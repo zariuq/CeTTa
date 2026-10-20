@@ -1,9 +1,11 @@
-/* The frame identity facility issues handles in four classes, each spelled
- * by a prefix of leading one bits.  Every class round-trips its spelling,
- * rejects a stale generation and retires a handle whose generations are
- * spent; words no class issues do not decode; and a bounded table refuses
- * without spending an identity, then serves again after a release.  The
- * census counts what was issued, freed to the shared list and retired. */
+/* The frame identity facility issues one 64-bit word per identity: a handle
+ * and its generation.  At every handle range an identity round-trips its
+ * spelling, rejects a stale generation and retires its handle after the last
+ * generation, the last handle's retirement leaving nothing to issue; words
+ * the facility never issues do not decode; and a bounded
+ * table refuses without spending an identity, then serves again after a
+ * release.  The census counts what was issued, freed to the shared list and
+ * retired. */
 #include "binding/frame_identity.h"
 #include "binding/frame_identity_census.h"
 #include "binding/frame_identity_test.h"
@@ -23,15 +25,15 @@ static void check(bool ok, const char *what) {
     }
 }
 
-/* What a fresh handle of the class starting at `first` reads as, and its
- * lifetime: reuse raises the generation, the old spelling stays stale, and
- * the handle retires after its last generation. */
-static void check_class(uint32_t first, uint32_t prefix, uint32_t prefix_bits,
-                        uint32_t generation_max, const char *name) {
+/* What a fresh handle at `first` reads as, and its lifetime: reuse raises
+ * the generation, the old spelling stays stale, and the handle retires after
+ * its last generation (reached through the aging hook rather than 2^32
+ * reuses). */
+static void check_handle(uint32_t first, const char *name) {
     char what[160];
     if (first > 1u)
         cetta_frame_identity_test_issue_from(first);
-    CettaFrameIdentity identity = 0u;
+    CettaFrameIdentity identity = CETTA_FRAME_IDENTITY_NONE;
     snprintf(what, sizeof what, "%s: a fresh handle is issued", name);
     check(cetta_frame_identity_acquire(&identity), what);
     CettaFrameIdentityParts parts;
@@ -39,39 +41,43 @@ static void check_class(uint32_t first, uint32_t prefix, uint32_t prefix_bits,
     check(cetta_frame_identity_parts(identity, &parts), what);
     snprintf(what, sizeof what, "%s: handle %u, first generation", name, first);
     check(parts.handle == first && parts.generation == 1u &&
-          parts.generation_max == generation_max, what);
-    snprintf(what, sizeof what, "%s: spelled with its class prefix", name);
-    check(identity >> (32u - prefix_bits) == prefix, what);
+          parts.generation_max == CETTA_FRAME_GENERATION_MAX, what);
+    snprintf(what, sizeof what, "%s: generation above the handle", name);
+    check(identity.word == ((UINT64_C(1) << 32) | first), what);
     check(cetta_frame_handle(identity) == first &&
           cetta_frame_generation(identity) == 1u, "handle and generation read back");
     check(cetta_frame_identity_retain(identity), "a live identity is retained");
     cetta_frame_identity_release(identity);
 
-    CettaFrameIdentity previous = identity;
-    uint32_t generations = 1u;
-    bool retired = false;
-    while (!retired) {
-        cetta_frame_identity_release(previous);
-        CettaFrameIdentity next = 0u;
-        if (!cetta_frame_identity_acquire(&next)) {
-            check(false, "a released handle serves again");
-            return;
-        }
-        snprintf(what, sizeof what, "%s: a stale generation is rejected", name);
-        check(!cetta_frame_identity_retain(previous), what);
-        if (cetta_frame_handle(next) != first) {
-            /* Held, so that no free handle is left for the next class. */
-            retired = true;
-            break;
-        }
-        generations++;
-        snprintf(what, sizeof what, "%s: reuse raises the generation", name);
-        check(cetta_frame_generation(next) == generations, what);
-        previous = next;
+    cetta_frame_identity_release(identity);
+    CettaFrameIdentity next = CETTA_FRAME_IDENTITY_NONE;
+    check(cetta_frame_identity_acquire(&next) &&
+          cetta_frame_handle(next) == first &&
+          cetta_frame_generation(next) == 2u,
+          "a released handle serves again at the next generation");
+    snprintf(what, sizeof what, "%s: a stale generation is rejected", name);
+    check(!cetta_frame_identity_retain(identity), what);
+
+    cetta_frame_identity_release(next);
+    cetta_frame_identity_test_age(first, CETTA_FRAME_GENERATION_MAX - 1u);
+    CettaFrameIdentity last = CETTA_FRAME_IDENTITY_NONE;
+    snprintf(what, sizeof what, "%s: the last generation is issued", name);
+    check(cetta_frame_identity_acquire(&last) &&
+          cetta_frame_handle(last) == first &&
+          cetta_frame_generation(last) == CETTA_FRAME_GENERATION_MAX, what);
+    cetta_frame_identity_release(last);
+    CettaFrameIdentity after = CETTA_FRAME_IDENTITY_NONE;
+    snprintf(what, sizeof what, "%s: retired after its last generation", name);
+    if (first == CETTA_FRAME_HANDLE_LIMIT - 1u) {
+        /* Nothing is left to issue once the last handle retires. */
+        uint64_t before = cetta_frame_identity_exhaustions();
+        check(!cetta_frame_identity_acquire(&after) &&
+              cetta_frame_identity_exhaustions() == before + 1u, what);
+        return;
     }
-    snprintf(what, sizeof what, "%s: retired after generation %u", name,
-             generation_max);
-    check(generations == generation_max, what);
+    /* Held, so that the next check starts from its own fresh handle. */
+    check(cetta_frame_identity_acquire(&after) &&
+          cetta_frame_handle(after) != first, what);
 }
 
 static void check_bounded_refusal(void) {
@@ -89,11 +95,11 @@ static void check_bounded_refusal(void) {
         while (count <= LIMIT && cetta_frame_identity_acquire(&held[count]))
             count++;
         uint64_t before = cetta_frame_identity_exhaustions();
-        CettaFrameIdentity refused = 0u;
+        CettaFrameIdentity refused = CETTA_FRAME_IDENTITY_NONE;
         bool again = cetta_frame_identity_acquire(&refused);
         bool counted = cetta_frame_identity_exhaustions() == before + 1u;
         cetta_frame_identity_release(held[0]);
-        CettaFrameIdentity served = 0u;
+        CettaFrameIdentity served = CETTA_FRAME_IDENTITY_NONE;
         bool serves = cetta_frame_identity_acquire(&served);
         _exit(count == LIMIT && !again && counted && serves &&
               cetta_frame_handle(served) == cetta_frame_handle(held[0]) ? 0 : 1);
@@ -149,31 +155,36 @@ int main(void) {
     /* First, while no handle has been issued. */
     check_bounded_refusal();
     check_census();
-    check_class(1u, 0u, 1u, CETTA_FRAME_GENERATION_MAX, "class 0");
-    check_class(CETTA_FRAME_CLASS1_FIRST, 2u, 2u, 0x3eu, "class 1");
-    check_class(CETTA_FRAME_CLASS2_FIRST, 6u, 3u, 0x6u, "class 2");
-    check_class(CETTA_FRAME_CLASS3_FIRST, 14u, 4u, 0x2u, "class 3");
+    check_handle(1u, "the first handle");
+    check_handle(UINT32_C(1) << 20, "a handle at 2^20");
+    check_handle(UINT32_C(1) << 31, "a handle at 2^31");
+    check_handle(CETTA_FRAME_HANDLE_LIMIT - 1u, "the last handle");
     CettaFrameIdentityCensus census;
     cetta_frame_identity_census(&census);
-    check(census.retired == 4u, "the census counts one retired handle per class");
+    check(census.retired == 4u, "the census counts each retired handle");
 
     CettaFrameIdentityParts parts;
-    check(!cetta_frame_identity_parts(0u, &parts), "zero names no identity");
-    check(!cetta_frame_identity_parts(UINT32_C(0xFFEFFFFF), &parts),
-          "a word with four leading ones belongs to no class");
+    check(!cetta_frame_identity_parts(CETTA_FRAME_IDENTITY_NONE, &parts),
+          "zero names no identity");
+    check(!cetta_frame_identity_parts((CettaFrameIdentity){5u}, &parts),
+          "generation zero is never issued");
+    check(!cetta_frame_identity_parts(CETTA_VARIANT_PRIVATE_SLOT_EPOCH, &parts),
+          "the private variant slot epoch names no identity");
     check(!cetta_frame_identity_parts(
-              (CettaFrameIdentity)(CETTA_VARIANT_PRIVATE_SLOT_TAG >> 32), &parts),
-          "the private variant slot tag names no identity");
+              (CettaFrameIdentity){UINT64_C(3) << 32}, &parts),
+          "handle zero is never issued");
     check(!cetta_frame_identity_parts(
-              (UINT32_C(0x7ff) << 20) | 5u, &parts),
-          "a class-0 spelling past its last generation does not decode");
-    check(cetta_frame_identity_parts((UINT32_C(3) << 20) | 5u, &parts) &&
-          parts.handle == 5u && parts.generation == 3u,
-          "a class-0 spelling decodes to its handle and generation");
+              (CettaFrameIdentity){(UINT64_C(1) << 32) | CETTA_FRAME_HANDLE_LIMIT},
+              &parts),
+          "no handle is issued at the limit");
+    check(cetta_frame_identity_parts(
+              (CettaFrameIdentity){(UINT64_C(3) << 32) | 5u}, &parts) &&
+              parts.handle == 5u && parts.generation == 3u,
+          "a spelling decodes to its handle and generation");
     if (failures)
         return 1;
-    printf("PASS: frame identities round-trip, go stale and retire in every "
-           "class; foreign words do not decode; a bounded table refuses and "
-           "serves again; the census counts them\n");
+    printf("PASS: frame identities round-trip, go stale and retire across the "
+           "handle range; foreign words do not decode; a bounded table refuses "
+           "and serves again; the census counts them\n");
     return 0;
 }

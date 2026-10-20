@@ -1178,7 +1178,7 @@ static bool petta_block_note_inference_taint(
         return false;
     for (size_t index = 0u;
          index < check->inference_tainted_var_len; index++) {
-        if (check->inference_tainted_vars[index] == variable)
+        if (var_id_eq(check->inference_tainted_vars[index], variable))
             return true;
     }
     if (!petta_block_reserve(
@@ -1201,7 +1201,7 @@ static bool petta_block_inference_parameter_tainted(
         return false;
     for (size_t index = 0u;
          index < check->inference_tainted_var_len; index++) {
-        if (check->inference_tainted_vars[index] == pattern->var_id)
+        if (var_id_eq(check->inference_tainted_vars[index], pattern->var_id))
             return true;
     }
     return false;
@@ -2113,7 +2113,7 @@ static bool petta_block_type_compatible_depth(
             Atom *member = petta_block_resolve_binding(
                 check, bindings, required->expr.elems[index]);
             if (member && member->kind == ATOM_VAR &&
-                member->var_id == actual->var_id) {
+                var_id_eq(member->var_id, actual->var_id)) {
                 CETTA_PETTA_TYPECHECK_CENSUS_HIT(
                     CETTA_PETTA_TYPECHECK_CENSUS_EVENT_TYPE_VAR_ACTUAL_UNION_SELF);
                 /* Roman's soft compatibility accepts this self-membership,
@@ -2134,7 +2134,7 @@ static bool petta_block_type_compatible_depth(
             Atom *member = petta_block_resolve_binding(
                 check, bindings, actual->expr.elems[index]);
             if (member && member->kind == ATOM_VAR &&
-                member->var_id == required->var_id) {
+                var_id_eq(member->var_id, required->var_id)) {
                 CETTA_PETTA_TYPECHECK_CENSUS_HIT(
                     CETTA_PETTA_TYPECHECK_CENSUS_EVENT_TYPE_VAR_REQUIRED_UNION_SELF);
                 return true;
@@ -2143,7 +2143,7 @@ static bool petta_block_type_compatible_depth(
     }
     if (actual->kind == ATOM_VAR) {
         if (required->kind == ATOM_VAR &&
-            actual->var_id == required->var_id) {
+            var_id_eq(actual->var_id, required->var_id)) {
             CETTA_PETTA_TYPECHECK_CENSUS_HIT(
                 CETTA_PETTA_TYPECHECK_CENSUS_EVENT_TYPE_VAR_IDENTITY);
             return true;
@@ -2341,7 +2341,7 @@ typedef struct {
 static Atom *petta_rational_type_lookup(
     const PettaRationalTypeReplay *replay, VarId variable) {
     for (size_t index = replay->binding_len; index > 0u; index--) {
-        if (replay->bindings[index - 1u].variable == variable)
+        if (var_id_eq(replay->bindings[index - 1u].variable, variable))
             return replay->bindings[index - 1u].value;
     }
     return NULL;
@@ -2353,7 +2353,7 @@ static Atom *petta_rational_type_dereference(
     while (type && type->kind == ATOM_VAR && remaining-- > 0u) {
         Atom *next = petta_rational_type_lookup(replay, type->var_id);
         if (!next || (next->kind == ATOM_VAR &&
-                      next->var_id == type->var_id)) {
+                      var_id_eq(next->var_id, type->var_id))) {
             return type;
         }
         type = next;
@@ -2423,14 +2423,14 @@ static int petta_rational_type_reaches_variable(
         if (!current)
             continue;
         if (current->kind == ATOM_VAR) {
-            if (current->var_id == target) {
+            if (var_id_eq(current->var_id, target)) {
                 free(seen);
                 free(pending);
                 return 1;
             }
             bool prior = false;
             for (size_t index = 0u; index < seen_len; index++) {
-                if (seen[index] == current->var_id) {
+                if (var_id_eq(seen[index], current->var_id)) {
                     prior = true;
                     break;
                 }
@@ -2822,7 +2822,7 @@ static bool petta_block_dynamic_pattern_var(
         return false;
     for (size_t index = 0u;
          index < check->dynamic_pattern_var_len; index++) {
-        if (check->dynamic_pattern_vars[index] == variable)
+        if (var_id_eq(check->dynamic_pattern_vars[index], variable))
             return true;
     }
     return false;
@@ -2831,7 +2831,7 @@ static bool petta_block_dynamic_pattern_var(
 static bool petta_block_var_id_present(
     const VarId *variables, size_t count, VarId variable) {
     for (size_t index = 0u; index < count; index++) {
-        if (variables[index] == variable)
+        if (var_id_eq(variables[index], variable))
             return true;
     }
     return false;
@@ -4013,7 +4013,7 @@ static bool petta_block_case_pattern_consumes_constructor(
             return false;
         for (CettaExprIndex prior = 1u; prior < index; prior++) {
             if (pattern->expr.elems[prior]->kind == ATOM_VAR &&
-                pattern->expr.elems[prior]->var_id == argument->var_id) {
+                var_id_eq(pattern->expr.elems[prior]->var_id, argument->var_id)) {
                 return false;
             }
         }
@@ -4384,7 +4384,7 @@ static Atom *petta_block_replace_term_variable(
     Atom *replacement, uint32_t depth) {
     if (!check || !term || !replacement || depth > 2048u)
         return NULL;
-    if (term->kind == ATOM_VAR && term->var_id == variable)
+    if (term->kind == ATOM_VAR && var_id_eq(term->var_id, variable))
         return replacement;
     if (term->kind != ATOM_EXPR)
         return term;
@@ -6790,7 +6790,7 @@ static bool petta_block_value_manifest_bool(
     if (value && value->kind == ATOM_VAR) {
         for (size_t index = 0u;
              index < check->bound_bool_parameter_len; index++) {
-            if (check->bound_bool_parameters[index] == value->var_id)
+            if (var_id_eq(check->bound_bool_parameters[index], value->var_id))
                 return true;
         }
     }
@@ -7352,7 +7352,7 @@ static bool petta_block_value_known_nonempty(
          index > 0u; index--) {
         Atom *known = check->nonempty_values[index - 1u];
         if ((known->kind == ATOM_VAR && value->kind == ATOM_VAR &&
-             known->var_id == value->var_id) || atom_eq(known, value))
+             var_id_eq(known->var_id, value->var_id)) || atom_eq(known, value))
             return true;
     }
     return false;
@@ -7647,7 +7647,7 @@ static bool petta_block_is_member_probe_bound(
          position < lhs->expr.len; position++) {
         Atom *parameter = lhs->expr.elems[position];
         if (parameter->kind == ATOM_VAR &&
-            parameter->var_id == probe->var_id)
+            var_id_eq(parameter->var_id, probe->var_id))
             return !petta_block_tests_variable_boundness(
                 check->enforced_clause_body, parameter, 0u);
     }
@@ -7679,7 +7679,7 @@ static bool petta_block_mentions_var(
     if (depth > 2048u)
         return true;
     if (atom->kind == ATOM_VAR)
-        return atom->var_id == var;
+        return var_id_eq(atom->var_id, var);
     if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
         return false;
     for (CettaExprIndex index = 0u; index < atom->expr.len; index++) {
@@ -7708,7 +7708,7 @@ static bool petta_block_decons_pattern_may_fail(
     Atom *head = pattern->expr.elems[0];
     Atom *tail = pattern->expr.elems[1];
     if (head->kind != ATOM_VAR || tail->kind != ATOM_VAR ||
-        head->var_id == tail->var_id)
+        var_id_eq(head->var_id, tail->var_id))
         return true;
     Atom *lhs = check ? check->enforced_clause_lhs : NULL;
     for (int index = 0; index < 2; index++) {
@@ -8346,7 +8346,7 @@ static bool petta_block_position_covers_constructor_totally(
             Atom *variable = pattern->expr.elems[field];
             total = variable->kind == ATOM_VAR;
             for (CettaExprIndex prior = 1u; total && prior < field; prior++)
-                total = pattern->expr.elems[prior]->var_id != variable->var_id;
+                total = !var_id_eq(pattern->expr.elems[prior]->var_id, variable->var_id);
         }
         if (total)
             return true;
@@ -8502,7 +8502,7 @@ static bool petta_block_tests_variable_boundness(
     if (petta_block_head_is(expression, "is-var") &&
         expression->expr.len == 2u &&
         expression->expr.elems[1]->kind == ATOM_VAR &&
-        expression->expr.elems[1]->var_id == variable->var_id)
+        var_id_eq(expression->expr.elems[1]->var_id, variable->var_id))
         return true;
     for (CettaExprIndex index = 0u;
          index < expression->expr.len; index++) {
@@ -9097,7 +9097,7 @@ static bool petta_block_check_equation(
                 Atom *slot = fresh->expr.elems[position];
                 Atom *pattern = lhs->expr.elems[position];
                 if (slot->kind == ATOM_VAR &&
-                    slot->var_id == input_variables[index] &&
+                    var_id_eq(slot->var_id, input_variables[index]) &&
                     pattern->kind != ATOM_VAR) {
                     head_specialized[index] = true;
                     break;
@@ -9180,7 +9180,7 @@ static bool petta_block_check_equation(
             bool selected_by_head = false;
             for (size_t input = 0u;
                  input < input_variable_len; input++) {
-                if (input_variables[input] == promised_variables[index]) {
+                if (var_id_eq(input_variables[input], promised_variables[index])) {
                     selected_by_head = head_specialized[input];
                     break;
                 }
@@ -9758,7 +9758,7 @@ static Atom *petta_typecheck_boundary_operand(Atom *atom) {
 static bool petta_typecheck_boundary_is_variable(
     Atom *atom, VarId variable) {
     atom = petta_typecheck_boundary_operand(atom);
-    return atom && atom->kind == ATOM_VAR && atom->var_id == variable;
+    return atom && atom->kind == ATOM_VAR && var_id_eq(atom->var_id, variable);
 }
 
 /* Derive only facts that are logically forced by one boolean observation.

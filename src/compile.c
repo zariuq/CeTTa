@@ -275,7 +275,7 @@ static void capture_add(CaptureTable *ct, VarId var_id, const char *reg) {
 
 static const char *capture_lookup(CaptureTable *ct, VarId var_id) {
     for (size_t i = 0; i < ct->len; i++)
-        if (ct->caps[i].var_id == var_id)
+        if (var_id_eq(ct->caps[i].var_id, var_id))
             return ct->caps[i].llvm_reg;
     return NULL;
 }
@@ -455,8 +455,9 @@ static const char *emit_rhs(FILE *out, Arena *compiler_arena, Atom *rhs,
                 strlen(name)+1, strlen(name)+1);
         emit_mangled(out, name);
         if (rhs->name_key)
+            /* Compiled source variables have no activation: the base names them. */
             fprintf(out, ", i32 0, i32 0), i64 %" PRIu64 ")\n",
-                    (uint64_t)rhs->var_id);
+                    rhs->var_id.base);
         else
             fprintf(out, ", i32 0, i32 0))\n");
         return reg;

@@ -33,7 +33,7 @@ static CettaGsltTermViewStatusV1 resolve_view_variable(
         source_variable->kind != ATOM_VAR)
         return CETTA_GSLT_TERM_VIEW_INVALID_V1;
     for (uint32_t index = 0u; index < environment->len; index++) {
-        if (environment->variables[index] == source_variable->var_id) {
+        if (var_id_eq(environment->variables[index], source_variable->var_id)) {
             *target_out = environment->values[index];
             return *target_out
                 ? CETTA_GSLT_TERM_VIEW_OK_V1
@@ -93,8 +93,8 @@ int main(void) {
     cetta_gslt_ground_dense_workspace_init_v1(&workspace);
 
     {
-        Atom *cursor = atom_var_with_id(&source, "cursor", 101u);
-        Atom *forest = atom_var_with_id(&source, "forest", 102u);
+        Atom *cursor = atom_var_with_id(&source, "cursor", var_id_from_base(101u));
+        Atom *forest = atom_var_with_id(&source, "forest", var_id_from_base(102u));
         Atom *literal_arguments[] = {atom_string(&source, "name")};
         Atom *literal = expression(
             &source, "token-kind", literal_arguments, 1u);
@@ -131,12 +131,12 @@ int main(void) {
 
         expect_true(
             cetta_gslt_ground_dense_term_compile_v1(
-                &parser_head, head, 101u, 2u, error, sizeof(error)),
+                &parser_head, head, var_id_from_base(101u), 2u, error, sizeof(error)),
             error[0] ? error : "parser-shaped head compiles");
         error[0] = '\0';
         expect_true(
             cetta_gslt_ground_dense_term_compile_v1(
-                &parser_body, body, 101u, 2u, error, sizeof(error)),
+                &parser_body, body, var_id_from_base(101u), 2u, error, sizeof(error)),
             error[0] ? error : "parser-shaped body compiles");
         expect_true(
             !cetta_gslt_ground_dense_term_is_linear_v1(&parser_head),
@@ -145,9 +145,9 @@ int main(void) {
             uint32_t offset = UINT32_MAX;
             expect_true(
                 cetta_gslt_ground_dense_term_first_binding_offset_v1(
-                    &parser_head, 101u, &offset) && offset == 0u &&
+                    &parser_head, var_id_from_base(101u), &offset) && offset == 0u &&
                 cetta_gslt_ground_dense_term_first_binding_offset_v1(
-                    &parser_head, 102u, &offset) && offset == 1u,
+                    &parser_head, var_id_from_base(102u), &offset) && offset == 1u,
                 "a nonlinear pattern exposes exact first-binding coordinates");
         }
         parser_nodes =
@@ -175,8 +175,8 @@ int main(void) {
             "instantiation rebuilds only slot-dependent expressions");
 
         {
-            Atom *view_cursor = atom_var_with_id(&source, "view-cursor", 501u);
-            Atom *view_forest = atom_var_with_id(&source, "view-forest", 502u);
+            Atom *view_cursor = atom_var_with_id(&source, "view-cursor", var_id_from_base(501u));
+            Atom *view_forest = atom_var_with_id(&source, "view-forest", var_id_from_base(502u));
             Atom *view_pair_arguments[] = {
                 view_cursor, view_forest, view_cursor,
             };
@@ -186,7 +186,7 @@ int main(void) {
             Atom *view = expression(
                 &source, "parser-step", view_arguments, 2u);
             ViewEnvironment environment = {
-                .variables = {501u, 502u},
+                .variables = {var_id_from_base(501u), var_id_from_base(502u)},
                 .values = {cursor_value, forest_value},
                 .len = 2u,
             };
@@ -254,7 +254,7 @@ int main(void) {
         {
             Atom *open_pair_arguments[] = {
                 cursor_value, forest_value,
-                atom_var_with_id(&target, "open", 9001u),
+                atom_var_with_id(&target, "open", var_id_from_base(9001u)),
             };
             Atom *open_pair = expression(
                 &target, "parser-cell", open_pair_arguments, 3u);
@@ -268,11 +268,11 @@ int main(void) {
                 "an open target is outside the admitted ground path");
         }
         {
-            Atom *outside = atom_var_with_id(&source, "outside", 103u);
+            Atom *outside = atom_var_with_id(&source, "outside", var_id_from_base(103u));
             error[0] = '\0';
             expect_true(
                 !cetta_gslt_ground_dense_term_compile_v1(
-                    &parser_head, outside, 101u, 2u,
+                    &parser_head, outside, var_id_from_base(101u), 2u,
                     error, sizeof(error)) &&
                     error[0] != '\0' &&
                     cetta_gslt_ground_dense_term_node_count_v1(
@@ -287,14 +287,14 @@ int main(void) {
     }
 
     {
-        Atom *state = atom_var_with_id(&source, "state", 201u);
+        Atom *state = atom_var_with_id(&source, "state", var_id_from_base(201u));
         Atom *head_arguments[] = {state, atom_symbol(&source, "ready")};
         Atom *head = expression(
             &source, "rewrite-step", head_arguments, 2u);
         Atom *body_arguments[] = {state};
         Atom *body = expression(
             &source, "rewrite-result", body_arguments, 1u);
-        Atom *missing = atom_var_with_id(&source, "missing", 202u);
+        Atom *missing = atom_var_with_id(&source, "missing", var_id_from_base(202u));
         Atom *missing_arguments[] = {missing};
         Atom *missing_term = expression(
             &source, "rewrite-result", missing_arguments, 1u);
@@ -312,26 +312,26 @@ int main(void) {
         error[0] = '\0';
         expect_true(
             cetta_gslt_ground_dense_term_compile_v1(
-                &rewrite_head, head, 201u, 2u, error, sizeof(error)) &&
+                &rewrite_head, head, var_id_from_base(201u), 2u, error, sizeof(error)) &&
                 cetta_gslt_ground_dense_term_is_linear_v1(&rewrite_head),
             error[0] ? error : "linear rewrite-shaped head compiles");
         {
             uint32_t offset = UINT32_MAX;
             expect_true(
                 cetta_gslt_ground_dense_term_first_binding_offset_v1(
-                    &rewrite_head, 201u, &offset) && offset == 0u,
+                    &rewrite_head, var_id_from_base(201u), &offset) && offset == 0u,
                 "a linear producer exposes its exact binding coordinate");
             expect_true(
                 !cetta_gslt_ground_dense_term_first_binding_offset_v1(
-                    &rewrite_head, 202u, &offset),
+                    &rewrite_head, var_id_from_base(202u), &offset),
                 "a variable absent from the producer has no coordinate");
         }
         error[0] = '\0';
         expect_true(
             cetta_gslt_ground_dense_term_compile_v1(
-                &rewrite_body, body, 201u, 2u, error, sizeof(error)) &&
+                &rewrite_body, body, var_id_from_base(201u), 2u, error, sizeof(error)) &&
                 cetta_gslt_ground_dense_term_compile_v1(
-                    &missing_body, missing_term, 201u, 2u,
+                    &missing_body, missing_term, var_id_from_base(201u), 2u,
                     error, sizeof(error)),
             error[0] ? error : "rewrite-shaped bodies compile");
         expect_true(
@@ -366,7 +366,7 @@ int main(void) {
         error[0] = '\0';
         expect_true(
             cetta_gslt_ground_dense_term_compile_v1(
-                &rigid, rigid_source, 1u, 0u,
+                &rigid, rigid_source, var_id_from_base(1u), 0u,
                 error, sizeof(error)) &&
                 cetta_gslt_ground_dense_term_match_v1(
                     &workspace, &rigid, rigid_target, NULL) ==
@@ -374,14 +374,14 @@ int main(void) {
             error[0] ? error : "zero-width rigid program is admitted");
         expect_true(
             !cetta_gslt_ground_dense_term_compile_v1(
-                &rigid, rigid_source, UINT64_MAX, 2u,
+                &rigid, rigid_source, var_id_from_base(UINT64_MAX), 2u,
                 error, sizeof(error)),
             "a wrapping variable interval is rejected");
     }
 
     {
-        Atom *consumer_slot = atom_var_with_id(&source, "capture", 301u);
-        Atom *open = atom_var_with_id(&source, "open-source", 601u);
+        Atom *consumer_slot = atom_var_with_id(&source, "capture", var_id_from_base(301u));
+        Atom *open = atom_var_with_id(&source, "open-source", var_id_from_base(601u));
         Atom *open_arguments[] = {open};
         Atom *open_view = expression(
             &source, "source-wrapper", open_arguments, 1u);
@@ -389,7 +389,7 @@ int main(void) {
         error[0] = '\0';
         expect_true(
             cetta_gslt_ground_dense_term_compile_v1(
-                &capture, consumer_slot, 301u, 1u,
+                &capture, consumer_slot, var_id_from_base(301u), 1u,
                 error, sizeof(error)),
             error[0] ? error : "capture-shaped consumer compiles");
         expect_true(

@@ -7632,14 +7632,14 @@ bool cetta_tptp_compact_wrappers_v1(
             left->expr.elems[0]->kind != ATOM_SYMBOL || left->expr.elems[0]->sym_id != v ||
             right->expr.elems[0]->kind != ATOM_SYMBOL || right->expr.elems[0]->sym_id != v ||
             left->expr.elems[1]->kind != ATOM_VAR || right->expr.elems[1]->kind != ATOM_VAR ||
-            left->expr.elems[1]->var_id != right->expr.elems[1]->var_id)
+            !var_id_eq(left->expr.elems[1]->var_id, right->expr.elems[1]->var_id))
             continue;
         node = left->expr.elems[2];
         if (node->kind != ATOM_EXPR || node->expr.len != 3u ||
             node->expr.elems[0]->kind != ATOM_SYMBOL || node->expr.elems[0]->sym_id != bnf ||
             node->expr.elems[1]->kind != ATOM_SYMBOL || node->expr.elems[2]->kind != ATOM_VAR ||
             right->expr.elems[2]->kind != ATOM_VAR ||
-            node->expr.elems[2]->var_id != right->expr.elems[2]->var_id)
+            !var_id_eq(node->expr.elems[2]->var_id, right->expr.elems[2]->var_id))
             continue;
         wrappers[len++] = node->expr.elems[1]->sym_id;
     }

@@ -1095,9 +1095,9 @@ static bool compiled_node_matches_source(
         if (source->kind != ATOM_VAR || node->variable >= variable_count)
             return false;
         if (assigned[node->variable])
-            return variables[node->variable] == source->var_id;
+            return var_id_eq(variables[node->variable], source->var_id);
         for (uint32_t index = 0u; index < variable_count; index++)
-            if (assigned[index] && variables[index] == source->var_id)
+            if (assigned[index] && var_id_eq(variables[index], source->var_id))
                 return false;
         variables[node->variable] = source->var_id;
         assigned[node->variable] = true;

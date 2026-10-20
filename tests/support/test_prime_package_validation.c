@@ -771,8 +771,7 @@ int main(int argc, char **argv) {
         sealed_pair_after->expr.elems[1] != sealed_pair_before->expr.elems[1] ||
         sealed_pair_before->expr.elems[2]->kind != ATOM_VAR ||
         sealed_pair_after->expr.elems[2]->kind != ATOM_VAR ||
-        sealed_pair_after->expr.elems[2]->var_id ==
-            sealed_pair_before->expr.elems[2]->var_id) {
+        var_id_eq(sealed_pair_after->expr.elems[2]->var_id, sealed_pair_before->expr.elems[2]->var_id)) {
         fprintf(stderr,
                 "sealed changed an ABT index or retained a free metavariable\n");
         goto cleanup;
@@ -813,7 +812,7 @@ int main(int argc, char **argv) {
         sealed_cursor = sealed_cursor->expr.elems[1];
     }
     if (!sealed_cursor || sealed_cursor->kind != ATOM_VAR ||
-        sealed_cursor->var_id == sealed_deep_leaf->var_id) {
+        var_id_eq(sealed_cursor->var_id, sealed_deep_leaf->var_id)) {
         fprintf(stderr, "sealed deep traversal did not freshen its leaf\n");
         goto cleanup;
     }
@@ -1042,7 +1041,7 @@ int main(int argc, char **argv) {
 
     bindings_init(&deep_match_bindings);
     if (!match_atoms_epoch(deep_match_left, deep_match_right,
-                           &deep_match_bindings, &arena, 17u)) {
+                           &deep_match_bindings, &arena, (CettaFrameIdentity){17u})) {
         fprintf(stderr, "epoch matcher failed above structural depth 64\n");
         bindings_free(&deep_match_bindings);
         goto cleanup;
@@ -1109,7 +1108,7 @@ int main(int argc, char **argv) {
         goto cleanup;
     }
     if (match_atoms_epoch(cycle_expr, cycle_expr, &cyclic_bindings,
-                          &arena, 0u)) {
+                          &arena, CETTA_FRAME_IDENTITY_NONE)) {
         fprintf(stderr, "epoch matcher accepted a cyclic finite term\n");
         bindings_free(&cyclic_bindings);
         goto cleanup;
@@ -1119,7 +1118,7 @@ int main(int argc, char **argv) {
     if (cycle_expr_id == CETTA_ATOM_ID_NONE ||
         match_atoms_atom_id_epoch(
             cycle_expr, &universe, cycle_expr_id,
-            &cyclic_bindings, &arena, 0u)) {
+            &cyclic_bindings, &arena, CETTA_FRAME_IDENTITY_NONE)) {
         fprintf(stderr, "store-backed matcher accepted a cyclic finite term\n");
         bindings_free(&cyclic_bindings);
         goto cleanup;
@@ -1175,7 +1174,7 @@ int main(int argc, char **argv) {
     if (deep_match_id == CETTA_ATOM_ID_NONE ||
         !match_atoms_atom_id_epoch(
             deep_match_left, &universe, deep_match_id,
-            &deep_match_bindings, &arena, 19u)) {
+            &deep_match_bindings, &arena, (CettaFrameIdentity){19u})) {
         fprintf(stderr, "store-backed matcher failed above structural depth 64\n");
         bindings_free(&deep_match_bindings);
         goto cleanup;

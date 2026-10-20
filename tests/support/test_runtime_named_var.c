@@ -31,13 +31,13 @@ int main(void) {
     g_var_intern = &variables;
 
     Atom *first = cetta_atom_named_var(
-        &arena, "(generated \"y\")", (VarId)41u);
+        &arena, "(generated \"y\")", var_id_from_base(41u));
     Atom *second = cetta_atom_named_var(
-        &arena, "(generated \"y\")", (VarId)42u);
+        &arena, "(generated \"y\")", var_id_from_base(42u));
 
     CHECK(first && first->kind == ATOM_VAR,
           "compiled structural variable is reconstructed");
-    CHECK(first && first->var_id == (VarId)41u,
+    CHECK(first && var_id_eq(first->var_id, var_id_from_base(41u)),
           "compiled structural variable preserves VarId identity");
     CHECK(first && first->name_key && first->name_key->kind == ATOM_EXPR,
           "compiled structural variable preserves its structural key");
@@ -53,9 +53,9 @@ int main(void) {
           "equal structural spellings reconstruct equal keys");
     CHECK(first && second && !atom_eq(first, second),
           "VarId remains authoritative over equal key presentation");
-    CHECK(cetta_atom_named_var(&arena, "$open", (VarId)43u) == NULL,
+    CHECK(cetta_atom_named_var(&arena, "$open", var_id_from_base(43u)) == NULL,
           "open structural keys fail closed");
-    CHECK(cetta_atom_named_var(&arena, "one two", (VarId)44u) == NULL,
+    CHECK(cetta_atom_named_var(&arena, "one two", var_id_from_base(44u)) == NULL,
           "multi-form structural keys fail closed");
 
     bool old_universal = parser_set_universal_name_syntax_enabled(true);
@@ -101,8 +101,7 @@ int main(void) {
               long_pair->expr.elems[2]->kind == ATOM_VAR,
           "syn:var lowers to genuine native matcher variables");
     CHECK(long_pair &&
-              long_pair->expr.elems[1]->var_id ==
-                  long_pair->expr.elems[2]->var_id,
+              var_id_eq(long_pair->expr.elems[1]->var_id, long_pair->expr.elems[2]->var_id),
           "repeated expanded structural names preserve variable sharing");
     CHECK(long_pair && long_pair->expr.elems[1]->name_key &&
               atom_eq(long_pair->expr.elems[1]->name_key,

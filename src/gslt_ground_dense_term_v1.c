@@ -240,13 +240,13 @@ static bool cetta_gslt_ground_dense_compile_impl_v1(
                 uint32_t slot;
                 CettaGsltGroundDenseNodeV1 node;
 
-                if (atom->var_id < impl->first_variable) {
+                if (atom->var_id.base < impl->first_variable.base) {
                     cetta_gslt_ground_dense_set_error_v1(
                         error_buf, error_buf_size,
                         "dense term variable precedes its admitted interval");
                     goto done;
                 }
-                offset = atom->var_id - impl->first_variable;
+                offset = atom->var_id.base - impl->first_variable.base;
                 if (offset >= impl->variable_width) {
                     cetta_gslt_ground_dense_set_error_v1(
                         error_buf, error_buf_size,
@@ -385,10 +385,10 @@ bool cetta_gslt_ground_dense_term_compile_v1(
 
     if (error_buf && error_buf_size != 0u)
         error_buf[0] = '\0';
-    if (!program || !source || first_variable == VAR_ID_NONE ||
+    if (!program || !source || var_id_is_none(first_variable) ||
         (variable_width != 0u &&
          (uint64_t)(variable_width - 1u) >
-             UINT64_MAX - first_variable)) {
+             UINT64_MAX - first_variable.base)) {
         cetta_gslt_ground_dense_set_error_v1(
             error_buf, error_buf_size,
             "invalid dense term compilation request");
@@ -442,9 +442,9 @@ bool cetta_gslt_ground_dense_term_first_binding_offset_v1(
     uint64_t slot;
 
     if (!impl || !offset_out ||
-        source_variable < impl->first_variable)
+        source_variable.base < impl->first_variable.base)
         return false;
-    slot = source_variable - impl->first_variable;
+    slot = source_variable.base - impl->first_variable.base;
     if (slot >= impl->variable_width ||
         !impl->first_binding_offsets ||
         impl->first_binding_offsets[slot] == UINT32_MAX)

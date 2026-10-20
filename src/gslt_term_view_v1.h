@@ -162,7 +162,7 @@ static inline bool cetta_gslt_term_view_project_expression_coordinates_v1(
             for (CettaExprIndex previous = 0u;
                  previous < index; previous++) {
                 if (coordinates[previous]->kind == ATOM_VAR &&
-                    coordinates[previous]->var_id == resolved->var_id) {
+                    var_id_eq(coordinates[previous]->var_id, resolved->var_id)) {
                     return false;
                 }
             }

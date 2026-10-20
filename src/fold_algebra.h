@@ -57,7 +57,8 @@ typedef enum {
     CETTA_FOLD_EXPR_ADD,
     CETTA_FOLD_EXPR_SUB,
     CETTA_FOLD_EXPR_MUL,
-    CETTA_FOLD_EXPR_MOD,
+    /* Floor remainder: the fold kernels serve PeTTa, whose `%` floors. */
+    CETTA_FOLD_EXPR_FREM,
     CETTA_FOLD_EXPR_MIN,
     CETTA_FOLD_EXPR_MAX,
 } CettaFoldExprKind;
@@ -79,9 +80,6 @@ bool cetta_fold_expr_leaf(CettaFoldExpr *expr, CettaFoldExprKind kind,
                           int64_t literal, uint8_t *index_out);
 bool cetta_fold_expr_binary(CettaFoldExpr *expr, CettaFoldExprKind kind,
                             uint8_t left, uint8_t right, uint8_t *index_out);
-
-/* Floor division remainder, the sign of the divisor (PeTTa's `%`). */
-bool cetta_fold_floor_mod(int64_t value, int64_t divisor, int64_t *out);
 
 /* Exact evaluation of node `root` at (item, acc). */
 CettaFoldStatus cetta_fold_expr_eval(const CettaFoldExpr *expr, uint8_t root,

@@ -916,7 +916,7 @@ typedef struct PrimeVarContext {
 
 static bool prime_var_is_bound(const PrimeVarContext *context, VarId id) {
     for (const PrimeVarContext *it = context; it; it = it->parent)
-        if (it->id == id) return true;
+        if (var_id_eq(it->id, id)) return true;
     return false;
 }
 
@@ -956,7 +956,7 @@ typedef struct {
 } PrimeCanonicalScope;
 
 static uint64_t prime_canonical_var_hash(VarId id) {
-    uint64_t x = (uint64_t)id;
+    uint64_t x = var_id_mix(id);
     x ^= x >> 30;
     x *= UINT64_C(0xbf58476d1ce4e5b9);
     x ^= x >> 27;
@@ -1007,7 +1007,7 @@ static PrimeCanonicalSlot *prime_canonical_scope_find(
         if (slot->state == 0u)
             return insert && tombstone != SIZE_MAX
                 ? &scope->slots[tombstone] : slot;
-        if (slot->state == 1u && slot->id == id) return slot;
+        if (slot->state == 1u && var_id_eq(slot->id, id)) return slot;
         if (insert && slot->state == 2u && tombstone == SIZE_MAX)
             tombstone = pos;
         pos = (pos + 1u) & (scope->slot_cap - 1u);
@@ -2021,7 +2021,7 @@ static bool prime_regular_level_schema_parameter(
         !parameter_out)
         return false;
     for (size_t index = 0u; index < variables->count; index++) {
-        if (variables->variables[index]->var_id != variable->var_id) continue;
+        if (!var_id_eq(variables->variables[index]->var_id, variable->var_id)) continue;
         *parameter_out = (uint64_t)index;
         return true;
     }
@@ -2389,7 +2389,7 @@ prime_regular_declaration_instantiate_fvar(
             return prime_regular_declaration_occurrence_result(
                 CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL,
                 "declaration-level-identity-exhausted");
-        fresh_parameters[index] = (uint64_t)fresh;
+        fresh_parameters[index] = fresh.base;
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_DECLARATION_LEVEL_INSTANCE);
@@ -2701,7 +2701,7 @@ prime_resolve_declared_regular_name(
                             arena,
                             "declaration-rigid-level-identity-exhausted"));
                 }
-                rigid_parameters[parameter] = (uint64_t)fresh;
+                rigid_parameters[parameter] = fresh.base;
             }
             bool renamed = true;
             formed_type = prime_regular_level_schema_instantiate_rec(

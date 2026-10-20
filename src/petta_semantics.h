@@ -475,7 +475,7 @@ bool petta_semantics_match_lowered_head(
  * structure stays borrowed; retaining source syntax uses the eager match. */
 bool petta_semantics_match_lowered_head_epoch(
     Arena *arena, Atom *head, Atom *value,
-    BindingsBuilder *builder, uint32_t epoch);
+    BindingsBuilder *builder, CettaFrameIdentity epoch);
 
 /*
  * HE stdlib equations reused by PeTTa are lowered to private value-binding

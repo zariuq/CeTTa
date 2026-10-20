@@ -725,7 +725,7 @@ endif
 ifeq ($(ENABLE_PETTA_TYPECHECK_CENSUS),1)
 PETTA_TYPECHECK_CENSUS_SRC = src/petta_typecheck_census.c
 endif
-SRC = src/symbol.c src/scalar_trie.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
+SRC = src/symbol.c src/scalar_trie.c src/atom.c src/term_graph.c src/delay_service.c src/string_ops.c src/str_natives.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/abt.c src/parser.c $(COMPILED_READER_RUNTIME_SRC) src/mm2_lower.c src/subst_tree.c src/space.c src/registry_resolver.c src/space_match_backend.c src/match.c src/binding/rule.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/match_decision.c src/select/code_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/answer_bank.c src/table_store.c src/search_machine.c src/search_control_advice.c src/petta_program.c src/petta_type_fact_provider_v1.c src/petta_builtin_registry.c src/petta_typecheck_v3_decision_v1.c src/petta_typecheck_v3.c src/generated/petta_typecheck_v3_core_v1.generated.c src/generated/petta_typecheck_v3_core_provider_catalog_v1.generated.c src/petta_search_machine.c $(PETTA_TYPECHECK_V2_SRC) src/petta_specializer.c src/fixpoint.c src/rule_machine.c $(LIB_PROLOG_SRC) src/term_universe.c src/stats.c src/parallel_executor.c src/prime_need.c src/petta_semantics.c src/petta_numeric.c src/petta_runtime.c src/prepared_pure_machine.c src/owned_execution.c src/answer_storage.c src/fold_algebra.c src/native_fold.c src/exec_saturation.c src/open_equation_machine.c src/eval.c src/grounded.c src/he_macro_expansion.c src/he_typing.c src/he_typing_authority.c src/generated/he_typing_consistency_core_source_binding_v1.generated.c src/generated/he_profiled_type_inference_core_source_binding_v1.generated.c src/inference_checker.c src/nik_direct_authority.c src/nik_hosted_calculus.c src/nik_licensed_implementation_selection.c src/nik_runtime.c src/prime_semantics.c src/generated/prime_typing_closed_formation_source_binding_v1.generated.c src/text_source.c src/native_handle.c src/native_sha256.c src/mork_space_bridge_runtime.c src/library.c src/library_pattern.c src/langdef_pack.c src/gslt_provider_runtime.c src/gslt_space_fact_provider_v1.c src/gslt_finite_fact_provider_v1.c src/gslt_revisioned_space_provider_v1.c src/gslt_abt_provider_v1.c src/gslt_horn_runtime.c src/gslt_dense_bitset_v1.c src/gslt_compiled_runtime.c src/gslt_indexed_instruction_decoder_v1.c src/gslt_indexed_value_table_v1.c src/gslt_split_indexed_table_v1.c src/gslt_literal_hole_program_v1.c src/gslt_u32_index_v1.c src/gslt_u32_slice_arena_v1.c src/gslt_epoch_slots_v1.c src/gslt_ground_dense_term_v1.c src/gslt_language_runtime.c src/gslt_pure_provider_v1.c src/gslt_support_transform_runtime.c src/generated/prime_nik_authorities_v1.generated.c src/generated/gslt_il_language_v1.generated.c src/generated/metta_interact_language_v1.generated.c src/generated/mm2_gslt_profile_v1.generated.c src/generated/subzero_language_v1.generated.c src/generated/zero_language_v1.generated.c src/generated/zero_exp_language_v1.generated.c src/generated/zero_emit_language_v1.generated.c src/generated/zero_interact_language_v1.generated.c src/generated/zero_interact_provider_catalog_v1.generated.c src/generated/zerouv_language_v1.generated.c src/he_small_step_pack.c src/lib_parse_native_grammar.c src/lib_parse_inference_native.c experiments/gslt2parse_foundation/native/finite_horn_gslt_v1.c experiments/gslt2parse_foundation/native/finite_horn_ground_term_v1.c experiments/gslt2parse_foundation/native/parser_term_projection_v1.c experiments/gslt2parse_foundation/native/parser_pack_abi_v1.c experiments/gslt2parse_foundation/native/parser_action_bytecode_v1.c experiments/gslt2parse_foundation/native/parser_pack_native_v1.c experiments/gslt2parse_foundation/native/parser_pack_lexical_v1.c experiments/gslt2parse_foundation/native/parser_pack_gll_v1.c experiments/gslt2parse_foundation/native/regular_span_dfa_v1.c experiments/gslt2parse_foundation/native/regular_span_nfa_v1.c $(PYTHON_SRC) src/session.c src/lang.c src/rhocalc_core.c src/rhocalc_syntax.c src/compile.c src/runtime.c src/cetta_stdlib.c native/native_modules.c src/main.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
 SRC += src/library_fs.c
@@ -774,6 +774,7 @@ SRC += \
 	src/prime_typed_flow_boundary.c \
 	src/prime_rule_machine_ingress.c \
 	src/prime_native_calculus.c \
+	src/equation_presentation.c \
 	src/gdl_source_presentation.c \
 	src/gdl_finite_herbrand.c \
 	src/gdl_stratified_model.c \
@@ -1913,7 +1914,7 @@ PARSER_STANDALONE_SRC = src/parser.c src/name_key.c
 # standalone linker that includes match.c must include the snapshot algebra.
 MATCH_STANDALONE_SRC = src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/prime_need.c
 SHARED_TRANSITION_STANDALONE_SRC = src/shared_transition.c
-SPACE_STANDALONE_SRC = src/space.c src/space_path_index.c src/binding/rule.c
+SPACE_STANDALONE_SRC = src/space.c src/space_path_index.c src/binding/rule.c src/fixpoint.c
 SPACE_STANDALONE_DEPS = $(SPACE_STANDALONE_SRC) $(wildcard src/*.h src/binding/*.h) Makefile
 RELATIONAL_STANDALONE_SRC = src/relational_plan.c src/relational_cursor.c
 SPACE_MATCH_BACKEND_STANDALONE_SRC = src/space_match_backend.c $(RELATIONAL_STANDALONE_SRC)
@@ -3813,26 +3814,27 @@ $(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN): tests/test_arena_frame_identity_owne
 test-arena-frame-identity-ownership: $(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN)
 	@$(call cetta_exec,./$(ARENA_FRAME_IDENTITY_OWNERSHIP_TEST_BIN))
 
-# Frame identities (src/binding/frame_identity.h) are issued in four classes
-# spelled by prefixes of leading one bits: each round-trips its spelling,
-# rejects stale generations and retires a spent handle; other words do not
-# decode; a bounded table refuses without spending and serves again.
+# Frame identities (src/binding/frame_identity.h) are one 64-bit word, a
+# handle and its generation: across the handle range each round-trips its
+# spelling, rejects stale generations and retires a spent handle; other
+# words do not decode; a bounded table refuses without spending and serves
+# again.
 LAYOUT_WORDS_HEADER = src/generated/cetta_layout_words.generated.h
-FRAME_IDENTITY_CLASSES_TEST_BIN = runtime/test_frame_identity_classes-$(BUILD_OBJ_TAG)
+FRAME_IDENTITY_TEST_BIN = runtime/test_frame_identity-$(BUILD_OBJ_TAG)
 
-$(FRAME_IDENTITY_CLASSES_TEST_BIN): tests/test_frame_identity_classes.c src/atom.c src/binding/frame_identity.c src/binding/frame_identity.h src/binding/frame_identity_test.h $(LAYOUT_WORDS_HEADER) $(BUILD_CONFIG_HEADER)
+$(FRAME_IDENTITY_TEST_BIN): tests/test_frame_identity.c src/atom.c src/binding/frame_identity.c src/binding/frame_identity.h src/binding/frame_identity_test.h $(LAYOUT_WORDS_HEADER) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_frame_identity_classes.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_frame_identity.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
 
-.PHONY: test-frame-identity-classes
-test: test-frame-identity-classes
-test-frame-identity-classes: $(FRAME_IDENTITY_CLASSES_TEST_BIN)
-	@$(call cetta_exec,./$(FRAME_IDENTITY_CLASSES_TEST_BIN))
+.PHONY: test-frame-identity
+test: test-frame-identity
+test-frame-identity: $(FRAME_IDENTITY_TEST_BIN)
+	@$(call cetta_exec,./$(FRAME_IDENTITY_TEST_BIN))
 
-# Variable ids and frame identities are spelled by the layouts declared in
+# Frame identities are spelled by the layout declared in
 # langdef/layouts/runtime_words.module.  The accessors are checked-in
 # ordinary C; regenerating them needs cesta, building with them does not.
-# The test compares them with an independent decoding of every class.
+# The test compares them with an independent reading of the word.
 CESTA ?= cesta
 LAYOUT_WORDS_TEST_BIN = runtime/test_layout_words-$(BUILD_OBJ_TAG)
 
@@ -3842,7 +3844,7 @@ regenerate-layout-words:
 check-layout-words-generated:
 	python3 -B tools/regenerate_layout_words.py --cesta "$(CESTA)" --check
 
-$(LAYOUT_WORDS_TEST_BIN): tests/test_layout_words.c $(LAYOUT_WORDS_HEADER) src/binding/frame_identity.h
+$(LAYOUT_WORDS_TEST_BIN): tests/test_layout_words.c $(LAYOUT_WORDS_HEADER) src/binding/frame_identity.h src/match.h
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_layout_words.c $(LDFLAGS)
 
@@ -4363,6 +4365,20 @@ $(ATOM_DEEP_COPY_TEST_BIN): tests/test_atom_deep_copy_iterative.c $(SYMBOL_STAND
 test-atom-deep-copy-iterative: $(ATOM_DEEP_COPY_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_DEEP_COPY_TEST_BIN))
 
+# The hash cache is 0 until a hash is known: a computed 0 is spelled alike
+# whether a node was cached or folded afresh, and threads hashing the same
+# shared atoms agree with a sequential pass.
+ATOM_HASH_CACHE_TEST_BIN = runtime/test_atom_hash_cache-$(BUILD_OBJ_TAG)
+
+$(ATOM_HASH_CACHE_TEST_BIN): tests/test_atom_hash_cache.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_hash_cache.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+
+.PHONY: test-atom-hash-cache
+test: test-atom-hash-cache
+test-atom-hash-cache: $(ATOM_HASH_CACHE_TEST_BIN)
+	@$(call cetta_exec,./$(ATOM_HASH_CACHE_TEST_BIN))
+
 ATOM_STRING_STORAGE_TEST_BIN = runtime/test_atom_string_storage-$(BUILD_OBJ_TAG)
 $(ATOM_STRING_STORAGE_TEST_BIN): tests/test_atom_string_storage.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/atom.h src/binding/frame_identity.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
@@ -4802,6 +4818,21 @@ test-prime-need-match-pattern: $(BIN) tests/prime/need_match_pattern_values.mett
 			| diff -u tests/prime/need_match_pattern_values.expected -; \
 	done; \
 	echo "PASS: a Need cell in a match, unify or let pattern is matched as its value"
+
+.PHONY: test-prime-need-case-pattern
+# A Need cell in a case pattern is forced when the selection reaches its
+# branch, never before, and each value continues the selection from there,
+# over a scrutinee evaluated once.
+test: test-prime-need-case-pattern
+test-prime-need-case-pattern: $(BIN) tests/prime/need_case_pattern_values.metta \
+		tests/prime/need_case_pattern_values.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang prime \
+			tests/prime/need_case_pattern_values.metta \
+			| diff -u tests/prime/need_case_pattern_values.expected -; \
+	done; \
+	echo "PASS: a Need cell in a case pattern is forced by its branch alone"
 
 test-prime-suspension-rights: $(BIN)
 	@set -eu; \
@@ -21248,6 +21279,8 @@ test-runtime-stats-lane-body:
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-frame-identity-refusal-sweep
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-identity-repeat-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-joint-rows-native
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-exec-saturation-stats
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-native-fold-stats
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-chain-natural-linear
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-petta-translation-linear
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-he-captured-frame-support
@@ -31378,10 +31411,12 @@ test-petta-escaping-variables: $(BIN) tests/petta/escaping_variables.metta \
 	fi; \
 	echo "PASS: escaping variables stay distinct and shared as SWI-PeTTa prints them"
 
-# Identity pressure: under a bound of 40,000 identities two traversals that
-# hold about 36,000 at once run in the machine, because a collection of every
-# generation runs when the identities left fall low; left to the heap's own
-# schedule the same bound is refused, as capacity, not as an answer.
+# Identity pressure: under a bound of 4,000 identities two traversals that
+# hold about 2,500 at once run in the machine, because a collection of every
+# generation runs when the identities left fall low.  The traversals allocate
+# far less than the heap's major window, so left to the heap's own schedule
+# no collection reaches the first one's dead frames and the same bound is
+# refused, as capacity, not as an answer.
 .PHONY: test-petta-identity-pressure
 test-petta-semantics: test-petta-identity-pressure
 test-petta-identity-pressure: $(BIN) tests/petta/identity_pressure.metta \
@@ -31389,7 +31424,7 @@ test-petta-identity-pressure: $(BIN) tests/petta/identity_pressure.metta \
 	@set -eu; \
 	machine="CETTA_OPEN_EQUATIONS_REFERENCE=1 CETTA_PREPARED_PURE_REFERENCE=1"; \
 	expected=$$(cat tests/petta/identity_pressure.expected); \
-	for bound in "" "CETTA_DIAG_FRAME_IDENTITY_LIMIT=40000"; do \
+	for bound in "" "CETTA_DIAG_FRAME_IDENTITY_LIMIT=4000"; do \
 		actual=$$(env $$machine $$bound $(CETTA_BIN_INVOKE) --lang petta \
 			tests/petta/identity_pressure.metta 2>&1) || true; \
 		if [ "$$actual" != "$$expected" ]; then \
@@ -31399,7 +31434,7 @@ test-petta-identity-pressure: $(BIN) tests/petta/identity_pressure.metta \
 		fi; \
 	done; \
 	status=0; \
-	actual=$$(env $$machine CETTA_DIAG_FRAME_IDENTITY_LIMIT=40000 \
+	actual=$$(env $$machine CETTA_DIAG_FRAME_IDENTITY_LIMIT=4000 \
 		CETTA_PETTA_IDENTITY_PRESSURE=0 $(CETTA_BIN_INVOKE) --lang petta \
 		tests/petta/identity_pressure.metta 2>&1) || status=$$?; \
 	if [ $$status -ne 2 ] || \
@@ -32298,14 +32333,34 @@ test-prepared-pure-undefined-type-operands: $(BIN)
 test-prepared-pure-dispatch-authority: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_prepared_dispatch_authority.py "$(CETTA_SCRIPT_BIN)"
 
-.PHONY: test-native-fold
-# Native folds equal the ordinary fold on seeded random steps and shapes;
-# the runtime-stats build also shows that every native route was taken.
+.PHONY: test-native-fold test-native-fold-stats
+# Native folds equal the ordinary fold on seeded random steps and shapes, and
+# on declared steps (declarations integer folds break are never folded
+# natively); in the runtime-stats lane every native route was taken and a
+# step declared over Numbers stays native.
+test: test-native-fold
 test-native-fold: $(BIN)
-	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_fold_differential.py \
-		./$(BIN) $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
-ifneq ($(ENABLE_RUNTIME_STATS),1)
-	@$(MAKE) -s ENABLE_RUNTIME_STATS=1 $@
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_fold_differential.py ./$(BIN)
+test-native-fold-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_fold_differential.py ./$(BIN) --stats
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
+endif
+
+.PHONY: test-exec-saturation test-exec-saturation-stats
+# exec:saturate's semi-naive rounds leave the facts and answers of its
+# authored rounds on fixed and seeded programs, declined shapes included; in
+# the runtime-stats lane, every admitted program took the semi-naive rounds
+# and no declined one did.
+test: test-exec-saturation
+test-exec-saturation: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_exec_saturation_differential.py ./$(BIN)
+test-exec-saturation-stats: $(BIN)
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_exec_saturation_differential.py ./$(BIN) --stats
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 $@
 endif
 
 .PHONY: test-open-equations
@@ -44382,8 +44437,12 @@ qualify-json-gslt-corpus:
 # validates redundant signatures and retains ordered, duplicate-free operation
 # identities; it supplies no arithmetic semantics and activates no runtime
 # implementation.
+# The operation identities, and the one exact-integer arithmetic every
+# evaluator computes with (header-only: the provider and the generated
+# register arms include it without another object).
+EXACT_INTEGER_CORE_HEADERS = src/exact_integer.h native/exact_integer_operation_v1.h
 EXACT_INTEGER_THEORY_V1_SRC = native/exact_integer_theory_v1.c
-EXACT_INTEGER_THEORY_V1_HEADER = native/exact_integer_theory_v1.h
+EXACT_INTEGER_THEORY_V1_HEADER = native/exact_integer_theory_v1.h native/exact_integer_operation_v1.h
 EXACT_INTEGER_THEORY_V1_OBJ = native/exact_integer_theory_v1.$(BUILD_OBJ_TAG).o
 EXACT_INTEGER_THEORY_V1_TEST_SRC = tests/support/test_exact_integer_theory_v1.c
 EXACT_INTEGER_THEORY_V1_TEST_OBJ = runtime/bootstrap/test_exact_integer_theory_v1.$(BUILD_OBJ_TAG).o
@@ -44412,6 +44471,20 @@ $(EXACT_INTEGER_THEORY_V1_TEST_BIN): \
 test-exact-integer-theory-v1: $(EXACT_INTEGER_THEORY_V1_TEST_BIN)
 	@$(EXACT_INTEGER_THEORY_V1_TEST_BIN)
 
+# Every core operation on small operands agrees with its definition computed
+# in 128 bits and with the GMP path, promotes exactly when the result does
+# not fit, and is undefined exactly on a zero divisor.
+EXACT_INTEGER_CORE_TEST_BIN = runtime/test_exact_integer_core-$(BUILD_OBJ_TAG)
+
+$(EXACT_INTEGER_CORE_TEST_BIN): tests/test_exact_integer_core.c $(EXACT_INTEGER_CORE_HEADERS) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_exact_integer_core.c $(LDFLAGS)
+
+.PHONY: test-exact-integer-core
+test: test-exact-integer-core
+test-exact-integer-core: $(EXACT_INTEGER_CORE_TEST_BIN)
+	@$(call cetta_exec,./$(EXACT_INTEGER_CORE_TEST_BIN))
+
 # Optional GMP realization of the external-call exact-integer ABI. It has no
 # compiler authority and is not part of default runtime objects.
 EXTERNAL_CALL_GENERATED_ABI_V1_HEADER = native/external_call_generated_abi_v1.h
@@ -44422,7 +44495,8 @@ EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_OBJ = native/external_call_gmp_exact_integer_
 $(EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_OBJ): \
 		$(EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_SRC) \
 		$(EXTERNAL_CALL_GMP_EXACT_INTEGER_V1_HEADER) \
-		$(EXTERNAL_CALL_GENERATED_ABI_V1_HEADER) $(BUILD_CONFIG_HEADER)
+		$(EXTERNAL_CALL_GENERATED_ABI_V1_HEADER) \
+		$(EXACT_INTEGER_CORE_HEADERS) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(GMP_CFLAGS) $(CFLAGS) $(DEPFLAGS) \
 		-MF $(@:.o=.d) -c -o $@ $<
@@ -44652,6 +44726,50 @@ test-exact-arithmetic-to-external-call-v1: \
 		test-external-call-to-structured-c-transform-v1 \
 		test-arithmetic-target-coproduct-v1 \
 		test-exact-arithmetic-external-call-generated-v1
+
+# The shared fork/exec child setup (src/proc_child.h, from cetta-ours
+# adb22e32) on the kernel's close_range and on the /proc/self/fd scan with
+# close_range disabled, including a descriptor above 65535 and a refused scan
+# that refuses exec.
+PROC_CHILD_TEST_BIN = runtime/test-proc-child
+PROC_CHILD_FALLBACK_TEST_BIN = runtime/test-proc-child-fallback
+$(PROC_CHILD_TEST_BIN): tests/test_proc_child.c src/proc_child.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -o $@ $<
+
+$(PROC_CHILD_FALLBACK_TEST_BIN): tests/test_proc_child.c src/proc_child.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -DCETTA_PROC_NO_CLOSE_RANGE=1 \
+		-DCETTA_PROC_TEST_DENIAL=1 -Wl,--wrap=open -o $@ $<
+
+# The shared worklist closures (src/fixpoint.c) against the naive
+# changed-loop definitions, on fixed controls and seeded random graphs.
+runtime/test-fixpoint: tests/test_fixpoint.c src/fixpoint.c src/fixpoint.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -o $@ tests/test_fixpoint.c src/fixpoint.c
+
+.PHONY: test-fixpoint
+test: test-fixpoint
+test-fixpoint: runtime/test-fixpoint
+	@runtime/test-fixpoint
+
+# The initial thread's growable stack, read from the kernel's mapping and
+# limit (from cetta-ours 389b9b48), with fixed-stack workers left to their
+# own bounds.
+runtime/test-linux-stack-bounds: tests/test_linux_stack_bounds.c src/linux_stack_bounds.h
+	@mkdir -p $(dir $@)
+	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -pthread -o $@ $<
+
+.PHONY: test-linux-stack-bounds
+test: test-linux-stack-bounds
+test-linux-stack-bounds: runtime/test-linux-stack-bounds
+	@runtime/test-linux-stack-bounds
+
+.PHONY: test-proc-child
+test: test-proc-child
+test-proc-child: $(PROC_CHILD_TEST_BIN) $(PROC_CHILD_FALLBACK_TEST_BIN)
+	@$(PROC_CHILD_TEST_BIN)
+	@$(PROC_CHILD_FALLBACK_TEST_BIN)
 
 # Portable asynchronous I/O qualification.  HTTP is an explicit build
 # capability; no network provider or test fixture is activated by default.

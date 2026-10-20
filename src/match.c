@@ -5,6 +5,7 @@
 #include "term_universe.h"
 #include "term_canon.h"
 #include "variant_shape.h"
+#include <inttypes.h>
 #include <assert.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -113,7 +114,7 @@ struct BindingsExclusiveFrame {
     BindingsExclusiveWrite *writes;
     uint32_t write_len;
     uint32_t write_cap;
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     bool owns_identity;
     bool active;
     /* The identity was minted for this activation, so no binding outside the
@@ -447,10 +448,10 @@ static bool match_occurrence_is_finite_dag(const Atom *root) {
  * audit (the path set, not this decision). */
 static inline bool match_shared_occurrence_same_environment(
         bool left_original, bool right_original,
-        uint32_t left_epoch, uint32_t right_epoch) {
+        CettaFrameIdentity left_epoch, CettaFrameIdentity right_epoch) {
     if (left_original != right_original)
         return false;
-    if (left_original && left_epoch != right_epoch)
+    if (left_original && !cetta_frame_identity_eq(left_epoch, right_epoch))
         return false;
     return true;
 }
@@ -593,11 +594,11 @@ bool bindings_builder_prime_trail_reserve(
 static bool bindings_builder_snapshot(
     BindingsBuilder *bb, bool *created_out);
 static bool bindings_alias_keeps_caller_identity(
-        VarId id, BindingValue value, uint32_t identity, bool *cross_frame_alias) {
+        VarId id, BindingValue value, CettaFrameIdentity identity, bool *cross_frame_alias) {
     if (!value.skeleton || value.skeleton->kind != ATOM_VAR)
         return true;
-    bool key_local = var_epoch_suffix(id) == identity;
-    bool value_local = var_epoch_suffix(binding_value_variable_id(value)) == identity;
+    bool key_local = cetta_frame_identity_eq(var_epoch_suffix(id), identity);
+    bool value_local = cetta_frame_identity_eq(var_epoch_suffix(binding_value_variable_id(value)), identity);
     if (key_local != value_local && cross_frame_alias)
         *cross_frame_alias = true;
     return key_local || !value_local;
@@ -605,10 +606,11 @@ static bool bindings_alias_keeps_caller_identity(
 
 bool bindings_builder_aliases_normalized_since(
         const BindingsBuilder *builder, uint32_t trail_mark,
-        uint32_t first_entry, uint32_t identity, bool *cross_frame_alias) {
+        uint32_t first_entry, CettaFrameIdentity identity, bool *cross_frame_alias) {
     if (cross_frame_alias)
         *cross_frame_alias = false;
-    if (!builder || !identity || trail_mark > builder->trail_len ||
+    if (!builder || cetta_frame_identity_is_none(identity) ||
+        trail_mark > builder->trail_len ||
         first_entry > builder->current.len)
         return false;
     const Bindings *bindings = &builder->current;
@@ -622,7 +624,8 @@ bool bindings_builder_aliases_normalized_since(
         const BindingsFrameUndoEntry *undo = &builder->frame_undo[cursor - 1u];
         if (undo->trail_mark < trail_mark)
             break;
-        VarId id = var_epoch_id(undo->source_id, undo->frame_ref.identity);
+        VarId id = var_epoch_id(var_id_from_base(undo->source_id),
+                            undo->frame_ref.identity);
         BindingValue value = bindings_lookup_value_id((Bindings *)bindings, id);
         if (!bindings_alias_keeps_caller_identity(id, value, identity, cross_frame_alias))
             return false;
@@ -728,11 +731,11 @@ size_t bindings_constraint_active_bytes(void) {
 }
 
 static inline bool binding_var_eq(VarId lhs, VarId rhs) {
-    return lhs == rhs;
+    return var_id_eq(lhs, rhs);
 }
 
 static bool binding_id_has_frame(VarId id) {
-    return var_epoch_suffix(id) != 0u && !variant_private_var_id(id);
+    return !cetta_frame_identity_is_none(var_epoch_suffix(id)) && !variant_private_var_id(id);
 }
 
 static bool atom_contains_private_variant_var(const Atom *atom) {
@@ -1047,9 +1050,9 @@ static void bindings_temp_constraints_release(BindingConstraint *constraints,
 
 
 static size_t bindings_var_id_hash(VarId id) {
-    /* Fold packed epoch/base structure through a bijective 64-bit mix before
-     * the power-of-two tables select their low address bits. */
-    uint64_t x = (uint64_t)id;
+    /* Both words mixed before the power-of-two tables select their low
+     * address bits. */
+    uint64_t x = var_id_mix(id);
     x ^= x >> 24;
     x *= UINT64_C(0xff51afd7ed558ccd);
     x ^= x >> 29;
@@ -1075,8 +1078,8 @@ void bindings_exclusive_frame_free(BindingsExclusiveFrame *frame) {
 
 bool bindings_exclusive_frame_begin(
         BindingsExclusiveFrame *frame, BindingsFrameSchema *schema,
-        uint32_t epoch) {
-    if (!frame || !schema || epoch == 0u)
+        CettaFrameIdentity epoch) {
+    if (!frame || !schema || cetta_frame_identity_is_none(epoch))
         return false;
     uint32_t len = schema->len;
     if (len > frame->value_cap) {
@@ -1114,7 +1117,7 @@ bool bindings_exclusive_frame_begin(
 
 bool bindings_exclusive_frame_begin_fresh(
         BindingsExclusiveFrame *frame, BindingsFrameSchema *schema,
-        uint32_t epoch) {
+        CettaFrameIdentity epoch) {
     if (!bindings_exclusive_frame_begin(frame, schema, epoch))
         return false;
     frame->fresh = true;
@@ -1131,10 +1134,10 @@ bool bindings_exclusive_frame_test_certified(
 static bool bindings_exclusive_frame_source_slot(
         const BindingsExclusiveFrame *frame, VarId id,
         uint32_t *slot_out) {
-    return frame && frame->active && frame->epoch != 0u &&
-        var_epoch_suffix(id) == frame->epoch &&
+    return frame && frame->active && !cetta_frame_identity_is_none(frame->epoch) &&
+        cetta_frame_identity_eq(var_epoch_suffix(id), frame->epoch) &&
         bindings_frame_schema_find_slot(
-            frame->schema, (VarId)var_base_id(id), slot_out);
+            frame->schema, var_source_id(id), slot_out);
 }
 
 static BindingValue bindings_exclusive_frame_lookup(
@@ -1180,7 +1183,7 @@ bool bindings_exclusive_frame_aliases_normalized(
         const BindingsExclusiveFrame *frame, bool *cross_frame_alias) {
     if (cross_frame_alias)
         *cross_frame_alias = false;
-    if (!frame || !frame->active || frame->epoch == 0u)
+    if (!frame || !frame->active || cetta_frame_identity_is_none(frame->epoch))
         return false;
     for (uint32_t index = 0u; index < frame->write_len; index++) {
         const BindingsExclusiveWrite *write = &frame->writes[index];
@@ -1192,11 +1195,10 @@ bool bindings_exclusive_frame_aliases_normalized(
         BindingValue value = write->local_slot == UINT32_MAX
             ? write->external_value
             : frame->values[write->local_slot];
-        bool entry_is_local = var_epoch_suffix(id) == frame->epoch;
+        bool entry_is_local = cetta_frame_identity_eq(var_epoch_suffix(id), frame->epoch);
         bool value_is_local = value.skeleton &&
             value.skeleton->kind == ATOM_VAR &&
-            var_epoch_suffix(binding_value_variable_id(value)) ==
-                frame->epoch;
+            cetta_frame_identity_eq(var_epoch_suffix(binding_value_variable_id(value)), frame->epoch);
         if (value.skeleton && value.skeleton->kind == ATOM_VAR &&
             entry_is_local != value_is_local && cross_frame_alias) {
             *cross_frame_alias = true;
@@ -1297,12 +1299,12 @@ static bool bindings_value_collect_frame_ids(
      * supplies the frame generation; materialized syntax already carries it
      * in the identifier. */
     VarId singleton = atom_single_variable_id(value.skeleton);
-    if (singleton != VAR_ID_NONE) {
-        uint32_t epoch = binding_value_is_contextual(value)
-            ? value.epoch : var_epoch_suffix(singleton);
-        if (epoch != 0u && !variant_private_var_id(singleton)) {
+    if (!var_id_is_none(singleton)) {
+        CettaFrameIdentity epoch = binding_value_is_contextual(value)
+            ? binding_value_epoch(value) : var_epoch_suffix(singleton);
+        if (!cetta_frame_identity_is_none(epoch) && !variant_private_var_id(singleton)) {
             inline_ids[0] = var_epoch_id(
-                (VarId)var_base_id(singleton), epoch);
+                var_source_id(singleton), epoch);
             *len_out = 1u;
         }
         return true;
@@ -1333,16 +1335,16 @@ static bool bindings_value_collect_frame_ids(
         if (!atom || !atom_has_vars(atom))
             continue;
         if (atom->kind == ATOM_VAR) {
-            uint32_t epoch = binding_value_is_contextual(value)
-                ? value.epoch : var_epoch_suffix(atom->var_id);
-            if (epoch == 0u || variant_private_var_id(atom->var_id))
+            CettaFrameIdentity epoch = binding_value_is_contextual(value)
+                ? binding_value_epoch(value) : var_epoch_suffix(atom->var_id);
+            if (cetta_frame_identity_is_none(epoch) || variant_private_var_id(atom->var_id))
                 continue;
             VarId id = var_epoch_id(
-                (VarId)var_base_id(atom->var_id), epoch);
+                var_source_id(atom->var_id), epoch);
             bool known = false;
             if (!known_set) {
                 for (size_t index = 0u; index < id_len; index++) {
-                    if (ids[index] == id) {
+                    if (var_id_eq(ids[index], id)) {
                         known = true;
                         break;
                     }
@@ -1351,12 +1353,12 @@ static bool bindings_value_collect_frame_ids(
                 size_t slot = bindings_var_id_hash(id) & known_mask;
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_ID_SET_LOOKUP);
-                while (known_set[slot] != VAR_ID_NONE && known_set[slot] != id) {
+                while (!var_id_is_none(known_set[slot]) && !var_id_eq(known_set[slot], id)) {
                     cetta_runtime_stats_inc(
                         CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_ID_SET_PROBE);
                     slot = (slot + 1u) & known_mask;
                 }
-                known = known_set[slot] == id;
+                known = var_id_eq(known_set[slot], id);
                 if (!known)
                     known_set[slot] = id;
             }
@@ -1390,7 +1392,7 @@ static bool bindings_value_collect_frame_ids(
                 size_t mask = capacity - 1u;
                 for (size_t index = 0u; index < id_len; index++) {
                     size_t slot = bindings_var_id_hash(ids[index]) & mask;
-                    while (grown[slot] != VAR_ID_NONE)
+                    while (!var_id_is_none(grown[slot]))
                         slot = (slot + 1u) & mask;
                     grown[slot] = ids[index];
                 }
@@ -1469,8 +1471,8 @@ static bool bindings_materialized_value_has_epoch_variable(
 static bool bindings_frame_index_note_value_context(
         Bindings *bindings, BindingsBuilder *builder,
         BindingValue value, bool note_store) {
-    if (binding_value_is_contextual(value) && value.epoch != 0u &&
-        bindings_frame_index_epoch_complete(bindings, value.epoch)) {
+    if (binding_value_is_contextual(value) && !cetta_frame_identity_is_none(binding_value_epoch(value)) &&
+        bindings_frame_index_epoch_complete(bindings, binding_value_epoch(value))) {
         if (note_store) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_CONTEXT_STORE_OWNED);
@@ -1615,7 +1617,7 @@ static void bindings_lookup_index_unrecord_single_cached_slot(
     }
     size_t cursor = 0u;
     while (cursor < index->single_cached_len &&
-           index->single_cached_ids[cursor] != slot->id) {
+           !var_id_eq(index->single_cached_ids[cursor], slot->id)) {
         cursor++;
     }
     assert(cursor < index->single_cached_len);
@@ -1706,15 +1708,15 @@ static size_t bindings_lookup_index_capacity_for_len(uint32_t len) {
 
 static bool bindings_lookup_index_insert_raw(
     BindingsLookupIndex *index, VarId id, uint32_t entry_index) {
-    if (!index || id == VAR_ID_NONE || index->capacity == 0u)
+    if (!index || var_id_is_none(id) || index->capacity == 0u)
         return false;
     size_t mask = index->capacity - 1u;
     size_t slot = bindings_var_id_hash(id) & mask;
-    while (index->slots[slot].id != VAR_ID_NONE &&
+    while (!var_id_is_none(index->slots[slot].id) &&
            !binding_var_eq(index->slots[slot].id, id)) {
         slot = (slot + 1u) & mask;
     }
-    if (index->slots[slot].id == VAR_ID_NONE) {
+    if (var_id_is_none(index->slots[slot].id)) {
         index->slots[slot].id = id;
         index->count++;
     } else if (index->slots[slot].index_plus_one != entry_index + 1u) {
@@ -1745,7 +1747,7 @@ static bool bindings_lookup_index_rehash(BindingsLookupIndex *index,
     index->capacity = capacity;
     index->count = 0u;
     for (size_t i = 0u; i < old_capacity; i++) {
-        if (old_slots[i].id == VAR_ID_NONE)
+        if (var_id_is_none(old_slots[i].id))
             continue;
         if (!bindings_lookup_index_insert_raw(
                 index, old_slots[i].id,
@@ -1812,11 +1814,11 @@ static bool bindings_lookup_index_detach(Bindings *bindings) {
 
 static bool bindings_lookup_index_find_slot(
     const BindingsLookupIndex *index, VarId id, size_t *slot_out) {
-    if (!index || id == VAR_ID_NONE || index->capacity == 0u)
+    if (!index || var_id_is_none(id) || index->capacity == 0u)
         return false;
     size_t mask = index->capacity - 1u;
     size_t slot = bindings_var_id_hash(id) & mask;
-    while (index->slots[slot].id != VAR_ID_NONE) {
+    while (!var_id_is_none(index->slots[slot].id)) {
         if (binding_var_eq(index->slots[slot].id, id)) {
             if (slot_out)
                 *slot_out = slot;
@@ -1837,19 +1839,19 @@ static uint32_t bindings_lookup_index_find(
 
 static void bindings_lookup_index_delete_unique(
     BindingsLookupIndex *index, VarId id) {
-    if (!index || id == VAR_ID_NONE || index->capacity == 0u)
+    if (!index || var_id_is_none(id) || index->capacity == 0u)
         return;
     size_t mask = index->capacity - 1u;
     size_t hole = bindings_var_id_hash(id) & mask;
-    while (index->slots[hole].id != VAR_ID_NONE &&
+    while (!var_id_is_none(index->slots[hole].id) &&
            !binding_var_eq(index->slots[hole].id, id)) {
         hole = (hole + 1u) & mask;
     }
-    if (index->slots[hole].id == VAR_ID_NONE)
+    if (var_id_is_none(index->slots[hole].id))
         return;
 
     size_t scan = (hole + 1u) & mask;
-    while (index->slots[scan].id != VAR_ID_NONE) {
+    while (!var_id_is_none(index->slots[scan].id)) {
         size_t home =
             bindings_var_id_hash(index->slots[scan].id) & mask;
         size_t scan_distance = (scan - home) & mask;
@@ -2023,7 +2025,7 @@ bool bindings_frame_index_test_lookup(
 }
 
 bool bindings_frame_storage_test_identity(
-        const Bindings *bindings, uint32_t epoch,
+        const Bindings *bindings, CettaFrameIdentity epoch,
         const void **schema_out, const void **slots_out) {
     if (!bindings || !schema_out || !slots_out)
         return false;
@@ -2048,11 +2050,11 @@ bool bindings_lookup_index_test_generic_contains(
 }
 
 bool bindings_frame_ref_test_for_epoch(
-        const Bindings *bindings, uint32_t epoch,
+        const Bindings *bindings, CettaFrameIdentity epoch,
         BindingsFrameRef *ref_out) {
     if (ref_out)
         *ref_out = (BindingsFrameRef){0};
-    if (!bindings || !ref_out || epoch == 0u)
+    if (!bindings || !ref_out || cetta_frame_identity_is_none(epoch))
         return false;
     const BindingsFrameIndexEntry *entry =
         bindings_frame_index_find_frame_const(
@@ -2064,9 +2066,9 @@ bool bindings_frame_ref_test_for_epoch(
 
 bool bindings_frame_ref_test_resolves(
         const Bindings *bindings, BindingsFrameRef ref,
-        uint32_t *epoch_out) {
+        CettaFrameIdentity *epoch_out) {
     if (epoch_out)
-        *epoch_out = 0u;
+        *epoch_out = CETTA_FRAME_IDENTITY_NONE;
     if (!bindings || !epoch_out)
         return false;
     const BindingsFrameIndexEntry *entry =
@@ -2119,7 +2121,7 @@ static inline int32_t bindings_lookup_index(Bindings *b, VarId var_id) {
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_GENERIC_MAP);
     cetta_runtime_stats_inc(
-        var_epoch_suffix(var_id) == 0u
+        cetta_frame_identity_is_none(var_epoch_suffix(var_id))
             ? CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_PLAIN_IDENTITY
             : CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_UNOWNED_CONTEXTUAL);
     BindingsLookupIndex *index = b->lookup_index;
@@ -2256,7 +2258,7 @@ static bool bindings_resolve_value_root(
         VarId id = binding_value_variable_id(value);
         BindingValue next = bindings_lookup_value(bindings, value);
         if (!next.skeleton ||
-            (next.skeleton->kind == ATOM_VAR && binding_value_variable_id(next) == id))
+            (next.skeleton->kind == ATOM_VAR && var_id_eq(binding_value_variable_id(next), id)))
             break;
         if (remaining-- == 0u)
             return false;
@@ -2443,8 +2445,8 @@ static bool bindings_add_constraint_inplace_internal(Bindings *b, BindingValue l
 static bool bindings_add_constraint_internal(Bindings *b, BindingValue lhs, BindingValue rhs,
                                              bool normalize_constraints);
 static VarId binding_value_qualify_id(BindingValue value, VarId id) {
-    return id != VAR_ID_NONE && binding_value_is_contextual(value)
-        ? var_epoch_id(id, value.epoch) : id;
+    return !var_id_is_none(id) && binding_value_is_contextual(value)
+        ? var_epoch_id(id, binding_value_epoch(value)) : id;
 }
 
 static VarId binding_value_single_variable_id(BindingValue value) {
@@ -2499,7 +2501,7 @@ static BindingsReachability bindings_single_reach_cache_query(
 
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_SINGLE_REACH_CACHE_QUERY);
-    if (!bindings || start == VAR_ID_NONE || target == VAR_ID_NONE ||
+    if (!bindings || var_id_is_none(start) || var_id_is_none(target) ||
         bindings->len < BINDINGS_LOOKUP_INDEX_THRESHOLD) {
         goto decline;
     }
@@ -2547,7 +2549,7 @@ static BindingsReachability bindings_single_reach_cache_query(
             bindings_lookup_index_single_cache_kind(slot);
         if (cache_kind ==
                 BINDINGS_SINGLE_REACH_CACHE_TERMINAL) {
-            if (slot->single_terminal == VAR_ID_NONE)
+            if (var_id_is_none(slot->single_terminal))
                 goto decline;
             immutable_path = false;
             current = slot->single_terminal;
@@ -2582,7 +2584,7 @@ static BindingsReachability bindings_single_reach_cache_query(
             break;
         }
         single = binding_value_single_variable_id(value);
-        if (single == VAR_ID_NONE) {
+        if (var_id_is_none(single)) {
             result_kind = BINDINGS_SINGLE_REACH_CACHE_COMPLEX;
             break;
         }
@@ -2707,7 +2709,7 @@ static BindingsReachability bindings_bind_evidence(
         return BINDINGS_REACHABILITY_ABSENT;
     }
     VarId single = binding_value_single_variable_id(value);
-    if (single != VAR_ID_NONE) {
+    if (!var_id_is_none(single)) {
         BindingsReachability cached =
             bindings_single_reach_cache_query(bindings, single, var_id);
         if (cached != BINDINGS_REACHABILITY_UNKNOWN)
@@ -3173,7 +3175,7 @@ fail:
 static bool binding_prefix_item_equal(const Binding *left,
                                       const Binding *right) {
     if (!left || !right ||
-        left->var_id != right->var_id ||
+        !var_id_eq(left->var_id, right->var_id) ||
         left->spelling != right->spelling) {
         return false;
     }
@@ -3811,7 +3813,7 @@ static bool bindings_rewrite_value_id_inplace(
             bindings->frame_index, var_epoch_suffix(id));
         uint32_t slot = 0u;
         if (!frame || !bindings_frame_index_find_slot(
-                frame, (VarId)var_base_id(id), &slot) ||
+                frame, var_source_id(id), &slot) ||
             !frame->values[slot].skeleton ||
             !bindings_frame_index_record(bindings, id, value)) {
             return false;
@@ -3943,7 +3945,7 @@ static bool bindings_frame_index_lookup_context_id(
         *value_out = binding_value_from_atom(NULL);
     if (!bindings || !bindings->frame_index || !value_out ||
         !binding_value_is_contextual(context) ||
-        id == VAR_ID_NONE || var_epoch_suffix(id) != context.epoch) {
+        var_id_is_none(id) || !cetta_frame_identity_eq(var_epoch_suffix(id), binding_value_epoch(context))) {
         return false;
     }
     BindingsFrameRef ref = binding_value_frame_ref(context);
@@ -3955,7 +3957,7 @@ static bool bindings_frame_index_lookup_context_id(
         return false;
     uint32_t slot = 0u;
     if (!bindings_frame_index_find_slot(
-            frame, (VarId)var_base_id(id), &slot)) {
+            frame, var_source_id(id), &slot)) {
         return false;
     }
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
@@ -3987,7 +3989,7 @@ static bool bindings_frame_index_lookup_value_ref(
         return false;
     uint32_t slot = 0u;
     if (!bindings_frame_index_find_slot(
-            frame, (VarId)var_base_id(variable.skeleton->var_id), &slot)) {
+            frame, var_source_id(variable.skeleton->var_id), &slot)) {
         return false;
     }
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP);
@@ -4049,15 +4051,15 @@ CettaGsltTermViewStatusV1 bindings_resolve_term_view_root_v1(
 
 
 
-char *arena_tagged_var_name(Arena *a, const char *name, uint32_t suffix) {
+char *arena_tagged_var_name(Arena *a, const char *name, CettaFrameIdentity suffix) {
     size_t name_len = strlen(name);
-    size_t needed = name_len + 1 + 10 + 1;
+    size_t needed = name_len + 1 + 20 + 1;
     char *buf = arena_alloc(a, needed);
-    snprintf(buf, needed, "%s#%u", name, suffix);
+    snprintf(buf, needed, "%s#%" PRIu64, name, suffix.word);
     return buf;
 }
 
-static Atom *epoch_var_atom(Arena *a, Atom *var, uint32_t epoch) {
+static Atom *epoch_var_atom(Arena *a, Atom *var, CettaFrameIdentity epoch) {
     return atom_var_like(a, var, var_epoch_id(var->var_id, epoch));
 }
 
@@ -4609,11 +4611,11 @@ static bool bindings_apply_memo_reserve(BindingApplyMemo *memo, uint32_t needed)
 static bool bindings_apply_memo_index_insert(
     BindingApplyMemoSlot *slots, size_t slot_cap,
     VarId id, uint32_t index) {
-    if (!slots || slot_cap == 0u || id == VAR_ID_NONE)
+    if (!slots || slot_cap == 0u || var_id_is_none(id))
         return false;
     size_t mask = slot_cap - 1u;
     size_t slot = bindings_var_id_hash(id) & mask;
-    while (slots[slot].id != VAR_ID_NONE &&
+    while (!var_id_is_none(slots[slot].id) &&
            !binding_var_eq(slots[slot].id, id)) {
         slot = (slot + 1u) & mask;
     }
@@ -4656,11 +4658,11 @@ static bool bindings_apply_memo_index_build(
 static uint32_t bindings_apply_memo_index_find(
     const BindingApplyMemo *memo, VarId id) {
     if (!memo || !memo->slots || memo->slot_cap == 0u ||
-        id == VAR_ID_NONE)
+        var_id_is_none(id))
         return 0u;
     size_t mask = memo->slot_cap - 1u;
     size_t slot = bindings_var_id_hash(id) & mask;
-    while (memo->slots[slot].id != VAR_ID_NONE) {
+    while (!var_id_is_none(memo->slots[slot].id)) {
         if (binding_var_eq(memo->slots[slot].id, id))
             return memo->slots[slot].index_plus_one;
         slot = (slot + 1u) & mask;
@@ -4733,7 +4735,7 @@ struct BindingsEpochAccelerator;
  * (`resolve_outer`), through an optional accelerator (`fast`). */
 typedef struct {
     const struct BindingsEpochAccelerator *fast;
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     uint32_t first_entry;
     BindingValueKind kind;
     bool original_side;
@@ -4747,7 +4749,7 @@ typedef struct {
 typedef struct {
     Atom *source;
     Atom *image;
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     BindingValueKind kind;
 } BindingApplyGraphEntry;
 
@@ -4756,10 +4758,10 @@ typedef struct {
     size_t len, cap;
 } BindingApplyGraph;
 
-static size_t bindings_apply_graph_hash(Atom *source, uint32_t epoch,
+static size_t bindings_apply_graph_hash(Atom *source, CettaFrameIdentity epoch,
                                         BindingValueKind kind) {
     uint64_t hash = (uint64_t)(uintptr_t)source;
-    hash ^= (uint64_t)epoch * UINT64_C(0x9e3779b97f4a7c15);
+    hash ^= epoch.word * UINT64_C(0x9e3779b97f4a7c15);
     hash ^= (uint64_t)kind * UINT64_C(0xbf58476d1ce4e5b9);
     hash ^= hash >> 30u;
     hash *= UINT64_C(0xbf58476d1ce4e5b9);
@@ -4772,7 +4774,7 @@ static BindingApplyGraphEntry *bindings_apply_graph_slot(
         (graph->cap - 1u);
     while (graph->entries[slot].source &&
            (graph->entries[slot].source != source ||
-            graph->entries[slot].epoch != scope.epoch ||
+            !cetta_frame_identity_eq(graph->entries[slot].epoch, scope.epoch) ||
             graph->entries[slot].kind != scope.kind))
         slot = (slot + 1u) & (graph->cap - 1u);
     return &graph->entries[slot];
@@ -4838,7 +4840,7 @@ static inline Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, Bin
     if (!b || !a || !atom)
         return NULL;
     if (!bindings_has_bound_values(b) && !rewrite_var &&
-        value.kind == BINDING_VALUE_MATERIALIZED)
+        binding_value_kind(value) == BINDING_VALUE_MATERIALIZED)
         return atom;
     /* Ground-term sharing: a variable-free atom is canonical and immutable --
      * no binding can rewrite it -- so return it shared instead of walking and
@@ -4877,7 +4879,7 @@ static inline Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, Bin
         .rewrite_var = rewrite_var,
         .rewrite_ctx = rewrite_ctx,
     };
-    BindingsApplyScope scope = {.epoch = value.epoch, .kind = value.kind};
+    BindingsApplyScope scope = {.epoch = binding_value_epoch(value), .kind = binding_value_kind(value)};
     /* Graph observation owns its extra state. Ordinary substitution keeps
      * its original frame, without an unused graph field on each call.
      * Cyclic images still depend on the active variable path. */
@@ -4940,7 +4942,7 @@ Atom *bindings_apply_value_without_id(
      * including older occurrences, rather than revealing a shadowed value. */
     for (uint32_t i = reduced.len; i > 0u;) {
         --i;
-        if (bindings_entry_at(&reduced, i)->var_id == skip_id &&
+        if (var_id_eq(bindings_entry_at(&reduced, i)->var_id, skip_id) &&
             !bindings_remove_entry_at(&reduced, i)) {
             bindings_free(&reduced);
             return NULL;
@@ -4986,9 +4988,9 @@ static bool bindings_activation_view_find_slot(
     if (!frame || !slot_out)
         return false;
     if (frame->source_ids_contiguous) {
-        if (source_id < frame->source_first_id)
+        if (source_id.base < frame->source_first_id.base)
             return false;
-        uint64_t offset = source_id - frame->source_first_id;
+        uint64_t offset = source_id.base - frame->source_first_id.base;
         if (offset >= frame->len)
             return false;
         *slot_out = (uint32_t)offset;
@@ -4998,12 +5000,12 @@ static bool bindings_activation_view_find_slot(
     uint32_t high = frame->len;
     while (low < high) {
         uint32_t middle = low + (high - low) / 2u;
-        if (frame->source_ids[middle] < source_id)
+        if (frame->source_ids[middle].base < source_id.base)
             low = middle + 1u;
         else
             high = middle;
     }
-    if (low >= frame->len || frame->source_ids[low] != source_id)
+    if (low >= frame->len || !var_id_eq(frame->source_ids[low], source_id))
         return false;
     *slot_out = low;
     return true;
@@ -5019,7 +5021,7 @@ static bool bindings_activation_read_lookup(
         *present_out = false;
     if (!frame || !value_out || !present_out ||
         !frame->source_ids || !frame->source_variables ||
-        source_id == VAR_ID_NONE) {
+        var_id_is_none(source_id)) {
         return false;
     }
     uint32_t index;
@@ -5117,7 +5119,7 @@ static bool bindings_resolve_ground_value(
 
 bool bindings_resolve_epoch_view_ground(
         const Bindings *bindings, const Atom *source_variable,
-        uint32_t epoch, uint32_t first_entry, Atom **ground_out) {
+        CettaFrameIdentity epoch, uint32_t first_entry, Atom **ground_out) {
     BindingValue value;
 
     if (ground_out)
@@ -5194,8 +5196,7 @@ static inline BindingsApplyVarStep bindings_apply_rewrite_var_step(
         BindingsApplyFold *fold, Atom *atom, const BindingsApplyScope *scope,
         uint32_t seen_len, VarId *id_out, Atom **image_out,
         BindingValue *bound_out) {
-    BindingValue value = {
-        .skeleton = atom, .epoch = scope->epoch, .kind = scope->kind};
+    BindingValue value = binding_value_make(atom, scope->epoch, scope->kind);
     VarId id = binding_value_variable_id(value);
     Atom *memoized = bindings_apply_memo_lookup(fold->memo, id);
     if (memoized) {
@@ -5283,7 +5284,7 @@ static BindingsApplyScope bindings_apply_bound_scope(
         bool epoch_fold, const BindingsApplyScope *scope,
         BindingValue bound) {
     if (!epoch_fold)
-        return (BindingsApplyScope){.epoch = bound.epoch, .kind = bound.kind};
+        return (BindingsApplyScope){.epoch = binding_value_epoch(bound), .kind = binding_value_kind(bound)};
     if (!binding_value_is_contextual(bound)) {
         /* Stored syntax: its variables are read on the stored side. */
         BindingsApplyScope stored = *scope;
@@ -5292,7 +5293,7 @@ static BindingsApplyScope bindings_apply_bound_scope(
     }
     return (BindingsApplyScope){
         .fast = scope->fast && scope->fast->exclusive ? scope->fast : NULL,
-        .epoch = bound.epoch,
+        .epoch = binding_value_epoch(bound),
         .first_entry = 0u,
         .original_side = true,
         .resolve_outer = true,
@@ -5469,7 +5470,7 @@ static Atom *bindings_apply_epoch_fold(BindingsApplyFold *fold, Atom *atom,
 }
 
 static Atom *bindings_apply_epoch_from(
-        Bindings *b, Arena *a, Atom *atom, uint32_t epoch,
+        Bindings *b, Arena *a, Atom *atom, CettaFrameIdentity epoch,
         uint32_t first_entry, bool resolve_outer,
         const BindingsEpochAccelerator *fast,
         bool original_side, VarId initial_seen_id,
@@ -5503,7 +5504,7 @@ static Atom *bindings_apply_epoch_from(
     bool track_cycles =
         b->cycle_state != BINDINGS_CYCLE_ACYCLIC;
     uint32_t initial_seen_len = 0u;
-    if (track_cycles && initial_seen_id != VAR_ID_NONE) {
+    if (track_cycles && !var_id_is_none(initial_seen_id)) {
         if (!bindings_apply_seen_reserve(&seen, 0u, 1u)) {
             bindings_apply_memo_release(&outer_memo);
             bindings_apply_memo_release(&local_memo);
@@ -5538,7 +5539,7 @@ static Atom *bindings_apply_epoch_from(
 }
 
 static Atom *bindings_apply_epoch_view(Bindings *b, Arena *a, Atom *atom,
-                                       uint32_t epoch,
+                                       CettaFrameIdentity epoch,
                                        uint32_t first_entry,
                                        bool resolve_outer,
                                        const BindingsActivationView *frame,
@@ -5553,14 +5554,14 @@ static Atom *bindings_apply_epoch_view(Bindings *b, Arena *a, Atom *atom,
 }
 
 Atom *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
-                                 uint32_t epoch, uint32_t first_entry) {
+                                 CettaFrameIdentity epoch, uint32_t first_entry) {
     return bindings_apply_epoch_view(
         b, a, atom, epoch, first_entry, false,
         NULL, NULL);
 }
 
 Atom *bindings_apply_epoch_then_all(Bindings *b, Arena *a, Atom *atom,
-                                    uint32_t epoch,
+                                    CettaFrameIdentity epoch,
                                     uint32_t first_entry) {
     return bindings_apply_epoch_view(
         b, a, atom, epoch, first_entry, true,
@@ -5570,7 +5571,7 @@ Atom *bindings_apply_epoch_then_all(Bindings *b, Arena *a, Atom *atom,
 Atom *bindings_apply_activation_view_then_all(
         Bindings *bindings, Arena *a, Atom *atom,
         const BindingsActivationView *frame) {
-    if (!bindings || !a || !atom || !frame || frame->epoch == 0u ||
+    if (!bindings || !a || !atom || !frame || cetta_frame_identity_is_none(frame->epoch) ||
         frame->first_entry > bindings->len)
         return NULL;
     Bindings *b = bindings;
@@ -5583,7 +5584,7 @@ Atom *bindings_apply_exclusive_frame_then_all(
         BindingsBuilder *builder, Arena *a, Atom *atom,
         const BindingsExclusiveFrame *frame) {
     if (!builder || !a || !atom || !frame || !frame->active ||
-        !frame->schema || frame->epoch == 0u)
+        !frame->schema || cetta_frame_identity_is_none(frame->epoch))
         return NULL;
     BindingsEpochAccelerator accelerator = {
         .exclusive = frame,
@@ -5599,7 +5600,7 @@ Atom *bindings_apply_activation_view_slot_then_all(
         const BindingsActivationView *frame,
         Atom *source_variable, uint32_t slot) {
     if (!bindings || !a || !frame || slot >= frame->len ||
-        frame->epoch == 0u ||
+        cetta_frame_identity_is_none(frame->epoch) ||
         frame->first_entry > bindings->len ||
         !source_variable || source_variable->kind != ATOM_VAR ||
         !frame->source_ids || !frame->source_variables) {
@@ -5611,9 +5612,9 @@ Atom *bindings_apply_activation_view_slot_then_all(
     Bindings *b = bindings;
     Atom *template_variable = frame->source_variables[slot];
     VarId source_id = frame->source_ids[slot];
-    if (source_variable->var_id != source_id ||
+    if (!var_id_eq(source_variable->var_id, source_id) ||
         !template_variable || template_variable->kind != ATOM_VAR ||
-        template_variable->var_id != source_id)
+        !var_id_eq(template_variable->var_id, source_id))
         return NULL;
     BindingValue value = binding_value_from_atom(NULL);
     bool present = false;
@@ -5627,7 +5628,7 @@ Atom *bindings_apply_activation_view_slot_then_all(
     BindingsEpochAccelerator accelerator = {.activation = read};
     return bindings_apply_epoch_from(
         b, a, value.skeleton,
-        binding_value_is_contextual(value) ? value.epoch : frame->epoch,
+        binding_value_is_contextual(value) ? binding_value_epoch(value) : frame->epoch,
         binding_value_is_contextual(value) ? 0u : frame->first_entry, true,
         binding_value_is_contextual(value) ? NULL : &accelerator,
         binding_value_is_contextual(value), var_epoch_id(source_id, frame->epoch), NULL);
@@ -5638,7 +5639,7 @@ Atom *bindings_resolve_activation_view_slot_root(
         const BindingsActivationView *frame,
         Atom *source_variable, uint32_t slot) {
     if (!bindings || !a || !frame || slot >= frame->len ||
-        frame->epoch == 0u ||
+        cetta_frame_identity_is_none(frame->epoch) ||
         frame->first_entry > bindings->len ||
         !source_variable || source_variable->kind != ATOM_VAR ||
         !frame->source_ids || !frame->source_variables) {
@@ -5650,9 +5651,9 @@ Atom *bindings_resolve_activation_view_slot_root(
     Bindings *b = bindings;
     Atom *template_variable = frame->source_variables[slot];
     VarId source_id = frame->source_ids[slot];
-    if (source_variable->var_id != source_id ||
+    if (!var_id_eq(source_variable->var_id, source_id) ||
         !template_variable || template_variable->kind != ATOM_VAR ||
-        template_variable->var_id != source_id)
+        !var_id_eq(template_variable->var_id, source_id))
         return NULL;
     BindingValue value = binding_value_from_atom(NULL);
     bool present = false;
@@ -5667,7 +5668,7 @@ Atom *bindings_resolve_activation_view_slot_root(
 }
 
 Atom *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom,
-                           uint32_t epoch) {
+                           CettaFrameIdentity epoch) {
     return bindings_apply_epoch_since(b, a, atom, epoch, 0u);
 }
 
@@ -5910,24 +5911,24 @@ fail:
 }
 
 static Atom *rename_epoch_variable(Arena *a, Atom *atom, void *context) {
-    return epoch_var_atom(a, atom, *(const uint32_t *)context);
+    return epoch_var_atom(a, atom, *(const CettaFrameIdentity *)context);
 }
 
 /* Keep the address-taken epoch and walk frame out of materialized reads. */
 __attribute__((noinline))
-Atom *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch) {
+Atom *atom_freshen_epoch(Arena *a, Atom *atom, CettaFrameIdentity epoch) {
     return rename_vars_walk(a, atom, rename_epoch_variable, &epoch, false);
 }
 
 Atom *binding_value_materialize(Arena *a, BindingValue value) {
     if (!value.skeleton)
         return NULL;
-    switch (value.kind) {
+    switch (binding_value_kind(value)) {
     case BINDING_VALUE_MATERIALIZED:
         return value.skeleton;
     case BINDING_VALUE_CONTEXTUAL:
     case BINDING_VALUE_CONTEXTUAL_PERSISTENT:
-        return a ? atom_freshen_epoch(a, value.skeleton, value.epoch) : NULL;
+        return a ? atom_freshen_epoch(a, value.skeleton, binding_value_epoch(value)) : NULL;
     }
     return NULL;
 }
@@ -5935,8 +5936,8 @@ Atom *binding_value_materialize(Arena *a, BindingValue value) {
 bool binding_value_equal(BindingValue left, BindingValue right) {
     if (!left.skeleton || !right.skeleton)
         return false;
-    if ((left.kind == BINDING_VALUE_MATERIALIZED &&
-         right.kind == BINDING_VALUE_MATERIALIZED) ||
+    if ((binding_value_kind(left) == BINDING_VALUE_MATERIALIZED &&
+         binding_value_kind(right) == BINDING_VALUE_MATERIALIZED) ||
         (!atom_has_vars(left.skeleton) && !atom_has_vars(right.skeleton)))
         return atom_eq(left.skeleton, right.skeleton);
     return binding_values_eq_under_bindings(NULL, left, right);
@@ -5959,7 +5960,7 @@ static int bindings_observed_frame_slot_compare(
         bindings_frame_slot_source_id(left->frame, left->slot), left->frame->epoch);
     VarId right_id = var_epoch_id(
         bindings_frame_slot_source_id(right->frame, right->slot), right->frame->epoch);
-    return (left_id > right_id) - (left_id < right_id);
+    return var_id_cmp(left_id, right_id);
 }
 
 Atom *bindings_to_atom(Arena *a, const Bindings *b) {
@@ -6171,7 +6172,7 @@ static bool bindings_builder_record_frame_slot_value(
     if (authority_moved_out)
         *authority_moved_out = false;
     if (!bb || !bindings_frame_ref_is_valid(ref) ||
-        ref.identity != var_epoch_suffix(id) ||
+        !cetta_frame_identity_eq(ref.identity, var_epoch_suffix(id)) ||
         bb->trail_len == 0u) {
         return false;
     }
@@ -6184,9 +6185,9 @@ static bool bindings_builder_record_frame_slot_value(
      * Its physical slot positions can change, but the variable identity
      * cannot. Complete activation inventories keep the supplied coordinate;
      * sparse images translate it at this write boundary before recording undo. */
-    VarId source_id = (VarId)var_base_id(id);
+    VarId source_id = var_source_id(id);
     if ((slot >= frame->slot_len ||
-         bindings_frame_slot_source_id(frame, slot) != source_id) &&
+         !var_id_eq(bindings_frame_slot_source_id(frame, slot), source_id)) &&
         !bindings_frame_index_find_slot(frame, source_id, &slot)) {
         return false;
     }
@@ -6826,7 +6827,7 @@ bool bindings_builder_visit_bound_since(
     for (uint32_t index = since.frame_writes; index < bb->frame_undo_len;
          index++) {
         const BindingsFrameUndoEntry *undo = &bb->frame_undo[index];
-        if (!visit(context, var_epoch_id(undo->source_id,
+        if (!visit(context, var_epoch_id(var_id_from_base(undo->source_id),
                                          undo->frame_ref.identity)))
             return false;
     }
@@ -7114,7 +7115,7 @@ static bool bindings_match_store_value(
     #else
     (void)role;
     #endif
-    if (value.kind == BINDING_VALUE_CONTEXTUAL &&
+    if (binding_value_kind(value) == BINDING_VALUE_CONTEXTUAL &&
         !atom_graph_is_closed_for_arena(arena, value.skeleton)) {
         if (!transport)
             return false;
@@ -7174,7 +7175,7 @@ typedef struct RuleFrameRegion {
     const VarId *variable_ids;
     BindingValue *values;
     uint32_t value_count;
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     BindingsFrameRef authority_ref;
     bool frame_admitted;
     BindingsExclusiveFrame *exclusive;
@@ -7182,7 +7183,7 @@ typedef struct RuleFrameRegion {
 
 static bool rule_frame_region_admit_frame(
         RuleFrameRegion *view, BindingsBuilder *builder,
-        Atom *source_var, uint32_t epoch);
+        Atom *source_var, CettaFrameIdentity epoch);
 static bool rule_frame_region_store_exclusive(
         RuleFrameRegion *view, BindingsBuilder *builder,
         Arena *arena, AtomDeepCopySession **transport,
@@ -7196,7 +7197,7 @@ static bool rule_frame_region_store_exclusive(
  * same attempt therefore never rediscover or extend the frame one variable
  * at a time. */
 static bool bindings_builder_add_rule_epoch_key_fresh(
-        BindingsBuilder *bb, Atom *source_var, uint32_t epoch,
+        BindingsBuilder *bb, Atom *source_var, CettaFrameIdentity epoch,
         BindingValue value, Arena *arena, AtomDeepCopySession **transport,
         RuleFrameRegion *frame_region,
         BindingValue *authoritative_value_out) {
@@ -7204,7 +7205,7 @@ static bool bindings_builder_add_rule_epoch_key_fresh(
         *authoritative_value_out = binding_value_from_atom(NULL);
     static _Thread_local int direct_enabled = -1;
     if (!bb || !source_var || source_var->kind != ATOM_VAR ||
-        source_var->var_id == VAR_ID_NONE || epoch == 0u || !value.skeleton) {
+        var_id_is_none(source_var->var_id) || cetta_frame_identity_is_none(epoch) || !value.skeleton) {
         return false;
     }
     cetta_runtime_stats_inc(
@@ -7528,12 +7529,12 @@ static bool var_id_set_hash_insert(
         VarId *slots, size_t slot_cap, VarId id) {
     if (!slots || slot_cap == 0u ||
         (slot_cap & (slot_cap - 1u)) != 0u ||
-        id == VAR_ID_NONE) {
+        var_id_is_none(id)) {
         return false;
     }
     size_t slot = bindings_var_id_hash(id) & (slot_cap - 1u);
     for (size_t probes = 0u; probes < slot_cap; probes++) {
-        if (slots[slot] == VAR_ID_NONE || slots[slot] == id) {
+        if (var_id_is_none(slots[slot]) || var_id_eq(slots[slot], id)) {
             slots[slot] = id;
             return true;
         }
@@ -7571,30 +7572,30 @@ static bool var_id_set_rehash(
 }
 
 static bool var_id_set_contains(const VarIdSet *set, VarId id) {
-    if (!set || id == VAR_ID_NONE)
+    if (!set || var_id_is_none(id))
         return false;
     if (set->slots) {
         size_t slot =
             bindings_var_id_hash(id) & (set->slot_cap - 1u);
         for (size_t probes = 0u;
              probes < set->slot_cap; probes++) {
-            if (set->slots[slot] == VAR_ID_NONE)
+            if (var_id_is_none(set->slots[slot]))
                 return false;
-            if (set->slots[slot] == id)
+            if (var_id_eq(set->slots[slot], id))
                 return true;
             slot = (slot + 1u) & (set->slot_cap - 1u);
         }
         return false;
     }
     for (uint32_t i = 0; i < set->len; i++) {
-        if (set->items[i] == id)
+        if (var_id_eq(set->items[i], id))
             return true;
     }
     return false;
 }
 
 static bool var_id_set_add(VarIdSet *set, VarId id) {
-    if (!set || id == VAR_ID_NONE)
+    if (!set || var_id_is_none(id))
         return false;
     if (var_id_set_contains(set, id))
         return true;
@@ -7709,7 +7710,7 @@ static bool collect_value_var_ids_hash_stable(BindingValue value, VarIdSet *set)
          * set contribution. Published hash-stable graphs are acyclic, so no
          * cycle check is lost by skipping their internal occurrences. */
         VarId single = atom_single_variable_id(atom);
-        if (single != VAR_ID_NONE) {
+        if (!var_id_is_none(single)) {
             if (!var_id_set_add(set, binding_value_qualify_id(value, single)))
                 goto fail;
             continue;
@@ -7781,7 +7782,7 @@ static bool collect_value_var_ids_roots(BindingValue value,
         }
         if ((atom->flags & ATOM_FLAG_HASH_STABLE) != 0u) {
             VarId single = atom_single_variable_id(atom);
-            if (single != VAR_ID_NONE) {
+            if (!var_id_is_none(single)) {
                 if (!var_id_set_add(set, binding_value_qualify_id(value, single)))
                     goto fail;
                 continue;
@@ -7875,10 +7876,11 @@ static bool bindings_support_collect_atom(const Atom *atom, void *raw) {
     uint64_t thunk_id = 0u;
     if (collector->need &&
         prime_need_ref_belongs_to(atom, collector->need, &thunk_id)) {
-        if (var_id_set_contains(&collector->visited_thunks, thunk_id))
+        if (var_id_set_contains(&collector->visited_thunks,
+                                var_id_from_base(thunk_id)))
             return false;
         PrimeNeedCellView cell;
-        if (!var_id_set_add(&collector->visited_thunks, thunk_id) ||
+        if (!var_id_set_add(&collector->visited_thunks, var_id_from_base(thunk_id)) ||
             !prime_need_snapshot_lookup(collector->need, thunk_id, &cell))
             return true;
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
@@ -7934,8 +7936,8 @@ bool bindings_collect_support(const Bindings *bindings,
         Atom *atom = collector.value.skeleton;
         bool created = false;
         if (!bindings_apply_graph_enter(&visited, atom,
-                (BindingsApplyScope){.epoch = collector.value.epoch,
-                                     .kind = collector.value.kind}, &created))
+                (BindingsApplyScope){.epoch = binding_value_epoch(collector.value),
+                                     .kind = binding_value_kind(collector.value)}, &created))
             goto done;
         if (!created) continue;
         if (bindings_support_collect_atom(atom, &collector)) goto done;
@@ -7964,7 +7966,7 @@ done:
 static int var_id_compare(const void *left, const void *right);
 
 static bool binding_value_import_context(
-        BindingValue *value, Arena *arena, CettaVarMap *inventory, uint32_t epoch) {
+        BindingValue *value, Arena *arena, CettaVarMap *inventory, CettaFrameIdentity epoch) {
     if (binding_value_is_contextual(*value) || !atom_has_vars(value->skeleton))
         return true;
     Atom *syntax = cetta_import_frame_syntax(arena, value->skeleton, inventory, epoch);
@@ -7975,8 +7977,8 @@ static bool binding_value_import_context(
 }
 
 bool bindings_contextualize_unframed(
-        Bindings *bindings, Arena *arena, CettaVarMap *inventory, uint32_t epoch) {
-    if (!bindings || !arena || !inventory || epoch == 0u)
+        Bindings *bindings, Arena *arena, CettaVarMap *inventory, CettaFrameIdentity epoch) {
+    if (!bindings || !arena || !inventory || cetta_frame_identity_is_none(epoch))
         return false;
     Bindings converted;
     bindings_init(&converted);
@@ -7991,8 +7993,8 @@ bool bindings_contextualize_unframed(
     uint32_t pending_len = 0u;
     for (uint32_t index = 0u; index < original_len; index++) {
         Binding entry = *bindings_entry_at(&converted, index);
-        if (entry.var_id == VAR_ID_NONE ||
-            var_epoch_suffix(entry.var_id) != 0u)
+        if (var_id_is_none(entry.var_id) ||
+            !cetta_frame_identity_is_none(var_epoch_suffix(entry.var_id)))
             continue;
         Atom *key = atom_var_with_presentation(
             arena, entry.spelling, entry.name_key, entry.var_id);
@@ -8014,7 +8016,7 @@ bool bindings_contextualize_unframed(
     Atom **variables = inventory->len
         ? cetta_malloc((size_t)inventory->len * sizeof(*variables)) : NULL;
     for (uint32_t slot = 0u; slot < inventory->len; slot++) {
-        slots[slot] = (VarId)slot + 1u;
+        slots[slot] = var_id_from_base((uint64_t)slot + 1u);
         variables[slot] = inventory->items[slot].mapped_var;
     }
     BindingsFrameSchema *schema = bindings_frame_schema_new_presented(
@@ -8035,8 +8037,8 @@ bool bindings_contextualize_unframed(
     }
     for (uint32_t index = original_len; index > 0u; index--) {
         const Binding *entry = bindings_entry_at(&converted, index - 1u);
-        if (entry->var_id == VAR_ID_NONE ||
-            var_epoch_suffix(entry->var_id) != 0u)
+        if (var_id_is_none(entry->var_id) ||
+            !cetta_frame_identity_is_none(var_epoch_suffix(entry->var_id)))
             continue;
         if (!bindings_remove_entry_at(&converted, index - 1u))
             goto fail;
@@ -8056,7 +8058,7 @@ fail:
 static int var_id_compare(const void *left, const void *right) {
     VarId a = *(const VarId *)left;
     VarId b = *(const VarId *)right;
-    return (a > b) - (a < b);
+    return var_id_cmp(a, b);
 }
 
 /* Reserve frame coordinates without binding them. One cycle-aware support
@@ -8083,15 +8085,15 @@ static bool bindings_prepare_var_batch(Bindings *bindings,
     if (ids.len > 1u)
         qsort(ids.items, ids.len, sizeof(*ids.items), var_id_compare);
     for (uint32_t start = 0u; start < ids.len && ok;) {
-        uint32_t epoch = var_epoch_suffix(ids.items[start]);
+        CettaFrameIdentity epoch = var_epoch_suffix(ids.items[start]);
         uint32_t end = start + 1u;
-        while (end < ids.len && var_epoch_suffix(ids.items[end]) == epoch)
+        while (end < ids.len && cetta_frame_identity_eq(var_epoch_suffix(ids.items[end]), epoch))
             end++;
-        if (epoch != 0u && !variant_private_var_id(ids.items[start])) {
+        if (!cetta_frame_identity_is_none(epoch) && !variant_private_var_id(ids.items[start])) {
             const BindingsFrameIndexEntry *known =
                 bindings_frame_index_find_frame_const(bindings->frame_index, epoch);
             if (known && known->schema->source_ids_contiguous &&
-                known->schema->source_first_id == 1u) {
+                var_id_eq(known->schema->source_first_id, var_id_from_base(1u))) {
                 /* Growing a runtime slot array must retain its existing
                  * coordinates. Reserve its largest mentioned slot first. */
                 ok = bindings_frame_index_ensure_id(bindings, ids.items[end - 1u]);
@@ -8099,7 +8101,7 @@ static bool bindings_prepare_var_batch(Bindings *bindings,
                     ok = bindings_frame_index_ensure_id(bindings, ids.items[i]);
             } else {
                 for (uint32_t i = start; i < end; i++)
-                    ids.items[i] = (VarId)var_base_id(ids.items[i]);
+                    ids.items[i] = var_source_id(ids.items[i]);
                 ok = bindings_frame_index_register(
                     bindings, ids.items + start, end - start, epoch);
             }
@@ -8160,8 +8162,8 @@ static bool bindings_activation_source_ids(
     if (collected) {
         for (uint32_t index = 0u; index < variables->len; index++) {
             variables->items[index] =
-                (VarId)var_base_id(variables->items[index]);
-            if (variables->items[index] == VAR_ID_NONE) {
+                var_source_id(variables->items[index]);
+            if (var_id_is_none(variables->items[index])) {
                 collected = false;
                 break;
             }
@@ -8172,7 +8174,7 @@ static bool bindings_activation_source_ids(
               sizeof(*variables->items), var_id_compare);
         uint32_t write = 1u;
         for (uint32_t read = 1u; read < variables->len; read++) {
-            if (variables->items[read] != variables->items[write - 1u])
+            if (!var_id_eq(variables->items[read], variables->items[write - 1u]))
                 variables->items[write++] = variables->items[read];
         }
         variables->len = write;
@@ -8181,8 +8183,8 @@ static bool bindings_activation_source_ids(
 }
 
 bool bindings_register_activation_source_frame(
-        Bindings *bindings, Atom *source, uint32_t epoch) {
-    if (!bindings || !source || epoch == 0u)
+        Bindings *bindings, Atom *source, CettaFrameIdentity epoch) {
+    if (!bindings || !source || cetta_frame_identity_is_none(epoch))
         return false;
     VarIdSet variables;
     var_id_set_init(&variables);
@@ -8194,8 +8196,8 @@ bool bindings_register_activation_source_frame(
 }
 
 bool bindings_builder_register_activation_source_frame(
-        BindingsBuilder *builder, Atom *source, uint32_t epoch) {
-    if (!builder || !source || epoch == 0u)
+        BindingsBuilder *builder, Atom *source, CettaFrameIdentity epoch) {
+    if (!builder || !source || cetta_frame_identity_is_none(epoch))
         return false;
     VarIdSet variables;
     var_id_set_init(&variables);
@@ -8216,7 +8218,7 @@ static BindingsReachability bindings_value_reaches_var(
     Bindings *bindings, BindingValue value, VarId target) {
     uint64_t single_depth = 0u;
 
-    if (!bindings || !value.skeleton || target == VAR_ID_NONE)
+    if (!bindings || !value.skeleton || var_id_is_none(target))
         return BINDINGS_REACHABILITY_UNKNOWN;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_CYCLE_REACH_QUERY);
@@ -8228,7 +8230,7 @@ static BindingsReachability bindings_value_reaches_var(
      * Multi-variable expressions retain the exact general traversal below. */
     for (;;) {
         VarId single = binding_value_single_variable_id(value);
-        if (single == VAR_ID_NONE)
+        if (var_id_is_none(single))
             break;
         single_depth++;
         cetta_runtime_stats_inc(
@@ -8383,12 +8385,12 @@ static BindingsReachability bindings_exclusive_frame_value_reaches(
 static BindingsReachability bindings_cycle_source_support_reaches_var(
         Bindings *bindings, Atom *source,
         const VarId *variable_ids, uint64_t variable_mask,
-        uint32_t epoch, VarId target,
+        CettaFrameIdentity epoch, VarId target,
         const RuleFrameRegion *frame_region) {
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_CYCLE_PLAN_SUPPORT_ATTEMPT);
     if (!bindings_cycle_plan_support_enabled() || !bindings || !source ||
-        epoch == 0u || target == VAR_ID_NONE ||
+        cetta_frame_identity_is_none(epoch) || var_id_is_none(target) ||
         bindings->cycle_state != BINDINGS_CYCLE_ACYCLIC ||
         (atom_has_vars(source) &&
          (!variable_ids || variable_mask == 0u))) {
@@ -8408,7 +8410,7 @@ static BindingsReachability bindings_cycle_source_support_reaches_var(
         uint32_t slot = (uint32_t)__builtin_ctzll(remaining);
         remaining &= remaining - 1u;
         VarId source_id = variable_ids[slot];
-        if (source_id == VAR_ID_NONE) {
+        if (var_id_is_none(source_id)) {
             indeterminate = true;
             continue;
         }
@@ -8476,7 +8478,7 @@ static BindingsReachability bindings_exclusive_frame_value_reaches(
         const BindingsExclusiveFrame *frame, Bindings *outer,
         BindingValue value, VarId target) {
     if (!frame || !frame->active || !outer || !value.skeleton ||
-        target == VAR_ID_NONE)
+        var_id_is_none(target))
         return BINDINGS_REACHABILITY_UNKNOWN;
     size_t single_remaining = bindings_dereference_limit(outer);
     size_t local_bound = (size_t)frame->schema->len + frame->write_len;
@@ -8484,7 +8486,7 @@ static BindingsReachability bindings_exclusive_frame_value_reaches(
         ? SIZE_MAX : single_remaining + local_bound;
     for (;;) {
         VarId single = binding_value_single_variable_id(value);
-        if (single == VAR_ID_NONE)
+        if (var_id_is_none(single))
             break;
         if (binding_var_eq(single, target))
             return BINDINGS_REACHABILITY_PRESENT;
@@ -8556,7 +8558,7 @@ static bool bindings_exclusive_frame_prepare_value(
 #else
     (void)role;
 #endif
-    if (value->kind == BINDING_VALUE_CONTEXTUAL &&
+    if (binding_value_kind(*value) == BINDING_VALUE_CONTEXTUAL &&
         !atom_graph_is_closed_for_arena(arena, value->skeleton)) {
         if (!transport)
             return false;
@@ -8604,7 +8606,7 @@ static bool bindings_exclusive_frame_prepare_value(
 enum { BINDINGS_GROUND_BIND_NODE_LIMIT = 64 };
 
 static Atom *binding_value_instantiate_ground_node(
-        Bindings *bindings, Arena *arena, Atom *skeleton, uint32_t epoch,
+        Bindings *bindings, Arena *arena, Atom *skeleton, CettaFrameIdentity epoch,
         BindingValueKind kind, uint32_t *remaining) {
     if (!atom_has_vars(skeleton))
         return skeleton;
@@ -8644,7 +8646,7 @@ static BindingValue binding_value_ground_or_self(
     ArenaMark mark = arena_mark(arena);
     uint32_t remaining = BINDINGS_GROUND_BIND_NODE_LIMIT;
     Atom *ground = binding_value_instantiate_ground_node(
-        bindings, arena, value.skeleton, value.epoch, value.kind, &remaining);
+        bindings, arena, value.skeleton, binding_value_epoch(value), binding_value_kind(value), &remaining);
     if (!ground) {
         arena_reset(arena, mark);
         cetta_runtime_stats_inc(
@@ -8662,15 +8664,15 @@ static bool bindings_exclusive_frame_value_avoids(
         const BindingsExclusiveFrame *frame, BindingValue value) {
     if (!atom_has_vars(value.skeleton))
         return true;
-    if (frame->epoch == 0u)
+    if (cetta_frame_identity_is_none(frame->epoch))
         return false;
     if (binding_value_is_contextual(value))
-        return value.epoch != frame->epoch;
+        return !cetta_frame_identity_eq(binding_value_epoch(value), frame->epoch);
     VarIdSet support;
     var_id_set_init(&support);
     bool avoids = collect_value_var_ids(value, &support);
     for (uint32_t index = 0u; avoids && index < support.len; index++)
-        avoids = var_epoch_suffix(support.items[index]) != frame->epoch;
+        avoids = !cetta_frame_identity_eq(var_epoch_suffix(support.items[index]), frame->epoch);
     var_id_set_free(&support);
     return avoids;
 }
@@ -8683,7 +8685,7 @@ static bool bindings_exclusive_frame_store(
         BindingValue *authoritative_value_out) {
     if (authoritative_value_out)
         *authoritative_value_out = binding_value_from_atom(NULL);
-    if (!frame || !frame->active || !builder || id == VAR_ID_NONE ||
+    if (!frame || !frame->active || !builder || var_id_is_none(id) ||
         !value.skeleton ||
         !bindings_exclusive_frame_prepare_value(
             arena, transport, role, &value, &name_key)) {
@@ -8826,7 +8828,7 @@ fail:
 bool bindings_exclusive_frame_freeze(
         BindingsExclusiveFrame *frame, BindingsBuilder *builder) {
     if (!frame || !frame->active || !frame->schema || !builder ||
-        frame->epoch == 0u)
+        cetta_frame_identity_is_none(frame->epoch))
         return false;
     if (!bindings_builder_prepare_fresh_entries(
             builder, frame->write_len))
@@ -8881,7 +8883,7 @@ uint64_t bindings_builder_frame_write_boundary(
 bool bindings_exclusive_frame_publish_slots(
         BindingsExclusiveFrame *frame, BindingsBuilder *builder) {
     if (!frame || !frame->active || !frame->schema || !builder ||
-        frame->epoch == 0u ||
+        cetta_frame_identity_is_none(frame->epoch) ||
         bindings_exclusive_frame_has_external_writes(frame) ||
         frame->write_len > UINT32_MAX - builder->trail_len ||
         frame->write_len > UINT32_MAX - builder->frame_undo_len ||
@@ -9065,10 +9067,10 @@ static bool bindings_reachable_vars_rehash(
     memset(slots, 0, cap * sizeof(*slots));
     for (size_t i = 0u; i < vars->slot_cap; i++) {
         VarId id = vars->slots[i];
-        if (id == VAR_ID_NONE)
+        if (var_id_is_none(id))
             continue;
         size_t slot = bindings_var_id_hash(id) & (cap - 1u);
-        while (slots[slot] != VAR_ID_NONE)
+        while (!var_id_is_none(slots[slot]))
             slot = (slot + 1u) & (cap - 1u);
         slots[slot] = id;
     }
@@ -9080,12 +9082,12 @@ static bool bindings_reachable_vars_rehash(
 
 static bool bindings_reachable_vars_contains(
     const BindingsReachableVars *vars, VarId id) {
-    if (!vars || id == VAR_ID_NONE || vars->slot_cap == 0u)
+    if (!vars || var_id_is_none(id) || vars->slot_cap == 0u)
         return false;
     size_t slot =
         bindings_var_id_hash(id) & (vars->slot_cap - 1u);
-    while (vars->slots[slot] != VAR_ID_NONE) {
-        if (vars->slots[slot] == id)
+    while (!var_id_is_none(vars->slots[slot])) {
+        if (var_id_eq(vars->slots[slot], id))
             return true;
         slot = (slot + 1u) & (vars->slot_cap - 1u);
     }
@@ -9094,7 +9096,7 @@ static bool bindings_reachable_vars_contains(
 
 static bool bindings_reachable_vars_add(
     BindingsReachableVars *vars, VarId id) {
-    if (!vars || id == VAR_ID_NONE)
+    if (!vars || var_id_is_none(id))
         return false;
     if (bindings_reachable_vars_contains(vars, id))
         return true;
@@ -9119,7 +9121,7 @@ static bool bindings_reachable_vars_add(
     }
     size_t slot =
         bindings_var_id_hash(id) & (vars->slot_cap - 1u);
-    while (vars->slots[slot] != VAR_ID_NONE)
+    while (!var_id_is_none(vars->slots[slot]))
         slot = (slot + 1u) & (vars->slot_cap - 1u);
     vars->slots[slot] = id;
     vars->slot_len++;
@@ -9134,7 +9136,7 @@ static bool bindings_reachable_vars_add_value(
         return true;
     VarId single = binding_value_single_variable_id(value);
     if (atom->kind == ATOM_VAR ||
-        (single != VAR_ID_NONE && (atom->flags & ATOM_FLAG_HASH_STABLE)))
+        (!var_id_is_none(single) && (atom->flags & ATOM_FLAG_HASH_STABLE)))
         return bindings_reachable_vars_add(vars, single);
     VarIdSet found;
     var_id_set_init(&found);
@@ -9160,7 +9162,7 @@ static bool bindings_reachable_vars_add_atom(
 static bool bindings_reachable_vars_add_epoch_root(
     BindingsReachableVars *vars,
     const BindingsEpochRoot *root) {
-    if (!vars || !root || !root->atom || root->epoch == 0u)
+    if (!vars || !root || !root->atom || cetta_frame_identity_is_none(root->epoch))
         return false;
     if (!atom_has_vars(root->atom))
         return true;
@@ -9168,11 +9170,11 @@ static bool bindings_reachable_vars_add_epoch_root(
         CettaTermVariableSupportIterator iterator;
         cetta_term_variable_support_iterator_init(
             &iterator, root->variable_support);
-        uint32_t base_id = 0u;
+        uint64_t base_id = 0u;
         while (cetta_term_variable_support_iterator_next(
                    &iterator, &base_id)) {
             if (!bindings_reachable_vars_add(
-                    vars, var_epoch_id((VarId)base_id,
+                    vars, var_epoch_id(var_id_from_base(base_id),
                                        root->epoch))) {
                 return false;
             }
@@ -9228,13 +9230,13 @@ static bool bindings_reachable_index_build(
     memset(slots, 0, cap * sizeof(*slots));
     for (uint32_t i = 0u; i < src->len; i++) {
         VarId id = bindings_entry_at(src, i)->var_id;
-        if (id == VAR_ID_NONE) {
+        if (var_id_is_none(id)) {
             free(slots);
             return false;
         }
         size_t slot = bindings_var_id_hash(id) & (cap - 1u);
-        while (slots[slot].id != VAR_ID_NONE &&
-               slots[slot].id != id) {
+        while (!var_id_is_none(slots[slot].id) &&
+               !var_id_eq(slots[slot].id, id)) {
             slot = (slot + 1u) & (cap - 1u);
         }
         /* Match lookup scans newest-to-oldest, so duplicates map to newest. */
@@ -9248,11 +9250,11 @@ static bool bindings_reachable_index_build(
 
 static uint32_t bindings_reachable_index_lookup(
     const BindingsReachableIndexSlot *slots, size_t cap, VarId id) {
-    if (!slots || cap == 0u || id == VAR_ID_NONE)
+    if (!slots || cap == 0u || var_id_is_none(id))
         return 0u;
     size_t slot = bindings_var_id_hash(id) & (cap - 1u);
-    while (slots[slot].id != VAR_ID_NONE) {
-        if (slots[slot].id == id)
+    while (!var_id_is_none(slots[slot].id)) {
+        if (var_id_eq(slots[slot].id, id))
             return slots[slot].index_plus_one;
         slot = (slot + 1u) & (cap - 1u);
     }
@@ -9336,13 +9338,13 @@ static bool bindings_projection_copy_live_frame_values(
                 src->frame_index, var_epoch_suffix(id));
         uint32_t source_slot = 0u;
         if (!source || !bindings_frame_index_find_slot(
-                source, (VarId)var_base_id(id), &source_slot)) {
+                source, var_source_id(id), &source_slot)) {
             return false;
         }
         BindingValue value = source->values[source_slot];
         if (!value.skeleton)
             continue;
-        VarId source_id = (VarId)var_base_id(id);
+        VarId source_id = var_source_id(id);
         if (!bindings_frame_index_ensure_presentation(
                 dst, id, bindings_frame_slot_spelling(source, source_slot),
                 bindings_frame_slot_name_key(source, source_slot)) ||
@@ -10075,7 +10077,7 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
         for (uint32_t i = 0u; i < bb->frame_undo_len; i++) {
             BindingsFrameUndoEntry undo = bb->frame_undo[i];
             VarId id = var_epoch_id(
-                (VarId)undo.source_id,
+                var_id_from_base(undo.source_id),
                 undo.frame_ref.identity);
             const BindingsFrameIndexEntry *projected_frame = NULL;
             uint32_t projected_slot = 0u;
@@ -10251,7 +10253,7 @@ static void rename_var_map_free(RenameVarMap *map) {
 
 static Atom *rename_var_map_lookup(RenameVarMap *map, VarId id) {
     for (uint32_t i = 0; i < map->len; i++) {
-        if (map->items[i].id == id)
+        if (var_id_eq(map->items[i].id, id))
             return map->items[i].mapped;
     }
     return NULL;
@@ -10259,7 +10261,7 @@ static Atom *rename_var_map_lookup(RenameVarMap *map, VarId id) {
 
 static Atom *rename_var_map_add_fresh(RenameVarMap *map, Arena *a, Atom *var) {
     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-    uint32_t suffix = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    CettaFrameIdentity suffix = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     Atom *fresh = atom_var_like(a, var, var_epoch_id(var->var_id, suffix));
     if (map->len >= map->cap) {
         uint32_t next_cap = map->cap ? map->cap * 2u : 8u;
@@ -10298,7 +10300,7 @@ static Atom *rename_vars_listed_iterative(Arena *a, Atom *root,
     return rename_vars_walk(a, root, rename_listed_variable, &policy, false);
 }
 
-Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix) {
+Atom *rename_vars(Arena *a, Atom *atom, CettaFrameIdentity suffix) {
     return rename_vars_walk(a, atom, rename_epoch_variable, &suffix, true);
 }
 
@@ -10454,8 +10456,8 @@ static MatchListOutcome match_list_meet(Arena *a, Atom *left, Atom *right,
  * no persistent owner holds. */
 static BindingValue match_list_derived_value(BindingValue side, Atom *derived) {
     side.skeleton = derived;
-    if (side.kind == BINDING_VALUE_CONTEXTUAL_PERSISTENT)
-        side.kind = BINDING_VALUE_CONTEXTUAL;
+    if (binding_value_kind(side) == BINDING_VALUE_CONTEXTUAL_PERSISTENT)
+        binding_value_set_kind(&side, BINDING_VALUE_CONTEXTUAL);
     else if (!atom_has_vars(derived))
         side = binding_value_from_atom(derived);
     return side;
@@ -10535,7 +10537,7 @@ static bool bindings_entry_is_trivial_self(
     const Binding *entry = &logical[idx];
     Atom *value = entry->value.skeleton;
     return value->kind == ATOM_VAR &&
-           binding_value_variable_id(entry->value) == entry->var_id;
+           var_id_eq(binding_value_variable_id(entry->value), entry->var_id);
 }
 
 typedef struct {
@@ -10708,7 +10710,7 @@ typedef struct {
 } MatchTerm;
 
 static MatchTerm match_term_at(Atom *source, BindingValueKind kind,
-                               uint32_t epoch, uint32_t first_entry,
+                               CettaFrameIdentity epoch, uint32_t first_entry,
                                const BindingsActivationView *frame) {
     bool contextual = kind != BINDING_VALUE_MATERIALIZED;
     BindingValue value = binding_value_from_context_kind(
@@ -10753,17 +10755,18 @@ static void match_path_free(MatchPathSet *path) {
 
 static bool match_term_same_occurrence(MatchTerm left, MatchTerm right) {
     if (left.value.skeleton != right.value.skeleton ||
-        left.value.kind != right.value.kind)
+        binding_value_kind(left.value) != binding_value_kind(right.value))
         return false;
-    return left.value.kind == BINDING_VALUE_MATERIALIZED ||
-        (left.value.epoch == right.value.epoch &&
+    return binding_value_kind(left.value) == BINDING_VALUE_MATERIALIZED ||
+        (cetta_frame_identity_eq(binding_value_epoch(left.value), binding_value_epoch(right.value)) &&
          left.first_entry == right.first_entry);
 }
 
 static uintptr_t match_term_path_hash(MatchTerm term) {
     uintptr_t hash = (uintptr_t)term.value.skeleton >> 4;
     if (binding_value_is_contextual(term.value)) {
-        hash ^= (uintptr_t)term.value.epoch * (uintptr_t)0x85ebca6bu;
+        hash ^= (uintptr_t)binding_value_epoch(term.value).word *
+                (uintptr_t)0x85ebca6bu;
         hash ^= (uintptr_t)term.first_entry * (uintptr_t)0xc2b2ae35u;
         hash ^= (uintptr_t)0x27d4eb2fu;
     }
@@ -10930,7 +10933,7 @@ static void alpha_pair_set_free(AlphaPairSet *pairs) {
 
 static VarId alpha_lookup_left(const AlphaPairSet *pairs, VarId left) {
     for (uint32_t i = 0; i < pairs->len; i++) {
-        if (pairs->items[i].left == left)
+        if (var_id_eq(pairs->items[i].left, left))
             return pairs->items[i].right;
     }
     return VAR_ID_NONE;
@@ -10938,7 +10941,7 @@ static VarId alpha_lookup_left(const AlphaPairSet *pairs, VarId left) {
 
 static VarId alpha_lookup_right(const AlphaPairSet *pairs, VarId right) {
     for (uint32_t i = 0; i < pairs->len; i++) {
-        if (pairs->items[i].right == right)
+        if (var_id_eq(pairs->items[i].right, right))
             return pairs->items[i].left;
     }
     return VAR_ID_NONE;
@@ -11039,8 +11042,8 @@ static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
                 goto done;
             VarId mapped_right = alpha_lookup_left(&pairs, left->var_id);
             VarId mapped_left = alpha_lookup_right(&pairs, right->var_id);
-            if (mapped_right || mapped_left) {
-                if (mapped_right != right->var_id || mapped_left != left->var_id)
+            if (!var_id_is_none(mapped_right) || !var_id_is_none(mapped_left)) {
+                if (!var_id_eq(mapped_right, right->var_id) || !var_id_eq(mapped_left, left->var_id))
                     goto done;
             } else if (!alpha_add_pair(&pairs, left->var_id, right->var_id)) {
                 goto done;
@@ -11256,7 +11259,7 @@ static bool binding_values_eq_under_bindings(Bindings *b, BindingValue lhs, Bind
         if (left->kind != right->kind)
             goto done;
         if (left->kind == ATOM_VAR) {
-            if (binding_value_variable_id(lhs) != binding_value_variable_id(rhs))
+            if (!var_id_eq(binding_value_variable_id(lhs), binding_value_variable_id(rhs)))
                 goto done;
             continue;
         }
@@ -11268,7 +11271,7 @@ static bool binding_values_eq_under_bindings(Bindings *b, BindingValue lhs, Bind
         if (left == right &&
             match_shared_occurrence_same_environment(
                 binding_value_is_contextual(lhs),
-                binding_value_is_contextual(rhs), lhs.epoch, rhs.epoch))
+                binding_value_is_contextual(rhs), binding_value_epoch(lhs), binding_value_epoch(rhs)))
             continue;
         if (!atom_has_vars(left) && !atom_has_vars(right)) {
             if (!atom_eq(left, right))
@@ -11428,7 +11431,7 @@ retry_pair:
             continue;
         if (left == right) {
             if (left && left->kind == ATOM_VAR &&
-                binding_value_variable_id(left_value) == binding_value_variable_id(right_value) &&
+                var_id_eq(binding_value_variable_id(left_value), binding_value_variable_id(right_value)) &&
                 (!current || (current->cycle_state == BINDINGS_CYCLE_ACYCLIC)))
                 continue;
             if (match_shared_ground_reflexivity_try(
@@ -11436,7 +11439,7 @@ retry_pair:
                     match_shared_occurrence_same_environment(
                         binding_value_is_contextual(left_value),
                         binding_value_is_contextual(right_value),
-                        left_value.epoch, right_value.epoch), current))
+                        binding_value_epoch(left_value), binding_value_epoch(right_value)), current))
                 continue;
         }
         bool closed_equal = false;
@@ -11480,8 +11483,7 @@ retry_pair:
                     right_value = right_existing;
                     goto retry_pair;
                 }
-                if (binding_value_variable_id(left_value) ==
-                    binding_value_variable_id(right_value)) continue;
+                if (var_id_eq(binding_value_variable_id(left_value), binding_value_variable_id(right_value))) continue;
             }
             bool added = builder
                 ? bindings_builder_add_id_internal(
@@ -11566,12 +11568,10 @@ retry_pair:
                     &work,
                     (MatchTerm){.value = meet.left_derived
                         ? match_list_derived_value(left_value, meet.left_rest)
-                        : (BindingValue){meet.left_rest, left_value.epoch,
-                                         left_value.kind}},
+                        : binding_value_with_skeleton(left_value, meet.left_rest)},
                     (MatchTerm){.value = meet.right_derived
                         ? match_list_derived_value(right_value, meet.right_rest)
-                        : (BindingValue){meet.right_rest, right_value.epoch,
-                                         right_value.kind}}))
+                        : binding_value_with_skeleton(right_value, meet.right_rest)}))
                 goto fail;
             for (CettaExprIndex i = meet.prefix; i >= 1u; i--) {
                 BindingValue left_child = left_value, right_child = right_value;
@@ -11674,42 +11674,42 @@ bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb,
 static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
                                        Bindings *bindings,
                                        BindingsBuilder *builder,
-                                       Arena *a, uint32_t epoch);
+                                       Arena *a, CettaFrameIdentity epoch);
 static bool match_atoms_epoch_rule_local_worklist(
     Atom *left, Atom *right, BindingsBuilder *builder,
-    Arena *a, uint32_t epoch);
+    Arena *a, CettaFrameIdentity epoch);
 static bool match_atoms_epoch_rule_local_planned_worklist(
     Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
-    BindingsBuilder *builder, Arena *a, uint32_t epoch);
+    BindingsBuilder *builder, Arena *a, CettaFrameIdentity epoch);
 static bool match_atoms_epoch_view_worklist(
-    Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
+    Atom *left, CettaFrameIdentity left_epoch, uint32_t left_first_entry,
     Atom *right, Bindings *bindings, BindingsBuilder *builder,
-    Arena *a, uint32_t right_epoch);
+    Arena *a, CettaFrameIdentity right_epoch);
 static bool match_atoms_epoch_view_current_worklist(
-    Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
+    Atom *left, CettaFrameIdentity left_epoch, uint32_t left_first_entry,
     Atom *right, Bindings *bindings, BindingsBuilder *builder,
     Arena *a);
 static bool match_atoms_epoch_view_rule_local_worklist(
-    Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
-    Atom *right, BindingsBuilder *builder, Arena *a, uint32_t right_epoch);
+    Atom *left, CettaFrameIdentity left_epoch, uint32_t left_first_entry,
+    Atom *right, BindingsBuilder *builder, Arena *a, CettaFrameIdentity right_epoch);
 static bool match_atoms_epoch_view_rule_local_planned_worklist(
-    Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
+    Atom *left, CettaFrameIdentity left_epoch, uint32_t left_first_entry,
     Atom *right, const CettaOpenPatternPlan *right_plan,
-    BindingsBuilder *builder, Arena *a, uint32_t right_epoch);
+    BindingsBuilder *builder, Arena *a, CettaFrameIdentity right_epoch);
 static bool match_atoms_activation_view_worklist(
     Atom *left, const BindingsActivationView *left_frame,
     Atom *right, Bindings *bindings, BindingsBuilder *builder,
-    Arena *a, uint32_t right_epoch, bool right_original,
+    Arena *a, CettaFrameIdentity right_epoch, bool right_original,
     bool prefer_right_rule_slot,
     const CettaOpenPatternPlan *right_plan);
 static bool match_atoms_atom_id_epoch_worklist(
     BindingValue left_value, const TermUniverse *candidate_universe, AtomId right_id,
-    Bindings *b, Arena *a, uint32_t epoch);
+    Bindings *b, Arena *a, CettaFrameIdentity epoch);
 static bool match_atoms_epoch_views_linear(
-    Atom *left, BindingValueKind left_kind, uint32_t left_epoch,
+    Atom *left, BindingValueKind left_kind, CettaFrameIdentity left_epoch,
     uint32_t left_first_entry, Atom *right,
     Bindings *bindings, BindingsBuilder *builder,
-    Arena *a, uint32_t right_epoch, BindingValueKind right_kind,
+    Arena *a, CettaFrameIdentity right_epoch, BindingValueKind right_kind,
     bool prefer_right_rule_slot,
     const BindingsActivationView *left_frame,
     const CettaOpenPatternPlan *right_plan,
@@ -11769,7 +11769,7 @@ bool match_leaf_patch_view_enabled(void) {
  * binding in b.  Anything outside the shape (nesting, a non-var pattern arg, a
  * variable query arg, or a pre-bound epoched var) falls back. */
 bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
-                                         Arena *a, uint32_t epoch) {
+                                         Arena *a, CettaFrameIdentity epoch) {
     if (!query || !lhs || !b || !a)
         return false;
     if (query->kind != ATOM_EXPR || lhs->kind != ATOM_EXPR)
@@ -11798,7 +11798,7 @@ bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
         if (bindings_lookup_value_id(b, eid).skeleton)
             return false; /* epoched var already bound -> matcher dereferences */
         for (uint32_t j = 0; j < nseen; j++)
-            if (seen[j] == eid)
+            if (var_id_eq(seen[j], eid))
                 return false; /* repeated variable -> non-linear -> refuse */
         if (nseen >= (sizeof seen / sizeof seen[0]))
             return false; /* arity beyond the small cap -> conservative refuse */
@@ -11822,7 +11822,7 @@ bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
 
 bool match_atoms_epoch_positional_linear_builder(
         Atom *query, Atom *lhs, BindingsBuilder *bb,
-        Arena *a, uint32_t epoch) {
+        Arena *a, CettaFrameIdentity epoch) {
     if (!query || !lhs || !bb || !a)
         return false;
     if (query->kind != ATOM_EXPR || lhs->kind != ATOM_EXPR)
@@ -11855,7 +11855,7 @@ bool match_atoms_epoch_positional_linear_builder(
         if (bindings_lookup_value_id(current, eid).skeleton)
             return false;
         for (uint32_t j = 0u; j < nseen; j++)
-            if (seen[j] == eid)
+            if (var_id_eq(seen[j], eid))
                 return false;
         if (nseen >= (sizeof seen / sizeof seen[0]))
             return false;
@@ -11871,19 +11871,19 @@ bool match_atoms_epoch_positional_linear_builder(
     return true;
 }
 
-bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch) {
+bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, CettaFrameIdentity epoch) {
     return match_atoms_epoch_worklist(left, right, b, NULL, a, epoch);
 }
 
 bool match_atoms_epoch_builder(Atom *left, Atom *right,
                                BindingsBuilder *bb, Arena *a,
-                               uint32_t epoch) {
+                               CettaFrameIdentity epoch) {
     return match_atoms_epoch_worklist(left, right, NULL, bb, a, epoch);
 }
 
 bool match_atoms_epoch_builder_rule_local(
         Atom *left, Atom *right, BindingsBuilder *bb,
-        Arena *a, uint32_t epoch) {
+        Arena *a, CettaFrameIdentity epoch) {
     return match_atoms_epoch_rule_local_worklist(
         left, right, bb, a, epoch);
 }
@@ -11891,7 +11891,7 @@ bool match_atoms_epoch_builder_rule_local(
 bool match_atoms_epoch_builder_rule_local_planned(
         Atom *left, Atom *right,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t epoch) {
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity epoch) {
     return match_atoms_epoch_rule_local_planned_worklist(
         left, right, right_plan, bb, a, epoch);
 }
@@ -11899,24 +11899,24 @@ bool match_atoms_epoch_builder_rule_local_planned(
 bool match_atoms_epoch_builder_rule_local_linear(
         Atom *left, Atom *right,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t epoch) {
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity epoch) {
     return match_atoms_epoch_views_linear(
-        left, BINDING_VALUE_MATERIALIZED, 0u, 0u,
+        left, BINDING_VALUE_MATERIALIZED, CETTA_FRAME_IDENTITY_NONE, 0u,
         right, NULL, bb, a, epoch,
         BINDING_VALUE_CONTEXTUAL, true, NULL, right_plan, NULL);
 }
 
 bool match_atoms_epoch_view_builder(
-        Atom *left_original, uint32_t left_epoch,
+        Atom *left_original, CettaFrameIdentity left_epoch,
         uint32_t left_first_entry, Atom *right_original,
-        BindingsBuilder *bb, Arena *a, uint32_t right_epoch) {
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch) {
     return match_atoms_epoch_view_worklist(
         left_original, left_epoch, left_first_entry,
         right_original, NULL, bb, a, right_epoch);
 }
 
 bool match_atoms_epoch_view_builder_current(
-        Atom *left_original, uint32_t left_epoch,
+        Atom *left_original, CettaFrameIdentity left_epoch,
         uint32_t left_first_entry, Atom *right,
         BindingsBuilder *bb, Arena *a) {
     return match_atoms_epoch_view_current_worklist(
@@ -11925,29 +11925,29 @@ bool match_atoms_epoch_view_builder_current(
 }
 
 bool match_atoms_epoch_view_builder_rule_local(
-        Atom *left_original, uint32_t left_epoch,
+        Atom *left_original, CettaFrameIdentity left_epoch,
         uint32_t left_first_entry, Atom *right_original,
-        BindingsBuilder *bb, Arena *a, uint32_t right_epoch) {
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch) {
     return match_atoms_epoch_view_rule_local_worklist(
         left_original, left_epoch, left_first_entry,
         right_original, bb, a, right_epoch);
 }
 
 bool match_atoms_epoch_view_builder_rule_local_planned(
-        Atom *left_original, uint32_t left_epoch,
+        Atom *left_original, CettaFrameIdentity left_epoch,
         uint32_t left_first_entry, Atom *right_original,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t right_epoch) {
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch) {
     return match_atoms_epoch_view_rule_local_planned_worklist(
         left_original, left_epoch, left_first_entry,
         right_original, right_plan, bb, a, right_epoch);
 }
 
 bool match_atoms_epoch_view_builder_rule_local_linear(
-        Atom *left_original, uint32_t left_epoch,
+        Atom *left_original, CettaFrameIdentity left_epoch,
         uint32_t left_first_entry, Atom *right_original,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t right_epoch) {
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch) {
     return match_atoms_epoch_views_linear(
         left_original, BINDING_VALUE_CONTEXTUAL,
         left_epoch, left_first_entry,
@@ -11958,7 +11958,7 @@ bool match_atoms_epoch_view_builder_rule_local_linear(
 bool match_atoms_activation_view_builder(
         Atom *left_original, const BindingsActivationView *left_frame,
         Atom *right_original, BindingsBuilder *bb, Arena *a,
-        uint32_t right_epoch) {
+        CettaFrameIdentity right_epoch) {
     return match_atoms_activation_view_worklist(
         left_original, left_frame, right_original,
         NULL, bb, a, right_epoch, true, false, NULL);
@@ -11969,13 +11969,13 @@ bool match_atoms_activation_view_builder_current(
         Atom *right, BindingsBuilder *bb, Arena *a) {
     return match_atoms_activation_view_worklist(
         left_original, left_frame, right,
-        NULL, bb, a, 0u, false, false, NULL);
+        NULL, bb, a, CETTA_FRAME_IDENTITY_NONE, false, false, NULL);
 }
 
 bool match_atoms_activation_view_builder_rule_local(
         Atom *left_original, const BindingsActivationView *left_frame,
         Atom *right_original, BindingsBuilder *bb, Arena *a,
-        uint32_t right_epoch) {
+        CettaFrameIdentity right_epoch) {
     return match_atoms_activation_view_worklist(
         left_original, left_frame, right_original,
         NULL, bb, a, right_epoch, true, true, NULL);
@@ -11986,7 +11986,7 @@ bool match_atoms_activation_view_builder_rule_local_planned(
         const BindingsActivationView *left_frame,
         Atom *right_original,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t right_epoch) {
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch) {
     return match_atoms_activation_view_worklist(
         left_original, left_frame, right_original,
         NULL, bb, a, right_epoch, true, true, right_plan);
@@ -11997,7 +11997,7 @@ bool match_atoms_activation_view_builder_rule_local_linear(
         const BindingsActivationView *left_frame,
         Atom *right_original,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t right_epoch) {
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch) {
     if (!bindings_activation_view_available(left_frame, &bb->current))
         return false;
     return match_atoms_epoch_views_linear(
@@ -12010,14 +12010,14 @@ bool match_atoms_activation_view_builder_rule_local_linear(
 
 bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_universe,
                                AtomId right_id, Bindings *b, Arena *a,
-                               uint32_t epoch) {
+                               CettaFrameIdentity epoch) {
     return match_binding_value_atom_id_epoch(
         binding_value_from_atom(left), candidate_universe, right_id, b, a, epoch);
 }
 
 bool match_binding_value_atom_id_epoch(
         BindingValue left, const TermUniverse *candidate_universe,
-        AtomId right_id, Bindings *b, Arena *a, uint32_t epoch) {
+        AtomId right_id, Bindings *b, Arena *a, CettaFrameIdentity epoch) {
     return match_atoms_atom_id_epoch_worklist(left, candidate_universe, right_id, b, a, epoch);
 }
 
@@ -12113,11 +12113,11 @@ static inline void rule_frame_region_init(
 
 static bool rule_frame_region_borrow(
         RuleFrameRegion *view, BindingsBuilder *builder,
-        uint32_t epoch) {
+        CettaFrameIdentity epoch) {
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_MATCH_RULE_FRAME_REGION_BORROW_ATTEMPT);
     if (view && view->exclusive && view->exclusive->active) {
-        if (view->exclusive->epoch != epoch)
+        if (!cetta_frame_identity_eq(view->exclusive->epoch, epoch))
             return false;
         view->values = view->exclusive->values;
         view->value_count = view->exclusive->schema->len;
@@ -12128,7 +12128,7 @@ static bool rule_frame_region_borrow(
             CETTA_RUNTIME_COUNTER_MATCH_RULE_FRAME_REGION_BORROW_DIRECT);
         return true;
     }
-    if (!view || !builder || epoch == 0u ||
+    if (!view || !builder || cetta_frame_identity_is_none(epoch) ||
         !builder->current.frame_index) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_MATCH_RULE_FRAME_REGION_BORROW_GENERAL);
@@ -12169,8 +12169,8 @@ static bool rule_frame_region_borrow(
 
 static bool rule_frame_region_admit_inventory(
         RuleFrameRegion *view, BindingsBuilder *builder,
-        uint32_t epoch) {
-    if (!view || !builder || epoch == 0u ||
+        CettaFrameIdentity epoch) {
+    if (!view || !builder || cetta_frame_identity_is_none(epoch) ||
         !view->variable_ids || view->eligible == 0u) {
         return false;
     }
@@ -12201,8 +12201,8 @@ static bool rule_frame_region_admit_inventory(
 
 static bool rule_frame_region_admit_source(
         RuleFrameRegion *view, BindingsBuilder *builder,
-        Atom *source, uint32_t epoch) {
-    if (!builder || !source || epoch == 0u)
+        Atom *source, CettaFrameIdentity epoch) {
+    if (!builder || !source || cetta_frame_identity_is_none(epoch))
         return false;
     if (!atom_has_vars(source))
         return true;
@@ -12231,9 +12231,9 @@ static bool rule_frame_region_admit_source(
 
 static bool rule_frame_region_admit_frame(
         RuleFrameRegion *view, BindingsBuilder *builder,
-        Atom *source_var, uint32_t epoch) {
+        Atom *source_var, CettaFrameIdentity epoch) {
     if (!builder || !source_var || source_var->kind != ATOM_VAR ||
-        source_var->var_id == VAR_ID_NONE || epoch == 0u) {
+        var_id_is_none(source_var->var_id) || cetta_frame_identity_is_none(epoch)) {
         return false;
     }
     if (view && view->exclusive && view->exclusive->active)
@@ -12248,7 +12248,7 @@ static bool rule_frame_region_admit_frame(
     }
     if (view && view->variable_ids && view->eligible != 0u)
         return rule_frame_region_admit_inventory(view, builder, epoch);
-    VarId source_id = (VarId)var_base_id(source_var->var_id);
+    VarId source_id = var_source_id(source_var->var_id);
     if (!bindings_builder_register_frame(
             builder, &source_id, 1u, epoch)) {
         return false;
@@ -12284,16 +12284,16 @@ static inline BindingValue rule_frame_region_lookup(
         uint64_t variable_mask,
         Bindings *bindings, VarId activated_id) {
     uint32_t slot = 0u;
-    if (!bindings || activated_id == VAR_ID_NONE ||
+    if (!bindings || var_id_is_none(activated_id) ||
         !rule_frame_region_index(view, variable_mask, &slot)) {
-        return activated_id != VAR_ID_NONE
+        return !var_id_is_none(activated_id)
             ? bindings_exclusive_frame_lookup(
                   view ? view->exclusive : NULL, bindings,
                   activated_id, NULL)
             : binding_value_from_atom(NULL);
     }
     if (!view->values ||
-        view->epoch != var_epoch_suffix(activated_id) ||
+        !cetta_frame_identity_eq(view->epoch, var_epoch_suffix(activated_id)) ||
         slot >= view->value_count) {
         return bindings_exclusive_frame_lookup(
             view ? view->exclusive : NULL, bindings,
@@ -12313,7 +12313,7 @@ static inline BindingValue rule_frame_region_lookup_value(
             view, variable_mask, bindings, id);
     if (view && view->exclusive && view->exclusive->active) {
         if (binding_value_is_contextual(variable) &&
-            variable.epoch == view->exclusive->epoch) {
+            cetta_frame_identity_eq(binding_value_epoch(variable), view->exclusive->epoch)) {
             return bindings_exclusive_frame_lookup(
                 view->exclusive, bindings, id, NULL);
         }
@@ -12539,10 +12539,10 @@ static bool match_plan_fails_before_bind(
 }
 
 static bool match_atoms_epoch_views_worklist(
-    Atom *left, BindingValueKind left_kind, uint32_t left_epoch,
+    Atom *left, BindingValueKind left_kind, CettaFrameIdentity left_epoch,
     uint32_t left_first_entry, Atom *right,
     Bindings *bindings, BindingsBuilder *builder,
-    Arena *a, uint32_t right_epoch, BindingValueKind right_kind,
+    Arena *a, CettaFrameIdentity right_epoch, BindingValueKind right_kind,
     bool prefer_right_rule_slot,
     const BindingsActivationView *left_frame,
     const CettaOpenPatternPlan *right_plan,
@@ -12550,11 +12550,11 @@ static bool match_atoms_epoch_views_worklist(
     EpochMatchWorklist work;
     MatchPathSet path;
     Bindings *initial = builder ? &builder->current : bindings;
-    const uint32_t rule_epoch = right_frame_region &&
+    const CettaFrameIdentity rule_epoch = right_frame_region &&
             right_frame_region->exclusive &&
             right_frame_region->exclusive->active
         ? right_frame_region->exclusive->epoch
-        : right_frame_region && right_frame_region->epoch != 0u
+        : right_frame_region && !cetta_frame_identity_is_none(right_frame_region->epoch)
             ? right_frame_region->epoch
             : right_epoch;
 
@@ -12630,14 +12630,14 @@ static bool match_atoms_epoch_views_worklist(
         BindingValue right_value = pair.right.value;
         left = left_value.skeleton;
         right = right_value.skeleton;
-        left_kind = left_value.kind;
-        right_kind = right_value.kind;
+        left_kind = binding_value_kind(left_value);
+        right_kind = binding_value_kind(right_value);
         bool left_original = binding_value_is_contextual(left_value);
         bool right_original = binding_value_is_contextual(right_value);
-        left_epoch = left_value.epoch;
+        left_epoch = binding_value_epoch(left_value);
         left_first_entry = pair.left.first_entry;
         left_frame = pair.left.frame;
-        right_epoch = right_value.epoch;
+        right_epoch = binding_value_epoch(right_value);
         right_plan = pair.right_plan;
         attempt_resolving_bound = false;
         Bindings *current = builder ? &builder->current : bindings;
@@ -12725,9 +12725,9 @@ retry_pair:
                     attempt_resolving_bound = true;
                     left_value = existing;
                     left = existing.skeleton;
-                    left_kind = existing.kind;
+                    left_kind = binding_value_kind(existing);
                     left_original = binding_value_is_contextual(existing);
-                    left_epoch = existing.epoch;
+                    left_epoch = binding_value_epoch(existing);
                     left_first_entry = 0u;
                     left_frame = NULL;
                     goto retry_pair;
@@ -12748,7 +12748,7 @@ retry_pair:
                     cetta_runtime_stats_inc(
                         CETTA_RUNTIME_COUNTER_MATCH_LEFTOVER_HASH);
                     cetta_runtime_stats_inc(
-                        var_epoch_suffix(left_id) == 0u
+                        cetta_frame_identity_is_none(var_epoch_suffix(left_id))
                             ? CETTA_RUNTIME_COUNTER_MATCH_LEFTOVER_UNFRAMED_PLAIN
                             : CETTA_RUNTIME_COUNTER_MATCH_LEFTOVER_UNFRAMED_EPOCH);
                     existing = bindings_lookup_value_id(current, left_id);
@@ -12765,9 +12765,9 @@ retry_pair:
                 attempt_resolving_bound = true;
                 left_value = existing;
                 left = existing.skeleton;
-                left_kind = existing.kind;
+                left_kind = binding_value_kind(existing);
                 left_original = binding_value_is_contextual(existing);
-                left_epoch = existing.epoch;
+                left_epoch = binding_value_epoch(existing);
                 left_first_entry = 0u;
                 left_frame = NULL;
                 goto retry_pair;
@@ -12791,15 +12791,15 @@ retry_pair:
                     attempt_resolving_bound = true;
                     right_value = right_existing;
                     right = right_existing.skeleton;
-                    right_kind = right_existing.kind;
+                    right_kind = binding_value_kind(right_existing);
                     right_original = binding_value_is_contextual(right_existing);
-                    right_epoch = right_existing.epoch;
+                    right_epoch = binding_value_epoch(right_existing);
                     right_plan = NULL;
                     goto retry_pair;
                 }
-                if (left_id == right_id) continue;
+                if (var_id_eq(left_id, right_id)) continue;
                 if (prefer_right_rule_slot && right_original &&
-                    right_epoch == rule_epoch) {
+                    cetta_frame_identity_eq(right_epoch, rule_epoch)) {
                     BindingValue value = left_value;
                     value.skeleton = left;
                     bool added = builder && value.skeleton
@@ -12877,16 +12877,16 @@ retry_pair:
                 attempt_resolving_bound = true;
                 right_value = existing;
                 right = existing.skeleton;
-                right_kind = existing.kind;
+                right_kind = binding_value_kind(existing);
                 right_original = binding_value_is_contextual(existing);
-                right_epoch = existing.epoch;
+                right_epoch = binding_value_epoch(existing);
                 right_plan = NULL;
                 goto retry_pair;
             }
             BindingValue binding_value = left_value;
             binding_value.skeleton = left;
             bool added = false;
-            if (builder && right_original && right_epoch == rule_epoch &&
+            if (builder && right_original && cetta_frame_identity_eq(right_epoch, rule_epoch) &&
                 (prefer_right_rule_slot || !right->name_key)) {
                 added = bindings_builder_add_rule_epoch_key_fresh(
                     builder, right, right_epoch, binding_value, a, &transport,
@@ -12951,12 +12951,10 @@ retry_pair:
                 MatchTerm left_rest = left_term, right_rest = right_term;
                 left_rest.value = meet.left_derived
                     ? match_list_derived_value(left_term.value, meet.left_rest)
-                    : (BindingValue){meet.left_rest, left_value.epoch,
-                                     left_value.kind};
+                    : binding_value_with_skeleton(left_value, meet.left_rest);
                 right_rest.value = meet.right_derived
                     ? match_list_derived_value(right_term.value, meet.right_rest)
-                    : (BindingValue){meet.right_rest, right_value.epoch,
-                                     right_value.kind};
+                    : binding_value_with_skeleton(right_value, meet.right_rest);
                 if (!epoch_match_push(
                         &work, left_rest, right_rest,
                         right_plan && !meet.right_derived
@@ -13080,10 +13078,10 @@ fail:
  * to the unchanged generic matcher; a variable matched against an unentered
  * rigid subtree advances by the subtree's exact compiled span. */
 static bool match_atoms_epoch_views_linear(
-    Atom *left, BindingValueKind left_kind, uint32_t left_epoch,
+    Atom *left, BindingValueKind left_kind, CettaFrameIdentity left_epoch,
     uint32_t left_first_entry, Atom *right,
     Bindings *bindings, BindingsBuilder *builder,
-    Arena *a, uint32_t right_epoch, BindingValueKind right_kind,
+    Arena *a, CettaFrameIdentity right_epoch, BindingValueKind right_kind,
     bool prefer_right_rule_slot,
     const BindingsActivationView *left_frame,
     const CettaOpenPatternPlan *right_plan,
@@ -13134,9 +13132,9 @@ static bool match_atoms_epoch_views_linear(
     while (stack.len != 0u) {
         OpenPatternProgramItem item = stack.items[--stack.len];
         left = item.left.value.skeleton;
-        left_kind = item.left.value.kind;
+        left_kind = binding_value_kind(item.left.value);
         bool left_original = binding_value_is_contextual(item.left.value);
-        left_epoch = item.left.value.epoch;
+        left_epoch = binding_value_epoch(item.left.value);
         left_first_entry = item.left.first_entry;
         left_frame = item.left.frame;
         size_t cursor = item.cursor;
@@ -13212,9 +13210,9 @@ retry_pair:
                         local_dereference_allowance))
                         goto fail;
                     left = existing.skeleton;
-                    left_kind = existing.kind;
+                    left_kind = binding_value_kind(existing);
                     left_original = binding_value_is_contextual(existing);
-                    left_epoch = existing.epoch;
+                    left_epoch = binding_value_epoch(existing);
                     left_first_entry = 0u;
                     left_frame = NULL;
                     goto retry_pair;
@@ -13232,7 +13230,7 @@ retry_pair:
                     cetta_runtime_stats_inc(
                         CETTA_RUNTIME_COUNTER_MATCH_LEFTOVER_HASH);
                     cetta_runtime_stats_inc(
-                        var_epoch_suffix(left_id) == 0u
+                        cetta_frame_identity_is_none(var_epoch_suffix(left_id))
                             ? CETTA_RUNTIME_COUNTER_MATCH_LEFTOVER_UNFRAMED_PLAIN
                             : CETTA_RUNTIME_COUNTER_MATCH_LEFTOVER_UNFRAMED_EPOCH);
                     existing = bindings_lookup_value_id(current, left_id);
@@ -13248,9 +13246,9 @@ retry_pair:
                         local_dereference_allowance))
                     goto fail;
                 left = existing.skeleton;
-                left_kind = existing.kind;
+                left_kind = binding_value_kind(existing);
                 left_original = binding_value_is_contextual(existing);
-                left_epoch = existing.epoch;
+                left_epoch = binding_value_epoch(existing);
                 left_first_entry = 0u;
                 left_frame = NULL;
                 goto retry_pair;
@@ -13271,7 +13269,7 @@ retry_pair:
                             left, left_kind,
                             left_epoch, left_first_entry,
                             right_existing.skeleton, bindings, builder,
-                            a, right_existing.epoch, right_existing.kind,
+                            a, binding_value_epoch(right_existing), binding_value_kind(right_existing),
                             prefer_right_rule_slot,
                             left_frame, NULL, &frame_region)) {
                         attempt_repeated_var = true;
@@ -13279,7 +13277,7 @@ retry_pair:
                     }
                     continue;
                 }
-                if (left_id == right_id)
+                if (var_id_eq(left_id, right_id))
                     continue;
                 if (prefer_right_rule_slot) {
                     bool added = builder &&
@@ -13361,7 +13359,7 @@ retry_pair:
                         left, left_kind,
                         left_epoch, left_first_entry,
                         existing.skeleton, bindings, builder,
-                        a, existing.epoch, existing.kind,
+                        a, binding_value_epoch(existing), binding_value_kind(existing),
                         prefer_right_rule_slot,
                         left_frame, NULL, &frame_region)) {
                     attempt_repeated_var = true;
@@ -13479,17 +13477,17 @@ fail:
 static bool match_atoms_epoch_worklist(Atom *left, Atom *right,
                                        Bindings *bindings,
                                        BindingsBuilder *builder,
-                                       Arena *a, uint32_t epoch) {
+                                       Arena *a, CettaFrameIdentity epoch) {
     return match_atoms_epoch_views_worklist(
-        left, BINDING_VALUE_MATERIALIZED, 0u, 0u,
+        left, BINDING_VALUE_MATERIALIZED, CETTA_FRAME_IDENTITY_NONE, 0u,
         right, bindings, builder, a, epoch,
         BINDING_VALUE_CONTEXTUAL, false, NULL, NULL, NULL);
 }
 
 static bool match_atoms_epoch_view_worklist(
-        Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
+        Atom *left, CettaFrameIdentity left_epoch, uint32_t left_first_entry,
         Atom *right, Bindings *bindings, BindingsBuilder *builder,
-        Arena *a, uint32_t right_epoch) {
+        Arena *a, CettaFrameIdentity right_epoch) {
     return match_atoms_epoch_views_worklist(
         left, BINDING_VALUE_CONTEXTUAL, left_epoch, left_first_entry,
         right, bindings, builder, a, right_epoch,
@@ -13497,19 +13495,19 @@ static bool match_atoms_epoch_view_worklist(
 }
 
 static bool match_atoms_epoch_view_current_worklist(
-        Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
+        Atom *left, CettaFrameIdentity left_epoch, uint32_t left_first_entry,
         Atom *right, Bindings *bindings, BindingsBuilder *builder,
         Arena *a) {
     return match_atoms_epoch_views_worklist(
         left, BINDING_VALUE_CONTEXTUAL, left_epoch, left_first_entry,
-        right, bindings, builder, a, 0u,
+        right, bindings, builder, a, CETTA_FRAME_IDENTITY_NONE,
         BINDING_VALUE_MATERIALIZED, false, NULL, NULL, NULL);
 }
 
 static bool match_atoms_epoch_view_rule_local_worklist(
-        Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
+        Atom *left, CettaFrameIdentity left_epoch, uint32_t left_first_entry,
         Atom *right, BindingsBuilder *builder, Arena *a,
-        uint32_t right_epoch) {
+        CettaFrameIdentity right_epoch) {
     return match_atoms_epoch_views_worklist(
         left, BINDING_VALUE_CONTEXTUAL, left_epoch, left_first_entry,
         right, NULL, builder, a, right_epoch,
@@ -13517,9 +13515,9 @@ static bool match_atoms_epoch_view_rule_local_worklist(
 }
 
 static bool match_atoms_epoch_view_rule_local_planned_worklist(
-        Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
+        Atom *left, CettaFrameIdentity left_epoch, uint32_t left_first_entry,
         Atom *right, const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *builder, Arena *a, uint32_t right_epoch) {
+        BindingsBuilder *builder, Arena *a, CettaFrameIdentity right_epoch) {
     RuleFrameRegion frame_region;
     rule_frame_region_init(&frame_region, right_plan);
     return match_atoms_epoch_views_worklist(
@@ -13532,7 +13530,7 @@ static bool match_atoms_epoch_view_rule_local_planned_worklist(
 static bool match_atoms_activation_view_worklist(
         Atom *left, const BindingsActivationView *left_frame,
         Atom *right, Bindings *bindings, BindingsBuilder *builder,
-    Arena *a, uint32_t right_epoch, bool right_original,
+    Arena *a, CettaFrameIdentity right_epoch, bool right_original,
     bool prefer_right_rule_slot,
     const CettaOpenPatternPlan *right_plan) {
     if (!bindings_activation_view_available(
@@ -13552,9 +13550,9 @@ static bool match_atoms_activation_view_worklist(
 
 static bool match_atoms_epoch_rule_local_worklist(
         Atom *left, Atom *right, BindingsBuilder *builder,
-        Arena *a, uint32_t epoch) {
+        Arena *a, CettaFrameIdentity epoch) {
     return match_atoms_epoch_views_worklist(
-        left, BINDING_VALUE_MATERIALIZED, 0u, 0u,
+        left, BINDING_VALUE_MATERIALIZED, CETTA_FRAME_IDENTITY_NONE, 0u,
         right, NULL, builder, a, epoch,
         BINDING_VALUE_CONTEXTUAL, true, NULL, NULL, NULL);
 }
@@ -13562,11 +13560,11 @@ static bool match_atoms_epoch_rule_local_worklist(
 static bool match_atoms_epoch_rule_local_planned_worklist(
         Atom *left, Atom *right,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *builder, Arena *a, uint32_t epoch) {
+        BindingsBuilder *builder, Arena *a, CettaFrameIdentity epoch) {
     RuleFrameRegion frame_region;
     rule_frame_region_init(&frame_region, right_plan);
     return match_atoms_epoch_views_worklist(
-        left, BINDING_VALUE_MATERIALIZED, 0u, 0u,
+        left, BINDING_VALUE_MATERIALIZED, CETTA_FRAME_IDENTITY_NONE, 0u,
         right, NULL, builder, a, epoch,
         BINDING_VALUE_CONTEXTUAL, true, NULL, right_plan,
         right_plan ? &frame_region : NULL);
@@ -13574,10 +13572,10 @@ static bool match_atoms_epoch_rule_local_planned_worklist(
 
 bool match_binding_value_epoch_builder_rule_local(
         BindingValue left, Atom *right, BindingsBuilder *bb,
-        Arena *a, uint32_t right_epoch) {
-    return left.skeleton && right && bb && a && right_epoch != 0u &&
+        Arena *a, CettaFrameIdentity right_epoch) {
+    return left.skeleton && right && bb && a && !cetta_frame_identity_is_none(right_epoch) &&
         match_atoms_epoch_views_worklist(
-            left.skeleton, left.kind, left.epoch, 0u,
+            left.skeleton, binding_value_kind(left), binding_value_epoch(left), 0u,
             right, NULL, bb, a, right_epoch,
             BINDING_VALUE_CONTEXTUAL, true, NULL, NULL, NULL);
 }
@@ -13585,12 +13583,12 @@ bool match_binding_value_epoch_builder_rule_local(
 bool match_binding_value_epoch_builder_rule_local_planned(
         BindingValue left, Atom *right,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t right_epoch) {
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch) {
     RuleFrameRegion frame_region;
     rule_frame_region_init(&frame_region, right_plan);
-    return left.skeleton && right && bb && a && right_epoch != 0u &&
+    return left.skeleton && right && bb && a && !cetta_frame_identity_is_none(right_epoch) &&
         match_atoms_epoch_views_worklist(
-            left.skeleton, left.kind, left.epoch, 0u,
+            left.skeleton, binding_value_kind(left), binding_value_epoch(left), 0u,
             right, NULL, bb, a, right_epoch,
             BINDING_VALUE_CONTEXTUAL, true, NULL, right_plan,
             right_plan ? &frame_region : NULL);
@@ -13610,7 +13608,7 @@ typedef enum {
 static MatchBareVariableStep match_exclusive_bare_variable(
         BindingValue left, Atom *right,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch,
         BindingsExclusiveFrame *exclusive) {
     if (right->kind != ATOM_VAR || !left.skeleton ||
         left.skeleton->kind == ATOM_VAR ||
@@ -13644,12 +13642,12 @@ static MatchBareVariableStep match_exclusive_bare_variable(
 bool match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
         BindingValue left, Atom *right, BindingValueKind right_kind,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch,
         BindingsExclusiveFrame *exclusive, bool linear) {
-    if (!left.skeleton || !right || !bb || !a || right_epoch == 0u ||
+    if (!left.skeleton || !right || !bb || !a || cetta_frame_identity_is_none(right_epoch) ||
         !binding_value_kind_is_contextual(right_kind) ||
         !exclusive || !exclusive->active ||
-        exclusive->epoch != right_epoch)
+        !cetta_frame_identity_eq(exclusive->epoch, right_epoch))
         return false;
     MatchBareVariableStep bare = match_exclusive_bare_variable(
         left, right, right_plan, bb, a, right_epoch, exclusive);
@@ -13657,7 +13655,7 @@ bool match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
         return bare == MATCH_BARE_VARIABLE_BOUND;
     if (linear && right_plan) {
         return match_atoms_epoch_views_linear(
-            left.skeleton, left.kind, left.epoch, 0u,
+            left.skeleton, binding_value_kind(left), binding_value_epoch(left), 0u,
             right, NULL, bb, a, right_epoch,
             right_kind, true, NULL,
             right_plan, exclusive);
@@ -13666,7 +13664,7 @@ bool match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
     rule_frame_region_init_exclusive(
         &frame_region, right_plan, exclusive);
     return match_atoms_epoch_views_worklist(
-        left.skeleton, left.kind, left.epoch, 0u,
+        left.skeleton, binding_value_kind(left), binding_value_epoch(left), 0u,
         right, NULL, bb, a, right_epoch,
         right_kind, true, NULL, right_plan,
         &frame_region);
@@ -13675,7 +13673,7 @@ bool match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
 bool match_atoms_epoch_builder_rule_local_in_exclusive_frame(
         Atom *left, Atom *right, BindingValueKind right_kind,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t epoch,
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity epoch,
         BindingsExclusiveFrame *exclusive, bool linear) {
     return match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
         binding_value_from_atom(left), right, right_kind, right_plan,
@@ -13683,15 +13681,15 @@ bool match_atoms_epoch_builder_rule_local_in_exclusive_frame(
 }
 
 bool match_atoms_epoch_view_builder_rule_local_in_exclusive_frame(
-        Atom *left, uint32_t left_epoch, uint32_t left_first_entry,
+        Atom *left, CettaFrameIdentity left_epoch, uint32_t left_first_entry,
         Atom *right, BindingValueKind right_kind,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch,
         BindingsExclusiveFrame *exclusive, bool linear) {
-    if (!left || !right || !bb || !a || right_epoch == 0u ||
+    if (!left || !right || !bb || !a || cetta_frame_identity_is_none(right_epoch) ||
         !binding_value_kind_is_contextual(right_kind) ||
         !exclusive || !exclusive->active ||
-        exclusive->epoch != right_epoch)
+        !cetta_frame_identity_eq(exclusive->epoch, right_epoch))
         return false;
     MatchBareVariableStep bare = match_exclusive_bare_variable(
         binding_value_from_context_kind(
@@ -13722,12 +13720,12 @@ bool match_atoms_activation_view_builder_rule_local_in_exclusive_frame(
         Atom *left, const BindingsActivationView *left_frame,
         Atom *right, BindingValueKind right_kind,
         const CettaOpenPatternPlan *right_plan,
-        BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
+        BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch,
         BindingsExclusiveFrame *exclusive, bool linear) {
     if (!left || !left_frame || !right || !bb || !a ||
         !binding_value_kind_is_contextual(right_kind) ||
         !exclusive || !exclusive->active ||
-        exclusive->epoch != right_epoch ||
+        !cetta_frame_identity_eq(exclusive->epoch, right_epoch) ||
         !bindings_activation_view_available(left_frame, &bb->current))
         return false;
     MatchBareVariableStep bare = match_exclusive_bare_variable(
@@ -13932,7 +13930,7 @@ static bool stored_grounded_equal(Atom *left,
  * decodable persistent node needs the arena-local materialized fallback. */
 static bool term_universe_match_binding_value(
         const TermUniverse *universe, Arena *fallback,
-        AtomId id, uint32_t epoch, BindingValue *out) {
+        AtomId id, CettaFrameIdentity epoch, BindingValue *out) {
     if (!universe || id == CETTA_ATOM_ID_NONE || !out)
         return false;
     bool open = tu_has_vars(universe, id);
@@ -13954,7 +13952,7 @@ static bool term_universe_match_binding_value(
 
 static bool match_atoms_atom_id_epoch_worklist(
     BindingValue left_value, const TermUniverse *candidate_universe, AtomId right_id,
-    Bindings *b, Arena *a, uint32_t epoch) {
+    Bindings *b, Arena *a, CettaFrameIdentity epoch) {
     Atom *left = left_value.skeleton;
     if (!left || !candidate_universe || right_id == CETTA_ATOM_ID_NONE)
         return false;
@@ -13997,8 +13995,8 @@ retry_pair:
             Atom *right = term_universe_get_atom(
                 (TermUniverse *)candidate_universe, right_id);
             if (!right || !match_atoms_epoch_views_worklist(
-                    left, left_value.kind,
-                    left_value.epoch, 0u, right, b, NULL, a, epoch,
+                    left, binding_value_kind(left_value),
+                    binding_value_epoch(left_value), 0u, right, b, NULL, a, epoch,
                     BINDING_VALUE_CONTEXTUAL, false,
                     NULL, NULL, NULL))
                 goto fail;
@@ -14028,7 +14026,7 @@ retry_pair:
                     }
                     continue;
                 }
-                if (binding_value_variable_id(left_value) == right_var_id) continue;
+                if (var_id_eq(binding_value_variable_id(left_value), right_var_id)) continue;
                 BindingValue value = binding_value_from_atom(NULL);
                 if (!term_universe_match_binding_value(
                         candidate_universe, a, right_id, epoch, &value) ||
@@ -14100,8 +14098,8 @@ retry_pair:
                 Atom *right = term_universe_get_atom(
                     (TermUniverse *)candidate_universe, right_id);
                 if (!right || !match_atoms_epoch_views_worklist(
-                        left, left_value.kind,
-                        left_value.epoch, 0u, right, b, NULL, a, epoch,
+                        left, binding_value_kind(left_value),
+                        binding_value_epoch(left_value), 0u, right, b, NULL, a, epoch,
                         BINDING_VALUE_CONTEXTUAL, false,
                         NULL, NULL, NULL))
                     goto fail;

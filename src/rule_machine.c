@@ -272,7 +272,7 @@ static bool rm_parse_bytecode_block(Atom *atom, RMBytecodeBlock *out) {
 
 static bool rm_same_var(Atom *left, Atom *right) {
     return left && right && left->kind == ATOM_VAR &&
-           right->kind == ATOM_VAR && left->var_id == right->var_id;
+           right->kind == ATOM_VAR && var_id_eq(left->var_id, right->var_id);
 }
 
 static int rm_symbol_atom_ptr_cmp(const void *left, const void *right) {

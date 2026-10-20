@@ -19,7 +19,7 @@ static Atom *rewrite_map_leaf(Arena *dst, Atom *src, void *context) {
 static Atom *frame_syntax_create_slot(
         Arena *dst, Atom *source, uint32_t ordinal, void *context) {
     (void)context;
-    return ordinal ? atom_var_like(dst, source, (VarId)ordinal) : NULL;
+    return ordinal ? atom_var_like(dst, source, var_id_from_base(ordinal)) : NULL;
 }
 
 static Atom *frame_syntax_rewrite_variable(Arena *dst, Atom *source, void *context) {
@@ -43,7 +43,7 @@ typedef struct {
 
 static Atom *frame_syntax_import_variable(Arena *dst, Atom *source, void *context) {
     FrameSyntaxImport *import = context;
-    if (var_epoch_suffix(source->var_id) != 0u)
+    if (!cetta_frame_identity_is_none(var_epoch_suffix(source->var_id)))
         return atom_deep_copy_shared(dst, source);
     Atom *slot = frame_syntax_rewrite_variable(dst, source, import->inventory);
     return slot ? atom_var_like(dst, source, var_epoch_id(slot->var_id, import->identity))
@@ -53,7 +53,8 @@ static Atom *frame_syntax_import_variable(Arena *dst, Atom *source, void *contex
 Atom *cetta_import_frame_syntax(Arena *dst, Atom *src, CettaVarMap *inventory,
                               CettaFrameIdentity identity) {
     FrameSyntaxImport import = {inventory, identity};
-    return inventory && identity ? cetta_atom_rewrite_vars(
+    return inventory && !cetta_frame_identity_is_none(identity)
+        ? cetta_atom_rewrite_vars(
         dst, src, frame_syntax_import_variable, &import, true) : NULL;
 }
 
@@ -63,7 +64,9 @@ static Atom *frame_instantiate_create_slot(
     CettaFrameIdentity identity = *(CettaFrameIdentity *)context;
     uint32_t slot;
     return cetta_frame_identity_new_slot(identity, 0u, &slot)
-        ? atom_var_like(dst, source, var_epoch_id(slot, identity)) : NULL;
+        ? atom_var_like(dst, source,
+                       var_epoch_id(var_id_from_base(slot), identity))
+        : NULL;
 }
 
 static Atom *frame_instantiate_variable(
@@ -76,7 +79,7 @@ static Atom *frame_instantiate_variable(
 bool cetta_instantiate_frame_terms_within(Arena *dst, Atom **terms,
                                           size_t count,
                                           CettaFrameIdentity identity) {
-    if (!dst || (count && !terms) || !identity ||
+    if (!dst || (count && !terms) || cetta_frame_identity_is_none(identity) ||
         count > SIZE_MAX / sizeof(Atom *))
         return false;
     if (!count)

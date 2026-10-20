@@ -1,6 +1,8 @@
 #include "term_canon.h"
 #include <time.h>
 #include "space.h"
+#include "fixpoint.h"
+#include "symbol_index.h"
 #include "space_path_index.h"
 #include "space_type_evidence.h"
 #include "shared_transition.h"
@@ -12,6 +14,7 @@
 #include <malloc.h>
 #endif
 #include "eval.h"
+#include "exact_integer.h"
 #include <assert.h>
 #include <inttypes.h>
 #include <stdatomic.h>
@@ -224,7 +227,7 @@ typedef struct {
 } DiscIntHashTable;
 
 /* The branches of one scalar kind.  An integer is keyed by its value; a
- * string by its content's 64-bit hash, so different strings with equal
+ * string by its cached structural hash, so different strings with equal
  * hashes share a branch, which the matcher tells apart. */
 typedef struct {
     DiscIntBranch *list;
@@ -948,18 +951,18 @@ static DiscNode *disc_get_int(DiscPool *pool, DiscNode *n, int64_t val) {
     return disc_get_scalar(pool, n, DISC_EDGE_INTEGER, val);
 }
 
-/* A string's key: a hash of its bytes, which may hold NUL.  Equal strings
- * from any arena or universe have equal keys. */
-static int64_t disc_string_key(const char *bytes, size_t len) {
-    uint64_t hash = UINT64_C(0xcbf29ce484222325);
-    for (size_t i = 0u; i < len; i++) {
-        hash ^= (unsigned char)bytes[i];
-        hash *= UINT64_C(0x100000001b3);
-    }
-    hash ^= hash >> 33u;
-    hash *= UINT64_C(0xff51afd7ed558ccd);
-    hash ^= hash >> 33u;
-    return (int64_t)hash;
+/* A string's key: its leaf's structural hash, computed once over its bytes
+ * (embedded NUL included) and cached, equal for the atom and its universe
+ * record (cetta-ours 23726ac5).  Rebuilding an index reads it instead of
+ * hashing every stored string again; collisions only widen candidates,
+ * which the matcher tells apart. */
+static int64_t disc_string_key(Atom *atom) {
+    return (int64_t)atom_hash(atom);
+}
+
+static int64_t disc_string_key_id(const TermUniverse *universe,
+                                  AtomId atom_id) {
+    return (int64_t)tu_hash32(universe, atom_id);
 }
 
 /* Limit expansion of expression occurrences, not merely depth: a wide DAG
@@ -984,7 +987,7 @@ static DiscNode *disc_insert_atom(DiscPool *pool, DiscNode *node, Atom *a,
         if (a->ground.gkind == GV_STRING)
             return disc_get_scalar(
                 pool, node, DISC_EDGE_STRING,
-                disc_string_key(a->ground.sval, a->ground.slen));
+                disc_string_key(a));
         /* Other grounded values sit on the variable branch. */
         return disc_get_var(pool, node);
     case ATOM_EXPR: {
@@ -1032,8 +1035,7 @@ static bool disc_insert_atom_id(DiscPool *pool, DiscNode *node,
         } else if (tu_ground_kind(universe, atom_id) == GV_STRING) {
             *out_leaf = disc_get_scalar(
                 pool, node, DISC_EDGE_STRING,
-                disc_string_key(tu_string_cstr(universe, atom_id),
-                                tu_string_len(universe, atom_id)));
+                disc_string_key_id(universe, atom_id));
         } else {
             *out_leaf = disc_get_var(pool, node);
         }
@@ -1230,9 +1232,8 @@ static DiscNode *disc_find_atom_id_path(
         if (tu_ground_kind(universe, atom_id) == GV_STRING)
             return disc_path_step(
                 path, node, DISC_EDGE_STRING,
-                (DiscEdgeKey){.integer = disc_string_key(
-                    tu_string_cstr(universe, atom_id),
-                    tu_string_len(universe, atom_id))});
+                (DiscEdgeKey){.integer = disc_string_key_id(
+                    universe, atom_id)});
         return disc_path_step(path, node, DISC_EDGE_VARIABLE,
                               (DiscEdgeKey){0});
     case ATOM_EXPR: {
@@ -1621,7 +1622,7 @@ static void disc_step(DiscNode *node, Atom *q, DiscNodeSet *next) {
         else if (q->ground.gkind == GV_STRING)
             dns_push(next, disc_find_scalar_branch(
                 node, DISC_EDGE_STRING,
-                disc_string_key(q->ground.sval, q->ground.slen)));
+                disc_string_key(q)));
         /* A variable in the indexed LHS matches any grounded value */
         dns_push(next, disc_find_variable_branch(node));
         break;
@@ -2428,13 +2429,13 @@ static bool disc_tail_is_free_linear(
         if (!later || later->kind != ATOM_VAR)
             return false;
         for (size_t bind = 0u; bind < bind_len; bind++) {
-            if (bind_ids && bind_ids[bind] == later->var_id)
+            if (bind_ids && var_id_eq(bind_ids[bind], later->var_id))
                 return false;
         }
         for (CettaExprIndex earlier = 0u; earlier < rest; earlier++) {
             const Atom *previous = pattern->expr.elems[earlier];
             if (previous && previous->kind == ATOM_VAR &&
-                previous->var_id == later->var_id)
+                var_id_eq(previous->var_id, later->var_id))
                 return false;
         }
     }
@@ -2572,7 +2573,7 @@ bool disc_project_flat_bound_column(
         if (item->kind == ATOM_VAR) {
             ground = NULL;
             for (size_t bind = 0u; bind < bind_len; bind++) {
-                if (bind_ids[bind] == item->var_id) {
+                if (var_id_eq(bind_ids[bind], item->var_id)) {
                     ground = bind_values[bind];
                     break;
                 }
@@ -2627,7 +2628,7 @@ bool disc_count_flat_bound_vars(
         if (item->kind == ATOM_VAR) {
             ground = NULL;
             for (size_t bind = 0u; bind < bind_len; bind++) {
-                if (bind_ids[bind] == item->var_id) {
+                if (var_id_eq(bind_ids[bind], item->var_id)) {
                     ground = bind_values[bind];
                     break;
                 }
@@ -2703,7 +2704,7 @@ bool disc_count_flat_expression_coordinates(
         if (!coordinates[index] || coordinates[index]->kind != ATOM_VAR)
             return false;
         for (CettaExprIndex earlier = first_var; earlier < index; earlier++) {
-            if (coordinates[earlier]->var_id == coordinates[index]->var_id)
+            if (var_id_eq(coordinates[earlier]->var_id, coordinates[index]->var_id))
                 return false;
         }
     }
@@ -6114,6 +6115,7 @@ typedef struct {
     SpaceEffectNode *nodes;
     size_t len;
     size_t cap;
+    CettaSymbolIndex by_head;
     bool failed;
 } SpaceEffectGraph;
 
@@ -6347,13 +6349,13 @@ static bool space_effect_graph_reserve(SpaceEffectGraph *graph,
 
 static bool space_effect_graph_find_or_add(
     SpaceEffectGraph *graph, SymbolId head, size_t *out_index) {
-    for (size_t i = 0u; i < graph->len; i++) {
-        if (graph->nodes[i].head == head) {
-            *out_index = i;
-            return true;
-        }
+    size_t known = cetta_symbol_index_find(&graph->by_head, head);
+    if (known != SIZE_MAX) {
+        *out_index = known;
+        return true;
     }
-    if (!space_effect_graph_reserve(graph, graph->len + 1u))
+    if (!space_effect_graph_reserve(graph, graph->len + 1u) ||
+        !cetta_symbol_index_put(&graph->by_head, head, graph->len))
         return false;
     size_t index = graph->len++;
     graph->nodes[index].head = head;
@@ -6677,6 +6679,7 @@ static void space_effect_graph_free(SpaceEffectGraph *graph) {
     for (size_t i = 0u; i < graph->len; i++)
         free(graph->nodes[i].dependencies);
     free(graph->nodes);
+    cetta_symbol_index_free(&graph->by_head);
     memset(graph, 0, sizeof(*graph));
 }
 
@@ -6685,29 +6688,48 @@ static bool space_effect_graph_solve(SpaceEffectGraph *graph) {
         if (!space_effect_scan_node(graph, scan))
             return false;
     }
-    bool changed;
-    do {
-        changed = false;
-        for (size_t i = 0u; i < graph->len; i++) {
-            CettaGsltQueryEffect effect = graph->nodes[i].base_effect;
-            for (size_t di = 0u;
-                 di < graph->nodes[i].dependency_len; di++) {
-                SymbolId dependency = graph->nodes[i].dependencies[di];
-                for (size_t ni = 0u; ni < graph->len; ni++) {
-                    if (graph->nodes[ni].head == dependency) {
-                        effect = cetta_gslt_query_effect_join(
-                            effect, graph->nodes[ni].effect);
-                        break;
-                    }
-                }
-            }
-            if (effect != graph->nodes[i].effect) {
-                graph->nodes[i].effect = effect;
-                changed = true;
-            }
+    /* A head's effect joins its base effect with its dependencies'.  The
+     * effects are sets of bits joined by union, so each bit is its own
+     * least fixed point (fixpoint.h): a head has it when some head it
+     * reaches has it in its base. */
+    size_t len = graph->len, edges = 0u;
+    for (size_t i = 0u; i < len; i++)
+        edges += graph->nodes[i].dependency_len;
+    size_t *first = malloc((len + 1u) * sizeof(*first));
+    size_t *targets = malloc((edges ? edges : 1u) * sizeof(*targets));
+    bool *in = malloc((len ? len : 1u) * sizeof(*in));
+    bool ok = first && targets && in;
+    size_t used = 0u;
+    unsigned bits = 0u;
+    for (size_t i = 0u; ok && i < len; i++) {
+        first[i] = used;
+        bits |= (unsigned)graph->nodes[i].base_effect;
+        graph->nodes[i].effect = graph->nodes[i].base_effect;
+        for (size_t d = 0u; d < graph->nodes[i].dependency_len; d++) {
+            size_t target = cetta_symbol_index_find(
+                &graph->by_head, graph->nodes[i].dependencies[d]);
+            if (target != SIZE_MAX)
+                targets[used++] = target;
         }
-    } while (changed);
-    return space_program_token_is_current(graph->program);
+    }
+    CettaFixpointGraph dependencies = {len, first, targets};
+    if (ok)
+        first[len] = used;
+    for (unsigned bit = 1u; ok && bit && bit <= bits; bit <<= 1u) {
+        if (!(bits & bit))
+            continue;
+        for (size_t i = 0u; i < len; i++)
+            in[i] = ((unsigned)graph->nodes[i].base_effect & bit) != 0u;
+        ok = cetta_fixpoint_least(&dependencies, in);
+        for (size_t i = 0u; ok && i < len; i++)
+            if (in[i])
+                graph->nodes[i].effect = cetta_gslt_query_effect_join(
+                    graph->nodes[i].effect, (CettaGsltQueryEffect)bit);
+    }
+    free(first);
+    free(targets);
+    free(in);
+    return ok && space_program_token_is_current(graph->program);
 }
 
 static CettaGsltQueryEffect space_query_effect_for_head_analyzed(
@@ -7753,7 +7775,7 @@ static bool query_visible_var_set_add(QueryVisibleVarSet *set, Atom *var) {
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_QUERY_VISIBLE_DEDUP_SCAN,
                             set->len);
     for (CettaExprIndex i = 0; i < set->len; i++) {
-        if (set->items[i].var_id == var->var_id)
+        if (var_id_eq(set->items[i].var_id, var->var_id))
             return true;
     }
     if (!query_visible_var_set_reserve(set, set->len + 1))
@@ -7768,7 +7790,7 @@ static bool query_visible_var_set_add(QueryVisibleVarSet *set, Atom *var) {
 static bool query_visible_var_set_contains(const QueryVisibleVarSet *set,
                                            VarId var_id) {
     for (CettaExprIndex i = 0; set && i < set->len; i++) {
-        if (set->items[i].var_id == var_id)
+        if (var_id_eq(set->items[i].var_id, var_id))
             return true;
     }
     return false;
@@ -7815,11 +7837,11 @@ static const QueryVisibleVar *query_visible_alias_for_var(
         BindingValue exact = bindings_lookup_value_id((Bindings *)full, visible->items[i].var_id);
         if (!exact.skeleton || exact.skeleton->kind != ATOM_VAR)
             continue;
-        if (binding_value_variable_id(exact) != atom->var_id)
+        if (!var_id_eq(binding_value_variable_id(exact), atom->var_id))
             continue;
-        if (atom->var_id == visible->items[i].var_id)
+        if (var_id_eq(atom->var_id, visible->items[i].var_id))
             return NULL;
-        if (found && found->var_id != visible->items[i].var_id)
+        if (found && !var_id_eq(found->var_id, visible->items[i].var_id))
             return NULL;
         found = &visible->items[i];
     }
@@ -7898,7 +7920,7 @@ static bool project_query_visible_bindings(Arena *a,
         }
         resolved = rewrite_query_visible_aliases(a, resolved, visible, full);
         if (resolved->kind == ATOM_VAR &&
-            resolved->var_id == visible->items[i].var_id) {
+            var_id_eq(resolved->var_id, visible->items[i].var_id)) {
             continue;
         }
         Atom *visible_var = atom_var_with_presentation(
@@ -9870,11 +9892,11 @@ space_member_annotated_types(
                                                   &subject_id, &type_id)) {
             if (term_universe_atom_id_eq(s->native.universe, subject_id, atom)) {
                 CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-                CettaFrameIdentity identity = 0u;
+                CettaFrameIdentity identity = CETTA_FRAME_IDENTITY_NONE;
                 if (tu_has_vars(s->native.universe, type_id) &&
                     !cetta_frame_identity_scope_try(&frame_identity_scope, &identity))
                     return false;
-                Atom *type_copy = identity
+                Atom *type_copy = !cetta_frame_identity_is_none(identity)
                     ? term_universe_copy_atom_epoch(s->native.universe, a, type_id, identity)
                     : term_universe_copy_atom(s->native.universe, a, type_id);
                 if (!type_copy)
@@ -10642,7 +10664,7 @@ static uint32_t he_direct_supertypes(Space *s, Arena *a, Atom *type,
         for (CettaCount i = 0u; i < found.len; i++) {
             Atom *value = bindings_apply_if_vars(&found.items[i], a, super);
             if (value && !(value->kind == ATOM_VAR &&
-                           value->var_id == super->var_id))
+                           var_id_eq(value->var_id, super->var_id)))
                 (*out)[count++] = value;
         }
     }
@@ -11038,14 +11060,14 @@ typedef struct QueryResultSink {
 static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
                                        Atom *query,
                                        const QueryVisibleVarSet *visible,
-                                       Arena *a, uint32_t epoch,
+                                       Arena *a, CettaFrameIdentity epoch,
                                        BindingsFrameSchema *frame_schema,
                                        const Bindings *seed,
                                        QueryResultSink *sink);
 static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
                                               Atom *query,
                                               const QueryVisibleVarSet *visible,
-                                              Arena *a, uint32_t epoch,
+                                              Arena *a, CettaFrameIdentity epoch,
                                               const Bindings *seed,
                                               QueryResultSink *sink);
 static bool query_equation_emit_decoded_plan_epoch(
@@ -11053,14 +11075,14 @@ static bool query_equation_emit_decoded_plan_epoch(
     Atom *refinement_fallback_lhs, Atom *refinement_failure_rhs,
     BindingsFrameSchema *frame_schema,
     Atom *query, const QueryVisibleVarSet *visible,
-    Arena *a, uint32_t epoch, const Bindings *seed,
+    Arena *a, CettaFrameIdentity epoch, const Bindings *seed,
     QueryResultSink *sink);
 static bool query_equation_emit_candidate_plan_epoch(
     Atom *equation, Atom *match_pattern, Atom *result_template,
     Atom *refinement_failure_template, Atom *refinement_fallback_pattern,
     BindingsFrameSchema *frame_schema,
     Atom *query, const QueryVisibleVarSet *visible,
-    Arena *a, uint32_t epoch, const Bindings *seed,
+    Arena *a, CettaFrameIdentity epoch, const Bindings *seed,
     QueryResultSink *sink);
 
 static void query_result_sink_init_collect(QueryResultSink *sink,
@@ -11369,7 +11391,7 @@ static void query_bucket_legacy(Space *s, EqBucket *bucket, Atom *query,
 static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
                                        Atom *query,
                                        const QueryVisibleVarSet *visible,
-                                       Arena *a, uint32_t epoch,
+                                       Arena *a, CettaFrameIdentity epoch,
                                        BindingsFrameSchema *frame_schema,
                                        const Bindings *seed,
                                        QueryResultSink *sink) {
@@ -11418,7 +11440,7 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
 }
 
 static bool query_equation_match_decoded_epoch(
-    Atom *lhs, Atom *query, Arena *a, uint32_t epoch,
+    Atom *lhs, Atom *query, Arena *a, CettaFrameIdentity epoch,
     Bindings *merged) {
     if (!lhs || !query || !a || !merged)
         return false;
@@ -11446,7 +11468,7 @@ static bool query_equation_emit_decoded_plan_epoch(
     Atom *refinement_fallback_lhs, Atom *refinement_failure_rhs,
     BindingsFrameSchema *frame_schema,
     Atom *query, const QueryVisibleVarSet *visible,
-    Arena *a, uint32_t epoch, const Bindings *seed,
+    Arena *a, CettaFrameIdentity epoch, const Bindings *seed,
     QueryResultSink *sink) {
     if (!lhs || !rhs || !query || !a || !sink)
         return false;
@@ -11507,7 +11529,7 @@ static bool query_equation_emit_decoded_plan_epoch(
 static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
                                               Atom *query,
                                               const QueryVisibleVarSet *visible,
-                                              Arena *a, uint32_t epoch,
+                                              Arena *a, CettaFrameIdentity epoch,
                                               const Bindings *seed,
                                               QueryResultSink *sink) {
     return query_equation_emit_decoded_plan_epoch(
@@ -11520,7 +11542,7 @@ static bool query_equation_emit_candidate_plan_epoch(
     Atom *refinement_failure_template, Atom *refinement_fallback_pattern,
     BindingsFrameSchema *frame_schema,
     Atom *query, const QueryVisibleVarSet *visible,
-    Arena *a, uint32_t epoch, const Bindings *seed,
+    Arena *a, CettaFrameIdentity epoch, const Bindings *seed,
     QueryResultSink *sink) {
     if (!equation || !match_pattern || !result_template)
         return false;
@@ -11844,7 +11866,7 @@ static bool pattern_vars_unique_rec(const Atom *a, VarId *seen, uint32_t *n,
         return true;
     if (a->kind == ATOM_VAR) {
         for (uint32_t i = 0; i < *n; i++)
-            if (seen[i] == a->var_id)
+            if (var_id_eq(seen[i], a->var_id))
                 return false; /* repeated variable -> non-linear */
         if (*n >= cap)
             return false; /* too many vars to verify -> conservative refuse */
@@ -11946,7 +11968,7 @@ static bool prepared_rhs_is_range_restricted(
         return true;
     if (atom->kind == ATOM_VAR) {
         for (CettaExprIndex i = 0u; i < plan->arity; i++)
-            if (plan->registers[i] == atom->var_id)
+            if (var_id_eq(plan->registers[i], atom->var_id))
                 return true;
         return false;
     }
@@ -11990,7 +12012,7 @@ static bool prepared_register_is_register(
     if (!plan || !atom || atom->kind != ATOM_VAR)
         return false;
     for (CettaExprIndex i = 0u; i < plan->arity; i++)
-        if (plan->registers[i] == atom->var_id)
+        if (var_id_eq(plan->registers[i], atom->var_id))
             return true;
     return false;
 }
@@ -12396,7 +12418,7 @@ static bool space_prepare_single_equation_uncached(
         if (!argument || argument->kind != ATOM_VAR)
             return false;
         for (CettaExprIndex j = 0u; j < i; j++)
-            if (plan.registers[j] == argument->var_id)
+            if (var_id_eq(plan.registers[j], argument->var_id))
                 return false;
         plan.registers[i] = argument->var_id;
     }
@@ -12479,7 +12501,7 @@ static Atom *prepared_equation_instantiate_rec(
         return source;
     if (source->kind == ATOM_VAR) {
         for (CettaExprIndex i = 0u; i < plan->arity; i++)
-            if (plan->registers[i] == source->var_id)
+            if (var_id_eq(plan->registers[i], source->var_id))
                 return register_values[i];
         return NULL;
     }
@@ -12542,7 +12564,7 @@ static Atom *prepared_register_execute_expression(
     }
     if (source->kind == ATOM_VAR) {
         for (CettaExprIndex i = 0u; i < plan->arity; i++) {
-            if (plan->registers[i] == source->var_id) {
+            if (var_id_eq(plan->registers[i], source->var_id)) {
                 Atom *value = register_values[i];
                 if (!prepared_register_exact_integer(value))
                     return NULL;
@@ -12721,7 +12743,7 @@ static bool prepared_mpz_register_index(
     if (!plan || !atom || atom->kind != ATOM_VAR)
         return false;
     for (CettaExprIndex i = 0u; i < plan->arity; i++) {
-        if (plan->registers[i] == atom->var_id) {
+        if (var_id_eq(plan->registers[i], atom->var_id)) {
             if (index_out)
                 *index_out = i;
             return true;
@@ -12782,13 +12804,16 @@ static bool prepared_mpz_eval_integer(
     mpz_ptr result = prepared_mpz_scratch_take(scratch);
     if (!result)
         return false;
+    CettaExactIntegerV1Operation operation;
     if (head == g_builtin_syms.op_plus)
-        mpz_add(result, left.source, right.source);
+        operation = CETTA_EXACT_INTEGER_V1_ADD;
     else if (head == g_builtin_syms.op_minus)
-        mpz_sub(result, left.source, right.source);
+        operation = CETTA_EXACT_INTEGER_V1_SUB;
     else if (head == g_builtin_syms.op_mul)
-        mpz_mul(result, left.source, right.source);
+        operation = CETTA_EXACT_INTEGER_V1_MUL;
     else
+        return false;
+    if (!cetta_exact_integer_big(operation, left.source, right.source, result))
         return false;
     value_out->source = result;
     value_out->temporary = result;

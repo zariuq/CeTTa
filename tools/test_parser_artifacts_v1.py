@@ -13,9 +13,9 @@ from test_lbnf_values_v1 import CFLEX, headed, library_import, lower_read, outpu
 ROOT = Path(__file__).resolve().parents[1]
 HOST_ENDPOINTS = {
     "he": ("he", "extended"),
-    "petta": ("petta@1.0.6", "extended"),
+    "petta": ("petta", "extended"),
     "petta-1.1": ("petta@1.1", None),
-    "prime": ("prime@0.0.1", None),
+    "prime": ("prime", None),
 }
 
 

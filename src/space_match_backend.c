@@ -12,6 +12,7 @@
 #include "stats.h"
 #include "space_path_index.h"
 #include "generated/cetta_execution_contracts.generated.h"
+#include <inttypes.h>
 #include <ctype.h>
 #include <math.h>
 #include <stdlib.h>
@@ -23,8 +24,8 @@
 #define IMPORTED_MORK_QUERY_ONLY_V2_MAGIC 0x43544252u
 #define IMPORTED_MORK_QUERY_ONLY_V2_VERSION 5u
 #define IMPORTED_MORK_MULTI_REF_V3_VERSION 6u
-#define IMPORTED_MORK_CONTEXTUAL_ROWS_WIRE_VERSION 6u
-#define IMPORTED_MORK_CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION 9u
+#define IMPORTED_MORK_CONTEXTUAL_ROWS_WIRE_VERSION 10u
+#define IMPORTED_MORK_CONTEXTUAL_INDEXED_ROWS_WIRE_VERSION 11u
 #define IMPORTED_MORK_CONTEXTUAL_EXACT_ROWS_FLAGS 0x0000u
 #define IMPORTED_MORK_CONTEXTUAL_QUERY_ROWS_FLAGS 0x0000u
 #define IMPORTED_MORK_CONTEXTUAL_INDEXED_QUERY_ROWS_FLAGS 0x0001u
@@ -479,7 +480,7 @@ static bool imported_atom_has_epoch_vars(const Atom *atom) {
         return false;
     switch (atom->kind) {
     case ATOM_VAR:
-        return var_epoch_suffix(atom->var_id) != 0;
+        return !cetta_frame_identity_is_none(var_epoch_suffix(atom->var_id));
     case ATOM_EXPR:
         for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
             if (imported_atom_has_epoch_vars(atom->expr.elems[i]))
@@ -530,13 +531,13 @@ static void subst_matchset_push_row(SubstMatchSet *out, CettaIndex atom_idx);
 
 static bool subst_match_same(const SubstMatch *a, const SubstMatch *b) {
     return a->atom_idx == b->atom_idx &&
-           a->epoch == b->epoch &&
+           cetta_frame_identity_eq(a->epoch, b->epoch) &&
            a->exact == b->exact &&
            bindings_eq((Bindings *)&a->bindings, (Bindings *)&b->bindings);
 }
 
 static void subst_matchset_push(SubstMatchSet *out, CettaIndex atom_idx,
-                                uint32_t epoch, const Bindings *bindings,
+                                CettaFrameIdentity epoch, const Bindings *bindings,
                                 bool exact) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_SMSET_ROWS);
     if (out->len >= out->cap) {
@@ -577,7 +578,7 @@ static void subst_matchset_push(SubstMatchSet *out, CettaIndex atom_idx,
 static void subst_matchset_push_row(SubstMatchSet *out, CettaIndex atom_idx) {
     Bindings empty;
     bindings_init(&empty);
-    subst_matchset_push(out, atom_idx, 0u, &empty, false);
+    subst_matchset_push(out, atom_idx, CETTA_FRAME_IDENTITY_NONE, &empty, false);
     bindings_free(&empty);
 }
 
@@ -594,7 +595,7 @@ static inline bool subst_match_order_le(const SubstMatch *a,
                                         const SubstMatch *b) {
     if (a->atom_idx != b->atom_idx)
         return a->atom_idx < b->atom_idx;
-    return a->epoch <= b->epoch;  /* ties keep left-run order (stable) */
+    return a->epoch.word <= b->epoch.word;  /* ties keep left-run order (stable) */
 }
 
 /* Stable O(n log n) sort by (atom_idx, epoch) via bottom-up merge, using the
@@ -963,7 +964,7 @@ static bool native_stored_coordinate_matches(const TermUniverse *universe,
 }
 
 static bool match_space_atom_epoch(Space *s, CettaIndex atom_idx, Atom *query,
-                                   Bindings *b, Arena *a, uint32_t epoch) {
+                                   Bindings *b, Arena *a, CettaFrameIdentity epoch) {
     if (!s || !query || !b || atom_idx >= s->native.len)
         return false;
     AtomId atom_id = space_get_atom_id_at64(s, atom_idx);
@@ -1263,7 +1264,7 @@ static void imported_binding_set_to_exact_matches(SubstMatchSet *out,
     if (!matches)
         return;
     for (CettaIndex i = 0; i < matches->len; i++)
-        subst_matchset_push(out, 0, 0, &matches->items[i], true);
+        subst_matchset_push(out, 0, CETTA_FRAME_IDENTITY_NONE, &matches->items[i], true);
 }
 
 static bool native_cold_flat_candidates(
@@ -1402,7 +1403,7 @@ static bool native_pattern_is_flat_linear(Atom *pattern) {
         }
         for (size_t previous = 0u;
              previous < seen_len; previous++) {
-            if (seen[previous] == item->var_id) {
+            if (var_id_eq(seen[previous], item->var_id)) {
                 admissible = false;
                 break;
             }
@@ -1836,12 +1837,12 @@ static NativeFlatViewRowResult native_flat_view_variable_row_matches(
         }
 
         VarId variable = tu_var_id(universe, stored);
-        if (variable == VAR_ID_NONE)
+        if (var_id_is_none(variable))
             return NATIVE_FLAT_VIEW_ROW_DECLINE;
         bool assigned = false;
         for (CettaExprIndex previous = 0u;
              previous < assignment_count; previous++) {
-            if (stored_variables[previous] != variable)
+            if (!var_id_eq(stored_variables[previous], variable))
                 continue;
             assigned = true;
             if (!atom_eq(stored_values[previous], query))
@@ -2164,7 +2165,7 @@ static void native_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     if (s->native.len <= MATCH_TRIE_THRESHOLD) {
         for (CettaIndex i = 0; i < s->native.len; i++) {
             CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-            uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+            CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
             Bindings b;
             bindings_init(&b);
             if (match_space_atom_epoch(s, i, query, &b, a, epoch)) {
@@ -2363,7 +2364,7 @@ typedef struct {
     ImportedBridgeValueVar *items;
     uint32_t len;
     uint32_t cap;
-    uint32_t spelling_nonce;
+    uint64_t spelling_nonce;
 } ImportedBridgeValueVarMap;
 
 static void imported_bridge_varmap_init(ImportedBridgeVarMap *map);
@@ -2386,6 +2387,8 @@ static bool imported_bridge_read_u8(const uint8_t *packet, size_t len, size_t *o
                                     uint8_t *out);
 static bool imported_bridge_read_u64(const uint8_t *packet, size_t len, size_t *off,
                                      uint64_t *out);
+static bool imported_bridge_read_var_id(const uint8_t *packet, size_t len,
+                                        size_t *off, VarId *out);
 static Atom *imported_bridge_parse_token_bytes(Arena *a,
                                                const uint8_t *bytes,
                                                uint32_t len,
@@ -3445,7 +3448,7 @@ static size_t imported_opening_var_hash(uint32_t opening_instance,
 }
 
 static size_t imported_opening_reverse_hash(VarId opened_var_id) {
-    return imported_opening_mix64((uint64_t)opened_var_id);
+    return imported_opening_mix64(var_id_mix(opened_var_id));
 }
 
 static bool imported_opening_var_map_grow(ImportedOpeningVarMap *map) {
@@ -3492,11 +3495,11 @@ static bool imported_opening_reverse_map_grow(ImportedOpeningVarMap *map) {
     memset(next, 0, next_cap * sizeof(*next));
     for (size_t i = 0; i < map->reverse_cap; i++) {
         ImportedOpeningReverseSlot slot = map->reverse_slots[i];
-        if (slot.opened_var_id == VAR_ID_NONE)
+        if (var_id_is_none(slot.opened_var_id))
             continue;
         size_t pos = imported_opening_reverse_hash(slot.opened_var_id) &
                      (next_cap - 1u);
-        while (next[pos].opened_var_id != VAR_ID_NONE)
+        while (!var_id_is_none(next[pos].opened_var_id))
             pos = (pos + 1u) & (next_cap - 1u);
         next[pos] = slot;
     }
@@ -3515,7 +3518,7 @@ static bool imported_opening_var_map_get(
     size_t pos;
 
     if (!map || !out_var_id || opening_instance == 0u ||
-        source_var_id == VAR_ID_NONE)
+        var_id_is_none(source_var_id))
         return false;
     if (map->cap == 0u || (map->len + 1u) * 2u > map->cap) {
         if (!imported_opening_var_map_grow(map))
@@ -3528,7 +3531,7 @@ static bool imported_opening_var_map_get(
         if (slot->opening_instance == 0u) {
             size_t reverse_pos;
             VarId fresh = fresh_var_id();
-            if (fresh == VAR_ID_NONE)
+            if (var_id_is_none(fresh))
                 return false;
             if (map->reverse_cap == 0u ||
                 (map->reverse_len + 1u) * 2u > map->reverse_cap) {
@@ -3537,9 +3540,8 @@ static bool imported_opening_var_map_get(
             }
             reverse_pos = imported_opening_reverse_hash(fresh) &
                           (map->reverse_cap - 1u);
-            while (map->reverse_slots[reverse_pos].opened_var_id !=
-                   VAR_ID_NONE) {
-                if (map->reverse_slots[reverse_pos].opened_var_id == fresh)
+            while (!var_id_is_none(map->reverse_slots[reverse_pos].opened_var_id)) {
+                if (var_id_eq(map->reverse_slots[reverse_pos].opened_var_id, fresh))
                     return false;
                 reverse_pos = (reverse_pos + 1u) & (map->reverse_cap - 1u);
             }
@@ -3560,7 +3562,7 @@ static bool imported_opening_var_map_get(
         }
         if (slot->opening_instance == opening_instance &&
             slot->source_identity == source_identity) {
-            if (slot->source_var_id != source_var_id)
+            if (!var_id_eq(slot->source_var_id, source_var_id))
                 return false;
             *out_var_id = slot->opened_var_id;
             return true;
@@ -3571,7 +3573,7 @@ static bool imported_opening_var_map_get(
 
 static bool imported_opening_source_var_id(VarId opened_var_id,
                                            VarId *out_source_var_id) {
-    if (opened_var_id == VAR_ID_NONE || !out_source_var_id)
+    if (var_id_is_none(opened_var_id) || !out_source_var_id)
         return false;
     for (const ImportedOpeningScope *scope = g_imported_opening_scope;
          scope; scope = scope->previous) {
@@ -3581,8 +3583,8 @@ static bool imported_opening_source_var_id(VarId opened_var_id,
             continue;
         pos = imported_opening_reverse_hash(opened_var_id) &
               (map->reverse_cap - 1u);
-        while (map->reverse_slots[pos].opened_var_id != VAR_ID_NONE) {
-            if (map->reverse_slots[pos].opened_var_id == opened_var_id) {
+        while (!var_id_is_none(map->reverse_slots[pos].opened_var_id)) {
+            if (var_id_eq(map->reverse_slots[pos].opened_var_id, opened_var_id)) {
                 *out_source_var_id = map->reverse_slots[pos].source_var_id;
                 return true;
             }
@@ -3633,7 +3635,7 @@ static bool imported_opening_context_add_entry(ImportedOpeningContext *context,
                                                uint16_t slot,
                                                VarId var_id,
                                                SymbolId spelling) {
-    if (!context || var_id == VAR_ID_NONE || spelling == SYMBOL_ID_NONE)
+    if (!context || var_id_is_none(var_id) || spelling == SYMBOL_ID_NONE)
         return false;
     if (imported_opening_context_slot(context, slot))
         return false;
@@ -3681,7 +3683,7 @@ static bool imported_opening_context_add_matched_entry(
     uint8_t source_env,
     VarId var_id,
     SymbolId spelling) {
-    if (!context || source_env == 0 || var_id == VAR_ID_NONE ||
+    if (!context || source_env == 0 || var_id_is_none(var_id) ||
         spelling == SYMBOL_ID_NONE)
         return false;
     if (imported_opening_context_slot(context, slot))
@@ -3708,7 +3710,7 @@ static bool imported_opening_context_add_matched_instance_entry(
     uint16_t source_slot,
     VarId var_id,
     SymbolId spelling) {
-    if (!context || opening_instance == 0u || var_id == VAR_ID_NONE ||
+    if (!context || opening_instance == 0u || var_id_is_none(var_id) ||
         spelling == SYMBOL_ID_NONE)
         return false;
     if (imported_opening_context_slot(context, slot))
@@ -3771,10 +3773,10 @@ static bool imported_bridge_read_contextual_opening_contexts(
                 goto fail;
 
             if (kind == IMPORTED_MORK_OPEN_REF_EXACT) {
-                uint64_t var_id = 0;
+                VarId var_id = VAR_ID_NONE;
                 uint32_t spelling_len = 0;
                 SymbolId spelling = SYMBOL_ID_NONE;
-                if (!imported_bridge_read_u64(packet, packet_len, off, &var_id) ||
+                if (!imported_bridge_read_var_id(packet, packet_len, off, &var_id) ||
                     !imported_bridge_read_u32(packet, packet_len, off, &spelling_len) ||
                     spelling_len == 0 ||
                     *off + (size_t)spelling_len > packet_len)
@@ -3782,7 +3784,7 @@ static bool imported_bridge_read_contextual_opening_contexts(
                 spelling = symbol_intern_bytes(g_symbols, packet + *off, spelling_len);
                 *off += spelling_len;
                 if (!imported_opening_context_add_entry(
-                        &contexts[i], slot, (VarId)var_id, spelling))
+                        &contexts[i], slot, var_id, spelling))
                     goto fail;
             } else if (kind == IMPORTED_MORK_OPEN_REF_QUERY_SLOT && allow_query_refs) {
                 uint16_t query_slot = 0;
@@ -3794,14 +3796,14 @@ static bool imported_bridge_read_contextual_opening_contexts(
                        allow_query_refs) {
                 uint8_t source_env = 0;
                 uint8_t matched_reserved = 0;
-                uint64_t var_id = 0;
+                VarId var_id = VAR_ID_NONE;
                 uint32_t spelling_len = 0;
                 SymbolId spelling = SYMBOL_ID_NONE;
                 if (!imported_bridge_read_u8(packet, packet_len, off, &source_env) ||
                     !imported_bridge_read_u8(packet, packet_len, off,
                                              &matched_reserved) ||
                     source_env == 0 || matched_reserved != 0 ||
-                    !imported_bridge_read_u64(packet, packet_len, off, &var_id) ||
+                    !imported_bridge_read_var_id(packet, packet_len, off, &var_id) ||
                     !imported_bridge_read_u32(packet, packet_len, off,
                                               &spelling_len) ||
                     spelling_len == 0 ||
@@ -3811,14 +3813,14 @@ static bool imported_bridge_read_contextual_opening_contexts(
                                                spelling_len);
                 *off += spelling_len;
                 if (!imported_opening_context_add_matched_entry(
-                        &contexts[i], slot, source_env, (VarId)var_id,
+                        &contexts[i], slot, source_env, var_id,
                         spelling))
                     goto fail;
             } else if (kind == IMPORTED_MORK_OPEN_REF_MATCHED_INSTANCE &&
                        allow_query_refs) {
                 uint32_t opening_instance = 0;
                 uint16_t source_slot = 0;
-                uint64_t var_id = 0;
+                VarId var_id = VAR_ID_NONE;
                 uint32_t spelling_len = 0;
                 SymbolId spelling = SYMBOL_ID_NONE;
                 if (!imported_bridge_read_u32(packet, packet_len, off,
@@ -3826,7 +3828,7 @@ static bool imported_bridge_read_contextual_opening_contexts(
                     opening_instance == 0u ||
                     !imported_bridge_read_u16(packet, packet_len, off,
                                               &source_slot) ||
-                    !imported_bridge_read_u64(packet, packet_len, off, &var_id) ||
+                    !imported_bridge_read_var_id(packet, packet_len, off, &var_id) ||
                     !imported_bridge_read_u32(packet, packet_len, off,
                                               &spelling_len) ||
                     spelling_len == 0 ||
@@ -3837,7 +3839,7 @@ static bool imported_bridge_read_contextual_opening_contexts(
                 *off += spelling_len;
                 if (!imported_opening_context_add_matched_instance_entry(
                         &contexts[i], slot, opening_instance, source_slot,
-                        (VarId)var_id, spelling))
+                        var_id, spelling))
                     goto fail;
             } else {
                 goto fail;
@@ -3991,7 +3993,7 @@ static Atom *imported_bridge_parse_value_contextual_rec(
             VarId opened_var_id = VAR_ID_NONE;
             if (!imported_opening_var_map_get(
                     row_openings, entry->source_env,
-                    (uint64_t)entry->var_id, entry->var_id,
+                    var_id_mix(entry->var_id), entry->var_id,
                     &opened_var_id)) {
                 *ok = false;
                 return NULL;
@@ -4042,7 +4044,7 @@ static Atom *imported_bridge_parse_value_contextual_rec(
             VarId opened_var_id = VAR_ID_NONE;
             if (!imported_opening_var_map_get(
                     row_openings, entry->source_env,
-                    (uint64_t)entry->var_id, entry->var_id,
+                    var_id_mix(entry->var_id), entry->var_id,
                     &opened_var_id)) {
                 *ok = false;
                 return NULL;
@@ -4379,7 +4381,7 @@ static bool imported_bridge_decode_contextual_exact_rows(
             uint16_t slot = 0;
             uint8_t kind = 0;
             uint8_t reserved = 0;
-            uint64_t var_id = 0;
+            VarId var_id = VAR_ID_NONE;
             uint32_t spelling_len = 0;
             SymbolId spelling = SYMBOL_ID_NONE;
             if (!imported_bridge_read_u16(packet, packet_len, &off, &slot) ||
@@ -4387,7 +4389,7 @@ static bool imported_bridge_decode_contextual_exact_rows(
                 !imported_bridge_read_u8(packet, packet_len, &off, &reserved) ||
                 kind != IMPORTED_MORK_OPEN_REF_EXACT ||
                 reserved != 0 ||
-                !imported_bridge_read_u64(packet, packet_len, &off, &var_id) ||
+                !imported_bridge_read_var_id(packet, packet_len, &off, &var_id) ||
                 !imported_bridge_read_u32(packet, packet_len, &off, &spelling_len) ||
                 spelling_len == 0 ||
                 off + (size_t)spelling_len > packet_len)
@@ -4395,7 +4397,7 @@ static bool imported_bridge_decode_contextual_exact_rows(
             spelling = symbol_intern_bytes(g_symbols, packet + off, spelling_len);
             off += spelling_len;
             if (!imported_opening_context_add_entry(
-                    &contexts[i], slot, (VarId)var_id, spelling))
+                    &contexts[i], slot, var_id, spelling))
                 goto done;
         }
     }
@@ -6635,7 +6637,7 @@ static Atom *imported_token_atom(const ImportedFlatToken *tok,
 
 static Atom *imported_token_copy_epoch(Arena *a, const ImportedFlatToken *tok,
                                        const TermUniverse *universe,
-                                       uint32_t epoch) {
+                                       CettaFrameIdentity epoch) {
     if (!tok)
         return NULL;
     if (tok->origin_id != CETTA_ATOM_ID_NONE && universe)
@@ -6652,7 +6654,7 @@ static bool imported_token_equal(const ImportedFlatToken *lhs,
     case IMPORTED_FLAT_SYMBOL:
         return lhs->sym_id == rhs->sym_id;
     case IMPORTED_FLAT_VAR:
-        return lhs->var_id == rhs->var_id;
+        return var_id_eq(lhs->var_id, rhs->var_id);
     case IMPORTED_FLAT_EXPR:
         return lhs->arity == rhs->arity;
     case IMPORTED_FLAT_INT:
@@ -6727,7 +6729,7 @@ static bool imported_bridge_varmap_add(ImportedBridgeVarMap *map,
                                        VarId var_id,
                                        SymbolId spelling) {
     for (uint32_t i = 0; i < map->len; i++) {
-        if (map->items[i].var_id == var_id)
+        if (var_id_eq(map->items[i].var_id, var_id))
             return true;
     }
     if (map->len >= map->cap) {
@@ -6774,7 +6776,7 @@ static bool imported_bridge_varmap_find(
     if (!map)
         return false;
     for (uint32_t i = 0; i < map->len; i++) {
-        if (map->items[i].var_id == var_id) {
+        if (var_id_eq(map->items[i].var_id, var_id)) {
             if (out_index)
                 *out_index = i;
             return true;
@@ -6806,7 +6808,7 @@ static Atom *imported_bridge_rewrite_alpha_query_var(
      * The original VarId/spelling map remains authoritative for decoded rows.
      */
     return atom_var_with_spelling(
-        a, symbol_intern_cstr(g_symbols, name), (VarId)index + 1u);
+        a, symbol_intern_cstr(g_symbols, name), var_id_from_base((uint64_t)index + 1u));
 }
 
 static Atom *imported_bridge_alpha_canonicalize_query(
@@ -6895,6 +6897,18 @@ static bool imported_bridge_read_u64(const uint8_t *packet, size_t len, size_t *
            ((uint64_t)packet[*off + 6] << 8) |
            (uint64_t)packet[*off + 7];
     *off += 8;
+    return true;
+}
+
+/* A VarId on the wire: its base word, then its epoch word, big-endian. */
+static bool imported_bridge_read_var_id(const uint8_t *packet, size_t len,
+                                        size_t *off, VarId *out) {
+    uint64_t base = 0u;
+    uint64_t epoch = 0u;
+    if (!imported_bridge_read_u64(packet, len, off, &base) ||
+        !imported_bridge_read_u64(packet, len, off, &epoch))
+        return false;
+    *out = (VarId){base, {epoch}};
     return true;
 }
 
@@ -7072,7 +7086,8 @@ static void imported_bridge_value_varmap_init(ImportedBridgeValueVarMap *map) {
     map->items = NULL;
     map->len = 0;
     map->cap = 0;
-    map->spelling_nonce = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    map->spelling_nonce =
+        cetta_frame_identity_scope_fresh(&frame_identity_scope).word;
 }
 
 static void imported_bridge_value_varmap_free(ImportedBridgeValueVarMap *map) {
@@ -7101,8 +7116,8 @@ imported_bridge_value_varmap_get_or_add(ImportedBridgeValueVarMap *map,
                                    sizeof(ImportedBridgeValueVar) * map->cap);
     }
     char name[64];
-    snprintf(name, sizeof(name), "$__mork_b%u_%u#%u", (unsigned)value_env,
-             (unsigned)value_index, (unsigned)map->spelling_nonce);
+    snprintf(name, sizeof(name), "$__mork_b%u_%u#%" PRIu64, (unsigned)value_env,
+             (unsigned)value_index, map->spelling_nonce);
     map->items[map->len] = (ImportedBridgeValueVar){
         .value_env = value_env,
         .value_index = value_index,
@@ -7345,7 +7360,7 @@ static char *imported_bridge_build_conjunction_text(Arena *a, Atom **patterns,
 static ImportedCorefRef *imported_find_query_ref(ImportedCorefState *refs,
                                                  VarId var_id) {
     for (uint32_t i = 0; i < refs->nquery; i++)
-        if (refs->query[i].var_id == var_id)
+        if (var_id_eq(refs->query[i].var_id, var_id))
             return &refs->query[i];
     return NULL;
 }
@@ -7353,7 +7368,7 @@ static ImportedCorefRef *imported_find_query_ref(ImportedCorefState *refs,
 static ImportedCorefRef *imported_find_indexed_ref(ImportedCorefState *refs,
                                                    VarId var_id) {
     for (uint32_t i = 0; i < refs->nindexed; i++)
-        if (refs->indexed[i].var_id == var_id)
+        if (var_id_eq(refs->indexed[i].var_id, var_id))
             return &refs->indexed[i];
     return NULL;
 }
@@ -7361,7 +7376,7 @@ static ImportedCorefRef *imported_find_indexed_ref(ImportedCorefState *refs,
 static ImportedCorefRef *imported_find_indexed_value(ImportedCorefState *refs,
                                                      VarId var_id) {
     for (uint32_t i = 0; i < refs->nindexed_value; i++)
-        if (refs->indexed_value[i].var_id == var_id)
+        if (var_id_eq(refs->indexed_value[i].var_id, var_id))
             return &refs->indexed_value[i];
     return NULL;
 }
@@ -7424,7 +7439,7 @@ static bool imported_subtree_contains_var(const ImportedFlatToken *tokens,
     CettaIndex end = idx + tokens[idx].span;
     for (CettaIndex i = idx; i < end; i++) {
         if (tokens[i].kind == IMPORTED_FLAT_VAR &&
-            tokens[i].var_id == var_id)
+            var_id_eq(tokens[i].var_id, var_id))
             return true;
     }
     return false;
@@ -7457,7 +7472,7 @@ static bool imported_materialize_bindings(const ImportedCorefState *refs,
                                           const ImportedFlatToken *qtokens,
                                           const ImportedFlatToken *ctokens,
                                           const TermUniverse *candidate_universe,
-                                          uint32_t epoch, Arena *a,
+                                          CettaFrameIdentity epoch, Arena *a,
                                           Bindings *out) {
     bindings_init(out);
     for (uint32_t i = 0; i < refs->nquery; i++) {
@@ -8245,7 +8260,7 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
 static bool imported_match_subtree_legacy(const ImportedFlatToken *q, CettaIndex qi,
                                           const ImportedFlatToken *c, CettaIndex ci,
                                           const TermUniverse *candidate_universe,
-                                          Bindings *b, Arena *a, uint32_t epoch,
+                                          Bindings *b, Arena *a, CettaFrameIdentity epoch,
                                           CettaIndex *qnext, CettaIndex *cnext) {
     const ImportedFlatToken *qroot = &q[qi];
     const ImportedFlatToken *croot = &c[ci];
@@ -8362,8 +8377,8 @@ static void imported_collect_bucket(const ImportedFlatBucket *bucket,
         if (verdict == IMPORTED_COREF_FAIL)
             continue;
         /* The row's variables, if it has any, take a frame of their own. */
-        uint32_t match_epoch = entry->open
-            ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : 0u;
+        CettaFrameIdentity match_epoch = entry->open
+            ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : CETTA_FRAME_IDENTITY_NONE;
         if (verdict == IMPORTED_COREF_EXACT &&
             qnext == qlen && cnext == entry->len) {
             Bindings b;
@@ -9960,7 +9975,7 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         CettaIndex idx = candidates[ci];
         if (idx >= s->native.len) continue;
-        uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+        CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
         Bindings b;
         bindings_init(&b);
         if (match_space_atom_epoch(s, idx, query, &b, a, epoch)) {
@@ -11570,7 +11585,7 @@ static void overlay_subst_query(Space *s, Arena *a, Atom *query,
         smset_free(&base_matches);
         for (CettaIndex i = 0; i < s->native.len; i++) {
             CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-            uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+            CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
             Bindings b;
             bindings_init(&b);
             if (match_space_atom_epoch(s, i, query, &b, a, epoch)) {
@@ -11584,12 +11599,12 @@ static void overlay_subst_query(Space *s, Arena *a, Atom *query,
     for (CettaIndex i = 0; i < logical_len; i++) {
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
         Atom *atom = space_get_at64(s, i);
-        uint32_t epoch;
+        CettaFrameIdentity epoch;
         Bindings b;
         if (!atom)
             continue;
         epoch = atom_has_vars(atom)
-            ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : 0u;
+            ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : CETTA_FRAME_IDENTITY_NONE;
         bindings_init(&b);
         if (match_atoms_epoch(query, atom, &b, a, epoch)) {
             subst_matchset_push(out, i, epoch, &b, true);
@@ -11753,7 +11768,7 @@ static inline __attribute__((always_inline)) void space_subst_query_member(
             for (CettaIndex i = 0; i < nexact; i++) {
                 Bindings empty;
                 bindings_init(&empty);
-                subst_matchset_push(out, exact[i], 0, &empty, true);
+                subst_matchset_push(out, exact[i], CETTA_FRAME_IDENTITY_NONE, &empty, true);
                 bindings_free(&empty);
             }
             free(exact);
@@ -11845,7 +11860,7 @@ bool space_subst_match_with_seed(Space *space, Atom *pattern, const SubstMatch *
         return false;
     }
 
-    uint32_t suffix = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    CettaFrameIdentity suffix = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     if (match_space_atom_epoch(space, sm->atom_idx, pattern, &merged, a, suffix)) {
         bindings_move(out, &merged);
         return true;
@@ -11875,7 +11890,7 @@ bool space_match_backend_match_atom_seeded(Space *s, CettaIndex atom_idx,
     CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     if (!s || atom_idx >= s->native.len)
         return false;
-    uint32_t suffix = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    CettaFrameIdentity suffix = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     return match_space_atom_epoch(s, atom_idx, pattern, env, a, suffix);
 }
 
@@ -11936,7 +11951,7 @@ static int cetta_flat_join_bind(
         return 0;
     if (pattern_item->kind == ATOM_VAR) {
         for (size_t index = 0u; index < *bind_len; index++) {
-            if (binds[index].id == pattern_item->var_id)
+            if (var_id_eq(binds[index].id, pattern_item->var_id))
                 return atom_eq(binds[index].value, fact_item) ? 1 : 0;
         }
         if (*bind_len >= CETTA_FLAT_JOIN_MAX_BINDS)
@@ -11961,7 +11976,7 @@ static Atom *cetta_flat_join_resolve(
         if (item->kind == ATOM_VAR) {
             Atom *bound = NULL;
             for (size_t bind = 0u; bind < bind_len; bind++) {
-                if (binds[bind].id == item->var_id) {
+                if (var_id_eq(binds[bind].id, item->var_id)) {
                     bound = binds[bind].value;
                     break;
                 }
@@ -12409,7 +12424,7 @@ bool space_native_pattern_each_int(
             continue;
         const Atom *value = NULL;
         for (size_t bind = 0u; bind < bind_len; bind++) {
-            if (binds[bind].id == variable) {
+            if (var_id_eq(binds[bind].id, variable)) {
                 value = binds[bind].value;
                 break;
             }
@@ -12518,7 +12533,7 @@ static bool cetta_chain_message_add(
 static bool cetta_flat_pattern_has_var(const Atom *pattern, VarId id) {
     for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
         const Atom *item = pattern->expr.elems[index];
-        if (item->kind == ATOM_VAR && item->var_id == id)
+        if (item->kind == ATOM_VAR && var_id_eq(item->var_id, id))
             return true;
     }
     return false;
@@ -12541,7 +12556,7 @@ static bool cetta_chain_key(Atom *const *patterns, size_t pattern_count,
             if (other != left + 1u && other + 1u != left)
                 return false;
             if (other == left + 1u) {
-                if (found && *key_out != item->var_id)
+                if (found && !var_id_eq(*key_out, item->var_id))
                     return false;
                 *key_out = item->var_id;
                 found = true;
@@ -12554,7 +12569,7 @@ static bool cetta_chain_key(Atom *const *patterns, size_t pattern_count,
 static Atom *cetta_flat_bind_value(const CettaFlatJoinBind *binds,
                                    size_t bind_len, VarId id) {
     for (size_t index = 0u; index < bind_len; index++) {
-        if (binds[index].id == id)
+        if (var_id_eq(binds[index].id, id))
             return binds[index].value;
     }
     return NULL;

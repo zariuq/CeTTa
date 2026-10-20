@@ -2107,8 +2107,7 @@ static void test_deep_cons_semantics(Arena *arena) {
            PETTA_FORM_CONS);
     assert(atom_alpha_eq(observable_open->expr.elems[1], item));
     assert(observable_open->expr.elems[2]->kind == ATOM_VAR);
-    assert(observable_open->expr.elems[2]->var_id ==
-           open_tail->var_id);
+    assert(var_id_eq(observable_open->expr.elems[2]->var_id, open_tail->var_id));
 
     PeTTaConsShapeFacts cons_facts;
     assert(petta_semantics_cons_shape_facts(&cons_facts));
@@ -2271,7 +2270,7 @@ static void test_contextual_cons_values(Arena *arena) {
     Atom *nil = atom_unit(arena);
     Atom *source = atom_expr3(arena, head, x, nil);
     Atom *tag = petta_semantics_open_cons_value(arena, a, nil)->expr.elems[0];
-    uint32_t left_epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope), right_epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    CettaFrameIdentity left_epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope), right_epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     for (unsigned agree = 0u; agree < 2u; agree++) {
         Bindings seed;
         bindings_init(&seed);
@@ -2300,7 +2299,7 @@ static void test_contextual_cons_values(Arena *arena) {
 
 static void test_lowered_head_epoch_views(Arena *arena) {
     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
-    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     Atom *a = atom_symbol(arena, "epoch-a");
     Atom *b = atom_symbol(arena, "epoch-b");
     Atom *f = atom_symbol(arena, "epoch-f");
@@ -2368,12 +2367,12 @@ static void test_lowered_head_epoch_views(Arena *arena) {
             BindingValue second = bindings_lookup_value_id(&viewed.current, destination2->var_id);
             assert(binding_value_equal(first, second));
             assert(first.skeleton == shared_child && second.skeleton == shared_child &&
-                   first.kind == BINDING_VALUE_CONTEXTUAL && first.epoch == epoch);
+                   binding_value_kind(first) == BINDING_VALUE_CONTEXTUAL && cetta_frame_identity_eq(binding_value_epoch(first), epoch));
         }
         if (cases[i].value == destination && cases[i].source->kind == ATOM_EXPR) {
             BindingValue retained = bindings_lookup_value_id(&viewed.current, destination->var_id);
             assert(retained.skeleton == cases[i].source &&
-                   retained.kind == BINDING_VALUE_CONTEXTUAL && retained.epoch == epoch);
+                   binding_value_kind(retained) == BINDING_VALUE_CONTEXTUAL && cetta_frame_identity_eq(binding_value_epoch(retained), epoch));
         }
         bindings_builder_free(&viewed);
         bindings_builder_free(&reference);
@@ -2544,8 +2543,8 @@ static void test_answer_materialization_boundaries(
     if (exported_shared != shared_image || exported_alias != shared_image)
         fprintf(stderr, "publication-sharing: shared=%p alias=%p answer=%p ids=%llu,%llu bindings=%u\n",
                 (void *)exported_shared, (void *)exported_alias, (void *)shared_image,
-                (unsigned long long)shared_var->var_id,
-                (unsigned long long)alias_var->var_id, environment.len);
+                (unsigned long long)shared_var->var_id.base,
+                (unsigned long long)alias_var->var_id.base, environment.len);
     assert(exported_shared == shared_image && exported_alias == shared_image);
     petta_machine_destroy(&machine);
     assert(shared_image->kind == ATOM_EXPR && shared_image->expr.len == 3u);
@@ -2795,7 +2794,7 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
     assert(bindings_builder_add_var_fresh(&builder, outer_link, outer_value));
     assert(bindings_builder_add_var_fresh(&builder, outer, outer_link));
     uint32_t activation_first = builder.current.len;
-    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
     Atom *rule_slot = atom_var_like(
         arena, rule, var_epoch_id(rule->var_id, epoch));
     assert(rule_slot);
@@ -2812,7 +2811,7 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
     Atom *local = bindings_apply_epoch_since(
         &builder.current, arena, rule, epoch, activation_first);
     assert(local && local->kind == ATOM_VAR);
-    assert(local->var_id == outer->var_id);
+    assert(var_id_eq(local->var_id, outer->var_id));
 
     /* The ordinary full-environment operation remains the materialization
      * boundary and therefore resolves the outer slot as well. */
@@ -2833,9 +2832,8 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
     Atom *fresh_unbound = bindings_apply_epoch(
         &builder.current, arena, unbound, epoch);
     assert(fresh_unbound && fresh_unbound->kind == ATOM_VAR);
-    assert(fresh_unbound->var_id ==
-           var_epoch_id(unbound->var_id, epoch));
-    assert(fresh_unbound->var_id != unbound->var_id);
+    assert(var_id_eq(fresh_unbound->var_id, var_epoch_id(unbound->var_id, epoch)));
+    assert(!var_id_eq(fresh_unbound->var_id, unbound->var_id));
 
     Atom *pair = atom_symbol(arena, "activation-pair");
     Atom *source_children[] = {pair, rule, unbound};
@@ -2852,8 +2850,7 @@ static void test_activation_epoch_suffix_application(Arena *arena) {
            fused_pair->expr.len == 3u);
     assert(fused_pair->expr.elems[1] == outer_value);
     assert(fused_pair->expr.elems[2]->kind == ATOM_VAR);
-    assert(fused_pair->expr.elems[2]->var_id ==
-           var_epoch_id(unbound->var_id, epoch));
+    assert(var_id_eq(fused_pair->expr.elems[2]->var_id, var_epoch_id(unbound->var_id, epoch)));
 
     /* A malformed suffix boundary must fail closed. */
     assert(!bindings_apply_epoch_since(
@@ -2893,13 +2890,13 @@ static void test_root_context_identity_import(
     CETTA_FRAME_IDENTITY_SCOPE(identities);
     CettaFrameIdentity identity = cetta_frame_identity_scope_fresh(&identities);
     add_equation(space, persistent, "(= (root-context-identity $value) $value)");
-    Atom *foreign = atom_var_with_id(answers, "owned-root", var_epoch_id(1u, identity));
+    Atom *foreign = atom_var_with_id(answers, "owned-root", var_epoch_id(var_id_from_base(1u), identity));
     Atom *authored = atom_var(answers, "authored-root");
     Atom *pair = atom_expr3(answers, atom_symbol(answers, "ImportedPair"), foreign, authored);
     Atom *query = atom_expr2(answers, atom_symbol(answers, "root-context-identity"), pair);
     Bindings base;
     bindings_init(&base);
-    VarId slot = 1u;
+    VarId slot = var_id_from_base(1u);
     assert(bindings_register_complete_contextual_frame(&base, &slot, 1u, identity));
     assert(bindings_add_var(&base, foreign, atom_int(answers, 71)));
     assert(bindings_add_var(&base, authored, atom_int(answers, 83)));
@@ -3404,7 +3401,7 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     Atom *moved_view = atom_expr_view_rehome(arena, old_view, new_children);
     assert(moved_view);
     VarId moved_support = atom_single_variable_id(moved_view);
-    assert(moved_support == VAR_ID_NONE || moved_support == renamed->var_id);
+    assert(var_id_is_none(moved_support) || var_id_eq(moved_support, renamed->var_id));
     assert(atom_eq(moved_view, atom_expr(arena, new_children, 2u)));
     assert(!atom_eq(moved_view, old_view));
     Atom *query_vars[] = {variable};
@@ -3473,10 +3470,10 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
             node = node->expr.elems[0];
         }
         assert(node->kind == ATOM_VAR);
-        assert(node->var_id != variable->var_id);
+        assert(!var_id_eq(node->var_id, variable->var_id));
         leaves[item] = node;
     }
-    assert(leaves[0]->var_id != leaves[1]->var_id);
+    assert(!var_id_eq(leaves[0]->var_id, leaves[1]->var_id));
     cetta_open_equation_program_release(collector);
 
     /* Deep open cells must enter without a recursive depth cutoff. */
@@ -3609,7 +3606,7 @@ static void test_compiled_borrowed_suffix(TermUniverse *universe, Arena *arena) 
             bool found = false;
             for (uint32_t i = 0u; i < count; i++) {
                 values[i] = variables[i];
-                if (variables[i]->var_id == destination->var_id) {
+                if (var_id_eq(variables[i]->var_id, destination->var_id)) {
                     values[i] = atom_symbol(&answers, "resumed");
                     found = true;
                 }
@@ -3670,7 +3667,7 @@ static uint32_t test_compiled_accept_host_value(
     bool found = false;
     for (uint32_t i = 0u; i < count; i++) {
         values[i] = variables[i];
-        if (variables[i]->var_id == destination->var_id) {
+        if (var_id_eq(variables[i]->var_id, destination->var_id)) {
             values[i] = parse_one(arena, answer);
             found = true;
         }
@@ -4379,14 +4376,14 @@ static void test_compiled_terminal_host(TermUniverse *universe, Arena *arena) {
     assert(atom_alpha_eq(query_values[0],
         parse_one(&answers, "(Row (Box $result))")));
     Atom *inner = query_values[0]->expr.elems[1]->expr.elems[1];
-    assert(inner->kind == ATOM_VAR && inner->var_id == destination->var_id);
+    assert(inner->kind == ATOM_VAR && var_id_eq(inner->var_id, destination->var_id));
 
     /* Native clients may ignore the transfer hint. The ordinary accept and
      * resume protocol still fills every return slot and publishes once. */
     Atom **host_values = malloc(sizeof(*host_values) * host_count);
     assert(host_values && host_count > 0u);
     for (uint32_t i = 0u; i < host_count; i++)
-        host_values[i] = host_vars[i]->var_id == destination->var_id
+        host_values[i] = var_id_eq(host_vars[i]->var_id, destination->var_id)
             ? atom_int(&answers, 17) : host_vars[i];
     uint32_t base = 0u;
     assert(cetta_open_equation_cursor_accept(cursor, query_vars, host_vars,
@@ -4435,10 +4432,10 @@ static void test_compiled_terminal_host(TermUniverse *universe, Arena *arena) {
     assert(atom_alpha_eq(goal, parse_one(&answers, "(eval (Out $x))")));
     Atom *shared = query_values[0]->expr.elems[1];
     assert(shared->kind == ATOM_VAR);
-    assert(shared->var_id == query_values[0]->expr.elems[2]->var_id);
-    assert(shared->var_id == goal->expr.elems[1]->expr.elems[1]->var_id);
+    assert(var_id_eq(shared->var_id, query_values[0]->expr.elems[2]->var_id));
+    assert(var_id_eq(shared->var_id, goal->expr.elems[1]->expr.elems[1]->var_id));
     assert(query_values[1]->kind == ATOM_VAR &&
-        query_values[1]->var_id == destination->var_id);
+        var_id_eq(query_values[1]->var_id, destination->var_id));
     cetta_open_equation_cursor_close(cursor);
     cetta_open_equation_program_release(compiled);
 
@@ -4735,7 +4732,7 @@ static void test_alpha_reconciled_slot_authority(
     assert(equation_schema && template_variable_count == 2u &&
            bindings_frame_schema_source_ids(equation_schema) == template_source_ids);
     assert(bindings_register_complete_frame_schema(
-        &schema_activation, equation_schema, 719u));
+        &schema_activation, equation_schema, (CettaFrameIdentity){719u}));
     VarId retained_source_id = template_source_ids[0];
     const PettaPlanNode *live_rhs_first_plan =
         petta_plan_child(lease.items[0].rhs_plan, 1u);
@@ -4749,12 +4746,10 @@ static void test_alpha_reconciled_slot_authority(
            live_rhs_second_plan->has_equation_variable_slot &&
            live_rhs_second_plan->equation_variable_slot <
                template_variable_count);
-    assert(template_source_ids[
-               live_rhs_first_plan->equation_variable_slot] !=
-           leased_rhs->expr.elems[1]->var_id);
-    assert(template_source_ids[
-               live_rhs_second_plan->equation_variable_slot] !=
-           leased_rhs->expr.elems[2]->var_id);
+    assert(!var_id_eq(template_source_ids[
+               live_rhs_first_plan->equation_variable_slot], leased_rhs->expr.elems[1]->var_id));
+    assert(!var_id_eq(template_source_ids[
+               live_rhs_second_plan->equation_variable_slot], leased_rhs->expr.elems[2]->var_id));
     (void)template_source_variables;
     assert(snapshot_stats.alpha_equality_checks == 1u);
     petta_program_candidate_snapshot_lease_release(&lease);
@@ -4794,11 +4789,11 @@ static void test_alpha_reconciled_slot_authority(
     petta_program_free(program);
     /* An activation owns the equation inventory even after plan teardown. */
     assert(bindings_frame_schema_len(equation_schema) == 2u &&
-           bindings_frame_schema_source_ids(equation_schema)[0] == retained_source_id);
+           var_id_eq(bindings_frame_schema_source_ids(equation_schema)[0], retained_source_id));
     assert(bindings_add_id(&schema_activation,
-        var_epoch_id(retained_source_id, 719u), SYMBOL_ID_NONE, atom_int(answers, 71)));
+        var_epoch_id(retained_source_id, (CettaFrameIdentity){719u}), SYMBOL_ID_NONE, atom_int(answers, 71)));
     BindingValue retained = bindings_lookup_value_id(
-        &schema_activation, var_epoch_id(retained_source_id, 719u));
+        &schema_activation, var_epoch_id(retained_source_id, (CettaFrameIdentity){719u}));
     assert(retained.skeleton && atom_eq(retained.skeleton, atom_int(answers, 71)));
     bindings_free(&schema_activation);
     space_free(&space);
@@ -5837,7 +5832,7 @@ static void test_open_pattern_support_certificate(
     assert_open_pattern_linear_program(support_plan);
     (void)source_variables;
 
-    uint32_t support_epoch = 0u;
+    CettaFrameIdentity support_epoch = CETTA_FRAME_IDENTITY_NONE;
     assert(cetta_frame_identity_scope_try(&frame_identity_scope, &support_epoch));
     Atom *support_query = parse_one(persistent, "(support-plan $q)");
     BindingsBuilder support_bindings;
@@ -5875,7 +5870,7 @@ static void test_open_pattern_support_certificate(
             candidates[0].equation_template);
     assert(cycle_plan);
     assert_open_pattern_linear_program(cycle_plan);
-    uint32_t cycle_epoch = 0u;
+    CettaFrameIdentity cycle_epoch = CETTA_FRAME_IDENTITY_NONE;
     assert(cetta_frame_identity_scope_try(&frame_identity_scope, &cycle_epoch));
     Atom *cycle_query =
         parse_one(persistent, "(support-cycle $q $q)");
@@ -5945,7 +5940,7 @@ static void test_open_pattern_support_certificate(
     assert_open_pattern_linear_program(wide_plan);
     assert(!wide_plan->variable_ids);
     assert(wide_plan->variable_mask == 0u);
-    uint32_t wide_epoch = 0u;
+    CettaFrameIdentity wide_epoch = CETTA_FRAME_IDENTITY_NONE;
     assert(cetta_frame_identity_scope_try(&frame_identity_scope, &wide_epoch));
     Atom *wide_query = parse_one(persistent, "(support-wide $q)");
     BindingsBuilder wide_bindings;
@@ -6024,7 +6019,7 @@ static void test_open_pattern_support_certificate(
                 candidates[0].equation_template);
         assert_open_pattern_linear_program(plan);
         Atom *query = parse_one(persistent, test->query);
-        uint32_t epoch = 0u;
+        CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
         assert(cetta_frame_identity_scope_try(&frame_identity_scope, &epoch));
         BindingsBuilder tree_builder;
         BindingsBuilder linear_builder;
@@ -7747,7 +7742,7 @@ static bool free_variable_probe_visit(
 static bool free_variable_probe_contains(
     const FreeVariableProbe *probe, VarId var_id) {
     for (size_t index = 0u; index < probe->len; index++) {
-        if (probe->ids[index] == var_id)
+        if (var_id_eq(probe->ids[index], var_id))
             return true;
     }
     return false;
@@ -7767,7 +7762,7 @@ static void test_lexical_free_variable_projection(Arena *arena) {
     assert(eval_visit_lexical_free_variables(
         let_query, free_variable_probe_visit, &probe));
     assert(probe.len == 1u);
-    assert(probe.ids[0] == free->var_id);
+    assert(var_id_eq(probe.ids[0], free->var_id));
     assert(!free_variable_probe_contains(&probe, local->var_id));
 
     Atom *map_query = parse_one(
@@ -7782,8 +7777,8 @@ static void test_lexical_free_variable_projection(Arena *arena) {
     assert(eval_visit_lexical_free_variables(
         map_query, free_variable_probe_visit, &probe));
     assert(probe.len == 2u);
-    assert(probe.ids[0] == items->var_id);
-    assert(probe.ids[1] == offset->var_id);
+    assert(var_id_eq(probe.ids[0], items->var_id));
+    assert(var_id_eq(probe.ids[1], offset->var_id));
     assert(!free_variable_probe_contains(&probe, item->var_id));
 
     Atom *fold_query = parse_one(
@@ -7801,9 +7796,9 @@ static void test_lexical_free_variable_projection(Arena *arena) {
     assert(eval_visit_lexical_free_variables(
         fold_query, free_variable_probe_visit, &probe));
     assert(probe.len == 3u);
-    assert(probe.ids[0] == fold_query->expr.elems[1]->var_id);
-    assert(probe.ids[1] == initial->var_id);
-    assert(probe.ids[2] == offset->var_id);
+    assert(var_id_eq(probe.ids[0], fold_query->expr.elems[1]->var_id));
+    assert(var_id_eq(probe.ids[1], initial->var_id));
+    assert(var_id_eq(probe.ids[2], offset->var_id));
     assert(!free_variable_probe_contains(
         &probe, accumulator->var_id));
     assert(!free_variable_probe_contains(&probe, item->var_id));
@@ -7818,7 +7813,7 @@ static void test_lexical_free_variable_projection(Arena *arena) {
     assert(eval_visit_lexical_free_variables(
         lambda_query, free_variable_probe_visit, &probe));
     assert(probe.len == 1u);
-    assert(probe.ids[0] == captured->var_id);
+    assert(var_id_eq(probe.ids[0], captured->var_id));
     assert(!free_variable_probe_contains(&probe, argument->var_id));
 
     Atom *deep = atom_expr2(arena, free, captured);
@@ -7829,8 +7824,8 @@ static void test_lexical_free_variable_projection(Arena *arena) {
     probe.len = 0u;
     assert(eval_visit_lexical_free_variables(
         quoted, free_variable_probe_visit, &probe));
-    assert(probe.len == 2u && probe.ids[0] == free->var_id &&
-        probe.ids[1] == captured->var_id);
+    assert(probe.len == 2u && var_id_eq(probe.ids[0], free->var_id) &&
+        var_id_eq(probe.ids[1], captured->var_id));
     assert(!free_variable_probe_contains(&probe, local->var_id));
 }
 
@@ -8724,10 +8719,8 @@ static void test_reachable_binding_projection(Arena *arena) {
     assert(bindings_project_reachable(
         &large, large_roots, 1u, &projected));
     assert(projected.len == 2u);
-    assert(projected.entries[0].var_id ==
-           large_live->var_id);
-    assert(projected.entries[1].var_id ==
-           large_middle->var_id);
+    assert(var_id_eq(projected.entries[0].var_id, large_live->var_id));
+    assert(var_id_eq(projected.entries[1].var_id, large_middle->var_id));
     assert(bindings_lookup_value_id(&projected, large_live->var_id).skeleton == large_middle);
     assert(bindings_lookup_value_id(&projected, large_middle->var_id).skeleton == kept_value);
     bindings_free(&projected);
@@ -11317,15 +11310,15 @@ static void test_observation_frozen_environment(Arena *arena) {
     Binding contextual_binding = {
         .var_id = key->var_id,
         .spelling = key->sym_id,
-        .value = binding_value_from_context(reachable, 401u),
+        .value = binding_value_from_context(reachable, (CettaFrameIdentity){401u}),
     };
     Bindings contextual = {.entries = &contextual_binding, .len = 1u};
     assert(!cetta_observation_environment_var_is_private(
-        &contextual, var_epoch_id(reachable->var_id, 401u)));
+        &contextual, var_epoch_id(reachable->var_id, (CettaFrameIdentity){401u})));
     assert(cetta_observation_environment_var_is_private(
         &contextual, reachable->var_id));
     assert(cetta_observation_environment_var_is_private(
-        &contextual, var_epoch_id(reachable->var_id, 402u)));
+        &contextual, var_epoch_id(reachable->var_id, (CettaFrameIdentity){402u})));
     Atom *serialized = bindings_to_atom(arena, &contextual);
     Bindings roundtrip;
     assert(serialized && bindings_from_atom(serialized, &roundtrip));

@@ -87,8 +87,8 @@ static bool alpha(const Atom *a, const Atom *b, Renaming *map) {
         return false;
     if (a->kind == ATOM_VAR) {
         for (uint32_t i = 0; i < map->count; i++) {
-            if (map->left[i] == a->var_id || map->right[i] == b->var_id)
-                return map->left[i] == a->var_id && map->right[i] == b->var_id;
+            if (var_id_eq(map->left[i], a->var_id) || var_id_eq(map->right[i], b->var_id))
+                return var_id_eq(map->left[i], a->var_id) && var_id_eq(map->right[i], b->var_id);
         }
         assert(map->count < 256u);
         map->left[map->count] = a->var_id;
@@ -134,9 +134,9 @@ int main(int argc, char **argv) {
         declared[i] = atom_symbol(&persistent, name);
     }
     for (int i = 0; i < SUBJECT_VARS; i++)
-        subject_vars[i] = atom_var_with_id(&persistent, "x", 5000u + (VarId)i);
+        subject_vars[i] = atom_var_with_id(&persistent, "x", var_id_from_base(5000u + i));
     for (int i = 0; i < TYPE_VARS; i++)
-        type_vars[i] = atom_var_with_id(&persistent, "t", 6000u + (VarId)i);
+        type_vars[i] = atom_var_with_id(&persistent, "t", var_id_from_base(6000u + i));
     const char *type_names[8] = {"Nat", "Number", "String", "Bool", "%Undefined%",
                                  "Symbol", "Expression", "u0"};
     for (int i = 0; i < 8; i++)

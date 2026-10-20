@@ -1,3 +1,4 @@
+#include "fixpoint.h"
 #include "prepared_pure_machine.h"
 #include "he_macro_expansion.h"
 
@@ -1913,10 +1914,10 @@ static bool prepared_pure_builtin_syntax(SymbolId head) {
 static bool prepared_pure_context_lookup(
     const PreparedPureCompileContext *context, VarId var,
     uint32_t *slot_out) {
-    if (!context || var == VAR_ID_NONE)
+    if (!context || var_id_is_none(var))
         return false;
     for (size_t i = context->len; i > 0u; i--) {
-        if (context->bindings[i - 1u].var == var) {
+        if (var_id_eq(context->bindings[i - 1u].var, var)) {
             if (slot_out)
                 *slot_out = context->bindings[i - 1u].slot;
             return true;
@@ -1928,7 +1929,7 @@ static bool prepared_pure_context_lookup(
 static bool prepared_pure_context_bind(
     PreparedPureCompileContext *context, VarId var,
     bool allow_shadow, uint32_t *slot_out) {
-    if (!context || var == VAR_ID_NONE ||
+    if (!context || var_id_is_none(var) ||
         context->next_slot >= PREPARED_PURE_MAX_SLOTS)
         return false;
     uint32_t existing = 0u;
@@ -1953,12 +1954,12 @@ static bool prepared_pure_bind_var_index(
     const CettaPreparedPureProgram *program,
     uint32_t first_var, uint32_t var_count, VarId var,
     uint32_t *index_out) {
-    if (!program || !index_out || var == VAR_ID_NONE ||
+    if (!program || !index_out || var_id_is_none(var) ||
         first_var > program->bind_var_len ||
         var_count > program->bind_var_len - first_var)
         return false;
     for (uint32_t i = 0u; i < var_count; i++) {
-        if (program->bind_vars[first_var + i].var == var) {
+        if (var_id_eq(program->bind_vars[first_var + i].var, var)) {
             *index_out = i;
             return true;
         }
@@ -2065,7 +2066,7 @@ static bool prepared_pure_compile_bind_pattern(
             &program->bind_vars[first_var + i - 1u];
         flat = pattern->expr.elems[i] &&
             pattern->expr.elems[i]->kind == ATOM_VAR &&
-            binding->var == pattern->expr.elems[i]->var_id &&
+            var_id_eq(binding->var, pattern->expr.elems[i]->var_id) &&
             !binding->prebound;
     }
     *pattern_index_out = (uint32_t)program->bind_pattern_len;
@@ -2249,7 +2250,7 @@ static bool prepared_pure_petta_intrinsic_type_guard(Space *space) {
 static bool prepared_pure_type_mentions_var(
     const Atom *type, VarId id, uint32_t depth) {
     if (type->kind == ATOM_VAR)
-        return type->var_id == id;
+        return var_id_eq(type->var_id, id);
     if (type->kind != ATOM_EXPR)
         return false;
     if (depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
@@ -2275,7 +2276,7 @@ static bool prepared_pure_head_answers_parameter(
         lhs->expr.len == (CettaExprLen)(arity + 1u) &&
         lhs->expr.elems[index + 1u]->kind == ATOM_VAR &&
         rhs->kind == ATOM_VAR &&
-        rhs->var_id == lhs->expr.elems[index + 1u]->var_id;
+        var_id_eq(rhs->var_id, lhs->expr.elems[index + 1u]->var_id);
 }
 
 /* A head's one signature, when it is an arrow of `arity` parameters whose
@@ -3050,7 +3051,7 @@ static bool prepared_pure_compile_bind_sequence(
 static bool prepared_pure_expansion_var(
     const CettaPreparedPureProgram *program, VarId id) {
     for (size_t i = program->expansion_var_len; i > 0u; i--) {
-        if (program->expansion_vars[i - 1u] == id)
+        if (var_id_eq(program->expansion_vars[i - 1u], id))
             return true;
     }
     return false;
@@ -3967,7 +3968,7 @@ static bool prepared_pure_term_vars(
         return false;
     if (term->kind == ATOM_VAR) {
         for (size_t i = 0u; i < *len; i++) {
-            if ((*vars)[i]->var_id == term->var_id)
+            if (var_id_eq((*vars)[i]->var_id, term->var_id))
                 return true;
         }
         if (!prepared_pure_reserve(
@@ -4875,9 +4876,9 @@ static int prepared_pure_var_slot_compare(
     const void *left_ptr, const void *right_ptr) {
     const PreparedPureVarSlot *left = left_ptr;
     const PreparedPureVarSlot *right = right_ptr;
-    if (left->var < right->var)
+    if (var_id_lt(left->var, right->var))
         return -1;
-    if (left->var > right->var)
+    if (var_id_lt(right->var, left->var))
         return 1;
     return 0;
 }
@@ -5994,9 +5995,9 @@ static bool prepared_pure_equation_var_slot(
         const PreparedPureVarSlot *entry =
             &program->pattern_vars[
                 equation->first_pattern_var + middle];
-        if (entry->var < var) {
+        if (var_id_lt(entry->var, var)) {
             lower = middle + 1u;
-        } else if (entry->var > var) {
+        } else if (var_id_lt(var, entry->var)) {
             upper = middle;
         } else {
             *slot_out = entry->slot;
@@ -8596,8 +8597,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     const CettaPreparedPureSourceView *source_view,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics) {
-    if (!space || !expression || accumulator_var == VAR_ID_NONE ||
-        item_var == VAR_ID_NONE || accumulator_var == item_var ||
+    if (!space || !expression || var_id_is_none(accumulator_var) ||
+        var_id_is_none(item_var) || var_id_eq(accumulator_var, item_var) ||
         !boolean_value || !construct_value ||
         (call_mode != CETTA_GSLT_PURE_CALL_EAGER &&
          call_mode != CETTA_GSLT_PURE_CALL_CALL_BY_NEED))
@@ -8869,6 +8870,8 @@ static bool prepared_pure_answer_value_node(
 
 /* A node whose evaluation cannot choose: it holds no choice zero and calls
  * only deterministic heads. */
+/* Whether a node can produce more than one answer: a zero, a call to a
+ * head that is not deterministic, or such a node below it. */
 static bool prepared_pure_node_chooses(
     const CettaPreparedPureProgram *program, uint32_t node_index,
     uint32_t depth) {
@@ -8894,35 +8897,88 @@ static bool prepared_pure_node_chooses(
     return false;
 }
 
-/* The greatest fixed point: start from the heads weak-head matching makes
- * determinate and drop any whose body can choose, until none changes. */
+/* One equation tree's part of the classification: whether it can choose
+ * by itself (a zero, a call outside the program, a malformed or too deep
+ * node), and the heads it calls, appended to `calls`. */
+typedef struct {
+    size_t *items;
+    size_t len;
+    size_t cap;
+    bool failed;
+} PreparedPureCalls;
+
+static bool prepared_pure_tree_chooses_locally(
+    const CettaPreparedPureProgram *program, uint32_t node_index,
+    uint32_t depth, PreparedPureCalls *calls) {
+    if (!program || node_index >= program->node_len ||
+        depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return true;
+    const PreparedPureNode *node = &program->nodes[node_index];
+    if (node->kind == PREPARED_PURE_ZERO)
+        return true;
+    if (node->kind == PREPARED_PURE_CALL) {
+        if (node->auxiliary >= program->head_len)
+            return true;
+        if (calls->len == calls->cap) {
+            size_t cap = calls->cap ? calls->cap * 2u : 16u;
+            size_t *items = realloc(calls->items, cap * sizeof(*items));
+            if (!items) {
+                calls->failed = true;
+                return true;
+            }
+            calls->items = items;
+            calls->cap = cap;
+        }
+        calls->items[calls->len++] = node->auxiliary;
+    }
+    if (node->first_child > program->child_len ||
+        node->child_count > program->child_len - node->first_child)
+        return true;
+    for (uint32_t index = 0u; index < node->child_count; index++) {
+        if (prepared_pure_tree_chooses_locally(
+                program, program->children[node->first_child + index],
+                depth + 1u, calls))
+            return true;
+    }
+    return false;
+}
+
+/* The greatest fixed point (fixpoint.h): a head is deterministic when weak-
+ * head matching makes it determinate, no equation body can choose by
+ * itself, and every head its bodies call is deterministic.  Should the
+ * graph not fit in memory, no head is. */
 static void prepared_pure_classify_deterministic_heads(
     CettaPreparedPureProgram *program) {
-    for (uint32_t index = 0u; index < program->head_len; index++) {
+    size_t heads = program->head_len;
+    size_t *first = malloc((heads + 1u) * sizeof(*first));
+    bool *admitted = malloc((heads ? heads : 1u) * sizeof(*admitted));
+    PreparedPureCalls calls = {0};
+    bool ok = first && admitted;
+    for (uint32_t index = 0u; ok && index < heads; index++) {
         PreparedPureHead *head = &program->heads[index];
-        head->deterministic = head->compiled &&
+        first[index] = calls.len;
+        admitted[index] = head->compiled &&
             prepared_pure_head_is_whnf_determinate(program, head);
-    }
-    bool changed = true;
-    while (changed) {
-        changed = false;
-        for (uint32_t index = 0u; index < program->head_len; index++) {
-            PreparedPureHead *head = &program->heads[index];
-            if (!head->deterministic)
-                continue;
-            for (uint32_t offset = 0u;
-                 offset < head->equation_count; offset++) {
-                const PreparedPureEquation *equation =
-                    &program->equations[head->first_equation + offset];
-                if (prepared_pure_node_chooses(
-                        program, equation->root, 0u)) {
-                    head->deterministic = false;
-                    changed = true;
-                    break;
-                }
-            }
+        for (uint32_t offset = 0u;
+             admitted[index] && offset < head->equation_count; offset++) {
+            const PreparedPureEquation *equation =
+                &program->equations[head->first_equation + offset];
+            if (prepared_pure_tree_chooses_locally(
+                    program, equation->root, 0u, &calls))
+                admitted[index] = false;
         }
+        ok = !calls.failed;
     }
+    if (ok) {
+        first[heads] = calls.len;
+        CettaFixpointGraph graph = {heads, first, calls.items};
+        ok = cetta_fixpoint_greatest(&graph, admitted);
+    }
+    for (uint32_t index = 0u; index < heads; index++)
+        program->heads[index].deterministic = ok && admitted[index];
+    free(first);
+    free(admitted);
+    free(calls.items);
 }
 
 /* A value tree evaluates to itself: literals and locals under constructors,
@@ -11888,7 +11944,7 @@ static Atom *prepared_pure_decode_pattern(
         for (uint32_t index = 0u; index < pattern->var_count; index++) {
             const PreparedPureBindVar *var =
                 &program->bind_vars[pattern->first_var + index];
-            if (var->var == atom->var_id)
+            if (var_id_eq(var->var, atom->var_id))
                 return prepared_pure_decode_slot(decode, var->slot);
         }
         return NULL;
