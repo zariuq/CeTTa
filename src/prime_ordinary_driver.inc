@@ -164,51 +164,110 @@ static const char *prime_share_grounded_refusal(GroundedKind kind) {
  * inspection admits immutable syntax payloads; it does not create a pin or
  * authorize an external writer. Index/cache accesses retain their existing
  * concurrent-scope guards. */
+typedef struct {
+    size_t position;
+    CettaExprIndex child;
+    bool checked;
+} PrimeOrdinaryGraphCursor;
+
+struct PrimeOrdinaryGraphInspection {
+    PrimeEvalStackSupportBuffer scan;
+    CettaStorageCensus seen;
+    PrimeOrdinaryGraphCursor cursor;
+    Arena *arena;
+    uint32_t arena_identity, older_identity;
+    uint64_t arena_epoch;
+    HashConsTable *hashcons;
+    bool scalar_cache;
+};
+
+/* Both admissions use the same node predicate and edge order. A finite
+ * slice retains its census, node position and next edge. Native indexing,
+ * allocation and pointer validity remain primitive service obligations. */
+static inline __attribute__((always_inline)) CettaContinuationStatus
+prime_ordinary_immutable_graph_run(PrimeEvalStackSupportBuffer *scan,
+    CettaStorageCensus *seen,PrimeOrdinaryGraphCursor *cursor,
+    uint64_t allowance,uint64_t *used) {
+    uint64_t spent=0u;
+    if (used) *used=0u;
+#define INSPECTION_DEBIT() do { \
+    if (used) { \
+        if (spent==allowance) { *used=spent;return CETTA_CONTINUATION_DEFERRED; } \
+        ++spent; *used=spent; \
+    } \
+} while (0)
+    if (used && !allowance) return CETTA_CONTINUATION_DEFERRED;
+    while (cursor->position<scan->len) {
+        Atom *atom=scan->items[cursor->position];
+        if (!cursor->checked) {
+            INSPECTION_DEBIT();
+            if (!atom) {
+                prime_share_refuse("immutable-null");
+                return CETTA_CONTINUATION_UNSUPPORTED;
+            }
+            if (!cetta_storage_object(seen,atom,0u,CETTA_STORAGE_VISITED)) {
+                if (seen->incomplete || seen->overflow) {
+                    prime_share_refuse("immutable-census");
+                    return CETTA_CONTINUATION_UNSUPPORTED;
+                }
+                cursor->position++;
+                continue;
+            }
+            if (atom->structural_facts&ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) {
+                prime_share_refuse("immutable-handle");
+                return CETTA_CONTINUATION_UNSUPPORTED;
+            }
+            if (atom->kind==ATOM_GROUNDED) {
+                GroundedKind kind=atom->ground.gkind;
+                if (kind!=GV_INT && kind!=GV_FLOAT && kind!=GV_BOOL && kind!=GV_STRING &&
+                    kind!=GV_BIGINT && kind!=GV_RATIONAL) {
+                    prime_share_refuse(prime_share_grounded_refusal(kind));
+                    return CETTA_CONTINUATION_UNSUPPORTED;
+                }
+            } else if (atom->kind==ATOM_EXPR) {
+                if (atom->expr.len && !atom->expr.elems) {
+                    prime_share_refuse("immutable-expression");
+                    return CETTA_CONTINUATION_UNSUPPORTED;
+                }
+            } else if (atom->kind!=ATOM_VAR && atom->kind!=ATOM_SYMBOL) {
+                prime_share_refuse("immutable-kind");
+                return CETTA_CONTINUATION_UNSUPPORTED;
+            }
+            cursor->checked=true;
+        }
+        CettaExprLen children=atom->kind==ATOM_EXPR?atom->expr.len:
+            atom->kind==ATOM_VAR && atom->name_key?1u:0u;
+        while (cursor->child<children) {
+            INSPECTION_DEBIT();
+            Atom *child=atom->kind==ATOM_VAR?atom->name_key:atom->expr.elems[cursor->child];
+            if (!prime_eval_stack_support_buffer_push(scan,child)) {
+                prime_share_refuse("immutable-push");
+                return CETTA_CONTINUATION_UNSUPPORTED;
+            }
+            cursor->child++;
+        }
+        cursor->position++;cursor->child=0u;cursor->checked=false;
+    }
+    if (seen->incomplete || seen->overflow) {
+        prime_share_refuse("immutable-census");
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    }
+    return CETTA_CONTINUATION_READY;
+#undef INSPECTION_DEBIT
+}
+
 static bool prime_ordinary_immutable_graph(PrimeEvalStackSupportBuffer *scan,
     CettaStorageCensus *seen) {
-    for(size_t i=0u;i<scan->len;i++) {
-        Atom *atom=scan->items[i];
-        if(!atom) {
-            prime_share_refuse("immutable-null");
-            return false;
-        }
-        if(!cetta_storage_object(seen,atom,0u,CETTA_STORAGE_VISITED)) {
-            if(seen->incomplete || seen->overflow) {
-                prime_share_refuse("immutable-census");
-                return false;
-            }
-            continue;
-        }
-        if(atom->structural_facts&ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) {
-            prime_share_refuse("immutable-handle");
-            return false;
-        }
-        if(atom->kind==ATOM_GROUNDED) {
-            GroundedKind kind=atom->ground.gkind;
-            if(kind!=GV_INT && kind!=GV_FLOAT && kind!=GV_BOOL && kind!=GV_STRING &&
-                kind!=GV_BIGINT && kind!=GV_RATIONAL) {
-                prime_share_refuse(prime_share_grounded_refusal(kind));
-                return false;
-            }
-        } else if(atom->kind==ATOM_EXPR) {
-            for(CettaExprIndex j=0u;j<atom->expr.len;j++)
-                if(!prime_eval_stack_support_buffer_push(scan,atom->expr.elems[j])) {
-                    prime_share_refuse("immutable-push");
-                    return false;
-                }
-        } else if(atom->kind==ATOM_VAR) {
-            if(atom->name_key && !prime_eval_stack_support_buffer_push(scan,atom->name_key)) {
-                prime_share_refuse("immutable-push");
-                return false;
-            }
-        } else if(atom->kind!=ATOM_SYMBOL) {
-            prime_share_refuse("immutable-kind");
-            return false;
-        }
-    }
-    if (seen->incomplete || seen->overflow)
-        prime_share_refuse("immutable-census");
-    return !seen->incomplete && !seen->overflow;
+    PrimeOrdinaryGraphCursor cursor={0};
+    return prime_ordinary_immutable_graph_run(scan,seen,&cursor,0u,NULL)
+        ==CETTA_CONTINUATION_READY;
+}
+
+static void prime_ordinary_graph_inspection_free(PrimeOrdinaryGraphInspection *inspection) {
+    if (!inspection) return;
+    cetta_storage_census_free(&inspection->seen);
+    prime_eval_stack_support_buffer_free(&inspection->scan);
+    free(inspection);
 }
 
 static bool prime_ordinary_shared_source_admitted(Space *space) {

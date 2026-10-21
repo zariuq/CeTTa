@@ -455,7 +455,12 @@ static bool eval_owned_residual_body(Atom *body, const Bindings *bindings,
 static bool eval_owned_residual_return(Outcome *outcome,
                                        EvalOwnedResidual *residual) {
     Atom *value = outcome_atom_materialize(residual->arena, outcome);
-    if (!value || atom_is_legacy_empty_sentinel(value))
+    if (!value) {
+        if (!eval_unwinding()) return true;
+        residual->ok = false;
+        return false;
+    }
+    if (atom_is_legacy_empty_sentinel(value))
         return true;
     if (!residual->resumption) {
         CettaOwnedReturn returned = {

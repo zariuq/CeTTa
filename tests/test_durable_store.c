@@ -1,6 +1,8 @@
 #define _POSIX_C_SOURCE 200809L
 #include "durable_store.h"
-#include <sqlite3.h>
+#include "native_journal.h"
+#include <errno.h>
+#include <fcntl.h>
 #include <assert.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -12,15 +14,28 @@
 #include <unistd.h>
 
 static const char *crash_at;
-static sqlite3 *concurrent_writer;
+static CettaDurableStore *concurrent_writer;
+static pthread_t writer_thread;
+static void *write_during_read(void *context);
+static bool fail_sync;
+static unsigned sync_failures;
+static int64_t write_allowance=-1;
+ssize_t __real_write(int fd,const void *bytes,size_t size);
+ssize_t __wrap_write(int fd,const void *bytes,size_t size) {
+    if (write_allowance<0) return __real_write(fd,bytes,size);
+    if (!write_allowance) { errno=EIO; return -1; }
+    if (size>(uint64_t)write_allowance) size=(size_t)write_allowance;
+    ssize_t n=__real_write(fd,bytes,size); if (n>0) write_allowance-=n; return n;
+}
+int __real_fsync(int fd);
+int __wrap_fsync(int fd) {
+    if (fail_sync) { ++sync_failures; errno=EIO; return -1; }
+    return __real_fsync(fd);
+}
 void cetta_durable_test_boundary(const char *boundary) {
     if (concurrent_writer && !strcmp(boundary,"read_meta")) {
-        sqlite3 *db=concurrent_writer; concurrent_writer=NULL;
-        assert(sqlite3_exec(db,
-            "BEGIN IMMEDIATE; INSERT INTO records VALUES('state','one',x'78',1,0);"
-            "INSERT INTO deltas VALUES(1,0,1,'state','one',x'78');"
-            "UPDATE meta SET revision=1,live_bytes=9,live_count=1,history_bytes=9; COMMIT;",
-            NULL,NULL,NULL)==SQLITE_OK);
+        CettaDurableStore *writer=concurrent_writer; concurrent_writer=NULL;
+        assert(!pthread_create(&writer_thread,NULL,write_during_read,writer));
     }
     if (crash_at && !strcmp(crash_at, boundary)) kill(getpid(), SIGKILL);
 }
@@ -52,6 +67,11 @@ static int64_t commit(CettaDurableStore *s, CettaDurableOp *ops, size_t n) {
     check(cetta_durable_commit(s, v.epoch, v.revision, ops, n, &next), DURABLE_OK);
     assert(next == v.revision + 1);
     cetta_durable_snapshot_free(&v); return next;
+}
+
+static void *write_during_read(void *context) {
+    CettaDurableOp op=put(DURABLE_INSERT,"state","one","x");
+    commit(context,&op,1); return NULL;
 }
 
 static const CettaDurableRecord *record(CettaDurableSnapshot *v,
@@ -182,7 +202,7 @@ static void limits(const char *path) {
 }
 
 static void disk_full(const char *path) {
-    CettaDurableLimits l=cetta_durable_default_limits(); l.database_pages=64;
+    CettaDurableLimits l=cetta_durable_default_limits(); l.storage_pages=64;
     CettaDurableStore *s=open_store(path,&l);
     CettaDurableOp first=put(DURABLE_INSERT,"state","s","before"); commit(s,&first,1);
     CettaDurableSnapshot old=snapshot(s);
@@ -198,9 +218,8 @@ static void disk_full(const char *path) {
 }
 
 static void wrong_version(const char *path) {
-    sqlite3 *db=NULL; assert(sqlite3_open(path,&db)==SQLITE_OK);
-    assert(sqlite3_exec(db,"PRAGMA user_version=999",NULL,NULL,NULL)==SQLITE_OK);
-    sqlite3_close(db); CettaDurableStore *s=NULL;
+    int fd=open(path,O_WRONLY|O_CREAT|O_TRUNC,0600); assert(fd>=0);
+    assert(write(fd,"foreign-format",14)==14); assert(!close(fd)); CettaDurableStore *s=NULL;
     check(cetta_durable_open(path,NULL,&s),DURABLE_VERSION); assert(!s);
 }
 
@@ -235,32 +254,7 @@ static void concurrent(const char *path) {
 }
 
 
-/* A VFS interposer fails the actual WAL xSync at COMMIT, not a simulated
- * return from the store. All other methods still use SQLite's normal VFS. */
-static sqlite3_vfs fault_vfs;
-static sqlite3_vfs *base_vfs;
-static sqlite3_io_methods fault_methods;
-static const sqlite3_io_methods *base_methods;
-static bool fail_sync;
-static unsigned sync_failures;
-static int fault_sync(sqlite3_file *f, int flags) {
-    if (fail_sync) { ++sync_failures; return SQLITE_IOERR_FSYNC; }
-    return base_methods->xSync(f,flags);
-}
-static int fault_open(sqlite3_vfs *v, sqlite3_filename name, sqlite3_file *f, int flags, int *out) {
-    (void)v;
-    int rc=base_vfs->xOpen(base_vfs,name,f,flags,out);
-    if (rc==SQLITE_OK && (flags&SQLITE_OPEN_WAL)) {
-        base_methods=f->pMethods; fault_methods=*base_methods;
-        fault_methods.xSync=fault_sync; f->pMethods=&fault_methods;
-    }
-    return rc;
-}
-
 static void commit_ioerr(const char *path) {
-    base_vfs=sqlite3_vfs_find(NULL); assert(base_vfs);
-    fault_vfs=*base_vfs; fault_vfs.zName="durable-test-fsync"; fault_vfs.xOpen=fault_open;
-    assert(sqlite3_vfs_register(&fault_vfs,1)==SQLITE_OK);
     CettaDurableStore *s=open_store(path,NULL);
     CettaDurableOp op=put(DURABLE_INSERT,"state","one","before"); commit(s,&op,1);
     CettaDurableSnapshot old=snapshot(s); int64_t next;
@@ -276,8 +270,6 @@ static void commit_ioerr(const char *path) {
     check(cetta_durable_commit(s,old.epoch,old.revision,&op,1,&next),DURABLE_POISONED);
     CettaDurableUsage usage; check(cetta_durable_usage(s,&usage),DURABLE_POISONED);
     cetta_durable_close(s);
-    assert(sqlite3_vfs_register(base_vfs,1)==SQLITE_OK);
-    assert(sqlite3_vfs_unregister(&fault_vfs)==SQLITE_OK);
     s=open_store(path,NULL); replay_equal(s);
     v=snapshot(s);
     assert(v.revision==old.revision || v.revision==old.revision+1);
@@ -309,15 +301,15 @@ static void recovery_mismatch(const char *path) {
     CettaDurableStore *s=open_store(path,NULL);
     CettaDurableOp op=put(DURABLE_INSERT,"state","one","original"); commit(s,&op,1);
     cetta_durable_close(s);
-    sqlite3 *db=NULL; assert(sqlite3_open(path,&db)==SQLITE_OK);
-    assert(sqlite3_exec(db,"UPDATE records SET value=x'636f727275707421'",NULL,NULL,NULL)==SQLITE_OK);
-    sqlite3_close(db);
+    int fd=open(path,O_RDWR); assert(fd>=0); unsigned char byte;
+    off_t end=lseek(fd,-1,SEEK_END); assert(end>0 && read(fd,&byte,1)==1); byte^=1;
+    assert(pwrite(fd,&byte,1,end)==1); assert(!close(fd));
     check(cetta_durable_open(path,NULL,&s),DURABLE_CORRUPT); assert(!s);
 }
 
 static void removal_reserve(const char *path) {
     CettaDurableLimits l=cetta_durable_default_limits();
-    l.record_bytes=12*1024; l.batch_bytes=13*1024; l.history_bytes=13*1024; l.database_pages=64;
+    l.record_bytes=12*1024; l.batch_bytes=13*1024; l.history_bytes=13*1024; l.storage_pages=64;
     CettaDurableStore *s=open_store(path,&l);
     char data[12*1024]; memset(data,'x',sizeof(data));
     /* Each growth batch compacts. Stop when copying the next checkpoint no
@@ -400,19 +392,20 @@ static void dependencies(const char *path) {
     s=open_store(path,NULL); check(cetta_durable_watch_current(s,watch),DURABLE_OK); cetta_durable_close(s);
     char other[512]; snprintf(other,sizeof(other),"%s.other",path);
     s=open_store(other,NULL); check(cetta_durable_watch_current(s,watch),DURABLE_CONFLICT);
-    cetta_durable_close(s); unlink(other); cetta_durable_watch_free(watch);
+    cetta_durable_close(s); unlink(other);
+    char lock[600]; snprintf(lock,sizeof(lock),"%s.lock",other); unlink(lock); cetta_durable_watch_free(watch);
 }
 
 static void coherent_read_mode(const char *path, bool recover) {
     CettaDurableStore *s=open_store(path,NULL);
-    sqlite3 *writer=NULL; assert(sqlite3_open(path,&writer)==SQLITE_OK);
-    concurrent_writer=writer; CettaDurableSnapshot v;
+    concurrent_writer=s; CettaDurableSnapshot v;
     check(recover ? cetta_durable_recover(s,&v) : cetta_durable_snapshot(s,NULL,&v),DURABLE_OK);
     assert(!concurrent_writer && v.revision==0 && v.count==0);
+    assert(!pthread_join(writer_thread,NULL));
     cetta_durable_snapshot_free(&v);
     v=snapshot(s); assert(v.revision==1 && v.count==1);
     cetta_durable_snapshot_free(&v); replay_equal(s);
-    sqlite3_close(writer); cetta_durable_close(s);
+    cetta_durable_close(s);
 }
 
 static void coherent_read(const char *path) { coherent_read_mode(path,false); }
@@ -461,6 +454,7 @@ static void joined_dependencies(const char *path) {
     CettaDurableStore *different=open_store(foreign,NULL);
     check(cetta_durable_observe_joined(different,required,&output,1,&joined),DURABLE_CONFLICT); assert(!joined);
     cetta_durable_close(different); assert(!unlink(foreign));
+    char lock[600]; snprintf(lock,sizeof(lock),"%s.lock",foreign); unlink(lock);
     joined=(void *)1;
     check(cetta_durable_observe_joined(s,NULL,&output,1,&joined),DURABLE_INVALID); assert(!joined);
     cetta_durable_close(s);
@@ -473,9 +467,9 @@ static void coherent_join(const char *path) {
     CettaDurableStore *s=open_store(path,NULL);
     CettaDurableScope absent={DURABLE_KEY,"state","one"};
     CettaDurableObservation *required=observe(s,&absent,1), *joined=NULL;
-    sqlite3 *writer=NULL; assert(sqlite3_open(path,&writer)==SQLITE_OK); concurrent_writer=writer;
+    concurrent_writer=s;
     check(cetta_durable_observe_joined(s,required,&absent,1,&joined),DURABLE_OK);
-    assert(!concurrent_writer);
+    assert(!concurrent_writer); assert(!pthread_join(writer_thread,NULL));
     for(size_t i=0;i<2;i++) {
         const CettaDurableSnapshot *v=cetta_durable_observation_view(joined,i);
         assert(v && !v->count && v->revision==0);
@@ -484,21 +478,105 @@ static void coherent_join(const char *path) {
     check(cetta_durable_commit_observed(s,joined,&change,1,&next),DURABLE_CONFLICT);
     CettaDurableSnapshot v=snapshot(s); assert(v.revision==1 && v.count==1);
     cetta_durable_snapshot_free(&v); cetta_durable_observation_free(joined);
-    cetta_durable_observation_free(required); sqlite3_close(writer); cetta_durable_close(s);
+    cetta_durable_observation_free(required); cetta_durable_close(s);
+}
+
+static void physical_owner_aliases(const char *path) {
+    CettaDurableStore *s=open_store(path,NULL),*alias_store=NULL;
+    CettaDurableOp op=put(DURABLE_INSERT,"state","one","preserved"); commit(s,&op,1);
+    char alias[600],lock[620],temporary[600];
+    snprintf(alias,sizeof(alias),"%s.alias",path); snprintf(lock,sizeof(lock),"%s.lock",alias);
+    assert(!link(path,alias));
+    check(cetta_durable_open(alias,NULL,&alias_store),DURABLE_INVALID); assert(!alias_store);
+    assert(!unlink(alias)); assert(!unlink(lock));
+    snprintf(temporary,sizeof(temporary),"%s.checkpoint",path);
+    assert(!link(path,temporary));
+    check(cetta_durable_checkpoint(s),DURABLE_INVALID);
+    CettaDurableSnapshot v=snapshot(s); value(&v,"state","one","preserved");
+    replay_equal(s); assert(!unlink(temporary));
+    check(cetta_durable_checkpoint(s),DURABLE_OK);
+    cetta_durable_snapshot_free(&v); cetta_durable_close(s);
+    s=open_store(path,NULL); v=snapshot(s); value(&v,"state","one","preserved");
+    cetta_durable_snapshot_free(&v); cetta_durable_close(s);
+}
+
+static void semantic_corruption(const char *path) {
+    CettaDurableStore *s=open_store(path,NULL);
+    CettaDurableOp ops[]={put(DURABLE_INSERT,"state","a","x"),put(DURABLE_INSERT,"state","b","y")};
+    commit(s,ops,2); cetta_durable_close(s);
+    int fd=open(path,O_RDWR); assert(fd>=0); unsigned char *header=NULL,*batch=NULL;
+    size_t hs=0,bs=0; off_t next=0,end=0;
+    assert(cetta_native_journal_read(fd,0,0,&header,&hs,&next)==CETTA_JOURNAL_OK);
+    assert(cetta_native_journal_read(fd,next,0,&batch,&bs,&end)==CETTA_JOURNAL_OK);
+    /* Independently re-frame a correct-checksum but repeated key. The second
+     * row cannot acquire a new occurrence merely by changing its position. */
+    assert(bs==53+2*(29+5+1+1));
+    unsigned char *forged=malloc(bs); assert(forged); memcpy(forged,batch,bs);
+    size_t second=53+29+5+1+1; forged[second]=DURABLE_REPLACE;
+    forged[second+29+5]='a';
+    assert(!ftruncate(fd,0) && lseek(fd,0,SEEK_SET)==0);
+    assert(cetta_native_journal_append(fd,header,hs,false,NULL)==CETTA_JOURNAL_OK);
+    assert(cetta_native_journal_append(fd,forged,bs,true,NULL)==CETTA_JOURNAL_OK);
+    assert(!close(fd)); check(cetta_durable_open(path,NULL,&s),DURABLE_CORRUPT); assert(!s);
+    /* A discontinuous revision is corrupt despite an authentic frame digest. */
+    memcpy(forged,batch,bs); forged[44]=3;
+    fd=open(path,O_RDWR|O_TRUNC); assert(fd>=0);
+    assert(cetta_native_journal_append(fd,header,hs,false,NULL)==CETTA_JOURNAL_OK);
+    assert(cetta_native_journal_append(fd,forged,bs,true,NULL)==CETTA_JOURNAL_OK);
+    assert(!close(fd)); check(cetta_durable_open(path,NULL,&s),DURABLE_CORRUPT); assert(!s);
+    free(header); free(batch); free(forged);
+}
+
+static void partial_append(const char *path) {
+    for (int64_t allowance=0;allowance<173;++allowance) {
+        CettaDurableStore *s=open_store(path,NULL);
+        CettaDurableSnapshot old=snapshot(s); CettaDurableOp op=put(DURABLE_INSERT,"state","partial","payload");
+        int64_t next=0; write_allowance=allowance;
+        check(cetta_durable_commit(s,old.epoch,old.revision,&op,1,&next),DURABLE_UNKNOWN);
+        assert(next==-1); write_allowance=-1;
+        CettaDurableSnapshot poisoned; check(cetta_durable_snapshot(s,NULL,&poisoned),DURABLE_POISONED);
+        cetta_durable_close(s); s=open_store(path,NULL);
+        CettaDurableSnapshot now=snapshot(s); assert(!now.count && now.revision==old.revision);
+        assert(!strcmp(now.epoch,old.epoch)); replay_equal(s);
+        cetta_durable_snapshot_free(&old); cetta_durable_snapshot_free(&now); cetta_durable_close(s);
+    }
+}
+
+static void unlimited_and_binary(const char *path) {
+    CettaDurableStore *s=open_store(path,NULL); size_t size=2u*1024u*1024u;
+    unsigned char *data=malloc(size); assert(data);
+    for (size_t i=0;i<size;++i) data[i]=(unsigned char)i;
+    char long_key[4097]; memset(long_key,'k',sizeof(long_key)-1); long_key[sizeof(long_key)-1]=0;
+    CettaDurableOp ops[]={{DURABLE_INSERT,"binary","a",data,size},{DURABLE_INSERT,"binary","b",data,size},
+        {DURABLE_INSERT,long_key,long_key,data,size}};
+    commit(s,ops,3); check(cetta_durable_checkpoint(s),DURABLE_OK);
+    CettaDurableStore *second=NULL; check(cetta_durable_open(path,NULL,&second),DURABLE_BUSY); assert(!second);
+    cetta_durable_close(s); s=open_store(path,NULL);
+    CettaDurableSnapshot v=snapshot(s); assert(v.count==3);
+    CettaDurableScope query={DURABLE_KEY,long_key,long_key};
+    CettaDurableObservation *seen=observe(s,&query,1);
+    assert(cetta_durable_observation_view(seen,0)->count==1); cetta_durable_observation_free(seen);
+    for(size_t i=0;i<v.count;++i) assert(v.records[i].size==size && !memcmp(v.records[i].data,data,size));
+    CettaDurableLimits l=cetta_durable_default_limits(); l.record_bytes=1024;
+    cetta_durable_close(s); s=open_store(path,&l); int64_t next;
+    CettaDurableOp denied={DURABLE_REPLACE,"binary","a",data,size};
+    check(cetta_durable_commit(s,v.epoch,v.revision,&denied,1,&next),DURABLE_LIMIT);
+    CettaDurableSnapshot now=snapshot(s); assert(now.revision==v.revision); replay_equal(s);
+    cetta_durable_snapshot_free(&now); cetta_durable_snapshot_free(&v); cetta_durable_close(s); free(data);
 }
 
 int main(void) {
     char dir[]="/tmp/cetta-durable-test-XXXXXX"; assert(mkdtemp(dir));
     char path[256];
-    const char *names[]={"basic","crash","limits","full","version","concurrent","ioerr","degraded","mismatch","reserve","dependencies","coherent","coherent_recover","joined","coherent_join"};
-    void (*tests[])(const char *)={basic,crashes,limits,disk_full,wrong_version,concurrent,commit_ioerr,degraded,recovery_mismatch,removal_reserve,dependencies,coherent_read,coherent_recover,joined_dependencies,coherent_join};
+    const char *names[]={"basic","crash","limits","full","version","concurrent","ioerr","degraded","mismatch","reserve","dependencies","coherent","coherent_recover","joined","coherent_join","partial","binary","semantic","aliases"};
+    void (*tests[])(const char *)={basic,crashes,limits,disk_full,wrong_version,concurrent,commit_ioerr,degraded,recovery_mismatch,removal_reserve,dependencies,coherent_read,coherent_recover,joined_dependencies,coherent_join,partial_append,unlimited_and_binary,semantic_corruption,physical_owner_aliases};
     for (size_t i=0;i<sizeof(tests)/sizeof(*tests);++i) {
         snprintf(path,sizeof(path),"%s/%s.db",dir,names[i]); tests[i](path);
         assert(unlink(path)==0);
-        char sidecar[300]; snprintf(sidecar,sizeof(sidecar),"%s-wal",path); unlink(sidecar);
-        snprintf(sidecar,sizeof(sidecar),"%s-shm",path); unlink(sidecar);
+        char sidecar[300]; snprintf(sidecar,sizeof(sidecar),"%s.lock",path); unlink(sidecar);
+        snprintf(sidecar,sizeof(sidecar),"%s.checkpoint",path); unlink(sidecar);
     }
     assert(rmdir(dir)==0);
-    puts("durable store: atomic transitions, conflicts, checkpoint replay, four crash boundaries, disk full, limits, versions, concurrent decisions, fsync poisoning, degraded recovery, consistency checks, deletion reserve, scoped decisions passed");
+    puts("durable store: atomic transitions, conflicts, checkpoint replay, four crash boundaries, disk full, limits, versions, concurrent decisions, fsync poisoning, degraded recovery, consistency checks, deletion reserve, scoped decisions, 173 partial appends, unlimited binary values/long names and checkpoint lock identity and forged-frame/physical-alias rejection passed");
     return 0;
 }

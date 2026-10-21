@@ -2,11 +2,13 @@
 """Cross-process storage conformance, using an independent CSP1 codec."""
 from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
+import grp
 import hashlib
 import importlib.util
 import json
 from pathlib import Path
 import os
+import pwd
 import socket
 import struct
 import subprocess
@@ -34,10 +36,11 @@ if not BACKENDS or any(x not in ("native", "pathmap", "mork") for x in BACKENDS)
 
 
 class Fixture:
-    def __init__(self, **options):
+    def __init__(self, shared=False, **options):
         self.temp = tempfile.TemporaryDirectory(prefix="cetta-space-")
         self.root = Path(self.temp.name)
         self.socket = str(self.root / "s.sock")
+        self.shared_socket = str(self.root / "shared.sock") if shared else None
         self.data = self.root / "data"
         self.options = options
         self.process = None
@@ -47,6 +50,9 @@ class Fixture:
     def start(self, success=True):
         self.log = self.error.open("ab")
         arguments = [SERVICE, "--socket", self.socket, "--data", str(self.data)]
+        if self.shared_socket:
+            arguments += ["--shared-socket", self.shared_socket,
+                          "--shared-group", grp.getgrgid(os.getgid()).gr_name]
         for name, value in self.options.items():
             arguments += ["--" + name.replace("_", "-"), str(value)]
         self.process = subprocess.Popen(arguments, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=self.log)
@@ -152,6 +158,7 @@ class ServiceTests(unittest.TestCase):
                     E("ops", E("add", S("different"))), request_id="noop")
         receipt = self.client.call("receipt", space.uuid, "noop")
         self.assertEqual(receipt, E("reply", "noop", S("ok"), answer))
+        self.denied("service-identity", self.client.call, "receipt", "0" * 32, "noop")
         TRACE.append({"kind": "conditional", "before": initial, "after": space.revision,
                       "stale": True, "correlated": True})
 
@@ -427,10 +434,22 @@ class ServiceTests(unittest.TestCase):
         before = space.revision
         ops = E("ops", E("add", S("once")))
         space.add(S("once"), request_id="old")
-        for i in range(257):
+        # Cross both the 256-entry reply-cache boundary and the durable
+        # decision index's initial load threshold.
+        for i in range(385):
             space.batch(request_id=f"retire-{i}")
         self.assertEqual(self.client.call("receipt", space.uuid, "old"), S("unknown-receipt"))
-        self.denied("stale-revision", self.client.call, "batch", space.uuid, space.id, before, ops, request_id="old")
+        self.denied("unknown-receipt", self.client.call, "batch", space.uuid, space.id, before, ops, request_id="old")
+        self.assertEqual(space.match_count(S("once")), 1)
+        self.client.call("compact", space.uuid)
+        self.client.close()
+        self.fixture.restart(crash=True)
+        self.client = Client(self.fixture.socket)
+        self.addCleanup(self.client.close)
+        space = self.space()
+        self.assertEqual(self.client.call("receipt", space.uuid, "old"), S("unknown-receipt"))
+        self.denied("unknown-receipt", self.client.call, "batch", space.uuid, space.id,
+                    before, ops, request_id="old")
         self.assertEqual(space.match_count(S("once")), 1)
 
     def test_restart_rejects_old_cursor(self):
@@ -550,6 +569,8 @@ class ServiceTests(unittest.TestCase):
             path.write_text(f'''!(import! &self space_service)
 !(space:open "{self.fixture.socket}" "{space.name}" native)
 !(space:list "{self.fixture.socket}")
+!(space:principal-ref "{self.fixture.socket}")
+!(space:rotate-principal "{self.fixture.socket}" (account {os.getuid()}))
 !(space:describe "{self.fixture.socket}" {descriptor})
 !(space:add "{self.fixture.socket}" {descriptor} (helper 17))
 !(space:count "{self.fixture.socket}" {descriptor} (helper $x))
@@ -560,6 +581,8 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(process.returncode,0,process.stderr)
             self.assertIn("committed",process.stdout)
             self.assertIn("stale-revision",process.stdout)
+            self.assertIn("principal-ref",process.stdout)
+            self.assertIn("rotated-principal",process.stdout)
             self.assertIn(f'"{space.name}" native bag',process.stdout)
             self.assertEqual(space.match(E("helper",Var(0)),Var(0)),[17])
 
@@ -720,7 +743,679 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("verification failed",result.stderr)
 
 
+MEMBER = os.getuid()
+NOBODY = 65534
+ACCOUNT = E("account", MEMBER, S(pwd.getpwuid(MEMBER).pw_name))
+# A send-only mailbox grant: one message and its pending record, correlated by
+# shared variables, with the authenticated account as the sender's account.
+SENDER = E("from", E("caller"), Var(2))
+SHAPE = E("bundle", E("MailboxMessage", 1, Var(0), Var(1), "", SENDER, Var(3)),
+          E("MailboxPending", 1, Var(1), "", SENDER, Var(0)))
+UNIQUE = E("MailboxMessage", 1, Var(0), Var(4), Var(5), E("from", E("caller"), Var(6)), Var(7))
+
+
+def letter(ident, to, agent, body, sender=None):
+    sender = sender or E("from", ACCOUNT, agent)
+    return (E("MailboxMessage", 1, ident, to, "", sender, body),
+            E("MailboxPending", 1, to, "", sender, ident))
+
+
+class PrincipalTests(unittest.TestCase):
+    """Another account's view, staged on one login: stores and grants are made
+    while this account owns the service, which then restarts under another
+    owner so that this account connects as an ordinary member."""
+
+    def setUp(self):
+        self.fixture = Fixture(shared=True)
+        self.addCleanup(self.fixture.close)
+
+    def connect(self, shared=False):
+        client = Client(self.fixture.shared_socket if shared else self.fixture.socket)
+        self.addCleanup(client.close)
+        return client
+
+    def as_owner(self):
+        self.fixture.options.pop("owner_uid", None)
+        self.fixture.restart()
+        return self.connect()
+
+    def as_member(self):
+        self.fixture.options["owner_uid"] = NOBODY
+        self.fixture.restart()
+        return self.connect(shared=True)
+
+    def denied(self, reason, function, *args, **kwargs):
+        with self.assertRaises(csp.ServiceError) as caught:
+            function(*args, **kwargs)
+        self.assertEqual(caught.exception.reason, S(reason))
+
+    def prepare(self, owner):
+        mail, secret, shared = owner.open("mail"), owner.open("secret"), owner.open("shared")
+        secret.add(E("private", "diary"))
+        shared.add(E("note", "hello"))
+        owner.call("grant", mail.uuid, mail.id, E("account", MEMBER), E("rights", S("append")), SHAPE, UNIQUE)
+        owner.call("grant", shared.uuid, shared.id, E("account", MEMBER), E("rights", S("read")),
+                   S("none"), S("none"))
+        return mail, secret, shared
+
+    def test_shared_socket_is_group_only_and_the_owner_is_one_principal(self):
+        state = Path(self.fixture.shared_socket).stat()
+        self.assertEqual(state.st_mode & 0o777, 0o660)
+        self.assertEqual(state.st_gid, os.getgid())
+        self.assertEqual(Path(self.fixture.socket).stat().st_mode & 0o777, 0o600)
+        private, shared = self.connect(), self.connect(shared=True)
+        for client in (private, shared):
+            self.assertEqual(client.call("whoami"), E("principal", ACCOUNT, S("owner")))
+        space = private.open("same")
+        args = (space.uuid, space.id, space.revision, E("ops", E("add", S("once"))))
+        first = private.call("batch", *args, request_id="same-request")
+        self.assertEqual(shared.call("batch", *args, request_id="same-request"), first)
+        self.assertEqual(space.match_count(S("once")), 1)
+        journal = (self.fixture.data / "journal.csl").read_bytes()
+        self.assertIn(b"event-authorized", journal)
+        self.assertNotIn(b"event-from", journal)
+
+    def test_principal_incarnations_are_service_scoped_monotone_and_durable(self):
+        owner = self.connect()
+        uuid = owner.hello()[2]
+        self.assertEqual(owner.principal_ref(), E("principal-ref", uuid, MEMBER, 0))
+        first = owner.rotate_principal(E("account", MEMBER))[1]
+        self.assertEqual(first[:3], (S("principal-ref"), uuid, MEMBER))
+        self.assertGreater(first[3], 0)
+        self.fixture.restart(crash=True)
+        owner = self.connect()
+        second = owner.rotate_principal(E("account", MEMBER))[1]
+        self.assertEqual(second[:3], first[:3])
+        self.assertGreater(second[3], first[3])
+
+    def test_unbound_member_observes_only_opaque_absence_without_minting(self):
+        self.fixture.options["owner_uid"] = NOBODY
+        self.fixture.restart()
+        member = self.connect(shared=True)
+        hello = member.hello()
+        self.assertEqual(member.call("whoami"), E("principal", ACCOUNT, S("member")))
+        self.assertEqual(member.list_spaces(), [])
+        self.assertEqual(member.call("receipt", hello[2], "absent"), S("unknown-receipt"))
+        self.denied("missing-origin", member.call, "origin", hello[2],
+                    E("origin-ref", hello[2], MEMBER, "absent", "0" * 32))
+        self.denied("missing-space", member.open, "absent")
+        self.denied("authority-refused", member.principal_ref)
+        self.denied("service-identity", member.call, "list", "0" * 32)
+        owner = self.as_owner()
+        self.assertEqual(owner.rotate_principal(E("account", MEMBER))[1][3], 1)
+
+    def test_rotation_rekeys_grants_tickets_and_request_ids_end_to_end(self):
+        owner = self.connect()
+        first = owner.rotate_principal(E("account", MEMBER))[1]
+        space = owner.open("rotating-member")
+        owner.call("grant-ticketed", space.uuid, space.id, E("account", MEMBER),
+                   E("rights", S("write")), E("rights", S("write")),
+                   S("none"), S("none"))
+        old_ticket = owner.call("issue-ticket", space.uuid, space.id,
+                                E("account", MEMBER), E("rights", S("write")))[3]
+        member = self.as_member()
+        self.assertEqual(member.principal_ref(), first)
+        space = member.open("rotating-member")
+        old_ops = E("ops", E("add", E("incarnation", 1)))
+        member.call("batch-ticket", space.uuid, space.id, space.revision,
+                    old_ticket, old_ops, request_id="incarnation-write")
+
+        owner = self.as_owner()
+        space = owner.open("rotating-member")
+        second = owner.rotate_principal(E("account", MEMBER))[1]
+        self.assertGreater(second[3], first[3])
+        member = self.as_member()
+        self.assertEqual(member.principal_ref(), second)
+        self.denied("missing-space", member.open, "rotating-member")
+        self.assertEqual(member.call("receipt", space.uuid, "incarnation-write"),
+                         S("unknown-receipt"))
+
+        owner = self.as_owner()
+        space = owner.open("rotating-member")
+        owner.call("grant-ticketed", space.uuid, space.id, E("account", MEMBER),
+                   E("rights", S("write")), E("rights", S("write")),
+                   S("none"), S("none"))
+        fresh_ticket = owner.call("issue-ticket", space.uuid, space.id,
+                                  E("account", MEMBER), E("rights", S("write")))[3]
+        member = self.as_member()
+        space = member.open("rotating-member")
+        self.denied("ticket-unavailable", member.call, "batch-ticket", space.uuid,
+                    space.id, space.revision, old_ticket, E("ops"))
+        fresh_ops = E("ops", E("add", E("incarnation", 2)))
+        member.call("batch-ticket", space.uuid, space.id, space.revision,
+                    fresh_ticket, fresh_ops, request_id="incarnation-write")
+        self.assertCountEqual(space.match(E("incarnation", Var(0)), Var(0)), [1, 2])
+
+    def test_member_sees_only_granted_stores(self):
+        _, secret, _ = self.prepare(self.connect())
+        member = self.as_member()
+        self.assertEqual(member.call("whoami"), E("principal", ACCOUNT, S("member")))
+        self.assertEqual(member.hello()[4], 0)
+        listed = {entry[3]: entry[6:] for entry in member.list_spaces()}
+        self.assertEqual(listed, {"mail": (0, 0), "shared": (1, 1)})
+        self.denied("missing-space", member.open, "secret")
+        self.denied("missing-space", member.open, "absent")
+        self.denied("missing-space", member.call, "describe", secret.uuid, secret.id)
+        self.denied("missing-space", member.call, "batch", secret.uuid, secret.id, 1, E("ops"))
+        mail = member.open("mail")
+        self.assertEqual(mail.revision, 0)
+        for operation, args in (("describe", ()), ("verify", ()), ("count", (Var(0),)),
+                                ("query", (Var(0), Var(0), 10, 1000)), ("watch", (0, 10)),
+                                ("batch", (0, E("ops"))), ("drop", (0, 0)),
+                                ("grant", (E("account", MEMBER), E("rights"), S("none"), S("none"))),
+                                ("append", (E("bundle", S("loose")),))):
+            with self.subTest(operation=operation):
+                expected = "shape-mismatch" if operation == "append" else "forbidden"
+                self.denied(expected, member.call, operation, mail.uuid, mail.id, *args)
+        self.denied("forbidden", member.call, "compact", mail.uuid)
+        shared = member.open("shared")
+        self.assertEqual(shared.match(E("note", Var(0)), Var(0)), ["hello"])
+        self.denied("forbidden", member.call, "batch", shared.uuid, shared.id, shared.revision, E("ops"))
+
+    def test_member_append_is_shaped_unique_and_authenticated(self):
+        self.prepare(self.connect())
+        member = self.as_member()
+        mail = member.open("mail")
+
+        def post(bundle):
+            return member.call("append", mail.uuid, mail.id, E("bundle", *bundle))
+
+        self.assertEqual(post(letter("m1", "receiver", "writer", "hi")), S("appended"))
+        self.assertEqual(post(letter("m1", "receiver", "writer", "hi")), S("duplicate"))
+        self.denied("id-conflict", post, letter("m1", "receiver", "writer", "changed"))
+        forged = E("from", E("account", 1), "writer")
+        self.denied("shape-mismatch", post, letter("m2", "receiver", "writer", "x", sender=forged))
+        self.denied("shape-mismatch", post, letter("m3", "receiver", "writer", "x")[:1])
+        message, _ = letter("m4", "receiver", "writer", "x")
+        _, other = letter("m5", "receiver", "writer", "x")
+        self.denied("shape-mismatch", post, (message, other))
+        ready = E("MailboxReady", 1, "m6", "receiver", 0, S("none"), "m6")
+        self.denied("shape-mismatch", post, letter("m6", "receiver", "writer", "x") + (ready,))
+        sender = E("from", ACCOUNT, "writer")
+        self.denied("open-value", post, (E("MailboxMessage", 1, Var(9), "receiver", "", sender, "x"),
+                                         E("MailboxPending", 1, "receiver", "", sender, Var(9))))
+        owner = self.as_owner()
+        mail = owner.open("mail")
+        self.assertEqual(mail.match(E("MailboxMessage", 1, Var(0), Var(1), Var(2), Var(3), Var(4)),
+                                    E("seen", Var(0), Var(1), Var(3), Var(4))),
+                         [E("seen", "m1", "receiver", sender, "hi")])
+        self.assertEqual(mail.match_count(E("MailboxPending", 1, Var(0), Var(1), Var(2), Var(3))), 1)
+        # A pickup consumes the pending record but keeps the message, so an
+        # identical retry is still a duplicate and a changed one a conflict.
+        mail.batch(E("remove", letter("m1", "receiver", "writer", "hi")[1]))
+        member = self.as_member()
+        mail = member.open("mail")
+        self.assertEqual(post(letter("m1", "receiver", "writer", "hi")), S("duplicate"))
+        self.denied("id-conflict", post, letter("m1", "receiver", "writer", "changed"))
+
+        # Distinct IDs sharing the structural string hash still name distinct
+        # messages. A candidate collision must not become a duplicate/conflict.
+        for message_id in ("!c", '"@'):
+            self.assertEqual(post(letter(message_id, "receiver", "writer", "hi")), S("appended"))
+            self.assertEqual(post(letter(message_id, "receiver", "writer", "hi")), S("duplicate"))
+
+    @unittest.skipUnless(CETTA, "provide cetta for the MeTTa mailbox client")
+    def test_mailbox_post_from_another_account_reaches_the_owner(self):
+        owner = self.connect()
+        mail = owner.open("agent-mail")
+        owner.call("grant", mail.uuid, mail.id, E("account", MEMBER), E("rights", S("append")), SHAPE, UNIQUE)
+
+        def run(socket, source):
+            path = self.fixture.root / "client.metta"
+            path.write_text("!(import! &self mailbox)\n" + source)
+            process = subprocess.run([CETTA, "--lang", "petta", "--quiet", str(path)], cwd=ROOT,
+                                     text=True, capture_output=True, timeout=30)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            return process.stdout
+
+        post = f'!(mailbox:post "{self.fixture.shared_socket}" "agent-mail" "p1" "receiver" "writer" "hello")\n'
+        self.as_member()
+        self.assertIn('(mailbox:sent "p1" accepted)', run(self.fixture.shared_socket, post))
+        self.assertIn('(mailbox:sent "p1" duplicate)', run(self.fixture.shared_socket, post))
+        self.as_owner()
+        account = f'(account {MEMBER} {pwd.getpwuid(MEMBER).pw_name})'
+        self.assertIn(f'(mailbox:delivery "p1" (from {account} "writer") "hello")',
+                      run(self.fixture.socket, f'!(mailbox:next "{self.fixture.socket}" "agent-mail" "receiver")\n'))
+
+        # The public helper reaches the same authenticated append boundary
+        # through a generation-bound ticket and consumes it with the send.
+        owner = self.connect()
+        mail = owner.open("agent-mail")
+        owner.call("grant-ticketed", mail.uuid, mail.id, E("account", MEMBER),
+                   E("rights", S("append")), E("rights", S("append")), SHAPE, UNIQUE)
+        issued = owner.call("issue-ticket", mail.uuid, mail.id, E("account", MEMBER),
+                            E("rights", S("append")))
+        self.as_member()
+        post_ticket = (f'!(mailbox:post-ticket "{self.fixture.shared_socket}" "agent-mail" '
+                       f'{issued[3]} "p2" "receiver" "writer" "ticketed")\n')
+        self.assertIn('(mailbox:sent "p2" accepted)',
+                      run(self.fixture.shared_socket, post_ticket))
+        owner = self.as_owner()
+        mail = owner.open("agent-mail")
+        sender = E("from", ACCOUNT, "writer")
+        self.assertEqual(
+            mail.match(E("MailboxMessage", 1, "p2", "receiver", "", sender, Var(0)), Var(0)),
+            ["ticketed"])
+
+    def test_grants_survive_a_checkpoint_and_revocation_removes_access(self):
+        _, _, shared = self.prepare(self.connect())
+        self.connect().call("compact", shared.uuid)
+        member = self.as_member()
+        self.assertEqual(member.open("shared").match(E("note", Var(0)), Var(0)), ["hello"])
+        owner = self.as_owner()
+        shared = owner.open("shared")
+        self.assertEqual(owner.call("grant", shared.uuid, shared.id, E("account", MEMBER), E("rights"),
+                                    S("none"), S("none")),
+                         E("granted", E("account", MEMBER), E("rights")))
+        member = self.as_member()
+        self.denied("missing-space", member.open, "shared")
+
+    def test_regrant_does_not_reauthorize_cached_reply(self):
+        mail, _, _ = self.prepare(self.connect())
+        member = self.as_member()
+        mail = member.open("mail")
+        bundle = E("bundle", *letter("receipt-generation", "receiver", "writer", "one"))
+        self.assertEqual(member.call("append", mail.uuid, mail.id, bundle,
+                                     request_id="member-authorized"), S("appended"))
+
+        owner = self.as_owner()
+        mail = owner.open("mail")
+        self.assertEqual(owner.call("grant", mail.uuid, mail.id, E("account", MEMBER),
+                                    E("rights"), S("none"), S("none"))[0], S("granted"))
+        self.assertEqual(owner.call("grant", mail.uuid, mail.id, E("account", MEMBER),
+                                    E("rights", S("append")), SHAPE, UNIQUE)[0], S("granted"))
+
+        member = self.as_member()
+        mail = member.open("mail")
+        self.denied("authority-refused", member.call, "receipt", mail.uuid,
+                    "member-authorized")
+        self.denied("authority-refused", member.call, "append", mail.uuid, mail.id, bundle,
+                    request_id="member-authorized")
+        owner = self.as_owner()
+        mail = owner.open("mail")
+        self.assertEqual(mail.match_count(E("MailboxMessage", 1, "receipt-generation",
+                                            Var(0), Var(1), Var(2), Var(3))), 1)
+
+    def test_one_shot_append_ticket_is_commit_spent_and_durable(self):
+        owner = self.connect()
+        mail, _, _ = self.prepare(owner)
+        self.assertIn(S("one-shot-tickets"), owner.hello()[5])
+        owner.call("grant-ticketed", mail.uuid, mail.id, E("account", MEMBER),
+                   E("rights", S("append")), E("rights", S("append")), SHAPE, UNIQUE)
+        ticket = owner.call("issue-ticket", mail.uuid, mail.id, E("account", MEMBER),
+                            E("rights", S("append")))
+        self.assertEqual(ticket[:3], (S("ticket"), mail.uuid, mail.id))
+        ticket_id = ticket[3]
+        bundle = E("bundle", *letter("ticketed", "receiver", "writer", "once"))
+
+        member = self.as_member()
+        mail = member.open("mail")
+        args = (mail.uuid, mail.id, ticket_id, bundle)
+        self.denied("ticket-required", member.call, "append", mail.uuid, mail.id, bundle)
+        self.assertEqual(member.call("append-ticket", *args, request_id="ticket-use"),
+                         S("appended"))
+        self.assertEqual(member.call("append-ticket", *args, request_id="ticket-use"),
+                         S("appended"))
+        self.assertEqual(member.call("receipt", mail.uuid, "ticket-use"),
+                         E("reply", "ticket-use", S("ok"), S("appended")))
+        self.denied("ticket-unavailable", member.call, "append-ticket", *args,
+                    request_id="copied-ticket")
+
+        owner = self.as_owner()
+        mail = owner.open("mail")
+        owner.call("compact", mail.uuid)
+        member = self.as_member()
+        mail = member.open("mail")
+        self.assertEqual(member.call("append-ticket", *args, request_id="ticket-use"),
+                         S("appended"))
+        self.denied("ticket-unavailable", member.call, "append-ticket", *args,
+                    request_id="copied-after-restart")
+        owner = self.as_owner()
+        mail = owner.open("mail")
+        self.assertEqual(mail.match_count(E("MailboxMessage", 1, "ticketed",
+                                            Var(0), Var(1), Var(2), Var(3))), 1)
+        revoked = owner.call("issue-ticket", mail.uuid, mail.id, E("account", MEMBER),
+                             E("rights", S("append")))
+        self.assertEqual(owner.call("revoke-ticket", mail.uuid, mail.id, revoked[3]),
+                         S("ticket-revoked"))
+        member = self.as_member()
+        mail = member.open("mail")
+        self.denied("ticket-unavailable", member.call, "append-ticket", mail.uuid,
+                    mail.id, revoked[3], bundle, request_id="revoked-ticket")
+
+    @unittest.skipUnless(CETTA, "provide cetta for the explicit grant helper")
+    def test_explicit_root_grant_is_reference_only_and_durable(self):
+        owner = self.connect()
+        space = owner.open("explicit-grant")
+        self.assertIn(S("attenuating-grants"), owner.hello()[5])
+        granted = owner.call("grant-root", space.uuid, space.id, E("account", MEMBER),
+                             E("rights", S("append")), E("rights", S("append")),
+                             S("false"), S("none"), S("none"))
+        self.assertEqual(granted[0], S("granted-root"))
+        grant = granted[1]
+        issued = owner.call("issue-ticket-v2", space.uuid, space.id, grant,
+                            E("rights", S("append")))
+        self.assertEqual(issued[0], S("ticket-v2"))
+        ticket = issued[2]
+
+        member = self.as_member()
+        self.denied("missing-space", member.open, "explicit-grant")
+        self.denied("missing-space", member.call, "append", space.uuid, space.id,
+                    E("bundle", S("ambient-bypass")))
+
+        descriptor = (f'(space "{space.uuid}" {space.id} "{space.name}" '
+                      f'native bag {space.revision} {space.count})')
+        grant_text = f'(grant-ref "{grant[1]}" {grant[2]} {grant[3]} {grant[4]})'
+        ticket_text = f'(ticket-ref "{ticket[1]}" {ticket[2]} {ticket[3]})'
+        source = (f'!(import! &self space_service)\n'
+                  f'!(space:append-authorized "{self.fixture.shared_socket}" {descriptor} '
+                  f'{grant_text} {ticket_text} (bundle explicit-value))\n')
+        path = self.fixture.root / "explicit-grant.metta"
+        path.write_text(source)
+        process = subprocess.run([CETTA, "--lang", "petta", "--quiet", str(path)],
+                                 cwd=ROOT, text=True, capture_output=True, timeout=30)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("appended", process.stdout)
+
+        owner = self.as_owner()
+        stored = owner.open("explicit-grant")
+        self.assertEqual(stored.match_count(S("explicit-value")), 1)
+
+    @unittest.skipUnless(CETTA, "provide cetta for the explicit read-grant helpers")
+    def test_explicit_read_grant_carries_snapshot_watch_and_regrant_lifetimes(self):
+        owner = self.connect()
+        space = owner.open("explicit-read")
+        space.batch(E("add", E("visible", 1)), E("add", E("visible", 2)))
+        grant = owner.call("grant-root", space.uuid, space.id, E("account", MEMBER),
+                           E("rights", S("observe"), S("read")), E("rights"),
+                           S("false"), S("none"), S("none"))[1]
+
+        member = self.as_member()
+        self.assertIn(S("explicit-read-grants"), member.hello()[5])
+        self.denied("missing-space", member.open, "explicit-read")
+        self.denied("missing-space", member.call, "query", space.uuid, space.id,
+                    E("visible", Var(0)), Var(0), 10, 30000)
+        authority = E("authority", grant)
+        descriptor = member.call("describe", space.uuid, space.id, authority)
+        view = csp.Space(member, descriptor)
+        self.assertEqual(view.verify(grant)[0], S("verified"))
+        self.assertEqual(view.match_count(E("visible", Var(0)), grant=grant), 2)
+        self.assertEqual(view.match(E("visible", Var(0)), Var(0), grant=grant), [1, 2])
+        self.assertEqual(view.watch(view.revision, 0, grant)[0], S("unchanged"))
+
+        descriptor_text = (f'(space "{view.uuid}" {view.id} "{view.name}" '
+                           f'{view.backend} {view.multiplicity} {view.revision} {view.count})')
+        grant_text = f'(grant-ref "{grant[1]}" {grant[2]} {grant[3]} {grant[4]})'
+        source = (f'!(import! &self space_service)\n'
+                  f'!(space:count-authorized "{self.fixture.shared_socket}" '
+                  f'{descriptor_text} {grant_text} (visible $x))\n'
+                  f'!(space:watch-authorized "{self.fixture.shared_socket}" '
+                  f'{descriptor_text} {grant_text} {view.revision} 0)\n')
+        path = self.fixture.root / "explicit-read.metta"
+        path.write_text(source)
+        process = subprocess.run([CETTA, "--lang", "petta", "--quiet", str(path)],
+                                 cwd=ROOT, text=True, capture_output=True, timeout=30)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("2", process.stdout)
+        self.assertIn("unchanged", process.stdout)
+
+        owner = self.as_owner()
+        current = owner.open("explicit-read")
+        owner.call("revoke-grant", current.uuid, current.id, grant)
+        fresh = owner.call("grant-root", current.uuid, current.id, E("account", MEMBER),
+                           E("rights", S("observe"), S("read")), E("rights"),
+                           S("false"), S("none"), S("none"))[1]
+        member = self.as_member()
+        self.denied("missing-space", member.call, "count", current.uuid, current.id,
+                    E("visible", Var(0)), E("authority", grant))
+        self.assertEqual(member.call("count", current.uuid, current.id,
+                                     E("visible", Var(0)), E("authority", fresh)), 2)
+
+    @unittest.skipUnless(CETTA, "provide cetta for the account-origin helper")
+    def test_account_origin_is_service_stamped_historical_and_durable(self):
+        owner = self.connect()
+        space = owner.open("account-origin")
+        pattern = E("bundle", E("attested", E("caller"), E("origin"), Var(0)))
+        self.denied("invalid-grant", owner.call, "grant-root", space.uuid, space.id,
+                    E("account", MEMBER), E("rights", S("write")), E("rights"),
+                    S("false"), pattern, S("none"))
+        self.denied("invalid-grant", owner.call, "grant-root", space.uuid, space.id,
+                    E("account", MEMBER), E("rights", S("append")), E("rights"),
+                    S("false"), E("bundle", E("plain", Var(0))), E("origin"))
+        granted = owner.call("grant-root", space.uuid, space.id, E("account", MEMBER),
+                             E("rights", S("append")), E("rights"), S("false"),
+                             pattern, S("none"))
+        grant = granted[1]
+
+        member = self.as_member()
+        bundle = E("bundle", E("attested", ACCOUNT, E("origin"), 7))
+        self.assertEqual(member.call("append-authorized", space.uuid, space.id, grant,
+                                     S("none"), bundle, request_id="origin-one"),
+                         S("appended"))
+
+        self.fixture.options.pop("owner_uid", None)
+        self.fixture.restart(crash=True)
+        owner = self.connect()
+        stored = owner.open("account-origin")
+        origins = stored.match(E("attested", ACCOUNT, Var(0), 7), Var(0))
+        self.assertEqual(len(origins), 1)
+        origin = origins[0]
+        self.assertEqual(origin[:4], (S("origin-ref"), stored.uuid, MEMBER, "origin-one"))
+        self.assertEqual(len(origin[4]), 32)
+        attestation = owner.call("origin", stored.uuid, origin)
+        self.assertEqual(len(attestation), 5)
+        self.assertEqual(attestation[0], S("account-origin"))
+        self.assertEqual(attestation[1], origin)
+        self.assertEqual(attestation[2][:3], (S("principal-ref"), stored.uuid, MEMBER))
+        self.assertGreater(attestation[2][3], 0)
+        self.assertEqual(attestation[3], E("origin-authority", stored.id, grant[3], grant[4],
+                                           E("rights", S("append")), S("none")))
+        self.assertEqual(len(attestation[4]), 64)
+        materialized = E("bundle", E("attested", ACCOUNT, origin, 7))
+        self.assertEqual(attestation[4], hashlib.sha256(csp.encode(materialized)).hexdigest())
+
+        member = self.as_member()
+        forged = E("bundle", E("attested", ACCOUNT, origin, 8))
+        self.denied("origin-required", member.call, "append-authorized", space.uuid,
+                    space.id, grant, S("none"), forged, request_id="origin-forged")
+        bad = E("origin-ref", origin[1], origin[2], origin[3], "0" * 32)
+        self.denied("missing-origin", member.call, "origin", space.uuid, bad)
+
+        owner = self.as_owner()
+        stored = owner.open("account-origin")
+        for index in range(256):
+            stored.batch(request_id=f"origin-evict-{index}")
+        member = self.as_member()
+        self.assertEqual(member.call("receipt", space.uuid, "origin-one"),
+                         S("unknown-receipt"))
+        self.assertEqual(member.call("origin", space.uuid, origin), attestation)
+
+        owner = self.as_owner()
+        stored = owner.open("account-origin")
+        owner.call("revoke-grant", stored.uuid, stored.id, grant)
+        owner.call("compact", stored.uuid)
+        member = self.as_member()
+        self.denied("missing-space", member.call, "append-authorized", space.uuid,
+                    space.id, grant, S("none"), bundle, request_id="origin-after-revoke")
+        self.assertEqual(member.call("origin", space.uuid, origin), attestation)
+
+        source = (f'!(import! &self space_service)\n'
+                  f'!(space:origin "{self.fixture.shared_socket}" '
+                  f'(origin-ref "{origin[1]}" {origin[2]} "{origin[3]}" "{origin[4]}"))\n')
+        path = self.fixture.root / "account-origin.metta"
+        path.write_text(source)
+        process = subprocess.run([CETTA, "--lang", "petta", "--quiet", str(path)],
+                                 cwd=ROOT, text=True, capture_output=True, timeout=30)
+        self.assertEqual(process.returncode, 0, process.stderr)
+        self.assertIn("account-origin", process.stdout)
+
+    def test_account_origin_digest_is_checked_during_recovery(self):
+        owner = self.connect()
+        space = owner.open("origin-digest")
+        pattern = E("bundle", E("sealed-origin", E("caller"), E("origin"), Var(0)))
+        grant = owner.call("grant-root", space.uuid, space.id, E("account", MEMBER),
+                           E("rights", S("append")), E("rights"), S("false"),
+                           pattern, S("none"))[1]
+        member = self.as_member()
+        member.call("append-authorized", space.uuid, space.id, grant, S("none"),
+                    E("bundle", E("sealed-origin", ACCOUNT, E("origin"), 9)),
+                    request_id="origin-digest-event")
+        member.close()
+        self.fixture.stop()
+
+        journal = self.fixture.data / "journal.csl"
+        data = bytearray(journal.read_bytes())
+        position = 0
+        changed = False
+        while position < len(data):
+            self.assertEqual(data[position:position+4], b"CSL1")
+            length = struct.unpack(">I", data[position+4:position+8])[0]
+            start, end = position + 72, position + 72 + length
+            record = csp.decode(bytes(data[start:end]))
+            if record[0] == S("event-authorized-v5") and record[9] != S("none"):
+                record = tuple(record[:10]) + ("0" * 64,) + tuple(record[11:])
+                payload = csp.encode(record)
+                self.assertEqual(len(payload), length)
+                data[position+8:position+72] = hashlib.sha256(payload).hexdigest().encode()
+                data[start:end] = payload
+                changed = True
+                break
+            position = end
+        self.assertTrue(changed)
+        journal.write_bytes(data)
+        self.fixture.start(success=False)
+        self.assertNotEqual(self.fixture.process.returncode, 0)
+        self.fixture.process = None
+
+    def test_ticket_conflict_preserves_currency_and_regrant_invalidates_it(self):
+        owner = self.connect()
+        space = owner.open("ticket-write")
+        owner.call("grant-ticketed", space.uuid, space.id, E("account", MEMBER),
+                   E("rights", S("write")), E("rights", S("write")), S("none"), S("none"))
+        ticket = owner.call("issue-ticket", space.uuid, space.id, E("account", MEMBER),
+                            E("rights", S("write")))
+        ticket_id = ticket[3]
+
+        member = self.as_member()
+        space = member.open("ticket-write")
+        ops = E("ops", E("add", S("once")))
+        self.denied("ticket-required", member.call, "batch", space.uuid, space.id,
+                    space.revision, ops)
+        self.denied("stale-revision", member.call, "batch-ticket", space.uuid, space.id,
+                    space.revision + 1, ticket_id, ops)
+        self.assertEqual(member.call("batch-ticket", space.uuid, space.id, space.revision,
+                                     ticket_id, ops)[3], space.revision + 1)
+        self.denied("ticket-unavailable", member.call, "batch-ticket", space.uuid, space.id,
+                    space.revision + 1, ticket_id, E("ops"))
+
+        owner = self.as_owner()
+        space = owner.open("ticket-write")
+        fresh = owner.call("issue-ticket", space.uuid, space.id, E("account", MEMBER),
+                           E("rights", S("write")))
+        owner.call("grant", space.uuid, space.id, E("account", MEMBER), E("rights"),
+                   S("none"), S("none"))
+        owner.call("grant-ticketed", space.uuid, space.id, E("account", MEMBER),
+                   E("rights", S("write")), E("rights", S("write")), S("none"), S("none"))
+        member = self.as_member()
+        space = member.open("ticket-write")
+        self.denied("ticket-unavailable", member.call, "batch-ticket", space.uuid, space.id,
+                    space.revision, fresh[3], E("ops"))
+
+
 class QuotaTests(unittest.TestCase):
+    def test_optional_principal_limit_refuses_new_accounts_not_rotation(self):
+        fixture = Fixture(max_principals=1)
+        try:
+            with Client(fixture.socket) as client:
+                first = client.rotate_principal(E("account", NOBODY))[1]
+                second = client.rotate_principal(E("account", NOBODY))[1]
+                self.assertGreater(second[3], first[3])
+                with self.assertRaises(csp.ServiceError) as caught:
+                    client.rotate_principal(E("account", MEMBER + 1))
+                self.assertEqual(caught.exception.reason, S("principal-capacity"))
+                space = client.open("principal-limit")
+                client.call("compact", space.uuid)
+            fixture.restart()
+            with Client(fixture.socket) as client:
+                third = client.rotate_principal(E("account", NOBODY))[1]
+                self.assertGreater(third[3], second[3])
+                with self.assertRaises(csp.ServiceError) as caught:
+                    client.rotate_principal(E("account", MEMBER + 1))
+                self.assertEqual(caught.exception.reason, S("principal-capacity"))
+        finally:
+            fixture.close()
+
+    def test_optional_grant_limit_refuses_instead_of_reusing_identity(self):
+        fixture = Fixture(max_grants=1)
+        try:
+            with Client(fixture.socket) as client:
+                space = client.open("one-grant")
+                first = client.call("grant-root", space.uuid, space.id,
+                                    E("account", MEMBER), E("rights", S("append")),
+                                    E("rights"), S("false"), S("none"), S("none"))
+                self.assertEqual(first[1][3:], (1, 1))
+                with self.assertRaises(csp.ServiceError) as caught:
+                    client.call("grant-root", space.uuid, space.id,
+                                E("account", MEMBER + 1), E("rights", S("append")),
+                                E("rights"), S("false"), S("none"), S("none"))
+                self.assertEqual(caught.exception.reason, S("grant-capacity"))
+                client.call("compact", space.uuid)
+            fixture.restart()
+            with Client(fixture.socket) as client:
+                space = client.open("one-grant")
+                with self.assertRaises(csp.ServiceError) as caught:
+                    client.call("grant-root", space.uuid, space.id,
+                                E("account", MEMBER + 1), E("rights", S("append")),
+                                E("rights"), S("false"), S("none"), S("none"))
+                self.assertEqual(caught.exception.reason, S("grant-capacity"))
+        finally:
+            fixture.close()
+
+    def test_optional_ticket_limit_refuses_instead_of_reusing_identity(self):
+        fixture = Fixture(max_tickets=1)
+        try:
+            with Client(fixture.socket) as client:
+                space = client.open("one-ticket")
+                client.call("grant-ticketed", space.uuid, space.id, E("account", MEMBER),
+                            E("rights", S("append")), E("rights", S("append")),
+                            S("none"), S("none"))
+                first = client.call("issue-ticket", space.uuid, space.id, E("account", MEMBER),
+                                    E("rights", S("append")))
+                with self.assertRaises(csp.ServiceError) as caught:
+                    client.call("issue-ticket", space.uuid, space.id, E("account", MEMBER),
+                                E("rights", S("append")))
+                self.assertEqual(caught.exception.reason, S("ticket-capacity"))
+                client.call("compact", space.uuid)
+            fixture.restart()
+            with Client(fixture.socket) as client:
+                space = client.open("one-ticket")
+                self.assertEqual(first[3], 1)
+                with self.assertRaises(csp.ServiceError) as caught:
+                    client.call("issue-ticket", space.uuid, space.id, E("account", MEMBER),
+                                E("rights", S("append")))
+                self.assertEqual(caught.exception.reason, S("ticket-capacity"))
+        finally:
+            fixture.close()
+
+    def test_optional_decision_limit_refuses_instead_of_forgetting(self):
+        fixture = Fixture(max_decisions=1)
+        try:
+            with Client(fixture.socket) as client:
+                space = client.open("one-decision")
+                with self.assertRaises(csp.ServiceError) as caught:
+                    space.batch()
+                self.assertEqual(caught.exception.reason, S("decision-capacity"))
+                self.assertEqual(space.describe()[6:], (0, 0))
+                client.call("compact", space.uuid)
+            fixture.restart()
+            with Client(fixture.socket) as client:
+                space = client.open("one-decision")
+                with self.assertRaises(csp.ServiceError) as caught:
+                    space.batch()
+                self.assertEqual(caught.exception.reason, S("decision-capacity"))
+        finally:
+            fixture.close()
+
     def test_conservative_batch_admission_preserves_state(self):
         fixture = Fixture(max_facts=2,max_live_bytes=1024)
         try:

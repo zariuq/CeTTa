@@ -2,6 +2,7 @@
 #define CETTA_DURABLE_HOST_H
 #include "durable_store.h"
 #include "eval.h"
+#include "native_cost.h"
 #include "owned_execution.h"
 
 /* Native coordination boundary; deliberately not an evaluator builtin.
@@ -75,17 +76,27 @@ const CettaDurableSnapshot *cetta_host_view(const CettaHostDecision *decision, s
  * Run the speculative gate and retain the outcome on this ticket. Previous
  * results are discarded even if this call fails. Expression is host-owned
  * trusted code; worker proposals must enter through recorded input data.
- * DURABLE_OK means evaluation ran, not that it completed or can be accepted. */
+ * This synchronous speculative entry uses HE. Prime uses plan_open and its
+ * independently admitted retained source profile. DURABLE_OK means evaluation
+ * ran, not that it completed or can be accepted. */
 CettaDurableStatus cetta_host_evaluate(CettaHostDecision *decision,
     const CettaHostProgram *program, Atom *expression, int fuel);
 typedef struct {
     uint64_t quantum, work_limit;
     size_t preparation_inspections, preparation_bytes, results;
+    /* Optional retained return-phase slicing. Clear limit flags select the
+     * ordinary unlimited phase with a zero numeric field. A set flag admits
+     * zero as an inert slice and requires a value below UINT64_MAX. Source
+     * preparation and destination transport retain independent residuals. */
+    CettaPrimeReturnSlice return_slice;
     /* Optional caller-paid parent. Admission reserves work_limit; the owned
      * provider retains that lease and refunds its unused balance on disposal.
      * NULL preserves the independently selected ordinary planning path. */
     CettaWorkCredit *credit;
 } CettaHostPlanLimits;
+typedef struct {
+    uint64_t inspections, arena_bytes;
+} CettaHostSetupWork;
 /* Explicit retained Prime planning over the decision's fresh captured views.
  * Source &self changes are confined to that private snapshot; external I/O
  * and capabilities are not admitted. No durable mutation occurs during
@@ -102,6 +113,70 @@ CettaDurableStatus cetta_host_plan_open(CettaHostDecision *,
  * use plan_cancel/decision_free so final work and results remain inspectable.
  * Decisions, original intern contexts and trusted host program outlive use. */
 CettaOwnedTask *cetta_host_plan_task(CettaHostDecision *);
+/* Cumulative structural return work of the retained plan. Preparation is
+ * owned by the source adapter; transport is owned by this host destination.
+ * Scalar work, allocation and cleanup retain their separate prices. */
+bool cetta_host_plan_return_work(
+    const CettaHostDecision *, CettaPrimeReturnWork *);
+typedef enum {
+    CETTA_HOST_PLAN_ADMISSION_READY,
+    CETTA_HOST_PLAN_ADMISSION_PAUSED,
+    CETTA_HOST_PLAN_ADMISSION_REFUSED,
+    CETTA_HOST_PLAN_ADMISSION_INVALIDATED,
+    CETTA_HOST_PLAN_PRODUCER,
+    CETTA_HOST_PLAN_SOURCE_WORK,
+    CETTA_HOST_PLAN_PREPARATION,
+    CETTA_HOST_PLAN_CONSUMER,
+    CETTA_HOST_PLAN_TRANSPORT,
+    CETTA_HOST_PLAN_FINAL_CURRENT,
+    CETTA_HOST_PLAN_RETIREMENT,
+    CETTA_HOST_PLAN_SETUP,
+} CettaHostPlanTag;
+typedef struct CettaHostPlanOccurrence {
+    CettaHostPlanTag tag;
+    CettaNativeCostEvent event;
+} CettaHostPlanOccurrence;
+#define CETTA_HOST_PLAN_RECEIPT_CAPACITY 12u
+typedef struct CettaHostPlanReceipt {
+    CettaHostPlanOccurrence occurrences[CETTA_HOST_PLAN_RECEIPT_CAPACITY];
+    CettaOwnedExecutionStep step;
+    uint8_t count;
+    bool initial_pending,complete;
+} CettaHostPlanReceipt;
+typedef struct CettaHostPlanReceiptSummary {
+    CettaOwnedExecutionStep step;
+    CettaOwnedTaskAdmission last_admission;
+    uint64_t admission,producer,consumer,final_is_current,retirements;
+    uint64_t setup_work,source_work,total;
+    CettaPrimeReturnWork returns;
+    bool initial_pending;
+} CettaHostPlanReceiptSummary;
+typedef struct {
+    CettaOwnedVisit visit;
+    CettaOwnedTaskAccount protocol;
+    uint64_t source_work;
+    /* Fresh program/snapshot projection precedes the retained provider. Its
+     * structural work is emitted once as the first ordered receipt event;
+     * destination-arena bytes stay a separate physical/storage observation. */
+    CettaHostSetupWork setup;
+    CettaPrimeReturnWork returns;
+    /* Issued synchronously at callback completion, before the next protocol
+     * action. A provider/consumer delta is one explicit settlement occurrence;
+     * this order is not reconstructed later from the aggregate fields. */
+    CettaHostPlanReceipt receipt;
+} CettaHostPlanPollAccount;
+/* One retained host poll with its exact exposed phase deltas. The provider's
+ * other primitive/allocation costs and the enclosing activity's arrival,
+ * queue, publication and teardown work remain separately accounted. */
+CettaDurableStatus cetta_host_plan_poll_accounted(
+    CettaHostDecision *, bool poll, CettaHostPlanPollAccount *);
+/* Validate and project the host-issued ordered occurrences. Each event keeps
+ * the existing native identity, origin, occurrence, kind and units; the tag
+ * states which poll action issued that event. Aggregates are derived views. */
+bool cetta_host_plan_receipt_summarize(
+    const CettaHostPlanReceipt *,CettaHostPlanReceiptSummary *);
+bool cetta_host_plan_receipt_total(
+    const CettaHostPlanReceipt *, uint64_t *total);
 /* Cancel planning without consuming durable input or attempting commitment.
  * Completed data stays readable; the outcome becomes incomplete/cancelled. */
 void cetta_host_plan_cancel(CettaHostDecision *);

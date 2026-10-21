@@ -145,11 +145,23 @@ int main(int argc, char **argv) {
         return 78;
     }
     CettaDurableStore *store=NULL;
-    CettaDurableStatus s=cetta_durable_open(argv[1],NULL,&store);
+    CettaDurableLimits storage_limits=cetta_durable_bounded_limits();
+    CettaDurableStatus s=cetta_durable_open(argv[1],&storage_limits,&store);
     CettaHostProgram trusted={"activity/1",&program,&context};
-    CettaActivityConfig config={&trusted,argv[3],atoi(argv[2]),getuid(),2000000,(size_t)atoi(argv[4])};
+    size_t capacity=(size_t)atoi(argv[4]);
+    CettaActivityConfig config={
+        .program=&trusted,
+        .worker=argv[3],
+        .listener=atoi(argv[2]),
+        .worker_uid=getuid(),
+        .fuel=2000000,
+        .ready_capacity=capacity,
+        .worker_peer_capacity=capacity,
+    };
     if(prime)config.planning=(CettaHostPlanLimits){.quantum=(uint64_t)quantum,.work_limit=(uint64_t)work,
-        .preparation_inspections=1000000,.preparation_bytes=64u*1024u*1024u,.results=2};
+        .preparation_inspections=1000000,.preparation_bytes=64u*1024u*1024u,.results=2,
+        .return_slice={.preparation=(uint64_t)quantum,.transport=(uint64_t)quantum,
+            .limit_preparation=true,.limit_transport=true}};
     CettaActivityRuntime *runtime=NULL;
     if (s==DURABLE_OK) s=cetta_activity_new(store,&config,&runtime);
     if (s!=DURABLE_OK) { fprintf(stderr,"activity-service: %s\n",cetta_durable_status_name(s)); return 78; }
@@ -200,9 +212,30 @@ int main(int argc, char **argv) {
     dprintf(STDOUT_FILENO,"stats {\"steps\":%" PRIu64 ",\"accepted\":%" PRIu64 ",\"published\":%" PRIu64
         ",\"blocked\":%" PRIu64 ",\"timer_events\":%" PRIu64 ",\"max_step_us\":%" PRIu64 ",\"max_loop_us\":%" PRIu64
         ",\"ready\":%zu,\"watch_bytes\":%zu,\"plan_polls\":%" PRIu64 ",\"plan_work\":%" PRIu64
+        ",\"plan_setup\":%" PRIu64 ",\"plan_setup_bytes\":%" PRIu64
+        ",\"plan_preparation\":%" PRIu64 ",\"plan_transport\":%" PRIu64
+        ",\"plan_receipt_events\":%" PRIu64 ",\"plan_receipt_units\":%" PRIu64
+        ",\"plan_admission\":%" PRIu64 ",\"plan_producer\":%" PRIu64
+        ",\"plan_consumer\":%" PRIu64 ",\"plan_final\":%" PRIu64
+        ",\"plan_rotations\":%" PRIu64 ",\"plan_retirements\":%" PRIu64
+        ",\"slot_admission\":%" PRIu64 ",\"slot_preparation\":%" PRIu64
+        ",\"slot_execution\":%" PRIu64 ",\"slot_delivery\":%" PRIu64
+        ",\"slot_teardown\":%" PRIu64 ",\"slot_arrivals\":%" PRIu64
+        ",\"slot_bookkeeping\":%" PRIu64 ",\"slot_units\":%" PRIu64
+        ",\"max_slot_units\":%" PRIu64
         ",\"live_bytes\":%" PRId64 ",\"peak_rss_kib\":%ld}\n",
         stats.steps,stats.accepted,stats.published,stats.blocked,stats.timer_events,stats.max_step_us,max_loop_us,
-        stats.ready,stats.watch_bytes,stats.plan_polls,stats.plan_work,usage.live_bytes,resources.ru_maxrss);
+        stats.ready,stats.watch_bytes,stats.plan_polls,stats.plan_work,
+        stats.plan_setup,stats.plan_setup_bytes,
+        stats.plan_preparation,stats.plan_transport,
+        stats.plan_receipt_events,stats.plan_receipt_units,
+        stats.plan_protocol.admission,stats.plan_protocol.producer,
+        stats.plan_protocol.consumer,stats.plan_protocol.final_is_current,
+        stats.plan_protocol.rotations,stats.plan_protocol.retirements,
+        stats.slot_admission,stats.slot_preparation,stats.slot_execution,
+        stats.slot_delivery,stats.slot_teardown,stats.slot_arrivals,
+        stats.slot_bookkeeping,stats.slot_units,stats.max_slot_units,
+        usage.live_bytes,resources.ru_maxrss);
     cetta_activity_free(runtime); cetta_durable_close(store);
     cetta_library_context_free(&context); eval_set_library_context(NULL);
     registry_free(&registry); space_free(&program); arena_free(&scratch); arena_free(&persistent);

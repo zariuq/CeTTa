@@ -31,10 +31,11 @@ struct CettaWorkerEndpoint {
     char worker[65], prefix[66];
     Peer *peers;
     struct pollfd *pollfds;
-    size_t peer_capacity, next;
+    size_t peer_capacity, max_peers, next;
 };
 static bool reserve_peers(CettaWorkerEndpoint *e) {
     size_t capacity = e->peer_capacity ? e->peer_capacity * 2u : INITIAL_PEERS;
+    if (e->max_peers && capacity>e->max_peers) capacity=e->max_peers;
     if (capacity <= e->peer_capacity || capacity > SIZE_MAX / sizeof(Peer) ||
         capacity > SIZE_MAX / sizeof(struct pollfd) - 3u) return false;
     Peer *peers = malloc(capacity * sizeof(*peers));
@@ -433,8 +434,9 @@ static void close_peer(Peer *p) {
     if (p->fd>=0) close(p->fd);
     free(p->reply); *p=(Peer){.fd=-1};
 }
-CettaDurableStatus cetta_worker_endpoint_new(CettaDurableStore *store, int listener,
-        uid_t uid, const char *worker, CettaWorkerEndpoint **out) {
+CettaDurableStatus cetta_worker_endpoint_new_limited(CettaDurableStore *store,
+        int listener,uid_t uid,const char *worker,size_t max_peers,
+        CettaWorkerEndpoint **out) {
     if (!out) return DURABLE_INVALID;
     *out=NULL;
     int type=0, accept=0; socklen_t len=sizeof(type);
@@ -444,6 +446,7 @@ CettaDurableStatus cetta_worker_endpoint_new(CettaDurableStore *store, int liste
         getsockopt(listener,SOL_SOCKET,SO_ACCEPTCONN,&accept,&len) || !accept ||
         getsockname(listener,(struct sockaddr *)&address,&address_size) || address.ss_family!=AF_UNIX) return DURABLE_INVALID;
     CettaWorkerEndpoint *e=calloc(1,sizeof(*e)); if (!e) return DURABLE_NOMEM;
+    e->max_peers=max_peers;
     if (!reserve_peers(e)) { free(e); return DURABLE_NOMEM; }
     int flags=fcntl(listener,F_GETFL);
     if (flags<0 || fcntl(listener,F_SETFL,flags|O_NONBLOCK)<0 || fcntl(listener,F_SETFD,FD_CLOEXEC)<0) {
@@ -452,10 +455,17 @@ CettaDurableStatus cetta_worker_endpoint_new(CettaDurableStore *store, int liste
     e->store=store; e->listener=listener; e->uid=uid; strcpy(e->worker,worker); key(e->prefix,worker,"");
     *out=e; return DURABLE_OK;
 }
+CettaDurableStatus cetta_worker_endpoint_new(CettaDurableStore *store, int listener,
+        uid_t uid,const char *worker,CettaWorkerEndpoint **out) {
+    return cetta_worker_endpoint_new_limited(store,listener,uid,worker,0u,out);
+}
 void cetta_worker_endpoint_free(CettaWorkerEndpoint *e) {
     if (!e) return;
     for (size_t i=0;i<e->peer_capacity;++i) close_peer(&e->peers[i]);
     close(e->listener); free(e->peers); free(e->pollfds); free(e);
+}
+size_t cetta_worker_endpoint_slots(const CettaWorkerEndpoint *e) {
+    return e?e->peer_capacity:0u;
 }
 CettaDurableStatus cetta_worker_endpoint_step(CettaWorkerEndpoint *e, unsigned timeout, size_t *requests) {
     if (!e || !requests || timeout>1000) return DURABLE_INVALID;
@@ -503,7 +513,15 @@ CettaDurableStatus cetta_worker_endpoint_step(CettaWorkerEndpoint *e, unsigned t
     if (accept_ready) {
         size_t slot = 0u;
         while (slot < e->peer_capacity && e->peers[slot].fd >= 0) ++slot;
-        if (slot == e->peer_capacity && !reserve_peers(e)) return DURABLE_NOMEM;
+        if (slot==e->peer_capacity && e->max_peers &&
+            e->peer_capacity>=e->max_peers) {
+            int refused=accept4(e->listener,NULL,NULL,SOCK_NONBLOCK|SOCK_CLOEXEC);
+            if(refused>=0)close(refused);
+            else if(errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR)
+                return DURABLE_IO;
+            accept_ready=false;
+        } else if (slot == e->peer_capacity && !reserve_peers(e)) return DURABLE_NOMEM;
+        if (!accept_ready) goto accepted;
         int fd=accept4(e->listener,NULL,NULL,SOCK_NONBLOCK|SOCK_CLOEXEC);
         if (fd>=0) {
             struct ucred peer; socklen_t n=sizeof(peer);
@@ -511,6 +529,7 @@ CettaDurableStatus cetta_worker_endpoint_step(CettaWorkerEndpoint *e, unsigned t
             else e->peers[slot]=(Peer){.fd=fd,.touched=now};
         } else if (errno!=EAGAIN && errno!=EWOULDBLOCK && errno!=EINTR) return DURABLE_IO;
     }
+accepted:
     e->next=(e->next+1)%e->peer_capacity;
     return status;
 }

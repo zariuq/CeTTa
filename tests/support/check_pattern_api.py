@@ -70,6 +70,8 @@ cases = [
     ("!(collapse (pat:solve match% ((($x $y) ($y a)))))", ["()"]),
     ("!(pat:apply (pat:solve unify ((($x $y) ($y a)))) ($x $y))", ["(a a)"]),
     ("!(pat:apply (pat:solve match% ()) retained)", ["retained"]),
+    # A completed native value is not an ordinary invocation refusal.
+    ("!(pat:apply (pat:solve match% ()) NotReducible)", ["NotReducible"]),
     # Both repeated occurrences and injectivity constrain a variant witness.
     ("!(collapse (pat:solve variant ((($x $x) ($y $z)))))", ["()"]),
     ("!(collapse (pat:solve variant ((($x $y) ($z $z)))))", ["()"]),

@@ -456,18 +456,24 @@ void table_store_abort_query(TableQueryHandle *handle) {
 
 typedef struct {
     QueryResults *results;
+    CettaEvalCompletion completion;
 } QueryResultsCollectCtx;
 
 typedef struct {
     Arena *out_arena;
     QueryResultVisitor visitor;
     void *ctx;
+    CettaEvalCompletion completion;
+    CettaCount visited;
 } TableMaterializeVisitorCtx;
 
 static bool query_results_collect_visit(Atom *result, const Bindings *bindings,
                                         void *ctx) {
     QueryResultsCollectCtx *collect = ctx;
-    return query_results_push(collect->results, result, (Bindings *)bindings);
+    if (query_results_push(collect->results, result, (Bindings *)bindings))
+        return true;
+    collect->completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+    return false;
 }
 
 static bool table_store_materialize_visit(Atom *result,
@@ -480,9 +486,12 @@ static bool table_store_materialize_visit(Atom *result,
         materialized = variant_instance_materialize(materialize->out_arena,
                                                     materialized,
                                                     variant);
-        if (!materialized)
-            return true;
+        if (!materialized) {
+            materialize->completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+            return false;
+        }
     }
+    materialize->visited++;
     return materialize->visitor(materialized, bindings, materialize->ctx);
 }
 
@@ -587,7 +596,8 @@ done:
 static CettaCount table_store_entry_visit_delayed(
     const TableStoreEntry *entry, const AnswerBank *answer_bank,
     Arena *out_arena, const CettaVarMap *goal_instantiation,
-    TableDelayedResultVisitor visitor, void *ctx) {
+    TableDelayedResultVisitor visitor, void *ctx,
+    CettaEvalCompletion *completion) {
     CettaCount visited = 0;
     if (!entry || !visitor)
         return 0;
@@ -602,7 +612,8 @@ static CettaCount table_store_entry_visit_delayed(
                                                 &result,
                                                 &materialized,
                                                 &replay_variant)) {
-            continue;
+            if (completion) *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+            break;
         }
         visited++;
         bool keep_going = visitor(result, &materialized, &replay_variant, ctx);
@@ -614,17 +625,22 @@ static CettaCount table_store_entry_visit_delayed(
     return visited;
 }
 
-bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
+bool table_store_lookup_visit_delayed_checked(TableStore *store, Space *space,
                                       uint64_t revision,
                                       Atom *query, Arena *out_arena,
                                       TableDelayedResultVisitor visitor,
                                       void *ctx,
-                                      CettaCount *visited_out) {
+                                      CettaCount *visited_out,
+    CettaEvalCompletion *completion) {
+    if (completion) *completion = CETTA_EVAL_COMPLETE;
     if (visited_out)
         *visited_out = 0;
-    if (!store || store->mode != CETTA_TABLE_MODE_VARIANT || !space || !query ||
-        !out_arena || !visitor) {
+    if (!store || store->mode != CETTA_TABLE_MODE_VARIANT) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_MISS);
+        return false;
+    }
+    if (!space || !query || !out_arena || !visitor) {
+        if (completion) *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
         return false;
     }
 
@@ -639,6 +655,13 @@ bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
                                                      &probe_map,
                                                      &goal_instantiation,
                                                      &kTableStoreVariantOptions);
+    if (!goal_key) {
+        cetta_var_map_free(&probe_map);
+        cetta_var_map_free(&goal_instantiation);
+        arena_free(&probe_arena);
+        if (completion) *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        return false;
+    }
     uint32_t goal_hash = atom_hash(goal_key);
     TableStoreMatch match = table_store_find_match(store, space, revision,
                                                    goal_key, goal_hash);
@@ -655,7 +678,7 @@ bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
     TableStoreEntry *entry = match.exact;
     CettaCount visited = table_store_entry_visit_delayed(
         entry, store->answer_bank, out_arena, &goal_instantiation, visitor,
-        ctx);
+        ctx, completion);
 
     cetta_var_map_free(&probe_map);
     cetta_var_map_free(&goal_instantiation);
@@ -666,18 +689,32 @@ bool table_store_lookup_visit_delayed(TableStore *store, Space *space,
     return true;
 }
 
-bool table_store_lookup_visit_ref(TableStore *store, Space *space,
+bool table_store_lookup_visit_delayed(TableStore *store, Space *space, uint64_t revision,
+    Atom *query, Arena *out_arena, TableDelayedResultVisitor visitor, void *ctx,
+    CettaCount *visited_out) {
+    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+    bool hit = table_store_lookup_visit_delayed_checked(store, space, revision, query,
+        out_arena, visitor, ctx, visited_out, &completion);
+    return hit && completion == CETTA_EVAL_COMPLETE;
+}
+
+bool table_store_lookup_visit_ref_checked(TableStore *store, Space *space,
                                   uint64_t revision,
                                   Atom *query,
                                   Arena *goal_owner,
                                   TableAnswerRefVisitor visitor,
                                   void *ctx,
-                                  CettaCount *visited_out) {
+                                  CettaCount *visited_out,
+    CettaEvalCompletion *completion) {
+    if (completion) *completion = CETTA_EVAL_COMPLETE;
     if (visited_out)
         *visited_out = 0;
-    if (!store || store->mode != CETTA_TABLE_MODE_VARIANT || !space || !query ||
-        !goal_owner || !visitor) {
+    if (!store || store->mode != CETTA_TABLE_MODE_VARIANT) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TABLE_MISS);
+        return false;
+    }
+    if (!space || !query || !goal_owner || !visitor) {
+        if (completion) *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
         return false;
     }
 
@@ -692,6 +729,13 @@ bool table_store_lookup_visit_ref(TableStore *store, Space *space,
                                                      &probe_map,
                                                      &goal_instantiation,
                                                      &kTableStoreVariantOptions);
+    if (!goal_key) {
+        cetta_var_map_free(&probe_map);
+        cetta_var_map_free(&goal_instantiation);
+        arena_free(&probe_arena);
+        if (completion) *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        return false;
+    }
     uint32_t goal_hash = atom_hash(goal_key);
     TableStoreMatch match = table_store_find_match(store, space, revision,
                                                    goal_key, goal_hash);
@@ -708,6 +752,7 @@ bool table_store_lookup_visit_ref(TableStore *store, Space *space,
         cetta_var_map_free(&probe_map);
         cetta_var_map_free(&goal_instantiation);
         arena_free(&probe_arena);
+        if (completion) *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
         return false;
     }
     CettaCount visited = 0;
@@ -728,31 +773,75 @@ bool table_store_lookup_visit_ref(TableStore *store, Space *space,
     return true;
 }
 
-bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision,
+bool table_store_lookup_visit_ref(TableStore *store, Space *space, uint64_t revision,
+    Atom *query, Arena *goal_owner, TableAnswerRefVisitor visitor, void *ctx,
+    CettaCount *visited_out) {
+    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+    bool hit = table_store_lookup_visit_ref_checked(store, space, revision, query,
+        goal_owner, visitor, ctx, visited_out, &completion);
+    return hit && completion == CETTA_EVAL_COMPLETE;
+}
+
+bool table_store_lookup_visit_checked(TableStore *store, Space *space, uint64_t revision,
                               Atom *query, Arena *out_arena,
                               QueryResultVisitor visitor, void *ctx,
-                              CettaCount *visited_out) {
+                              CettaCount *visited_out,
+    CettaEvalCompletion *completion) {
+    if (visited_out) *visited_out = 0u;
+    if (!visitor) {
+        if (completion) *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        return false;
+    }
     TableMaterializeVisitorCtx materialize = {
         .out_arena = out_arena,
         .visitor = visitor,
         .ctx = ctx,
     };
-    return table_store_lookup_visit_delayed(store, space, revision, query,
+    CettaEvalCompletion local = CETTA_EVAL_COMPLETE;
+    bool hit = table_store_lookup_visit_delayed_checked(store, space, revision, query,
                                             out_arena,
                                             table_store_materialize_visit,
                                             &materialize,
-                                            visited_out);
+                                            NULL, &local);
+    if (visited_out) *visited_out = materialize.visited;
+    if (local == CETTA_EVAL_COMPLETE) local = materialize.completion;
+    if (completion) *completion = local;
+    return hit;
 }
 
-bool table_store_lookup(TableStore *store, Space *space, uint64_t revision,
+bool table_store_lookup_visit(TableStore *store, Space *space, uint64_t revision,
+    Atom *query, Arena *out_arena, QueryResultVisitor visitor, void *ctx,
+    CettaCount *visited_out) {
+    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+    bool hit = table_store_lookup_visit_checked(store, space, revision, query,
+        out_arena, visitor, ctx, visited_out, &completion);
+    return hit && completion == CETTA_EVAL_COMPLETE;
+}
+
+bool table_store_lookup_checked(TableStore *store, Space *space, uint64_t revision,
                         Atom *query, Arena *out_arena,
-                        QueryResults *out) {
+                        QueryResults *out, CettaEvalCompletion *completion) {
+    if (!out) {
+        if (completion) *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        return false;
+    }
     QueryResultsCollectCtx collect = {
         .results = out,
     };
-    return table_store_lookup_visit(store, space, revision, query, out_arena,
-                                    query_results_collect_visit, &collect,
-                                    NULL);
+    CettaEvalCompletion local = CETTA_EVAL_COMPLETE;
+    bool hit = table_store_lookup_visit_checked(store, space, revision, query, out_arena,
+        query_results_collect_visit, &collect, NULL, &local);
+    if (local == CETTA_EVAL_COMPLETE) local = collect.completion;
+    if (completion) *completion = local;
+    return hit;
+}
+
+bool table_store_lookup(TableStore *store, Space *space, uint64_t revision,
+    Atom *query, Arena *out_arena, QueryResults *out) {
+    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+    bool hit = table_store_lookup_checked(store, space, revision, query,
+        out_arena, out, &completion);
+    return hit && completion == CETTA_EVAL_COMPLETE;
 }
 
 bool table_store_put(TableStore *store, Space *space, uint64_t revision,

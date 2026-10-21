@@ -507,7 +507,7 @@ int main(int argc,char **argv) {
     cetta_durable_close(store); assert(cetta_durable_open(db,NULL,&store)==DURABLE_OK);
     lane("42.0","(tg-agent:sending \"42.0.00000000000000000003\" 0 1)");
     printf("Telegram channel: %u pure policy checks; deliveries without waiting, acknowledgment-only answers, keyed submissions, lane order, receipts, definitive failure progress, uncertainty without replay or lane blocking, rejections, commands answered by the service or raced against their deadline, menus, taps raced against their deadline, and stop/start at dispatch passed\n",policy_checks);
-    cetta_durable_close(store); unlink(db); char path[300]; snprintf(path,sizeof(path),"%s-wal",db); unlink(path); snprintf(path,sizeof(path),"%s-shm",db); unlink(path); rmdir(dir);
+    cetta_durable_close(store); unlink(db); char path[300]; snprintf(path,sizeof(path),"%s.lock",db); unlink(path); snprintf(path,sizeof(path),"%s.checkpoint",db); unlink(path); rmdir(dir);
     cetta_library_context_free(&context); eval_set_library_context(NULL); registry_free(&registry); space_free(&program);
     arena_free(&scratch); arena_free(&persistent); var_intern_free(&vars); symbol_table_free(&symbols); g_symbols=NULL; g_var_intern=NULL;
 }

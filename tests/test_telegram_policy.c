@@ -199,8 +199,8 @@ static void intake_checks(const char *body, const char *config) {
     assert(cetta_inbox_begin(store,"rate",&w)==DURABLE_PRECONDITION);
     assert(cetta_inbox_recover_poll(store,"bot",&w)==DURABLE_OK && cetta_inbox_offset(w)==11);
     cetta_inbox_window_free(w); cetta_durable_close(store); unlink(path);
-    char side[300]; snprintf(side,sizeof(side),"%s-wal",path); unlink(side);
-    snprintf(side,sizeof(side),"%s-shm",path); unlink(side); ++checks;
+    char side[300]; snprintf(side,sizeof(side),"%s.lock",path); unlink(side);
+    snprintf(side,sizeof(side),"%s.checkpoint",path); unlink(side); ++checks;
 }
 static void recovery_response(int code, int status, bool cancelled, const char *kind,
     const char *body, int64_t failures, int64_t now, const char *expected) {
@@ -404,8 +404,8 @@ static void recovery_checks(void) {
     assert(atom_eq(cetta_telegram_intake_outcome(a)->results.items[0],parse("(telegram:retry-at 1 4000 rate-limit)")));
     assert(cetta_telegram_intake_commit_recovery(a,&revision)==DURABLE_OK); cetta_telegram_intake_free(a); ++checks;
     cetta_durable_close(store); unlink(path);
-    char side[300]; snprintf(side,sizeof(side),"%s-wal",path); unlink(side);
-    snprintf(side,sizeof(side),"%s-shm",path); unlink(side);
+    char side[300]; snprintf(side,sizeof(side),"%s.lock",path); unlink(side);
+    snprintf(side,sizeof(side),"%s.checkpoint",path); unlink(side);
 }
 int main(int argc,char **argv) {
     assert(argc==1 || (argc==2 && !strcmp(argv[1],"--long-message")));

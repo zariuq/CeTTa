@@ -230,6 +230,7 @@ class Spec:
         effect = find_form(forms, "gslt", "relational-may-effect")
         rows = find_form(forms, "gslt", "streamed-row-disposition")
         observation = find_form(forms, "gslt", "observation-profile")
+        service_admission = find_form(forms, "gslt", "native-service-admission")
         lifetime = find_form(forms, "gslt", "resource-lifetime")
         prepared = find_form(forms, "gslt", "determinate-equation-continuation")
         total = find_form(forms, "gslt", "total-expression-normalization")
@@ -295,6 +296,24 @@ class Spec:
 
         self.row_values = declared_values(rows, "row disposition")
         self.visibility_values = declared_values(observation, "visibility")
+        placement_values = [
+            atom_text(item[1], "native service placement")
+            for item in entries(service_admission, "placement")
+            if len(item) == 2]
+        progress_values = [
+            atom_text(item[1], "native service progress")
+            for item in entries(service_admission, "progress")
+            if len(item) == 2]
+        if (len(set(placement_values)) != len(placement_values) or
+                len(set(progress_values)) != len(progress_values)):
+            raise SpecError("native service advice values must be duplicate-free")
+        if set(placement_values) != {"local", "coordinator", "unresolved"}:
+            raise SpecError("native service placement must declare local, coordinator and unresolved")
+        if set(progress_values) != {
+                "bounded", "yielding", "isolated", "unresolved-progress"}:
+            raise SpecError("native service progress declaration is incomplete")
+        self.service_placement_values = placement_values
+        self.service_progress_values = progress_values
         self.transitions = [atom_text(item[1], "lifetime transition")
                             for item in entries(lifetime, "transition")
                             if len(item) >= 2]
@@ -556,6 +575,69 @@ class Spec:
             self.heads.append((name, symbol_fields[name], effect_value))
         if not self.heads:
             raise SpecError("at least one relational query head is required")
+
+        defaults = entries(native, "native-call-default")
+        if defaults != [["native-call-default", "unresolved", "unresolved-progress"]]:
+            raise SpecError("native call default must be unresolved/unresolved-progress")
+        constructors = entries(native, "native-call-constructor")
+        if len(constructors) != 1 or len(constructors[0]) != 4:
+            raise SpecError("native call constructor needs placement, progress and bound")
+        user_equations = entries(native, "native-call-user-equation")
+        if len(user_equations) != 1 or len(user_equations[0]) != 3:
+            raise SpecError("native call user-equation needs placement and progress")
+        self.native_call_constructor = (
+            atom_text(constructors[0][1], "constructor placement"),
+            atom_text(constructors[0][2], "constructor progress"),
+            atom_text(constructors[0][3], "constructor bound"))
+        self.native_call_user_equation = (
+            atom_text(user_equations[0][1], "user-equation placement"),
+            atom_text(user_equations[0][2], "user-equation progress"))
+        if self.native_call_constructor[:2] != ("local", "bounded") or \
+                not self.native_call_constructor[2].isdigit() or \
+                int(self.native_call_constructor[2]) < 1:
+            raise SpecError("constructor calls must be local with a positive bounded contract")
+        if self.native_call_user_equation != ("local", "yielding"):
+            raise SpecError("user equations must be local yielding calls")
+        self.native_call_heads: list[tuple[str, str, str, str, int]] = []
+        seen_native_call_fields: set[str] = set()
+        for entry in entries(native, "native-call-head"):
+            if len(entry) not in (4, 5):
+                raise SpecError(f"malformed native-call-head: {sexpr(entry)}")
+            name = atom_text(entry[1], "native call head")
+            placement = atom_text(entry[2], "native call placement")
+            progress = atom_text(entry[3], "native call progress")
+            if name not in symbol_fields:
+                raise SpecError(f"native call head {name} has no entry in {SYMBOL_TABLE.name}")
+            if placement not in placement_values or progress not in progress_values:
+                raise SpecError(f"native call head {name} has unknown advice")
+            bound = 0
+            if progress == "bounded":
+                if len(entry) != 5 or not atom_text(entry[4], "native call bound").isdigit():
+                    raise SpecError(f"bounded native call head {name} needs a positive bound")
+                bound = int(atom_text(entry[4], "native call bound"))
+                if bound < 1:
+                    raise SpecError(f"bounded native call head {name} needs a positive bound")
+            elif len(entry) != 4:
+                raise SpecError(f"unbounded native call head {name} cannot carry a bound")
+            field = symbol_fields[name]
+            if field in seen_native_call_fields:
+                raise SpecError(f"native call head {name} is declared twice")
+            if placement == "local" and progress not in ("bounded", "yielding"):
+                raise SpecError(f"local native call head {name} lacks inline progress")
+            if progress == "isolated" and placement != "coordinator":
+                raise SpecError(f"isolated native call head {name} must be coordinator-owned")
+            seen_native_call_fields.add(field)
+            self.native_call_heads.append((name, field, placement, progress, bound))
+        if not self.native_call_heads:
+            raise SpecError("at least one native call head is required")
+        relational_fields = {field for _, field, _ in self.heads}
+        conflicting_local = relational_fields & {
+            field for _, field, placement, _, _ in self.native_call_heads
+            if placement == "local"}
+        if conflicting_local:
+            raise SpecError(
+                "a store-effect head cannot be worker-local: " +
+                repr(sorted(conflicting_local)))
 
         self.total_integer_heads: list[tuple[str, str, int]] = []
         for entry in entries(native, "total-integer-head"):
@@ -1272,6 +1354,22 @@ def render_header(spec: Spec) -> str:
         f"    X({field}, CETTA_GSLT_QUERY_EFFECT_{c_enum(effect)})"
         for _, field, effect in spec.heads
     )
+    placement_constants = "\n".join(
+        f"    CETTA_GSLT_PLACEMENT_{c_enum(value)} = {index},"
+        for index, value in enumerate(spec.service_placement_values)
+    )
+    progress_constants = "\n".join(
+        f"    CETTA_GSLT_PROGRESS_{c_enum(value)} = {index},"
+        for index, value in enumerate(spec.service_progress_values)
+    )
+    native_call_rows = " \\\n".join(
+        f"    X({field}, CETTA_GSLT_PLACEMENT_{c_enum(placement)}, "
+        f"CETTA_GSLT_PROGRESS_{c_enum(progress)}, {bound}u)"
+        for _, field, placement, progress, bound in spec.native_call_heads
+    )
+    constructor_placement, constructor_progress, constructor_bound = \
+        spec.native_call_constructor
+    user_placement, user_progress = spec.native_call_user_equation
     opaque_expression_head_rows = " \\\n".join(
         f"    X({field})"
         for _, field in spec.opaque_expression_heads
@@ -1597,6 +1695,52 @@ def render_header(spec: Spec) -> str:
 typedef enum {{
 {effect_enum}
 }} CettaGsltQueryEffect;
+
+typedef enum {{
+{placement_constants}
+}} CettaGsltWorkerPlacementAdvice;
+
+typedef enum {{
+{progress_constants}
+}} CettaGsltProgressAdvice;
+
+typedef struct {{
+    CettaGsltWorkerPlacementAdvice placement;
+    CettaGsltProgressAdvice progress;
+    uint64_t bound;
+}} CettaGsltNativeCallAdvice;
+
+#define CETTA_GSLT_NATIVE_CALL_HEAD_ROWS(X) \\
+{native_call_rows}
+
+#define CETTA_GSLT_NATIVE_CALL_DEFAULT \\
+    ((CettaGsltNativeCallAdvice){{CETTA_GSLT_PLACEMENT_UNRESOLVED, \\
+        CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS, 0u}})
+#define CETTA_GSLT_NATIVE_CALL_CONSTRUCTOR \\
+    ((CettaGsltNativeCallAdvice){{CETTA_GSLT_PLACEMENT_{c_enum(constructor_placement)}, \\
+        CETTA_GSLT_PROGRESS_{c_enum(constructor_progress)}, {constructor_bound}u}})
+#define CETTA_GSLT_NATIVE_CALL_USER_EQUATION \\
+    ((CettaGsltNativeCallAdvice){{CETTA_GSLT_PLACEMENT_{c_enum(user_placement)}, \\
+        CETTA_GSLT_PROGRESS_{c_enum(user_progress)}, 0u}})
+
+static inline bool cetta_gslt_native_call_head_advice(
+    SymbolId head, const BuiltinSyms *builtins, CettaGsltNativeCallAdvice *out) {{
+    if (!builtins || !out) return false;
+#define CETTA_GSLT_NATIVE_CALL_ADVICE_CASE(field, placement, progress, bound) \\
+    if (head == builtins->field) {{ \\
+        *out = (CettaGsltNativeCallAdvice){{placement, progress, bound}}; \\
+        return true; \\
+    }}
+    CETTA_GSLT_NATIVE_CALL_HEAD_ROWS(CETTA_GSLT_NATIVE_CALL_ADVICE_CASE)
+#undef CETTA_GSLT_NATIVE_CALL_ADVICE_CASE
+    *out = CETTA_GSLT_NATIVE_CALL_DEFAULT;
+    return false;
+}}
+
+static inline bool cetta_gslt_progress_inline(CettaGsltProgressAdvice progress) {{
+    return progress == CETTA_GSLT_PROGRESS_BOUNDED ||
+           progress == CETTA_GSLT_PROGRESS_YIELDING;
+}}
 
 #define CETTA_GSLT_QUERY_EFFECT_HEAD_ROWS(X) \\
 {head_rows}

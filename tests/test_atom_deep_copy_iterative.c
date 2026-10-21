@@ -792,6 +792,130 @@ static void check_session_companion_cleanup(Arena *destination) {
     atom_deep_copy_session_free(NULL);
 }
 
+/* A represented DAG must resume without expanding its occurrence tree or
+ * restarting its copied prefix. The two grants produce the same endpoint and
+ * exact decision debit as the joined grant. */
+static void check_copy_slices(void) {
+    enum { DEPTH = 256 };
+    Arena source, joined, split;
+    arena_init_detached(&source);arena_init_detached(&joined);arena_init_detached(&split);
+    Atom *root=atom_int(&source,42);
+    for (unsigned i=0u;i<DEPTH;i++) root=atom_expr2(&source,root,root);
+    AtomDeepCopySession *one=atom_deep_copy_session_new(&joined);
+    AtomDeepCopySession *many=atom_deep_copy_session_new(&split);
+    Atom *whole=NULL,*pieces=NULL;
+    uint64_t all=0u,used=99u,total=0u;
+    assert(atom_deep_copy_session_advance(one,root,UINT64_MAX,&whole,&all)
+        ==ATOM_DEEP_COPY_COMPLETE && whole && all==3u*DEPTH+1u);
+    size_t bytes=arena_accounted_live_bytes(&split);
+    assert(atom_deep_copy_session_advance(many,root,0u,&pieces,&used)
+        ==ATOM_DEEP_COPY_PAUSED && !pieces && !used);
+    assert(!atom_deep_copy_session_pending(many) &&
+        arena_accounted_live_bytes(&split)==bytes);
+    AtomDeepCopyStep step=ATOM_DEEP_COPY_PAUSED;
+    for (unsigned turn=0u;step==ATOM_DEEP_COPY_PAUSED;turn++) {
+        uint64_t grant=turn%7u+1u;
+        step=atom_deep_copy_session_advance(many,root,grant,&pieces,&used);
+        assert(used<=grant && used>0u);
+        total+=used;
+        assert(total<=all);
+        if (step==ATOM_DEEP_COPY_PAUSED) {
+            assert(!pieces && atom_deep_copy_session_pending(many));
+            assert(!atom_deep_copy_session_forwarded(many,root));
+            assert(!atom_deep_copy_session_clone(many));
+            assert(!atom_deep_copy_session_relocate(many,one));
+            assert(!atom_deep_copy_session_relocate(one,many));
+            assert(!atom_deep_copy_session_copy(many,root));
+            bytes=arena_accounted_live_bytes(&split);
+            assert(atom_deep_copy_session_advance(many,root,0u,&pieces,&used)
+                ==ATOM_DEEP_COPY_PAUSED && !pieces && !used);
+            assert(arena_accounted_live_bytes(&split)==bytes);
+            Atom *other=atom_int(&source,43);
+            assert(atom_deep_copy_session_advance(many,other,1u,&pieces,&used)
+                ==ATOM_DEEP_COPY_REFUSED && !pieces && !used);
+            assert(!atom_deep_copy_session_failed(many));
+            TestCopyResolution changed={.from=root,.to=other};
+            atom_deep_copy_session_set_resolver(many,resolve_test_atom,&changed);
+            assert(!atom_deep_copy_session_set_snapshot(many));
+            AtomDeepCopyArenaPair pairs[]={{&source,&split}};
+            assert(!atom_deep_copy_session_set_arena_map(many,pairs,1u));
+            assert(!atom_deep_copy_session_forward_region(many,&source,arena_mark(&source)));
+        }
+    }
+    assert(step==ATOM_DEEP_COPY_COMPLETE && total==all && pieces);
+    assert(!atom_deep_copy_session_pending(many));
+    assert(atom_deep_copy_session_copy(many,root)==pieces);
+    assert(atom_deep_copy_session_advance(many,root,1u,&pieces,&used)
+        ==ATOM_DEEP_COPY_COMPLETE && used==1u);
+    Atom *left=whole,*right=pieces;
+    for (unsigned i=0u;i<DEPTH;i++) {
+        assert(left->kind==ATOM_EXPR && right->kind==ATOM_EXPR);
+        assert(left->expr.len==2u && right->expr.len==2u);
+        assert(left->expr.elems[0]==left->expr.elems[1]);
+        assert(right->expr.elems[0]==right->expr.elems[1]);
+        left=left->expr.elems[0];right=right->expr.elems[0];
+    }
+    assert(left->ground.ival==42 && right->ground.ival==42);
+    atom_deep_copy_session_free(one);atom_deep_copy_session_free(many);
+    arena_free(&source);
+    assert(left->ground.ival==42 && right->ground.ival==42);
+    arena_free(&joined);arena_free(&split);
+
+    /* A destination reset cannot make the saved stack valid again. Refusal
+     * happens before reading its reclaimed partial backing. */
+    arena_init_detached(&source);arena_init_detached(&split);
+    root=atom_expr2(&source,atom_int(&source,1),atom_int(&source,2));
+    many=atom_deep_copy_session_new(&split);
+    ArenaMark mark=arena_mark(&split);
+    assert(atom_deep_copy_session_advance(many,root,1u,&pieces,&used)
+        ==ATOM_DEEP_COPY_PAUSED);
+    arena_reset(&split,mark);
+    assert(atom_deep_copy_session_advance(many,root,1u,&pieces,&used)
+        ==ATOM_DEEP_COPY_REFUSED && !pieces && !used);
+    assert(atom_deep_copy_session_failed(many));
+    assert(!atom_deep_copy_session_forwarded(many,root));
+    atom_deep_copy_session_free(many);
+    many=atom_deep_copy_session_new(&split);
+    assert(atom_deep_copy_session_advance(many,root,1u,&pieces,&used)
+        ==ATOM_DEEP_COPY_PAUSED);
+    atom_deep_copy_session_free(many); /* Cancel before retiring the source. */
+    arena_free(&source);arena_free(&split);
+
+    /* One traversal decision can reserve a wide node's backing. A traversal
+     * grant is therefore not an allocation or scalar-byte limit. */
+    arena_init_detached(&source);arena_init_detached(&split);
+    enum { WIDTH = 4096 };
+    Atom *children[WIDTH];
+    for (unsigned i=0u;i<WIDTH;i++) children[i]=atom_int(&source,i);
+    root=atom_expr(&source,children,WIDTH);
+    many=atom_deep_copy_session_new(&split);
+    assert(atom_deep_copy_session_advance(many,root,1u,&pieces,&used)
+        ==ATOM_DEEP_COPY_PAUSED && used==1u);
+    assert(arena_accounted_live_bytes(&split)>=WIDTH*sizeof(Atom *));
+    atom_deep_copy_session_free(many);
+
+    /* A load-time admission cannot authorize a changed intern context. */
+    many=atom_deep_copy_session_new(&split);
+    assert(atom_deep_copy_session_advance(many,root,1u,&pieces,&used)
+        ==ATOM_DEEP_COPY_PAUSED);
+    SymbolTable replacement;
+    symbol_table_init(&replacement);
+    SymbolTable *previous=g_symbols;g_symbols=&replacement;
+    assert(atom_deep_copy_session_advance(many,root,1u,&pieces,&used)
+        ==ATOM_DEEP_COPY_REFUSED && !pieces && !used);
+    g_symbols=previous;symbol_table_free(&replacement);
+    atom_deep_copy_session_free(many);
+    many=atom_deep_copy_session_new(&split);
+    assert(atom_deep_copy_session_set_snapshot(many));
+    assert(atom_deep_copy_session_advance(many,root,1u,&pieces,&used)
+        ==ATOM_DEEP_COPY_REFUSED && !pieces && !used);
+    assert(!atom_deep_copy_session_failed(many));
+    assert(atom_deep_copy_session_copy(many,root));
+    atom_deep_copy_session_free(many);
+    arena_free(&source);arena_free(&split);
+    puts("PASS: sliced graph copy retains one shared DAG, exact debit, inert zero grants and cancellation; changed roots/profiles/epochs refuse");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena source;
@@ -805,6 +929,7 @@ int main(void) {
     g_symbols = &symbols;
     g_hashcons = NULL;
     g_var_intern = NULL;
+    check_copy_slices();
     check_copy_destination_scope();
     check_copy_metadata_identities();
     check_copy_metadata_lifetimes();

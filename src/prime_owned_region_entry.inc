@@ -25,15 +25,19 @@ CettaContinuationStatus eval_prime_owned_region_outcome(
     Space *source, Arena *output, Arena *persistent, Registry *registry,
     Atom *expression, CettaPrimeOwnedRegionProfile profile,
     size_t inspection_limit, size_t byte_limit, EvalOutcome *outcome) {
+    bool weighted = source && output && prime_native_owned_top_context_admitted() &&
+        native_weight_form(expression) &&
+        prime_native_control_admits(source,output,expression,true);
     if (profile!=CETTA_PRIME_OWNED_REGION_READ_ONLY_SNAPSHOT_V1 ||
         !outcome || outcome->prime_observation || !output || output->hashcons ||
         output->older_identity || !persistent ||
-        !prime_native_registry_observation_admits(source,output,expression))
+        (!weighted && !prime_native_registry_observation_admits(source,output,expression)))
         return CETTA_CONTINUATION_UNSUPPORTED;
     CettaLibraryContext *authority=g_library_context;
     CettaContinuationStatus status=CETTA_CONTINUATION_UNSUPPORTED;
     PrimeNativeOwnedRegion *region=prime_native_owned_region_capture(source,registry,
-        expression,expr_arg(expression,expr_nargs(expression)-1u),inspection_limit,byte_limit,false,&status);
+        expression,weighted ? expression : expr_arg(expression,expr_nargs(expression)-1u),
+        inspection_limit,byte_limit,false,&status);
     if (!region) return status;
     CettaPrimeObservationReturn *owned=calloc(1u,sizeof(*owned));
     PrimeNativeTopEpisode *episode=calloc(1u,sizeof(*episode));
@@ -56,6 +60,8 @@ CettaContinuationStatus eval_prime_owned_region_outcome(
     top->source_owner=&region->snapshot;
     top->owned.holder_arena=&owned->holders;
     top->owned.pending=&owned->pending;
+    top->owned.return_mode = weighted ? PRIME_NATIVE_RETURN_WEIGHTED_CALL
+        : PRIME_NATIVE_RETURN_OBSERVATION;
     top->owned.origin_authority=authority;
     top->owned.status=CETTA_CONTINUATION_CAPACITY;
     if (!prime_native_owned_top_reserve(top,output,&outcome->results)) {

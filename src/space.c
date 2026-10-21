@@ -6154,10 +6154,22 @@ void space_occurrence_cursor_storage_census(const SpaceOccurrenceCursor *cursor,
     }
 }
 
+/* A space stores syntax: copies made to store an atom drop HE's evaluated
+ * marks (atom_deep_copy_strip_he_marks_enter). */
+static void space_store_scope_leave(bool *entered) {
+    if (*entered)
+        atom_deep_copy_strip_he_marks_leave();
+}
+
+#define SPACE_STORE_SCOPE() \
+    __attribute__((cleanup(space_store_scope_leave))) bool space_store_scope = \
+        (atom_deep_copy_strip_he_marks_enter(), true)
+
 Atom *space_store_atom(Space *s, Arena *fallback, Atom *atom) {
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_transition = {0};
     cetta_shared_transition_guard_enter(&shared_transition);
+    SPACE_STORE_SCOPE();
     return term_universe_store_atom(s ? s->native.universe : NULL, fallback, atom);
 }
 
@@ -8089,8 +8101,10 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
         !queue_gap && space_match_backend_needs_atom_on_add(s, atom_id);
     bool defer_secondary =
         space_defer_incremental_secondary_indices(s);
-    if (backend_needs_atom && space_tracks_atom_ids(s) &&
-        atom_id != CETTA_ATOM_ID_NONE) {
+    /* The stored atom, which holds no evaluated mark, stands for one that
+     * may: the space keeps syntax, also in its equation index. */
+    if ((backend_needs_atom || atom_may_hold_he_mark(backend_atom)) &&
+        space_tracks_atom_ids(s) && atom_id != CETTA_ATOM_ID_NONE) {
         Atom *stored_backend_atom =
             term_universe_get_atom(s->native.universe, atom_id);
         if (stored_backend_atom) {
@@ -8320,6 +8334,7 @@ void space_add(Space *s, Atom *atom) {
     s = space_mutation_target(s);
     if (!s)
         return;
+    SPACE_STORE_SCOPE();
     AtomId atom_id = CETTA_ATOM_ID_NONE;
     bool transition_failed = false;
     if (space_store_atom_via_backend_primary(
@@ -8357,6 +8372,7 @@ static bool space_admit_atom_impl(Space *s, Arena *fallback,
     bool transition_failed = false;
     if (!s || !atom)
         return false;
+    SPACE_STORE_SCOPE();
 
     if (space_store_atom_via_backend_primary(
             s, atom, &transition_failed))
@@ -10323,11 +10339,16 @@ bool space_pop(Space *s, Atom **out) {
             return false;
         if (out)
             *out = top;
-        if (local_len > 0)
-            return space_overlay_remove_local_raw_index(s, local_len - 1u);
+        bool remove_local = space_is_queue(s)
+            ? base_visible == 0u
+            : local_len > 0u;
+        if (remove_local && local_len > 0u)
+            return space_overlay_remove_local_raw_index(
+                s, space_is_queue(s) ? 0u : local_len - 1u);
         if (base_visible > 0) {
             CettaIndex raw = 0;
-            if (!space_overlay_visible_base_raw_index(s, base_visible - 1u, &raw) ||
+            CettaIndex visible = space_is_queue(s) ? 0u : base_visible - 1u;
+            if (!space_overlay_visible_base_raw_index(s, visible, &raw) ||
                 !space_overlay_mark_base_removed(s, raw)) {
                 return false;
             }
@@ -11029,6 +11050,10 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
                           atom_atom_type(a), atom_atom_type(a));
     case GV_STATE: {
         StateCell *cell = (StateCell *)atom->ground.ptr;
+        if (eval_current_uses_rust_he_compat_semantics &&
+            eval_current_uses_rust_he_compat_semantics())
+            return atom_expr2(a, atom_symbol_literal(a, "StateMonad"),
+                cell->content_type ? cell->content_type : atom_undefined_type(a));
         if (cell->content_type &&
             !atom_is_symbol_id(cell->content_type, g_builtin_syms.undefined_type))
             return atom_expr2(a, atom_symbol_literal(a, "StateMonad"), cell->content_type);
@@ -11261,8 +11286,9 @@ static SpaceDeclarationVisit space_visit_declarations(
         }
         return SPACE_DECLARATION_NEXT;
     }
-    if (cost)
-        cost->indexed_lookups++;
+    /* Each physical level reads its own index, but the caller charges the
+     * composed read as one logical lookup: a judgment's cost must not depend
+     * on how many overlays present the same declarations. */
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_DECLARED_TYPE_INDEXED_LOOKUP);
     const SpaceHeadChains *index = &s->native.ty_idx.rows;
     const SpaceHeadChain *chain = space_head_chains_find(index, head);
@@ -11358,6 +11384,9 @@ space_member_annotated_types(
         .budget = budget, .as_stored = as_stored};
     bool scan = !declared_type_index_enabled() ||
         (space_has_overlay_base(s) && budget && budget->steps_limited);
+    /* One indexed lookup per member, however deep its overlay chain. */
+    if (!scan && cost)
+        cost->indexed_lookups++;
     for (int pass = 0; pass < passes && !list->stopped; pass++) {
         CettaIndex first = pass == 0 ? imported : 0u;
         CettaIndex end = pass == 0 ? logical_len : imported;
@@ -12702,6 +12731,8 @@ typedef struct QueryResultSink {
     QueryResults *results;
     QueryResultVisitor visitor;
     void *visitor_ctx;
+    QueryEquationResultInstantiator instantiate;
+    void *instantiate_context;
     QueryEquationCandidatePlan candidate_plan;
     void *candidate_plan_ctx;
     CettaCount emitted;
@@ -12744,6 +12775,8 @@ static void query_result_sink_init_collect(QueryResultSink *sink,
     sink->results = results;
     sink->visitor = NULL;
     sink->visitor_ctx = NULL;
+    sink->instantiate = NULL;
+    sink->instantiate_context = NULL;
     sink->candidate_plan = NULL;
     sink->candidate_plan_ctx = NULL;
     sink->emitted = 0;
@@ -12759,6 +12792,8 @@ static void query_result_sink_init_visit(QueryResultSink *sink,
     sink->results = NULL;
     sink->visitor = visitor;
     sink->visitor_ctx = ctx;
+    sink->instantiate = NULL;
+    sink->instantiate_context = NULL;
     sink->candidate_plan = NULL;
     sink->candidate_plan_ctx = NULL;
     sink->emitted = 0;
@@ -13078,6 +13113,47 @@ static bool query_equation_match_code_head(Atom *lhs, Atom *query, Arena *a,
            matched;
 }
 
+typedef struct {
+    const QueryVisibleVarSet *visible;
+    const Bindings *full;
+} QueryEquationSubstitution;
+
+static Atom *query_equation_substitute_match(Arena *arena, Atom *term,
+                                             void *context) {
+    const QueryEquationSubstitution *match = context;
+    Atom *result = bindings_apply_if_vars(match->full, arena, term);
+    return rewrite_query_visible_aliases(
+        arena, result, match->visible, match->full);
+}
+
+static bool query_equation_emit_instantiated(
+    Atom *lhs, Atom *rhs, Arena *arena, uint32_t epoch,
+    const QueryVisibleVarSet *visible, const Bindings *full,
+    QueryResultSink *sink) {
+    Bindings projected;
+    if (!project_query_visible_bindings(arena, visible, full, &projected)) {
+        sink->incomplete = true;
+        return false;
+    }
+    Bindings none;
+    bindings_init(&none);
+    QueryEquationSubstitution substitution = {visible, full};
+    QueryEquationInstantiation match = {
+        .pattern = bindings_apply_epoch(&none, arena, lhs, epoch),
+        .body = bindings_apply_epoch(&none, arena, rhs, epoch),
+        .substitute = query_equation_substitute_match,
+        .context = &substitution,
+    };
+    bindings_free(&none);
+    Atom *result = match.pattern && match.body
+        ? sink->instantiate(&match, arena, &projected,
+                            sink->instantiate_context) : NULL;
+    bool emitted = result && query_result_sink_emit(sink, result, &projected);
+    sink->incomplete = sink->incomplete || !emitted || sink->stop;
+    bindings_free(&projected);
+    return emitted;
+}
+
 static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
                                        Atom *query,
                                        const QueryVisibleVarSet *visible,
@@ -13116,6 +13192,15 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
         CettaSurvivorAllocationScope allocation_scope =
             cetta_survivor_allocation_scope_enter(
                 CETTA_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION);
+        if (sink->instantiate) {
+            emitted = query_equation_emit_instantiated(
+                term_universe_get_atom(s->native.universe, lhs_id),
+                term_universe_get_atom(s->native.universe, rhs_id),
+                a, epoch, visible, &merged, sink);
+            cetta_survivor_allocation_scope_leave(allocation_scope);
+            bindings_free(&merged);
+            return emitted;
+        }
         Atom *rhs_copy = tu_has_vars(s->native.universe, rhs_id)
             ? term_universe_copy_atom_epoch(s->native.universe, a, rhs_id, epoch)
             : term_universe_copy_atom(s->native.universe, a, rhs_id);
@@ -13227,6 +13312,13 @@ static bool query_equation_emit_decoded_plan_epoch(
         CettaSurvivorAllocationScope allocation_scope =
             cetta_survivor_allocation_scope_enter(
                 CETTA_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION);
+        if (sink->instantiate) {
+            emitted = query_equation_emit_instantiated(
+                lhs, selected_rhs, a, epoch, visible, &merged, sink);
+            cetta_survivor_allocation_scope_leave(allocation_scope);
+            bindings_free(&merged);
+            return emitted;
+        }
         Atom *result = bindings_apply_epoch(&merged, a, selected_rhs, epoch);
         result = rewrite_query_visible_aliases(a, result, visible, &merged);
         cetta_survivor_allocation_scope_leave(allocation_scope);
@@ -15347,6 +15439,7 @@ CettaTermMatchStatus query_rule_visit(const CettaRuleDescriptor *rule,
 static CettaMatchCompletion query_equation_visit_status(
         Atom *equation, Atom *query, Arena *a,
         QueryResultVisitor visitor, void *ctx,
+        QueryEquationResultInstantiator instantiate, void *instantiate_context,
         bool checked, uint64_t pair_budget, CettaCount *count) {
     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     QueryResultSink sink;
@@ -15363,6 +15456,8 @@ static CettaMatchCompletion query_equation_visit_status(
         return CETTA_MATCH_INCOMPLETE;
     }
     query_result_sink_init_visit(&sink, visitor, ctx);
+    sink.instantiate = instantiate;
+    sink.instantiate_context = instantiate_context;
     sink.checked = checked;
     sink.pair_budget = pair_budget;
     CettaFrameIdentity identity;
@@ -15386,8 +15481,21 @@ CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
                                 QueryResultVisitor visitor, void *ctx) {
     CettaCount count;
     (void)query_equation_visit_status(equation, query, a, visitor, ctx,
-                                     false, UINT64_MAX, &count);
+                                     NULL, NULL, false, UINT64_MAX, &count);
     return count;
+}
+
+CettaMatchCompletion query_equation_visit_instantiated(
+        Atom *equation, Atom *query, Arena *arena,
+        QueryEquationResultInstantiator instantiate, void *instantiate_context,
+        QueryResultVisitor visitor, void *visitor_context, CettaCount *emitted) {
+    CettaCount count;
+    CettaMatchCompletion decision = query_equation_visit_status(
+        equation, query, arena, visitor, visitor_context,
+        instantiate, instantiate_context, false, UINT64_MAX, &count);
+    if (emitted)
+        *emitted = count;
+    return decision;
 }
 
 CettaMatchCompletion query_equation_visit_checked(
@@ -15396,7 +15504,8 @@ CettaMatchCompletion query_equation_visit_checked(
         CettaCount *emitted) {
     CettaCount count;
     CettaMatchCompletion decision = query_equation_visit_status(
-        equation, query, arena, visitor, context, true, pair_budget, &count);
+        equation, query, arena, visitor, context,
+        NULL, NULL, true, pair_budget, &count);
     if (emitted)
         *emitted = count;
     return decision;

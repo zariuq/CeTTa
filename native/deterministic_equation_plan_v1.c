@@ -2146,11 +2146,13 @@ static bool equation_machine_apply(DeterministicEquationContextV1 *context,
 static Atom *evaluate_compiled(DeterministicEquationContextV1 *context, const Atom *root) {
     DeterministicEquationMachineV1 m = {0};
     Atom *result = NULL;
+    /* As in evaluate_term, the argument values may hold variables: they are
+     * data, matched only by the equations' own variables. */
     if (!root || root->kind != ATOM_EXPR || root->expr.len == 0u ||
         root->expr.len - 1u > UINT32_MAX || !root->expr.elems[0] ||
-        root->expr.elems[0]->kind != ATOM_SYMBOL || atom_has_vars(root)) {
+        root->expr.elems[0]->kind != ATOM_SYMBOL) {
         (void)equation_fail(context, CETTA_DETERMINISTIC_EQUATION_V1_BAD_ARGUMENT,
-            "deterministic data application expects a ground symbol-headed call");
+            "deterministic data application expects a symbol-headed call");
         return NULL;
     }
     uint32_t arity = (uint32_t)(root->expr.len - 1u);
@@ -2263,6 +2265,119 @@ done:
     return result;
 }
 
+typedef struct {
+    VarId *ids;
+    size_t len, cap;
+    bool failed;
+} EquationVariableIdsV1;
+
+static int equation_variable_id_order(const void *left, const void *right) {
+    VarId a = *(const VarId *)left, b = *(const VarId *)right;
+    return a < b ? -1 : a > b;
+}
+
+/* Visit every variable occurrence of `term`, skipping closed subterms.
+ * `visit` returns false to stop. False when allocation failed. */
+static bool equation_visit_variables(const Atom *term,
+                                     bool (*visit)(VarId, void *),
+                                     void *context) {
+    const Atom *inline_stack[64];
+    const Atom **stack = inline_stack;
+    size_t len = 0u, cap = sizeof(inline_stack) / sizeof(*inline_stack);
+    bool ok = true;
+    if (term && atom_has_vars(term))
+        stack[len++] = term;
+    while (len > 0u) {
+        const Atom *node = stack[--len];
+        if (node->kind == ATOM_VAR) {
+            if (!visit(node->var_id, context))
+                break;
+            continue;
+        }
+        if (node->kind != ATOM_EXPR)
+            continue;
+        for (CettaExprIndex i = 0u; i < node->expr.len; i++) {
+            const Atom *child = node->expr.elems[i];
+            if (!child || !atom_has_vars(child))
+                continue;
+            if (len == cap) {
+                size_t next = cap * 2u;
+                const Atom **grown = stack == inline_stack
+                    ? malloc(next * sizeof(*grown))
+                    : realloc((void *)stack, next * sizeof(*grown));
+                if (!grown) {
+                    ok = false;
+                    len = 0u;
+                    break;
+                }
+                if (stack == inline_stack)
+                    memcpy((void *)grown, inline_stack, len * sizeof(*grown));
+                stack = grown;
+                cap = next;
+            }
+            stack[len++] = child;
+        }
+    }
+    if (stack != inline_stack)
+        free((void *)stack);
+    return ok;
+}
+
+static bool equation_collect_variable(VarId id, void *raw) {
+    EquationVariableIdsV1 *ids = raw;
+    if (ids->len == ids->cap) {
+        size_t next = ids->cap ? ids->cap * 2u : 16u;
+        VarId *grown = realloc(ids->ids, next * sizeof(*grown));
+        if (!grown) {
+            ids->failed = true;
+            return false;
+        }
+        ids->ids = grown;
+        ids->cap = next;
+    }
+    ids->ids[ids->len++] = id;
+    return true;
+}
+
+typedef struct {
+    const EquationVariableIdsV1 *call;
+    bool foreign;
+} EquationForeignVariableV1;
+
+static bool equation_note_foreign_variable(VarId id, void *raw) {
+    EquationForeignVariableV1 *check = raw;
+    if (bsearch(&id, check->call->ids, check->call->len, sizeof(VarId),
+                equation_variable_id_order))
+        return true;
+    check->foreign = true;
+    return false;
+}
+
+/* Whether `result` holds a variable that does not occur in `call`. Apply's
+ * argument values are open data whose variables may reach its answer; any
+ * other variable is a source metavariable that no binding replaced (one at
+ * an inert tuple head, say). False with *failed set when allocation failed. */
+static bool equation_result_has_foreign_variable(const Atom *result,
+                                                 const Atom *call,
+                                                 bool *failed) {
+    EquationVariableIdsV1 ids = {0};
+    EquationForeignVariableV1 check = {.call = &ids};
+    *failed = false;
+    if (!equation_visit_variables(call, equation_collect_variable, &ids) ||
+        ids.failed) {
+        free(ids.ids);
+        *failed = true;
+        return false;
+    }
+    if (ids.len > 1u)
+        qsort(ids.ids, ids.len, sizeof(*ids.ids), equation_variable_id_order);
+    if (!equation_visit_variables(result, equation_note_foreign_variable,
+                                  &check))
+        *failed = true;
+    free(ids.ids);
+    return !*failed && check.foreign;
+}
+
 static bool deterministic_equation_execute(
     const CettaDeterministicEquationPlanV1 *plan, const Atom *call,
     CettaDeterministicPrimitiveFnV1 primitive, void *primitive_context,
@@ -2333,14 +2448,26 @@ static bool deterministic_equation_execute(
             *status = context.status;
         return false;
     }
-    if (!entry_arguments_are_values && atom_has_vars(*out)) {
+    /* A run's answer is ground. Apply's answer may hold the variables of
+     * its argument values, never a source metavariable. */
+    bool variables_failed = false;
+    if (atom_has_vars(*out) &&
+        (!entry_arguments_are_values ||
+         equation_result_has_foreign_variable(*out, call, &variables_failed) ||
+         variables_failed)) {
         arena_reset(arena, mark);
         *out = NULL;
         if (status)
-            *status = CETTA_DETERMINISTIC_EQUATION_V1_NON_GROUND_TERM;
+            *status = variables_failed
+                ? CETTA_DETERMINISTIC_EQUATION_V1_RESOURCE_LIMIT
+                : CETTA_DETERMINISTIC_EQUATION_V1_NON_GROUND_TERM;
         return equation_error(
             error, error_size,
-            "deterministic equation result is not ground");
+            variables_failed
+                ? "cannot allocate the deterministic equation result's variable check"
+                : !entry_arguments_are_values
+                ? "deterministic equation result is not ground"
+                : "deterministic equation result holds an unbound source variable");
     }
     if (status)
         *status = CETTA_DETERMINISTIC_EQUATION_V1_OK;

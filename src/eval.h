@@ -259,7 +259,7 @@ typedef struct EvalOutcome {
        answer, so the incompleteness is not also reported to the enclosing
        evaluation. */
     bool completion_consumed;
-    /* Owns an uncommitted top-level Observation; released by free. */
+    /* Owns retained top-level results or an Observation; released by free. */
     struct CettaPrimeObservationReturn *prime_observation;
 } EvalOutcome;
 
@@ -288,7 +288,27 @@ typedef struct {
     bool producer_complete, return_materialized;
     size_t accepted_rows, copied_rows;
     uint64_t remaining_allowance;
+    /* Explicitly sliced ordinary return transport. Traversal decisions are
+     * separate from controller work and from prices of native copy services. */
+    bool copy_pending;
+    uint64_t copy_traversal_steps;
+    bool preparation_pending;
+    uint64_t preparation_steps;
 } CettaPrimeObservationState;
+
+/* Optional finite return-service slices, independent of source-controller
+ * credit and accepted-return count. Unlimited phases have their limit flag
+ * clear. Preparation counts a raw-row conversion, retained Need-reifier
+ * transitions and immutable-graph node/edge inspections. Scoped substitution,
+ * AnswerRef merge, lookup, constructors, allocation and cleanup have separate
+ * primitive prices. */
+typedef struct {
+    uint64_t preparation, transport;
+    bool limit_preparation, limit_transport;
+} CettaPrimeReturnSlice;
+typedef struct {
+    uint64_t preparation, transport;
+} CettaPrimeReturnWork;
 /* The state is a borrowed view. The outcome and its result arena, library,
  * registry and source Space must remain live through retry or disposal.
  * A pending row is retried without invoking its producer again. */
@@ -296,13 +316,44 @@ bool eval_outcome_observation_state(const struct EvalOutcome *outcome,
                                   CettaPrimeObservationState *state);
 CettaContinuationStatus eval_outcome_resume_observation(
     struct EvalOutcome *outcome, uint64_t allowance);
+/* Opt-in ordinary owned-root transport. Controller allowance adds to its
+ * existing retained work bank; unused earlier credit is still available.
+ * copy_allowance independently bounds graph traversal
+ * decisions for this invocation. A copy pause retains the exact pending
+ * answer and returns DEFERRED. A fully copied answer may retry a refused
+ * result slot with zero copy allowance. Scalar/memo/allocator/validation and
+ * cleanup services have separate costs; this is not a whole-slot time bound.
+ * Select an owned root with zero initial allowance to slice its first return.
+ * copy_used, when supplied, reports this call's exact traversal debit even
+ * when completion releases the observation. Other observation profiles refuse
+ * without changing their residual or spending copy allowance. */
+CettaContinuationStatus eval_outcome_resume_observation_with_transport(
+    struct EvalOutcome *outcome, uint64_t allowance, uint64_t copy_allowance,
+    uint64_t *copy_used);
+/* NULL selects unlimited return preparation/transport. A zero preparation
+ * slice retains an unprepared row; a zero transport slice may still publish
+ * an already copied row. No partial term is delivered. Work, if requested,
+ * reports this call's actual phase debits even when completion retires its
+ * owner. Neither phase allowance is a whole-slot instruction/time bound. */
+CettaContinuationStatus eval_outcome_resume_observation_slice(
+    struct EvalOutcome *outcome, uint64_t allowance,
+    const CettaPrimeReturnSlice *slice, CettaPrimeReturnWork *work);
 
 typedef enum {
     CETTA_PRIME_OWNED_REGION_READ_ONLY_SNAPSHOT_V1 = 1
 } CettaPrimeOwnedRegionProfile;
-/* Explicit private snapshot semantics for retained native select/once and
- * cost:run. Finite demand keeps the complete residual; cost observation is
- * optional for select/once. Ordinary evaluation is unchanged.
+/* Explicit private snapshot semantics for retained native select/once,
+ * cost:run and raw native weight forms. A raw weight entry acquires its
+ * source with zero initial producer work; resume grants advance that call.
+ * Grant exhaustion returns DEFERRED without constructing an Observation.
+ * A closed call returns its separate occurrences (including zero results);
+ * a genuinely open source cut returns one Observation with its complete
+ * residual. Closed return rows preserve their environment until projection.
+ * Finite demand keeps the complete residual; cost observation is optional
+ * for select/once. Ordinary evaluation is unchanged.
+ * As with the ordinary Atom API, the term retains the binding identities
+ * chosen when it was formed. Authored text is elaborated at reader ingress;
+ * capture does not select a scope policy or re-elaborate existing terms.
  * Source roots/services remain held and quiescent through capture and the
  * synchronous original-registry enrollment/acquisition. The result arena
  * must be detached from hashcons/older generations and stays externally
@@ -356,6 +407,10 @@ void eval_c_stack_boundary_capture(CettaEvalCStackBoundary *boundary);
 void eval_top(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_one_step(Space *s, Arena *a, Atom *expr, ResultSet *rs);
 void eval_top_with_registry(Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr, ResultSet *rs);
+/* The same top evaluator with explicit completion. A partial result prefix
+ * does not certify exhaustion after fuel, cancellation or service refusal. */
+CettaEvalCompletion eval_top_with_registry_completion(Space *space,Arena *arena,Arena *persistent,
+    Registry *registry,Atom *expression,ResultSet *results);
 void eval_top_with_registry_petta_plan_outcome(
     Space *s, Arena *a, Arena *persistent, Registry *r, Atom *expr,
     const struct PettaPlanNode *plan, EvalOutcome *outcome);
@@ -400,12 +455,16 @@ bool cetta_prime_open_code_head(SymbolId head);
 int eval_get_default_fuel(void);
 int eval_current_effective_fuel_limit(void);
 bool eval_current_prefer_rationals(void);
-bool eval_current_uses_rust_he_compat_semantics(void);
+bool eval_current_uses_rust_he_compat_semantics(void) __attribute__((weak));
 bool eval_current_builtin_allowed(const char *name) __attribute__((weak));
 bool eval_current_pattern_module_enabled(void) __attribute__((weak));
 uint32_t eval_current_pattern_control_arity(SymbolId head) __attribute__((weak));
 SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
 Space *eval_resolve_space_read(Space *space) __attribute__((weak));
+/* Resolve a transactional view and register its live-space dependency with
+ * every active retained/native observer. Ordinary execution has a cold
+ * no-observer fast path. */
+Space *eval_observe_space_read(Space *space) __attribute__((weak));
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
 /* The error a minimal instruction answers for arguments outside `expected`:
@@ -461,6 +520,9 @@ uint32_t eval_get_atom_types_structural_profiled_budgeted(
 uint64_t eval_current_max_rational_digits(void);
 uint32_t eval_current_num_threads(void);
 void eval_set_library_context(CettaLibraryContext *ctx);
+/* Select an existing invocation context without initializing its options.
+ * The scoped caller restores the returned context before yielding. */
+CettaLibraryContext *eval_swap_library_context(CettaLibraryContext *next);
 CettaLibraryContext *eval_current_library_context(void);
 
 /* A Prime typing judgment, or Prime's `get-type`, is in progress.  An entry
@@ -493,6 +555,23 @@ uint64_t eval_payload_owner_epoch(void);
 uint64_t eval_next_payload_owner_epoch(void);
 bool eval_payload_redirects_begin(Arena *owner);
 void eval_payload_redirects_end(void);
+/* A frame retains its parent redirects and scratch resources independently of
+ * activation. Its arena and the borrowed base-resource owners remain held by
+ * the caller. Frames and activation scopes stay on their creating thread. */
+typedef struct CettaEvalPayloadFrame CettaEvalPayloadFrame;
+typedef struct {
+    CettaEvalPayloadFrame *previous, *entered;
+} CettaEvalPayloadScope;
+CettaEvalPayloadFrame *eval_payload_frame_open(Arena *owner);
+bool eval_payload_frame_enter(CettaEvalPayloadFrame *frame,
+                               CettaEvalPayloadScope *scope);
+void eval_payload_frame_leave(CettaEvalPayloadScope *scope);
+void eval_payload_frame_close(CettaEvalPayloadFrame *frame);
+/* Optional ordinary Prime stack provider for the rho payload protocol. The
+ * caller keeps source services selected on every open/step/close. Its grant
+ * counts stack/return phases, not the work of atomic native operations. */
+struct RhocalcPayloadProvider;
+const struct RhocalcPayloadProvider *eval_prime_payload_provider(void);
 bool eval_payload_note_space_redirect(Space *orig, Space *redirect);
 bool eval_payload_note_state_redirect(StateCell *orig, StateCell *redirect);
 bool eval_payload_track_scratch_space(Space *space);

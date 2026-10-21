@@ -24,6 +24,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("cc", "cppflags", "cflags", "ldflags"):
         parser.add_argument("--" + name, required=True)
+    # The symbol table's standalone closure (the Makefile's
+    # SYMBOL_STANDALONE_SRC): symbol.c keeps its spelling index in the
+    # scalar trie, so it does not link alone.
+    parser.add_argument("--symbol-sources", default="src/symbol.c")
     parser.add_argument("--output", type=Path, default=Path("runtime/gc-experiments/engine-mutants"))
     args = parser.parse_args()
     out = args.output.resolve()
@@ -41,7 +45,8 @@ def main():
         source.write_text(text)
         binary = out / name
         command = (shlex.split(args.cc) + shlex.split(args.cppflags) + shlex.split(args.cflags)
-                   + ["-o", str(binary), "tests/test_managed_symbol_values.c", "src/symbol.c",
+                   + ["-o", str(binary), "tests/test_managed_symbol_values.c",
+                      *shlex.split(args.symbol_sources),
                       str(source), "src/binding/frame_identity.c"] + shlex.split(args.ldflags))
         build = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=60)
         (out / (name + ".build.log")).write_text(build.stdout + build.stderr)

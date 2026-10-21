@@ -15,9 +15,12 @@
       ($bad activity:invalid))))
 
 (= (activity:receive $worker)
+   (activity:receive-at $worker (activity:state)))
+
+(= (activity:receive-at $worker $state)
    (activity:match (host:record 0 $key
      (activity:input 1 $id $owner $generation $kind $body $due $period))
-     (if (== (activity:state) activity:idle)
+     (if (== $state activity:idle)
        (case $kind
          ((work
            (host:transition (activity:waiting 1 $id $owner $generation) ()
@@ -31,13 +34,15 @@
              ((host:send 1 (timer:at 1 $due $period FireOnce 0 $body)
                 (activity:tick 1 $id $owner $generation)))))
           ($bad Empty)))
-       (host:transition (activity:state)
+       (host:transition $state
          ((host:put 0 $id (activity:rejected 1 $owner $generation existing-activity))) ()))))
 
 (= (activity:cancel)
+   (activity:cancel-at (activity:state)))
+
+(= (activity:cancel-at $state)
    (activity:match (host:record 0 $key
      (activity:input 1 $id $owner $generation cancel $body $due $period))
-     (let $state (activity:state)
        (case $state
          (((activity:waiting 1 $request $owner $generation)
            (host:transition (activity:cancelled 1 $request $owner $generation)
@@ -47,11 +52,14 @@
              ((host:put 0 $id (activity:cancelled-wait 1 $owner $generation))) ()))
           ($other
            (host:transition $state
-             ((host:put 0 $id (activity:cancel-refused 1 $owner $generation))) ())))))))
+             ((host:put 0 $id (activity:cancel-refused 1 $owner $generation))) ()))))))
 
 ; Views: 2 result, 3 task, 4 origin, 5 intent. Versions and the observation
 ; match again in the exact acceptance snapshot, including negative reads.
 (= (activity:reply $worker $result-key $task-key $intent-key)
+   (activity:reply-at $worker $result-key $task-key $intent-key (activity:state)))
+
+(= (activity:reply-at $worker $result-key $task-key $intent-key $state)
    (activity:match (host:record 0 $key (host:worker-result 1 $worker $task $revision $body))
     (activity:match (host:record 3 $task-key $observation)
      (activity:match (host:record-version 3 $task-key $revision $task-position)
@@ -61,8 +69,7 @@
         (activity:match (host:record 5 $intent-key
           (host:intent 1 "worker.request" "1" (worker:request 1 $worker $observation)
             (activity:return 1 $request $owner $generation)))
-         (let* (($state (activity:state))
-                ($current (== $state (activity:waiting 1 $request $owner $generation)))
+         (let* (($current (== $state (activity:waiting 1 $request $owner $generation)))
                 ($channel (durable:rho:channel $intent-key))
                 ($values (rhometta:values (rhometta:run-canonical
                   (rho:par
@@ -78,15 +85,224 @@
               ($bad Empty)))))))))))
 
 (= (activity:timer-reply $result-key $intent-key $effect-id)
+   (activity:timer-reply-at $result-key $intent-key $effect-id (activity:state)))
+
+(= (activity:timer-reply-at $result-key $intent-key $effect-id $state)
    (activity:match (host:record 0 $key
      (host:timer-event 1 $effect-id $sequence $kind $due $now $represented $body
        (activity:tick 1 $request $owner $generation)))
     (activity:match (host:record 3 $intent-key
       (host:intent 1 "timer.after" "1" $payload
         (activity:tick 1 $request $owner $generation)))
-     (let* (($state (activity:state))
-            ($current (== $state (activity:timing 1 $request $owner $generation))))
+     (let* (($current (== $state (activity:timing 1 $request $owner $generation))))
        (host:transition $state
          ((host:put 0 $result-key
             (activity:timer-result 1 $owner $generation $sequence $kind $due $now
               $represented (if $current current late) $body))) ())))))
+
+; A state context changes only the state component of a proposed transition.
+; Writes and effect descriptions still cross the host's original grant and
+; publication checks. Contexts are data interpreted by trusted policy code.
+(= (activity:map-state $context $proposal)
+   (case $proposal
+     (((host:transition $state $writes $effects)
+       (let $wrapped (activity:frame-state $context $state)
+         (host:transition $wrapped $writes $effects)))
+      ($other $other))))
+
+(= (activity:frame-state activity:identity $state) $state)
+
+; A duty has two existing activity states. Relinquishing a grant, cancelling
+; an action or recording its completion does not remove the enclosing duty.
+; The native host supplies invocation identity and publication authority;
+; these fields and policy observations are descriptions, not native grants.
+(= (activity:frame-state
+     (activity:duty-frame
+       (activity:duty 1 $id $obligor $obligee $scope $holder
+         $primary $repair $cancelled $disposition $history) primary) $state)
+   (activity:duty 1 $id $obligor $obligee $scope $holder
+     (if (== $disposition activity:unsettled) $state $primary)
+     $repair $cancelled $disposition $history))
+
+(= (activity:frame-state
+     (activity:duty-frame
+       (activity:duty 1 $id $obligor $obligee $scope $holder
+         $primary $repair $cancelled $disposition $history) repair) $state)
+   (activity:duty 1 $id $obligor $obligee $scope $holder
+     $primary (if (== $disposition activity:unsettled) $state $repair)
+     $cancelled $disposition $history))
+
+(= (activity:duty-task
+     (activity:duty 1 $id $obligor $obligee $scope $holder
+       $primary $repair $cancelled $disposition $history) $purpose)
+   (case $purpose ((primary $primary) (repair $repair)
+     ($other (activity:refused unknown-purpose)))))
+
+(= (activity:append-event $history $event)
+   (if (== $history ())
+     (cons-atom $event ())
+     (let ($head $tail) (decons-atom $history)
+       (let $rest (activity:append-event $tail $event)
+         (cons-atom $head $rest)))))
+
+; Keep the actual keys and versions of all matching grants. The host's
+; captured policy view must be declared and revalidated with publication;
+; constructing an equal-looking authority value cannot replace that check.
+(= (activity:grant-evidence $view $principal $scope $right)
+   (let $grants
+     (collapse
+       (activity:match (host:record $view $key
+         (activity:grant 1 $principal $scope $right))
+         (activity:match (host:record-version $view $key $revision $position)
+           (activity:grant-reference $key $revision $position))))
+     (if (== $grants ())
+       (activity:refused authority)
+       (activity:authority $grants))))
+
+(= (activity:duty-issue $occurrence $principal $beneficiary $scope $policy-view)
+   (if (== (activity:state) activity:idle)
+     (case (activity:grant-evidence $policy-view $principal $scope issue)
+       (((activity:authority $issued)
+         (case (activity:grant-evidence $policy-view $principal $scope hold)
+           (((activity:authority $held)
+             (let $history (cons-atom
+               (activity:issued $occurrence $principal $beneficiary $scope $issued $held) ())
+               (host:transition
+                 (activity:duty 1 $occurrence $principal $beneficiary $scope $principal
+                   activity:idle activity:idle activity:live activity:unsettled $history)
+                 () ())))
+            ($denied $denied))))
+        ($denied $denied)))
+     (activity:refused existing-duty)))
+
+(= (activity:duty-transfer $principal $recipient $policy-view)
+   (case (activity:state)
+     (((activity:duty 1 $id $obligor $obligee $scope $holder
+         $primary $repair $cancelled $disposition $history)
+       (if (and (== $principal $holder) (== $disposition activity:unsettled))
+         (case (activity:grant-evidence $policy-view $principal $scope transfer)
+           (((activity:authority $gives)
+             (case (activity:grant-evidence $policy-view $recipient $scope hold)
+               (((activity:authority $accepts)
+                 (let $next (activity:append-event $history
+                     (activity:transferred $principal $recipient $gives $accepts))
+                   (host:transition
+                     (activity:duty 1 $id $obligor $obligee $scope $recipient
+                       $primary $repair $cancelled $disposition $next) () ())))
+                ($denied $denied))))
+            ($denied $denied)))
+         (activity:refused holder-or-settled)))
+      ($other (activity:refused missing-duty)))))
+
+(= (activity:duty-cancel $principal $policy-view)
+   (case (activity:state)
+     (((activity:duty 1 $id $obligor $obligee $scope $holder
+         $primary $repair $cancelled $disposition $history)
+       (if (== $principal $holder)
+         (case (activity:grant-evidence $policy-view $principal $scope execute)
+           (((activity:authority $authority)
+             (let $next (activity:append-event $history
+                 (activity:cancelled-by $principal $authority))
+               (host:transition
+                 (activity:duty 1 $id $obligor $obligee $scope $holder
+                   $primary $repair activity:cancelled $disposition $next) () ())))
+            ($denied $denied)))
+         (activity:refused holder)))
+      ($other (activity:refused missing-duty)))))
+
+; Only starting new work needs execute authority. Persisting an already
+; correlated completion uses reply-at and keeps its effect even after cancel
+; or revocation. Adoption is a separate current-authority operation.
+(= (activity:duty-receive $principal $purpose $worker $policy-view)
+   (let $duty (activity:state)
+     (case $duty
+       (((activity:duty 1 $id $obligor $obligee $scope $holder
+           $primary $repair $cancelled $disposition $history)
+         (if (and (== $principal $holder) (== $disposition activity:unsettled))
+           (if (or (and (== $purpose primary) (== $cancelled activity:live))
+                   (and (== $purpose repair) (== $cancelled activity:cancelled)))
+             (case (activity:grant-evidence $policy-view $principal $scope execute)
+               (((activity:authority $authority)
+                 (let $requests (collapse
+                     (activity:match (host:record 0 $key
+                       (activity:input 1 $request (activity:duty-owner $id $purpose)
+                         $generation work $body 0 0)) $generation))
+                   (case $requests
+                     ((($generation)
+                       (if (> $generation 0)
+                         (let $task (activity:duty-task $duty $purpose)
+                           (activity:map-state (activity:duty-frame $duty $purpose)
+                             (activity:receive-at $worker $task)))
+                         (activity:refused generation)))
+                      ($other (activity:refused request-owner))))))
+                ($denied $denied)))
+             (activity:refused direction))
+           (activity:refused holder-or-settled)))
+        ($other (activity:refused missing-duty))))))
+
+(= (activity:duty-reply $purpose $worker $result-key $task-key $intent-key)
+   (let $duty (activity:state)
+     (case $duty
+       (((activity:duty 1 $id $obligor $obligee $scope $holder
+           $primary $repair $cancelled $disposition $history)
+         (case $purpose
+           ((primary (activity:map-state (activity:duty-frame $duty primary)
+              (activity:reply-at $worker $result-key $task-key $intent-key $primary)))
+            (repair (activity:map-state (activity:duty-frame $duty repair)
+              (activity:reply-at $worker $result-key $task-key $intent-key $repair)))
+            ($other (activity:refused unknown-purpose)))))
+        ($other (activity:refused missing-duty))))))
+
+; The checker is part of the trusted host program. It interprets the completed
+; answer against separately captured receiver evidence, not a client-supplied
+; claim that a check passed. The contract tag names that interpretation. Both
+; result and evidence references retain their exact publication dependencies.
+(= (activity:duty-settlement $duty $principal $purpose $generation $authority
+     $result-view $result-key $evidence-view $evidence-key $contract $checker)
+   (let $observed (collapse
+       (activity:match (host:record $result-view $result-key
+         (activity:result 1 (activity:duty-owner $id $purpose)
+           $generation current $answer))
+         (activity:match (host:record-version $result-view $result-key $rr $rp)
+           (activity:match (host:record $evidence-view $evidence-key $evidence)
+             (activity:match (host:record-version $evidence-view $evidence-key $er $ep)
+               (activity:settlement-input $id $answer $rr $rp $evidence $er $ep))))))
+     (case $duty
+       (((activity:duty 1 $id $obligor $obligee $scope $holder
+           $primary $repair $cancelled $disposition $history)
+         (case $observed
+           ((((activity:settlement-input $id $answer $rr $rp $evidence $er $ep))
+             (if (== ($checker $duty $purpose $answer $evidence) True)
+               (let $settled
+                   (activity:settled 1 $principal $purpose $generation $answer
+                     (activity:result-reference $result-key $rr $rp)
+                     (activity:evidence-reference $contract $evidence-key $er $ep) $authority)
+                 (let $next (activity:append-event $history $settled)
+                   (host:transition
+                     (activity:duty 1 $id $obligor $obligee $scope $holder
+                       $primary $repair $cancelled $settled $next) () ())))
+               (activity:refused meaning)))
+            ($other (activity:refused evidence)))))
+        ($other (activity:refused missing-duty))))))
+
+(= (activity:duty-settle $principal $purpose $policy-view $result-view $result-key
+     $evidence-view $evidence-key $contract $checker)
+   (let $duty (activity:state)
+     (case $duty
+       (((activity:duty 1 $id $obligor $obligee $scope $holder
+           $primary $repair $cancelled $disposition $history)
+         (if (and (== $principal $holder) (== $disposition activity:unsettled))
+           (if (or (and (== $purpose primary) (== $cancelled activity:live))
+                   (and (== $purpose repair) (== $cancelled activity:cancelled)))
+             (let $right (case $purpose ((primary adopt) (repair compensate)))
+               (case (activity:grant-evidence $policy-view $principal $scope $right)
+                 (((activity:authority $authority)
+                   (case (activity:duty-task $duty $purpose)
+                     (((activity:done 1 $request (activity:duty-owner $id $purpose) $generation)
+                       (activity:duty-settlement $duty $principal $purpose $generation $authority
+                         $result-view $result-key $evidence-view $evidence-key $contract $checker))
+                      ($other (activity:refused incomplete)))))
+                  ($denied $denied))))
+             (activity:refused direction))
+           (activity:refused holder-or-settled)))
+        ($other (activity:refused missing-duty))))))

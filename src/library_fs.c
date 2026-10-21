@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -429,6 +430,7 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
     if (!head || head->kind != ATOM_SYMBOL) return false;
     SymbolId op = atom_symbol_current_id(head);
     const char *name = op == g_builtin_syms.lib_fs_metadata ? "metadata" :
+        op == g_builtin_syms.lib_fs_rename ? "rename" :
         op == g_builtin_syms.lib_fs_walk_open ? "walk-open" :
         op == g_builtin_syms.lib_fs_walk_current ? "walk-current" :
         op == g_builtin_syms.lib_fs_walk_step ? "walk-step" :
@@ -442,12 +444,20 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
     if (eval_native_interrupted()) { *out = cetta_call_interrupted(); return true; }
     Atom *value;
     uint32_t arity = op == g_builtin_syms.lib_fs_metadata ||
+        op == g_builtin_syms.lib_fs_rename ||
         op == g_builtin_syms.lib_fs_read_chunk || op == g_builtin_syms.lib_fs_walk_step ||
         op == g_builtin_syms.lib_fs_walk_metadata ? 2u : 1u;
     const char *path = nargs ? path_arg(args[0]) : NULL;
     uint64_t observed = 0u;
     bool position_known = true;
     if (nargs != arity) goto argument;
+    if (op == g_builtin_syms.lib_fs_rename) {
+        const char *target = path_arg(args[1]);
+        if (!path || !target) goto argument;
+        value = rename(path, target) == 0 ? atom_unit(arena)
+            : os_failed(arena, name, path, errno, 0u, true);
+        goto completed;
+    }
     if (op == g_builtin_syms.lib_fs_metadata || op == g_builtin_syms.lib_fs_open_read ||
         op == g_builtin_syms.lib_fs_open_directory || op == g_builtin_syms.lib_fs_walk_open) {
         if (!path) goto argument;

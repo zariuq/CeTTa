@@ -18,3 +18,21 @@
 !(assertEqualToResult
    (get-type (Deduction pP pQ pR pPQ pPQ))
    ())
+
+; Independent dependent premises retain only the lexical support needed by
+; each nested type query, rather than every earlier caller frame.
+(: SupportMeasure Type)
+(: SupportValue (-> Number SupportMeasure))
+(: SupportEvidence (-> Atom SupportMeasure Type))
+(: support-premise (SupportEvidence SupportEvent (SupportValue 1)))
+(: SupportReturnFirst
+   (-> (SupportEvidence $x0 $m0)
+       (SupportEvidence $x1 $m1)
+       (SupportEvidence $x2 $m2)
+       (SupportEvidence $x0 $m0)))
+!(assertEqual
+   (get-type (SupportReturnFirst support-premise support-premise support-premise))
+   (SupportEvidence SupportEvent (SupportValue 1)))
+!(assertEqualToResult
+   (get-type (SupportReturnFirst support-premise 7 support-premise))
+   ())

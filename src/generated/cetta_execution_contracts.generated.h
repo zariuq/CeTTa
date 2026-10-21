@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: ccbc5fbe08b7d592048b538825d00d03f1468d4de58579c072d545aa5c53e646
+ * Source SHA-256: 1a14b95df27e1e9f3c029ce869013b02dde86271e16ab9e3fc0c5b26cc933a55
  */
 
 #include <stdbool.h>
@@ -13,6 +13,64 @@ typedef enum {
     CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY = 1u << 0,
     CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE = 1u << 1,
 } CettaGsltQueryEffect;
+
+typedef enum {
+    CETTA_GSLT_PLACEMENT_LOCAL = 0,
+    CETTA_GSLT_PLACEMENT_COORDINATOR = 1,
+    CETTA_GSLT_PLACEMENT_UNRESOLVED = 2,
+} CettaGsltWorkerPlacementAdvice;
+
+typedef enum {
+    CETTA_GSLT_PROGRESS_BOUNDED = 0,
+    CETTA_GSLT_PROGRESS_YIELDING = 1,
+    CETTA_GSLT_PROGRESS_ISOLATED = 2,
+    CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS = 3,
+} CettaGsltProgressAdvice;
+
+typedef struct {
+    CettaGsltWorkerPlacementAdvice placement;
+    CettaGsltProgressAdvice progress;
+    uint64_t bound;
+} CettaGsltNativeCallAdvice;
+
+#define CETTA_GSLT_NATIVE_CALL_HEAD_ROWS(X) \
+    X(decons_atom, CETTA_GSLT_PLACEMENT_LOCAL, CETTA_GSLT_PROGRESS_BOUNDED, 1u) \
+    X(cons_atom, CETTA_GSLT_PLACEMENT_LOCAL, CETTA_GSLT_PROGRESS_BOUNDED, 1u) \
+    X(car_atom, CETTA_GSLT_PLACEMENT_LOCAL, CETTA_GSLT_PROGRESS_BOUNDED, 1u) \
+    X(cdr_atom, CETTA_GSLT_PLACEMENT_LOCAL, CETTA_GSLT_PROGRESS_BOUNDED, 1u) \
+    X(get_metatype, CETTA_GSLT_PLACEMENT_LOCAL, CETTA_GSLT_PROGRESS_BOUNDED, 1u) \
+    X(context_space, CETTA_GSLT_PLACEMENT_LOCAL, CETTA_GSLT_PROGRESS_BOUNDED, 1u) \
+    X(select, CETTA_GSLT_PLACEMENT_COORDINATOR, CETTA_GSLT_PROGRESS_YIELDING, 0u) \
+    X(readln_bang, CETTA_GSLT_PLACEMENT_COORDINATOR, CETTA_GSLT_PROGRESS_ISOLATED, 0u)
+
+#define CETTA_GSLT_NATIVE_CALL_DEFAULT \
+    ((CettaGsltNativeCallAdvice){CETTA_GSLT_PLACEMENT_UNRESOLVED, \
+        CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS, 0u})
+#define CETTA_GSLT_NATIVE_CALL_CONSTRUCTOR \
+    ((CettaGsltNativeCallAdvice){CETTA_GSLT_PLACEMENT_LOCAL, \
+        CETTA_GSLT_PROGRESS_BOUNDED, 1u})
+#define CETTA_GSLT_NATIVE_CALL_USER_EQUATION \
+    ((CettaGsltNativeCallAdvice){CETTA_GSLT_PLACEMENT_LOCAL, \
+        CETTA_GSLT_PROGRESS_YIELDING, 0u})
+
+static inline bool cetta_gslt_native_call_head_advice(
+    SymbolId head, const BuiltinSyms *builtins, CettaGsltNativeCallAdvice *out) {
+    if (!builtins || !out) return false;
+#define CETTA_GSLT_NATIVE_CALL_ADVICE_CASE(field, placement, progress, bound) \
+    if (head == builtins->field) { \
+        *out = (CettaGsltNativeCallAdvice){placement, progress, bound}; \
+        return true; \
+    }
+    CETTA_GSLT_NATIVE_CALL_HEAD_ROWS(CETTA_GSLT_NATIVE_CALL_ADVICE_CASE)
+#undef CETTA_GSLT_NATIVE_CALL_ADVICE_CASE
+    *out = CETTA_GSLT_NATIVE_CALL_DEFAULT;
+    return false;
+}
+
+static inline bool cetta_gslt_progress_inline(CettaGsltProgressAdvice progress) {
+    return progress == CETTA_GSLT_PROGRESS_BOUNDED ||
+           progress == CETTA_GSLT_PROGRESS_YIELDING;
+}
 
 #define CETTA_GSLT_QUERY_EFFECT_HEAD_ROWS(X) \
     X(match, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
@@ -52,6 +110,16 @@ typedef enum {
     X(step_bang, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(petta_transaction, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(get_state, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(space_push, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(space_pop, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(space_truncate, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(space_get, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(space_len, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(space_peek, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(size, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(count_atoms, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(minimal_space_contains_exact, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(minimal_space_revision, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(runtime_stats_bang, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(lib_system_exit_with_code, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_system_write, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
@@ -74,6 +142,7 @@ typedef enum {
     X(lib_fs_try_canonical_under, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(lib_fs_read_text, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(lib_fs_write, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_rename, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_fs_append_text, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_fs_read_lines, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(lib_fs_metadata, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \

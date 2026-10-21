@@ -212,7 +212,9 @@ static void test_uncertain_rows_keep_rigid_prefixes(TermUniverse *universe,
     CettaIndex *positions = NULL, count = 0u, capacity = 0u;
     assert(space_path_index_candidates(&space, query, &positions, &count, &capacity));
     assert(count == 13u);
-    assert(capacity == 77u);
+    /* Head-partitioned uncertain rows allocate only the query head's
+     * candidates; the 64 open rows of the other constructor stay out. */
+    assert(capacity == count && capacity == 13u);
     /* Eight matching ground occurrences, then the variable-headed row,
      * whole-row variable and correlated row of the right constructor. */
     for (CettaIndex index = 0u; index < 8u; index++)
@@ -440,7 +442,8 @@ static void test_string_prefixes_collisions_and_binary_values(TermUniverse *univ
     assert(space_path_indexes_info(&space, &info));
     assert(info.key_kind == CETTA_SPACE_PATH_STRING_HASH_KEY);
     CettaIndex *candidates = NULL, count = 0u;
-    assert(space_path_index_candidates(&space, query, &candidates, &count));
+    assert(space_path_index_candidates(
+        &space, query, &candidates, &count, NULL));
     assert(count < 8u);
     bool included_collision = false;
     for (CettaIndex index = 0; index < count; index++)
@@ -468,19 +471,28 @@ static void test_unrecorded_string_paths(Arena *arena) {
     space_init_with_universe(&space,&universe);
     space.kind=SPACE_KIND_STACK;
     Atom *head=atom_symbol_data_n(arena,"unrecorded-string-row",21u);
+    StateCell identity={0};
+    Atom *identity_value=atom_state(arena,&identity);
     for (int64_t index=0; index<512; ++index) {
         char key[32];
         snprintf(key,sizeof(key),"id-%lld",(long long)index);
-        Atom *children[]={head,atom_string(arena,key),atom_int(arena,index)};
-        assert(space_admit_atom(&space,&persistent,atom_expr(arena,children,3u)));
+        Atom *children[]={
+            head,atom_string(arena,key),atom_int(arena,index),identity_value};
+        assert(space_admit_atom(&space,&persistent,atom_expr(arena,children,4u)));
     }
     assert(!tu_hdr(&universe,space_get_atom_id_at64(&space,0u)));
-    Atom *children[]={head,atom_string(arena,"id-17"),atom_var(arena,"value")};
-    Atom *pattern=atom_expr(arena,children,3u);
+    Atom *children[]={head,atom_string(arena,"id-17"),atom_var(arena,"value"),
+        atom_var(arena,"identity")};
+    Atom *pattern=atom_expr(arena,children,4u);
     space.match_backend.native.cold_flat_scans=4u;
-    compare_reference(&space,arena,pattern);
+    /* The identity-bearing fourth field intentionally makes the row a
+     * decoded-only fallback. It is not copied through a substitution just to
+     * test indexing; compare the general matcher occurrence by occurrence. */
+    for (CettaIndex position=0u; position<space_length64(&space); ++position)
+        assert(direct_match(&space,arena,pattern,position)==(position==17u));
     CettaIndex *positions=NULL,count=0u;
-    assert(space_path_index_candidates(&space,pattern,&positions,&count));
+    assert(space_path_index_candidates(
+        &space, pattern, &positions, &count, NULL));
     assert(count==1u && positions[0]==17u);
     free(positions);
     space_free(&space);

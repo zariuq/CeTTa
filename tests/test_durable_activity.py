@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import queue
 import socket
-import sqlite3
+from support.durable_journal_fixture import records
 import subprocess
 import threading
 import time
@@ -27,7 +27,7 @@ class Service:
     def start(self):
         self.events = queue.Queue()
         self.process = subprocess.Popen([os.environ["CETTA_ACTIVITY_SERVICE"],
-            str(self.directory / "journal.sqlite3"), str(self.listener.fileno()),
+            str(self.directory / "journal.cdr"), str(self.listener.fileno()),
             "activities", str(self.capacity)] + self.planning, pass_fds=[self.listener.fileno()],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1)
@@ -165,6 +165,31 @@ class PrimeActivityTests(unittest.TestCase):
             stats = json.loads(next(l[6:] for l in s.lines if l.startswith("stats ")))
             paid.append(stats["plan_work"])
             self.assertGreater(stats["plan_polls"], 1)
+            self.assertGreater(stats["plan_setup"], 0)
+            self.assertGreater(stats["plan_setup_bytes"], 0)
+            self.assertGreater(stats["plan_preparation"], 0)
+            self.assertGreater(stats["plan_transport"], 0)
+            self.assertGreater(stats["plan_admission"], 0)
+            self.assertGreater(stats["plan_producer"], 0)
+            self.assertGreater(stats["plan_consumer"], 0)
+            self.assertLessEqual(stats["plan_final"], stats["plan_producer"])
+            self.assertEqual(stats["plan_rotations"], 0)
+            callbacks = sum(stats[name] for name in (
+                "plan_admission", "plan_producer", "plan_consumer",
+                "plan_final", "plan_rotations", "plan_retirements"))
+            self.assertEqual(stats["plan_receipt_units"], callbacks +
+                stats["plan_setup"] +
+                stats["plan_work"] + stats["plan_preparation"] +
+                stats["plan_transport"])
+            self.assertEqual(stats["slot_units"], sum(stats[name] for name in (
+                "slot_admission", "slot_preparation", "slot_execution",
+                "slot_delivery", "slot_teardown", "slot_arrivals",
+                "slot_bookkeeping")))
+            self.assertGreater(stats["max_slot_units"], 0)
+            self.assertLessEqual(stats["max_slot_units"], stats["slot_units"])
+            self.assertGreaterEqual(stats["slot_preparation"], stats["plan_setup"])
+            self.assertGreaterEqual(stats["slot_execution"], stats["plan_work"])
+            self.assertGreaterEqual(stats["plan_receipt_events"], callbacks)
             print("native activity quantum", quantum, "stats", json.dumps(stats), flush=True)
         self.assertEqual(paid[0], paid[1]); self.assertGreater(paid[0], 0)
 
@@ -176,26 +201,38 @@ class PrimeActivityTests(unittest.TestCase):
         s.close(); s.process = None
         stats = json.loads(next(l[6:] for l in s.lines if l.startswith("stats ")))
         self.assertEqual(stats["plan_work"], 0); self.assertEqual(stats["plan_polls"], 1)
+        self.assertGreater(stats["plan_setup"], 0)
+        self.assertGreater(stats["plan_setup_bytes"], 0)
+        self.assertEqual(stats["plan_preparation"], 0)
+        self.assertEqual(stats["plan_transport"], 0)
+        self.assertGreaterEqual(stats["plan_admission"], 1)
+        self.assertEqual(stats["plan_consumer"], 0)
+        callbacks = sum(stats[name] for name in (
+            "plan_admission", "plan_producer", "plan_consumer",
+            "plan_final", "plan_rotations", "plan_retirements"))
+        self.assertEqual(stats["plan_receipt_units"], callbacks + stats["plan_setup"])
+        self.assertEqual(stats["slot_units"], sum(stats[name] for name in (
+            "slot_admission", "slot_preparation", "slot_execution",
+            "slot_delivery", "slot_teardown", "slot_arrivals",
+            "slot_bookkeeping")))
+        self.assertGreater(stats["max_slot_units"], 0)
         self.assertEqual(stats["ready"], 1)
-        with sqlite3.connect(s.directory / "journal.sqlite3") as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.inbox'").fetchone()[0], 2)
-            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.commits'").fetchone()[0], 0)
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.inbox")), 2)
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.commits")), 0)
 
     def test_parked_native_plan_restart_reuses_input_then_replays_completed_result(self):
         s = self.service(work_limit=0)
         s.record("notice", "restart", body="restart")
         self.assertEqual(s.rpc(1)[0], 64)
         s.kill()
-        with sqlite3.connect(s.directory / "journal.sqlite3") as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.inbox'").fetchone()[0], 1)
-            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.commits'").fetchone()[0], 0)
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.inbox")), 1)
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.commits")), 0)
         # Restart owns a fresh planning ticket; the persisted input survives
         # retirement of the exhausted in-process task and its original purse.
         s.planning[-1] = "100000"
         s.start(); s.wait(lambda l: l.startswith("result restart "), 15)
         s.kill(); s.start(); s.wait(lambda l: l.startswith("result restart "), 15)
-        with sqlite3.connect(s.directory / "journal.sqlite3") as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.commits'").fetchone()[0], 1)
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.commits")), 1)
 
 
 @unittest.skipUnless(os.environ.get("CETTA_ACTIVITY_SERVICE"), "set CETTA_ACTIVITY_SERVICE")
@@ -317,7 +354,7 @@ class ActivityTests(unittest.TestCase):
             with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as listener:
                 listener.bind(path); listener.listen(16)
                 process = subprocess.Popen([os.environ["CETTA_ACTIVITY_SERVICE"],
-                    str(Path(directory) / "journal.sqlite3"), str(listener.fileno()), "activities", "4"],
+                    str(Path(directory) / "journal.cdr"), str(listener.fileno()), "activities", "4"],
                     pass_fds=[listener.fileno()], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 try:
                     self.assertEqual(process.stdout.readline(), b"ready\n")

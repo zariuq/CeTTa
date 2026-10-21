@@ -209,6 +209,7 @@ typedef struct {
     char *data;
     size_t len;
     size_t cap;
+    bool failed;
 } RhoStr;
 
 typedef struct {
@@ -437,6 +438,7 @@ static RhoView rho_view(Atom *atom) {
 
 static Atom *rho_call(Arena *arena, const char *head,
                       Atom *const *args, uint32_t nargs) {
+    for (uint32_t i=0u;i<nargs;i++) if (!args[i]) return NULL;
     Atom **elems = arena_alloc(arena, sizeof(Atom *) * (size_t)(nargs + 1));
     elems[0] = atom_symbol_id(arena, rho_head_symbol_id(head));
     for (uint32_t i = 0; i < nargs; i++) {
@@ -840,8 +842,11 @@ static void rho_alpha_pop(RhoAlphaEnv *env, uint32_t mark) {
 }
 
 static bool rho_alpha_push(RhoAlphaEnv *env, VarId var_id) {
+    if (env->next_index==UINT32_MAX) return false;
     if (env->len == env->cap) {
-        uint32_t next_cap = env->cap ? env->cap * 2u : 8u;
+        uint32_t next_cap=env->cap>UINT32_MAX/2u ? UINT32_MAX : env->cap ? env->cap*2u : 8u;
+        size_t count=next_cap;
+        if (next_cap<=env->cap || count>SIZE_MAX/sizeof(RhoAlphaEntry)) return false;
         RhoAlphaEntry *next =
             cetta_realloc(env->items, sizeof(RhoAlphaEntry) * next_cap);
         if (!next) return false;
@@ -865,28 +870,39 @@ static bool rho_alpha_lookup(const RhoAlphaEnv *env, VarId var_id,
     return false;
 }
 
+static bool rho_str_fail(RhoStr *str) {
+    str->failed=true;
+    rho_validation_set("rho canonical text construction failed");
+    return false;
+}
+
 static bool rho_str_reserve(RhoStr *str, size_t extra) {
+    if (str->failed) return false;
+    if (str->len==SIZE_MAX || extra>SIZE_MAX-str->len-1u) return rho_str_fail(str);
     size_t needed = str->len + extra + 1u;
     if (needed <= str->cap) return true;
-    size_t next_cap = str->cap ? str->cap * 2u : 128u;
-    while (next_cap < needed) next_cap *= 2u;
+    size_t next_cap = str->cap ? str->cap : 128u;
+    while (next_cap < needed) {
+        if (next_cap>SIZE_MAX/2u) {next_cap=needed;break;}
+        next_cap*=2u;
+    }
     char *next = realloc(str->data, next_cap);
-    if (!next) return false;
+    if (!next) return rho_str_fail(str);
     str->data = next;
     str->cap = next_cap;
     return true;
 }
 
 static bool rho_str_append_n(RhoStr *str, const char *text, size_t len) {
-    if (!rho_str_reserve(str, len)) return false;
-    memcpy(str->data + str->len, text, len);
+    if ((!text && len) || !rho_str_reserve(str, len)) return rho_str_fail(str);
+    if (len) memcpy(str->data + str->len, text, len);
     str->len += len;
     str->data[str->len] = '\0';
     return true;
 }
 
 static bool rho_str_append(RhoStr *str, const char *text) {
-    return rho_str_append_n(str, text, strlen(text));
+    return text ? rho_str_append_n(str, text, strlen(text)) : rho_str_fail(str);
 }
 
 static bool rho_str_appendf(RhoStr *str, const char *fmt, ...) {
@@ -899,16 +915,28 @@ static bool rho_str_appendf(RhoStr *str, const char *fmt, ...) {
     va_end(ap);
     if (needed < 0) {
         va_end(ap2);
-        return false;
+        return rho_str_fail(str);
     }
     if (!rho_str_reserve(str, (size_t)needed)) {
         va_end(ap2);
         return false;
     }
-    vsnprintf(str->data + str->len, str->cap - str->len, fmt, ap2);
+    int written=vsnprintf(str->data + str->len, str->cap - str->len, fmt, ap2);
     va_end(ap2);
+    if (written!=needed) return rho_str_fail(str);
     str->len += (size_t)needed;
     return true;
+}
+
+/* A failed append cannot license the already allocated prefix as a key. */
+static char *rho_str_take(RhoStr *str,const char *empty) {
+    if (str->failed) {
+        free(str->data);*str=(RhoStr){0};
+        return NULL;
+    }
+    char *text=str->data ? str->data : rho_heap_strdup(empty);
+    *str=(RhoStr){0};
+    return text;
 }
 
 typedef enum {
@@ -977,7 +1005,7 @@ static char *rho_atom_text_key_slow(Atom *atom) {
 
     arena_init(&scratch);
     rendered = atom_to_string(&scratch, atom);
-    out = rendered ? rho_heap_strdup(rendered) : rho_heap_strdup("");
+    out = rendered ? rho_heap_strdup(rendered) : NULL;
     arena_free(&scratch);
     return out;
 }
@@ -1234,7 +1262,7 @@ static char *rho_atom_text_key_direct(Atom *atom) {
         free(out.data);
         return NULL;
     }
-    return out.data ? out.data : rho_heap_strdup("");
+    return rho_str_take(&out,"");
 }
 
 static bool rho_atom_text_unambiguous_symbol(const Atom *atom) {
@@ -1396,11 +1424,12 @@ static bool rho_atom_text_key_into(Atom *atom, RhoStr *out) {
     mark = out->len;
     if (mode == 0) {
         if (rho_atom_text_key_direct_into(atom, out)) return true;
+        if (out->failed) return false;
         out->len = mark;
         if (out->data) out->data[mark] = '\0';
     }
     slow = rho_atom_text_key_slow(atom);
-    if (!slow) return false;
+    if (!slow) return rho_str_fail(out);
     ok = rho_str_append(out, slow);
     free(slow);
     return ok;
@@ -1425,11 +1454,11 @@ static char *rho_key_proc_quoted(Atom *proc) {
     rho_alpha_init(&env);
     rho_key_proc_into(proc, &env, &out);
     rho_alpha_free(&env);
-    if (!out.data) return rho_heap_strdup("");
-    return out.data;
+    return rho_str_take(&out,"");
 }
 
 static void rho_key_name_into(Atom *name, RhoAlphaEnv *env, RhoStr *out) {
+    if (!name) {rho_str_fail(out);return;}
     if (name->kind == ATOM_VAR) {
         rho_key_var_into(name, env, out);
         return;
@@ -1454,6 +1483,7 @@ static void rho_key_name_into(Atom *name, RhoAlphaEnv *env, RhoStr *out) {
 }
 
 static void rho_key_proc_into(Atom *proc, RhoAlphaEnv *env, RhoStr *out) {
+    if (!proc) {rho_str_fail(out);return;}
     RhoView view = rho_view(proc);
     switch (view.kind) {
     case RHO_NIL:
@@ -1482,7 +1512,7 @@ static void rho_key_proc_into(Atom *proc, RhoAlphaEnv *env, RhoStr *out) {
                 ? "recv-persistent(" : "recv(");
         rho_key_name_into(view.args[0], env, out);
         (void)rho_str_append(out, ",");
-        (void)rho_alpha_push(env, view.args[1]->var_id);
+        if (!rho_alpha_push(env,view.args[1]->var_id)) {rho_str_fail(out);return;}
         rho_key_proc_into(view.args[2], env, out);
         rho_alpha_pop(env, mark);
         (void)rho_str_append(out, ")");
@@ -1518,8 +1548,7 @@ static char *rho_key_proc(Atom *proc) {
     rho_alpha_init(&env);
     rho_key_proc_into(proc, &env, &out);
     rho_alpha_free(&env);
-    if (!out.data) return rho_heap_strdup("");
-    return out.data;
+    return rho_str_take(&out,"");
 }
 
 static char *rho_key_name(Atom *name) {
@@ -1528,8 +1557,7 @@ static char *rho_key_name(Atom *name) {
     rho_alpha_init(&env);
     rho_key_name_into(name, &env, &out);
     rho_alpha_free(&env);
-    if (!out.data) return rho_heap_strdup("");
-    return out.data;
+    return rho_str_take(&out,"");
 }
 
 static void rho_process_key_cache_init(
@@ -1673,29 +1701,37 @@ static int rho_endpoint_cmp_key(const void *lhs, const void *rhs) {
 static Atom *rho_normalize_proc(Arena *arena, Atom *proc);
 static Atom *rho_normalize_name(Arena *arena, Atom *name);
 
-static void rho_collect_par(Arena *arena, Atom *proc, RhoAtomVec *out) {
-    Atom *norm = rho_normalize_proc(arena, proc);
-    RhoView view = rho_view(norm);
-    if (view.kind == RHO_NIL) return;
-    if (view.kind == RHO_PAR) {
-        for (uint32_t i = 0; i < view.nargs; i++) {
-            rho_collect_par(arena, view.args[i], out);
-        }
-        return;
+static bool rho_collect_par(Arena *arena, Atom *proc, RhoAtomVec *out) {
+    Atom *norm=rho_normalize_proc(arena,proc);
+    if (!norm) return false;
+    RhoView view=rho_view(norm);
+    if (view.kind==RHO_NIL) return true;
+    if (view.kind==RHO_PAR) {
+        for (uint32_t i=0u;i<view.nargs;i++)
+            if (!rho_collect_par(arena,view.args[i],out)) return false;
+        return true;
     }
-    (void)rho_vec_push(out, norm);
+    return rho_vec_push(out,norm);
+}
+
+static RhoKeyedAtom *rho_keyed_atoms_new(const RhoAtomVec *vec,char *(*key)(Atom *)) {
+    RhoKeyedAtom *items=cetta_malloc(sizeof(*items)*(size_t)vec->len);
+    for (uint32_t i=0u;i<vec->len;i++) {
+        items[i]=(RhoKeyedAtom){.atom=vec->items[i],.key=key(vec->items[i]),.ordinal=i};
+        if (!items[i].key) {
+            for (uint32_t j=0u;j<i;j++) free(items[j].key);
+            free(items);return NULL;
+        }
+    }
+    return items;
 }
 
 static Atom *rho_par_from_vec(Arena *arena, RhoAtomVec *vec) {
     if (vec->len == 0) return rho_nil(arena);
     if (vec->len == 1) return vec->items[0];
 
-    RhoKeyedAtom *items = cetta_malloc(sizeof(RhoKeyedAtom) * vec->len);
-    for (uint32_t i = 0; i < vec->len; i++) {
-        items[i].atom = vec->items[i];
-        items[i].key = rho_key_proc(vec->items[i]);
-        items[i].ordinal = i;
-    }
+    RhoKeyedAtom *items=rho_keyed_atoms_new(vec,rho_key_proc);
+    if (!items) return NULL;
     qsort(items, vec->len, sizeof(RhoKeyedAtom), rho_keyed_atom_cmp);
 
     Atom **args = arena_alloc(arena, sizeof(Atom *) * vec->len);
@@ -1731,6 +1767,7 @@ static Atom *rho_copy_var(Arena *arena, Atom *var) {
 }
 
 static Atom *rho_normalize_name(Arena *arena, Atom *name) {
+    if (!name) return NULL;
     if (name->kind == ATOM_VAR) return rho_copy_var(arena, name);
     RhoView view = rho_view(name);
     if (view.kind == RHO_QUOTE && view.nargs == 1) {
@@ -1753,7 +1790,7 @@ static Atom *rho_normalize_proc(Arena *arena, Atom *proc) {
         RhoAtomVec flat;
         rho_vec_init(&flat);
         for (uint32_t i = 0; i < view.nargs; i++) {
-            rho_collect_par(arena, view.args[i], &flat);
+            if (!rho_collect_par(arena,view.args[i],&flat)) {rho_vec_free(&flat);return NULL;}
         }
         Atom *out = rho_par_from_vec(arena, &flat);
         rho_vec_free(&flat);
@@ -1852,6 +1889,7 @@ static Atom *rho_rename_proc(Arena *arena, Atom *proc,
 static Atom *rho_rename_name(Arena *arena, Atom *name,
                              VarId old_id, Atom *replacement_name) {
     Atom *norm = rho_normalize_name(arena, name);
+    if (!norm) return NULL;
     if (norm->kind == ATOM_VAR && norm->var_id == old_id) {
         return replacement_name;
     }
@@ -1937,6 +1975,7 @@ static Atom *rho_subst_name_mark(Arena *arena, Atom *name,
                                  bool *matched) {
     Atom *norm = rho_normalize_name(arena, name);
     if (matched) *matched = false;
+    if (!norm) return NULL;
     if (norm->kind == ATOM_VAR) {
         if (norm->var_id == var_id) {
             if (matched) *matched = true;
@@ -2448,27 +2487,26 @@ static Atom *rho_endpoint_direct_value_channel(RhoView endpoint) {
     return quoted.args[0];
 }
 
+static bool rho_collect_endpoint(RhoAtomVec *components,uint32_t index,
+        RhoEndpointVec *sends,RhoEndpointVec *recvs) {
+    RhoView view=rho_view(components->items[index]);
+    RhoEndpointVec *target=NULL;
+    if (view.kind==RHO_SEND && view.nargs==2u) target=sends;
+    else if ((view.kind==RHO_RECV || view.kind==RHO_RECV_PERSISTENT) && view.nargs==3u)
+        target=recvs;
+    if (!target) return true;
+    char *key=rho_key_name(view.args[0]);
+    if (!key) return false;
+    if (rho_endpoint_vec_push(target,index,view,key)) return true;
+    free(key);
+    return false;
+}
+
 static bool rho_collect_endpoints(RhoAtomVec *components,
                                   RhoEndpointVec *sends,
                                   RhoEndpointVec *recvs) {
-    for (uint32_t i = 0; i < components->len; i++) {
-        RhoView view = rho_view(components->items[i]);
-        if (view.kind == RHO_SEND && view.nargs == 2) {
-            char *key = rho_key_name(view.args[0]);
-            if (!rho_endpoint_vec_push(sends, i, view, key)) {
-                free(key);
-                return false;
-            }
-        } else if ((view.kind == RHO_RECV ||
-                    view.kind == RHO_RECV_PERSISTENT) &&
-                   view.nargs == 3) {
-            char *key = rho_key_name(view.args[0]);
-            if (!rho_endpoint_vec_push(recvs, i, view, key)) {
-                free(key);
-                return false;
-            }
-        }
-    }
+    for (uint32_t i=0u;i<components->len;i++)
+        if (!rho_collect_endpoint(components,i,sends,recvs)) return false;
     if (sends->len > 1) {
         qsort(sends->items, sends->len, sizeof(RhoEndpoint),
               rho_endpoint_cmp_key);
@@ -2737,25 +2775,32 @@ static StateCell *rho_state_clone_for(const RhoStateCloneMap *map,
 
 /* Add `orig` to the map (deduped), creating its copy-on-write overlay.  Returns
  * false only on allocation failure or if the map is full. */
+static bool rho_overlay_map_bind_pair(RhoOverlayMap *map,Space *orig,Space *overlay);
+
 static bool rho_overlay_map_add(RhoOverlayMap *map, Space *orig) {
     Space *ov;
     if (!orig || rho_overlay_for(map, orig))
         return true;
-    if (!rho_overlay_map_ensure(map, map->len + 1))
+    Space *visible=eval_resolve_space_read ? eval_resolve_space_read(orig) : orig;
+    if (!visible) return false;
+    ov=rho_overlay_for(map,visible);
+    if (ov) return rho_overlay_map_bind_pair(map,orig,ov);
+    int needed=visible==orig ? 1 : 2;
+    if (map->len>INT_MAX-needed || !rho_overlay_map_ensure(map,map->len+needed))
         return false;
     ov = cetta_malloc(sizeof(Space));
     if (!ov)
         return false;
-    space_init_overlay(ov, orig);
+    space_init_overlay(ov, visible);
     if (!eval_payload_track_scratch_space(ov)) {
         space_free(ov);
         free(ov);
         return false;
     }
-    map->orig[map->len] = orig;
-    map->overlay[map->len] = ov;
-    map->len++;
-    return true;
+    /* Raw references and the parent's already visible reference name one
+     * child view, including when both occur in the same payload graph. */
+    return rho_overlay_map_bind_pair(map,orig,ov) &&
+        (visible==orig || rho_overlay_map_bind_pair(map,visible,ov));
 }
 
 static bool rho_overlay_map_bind_pair(RhoOverlayMap *map, Space *orig,
@@ -2768,7 +2813,7 @@ static bool rho_overlay_map_bind_pair(RhoOverlayMap *map, Space *orig,
             return true;
         }
     }
-    if (!rho_overlay_map_ensure(map, map->len + 1))
+    if (map->len==INT_MAX || !rho_overlay_map_ensure(map, map->len + 1))
         return false;
     map->orig[map->len] = orig;
     map->overlay[map->len] = overlay;
@@ -2953,7 +2998,8 @@ static bool rho_eval_registry_init(Registry *dst, Registry *src,
             if (!registry_copy_entry(dst, src, i, value)) return false;
         }
     }
-    if (g_builtin_syms.self != SYMBOL_ID_NONE && self_overlay) {
+    if (g_builtin_syms.self != SYMBOL_ID_NONE && self_overlay &&
+        !registry_lookup_id(dst,g_builtin_syms.self)) {
         registry_bind_id(dst, g_builtin_syms.self, atom_space(arena, self_overlay));
     }
     return true;
@@ -3362,165 +3408,225 @@ static Atom *rho_promote_payload_atom(Arena *arena,
  * see the frozen shared bases plus local scratch; writes stay local to the
  * payload and never escape to a sibling. Escaping local spaces are materialized
  * as owned results; shared bases are never implicitly committed. */
-static bool rho_eval_payload_results(Arena *arena,
-                                     const RhocalcEvalContext *eval_context,
-                                     Atom *payload_expr,
-                                     ResultSet *out) {
-    RhoOverlayMap map = {0};
-    RhoStateCloneMap state_map = {0};
-    RhoPromotedSpaceMap promoted_spaces = {0};
-    RhoPromotedStateMap promoted_states = {0};
-    Registry local_registry = {0};
-    Arena *persistent = NULL;
-    CettaLibraryContext *prev_library_context;
-    Space *self_overlay;
-    uint64_t owner_epoch = 0;
+typedef enum {
+    RHO_PAYLOAD_PREPARE, RHO_PAYLOAD_EVALUATE, RHO_PAYLOAD_PROMOTE,
+    RHO_PAYLOAD_COMPLETE, RHO_PAYLOAD_REFUSED
+} RhoPayloadPhase;
+typedef struct {
+    Arena *arena, *persistent;
+    RhocalcEvalContext context;
+    CettaEvalPayloadFrame *frame;
+    RhoOverlayMap map;
+    RhoStateCloneMap state_map;
+    RhoPromotedSpaceMap promoted_spaces;
+    RhoPromotedStateMap promoted_states;
+    Registry local_registry;
+    ResultSet results;
     Atom *payload;
-    bool alias_fault = false;
-    bool redirects_started = false;
+    Space *self_overlay;
+    uint64_t owner_epoch;
+    void *provider_job;
+    RhoPayloadPhase phase;
+    bool alias_fault, running;
+} RhoPayloadJob;
 
-    if (!arena || !eval_context || !eval_context->space || !payload_expr || !out) {
-        return false;
-    }
-
-    payload = rho_unquote_payload_atom(payload_expr);
-
-    persistent = eval_context->persistent_arena
-        ? eval_context->persistent_arena
-        : eval_current_persistent_arena();
-    if (!persistent)
-        persistent = arena;
-    owner_epoch = eval_next_payload_owner_epoch();
-    if (!eval_payload_redirects_begin(persistent))
-        goto fail;
-    redirects_started = true;
-
+static RhoPayloadJob *rho_payload_open(Arena *arena,
+    const RhocalcEvalContext *context,Atom *expression) {
+    if (!arena || !context || !context->space || !expression) return NULL;
+    const RhocalcPayloadProvider *provider=context->payload_provider;
+    if (provider && (!provider->open || !provider->step || !provider->close)) return NULL;
+    RhoPayloadJob *job=calloc(1u,sizeof(*job));
+    if (!job) return NULL;
+    job->arena=arena;job->context=*context;
+    job->persistent=context->persistent_arena?context->persistent_arena:
+        eval_current_persistent_arena();
+    if (!job->persistent) job->persistent=arena;
+    job->payload=rho_unquote_payload_atom(expression);
+    job->owner_epoch=eval_next_payload_owner_epoch();
+    result_set_init(&job->results);
+    job->frame=eval_payload_frame_open(job->persistent);
+    if (!job->frame) {free(job);return NULL;}
+    return job;
+}
+static bool rho_payload_prepare(RhoPayloadJob *job) {
     /* Overlay the self space, every registry-bound space, and every baked space
      * literal in the payload term. State cells are rebound separately below. */
-    if (!rho_overlay_map_add(&map, eval_context->space))
-        goto fail;
-    if (eval_context->registry) {
-        for (uint32_t i = 0; i < eval_context->registry->len; i++) {
-            Atom *v = eval_context->registry->entries[i].value;
+    if (!rho_overlay_map_add(&job->map, job->context.space))
+        return false;
+    if (job->context.registry) {
+        for (uint32_t i = 0; i < job->context.registry->len; i++) {
+            Atom *v = job->context.registry->entries[i].value;
             if (v && v->kind == ATOM_GROUNDED && v->ground.gkind == GV_SPACE) {
-                if (!rho_overlay_map_add(&map, (Space *)v->ground.ptr))
-                    goto fail;
+                if (!rho_overlay_map_add(&job->map, (Space *)v->ground.ptr))
+                    return false;
             }
-            if (v && !rho_collect_state_ptrs_into_map(&state_map, v))
-                goto fail;
+            if (v && !rho_collect_state_ptrs_into_map(&job->state_map, v))
+                return false;
         }
     }
-    if (!rho_collect_space_ptrs_into_map(&map, payload))
-        goto fail;
-    if (!rho_collect_state_ptrs_into_map(&state_map, payload))
-        goto fail;
-    for (int i = 0; i < state_map.len; i++) {
-        StateCell *cell = state_map.orig[i];
+    if (!rho_collect_space_ptrs_into_map(&job->map, job->payload))
+        return false;
+    if (!rho_collect_state_ptrs_into_map(&job->state_map, job->payload))
+        return false;
+    for (int i = 0; i < job->state_map.len; i++) {
+        StateCell *cell = job->state_map.orig[i];
         if (cell) {
-            if (!rho_collect_space_ptrs_into_map(&map, cell->value))
-                goto fail;
-            if (!rho_collect_space_ptrs_into_map(&map, cell->content_type))
-                goto fail;
+            if (!rho_collect_space_ptrs_into_map(&job->map, cell->value))
+                return false;
+            if (!rho_collect_space_ptrs_into_map(&job->map, cell->content_type))
+                return false;
         }
     }
 
-    self_overlay = rho_overlay_for(&map, eval_context->space);
+    job->self_overlay = rho_overlay_for(&job->map, job->context.space);
 
-    if (!rho_state_clone_map_materialize(&state_map, persistent, &map,
-                                         owner_epoch))
-        goto fail;
-    for (int i = 0; i < map.len; i++) {
-        if (!rho_overlay_map_bind_pair(&map, map.orig[i], map.overlay[i]) ||
-            !eval_payload_note_space_redirect(map.orig[i], map.overlay[i]))
-            goto fail;
+    if (!rho_state_clone_map_materialize(&job->state_map, job->persistent, &job->map,
+                                         job->owner_epoch))
+        return false;
+    for (int i = 0; i < job->map.len; i++) {
+        if (!rho_overlay_map_bind_pair(&job->map, job->map.orig[i], job->map.overlay[i]) ||
+            !eval_payload_note_space_redirect(job->map.orig[i], job->map.overlay[i]))
+            return false;
     }
-    for (int i = 0; i < state_map.len; i++) {
-        if (!rho_state_clone_map_bind_pair(&state_map, state_map.orig[i],
-                                           state_map.clone[i]) ||
-            !eval_payload_note_state_redirect(state_map.orig[i],
-                                              state_map.clone[i]))
-            goto fail;
+    for (int i = 0; i < job->state_map.len; i++) {
+        if (!rho_state_clone_map_bind_pair(&job->state_map, job->state_map.orig[i],
+                                           job->state_map.clone[i]) ||
+            !eval_payload_note_state_redirect(job->state_map.orig[i],
+                                              job->state_map.clone[i]))
+            return false;
     }
-    if (!rho_eval_registry_init(&local_registry, eval_context->registry, &map,
-                                &state_map, self_overlay, arena))
-        goto fail;
+    if (!rho_eval_registry_init(&job->local_registry, job->context.registry, &job->map,
+                                &job->state_map, job->self_overlay, job->arena))
+        return false;
 
-    payload = rho_atom_rebind_resources(arena, payload, &map, &state_map);
-    if (!payload)
-        goto fail;
+    job->payload = rho_atom_rebind_resources(job->arena, job->payload, &job->map, &job->state_map);
+    if (!job->payload)
+        return false;
 
-    prev_library_context = eval_current_library_context();
-    if (eval_context->library_context != prev_library_context) {
-        eval_set_library_context(eval_context->library_context);
-    }
-    {
-        bool prev_transactional = eval_set_payload_transactional(true);
-        uint64_t prev_epoch = eval_set_payload_owner_epoch(owner_epoch);
-        eval_top_with_registry(self_overlay, arena, persistent, &local_registry,
-                               payload, out);
-        eval_set_payload_owner_epoch(prev_epoch);
-        eval_set_payload_transactional(prev_transactional);
-    }
-    if (eval_context->library_context != prev_library_context) {
-        eval_set_library_context(prev_library_context);
-    }
 
+    if (job->context.payload_provider) {
+        job->provider_job=job->context.payload_provider->open(job->self_overlay,
+            job->arena,job->persistent,&job->local_registry,job->payload);
+        if (!job->provider_job) return false;
+    }
+    return true;
+}
+static bool rho_payload_promote(RhoPayloadJob *job) {
+    ResultSet *out=&job->results;
     for (CettaCount i = 0; i < eval_payload_space_redirect_count(); i++) {
         Space *orig = NULL;
         Space *redirect = NULL;
         if (!eval_payload_space_redirect_at(i, &orig, &redirect) ||
-            !rho_overlay_map_bind_pair(&map, orig, redirect))
-            goto fail;
+            !rho_overlay_map_bind_pair(&job->map, orig, redirect))
+            return false;
     }
     for (CettaCount i = 0; i < eval_payload_state_redirect_count(); i++) {
         StateCell *orig = NULL;
         StateCell *redirect = NULL;
         if (!eval_payload_state_redirect_at(i, &orig, &redirect) ||
-            !rho_state_clone_map_bind_pair(&state_map, orig, redirect))
-            goto fail;
+            !rho_state_clone_map_bind_pair(&job->state_map, orig, redirect))
+            return false;
     }
     for (CettaCount r = 0; r < out->len; r++) {
-        out->items[r] = rho_atom_rebind_resources(arena, out->items[r], &map,
-                                                  &state_map);
+        out->items[r] = rho_atom_rebind_resources(job->arena, out->items[r], &job->map,
+                                                  &job->state_map);
         if (!out->items[r])
-            goto fail;
+            return false;
     }
 
     for (CettaCount r = 0; r < out->len; r++) {
         out->items[r] =
-            rho_promote_payload_atom(arena, persistent, out->items[r],
-                                     &map, &state_map,
-                                     &promoted_spaces, &promoted_states,
-                                     owner_epoch,
+            rho_promote_payload_atom(job->arena, job->persistent, out->items[r],
+                                     &job->map, &job->state_map,
+                                     &job->promoted_spaces, &job->promoted_states,
+                                     job->owner_epoch,
                                      (uint64_t)r + 1u,
-                                     &alias_fault);
+                                     &job->alias_fault);
         if (!out->items[r]) {
-            if (alias_fault) {
-                if (eval_context->payload_failure)
-                    *eval_context->payload_failure =
+            if (job->alias_fault) {
+                if (job->context.payload_failure)
+                    *job->context.payload_failure =
                         RHOCALC_PAYLOAD_FAILURE_OWNED_EXPORT_ALIASED;
                 rho_validation_set("PayloadOwnedExportAliased");
             }
-            goto fail;
+            return false;
         }
     }
 
-    rho_promoted_space_map_free(&promoted_spaces);
-    rho_promoted_state_map_free(&promoted_states);
-    rho_overlay_map_free(&map);
-    rho_state_clone_map_free(&state_map);
-    registry_free(&local_registry);
-    eval_payload_redirects_end();
-    return true;
 
-fail:
-    rho_promoted_space_map_free(&promoted_spaces);
-    rho_promoted_state_map_free(&promoted_states);
-    rho_overlay_map_free(&map);
-    rho_state_clone_map_free(&state_map);
-    registry_free(&local_registry);
-    if (redirects_started) eval_payload_redirects_end();
-    return false;
+    return true;
+}
+/* One transaction phase or one provider grant. The selected frame is always
+ * left before returning, including refusal. Setup and promotion retain their
+ * own atomic service cost rather than pretending to be one primitive step. */
+static RhocalcPayloadStatus rho_payload_step(RhoPayloadJob *job,uint64_t allowance) {
+    if (!job || job->running || job->phase==RHO_PAYLOAD_REFUSED)
+        return RHOCALC_PAYLOAD_FAILED;
+    if (job->phase==RHO_PAYLOAD_COMPLETE) return RHOCALC_PAYLOAD_DONE;
+    if (!allowance) return RHOCALC_PAYLOAD_PENDING;
+    CettaEvalPayloadScope scope={0};
+    if (!eval_payload_frame_enter(job->frame,&scope)) return RHOCALC_PAYLOAD_FAILED;
+    CettaLibraryContext *library=eval_swap_library_context(job->context.library_context);
+    bool transactional=eval_set_payload_transactional(true);
+    uint64_t epoch=eval_set_payload_owner_epoch(job->owner_epoch);
+    job->running=true;
+    bool okay=true;
+    if (job->phase==RHO_PAYLOAD_PREPARE) {
+        okay=rho_payload_prepare(job);
+        if (okay) job->phase=RHO_PAYLOAD_EVALUATE;
+    } else if (job->phase==RHO_PAYLOAD_EVALUATE) {
+        RhocalcPayloadStatus status;
+        if (job->context.payload_provider)
+            status=job->context.payload_provider->step(job->provider_job,allowance,&job->results);
+        else {
+            CettaEvalCompletion completion=eval_top_with_registry_completion(job->self_overlay,
+                job->arena,job->persistent,&job->local_registry,job->payload,&job->results);
+            status=completion==CETTA_EVAL_COMPLETE?RHOCALC_PAYLOAD_DONE:RHOCALC_PAYLOAD_FAILED;
+        }
+        okay=status!=RHOCALC_PAYLOAD_FAILED;
+        if (status==RHOCALC_PAYLOAD_DONE) job->phase=RHO_PAYLOAD_PROMOTE;
+    } else if (job->phase==RHO_PAYLOAD_PROMOTE) {
+        okay=rho_payload_promote(job);
+        if (okay) job->phase=RHO_PAYLOAD_COMPLETE;
+    }
+    if (!okay) job->phase=RHO_PAYLOAD_REFUSED;
+    job->running=false;
+    eval_set_payload_owner_epoch(epoch);eval_set_payload_transactional(transactional);
+    eval_swap_library_context(library);eval_payload_frame_leave(&scope);
+    return job->phase==RHO_PAYLOAD_COMPLETE?RHOCALC_PAYLOAD_DONE:
+        job->phase==RHO_PAYLOAD_REFUSED?RHOCALC_PAYLOAD_FAILED:RHOCALC_PAYLOAD_PENDING;
+}
+static void rho_payload_close(RhoPayloadJob *job) {
+    if (!job) return;
+    assert(!job->running);
+    if (job->provider_job) {
+        CettaEvalPayloadScope scope={0};
+        bool entered=eval_payload_frame_enter(job->frame,&scope);
+        assert(entered);(void)entered;
+        CettaLibraryContext *library=eval_swap_library_context(job->context.library_context);
+        bool transactional=eval_set_payload_transactional(true);
+        uint64_t epoch=eval_set_payload_owner_epoch(job->owner_epoch);
+        job->context.payload_provider->close(job->provider_job);
+        eval_set_payload_owner_epoch(epoch);eval_set_payload_transactional(transactional);
+        eval_swap_library_context(library);eval_payload_frame_leave(&scope);
+    }
+    rho_promoted_space_map_free(&job->promoted_spaces);
+    rho_promoted_state_map_free(&job->promoted_states);
+    rho_overlay_map_free(&job->map);rho_state_clone_map_free(&job->state_map);
+    registry_free(&job->local_registry);result_set_free(&job->results);
+    eval_payload_frame_close(job->frame);free(job);
+}
+static bool rho_eval_payload_results(Arena *arena,
+    const RhocalcEvalContext *context,Atom *expression,ResultSet *out) {
+    if (!out) return false;
+    RhoPayloadJob *job=rho_payload_open(arena,context,expression);
+    if (!job) return false;
+    RhocalcPayloadStatus status;
+    do {status=rho_payload_step(job,UINT64_MAX);} while(status==RHOCALC_PAYLOAD_PENDING);
+    bool okay=status==RHOCALC_PAYLOAD_DONE;
+    if (okay) for (CettaCount i=0u;i<job->results.len;i++)
+        result_set_add(out,job->results.items[i]);
+    rho_payload_close(job);return okay;
 }
 
 static Atom *rho_embed_payload_result_name(Arena *arena, Atom *result) {
@@ -3588,6 +3694,7 @@ static bool rho_compute_comm_continuations(Arena *arena,
 
     Atom *replacement =
         rho_unary(arena, "rho:quote", rho_normalize_proc(arena, send.args[1]));
+    if (!replacement) return false;
     Atom *body = rho_subst_proc(arena, recv.args[2], recv.args[1]->var_id,
                                 replacement);
     return body && rho_vec_push(out_bodies, body);
@@ -3729,7 +3836,7 @@ static bool rho_machine_load_process(RhoMachine *machine, Atom *proc) {
     if (!ok) return false;
     machine->current = rho_normalize_proc(machine->arena, proc);
     machine->current_canonical_order = machine->current != NULL;
-    return true;
+    return machine->current!=NULL;
 }
 
 #define RHO_MACHINE_COMPACTION_INTERVAL 64u
@@ -3897,7 +4004,7 @@ static bool rho_reaction_key_against_bound(
             }
             if (ok) {
                 rho_key_proc_into(next, &env, &key);
-                ok = key.data != NULL;
+                ok = key.data != NULL && !key.failed;
             }
             if (ok) rho_key_bound_note(&cmp, &key);
             emitted++;
@@ -3915,7 +4022,7 @@ static bool rho_reaction_key_against_bound(
 done:
     for (uint32_t i = 0u; i < body_len; i++) free(body_items[i].key);
     free(body_items);
-    if (!ok) {
+    if (!ok || key.failed) {
         free(key.data);
         return false;
     }
@@ -3948,12 +4055,13 @@ typedef struct {
     Atom *current;
     const char *current_local_key;
     char *current_shifted_key;
-    size_t current_key_len;
     size_t current_key_pos;
     uint32_t next_alpha_index;
     uint32_t current_binder_count;
     bool current_key_owned;
     bool delimiter_pending;
+    bool whole_key;
+    uint8_t prefix_pos;
     bool done;
 } RhoReactionTextCursor;
 
@@ -4020,8 +4128,13 @@ static bool rho_reaction_key_view_init(
                   sizeof(*view->body_items), rho_keyed_atom_cmp);
         }
     }
-    view->total = components->len -
-        (view->retain_recv ? 1u : 2u) + view->body_len;
+    uint32_t retained = components->len - (view->retain_recv ? 1u : 2u);
+    if (view->body_len > UINT32_MAX - retained) {
+        rho_reaction_key_view_free(view);
+        rho_validation_set("rho reaction component count exhausted");
+        return false;
+    }
+    view->total = retained + view->body_len;
     return true;
 }
 
@@ -4122,8 +4235,7 @@ static char *rho_key_proc_from_alpha_index(
     env.next_index = next_alpha_index;
     rho_key_proc_into(proc, &env, &out);
     rho_alpha_free(&env);
-    if (!out.data) return rho_heap_strdup("");
-    return out.data;
+    return rho_str_take(&out,"");
 }
 
 static void rho_reaction_text_cursor_free(RhoReactionTextCursor *cursor) {
@@ -4150,7 +4262,6 @@ static bool rho_reaction_text_cursor_prepare_current(
         cursor->current_key_owned = true;
     }
     if (!cursor->current_shifted_key) return false;
-    cursor->current_key_len = strlen(cursor->current_shifted_key);
     cursor->current_key_pos = 0u;
     return true;
 }
@@ -4179,7 +4290,19 @@ static bool rho_reaction_text_cursor_next_byte(
     if (!cursor || !out_byte || !out_has_byte) return false;
     *out_has_byte = false;
     if (cursor->done) return true;
-    if (cursor->current_key_pos < cursor->current_key_len) {
+    if (cursor->whole_key && cursor->components.view->total == 0u) {
+        *out_byte = (unsigned char)'0';
+        *out_has_byte = true;
+        cursor->done = true;
+        return true;
+    }
+    if (cursor->whole_key && cursor->components.view->total > 1u &&
+        cursor->prefix_pos < 4u) {
+        *out_byte = (unsigned char)"par("[cursor->prefix_pos++];
+        *out_has_byte = true;
+        return true;
+    }
+    if (cursor->current_shifted_key[cursor->current_key_pos] != '\0') {
         *out_byte = (unsigned char)
             cursor->current_shifted_key[cursor->current_key_pos++];
         *out_has_byte = true;
@@ -4208,10 +4331,22 @@ static bool rho_reaction_text_cursor_next_byte(
         }
         return true;
     }
-    *out_byte = (unsigned char)')';
-    *out_has_byte = true;
     cursor->done = true;
+    if (!cursor->whole_key || cursor->components.view->total > 1u) {
+        *out_byte = (unsigned char)')';
+        *out_has_byte = true;
+    }
     return true;
+}
+
+static bool rho_reaction_text_cursor_init_whole(
+    RhoReactionTextCursor *cursor,const RhoReactionKeyView *view) {
+    *cursor=(RhoReactionTextCursor){.whole_key=true};
+    rho_reaction_component_cursor_init(&cursor->components,view);
+    if (!view->total) return true;
+    if (!rho_reaction_component_cursor_next(&cursor->components,
+            &cursor->current,&cursor->current_local_key)) return false;
+    return rho_reaction_text_cursor_prepare_current(cursor);
 }
 
 static bool rho_reaction_key_view_text_compare(
@@ -4240,136 +4375,129 @@ static bool rho_reaction_key_view_text_compare(
     return ok;
 }
 
-static bool rho_reaction_key_view_structural_compare(
-    const RhoReactionKeyView *left,
-    const RhoReactionKeyView *right, int *out_order) {
-    RhoReactionComponentCursor left_components;
-    RhoReactionComponentCursor right_components;
-    uint32_t left_alpha_index = 0u;
-    uint32_t right_alpha_index = 0u;
+typedef enum {
+    RHO_COMPARE_COMPONENT,
+    RHO_COMPARE_TEXT,
+    RHO_COMPARE_FINISH,
+    RHO_COMPARE_DONE
+} RhoReactionComparePhase;
 
-    if (!left || !right || !out_order) return false;
-    if (left->total <= 1u || right->total <= 1u) {
-        return rho_reaction_key_view_text_compare(left, right, out_order);
+/* A component probe skips at most one physically shared component. A text
+ * probe reads at most one byte from each existing text cursor. Constructing
+ * alpha-shifted/component keys and merging component heads remain separate
+ * atomic services; these probes are not a whole-slot instruction bound. */
+typedef struct {
+    const RhoReactionKeyView *left,*right;
+    RhoReactionComponentCursor left_components,right_components;
+    RhoReactionTextCursor left_text,right_text;
+    uint32_t left_alpha_index,right_alpha_index;
+    RhoReactionComparePhase phase;
+    uint64_t component_probes,text_probes;
+    int order;
+    bool text_live;
+} RhoReactionCompare;
+
+static void rho_reaction_compare_free(RhoReactionCompare *comparison) {
+    if (comparison->text_live) {
+        rho_reaction_text_cursor_free(&comparison->left_text);
+        rho_reaction_text_cursor_free(&comparison->right_text);
     }
-    rho_reaction_component_cursor_init(&left_components, left);
-    rho_reaction_component_cursor_init(&right_components, right);
-    for (;;) {
-        Atom *left_atom = NULL;
-        Atom *right_atom = NULL;
-        const char *left_local_key = NULL;
-        const char *right_local_key = NULL;
-        bool left_has = rho_reaction_component_cursor_next(
-            &left_components, &left_atom, &left_local_key);
-        bool right_has = rho_reaction_component_cursor_next(
-            &right_components, &right_atom, &right_local_key);
+    *comparison=(RhoReactionCompare){0};
+}
 
+static bool rho_reaction_compare_init(RhoReactionCompare *comparison,
+        const RhoReactionKeyView *left,const RhoReactionKeyView *right) {
+    *comparison=(RhoReactionCompare){.left=left,.right=right};
+    rho_reaction_component_cursor_init(&comparison->left_components,left);
+    rho_reaction_component_cursor_init(&comparison->right_components,right);
+    if (left->total>1u && right->total>1u) return true;
+    comparison->phase=RHO_COMPARE_TEXT;
+    comparison->text_live=true;
+    return rho_reaction_text_cursor_init_whole(&comparison->left_text,left) &&
+        rho_reaction_text_cursor_init_whole(&comparison->right_text,right);
+}
+
+static bool rho_reaction_key_view_oracle_enabled(void) {
+    static atomic_int oracle_mode=ATOMIC_VAR_INIT(-1);
+    int mode=atomic_load_explicit(&oracle_mode,memory_order_relaxed);
+    if (mode<0) {
+        int selected=getenv("CETTA_RHO_STRUCTURAL_KEY_ORACLE") ? 1 : 0;
+        int expected=-1;
+        if (!atomic_compare_exchange_strong_explicit(&oracle_mode,&expected,selected,
+                memory_order_relaxed,memory_order_relaxed)) selected=expected;
+        mode=selected;
+    }
+    return mode!=0;
+}
+
+static bool rho_reaction_compare_advance(RhoReactionCompare *comparison) {
+    switch (comparison->phase) {
+    case RHO_COMPARE_COMPONENT: {
+        Atom *left_atom=NULL,*right_atom=NULL;
+        const char *left_key=NULL,*right_key=NULL;
+        comparison->component_probes++;
+        bool left_has=rho_reaction_component_cursor_next(&comparison->left_components,
+            &left_atom,&left_key);
+        bool right_has=rho_reaction_component_cursor_next(&comparison->right_components,
+            &right_atom,&right_key);
         if (!left_has || !right_has) {
-            if (left_has != right_has) {
-                *out_order = left_has ? 1 : -1;
-            } else {
-                *out_order = 0;
+            comparison->order=left_has ? 1 : right_has ? -1 : 0;
+            comparison->phase=RHO_COMPARE_FINISH;
+            return true;
+        }
+        if (left_atom==right_atom && comparison->left_alpha_index==comparison->right_alpha_index) {
+            uint32_t binders=0u;
+            if (!rho_key_proc_binder_count(left_atom,&binders) ||
+                    comparison->left_alpha_index>UINT32_MAX-binders) return false;
+            comparison->left_alpha_index+=binders;
+            comparison->right_alpha_index+=binders;
+            bool left_end=comparison->left_components.emitted==comparison->left->total;
+            bool right_end=comparison->right_components.emitted==comparison->right->total;
+            if (left_end || right_end) {
+                comparison->order=left_end ? right_end ? 0 : -1 : 1;
+                comparison->phase=RHO_COMPARE_FINISH;
             }
             return true;
         }
-        if (left_atom == right_atom &&
-            left_alpha_index == right_alpha_index) {
-            uint32_t binders = 0u;
-            if (!rho_key_proc_binder_count(left_atom, &binders) ||
-                left_alpha_index > UINT32_MAX - binders) {
+        comparison->text_live=true;
+        if (!rho_reaction_text_cursor_init_at_current(&comparison->left_text,
+                &comparison->left_components,left_atom,left_key,comparison->left_alpha_index) ||
+            !rho_reaction_text_cursor_init_at_current(&comparison->right_text,
+                &comparison->right_components,right_atom,right_key,comparison->right_alpha_index))
+            return false;
+        comparison->phase=RHO_COMPARE_TEXT;
+        return true;
+    }
+    case RHO_COMPARE_TEXT: {
+        unsigned char left=0u,right=0u;
+        bool left_ready=false,right_ready=false;
+        comparison->text_probes++;
+        if (!rho_reaction_text_cursor_next_byte(&comparison->left_text,&left,&left_ready) ||
+            !rho_reaction_text_cursor_next_byte(&comparison->right_text,&right,&right_ready))
+            return false;
+        if (left_ready!=right_ready || !left_ready || left!=right) {
+            comparison->order=left_ready!=right_ready ? left_ready ? 1 : -1
+                : !left_ready ? 0 : left<right ? -1 : 1;
+            comparison->phase=RHO_COMPARE_FINISH;
+        }
+        return true;
+    }
+    case RHO_COMPARE_FINISH:
+        if (rho_reaction_key_view_oracle_enabled()) {
+            int text_order=0;
+            if (!rho_reaction_key_view_text_compare(comparison->left,comparison->right,&text_order))
+                return false;
+            if (comparison->order!=text_order) {
+                rho_validation_set("rho structural reaction order disagrees with text oracle");
                 return false;
             }
-            left_alpha_index += binders;
-            right_alpha_index += binders;
-            if (left_components.emitted == left->total ||
-                right_components.emitted == right->total) {
-                if ((left_components.emitted == left->total) !=
-                    (right_components.emitted == right->total)) {
-                    *out_order = left_components.emitted == left->total
-                        ? -1 : 1;
-                    return true;
-                }
-            }
-            continue;
         }
-        {
-            RhoReactionTextCursor left_text;
-            RhoReactionTextCursor right_text;
-            bool ok = rho_reaction_text_cursor_init_at_current(
-                &left_text, &left_components, left_atom,
-                left_local_key, left_alpha_index);
-            if (!ok) return false;
-            ok = rho_reaction_text_cursor_init_at_current(
-                &right_text, &right_components, right_atom,
-                right_local_key, right_alpha_index);
-            if (!ok) {
-                rho_reaction_text_cursor_free(&left_text);
-                return false;
-            }
-            for (;;) {
-                unsigned char left_byte = 0u;
-                unsigned char right_byte = 0u;
-                bool left_byte_ready = false;
-                bool right_byte_ready = false;
-                ok = rho_reaction_text_cursor_next_byte(
-                    &left_text, &left_byte, &left_byte_ready) &&
-                     rho_reaction_text_cursor_next_byte(
-                    &right_text, &right_byte, &right_byte_ready);
-                if (!ok || left_byte_ready != right_byte_ready ||
-                    !left_byte_ready || left_byte != right_byte) {
-                    if (ok) {
-                        if (left_byte_ready != right_byte_ready) {
-                            *out_order = left_byte_ready ? 1 : -1;
-                        } else if (!left_byte_ready) {
-                            *out_order = 0;
-                        } else {
-                            *out_order = left_byte < right_byte ? -1 : 1;
-                        }
-                    }
-                    rho_reaction_text_cursor_free(&left_text);
-                    rho_reaction_text_cursor_free(&right_text);
-                    return ok;
-                }
-            }
-        }
+        comparison->phase=RHO_COMPARE_DONE;
+        return true;
+    case RHO_COMPARE_DONE:
+        return true;
     }
-}
-
-static bool rho_reaction_key_view_compare(
-    const RhoReactionKeyView *left,
-    const RhoReactionKeyView *right, int *out_order) {
-    static atomic_int oracle_mode = ATOMIC_VAR_INIT(-1);
-    int mode = atomic_load_explicit(&oracle_mode, memory_order_relaxed);
-    int structural_order = 0;
-
-    if (mode < 0) {
-        int selected = getenv("CETTA_RHO_STRUCTURAL_KEY_ORACLE") ? 1 : 0;
-        int expected = -1;
-        if (!atomic_compare_exchange_strong_explicit(
-                &oracle_mode, &expected, selected,
-                memory_order_relaxed, memory_order_relaxed)) {
-            selected = expected;
-        }
-        mode = selected;
-    }
-    if (!rho_reaction_key_view_structural_compare(
-            left, right, &structural_order)) {
-        return false;
-    }
-    if (mode != 0) {
-        int text_order = 0;
-        if (!rho_reaction_key_view_text_compare(
-                left, right, &text_order)) {
-            return false;
-        }
-        if (structural_order != text_order) {
-            rho_validation_set(
-                "rho structural reaction order disagrees with text oracle");
-            return false;
-        }
-    }
-    *out_order = structural_order;
-    return true;
+    return false;
 }
 
 /* Canonical execution needs the least successor, whereas the public frontier
@@ -4383,209 +4511,485 @@ static bool rho_reaction_key_view_compare(
 static bool rho_machine_collect_normalized_components(
     RhoMachine *machine, RhoAtomVec *out, bool *out_normalized);
 
-static bool rho_machine_select_streaming_canonical_successor(
-    RhoMachine *machine, Atom **out_next, bool *out_quiescent) {
-    Arena scratch;
-    Arena selected;
-    RhoAtomVec components;
-    RhoEndpointVec sends;
-    RhoEndpointVec recvs;
-    uint32_t recv_pos = 0u;
-    uint32_t send_pos = 0u;
-    uint32_t best_recv = 0u;
-    uint32_t best_send = 0u;
-    uint64_t next_ordinal = 0u;
-    uint64_t best_ordinal = UINT64_MAX;
-    Atom *best_body = NULL;
-    RhoReactionKeyView best_view = {0};
-    char **component_keys = NULL;
-    bool *component_key_owned = NULL;
-    bool best_view_ready = false;
-    bool found = false;
-    bool ok = true;
+typedef struct {
+    const char *left,*right;
+    size_t offset;
+    int order;
+    bool done;
+} RhoKeyProbe;
 
-    if (!machine || !machine->arena || !machine->current ||
-        !out_next || !out_quiescent) {
+static bool rho_key_probe_init(RhoKeyProbe *probe,const char *left,const char *right) {
+    if (!left || !right) return false;
+    *probe=(RhoKeyProbe){.left=left,.right=right,.done=left==right};
+    return true;
+}
+
+static void rho_key_probe_advance(RhoKeyProbe *probe) {
+    if (probe->done) return;
+    unsigned char left=(unsigned char)probe->left[probe->offset];
+    unsigned char right=(unsigned char)probe->right[probe->offset];
+    if (left==right && left) probe->offset++;
+    else {
+        probe->order=left<right ? -1 : left>right ? 1 : 0;
+        probe->done=true;
+    }
+}
+
+/* Stable bottom-up endpoint sorting. The primary vector always owns a
+ * complete permutation; the unpublished scratch pass borrows its keys. A
+ * pause/cancel may discard that pass without freeing or duplicating a key.
+ * One advance performs one setup, byte comparison/copy, or pass swap. */
+typedef struct {
+    RhoEndpointVec *vector;
+    RhoEndpoint *scratch;
+    uint32_t scratch_capacity,width,output,left,left_end,right,right_end;
+    RhoKeyProbe key_probe;
+    bool probe_initialized,range_ready,done;
+} RhoEndpointSort;
+
+static void rho_endpoint_sort_free(RhoEndpointSort *sort) {
+    free(sort->scratch);
+    *sort=(RhoEndpointSort){0};
+}
+
+static bool rho_endpoint_sort_init(RhoEndpointSort *sort,RhoEndpointVec *vector) {
+    *sort=(RhoEndpointSort){.vector=vector,.width=1u,.done=vector->len<2u};
+    if (sort->done) return true;
+    size_t length=vector->len;
+    if (length>SIZE_MAX/sizeof(*sort->scratch)) return false;
+    sort->scratch=malloc(length*sizeof(*sort->scratch));
+    sort->scratch_capacity=vector->len;
+    return sort->scratch!=NULL;
+}
+
+static bool rho_endpoint_sort_advance(RhoEndpointSort *sort) {
+    if (sort->done) return true;
+    RhoEndpointVec *vector=sort->vector;
+    if (!sort->range_ready) {
+        if (sort->output==vector->len) {
+            RhoEndpoint *old=vector->items;
+            uint32_t old_capacity=vector->cap;
+            vector->items=sort->scratch;vector->cap=sort->scratch_capacity;
+            sort->scratch=old;sort->scratch_capacity=old_capacity;
+            if (sort->width>=vector->len-sort->width) sort->done=true;
+            else {sort->width*=2u;sort->output=0u;}
+            return true;
+        }
+        sort->left=sort->output;
+        uint32_t left_count=vector->len-sort->left;
+        if (left_count>sort->width) left_count=sort->width;
+        sort->left_end=sort->left+left_count;
+        sort->right=sort->left_end;
+        uint32_t right_count=vector->len-sort->right;
+        if (right_count>sort->width) right_count=sort->width;
+        sort->right_end=sort->right+right_count;
+        sort->range_ready=true;sort->probe_initialized=false;
+        return true;
+    }
+    if (sort->left==sort->left_end && sort->right==sort->right_end) {
+        sort->range_ready=false;
+        return true;
+    }
+    bool take_left=sort->right==sort->right_end;
+    if (!take_left && sort->left<sort->left_end) {
+        const RhoEndpoint *left=&vector->items[sort->left],*right=&vector->items[sort->right];
+        if (!sort->probe_initialized) {
+            if (!rho_key_probe_init(&sort->key_probe,left->key,right->key)) return false;
+            sort->probe_initialized=true;
+        }
+        rho_key_probe_advance(&sort->key_probe);
+        if (!sort->key_probe.done) return true;
+        int order=sort->key_probe.order;
+        take_left=order<0 || (order==0 && left->component_index<=right->component_index);
+    }
+    sort->scratch[sort->output++]=vector->items[take_left ? sort->left++ : sort->right++];
+    sort->probe_initialized=false;
+    return true;
+}
+
+typedef enum {
+    RHO_CANONICAL_PREPARE,
+    RHO_CANONICAL_COLLECT,
+    RHO_CANONICAL_ALLOCATE,
+    RHO_CANONICAL_KEYS,
+    RHO_CANONICAL_ENDPOINTS,
+    RHO_CANONICAL_SORT_SENDS,
+    RHO_CANONICAL_SORT_RECVS,
+    RHO_CANONICAL_ALIGN,
+    RHO_CANONICAL_RECV_RANGE,
+    RHO_CANONICAL_SEND_RANGE,
+    RHO_CANONICAL_PAIR,
+    RHO_CANONICAL_PAYLOAD,
+    RHO_CANONICAL_PAYLOAD_BODY,
+    RHO_CANONICAL_BODY,
+    RHO_CANONICAL_COMPARE,
+    RHO_CANONICAL_FINISH
+} RhoCanonicalPhase;
+
+/* The selector owns its actual partially scanned candidate stream. Scratch
+ * bodies survive a pause; only a newly selected body is copied persistently.
+ * Each advance is one selector phase/probe, not a bound on key construction,
+ * payload evaluation, allocation or rebuilding the selected successor. */
+typedef struct {
+    RhoMachine *machine;
+    Arena scratch, selected;
+    ArenaMark pair_mark;
+    RhoAtomVec bodies;
+    RhoPayloadJob *payload;
+    CettaCount payload_position;
+    RhoCanonicalPhase phase;
+    uint32_t recv_pos, send_pos, recv_start, send_start, recv_end, send_end;
+    uint32_t recv, send, body, best_recv, best_send, best_body_index;
+    uint64_t next_ordinal, best_ordinal;
+    uint64_t matching_pairs, body_candidates, completed_scans;
+    Atom *best_body, *next;
+    RhoReactionKeyView best_view,candidate_view;
+    RhoReactionCompare comparison;
+    RhoEndpointSort endpoint_sort;
+    RhoView process_view;
+    uint32_t preparation_position;
+    uint64_t candidate_ordinal,component_probes,text_probes,preparation_steps,channel_scan_probes;
+    RhoKeyProbe channel_probe;
+    bool channel_probe_initialized;
+    char **component_keys;
+    bool *component_key_owned;
+    bool best_view_ready,candidate_ready,comparison_live,found,done,quiescent;
+} RhoCanonicalCursor;
+
+static void rho_canonical_cursor_init(RhoCanonicalCursor *cursor, RhoMachine *machine) {
+    *cursor = (RhoCanonicalCursor){.machine=machine,
+        .phase=RHO_CANONICAL_PREPARE,.best_ordinal=UINT64_MAX};
+    arena_init(&cursor->scratch);
+    arena_init(&cursor->selected);
+    rho_vec_init(&cursor->bodies);
+    assert(!machine->comm_index_loaded && !machine->components.len &&
+        !machine->sends.len && !machine->recvs.len);
+}
+
+static void rho_canonical_cursor_free(RhoCanonicalCursor *cursor) {
+    RhoMachine *machine=cursor->machine;
+    rho_payload_close(cursor->payload);
+    rho_endpoint_sort_free(&cursor->endpoint_sort);
+    if (cursor->comparison_live) rho_reaction_compare_free(&cursor->comparison);
+    if (cursor->candidate_ready) rho_reaction_key_view_free(&cursor->candidate_view);
+    if (cursor->best_view_ready) rho_reaction_key_view_free(&cursor->best_view);
+    if (cursor->component_keys && cursor->component_key_owned) {
+        for (uint32_t i=0u;i<machine->components.len;i++)
+            if (cursor->component_key_owned[i]) free(cursor->component_keys[i]);
+    }
+    free(cursor->component_keys);
+    free(cursor->component_key_owned);
+    rho_vec_free(&cursor->bodies);
+    rho_machine_clear_comm_index(machine);
+    arena_free(&cursor->selected);
+    arena_free(&cursor->scratch);
+    *cursor=(RhoCanonicalCursor){0};
+}
+
+static bool rho_canonical_cursor_prepare(RhoCanonicalCursor *cursor) {
+    RhoMachine *machine=cursor->machine;
+    if (!machine->current_canonical_order) {
+        machine->current=rho_normalize_proc(machine->arena,machine->current);
+        if (!machine->current) return false;
+        machine->current_canonical_order=true;
+    }
+    cursor->process_view=rho_view(machine->current);
+    cursor->phase=RHO_CANONICAL_COLLECT;
+    return true;
+}
+
+static bool rho_canonical_cursor_choose(RhoCanonicalCursor *cursor,int order) {
+    RhoMachine *machine=cursor->machine;
+    if (!cursor->found || order<0 || (order==0 && cursor->candidate_ordinal<cursor->best_ordinal)) {
+        if (cursor->best_view_ready) {
+            rho_reaction_key_view_free(&cursor->best_view);
+            cursor->best_view_ready=false;
+        }
+        arena_free(&cursor->selected);
+        arena_init(&cursor->selected);
+        cursor->best_body=atom_deep_copy(&cursor->selected,cursor->bodies.items[cursor->body]);
+        if (!cursor->best_body || !rho_reaction_key_view_init(&cursor->best_view,
+                &machine->components,cursor->component_keys,
+                machine->sends.items[cursor->send].component_index,
+                machine->recvs.items[cursor->recv].component_index,cursor->best_body)) return false;
+        cursor->best_recv=cursor->recv;
+        cursor->best_send=cursor->send;
+        cursor->best_body_index=cursor->body;
+        cursor->best_ordinal=cursor->candidate_ordinal;
+        cursor->best_view_ready=true;
+        cursor->found=true;
+    }
+    rho_reaction_key_view_free(&cursor->candidate_view);
+    cursor->candidate_ready=false;
+    cursor->body++;
+    cursor->phase=RHO_CANONICAL_BODY;
+    return true;
+}
+
+static bool rho_canonical_cursor_body(RhoCanonicalCursor *cursor) {
+    RhoMachine *machine=cursor->machine;
+    if (cursor->next_ordinal==UINT64_MAX) {
+        rho_validation_set("rho canonical candidate ordinal exhausted");
         return false;
     }
+    cursor->candidate_ordinal=cursor->next_ordinal++;
+    cursor->body_candidates++;
+    if (!rho_reaction_key_view_init(&cursor->candidate_view,&machine->components,
+            cursor->component_keys,machine->sends.items[cursor->send].component_index,
+            machine->recvs.items[cursor->recv].component_index,cursor->bodies.items[cursor->body]))
+        return false;
+    cursor->candidate_ready=true;
+    if (!cursor->found) return rho_canonical_cursor_choose(cursor,0);
+    cursor->comparison_live=true;
+    if (!rho_reaction_compare_init(&cursor->comparison,&cursor->candidate_view,&cursor->best_view))
+        return false;
+    cursor->phase=RHO_CANONICAL_COMPARE;
+    return true;
+}
 
-    *out_next = NULL;
-    *out_quiescent = true;
-    arena_init(&scratch);
-    arena_init(&selected);
-    rho_vec_init(&components);
-    rho_endpoint_vec_init(&sends);
-    rho_endpoint_vec_init(&recvs);
-    if (!machine->current_canonical_order) {
-        machine->current = rho_normalize_proc(
-            machine->arena, machine->current);
-        if (!machine->current) {
-            ok = false;
-            goto done;
-        }
-        machine->current_canonical_order = true;
+static bool rho_canonical_cursor_channel_probe(RhoCanonicalCursor *cursor,
+        const RhoEndpoint *left,const RhoEndpoint *right,bool *ready,int *order) {
+    if (!cursor->channel_probe_initialized) {
+        if (!rho_key_probe_init(&cursor->channel_probe,left->key,right->key)) return false;
+        cursor->channel_probe_initialized=true;
     }
-    {
-        bool normalized = false;
-        if (!rho_machine_collect_normalized_components(
-                machine, &components, &normalized) || !normalized) {
-            ok = false;
-            goto done;
-        }
+    if (!cursor->channel_probe.done) {
+        cursor->channel_scan_probes++;
+        rho_key_probe_advance(&cursor->channel_probe);
     }
-    component_keys = cetta_malloc(sizeof(char *) * components.len);
-    component_key_owned = cetta_malloc(sizeof(bool) * components.len);
-    if ((!component_keys || !component_key_owned) && components.len > 0u) {
-        ok = false;
-        goto done;
+    *ready=cursor->channel_probe.done;
+    if (*ready) {
+        *order=cursor->channel_probe.order;
+        cursor->channel_probe_initialized=false;
     }
-    if (component_keys && component_key_owned) {
-        memset(component_keys, 0, sizeof(char *) * components.len);
-        memset(component_key_owned, 0, sizeof(bool) * components.len);
-    }
-    for (uint32_t i = 0u; i < components.len; i++) {
-        component_keys[i] = rho_process_key_cached(
-            &machine->process_key_cache, components.items[i],
-            &component_key_owned[i]);
-        if (!component_keys[i] ||
-            (i > 0u && strcmp(component_keys[i - 1u],
-                              component_keys[i]) > 0)) {
-            ok = false;
-            goto done;
-        }
-    }
-    if (!rho_collect_endpoints(&components, &sends, &recvs)) {
-        ok = false;
-        goto done;
-    }
+    return true;
+}
 
-    while (recv_pos < recvs.len && send_pos < sends.len && ok) {
-        int cmp = rho_endpoint_key_compare(
-            &recvs.items[recv_pos], &sends.items[send_pos]);
-        if (cmp < 0) {
-            recv_pos++;
-            continue;
-        }
-        if (cmp > 0) {
-            send_pos++;
-            continue;
-        }
-
-        uint32_t recv_start = recv_pos;
-        uint32_t send_start = send_pos;
-        while (recv_pos < recvs.len &&
-               rho_endpoint_key_compare(
-                   &recvs.items[recv_pos],
-                   &recvs.items[recv_start]) == 0) {
-            recv_pos++;
-        }
-        while (send_pos < sends.len &&
-               rho_endpoint_key_compare(
-                   &sends.items[send_pos],
-                   &sends.items[send_start]) == 0) {
-            send_pos++;
-        }
-
-        for (uint32_t r = recv_start; r < recv_pos && ok; r++) {
-            for (uint32_t s = send_start; s < send_pos && ok; s++) {
-                ArenaMark mark = arena_mark(&scratch);
-                RhoAtomVec bodies;
-                rho_vec_init(&bodies);
-                if (!rho_compute_comm_continuations(
-                        &scratch, &sends.items[s], &recvs.items[r],
-                        machine->eval_context, &bodies)) {
-                    ok = false;
-                }
-                for (uint32_t b = 0u; b < bodies.len && ok; b++) {
-                    RhoReactionKeyView candidate_view = {0};
-                    int order = 0;
-                    uint64_t ordinal = next_ordinal++;
-                    if (!rho_reaction_key_view_init(
-                            &candidate_view, &components, component_keys,
-                            sends.items[s].component_index,
-                            recvs.items[r].component_index,
-                            bodies.items[b])) {
-                        ok = false;
-                        break;
-                    }
-                    if (found &&
-                        !rho_reaction_key_view_compare(
-                            &candidate_view, &best_view, &order)) {
-                        rho_reaction_key_view_free(&candidate_view);
-                        ok = false;
-                        break;
-                    }
-                    if (!found || order < 0 ||
-                        (order == 0 && ordinal < best_ordinal)) {
-                        if (best_view_ready) {
-                            rho_reaction_key_view_free(&best_view);
-                            best_view_ready = false;
-                        }
-                        arena_free(&selected);
-                        arena_init(&selected);
-                        best_body = atom_deep_copy(
-                            &selected, bodies.items[b]);
-                        if (!best_body) {
-                            rho_reaction_key_view_free(&candidate_view);
-                            ok = false;
-                            break;
-                        }
-                        best_recv = r;
-                        best_send = s;
-                        best_ordinal = ordinal;
-                        if (!rho_reaction_key_view_init(
-                                &best_view, &components, component_keys,
-                                sends.items[s].component_index,
-                                recvs.items[r].component_index,
-                                best_body)) {
-                            rho_reaction_key_view_free(&candidate_view);
-                            ok = false;
-                            break;
-                        }
-                        best_view_ready = true;
-                        found = true;
-                    }
-                    rho_reaction_key_view_free(&candidate_view);
-                }
-                rho_vec_free(&bodies);
-                arena_reset(&scratch, mark);
-            }
-        }
+static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
+    RhoMachine *machine=cursor->machine;
+    if (cursor->done) return true;
+    if (cursor->phase<RHO_CANONICAL_ALIGN) cursor->preparation_steps++;
+    switch (cursor->phase) {
+    case RHO_CANONICAL_PREPARE:
+        return rho_canonical_cursor_prepare(cursor);
+    case RHO_CANONICAL_COLLECT: {
+        RhoView *view=&cursor->process_view;
+        if (view->kind==RHO_NIL) cursor->phase=RHO_CANONICAL_ALLOCATE;
+        else if (view->kind!=RHO_PAR) {
+            if (!rho_vec_push(&machine->components,machine->current)) return false;
+            cursor->phase=RHO_CANONICAL_ALLOCATE;
+        } else if (cursor->preparation_position<view->nargs) {
+            Atom *part=view->args[cursor->preparation_position++];
+            RhoKind kind=rho_view(part).kind;
+            if (kind==RHO_NIL || kind==RHO_PAR || !rho_vec_push(&machine->components,part))
+                return false;
+        } else cursor->phase=RHO_CANONICAL_ALLOCATE;
+        return true;
     }
-
-    if (ok && found) {
-        Atom *committed_body = atom_deep_copy(machine->arena, best_body);
-        if (!committed_body) {
-            ok = false;
+    case RHO_CANONICAL_ALLOCATE:
+        cursor->component_keys=calloc(machine->components.len,sizeof(*cursor->component_keys));
+        cursor->component_key_owned=calloc(machine->components.len,sizeof(*cursor->component_key_owned));
+        if (machine->components.len && (!cursor->component_keys || !cursor->component_key_owned))
+            return false;
+        cursor->preparation_position=0u;
+        cursor->phase=RHO_CANONICAL_KEYS;
+        return true;
+    case RHO_CANONICAL_KEYS:
+        if (cursor->preparation_position<machine->components.len) {
+            uint32_t i=cursor->preparation_position++;
+            cursor->component_keys[i]=rho_process_key_cached(&machine->process_key_cache,
+                machine->components.items[i],&cursor->component_key_owned[i]);
+            if (!cursor->component_keys[i] || (i &&
+                strcmp(cursor->component_keys[i-1u],cursor->component_keys[i])>0)) return false;
         } else {
-            *out_next = rho_rebuild_reaction(
-                machine->arena, &components,
-                sends.items[best_send].component_index,
-                recvs.items[best_recv].component_index,
-                committed_body);
-            ok = *out_next != NULL;
-            if (ok) machine->current_canonical_order = true;
-            *out_quiescent = false;
+            cursor->preparation_position=0u;
+            cursor->phase=RHO_CANONICAL_ENDPOINTS;
         }
-    } else if (ok) {
-        *out_next = machine->current;
+        return true;
+    case RHO_CANONICAL_ENDPOINTS:
+        if (cursor->preparation_position<machine->components.len)
+            return rho_collect_endpoint(&machine->components,cursor->preparation_position++,
+                &machine->sends,&machine->recvs);
+        if (!rho_endpoint_sort_init(&cursor->endpoint_sort,&machine->sends)) return false;
+        cursor->phase=RHO_CANONICAL_SORT_SENDS;
+        return true;
+    case RHO_CANONICAL_SORT_SENDS:
+        if (!rho_endpoint_sort_advance(&cursor->endpoint_sort)) return false;
+        if (cursor->endpoint_sort.done) {
+            rho_endpoint_sort_free(&cursor->endpoint_sort);
+            if (!rho_endpoint_sort_init(&cursor->endpoint_sort,&machine->recvs)) return false;
+            cursor->phase=RHO_CANONICAL_SORT_RECVS;
+        }
+        return true;
+    case RHO_CANONICAL_SORT_RECVS:
+        if (!rho_endpoint_sort_advance(&cursor->endpoint_sort)) return false;
+        if (cursor->endpoint_sort.done) {
+            rho_endpoint_sort_free(&cursor->endpoint_sort);
+            machine->comm_index_loaded=true;
+            cursor->phase=RHO_CANONICAL_ALIGN;
+        }
+        return true;
+    case RHO_CANONICAL_ALIGN: {
+        if (cursor->recv_pos==machine->recvs.len || cursor->send_pos==machine->sends.len) {
+            cursor->phase=RHO_CANONICAL_FINISH;
+            return true;
+        }
+        bool ready=false;int order=0;
+        if (!rho_canonical_cursor_channel_probe(cursor,&machine->recvs.items[cursor->recv_pos],
+                &machine->sends.items[cursor->send_pos],&ready,&order)) return false;
+        if (!ready) return true;
+        if (order<0) cursor->recv_pos++;
+        else if (order>0) cursor->send_pos++;
+        else {
+            cursor->recv_start=cursor->recv_end=cursor->recv_pos;
+            cursor->send_start=cursor->send_end=cursor->send_pos;
+            cursor->phase=RHO_CANONICAL_RECV_RANGE;
+        }
+        return true;
     }
+    case RHO_CANONICAL_RECV_RANGE: {
+        if (cursor->recv_end==machine->recvs.len) {
+            cursor->phase=RHO_CANONICAL_SEND_RANGE;return true;
+        }
+        bool ready=false;int order=0;
+        if (!rho_canonical_cursor_channel_probe(cursor,&machine->recvs.items[cursor->recv_end],
+                &machine->recvs.items[cursor->recv_start],&ready,&order)) return false;
+        if (!ready) return true;
+        if (!order) cursor->recv_end++;
+        else cursor->phase=RHO_CANONICAL_SEND_RANGE;
+        return true;
+    }
+    case RHO_CANONICAL_SEND_RANGE: {
+        if (cursor->send_end<machine->sends.len) {
+            bool ready=false;int order=0;
+            if (!rho_canonical_cursor_channel_probe(cursor,&machine->sends.items[cursor->send_end],
+                    &machine->sends.items[cursor->send_start],&ready,&order)) return false;
+            if (!ready) return true;
+            if (!order) {cursor->send_end++;return true;}
+        }
+        cursor->recv=cursor->recv_start;
+        cursor->send=cursor->send_start;
+        cursor->phase=RHO_CANONICAL_PAIR;
+        return true;
+    }
+    case RHO_CANONICAL_PAIR:
+        if (cursor->matching_pairs==UINT64_MAX) {
+            rho_validation_set("rho canonical pair count exhausted");
+            return false;
+        }
+        cursor->pair_mark=arena_mark(&cursor->scratch);
+        cursor->matching_pairs++;
+        if (machine->eval_context &&
+            rho_view(machine->sends.items[cursor->send].view.args[1]).kind==RHO_EVAL_PAYLOAD) {
+            Atom *expression=rho_view(machine->sends.items[cursor->send].view.args[1]).args[0];
+            cursor->payload=rho_payload_open(&cursor->scratch,machine->eval_context,expression);
+            if (!cursor->payload) return false;
+            cursor->payload_position=0u;
+            cursor->phase=RHO_CANONICAL_PAYLOAD;
+            return true;
+        }
+        if (!rho_compute_comm_continuations(&cursor->scratch,
+                &machine->sends.items[cursor->send],&machine->recvs.items[cursor->recv],
+                machine->eval_context,&cursor->bodies)) return false;
+        cursor->body=0u;
+        cursor->phase=RHO_CANONICAL_BODY;
+        return true;
+    case RHO_CANONICAL_PAYLOAD: {
+        RhocalcPayloadStatus status=rho_payload_step(cursor->payload,1u);
+        if (status==RHOCALC_PAYLOAD_FAILED) return false;
+        if (status==RHOCALC_PAYLOAD_DONE) cursor->phase=RHO_CANONICAL_PAYLOAD_BODY;
+        return true;
+    }
+    case RHO_CANONICAL_PAYLOAD_BODY:
+        if (cursor->payload_position<cursor->payload->results.len) {
+            Atom *replacement=rho_embed_payload_result_name(&cursor->scratch,
+                cursor->payload->results.items[cursor->payload_position]);
+            RhoView *receive=&machine->recvs.items[cursor->recv].view;
+            Atom *body=replacement?rho_subst_proc(&cursor->scratch,receive->args[2],
+                receive->args[1]->var_id,replacement):NULL;
+            if (!body || !rho_vec_push(&cursor->bodies,body)) return false;
+            cursor->payload_position++;
+        } else {
+            rho_payload_close(cursor->payload);cursor->payload=NULL;
+            cursor->body=0u;cursor->phase=RHO_CANONICAL_BODY;
+        }
+        return true;
+    case RHO_CANONICAL_BODY:
+        if (cursor->body<cursor->bodies.len) return rho_canonical_cursor_body(cursor);
+        rho_vec_free(&cursor->bodies);
+        rho_vec_init(&cursor->bodies);
+        arena_reset(&cursor->scratch,cursor->pair_mark);
+        cursor->send++;
+        if (cursor->send==cursor->send_end) {
+            cursor->send=cursor->send_start;
+            cursor->recv++;
+        }
+        if (cursor->recv==cursor->recv_end) {
+            cursor->recv_pos=cursor->recv_end;
+            cursor->send_pos=cursor->send_end;
+            cursor->phase=RHO_CANONICAL_ALIGN;
+        } else cursor->phase=RHO_CANONICAL_PAIR;
+        return true;
+    case RHO_CANONICAL_COMPARE:
+        if (!rho_reaction_compare_advance(&cursor->comparison)) return false;
+        if (cursor->comparison.phase==RHO_COMPARE_DONE) {
+            int order=cursor->comparison.order;
+            cursor->component_probes+=cursor->comparison.component_probes;
+            cursor->text_probes+=cursor->comparison.text_probes;
+            rho_reaction_compare_free(&cursor->comparison);
+            cursor->comparison_live=false;
+            return rho_canonical_cursor_choose(cursor,order);
+        }
+        return true;
+    case RHO_CANONICAL_FINISH:
+        cursor->quiescent=!cursor->found;
+        if (cursor->found) {
+            Atom *body=atom_deep_copy(machine->arena,cursor->best_body);
+            if (!body) return false;
+            cursor->next=rho_rebuild_reaction(machine->arena,&machine->components,
+                machine->sends.items[cursor->best_send].component_index,
+                machine->recvs.items[cursor->best_recv].component_index,body);
+            if (!cursor->next) return false;
+            machine->current_canonical_order=true;
+        } else cursor->next=machine->current;
+        cursor->completed_scans=1u;
+        cursor->done=true;
+        return true;
+    }
+    return false;
+}
 
-done:
-    if (component_keys && component_key_owned) {
-        for (uint32_t i = 0u; i < components.len; i++) {
-            if (component_key_owned[i]) free(component_keys[i]);
-        }
+static void rho_canonical_cursor_account(const RhoCanonicalCursor *cursor,
+        RhocalcRunAccount *account) {
+    account->preparation_steps+=cursor->preparation_steps;
+    account->channel_scan_probes+=cursor->channel_scan_probes;
+    account->matching_pairs+=cursor->matching_pairs;
+    account->body_candidates+=cursor->body_candidates;
+    account->completed_scans+=cursor->completed_scans;
+    account->comparison_component_probes+=cursor->component_probes;
+    account->comparison_text_probes+=cursor->text_probes;
+    if (cursor->comparison_live) {
+        account->comparison_component_probes+=cursor->comparison.component_probes;
+        account->comparison_text_probes+=cursor->comparison.text_probes;
     }
-    free(component_keys);
-    free(component_key_owned);
-    if (best_view_ready) rho_reaction_key_view_free(&best_view);
-    rho_endpoint_vec_free(&sends);
-    rho_endpoint_vec_free(&recvs);
-    rho_vec_free(&components);
-    arena_free(&selected);
-    arena_free(&scratch);
-    return ok;
+}
+
+static bool rho_machine_select_streaming_canonical_successor(
+    RhoMachine *machine, Atom **out_next, bool *out_quiescent) {
+    if (!machine || !machine->arena || !machine->current || !out_next || !out_quiescent)
+        return false;
+    *out_next=NULL;
+    *out_quiescent=true;
+    RhoCanonicalCursor cursor;
+    rho_canonical_cursor_init(&cursor,machine);
+    bool okay=true;
+    while (!cursor.done && okay) okay=rho_canonical_cursor_advance(&cursor);
+    if (okay) {
+        *out_next=cursor.next;
+        *out_quiescent=cursor.quiescent;
+    }
+    rho_canonical_cursor_free(&cursor);
+    return okay;
 }
 
 /* machine->current is normalized on entry and every committed successor is
@@ -4931,6 +5335,10 @@ static bool rho_async_publish_endpoint(RhoAsyncExecutor *executor,
                                        Atom *proc,
                                        RhoView view) {
     char *key = rho_key_name(view.args[0]);
+    if (!key) {
+        rho_async_fail(executor, "could not construct rho channel key");
+        return false;
+    }
     RhoChannelBucket *bucket =
         rho_channel_table_get_or_create(&executor->channels, key);
     RhoAsyncEndpoint *current = cetta_malloc(sizeof(RhoAsyncEndpoint));
@@ -5416,8 +5824,8 @@ static bool rhocalc_try_quiet_macro_step(
     rho_vec_init(&components);
     rho_endpoint_vec_init(&sends);
     rho_endpoint_vec_init(&recvs);
-    rho_collect_par(arena, proc, &components);
-    if (!rho_collect_endpoints(&components, &sends, &recvs)) {
+    if (!rho_collect_par(arena,proc,&components) ||
+        !rho_collect_endpoints(&components,&sends,&recvs)) {
         ok = false;
         goto done;
     }
@@ -5487,7 +5895,11 @@ static bool rhocalc_try_quiet_macro_step(
         }
         for (uint32_t b = 0; b < group->bodies.len; b++) {
             Atom *body = rho_normalize_proc(arena, group->bodies.items[b]);
-            if (!body || !rho_proc_is_quiet(body)) {
+            if (!body) {
+                ok = false;
+                goto done;
+            }
+            if (!rho_proc_is_quiet(body)) {
                 group->reject_reason = RHO_MACRO_REJECT_NONQUIET;
                 exact_groups++;
                 goto next_group;
@@ -6733,7 +7145,7 @@ static Atom *rhocost_normalize_signature(Arena *arena, Atom *sig) {
     rho_vec_init(&atoms);
     if (!rhocost_collect_signature_atoms(sig, &atoms)) {
         rho_vec_free(&atoms);
-        return sig;
+        return NULL;
     }
     out = rhocost_signature_from_vec(arena, &atoms);
     rho_vec_free(&atoms);
@@ -6789,7 +7201,7 @@ static char *rhocost_key_signature(Atom *sig) {
     rho_vec_init(&atoms);
     if (!rhocost_collect_signature_atoms(sig, &atoms)) {
         rho_vec_free(&atoms);
-        return rho_heap_strdup("?bad-sig");
+        return NULL;
     }
     rhocost_normalize_signature_vec(&atoms);
     (void)rho_str_append(&out, "sig(");
@@ -6800,7 +7212,7 @@ static char *rhocost_key_signature(Atom *sig) {
     }
     (void)rho_str_append(&out, ")");
     rho_vec_free(&atoms);
-    return out.data ? out.data : rho_heap_strdup("sig()");
+    return rho_str_take(&out,"sig()");
 }
 
 /* ── Cost grammar validation ────────────────────────────────────────────────
@@ -7127,6 +7539,7 @@ static void rhocost_key_name_into(Atom *name, RhoAlphaEnv *env, RhoStr *out) {
 }
 
 static void rhocost_key_proc_into(Atom *proc, RhoAlphaEnv *env, RhoStr *out) {
+    if (!proc) {rho_str_fail(out);return;}
     RhoView view = rho_view(proc);
     switch (view.kind) {
     case RHO_NIL:
@@ -7153,7 +7566,7 @@ static void rhocost_key_proc_into(Atom *proc, RhoAlphaEnv *env, RhoStr *out) {
         rhocost_key_name_into(view.args[0], env, out);
         (void)rho_str_append(out, ",");
         if (view.nargs == 3 && view.args[1]->kind == ATOM_VAR) {
-            (void)rho_alpha_push(env, view.args[1]->var_id);
+            if (!rho_alpha_push(env,view.args[1]->var_id)) {rho_str_fail(out);return;}
             rhocost_key_term_into(view.args[2], env, out);
         } else {
             (void)rho_str_append(out, "?bad-binder");
@@ -7178,6 +7591,7 @@ static void rhocost_key_proc_into(Atom *proc, RhoAlphaEnv *env, RhoStr *out) {
 }
 
 static void rhocost_key_term_into(Atom *term, RhoAlphaEnv *env, RhoStr *out) {
+    if (!term) {rho_str_fail(out);return;}
     RhoCostTermView view = rhocost_term_view(term);
     switch (view.kind) {
     case RHOCOST_TERM_NIL:
@@ -7188,6 +7602,7 @@ static void rhocost_key_term_into(Atom *term, RhoAlphaEnv *env, RhoStr *out) {
         return;
     case RHOCOST_TERM_STACK_CONS: {
         char *signature_key = rhocost_key_signature(view.args[0]);
+        if (!signature_key) {rho_str_fail(out);return;}
         (void)rho_str_appendf(out, "stack(%s:", signature_key);
         free(signature_key);
         rhocost_key_term_into(view.args[1], env, out);
@@ -7208,6 +7623,7 @@ static void rhocost_key_term_into(Atom *term, RhoAlphaEnv *env, RhoStr *out) {
         return;
     case RHOCOST_TERM_SIGNED: {
         char *signature_key = rhocost_key_signature(view.args[1]);
+        if (!signature_key) {rho_str_fail(out);return;}
         (void)rho_str_append(out, "signed(");
         rhocost_key_proc_into(view.args[0], env, out);
         (void)rho_str_appendf(out, ",%s)", signature_key);
@@ -7234,7 +7650,7 @@ static char *rhocost_key_name(Atom *name) {
     rho_alpha_init(&env);
     rhocost_key_name_into(name, &env, &out);
     rho_alpha_free(&env);
-    return out.data ? out.data : rho_heap_strdup("");
+    return rho_str_take(&out,"");
 }
 
 static char *rhocost_key_proc(Atom *proc) {
@@ -7243,7 +7659,7 @@ static char *rhocost_key_proc(Atom *proc) {
     rho_alpha_init(&env);
     rhocost_key_proc_into(proc, &env, &out);
     rho_alpha_free(&env);
-    return out.data ? out.data : rho_heap_strdup("");
+    return rho_str_take(&out,"");
 }
 
 static char *rhocost_key_term(Atom *term) {
@@ -7252,21 +7668,17 @@ static char *rhocost_key_term(Atom *term) {
     rho_alpha_init(&env);
     rhocost_key_term_into(term, &env, &out);
     rho_alpha_free(&env);
-    return out.data ? out.data : rho_heap_strdup("");
+    return rho_str_take(&out,"");
 }
 
-static void rhocost_collect_proc_par(Arena *arena, Atom *proc, RhoAtomVec *out);
+static bool rhocost_collect_proc_par(Arena *arena, Atom *proc, RhoAtomVec *out);
 
 static Atom *rhocost_proc_par_from_vec(Arena *arena, RhoAtomVec *vec) {
     if (vec->len == 0) return rho_nil(arena);
     if (vec->len == 1) return vec->items[0];
 
-    RhoKeyedAtom *items = cetta_malloc(sizeof(RhoKeyedAtom) * vec->len);
-    for (uint32_t i = 0; i < vec->len; i++) {
-        items[i].atom = vec->items[i];
-        items[i].key = rhocost_key_proc(vec->items[i]);
-        items[i].ordinal = i;
-    }
+    RhoKeyedAtom *items=rho_keyed_atoms_new(vec,rhocost_key_proc);
+    if (!items) return NULL;
     qsort(items, vec->len, sizeof(RhoKeyedAtom), rho_keyed_atom_cmp);
 
     Atom **args = arena_alloc(arena, sizeof(Atom *) * vec->len);
@@ -7279,6 +7691,7 @@ static Atom *rhocost_proc_par_from_vec(Arena *arena, RhoAtomVec *vec) {
 }
 
 static Atom *rhocost_normalize_name(Arena *arena, Atom *name) {
+    if (!name) return NULL;
     if (name->kind == ATOM_VAR) return name;
     if (rhocost_is_ground_signature(name) || rhocost_is_sig_mul(name)) {
         return rhocost_normalize_signature(arena, name);
@@ -7307,7 +7720,7 @@ static Atom *rhocost_normalize_proc(Arena *arena, Atom *proc) {
         RhoAtomVec flat;
         rho_vec_init(&flat);
         for (uint32_t i = 0; i < view.nargs; i++) {
-            rhocost_collect_proc_par(arena, view.args[i], &flat);
+            if (!rhocost_collect_proc_par(arena,view.args[i],&flat)) {rho_vec_free(&flat);return NULL;}
         }
         proc = rhocost_proc_par_from_vec(arena, &flat);
         rho_vec_free(&flat);
@@ -7335,30 +7748,26 @@ static Atom *rhocost_normalize_proc(Arena *arena, Atom *proc) {
     return proc;
 }
 
-static void rhocost_collect_proc_par(Arena *arena, Atom *proc, RhoAtomVec *out) {
-    Atom *norm = rhocost_normalize_proc(arena, proc);
-    RhoView view = rho_view(norm);
-    if (view.kind == RHO_NIL) return;
-    if (view.kind == RHO_PAR) {
-        for (uint32_t i = 0; i < view.nargs; i++) {
-            rhocost_collect_proc_par(arena, view.args[i], out);
-        }
-        return;
+static bool rhocost_collect_proc_par(Arena *arena, Atom *proc, RhoAtomVec *out) {
+    Atom *norm=rhocost_normalize_proc(arena,proc);
+    if (!norm) return false;
+    RhoView view=rho_view(norm);
+    if (view.kind==RHO_NIL) return true;
+    if (view.kind==RHO_PAR) {
+        for (uint32_t i=0u;i<view.nargs;i++)
+            if (!rhocost_collect_proc_par(arena,view.args[i],out)) return false;
+        return true;
     }
-    (void)rho_vec_push(out, norm);
+    return rho_vec_push(out,norm);
 }
 
-static void rhocost_collect_term_par(Arena *arena, Atom *term, RhoAtomVec *out);
+static bool rhocost_collect_term_par(Arena *arena, Atom *term, RhoAtomVec *out);
 
 static Atom *rhocost_term_par_from_vec(Arena *arena, RhoAtomVec *vec) {
     if (vec->len == 0) return rhocost_nil(arena);
     if (vec->len == 1) return vec->items[0];
-    RhoKeyedAtom *items = cetta_malloc(sizeof(RhoKeyedAtom) * vec->len);
-    for (uint32_t i = 0; i < vec->len; i++) {
-        items[i].atom = vec->items[i];
-        items[i].key = rhocost_key_term(vec->items[i]);
-        items[i].ordinal = i;
-    }
+    RhoKeyedAtom *items=rho_keyed_atoms_new(vec,rhocost_key_term);
+    if (!items) return NULL;
     qsort(items, vec->len, sizeof(RhoKeyedAtom), rho_keyed_atom_cmp);
     Atom **args = arena_alloc(arena, sizeof(Atom *) * vec->len);
     for (uint32_t i = 0; i < vec->len; i++) {
@@ -7405,7 +7814,7 @@ static Atom *rhocost_normalize_term(Arena *arena, Atom *term) {
         RhoAtomVec flat;
         rho_vec_init(&flat);
         for (uint32_t i = 0; i < view.nargs; i++) {
-            rhocost_collect_term_par(arena, view.args[i], &flat);
+            if (!rhocost_collect_term_par(arena,view.args[i],&flat)) {rho_vec_free(&flat);return NULL;}
         }
         term = rhocost_term_par_from_vec(arena, &flat);
         rho_vec_free(&flat);
@@ -7417,17 +7826,17 @@ static Atom *rhocost_normalize_term(Arena *arena, Atom *term) {
     return term;
 }
 
-static void rhocost_collect_term_par(Arena *arena, Atom *term, RhoAtomVec *out) {
-    Atom *norm = rhocost_normalize_term(arena, term);
-    RhoCostTermView view = rhocost_term_view(norm);
-    if (view.kind == RHOCOST_TERM_NIL) return;
-    if (view.kind == RHOCOST_TERM_PAR) {
-        for (uint32_t i = 0; i < view.nargs; i++) {
-            rhocost_collect_term_par(arena, view.args[i], out);
-        }
-        return;
+static bool rhocost_collect_term_par(Arena *arena, Atom *term, RhoAtomVec *out) {
+    Atom *norm=rhocost_normalize_term(arena,term);
+    if (!norm) return false;
+    RhoCostTermView view=rhocost_term_view(norm);
+    if (view.kind==RHOCOST_TERM_NIL) return true;
+    if (view.kind==RHOCOST_TERM_PAR) {
+        for (uint32_t i=0u;i<view.nargs;i++)
+            if (!rhocost_collect_term_par(arena,view.args[i],out)) return false;
+        return true;
     }
-    (void)rho_vec_push(out, norm);
+    return rho_vec_push(out,norm);
 }
 
 /* ── Cost substitution ──────────────────────────────────────────────────────
@@ -7515,6 +7924,7 @@ static Atom *rhocost_rename_term(Arena *arena, Atom *term,
 static Atom *rhocost_rename_name(Arena *arena, Atom *name,
                                  VarId old_id, Atom *replacement_name) {
     Atom *norm = rhocost_normalize_name(arena, name);
+    if (!norm) return NULL;
     if (norm->kind == ATOM_VAR && norm->var_id == old_id) {
         return replacement_name;
     }
@@ -7619,6 +8029,7 @@ static Atom *rhocost_subst_term(Arena *arena, Atom *term,
 static Atom *rhocost_subst_name(Arena *arena, Atom *name,
                                 VarId var_id, Atom *replacement_term) {
     Atom *norm = rhocost_normalize_name(arena, name);
+    if (!norm) return NULL;
     if (norm->kind == ATOM_VAR && norm->var_id == var_id) {
         return rho_unary(arena, "rho:quote",
                          rhocost_normalize_term(arena, replacement_term));
@@ -7631,6 +8042,7 @@ static Atom *rhocost_subst_name_mark(Arena *arena, Atom *name,
                                      bool *matched) {
     Atom *norm = rhocost_normalize_name(arena, name);
     *matched = false;
+    if (!norm) return NULL;
     if (norm->kind == ATOM_VAR && norm->var_id == var_id) {
         *matched = true;
         return rho_unary(arena, "rho:quote",
@@ -7771,6 +8183,7 @@ static bool rhocost_signed_body_endpoint(uint32_t component_index,
         return true;
     }
     char *key = rhocost_key_name(body_view.args[0]);
+    if (!key) return false;
     bool ok;
     if (body_view.kind == RHO_RECV) {
         ok = rhocost_signed_endpoint_vec_push(recvs, component_index,
@@ -7810,6 +8223,11 @@ static bool rhocost_whole_signed_redex(uint32_t component_index,
         if (recv.kind == RHO_RECV) {
             char *recv_key = rhocost_key_name(recv.args[0]);
             char *send_key = rhocost_key_name(send.args[0]);
+            if (!recv_key || !send_key) {
+                free(recv_key);
+                free(send_key);
+                return false;
+            }
             bool same = strcmp(recv_key, send_key) == 0;
             free(send_key);
             if (same) {
@@ -7825,8 +8243,8 @@ static bool rhocost_whole_signed_redex(uint32_t component_index,
     return true;
 }
 
-static void rhocost_collect_term_components(Arena *arena, Atom *term, RhoAtomVec *out) {
-    rhocost_collect_term_par(arena, term, out);
+static bool rhocost_collect_term_components(Arena *arena, Atom *term, RhoAtomVec *out) {
+    return rhocost_collect_term_par(arena,term,out);
 }
 
 static bool rhocost_runtime_components_sort(
@@ -7915,14 +8333,19 @@ static Atom *rhocost_runtime_components_term(
     return rhocost_par(arena, components->items, components->len);
 }
 
-static void rhocost_trace_components_sort(RhoCostTraceComponentVec *components) {
-    if (components->len < 2) return;
+static bool rhocost_trace_components_sort(RhoCostTraceComponentVec *components) {
+    if (components->len < 2) return true;
     RhoCostKeyedTraceComponent *keyed =
         cetta_malloc(sizeof(RhoCostKeyedTraceComponent) * components->len);
     for (uint32_t i = 0; i < components->len; i++) {
         keyed[i].component = components->items[i];
         keyed[i].key = rhocost_key_term(components->items[i].term);
         keyed[i].ordinal = i;
+        if (!keyed[i].key) {
+            for (uint32_t j = 0; j < i; j++) free(keyed[j].key);
+            free(keyed);
+            return false;
+        }
     }
     qsort(keyed, components->len, sizeof(RhoCostKeyedTraceComponent),
           rhocost_keyed_trace_component_cmp);
@@ -7931,6 +8354,7 @@ static void rhocost_trace_components_sort(RhoCostTraceComponentVec *components) 
         free(keyed[i].key);
     }
     free(keyed);
+    return true;
 }
 
 static bool rhocost_trace_components_add_term(
@@ -8045,7 +8469,10 @@ static bool rhocost_trace_apply_step(
         }
     }
 
-    rhocost_trace_components_sort(&next);
+    if (!rhocost_trace_components_sort(&next)) {
+        rhocost_trace_component_vec_free(&next);
+        return false;
+    }
     rhocost_trace_component_vec_free(components);
     *components = next;
     return true;
@@ -8128,10 +8555,14 @@ static Atom *rhocost_rebuild_result(Arena *arena,
     rho_vec_init(&out);
     for (uint32_t i = 0; i < components->len; i++) {
         if (rhocost_index_skipped(i, skip, skip_len)) continue;
-        rhocost_collect_term_par(arena, components->items[i], &out);
+        if (!rhocost_collect_term_par(arena,components->items[i],&out)) {
+            rho_vec_free(&out);return NULL;
+        }
     }
     for (uint32_t i = 0; i < extra_len; i++) {
-        rhocost_collect_term_par(arena, extras[i], &out);
+        if (!rhocost_collect_term_par(arena,extras[i],&out)) {
+            rho_vec_free(&out);return NULL;
+        }
     }
     Atom *term = rhocost_term_par_from_vec(arena, &out);
     rho_vec_free(&out);
@@ -8142,10 +8573,11 @@ static char *rhocost_step_transition_key(Atom *result, Atom *consumed_sig) {
     char *term_key = rhocost_key_term(result);
     char *sig_key = rhocost_key_signature(consumed_sig);
     RhoStr out = {0};
+    if (!term_key || !sig_key) {free(term_key);free(sig_key);return NULL;}
     (void)rho_str_appendf(&out, "%s//cost(%s)", term_key, sig_key);
     free(term_key);
     free(sig_key);
-    return out.data ? out.data : rho_heap_strdup("");
+    return rho_str_take(&out,"");
 }
 
 static bool rhocost_emit_step(Arena *arena,
@@ -8182,7 +8614,9 @@ static bool rhocost_emit_step(Arena *arena,
 
     next = rhocost_rebuild_result(arena, components, skip, skip_len,
                                   extras, extra_len);
+    if (!next) return false;
     key = rhocost_step_transition_key(next, consumed_sig);
+    if (!key) return false;
     return rhocost_step_set_acc_push_keyed(
         out, next, consumed_sig, body, participant_skip,
         participant_skip_len, tokens, chosen_tokens, key);
@@ -8382,6 +8816,10 @@ static bool rhocost_collect_candidates_from_components(
             if (stack.kind == RHOCOST_TERM_STACK_CONS && stack.nargs == 2 &&
                 rhocost_check_signature(stack.args[0])) {
                 char *location_key = rhocost_key_name(view.args[0]);
+                if (!location_key) {
+                    ok = false;
+                    break;
+                }
                 ok = rhocost_token_vec_push(
                     &tokens, i, view.args[0], location_key,
                     stack.args[0], stack.args[1]);
@@ -8406,6 +8844,10 @@ static bool rhocost_collect_candidates_from_components(
                                  wholes.items[w].recv.args[1]->var_id,
                                  wholes.items[w].send.args[1])
             : NULL;
+        if (!consumed_sig || (compute_contracta && !body)) {
+            ok = false;
+            break;
+        }
         if (!rhocost_search_consume(control)) break;
         rho_vec_init(&required_sig_atoms);
         rhocost_index_vec_init(&chosen_tokens);
@@ -8451,6 +8893,10 @@ static bool rhocost_collect_candidates_from_components(
                                      recvs.items[r].view.args[1]->var_id,
                                      sends.items[s].view.args[1])
                 : NULL;
+            if (compute_contracta && !body) {
+                ok = false;
+                break;
+            }
             skip[0] = recvs.items[r].component_index;
             skip[1] = sends.items[s].component_index;
             rho_vec_init(&required_sig_atoms);
@@ -8680,7 +9126,10 @@ static bool rhocost_parallel_task_redex_valid(
     RhoView recv = {0};
     RhoView send = {0};
     Atom *demand = NULL;
+    Atom *normalized_signature = NULL;
     Atom *expected_contractum = NULL;
+    Atom *normalized_expected = NULL;
+    Atom *normalized_contractum = NULL;
     char *expected_channel_key = NULL;
     char *recv_channel_key = NULL;
     char *send_channel_key = NULL;
@@ -8755,17 +9204,21 @@ static bool rhocost_parallel_task_redex_valid(
         recv.args[1]->var_id != task->plan.recv_binder ||
         !atom_eq(recv.args[2], task->plan.recv_body) ||
         !atom_eq(send.args[1], task->plan.send_payload) ||
-        !atom_eq(rhocost_normalize_signature(arena, task->plan.consumed_sig),
-                 demand) ||
         !rhocost_check_term_rec(task->contractum)) {
         return false;
     }
+    normalized_signature = rhocost_normalize_signature(
+        arena, task->plan.consumed_sig);
+    if (!normalized_signature || !atom_eq(normalized_signature, demand))
+        return false;
 
     expected_contractum = rhocost_subst_term(
         arena, recv.args[2], recv.args[1]->var_id, send.args[1]);
-    if (!expected_contractum ||
-        !atom_eq(rhocost_normalize_term(arena, expected_contractum),
-                 rhocost_normalize_term(arena, task->contractum))) {
+    if (!expected_contractum) return false;
+    normalized_expected = rhocost_normalize_term(arena, expected_contractum);
+    normalized_contractum = rhocost_normalize_term(arena, task->contractum);
+    if (!normalized_expected || !normalized_contractum ||
+        !atom_eq(normalized_expected, normalized_contractum)) {
         return false;
     }
 
@@ -9318,8 +9771,12 @@ static bool rhocost_collect_steps(Arena *arena, Atom *term,
     if (!rhocost_term_well_formed(term)) return false;
 
     rho_vec_init(&components);
-    rhocost_collect_term_components(arena, rhocost_normalize_term(arena, term),
-                                    &components);
+    Atom *normalized = rhocost_normalize_term(arena, term);
+    if (!normalized || !rhocost_collect_term_components(arena, normalized,
+                                                       &components)) {
+        rho_vec_free(&components);
+        return false;
+    }
     ok = rhocost_collect_steps_from_components(arena, &components, out, NULL);
     rho_vec_free(&components);
     return ok;
@@ -9359,7 +9816,7 @@ static Atom *rhocalc_cost_causal_run_expr(Arena *arena, Atom *term,
         rho_validation_set("rho cost trace could not initialize provenance");
         goto done;
     }
-    rhocost_trace_components_sort(&components);
+    if (!rhocost_trace_components_sort(&components)) goto done;
 
     for (;;) {
         RhoAtomVec projected_components;
@@ -9673,9 +10130,8 @@ static bool rho_collect_successors(Arena *arena, Atom *proc,
     rho_vec_init(&components);
     rho_endpoint_vec_init(&sends);
     rho_endpoint_vec_init(&recvs);
-    rho_collect_par(arena, proc, &components);
-
-    if (!rho_collect_endpoints(&components, &sends, &recvs)) {
+    if (!rho_collect_par(arena,proc,&components) ||
+        !rho_collect_endpoints(&components,&sends,&recvs)) {
         rho_endpoint_vec_free(&sends);
         rho_endpoint_vec_free(&recvs);
         rho_vec_free(&components);
@@ -9743,59 +10199,227 @@ bool rhocalc_reduce_to_quiescence_with_profile(Arena *arena, Atom *proc,
                                                           NULL, out);
 }
 
+typedef enum {
+    RHO_RUN_LOAD,
+    RHO_RUN_SELECT,
+    RHO_RUN_COMMIT,
+    RHO_RUN_COMPACT,
+    RHO_RUN_EXPORT
+} RhoRunPhase;
+
+struct RhocalcRun {
+    RhoMachine machine;
+    RhocalcEvalContext context;
+    _Atomic(RhocalcPayloadFailure) payload_failure;
+    RhoCanonicalCursor cursor;
+    RhocalcRunAccount account;
+    RhocalcCommAddress pending_comm, last_comm;
+    RhoReductionResult result;
+    Atom *input, *next;
+    RhoRunPhase phase;
+    RhocalcRunStatus status;
+    bool cursor_live, quiescent, atomic_selection, has_pending_comm, has_last_comm;
+    char error[256];
+};
+
+static void rho_run_retire_cursor(RhocalcRun *run) {
+    if (!run->cursor_live) return;
+    rho_canonical_cursor_account(&run->cursor,&run->account);
+    rho_canonical_cursor_free(&run->cursor);
+    run->cursor_live=false;
+}
+
+static bool rho_run_fail(RhocalcRun *run) {
+    const char *message=rhocalc_last_validation_error();
+    snprintf(run->error,sizeof(run->error),"%s",
+        message && *message ? message : "rho run transition failed");
+    run->status=RHOCALC_RUN_FAILED;
+    return false;
+}
+
+static RhocalcRun *rho_run_open(Arena *arena, Atom *proc,
+                                const RhoRuntimeProfile *profile,
+                                const RhocalcEvalContext *eval_context,
+                                bool atomic_selection) {
+    rho_validation_clear();
+    if (!arena || !proc || !rho_runtime_profile_supported(profile)) return NULL;
+    if (profile->threaded) {
+        rho_validation_set("resumable rho runs require sequential execution");
+        return NULL;
+    }
+    RhocalcRun *run=calloc(1u,sizeof(*run));
+    if (!run) return NULL;
+    atomic_init(&run->payload_failure,RHOCALC_PAYLOAD_FAILURE_NONE);
+    if (eval_context) {
+        run->context=*eval_context;
+        run->context.payload_failure=&run->payload_failure;
+    }
+    rho_machine_init(&run->machine,arena,profile,eval_context ? &run->context : NULL);
+    run->input=atomic_selection ? proc : atom_deep_copy(run->machine.arena,proc);
+    if (!run->input) {
+        rhocalc_run_close(run);
+        return NULL;
+    }
+    run->phase=RHO_RUN_LOAD;
+    run->status=RHOCALC_RUN_PENDING;
+    run->atomic_selection=atomic_selection;
+    return run;
+}
+
+RhocalcRun *rhocalc_run_open(Arena *arena, Atom *proc,
+                            const RhoRuntimeProfile *profile,
+                            const RhocalcEvalContext *eval_context) {
+    return rho_run_open(arena,proc,profile,eval_context,false);
+}
+
+static bool rho_run_advance(RhocalcRun *run) {
+    RhoMachine *machine=&run->machine;
+    switch (run->phase) {
+    case RHO_RUN_LOAD:
+        if (!rho_machine_load_process(machine,run->input)) return rho_run_fail(run);
+        run->input=NULL;
+        run->phase=RHO_RUN_SELECT;
+        return true;
+    case RHO_RUN_SELECT:
+        if (run->atomic_selection || machine->profile.scheduler_policy==RHO_SCHEDULER_ROTATING) {
+            if (!rho_machine_select_successor(machine,&run->next,&run->quiescent))
+                return rho_run_fail(run);
+        } else {
+            if (!run->cursor_live) {
+                rho_canonical_cursor_init(&run->cursor,machine);
+                run->cursor_live=true;
+            }
+            run->account.selector_steps++;
+            if (!rho_canonical_cursor_advance(&run->cursor)) return rho_run_fail(run);
+            if (!run->cursor.done) return true;
+            run->next=run->cursor.next;
+            run->quiescent=run->cursor.quiescent;
+            run->has_pending_comm=run->cursor.found;
+            if (run->has_pending_comm) {
+                RhoCanonicalCursor *cursor=&run->cursor;
+                run->pending_comm=(RhocalcCommAddress){
+                    .source_reductions=run->result.reductions_taken,
+                    .send_component=machine->sends.items[cursor->best_send].component_index,
+                    .recv_component=machine->recvs.items[cursor->best_recv].component_index,
+                    .body_index=cursor->best_body_index,
+                    .candidate_ordinal=cursor->best_ordinal};
+            }
+            rho_run_retire_cursor(run);
+        }
+        run->phase=RHO_RUN_COMMIT;
+        return true;
+    case RHO_RUN_COMMIT:
+        /* Preserve the public driver's select-before-limit ordering, including
+         * payload work used to establish that another reduction exists. */
+        if (run->quiescent || run->result.reductions_taken==machine->profile.reduction_limit) {
+            run->result.status=run->quiescent ? RHOCALC_REDUCTION_QUIESCENT
+                : RHOCALC_REDUCTION_LIMIT_EXHAUSTED;
+            run->phase=RHO_RUN_EXPORT;
+            return true;
+        }
+        machine->current=run->next;
+        run->next=NULL;
+        if (run->has_pending_comm) {
+            run->last_comm=run->pending_comm;
+            run->has_last_comm=true;
+            run->has_pending_comm=false;
+        }
+        run->result.reductions_taken++;
+        machine->reductions_since_compaction++;
+        run->phase=rho_machine_compaction_enabled(machine) &&
+            machine->reductions_since_compaction==RHO_MACHINE_COMPACTION_INTERVAL
+                ? RHO_RUN_COMPACT : RHO_RUN_SELECT;
+        return true;
+    case RHO_RUN_COMPACT:
+        if (!rho_machine_compact_current(machine)) return rho_run_fail(run);
+        run->phase=RHO_RUN_SELECT;
+        return true;
+    case RHO_RUN_EXPORT:
+        run->result.residual=rho_machine_export_current(machine);
+        if (!run->result.residual) return rho_run_fail(run);
+        run->status=RHOCALC_RUN_DONE;
+        return true;
+    }
+    return rho_run_fail(run);
+}
+
+RhocalcRunStatus rhocalc_run_poll(RhocalcRun *run, uint64_t allowance, uint64_t *used) {
+    uint64_t spent=0u;
+    if (used) *used=0u;
+    if (!run) return RHOCALC_RUN_FAILED;
+    if (allowance && run->status==RHOCALC_RUN_PENDING) rho_validation_clear();
+    while (spent<allowance && run->status==RHOCALC_RUN_PENDING) {
+        if (run->account.driver_steps==UINT64_MAX) {
+            rho_validation_set("rho driver step account exhausted");
+            rho_run_fail(run);
+            break;
+        }
+        run->account.driver_steps++;
+        spent++;
+        if (!rho_run_advance(run)) break;
+    }
+    if (used) *used=spent;
+    return run->status;
+}
+
+bool rhocalc_run_result(const RhocalcRun *run, RhoReductionResult *out) {
+    if (!run || !out || run->status!=RHOCALC_RUN_DONE) return false;
+    *out=run->result;
+    return true;
+}
+
+RhocalcRunAccount rhocalc_run_account(const RhocalcRun *run) {
+    if (!run) return (RhocalcRunAccount){0};
+    RhocalcRunAccount account=run->account;
+    if (run->cursor_live) rho_canonical_cursor_account(&run->cursor,&account);
+    account.reductions_taken=run->result.reductions_taken;
+    return account;
+}
+
+bool rhocalc_run_last_comm(const RhocalcRun *run, RhocalcCommAddress *out) {
+    if (!run || !out || !run->has_last_comm) return false;
+    *out=run->last_comm;
+    return true;
+}
+
+RhocalcPayloadFailure rhocalc_run_payload_failure(const RhocalcRun *run) {
+    return run ? atomic_load_explicit(&run->payload_failure,memory_order_relaxed)
+        : RHOCALC_PAYLOAD_FAILURE_NONE;
+}
+
+const char *rhocalc_run_error(const RhocalcRun *run) {
+    return run && run->error[0] ? run->error : NULL;
+}
+
+void rhocalc_run_close(RhocalcRun *run) {
+    if (!run) return;
+    rho_run_retire_cursor(run);
+    rho_machine_free(&run->machine);
+    free(run);
+}
+
 bool rhocalc_reduce_to_quiescence_with_eval_context(
     Arena *arena, Atom *proc, const RhoRuntimeProfile *profile,
     const RhocalcEvalContext *eval_context, RhoReductionResult *out) {
-    RhoMachine machine;
-
     if (!arena || !proc || !profile || !out) return false;
-    out->residual = NULL;
-    out->reductions_taken = 0;
-    out->status = RHOCALC_REDUCTION_QUIESCENT;
-
-    if (!rho_runtime_profile_supported(profile)) {
-        return false;
+    *out=(RhoReductionResult){0};
+    if (!rho_runtime_profile_supported(profile)) return false;
+    if (profile->threaded)
+        return rhocalc_reduce_to_quiescence_threaded(arena,proc,profile,eval_context,out);
+    /* The synchronous client uses the same phases while retaining the existing
+     * singleton/exhaustive selection optimizations. */
+    RhocalcRun *run=rho_run_open(arena,proc,profile,eval_context,true);
+    if (!run) return false;
+    while (rhocalc_run_poll(run,UINT64_MAX,NULL)==RHOCALC_RUN_PENDING) {}
+    bool okay=rhocalc_run_result(run,out);
+    if (eval_context && eval_context->payload_failure) {
+        RhocalcPayloadFailure failure=rhocalc_run_payload_failure(run);
+        if (failure!=RHOCALC_PAYLOAD_FAILURE_NONE)
+            atomic_store_explicit(eval_context->payload_failure,failure,memory_order_relaxed);
     }
-    if (profile->threaded) {
-        return rhocalc_reduce_to_quiescence_threaded(arena, proc, profile,
-                                                     eval_context, out);
-    }
-
-    rho_machine_init(&machine, arena, profile, eval_context);
-    if (!rho_machine_load_process(&machine, proc)) {
-        rho_machine_free(&machine);
-        return false;
-    }
-
-    for (;;) {
-        Atom *next = NULL;
-        bool quiescent = false;
-        if (!rho_machine_select_successor(&machine, &next, &quiescent)) {
-            rho_machine_free(&machine);
-            return false;
-        }
-        if (quiescent) {
-            out->residual = rho_machine_export_current(&machine);
-            rho_machine_free(&machine);
-            return out->residual != NULL;
-        }
-        if (out->reductions_taken == profile->reduction_limit) {
-            out->residual = rho_machine_export_current(&machine);
-            out->status = RHOCALC_REDUCTION_LIMIT_EXHAUSTED;
-            rho_machine_free(&machine);
-            return out->residual != NULL;
-        }
-        machine.current = next;
-        out->reductions_taken++;
-        machine.reductions_since_compaction++;
-        if (rho_machine_compaction_enabled(&machine) &&
-            machine.reductions_since_compaction ==
-                RHO_MACHINE_COMPACTION_INTERVAL &&
-            !rho_machine_compact_current(&machine)) {
-            rho_machine_free(&machine);
-            return false;
-        }
-    }
+    if (!okay && rhocalc_run_error(run)) rho_validation_set("%s",rhocalc_run_error(run));
+    rhocalc_run_close(run);
+    return okay;
 }
 
 static bool rhocost_reduce_to_quiescence_threaded(
@@ -9850,6 +10474,7 @@ static bool rhocost_reduce_to_quiescence_with_profile(
         return false;
     }
     current = rhocost_normalize_term(arena, term);
+    if (!current) return false;
 
     for (;;) {
         RhoCostStepSet successors = {0};

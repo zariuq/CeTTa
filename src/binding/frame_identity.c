@@ -86,9 +86,9 @@ static bool frame_identity_segment_ensure(uint32_t handle) {
 
 static uint32_t frame_identity_generation_max(uint32_t handle) {
     return handle < CETTA_FRAME_CLASS1_FIRST ? CETTA_FRAME_GENERATION_MAX
-         : handle < CETTA_FRAME_CLASS2_FIRST ? UINT32_C(0x3e)
-         : handle < CETTA_FRAME_CLASS3_FIRST ? UINT32_C(0x6)
-         : UINT32_C(0x2);
+         : handle < CETTA_FRAME_CLASS2_FIRST ? CETTA_FRAME_CLASS1_GENERATION_MAX
+         : handle < CETTA_FRAME_CLASS3_FIRST ? CETTA_FRAME_CLASS2_GENERATION_MAX
+         : CETTA_FRAME_CLASS3_GENERATION_MAX;
 }
 
 static CettaFrameIdentity frame_identity_spell(uint32_t handle,

@@ -89,9 +89,8 @@ static bool prime_native_acquired_accept(
     return operation->return_refusal == NULL;
 }
 
-static bool prime_native_acquired_values(PrimeNativeAcquiredOperation *operation,
+static bool prime_native_acquired_interval(PrimeNativeAcquiredOperation *operation,
     PrimeNativeControl *control) {
-    if (operation->values) return true;
     if (operation->return_refusal || !operation->producer_complete ||
         operation->output_first > operation->value_cursor ||
         operation->value_cursor > operation->output_limit ||
@@ -116,6 +115,13 @@ static bool prime_native_acquired_values(PrimeNativeAcquiredOperation *operation
         }
         operation->acceptance_checked = true;
     }
+    return true;
+}
+
+static bool prime_native_acquired_values(PrimeNativeAcquiredOperation *operation,
+    PrimeNativeControl *control) {
+    if (operation->values) return true;
+    if (!prime_native_acquired_interval(operation,control)) return false;
     PrimeNativeReturnCarrier *carrier = operation->carrier;
     if (!operation->value_copy) {
         operation->value_copy = atom_deep_copy_session_new(&carrier->value_storage);
@@ -145,21 +151,28 @@ static bool prime_native_acquired_values(PrimeNativeAcquiredOperation *operation
         }
         if (!operation->reified) {
             Outcome *row = &control->output.items[index];
+            __attribute__((cleanup(prime_need_active_leave)))
+            PrimeNeedActiveGuard selected;
+            prime_need_active_enter_captured(&selected,&row->env);
+            EvalCompletionTracker preparation={.completion=CETTA_EVAL_COMPLETE};
+            EvalCompletionTracker *caller=g_eval_completion_tracker;
+            g_eval_completion_tracker=&preparation;
             Atom *value = outcome_atom_materialize(control->driver.arena, row);
             operation->reified = value ? prime_need_reify_suspended(
                 &carrier->value_storage, value, bindings_need_view(&row->env)) : NULL;
-            if (!operation->reified) {
-                operation->return_refusal = "ReturnReification";
-                return false;
-            }
+            g_eval_completion_tracker=caller;
+            if (preparation.interrupted) operation->reified=NULL;
+            if (!operation->reified) return false;
         }
         /* One actual map covers the complete batch and variable name keys.
          * It refuses raw Need/native/context/resource leaves. It never
          * falls back to the unreified source after a failed conversion. */
         Atom *copy = atom_deep_copy_session_copy(operation->value_copy, operation->reified);
         if (!copy) {
-            operation->return_refusal = atom_deep_copy_session_snapshot_unsupported(
-                operation->value_copy) ? "UnsupportedReturnGraph" : "ReturnCopyRefused";
+            if (atom_deep_copy_session_snapshot_unsupported(operation->value_copy))
+                operation->return_refusal = "UnsupportedReturnGraph";
+            else if (atom_deep_copy_session_failed(operation->value_copy))
+                operation->return_refusal = "ReturnCopyRefused";
             return false;
         }
         operation->value_items[operation->value_count++] = copy;
@@ -241,6 +254,73 @@ static uint64_t prime_native_acquired_produce(PrimeNativeAcquiredOperation *oper
         control->invalidated || control->registry_read.incomplete ||
         control->driver.capacity_blocked || !operation->remaining;
     return spent;
+}
+
+/* The policy owns the source endpoint; a caller grant only authorizes a
+ * slice. Once that endpoint is reached the exact accepted interval stays
+ * immutable until every closed Outcome, or one open Observation, commits. */
+static CettaContinuationStatus prime_native_acquired_weighted_return(
+    PrimeNativeOwnedRequest *request, uint64_t allowance) {
+    PrimeNativeAcquiredOperation *operation=request ? request->acquired : NULL;
+    PrimeNativeControl *control=operation
+        ? cetta_native_handle_use_resource(&operation->use) : NULL;
+    if (!control || !prime_native_acquired_receiver_admitted(operation,control))
+        return CETTA_CONTINUATION_INVALIDATED;
+    if (request->pending->len) return CETTA_CONTINUATION_DEFERRED;
+    if (!operation->producer_complete) {
+        uint64_t grant=allowance < operation->remaining ? allowance : operation->remaining;
+        control->leased=operation->owns_lease=true;
+        (void)prime_native_acquired_produce(operation,control,grant);
+        if (!operation->producer_complete) return CETTA_CONTINUATION_DEFERRED;
+        operation->closed_return=prime_native_control_closed(control);
+    }
+    if (!operation->closed_return) {
+        if (!prime_native_acquired_prepare_row(operation) ||
+            !prime_native_acquired_materialize(operation,&control->policy))
+            return CETTA_CONTINUATION_CAPACITY;
+        return prime_native_control_deliver_owned(operation,&operation->pending,request->pending)
+            == OUTCOME_APPEND_COMMITTED ? CETTA_CONTINUATION_READY : CETTA_CONTINUATION_CAPACITY;
+    }
+    if (!prime_native_acquired_interval(operation,control)) return CETTA_CONTINUATION_CAPACITY;
+    while (operation->value_cursor < operation->output_limit &&
+        (operation->value_cursor >= control->delivered_capacity ||
+         !control->delivered[operation->value_cursor])) operation->value_cursor++;
+    if (operation->value_cursor == operation->output_limit) {
+        operation->published=true;
+        return CETTA_CONTINUATION_READY;
+    }
+    if (!operation->pending.len) {
+        const Outcome *source=&control->output.items[operation->value_cursor];
+        __attribute__((cleanup(prime_need_active_leave))) PrimeNeedActiveGuard selected;
+        prime_need_active_enter_captured(&selected,&source->env);
+        EvalCompletionTracker preparation={.completion=CETTA_EVAL_COMPLETE};
+        EvalCompletionTracker *caller=g_eval_completion_tracker;
+        g_eval_completion_tracker=&preparation;
+        bool ready=outcome_set_add_promoted_existing(operation->receiver,
+            &operation->pending,source,true) &&
+            bindings_promote_atoms_to_arena(&operation->pending.items[0].env,operation->receiver);
+        g_eval_completion_tracker=caller;
+        if (!ready || preparation.interrupted) {
+            if (operation->pending.len) {
+                outcome_free_fields(&operation->pending.items[0]);
+                operation->pending.len=0u;
+            }
+            return CETTA_CONTINUATION_CAPACITY;
+        }
+        operation->materialized=true;
+        operation->value_count++;
+    }
+    __attribute__((cleanup(prime_need_active_leave))) PrimeNeedActiveGuard selected;
+    prime_need_active_enter_captured(&selected,&operation->pending.items[0].env);
+    if (prime_native_control_deliver_owned(operation,&operation->pending,request->pending)
+            != OUTCOME_APPEND_COMMITTED)
+        return CETTA_CONTINUATION_CAPACITY;
+    operation->value_cursor++;
+    while (operation->value_cursor < operation->output_limit &&
+        (operation->value_cursor >= control->delivered_capacity ||
+         !control->delivered[operation->value_cursor])) operation->value_cursor++;
+    operation->published=operation->value_cursor==operation->output_limit;
+    return CETTA_CONTINUATION_READY;
 }
 
 static bool prime_native_acquired_resume_nested(PrimeEvalStackFrame *frame) {

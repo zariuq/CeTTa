@@ -138,6 +138,17 @@ int main(void) {
     int pair[2]; assert(socketpair(AF_UNIX,SOCK_SEQPACKET,0,pair)==0);
     assert(cetta_worker_endpoint_new(store,pair[0],getuid(),"brain",&endpoint)==DURABLE_INVALID && !endpoint);
     close(pair[0]); close(pair[1]);
+    assert(cetta_worker_endpoint_new_limited(
+        store,listener(),getuid(),"brain",2u,&endpoint)==DURABLE_OK);
+    assert(cetta_worker_endpoint_slots(endpoint)==2u);
+    int limited[3];
+    for(size_t i=0u;i<3u;i++){limited[i]=client();pump();}
+    char refused_byte;
+    assert(recv(limited[2],&refused_byte,1,0)==0);
+    rpc(limited[0],WORKER_NEXT,"","",WORKER_IDLE,"","");
+    rpc(limited[1],WORKER_NEXT,"","",WORKER_IDLE,"","");
+    for(size_t i=0u;i<3u;i++)close(limited[i]);
+    cetta_worker_endpoint_free(endpoint);endpoint=NULL;assert(!unlink(socket_path));
     assert(cetta_worker_endpoint_new(store,listener(),getuid(),"brain",&endpoint)==DURABLE_OK);
     /* Active clients must not be reset at an arbitrary sixteen-peer limit.
      * Keep them open while admitting another client, then reuse every one. */
@@ -312,8 +323,8 @@ int main(void) {
     const char *files[]={"journal.db","quota.db","channel.db"};
     for (size_t i=0;i<3;++i) {
         char file[300]; snprintf(file,sizeof(file),"%s/%s",directory,files[i]); unlink(file);
-        snprintf(file,sizeof(file),"%s/%s-wal",directory,files[i]); unlink(file);
-        snprintf(file,sizeof(file),"%s/%s-shm",directory,files[i]); unlink(file);
+        snprintf(file,sizeof(file),"%s/%s.lock",directory,files[i]); unlink(file);
+        snprintf(file,sizeof(file),"%s/%s.checkpoint",directory,files[i]); unlink(file);
     }
     assert(!rmdir(directory));
     puts("durable worker: local peer identity, bounded data, immutable tasks, atomic replies, lost acknowledgments, process restart, quota rollback, batched reads and unsolicited submissions passed");

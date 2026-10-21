@@ -12,7 +12,8 @@ typedef struct {
     int listener; /* listening CWP1 seqpacket socket; owned on success */
     uid_t worker_uid;
     int fuel;
-    size_t ready_capacity;
+    size_t ready_capacity;       /* retained candidates */
+    size_t worker_peer_capacity; /* live CWP1 connections */
     /* Zero quantum selects the synchronous HE extended policy. A positive
      * finite quantum selects a self-contained Prime default policy and its
      * retained host planner. Work purse/preparation/results have explicit
@@ -23,8 +24,20 @@ typedef struct {
     uint64_t steps, accepted, published, blocked, timer_events, worker_requests;
     uint64_t max_step_us;
     uint64_t plan_polls, plan_work;
+    uint64_t plan_setup, plan_setup_bytes;
+    uint64_t plan_preparation, plan_transport;
+    uint64_t plan_receipt_events, plan_receipt_units;
+    CettaOwnedTaskAccount plan_protocol;
+    uint64_t slot_admission, slot_preparation, slot_execution, slot_delivery;
+    uint64_t slot_teardown, slot_arrivals, slot_bookkeeping, slot_units;
+    uint64_t max_slot_units;
     size_t ready, watch_bytes;
 } CettaActivityStats;
+typedef struct {
+    uint64_t admission, preparation, execution, delivery;
+    uint64_t teardown, arrivals, bookkeeping, total;
+    bool complete;
+} CettaActivitySlotAccount;
 
 /* Trusted host intake, not a worker/proposal entry. IDs identify occurrences
  * permanently; identical resubmission is OK even after inbox consumption.
@@ -53,6 +66,11 @@ CettaDurableStatus cetta_activity_new(CettaDurableStore *store,
  * latch. Whole-step duration is measured; fuel/visits are NOT a wall-time cap.
  * The embedding event loop owns sleeping/wakes, not an activity's await. */
 CettaDurableStatus cetta_activity_step(CettaActivityRuntime *runtime, unsigned visits);
+/* The same service turn with its complete logical phase account. Native store,
+ * socket and allocator instruction/time realization remains a trusted service
+ * boundary; their finite configured capacities bound the loops counted here. */
+CettaDurableStatus cetta_activity_step_accounted(CettaActivityRuntime *runtime,
+    unsigned visits, CettaActivitySlotAccount *account);
 /* Wait on the worker's listener/connected peers, an optional native intake fd,
  * and the next absolute timer deadline. Does not consume a hint or evaluate.
  * Outstanding unvisited candidates force a recheck. Caller reads intake and

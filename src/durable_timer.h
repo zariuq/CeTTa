@@ -6,7 +6,7 @@
 typedef struct { int64_t utc_ms; uint64_t monotonic_ms; } CettaClockSample;
 typedef struct { char after_key[256]; } CettaTimerCursor;
 typedef struct {
-    size_t emitted, faults;
+    size_t visited, emitted, faults;
     int64_t next_deadline_ms; /* -1 when no future deadline was found */
     bool more_due;
 } CettaTimerTick;
@@ -27,6 +27,9 @@ bool cetta_timer_validate(void *unused, const Atom *payload, const Atom *reply);
  * max_events is 1..64; round-robin admission bounds catch-up and avoids one
  * old periodic timer monopolizing the service. Cursor is a scheduling hint,
  * not durable authority. Fault callbacks run outside transactions.
+ * visited counts the ordered outbox records actually inspected by this tick;
+ * it includes non-timers and faults but excludes a record skipped after the
+ * event budget is already exhausted.
  * A forward wall jump makes timers overdue; a backward jump delays firing
  * until the sampled UTC deadline is reached. Used clock samples are recorded.
  * Storage failure stops admission, without advancing the failing timer. */

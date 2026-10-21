@@ -36,8 +36,8 @@ static void remove_input(const char *key) {
 }
 static void empty(const char *path) {
     assert(!unlink(path));
-    char sidecar[300]; snprintf(sidecar,sizeof(sidecar),"%s-wal",path); unlink(sidecar);
-    snprintf(sidecar,sizeof(sidecar),"%s-shm",path); unlink(sidecar);
+    char sidecar[300]; snprintf(sidecar,sizeof(sidecar),"%s.lock",path); unlink(sidecar);
+    snprintf(sidecar,sizeof(sidecar),"%s.checkpoint",path); unlink(sidecar);
 }
 int main(int argc, char **argv) {
     SymbolTable symbols; symbol_table_init(&symbols); symbol_table_init_builtins(&symbols,&g_builtin_syms); g_symbols=&symbols;

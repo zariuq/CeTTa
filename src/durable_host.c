@@ -14,6 +14,10 @@
 #define HOST_GRANTS 64
 #define HOST_ACTIONS 128
 #define HOST_VALUE_BYTES (1024u*1024u)
+/* Setup, two admissions, five lifecycle callbacks and one source/preparation/
+ * transport settlement each are the complete first-poll occurrence bound. */
+_Static_assert(CETTA_HOST_PLAN_RECEIPT_CAPACITY>=10u,
+    "retained host poll receipt is too small");
 
 struct CettaHostDecision {
     CettaDurableStore *store;
@@ -28,8 +32,20 @@ struct CettaHostDecision {
     CettaOwnedTask planner;
 };
 
+static void host_return_copy_clear(CettaHostEvaluation *e,bool discard) {
+    if (!e) return;
+    atom_deep_copy_session_free(e->return_copy);
+    if (discard && e->return_marked) {
+        arena_reset(&e->scratch,e->return_mark);
+        arena_release_spare(&e->scratch,e->return_spare);
+    }
+    e->return_copy=NULL;e->return_source=NULL;
+    e->return_marked=false;
+}
+
 void cetta_host_eval_free(CettaHostEvaluation *e) {
     if (!e) return;
+    host_return_copy_clear(e,true);
     eval_outcome_free(&e->outcome);
     registry_free(&e->registry); space_free(&e->space);
     arena_free(&e->scratch); arena_free(&e->persistent);
@@ -42,6 +58,16 @@ static void clear_evaluation(CettaHostDecision *d) {
 
 static bool name(const char *s) { return s && *s && strnlen(s,256)<=255; }
 static bool reserved(const char *s) { return !strncmp(s,"host.",5); }
+static bool return_slice_valid(const CettaPrimeReturnSlice *slice) {
+    return slice &&
+        (slice->limit_preparation
+            ? slice->preparation!=UINT64_MAX : !slice->preparation) &&
+        (slice->limit_transport
+            ? slice->transport!=UINT64_MAX : !slice->transport);
+}
+static void add_work(uint64_t *total,uint64_t amount) {
+    *total=*total>UINT64_MAX-amount?UINT64_MAX:*total+amount;
+}
 static bool nonce(char out[33]) {
     unsigned char bytes[16]; size_t used=0;
     int fd=open("/dev/urandom",O_RDONLY|O_CLOEXEC);
@@ -198,8 +224,8 @@ const EvalOutcome *cetta_host_outcome(const CettaHostDecision *d) {
 CettaDurableStatus cetta_host_watch(const CettaHostDecision *d, size_t limit, CettaDurableWatch **out) {
     return cetta_durable_watch_new(d?d->observation:NULL,limit,out);
 }
-CettaDurableStatus cetta_host_eval_create(const CettaHostProgram *program,
-                                         CettaHostEvaluation **out) {
+static CettaDurableStatus host_eval_allocate(const CettaHostProgram *program,
+        CettaHostEvaluation **out) {
     if (!out) return DURABLE_INVALID;
     *out=NULL;
     if (!program || !program->space || !program->context || !name(program->version))
@@ -208,31 +234,66 @@ CettaDurableStatus cetta_host_eval_create(const CettaHostProgram *program,
     if (!e) return DURABLE_NOMEM;
     arena_init(&e->persistent); arena_init(&e->scratch); space_init(&e->space);
     registry_init(&e->registry); eval_outcome_init(&e->outcome);
+    *out=e;return DURABLE_OK;
+}
+
+static CettaDurableStatus host_eval_copy_program(CettaHostEvaluation *e,
+        const CettaHostProgram *program,uint64_t inspection_limit,
+        uint64_t byte_limit,CettaHostSetupWork *work) {
+    if (!e || !program || !program->space || !inspection_limit || !byte_limit)
+        return DURABLE_INVALID;
+    AtomDeepCopySession *copy=atom_deep_copy_session_new(&e->persistent);
+    if (!copy) return DURABLE_NOMEM;
     CettaDurableStatus status=DURABLE_INVALID;
+    uint64_t inspections=0u;
     for (CettaCount i=0;i<space_length64(program->space);++i) {
         Atom *a=space_get_at64(program->space,i);
         if (!a || (a->flags&ATOM_FLAG_HAS_IDENTITY_GROUNDED) ||
             (a->kind==ATOM_EXPR && a->expr.len &&
                 (atom_is_symbol(a->expr.elems[0],"host:record") ||
                  atom_is_symbol(a->expr.elems[0],"host:record-version")))) goto fail;
-        Atom *copy=atom_deep_copy(&e->persistent,a);
-        if (!copy) { status=DURABLE_NOMEM; goto fail; }
-        space_add(&e->space,copy);
+        if (inspections>=inspection_limit) {status=DURABLE_LIMIT;goto fail;}
+        Atom *image=NULL;uint64_t used=0u;
+        AtomDeepCopyStep step=atom_deep_copy_session_advance(
+            copy,a,inspection_limit-inspections,&image,&used);
+        if (used>inspection_limit-inspections) {status=DURABLE_CORRUPT;goto fail;}
+        inspections+=used;
+        if (step==ATOM_DEEP_COPY_PAUSED) {status=DURABLE_LIMIT;goto fail;}
+        if (step!=ATOM_DEEP_COPY_COMPLETE || !image) {status=DURABLE_NOMEM;goto fail;}
+        space_add(&e->space,image);
+        size_t bytes=arena_accounted_live_bytes(&e->persistent);
+        if (bytes==SIZE_MAX || bytes>byte_limit) {status=DURABLE_LIMIT;goto fail;}
     }
     if (!space_copy_module_view(&e->space,program->space)) {
         status=DURABLE_NOMEM;
         goto fail;
     }
     registry_bind(&e->registry,"&self",atom_space(&e->persistent,&e->space));
-    *out=e; return DURABLE_OK;
+    {
+        size_t bytes=arena_accounted_live_bytes(&e->persistent);
+        if (bytes==SIZE_MAX || bytes>byte_limit) {status=DURABLE_LIMIT;goto fail;}
+        if (work) *work=(CettaHostSetupWork){inspections,(uint64_t)bytes};
+    }
+    atom_deep_copy_session_free(copy);return DURABLE_OK;
 fail:
-    cetta_host_eval_free(e); return status;
+    atom_deep_copy_session_free(copy);return status;
+}
+
+CettaDurableStatus cetta_host_eval_create(const CettaHostProgram *program,
+                                         CettaHostEvaluation **out) {
+    CettaHostEvaluation *e=NULL;
+    CettaDurableStatus status=host_eval_allocate(program,&e);
+    if (status==DURABLE_OK)
+        status=host_eval_copy_program(e,program,UINT64_MAX,SIZE_MAX,NULL);
+    if (status!=DURABLE_OK) {cetta_host_eval_free(e);return status;}
+    *out=e;return DURABLE_OK;
 }
 CettaDurableStatus cetta_host_eval_run(CettaHostEvaluation *e,
     const CettaHostProgram *program, Atom *expression, int fuel) {
     if (!e) return DURABLE_INVALID;
     eval_outcome_free(&e->outcome); eval_outcome_init(&e->outcome);
-    if (!program || !program->context || !expression || fuel<=0 ||
+    if (!program || !program->context ||
+        program->context->session.language_id!=CETTA_LANGUAGE_HE || !expression || fuel<=0 ||
         (expression->flags&ATOM_FLAG_HAS_IDENTITY_GROUNDED)) return DURABLE_INVALID;
     Atom *copy=atom_deep_copy(&e->persistent,expression);
     if (!copy) return DURABLE_NOMEM;
@@ -240,13 +301,25 @@ CettaDurableStatus cetta_host_eval_run(CettaHostEvaluation *e,
         copy,fuel,&e->outcome);
     return DURABLE_OK;
 }
-static CettaDurableStatus host_projection(CettaHostDecision *d,const CettaHostProgram *program) {
-    CettaDurableStatus status=cetta_host_eval_create(program,&d->evaluation);
+static CettaDurableStatus host_projection(CettaHostDecision *d,
+        const CettaHostProgram *program,const CettaHostPlanLimits *limits) {
+    CettaDurableStatus status=host_eval_allocate(program,&d->evaluation);
     if (status!=DURABLE_OK) return status;
     CettaHostEvaluation *e=d->evaluation;
+    status=host_eval_copy_program(e,program,
+        limits?limits->preparation_inspections:UINT64_MAX,
+        limits?limits->preparation_bytes:SIZE_MAX,
+        limits?&e->setup_work:NULL);
+    if (status!=DURABLE_OK) goto fail;
     const CettaDurableSnapshot *v;
     for (size_t i=0;(v=cetta_host_view(d,i));++i) {
         for (size_t j=0;j<v->count;++j) {
+            if (limits && (e->setup_work.inspections>
+                    limits->preparation_inspections-2u ||
+                v->records[j].size>limits->preparation_bytes-
+                    (size_t)e->setup_work.arena_bytes)) {
+                status=DURABLE_LIMIT;goto fail;
+            }
             Atom *value=NULL;
             status=cetta_durable_value_decode(&e->persistent,v->records[j].data,v->records[j].size,&value);
             if (status!=DURABLE_OK) goto fail;
@@ -257,6 +330,14 @@ static CettaDurableStatus host_projection(CettaHostDecision *d,const CettaHostPr
                 atom_int(&e->persistent,(int64_t)i),atom_string(&e->persistent,v->records[j].key),
                 atom_int(&e->persistent,v->records[j].revision),atom_int(&e->persistent,v->records[j].position)};
             space_add(&e->space,atom_expr(&e->persistent,meta,5));
+            if (limits) {
+                size_t bytes=arena_accounted_live_bytes(&e->persistent);
+                if (bytes==SIZE_MAX || bytes>limits->preparation_bytes) {
+                    status=DURABLE_LIMIT;goto fail;
+                }
+                e->setup_work.inspections+=2u;
+                e->setup_work.arena_bytes=(uint64_t)bytes;
+            }
         }
     }
     return DURABLE_OK;
@@ -268,25 +349,31 @@ CettaDurableStatus cetta_host_evaluate(CettaHostDecision *d,
     if (!d) return DURABLE_INVALID;
     if (d->spent) return DURABLE_CONFLICT;
     clear_evaluation(d);
-    if (!program || !program->space || !program->context || !name(program->version) ||
+    if (!program || !program->space || !program->context ||
+        program->context->session.language_id!=CETTA_LANGUAGE_HE || !name(program->version) ||
         !expression || fuel<=0 || (expression->flags&ATOM_FLAG_HAS_IDENTITY_GROUNDED)) return DURABLE_INVALID;
     if (strcmp(d->program,program->version)) return DURABLE_VERSION;
-    CettaDurableStatus status=host_projection(d,program);
+    CettaDurableStatus status=host_projection(d,program,NULL);
     if (status==DURABLE_OK) status=cetta_host_eval_run(d->evaluation,program,expression,fuel);
     if (status!=DURABLE_OK) clear_evaluation(d);
     return status;
 }
 
-static bool host_plan_compatible(void *raw) {
+static CettaOwnedTaskAdmission host_plan_admit(void *raw) {
     CettaHostDecision *d=raw;
     CettaHostEvaluation *e=d->evaluation;
     uint64_t work;
     if (d->spent || !e || !e->retained || e->cancelled ||
         !eval_prime_source_execution_work(&d->planner.execution,&work) ||
-        !eval_prime_source_execution_is_current(&d->planner.execution)) return false;
+        !eval_prime_source_execution_is_current(&d->planner.execution))
+        return CETTA_OWNED_TASK_ADMISSION_INVALIDATED;
     uint64_t remaining=work<e->limits.work_limit?e->limits.work_limit-work:0u;
-    return eval_prime_source_execution_set_quantum(&d->planner.execution,
-        remaining<e->limits.quantum?remaining:e->limits.quantum);
+    CettaPrimeReturnSlice source=e->limits.return_slice;
+    source.transport=0u;source.limit_transport=false;
+    return eval_prime_source_execution_set_return_slice(&d->planner.execution,&source) &&
+        eval_prime_source_execution_set_quantum(&d->planner.execution,
+            remaining<e->limits.quantum?remaining:e->limits.quantum)?
+        CETTA_OWNED_TASK_ADMISSION_READY:CETTA_OWNED_TASK_ADMISSION_INVALIDATED;
 }
 static bool host_plan_collect(void *raw,const CettaOwnedReturn *returned) {
     CettaHostDecision *d=raw;
@@ -297,14 +384,30 @@ static bool host_plan_collect(void *raw,const CettaOwnedReturn *returned) {
         returned->outcome.result_form!=CETTA_CALL_RESULT_COMPLETED_VALUE || !term ||
         (term->flags&(ATOM_FLAG_HAS_VARS|ATOM_FLAG_HAS_IDENTITY_GROUNDED))) return false;
     if (e->outcome.results.len>=e->limits.results) { e->plan_refusal=DURABLE_LIMIT;return false; }
+    if (e->return_copy && e->return_source!=term) return false;
+    if (!e->return_copy) {
+        e->return_mark=arena_mark(&e->scratch);
+        e->return_spare=e->scratch.spare_bytes;
+        e->return_copy=atom_deep_copy_session_new(&e->scratch);
+        if (!e->return_copy) { e->plan_refusal=DURABLE_NOMEM;return false; }
+        e->return_source=term;e->return_marked=true;
+    }
+    uint64_t used=0u;
+    Atom *copy=NULL;
+    uint64_t allowance=e->limits.return_slice.limit_transport?
+        e->limits.return_slice.transport:UINT64_MAX;
+    AtomDeepCopyStep step=atom_deep_copy_session_advance(
+        e->return_copy,term,allowance,&copy,&used);
+    add_work(&e->return_work.transport,used);
+    if (step==ATOM_DEEP_COPY_PAUSED) { e->plan_refusal=DURABLE_OK;return false; }
+    if (step!=ATOM_DEEP_COPY_COMPLETE || !copy) {
+        e->plan_refusal=DURABLE_NOMEM;return false;
+    }
     CettaCount slot=e->outcome.results.len;
     result_set_add(&e->outcome.results,NULL);
     if (e->outcome.results.len==slot) { e->plan_refusal=DURABLE_NOMEM;return false; }
-    Atom *copy=atom_deep_copy(&e->scratch,term);
-    if (!copy) {
-        e->outcome.results.len=slot;e->plan_refusal=DURABLE_NOMEM;return false;
-    }
-    e->outcome.results.items[slot]=copy;e->plan_refusal=DURABLE_OK;
+    e->outcome.results.items[slot]=copy;
+    host_return_copy_clear(e,false);e->plan_refusal=DURABLE_OK;
     return true;
 }
 CettaDurableStatus cetta_host_plan_open(CettaHostDecision *d,
@@ -315,16 +418,23 @@ CettaDurableStatus cetta_host_plan_open(CettaHostDecision *d,
     if (!program || !program->space || !program->context || !name(program->version) ||
         !expression || (expression->flags&ATOM_FLAG_HAS_IDENTITY_GROUNDED) ||
         !limits || !limits->quantum || limits->quantum==UINT64_MAX ||
-        limits->work_limit==UINT64_MAX) return DURABLE_INVALID;
+        limits->work_limit==UINT64_MAX ||
+        !return_slice_valid(&limits->return_slice)) return DURABLE_INVALID;
     if (strcmp(d->program,program->version)) return DURABLE_VERSION;
-    CettaDurableStatus status=host_projection(d,program);
+    if (limits->preparation_inspections<3u || !limits->preparation_bytes)
+        return DURABLE_INVALID;
+    CettaDurableStatus status=host_projection(d,program,limits);
     if (status!=DURABLE_OK) return status;
     CettaHostEvaluation *e=d->evaluation;
     CettaPrimeSourceOwner *source=NULL;
     CettaOwnedExecution execution={0};
+    size_t remaining_inspections=limits->preparation_inspections-
+        (size_t)e->setup_work.inspections;
+    size_t remaining_bytes=limits->preparation_bytes-
+        (size_t)e->setup_work.arena_bytes;
     CettaContinuationStatus captured=eval_prime_source_owner_capture_context(program->context,
         &e->space,&e->registry,expression,CETTA_PRIME_SOURCE_PRIVATE_DATA_WORLD,
-        limits->preparation_inspections,limits->preparation_bytes,&source);
+        remaining_inspections,remaining_bytes,&source);
     if (captured==CETTA_CONTINUATION_READY)
         captured=eval_prime_source_execution_open(source,limits->quantum,&execution);
     eval_prime_source_owner_release(source);
@@ -338,7 +448,7 @@ CettaDurableStatus cetta_host_plan_open(CettaHostDecision *d,
     e->outcome.budget_limited=true;e->outcome.budget_initial=limits->work_limit;
     e->outcome.budget_remaining=limits->work_limit;
     e->outcome.completion=CETTA_EVAL_INCOMPLETE_FUEL;
-    if (!cetta_owned_task_init(&d->planner,&execution,host_plan_compatible,host_plan_collect,d)) {
+    if (!cetta_owned_task_init(&d->planner,&execution,host_plan_admit,host_plan_collect,d)) {
         status=DURABLE_PRECONDITION;goto fail;
     }
     return DURABLE_OK;
@@ -349,9 +459,277 @@ CettaOwnedTask *cetta_host_plan_task(CettaHostDecision *d) {
     return d && d->evaluation && d->evaluation->retained && !d->evaluation->cancelled?
         &d->planner:NULL;
 }
+bool cetta_host_plan_return_work(
+    const CettaHostDecision *d,CettaPrimeReturnWork *out) {
+    if (!out) return false;
+    *out=(CettaPrimeReturnWork){0};
+    if (!d || !d->evaluation || !d->evaluation->retained ||
+        d->evaluation->cancelled ||
+        !eval_prime_source_execution_return_work(&d->planner.execution,out))
+        return false;
+    out->transport=d->evaluation->return_work.transport;
+    return true;
+}
+typedef struct {
+    CettaHostDecision *decision;
+    CettaHostPlanPollAccount *out;
+    CettaNativeCostEventSource events;
+    uint64_t source_seen;
+    uint64_t issued_total;
+    CettaPrimeReturnWork returns_seen;
+    bool complete;
+} HostPlanReceiptBuilder;
+
+static bool host_plan_receipt_append(HostPlanReceiptBuilder *builder,
+    CettaHostPlanTag tag,CettaNativeCostKind kind,uint64_t units) {
+    if (!units) return true;
+    CettaHostPlanReceipt *receipt=&builder->out->receipt;
+    if (!builder->complete || receipt->count>=CETTA_HOST_PLAN_RECEIPT_CAPACITY ||
+        tag>CETTA_HOST_PLAN_SETUP || (unsigned)kind>=CETTA_COST_KIND_COUNT) {
+        builder->complete=false;return false;
+    }
+    CettaNativeCostEvent event={0};
+    if (!cetta_native_cost_event_source_issue(
+            &builder->events,kind,units,&event) ||
+        builder->issued_total>UINT64_MAX-units) {
+        builder->complete=false;return false;
+    }
+    builder->issued_total+=units;
+    if (!event.identity || !event.origin || !event.occurrence ||
+        event.repetitions!=1u || event.units!=units || event.kind!=kind) {
+        builder->complete=false;return false;
+    }
+    receipt->occurrences[receipt->count++]=(CettaHostPlanOccurrence){tag,event};
+    return true;
+}
+
+static bool host_plan_receipt_progress(HostPlanReceiptBuilder *builder,
+    bool source,bool transport) {
+    uint64_t current_source=0u;
+    CettaPrimeReturnWork current_returns={0};
+    if (!eval_prime_source_execution_work(
+            &builder->decision->planner.execution,&current_source) ||
+        !cetta_host_plan_return_work(builder->decision,&current_returns) ||
+        current_source<builder->source_seen ||
+        current_returns.preparation<builder->returns_seen.preparation ||
+        current_returns.transport<builder->returns_seen.transport) {
+        builder->complete=false;return false;
+    }
+    uint64_t source_delta=current_source-builder->source_seen;
+    uint64_t preparation_delta=
+        current_returns.preparation-builder->returns_seen.preparation;
+    uint64_t transport_delta=current_returns.transport-builder->returns_seen.transport;
+    if ((!source && (source_delta || preparation_delta)) ||
+        (!transport && transport_delta)) {
+        builder->complete=false;return false;
+    }
+    if (source) {
+        (void)host_plan_receipt_append(builder,CETTA_HOST_PLAN_SOURCE_WORK,
+            CETTA_COST_QUANTUM,source_delta);
+        (void)host_plan_receipt_append(builder,CETTA_HOST_PLAN_PREPARATION,
+            CETTA_COST_ANALYSIS_STEP,preparation_delta);
+    }
+    if (transport)
+        (void)host_plan_receipt_append(builder,CETTA_HOST_PLAN_TRANSPORT,
+            CETTA_COST_CAPTURE,transport_delta);
+    builder->source_seen=current_source;
+    builder->returns_seen=current_returns;
+    return builder->complete;
+}
+
+static void host_plan_receipt_observe(void *raw,CettaOwnedTaskPhase phase,
+    uint64_t detail) {
+    HostPlanReceiptBuilder *builder=raw;
+    switch (phase) {
+    case CETTA_OWNED_TASK_PHASE_ADMISSION: {
+        CettaHostPlanTag tag;
+        switch ((CettaOwnedTaskAdmission)detail) {
+        case CETTA_OWNED_TASK_ADMISSION_READY:
+            tag=CETTA_HOST_PLAN_ADMISSION_READY;break;
+        case CETTA_OWNED_TASK_ADMISSION_PAUSED:
+            tag=CETTA_HOST_PLAN_ADMISSION_PAUSED;break;
+        case CETTA_OWNED_TASK_ADMISSION_REFUSED:
+            tag=CETTA_HOST_PLAN_ADMISSION_REFUSED;break;
+        case CETTA_OWNED_TASK_ADMISSION_INVALIDATED:
+            tag=CETTA_HOST_PLAN_ADMISSION_INVALIDATED;break;
+        default:builder->complete=false;return;
+        }
+        (void)host_plan_receipt_append(builder,tag,CETTA_COST_ANALYSIS_STEP,1u);
+        break;
+    }
+    case CETTA_OWNED_TASK_PHASE_PRODUCER:
+        (void)host_plan_receipt_progress(builder,true,false);
+        (void)host_plan_receipt_append(builder,CETTA_HOST_PLAN_PRODUCER,
+            CETTA_COST_ANALYSIS_STEP,1u);
+        break;
+    case CETTA_OWNED_TASK_PHASE_CONSUMER:
+        (void)host_plan_receipt_progress(builder,false,true);
+        (void)host_plan_receipt_append(builder,CETTA_HOST_PLAN_CONSUMER,
+            CETTA_COST_ANALYSIS_STEP,1u);
+        break;
+    case CETTA_OWNED_TASK_PHASE_FINAL_CURRENT:
+        (void)host_plan_receipt_append(builder,CETTA_HOST_PLAN_FINAL_CURRENT,
+            CETTA_COST_ANALYSIS_STEP,1u);
+        break;
+    case CETTA_OWNED_TASK_PHASE_RETIREMENT:
+        (void)host_plan_receipt_append(builder,CETTA_HOST_PLAN_RETIREMENT,
+            CETTA_COST_FRAME_RETIRE,1u);
+        break;
+    case CETTA_OWNED_TASK_PHASE_ROTATION:
+    default:
+        builder->complete=false;
+    }
+}
+
+static bool add_exact(uint64_t *total,uint64_t units) {
+    if (*total>UINT64_MAX-units) return false;
+    *total+=units;return true;
+}
+
+bool cetta_host_plan_receipt_summarize(const CettaHostPlanReceipt *receipt,
+    CettaHostPlanReceiptSummary *summary) {
+    if (!receipt || !summary || !receipt->complete ||
+        receipt->count>CETTA_HOST_PLAN_RECEIPT_CAPACITY ||
+        receipt->step>CETTA_OWNED_EXECUTION_INTERRUPTED)
+        return false;
+    *summary=(CettaHostPlanReceiptSummary){
+        .step=receipt->step,.initial_pending=receipt->initial_pending};
+    uint64_t identity=0u,origin=0u,occurrence=0u;
+    for(uint8_t i=0u;i<receipt->count;i++) {
+        const CettaHostPlanOccurrence *item=&receipt->occurrences[i];
+        const CettaNativeCostEvent *event=&item->event;
+        if (item->tag>CETTA_HOST_PLAN_SETUP || !event->identity ||
+            !event->origin || !event->occurrence || !event->units ||
+            event->repetitions!=1u || (unsigned)event->kind>=CETTA_COST_KIND_COUNT ||
+            event->identity<=identity || event->occurrence<=occurrence ||
+            (origin && event->origin!=origin) ||
+            !add_exact(&summary->total,event->units)) return false;
+        identity=event->identity;origin=event->origin;occurrence=event->occurrence;
+        switch(item->tag) {
+        case CETTA_HOST_PLAN_SETUP:
+            if (event->kind!=CETTA_COST_ANALYSIS_STEP ||
+                !add_exact(&summary->setup_work,event->units)) return false;
+            break;
+        case CETTA_HOST_PLAN_ADMISSION_READY:
+        case CETTA_HOST_PLAN_ADMISSION_PAUSED:
+        case CETTA_HOST_PLAN_ADMISSION_REFUSED:
+        case CETTA_HOST_PLAN_ADMISSION_INVALIDATED:
+            if (event->kind!=CETTA_COST_ANALYSIS_STEP || event->units!=1u)
+                return false;
+            summary->admission++;
+            summary->last_admission=(CettaOwnedTaskAdmission)(
+                CETTA_OWNED_TASK_ADMISSION_READY+
+                item->tag-CETTA_HOST_PLAN_ADMISSION_READY);
+            break;
+        case CETTA_HOST_PLAN_PRODUCER:
+            if (event->kind!=CETTA_COST_ANALYSIS_STEP || event->units!=1u)
+                return false;
+            summary->producer++;break;
+        case CETTA_HOST_PLAN_SOURCE_WORK:
+            if (event->kind!=CETTA_COST_QUANTUM ||
+                !add_exact(&summary->source_work,event->units)) return false;
+            break;
+        case CETTA_HOST_PLAN_PREPARATION:
+            if (event->kind!=CETTA_COST_ANALYSIS_STEP ||
+                !add_exact(&summary->returns.preparation,event->units)) return false;
+            break;
+        case CETTA_HOST_PLAN_CONSUMER:
+            if (event->kind!=CETTA_COST_ANALYSIS_STEP || event->units!=1u)
+                return false;
+            summary->consumer++;break;
+        case CETTA_HOST_PLAN_TRANSPORT:
+            if (event->kind!=CETTA_COST_CAPTURE ||
+                !add_exact(&summary->returns.transport,event->units)) return false;
+            break;
+        case CETTA_HOST_PLAN_FINAL_CURRENT:
+            if (event->kind!=CETTA_COST_ANALYSIS_STEP || event->units!=1u)
+                return false;
+            summary->final_is_current++;break;
+        case CETTA_HOST_PLAN_RETIREMENT:
+            if (event->kind!=CETTA_COST_FRAME_RETIRE || event->units!=1u)
+                return false;
+            summary->retirements++;break;
+        }
+    }
+    return true;
+}
+
+bool cetta_host_plan_receipt_total(
+    const CettaHostPlanReceipt *receipt,uint64_t *total) {
+    CettaHostPlanReceiptSummary summary;
+    if (!total || !cetta_host_plan_receipt_summarize(receipt,&summary)) return false;
+    *total=summary.total;return true;
+}
+
+CettaDurableStatus cetta_host_plan_poll_accounted(
+    CettaHostDecision *d,bool poll,CettaHostPlanPollAccount *out) {
+    if (!out) return DURABLE_INVALID;
+    *out=(CettaHostPlanPollAccount){0};
+    CettaOwnedTask *task=cetta_host_plan_task(d);
+    uint64_t source_before=0u,source_after=0u;
+    CettaPrimeReturnWork return_before={0},return_after={0};
+    if (!task || !eval_prime_source_execution_work(
+            &task->execution,&source_before) ||
+        !cetta_host_plan_return_work(d,&return_before))
+        return DURABLE_PRECONDITION;
+    out->receipt.initial_pending=task->execution.has_pending;
+    HostPlanReceiptBuilder builder={.decision=d,.out=out,
+        .source_seen=source_before,.returns_seen=return_before,.complete=true};
+    if (!cetta_native_cost_event_source_init(&builder.events)) builder.complete=false;
+    bool report_setup=!d->evaluation->setup_reported;
+    if (report_setup) {
+        out->setup=d->evaluation->setup_work;
+        (void)host_plan_receipt_append(&builder,CETTA_HOST_PLAN_SETUP,
+            CETTA_COST_ANALYSIS_STEP,out->setup.inspections);
+    }
+    out->visit=cetta_owned_task_poll_observed(task,poll,&out->protocol,
+        host_plan_receipt_observe,&builder);
+    out->receipt.step=out->visit.step;
+    if (!eval_prime_source_execution_work(&task->execution,&source_after) ||
+        !cetta_host_plan_return_work(d,&return_after) ||
+        source_after<source_before ||
+        return_after.preparation<return_before.preparation ||
+        return_after.transport<return_before.transport) {
+        out->receipt.complete=false;
+        return DURABLE_CORRUPT;
+    }
+    if (source_after!=builder.source_seen ||
+        return_after.preparation!=builder.returns_seen.preparation ||
+        return_after.transport!=builder.returns_seen.transport)
+        builder.complete=false;
+    out->source_work=source_after-source_before;
+    out->returns.preparation=
+        return_after.preparation-return_before.preparation;
+    out->returns.transport=return_after.transport-return_before.transport;
+    out->receipt.complete=builder.complete;
+    CettaHostPlanReceiptSummary summary={0};
+    bool exact=cetta_host_plan_receipt_summarize(&out->receipt,&summary);
+    if (out->protocol.phase_overflow || out->protocol.rotations ||
+        out->protocol.producer>1u || out->protocol.consumer>1u ||
+        out->protocol.final_is_current>1u || out->protocol.retirements>1u ||
+        out->protocol.phase_count!=out->protocol.admission+out->protocol.producer+
+            out->protocol.consumer+out->protocol.final_is_current+
+            out->protocol.retirements ||
+        (exact && (summary.initial_pending!=out->receipt.initial_pending ||
+        summary.step!=out->visit.step ||
+        summary.setup_work!=out->setup.inspections ||
+        summary.last_admission!=out->visit.admission ||
+        summary.admission!=out->protocol.admission ||
+        summary.producer!=out->protocol.producer ||
+        summary.consumer!=out->protocol.consumer ||
+        summary.final_is_current!=out->protocol.final_is_current ||
+        summary.retirements!=out->protocol.retirements ||
+        summary.source_work!=out->source_work ||
+        summary.returns.preparation!=out->returns.preparation ||
+        summary.returns.transport!=out->returns.transport ||
+        builder.issued_total!=summary.total))) return DURABLE_CORRUPT;
+    if (report_setup && exact) d->evaluation->setup_reported=true;
+    return DURABLE_OK;
+}
 void cetta_host_plan_cancel(CettaHostDecision *d) {
     if (!d || !d->evaluation || !d->evaluation->retained || d->evaluation->cancelled) return;
     (void)cetta_host_outcome(d);
+    host_return_copy_clear(d->evaluation,true);
     cetta_owned_task_cancel(&d->planner);
     d->evaluation->cancelled=true;
     d->evaluation->outcome.completion=CETTA_EVAL_INCOMPLETE_CANCELLED;

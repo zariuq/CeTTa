@@ -256,7 +256,7 @@ behaviour must be qualified before making broader transport guarantees.
 ## Checks and scope
 
 `make ENABLE_HTTP=1 test-http-worker` runs a private loopback fixture with a
-SQLite journal. It checks independent progress, copied binary data, duplicate
+native CeTTa journal. It checks independent progress, copied binary data, duplicate
 handles, admission and response bounds, cancellation, durable claims before
 dispatch, retained completion bytes through repeated recording failures, no
 HTTP replay, recovery, unrecorded shutdown outcomes and concurrent producers.
@@ -341,10 +341,10 @@ does not rebuild tables, change rowids, stamp a schema version, force WAL or
 change the existing database's journal mode.
 
 When embedded Python and native CeTTa access the same database, build with
-`SQLITE_PROVIDER=system` and use the **same shared SQLite library** as Python's
+`ENABLE_SQLITE=1` and use the **same shared SQLite library** as Python's
 `_sqlite3`. Two independent SQLite copies in one process can interfere with
 file-lock ownership. `SQLITE_CFLAGS` and `SQLITE_LIBS` can select an SDK or
 Python environment; otherwise the build uses pkg-config or ordinary system
-linkage. `ENABLE_DURABLE=1` enables this library. The native SQLite parity test
+linkage. `ENABLE_SQLITE=1` enables this library independently of native durability. The native SQLite parity test
 checks existing rowids and types, atomic rollback, unbounded result selection,
 and shared linkage with an embedded Python reader.

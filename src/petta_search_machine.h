@@ -892,6 +892,13 @@ typedef struct {
      * not a branch world or any additional execution authority. */
     Arena *(*return_occurrence_owner)(void *context, Arena *answer_arena,
                                       const Bindings *environment);
+    /* Language-owned support hidden behind opaque values participates in
+     * host calls and returned closures. Project the existing environment
+     * without evaluating the value or adding execution authority. The
+     * initialized output owns its bindings; its atoms belong to arena or
+     * to the input's retained owners. NULL uses syntactic reachability. */
+    bool (*project_environment)(void *context, Arena *arena, Atom *value,
+        const Bindings *environment, Bindings *projected);
 } PettaMachineHost;
 
 typedef enum {

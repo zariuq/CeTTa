@@ -107,13 +107,48 @@ typedef bool (*CettaOwnedExecutionFinalIsCurrent)(void *computation);
 typedef bool (*CettaOwnedReturnConsumer)(
     void *consumer, const CettaOwnedReturn *returned);
 
-/* Exact calls made by one explicitly observed task visit. These are not
- * callback instructions or elapsed time. Arrival processing, owner cleanup
- * and enclosing host work have their own accounts. No task stores a meter. */
+typedef enum {
+    CETTA_OWNED_TASK_PHASE_ROTATION,
+    CETTA_OWNED_TASK_PHASE_ADMISSION,
+    CETTA_OWNED_TASK_PHASE_PRODUCER,
+    CETTA_OWNED_TASK_PHASE_CONSUMER,
+    CETTA_OWNED_TASK_PHASE_FINAL_CURRENT,
+    CETTA_OWNED_TASK_PHASE_RETIREMENT,
+} CettaOwnedTaskPhase;
+#define CETTA_OWNED_TASK_PHASE_CAPACITY 8u
+
+/* Optional synchronous observation of a completed service action. `detail`
+ * is the returned admission or execution verdict, the consumer/final Boolean,
+ * or zero for rotation and retirement. The observer may update only its own
+ * state; it must not reenter or mutate the task, execution or queue. */
+typedef void (*CettaOwnedTaskAccountObserver)(void *context,
+    CettaOwnedTaskPhase phase, uint64_t detail);
+
+/* Exact calls made by one explicitly observed task visit, including their
+ * actual kernel order. These are not callback instructions or elapsed time.
+ * Arrival processing, owner cleanup and enclosing host work have their own
+ * accounts. No task stores a meter; unaccounted execution records nothing. */
 typedef struct {
-    uint64_t compatibility, producer, consumer, final_is_current;
+    uint64_t admission, producer, consumer, final_is_current;
     uint64_t rotations, retirements;
+    uint8_t phases[CETTA_OWNED_TASK_PHASE_CAPACITY], phase_count;
+    bool phase_overflow;
 } CettaOwnedTaskAccount;
+
+static inline void cetta_owned_task_account_record(
+    CettaOwnedTaskAccount *account,CettaOwnedTaskAccountObserver observer,
+    void *observer_context,CettaOwnedTaskPhase phase,uint64_t detail) {
+    if (phase>CETTA_OWNED_TASK_PHASE_RETIREMENT) {
+        if (account) account->phase_overflow=true;
+        return;
+    }
+    if (account) {
+        if (account->phase_count>=CETTA_OWNED_TASK_PHASE_CAPACITY)
+            account->phase_overflow=true;
+        else account->phases[account->phase_count++]=(uint8_t)phase;
+    }
+    if (observer) observer(observer_context,phase,detail);
+}
 
 typedef struct {
     void *computation;
@@ -165,7 +200,8 @@ static inline __attribute__((always_inline))
 CettaOwnedExecutionStep cetta_owned_execution_sequence_accounted_with(
     CettaOwnedExecution *execution, uint64_t allowance,
     CettaOwnedExecutionNext next, CettaOwnedReturnConsumer consume,
-    void *consumer, CettaOwnedTaskAccount *account) {
+    void *consumer, CettaOwnedTaskAccount *account,
+    CettaOwnedTaskAccountObserver observer,void *observer_context) {
     if (!execution || !execution->computation || !next || !consume)
         return CETTA_OWNED_EXECUTION_HANDOFF;
     if (execution->terminal)
@@ -173,9 +209,11 @@ CettaOwnedExecutionStep cetta_owned_execution_sequence_accounted_with(
     while (allowance > 0u) {
         if (!execution->has_pending) {
             CettaOwnedReturn returned = {0};
-            if (account) account->producer++;
             CettaOwnedExecutionStep step = next(
                 execution->computation, &returned, &execution->completion);
+            if (account) account->producer++;
+            cetta_owned_task_account_record(account,observer,observer_context,
+                CETTA_OWNED_TASK_PHASE_PRODUCER,(uint64_t)step);
             if (step != CETTA_OWNED_EXECUTION_RETURN) {
                 execution->stop = step;
                 execution->terminal = step != CETTA_OWNED_EXECUTION_PAUSED;
@@ -191,8 +229,11 @@ CettaOwnedExecutionStep cetta_owned_execution_sequence_accounted_with(
         bool final = execution->pending.final &&
             execution->completion == CETTA_EVAL_COMPLETE;
         if (final && execution->final_is_current) {
+            bool current=execution->final_is_current(execution->computation);
             if (account) account->final_is_current++;
-            final = execution->final_is_current(execution->computation);
+            cetta_owned_task_account_record(account,observer,observer_context,
+                CETTA_OWNED_TASK_PHASE_FINAL_CURRENT,current?1u:0u);
+            final = current;
         }
         execution->has_pending = false;
         memset(&execution->pending, 0, sizeof(execution->pending));
@@ -214,7 +255,7 @@ CettaOwnedExecutionStep cetta_owned_execution_sequence_with(
     CettaOwnedExecutionNext next, CettaOwnedReturnConsumer consume,
     void *consumer) {
     return cetta_owned_execution_sequence_accounted_with(
-        execution, allowance, next, consume, consumer, NULL);
+        execution, allowance, next, consume, consumer, NULL, NULL, NULL);
 }
 
 /* Releases abandoned execution without undoing accepted returns or effects.
@@ -227,14 +268,25 @@ void cetta_owned_execution_cancel(CettaOwnedExecution *execution);
  * Callbacks may update private retry state, but must not mutate this task,
  * its execution or queue, or recursively service it. The host serializes all
  * operations and supplies the relevant source and publication permissions. */
-/* Compatibility may configure a quiescent provider's next work grant through
- * its adapter. It must not advance or dispose the provider or alter the
- * sequencer's terminal, loan, acceptance or membership fields. */
-typedef bool (*CettaOwnedTaskCompatible)(void *context);
+/* Admission may configure a quiescent provider's next work grant through its
+ * adapter. It must not advance or dispose the provider or alter the
+ * sequencer's terminal, loan, acceptance or membership fields. A non-ready
+ * verdict retains the exact computation and queue membership. INVALIDATED is
+ * reported to the host; it does not silently discard a residual that may need
+ * inspection, migration or explicit cancellation. */
+typedef enum {
+    /* Visit observation only. A callback that returns this is invalidated. */
+    CETTA_OWNED_TASK_ADMISSION_UNCHECKED = 0,
+    CETTA_OWNED_TASK_ADMISSION_READY,
+    CETTA_OWNED_TASK_ADMISSION_PAUSED,
+    CETTA_OWNED_TASK_ADMISSION_REFUSED,
+    CETTA_OWNED_TASK_ADMISSION_INVALIDATED,
+} CettaOwnedTaskAdmission;
+typedef CettaOwnedTaskAdmission (*CettaOwnedTaskAdmit)(void *context);
 typedef struct {
     CettaReadyLink ready;
     CettaOwnedExecution execution;
-    CettaOwnedTaskCompatible compatible;
+    CettaOwnedTaskAdmit admit;
     CettaOwnedReturnConsumer consume;
     void *context;
 } CettaOwnedTask;
@@ -242,23 +294,25 @@ typedef struct {
 typedef struct {
     CettaOwnedTask *task; /* NULL means no queued task. */
     CettaOwnedExecutionStep step;
-    bool context_refused;
+    /* Last admission observed in this visit; UNCHECKED means none was made. */
+    CettaOwnedTaskAdmission admission;
 } CettaOwnedVisit;
 
 /* Move one qualified computation into an empty, unqueued task. Failure leaves
  * both objects unchanged. Admission uses cetta_ready_admit(&task->ready).
  * Completed tasks leave the queue but retain their owner until cancellation. */
 bool cetta_owned_task_init(CettaOwnedTask *task, CettaOwnedExecution *execution,
-    CettaOwnedTaskCompatible compatible, CettaOwnedReturnConsumer consume,
+    CettaOwnedTaskAdmit admit, CettaOwnedReturnConsumer consume,
     void *context);
 
 /* Rotate once, then attempt at most one producer poll or held-loan retry.
- * A false poll rotates without callbacks or work. Compatibility is checked
- * before a producer call and before delivery, including a held loan. Refusal
- * retains the entire call and its queue membership. Only an actual terminal
- * execution retires. Each callback/provider must return: this bounds service
- * visits and accepted occurrences, not instructions, time or source firings.
- * A provider's finite work quantum is a separate adapter contract. */
+ * A false poll rotates without callbacks or work. Admission is checked before
+ * a producer call and before delivery, including a held loan. PAUSED, REFUSED
+ * and INVALIDATED retain the entire call and its queue membership; the host
+ * decides whether to retry, replace policy, inspect or cancel. Only an actual
+ * terminal execution retires. Each callback/provider must return: this bounds
+ * service visits and accepted occurrences, not instructions, time or source
+ * firings. A provider's finite work quantum is a separate adapter contract. */
 CettaOwnedVisit cetta_owned_task_visit(CettaReadyQueue *queue, bool poll);
 /* The same one-poll service for an initialized task whose enclosing host
  * already selected its candidate. It does not admit or rotate membership;
@@ -267,7 +321,7 @@ CettaOwnedVisit cetta_owned_task_poll(CettaOwnedTask *task, bool poll);
 
 /* Explicit numerical observation of the same visit/poll. A non-NULL account
  * is reset before service; NULL selects ordinary unaccounted execution.
- * Each visit makes at most two compatibility calls and one call to each of
+ * Each visit makes at most two admission calls and one call to each of
  * producer, consumer and final-current validator. Retrying a held return
  * does not poll its producer. Poll alone performs no queue rotation.
  * Empty visits still have host/queue bookkeeping outside these call counts.
@@ -277,6 +331,12 @@ CettaOwnedVisit cetta_owned_task_visit_accounted(
     CettaReadyQueue *queue, bool poll, CettaOwnedTaskAccount *account);
 CettaOwnedVisit cetta_owned_task_poll_accounted(
     CettaOwnedTask *task, bool poll, CettaOwnedTaskAccount *account);
+/* The same account plus callback-completion observations in exact service
+ * order. This is the bridge for optional receipts; NULL preserves the plain
+ * accounted path. */
+CettaOwnedVisit cetta_owned_task_poll_observed(
+    CettaOwnedTask *task, bool poll, CettaOwnedTaskAccount *account,
+    CettaOwnedTaskAccountObserver observer,void *observer_context);
 
 /* Remove this membership and release its computation. Independent captured
  * returns and other tasks retain their own shares. No effect is rolled back. */

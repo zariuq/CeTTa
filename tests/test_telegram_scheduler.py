@@ -7,7 +7,7 @@ import pathlib
 import select
 import signal
 import socket
-import sqlite3
+from support.durable_journal_fixture import records as native_records
 import subprocess
 import sys
 import tempfile
@@ -61,12 +61,8 @@ class AgentPeer(Peer):
         return 200,[],json.dumps({'ok':True,'result':{'message_id':99,'chat':{'id':data['chat_id']}}}).encode()
 
 
-def records(db,space):
-    try:
-        with sqlite3.connect(f'file:{db}?mode=ro',uri=True) as c:
-            return dict(c.execute('SELECT key,value FROM records WHERE space=?',(space,)))
-    except sqlite3.OperationalError:
-        return {}
+def records(db, space):
+    return native_records(db, space)
 
 
 def wait(proc,predicate,label,seconds=12):

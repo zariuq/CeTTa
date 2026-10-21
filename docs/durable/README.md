@@ -1,18 +1,14 @@
 # Durable named spaces
 
 The [native mailbox guide](../mailbox/README.md) describes single-channel
-receives on the SQLite-free named-space service. Its mailbox commits are
-atomic within one native physical space; it does not replace this library's
-existing cross-space transaction domain.
+receives on the named-space service. Both services use native CeTTa spaces and
+the same checksummed journal framing. This library supplies one local commit
+domain across named record spaces; the mailbox service commits within one
+physical space.
 
-The optional `durable` library supplies one local commit domain across named
-record spaces. It is the storage boundary for a durable process host, not a
-transport dispatcher. Applications work with MeTTa data and do not issue SQL.
-
-Build with `ENABLE_DURABLE=1`. The default SQLite provider is the pinned
-amalgamation in `vendor/sqlite`. `SQLITE_PROVIDER=system` uses a development
-package discoverable through pkg-config (SQLite 3.37 or newer). A build without
-the feature returns `(durable:failure unavailable)`.
+Build with `ENABLE_DURABLE=1`. Durable state has no SQL dependency. Access to
+application-owned SQL databases is a separate `ENABLE_SQLITE=1` feature.
+Applications use MeTTa data and the durable API, not storage-specific queries.
 
 CLI administration is off by default. A dedicated maintenance invocation,
 `cetta --durable-admin repair.metta`, enables literal top-level administrative
@@ -64,7 +60,7 @@ without a read set. Use the scoped C API for application decisions:
 2. Evaluation uses those views outside the transaction. All reads affecting
    the decision must be declared, including absence and range predicates.
 3. `cetta_durable_commit_observed` validates the exact keys and revisions in
-   each view under `BEGIN IMMEDIATE`, then applies the batch. Every written
+   each view under the native commit lock, then applies the batch. Every written
    key must also be covered by a declared scope. Empty views validate absence.
 
 The host must enforce three observation invariants:
@@ -81,7 +77,7 @@ host-supplied observation the complete durable read set of the decision.
 Policy loaders can carry their own observed dependencies into that read set.
 `cetta_durable_observe_joined` checks an earlier observation while reading new
 scopes in one transaction. New views come first, followed by owned copies of
-the earlier scopes. Their database epoch, complete keys and record revisions
+the earlier scopes. Their store epoch, complete keys and record revisions
 must still agree. This includes recorded absences and complete prefix results;
 an unrelated update may proceed. The returned observation remains independent
 of the earlier owner and protects every combined scope at commit or watch.
@@ -94,7 +90,7 @@ A policy change can refuse either admission or later acceptance, even while
 the old context is alive. Restoring its old bytes under a fresh revision also
 refuses. Dependency views do not add indexed grants or `host:record` facts to
 the evaluator. Planning runs against its original capture without checking the
-database each quantum. A conflict requires a new policy observation, context
+store each quantum. A conflict requires a new policy observation, context
 and decision; it cannot retarget an existing plan.
 
 This revocation orders against acceptance. An already accepted outbox intent
@@ -106,9 +102,8 @@ Validation uses exact comparisons, not hashes, and needs no tombstone table.
 Unrelated writes do not conflict. A removed and reinserted record has a new
 revision and invalidates a positive read. An insertion followed by removal
 preserves an absence observation: the predicate is true again at commit.
-Prefixes are binary byte ranges using the `(space,key)` primary index, with no
-wildcard interpretation. Observations bound their total materialized size,
-including overlapping scopes. They retain no SQLite transaction.
+Prefixes compare raw key bytes with no wildcard interpretation. Observations bound their total materialized size,
+including overlapping scopes. They retain no storage lock or transaction.
 
 A conflict permits retrying a pure decision; it does not permit repeating an
 external effect. In particular, persist a completed LLM response as an input
@@ -118,58 +113,64 @@ another action.
 
 ## Storage and recovery
 
-SQLite runs in WAL mode with synchronous FULL and short transactions. Each
-transaction updates current records, appends their deltas, and advances the
-revision together. Open compares the checkpoint-plus-delta reconstruction against current records
-byte for byte, and checks accounting in the same read transaction. A mismatch
-fails closed as corruption. Snapshot and recovery also use explicit read
-transactions. Reconstruction executes no application program. Checkpointing replaces
-the checkpoint and truncates the delta history atomically, preserving every
-live record, including pending and uncertain work. SQLite's own WAL recovery
-remains responsible for interrupted database transactions.
+Live values are inert string/integer records in a private native CeTTa space.
+A commit checks its complete read manifest, preconditions, accounting and
+admission limits, then prepares the next space projection before appending one
+whole-batch journal frame and syncing it. Publication swaps in that prepared
+projection without further allocation or semantic checks.
 
-A persistent random epoch distinguishes database identities. A restored copy
-retains that epoch: it does not gain dispatch authority. The host must start
-shadow/replay copies with dispatch disabled and separately control ownership. Schema versions
-are checked on open. The service must pin its handler, payload-language and
-continuation versions in its own coordination records; this storage layer does
-not migrate application programs.
+The shared CSL1 frame contains a length, a SHA-256 digest and a typed CDR1
+payload. Recovery replays records as data. An incomplete final append is
+truncated on reopen; a complete corrupt frame fails closed. Checkpoints stream
+all live rows to a new file, sync it, atomically replace the journal, and sync
+the parent directory. Pending and uncertain records are retained. Compaction
+also rebuilds the private arena and intern universe, reclaiming retired values.
+Existing SQL files fail the native version check; no implicit conversion occurs.
 
-One cooperating local process holds a lifetime OS lock on the database inode.
-Use a private directory on a local filesystem for the database and its SQLite
-sidecars. Do not rename or replace an open database. This lock is not fencing
-for a distributed deployment or for unrelated software that bypasses it.
-Store operations serialize across threads; close requires exclusive caller
-ownership. Evaluation and HTTP never run inside a database transaction.
+A persistent random epoch distinguishes store identities. A restored copy
+retains the epoch and gains no dispatch authority. The host must keep replay
+copies dispatch-disabled and separately control ownership. The service records
+its handler, payload-language and continuation versions as application data;
+this layer does not migrate programs.
 
-Default admission bounds are 1 MiB per value, 4 MiB per batch, 4096 operations
-per batch, 100,000 live records, 64 MiB of live record data and names, and 16 MiB
-of retained delta data and names. A growth batch folds history into a
-checkpoint when its budget would be exceeded. Removal-only batches use a
-reclamation reserve instead: their extra history is bounded by the names of
-existing occurrences they remove. This avoids copying the live set to permit
-a deletion near the page cap. Removal-only batches also tolerate lowered byte
-budgets smaller than existing names; their size remains bounded by the operation
-count and the fixed name-size limit. Before a subsequent growth batch, history is
-compacted again. The database is capped at 65,536 pages; checkpoint
-and WAL space also require disk headroom. A full disk or exceeded quota fails
-the operation without publishing a revision. An I/O error at COMMIT instead
-returns `unknown-outcome`: the transaction might have committed. I/O errors
-and corruption poison the connection; subsequent operations return `poisoned`
-until it is closed and reopened. Never use a missing success receipt as
-permission to acknowledge an input, dispatch a proposal, or blindly retry it.
+One cooperating process holds a lifetime exclusive lock on the stable `.lock`
+sidecar. The lock survives replacement of the journal during checkpointing.
+Hard-linked journals are refused; an aliased checkpoint temporary file is
+refused before truncation. Keep the journal, lock and `.checkpoint` temporary file in one private local
+directory. Do not replace or remove the lock while the store is open. This is
+not distributed fencing and cannot constrain software that bypasses the lock.
+Store operations serialize across threads; close requires exclusive ownership.
+No evaluation or network effect runs while the store holds its commit lock.
 
-Lowering admission limits does not prevent open, snapshot, recovery, removal or
-checkpointing. The usage API reports exceeded limits. Changes that increase an
-already excessive live-byte or record count are rejected; shrinking changes
-remain admissible. Existing values above a new value-size limit remain readable.
-Physical disk exhaustion can still prevent any write; the reserve avoids a
-forced checkpoint copy, not SQLite's own need for working disk space.
+Every admission limit is independently optional: zero means unlimited. The
+library default imposes no policy quotas. `cetta_durable_bounded_limits()` is an
+explicit service profile: 1 MiB per value, 4 MiB per batch, 4096 operations,
+100,000 live records, 64 MiB live data and names, 16 MiB delta history, and
+65,536 journal pages of 4096 bytes. Responsive service constructors select that
+profile. Applications can supply different limits. Native string, integer and
+frame representation ranges remain distinct from these policy choices.
+
+A growth batch compacts history when its selected allowance is exceeded, or
+when retired data warrants reclaiming the arena. Removal-only batches may log
+the names of existing occurrences beyond a reduced byte/page allowance so
+reclamation can proceed without copying the live set first. Physical disk
+exhaustion can still prevent a write. A configured capacity refusal happens
+before append and leaves no published revision. A journal write or sync failure
+returns `unknown-outcome` and poisons the handle: close and reopen, then inspect
+state. A missing acknowledgment never licenses blind retry or external dispatch.
+
+Lowered limits do not prevent open, snapshot, recovery, removal or checkpointing.
+Usage reports the exceeded dimensions; growth beyond an already excessive live
+byte or row count is refused. Existing oversized values remain readable. The
+native projection currently clones row references and scans keys under the
+owner lock; this is not an indexed-store performance claim or a wall-clock
+service bound. Native arena allocation retains the runtime's process-failure
+contract; recoverable allocator failure is not interpreted as an empty query.
 
 The C API exposes bounds for the host to configure. The MeTTa library currently
-uses the defaults. No long-lived SQLite reader transaction escapes this API.
-Backups must use SQLite's backup facilities or a stopped, closed database;
-copying only the database file while WAL is active is not a backup protocol.
+uses unlimited admission. No storage lock escapes this API. Back up a stopped,
+closed store, or copy one stable checkpoint inode under an explicit host backup
+protocol. A copied journal does not transfer dispatch ownership.
 
 ## Stored data
 
@@ -200,10 +201,11 @@ CeTTa spaces or cyclic runtime objects can be persisted.
 
 `make test-durable-store` checks atomic transitions, stale snapshot rejection,
 checkpoint/delta reconstruction, concurrent decisions, process death at four
-write boundaries, a SQLite full-disk condition, quotas and version rejection.
-It also tests actual WAL fsync failure through a VFS interposer, poisoned-handle
-refusal, byte-for-byte recovery validation, lowered limits, deletion at the page
-cap, a concurrent writer between metadata and record reads, and scoped decisions
+write boundaries, storage allowances, optional quotas and version rejection.
+It also tests actual journal write/fsync failure through linker interposition,
+173 partial appends, binary values beyond the bounded profile, stable checkpoint
+lock identity, poisoned handles, byte-for-byte recovery, lowered limits, deletion
+at the page cap, concurrent reads and scoped decisions
 amid unrelated traffic and conflicting positive/negative reads.
 `make test-durable-value` checks the codec. With an enabled binary,
 `python3 tests/test_durable_library.py ./cetta` checks the MeTTa boundary and
@@ -365,9 +367,16 @@ for diagnostic comparisons. Native lookup telemetry can differ between these
 implementations; source firings and controller allowances retain their meanings.
 Indexed lookup alone does not bound the duration of a complete planning poll.
 
-This retained profile accepts self-contained Prime default contexts. Imported
-module contexts and opaque capabilities need their own capture/ownership
-contracts and are declined without a synchronous fallback. The existing
+This retained profile accepts Prime default contexts with already linked
+structural libraries. Embedded imports use the same compiled source reader
+and document-scope elaboration as the CLI. Capture retains code, binding
+metadata and structural library availability, without retaining loader
+inventories or acquiring external services. Equation lookup uses frozen code;
+`&self` and `context-space` designate the separate private data world.
+Computed storage coordinates use the retained argument continuation.
+Every resolved call still needs its invocation-time service admission.
+Opaque capabilities and other mutable library services need their own
+capture/ownership contracts and are declined without a synchronous fallback. The existing
 `cetta_host_evaluate` route retains its HE extended semantics. Neither route
 requires a history recorder or correctness receipt.
 
@@ -1416,3 +1425,51 @@ delivery still use their own established boundaries. Timer/intake discovery
 currently scans journal snapshots; terminal journal retention and a sustained
 production soak remain qualification work. Fuel and visit counts are not a
 wall-time bound: the example reports the actual longest service step.
+
+### Duties around an activity
+
+The same library can retain a duty around its primary activity and a separate
+repair activity. `activity:receive-at`, `activity:reply-at` and their cancellation
+and timer counterparts take an explicit activity state. `activity:map-state`
+changes only the state component of their proposed transition; writes and sends
+still cross the original native grant checks. Existing activity entry points
+use these functions with `activity:state`.
+
+The duty state records its occurrence, original obligor, beneficiary, scope,
+current holder, both activity states, cancellation, disposition and history.
+The host supplies a fresh occurrence and authenticated invocation principal as
+trusted arguments. A claimed sender or an authority-shaped value in input data
+does not supply either. An issued duty initially belongs to its obligor.
+Transfer requires the holder's `transfer` grant and the recipient's `hold`
+grant, while preserving the original parties and scope.
+
+Policy views contain `(activity:grant 1 principal scope right)` records. The
+host must declare the complete policy scope and revalidate it with publication.
+The recorded grant references retain each key, revision and position; they
+are evidence of the decision's observation, not native execution grants.
+Starting primary or repair work requires current `execute` authority and a
+task owner `(activity:duty-owner occurrence purpose)`. A correlated completion
+can still be persisted after cancellation or revocation. It leaves the duty
+unsettled until an authorized disposition is recorded.
+
+`activity:duty-settle` takes the principal, purpose, policy view, result view
+and key, receiver-evidence view and key, contract tag, and trusted checker.
+Primary adoption requires `adopt`; repair requires `compensate`. The checker
+interprets the completed answer against separately captured receiver evidence.
+Only `True` permits settlement. The disposition records the result, grant and
+receiver-evidence versions. A contract tag or worker assertion alone cannot
+settle a duty. An unavailable result, missing evidence or failed check leaves
+an explicit refusal and preserves the input and duty.
+
+The worker-host tests use an independent receiver fixture whose native commit
+updates actual wallet funds, stable request receipts and debit/refund history.
+They exercise primary adoption, a real compensating refund, restart after
+debit, version-changing revocation, forged evidence and irreversible effects.
+Receiver authenticity, correct evidence issuance and principal binding remain
+host/service contracts; this fixture is not a general evidence authenticator
+or a proof of eventual settlement. The complete duty scenario currently uses
+the HE speculative host. Retained Prime issuance imports the same maintained
+client, preserves its scope records and rejects policy revocation/regrant
+before acceptance. The full Prime reply path still needs a bounded, yielding
+or isolated admission face for the existing Rhometta reducer; retaining its
+definition does not admit that service into a responsive slot.

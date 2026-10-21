@@ -62,8 +62,9 @@
 !(collapse (let $a (+ $b 1) (let $b "s" $a)))
 !(collapse (let* (($a (+ $b 1)) ($b "s")) $a))
 
-; The program changes between the binding and the use: the stuck value is
-; evaluated against the changed program.
+; The program changes between the binding and the use: the stuck value was
+; answered as a value, so it keeps that form against the changed program
+; (Rust HE answers the same).
 (= (after-change) (let $a (foo) (let $u (add-atom &self (= (foo) 3)) $a)))
 !(after-change)
 (= (after-change-in-tuple) (let $a (bar) (let $u (add-atom &self (= (bar) 4)) (w $a))))

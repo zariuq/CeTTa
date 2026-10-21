@@ -30,6 +30,7 @@
 #include "native_cost.h"
 #include "symbol.h"
 #include "parser.h"
+#include "prime_compiled_reader.h"
 
 #define PRIME_DEF_SCHEMA_VERSION 3
 #define PRIME_DIALECT_MAJOR 0
@@ -6512,6 +6513,7 @@ typedef struct {
     const Atom *key;
     Atom *syntax;
     Atom *runtime;
+    CettaCallResultForm result_form;
 } PrimeSubstValue;
 static __thread const PrimeSubstValue *g_prime_subst_value = NULL;
 
@@ -6983,7 +6985,17 @@ static Atom *prime_subst_in(Arena *arena, Atom *term, const Atom *key,
         Atom *child = term->expr.elems[i];
         PrimeChildRole role = pattern ? PRIME_CHILD_PATTERN
                                       : prime_child_role(term, i);
-        Atom *next = role == PRIME_CHILD_PATTERN_PAIRS
+        const PrimeSubstValue *returned = g_prime_subst_value;
+        /* A completed symbol is data until explicitly used as a call head.
+         * Keep that head visible to construct formation. A source argument
+         * still uses its shared cell here, including a bare-symbol source. */
+        bool formed_head = !pattern && i == 0u && returned &&
+            returned->result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+            returned->syntax == value && value->kind == ATOM_SYMBOL &&
+            prime_same_key(returned->key, key) &&
+            prime_binder_reference(key, child);
+        Atom *next = formed_head ? value
+            : role == PRIME_CHILD_PATTERN_PAIRS
             ? prime_subst_pairs(arena, child, key, value)
             : prime_subst_in(arena, child, key, value,
                              role == PRIME_CHILD_PATTERN);
@@ -7012,13 +7024,14 @@ static Atom *prime_subst_binder(Arena *arena, Atom *term, const Atom *key,
 }
 
 Atom *prime_semantics_subst_value(Arena *arena, Atom *term, Atom *var,
-                                  Atom *value, Atom *runtime_value) {
+                                  Atom *value, Atom *runtime_value,
+                                  CettaCallResultForm result_form) {
     if (!arena || !term || !var || var->kind != ATOM_VAR || !value ||
         !runtime_value)
         return NULL;
     const Atom *saved = g_prime_subst_quoted_hole;
     const PrimeSubstValue *saved_value = g_prime_subst_value;
-    PrimeSubstValue role = {var, value, runtime_value};
+    PrimeSubstValue role = {var, value, runtime_value, result_form};
     g_prime_subst_quoted_hole = var;
     g_prime_subst_value = &role;
     /* Capture avoidance and code splicing inspect the original value.
@@ -7031,7 +7044,8 @@ Atom *prime_semantics_subst_value(Arena *arena, Atom *term, Atom *var,
 
 Atom *prime_semantics_subst_var(Arena *arena, Atom *term, Atom *var,
                                 Atom *value) {
-    return prime_semantics_subst_value(arena, term, var, value, value);
+    return prime_semantics_subst_value(
+        arena, term, var, value, value, CETTA_CALL_RESULT_EXPRESSION);
 }
 
 /* A lambda with the binder or own name `key` renamed to a fresh variable
@@ -8051,8 +8065,10 @@ bool prime_semantics_is_authored_lambda(Arena *arena, Atom *term) {
  * that remain are kept (annotated reduction, `ATm.Step.betaTyped`, whose
  * erasure is ordinary beta: `Step.erasure`, WrittenDomains.lean).  The
  * remaining arguments apply to the result. */
-Atom *prime_semantics_beta(Arena *arena, Atom *call) {
-    if (!arena || !call || call->kind != ATOM_EXPR || call->expr.len < 2u)
+Atom *prime_semantics_beta_value(Arena *arena, Atom *call,
+                                 Atom *runtime_argument) {
+    if (!arena || !call || call->kind != ATOM_EXPR || call->expr.len < 2u ||
+        !runtime_argument)
         return NULL;
     Atom *function = call->expr.elems[0];
     /* A lambda with its crossing set, (meta (lam ...) {...}), applies as the
@@ -8099,9 +8115,16 @@ Atom *prime_semantics_beta(Arena *arena, Atom *call) {
             return NULL;
     }
     Atom *key = prime_binder_key(binder);
-    if (key &&
-        !prime_subst_telescope(arena, rest, rest_count, rest_syntax, &body,
-                               &own, key, argument, has_siblings))
+    const PrimeSubstValue *saved = g_prime_subst_value;
+    PrimeSubstValue role = {
+        key, argument, runtime_argument, CETTA_CALL_RESULT_EXPRESSION};
+    if (runtime_argument != argument)
+        g_prime_subst_value = &role;
+    bool substituted = !key ||
+        prime_subst_telescope(arena, rest, rest_count, rest_syntax, &body,
+                              &own, key, argument, has_siblings);
+    g_prime_subst_value = saved;
+    if (!substituted)
         return NULL;
     Atom *reduct = rest_count == 0u
         ? body
@@ -8116,6 +8139,12 @@ Atom *prime_semantics_beta(Arena *arena, Atom *call) {
     for (CettaExprIndex i = 2u; i < call->expr.len; i++)
         items[i - 1u] = call->expr.elems[i];
     return atom_expr(arena, items, call->expr.len - 1u);
+}
+
+Atom *prime_semantics_beta(Arena *arena, Atom *call) {
+    return prime_semantics_beta_value(arena, call,
+        call && call->kind == ATOM_EXPR && call->expr.len >= 2u
+            ? call->expr.elems[1] : NULL);
 }
 
 /* The seal of quoted code (atom_is_quotation) while the session seals:
@@ -12033,23 +12062,25 @@ bool prime_semantics_code_pattern(const Atom *pattern) {
     return prime_pattern_quotes(pattern, 0u);
 }
 
-/* Whether the pattern `term` holds code it takes apart: a quotation whose
- * code is an expression.  A quotation of a bare variable takes code whole,
- * and matches binder by binder exactly as it matches as written. */
-static bool prime_pattern_takes_code_apart(const Atom *term,
-                                           uint32_t nesting) {
-    if (!term || term->kind != ATOM_EXPR || nesting > PRIME_ELAB_NESTING_LIMIT)
+/* Even a whole quoted hole earns a completed value. An authored lambda
+ * pattern also inspects opaque syntax, whose fields may retain Need cells.
+ * Both require the native pattern view, rather than structural matching by
+ * a machine that treats every bound expression as a fresh computation. */
+static bool prime_pattern_owned_code_node(const Atom *term, void *context) {
+    if (!term || term->kind != ATOM_EXPR)
         return false;
     if (prime_code_like(term))
-        return term->expr.elems[1] && term->expr.elems[1]->kind == ATOM_EXPR;
-    for (CettaExprIndex i = 0u; i < term->expr.len; i++)
-        if (prime_pattern_takes_code_apart(term->expr.elems[i], nesting + 1u))
-            return true;
-    return false;
+        return true;
+    PrimeLambdaTelescope telescope;
+    return prime_lambda_telescope(context, (Atom *)term, &telescope);
 }
 
 bool prime_semantics_pattern_takes_code_apart(const Atom *pattern) {
-    return prime_pattern_takes_code_apart(pattern, 0u);
+    Arena scratch;
+    arena_init_detached(&scratch);
+    bool owned = atom_graph_any(pattern, prime_pattern_owned_code_node, &scratch);
+    arena_free(&scratch);
+    return owned;
 }
 
 bool prime_semantics_binder_takes_code_apart(const Atom *term) {
@@ -12061,14 +12092,14 @@ bool prime_semantics_binder_takes_code_apart(const Atom *term) {
         PrimeChildRole role = prime_child_role(term, i);
         Atom *child = term->expr.elems[i];
         if (role == PRIME_CHILD_PATTERN &&
-            prime_pattern_takes_code_apart(child, 0u))
+            prime_semantics_pattern_takes_code_apart(child))
             return true;
         if (role == PRIME_CHILD_PATTERN_PAIRS && child &&
             child->kind == ATOM_EXPR)
             for (CettaExprIndex k = 0u; k < child->expr.len; k++) {
                 Atom *pair = child->expr.elems[k];
                 if (pair && pair->kind == ATOM_EXPR && pair->expr.len == 2u &&
-                    prime_pattern_takes_code_apart(pair->expr.elems[0], 0u))
+                    prime_semantics_pattern_takes_code_apart(pair->expr.elems[0]))
                     return true;
             }
     }
@@ -12473,10 +12504,6 @@ bool prime_semantics_code_unify(Arena *arena, Atom *pattern, Atom *value,
     return true;
 }
 
-static bool prime_bindings_code_pattern(const Atom *pattern) {
-    return prime_pattern_takes_code_apart(pattern, 0u);
-}
-
 /* Whether the code `term` holds a binder: a lambda, a map-atom or
  * foldl-atom template, or a `new`. */
 static bool prime_code_holds_binder(const Atom *term, uint32_t nesting) {
@@ -12532,7 +12559,7 @@ static const BindingsStructureHooks prime_binding_structure_hooks = {
     .formed_node = prime_bindings_formed_node,
     .code_reading = prime_bindings_code_reading,
     .own_list = prime_bindings_own_list,
-    .code_pattern = prime_bindings_code_pattern,
+    .code_pattern = prime_semantics_code_pattern,
     .code_match = prime_semantics_code_unify,
     .code_selection = prime_bindings_code_selection,
 };
@@ -13458,6 +13485,64 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
     if (ok && counting && !planning) prime_scope_census_print(census);
     if (ok && planning) printf("{\"kind\":\"complete\",\"forms\":%zu}\n", count);
     return ok;
+}
+
+static int prime_semantics_read_source_ids(PrimeCompiledReaderV1 *reader,
+    const char *source, bool file, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size) {
+    if (out_ids) *out_ids = NULL;
+    if (error_buf && error_buf_size) error_buf[0] = '\0';
+    if (!out_ids || !universe || !source) return -1;
+    PrimeCompiledReaderV1 *owned = NULL;
+    if (!reader) {
+        owned = prime_compiled_reader_v1_new();
+        if (!owned || !prime_compiled_reader_v1_prepare(owned, error_buf, error_buf_size)) {
+            prime_compiled_reader_v1_free(owned);
+            return -1;
+        }
+        reader = owned;
+    }
+    bool names = parser_set_universal_name_syntax_enabled(true);
+    bool lists = parser_set_list_syntax_enabled(true);
+    bool rationals = parser_set_rational_literals_enabled(true);
+    bool namespaces = parser_set_namespace_sugar_enabled(true);
+    int count = file
+        ? prime_compiled_reader_v1_parse_file_ids(reader, source, universe,
+            out_ids, NULL, error_buf, error_buf_size)
+        : prime_compiled_reader_v1_parse_text_ids(reader, source, universe,
+            out_ids, NULL, error_buf, error_buf_size);
+    if (count > 0 && !prime_semantics_elaborate_read_forms(universe, *out_ids, (size_t)count)) {
+        const char *why = prime_semantics_elaboration_error();
+        if (error_buf && error_buf_size)
+            snprintf(error_buf, error_buf_size,
+                "the binding structure of a form could not be elaborated%s%s",
+                why ? ": " : "", why ? why : "");
+        count = -1;
+    }
+    parser_set_namespace_sugar_enabled(namespaces);
+    parser_set_rational_literals_enabled(rationals);
+    parser_set_list_syntax_enabled(lists);
+    parser_set_universal_name_syntax_enabled(names);
+    prime_compiled_reader_v1_free(owned);
+    if (count < 0) {
+        free(*out_ids);
+        *out_ids = NULL;
+    }
+    return count;
+}
+
+int prime_semantics_read_source_text_ids(PrimeCompiledReaderV1 *reader,
+    const char *text, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size) {
+    return prime_semantics_read_source_ids(reader, text, false, universe,
+        out_ids, error_buf, error_buf_size);
+}
+
+int prime_semantics_read_source_file_ids(PrimeCompiledReaderV1 *reader,
+    const char *filename, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size) {
+    return prime_semantics_read_source_ids(reader, filename, true, universe,
+        out_ids, error_buf, error_buf_size);
 }
 
 /* `lift`: named syntax operations on code values.  A quotation is sealed,

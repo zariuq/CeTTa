@@ -168,6 +168,42 @@
       ($error $error))){$ignored18 $ignored19 $ignored20 $ignored21 $ignored22 $ignored23 $ignored24 $error}
      (($result (return $result)))){$result}))
 
+; A send from another account is one append and reads nothing. The service
+; binds (caller) in its grant's shape to the authenticated account, so that
+; account cannot be forged; the agent name within an account is the caller's.
+(= (mailbox:post $socket $name $id $to $agent $body)
+   (function (case (case (space:whoami $socket)
+     (((reply $ignored59 ok (principal $account $ignored60))
+       (let $space (mailbox:open $socket $name)
+         (case $space
+           (((space $ignored61 $ignored62 $ignored63 $ignored64 $ignored65 $ignored66 $ignored67)
+             (case (space:append $socket $space
+                     (bundle (MailboxMessage 1 $id $to "" (from $account $agent) $body)
+                             (MailboxPending 1 $to "" (from $account $agent) $id)))
+               (((reply $ignored68 ok appended) (mailbox:sent $id accepted))
+                ((reply $ignored69 ok duplicate) (mailbox:sent $id duplicate))
+                ($error $error))){$ignored68 $ignored69 $error})
+            ($error $error))){$ignored61 $ignored62 $ignored63 $ignored64 $ignored65 $ignored66 $ignored67 $error}){$space})
+      ($error $error))){$ignored59 $account $ignored60 $error}
+     (($result (return $result)))){$result}))
+
+; The same authenticated bundle under an explicit commit-spent ticket.
+(= (mailbox:post-ticket $socket $name $ticket $id $to $agent $body)
+   (function (case (case (space:whoami $socket)
+     (((reply $ignored70 ok (principal $account $ignored71))
+       (let $space (mailbox:open $socket $name)
+         (case $space
+           (((space $ignored72 $ignored73 $ignored74 $ignored75 $ignored76 $ignored77 $ignored78)
+             (case (space:append-ticket $socket $space $ticket
+                     (bundle (MailboxMessage 1 $id $to "" (from $account $agent) $body)
+                             (MailboxPending 1 $to "" (from $account $agent) $id)))
+               (((reply $ignored79 ok appended) (mailbox:sent $id accepted))
+                ((reply $ignored80 ok duplicate) (mailbox:sent $id duplicate))
+                ($error $error))){$ignored79 $ignored80 $error})
+            ($error $error))){$ignored72 $ignored73 $ignored74 $ignored75 $ignored76 $ignored77 $ignored78 $error}){$space})
+      ($error $error))){$ignored70 $account $ignored71 $error}
+     (($result (return $result)))){$result}))
+
 (= (mailbox:next $socket $name $owner)
    (function (case (let $space (mailbox:open $socket $name)
      (mailbox:next-in $socket $space $owner)){$space}

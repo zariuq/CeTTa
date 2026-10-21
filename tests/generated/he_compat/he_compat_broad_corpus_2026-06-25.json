@@ -21889,9 +21889,45 @@
     },
     {
       "cetta": {
-        "bytes": 30,
-        "head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
+        "bytes": 50,
+        "head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "observations": [
+          {
+            "kind": "result-bag",
+            "value": [
+              [
+                "()",
+                1
+              ]
+            ]
+          },
+          {
+            "kind": "result-bag",
+            "value": [
+              [
+                "()",
+                1
+              ]
+            ]
+          },
+          {
+            "kind": "result-bag",
+            "value": [
+              [
+                "()",
+                1
+              ]
+            ]
+          },
+          {
+            "kind": "result-bag",
+            "value": [
+              [
+                "()",
+                1
+              ]
+            ]
+          },
           {
             "kind": "result-bag",
             "value": [
@@ -21948,7 +21984,7 @@
           }
         ],
         "returncode": 0,
-        "sha256": "9144fac3c85e0212d983d5868b26c108e4c03b1c950faa86cd098ee93a987e27",
+        "sha256": "74d51caa6648f5807c35a2764e10efdc9bc9f386289d6355227fb19aab027e8c",
         "timed_out": false
       },
       "classification": "agree",
@@ -21965,9 +22001,45 @@
       },
       "path": "tests/test_he_nested_binding_substitution_regression.metta",
       "upstream": {
-        "bytes": 30,
-        "head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
+        "bytes": 50,
+        "head": "[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n[()]\n",
         "observations": [
+          {
+            "kind": "result-bag",
+            "value": [
+              [
+                "()",
+                1
+              ]
+            ]
+          },
+          {
+            "kind": "result-bag",
+            "value": [
+              [
+                "()",
+                1
+              ]
+            ]
+          },
+          {
+            "kind": "result-bag",
+            "value": [
+              [
+                "()",
+                1
+              ]
+            ]
+          },
+          {
+            "kind": "result-bag",
+            "value": [
+              [
+                "()",
+                1
+              ]
+            ]
+          },
           {
             "kind": "result-bag",
             "value": [
@@ -22024,7 +22096,7 @@
           }
         ],
         "returncode": 0,
-        "sha256": "9144fac3c85e0212d983d5868b26c108e4c03b1c950faa86cd098ee93a987e27",
+        "sha256": "74d51caa6648f5807c35a2764e10efdc9bc9f386289d6355227fb19aab027e8c",
         "timed_out": false
       }
     },

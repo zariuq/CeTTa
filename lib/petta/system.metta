@@ -4,6 +4,7 @@
 
 (: system:monotonic-ns (-> Number))
 (: system:cwd (-> String))
+(: system:runtime-root (-> String))
 (= (system:wall-time) (__cetta_lib_system_host wall-time))
 (= (system:pid) (__cetta_lib_system_host pid))
 (= (system:pid-alive? $pid) (__cetta_lib_system_host pid-alive $pid))
@@ -19,5 +20,6 @@
 (= (system:write $stream $bytes) (__cetta_lib_system_write $stream $bytes))
 (= (system:cwd) (__cetta_lib_system_cwd ()))
 (= (system:entry-directory) (__cetta_lib_system_entry_directory ()))
+(= (system:runtime-root) (__cetta_lib_system_runtime_root ()))
 (= (system:monotonic-ns) (__cetta_lib_system_monotonic_ns ()))
 (= (system:timed $suspension) (case (system:monotonic-ns) (($start (case (force $suspension) (($value (case (system:monotonic-ns) (($end (system:timed-result (- $end $start) $value)))))))))))

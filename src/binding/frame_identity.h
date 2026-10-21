@@ -19,27 +19,64 @@
  *   class 2  110    gen:3  handle:26
  *   class 3  1110   gen:2  handle:26
  *
+ * The spelling is declared once, as the FrameIdentity layout in
+ * langdef/layouts/runtime_words.module.  The generated accessors read and
+ * write it, and the class constants below are checked against it when this
+ * header compiles.
+ *
  * A handle's number is unique across classes (cetta_frame_handle), so it
  * can key per-frame tables.  Cells are allocated when their handles are
  * first issued; the number of live identities is bounded by memory, not by
  * a table fixed at build time. */
 typedef uint32_t CettaFrameIdentity;
 
-enum {
-    /* Class 0's spelling: the generation sits above this many handle bits. */
-    CETTA_FRAME_HANDLE_BITS = 20,
-    CETTA_FRAME_GENERATION_BITS = 11,
-};
-
-/* Class 0's handle mask and largest generation. */
-#define CETTA_FRAME_HANDLE_MASK UINT32_C(0x000fffff)
-#define CETTA_FRAME_GENERATION_MAX UINT32_C(0x000007fe)
-
 /* Handles of every class, numbered from one; zero is never a handle. */
 #define CETTA_FRAME_CLASS1_FIRST (UINT32_C(1) << 20)
 #define CETTA_FRAME_CLASS2_FIRST (CETTA_FRAME_CLASS1_FIRST + (UINT32_C(1) << 24))
 #define CETTA_FRAME_CLASS3_FIRST (CETTA_FRAME_CLASS2_FIRST + (UINT32_C(1) << 26))
 #define CETTA_FRAME_HANDLE_LIMIT (CETTA_FRAME_CLASS3_FIRST + (UINT32_C(1) << 26))
+
+/* The largest generation each class spells; class 0's is the largest. */
+#define CETTA_FRAME_GENERATION_MAX UINT32_C(0x000007fe)
+#define CETTA_FRAME_CLASS1_GENERATION_MAX UINT32_C(0x3e)
+#define CETTA_FRAME_CLASS2_GENERATION_MAX UINT32_C(0x6)
+#define CETTA_FRAME_CLASS3_GENERATION_MAX UINT32_C(0x2)
+
+/* In the declared layout, handles first .. next - 1 carry generations
+ * 1 .. max and no others, and a spelling reads back its handle and
+ * generation. */
+#define CETTA_FRAME_LAYOUT_CLASS(first, next, max)                           \
+    (CESTA_LAYOUT_FrameIdentity_admits_BODY((first), 1u) &&                  \
+     CESTA_LAYOUT_FrameIdentity_admits_BODY((first), (max)) &&               \
+     CESTA_LAYOUT_FrameIdentity_admits_BODY((next) - 1u, (max)) &&           \
+     !CESTA_LAYOUT_FrameIdentity_admits_BODY((first), 0u) &&                 \
+     !CESTA_LAYOUT_FrameIdentity_admits_BODY((first), (max) + 1u) &&         \
+     !CESTA_LAYOUT_FrameIdentity_admits_BODY((next) - 1u, (max) + 1u) &&     \
+     CESTA_LAYOUT_FrameIdentity_handle_BODY(                                 \
+         CESTA_LAYOUT_FrameIdentity_encode_BODY((next) - 1u, (max))) ==      \
+         (next) - 1u &&                                                      \
+     CESTA_LAYOUT_FrameIdentity_generation_BODY(                             \
+         CESTA_LAYOUT_FrameIdentity_encode_BODY((first), (max))) == (max))
+
+_Static_assert(CETTA_FRAME_LAYOUT_CLASS(UINT32_C(1), CETTA_FRAME_CLASS1_FIRST,
+                                        CETTA_FRAME_GENERATION_MAX),
+               "class 0 differs from the FrameIdentity layout");
+_Static_assert(CETTA_FRAME_LAYOUT_CLASS(CETTA_FRAME_CLASS1_FIRST,
+                                        CETTA_FRAME_CLASS2_FIRST,
+                                        CETTA_FRAME_CLASS1_GENERATION_MAX),
+               "class 1 differs from the FrameIdentity layout");
+_Static_assert(CETTA_FRAME_LAYOUT_CLASS(CETTA_FRAME_CLASS2_FIRST,
+                                        CETTA_FRAME_CLASS3_FIRST,
+                                        CETTA_FRAME_CLASS2_GENERATION_MAX),
+               "class 2 differs from the FrameIdentity layout");
+_Static_assert(CETTA_FRAME_LAYOUT_CLASS(CETTA_FRAME_CLASS3_FIRST,
+                                        CETTA_FRAME_HANDLE_LIMIT,
+                                        CETTA_FRAME_CLASS3_GENERATION_MAX),
+               "class 3 differs from the FrameIdentity layout");
+_Static_assert(!CESTA_LAYOUT_FrameIdentity_admits_BODY(0u, 1u) &&
+               !CESTA_LAYOUT_FrameIdentity_admits_BODY(
+                   CETTA_FRAME_HANDLE_LIMIT, 1u),
+               "the FrameIdentity layout issues a handle outside the classes");
 
 typedef struct {
     uint32_t handle;
@@ -60,15 +97,15 @@ static inline bool cetta_frame_identity_parts(CettaFrameIdentity identity,
     } else if ((identity >> 30) == 2u) {
         out->handle = (uint32_t)FrameIdentity_handle(identity);
         out->generation = (uint32_t)FrameIdentity_generation(identity);
-        out->generation_max = UINT32_C(0x3e);
+        out->generation_max = CETTA_FRAME_CLASS1_GENERATION_MAX;
     } else if ((identity >> 29) == 6u) {
         out->handle = (uint32_t)FrameIdentity_handle(identity);
         out->generation = (uint32_t)FrameIdentity_generation(identity);
-        out->generation_max = UINT32_C(0x6);
+        out->generation_max = CETTA_FRAME_CLASS2_GENERATION_MAX;
     } else if ((identity >> 28) == 14u) {
         out->handle = (uint32_t)FrameIdentity_handle(identity);
         out->generation = (uint32_t)FrameIdentity_generation(identity);
-        out->generation_max = UINT32_C(0x2);
+        out->generation_max = CETTA_FRAME_CLASS3_GENERATION_MAX;
     } else {
         out->handle = (uint32_t)FrameIdentity_handle(identity);
         out->generation = (uint32_t)FrameIdentity_generation(identity);
@@ -82,17 +119,13 @@ static inline bool cetta_frame_identity_parts(CettaFrameIdentity identity,
 /* The handle an identity names.  Live identities of every class name
  * distinct handles, so it keys per-frame tables. */
 static inline uint32_t cetta_frame_handle(CettaFrameIdentity identity) {
-    CettaFrameIdentityParts parts;
-    (void)cetta_frame_identity_parts(identity, &parts);
-    return parts.handle;
+    return (uint32_t)FrameIdentity_handle(identity);
 }
 
 /* The identity's generation within its handle.  Generations of one handle
  * increase with each reuse. */
 static inline uint32_t cetta_frame_generation(CettaFrameIdentity identity) {
-    CettaFrameIdentityParts parts;
-    (void)cetta_frame_identity_parts(identity, &parts);
-    return parts.generation;
+    return (uint32_t)FrameIdentity_generation(identity);
 }
 
 /* Successful acquisition returns one ownership reference.  Retain refuses a

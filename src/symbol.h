@@ -473,6 +473,7 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_fs_update_text, "__cetta_lib_fs_update_text") \
     X(lib_fs_is_file, "__cetta_lib_fs_is_file") \
     X(lib_fs_write, "__cetta_lib_fs_write") \
+    X(lib_fs_rename, "__cetta_lib_fs_rename") \
     X(lib_fs_append_text, "__cetta_lib_fs_append_text") \
     X(lib_fs_read_lines, "__cetta_lib_fs_read_lines") \
     X(lib_fs_read_lines_between, "__cetta_lib_fs_read_lines_between") \

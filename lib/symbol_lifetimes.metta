@@ -510,4 +510,38 @@
   ; Lookup may precede interning for this holder, which later forms symbol atoms.
   ; Its fixed spelling alone does not establish a lifetime for destructive sweeping.
   (holder src/eval.c static:prime_symbol_cell_head_id:.head unresolved)
+  ; Interned once for the process and only compared afterwards: Megalodon's
+  ; atom and module heads, the regex source's rule head, the agenda
+  ; discovery's exec head, and Prime's interaction, admission, breakpoint and
+  ; discovery-profile words.
+  (holder native/megalodon/mg_atom.c static:.g_ctor_sym owned-vocabulary)
+  (holder native/megalodon/mg_atom.c static:.g_sym owned-vocabulary)
+  (holder native/megalodon/mg_cetta_module.c static:.g_node_symbol owned-vocabulary)
+  (holder native/regex_source_v1.c static:cst_rule_symbol:.id owned-vocabulary)
+  (holder src/eval.c PrimeNeedSymbolIds.control_breakpoint owned-vocabulary)
+  (holder src/eval.c PrimeNeedSymbolIds.equation_admissions owned-vocabulary)
+  (holder src/eval.c PrimeNeedSymbolIds.interaction_choices owned-vocabulary)
+  (holder src/eval.c PrimeNeedSymbolIds.interaction_dispose owned-vocabulary)
+  (holder src/eval.c PrimeNeedSymbolIds.interaction_perform owned-vocabulary)
+  (holder src/eval.c PrimeNeedSymbolIds.resource_matches owned-vocabulary)
+  (holder src/eval.c PrimeNeedSymbolIds.resource_resume owned-vocabulary)
+  (holder src/native_space_agenda.c CettaSpaceAgendaDiscovery.exec owned-vocabulary)
+  ; Looked up, never interned, and only compared while a parse is replayed.
+  (holder experiments/gslt2parse_foundation/native/parser_pack_native_v1.c PPNativeV1ReplaySymbols.* compare-only-cache)
+  ; Held only while one call returns to its caller, one arrow signature is
+  ; read or one name query is answered.
+  (holder src/eval_he_boundary.inc HeOrientRow.spelling transient)
+  (holder src/eval_he_boundary.inc HeOrientVar.spelling transient)
+  (holder src/eval_he_boundary.inc HeQueryRepresentative.spelling transient)
+  (holder src/space.c SpaceArrowSignatureRead.head transient)
+  (holder src/symbol.h SymbolNameQueryResult.ids transient)
+  ; Kept as long as a deterministic plan, a prepared index or an interaction
+  ; discovery lives, which the census does not yet tie to an owner.
+  (holder native/deterministic_equation_plan_v1.c DeterministicEquationContextV1.let_symbol unresolved)
+  (holder native/deterministic_equation_plan_v1.c DeterministicEquationContextV1.nullary_symbol unresolved)
+  (holder native/deterministic_equation_plan_v1.c DeterministicEquationHeadV1.head unresolved)
+  (holder native/deterministic_equation_plan_v1.c DeterministicEquationRuleV1.first_head unresolved)
+  (holder native/deterministic_equation_plan_v1.c DeterministicEquationTemplateV1.head unresolved)
+  (holder native/prepared_unary_index_v1.h CettaPreparedUnaryNodeV1.head unresolved)
+  (holder src/eval.c PrimeInteractionDiscovery.profile unresolved)
 )

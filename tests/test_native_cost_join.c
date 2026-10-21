@@ -3,6 +3,26 @@
 #include <stdio.h>
 static size_t checks;
 #define CHECK(X) do {assert(X); checks++;} while(0)
+static void exact_event_sources(void) {
+ CettaNativeCostEventSource first={0},second={0};
+ CettaNativeCostEvent a={0},b={0},sentinel={.identity=77u};
+ CHECK(!cetta_native_cost_event_source_init(NULL));
+ CHECK(cetta_native_cost_event_source_init(&first));
+ CHECK(cetta_native_cost_event_source_init(&second));
+ CHECK(first.origin && second.origin && first.origin!=second.origin);
+ CHECK(!cetta_native_cost_event_source_issue(
+  &first,CETTA_COST_QUANTUM,0u,&sentinel) && sentinel.identity==77u);
+ CHECK(!cetta_native_cost_event_source_issue(
+  &first,CETTA_COST_KIND_COUNT,1u,&sentinel) && sentinel.identity==77u);
+ CHECK(cetta_native_cost_event_source_issue(
+  &first,CETTA_COST_QUANTUM,3u,&a));
+ CHECK(cetta_native_cost_event_source_issue(
+  &first,CETTA_COST_ANALYSIS_STEP,2u,&b));
+ CHECK(a.identity && b.identity>a.identity && a.origin==first.origin &&
+  b.origin==first.origin && a.occurrence==1u && b.occurrence==2u &&
+  a.units==3u && b.units==2u && a.repetitions==1u && b.repetitions==1u &&
+  a.kind==CETTA_COST_QUANTUM && b.kind==CETTA_COST_ANALYSIS_STEP);
+}
 static void compact_joins(void) {
  CettaNativeCostLedger parent,left,right;CettaNativeCostScope scope;
  cetta_native_cost_init_compact(&parent);cetta_native_cost_init_compact(&left);cetta_native_cost_init(&right);
@@ -40,6 +60,7 @@ static void compact_joins(void) {
 }
 
 int main(void) {
+ exact_event_sources();
  compact_joins();
  CettaNativeCostLedger parent,left,right;CettaNativeCostScope p,l,r;
  cetta_native_cost_init(&parent);cetta_native_cost_init(&left);cetta_native_cost_init(&right);

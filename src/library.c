@@ -13,6 +13,7 @@
 #include "petta_typecheck.h"
 #include "petta_typecheck_v3.h"
 #include "prime_scoped_judgments.h"
+#include "prime_semantics.h"
 #include "rhocalc_core.h"
 #include "rhocalc_syntax.h"
 #include "rule_machine.h"
@@ -194,6 +195,44 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"json", CETTA_LIBRARY_JSON, NULL},
 #endif
 };
+
+/* These namespaces dispatch through structural mechanisms, without a
+ * separate mutable runtime owner. Availability is not permission: the
+ * retained caller still checks every resolved operation before invocation. */
+static const CettaLibraryMask PRIME_SNAPSHOT_MECHANISMS =
+    CETTA_LIBRARY_STR | CETTA_LIBRARY_LTS | CETTA_LIBRARY_RHO | CETTA_LIBRARY_RHOMETTA;
+
+static bool library_prime_snapshot_common(const CettaLibraryContext *ctx) {
+    if (!ctx || ctx->session.language_id!=CETTA_LANGUAGE_PRIME ||
+        ctx->session.profile!=cetta_profile_prime_default() ||
+        ctx->session.test_verdict || ctx->session.test_verdict_context ||
+        ctx->session.process_control.exit_requested || !ctx->petta_program ||
+        ctx->nik_runtime || (ctx->active_mask & ~PRIME_SNAPSHOT_MECHANISMS) ||
+        ctx->petta_trusted_library_import_depth || ctx->import_space_alias_len ||
+        ctx->module_token_scope || ctx->he_module_run_scope || ctx->he_module_failures ||
+        ctx->top_module_space || ctx->top_module_registry || ctx->module_own_view_len ||
+        ctx->retired_module_len || ctx->petta_translator_rules ||
+        ctx->petta_translator_rule_len || ctx->petta_translator_rule_cap ||
+        ctx->petta_tabled_relations || ctx->petta_tabled_relation_len || ctx->petta_tabled_relation_cap ||
+        ctx->petta_memo.all_arities || ctx->petta_memo.all_arity_len || ctx->petta_memo.all_arity_cap ||
+        ctx->petta_memo.exact_arities || ctx->petta_memo.exact_arity_len || ctx->petta_memo.exact_arity_cap ||
+        ctx->petta_shared_table || ctx->petta_open_programs || ctx->petta_open_programs_free ||
+        ctx->petta_match_decisions || ctx->petta_match_decisions_free ||
+        ctx->petta_static_imports || ctx->petta_static_imports_free ||
+        ctx->petta_runtime || ctx->petta_typecheck_v3 || ctx->petta_token_space_clause_registry ||
+        ctx->io_runtime || ctx->durable_runtime || ctx->json_runtime)
+        return false;
+    for (size_t i=0u;i<CETTA_PETTA_MEMO_CONTROL_COUNT;i++)
+        if (ctx->petta_memo.imported_controls[i]) return false;
+    return true;
+}
+
+bool cetta_library_context_prime_snapshot_source_admitted(const CettaLibraryContext *source) {
+    /* Search paths and completed import inventories affect future loading,
+     * which this source profile does not execute. The caller captures and
+     * compares the actual linked code, values and resolved-call meanings. */
+    return library_prime_snapshot_common(source);
+}
 
 static const char *CETTA_MM2_PROGRAM_HANDLE_KIND = "mork-program";
 static const char *CETTA_MM2_CONTEXT_HANDLE_KIND = "mork-context";
@@ -646,6 +685,21 @@ bool cetta_library_context_init_prime_snapshot(CettaLibraryContext *ctx) {
         cetta_profile_prime_default(), false);
     g_hashcons = previous_hashcons;
     return ctx->nik_runtime_mutex_ready && ctx->petta_program != NULL;
+}
+
+bool cetta_library_context_init_prime_snapshot_from(CettaLibraryContext *ctx,
+        const CettaLibraryContext *source) {
+    if (!ctx || !source || ctx==source) return false;
+    bool initialized=cetta_library_context_init_prime_snapshot(ctx);
+    if (!initialized || !cetta_library_context_prime_snapshot_source_admitted(source)) return false;
+    ctx->session=source->session;
+    ctx->active_mask=source->active_mask;
+    ctx->prime_relational_plan_enabled=source->prime_relational_plan_enabled;
+    memcpy(ctx->root_dir,source->root_dir,sizeof(ctx->root_dir));
+    memcpy(ctx->working_dir,source->working_dir,sizeof(ctx->working_dir));
+    memcpy(ctx->script_path,source->script_path,sizeof(ctx->script_path));
+    memcpy(ctx->script_dir,source->script_dir,sizeof(ctx->script_dir));
+    return true;
 }
 
 void cetta_library_context_free(CettaLibraryContext *ctx) {
@@ -1476,6 +1530,31 @@ static bool library_root_has_lib_dir(const char *root) {
            stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+static bool library_resolve_exec_path(const char *argv0, char resolved[PATH_MAX]) {
+    const char *search = getenv("PATH");
+    if (strchr(argv0, '/') || !search)
+        return realpath(argv0, resolved) != NULL;
+    while (true) {
+        const char *end = strchr(search, ':');
+        size_t length = end ? (size_t)(end - search) : strlen(search);
+        char candidate[PATH_MAX];
+        struct stat st;
+        if (length < sizeof(candidate)) {
+            int n = length
+                ? snprintf(candidate, sizeof(candidate), "%.*s/%s",
+                           (int)length, search, argv0)
+                : snprintf(candidate, sizeof(candidate), "%s", argv0);
+            if (n > 0 && (size_t)n < sizeof(candidate) &&
+                stat(candidate, &st) == 0 && S_ISREG(st.st_mode) &&
+                access(candidate, X_OK) == 0 && realpath(candidate, resolved))
+                return true;
+        }
+        if (!end)
+            return false;
+        search = end + 1;
+    }
+}
+
 bool cetta_library_root_for_exec_path(const char *argv0,
                                       char *output, size_t output_size) {
     char resolved[PATH_MAX];
@@ -1485,7 +1564,7 @@ bool cetta_library_root_for_exec_path(const char *argv0,
     if (!output || output_size == 0u)
         return false;
     output[0] = '\0';
-    if (!argv0 || !realpath(argv0, resolved))
+    if (!argv0 || !*argv0 || !library_resolve_exec_path(argv0, resolved))
         return false;
     slash = strrchr(resolved, '/');
     if (!slash)
@@ -4650,6 +4729,12 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
         return ctx->script_dir[0] ? atom_string(a, ctx->script_dir)
             : library_signature_error(a, head, args, nargs, "entry directory is not established");
     }
+    if (atom_is_symbol(head, "__cetta_lib_system_runtime_root")) {
+        if (!system_zero_arg_ok(args, nargs))
+            return library_signature_error(a, head, args, nargs, "expected: (system:runtime-root)");
+        return ctx->root_dir[0] ? atom_string(a, ctx->root_dir)
+            : library_signature_error(a, head, args, nargs, "runtime root is not established");
+    }
     if (head_id == g_builtin_syms.lib_system_monotonic_ns) {
         return system_monotonic_ns(a, head, args, nargs);
     }
@@ -4989,11 +5074,9 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
 static bool rhometta_eval_context_from_current(
     const CettaLibraryContext *ctx, Space *space, RhocalcEvalContext *out) {
     if (!ctx || !space || !out) return false;
-    out->space = space;
-    out->registry = eval_current_registry();
-    out->persistent_arena = eval_current_persistent_arena();
-    out->library_context = (CettaLibraryContext *)ctx;
-    out->payload_failure = NULL;
+    *out=(RhocalcEvalContext){.space=space,.registry=eval_current_registry(),
+        .persistent_arena=eval_current_persistent_arena(),
+        .library_context=(CettaLibraryContext *)ctx};
     return true;
 }
 
@@ -9217,9 +9300,11 @@ bool cetta_library_petta_process_text(
 
     AtomId *atom_ids = NULL;
     char diagnostic[512];
-    int atom_count = parse_metta_text_ids_diagnostic(
-        text, space->native.universe, &atom_ids,
-        diagnostic, sizeof(diagnostic));
+    int atom_count = ctx->session.language_id == CETTA_LANGUAGE_PRIME
+        ? prime_semantics_read_source_text_ids(NULL, text, space->native.universe,
+            &atom_ids, diagnostic, sizeof(diagnostic))
+        : parse_metta_text_ids_diagnostic(text, space->native.universe,
+            &atom_ids, diagnostic, sizeof(diagnostic));
     if (atom_count < 0) {
         const char *message = diagnostic[0] != '\0'
             ? diagnostic : "invalid PeTTa source";
@@ -9761,9 +9846,11 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
         ok = load_he_document(ctx, path, work_space, eval_arena,
                               persistent_arena, registry, source, last_results, error_out);
     } else {
-        int n = parse_metta_file_ids(path,
-                                     work_space ? work_space->native.universe : NULL,
-                                     &atom_ids);
+        int n = ctx->session.language_id == CETTA_LANGUAGE_PRIME
+            ? prime_semantics_read_source_file_ids(NULL, path,
+                work_space ? work_space->native.universe : NULL, &atom_ids, NULL, 0u)
+            : parse_metta_file_ids(path,
+                work_space ? work_space->native.universe : NULL, &atom_ids);
         if (n < 0) {
             ok = false;
             *error_out = module_reason(ctx, eval_arena, "ModuleParseFailed", path);
@@ -12222,28 +12309,17 @@ void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx
     petta_program_storage_census(ctx->petta_program, census);
     /* This constructor/profile has no such owners. Unexpected state is
      * an incomplete census, never a zero-byte approximation of a service. */
-    if (!ctx->nik_runtime_mutex_ready || !ctx->petta_program ||
-        ctx->session.language_id != CETTA_LANGUAGE_PRIME ||
-        ctx->session.profile != cetta_profile_prime_default() ||
-        ctx->session.test_verdict || ctx->session.test_verdict_context ||
-        ctx->nik_runtime || ctx->active_mask || ctx->import_dir_len || ctx->module_mount_len ||
-        ctx->petta_library_paths.items || ctx->petta_library_paths.len ||
-        ctx->petta_library_paths.cap || ctx->imported_file_len ||
-        ctx->petta_trusted_library_import_depth || ctx->import_space_alias_len ||
-        ctx->cmdline_arg_len || ctx->loaded_module_len || ctx->module_token_scope ||
-        ctx->top_module_space || ctx->retired_modules || ctx->retired_module_len || ctx->retired_module_cap ||
-        ctx->native_handle_registry || ctx->native_handle_next_id != 1u ||
-        ctx->petta_translator_rules || ctx->petta_translator_rule_len || ctx->petta_translator_rule_cap ||
-        ctx->petta_tabled_relations || ctx->petta_tabled_relation_len || ctx->petta_tabled_relation_cap ||
-        ctx->petta_memo.all_arities || ctx->petta_memo.all_arity_len || ctx->petta_memo.all_arity_cap ||
-        ctx->petta_memo.exact_arities || ctx->petta_memo.exact_arity_len || ctx->petta_memo.exact_arity_cap ||
-        ctx->petta_shared_table || ctx->petta_open_programs || ctx->petta_open_programs_free ||
-        ctx->petta_match_decisions || ctx->petta_match_decisions_free ||
-        ctx->petta_static_imports || ctx->petta_static_imports_free || ctx->petta_runtime || ctx->petta_typecheck_v3 ||
-        ctx->petta_token_space_clause_registry || ctx->lib_prolog || ctx->foreign_runtime ||
-        ctx->io_runtime || ctx->json_runtime)
+    if (!library_prime_snapshot_common(ctx) || !ctx->nik_runtime_mutex_ready ||
+        ctx->import_dirs || ctx->import_dir_len || ctx->import_dir_cap ||
+        ctx->module_mounts || ctx->module_mount_len || ctx->module_mount_cap ||
+        ctx->petta_library_paths.items || ctx->petta_library_paths.len || ctx->petta_library_paths.cap ||
+        ctx->imported_files || ctx->imported_file_len || ctx->imported_file_cap || ctx->cmdline_arg_len ||
+        ctx->loaded_modules || ctx->loaded_module_len || ctx->loaded_module_cap ||
+        ctx->module_own_views || ctx->module_own_view_cap ||
+        ctx->retired_modules || ctx->retired_module_cap ||
+        ctx->he_module_aliases || ctx->he_module_alias_len || ctx->he_module_alias_cap ||
+        ctx->native_handle_registry || ctx->native_handle_next_id!=1u ||
+        ctx->lib_prolog || ctx->foreign_runtime || ctx->parser_cache ||
+        ctx->prime_hol_guest || ctx->prime_hol_guest_free || ctx->prime_lf_guest || ctx->prime_lf_guest_free)
         cetta_storage_refuse(census, "PrivateServiceProfileChanged");
-    for (size_t i = 0u; i < CETTA_PETTA_MEMO_CONTROL_COUNT; i++)
-        if (ctx->petta_memo.imported_controls[i])
-            cetta_storage_refuse(census, "PrivateServiceProfileChanged");
 }

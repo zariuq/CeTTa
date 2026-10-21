@@ -149,6 +149,13 @@
    (DelayedLow $answer))
 !(let $answer (type:must (delayed-answer) Nat 20000)
    (DelayedHigh $answer))
+; The same bounded producer exposes a positive witness and a complete
+; single-type result, including the ready cells used by recursive arithmetic.
+!(let $answer (type:may (delayed-answer) Bool 20000)
+   (DelayedMayWitness $answer))
+(= (delayed-only) (delayed-value 2))
+!(let $answer (type:must (delayed-only) Bool 1000)
+   (DelayedMustAll $answer))
 ; PrimeDef is a structured package. Its nucleus and each added semantic
 ; component are separate fields rather than a prose descriptor.
 !(prime-def-roots (prime-package &self))

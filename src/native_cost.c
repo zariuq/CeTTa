@@ -30,6 +30,30 @@ static const char *const names[CETTA_COST_KIND_COUNT] = {
     "coefficient-handle",
 };
 
+bool cetta_native_cost_event_source_init(CettaNativeCostEventSource *source) {
+    if (!source) return false;
+    *source=(CettaNativeCostEventSource){
+        .origin=cetta_identity_try_take(&next_ledger_identity)};
+    source->exhausted=!source->origin;
+    return !source->exhausted;
+}
+
+bool cetta_native_cost_event_source_issue(CettaNativeCostEventSource *source,
+    CettaNativeCostKind kind,uint64_t units,CettaNativeCostEvent *event) {
+    if (!source || !event || source->exhausted || !source->origin || !units ||
+        (unsigned)kind>=CETTA_COST_KIND_COUNT) return false;
+    if (source->next_occurrence==UINT64_MAX) {
+        source->exhausted=true;return false;
+    }
+    uint64_t identity=cetta_identity_try_take(&next_event_identity);
+    if (!identity) { source->exhausted=true;return false; }
+    source->next_occurrence++;
+    *event=(CettaNativeCostEvent){.identity=identity,.origin=source->origin,
+        .occurrence=source->next_occurrence,.units=units,.repetitions=1u,
+        .kind=kind};
+    return true;
+}
+
 void cetta_native_cost_init(CettaNativeCostLedger *ledger) {
     if (ledger) {
         memset(ledger, 0, sizeof(*ledger));

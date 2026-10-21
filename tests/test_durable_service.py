@@ -6,7 +6,7 @@ import os
 import pathlib
 import signal
 import socket
-import sqlite3
+from support.durable_journal_fixture import records as native_records
 import subprocess
 import sys
 import tempfile
@@ -68,11 +68,7 @@ class ServicePeer(Peer):
 
 
 def records(db, space):
-    try:
-        with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as conn:
-            return dict(conn.execute("SELECT key,value FROM records WHERE space=?", (space,)))
-    except sqlite3.OperationalError:
-        return {}
+    return native_records(db, space)
 
 
 def wait_for(proc, predicate, description, seconds=12):

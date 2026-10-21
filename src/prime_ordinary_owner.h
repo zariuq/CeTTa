@@ -109,6 +109,18 @@ bool eval_prime_source_execution_is_current(const CettaOwnedExecution *);
  * Neither operation replenishes a host's separate total-work purse. */
 bool eval_prime_source_execution_work(const CettaOwnedExecution *, uint64_t *);
 bool eval_prime_source_execution_set_quantum(const CettaOwnedExecution *, uint64_t);
+/* Select one preparation slice per provider invocation without advancing it.
+ * NULL restores unlimited preparation. A source provider loans its result;
+ * destination transport belongs to its consumer, so a transport limit is
+ * refused here. The same raw row and partial reification survive policy
+ * changes, zero slices and shared-driver moves. The work view reports the
+ * explicitly sliced preparation steps accumulated by this owner; unlimited
+ * untouched preparation has no traversal counter. Controller credit, callback
+ * counts and primitive/time prices remain separate. */
+bool eval_prime_source_execution_set_return_slice(
+    const CettaOwnedExecution *, const CettaPrimeReturnSlice *);
+bool eval_prime_source_execution_return_work(
+    const CettaOwnedExecution *, CettaPrimeReturnWork *);
 
 /* These operations require the actual live source driver, including after
  * movement into the shared producer. Calls are serialized and the provider

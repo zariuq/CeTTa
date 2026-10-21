@@ -119,6 +119,29 @@
   (rule diagnostic-determinate-rule-use
     (= (observe diagnostic determinate-rule-use) emit)))
 
+; Placement and progress are separate from effects.  A known-pure call still
+; needs a progress contract before it may occupy a responsive worker slot;
+; conversely a yielding control form may remain coordinator-owned.  Unknown
+; calls are never inferred to be local or bounded.
+(gslt native-service-admission
+  (sort PlacementAdvice)
+  (placement local)
+  (placement coordinator)
+  (placement unresolved)
+  (sort ProgressAdvice)
+  (progress bounded)
+  (progress yielding)
+  (progress isolated)
+  (progress unresolved-progress)
+  (rule bounded-local
+    (= (inline-service local bounded) admitted))
+  (rule yielding-local
+    (= (inline-service local yielding) admitted))
+  (law isolated-needs-boundary
+    (= (inline-service coordinator isolated) refused))
+  (law unresolved-is-refused
+    (= (inline-service unresolved unresolved-progress) refused)))
+
 (gslt resource-lifetime
   (sort State)
   (state uninitialized)
@@ -640,7 +663,7 @@
 
 (composition cetta-execution-contracts
   (components relational-may-effect streamed-row-disposition
-              observation-profile resource-lifetime
+              observation-profile native-service-admission resource-lifetime
               determinate-equation-continuation
               total-expression-normalization
               value-allocation
@@ -652,6 +675,21 @@
 
 (interpretation cetta-native-execution (of cetta-execution-contracts)
   (query-default pure)
+  ; The default is conservative.  These rows cover the fixed native heads
+  ; which the retained worker/service boundary can classify independently of
+  ; a user program.  Constructors and revision-pinned user equations use the
+  ; category rules below rather than an ever-growing spelling list.
+  (native-call-default unresolved unresolved-progress)
+  (native-call-constructor local bounded 1)
+  (native-call-user-equation local yielding)
+  (native-call-head decons-atom local bounded 1)
+  (native-call-head cons-atom local bounded 1)
+  (native-call-head car-atom local bounded 1)
+  (native-call-head cdr-atom local bounded 1)
+  (native-call-head get-metatype local bounded 1)
+  (native-call-head context-space local bounded 1)
+  (native-call-head select coordinator yielding)
+  (native-call-head readln! coordinator isolated)
   (query-head match relational-query)
   (query-head get-atoms relational-query)
   (query-head mork:match relational-query)
@@ -689,6 +727,16 @@
   (query-head step! world-write)
   (query-head transaction world-write)
   (query-head get-state relational-query)
+  (query-head space-push world-write)
+  (query-head space-pop world-write)
+  (query-head space-truncate world-write)
+  (query-head space-get relational-query)
+  (query-head space-len relational-query)
+  (query-head space-peek relational-query)
+  (query-head size relational-query)
+  (query-head count-atoms relational-query)
+  (query-head _minimal-space-contains-exact relational-query)
+  (query-head _minimal-space-revision relational-query)
   (query-head runtime-stats! relational-query)
   (query-head __cetta_lib_system_exit_with_code world-write)
   (query-head __cetta_lib_system_write world-write)
@@ -711,6 +759,7 @@
   (query-head __cetta_lib_fs_try_canonical_under relational-query)
   (query-head __cetta_lib_fs_read_text relational-query)
   (query-head __cetta_lib_fs_write world-write)
+  (query-head __cetta_lib_fs_rename world-write)
   (query-head __cetta_lib_fs_append_text world-write)
   (query-head __cetta_lib_fs_read_lines relational-query)
   (query-head __cetta_lib_fs_metadata relational-query)

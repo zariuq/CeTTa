@@ -64,7 +64,7 @@ static CettaDurableStatus save(CettaSupervisor *s, CettaDurableObservation *obs,
     if (t->payload_bytes>SIZE_MAX-HEADER_BYTES ||
         t->result_bytes>SIZE_MAX-HEADER_BYTES-t->payload_bytes) return DURABLE_LIMIT;
     size_t bytes=HEADER_BYTES+t->payload_bytes+t->result_bytes;
-    if (bytes>s->record_bytes) return DURABLE_LIMIT;
+    if (s->record_bytes && bytes>s->record_bytes) return DURABLE_LIMIT;
     unsigned char *p=calloc(1,bytes);
     if (!p) return DURABLE_NOMEM;
     memcpy(p,task_magic,8); put64(p+8,t->remaining); put64(p+16,t->generation);
@@ -233,8 +233,8 @@ CettaDurableStatus cetta_supervisor_reply(CettaSupervisor *s,const char *epoch,
     if (st==DURABLE_PRECONDITION) st=DURABLE_OK;
     else if (st==DURABLE_OK && current(s,epoch,generation,&t) &&
         t.phase==(kind==SUP_COMPLETE?SUP_ACTIVE:SUP_UNCERTAIN)) {
-        bool fits=s->record_bytes>=HEADER_BYTES && t.payload_bytes<=s->record_bytes-HEADER_BYTES &&
-            bytes<=s->record_bytes-HEADER_BYTES-t.payload_bytes;
+        bool fits=!s->record_bytes || (s->record_bytes>=HEADER_BYTES && t.payload_bytes<=s->record_bytes-HEADER_BYTES &&
+            bytes<=s->record_bytes-HEADER_BYTES-t.payload_bytes);
         unsigned char *copy=fits?malloc(bytes?bytes:1):NULL;
         if (!copy) st=fits?DURABLE_NOMEM:DURABLE_LIMIT;
         else {

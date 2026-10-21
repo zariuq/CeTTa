@@ -10,7 +10,7 @@ import json
 import pathlib
 import signal
 import socket
-import sqlite3
+from support.durable_journal_fixture import records as native_records
 import subprocess
 import sys
 import tempfile
@@ -53,11 +53,7 @@ class ChannelPeer(Peer):
 
 
 def rows(database, space):
-    try:
-        with sqlite3.connect(f'file:{database}?mode=ro', uri=True) as c:
-            return dict(c.execute('SELECT key,value FROM records WHERE space=?', (space,)))
-    except sqlite3.OperationalError:
-        return {}
+    return native_records(database, space)
 
 
 def wait(proc, predicate, label, seconds=15):

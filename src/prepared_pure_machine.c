@@ -2337,6 +2337,15 @@ static bool prepared_pure_bind_var_index(
     return false;
 }
 
+static bool prepared_pure_pattern_needs_host(const Atom *pattern) {
+    const BindingsStructureHooks *structure = bindings_structure_hooks();
+    return (structure && structure->code_pattern &&
+            structure->code_pattern(pattern)) ||
+        (eval_current_language_id &&
+         eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+         prime_semantics_pattern_takes_code_apart(pattern));
+}
+
 /* Compile a binder pattern into positional slot actions.  A variable already
  * visible at the binder is a rigid reference; the first occurrence of a fresh
  * variable allocates a slot, and later occurrences share that same slot. */
@@ -2352,9 +2361,7 @@ static bool prepared_pure_compile_bind_pattern(
     /* Binder-aware code patterns use the language's matching authority,
      * just as equation heads do. Decline before allocating slots or
      * charging an invocation; structural mismatch is not code mismatch. */
-    const BindingsStructureHooks *structure = bindings_structure_hooks();
-    if (structure && structure->code_pattern &&
-        structure->code_pattern(pattern))
+    if (prepared_pure_pattern_needs_host(pattern))
         return prepared_pure_reject(
             program, "binding pattern takes code apart", pattern);
 
@@ -4433,10 +4440,9 @@ static bool prepared_pure_ground_data(CettaPreparedPureProgram *program,
     while (data && len > 0u) {
         Atom *node = stack[--len];
         if (node->kind == ATOM_SYMBOL) {
-            CettaPreparedPureExpressionView view = {0};
-            data = !program->expression_view ||
-                program->expression_view(program->space, node, &view) !=
-                    CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY;
+            /* A dialect-owned zero, projection or refusal is not an inert
+             * field. Use the same leaf judgment as retained value slots. */
+            data = prepared_pure_leaf_ready(program, node);
             continue;
         }
         if (node->kind == ATOM_GROUNDED) {
@@ -6156,9 +6162,7 @@ static bool prepared_pure_compile_head(
         /* A head that takes code apart meets the code binder by binder
          * (the language's binding structure, bindings_structure_hooks),
          * which the equation query does. */
-        const BindingsStructureHooks *structure = bindings_structure_hooks();
-        if (structure && structure->code_pattern &&
-            structure->code_pattern(occurrence.lhs))
+        if (prepared_pure_pattern_needs_host(occurrence.lhs))
             return prepared_pure_reject(
                 program, "equation head takes code apart", occurrence.lhs);
 

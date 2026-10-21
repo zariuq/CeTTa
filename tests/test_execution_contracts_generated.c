@@ -14,6 +14,7 @@ static void test_query_head_rows(void) {
     bool saw_match = false, saw_get_atoms = false, saw_mork_match = false;
     bool saw_get_type = false, saw_get_type_space = false;
     bool saw_add_atom = false, saw_remove_atom = false;
+    unsigned saw_space_contracts = 0u;
 #define COUNT_HEAD(head, effect) do { \
     assert((effect) != CETTA_GSLT_QUERY_EFFECT_PURE); \
     rows++; \
@@ -26,6 +27,25 @@ static void test_query_head_rows(void) {
     if (strcmp(#head, "mork_match_syntax") == 0) saw_mork_match = true; \
     if (strcmp(#head, "get_type") == 0) saw_get_type = true; \
     if (strcmp(#head, "get_type_space") == 0) saw_get_type_space = true; \
+    if (strcmp(#head, "space_push") == 0 || \
+        strcmp(#head, "space_pop") == 0 || \
+        strcmp(#head, "space_truncate") == 0) { \
+        assert((effect) == CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE); \
+        saw_space_contracts++; \
+    } \
+    if (strcmp(#head, "space_get") == 0 || \
+        strcmp(#head, "space_len") == 0 || \
+        strcmp(#head, "space_peek") == 0 || \
+        strcmp(#head, "size") == 0 || \
+        strcmp(#head, "count_atoms") == 0) { \
+        assert((effect) == CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY); \
+        saw_space_contracts++; \
+    } \
+    if (strcmp(#head, "minimal_space_contains_exact") == 0 || \
+        strcmp(#head, "minimal_space_revision") == 0) { \
+        assert((effect) == CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY); \
+        saw_space_contracts++; \
+    } \
 } while (0);
     CETTA_GSLT_QUERY_EFFECT_HEAD_ROWS(COUNT_HEAD)
 #undef COUNT_HEAD
@@ -33,6 +53,7 @@ static void test_query_head_rows(void) {
     assert(saw_match && saw_get_atoms && saw_mork_match);
     assert(saw_get_type && saw_get_type_space);
     assert(saw_add_atom && saw_remove_atom);
+    assert(saw_space_contracts == 10u);
 
     /* Joining is union over the two flags. */
     assert(cetta_gslt_query_effect_join(
@@ -74,6 +95,37 @@ static void test_query_head_rows(void) {
             CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE));
     assert(CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL ==
            CETTA_GSLT_QUERY_EFFECT_PURE);
+}
+
+static void test_native_service_advice(void) {
+    unsigned rows=0u,local=0u,coordinator=0u,isolated=0u;
+#define COUNT_NATIVE_CALL(field,placement,progress,bound) do { \
+    rows++; \
+    if ((placement)==CETTA_GSLT_PLACEMENT_LOCAL) { \
+        local++; \
+        assert(cetta_gslt_progress_inline(progress)); \
+    } else if ((placement)==CETTA_GSLT_PLACEMENT_COORDINATOR) { \
+        coordinator++; \
+    } else assert(0); \
+    if ((progress)==CETTA_GSLT_PROGRESS_BOUNDED) assert((bound)>0u); \
+    else assert((bound)==0u); \
+    if ((progress)==CETTA_GSLT_PROGRESS_ISOLATED) isolated++; \
+} while (0);
+    CETTA_GSLT_NATIVE_CALL_HEAD_ROWS(COUNT_NATIVE_CALL)
+#undef COUNT_NATIVE_CALL
+    assert(rows==8u && local==6u && coordinator==2u && isolated==1u);
+    CettaGsltNativeCallAdvice fallback=CETTA_GSLT_NATIVE_CALL_DEFAULT;
+    CettaGsltNativeCallAdvice constructor=CETTA_GSLT_NATIVE_CALL_CONSTRUCTOR;
+    CettaGsltNativeCallAdvice equation=CETTA_GSLT_NATIVE_CALL_USER_EQUATION;
+    assert(fallback.placement==CETTA_GSLT_PLACEMENT_UNRESOLVED &&
+        fallback.progress==CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS &&
+        !cetta_gslt_progress_inline(fallback.progress));
+    assert(constructor.placement==CETTA_GSLT_PLACEMENT_LOCAL &&
+        constructor.progress==CETTA_GSLT_PROGRESS_BOUNDED &&
+        constructor.bound==1u);
+    assert(equation.placement==CETTA_GSLT_PLACEMENT_LOCAL &&
+        equation.progress==CETTA_GSLT_PROGRESS_YIELDING && !equation.bound);
+    assert(!cetta_gslt_progress_inline(CETTA_GSLT_PROGRESS_ISOLATED));
 }
 
 static void test_row_dispositions(void) {
@@ -817,6 +869,7 @@ static void test_generated_tuple_machine_roots(void) {
 
 int main(void) {
     test_query_head_rows();
+    test_native_service_advice();
     test_row_dispositions();
     test_observation_and_lifetime();
     test_prepared_equation_admission();

@@ -16,6 +16,8 @@ typedef enum {
     CETTA_EVAL_INCOMPLETE_HOST_FAILURE,
     /* A denied effect remains observable even when an Error is caught. */
     CETTA_EVAL_INCOMPLETE_EFFECT_DENIED,
+    /* A requested finite service slice retained its unfinished computation. */
+    CETTA_EVAL_INCOMPLETE_PAUSED,
 } CettaEvalCompletion;
 
 #endif

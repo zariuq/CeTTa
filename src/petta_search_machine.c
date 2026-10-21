@@ -10069,6 +10069,7 @@ static bool petta_transfer_hosts_equal(
     if (left->measure_stats != right->measure_stats) return false;
     if (left->quote_is_inert_data != right->quote_is_inert_data) return false;
     if (left->return_occurrence_owner != right->return_occurrence_owner) return false;
+    if (left->project_environment != right->project_environment) return false;
     if (left->graded_equations != right->graded_equations) return false;
     if (left->empty_symbol_is_no_result != right->empty_symbol_is_no_result) return false;
     if (left->source_output_constraints != right->source_output_constraints) return false;
@@ -23489,8 +23490,9 @@ static bool petta_machine_start_collapse(
         return false;
     }
     /* Collapse consumes owned values and delayed goals, then discards each
-     * returned environment. Keep answer materialization and Prime resources,
-     * but omit the ordinary visible exports that this private owner ignores
+     * returned environment. Keep answer materialization and the answer's
+     * resource leases, but omit the environment this private owner ignores:
+     * its visible exports and its Prime occurrence
      * (Collapse.Publication.collect_mapReceipts). Externalized child work
      * keeps the full publication contract. */
     inner->impl->discard_visible_bindings =
@@ -38230,7 +38232,11 @@ static bool petta_machine_dispatch_goal(
     Bindings host_environment;
     bindings_init(&host_environment);
     bool projected = true;
-    if (first && atom_has_vars(first)) {
+    if (machine->host.project_environment) {
+        projected = machine->host.project_environment(
+            machine->host.context, &machine->heap, first,
+            environment, &host_environment);
+    } else if (first && atom_has_vars(first)) {
         Atom *roots[] = {first};
         projected = bindings_project_reachable(
             environment, roots, 1u, &host_environment);
@@ -38394,8 +38400,20 @@ static bool petta_machine_emit(
         PETTA_ATOM_COPY_ANSWER, copies);
     if (!promoted)
         goto fail_exports;
-    if (bindings_prime_present(current)) {
-        bindings_prime_assign(environment, current);
+    /* A closed collected value needs no occurrence copy. Opaque fields are
+     * different: discarding visible query bindings must not discard the
+     * lexical world needed to demand those fields later. */
+    if ((!machine->discard_visible_bindings ||
+         (machine->host.project_environment && atom_has_registry_refs(resolved))) &&
+        (machine->host.project_environment || bindings_prime_present(current))) {
+        if (machine->host.project_environment) {
+            if (!machine->host.project_environment(
+                    machine->host.context, &machine->heap, resolved,
+                    current, environment))
+                goto fail_exports;
+        } else {
+            bindings_prime_assign(environment, current);
+        }
         Arena *occurrence_owner = machine->host.return_occurrence_owner
             ? machine->host.return_occurrence_owner(
                 machine->host.context, machine->answer_arena, environment)

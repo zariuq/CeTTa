@@ -9,6 +9,15 @@
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
+/* Refutation requires an actual mismatch. Resource exhaustion, invalid
+ * frame state and undecided cyclic/list meetings remain incomplete. The
+ * same distinction applies when preparing a compatible binding image. */
+typedef enum {
+    CETTA_MATCH_INCOMPLETE,
+    CETTA_MATCH_REFUTED,
+    CETTA_MATCH_MATCHED,
+} CettaMatchCompletion;
+
 typedef enum {
     BINDING_VALUE_MATERIALIZED,
     BINDING_VALUE_CONTEXTUAL,
@@ -763,6 +772,10 @@ bool bindings_add_vars(Bindings *bindings, Atom *const *variables,
 bool      bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);
 bool      bindings_try_merge_live(Bindings *dst, const Bindings *src);
+/* Failure preserves dst. REFUTED is a witnessed incompatibility;
+ * INCOMPLETE never licenses discarding a candidate or certifying absence. */
+CettaMatchCompletion bindings_try_merge_live_checked(
+    Bindings *dst, const Bindings *src);
 bool      bindings_clone_merge(Bindings *dst, const Bindings *base,
                                const Bindings *extra);
 bool      bindings_contains_private_variant_slots(const Bindings *b);
@@ -1043,6 +1056,8 @@ bool      bindings_builder_add_id_fresh(BindingsBuilder *bb, VarId var_id,
 bool      bindings_builder_add_var_fresh(BindingsBuilder *bb, Atom *var,
                                          Atom *val);
 bool      bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src);
+CettaMatchCompletion bindings_builder_try_merge_checked(
+    BindingsBuilder *builder, const Bindings *source);
 const Bindings *bindings_builder_bindings(const BindingsBuilder *bb);
 void      bindings_builder_take(BindingsBuilder *bb, Bindings *out);
 
@@ -1153,14 +1168,8 @@ bool match_atoms_builder_with_attempt_frame(
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
 /* Epoch-aware matcher over an existing trail-backed environment.  The caller
  * owns the save/rollback boundary when failure must be transactional. */
-/* A refutation is an actual rigid mismatch. Resource exhaustion, invalid
- * frame state and undecided cyclic/list meetings remain incomplete. Checked
- * callers use this when absence, rather than one positive match, is evidence. */
-typedef enum {
-    CETTA_MATCH_INCOMPLETE,
-    CETTA_MATCH_REFUTED,
-    CETTA_MATCH_MATCHED,
-} CettaMatchCompletion;
+/* Checked callers use this when absence, rather than one positive match,
+ * is evidence. */
 CettaMatchCompletion match_atoms_epoch_builder_checked(
     Atom *left, Atom *right, BindingsBuilder *builder, Arena *arena,
     uint32_t epoch, uint64_t pair_budget);
@@ -1177,8 +1186,12 @@ typedef enum {
  * trail, path set and copy transport. Syntax and result arena are borrowed.
  * A zero grant performs no matching. A grant counts worklist nodes and alias
  * resolution retries and retained graph-query actions. Occurs queries use an
- * acyclic private binding image; finite-occurrence audits check the atom graph. Equality, hash growth, frame admission, transport and binding
- * publication still need their own byte/work bounds. A pair's match-node debit
+ * acyclic private binding image; finite-occurrence audits check the atom graph.
+ * Graph-query memo clearing, probing and migration debit index visits; stack
+ * copying and traversal debit analysis steps. Each position survives a pause.
+ * Equality, variable-index maintenance, frame admission, allocator calls,
+ * transport and binding publication still need their own byte/work bounds.
+ * A pair's match-node debit
  * is paid once, including when a nested operation spans several grants.
  * INCOMPLETE retains an undecided primitive; it is not a rigid refutation.
  * CAPACITY retains a refused identity reservation. */
@@ -1196,6 +1209,9 @@ CettaMatchCursor *match_atoms_cursor_clone(const CettaMatchCursor *source);
  * registered map must include the result arena and every reachable Atom
  * owner; syntax and result domains cannot be collapsed into one arena.
  * No matcher transition is replayed. Saved pointer-key tables are rehashed;
+ * an unfinished physical probe is rebased for its relocated key while old
+ * migration rows and stack-copy positions are retained. Relocation has its
+ * own unbounded transport/allocation price, outside a matching grant;
  * inconsistent shared-buffer images or borrowed activation accelerators
  * refuse the copy. Refusal preserves the source; the caller discards the
  * unpublished destinations/session. All mapped destination arenas and separately
@@ -1212,6 +1228,18 @@ bool match_atoms_cursor_take(CettaMatchCursor *cursor, Bindings *out);
 void match_atoms_cursor_free(CettaMatchCursor *cursor);
 void match_atoms_cursor_storage_census(const CettaMatchCursor *cursor,
     CettaStorageCensus *census);
+
+#ifdef CETTA_TEST_HOOKS
+typedef struct {
+    unsigned phase;
+    size_t capacity, next_capacity, cleared, scanned, probe;
+    size_t stack_length, stack_capacity, next_stack_capacity, copied;
+} CettaMatchGraphTestState;
+bool match_atoms_cursor_test_graph(const CettaMatchCursor *cursor,
+    CettaMatchGraphTestState *state);
+size_t match_atoms_cursor_test_bucket(Atom *atom, size_t mask);
+void match_atoms_cursor_test_refuse_graph_allocation(void);
+#endif
 
 bool match_atoms_epoch_builder(Atom *left, Atom *right,
                                BindingsBuilder *bb, Arena *a,

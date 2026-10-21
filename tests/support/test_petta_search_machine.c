@@ -852,23 +852,15 @@ static void test_type_frame_exhaustion(Arena *arena) {
         Atom *ground = parse_one(arena, "exhaustion-ground");
         Atom *poly = parse_one(arena, "exhaustion-poly");
         Atom *number = parse_one(arena, "Number");
-        /* The facility grows with demand; bound it in this child so that
-         * exhaustion is reached without issuing every handle it could. */
-        cetta_frame_identity_limit_handles(UINT32_C(1) << 16);
-        size_t capacity = (size_t)1u << 16;
-        CettaFrameIdentity *held = malloc(sizeof(*held) * capacity);
+        /* This child bounds the handle table so that holding every handle
+         * is cheap; the bound is the facility's, the behavior the same. */
+        const size_t limit = (size_t)1u << 16;
+        cetta_frame_identity_limit_handles((uint32_t)limit);
+        CettaFrameIdentity *held = malloc(sizeof(*held) * limit);
         assert(held);
         size_t count = 0u;
-        for (;;) {
-            if (count == capacity) {
-                capacity *= 2u;
-                held = realloc(held, sizeof(*held) * capacity);
-                assert(held);
-            }
-            if (!cetta_frame_identity_acquire(&held[count]))
-                break;
+        while (count < limit && cetta_frame_identity_acquire(&held[count]))
             count++;
-        }
         Atom **types = NULL;
         uint32_t length = 0u;
         CettaEvalCompletion completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
@@ -949,6 +941,69 @@ static void test_type_stack_exhaustion(void) {
     space_free(&space);
     arena_free(&arena);
     puts("PASS: deep native type inference and checking report stack exhaustion and recover");
+}
+
+static void test_type_call_arity(Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init(&space);
+    Atom *head = parse_one(arena, "arity-facts");
+    Atom *unary = parse_one(arena, "(: arity-facts (-> Number Number))");
+    Atom *binary = parse_one(arena, "(: arity-facts (-> Number Number Number))");
+    Atom *equation = parse_one(arena, "(= (arity-facts $x) $x)");
+    space_add(&space, unary);
+    space_add(&space, binary);
+    space_add(&space, equation);
+    for (unsigned cache = 0u; cache < 2u; cache++) {
+        PettaTypeCall *calls = NULL;
+        uint32_t count = 0u;
+        bool held = false;
+        assert(petta_program_type_calls(cache ? program : NULL, &space,
+            head, 1u, arena, &calls, &count, &held));
+        assert(count == 1u && calls[0].arity == 1u);
+        free(calls);
+    }
+    /* Fill the arity cache in reverse order and revisit it. Selection must
+     * agree with an uncached observation beyond its initial capacity. */
+    for (unsigned pass = 0u; pass < 2u; pass++) {
+        for (CettaExprLen supplied = 130u; supplied > 0u; supplied--) {
+            PettaTypeCall *cached = NULL, *fresh = NULL;
+            uint32_t cached_count = 0u, fresh_count = 0u;
+            bool cached_hold = false, fresh_hold = false;
+            assert(petta_program_type_calls(program, &space, head,
+                supplied - 1u, arena, &cached, &cached_count, &cached_hold));
+            assert(petta_program_type_calls(NULL, &space, head,
+                supplied - 1u, arena, &fresh, &fresh_count, &fresh_hold));
+            assert(cached_count == fresh_count && cached_hold == fresh_hold);
+            for (uint32_t i = 0u; i < cached_count; i++)
+                assert(atom_alpha_eq(cached[i].signature, fresh[i].signature));
+            free(cached);
+            free(fresh);
+        }
+    }
+    assert(space_remove(&space, unary));
+    PettaTypeCall *calls = NULL;
+    uint32_t count = 0u;
+    bool held = false;
+    assert(petta_program_type_calls(program, &space, head, 1u, arena,
+                                    &calls, &count, &held));
+    assert(count == 0u);
+    free(calls);
+    assert(space_remove(&space, equation));
+    space_add(&space, parse_one(arena, "(= (arity-facts $x $y) $x)"));
+    assert(petta_program_type_calls(program, &space, head, 1u, arena,
+                                    &calls, &count, &held));
+    assert(count == 1u && calls[0].arity == 2u);
+    free(calls);
+    space_add(&space, equation);
+    assert(petta_program_type_calls(program, &space, head, 1u, arena,
+                                    &calls, &count, &held));
+    assert(count == 0u);
+    free(calls);
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: cached and uncached type families distinguish full calls from partial application");
 }
 
 static void test_type_call_facts(Arena *arena) {
@@ -12299,6 +12354,15 @@ static void test_operation_pause_control(Space *space, Arena *persistent, Arena 
     puts("PASS: native breakpoint retains operation before budget; current authorization, duplicate answers, restored images and one-shot host effects remain distinct");
 }
 
+static bool project_owned_transfer_environment(
+        void *context, Arena *arena, Atom *value,
+        const Bindings *environment, Bindings *projected) {
+    (void)context;
+    (void)arena;
+    Atom *roots[] = {value};
+    return bindings_project_reachable(environment, roots, 1u, projected);
+}
+
 static void test_owned_continuation_transfer(
         Space *space, Arena *persistent, Arena *answers) {
     add_equation(space, persistent, "(= (owned-transfer-choice) 1)");
@@ -12328,6 +12392,7 @@ static void test_owned_continuation_transfer(
             .context=&from, .admit_branch_capture=admit_effect_free_continuation,
             .admit_branch_transfer=admit_owned_continuation_transfer,
             .permit_transition=permit_owned_continuation_transition,
+            .project_environment=project_owned_transfer_environment,
         };
         PettaMachineHost target_host = source_host;
         target_host.context = &to;
@@ -12366,6 +12431,13 @@ static void test_owned_continuation_transfer(
             assert(image.payload == original_payload);
             petta_machine_destroy(&target);
             target_host.empty_symbol_is_no_result = false;
+            target_host.project_environment = NULL;
+            assert(petta_machine_init(&target, space, answers, query, NULL, &target_host));
+            assert(petta_machine_transfer_continuation(&target, &source, &image) ==
+                CETTA_CONTINUATION_UNSUPPORTED);
+            assert(image.payload == original_payload);
+            petta_machine_destroy(&target);
+            target_host.project_environment = source_host.project_environment;
             assert(petta_machine_init(&target, space, answers, query, NULL, &target_host));
         }
         assert(petta_machine_transfer_continuation(&target, &source, &image) ==
@@ -14236,8 +14308,9 @@ static void test_sequence_projection_views(Arena *arena) {
 int main(int argc, char **argv) {
     bool worker_only = argc == 2 && strcmp(argv[1], "--worker-ownership") == 0;
     bool resume_only = argc == 2 && strcmp(argv[1], "--resume-contract") == 0;
-    if (argc != 1 && !worker_only && !resume_only) {
-        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract]\n", stderr);
+    bool arity_only = argc == 2 && strcmp(argv[1], "--arity-contract") == 0;
+    if (argc != 1 && !worker_only && !resume_only && !arity_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract]\n", stderr);
         return 2;
     }
     Arena persistent;
@@ -14260,6 +14333,11 @@ int main(int argc, char **argv) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    if (arity_only) {
+        test_type_call_arity(&answers);
+        test_type_call_facts(&answers);
+        goto release_owners;
+    }
     if (worker_only) {
         test_worker_session_decisions(&answers);
         goto release_owners;
@@ -14276,6 +14354,7 @@ int main(int argc, char **argv) {
     test_type_fact_retention();
     test_type_frame_exhaustion(&answers);
     test_type_stack_exhaustion();
+    test_type_call_arity(&answers);
     test_type_call_facts(&answers);
     assert_type_pure_symbol_facts();
     puts("PASS: type-pure grounded symbol facts");

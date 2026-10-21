@@ -2746,6 +2746,12 @@ static Atom *grounded_collapse_add_next(Arena *a, Atom *head, Atom **args, uint3
     return atom_expr(a, elems, list->expr.len + 1);
 }
 
+static Space *grounded_observed_space_read(Space *space) {
+    if (eval_observe_space_read)
+        return eval_observe_space_read(space);
+    return eval_resolve_space_read ? eval_resolve_space_read(space) : space;
+}
+
 static Atom *grounded_space_contains_exact(Arena *a, Atom *head,
                                            Atom **args, uint32_t nargs) {
     if (nargs != 2)
@@ -2753,9 +2759,8 @@ static Atom *grounded_space_contains_exact(Arena *a, Atom *head,
     if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_SPACE))
         return grounded_bad_arg_type(a, head, args, nargs, 1,
                                      atom_symbol(a, "SpaceType"), args[0]);
-    Space *space = (Space *)args[0]->ground.ptr;
-    if (eval_resolve_space_read)
-        space = eval_resolve_space_read(space);
+    Space *space = grounded_observed_space_read(
+        (Space *)args[0]->ground.ptr);
     return atom_bool(a, space_contains_exact(space, args[1]));
 }
 
@@ -2766,9 +2771,8 @@ static Atom *grounded_space_revision(Arena *a, Atom *head,
     if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_SPACE))
         return grounded_bad_arg_type(a, head, args, nargs, 1,
                                      atom_symbol(a, "SpaceType"), args[0]);
-    Space *space = (Space *)args[0]->ground.ptr;
-    if (eval_resolve_space_read)
-        space = eval_resolve_space_read(space);
+    Space *space = grounded_observed_space_read(
+        (Space *)args[0]->ground.ptr);
     uint64_t revision = space_revision(space);
     if (revision > (uint64_t)INT64_MAX)
         return grounded_string_error(a, head, args, nargs,
@@ -3903,9 +3907,8 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         if (head_id == g_builtin_syms.size &&
             args[0]->kind == ATOM_GROUNDED &&
             args[0]->ground.gkind == GV_SPACE) {
-            Space *space = (Space *)args[0]->ground.ptr;
-            if (eval_resolve_space_read)
-                space = eval_resolve_space_read(space);
+            Space *space = grounded_observed_space_read(
+                (Space *)args[0]->ground.ptr);
             return atom_int(a, (int64_t)space_length64(space));
         }
         if (head_id == g_builtin_syms.size_atom &&

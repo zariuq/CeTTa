@@ -50,6 +50,19 @@ typedef struct {
     CettaNativeCostKind kind;
 } CettaNativeCostEvent;
 
+/* Allocation-free source of exact events for native boundaries whose ordered
+ * receipt, rather than a persistent ledger, owns the numerical account. It
+ * shares the ledger/event identity namespaces and issues one new physical
+ * occurrence per successful call. A zeroed or exhausted source refuses. */
+typedef struct {
+    uint64_t origin;
+    uint64_t next_occurrence;
+    bool exhausted;
+} CettaNativeCostEventSource;
+bool cetta_native_cost_event_source_init(CettaNativeCostEventSource *);
+bool cetta_native_cost_event_source_issue(CettaNativeCostEventSource *,
+    CettaNativeCostKind kind,uint64_t units,CettaNativeCostEvent *);
+
 typedef struct {
     uint64_t counts[CETTA_COST_KIND_COUNT];
     uint64_t work;

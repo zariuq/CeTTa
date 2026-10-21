@@ -277,6 +277,14 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
  * The caller must independently validate every captured root and call. A
  * false result still leaves an initialized context requiring normal free. */
 bool cetta_library_context_init_prime_snapshot(CettaLibraryContext *ctx);
+/* Project an already linked Prime program's immutable mechanisms. Loader
+ * inventories are not execution services and are not copied. Import/module
+ * lookup and every native operation still need independent invocation
+ * admission; this projection grants no external effect or handle authority.
+ * Source context and code roots must be quiescent through capture. */
+bool cetta_library_context_prime_snapshot_source_admitted(const CettaLibraryContext *source);
+bool cetta_library_context_init_prime_snapshot_from(CettaLibraryContext *ctx,
+    const CettaLibraryContext *source);
 void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx,
     CettaStorageCensus *census);
 void cetta_library_context_free(CettaLibraryContext *ctx);

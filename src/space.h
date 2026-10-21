@@ -918,6 +918,22 @@ typedef struct {
 
 typedef bool (*QueryResultVisitor)(Atom *result, const Bindings *bindings,
                                    void *ctx);
+/* A successful match before substituting its result template. The pattern
+ * and body have this activation's fresh variable identities. substitute
+ * applies the full match and restores caller-visible aliases; private rule
+ * bindings remain inside the query. All fields are borrowed for the call. */
+typedef struct {
+    Atom *pattern;
+    Atom *body;
+    Atom *(*substitute)(Arena *arena, Atom *term, void *context);
+    void *context;
+} QueryEquationInstantiation;
+/* The caller bindings are projected as usual. An evaluator may also attach
+ * its operational state while instantiating values with language-specific
+ * provenance. NULL reports incomplete instantiation, never a refutation. */
+typedef Atom *(*QueryEquationResultInstantiator)(
+    const QueryEquationInstantiation *match, Arena *arena,
+    Bindings *caller_bindings, void *context);
 /* Conservative pre-materialization filter.  Returning false may only exclude
  * an equation occurrence already proved unable to match.  The equation store
  * retains authority for candidate order, multiplicity, freshening, and exact
@@ -955,6 +971,12 @@ CettaCount query_equations_visit_planned(
    substitution, but performs no candidate selection. */
 CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
                                 QueryResultVisitor visitor, void *ctx);
+/* The same match and projection, with a synchronous result instantiator
+ * before ordinary substitution would erase the matched fields' roles. */
+CettaMatchCompletion query_equation_visit_instantiated(
+    Atom *equation, Atom *query, Arena *arena,
+    QueryEquationResultInstantiator instantiate, void *instantiate_context,
+    QueryResultVisitor visitor, void *visitor_context, CettaCount *emitted);
 /* Same per-row freshening/matching/projection, with absence certified only
  * by a completed refutation. Incomplete matching or RHS/projection failure
  * never becomes an empty successful visit. pair_budget limits the matcher's

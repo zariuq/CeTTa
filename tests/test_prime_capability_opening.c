@@ -64,7 +64,7 @@ static bool cell_projection(Arena *arena) {
     bindings_init(&caller);
     assert(bindings_add_var(&caller, capture, seven));
     assert(bindings_add_var(&caller, private, atom_int(arena, 13)));
-    assert(prime_need_project_cell_logical_env(arena, &cell, &caller, &projected));
+    assert(prime_need_project_cell_logical_env(arena, &cell, &caller, &projected, NULL, NULL));
     bool ok = atom_eq(bindings_apply(&projected, arena, capture), seven) &&
         !bindings_lookup_value_id(&projected, private->var_id).skeleton;
     bindings_free(&projected);
@@ -89,7 +89,7 @@ static bool same_spelling_cell_projection(Arena *arena) {
     Bindings caller, projected;
     bindings_init(&caller);
     assert(bindings_add_var(&caller, caller_variable, atom_int(arena, 99)));
-    assert(prime_need_project_cell_logical_env(arena, &cell, &caller, &projected));
+    assert(prime_need_project_cell_logical_env(arena, &cell, &caller, &projected, NULL, NULL));
     bool ok = atom_eq(bindings_apply(&projected, arena, capture), capture) &&
         !bindings_lookup_value_id(&projected, caller_variable->var_id).skeleton;
     bindings_free(&projected);
@@ -138,7 +138,7 @@ static bool constrained_projection(Arena *arena, unsigned mode, bool bound_root)
     bool admitted = mode == 0u
         ? bindings_project_body_exact_env(arena, body, &full, &projected)
         : mode == 1u
-        ? prime_need_project_cell_logical_env(arena, &cell, &full, &projected)
+        ? prime_need_project_cell_logical_env(arena, &cell, &full, &projected, NULL, NULL)
         : mode == 2u
         ? bindings_project_control_continuation(arena, body, &full, false, &projected)
         : bindings_project_function_result(arena, body, atom_symbol(arena, "returned"),
@@ -314,7 +314,7 @@ static bool unbound_frame_projection(Arena *arena, unsigned mode,
         cell.capture_var_ids = &captured_id;
         cell.capture_var_count = 1u;
 #endif
-        made = prime_need_project_cell_logical_env(arena, &cell, &full, &projected);
+        made = prime_need_project_cell_logical_env(arena, &cell, &full, &projected, NULL, NULL);
     } else {
         made = bindings_project_function_result(arena, root, root, &full, &projected);
     }

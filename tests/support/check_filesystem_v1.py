@@ -67,6 +67,17 @@ def main():
 
     prefix = "!(import! &self fs)\n!(import! &self system)\n"
     for language in args.language or ("he", "petta", "prime"):
+        staged, published = output / f"{language}-staged", output / f"{language}-published"
+        staged.write_bytes(b"new\x00content")
+        staged.chmod(0o640)
+        published.write_bytes(b"old content")
+        observed = run(language, "rename-replace", prefix +
+            f'!(fs:rename {json.dumps(str(staged))} {json.dumps(str(published))})\n')
+        assert b"fs:failed" not in observed and published.read_bytes() == b"new\x00content", observed
+        assert not staged.exists() and published.stat().st_mode & 0o777 == 0o640
+        observed = run(language, "rename-missing", prefix +
+            f'!(fs:rename {json.dumps(str(staged))} {json.dumps(str(published))})\n')
+        assert b"fs:failed fs:missing rename" in observed and published.read_bytes() == b"new\x00content", observed
         observed = run(language, "protocol_empty_data_positive", cwd=empty)
         assert b"(FsDelivered (EmptyBytes))" in observed and b"(FsComplete)" not in observed, observed
         observed = run(language, "protocol_end_positive", cwd=empty)
@@ -77,6 +88,16 @@ def main():
         assert b"LangDef:TermRejected" in observed, observed
         observed = run(language, "directory_empty_positive", path=empty)
         assert b"(DirectoryEmpty (fs:end 0) fs:closed)" in observed, observed
+        # A computed operand reaches the native as its value. Retaining its
+        # completed cell must neither restore its source nor repeat effects.
+        source = prefix + '(= (filesystem:path) ' \
+            + '(chain (println! path-computed-once) $_ (system:arg 0)))\n' \
+            + '!(let $owner (fs:open-directory (filesystem:path)) ' \
+            + '(let $end (fs:next-entry $owner) ' \
+            + '(let $closed (fs:close $owner) (ComputedPath $end $closed))))\n'
+        observed = run(language, "computed-path-once", source, path=empty)
+        assert observed.count(b"path-computed-once") == 1, observed
+        assert b"(ComputedPath (fs:end 0) fs:closed)" in observed, observed
         observed = run(language, "walk_exclusions_positive", path=walk)
         assert observed.count(b"fs:walk-entry") == 2 and b'"keep/leaf"' in observed, observed
         assert b'"skip"' not in observed and b"(fs:end 3) fs:closed" in observed, observed

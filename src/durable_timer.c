@@ -158,6 +158,7 @@ CettaDurableStatus cetta_timer_tick(CettaDurableStore *store, CettaTimerCursor *
     if (start==snap.count) start=0;
     for (size_t i=0;i<snap.count;++i) {
         if (out->emitted==budget) { out->more_due=true; break; }
+        ++out->visited;
         const CettaDurableRecord *r=&snap.records[(start+i)%snap.count];
         Arena a; arena_init(&a); Atom *p=NULL; Timer t; bool is_timer;
         s=decode(&a,r,&p,&t,&is_timer);

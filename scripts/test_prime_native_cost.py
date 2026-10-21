@@ -879,6 +879,14 @@ def analysis_controls(gate, cases):
         ('hidden constructor call', '(= (f) A)', '(Tree (f))', 'UnsupportedSource'),
         ('semantic weight', '(= (f) (weight:where A 3))', '(f)', 'UnsupportedSuccessor'),
         ('declared function type', '(: f (-> Number Number)) (= (f $x) $x)', '(f 3)', 'UnsupportedSource'),
+        ('quoted field', '(= (k $x $y) $x) (= (f (quote $e)) $e)',
+         '(f (quote (k 1 2)))', 'UnsupportedSource'),
+        ('reachable quoted field', '(= (k $x $y) $x) (= (f (quote $e)) $e) '
+         '(= (root) (f (quote (k 1 2))))', '(root)', 'UnsupportedSuccessor'),
+        ('lambda inspection', '(= (f (lam $v $body)) found)',
+         '(f (lam x x))', 'UnsupportedSource'),
+        ('reachable lambda inspection', '(= (f (lam $v $body)) found) '
+         '(= (root) (f (lam x x)))', '(root)', 'UnsupportedSuccessor'),
     ):
         trees, _ = gate.run(name, source + f' !(cost:analyze (quote {body}) 40)')
         analysis = analysis_fields(trees[-1][0])

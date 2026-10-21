@@ -157,42 +157,60 @@ void cetta_owned_execution_cancel(CettaOwnedExecution *execution) {
 }
 
 bool cetta_owned_task_init(CettaOwnedTask *task, CettaOwnedExecution *execution,
-    CettaOwnedTaskCompatible compatible, CettaOwnedReturnConsumer consume,
+    CettaOwnedTaskAdmit admit, CettaOwnedReturnConsumer consume,
     void *context) {
-    if (!task || task->ready.owner || !compatible || !consume ||
+    if (!task || task->ready.owner || !admit || !consume ||
         !cetta_owned_execution_move(&task->execution, execution))
         return false;
-    task->compatible = compatible;
+    task->admit = admit;
     task->consume = consume;
     task->context = context;
     return true;
 }
 
 static inline __attribute__((always_inline))
-bool owned_task_deliver_to(CettaOwnedVisit *visit,
-    const CettaOwnedReturn *returned, CettaOwnedTaskAccount *account) {
+bool owned_task_admit(CettaOwnedVisit *visit, CettaOwnedTaskAccount *account,
+    CettaOwnedTaskAccountObserver observer,void *observer_context) {
     CettaOwnedTask *task = visit->task;
-    if (account) account->compatibility++;
-    if (!task->compatible(task->context)) {
-        visit->context_refused = true;
-        return false;
-    }
+    CettaOwnedTaskAdmission admission=task->admit(task->context);
+    if (admission<CETTA_OWNED_TASK_ADMISSION_READY ||
+        admission>CETTA_OWNED_TASK_ADMISSION_INVALIDATED)
+        admission=CETTA_OWNED_TASK_ADMISSION_INVALIDATED;
+    if (account) account->admission++;
+    cetta_owned_task_account_record(account,observer,observer_context,
+        CETTA_OWNED_TASK_PHASE_ADMISSION,(uint64_t)admission);
+    visit->admission=admission;
+    return admission==CETTA_OWNED_TASK_ADMISSION_READY;
+}
+
+static inline __attribute__((always_inline))
+bool owned_task_deliver_to(CettaOwnedVisit *visit,
+    const CettaOwnedReturn *returned, CettaOwnedTaskAccount *account,
+    CettaOwnedTaskAccountObserver observer,void *observer_context) {
+    CettaOwnedTask *task = visit->task;
+    if (!owned_task_admit(visit,account,observer,observer_context)) return false;
+    bool accepted=task->consume(task->context, returned);
     if (account) account->consumer++;
-    return task->consume(task->context, returned);
+    cetta_owned_task_account_record(account,observer,observer_context,
+        CETTA_OWNED_TASK_PHASE_CONSUMER,accepted?1u:0u);
+    return accepted;
 }
 
 static bool owned_task_deliver(void *raw, const CettaOwnedReturn *returned) {
-    return owned_task_deliver_to(raw, returned, NULL);
+    return owned_task_deliver_to(raw, returned, NULL, NULL, NULL);
 }
 
 typedef struct {
     CettaOwnedVisit *visit;
     CettaOwnedTaskAccount *account;
+    CettaOwnedTaskAccountObserver observer;
+    void *observer_context;
 } OwnedTaskDelivery;
 
 static bool owned_task_deliver_accounted(void *raw, const CettaOwnedReturn *returned) {
     OwnedTaskDelivery *delivery = raw;
-    return owned_task_deliver_to(delivery->visit, returned, delivery->account);
+    return owned_task_deliver_to(delivery->visit, returned, delivery->account,
+        delivery->observer,delivery->observer_context);
 }
 
 CettaOwnedVisit cetta_owned_task_visit(CettaReadyQueue *queue, bool poll) {
@@ -202,51 +220,64 @@ CettaOwnedVisit cetta_owned_task_visit(CettaReadyQueue *queue, bool poll) {
 
 static inline __attribute__((always_inline))
 CettaOwnedVisit owned_task_poll(CettaOwnedTask *task, bool poll,
-                               CettaOwnedTaskAccount *account) {
+    CettaOwnedTaskAccount *account,CettaOwnedTaskAccountObserver observer,
+    void *observer_context) {
     CettaOwnedVisit visit = {.task = task, .step = CETTA_OWNED_EXECUTION_PAUSED};
     if (!task) return visit;
     if (!task->execution.terminal && poll) {
-        bool compatible = true;
+        bool admitted = true;
         if (!task->execution.has_pending) {
-            if (account) account->compatibility++;
-            compatible = task->compatible(task->context);
+            admitted=owned_task_admit(&visit,account,observer,observer_context);
         }
-        if (!compatible) visit.context_refused = true;
-        else if (account) {
-            OwnedTaskDelivery delivery = {&visit, account};
+        if (admitted && account) {
+            OwnedTaskDelivery delivery = {&visit,account,observer,observer_context};
             visit.step = cetta_owned_execution_sequence_accounted_with(
                 &task->execution, 1u, task->execution.next,
-                owned_task_deliver_accounted, &delivery, account);
-        } else
+                owned_task_deliver_accounted, &delivery, account,
+                observer,observer_context);
+        } else if (admitted)
             visit.step = cetta_owned_execution_sequence(
                 &task->execution, 1u, owned_task_deliver, &visit);
     }
     if (task->execution.terminal) {
         visit.step = task->execution.stop;
         if (task->ready.owner) {
-            if (account) account->retirements++;
             cetta_ready_remove(task->ready.owner, &task->ready);
+            if (account) account->retirements++;
+            cetta_owned_task_account_record(account,observer,observer_context,
+                CETTA_OWNED_TASK_PHASE_RETIREMENT,0u);
         }
     }
     return visit;
 }
 
 CettaOwnedVisit cetta_owned_task_poll(CettaOwnedTask *task, bool poll) {
-    return owned_task_poll(task, poll, NULL);
+    return owned_task_poll(task, poll, NULL, NULL, NULL);
 }
 
 CettaOwnedVisit cetta_owned_task_poll_accounted(
     CettaOwnedTask *task, bool poll, CettaOwnedTaskAccount *account) {
     if (account) *account = (CettaOwnedTaskAccount){0};
-    return owned_task_poll(task, poll, account);
+    return owned_task_poll(task, poll, account, NULL, NULL);
+}
+
+CettaOwnedVisit cetta_owned_task_poll_observed(
+    CettaOwnedTask *task,bool poll,CettaOwnedTaskAccount *account,
+    CettaOwnedTaskAccountObserver observer,void *observer_context) {
+    if (account) *account=(CettaOwnedTaskAccount){0};
+    return owned_task_poll(task,poll,account,observer,observer_context);
 }
 
 CettaOwnedVisit cetta_owned_task_visit_accounted(
     CettaReadyQueue *queue, bool poll, CettaOwnedTaskAccount *account) {
     if (account) *account = (CettaOwnedTaskAccount){0};
     CettaReadyLink *link = cetta_ready_rotate(queue);
-    if (account && link) account->rotations++;
-    return owned_task_poll((CettaOwnedTask *)link, poll, account);
+    if (account && link) {
+        account->rotations++;
+        cetta_owned_task_account_record(account,NULL,NULL,
+            CETTA_OWNED_TASK_PHASE_ROTATION,0u);
+    }
+    return owned_task_poll((CettaOwnedTask *)link,poll,account,NULL,NULL);
 }
 
 void cetta_owned_task_cancel(CettaOwnedTask *task) {

@@ -70,7 +70,9 @@ static void reject(CettaHostDecision *d, const char *expression, CettaDurableSta
 }
 
 static const CettaHostPlanLimits plan_limits={.quantum=1,.work_limit=10000,
-    .preparation_inspections=100000,.preparation_bytes=8u*1024u*1024u,.results=4};
+    .preparation_inspections=100000,.preparation_bytes=8u*1024u*1024u,.results=4,
+    .return_slice={.preparation=1u,.transport=1u,
+        .limit_preparation=true,.limit_transport=true}};
 static void retained_program(Space *source,CettaLibraryContext *ctx,CettaHostProgram *out) {
     space_init(source);
     cetta_library_context_init_for_language_profile(ctx,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());
@@ -109,6 +111,146 @@ static void retained_run(CettaHostDecision *d) {
             queue.count,(int)task->execution.stop,(int)out->completion,
             (unsigned long long)out->results.len,(unsigned long long)out->steps_spent);
     assert(!queue.count && out->completion==CETTA_EVAL_COMPLETE);
+}
+static void retained_slot_account(const CettaHostProgram *p) {
+    write_record("host.inbox","native/slot-account","(received \"accounted\")");
+    CettaHostDecision *d=retained_begin(
+        "native/slot-account","native/slot-account",false);
+    CettaHostPlanLimits limits=plan_limits;
+    limits.quantum=7u;
+    CettaHostPlanLimits invalid=limits;
+    invalid.return_slice.limit_transport=false;
+    assert(cetta_host_plan_open(d,p,parse("(plan 8)"),&invalid)==DURABLE_INVALID &&
+        !cetta_host_plan_task(d));
+    invalid=limits;invalid.return_slice.transport=UINT64_MAX;
+    assert(cetta_host_plan_open(d,p,parse("(plan 8)"),&invalid)==DURABLE_INVALID &&
+        !cetta_host_plan_task(d));
+    invalid=limits;invalid.preparation_inspections=2u;
+    assert(cetta_host_plan_open(d,p,parse("(plan 8)"),&invalid)==DURABLE_INVALID &&
+        !cetta_host_plan_task(d));
+    invalid=limits;invalid.preparation_inspections=3u;
+    assert(cetta_host_plan_open(d,p,parse("(plan 8)"),&invalid)==DURABLE_LIMIT &&
+        !cetta_host_plan_task(d));
+    invalid=limits;invalid.preparation_bytes=64u;
+    assert(cetta_host_plan_open(d,p,parse("(plan 8)"),&invalid)==DURABLE_LIMIT &&
+        !cetta_host_plan_task(d));
+    retained_open(d,p,"(plan 8)",limits);
+    CettaOwnedTask *task=cetta_host_plan_task(d);assert(task);
+    CettaReadyQueue queue={.capacity=1u};
+    assert(cetta_ready_admit(&queue,&task->ready)==READY_ADMITTED);
+    CettaOwnedTaskAccount total={0};
+    bool dispatch_cost_separated=false,receipt_refusals_checked=false;
+    uint64_t receipt_events=0u,receipt_units=0u,last_identity=0u;
+    uint64_t setup_work=0u,setup_bytes=0u;
+    for(unsigned slot=0u;slot<10000u && !task->execution.terminal;slot++) {
+        CettaHostPlanPollAccount poll={0};
+        assert(cetta_host_plan_poll_accounted(d,true,&poll)==DURABLE_OK &&
+            poll.visit.task==task && poll.source_work<=limits.quantum &&
+            poll.returns.preparation<=limits.return_slice.preparation &&
+            poll.returns.transport<=limits.return_slice.transport);
+        CettaOwnedTaskAccount account=poll.protocol;
+        uint64_t slot_units=0u;
+        CettaHostPlanReceiptSummary summary={0};
+        assert(!account.phase_overflow && account.phase_count==
+            account.admission+account.producer+account.consumer+
+                account.final_is_current+account.rotations+account.retirements &&
+            cetta_host_plan_receipt_summarize(&poll.receipt,&summary) &&
+            cetta_host_plan_receipt_total(&poll.receipt,&slot_units) &&
+            summary.initial_pending==poll.receipt.initial_pending &&
+            summary.step==poll.visit.step &&
+            summary.setup_work==poll.setup.inspections &&
+            summary.last_admission==poll.visit.admission &&
+            summary.admission==account.admission &&
+            summary.producer==account.producer &&
+            summary.consumer==account.consumer &&
+            summary.final_is_current==account.final_is_current &&
+            summary.retirements==account.retirements &&
+            summary.source_work==poll.source_work &&
+            summary.returns.preparation==poll.returns.preparation &&
+            summary.returns.transport==poll.returns.transport &&
+            slot_units==poll.setup.inspections+account.phase_count+poll.source_work+
+                poll.returns.preparation+poll.returns.transport);
+        assert(poll.setup.inspections<=limits.preparation_inspections &&
+            poll.setup.arena_bytes<=limits.preparation_bytes);
+        setup_work+=poll.setup.inspections;setup_bytes+=poll.setup.arena_bytes;
+        uint64_t origin=0u,occurrence=0u;
+        for(uint8_t event=0u;event<poll.receipt.count;event++) {
+            const CettaNativeCostEvent *native=
+                &poll.receipt.occurrences[event].event;
+            assert(native->identity>last_identity && native->origin &&
+                native->occurrence>occurrence &&
+                (!origin || native->origin==origin));
+            last_identity=native->identity;origin=native->origin;
+            occurrence=native->occurrence;
+        }
+        if(!receipt_refusals_checked && poll.receipt.count) {
+            CettaHostPlanReceipt forged=poll.receipt;
+            forged.complete=false;
+            assert(!cetta_host_plan_receipt_summarize(&forged,&summary));
+            forged=poll.receipt;
+            forged.occurrences[0].event.identity=0u;
+            assert(!cetta_host_plan_receipt_summarize(&forged,&summary));
+            forged=poll.receipt;
+            forged.occurrences[0].tag=CETTA_HOST_PLAN_SOURCE_WORK;
+            assert(!cetta_host_plan_receipt_summarize(&forged,&summary));
+            receipt_refusals_checked=true;
+        }
+        receipt_events+=poll.receipt.count;receipt_units+=slot_units;
+        assert(account.admission<=2u && account.producer<=1u &&
+            account.consumer<=1u && account.final_is_current<=1u &&
+            !account.rotations && account.retirements<=1u);
+        if(poll.source_work>account.producer+account.consumer)
+            dispatch_cost_separated=true;
+        total.admission+=account.admission;total.producer+=account.producer;
+        total.consumer+=account.consumer;
+        total.final_is_current+=account.final_is_current;
+        total.rotations+=account.rotations;total.retirements+=account.retirements;
+    }
+    const EvalOutcome *out=cetta_host_outcome(d);
+    CettaPrimeReturnWork work={0};
+    bool qualified=task->execution.terminal && !queue.count &&
+        out->completion==CETTA_EVAL_COMPLETE && out->results.len==1u &&
+        cetta_host_plan_return_work(d,&work) && work.preparation>0u &&
+        work.transport>0u && total.admission>0u && total.producer>0u &&
+        setup_work>0u && setup_work<=limits.preparation_inspections &&
+        setup_bytes>0u && setup_bytes<=limits.preparation_bytes &&
+        total.consumer>0u && total.final_is_current<=1u &&
+        total.retirements==1u && dispatch_cost_separated &&
+        receipt_refusals_checked;
+    if(!qualified)fprintf(stderr,"slot account terminal=%u queue=%zu completion=%u rows=%llu "
+        "setup=%llu setup_bytes=%llu preparation=%llu transport=%llu admission=%llu producer=%llu consumer=%llu "
+        "final=%llu retired=%llu separated=%u\n",task->execution.terminal?1u:0u,queue.count,
+        (unsigned)out->completion,(unsigned long long)out->results.len,
+        (unsigned long long)setup_work,(unsigned long long)setup_bytes,
+        (unsigned long long)work.preparation,(unsigned long long)work.transport,
+        (unsigned long long)total.admission,(unsigned long long)total.producer,
+        (unsigned long long)total.consumer,(unsigned long long)total.final_is_current,
+        (unsigned long long)total.retirements,dispatch_cost_separated?1u:0u);
+    assert(qualified);
+    uint64_t bounded_source=out->steps_spent;
+    uint64_t bounded_preparation=work.preparation,bounded_transport=work.transport;
+    cetta_host_plan_cancel(d);
+    assert(!cetta_host_plan_return_work(d,&work));
+    cetta_host_decision_free(d);
+    write_record("host.inbox","native/slot-unlimited","(received \"unlimited\")");
+    d=retained_begin("native/slot-unlimited","native/slot-unlimited",false);
+    limits=plan_limits;limits.return_slice=(CettaPrimeReturnSlice){0};
+    retained_open(d,p,"(host:transition unlimited () ())",limits);
+    retained_run(d);
+    assert(cetta_host_plan_return_work(d,&work) && !work.preparation &&
+        work.transport>0u);
+    uint64_t unlimited_transport=work.transport;
+    cetta_host_plan_cancel(d);cetta_host_decision_free(d);
+    printf("PASS: retained host slot setup=%llu setup_bytes=%llu source=%llu preparation=%llu transport=%llu "
+        "admission=%llu producer=%llu consumer=%llu final=%llu retired=%llu "
+        "receipt_events=%llu receipt_units=%llu unlimited_transport=%llu\n",
+        (unsigned long long)setup_work,(unsigned long long)setup_bytes,
+        (unsigned long long)bounded_source,
+        (unsigned long long)bounded_preparation,(unsigned long long)bounded_transport,
+        (unsigned long long)total.admission,(unsigned long long)total.producer,
+        (unsigned long long)total.consumer,(unsigned long long)total.final_is_current,
+        (unsigned long long)total.retirements,(unsigned long long)receipt_events,
+        (unsigned long long)receipt_units,(unsigned long long)unlimited_transport);
 }
 static void retained_credit_cases(const CettaHostProgram *p) {
     write_record("host.inbox","native/credit","(received \"funded\")");
@@ -232,13 +374,15 @@ static void retained_host_cases(void) {
     retained_open(loop,&p,"(host:transition stopped () ())",plan_limits);retained_run(loop);
     assert(cetta_host_accept(loop,0,&commit)==DURABLE_OK);cetta_host_decision_free(loop);
 
-    for(unsigned kind=0;kind<3;kind++) {
+    for(unsigned kind=0;kind<4;kind++) {
         char input[48],actor[48];snprintf(input,sizeof(input),"native/limit/%u",kind);
         snprintf(actor,sizeof(actor),"native/limit-actor/%u",kind);
         write_record("host.inbox",input,"(received \"limited\")");
         CettaHostDecision *d=retained_begin(input,actor,false);
         CettaHostPlanLimits limits=plan_limits;
-        if(kind<2)limits.work_limit=kind;else limits.results=0;
+        if(kind<2)limits.work_limit=kind;
+        else if(kind==2)limits.results=0;
+        else limits.return_slice.transport=0u;
         retained_open(d,&p,kind<2?"(spin 0)":"(host:transition stopped () ())",limits);
         CettaOwnedTask *task=cetta_host_plan_task(d);
         CettaReadyQueue single={.capacity=1};assert(cetta_ready_admit(&single,&task->ready)==READY_ADMITTED);
@@ -246,13 +390,17 @@ static void retained_host_cases(void) {
         for(unsigned i=0;i<32;i++) {
             cetta_owned_task_visit(&single,true);out=cetta_host_outcome(d);
             if(kind<2)assert(out->steps_spent<=kind && !out->results.len);
-            if(kind==2 && task->execution.has_pending) {
+            if(kind>=2 && task->execution.has_pending) {
                 if(!loan.outcome.term) {loan=task->execution.pending;held=out->steps_spent;}
                 else assert(task->execution.pending.outcome.term==loan.outcome.term && out->steps_spent==held);
             }
         }
         assert(!task->execution.terminal && cetta_host_accept(d,0,&commit)==DURABLE_PRECONDITION);
-        assert(kind==2?task->execution.has_pending:out->budget_remaining==0);
+        assert(kind>=2?task->execution.has_pending:out->budget_remaining==0);
+        if(kind==3) {
+            CettaPrimeReturnWork work={0};
+            assert(cetta_host_plan_return_work(d,&work) && !work.transport);
+        }
         cetta_host_plan_cancel(d);assert(!single.count);cetta_host_decision_free(d);
     }
     /* Validation refusal precedes spending; an admitted replacement plan can
@@ -263,6 +411,7 @@ static void retained_host_cases(void) {
     retained_run(retry);assert(cetta_host_accept(retry,0,&commit)==DURABLE_INVALID);
     retained_open(retry,&p,"(host:transition good () ())",plan_limits);retained_run(retry);
     assert(cetta_host_accept(retry,0,&commit)==DURABLE_OK);cetta_host_decision_free(retry);
+    retained_slot_account(&p);
     retained_credit_cases(&p);
     eval_set_library_context(&context);cetta_library_context_free(&ctx);space_free(&source);
     puts("PASS: retained Prime plans share the actual ready queue, finish beside a yielding loop, keep captured views, bound total work, retain refused loans and use one atomic durable acceptance");
@@ -546,8 +695,8 @@ int main(int argc, char **argv) {
     authority_dependencies();
     cetta_durable_close(store);
     assert(!unlink(path));
-    char sidecar[300]; snprintf(sidecar,sizeof(sidecar),"%s-wal",path); unlink(sidecar);
-    snprintf(sidecar,sizeof(sidecar),"%s-shm",path); unlink(sidecar); assert(!rmdir(directory));
+    char sidecar[300]; snprintf(sidecar,sizeof(sidecar),"%s.lock",path); unlink(sidecar);
+    snprintf(sidecar,sizeof(sidecar),"%s.checkpoint",path); unlink(sidecar); assert(!rmdir(directory));
     eval_set_library_context(NULL); cetta_library_context_free(&context);
     registry_free(&registry); space_free(&program); arena_free(&scratch); arena_free(&persistent);
     g_var_intern=NULL; var_intern_free(&vars); g_symbols=NULL; symbol_table_free(&symbols);

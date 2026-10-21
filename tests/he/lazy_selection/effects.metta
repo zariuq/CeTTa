@@ -61,3 +61,16 @@
 !(select 3 (match &self (lazy-a $x)
   (match &self (lazy-b $y $body) (match &self (lazy-c $x $y) $body))))
 !(collapse (match &self lazy-hit found))
+
+; A raw function refusal restores its call before bounded publication.
+; The unselected occurrence must not perform its effect.
+(= (decline-once)
+  (function (chain (eval (add-atom &self (decline-seen a))) $r
+    (return NotReducible))))
+(= (decline-once)
+  (function (chain (eval (add-atom &self (decline-seen b))) $r
+    (return NotReducible))))
+!(once (decline-once))
+!(collapse (match &self (decline-seen $x) $x))
+!(select 2 (decline-once))
+!(collapse (match &self (decline-seen $x) $x))
