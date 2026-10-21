@@ -457,12 +457,16 @@ static Atom *json_from_ordinary_scalar(JsonValueCtxV1 *ctx, Atom *value) {
         return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
                                 "JsonBool expects True or False"), NULL;
     }
-    Atom *str_atom = json_expr_is(value, "JsonString", 2u)
-        ? value->expr.elems[1] : value;
-    if (str_atom && str_atom->kind == ATOM_GROUNDED &&
-        str_atom->ground.gkind == GV_STRING) {
-        const char *text = str_atom->ground.sval;
-        size_t text_len = atom_string_len(str_atom);
+    bool tagged_string = json_expr_is(value, "JsonString", 2u);
+    Atom *str_atom = tagged_string ? value->expr.elems[1] : value;
+    /* The tagged compatibility view explicitly declares a text payload.
+     * PeTTa foreign strings can be symbol spellings; bare ordinary symbols
+     * remain invalid JSON values. */
+    const char *string_text = tagged_string && str_atom && str_atom->kind == ATOM_SYMBOL
+        ? atom_name_cstr(str_atom) : json_text(str_atom);
+    if (string_text) {
+        const char *text = string_text;
+        size_t text_len = json_text_len(str_atom, text);
         if (!ctx->arena)
             return json_utf8_text(ctx, text, text_len, NULL)
                 ? value : NULL;
@@ -804,8 +808,10 @@ static bool json_emit_string(JsonValueCtxV1 *ctx, Atom *string,
     return json_bytes_char(out, '"');
 }
 
-static bool json_emit_native_text(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out) {
-    const char *text = json_text(value);
+static bool json_emit_native_text(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out,
+                                  bool tagged_string) {
+    const char *text = tagged_string && value && value->kind == ATOM_SYMBOL
+        ? atom_name_cstr(value) : json_text(value);
     if (!text) return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
                                        "ordinary JSON strings must be native strings");
     size_t len = json_text_len(value, text), scalars;
@@ -858,7 +864,7 @@ static bool json_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out,
                 : json_bytes_append(out, "false", 5u);
         }
         if (json_expr_is(value, "JsonString", 2u))
-            return json_emit_native_text(ctx, value->expr.elems[1], out);
+            return json_emit_native_text(ctx, value->expr.elems[1], out, true);
         if (json_expr_is(value, "JsonNumber", 2u)) {
             Atom *number = value->expr.elems[1];
             const char *text = json_text(number);
@@ -875,7 +881,7 @@ static bool json_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out,
         }
         if (value && value->kind == ATOM_GROUNDED &&
             value->ground.gkind == GV_STRING)
-            return json_emit_native_text(ctx, value, out);
+            return json_emit_native_text(ctx, value, out, false);
         if (value && value->kind == ATOM_GROUNDED &&
             (value->ground.gkind == GV_INT ||
              value->ground.gkind == GV_BIGINT ||
@@ -960,7 +966,7 @@ static Atom *json_emit_child(JsonValueCtxV1 *ctx, JsonEmitFrameV1 *frame, JsonBy
     if (pretty && !json_emit_indent(out, depth)) return NULL;
     if (!frame->object) return child;
     if (ordinary && json_expr_is(child, "JsonPair", 3u) &&
-        json_emit_native_text(ctx, child->expr.elems[1], out) && json_bytes_char(out, ':') &&
+        json_emit_native_text(ctx, child->expr.elems[1], out, false) && json_bytes_char(out, ':') &&
         (!pretty || json_bytes_char(out, ' ')))
         return child->expr.elems[2];
     if (json_expr_is(child, "JsonMemberV1", 5u) &&

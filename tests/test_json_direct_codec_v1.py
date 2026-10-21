@@ -60,6 +60,26 @@ def main():
                 assert direct == reference, (language, direct[:200], reference[:200])
                 checks += 1
 
+            # The PeTTa foreign bridge returns strings as symbols. The
+            # explicit JsonString tag carries their text meaning in all lanes.
+            for encoder in ("json-stringify", "json:stringify-reference"):
+                expected = '{"focus":"input:fixture"}'
+                answer = run(binary, source, language,
+                             f'{encoder} (JsonObject ((JsonPair "focus" (JsonString input:fixture))))')
+                assert answer == hashlib.sha256(expected.encode()).hexdigest(), (language, answer)
+                checks += 1
+
+            # Compatibility is carried by JsonString, never inferred for a
+            # bare symbol or a numeric payload masquerading as text.
+            for invalid in ('bare-symbol', '(JsonString 12)',
+                            '(JsonObject ((JsonPair bare-key JsonNull)))'):
+                answer = run(binary, source, language,
+                    f'case (json:stringify {invalid}) '
+                    '(((JsonFailureV1 $phase JsonMalformedValueV1 $call $why) "rejected") '
+                    '($other "accepted"))')
+                assert answer == hashlib.sha256(b"rejected").hexdigest(), (language, invalid)
+                checks += 1
+
             # Evaluated cons lists, including nested arrays and duplicate keys.
             setup = '''(($tail (cons-atom JsonNull ()))
               ($items (cons-atom (JsonString "x") $tail))
