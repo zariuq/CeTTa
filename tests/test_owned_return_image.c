@@ -74,7 +74,7 @@ static void test_logical_roots(void) {
     assert(bindings_eq((Bindings *)view->environment, &bindings));
     Atom *cx = view->outcome.term->expr.elems[2];
     Atom *cy = view->outcome.term->expr.elems[1];
-    assert(cx->var_id == xid && cy->var_id == yid);
+    assert(var_id_eq(cx->var_id, xid) && var_id_eq(cy->var_id, yid));
     assert(view->outcome.term->expr.elems[3] == cx);
     assert(view->outcome.delayed->expr.elems[1] == cy);
     assert(bindings_lookup_value_id((Bindings *)view->environment, xid).skeleton == cy);
@@ -173,16 +173,16 @@ static void test_explicit_contextual_carrier(void) {
     CettaFrameIdentity epoch;
     assert(cetta_frame_identity_acquire(&epoch));
     Atom *x = atom_var_with_id(&source, "explicit-x", fresh_var_id());
-    Atom *y = atom_var_with_id(&source, "explicit-y", 1u);
+    Atom *y = atom_var_with_id(&source, "explicit-y", var_id_from_base(1u));
     Atom *skeleton = atom_expr2(&source, atom_symbol(&source, "Box"), y);
     Bindings bindings;
     bindings_init(&bindings);
-    VarId ids[] = {1u};
+    VarId ids[] = {var_id_from_base(1u)};
     assert(bindings_register_complete_contextual_frame(&bindings, ids, 1u, epoch));
     assert(match_binding_values(binding_value_from_atom(x),
         binding_value_from_context(skeleton, epoch), &bindings, &source));
     BindingValue value = bindings_lookup_value_id(&bindings, x->var_id);
-    assert(value.kind == BINDING_VALUE_CONTEXTUAL && value.epoch == epoch &&
+    assert(binding_value_kind(value) == BINDING_VALUE_CONTEXTUAL && cetta_frame_identity_eq(binding_value_epoch(value), epoch) &&
            value.skeleton == skeleton);
     Atom *qualified_y = atom_var_with_id(&source, "explicit-y", var_epoch_id(y->var_id, epoch));
     assert(bindings_add_var(&bindings, qualified_y, atom_int(&source, 71)));
@@ -197,7 +197,7 @@ static void test_explicit_contextual_carrier(void) {
     cetta_frame_identity_release(epoch);
     const CettaOwnedReturn *view = cetta_owned_return_image_view(image);
     value = bindings_lookup_value_id((Bindings *)view->environment, xid);
-    assert(value.kind == BINDING_VALUE_CONTEXTUAL && value.epoch == epoch);
+    assert(binding_value_kind(value) == BINDING_VALUE_CONTEXTUAL && cetta_frame_identity_eq(binding_value_epoch(value), epoch));
     Atom *applied = bindings_apply((Bindings *)view->environment, &observation, view->outcome.term);
     assert(applied && applied->kind == ATOM_EXPR && applied->expr.len == 2u);
     assert_int(applied->expr.elems[1], 71);
@@ -460,7 +460,7 @@ static void test_name_keys_and_resources(void) {
     const CettaOwnedReturn *view = cetta_owned_return_image_view(image);
     Atom *copied_name = view->outcome.term->expr.elems[0];
     assert(copied_name != named && copied_name->name_key == view->outcome.delayed);
-    assert(copied_name->var_id == named->var_id);
+    assert(var_id_eq(copied_name->var_id, named->var_id));
     /* A later unqualified leaf must release every earlier tentative hold. */
     Atom *unqualified = atom_state(&source, &(StateCell){0});
     CettaOwnedReturn failure = {
@@ -496,15 +496,15 @@ static void test_frame_schema_resource_root(void) {
     CettaFrameIdentity epoch;
     assert(cetta_frame_identity_acquire(&epoch));
     Atom *variable = atom_var_with_name_key(&source,
-        atom_space(&source, &resources->space), 1u);
-    VarId ids[] = {1u};
+        atom_space(&source, &resources->space), var_id_from_base(1u));
+    VarId ids[] = {var_id_from_base(1u)};
     Atom *variables[] = {variable};
     BindingsFrameSchema *schema = bindings_frame_schema_new_presented(ids, variables, 1u);
     assert(schema);
     Bindings bindings;
     bindings_init(&bindings);
     assert(bindings_register_complete_frame_schema(&bindings, schema, epoch));
-    Atom *slot = atom_var_with_name_key(&source, variable->name_key, var_epoch_id(1u, epoch));
+    Atom *slot = atom_var_with_name_key(&source, variable->name_key, var_epoch_id(var_id_from_base(1u), epoch));
     assert(bindings_add_var(&bindings, slot, atom_int(&source, 11)) && bindings.len == 0u);
     CettaOwnedReturn returned = {
         .outcome = cetta_call_completed_value(atom_int(&source, 5)), .environment = &bindings,
@@ -525,7 +525,7 @@ static void test_frame_schema_resource_root(void) {
     BindingsIterator iterator = {.bindings = view->environment};
     Binding retained;
     assert(bindings_iterator_next(&iterator, &retained));
-    assert(retained.var_id == var_epoch_id(1u, epoch) && retained.name_key &&
+    assert(var_id_eq(retained.var_id, var_epoch_id(var_id_from_base(1u), epoch)) && retained.name_key &&
            retained.name_key->ground.gkind == GV_SPACE &&
            retained.name_key->ground.ptr == &resources->space);
     assert_int(retained.value.skeleton, 11);

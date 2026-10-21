@@ -15,11 +15,13 @@ static void *worker(void *unused) {
 }
 
 int main(void) {
-    CHECK(cetta_stack_growth_low(900, 1000, 200, 600, 800) == 400, "growable pages are available");
-    CHECK(cetta_stack_growth_low(900, 1000, 800, 600, 800) == 800, "growth stops at preceding mapping");
-    CHECK(cetta_stack_growth_low(900, 1000, 200, 50, 800) == 900, "lowered limit does not unmap pages");
-    CHECK(cetta_stack_growth_low(900, 1000, 200, 600, 200) == 800, "caller cap bounds growth");
-    CHECK(cetta_stack_growth_low(900, 1000, 200, UINT64_MAX, UINT64_MAX) == 200, "large limits do not underflow");
+    CHECK(cetta_stack_growth_low(900, 1000, 200, 0, 600, 800) == 400, "growable pages are available");
+    CHECK(cetta_stack_growth_low(900, 1000, 800, 0, 600, 800) == 800, "growth stops at preceding mapping");
+    CHECK(cetta_stack_growth_low(900, 1000, 500, 150, 600, 800) == 650, "growth stops a guard gap above it");
+    CHECK(cetta_stack_growth_low(900, 1000, 200, 0, 50, 800) == 900, "lowered limit does not unmap pages");
+    CHECK(cetta_stack_growth_low(900, 1000, 200, 0, 600, 200) == 800, "caller cap bounds growth");
+    CHECK(cetta_stack_growth_low(900, 1000, 200, 0, UINT64_MAX, UINT64_MAX) == 200, "large limits do not underflow");
+    CHECK(cetta_stack_growth_low(900, 1000, UINTPTR_MAX - 10, 100, 600, 800) == 900, "a gap past the top saturates");
     uintptr_t low = 0u, high = 0u, here = (uintptr_t)__builtin_frame_address(0);
     bool known = cetta_linux_initial_stack_bounds(here, 16u * 1024u * 1024u, &low, &high);
     CHECK(known && low <= here && here < high, "initial stack bounds contain the current frame");

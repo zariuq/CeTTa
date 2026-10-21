@@ -37,7 +37,7 @@ static void saved_match(void) {
     assert(result && result->kind == ATOM_EXPR && result->expr.len == 2u);
     assert(result->expr.elems[0] == result->expr.elems[1]);
     arena_free(&saved);
-    assert(result->expr.elems[0]->expr.elems[1]->var_id == u_id);
+    assert(var_id_eq(result->expr.elems[0]->expr.elems[1]->var_id, u_id));
     assert(atom_is_symbol(result->expr.elems[0]->expr.elems[0], "f"));
     arena_free(&destination);
 }
@@ -76,15 +76,15 @@ static void saved_permutation(void) {
     Atom *term = atom_expr3(&destination, shared, shared, c);
     Atom *result = bindings_apply_saved(&destination, copy, term);
     assert(result && result->expr.elems[0] == result->expr.elems[1]);
-    assert(result->expr.elems[0]->expr.elems[0]->var_id == yi);
-    assert(result->expr.elems[0]->expr.elems[1]->var_id == xi);
-    assert(result->expr.elems[2]->var_id == zi);
+    assert(var_id_eq(result->expr.elems[0]->expr.elems[0]->var_id, yi));
+    assert(var_id_eq(result->expr.elems[0]->expr.elems[1]->var_id, xi));
+    assert(var_id_eq(result->expr.elems[2]->var_id, zi));
     CettaBindingsValue *value = copy->ground.ptr;
     Atom *projection = value->observe(&destination, value);
     arena_free(&copied);
-    assert(result->expr.elems[0]->expr.elems[0]->var_id == yi);
+    assert(var_id_eq(result->expr.elems[0]->expr.elems[0]->var_id, yi));
     assert(projection && projection->expr.elems[1]->expr.len == 2u);
-    assert(projection->expr.elems[1]->expr.elems[0]->expr.elems[1]->var_id == yi);
+    assert(var_id_eq(projection->expr.elems[1]->expr.elems[0]->expr.elems[1]->var_id, yi));
     arena_free(&destination);
 }
 
@@ -131,7 +131,7 @@ static void saved_open_template(void) {
         result = result->expr.elems[0];
     }
     assert(atom_is_symbol(result->expr.elems[0], "done"));
-    assert(result->expr.elems[1]->var_id == yi);
+    assert(var_id_eq(result->expr.elems[1]->var_id, yi));
     arena_free(&destination);
 }
 
@@ -403,8 +403,8 @@ static void saved_carrier(void) {
     arena_free(&saved);
     Atom *result_parameter = term_graph_value_param(result, 0u);
     Atom *renamed_parameter = term_graph_value_param(renamed, 0u);
-    assert(result_parameter && result_parameter->kind == ATOM_VAR && result_parameter->var_id == ui);
-    assert(renamed_parameter && renamed_parameter->kind == ATOM_VAR && renamed_parameter->var_id == xi);
+    assert(result_parameter && result_parameter->kind == ATOM_VAR && var_id_eq(result_parameter->var_id, ui));
+    assert(renamed_parameter && renamed_parameter->kind == ATOM_VAR && var_id_eq(renamed_parameter->var_id, xi));
     const CettaTermGraphRef *reference;
     Atom *const *arguments;
     uint32_t argument_count;
@@ -448,7 +448,7 @@ static void opaque_context_scope(void) {
     arena_free(&saved);
     Atom *value = atom_prime_context_lookup(atom_prime_context_value(result),
         atom_symbol(&destination, "local"));
-    assert(value && value->kind == ATOM_VAR && value->var_id == inside_id);
+    assert(value && value->kind == ATOM_VAR && var_id_eq(value->var_id, inside_id));
     arena_free(&destination);
 }
 

@@ -26,7 +26,7 @@ _Static_assert(
         CETTA_SURVIVOR_ALLOC_ROLE_COUNT,
     "survivor allocation roles and counters must remain isomorphic");
 
-#include "generated/cetta_runtime_counter_names.generated.inc"
+#include "generated/cetta_runtime_counter_names.generated.h"
 
 static int64_t clamp_counter(uint64_t value) {
     if (value > (uint64_t)INT64_MAX)

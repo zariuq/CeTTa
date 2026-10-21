@@ -436,7 +436,7 @@ static Atom *make_pair(Arena *a, SymbolId pair_sym, int64_t lhs, int64_t rhs) {
 static Atom *make_pair_var(Arena *a, SymbolId pair_sym) {
     Atom *elems[3] = {
         atom_symbol_id(a, pair_sym),
-        atom_var_with_id(a, "x", 1),
+        atom_var_with_id(a, "x", var_id_from_base(1)),
         atom_int(a, 2),
     };
     return atom_expr(a, elems, 3);
@@ -633,7 +633,7 @@ static void test_space_equation_projection_tokens(void) {
     Atom *wildcard_equation = atom_expr3(
         &scratch,
         atom_symbol_id(&scratch, g_builtin_syms.equals),
-        atom_var_with_id(&scratch, "equation-token-head", 9001u),
+        atom_var_with_id(&scratch, "equation-token-head", var_id_from_base(9001u)),
         atom_int(&scratch, 2));
     Atom *data = atom_symbol(&scratch, "equation-token-data");
 
@@ -1229,7 +1229,7 @@ int main(int argc, char **argv) {
             atom_expr3(&equation_scratch,
                        atom_symbol_id(&equation_scratch,
                                       g_builtin_syms.equals),
-                       atom_var_with_id(&equation_scratch, "wildcard", 1),
+                       atom_var_with_id(&equation_scratch, "wildcard", var_id_from_base(1)),
                        atom_true(&equation_scratch));
         space_add(&equation_space, wildcard_equation);
         assert(space_single_linear_equation(&equation_space, source_head) ==
@@ -1245,7 +1245,7 @@ int main(int argc, char **argv) {
             atom_symbol(&equation_scratch, "captured"));
         Atom *callable_lhs = atom_expr2(
             &equation_scratch, callable_head,
-            atom_var_with_id(&equation_scratch, "input", 2));
+            atom_var_with_id(&equation_scratch, "input", var_id_from_base(2)));
         Atom *callable_equation = atom_expr3(
             &equation_scratch,
             atom_symbol_id(&equation_scratch, g_builtin_syms.equals),
@@ -1529,8 +1529,8 @@ int main(int argc, char **argv) {
                 symbol_intern_cstr(g_symbols, "prepared-equation-head");
             SymbolId result_head =
                 symbol_intern_cstr(g_symbols, "prepared-equation-result");
-            Atom *x = atom_var_with_id(&equation_scratch, "x", 7001u);
-            Atom *y = atom_var_with_id(&equation_scratch, "y", 7002u);
+            Atom *x = atom_var_with_id(&equation_scratch, "x", var_id_from_base(7001u));
+            Atom *y = atom_var_with_id(&equation_scratch, "y", var_id_from_base(7002u));
             Atom *lhs_elems[3] = {
                 atom_symbol_id(&equation_scratch, prepared_head), x, y,
             };
@@ -1583,7 +1583,7 @@ int main(int argc, char **argv) {
             /* A non-ground call stays on the general matcher path. */
             Atom *variable_call_elems[3] = {
                 atom_symbol_id(&equation_scratch, prepared_head),
-                atom_var_with_id(&equation_scratch, "query", 8001u),
+                atom_var_with_id(&equation_scratch, "query", var_id_from_base(8001u)),
                 shared,
             };
             assert(!space_prepared_equation_instantiate_ground(
@@ -1621,9 +1621,9 @@ int main(int argc, char **argv) {
             space_init_with_universe(&register_space, &equation_universe);
             SymbolId loop_head =
                 symbol_intern_cstr(g_symbols, "prepared-register-loop");
-            Atom *n = atom_var_with_id(&equation_scratch, "n", 7101u);
-            Atom *a = atom_var_with_id(&equation_scratch, "a", 7102u);
-            Atom *b = atom_var_with_id(&equation_scratch, "b", 7103u);
+            Atom *n = atom_var_with_id(&equation_scratch, "n", var_id_from_base(7101u));
+            Atom *a = atom_var_with_id(&equation_scratch, "a", var_id_from_base(7102u));
+            Atom *b = atom_var_with_id(&equation_scratch, "b", var_id_from_base(7103u));
             Atom *zero = atom_int(&equation_scratch, 0);
             Atom *one = atom_int(&equation_scratch, 1);
             Atom *guard_elems[3] = {
@@ -1739,7 +1739,7 @@ int main(int argc, char **argv) {
             SymbolId recursive_head =
                 symbol_intern_cstr(g_symbols, "prepared-register-recursive-fib");
             Atom *n = atom_var_with_id(
-                &equation_scratch, "recursive-n", 7201u);
+                &equation_scratch, "recursive-n", var_id_from_base(7201u));
             Atom *zero = atom_int(&equation_scratch, 0);
             Atom *one = atom_int(&equation_scratch, 1);
             Atom *two = atom_int(&equation_scratch, 2);
@@ -1853,9 +1853,9 @@ int main(int argc, char **argv) {
             SymbolId head =
                 symbol_intern_cstr(g_symbols, "prepared-existential-head");
             Atom *lhs_var =
-                atom_var_with_id(&equation_scratch, "lhs", 9001u);
+                atom_var_with_id(&equation_scratch, "lhs", var_id_from_base(9001u));
             Atom *rhs_var =
-                atom_var_with_id(&equation_scratch, "rhs", 9002u);
+                atom_var_with_id(&equation_scratch, "rhs", var_id_from_base(9002u));
             Atom *lhs_elems[2] = {
                 atom_symbol_id(&equation_scratch, head), lhs_var,
             };
@@ -1903,9 +1903,9 @@ int main(int argc, char **argv) {
             SymbolId inert =
                 symbol_intern_cstr(g_symbols, "effect-lfp-inert-value");
             Atom *x = atom_var_with_id(
-                &equation_scratch, "effect-x", 9101u);
+                &equation_scratch, "effect-x", var_id_from_base(9101u));
             Atom *function = atom_var_with_id(
-                &equation_scratch, "effect-function", 9102u);
+                &equation_scratch, "effect-function", var_id_from_base(9102u));
 
 #define EFFECT_CALL1(head_id, argument) \
     atom_expr2(&equation_scratch, \
@@ -2123,7 +2123,7 @@ int main(int argc, char **argv) {
         Atom *open = atom_expr2(
             &exact_scratch_c,
             atom_symbol_id(&exact_scratch_c, relation),
-            atom_var_with_id(&exact_scratch_c, "x", 991u));
+            atom_var_with_id(&exact_scratch_c, "x", var_id_from_base(991u)));
         bool applicable = false;
 
         space_init_with_universe(&exact_match_space, &exact_universe);
@@ -2172,27 +2172,27 @@ int main(int argc, char **argv) {
                                            &alpha_persistent);
         Atom *stored_elems[4] = {
             atom_symbol_id(&alpha_scratch_a, rel_sym),
-            atom_var_with_id(&alpha_scratch_a, "x", 101u),
-            atom_var_with_id(&alpha_scratch_a, "y", 102u),
-            atom_var_with_id(&alpha_scratch_a, "x", 101u),
+            atom_var_with_id(&alpha_scratch_a, "x", var_id_from_base(101u)),
+            atom_var_with_id(&alpha_scratch_a, "y", var_id_from_base(102u)),
+            atom_var_with_id(&alpha_scratch_a, "x", var_id_from_base(101u)),
         };
         Atom *variant_elems[4] = {
             atom_symbol_id(&alpha_scratch_b, rel_sym),
             atom_var_with_id(&alpha_scratch_b, "a",
-                             var_epoch_id(201u, 17u)),
+                             var_epoch_id(var_id_from_base(201u), (CettaFrameIdentity){17u})),
             atom_var_with_id(&alpha_scratch_b, "b",
-                             var_epoch_id(202u, 17u)),
+                             var_epoch_id(var_id_from_base(202u), (CettaFrameIdentity){17u})),
             atom_var_with_id(&alpha_scratch_b, "a",
-                             var_epoch_id(201u, 17u)),
+                             var_epoch_id(var_id_from_base(201u), (CettaFrameIdentity){17u})),
         };
         Atom *different_partition_elems[4] = {
             atom_symbol_id(&alpha_scratch_c, rel_sym),
             atom_var_with_id(&alpha_scratch_c, "a",
-                             var_epoch_id(301u, 29u)),
+                             var_epoch_id(var_id_from_base(301u), (CettaFrameIdentity){29u})),
             atom_var_with_id(&alpha_scratch_c, "b",
-                             var_epoch_id(302u, 29u)),
+                             var_epoch_id(var_id_from_base(302u), (CettaFrameIdentity){29u})),
             atom_var_with_id(&alpha_scratch_c, "b",
-                             var_epoch_id(302u, 29u)),
+                             var_epoch_id(var_id_from_base(302u), (CettaFrameIdentity){29u})),
         };
         Atom *stored = atom_expr(&alpha_scratch_a, stored_elems, 4u);
         Atom *variant = atom_expr(&alpha_scratch_b, variant_elems, 4u);
@@ -2272,13 +2272,13 @@ int main(int argc, char **argv) {
         Atom *unstable_stored =
             atom_expr3(&alpha_scratch_a,
                        atom_symbol_id(&alpha_scratch_a, rel_sym),
-                       atom_var_with_id(&alpha_scratch_a, "u", 401u),
+                       atom_var_with_id(&alpha_scratch_a, "u", var_id_from_base(401u)),
                        atom_space(&alpha_scratch_a, &mutable_payload));
         Atom *unstable_variant =
             atom_expr3(&alpha_scratch_b,
                        atom_symbol_id(&alpha_scratch_b, rel_sym),
                        atom_var_with_id(&alpha_scratch_b, "v",
-                                        var_epoch_id(501u, 31u)),
+                                        var_epoch_id(var_id_from_base(501u), (CettaFrameIdentity){31u})),
                        atom_space(&alpha_scratch_b, &mutable_payload));
         assert(atom_alpha_eq(unstable_stored, unstable_variant));
         space_add(&unstable_alpha_space, unstable_stored);

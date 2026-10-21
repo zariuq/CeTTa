@@ -25,6 +25,11 @@
 (= (cr-pair $x $y) (Pair $x $y))
 (: cr-sum (-> Number Number %Undefined%))
 (= (cr-sum $x $y) (Sum $x $y))
+(: cr-raw-result (-> Atom))
+(= (cr-raw-result) (+ 1 2))
+(: cr-forced-raw-result (-> Atom))
+(= (cr-forced-raw-result)
+   (function (chain (eval (+ 1 2)) $value (return $value))))
 (CrHeld id cr-id)
 (CrHeld bad cr-bad)
 (CrHeld raw cr-raw)
@@ -111,3 +116,8 @@
 ; tuple, before the callee is known; the callee's checks still apply.
 !(collapse ((cr-fetch raw) (+ 1 2)))
 !(collapse ((cr-fetch id) (cr-wrong)))
+
+; A raw Atom codomain holds an ordinary body as data.  An explicit function
+; marker still runs before producing its raw Atom result.
+!(cr-raw-result)
+!(cr-forced-raw-result)

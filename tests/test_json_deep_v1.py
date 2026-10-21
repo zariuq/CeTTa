@@ -20,8 +20,8 @@ def main():
                 source.write_text(
                     "!(import! &self json)\n"
                     f"!(== (json:stringify (json:parse {literal})) {literal})\n"
-                    f"!(== (json-stringify (json-parse {literal})) {literal})\n"
-                    f"!(== (json-stringify (json:to-legacy (json:parse {literal}))) {literal})\n"
+                    f"!(== (json:inspect-stringify (json:inspect {literal})) {literal})\n"
+                    f"!(== (json:stringify (json:from-inspection (json:inspect {literal}))) {literal})\n"
                 )
                 run = subprocess.run([binary, "--lang", language, str(source)],
                                      capture_output=True, text=True)

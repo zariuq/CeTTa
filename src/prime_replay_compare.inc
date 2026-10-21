@@ -121,7 +121,7 @@ static bool prime_replay_compare_cell(const PrimeNeedCellView *a,const PrimeNeed
     RC_P("cell.capture_storage",a->capture_var_ids,b->capture_var_ids);
     if(a->capture_var_count!=b->capture_var_count||(a->capture_var_count&&(!a->capture_var_ids||!b->capture_var_ids)))return false;
     for(size_t i=0u;i<a->capture_var_count;i++)
-        RC_I("cell.variable",CETTA_CHECKPOINT_VAR,a->capture_var_ids[i],b->capture_var_ids[i]);
+        if(!cetta_checkpoint_var(read,"cell.variable",a->capture_var_ids[i],b->capture_var_ids[i]))return false;
 #endif
     return true;
 }

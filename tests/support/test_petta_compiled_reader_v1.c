@@ -194,12 +194,12 @@ int main(void) {
         expect(&counts,
                tu_kind(&universe, x1) == ATOM_VAR &&
                    tu_kind(&universe, x2) == ATOM_VAR &&
-                   tu_var_id(&universe, x1) == tu_var_id(&universe, x2),
+                   var_id_eq(tu_var_id(&universe, x1), tu_var_id(&universe, x2)),
                "named PeTTa variables co-refer within one form");
         expect(&counts,
                tu_kind(&universe, a1) == ATOM_VAR &&
                    tu_kind(&universe, a2) == ATOM_VAR &&
-                   tu_var_id(&universe, a1) != tu_var_id(&universe, a2),
+                   !var_id_eq(tu_var_id(&universe, a1), tu_var_id(&universe, a2)),
                "PeTTa underscore variables are independently fresh");
     } else {
         expect(&counts, false,

@@ -1,8 +1,12 @@
 #include "json_value_v1.h"
 #include "json_direct_v1.h"
 
+#include "native/decimal_value_v1.h"
 #include "lib_parse_native_grammar.h"
+#include "utf8.h"
 
+#include <inttypes.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,6 +15,8 @@
 typedef struct {
     Arena *arena;
     CettaJsonNumberValidatorV1 number_validator;
+    bool ordinary_copy;
+    bool legacy_tags;
     uint64_t work;
     uint32_t work_limit;
     uint32_t depth_limit;
@@ -42,7 +48,7 @@ static bool json_value_error(JsonValueCtxV1 *ctx,
     return false;
 }
 
-static bool json_value_work(JsonValueCtxV1 *ctx, uint32_t amount) {
+static bool json_value_work(JsonValueCtxV1 *ctx, uint64_t amount) {
     if (!ctx || amount > UINT64_MAX - ctx->work ||
         (ctx->work_limit && (ctx->work > ctx->work_limit || amount > ctx->work_limit - ctx->work))) {
         return json_value_error(ctx, CETTA_JSON_VALUE_V1_RESOURCE_LIMIT,
@@ -182,8 +188,8 @@ static bool json_scalar_list_view(JsonValueCtxV1 *ctx, Atom *string,
     for (index = 0u; index < list->expr.len; index++) {
         Atom *cp = list->expr.elems[index];
         Atom *value;
-        if (!json_value_work(ctx, 1u) ||
-            !json_expr_is(cp, "cp", 2u) ||
+        if (!json_value_work(ctx, 1u)) return false;
+        if (!json_expr_is(cp, "cp", 2u) ||
             !(value = cp->expr.elems[1]) || value->kind != ATOM_GROUNDED ||
             value->ground.gkind != GV_INT || value->ground.ival < 0 ||
             value->ground.ival > 0x10ffff ||
@@ -288,7 +294,36 @@ static bool json_canonical_string_utf8(JsonValueCtxV1 *ctx, Atom *string,
     return true;
 }
 
-static Atom *json_to_legacy_scalar(JsonValueCtxV1 *ctx, Atom *value) {
+static Atom *json_ordinary_number_from_text(
+    JsonValueCtxV1 *ctx, Atom *text_atom) {
+    if (!text_atom || text_atom->kind != ATOM_GROUNDED ||
+        text_atom->ground.gkind != GV_STRING || !text_atom->ground.sval) {
+        json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                         "JsonNumberV1 expects an exact text lexeme");
+        return NULL;
+    }
+    const char *text = text_atom->ground.sval;
+    size_t length = atom_string_len(text_atom);
+    if (!cetta_json_direct_v1_number_valid(
+            (const uint8_t *)text, length)) {
+        json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                         "JsonNumberV1 contains an invalid number lexeme");
+        return NULL;
+    }
+    bool real = memchr(text, '.', length) || memchr(text, 'e', length) ||
+                memchr(text, 'E', length);
+    if (!real)
+        return atom_bigint(ctx->arena, text);
+    double number = 0.0;
+    if (!cetta_decimal_real_nearest_v1(text, &number)) {
+        json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                         "JsonNumberV1 cannot be projected to a native number");
+        return NULL;
+    }
+    return atom_float(ctx->arena, number);
+}
+
+static Atom *json_to_ordinary_scalar(JsonValueCtxV1 *ctx, Atom *value) {
     if (atom_is_symbol(value, "JsonNullV1"))
         return atom_symbol(ctx->arena, "JsonNull");
     if (json_expr_is(value, "JsonBoolV1", 2u)) {
@@ -299,28 +334,32 @@ static Atom *json_to_legacy_scalar(JsonValueCtxV1 *ctx, Atom *value) {
                              "JsonBoolV1 expects True or False");
             return NULL;
         }
-        return json_app1(ctx->arena, "JsonBool",
-                         atom_bool(ctx->arena, boolean_value));
+        Atom *b = atom_bool(ctx->arena, boolean_value);
+        return ctx->legacy_tags ? json_app1(ctx->arena, "JsonBool", b) : b;
     }
     if (json_expr_is(value, "JsonNumberV1", 2u)) {
-        Atom *number = value->expr.elems[1];
-        if (!number || number->kind != ATOM_GROUNDED ||
-            number->ground.gkind != GV_STRING || !number->ground.sval) {
-            json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
-                             "JsonNumberV1 expects an exact text lexeme");
-            return NULL;
+        if (ctx->legacy_tags) {
+            Atom *number = value->expr.elems[1];
+            if (!number || number->kind != ATOM_GROUNDED ||
+                number->ground.gkind != GV_STRING || !number->ground.sval) {
+                json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                                 "JsonNumberV1 expects an exact text lexeme");
+                return NULL;
+            }
+            return json_app1(ctx->arena, "JsonNumber",
+                             atom_string_n(ctx->arena, number->ground.sval,
+                                           atom_string_len(number)));
         }
-        return json_app1(ctx->arena, "JsonNumber",
-                         atom_string_n(ctx->arena, number->ground.sval,
-                                       number->ground.slen));
+        return json_ordinary_number_from_text(ctx, value->expr.elems[1]);
     }
     if (json_expr_is(value, "JsonStringV1", 2u)) {
         JsonBytesV1 utf8 = {.limit = CETTA_STRING_BYTES_MAX, .ctx = ctx};
         Atom *result = NULL;
         if (json_canonical_string_utf8(ctx, value, &utf8)) {
-            result = json_app1(ctx->arena, "JsonString",
-                               atom_string_n(ctx->arena,
-                                   (const char *)utf8.bytes, utf8.len));
+            result = atom_string_n(ctx->arena,
+                                   (const char *)utf8.bytes, utf8.len);
+            if (ctx->legacy_tags && result)
+                result = json_app1(ctx->arena, "JsonString", result);
         }
         free(utf8.bytes);
         return result;
@@ -352,7 +391,7 @@ static Atom *json_scalar_list_from_utf8(JsonValueCtxV1 *ctx,
                             sizeof(*items));
     if (!items) {
         json_value_error(ctx, CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE,
-                         "out of memory decoding legacy JSON string");
+                         "out of memory decoding an inspected JSON string");
         goto done;
     }
     for (index = 0u; index < scalars.view.scalar_len; index++) {
@@ -374,11 +413,8 @@ done:
 }
 
 static const char *json_text(Atom *atom) {
-    if (!atom) return NULL;
-    if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRING)
-        return atom->ground.sval;
-    if (atom->kind == ATOM_SYMBOL) return atom_name_cstr(atom);
-    return NULL;
+    return atom && atom->kind == ATOM_GROUNDED &&
+        atom->ground.gkind == GV_STRING ? atom->ground.sval : NULL;
 }
 
 /* The caller has already checked that atom is text. */
@@ -386,47 +422,125 @@ static size_t json_text_len(Atom *atom, const char *text) {
     return atom->kind == ATOM_GROUNDED ? atom_string_len(atom) : strlen(text);
 }
 
-static Atom *json_from_legacy_scalar(JsonValueCtxV1 *ctx, Atom *value) {
+/* A text carrier is inspected in place. Scalar syntax is an explicit
+ * conversion, not a prerequisite for validation, lookup or emission. */
+static bool json_utf8_text(JsonValueCtxV1 *ctx, const char *text, size_t len,
+                           size_t *scalar_count) {
+    size_t at = 0u, count = 0u;
+    while (at < len) {
+        if ((uint8_t)text[at] < 0x80u) { at++; count++; continue; }
+        uint32_t scalar, width;
+        if (!cetta_utf8_decode_one((const uint8_t *)text, len, at, &scalar, &width))
+            return json_value_error(ctx, CETTA_JSON_VALUE_V1_INVALID_UTF8,
+                                    "invalid UTF-8 at byte offset %zu", at);
+        at += width; count++;
+    }
+    if (scalar_count) *scalar_count = count;
+    return true;
+}
+
+static Atom *json_from_ordinary_scalar(JsonValueCtxV1 *ctx, Atom *value) {
     if (atom_is_symbol(value, "JsonNull"))
-        return atom_symbol(ctx->arena, "JsonNullV1");
+        return ctx->arena ? atom_symbol(ctx->arena, ctx->ordinary_copy ? "JsonNull" : "JsonNullV1") : value;
+    bool boolean_value = false;
+    if (json_bool_view(value, &boolean_value) ||
+        (json_expr_is(value, "JsonBool", 2u) &&
+         json_bool_view(value->expr.elems[1], &boolean_value))) {
+        if (!ctx->arena)
+            return value;
+        return ctx->ordinary_copy
+            ? atom_bool(ctx->arena, boolean_value)
+            : json_app1(ctx->arena, "JsonBoolV1",
+                        atom_bool(ctx->arena, boolean_value));
+    }
     if (json_expr_is(value, "JsonBool", 2u)) {
-        Atom *boolean = value->expr.elems[1];
-        bool boolean_value;
-        if (!json_bool_view(boolean, &boolean_value)) {
-            return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
-                                    "JsonBool expects True or False"), NULL;
+        return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                                "JsonBool expects True or False"), NULL;
+    }
+    Atom *str_atom = json_expr_is(value, "JsonString", 2u)
+        ? value->expr.elems[1] : value;
+    if (str_atom && str_atom->kind == ATOM_GROUNDED &&
+        str_atom->ground.gkind == GV_STRING) {
+        const char *text = str_atom->ground.sval;
+        size_t text_len = atom_string_len(str_atom);
+        if (!ctx->arena)
+            return json_utf8_text(ctx, text, text_len, NULL)
+                ? value : NULL;
+        if (ctx->ordinary_copy) {
+            return json_utf8_text(ctx, text, text_len, NULL)
+                ? atom_string_n(ctx->arena, text, text_len) : NULL;
         }
-        return json_app1(ctx->arena, "JsonBoolV1",
-                         atom_bool(ctx->arena, boolean_value));
+        return json_scalar_list_from_utf8(ctx, text, text_len);
     }
     if (json_expr_is(value, "JsonString", 2u)) {
-        const char *text = json_text(value->expr.elems[1]);
-        if (!text) {
-            return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
-                                    "JsonString expects text"), NULL;
-        }
-        return json_scalar_list_from_utf8(
-            ctx, text, json_text_len(value->expr.elems[1], text));
+        return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                                "JsonString expects text"), NULL;
     }
     if (json_expr_is(value, "JsonNumber", 2u)) {
-        const char *text = json_text(value->expr.elems[1]);
+        Atom *num_atom = value->expr.elems[1];
+        const char *text = json_text(num_atom);
         if (!text) {
             return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
-                                    "JsonNumber expects an exact text lexeme"),
-                NULL;
+                                    "JsonNumber expects an exact text lexeme"), NULL;
         }
+        size_t text_len = json_text_len(num_atom, text);
+        if (!cetta_json_direct_v1_number_valid((const uint8_t *)text, text_len)) {
+            return json_value_error(ctx, CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT,
+                                    "JSON syntax rejected by authored grammar"), NULL;
+        }
+        if (!ctx->arena)
+            return value;
+        if (ctx->ordinary_copy)
+            return json_ordinary_number_from_text(ctx, num_atom);
         return json_app1(ctx->arena, "JsonNumberV1",
-                         atom_string_n(ctx->arena, text,
-                             json_text_len(value->expr.elems[1], text)));
+                         atom_string_n(ctx->arena, text, text_len));
+    }
+    if (value->kind == ATOM_GROUNDED &&
+        (value->ground.gkind == GV_INT ||
+         value->ground.gkind == GV_BIGINT ||
+         value->ground.gkind == GV_FLOAT)) {
+        if (value->ground.gkind == GV_FLOAT && !isfinite(value->ground.fval)) {
+            return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                                    "ordinary JSON numbers must be finite"), NULL;
+        }
+        if (!ctx->arena)
+            return value;
+        if (ctx->ordinary_copy)
+            return atom_deep_copy(ctx->arena, value);
+        char *number_text = NULL;
+        bool heap_text = false;
+        if (value->ground.gkind == GV_FLOAT) {
+            if (!cetta_decimal_real_from_double_v1(
+                    value->ground.fval, &number_text)) {
+                return json_value_error(
+                    ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                    "ordinary JSON float has no finite decimal spelling"), NULL;
+            }
+            heap_text = true;
+        } else {
+            number_text = atom_to_parseable_string(ctx->arena, value);
+        }
+        Atom *result = number_text
+            ? json_app1(ctx->arena, "JsonNumberV1",
+                        atom_string(ctx->arena, number_text))
+            : NULL;
+        if (heap_text)
+            free(number_text);
+        if (!result)
+            json_value_error(ctx, CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE,
+                             "out of memory converting a JSON number");
+        return result;
     }
 
     json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
-                     "malformed legacy JSON value");
+                     "malformed ordinary JSON value");
     return NULL;
 }
 
 typedef struct {
-    Atom *items;
+    Atom *source;
+    Atom *const *items;
+    CettaExprLen count;
     Atom **converted;
     Atom *key;
     CettaExprIndex index;
@@ -434,10 +548,10 @@ typedef struct {
 } JsonConvertFrameV1;
 
 static Atom *json_convert_child(JsonValueCtxV1 *ctx, JsonConvertFrameV1 *frame,
-                                bool to_legacy) {
-    Atom *child = frame->items->expr.elems[frame->index];
+                                bool to_ordinary) {
+    Atom *child = frame->items[frame->index];
     if (!frame->object) return child;
-    if (to_legacy) {
+    if (to_ordinary) {
         JsonBytesV1 utf8 = {.limit = CETTA_STRING_BYTES_MAX, .ctx = ctx};
         bool ok = json_expr_is(child, "JsonMemberV1", 5u) &&
             child->expr.elems[1] && child->expr.elems[1]->kind == ATOM_GROUNDED &&
@@ -450,6 +564,15 @@ static Atom *json_convert_child(JsonValueCtxV1 *ctx, JsonConvertFrameV1 *frame,
         if (ok) return child->expr.elems[3];
     } else if (json_expr_is(child, "JsonPair", 3u)) {
         const char *key = json_text(child->expr.elems[1]);
+        if (key && !ctx->arena)
+            return json_utf8_text(ctx, key, json_text_len(child->expr.elems[1], key), NULL)
+                ? child->expr.elems[2] : NULL;
+        if (key && ctx->ordinary_copy) {
+            size_t len = json_text_len(child->expr.elems[1], key);
+            if (!json_utf8_text(ctx, key, len, NULL)) return NULL;
+            frame->key = atom_string_n(ctx->arena, key, len);
+            return child->expr.elems[2];
+        }
         if (key && (frame->key = json_scalar_list_from_utf8(
                 ctx, key, json_text_len(child->expr.elems[1], key))))
             return child->expr.elems[2];
@@ -459,7 +582,7 @@ static Atom *json_convert_child(JsonValueCtxV1 *ctx, JsonConvertFrameV1 *frame,
     return NULL;
 }
 
-static Atom *json_convert_value(JsonValueCtxV1 *ctx, Atom *value, bool to_legacy) {
+static Atom *json_convert_value(JsonValueCtxV1 *ctx, Atom *value, bool to_ordinary) {
     JsonConvertFrameV1 *frames = NULL;
     size_t len = 0u, cap = 0u;
     Atom *current = value;
@@ -473,10 +596,11 @@ static Atom *json_convert_value(JsonValueCtxV1 *ctx, Atom *value, bool to_legacy
             goto failed;
         }
         if (!json_value_work(ctx, 1u)) goto failed;
-        bool object = json_expr_is(current, to_legacy ? "JsonObjectV1" : "JsonObject", 2u);
-        if (object || json_expr_is(current, to_legacy ? "JsonArrayV1" : "JsonArray", 2u)) {
-            Atom *items = current->expr.elems[1];
-            if (!items || items->kind != ATOM_EXPR) {
+        bool object = json_expr_is(current, to_ordinary ? "JsonObjectV1" : "JsonObject", 2u);
+        if (object || json_expr_is(current, to_ordinary ? "JsonArrayV1" : "JsonArray", 2u)) {
+            Atom *const *items;
+            CettaExprLen count;
+            if (!atom_sequence_view(current->expr.elems[1], &items, &count)) {
                 json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed JSON container");
                 goto failed;
             }
@@ -487,34 +611,36 @@ static Atom *json_convert_value(JsonValueCtxV1 *ctx, Atom *value, bool to_legacy
                 if (!grown) goto allocation;
                 frames = grown; cap = next;
             }
-            Atom **converted = items->expr.len ? calloc(items->expr.len, sizeof(*converted)) : NULL;
-            if (items->expr.len && !converted) goto allocation;
-            frames[len++] = (JsonConvertFrameV1){.items = items, .converted = converted, .object = object};
-            if (!items->expr.len) goto closed;
-            current = json_convert_child(ctx, &frames[len-1u], to_legacy);
+            Atom **converted = ctx->arena && count ? calloc(count, sizeof(*converted)) : NULL;
+            if (ctx->arena && count && !converted) goto allocation;
+            frames[len++] = (JsonConvertFrameV1){.source = current, .items = items, .count = count,
+                .converted = converted, .object = object};
+            if (!count) goto closed;
+            current = json_convert_child(ctx, &frames[len-1u], to_ordinary);
             if (!current) goto failed;
             continue;
         }
-        current = to_legacy ? json_to_legacy_scalar(ctx, current) : json_from_legacy_scalar(ctx, current);
+        current = to_ordinary ? json_to_ordinary_scalar(ctx, current) : json_from_ordinary_scalar(ctx, current);
         if (!current) goto failed;
         for (;;) {
             if (!len) { free(frames); return current; }
             JsonConvertFrameV1 *frame = &frames[len-1u];
-            if (frame->object) current = to_legacy
+            if (ctx->arena && frame->object) current = to_ordinary || ctx->ordinary_copy
                 ? json_app2(ctx->arena, "JsonPair", frame->key, current)
                 : json_app4(ctx->arena, "JsonMemberV1", atom_int(ctx->arena, frame->index),
                             frame->key, current, atom_symbol(ctx->arena, "JsonNoSourceSpanV1"));
-            frame->converted[frame->index++] = current;
-            if (frame->index < frame->items->expr.len) {
-                current = json_convert_child(ctx, frame, to_legacy);
+            if (ctx->arena) frame->converted[frame->index] = current;
+            frame->index++;
+            if (frame->index < frame->count) {
+                current = json_convert_child(ctx, frame, to_ordinary);
                 if (!current) goto failed;
                 break;
             }
 closed:
             frame = &frames[len-1u];
-            current = json_app1(ctx->arena, frame->object ? (to_legacy ? "JsonObject" : "JsonObjectV1") :
-                               (to_legacy ? "JsonArray" : "JsonArrayV1"),
-                               atom_expr(ctx->arena, frame->converted, frame->items->expr.len));
+            current = ctx->arena ? json_app1(ctx->arena, frame->object ? (to_ordinary || ctx->ordinary_copy ? "JsonObject" : "JsonObjectV1") :
+                               (to_ordinary || ctx->ordinary_copy ? "JsonArray" : "JsonArrayV1"),
+                               atom_expr(ctx->arena, frame->converted, frame->count)) : frame->source;
             free(frame->converted); len--;
         }
     }
@@ -529,7 +655,7 @@ static bool json_convert(Arena *arena, Atom *value,
                          uint32_t work_limit, uint32_t depth_limit,
                          Atom **out, CettaJsonValueV1Status *status,
                          char *error_buf, size_t error_buf_size,
-                         bool to_legacy) {
+                         bool to_ordinary) {
     JsonValueCtxV1 ctx;
     ArenaMark mark;
     Atom *result;
@@ -551,7 +677,7 @@ static bool json_convert(Arena *arena, Atom *value,
         .error = error_buf,
         .error_size = error_buf_size,
     };
-    result = json_convert_value(&ctx, value, to_legacy);
+    result = json_convert_value(&ctx, value, to_ordinary);
     if (!result) {
         arena_reset(arena, mark);
         if (status) *status = ctx.status;
@@ -562,7 +688,7 @@ static bool json_convert(Arena *arena, Atom *value,
     return true;
 }
 
-bool cetta_json_value_v1_to_legacy(
+bool cetta_json_value_v1_to_ordinary(
     Arena *arena, Atom *canonical, uint32_t work_limit,
     uint32_t depth_limit, Atom **out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size) {
@@ -570,12 +696,79 @@ bool cetta_json_value_v1_to_legacy(
                         out, status, error_buf, error_buf_size, true);
 }
 
-bool cetta_json_value_v1_from_legacy(
-    Arena *arena, Atom *legacy, uint32_t work_limit,
+bool cetta_json_value_v1_to_legacy(
+    Arena *arena, Atom *canonical, uint32_t work_limit,
     uint32_t depth_limit, Atom **out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size) {
-    return json_convert(arena, legacy, work_limit, depth_limit,
+    JsonValueCtxV1 ctx;
+    ArenaMark mark;
+    Atom *result;
+    if (error_buf && error_buf_size > 0u) error_buf[0] = '\0';
+    if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
+    if (!arena || !canonical || !out) {
+        if (error_buf && error_buf_size > 0u)
+            (void)snprintf(error_buf, error_buf_size, "bad JSON value conversion arguments");
+        return false;
+    }
+    mark = arena_mark(arena);
+    ctx = (JsonValueCtxV1){
+        .arena = arena,
+        .legacy_tags = true,
+        .work_limit = work_limit,
+        .depth_limit = depth_limit,
+        .status = CETTA_JSON_VALUE_V1_OK,
+        .error = error_buf,
+        .error_size = error_buf_size,
+    };
+    result = json_convert_value(&ctx, canonical, true);
+    if (!result) {
+        arena_reset(arena, mark);
+        if (status) *status = ctx.status;
+        return false;
+    }
+    *out = result;
+    if (status) *status = CETTA_JSON_VALUE_V1_OK;
+    return true;
+}
+
+bool cetta_json_value_v1_from_ordinary(
+    Arena *arena, Atom *ordinary, uint32_t work_limit,
+    uint32_t depth_limit, Atom **out, CettaJsonValueV1Status *status,
+    char *error_buf, size_t error_buf_size) {
+    return json_convert(arena, ordinary, work_limit, depth_limit,
                         out, status, error_buf, error_buf_size, false);
+}
+
+bool cetta_json_value_v1_validate_ordinary(Atom *value,
+    uint32_t work_limit, uint32_t depth_limit, CettaJsonValueV1Status *status,
+    char *error_buf, size_t error_buf_size) {
+    if (error_buf && error_buf_size) error_buf[0] = '\0';
+    if (!value) {
+        if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
+        if (error_buf && error_buf_size)
+            (void)snprintf(error_buf, error_buf_size, "bad JSON value conversion arguments");
+        return false;
+    }
+    JsonValueCtxV1 ctx = {.work_limit = work_limit, .depth_limit = depth_limit,
+        .status = CETTA_JSON_VALUE_V1_OK, .error = error_buf, .error_size = error_buf_size};
+    bool ok = json_convert_value(&ctx, value, false) != NULL;
+    if (status) *status = ctx.status;
+    return ok;
+}
+
+bool cetta_json_value_v1_normalize_ordinary(Arena *arena, Atom *value, Atom **out,
+    CettaJsonValueV1Status *status, char *error_buf, size_t error_buf_size) {
+    if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
+    if (!arena || !value || !out) return false;
+    if (error_buf && error_buf_size) error_buf[0] = '\0';
+    ArenaMark mark = arena_mark(arena);
+    JsonValueCtxV1 ctx = {.arena = arena, .ordinary_copy = true,
+        .status = CETTA_JSON_VALUE_V1_OK, .error = error_buf, .error_size = error_buf_size};
+    Atom *result = json_convert_value(&ctx, value, false);
+    if (status) *status = ctx.status;
+    if (!result) { arena_reset(arena, mark); return false; }
+    *out = result;
+    return true;
 }
 
 static bool json_emit_string(JsonValueCtxV1 *ctx, Atom *string,
@@ -611,16 +804,124 @@ static bool json_emit_string(JsonValueCtxV1 *ctx, Atom *string,
     return json_bytes_char(out, '"');
 }
 
-static bool json_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out) {
-    if (atom_is_symbol(value, "JsonNullV1"))
+static bool json_emit_native_text(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out) {
+    const char *text = json_text(value);
+    if (!text) return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                                       "ordinary JSON strings must be native strings");
+    size_t len = json_text_len(value, text), scalars;
+    if (!json_utf8_text(ctx, text, len, &scalars) ||
+        !json_value_work(ctx, scalars) || !json_bytes_char(out, '"')) return false;
+    static const char hex[] = "0123456789abcdef";
+    size_t begin = 0u;
+    for (size_t at = 0u; at < len; at++) {
+        uint8_t c = (uint8_t)text[at];
+        if (c >= 0x20u && c != '"' && c != '\\') continue;
+        if (!json_bytes_append(out, text + begin, at - begin)) return false;
+        const char *escape = NULL;
+        switch (c) {
+        case '"': escape = "\\\""; break;
+        case '\\': escape = "\\\\"; break;
+        case '\b': escape = "\\b"; break;
+        case '\f': escape = "\\f"; break;
+        case '\n': escape = "\\n"; break;
+        case '\r': escape = "\\r"; break;
+        case '\t': escape = "\\t"; break;
+        }
+        if (escape) {
+            if (!json_bytes_append(out, escape, 2u)) return false;
+        } else {
+            char escaped[] = {'\\', 'u', '0', '0', hex[c >> 4u], hex[c & 15u]};
+            if (!json_bytes_append(out, escaped, sizeof(escaped))) return false;
+        }
+        begin = at + 1u;
+    }
+    return json_bytes_append(out, text + begin, len - begin) && json_bytes_char(out, '"');
+}
+
+/* Reference emission is checked by the full runtime roundtrip. Fast
+ * emission supplies its lexical interpretation explicitly. */
+static bool json_number_lexeme_valid(JsonValueCtxV1 *ctx, const char *bytes, size_t len) {
+    return !ctx->number_validator ||
+        ctx->number_validator((const uint8_t *)bytes, len);
+}
+
+static bool json_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, bool ordinary) {
+    if (atom_is_symbol(value, ordinary ? "JsonNull" : "JsonNullV1"))
         return json_bytes_append(out, "null", 4u);
-    if (json_expr_is(value, "JsonBoolV1", 2u)) {
+    if (ordinary) {
         bool boolean_value;
-        if (json_bool_view(value->expr.elems[1], &boolean_value)) {
+        if (json_bool_view(value, &boolean_value) ||
+            (json_expr_is(value, "JsonBool", 2u) &&
+             json_bool_view(value->expr.elems[1], &boolean_value))) {
             return boolean_value
                 ? json_bytes_append(out, "true", 4u)
                 : json_bytes_append(out, "false", 5u);
         }
+        if (json_expr_is(value, "JsonString", 2u))
+            return json_emit_native_text(ctx, value->expr.elems[1], out);
+        if (json_expr_is(value, "JsonNumber", 2u)) {
+            Atom *number = value->expr.elems[1];
+            const char *text = json_text(number);
+            if (!text || number->kind != ATOM_GROUNDED ||
+                number->ground.gkind != GV_STRING) {
+                return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                                        "JsonNumber expects exact text");
+            }
+            size_t len = json_text_len(number, text);
+            if (!json_number_lexeme_valid(ctx, text, len))
+                return json_value_error(ctx, CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT,
+                                        "JSON syntax rejected by authored grammar");
+            return json_bytes_append(out, text, len);
+        }
+        if (value && value->kind == ATOM_GROUNDED &&
+            value->ground.gkind == GV_STRING)
+            return json_emit_native_text(ctx, value, out);
+        if (value && value->kind == ATOM_GROUNDED &&
+            (value->ground.gkind == GV_INT ||
+             value->ground.gkind == GV_BIGINT ||
+             value->ground.gkind == GV_FLOAT)) {
+            char *text = NULL;
+            bool heap_text = false;
+            if (value->ground.gkind == GV_FLOAT) {
+                if (!cetta_decimal_real_from_double_v1(
+                        value->ground.fval, &text)) {
+                    return json_value_error(
+                        ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                        "ordinary JSON numbers must be finite");
+                }
+                heap_text = true;
+            } else if (value->ground.gkind == GV_BIGINT) {
+                text = (char *)atom_bigint_cstr(value);
+            } else {
+                char integer[64];
+                int written = snprintf(
+                    integer, sizeof(integer), "%" PRId64,
+                    value->ground.ival);
+                if (written <= 0 || (size_t)written >= sizeof(integer))
+                    return json_value_error(
+                        ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                        "invalid ordinary JSON integer");
+                return json_bytes_append(
+                    out, integer, (size_t)written);
+            }
+            bool emitted = text && json_number_lexeme_valid(ctx, text, strlen(text)) &&
+                           json_bytes_append(out, text, strlen(text));
+            if (heap_text)
+                free(text);
+            if (emitted)
+                return true;
+            return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                                    "invalid ordinary JSON number");
+        }
+        return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
+                                "malformed ordinary JSON scalar");
+    }
+    if (json_expr_is(value, "JsonBoolV1", 2u)) {
+        bool boolean_value;
+        if (json_bool_view(value->expr.elems[1], &boolean_value))
+            return boolean_value
+                ? json_bytes_append(out, "true", 4u)
+                : json_bytes_append(out, "false", 5u);
         return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
                                 "JsonBoolV1 expects True or False");
     }
@@ -628,42 +929,54 @@ static bool json_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out)
         return json_emit_string(ctx, value, out);
     if (json_expr_is(value, "JsonNumberV1", 2u)) {
         Atom *number = value->expr.elems[1];
-        if (!number || number->kind != ATOM_GROUNDED ||
-            number->ground.gkind != GV_STRING || !number->ground.sval) {
+        const char *text = json_text(number);
+        if (!text || number->kind != ATOM_GROUNDED ||
+            number->ground.gkind != GV_STRING) {
             return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
                                     "JsonNumberV1 expects exact text");
         }
-        /* Reference emission is checked by the full runtime roundtrip.
-         * Fast emission supplies its lexical interpretation explicitly. */
-        if (ctx->number_validator && !ctx->number_validator(
-                (const uint8_t *)number->ground.sval, number->ground.slen))
+        size_t len = json_text_len(number, text);
+        if (!json_number_lexeme_valid(ctx, text, len))
             return json_value_error(ctx, CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT,
                                     "JSON syntax rejected by authored grammar");
-        return json_bytes_append(out, number->ground.sval,
-                                 number->ground.slen);
+        return json_bytes_append(out, text, len);
     }
     return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
 }
 
-typedef struct { Atom *items; CettaExprIndex index; bool object; } JsonEmitFrameV1;
+typedef struct { Atom *const *items; CettaExprLen count, index; bool object; } JsonEmitFrameV1;
 
-static Atom *json_emit_child(JsonValueCtxV1 *ctx, JsonEmitFrameV1 *frame, JsonBytesV1 *out) {
-    Atom *child = frame->items->expr.elems[frame->index];
+static bool json_emit_indent(JsonBytesV1 *out, size_t depth) {
+    if (!json_bytes_char(out, '\n')) return false;
+    for (size_t level = 0u; level < depth; level++)
+        if (!json_bytes_append(out, "  ", 2u)) return false;
+    return true;
+}
+
+static Atom *json_emit_child(JsonValueCtxV1 *ctx, JsonEmitFrameV1 *frame, JsonBytesV1 *out,
+                             bool ordinary, bool pretty, size_t depth) {
+    Atom *child = frame->items[frame->index];
     if (frame->index && !json_bytes_char(out, ',')) return NULL;
+    if (pretty && !json_emit_indent(out, depth)) return NULL;
     if (!frame->object) return child;
+    if (ordinary && json_expr_is(child, "JsonPair", 3u) &&
+        json_emit_native_text(ctx, child->expr.elems[1], out) && json_bytes_char(out, ':') &&
+        (!pretty || json_bytes_char(out, ' ')))
+        return child->expr.elems[2];
     if (json_expr_is(child, "JsonMemberV1", 5u) &&
         child->expr.elems[1] && child->expr.elems[1]->kind == ATOM_GROUNDED &&
         child->expr.elems[1]->ground.gkind == GV_INT &&
         child->expr.elems[1]->ground.ival == (int64_t)frame->index &&
         json_member_span_valid(child->expr.elems[4]) &&
-        json_emit_string(ctx, child->expr.elems[2], out) && json_bytes_char(out, ':'))
+        json_emit_string(ctx, child->expr.elems[2], out) && json_bytes_char(out, ':') &&
+        (!pretty || json_bytes_char(out, ' ')))
         return child->expr.elems[3];
     if (ctx->status == CETTA_JSON_VALUE_V1_OK)
         json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
     return NULL;
 }
 
-static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out) {
+static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, bool ordinary, bool pretty) {
     JsonEmitFrameV1 *frames = NULL;
     size_t len = 0u, cap = 0u;
     Atom *current = value;
@@ -677,10 +990,11 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out) 
             goto failed;
         }
         if (!json_value_work(ctx, 1u)) goto failed;
-        bool object = json_expr_is(current, "JsonObjectV1", 2u);
-        if (object || json_expr_is(current, "JsonArrayV1", 2u)) {
-            Atom *items = current->expr.elems[1];
-            if (!items || items->kind != ATOM_EXPR) {
+        bool object = json_expr_is(current, ordinary ? "JsonObject" : "JsonObjectV1", 2u);
+        if (object || json_expr_is(current, ordinary ? "JsonArray" : "JsonArrayV1", 2u)) {
+            Atom *const *items;
+            CettaExprLen count;
+            if (!atom_sequence_view(current->expr.elems[1], &items, &count)) {
                 json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
                 goto failed;
             }
@@ -692,22 +1006,23 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out) 
                 if (!grown) goto allocation;
                 frames = grown; cap = next;
             }
-            frames[len++] = (JsonEmitFrameV1){.items = items, .object = object};
-            if (!items->expr.len) goto closed;
-            current = json_emit_child(ctx, &frames[len-1u], out);
+            frames[len++] = (JsonEmitFrameV1){.items = items, .count = count, .object = object};
+            if (!count) goto closed;
+            current = json_emit_child(ctx, &frames[len-1u], out, ordinary, pretty, len);
             if (!current) goto failed;
             continue;
         }
-        if (!json_emit_scalar(ctx, current, out)) goto failed;
+        if (!json_emit_scalar(ctx, current, out, ordinary)) goto failed;
         while (len) {
             JsonEmitFrameV1 *frame = &frames[len-1u];
-            if (++frame->index < frame->items->expr.len) {
-                current = json_emit_child(ctx, frame, out);
+            if (++frame->index < frame->count) {
+                current = json_emit_child(ctx, frame, out, ordinary, pretty, len);
                 if (!current) goto failed;
                 break;
             }
 closed:
             frame = &frames[len-1u];
+            if (pretty && frame->count && !json_emit_indent(out, len-1u)) goto failed;
             if (!json_bytes_char(out, frame->object ? '}' : ']')) goto failed;
             len--;
         }
@@ -721,7 +1036,7 @@ failed:
 
 static bool json_stringify_impl(
     const CettaJsonRuntimeV1 *runtime, CettaJsonNumberValidatorV1 number_validator,
-    Atom *value, bool legacy_input,
+    Atom *value, bool ordinary_input, bool pretty,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out,
     CettaJsonValueV1Status *status,
@@ -751,7 +1066,13 @@ static bool json_stringify_impl(
      * similar prefixes at hash-table collisions. Keep it wholly local. */
     arena_init_detached(&normalized_arena);
     arena_init_detached(&reparsed_arena);
-    if (legacy_input && !cetta_json_value_v1_from_legacy(
+    bool fused_ordinary = ordinary_input && !runtime;
+    if (fused_ordinary && !cetta_json_value_v1_validate_ordinary(value, work_limit,
+            depth_limit, &convert_status, error_buf, error_buf_size)) {
+        if (status) *status = convert_status;
+        goto done;
+    }
+    if (ordinary_input && !fused_ordinary && !cetta_json_value_v1_from_ordinary(
             &normalized_arena, value, work_limit, depth_limit,
             &canonical, &convert_status, error_buf, error_buf_size)) {
         if (status) *status = convert_status;
@@ -766,7 +1087,7 @@ static bool json_stringify_impl(
         .error_size = error_buf_size,
     };
     bytes = (JsonBytesV1){.limit = byte_limit ? byte_limit : CETTA_STRING_BYTES_MAX, .ctx = &ctx};
-    if (!json_emit_value(&ctx, canonical, &bytes)) {
+    if (!json_emit_value(&ctx, canonical, &bytes, fused_ordinary, pretty)) {
         if (status) *status = ctx.status;
         goto done_bytes;
     }
@@ -805,7 +1126,7 @@ done:
 }
 
 bool cetta_json_value_v1_stringify(
-    const CettaJsonRuntimeV1 *runtime, Atom *value, bool legacy_input,
+    const CettaJsonRuntimeV1 *runtime, Atom *value, bool ordinary_input,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size) {
@@ -813,247 +1134,26 @@ bool cetta_json_value_v1_stringify(
         if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
         return false;
     }
-    return json_stringify_impl(runtime, NULL, value, legacy_input, work_limit,
+    return json_stringify_impl(runtime, NULL, value, ordinary_input, false, work_limit,
         depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
 }
 
 bool cetta_json_value_v1_emit(CettaJsonNumberValidatorV1 number_validator,
-    Atom *value, bool legacy_input,
+    Atom *value, bool ordinary_input,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size) {
-    return json_stringify_impl(NULL, number_validator, value, legacy_input, work_limit,
+    return json_stringify_impl(NULL, number_validator, value, ordinary_input, false, work_limit,
         depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
 }
 
-/* Direct emission of a legacy value. It accepts what
- * cetta_json_value_v1_from_legacy accepts and writes what emitting the
- * converted value writes, with the same failures in the same order, but it
- * builds no scalar atoms: text goes from its UTF-8 bytes to escaped output.
- * Conversion failures win over emission failures, as in convert-then-emit;
- * the first emission failure in output order is kept until the walk ends. */
-typedef struct { Atom *items; CettaExprIndex index; bool object; } JsonLegacyEmitFrameV1;
-
-typedef struct {
-    CettaJsonValueV1Status status;
-    char message[256];
-} JsonDeferredFailureV1;
-
-static bool json_legacy_emit_text(JsonValueCtxV1 *ctx, Atom *atom, JsonBytesV1 *out) {
-    static const uint8_t hex[] = "0123456789abcdef";
-    const char *text = json_text(atom);
-    CettaLpNativeUtf8ScalarBuffer scalars;
-    char error[256] = {0};
-    bool ok = false;
-    uint32_t index, start;
-    cetta_lp_native_utf8_scalar_buffer_init(&scalars);
-    if (!cetta_lp_native_utf8_scalar_buffer_decode(
-            &scalars, (const uint8_t *)text, json_text_len(atom, text), error, sizeof(error))) {
-        json_value_error(ctx, CETTA_JSON_VALUE_V1_INVALID_UTF8,
-                         "%s", error[0] ? error : "invalid UTF-8 string");
-        goto done;
-    }
-    if (!json_bytes_char(out, '"')) goto done;
-    for (index = 0u, start = 0u; index < scalars.view.scalar_len; index++) {
-        uint32_t scalar = cetta_lp_native_utf8_scalar_view_scalar_at(&scalars.view, index);
-        uint8_t escape[6] = {'\\', 'u', '0', '0', 0, 0};
-        const char *pair = NULL;
-        if (scalar >= 0x20u && scalar < 0x80u && scalar != '"' && scalar != '\\') continue;
-        if (start < index && scalars.view.ascii_bytes &&
-            !json_bytes_append(out, scalars.view.ascii_bytes + start, index - start)) goto done;
-        if (start < index && !scalars.view.ascii_bytes) {
-            for (uint32_t plain = start; plain < index; plain++)
-                if (!json_bytes_char(out, (uint8_t)cetta_lp_native_utf8_scalar_view_scalar_at(&scalars.view, plain))) goto done;
-        }
-        start = index + 1u;
-        switch (scalar) {
-        case '"': pair = "\\\""; break;
-        case '\\': pair = "\\\\"; break;
-        case '\b': pair = "\\b"; break;
-        case '\f': pair = "\\f"; break;
-        case '\n': pair = "\\n"; break;
-        case '\r': pair = "\\r"; break;
-        case '\t': pair = "\\t"; break;
-        default: break;
-        }
-        if (pair) {
-            if (!json_bytes_append(out, pair, 2u)) goto done;
-        } else if (scalar < 0x20u) {
-            escape[4] = hex[(scalar >> 4u) & 0xfu];
-            escape[5] = hex[scalar & 0xfu];
-            if (!json_bytes_append(out, escape, sizeof(escape))) goto done;
-        } else if (!json_utf8_append_scalar(out, scalar)) {
-            goto done;
-        }
-    }
-    if (start < index && scalars.view.ascii_bytes &&
-        !json_bytes_append(out, scalars.view.ascii_bytes + start, index - start)) goto done;
-    if (start < index && !scalars.view.ascii_bytes) {
-        for (uint32_t plain = start; plain < index; plain++)
-            if (!json_bytes_char(out, (uint8_t)cetta_lp_native_utf8_scalar_view_scalar_at(&scalars.view, plain))) goto done;
-    }
-    ok = json_bytes_char(out, '"');
-done:
-    cetta_lp_native_utf8_scalar_buffer_free(&scalars);
-    return ok;
-}
-
-/* An emission failure is remembered, and the walk continues to find any
- * later conversion failure, which would have come first. */
-static bool json_legacy_defer(JsonValueCtxV1 *ctx, JsonDeferredFailureV1 *deferred) {
-    if (deferred->status == CETTA_JSON_VALUE_V1_OK) {
-        deferred->status = ctx->status;
-        (void)snprintf(deferred->message, sizeof(deferred->message), "%s",
-                       ctx->error && ctx->error[0] ? ctx->error : "JSON emission failure");
-    }
-    ctx->status = CETTA_JSON_VALUE_V1_OK;
-    if (ctx->error && ctx->error_size > 0u) ctx->error[0] = '\0';
-    return true;
-}
-
-static bool json_legacy_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out,
-                                    JsonDeferredFailureV1 *deferred) {
-    if (atom_is_symbol(value, "JsonNull"))
-        return json_bytes_append(out, "null", 4u) || json_legacy_defer(ctx, deferred);
-    if (json_expr_is(value, "JsonBool", 2u)) {
-        bool boolean_value;
-        if (!json_bool_view(value->expr.elems[1], &boolean_value))
-            return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
-                                    "JsonBool expects True or False");
-        return (boolean_value ? json_bytes_append(out, "true", 4u)
-                              : json_bytes_append(out, "false", 5u)) || json_legacy_defer(ctx, deferred);
-    }
-    if (json_expr_is(value, "JsonString", 2u)) {
-        if (!json_text(value->expr.elems[1]))
-            return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
-                                    "JsonString expects text");
-        if (json_legacy_emit_text(ctx, value->expr.elems[1], out)) return true;
-        return ctx->status == CETTA_JSON_VALUE_V1_INVALID_UTF8 ? false : json_legacy_defer(ctx, deferred);
-    }
-    if (json_expr_is(value, "JsonNumber", 2u)) {
-        Atom *number = value->expr.elems[1];
-        const char *text = json_text(number);
-        size_t len;
-        if (!text)
-            return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
-                                    "JsonNumber expects an exact text lexeme");
-        len = json_text_len(number, text);
-        if (ctx->number_validator && !ctx->number_validator((const uint8_t *)text, len)) {
-            json_value_error(ctx, CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT,
-                             "JSON syntax rejected by authored grammar");
-            return json_legacy_defer(ctx, deferred);
-        }
-        return json_bytes_append(out, text, len) || json_legacy_defer(ctx, deferred);
-    }
-    return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE,
-                            "malformed legacy JSON value");
-}
-
-static Atom *json_legacy_emit_child(JsonValueCtxV1 *ctx, JsonLegacyEmitFrameV1 *frame,
-                                    JsonBytesV1 *out, JsonDeferredFailureV1 *deferred) {
-    Atom *child = frame->items->expr.elems[frame->index];
-    if (frame->index && !json_bytes_char(out, ',')) json_legacy_defer(ctx, deferred);
-    if (!frame->object) return child;
-    if (json_expr_is(child, "JsonPair", 3u) && json_text(child->expr.elems[1])) {
-        if (!json_legacy_emit_text(ctx, child->expr.elems[1], out)) {
-            if (ctx->status == CETTA_JSON_VALUE_V1_INVALID_UTF8) return NULL;
-            json_legacy_defer(ctx, deferred);
-        }
-        if (!json_bytes_char(out, ':')) json_legacy_defer(ctx, deferred);
-        return child->expr.elems[2];
-    }
-    json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed JSON object member");
-    return NULL;
-}
-
-static bool json_legacy_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out,
-                                   JsonDeferredFailureV1 *deferred) {
-    JsonLegacyEmitFrameV1 *frames = NULL;
-    size_t len = 0u, cap = 0u;
-    Atom *current = value;
-    for (;;) {
-        if (!current) {
-            json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "missing JSON value");
-            goto failed;
-        }
-        bool object = json_expr_is(current, "JsonObject", 2u);
-        if (object || json_expr_is(current, "JsonArray", 2u)) {
-            Atom *items = current->expr.elems[1];
-            if (!items || items->kind != ATOM_EXPR) {
-                json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed JSON container");
-                goto failed;
-            }
-            if (len == cap) {
-                size_t next = cap ? cap * 2u : 16u;
-                if (next < cap || next > SIZE_MAX / sizeof(*frames)) goto allocation;
-                JsonLegacyEmitFrameV1 *grown = realloc(frames, next * sizeof(*frames));
-                if (!grown) goto allocation;
-                frames = grown; cap = next;
-            }
-            if (!json_bytes_char(out, object ? '{' : '[')) json_legacy_defer(ctx, deferred);
-            frames[len++] = (JsonLegacyEmitFrameV1){.items = items, .object = object};
-            if (!items->expr.len) goto closed;
-            current = json_legacy_emit_child(ctx, &frames[len-1u], out, deferred);
-            if (!current) goto failed;
-            continue;
-        }
-        if (!json_legacy_emit_scalar(ctx, current, out, deferred)) goto failed;
-        while (len) {
-            JsonLegacyEmitFrameV1 *frame = &frames[len-1u];
-            if (++frame->index < frame->items->expr.len) {
-                current = json_legacy_emit_child(ctx, frame, out, deferred);
-                if (!current) goto failed;
-                break;
-            }
-closed:
-            frame = &frames[len-1u];
-            if (!json_bytes_char(out, frame->object ? '}' : ']')) json_legacy_defer(ctx, deferred);
-            len--;
-        }
-        if (!len) { free(frames); return true; }
-    }
-allocation:
-    json_value_error(ctx, CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE, "out of memory converting JSON value");
-failed:
-    free(frames); return false;
-}
-
-bool cetta_json_value_v1_emit_legacy(CettaJsonNumberValidatorV1 number_validator,
-    Atom *value, size_t byte_limit, uint8_t **bytes_out, size_t *byte_len_out,
-    CettaJsonValueV1Status *status, char *error_buf, size_t error_buf_size) {
-    JsonValueCtxV1 ctx;
-    JsonBytesV1 bytes;
-    JsonDeferredFailureV1 deferred = {.status = CETTA_JSON_VALUE_V1_OK};
-    if (error_buf && error_buf_size > 0u) error_buf[0] = '\0';
-    if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
-    if (!number_validator || !value || !bytes_out || !byte_len_out) {
-        if (error_buf && error_buf_size > 0u)
-            (void)snprintf(error_buf, error_buf_size, "bad JSON stringify arguments");
-        return false;
-    }
-    ctx = (JsonValueCtxV1){
-        .number_validator = number_validator,
-        .status = CETTA_JSON_VALUE_V1_OK,
-        .error = error_buf,
-        .error_size = error_buf_size,
-    };
-    bytes = (JsonBytesV1){.limit = byte_limit ? byte_limit : CETTA_STRING_BYTES_MAX, .ctx = &ctx};
-    if (!json_legacy_emit_value(&ctx, value, &bytes, &deferred)) {
-        if (status) *status = ctx.status;
-        free(bytes.bytes);
-        return false;
-    }
-    if (deferred.status != CETTA_JSON_VALUE_V1_OK) {
-        if (status) *status = deferred.status;
-        if (error_buf && error_buf_size > 0u)
-            (void)snprintf(error_buf, error_buf_size, "%s", deferred.message);
-        free(bytes.bytes);
-        return false;
-    }
-    *bytes_out = bytes.bytes ? bytes.bytes : (uint8_t *)calloc(1u, 1u);
-    *byte_len_out = bytes.len;
-    if (status) *status = CETTA_JSON_VALUE_V1_OK;
-    return *bytes_out != NULL;
+bool cetta_json_value_v1_emit_pretty(CettaJsonNumberValidatorV1 number_validator,
+    Atom *value, bool ordinary_input,
+    uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
+    uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
+    char *error_buf, size_t error_buf_size) {
+    return json_stringify_impl(NULL, number_validator, value, ordinary_input, true, work_limit,
+        depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
 }
 
 const char *cetta_json_value_v1_status_name(CettaJsonValueV1Status status) {

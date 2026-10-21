@@ -150,8 +150,8 @@ static void check_module_prefix(TestCounts *counts,
         expect(counts, tu_kind(universe, left) == ATOM_VAR &&
                        tu_kind(universe, right) == ATOM_VAR &&
                        tu_kind(universe, next) == ATOM_VAR &&
-                       tu_var_id(universe, left) == tu_var_id(universe, right) &&
-                       tu_var_id(universe, left) != tu_var_id(universe, next),
+                       var_id_eq(tu_var_id(universe, left), tu_var_id(universe, right)) &&
+                       !var_id_eq(tu_var_id(universe, left), tu_var_id(universe, next)),
                "prefix keeps within-form sharing and refreshes between forms");
         expect(counts, tu_kind(universe, ids[2]) == ATOM_SYMBOL &&
                        tu_sym(universe, ids[2]) == g_builtin_syms.bang,
@@ -425,8 +425,7 @@ int main(void) {
     expect(&counts,
            host_var_left != CETTA_ATOM_ID_NONE &&
                host_var_right != CETTA_ATOM_ID_NONE &&
-               tu_var_id(&universe, host_var_left) ==
-                   tu_var_id(&universe, host_var_right),
+               var_id_eq(tu_var_id(&universe, host_var_left), tu_var_id(&universe, host_var_right)),
            "direct variable projection shares identity within one form");
     {
         AtomId children[2] = {host_var_left, host_var_right};
@@ -473,8 +472,7 @@ int main(void) {
     expect(&counts,
            host_next_form && host_next_var != CETTA_ATOM_ID_NONE &&
                host_var_left != CETTA_ATOM_ID_NONE &&
-               tu_var_id(&universe, host_next_var) !=
-                   tu_var_id(&universe, host_var_left),
+               !var_id_eq(tu_var_id(&universe, host_next_var), tu_var_id(&universe, host_var_left)),
            "top-level form boundaries refresh variable identity");
 
     atom_len = he_compiled_reader_v1_parse_text_ids(
@@ -523,7 +521,7 @@ int main(void) {
                    right != CETTA_ATOM_ID_NONE &&
                    tu_kind(&universe, left) == ATOM_VAR &&
                    tu_kind(&universe, right) == ATOM_VAR &&
-                   tu_var_id(&universe, left) == tu_var_id(&universe, right),
+                   var_id_eq(tu_var_id(&universe, left), tu_var_id(&universe, right)),
                "variable identity is shared within one top-level form");
         expect(&counts,
                tu_kind(&universe, ids[2]) == ATOM_GROUNDED &&
@@ -617,8 +615,7 @@ int main(void) {
         AtomId variables = atom_len == 3 && ids ? ids[2] : CETTA_ATOM_ID_NONE;
         expect(&counts, variables != CETTA_ATOM_ID_NONE &&
             tu_arity(&universe, variables) == 2u &&
-            tu_var_id(&universe, tu_child(&universe, variables, 0u)) !=
-                tu_var_id(&universe, tu_child(&universe, variables, 1u)),
+            !var_id_eq(tu_var_id(&universe, tu_child(&universe, variables, 0u)), tu_var_id(&universe, tu_child(&universe, variables, 1u))),
             "HE preserves distinct dotted and colon variable identities");
         expect(&counts, parser_namespace_sugar_enabled(),
             "a compiled HE projection does not alter another reader's policy");

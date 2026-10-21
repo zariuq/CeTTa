@@ -70,7 +70,7 @@ static bool eval_owned_pattern_parameters(Atom *pattern, EvalOwnedShape shape,
         return false;
     if (pattern->kind == ATOM_VAR) {
         for (size_t i = 0u; i < *count; i++) {
-            if (parameters[i].variable != pattern->var_id)
+            if (!var_id_eq(parameters[i].variable, pattern->var_id))
                 continue;
             if (parameters[i].shape == EVAL_OWNED_DATA)
                 parameters[i].shape = shape;
@@ -104,7 +104,7 @@ static bool eval_owned_shape(EvalOwnedAdmission *admission, Atom *term,
         return shape != EVAL_OWNED_BOOLEAN;
     if (term->kind == ATOM_VAR) {
         for (size_t i = 0u; i < variable_count; i++)
-            if (variables[i].variable == term->var_id)
+            if (var_id_eq(variables[i].variable, term->var_id))
                 return shape == EVAL_OWNED_DATA || variables[i].shape == shape;
         return false;
     }
@@ -740,7 +740,7 @@ static bool eval_owned_collapsed_fold(Space *space, Arena *arena, Atom *collapse
         expr_nargs(collapsed) != 1u || !initial || !body ||
         !accumulator_binder || accumulator_binder->kind != ATOM_VAR ||
         !item_binder || item_binder->kind != ATOM_VAR ||
-        accumulator_binder->var_id == item_binder->var_id || !result)
+        var_id_eq(accumulator_binder->var_id, item_binder->var_id) || !result)
         return false;
     Atom *closed_initial = environment
         ? bindings_apply_if_vars(environment, arena, initial) : initial;

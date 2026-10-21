@@ -886,7 +886,7 @@ typedef struct PrimeVarContext {
 
 static bool prime_var_is_bound(const PrimeVarContext *context, VarId id) {
     for (const PrimeVarContext *it = context; it; it = it->parent)
-        if (it->id == id) return true;
+        if (var_id_eq(it->id, id)) return true;
     return false;
 }
 
@@ -926,7 +926,7 @@ typedef struct {
 } PrimeCanonicalScope;
 
 static uint64_t prime_canonical_var_hash(VarId id) {
-    uint64_t x = (uint64_t)id;
+    uint64_t x = var_id_mix(id);
     x ^= x >> 30;
     x *= UINT64_C(0xbf58476d1ce4e5b9);
     x ^= x >> 27;
@@ -977,7 +977,7 @@ static PrimeCanonicalSlot *prime_canonical_scope_find(
         if (slot->state == 0u)
             return insert && tombstone != SIZE_MAX
                 ? &scope->slots[tombstone] : slot;
-        if (slot->state == 1u && slot->id == id) return slot;
+        if (slot->state == 1u && var_id_eq(slot->id, id)) return slot;
         if (insert && slot->state == 2u && tombstone == SIZE_MAX)
             tombstone = pos;
         pos = (pos + 1u) & (scope->slot_cap - 1u);
@@ -2097,7 +2097,7 @@ static bool prime_regular_level_schema_parameter(
         !parameter_out)
         return false;
     for (size_t index = 0u; index < variables->count; index++) {
-        if (variables->variables[index]->var_id != variable->var_id) continue;
+        if (!var_id_eq(variables->variables[index]->var_id, variable->var_id)) continue;
         *parameter_out = (uint64_t)index;
         return true;
     }
@@ -2499,7 +2499,7 @@ prime_regular_declaration_instantiate_fvar(
             return prime_regular_declaration_occurrence_result(
                 CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE, NULL,
                 "declaration-level-identity-exhausted");
-        fresh_parameters[index] = (uint64_t)fresh;
+        fresh_parameters[index] = fresh.base;
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PRIME_DECLARATION_LEVEL_INSTANCE);
@@ -2930,7 +2930,7 @@ prime_resolve_declared_regular_name(
                             arena,
                             "declaration-rigid-level-identity-exhausted"));
                 }
-                rigid_parameters[parameter] = (uint64_t)fresh;
+                rigid_parameters[parameter] = fresh.base;
             }
             bool renamed = true;
             formed_type = prime_regular_level_schema_instantiate_rec(
@@ -5964,7 +5964,7 @@ static Atom *prime_quote_runtime_term(Arena *arena, Atom *term) {
 static Atom *prime_quote_fresh_binder(Arena *arena) {
     char spelling[32];
     snprintf(spelling, sizeof spelling, "b%llu",
-             (unsigned long long)fresh_var_id());
+             (unsigned long long)fresh_var_id().base);
     return atom_symbol(arena, spelling);
 }
 
@@ -6141,7 +6141,7 @@ static bool prime_same_key(const Atom *left, const Atom *right) {
     if (!left || !right) return false;
     if (left->kind == ATOM_VAR || right->kind == ATOM_VAR)
         return left->kind == ATOM_VAR && right->kind == ATOM_VAR &&
-               left->var_id == right->var_id;
+               var_id_eq(left->var_id, right->var_id);
     return atom_eq((Atom *)left, (Atom *)right);
 }
 
@@ -6525,7 +6525,7 @@ static Atom *prime_bindings_formed_node(Arena *arena, Atom *node,
 static Atom *prime_fill_quoted_hole(Arena *arena, Atom *term, VarId id,
                                     Atom *value) {
     if (!term) return NULL;
-    if (term->kind == ATOM_VAR) return term->var_id == id ? value : term;
+    if (term->kind == ATOM_VAR) return var_id_eq(term->var_id, id) ? value : term;
     if (term->kind != ATOM_EXPR || !atom_has_vars(term)) return term;
     Atom **items = NULL;
     for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
@@ -6543,7 +6543,7 @@ static Atom *prime_fill_quoted_hole(Arena *arena, Atom *term, VarId id,
     if (!items) return term;
     Atom *filled = atom_expr(arena, items, term->expr.len);
     if (filled && term->expr.elems[0]->kind == ATOM_VAR &&
-        term->expr.elems[0]->var_id == id && items[0] &&
+        var_id_eq(term->expr.elems[0]->var_id, id) && items[0] &&
         items[0]->kind == ATOM_SYMBOL)
         filled = prime_bindings_formed_node(arena, filled, true);
     return filled;
@@ -6929,7 +6929,7 @@ static Atom *prime_subst_in(Arena *arena, Atom *term, const Atom *key,
      * a binder fills its own slot where it is a hole of quoted code. */
     if (!pattern && atom_is_quotation(term)) {
         const Atom *hole = g_prime_subst_quoted_hole;
-        return hole && key->kind == ATOM_VAR && key->var_id == hole->var_id
+        return hole && key->kind == ATOM_VAR && var_id_eq(key->var_id, hole->var_id)
             ? prime_fill_quoted_hole(arena, term, key->var_id,
                                      prime_spliced_syntax(value))
             : term;
@@ -7176,30 +7176,30 @@ static bool prime_env_reserve(void **items, size_t *cap, size_t need,
 }
 
 static size_t prime_env_memo_slot(VarId id, size_t cap) {
-    uint64_t mixed = (uint64_t)id * UINT64_C(0x9E3779B97F4A7C15);
+    uint64_t mixed = var_id_mix(id) * UINT64_C(0x9E3779B97F4A7C15);
     return (size_t)(mixed >> 17) & (cap - 1u);
 }
 
 static Atom *prime_env_memo_get(const PrimeEnvSubst *s, VarId id) {
     if (!s->memo_cap) return NULL;
     size_t at = prime_env_memo_slot(id, s->memo_cap);
-    while (s->memo[at].id != VAR_ID_NONE) {
-        if (s->memo[at].id == id) return s->memo[at].image;
+    while (!var_id_is_none(s->memo[at].id)) {
+        if (var_id_eq(s->memo[at].id, id)) return s->memo[at].image;
         at = (at + 1u) & (s->memo_cap - 1u);
     }
     return NULL;
 }
 
 static bool prime_env_memo_put(PrimeEnvSubst *s, VarId id, Atom *image) {
-    if (id == VAR_ID_NONE) return true;
+    if (var_id_is_none(id)) return true;
     if ((s->memo_len + 1u) * 2u > s->memo_cap) {
         size_t cap = s->memo_cap ? s->memo_cap * 2u : 32u;
         PrimeEnvMemoSlot *slots = calloc(cap, sizeof(*slots));
         if (!slots) return false;
         for (size_t i = 0u; i < s->memo_cap; i++) {
-            if (s->memo[i].id == VAR_ID_NONE) continue;
+            if (var_id_is_none(s->memo[i].id)) continue;
             size_t at = prime_env_memo_slot(s->memo[i].id, cap);
-            while (slots[at].id != VAR_ID_NONE) at = (at + 1u) & (cap - 1u);
+            while (!var_id_is_none(slots[at].id)) at = (at + 1u) & (cap - 1u);
             slots[at] = s->memo[i];
         }
         free(s->memo);
@@ -7207,16 +7207,16 @@ static bool prime_env_memo_put(PrimeEnvSubst *s, VarId id, Atom *image) {
         s->memo_cap = cap;
     }
     size_t at = prime_env_memo_slot(id, s->memo_cap);
-    while (s->memo[at].id != VAR_ID_NONE && s->memo[at].id != id)
+    while (!var_id_is_none(s->memo[at].id) && !var_id_eq(s->memo[at].id, id))
         at = (at + 1u) & (s->memo_cap - 1u);
-    if (s->memo[at].id == VAR_ID_NONE) s->memo_len++;
+    if (var_id_is_none(s->memo[at].id)) s->memo_len++;
     s->memo[at] = (PrimeEnvMemoSlot){.id = id, .image = image};
     return true;
 }
 
 static bool prime_env_hidden(const PrimeEnvSubst *s, VarId id) {
     for (size_t i = s->hidden_base; i < s->hidden_len; i++)
-        if (s->hidden[i] == id) return true;
+        if (var_id_eq(s->hidden[i], id)) return true;
     return false;
 }
 
@@ -7254,7 +7254,7 @@ static Atom *prime_env_image(PrimeEnvSubst *s, Atom *var) {
     Atom *memo = prime_env_memo_get(s, id);
     if (memo) return memo;
     for (size_t i = 0u; i < s->resolving_len; i++)
-        if (s->resolving[i] == id) return var;
+        if (var_id_eq(s->resolving[i], id)) return var;
     BindingValue bound = bindings_lookup_value_id(s->store, id);
     if (!bound.skeleton) {
         if (!prime_env_memo_put(s, id, var)) s->failed = true;
@@ -7719,9 +7719,9 @@ static void prime_free_names_hide(PrimeFreeNames *f, const Atom *key) {
 
 static void prime_free_names_add(PrimeFreeNames *f, Atom *var) {
     for (size_t i = 0u; i < f->hidden_len; i++)
-        if (f->hidden[i] == var->var_id) return;
+        if (var_id_eq(f->hidden[i], var->var_id)) return;
     for (size_t i = 0u; i < f->found_len; i++)
-        if (f->found[i]->var_id == var->var_id) return;
+        if (var_id_eq(f->found[i]->var_id, var->var_id)) return;
     if (!prime_env_reserve((void **)&f->found, &f->found_cap,
                            f->found_len + 1u, sizeof(*f->found))) {
         f->failed = true;
@@ -7851,7 +7851,7 @@ static bool prime_scope_copy(Arena *arena, CettaFrameIdentityScope *identities,
         *body = next;
         for (CettaExprIndex j = PRIME_OWN_FIRST; *own && j < (*own)->expr.len;
              j++) {
-            if ((*own)->expr.elems[j]->var_id != names[i]->var_id) continue;
+            if (!var_id_eq((*own)->expr.elems[j]->var_id, names[i]->var_id)) continue;
             Atom *list = prime_list_with(arena, *own, j, fresh);
             if (!list) return false;
             *own = list;
@@ -8459,7 +8459,7 @@ typedef struct {
 } PrimeVarMap;
 
 static size_t prime_var_map_slot(VarId id, uint32_t level, size_t cap) {
-    uint64_t mixed = (uint64_t)id * UINT64_C(0x9E3779B97F4A7C15) ^
+    uint64_t mixed = var_id_mix(id) * UINT64_C(0x9E3779B97F4A7C15) ^
                      ((uint64_t)level + 1u) * UINT64_C(0xC2B2AE3D27D4EB4F);
     mixed ^= mixed >> 31;
     return (size_t)mixed & (cap - 1u);
@@ -8470,7 +8470,7 @@ static PrimeVarEntry *prime_var_map_find(const PrimeVarMap *m, VarId id,
     if (!m->cap) return NULL;
     size_t at = prime_var_map_slot(id, level, m->cap);
     while (m->items[at].used) {
-        if (m->items[at].id == id && m->items[at].level == level)
+        if (var_id_eq(m->items[at].id, id) && m->items[at].level == level)
             return &m->items[at];
         at = (at + 1u) & (m->cap - 1u);
     }
@@ -8696,7 +8696,7 @@ static void prime_elab_refuse(PrimeElab *e, const char *what,
 
 static bool prime_elab_list_has(const Atom *list, VarId id) {
     for (CettaExprIndex i = 0u; list && i < list->expr.len; i++)
-        if (list->expr.elems[i]->var_id == id) return true;
+        if (var_id_eq(list->expr.elems[i]->var_id, id)) return true;
     return false;
 }
 
@@ -9079,7 +9079,7 @@ static void prime_elab_fresh_names(PrimeElab *e, Atom *pattern, Atom *crossing,
             prime_elab_list_has(crossing, pattern->var_id))
             return;
         for (size_t i = 0u; i < *count; i++)
-            if ((*names)[i]->var_id == pattern->var_id) return;
+            if (var_id_eq((*names)[i]->var_id, pattern->var_id)) return;
         if (prime_elab_reserve(e, (void **)names, cap, *count + 1u,
                                sizeof(**names)))
             (*names)[(*count)++] = pattern;
@@ -9345,7 +9345,7 @@ static Atom *prime_elab_rebuild_meta(PrimeElab *e, Atom *term, Atom *inner,
 
 static bool prime_elab_hole_in_scope(const PrimeElab *e, VarId id) {
     for (size_t i = e->holes_len; i > 0u; i--)
-        if (e->holes[i - 1u] == id) return true;
+        if (var_id_eq(e->holes[i - 1u], id)) return true;
     return false;
 }
 
@@ -9353,7 +9353,7 @@ static bool prime_elab_hole_in_scope(const PrimeElab *e, VarId id) {
 static bool prime_elab_hole_scope(const PrimeElab *e, VarId id,
                                   uint32_t *scope) {
     for (size_t i = e->holes_len; i > 0u; i--)
-        if (e->holes[i - 1u] == id) {
+        if (var_id_eq(e->holes[i - 1u], id)) {
             *scope = e->holes_scope[i - 1u];
             return true;
         }
@@ -9472,7 +9472,7 @@ static uint32_t prime_scope_new(PrimeElab *e, uint32_t parent,
 static void prime_scope_note(PrimeElab *e, uint32_t scope, VarId id) {
     PrimeScopeNode *node = &e->scopes[scope];
     if (node->direct_len &&
-        node->direct[node->direct_len - 1u] == id)
+        var_id_eq(node->direct[node->direct_len - 1u], id))
         return;
     if (prime_elab_reserve(e, (void **)&node->direct, &node->direct_cap,
                            node->direct_len + 1u, sizeof(*node->direct)))
@@ -9481,7 +9481,7 @@ static void prime_scope_note(PrimeElab *e, uint32_t scope, VarId id) {
 
 static int prime_var_id_cmp(const void *left, const void *right) {
     VarId a = *(const VarId *)left, b = *(const VarId *)right;
-    return a < b ? -1 : (a > b ? 1 : 0);
+    return var_id_cmp(a, b);
 }
 
 static size_t prime_var_ids_sort(VarId *ids, size_t len) {
@@ -9489,7 +9489,7 @@ static size_t prime_var_ids_sort(VarId *ids, size_t len) {
     qsort(ids, len, sizeof(*ids), prime_var_id_cmp);
     size_t out = 1u;
     for (size_t i = 1u; i < len; i++)
-        if (ids[i] != ids[out - 1u]) ids[out++] = ids[i];
+        if (!var_id_eq(ids[i], ids[out - 1u])) ids[out++] = ids[i];
     return out;
 }
 
@@ -9497,8 +9497,9 @@ static bool prime_var_ids_has(const VarId *ids, size_t len, VarId id) {
     size_t lo = 0u, hi = len;
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2u;
-        if (ids[mid] < id) lo = mid + 1u;
-        else if (ids[mid] > id) hi = mid;
+        int cmp = var_id_cmp(ids[mid], id);
+        if (cmp < 0) lo = mid + 1u;
+        else if (cmp > 0) hi = mid;
         else return true;
     }
     return false;
@@ -9545,7 +9546,8 @@ typedef struct {
 
 static int prime_scope_use_cmp(const void *left, const void *right) {
     const PrimeScopeUse *a = left, *b = right;
-    if (a->id != b->id) return a->id < b->id ? -1 : 1;
+    int cmp = var_id_cmp(a->id, b->id);
+    if (cmp != 0) return cmp;
     return a->scope < b->scope ? -1 : (a->scope > b->scope ? 1 : 0);
 }
 
@@ -9566,7 +9568,7 @@ static size_t prime_scope_uses_first(const PrimeScopeUse *uses, size_t len,
     size_t lo = 0u, hi = len;
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2u;
-        if (uses[mid].id < id) lo = mid + 1u;
+        if (var_id_lt(uses[mid].id, id)) lo = mid + 1u;
         else hi = mid;
     }
     return lo;
@@ -9614,7 +9616,7 @@ static bool prime_scope_quotations_settle(PrimeElab *e) {
             VarId id = node->direct[i];
             bool elsewhere = false;
             for (size_t u = prime_scope_uses_first(uses, len, id);
-                 u < len && uses[u].id == id && !elsewhere; u++)
+                 u < len && var_id_eq(uses[u].id, id) && !elsewhere; u++)
                 elsewhere = !prime_scope_within(e, uses[u].scope, s);
             if (!elsewhere) {
                 node->direct[kept++] = id;
@@ -9625,7 +9627,7 @@ static bool prime_scope_quotations_settle(PrimeElab *e) {
                 PrimeScopeNode *outer = &e->scopes[at];
                 size_t u = prime_scope_uses_first(uses, len, id);
                 bool writes = false;
-                for (; u < len && uses[u].id == id && !writes; u++)
+                for (; u < len && var_id_eq(uses[u].id, id) && !writes; u++)
                     writes = uses[u].scope == (uint32_t)at;
                 if (writes) break;
                 if (!outer->quotation) continue;
@@ -9779,7 +9781,7 @@ static Atom *prime_scope_crossing(PrimeElab *e, Atom *braces,
 static bool prime_braces_has(const Atom *braces, VarId id) {
     for (CettaExprIndex i = 1u; braces && i < braces->expr.len; i++)
         if (braces->expr.elems[i] && braces->expr.elems[i]->kind == ATOM_VAR &&
-            braces->expr.elems[i]->var_id == id)
+            var_id_eq(braces->expr.elems[i]->var_id, id))
             return true;
     return false;
 }
@@ -10149,7 +10151,7 @@ done:
 static Atom *prime_lex_lookup(PrimeElab *e, Atom *var) {
     if (prime_elab_is_binder_id(e, var->var_id)) return var;
     for (size_t i = e->lex_len; i > 0u; i--)
-        if (e->lex[i - 1u].from == var->var_id) return e->lex[i - 1u].to;
+        if (var_id_eq(e->lex[i - 1u].from, var->var_id)) return e->lex[i - 1u].to;
     return var;
 }
 
@@ -10157,7 +10159,7 @@ static Atom *prime_lex_lookup(PrimeElab *e, Atom *var) {
  * it (the innermost entry decides). */
 static bool prime_lex_is_shared(const PrimeElab *e, VarId id) {
     for (size_t i = e->lex_shared_len; i > 0u; i--)
-        if (e->lex_shared[i - 1u].id == id)
+        if (var_id_eq(e->lex_shared[i - 1u].id, id))
             return e->lex_shared[i - 1u].in_force;
     return false;
 }
@@ -10196,7 +10198,7 @@ static void prime_lex_pattern_names(PrimeElab *e, Atom *pattern, Atom ***names,
              prime_elab_hole_in_scope(e, pattern->var_id)))
             return;
         for (size_t i = 0u; i < *count; i++)
-            if ((*names)[i]->var_id == pattern->var_id) return;
+            if (var_id_eq((*names)[i]->var_id, pattern->var_id)) return;
         if (prime_elab_reserve(e, (void **)names, cap, *count + 1u,
                                sizeof(**names)))
             (*names)[(*count)++] = pattern;
@@ -10292,7 +10294,7 @@ static Atom *prime_lex_template(PrimeElab *e, Atom *body,
             if (prime_elab_list_has(shared, id)) continue;
             bool seen = false;
             for (size_t k = 0u; k < owned_len && !seen; k++)
-                seen = e->lex[lex_mark + k].from == id;
+                seen = var_id_eq(e->lex[lex_mark + k].from, id);
             if (seen) continue;
             PrimeVarEntry *spelled = prime_var_map_find(&e->spellings, id, 0u);
             Atom *slot = spelled && spelled->atom
@@ -11616,7 +11618,7 @@ static Atom *prime_rename_everywhere(Arena *arena, Atom *term,
     if (!term) return NULL;
     if (term->kind == ATOM_VAR) {
         for (size_t i = 0u; i < count; i++)
-            if (term->var_id == from[i]->var_id) return to[i];
+            if (var_id_eq(term->var_id, from[i]->var_id)) return to[i];
         return term;
     }
     if (term->kind != ATOM_EXPR || !atom_has_vars(term)) return term;
@@ -11749,7 +11751,7 @@ static Atom *prime_bindings_own_list(Arena *arena, Atom *list) {
             break;
         }
         for (CettaExprIndex k = PRIME_OWN_FIRST; k < j; k++)
-            if (list->expr.elems[k]->var_id == item->var_id) {
+            if (var_id_eq(list->expr.elems[k]->var_id, item->var_id)) {
                 clean = false;
                 break;
             }
@@ -11765,7 +11767,7 @@ static Atom *prime_bindings_own_list(Arena *arena, Atom *list) {
         if (!item || item->kind != ATOM_VAR) continue;
         bool seen = false;
         for (CettaExprIndex k = PRIME_OWN_FIRST; k < kept && !seen; k++)
-            seen = items[k]->var_id == item->var_id;
+            seen = var_id_eq(items[k]->var_id, item->var_id);
         if (!seen) items[kept++] = item;
     }
     return atom_expr(arena, items, kept);
@@ -12102,14 +12104,14 @@ typedef struct {
 static bool prime_contextual_member(const PrimeAtomList *list,
                                     const Atom *var) {
     for (size_t i = 0u; i < list->len; i++)
-        if (list->items[i]->var_id == var->var_id) return true;
+        if (var_id_eq(list->items[i]->var_id, var->var_id)) return true;
     return false;
 }
 
 /* Whether `term` mentions the variable `id` anywhere. */
 static bool prime_contextual_mentions(const Atom *term, VarId id) {
     if (!term) return false;
-    if (term->kind == ATOM_VAR) return term->var_id == id;
+    if (term->kind == ATOM_VAR) return var_id_eq(term->var_id, id);
     if (term->kind != ATOM_EXPR || !atom_has_vars(term)) return false;
     for (CettaExprIndex i = 0u; i < term->expr.len; i++)
         if (prime_contextual_mentions(term->expr.elems[i], id)) return true;
@@ -12367,7 +12369,7 @@ static Atom *prime_contextual_splice(PrimeContextualMatch *c, Atom *term,
     if (term->kind == ATOM_VAR) {
         if (depth == 0u) return term;
         for (size_t i = 0u; i < c->holes.len; i++)
-            if (c->holes.items[i]->var_id == term->var_id)
+            if (var_id_eq(c->holes.items[i]->var_id, term->var_id))
                 return c->parts.items[i];
         return term;
     }
@@ -12996,11 +12998,11 @@ static size_t prime_census_count(const PrimeCensusIds *sorted, VarId id) {
     size_t lo = 0u, hi = sorted->len;
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2u;
-        if (sorted->ids[mid] < id) lo = mid + 1u;
+        if (var_id_lt(sorted->ids[mid], id)) lo = mid + 1u;
         else hi = mid;
     }
     size_t count = 0u;
-    while (lo < sorted->len && sorted->ids[lo] == id) {
+    while (lo < sorted->len && var_id_eq(sorted->ids[lo], id)) {
         count++;
         lo++;
     }
@@ -13026,7 +13028,7 @@ static void prime_census_let(PrimeScopeCensus *c, const PrimeCensusIds *all,
         prime_census_sort(&in);
         uint64_t refining = 0u;
         for (size_t i = 0u; i < names.len; i++) {
-            if (i > 0u && names.ids[i] == names.ids[i - 1u]) continue;
+            if (i > 0u && var_id_eq(names.ids[i], names.ids[i - 1u])) continue;
             if (prime_census_count(all, names.ids[i]) >
                 prime_census_count(&in, names.ids[i]))
                 refining++;
@@ -13066,9 +13068,9 @@ static void prime_census_free_walk(Arena *arena, PrimeCensusFree *f,
     if (f->failed || !term || !atom_has_vars(term)) return;
     if (term->kind == ATOM_VAR) {
         for (size_t i = 0u; i < f->hidden_len; i++)
-            if (f->hidden[i] == term->var_id) return;
+            if (var_id_eq(f->hidden[i], term->var_id)) return;
         for (size_t i = 0u; i < f->found_len; i++)
-            if (f->found[i] == term->var_id) return;
+            if (var_id_eq(f->found[i], term->var_id)) return;
         if (!prime_env_reserve((void **)&f->found, &f->found_cap,
                                f->found_len + 1u, sizeof(*f->found))) {
             f->failed = true;

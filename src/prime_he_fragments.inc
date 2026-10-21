@@ -331,7 +331,7 @@ static bool prime_he_binder_telescope(Atom *type) {
             if (!prime_he_binder_component(type->expr.elems[j],
                                            &other, &other_domain))
                 continue;
-            if (var && j != i && var->var_id == other->var_id)
+            if (var && j != i && var_id_eq(var->var_id, other->var_id))
                 return false;
             bool ok = true;
             if (j >= i &&
@@ -357,7 +357,7 @@ static bool prime_he_implicit_variables(Atom *type, bool *ok) {
                 for (CettaExprIndex i = 1u; !bound && i + 1u < type->expr.len; i++) {
                     Atom *var = NULL, *domain = NULL;
                     bound = prime_he_binder_component(type->expr.elems[i], &var, &domain) &&
-                            var->var_id == atom->var_id;
+                            var_id_eq(var->var_id, atom->var_id);
                 }
             found = !bound;
         } else if (atom->kind == ATOM_EXPR) {
@@ -462,7 +462,7 @@ typedef struct {
 
 static Atom *prime_he_subst_lookup(const PrimeHeSubst *subst, VarId id) {
     for (size_t i = 0u; i < subst->len; i++)
-        if (subst->items[i].id == id) return subst->items[i].value;
+        if (var_id_eq(subst->items[i].id, id)) return subst->items[i].value;
     return NULL;
 }
 
@@ -502,7 +502,7 @@ static bool prime_he_occurs(const PrimeHeSubst *subst, VarId id, Atom *root,
     while (*ok && !found && stack.len > 0u) {
         Atom *atom = prime_he_subst_walk(subst, stack.items[--stack.len]);
         if (atom->kind == ATOM_VAR) {
-            found = atom->var_id == id;
+            found = var_id_eq(atom->var_id, id);
         } else if (atom->kind == ATOM_EXPR) {
             for (CettaExprIndex i = 0u; *ok && i < atom->expr.len; i++)
                 *ok = prime_he_stack_push(&stack, atom->expr.elems[i]);
@@ -525,7 +525,7 @@ static bool prime_he_unify(PrimeHeSubst *subst, Atom *left, Atom *right,
     while (*ok && result && stack.len > 0u) {
         Atom *r = prime_he_subst_walk(subst, stack.items[--stack.len]);
         Atom *l = prime_he_subst_walk(subst, stack.items[--stack.len]);
-        if (l->kind == ATOM_VAR && r->kind == ATOM_VAR && l->var_id == r->var_id)
+        if (l->kind == ATOM_VAR && r->kind == ATOM_VAR && var_id_eq(l->var_id, r->var_id))
             continue;
         if (l->kind == ATOM_VAR || r->kind == ATOM_VAR) {
             Atom *variable = l->kind == ATOM_VAR ? l : r;
@@ -639,7 +639,7 @@ static bool prime_he_var_occurs_in(Atom *root, VarId id, bool *ok) {
     while (*ok && !found && stack.len > 0u) {
         Atom *atom = stack.items[--stack.len];
         if (atom->kind == ATOM_VAR) {
-            found = atom->var_id == id;
+            found = var_id_eq(atom->var_id, id);
         } else if (atom->kind == ATOM_EXPR) {
             for (CettaExprIndex i = 0u; *ok && i < atom->expr.len; i++)
                 *ok = prime_he_stack_push(&stack, atom->expr.elems[i]);
@@ -1487,7 +1487,13 @@ static Atom *prime_hol_leaf_type(PrimeHolTranslation *tr, Atom *leaf) {
     Arena *a = tr->a;
     if (leaf->kind == ATOM_VAR) {
         char name[48];
-        snprintf(name, sizeof(name), "v%llu", (unsigned long long)leaf->var_id);
+        if (cetta_frame_identity_is_none(leaf->var_id.epoch))
+            snprintf(name, sizeof(name), "v%llu",
+                     (unsigned long long)leaf->var_id.base);
+        else
+            snprintf(name, sizeof(name), "v%llu_%llu",
+                     (unsigned long long)leaf->var_id.base,
+                     (unsigned long long)leaf->var_id.epoch.word);
         return prime_hol_tyvar(a, name);
     }
     /* Whether a whole type is a contract type is decided before
@@ -2256,7 +2262,7 @@ static bool prime_lf_scope_push(PrimeLfScope *scope, Atom *name) {
 
 static bool prime_lf_same_name(Atom *left, Atom *right) {
     if (left->kind == ATOM_VAR && right->kind == ATOM_VAR)
-        return left->var_id == right->var_id;
+        return var_id_eq(left->var_id, right->var_id);
     return atom_eq(left, right);
 }
 

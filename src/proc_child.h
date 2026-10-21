@@ -1,8 +1,9 @@
 #ifndef CETTA_PROC_CHILD_H
 #define CETTA_PROC_CHILD_H
 
-/* Shared fork/exec child setup. Call with signals blocked. No allocation or
- * inherited host callbacks here; descriptors may alias standard streams. */
+/* Shared fork/exec child setup (from cetta-ours adb22e32). Call with signals
+ * blocked. No allocation or inherited host callbacks here; descriptors may
+ * alias standard streams. */
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -72,15 +73,34 @@ static inline _Noreturn void cetta_proc_child_stop(int fd, int stage, int error)
     _exit(127);
 }
 
-static inline _Noreturn void cetta_proc_child_exec(const char *program,
+/* `new_group` puts the child in a process group of its own, so its owner can
+ * signal the whole tree; otherwise it stays in the caller's group and sees
+ * the caller's terminal signals, as a plain fork does. */
+static inline _Noreturn void cetta_proc_child_exec_group_fds(const char *program,
         char *const argv[], char *const env[], const char *cwd,
-        int in, int out, int err, int report) {
-    if (report < 3) {
-        int moved = fcntl(report, F_DUPFD_CLOEXEC, 3);
+        int in, int out, int err, int report, int new_group,
+        int pass3, int pass4) {
+    int private_minimum = pass3 >= 0 || pass4 >= 0 ? 5 : 3;
+    if (report < private_minimum) {
+        int moved = fcntl(report, F_DUPFD_CLOEXEC, private_minimum);
         if (moved < 0) cetta_proc_child_stop(report, CETTA_PROC_CHILD_STDIO, errno);
         report = moved;
     }
-    if (setpgid(0, 0)) cetta_proc_child_stop(report, CETTA_PROC_CHILD_GROUP, errno);
+    /* Preserve pass-through sources before either target can overwrite one.
+     * The descriptor sweep below marks every source close-on-exec; dup2 then
+     * publishes only the two explicitly requested descriptors. */
+    if (pass3 >= 0 && pass3 < 5) {
+        int moved = fcntl(pass3, F_DUPFD_CLOEXEC, 5);
+        if (moved < 0) cetta_proc_child_stop(report, CETTA_PROC_CHILD_FDS, errno);
+        pass3 = moved;
+    }
+    if (pass4 >= 0 && pass4 < 5) {
+        int moved = fcntl(pass4, F_DUPFD_CLOEXEC, 5);
+        if (moved < 0) cetta_proc_child_stop(report, CETTA_PROC_CHILD_FDS, errno);
+        pass4 = moved;
+    }
+    if (new_group && setpgid(0, 0))
+        cetta_proc_child_stop(report, CETTA_PROC_CHILD_GROUP, errno);
     struct sigaction standard = {.sa_handler = SIG_DFL};
     sigemptyset(&standard.sa_mask);
     for (int sig = 1; sig < NSIG; ++sig) {
@@ -97,6 +117,12 @@ static inline _Noreturn void cetta_proc_child_exec(const char *program,
         fcntl(0, F_SETFD, 0) < 0 || fcntl(1, F_SETFD, 0) < 0 || fcntl(2, F_SETFD, 0) < 0)
         cetta_proc_child_stop(report, CETTA_PROC_CHILD_STDIO, errno);
     if (cetta_proc_child_cloexec()) cetta_proc_child_stop(report, CETTA_PROC_CHILD_FDS, errno);
+    if ((pass3 >= 0 &&
+         (dup2(pass3, 3) < 0 || fcntl(3, F_SETFD, 0) < 0)) ||
+        (pass4 >= 0 &&
+         (dup2(pass4, 4) < 0 || fcntl(4, F_SETFD, 0) < 0))) {
+        cetta_proc_child_stop(report, CETTA_PROC_CHILD_FDS, errno);
+    }
     if (chdir(cwd)) cetta_proc_child_stop(report, CETTA_PROC_CHILD_CWD, errno);
     sigset_t empty;
     sigemptyset(&empty);
@@ -104,6 +130,26 @@ static inline _Noreturn void cetta_proc_child_exec(const char *program,
         cetta_proc_child_stop(report, CETTA_PROC_CHILD_SIGNALS, errno);
     execve(program, argv, env);
     cetta_proc_child_stop(report, CETTA_PROC_CHILD_EXEC, errno);
+}
+
+static inline _Noreturn void cetta_proc_child_exec_group(const char *program,
+        char *const argv[], char *const env[], const char *cwd,
+        int in, int out, int err, int report, int new_group) {
+    cetta_proc_child_exec_group_fds(
+        program, argv, env, cwd, in, out, err, report, new_group, -1, -1);
+}
+
+static inline _Noreturn void cetta_proc_child_exec_scoped(const char *program,
+        char *const argv[], char *const env[], const char *cwd,
+        int in, int out, int err, int report, int owner, int receipt) {
+    cetta_proc_child_exec_group_fds(
+        program, argv, env, cwd, in, out, err, report, 1, owner, receipt);
+}
+
+static inline _Noreturn void cetta_proc_child_exec(const char *program,
+        char *const argv[], char *const env[], const char *cwd,
+        int in, int out, int err, int report) {
+    cetta_proc_child_exec_group(program, argv, env, cwd, in, out, err, report, 1);
 }
 
 #endif

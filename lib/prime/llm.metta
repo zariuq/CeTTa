@@ -32,7 +32,8 @@
      (case (llm:v1:render $value)
        (((llm:v1:failure $code) (return (llm:v1:error $code)))
         ((Error $source $reason) (return (llm:v1:error result-render-error)))
-        ($text (return (llm:v1:ok $text))))){$code $source $reason $text}))
+        ((JsonFailureV1 $phase $status $source $reason) (return (llm:v1:error result-render-error)))
+        ($text (return (llm:v1:ok $text))))){$code $source $reason $phase $status $text}))
 
 (= (llm:v1:member? $value $items)
    (if (== $items ()) False

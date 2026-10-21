@@ -20,7 +20,7 @@ bool bindings_activation_view_borrow(
     if (!read_out)
         return false;
     *read_out = (BindingsActivationRead){0};
-    if (!frame || !bindings || frame->epoch == 0u ||
+    if (!frame || !bindings || cetta_frame_identity_is_none(frame->epoch) ||
         !binding_value_kind_is_contextual(frame->source_kind) ||
         frame->first_entry > bindings->len ||
         (frame->len > 0u && (!frame->source_ids || !frame->source_variables)))
@@ -92,11 +92,11 @@ bool bindings_activation_view_prepare(
         BindingsActivationView *frame,
         BindingsBuilder *builder,
         const VarId *source_ids, Atom *const *source_variables,
-        uint32_t variable_count, uint32_t epoch,
+        uint32_t variable_count, CettaFrameIdentity epoch,
         uint32_t first_entry) {
     Bindings *bindings = builder ? &builder->current : NULL;
     if (!frame || !builder || !bindings || builder->instance_id == 0u ||
-        epoch == 0u ||
+        cetta_frame_identity_is_none(epoch) ||
         first_entry > bindings->len ||
         (variable_count > 0u && (!source_ids || !source_variables))) {
         return false;
@@ -105,13 +105,13 @@ bool bindings_activation_view_prepare(
     for (uint32_t index = 0u; index < variable_count; index++) {
         Atom *variable = source_variables[index];
         if (!variable || variable->kind != ATOM_VAR ||
-            variable->var_id != source_ids[index] ||
-            var_epoch_suffix(source_ids[index]) != 0u ||
-            (index > 0u && source_ids[index - 1u] >= source_ids[index])) {
+            !var_id_eq(variable->var_id, source_ids[index]) ||
+            !cetta_frame_identity_is_none(var_epoch_suffix(source_ids[index])) ||
+            (index > 0u && source_ids[index - 1u].base >= source_ids[index].base)) {
             return false;
         }
         if (index > 0u &&
-            source_ids[index] != source_ids[index - 1u] + UINT64_C(1)) {
+            source_ids[index].base != source_ids[index - 1u].base + UINT64_C(1)) {
             source_ids_contiguous = false;
         }
     }
@@ -163,11 +163,11 @@ bool bindings_activation_view_prepare_schema(
         BindingsBuilder *builder,
         BindingsFrameSchema *schema,
         Atom *const *source_variables,
-        uint32_t epoch, uint32_t first_entry) {
+        CettaFrameIdentity epoch, uint32_t first_entry) {
     Bindings *bindings = builder ? &builder->current : NULL;
     uint32_t variable_count = schema ? schema->len : 0u;
     if (!frame || !builder || !bindings || !schema ||
-        builder->instance_id == 0u || epoch == 0u ||
+        builder->instance_id == 0u || cetta_frame_identity_is_none(epoch) ||
         first_entry > bindings->len ||
         (variable_count > 0u && !source_variables)) {
         return false;

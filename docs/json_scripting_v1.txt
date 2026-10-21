@@ -1,0 +1,149 @@
+JSON data for scripts and indexed applications
+=============================================
+
+The ordinary surface has one spelling: json:parse, json:stringify, json:get.
+Parsing uses the predictive realization generated from the RFC-8259 grammar;
+it does not build diagnostic forests or scalar atoms for each character.
+json:pretty emits the same value with two-space indentation through the same
+iterative emitter, without constructing and reparsing minified text first.
+
+Values are ordinary data:
+
+  JsonNull
+  true                                  ; host Boolean spelling
+  "native UTF-8 text"
+  7                                     ; Int or BigInt
+  1.25                                  ; Float
+  (JsonArray (values ...))
+  (JsonObject ((JsonPair "key" value) ...))
+
+Strings, numbers and booleans need no projection or reparsing.
+json:array-items and json:object-pairs expose container children.
+list:sum-by fuses numeric projection/reduction: it executes a pure
+single-valued projection once per occurrence, keeps an Int/Float accumulator
+unboxed, and falls back to its authored recursive fold on choices, effects,
+overflow or unsupported number kinds. Strings may contain U+0000. Invalid UTF-8 and
+unpaired UTF-16 surrogate escapes are rejected; no normalization is implied.
+
+The operational number view deliberately follows common scripting practice:
+integer lexemes become exact Int/BigInt values and fraction/exponent lexemes
+become the nearest binary64 Float. Integer negative zero and redundant decimal
+digits therefore do not survive this view. An overflowing exponent can project
+to IEEE infinity, but strict JSON emission rejects non-finite numbers. Use
+json:inspect when exact number spelling or arbitrary RFC-8259 magnitude is the
+required observation.
+
+Selective parsing
+-----------------
+
+json:parse-at validates a complete document while materializing only one
+selected subtree. Its path is an expression of native string keys and
+zero-based integer array indices:
+
+  (json:parse-at text ("choices" 0 "message" "content"))
+
+Object steps select the first matching occurrence, exactly as repeated
+json:get over json:parse would. JsonMissingV1 distinguishes a missing path
+from JsonNull. Invalid paths and malformed bytes are JsonFailureV1 values;
+syntax errors in unselected siblings are not hidden.
+
+The selective scanner and ordinary parser share the generated predictive
+lookahead and lexical DFA. It records a borrowed byte span, validates the
+rest of the document, and materializes that span only after validation has
+completed. Its plain-string word loop is enabled only after checking the
+generated DFA state really loops for the complete admitted ASCII class.
+
+Member semantics
+----------------
+
+Object order and duplicate members survive parse/emission. json:get reads
+the first occurrence, or JsonNull when absent. json:get-first/json:get-last
+return (JsonFoundV1 ordinal value) or JsonMissingV1, distinguishing an absent
+member from an explicitly present null. json:get-all returns
+(JsonMatchesV1 (values ...)); json:members returns (JsonMembersV1 (pairs ...)).
+There is no implicit duplicate-key collapse or first/last policy change.
+This is a breaking surface migration: applications using previous spellings
+or scalar return shapes must migrate before adopting this library version.
+Only the namespaced API is exported; no second spelling is retained.
+
+Lookup traverses member keys, not unrelated string payloads. Returned values
+are owned copies. Thus an ordered-object scan costs members visited plus
+result size, not constant time as in a prepared hash table. For repeated
+database-style queries, index selected fields in an ordinary local space;
+the JSON object itself remains readable data and duplicate rows survive.
+
+Parsing and emission validate their full external-data boundary. Projection
+does not certify a manually constructed object's unrelated payloads. Failures
+are (JsonFailureV1 phase status call message) data. A malformed value, resource
+exhaustion, allocation failure and syntax rejection remain distinct statuses.
+
+Inspection and diagnostics
+--------------------------
+
+json:inspect explicitly builds JsonStringV1 scalar lists and JsonMemberV1
+occurrence/source-span data. json:inspect-members and json:inspect-get-first,
+json:inspect-get-last, json:inspect-get-all operate on that inspection value.
+json:from-inspection converts it to ordinary data without a text round trip;
+json:inspect-stringify emits it directly. This view is not a byte-for-byte
+concrete syntax tree: for example, two equivalent string escape spellings
+decode to the same scalar sequence.
+
+json:parse-reference/json:stringify-reference and their inspect variants
+request the authored diagnostic parser/round-trip checks for qualification.
+Ordinary scripts need neither that forest nor its explicit reference limits.
+Native conformance testing is not a C-to-Lean refinement theorem.
+
+Executable workloads
+--------------------
+
+examples/json_scripting_v1.metta demonstrates ordinary calls and authored
+MeTTa updates/reductions. tests/support/check_json_workflows_v1.py runs:
+
+  configuration       file ingestion/publication, nested reads, pretty output
+  API/LLM responses   object/array traversal, selective paths, Unicode text
+  write/update        replace, append and remove object fields, nested edit
+  numeric data        array reduction/embedding norm, exact numeric spellings
+  database queries    filter rows, store projected facts, retain duplicates
+  JSON Lines          final record, blank-line failure, CR/UTF-8 chunk seams
+  validation          malformed syntax, invalid values, wrong object shape
+  inspection          explicit projection agrees with ordinary emission
+
+JSONL records are delimited by LF (CRLF is accepted as trailing JSON
+whitespace). Do not use Unicode line separators for framing: U+2028 can occur
+inside a valid JSON string. The example builds LF segments in MeTTa and uses
+the existing persistent line collector, assembling complete records once.
+It does not require a JSON-specific I/O primitive. File/HTTP/process ownership
+and errors remain the respective libraries' responsibilities.
+
+Run from the repository root:
+
+  python3 tests/support/check_json_workflows_v1.py --cetta ./cetta
+  python3 tests/support/check_json_workflows_v1.py --cetta ./cetta --benchmark
+  python3 tests/support/check_json_workflows_v1.py --cetta ./cetta \
+    --conformance JSONTestSuite/test_parsing
+
+Benchmarks separate the first in-process preparation/specialization, a second
+execution of the same operation, and whole-process time. Inputs are prepared
+outside those operation intervals; neither specialization nor process startup
+is silently charged to the steady-state row. Sizes vary for text-heavy
+messages, numeric arrays and record arrays. Each timed result is independently
+checked; a missing or inert result fails rather than looking fast. Python's
+standard codec supplies a separately timed baseline, not identical duplicate
+or exact-number semantics. The native test's --value-cost option also measures
+arena allocation and the explicit scalar-conversion reference on one binary.
+The same benchmark command also measures complete config updates, numeric
+traversals, filtering/aggregation, space indexing/query, JSONL aggregation and
+file ingestion at several sizes. These include authored loop and query costs,
+not just codec time. --workflow-sizes selects these separate input scales;
+--projection-sizes selects ignored-payload sizes for selective parsing.
+
+Workload references:
+  https://github.com/miloyip/nativejson-benchmark
+  https://github.com/nst/JSONTestSuite
+  https://jsonlines.org/
+  https://www.sqlite.org/json1.html
+  https://www.postgresql.org/docs/current/datatype-json.html
+
+This is a codec and composable value API, not a claim to implement every
+JSON Schema, JSONPath, JSON Patch, canonical-signature or SAX-event protocol.
+Those specifications require their own explicit semantics and gates.

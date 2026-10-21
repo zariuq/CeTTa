@@ -1,5 +1,7 @@
 #include "prime_native_calculus.h"
 
+#include "equation_presentation.h"
+
 #include "prime_regular_pattern.h"
 #include "prime_typed_finite_relation.h"
 #include "prime_typed_flow_boundary.h"
@@ -467,32 +469,19 @@ static const char *const *prime_native_rule_m_spelling(
     return NULL;
 }
 
+/* One term of a Prime presentation, read with Prime's universal name
+ * syntax, which is how the live equations were read. */
 static Atom *prime_native_parse_one(
     Arena *owner, const char *source) {
-    size_t position = 0u;
     bool names = parser_set_universal_name_syntax_enabled(true);
-    Atom *term = owner && source
-        ? parse_sexpr(owner, source, &position)
-        : NULL;
+    Atom *term = cetta_presentation_parse_one(owner, source);
     parser_set_universal_name_syntax_enabled(names);
-    return term && parser_rest_is_delimiters(source, &position)
-        ? term
-        : NULL;
+    return term;
 }
 
-static bool prime_native_patterns_overlap(Atom *left, Atom *right) {
-    if (!left || !right) return false;
-    /* Only the verdict is kept; the unifier and its syntax are dropped. */
-    Arena scratch;
-    arena_init(&scratch);
-    Bindings overlap;
-    bindings_init(&overlap);
-    bool result = match_atoms(left, right, &overlap, &scratch);
-    bindings_free(&overlap);
-    arena_free(&scratch);
-    return result;
-}
-
+/* cetta_equation_presentation_exact for a Prime presentation: its sources
+ * are read as Prime source, and an equation may also be written in its
+ * rule-M spelling. */
 static bool prime_native_equation_profile_exact(
     Arena *scratch, Space *space, const char *head_name,
     const char *const *expected_sources, size_t expected_count) {
@@ -559,7 +548,7 @@ static bool prime_native_equation_profile_exact(
          * not another definition of it.  Any overlapping wildcard still
          * invalidates the exact admitted presentation. */
         for (size_t index = 0u; index < expected_count; index++) {
-            if (prime_native_patterns_overlap(
+            if (cetta_patterns_overlap(
                     occurrence.lhs, expected_lhs[index])) {
                 return false;
             }
@@ -2009,7 +1998,7 @@ static PrimeNativePlanBuildV1 prime_native_relation_symbol_provider(
                 occurrence.lhs->expr.len == 2u &&
                 atom_eq(occurrence.lhs->expr.elems[0], relation_term);
             if (!exact_fact) {
-                if (prime_native_patterns_overlap(
+                if (cetta_patterns_overlap(
                         occurrence.lhs, relation_probe)) {
                     return PRIME_NATIVE_PLAN_DECLINED;
                 }

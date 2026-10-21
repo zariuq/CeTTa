@@ -1,6 +1,7 @@
 #ifndef CETTA_EXACT_INTEGER_THEORY_V1_H
 #define CETTA_EXACT_INTEGER_THEORY_V1_H
 
+#include "exact_integer_operation_v1.h"
 #include "operational_language_def_v1.h"
 
 #include <stdbool.h>
@@ -13,17 +14,6 @@
  * it and retains only the operation identity plus its source occurrence.  It
  * supplies no arithmetic semantics and licenses no implementation.
  */
-typedef enum {
-    CETTA_EXACT_INTEGER_V1_ADD = 0,
-    CETTA_EXACT_INTEGER_V1_SUB,
-    CETTA_EXACT_INTEGER_V1_MUL,
-    CETTA_EXACT_INTEGER_V1_TQUOT,
-    CETTA_EXACT_INTEGER_V1_FQUOT,
-    CETTA_EXACT_INTEGER_V1_TREM,
-    CETTA_EXACT_INTEGER_V1_FREM,
-    CETTA_EXACT_INTEGER_V1_OPERATION_COUNT
-} CettaExactIntegerV1Operation;
-
 typedef struct {
     CettaExactIntegerV1Operation operation;
     uint32_t source_byte_left;

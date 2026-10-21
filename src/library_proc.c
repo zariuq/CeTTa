@@ -2,6 +2,7 @@
 #include "library_proc.h"
 #include "library.h"
 #include "eval.h"
+#include "../native/process_scope_v1.h"
 #include "proc_child.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -12,6 +13,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -38,7 +40,7 @@ typedef struct {
     uint64_t timeout_ms;
     int launch_error, host_error, wait_status;
     const char *launch_stage;
-    bool waited, timed_out, cancelled;
+    bool waited, timed_out, cancelled, owned_tree;
     ProcCapture output[2];
 } ProcJob;
 
@@ -189,11 +191,17 @@ static void kill_owned(pid_t pid) {
 static void *execute(void *resource) {
     ProcJob *job = resource;
     int input[2] = {-1,-1}, output[2][2] = {{-1,-1},{-1,-1}};
+    int owner[2] = {-1,-1}, receipt[2] = {-1,-1};
     int report[2] = {-1,-1};
     pid_t pid = -1;
     if (cancelled(job)) { job->cancelled = true; goto finish; }
     if (owned_pipe(input, O_CLOEXEC) || owned_pipe(output[0], O_CLOEXEC) || owned_pipe(output[1], O_CLOEXEC)) {
         job->launch_error = errno; job->launch_stage = "pipe"; goto finish;
+    }
+    if (job->owned_tree &&
+        (owned_pipe(owner, O_CLOEXEC) ||
+         owned_pipe(receipt, O_CLOEXEC | O_NONBLOCK))) {
+        job->launch_error = errno; job->launch_stage = "scope-pipe"; goto finish;
     }
 #if defined(__GLIBC__) && !defined(CETTA_PROC_FORK_SPAWN)
     posix_spawn_file_actions_t actions;
@@ -216,12 +224,20 @@ static void *execute(void *resource) {
     SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, input[0], STDIN_FILENO));
     SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, output[0][1], STDOUT_FILENO));
     SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, output[1][1], STDERR_FILENO));
-    SPAWN_STEP(posix_spawn_file_actions_addclosefrom_np(&actions, 3));
+    if (job->owned_tree) {
+        SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, owner[0], 3));
+        SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, receipt[1], 4));
+    }
+    SPAWN_STEP(posix_spawn_file_actions_addclosefrom_np(&actions, job->owned_tree ? 5 : 3));
     SPAWN_STEP(posix_spawn(&pid, job->program, &actions, &attributes, job->argv, job->env));
 #undef SPAWN_STEP
     posix_spawnattr_destroy(&attributes);
     posix_spawn_file_actions_destroy(&actions);
     if (error) { job->launch_error = error; job->launch_stage = "spawn"; goto finish; }
+    if (job->owned_tree) {
+        close(owner[0]); owner[0] = -1;
+        close(receipt[1]); receipt[1] = -1;
+    }
 #else
     /* musl has no closefrom spawn action. Reuse the owned fork/exec child
      * setup instead of enumerating a concurrently changing parent FD table. */
@@ -233,12 +249,25 @@ static void *execute(void *resource) {
     int error = pthread_sigmask(SIG_SETMASK, &blocked, &previous);
     if (error) { job->launch_error = error; job->launch_stage = "spawn-signals"; goto finish; }
     pid = fork();
-    if (!pid) cetta_proc_child_exec(job->program, job->argv, job->env, job->cwd,
-        input[0], output[0][1], output[1][1], report[1]);
+    if (!pid) {
+        if (job->owned_tree) {
+            cetta_proc_child_exec_scoped(
+                job->program, job->argv, job->env, job->cwd,
+                input[0], output[0][1], output[1][1], report[1],
+                owner[0], receipt[1]);
+        }
+        cetta_proc_child_exec(
+            job->program, job->argv, job->env, job->cwd,
+            input[0], output[0][1], output[1][1], report[1]);
+    }
     int fork_error = errno;
     (void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
     if (pid < 0) { job->launch_error = fork_error; job->launch_stage = "fork"; goto finish; }
     close(report[1]); report[1] = -1;
+    if (job->owned_tree) {
+        close(owner[0]); owner[0] = -1;
+        close(receipt[1]); receipt[1] = -1;
+    }
 #endif
     close(input[0]); input[0] = -1;
     for (int i = 0; i < 2; i++) { close(output[i][1]); output[i][1] = -1; }
@@ -282,7 +311,11 @@ static void *execute(void *resource) {
             else if (observed < 0 && errno != EINTR) { job->host_error = errno; break; }
         }
     }
-    if (job->cancelled || job->timed_out || job->host_error) kill_owned(pid);
+    if (job->owned_tree) {
+        /* Pipe revocation covers parent death too, including death before
+         * the supervisor starts. No parent-PID or startup-signal race. */
+        close(owner[1]); owner[1] = -1;
+    } else if (job->cancelled || job->timed_out || job->host_error) kill_owned(pid);
     if (!job->waited) {
         pid_t waited;
         do waited = waitpid(pid, &job->wait_status, 0); while (waited < 0 && errno == EINTR);
@@ -299,11 +332,30 @@ static void *execute(void *resource) {
             job->launch_error = stopped[1]; job->launch_stage = "spawn";
         } else if ((count < 0 && errno != EAGAIN) || count > 0) job->host_error = EIO;
     }
+    if (job->owned_tree && job->waited &&
+        !job->launch_error && !job->host_error) {
+        CettaProcessScopeReceiptV1 value;
+        size_t received = 0;
+        while (received < sizeof value) {
+            ssize_t count = read(receipt[0], (char *)&value + received, sizeof value - received);
+            if (count > 0) received += (size_t)count;
+            else if (count < 0 && errno == EINTR) continue;
+            else break;
+        }
+        if (received == sizeof value && value.magic == CETTA_PROCESS_SCOPE_MAGIC_V1 &&
+            WIFEXITED(job->wait_status) && WEXITSTATUS(job->wait_status) == 0) {
+            job->wait_status = value.wait_status;
+            if (value.launch_error) { job->launch_error = value.launch_error; job->launch_stage = "exec"; }
+            if (value.host_error && !job->host_error) job->host_error = value.host_error;
+        } else if (!job->host_error) job->host_error = EPROTO;
+    }
     for (int i = 0; i < 2; i++) if (output[i][0] >= 0) drain(job, &output[i][0], &job->output[i]);
 finish:
     for (int i = 0; i < 2; i++) {
         if (report[i] >= 0) close(report[i]);
         if (input[i] >= 0) close(input[i]);
+        if (owner[i] >= 0) close(owner[i]);
+        if (receipt[i] >= 0) close(receipt[i]);
         for (int j = 0; j < 2; j++) if (output[i][j] >= 0) close(output[i][j]);
     }
     pthread_mutex_lock(&job->lock);
@@ -339,6 +391,45 @@ static char *resolve_program(ProcJob *job) {
         if (!colon) return first;
         path = colon + 1;
     }
+}
+
+static bool prepare_scope(ProcJob *job) {
+    /* A companion is tied to the actual executable, never a search-path
+     * executable selected by the proposed command or its environment. */
+    size_t capacity = 256;
+    char *companion = NULL;
+    for (;;) {
+        char *next = realloc(companion, capacity + sizeof ".proc-scope");
+        if (!next) { free(companion); return false; }
+        companion = next;
+        ssize_t size = readlink("/proc/self/exe", companion, capacity);
+        if (size < 0) { free(companion); return false; }
+        if ((size_t)size < capacity) {
+            struct stat executable;
+            if (stat("/proc/self/exe", &executable)) { free(companion); return false; }
+            const char deleted[] = " (deleted)";
+            if (!executable.st_nlink && (size_t)size >= sizeof deleted - 1 &&
+                !memcmp(companion + size - (sizeof deleted - 1), deleted, sizeof deleted - 1))
+                size -= sizeof deleted - 1;
+            memcpy(companion + size, ".proc-scope", sizeof ".proc-scope"); break;
+        }
+        if (capacity > (SIZE_MAX - sizeof ".proc-scope") / 2) {
+            free(companion); errno = EOVERFLOW; return false;
+        }
+        capacity *= 2;
+    }
+    size_t count = 0;
+    while (job->argv[count]) count++;
+    if (count > SIZE_MAX / sizeof(char *) - 3) { free(companion); errno = EOVERFLOW; return false; }
+    char **arguments = calloc(count + 3, sizeof(char *));
+    char *executable = strdup(companion);
+    if (!arguments || !executable) { free(companion); free(arguments); free(executable); return false; }
+    arguments[0] = companion;
+    arguments[1] = job->program;
+    for (size_t i = 0; i < count; i++) arguments[i + 2] = job->argv[i];
+    free(job->argv);
+    job->argv = arguments; job->program = executable;
+    return true;
 }
 
 static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char **reason) {
@@ -381,7 +472,7 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
         Atom *key = entry->expr.elems[0], *value = entry->expr.elems[1];
         unsigned bit = atom_is_symbol(key, "cwd") ? 1u : atom_is_symbol(key, "env") ? 2u :
             atom_is_symbol(key, "stdin") ? 4u : atom_is_symbol(key, "timeout-ms") ? 8u :
-            atom_is_symbol(key, "max-bytes") ? 16u : 0u;
+            atom_is_symbol(key, "max-bytes") ? 16u : atom_is_symbol(key, "lifetime") ? 32u : 0u;
         if (!bit || (seen & bit)) { *reason = "unknown or duplicate process option"; goto refuse; }
         seen |= bit;
         if (bit == 1u) {
@@ -392,6 +483,12 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
             }
         }
         else if (bit == 2u) env = value;
+        else if (bit == 32u) {
+            if (!atom_is_symbol(value, "owner") && !atom_is_symbol(value, "group")) {
+                *reason = "lifetime must be owner or group"; goto refuse;
+            }
+            job->owned_tree = atom_is_symbol(value, "owner");
+        }
         else if (bit == 4u) {
             const char *bytes;
             if (!bytes_arg(value, &bytes, &job->input_len)) { *reason = "stdin must be a byte string"; goto refuse; }
@@ -440,6 +537,7 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
     }
     job->program = resolve_program(job);
     if (!job->program) goto allocation;
+    if (job->owned_tree && !prepare_scope(job)) goto host_failure;
     if (owned_pipe(job->wake, O_CLOEXEC | O_NONBLOCK)) goto host_failure;
     return job;
 host_failure:

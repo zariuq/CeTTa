@@ -2,11 +2,13 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: dd8a98d168f312dc0cd337ab513c337475107fab37c09de3496c846ea1cabdd1
+ * Source SHA-256: fe2766e13e8f904a4b8befd735617d41575a167de1bec900af20843dbca85872
  */
 
 #include <stdbool.h>
 #include <stdint.h>
+
+#include "../exact_integer.h"
 
 typedef enum {
     CETTA_GSLT_QUERY_EFFECT_PURE = 0u,
@@ -392,6 +394,7 @@ typedef enum {
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION = 1,
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS = 2,
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS = 3,
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH = 4,
 } CettaGsltPreparedPureIntrinsicInstruction;
 
 typedef enum {
@@ -423,7 +426,32 @@ typedef enum {
     X(repeat_atom, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
     X(decons_atom, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION) \
     X(cons_atom, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS) \
-    X(union_atom, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS)
+    X(union_atom, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS) \
+    X(lib_json_parse_v1, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_parse_v1, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_to_legacy_v1, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_from_inspection_v1, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_parse, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_parse, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_project_v1, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_stringify_v1, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_stringify_v1, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_stringify, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_stringify, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_members_v1, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_members_v1, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_get_all_v1, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_get_all_v1, 3u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_get_first_v1, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_get_first_v1, 3u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_get_last_v1, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_get_last_v1, 3u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_json_object_get, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_str, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_str, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_str, 3u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_str, 4u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
+    X(lib_str_value, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH)
 
 typedef enum {
     CETTA_GSLT_FOLD_CONTROL_BIND = 0,
@@ -982,15 +1010,15 @@ static inline bool cetta_gslt_register_execute_small_binary(
     *promote_out = false;
     switch (instruction) {
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_ADD:
-        *promote_out = __builtin_add_overflow(left, right, integer_out);
+        switch (cetta_exact_integer_small(CETTA_EXACT_INTEGER_V1_ADD, left, right, integer_out)) { case CETTA_EXACT_INTEGER_UNDEFINED: return false; case CETTA_EXACT_INTEGER_PROMOTE: *promote_out = true; break; case CETTA_EXACT_INTEGER_VALUE: break; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_SUBTRACT:
-        *promote_out = __builtin_sub_overflow(left, right, integer_out);
+        switch (cetta_exact_integer_small(CETTA_EXACT_INTEGER_V1_SUB, left, right, integer_out)) { case CETTA_EXACT_INTEGER_UNDEFINED: return false; case CETTA_EXACT_INTEGER_PROMOTE: *promote_out = true; break; case CETTA_EXACT_INTEGER_VALUE: break; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_MULTIPLY:
-        *promote_out = __builtin_mul_overflow(left, right, integer_out);
+        switch (cetta_exact_integer_small(CETTA_EXACT_INTEGER_V1_MUL, left, right, integer_out)) { case CETTA_EXACT_INTEGER_UNDEFINED: return false; case CETTA_EXACT_INTEGER_PROMOTE: *promote_out = true; break; case CETTA_EXACT_INTEGER_VALUE: break; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_EQUAL:
@@ -1014,11 +1042,11 @@ static inline bool cetta_gslt_register_execute_small_binary(
         *kind_out = CETTA_GSLT_REGISTER_RESULT_BOOLEAN;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER:
-        if (right == 0) { return false; } *integer_out = (left == INT64_MIN && right == -1) ? 0 : left % right;
+        switch (cetta_exact_integer_small(CETTA_EXACT_INTEGER_V1_TREM, left, right, integer_out)) { case CETTA_EXACT_INTEGER_UNDEFINED: return false; case CETTA_EXACT_INTEGER_PROMOTE: *promote_out = true; break; case CETTA_EXACT_INTEGER_VALUE: break; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO:
-        if (right == 0) { return false; } if (left == INT64_MIN && right == -1) { *integer_out = 0; } else { *integer_out = left % right; if (*integer_out != 0 && ((*integer_out < 0) != (right < 0))) *integer_out += right; }
+        switch (cetta_exact_integer_small(CETTA_EXACT_INTEGER_V1_FREM, left, right, integer_out)) { case CETTA_EXACT_INTEGER_UNDEFINED: return false; case CETTA_EXACT_INTEGER_PROMOTE: *promote_out = true; break; case CETTA_EXACT_INTEGER_VALUE: break; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     default:
@@ -1039,15 +1067,15 @@ static inline bool cetta_gslt_register_execute_binary(
         return false;
     switch (instruction) {
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_ADD:
-        mpz_add(integer_out, left, right);
+        if (!cetta_exact_integer_big(CETTA_EXACT_INTEGER_V1_ADD, left, right, integer_out)) { return false; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_SUBTRACT:
-        mpz_sub(integer_out, left, right);
+        if (!cetta_exact_integer_big(CETTA_EXACT_INTEGER_V1_SUB, left, right, integer_out)) { return false; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_MULTIPLY:
-        mpz_mul(integer_out, left, right);
+        if (!cetta_exact_integer_big(CETTA_EXACT_INTEGER_V1_MUL, left, right, integer_out)) { return false; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_EQUAL:
@@ -1071,11 +1099,11 @@ static inline bool cetta_gslt_register_execute_binary(
         *kind_out = CETTA_GSLT_REGISTER_RESULT_BOOLEAN;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_REMAINDER:
-        if (mpz_sgn(right) == 0) { return false; } mpz_tdiv_r(integer_out, left, right);
+        if (!cetta_exact_integer_big(CETTA_EXACT_INTEGER_V1_TREM, left, right, integer_out)) { return false; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     case CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_FLOOR_MODULO:
-        if (mpz_sgn(right) == 0) { return false; } mpz_fdiv_r(integer_out, left, right);
+        if (!cetta_exact_integer_big(CETTA_EXACT_INTEGER_V1_FREM, left, right, integer_out)) { return false; }
         *kind_out = CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
         return true;
     default:

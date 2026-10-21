@@ -638,7 +638,7 @@ static bool bridge_var_map_index(BridgeVarMap *vars,
                                  uint8_t *out_index,
                                  bool *out_is_new) {
     for (uint8_t i = 0; i < vars->len; i++) {
-        if (vars->slots[i].var_id == var_id) {
+        if (var_id_eq(vars->slots[i].var_id, var_id)) {
             if (out_index)
                 *out_index = i;
             if (out_is_new)
@@ -680,7 +680,9 @@ static bool bridge_expr_context_from_vars(const BridgeVarMap *vars,
         if (!bridge_expr_buf_push_u16_be(context, i) ||
             !bridge_expr_buf_push_u8(context, 0) ||
             !bridge_expr_buf_push_u8(context, 0) ||
-            !bridge_expr_buf_push_u64_be(context, vars->slots[i].var_id) ||
+            !bridge_expr_buf_push_u64_be(context, vars->slots[i].var_id.base) ||
+            !bridge_expr_buf_push_u64_be(context,
+                                         vars->slots[i].var_id.epoch.word) ||
             !bridge_expr_buf_push_u32_be(context, len) ||
             !bridge_expr_buf_push_bytes(context, name, len)) {
             return false;

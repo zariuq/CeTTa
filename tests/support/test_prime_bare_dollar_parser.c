@@ -56,7 +56,7 @@ static void check_direct_id_partition(ParserBareDollarMode mode,
         CHECK(tu_kind(&universe, left) == ATOM_VAR &&
                   tu_kind(&universe, right) == ATOM_VAR,
               "direct-to-ID reader classifies bare dollar as a variable");
-        CHECK((tu_var_id(&universe, left) == tu_var_id(&universe, right)) ==
+        CHECK((var_id_eq(tu_var_id(&universe, left), tu_var_id(&universe, right))) ==
                   expect_same,
               "direct-to-ID reader preserves the selected identity partition");
     } else {
@@ -99,8 +99,7 @@ int main(void) {
               fresh_pair->expr.elems[2]->kind == ATOM_VAR,
           "fresh contender parses each bare dollar as an ordinary variable");
     CHECK(is_binary_form(fresh_pair) &&
-              fresh_pair->expr.elems[1]->var_id !=
-                  fresh_pair->expr.elems[2]->var_id,
+              !var_id_eq(fresh_pair->expr.elems[1]->var_id, fresh_pair->expr.elems[2]->var_id),
           "fresh contender allocates a distinct identity per occurrence");
     char *fresh_rendered = parser_render_syntax(
         &arena, fresh_pair, PARSER_SYNTAX_PRINT_COMPACT);
@@ -112,8 +111,7 @@ int main(void) {
     CHECK(fresh_roundtrip && atom_alpha_eq(fresh_pair, fresh_roundtrip),
           "fresh anonymous variable partition survives syntax round-trip");
     CHECK(is_binary_form(fresh_roundtrip) &&
-              fresh_roundtrip->expr.elems[1]->var_id !=
-                  fresh_roundtrip->expr.elems[2]->var_id,
+              !var_id_eq(fresh_roundtrip->expr.elems[1]->var_id, fresh_roundtrip->expr.elems[2]->var_id),
           "syntax round-trip does not collapse distinct anonymous variables");
 
     Atom *ground_pair = parse_one(&arena, "(P a b)");
@@ -142,24 +140,20 @@ int main(void) {
     Atom *underscore_pair = parse_one(&arena, "(P $_ $_)");
     Atom *structural_pair = parse_one(&arena, "(P $@(k) $@(k))");
     CHECK(is_binary_form(named_pair) &&
-              named_pair->expr.elems[1]->var_id ==
-                  named_pair->expr.elems[2]->var_id,
+              var_id_eq(named_pair->expr.elems[1]->var_id, named_pair->expr.elems[2]->var_id),
           "named variables retain co-reference in fresh mode");
     CHECK(is_binary_form(underscore_pair) &&
-              underscore_pair->expr.elems[1]->var_id ==
-                  underscore_pair->expr.elems[2]->var_id,
+              var_id_eq(underscore_pair->expr.elems[1]->var_id, underscore_pair->expr.elems[2]->var_id),
           "existing $_ remains a named co-referential variable");
     CHECK(is_binary_form(structural_pair) &&
-              structural_pair->expr.elems[1]->var_id ==
-                  structural_pair->expr.elems[2]->var_id,
+              var_id_eq(structural_pair->expr.elems[1]->var_id, structural_pair->expr.elems[2]->var_id),
           "structural variables retain co-reference in fresh mode");
 
     parser_set_bare_dollar_mode(PARSER_BARE_DOLLAR_SHARED_VARIABLE);
     Atom *shared_pair = parse_one(&arena, "(P $ $)");
     CHECK(is_binary_form(shared_pair) &&
               shared_pair->expr.elems[1]->kind == ATOM_VAR &&
-              shared_pair->expr.elems[1]->var_id ==
-                  shared_pair->expr.elems[2]->var_id,
+              var_id_eq(shared_pair->expr.elems[1]->var_id, shared_pair->expr.elems[2]->var_id),
           "shared contender assigns one empty-spelling identity per form");
     Bindings shared_unequal;
     bindings_init(&shared_unequal);

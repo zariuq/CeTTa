@@ -107,27 +107,27 @@ static void match_progress_entry_case(const char *request, bool diagnostic) {
     Atom *body=expr_arg(inner,2u);
     MatchVisibleVarSet visible;match_visible_var_set_init(&visible);
     assert(collect_match_visible_vars_many(patterns,2u,&visible));
-    MatchResultSnapshot snapshot={0};DeferredSpaceSet deferred={0};
+    MatchChainCertificate certificate={0};DeferredSpaceSet deferred={0};
     MatchResultDirectEvalScratch scratch={0};
     outcome_set_init(&out);bindings_init(&empty);
     MatchChainDfsCtx dfs={.s=&space,.a=&arena,.fuel=-1,.os=&out,
         .step_spaces=spaces,.step_patterns=patterns,.nsteps=2u,.visible=&visible,
-        .snapshot=&snapshot,.deferred_spaces=&deferred,.direct_scratch=&scratch,
+        .certificate=&certificate,.deferred_spaces=&deferred,.direct_scratch=&scratch,
         .body=body,.query_spaces=spaces,.nquery_spaces=2u};
     (diagnostic?match_chain_dfs_diagnostic:match_chain_dfs_plain)(&dfs,0u,&empty);
-    match_result_snapshot_eval(&space,&arena,&snapshot,-1,&out);
+    CHECK(!certificate.failed);
     CHECK(out.len==2u);
     for(CettaCount i=0u;i<out.len;i++)
         CHECK(atom_eq(outcome_atom_materialize(&arena,&out.items[i]),expected));
     CHECK(g_match_chain_progress==(diagnostic?8u:0u));
-    outcome_set_free(&out);match_result_snapshot_free(&snapshot);bindings_free(&empty);
+    outcome_set_free(&out);bindings_free(&empty);
 
     Bindings row;bindings_init(&row);
     assert(match_atoms(patterns[1],parse_one(&arena,"(Edge B C)"),&row,&arena));
     outcome_set_init(&out);
     PathmapConjunctionStreamCtx indexed={.space=&space,.arena=&arena,.fuel=-1,
         .outcomes=&out,.visible=&visible,.body=body,.query_space=&space,
-        .preserve_bindings=true,.snapshot=&snapshot,.deferred_spaces=&deferred,
+        .preserve_bindings=true,.certificate=&certificate,.deferred_spaces=&deferred,
         .direct_scratch=&scratch,.factor_count=2u};
     CHECK((diagnostic?pathmap_conjunction_stream_row_diagnostic:
         pathmap_conjunction_stream_row_plain)(&row,&indexed));
@@ -551,7 +551,11 @@ static void implicit_first_source_case(bool empty_query, bool mutate_read) {
         }
     }
     CHECK(returned!=NULL);assert(returned);
-    CHECK(empty_query ? !returned->control_closed && returned->equation_search!=NULL
+    /* Enumeration may be closed while its divergent child remains pending.
+     * The complete-query obligation is live until notification, not merely
+     * until the equation cursor has stopped issuing work. */
+    CHECK(empty_query ? !returned->control_notified && returned->equation_search!=NULL &&
+                        returned->control_pending>0u
                       : returned->control_closed && returned->control_notified);
     CHECK(control.query_read_count==1u && !observed.count && !control.output.len);
     CHECK(space_read_token_is_current(control.query_reads[0]));
@@ -898,9 +902,17 @@ static Atom *owned_region_test_request(Space *space, Arena *arena, Bindings *env
                 nested=frame; break;
             }
     }
-    CHECK((nested!=NULL)==accepted);
-    if(accepted) {
-        assert(nested && nested->control_nested_operation);
+    /* A request can finish before the harness sees a suspended frame.
+     * It must still return exactly one Observation and release its lease.
+     * Callers below check exact answers, paid work and retained occurrences. */
+    if(accepted && !nested) {
+        CHECK(prime_native_control_closed(&parent) && !parent.failed &&
+              !parent.driver.capacity_blocked && observed.count==1u && !child->leased);
+        CHECK(observed.value && observed.value->kind==ATOM_EXPR &&
+              atom_is_symbol(observed.value->expr.elems[0],"Observation"));
+    } else CHECK((nested!=NULL)==accepted);
+    if(nested) {
+        assert(nested->control_nested_operation);
         PrimeNativeAcquiredOperation *operation=nested->control_nested_operation;
         CHECK(operation->use.self==&operation->use && operation->owns_lease && child->leased);
         CHECK(operation->parent_frame==nested && operation->parent_control==&parent);
@@ -1464,18 +1476,18 @@ static void owned_outcome_copy_case(unsigned count, bool owned, bool secondary) 
         cetta_weight_ledger_append(&source, &factors, 702u, 802u, value, &factors) &&
         cetta_weight_ledger_handle(&source, &factors, &empty, 901u, &handled, &selected));
     Bindings seed; bindings_init(&seed);
-    assert(bindings_add_id(&seed, 419u, SYMBOL_ID_NONE, value) &&
-        bindings_add_id(&seed, 422u, SYMBOL_ID_NONE, handled.last->previous->value) &&
-        bindings_add_id(&seed, 423u, SYMBOL_ID_NONE, handled.last->value) &&
+    assert(bindings_add_id(&seed, var_id_from_base(419u), SYMBOL_ID_NONE, value) &&
+        bindings_add_id(&seed, var_id_from_base(422u), SYMBOL_ID_NONE, handled.last->previous->value) &&
+        bindings_add_id(&seed, var_id_from_base(423u), SYMBOL_ID_NONE, handled.last->value) &&
         bindings_add_var(&seed, variable, external_value));
     *bindings_need_mut(&seed) = completed;
     *bindings_weight_mut(&seed) = handled;
     PrimeNeedCellView before = {0};
     assert(prime_need_snapshot_lookup(&completed, cell_id, &before) &&
         before.origin == value && before.cached == value &&
-        bindings_lookup_value_id(&seed, 419u).skeleton == value &&
-        bindings_lookup_value_id(&seed, 422u).skeleton == handled.last->previous->value &&
-        bindings_lookup_value_id(&seed, 423u).skeleton == handled.last->value &&
+        bindings_lookup_value_id(&seed, var_id_from_base(419u)).skeleton == value &&
+        bindings_lookup_value_id(&seed, var_id_from_base(422u)).skeleton == handled.last->previous->value &&
+        bindings_lookup_value_id(&seed, var_id_from_base(423u)).skeleton == handled.last->value &&
         handled.last->value != value && handled.last->previous->value != value &&
         handled.last->value != handled.last->previous->value);
     VariantShape shape; variant_shape_init(&shape);
@@ -1494,7 +1506,7 @@ static void owned_outcome_copy_case(unsigned count, bool owned, bool secondary) 
         assert(bindings_clone(&out->env, &seed) &&
             bindings_refresh_occurrence_token(&out->env) &&
             variant_instance_from_shape(&out->variant, &shape) &&
-            cetta_var_map_add(&out->answer_ref.goal_instantiation, 519u, variable));
+            cetta_var_map_add(&out->answer_ref.goal_instantiation, var_id_from_base(519u), variable));
         occurrences[i] = bindings_occurrence_token(&out->env);
         assert(variant_instance_peek_private_id(&out->variant, slot) == value);
     }
@@ -1564,7 +1576,7 @@ static void owned_outcome_copy_case(unsigned count, bool owned, bool secondary) 
         CHECK(out->atom == transported && out->materialized_atom == (i % 2u ? NULL : transported) &&
               out->delayed->expr.elems[1]->expr.elems[1]->ground.ival == 17);
         CHECK(variant_instance_peek_private_id(&out->variant, slot) == transported &&
-              cetta_var_map_lookup(&out->answer_ref.goal_instantiation, 519u) == transported_var &&
+              cetta_var_map_lookup(&out->answer_ref.goal_instantiation, var_id_from_base(519u)) == transported_var &&
               bindings_lookup_value_id(&out->env, transported_var->var_id).skeleton == external_value);
         CHECK(prime_need_snapshot_lookup(bindings_need_view(&out->env), cell_id, &cell) &&
               cell.origin == transported && cell.cached == transported &&
@@ -1572,8 +1584,8 @@ static void owned_outcome_copy_case(unsigned count, bool owned, bool secondary) 
               bindings_occurrence_token(&out->env) == occurrences[i]);
         CHECK(weights->length == 2u && weights->last->value != transported &&
               weights->last->value != weights->last->previous->value &&
-              bindings_lookup_value_id(&out->env, 422u).skeleton == weights->last->previous->value &&
-              bindings_lookup_value_id(&out->env, 423u).skeleton == weights->last->value &&
+              bindings_lookup_value_id(&out->env, var_id_from_base(422u)).skeleton == weights->last->previous->value &&
+              bindings_lookup_value_id(&out->env, var_id_from_base(423u)).skeleton == weights->last->value &&
               cetta_weight_ledger_handler(weights, 701u) == 901u &&
               cetta_weight_ledger_handler(weights, 702u) == 901u);
         if (i) CHECK(occurrences[i] != occurrences[i - 1u] && copy.items[i - 1u].atom == out->atom);
@@ -1748,8 +1760,8 @@ static void captured_query_publication_case(bool replace, bool relocate, bool al
         facts[i]=atom_expr2(&external,atom_symbol(&external,"Fact"),values[i]);
         space_add(&space,facts[i]);
     }
-    Atom *x=atom_var_with_spelling(&input,symbol_intern_cstr(g_symbols,"captured-x"),124201u);
-    Atom *y=atom_var_with_spelling(&input,symbol_intern_cstr(g_symbols,"captured-y"),124202u);
+    Atom *x=atom_var_with_spelling(&input,symbol_intern_cstr(g_symbols,"captured-x"),var_id_from_base(124201u));
+    Atom *y=atom_var_with_spelling(&input,symbol_intern_cstr(g_symbols,"captured-y"),var_id_from_base(124202u));
     Atom *left=atom_expr2(&input,atom_symbol(&input,"Fact"),x);
     Atom *right=atom_expr2(&input,atom_symbol(&input,"Fact"),alternative?x:y);
     Atom *pattern=atom_expr3(&input,atom_symbol(&input,alternative?"|":","),left,right);
@@ -1825,7 +1837,7 @@ static bool owned_query_need_world_case(size_t cut, size_t *limit,
     Atom *fact=atom_expr2(&external,atom_symbol(&external,"query-frame"),atom_int(&external,7));
     AtomId fact_id=term_universe_store_atom_id(&universe,NULL,fact);assert(fact_id);
     space_add_atom_id(&space,fact_id);
-    Atom *variable=atom_var_with_spelling(&input,symbol_intern_cstr(g_symbols,"query-frame-var"),123401u);
+    Atom *variable=atom_var_with_spelling(&input,symbol_intern_cstr(g_symbols,"query-frame-var"),var_id_from_base(123401u));
     Atom *pattern=atom_expr2(&input,atom_symbol(&input,"query-frame"),variable);
     Atom *value=atom_expr2(&result,atom_symbol(&result,"Value"),atom_int(&result,7));
     PrimeNeedSnapshot root={0},allocated,running,completed;uint64_t cell=0;
@@ -2940,8 +2952,9 @@ static void worker_symbol_source_cases(void) {
 }
 
 static bool seen_reference_equal(BindingValue left, BindingValue right) {
-    if (left.skeleton != right.skeleton || left.kind != right.kind) return false;
-    return left.kind == BINDING_VALUE_MATERIALIZED || left.epoch == right.epoch;
+    if (left.skeleton != right.skeleton || binding_value_kind(left) != binding_value_kind(right)) return false;
+    return binding_value_kind(left) == BINDING_VALUE_MATERIALIZED ||
+        cetta_frame_identity_eq(binding_value_epoch(left), binding_value_epoch(right));
 }
 
 static void outcome_seen_identity_control(void) {
@@ -2954,11 +2967,10 @@ static void outcome_seen_identity_control(void) {
     uint32_t state = 17u;
     for (size_t step = 0u; step < 16000u; step++) {
         state = state * UINT32_C(1664525) + UINT32_C(1013904223);
-        BindingValue value = {
-            .skeleton = (state & 31u) == 0u ? NULL : &atoms[(state >> 8u) % 257u],
-            .kind = (BindingValueKind)((state >> 20u) % 3u),
-            .epoch = (state >> 24u) % 4u,
-        };
+        BindingValue value = binding_value_make(
+            (state & 31u) == 0u ? NULL : &atoms[(state >> 8u) % 257u],
+            (CettaFrameIdentity){.word = (state >> 24u) % 4u},
+            (BindingValueKind)((state >> 20u) % 3u));
         bool found = false;
         for (size_t i = 0u; i < expected_len; i++)
             if (seen_reference_equal(expected[i], value)) { found = true; break; }
@@ -2972,8 +2984,8 @@ static void outcome_seen_identity_control(void) {
     assert(expected_len > 1024u);
     for (size_t i = 0u; i < expected_len; i++) {
         assert(seen.items[i].skeleton == expected[i].skeleton);
-        assert(seen.items[i].kind == expected[i].kind);
-        assert(seen.items[i].epoch == expected[i].epoch);
+        assert(binding_value_kind(seen.items[i]) == binding_value_kind(expected[i]));
+        assert(cetta_frame_identity_eq(binding_value_epoch(seen.items[i]), binding_value_epoch(expected[i])));
         assert(!outcome_preview_seen_add_value(&seen, expected[i]));
     }
     outcome_preview_seen_free(&seen);
@@ -2983,18 +2995,18 @@ static void outcome_seen_identity_control(void) {
     assert(!seen.slots && !seen.slot_cap);
     BindingValue m = binding_value_from_atom(&atoms[32]);
     assert(outcome_preview_seen_add_value(&seen, m));
-    m.epoch = 91u;
+    binding_value_set_epoch(&m, (CettaFrameIdentity){.word = 91u});
     assert(!outcome_preview_seen_add_value(&seen, m));
-    BindingValue c = binding_value_from_context(&atoms[32], 11u);
+    BindingValue c = binding_value_from_context(&atoms[32], (CettaFrameIdentity){.word = 11u});
     assert(outcome_preview_seen_add_value(&seen, c));
-    c.epoch = 12u;
+    binding_value_set_epoch(&c, (CettaFrameIdentity){.word = 12u});
     assert(outcome_preview_seen_add_value(&seen, c));
-    c.kind = BINDING_VALUE_CONTEXTUAL_PERSISTENT;
+    binding_value_set_kind(&c, BINDING_VALUE_CONTEXTUAL_PERSISTENT);
     assert(outcome_preview_seen_add_value(&seen, c));
     assert(outcome_preview_seen_add(&seen, &atoms[33]));
     assert(seen.slots && seen.slot_cap >= 64u);
     assert(outcome_preview_seen_contains_value(&seen, c));
-    c.epoch = 13u;
+    binding_value_set_epoch(&c, (CettaFrameIdentity){.word = 13u});
     assert(!outcome_preview_seen_contains_value(&seen, c));
     assert(outcome_preview_seen_contains(&seen, &atoms[32]));
     assert(!outcome_preview_seen_contains(&seen, &atoms[34]));
@@ -3940,7 +3952,7 @@ static void projected_own_case(unsigned which) {
         Atom *image=result->expr.elems[3];
         assert(atom_is_prime_own_list(image) && image->expr.len==3u);
         assert(image->expr.elems[0]==own->expr.elems[0] && image->expr.elems[1]==record);
-        assert(image->expr.elems[2]->kind==ATOM_VAR && image->expr.elems[2]->var_id==y->var_id);
+        assert(image->expr.elems[2]->kind==ATOM_VAR && var_id_eq(image->expr.elems[2]->var_id, y->var_id));
         assert(prime_semantics_is_authored_lambda(&arena,result));
         Atom *application=atom_expr2(&arena,result,atom_int(&arena,1));
         Atom *answer=prime_semantics_authored_head_step(&arena,application);
@@ -3949,14 +3961,14 @@ static void projected_own_case(unsigned which) {
         assert(bindings_add_var(&env,x,y));
         result=bindings_apply_projected_body_visible(&env,&arena,own);
         assert(atom_is_prime_own_list(result) && result->expr.len==3u);
-        assert(result->expr.elems[1]==record && result->expr.elems[2]->var_id==y->var_id);
+        assert(result->expr.elems[1]==record && var_id_eq(result->expr.elems[2]->var_id, y->var_id));
     } else if(which==2u) {
         Atom *value=atom_expr2(&arena,atom_symbol(&arena,"Box"),y);
         assert(bindings_add_var(&env,x,value));
         assert(bindings_add_var(&env,y,atom_int(&arena,5)));
         result=bindings_apply_projected_body_visible(&env,&arena,x);
         assert(result && atom_eq(result,value));
-        assert(result->expr.elems[1]->kind==ATOM_VAR && result->expr.elems[1]->var_id==y->var_id);
+        assert(result->expr.elems[1]->kind==ATOM_VAR && var_id_eq(result->expr.elems[1]->var_id, y->var_id));
     } else if(which==3u) {
         BindingsStructureHooks rejecting=*prime_semantics_binding_hooks();
         rejecting.own_list=projected_own_refuse;bindings_structure_hooks_set(&rejecting);
@@ -3975,7 +3987,7 @@ static void projected_own_case(unsigned which) {
         result=bindings_apply_projected_body_visible(&env,&arena,ordinary);
         assert(result && result->expr.len==4u && !atom_sequence_is_own_list(result));
         assert(result->expr.elems[1]==record && result->expr.elems[2]->kind==ATOM_GROUNDED && result->expr.elems[2]->ground.ival==5);
-        assert(result->expr.elems[3]->kind==ATOM_VAR && result->expr.elems[3]->var_id==y->var_id);
+        assert(result->expr.elems[3]->kind==ATOM_VAR && var_id_eq(result->expr.elems[3]->var_id, y->var_id));
     } else assert(false);
     bindings_structure_hooks_set(prior);bindings_free(&env);arena_free(&arena);
     printf("ProjectedOwn %u passed\n",which);

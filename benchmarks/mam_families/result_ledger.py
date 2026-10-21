@@ -18,6 +18,7 @@ import re
 
 
 METRICS = ('wall_s', 'query_ms', 'instructions', 'peak_rss_mib', 'retained_bytes')
+RANGE_STATISTICS = ('min', 'q1', 'q3', 'max')
 OBSERVERS = {'ordered_occurrences', 'occurrence_bag', 'set', 'count', 'exists', 'effect_history'}
 PHASES = {'whole_process', 'preparation', 'query', 'transfer', 'scheduling', 'validation'}
 QUALITIES = {'checked_samples', 'diagnostic', 'exploratory', 'pending'}
@@ -88,6 +89,19 @@ def validate(ledger, evidence_root=None):
                 require(value is None or (type(value) in (int, float) and math.isfinite(value)
                                          and value >= 0), name + ': invalid metric')
                 require(value is None or trials > 0, name + ': measurement without trials')
+            for metric, values in variant.get('metric_ranges', {}).items():
+                require(metric in variant['metrics'] and variant['metrics'][metric] is not None,
+                        name + ': range has no median metric ' + metric)
+                require(set(values) == set(RANGE_STATISTICS),
+                        name + ': incomplete range for ' + metric)
+                ordered = [values[key] for key in RANGE_STATISTICS]
+                require(all(type(value) in (int, float) and math.isfinite(value)
+                            and value >= 0 for value in ordered),
+                        name + ': invalid range for ' + metric)
+                minimum, q1, q3, maximum = ordered
+                median = variant['metrics'][metric]
+                require(minimum <= q1 <= median <= q3 <= maximum,
+                        name + ': unordered range for ' + metric)
             if result['quality'] == 'checked_samples':
                 require(variant['correct'] == 'passed' and trials > 0,
                         name + ': unchecked sample cannot be a checked measurement')
@@ -130,6 +144,13 @@ def render(ledger):
             metrics = ', '.join(f'{k}={v:.6g}' for k, v in variant['metrics'].items()
                                 if v is not None)
             lines.append(f"  {variant['name']} ({variant['artifact']}, {variant['trials']} trials): {metrics}")
+            ranges = variant.get('metric_ranges', {})
+            if ranges:
+                rendered = ', '.join(
+                    f"{metric}=[{values['min']:.6g}; {values['q1']:.6g}.."
+                    f"{values['q3']:.6g}; {values['max']:.6g}]"
+                    for metric, values in ranges.items())
+                lines.append('    ranges min; Q1..Q3; max: ' + rendered)
         if result.get('limits'):
             lines.append('  Limits: ' + result['limits'])
     lines += ['', 'Next experiments, in priority order:']
@@ -141,15 +162,22 @@ def render(ledger):
 
 def write_csv(ledger, stream):
     fields = ['result', 'quality', 'comparison', 'observer', 'phase', 'variant',
-              'artifact', 'correct', 'trials', *METRICS]
+              'artifact', 'correct', 'trials', *METRICS,
+              *(f'{metric}_{statistic}' for metric in METRICS
+                for statistic in RANGE_STATISTICS)]
     writer = csv.DictWriter(stream, fieldnames=fields)
     writer.writeheader()
     for result in ledger['results']:
         for variant in result['variants']:
+            ranges = {
+                f'{metric}_{statistic}': value
+                for metric, values in variant.get('metric_ranges', {}).items()
+                for statistic, value in values.items()
+            }
             writer.writerow(dict(result=result['id'], quality=result['quality'],
                 comparison=result['comparison'], observer=result['observer'], phase=result['phase'],
                 variant=variant['name'], artifact=variant['artifact'], correct=variant['correct'],
-                trials=variant['trials'], **variant['metrics']))
+                trials=variant['trials'], **variant['metrics'], **ranges))
 
 
 def main():

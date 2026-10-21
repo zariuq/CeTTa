@@ -6,7 +6,10 @@
  *   - a grounded leaf's name_key is NULL (only a variable carries one; a
  *     collection reads the field as its mark and as its forwarding copy);
  *   - its hash cache is clear and its arena is the one it was built in;
- *   - a variable built with a name key keeps it (the positive control).
+ *   - a variable built with a name key keeps it (the positive control);
+ *   - when the hash-cons table can hold no more, a constructor answers an
+ *     atom of its own arena, never its temporary header, and a table with
+ *     room still shares its representative (cetta-ours a4ab5acd).
  */
 #include "atom.h"
 #include "symbol.h"
@@ -38,8 +41,7 @@ static void check_leaf(Atom *atom, Arena *a, const char *what) {
     snprintf(text, sizeof text, "%s: name_key is NULL", what);
     check(atom && atom->name_key == NULL, text);
     snprintf(text, sizeof text, "%s: hash cache is clear", what);
-    check(atom && atom->hash_cache == 0u &&
-              (atom->flags & ATOM_FLAG_HASH_VALID) == 0u, text);
+    check(atom && atom_hash_cache_load(atom) == 0u, text);
     snprintf(text, sizeof text, "%s: arena identity", what);
     check(atom && atom->arena_id == a->identity, text);
 }
@@ -47,9 +49,8 @@ static void check_leaf(Atom *atom, Arena *a, const char *what) {
 static void check_full_hashcons_fallback(Arena *arena) {
     HashConsTable hc;
     hashcons_init_compact(&hc);
-    /* Force the defensive full-table path without allocating enough entries
-     * to trigger automatic growth. These borrowed fixtures are removed before
-     * freeing the table. */
+    /* Fill every slot with a borrowed atom, so the table holds no more
+     * without growing; the fixtures are cleared before the table is freed. */
     Atom occupied;
     atom_scalar_leaf_bool(&occupied, true);
     for (uint32_t i = 0; i < hc.size; ++i)
@@ -69,7 +70,7 @@ static void check_full_hashcons_fallback(Arena *arena) {
     for (uint32_t i = 0; i < hc.size; ++i)
         hc.table[i] = NULL;
     hc.used = 0;
-    /* Successful interning still shares its published representative. */
+    /* With room, interning shares its published representative. */
     Atom *published = atom_bool(arena, false);
     check(published && atom_bool(arena, false) == published,
           "successful hashconsing preserves the published representative");
@@ -136,7 +137,7 @@ int main(void) {
     /* The positive control: a variable's name key is kept. */
     dirty(&arena, mark, 0xbeu);
     Atom *key = atom_symbol(&arena, "spelling");
-    Atom *variable = atom_var_with_name_key(&arena, key, 7u);
+    Atom *variable = atom_var_with_name_key(&arena, key, var_id_from_base(7u));
     check(variable && variable->name_key == key,
           "a variable keeps its name key");
 

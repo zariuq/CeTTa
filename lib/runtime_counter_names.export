@@ -1,1 +1,1 @@
-(cesta-export/1 (header CETTA_RUNTIME_COUNTER_NAMES_GENERATED_H) (include "cetta_runtime_counters.generated.h") (counter-names "runtime_counters.data"))
+(cesta-export/1 (header CETTA_RUNTIME_COUNTER_NAMES_GENERATED_H) (profile c11) (counter-names "runtime_counters.data"))

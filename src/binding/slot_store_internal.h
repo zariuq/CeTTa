@@ -9,7 +9,7 @@
 #include "frame_schema_internal.h"
 
 typedef struct BindingsFrameIndexEntry {
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     bool owns_identity;
     BindingsFrameSchema *schema;
     _Atomic uint32_t *storage_references;
@@ -32,13 +32,13 @@ struct BindingsFrameUndoEntry {
     uint64_t previous_write_version;
     uint64_t written_write_version;
     BindingsFrameRef frame_ref;
-    uint32_t source_id;
+    uint64_t source_id;
     uint32_t slot;
     uint32_t trail_mark;
 };
 
 struct BindingsFrameRegistrationUndoEntry {
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     uint32_t trail_mark;
     BindingsFrameSchema *previous_schema;
     bool frame_existed;
@@ -163,31 +163,31 @@ bool bindings_frame_index_mark_activation_boundary_ref(
 
 bool bindings_frame_index_register_kind(
         Bindings *bindings, const VarId *source_ids,
-        uint32_t source_len, uint32_t epoch, bool schema_complete,
+        uint32_t source_len, CettaFrameIdentity epoch, bool schema_complete,
         BindingsFrameSchema *prepared_schema,
         BindingsFrameRef *ref_out,
         bool registration_change_proved);
 
 bool bindings_frame_index_register(
         Bindings *bindings, const VarId *source_ids,
-        uint32_t source_len, uint32_t epoch);
+        uint32_t source_len, CettaFrameIdentity epoch);
 
 bool bindings_frame_index_merge_schemas(
     Bindings *destination, const Bindings *source);
 
 bool bindings_builder_register_frame_kind(
         BindingsBuilder *builder, const VarId *source_ids,
-        uint32_t source_len, uint32_t epoch, bool schema_complete,
+        uint32_t source_len, CettaFrameIdentity epoch, bool schema_complete,
         BindingsFrameSchema *prepared_schema,
         BindingsFrameRef *ref_out);
 
 bool bindings_builder_register_frame(
         BindingsBuilder *builder, const VarId *source_ids,
-        uint32_t source_len, uint32_t epoch);
+        uint32_t source_len, CettaFrameIdentity epoch);
 
 bool bindings_builder_register_complete_frame_schema_ref(
         BindingsBuilder *builder, BindingsFrameSchema *schema,
-        uint32_t epoch, BindingsFrameRef *ref_out);
+        CettaFrameIdentity epoch, BindingsFrameRef *ref_out);
 
 bool bindings_builder_merge_frame_schemas(
         BindingsBuilder *builder, const Bindings *source);
@@ -236,7 +236,8 @@ static inline BindingsFrameIndexEntry *bindings_frame_index_find_ref(
         return NULL;
     BindingsFrameIndexEntry *entry = bindings_frame_table_lookup(
         index, cetta_frame_handle(ref.identity));
-    return entry && entry->epoch == ref.identity ? entry : NULL;
+    return entry && cetta_frame_identity_eq(entry->epoch, ref.identity)
+        ? entry : NULL;
 }
 
 static inline const BindingsFrameIndexEntry *bindings_frame_index_find_ref_const(
@@ -247,26 +248,27 @@ static inline const BindingsFrameIndexEntry *bindings_frame_index_find_ref_const
 static inline BindingsFrameRef bindings_frame_ref_from_entry(
         const BindingsFrameIndex *index,
         const BindingsFrameIndexEntry *entry) {
-    BindingsFrameRef ref = {.identity = entry ? entry->epoch : 0u};
+    BindingsFrameRef ref = {
+        .identity = entry ? entry->epoch : CETTA_FRAME_IDENTITY_NONE};
     return bindings_frame_index_find_ref_const(index, ref) == entry
         ? ref : (BindingsFrameRef){0};
 }
 
 static inline BindingsFrameIndexEntry *bindings_frame_index_find_frame(
-        BindingsFrameIndex *index, uint32_t identity) {
+        BindingsFrameIndex *index, CettaFrameIdentity identity) {
     return bindings_frame_index_find_ref(index,
         (BindingsFrameRef){.identity = identity});
 }
 
 static inline const BindingsFrameIndexEntry *bindings_frame_index_find_frame_const(
-        const BindingsFrameIndex *index, uint32_t epoch) {
+        const BindingsFrameIndex *index, CettaFrameIdentity epoch) {
     return bindings_frame_index_find_frame(
         (BindingsFrameIndex *)index, epoch);
 }
 
 static inline VarId bindings_frame_slot_source_id(const BindingsFrameIndexEntry *frame,
                                           uint32_t slot) {
-    return slot < frame->schema->len ? frame->schema->source_ids[slot] : (VarId)slot + 1u;
+    return slot < frame->schema->len ? frame->schema->source_ids[slot] : var_id_from_base((uint64_t)slot + 1u);
 }
 
 static inline SymbolId bindings_frame_slot_spelling(const BindingsFrameIndexEntry *frame,
@@ -285,12 +287,13 @@ static inline Atom *bindings_frame_slot_name_key(const BindingsFrameIndexEntry *
 static inline bool bindings_frame_index_find_slot(
         const BindingsFrameIndexEntry *frame, VarId source_id,
         uint32_t *slot_out) {
-    if (!frame || !slot_out || source_id == VAR_ID_NONE)
+    if (!frame || !slot_out || var_id_is_none(source_id))
         return false;
+    /* Source ids carry no activation: slots are keyed by their bases. */
     if (frame->schema->source_ids_contiguous) {
-        if (source_id < frame->schema->source_first_id)
+        if (source_id.base < frame->schema->source_first_id.base)
             return false;
-        uint64_t offset = source_id - frame->schema->source_first_id;
+        uint64_t offset = source_id.base - frame->schema->source_first_id.base;
         if (offset >= frame->slot_len)
             return false;
         *slot_out = (uint32_t)offset;
@@ -300,12 +303,12 @@ static inline bool bindings_frame_index_find_slot(
     uint32_t high = frame->schema->len;
     while (low < high) {
         uint32_t middle = low + (high - low) / 2u;
-        if (frame->schema->source_ids[middle] < source_id)
+        if (frame->schema->source_ids[middle].base < source_id.base)
             low = middle + 1u;
         else
             high = middle;
     }
-    if (low >= frame->schema->len || frame->schema->source_ids[low] != source_id)
+    if (low >= frame->schema->len || !var_id_eq(frame->schema->source_ids[low], source_id))
         return false;
     *slot_out = low;
     return true;
@@ -321,8 +324,8 @@ static inline bool bindings_frame_index_find_coordinate(
         *slot_out = 0u;
     if (!bindings || !bindings->frame_index || !frame_out || !slot_out)
         return false;
-    uint32_t epoch = var_epoch_suffix(id);
-    if (epoch == 0u)
+    CettaFrameIdentity epoch = var_epoch_suffix(id);
+    if (cetta_frame_identity_is_none(epoch))
         return false;
     const BindingsFrameIndexEntry *frame =
         bindings_frame_index_find_frame_const(
@@ -331,7 +334,7 @@ static inline bool bindings_frame_index_find_coordinate(
         return false;
     uint32_t slot = 0u;
     if (!bindings_frame_index_find_slot(
-            frame, (VarId)var_base_id(id), &slot)) {
+            frame, var_source_id(id), &slot)) {
         /* One activation may contain authored source slots and separately
          * minted destination holes.  Until a hole is explicitly admitted to
          * this frame, the epoch alone cannot assign its coordinate to the
@@ -366,7 +369,7 @@ static inline bool bindings_frame_index_owns_id(
 }
 
 static inline bool bindings_frame_index_epoch_complete(
-        const Bindings *bindings, uint32_t epoch) {
+        const Bindings *bindings, CettaFrameIdentity epoch) {
     const BindingsFrameIndexEntry *frame = bindings
         ? bindings_frame_index_find_frame_const(
               bindings->frame_index, epoch)

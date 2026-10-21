@@ -621,6 +621,22 @@ bool cetta_decimal_real_double_v1(const char *text, double *out) {
     return true;
 }
 
+bool cetta_decimal_real_nearest_v1(const char *text, double *out) {
+    char *canonical = NULL;
+    char *end = NULL;
+    if (!out || !cetta_decimal_real_canonical_v1(text, &canonical))
+        return false;
+    free(canonical);
+    (void)pthread_once(&dv_locale_once, dv_locale_init);
+    if (!dv_locale)
+        return false;
+    double value = strtod_l(text, &end, dv_locale);
+    if (!end || *end != '\0' || isnan(value))
+        return false;
+    *out = value;
+    return true;
+}
+
 bool cetta_decimal_real_from_double_v1(double value, char **out) {
     char candidate[64];
     if (!out)

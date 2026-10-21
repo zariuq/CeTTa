@@ -139,6 +139,54 @@ def answer_atoms(stdout: str, grouped: bool | str) -> list[str]:
     return atoms
 
 
+def runtime_counters(stderr: str) -> dict[str, int]:
+    """Read one complete `--emit-runtime-stats` counter vector.
+
+    Other diagnostics may surround the vector.  A requested receipt is not
+    evidence when it is absent, duplicated, malformed, or negative.
+    """
+    counters = {}
+    for line in stderr.splitlines():
+        if not line.startswith('runtime-counter '):
+            continue
+        fields = line.split()
+        if len(fields) != 3:
+            raise ValueError('malformed runtime counter: ' + line[:120])
+        _, name, raw = fields
+        if name in counters:
+            raise ValueError('duplicate runtime counter: ' + name)
+        try:
+            value = int(raw)
+        except ValueError as error:
+            raise ValueError('non-integer runtime counter: ' + name) from error
+        if value < 0:
+            raise ValueError('negative runtime counter: ' + name)
+        counters[name] = value
+    if not counters:
+        raise ValueError('runtime counter vector is absent')
+    return counters
+
+
+def runtime_counter_receipt(stderr: str) -> dict:
+    counters = runtime_counters(stderr)
+    if counters.get('runtime-statistics-recorded') != 1:
+        raise ValueError('runtime counters were not recorded by this build')
+    vector = ''.join(f'{key} {counters[key]}\n' for key in sorted(counters))
+    return dict(
+        runtime_counter_count=len(counters),
+        runtime_counter_sha256=hashlib.sha256(vector.encode()).hexdigest(),
+        runtime_counters={key:value for key,value in counters.items() if value})
+
+
+def git_source_identity(root: Path) -> str:
+    """Identity of one tracked source checkout, including local edits."""
+    head = subprocess.check_output(
+        ['git', '-C', str(root), 'rev-parse', 'HEAD'])
+    diff = subprocess.check_output(
+        ['git', '-C', str(root), 'diff', 'HEAD', '--binary'])
+    return hashlib.sha256(head + b'\n' + diff).hexdigest()
+
+
 def paired_measure(cmd, cwd, env, stem, timeout, cpu, instructions):
     """Reap the complete job; kill its process group on timeout."""
     stem.parent.mkdir(parents=True,exist_ok=True)
@@ -210,6 +258,8 @@ def paired_main():
     ap.add_argument('--timeout',type=float,default=60)
     ap.add_argument('--cpu',type=int)
     ap.add_argument('--instructions',action='store_true')
+    ap.add_argument('--runtime-stats',action='store_true',
+                    help='require and retain CeTTa runtime-counter receipts')
     ap.add_argument('--engine-env',action='append',default=[],metavar='ENGINE:KEY=VALUE')
     args=ap.parse_args()
     if args.trials<1 or args.timeout<=0: ap.error('trials and timeout must be positive')
@@ -231,11 +281,13 @@ def paired_main():
         configured[eng][key]=value
     def sha_file(p): return hashlib.sha256(Path(p).read_bytes()).hexdigest()
     identities={'cetta':sha_file(args.cetta),'manifest':hashlib.sha256(manifest_bytes).hexdigest()}
+    if 'swi' in engines: identities['petta']=git_source_identity(args.petta_root)
     if args.he_bin: identities['he']=sha_file(args.he_bin)
     if args.jetta_jar: identities['jetta']=sha_file(args.jetta_jar)
     if args.mork_bin: identities['mork']=sha_file(args.mork_bin)
     run_identity=dict(binaries=identities,engine_env=configured,cpu=args.cpu,
-                      trials=args.trials,timeout=args.timeout,instructions=args.instructions,
+                      trials=args.trials,timeout=args.timeout,
+                      instructions=args.instructions,runtime_stats=args.runtime_stats,
                       measurement='wall includes launcher startup; peak RSS is the native job, before result readout')
     (out/'identity.json').write_text(json.dumps(run_identity,indent=2)+'\n')
     rows=[]
@@ -267,6 +319,7 @@ def paired_main():
                     lang='petta' if eng=='cetta-petta' else 'he'
                     cmd=[str(args.cetta.resolve()),'--lang',lang]
                     if 'profile' in variant: cmd+=['--profile',variant['profile']]
+                    if args.runtime_stats: cmd+=['--emit-runtime-stats']
                     if eng=='cetta-mork': cmd+=['--quiet']
                     cmd+=[str(src)]
                 elif eng=='swi': cmd=['sh',str(args.petta_root.resolve()/'run.sh'),str(src),'--silent']
@@ -321,9 +374,19 @@ def paired_main():
                     rr=paired_measure(cmd,cases,env,stem,
                                       args.timeout,args.cpu,args.instructions)
                     valid=rr['rc']==0 and not rr['timed_out']
+                    if args.runtime_stats and eng in {
+                            'cetta-he','cetta-petta','cetta-mork'}:
+                        try:
+                            rr.update(runtime_counter_receipt(
+                                Path(rr['stderr_file']).read_text()))
+                        except (OSError,UnicodeError,ValueError) as error:
+                            rr['runtime_stats_error']=str(error)
+                            valid=False
                     if any(sha_file(dep)!=digest for dep,digest in dependencies.items()):
                         raise ValueError('changed runtime dependency: '+name)
-                    status='timeout' if rr['timed_out'] else ('exit-failure' if rr['rc'] else 'wrong-answer')
+                    status=('invalid-runtime-stats' if rr.get('runtime_stats_error')
+                            else 'timeout' if rr['timed_out']
+                            else 'exit-failure' if rr['rc'] else 'wrong-answer')
                     try:
                         observation=Path(rr['stdout_file']).read_text()
                         if eng=='mork':
@@ -354,6 +417,8 @@ def paired_main():
                         # Do not repeat an unchanged timeout, crash or wrong answer.
                         failed_engines.add(eng)
     assert sha_file(args.cetta)==identities['cetta']
+    if 'swi' in engines:
+        assert git_source_identity(args.petta_root)==identities['petta']
     if args.he_bin: assert sha_file(args.he_bin)==identities['he']
     if args.jetta_jar: assert sha_file(args.jetta_jar)==identities['jetta']
     if args.mork_bin: assert sha_file(args.mork_bin)==identities['mork']

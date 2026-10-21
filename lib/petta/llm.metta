@@ -13,7 +13,7 @@
 (: llm:v1:render (-> Atom %Undefined%))
 (= (llm:v1:render $value) (case $value (((llm:v1:failure $code) (llm:v1:failure $code)) ($other (llm:v1:render-json $value)))))
 (: llm:v1:render-outcome (-> Atom %Undefined%))
-(= (llm:v1:render-outcome $value) (case (catch (llm:v1:render $value)) (((llm:v1:failure $code) (llm:v1:error $code)) ((Error $source $reason) (llm:v1:error result-render-error)) ($text (llm:v1:ok $text)))))
+(= (llm:v1:render-outcome $value) (case (catch (llm:v1:render $value)) (((llm:v1:failure $code) (llm:v1:error $code)) ((Error $source $reason) (llm:v1:error result-render-error)) ((JsonFailureV1 $phase $status $source $reason) (llm:v1:error result-render-error)) ($text (llm:v1:ok $text)))))
 (= (llm:v1:member? $value $items) (if (== $items ()) False (if (== $value (car-atom $items)) True (let $tail (cdr-atom $items) (llm:v1:member? $value $tail)))))
 (= (llm:v1:unique-list? $items) (if (== $items ()) True (let* (($head (car-atom $items)) ($tail (cdr-atom $items)) ($ok (llm:v1:unique? $head))) (if $ok (llm:v1:unique-list? $tail) False))))
 (= (llm:v1:unique-members? $members $seen) (if (== $members ()) True (case (car-atom $members) (((JsonMemberV1 $index $key $value $span) (let* (($duplicate (llm:v1:member? $key $seen)) ($nested (llm:v1:unique? $value)) ($tail (cdr-atom $members)) ($next (cons-atom $key $seen))) (if (or $duplicate (not $nested)) False (llm:v1:unique-members? $tail $next)))) ($other False)))))

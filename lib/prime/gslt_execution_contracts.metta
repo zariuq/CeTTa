@@ -272,6 +272,13 @@
   (instruction deconstruct-nonempty-expression)
   (instruction construct-expression-cons)
   (instruction concatenate-expressions)
+  ; Invoke an explicitly listed, effect-free native through the same library
+  ; dispatcher as the canonical evaluator.  Only a completed value, or an
+  ; atomic expression result whose evaluation is the identity, belongs to
+  ; this instruction.  Every failure, choice, suspension, or executable
+  ; expression result abandons the speculative program and is replayed by
+  ; the canonical evaluator.
+  (instruction library-value-dispatch)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
   (rule intrinsic-is-pure
@@ -940,6 +947,64 @@
     cons-atom 2 strict-all construct-expression-cons)
   (prepared-pure-intrinsic-head
     union-atom 2 strict-all concatenate-expressions)
+  ; JSON codecs and projections are pure value operations.  Naming each
+  ; native head and arity is the positive admission certificate: importing a
+  ; different extension does not make it eligible for prepared execution.
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_parse_v1 1 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_parse_v1 2 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_to_legacy_v1 1 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_from_inspection_v1 1 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_parse 1 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_parse 2 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_project_v1 2 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_stringify_v1 1 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_stringify_v1 2 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_stringify 1 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_stringify 2 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_members_v1 1 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_members_v1 2 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_get_all_v1 2 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_get_all_v1 3 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_get_first_v1 2 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_get_first_v1 3 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_get_last_v1 2 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_get_last_v1 3 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_json_object_get 2 strict-all library-value-dispatch)
+  ; lib/str's table is entirely deterministic and effect-free.  The native
+  ; selector remains an evaluated operand and the canonical dispatcher still
+  ; validates the selector and arity; only atomic results are accepted from
+  ; its expression-returning interface.  The value interface may return a
+  ; structured completed value.
+  (prepared-pure-intrinsic-head
+    __cetta_lib_str 1 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_str 2 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_str 3 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_str 4 strict-all library-value-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_str_value 2 strict-all library-value-dispatch)
   (fold-control-head let 3 bind)
   (fold-control-head let* 2 bind-sequence)
   (fold-control-head if 3 branch)

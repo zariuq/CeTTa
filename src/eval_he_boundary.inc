@@ -121,7 +121,7 @@ typedef struct {
 
 static bool he_var_id_listed(const VarId *ids, uint32_t count, VarId id) {
     for (uint32_t i = 0u; i < count; i++)
-        if (ids[i] == id)
+        if (var_id_eq(ids[i], id))
             return true;
     return false;
 }
@@ -144,7 +144,7 @@ static bool he_query_representative_collect(Arena *arena, const Bindings *bindin
         if (!value)
             goto fail;
         for (uint32_t i = 0u; i < count; i++) {
-            if (reps[i].query_id == binding.var_id) {
+            if (var_id_eq(reps[i].query_id, binding.var_id)) {
                 slot = i;
                 break;
             }
@@ -172,11 +172,11 @@ static bool he_query_representative_collect(Arena *arena, const Bindings *bindin
         reps[slot].ambiguous = false;
     }
     for (uint32_t i = 0u; i < count; i++) {
-        if (reps[i].terminal_id == VAR_ID_NONE || !reps[i].eligible)
+        if (var_id_is_none(reps[i].terminal_id) || !reps[i].eligible)
             continue;
         for (uint32_t j = 0u; j < count; j++) {
             if (i != j && reps[j].eligible &&
-                reps[j].terminal_id == reps[i].terminal_id)
+                var_id_eq(reps[j].terminal_id, reps[i].terminal_id))
                 reps[i].ambiguous = true;
         }
     }
@@ -197,14 +197,14 @@ static Atom *he_rewrite_query_representative(Arena *arena, Atom *atom,
         const HeQueryRepresentative *found = NULL;
         for (uint32_t i = 0u; i < count; i++) {
             if (!reps[i].eligible || reps[i].ambiguous ||
-                reps[i].terminal_id == VAR_ID_NONE ||
-                reps[i].terminal_id != atom->var_id)
+                var_id_is_none(reps[i].terminal_id) ||
+                !var_id_eq(reps[i].terminal_id, atom->var_id))
                 continue;
             if (found)
                 return atom;
             found = &reps[i];
         }
-        if (!found || found->query_id == atom->var_id)
+        if (!found || var_id_eq(found->query_id, atom->var_id))
             return atom;
         return atom_var_with_presentation(
             arena, found->spelling, found->name_key, found->query_id);
@@ -287,7 +287,7 @@ static bool he_orient_query_representative_among(
         bindings_init(&published);
         for (uint32_t i = 0u; ok && i < count; i++) {
             if (values[i]->kind == ATOM_VAR &&
-                values[i]->var_id == reps[i].query_id)
+                var_id_eq(values[i]->var_id, reps[i].query_id))
                 continue;
             Atom *key = atom_var_with_presentation(
                 arena, reps[i].spelling, reps[i].name_key, reps[i].query_id);
@@ -709,7 +709,7 @@ static bool he_orient_node(HeOrientVar **vars, uint32_t *count, uint32_t *cap,
                            VarId id, SymbolId spelling, Atom *name_key,
                            uint32_t *index_out) {
     for (uint32_t i = 0; i < *count; i++) {
-        if ((*vars)[i].id == id) {
+        if (var_id_eq((*vars)[i].id, id)) {
             *index_out = i;
             return true;
         }
@@ -740,7 +740,7 @@ static void he_orient_note_left(HeOrientVar *vars, uint32_t count,
         return;
     if (atom->kind == ATOM_VAR) {
         for (uint32_t i = 0; i < count; i++) {
-            if (vars[i].id != atom->var_id || vars[i].left_order != UINT32_MAX)
+            if (!var_id_eq(vars[i].id, atom->var_id) || vars[i].left_order != UINT32_MAX)
                 continue;
             vars[i].left_order = (*order)++;
             vars[i].left_atom = atom;
@@ -781,7 +781,7 @@ static bool he_orient_unify_left(Arena *arena, Atom *left, Bindings *matched) {
             if (!value)
                 goto fail;
             for (uint32_t i = 0; i < row_count; i++) {
-                if (rows[i].key == binding.var_id) {
+                if (var_id_eq(rows[i].key, binding.var_id)) {
                     slot = i;
                     break;
                 }
@@ -804,7 +804,7 @@ static bool he_orient_unify_left(Arena *arena, Atom *left, Bindings *matched) {
             rows[slot].value = value;
             rows[slot].value_var =
                 value->kind == ATOM_VAR ? value->var_id : VAR_ID_NONE;
-            if (rows[slot].value_var != VAR_ID_NONE)
+            if (!var_id_is_none(rows[slot].value_var))
                 saw_var_edge = true;
         }
     }
@@ -816,7 +816,7 @@ static bool he_orient_unify_left(Arena *arena, Atom *left, Bindings *matched) {
                             rows[i].spelling, rows[i].name_key, &key_node);
         if (!ok)
             break;
-        if (rows[i].value_var == VAR_ID_NONE) {
+        if (var_id_is_none(rows[i].value_var)) {
             vars[key_node].nonvar = true;
             continue;
         }
@@ -866,9 +866,9 @@ static bool he_orient_unify_left(Arena *arena, Atom *left, Bindings *matched) {
         for (uint32_t i = 0; ok && i < row_count; i++) {
             uint32_t key_node = 0u;
             Atom *key;
-            if (rows[i].value_var != VAR_ID_NONE) {
+            if (!var_id_is_none(rows[i].value_var)) {
                 for (uint32_t v = 0; v < var_count; v++) {
-                    if (vars[v].id == rows[i].key) {
+                    if (var_id_eq(vars[v].id, rows[i].key)) {
                         key_node = v;
                         break;
                     }

@@ -45,7 +45,7 @@ Atom *cetta_atom_symbol(Arena *a, const char *name) {
 }
 
 Atom *cetta_atom_named_var(Arena *a, const char *key_text, VarId id) {
-    if (!a || !key_text || id == VAR_ID_NONE) return NULL;
+    if (!a || !key_text || var_id_is_none(id)) return NULL;
 
     Arena scratch;
     arena_init(&scratch);

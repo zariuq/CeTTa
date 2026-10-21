@@ -35,3 +35,31 @@
       (once (match $facts (exec $key $query $templates)
                (exec $key $query $templates)))
       (exec:fire $facts $selected)))
+
+; Saturation fires a finite set of exec directives, given as data, in rounds.
+; A round proposes every template instance of every directive over every
+; match of its query into a private proposal space, then publishes the
+; proposals without duplicates; rounds repeat until one adds nothing.  The
+; directives are neither selected nor consumed: each stays a rule of the
+; saturation, and the space holds their least common fixed point.  When the
+; templates build ever larger terms there is no fixed point and saturation
+; does not return.
+(: exec:saturate (-> Atom Atom %Undefined%))
+(: exec:round (-> Atom Atom %Undefined%))
+(: exec:size (-> Atom %Undefined%))
+(= (exec:size $facts)
+   (let $atoms (collapse (get-atoms $facts)) (size-atom $atoms)))
+(= (exec:round $facts $directives)
+   (let $pending (new-space)
+      (let $_planned
+            (collapse
+               (let (exec $key $query $templates) (superpose $directives)
+                  (let (, $outputs) (decons-atom $templates)
+                     (match $facts $query (exec:emit $pending $outputs)))))
+         (exec:publish $facts $pending))))
+(= (exec:saturate $facts $directives)
+   (let* (($before (exec:size $facts))
+          ($_round (exec:round $facts $directives)))
+      (if (== $before (exec:size $facts))
+          ()
+          (exec:saturate $facts $directives))))
