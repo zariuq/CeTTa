@@ -507,6 +507,7 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_proc_run, "__cetta_lib_proc_run") \
     X(lib_sqlite_query, "__cetta_lib_sqlite_query") \
     X(lib_sqlite_transaction, "__cetta_lib_sqlite_transaction") \
+    X(lib_sqlite_observe, "__cetta_lib_sqlite_observe") \
     X(lib_json_capabilities_v1, "__cetta_lib_json_capabilities_v1") \
     X(lib_json_parse_v1, "__cetta_lib_json_parse_v1") \
     X(lib_json_to_legacy_v1, "__cetta_lib_json_to_legacy_v1") \

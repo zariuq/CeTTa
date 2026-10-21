@@ -460,9 +460,9 @@
     {
       "source": "sqlite.metta",
       "output": "sqlite.metta",
-      "source_sha256": "84d1900833b66450d822aaf7ed7a5e3991bcde82e586b221a539694999f8ab85",
-      "output_sha256": "a12178105e91975d83ff2804b2d3fa0b36b1878fe16c4faa18df44d3d7fc095f",
-      "edits": 2,
+      "source_sha256": "5fa16ce85a38432cb58e2652288997406b3a6adc011a68857251a4fcf50b188d",
+      "output_sha256": "bc53c29af9f4cc4e00916fb6aa1ee8c3e8a5aa3a36b1e7d62c4098ec44d0c10a",
+      "edits": 3,
       "code_diagnostics": 0
     },
     {

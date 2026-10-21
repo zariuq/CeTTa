@@ -1,5 +1,6 @@
 #include "library_sqlite.h"
 #include "symbol.h"
+#include <errno.h>
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
@@ -75,7 +76,15 @@ static Atom *column(Arena *a, sqlite3_stmt *statement, int index) {
         default: return atom_symbol(a, "sqlite:null");
     }
 }
-static int statement_run(sqlite3 *db, Arena *a, Atom *source, Atom *parameters, Atom **answer) {
+/* An observation is refused ATTACH while it is prepared, so it opens no
+ * other database file. */
+static int observe_authorizer(void *unused, int action, const char *first,
+                              const char *second, const char *database, const char *trigger) {
+    (void)unused; (void)first; (void)second; (void)database; (void)trigger;
+    return action == SQLITE_ATTACH ? SQLITE_DENY : SQLITE_OK;
+}
+static int statement_run(sqlite3 *db, Arena *a, Atom *source, Atom *parameters, bool observe,
+                         Atom **answer) {
     const char *sql = text(source);
     if (!sql || !parameters || parameters->kind != ATOM_EXPR) {
         *answer = failure(a, SQLITE_MISMATCH, "expected SQL text and a parameter list", false);
@@ -95,14 +104,24 @@ static int statement_run(sqlite3 *db, Arena *a, Atom *source, Atom *parameters, 
         }
         if (extra) {
             sqlite3_finalize(extra); sqlite3_finalize(statement);
-            *answer = failure(a, SQLITE_MISUSE, "use sqlite:transaction for multiple statements", false);
+            *answer = failure(a, SQLITE_MISUSE, observe ? "sqlite:observe runs one statement" :
+                "use sqlite:transaction for multiple statements", false);
             return SQLITE_MISUSE;
         }
     }
     if (rc != SQLITE_OK || !statement) {
         *answer = failure(a, rc == SQLITE_OK ? SQLITE_MISUSE : rc,
-            rc == SQLITE_OK ? "SQL contains no statement" : sqlite3_errmsg(db), false);
+            rc == SQLITE_OK ? "SQL contains no statement" :
+            observe && (rc & 255) == SQLITE_AUTH ? "sqlite:observe does not attach databases" :
+            sqlite3_errmsg(db), false);
         sqlite3_finalize(statement); return rc == SQLITE_OK ? SQLITE_MISUSE : rc;
+    }
+    /* SQLite reports whether the prepared program can write. The read-only
+     * connection and query_only are further layers, not the check itself. */
+    if (observe && !sqlite3_stmt_readonly(statement)) {
+        sqlite3_finalize(statement);
+        *answer = failure(a, SQLITE_READONLY, "sqlite:observe runs only statements that do not write", false);
+        return SQLITE_READONLY;
     }
     if (parameters->expr.len != (uint32_t)sqlite3_bind_parameter_count(statement)) rc = SQLITE_RANGE;
     for (uint32_t i = 0; rc == SQLITE_OK && i < parameters->expr.len; ++i)
@@ -133,7 +152,7 @@ static int statement_run(sqlite3 *db, Arena *a, Atom *source, Atom *parameters, 
     sqlite3_finalize(statement); free(names); free(values); free(rows);
     return rc;
 }
-static Atom *run(Arena *a, Atom **args, uint32_t nargs, bool transaction) {
+static Atom *run(Arena *a, Atom **args, uint32_t nargs, bool transaction, bool observe) {
     int wait = 0;
     const char *path = nargs == 4 ? text(args[0]) : NULL;
     const char *mode = transaction && nargs == 4 ? text(args[1]) : NULL;
@@ -142,16 +161,27 @@ static Atom *run(Arena *a, Atom **args, uint32_t nargs, bool transaction) {
         (transaction && (!mode || (strcmp(mode, "deferred") && strcmp(mode, "immediate")) ||
                          !statements || statements->kind != ATOM_EXPR)))
         return failure(a, SQLITE_MISUSE, "expected path, SQL/parameters or transaction mode/statements, and SQLite busy milliseconds", false);
+    /* An observation opens an existing database read-only: it never creates
+     * the file or writes a page of it, and leaves WAL checkpoints to writers.
+     * Like any SQLite reader it still uses the -wal and -shm files. */
     sqlite3 *db = NULL;
-    int rc = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, NULL);
+    int rc = sqlite3_open_v2(path, &db, (observe ? SQLITE_OPEN_READONLY :
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_FULLMUTEX, NULL);
     if (rc != SQLITE_OK) {
-        Atom *error = failure(a, rc, db ? sqlite3_errmsg(db) : "cannot open database", false);
+        Atom *error = failure(a, rc, !db ? "cannot open database" :
+            observe && sqlite3_system_errno(db) == ENOENT ? "database file does not exist" :
+            sqlite3_errmsg(db), false);
         sqlite3_close(db); return error;
     }
     sqlite3_extended_result_codes(db, 1); sqlite3_busy_timeout(db, wait);
-    rc = sqlite3_exec(db, "PRAGMA synchronous=FULL", NULL, NULL, NULL);
+    if (!observe) rc = sqlite3_exec(db, "PRAGMA synchronous=FULL", NULL, NULL, NULL);
+    else {
+        rc = sqlite3_db_config(db, SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, 1, (int *)NULL);
+        if (rc == SQLITE_OK) rc = sqlite3_exec(db, "PRAGMA query_only=1", NULL, NULL, NULL);
+        if (rc == SQLITE_OK) rc = sqlite3_set_authorizer(db, observe_authorizer, NULL);
+    }
     Atom *answer = NULL;
-    if (rc == SQLITE_OK && !transaction) rc = statement_run(db, a, args[1], args[2], &answer);
+    if (rc == SQLITE_OK && !transaction) rc = statement_run(db, a, args[1], args[2], observe, &answer);
     else if (rc == SQLITE_OK) {
         rc = sqlite3_exec(db, !strcmp(mode, "immediate") ? "BEGIN IMMEDIATE" : "BEGIN DEFERRED", NULL, NULL, NULL);
         Atom **results = statements->expr.len ? cetta_malloc(statements->expr.len * sizeof(*results)) : NULL;
@@ -161,7 +191,7 @@ static Atom *run(Arena *a, Atom **args, uint32_t nargs, bool transaction) {
                 !atom_is_symbol(entry->expr.elems[0], "sqlite:statement")) {
                 answer = failure(a, SQLITE_MISUSE, "expected (sqlite:statement SQL parameters)", false);
                 rc = SQLITE_MISUSE;
-            } else rc = statement_run(db, a, entry->expr.elems[1], entry->expr.elems[2], &results[i]);
+            } else rc = statement_run(db, a, entry->expr.elems[1], entry->expr.elems[2], false, &results[i]);
             if (rc != SQLITE_OK && !answer) answer = results[i];
         }
         if (rc == SQLITE_OK) {
@@ -175,7 +205,8 @@ static Atom *run(Arena *a, Atom **args, uint32_t nargs, bool transaction) {
     if (!sqlite3_get_autocommit(db)) {
         sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
         if (!transaction && rc == SQLITE_OK)
-            answer = failure(a, SQLITE_MISUSE, "unclosed transaction rolled back; use sqlite:transaction", false);
+            answer = failure(a, SQLITE_MISUSE, observe ? "unclosed transaction rolled back" :
+                "unclosed transaction rolled back; use sqlite:transaction", false);
     }
     sqlite3_close(db);
     return answer;
@@ -185,10 +216,12 @@ static Atom *run(Arena *a, Atom **args, uint32_t nargs, bool transaction) {
 Atom *cetta_sqlite_dispatch(Arena *arena, Atom *head, Atom **args, uint32_t nargs) {
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
     SymbolId id = atom_symbol_current_id(head);
-    if (id != g_builtin_syms.lib_sqlite_query && id != g_builtin_syms.lib_sqlite_transaction) return NULL;
+    if (id != g_builtin_syms.lib_sqlite_query && id != g_builtin_syms.lib_sqlite_transaction &&
+        id != g_builtin_syms.lib_sqlite_observe) return NULL;
 #if CETTA_BUILD_WITH_DURABLE
     if (nargs != 4) return failure(arena, SQLITE_MISUSE, "expected four SQLite arguments", false);
-    return run(arena, args, nargs, id == g_builtin_syms.lib_sqlite_transaction);
+    return run(arena, args, nargs, id == g_builtin_syms.lib_sqlite_transaction,
+               id == g_builtin_syms.lib_sqlite_observe);
 #else
     (void)args; (void)nargs;
     return atom_error(arena, head, atom_string(arena, "SQLite support requires ENABLE_DURABLE=1"));
