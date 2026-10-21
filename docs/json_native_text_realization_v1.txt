@@ -1,0 +1,125 @@
+JSON text carriers and conversion fusion
+======================================
+
+Scope
+-----
+
+This is a realization contract, not a declaration that the C codec has been
+proved equivalent to the Lean semantics. Ordinary namespaced operations now
+select native-string values. Scalar/occurrence expansion is requested by
+json:inspect; its reference-parser variant is json:inspect-reference.
+Native-string lookup and emission eliminate the scalar-AST intermediate.
+A native-string realization retaining occurrence spans remains separate work.
+
+Existing authority
+------------------
+
+The occurrence-preserving target in
+langdef/json/occurrence_preserving_value_v1.metta declares UnicodeScalars with
+CarrierAst. JsonStringV1 consequently exposes a scalar-list AST today. The
+ordinary string leaves and JsonPair keys carry native text.
+
+The corresponding Lean source is JSONParserPackNTT.jsonValue. Its lossless
+value interpretation is RFC8259ValueSemantics.JSONValue: strings are scalar
+lists; number lexemes, ordered duplicate members, occurrence IDs and spans
+are retained. JsonTermRung also demonstrates host-valued String leaves, but
+its rational-number model is not a replacement for this lossless semantics.
+
+CarrierBuiltinString already exists in the LanguageDef wire and the native
+MeTTa value interface. A string realization need not add JSON-specific fields
+to LanguageDef or any JSON cases to the evaluator.
+
+Emission fusion and ordinary field projection
+--------------------------------------------
+
+Let lift convert an ordinary value to the occurrence-preserving value.
+Ordinary emission eliminates this intermediate value:
+
+    historical value -- lift --> scalar-list value -- emit --> JSON text
+           |                                                  ^
+           +---------------- fused emit ----------------------+
+
+The contract is agreement of completed text and semantic failures, not just
+agreement of a few successful parses. Emission uses validated,
+length-carrying UTF-8 directly, without constructing a cp Atom per character.
+Parsing and the existing explicit reference codec remain independently usable.
+
+Selective parse projection is a second partial region:
+
+    bytes -- parse --> value -- first-path observer --> selected value
+      |                                                   ^
+      +-- validating span scan -- materialize selected ---+
+
+The scanner uses predictive choices and lexical transitions generated from
+the same LanguageDef inputs as the ordinary parser. It validates the complete
+document before publishing the selected value; an unsupported path is refused
+before scanning and a missing path is an explicit observation. The Lean-side
+qualification fixes first-key and zero-based-index semantics as equivalent
+partial regions. Native differential tests compare this implementation with
+ordinary parse followed by value projection; they do not constitute a C
+refinement proof.
+
+Lookup is a projection, not another document-validation boundary. It checks
+the object/member structure visited and normalizes selected values, without
+traversing unrelated payloads. Complete validation happens during parse and
+emission. Consequently a selected valid field in a manually malformed object
+can be read even though emitting the entire object fails. This deliberately
+replaces the former whole-document-validation behaviour of ordinary lookup.
+Objects are ordered member sequences: lookup remains O(members visited plus
+selected result size), not a hash-table complexity claim. An explicit local
+space can index frequently queried fields without expanding string contents.
+
+Native text for the occurrence-preserving target
+-----------------------------------------------
+
+A separate realization replaces only UnicodeScalars' execution carrier by
+validated UTF-8 text. The authored scalar-list meaning remains the reference.
+Make this selection explicit in preparation metadata, with an explicit
+projection when a client requests scalar-list syntax. Merely accepting both
+payload shapes under one unversioned constructor is not a representation
+proof: ordinary MeTTa matching can distinguish those shapes.
+
+The leaf interpretation is:
+
+    meaning : validated native text -> List UnicodeScalar
+
+The string implementation must establish decode(encode(xs)) = xs and
+encode(decode(text)) = text on validated inputs. Lift that correspondence
+through the actual occurrence-preserving JSON constructors, retaining number
+lexemes and each member's occurrence and span. Then establish commuting laws
+for the authored parse elaboration, emission and first/last/all lookup.
+Scalar expansion belongs at an explicit diagnostic/projection boundary, not
+in ordinary ingestion, lookup or emission.
+
+Required distinctions
+---------------------
+
+* UTF-8 text uses its stored length, not strlen. U+0000 is valid JSON text.
+  native/utf8_scalar_v1.h currently rejects NUL for its grammar-codec domain;
+  it must not be reused as a JSON-text encoder without changing that contract.
+* Invalid UTF-8 and lone UTF-16 surrogates remain semantic rejections. A valid
+  surrogate pair denotes one scalar. Do not silently replace invalid input.
+* No Unicode normalization, case folding or key deduplication is implied.
+* Objects remain occurrence lists. A hash index is a prepared observation,
+  not authority to erase ordering or duplicate members.
+* Exact number spelling survives; do not round-trip through a host float.
+* Conversion failures preceding emission in the reference pipeline must not
+  be hidden by the fused emitter's earlier traversal of output bytes.
+* Native buffer ownership and byte limits require their own implementation
+  controls. A Lean leaf/constructor proof alone does not verify C allocation,
+  lifetime, decoder or emitter code.
+
+Qualification
+-------------
+
+Compare the fused and reference routes on valid and malformed values, every
+Unicode scalar boundary, escaped NUL, paired/lone surrogates, duplicate keys,
+deep containers, exact number lexemes and mixed-invalid-input precedence.
+Use both public dialect spellings. Include large UTF-8 payloads and repeated
+lookup/emission, accounting for allocations as well as elapsed time. No
+platform-specific speed or memory threshold belongs in the language contract.
+
+The long-term compilation target is a checked fold over the JSON value
+presentation with a native text carrier, not a second independent definition
+of JSON embedded in the evaluator. Direct codec code is a realization to be
+checked against that authority, not the authority itself.

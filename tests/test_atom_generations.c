@@ -23,8 +23,7 @@ static bool generation_closed(const Atom *atom) {
 static void assert_view_summary(Arena *arena, Atom *view) {
     Atom *folded = atom_expr(arena, view->expr.elems, view->expr.len);
     assert(folded != NULL && atom_eq(view, folded));
-    assert((view->flags & ~ATOM_FLAG_HASH_VALID) ==
-           (folded->flags & ~ATOM_FLAG_HASH_VALID));
+    assert(view->flags == folded->flags);
     assert(view->structural_facts == folded->structural_facts);
 }
 

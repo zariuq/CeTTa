@@ -76,7 +76,7 @@ void cetta_delay_service_storage_census(const CettaDelayService *service,
 }
 
 static uint32_t delay_bucket(VarId var, uint32_t cap) {
-    uint64_t h = var * 0x9E3779B97F4A7C15ull;
+    uint64_t h = var_id_mix(var) * 0x9E3779B97F4A7C15ull;
     return (uint32_t)(h >> 32) & (cap - 1u);
 }
 
@@ -272,7 +272,7 @@ bool cetta_delay_watches(const CettaDelayService *service, VarId var) {
              delay_bucket(var, service->bucket_cap)];
          cursor; cursor = service->watches[cursor - 1u].next) {
         const DelayWatch *watch = &service->watches[cursor - 1u];
-        if (watch->var == var && service->goals[watch->goal].goal.suspended)
+        if (var_id_eq(watch->var, var) && service->goals[watch->goal].goal.suspended)
             return true;
     }
     return false;
@@ -340,7 +340,7 @@ static bool delay_gather(CettaDelayService *service, VarId var,
              delay_bucket(var, service->bucket_cap)];
          cursor; cursor = service->watches[cursor - 1u].next) {
         const DelayWatch *watch = &service->watches[cursor - 1u];
-        if (watch->var != var || !service->goals[watch->goal].goal.suspended)
+        if (!var_id_eq(watch->var, var) || !service->goals[watch->goal].goal.suspended)
             continue;
         if (!delay_grow((void **)&service->queue, &service->queue_cap,
                         service->queue_len + *count + 1u,
@@ -610,7 +610,7 @@ bool cetta_delay_reach(const CettaDelayService *service, const VarId *vars,
                 bool *seen = family ? owned_reached : reached;
                 const CettaDelayGoal *goal = family ? owned.items[watch->goal]
                     : &service->goals[watch->goal].goal;
-                if (watch->var != var || seen[watch->goal] ||
+                if (!var_id_eq(watch->var, var) || seen[watch->goal] ||
                     (!family && !goal->suspended))
                     continue;
                 if (found == UINT32_MAX || goal->var_len > UINT32_MAX - pending_len ||
@@ -665,7 +665,7 @@ uint32_t cetta_delay_goals_on(const CettaDelayService *service, VarId var,
          cursor; cursor = service->watches[cursor - 1u].next) {
         const DelayWatch *watch = &service->watches[cursor - 1u];
         const DelayGoalRecord *record = &service->goals[watch->goal];
-        if (watch->var != var || !record->goal.suspended)
+        if (!var_id_eq(watch->var, var) || !record->goal.suspended)
             continue;
         if (count < capacity)
             goals[count] = &record->goal;
@@ -680,7 +680,7 @@ uint32_t cetta_delay_goals_on(const CettaDelayService *service, VarId var,
         for (uint32_t at = 0; at < owned.len; at++) {
             const CettaDelayGoal *goal = owned.items[at];
             for (uint32_t v = 0; v < goal->var_len; v++) {
-                if (goal->vars[v] != var)
+                if (!var_id_eq(goal->vars[v], var))
                     continue;
                 if (count == UINT32_MAX) {
                     free(owned.items);

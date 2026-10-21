@@ -61,6 +61,7 @@
  */
 
 #include "rhocalc_core.h"
+#include <inttypes.h>
 #include <assert.h>
 #include <limits.h>
 #include <pthread.h>
@@ -482,7 +483,7 @@ static Atom *rho_unquote_payload_atom(Atom *atom) {
 
 static bool rho_atom_contains_var_id(Atom *atom, VarId var_id) {
     if (!atom || !atom_has_vars(atom)) return false;
-    if (atom->kind == ATOM_VAR) return atom->var_id == var_id;
+    if (atom->kind == ATOM_VAR) return var_id_eq(atom->var_id, var_id);
     if (atom->kind != ATOM_EXPR) return false;
     for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
         if (rho_atom_contains_var_id(atom->expr.elems[i], var_id)) return true;
@@ -857,7 +858,7 @@ static bool rho_alpha_push(RhoAlphaEnv *env, VarId var_id) {
 static bool rho_alpha_lookup(const RhoAlphaEnv *env, VarId var_id,
                              uint32_t *out_index) {
     for (uint32_t i = env->len; i > 0; i--) {
-        if (env->items[i - 1].var_id == var_id) {
+        if (var_id_eq(env->items[i - 1].var_id, var_id)) {
             if (out_index) *out_index = env->items[i - 1].index;
             return true;
         }
@@ -1066,7 +1067,7 @@ static bool rho_atom_text_key_direct_emit(
             ok = rho_atom_text_sink_append(sink, atom_name_cstr(atom));
             break;
         case ATOM_VAR: {
-            uint32_t epoch = var_epoch_suffix(atom->var_id);
+            CettaFrameIdentity epoch = var_epoch_suffix(atom->var_id);
             if (atom->name_key &&
                 atom->name_key->kind == ATOM_GROUNDED &&
                 atom->name_key->ground.gkind == GV_INTERNAL_TAG &&
@@ -1077,16 +1078,17 @@ static bool rho_atom_text_key_direct_emit(
                         ? "__prime_let" : atom_symbol_bytes(atom));
             } else if (atom->name_key) {
                 ok = rho_atom_text_sink_append(sink, "$@") &&
-                     (!epoch || rho_atom_text_sink_appendf(
-                         sink, "#%u", epoch)) &&
+                     (cetta_frame_identity_is_none(epoch) ||
+                      rho_atom_text_sink_appendf(
+                          sink, "#%" PRIu64, epoch.word)) &&
                      rho_atom_text_stack_push_atom(&stack, atom->name_key);
                 break;
             } else {
                 ok = rho_atom_text_sink_appendf(
                     sink, "$%s", atom_name_cstr(atom));
             }
-            if (ok && epoch) {
-                ok = rho_atom_text_sink_appendf(sink, "#%u", epoch);
+            if (ok && !cetta_frame_identity_is_none(epoch)) {
+                ok = rho_atom_text_sink_appendf(sink, "#%" PRIu64, epoch.word);
             }
             break;
         }
@@ -1414,8 +1416,9 @@ static void rho_key_var_into(Atom *var, RhoAlphaEnv *env, RhoStr *out) {
     if (rho_alpha_lookup(env, var->var_id, &index)) {
         (void)rho_str_appendf(out, "$#%u", index);
     } else {
-        (void)rho_str_appendf(out, "$%s:%llu", atom_name_cstr(var),
-                              (unsigned long long)var->var_id);
+        (void)rho_str_appendf(out, "$%s:%" PRIu64 ":%" PRIu64,
+                              atom_name_cstr(var), var->var_id.base,
+                              var->var_id.epoch.word);
     }
 }
 
@@ -1798,7 +1801,7 @@ static bool rho_proc_has_free_var(Atom *proc, VarId var_id);
 
 static bool rho_name_has_free_var(Atom *name, VarId var_id) {
     if (!name) return false;
-    if (name->kind == ATOM_VAR) return name->var_id == var_id;
+    if (name->kind == ATOM_VAR) return var_id_eq(name->var_id, var_id);
     RhoView view = rho_view(name);
     if (view.kind == RHO_QUOTE && view.nargs == 1) {
         return rho_proc_has_free_var(view.args[0], var_id);
@@ -1825,7 +1828,7 @@ static bool rho_proc_has_free_var(Atom *proc, VarId var_id) {
         if (view.nargs != 3) return false;
         if (rho_name_has_free_var(view.args[0], var_id)) return true;
         if (view.args[1]->kind == ATOM_VAR &&
-            view.args[1]->var_id == var_id) {
+            var_id_eq(view.args[1]->var_id, var_id)) {
             return false;
         }
         return rho_proc_has_free_var(view.args[2], var_id);
@@ -1852,7 +1855,7 @@ static Atom *rho_rename_proc(Arena *arena, Atom *proc,
 static Atom *rho_rename_name(Arena *arena, Atom *name,
                              VarId old_id, Atom *replacement_name) {
     Atom *norm = rho_normalize_name(arena, name);
-    if (norm->kind == ATOM_VAR && norm->var_id == old_id) {
+    if (norm->kind == ATOM_VAR && var_id_eq(norm->var_id, old_id)) {
         return replacement_name;
     }
     return norm;
@@ -1885,7 +1888,7 @@ static Atom *rho_rename_proc(Arena *arena, Atom *proc,
         const char *head = view.kind == RHO_RECV_PERSISTENT
             ? "rho:recv-persistent" : "rho:recv";
         if (view.args[1]->kind == ATOM_VAR &&
-            view.args[1]->var_id == old_id) {
+            var_id_eq(view.args[1]->var_id, old_id)) {
             return rho_ternary(arena, head,
                                rho_rename_name(arena, view.args[0], old_id,
                                                replacement_name),
@@ -1938,7 +1941,7 @@ static Atom *rho_subst_name_mark(Arena *arena, Atom *name,
     Atom *norm = rho_normalize_name(arena, name);
     if (matched) *matched = false;
     if (norm->kind == ATOM_VAR) {
-        if (norm->var_id == var_id) {
+        if (var_id_eq(norm->var_id, var_id)) {
             if (matched) *matched = true;
             return replacement_name;
         }
@@ -1974,7 +1977,7 @@ static Atom *rho_subst_proc(Arena *arena, Atom *proc,
         const char *head = view.kind == RHO_RECV_PERSISTENT
             ? "rho:recv-persistent" : "rho:recv";
         if (view.args[1]->kind == ATOM_VAR &&
-            view.args[1]->var_id == var_id) {
+            var_id_eq(view.args[1]->var_id, var_id)) {
             return rho_ternary(arena, head,
                                rho_subst_name(arena, view.args[0],
                                               var_id, replacement_name),
@@ -2027,7 +2030,7 @@ static Atom *rho_subst_proc(Arena *arena, Atom *proc,
 static bool rho_abt_scope_index(const RhoScope *scope, VarId var_id,
                                 uint32_t *out_index) {
     for (uint32_t i = scope->len; i > 0u; i--) {
-        if (scope->items[i - 1u] == var_id) {
+        if (var_id_eq(scope->items[i - 1u], var_id)) {
             *out_index = scope->len - i;
             return true;
         }
@@ -2134,9 +2137,9 @@ bool rhocalc_atom_text_key_correspondence_selftest(Arena *arena) {
 
     if (!arena || !g_symbols) return false;
     cases[count++] = atom_symbol(arena, "alpha");
-    cases[count++] = atom_var_with_id(arena, "x", (VarId)17u);
+    cases[count++] = atom_var_with_id(arena, "x", var_id_from_base(17u));
     cases[count++] = atom_var_with_id(
-        arena, "epoch", ((VarId)3u << 32) | (VarId)19u);
+        arena, "epoch", (VarId){19u, {3u}});
     cases[count++] = atom_int(arena, -42);
     cases[count++] = atom_float(arena, 1.25);
     cases[count++] = atom_bool(arena, false);
@@ -2152,7 +2155,7 @@ bool rhocalc_atom_text_key_correspondence_selftest(Arena *arena) {
     cases[count++] = atom_expr3(
         arena, atom_symbol(arena, "f"),
         atom_string(arena, "nested\nstring"),
-        atom_var_with_id(arena, "z", (VarId)23u));
+        atom_var_with_id(arena, "z", var_id_from_base(23u)));
     state.value = atom_expr2(
         arena, atom_symbol(arena, "held"), atom_int(arena, 9));
     state.content_type = atom_symbol(arena, "Atom");
@@ -2257,9 +2260,9 @@ bool rhocalc_abt_substitution_correspondence_selftest(Arena *arena) {
 
     Atom *channel = rho_unary(arena, "rho:quote", rho_nil(arena));
     Atom *outer = atom_var_with_id(
-        arena, "y", ((VarId)1u << 32) | (VarId)11u);
+        arena, "y", (VarId){11u, {1u}});
     Atom *inner = atom_var_with_id(
-        arena, "x", ((VarId)1u << 32) | (VarId)12u);
+        arena, "x", (VarId){12u, {1u}});
     Atom *inner_body = rho_binary(
         arena, "rho:send", outer, rho_nil(arena));
     Atom *inner_recv = rho_ternary(
@@ -2297,7 +2300,7 @@ bool rhocalc_abt_substitution_correspondence_selftest(Arena *arena) {
     bool nameful_recv = nameful_view.kind == RHO_RECV;
     bool renamed = nameful_recv &&
                    nameful_view.args[1]->kind == ATOM_VAR &&
-                   nameful_view.args[1]->var_id != inner->var_id;
+                   !var_id_eq(nameful_view.args[1]->var_id, inner->var_id);
     bool encoded = canonical_result && canonical_nameful;
     bool equal = encoded && atom_eq(canonical_result, canonical_nameful);
     bool scoped = encoded &&
@@ -7440,7 +7443,7 @@ static bool rhocost_term_has_free_var(Atom *term, VarId var_id);
 
 static bool rhocost_name_has_free_var(Atom *name, VarId var_id) {
     if (!name) return false;
-    if (name->kind == ATOM_VAR) return name->var_id == var_id;
+    if (name->kind == ATOM_VAR) return var_id_eq(name->var_id, var_id);
     {
         RhoView view = rho_view(name);
         if (view.kind == RHO_QUOTE && view.nargs == 1) {
@@ -7468,7 +7471,7 @@ static bool rhocost_proc_has_free_var(Atom *proc, VarId var_id) {
         if (view.nargs != 3) return false;
         if (rhocost_name_has_free_var(view.args[0], var_id)) return true;
         if (view.args[1]->kind == ATOM_VAR &&
-            view.args[1]->var_id == var_id) {
+            var_id_eq(view.args[1]->var_id, var_id)) {
             return false;
         }
         return rhocost_term_has_free_var(view.args[2], var_id);
@@ -7515,7 +7518,7 @@ static Atom *rhocost_rename_term(Arena *arena, Atom *term,
 static Atom *rhocost_rename_name(Arena *arena, Atom *name,
                                  VarId old_id, Atom *replacement_name) {
     Atom *norm = rhocost_normalize_name(arena, name);
-    if (norm->kind == ATOM_VAR && norm->var_id == old_id) {
+    if (norm->kind == ATOM_VAR && var_id_eq(norm->var_id, old_id)) {
         return replacement_name;
     }
     return norm;
@@ -7545,7 +7548,7 @@ static Atom *rhocost_rename_proc(Arena *arena, Atom *proc,
                                            replacement_name)));
     case RHO_RECV:
         if (view.args[1]->kind == ATOM_VAR &&
-            view.args[1]->var_id == old_id) {
+            var_id_eq(view.args[1]->var_id, old_id)) {
             return rho_ternary(arena, "rho:recv",
                                rhocost_rename_name(arena, view.args[0], old_id,
                                                    replacement_name),
@@ -7619,7 +7622,7 @@ static Atom *rhocost_subst_term(Arena *arena, Atom *term,
 static Atom *rhocost_subst_name(Arena *arena, Atom *name,
                                 VarId var_id, Atom *replacement_term) {
     Atom *norm = rhocost_normalize_name(arena, name);
-    if (norm->kind == ATOM_VAR && norm->var_id == var_id) {
+    if (norm->kind == ATOM_VAR && var_id_eq(norm->var_id, var_id)) {
         return rho_unary(arena, "rho:quote",
                          rhocost_normalize_term(arena, replacement_term));
     }
@@ -7631,7 +7634,7 @@ static Atom *rhocost_subst_name_mark(Arena *arena, Atom *name,
                                      bool *matched) {
     Atom *norm = rhocost_normalize_name(arena, name);
     *matched = false;
-    if (norm->kind == ATOM_VAR && norm->var_id == var_id) {
+    if (norm->kind == ATOM_VAR && var_id_eq(norm->var_id, var_id)) {
         *matched = true;
         return rho_unary(arena, "rho:quote",
                          rhocost_normalize_term(arena, replacement_term));
@@ -7663,7 +7666,7 @@ static Atom *rhocost_subst_proc(Arena *arena, Atom *proc,
                                           replacement_term)));
     case RHO_RECV:
         if (view.args[1]->kind == ATOM_VAR &&
-            view.args[1]->var_id == var_id) {
+            var_id_eq(view.args[1]->var_id, var_id)) {
             return rho_ternary(arena, "rho:recv",
                                rhocost_subst_name(arena, view.args[0], var_id,
                                                   replacement_term),

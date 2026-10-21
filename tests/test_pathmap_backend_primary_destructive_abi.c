@@ -84,8 +84,8 @@ static bool inspect_opened_binder_shaped_payload(
     assert(atom_symbol_current_id(binder_shaped) == probe->spelling);
     assert(atom_symbol_current_id(free0) == probe->spelling);
     assert(atom_symbol_current_id(free1) == probe->spelling);
-    assert(binder_shaped->var_id != free0->var_id);
-    assert(free0->var_id == free1->var_id);
+    assert(!var_id_eq(binder_shaped->var_id, free0->var_id));
+    assert(var_id_eq(free0->var_id, free1->var_id));
     probe->visits++;
     return true;
 }
@@ -99,12 +99,12 @@ static void test_indexed_opening_spelling_capture_fence(
     SymbolId pair_sym = symbol_intern_cstr(g_symbols, "Pair");
     SymbolId spelling = symbol_intern_cstr(g_symbols, "x");
     SymbolId query_spelling = symbol_intern_cstr(g_symbols, "payload-query");
-    VarId query_var_id = UINT64_C(83001);
+    VarId query_var_id = var_id_from_base(UINT64_C(83001));
 
     Atom *binder_shaped = atom_var_with_spelling(
-        arena, spelling, UINT64_C(81001));
+        arena, spelling, var_id_from_base(UINT64_C(81001)));
     Atom *free = atom_var_with_spelling(
-        arena, spelling, UINT64_C(82002));
+        arena, spelling, var_id_from_base(UINT64_C(82002)));
     Atom *lam = atom_expr2(
         arena, atom_symbol_id(arena, lam_sym), binder_shaped);
     Atom *pair = atom_expr3(
@@ -148,7 +148,7 @@ static void test_streamed_row_disposition(Arena *arena) {
     RowVisitProbe probe = {.visits = 0u, .keep_going = true};
     SymbolId query_spelling = symbol_intern_cstr(g_symbols, "row-query");
     SymbolId f_sym = symbol_intern_cstr(g_symbols, "row-f");
-    Atom *query = atom_var_with_spelling(arena, query_spelling, 90001u);
+    Atom *query = atom_var_with_spelling(arena, query_spelling, var_id_from_base(90001u));
     Atom *cyclic_value = atom_expr2(
         arena, atom_symbol_id(arena, f_sym), query);
 
@@ -303,7 +303,7 @@ static void test_ground_existence_stays_shadow_free(
     Atom *open = make_edge_with_atom(
         arena, edge_sym,
         atom_var_with_spelling(
-            arena, symbol_intern_cstr(g_symbols, "existence-x"), 84001u),
+            arena, symbol_intern_cstr(g_symbols, "existence-x"), var_id_from_base(84001u)),
         atom_symbol_id(arena, c_sym));
     space_add(&space, open);
     applicable = true;
@@ -411,7 +411,7 @@ static void test_ground_count_stays_shadow_free(
     Atom *open = make_edge_with_atom(
         arena, edge_sym,
         atom_var_with_spelling(
-            arena, symbol_intern_cstr(g_symbols, "count-x"), 85001u),
+            arena, symbol_intern_cstr(g_symbols, "count-x"), var_id_from_base(85001u)),
         atom_symbol_id(arena, b_sym));
     view.source = open;
     assert(!space_match_count_flat_linear_view64(
@@ -521,7 +521,7 @@ static void test_batch_mutation_transaction(Arena *arena,
         make_edge_with_atom(
             arena, edge_sym,
             atom_var_with_spelling(
-                arena, symbol_intern_cstr(g_symbols, "batch-x"), 70001u),
+                arena, symbol_intern_cstr(g_symbols, "batch-x"), var_id_from_base(70001u)),
             atom_symbol_id(arena, c_sym)));
     id_wide = term_universe_store_atom_id(
         universe, NULL,

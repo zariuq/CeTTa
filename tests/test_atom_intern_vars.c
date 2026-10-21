@@ -38,7 +38,7 @@ int main(void) {
     SymbolId y = symbol_intern_cstr(&symbols, "y");
 
     /* The same identity interns to one atom. */
-    Atom *first = atom_var_with_spelling(&arena, x, 0u);
+    Atom *first = atom_var_with_spelling(&arena, x, var_id_from_base(0u));
     assert(first != NULL && first->kind == ATOM_VAR);
     VarId id = first->var_id;
     Atom *again = atom_var_with_spelling(&arena, x, id);

@@ -34,21 +34,21 @@ static Atom *expr3(Arena *a, Atom *x0, Atom *x1, Atom *x2) {
 }
 
 static Atom *make_typed_fact(Arena *a) {
-    Atom *type_a_0 = var(a, "a", 1001);
-    Atom *type_a_1 = var(a, "a", 1001);
-    Atom *type_b = var(a, "b", 1002);
+    Atom *type_a_0 = var(a, "a", var_id_from_base(1001));
+    Atom *type_a_1 = var(a, "a", var_id_from_base(1001));
+    Atom *type_b = var(a, "b", var_id_from_base(1002));
     Atom *inner = expr3(a, sym(a, "->"), type_b, type_a_1);
     Atom *outer = expr3(a, sym(a, "->"), type_a_0, inner);
     return expr3(a, sym(a, ":"), sym(a, "ax-1"), outer);
 }
 
 static Atom *make_typed_query(Arena *a) {
-    return expr3(a, sym(a, ":"), var(a, "x", 2001), var(a, "t", 2002));
+    return expr3(a, sym(a, ":"), var(a, "x", var_id_from_base(2001)), var(a, "t", var_id_from_base(2002)));
 }
 
 static void assert_typed_match_shape(const Bindings *bindings, SymbolId arrow_sym) {
-    Atom *x_val = bindings_lookup_value_id((Bindings *)bindings, 2001).skeleton;
-    Atom *t_val = bindings_lookup_value_id((Bindings *)bindings, 2002).skeleton;
+    Atom *x_val = bindings_lookup_value_id((Bindings *)bindings, var_id_from_base(2001)).skeleton;
+    Atom *t_val = bindings_lookup_value_id((Bindings *)bindings, var_id_from_base(2002)).skeleton;
     assert(x_val != NULL);
     assert(t_val != NULL);
     assert(x_val->kind == ATOM_SYMBOL);
@@ -65,7 +65,7 @@ static void assert_typed_match_shape(const Bindings *bindings, SymbolId arrow_sy
     assert(atom_symbol_current_id(t_val->expr.elems[2]->expr.elems[0]) == arrow_sym);
     assert(t_val->expr.elems[2]->expr.elems[1]->kind == ATOM_VAR);
     assert(t_val->expr.elems[2]->expr.elems[2]->kind == ATOM_VAR);
-    assert(t_val->expr.elems[1]->var_id == t_val->expr.elems[2]->expr.elems[2]->var_id);
+    assert(var_id_eq(t_val->expr.elems[1]->var_id, t_val->expr.elems[2]->expr.elems[2]->var_id));
 }
 
 int main(void) {

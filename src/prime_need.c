@@ -5722,7 +5722,7 @@ bool prime_need_snapshot_compare(const PrimeNeedSnapshot *left,
         if(a->capture_var_count!=b->capture_var_count||
             (a->capture_var_count&&(!a->capture_var_ids||!b->capture_var_ids)))return false;
         for(size_t i=0u;i<a->capture_var_count;i++)
-            PN_ID("need.capture_variable",CETTA_CHECKPOINT_VAR,a->capture_var_ids[i],b->capture_var_ids[i]);
+            if(!cetta_checkpoint_var(read,"need.capture_variable",a->capture_var_ids[i],b->capture_var_ids[i]))return false;
 #endif
 #if CETTA_PRIME_NEED_HEAP_INDEX
         if(!prime_need_compare_indexes(a->heap_index,a,b->heap_index,b,false,read)||

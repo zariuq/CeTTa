@@ -64,10 +64,9 @@ static void check_prefix_collection(bool reverse) {
 /* The summary a suffix carries is the one its own children fold to. */
 static void assert_same_summary(const Atom *suffix, const Atom *folded) {
     assert(atom_eq((Atom *)suffix, (Atom *)folded));
-    assert((suffix->flags & ~ATOM_FLAG_HASH_VALID) ==
-           (folded->flags & ~ATOM_FLAG_HASH_VALID));
+    assert(suffix->flags == folded->flags);
     assert(suffix->structural_facts == folded->structural_facts);
-    assert(suffix->var_id == folded->var_id);
+    assert(var_id_eq(suffix->var_id, folded->var_id));
 }
 
 /* Every suffix of `expression`, and every suffix of those, taken in `arena`:
@@ -101,11 +100,10 @@ static void check_suffixes(Arena *arena, Atom *expression, bool shares) {
 static void assert_summary_or_unsettled(const Atom *suffix,
                                         const Atom *folded) {
     assert(atom_eq((Atom *)suffix, (Atom *)folded));
-    assert((suffix->flags & ~ATOM_FLAG_HASH_VALID) ==
-           (folded->flags & ~ATOM_FLAG_HASH_VALID));
+    assert(suffix->flags == folded->flags);
     assert(suffix->structural_facts == folded->structural_facts);
-    assert(suffix->var_id == folded->var_id ||
-           (suffix->var_id == VAR_ID_NONE &&
+    assert(var_id_eq(suffix->var_id, folded->var_id) ||
+           (var_id_is_none(suffix->var_id) &&
             (suffix->flags & ATOM_FLAG_HAS_VARS) != 0u));
 }
 

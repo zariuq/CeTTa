@@ -57,7 +57,7 @@ static inline bool cetta_rule_view(Atom *source, unsigned admitted_forms,
  * the caller's equality service; completeness assumes the declared finite
  * first-order leaf contract. */
 CettaTermMatchStatus cetta_rule_prepare(const CettaRuleDescriptor *rule,
-    Atom *query, uint32_t epoch, Arena *arena, Bindings *environment,
+    Atom *query, CettaFrameIdentity epoch, Arena *arena, Bindings *environment,
     bool (*leaf_equal)(Atom *, Atom *), Atom **body);
 
 #endif

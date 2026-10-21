@@ -1022,7 +1022,7 @@ static Atom *rho_elab_lookup(RhoElaborator *elab, SymbolId spelling,
                              VarId source_var_id) {
     for (uint32_t i = elab->binding_len; i > 0; i--) {
         if (elab->bindings[i - 1].spelling == spelling &&
-            elab->bindings[i - 1].source_var_id == source_var_id) {
+            var_id_eq(elab->bindings[i - 1].source_var_id, source_var_id)) {
             return elab->bindings[i - 1].var;
         }
     }
@@ -1273,7 +1273,7 @@ static bool rho_id_stack_push(RhoIdStack *stack, VarId id) {
 
 static bool rho_id_stack_contains(RhoIdStack *stack, VarId id) {
     for (uint32_t i = stack->len; i > 0; i--) {
-        if (stack->items[i - 1] == id) return true;
+        if (var_id_eq(stack->items[i - 1], id)) return true;
     }
     return false;
 }
@@ -1337,7 +1337,7 @@ static void rho_print_collect_free(RhoPrintCtx *ctx, Atom *atom,
 
 static const char *rho_print_lookup(RhoPrintCtx *ctx, VarId id) {
     for (uint32_t i = ctx->binding_len; i > 0; i--) {
-        if (ctx->bindings[i - 1].id == id) return ctx->bindings[i - 1].name;
+        if (var_id_eq(ctx->bindings[i - 1].id, id)) return ctx->bindings[i - 1].name;
     }
     return NULL;
 }

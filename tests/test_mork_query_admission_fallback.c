@@ -56,7 +56,7 @@ static bool visit(const Bindings *bindings, void *context) {
     Probe *probe = context;
     assert(bindings != NULL);
     if (probe->ground) {
-        Atom *value = bindings_lookup_value_id((Bindings *)bindings, 42u).skeleton;
+        Atom *value = bindings_lookup_value_id((Bindings *)bindings, var_id_from_base(42u)).skeleton;
         assert(value != NULL);
         if (atom_is_symbol(value, "b"))
             probe->b_values++;
@@ -107,7 +107,7 @@ int main(void) {
     Atom *items[] = {
         atom_symbol(&arena, "edge"),
         atom_symbol(&arena, "a"),
-        atom_var_with_spelling(&arena, symbol_intern_cstr(&symbols, "query"), 42u),
+        atom_var_with_spelling(&arena, symbol_intern_cstr(&symbols, "query"), var_id_from_base(42u)),
     };
     Atom *query = atom_expr(&arena, items, 3);
     assert(__real_cetta_mork_bridge_supports_query_only_v2_cursor());

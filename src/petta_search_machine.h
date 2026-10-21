@@ -50,6 +50,10 @@ typedef enum {
      * first; ordinary backtracking then reaches explicit relation equations.
      */
     PETTA_MACHINE_HOST_READY_RELATIONAL_EXTENSION,
+    /* An authored realization that cannot transport residual constraints.
+     * The machine uses READY_APPLICATION only when its current bindings
+     * and delay service are unconstrained; otherwise equation search runs. */
+    PETTA_MACHINE_HOST_READY_UNCONSTRAINED_REGION,
 } PettaMachineHostMode;
 
 typedef enum {
@@ -237,7 +241,7 @@ typedef enum {
 typedef struct {
     Atom *expression;
     const Bindings *environment;
-    uint32_t activation_epoch;
+    CettaFrameIdentity activation_epoch;
     uint32_t activation_first_entry;
 } PettaMachineOperationView;
 
@@ -628,6 +632,15 @@ typedef struct {
     PettaMachineFoldResult (*map_single_result)(
         void *context, Space *space, Arena *arena,
         Atom *items, Atom *item_binder, Atom *body_expression,
+        const Bindings *environment, Atom **result_out);
+    /* A generated determinate predicate may own a lexical filter.  It keeps
+     * each source occurrence whose unique pure result is the active
+     * language's true value, preserving order and duplicates.  Any effect,
+     * choice, suspension, stale read, or unsupported result declines before
+     * publication, leaving the existential relational filter authoritative. */
+    PettaMachineFoldResult (*filter_single_result)(
+        void *context, Space *space, Arena *arena,
+        Atom *items, Atom *item_binder, Atom *predicate_expression,
         const Bindings *environment, Atom **result_out);
     /* Pull a determinate, effect-free collection without materializing its
      * spine.  The callback is the consumer algebra; length is only its first

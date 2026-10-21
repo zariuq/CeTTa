@@ -212,7 +212,7 @@ enum {
 struct PPOSLFNativePendingGoalV1 {
     Atom *goal;
     uint32_t depth;
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     uint32_t activation_first_entry;
     bool epoch_original;
     bool activation_view_admitted;
@@ -2110,7 +2110,7 @@ static Atom *pposlf_native_type_vm_v1_compile_term(
         break;
     case PPOSLF_NATIVE_TERM_VARIABLE_V1:
         result = atom_var_with_id(
-            &impl->program_arena, "v", (VarId)term->variable + 1u);
+            &impl->program_arena, "v", var_id_from_base((uint64_t)term->variable + 1u));
         break;
     case PPOSLF_NATIVE_TERM_APPLICATION_V1: {
         Atom **elements;
@@ -2482,7 +2482,7 @@ static PPOSLFNativeTypeVMImplV1 *pposlf_native_type_vm_v1_build(
         }
         if (rule->body_variables_in_head) {
             if (!cetta_gslt_ground_dense_term_compile_v1(
-                    &rule->ground_dense_head, rule->head, 1u,
+                    &rule->ground_dense_head, rule->head, var_id_from_base(1u),
                     rule->variable_count, error_buf, error_buf_size) ||
                 cetta_gslt_ground_dense_term_is_linear_v1(
                     &rule->ground_dense_head) != rule->head_linear) {
@@ -2511,7 +2511,7 @@ static PPOSLFNativeTypeVMImplV1 *pposlf_native_type_vm_v1_build(
                         continue;
                     if (!cetta_gslt_ground_dense_term_compile_v1(
                             &rule->ground_dense_body[body],
-                            rule->body[body], 1u,
+                            rule->body[body], var_id_from_base(1u),
                             rule->variable_count,
                             error_buf, error_buf_size))
                         goto fail;
@@ -3555,7 +3555,7 @@ static bool pposlf_native_atom_root_push_v1(
 
 static bool pposlf_native_epoch_root_push_v1(
     BindingsEpochRoot **items, size_t *len, size_t *cap,
-    Atom *atom, uint32_t epoch) {
+    Atom *atom, CettaFrameIdentity epoch) {
     BindingsEpochRoot *grown;
     size_t next_cap;
 
@@ -4343,7 +4343,7 @@ done:
 
 typedef struct {
     const Bindings *bindings;
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     uint32_t first_entry;
 } PPOSLFNativeDenseActivationResolverV1;
 
@@ -4778,7 +4778,7 @@ static PPOSLFNativeSearchOutcomeV1 pposlf_native_type_vm_v1_search(
             const PPOSLFNativeCompiledRuleV1 *rule;
             PPOSLFNativePendingGoalV1 *expanded;
             uint32_t candidate;
-            uint32_t epoch = 0u;
+            CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
             uint32_t activation_first_entry = 0u;
             bool goal_ground = false;
             bool ground_pattern = false;

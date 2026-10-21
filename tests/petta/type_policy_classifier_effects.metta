@@ -1,5 +1,6 @@
 ; A failing classifier is not empty exhaustion: metatype cannot rescue it.
-(= (get-type pcg-poison) (progn (println! CLASSIFIER-RAN) (/ 1 0)))
+; Native parsing supplies the failure even without foreign arithmetic.
+(= (get-type pcg-poison) (progn (println! CLASSIFIER-RAN) (parse ")")))
 (: pcg-symbol (-> Symbol Atom))
 (= (pcg-symbol $x) SHOULD-NOT-SUCCEED)
 !(let (Error $reason $context) (catch (pcg-symbol pcg-poison)) $reason)

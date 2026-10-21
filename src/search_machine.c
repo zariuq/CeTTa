@@ -40,9 +40,9 @@ static bool cetta_observation_value_contains_var(
         BindingValue value, VarId variable) {
     const Atom *root = value.skeleton;
     bool contextual = binding_value_is_contextual(value);
-    if (contextual && var_epoch_suffix(variable) != value.epoch)
+    if (contextual && !cetta_frame_identity_eq(var_epoch_suffix(variable), binding_value_epoch(value)))
         return false;
-    if (!root || variable == VAR_ID_NONE)
+    if (!root || var_id_is_none(variable))
         return false;
     if (!(contextual ? atom_has_vars(root)
                      : atom_variable_bloom_may_contain(root, variable)))
@@ -60,7 +60,7 @@ static bool cetta_observation_value_contains_var(
         const Atom *atom = work[--length].atom;
         if (atom->kind == ATOM_VAR &&
             (contextual ? var_base_id(atom->var_id) == var_base_id(variable)
-                        : atom->var_id == variable)) {
+                        : var_id_eq(atom->var_id, variable))) {
             free(work);
             return true;
         }
@@ -98,13 +98,13 @@ bool cetta_observation_atom_contains_var(const Atom *root, VarId variable) {
 
 bool cetta_observation_environment_var_is_private(
         const Bindings *environment, VarId variable) {
-    if (!environment || variable == VAR_ID_NONE)
+    if (!environment || var_id_is_none(variable))
         return false;
     BindingsIterator iterator = {.bindings = environment};
     Binding logical_binding;
     while (bindings_iterator_next(&iterator, &logical_binding)) {
         const Binding *binding = &logical_binding;
-        if (binding->var_id == variable ||
+        if (var_id_eq(binding->var_id, variable) ||
             cetta_observation_value_contains_var(binding->value, variable)) {
             return false;
         }
@@ -128,7 +128,7 @@ bool cetta_observation_variable_uses_only_unary_consumers(
         CettaObservationUnaryConsumerPredicate is_consumer,
         CettaObservationExecutableChildrenPredicate children_executable,
         void *context, uint64_t *uses) {
-    if (!root || variable == VAR_ID_NONE || !is_consumer || !uses)
+    if (!root || var_id_is_none(variable) || !is_consumer || !uses)
         return false;
     if (!atom_variable_bloom_may_contain(root, variable))
         return true;
@@ -147,7 +147,7 @@ bool cetta_observation_variable_uses_only_unary_consumers(
     while (length > 0u) {
         CettaObservationUseWork item = work[--length];
         const Atom *atom = item.atom;
-        if (atom->kind == ATOM_VAR && atom->var_id == variable) {
+        if (atom->kind == ATOM_VAR && var_id_eq(atom->var_id, variable)) {
             free(work);
             return false;
         }
@@ -163,7 +163,7 @@ bool cetta_observation_variable_uses_only_unary_consumers(
             item.executable && atom->expr.len == 2u &&
             head != SYMBOL_ID_NONE && is_consumer(context, head) &&
             atom->expr.elems[1]->kind == ATOM_VAR &&
-            atom->expr.elems[1]->var_id == variable;
+            var_id_eq(atom->expr.elems[1]->var_id, variable);
         if (direct_consumer) {
             if (*uses == UINT64_MAX) {
                 free(work);

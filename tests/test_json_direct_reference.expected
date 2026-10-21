@@ -1,4 +1,4 @@
 [()]
 [(JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 120))) (JsonNumberV1 "1") (JsonSourceSpanV1 1 6)) (JsonMemberV1 1 (JsonStringV1 ((cp 120))) (JsonNumberV1 "2") (JsonSourceSpanV1 7 12))))]
-[(JsonArray ((JsonBool True) (JsonBool False) JsonNull (JsonString "λ")))]
+[(JsonArray (True False JsonNull "λ"))]
 ["{\"x\":1,\"x\":2}"]

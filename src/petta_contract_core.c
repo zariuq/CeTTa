@@ -342,7 +342,7 @@ typedef struct {
 
 static ContractFact *contract_fact(ContractScan *scan, VarId var) {
     for (uint32_t i = 0u; i < scan->fact_len; i++) {
-        if (scan->facts[i].var == var)
+        if (var_id_eq(scan->facts[i].var, var))
             return &scan->facts[i];
     }
     return NULL;
@@ -387,7 +387,7 @@ static uint32_t contract_var_occurrences(const Atom *atom, VarId var) {
     if (!atom)
         return 0u;
     if (atom->kind == ATOM_VAR)
-        return atom->var_id == var ? 1u : 0u;
+        return var_id_eq(atom->var_id, var) ? 1u : 0u;
     if (atom->kind != ATOM_EXPR)
         return 0u;
     uint32_t count = 0u;
@@ -1192,7 +1192,7 @@ static bool contract_reads_space(Atom *expr, VarId var, uint32_t depth) {
     if (expr->expr.len == 4u &&
         atom_is_symbol_id(expr->expr.elems[0], g_builtin_syms.match) &&
         expr->expr.elems[1]->kind == ATOM_VAR &&
-        expr->expr.elems[1]->var_id == var)
+        var_id_eq(expr->expr.elems[1]->var_id, var))
         return true;
     for (CettaExprIndex i = 0u; i < expr->expr.len; i++) {
         if (contract_reads_space(expr->expr.elems[i], var, depth + 1u))
@@ -1213,7 +1213,7 @@ static bool contract_self_constant(ContractScan *scan, Atom *expr,
     if (expr->expr.len == scan->arity + 1u &&
         atom_is_symbol_id(expr->expr.elems[0], scan->head)) {
         Atom *argument = expr->expr.elems[index + 1u];
-        if (argument->kind == ATOM_VAR && argument->var_id == self) {
+        if (argument->kind == ATOM_VAR && var_id_eq(argument->var_id, self)) {
             /* passes the parameter through */
         } else if (argument->kind == ATOM_SYMBOL &&
                    (*constant == SYMBOL_ID_NONE ||
@@ -1345,7 +1345,7 @@ static bool contract_entry_facts(ContractScan *scan,
                 }
                 bool shared_with_result = !scan->closed_result &&
                     scan->result_formal &&
-                    scan->result_formal->var_id == formal->var_id;
+                    var_id_eq(scan->result_formal->var_id, formal->var_id);
                 if (uses == 1u) {
                     fact = PETTA_CONTRACT_ENTRY_ANY;
                 } else if (uses == 2u && shared_with_result &&

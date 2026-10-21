@@ -47,7 +47,7 @@ static void directional_and_ordinary(Arena *arena) {
         cetta_frame_identity_scope_fresh(&frames), arena, &environment,
         atom_eq, &body) == CETTA_TERM_MATCH_MISMATCH);
     assert(body == sentinel);
-    assert(bindings_apply(&environment, arena, q)->var_id == q->var_id);
+    assert(var_id_eq(bindings_apply(&environment, arena, q)->var_id, q->var_id));
     assert(bindings_apply(&environment, arena, saved) == sentinel);
     descriptor = rule(arena, "=", call(arena, a), a);
     assert(cetta_rule_prepare(&descriptor, call(arena, q),
@@ -80,13 +80,13 @@ static void aliases_and_body(Arena *arena) {
     assert(cetta_rule_prepare(&descriptor, call(arena, atom_expr2(arena, u, u)),
         cetta_frame_identity_scope_fresh(&frames), arena, &environment,
         atom_eq, &body) == CETTA_TERM_MATCH_OK);
-    assert(body->expr.elems[1]->var_id == u->var_id);
-    assert(bindings_apply(&environment, arena, u)->var_id == u->var_id);
+    assert(var_id_eq(body->expr.elems[1]->var_id, u->var_id));
+    assert(var_id_eq(bindings_apply(&environment, arena, u)->var_id, u->var_id));
     /* Head preparation only constructs the body. Executing ordinary body
      * unification afterwards may deliberately bind the caller. */
     assert(match_atoms(body->expr.elems[1], body->expr.elems[2], &environment, arena));
     assert(atom_eq(bindings_apply(&environment, arena, u), atom_int(arena, 7)));
-    assert(bindings_apply(&environment, arena, v)->var_id == v->var_id);
+    assert(var_id_eq(bindings_apply(&environment, arena, v)->var_id, v->var_id));
     bindings_free(&environment);
 }
 
@@ -108,12 +108,11 @@ static void activation_identity(Arena *arena) {
         atom_eq, &second) == CETTA_TERM_MATCH_OK);
     assert(first->expr.elems[0] == first->expr.elems[1]);
     assert(second->expr.elems[0] == second->expr.elems[1]);
-    assert(first->expr.elems[0]->expr.elems[0]->var_id == x->var_id);
-    assert(first->expr.elems[0]->expr.elems[1]->var_id != private->var_id);
-    assert(first->expr.elems[0]->expr.elems[1]->var_id !=
-           second->expr.elems[0]->expr.elems[1]->var_id);
+    assert(var_id_eq(first->expr.elems[0]->expr.elems[0]->var_id, x->var_id));
+    assert(!var_id_eq(first->expr.elems[0]->expr.elems[1]->var_id, private->var_id));
+    assert(!var_id_eq(first->expr.elems[0]->expr.elems[1]->var_id, second->expr.elems[0]->expr.elems[1]->var_id));
     Atom *old = second;
-    assert(cetta_rule_prepare(&descriptor, call(arena, x), 0u, arena,
+    assert(cetta_rule_prepare(&descriptor, call(arena, x), CETTA_FRAME_IDENTITY_NONE, arena,
         &environment, atom_eq, &second) == CETTA_TERM_MATCH_INVALID);
     assert(second == old);
     bindings_free(&environment);

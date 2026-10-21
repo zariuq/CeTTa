@@ -54,7 +54,7 @@ static CettaAtomWireStatus encode(Writer *w, const Atom *a, unsigned depth) {
     } else if (a->kind == ATOM_VAR) {
         tag = 'V';
         size_t index = 0;
-        while (index < w->vars && w->ids[index] != a->var_id) ++index;
+        while (index < w->vars && !var_id_eq(w->ids[index], a->var_id)) ++index;
         if (index == w->vars) {
             if (w->vars == CETTA_ATOM_WIRE_VARS) return ATOM_WIRE_LIMIT;
             w->ids[w->vars++] = a->var_id;

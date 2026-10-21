@@ -1813,7 +1813,7 @@ static bool chain_index_build(ChainContext *ctx) {
 
 static bool chain_query_var_add(ChainContext *ctx, Atom *var) {
     for (uint32_t i = 0; i < ctx->query_var_count; i++)
-        if (ctx->query_vars[i].var_id == var->var_id) return true;
+        if (var_id_eq(ctx->query_vars[i].var_id, var->var_id)) return true;
     if (ctx->query_var_count == ctx->query_var_cap) {
         uint32_t ncap = ctx->query_var_cap ? ctx->query_var_cap * 2u : 8u;
         ChainQueryVar *next = realloc(ctx->query_vars,
@@ -1862,7 +1862,7 @@ static bool chain_collect_query_vars(ChainContext *ctx, Atom *atom) {
 static bool chain_scheme_var_add(ChainContext *ctx, Atom *var) {
     VarId fresh_id = var->var_id;
     for (uint32_t i = 0; i < ctx->scheme_var_count; i++)
-        if (ctx->scheme_vars[i] == fresh_id) return true;
+        if (var_id_eq(ctx->scheme_vars[i], fresh_id)) return true;
     if (ctx->scheme_var_count == ctx->scheme_var_cap) {
         uint32_t ncap = ctx->scheme_var_cap ? ctx->scheme_var_cap * 2u : 8u;
         VarId *next = realloc(ctx->scheme_vars, sizeof(VarId) * ncap);
@@ -1920,7 +1920,7 @@ typedef struct {
 static Atom *answer_canonical_var(ChainContext *ctx, AnswerCanonicalMap *map,
                                   Atom *var) {
     for (uint32_t i = 0; i < map->count; i++)
-        if (map->items[i].source == var->var_id)
+        if (var_id_eq(map->items[i].source, var->var_id))
             return map->items[i].canonical;
     if (map->count == map->cap) {
         uint32_t ncap = map->cap ? map->cap * 2u : 8u;
@@ -2042,7 +2042,7 @@ fail:
 static bool chain_scheme_var_rank(const ChainContext *ctx, VarId id,
                                   uint32_t *rank_out) {
     for (uint32_t i = 0; i < ctx->scheme_var_count; i++) {
-        if (ctx->scheme_vars[i] == id) {
+        if (var_id_eq(ctx->scheme_vars[i], id)) {
             *rank_out = i;
             return true;
         }

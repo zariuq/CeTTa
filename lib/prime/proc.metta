@@ -45,6 +45,8 @@
 ; Process observations preserve bytes and distinguish exit, signal, launch
 ; failure and interruption. Options are explicit (name value) pairs. A zero
 ; timeout or capture limit means no bound. Text decoding is a separate policy.
+; lifetime owner selects tree ownership through the Linux process companion;
+; the default lifetime group retains process-group cancellation.
 (= (proc:spawn $argv $options)
    (__cetta_lib_proc_spawn $argv $options))
 (= (proc:poll $owner)

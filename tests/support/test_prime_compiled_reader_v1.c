@@ -363,8 +363,7 @@ int main(void) {
                len == 1 && tu_arity(&compiled_universe, form) == 3u &&
                    tu_kind(&compiled_universe, left) == ATOM_VAR &&
                    tu_kind(&compiled_universe, right) == ATOM_VAR &&
-                   tu_var_id(&compiled_universe, left) !=
-                       tu_var_id(&compiled_universe, right),
+                   !var_id_eq(tu_var_id(&compiled_universe, left), tu_var_id(&compiled_universe, right)),
                "Prime bare dollars project to independent fresh variables");
         free(ids);
     }

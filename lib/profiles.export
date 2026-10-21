@@ -1,0 +1,8 @@
+(cesta-export/1 (header CETTA_PROFILES_GENERATED_H) (profile c11)
+ (table-enum "profiles.data" Profiles (enum CettaProfileId) (id id) (name code))
+ (table-enum "profiles.data" Versions (enum CettaLanguageVersionId) (id id) (name code))
+ (table-rows "profiles.data" Languages (macro CETTA_LANGUAGE_ID_ROWS) (columns code id))
+ (table-rows "profiles.data" Profiles (macro CETTA_PROFILE_BEFORE_ROWS) (columns object code language name note he extensions dependent rust version identity self quote) (where group before))
+ (table-rows "profiles.data" Profiles (macro CETTA_PROFILE_TYPING_ROWS) (columns object code language name note he extensions dependent rust version identity self quote) (where group typing))
+ (table-rows "profiles.data" Profiles (macro CETTA_PROFILE_AFTER_ROWS) (columns object code language name note he extensions dependent rust version identity self quote) (where group after))
+ (table-rows "profiles.data" Profiles (macro CETTA_PROFILE_HOL_ROWS) (columns object code language name note he extensions dependent rust version identity self quote) (where group hol)))

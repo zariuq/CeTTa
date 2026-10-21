@@ -1,0 +1,92 @@
+Prime known issues
+==================
+
+Open defects in the Prime evaluator, with reproducers, observed behaviour
+and current diagnosis.  An entry is removed by the change that fixes it,
+together with a regression test.
+
+Both issues below come from the fair first-answer scheduler (inline
+observation quantum followed by fair native-control descent), commits
+a9821431 and e882d604.  The opt merge that follows them does not touch
+this code.
+
+
+PK-1  Unbounded memory under fair native control
+------------------------------------------------
+
+Reproducers:
+
+    ; A: a divergent alternative under a bounded prefix
+    (= (spin) (spin))
+    !(select 2 (superpose ((spin) (answer x))))
+
+    ; B: a divergent alternative that grows its argument
+    (= (cf $n) (cf (+ $n 1)))
+    !(select 2 (superpose ((cf 0) (answer x))))
+
+Both programs are expected to run forever: the bag has one member and the
+prefix asks for two.  They should do so in bounded memory.
+
+Observed (default build, 4 MiB collection budget):
+    A: about 80 MB resident after 2 s, about 300 MB after 5 s.
+    B: about 1.8 GB resident after 5 s.
+
+Diagnosis:
+  1. The native-control collector is called but always declines.  Its
+     frame-kind admission (prime_native_control_collectable) omits
+     PRIME_EVAL_STACK_FRAME_ALTERNATIVES, the frame that superpose and
+     hyperpose push under native control, so no frontier containing a
+     choice is ever collected.  It also refuses any frame with
+     shared_need_wait, although a single-coordinator run evacuates and
+     audits those frames completely.
+  2. prime_native_control_schedule_publication passes the selected
+     equation's full matcher environment to the scheduled body.  The
+     stack and inline paths project it with
+     bindings_project_control_continuation first, so dead equation-local
+     bindings are carried only on the native path.
+  3. In B the argument (+ $n 1) is never demanded by the pattern $n, so
+     under call-by-need each step wraps one more suspended addition
+     around the previous one.  That chain is live, so no collector can
+     bound it.  Open question: evaluate a pure, total primitive
+     application eagerly when all its operands are ready values (it cannot
+     change any answer or effect), or accept growth linear in the number
+     of steps for this program.
+
+
+PK-2  once over deep single-path recursion is about twice as slow
+-----------------------------------------------------------------
+
+Reproducer:
+
+    (= (lookup a) 1)
+    (= (lookup b) 2)
+    (= (lookup c) 3)
+    (= (sum3) (+ (lookup a) (+ (lookup b) (lookup c))))
+    (= (rep 0 $x) $x)
+    (= (rep $n $x) (if (> $n 0) (rep (- $n 1) (+ $x (sum3))) $x))
+    !(once (rep 3000 0))
+
+Observed: about 0.40 s, against about 0.20 s with plain depth-first
+descent.  The answer is correct.
+
+Diagnosis:
+  1. The descent is single-path down to (rep 0 ...), so the inline
+     quantum is renewed all the way.  There both equations match.  While
+     the first forces the accumulated argument (3000 nested suspended
+     additions), the second waits, the quantum expires, and the inline
+     attempt is discarded.  Native control then restarts the whole
+     observation from (rep 3000 0) instead of adopting the live frontier.
+  2. Under native control the two publications at (rep 0 ...) both demand
+     the same shared argument cell.  The second starts its own force frame
+     while the first is still in flight, so the 3000 additions are
+     computed twice in lockstep.  The parallel force barrier that would
+     share the in-flight force is active only for parallel controls.
+  3. The prepared register loop
+     (space_prepared_equation_run_register_loop and _recursion) is not
+     bounded by the inline observation quantum, so the steps it takes are
+     not charged to it.
+
+Planned repair: adopt the inline frontier into native control on quantum
+expiry; let a force frame in a single-coordinator control wait on an open
+force of the same cell, world and fuel, and wake it with that force's
+values; bound and charge the prepared register loop by the quantum.

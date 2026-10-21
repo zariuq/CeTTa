@@ -246,7 +246,7 @@
 ; ID the credential's own (ID, digits as text). The host checks the name's
 ; characters before declaring it; anything else is no username.
 (= (tg-cmd:identity $body $id)
-   (case (telegram:normalize (json:parse $body) 0)
+   (case (telegram:normalize (json:inspect $body) 0)
      (((tg:ok $answer)
        (case ((telegram:field $answer "ok") (telegram:field $answer "result"))
          ((((tg:some (JsonBoolV1 True)) (tg:some $me))

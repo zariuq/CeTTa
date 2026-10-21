@@ -47,13 +47,9 @@ static inline void cetta_var_index_free(CettaVarIndex *index) {
 }
 
 static inline size_t cetta_var_index_hash(VarId id) {
-    /* A bijective mix of the packed epoch and base, as bindings use, before
-     * the table takes its low bits. */
-    uint64_t x = (uint64_t)id;
-    x ^= x >> 24;
-    x *= UINT64_C(0xff51afd7ed558ccd);
-    x ^= x >> 29;
-    return (size_t)x;
+    /* Both words mixed, as bindings key them, before the table takes its
+     * low bits. */
+    return (size_t)var_id_mix(id);
 }
 
 /* An empty table with room for `expected` entries before it is half full. */
@@ -91,14 +87,14 @@ static inline bool cetta_var_index_has_room(const CettaVarIndex *index) {
  * confirms it against its list. */
 static inline uint32_t cetta_var_index_propose(const CettaVarIndex *index,
                                                VarId id) {
-    if (!index->slots || id == VAR_ID_NONE)
+    if (!index->slots || var_id_is_none(id))
         return UINT32_MAX;
     size_t mask = index->cap - 1u;
     for (size_t slot = cetta_var_index_hash(id) & mask;;
          slot = (slot + 1u) & mask) {
-        if (index->slots[slot].id == VAR_ID_NONE)
+        if (var_id_is_none(index->slots[slot].id))
             return UINT32_MAX;
-        if (index->slots[slot].id == id)
+        if (var_id_eq(index->slots[slot].id, id))
             return index->slots[slot].position;
     }
 }
@@ -109,10 +105,10 @@ static inline void cetta_var_index_record(CettaVarIndex *index, VarId id,
                                           uint32_t position) {
     size_t mask = index->cap - 1u;
     size_t slot = cetta_var_index_hash(id) & mask;
-    while (index->slots[slot].id != VAR_ID_NONE &&
-           index->slots[slot].id != id)
+    while (!var_id_is_none(index->slots[slot].id) &&
+           !var_id_eq(index->slots[slot].id, id))
         slot = (slot + 1u) & mask;
-    if (index->slots[slot].id == VAR_ID_NONE)
+    if (var_id_is_none(index->slots[slot].id))
         index->used++;
     index->slots[slot] = (CettaVarIndexSlot){.id = id, .position = position};
 }
@@ -125,13 +121,13 @@ static inline uint32_t cetta_var_index_find_atom(const CettaVarIndex *index,
                                                  uint32_t len, VarId id) {
     if (len <= CETTA_VAR_INDEX_SCAN || !index || !index->slots) {
         for (uint32_t position = 0u; position < len; position++) {
-            if (vars[position]->var_id == id)
+            if (var_id_eq(vars[position]->var_id, id))
                 return position;
         }
         return UINT32_MAX;
     }
     uint32_t position = cetta_var_index_propose(index, id);
-    return position < len && vars[position]->var_id == id
+    return position < len && var_id_eq(vars[position]->var_id, id)
         ? position : UINT32_MAX;
 }
 
@@ -182,16 +178,16 @@ static inline size_t cetta_var_index_find_records(
     const CettaVarIndex *index, const void *records, size_t stride,
     size_t len, VarId id) {
     if (len <= CETTA_VAR_INDEX_SCAN || len > UINT32_MAX ||
-        id == VAR_ID_NONE || !index || !index->slots) {
+        var_id_is_none(id) || !index || !index->slots) {
         for (size_t position = 0u; position < len; position++) {
-            if (cetta_var_record_id(records, stride, position) == id)
+            if (var_id_eq(cetta_var_record_id(records, stride, position), id))
                 return position;
         }
         return SIZE_MAX;
     }
     uint32_t position = cetta_var_index_propose(index, id);
     return position < len &&
-            cetta_var_record_id(records, stride, position) == id
+            var_id_eq(cetta_var_record_id(records, stride, position), id)
         ? position : SIZE_MAX;
 }
 
@@ -204,12 +200,12 @@ static inline bool cetta_var_index_note_records(
             return false;
         for (uint32_t position = 0u; position < len; position++) {
             VarId id = cetta_var_record_id(records, stride, position);
-            if (id != VAR_ID_NONE)
+            if (!var_id_is_none(id))
                 cetta_var_index_record(index, id, position);
         }
     } else {
         VarId id = cetta_var_record_id(records, stride, len - 1u);
-        if (id != VAR_ID_NONE)
+        if (!var_id_is_none(id))
             cetta_var_index_record(index, id, (uint32_t)(len - 1u));
     }
     return true;

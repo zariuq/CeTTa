@@ -263,7 +263,7 @@ static Atom *horn_quote_index(Arena *arena, uint32_t index) {
 static bool horn_source_variable_index(
     GsltHornSourceVariables *variables, VarId id, uint32_t *index) {
     for (uint32_t current = 0u; current < variables->count; current++) {
-        if (variables->ids[current] == id) {
+        if (var_id_eq(variables->ids[current], id)) {
             *index = current;
             return true;
         }

@@ -10,7 +10,7 @@
 
 static bool leaf_equal(Atom *left, Atom *right) {
     return left->kind == ATOM_VAR && right->kind == ATOM_VAR &&
-           left->var_id == right->var_id;
+           var_id_eq(left->var_id, right->var_id);
 }
 
 static uint64_t nanoseconds(void) {
@@ -35,7 +35,7 @@ int main(int argc, char **argv) {
     assert(nodes && children);
     Atom *left = nodes, *right = nodes + depth + 1u;
     left[0].kind = right[0].kind = ATOM_VAR;
-    left[0].var_id = 1u; right[0].var_id = 2u;
+    left[0].var_id = var_id_from_base(1u); right[0].var_id = var_id_from_base(2u);
     for (size_t i = 1u; i <= depth; ++i) {
         left[i].kind = right[i].kind = ATOM_EXPR;
         left[i].expr.len = right[i].expr.len = 2u;

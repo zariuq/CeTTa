@@ -224,6 +224,7 @@ static inline SymbolSpelling symbol_spelling(
     X(cdr_atom, "cdr-atom") \
     X(unify, "unify") \
     X(case_text, "case") \
+    X(case_value_text, "%case-value%") \
     X(switch_text, "switch") \
     X(switch_minimal, "switch-minimal") \
     X(let_star, "let*") \
@@ -288,6 +289,7 @@ static inline SymbolSpelling symbol_spelling(
     X(add_atom, "add-atom") \
     X(add_atoms, "add-atoms") \
     X(add_atom_nodup, "add-atom-nodup") \
+    X(exec_saturate, "exec:saturate") \
     X(mork_add_atoms, "mork:add-atoms") \
     X(mork_add_atom, "mork:add-atom") \
     X(mork_remove_atom, "mork:remove-atom") \
@@ -420,6 +422,7 @@ static inline SymbolSpelling symbol_spelling(
     X(llist_cons, "LCons") \
     X(minimal_map_atom, "_minimal-map-atom") \
     X(minimal_retain_top_k_by_number, "_minimal-retain-top-k-by-number") \
+    X(minimal_sum_by, "_minimal-sum-by") \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(minimal_foldl_llist, "_minimal-foldl-llist") \
     X(minimal_foldl_sequence, "_minimal-foldl-sequence") \
@@ -507,7 +510,9 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_json_capabilities_v1, "__cetta_lib_json_capabilities_v1") \
     X(lib_json_parse_v1, "__cetta_lib_json_parse_v1") \
     X(lib_json_to_legacy_v1, "__cetta_lib_json_to_legacy_v1") \
+    X(lib_json_from_inspection_v1, "__cetta_lib_json_from_inspection_v1") \
     X(lib_json_parse, "__cetta_lib_json_parse") \
+    X(lib_json_project_v1, "__cetta_lib_json_project_v1") \
     X(lib_json_stringify_v1, "__cetta_lib_json_stringify_v1") \
     X(lib_json_stringify, "__cetta_lib_json_stringify") \
     X(lib_json_members_v1, "__cetta_lib_json_members_v1") \
@@ -815,6 +820,7 @@ static inline SymbolSpelling symbol_spelling(
     X(if_equal) \
     X(sealed_text) \
     X(minimal_retain_top_k_by_number) \
+    X(minimal_sum_by) \
     X(minimal_foldl_atom) \
     X(minimal_foldl_llist) \
     X(minimal_foldl_sequence) \
@@ -1011,7 +1017,7 @@ static inline SymbolSpelling symbol_spelling(
     X(parse) \
     X(parse_first) \
     X(lib_json_parse_v1) \
-    X(lib_json_to_legacy_v1) \
+    X(lib_json_from_inspection_v1) \
     X(lib_json_parse) \
     X(lib_json_stringify_v1) \
     X(lib_json_stringify) \

@@ -1,5 +1,6 @@
 #include "match_decision.h"
 #include "match.h"
+#include "binding/term_cursor.h"
 #include "parser.h"
 #include "symbol.h"
 
@@ -193,13 +194,13 @@ static void test_scoped_cursors(
     VarId ids[] = {x->var_id};
     Atom *variables[] = {x};
     assert(bindings_activation_view_prepare(
-        &frame, &builder, ids, variables, 1u, epoch, first));
+        &frame, &builder, ids, variables, 1u, (CettaFrameIdentity){epoch}, first));
     /* Preparation records the write boundary; activation writes follow it. */
     uint32_t mark = bindings_builder_save(&builder);
     assert(bindings_builder_add_id_fresh(&builder,
-        var_epoch_id(x->var_id, epoch), atom_symbol_current_id(x), outer_value));
+        var_epoch_id(x->var_id, (CettaFrameIdentity){epoch}), atom_symbol_current_id(x), outer_value));
     assert(bindings_builder_add_id_fresh(&builder,
-        var_epoch_id(y->var_id, epoch), atom_symbol_current_id(y), b));
+        var_epoch_id(y->var_id, (CettaFrameIdentity){epoch}), atom_symbol_current_id(y), b));
     BindingsTermCursorContextV1 context = {&builder.current, &frame};
     CettaGsltTermCursorV1 argument = {x, &frame};
     CettaMatchDecisionQueryViewV1 query = {
@@ -251,17 +252,124 @@ static void test_scoped_cursors(
             bindings_builder_rollback(&builder, mark);
             expect_cursor_refs(decision, space, semantics, &query, open_refs, 3u);
             assert(bindings_builder_add_id_fresh(&builder,
-                var_epoch_id(x->var_id, epoch), atom_symbol_current_id(x), outer_value));
+                var_epoch_id(x->var_id, (CettaFrameIdentity){epoch}), atom_symbol_current_id(x), outer_value));
             assert(bindings_builder_add_id_fresh(&builder,
-                var_epoch_id(y->var_id, epoch), atom_symbol_current_id(y), b));
+                var_epoch_id(y->var_id, (CettaFrameIdentity){epoch}), atom_symbol_current_id(y), b));
             assert(bindings_activation_view_prepare(
-                &frame, &builder, ids, variables, 1u, epoch, first));
+                &frame, &builder, ids, variables, 1u, (CettaFrameIdentity){epoch}, first));
             expect_cursor_refs(decision, space, semantics, &query, outer_refs, 2u);
             cetta_match_decision_free(decision);
         }
     }
     bindings_activation_view_free(&frame);
     bindings_builder_free(&builder);
+}
+
+static void test_contextual_cursor_worlds(
+        Arena *arena, Space *space,
+        CettaMatchDecisionSemanticIdentity semantics) {
+    Atom *source = parse_one(arena, "(scoped $cursor-x)");
+    Atom *box = parse_one(arena, "(box $cursor-y)");
+    Atom *x = source->expr.elems[1];
+    Atom *y = box->expr.elems[1];
+    Atom *z = parse_one(arena, "$cursor-z");
+    Atom *a = parse_one(arena, "a"), *b = parse_one(arena, "b");
+    VarId ids[] = {x->var_id, y->var_id, z->var_id};
+    Atom *variables[] = {x};
+    CettaFrameIdentity scopes[4];
+    CETTA_FRAME_IDENTITY_SCOPE(scope_owner);
+    for (unsigned i = 0u; i < 4u; i++)
+        scopes[i] = cetta_frame_identity_scope_fresh(&scope_owner);
+    BindingsBuilder builder;
+    assert(bindings_builder_init(&builder, NULL));
+    BindingsActivationView frame;
+    bindings_activation_view_init(&frame);
+    assert(bindings_activation_view_prepare(
+        &frame, &builder, &ids[0], variables, 1u, scopes[0], 0u));
+    assert(bindings_builder_register_contextual_frame(&builder, &ids[1], 1u, scopes[1]));
+    assert(bindings_builder_register_contextual_frame(&builder, &ids[2], 1u, scopes[2]));
+    uint32_t mark = bindings_builder_save(&builder);
+    assert(bindings_builder_add_var_fresh(&builder, y, b));
+    assert(match_binding_values_builder(
+        binding_value_from_context(x, scopes[0]),
+        binding_value_from_persistent_context(box, scopes[1]), &builder, arena));
+    assert(match_binding_values_builder(
+        binding_value_from_context(y, scopes[1]),
+        binding_value_from_context(z, scopes[2]), &builder, arena));
+    assert(match_binding_values_builder(
+        binding_value_from_context(z, scopes[2]),
+        binding_value_from_atom(a), &builder, arena));
+
+    BindingsTermCursorContextV1 context = {&builder.current, &frame};
+    CettaGsltTermCursorV1 argument = {x, &frame}, root = {0};
+    assert(bindings_resolve_term_cursor_v1(&context, argument, &root) ==
+        CETTA_GSLT_TERM_VIEW_DEFER_V1);
+    ArenaMark allocation = arena_mark(arena);
+    assert(bindings_resolve_scoped_term_cursor_v1(&context, argument, &root) ==
+        CETTA_GSLT_TERM_VIEW_OK_V1);
+    assert(root.source == box && root.scope && root.scope != &frame);
+    CettaGsltTermCursorV1 child = {0}, leaf = {0};
+    assert(cetta_gslt_term_cursor_child_v1(root, 1u, &child));
+    assert(bindings_resolve_scoped_term_cursor_v1(&context, child, &leaf) ==
+        CETTA_GSLT_TERM_VIEW_OK_V1);
+    assert(atom_eq(leaf.source, a) && !leaf.scope);
+    assert(arena_at_mark(arena, allocation));
+
+    CettaMatchDecisionQueryViewV1 query = {
+        .head = {source->expr.elems[0], NULL},
+        .arguments = &argument, .arity = 1u,
+        .observer = {bindings_resolve_scoped_term_cursor_v1, &context},
+    };
+    CettaMatchDecisionEquation equations[] = {
+        {parse_one(arena, "(scoped (box a))"), 10u},
+        {parse_one(arena, "(scoped (box b))"), 20u},
+        {parse_one(arena, "(scoped (box a))"), 30u},
+    };
+    const uint32_t selected[] = {10u, 30u}, open[] = {10u, 20u, 30u};
+    Atom *forced = bindings_apply_activation_view_then_all(
+        &builder.current, arena, source, &frame);
+    assert(forced && atom_eq(forced, equations[0].pattern));
+    for (unsigned realization = 0u; realization < 8u; realization++) {
+        CettaMatchDecision *decision = cetta_match_decision_compile(
+            space_read_token(space), semantics, equations, 3u,
+            CETTA_MATCH_DECISION_DEEP, 0u,
+            (CettaMatchDecisionRealization){
+                .use_direct_prefix_observation = (realization & 1u) != 0u,
+                .use_eager_prefix_observation = (realization & 2u) != 0u,
+                .use_direct_equality_observation = (realization & 4u) != 0u,
+            }, NULL, NULL);
+        assert(decision);
+        allocation = arena_mark(arena);
+        expect_cursor_refs(decision, space, semantics, &query, selected, 2u);
+        assert(arena_at_mark(arena, allocation));
+        expect_refs(decision, space, forced, semantics, UINT64_MAX, selected, 2u);
+        cetta_match_decision_free(decision);
+    }
+
+    /* A shared payload does not transfer a borrowed directory pointer. */
+    BindingsBuilder fork;
+    assert(bindings_builder_init(&fork, &builder.current));
+    assert(bindings_builder_register_contextual_frame(&fork, &ids[2], 1u, scopes[3]));
+    BindingsTermCursorContextV1 foreign = {&fork.current, NULL};
+    assert(bindings_resolve_scoped_term_cursor_v1(&foreign, child, &leaf) ==
+        CETTA_GSLT_TERM_VIEW_DEFER_V1);
+    CettaMatchDecision *decision = cetta_match_decision_compile(
+        space_read_token(space), semantics, equations, 3u,
+        CETTA_MATCH_DECISION_DEEP, 0u,
+        (CettaMatchDecisionRealization){0}, NULL, NULL);
+    assert(decision);
+    expect_cursor_refs(decision, space, semantics, &query, selected, 2u);
+    context.bindings = &fork.current;
+    expect_cursor_refs(decision, space, semantics, &query, selected, 2u);
+    bindings_builder_rollback(&builder, mark);
+    context.bindings = &builder.current;
+    expect_cursor_refs(decision, space, semantics, &query, open, 3u);
+    bindings_builder_free(&builder);
+    context.bindings = &fork.current;
+    expect_cursor_refs(decision, space, semantics, &query, selected, 2u);
+    cetta_match_decision_free(decision);
+    bindings_activation_view_free(&frame);
+    bindings_builder_free(&fork);
 }
 
 static void test_bound_constructor_prefix(
@@ -352,10 +460,10 @@ static void test_scoped_equality(
         VarId ids[] = {source->var_id};
         Atom *variables[] = {source};
         assert(bindings_activation_view_prepare(
-            &frame, &builder, ids, variables, 1u, epoch, first));
+            &frame, &builder, ids, variables, 1u, (CettaFrameIdentity){epoch}, first));
         uint32_t mark = bindings_builder_save(&builder);
         assert(bindings_builder_add_id_fresh(&builder,
-            var_epoch_id(source->var_id, epoch), atom_symbol_current_id(source), outer));
+            var_epoch_id(source->var_id, (CettaFrameIdentity){epoch}), atom_symbol_current_id(source), outer));
         BindingsTermCursorContextV1 context = {&builder.current, &frame};
         CettaGsltTermCursorV1 arguments[] = {{left, &frame}, {right, NULL}};
         CettaMatchDecisionQueryViewV1 query = {
@@ -382,11 +490,11 @@ static void test_scoped_equality(
         bindings_builder_rollback(&builder, mark);
         expect_cursor_refs(decision, space, semantics, &query, all, 3u);
         assert(bindings_activation_view_prepare(
-            &frame, &builder, ids, variables, 1u, epoch, first));
+            &frame, &builder, ids, variables, 1u, (CettaFrameIdentity){epoch}, first));
         /* An unbound authored variable cannot borrow its ordinary namesake. */
         expect_cursor_refs(decision, space, semantics, &query, all, 3u);
         assert(bindings_builder_add_id_fresh(&builder,
-            var_epoch_id(source->var_id, epoch), atom_symbol_current_id(source), b));
+            var_epoch_id(source->var_id, (CettaFrameIdentity){epoch}), atom_symbol_current_id(source), b));
         assert(bindings_activation_view_available(&frame, &builder.current));
         expect_cursor_refs(decision, space, semantics, &query, all, 3u);
         /* A bounded observation may be less precise than complete forcing.
@@ -998,6 +1106,7 @@ int main(void) {
     cetta_match_decision_free(projection);
 
     test_bounded_path_precision(&persistent, &space, semantic_identity);
+    test_contextual_cursor_worlds(&persistent, &space, semantic_identity);
     test_scoped_equality(&persistent, &space, semantic_identity);
 
     cetta_match_decision_free(opaque);

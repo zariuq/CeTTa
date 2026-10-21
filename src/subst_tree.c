@@ -530,7 +530,7 @@ static SubstNode *snode_get_sym(SubstNode *n, SymbolId key) {
 static SubstNode *snode_get_var(SubstNode *n, VarId var_id,
                                 SymbolId spelling, Atom *name_key) {
     for (uint32_t i = 0; i < n->nvars; i++)
-        if (n->vars[i].var_id == var_id) return n->vars[i].child;
+        if (var_id_eq(n->vars[i].var_id, var_id)) return n->vars[i].child;
     if (n->nvars >= n->cvars) {
         n->cvars = n->cvars ? n->cvars * 2 : 4;
         n->vars = cetta_realloc(n->vars, sizeof(n->vars[0]) * n->cvars);
@@ -606,7 +606,7 @@ static SubstNode *snode_get_text(SubstNode *n, const SubstTextKey *key) {
     return branch.child;
 }
 
-static void snode_add_leaf(SubstNode *n, CettaIndex idx, uint32_t epoch) {
+static void snode_add_leaf(SubstNode *n, CettaIndex idx, CettaFrameIdentity epoch) {
     if (n->nleaves >= n->cleaves) {
         n->cleaves = n->cleaves ? n->cleaves * 2 : 4;
         n->leaves = cetta_realloc(n->leaves, sizeof(n->leaves[0]) * n->cleaves);
@@ -838,8 +838,8 @@ void stree_bucket_insert(SubstBucket *bucket, Atom *atom, CettaIndex atom_idx) {
     /* Ground rows have no variables to standardize apart. Retaining one
      * activation identity per such row makes a large fact index consume the
      * finite frame inventory without introducing any variable scope. */
-    uint32_t epoch = atom_has_vars(atom)
-        ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : 0u;
+    CettaFrameIdentity epoch = atom_has_vars(atom)
+        ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : CETTA_FRAME_IDENTITY_NONE;
     if (!bucket->root) bucket->root = snode_new();
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
     SubstNode *leaf = snode_insert_atom(bucket->root, atom, 0u, &budget);
@@ -852,8 +852,8 @@ bool stree_bucket_insert_id(SubstBucket *bucket, const TermUniverse *universe,
                                 CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     if (!bucket || !universe || atom_id == CETTA_ATOM_ID_NONE)
         return false;
-    uint32_t epoch = tu_has_vars(universe, atom_id)
-        ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : 0u;
+    CettaFrameIdentity epoch = tu_has_vars(universe, atom_id)
+        ? cetta_frame_identity_scope_fresh(&frame_identity_scope) : CETTA_FRAME_IDENTITY_NONE;
     if (!bucket->root)
         bucket->root = snode_new();
     CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
@@ -953,7 +953,7 @@ void smset_free(SubstMatchSet *s) {
     s->cap = 1;
 }
 
-static void smset_push_move(SubstMatchSet *s, CettaIndex atom_idx, uint32_t epoch,
+static void smset_push_move(SubstMatchSet *s, CettaIndex atom_idx, CettaFrameIdentity epoch,
                             Bindings *b) {
     if (s->len >= s->cap) {
         CettaIndex next_cap = s->cap ? s->cap * 2 : 8;
@@ -1023,7 +1023,7 @@ static void st_collect(SubstNode *node, BindingsBuilder *bb, Arena *a,
         Bindings tagged;
         if (!bindings_clone(&tagged, current))
             continue;
-        uint32_t epoch = node->leaves[li].epoch;
+        CettaFrameIdentity epoch = node->leaves[li].epoch;
         /* Epoch-tag indexed-side variable ids */
         if (!bindings_prepare_logical_write(&tagged)) {
             bindings_free(&tagged);

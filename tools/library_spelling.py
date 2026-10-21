@@ -12,6 +12,9 @@ Native results sealed by function/case (the PeTTa spelling):
   (function (case CALL (($r (return $r)))))
       -> CALL
 
+  (function (case VALUE ((PATTERN (return BODY)))))
+      -> (let PATTERN VALUE BODY)
+
 A native answers (return VALUE); HE's function hands VALUE back untouched,
 and PeTTa never evaluates a value twice, so the plain case is exact there.
 
@@ -220,7 +223,10 @@ def unwrap_function(form):
     # an explicit catch; preserve the scope of this authored error handler.
     if any(isinstance(branch[0], list) and branch[0]
            and branch[0][0] == Symbol("Error") for branch in new_branches):
-        call = [Symbol("catch"), call]
+        return [Symbol("case"), [Symbol("catch"), call], new_branches]
+    if len(new_branches) == 1:
+        pattern, body = new_branches[0]
+        return [Symbol("let"), pattern, call, body]
     return [Symbol("case"), call, new_branches]
 
 
@@ -444,6 +450,17 @@ def handoff_heads(forms):
     operation all of whose equations hand a value to a native, and every
     native so called (its HE interface), as two sets."""
     handoff, other, natives = set(), set(), set()
+    projection_interfaces = {}
+    for declaration in forms:
+        if (isinstance(declaration, list) and len(declaration) == 3 and declaration[0] == ":"
+                and isinstance(declaration[1], Symbol)):
+            arrow = declaration[2]
+            transparent = (isinstance(arrow, list) and len(arrow) >= 3 and arrow[0] == Symbol("->")
+                           and arrow[-1] == Symbol("Atom")
+                           and all(parameter in (Symbol("Atom"), Symbol("%Undefined%"))
+                                   for parameter in arrow[1:-1]))
+            head = declaration[1]
+            projection_interfaces[head] = projection_interfaces.get(head, True) and transparent
     for form in forms:
         if not (isinstance(form, list) and len(form) == 3 and form[0] == "="
                 and isinstance(form[1], list) and form[1]
@@ -454,12 +471,37 @@ def handoff_heads(forms):
         if call is None:
             call = sealed_native_case_call(form[2])
         if call is None:
+            if structural_projection(form[2]) and projection_interfaces.get(head, True):
+                handoff.add(head)
+                continue
             other.add(head)
             continue
         handoff.add(head)
         if isinstance(call, list) and call and isinstance(call[0], Symbol):
             natives.add(call[0])
     return handoff - other, natives
+
+
+def structural_projection(body):
+    """A forcing case that returns exactly one field, without computation.
+
+    HE's Atom result protects the projected data from re-interpretation.
+    PeTTa instead needs its case body to run; Prime retains the forcing case.
+    This rule does not erase declarations of arbitrary case computations.
+    """
+    if not (isinstance(body, list) and len(body) == 2 and body[0] == Symbol("function")):
+        return False
+    case = body[1]
+    if not (isinstance(case, list) and len(case) == 3 and case[0] == Symbol("case")
+            and is_variable(case[1]) and isinstance(case[2], list) and len(case[2]) == 1):
+        return False
+    branch = case[2][0]
+    if not (isinstance(branch, list) and len(branch) == 2
+            and isinstance(branch[0], list) and len(branch[0]) == 2
+            and isinstance(branch[0][0], Symbol) and not is_variable(branch[0][0])
+            and is_variable(branch[0][1])):
+        return False
+    return is_return_of(branch[1], branch[0][1])
 
 
 def is_declaration_of(form, heads: set) -> bool:

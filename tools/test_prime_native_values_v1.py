@@ -36,10 +36,10 @@ def main():
 
     for language in ("he", "petta", "prime"):
         source = DEFINITIONS + """
-!(json:stringify (JsonNumberV1 "7"))
-!(json:stringify (native-field:number (native-field:digits)))
+!(json:inspect-stringify (JsonNumberV1 "7"))
+!(json:inspect-stringify (native-field:number (native-field:digits)))
 !(let $digits "7"
-   (json:stringify (native-field:number $digits)))
+   (json:inspect-stringify (native-field:number $digits)))
 """
         values = run(binary, language, output, "computed", source)
         if [scalar_text(value) for value in values[-3:]] != ["7", "7", "7"]:
@@ -47,9 +47,9 @@ def main():
         checks += 3
 
     source = DEFINITIONS + """
-!(json:stringify (native-field:pair (native-field:pick)))
-!(json:stringify (native-field:two (native-field:pick) (native-field:pick)))
-!(json:stringify (native-field:number (superpose ("7" "7"))))
+!(json:inspect-stringify (native-field:pair (native-field:pick)))
+!(json:inspect-stringify (native-field:two (native-field:pick) (native-field:pick)))
+!(json:inspect-stringify (native-field:number (superpose ("7" "7"))))
 """
     values = run(binary, "prime", output, "occurrences", source)
     values = [value for value in values if value != Symbol(",")]
@@ -65,7 +65,7 @@ def main():
      (let $_ (change-state! &native-field:count (+ $old 1)) "7")))
 """
     source = DEFINITIONS + effects + """
-!(let $rendered (json:stringify (native-field:pair (native-field:effect)))
+!(let $rendered (json:inspect-stringify (native-field:pair (native-field:effect)))
    (let $count (get-state &native-field:count)
      (function (return (NativeFieldEffectV1 $rendered $count)))))
 """
@@ -79,7 +79,7 @@ def main():
         source = DEFINITIONS + effects + f"""
 (: native-field:held (-> %Undefined% Atom))
 (= (native-field:held $x) (JsonNumberV1 ({barrier} $x)))
-!(let $rendered (json:stringify (native-field:held (native-field:effect)))
+!(let $rendered (json:inspect-stringify (native-field:held (native-field:effect)))
    (let $count (get-state &native-field:count)
      (function (return (NativeFieldHeldV1 $rendered $count)))))
 """

@@ -521,7 +521,7 @@ static void display_var_map_free(CettaDisplayVarMap *map) {
 static bool display_var_map_push(CettaDisplayVarMap *map, VarId var_id,
                                  const char *base_name) {
     for (uint32_t i = 0; i < map->len; i++) {
-        if (map->entries[i].var_id == var_id) {
+        if (var_id_eq(map->entries[i].var_id, var_id)) {
             return true;
         }
     }
@@ -673,7 +673,7 @@ static bool display_var_finalize(CettaDisplayVarMap *map, Arena *arena,
         for (uint32_t j = 0; j < map->len; j++) {
             if (strcmp(map->entries[j].base_name, base) != 0) continue;
             group_size++;
-            if (map->entries[j].var_id < map->entries[i].var_id) {
+            if (var_id_lt(map->entries[j].var_id, map->entries[i].var_id)) {
                 rank++;
             }
         }
@@ -702,7 +702,7 @@ static bool display_var_finalize(CettaDisplayVarMap *map, Arena *arena,
 
 static const char *display_var_lookup(const CettaDisplayVarMap *map, VarId var_id) {
     for (uint32_t i = 0; i < map->len; i++) {
-        if (map->entries[i].var_id == var_id) {
+        if (var_id_eq(map->entries[i].var_id, var_id)) {
             return map->entries[i].display_name ?
                 map->entries[i].display_name : map->entries[i].base_name;
         }

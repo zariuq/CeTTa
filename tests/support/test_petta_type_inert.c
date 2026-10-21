@@ -87,8 +87,8 @@ static bool alpha(const Atom *a, const Atom *b, Renaming *map) {
         return false;
     if (a->kind == ATOM_VAR) {
         for (uint32_t i = 0; i < map->count; i++) {
-            if (map->left[i] == a->var_id || map->right[i] == b->var_id)
-                return map->left[i] == a->var_id && map->right[i] == b->var_id;
+            if (var_id_eq(map->left[i], a->var_id) || var_id_eq(map->right[i], b->var_id))
+                return var_id_eq(map->left[i], a->var_id) && var_id_eq(map->right[i], b->var_id);
         }
         assert(map->count < 256u);
         map->left[map->count] = a->var_id;

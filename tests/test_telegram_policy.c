@@ -88,7 +88,7 @@ static void long_message(void) {
     EvalOutcome out; clock_t start=clock();
     Atom *large_result=decode(message,policy,&out);
     if (!form(large_result,"telegram:batch",3)) {
-        EvalOutcome diagnostic; Atom *args[]={atom_symbol(&persistent,"json:parse"),atom_string(&persistent,message)};
+        EvalOutcome diagnostic; Atom *args[]={atom_symbol(&persistent,"json:inspect"),atom_string(&persistent,message)};
         Atom *why=run(atom_expr(&persistent,args,2),1000000,&diagnostic);
         if (!form(why,"JsonObjectV1",2)) atom_print(why,stderr);
         eval_outcome_free(&diagnostic);
@@ -431,7 +431,7 @@ int main(int argc,char **argv) {
     check("(telegram:integer (JsonNumberV1 \"-9223372036854775809\"))","tg:bad");
     check("(telegram:integer (JsonNumberV1 \"7e0\"))","tg:bad");
     check("(telegram:integer (JsonNumberV1 \"1.0\"))","tg:bad");
-    check("(json:parse \"null\")","JsonNullV1");
+    check("(json:inspect \"null\")","JsonNullV1");
     check("(sort-atom (b a))","(a b)");
     check("(unique-atom (a a))","(a)");
     check("(unique-atom ())","()");
@@ -440,15 +440,15 @@ int main(int argc,char **argv) {
     check("(telegram:member k ((JsonMemberV1 0 k v span)))","(tg:some v)");
     check("(telegram:normalize (JsonBoolV1 True) 0)","(tg:ok (JsonBoolV1 True))");
     check("(telegram:object-members ((JsonMemberV1 0 k (JsonBoolV1 True) span)) (k) 0 1)","(tg:ok ((JsonMemberV1 0 k (JsonBoolV1 True) JsonNoSourceSpanV1)))");
-    check("(telegram:normalize (json:parse \"{}\") 0)","(tg:ok (JsonObjectV1 ()))");
-    check("(telegram:normalize (json:parse \"{\\\"ok\\\":true}\") 0)","(tg:ok (JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 111) (cp 107))) (JsonBoolV1 True) JsonNoSourceSpanV1))))");
+    check("(telegram:normalize (json:inspect \"{}\") 0)","(tg:ok (JsonObjectV1 ()))");
+    check("(telegram:normalize (json:inspect \"{\\\"ok\\\":true}\") 0)","(tg:ok (JsonObjectV1 ((JsonMemberV1 0 (JsonStringV1 ((cp 111) (cp 107))) (JsonBoolV1 True) JsonNoSourceSpanV1))))");
     response("{\"ok\":true,\"result\":[]}","(telegram:batch 1 ())");
     response("{\"ok\":true,\"ok\":true,\"result\":[]}","(telegram:hold 1 malformed-json)");
     response("{\"ok\":true,\"result\":{}}","(telegram:hold 1 malformed-response)");
     response("{\"ok\":false,\"error_code\":429,\"parameters\":{\"retry_after\":3}}","(telegram:retry 1 3 rate-limit)");
     response("{\"ok\":false,\"error_code\":409}","(telegram:hold 1 conflicting-poller)");
     response("{\"ok\":false,\"error_code\":500}","(telegram:hold 1 api-error)");
-    check("(telegram:route 4 \"message\" (json:parse \"{\\\"chat\\\":{\\\"id\\\":42,\\\"type\\\":\\\"private\\\"},\\\"message_thread_id\\\":5}\") (tg:integer 7) dummy (telegram:policy 1 (42) False (7) (8)))",
+    check("(telegram:route 4 \"message\" (json:inspect \"{\\\"chat\\\":{\\\"id\\\":42,\\\"type\\\":\\\"private\\\"},\\\"message_thread_id\\\":5}\") (tg:integer 7) dummy (telegram:policy 1 (42) False (7) (8)))",
         "(tg:item 4 \"42.5\" routed (telegram:input 1 \"message\" 42 5 7 operator dummy))");
     const char *group="{\"ok\":true,\"result\":[{\"update_id\":10,\"message\":{\"chat\":{\"id\":-100,\"type\":\"supergroup\"},\"message_thread_id\":12,\"from\":{\"id\":7},\"text\":\"a\\u0000b 😀\"}}]}";
     route(group,policy,"-100.12","routed","message",-100,12,7,"operator");

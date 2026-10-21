@@ -124,6 +124,41 @@ class CodecFixtures(unittest.TestCase):
         self.assertEqual([b["text"] for b in anthropic["system"]], ["system", "developer"])
         self.assertEqual(anthropic["system"][-1]["cache_control"], {"type": "ephemeral"})
 
+    def test_conversation_caching_marks_the_newest_and_previous_user_turns(self):
+        call = {"id": "call-a", "type": "function", "function": {"name": "nop", "arguments": "{}"}}
+        request = {"model": "fixture-model", "max_tokens": 42, "messages": [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "task"},
+            {"role": "assistant", "content": "first", "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": "call-a", "content": "one"},
+            {"role": "assistant", "content": "second", "tool_calls": [{**call, "id": "call-b"}]},
+            {"role": "tool", "tool_call_id": "call-b", "content": "two"}]}
+        opening = {**request, "messages": request["messages"][:2], "cache_messages": True}
+        plain, cached, first, hour, wrong_ttl, elsewhere = self.each_dialect([
+            self.encode("anthropic", request),
+            self.encode("anthropic", {**request, "cache_messages": True}),
+            self.encode("anthropic", opening),
+            self.encode("anthropic", {**request, "cache_messages": True, "cache_ttl": "1h"}),
+            self.encode("anthropic", {**request, "cache_ttl": "2h"}),
+            self.encode("chat-completions", {**request, "cache_messages": True})])
+
+        def marked(body):
+            return [(index, position) for index, message in enumerate(body["messages"])
+                    for position, block in enumerate(message["content"]) if "cache_control" in block]
+
+        def unmarked(body):
+            return [{**m, "content": [{k: v for k, v in b.items() if k != "cache_control"} for b in m["content"]]}
+                    for m in body["messages"]]
+
+        self.assertEqual(marked(plain), [])
+        self.assertEqual(plain["system"][-1]["cache_control"], {"type": "ephemeral"})
+        self.assertEqual(marked(cached), [(2, 0), (4, 0)])
+        self.assertEqual(unmarked(cached), plain["messages"])
+        self.assertEqual(marked(first), [(0, 0)])
+        self.assertEqual(hour["system"][-1]["cache_control"], {"type": "ephemeral", "ttl": "1h"})
+        self.assertEqual(hour["messages"][4]["content"][-1]["cache_control"], {"type": "ephemeral", "ttl": "1h"})
+        self.assertEqual((wrong_ttl, elsewhere), ("ERROR:invalid-cache-policy", "ERROR:unsupported-provider-option"))
+
     def test_chat_reasoning_uses_an_explicit_wire_profile(self):
         request = {**self.request(), "reasoning": {"effort": "low"}}
         native, compatible, unknown = self.each_dialect([

@@ -192,7 +192,7 @@
 
 (= (telegram:decode $body $policy)
    (if (> (str:byte-length $body) 262144) (telegram:hold 1 body-limit)
-     (case (json:parse $body)
+     (case (json:inspect $body)
        (((JsonFailureV1 $phase JsonResourceLimitV1 $source $detail) (telegram:hold 1 parser-limit))
         ($parsed (telegram:decode-value $parsed $policy)))){$phase $source $detail $parsed}))
 

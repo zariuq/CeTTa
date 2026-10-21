@@ -220,7 +220,7 @@ static bool prime_replay_read_physical(void *raw,const char *field,uint64_t a,ui
     c->physical_count++;return true;
 }
 static bool prime_replay_frame_scope_contains(PrimeReplayComparison *c,
-    const CettaFrameIdentityScope *scope,uint32_t identity,bool right,
+    const CettaFrameIdentityScope *scope,CettaFrameIdentity identity,bool right,
     uint32_t hint,uint32_t *position) {
     if(!prime_replay_compare_tick(c,"frame_scope.header",1u,false))return false;
     if(!scope)return prime_replay_compare_refuse(c,"frame_scope.owner","MissingFrameScope");
@@ -238,13 +238,13 @@ static bool prime_replay_frame_scope_contains(PrimeReplayComparison *c,
      * nothing until this actual initialized entry has been read again. */
     if(hint<scope->len) {
         FS_P("frame_scope.index",hint);
-        uint32_t held=scope->identities[hint];FS_P("frame_scope.identity",held);
-        if(held==identity){*position=hint;return true;}
+        CettaFrameIdentity held=scope->identities[hint];FS_P("frame_scope.identity",held.word);
+        if(cetta_frame_identity_eq(held,identity)){*position=hint;return true;}
     }
     for(uint32_t i=0u;i<scope->len;i++) {
         FS_P("frame_scope.index",i);
-        uint32_t held=scope->identities[i];FS_P("frame_scope.identity",held);
-        if(held==identity){*position=i;return true;}
+        CettaFrameIdentity held=scope->identities[i];FS_P("frame_scope.identity",held.word);
+        if(cetta_frame_identity_eq(held,identity)){*position=i;return true;}
     }
     return prime_replay_compare_refuse(c,"frame_scope.membership","UnheldFrameScopeGeneration");
 #undef FS_P
@@ -254,7 +254,7 @@ static bool prime_replay_read_frame_scope(void *raw,const char *field,
     const CettaFrameIdentityScope *b,uint64_t bi) {
     PrimeReplayComparison *c=raw;
     if(!prime_replay_compare_tick(c,field,1u,false))return false;
-    if(!ai||!bi||ai>UINT32_MAX||bi>UINT32_MAX)
+    if(!ai||!bi)
         return prime_replay_compare_refuse(c,field,"FrameScopeIdentity");
     for(size_t i=0u;i<c->identities.length;i++) {
         if(!prime_replay_compare_tick(c,"frame_scope.relation",1u,true))return false;
@@ -262,8 +262,8 @@ static bool prime_replay_read_frame_scope(void *raw,const char *field,
         if(p->role==CETTA_CHECKPOINT_FRAME&&p->left==ai&&p->right==bi) {
             uint32_t left=p->frame_owned?p->frame_left_hint:UINT32_MAX;
             uint32_t right=p->frame_owned?p->frame_right_hint:UINT32_MAX;
-            if(!prime_replay_frame_scope_contains(c,a,(uint32_t)ai,false,left,&left)||
-                !prime_replay_frame_scope_contains(c,b,(uint32_t)bi,true,right,&right))return false;
+            if(!prime_replay_frame_scope_contains(c,a,(CettaFrameIdentity){ai},false,left,&left)||
+                !prime_replay_frame_scope_contains(c,b,(CettaFrameIdentity){bi},true,right,&right))return false;
             p->frame_left_hint=left;p->frame_right_hint=right;
             p->frame_owned=true;return true;
         }
@@ -422,21 +422,22 @@ static bool prime_replay_read_atom_graph(PrimeReplayComparison *c) {
             !prime_replay_read_scalar(c,"atom.flags",a->flags,b->flags)||
             !prime_replay_read_scalar(c,"atom.structural_facts",a->structural_facts,b->structural_facts)||
             !prime_replay_read_scalar(c,"atom.symbol",a->symbol_number,b->symbol_number)||
-            !prime_replay_read_identity(c,"atom.variable",CETTA_CHECKPOINT_VAR,a->var_id,b->var_id)||
+            !cetta_checkpoint_var(&c->read,"atom.variable",a->var_id,b->var_id)||
             !prime_replay_read_identity(c,"atom.arena",CETTA_CHECKPOINT_ARENA,a->arena_id,b->arena_id))return false;
         if((a->structural_facts&ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID)&&
             domain!=PRIME_REPLAY_ATOM_REGISTRY)
             return prime_replay_compare_refuse(c,"atom.native_handle","CapturedCapability");
-        if(a->flags&ATOM_FLAG_HASH_VALID) {
-            if(!prime_replay_read_scalar(c,"atom.hash_cache",a->hash_cache,b->hash_cache))return false;
-        } else if(!prime_replay_read_physical(c,"atom.inactive_hash_cache",a->hash_cache,b->hash_cache))return false;
+        uint32_t ah=atom_hash_cache_load(a),bh=atom_hash_cache_load(b);
+        if(ah||bh) {
+            if(!prime_replay_read_scalar(c,"atom.hash_cache",ah,bh))return false;
+        } else if(!prime_replay_read_physical(c,"atom.inactive_hash_cache",ah,bh))return false;
         if(a->kind==ATOM_SYMBOL&&
             (!prime_replay_read_symbol_payload(c,a,false)||
              !prime_replay_read_symbol_payload(c,b,true)))return false;
         if(a->kind==ATOM_VAR) {
-            uint32_t af=var_epoch_suffix(a->var_id),bf=var_epoch_suffix(b->var_id);
-            if((af&&(!ao||!arena_checkpoint_holds_frame(ao,af,&c->read,false)))||
-                (bf&&(!bo||!arena_checkpoint_holds_frame(bo,bf,&c->read,true))))
+            CettaFrameIdentity af=var_epoch_suffix(a->var_id),bf=var_epoch_suffix(b->var_id);
+            if((!cetta_frame_identity_is_none(af)&&(!ao||!arena_checkpoint_holds_frame(ao,af,&c->read,false)))||
+                (!cetta_frame_identity_is_none(bf)&&(!bo||!arena_checkpoint_holds_frame(bo,bf,&c->read,true))))
                 return prime_replay_compare_refuse(c,"atom.variable_owner","MissingFrameHold");
             if(!prime_replay_read_atom_domain(c,"atom.name_key",a->name_key,b->name_key,domain))return false;
         } else if(a->kind==ATOM_SYMBOL&&
@@ -503,16 +504,16 @@ static bool prime_replay_read_atom_graph(PrimeReplayComparison *c) {
  * stay rigid. Whole primitive charges are still compared separately. */
 static bool prime_replay_read_frame_authority(PrimeReplayComparison *c,
     PrimeReplayIdentityPair p) {
-    if(p.left>UINT32_MAX||p.right>UINT32_MAX)return false;
     uint32_t a=0u,b=0u;
-    if(!cetta_frame_identity_slot_count((uint32_t)p.left,&a)||
-        !cetta_frame_identity_slot_count((uint32_t)p.right,&b)||a!=b)
+    CettaFrameIdentity left={p.left},right={p.right};
+    if(!cetta_frame_identity_slot_count(left,&a)||
+        !cetta_frame_identity_slot_count(right,&b)||a!=b)
         return prime_replay_compare_refuse(c,"identity.frame","FrameAuthority");
     if(p.left!=p.right) {
         bool held=p.frame_owned;
         for(size_t j=0u;j<c->arena_count;j++) {
-            if(arena_checkpoint_holds_frame(c->arenas[j].left,(uint32_t)p.left,&c->read,false)&&
-                arena_checkpoint_holds_frame(c->arenas[j].right,(uint32_t)p.right,&c->read,true))held=true;
+            if(arena_checkpoint_holds_frame(c->arenas[j].left,left,&c->read,false)&&
+                arena_checkpoint_holds_frame(c->arenas[j].right,right,&c->read,true))held=true;
             if(c->refusal)return false;
         }
         if(!held)return prime_replay_compare_refuse(c,"identity.frame","UnheldFrameGeneration");
@@ -546,10 +547,8 @@ static bool prime_replay_read_identity_authority(PrimeReplayComparison *c,size_t
             continue;
         }
         if(p.role==CETTA_CHECKPOINT_VAR) {
-            if(var_base_id(p.left)!=var_base_id(p.right))
+            if(p.left!=p.right)
                 return prime_replay_compare_refuse(c,"identity.variable","VariableSourceIdentity");
-            if(!prime_replay_read_identity(c,"identity.variable_frame",CETTA_CHECKPOINT_FRAME,
-                var_epoch_suffix(p.left),var_epoch_suffix(p.right)))return false;
             continue;
         }
         if(p.role==CETTA_CHECKPOINT_FRAME) {

@@ -1,0 +1,14 @@
+(left 2)
+(left 1)
+[(answer Z)]
+[(Got (answer Z))]
+[(answer Z)]
+[((answer Z))]
+[(at a)]
+[30]
+[(answer x)]
+[(answer x)]
+[((answer x) (answer y))]
+[((answer x) (answer y))]
+[(answer a)]
+[(s (s leaf))]

@@ -7,7 +7,6 @@
 #include "utf8.h"
 
 #include <ctype.h>
-#include <errno.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -408,20 +407,36 @@ static Atom *str_to_number(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     if (!str_string(args[0], &text, &len))
         return str_expects(r, "expected a string");
     size_t i = 0u;
-    if (i < len && (text[i] == '-' || text[i] == '+'))
+    bool negative = i < len && text[i] == '-';
+    if (i < len && (negative || text[i] == '+'))
         i++;
     size_t digits_start = i;
-    while (i < len && text[i] >= '0' && text[i] <= '9')
+    uint64_t magnitude = 0u;
+    uint64_t limit = negative
+        ? (uint64_t)INT64_MAX + UINT64_C(1)
+        : (uint64_t)INT64_MAX;
+    bool fits_int64 = true;
+    while (i < len && text[i] >= '0' && text[i] <= '9') {
+        uint64_t digit = (uint64_t)(text[i] - '0');
+        if (fits_int64) {
+            if (magnitude > (limit - digit) / UINT64_C(10))
+                fits_int64 = false;
+            else
+                magnitude = magnitude * UINT64_C(10) + digit;
+        }
         i++;
-    char *copy = arena_alloc(a, len + 1u);
-    memcpy(copy, text, len);
-    copy[len] = '\0';
+    }
     if (i > digits_start && i == len) {
-        errno = 0;
-        char *end = NULL;
-        long long value = strtoll(copy, &end, 10);
-        if (errno == 0 && end == copy + len)
-            return atom_int(a, (int64_t)value);
+        if (fits_int64) {
+            int64_t value = negative
+                ? magnitude == (uint64_t)INT64_MAX + UINT64_C(1)
+                    ? INT64_MIN : -(int64_t)magnitude
+                : (int64_t)magnitude;
+            return atom_int(a, value);
+        }
+        char *copy = arena_alloc(a, len + 1u);
+        memcpy(copy, text, len);
+        copy[len] = '\0';
         return atom_bigint(a, copy[0] == '+' ? copy + 1 : copy);
     }
     bool saw_digit = i > digits_start;
@@ -444,6 +459,9 @@ static Atom *str_to_number(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     }
     if (!saw_digit || i != len)
         return str_refuses(r, "StrNotANumberV1", i);
+    char *copy = arena_alloc(a, len + 1u);
+    memcpy(copy, text, len);
+    copy[len] = '\0';
     double value = strtod(copy, NULL);
     if (isinf(value))
         return str_refuses(r, "StrNumberOutOfRangeV1", 0u);

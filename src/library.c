@@ -23,6 +23,7 @@
 #include "library_cwp.h"
 #include "library_space_service.h"
 #include "library_proc.h"
+#include "proc_child.h"
 #include "library_fs.h"
 #include "library_re.h"
 #include "library_proc_run.h"
@@ -2625,47 +2626,161 @@ static void drain_subprocess_output(
         output[used] = '\0';
 }
 
+/* Helper launches (git, build commands) go through the shared child setup
+ * (proc_child.h): nothing allocates after fork, every descriptor but the
+ * output pipe is closed on exec, signals are reset and stdin reads
+ * /dev/null; the child stays in the caller's process group.  The program is
+ * found on PATH and the environment built before the fork. */
+extern char **environ;
+
+static bool library_find_program(const char *name, char *out,
+                                 size_t out_size) {
+    if (strchr(name, '/')) {
+        int n = snprintf(out, out_size, "%s", name);
+        return n > 0 && (size_t)n < out_size && access(out, X_OK) == 0;
+    }
+    const char *path = getenv("PATH");
+    if (!path || !*path)
+        path = "/usr/local/bin:/usr/bin:/bin";
+    for (const char *entry = path;;) {
+        const char *colon = strchr(entry, ':');
+        size_t length = colon ? (size_t)(colon - entry) : strlen(entry);
+        int n = length
+            ? snprintf(out, out_size, "%.*s/%s", (int)length, entry, name)
+            : snprintf(out, out_size, "./%s", name);
+        if (n > 0 && (size_t)n < out_size && access(out, X_OK) == 0)
+            return true;
+        if (!colon)
+            return false;
+        entry = colon + 1;
+    }
+}
+
+/* The inherited environment with `extra` ("NAME=VALUE") in place of any
+ * entry of that name.  The caller frees the array, not its strings. */
+static char **library_child_environment(const char *extra) {
+    size_t name_length = extra ? (size_t)(strchr(extra, '=') - extra) : 0u;
+    size_t count = 0u;
+    while (environ && environ[count])
+        count++;
+    char **env = malloc((count + 2u) * sizeof(*env));
+    if (!env)
+        return NULL;
+    size_t kept = 0u;
+    for (size_t i = 0u; i < count; i++) {
+        if (extra && strncmp(environ[i], extra, name_length + 1u) == 0)
+            continue;
+        env[kept++] = environ[i];
+    }
+    if (extra)
+        env[kept++] = (char *)extra;
+    env[kept] = NULL;
+    return env;
+}
+
+/* Start `name` with `argv` in `cwd`, its output and errors into one pipe.
+ * Answers the child, or -1 with *not_found set when `name` is not on PATH.
+ * The child's setup report is read after reaping (library_reap_captured). */
+static pid_t library_spawn_captured(const char *name, char *argv[],
+                                    const char *cwd, const char *extra_env,
+                                    int *output_out, int *report_out,
+                                    bool *not_found_out) {
+    *output_out = *report_out = -1;
+    *not_found_out = false;
+    char program[PATH_MAX];
+    if (!library_find_program(name, program, sizeof program)) {
+        *not_found_out = true;
+        return -1;
+    }
+    char **env = library_child_environment(extra_env);
+    if (!env)
+        return -1;
+    int output[2] = {-1, -1}, report[2] = {-1, -1};
+    if (pipe2(output, O_CLOEXEC) != 0 ||
+        pipe2(report, O_CLOEXEC | O_NONBLOCK) != 0) {
+        if (output[0] >= 0) { close(output[0]); close(output[1]); }
+        free(env);
+        return -1;
+    }
+    sigset_t blocked, previous;
+    sigfillset(&blocked);
+    pthread_sigmask(SIG_SETMASK, &blocked, &previous);
+    pid_t pid = fork();
+    if (pid == 0)
+        cetta_proc_child_exec_group(program, argv, env, cwd ? cwd : ".",
+                                    -1, output[1], output[1], report[1], 0);
+    pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    free(env);
+    close(output[1]);
+    close(report[1]);
+    if (pid < 0) {
+        close(output[0]);
+        close(report[0]);
+        return -1;
+    }
+    *output_out = output[0];
+    *report_out = report[0];
+    return pid;
+}
+
+/* Reap `pid`; a setup failure the child reported reads as the exit codes
+ * a plain fork's child gave: 126 when its directory was unavailable, 127
+ * otherwise. */
+static bool library_reap_captured(pid_t pid, int report, int *status_out) {
+    int status = 0;
+    pid_t waited;
+    do waited = waitpid(pid, &status, 0); while (waited < 0 && errno == EINTR);
+    int stopped[2] = {0, 0};
+    ssize_t count = 0;
+    if (waited == pid)
+        do count = read(report, stopped, sizeof stopped);
+        while (count < 0 && errno == EINTR);
+    close(report);
+    if (waited != pid)
+        return false;
+    if (count == (ssize_t)sizeof stopped)
+        status = (stopped[0] == CETTA_PROC_CHILD_CWD ? 126 : 127) << 8;
+    *status_out = status;
+    return true;
+}
+
+/* Run git with `argv`, its output and errors into `errbuf`; false, with the
+ * reason in `errbuf`, when git could not be started or reaped. */
+static bool library_git_captured(char *argv[], char *errbuf,
+                                 size_t errbuf_sz, int *status_out) {
+    int output = -1, report = -1;
+    bool not_found = false;
+    pid_t pid = library_spawn_captured("git", argv, NULL,
+                                       "GIT_TERMINAL_PROMPT=0",
+                                       &output, &report, &not_found);
+    if (pid < 0) {
+        if (errbuf_sz > 0)
+            snprintf(errbuf, errbuf_sz, not_found
+                ? "git executable not found"
+                : "git-module! failed to spawn git");
+        return false;
+    }
+    drain_subprocess_output(output, errbuf, errbuf_sz);
+    close(output);
+    if (!library_reap_captured(pid, report, status_out)) {
+        if (errbuf_sz > 0)
+            snprintf(errbuf, errbuf_sz, "git-module! failed to wait for git");
+        return false;
+    }
+    return true;
+}
+
 static bool run_git_clone(const char *url, const char *dst,
                           char *errbuf, size_t errbuf_sz) {
-    int pipefd[2];
-    if (pipe(pipefd) != 0) {
-        if (errbuf_sz > 0) snprintf(errbuf, errbuf_sz, "git-module! failed to create pipe");
-        return false;
-    }
-
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        if (errbuf_sz > 0) snprintf(errbuf, errbuf_sz, "git-module! failed to spawn git");
-        return false;
-    }
-
-    if (pid == 0) {
-        setenv("GIT_TERMINAL_PROMPT", "0", 1);
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[0]);
-        close(pipefd[1]);
-        char *const argv[] = {
-            "git", "-c", "protocol.file.allow=always",
-            "clone", "--depth", "1",
-            (char *)url, (char *)dst,
-            NULL
-        };
-        execvp("git", argv);
-        _exit(127);
-    }
-
-    close(pipefd[1]);
-    drain_subprocess_output(pipefd[0], errbuf, errbuf_sz);
-    close(pipefd[0]);
-
+    char *argv[] = {
+        "git", "-c", "protocol.file.allow=always",
+        "clone", "--depth", "1",
+        (char *)url, (char *)dst,
+        NULL
+    };
     int status = 0;
-    if (waitpid(pid, &status, 0) < 0) {
-        if (errbuf_sz > 0) snprintf(errbuf, errbuf_sz, "git-module! failed to wait for git");
+    if (!library_git_captured(argv, errbuf, errbuf_sz, &status))
         return false;
-    }
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
         return true;
     }
@@ -2680,47 +2795,28 @@ static bool run_git_clone(const char *url, const char *dst,
 static bool run_petta_build_command(const char *repo_path,
                                     const char *build_command,
                                     char *errbuf, size_t errbuf_sz) {
-    int pipefd[2];
     pid_t pid;
 
     if (!build_command || !*build_command)
         return true;
-    if (pipe(pipefd) != 0) {
-        if (errbuf_sz > 0)
-            snprintf(errbuf, errbuf_sz,
-                     "git-import! failed to create build pipe");
-        return false;
-    }
-
-    pid = fork();
+    char *argv[] = {"sh", (char *)build_command, NULL};
+    int output = -1, report = -1;
+    bool not_found = false;
+    pid = library_spawn_captured("sh", argv, repo_path, NULL,
+                                 &output, &report, &not_found);
     if (pid < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
         if (errbuf_sz > 0)
-            snprintf(errbuf, errbuf_sz,
-                     "git-import! failed to spawn build");
+            snprintf(errbuf, errbuf_sz, not_found
+                ? "git-import! shell executable not found"
+                : "git-import! failed to spawn build");
         return false;
     }
-    if (pid == 0) {
-        if (chdir(repo_path) != 0)
-            _exit(126);
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[0]);
-        close(pipefd[1]);
-        char *const argv[] = {
-            "sh", (char *)build_command, NULL
-        };
-        execvp("sh", argv);
-        _exit(127);
-    }
 
-    close(pipefd[1]);
-    drain_subprocess_output(pipefd[0], errbuf, errbuf_sz);
-    close(pipefd[0]);
+    drain_subprocess_output(output, errbuf, errbuf_sz);
+    close(output);
 
     int status = 0;
-    if (waitpid(pid, &status, 0) < 0) {
+    if (!library_reap_captured(pid, report, &status)) {
         if (errbuf_sz > 0)
             snprintf(errbuf, errbuf_sz,
                      "git-import! failed to wait for build");
@@ -2764,50 +2860,36 @@ static bool run_git_arguments(
         return false;
     }
 
-    int pipefd[2];
-    if (pipe(pipefd) != 0) {
-        if (output && output_size > 0u)
-            snprintf(output, output_size, "failed to create git pipe");
-        return false;
+    char *argv[MAX_GIT_ARGUMENTS + 8u];
+    size_t argc = 0u;
+    argv[argc++] = (char *)"git";
+    argv[argc++] = (char *)"-c";
+    argv[argc++] = (char *)"protocol.file.allow=always";
+    if (repo_path) {
+        argv[argc++] = (char *)"-C";
+        argv[argc++] = (char *)repo_path;
     }
-    pid_t pid = fork();
+    for (size_t index = 0u; index < argument_count; index++)
+        argv[argc++] = (char *)arguments[index];
+    argv[argc] = NULL;
+    int pipe_out = -1, report = -1;
+    bool not_found = false;
+    pid_t pid = library_spawn_captured("git", argv, NULL,
+                                       "GIT_TERMINAL_PROMPT=0",
+                                       &pipe_out, &report, &not_found);
     if (pid < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
         if (output && output_size > 0u)
-            snprintf(output, output_size, "failed to spawn git");
+            snprintf(output, output_size, not_found
+                ? "git executable not found" : "failed to spawn git");
         return false;
     }
-    if (pid == 0) {
-        char *argv[MAX_GIT_ARGUMENTS + 8u];
-        size_t argc = 0u;
-        argv[argc++] = (char *)"git";
-        argv[argc++] = (char *)"-c";
-        argv[argc++] = (char *)"protocol.file.allow=always";
-        if (repo_path) {
-            argv[argc++] = (char *)"-C";
-            argv[argc++] = (char *)repo_path;
-        }
-        for (size_t index = 0u; index < argument_count; index++)
-            argv[argc++] = (char *)arguments[index];
-        argv[argc] = NULL;
 
-        setenv("GIT_TERMINAL_PROMPT", "0", 1);
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[0]);
-        close(pipefd[1]);
-        execvp("git", argv);
-        _exit(127);
-    }
-
-    close(pipefd[1]);
     if (output && output_size > 0u)
         output[0] = '\0';
     size_t used = 0u;
     char chunk[512];
     ssize_t received;
-    while ((received = read(pipefd[0], chunk, sizeof(chunk))) > 0) {
+    while ((received = read(pipe_out, chunk, sizeof(chunk))) > 0) {
         if (output && output_size > used + 1u) {
             size_t available = output_size - used - 1u;
             size_t copied = (size_t)received < available
@@ -2817,10 +2899,10 @@ static bool run_git_arguments(
             output[used] = '\0';
         }
     }
-    close(pipefd[0]);
+    close(pipe_out);
 
     int status = 0;
-    if (waitpid(pid, &status, 0) < 0) {
+    if (!library_reap_captured(pid, report, &status)) {
         if (output && output_size > 0u)
             snprintf(output, output_size, "failed to wait for git");
         return false;
@@ -3057,87 +3139,23 @@ done:
 
 static bool run_git_try_fetch_latest(const char *repo_path,
                                      char *errbuf, size_t errbuf_sz) {
-    int pipefd[2];
-    if (pipe(pipefd) != 0) {
-        if (errbuf_sz > 0) snprintf(errbuf, errbuf_sz, "git-module! failed to create pipe");
-        return false;
-    }
-
-    pid_t pid = fork();
-    if (pid < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        if (errbuf_sz > 0) snprintf(errbuf, errbuf_sz, "git-module! failed to spawn git");
-        return false;
-    }
-
-    if (pid == 0) {
-        setenv("GIT_TERMINAL_PROMPT", "0", 1);
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[0]);
-        close(pipefd[1]);
-        char *const argv[] = {
-            "git", "-C", (char *)repo_path,
-            "-c", "protocol.file.allow=always",
-            "fetch", "--depth", "1", "origin",
-            NULL
-        };
-        execvp("git", argv);
-        _exit(127);
-    }
-
-    close(pipefd[1]);
-    drain_subprocess_output(pipefd[0], errbuf, errbuf_sz);
-    close(pipefd[0]);
-
+    char *fetch[] = {
+        "git", "-C", (char *)repo_path,
+        "-c", "protocol.file.allow=always",
+        "fetch", "--depth", "1", "origin",
+        NULL
+    };
     int status = 0;
-    if (waitpid(pid, &status, 0) < 0) {
-        if (errbuf_sz > 0) snprintf(errbuf, errbuf_sz, "git-module! failed to wait for git");
+    if (!library_git_captured(fetch, errbuf, errbuf_sz, &status) ||
+        !(WIFEXITED(status) && WEXITSTATUS(status) == 0))
         return false;
-    }
-    if (!(WIFEXITED(status) && WEXITSTATUS(status) == 0)) {
-        return false;
-    }
-
-    if (pipe(pipefd) != 0) {
-        if (errbuf_sz > 0) snprintf(errbuf, errbuf_sz, "git-module! failed to create pipe");
-        return false;
-    }
-
-    pid = fork();
-    if (pid < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
-        if (errbuf_sz > 0) snprintf(errbuf, errbuf_sz, "git-module! failed to spawn git");
-        return false;
-    }
-
-    if (pid == 0) {
-        setenv("GIT_TERMINAL_PROMPT", "0", 1);
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[0]);
-        close(pipefd[1]);
-        char *const argv[] = {
-            "git", "-C", (char *)repo_path,
-            "reset", "--hard", "FETCH_HEAD",
-            NULL
-        };
-        execvp("git", argv);
-        _exit(127);
-    }
-
-    close(pipefd[1]);
-    drain_subprocess_output(pipefd[0], errbuf, errbuf_sz);
-    close(pipefd[0]);
-
-    status = 0;
-    if (waitpid(pid, &status, 0) < 0) {
-        if (errbuf_sz > 0) snprintf(errbuf, errbuf_sz, "git-module! failed to wait for git");
-        return false;
-    }
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    char *reset[] = {
+        "git", "-C", (char *)repo_path,
+        "reset", "--hard", "FETCH_HEAD",
+        NULL
+    };
+    return library_git_captured(reset, errbuf, errbuf_sz, &status) &&
+           WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 static bool upsert_module_mount(CettaLibraryContext *ctx, const char *namespace_name,
@@ -12277,4 +12295,26 @@ void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx
     for (size_t i = 0u; i < CETTA_PETTA_MEMO_CONTROL_COUNT; i++)
         if (ctx->petta_memo.imported_controls[i])
             cetta_storage_refuse(census, "PrivateServiceProfileChanged");
+}
+
+bool cetta_library_call_native_prepared_view(
+    CettaLibraryContext *ctx, Space *space,
+    Arena *a, Atom *head, Atom **args,
+    uint32_t nargs, CettaCallOutcome *out) {
+    if (!ctx || !a || !head || !out)
+        return false;
+#if CETTA_BUILD_WITH_JSON_GSLT
+    if (ctx->active_mask & CETTA_LIBRARY_JSON) {
+        Atom *value = NULL;
+        if (cetta_json_library_borrowed_value_v1(
+                ctx->json_runtime, a, head, args, nargs, &value)) {
+            if (!value)
+                return false;
+            *out = cetta_call_completed_value(value);
+            return true;
+        }
+    }
+#endif
+    return cetta_library_call_native(
+        ctx, space, a, head, args, nargs, out);
 }
