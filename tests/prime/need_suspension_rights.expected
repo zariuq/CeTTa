@@ -27,3 +27,6 @@
 [()]
 [(force (suspension:restrict (delay (rights-bump)) (suspension:rights inspect)))]
 [0]
+[()]
+[()]
+[(suspension:view 15)]

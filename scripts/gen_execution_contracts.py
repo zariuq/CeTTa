@@ -66,14 +66,25 @@ PETTA_FOLD_EXPECTED = (
 ROW_CLASS_PROBES = {"malformed": "!decoded", "cyclic": "cyclic", "valid": None}
 
 # Compiler backend for the register-expression GSLT.  The presentation names
-# semantic instructions; this table is their GMP interpretation.  Generated C
-# executes these arms directly, so the spec produces the hot-path program.
+# semantic instructions; arithmetic ones are operations of the exact-integer
+# theory, computed by its one implementation (src/exact_integer.h) on GMP
+# and on tagged small integers alike.  Comparisons are interpreted here.
+REGISTER_INSTRUCTION_OPERATION: dict[str, str] = {
+    "integer-add": "CETTA_EXACT_INTEGER_V1_ADD",
+    "integer-subtract": "CETTA_EXACT_INTEGER_V1_SUB",
+    "integer-multiply": "CETTA_EXACT_INTEGER_V1_MUL",
+    "integer-remainder": "CETTA_EXACT_INTEGER_V1_TREM",
+    "integer-floor-modulo": "CETTA_EXACT_INTEGER_V1_FREM",
+}
+
 REGISTER_INSTRUCTION_C: dict[str, tuple[str, str]] = {
-    "integer-add": ("exact-integer", "mpz_add(integer_out, left, right);"),
-    "integer-subtract": (
-        "exact-integer", "mpz_sub(integer_out, left, right);"),
-    "integer-multiply": (
-        "exact-integer", "mpz_mul(integer_out, left, right);"),
+    **{
+        instruction: (
+            "exact-integer",
+            f"if (!cetta_exact_integer_big({operation}, left, right, "
+            "integer_out)) { return false; }")
+        for instruction, operation in REGISTER_INSTRUCTION_OPERATION.items()
+    },
     "integer-equal": ("boolean", "*boolean_out = mpz_cmp(left, right) == 0;"),
     "integer-less": ("boolean", "*boolean_out = mpz_cmp(left, right) < 0;"),
     "integer-greater": ("boolean", "*boolean_out = mpz_cmp(left, right) > 0;"),
@@ -81,44 +92,26 @@ REGISTER_INSTRUCTION_C: dict[str, tuple[str, str]] = {
         "boolean", "*boolean_out = mpz_cmp(left, right) <= 0;"),
     "integer-greater-equal": (
         "boolean", "*boolean_out = mpz_cmp(left, right) >= 0;"),
-    "integer-remainder": (
-        "exact-integer",
-        "if (mpz_sgn(right) == 0) { return false; } "
-        "mpz_tdiv_r(integer_out, left, right);"),
-    "integer-floor-modulo": (
-        "exact-integer",
-        "if (mpz_sgn(right) == 0) { return false; } "
-        "mpz_fdiv_r(integer_out, left, right);"),
 }
 
 # Tagged-small-integer interpretation of the same semantic instructions.
-# Arithmetic promotes to the GMP arm exactly on signed overflow; comparisons
-# never promote.  Both programs are emitted from the one instruction list.
+# Arithmetic promotes to the GMP arm exactly when the exact result does not
+# fit; a zero divisor declines on both arms; comparisons never promote.
 REGISTER_INSTRUCTION_SMALL_C: dict[str, str] = {
-    "integer-add": (
-        "*promote_out = __builtin_add_overflow(left, right, integer_out);"),
-    "integer-subtract": (
-        "*promote_out = __builtin_sub_overflow(left, right, integer_out);"),
-    "integer-multiply": (
-        "*promote_out = __builtin_mul_overflow(left, right, integer_out);"),
+    **{
+        instruction: (
+            f"switch (cetta_exact_integer_small({operation}, left, right, "
+            "integer_out)) { "
+            "case CETTA_EXACT_INTEGER_UNDEFINED: return false; "
+            "case CETTA_EXACT_INTEGER_PROMOTE: *promote_out = true; break; "
+            "case CETTA_EXACT_INTEGER_VALUE: break; }")
+        for instruction, operation in REGISTER_INSTRUCTION_OPERATION.items()
+    },
     "integer-equal": "*boolean_out = left == right;",
     "integer-less": "*boolean_out = left < right;",
     "integer-greater": "*boolean_out = left > right;",
     "integer-less-equal": "*boolean_out = left <= right;",
     "integer-greater-equal": "*boolean_out = left >= right;",
-    "integer-remainder": (
-        "if (right == 0) { return false; } "
-        "*integer_out = (left == INT64_MIN && right == -1) "
-        "? 0 : left % right;"),
-    "integer-floor-modulo": (
-        "if (right == 0) { return false; } "
-        "if (left == INT64_MIN && right == -1) { "
-        "*integer_out = 0; "
-        "} else { "
-        "*integer_out = left % right; "
-        "if (*integer_out != 0 && "
-        "((*integer_out < 0) != (right < 0))) *integer_out += right; "
-        "}"),
 }
 
 REGISTER_INSTRUCTION_ATOM_C: dict[str, tuple[str, str]] = {
@@ -133,6 +126,7 @@ PREPARED_PURE_INTRINSIC_INSTRUCTIONS = {
     "deconstruct-nonempty-expression",
     "construct-expression-cons",
     "concatenate-expressions",
+    "library-value-dispatch",
 }
 PREPARED_PURE_INTRINSIC_OPERAND_DISCIPLINES = {"strict-all"}
 
@@ -1691,6 +1685,8 @@ def render_header(spec: Spec) -> str:
 
 #include <stdbool.h>
 #include <stdint.h>
+
+#include "../exact_integer.h"
 
 typedef enum {{
 {effect_enum}

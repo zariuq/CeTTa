@@ -3048,7 +3048,7 @@ static bool he_canonical_call_compilable(Atom *atom) {
         atom->expr.elems[0]->kind != ATOM_SYMBOL)
         return false;
     SymbolId head = atom_symbol_current_id(atom->expr.elems[0]);
-    return !is_grounded_op(head) && !symbol_id_is_builtin(head);
+    return !is_grounded_op(head) && !symbol_id_is_builtin_for(head, eval_current_language_id());
 }
 
 static void he_canonical_call(HeCanonicalFrame *frame) {

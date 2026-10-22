@@ -298,7 +298,7 @@ static const HeValueHeadClass *he_value_head_class(Space *s, Arena *a,
     HeValueHeadClass class = {
         .head = atom_symbol_current_id(head), .arity = arity, .state = HE_VALUE_HEAD_OTHER,
     };
-    if (!symbol_id_is_builtin(atom_symbol_current_id(head)) && !is_grounded_op(atom_symbol_current_id(head)) &&
+    if (!symbol_id_is_builtin_for(atom_symbol_current_id(head), eval_current_language_id()) && !is_grounded_op(atom_symbol_current_id(head)) &&
         !atom_has_registry_refs(head)) {
         Atom **types = NULL;
         uint32_t count = eval_get_atom_types_profiled(s, a, head, &types);

@@ -2,6 +2,8 @@
 #include "petta_specializer.h"
 
 #include "eval.h"
+#include "fixpoint.h"
+#include "symbol_index.h"
 #include "grounded.h"
 #include "match.h"
 #include "petta_semantics.h"
@@ -331,7 +333,7 @@ static void petta_specializer_trace_variables(Atom *root) {
                 atom_symbol_current_id(atom) == SYMBOL_ID_NONE
                     ? "<structural>"
                     : atom_symbol_bytes(atom),
-                (uint64_t)atom->var_id);
+                atom->var_id.base);
             continue;
         }
         if (atom->kind != ATOM_EXPR)
@@ -405,10 +407,10 @@ static bool petta_symbol_vector_push_unique(
 
 static bool petta_var_vector_contains(
     const PettaVarVector *vector, VarId variable) {
-    if (!vector || variable == VAR_ID_NONE)
+    if (!vector || var_id_is_none(variable))
         return false;
     for (size_t index = 0u; index < vector->len; index++) {
-        if (vector->items[index] == variable)
+        if (var_id_eq(vector->items[index], variable))
             return true;
     }
     return false;
@@ -416,7 +418,7 @@ static bool petta_var_vector_contains(
 
 static bool petta_var_vector_push_unique(
     PettaVarVector *vector, VarId variable) {
-    if (!vector || variable == VAR_ID_NONE)
+    if (!vector || var_id_is_none(variable))
         return false;
     if (petta_var_vector_contains(vector, variable))
         return true;
@@ -643,7 +645,7 @@ static bool petta_find_variable_path(
          cursor++) {
         PettaPathSearchItem *item = &search.items[cursor];
         if (item->atom->kind == ATOM_VAR &&
-            item->atom->var_id == variable) {
+            var_id_eq(item->atom->var_id, variable)) {
             found = cursor;
             break;
         }
@@ -853,7 +855,7 @@ static bool petta_atom_contains_variable(
     while (stack.len > 0u) {
         Atom *atom = stack.items[--stack.len];
         if (atom->kind == ATOM_VAR &&
-            atom->var_id == variable) {
+            var_id_eq(atom->var_id, variable)) {
             free(stack.items);
             return true;
         }
@@ -885,7 +887,7 @@ static bool petta_variable_is_direct_callable(
             continue;
         if (atom->expr.len > 0u &&
             atom->expr.elems[0]->kind == ATOM_VAR &&
-            atom->expr.elems[0]->var_id == variable) {
+            var_id_eq(atom->expr.elems[0]->var_id, variable)) {
             free(stack.items);
             return true;
         }
@@ -1542,18 +1544,6 @@ typedef struct {
     PettaSymbolVector forwards;
 } PettaRelationRelevanceNode;
 
-enum { PETTA_RELATION_RELEVANCE_NODE_LIMIT = 4096 };
-
-static size_t petta_relation_relevance_node_find(
-    const PettaRelationRelevanceNode *nodes, size_t len,
-    SymbolId symbol) {
-    for (size_t index = 0u; index < len; index++) {
-        if (nodes[index].symbol == symbol)
-            return index;
-    }
-    return SIZE_MAX;
-}
-
 /* Read every source equation of one relation into its node. */
 static bool petta_relation_relevance_node_scan(
     PettaSpecializerContext *context,
@@ -1646,14 +1636,17 @@ petta_relation_specialization_relevance(
         return cached;
 
     PettaRelationRelevanceNode *nodes = NULL;
+    CettaSymbolIndex by_symbol = {0};
     size_t len = 0u;
     size_t cap = 0u;
     PettaRelationRelevance result = PETTA_RELATION_RELEVANCE_UNKNOWN;
     bool ok = petta_reserve(
         (void **)&nodes, &cap, 1u, sizeof(*nodes));
     bool source_has_equation = false;
-    if (ok)
+    if (ok) {
         nodes[len++] = (PettaRelationRelevanceNode){.symbol = source};
+        ok = cetta_symbol_index_put(&by_symbol, source, 0u);
+    }
     for (size_t next = 0u; ok && next < len; next++) {
         /* A stored callee fact is already this fixed point's answer. */
         if (nodes[next].cached)
@@ -1671,19 +1664,21 @@ petta_relation_specialization_relevance(
         for (size_t index = 0u;
              ok && index < nodes[next].forwards.len; index++) {
             SymbolId callee = nodes[next].forwards.items[index];
-            if (petta_relation_relevance_node_find(
-                    nodes, len, callee) != SIZE_MAX)
+            if (cetta_symbol_index_find(&by_symbol, callee) != SIZE_MAX)
                 continue;
             PettaRelationRelevance known =
                 PETTA_RELATION_RELEVANCE_UNKNOWN;
-            if (len >= PETTA_RELATION_RELEVANCE_NODE_LIMIT ||
-                !petta_reserve(
+            if (!petta_reserve(
                     (void **)&nodes, &cap, len + 1u,
                     sizeof(*nodes))) {
                 ok = false;
                 break;
             }
             nodes[len] = (PettaRelationRelevanceNode){.symbol = callee};
+            if (!cetta_symbol_index_put(&by_symbol, callee, len)) {
+                ok = false;
+                break;
+            }
             if (petta_relation_relevance_cache_lookup(
                     program, callee, &known)) {
                 nodes[len].direct =
@@ -1697,35 +1692,47 @@ petta_relation_specialization_relevance(
     if (ok && source_has_equation &&
         space_program_token_eq(
             space_program_token(context->space), program)) {
-        /* Two least fixed points: `possible` treats unreadable bodies as
-         * relevant; `certain` asks whether relevance holds without them. */
-        for (size_t index = 0u; index < len; index++) {
-            nodes[index].possible =
-                nodes[index].direct || nodes[index].unknown;
-            nodes[index].certain = nodes[index].direct;
-        }
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            for (size_t index = 0u; index < len; index++) {
-                PettaRelationRelevanceNode *node = &nodes[index];
-                for (size_t edge = 0u;
-                     edge < node->forwards.len; edge++) {
-                    size_t target = petta_relation_relevance_node_find(
-                        nodes, len, node->forwards.items[edge]);
-                    if (target == SIZE_MAX)
-                        continue;
-                    if (!node->possible && nodes[target].possible) {
-                        node->possible = true;
-                        changed = true;
-                    }
-                    if (!node->certain && nodes[target].certain) {
-                        node->certain = true;
-                        changed = true;
-                    }
-                }
+        /* Two least fixed points over the explored forwards (fixpoint.h):
+         * `possible` treats unreadable bodies as relevant; `certain` asks
+         * whether relevance holds without them. */
+        size_t edges = 0u;
+        for (size_t at = 0u; at < len; at++)
+            edges += nodes[at].forwards.len;
+        size_t *first = malloc((len + 1u) * sizeof(*first));
+        size_t *targets = malloc((edges ? edges : 1u) * sizeof(*targets));
+        bool *possible = malloc(len * sizeof(*possible));
+        bool *certain = malloc(len * sizeof(*certain));
+        ok = first && targets && possible && certain;
+        size_t used = 0u;
+        for (size_t at = 0u; ok && at < len; at++) {
+            first[at] = used;
+            for (size_t edge = 0u; edge < nodes[at].forwards.len; edge++) {
+                size_t target = cetta_symbol_index_find(
+                    &by_symbol, nodes[at].forwards.items[edge]);
+                if (target != SIZE_MAX)
+                    targets[used++] = target;
             }
+            possible[at] = nodes[at].direct || nodes[at].unknown;
+            certain[at] = nodes[at].direct;
         }
+        if (ok) {
+            first[len] = used;
+            CettaFixpointGraph graph = {len, first, targets};
+            ok = cetta_fixpoint_least(&graph, possible) &&
+                 cetta_fixpoint_least(&graph, certain);
+        }
+        for (size_t at = 0u; ok && at < len; at++) {
+            nodes[at].possible = possible[at];
+            nodes[at].certain = certain[at];
+        }
+        free(first);
+        free(targets);
+        free(possible);
+        free(certain);
+    }
+    if (ok && source_has_equation &&
+        space_program_token_eq(
+            space_program_token(context->space), program)) {
         for (size_t index = 0u; index < len; index++) {
             PettaRelationRelevance relevance =
                 nodes[index].certain
@@ -1743,6 +1750,7 @@ petta_relation_specialization_relevance(
     for (size_t index = 0u; index < len; index++)
         free(nodes[index].forwards.items);
     free(nodes);
+    cetta_symbol_index_free(&by_symbol);
     return result;
 }
 
@@ -1928,7 +1936,7 @@ static BindingValue petta_binding_value_child(
         BindingValue parent, Atom *child) {
     return binding_value_is_contextual(parent)
         ? binding_value_from_context_kind(
-              child, parent.epoch, parent.kind)
+              child, binding_value_epoch(parent), binding_value_kind(parent))
         : binding_value_from_atom(child);
 }
 
@@ -3096,7 +3104,7 @@ static bool petta_specializer_var_selected(
     if (!atom || atom->kind != ATOM_VAR)
         return false;
     for (size_t index = 0u; index < selected_len; index++) {
-        if (selected[index] == atom->var_id)
+        if (var_id_eq(selected[index], atom->var_id))
             return true;
     }
     return false;

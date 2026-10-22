@@ -356,26 +356,24 @@ def lower(text: str, external_heads: tuple[str, ...] = (),
     translated = [adapter.declaration(adapter.error_view(node) if capture_external_errors else node)
                   for node in forms]
     if adapter.captured_calls:
-        # Each declared deterministic operation is evaluated once. The fresh
-        # private space carries its successful value across if-error's raw
-        # status arms. No speculative second file read is performed.
-        box, value, status = map(Symbol, ("$box", "$value", "$status"))
-        result_tag = Symbol(adapter.state_name + ":CapturedValue")
+        # Observe each declared finite deterministic operation once. The
+        # result bag keeps an Error passive until its presence is inspected;
+        # an unobserved stored value could escape its handler later.
+        value, source, reason, unexpected = map(
+            Symbol, ("$value", "$source", "$reason", "$unexpected"))
         error_tag = Symbol(adapter.state_name + ":SourceError")
         helpers = []
         for head, arity in sorted(adapter.captured_calls):
             arguments = [Symbol("$argument" + str(i)) for i in range(arity)]
             alias = adapter.state_name + ":external:" + head + ":" + str(arity)
-            attempted = form("let", value, form(head, *arguments),
-                             form("add-atom", box, [result_tag, value]))
             failed = form("function", form("return", [error_tag, Symbol(head),
                                                         Symbol("ExternalFailure")]))
-            success = form("match", box, [result_tag, value], value)
-            body = form("let", box, form("new-space"),
-                form("let", status, form("if-error", attempted,
-                                          Symbol("Failed"), Symbol("Succeeded")),
-                     form("case", status, [[Symbol("Failed"), failed],
-                                            [Symbol("Succeeded"), success]])))
+            body = form("case", form("collapse", form(head, *arguments)),
+                        [[[[Symbol("Error"), source, reason]], failed],
+                         [[value], form("function", form("return", value))],
+                         [[], form("superpose", [])],
+                         [unexpected, form("Error", Symbol(head),
+                                           Symbol("NonUniqueExternalResult"))]])
             helpers.append(form("=", form(alias, *arguments), body))
         translated = helpers + translated
     if adapter.sequence_primitives:

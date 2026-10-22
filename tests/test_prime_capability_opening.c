@@ -78,7 +78,7 @@ static bool cell_projection(Arena *arena) {
 static bool same_spelling_cell_projection(Arena *arena) {
     Atom *capture = atom_var_with_id(arena, "captured-name", fresh_var_id());
     Atom *caller_variable = atom_var_with_id(arena, "captured-name", fresh_var_id());
-    assert(capture && caller_variable && capture->var_id != caller_variable->var_id);
+    assert(capture && caller_variable && !var_id_eq(capture->var_id, caller_variable->var_id));
     PrimeNeedCellView cell = {.origin = capture};
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
     VarId captured_id = capture->var_id;
@@ -168,8 +168,10 @@ static bool constrained_projection(Arena *arena, unsigned mode, bool bound_root)
 
 static bool exact_body_resolves_contextual_alias(Arena *arena) {
     CettaFrameIdentityScope identities = {0};
-    CettaFrameIdentity outer_epoch = 0u, inner_epoch = 0u;
-    VarId outer_source = 1u, inner_source = 2u;
+    CettaFrameIdentity outer_epoch = CETTA_FRAME_IDENTITY_NONE;
+    CettaFrameIdentity inner_epoch = CETTA_FRAME_IDENTITY_NONE;
+    VarId outer_source = var_id_from_base(1u);
+    VarId inner_source = var_id_from_base(2u);
     assert(cetta_frame_identity_scope_try(&identities, &outer_epoch));
     assert(cetta_frame_identity_scope_try(&identities, &inner_epoch));
     Atom *inner = atom_var_with_id(arena, "exact-inner", inner_source);
@@ -195,7 +197,7 @@ static bool exact_body_resolves_contextual_alias(Arena *arena) {
     Atom *expected = atom_expr3(arena, atom_symbol(arena, "Pair"), seven, seven);
     Atom *single_pass = bindings_apply_projected_body_visible(&captured, arena, body);
     bool ok = binding_value_is_contextual(alias) &&
-        binding_value_frame_ref(alias).identity == inner_epoch &&
+        cetta_frame_identity_eq(binding_value_frame_ref(alias).identity, inner_epoch) &&
         instantiated && atom_eq(actual, expected) && !atom_eq(single_pass, expected);
     bindings_free(&captured);
     bindings_free(&full);
@@ -239,11 +241,11 @@ static bool capture_follows_capabilities_in_bound_values(Arena *arena) {
     return ok;
 }
 
-static bool projection_frame(const Bindings *bindings, uint32_t epoch,
+static bool projection_frame(const Bindings *bindings, CettaFrameIdentity epoch,
                              BindingsFrameStateView *view) {
     BindingsFrameStateIterator iterator = {.bindings = bindings};
     while (bindings_frame_state_next(&iterator, view))
-        if (view->ref.identity == epoch)
+        if (cetta_frame_identity_eq(view->ref.identity, epoch))
             return true;
     return false;
 }
@@ -326,7 +328,7 @@ static bool unbound_frame_projection(Arena *arena, unsigned mode,
         kept.has_activation_write_boundary == before.has_activation_write_boundary &&
         kept.activation_write_boundary == before.activation_write_boundary &&
         bindings_frame_state_read_slot(&kept, 1u, &slot) &&
-        slot.var_id == root->var_id && !slot.value.skeleton &&
+        var_id_eq(slot.var_id, root->var_id) && !slot.value.skeleton &&
         !projection_frame(&projected, private_epoch, &private_frame) &&
         !bindings_lookup_value_id(&projected, var_epoch_id(ids[0], epoch)).skeleton &&
         bindings_activation_view_available(&activation, &projected) &&

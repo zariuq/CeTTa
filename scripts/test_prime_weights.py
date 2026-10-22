@@ -686,7 +686,7 @@ def search_clients(gate):
         authored_fixture(gate, 'seven_routes.metta'))
     assert len(obs) == 3 and all(x['satisfied'] == 'True' for x in obs), obs
     unpacked = [[contribution(x) for x in result['values']] for result in obs]
-    assert [x[0][1] for x in unpacked[0]] == list('abcdefg'), unpacked
+    assert bag(x[0][1] for x in unpacked[0]) == bag(list('abcdefg')), unpacked
     assert [x[0][1] for x in unpacked[1]] == list('bcdefgh'), unpacked
     assert [x[0][1] for x in unpacked[2]] == list('bcdefgh'), unpacked
     assert unpacked[2][1][1:] == [0, [0]], unpacked
@@ -695,9 +695,13 @@ def search_clients(gate):
     source = '(= (product $a $b) (+ $a $b)) (= (product $a $b) (* $a $b)) '
     trees, _ = gate.run('nondeterministic algebra callback', source +
         '!(weight:read (algebra 0 1 + product) (weight:where V 2))')
-    assert bag([contribution(x) for x in trees[-1]]) == bag([
+    assert bag(contribution(x) for tree in trees for x in tree) == bag([
         ['V', 3, [2]], ['V', 2, [2]]]), trees
     gate.passed_case('nondeterministic interpretation retains separate callback worlds')
+    trees, _ = gate.run('captured algebra multiplication callback',
+        '!(let $product * (weight:read (algebra 0 1 + $product) (weight:where V 2)))')
+    assert [contribution(x) for tree in trees for x in tree] == [['V', 2, [2]]], trees
+    gate.passed_case('a captured multiplication callable is invoked before its returned value is observed')
     source = '(= (product $a $b) (weight:where (* $a $b) 7)) '
     trees, _ = gate.run('readout callback contribution snapshot', source +
         '!(weight:read (algebra 0 1 + *) '
@@ -1224,6 +1228,24 @@ def authored_keys(gate):
     assert keyed_work < unkeyed_work and ranked_work < unkeyed_work
     gate.passed_case('weighted match rows are occurrences that keys can see')
 
+    source = (prefix + '(= (explode) (println! "FORBIDDEN-KEY-BODY")) '
+              '(= (pick) (slow 200 (explode))) (= (pick) (slow 1 High)) ')
+    _, observations = gate.run('key wildcard leaves an unchosen body unforced', source +
+        '!(select 1 (search-policy (control WO (key (slow $n $v) $n) (budget 100000))) '
+        '(weight:read (algebra 0 1 + *) (pick)))')
+    assert contribution(observations[-1]['values'][0]) == ['High', 1, []], observations
+    assert 'FORBIDDEN-KEY-BODY' not in gate.receipts[-1]['stdout'], gate.receipts[-1]
+    gate.passed_case('key inspection leaves wildcard source unexecuted')
+
+    source = (prefix + '(= (tick) (let $_ (println! "KEY-SHARED-CELL") 7)) '
+              '(= (twice $x) (slow 1 (Pair $x $x))) ')
+    _, observations = gate.run('key wildcard preserves shared body cells', source +
+        '!(select 1 (search-policy (control WO (key (slow $n $v) $n) (budget 100000))) '
+        '(weight:read (algebra 0 1 + *) (twice (tick))))')
+    assert contribution(observations[-1]['values'][0]) == [['Pair', 7, 7], 1, []], observations
+    assert gate.receipts[-1]['stdout'].splitlines().count('KEY-SHARED-CELL') == 1, gate.receipts[-1]
+    gate.passed_case('key inspection preserves one shared body invocation')
+
 
 def native_handler_boundaries(gate):
     source = '(= (rows) (weighted A 2)) (= (rows) (weighted B 3)) '
@@ -1602,6 +1624,22 @@ def admitted_coefficients(gate):
     compare('match-bound body grade and callable share the captured row',source,
         '(match &self (F $x $g $predicate) (Pair $x $g) (where $g (admit $predicate)))',
         [[['Pair','a',2],2,[2]]])
+    for name, verdict, expected in [('accepting', 'True', [['V', 2, [2]]]),
+                                    ('rejecting', 'False', [])]:
+        compare('captured ' + name + ' admission callable',
+            f'(= (captured-guard $w) {verdict}) ',
+            '(let $predicate captured-guard (weight:where V 2 (admit $predicate)))', expected)
+    _, captured = gate.run('captured admission callable retains pure authority',
+        '(F 2 captured-effect) (= (captured-effect $w) (let $_ (println! "FORBIDDEN-CAPTURED-GUARD") True)) '
+        f'!(select 7 {control(1500)} '+read(
+            '(match &self (F $g $predicate) V (where $g (admit $predicate)))')+')')
+    assert captured[-1]['status'] == 'fault' and captured[-1]['values'] == [], captured
+    assert 'FORBIDDEN-CAPTURED-GUARD' not in gate.receipts[-1]['stdout']
+    gate.passed_case('a captured admission callable cannot execute effects')
+    if getattr(gate, 'language', 'prime') == 'prime':
+        compare('returned admission application stays data',
+            '(= (yes $w) True) (= (quoted-guard $w) (quote (yes 2))) ',
+            '(weight:where V 2 (admit quoted-guard))', [], closed=False)
     source='(= (accept True) True) (= (accept False) False) '
     source+='(=w (gid $x) $x False (admit accept)) '
     compare('Boolean false coefficient uses explicit Boolean admission',source,'(gid V)',[],

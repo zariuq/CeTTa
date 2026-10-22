@@ -663,11 +663,17 @@ int symbol_compare(const SymbolTable *st, SymbolId left, SymbolId right) {
 }
 
 bool symbol_id_is_builtin(SymbolId id) {
-    return id != SYMBOL_ID_NONE &&
-           (id <= g_builtin_syms.native_handle ||
-            id == g_builtin_syms.empty_form ||
-            (id >= g_builtin_syms.work_new &&
-             id <= g_builtin_syms.work_exists));
+    /* Registration owns membership, including append-only extensions and
+     * names interned before builtin initialization. IDs are not permissions. */
+    return (symbol_flags(g_symbols, id) & CETTA_SYMBOL_FLAG_BUILTIN) != 0u;
+}
+
+bool symbol_id_is_builtin_for(SymbolId id, CettaLanguageId language) {
+    uint32_t flags = symbol_flags(g_symbols, id);
+    return (flags & CETTA_SYMBOL_FLAG_BUILTIN) != 0u &&
+        (flags & CETTA_SYMBOL_FLAG_BUILTIN_CONSTRUCTOR) == 0u &&
+        ((flags & CETTA_SYMBOL_FLAG_PETTA_ONLY_BUILTIN) == 0u ||
+         language == CETTA_LANGUAGE_PETTA);
 }
 
 uint64_t symbol_hash_value(const SymbolTable *st, SymbolId id) {
@@ -769,6 +775,15 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
     symbol_table_add_flags(st, builtins->field, CETTA_SYMBOL_FLAG_BUILTIN);
     CETTA_BUILTIN_SYMBOLS(CETTA_MARK_BUILTIN)
 #undef CETTA_MARK_BUILTIN
+
+#define CETTA_MARK_PETTA_ONLY(field) \
+    symbol_table_add_flags(st, builtins->field, CETTA_SYMBOL_FLAG_PETTA_ONLY_BUILTIN);
+    CETTA_PETTA_ONLY_BUILTIN_SYMBOL_FIELDS(CETTA_MARK_PETTA_ONLY)
+#undef CETTA_MARK_PETTA_ONLY
+#define CETTA_MARK_CONSTRUCTOR(field) \
+    symbol_table_add_flags(st, builtins->field, CETTA_SYMBOL_FLAG_BUILTIN_CONSTRUCTOR);
+    CETTA_BUILTIN_CONSTRUCTOR_SYMBOL_FIELDS(CETTA_MARK_CONSTRUCTOR)
+#undef CETTA_MARK_CONSTRUCTOR
 
 #define CETTA_MARK_STATIC_GROUNDED(field) \
     symbol_table_add_flags( \

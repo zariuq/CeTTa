@@ -142,7 +142,7 @@ static const char *ok_message="{\"ok\":true,\"result\":{\"message_id\":9,\"chat\
 static Atom *json_update(const char *json) {
     char escaped[1100],expr[1200],*o=escaped;
     for (const char *p=json;*p;++p) { if (*p=='"' || *p=='\\') *o++='\\'; *o++=*p; } *o=0;
-    snprintf(expr,sizeof(expr),"(telegram:normalize (json:parse \"%s\") 0)",escaped);
+    snprintf(expr,sizeof(expr),"(telegram:normalize (json:inspect \"%s\") 0)",escaped);
     EvalOutcome r; eval_outcome_init(&r);
     eval_top_speculative(&context,&program,&scratch,&persistent,&registry,parse(expr),2000000,&r);
     assert(r.completion==CETTA_EVAL_COMPLETE && r.results.len==1);

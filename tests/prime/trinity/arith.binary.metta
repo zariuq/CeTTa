@@ -696,7 +696,8 @@
    (= (spin (bit0 $p)) (spin (bit0 $p)))
    (= (spin (bit1 $p)) (spin $p))))
 ; A gcd that swaps its arguments: the calls do not go down the bound, and
-; without proofs of the obligations the verdict states them, one per call.
+; without proofs the verdict states two obligations, one per recursive call.
+; Inferred scope metadata is not a third mathematical obligation.
 !(let $r (try (hol:define &self gcd-swap (-> pos pos pos)
    (by bound num (lam x (lam y (add (pos-digits x) (pos-digits y)))))
    (= (gcd-swap one $y) one)

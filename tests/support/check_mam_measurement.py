@@ -7,7 +7,7 @@ import resource
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "benchmarks/mam_families"))
-from run import paired_measure
+from run import paired_measure, runtime_counter_receipt, runtime_counters
 from cost_gate import instruction_gate
 
 
@@ -45,11 +45,51 @@ def check_instruction_gate():
     print("PASS: calibrated paired instruction gate rejects regressions, uncertainty and invalid observations")
 
 
+def check_runtime_counters():
+    observed = runtime_counters(
+        "diagnostic before\n"
+        "runtime-counter region-attempt 3\n"
+        "runtime-counter region-commit 2\n"
+        "diagnostic after\n")
+    assert observed == {"region-attempt": 3, "region-commit": 2}
+    rejected = (
+        "",
+        "runtime-counter missing-value\n",
+        "runtime-counter counter nope\n",
+        "runtime-counter counter -1\n",
+        "runtime-counter counter 1\nruntime-counter counter 1\n",
+    )
+    for text in rejected:
+        try:
+            runtime_counters(text)
+        except ValueError:
+            continue
+        raise AssertionError(("invalid runtime receipt accepted", text))
+    receipt = runtime_counter_receipt(
+        "runtime-counter region-attempt 3\n"
+        "runtime-counter unused 0\n"
+        "runtime-counter runtime-statistics-recorded 1\n")
+    assert receipt["runtime_counter_count"] == 3
+    assert receipt["runtime_counters"] == {
+        "region-attempt": 3, "runtime-statistics-recorded": 1}
+    assert len(receipt["runtime_counter_sha256"]) == 64
+    try:
+        runtime_counter_receipt(
+            "runtime-counter region-attempt 0\n"
+            "runtime-counter runtime-statistics-recorded 0\n")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("non-instrumented runtime vector accepted")
+    print("PASS: runtime receipt parser accepts one total nonnegative vector and rejects absent, malformed and duplicate rows")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("out", type=Path)
     args = parser.parse_args()
     check_instruction_gate()
+    check_runtime_counters()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     # A measurement of the child must not inherit this launcher's high-water mark.

@@ -3,6 +3,7 @@
 (ControlReturned 20 False suspended)
 (Heartbeat 1)
 (Service 1)
+(Heartbeat 2)
 [(MonitorPaused () () 20 40 False False suspended suspended)]
 [()]
 [()]

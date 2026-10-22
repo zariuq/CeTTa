@@ -4,6 +4,78 @@
 #include "atom.h"
 #include "var_index.h"
 
+/* Results learned by one immutable graph walk, keyed by source and role.
+ * Sources and images borrow the walk's complete graph/context lifetimes.
+ * Distinct keys may have the same image. This is not an object-identity map,
+ * a permission, or a cache for context-dependent/effectful calls.
+ *
+ * One writer owns a memo. A retained cursor must finish or be cancelled
+ * before another writer starts. Readers may inspect the committed table
+ * during growth; the replacement becomes authoritative only when complete.
+ * Allocation and allocator retirement remain atomic services. */
+typedef struct {
+    const void *node;
+    uint32_t aux;
+    uintptr_t value;
+} CettaNodeMemoSlot;
+
+typedef struct {
+    CettaNodeMemoSlot inline_slots[8];
+    size_t inline_len;
+    CettaNodeMemoSlot *slots;
+    size_t cap, len;
+    uint64_t revision;
+} CettaNodeMemo;
+
+typedef enum {
+    CETTA_NODE_MEMO_PENDING,
+    CETTA_NODE_MEMO_FOUND,
+    CETTA_NODE_MEMO_ABSENT,
+    CETTA_NODE_MEMO_STORED,
+    CETTA_NODE_MEMO_REFUSED
+} CettaNodeMemoStatus;
+
+typedef struct {
+    const CettaNodeMemo *memo;
+    CettaNodeMemo *writer;
+    CettaNodeMemoSlot *grown;
+    CettaNodeMemoSlot carried;
+    const void *node;
+    uintptr_t value;
+    size_t position, slot, inspected, grow_cap, clear_position, copy_position;
+    size_t byte_limit, allocated_bytes;
+    uint64_t revision, steps, probes;
+    uint32_t aux;
+    unsigned phase;
+    CettaNodeMemoStatus status;
+} CettaNodeMemoCursor;
+
+/* Begin uses an empty cursor; cancel releases only an unpublished growth
+ * buffer. Each advance inspects at most one table slot or initializes one
+ * replacement slot. Absence, refusal and unfinished lookup are distinct.
+ * byte_limit bounds simultaneous heap table storage, not embedded control. */
+void cetta_node_memo_find_begin(CettaNodeMemoCursor *cursor,
+    const CettaNodeMemo *memo, const void *node, uint32_t aux);
+void cetta_node_memo_store_begin(CettaNodeMemoCursor *cursor,
+    CettaNodeMemo *memo, const void *node, uint32_t aux, uintptr_t value,
+    size_t byte_limit);
+CettaNodeMemoStatus cetta_node_memo_advance(CettaNodeMemoCursor *cursor);
+void cetta_node_memo_cancel(CettaNodeMemoCursor *cursor);
+void cetta_node_memo_free(CettaNodeMemo *memo);
+
+typedef bool (*CettaNodeMemoProbe)(void *context);
+/* Synchronous clients may use a best-effort memo. A checked refusal never
+ * publishes a partial entry; callers requiring sharing must propagate it. */
+bool cetta_node_memo_find_checked(const CettaNodeMemo *memo, const void *node,
+    uint32_t aux, uintptr_t *value, CettaNodeMemoProbe probe, void *context);
+bool cetta_node_memo_find(const CettaNodeMemo *memo, const void *node,
+    uint32_t aux, uintptr_t *value);
+bool cetta_node_memo_store_checked(CettaNodeMemo *memo, const void *node,
+    uint32_t aux, uintptr_t value, CettaNodeMemoProbe probe, void *context,
+    size_t byte_limit);
+void cetta_node_memo_store(CettaNodeMemo *memo, const void *node,
+    uint32_t aux, uintptr_t value);
+
 /*
  * Shared variable-remapping seam for canonical keys and re-materialization.
  *

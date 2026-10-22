@@ -275,7 +275,7 @@ static bool he_execution_primitive_signature(HeExecutionAdmission *admission,
         if (head == g_builtin_syms.op_eq) {
             admitted = parts[1]->kind == ATOM_VAR &&
                 parts[2]->kind == ATOM_VAR &&
-                parts[1]->var_id == parts[2]->var_id &&
+                var_id_eq(parts[1]->var_id, parts[2]->var_id) &&
                 he_execution_type_name(parts[3], "Bool");
         } else {
             bool arithmetic = head == g_builtin_syms.op_plus ||
@@ -305,8 +305,9 @@ static bool he_let_library_wiring(const Atom *lhs, const Atom *rhs) {
     if (!pattern || !atom || !template ||
         pattern->kind != ATOM_VAR || atom->kind != ATOM_VAR ||
         template->kind != ATOM_VAR ||
-        pattern->var_id == atom->var_id || pattern->var_id == template->var_id ||
-        atom->var_id == template->var_id)
+        var_id_eq(pattern->var_id, atom->var_id) ||
+        var_id_eq(pattern->var_id, template->var_id) ||
+        var_id_eq(atom->var_id, template->var_id))
         return false;
     if (!rhs || rhs->kind != ATOM_EXPR || rhs->expr.len != 5u ||
         atom_head_symbol_id(rhs) != g_builtin_syms.unify)
@@ -315,9 +316,9 @@ static bool he_let_library_wiring(const Atom *lhs, const Atom *rhs) {
     Atom *matched = rhs->expr.elems[2];
     Atom *body = rhs->expr.elems[3];
     return value && matched && body &&
-        value->kind == ATOM_VAR && value->var_id == atom->var_id &&
-        matched->kind == ATOM_VAR && matched->var_id == pattern->var_id &&
-        body->kind == ATOM_VAR && body->var_id == template->var_id &&
+        value->kind == ATOM_VAR && var_id_eq(value->var_id, atom->var_id) &&
+        matched->kind == ATOM_VAR && var_id_eq(matched->var_id, pattern->var_id) &&
+        body->kind == ATOM_VAR && var_id_eq(body->var_id, template->var_id) &&
         atom_is_symbol_id(rhs->expr.elems[4], g_builtin_syms.empty);
 }
 
@@ -385,7 +386,7 @@ static bool he_execution_intrinsic_equations(Space *space, SymbolId head) {
                 if (!atom_is_computation_zero_form(rhs))
                     return false;
             } else if (!rhs || rhs->kind != ATOM_VAR ||
-                       rhs->var_id != lhs->expr.elems[truth ? 2u : 3u]->var_id) {
+                       !var_id_eq(rhs->var_id, lhs->expr.elems[truth ? 2u : 3u]->var_id)) {
                 return false;
             }
         }
@@ -549,8 +550,7 @@ static bool he_head_single_answer_in(Space *space, SymbolId head,
         for (CettaExprIndex i = 1u; single && i < lhs->expr.len; i++) {
             single = lhs->expr.elems[i]->kind == ATOM_VAR;
             for (CettaExprIndex j = 1u; single && j < i; j++)
-                single = lhs->expr.elems[j]->var_id !=
-                    lhs->expr.elems[i]->var_id;
+                single = !var_id_eq(lhs->expr.elems[j]->var_id, lhs->expr.elems[i]->var_id);
         }
         body = occurrence.rhs;
     }
@@ -770,7 +770,7 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
         if (params[index]->kind != ATOM_VAR)
             return SYMBOL_ID_NONE;
     }
-    if (arity == 2u && params[0]->var_id == params[1]->var_id)
+    if (arity == 2u && var_id_eq(params[0]->var_id, params[1]->var_id))
         return SYMBOL_ID_NONE;
     /* The collections bind in order, then the aggregate, then the emit. */
     const Atom *collected[2] = {NULL, NULL};
@@ -784,7 +784,7 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
         if (value->kind != ATOM_EXPR || value->expr.len != 2u ||
             !eval_is_reify_head(atom_head_symbol_id(value)) ||
             value->expr.elems[1]->kind != ATOM_VAR ||
-            value->expr.elems[1]->var_id != params[index]->var_id)
+            !var_id_eq(value->expr.elems[1]->var_id, params[index]->var_id))
             return SYMBOL_ID_NONE;
         collected[index] = body->expr.elems[1];
         body = body->expr.elems[3];
@@ -801,13 +801,12 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
         return SYMBOL_ID_NONE;
     for (uint32_t index = 0u; index < arity; index++)
         if (combined->expr.elems[index + 1u]->kind != ATOM_VAR ||
-            combined->expr.elems[index + 1u]->var_id !=
-                collected[index]->var_id)
+            !var_id_eq(combined->expr.elems[index + 1u]->var_id, collected[index]->var_id))
             return SYMBOL_ID_NONE;
     if (emit->kind != ATOM_EXPR || emit->expr.len != 2u ||
         !atom_is_symbol_id(emit->expr.elems[0], g_builtin_syms.superpose) ||
         emit->expr.elems[1]->kind != ATOM_VAR ||
-        emit->expr.elems[1]->var_id != result->var_id)
+        !var_id_eq(emit->expr.elems[1]->var_id, result->var_id))
         return SYMBOL_ID_NONE;
     return aggregate;
 }
@@ -818,7 +817,7 @@ static SymbolId he_library_stream_aggregate(Space *space, const Atom *term) {
 static bool he_execution_head_requires_canonical(Space *space, SymbolId head,
     bool intrinsic, bool collection, bool library_stream) {
     return !intrinsic && head != SYMBOL_ID_NONE && !collection &&
-        !library_stream && (is_grounded_op(head) || symbol_id_is_builtin(head) ||
+        !library_stream && (is_grounded_op(head) || symbol_id_is_builtin_for(head, eval_current_language_id()) ||
                            space_head_declares_type(space, head));
 }
 
@@ -1113,7 +1112,7 @@ static bool he_stream_head_total(Space *space, SymbolId head,
             Atom *argument = lhs->expr.elems[i];
             general = argument->kind == ATOM_VAR;
             for (CettaExprIndex j = 1u; general && j < i; j++)
-                general = lhs->expr.elems[j]->var_id != argument->var_id;
+                general = !var_id_eq(lhs->expr.elems[j]->var_id, argument->var_id);
         }
         if (general)
             return true;
@@ -1141,7 +1140,7 @@ static bool he_symbol_callable(Space *space, SymbolId symbol) {
         space_program_token_is_current(slot->token))
         return slot->callable;
     bool callable = eval_space_has_equations(space, symbol) ||
-        is_grounded_op(symbol) || symbol_id_is_builtin(symbol);
+        is_grounded_op(symbol) || symbol_id_is_builtin_for(symbol, eval_current_language_id());
     *slot = (HeSymbolCallability){.symbol = symbol, .callable = callable,
         .token = space_program_token(space)};
     return callable;
@@ -1329,7 +1328,7 @@ typedef struct {
 
 static bool he_bound_contains(const HeBoundVariables *bound, VarId id) {
     for (size_t index = bound->len; index > 0u; index--)
-        if (bound->items[index - 1u] == id)
+        if (var_id_eq(bound->items[index - 1u], id))
             return true;
     return false;
 }
@@ -1368,7 +1367,7 @@ typedef struct {
     /* The ground subterms walked, with their depth and tail position: a
      * ground subterm reads no binder, so what walking it adds to `flags` is
      * the same wherever it occurs at that depth and position. */
-    EvalNodeMemo walked;
+    CettaNodeMemo walked;
 } HeRawFlow;
 
 enum { HE_RAW_VALUE = 1, HE_CALL_VALUE = 2 };
@@ -1488,9 +1487,9 @@ static void he_raw_flow_walk(HeRawFlow *flow, const Atom *term, bool tail,
     if (!atom_has_vars(term) && term->expr.len > 1u) {
         uint32_t position = depth * 2u + (tail ? 1u : 0u);
         uintptr_t walked = 0u;
-        if (eval_node_memo_find(&flow->walked, term, position, &walked))
+        if (cetta_node_memo_find(&flow->walked, term, position, &walked))
             return;
-        eval_node_memo_store(&flow->walked, term, position, 1u);
+        cetta_node_memo_store(&flow->walked, term, position, 1u);
     }
     SymbolId id = atom_head_symbol_id(term);
     CettaExprLen len = term->expr.len;
@@ -1607,7 +1606,7 @@ static void he_raw_flow_body(Space *space, const Atom *body, bool tail,
     he_raw_flow_merge(out, &flow.flags);
     free(flow.raw.items);
     free(flow.called.items);
-    eval_node_memo_free(&flow.walked);
+    cetta_node_memo_free(&flow.walked);
 }
 
 /* Whether `term` has a variable not bound by an enclosing binder of `term`
@@ -1684,7 +1683,7 @@ static size_t he_variable_occurrences(const Atom *term, VarId id,
     if (depth >= 256u)
         return SIZE_MAX;
     if (term->kind == ATOM_VAR)
-        return term->var_id == id;
+        return var_id_eq(term->var_id, id);
     size_t count = 0u;
     if (term->kind == ATOM_EXPR)
         for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
@@ -1825,28 +1824,28 @@ static bool he_equation_introduces_variables(const Atom *lhs,
 /* The answer at a subterm depends on it and its depth, which keep the
  * bound exact: a subterm a value shares is asked once per depth. */
 static bool he_term_collects_in(const Atom *term, uint32_t depth,
-                                EvalNodeMemo *memo) {
+                                CettaNodeMemo *memo) {
     if (!term || term->kind != ATOM_EXPR)
         return false;
     if (depth >= 256u ||
         eval_is_reify_head(atom_head_symbol_id(term)))
         return true;
     uintptr_t known = 0u;
-    if (eval_node_memo_find(memo, term, depth, &known))
+    if (cetta_node_memo_find(memo, term, depth, &known))
         return known != 0u;
     bool collects = false;
     for (CettaExprIndex index = 0u; !collects && index < term->expr.len;
          index++)
         collects = he_term_collects_in(term->expr.elems[index], depth + 1u,
                                        memo);
-    eval_node_memo_store(memo, term, depth, collects);
+    cetta_node_memo_store(memo, term, depth, collects);
     return collects;
 }
 
 static bool he_term_collects(const Atom *term, uint32_t depth) {
-    EvalNodeMemo memo = {0};
+    CettaNodeMemo memo = {0};
     bool collects = he_term_collects_in(term, depth, &memo);
-    eval_node_memo_free(&memo);
+    cetta_node_memo_free(&memo);
     return collects;
 }
 
@@ -2006,7 +2005,7 @@ static bool he_binding_order_walk(HeBindingOrder *order, const Atom *term) {
         }
     } else {
         bool computes = head != SYMBOL_ID_NONE &&
-            (is_grounded_op(head) || symbol_id_is_builtin(head) ||
+            (is_grounded_op(head) || symbol_id_is_builtin_for(head, eval_current_language_id()) ||
              (order->space && eval_space_has_equations(order->space, head)));
         for (CettaExprIndex index = 0u; ok && index < term->expr.len; index++) {
             const Atom *child = term->expr.elems[index];
@@ -2065,7 +2064,7 @@ static bool he_execution_term_computes(Space *space, const Atom *term) {
     bool structural = id == g_builtin_syms.match || id == g_builtin_syms.comma ||
         he_execution_collection(id);
     if (!structural && (eval_space_has_equations(space, id) ||
-                        is_grounded_op(id) || symbol_id_is_builtin(id)))
+                        is_grounded_op(id) || symbol_id_is_builtin_for(id, eval_current_language_id())))
         return true;
     for (CettaExprIndex index = 1u; index < term->expr.len; index++)
         if (he_execution_term_computes(space, term->expr.elems[index]))
@@ -2120,7 +2119,7 @@ static inline __attribute__((always_inline)) bool he_shared_execution_candidate(
      * admission walk would refuse it at its first term. A match and the
      * collection forms are the builtins the walk judges itself. */
     if (source_head != SYMBOL_ID_NONE &&
-        (is_grounded_op(source_head) || symbol_id_is_builtin(source_head)) &&
+        (is_grounded_op(source_head) || symbol_id_is_builtin_for(source_head, eval_current_language_id())) &&
         source_head != g_builtin_syms.match &&
         !he_execution_collection(source_head))
         return false;
@@ -2200,7 +2199,7 @@ static bool he_shared_execution_admit(Space *space, Arena *arena,
                                        admission.open_root, false, true,
                                        &admission);
     } else if (source_head != SYMBOL_ID_NONE &&
-               !symbol_id_is_builtin(source_head) &&
+               !symbol_id_is_builtin_for(source_head, eval_current_language_id()) &&
                he_execution_plain_arguments(source) &&
                eval_space_has_equations(space, source_head)) {
         he_closure_decision_record(space, source_head, admission.open_root,
@@ -2248,7 +2247,7 @@ static inline __attribute__((always_inline)) bool he_shared_execution_try_kernel
      * relational episode. A decline publishes nothing and leaves the source
      * for the general machine; open calls never enter this closed attempt. */
     if (!plan.open_root && source && source->kind == ATOM_EXPR &&
-        source_head != SYMBOL_ID_NONE && !symbol_id_is_builtin(source_head)) {
+        source_head != SYMBOL_ID_NONE && !symbol_id_is_builtin_for(source_head, eval_current_language_id())) {
         Bindings empty;
         bindings_init(&empty);
         const Bindings *outer = environment ? environment : &empty;

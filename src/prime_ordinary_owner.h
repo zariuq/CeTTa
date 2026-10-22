@@ -75,6 +75,11 @@ bool eval_prime_source_owner_is_current(const CettaPrimeSourceOwner *);
  * Calls and callbacks are serialized. The source's intern contexts remain
  * live. Shared admission and publication must supply their own compatibility
  * gate and complete return capture; a loan does not confer those permissions.
+ * Reusable values retain their runtime term and complete logical/Need world;
+ * the receiver consumes both together. This is distinct from atoms-only
+ * observation or explicit storage reification. A receiver retains the owning
+ * services and threads each invocation's resulting world; replaying an old
+ * immutable image restarts its captured Need state rather than updating it.
  * Unsupported admission performs no synchronous evaluation fallback. */
 CettaContinuationStatus eval_prime_source_execution_open(
     CettaPrimeSourceOwner *, uint64_t quantum, CettaOwnedExecution *);

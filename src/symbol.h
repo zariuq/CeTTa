@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include "scalar_trie.h"
+#include "lang.h"
 
 #ifndef CETTA_SYMBOL_READ_COVERAGE
 #define CETTA_SYMBOL_READ_COVERAGE 0
@@ -24,6 +25,8 @@ enum {
     CETTA_SYMBOL_FLAG_RUNTIME_DATA = 1u << 4,
     CETTA_SYMBOL_FLAG_SPECULATIVE_OP = 1u << 2,
     CETTA_SYMBOL_FLAG_BUILTIN = 1u << 3,
+    CETTA_SYMBOL_FLAG_PETTA_ONLY_BUILTIN = 1u << 5,
+    CETTA_SYMBOL_FLAG_BUILTIN_CONSTRUCTOR = 1u << 6,
 };
 
 typedef struct {
@@ -224,6 +227,7 @@ static inline SymbolSpelling symbol_spelling(
     X(cdr_atom, "cdr-atom") \
     X(unify, "unify") \
     X(case_text, "case") \
+    X(case_value_text, "%case-value%") \
     X(switch_text, "switch") \
     X(switch_minimal, "switch-minimal") \
     X(let_star, "let*") \
@@ -288,6 +292,7 @@ static inline SymbolSpelling symbol_spelling(
     X(add_atom, "add-atom") \
     X(add_atoms, "add-atoms") \
     X(add_atom_nodup, "add-atom-nodup") \
+    X(exec_saturate, "exec:saturate") \
     X(mork_add_atoms, "mork:add-atoms") \
     X(mork_add_atom, "mork:add-atom") \
     X(mork_remove_atom, "mork:remove-atom") \
@@ -420,6 +425,7 @@ static inline SymbolSpelling symbol_spelling(
     X(llist_cons, "LCons") \
     X(minimal_map_atom, "_minimal-map-atom") \
     X(minimal_retain_top_k_by_number, "_minimal-retain-top-k-by-number") \
+    X(minimal_sum_by, "_minimal-sum-by") \
     X(minimal_foldl_atom, "_minimal-foldl-atom") \
     X(minimal_foldl_llist, "_minimal-foldl-llist") \
     X(minimal_foldl_sequence, "_minimal-foldl-sequence") \
@@ -507,7 +513,9 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_json_capabilities_v1, "__cetta_lib_json_capabilities_v1") \
     X(lib_json_parse_v1, "__cetta_lib_json_parse_v1") \
     X(lib_json_to_legacy_v1, "__cetta_lib_json_to_legacy_v1") \
+    X(lib_json_from_inspection_v1, "__cetta_lib_json_from_inspection_v1") \
     X(lib_json_parse, "__cetta_lib_json_parse") \
+    X(lib_json_project_v1, "__cetta_lib_json_project_v1") \
     X(lib_json_stringify_v1, "__cetta_lib_json_stringify_v1") \
     X(lib_json_stringify, "__cetta_lib_json_stringify") \
     X(lib_json_members_v1, "__cetta_lib_json_members_v1") \
@@ -765,6 +773,15 @@ static inline SymbolSpelling symbol_spelling(
     X(work_count, "work-count") \
     X(work_exists, "work-exists")
 
+/* Identity, dialect ownership and constructor role are separate facts.
+ * These columns supplement the registered vocabulary without changing IDs. */
+#define CETTA_PETTA_ONLY_BUILTIN_SYMBOL_FIELDS(X) \
+    X(petta_member) X(petta_last) X(petta_the) X(petta_make_list) \
+    X(petta_msort) X(petta_transaction) X(petta_with_mutex) \
+    X(petta_min) X(petta_max) X(petta_decons)
+#define CETTA_BUILTIN_CONSTRUCTOR_SYMBOL_FIELDS(X) \
+    X(prime_data) X(subtype)
+
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into
    SymbolEntry flags, so evaluator dispatch reads one capability bit instead
@@ -815,6 +832,7 @@ static inline SymbolSpelling symbol_spelling(
     X(if_equal) \
     X(sealed_text) \
     X(minimal_retain_top_k_by_number) \
+    X(minimal_sum_by) \
     X(minimal_foldl_atom) \
     X(minimal_foldl_llist) \
     X(minimal_foldl_sequence) \
@@ -1011,7 +1029,7 @@ static inline SymbolSpelling symbol_spelling(
     X(parse) \
     X(parse_first) \
     X(lib_json_parse_v1) \
-    X(lib_json_to_legacy_v1) \
+    X(lib_json_from_inspection_v1) \
     X(lib_json_parse) \
     X(lib_json_stringify_v1) \
     X(lib_json_stringify) \
@@ -1036,10 +1054,13 @@ typedef struct {
 extern SymbolTable *g_symbols;
 extern BuiltinSyms g_builtin_syms;
 
-/* Builtin syntax symbols occupy the table's initial contiguous interval.
- * This distinguishes evaluator syntax from later interned constructor/data
- * heads without spelling the builtin set again in each consumer. */
+/* Registration flags identify the builtin vocabulary independently of IDs.
+ * Executable membership additionally depends on dialect and constructor role;
+ * callers that dispatch operations use symbol_id_is_builtin_for instead. */
 bool symbol_id_is_builtin(SymbolId id);
+/* Executable builtin membership; registered type constructors and names owned
+ * by another dialect keep ordinary data/equation resolution in that dialect. */
+bool symbol_id_is_builtin_for(SymbolId id, CettaLanguageId language);
 
 void symbol_table_init(SymbolTable *st);
 void symbol_table_free(SymbolTable *st);

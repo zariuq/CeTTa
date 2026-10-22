@@ -4,6 +4,7 @@
 #include "atom.h"
 #include "native/native_modules.h"
 #include "call_outcome.h"
+#include "owned_execution.h"
 #include "foreign.h"
 #include "mork_space_bridge_runtime.h"
 #include "native_handle.h"
@@ -449,6 +450,27 @@ Atom *cetta_library_durable_admin(CettaLibraryContext *ctx, Arena *arena, Atom *
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out);
+/* Native services with an owned, yielding realization. Operands are already
+ * observed values. The caller keeps the COMPLETE immutable operand graph,
+ * its arenas/intern/resource owners, selected services and captures alive
+ * (holding just the root arena is insufficient), checks current authority
+ * before each advance, and closes the owner
+ * after delivery. Opening allocates an owner without executing the request;
+ * its first preparation, final materialization and cleanup have atomic costs. */
+struct RhocalcPayloadProvider;
+bool cetta_library_native_execution_supported(const CettaLibraryContext *ctx, SymbolId head);
+bool cetta_library_native_execution_open(CettaLibraryContext *ctx, Space *space,
+    Arena *arena, Atom *call, const struct RhocalcPayloadProvider *payload,
+    CettaOwnedExecution *out);
+/* The prepared pure machine keeps every argument alive until it has consumed
+ * the result.  A library may therefore return an immutable view into an
+ * argument instead of copying it; callers outside that lifetime use the
+ * owned-result function above.  Libraries without such a view fall back to
+ * the ordinary dispatcher. */
+bool cetta_library_call_native_prepared_view(
+    CettaLibraryContext *ctx, Space *space,
+    Arena *a, Atom *head, Atom **args,
+    uint32_t nargs, CettaCallOutcome *out);
 bool cetta_library_lookup_explicit_mork_bridge(CettaLibraryContext *ctx,
                                                Atom *space_arg,
                                                CettaMorkSpaceHandle **bridge_out);

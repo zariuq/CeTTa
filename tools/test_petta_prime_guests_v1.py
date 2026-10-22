@@ -31,6 +31,7 @@ def main() -> None:
     parser.add_argument("--eval-hashcons", action="store_true")
     parser.add_argument("--package", action="append", choices=(
         "guest-dialect-controls", "guest-wire-controls", "guest-sequence-controls",
+        "guest-external-result-controls",
         "hol-kernel-controls", "hol-beta-controls", "hol-type-instantiation-controls",
         "hol-term-instantiation-controls", "hol-publication-controls", "hol-cache-authorization-controls", "hol-mixed-history-controls",
         "hol-axiom-execution-controls", "hol-axiom-event-controls", "hol-declaration-history-controls", "hol-definition-history-controls", "hol-parameter-order-controls", "hol-type-definition-publication-controls", "guest-bound-call-controls",
@@ -108,6 +109,33 @@ def main() -> None:
                       "empty-view")
     execute("guest-dialect-controls", dialect_fixture.read_text(),
             [f"[(GuestControl {label} True)]" for label in dialect_labels])
+
+    if not args.package or "guest-external-result-controls" in args.package:
+        # A successful rename cannot be repeated: its source has moved.
+        # A later invocation with the same arguments must still run afresh.
+        origin = show(str(work / "external-result-source.txt"))
+        destination = show(str(work / "external-result-target.txt"))
+        external_modules = "!(import! &self fs)\n!(import! &self str)\n"
+        external_body = (
+            f'!(fs:write {origin} "prepared")\n'
+            '!(ExternalResult unicode (== (str:from-codepoints (955)) "λ"))\n'
+            '!(ExternalResult surrogate (case (str:from-codepoints (55296)) '
+            '(((Error $source $reason) True) ($other False))))\n'
+            f'!(ExternalResult rename-once (case (fs:rename {origin} {destination}) '
+            '((() True) ($other False))))\n'
+            f'!(ExternalResult repeat-is-fresh (case (fs:rename {origin} {destination}) '
+            '(((fs:failed $kind $operation $path $errno $progress $detail) True) '
+            '($other False))))\n')
+        external_translated, external_inventory = compile_source(external_body, binary,
+            work / "guest-external-result-controls.views.metta",
+            ("fs:write", "fs:rename", "str:from-codepoints"),
+            capture_external_errors=("fs:rename", "str:from-codepoints"))
+        external_labels = ("unicode", "surrogate", "rename-once", "repeat-is-fresh")
+        execute("guest-external-result-controls", external_modules + external_body,
+                ["[()]"] * 3 + [f"[(ExternalResult {label} True)]" for label in external_labels],
+                (external_modules + external_translated, external_inventory), 3,
+                source_expected=["true", "true", "()"] +
+                    [f"(ExternalResult {label} true)" for label in external_labels])
 
     bound_fixture = repository / "tests" / "support" / "fixtures" / "petta_bound_calls.metta"
     bound_labels = ("captured-symbol", "nested-binding", "strict-argument", "alternatives",

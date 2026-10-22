@@ -264,12 +264,15 @@ class Inputs:
 def run_compiler(binary, directory, name, program, timeout):
     source = directory / f"{name}.metta"
     source.write_text(program, encoding="utf-8")
-    result = subprocess.run([str(binary), "--lang", "petta@1.0.6", "--profile", "extended", str(source)],
+    result = subprocess.run([str(binary), "--lang", "petta", "--profile", "extended", str(source)],
                             cwd=ROOT, capture_output=True, text=True, timeout=timeout)
     (directory / f"{name}.stdout").write_text(result.stdout, encoding="utf-8")
     (directory / f"{name}.stderr").write_text(result.stderr, encoding="utf-8")
     if result.returncode:
-        raise ValueError(f"parser compiler failed for {name}: exit {result.returncode}")
+        # The temporary directory is removed on failure; retain the compiler's
+        # diagnostic in the exception rather than losing the actual cause.
+        raise ValueError(f"parser compiler failed for {name}: exit {result.returncode}\n"
+                         f"{result.stderr[-4000:]}")
     values = []
     for line in result.stdout.splitlines():
         if line.strip() and line != "true":

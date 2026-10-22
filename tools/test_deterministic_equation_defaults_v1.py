@@ -41,7 +41,7 @@ def main():
     path = output / 'controls.metta'
     path.write_text(source)
     ran = subprocess.run([str(args.cetta.resolve()), '--no-results', '--lang',
-                          'petta@1.0.6', str(path)], cwd=ROOT, capture_output=True, text=True)
+                          'petta', str(path)], cwd=ROOT, capture_output=True, text=True)
     assert ran.returncode == 0, ran.stderr or ran.stdout[:2000]
     assert ran.stdout.strip() == '(EquationDefaults true true true)', ran.stdout[:2000]
     print('DeterministicEquationDefaults 3 0')

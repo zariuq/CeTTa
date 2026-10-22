@@ -92,7 +92,7 @@ int main(void) {
           "plain and contextual bridges preserve identical canonical structure");
 
     Atom *meta = atom_var_with_id(
-        &arena, "m", ((VarId)1u << 32) | (VarId)7u);
+        &arena, "m", (VarId){7u, {1u}});
     Atom *open_schema = node2(&arena, "App", canonical, meta);
     error = NULL;
     bool meta_ok = cetta_mm2_atom_to_contextual_bridge_expr_bytes(

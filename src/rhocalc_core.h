@@ -99,6 +99,24 @@ typedef struct {
     uint64_t comparison_text_probes;
     uint64_t preparation_steps;
     uint64_t channel_scan_probes;
+    /* Retained preparation, including private export normalization. It includes memo
+     * probes and retained table growth. Normalization also includes key actions;
+     * these overlapping diagnostics must not be added as a total invoice.
+     * Payload rendering and allocation retain their separate atomic prices. */
+    uint64_t validation_steps, normalization_steps, key_steps, key_bytes;
+    uint64_t construction_children, construction_bytes;
+    /* Subsets of the phase totals above, never extra invoice units. Physical
+     * hash placement can change these when an equivalent graph is relocated;
+     * exact split accounts require the same prepared representation. */
+    uint64_t validation_memo_steps, normalization_memo_steps, selector_memo_steps;
+    /* Final canonical reaction construction. These overlap driver/selector
+     * and preparation totals; copy/merge actions and child writes overlap
+     * build actions. Bytes describe requested expression storage, not RSS. */
+    uint64_t reaction_build_steps, reaction_copy_steps, reaction_merge_steps;
+    uint64_t reaction_children, reaction_bytes;
+    /* Copy-session actions within driver_steps. Opening/finalizing transfers
+     * and retiring a generation have their separate atomic service prices. */
+    uint64_t compaction_copy_steps, export_copy_steps;
     uint32_t reductions_taken;
 } RhocalcRunAccount;
 
@@ -122,16 +140,42 @@ typedef struct {
  * registry and library for the run. Opening does not snapshot these services
  * or replace the caller's current-authority/publication checks.
  *
- * Poll allowance counts driver transitions, including canonical selector
- * probes. Component collection, endpoint merge sorting, channel-group scans
- * and reaction-key comparison retain their inner positions. Validation,
- * normalization, key construction, component-head merging, substitution,
- * copying, allocation and export remain atomic services. Payload transactions
+ * Poll allowance counts driver transitions, including retained grammar and
+ * initial normalization actions and canonical selector probes. Initial
+ * normalization retains child traversal, flattening, process/name key bytes,
+ * alpha lookup, stable sorting and wide expression assembly. Source/role
+ * memo lookup, table clearing and collision rehashing retain their positions;
+ * completed results share syntax storage without removing occurrences.
+ * Hash-probe work depends on all prepared node addresses, including private
+ * normalized nodes. Exact split accounts require the same prepared graph and
+ * provider choices, not just equivalent original inputs. Memo subcounts expose
+ * these physical actions without subtracting them from the actual invoice.
+ * Component keys, endpoint merge sorting, channel-group scans, body-row
+ * preparation, component merging and contextual reaction-key comparison also
+ * retain their inner positions. A completed key carries its binder displacement;
+ * quotation does not change its parent's counter. A comparison retains one
+ * side's reply while the other is pending. Selected-body copying/remapping
+ * completes before replacing the previous winner. Final canonical successor
+ * construction retains its body copy, row merge and child assembly; only a
+ * completed root becomes the next process. A normalized variable-free body
+ * preserves its syntax sharing under literal substitution. Deferred payloads
+ * still run and retain every result occurrence. Payload atom rendering,
+ * Compaction and export retain the existing graph-copy session; the old
+ * generation remains live until compaction commits. Canonical export keeps
+ * that copied graph; other orderings use the retained normalizer. Payload atom
+ * rendering, scalar/name construction, allocation, variable-bearing
+ * substitution and cleanup retain atomic services, including generation
+ * retirement and control-owner destruction after a completed transfer.
+ * The eager-copy opener retains its initial copy cost; the held
+ * opener below avoids that copy with a stronger input-lifetime contract.
+ * Payload transactions
  * retain setup/evaluation/promotion phases; an explicit provider can retain
  * evaluator and return traversal inside evaluation. Its own atomic services
  * remain separately priced, and the default evaluator is synchronous.
  * Driver counts are NOT a bound on their work or wall-clock cost; closing
  * also retains its separate cleanup cost.
+ * Synchronous interning profiles keep their admitted atomic constructor;
+ * incremental draft assembly requires a noninterning arena.
  * Rotating selection is one atomic frontier transition. Threaded runs continue
  * to use the existing synchronous/threaded entry points.
  *
@@ -147,6 +191,14 @@ typedef struct {
 RhocalcRun *rhocalc_run_open(Arena *arena, Atom *proc,
                             const RhoRuntimeProfile *profile,
                             const RhocalcEvalContext *eval_context);
+/* Fixed-control opening without an input copy. In addition to the contracts
+ * above, the caller holds the COMPLETE immutable input graph, its arenas and
+ * resource/intern owners until close. Holding only the root arena is not
+ * sufficient. The service uses this when its invocation already holds that
+ * graph. Zero polls neither validate nor normalize borrowed syntax. */
+RhocalcRun *rhocalc_run_open_held(Arena *arena, Atom *proc,
+                                 const RhoRuntimeProfile *profile,
+                                 const RhocalcEvalContext *eval_context);
 RhocalcRunStatus rhocalc_run_poll(RhocalcRun *run, uint64_t allowance,
                                   uint64_t *used);
 bool rhocalc_run_result(const RhocalcRun *run, RhoReductionResult *out);
@@ -202,6 +254,16 @@ bool rhocalc_reduce_to_quiescence(Arena *arena, Atom *proc,
 /* Project the payloads of top-level inert rho:val components from a residual.
  * The returned expression preserves their occurrence order. */
 Atom *rhocalc_observe_top_level_values(Arena *arena, Atom *residual);
+/* The same ordered observation as the synchronous entry, retaining one
+ * traversal position per poll transition. The caller holds the immutable
+ * residual and result arena until close. Zero allowance is inert; allocation
+ * and final expression construction have separate atomic costs. */
+typedef struct RhocalcValueObservation RhocalcValueObservation;
+RhocalcValueObservation *rhocalc_values_open(Arena *arena, Atom *residual);
+RhocalcRunStatus rhocalc_values_poll(RhocalcValueObservation *observation,
+    uint64_t allowance, uint64_t *used);
+Atom *rhocalc_values_result(const RhocalcValueObservation *observation);
+void rhocalc_values_close(RhocalcValueObservation *observation);
 
 #ifdef CETTA_TEST_HOOKS
 bool rhocalc_payload_map_capacity_selftest(void);

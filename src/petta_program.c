@@ -503,19 +503,19 @@ static bool petta_program_variable_slot(
     if (slot_out)
         *slot_out = 0u;
     if (!variable_ids || variable_count == 0u ||
-        id == VAR_ID_NONE || !slot_out) {
+        var_id_is_none(id) || !slot_out) {
         return false;
     }
     uint32_t low = 0u;
     uint32_t high = variable_count;
     while (low < high) {
         uint32_t middle = low + (high - low) / 2u;
-        if (variable_ids[middle] < id)
+        if (var_id_lt(variable_ids[middle], id))
             low = middle + 1u;
         else
             high = middle;
     }
-    if (low >= variable_count || variable_ids[low] != id)
+    if (low >= variable_count || !var_id_eq(variable_ids[low], id))
         return false;
     *slot_out = low;
     return true;
@@ -748,7 +748,7 @@ static size_t petta_program_var_lower_bound(
     size_t high = variables ? variables->len : 0u;
     while (low < high) {
         size_t middle = low + (high - low) / 2u;
-        if (variables->items[middle] < id)
+        if (var_id_lt(variables->items[middle], id))
             low = middle + 1u;
         else
             high = middle;
@@ -759,11 +759,11 @@ static size_t petta_program_var_lower_bound(
 static bool petta_program_var_insert(
     PettaProgramVarSet *variables, Atom *variable) {
     if (!variables || !variable || variable->kind != ATOM_VAR ||
-        variable->var_id == VAR_ID_NONE)
+        var_id_is_none(variable->var_id))
         return false;
     VarId id = variable->var_id;
     size_t index = petta_program_var_lower_bound(variables, id);
-    if (index < variables->len && variables->items[index] == id)
+    if (index < variables->len && var_id_eq(variables->items[index], id))
         return true;
     if (variables->len == variables->cap) {
         size_t next_cap = variables->cap ? variables->cap * 2u : 8u;
@@ -852,7 +852,7 @@ static bool petta_program_variables_contained(
         size_t found = petta_program_var_lower_bound(
             container, contained->items[index]);
         if (found >= container->len ||
-            container->items[found] != contained->items[index]) {
+            !var_id_eq(container->items[found], contained->items[index])) {
             return false;
         }
     }
@@ -865,10 +865,10 @@ static bool petta_program_variables_beyond(
     size_t left_index = 0u;
     for (size_t right_index = 0u; right_index < right->len; right_index++) {
         while (left_index < left->len &&
-               left->items[left_index] < right->items[right_index])
+               var_id_lt(left->items[left_index], right->items[right_index]))
             left_index++;
         if (left_index >= left->len ||
-            left->items[left_index] != right->items[right_index])
+            !var_id_eq(left->items[left_index], right->items[right_index]))
             return true;
     }
     return false;
@@ -904,10 +904,10 @@ static bool petta_program_variable_union_count(
     while (left_index < left->len || right_index < right->len) {
         if (right_index >= right->len ||
             (left_index < left->len &&
-             left->items[left_index] < right->items[right_index])) {
+             var_id_lt(left->items[left_index], right->items[right_index]))) {
             left_index++;
         } else if (left_index >= left->len ||
-                   right->items[right_index] < left->items[left_index]) {
+                   var_id_lt(right->items[right_index], left->items[left_index])) {
             right_index++;
         } else {
             left_index++;
@@ -950,7 +950,7 @@ static const PettaEquationTemplate *petta_program_compile_equation_template(
     VarId *slots = variable_count
         ? cetta_malloc(sizeof(*slots) * (size_t)variable_count) : NULL;
     for (uint32_t slot = 0u; slot < variable_count; slot++) {
-        slots[slot] = (VarId)slot + 1u;
+        slots[slot] = var_id_from_base((uint64_t)slot + 1u);
         template->source_variables[slot] = inventory.items[slot].mapped_var;
     }
     template->frame_schema = bindings_frame_schema_new_presented(
@@ -1082,24 +1082,24 @@ static PettaEquationTemplateC0 *petta_program_compile_equation_template_c0(
         !atom_structural_may_have_list(lhs);
     size_t union_variables =
         (size_t)*static_variable_count_out;
-    VarId union_first_variable = 1u;
-    VarId union_last_variable = 0u;
+    VarId union_first_variable = var_id_from_base(1u);
+    VarId union_last_variable = VAR_ID_NONE;
     if (open_admitted && union_variables != 0u) {
         bool lhs_nonempty = lhs_variables.len != 0u;
         bool rhs_nonempty = rhs_variables.len != 0u;
         union_first_variable = lhs_nonempty && rhs_nonempty
-            ? (lhs_variables.items[0] < rhs_variables.items[0]
+            ? (var_id_lt(lhs_variables.items[0], rhs_variables.items[0])
                    ? lhs_variables.items[0] : rhs_variables.items[0])
             : lhs_nonempty
                 ? lhs_variables.items[0] : rhs_variables.items[0];
         VarId lhs_last = lhs_nonempty
-            ? lhs_variables.items[lhs_variables.len - 1u] : 0u;
+            ? lhs_variables.items[lhs_variables.len - 1u] : VAR_ID_NONE;
         VarId rhs_last = rhs_nonempty
-            ? rhs_variables.items[rhs_variables.len - 1u] : 0u;
-        union_last_variable = lhs_last > rhs_last
+            ? rhs_variables.items[rhs_variables.len - 1u] : VAR_ID_NONE;
+        union_last_variable = var_id_lt(rhs_last, lhs_last)
             ? lhs_last : rhs_last;
         uint64_t union_span =
-            union_last_variable - union_first_variable + 1u;
+            union_last_variable.base - union_first_variable.base + 1u;
         open_admitted =
             union_span <= PETTA_EQUATION_TEMPLATE_C0_MAX_VARIABLE_SPAN;
     }
@@ -1113,13 +1113,13 @@ static PettaEquationTemplateC0 *petta_program_compile_equation_template_c0(
         petta_program_variables_contained(
             &rhs_variables, &lhs_variables) &&
         lhs_variables.len <= UINT32_MAX;
-    VarId first_variable = 1u;
+    VarId first_variable = var_id_from_base(1u);
     uint32_t variable_width = 0u;
     if (admitted && lhs_variables.len != 0u) {
         first_variable = lhs_variables.items[0];
         VarId last_variable =
             lhs_variables.items[lhs_variables.len - 1u];
-        uint64_t span = last_variable - first_variable + 1u;
+        uint64_t span = last_variable.base - first_variable.base + 1u;
         admitted = span <= PETTA_EQUATION_TEMPLATE_C0_MAX_VARIABLE_SPAN;
         if (admitted)
             variable_width = (uint32_t)span;
@@ -1934,7 +1934,7 @@ bool petta_program_head_is_intrinsic(SymbolId head) {
             /* Builtin data names are not PeTTa operations.  User
              * definitions still establish callability through ordinary
              * resolution. */
-            (symbol_id_is_builtin(head) &&
+            (symbol_id_is_builtin_for(head, eval_current_language_id ? eval_current_language_id() : CETTA_LANGUAGE_HE) &&
              !petta_program_builtin_names_data(head)) ||
             is_grounded_op(head) ||
             (grounded_op_is_pattern(head) && eval_current_pattern_control_arity &&
@@ -2631,10 +2631,21 @@ static bool petta_plan_held_value(
     return false;
 }
 
+static bool petta_translation_is_value(
+    PettaProgram *program, const PettaCallabilityDomain *callability,
+    const PettaTranslationEnvironment *environment, Atom *root);
+static bool petta_translation_value_cached(
+    PettaProgram *program, const PettaTranslationEnvironment *environment,
+    Atom *atom);
+static void petta_translation_value_keep(
+    PettaProgram *program, const PettaTranslationEnvironment *environment,
+    Atom *atom);
+
 static PettaPlanNode *petta_plan_build_in(
     PettaProgram *program, Arena *plans,
     const PettaCallabilityDomain *callability, Atom *root,
     bool compile_regions, bool translation,
+    const PettaTranslationEnvironment *environment,
     Atom *const *held, size_t held_len) {
     if (!program || !plans || !root)
         return NULL;
@@ -2663,6 +2674,12 @@ static PettaPlanNode *petta_plan_build_in(
         if (!atom || !node) {
             ok = false;
             break;
+        }
+        if (translation && environment &&
+            petta_translation_value_cached(program, environment, atom)) {
+            node->role = PETTA_PLAN_VALUE;
+            node->output = PETTA_PLAN_OUTPUT_VALUE;
+            continue;
         }
         if (atom->kind != ATOM_EXPR) {
             node->role = PETTA_PLAN_VALUE;
@@ -2864,50 +2881,95 @@ static const PettaPlanNode *petta_plan_build(
     const PettaCallabilityDomain *callability, Atom *root) {
     return program
         ? petta_plan_build_in(
-              program, &program->plans, callability, root, true, false,
+              program, &program->plans, callability, root, true, false, NULL,
               NULL, 0u)
         : NULL;
 }
 
 /* A subtree without a call is a value where a runtime translation reads it:
  * nothing in it runs, as SWI-PeTTa's translation leaves call-free data as it
- * is.  Its plan is one VALUE place, so the plan records only the term's
- * code. */
-static bool petta_plan_collapse_values(PettaPlanNode *root) {
-    PettaPlanNode **work = NULL;
+ * is.  One postorder pass records positive certificates for every inspected
+ * call-free subtree, then replaces each with one VALUE place.  A value held
+ * only by its parent (for example quote's argument) is never certified for a
+ * different context. */
+static bool petta_plan_collapse_values(
+        PettaProgram *program, Atom *root_source, PettaPlanNode *root,
+        const PettaTranslationEnvironment *environment) {
+    typedef struct {
+        Atom *source;
+        PettaPlanNode *plan;
+        bool finish;
+    } Item;
+    Item *work = NULL;
     size_t work_len = 0u;
     size_t work_cap = 0u;
     if (!petta_program_reserve(
             (void **)&work, &work_cap, 1u, sizeof(*work))) {
         return false;
     }
-    work[work_len++] = root;
+    work[work_len++] = (Item){
+        .source = root_source,
+        .plan = root,
+    };
     bool ok = true;
     while (work_len > 0u) {
-        PettaPlanNode *node = work[--work_len];
-        if (node->child_count == 0u)
-            continue;
-        if (!node->contains_call &&
-            !node->contains_cardinality_call &&
-            !node->contains_deferred_occurrence_transport) {
+        Item item = work[--work_len];
+        Atom *source = item.source;
+        PettaPlanNode *node = item.plan;
+        if (!source || !node) {
+            ok = false;
+            break;
+        }
+        if (item.finish) {
+            petta_translation_value_keep(program, environment, source);
             *node = (PettaPlanNode){
                 .role = PETTA_PLAN_VALUE,
                 .output = PETTA_PLAN_OUTPUT_VALUE,
             };
             continue;
         }
-        if ((size_t)node->child_count > SIZE_MAX - work_len ||
+        if (node->role == PETTA_PLAN_VALUE) {
+            if (source->kind == ATOM_EXPR &&
+                (atom_is_list_form(source) ||
+                 petta_semantics_is_canonical_closure(source))) {
+                petta_translation_value_keep(program, environment, source);
+            }
+            *node = (PettaPlanNode){
+                .role = PETTA_PLAN_VALUE,
+                .output = PETTA_PLAN_OUTPUT_VALUE,
+            };
+            continue;
+        }
+        if (source->kind != ATOM_EXPR ||
+            node->child_count != source->expr.len) {
+            continue;
+        }
+        bool value = !node->contains_call &&
+            !node->contains_cardinality_call &&
+            !node->contains_deferred_occurrence_transport;
+        size_t extra = (size_t)node->child_count + (value ? 1u : 0u);
+        if (extra > SIZE_MAX - work_len ||
             !petta_program_reserve(
                 (void **)&work, &work_cap,
-                work_len + (size_t)node->child_count,
+                work_len + extra,
                 sizeof(*work))) {
             ok = false;
             break;
         }
-        for (CettaExprIndex index = 0u;
-             index < node->child_count; index++) {
-            work[work_len++] =
-                (PettaPlanNode *)&node->children[index];
+        if (value) {
+            work[work_len++] = (Item){
+                .source = source,
+                .plan = node,
+                .finish = true,
+            };
+        }
+        for (CettaExprIndex index = node->child_count;
+             index > 0u; index--) {
+            CettaExprIndex child = index - 1u;
+            work[work_len++] = (Item){
+                .source = source->expr.elems[child],
+                .plan = (PettaPlanNode *)&node->children[child],
+            };
         }
     }
     free(work);
@@ -4499,6 +4561,7 @@ const PettaPlanNode *petta_program_plan_current_in(
     bool ok = petta_program_collect_callability(program, &callability);
     const PettaPlanNode *plan = ok
         ? petta_plan_build_in(program, plans, &callability, atom, false, false,
+                             NULL,
                              NULL, 0u)
         : NULL;
     free(callability.named_heads);
@@ -4518,15 +4581,27 @@ enum { PETTA_TRANSIENT_PLAN_BOUND = 4096u };
  * atom_alpha_eq decides between atoms that collide.  A quoted argument is
  * not read; `*quoted` tells whether the goal has one, which is then compared
  * with no kept goal. */
-static uint64_t petta_alpha_hash(Atom *root, bool *quoted) {
+/* Source-shape memoization is opportunistic.  A large substituted value is
+ * planned against its positive certificates and interned by plan shape; it
+ * must not be copied merely to retain a source key. */
+enum { PETTA_TRANSIENT_PLAN_KEY_NODE_BOUND = 128u };
+
+static uint64_t petta_alpha_hash(
+        Atom *root, bool *quoted, bool *complete) {
     *quoted = false;
+    *complete = true;
     uint64_t hash = UINT64_C(0xcbf29ce484222325);
     Atom *inline_stack[64];
     Atom **stack = inline_stack;
     size_t len = 0u;
     size_t cap = sizeof(inline_stack) / sizeof(inline_stack[0]);
+    size_t visited = 0u;
     stack[len++] = root;
     while (len > 0u) {
+        if (visited++ == PETTA_TRANSIENT_PLAN_KEY_NODE_BOUND) {
+            *complete = false;
+            break;
+        }
         Atom *atom = stack[--len];
         uint64_t word;
         switch (atom->kind) {
@@ -4552,6 +4627,7 @@ static uint64_t petta_alpha_hash(Atom *root, bool *quoted) {
                 if (!grown) {
                     if (stack != inline_stack)
                         free(stack);
+                    *complete = false;
                     return 0u;
                 }
                 if (stack == inline_stack)
@@ -4678,6 +4754,58 @@ static PettaTransientValue *petta_transient_value_slot(
     return &program->transient_values[hash & (PETTA_TRANSIENT_VALUE_CAP - 1u)];
 }
 
+static PettaTransientValue *petta_translation_value_entry(
+        PettaProgram *program,
+        const PettaTranslationEnvironment *environment, Atom *atom,
+        const Arena **source_out) {
+    *source_out = NULL;
+    if (!environment)
+        return NULL;
+    for (size_t index = 0u;
+         index < environment->source_arena_count; index++) {
+        const Arena *candidate = environment->source_arenas[index];
+        if (candidate && candidate->identity == atom->arena_id) {
+            *source_out = candidate;
+            break;
+        }
+    }
+    return petta_transient_value_slot(program, *source_out, atom);
+}
+
+static bool petta_translation_value_cached(
+        PettaProgram *program,
+        const PettaTranslationEnvironment *environment, Atom *atom) {
+    const Arena *source = NULL;
+    PettaTransientValue *slot =
+        petta_translation_value_entry(
+            program, environment, atom, &source);
+    bool cached = slot && slot->atom == atom &&
+        slot->arena_identity == source->identity &&
+        slot->reset_epoch == source->reset_epoch &&
+        slot->callability_epoch == program->callability_epoch;
+    if (cached) {
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PETTA_TRANSLATION_VALUE_REUSE);
+    }
+    return cached;
+}
+
+static void petta_translation_value_keep(
+        PettaProgram *program,
+        const PettaTranslationEnvironment *environment, Atom *atom) {
+    const Arena *source = NULL;
+    PettaTransientValue *slot =
+        petta_translation_value_entry(
+            program, environment, atom, &source);
+    if (slot) {
+        *slot = (PettaTransientValue){
+            .atom = atom, .reset_epoch = source->reset_epoch,
+            .arena_identity = source->identity,
+            .callability_epoch = program->callability_epoch,
+        };
+    }
+}
+
 /* This is a sufficient fragment of the translator's value rule. A dynamic
  * head or any language/program/extension operation defers to the full
  * translator. Constructor-built list and closure values are opaque there. */
@@ -4701,21 +4829,9 @@ static bool petta_translation_is_value(
             len--;
             continue;
         }
-        const Arena *source = NULL;
-        for (size_t index = 0u; index < environment->source_arena_count; index++) {
-            const Arena *candidate = environment->source_arenas[index];
-            if (candidate && candidate->identity == atom->arena_id) {
-                source = candidate;
-                break;
-            }
-        }
-        PettaTransientValue *slot = petta_transient_value_slot(program, source, atom);
         if (!frame->entered) {
-            if (slot && slot->atom == atom &&
-                slot->arena_identity == source->identity &&
-                slot->reset_epoch == source->reset_epoch &&
-                slot->callability_epoch == program->callability_epoch) {
-                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_TRANSLATION_VALUE_REUSE);
+            if (petta_translation_value_cached(
+                    program, environment, atom)) {
                 len--;
                 continue;
             }
@@ -4735,11 +4851,7 @@ static bool petta_translation_is_value(
             frame->next = 1u;
         }
         if (frame->next == atom->expr.len) {
-            if (slot) *slot = (PettaTransientValue){
-                .atom = atom, .reset_epoch = source->reset_epoch,
-                .arena_identity = source->identity,
-                .callability_epoch = program->callability_epoch,
-            };
+            petta_translation_value_keep(program, environment, atom);
             len--;
             continue;
         }
@@ -4805,8 +4917,10 @@ const PettaPlanNode *petta_program_plan_transient(
      * translation reads it: comparing it with a kept goal, or keeping it,
      * would read the argument. */
     bool quoted = false;
-    uint64_t hash = current ? petta_alpha_hash(atom, &quoted) : 0u;
-    bool keyed = current && environment && !quoted;
+    bool key_complete = false;
+    uint64_t hash = current
+        ? petta_alpha_hash(atom, &quoted, &key_complete) : 0u;
+    bool keyed = current && environment && key_complete && !quoted;
     if (keyed && program->transient_plan_len > 0u) {
         PettaTransientPlan *entry =
             petta_transient_plan_slot(program, hash, atom);
@@ -4818,9 +4932,10 @@ const PettaPlanNode *petta_program_plan_transient(
     ArenaMark mark = arena_mark(&program->transient_scratch);
     PettaPlanNode *built = petta_plan_build_in(
         program, &program->transient_scratch, callability, atom, false,
-        true, NULL, 0u);
+        true, environment, NULL, 0u);
     const PettaPlanNode *plan =
-        built && petta_plan_collapse_values(built)
+        built && petta_plan_collapse_values(
+            program, atom, built, environment)
             ? petta_program_intern_plan(program, built)
             : NULL;
     arena_reset(&program->transient_scratch, mark);
@@ -4942,6 +5057,7 @@ static const PettaPlanNode *petta_program_plan_equation(
     const PettaPlanNode *plan =
         ok ? petta_plan_build_in(
                  program, &program->plans, &callability, atom, true, false,
+                 NULL,
                  held, held_len)
            : NULL;
     free(callability.named_heads);

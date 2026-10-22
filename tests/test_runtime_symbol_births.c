@@ -33,11 +33,41 @@ int main(void) {
     SymbolTable symbols;
     Arena arena;
     symbol_table_init(&symbols);
+    SymbolId early = symbol_intern_cstr(&symbols, "ordinary-before-builtins");
+    /* Even an already interned builtin spelling cannot turn the surrounding
+     * user-name interval into builtin authority. */
+    symbol_intern_cstr(&symbols, "Empty");
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
     g_symbols = &symbols;
     g_hashcons = NULL;
     g_var_intern = NULL;
     arena_init(&arena);
+
+    /* Appending a builtin must not make it a constructor or an unknown call.
+     * Its registration is the authority, independently of the legacy range. */
+#define CHECK_BUILTIN(field, text) assert(symbol_id_is_builtin(g_builtin_syms.field));
+    CETTA_BUILTIN_SYMBOLS(CHECK_BUILTIN)
+#undef CHECK_BUILTIN
+#define CHECK_DIALECT_BUILTIN(field) do { \
+    assert(symbol_id_is_builtin(g_builtin_syms.field)); \
+    assert(symbol_id_is_builtin_for(g_builtin_syms.field,CETTA_LANGUAGE_PETTA)); \
+    assert(!symbol_id_is_builtin_for(g_builtin_syms.field,CETTA_LANGUAGE_HE)); \
+    assert(!symbol_id_is_builtin_for(g_builtin_syms.field,CETTA_LANGUAGE_PRIME)); \
+} while (0);
+    CETTA_PETTA_ONLY_BUILTIN_SYMBOL_FIELDS(CHECK_DIALECT_BUILTIN)
+#undef CHECK_DIALECT_BUILTIN
+#define CHECK_CONSTRUCTOR(field) do { \
+    assert(symbol_id_is_builtin(g_builtin_syms.field)); \
+    assert(!symbol_id_is_builtin_for(g_builtin_syms.field,CETTA_LANGUAGE_PETTA)); \
+    assert(!symbol_id_is_builtin_for(g_builtin_syms.field,CETTA_LANGUAGE_HE)); \
+    assert(!symbol_id_is_builtin_for(g_builtin_syms.field,CETTA_LANGUAGE_PRIME)); \
+} while (0);
+    CETTA_BUILTIN_CONSTRUCTOR_SYMBOL_FIELDS(CHECK_CONSTRUCTOR)
+#undef CHECK_CONSTRUCTOR
+    assert(!symbol_id_is_builtin(early));
+    assert(!symbol_id_is_builtin(SYMBOL_ID_NONE));
+    assert(!symbol_id_is_builtin(symbol_intern_cstr(g_symbols, "ordinary-constructor")));
+    assert(!symbol_id_is_builtin(symbol_intern_data_cstr(g_symbols, "runtime-constructor")));
 
     Atom *runtime = parse_one(&arena, "(runtime-head $runtime-var runtime-leaf)", true);
     assert(runtime && runtime->kind == ATOM_EXPR);
@@ -72,7 +102,7 @@ int main(void) {
     assert(visits == (CETTA_MANAGED_SYMBOLS ? 2u : 3u));
     Atom *name_key = atom_symbol_data(&arena, "structural-name-key");
     Atom *variable = atom_var_with_presentation(&arena,
-        symbol_intern_data_cstr(g_symbols, "presented-variable"), name_key, 0u);
+        symbol_intern_data_cstr(g_symbols, "presented-variable"), name_key, var_id_from_base(0u));
     visits = 0u;
     assert(atom_visit_syntax_symbols(variable, count_symbol, &visits));
     assert(visits == (CETTA_MANAGED_SYMBOLS ? 1u : 2u));

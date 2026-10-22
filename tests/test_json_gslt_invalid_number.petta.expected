@@ -1,2 +1,2 @@
 true
-(Error (__cetta_lib_json_stringify (JsonNumber "01")) "JSON syntax rejected by authored grammar")
+(JsonFailureV1 JsonStringifyV1 JsonMalformedValueV1 (__cetta_lib_json_stringify (InvalidJsonScalarV1 "01")) "malformed ordinary JSON value")

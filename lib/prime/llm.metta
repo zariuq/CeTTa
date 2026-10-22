@@ -32,7 +32,8 @@
      (case (llm:v1:render $value)
        (((llm:v1:failure $code) (return (llm:v1:error $code)))
         ((Error $source $reason) (return (llm:v1:error result-render-error)))
-        ($text (return (llm:v1:ok $text))))){$code $source $reason $text}))
+        ((JsonFailureV1 $phase $status $source $reason) (return (llm:v1:error result-render-error)))
+        ($text (return (llm:v1:ok $text))))){$code $source $reason $phase $status $text}))
 
 (= (llm:v1:member? $value $items)
    (if (== $items ()) False
@@ -71,15 +72,14 @@
       ((JsonFailureV1 $other-phase $other-status $other-call $other-diagnostic)
        (llm:v1:failure invalid-or-ambiguous-json))
       ($converted $converted))))
+; A model response is parsed straight to a legacy value whose objects repeat
+; no key; a repeated key fails like any other ambiguous response.
+(: llm:v1:unique-legacy (-> Atom Atom))
+(= (llm:v1:unique-legacy $text)
+   (function (chain (eval (__cetta_lib_json_parse $text JsonUniqueKeysV1)) $result
+     (return $result)){$result}))
 (= (llm:v1:parse $text)
-   (let $value (json:parse $text)
-     (case $value
-       (((JsonFailureV1 $phase $status $call $diagnostic) (llm:v1:parsed $value))
-        ($canonical
-          (let $unique (llm:v1:unique? $canonical)
-            (if $unique
-              (let $converted (llm:v1:historical $canonical) (llm:v1:parsed $converted)){$converted}
-              (llm:v1:failure invalid-or-ambiguous-json))){$unique})))))
+   (let $value (llm:v1:unique-legacy $text) (llm:v1:parsed $value)))
 (= (llm:v1:object? $value)
    (case $value (((JsonObject $pairs) True) ($other False))))
 (= (llm:v1:array $value)
@@ -605,7 +605,7 @@
                  ($new-role (llm:v1:get $message "role")))
            (if
              (not (== $old-role $new-role))
-             (cons-atom $head (cons-atom $message ()))
+             (let $pair (cons-atom $message ()) (cons-atom $head $pair)){$pair}
              (let* (($old-content (llm:v1:get $head "content"))
                      ($old (llm:v1:array $old-content))
                      ($new-content (llm:v1:get $message "content"))
@@ -785,13 +785,44 @@
                      (llm:v1:validated ($checked) $validated-output-32)){$validated-output-32}){$type $fn $name $checked})
                ($other (llm:v1:failure unsupported-tool-choice)))){$pairs $other})){$kind}
        $selected)))
+(= (llm:v1:cache-marker $ttl)
+   (if (== $ttl JsonNull)
+     (JsonObject ((JsonPair "type" (JsonString "ephemeral"))))
+     (JsonObject ((JsonPair "type" (JsonString "ephemeral")) (JsonPair "ttl" $ttl)))))
 (= (llm:v1:cache-last $blocks)
+   (let $marker (llm:v1:cache-marker JsonNull) (llm:v1:cache-last-with $marker $blocks)))
+(= (llm:v1:cache-last-with $marker $blocks)
    (if (== $blocks ()) ()
      (let* (($head (car-atom $blocks)) ($tail (cdr-atom $blocks)))
        (if (== $tail ())
-         (let $cached (llm:v1:with $head "cache_control" (JsonObject ((JsonPair "type" (JsonString "ephemeral")))))
+         (let $cached (llm:v1:with $head "cache_control" $marker)
            (cons-atom $cached ())){$cached}
-         (let $rest (llm:v1:cache-last $tail) (cons-atom $head $rest)){$rest})){$head $tail}))
+         (let $rest (llm:v1:cache-last-with $marker $tail) (cons-atom $head $rest)){$rest})){$head $tail}))
+; A growing conversation caches at its newest user message and at the user
+; message that ended the previous request, so each call reads the prefix the
+; previous call wrote and writes only the new turn.
+(= (llm:v1:cache-message $marker $message)
+   (if (== (llm:v1:get $message "role") (JsonString "user"))
+     (case (llm:v1:get $message "content")
+       (((JsonArray $blocks)
+         (let $cached (llm:v1:cache-last-with $marker $blocks) (llm:v1:with $message "content" (JsonArray $cached))){$cached})
+        ($other $message))){$blocks $other}
+     $message))
+(= (llm:v1:reverse-onto $items $out)
+   (if (== $items ()) $out
+     (let* (($head (car-atom $items)) ($tail (cdr-atom $items)) ($next (cons-atom $head $out)))
+       (llm:v1:reverse-onto $tail $next)){$head $tail $next}))
+(= (llm:v1:cache-newest $marker $newest-first $position)
+   (if (or (== $newest-first ()) (> $position 2)) $newest-first
+     (let* (($head (car-atom $newest-first)) ($tail (cdr-atom $newest-first))
+            ($marked (if (== $position 1) $head (llm:v1:cache-message $marker $head)))
+            ($next (+ $position 1))
+            ($rest (llm:v1:cache-newest $marker $tail $next)))
+       (cons-atom $marked $rest)){$head $tail $marked $next $rest}))
+(= (llm:v1:cache-conversation $marker $conversation)
+   (let* (($newest-first (llm:v1:reverse-onto $conversation ()))
+          ($marked (llm:v1:cache-newest $marker $newest-first 0)))
+     (llm:v1:reverse-onto $marked ())))
 (= (llm:v1:reasoning-options $protocol $request $body)
    (let* (($reasoning (llm:v1:get $request "reasoning"))
            ($effort (llm:v1:get $reasoning "effort"))
@@ -867,6 +898,9 @@
                                                  (== $choice (JsonString "none"))))) True
                (llm:v1:failure tool-choice-without-tools)))
            ($cache (llm:v1:get $request "cache_system"))
+           ($cache-messages (llm:v1:get $request "cache_messages"))
+           ($ttl (llm:v1:get $request "cache_ttl"))
+           ($marker (llm:v1:cache-marker $ttl))
            ($chat-profile (llm:v1:get $request "chat_profile"))
            ($chat-limit (if (== $chat-profile (JsonString "compatible")) "max_tokens" "max_completion_tokens"))
            ($base
@@ -876,7 +910,7 @@
                  ("anthropic"
                    (case
                      (llm:v1:anthropic-conversation $messages $role-policy () ())
-                     (((llm:v1:conversation $system $conversation) (let* (($cached (if (== $cache (JsonBool False)) $system (llm:v1:cache-last $system))) ($body (JsonObject ((JsonPair "model" $model) (JsonPair "max_tokens" $tokens) (JsonPair "messages" (JsonArray $conversation)))))) (if (== $cached ()) $body (llm:v1:with $body "system" (JsonArray $cached)))){$cached $body})
+                     (((llm:v1:conversation $system $conversation) (let* (($cached (if (== $cache (JsonBool False)) $system (llm:v1:cache-last-with $marker $system))) ($turns (if (== $cache-messages (JsonBool True)) (llm:v1:cache-conversation $marker $conversation) $conversation)) ($body (JsonObject ((JsonPair "model" $model) (JsonPair "max_tokens" $tokens) (JsonPair "messages" (JsonArray $turns)))))) (if (== $cached ()) $body (llm:v1:with $body "system" (JsonArray $cached)))){$cached $turns $body})
                        ((llm:v1:failure $failed-conversation) (llm:v1:failure $failed-conversation))
                        ($invalid-conversation (llm:v1:failure invalid-protocol-data)))){$system $conversation $failed-conversation $invalid-conversation})
                  ("responses"
@@ -969,8 +1003,16 @@
           ($cache (llm:v1:get $request "cache_system"))
           ($cache-ok (if (or (== $cache JsonNull) (or (== $cache (JsonBool True)) (== $cache (JsonBool False))))
                        True (llm:v1:failure invalid-cache-policy)))
-          ($cache-supported (if (or (== $protocol "anthropic") (== $cache JsonNull)) True
-                               (llm:v1:failure unsupported-provider-option)))
+          ($cache-messages (llm:v1:get $request "cache_messages"))
+          ($cache-messages-ok (if (or (== $cache-messages JsonNull) (or (== $cache-messages (JsonBool True))
+                                    (== $cache-messages (JsonBool False))))
+                                True (llm:v1:failure invalid-cache-policy)))
+          ($ttl (llm:v1:get $request "cache_ttl"))
+          ($ttl-ok (if (or (== $ttl JsonNull) (or (== $ttl (JsonString "5m")) (== $ttl (JsonString "1h"))))
+                     True (llm:v1:failure invalid-cache-policy)))
+          ($cache-supported (if (or (== $protocol "anthropic")
+                                    (and (== $cache JsonNull) (and (== $cache-messages JsonNull) (== $ttl JsonNull))))
+                               True (llm:v1:failure unsupported-provider-option)))
           ($chat-profile (llm:v1:get $request "chat_profile"))
           ($chat-profile-ok (if (or (== $chat-profile JsonNull)
                   (and (== $protocol "chat-completions")
@@ -986,7 +1028,7 @@
                         (llm:v1:failure unsupported-tool-choice-policy)))
           ($supported (if (or (== $protocol "anthropic") (and (== $thinking JsonNull) (== $choice JsonNull)))
                         True (llm:v1:failure unsupported-provider-option))))
-     (llm:v1:validated ($role-ok $reasoning-ok $thinking-ok $cache-ok $cache-supported $chat-profile-ok $reasoning-fields $choice-ok $supported) True)))
+     (llm:v1:validated ($role-ok $reasoning-ok $thinking-ok $cache-ok $cache-messages-ok $ttl-ok $cache-supported $chat-profile-ok $reasoning-fields $choice-ok $supported) True)))
 (: llm:v1:validate-messages (-> Atom Atom %Undefined%))
 (= (llm:v1:validate-messages $protocol $messages)
    (if (== $messages ()) True
@@ -1031,7 +1073,7 @@
 (= (llm:v1:request-fields $request)
    (case
      $request
-     (((JsonObject $pairs) (llm:v1:allowed-fields $pairs ("model" "messages" "max_tokens" "tools" "tool_choice" "reasoning" "thinking" "cache_system" "role_policy" "tool_choice_policy" "chat_profile" "stream" "extensions")))
+     (((JsonObject $pairs) (llm:v1:allowed-fields $pairs ("model" "messages" "max_tokens" "tools" "tool_choice" "reasoning" "thinking" "cache_system" "cache_messages" "cache_ttl" "role_policy" "tool_choice_policy" "chat_profile" "stream" "extensions")))
        ($other (llm:v1:failure expected-object)))))
 (= (llm:v1:allowed-fields $pairs $allowed)
    (if
@@ -1207,6 +1249,12 @@
 (: llm:v1:tools (-> Atom Atom %Undefined%))
 (: llm:v1:tool-choice (-> Atom Atom Atom Atom %Undefined%))
 (: llm:v1:cache-last (-> Atom %Undefined%))
+(: llm:v1:cache-marker (-> Atom %Undefined%))
+(: llm:v1:cache-last-with (-> Atom Atom %Undefined%))
+(: llm:v1:cache-message (-> Atom Atom %Undefined%))
+(: llm:v1:reverse-onto (-> Atom Atom %Undefined%))
+(: llm:v1:cache-newest (-> Atom Atom Atom %Undefined%))
+(: llm:v1:cache-conversation (-> Atom Atom %Undefined%))
 (: llm:v1:reasoning-options (-> Atom Atom Atom %Undefined%))
 (: llm:v1:extensions (-> Atom Atom %Undefined%))
 (: llm:v1:encode-value (-> Atom Atom %Undefined%))

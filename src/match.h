@@ -32,7 +32,7 @@ typedef struct {
 } BindingsFrameRef;
 
 static inline bool bindings_frame_ref_is_valid(BindingsFrameRef ref) {
-    return ref.identity != 0u;
+    return !cetta_frame_identity_is_none(ref.identity);
 }
 
 /* A logical value retains syntax separately from its lexical interpretation.
@@ -43,39 +43,89 @@ static inline bool bindings_frame_ref_is_valid(BindingsFrameRef ref) {
  * be transported at an ownership boundary.  The substitution itself is not
  * captured here: subsequent branch refinements remain observable.  Context
  * is stored by value, never as a pointer into a matcher's stack. Branch-local
- * row coordinates are read-view metadata, not lexical context. */
+ * row coordinates are read-view metadata, not lexical context.
+ *
+ * Two words: the skeleton, and its context word, declared as the
+ * BindingContext layout in langdef/layouts/runtime_words.module: the frame
+ * identity of the lexical environment (zero when there is none) and the
+ * value's kind.  A frame identity's top two bits are zero, and the kind lives
+ * there, so a value passes, returns and copies as one register pair.  Lookup
+ * uses the frame's handle directly and checks its generation against the
+ * authoritative frame. */
 typedef struct {
     Atom *skeleton;
-    /* The frame identity is the lexical environment; lookup uses its handle
-     * directly and checks its generation against the authoritative frame. */
-    uint32_t epoch;
-    BindingValueKind kind;
+    uint64_t context;
 } BindingValue;
 
-_Static_assert(
-    sizeof(BindingValue) == sizeof(Atom *) + 2u * sizeof(uint32_t),
-    "BindingValue must not acquire alignment padding beyond its fields");
+_Static_assert(sizeof(BindingValue) == 2u * sizeof(uint64_t),
+               "a binding value is two words: its skeleton and its context");
+_Static_assert(BINDING_VALUE_MATERIALIZED == 0 &&
+               CESTA_LAYOUT_BindingContext_admits_BODY(
+                   UINT64_C(0x3FFFFFFFFFFFFFFF),
+                   BINDING_VALUE_CONTEXTUAL_PERSISTENT) &&
+               CESTA_LAYOUT_BindingContext_kind_BODY(
+                   CESTA_LAYOUT_BindingContext_pack_BODY(
+                       UINT64_C(0x3FFFFFFFFFFFFFFF),
+                       BINDING_VALUE_CONTEXTUAL)) == BINDING_VALUE_CONTEXTUAL &&
+               CESTA_LAYOUT_BindingContext_frame_BODY(
+                   CESTA_LAYOUT_BindingContext_pack_BODY(
+                       UINT64_C(0x3FFFFFFFFFFFFFFF),
+                       BINDING_VALUE_CONTEXTUAL)) == UINT64_C(0x3FFFFFFFFFFFFFFF),
+               "binding value kinds and frame identities differ from the "
+               "BindingContext layout");
 
-static inline BindingsFrameRef binding_value_frame_ref(BindingValue value) {
-    return (BindingsFrameRef){
-        .identity = value.epoch,
+static inline BindingValueKind binding_value_kind(BindingValue value) {
+    return (BindingValueKind)BindingContext_kind(value.context);
+}
+
+/* The frame identity of the value's lexical environment. */
+static inline CettaFrameIdentity binding_value_epoch(BindingValue value) {
+    return (CettaFrameIdentity){BindingContext_frame(value.context)};
+}
+
+static inline BindingValue binding_value_make(
+        Atom *skeleton, CettaFrameIdentity epoch, BindingValueKind kind) {
+    return (BindingValue){
+        .skeleton = skeleton,
+        .context = BindingContext_pack(epoch.word, (uint64_t)kind),
     };
 }
 
+static inline void binding_value_set_epoch(
+        BindingValue *value, CettaFrameIdentity epoch) {
+    value->context = BindingContext_set_frame(value->context, epoch.word);
+}
+
+static inline void binding_value_set_kind(
+        BindingValue *value, BindingValueKind kind) {
+    value->context = BindingContext_set_kind(value->context, (uint64_t)kind);
+}
+
+static inline BindingsFrameRef binding_value_frame_ref(BindingValue value) {
+    return (BindingsFrameRef){
+        .identity = binding_value_epoch(value),
+    };
+}
+
+/* `skeleton` read in the context of `value`. */
+static inline BindingValue binding_value_with_skeleton(
+        BindingValue value, Atom *skeleton) {
+    return (BindingValue){.skeleton = skeleton, .context = value.context};
+}
+
 static inline BindingValue binding_value_from_atom(Atom *atom) {
-    return (BindingValue){.skeleton = atom, .kind = BINDING_VALUE_MATERIALIZED};
+    return (BindingValue){.skeleton = atom, .context = 0u};
 }
 
 static inline BindingValue binding_value_from_context(
-        Atom *skeleton, uint32_t epoch) {
-    return (BindingValue){.skeleton = skeleton, .epoch = epoch,
-                          .kind = BINDING_VALUE_CONTEXTUAL};
+        Atom *skeleton, CettaFrameIdentity epoch) {
+    return binding_value_make(skeleton, epoch, BINDING_VALUE_CONTEXTUAL);
 }
 
 static inline BindingValue binding_value_from_persistent_context(
-        Atom *skeleton, uint32_t epoch) {
-    return (BindingValue){.skeleton = skeleton, .epoch = epoch,
-                          .kind = BINDING_VALUE_CONTEXTUAL_PERSISTENT};
+        Atom *skeleton, CettaFrameIdentity epoch) {
+    return binding_value_make(
+        skeleton, epoch, BINDING_VALUE_CONTEXTUAL_PERSISTENT);
 }
 
 static inline bool binding_value_kind_is_contextual(BindingValueKind kind) {
@@ -84,22 +134,22 @@ static inline bool binding_value_kind_is_contextual(BindingValueKind kind) {
 }
 
 static inline bool binding_value_is_contextual(BindingValue value) {
-    return binding_value_kind_is_contextual(value.kind);
+    return binding_value_kind_is_contextual(binding_value_kind(value));
 }
 
 static inline bool binding_value_context_is_persistent(BindingValue value) {
-    return value.kind == BINDING_VALUE_CONTEXTUAL_PERSISTENT;
+    return binding_value_kind(value) == BINDING_VALUE_CONTEXTUAL_PERSISTENT;
 }
 
 static inline BindingValue binding_value_from_context_kind(
-        Atom *skeleton, uint32_t epoch, BindingValueKind kind) {
+        Atom *skeleton, CettaFrameIdentity epoch, BindingValueKind kind) {
     /* A scalar variable whose packed identifier already names a frame is
      * the same contextual coordinate before and after qualification.  Keep
      * that context explicit so a later binding does not mistake it for
      * context-free syntax and fall back to the generic environment domain. */
     if (kind == BINDING_VALUE_MATERIALIZED && skeleton &&
         skeleton->kind == ATOM_VAR &&
-        var_epoch_suffix(skeleton->var_id) != 0u) {
+        !cetta_frame_identity_is_none(var_epoch_suffix(skeleton->var_id))) {
         return binding_value_from_context(
             skeleton, var_epoch_suffix(skeleton->var_id));
     }
@@ -114,7 +164,7 @@ static inline VarId binding_value_variable_id(BindingValue value) {
     if (!value.skeleton || value.skeleton->kind != ATOM_VAR)
         return VAR_ID_NONE;
     return binding_value_is_contextual(value)
-        ? var_epoch_id(value.skeleton->var_id, value.epoch)
+        ? var_epoch_id(value.skeleton->var_id, binding_value_epoch(value))
         : value.skeleton->var_id;
 }
 
@@ -432,7 +482,7 @@ bool      bindings_copy(Bindings *dst, const Bindings *src);
  * the remaining external rows are preserved. The operation is transactional. */
 typedef struct CettaVarMap CettaVarMap;
 bool      bindings_contextualize_unframed(Bindings *bindings, Arena *arena,
-                                          CettaVarMap *inventory, uint32_t epoch);
+                                          CettaVarMap *inventory, CettaFrameIdentity epoch);
 /* Capture retains a frozen image.  Ensure both flat logical arrays are
  * exclusively writable before changing an entry or constraint. */
 bool      bindings_prepare_logical_write(Bindings *bindings);
@@ -479,7 +529,7 @@ struct CettaTermVariableSupport;
  * summary retains the exact traversal fallback. */
 typedef struct {
     Atom *atom;
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     const struct CettaTermVariableSupport *variable_support;
 } BindingsEpochRoot;
 
@@ -497,7 +547,7 @@ struct BindingsActivationView {
     uint32_t len;
     VarId source_first_id;
     bool source_ids_contiguous;
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     BindingValueKind source_kind;
     uint32_t first_entry;
     uint64_t first_write_version;
@@ -509,7 +559,7 @@ bool      bindings_activation_view_prepare(
               BindingsActivationView *frame,
               BindingsBuilder *builder,
               const VarId *source_ids, Atom *const *source_variables,
-              uint32_t variable_count, uint32_t epoch,
+              uint32_t variable_count, CettaFrameIdentity epoch,
               uint32_t first_entry);
 /* Borrow the complete frame already published for one compiled equation.
  * The schema owns and validates the ordered source-id inventory; the aligned
@@ -521,7 +571,7 @@ bool      bindings_activation_view_prepare_schema(
               BindingsBuilder *builder,
               BindingsFrameSchema *schema,
               Atom *const *source_variables,
-              uint32_t epoch, uint32_t first_entry);
+              CettaFrameIdentity epoch, uint32_t first_entry);
 /* A view names an activation independently of the builder that prepared it.
  * Its inventory and source syntax must outlive the view. Each read explicitly
  * chooses a live or captured binding image that owns the referenced frame. */
@@ -645,26 +695,26 @@ BindingValue bindings_lookup_value_id(Bindings *b, VarId var_id);
  * ascending order; `epoch` supplies the frame coordinate. */
 bool      bindings_register_contextual_frame(
               Bindings *bindings, const VarId *source_ids,
-              uint32_t source_len, uint32_t epoch);
+              uint32_t source_len, CettaFrameIdentity epoch);
 bool      bindings_builder_register_contextual_frame(
               BindingsBuilder *builder, const VarId *source_ids,
-              uint32_t source_len, uint32_t epoch);
+              uint32_t source_len, CettaFrameIdentity epoch);
 /* Admit the complete variable inventory of one activation.  A completed
  * frame is closed: matchers consume its indexed coordinates without
  * rediscovering subterm schemas, and later attempts cannot add identifiers
  * to that epoch. */
 bool      bindings_register_complete_contextual_frame(
              Bindings *bindings, const VarId *source_ids,
-             uint32_t source_len, uint32_t epoch);
+             uint32_t source_len, CettaFrameIdentity epoch);
 bool bindings_register_complete_frame_schema(
-    Bindings *bindings, BindingsFrameSchema *schema, uint32_t epoch);
+    Bindings *bindings, BindingsFrameSchema *schema, CettaFrameIdentity epoch);
 /* Admit one immutable presented schema into an activation whose complete
  * variable inventory is not known in advance.  Later schemas for the same
  * epoch are merged by source id until that frame is explicitly completed. */
 bool bindings_builder_register_frame_schema(
-    BindingsBuilder *builder, BindingsFrameSchema *schema, uint32_t epoch);
+    BindingsBuilder *builder, BindingsFrameSchema *schema, CettaFrameIdentity epoch);
 bool bindings_builder_register_complete_frame_schema(
-    BindingsBuilder *builder, BindingsFrameSchema *schema, uint32_t epoch);
+    BindingsBuilder *builder, BindingsFrameSchema *schema, CettaFrameIdentity epoch);
 /* Runtime-created slots extend the activation's value array, leaving its
  * prepared syntax inventory immutable. No source-id inventory is collected. */
 Atom *bindings_builder_new_variable(BindingsBuilder *builder, Arena *arena,
@@ -680,13 +730,13 @@ void bindings_exclusive_frame_storage_census(
     const BindingsExclusiveFrame *frame, CettaStorageCensus *census);
 bool bindings_exclusive_frame_begin(
     BindingsExclusiveFrame *frame, BindingsFrameSchema *schema,
-    uint32_t epoch);
+    CettaFrameIdentity epoch);
 /* As begin, for an identity minted for this activation: no binding outside
  * the frame may mention it.  The frame then elides occurs checks that the
  * freshness proves vacuous, until a value it stores mentions the frame. */
 bool bindings_exclusive_frame_begin_fresh(
     BindingsExclusiveFrame *frame, BindingsFrameSchema *schema,
-    uint32_t epoch);
+    CettaFrameIdentity epoch);
 bool bindings_exclusive_frame_freeze(
     BindingsExclusiveFrame *frame, BindingsBuilder *builder);
 /* Publish a rule-local candidate directly into authoritative frame slots.
@@ -702,16 +752,16 @@ bool bindings_exclusive_frame_aliases_normalized(
     const BindingsExclusiveFrame *frame, bool *cross_frame_alias);
 bool bindings_builder_aliases_normalized_since(
     const BindingsBuilder *builder, uint32_t trail_mark,
-    uint32_t first_entry, uint32_t identity, bool *cross_frame_alias);
+    uint32_t first_entry, CettaFrameIdentity identity, bool *cross_frame_alias);
 Atom *bindings_apply_exclusive_frame_then_all(
     BindingsBuilder *builder, Arena *arena, Atom *atom,
     const BindingsExclusiveFrame *frame);
 /* Register the exact variable inventory carried by authored activation
  * syntax when no compiled template inventory is available. */
 bool      bindings_register_activation_source_frame(
-              Bindings *bindings, Atom *source, uint32_t epoch);
+              Bindings *bindings, Atom *source, CettaFrameIdentity epoch);
 bool      bindings_builder_register_activation_source_frame(
-              BindingsBuilder *builder, Atom *source, uint32_t epoch);
+              BindingsBuilder *builder, Atom *source, CettaFrameIdentity epoch);
 /* Resolve one original activation-view variable through the rule-local
  * binding suffix, then through ordinary outer variable links, without
  * allocating a substituted term.  A successful call with
@@ -719,7 +769,7 @@ bool      bindings_builder_register_activation_source_frame(
  * available and the caller must defer to the general view semantics. */
 bool      bindings_resolve_epoch_view_ground(
               const Bindings *bindings, const Atom *source_variable,
-              uint32_t epoch, uint32_t first_entry, Atom **ground_out);
+              CettaFrameIdentity epoch, uint32_t first_entry, Atom **ground_out);
 Atom     *binding_variable_atom(Arena *a, const Binding *binding);
 /* Follow root aliases without substitution or demand. The returned syntax
  * retains its lexical context; false means the chain cannot certify a root. */
@@ -857,6 +907,37 @@ Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
  * syntax under each lexical reading for acyclic binding environments.
  * Cyclic environments keep the ordinary active-path interpretation. */
 Atom     *bindings_apply_graph(Bindings *b, Arena *a, Atom *atom);
+typedef struct BindingsApplySession BindingsApplySession;
+typedef enum {
+    BINDINGS_APPLY_PENDING,
+    BINDINGS_APPLY_COMPLETE,
+    BINDINGS_APPLY_REFUSED
+} BindingsApplyStatus;
+/* Retain the existing value-application traversal. The caller holds an
+ * unchanged logical binding image and the source graph, its payload owners
+ * and runtime context. The hook table is copied; callback runtime state is
+ * still supplied by that context. shared_graph selects the same acyclic
+ * node-sharing interpretation as bindings_apply_graph; cycles keep the
+ * ordinary variable-path interpretation.
+ *
+ * Descent, ascent, prefix copies and sibling writes retain their positions.
+ * A private noninterning arena uses incremental summary assembly; an interning
+ * arena retains its atomic expression-finishing provider. Lookup/cache work,
+ * hooks, allocation and control retirement have separate service prices.
+ * These actions are not physical time or whole-slot bounds.
+ *
+ * Results have bindings_apply's borrowed-syntax contract. Retain their source
+ * and payload owners through use, or export with the existing copy service.
+ * No authority or mutable-world snapshot is granted here. */
+BindingsApplySession *bindings_apply_session_new(const Bindings *b, Arena *a,
+    BindingValue source, bool shared_graph);
+/* Zero allowance is inert on an admitted session. Both outputs are required;
+ * pending/refused work never exposes a partial root. Destination reset or a
+ * changed allocation profile refuses before further reads/publication. */
+BindingsApplyStatus bindings_apply_session_advance(BindingsApplySession *session,
+    uint64_t allowance, Atom **result, uint64_t *used);
+uint64_t bindings_apply_session_steps(const BindingsApplySession *session);
+void bindings_apply_session_free(BindingsApplySession *session);
 static inline Atom *bindings_apply_if_vars(const Bindings *b, Arena *a, Atom *atom) {
     if (!b || !bindings_has_bound_values(b) ||
         !atom || !atom_has_vars(atom))
@@ -871,19 +952,19 @@ Atom     *bindings_apply_value_without_id(
 Atom     *bindings_apply_rewrite_vars(Bindings *b, Arena *a, Atom *atom,
                                       BindingsRewriteVarFn rewrite_var,
                                       void *rewrite_ctx);
-Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, uint32_t epoch);
+Atom     *bindings_apply_epoch(Bindings *b, Arena *a, Atom *atom, CettaFrameIdentity epoch);
 /* Apply an epoch-standardized term through only the binding suffix beginning
  * at `first_entry`.  This is the activation-frame view used when a caller has
  * already instantiated the query through the older prefix: rule-local slots
  * are substituted now, while unresolved outer variables remain live trail
  * references for later demand. */
 Atom     *bindings_apply_epoch_since(Bindings *b, Arena *a, Atom *atom,
-                                     uint32_t epoch, uint32_t first_entry);
+                                     CettaFrameIdentity epoch, uint32_t first_entry);
 /* Compose activation-local substitution with the full outer environment in
  * one traversal.  Source variables consult only the activation suffix;
  * variables reached through their values consult the complete environment. */
 Atom     *bindings_apply_epoch_then_all(Bindings *b, Arena *a, Atom *atom,
-                                        uint32_t epoch,
+                                        CettaFrameIdentity epoch,
                                         uint32_t first_entry);
 /* Activation-view realization of bindings_apply_epoch_then_all.  It has the
  * same result and ownership contract; the finite activation inventory avoids
@@ -905,7 +986,7 @@ Atom     *bindings_resolve_activation_view_slot_root(
               Bindings *bindings, Arena *a,
               const BindingsActivationView *frame,
               Atom *source_variable, uint32_t slot);
-Atom     *atom_freshen_epoch(Arena *a, Atom *atom, uint32_t epoch);
+Atom     *atom_freshen_epoch(Arena *a, Atom *atom, CettaFrameIdentity epoch);
 /* Reify lexical identities at a consumer that requires an Atom.  This does
  * not apply branch substitutions or force Prime Need state.  Unchanged
  * subterms may be shared with the source; promotion is a separate operation. */
@@ -1093,22 +1174,22 @@ bool bindings_frame_index_test_lookup(
 bool bindings_exclusive_frame_test_certified(
     const BindingsExclusiveFrame *frame);
 bool bindings_frame_storage_test_identity(
-    const Bindings *bindings, uint32_t epoch,
+    const Bindings *bindings, CettaFrameIdentity epoch,
     const void **schema_out, const void **slots_out);
 bool bindings_current_binding_count_test(
     const Bindings *bindings, size_t *count_out);
 bool bindings_lookup_index_test_generic_contains(
     Bindings *bindings, VarId id, bool *present_out);
 bool bindings_frame_ref_test_for_epoch(
-    const Bindings *bindings, uint32_t epoch, BindingsFrameRef *ref_out);
+    const Bindings *bindings, CettaFrameIdentity epoch, BindingsFrameRef *ref_out);
 bool bindings_frame_ref_test_resolves(
     const Bindings *bindings, BindingsFrameRef ref,
-    uint32_t *epoch_out);
+    CettaFrameIdentity *epoch_out);
 #endif
 
 /* Rename all variables in atom: $name → $name#suffix.
    Returns new arena-allocated atom. Non-variable atoms returned as-is. */
-Atom *rename_vars(Arena *a, Atom *atom, uint32_t suffix);
+Atom *rename_vars(Arena *a, Atom *atom, CettaFrameIdentity suffix);
 
 /* Rename all variables in atom except the variables mentioned anywhere inside
    `ignore_spec`. Non-ignored variables are freshened consistently per original
@@ -1141,11 +1222,11 @@ bool match_binding_values_builder(BindingValue left, BindingValue right,
  * need neither a borrowed dense frame nor an eagerly substituted Atom. */
 bool match_binding_value_epoch_builder_rule_local(
          BindingValue left, Atom *right, BindingsBuilder *bb,
-         Arena *a, uint32_t right_epoch);
+         Arena *a, CettaFrameIdentity right_epoch);
 bool match_binding_value_epoch_builder_rule_local_planned(
          BindingValue left, Atom *right,
          const CettaOpenPatternPlan *right_plan,
-         BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch);
 /* The exclusive-frame forms take the rule pattern's ownership as
  * `right_kind`: BINDING_VALUE_CONTEXTUAL_PERSISTENT when its syntax owner
  * outlives the execution, as program-owned equation syntax does, so a
@@ -1154,7 +1235,7 @@ bool match_binding_value_epoch_builder_rule_local_planned(
 bool match_binding_value_epoch_builder_rule_local_in_exclusive_frame(
          BindingValue left, Atom *right, BindingValueKind right_kind,
          const CettaOpenPatternPlan *right_plan,
-         BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch,
          BindingsExclusiveFrame *exclusive, bool linear);
 bool match_atoms(Atom *left, Atom *right, Bindings *b, Arena *a);
 bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb,
@@ -1165,14 +1246,14 @@ bool match_atoms_builder(Atom *left, Atom *right, BindingsBuilder *bb,
 bool match_atoms_builder_with_attempt_frame(
         Atom *left, Atom *right, BindingsBuilder *bb,
         const BindingsActivationView *left_frame, Arena *a);
-bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, uint32_t epoch);
+bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, CettaFrameIdentity epoch);
 /* Epoch-aware matcher over an existing trail-backed environment.  The caller
  * owns the save/rollback boundary when failure must be transactional. */
 /* Checked callers use this when absence, rather than one positive match,
  * is evidence. */
 CettaMatchCompletion match_atoms_epoch_builder_checked(
     Atom *left, Atom *right, BindingsBuilder *builder, Arena *arena,
-    uint32_t epoch, uint64_t pair_budget);
+    CettaFrameIdentity epoch, uint64_t pair_budget);
 
 typedef struct CettaMatchCursor CettaMatchCursor;
 typedef enum {
@@ -1223,7 +1304,7 @@ CettaMatchCursorStep match_atoms_cursor_step(CettaMatchCursor *cursor,
     uint64_t node_budget);
 /* Zero before the first admitted step. The activation identity stays fixed
  * across grants; it does not identify a different validation activation. */
-uint32_t match_atoms_cursor_epoch(const CettaMatchCursor *cursor);
+CettaFrameIdentity match_atoms_cursor_epoch(const CettaMatchCursor *cursor);
 bool match_atoms_cursor_take(CettaMatchCursor *cursor, Bindings *out);
 void match_atoms_cursor_free(CettaMatchCursor *cursor);
 void match_atoms_cursor_storage_census(const CettaMatchCursor *cursor,
@@ -1243,14 +1324,14 @@ void match_atoms_cursor_test_refuse_graph_allocation(void);
 
 bool match_atoms_epoch_builder(Atom *left, Atom *right,
                                BindingsBuilder *bb, Arena *a,
-                               uint32_t epoch);
+                               CettaFrameIdentity epoch);
 /* Equation-activation-frame orientation of the same relation.  When two otherwise unbound
  * variables meet, bind the standardized-apart right rule slot to the live
  * left call variable.  This keeps a successful frame local when possible;
  * callers must still audit the appended keys and roll back on escape. */
 bool match_atoms_epoch_builder_rule_local(
          Atom *left, Atom *right, BindingsBuilder *bb,
-         Arena *a, uint32_t epoch);
+         Arena *a, CettaFrameIdentity epoch);
 /* The same equation-activation-frame matcher with a source-derived finite plan for the
  * right rule pattern.  The plan may remove repeated source classification
  * and source-side cycle bookkeeping, but never supplies query facts or
@@ -1258,17 +1339,17 @@ bool match_atoms_epoch_builder_rule_local(
  * save/rollback contract. */
 bool match_atoms_epoch_builder_rule_local_planned(
          Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
-         BindingsBuilder *bb, Arena *a, uint32_t epoch);
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity epoch);
 /* Experimental contiguous realization of the same exact plan.  It is kept
  * separate from the ordinary planned matcher until a measured physical-cost
  * predicate earns selection; callers retain the same save/rollback contract. */
 bool match_atoms_epoch_builder_rule_local_linear(
          Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
-         BindingsBuilder *bb, Arena *a, uint32_t epoch);
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity epoch);
 bool match_atoms_epoch_builder_rule_local_in_exclusive_frame(
          Atom *left, Atom *right, BindingValueKind right_kind,
          const CettaOpenPatternPlan *right_plan,
-         BindingsBuilder *bb, Arena *a, uint32_t epoch,
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity epoch,
          BindingsExclusiveFrame *exclusive, bool linear);
 /* Match an activation-local source term without first materializing the
  * complete substituted term.  Variables in `left_original` are interpreted
@@ -1286,16 +1367,16 @@ bool match_atoms_epoch_builder_rule_local_in_exclusive_frame(
  * and has the same caller-owned save/rollback contract.  Invalid activation
  * boundaries fail closed. */
 bool match_atoms_epoch_view_builder(
-         Atom *left_original, uint32_t left_epoch,
+         Atom *left_original, CettaFrameIdentity left_epoch,
          uint32_t left_first_entry, Atom *right_original,
-         BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch);
 /* Match the same activation-local source view against an ordinary live term.
  * Unlike `match_atoms_epoch_view_builder`, the right operand keeps its current
  * variable identities.  This is the demand-driven equivalent of applying the
  * activation environment to the left source and then calling
  * match_atoms_builder. */
 bool match_atoms_epoch_view_builder_current(
-         Atom *left_original, uint32_t left_epoch,
+         Atom *left_original, CettaFrameIdentity left_epoch,
          uint32_t left_first_entry, Atom *right,
          BindingsBuilder *bb, Arena *a);
 /* Equation-activation-frame orientation of the activation view: unify a persistent open
@@ -1304,32 +1385,32 @@ bool match_atoms_epoch_view_builder_current(
  * Materialise at observation.  Same save/rollback contract as
  * match_atoms_epoch_builder_rule_local on the forced term. */
 bool match_atoms_epoch_view_builder_rule_local(
-         Atom *left_original, uint32_t left_epoch,
+         Atom *left_original, CettaFrameIdentity left_epoch,
          uint32_t left_first_entry, Atom *right_original,
-         BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch);
 bool match_atoms_epoch_view_builder_rule_local_planned(
-         Atom *left_original, uint32_t left_epoch,
+         Atom *left_original, CettaFrameIdentity left_epoch,
          uint32_t left_first_entry, Atom *right_original,
          const CettaOpenPatternPlan *right_plan,
-         BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch);
 bool match_atoms_epoch_view_builder_rule_local_linear(
-         Atom *left_original, uint32_t left_epoch,
+         Atom *left_original, CettaFrameIdentity left_epoch,
          uint32_t left_first_entry, Atom *right_original,
          const CettaOpenPatternPlan *right_plan,
-         BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch);
 bool match_atoms_epoch_view_builder_rule_local_in_exclusive_frame(
-         Atom *left_original, uint32_t left_epoch,
+         Atom *left_original, CettaFrameIdentity left_epoch,
          uint32_t left_first_entry, Atom *right_original,
          BindingValueKind right_kind,
          const CettaOpenPatternPlan *right_plan,
-         BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch,
          BindingsExclusiveFrame *exclusive, bool linear);
 /* Exact matcher for the same activation view when its finite source-variable
  * inventory has already been resolved into dense slots. */
 bool match_atoms_activation_view_builder(
          Atom *left_original, const BindingsActivationView *left_frame,
          Atom *right_original, BindingsBuilder *bb, Arena *a,
-         uint32_t right_epoch);
+         CettaFrameIdentity right_epoch);
 /* Match the same dense activation view against an ordinary live term.  The
  * right operand keeps its current variable identities instead of receiving
  * a fresh epoch.  This is the allocation-free form of applying the frame to
@@ -1341,20 +1422,20 @@ bool match_atoms_activation_view_builder_current(
 bool match_atoms_activation_view_builder_rule_local(
          Atom *left_original, const BindingsActivationView *left_frame,
          Atom *right_original, BindingsBuilder *bb, Arena *a,
-         uint32_t right_epoch);
+         CettaFrameIdentity right_epoch);
 bool match_atoms_activation_view_builder_rule_local_planned(
          Atom *left_original, const BindingsActivationView *left_frame,
          Atom *right_original, const CettaOpenPatternPlan *right_plan,
-         BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch);
 bool match_atoms_activation_view_builder_rule_local_linear(
          Atom *left_original, const BindingsActivationView *left_frame,
          Atom *right_original, const CettaOpenPatternPlan *right_plan,
-         BindingsBuilder *bb, Arena *a, uint32_t right_epoch);
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch);
 bool match_atoms_activation_view_builder_rule_local_in_exclusive_frame(
          Atom *left_original, const BindingsActivationView *left_frame,
          Atom *right_original, BindingValueKind right_kind,
          const CettaOpenPatternPlan *right_plan,
-         BindingsBuilder *bb, Arena *a, uint32_t right_epoch,
+         BindingsBuilder *bb, Arena *a, CettaFrameIdentity right_epoch,
          BindingsExclusiveFrame *exclusive, bool linear);
 /* Leaf-patch view (env CETTA_LEAF_PATCH_VIEW=1, OFF by default). */
 bool match_leaf_patch_view_enabled(void);
@@ -1362,19 +1443,19 @@ bool match_leaf_patch_view_enabled(void);
  * self-sound (refuses non-linear / non-flat / var-query / pre-bound by falling
  * back with no partial binding). Result == match_atoms_epoch on that shape. */
 bool match_atoms_epoch_positional_linear(Atom *query, Atom *lhs, Bindings *b,
-                                         Arena *a, uint32_t epoch);
+                                         Arena *a, CettaFrameIdentity epoch);
 /* Builder form of the same admitted view.  It does not clone the environment:
  * callers that want a general-matcher fallback must save both the builder and
  * arena marks, then roll back on false before invoking that fallback. */
 bool match_atoms_epoch_positional_linear_builder(
          Atom *query, Atom *lhs, BindingsBuilder *bb,
-         Arena *a, uint32_t epoch);
+         Arena *a, CettaFrameIdentity epoch);
 bool match_binding_value_atom_id_epoch(
          BindingValue left, const TermUniverse *candidate_universe,
-         AtomId right_id, Bindings *b, Arena *a, uint32_t epoch);
+         AtomId right_id, Bindings *b, Arena *a, CettaFrameIdentity epoch);
 bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_universe,
                                AtomId right_id, Bindings *b, Arena *a,
-                               uint32_t epoch);
+                               CettaFrameIdentity epoch);
 
 /* Alpha-equivalence on atoms: two atoms are equivalent up to a bijective
    renaming of variable names. */
@@ -1383,12 +1464,12 @@ bool atom_alpha_eq(Atom *left, Atom *right);
  * other variable, including a captured frame variable, remains rigid.
  * One call compares one whole observation with one bijection. */
 bool atom_alpha_eq_scoped(Atom *left, Atom *right,
-    const uint32_t *left_epochs, size_t left_count,
-    const uint32_t *right_epochs, size_t right_count);
+    const CettaFrameIdentity *left_epochs, size_t left_count,
+    const CettaFrameIdentity *right_epochs, size_t right_count);
 
 /* Compare bindings as a set of (var,value) pairs, ignoring entry order. */
 bool bindings_eq(Bindings *a, Bindings *b);
-char *arena_tagged_var_name(Arena *a, const char *name, uint32_t suffix);
+char *arena_tagged_var_name(Arena *a, const char *name, CettaFrameIdentity suffix);
 
 /* ── Loop-binding rejection (occurs check, HE spec metta.md line 435) ── */
 

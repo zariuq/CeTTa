@@ -7,6 +7,8 @@ primitives. It does not run a shell, Python or Prolog. Build-time parser
 generation may still use Python.
 
   (proc:spawn ("program" "argument") ((stdin "bytes") (timeout-ms 1000)))
+  (proc:spawn ("program" "argument") ((lifetime owner)))
+      Linux process-tree ownership, including parent death and escaped groups
   (proc:status owner)       non-consuming pending/ready/consumed observation
   (proc:poll owner)         consume the result if ready; otherwise pending
   (proc:wait owner 100)     bounded consuming observation, not a child deadline
@@ -48,6 +50,17 @@ child PID stays reserved until capture finishes, preventing cancellation from
 targeting a reused PID. Cancellation targets the process group created by the
 provider; a descendant that deliberately leaves it is outside that guarantee.
 Native handle calls and explicit close/context teardown must be serialized.
+
+The explicit lifetime owner option uses the executable's .proc-scope companion,
+built alongside it. Deploy both together. Its Linux subreaper owns one command
+tree, not the evaluator's unrelated children. A private close-on-exec pipe
+revokes that tree on cancellation, owner release or evaluator death, including
+death during process startup. Escaped process groups are adopted and reaped.
+Normal command exit also closes the scope and reaps leftover descendants.
+Target exit status, signal and exec failure are retained in a separate receipt;
+a missing or invalid receipt is a host failure, never successful execution.
+The default lifetime group preserves the existing process-group contract.
+This is lifetime management, not filesystem, network or hostile-code isolation.
 
 system:write takes stdout or stderr and bytes, without printing or decoding
 them. --no-results suppresses answer display only. system:exit requests an

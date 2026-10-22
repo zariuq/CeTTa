@@ -55,7 +55,7 @@ typedef struct TermUniverse TermUniverse;
 
 typedef enum {
     CETTA_TERM_VARIABLE_SUPPORT_DENSE64 = 1,
-    CETTA_TERM_VARIABLE_SUPPORT_SPARSE32 = 2,
+    CETTA_TERM_VARIABLE_SUPPORT_SPARSE64 = 2,
 } CettaTermVariableSupportRepresentation;
 
 /* Immutable variable support derived only from an interned term's syntax.
@@ -64,10 +64,10 @@ typedef enum {
  * valid until that universe's storage is reset or freed. */
 typedef struct CettaTermVariableSupport {
     uint32_t count;
-    uint32_t first_base_id;
     CettaTermVariableSupportRepresentation representation;
+    uint64_t first_base_id;
     uint64_t dense_mask;
-    uint32_t sparse_base_ids[];
+    uint64_t sparse_base_ids[];
 } CettaTermVariableSupport;
 
 struct CettaTermVariableSupportBlock;
@@ -94,7 +94,7 @@ static inline void cetta_term_variable_support_iterator_init(
 
 static inline bool cetta_term_variable_support_iterator_next(
     CettaTermVariableSupportIterator *iterator,
-    uint32_t *base_id) {
+    uint64_t *base_id) {
     if (!iterator || !base_id || !iterator->support)
         return false;
     if (iterator->support->representation ==
@@ -269,7 +269,7 @@ typedef struct TermEntry {
 
 _Static_assert(sizeof(AtomId) == 8, "AtomId must remain 64-bit");
 _Static_assert(CETTA_ATOM_ID_NONE == UINT64_MAX, "AtomId sentinel must stay all-ones");
-_Static_assert(sizeof(VarId) == 8, "VarId must remain 64-bit");
+_Static_assert(sizeof(VarId) == 16, "VarId is two words: base and epoch");
 _Static_assert(sizeof(CettaTermHdr) == 16, "CettaTermHdr ABI drifted");
 _Static_assert(offsetof(CettaTermHdr, tag) == 0, "CettaTermHdr.tag offset drifted");
 _Static_assert(offsetof(CettaTermHdr, subtag) == 1, "CettaTermHdr.subtag offset drifted");
@@ -381,7 +381,7 @@ Atom *term_universe_copy_atom_read_symbols(
     const TermUniverse *universe, Arena *dst, AtomId id,
     TermUniverseSymbolRead read, void *context);
 Atom *term_universe_copy_atom_epoch(const TermUniverse *universe, Arena *dst,
-                                    AtomId id, uint32_t epoch);
+                                    AtomId id, CettaFrameIdentity epoch);
 char *term_universe_atom_to_string(Arena *a, const TermUniverse *universe,
                                    AtomId id);
 char *term_universe_atom_to_parseable_string(Arena *a,

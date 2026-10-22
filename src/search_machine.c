@@ -40,9 +40,9 @@ static bool cetta_observation_value_contains_var(
         BindingValue value, VarId variable) {
     const Atom *root = value.skeleton;
     bool contextual = binding_value_is_contextual(value);
-    if (contextual && var_epoch_suffix(variable) != value.epoch)
+    if (contextual && !cetta_frame_identity_eq(var_epoch_suffix(variable), binding_value_epoch(value)))
         return false;
-    if (!root || variable == VAR_ID_NONE)
+    if (!root || var_id_is_none(variable))
         return false;
     if (!(contextual ? atom_has_vars(root)
                      : atom_variable_bloom_may_contain(root, variable)))
@@ -60,7 +60,7 @@ static bool cetta_observation_value_contains_var(
         const Atom *atom = work[--length].atom;
         if (atom->kind == ATOM_VAR &&
             (contextual ? var_base_id(atom->var_id) == var_base_id(variable)
-                        : atom->var_id == variable)) {
+                        : var_id_eq(atom->var_id, variable))) {
             free(work);
             return true;
         }
@@ -98,13 +98,13 @@ bool cetta_observation_atom_contains_var(const Atom *root, VarId variable) {
 
 bool cetta_observation_environment_var_is_private(
         const Bindings *environment, VarId variable) {
-    if (!environment || variable == VAR_ID_NONE)
+    if (!environment || var_id_is_none(variable))
         return false;
     BindingsIterator iterator = {.bindings = environment};
     Binding logical_binding;
     while (bindings_iterator_next(&iterator, &logical_binding)) {
         const Binding *binding = &logical_binding;
-        if (binding->var_id == variable ||
+        if (var_id_eq(binding->var_id, variable) ||
             cetta_observation_value_contains_var(binding->value, variable)) {
             return false;
         }
@@ -128,7 +128,7 @@ bool cetta_observation_variable_uses_only_unary_consumers(
         CettaObservationUnaryConsumerPredicate is_consumer,
         CettaObservationExecutableChildrenPredicate children_executable,
         void *context, uint64_t *uses) {
-    if (!root || variable == VAR_ID_NONE || !is_consumer || !uses)
+    if (!root || var_id_is_none(variable) || !is_consumer || !uses)
         return false;
     if (!atom_variable_bloom_may_contain(root, variable))
         return true;
@@ -147,7 +147,7 @@ bool cetta_observation_variable_uses_only_unary_consumers(
     while (length > 0u) {
         CettaObservationUseWork item = work[--length];
         const Atom *atom = item.atom;
-        if (atom->kind == ATOM_VAR && atom->var_id == variable) {
+        if (atom->kind == ATOM_VAR && var_id_eq(atom->var_id, variable)) {
             free(work);
             return false;
         }
@@ -163,7 +163,7 @@ bool cetta_observation_variable_uses_only_unary_consumers(
             item.executable && atom->expr.len == 2u &&
             head != SYMBOL_ID_NONE && is_consumer(context, head) &&
             atom->expr.elems[1]->kind == ATOM_VAR &&
-            atom->expr.elems[1]->var_id == variable;
+            var_id_eq(atom->expr.elems[1]->var_id, variable);
         if (direct_consumer) {
             if (*uses == UINT64_MAX) {
                 free(work);
@@ -942,6 +942,7 @@ static bool cetta_continuation_store_reserve(
                 queue->items, &queue->items[queue->begin],
                 length * sizeof(*queue->items));
         }
+        queue->mid -= queue->begin;
         queue->begin = 0u;
         queue->end = length;
         if (additional <= queue->capacity - queue->end)
@@ -1037,6 +1038,8 @@ bool cetta_continuation_store_take(
     size_t selected = queue->begin + index;
     *continuation = queue->items[selected];
     if (selected == queue->begin) {
+        if (queue->mid == queue->begin)
+            queue->mid++;
         queue->items[queue->begin++] = (CettaOwnedContinuation){0};
     } else {
         size_t remaining = queue->end - selected - 1u;
@@ -1046,10 +1049,12 @@ bool cetta_continuation_store_take(
                 &queue->items[selected], &queue->items[selected + 1u],
                 remaining * sizeof(*queue->items));
         }
+        if (selected < queue->mid)
+            queue->mid--;
         queue->items[--queue->end] = (CettaOwnedContinuation){0};
     }
     if (queue->begin == queue->end)
-        queue->begin = queue->end = 0u;
+        queue->begin = queue->mid = queue->end = 0u;
     return true;
 }
 
@@ -1190,8 +1195,75 @@ bool cetta_continuation_hub_select(
     }
     *lane = (CettaSelectionLane)
         hub->schedule.lane[hub->schedule.state];
-    return cetta_selection_automaton_select(
-        &hub->schedule, cetta_continuation_hub_length(hub), index);
+    if (!hub->fair_descent)
+        return cetta_selection_automaton_select(
+            &hub->schedule, cetta_continuation_hub_length(hub), index);
+    size_t length = cetta_continuation_hub_length(hub);
+    size_t old_length = hub->store.mid - hub->store.begin;
+    size_t deep_length = hub->store.end - hub->store.mid;
+    size_t chosen = 0u;
+    /* The automaton supplies the lane; the regions supply the occurrence. */
+    if (!cetta_selection_automaton_select(&hub->schedule, length, &chosen))
+        return false;
+    if (length == 1u) {
+        /* A singleton is controller-free; its successors keep descending. */
+        *lane = CETTA_SELECTION_LANE_NEWEST;
+    } else if (*lane == CETTA_SELECTION_LANE_NEWEST) {
+        chosen = deep_length ? length - 1u : old_length - 1u;
+    } else {
+        bool old_region = old_length &&
+            (hub->oldest_from_old_region || !deep_length);
+        chosen = old_region ? 0u : old_length;
+        hub->oldest_from_old_region = !old_region;
+    }
+    hub->last_lane = *lane;
+    *index = chosen;
+    return true;
+}
+
+bool cetta_continuation_hub_enable_fair_descent(CettaContinuationHub *hub) {
+    if (!hub || !hub->initialized || cetta_continuation_hub_length(hub) ||
+        hub->selection_duty != CETTA_SELECTION_DUTY_RECURRENT_OLDEST)
+        return false;
+    hub->fair_descent = true;
+    hub->last_lane = CETTA_SELECTION_LANE_NEWEST;
+    hub->oldest_from_old_region = true;
+    return true;
+}
+
+/* Under fair descent, what follows an oldest selection is queued at the back
+ * of the old region; anything else at the end of the deep region. */
+static bool cetta_continuation_hub_place(
+        CettaContinuationHub *hub, CettaOwnedContinuation *continuation,
+        bool fresh) {
+    CettaContinuationStore *store = &hub->store;
+    if (!hub->fair_descent || hub->last_lane != CETTA_SELECTION_LANE_OLDEST)
+        return fresh ? cetta_continuation_store_append(store, continuation)
+                     : false;
+    if (fresh) {
+        if (!continuation->payload || !continuation->provider ||
+            continuation->occurrence_id != 0u ||
+            store->next_occurrence_id == 0u)
+            return false;
+    }
+    if (!cetta_continuation_store_reserve(store, 1u))
+        return false;
+    size_t deep_length = store->end - store->mid;
+    if (deep_length) {
+        cetta_native_cost_charge(CETTA_COST_QUEUE_MOVE, deep_length);
+        memmove(&store->items[store->mid + 1u], &store->items[store->mid],
+                deep_length * sizeof(*store->items));
+    }
+    if (fresh) {
+        continuation->occurrence_id = store->next_occurrence_id;
+        store->next_occurrence_id = store->next_occurrence_id == UINT64_MAX
+            ? 0u : store->next_occurrence_id + 1u;
+    }
+    cetta_native_cost_charge(CETTA_COST_QUEUE_INSERT, 1u);
+    store->items[store->mid++] = *continuation;
+    store->end++;
+    *continuation = (CettaOwnedContinuation){0};
+    return true;
 }
 
 bool cetta_continuation_hub_switch_schedule(
@@ -1425,6 +1497,8 @@ bool cetta_continuation_hub_requeue(CettaContinuationHub *hub,
     store->leases[lease] = store->leases[--store->lease_length];
     owned->resume_store = 0u;
     owned->resume_lease = 0u;
+    if (hub->fair_descent && hub->last_lane == CETTA_SELECTION_LANE_OLDEST)
+        return cetta_continuation_hub_place(hub, owned, false);
     cetta_native_cost_charge(CETTA_COST_QUEUE_INSERT,1u);
     store->items[store->end++] = *owned;
     *owned = (CettaOwnedContinuation){0};
@@ -1434,15 +1508,32 @@ bool cetta_continuation_hub_requeue(CettaContinuationHub *hub,
 bool cetta_continuation_hub_append(
         CettaContinuationHub *hub,
         CettaOwnedContinuation *continuation) {
-    return hub && hub->initialized &&
-        cetta_continuation_store_append(&hub->store, continuation);
+    return hub && hub->initialized && continuation &&
+        cetta_continuation_hub_place(hub, continuation, true);
 }
 
 bool cetta_continuation_hub_append_batch(
         CettaContinuationHub *hub,
         CettaContinuationBatch *batch) {
-    return hub && hub->initialized &&
-        cetta_continuation_store_append_batch(&hub->store, batch);
+    if (!hub || !hub->initialized)
+        return false;
+    if (!hub->fair_descent || hub->last_lane != CETTA_SELECTION_LANE_OLDEST)
+        return cetta_continuation_store_append_batch(&hub->store, batch);
+    /* An oldest service's batch joins the old region one by one, in order. */
+    if (!batch || !batch->items || batch->length == 0u)
+        return false;
+    for (size_t i = 0u; i < batch->length; i++)
+        if (!batch->items[i].payload || batch->items[i].occurrence_id != 0u ||
+            !cetta_continuation_provider_valid(batch->items[i].provider))
+            return false;
+    if (!cetta_continuation_store_reserve(&hub->store, batch->length))
+        return false;
+    for (size_t i = 0u; i < batch->length; i++)
+        if (!cetta_continuation_hub_place(hub, &batch->items[i], true))
+            return false;
+    free(batch->items);
+    *batch = (CettaContinuationBatch){0};
+    return true;
 }
 
 bool cetta_continuation_hub_take(

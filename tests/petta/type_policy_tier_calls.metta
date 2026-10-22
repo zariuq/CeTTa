@@ -130,6 +130,7 @@
 
 ; A foreign import changes call ownership without changing equation rows.
 ; Re-entering a previously compiled caller must consult the new authority.
+; Without the provider these operations remain inert and ownership stays authored.
 (: tier_foreign_cached (-> %Undefined%))
 (= (tier_foreign_cached) authored)
 (= (tier-foreign-cached-caller $free) (tier_foreign_cached))

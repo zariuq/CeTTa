@@ -81,12 +81,12 @@
 ;    call, PeTTa does not; the JSON library's own fixtures state both.)
 (: BoundaryData (-> Atom Atom))
 (= (boundary:json)
-   (let $number (json:parse "1")
-     (let $array (json:parse "[1, 2]")
+   (let $number (json:inspect "1")
+     (let $array (json:inspect "[1, 2]")
        (DataBoundaryV1 json
          (BoundaryData $number)
          (BoundaryData $array)
-         (json:stringify (json:parse "[1, 2]"))))))
+         (json:inspect-stringify (json:inspect "[1, 2]"))))))
 
 (: boundary:all (-> Atom Atom Atom %Undefined%))
 (= (boundary:all $policy $space $bindings)

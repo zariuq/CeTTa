@@ -964,7 +964,7 @@ static Atom *large_var_query(Arena *a,
             char name[64];
             uint32_t ordinal = chunk_first + i;
             snprintf(name, sizeof(name), "slot%u", ordinal);
-            chunk_items[i + 1u] = var(a, name, (VarId)ordinal + 1u);
+            chunk_items[i + 1u] = var(a, name, var_id_from_base((uint64_t)ordinal + 1u));
         }
         items[chunk + 1u] = atom_expr(a, chunk_items, chunk_arity);
     }
@@ -1040,13 +1040,13 @@ static void test_native_ground_exact_candidate_frontier(void) {
         &scratch, sym(&scratch, "exact-existence"), sym(&scratch, "missing"));
     Atom *unrelated_open = expr2(
         &scratch, sym(&scratch, "unrelated-existence"),
-        var(&scratch, "unrelated", 76001u));
+        var(&scratch, "unrelated", var_id_from_base(76001u)));
     Atom *unrelated_ground = expr2(
         &scratch, sym(&scratch, "unrelated-existence"),
         sym(&scratch, "ground"));
     Atom *related_open = expr2(
         &scratch, sym(&scratch, "exact-existence"),
-        var(&scratch, "related", 76002u));
+        var(&scratch, "related", var_id_from_base(76002u)));
 
     space_init_with_universe(&space, &universe);
     assert(space_match_backend_try_set(&space, SPACE_ENGINE_NATIVE));
@@ -1145,9 +1145,9 @@ static void test_native_flat_view_dead_binding_count(void) {
     Atom *a = sym(&scratch, "a");
     Atom *b = sym(&scratch, "b");
     Atom *tail = sym(&scratch, "tail");
-    Atom *same = var(&scratch, "same", 76101u);
-    Atom *left = var(&scratch, "left", 76102u);
-    Atom *right = var(&scratch, "right", 76103u);
+    Atom *same = var(&scratch, "same", var_id_from_base(76101u));
+    Atom *left = var(&scratch, "left", var_id_from_base(76102u));
+    Atom *right = var(&scratch, "right", var_id_from_base(76103u));
     Atom *same_row = expr3(&scratch, pair, same, same);
     Atom *independent_row = expr3(&scratch, pair, left, right);
     Atom *ground_row = expr3(&scratch, pair, a, b);
@@ -1172,8 +1172,8 @@ static void test_native_flat_view_dead_binding_count(void) {
         &count, &examined));
     assert(count == 3u && examined == 4u);
 
-    Atom *query_left = var(&scratch, "query-left", 76104u);
-    Atom *query_right = var(&scratch, "query-right", 76105u);
+    Atom *query_left = var(&scratch, "query-left", var_id_from_base(76104u));
+    Atom *query_right = var(&scratch, "query-right", var_id_from_base(76105u));
     Atom *query_open = expr3(&scratch, pair, query_left, query_right);
     CettaGsltTermViewV1 query_open_view = {
         .source = query_open,
@@ -1201,7 +1201,7 @@ static void test_native_flat_view_dead_binding_count(void) {
         &count, &examined));
 
     Atom *wrap = sym(&scratch, "wrap");
-    Atom *inner = var(&scratch, "inner", 76106u);
+    Atom *inner = var(&scratch, "inner", var_id_from_base(76106u));
     Atom *nested_row = expr3(
         &scratch, pair, expr2(&scratch, wrap, inner), tail);
     space_add(&space, nested_row);
@@ -1256,9 +1256,9 @@ static void test_native_conjunction_count_fold(void) {
     space_add(&space, expr3(&scratch, edge, b, d));
     space_add(&space, expr3(&scratch, edge, c, d));
 
-    Atom *x = var(&scratch, "x", 76201u);
-    Atom *y = var(&scratch, "y", 76202u);
-    Atom *z = var(&scratch, "z", 76203u);
+    Atom *x = var(&scratch, "x", var_id_from_base(76201u));
+    Atom *y = var(&scratch, "y", var_id_from_base(76202u));
+    Atom *z = var(&scratch, "z", var_id_from_base(76203u));
     Atom *path[] = {
         expr3(&scratch, edge, x, y),
         expr3(&scratch, edge, y, z),
@@ -1290,12 +1290,12 @@ static void test_native_conjunction_count_fold(void) {
     /* Repeated stored variables constrain the query before the next leg.
        Two identical stored occurrences times two identical ground edges are
        four semantic occurrences, not one set element. */
-    Atom *same = var(&scratch, "same", 76204u);
+    Atom *same = var(&scratch, "same", var_id_from_base(76204u));
     Atom *relation = sym(&scratch, "count-fold-relation");
     Atom *same_row = expr3(&scratch, relation, same, same);
     space_add(&space, same_row);
     space_add(&space, same_row);
-    Atom *q = var(&scratch, "q", 76205u);
+    Atom *q = var(&scratch, "q", var_id_from_base(76205u));
     Atom *stored_variable_join[] = {
         expr3(&scratch, relation, a, q),
         expr3(&scratch, edge, q, b),
@@ -1348,7 +1348,7 @@ static void test_imported_flat_add_boundary(TermUniverse *universe, Arena *scrat
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
 
     Atom *pair_vv = expr3(scratch, sym(scratch, "pair"),
-                          var(scratch, "z", 77), var(scratch, "z", 77));
+                          var(scratch, "z", var_id_from_base(77)), var(scratch, "z", var_id_from_base(77)));
     AtomId pair_vv_id = term_universe_store_atom_id(universe, NULL, pair_vv);
     assert(pair_vv_id != CETTA_ATOM_ID_NONE);
     assert(tu_hdr(universe, pair_vv_id) != NULL);
@@ -1369,8 +1369,8 @@ static void test_imported_flat_add_boundary(TermUniverse *universe, Arena *scrat
 
     Atom *rewrite_rule =
         expr3(scratch, sym(scratch, ":="),
-              expr2(scratch, sym(scratch, "I"), var(scratch, "x", 101)),
-              var(scratch, "x", 101));
+              expr2(scratch, sym(scratch, "I"), var(scratch, "x", var_id_from_base(101))),
+              var(scratch, "x", var_id_from_base(101)));
     AtomId rewrite_rule_id = term_universe_store_atom_id(universe, NULL, rewrite_rule);
     assert(rewrite_rule_id != CETTA_ATOM_ID_NONE);
     assert(tu_hdr(universe, rewrite_rule_id) != NULL);
@@ -1384,7 +1384,7 @@ static void test_imported_flat_add_boundary(TermUniverse *universe, Arena *scrat
     reset_test_counters();
     space_subst_query(&imported_space, scratch,
                       expr3(scratch, sym(scratch, "pair"),
-                            var(scratch, "q", 5001), var(scratch, "q", 5001)),
+                            var(scratch, "q", var_id_from_base(5001)), var(scratch, "q", var_id_from_base(5001))),
                       &pair_matches);
     assert(pair_matches.len == 2);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
@@ -1401,7 +1401,7 @@ static void test_imported_flat_add_boundary(TermUniverse *universe, Arena *scrat
     space_subst_query(&imported_space, scratch,
                       expr3(scratch, sym(scratch, ":="),
                             expr2(scratch, sym(scratch, "I"), sym(scratch, "foo")),
-                            var(scratch, "r", 5003)),
+                            var(scratch, "r", var_id_from_base(5003))),
                       &rewrite_matches);
     assert(rewrite_matches.len == 1);
     smset_free(&rewrite_matches);
@@ -1470,7 +1470,7 @@ static void test_imported_bridge_add_boundary(TermUniverse *universe, Arena *scr
     space_subst_query(&imported_space, scratch,
                       expr3(scratch, sym(scratch, ":="),
                             expr2(scratch, sym(scratch, "I"), sym(scratch, "foo")),
-                            var(scratch, "rhs", 7001)),
+                            var(scratch, "rhs", var_id_from_base(7001))),
                       &rule_matches);
     assert(rule_matches.len == 1);
     smset_free(&rule_matches);
@@ -1616,7 +1616,7 @@ static void test_byte_backed_rematch_delay(TermUniverse *universe, Arena *scratc
     SubstMatch sm;
     Atom *candidate =
         expr3(scratch, sym(scratch, "pair"), sym(scratch, "A"), sym(scratch, "B"));
-    Atom *query_var = var(scratch, "q", 9001);
+    Atom *query_var = var(scratch, "q", var_id_from_base(9001));
 
     space_init_with_universe(&space, universe);
     space_add(&space, candidate);
@@ -1624,7 +1624,7 @@ static void test_byte_backed_rematch_delay(TermUniverse *universe, Arena *scratc
     bindings_init(&seed);
     bindings_init(&sm.bindings);
     sm.atom_idx = 0;
-    sm.epoch = 0;
+    sm.epoch = CETTA_FRAME_IDENTITY_NONE;
     sm.exact = false;
 
     bindings_init(&out);
@@ -1679,12 +1679,12 @@ static void test_subst_tree_live_branch_builder_witness(Arena *scratch) {
     stree_bucket_insert(
         &bucket,
         expr3(scratch, sym(scratch, "pair"),
-              var(scratch, "x", 4101), sym(scratch, "B")),
+              var(scratch, "x", var_id_from_base(4101)), sym(scratch, "B")),
         0);
     stree_bucket_insert(
         &bucket,
         expr3(scratch, sym(scratch, "pair"),
-              var(scratch, "y", 4102), sym(scratch, "C")),
+              var(scratch, "y", var_id_from_base(4102)), sym(scratch, "C")),
         1);
 
     reset_test_counters();
@@ -1696,11 +1696,11 @@ static void test_subst_tree_live_branch_builder_witness(Arena *scratch) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_BINDINGS_CLONE) == 1);
     /* Contextual variables live in their frame slots, not generic rows. */
     BindingValue value = bindings_lookup_value_id(&matches.items[0].bindings,
-        var_epoch_id(4101u, matches.items[0].epoch));
+        var_epoch_id(var_id_from_base(4101u), matches.items[0].epoch));
     assert(value.skeleton && atom_is_symbol_id(value.skeleton,
         symbol_intern_cstr(g_symbols, "A")));
     assert(!bindings_lookup_value_id(&matches.items[0].bindings,
-        var_epoch_id(4102u, matches.items[0].epoch)).skeleton);
+        var_epoch_id(var_id_from_base(4102u), matches.items[0].epoch)).skeleton);
 
     smset_free(&matches);
     stree_bucket_free(&bucket);
@@ -1713,7 +1713,7 @@ static void test_subst_tree_ground_identity_capacity_bounded(
      * The caller bounds the inventory to 2^16 handles. */
     const CettaIndex count = ((CettaIndex)1u << 16) + 1u;
     Atom *ground = atom_int(scratch, 71819);
-    Atom *open = var(scratch, "index-open", 4171u);
+    Atom *open = var(scratch, "index-open", var_id_from_base(4171u));
     AtomId ground_id = term_universe_store_atom_id(universe, NULL, ground);
     AtomId open_id = term_universe_store_atom_id(universe, NULL, open);
     assert(ground_id != CETTA_ATOM_ID_NONE && open_id != CETTA_ATOM_ID_NONE);
@@ -1732,7 +1732,7 @@ static void test_subst_tree_ground_identity_capacity_bounded(
         assert(leaf->nleaves == count);
         for (CettaIndex i = 0; i < count; i++) {
             assert(leaf->leaves[i].idx == i);
-            assert(leaf->leaves[i].epoch == 0u);
+            assert(cetta_frame_identity_is_none(leaf->leaves[i].epoch));
             assert(!leaf->leaves[i].owns_identity);
         }
         stree_bucket_free(&bucket);
@@ -1748,7 +1748,7 @@ static void test_subst_tree_ground_identity_capacity_bounded(
         assert(bucket.root->nvars == 1u);
         leaf = bucket.root->vars[0].child;
         assert(leaf->nleaves == 2u);
-        assert(leaf->leaves[0].epoch != leaf->leaves[1].epoch);
+        assert(!cetta_frame_identity_eq(leaf->leaves[0].epoch, leaf->leaves[1].epoch));
         assert(leaf->leaves[0].owns_identity && leaf->leaves[1].owns_identity);
         CettaFrameIdentity epochs[2] = {
             leaf->leaves[0].epoch, leaf->leaves[1].epoch
@@ -2005,8 +2005,8 @@ static void test_bridge_structural_import_boundary(TermUniverse *universe,
     smset_init(&same_var_matches);
     space_subst_query(&imported_space, scratch,
                       expr3(scratch, sym(scratch, "pair"),
-                            var(scratch, "same", 9301),
-                            var(scratch, "same", 9301)),
+                            var(scratch, "same", var_id_from_base(9301)),
+                            var(scratch, "same", var_id_from_base(9301))),
                       &same_var_matches);
     assert(same_var_matches.len == 1);
     smset_free(&same_var_matches);
@@ -2097,8 +2097,8 @@ static void test_bridge_logical_len64_over_u32_boundary(TermUniverse *universe,
     assert(strcmp(space_match_backend_last_error(), "NativeSpaceTooLarge") == 0);
 
     g_query_cursor_enabled = true;
-    query = expr3(scratch, sym(scratch, "edge"), var(scratch, "x", 1),
-                  var(scratch, "y", 2));
+    query = expr3(scratch, sym(scratch, "edge"), var(scratch, "x", var_id_from_base(1)),
+                  var(scratch, "y", var_id_from_base(2)));
     assert(space_match_backend_visit_bindings_direct(
         &imported_space, scratch, query, count_bindings_visit, &visited));
     assert(visited == 1);
@@ -2147,7 +2147,7 @@ test_bridge_contextual_query_context_count_ceiling_falls_back_materialized(
         0xC3u, 'f', 'o', 'o',
     };
     uint32_t visited = 0;
-    Atom *query = expr2(scratch, sym(scratch, "ctx-query"), var(scratch, "x", 17));
+    Atom *query = expr2(scratch, sym(scratch, "ctx-query"), var(scratch, "x", var_id_from_base(17)));
 
     test_store_u32_be(packet, 0x43544252u);
     test_store_u16_be(packet + 4, 5u);
@@ -2634,8 +2634,8 @@ static void test_subst_match_normalize_compacted_duplicate_runs(Arena *scratch) 
     SubstMatchSet matches;
     Bindings a;
     Bindings b;
-    Atom *a_var = atom_var_with_id(scratch, "normalize-a", 91001u);
-    Atom *b_var = atom_var_with_id(scratch, "normalize-b", 91002u);
+    Atom *a_var = atom_var_with_id(scratch, "normalize-a", var_id_from_base(91001u));
+    Atom *b_var = atom_var_with_id(scratch, "normalize-b", var_id_from_base(91002u));
     CettaFrameIdentity epochs[2];
 
     assert(cetta_frame_identity_acquire(&epochs[0]));
@@ -2680,10 +2680,10 @@ static void test_subst_match_normalize_compacted_duplicate_runs(Arena *scratch) 
 
 static void test_leaf_patch_refusal_is_transactional(Arena *scratch) {
     const uint32_t epoch = 73u;
-    Atom *x = atom_var_with_id(scratch, "leaf-x", 92001u);
-    Atom *y = atom_var_with_id(scratch, "leaf-y", 92002u);
+    Atom *x = atom_var_with_id(scratch, "leaf-x", var_id_from_base(92001u));
+    Atom *y = atom_var_with_id(scratch, "leaf-y", var_id_from_base(92002u));
     Atom *epoch_y =
-        atom_var_like(scratch, y, var_epoch_id(y->var_id, epoch));
+        atom_var_like(scratch, y, var_epoch_id(y->var_id, (CettaFrameIdentity){epoch}));
     Atom *lhs = expr3(scratch, sym(scratch, "leaf-f"), x, y);
     Atom *query = expr3(scratch, sym(scratch, "leaf-f"),
                         atom_int(scratch, 1), atom_int(scratch, 2));
@@ -2701,10 +2701,10 @@ static void test_leaf_patch_refusal_is_transactional(Arena *scratch) {
     assert(base.eq_len == 1u);
 
     assert(!match_atoms_epoch_positional_linear(
-        query, lhs, &base, scratch, epoch));
+        query, lhs, &base, scratch, (CettaFrameIdentity){epoch}));
     assert(base.len == 0u);
     assert(base.eq_len == 1u);
-    assert(bindings_lookup_value_id(&base, var_epoch_id(x->var_id, epoch)).skeleton == NULL);
+    assert(bindings_lookup_value_id(&base, var_epoch_id(x->var_id, (CettaFrameIdentity){epoch})).skeleton == NULL);
 
     bindings_free(&base);
 }

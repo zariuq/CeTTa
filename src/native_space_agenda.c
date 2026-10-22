@@ -47,7 +47,7 @@ struct CettaSpaceAgendaMatch {
     Bindings captured, result;
     CettaMatchCursor *cursor;
     Atom *pattern, *row;
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     CettaMatchCursorStep decision;
     bool isolated, prepared, result_ready;
 };
@@ -112,7 +112,7 @@ struct CettaSpaceAgenda {
     bool join_ready;
     JoinedRow *rows, *validation;
     size_t row_count, row_capacity, validation_count, validation_capacity;
-    uint32_t *match_epochs[2];
+    CettaFrameIdentity *match_epochs[2];
     size_t match_epoch_count[2], match_epoch_capacity[2];
     bool validating;
     size_t build_index, sink_row, sink_index;
@@ -616,11 +616,11 @@ static bool join_begin(CettaSpaceAgenda *a) {
     return true;
 }
 
-static bool match_epoch_record(CettaSpaceAgenda *a, uint32_t epoch) {
+static bool match_epoch_record(CettaSpaceAgenda *a, CettaFrameIdentity epoch) {
     size_t side=a->validating?1u:0u;
     if(a->match_epoch_count[side]==a->match_epoch_capacity[side]) {
         size_t n=a->match_epoch_capacity[side]?a->match_epoch_capacity[side]*2u:16u;
-        uint32_t *grown=n>a->match_epoch_capacity[side] && n<=SIZE_MAX/sizeof(*grown)
+        CettaFrameIdentity *grown=n>a->match_epoch_capacity[side] && n<=SIZE_MAX/sizeof(*grown)
             ?realloc(a->match_epochs[side],n*sizeof(*grown)):NULL;
         if(!grown)return false;
         a->match_epochs[side]=grown;a->match_epoch_capacity[side]=n;
@@ -1855,7 +1855,7 @@ static bool agenda_word_identity(CettaSpaceAgendaTranscript *t, const char *fiel
     if (!cell) return false;
     cell->role=role; cell->value.scalar=value;
     if (role==CETTA_CHECKPOINT_FRAME && value &&
-        (value>UINT32_MAX || !cetta_frame_identity_scope_retain(&t->frame_holds,(uint32_t)value)))
+        !cetta_frame_identity_scope_retain(&t->frame_holds,(CettaFrameIdentity){value}))
         return agenda_word_refuse(t,budget,"TranscriptFrameOwner");
     return true;
 }
@@ -2103,7 +2103,7 @@ static bool agenda_word_state(CettaSpaceAgendaTranscript *t,
         }
         AW_S("epochs.length",a->match_epoch_count[side]); AW_F("epochs.capacity",a->match_epoch_capacity[side]);
         for (size_t i=0u;i<a->match_epoch_count[side];i++) {
-            AW_S("epoch.index",i); AW_I("epoch.frame",CETTA_CHECKPOINT_FRAME,a->match_epochs[side][i]);
+            AW_S("epoch.index",i); AW_I("epoch.frame",CETTA_CHECKPOINT_FRAME,a->match_epochs[side][i].word);
         }
     }
     AW_S("agenda.matching",a->matching!=NULL);
@@ -2112,7 +2112,7 @@ static bool agenda_word_state(CettaSpaceAgendaTranscript *t,
          * Isolated operands and result buffers are not admitted roots. */
         AW_S("match.isolated",a->matching->isolated); AW_S("match.prepared",a->matching->prepared);
         AW_S("match.result_ready",a->matching->result_ready); AW_S("match.decision",a->matching->decision);
-        AW_I("match.epoch",CETTA_CHECKPOINT_FRAME,a->matching->epoch);
+        AW_I("match.epoch",CETTA_CHECKPOINT_FRAME,a->matching->epoch.word);
     }
     return true;
 }
@@ -2472,14 +2472,14 @@ static bool agenda_live_state(AgendaLiveWord *r,const CettaSpaceAgendaEvent *eve
         }
         AL_S("epochs.length",a->match_epoch_count[side]);AL_P("epochs.capacity",a->match_epoch_capacity[side]);
         for(size_t i=0u;i<a->match_epoch_count[side];i++) {
-            AL_S("epoch.index",i);AL_I("epoch.frame",CETTA_CHECKPOINT_FRAME,a->match_epochs[side][i]);
+            AL_S("epoch.index",i);AL_I("epoch.frame",CETTA_CHECKPOINT_FRAME,a->match_epochs[side][i].word);
         }
     }
     AL_S("agenda.matching",a->matching!=NULL);
     if(a->matching) {
         AL_S("match.isolated",a->matching->isolated);AL_S("match.prepared",a->matching->prepared);
         AL_S("match.result_ready",a->matching->result_ready);AL_S("match.decision",a->matching->decision);
-        AL_I("match.epoch",CETTA_CHECKPOINT_FRAME,a->matching->epoch);
+        AL_I("match.epoch",CETTA_CHECKPOINT_FRAME,a->matching->epoch.word);
     }
     return true;
 }

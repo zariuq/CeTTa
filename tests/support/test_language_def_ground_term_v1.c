@@ -46,7 +46,7 @@ static Atom *pool_int(TestAtomPool *pool, int64_t value) {
 }
 
 static Atom *pool_var(TestAtomPool *pool, const char *name) {
-    return pool && name ? atom_var_with_id(&pool->arena, name, 1u) : NULL;
+    return pool && name ? atom_var_with_id(&pool->arena, name, var_id_from_base(1u)) : NULL;
 }
 
 static Atom *pool_expr(TestAtomPool *pool, const char *head,

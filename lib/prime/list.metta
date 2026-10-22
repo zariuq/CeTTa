@@ -128,6 +128,16 @@
                   (list:take-walk (- $count 1) $tail)
                (eval (cons-atom $head $rest))){$rest}){$head $tail})))
 
+; The complementary suffix action; non-positive requests keep the sequence.
+(= (list:drop $count $xs)
+   (let $items (list:to-expression $xs)
+     (list:like $xs (list:drop-walk $count $items))))
+(= (list:drop-walk $count $xs)
+   (if (<= $count 0) $xs
+     (if (== $xs ()) ()
+       (let ($head $tail) (decons-atom $xs)
+         (list:drop-walk (- $count 1) $tail)){$head $tail})))
+
 ; Efficient order-statistic filtering for already-computed numeric keys.
 ; Each child is `(key payload)`.  Selection is by descending key, but output
 ; retains the input occurrence order; earlier occurrences win boundary ties.
@@ -146,6 +156,39 @@
 
 (= (list:unkey $entries)
    (unkey-atom $entries))
+
+; Project each occurrence and combine the results in source order.  This is
+; the explicit-monoid form of foldMap: dynamic MeTTa supplies the identity and
+; combination operation rather than recovering them from a type class.  The
+; ordinary left fold is authoritative, including choices and effects.
+(= (list:fold-map $project $combine $identity $xs)
+   (let $items (list:to-expression $xs)
+     (list:fold-map-walk $project $combine $identity $items)))
+
+(= (list:fold-map-walk $project $combine $accumulator $xs)
+   (if (== $xs ())
+       $accumulator
+       (let ($head $tail) (decons-atom $xs)
+         (let $value ($project $head)
+           (let $next ($combine $accumulator $value)
+             (list:fold-map-walk $project $combine $next $tail)){$next}){$value}){$head $tail}))
+
+(= (list-internal:number-add $left $right) (+ $left $right))
+
+; Numeric addition is the first optimized fold-map instance.  A prepared
+; implementation may fuse projection and folding only when the projection is
+; pure and single-valued and every intermediate sum remains in the exact
+; unboxed Int/Float fragment; otherwise the authored fold-map below remains
+; authoritative from the first occurrence.
+(= (list:sum-by $key-function $xs)
+   (let $items (list:to-expression $xs)
+     (list:sum-by-walk $key-function $items)))
+
+(= (list:sum-by-walk $key-function $xs)
+   (_minimal-sum-by $xs $key-function))
+
+(= (_minimal-sum-by $xs $key-function)
+   (list:fold-map $key-function list-internal:number-add 0 $xs))
 
 ; Schwartzian order-statistic filtering: evaluate the key function exactly
 ; once per occurrence, select in the native keyed representation, and return

@@ -816,16 +816,26 @@
       (LCons ⊕ (LCons ⊼ (LCons ⊽ (LCons ≈ (LCons ≉ (LCons ≡
       (LCons ∀ (LCons ∃ (LCons λ (LCons Π (LCons Σ
       (LCons choice (LCons definite LNil))))))))))))))))))))) (body))
-    (rule binary-assoc-two (head (metta-equation
+    (rule binary-assoc-many (head (metta-equation
       (tptp-print-v1:binary-assoc
         ?mode ?operator ?head
-        (LCons ?left (LCons ?right LNil)))
+        (LCons ?left (LCons ?right ?rest)))
       (tptp-print-v1:cat3
         (bnf-v1:string->text "(")
         (tptp-print-v1:binary-chain
           ?mode ?operator ?head
-          (LCons ?left (LCons ?right LNil)))
+          (LCons ?left (LCons ?right ?rest)))
         (bnf-v1:string->text ")")))) (body))
+    (rule binary-chain-many (head (metta-equation
+      (tptp-print-v1:binary-chain
+        ?mode ?operator ?head
+        (LCons ?left (LCons ?middle (LCons ?right ?rest))))
+      (tptp-print-v1:cat3
+        (tptp-print-v1:binary-left ?mode ?operator ?head ?left)
+        (bnf-v1:string->text ?operator)
+        (tptp-print-v1:binary-chain
+          ?mode ?operator ?head
+          (LCons ?middle (LCons ?right ?rest)))))) (body))
     (rule binary-chain-two (head (metta-equation
       (tptp-print-v1:binary-chain
         ?mode ?operator ?head

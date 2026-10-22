@@ -602,8 +602,8 @@ static bool alpha_eq(Atom *x, Atom *y, VarPairs *pairs) {
     if (x->kind == ATOM_VAR || y->kind == ATOM_VAR) {
         if (x->kind != ATOM_VAR || y->kind != ATOM_VAR) return false;
         for (size_t i = 0u; i < pairs->count; i++) {
-            if (pairs->left[i] == x->var_id || pairs->right[i] == y->var_id)
-                return pairs->left[i] == x->var_id && pairs->right[i] == y->var_id;
+            if (var_id_eq(pairs->left[i], x->var_id) || var_id_eq(pairs->right[i], y->var_id))
+                return var_id_eq(pairs->left[i], x->var_id) && var_id_eq(pairs->right[i], y->var_id);
         }
         if (pairs->count == 64u) return false;
         pairs->left[pairs->count] = x->var_id;

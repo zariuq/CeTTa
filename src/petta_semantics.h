@@ -309,6 +309,12 @@ static inline bool petta_semantics_grounded_undefined(SymbolId head) {
 static inline bool petta_semantics_structural_test(SymbolId head) {
     return head == g_builtin_syms.alpha_eq || head == g_builtin_syms.op_eq;
 }
+/* The search machine owns both numeric extrema, including their nested
+ * occurrences. Their arithmetic bodies remain in the machine. */
+static inline bool petta_semantics_numeric_extremum(SymbolId head) {
+    return head == g_builtin_syms.petta_min ||
+           head == g_builtin_syms.petta_max;
+}
 /* The elements of a closed list as one flat expression, or as a list value
  * when its cells end in one: `list` itself when it is flat, NULL when its
  * cells end in a non-list or an unbound tail. */
@@ -475,7 +481,7 @@ bool petta_semantics_match_lowered_head(
  * structure stays borrowed; retaining source syntax uses the eager match. */
 bool petta_semantics_match_lowered_head_epoch(
     Arena *arena, Atom *head, Atom *value,
-    BindingsBuilder *builder, uint32_t epoch);
+    BindingsBuilder *builder, CettaFrameIdentity epoch);
 
 /*
  * HE stdlib equations reused by PeTTa are lowered to private value-binding

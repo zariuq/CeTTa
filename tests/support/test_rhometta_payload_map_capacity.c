@@ -53,7 +53,7 @@ static int test_atom_hashflags_soundness(void) {
     if (stable_expr_a != stable_expr_b)
         return fail("stable expression was not hash-consed");
     atom_hash(stable_expr_a);
-    if (!has_flag(stable_expr_a, ATOM_FLAG_HASH_VALID))
+    if (atom_hash_cache_load(stable_expr_a) == 0u)
         return fail("stable expression hash was not cached");
 
     Atom *space = atom_space(&arena, (void *)(uintptr_t)0x10u);
@@ -71,7 +71,7 @@ static int test_atom_hashflags_soundness(void) {
             has_flag(leaf, ATOM_FLAG_HASHCONS_ELIGIBLE))
             return fail("mutable leaf received stable/hashcons flags");
         atom_hash(leaf);
-        if (has_flag(leaf, ATOM_FLAG_HASH_VALID))
+        if (atom_hash_cache_load(leaf) != 0u)
             return fail("mutable leaf cached a hash");
 
         Atom *elems[2] = {pair, leaf};
@@ -83,7 +83,7 @@ static int test_atom_hashflags_soundness(void) {
         if (expr_a == expr_b)
             return fail("mutable-child expression was hash-consed");
         atom_hash(expr_a);
-        if (has_flag(expr_a, ATOM_FLAG_HASH_VALID))
+        if (atom_hash_cache_load(expr_a) != 0u)
             return fail("mutable-child expression cached a hash");
         (void)mutable_names[i];
     }
@@ -99,7 +99,7 @@ static int test_atom_hashflags_soundness(void) {
     if (contextual_a == contextual_b)
         return fail("contextual expression was hash-consed");
     atom_hash(contextual_a);
-    if (!has_flag(contextual_a, ATOM_FLAG_HASH_VALID))
+    if (atom_hash_cache_load(contextual_a) == 0u)
         return fail("contextual but stable expression did not cache its hash");
 
     arena_free(&arena);

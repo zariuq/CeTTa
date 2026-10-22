@@ -2,8 +2,10 @@ is (a b), should (a b). ✅
 is (), should (). ✅ 
 is ((a b) (a b) (a b) (a b)), should ((a b) (a b) (a b) (a b)). ✅ 
 is (2 3), should (2 3). ✅ 
+is ((z a) (z b c)), should ((z a) (z b c)). ✅ 
 is (a b), should (a b). ✅ 
 is (), should (). ✅ 
+true
 true
 true
 true

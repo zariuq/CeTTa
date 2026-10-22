@@ -195,11 +195,11 @@ static void test_structural_variable_name_store_contract(void) {
     Atom *key = atom_expr3(
         &scratch, atom_symbol(&scratch, "agent"),
         atom_symbol(&scratch, "Max"), atom_symbol(&scratch, "Botnick"));
-    Atom *named = atom_var_with_name_key(&scratch, key, 77u);
+    Atom *named = atom_var_with_name_key(&scratch, key, var_id_from_base(77u));
     AtomId named_id = term_universe_store_atom_id(
         &universe, &scratch, named);
     assert(named_id != CETTA_ATOM_ID_NONE);
-    assert(tu_var_id(&universe, named_id) == 77u);
+    assert(var_id_eq(tu_var_id(&universe, named_id), var_id_from_base(77u)));
     assert(tu_sym(&universe, named_id) == SYMBOL_ID_NONE);
     AtomId key_id = tu_var_name_key_id(&universe, named_id);
     assert(key_id != CETTA_ATOM_ID_NONE);
@@ -209,16 +209,16 @@ static void test_structural_variable_name_store_contract(void) {
         &scratch, &universe, named_id);
     assert(strcmp(text, "$@(agent Max Botnick)") == 0);
     Atom *copy = term_universe_copy_atom(&universe, &scratch, named_id);
-    assert(copy && copy->kind == ATOM_VAR && copy->var_id == 77u);
+    assert(copy && copy->kind == ATOM_VAR && var_id_eq(copy->var_id, var_id_from_base(77u)));
     assert(copy->name_key && atom_eq(copy->name_key, key));
 
-    Atom *fresh = atom_freshen_epoch(&scratch, named, 23u);
+    Atom *fresh = atom_freshen_epoch(&scratch, named, (CettaFrameIdentity){23u});
     assert(fresh && fresh->kind == ATOM_VAR);
-    assert(var_epoch_suffix(fresh->var_id) == 23u);
+    assert(var_epoch_suffix(fresh->var_id).word == 23u);
     assert(fresh->name_key && atom_eq(fresh->name_key, key));
-    Atom *renamed = rename_vars(&scratch, named, 31u);
+    Atom *renamed = rename_vars(&scratch, named, (CettaFrameIdentity){31u});
     assert(renamed && renamed->kind == ATOM_VAR);
-    assert(var_epoch_suffix(renamed->var_id) == 31u);
+    assert(var_epoch_suffix(renamed->var_id).word == 31u);
     assert(renamed->name_key && atom_eq(renamed->name_key, key));
 
     Bindings bindings;
@@ -1172,7 +1172,7 @@ static void test_atom_deep_copy_preserves_pointer_dag(void) {
 
     Atom *var_child_items[2] = {
         atom_symbol_id(&src_arena, leaf_sym),
-        atom_var_with_spelling(&src_arena, leaf_sym, 7),
+        atom_var_with_spelling(&src_arena, leaf_sym, var_id_from_base(7)),
     };
     Atom *shared_var_child = atom_expr(&src_arena, var_child_items, 2);
     Atom *var_root_items[4] = {
@@ -1182,7 +1182,7 @@ static void test_atom_deep_copy_preserves_pointer_dag(void) {
         shared_var_child,
     };
     Atom *var_root = atom_expr(&src_arena, var_root_items, 4);
-    Atom *fresh = atom_freshen_epoch(&dst_arena, var_root, 55);
+    Atom *fresh = atom_freshen_epoch(&dst_arena, var_root, (CettaFrameIdentity){55});
     assert(fresh != NULL);
     assert(fresh->kind == ATOM_EXPR);
     assert(fresh->expr.len == 4);
@@ -1190,7 +1190,7 @@ static void test_atom_deep_copy_preserves_pointer_dag(void) {
     assert(fresh->expr.elems[1] == fresh->expr.elems[2]);
     assert(fresh->expr.elems[2] == fresh->expr.elems[3]);
     assert(fresh->expr.elems[1]->expr.elems[1]->kind == ATOM_VAR);
-    assert(var_epoch_suffix(fresh->expr.elems[1]->expr.elems[1]->var_id) == 55);
+    assert(var_epoch_suffix(fresh->expr.elems[1]->expr.elems[1]->var_id).word == 55);
 
     arena_free(&dst_arena);
     arena_free(&src_arena);
@@ -1564,7 +1564,7 @@ static void assert_variable_support_ids(
     assert(support->count == expected_len);
     CettaTermVariableSupportIterator iterator;
     cetta_term_variable_support_iterator_init(&iterator, support);
-    uint32_t actual = 0u;
+    uint64_t actual = 0u;
     for (size_t i = 0u; i < expected_len; i++) {
         assert(cetta_term_variable_support_iterator_next(
             &iterator, &actual));
@@ -1589,9 +1589,9 @@ static void test_intrinsic_variable_support_contract(void) {
         symbol_intern_cstr(g_symbols, "support-contract-var");
     Atom *dense_items[4] = {
         atom_symbol_id(&scratch, tuple_sym),
-        atom_var_with_spelling(&scratch, var_sym, 2u),
-        atom_var_with_spelling(&scratch, var_sym, 5u),
-        atom_var_with_spelling(&scratch, var_sym, 2u),
+        atom_var_with_spelling(&scratch, var_sym, var_id_from_base(2u)),
+        atom_var_with_spelling(&scratch, var_sym, var_id_from_base(5u)),
+        atom_var_with_spelling(&scratch, var_sym, var_id_from_base(2u)),
     };
     Atom *dense_atom = atom_expr(&scratch, dense_items, 4u);
     AtomId dense_id =
@@ -1608,8 +1608,8 @@ static void test_intrinsic_variable_support_contract(void) {
 
     Atom *sparse_items[3] = {
         atom_symbol_id(&scratch, tuple_sym),
-        atom_var_with_spelling(&scratch, var_sym, 1u),
-        atom_var_with_spelling(&scratch, var_sym, 1000u),
+        atom_var_with_spelling(&scratch, var_sym, var_id_from_base(1u)),
+        atom_var_with_spelling(&scratch, var_sym, var_id_from_base(1000u)),
     };
     AtomId sparse_id = term_universe_store_atom_id(
         &universe, NULL, atom_expr(&scratch, sparse_items, 3u));
@@ -1619,7 +1619,7 @@ static void test_intrinsic_variable_support_contract(void) {
         &universe, sparse_id, &sparse_support));
     const uint32_t sparse_expected[2] = {1u, 1000u};
     assert(sparse_support->representation ==
-           CETTA_TERM_VARIABLE_SUPPORT_SPARSE32);
+           CETTA_TERM_VARIABLE_SUPPORT_SPARSE64);
     assert_variable_support_ids(
         sparse_support, sparse_expected, 2u);
 
@@ -1665,8 +1665,8 @@ static void test_intrinsic_variable_support_contract(void) {
 
     Atom *race_items[3] = {
         atom_symbol_id(&scratch, tuple_sym),
-        atom_var_with_spelling(&scratch, var_sym, 17u),
-        atom_var_with_spelling(&scratch, var_sym, 91u),
+        atom_var_with_spelling(&scratch, var_sym, var_id_from_base(17u)),
+        atom_var_with_spelling(&scratch, var_sym, var_id_from_base(91u)),
     };
     AtomId race_id = term_universe_store_atom_id(
         &universe, NULL, atom_expr(&scratch, race_items, 3u));
@@ -1831,7 +1831,7 @@ static void test_callable_value_store_contract(void) {
             Bindings bindings;
             bindings_init(&bindings);
             CETTA_FRAME_IDENTITY_SCOPE(scope);
-            uint32_t epoch = 0u;
+            CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
             assert(cetta_frame_identity_scope_try(&scope, &epoch));
             assert(match_atoms_atom_id_epoch(values[j], &universe, id,
                                              &bindings, &copy, epoch) == (i == j));
@@ -1920,8 +1920,8 @@ static void test_compact_hashcons_identity_across_growth(void) {
         if (i > 0u)
             assert(!atom_eq(again, values[i - 1u]));
     }
-    Atom *left = atom_var_with_id(&owner, "same-name", 991u);
-    Atom *right = atom_var_with_id(&owner, "same-name", 992u);
+    Atom *left = atom_var_with_id(&owner, "same-name", var_id_from_base(991u));
+    Atom *right = atom_var_with_id(&owner, "same-name", var_id_from_base(992u));
     assert(!atom_eq(left, right));
     arena_free(&owner);
     hashcons_free(&table);
@@ -1941,7 +1941,7 @@ static void test_batched_expression_identity(void) {
                 : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
             term_universe_set_persistent_arena(&universes[side], &arenas[side]);
             AtomId head_id = tu_intern_symbol(&universes[side], head);
-            AtomId variable = tu_intern_var(&universes[side], head, 42u);
+            AtomId variable = tu_intern_var(&universes[side], head, var_id_from_base(42u));
             for (size_t row = 0u; row < 81u; row++) {
                 children[side][row][0] = head_id;
                 children[side][row][1] = tu_intern_int(&universes[side], row % 39u);
@@ -2034,7 +2034,7 @@ static void test_copy_reads_symbols_once_with_owned_values(void) {
     assert(atom_eq(term_universe_copy_atom_read_symbols(
                        &universe, &output, id, NULL, NULL), form));
 
-    Atom *variable = atom_var_with_name_key(&source, word, 17u);
+    Atom *variable = atom_var_with_name_key(&source, word, var_id_from_base(17u));
     AtomId variable_id = term_universe_store_atom_id(&universe, NULL, variable);
     Atom *read_variable = term_universe_copy_atom_read_symbols(
         &universe, &output, variable_id, read_test_symbol, &names);
@@ -2074,11 +2074,11 @@ static void test_variable_record_holds_epoch_once(void) {
     SymbolId spelling = symbol_intern_cstr(g_symbols, "held");
     AtomId name = tu_intern_symbol(&universe, spelling);
     assert(name != CETTA_ATOM_ID_NONE);
-    uint32_t epoch = 0u;
+    CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
     {
         CETTA_FRAME_IDENTITY_SCOPE(scope);
         assert(cetta_frame_identity_scope_try(&scope, &epoch));
-        VarId x = var_epoch_id(41u, epoch), y = var_epoch_id(43u, epoch);
+        VarId x = var_epoch_id(var_id_from_base(41u), epoch), y = var_epoch_id(var_id_from_base(43u), epoch);
         AtomId first = tu_intern_var(&universe, spelling, x);
         assert(first != CETTA_ATOM_ID_NONE);
         for (int i = 0; i < 1000; i++)
@@ -2099,18 +2099,59 @@ static void test_variable_record_holds_epoch_once(void) {
     assert(cetta_frame_identity_retain(epoch));
     cetta_frame_identity_release(epoch);
     /* A variable whose activation has ended is stored without a hold. */
-    uint32_t ended = 0u;
+    CettaFrameIdentity ended = CETTA_FRAME_IDENTITY_NONE;
     {
         CETTA_FRAME_IDENTITY_SCOPE(scope);
         assert(cetta_frame_identity_scope_try(&scope, &ended));
     }
-    assert(tu_intern_var(&universe, spelling, var_epoch_id(47u, ended)) !=
+    assert(tu_intern_var(&universe, spelling, var_epoch_id(var_id_from_base(47u), ended)) !=
            CETTA_ATOM_ID_NONE);
     assert(universe.frame_identities.len == 3u);
     term_universe_free(&universe);
     /* Freeing the records returns every hold: the incarnation is over. */
     assert(!cetta_frame_identity_retain(epoch));
     arena_free(&persistent);
+}
+
+/* A universe record's hash32 is its atom's structural hash, a computed zero
+ * spelled alike: a leaf and an expression whose hashes fold to zero, a
+ * string and a nested expression are each found again by their atoms. */
+static uint32_t test_integer_hashing_to(uint32_t target) {
+    uint32_t h = 5381u;
+    h = (h * 33u) ^ (uint32_t)ATOM_GROUNDED;
+    h = (h * 33u) ^ (uint32_t)GV_INT;
+    return (h * 33u) ^ target;
+}
+
+static void test_record_hash_is_atom_hash(void) {
+    Arena arena, persistent;
+    arena_init(&arena);
+    arena_init(&persistent);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    Atom *zero = atom_int(&arena, (int64_t)test_integer_hashing_to(0u));
+    Atom *f = atom_symbol(&arena, "f");
+    Atom *probe = atom_expr2(&arena, f, atom_int(&arena, 7));
+    uint32_t x = atom_hash(probe) ^ atom_hash(probe->expr.elems[1]);
+    Atom *zero_expr = atom_expr2(
+        &arena, f, atom_int(&arena, (int64_t)test_integer_hashing_to(x)));
+    assert(atom_hash(zero) == ATOM_HASH_ZERO_SPELLING);
+    assert(atom_hash(zero_expr) == ATOM_HASH_ZERO_SPELLING);
+    Atom *atoms[] = {
+        zero, zero_expr,
+        atom_expr2(&arena, atom_symbol(&arena, "g"), zero_expr),
+        atom_string(&arena, "a message"),
+    };
+    for (size_t i = 0u; i < sizeof(atoms) / sizeof(atoms[0]); i++) {
+        AtomId id = term_universe_store_atom_id(&universe, NULL, atoms[i]);
+        assert(id != CETTA_ATOM_ID_NONE);
+        assert(tu_hash32(&universe, id) == atom_hash(atoms[i]));
+        assert(term_universe_lookup_atom_id(&universe, atoms[i]) == id);
+    }
+    term_universe_free(&universe);
+    arena_free(&persistent);
+    arena_free(&arena);
 }
 
 int main(void) {
@@ -2132,6 +2173,7 @@ int main(void) {
     test_variable_record_holds_epoch_once();
     test_arena_accounting_saturation_contract();
     test_store_format_contract();
+    test_record_hash_is_atom_hash();
     test_root_token_generation_contract();
     test_structural_variable_name_store_contract();
     test_store_format_migration_contract();
@@ -2162,7 +2204,7 @@ int main(void) {
     SymbolId tag_sym = symbol_intern_cstr(g_symbols, "Tag");
 
     Atom *sym = atom_symbol_id(&scratch, pair_sym);
-    Atom *var = atom_var_with_spelling(&scratch, var_sym, 42);
+    Atom *var = atom_var_with_spelling(&scratch, var_sym, var_id_from_base(42));
     Atom *ival = atom_int(&scratch, 17);
     Atom *fval = atom_float(&scratch, 3.5);
     Atom *truth = atom_bool(&scratch, true);
@@ -2195,7 +2237,7 @@ int main(void) {
     assert(tu_kind(&universe, int_id) == ATOM_GROUNDED);
     assert(tu_sym(&universe, sym_id) == pair_sym);
     assert(tu_sym(&universe, var_id) == var_sym);
-    assert(tu_var_id(&universe, var_id) == 42);
+    assert(var_id_eq(tu_var_id(&universe, var_id), var_id_from_base(42)));
     assert(!tu_has_vars(&universe, sym_id));
     assert(tu_has_vars(&universe, var_id));
     assert(tu_ground_kind(&universe, int_id) == GV_INT);
@@ -2207,7 +2249,7 @@ int main(void) {
     assert(strcmp(term_universe_atom_to_parseable_string(&scratch, &universe, str_id),
                   "\"hello\"") == 0);
     AtomId sym_id_direct = tu_intern_symbol(&universe, pair_sym);
-    AtomId var_id_direct = tu_intern_var(&universe, var_sym, 42);
+    AtomId var_id_direct = tu_intern_var(&universe, var_sym, var_id_from_base(42));
     AtomId int_id_direct = tu_intern_int(&universe, 17);
     AtomId float_id_direct = tu_intern_float(&universe, 3.5);
     AtomId bool_id_direct = tu_intern_bool(&universe, true);
@@ -2402,12 +2444,12 @@ int main(void) {
         assert(scoped_atom0->expr.elems[1]->kind == ATOM_VAR);
         assert(scoped_atom1->expr.elems[0]->kind == ATOM_VAR);
         assert(scoped_atom1->expr.elems[1]->kind == ATOM_VAR);
-        assert(scoped_atom0->expr.elems[0]->var_id ==
-               scoped_atom0->expr.elems[1]->var_id);
-        assert(scoped_atom1->expr.elems[0]->var_id ==
-               scoped_atom1->expr.elems[1]->var_id);
-        assert(scoped_atom0->expr.elems[0]->var_id !=
-               scoped_atom1->expr.elems[0]->var_id);
+        assert(var_id_eq(scoped_atom0->expr.elems[0]->var_id,
+                         scoped_atom0->expr.elems[1]->var_id));
+        assert(var_id_eq(scoped_atom1->expr.elems[0]->var_id,
+                         scoped_atom1->expr.elems[1]->var_id));
+        assert(!var_id_eq(scoped_atom0->expr.elems[0]->var_id,
+                          scoped_atom1->expr.elems[0]->var_id));
         space_free(&scoped_space);
     }
     {
@@ -2462,7 +2504,7 @@ int main(void) {
     assert(expr_load->expr.elems[2] == str_load);
     assert(expr_load->expr.elems[3] == var_load);
 
-    Atom *epoch_var = atom_var_with_spelling(&scratch, var_sym, var_epoch_id(42, 7));
+    Atom *epoch_var = atom_var_with_spelling(&scratch, var_sym, var_epoch_id(var_id_from_base(42), (CettaFrameIdentity){7}));
     Atom *epoch_items[3] = {sym, epoch_var, epoch_var};
     Atom *epoch_expr = atom_expr(&scratch, epoch_items, 3);
     AtomId epoch_id = term_universe_store_atom_id(&universe, NULL, epoch_expr);
@@ -2472,14 +2514,14 @@ int main(void) {
     assert(epoch_loaded->kind == ATOM_EXPR);
     assert(epoch_loaded->expr.len == 3);
     assert(epoch_loaded->expr.elems[1]->kind == ATOM_VAR);
-    assert(var_epoch_suffix(epoch_loaded->expr.elems[1]->var_id) == 0);
-    assert(epoch_loaded->expr.elems[1]->var_id == epoch_loaded->expr.elems[2]->var_id);
-    uint32_t epoch_canonical_base = var_base_id(epoch_loaded->expr.elems[1]->var_id);
+    assert(cetta_frame_identity_is_none(var_epoch_suffix(epoch_loaded->expr.elems[1]->var_id)));
+    assert(var_id_eq(epoch_loaded->expr.elems[1]->var_id, epoch_loaded->expr.elems[2]->var_id));
+    uint64_t epoch_canonical_base = var_base_id(epoch_loaded->expr.elems[1]->var_id);
     assert(epoch_canonical_base != 0);
     assert(epoch_canonical_base != 42);
-    Atom *epoch_copy = term_universe_copy_atom_epoch(&universe, &scratch, epoch_id, 99);
+    Atom *epoch_copy = term_universe_copy_atom_epoch(&universe, &scratch, epoch_id, (CettaFrameIdentity){99});
     assert(epoch_copy != NULL);
-    assert(var_epoch_suffix(epoch_copy->expr.elems[1]->var_id) == 99);
+    assert(var_epoch_suffix(epoch_copy->expr.elems[1]->var_id).word == 99);
     assert(var_base_id(epoch_copy->expr.elems[1]->var_id) == epoch_canonical_base);
 
     AtomId shared_child_ids[2] = {sym_id, var_id};
@@ -2495,7 +2537,7 @@ int main(void) {
     assert(shared_root_id != CETTA_ATOM_ID_NONE);
     reset_test_counters();
     Atom *shared_copy =
-        term_universe_copy_atom_epoch(&universe, &scratch, shared_root_id, 123);
+        term_universe_copy_atom_epoch(&universe, &scratch, shared_root_id, (CettaFrameIdentity){123});
     assert(shared_copy != NULL);
     assert(shared_copy->kind == ATOM_EXPR);
     assert(shared_copy->expr.len == 4);
@@ -2505,7 +2547,7 @@ int main(void) {
     assert(copied_child->kind == ATOM_EXPR);
     assert(copied_child->expr.len == 2);
     assert(copied_child->expr.elems[1]->kind == ATOM_VAR);
-    assert(var_epoch_suffix(copied_child->expr.elems[1]->var_id) == 123);
+    assert(var_epoch_suffix(copied_child->expr.elems[1]->var_id).word == 123);
     assert(var_base_id(copied_child->expr.elems[1]->var_id) ==
            var_base_id(var_load->var_id));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COPY_CALL) == 1);

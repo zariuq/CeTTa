@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include "durable_worker_host.h"
 #include "durable_host.h"
+#include "prime_ordinary_owner.h"
 #include "durable_value.h"
 #include "cetta_stdlib.h"
 #include "he_type_policy.h"
@@ -122,6 +123,7 @@ typedef struct {
     CettaHostProgram program;
     char actor[64],nonce[33],policy[80],result[96],task[80],outbox[64],evidence[96];
     unsigned sequence;
+    bool retained;
 } DutyClient;
 static Atom *duty_state(const DutyClient *c) {
     Atom *actor=record_value("host.actors",c->actor);
@@ -155,7 +157,9 @@ static CettaHostDecision *duty_begin(DutyClient *c,const char *input,const char 
     CettaHostDecisionSpec spec={input,c->actor,c->program.version,views,6,&channel,1};
     CettaHostDecision *d=NULL;assert(cetta_host_begin(store,&spec,&d)==DURABLE_OK);return d;
 }
+static const EvalOutcome *duty_plan(DutyClient *c,CettaHostDecision *d,const char *expression);
 static const EvalOutcome *duty_evaluate(DutyClient *c,CettaHostDecision *d,const char *expression) {
+    if (c->retained) return duty_plan(c,d,expression);
     assert(cetta_host_evaluate(d,&c->program,parse(expression),100000)==DURABLE_OK);
     const EvalOutcome *o=cetta_host_outcome(d);
     if(o->completion!=CETTA_EVAL_COMPLETE || o->effect_denials || o->results.len!=1) {
@@ -184,17 +188,92 @@ static const EvalOutcome *duty_plan(DutyClient *c,CettaHostDecision *d,const cha
     }
     const EvalOutcome *o=cetta_host_outcome(d);
     if(queue.count || !o || o->completion!=CETTA_EVAL_COMPLETE || o->results.len!=1) {
-        fprintf(stderr,"imported duty plan: queued=%zu stop=%d completion=%d rows=%zu\n",
-            queue.count,(int)task->execution.stop,o?(int)o->completion:-1,o?(size_t)o->results.len:0u);
+        fprintf(stderr,"imported duty plan %s: queued=%zu stop=%d completion=%d rows=%zu\n",
+            expression,queue.count,(int)task->execution.stop,o?(int)o->completion:-1,o?(size_t)o->results.len:0u);
         if(o)for(size_t i=0u;i<o->results.len;i++){atom_print(o->results.items[i],stderr);fputc('\n',stderr);}
     }
     assert(!queue.count && o && o->completion==CETTA_EVAL_COMPLETE && !o->effect_denials &&
         o->results.len==1u && count("host.commits")==commits && count("host.outbox")==effects);
     return o;
 }
+typedef struct { bool accept; unsigned calls; Atom *value; } NativeDelivery;
+static bool native_service_delivery(void *raw,const CettaOwnedReturn *returned) {
+    NativeDelivery *delivery=raw;delivery->calls++;
+    assert(returned->outcome.kind==CETTA_CALL_VALUE && returned->outcome.term &&
+        returned->outcome.result_form==CETTA_CALL_RESULT_COMPLETED_VALUE && returned->final);
+    delivery->value=returned->outcome.term;return delivery->accept;
+}
+static void native_service_controls(CettaLibraryContext *ctx,Space *space,Registry *names) {
+    const char *calls[]={
+        "(__cetta_lib_rhometta_values (rho:par (rho:val 1) (rho:val (if True 11 12)) (rho:val 2) (rho:val 1)))",
+        "(__cetta_lib_rhometta_run_canonical (rho:par (rho:recv (rho:quote rho:nil) $x (rho:drop $x)) (rho:send (rho:quote rho:nil) (rho:val 9))))"};
+    const char *expected[]={"(1 (if True 11 12) 2 1)","(rho:val 9)"};
+    for (unsigned i=0u;i<2u;i++) {
+        CettaOwnedExecution execution={0};NativeDelivery delivery={0};
+        assert(cetta_library_native_execution_open(ctx,space,&persistent,parse(calls[i]),
+            eval_prime_payload_provider(),&execution));
+        void *owner=execution.computation;
+        assert(cetta_owned_execution_sequence(&execution,0u,native_service_delivery,&delivery)==
+            CETTA_OWNED_EXECUTION_PAUSED && !delivery.calls && execution.computation==owner);
+        for(unsigned poll=0u;!execution.has_pending && poll<10000u;poll++)
+            assert(cetta_owned_execution_sequence(&execution,1u,native_service_delivery,&delivery)==
+                CETTA_OWNED_EXECUTION_PAUSED);
+        assert(execution.has_pending && execution.accepted==0u && delivery.calls==1u &&
+            atom_eq(delivery.value,parse(expected[i])));
+        Atom *pending=execution.pending.outcome.term;
+        assert(cetta_owned_execution_sequence(&execution,1u,native_service_delivery,&delivery)==
+            CETTA_OWNED_EXECUTION_PAUSED && execution.has_pending && execution.pending.outcome.term==pending &&
+            execution.computation==owner && delivery.calls==2u && !execution.accepted);
+        delivery.accept=true;
+        assert(cetta_owned_execution_sequence(&execution,1u,native_service_delivery,&delivery)==
+            CETTA_OWNED_EXECUTION_COMPLETE && execution.accepted==1u && !execution.has_pending &&
+            delivery.value==pending && delivery.calls==3u);
+        assert(cetta_owned_execution_sequence(&execution,1u,native_service_delivery,&delivery)==
+            CETTA_OWNED_EXECUTION_COMPLETE && delivery.calls==3u);
+        cetta_owned_execution_cancel(&execution);
+        assert(!execution.computation);
+    }
+    CettaOwnedExecution invalid={0};NativeDelivery refused={0};
+    assert(cetta_library_native_execution_open(ctx,space,&persistent,
+        parse("(__cetta_lib_rhometta_run_canonical (not-a-process))"),
+        eval_prime_payload_provider(),&invalid));
+    CettaOwnedExecutionStep verdict=CETTA_OWNED_EXECUTION_PAUSED;
+    for(unsigned poll=0u;verdict==CETTA_OWNED_EXECUTION_PAUSED && poll<100u;poll++)
+        verdict=cetta_owned_execution_sequence(&invalid,1u,native_service_delivery,&refused);
+    assert(verdict==CETTA_OWNED_EXECUTION_INTERRUPTED &&
+        invalid.completion==CETTA_EVAL_INCOMPLETE_HOST_FAILURE && !refused.calls && !invalid.accepted);
+    cetta_owned_execution_cancel(&invalid);
+    Arena destination;arena_init(&destination);ArenaMark before=arena_mark(&destination);
+    assert(cetta_library_native_execution_open(ctx,space,&destination,
+        parse("(__cetta_lib_rhometta_values (rho:val 1))"),eval_prime_payload_provider(),&invalid));
+    assert(cetta_owned_execution_sequence(&invalid,1u,native_service_delivery,&refused)==
+        CETTA_OWNED_EXECUTION_PAUSED && !refused.calls);
+    arena_reset(&destination,before);
+    assert(cetta_owned_execution_sequence(&invalid,1u,native_service_delivery,&refused)==
+        CETTA_OWNED_EXECUTION_INTERRUPTED && invalid.completion==CETTA_EVAL_INCOMPLETE_INVALIDATED &&
+        !refused.calls && !invalid.accepted);
+    cetta_owned_execution_cancel(&invalid);arena_free(&destination);
+    const char *data[]={"(Data Nat)","(:< Nat Number)","(lam x x)"};
+    for(unsigned i=0u;i<sizeof(data)/sizeof(*data);i++) {
+        CettaPrimeSourceOwner *source=NULL;
+        assert(eval_prime_source_owner_capture_context(ctx,space,names,parse(data[i]),
+            CETTA_PRIME_SOURCE_PRIVATE_DATA_WORLD,1000000u,32u*1024u*1024u,&source)==
+            CETTA_CONTINUATION_READY && source && eval_prime_source_owner_is_current(source));
+        eval_prime_source_owner_release(source);
+    }
+    puts("PASS: owned Rho services retain one completed data occurrence across refused delivery and exact retry");
+}
+
 static CettaHostCommit duty_accept(CettaHostDecision *d) {
     CettaHostCommit committed;CettaDurableStatus s=cetta_host_accept(d,0,&committed);
-    if(s!=DURABLE_OK)fprintf(stderr,"duty accept: %s\n",cetta_durable_status_name(s));
+    if(s!=DURABLE_OK) {
+        fprintf(stderr,"duty accept: %s\n",cetta_durable_status_name(s));
+        const EvalOutcome *outcome=cetta_host_outcome(d);
+        if(outcome) for(size_t i=0u;i<outcome->results.len;i++) {
+            Atom *value=outcome->results.items[i];
+            atom_print(value,stderr);fputc('\n',stderr);
+        }
+    }
     CettaHostCommit duplicate;
     assert(s==DURABLE_OK && cetta_host_accept(d,0,&duplicate)==DURABLE_CONFLICT);
     cetta_host_decision_free(d);return committed;
@@ -266,8 +345,8 @@ static void duty_client_cases(const char *database,const char *directory) {
         "((primary (and (== $status debited) (and (>= $before $scope) (== $after (- $before $scope))))) "
         "(repair (and (== $status refunded) (== $after (+ $before $scope)))) ($bad False))))) "
         "($bad False)))) ($bad False))))";
-    for(unsigned trial=0;trial<4;trial++) {
-        unsigned mode=trial==3,scenario=mode?0:trial;
+    for(unsigned trial=0;trial<6;trial++) {
+        unsigned mode=trial>=3,scenario=trial%3;
         CettaLibraryContext ctx;Space source;space_init(&source);Registry names;registry_init(&names);
         registry_bind(&names,"&self",atom_space(&persistent,&source));
         if(mode)cetta_library_context_init_for_language_profile(&ctx,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());
@@ -281,7 +360,15 @@ static void duty_client_cases(const char *database,const char *directory) {
         assert(cetta_library_import_module(&ctx,module?module:"durable:activity",&source,false,&scratch,
             &persistent,&names,1000000,NULL,&error));
         space_add(&source,parse(checker));
-        DutyClient client={.program={"activity/1",&source,&ctx}};
+        if(mode) {
+            space_add(&source,parse("(= (min $x) (+ $x 1))"));
+            space_add(&source,parse("(= (max $x) (+ $x 1))"));
+            space_add(&source,parse("(= (member $x) (+ $x 1))"));
+            space_add(&source,parse("(= (last $x) (+ $x 1))"));
+            space_add(&source,parse("(= (the $x) (+ $x 1))"));
+        }
+        if(mode && !scenario) native_service_controls(&ctx,&source,&names);
+        DutyClient client={.program={"activity/1",&source,&ctx},.retained=mode!=0u};
         DutyClient *c=&client;snprintf(c->actor,sizeof(c->actor),"duty/%s/%u",mode?"prime":"he",scenario);
         snprintf(c->policy,sizeof(c->policy),"%.63s/",c->actor);
         snprintf(c->result,sizeof(c->result),"%.63s/result",c->actor);
@@ -296,6 +383,13 @@ static void duty_client_cases(const char *database,const char *directory) {
              * host views. Synchronous evaluation remains the HE-only API. */
             assert(cetta_host_evaluate(d,&c->program,parse(expression),100000)==DURABLE_INVALID &&
                 !cetta_host_outcome(d) && !record_value("host.actors",c->actor));
+            const char *calls[]={"(min 41)","(max 41)","(member 41)","(last 41)","(the 41)"};
+            for(unsigned i=0u;i<sizeof(calls)/sizeof(*calls);i++) {
+                const EvalOutcome *custom=duty_plan(c,d,calls[i]);
+                assert(atom_eq(custom->results.items[0],parse("42")));
+            }
+            const EvalOutcome *conditional=duty_plan(c,d,"(if True 11 12)");
+            assert(atom_eq(conditional->results.items[0],parse("11")));
             duty_plan(c,d,expression);
             duty_grant(c,"alice","issue",false);duty_grant(c,"alice","issue",true);
             CettaHostCommit conflict;
@@ -309,12 +403,10 @@ static void duty_client_cases(const char *database,const char *directory) {
             Atom *state=duty_state(c);
             assert(atom_is_symbol(field(state,3),"alice") &&
                 atom_is_symbol(field(state,4),"beneficiary") && atom_is_symbol(field(state,6),"alice"));
-            registry_free(&names);space_free(&source);eval_set_library_context(&context);
-            cetta_library_context_free(&ctx);
             puts("PASS: imported Prime duty issuance uses retained scoped code, rejects authority ABA and commits only fresh policy");
-            continue;
+        } else {
+            duty_evaluate(c,d,expression);duty_accept(d);
         }
-        duty_evaluate(c,d,expression);duty_accept(d);
         Atom *issued=duty_state(c);assert(atom_is_symbol(field(issued,3),"alice") &&
             atom_is_symbol(field(issued,4),"beneficiary") && atom_is_symbol(field(issued,6),"alice"));
         duty_grant(c,"alice","transfer",true);
@@ -443,8 +535,8 @@ static void duty_client_cases(const char *database,const char *directory) {
         duty_case_done:
         close(fd);cetta_worker_endpoint_free(endpoint);assert(!unlink(address.sun_path));
         registry_free(&names);space_free(&source);eval_set_library_context(&context);cetta_library_context_free(&ctx);
-        printf("PASS: native HE duty %s, custody, revoked completion, receiver recovery and semantic settlement\n",
-            scenario==0?"real refund":scenario==1?"primary adoption":"irreversible uncertainty");
+        printf("PASS: native %s duty %s, custody, revoked completion, receiver recovery and semantic settlement\n",
+            mode?"Prime":"HE",scenario==0?"real refund":scenario==1?"primary adoption":"irreversible uncertainty");
     }
     eval_set_library_context(&context);
 }

@@ -326,7 +326,7 @@ static bool prime_replay_source_atom(PrimeReplaySourceScan *scan,PrimeReplaySynt
         return prime_replay_source_push(scan,expr_arg(atom,0u),false);
     }
     if(!explicit) {
-        if(registry_lookup_atom(head)||symbol_id_is_builtin(h)||
+        if(registry_lookup_atom(head)||symbol_id_is_builtin_for(h, eval_current_language_id())||
            prime_need_is_explicit_control_form(atom)||prime_scoped_judgment_is_head_id(h)||
            is_grounded_op(h)||h==ids->cost_run||h==ids->cost_inspect||h==ids->cost_trace||
            h==ids->cost_storage||h==ids->cost_analyze||

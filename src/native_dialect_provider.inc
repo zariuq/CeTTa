@@ -869,7 +869,7 @@ static bool native_dialect_prepare_he_type(
     /* Host syntax keeps its declared operand policy. In particular a
      * resource constructor is an operation, not an unmatched equation call.
      * The ordinary dispatcher still owns its permission and result. */
-    if (!held_control && symbol_id_is_builtin(head) &&
+    if (!held_control && symbol_id_is_builtin_for(head, eval_current_language_id()) &&
         !is_grounded_op(head) && petta_program_head_is_intrinsic(head)) {
         *handled = false; return true;
     }

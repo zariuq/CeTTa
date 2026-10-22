@@ -20,6 +20,7 @@ typedef struct {
 
 typedef struct {
     const CettaOwnedReturnImagePolicy *policy;
+    const PrimeNeedSnapshot *need_world;
     AtomDeepCopySession *session;
     PendingNameKey *keys;
     size_t key_count;
@@ -92,13 +93,29 @@ static Atom *capture_return_leaf(Arena *arena, Atom *leaf, void *context) {
     case GV_BIGINT: return atom_bigint_copy(arena, leaf);
     case GV_RATIONAL: return atom_rational(arena, atom_rational_cstr(leaf));
     case GV_INTERNAL_TAG: return atom_internal_tag(arena, (CettaInternalTag)leaf->ground.ival);
+    case GV_PRIME_NEED_CAPABILITY: {
+        /* This reference is internal only when the returned world itself
+         * authenticates its session, cell and authority. That entire world
+         * is copied in this same episode, including the cell's roots. A live
+         * evaluator is not part of that immutable graph; its reference, like
+         * an orphan reference, still needs an external owner below. */
+        uint64_t id=0u;
+        PrimeNeedCellView cell;
+        if (prime_need_ref_belongs_to(leaf, copy->need_world, &id) &&
+            prime_need_snapshot_lookup(copy->need_world,id,&cell) &&
+            cell.cache_state!=PRIME_NEED_CACHE_EVALUATING) {
+            const CettaPrimeNeedCapability *cap=atom_prime_need_capability_value(leaf);
+            return atom_prime_need_capability_with_rights(arena,cap->session_id,
+                cap->thunk_id,cap->authority_id,cap->rights);
+        }
+        break;
+    }
     case GV_SPACE:
     case GV_STATE:
     case GV_CAPTURE:
     case GV_BINDINGS:
     case GV_FOREIGN:
     case GV_TERM_GRAPH:
-    case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
         break;
     default:
@@ -160,7 +177,8 @@ CettaOwnedReturnImage *cetta_owned_return_image_capture(
     image->returned = *returned;
     arena_init_detached(&image->syntax);
     bindings_init(&image->environment);
-    ReturnCopy copy = {.policy = policy};
+    ReturnCopy copy = {.policy = policy,
+        .need_world=returned->environment?bindings_need_view(returned->environment):NULL};
     AtomDeepCopySession *session = atom_deep_copy_session_new_mapped(
         &image->syntax, capture_return_leaf, &copy);
     copy.session = session;

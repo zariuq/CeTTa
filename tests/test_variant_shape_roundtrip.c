@@ -58,7 +58,7 @@ int main(void) {
     SymbolId pair_sym = symbol_intern_cstr(g_symbols, "pair");
     SymbolId wrap_sym = symbol_intern_cstr(g_symbols, "wrap");
 
-    Atom *x = atom_var_with_id(&src_a, "x", 101);
+    Atom *x = atom_var_with_id(&src_a, "x", var_id_from_base(101));
     Atom *pair_term = make_term3(&src_a, pair_sym, x, x);
     VariantShape pair_shape;
     assert(variant_shape_from_atom(&bank, pair_term, &pair_shape));
@@ -81,9 +81,9 @@ int main(void) {
     assert(atom_eq(pair_instance_roundtrip, pair_term));
     Bindings env;
     bindings_init(&env);
-    Atom *bx = atom_var_with_id(&src_a, "bx", 111);
-    Atom *by = atom_var_with_id(&src_a, "by", 112);
-    Atom *bz = atom_var_with_id(&src_a, "bz", 113);
+    Atom *bx = atom_var_with_id(&src_a, "bx", var_id_from_base(111));
+    Atom *by = atom_var_with_id(&src_a, "by", var_id_from_base(112));
+    Atom *bz = atom_var_with_id(&src_a, "bz", var_id_from_base(113));
     Atom *bound_term = make_term3(&src_a, pair_sym, bx, by);
     Atom *wrap_bz = make_term2(&src_a, wrap_sym, bz);
     assert(bindings_add_var(&env, bx, wrap_bz));
@@ -127,14 +127,13 @@ int main(void) {
 
     Arena src_d;
     arena_init(&src_d);
-    Atom *y = atom_var_with_id(&src_d, "y", 401);
+    Atom *y = atom_var_with_id(&src_d, "y", var_id_from_base(401));
     Atom *pair_term_y = make_term3(&src_d, pair_sym, y, y);
     VariantShape pair_shape_y;
     assert(variant_shape_from_atom(&bank, pair_term_y, &pair_shape_y));
     assert(pair_shape_y.slot_env.len == 1);
     assert(variant_private_var_id(pair_shape_y.slot_env.entries[0].var_id));
-    assert(pair_shape.slot_env.entries[0].var_id ==
-           pair_shape_y.slot_env.entries[0].var_id);
+    assert(var_id_eq(pair_shape.slot_env.entries[0].var_id, pair_shape_y.slot_env.entries[0].var_id));
     assert(!atom_eq(pair_shape.slot_env.entries[0].value.skeleton,
                     pair_shape_y.slot_env.entries[0].value.skeleton));
     arena_reset(&out, out_mark);
@@ -142,8 +141,8 @@ int main(void) {
     assert(pair_roundtrip_y != NULL);
     assert(atom_eq(pair_roundtrip_y, pair_term_y));
 
-    Atom *u = atom_var_with_id(&src_b, "u", 201);
-    Atom *v = atom_var_with_id(&src_c, "v", 301);
+    Atom *u = atom_var_with_id(&src_b, "u", var_id_from_base(201));
+    Atom *v = atom_var_with_id(&src_c, "v", var_id_from_base(301));
     Atom *ctx_term1 = make_term3(&src_b, g_builtin_syms.native_handle,
                                  atom_symbol(&src_b, "kind-a"), u);
     Atom *ctx_term2 = make_term3(&src_c, g_builtin_syms.native_handle,

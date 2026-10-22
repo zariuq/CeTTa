@@ -25,6 +25,20 @@ def declarations(source, dialect="petta"):
 
 
 class HandoffDeclarations(unittest.TestCase):
+    def test_structural_projection_runs_and_keeps_its_forcing_boundary(self):
+        source = ("(: F (-> %Undefined% Atom))\n"
+                  "(= (F $value) (function (case $value (((Box $field) (return $field))))))")
+        self.assertEqual(declarations(source), [])
+        self.assertIn("(let (Box $field) $value $field)", spelling(source, "petta"))
+        self.assertIn("(function (case $value", spelling(source, "prime"))
+        for changed in (source.replace("(return $field)", "(return different)"),
+                        source.replace("(return $field)", "(return (effect $field))")):
+            self.assertEqual(declarations(changed), ["(: F (-> %Undefined% Atom))"])
+        constrained = source.replace("%Undefined%", "Number")
+        self.assertEqual(declarations(constrained), ["(: F (-> Number Atom))"])
+        datum = source.replace("%Undefined%", "Atom")
+        self.assertEqual(declarations(datum), ["(: F (-> Atom %Undefined%))"])
+
     def test_io_handoff_declarations_run_instead_of_returning_private_calls(self):
         source = (Path(__file__).resolve().parents[2] / "lib/io.metta").read_text()
         self.assertIn("(: io:try-submit (-> Atom %Undefined%))", declarations(source))
@@ -33,6 +47,10 @@ class HandoffDeclarations(unittest.TestCase):
         for name in ("io:submit", "io:poll", "io:capabilities", "io:cancel"):
             self.assertFalse(any(line.startswith(f"(: {name} ") for line in declarations(source)))
         self.assertFalse(any("__cetta_lib_io_" in line for line in declarations(source)))
+        atom_handoff = ("(: io:submit (-> Atom Atom))\n"
+                        "(: __cetta_lib_io_submit (-> Atom Atom))\n"
+                        "(= (io:submit $request) (function (chain (eval (__cetta_lib_io_submit $request)) $result (return $result))))")
+        self.assertEqual(declarations(atom_handoff), ["(: io:submit (-> Atom %Undefined%))"])
 
     def test_administrative_bindings_preserve_computation_and_data_parameters(self):
         body = "(function (let $p (prepare $x) (chain (eval (N $p $y)) $r (return $r))))"

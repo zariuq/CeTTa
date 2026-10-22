@@ -15,7 +15,7 @@ typedef struct {
     PrimeNativeOwnedRegion *region;
     PrimeNativeRegionNode *nodes;
     size_t *stack;
-    EvalNodeMemo index;
+    CettaNodeMemo index;
     size_t length, capacity, depth;
     bool value, executable;
     CettaContinuationStatus status;
@@ -40,7 +40,7 @@ static bool prime_native_region_probe(void *context) {
 
 static size_t prime_native_region_find(PrimeNativeRegionCapture *capture, const Atom *source) {
     uintptr_t index=0u;
-    return eval_node_memo_find_checked(&capture->index,source,0u,&index,
+    return cetta_node_memo_find_checked(&capture->index,source,0u,&index,
         prime_native_region_probe,capture) ? (size_t)index : SIZE_MAX;
 }
 
@@ -113,7 +113,7 @@ static bool prime_native_region_push(PrimeNativeRegionCapture *capture, Atom *so
     } else if (source->kind != ATOM_SYMBOL && source->kind != ATOM_VAR && source->kind != ATOM_EXPR)
         return false;
     size_t index = capture->length;
-    if (!eval_node_memo_store_checked(&capture->index,source,0u,(uintptr_t)index,
+    if (!cetta_node_memo_store_checked(&capture->index,source,0u,(uintptr_t)index,
             prime_native_region_probe,capture,capture->region->byte_limit)) {
         capture->status=CETTA_CONTINUATION_CAPACITY;return false;
     }
@@ -192,6 +192,7 @@ static bool prime_native_owned_region_constructor_head(Space *space, Arena *aren
 static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena,
     Atom *call, bool private_data) {
     if (!call || call->kind != ATOM_EXPR || !call->expr.len) return true;
+    if (prime_observation_value_barrier(space, arena, call)) return true;
     Atom *head_atom = call->expr.elems[0];
     if (private_data && prime_native_head_requires_resolution(
             head_atom, &g_prime_need_active))
@@ -207,6 +208,10 @@ static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena,
         head == g_builtin_syms.eval || head == g_builtin_syms.unify ||
         head == g_builtin_syms.context_space))
         return true;
+    /* This profile may enter a native handler with an actual retained
+     * realization. Payload calls keep this source's authority at every use. */
+    if (private_data && cetta_library_native_execution_supported(g_library_context, head))
+        return true;
     /* These semantic handlers use the same inspected equation/argument
      * closure. Costs, interaction services and effectful primitives retain
      * their separate admission contracts. Every descendant is still checked. */
@@ -215,8 +220,9 @@ static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena,
         head==weights->weight_exact_rational) return true;
     /* These are declaration/data constructors, not mutable services. */
     if (head == g_builtin_syms.equals || head == g_builtin_syms.colon ||
-        head == g_builtin_syms.arrow) return true;
-    if (symbol_id_is_builtin(head) || registry_lookup_atom(head_atom) ||
+        head == g_builtin_syms.arrow ||
+        (symbol_flags(g_symbols, head) & CETTA_SYMBOL_FLAG_BUILTIN_CONSTRUCTOR)) return true;
+    if (symbol_id_is_builtin_for(head, eval_current_language_id()) || registry_lookup_atom(head_atom) ||
         eval_native_weight_head(head) || cetta_prime_host_intrinsic_head(head)) return false;
     if (private_data && eval_equations_may_match_known_head(space,head)) return true;
     return g_library_context && g_library_context->petta_program &&
@@ -595,7 +601,7 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
         space_read_token_matches_live_space(source_read,source) &&
         prime_native_region_measure(&capture,copy);
     atom_deep_copy_session_free(copy);
-    eval_node_memo_free(&capture.index);
+    cetta_node_memo_free(&capture.index);
     free(capture.nodes); free(capture.stack);
     cetta_native_cost_scope_leave(&cost);
     if (!okay) {

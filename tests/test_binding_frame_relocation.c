@@ -18,17 +18,17 @@ static CettaFrameIdentity fresh(void) {
 }
 
 static void prepare(Bindings *bindings, Arena *arena, CettaFrameIdentity epoch) {
-    VarId ids[] = {1u, 2u};
+    VarId ids[] = {var_id_from_base(1u), var_id_from_base(2u)};
     Atom *variables[] = {atom_var_with_name_key(arena,
                             atom_expr2(arena, atom_symbol(arena, "relocation-name"),
-                                       atom_string(arena, "first")), 1u),
-                         atom_var_with_id(arena, "relocation-second", 2u)};
+                                       atom_string(arena, "first")), var_id_from_base(1u)),
+                         atom_var_with_id(arena, "relocation-second", var_id_from_base(2u))};
     BindingsFrameSchema *schema = bindings_frame_schema_new_presented(ids, variables, 2u);
     bindings_init(bindings);
     CHECK(schema && bindings_register_complete_frame_schema(bindings, schema, epoch),
           "register a presented complete frame");
     bindings_frame_schema_release(schema);
-    CHECK(bindings_add_id(bindings, var_epoch_id(1u, epoch), atom_symbol_current_id(variables[0]),
+    CHECK(bindings_add_id(bindings, var_epoch_id(var_id_from_base(1u), epoch), atom_symbol_current_id(variables[0]),
                          atom_string(arena, "first value")),
           "publish a foreign slot value");
 }
@@ -68,7 +68,7 @@ static void shared_images(void) {
           "structured schema names move once with their payload");
     CHECK(frame(&original, epoch)->values[0].skeleton == old_value,
           "an unpromoted sibling still observes the original value");
-    CHECK(left->epoch == before_first.epoch && left->owns_identity == before_first.owns_identity &&
+    CHECK(cetta_frame_identity_eq(left->epoch, before_first.epoch) && left->owns_identity == before_first.owns_identity &&
           left->bound_value_count == before_first.bound_value_count &&
           left->private_value_count == before_first.private_value_count &&
           left->slot_len == before_first.slot_len && left->schema_complete == before_first.schema_complete &&
@@ -79,21 +79,21 @@ static void shared_images(void) {
           "per-view identities and write boundaries survive shared relocation");
     CHECK(left->write_version[0] == before_first.write_version[0] &&
           first.frame_index->write_clock == original.frame_index->write_clock &&
-          left->values[0].kind == before_first.values[0].kind &&
-          left->values[0].epoch == before_first.values[0].epoch,
+          binding_value_kind(left->values[0]) == binding_value_kind(before_first.values[0]) &&
+          cetta_frame_identity_eq(binding_value_epoch(left->values[0]), binding_value_epoch(before_first.values[0])),
           "relocation preserves versions and value context");
-    CHECK(bindings_add_id(&first, var_epoch_id(2u, epoch), 0u,
+    CHECK(bindings_add_id(&first, var_epoch_id(var_id_from_base(2u), epoch), 0u,
                          atom_string(&destination, "branch write")),
           "a relocated image remains writable through copy-on-write");
     CHECK(frame(&first, epoch)->storage_references != frame(&second, epoch)->storage_references &&
-          !bindings_lookup_value_id(&second, var_epoch_id(2u, epoch)).skeleton &&
-          !bindings_lookup_value_id(&original, var_epoch_id(2u, epoch)).skeleton,
+          !bindings_lookup_value_id(&second, var_epoch_id(var_id_from_base(2u), epoch)).skeleton &&
+          !bindings_lookup_value_id(&original, var_epoch_id(var_id_from_base(2u), epoch)).skeleton,
           "a branch write does not leak into either sibling");
     atom_deep_copy_session_free(session);
     CHECK(atomic_load(frame(&second, epoch)->storage_references) == 1u,
           "session teardown releases its temporary image hold");
     bindings_free(&original); arena_free(&source);
-    CHECK(atom_eq(bindings_lookup_value_id(&second, var_epoch_id(1u, epoch)).skeleton,
+    CHECK(atom_eq(bindings_lookup_value_id(&second, var_epoch_id(var_id_from_base(1u), epoch)).skeleton,
                   atom_string(&destination, "first value")),
           "promoted values outlive the original arena");
     bindings_free(&first); bindings_free(&second);
@@ -269,8 +269,8 @@ static void identical_snapshot_merge(void) {
     bindings_init(&alias); bindings_init(&oracle); bindings_init(&different);
     BindingValue contextual = binding_value_from_context(
         atom_expr2(&arena, atom_symbol(&arena, "Contexted"),
-                   atom_var_with_id(&arena, "scope-other", 17u)), context_epoch);
-    CHECK(bindings_rewrite_value_id(&original, var_epoch_id(1u, epoch), contextual),
+                   atom_var_with_id(&arena, "scope-other", var_id_from_base(17u))), context_epoch);
+    CHECK(bindings_rewrite_value_id(&original, var_epoch_id(var_id_from_base(1u), epoch), contextual),
           "publish a contextual value before copying its complete snapshot");
     CHECK(bindings_copy(&alias, &original) && bindings_copy(&oracle, &original),
           "retain an identical live snapshot and a general-merge oracle");
@@ -287,22 +287,22 @@ static void identical_snapshot_merge(void) {
           frame(&original, epoch)->write_version[0] == before.write_version[0],
           "identical merge does not manufacture storage or a write");
     CHECK(frame(&original, epoch)->values[0].skeleton == contextual.skeleton &&
-          frame(&original, epoch)->values[0].kind == contextual.kind &&
-          frame(&original, epoch)->values[0].epoch == contextual.epoch &&
+          binding_value_kind(frame(&original, epoch)->values[0]) == binding_value_kind(contextual) &&
+          cetta_frame_identity_eq(binding_value_epoch(frame(&original, epoch)->values[0]), binding_value_epoch(contextual)) &&
           atom_eq(bindings_to_atom(&arena, &original), bindings_to_atom(&arena, &oracle)),
           "the untouched value context agrees with general merge observation");
     CHECK(bindings_copy(&different, &alias) &&
-          bindings_add_id(&different, 33u, 0u, atom_int(&arena, 54)),
+          bindings_add_id(&different, var_id_from_base(33u), 0u, atom_int(&arena, 54)),
           "add a generic row without changing the shared framed directory");
     CHECK(different.frame_index == alias.frame_index && different.len == 1u,
           "matching framed backing does not establish whole-image identity");
     CHECK(bindings_try_merge_live(&original, &different) &&
-          bindings_lookup_value_id(&original, 33u).skeleton &&
-          bindings_lookup_value_id(&original, 33u).skeleton->ground.ival == 54,
+          bindings_lookup_value_id(&original, var_id_from_base(33u)).skeleton &&
+          bindings_lookup_value_id(&original, var_id_from_base(33u)).skeleton->ground.ival == 54,
           "the general path retains additional unframed bindings");
     bindings_free(&different); bindings_init(&different);
     CHECK(bindings_copy(&different, &alias) &&
-          bindings_add_id(&different, var_epoch_id(2u, epoch), 0u, atom_string(&arena, "new value")),
+          bindings_add_id(&different, var_epoch_id(var_id_from_base(2u), epoch), 0u, atom_string(&arena, "new value")),
           "prepare a different snapshot with an additional authoritative binding");
     CHECK(different.frame_index != original.frame_index &&
           bindings_try_merge_live(&original, &different) &&
@@ -310,7 +310,7 @@ static void identical_snapshot_merge(void) {
           "a different directory is not skipped as an identical image");
     bindings_free(&different); bindings_init(&different);
     CHECK(bindings_copy(&different, &alias) &&
-          bindings_add_id(&different, var_epoch_id(2u, epoch), 0u, atom_string(&arena, "conflict")),
+          bindings_add_id(&different, var_epoch_id(var_id_from_base(2u), epoch), 0u, atom_string(&arena, "conflict")),
           "prepare a genuinely conflicting snapshot");
     CHECK(!bindings_try_merge_live(&original, &different) &&
           atom_eq(frame(&original, epoch)->values[1].skeleton, atom_string(&arena, "new value")),

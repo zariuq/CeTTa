@@ -14,7 +14,7 @@ from test_prime_native_parallel import check_cost
 from test_prime_weights import (matched_coefficients, matched_source_scopes, retained_queries,
     nested_coefficients, scoped_reads, weight_handler_authority, imported_coefficients, ordered_coefficients, authored_coefficients, admitted_coefficients,
     nested_selection_boundary, authored_algebra_clients, authored_readouts, captured_source_unchanged,
-    authored_programs, authored_pln_client, callable_admission, weight_licence_dependencies,
+    authored_programs, authored_pln_client, search_clients, callable_admission, weight_licence_dependencies,
     weight_licence_progress, family_boundaries, ordering_refusal_recovery, controller_agreement)
 
 
@@ -1107,6 +1107,7 @@ def main():
             authored_algebra_clients(gate)
             authored_pln_client(gate)
             authored_programs(gate)
+            search_clients(gate)
             authored_readouts(gate)
             family_boundaries(gate)
             ordering_refusal_recovery(gate)

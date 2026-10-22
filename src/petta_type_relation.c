@@ -1115,7 +1115,7 @@ static bool petta_type_inert_subject_has(const PettaTypeInertVars *vars,
     if (vars->overflow)
         return cetta_observation_atom_contains_var(subject, variable);
     for (uint32_t i = 0u; i < vars->count; i++) {
-        if (vars->vars[i] == variable)
+        if (var_id_eq(vars->vars[i], variable))
             return true;
     }
     return false;
@@ -1134,10 +1134,10 @@ static bool petta_type_inert_scan_required(
         if (!state->dead)
             return false;
         for (uint32_t i = 0u; i < *seen_count; i++) {
-            if (seen[i] != required->var_id)
+            if (!var_id_eq(seen[i], required->var_id))
                 continue;
             for (uint32_t j = 0u; j < state->repeated_count; j++) {
-                if (state->repeated[j] == required->var_id)
+                if (var_id_eq(state->repeated[j], required->var_id))
                     return false;
             }
             if (state->repeated_count == PETTA_TYPE_INERT_REFINEMENTS)
@@ -1198,7 +1198,7 @@ static Atom *petta_type_inert_resolve(const PettaTypeInertState *state,
     while (atom->kind == ATOM_VAR) {
         Atom *next = NULL;
         for (uint32_t i = 0u; i < state->count; i++) {
-            if (state->refinements[i].variable == atom->var_id) {
+            if (var_id_eq(state->refinements[i].variable, atom->var_id)) {
                 next = state->refinements[i].type;
                 break;
             }
@@ -1215,7 +1215,7 @@ static bool petta_type_inert_read_again(const PettaTypeInertState *state,
     if (!state->dead)
         return true;
     for (uint32_t i = 0u; i < state->repeated_count; i++) {
-        if (state->repeated[i] == variable)
+        if (var_id_eq(state->repeated[i], variable))
             return true;
     }
     return false;

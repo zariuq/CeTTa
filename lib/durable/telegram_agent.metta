@@ -199,7 +199,7 @@
    (case $outcome
      (((host:outcome 1 $effect $attempt observed (True False 0 $status $known $bytes False False False) $body)
        (if (or (== $status 200) (and (>= $status 400) (< $status 500)))
-         (tg-agent:api-result (telegram:normalize (json:parse $body) 0) $action)
+         (tg-agent:api-result (telegram:normalize (json:inspect $body) 0) $action)
          (tg-agent:uncertain http-status)))
       ((host:outcome 1 $effect $attempt not-started (False $cancelled $code $status $known $bytes $large $budget $allocation) $body)
        (tg-agent:not-sent))

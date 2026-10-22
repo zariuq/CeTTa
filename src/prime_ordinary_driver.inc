@@ -362,7 +362,7 @@ static bool prime_ordinary_shared_task_admitted(Space *space,Arena *arena,Atom *
             safe=false;break;
         }
         SymbolId id=atom_head_symbol_id(atom);
-        if(id!=SYMBOL_ID_NONE && !symbol_id_is_builtin(id) &&
+        if(id!=SYMBOL_ID_NONE && !symbol_id_is_builtin_for(id, eval_current_language_id()) &&
             !registry_lookup_atom(head) && eval_equations_may_match_known_head(space,id)) {
             /* PeTTa conservatively gives every non-symbol head a dynamic
              * plan, including an inert scalar-headed container. Keep its
@@ -421,7 +421,10 @@ static bool prime_ordinary_received_outcome(Arena *arena,const Outcome *row) {
 
 static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
     Space *space,Atom *expression,int fuel,const Bindings *environment,uint32_t workers) {
-    if(!source || source!=g_prime_eval_stack_driver || source->control || workers<2u ||
+    /* Explicit owned roots install their controller before source entry.
+     * A nested synchronous root retains its caller's return receiver and
+     * invocation checks; moving it cannot detach that borrowed ancestry. */
+    if(g_prime_ordinary_return || !source || source!=g_prime_eval_stack_driver || source->control || workers<2u ||
         source->streaming || source->running_task || source->active_task ||
         source->root_call_running || source->raw_call_depth || source->bind_depth ||
         source->poison_depth || source->capacity_blocked || source->failed ||
@@ -431,6 +434,12 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
         cetta_native_cost_observer_active() || cetta_shared_transition_guard_held_by_current_thread() ||
         eval_current_language_id()!=CETTA_LANGUAGE_PRIME ||
         active_search_table_mode()!=CETTA_TABLE_MODE_NONE)return false;
+    /* Promotion transfers the source driver itself. A borrowed service hook
+     * still names that original driver and must keep its exact next call.
+     * Authority-only parents do not prevent the independent optimization. */
+    for (PrimeEvalStackDriver *scope=source;scope;
+         scope=scope->call_permit_parent?scope->call_permit_parent:scope->authority_parent)
+        if (scope->call_permit) return false;
     size_t count=source->frame_depth;
     if(count>SIZE_MAX/sizeof(PrimeEvalStackFrame *) ||
         source->continuations.depth!=count ||
@@ -540,14 +549,6 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
     control->published=prefix;control->delivered_count=prefix;
     for(size_t i=0u;i<(size_t)prefix;i++)control->delivered[i]=true;
     memset(source,0,sizeof(*source));
-    if (g_prime_ordinary_return) {
-        CettaPrimeObservationReturn *owned=g_prime_ordinary_return;
-        assert(owned->ordinary && !owned->ordinary_control &&
-            source->frame_depth==0u && owned->output!=control->driver.arena);
-        prime_ordinary_return_take_control(owned,control);
-        free(frames);
-        return true;
-    }
     prime_native_control_run(control,UINT64_MAX,prime_ordinary_observe,NULL);
 #ifdef CETTA_PRIME_ORDINARY_TEST_OBSERVER
     prime_ordinary_test_finished(control);

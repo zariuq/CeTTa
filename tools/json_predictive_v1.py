@@ -272,10 +272,20 @@ def compile_sources(syntax, lexical, target, elaboration, predictive_compiler=pr
         "JD_ELEMENT_COMMA": rules["json:element-tail-cons"]["rhs"][1][1]}
     output = ["/* Generated predictive decisions from LanguageDef + elaboration. */"]
     output.extend(f"#define {name} {ord(value)}u" for name, value in punctuation.items())
-    output.append("static JsonStartV1 jd_value_start(JsonDirectV1 *p, Atom **value) {")
+    output.append("static JsonLookaheadV1 jd_value_lookahead(const JsonDirectV1 *p) {")
     output.append('if (p->at == p->len) goto invalid;')
     output.append("switch(p->bytes[p->at]) {")
     byte_cases = set()
+    value_rows = []
+    lookahead_names = {
+        "json:value-object": "JD_LOOK_OBJECT",
+        "json:value-array": "JD_LOOK_ARRAY",
+        "json:value-number": "JD_LOOK_NUMBER",
+        "json:value-string": "JD_LOOK_STRING",
+        "json:value-null": "JD_LOOK_NULL",
+        "json:value-true": "JD_LOOK_TRUE",
+        "json:value-false": "JD_LOOK_FALSE",
+    }
     for label, row in folded.items():
         if row["category"] != "JsonValue": continue
         tokens = {token for (category, token), chosen in selected.items() if category == "JsonValue" and chosen == label}
@@ -285,25 +295,48 @@ def compile_sources(syntax, lexical, target, elaboration, predictive_compiler=pr
         if byte_cases & starts: raise CompileError("value lookahead conflict: " + label)
         byte_cases |= starts
         output.extend(f"case {point}:" for point in sorted(starts))
-        if label == "json:value-object": output.append("return JD_START_OBJECT;")
-        elif label == "json:value-array": output.append("return JD_START_ARRAY;")
-        elif label == "json:value-number": output.append("*value = jd_number(p); return *value ? JD_START_SCALAR : JD_START_ERROR;")
-        elif label == "json:value-string": output.append("*value = jd_string(p,false); return *value ? JD_START_SCALAR : JD_START_ERROR;")
+        lookahead = lookahead_names.get(label)
+        if not lookahead:
+            raise CompileError("unsupported value action " + label)
+        if label in ("json:value-object", "json:value-array",
+                     "json:value-number", "json:value-string"):
+            output.append(f"return {lookahead};")
         else:
             literal = row["rhs"][0][1]; length = len(literal.encode())
             output.append(f"if ({length}u > p->len-p->at || memcmp(p->bytes+p->at,{json.dumps(literal)},{length})) break;")
+            output.append(f"return {lookahead};")
+        value_rows.append((label, row, lookahead))
+    output.extend(["default: break; }", "invalid: return JD_LOOK_ERROR;", "}"])
+    output.append("static JsonStartV1 jd_value_start(JsonDirectV1 *p, Atom **value) {")
+    output.append("switch (jd_value_lookahead(p)) {")
+    for label, row, lookahead in value_rows:
+        output.append(f"case {lookahead}:")
+        if label == "json:value-object": output.append("return JD_START_OBJECT;")
+        elif label == "json:value-array": output.append("return JD_START_ARRAY;")
+        elif label == "json:value-number": output.append("*value = jd_number(p); return *value ? JD_START_SCALAR : JD_START_ERROR;")
+        elif label == "json:value-string": output.append("*value = jd_string(p); return *value ? JD_START_SCALAR : JD_START_ERROR;")
+        else:
+            literal = row["rhs"][0][1]; length = len(literal.encode())
             output.append(f"p->at += {length}; p->scalar += {len(literal)};")
             if label == "json:value-null": output.append('*value = jd_head(p,JD_NULL); return JD_START_SCALAR;')
             elif label in ("json:value-true", "json:value-false"):
                 boolean = label == "json:value-true"
-                output.append('*value = jd_one(p,JD_BOOL,p->petta ? atom_symbol(p->arena,"' +
-                    str(boolean).lower() + '") : atom_bool(p->arena,' + str(boolean).lower() + ')); return JD_START_SCALAR;')
-            else: raise CompileError("unsupported value action " + label)
-    output.extend(['default: break; }', 'invalid: jd_error(p,CETTA_JSON_RUNTIME_V1_SYNTAX_REJECTED,"a JSON value");', 'return JD_START_ERROR;', '}'])
+                spelling = str(boolean).lower()
+                value = ('p->petta ? atom_symbol(p->arena,"' + spelling +
+                         '") : atom_bool(p->arena,' + spelling + ')')
+                output.append('*value = p->ordinary ? (' + value +
+                              ') : jd_one(p,JD_BOOL,' + value +
+                              '); return JD_START_SCALAR;')
+    output.extend(["case JD_LOOK_ERROR: break; }",
+                   'jd_error(p,CETTA_JSON_RUNTIME_V1_SYNTAX_REJECTED,"a JSON value");',
+                   "return JD_START_ERROR;", "}"])
     report = dict(source_sha256={p.name: sha256(p.read_bytes()).hexdigest() for p in (syntax, lexical, target, elaboration)},
         first={k: sorted(v) for k,v in first.items()}, follow={k: sorted(v) for k,v in follow.items()},
         structural_nonterminals=len(first), conflicts=[], lexical_categories=["JsonWs", "JsonNumber", "JsonString"],
-        transformations=["regular lexical folding", "erase only the elaboration's JsonWs positions", "fold member and element tail recursion into loops"],
+        transformations=["regular lexical folding",
+                         "erase only the elaboration's JsonWs positions",
+                         "fold member and element tail recursion into loops",
+                         "factor predictive lookahead across value and selective observers"],
         generalized_islands=[])
     nfa = NFA(); start = nfa.state()
     for tag, category in enumerate(report["lexical_categories"]):
@@ -348,7 +381,7 @@ def build_artifact(syntax, lexical, target, elaboration, dfa_compiler, output,
             '"JSON generated artifacts differ");\n' for i in range(8))
         prepared = {
             ARTIFACT_FILES[0]: artifact_identity("LEXICAL", digest).encode() + lexical_code,
-            ARTIFACT_FILES[1]: (artifact_identity("PREDICTIVE", digest) + code.split("static JsonStartV1 jd_value_start", 1)[0]).encode(),
+            ARTIFACT_FILES[1]: (artifact_identity("PREDICTIVE", digest) + code.split("static JsonLookaheadV1 jd_value_lookahead", 1)[0]).encode(),
             ARTIFACT_FILES[2]: (artifact_identity("IMPLEMENTATION", digest) + checks + code).encode(),
             ARTIFACT_FILES[3]: (json.dumps(report, indent=2, sort_keys=True) + "\n").encode(),
         }

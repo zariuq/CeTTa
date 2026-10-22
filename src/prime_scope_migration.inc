@@ -17,7 +17,7 @@ typedef struct {
 
 static size_t prime_migration_occ(const Atom *term, VarId id) {
     if (!term || !atom_has_vars(term)) return 0u;
-    if (term->kind == ATOM_VAR) return term->var_id == id;
+    if (term->kind == ATOM_VAR) return var_id_eq(term->var_id, id);
     if (term->kind != ATOM_EXPR || atom_is_prime_own_list(term)) return 0u;
     size_t count = 0u;
     for (CettaExprIndex i = 0u; i < atom_authored_len(term); i++)
@@ -135,7 +135,7 @@ static const Atom *prime_migration_cover(PrimeMigration *m, Atom *term,
 
 static const Atom *prime_migration_slot(PrimeMigration *m, VarId id) {
     for (size_t i = m->slots_len; i > 0u; i--)
-        if (m->slots[i - 1u].id == id) return m->slots[i - 1u].cover;
+        if (var_id_eq(m->slots[i - 1u].id, id)) return m->slots[i - 1u].cover;
     return prime_migration_cover(m, m->root, id);
 }
 
@@ -202,7 +202,7 @@ static void prime_migration_pattern(PrimeMigration *m, Atom *owner,
             prime_migration_slot(m, names[i]->var_id) == owner) continue;
         bool seen = false;
         for (size_t j = 0u; j < *count; j++)
-            if ((*shared)[j]->var_id == names[i]->var_id) seen = true;
+            if (var_id_eq((*shared)[j]->var_id, names[i]->var_id)) seen = true;
         if (!seen && prime_elab_reserve(e, (void **)shared, cap, *count + 1u,
                                         sizeof(**shared)))
             (*shared)[(*count)++] = names[i];

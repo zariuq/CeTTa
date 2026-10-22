@@ -115,8 +115,15 @@ int main(void) {
               atom_var_with_id(&arena, "anotherSpelling", variable->var_id)),
           "exact variable keys retain their spelling");
     CHECK(!atom_data_identical(variable,
-              atom_var_with_id(&arena, "exactVariable", variable->var_id + 1u)),
+              atom_var_with_id(&arena, "exactVariable", fresh_var_id())),
           "equal printed variables do not erase variable identity");
+    CETTA_FRAME_IDENTITY_SCOPE(frames);
+    CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&frames);
+    Atom *framed = atom_var_like(&arena, variable, var_epoch_id(variable->var_id, epoch));
+    CHECK(!atom_data_identical(variable, framed),
+          "equal source variables in different activations remain distinct keys");
+    CHECK(atom_data_identical(framed, atom_deep_copy(&arena, framed)),
+          "copying an exact variable key preserves its activation identity");
     Atom *named = atom_var_with_name_key(&arena, small, variable->var_id);
     CHECK(atom_data_identical(named, atom_deep_copy(&arena, named)),
           "structural variable names compare as finite data rather than pointers");

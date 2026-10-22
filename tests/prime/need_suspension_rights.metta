@@ -66,7 +66,9 @@
        (same-suspension $p (delay $origin)))
       ($_ malformed-view))))
 
-; Persistence keeps attenuated rights; it never restores authority.
+; Persistence keeps attenuated rights; it never restores authority.  A
+; space stores its argument as written, so a suspension is attenuated before
+; it is stored.
 !(bind! &rights-inspect-space (new-space))
 !(let $p (delay 11)
    (chain (suspension:restrict $p (suspension:rights inspect)) $restricted
@@ -115,3 +117,12 @@
    (stored (suspension:restrict (delay (rights-bump)) (suspension:rights inspect))))
 !(match &rights-source-space (stored $source) (force $source))
 !(get-state &rights-counter)
+
+; An attenuation written inside stored code is code: it never runs, and the
+; stored code holds the suspension itself, with all its rights.
+!(bind! &rights-code-space (new-space))
+!(let $p (delay 15)
+   (add-atom &rights-code-space
+     (stored (suspension:restrict $p (suspension:rights force)))))
+!(match &rights-code-space (stored (suspension:restrict $inner $rights))
+   (observe-origin $inner))

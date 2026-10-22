@@ -198,7 +198,7 @@ bool variant_instance_from_shape(VariantInstance *out, const VariantShape *shape
     while (bindings_iterator_next(&iterator, &logical_binding)) {
         const Binding *entry = &logical_binding;
         if (!variant_private_var_id(entry->var_id) ||
-            entry->value.kind != BINDING_VALUE_MATERIALIZED) {
+            binding_value_kind(entry->value) != BINDING_VALUE_MATERIALIZED) {
             variant_instance_free(&next);
             return false;
         }

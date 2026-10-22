@@ -37,7 +37,7 @@ _Noreturn void __wrap_abort(void) { _exit(86); }
 
 static bool leaf_eq(Atom *left, Atom *right) {
     return left->kind == ATOM_VAR && right->kind == ATOM_VAR &&
-           left->var_id == right->var_id;
+           var_id_eq(left->var_id, right->var_id);
 }
 
 int main(void) {
@@ -50,8 +50,8 @@ int main(void) {
     enum { N = 96 };
     CettaTermMatchPair pairs[N];
     for (unsigned i = 0; i < N; ++i) {
-        pairs[i].left = atom_var_with_id(&arena, "pattern", 1u + i);
-        pairs[i].right = atom_var_with_id(&arena, "subject", 1u + N + i);
+        pairs[i].left = atom_var_with_id(&arena, "pattern", var_id_from_base(1u + i));
+        pairs[i].right = atom_var_with_id(&arena, "subject", var_id_from_base(1u + N + i));
     }
     CettaTermMatch *publication = mmap(NULL, sizeof(*publication), PROT_READ | PROT_WRITE,
         MAP_SHARED | MAP_ANONYMOUS, -1, 0);

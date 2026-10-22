@@ -166,6 +166,30 @@ class ControllerDiversityManifestTests(unittest.TestCase):
                 },
             })
 
+    def test_prime_column_checks_the_observation_contract(self) -> None:
+        rows = {row["id"]: row for row in diversity.load_manifest()}
+        first = rows["once-recursive-first"]
+        diversity._qualify_prime(first, {
+            "stdout": "[(answer (S (S Z)))]\n", "completion": "complete"})
+        with self.assertRaisesRegex(RuntimeError, "source witness"):
+            diversity._qualify_prime(first, {
+                "stdout": "[(answer (S (S Z))), (answer Z)]\n",
+                "completion": "complete"})
+        with self.assertRaisesRegex(RuntimeError, "source witness"):
+            diversity._qualify_prime(first, {
+                "stdout": "[(answer (T Z))]\n", "completion": "complete"})
+        with self.assertRaisesRegex(RuntimeError, "timeout"):
+            diversity._qualify_prime(first, {
+                "stdout": "", "completion": "timeout"})
+        prefix = rows["finite-prefix-recursive"]
+        diversity._qualify_prime(prefix, {
+            "stdout": "[((answer (S Z)) (answer Z))]\n",
+            "completion": "complete"})
+        with self.assertRaisesRegex(RuntimeError, "distinct members"):
+            diversity._qualify_prime(prefix, {
+                "stdout": "[((answer Z) (answer Z))]\n",
+                "completion": "complete"})
+
     def test_printed_result_list_preserves_nested_occurrences(self) -> None:
         self.assertEqual(
             controller_check.metta_list_occurrences(

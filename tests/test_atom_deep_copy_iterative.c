@@ -389,7 +389,7 @@ static void check_copy_arena_map(void) {
         Atom *payload=atom_expr2(&input,input_head,small);
         Atom *equal_payload=atom_expr2(&input,input_head,small);
         assert(payload!=equal_payload && atom_eq(payload,equal_payload));
-        Atom *named=atom_var_with_name_key(&input,payload,UINT64_C(440051));
+        Atom *named=atom_var_with_name_key(&input,payload,var_id_from_base(UINT64_C(440051)));
         Atom *key=named->name_key;
         assert(key==payload);
         Atom global=*small; global.arena_id=0u;
@@ -480,7 +480,7 @@ static void check_copy_destination_scope(void) {
         assert(!atom_deep_copy_destination_enter(session, &destination, &outer));
         Atom *image = atom_deep_copy_session_copy(session, root);
         assert(image && arena_owns_atom(&child_destination, image));
-        CettaFrameIdentity identity = 0u;
+        CettaFrameIdentity identity = CETTA_FRAME_IDENTITY_NONE;
         assert(cetta_frame_identity_acquire(&identity));
         assert(atom_deep_copy_session_retain_frame(session, identity));
         cetta_frame_identity_release(identity);
@@ -524,7 +524,7 @@ static void check_copy_destination_scope(void) {
     size_t before = arena_accounted_live_bytes(&external);
     assert(!atom_deep_copy_destination_enter(session, &external, &scope));
     assert(!atom_deep_copy_session_targets(session, &external));
-    CettaFrameIdentity identity = 0u;
+    CettaFrameIdentity identity = CETTA_FRAME_IDENTITY_NONE;
     assert(cetta_frame_identity_acquire(&identity));
     assert(!atom_deep_copy_session_retain_frame(session, identity));
     assert(arena_accounted_live_bytes(&external) == before);
@@ -943,6 +943,19 @@ int main(void) {
     check_copy_distinct_scalar_nodes();
     check_copy_retained_owner();
     check_copy_arena_map();
+    /* Rebuilding preserves expression role, while ownership and variable
+     * summaries are derived from the actual replacement children. */
+    Atom *role_source=atom_he_evaluated_expr(&source,
+        (Atom *[]){atom_symbol(&source,"RoleBox"),atom_int(&source,1)},2u);
+    Atom *replacement=atom_var(&destination,"role-variable");
+    Atom *role_copy=atom_expr_rebuild(&destination,role_source,
+        (Atom *[]){atom_symbol(&destination,"RoleBox"),replacement},2u);
+    assert(role_copy && atom_is_he_evaluated(role_copy) && atom_has_vars(role_copy));
+    assert(role_copy->expr.elems[1]==replacement && role_copy->arena_id==destination.identity);
+    Atom *plain_source=atom_expr2(&source,atom_symbol(&source,"RoleBox"),atom_int(&source,1));
+    Atom *plain_copy=atom_expr_rebuild(&destination,plain_source,
+        (Atom *[]){atom_symbol(&destination,"RoleBox"),atom_int(&destination,2)},2u);
+    assert(plain_copy && !atom_is_he_evaluated(plain_copy) && !atom_has_vars(plain_copy));
     check_map(&source, &destination);
     check_session_companion_cleanup(&destination);
 

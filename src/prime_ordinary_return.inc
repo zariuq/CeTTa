@@ -5,16 +5,14 @@ struct CettaPrimeSourceScope {
     uint64_t allowance;
 };
 
-static bool prime_ordinary_source_current(const PrimeNativeTopEpisode *owner) {
+static bool prime_ordinary_source_presentation_current(const PrimeNativeTopEpisode *owner) {
     if (!owner || !owner->ordinary_source || !owner->owned_region) return false;
     PrimeNativeOwnedRegion *region=owner->owned_region;
     if (!region->ready || owner->space!=prime_native_region_program(region) ||
         owner->registry!=&region->registry || owner->persistent!=&region->persistent ||
         owner->library!=region->library ||
         !space_read_view_is_current(&owner->source_view) ||
-        (region->private_data &&
-            (!space_read_token_is_current(region->data_read) ||
-             !space_program_token_is_current(region->program_read))) ||
+        (region->private_data && !space_program_token_is_current(region->program_read)) ||
         memcmp(&owner->source_session,&region->library->session,sizeof(owner->source_session)))
         return false;
     const Registry *before=&owner->source_registry.initial,*now=owner->registry;
@@ -27,6 +25,12 @@ static bool prime_ordinary_source_current(const PrimeNativeTopEpisode *owner) {
             (Atom *)registry_entry_name_key(now,i))) return false;
     }
     return true;
+}
+
+static bool prime_ordinary_source_current(const PrimeNativeTopEpisode *owner) {
+    return prime_ordinary_source_presentation_current(owner) &&
+        (!owner->owned_region->private_data ||
+         space_read_token_is_current(owner->owned_region->data_read));
 }
 
 /* Selection authenticates the actual thread services, independently of
@@ -43,6 +47,16 @@ static bool prime_ordinary_source_selected(PrimeNativeTopEpisode *owner) {
         g_equation_match_cache_selected==&services->selectors &&
         space_execution_analysis_cache_selected()==services->effects &&
         g_symbols==owner->source_symbols && g_var_intern==owner->source_variables;
+}
+
+/* A synchronous receiver may have selected a live source without a search
+ * controller. Its unchanged program, registry and services still identify
+ * the private world whose exact-predecessor publication may advance. */
+static PrimeNativeTopEpisode *prime_ordinary_source_publication_owner(void) {
+    PrimeNativeTopEpisode *source=g_prime_ordinary_source_scope
+        ? g_prime_ordinary_source_scope->owner : NULL;
+    return prime_ordinary_source_selected(source) &&
+        prime_ordinary_source_presentation_current(source) ? source : NULL;
 }
 
 CettaContinuationStatus eval_prime_source_owner_capture(Space *space,Registry *registry,
@@ -454,8 +468,13 @@ static CettaMatchCompletion prime_ordinary_prepare_return(
         return CETTA_MATCH_INCOMPLETE;
     if (!owned->ordinary_preparation_limited && !owned->ordinary_reification &&
         !owned->ordinary_observed) {
-        CettaMatchCompletion completion=outcome_observe_top_value_checked(
-            owned->ordinary_control->driver.arena,row,&owned->ordinary_reified);
+        Arena *arena=owned->ordinary_control->driver.arena;
+        CettaMatchCompletion completion=owned->ordinary_owned_values
+            ? outcome_materialize_top_value_checked(arena,row,&owned->ordinary_reified)
+            : outcome_observe_top_value_checked(arena,row,&owned->ordinary_reified);
+        if (completion==CETTA_MATCH_MATCHED && owned->ordinary_owned_values)
+            owned->ordinary_reified=prime_need_apply_data_environment(arena,
+                owned->ordinary_reified,&row->env);
         if (completion==CETTA_MATCH_MATCHED && owned->ordinary_reified)
             owned->ordinary_return_phase=PRIME_ORDINARY_RETURN_PREPARED;
         else if (completion==CETTA_MATCH_REFUTED)
@@ -476,6 +495,15 @@ static CettaMatchCompletion prime_ordinary_prepare_return(
         owned->ordinary_observed=prime_need_apply_data_environment(arena,materialized,&row->env);
         if (!owned->ordinary_observed) return CETTA_MATCH_INCOMPLETE;
         owned->ordinary_return_phase=PRIME_ORDINARY_RETURN_REIFICATION;
+    }
+    /* The complete receiving environment owns the actual cell graph.
+     * Converting a reference into stored source here would create a second
+     * identity when its logical origin is later instantiated differently. */
+    if (owned->ordinary_owned_values) {
+        owned->ordinary_reified=owned->ordinary_observed;
+        owned->ordinary_observed=NULL;
+        owned->ordinary_return_phase=PRIME_ORDINARY_RETURN_PREPARED;
+        return CETTA_MATCH_MATCHED;
     }
     const PrimeNeedSnapshot *snapshot=prime_need_snapshot_present(bindings_need_view(&row->env))
         ? bindings_need_view(&row->env):&g_prime_need_active;
@@ -1061,6 +1089,7 @@ CettaContinuationStatus eval_prime_source_execution_open(CettaPrimeSourceOwner *
             execution->release=prime_ordinary_source_release;
             execution->final_is_current=prime_ordinary_source_final_current;
             owned->ordinary_quantum=quantum;
+            owned->ordinary_owned_values=true;
             /* No pointer to either temporary publication receiver escapes. */
             owned->output=NULL;owned->top.destination=NULL;
             outcome.prime_observation=NULL;

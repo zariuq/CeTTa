@@ -2,13 +2,13 @@
 #include "term_canon.h"
 
 typedef struct {
-    uint32_t epoch;
+    CettaFrameIdentity epoch;
     Bindings *bindings;
     CettaVarMap images;
 } RuleBodyInstance;
 
 static Atom *rule_fresh_variable(Arena *arena, Atom *variable, void *raw) {
-    uint32_t epoch = *(uint32_t *)raw;
+    CettaFrameIdentity epoch = *(const CettaFrameIdentity *)raw;
     return atom_var_like(arena, variable, var_epoch_id(variable->var_id, epoch));
 }
 
@@ -28,9 +28,9 @@ static Atom *rule_body_variable(Arena *arena, Atom *variable, void *raw) {
 }
 
 CettaTermMatchStatus cetta_rule_prepare(const CettaRuleDescriptor *rule,
-    Atom *query, uint32_t epoch, Arena *arena, Bindings *environment,
+    Atom *query, CettaFrameIdentity epoch, Arena *arena, Bindings *environment,
     bool (*leaf_equal)(Atom *, Atom *), Atom **body) {
-    if (!rule || !rule->head || !rule->body || !query || !epoch || !arena ||
+    if (!rule || !rule->head || !rule->body || !query || cetta_frame_identity_is_none(epoch) || !arena ||
         !environment || !leaf_equal || !body ||
         (unsigned)rule->binding > CETTA_RULE_BIND_HEAD)
         return CETTA_TERM_MATCH_INVALID;

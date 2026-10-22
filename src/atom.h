@@ -34,7 +34,14 @@ typedef struct CettaBigInt CettaBigInt;
 typedef struct CettaRational CettaRational;
 typedef struct CettaPrimeNeedCapability CettaPrimeNeedCapability;
 typedef struct CettaPrimeContext CettaPrimeContext;
-typedef uint64_t VarId;
+/* A variable's identity: its stable source identity (`base`) and the frame
+ * of the activation that renamed it (`epoch`; none outside activations).
+ * Two 64-bit words with no lifetime cap.  A struct, so that identities are
+ * compared with var_id_eq and never held in a narrower integer. */
+typedef struct {
+    uint64_t base;
+    CettaFrameIdentity epoch;
+} VarId;
 typedef uint32_t NameId;
 typedef uint64_t CettaExprLen;
 typedef uint64_t CettaExprIndex;
@@ -49,7 +56,45 @@ typedef struct CettaSymbolSpelling {
     char bytes[];
 } CettaSymbolSpelling;
 
-#define VAR_ID_NONE ((VarId)0)
+#define VAR_ID_NONE ((VarId){0u, {0u}})
+
+static inline bool var_id_eq(VarId left, VarId right) {
+    return left.base == right.base && left.epoch.word == right.epoch.word;
+}
+
+static inline bool var_id_is_none(VarId id) {
+    return id.base == 0u && id.epoch.word == 0u;
+}
+
+/* The order of the former packed word: by epoch, then by base. */
+static inline int var_id_cmp(VarId left, VarId right) {
+    if (left.epoch.word != right.epoch.word)
+        return left.epoch.word < right.epoch.word ? -1 : 1;
+    return left.base < right.base ? -1 : left.base > right.base ? 1 : 0;
+}
+
+static inline bool var_id_lt(VarId left, VarId right) {
+    return var_id_cmp(left, right) < 0;
+}
+
+/* The identity a source variable has outside every activation. */
+static inline VarId var_id_from_base(uint64_t base) {
+    return (VarId){base, {0u}};
+}
+
+/* A variable's source identity, its activation dropped. */
+static inline VarId var_source_id(VarId id) {
+    return var_id_from_base(id.base);
+}
+
+/* Both words mixed into one, for tables keyed by identity. */
+static inline uint64_t var_id_mix(VarId id) {
+    uint64_t mixed = id.base ^ (id.epoch.word * UINT64_C(0x9e3779b97f4a7c15));
+    mixed ^= mixed >> 33u;
+    mixed *= UINT64_C(0xff51afd7ed558ccd);
+    mixed ^= mixed >> 29u;
+    return mixed;
+}
 #define NAME_ID_NONE ((NameId)0)
 /* ── Atom kinds ─────────────────────────────────────────────────────────── */
 
@@ -147,7 +192,6 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
 }
 
 #define ATOM_FLAG_HAS_VARS 0x01u
-#define ATOM_FLAG_HASH_VALID 0x02u
 #define ATOM_FLAG_HAS_REGISTRY_REFS 0x04u
 #define ATOM_FLAG_HASH_STABLE 0x08u
 #define ATOM_FLAG_HASHCONS_ELIGIBLE 0x10u
@@ -175,12 +219,17 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
 #define ATOM_FLAG_VAR_BLOOM_WIDTH 22u
 #define ATOM_FLAG_VAR_BLOOM_MASK UINT32_C(0x7FFFFE00)
 /*
- * HE's evaluated mark: this expression is a value HE's evaluation answered,
- * and evaluating it again answers it unchanged (Hyperon Experimental's
- * metta).  The mark belongs to one occurrence of a value, not to the term:
- * an expression never inherits it from a child, an interned node never
- * carries it, equality and hashing ignore it, a copy of the value keeps it,
- * and a space storing the atom drops it, since a space holds syntax.
+ * The evaluated mark: this expression is a value, and evaluating it again
+ * answers it unchanged.  HE marks the answer its evaluation gives (Hyperon
+ * Experimental's metta), at that answer's root.  Prime marks a completed
+ * value, a datum its producer completed (a native operation's completed
+ * value, the datum of `return`), at every expression of that datum: the
+ * parts a pattern takes from it are values in turn, and a Need cell inside
+ * it is still a computation (prime_completed_value in eval.c).  The mark
+ * belongs to one occurrence of a value, not to the term: an expression never
+ * inherits it from a child, an interned node never carries it, equality and
+ * hashing ignore it, a copy of the value keeps it, and a space storing the
+ * atom drops it, since a space holds syntax.
  */
 #define ATOM_FLAG_HE_EVALUATED UINT32_C(0x80000000)
 /*
@@ -267,17 +316,17 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                "structural fact bits overlap");
 
 /*
- * VariantShape reserves this VarId prefix for its runtime-private slots.
- * Keeping the namespace test beside VarId lets immutable atoms summarize the
- * property compositionally instead of rescanning an arbitrarily deep value at
- * every Bindings boundary.
+ * VariantShape reserves this epoch for its runtime-private slots, whose
+ * ordinal is the base: handle 0xA11A at generation zero, which the frame
+ * identity facility never issues (generations count from one).  Keeping the
+ * namespace test beside VarId lets immutable atoms summarize the property
+ * compositionally instead of rescanning an arbitrarily deep value at every
+ * Bindings boundary.
  */
-#define CETTA_VARIANT_PRIVATE_SLOT_MASK UINT64_C(0xFFFFFFFF00000000)
-#define CETTA_VARIANT_PRIVATE_SLOT_TAG UINT64_C(0xFFFFA11A00000000)
+#define CETTA_VARIANT_PRIVATE_SLOT_EPOCH ((CettaFrameIdentity){UINT64_C(0xA11A)})
 
 static inline bool atom_var_id_is_private_variant(VarId id) {
-    return (id & CETTA_VARIANT_PRIVATE_SLOT_MASK) ==
-           CETTA_VARIANT_PRIVATE_SLOT_TAG;
+    return id.epoch.word == CETTA_VARIANT_PRIVATE_SLOT_EPOCH.word;
 }
 
 /* ── Atom ───────────────────────────────────────────────────────────────── */
@@ -313,7 +362,11 @@ struct Atom {
         Atom *name_key;      /* Variable name, or evacuation forwarding pointer. */
         const CettaSymbolSpelling *spelling; /* Unnumbered ATOM_SYMBOL only. */
     };
-    uint32_t hash_cache;     /* lazily memoized structural hash */
+    /* The structural hash, memoized: 0 until it is known, and never 0 after
+     * (a computed 0 is spelled as a fixed nonzero word).  The one field
+     * written after publication, by any thread that hashes the atom, so it
+     * is only read and written atomically (atom_hash_cache_load). */
+    uint32_t hash_cache;
     uint32_t structural_facts;
     union {
         struct {            /* ATOM_GROUNDED */
@@ -656,18 +709,30 @@ static inline bool atom_is_petta_no_result(const Atom *atom) {
 }
 
 static inline uint32_t atom_var_bloom_for_id(VarId id) {
-    if (id == VAR_ID_NONE)
+    if (var_id_is_none(id))
         return 0u;
-    uint64_t mixed = (uint64_t)id;
-    mixed ^= mixed >> 33u;
-    mixed *= UINT64_C(0xff51afd7ed558ccd);
-    mixed ^= mixed >> 29u;
+    uint64_t mixed = var_id_mix(id);
     uint32_t first =
         (uint32_t)(mixed % ATOM_FLAG_VAR_BLOOM_WIDTH);
     uint32_t second =
         (uint32_t)((mixed >> 32u) % ATOM_FLAG_VAR_BLOOM_WIDTH);
     return (UINT32_C(1) << (ATOM_FLAG_VAR_BLOOM_SHIFT + first)) |
            (UINT32_C(1) << (ATOM_FLAG_VAR_BLOOM_SHIFT + second));
+}
+
+/* Threads that hash one atom race to store the same word, so relaxed
+ * order suffices: the hash is a function of the immutable fields. */
+static inline uint32_t atom_hash_cache_load(const Atom *atom) {
+    return __atomic_load_n(&atom->hash_cache, __ATOMIC_RELAXED);
+}
+
+/* Copy an atom's header, reading its hash cache as the atomic word it is. */
+static inline void atom_header_copy(Atom *dst, const Atom *src) {
+    size_t after = offsetof(Atom, hash_cache) + sizeof(src->hash_cache);
+    memcpy(dst, src, offsetof(Atom, hash_cache));
+    dst->hash_cache = atom_hash_cache_load(src);
+    memcpy((char *)dst + after, (const char *)src + after,
+           sizeof(Atom) - after);
 }
 
 static inline bool atom_is_he_evaluated(const Atom *atom) {
@@ -1061,9 +1126,20 @@ uint32_t atom_hash(Atom *a);
 void atom_hash_read_scope_enter(void);
 void atom_hash_read_scope_leave(void);
 
+/* A hash cache of 0 means "not yet known", so every structural hash, cached
+ * or not, spells a computed 0 as this word: leaves, expression folds, the
+ * compile-time list hashes and the term universe's hash32 alike, so a cached
+ * child and a recomputed one contribute alike and an atom's hash equals its
+ * universe record's. */
+#define ATOM_HASH_ZERO_SPELLING UINT32_C(0x9e3779b9)
+#define ATOM_HASH_SPELL(h) \
+    ((uint32_t)(h) != 0u ? (uint32_t)(h) : ATOM_HASH_ZERO_SPELLING)
+
 /* ── Variable identity intern/freshening ──────────────────────────────── */
 
-typedef _Atomic(VarId) VarInternEntry;
+/* An interned source variable has no activation epoch, so an entry holds
+ * its base alone (zero until interned): one lock-free word per spelling. */
+typedef _Atomic(uint64_t) VarInternEntry;
 
 typedef struct {
     _Atomic(VarInternEntry *) *chunks;
@@ -1076,23 +1152,23 @@ VarId   var_intern(VarInternTable *t, SymbolId spelling);
 bool    fresh_var_id_try(VarId *id_out);
 VarId   fresh_var_id(void);
 
-/* VarId packs the stable source identity in the low word and an activation
- * epoch in the high word.  These accessors are inline because matching and
- * substitution consult the coordinate at every variable edge; atom.c emits
- * external definitions as well for binary callers. */
-inline uint32_t var_base_id(VarId id) {
-    return (uint32_t)CESTA_LAYOUT_VarId_base_BODY(id);
+/* A VarId's stable source identity and its activation epoch.  These
+ * accessors are inline because matching and substitution consult the
+ * coordinate at every variable edge; atom.c emits external definitions as
+ * well for binary callers. */
+inline uint64_t var_base_id(VarId id) {
+    return id.base;
 }
 
-inline uint32_t var_epoch_suffix(VarId id) {
-    return (uint32_t)CESTA_LAYOUT_VarId_epoch_BODY(id);
+inline CettaFrameIdentity var_epoch_suffix(VarId id) {
+    return id.epoch;
 }
 
-inline VarId var_epoch_id(VarId id, uint32_t epoch) {
-    uint32_t base = var_base_id(id);
+inline VarId var_epoch_id(VarId id, CettaFrameIdentity epoch) {
+    uint64_t base = id.base;
     if (base == 0u)
-        base = (uint32_t)fresh_var_id();
-    return (VarId)CESTA_LAYOUT_VarId_encode_BODY(base, epoch);
+        base = fresh_var_id().base;
+    return (VarId){base, epoch};
 }
 
 #ifdef CETTA_TEST_HOOKS
@@ -1533,12 +1609,32 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list);
  * vector, a draft must never escape or be consumed as an Atom before `finish`. */
 Atom *atom_expr_builder_begin(Arena *a, CettaExprLen len);
 Atom *atom_expr_builder_finish(Arena *a, Atom *draft);
+/* Unpublished expression assembly in an arena with interning disabled.
+ * Each append writes and summarizes one child; finish does no child traversal.
+ * The caller holds the arena, child graphs and intern environment unchanged
+ * until free. Missing/excess children, reset/replaced storage, and list-rest
+ * splicing refuse publication. Use the ordinary constructor for list splicing
+ * or interning. Allocation is sized by len; these are not elapsed-work bounds.
+ * Free cancels unpublished assembly or releases its fixed control record;
+ * completed atom storage remains in the arena. No draft pointer escapes. */
+typedef struct AtomExprAssembly AtomExprAssembly;
+AtomExprAssembly *atom_expr_assembly_new(Arena *a, CettaExprLen len);
+bool atom_expr_assembly_append(AtomExprAssembly *assembly, Atom *child);
+Atom *atom_expr_assembly_finish(AtomExprAssembly *assembly);
+/* Allow the ordinary list-rest finishing provider after the same retained
+ * child-summary assembly. Its splice/allocation has a separate atomic cost;
+ * the raw-expression finish above continues to refuse list-rest splicing. */
+Atom *atom_expr_assembly_finish_splicing(AtomExprAssembly *assembly);
+void atom_expr_assembly_free(AtomExprAssembly *assembly);
 /* Compatibility wrapper; immutable atoms are shared universally when the
    global hash-cons table is active. */
 Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len);
 /* `expression` marked as a value HE's evaluation answered: itself when it
  * carries the mark or is not an expression, otherwise a copy that does. */
 Atom *atom_he_evaluated_copy(Arena *a, Atom *expression);
+/* An expression of `elems` carrying the evaluated mark, never interned. */
+Atom *atom_he_evaluated_expr(Arena *a, Atom **elems, CettaExprLen len);
+Atom *atom_expr_rebuild(Arena *a,const Atom *source,Atom **children,CettaExprLen len);
 /* Deep copies made between enter and leave drop HE's evaluated marks: a
  * space stores syntax, never a value's evaluation state. */
 void atom_deep_copy_strip_he_marks_enter(void);
@@ -2044,6 +2140,27 @@ static inline bool cetta_expr_len_mul_fits_size(CettaExprLen len,
 
 
 #include "checkpoint_compare.h"
+
+static inline bool cetta_checkpoint_frame(const CettaCheckpointCompare *read,
+    const char *site, CettaFrameIdentity left, CettaFrameIdentity right) {
+    return read->identity(read->context, site, CETTA_CHECKPOINT_FRAME,
+                          left.word, right.word);
+}
+
+static inline bool cetta_checkpoint_var(const CettaCheckpointCompare *read,
+    const char *site, VarId left, VarId right) {
+    if (var_id_is_none(left) || var_id_is_none(right))
+        return read->identity(read->context, site, CETTA_CHECKPOINT_VAR,
+                              var_id_is_none(left) ? 0u : 1u,
+                              var_id_is_none(right) ? 0u : 1u);
+    if (left.base == 0u || right.base == 0u)
+        return false;
+    return read->identity(read->context, site, CETTA_CHECKPOINT_VAR,
+                          left.base, right.base) &&
+           read->identity(read->context, site, CETTA_CHECKPOINT_FRAME,
+                          left.epoch.word, right.epoch.word);
+}
+
 bool atom_checkpoint_global_budget(const HashConsTable *, size_t, size_t *, size_t *);
 bool atom_checkpoint_global_contains(const AtomDeepCopySession *, const Atom *, const CettaCheckpointCompare *);
 bool arena_checkpoint_span(const Arena *, const void *, size_t, const CettaCheckpointCompare *, bool);

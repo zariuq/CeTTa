@@ -32,6 +32,13 @@ bool cetta_decimal_real_canonical_v1(const char *text, char **out);
  * faithful double. */
 bool cetta_decimal_real_double_v1(const char *text, double *out);
 
+/* The nearest binary64 value using the C numeric locale.  Unlike the
+ * faithful conversion above, this deliberately admits IEEE infinity on
+ * overflow and signed zero on underflow.  It is the scripting-language
+ * projection used where an exact decimal spelling remains available through
+ * a separate inspection view. */
+bool cetta_decimal_real_nearest_v1(const char *text, double *out);
+
 /* The canonical real spelling of the shortest decimal that reads back as the
  * given finite double: 0.1 is 0.1, 0.30000000000000004 keeps its digits. */
 bool cetta_decimal_real_from_double_v1(double value, char **out);
