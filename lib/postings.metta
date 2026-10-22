@@ -12,6 +12,7 @@
 (: postings:sources-current-reference (-> Atom %Undefined%))
 (: postings:prepare (-> %Undefined% %Undefined%))
 (: postings:prepare-blocks (-> %Undefined% %Undefined%))
+(: postings:prepare-space-blocks-attempt (-> Atom Atom %Undefined%))
 (: postings:inspect (-> %Undefined% %Undefined%))
 (: postings:inspect-table (-> %Undefined% %Undefined%))
 (: postings:counts-before (-> %Undefined% %Undefined% %Undefined%))
@@ -99,6 +100,16 @@
           ($other
             (let $owner (postings:own (Postings:Blocks $items))
               (return $owner))))))))
+
+; A declared projection may borrow an exact immutable space snapshot and feed
+; the same table builder without first constructing its ordinary block tree.
+; This is deliberately an attempt: its caller owns the authored fallback.
+(= (postings:prepare-space-blocks-attempt $source $layout)
+   (function
+     (chain
+       (eval (__cetta_lib_postings_prepare
+               (Postings:SpaceBlocks $source $layout)))
+       $result (return $result))))
 
 (= (postings:block-events $blocks $key)
    (let $items (postings:sequence $blocks)

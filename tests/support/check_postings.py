@@ -141,6 +141,56 @@ def main():
             assert run.stdout.splitlines()[-true_count:] == [expected_true] * true_count, (language, reference, run.stdout[-2000:])
             assert run.stdout.splitlines()[-true_count - 1] == kind_expected, (language, reference, run.stdout[:500])
             total += len(expectations) + 4 + len(table_calls)
+
+    # One primary-dialect control covers the borrowed-space attempt itself.
+    # The surrounding matrix already covers the table observation and every
+    # generated library spelling; repeating this source-space setup there
+    # would add variants without adding a new invariant.
+    space_source = '''!(import! &self (library postings))
+!(let* (($source (new-space))
+        ($added (add-atoms $source
+          ((Block ("a" "a") 2 4) (Other ignored) (Block ("b") 1 3))))
+        ($attempt (postings:prepare-space-blocks-attempt $source
+          (Postings:BlockLayout Block 1 2 3 ("base") (Overlay)))))
+   (case $attempt
+     (((NativeHandle "postings-table-v1" $id)
+        (== (postings:inspect-table $attempt)
+          (("base" ((1 (3)) (2 (4))))
+           ("a" ((2 (4 4)))) ("b" ((1 (3)))))))
+      ($other False))))
+!(let* (($source (new-space))
+        ($added (add-atoms $source
+          ((Block ("a") 2 4) (Overlay "a" 2 5)))))
+   (== (postings:prepare-space-blocks-attempt $source
+         (Postings:BlockLayout Block 1 2 3 () (Overlay)))
+       Postings:Fallback))
+!(let* (($source (new-space))
+        ($added (add-atom $source (Block ("before") 0 1)))
+        ($snapshot (postings:prepare-space-blocks-attempt $source
+          (Postings:BlockLayout Block 1 2 3 () (Overlay))))
+        ($mutated (add-atom $source (Block ("after") 0 2))))
+   (== (postings:inspect-table $snapshot) (("before" ((0 (1)))))))
+'''
+    run = subprocess.run(
+        [str(args.cetta.resolve()), '--lang', 'petta@1.0.6', '-e', space_source],
+        cwd=ROOT, capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, (run.stdout, run.stderr)
+    assert run.stdout.splitlines()[-3:] == ['true', 'true', 'true'], run.stdout
+
+    for extra, environment in [([], dict(os.environ, CETTA_POSTINGS_SPACE_REFERENCE='1')),
+                               (['--fuel', '100000'], os.environ.copy())]:
+        run = subprocess.run(
+            [str(args.cetta.resolve()), *extra, '--lang', 'petta@1.0.6', '-e',
+             '''!(import! &self (library postings))
+!(let* (($source (new-space))
+        ($added (add-atom $source (Block ("a") 2 4))))
+   (== (postings:prepare-space-blocks-attempt $source
+         (Postings:BlockLayout Block 1 2 3 () ()))
+       Postings:Fallback))
+'''], cwd=ROOT, env=environment, capture_output=True, text=True, timeout=30)
+        assert run.returncode == 0, (extra, run.stdout, run.stderr)
+        assert run.stdout.splitlines()[-1:] == ['true'], (extra, run.stdout)
+    total += 5
     print(f'Postings {total} 0')
 
 
