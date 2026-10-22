@@ -1,0 +1,3 @@
+(PostingsCountMode table-tensor-before Table Prefix Tensor)
+(PostingsPolicy prepare-table (FirstOuterKeyOrder DuplicateOccurrences NumericGroupOrder NumericPositionsAscending CompleteValidation AtomicPublication OwnedSnapshot AuthoredFallback))
+(PostingsPolicy prepare-space-table-attempt (BorrowedSource DeclaredProjection FirstOuterKeyOrder DuplicateOccurrences NumericGroupOrder NumericPositionsAscending CompleteValidation AtomicPublication OwnedSnapshot AuthoredFallback))
