@@ -6030,6 +6030,11 @@ static size_t petta_machine_nursery_window(
     return window > floor ? window : floor;
 }
 
+size_t petta_machine_choice_collection_retry_threshold(
+    size_t nursery_live, size_t retry_window) {
+    return petta_size_add_saturating(nursery_live, retry_window);
+}
+
 static size_t petta_machine_next_major_threshold(
     size_t tenured_live) {
     size_t window = petta_machine_collect_sizes()->major_window;
@@ -6051,18 +6056,17 @@ static size_t petta_machine_next_major_threshold(
    proportional to binding work.  A window that ignored a growing choice
    stack collected a linearly growing root set at a fixed interval
    (quadratic on long derivations that leave alternatives open).
-   The window is four times that bound: collection work per write falls to a
-   quarter, for at most four times the garbage held between collections.
-   On the ai-mathematician search this ran 11% fewer instructions at equal
-   peak memory; twice the bound kept about half that gain, eight times
-   little more.  CETTA_PETTA_BINDING_WINDOW_FACTOR=k (1 to 16) sets the
-   multiple, to compare schedules. */
+   The window is sixteen times that bound.  On the shared-occurrence premise
+   search this cut root scans and promoted bytes substantially while retaining
+   the representation's memory reduction; large proof enumeration retained
+   its peak. CETTA_PETTA_BINDING_WINDOW_FACTOR=k (1 to 16) selects a smaller
+   comparison schedule. */
 static size_t petta_binding_window_factor(void) {
     static size_t factor = 0u;
     if (!factor) {
         const char *setting = getenv("CETTA_PETTA_BINDING_WINDOW_FACTOR");
         long value = setting ? strtol(setting, NULL, 10) : 0;
-        factor = value >= 1 && value <= 16 ? (size_t)value : 4u;
+        factor = value >= 1 && value <= 16 ? (size_t)value : 16u;
     }
     return factor;
 }
@@ -10937,12 +10941,20 @@ static bool petta_machine_maybe_collect(
     if (binding_count > machine->stats.maximum_binding_entries)
         machine->stats.maximum_binding_entries = binding_count;
     if (machine->choice_len != 0u) {
-        if (nursery_live >= machine->heap_collect_after ||
-            (tenured_live >= machine->tenured_major_after &&
-             petta_choice_major_heap_supported(machine))) {
-            if (!petta_choice_heap_evacuation_supported(machine))
-                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTION_DECLINED);
-            else if (!petta_machine_collect_choice_heap(machine))
+        bool nursery_due = nursery_live >= machine->heap_collect_after;
+        bool major_due =
+            tenured_live >= machine->tenured_major_after &&
+            petta_choice_major_heap_supported(machine);
+        if (nursery_due || major_due) {
+            if (!petta_choice_heap_evacuation_supported(machine)) {
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTION_DECLINED);
+                if (nursery_due)
+                    machine->heap_collect_after =
+                        petta_machine_choice_collection_retry_threshold(
+                            nursery_live,
+                            petta_machine_nursery_window(machine));
+            } else if (!petta_machine_collect_choice_heap(machine))
                 return false;
         }
         if (builder->growth_count <

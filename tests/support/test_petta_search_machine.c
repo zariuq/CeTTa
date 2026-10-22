@@ -44,6 +44,16 @@ static Atom *parse_one(Arena *arena, const char *source) {
     return result;
 }
 
+static void test_choice_collection_retry_threshold(void) {
+    assert(petta_machine_choice_collection_retry_threshold(100u, 64u) == 164u);
+    assert(petta_machine_choice_collection_retry_threshold(100u, 0u) == 100u);
+    assert(petta_machine_choice_collection_retry_threshold(
+               SIZE_MAX - 7u, 8u) == SIZE_MAX);
+    assert(petta_machine_choice_collection_retry_threshold(
+               SIZE_MAX, 1u) == SIZE_MAX);
+    puts("PASS: unsupported choice-heap collection retries are windowed and saturating");
+}
+
 static bool transient_plan_is_value(PettaProgram *program, Atom *atom,
                                     PettaTranslationEnvironment *environment) {
     const PettaPlanNode *plan = petta_program_plan_transient(program, atom, environment);
@@ -12139,7 +12149,8 @@ static void test_owned_operation_view(Arena *arena) {
         binding_value_from_atom(x)));
     assert(petta_machine_operation_view_root(&view, &root) == CETTA_GSLT_TERM_VIEW_DEFER_V1);
     assert(root == NULL);
-    uint32_t epoch = cetta_frame_identity_scope_fresh(&frame_identity_scope);
+    CettaFrameIdentity epoch =
+        cetta_frame_identity_scope_fresh(&frame_identity_scope);
     Atom *contextual = atom_expr2(arena, atom_symbol(arena, "OperationBox"), open);
     assert(bindings_rewrite_value_id(&environment, y->var_id,
         binding_value_from_context(contextual, epoch)));
@@ -14431,6 +14442,7 @@ int main(int argc, char **argv) {
     assert_type_pure_symbol_facts();
     puts("PASS: type-pure grounded symbol facts");
     test_search_context_checkpoint_capabilities();
+    test_choice_collection_retry_threshold();
     test_flat_fold_overlay_admission(&answers);
     test_native_runtime_named_arity();
     test_semantic_form_facts();

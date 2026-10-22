@@ -3,11 +3,11 @@
 ; HE-only native wrappers spelled as PeTTa calls.
 
 !(import! &self (library tensor))
-(: __cetta_lib_postings_prepare (-> Atom Atom))
 (: __cetta_lib_postings_sources_current (-> Atom Atom))
 (: postings:sources-current-reference (-> Atom %Undefined%))
 (: postings:prepare (-> %Undefined% %Undefined%))
 (: postings:prepare-blocks (-> %Undefined% %Undefined%))
+(: postings:prepare-space-blocks-attempt (-> Atom Atom %Undefined%))
 (: postings:inspect-table (-> %Undefined% %Undefined%))
 (: postings:counts-before (-> %Undefined% %Undefined% %Undefined%))
 (: postings:counts (-> %Undefined% %Undefined%))
@@ -23,6 +23,7 @@
 (= (postings:own $groups) (__cetta_lib_postings_own $groups))
 (= (postings:prepare-events $events) (case (__cetta_lib_postings_prepare (Postings:Events $events)) (((NativeHandle "postings-index-v1" $id) (NativeHandle "postings-index-v1" $id)) ($other (let $all-keys (map-atom $events $event (car-atom $event)) (let $unique-keys (unique-atom $all-keys) (let $keys (sort-atom $unique-keys) (let $groups (map-atom $keys $key (let* (($matching (filter-atom $events $event (let $event-key (car-atom $event) (if (= $event-key $key) True False)))) ($positions (map-atom $matching $event (index-atom $event 1)))) ($key $positions))) (let $index (postings:prepare $groups) $index)))))))))
 (= (postings:prepare-blocks $blocks) (let $items (postings:sequence $blocks) (case (__cetta_lib_postings_prepare (Postings:Blocks $items)) (((NativeHandle "postings-table-v1" $id) (NativeHandle "postings-table-v1" $id)) ($other (let $owner (postings:own (Postings:Blocks $items)) $owner))))))
+(= (postings:prepare-space-blocks-attempt $source $layout) (__cetta_lib_postings_prepare (Postings:SpaceBlocks $source $layout)))
 (= (postings:block-events $blocks $key) (let $items (postings:sequence $blocks) (if (== $items ()) () (let ($block $rest) (decons-atom $items) (let ($keys $group $position) (postings:sequence $block) (postings:block-key-events (postings:sequence $keys) $key $group $position (postings:block-events $rest $key)))))))
 (= (postings:block-key-events $keys $key $group $position $tail-events) (if (== $keys ()) $tail-events (let ($candidate $rest) (decons-atom $keys) (let $next (postings:block-key-events $rest $key $group $position $tail-events) (if (== $candidate $key) (cons-atom ($group $position) $next) $next)))))
 (= (postings:block-keys $blocks) (let $items (postings:sequence $blocks) (if (== $items ()) () (let ($block $rest) (decons-atom $items) (let ($keys $group $position) (postings:sequence $block) (postings:prepend-keys (postings:sequence $keys) (postings:block-keys $rest)))))))

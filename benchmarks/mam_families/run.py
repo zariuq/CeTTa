@@ -179,7 +179,32 @@ def runtime_counter_receipt(stderr: str) -> dict:
 
 
 def git_source_identity(root: Path) -> str:
-    """Identity of one tracked source checkout, including local edits."""
+    """Identify a checkout or complete frozen snapshot, never its enclosing repo."""
+    root = root.resolve()
+    manifest = root/'source-manifest.json'
+    if manifest.is_file():
+        raw = manifest.read_bytes()
+        files = json.loads(raw)['files']
+        recorded = set()
+        for item in files:
+            relative = Path(item['path'])
+            path = (root/relative).resolve()
+            if relative.is_absolute() or not path.is_relative_to(root) or path == manifest:
+                raise ValueError('invalid snapshot source path')
+            if relative.as_posix() in recorded:
+                raise ValueError('duplicate snapshot source path')
+            recorded.add(relative.as_posix())
+            if hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256']:
+                raise ValueError('changed snapshot source: '+relative.as_posix())
+        actual = {p.relative_to(root).as_posix() for p in root.rglob('*')
+                  if p.is_file() and p != manifest}
+        if not recorded or actual != recorded:
+            raise ValueError('snapshot manifest does not cover its complete file set')
+        return hashlib.sha256(raw).hexdigest()
+    top = subprocess.run(['git', '-C', str(root), 'rev-parse', '--show-toplevel'],
+                         capture_output=True, text=True)
+    if top.returncode or Path(top.stdout.strip()).resolve() != root:
+        raise ValueError('source root needs its own Git checkout or verified source-manifest.json')
     head = subprocess.check_output(
         ['git', '-C', str(root), 'rev-parse', 'HEAD'])
     diff = subprocess.check_output(

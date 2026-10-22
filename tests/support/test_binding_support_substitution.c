@@ -43,7 +43,8 @@ int main(int argc,char **argv) {
     Atom *unrelated=atom_var_with_id(&arena,"unrelated",fresh_var_id());
     Atom *leaf=atom_int(&arena,42);
     Bindings base;bindings_init(&base);
-    assert(bindings_add_id_acyclic(&base,unrelated->var_id,unrelated->sym_id,leaf));
+    assert(bindings_add_id_acyclic(
+        &base, unrelated->var_id, atom_symbol_current_id(unrelated), leaf));
     BindingsBuilder builder;assert(bindings_builder_init(&builder,&base));
     const Bindings *bindings=bindings_builder_bindings(&builder);
     if (argc>1 && (strcmp(argv[1],"bench")==0 || strcmp(argv[1],"bench-mixed")==0)) {

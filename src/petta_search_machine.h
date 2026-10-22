@@ -1318,4 +1318,10 @@ typedef struct {
 bool petta_machine_stats(
     const PettaMachine *machine, PettaMachineStats *stats);
 
+/* After an unsupported choice-heap collection, retry only after another
+ * amortization window of nursery growth.  Saturation means no finite retry
+ * remains representable; it never wraps into an immediate retry loop. */
+size_t petta_machine_choice_collection_retry_threshold(
+    size_t nursery_live, size_t retry_window);
+
 #endif /* CETTA_PETTA_SEARCH_MACHINE_H */

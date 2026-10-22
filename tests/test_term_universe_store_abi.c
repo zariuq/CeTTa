@@ -1751,7 +1751,8 @@ static void test_deep_term_universe_copy(void) {
     term_universe_init(&universe);
     term_universe_set_persistent_arena(&universe, &persistent);
     SymbolId name = symbol_intern_cstr(g_symbols, "deep-copy-variable");
-    AtomId leaf = tu_intern_var(&universe, name, 42u);
+    VarId variable = var_id_from_base(42u);
+    AtomId leaf = tu_intern_var(&universe, name, variable);
     AtomId root = leaf;
     const size_t depth = 50000u;
     for (size_t i = 0; i < depth; ++i) {
@@ -1759,8 +1760,10 @@ static void test_deep_term_universe_copy(void) {
         root = tu_expr_from_ids(&universe, children, 2u);
         assert(root != CETTA_ATOM_ID_NONE);
     }
+    CettaFrameIdentity epoch = {99u};
     Atom *plain = term_universe_copy_atom(&universe, &result, root);
-    Atom *fresh = term_universe_copy_atom_epoch(&universe, &result, root, 99u);
+    Atom *fresh = term_universe_copy_atom_epoch(
+        &universe, &result, root, epoch);
     assert(plain && fresh && plain != fresh);
     for (size_t i = 0; i < depth; ++i) {
         assert(plain->kind == ATOM_EXPR && plain->expr.len == 2u);
@@ -1771,9 +1774,9 @@ static void test_deep_term_universe_copy(void) {
         fresh = fresh->expr.elems[0];
     }
     assert(plain->kind == ATOM_VAR && fresh->kind == ATOM_VAR);
-    assert(plain->var_id == tu_var_id(&universe, leaf));
-    assert(fresh->var_id == var_epoch_id(plain->var_id, 99u));
-    assert(tu_var_id(&universe, leaf) == plain->var_id);
+    assert(var_id_eq(plain->var_id, tu_var_id(&universe, leaf)));
+    assert(var_id_eq(fresh->var_id, var_epoch_id(plain->var_id, epoch)));
+    assert(var_id_eq(tu_var_id(&universe, leaf), plain->var_id));
     assert(term_universe_copy_atom(&universe, &result, CETTA_ATOM_ID_NONE) == NULL);
     term_universe_free(&universe);
     arena_free(&result);

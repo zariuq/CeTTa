@@ -945,14 +945,6 @@ CettaTensorStatus cetta_tensor_matvec_rows(const CettaTensor *matrix,const Cetta
 static void name(const CettaTensor *m,const unsigned char *q,CettaTensorSchedule schedule,double *answer) { \
     const unsigned char *values=m->storage->values; \
     size_t rows=m->shape[0],cols=m->shape[1],cursor=0; \
-    if(m->layout==CETTA_TENSOR_CSC && schedule==CETTA_TENSOR_SEQUENTIAL) { \
-        for(size_t col=0;col<cols;col++) { \
-            double x=read_q(q+col*(qwidth)); \
-            for(size_t p=m->segments[col];p<m->segments[col+1];p++) \
-                answer[m->minor[p]]+=read_m(values+m->permutation[p]*(mwidth))*x; \
-        } \
-        return; \
-    } \
     for(size_t row=0;row<rows;row++) { \
         size_t base=row*cols,end; \
         if(m->layout==CETTA_TENSOR_CSR) { cursor=m->segments[row]; end=m->segments[row+1]; } \
