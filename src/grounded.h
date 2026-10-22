@@ -90,6 +90,12 @@ bool grounded_compare_numeric_atoms(Atom *left, Atom *right, int *ordering);
 /* Check if a symbol is a known grounded op head (by SymbolId). */
 bool is_grounded_op(SymbolId id);
 
+/* Source-declared sequence constructors return completed data, and may hold
+ * individual operands. Unlisted heads keep their existing call contract. */
+bool grounded_op_is_sequence_constructor(SymbolId id);
+bool grounded_op_sequence_accepts_arity(SymbolId id, uint32_t arity);
+bool grounded_op_sequence_data_arg(SymbolId id, uint32_t argument_index);
+
 /* Structural ordering has a separate profile licence from numeric order. */
 static inline bool grounded_op_is_term_order(SymbolId id) {
     return id == g_builtin_syms.term_lt || id == g_builtin_syms.term_gt ||

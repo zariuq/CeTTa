@@ -113,7 +113,7 @@ def main() -> None:
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     selected = set(args.only.split(',')) if args.only else None
-    known={'jetta','patrick','hm','parse','proof','affine','mutation','graph','bio','bio-index','bio-mork'}
+    known={'jetta','patrick','hm','parse','proof','affine','mutation','graph','bio','bio-index','bio-mork','selectors'}
     if selected and selected-known:
         ap.error('unknown families: '+', '.join(sorted(selected-known)))
     rows = []
@@ -146,6 +146,16 @@ def main() -> None:
                          expected_sha256=sha(exp), contract=contract,
                          dialects=dialects, notes=notes))
         print(f'{name}: {len(expected)} answers', flush=True)
+
+    if not selected or 'selectors' in selected:
+        body, separator, query = (ROOT/'benchmarks/selector_lookup.metta').read_text().rpartition('\n!')
+        if not separator or not query.startswith('(selector-lookup ('):
+            raise ValueError('selector example must end in its lookup query')
+        for size in ([8, 32] if args.scale == 'smoke' else [32, 128, 512, 2048]):
+            text = body + '\n!(selector-lookup (' + ' '.join(map(str, range(size))) + '))\n'
+            emit(f'selector_lookup_{size}', 'selectors', 'size', {'petta': text},
+                 [str(size * (size - 1) // 2)], {'selectors': size},
+                 notes='Distinct captured offsets share a constructor prefix. The independent oracle sums 0 through size-1. PeTTa application semantics; no HE adapter.')
 
     sizes = {
         'smoke': {'fibonacci': [15], 'interpreter': [2], 'differentiation': [2],

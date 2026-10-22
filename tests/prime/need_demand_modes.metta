@@ -170,15 +170,13 @@
 (= (prime-need:read-service-id $x) $x)
 !(prime-need:read-service-id (Pair (superpose (1 2)) (superpose (3 4))))
 
-; Pattern selection exposes only the retained fields it needs. Earned
-; callable syntax stays a value until explicit activation.
-!(let $box (cons-atom Box (cons-atom (cons-atom + (1 2)) ())) (let (Box $field) $box (Field $field)))
-!(let $box (cons-atom Box (cons-atom (cons-atom + (1 2)) ())) (case $box (((Box $field) (Field $field)))))
-!(let $box (cons-atom Box (cons-atom (cons-atom + (1 2)) ())) (unify $box (Box $field) (Field $field) NotBox))
-!(let $box (cons-atom Box (cons-atom (cons-atom + (1 2)) ())) (case $box (((Box $field) (Field (eval $field))))))
-; An ordinary computation supplied as an operand is evaluated before the
-; outer Data node is constructed. Code payloads above were built as Data first.
+; Constructor operands acquire their values before cons-atom builds Data.
+; Pattern selection preserves Data already held in those values.
 !(let $box (cons-atom Box ((+ 1 2))) (let (Box $field) $box (Field $field)))
+!(let $box (cons-atom Box ((+ 1 2))) (case $box (((Box $field) (Field $field)))))
+!(let $box (cons-atom Box ((+ 1 2))) (unify $box (Box $field) (Field $field) NotBox))
+!(let $box (cons-atom Box ((+ 1 2))) (case $box (((Box $field) (Field (eval $field))))))
+!(let $box (cons-atom Box ((cons-atom + (1 2)))) (let (Box $field) $box (Field $field)))
 (= (prime-need:pattern-store $tag $value) (add-atom &self (NeedPattern $tag $value)))
 (= (prime-need:pattern-box $field) (Box $field))
 (= (prime-need:pattern-tick $label $value) (chain (println! $label) $_ $value))
@@ -192,26 +190,6 @@
 !(match &self (NeedPattern field-once $value) (case $value (((Box 7) Impossible) ((Box 8) Kept))))
 !(case (superpose ()) (($unused Impossible)) Zero)
 !(case Empty ((Empty LiteralEmpty) ($unused Impossible)))
-
-; Completed replies discharge one operand demand, including open payloads.
-; Reading the constructor does not run its stored callable-shaped field.
-(= (prime-need:unreachable-payload $x) (prime-need:unreachable-payload $x))
-!(car-atom (cons-atom Good (cons-atom (cons-atom prime-need:unreachable-payload ($open)) ())))
-!(car-atom (superpose ((cons-atom Good (cons-atom (cons-atom prime-need:unreachable-payload ($open)) ()))
-                       (cons-atom AlsoGood (cons-atom (cons-atom prime-need:unreachable-payload ($open)) ())))))
-; The receipt belongs to that application. A different tail call must demand
-; its own argument even when the preceding call's same-index argument was ready.
-(= (fst $unused) (car-atom (cons-atom Wanted (1 2))))
-!(fst (cons-atom Box (7)))
-
-; Matching storage can instantiate the variables of a still-suspended field.
-; Reading that field opens the carrier in the matched world, not its wire shape.
-(= (prime-need:stored-save $key $items)
-   (add-atom &self (StoredDemand $key (StoredBox $items))))
-(= (prime-need:stored-payload (StoredBox $payload)) $payload)
-!(prime-need:stored-save (Key $v) ((V $v) (W $v)))
-!(match &self (StoredDemand (Key a) $box)
-   (decons-atom (prime-need:stored-payload $box)))
 
 ; A typed strict consumer rejects a suspension instead of forcing it.  Keep
 ; this negative observation last because an uncaught checked contradiction

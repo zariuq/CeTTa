@@ -1,0 +1,5 @@
+!(import! &self "../../../lib/petta/lib_module.metta")
+!(let* (($reader (langdef:load-baked-parser "module-core-reader"))
+        ($module (module:read-file $reader "postings-descriptors" "langdef/postings/Descriptors.module"))
+        ($closed (langdef:close-parser $reader)))
+  (println! $module))

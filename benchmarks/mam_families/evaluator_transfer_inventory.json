@@ -1,0 +1,1319 @@
+{
+  "schema": "cetta-evaluator-transfer-inventory-v1",
+  "scope": "Named technique families and inspected source anchors. Caller-by-caller coverage and full strongest-SWI acceptance remain open.",
+  "measurement_routes": {
+    "ordinary": "CETTA_OPEN_EQUATIONS_REFERENCE=1 and CETTA_PREPARED_PURE_REFERENCE=1; ordinary selection and binding services remain enabled",
+    "production": "normal dialect configuration",
+    "independent_reference": "feature-specific reference controls; preserve complete observations, not only printed scalar results"
+  },
+  "families": [
+    {
+      "id": "ordered-head-candidates",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/space.c",
+          "symbol": "space_equation_cursor_member_next"
+        },
+        {
+          "file": "src/petta_program.c",
+          "symbol": "petta_program_candidate_snapshot_lease_profiled"
+        }
+      ],
+      "admission": "Keep exact and wildcard occurrences in source order; retain the logical-update snapshot.",
+      "remaining_transfer": "Measure overlays and candidate-catalog reconciliation separately.",
+      "measure": [
+        "candidate scans",
+        "snapshot cache hits",
+        "copied candidate records"
+      ],
+      "validity": "The entered cursor leases its occurrence snapshot. New entries consult current space/program identities; a later mutation must not rewrite an already-entered logical-update snapshot.",
+      "source_occurrences": [
+        {
+          "file": "src/petta_program.c",
+          "symbols": [
+            "petta_program_candidate_snapshot_lease_profiled"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "petta_program_candidate_snapshot_lease_profiled"
+          ]
+        },
+        {
+          "file": "src/space.c",
+          "symbols": [
+            "space_equation_cursor_member_next"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "argument-selection",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_match_decision_select_candidates"
+        },
+        {
+          "file": "src/match_decision.c",
+          "symbol": "match_decision_select_query"
+        }
+      ],
+      "admission": "Discard only refuted candidates under current source, binding and callability observations. Plain PeTTa does not require a table declaration.",
+      "remaining_transfer": "Audit list-carrier bypasses, all-open discriminators, transaction/profile restrictions, and repeated verification. Separate selection permission from table-generation permission.",
+      "measure": [
+        "equation inputs",
+        "survivors",
+        "linear fallbacks",
+        "verification work"
+      ],
+      "validity": "A conservative decision uses the current binding view and source/classifier authority. It cannot carry a bound discriminator through rollback or mutation without revalidation.",
+      "source_occurrences": [
+        {
+          "file": "src/match_decision.c",
+          "symbols": [
+            "match_decision_select_query"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "petta_match_decision_select_candidates"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "compiled-head-matching",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/match.c",
+          "symbol": "match_atoms_epoch_view_builder_rule_local_planned"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_match_ground_template"
+        }
+      ],
+      "admission": "Pattern plans must preserve nonlinear variables, scope, occurs checks and authoritative fallback.",
+      "remaining_transfer": "Identify ordinary candidate entry points still reinterpreting an available pattern plan.",
+      "measure": [
+        "pattern instructions",
+        "unification attempts",
+        "freshened nodes"
+      ],
+      "validity": "The equation and its compiled pattern share a retained source identity. Variable scope, nonlinear correlation and current bindings remain matcher inputs.",
+      "source_occurrences": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_match_ground_template"
+          ]
+        },
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "match_atoms_epoch_view_builder_rule_local_planned"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "match_atoms_epoch_view_builder_rule_local_planned"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "source-owned-activation",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_unify_activation_source"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "match_atoms_activation_view_builder_current"
+        }
+      ],
+      "admission": "Authored syntax plus a registered live frame denotes the value; return policy and delayed constraints remain authoritative.",
+      "remaining_transfer": "Replace global list-history refusal with operand-specific evidence or the shared contextual unifier; qualify both before adoption.",
+      "measure": [
+        "binding_apply_calls",
+        "materialized bytes",
+        "unification allocations"
+      ],
+      "validity": "The syntax owner, frame incarnation and branch store must stay live. An epoch alone does not authorize borrowing after frame retirement.",
+      "source_occurrences": [
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "match_atoms_activation_view_builder_current"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "petta_machine_unify_activation_source",
+            "match_atoms_activation_view_builder_current"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "dense-and-exclusive-frame-slots",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/binding/slot_store.c",
+          "symbol": "bindings_frame_index_write_resolved_slot"
+        },
+        {
+          "file": "src/match.h",
+          "symbol": "BindingsExclusiveFrame"
+        }
+      ],
+      "admission": "One authoritative assignment per frame slot; writes and schema changes obey rollback and ownership.",
+      "remaining_transfer": "Reduce remaining fallback conversions and repeated slot/schema lookup without creating another binding authority.",
+      "measure": [
+        "frame lookups",
+        "frame registrations",
+        "trail writes"
+      ],
+      "validity": "Direct slots are valid for their registered frame directory and current branch. Exclusive ownership and trail restoration are separate obligations.",
+      "source_occurrences": [
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "bindings_frame_index_write_resolved_slot",
+            "BindingsExclusiveFrame"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "BindingsExclusiveFrame"
+          ]
+        },
+        {
+          "file": "src/binding/slot_store.c",
+          "symbols": [
+            "bindings_frame_index_write_resolved_slot"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "scoped-borrowed-reads",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/binding/term_cursor.h",
+          "symbol": "bindings_resolve_scoped_term_cursor_v1"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_resolve_cursor"
+        }
+      ],
+      "admission": "Borrowed scopes remain valid only during the stable read; children inherit their resolved parent context.",
+      "remaining_transfer": "Transfer root/field demand to ordinary consumers that currently materialize entire terms.",
+      "measure": [
+        "nodes read",
+        "materialized nodes",
+        "borrow refusals"
+      ],
+      "validity": "No write, rollback, collection, frame-directory replacement or owner release may intervene in the borrowed read. Reads do not grant execution authority.",
+      "source_occurrences": [
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "bindings_resolve_scoped_term_cursor_v1",
+            "bindings_resolve_cursor"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "bindings_resolve_scoped_term_cursor_v1"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ready-call-and-result-contracts",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/petta_type_policy.h",
+          "symbol": "PettaTypeCall"
+        },
+        {
+          "file": "src/petta_search_machine.h",
+          "symbol": "PettaAnalysisService"
+        },
+        {
+          "file": "src/call_outcome.h",
+          "symbol": "CettaCallResultForm"
+        }
+      ],
+      "admission": "Readiness, type authority, computation/data provenance and result demand are separate judgments.",
+      "remaining_transfer": "Consolidate their transport through ordinary, prepared and host entry without adding per-scalar descriptor allocation.",
+      "measure": [
+        "admission attempts",
+        "repeated checks",
+        "call nodes constructed"
+      ],
+      "validity": "Readiness, source interpretation, type evidence and result demand have distinct scopes. Changed declarations and mutable classifier dependencies reopen guards.",
+      "source_occurrences": [
+        {
+          "file": "src/petta_type_policy.c",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/petta_contract_core.c",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/petta_program.c",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "PettaTypeCall",
+            "PettaAnalysisService"
+          ]
+        },
+        {
+          "file": "src/library.c",
+          "symbols": [
+            "CettaCallResultForm"
+          ]
+        },
+        {
+          "file": "src/petta_type_relation.c",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "PettaTypeCall",
+            "PettaAnalysisService"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "outcome-and-owned-return",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/owned_execution.h",
+          "symbol": "CettaOwnedReturn"
+        },
+        {
+          "file": "src/eval_owned_execution.inc",
+          "symbol": "cetta_owned_execution_sequence"
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbol": "cetta_prepared_pure_answer_cursor_return"
+        }
+      ],
+      "admission": "Value, failure, raised error, interruption and suspension remain distinct; acceptance and publication retain their owner.",
+      "remaining_transfer": "Extend existing adapters instead of introducing a second universal outcome type.",
+      "measure": [
+        "returns accepted",
+        "pending returns",
+        "copies at publication"
+      ],
+      "validity": "The producer owns payload and environment through pending delivery. Accepted occurrences are not replayed; cancellation releases pending ownership.",
+      "source_occurrences": [
+        {
+          "file": "src/eval_owned_execution.inc",
+          "symbols": [
+            "CettaOwnedReturn",
+            "cetta_owned_execution_sequence",
+            "cetta_prepared_pure_answer_cursor_return"
+          ]
+        },
+        {
+          "file": "src/owned_execution.c",
+          "symbols": [
+            "CettaOwnedReturn",
+            "cetta_owned_execution_sequence"
+          ]
+        },
+        {
+          "file": "src/shared_return_producer.c",
+          "symbols": [
+            "CettaOwnedReturn",
+            "cetta_owned_execution_sequence"
+          ]
+        },
+        {
+          "file": "src/owned_return_image.c",
+          "symbols": [
+            "CettaOwnedReturn"
+          ]
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbols": [
+            "CettaOwnedReturn",
+            "cetta_prepared_pure_answer_cursor_return"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "continuation-frame-stack",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/owned_execution.h",
+          "symbol": "CettaOwnedFrameStack"
+        },
+        {
+          "file": "src/eval_he_canonical.inc",
+          "symbol": "cetta_owned_frame_push"
+        }
+      ],
+      "admission": "The adapter owns roots and demand; stack links grant no evaluation or lifetime authority.",
+      "remaining_transfer": "Share operational services while preserving PeTTa search order and HE completion boundaries.",
+      "measure": [
+        "frame pushes",
+        "handoffs",
+        "retained frames"
+      ],
+      "validity": "Links borrow stable frame addresses until popped. The dialect adapter retains roots, entered code, demand and scoped control.",
+      "source_occurrences": [
+        {
+          "file": "src/eval_he_boundary.inc",
+          "symbols": [
+            "CettaOwnedFrameStack",
+            "cetta_owned_frame_push"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "CettaOwnedFrameStack",
+            "cetta_owned_frame_push"
+          ]
+        },
+        {
+          "file": "src/eval_he_canonical.inc",
+          "symbols": [
+            "CettaOwnedFrameStack",
+            "cetta_owned_frame_push"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "immutable-syntax-and-generation-sharing",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/atom.c",
+          "symbol": "atom_settled_for_arena"
+        },
+        {
+          "file": "src/owned_return_image.c",
+          "symbol": "cetta_owned_return_image_capture"
+        }
+      ],
+      "admission": "Reuse must preserve the term/context identity and keep every reachable owner valid; opaque values require their own ownership descriptor.",
+      "remaining_transfer": "Remove unnecessary copies at certified boundaries and measure retention of source capsules.",
+      "measure": [
+        "deep copies",
+        "copied bytes",
+        "retained owners",
+        "RSS"
+      ],
+      "validity": "Sharing requires a live immutable owner with matching generation. An escaped value must own or retain its reachable graph; reachability does not bound whole-owner retention.",
+      "source_occurrences": [
+        {
+          "file": "src/shared_return_producer.c",
+          "symbols": [
+            "cetta_owned_return_image_capture"
+          ]
+        },
+        {
+          "file": "src/atom.c",
+          "symbols": [
+            "atom_settled_for_arena"
+          ]
+        },
+        {
+          "file": "src/owned_return_image.c",
+          "symbols": [
+            "cetta_owned_return_image_capture"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "suffix-and-list-views",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/atom.c",
+          "symbol": "atom_expr_suffix"
+        },
+        {
+          "file": "src/petta_semantics.c",
+          "symbol": "petta_semantics_flat_list_spine"
+        }
+      ],
+      "admission": "Logical list tags, rest tails, multiplicity and element identity must remain visible.",
+      "remaining_transfer": "Audit consumers that flatten or rebuild before an outer-shape observation.",
+      "measure": [
+        "suffix allocations",
+        "list materialization",
+        "tail walks"
+      ],
+      "validity": "A view keeps its underlying buffer alive. Normalized open-list shape can change with bindings and cannot be inferred from a raw header alone.",
+      "source_occurrences": [
+        {
+          "file": "src/term_graph.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        },
+        {
+          "file": "src/he_macro_expansion.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "atom_expr_suffix",
+            "petta_semantics_flat_list_spine"
+          ]
+        },
+        {
+          "file": "src/atom.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        },
+        {
+          "file": "src/grounded.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        },
+        {
+          "file": "src/petta_semantics.c",
+          "symbols": [
+            "atom_expr_suffix",
+            "petta_semantics_flat_list_spine"
+          ]
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "atom_expr_suffix",
+            "petta_semantics_flat_list_spine"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "variable-support-and-groundness",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/atom.h",
+          "symbol": "atom_single_variable_id"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_apply_value_rewrite_vars"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_values_reach_cell"
+        }
+      ],
+      "admission": "Immutable direct support is stable; its images depend on the current logical store and lexical frame.",
+      "remaining_transfer": "Reuse support observations at remaining activation/selection boundaries; do not cache live verdicts across writes or rollback.",
+      "measure": [
+        "support reads",
+        "binding lookups",
+        "graph visits"
+      ],
+      "validity": "Syntactic support belongs to immutable structure. Contextual groundness follows live bindings and rollback; branch-local results cannot become syntax-only facts.",
+      "source_occurrences": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "atom_single_variable_id"
+          ]
+        },
+        {
+          "file": "src/atom.c",
+          "symbols": [
+            "atom_single_variable_id"
+          ]
+        },
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "atom_single_variable_id",
+            "bindings_apply_value_rewrite_vars"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "atom_single_variable_id",
+            "petta_machine_values_reach_cell"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "occurs-check-certificates",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_unify"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_builder_add_id_internal_with_cycle_evidence"
+        }
+      ],
+      "admission": "Only proved groundness or fresh-frame noninterference can omit a cycle search.",
+      "remaining_transfer": "Map each ordinary binding entry to its strongest available evidence; keep uncertain cases on the exact check.",
+      "measure": [
+        "occurs walks",
+        "certificate hits",
+        "visited nodes"
+      ],
+      "validity": "A fresh cell certificate must name the incarnation and disjoint support that justify omitting a cycle walk. Unknown or overflowing support uses the authoritative walker.",
+      "source_occurrences": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_unify"
+          ]
+        },
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "bindings_builder_add_id_internal_with_cycle_evidence"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rollback-and-conditional-trailing",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/binding/slot_store.c",
+          "symbol": "bindings_builder_restore_frame_values"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_trial_begin"
+        }
+      ],
+      "admission": "Every future rollback observes the same assignments, aliases, constraints and services.",
+      "remaining_transfer": "Share the write/rollback contract; evaluate direct slots and conditional logging where lifetime frontiers permit it.",
+      "measure": [
+        "trail entries",
+        "undo bytes",
+        "binding writes"
+      ],
+      "validity": "Only writes that cannot survive the current rollback boundary may omit a trail entry. PeTTa choice marks do not establish HE snapshot policy.",
+      "source_occurrences": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_trial_begin"
+          ]
+        },
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "bindings_builder_restore_frame_values"
+          ]
+        },
+        {
+          "file": "src/binding/slot_store.c",
+          "symbols": [
+            "bindings_builder_restore_frame_values"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "reachable-binding-projection",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_project_reachable_selected"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_project_reachable_sparse"
+        }
+      ],
+      "admission": "Retain transitive support, constraints and rollback-visible roots; preserve entry order and frame ownership.",
+      "remaining_transfer": "Avoid repeated support extraction and unnecessary frame reconstruction only where measured profitable.",
+      "measure": [
+        "projected bindings",
+        "support traversals",
+        "projection allocation"
+      ],
+      "validity": "Projection uses the current root group, shared variable map and environment. Independently freshening correlated components is invalid.",
+      "source_occurrences": [
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "bindings_project_reachable_selected",
+            "bindings_project_reachable_sparse"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "choice-collection-scheduling",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_maybe_collect"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_choice_collection_retry_threshold"
+        }
+      ],
+      "admission": "Collection admission and rollback roots remain unchanged; failed collection scheduling uses saturating growth thresholds.",
+      "remaining_transfer": "Price declined scans, successful collection, retained memory and delayed collection after choice-shape changes.",
+      "measure": [
+        "declines",
+        "successful collections",
+        "nursery bytes",
+        "RSS"
+      ],
+      "validity": "Retry thresholds schedule an attempt and grant no collection authority. Collection admission and live-root preservation remain unchanged.",
+      "source_occurrences": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "petta_machine_maybe_collect",
+            "petta_machine_choice_collection_retry_threshold"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "revision-local-plan-validity",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/eval.c",
+          "symbol": "prepared_pure_program_cache_prepare_revision"
+        },
+        {
+          "file": "src/producer_reads.c",
+          "symbol": "cetta_producer_reads_valid"
+        }
+      ],
+      "admission": "A plan is reusable only while every source and authority dependency it consulted is current.",
+      "remaining_transfer": "Unify exact dependency validation; test pooled stamps only with collision and overflow accounting. Unknown foreign writes retain a global dependency.",
+      "measure": [
+        "invalidations",
+        "recompilation",
+        "validation reads"
+      ],
+      "validity": "A plan records its source, declarations, space and foreign authority reads. Absence is a dependency; unknown writes remain globally conservative.",
+      "source_occurrences": [
+        {
+          "file": "src/producer_reads.c",
+          "symbols": [
+            "cetta_producer_reads_valid"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "prepared_pure_program_cache_prepare_revision"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "cetta_producer_reads_valid"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "stable-negative-admission",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/eval.c",
+          "symbol": "prepared_pure_program_cache_has_decline_head"
+        },
+        {
+          "file": "src/eval.c",
+          "symbol": "petta_eval_open_program_lookup_locked"
+        }
+      ],
+      "admission": "Only dependency-qualified stable refusal may be cached; transient resource failure is not semantic refusal.",
+      "remaining_transfer": "Share positive/negative dependency discipline and measure repeated failed admission across routes.",
+      "measure": [
+        "refusal attempts",
+        "negative cache hits",
+        "invalidations"
+      ],
+      "validity": "Only a stable semantic refusal is reusable under its complete dependency footprint. Interrupt, allocation failure and transient capacity are not permanent refusals.",
+      "source_occurrences": [
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "prepared_pure_program_cache_has_decline_head",
+            "petta_eval_open_program_lookup_locked"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "foreign-observer-authority",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "petta_libpl_advance_revision"
+        },
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "cyclic_observer_current"
+        }
+      ],
+      "admission": "Exact builtin and wrapper provenance plus no carried effects justify the specific read-only failure rule.",
+      "remaining_transfer": "Extend effect summaries only with truthful predicate dependencies and mutation/override controls.",
+      "measure": [
+        "foreign checks",
+        "revision changes",
+        "plan revalidation"
+      ],
+      "validity": "Read-only classification must be proved for the actual foreign target and current provider authority. Unknown writes invalidate conservatively.",
+      "source_occurrences": [
+        {
+          "file": "src/petta_libpl.c",
+          "symbols": [
+            "petta_libpl_advance_revision",
+            "cyclic_observer_current"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "plain-scalar-operations",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/grounded.c",
+          "symbol": "grounded_try_plain_scalar_operation"
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbol": "prepared_pure_scalar_binary"
+        }
+      ],
+      "admission": "Preserve integer promotion, float order, operand demand, type checks and dialect Boolean representation.",
+      "remaining_transfer": "Reuse primitive implementations in ordinary and prepared consumers; inspect redundant boxing and type observations.",
+      "measure": [
+        "scalar calls",
+        "boxed intermediates",
+        "declines"
+      ],
+      "validity": "The selected intrinsic must be unoverridden in the current source. Exact arithmetic, floating order and dialect truth values remain part of the result contract.",
+      "source_occurrences": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "grounded_try_plain_scalar_operation"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "grounded_try_plain_scalar_operation"
+          ]
+        },
+        {
+          "file": "src/grounded.c",
+          "symbols": [
+            "grounded_try_plain_scalar_operation"
+          ]
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbols": [
+            "grounded_try_plain_scalar_operation",
+            "prepared_pure_scalar_binary"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "grounded_try_plain_scalar_operation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "deterministic-scalar-segments",
+      "disposition": "restricted_by_semantics",
+      "source": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_evaluate_activation_scalar_tree"
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbol": "prepared_pure_scalar_region"
+        }
+      ],
+      "admission": "A segment has the admitted effect, type and fuel contract; refusal preserves original evaluation.",
+      "remaining_transfer": "Share operation and liveness machinery, retaining different entry/result policies.",
+      "measure": [
+        "segment entries",
+        "fallbacks",
+        "intermediate allocations"
+      ],
+      "validity": "Admission includes source/effect authority, value shapes and complete result behavior. Ready operands alone do not establish purity or checked results.",
+      "source_occurrences": [
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbols": [
+            "prepared_pure_scalar_region"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "petta_machine_evaluate_activation_scalar_tree"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "source-derived-folds",
+      "disposition": "restricted_by_semantics",
+      "source": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_algebraic_append"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_scalar_sum"
+        },
+        {
+          "file": "src/native_fold.c",
+          "symbol": "cetta_native_foldall"
+        }
+      ],
+      "admission": "The source recurrence, recursive call protocol and observer must authorize the fold.",
+      "remaining_transfer": "Share scans, value operations and ownership plumbing with ordinary execution; preserve non-admitted source behavior.",
+      "measure": [
+        "nodes inspected",
+        "constructed nodes",
+        "fold admission"
+      ],
+      "validity": "The authored fold, matching/unification behavior, arithmetic and current definitions must support the lowering. Failed admission retains ordinary execution.",
+      "source_occurrences": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_algebraic_append",
+            "oem_scalar_sum"
+          ]
+        },
+        {
+          "file": "src/native_fold.c",
+          "symbols": [
+            "cetta_native_foldall"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "cetta_native_foldall"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "cetta_native_foldall"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "semi-naive-and-relational-cursors",
+      "disposition": "restricted_by_semantics",
+      "source": [
+        {
+          "file": "src/exec_saturation.c",
+          "symbol": "cetta_exec_saturate"
+        },
+        {
+          "file": "src/relational_cursor.c",
+          "symbol": "cetta_relational_count_cursor_advance"
+        },
+        {
+          "file": "src/fixpoint.c",
+          "symbol": "cetta_fixpoint_least"
+        }
+      ],
+      "admission": "The admitted closure/count observer determines duplicate handling, ordering, effects and resumption; navigation quantum is not dialect fuel.",
+      "remaining_transfer": "Reuse worklists, indexes and cursor lifecycle; do not replace arbitrary budgeted search with closure.",
+      "measure": [
+        "delta proposals",
+        "join probes",
+        "publication events"
+      ],
+      "validity": "The observer must permit the region algebra. Set closure does not justify dropping ordered occurrences, effects, bounded prefixes or proof provenance.",
+      "source_occurrences": [
+        {
+          "file": "src/relational_cursor.c",
+          "symbols": [
+            "cetta_relational_count_cursor_advance"
+          ]
+        },
+        {
+          "file": "src/petta_specializer.c",
+          "symbols": [
+            "cetta_fixpoint_least"
+          ]
+        },
+        {
+          "file": "src/eval_work.inc",
+          "symbols": [
+            "cetta_relational_count_cursor_advance"
+          ]
+        },
+        {
+          "file": "src/exec_saturation.c",
+          "symbols": [
+            "cetta_exec_saturate"
+          ]
+        },
+        {
+          "file": "src/fixpoint.c",
+          "symbols": [
+            "cetta_fixpoint_least"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "cetta_exec_saturate"
+          ]
+        },
+        {
+          "file": "src/space.c",
+          "symbols": [
+            "cetta_fixpoint_least"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "private-retention-and-flat-match-experiments",
+      "disposition": "rejected_by_measurements",
+      "source": [
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_reachable_vars_add_value"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_match_ground_template"
+        }
+      ],
+      "admission": "Correct output is necessary but does not establish an application gain.",
+      "remaining_transfer": "Support-union memo, flat matcher variants and append-right-unit candidate remain outside production until stronger cost and lifetime evidence.",
+      "measure": [
+        "wall time",
+        "instructions",
+        "peak RSS"
+      ],
+      "validity": "These candidates supply no production authority. Their observations and costs remain retained evidence until a revised candidate passes its own gates.",
+      "source_occurrences": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_match_ground_template"
+          ]
+        },
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "bindings_reachable_vars_add_value"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "specialization-selector-refutation",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_specializer.c",
+          "symbol": "petta_selector_fingerprint"
+        },
+        {
+          "file": "src/subst_tree.h",
+          "symbol": "cetta_index_expand_expression"
+        }
+      ],
+      "admission": "Bounded physical-structure observations under PeTTa term equality; unknown metadata and rational unfoldings decline. Every survivor retains exact comparison.",
+      "remaining_transfer": "The record scan remains linear. Other consumers require their own equality/observation policy before reusing this prefilter.",
+      "measure": [
+        "ordinary selector comparisons",
+        "bounded node reads",
+        "wall time",
+        "instructions",
+        "RSS"
+      ],
+      "validity": "Only immutable structural fields enter the stored fingerprint. Actual observations are local to one synchronous lookup; PeTTa structural equality is required. Every survivor still receives exact equality.",
+      "source_occurrences": [
+        {
+          "file": "src/subst_tree.c",
+          "symbols": [
+            "cetta_index_expand_expression"
+          ]
+        },
+        {
+          "file": "src/petta_specializer.c",
+          "symbols": [
+            "petta_selector_fingerprint",
+            "cetta_index_expand_expression"
+          ]
+        },
+        {
+          "file": "src/space.c",
+          "symbols": [
+            "cetta_index_expand_expression"
+          ]
+        },
+        {
+          "file": "src/space_match_backend.c",
+          "symbols": [
+            "cetta_index_expand_expression"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "specialization-artifact-head-index",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_specializer.c",
+          "symbol": "petta_specializer_equation_artifact"
+        },
+        {
+          "file": "src/symbol_index.h",
+          "symbol": "cetta_symbol_index_find"
+        }
+      ],
+      "admission": "A complete head-membership index can only reject an absent specialized head. Space identity, alpha equality, payload permission and occurrence order remain authoritative.",
+      "validity": "Record creation extends a complete index incrementally; removal and thread reset invalidate it. Incomplete allocation uses the original traversal. Small catalogs remain linear.",
+      "current_consumers": [
+        "src/petta_search_machine.c:petta_match_decision_source_pattern_root",
+        "src/eval.c:petta_prepared_pure_head_relational"
+      ],
+      "remaining_transfer": "Selective lookup within a present head remains linear. Other code/site caches need their own dependency footprints.",
+      "measure": [
+        "catalog scans",
+        "index construction",
+        "ordinary and normal application cost",
+        "retained index bytes"
+      ]
+    }
+  ],
+  "coverage": "All 26 named families have a disposition, native source anchors, file-level occurrence census, admission, validity and measurement obligations. Caller-by-caller transfer completion and the full ordinary-route workload baseline remain open.",
+  "review_reconciliation": [
+    {
+      "idea": "Shared call contract over existing engines",
+      "state": "incremental_foundation_present",
+      "native": [
+        "src/owned_execution.h",
+        "src/call_outcome.h",
+        "src/petta_type_policy.h",
+        "src/binding/term_cursor.h"
+      ],
+      "next": "Join demand, scoped evidence and argument transport through existing interfaces; retain direct lowering for ordinary scalar calls."
+    },
+    {
+      "idea": "Arity preflight and live argument guard",
+      "state": "already_integrated_and_extended",
+      "native": [
+        "src/open_equation_machine.c:oem_lexical_callable_step",
+        "src/open_equation_machine.c:oem_callable_argument_guard"
+      ],
+      "next": "Measure remaining contextual resolution after an admitted pure entry and underapplication; do not reapply the older patch."
+    },
+    {
+      "idea": "Borrow captured and supplied argument spans",
+      "state": "transferable_with_collector_obligation",
+      "native": [
+        "src/open_equation_machine.c:oem_expand_partial_application",
+        "src/open_equation_machine.c:oem_apply_step",
+        "src/open_equation_machine.c:oem_collect_slots"
+      ],
+      "next": "Validate borrowed-span owner lifetime and collection memo identity, including slices of unequal lengths. oem_collect_slots mutates activation locals only; young argument vectors are copied and old argument vectors remain unchanged. Avoid allocating a replacement array of wrapper records."
+    },
+    {
+      "idea": "Contextual selected-path reads",
+      "state": "partly_shared",
+      "native": [
+        "src/binding/term_cursor.h",
+        "src/prepared_pure_machine.c"
+      ],
+      "next": "Share successful reads with prepared consumers and preserve live aliases, rollback and normalization-sensitive list fallback."
+    },
+    {
+      "idea": "Capped exact support frontiers",
+      "state": "investigate_measured_coverage",
+      "native": [
+        "src/open_equation_machine.c:oem_occurs",
+        "src/open_equation_machine.c:oem_occurs_tabled",
+        "src/atom.h:atom_single_variable_id"
+      ],
+      "next": "Measure support cardinality weighted by avoided traversal; compare construction, relocation and retention costs before adding a two- or four-cell summary."
+    },
+    {
+      "idea": "Safe-for-space capture and joint export",
+      "state": "partly_shared",
+      "native": [
+        "src/open_equation_machine.c:oem_value_source",
+        "src/owned_return_image.c",
+        "src/atom.c"
+      ],
+      "next": "Measure reachable bytes separately from retained-owner bytes. Preserve one relocation map per correlated export group."
+    },
+    {
+      "idea": "Separate code, dispatch and observation caches",
+      "state": "partly_shared",
+      "native": [
+        "src/open_equation_machine.c:oem_callable_program",
+        "src/eval.c",
+        "src/producer_reads.h"
+      ],
+      "next": "Unify dependency validation without merging source validity with live-cell validity; keep transient failure distinct from stable refusal."
+    },
+    {
+      "idea": "Ordered log plus membership index plus delta",
+      "state": "semantically_restricted",
+      "native": [
+        "src/relational_cursor.c",
+        "src/exec_saturation.c"
+      ],
+      "next": "Preserve occurrence order, duplicate derivations, authored round counters and budgeted prefixes. Compiler-owned emission changes need their own admission."
+    },
+    {
+      "idea": "Observer-directed fields and destination specialization",
+      "state": "semantically_restricted",
+      "native": [
+        "src/open_equation_machine.c:oem_store_slot",
+        "src/prepared_pure_machine.c"
+      ],
+      "next": "Prove alias, early-constraint and source-version obligations before discarding data or moving equality checks."
+    },
+    {
+      "idea": "Complete residual transfer",
+      "state": "partly_shared",
+      "native": [
+        "src/owned_execution.h",
+        "src/open_equation_machine.c:cetta_open_equation_cursor_host_continuation_supported"
+      ],
+      "next": "Prove and test complete continuation, entered-code, constraint, older-alternative and budget state. Post-effect fallback must not restart the source call."
+    },
+    {
+      "idea": "Costed reads and native correspondence",
+      "state": "proof_work_continues",
+      "native": [
+        "src/binding/term_cursor.h",
+        "src/subst_tree.h"
+      ],
+      "next": "Connect actual scoped reads, opening, exports and compiler read footprints to the existing Lean models. Bounds exclude unmodelled native allocation and wall time."
+    },
+    {
+      "idea": "Universal CBPV interpreter before parity",
+      "state": "deferred_pending_evidence",
+      "native": [
+        "src/owned_execution.h"
+      ],
+      "next": "Use CBPV as the shared semantic contract. Adopt runtime abstractions only when adapters disappear and ordinary-call cost is preserved or improved."
+    }
+  ],
+  "non_prolog_comparisons": [
+    {
+      "system": "Souffle",
+      "url": "https://souffle-lang.github.io/handtuning",
+      "application": "Profile-guided indexed access and bounded experiments; CeTTa retains its ordered operational observer."
+    },
+    {
+      "system": "MLIR",
+      "url": "https://mlir.llvm.org/docs/Rationale/SideEffectsAndSpeculation/",
+      "application": "Keep effects and speculation permission separate; these interfaces do not establish CeTTa control semantics."
+    },
+    {
+      "system": "Koka / Perceus",
+      "url": "https://www.microsoft.com/en-us/research/publication/perceus-garbage-free-reference-counting-with-reuse/",
+      "application": "Ownership and reuse under explicit control flow; no automatic transfer to cyclic logical graphs."
+    }
+  ]
+}

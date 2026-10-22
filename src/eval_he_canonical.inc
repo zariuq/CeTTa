@@ -2226,6 +2226,9 @@ static void he_canonical_resume_dispatch(HeCanonicalFrame *frame) {
                 frame->has_non_functions = true;
                 continue;
             }
+            if (grounded_op_is_sequence_constructor(head) &&
+                get_function_arg_count(frame->types[i]) != nargs)
+                continue;
             frame->has_functions = true;
             if (curried_rank &&
                 space_curried_type_rank(frame->types[i], nargs) != curried_rank)

@@ -1,0 +1,10 @@
+arg-first
+arg-second
+done
+(Pair (Result true stamp) (Result false stamp))
+((Result false stamp) (Result false stamp))
+(Pair (Node first second) stamp)
+(Pair (Node capture) stamp)
+(true true)
+((Seen same stamp) (Seen same stamp))
+((true true))

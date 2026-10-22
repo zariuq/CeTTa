@@ -2,126 +2,129 @@
 #define CETTA_TENSOR_H
 
 #include "atom.h"
+#include "generated/tensor_descriptors.generated.h"
 
-/* Immutable, compact CPU tensors. A returned tensor has one caller hold.
- * Atom publication retains it; the caller then releases its own hold. Every
- * arena copy acquires its own hold. Reshape shares storage; writes allocate.
- * Numeric identity is dtype + shape + exact element bits, not addresses. */
 typedef struct CettaTensor CettaTensor;
+/* Codes 1--4 retain the CTN1 dense interchange meaning. */
 typedef enum {
-    CETTA_TENSOR_I64 = 1,
-    CETTA_TENSOR_F64 = 2,
-    CETTA_TENSOR_U8 = 3,
-    CETTA_TENSOR_F32 = 4,
+#define DTYPE(name, code, text, width, family, precision) CETTA_TENSOR_##name = code,
+    CETTA_TENSOR_DTYPE_ROWS(DTYPE)
+#undef DTYPE
 } CettaTensorDType;
-
+enum {
+    CETTA_TENSOR_FAMILY_Signed, CETTA_TENSOR_FAMILY_Unsigned,
+    CETTA_TENSOR_FAMILY_Floating, CETTA_TENSOR_FAMILY_Boolean
+};
+enum {
+#define DTYPE(name, code, text, width, family, precision) \
+    CETTA_TENSOR_WIDTH_##name = width, CETTA_TENSOR_PRECISION_##name = precision, \
+    CETTA_TENSOR_FAMILY_##name = CETTA_TENSOR_FAMILY_##family,
+    CETTA_TENSOR_DTYPE_ROWS(DTYPE)
+#undef DTYPE
+};
 typedef enum {
-    CETTA_TENSOR_OK = 0,
-    CETTA_TENSOR_DTYPE,
-    CETTA_TENSOR_SHAPE,
-    CETTA_TENSOR_COUNT,
-    CETTA_TENSOR_OVERFLOW,
-    CETTA_TENSOR_NOMEM,
-    CETTA_TENSOR_INDEX,
-    CETTA_TENSOR_VALUE,
-    CETTA_TENSOR_ENCODING,
-    CETTA_TENSOR_PROVIDER,
+#define LAYOUT(name, code, text, support, order) CETTA_TENSOR_##name = code,
+    CETTA_TENSOR_LAYOUT_ROWS(LAYOUT)
+#undef LAYOUT
+} CettaTensorLayout;
+typedef enum { CETTA_TENSOR_REJECT, CETTA_TENSOR_FIRST, CETTA_TENSOR_LAST, CETTA_TENSOR_SUM } CettaTensorDuplicates;
+typedef enum { CETTA_TENSOR_SEQUENTIAL, CETTA_TENSOR_FIXED4 } CettaTensorSchedule;
+typedef enum { CETTA_TENSOR_CAST_EXACT, CETTA_TENSOR_CAST_NEAREST, CETTA_TENSOR_CAST_TRUNCATE } CettaTensorCastMode;
+typedef enum {
+    CETTA_TENSOR_OK, CETTA_TENSOR_DTYPE, CETTA_TENSOR_SHAPE, CETTA_TENSOR_COUNT,
+    CETTA_TENSOR_OVERFLOW, CETTA_TENSOR_NOMEM, CETTA_TENSOR_INDEX_ERROR,
+    CETTA_TENSOR_VALUE, CETTA_TENSOR_DUPLICATE, CETTA_TENSOR_ENCODING, CETTA_TENSOR_ZERO_NORM,
+    CETTA_TENSOR_INEXACT, CETTA_TENSOR_PROMOTION
 } CettaTensorStatus;
+typedef union { int64_t i64; uint64_t index; double f64; float f32; uint8_t u8; } CettaTensorScalar;
 
 const char *cetta_tensor_status_name(CettaTensorStatus status);
 const char *cetta_tensor_dtype_name(CettaTensorDType dtype);
+const char *cetta_tensor_layout_name(CettaTensorLayout layout);
 size_t cetta_tensor_itemsize(CettaTensorDType dtype);
-/* The two-pass count admits zero axes without overflowing an earlier product. */
-CettaTensorStatus cetta_tensor_byte_count(CettaTensorDType dtype,
-    const size_t *shape, size_t rank, size_t *count, size_t *bytes);
-CettaTensorStatus cetta_tensor_new(CettaTensorDType dtype,
-    const size_t *shape, size_t rank, const void *data, size_t bytes,
-    CettaTensor **out);
+/* Logical coordinate cardinality, independent of dense byte feasibility. */
+CettaTensorStatus cetta_tensor_coordinate_count(const size_t *shape,size_t rank,size_t *count);
+CettaTensorStatus cetta_tensor_byte_count(CettaTensorDType dtype, const size_t *shape,
+    size_t rank, size_t *count, size_t *bytes);
+/* Constructors copy caller data. Each result has one caller reference. */
+CettaTensorStatus cetta_tensor_new(CettaTensorDType dtype, const size_t *shape,
+    size_t rank, const void *data, size_t bytes, CettaTensor **out);
+/* Internal typed sinks may transfer a malloc-compatible, exclusively owned
+ * buffer. Ownership transfers only on success; no mutable alias may survive. */
+CettaTensorStatus cetta_tensor_new_take(CettaTensorDType dtype, const size_t *shape,
+    size_t rank, void *data, size_t bytes, CettaTensor **out);
+CettaTensorStatus cetta_tensor_coo(CettaTensorDType dtype, const size_t *shape,
+    size_t rank, const size_t *flat_coordinates, const void *values, size_t entries,
+    CettaTensorDuplicates duplicates, CettaTensor **out);
 void cetta_tensor_retain(void *tensor);
 void cetta_tensor_release(void *tensor);
+Atom *cetta_tensor_atom(Arena *arena, CettaTensor *tensor);
+CettaTensor *cetta_tensor_from_atom(const Atom *atom);
 size_t cetta_tensor_rank(const CettaTensor *tensor);
-size_t cetta_tensor_count(const CettaTensor *tensor);
-size_t cetta_tensor_nbytes(const CettaTensor *tensor);
-/* Conservative retained allocation charge, including shared storage. */
-size_t cetta_tensor_retained_bytes(const CettaTensor *tensor);
 const size_t *cetta_tensor_shape(const CettaTensor *tensor);
+size_t cetta_tensor_count(const CettaTensor *tensor);
+size_t cetta_tensor_stored(const CettaTensor *tensor);
+size_t cetta_tensor_retained_bytes(const CettaTensor *tensor);
 CettaTensorDType cetta_tensor_dtype(const CettaTensor *tensor);
-const void *cetta_tensor_data(const CettaTensor *tensor);
+CettaTensorLayout cetta_tensor_layout(const CettaTensor *tensor);
+CettaTensorStatus cetta_tensor_get(const CettaTensor *tensor, size_t flat,
+    bool *present, CettaTensorScalar *value);
+/* Views are immutable element-strided dense views. Negative and zero strides
+ * are allowed after checked bounds validation against the retained owner. */
+CettaTensorStatus cetta_tensor_view(const CettaTensor *tensor, const size_t *shape,
+    const ptrdiff_t *strides, size_t rank, size_t offset, CettaTensor **out);
+CettaTensorStatus cetta_tensor_copy(const CettaTensor *tensor, CettaTensor **out);
+/* Logical row-order reshape: preserves a contiguous view's selected offset;
+ * noncontiguous dense inputs copy, and sparse support keeps flat ordinals. */
+CettaTensorStatus cetta_tensor_reshape(const CettaTensor *tensor,const size_t *shape,
+    size_t rank,CettaTensor **out);
+CettaTensorStatus cetta_tensor_convert(const CettaTensor *tensor, CettaTensorLayout layout,
+    CettaTensor **out);
+/* Whole-source-type numeric representability, generated from dtype metadata.
+ * It is not scalar-bit equality across different dtypes. */
+bool cetta_tensor_exact_promotion(CettaTensorDType source,CettaTensorDType target);
+/* Explicit conversion preserves support. Exact refuses lost numerical value;
+ * nearest permits floating rounding, truncate explicitly permits fractional
+ * removal on an integer destination. Integer overflow never wraps. Floating
+ * NaN sign/payload bits are widened exactly, or narrowed under the named mode. */
+CettaTensorStatus cetta_tensor_cast(const CettaTensor *tensor,CettaTensorDType target,
+    CettaTensorCastMode mode,CettaTensor **out);
 bool cetta_tensor_equal(const CettaTensor *left, const CettaTensor *right);
 int cetta_tensor_compare(const CettaTensor *left, const CettaTensor *right);
-uint32_t cetta_tensor_hash(const CettaTensor *tensor);
-bool cetta_tensor_shares_storage(const CettaTensor *left, const CettaTensor *right);
-CettaTensorStatus cetta_tensor_reshape(const CettaTensor *tensor,
-    const size_t *shape, size_t rank, CettaTensor **out);
-CettaTensorStatus cetta_tensor_copy(const CettaTensor *tensor, CettaTensor **out);
-CettaTensorStatus cetta_tensor_cast(const CettaTensor *tensor,
-    CettaTensorDType dtype, CettaTensor **out);
-CettaTensorStatus cetta_tensor_with(const CettaTensor *tensor, size_t index,
-    const void *element, CettaTensor **out);
-CettaTensorStatus cetta_tensor_binary(const CettaTensor *left,
-    const CettaTensor *right, bool multiply, CettaTensor **out);
-typedef struct {
-    CettaTensorDType dtype;
-    union { int64_t integer; double floating; } value;
-} CettaTensorScalar;
-/* With a right operand, this is a rank-one dot; otherwise an ordered sum. */
-CettaTensorStatus cetta_tensor_reduce(const CettaTensor *left,
-    const CettaTensor *right, CettaTensorScalar *out);
-/* Axis-zero gather preserves order and repeated indices. Selectors are i64. */
-CettaTensorStatus cetta_tensor_gather(const CettaTensor *source,
+uint64_t cetta_tensor_hash(const CettaTensor *tensor);
+bool cetta_tensor_all_finite(const CettaTensor *tensor);
+/* Stable scaled normalization of a vector or each matrix row. Refuses zero
+ * rows/nonfinite inputs. Returns f64, preserving shape and explicit support. */
+CettaTensorStatus cetta_tensor_normalize_rows(const CettaTensor *tensor,CettaTensor **out);
+/* Stored-coordinate traversal, in ascending logical coordinate order. Missing
+ * entries are not implicit floating operations. Fixed4 is an explicit schedule. */
+CettaTensorStatus cetta_tensor_sum(const CettaTensor *tensor, CettaTensorSchedule schedule,
+    CettaTensorScalar *result);
+CettaTensorStatus cetta_tensor_matvec(const CettaTensor *matrix, const CettaTensor *vector,
+    CettaTensorSchedule schedule, CettaTensor **out);
+/* Sequential scores for a fully present Index vector of requested rows.
+ * Request order and duplicate occurrences survive; unsupported packed layouts
+ * use ordinary matvec followed by gather without changing the observation. */
+CettaTensorStatus cetta_tensor_matvec_rows(const CettaTensor *matrix, const CettaTensor *vector,
+    const CettaTensor *rows, CettaTensor **out);
+CettaTensorStatus cetta_tensor_top_k(const CettaTensor *scores, const CettaTensor *mask,
+    size_t k, CettaTensor **out);
+CettaTensorStatus cetta_tensor_encode(const CettaTensor *tensor, unsigned char **bytes, size_t *size);
+CettaTensorStatus cetta_tensor_decode(const unsigned char *bytes, size_t size, CettaTensor **out);
+/* Copy dense logical values into caller-owned bytes without scalar Atoms.
+ * Sparse support is not implicitly erased at an interchange boundary. */
+CettaTensorStatus cetta_tensor_copy_values(const CettaTensor *tensor,void *bytes,size_t size);
+/* Explicit packed observation of stored coordinates and scalar values, both
+ * in ascending logical coordinate order. Neither observer fills absence. */
+CettaTensorStatus cetta_tensor_entries(const CettaTensor *tensor,
+    CettaTensor **coordinates, CettaTensor **values);
+/* Pull back support and values along an Index tensor. Missing indices or
+ * missing source coordinates remain absent; present indices must be in bounds. */
+CettaTensorStatus cetta_tensor_gather(const CettaTensor *tensor,
     const CettaTensor *indices, CettaTensor **out);
-/* Dense f64/f32 matrix with an f64 query, accumulation and result. NULL indices
- * selects all rows. Four ordered
- * accumulation lanes are combined in a fixed order, without FMA contraction.
- * This is a different reduction order from tensor:dot's scalar reference. */
-CettaTensorStatus cetta_tensor_matvec(const CettaTensor *matrix,
-    const CettaTensor *query, const CettaTensor *indices, CettaTensor **out);
-typedef enum {
-    CETTA_MATVEC_AUTO,
-    CETTA_MATVEC_SCALAR4,
-    CETTA_MATVEC_AVX4,
-} CettaTensorMatvecProvider;
-bool cetta_tensor_matvec_provider_available(CettaTensorMatvecProvider provider);
-CettaTensorStatus cetta_tensor_matvec_with_provider(const CettaTensor *matrix,
-    const CettaTensor *query, const CettaTensor *indices,
-    CettaTensorMatvecProvider provider, CettaTensor **out);
-CettaTensorStatus cetta_tensor_div(const CettaTensor *left,
-    const CettaTensor *right, CettaTensor **out);
-CettaTensorStatus cetta_tensor_scale(const CettaTensor *source, double factor,
-    CettaTensor **out);
-/* Boolean masks use u8 entries restricted to 0 and 1. */
-CettaTensorStatus cetta_tensor_mask_indices(size_t length,
-    const CettaTensor *indices, CettaTensor **out);
-CettaTensorStatus cetta_tensor_mask_binary(const CettaTensor *left,
-    const CettaTensor *right, bool is_or, CettaTensor **out);
-CettaTensorStatus cetta_tensor_mask_not(const CettaTensor *mask, CettaTensor **out);
-CettaTensorStatus cetta_tensor_nonzero(const CettaTensor *mask, CettaTensor **out);
-/* Sorted descending, with smaller source indices first at equal scores.
- * Enabled nonfinite scores are refused, including when k is zero. */
-CettaTensorStatus cetta_tensor_top_k(const CettaTensor *scores,
-    const CettaTensor *mask, size_t k, CettaTensor **out);
-/* Derived row certificate: [L1 conversion error upper bound, combined L1
- * magnitude upper bound]. Must belong to this exact source/compact pair. */
-CettaTensorStatus cetta_tensor_row_error_bounds(const CettaTensor *source,
-    const CettaTensor *compact, CettaTensor **out);
-/* Conservative bounds on the existing f64 lane4 score times positive scale.
- * A rounding environment outside the admitted fragment yields [-inf, inf],
- * retaining every row. NULL indices selects all rows. */
-CettaTensorStatus cetta_tensor_matvec_bounds(const CettaTensor *compact,
-    const CettaTensor *query, const CettaTensor *certificate,
-    const CettaTensor *indices, double scale, CettaTensor **lower, CettaTensor **upper);
-/* Keep every upper bound reaching the k-th largest lower bound; ties survive.
- * This returns a candidate superset, never a final approximate ranking. */
-CettaTensorStatus cetta_tensor_top_k_candidates(const CettaTensor *lower,
-    const CettaTensor *upper, size_t k, CettaTensor **out);
-/* CTN1: dtype:u8, rank:u32 LE, dimensions:u64 LE, ordered element bits LE.
- * Encoding is pointer-free, lossless and portable for the supported dtypes. */
-CettaTensorStatus cetta_tensor_encoded_size(const CettaTensor *tensor, size_t *size);
-CettaTensorStatus cetta_tensor_encode(const CettaTensor *tensor,
-    unsigned char **bytes, size_t *size);
-CettaTensorStatus cetta_tensor_decode(const unsigned char *bytes,
-    size_t size, CettaTensor **out);
-void cetta_tensor_print(const CettaTensor *tensor, FILE *out);
-Atom *cetta_tensor_dispatch(Arena *arena, Atom *head, Atom **args, uint32_t nargs);
+/* Concatenate the two stored occurrence sequences, then apply the explicit
+ * duplicate policy. Shape and dtype must agree. */
+CettaTensorStatus cetta_tensor_merge(const CettaTensor *left,
+    const CettaTensor *right, CettaTensorDuplicates duplicates, CettaTensor **out);
 
 #endif

@@ -572,6 +572,60 @@ static void test_generated_prepared_intrinsic_program(void) {
     assert(dual_numeric_heads == 8u);
 }
 
+static void test_generated_sequence_constructor_policy(void) {
+    struct SequencePolicy {
+        const char *field;
+        unsigned arities;
+        unsigned held_mask;
+    };
+#define SEQUENCE_POLICY(field, arities, mask) {#field, arities, mask},
+    const struct SequencePolicy constructors[] = {
+        CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(SEQUENCE_POLICY)
+    };
+#undef SEQUENCE_POLICY
+    const size_t count = sizeof(constructors) / sizeof(constructors[0]);
+    bool saw_range = false, saw_repeat = false;
+    bool saw_library_range = false, saw_library_repeat = false;
+    for (size_t index = 0u; index < count; index++) {
+        const struct SequencePolicy *policy = &constructors[index];
+        assert(policy->held_mask <= 0xffffu);
+        assert((policy->arities & 1u) == 0u);
+        assert((policy->arities & (1u << 2u)) != 0u);
+        assert((policy->arities & (1u << 3u)) == 0u);
+        for (size_t previous = 0u; previous < index; previous++)
+            assert(strcmp(policy->field, constructors[previous].field) != 0);
+        if (strcmp(policy->field, "range_atom") == 0) {
+            saw_range = true;
+            assert(policy->arities == 6u);
+            assert(policy->held_mask == 0u);
+        }
+        if (strcmp(policy->field, "lib_list_range") == 0) {
+            saw_library_range = true;
+            assert(policy->arities == 6u);
+            assert(policy->held_mask == 0u);
+        }
+        if (strcmp(policy->field, "repeat_atom") == 0) {
+            saw_repeat = true;
+            assert(policy->arities == 4u);
+            assert(policy->held_mask == 2u);
+        }
+        if (strcmp(policy->field, "lib_list_repeat") == 0) {
+            saw_library_repeat = true;
+            assert(policy->arities == 4u);
+            assert(policy->held_mask == 2u);
+        }
+        /* Strict-all code cannot erase a constructor's held operand. */
+#define CHECK_PREPARED_CONSTRUCTOR(symbol_field, arity, discipline, instruction) \
+        if (strcmp(policy->field, #symbol_field) == 0) { \
+            assert(policy->held_mask == 0u); \
+            assert((policy->arities & (1u << (arity))) != 0u); \
+        }
+        CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(CHECK_PREPARED_CONSTRUCTOR)
+#undef CHECK_PREPARED_CONSTRUCTOR
+    }
+    assert(saw_range && saw_repeat && saw_library_range && saw_library_repeat);
+}
+
 static void test_generated_pure_call_modes(void) {
     assert(CETTA_GSLT_PURE_CALL_EAGER !=
            CETTA_GSLT_PURE_CALL_CALL_BY_NEED);
@@ -881,6 +935,7 @@ int main(void) {
     test_generated_fold_control_program();
     test_generated_sequence_representations();
     test_generated_prepared_intrinsic_program();
+    test_generated_sequence_constructor_policy();
     test_generated_pure_call_modes();
     test_generated_prepared_machine_roots();
     test_generated_outcome_continuation_roots();

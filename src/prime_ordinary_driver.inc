@@ -154,6 +154,7 @@ static const char *prime_share_grounded_refusal(GroundedKind kind) {
     case GV_BINDINGS: return "immutable-bindings";
     case GV_TERM_GRAPH: return "immutable-term-graph";
     case GV_TENSOR: return "immutable-tensor";
+    case GV_STRUCTURAL: return "immutable-structural";
     case GV_SEAL: return "immutable-seal";
     }
     return "immutable-grounded";

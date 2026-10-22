@@ -43,7 +43,7 @@ $(HOL_LIGHT_BRIDGE_TEST_BIN)-sanitized: tests/hol_light/test_bridge.c tests/hol_
 test-hol-light-bridge-sanitized: $(HOL_LIGHT_BRIDGE_TEST_BIN)-sanitized
 	ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 $(HOL_LIGHT_BRIDGE_TEST_BIN)-sanitized
 
-test: test-hol-light-kernel test-hol-light-host test-hol-light-bridge
+test-all: test-hol-light-kernel test-hol-light-host test-hol-light-bridge
 
 $(HOL_LIGHT_TEST_DIR)/bench_kernel: benchmarks/hol_light/bench_kernel.c $(HOL_LIGHT_CORE_SRC) $(HOL_LIGHT_HEADERS) | $(HOL_LIGHT_TEST_DIR)
 	$(CC) $(HOL_LIGHT_TEST_CFLAGS) -D_POSIX_C_SOURCE=200809L -Inative/hol_light $< $(HOL_LIGHT_CORE_SRC) -lpthread -o $@

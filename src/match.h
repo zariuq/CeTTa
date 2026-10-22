@@ -690,6 +690,10 @@ void      bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
                              const CettaWeightLedger *weights);
 /* Borrow the value without discarding its lexical interpretation. */
 BindingValue bindings_lookup_value_id(Bindings *b, VarId var_id);
+/* Read a syntax variable through its lexical context without discarding the
+ * generation-checked frame. Materialized contexts use complete identities. */
+BindingValue bindings_lookup_context_id(
+    Bindings *b, BindingValue context, VarId source_id);
 /* Register the complete slot domain of a newly created contextual frame
  * before its syntax can execute.  Source ids are stable, unqualified ids in
  * ascending order; `epoch` supplies the frame coordinate. */

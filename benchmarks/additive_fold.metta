@@ -1,0 +1,20 @@
+; An additive tree algebra with intentionally shared children.
+(: measure-weight (-> Atom %Undefined%))
+(= (measure-weight $tree)
+   (case $tree
+     (((WeightLeaf $payload) 1)
+      ((WeightFork $left $right)
+       (let* (($a (measure-weight $left)) ($b (measure-weight $right)))
+         (+ 1 (+ $a $b)))))))
+(= (shared-tree $depth)
+   (if (== $depth 0) (WeightLeaf ignored)
+     (let $child (shared-tree (- $depth 1)) (WeightFork $child $child))))
+(= (repeat-measure $remaining $tree $total)
+   (if (== $remaining 0) $total
+     (let* (($weight (measure-weight $tree))
+            ($next (+ $total $weight))
+            ($previous (- $remaining 1)))
+       (repeat-measure $previous $tree $next))))
+(= (additive-benchmark $depth $repetitions)
+   (let $tree (shared-tree $depth) (repeat-measure $repetitions $tree 0)))
+!(additive-benchmark 8 100)

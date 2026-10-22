@@ -162,6 +162,7 @@ typedef bool (*CettaPreparedPureRegisterViewFn)(
     CettaGsltRegisterInstruction *instruction);
 typedef enum {
     CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION = 0,
+    CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE,
 } CettaPreparedPureValueObservation;
 typedef enum {
     CETTA_PREPARED_PURE_EXPRESSION_DEFAULT = 0,
@@ -414,6 +415,17 @@ bool cetta_prepared_pure_program_is_current(
 bool cetta_prepared_pure_program_returns_optional(
     const CettaPreparedPureProgram *program);
 
+/* The compiled node graph only selects, constructs, or observes values.
+ * It neither interprets argument syntax nor matches/binds caller variables.
+ * A live unresolved branch condition can still decline at execution. */
+bool cetta_prepared_pure_program_accepts_open_values(
+    const CettaPreparedPureProgram *program);
+
+/* For a fresh open-input node program, select canonical or execution-arena
+ * ownership for Boolean values that may outlive this private plan.
+ * Refuses a plan whose literals already retain its inline Boolean cache. */
+bool cetta_prepared_pure_program_use_exportable_booleans(
+    CettaPreparedPureProgram *program);
 /* Rebind the runtime arguments of a previously compiled closed entry call.
  * The head, arity and argument role promised at compilation must still hold;
  * this low-level operation cannot recheck a dialect's value predicate. */
@@ -752,6 +764,10 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_retain(
 
 /* The head and arity of each equation occurrence the program compiled. */
 size_t cetta_prepared_pure_program_equation_count(
+    const CettaPreparedPureProgram *program);
+/* Number of bounded, already-ready scalar regions in the compiled code.
+ * This reports admission, not an assertion that every region was executed. */
+size_t cetta_prepared_pure_program_scalar_tree_count(
     const CettaPreparedPureProgram *program);
 bool cetta_prepared_pure_program_equation_signature(
     const CettaPreparedPureProgram *program, size_t index,

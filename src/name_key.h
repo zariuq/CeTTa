@@ -29,6 +29,9 @@ NameId name_key_intern_snapshot(NameKeyTable *table,
 NameId name_key_find(const NameKeyTable *table, Atom *key);
 const Atom *name_key_lookup(const NameKeyTable *table, NameId id);
 uint32_t name_key_count(const NameKeyTable *table);
+/* Complete retained allocation account for the immutable key copies and the
+   table that indexes them.  False reports arithmetic overflow. */
+bool name_key_table_retained_bytes(const NameKeyTable *table, size_t *out);
 
 
 void name_key_table_storage_census(const NameKeyTable *table, CettaStorageCensus *census);

@@ -1,7 +1,7 @@
 #include "petta_semantics.h"
-#include "tensor.h"
+#include "tensor_dense_v1.h"
 
-int cetta_tensor_compare(const CettaTensor *, const CettaTensor *) __attribute__((weak));
+int cetta_dense_tensor_v1_compare(const CettaDenseTensorV1 *, const CettaDenseTensorV1 *) __attribute__((weak));
 
 #include "space.h"
 #include "stats.h"
@@ -3367,7 +3367,9 @@ static int petta_compare_grounded_atoms(
             (uint64_t)(uintptr_t)left->ground.ptr,
             (uint64_t)(uintptr_t)right->ground.ptr);
     case GV_TENSOR:
-        return cetta_tensor_compare(left->ground.ptr, right->ground.ptr);
+        return cetta_dense_tensor_v1_compare(left->ground.ptr, right->ground.ptr);
+    case GV_STRUCTURAL:
+        return atom_structural_compare(left, right);
     case GV_SEAL:
         /* Seal objects order by their private identity key: the order is
          * consistent with identity equality and exposes no address. */
@@ -3808,6 +3810,34 @@ bool petta_semantics_lambda_body(
     return true;
 }
 
+bool petta_semantics_lambda_arity(
+        const Atom *atom, CettaExprLen *arity) {
+    if (arity)
+        *arity = 0u;
+    int64_t identity = 0;
+    if (!atom_petta_callable_identity(atom, &identity))
+        return false;
+    CettaExprLen count = 0u;
+    const Atom *body = atom;
+    for (;;) {
+        int64_t nested_identity = 0;
+        Atom *next = NULL;
+        if (!atom_petta_callable_identity(body, &nested_identity) ||
+            nested_identity != identity ||
+            !petta_semantics_lambda_body(body, &next))
+            break;
+        if (count == UINT64_MAX)
+            return false;
+        count++;
+        body = next;
+    }
+    if (count == 0u)
+        return false;
+    if (arity)
+        *arity = count;
+    return true;
+}
+
 bool petta_semantics_is_mm2_exec(SymbolId head) {
     const PeTTaSymbolIds *ids = petta_symbol_ids();
     return ids->table && head != SYMBOL_ID_NONE && head == ids->mm2_exec;
@@ -3835,8 +3865,8 @@ bool petta_semantics_closure_remaining(const Atom *atom,
         !petta_semantics_lambda_body(base, NULL))
         return false;
     CettaExprLen parameters = 0u;
-    for (Atom *body = base; petta_semantics_lambda_body(body, &body);)
-        parameters++;
+    if (!petta_semantics_lambda_arity(base, &parameters))
+        return false;
     if (parameters < bound->expr.len)
         return false;
     if (remaining)

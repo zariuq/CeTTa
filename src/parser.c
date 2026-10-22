@@ -1916,6 +1916,7 @@ static bool parser_render_grounded(FILE *out, Atom *atom) {
     case GV_BINDINGS:
     case GV_TENSOR:
     case GV_FOREIGN:
+    case GV_STRUCTURAL:
     case GV_SEAL:
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:

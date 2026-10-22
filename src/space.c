@@ -3967,6 +3967,7 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_STRUCTURAL:
         case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -4012,6 +4013,7 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_STRUCTURAL:
         case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -5561,6 +5563,7 @@ static void space_reset_moved_from(Space *s) {
     s->revision = 0;
     s->equation_revision = 0;
     s->declaration_revision = 0;
+    s->declares_subtypes = false;
     s->prefix_epoch = space_fresh_prefix_epoch();
     space_native_storage_init_empty(s, space_default_universe());
     space_match_backend_init(s);
@@ -5595,6 +5598,7 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->revision = 0;
     s->equation_revision = 0;
     s->declaration_revision = 0;
+    s->declares_subtypes = false;
     s->prefix_epoch = space_fresh_prefix_epoch();
     space_match_backend_init(s);
     space_attach_to_universe(s, s->native.universe);
@@ -6913,13 +6917,41 @@ typedef struct {
     bool failed;
 } SpaceEffectGraph;
 
+typedef struct {
+    SymbolId head;
+    CettaGsltQueryEffect effect;
+    bool occupied;
+} SpaceGeneratedEffectCacheEntry;
+
+enum { SPACE_GENERATED_EFFECT_CACHE_CAP = 256u };
+static _Thread_local SpaceGeneratedEffectCacheEntry
+    g_space_generated_effect_cache[SPACE_GENERATED_EFFECT_CACHE_CAP];
+static _Thread_local uint64_t g_space_generated_effect_table_instance;
+
 static CettaGsltQueryEffect space_generated_query_head_effect(
     SymbolId head) {
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (g_space_generated_effect_table_instance != instance) {
+        memset(g_space_generated_effect_cache, 0,
+               sizeof(g_space_generated_effect_cache));
+        g_space_generated_effect_table_instance = instance;
+    }
+    size_t slot = ((size_t)head * (size_t)UINT32_C(2654435761)) &
+        (SPACE_GENERATED_EFFECT_CACHE_CAP - 1u);
+    SpaceGeneratedEffectCacheEntry *cached =
+        &g_space_generated_effect_cache[slot];
+    if (cached->occupied && cached->head == head)
+        return cached->effect;
+    CettaGsltQueryEffect result = CETTA_GSLT_QUERY_EFFECT_PURE;
 #define SPACE_QUERY_EFFECT_HEAD(field, effect) \
-    if (head == g_builtin_syms.field) return (effect);
+    if (head == g_builtin_syms.field) { result = (effect); goto done; }
     CETTA_GSLT_QUERY_EFFECT_HEAD_ROWS(SPACE_QUERY_EFFECT_HEAD)
 #undef SPACE_QUERY_EFFECT_HEAD
-    return CETTA_GSLT_QUERY_EFFECT_PURE;
+done:
+    *cached = (SpaceGeneratedEffectCacheEntry){
+        .head = head, .effect = result, .occupied = true,
+    };
+    return result;
 }
 
 static bool space_generated_fold_control(
@@ -11112,6 +11144,10 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
         return atom_symbol_literal(a, "Tensor");
     case GV_FOREIGN:
         return atom_symbol_literal(a, "Foreign");
+    case GV_STRUCTURAL: {
+        const char *name = atom_structural_type_name(atom);
+        return name ? atom_symbol(a, name) : atom_undefined_type(a);
+    }
     case GV_SEAL: {
         /* Sealed, SealFacet or Key: the kind of authority, never its brand. */
         const char *name = atom_seal_type_name(atom);

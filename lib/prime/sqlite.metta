@@ -3,12 +3,18 @@
 
 ; SQL is caller-selected data. No schema/version/journal migration, cursors,
 ; row quotas or transaction locks escape the native call. Existing databases
-; retain their rowids and NULL/TEXT/numeric/BLOB values.
+; retain their rowids and NULL/TEXT/numeric/BLOB values. sqlite:observe reads
+; an existing database without changing it: it opens the file read-only and
+; runs one statement only when SQLite reports that it cannot write.
 (: sqlite:query (-> String String %Undefined% Number Expression))
+(: sqlite:observe (-> String String %Undefined% Number Expression))
 (: sqlite:transaction (-> String %Undefined% %Undefined% Number Expression))
 (: __cetta_lib_sqlite_query (-> Atom Atom Atom Atom Atom))
+(: __cetta_lib_sqlite_observe (-> Atom Atom Atom Atom Atom))
 (: __cetta_lib_sqlite_transaction (-> Atom Atom Atom Atom Atom))
 (= (sqlite:query $path $sql $parameters $busy-ms)
    (function (chain (eval (__cetta_lib_sqlite_query $path $sql $parameters $busy-ms)) $result (return $result)){$result}))
+(= (sqlite:observe $path $sql $parameters $busy-ms)
+   (function (chain (eval (__cetta_lib_sqlite_observe $path $sql $parameters $busy-ms)) $result (return $result)){$result}))
 (= (sqlite:transaction $path $mode $statements $busy-ms)
    (function (chain (eval (__cetta_lib_sqlite_transaction $path $mode $statements $busy-ms)) $result (return $result)){$result}))

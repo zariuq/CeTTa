@@ -88,6 +88,7 @@ tests/prime/conformance/type_judgments.metta	prime	metta		any	native	test-prime	
 tests/prime/conformance/typed_equality.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/unbounded_search.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/conformance/written_domains.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/data_atom_path_a.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/data_head_patterns.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/data_holding.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/demand/bubbles.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression

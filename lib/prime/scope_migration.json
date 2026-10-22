@@ -58,6 +58,14 @@
       "code_diagnostics": 0
     },
     {
+      "source": "embedding.metta",
+      "output": "embedding.metta",
+      "source_sha256": "88ca2af433ceed407aacf398abb5710536d7ac5b50482f1089971b431371138c",
+      "output_sha256": "63612564d7e6a7d90d3c61101c20ab9f6295d8d574f16517997b99d501604870",
+      "edits": 23,
+      "code_diagnostics": 0
+    },
+    {
       "source": "fs.metta",
       "output": "fs.metta",
       "source_sha256": "3333204f956e968d6562941ce6967ef0cb0d39de7a9ebf39826bc109df82ecf9",
@@ -76,9 +84,17 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "91bda8b0c82927d145e8a1b785d998168d49903223f71dc36acaa0506fc47f8f",
-      "output_sha256": "17ae2479c518979abe480bbd23af95d9ef89386eebe149c5998e0602c6ee8edf",
+      "source_sha256": "3b619d3a287af7b372f3263b8e1071622038febaba6fed3be8da5b553b7b57b7",
+      "output_sha256": "b259b9f3311082363d8fca093da582e16b2499f90254e5459e7f265af9cb6879",
       "edits": 4,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "gslt_ordered_decision.metta",
+      "output": "gslt_ordered_decision.metta",
+      "source_sha256": "ac318df06a90e91c23868c091914331a026fa26a76ac21504a2a4ad89a2970b4",
+      "output_sha256": "4039fc7b566c6927088b6fe096bd8b32ea780985a4956d5f49587fe951f4d900",
+      "edits": 11,
       "code_diagnostics": 0
     },
     {
@@ -140,8 +156,8 @@
     {
       "source": "io.metta",
       "output": "io.metta",
-      "source_sha256": "7ddf9f8a83d3b20d2a5f97a057af97207c4478727ca7d6fd134d23d4b270a111",
-      "output_sha256": "c504eb08aa3f58a7960de3dc4abce9c4065d81b005c873e0bcb054d89498648e",
+      "source_sha256": "4ce6605e044a168802630ee5ff9e5f8c7b0f03b5bc58790e108bdd38cbfab544",
+      "output_sha256": "c542efa88dea1bca3e42ce13513e8b81ea60eb8dc32c24466c57800e53b6e11b",
       "edits": 15,
       "code_diagnostics": 0
     },
@@ -284,9 +300,9 @@
     {
       "source": "list.metta",
       "output": "list.metta",
-      "source_sha256": "7d3aa69d85a05f5e19985154fc2e4d8f75d1425d4c1a2013cd632d6bfbf27ca6",
-      "output_sha256": "ee496ef7607de06f9fb48e00cb64eb6f025177c92ae91a31c4897d1ca401d683",
-      "edits": 45,
+      "source_sha256": "9b30f68ee6c1bd9a56cb8a4b73e9b0ae3dcbcb51999889ab480d0fbbc8c8767d",
+      "output_sha256": "b13671ff403efe53103493b2669bfde39f11c5e05502f1dffe1c001c6db48f56",
+      "edits": 55,
       "code_diagnostics": 0
     },
     {
@@ -378,6 +394,22 @@
       "code_diagnostics": 0
     },
     {
+      "source": "ordered_module_delivery_v1.metta",
+      "output": "ordered_module_delivery_v1.metta",
+      "source_sha256": "1fd43e66bc154031e9222ff26c8f7bd4f2857e6df393decb697a29185c01677f",
+      "output_sha256": "c28bdb0a15619359280c32ed11f7bc570f5e462b9259814df0706fa2fba4ebc7",
+      "edits": 11,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "ordered_module_fused_v1.metta",
+      "output": "ordered_module_fused_v1.metta",
+      "source_sha256": "5d6db9302e62acfd05ed0f2ac879925d2f6a96b3e909030b590adb007faceb45",
+      "output_sha256": "25b45140603a61ccaf191b3a08b16bf36d359f5477489f0dd04e0d9ee3889d2d",
+      "edits": 61,
+      "code_diagnostics": 0
+    },
+    {
       "source": "pat/clause.metta",
       "output": "pat/clause.metta",
       "source_sha256": "e92fcb8b1a481d8ae9a871abd6733e7ef6ca014ddf97c77f5fcf18f57562edbc",
@@ -399,6 +431,14 @@
       "source_sha256": "82a3facc5ee24ae2f2c66a8463ccf222a5a4e476f289c0a2320aeefa87874ac0",
       "output_sha256": "825abc79310ac4f285fa6a782a29419984c0a4dc3ca3a39ba74f080901d0f32f",
       "edits": 52,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "postings.metta",
+      "output": "postings.metta",
+      "source_sha256": "f5b6166c09adf9bd05ec229a4fe0db9c95d644cba125e697b1260a6691dee7ed",
+      "output_sha256": "aaf1beb8e6a2ffb45036d2f61341c21d7759b51bb47c8d30fdb073f90bd34ee7",
+      "edits": 44,
       "code_diagnostics": 0
     },
     {
@@ -460,9 +500,9 @@
     {
       "source": "sqlite.metta",
       "output": "sqlite.metta",
-      "source_sha256": "84d1900833b66450d822aaf7ed7a5e3991bcde82e586b221a539694999f8ab85",
-      "output_sha256": "a12178105e91975d83ff2804b2d3fa0b36b1878fe16c4faa18df44d3d7fc095f",
-      "edits": 2,
+      "source_sha256": "5fa16ce85a38432cb58e2652288997406b3a6adc011a68857251a4fcf50b188d",
+      "output_sha256": "bc53c29af9f4cc4e00916fb6aa1ee8c3e8a5aa3a36b1e7d62c4098ec44d0c10a",
+      "edits": 3,
       "code_diagnostics": 0
     },
     {
@@ -487,6 +527,14 @@
       "source_sha256": "2e089e8e8729956f9ef016cb9e508eca1cc0dd330825e377e93ee71d83edad2a",
       "output_sha256": "aed728e015eb1d0f013263bbb19cd1715e13b628b3a7d7b200d35db6287e8c66",
       "edits": 19,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "tensor.metta",
+      "output": "tensor.metta",
+      "source_sha256": "4214ce0b315c7e7f4fe699c43609103ecf59563554db90dba62eec462d7f1a37",
+      "output_sha256": "9ff45540681718322365bc9feaa7b0fa9e3b4b40a9008e32b719f1b40102246c",
+      "edits": 16,
       "code_diagnostics": 0
     },
     {

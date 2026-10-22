@@ -400,6 +400,13 @@ void eval_c_stack_boundary_capture(CettaEvalCStackBoundary *boundary);
 
 /* ── Evaluation (public API) ───────────────────────────────────────────── */
 
+struct CettaPreparedPureProgram;
+/* Library consumers of already evaluated values share the ordinary closed
+ * call's dialect, purity, observer and source-currency admission. NULL means
+ * run the authored consumer; it never means the callback returned no answer. */
+struct CettaPreparedPureProgram *eval_prepare_pure_value_call(
+    Space *space, Arena *owner, Atom *call);
+
 /* Each entry owns its mutable query banks and compiled scratch. Reentrant
  * entry suspends that owner; returning restores it. Newly appended structural
  * results are published in `a` before the invocation's storage is released.

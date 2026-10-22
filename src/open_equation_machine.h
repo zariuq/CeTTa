@@ -141,6 +141,22 @@ bool cetta_open_equation_term_supported(Atom *term);
 CettaOpenEquationProgram *cetta_open_equation_program_compile(
     struct PettaProgram *petta, Space *space, SymbolId head, uint32_t arity,
     const CettaOpenEquationHost *host, const char **reason_out);
+/* Compile an executable program or retain a dependency-complete certificate
+ * for a stable refusal. A transient capacity/concurrency failure still
+ * returns NULL. The certificate can be refreshed like a program, but must
+ * never be executed unless `_admitted` is true. */
+CettaOpenEquationProgram *cetta_open_equation_program_compile_certificate(
+    struct PettaProgram *petta, Space *space, SymbolId head, uint32_t arity,
+    const CettaOpenEquationHost *host, const char **reason_out);
+/* A body over distinct value parameters. The caller establishes its code
+ * interpretation; this compiler owns a copy and uses the same local-relation
+ * path as ordinary controls. No equation is added to a Space. */
+CettaOpenEquationProgram *cetta_open_equation_program_compile_body(
+    struct PettaProgram *petta, Space *space, Atom *body,
+    Atom *const *parameters, uint32_t arity,
+    const CettaOpenEquationHost *host, const char **reason_out);
+bool cetta_open_equation_program_admitted(
+    const CettaOpenEquationProgram *program);
 /* Drop the compiler's reference; each open cursor holds its own. */
 void cetta_open_equation_program_retain(CettaOpenEquationProgram *program);
 void cetta_open_equation_program_release(CettaOpenEquationProgram *program);
@@ -425,6 +441,20 @@ typedef struct {
      * guards kept. It comes retained just like current's body entry. */
     CettaOpenEquationProgram *(*current_ready)(void *context, Space *space,
                                                SymbolId head, uint32_t arity);
+    /* A privately tagged lexical callable, compiled over one or two value
+     * parameters into an opaque determinate pure plan. The cursor owns the
+     * plan and its source syntax together; a refusal leaves canonical dynamic
+     * application authoritative. */
+    void *(*prepare_pure_callable)(void *context, Space *space, Arena *owner,
+                                   Atom *callable, uint32_t arity);
+    bool (*execute_pure_callable)(void *context, void *prepared, Arena *arena,
+                                  Atom *const *arguments, uint32_t arity,
+                                  Atom **result_out);
+    void (*release_pure_callable)(void *context, void *prepared);
+    /* A lexical body with choices or effects, compiled into this same
+     * continuation machine. Comes retained; NULL declines before execution. */
+    CettaOpenEquationProgram *(*compile_callable)(void *context, Space *space,
+                                                 Atom *callable, uint32_t arity);
     /* The selected dialect treats a still-unbound evaluated head as data.
      * This says nothing about a later interpretation after binding. */
     bool open_head_is_data;
