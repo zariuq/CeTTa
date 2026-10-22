@@ -115,7 +115,7 @@ int main(void) {
               atom_var_with_id(&arena, "anotherSpelling", variable->var_id)),
           "exact variable keys retain their spelling");
     CHECK(!atom_data_identical(variable,
-              atom_var_with_id(&arena, "exactVariable", variable->var_id + 1u)),
+              atom_var_with_id(&arena, "exactVariable", fresh_var_id())),
           "equal printed variables do not erase variable identity");
     Atom *named = atom_var_with_name_key(&arena, small, variable->var_id);
     CHECK(atom_data_identical(named, atom_deep_copy(&arena, named)),

@@ -58,6 +58,16 @@ def check_default(binary):
         if (run.returncode, run.stdout, run.stderr) != (0, expected, ''):
             raise ValueError(('default contract changed', language,
                               run.returncode, run.stdout, run.stderr))
+    # The release's two-argument lambda map is adapted to the native binder map.
+    # Pin its positive, empty, impossible and duplicate-occurrence observations.
+    source = ROOT / 'tests/petta/language_versions/combinatorics_contract.metta'
+    expected = source.with_suffix('.expected').read_text()
+    for language in ('petta', 'petta@1.0.6'):
+        run = subprocess.run([str(binary), '--lang', language, str(source)],
+                             capture_output=True, text=True, timeout=30)
+        if (run.returncode, run.stdout, run.stderr) != (0, expected, ''):
+            raise ValueError(('combinatorics adaptation changed', language,
+                              run.returncode, run.stdout, run.stderr))
 
 
 def main():

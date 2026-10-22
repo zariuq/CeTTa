@@ -1,0 +1,1 @@
+(PriorityHeapNative (heap (t second 1 ((t last 4 ()) (t first 1 ((t low 3 ()))))) 4) 0 4 1 second 1 first 3 low 4 last 0 ())

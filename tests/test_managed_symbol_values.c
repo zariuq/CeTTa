@@ -26,8 +26,8 @@ static void *register_worker(void *result) {
 }
 
 int main(void) {
-    _Static_assert(sizeof(void *) != 8 || sizeof(Atom) == 56,
-                   "Preserve the existing 64-bit Atom layout");
+    _Static_assert(sizeof(void *) != 8 || sizeof(Atom) == 64,
+                   "Preserve the growable-identity 64-bit Atom layout");
     SymbolTable table;
     symbol_table_init(&table);
     symbol_table_init_builtins(&table, &g_builtin_syms);

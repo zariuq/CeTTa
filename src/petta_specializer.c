@@ -167,7 +167,7 @@ static _Thread_local PettaSpecializationRecords
     g_petta_specializations = {0};
 
 enum {
-    PETTA_CALLABLE_CACHE_SLOTS = 256,
+    PETTA_CALLABLE_CACHE_SLOTS = 4096,
     PETTA_NAMED_ARITY_CACHE_SLOTS = 256,
     PETTA_RELATION_RELEVANCE_CACHE_SLOTS = 256,
     PETTA_QUERY_FOREST_CACHE_SLOTS = 1024,
@@ -3125,9 +3125,12 @@ static Atom *petta_specializer_keep_dispatches(
     PeTTaForm form = head_id == SYMBOL_ID_NONE
         ? PETTA_FORM_NONE : petta_semantics_form(head_id);
     CettaExprLen len = atom->expr.len;
+    /* A closure's captured tuple holds values. Its first slot is not an
+     * executable head, even when specialization selects a callable there. */
     if (head_id == g_builtin_syms.quote ||
         head_id == g_builtin_syms.return_text ||
-        form == PETTA_FORM_PREDICATE)
+        form == PETTA_FORM_PREDICATE ||
+        petta_semantics_runtime_callable_value(atom))
         return atom;
     if (!cetta_expr_len_mul_fits_size(len, sizeof(Atom *))) {
         context->capacity = true;

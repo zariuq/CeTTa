@@ -25,6 +25,9 @@
 #include "library_proc.h"
 #include "proc_child.h"
 #include "library_fs.h"
+#include "library_postings.h"
+#include "library_tensor.h"
+#include "library_group.h"
 #include "library_re.h"
 #include "library_proc_run.h"
 #include "library_sqlite.h"
@@ -152,6 +155,8 @@ enum {
     CETTA_LIBRARY_SQLITE = 1u << 20,
     CETTA_LIBRARY_SIWC = 1u << 21,
     CETTA_LIBRARY_RE = 1u << 22,
+    CETTA_LIBRARY_POSTINGS = 1u << 23,
+    CETTA_LIBRARY_TENSOR = 1u << 24,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -173,6 +178,8 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"fs", CETTA_LIBRARY_FS, NULL},
     {"str", CETTA_LIBRARY_STR, NULL},
     {"re", CETTA_LIBRARY_RE, NULL},
+    {"postings", CETTA_LIBRARY_POSTINGS, NULL},
+    {"tensor", CETTA_LIBRARY_TENSOR, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -12236,6 +12243,11 @@ static Atom *cetta_library_dispatch_native_value(
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out) {
+    if (ctx && cetta_group_sum_call(a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_TENSOR) &&
+        cetta_tensor_call(ctx, space, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_POSTINGS) &&
+        cetta_postings_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_RE) &&
         cetta_re_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_FS) &&

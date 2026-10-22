@@ -340,6 +340,38 @@ int main(void) {
     free(ids);
     ids = NULL;
 
+    {
+        const size_t widths[] = {65535u, 65536u, 100000u};
+        for (size_t w = 0u; w < sizeof(widths) / sizeof(*widths); w++) {
+            size_t width = widths[w], bytes = width * 2u + 2u;
+            uint8_t *document = malloc(bytes);
+            expect(&counts, document != NULL, "wide expression allocation");
+            if (!document)
+                break;
+            document[0] = '(';
+            for (size_t i = 0u; i < width; i++) {
+                document[1u + i * 2u] = 'v';
+                document[2u + i * 2u] = ' ';
+            }
+            document[bytes - 1u] = ')';
+            len = parse(reader, &universe, document, bytes, &ids, &receipt,
+                        error, sizeof(error));
+            expect(&counts,
+                   len == 1 && ids && tu_arity(&universe, ids[0]) == width &&
+                       tu_child(&universe, ids[0], 0u) ==
+                           tu_child(&universe, ids[0], width - 1u),
+                   "wide expressions retain every occurrence across the header summary boundary");
+            free(ids);
+            ids = NULL;
+            document[bytes - 1u] = ']';
+            len = parse(reader, &universe, document, bytes, &ids, &receipt,
+                        error, sizeof(error));
+            expect(&counts, len < 0 && !ids,
+                   "malformed wide expression does not publish a partial form");
+            free(document);
+        }
+    }
+
     petta_compiled_reader_v1_free(reader);
     term_universe_free(&universe);
     arena_free(&persistent);

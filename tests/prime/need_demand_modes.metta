@@ -170,12 +170,13 @@
 (= (prime-need:read-service-id $x) $x)
 !(prime-need:read-service-id (Pair (superpose (1 2)) (superpose (3 4))))
 
-; Pattern selection exposes only the retained fields it needs. Earned
-; callable syntax stays a value until explicit activation.
+; Constructor operands acquire their values before cons-atom builds Data.
+; Pattern selection preserves Data already held in those values.
 !(let $box (cons-atom Box ((+ 1 2))) (let (Box $field) $box (Field $field)))
 !(let $box (cons-atom Box ((+ 1 2))) (case $box (((Box $field) (Field $field)))))
 !(let $box (cons-atom Box ((+ 1 2))) (unify $box (Box $field) (Field $field) NotBox))
 !(let $box (cons-atom Box ((+ 1 2))) (case $box (((Box $field) (Field (eval $field))))))
+!(let $box (cons-atom Box ((cons-atom + (1 2)))) (let (Box $field) $box (Field $field)))
 (= (prime-need:pattern-store $tag $value) (add-atom &self (NeedPattern $tag $value)))
 (= (prime-need:pattern-box $field) (Box $field))
 (= (prime-need:pattern-tick $label $value) (chain (println! $label) $_ $value))

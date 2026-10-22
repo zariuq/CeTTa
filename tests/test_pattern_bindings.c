@@ -481,10 +481,10 @@ static void frame_inventory_shared_readings(void) {
     assert(!f->bound_value_count && !g->bound_value_count);
     /* Registration sorts sparse source coordinates. Both contexts retain
      * their own authoritative schema and values. */
-    assert(bindings_frame_slot_source_id(f, 0u) == var_base_id(a->var_id));
-    assert(bindings_frame_slot_source_id(f, 1u) == var_base_id(b->var_id));
-    assert(bindings_frame_slot_source_id(g, 0u) == var_base_id(a->var_id));
-    assert(bindings_frame_slot_source_id(g, 1u) == var_base_id(b->var_id));
+    assert(var_id_eq(bindings_frame_slot_source_id(f, 0u), var_source_id(a->var_id)));
+    assert(var_id_eq(bindings_frame_slot_source_id(f, 1u), var_source_id(b->var_id)));
+    assert(var_id_eq(bindings_frame_slot_source_id(g, 0u), var_source_id(a->var_id)));
+    assert(var_id_eq(bindings_frame_slot_source_id(g, 1u), var_source_id(b->var_id)));
     assert(bindings_add_id(&env, var_epoch_id(a->var_id, first), atom_symbol_current_id(a),
                            atom_int(&source, 1)));
     assert(bindings_add_id(&env, var_epoch_id(b->var_id, first), atom_symbol_current_id(b),
@@ -538,8 +538,8 @@ static void frame_inventory_identity_filtering(void) {
     const BindingsFrameIndexEntry *g = bindings_frame_index_find_frame_const(
         env.frame_index, second);
     assert(f && g && f->slot_len == 1u && g->slot_len == 1u);
-    assert(bindings_frame_slot_source_id(f, 0u) == var_base_id(a->var_id));
-    assert(bindings_frame_slot_source_id(g, 0u) == var_base_id(b->var_id));
+    assert(var_id_eq(bindings_frame_slot_source_id(f, 0u), var_source_id(a->var_id)));
+    assert(var_id_eq(bindings_frame_slot_source_id(g, 0u), var_source_id(b->var_id)));
     assert(!bindings_frame_index_find_frame_const(
         env.frame_index, var_epoch_suffix(private->var_id)));
     bindings_free(&env);
@@ -553,8 +553,8 @@ static void frame_inventory_identity_filtering(void) {
         &env, &arena));
     f = bindings_frame_index_find_frame_const(env.frame_index, first);
     assert(f && env.frame_index->len == 1u && f->slot_len == 2u);
-    assert(bindings_frame_slot_source_id(f, 0u) == var_base_id(a->var_id));
-    assert(bindings_frame_slot_source_id(f, 1u) == var_base_id(b->var_id));
+    assert(var_id_eq(bindings_frame_slot_source_id(f, 0u), var_source_id(a->var_id)));
+    assert(var_id_eq(bindings_frame_slot_source_id(f, 1u), var_source_id(b->var_id)));
     bindings_free(&env);
     arena_free(&arena);
 }
@@ -589,8 +589,8 @@ static void frame_inventory_raw_cycle_refusal(void) {
     const BindingsFrameIndexEntry *f = bindings_frame_index_find_frame_const(
         env.frame_index, epoch);
     assert(f && f->slot_len == 2u && env.len == before.len + 1u);
-    assert(bindings_frame_slot_source_id(f, 0u) == var_base_id(a->var_id));
-    assert(bindings_frame_slot_source_id(f, 1u) == var_base_id(b->var_id));
+    assert(var_id_eq(bindings_frame_slot_source_id(f, 0u), var_source_id(a->var_id)));
+    assert(var_id_eq(bindings_frame_slot_source_id(f, 1u), var_source_id(b->var_id)));
     bindings_free(&before);
     bindings_free(&env);
     arena_free(&arena);
@@ -618,10 +618,10 @@ static void frame_inventory_growth_and_cleanup(void) {
     const BindingsFrameIndexEntry *frame = bindings_frame_index_find_frame_const(
         env.frame_index, epoch);
     assert(frame && frame->slot_len == 65u && frame->schema->len == 65u);
-    assert(bindings_frame_slot_source_id(frame, 0u) == var_base_id(common->var_id));
+    assert(var_id_eq(bindings_frame_slot_source_id(frame, 0u), var_source_id(common->var_id)));
     for (unsigned i = 0u; i < 64u; ++i)
-        assert(bindings_frame_slot_source_id(frame, i + 1u) ==
-                 var_base_id(variables[i]->var_id));
+        assert(var_id_eq(bindings_frame_slot_source_id(frame, i + 1u),
+                 var_source_id(variables[i]->var_id)));
     bindings_free(&env);
 
     /* The rightmost rows grow the work stack, expression memo, variable

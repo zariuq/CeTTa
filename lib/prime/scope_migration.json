@@ -58,6 +58,14 @@
       "code_diagnostics": 0
     },
     {
+      "source": "embedding.metta",
+      "output": "embedding.metta",
+      "source_sha256": "88ca2af433ceed407aacf398abb5710536d7ac5b50482f1089971b431371138c",
+      "output_sha256": "63612564d7e6a7d90d3c61101c20ab9f6295d8d574f16517997b99d501604870",
+      "edits": 23,
+      "code_diagnostics": 0
+    },
+    {
       "source": "fs.metta",
       "output": "fs.metta",
       "source_sha256": "3333204f956e968d6562941ce6967ef0cb0d39de7a9ebf39826bc109df82ecf9",
@@ -76,8 +84,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "fe2766e13e8f904a4b8befd735617d41575a167de1bec900af20843dbca85872",
-      "output_sha256": "9cb5d43b9c9b5160265087fb938a231af4820282fad0c36756e6d2dc63358d49",
+      "source_sha256": "6f07f5da066face9a59951dd3bc1a17c953e0cd96816b21dc480b3406b179c65",
+      "output_sha256": "e2c180120b24bd4ebafa7f8e8cbefa905a379d921f18041d73c4f06ac2c9e4e9",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -284,9 +292,9 @@
     {
       "source": "list.metta",
       "output": "list.metta",
-      "source_sha256": "7d3aa69d85a05f5e19985154fc2e4d8f75d1425d4c1a2013cd632d6bfbf27ca6",
-      "output_sha256": "ee496ef7607de06f9fb48e00cb64eb6f025177c92ae91a31c4897d1ca401d683",
-      "edits": 45,
+      "source_sha256": "9b30f68ee6c1bd9a56cb8a4b73e9b0ae3dcbcb51999889ab480d0fbbc8c8767d",
+      "output_sha256": "b13671ff403efe53103493b2669bfde39f11c5e05502f1dffe1c001c6db48f56",
+      "edits": 55,
       "code_diagnostics": 0
     },
     {
@@ -402,6 +410,14 @@
       "code_diagnostics": 0
     },
     {
+      "source": "postings.metta",
+      "output": "postings.metta",
+      "source_sha256": "99537c85870abdc9067a7f4ceaa4fdd8e9672cd023df7d81df8ced20cce93b66",
+      "output_sha256": "3893bfebe713d77dc31604dbea7f79acf6877b1b611318eade7504db29f31eb3",
+      "edits": 43,
+      "code_diagnostics": 0
+    },
+    {
       "source": "prime_metadata.metta",
       "output": "prime_metadata.metta",
       "source_sha256": "8b7e30d90b55bb8f25a64ed56c7efd6c214a1037a03111ce3cb2bffd16799f89",
@@ -487,6 +503,14 @@
       "source_sha256": "2e089e8e8729956f9ef016cb9e508eca1cc0dd330825e377e93ee71d83edad2a",
       "output_sha256": "aed728e015eb1d0f013263bbb19cd1715e13b628b3a7d7b200d35db6287e8c66",
       "edits": 19,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "tensor.metta",
+      "output": "tensor.metta",
+      "source_sha256": "4214ce0b315c7e7f4fe699c43609103ecf59563554db90dba62eec462d7f1a37",
+      "output_sha256": "9ff45540681718322365bc9feaa7b0fa9e3b4b40a9008e32b719f1b40102246c",
+      "edits": 16,
       "code_diagnostics": 0
     },
     {

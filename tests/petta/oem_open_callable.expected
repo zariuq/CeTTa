@@ -1,0 +1,13 @@
+done
+(Pair done done)
+(Both (Pair first first) (Pair second second))
+true
+((Chosen $V0 right))
+(equal)
+()
+(first second third)
+6
+15
+held
+(Pair true false)
+(Pair false true)

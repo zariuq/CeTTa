@@ -35,11 +35,13 @@ Explicit interpretation of held syntax in the current space:
 
   (metta BODY %Undefined% &self) -> (eval BODY)
   (metta BODY %Undefined% (context-space)) -> (eval BODY)
+  (metta BODY %Undefined% SPACE_VARIABLE) -> (evalc BODY SPACE_VARIABLE)
 
 This is HE's full interpreter, not its one-step eval.  PeTTa's eval
 activates the held body after its pattern bindings have been installed.
 The zero-argument context-space instruction selects that same current
-invocation context. Other spaces and expected types are not covered.
+invocation context. An explicit space variable or named space uses evalc.
+Computed space expressions and other expected types are not covered.
 
 HE's one step of a call or a variable where the result is computed next
 (a binding's value, a body, a branch, a scrutinee):
@@ -91,6 +93,9 @@ are PeTTa's map-atom and foldl-atom (the PeTTa spelling):
   (function (eval (_minimal-map-atom L V T))) -> (map-atom L V T)
   (function (chain (context-space) $s
      (eval (_minimal-foldl-atom L I A X O $s)))) -> (foldl-atom L I A X O)
+Bare library identifiers in shared library sources declare standard-library
+dependencies. PeTTa spells these explicitly as (library NAME); paths retain
+their existing resolution and user programs are not rewritten by this tool.
 
 The output file is generated: it carries no comments, and a gate compares
 it with this transformation of its source.
@@ -99,6 +104,7 @@ it with this transformation of its source.
 from __future__ import annotations
 
 import sys
+import re
 from pathlib import Path
 
 HE_REALIZATIONS = "../langdef/he/generated/"
@@ -197,11 +203,27 @@ def is_return_of(form, var) -> bool:
             and form[1] == var)
 
 
-def unwrap_function(form):
+def unwrap_function(form, handler=False):
     """The two sealed-result wrapper shapes, or None."""
     if not (isinstance(form, list) and len(form) == 2 and form[0] == "function"):
         return None
     case = form[1]
+    if (handler and isinstance(case, list) and len(case) == 2 and case[0] == Symbol("return")):
+        return case[1] if not unsealed_return(case[1]) else None
+    if (isinstance(case, list) and len(case) == 3 and case[0] == Symbol("let*")
+            and isinstance(case[1], list)):
+        body = case[2]
+        for binding in reversed(case[1]):
+            if not (isinstance(binding, list) and len(binding) == 2
+                    and is_variable(binding[0]) and not unsealed_return(binding[1])):
+                return None
+            body = [Symbol("let"), binding[0], binding[1], body]
+        return unwrap_function([Symbol("function"), body], handler=handler)
+    if (isinstance(case, list) and len(case) == 4 and case[0] == Symbol("let")
+            and is_variable(case[1]) and not unsealed_return(case[2])):
+        body = unwrap_function([Symbol("function"), case[3]], handler=handler)
+        return ([Symbol("let"), case[1], case[2], body]
+                if body is not None else None)
     if not (isinstance(case, list) and len(case) == 3 and case[0] == "case"):
         return None
     call, branches = case[1], case[2]
@@ -216,14 +238,15 @@ def unwrap_function(form):
         if not (isinstance(branch, list) and len(branch) == 2):
             return None
         pattern, body = branch
-        if not (isinstance(body, list) and len(body) == 2 and body[0] == "return"):
+        unwrapped = unwrap_function([Symbol("function"), body], handler=True)
+        if unwrapped is None:
             return None
-        new_branches.append([pattern, body[1]])
+        new_branches.append([pattern, unwrapped])
     # HE Error values are ordinary case scrutinees. PeTTa raises them until
     # an explicit catch; preserve the scope of this authored error handler.
     if any(isinstance(branch[0], list) and branch[0]
            and branch[0][0] == Symbol("Error") for branch in new_branches):
-        return [Symbol("case"), [Symbol("catch"), call], new_branches]
+        call = [Symbol("catch"), call]
     if len(new_branches) == 1:
         pattern, body = new_branches[0]
         return [Symbol("let"), pattern, call, body]
@@ -336,6 +359,9 @@ def realization_import(form):
             and isinstance(form[2], Symbol) and form[2].startswith(HE_REALIZATIONS)):
         return [form[0], form[1],
                 Symbol(PETTA_REALIZATIONS + form[2][len(HE_REALIZATIONS):])]
+    if (isinstance(form, list) and len(form)==3 and form[0]==Symbol("import!")
+            and isinstance(form[2],Symbol) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',form[2])):
+        return [form[0],form[1],[Symbol("library"),form[2]]]
     return None
 
 
@@ -417,6 +443,13 @@ def transform(form, dialect: str):
                              and form[3][0] == Symbol("context-space")
                              and isinstance(form[3][0], Symbol)))):
                 return [Symbol("eval"), transform(form[1], dialect)]
+            if (len(form) == 4 and form[0] == Symbol("metta")
+                    and isinstance(form[0], Symbol)
+                    and form[2] == Symbol("%Undefined%")
+                    and isinstance(form[2], Symbol)
+                    and isinstance(form[3], Symbol)
+                    and form[3].startswith(("$", "&"))):
+                return [Symbol("evalc"), transform(form[1], dialect), transform(form[3], dialect)]
             if len(form) == 5 and form[0] == "unify":
                 left, right, then, otherwise = (transform(item, dialect)
                                                 for item in form[1:])

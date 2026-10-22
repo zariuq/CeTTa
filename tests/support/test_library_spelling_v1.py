@@ -25,6 +25,22 @@ def declarations(source, dialect="petta"):
 
 
 class HandoffDeclarations(unittest.TestCase):
+    def test_standard_dependencies_are_explicit_only_in_petta(self):
+        self.assertEqual(spell('(import! &self tensor)'), '(import! &self (library tensor))')
+        self.assertEqual(spell('(import! &self tensor)', 'prime'), '(import! &self tensor)')
+        self.assertEqual(spell('(import! &self ./custom.metta)'), '(import! &self ./custom.metta)')
+    def test_fallback_value_is_computed_before_the_handler_returns(self):
+        source='(function (case (N $x) (((Box $v) (return $v)) ($other (let $r (fallback $x) (return $r))))))'
+        self.assertEqual(spell(source), '(case (N $x) (((Box $v) $v) ($other (let $r (fallback $x) $r))))')
+        escaping=source.replace('(fallback $x)', '(return early)')
+        self.assertIn('(function',spell(escaping))
+        self.assertEqual(spell('(function (return (application x)))'), '(function (return (application x)))')
+    def test_case_result_after_value_bindings_runs_in_petta(self):
+        source = '(function (let* (($a (prepare $x)) ($b (use $a))) (case (N $b) (((Box $v) (return (Box $v))) ($other (return $other))))))'
+        self.assertEqual(spell(source),
+            '(let $a (prepare $x) (let $b (use $a) (case (N $b) (((Box $v) (Box $v)) ($other $other)))))')
+        escaping = source.replace('(prepare $x)', '(return stop)')
+        self.assertIn('(function', spell(escaping))
     def test_structural_projection_runs_and_keeps_its_forcing_boundary(self):
         source = ("(: F (-> %Undefined% Atom))\n"
                   "(= (F $value) (function (case $value (((Box $field) (return $field))))))")
@@ -157,6 +173,13 @@ class HeldBodySpelling(unittest.TestCase):
         self.assertEqual(spell("(metta $body %Undefined% (context-space))"),
                          "(eval $body)")
 
+    def test_explicit_space_interpretation(self):
+        for space in ("$scope", "&library"):
+            self.assertEqual(spell(f"(metta $body %Undefined% {space})"),
+                             f"(evalc $body {space})")
+            self.assertEqual(spell(f"(metta $body %Undefined% {space})", "prime"),
+                             f"(metta $body %Undefined% {space})")
+
     def test_activation_survives_computed_positions(self):
         for source, expected in (
             ("(let $x 1 (metta $body %Undefined% &self))",
@@ -180,7 +203,6 @@ class HeldBodySpelling(unittest.TestCase):
     def test_other_contexts_are_not_claimed(self):
         for source in (
             "(metta $body Atom &self)",
-            "(metta $body %Undefined% $space)",
             "(metta $body Atom (context-space))",
             "(metta $body %Undefined% (context-space $space))",
             '(metta $body %Undefined% ("context-space"))',

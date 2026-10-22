@@ -267,6 +267,33 @@ class CorpusManifestTests(unittest.TestCase):
             diagnostic.replace("library_path/1", "other/1"),
         )
 
+    def test_exact_leading_optional_janus_failure_is_transport_noise(
+        self,
+    ) -> None:
+        diagnostic = (
+            "ERROR: /opt/swipl/library/ext/swipy/janus.pl:116:\n"
+            "ERROR:    /opt/swipl/library/ext/swipy/janus.pl:116: "
+            "Initialization goal raised exception:\n"
+            "ERROR:    open_shared_object/3: libpython3.12.so.1.0: "
+            "cannot open shared object file: No such file or directory\n"
+        )
+        self.assertEqual(
+            MANIFEST.normalize_oracle_stderr(
+                diagnostic + "real error\n", self.root
+            ),
+            "real error\n",
+        )
+        self.assertEqual(
+            MANIFEST.normalize_oracle_stderr(
+                "real error\n" + diagnostic, self.root
+            ),
+            "real error\n" + diagnostic,
+        )
+        altered = diagnostic.replace("open_shared_object/3", "load/1")
+        self.assertEqual(
+            MANIFEST.normalize_oracle_stderr(altered, self.root), altered
+        )
+
     def test_valid_manifest_verifies(self) -> None:
         self.verify()
 

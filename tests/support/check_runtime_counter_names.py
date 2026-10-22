@@ -48,8 +48,8 @@ def table_names(source: str) -> list[str]:
 
 
 def main() -> int:
-    positions = enum_positions((ROOT / "src/stats.h").read_text())
-    names = table_names((ROOT / "src/stats.c").read_text())
+    positions = enum_positions((ROOT / "src/generated/cetta_runtime_counters.generated.h").read_text())
+    names = table_names((ROOT / "src/generated/cetta_runtime_counter_names.generated.h").read_text())
     errors = []
     if sorted(positions) != list(range(len(positions))):
         errors.append("enumerators are not dense from zero")

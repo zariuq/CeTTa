@@ -1,5 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
-#include "tensor.h"
+#include "tensor_dense_v1.h"
 #include "tests/test_runtime_stats_stubs.h"
 #include <inttypes.h>
 #include <math.h>
@@ -18,9 +18,9 @@ static double now(void) {
     if (clock_gettime(CLOCK_MONOTONIC, &t)) abort();
     return t.tv_sec + t.tv_nsec*1e-9;
 }
-static void require(CettaTensorStatus status) {
-    if (status != CETTA_TENSOR_OK) {
-        fprintf(stderr, "tensor benchmark: %s\n", cetta_tensor_status_name(status)); exit(1);
+static void require(CettaDenseTensorV1Status status) {
+    if (status != CETTA_DENSE_TENSOR_V1_OK) {
+        fprintf(stderr, "tensor benchmark: %s\n", cetta_dense_tensor_v1_status_name(status)); exit(1);
     }
 }
 static size_t number(const char *text) {
@@ -38,46 +38,46 @@ int main(int argc, char **argv) {
     double *data = malloc(n*d*sizeof(double)), *q = malloc(d*sizeof(double));
     if (!data || !q) return 1;
     for (size_t i=0;i<n*d;++i) data[i]=draw();
-    size_t shape[]={n,d}; CettaTensor *wide=NULL, *compact=NULL, *certificate=NULL;
-    require(cetta_tensor_new(CETTA_TENSOR_F64,shape,2,data,n*d*sizeof(double),&wide));
+    size_t shape[]={n,d}; CettaDenseTensorV1 *wide=NULL, *compact=NULL, *certificate=NULL;
+    require(cetta_dense_tensor_v1_new(CETTA_DENSE_TENSOR_V1_F64,shape,2,data,n*d*sizeof(double),&wide));
     free(data);
     double build_start=now();
-    require(cetta_tensor_cast(wide,CETTA_TENSOR_F32,&compact));
-    require(cetta_tensor_row_error_bounds(wide,compact,&certificate));
+    require(cetta_dense_tensor_v1_cast(wide,CETTA_DENSE_TENSOR_V1_F32,&compact));
+    require(cetta_dense_tensor_v1_row_error_bounds(wide,compact,&certificate));
     double build_seconds=now()-build_start;
     printf("{\"rows\":%zu,\"dimension\":%zu,\"index_build_seconds\":%.9g,\"samples\":[",n,d,build_seconds);
     for (size_t iteration=0;iteration<=repeats;++iteration) {
         for (size_t j=0;j<d;++j) q[j]=draw();
-        CettaTensor *query=NULL;
-        require(cetta_tensor_new(CETTA_TENSOR_F64,&d,1,q,d*sizeof(double),&query));
-        CettaTensor *scores=NULL, *target=NULL, *lo=NULL, *hi=NULL, *candidates=NULL;
-        CettaTensor *selected=NULL, *top=NULL, *mapped=NULL;
+        CettaDenseTensorV1 *query=NULL;
+        require(cetta_dense_tensor_v1_new(CETTA_DENSE_TENSOR_V1_F64,&d,1,q,d*sizeof(double),&query));
+        CettaDenseTensorV1 *scores=NULL, *target=NULL, *lo=NULL, *hi=NULL, *candidates=NULL;
+        CettaDenseTensorV1 *selected=NULL, *top=NULL, *mapped=NULL;
         double wide_ms=0, screen_ms=0;
         /* Alternation avoids consistently warming one tier with the other. */
         for (unsigned pass=0;pass<2;++pass) {
             bool screening=(pass+(iteration%2))%2;
             double start=now();
             if (screening) {
-                require(cetta_tensor_matvec_bounds(compact,query,certificate,NULL,1,&lo,&hi));
-                require(cetta_tensor_top_k_candidates(lo,hi,k,&candidates));
-                require(cetta_tensor_matvec(wide,query,candidates,&selected));
-                require(cetta_tensor_top_k(selected,NULL,k,&top));
-                require(cetta_tensor_gather(candidates,top,&mapped));
+                require(cetta_dense_tensor_v1_matvec_bounds(compact,query,certificate,NULL,1,&lo,&hi));
+                require(cetta_dense_tensor_v1_top_k_candidates(lo,hi,k,&candidates));
+                require(cetta_dense_tensor_v1_matvec(wide,query,candidates,&selected));
+                require(cetta_dense_tensor_v1_top_k(selected,NULL,k,&top));
+                require(cetta_dense_tensor_v1_gather(candidates,top,&mapped));
                 screen_ms=(now()-start)*1000;
             } else {
-                require(cetta_tensor_matvec(wide,query,NULL,&scores));
-                require(cetta_tensor_top_k(scores,NULL,k,&target));
+                require(cetta_dense_tensor_v1_matvec(wide,query,NULL,&scores));
+                require(cetta_dense_tensor_v1_top_k(scores,NULL,k,&target));
                 wide_ms=(now()-start)*1000;
             }
         }
-        if (!cetta_tensor_equal(target,mapped)) { fputs("screening lost exact top-k\n",stderr); return 1; }
-        const double *s=cetta_tensor_data(scores), *l=cetta_tensor_data(lo), *h=cetta_tensor_data(hi);
+        if (!cetta_dense_tensor_v1_equal(target,mapped)) { fputs("screening lost exact top-k\n",stderr); return 1; }
+        const double *s=cetta_dense_tensor_v1_data(scores), *l=cetta_dense_tensor_v1_data(lo), *h=cetta_dense_tensor_v1_data(hi);
         for (size_t i=0;i<n;++i) if (!(l[i]<=s[i] && s[i]<=h[i])) {
             fputs("invalid score interval\n",stderr); return 1;
         }
         /* A separate long-double scalar reference checks the actual kernel's
          * selected scores. It does not use the four-lane reduction. */
-        const double *matrix=cetta_tensor_data(wide); const int64_t *ids=cetta_tensor_data(target);
+        const double *matrix=cetta_dense_tensor_v1_data(wide); const int64_t *ids=cetta_dense_tensor_v1_data(target);
         for (size_t pos=0;pos<k;++pos) {
             size_t row=(size_t)ids[pos]; long double reference=0,magnitude=0;
             for (size_t j=0;j<d;++j) {
@@ -87,13 +87,13 @@ int main(int argc, char **argv) {
             if (fabsl(s[row]-reference)>1e-12L*(1+magnitude)) return 1;
         }
         if (iteration) printf("%s{\"wide_ms\":%.9g,\"screen_ms\":%.9g,\"candidates\":%zu}",
-            iteration>1 ? "," : "",wide_ms,screen_ms,cetta_tensor_count(candidates));
-        cetta_tensor_release(query); cetta_tensor_release(scores); cetta_tensor_release(target);
-        cetta_tensor_release(lo); cetta_tensor_release(hi); cetta_tensor_release(candidates);
-        cetta_tensor_release(selected); cetta_tensor_release(top); cetta_tensor_release(mapped);
+            iteration>1 ? "," : "",wide_ms,screen_ms,cetta_dense_tensor_v1_count(candidates));
+        cetta_dense_tensor_v1_release(query); cetta_dense_tensor_v1_release(scores); cetta_dense_tensor_v1_release(target);
+        cetta_dense_tensor_v1_release(lo); cetta_dense_tensor_v1_release(hi); cetta_dense_tensor_v1_release(candidates);
+        cetta_dense_tensor_v1_release(selected); cetta_dense_tensor_v1_release(top); cetta_dense_tensor_v1_release(mapped);
     }
     printf("],\"matrix_bytes\":%zu,\"compact_bytes\":%zu,\"certificate_bytes\":%zu}\n",
-        cetta_tensor_nbytes(wide),cetta_tensor_nbytes(compact),cetta_tensor_nbytes(certificate));
-    cetta_tensor_release(wide); cetta_tensor_release(compact); cetta_tensor_release(certificate); free(q);
+        cetta_dense_tensor_v1_nbytes(wide),cetta_dense_tensor_v1_nbytes(compact),cetta_dense_tensor_v1_nbytes(certificate));
+    cetta_dense_tensor_v1_release(wide); cetta_dense_tensor_v1_release(compact); cetta_dense_tensor_v1_release(certificate); free(q);
     return 0;
 }

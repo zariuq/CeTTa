@@ -542,6 +542,10 @@ Atom *petta_semantics_new_callable_identity(Arena *arena);
 Atom *petta_semantics_lambda_value(
     Arena *arena, Atom *identity, Atom *canonical_body);
 bool petta_semantics_lambda_body(const Atom *atom, Atom **canonical_body);
+/* The number of nested one-place lambdas belonging to the same nominal
+ * source occurrence. False for every other value. */
+bool petta_semantics_lambda_arity(
+    const Atom *atom, CettaExprLen *arity);
 /* A value PeTTa applies when it heads an application: a lambda, a nullary
  * lambda or a partial application.  Each is recognized by its top level
  * alone. */

@@ -424,6 +424,47 @@ static void init_test_symbols(SymbolTable *symbols) {
     g_var_intern = NULL;
 }
 
+/* A generated builtin classification belongs to the symbol-table instance:
+ * the same numeric id can name an inert symbol in the next session. */
+static void test_generated_effect_symbol_instances(void) {
+    SymbolId old_writer = SYMBOL_ID_NONE;
+    for (unsigned instance = 0u; instance < 2u; instance++) {
+        SymbolTable symbols;
+        symbol_table_init(&symbols);
+        if (instance != 0u) {
+            for (SymbolId id = 1u; id <= old_writer; id++) {
+                char name[64];
+                snprintf(name, sizeof(name), "effect-instance-padding-%u", id);
+                assert(symbol_intern_cstr(&symbols, name) == id);
+            }
+        }
+        symbol_table_init_builtins(&symbols, &g_builtin_syms);
+        g_symbols = &symbols;
+        Arena persistent;
+        arena_init(&persistent);
+        TermUniverse universe;
+        term_universe_init(&universe);
+        term_universe_set_persistent_arena(&universe, &persistent);
+        Space space;
+        space_init_with_universe(&space, &universe);
+        space.kind = SPACE_KIND_STACK;
+        if (instance == 0u) {
+            old_writer = g_builtin_syms.println_bang;
+        } else {
+            assert((space_query_effect_for_head(&space, old_writer, NULL) &
+                    CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) == 0u);
+        }
+        assert(space_query_effect_for_head(
+            &space, g_builtin_syms.println_bang, NULL) ==
+            CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE);
+        space_free(&space);
+        term_universe_free(&universe);
+        arena_free(&persistent);
+        g_symbols = NULL;
+        symbol_table_free(&symbols);
+    }
+}
+
 static Atom *make_pair(Arena *a, SymbolId pair_sym, int64_t lhs, int64_t rhs) {
     Atom *elems[3] = {
         atom_symbol_id(a, pair_sym),
@@ -2793,6 +2834,7 @@ int main(int argc, char **argv) {
     g_symbols = NULL;
     symbol_table_free(&symbols);
 
+    test_generated_effect_symbol_instances();
     puts("PASS: space term universe membership");
     return 0;
 }

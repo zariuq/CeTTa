@@ -4322,6 +4322,16 @@ BindingValue bindings_lookup_value_id(Bindings *b, VarId var_id) {
                     : binding_value_from_atom(NULL);
 }
 
+BindingValue bindings_lookup_context_id(
+        Bindings *b, BindingValue context, VarId source_id) {
+    VarId id = binding_value_is_contextual(context)
+        ? var_epoch_id(source_id, binding_value_epoch(context)) : source_id;
+    BindingValue image;
+    if (bindings_frame_index_lookup_context_id(b, context, id, &image))
+        return image;
+    return bindings_lookup_value_id(b, id);
+}
+
 /* Internal closure lookup.  Once a contextual value has entered a binding
  * image, its generation-checked frame handle is the authority.  Epoch/name
  * recovery remains only for values crossing an external compatibility
@@ -5234,6 +5244,13 @@ static inline Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, Bin
      * non-variable atoms). */
     if (!rewrite_var && !atom_has_vars(atom))
         return atom;
+    if (!rewrite_var && atom->kind == ATOM_EXPR &&
+        binding_value_kind(value) == BINDING_VALUE_MATERIALIZED) {
+        VarId support = atom_single_variable_id(atom);
+        if (!var_id_is_none(support) &&
+            !bindings_lookup_context_id(b, value, support).skeleton)
+            return atom;
+    }
     VarId seen_stack[BINDINGS_SEEN_STACK_CAP];
     VarId memo_id_stack[BINDINGS_MEMO_STACK_CAP];
     Atom *memo_val_stack[BINDINGS_MEMO_STACK_CAP];
@@ -5789,6 +5806,16 @@ static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom
         } else {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_REWRITE_NODE_VISIT);
+        }
+        /* Unbound materialized support is unchanged at every subtree, not
+         * only at the outer entry. Hooks and lexical renaming still walk. */
+        if (!result && frames.len > 0u && !epoch_fold && !fold->rewrite_var &&
+            atom->kind == ATOM_EXPR && scope.kind == BINDING_VALUE_MATERIALIZED) {
+            VarId support = atom_single_variable_id(atom);
+            if (!var_id_is_none(support) &&
+                !bindings_lookup_context_id(fold->b, binding_value_from_atom(atom),
+                                            support).skeleton)
+                result = atom;
         }
         if (graph && !result && atom->kind == ATOM_EXPR) {
             bool created = false;
@@ -11557,6 +11584,8 @@ static bool simple_match_leaf(Atom *pattern, Atom *target) {
         case GV_FOREIGN:
         case GV_SEAL:
             return pattern->ground.ptr == target->ground.ptr;
+        case GV_STRUCTURAL:
+            return atom_structural_equal(pattern, target);
         /* A rational term is equal to any node with its unfolding. */
         case GV_TERM_GRAPH:
         case GV_BINDINGS:
@@ -15346,6 +15375,7 @@ static bool stored_grounded_equal(Atom *left,
     case GV_BINDINGS:
     case GV_TENSOR:
     case GV_FOREIGN:
+    case GV_STRUCTURAL:
     case GV_SEAL:
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:

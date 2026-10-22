@@ -199,7 +199,8 @@ def paired_measure(cmd, cwd, env, stem, timeout, cpu, instructions):
     # The inner time process measures the native job's own descendants.
     cmd=['/usr/bin/time','-f','%e %U %S %M','-o',str(timing),'--',*cmd]
     if instructions:
-        cmd=['perf','stat','-x',',','-e','instructions:u,cycles:u','-o',str(perf),'--',*cmd]
+        cmd=['perf','stat','-x',',','-e','instructions:u,cycles:u,duration_time',
+             '-o',str(perf),'--',*cmd]
     def prepare():
         if cpu is not None: os.sched_setaffinity(0,{cpu})
     started=time.perf_counter()
@@ -229,9 +230,12 @@ def paired_measure(cmd, cwd, env, stem, timeout, cpu, instructions):
         if len(fields)==4:
             native_wall,native_user,native_system=map(float,fields[:3])
             native_rss=int(fields[3])
+    perf_wall = (counts.get('duration_time') / 1_000_000_000
+                 if counts.get('duration_time') is not None else None)
     return dict(rc=p.returncode,timed_out=bool(expired),wall=time.perf_counter()-started,
                 user=usage.ru_utime,system=usage.ru_stime,rss_kib=native_rss,
                 native_wall=native_wall,native_user=native_user,native_system=native_system,
+                perf_wall=perf_wall,
                 time_file=str(timing),
                 instructions=counts.get('instructions:u'),cycles=counts.get('cycles:u'),
                 stdout_sha256=hashlib.sha256(so.read_bytes()).hexdigest(),

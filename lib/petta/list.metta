@@ -2,6 +2,11 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
+(: __cetta_lib_list_group_sums (-> Atom Atom))
+(: __cetta_lib_list_group_sums_blocks (-> Atom Atom))
+(= (list:group-sums-number-blocks $blocks) (let $items (list:to-expression $blocks) (case (__cetta_lib_list_group_sums_blocks $items) (((List:GroupedSums $rows) $rows) ($other (let $flat (foldl-atom $items () $out $block (union-atom $out $block)) (let $fallback-rows (list:group-sums-number-reference $flat) $fallback-rows)))))))
+(= (list:group-sums-number $entries) (let $items (list:to-expression $entries) (case (__cetta_lib_list_group_sums $items) (((List:GroupedSums $rows) $rows) ($other (let $fallback-rows (list:group-sums-number-reference $items) $fallback-rows))))))
+(= (list:group-sums-number-reference $entries) (let* (($all-keys (map-atom $entries $row (car-atom $row))) ($keys (unique-atom $all-keys))) (map-atom $keys $key (let* (($rows (filter-atom $entries $row (let $row-key (car-atom $row) (== $row-key $key)))) ($amount (foldl-atom $rows 0 $total $row (let $value (index-atom $row 1) (+ $total $value))))) ($key $amount)))))
 (= (list:from-expression $xs) (__cetta_lib_list_from_expression $xs))
 (= (list:to-expression $xs) (__cetta_lib_list_to_expression $xs))
 (= (list:is-list $xs) (== (get-metatype $xs) List))
@@ -49,9 +54,14 @@
 (= (list:number-ascending $left $right) (<= $left $right))
 (= (list:number-descending $left $right) (>= $left $right))
 (= (list:sort-numbers $xs) (sort-numbers-atom $xs))
+(= (list:lower-bound-number $xs $bound) (list:lower-bound-number-in $xs $bound 0 (size-atom $xs)))
+(= (list:lower-bound-number-in $xs $bound $lo $hi) (if (>= $lo $hi) $lo (let* (($distance (- $hi $lo)) ($middle (+ $lo (/ (- $distance (% $distance 2)) 2)))) (if (< (index-atom $xs $middle) $bound) (list:lower-bound-number-in $xs $bound (+ $middle 1) $hi) (list:lower-bound-number-in $xs $bound $lo $middle)))))
 (= (list:map $xs $var $body) (if (list:is-list $xs) (let $items (list:to-expression $xs) (let $mapped (map-atom $items $var (eval $body)) (list:from-expression $mapped))) (map-atom $xs $var (eval $body))))
 (= (list:filter $xs $var $body) (if (list:is-list $xs) (let $items (list:to-expression $xs) (let $kept (filter-atom $items $var (eval $body)) (list:from-expression $kept))) (filter-atom $xs $var (eval $body))))
 (= (list:foldl $xs $init $acc $item $step) (if (list:is-list $xs) (let $items (list:to-expression $xs) (foldl-atom $items $init $acc $item $step)) (foldl-atom $xs $init $acc $item $step)))
+(: __cetta_lib_list_range (-> %Undefined% Expression))
+(: __cetta_lib_list_range (-> %Undefined% %Undefined% Expression))
+(: __cetta_lib_list_repeat (-> %Undefined% Atom Expression))
 (= (list:range $end) (__cetta_lib_list_range $end))
 (= (list:range $start $end) (__cetta_lib_list_range $start $end))
-(= (list:repeat $count $item) (repeat-atom $count $item))
+(= (list:repeat $count $item) (__cetta_lib_list_repeat $count $item))

@@ -2657,6 +2657,10 @@ static Atom *petta_block_literal_type(
     PettaBlockCheck *check, Atom *value) {
     if (!check || !value)
         return NULL;
+    if(atom_is_structural(value)) {
+        const char *name=atom_structural_type_name(value);
+        return name ? atom_symbol(&check->scratch,name) : NULL;
+    }
     PettaLiteralSort sort = petta_value_literal_sort(value);
     switch (sort) {
     case PETTA_LITERAL_NUMBER:
