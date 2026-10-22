@@ -6013,18 +6013,17 @@ static size_t petta_machine_next_major_threshold(
    proportional to binding work.  A window that ignored a growing choice
    stack collected a linearly growing root set at a fixed interval
    (quadratic on long derivations that leave alternatives open).
-   The window is four times that bound: collection work per write falls to a
-   quarter, for at most four times the garbage held between collections.
-   On the ai-mathematician search this ran 11% fewer instructions at equal
-   peak memory; twice the bound kept about half that gain, eight times
-   little more.  CETTA_PETTA_BINDING_WINDOW_FACTOR=k (1 to 16) sets the
-   multiple, to compare schedules. */
+   The window is sixteen times that bound.  On the shared-occurrence premise
+   search this cut root scans and promoted bytes substantially while retaining
+   the representation's memory reduction; large proof enumeration retained
+   its peak. CETTA_PETTA_BINDING_WINDOW_FACTOR=k (1 to 16) selects a smaller
+   comparison schedule. */
 static size_t petta_binding_window_factor(void) {
     static size_t factor = 0u;
     if (!factor) {
         const char *setting = getenv("CETTA_PETTA_BINDING_WINDOW_FACTOR");
         long value = setting ? strtol(setting, NULL, 10) : 0;
-        factor = value >= 1 && value <= 16 ? (size_t)value : 4u;
+        factor = value >= 1 && value <= 16 ? (size_t)value : 16u;
     }
     return factor;
 }

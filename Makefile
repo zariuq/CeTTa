@@ -43860,7 +43860,7 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # The libraries that run on real PeTTa; the remaining native libraries run
 # on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
-LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io re postings tensor tensor_descriptors embedding holkernel mm0kernel
+LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io re postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re holkernel mm0kernel
 .PHONY: test-library-spellings-v1 test-list-prefix-search test-tensor-support
 test-list-prefix-search: $(BIN)
@@ -43872,7 +43872,7 @@ test-list-numeric-sequences: $(BIN)
 
 test-all: test-list-numeric-sequences
 
-runtime/test_postings-$(BUILD_OBJ_TAG): tests/support/test_postings.c src/library_postings.c src/library_postings.h src/tensor.c src/tensor.h src/native_handle.c src/atom.c src/binding/frame_identity.c src/name_key.c $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+runtime/test_postings-$(BUILD_OBJ_TAG): tests/support/test_postings.c src/library_postings.c src/library_postings.h src/generated/postings_descriptors.generated.h src/tensor.c src/tensor.h src/native_handle.c src/atom.c src/binding/frame_identity.c src/name_key.c $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_NATIVE_HANDLE_TEST_HOOKS \
 		-Wl,--wrap=malloc,--wrap=calloc -o $@ tests/support/test_postings.c \
@@ -43884,6 +43884,27 @@ test-postings: $(BIN) runtime/test_postings-$(BUILD_OBJ_TAG)
 	./runtime/test_postings-$(BUILD_OBJ_TAG)
 	python3 tests/support/check_postings.py --cetta ./$(BIN)
 	python3 tests/support/check_postings_sources.py --cetta ./$(BIN)
+
+.PHONY: test-postings-descriptors qualify-postings-descriptors-lean
+test-postings-descriptors: $(BIN) tools/generate_postings_descriptors.py \
+		langdef/postings/Descriptors.module \
+		src/generated/postings_descriptors.generated.h \
+		langdef/postings/generated/Descriptors.lean \
+		lib/postings_descriptors.metta lib/petta/postings_descriptors.metta
+	python3 tools/generate_postings_descriptors.py --cetta ./$(BIN) --check
+	@got=$$(./$(BIN) --no-results --lang petta@1.0.6 --profile extended \
+		tests/langdef/postings/descriptors_surface_v1.metta); \
+	test "$$got" = "$$(cat tests/langdef/postings/descriptors_surface_v1.expected)"; \
+	echo '(PostingsDescriptorSurface 3 0)'
+
+qualify-postings-descriptors-lean:
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	test -f "$$lean_root/lakefile.lean" || \
+		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
+	descriptors="$(abspath langdef/postings/generated/Descriptors.lean)"; \
+	cd "$$lean_root"; \
+	lake env lean -DwarningAsError=true "$$descriptors"
 
 .PHONY: test-group-sums
 test-group-sums: $(BIN)
@@ -43959,6 +43980,7 @@ test-tensor-dlpack-numpy: $(TENSOR_DLPACK_LIB)
 
 test-all: test-list-prefix-search
 test-all: test-postings
+test-all: test-postings-descriptors
 test-all: test-group-sums
 test-all: test-tensor
 test-all: test-embedding

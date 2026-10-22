@@ -1,0 +1,71 @@
+Module PostingsDescriptors {
+  Theory Descriptors() {
+    Empty Types { Descriptor; } Terms {
+      "Before". |- "Before" : Descriptor;
+      "All". |- "All" : Descriptor;
+      "TensorBefore". |- "TensorBefore" : Descriptor;
+      "TensorAll". |- "TensorAll" : Descriptor;
+      "TableBefore". |- "TableBefore" : Descriptor;
+      "TableAll". |- "TableAll" : Descriptor;
+      "TableTensorBefore". |- "TableTensorBefore" : Descriptor;
+      "TableTensorAll". |- "TableTensorAll" : Descriptor;
+      "Stats". |- "Stats" : Descriptor;
+      "WireBefore". |- "before" : Descriptor;
+      "WireAll". |- "all" : Descriptor;
+      "WireTensorBefore". |- "tensor-before" : Descriptor;
+      "WireTensorAll". |- "tensor-all" : Descriptor;
+      "WireTableBefore". |- "table-before" : Descriptor;
+      "WireTableAll". |- "table-all" : Descriptor;
+      "WireTableTensorBefore". |- "table-tensor-before" : Descriptor;
+      "WireTableTensorAll". |- "table-tensor-all" : Descriptor;
+      "WireStats". |- "stats" : Descriptor;
+      "Index". |- "Index" : Descriptor;
+      "Table". |- "Table" : Descriptor;
+      "Either". |- "Either" : Descriptor;
+      "Prefix". |- "Prefix" : Descriptor;
+      "Complete". |- "Complete" : Descriptor;
+      "Metadata". |- "Metadata" : Descriptor;
+      "Rows". |- "Rows" : Descriptor;
+      "Tensor". |- "Tensor" : Descriptor;
+      "Statistics". |- "Statistics" : Descriptor;
+      "PrepareIndex". |- "PrepareIndex" : Descriptor;
+      "PrepareTable". |- "PrepareTable" : Descriptor;
+      "PrepareSpaceTableAttempt". |- "PrepareSpaceTableAttempt" : Descriptor;
+      "Inspect". |- "Inspect" : Descriptor;
+      "Counts". |- "Counts" : Descriptor;
+      "SourcesCurrent". |- "SourcesCurrent" : Descriptor;
+      "Close". |- "Close" : Descriptor;
+      "SourceOccurrenceOrder". |- "SourceOccurrenceOrder" : Descriptor;
+      "DuplicateOccurrences". |- "DuplicateOccurrences" : Descriptor;
+      "NumericPositionsAscending". |- "NumericPositionsAscending" : Descriptor;
+      "FirstOuterKeyOrder". |- "FirstOuterKeyOrder" : Descriptor;
+      "NumericGroupOrder". |- "NumericGroupOrder" : Descriptor;
+      "CompleteValidation". |- "CompleteValidation" : Descriptor;
+      "AtomicPublication". |- "AtomicPublication" : Descriptor;
+      "OwnedSnapshot". |- "OwnedSnapshot" : Descriptor;
+      "BorrowedSource". |- "BorrowedSource" : Descriptor;
+      "DeclaredProjection". |- "DeclaredProjection" : Descriptor;
+      "ExactSourceRevision". |- "ExactSourceRevision" : Descriptor;
+      "AuthoredFallback". |- "AuthoredFallback" : Descriptor;
+      "CloseInvalidatesAliases". |- "CloseInvalidatesAliases" : Descriptor;
+    } Equations {
+      (PostingsCountMode (Before)) == (CountMode (WireBefore) (Index) (Prefix) (Rows));
+      (PostingsCountMode (All)) == (CountMode (WireAll) (Index) (Complete) (Rows));
+      (PostingsCountMode (TensorBefore)) == (CountMode (WireTensorBefore) (Index) (Prefix) (Tensor));
+      (PostingsCountMode (TensorAll)) == (CountMode (WireTensorAll) (Index) (Complete) (Tensor));
+      (PostingsCountMode (TableBefore)) == (CountMode (WireTableBefore) (Table) (Prefix) (Rows));
+      (PostingsCountMode (TableAll)) == (CountMode (WireTableAll) (Table) (Complete) (Rows));
+      (PostingsCountMode (TableTensorBefore)) == (CountMode (WireTableTensorBefore) (Table) (Prefix) (Tensor));
+      (PostingsCountMode (TableTensorAll)) == (CountMode (WireTableTensorAll) (Table) (Complete) (Tensor));
+      (PostingsCountMode (Stats)) == (CountMode (WireStats) (Either) (Metadata) (Statistics));
+      (PostingsObservation (PrepareIndex)) == (Observe (SourceOccurrenceOrder) (DuplicateOccurrences) (NumericPositionsAscending) (CompleteValidation) (AtomicPublication) (OwnedSnapshot) (AuthoredFallback));
+      (PostingsObservation (PrepareTable)) == (Observe (FirstOuterKeyOrder) (DuplicateOccurrences) (NumericGroupOrder) (NumericPositionsAscending) (CompleteValidation) (AtomicPublication) (OwnedSnapshot) (AuthoredFallback));
+      (PostingsObservation (PrepareSpaceTableAttempt)) == (Observe (BorrowedSource) (DeclaredProjection) (FirstOuterKeyOrder) (DuplicateOccurrences) (NumericGroupOrder) (NumericPositionsAscending) (CompleteValidation) (AtomicPublication) (OwnedSnapshot) (AuthoredFallback));
+      (PostingsObservation (Inspect)) == (Observe (SourceOccurrenceOrder) (DuplicateOccurrences) (OwnedSnapshot));
+      (PostingsObservation (Counts)) == (Observe (DuplicateOccurrences) (NumericPositionsAscending) (AuthoredFallback));
+      (PostingsObservation (SourcesCurrent)) == (Observe (ExactSourceRevision) (CompleteValidation) (AuthoredFallback));
+      (PostingsObservation (Close)) == (Observe (CloseInvalidatesAliases));
+    }
+  }
+  theory Descriptors()
+}
