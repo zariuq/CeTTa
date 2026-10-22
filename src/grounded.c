@@ -3308,6 +3308,15 @@ static Atom *grounded_petta_math_result(Arena *a, SymbolId head_id,
     return prolog ? prolog : native;
 }
 
+static bool grounded_builds_value_head(Atom *head) {
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId id = atom_symbol_current_id(head);
+    return id == g_builtin_syms.parse ||
+           id == g_builtin_syms.parse_first ||
+           id == g_builtin_syms.readln_bang;
+}
+
 bool grounded_call(Arena *a, Atom *head, Atom **args, uint32_t nargs,
                    CettaCallOutcome *out) {
     /* An operation run inside another, by a callback, keeps the enclosing
@@ -3324,6 +3333,10 @@ bool grounded_call(Arena *a, Atom *head, Atom **args, uint32_t nargs,
         *out = cetta_call_raised(result);
     else if (atom_is_petta_no_result(result))
         *out = cetta_call_failure();
+    else if (eval_current_language_id &&
+             eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+             grounded_builds_value_head(head) && !atom_is_error(result))
+        *out = cetta_call_completed_value(result);
     else
         *out = cetta_call_value(result);
     return true;

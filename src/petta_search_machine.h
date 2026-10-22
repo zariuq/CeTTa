@@ -555,6 +555,11 @@ typedef struct {
         void *context, Space *space, Arena *arena, Atom *expression,
         const Bindings *environment, OutcomeSet *outcomes,
         CettaCallOutcome *end);
+    /* Mark a completed datum (a native operation's completed value or a
+     * matched space row) so later demand treats its closed expressions as
+     * values rather than re-executing them as code. */
+    Atom *(*complete_value)(
+        void *context, Space *space, Arena *arena, Atom *value);
     /* HE interpretation owns source demand and first-applicable overload
      * selection. Terminal judgments return values; an admitted application
      * returns fresh signatures with each correlated result contract. Arrays

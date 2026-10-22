@@ -22,33 +22,35 @@ static unsigned checks, failures;
 static void binding_predicate_controls(Arena *arena) {
     Atom *written = atom_expr3(arena, atom_symbol(arena, "+"),
                               atom_int(arena, 1), atom_int(arena, 2));
+    const CettaFrameIdentity max_frame = {UINT32_MAX};
     BindingValue materialized = binding_value_from_atom(written);
-    BindingValue contextual = binding_value_from_context(written, UINT32_MAX);
-    BindingValue persistent = binding_value_from_persistent_context(written, UINT32_MAX);
+    BindingValue contextual = binding_value_from_context(written, max_frame);
+    BindingValue persistent = binding_value_from_persistent_context(written, max_frame);
     size_t before = arena_accounted_live_bytes(arena);
     CHECK(!binding_value_context_is_persistent(materialized) &&
           !binding_value_is_contextual(materialized) &&
-          !binding_value_kind_is_contextual(materialized.kind),
+          !binding_value_kind_is_contextual(binding_value_kind(materialized)),
           "materialized syntax has neither contextual nor persistent context tags");
     CHECK(!binding_value_context_is_persistent(contextual) &&
           binding_value_is_contextual(contextual) &&
-          binding_value_kind_is_contextual(contextual.kind),
+          binding_value_kind_is_contextual(binding_value_kind(contextual)),
           "a contextual value retains context without acquiring a persistent context tag");
     CHECK(binding_value_context_is_persistent(persistent) &&
           binding_value_is_contextual(persistent) &&
-          binding_value_kind_is_contextual(persistent.kind),
+          binding_value_kind_is_contextual(binding_value_kind(persistent)),
           "a persistent contextual value is also contextual");
-    CHECK(!binding_value_context_is_persistent((BindingValue){
-              .skeleton = NULL, .epoch = UINT32_MAX, .kind = BINDING_VALUE_MATERIALIZED}),
+    CHECK(!binding_value_context_is_persistent(binding_value_make(
+              NULL, max_frame, BINDING_VALUE_MATERIALIZED)),
           "a null skeleton and nonzero epoch do not create persistent provenance");
-    CHECK(binding_value_context_is_persistent((BindingValue){
-              .skeleton = NULL, .epoch = UINT32_MAX,
-              .kind = BINDING_VALUE_CONTEXTUAL_PERSISTENT}),
+    CHECK(binding_value_context_is_persistent(binding_value_make(
+              NULL, max_frame, BINDING_VALUE_CONTEXTUAL_PERSISTENT)),
           "a null skeleton retains its persistent contextual tag");
     CHECK(arena_accounted_live_bytes(arena) == before &&
           materialized.skeleton == written && contextual.skeleton == written &&
-          persistent.skeleton == written && contextual.epoch == UINT32_MAX &&
-          persistent.epoch == UINT32_MAX && written->kind == ATOM_EXPR &&
+          persistent.skeleton == written &&
+          cetta_frame_identity_eq(binding_value_epoch(contextual), max_frame) &&
+          cetta_frame_identity_eq(binding_value_epoch(persistent), max_frame) &&
+          written->kind == ATOM_EXPR &&
           written->expr.len == 3u && written->expr.elems[1]->ground.ival == 1 &&
           written->expr.elems[2]->ground.ival == 2,
           "tag inspection leaves the complete value and written callable syntax inert");
@@ -68,8 +70,8 @@ static CettaGsltTermViewStatusV1 observe_cursor_binding(
 }
 
 static void term_cursor_children(Arena *arena) {
-    Atom *root_variable = atom_var_with_id(arena, "cursor-root", UINT64_C(990101));
-    Atom *child_variable = atom_var_with_id(arena, "cursor-child", UINT64_C(990102));
+    Atom *root_variable = atom_var_with_id(arena, "cursor-root", var_id_from_base(UINT64_C(990101)));
+    Atom *child_variable = atom_var_with_id(arena, "cursor-child", var_id_from_base(UINT64_C(990102)));
     Atom *outer = atom_symbol(arena, "cursor-outer");
     Atom *local = atom_symbol(arena, "cursor-local");
     Atom *head = atom_symbol(arena, "cursor-head");
@@ -77,7 +79,7 @@ static void term_cursor_children(Arena *arena) {
         arena, atom_symbol(arena, "+"), atom_int(arena, 1), atom_int(arena, 2));
     Atom *children[] = {head, child_variable, written_call, child_variable};
     Atom *body = atom_expr(arena, children, 4u);
-    const uint32_t epoch = 718u;
+    const CettaFrameIdentity epoch = {718u};
     BindingsBuilder builder;
     CHECK(bindings_builder_init(&builder, NULL), "initialize native term cursor bindings");
     CHECK(bindings_builder_add_var_fresh(&builder, child_variable, outer),
@@ -186,14 +188,14 @@ static void term_cursor_children(Arena *arena) {
 }
 
 static void activation_cursor_resolution(Arena *arena) {
-    Atom *source = atom_var_with_id(arena, "activation-cursor-source", UINT64_C(990201));
-    Atom *alias = atom_var_with_id(arena, "activation-cursor-alias", UINT64_C(990202));
-    Atom *other = atom_var_with_id(arena, "activation-cursor-other", UINT64_C(990203));
+    Atom *source = atom_var_with_id(arena, "activation-cursor-source", var_id_from_base(UINT64_C(990201)));
+    Atom *alias = atom_var_with_id(arena, "activation-cursor-alias", var_id_from_base(UINT64_C(990202)));
+    Atom *other = atom_var_with_id(arena, "activation-cursor-other", var_id_from_base(UINT64_C(990203)));
     Atom *seven = atom_int(arena, 7);
     Atom *eleven = atom_int(arena, 11);
     Atom *thirteen = atom_int(arena, 13);
     CETTA_FRAME_IDENTITY_SCOPE(identities);
-    CettaFrameIdentity source_epoch = 0u, alias_epoch = 0u;
+    CettaFrameIdentity source_epoch = CETTA_FRAME_IDENTITY_NONE, alias_epoch = CETTA_FRAME_IDENTITY_NONE;
     CHECK(cetta_frame_identity_scope_try(&identities, &source_epoch) &&
           cetta_frame_identity_scope_try(&identities, &alias_epoch),
           "acquire native frame identities for activation cursor observation");
@@ -253,7 +255,7 @@ static void activation_cursor_resolution(Arena *arena) {
           "a later materialized write enters the outer cursor domain");
 
     CETTA_FRAME_IDENTITY_SCOPE(retired_identity);
-    CettaFrameIdentity retired_epoch = 0u, replacement_epoch = 0u;
+    CettaFrameIdentity retired_epoch = CETTA_FRAME_IDENTITY_NONE, replacement_epoch = CETTA_FRAME_IDENTITY_NONE;
     BindingsBuilder retired_builder;
     CHECK(bindings_builder_init(&retired_builder, NULL) &&
           cetta_frame_identity_scope_try(&retired_identity, &retired_epoch),
@@ -313,7 +315,7 @@ static void activation_cursor_resolution(Arena *arena) {
               "store a contextual alias as a postboundary activation value");
         BindingValue resolved;
         CHECK(bindings_resolve_value_preview(&builder.current, contextual, &resolved) &&
-              resolved.skeleton == seven && resolved.kind == BINDING_VALUE_MATERIALIZED,
+              resolved.skeleton == seven && binding_value_kind(resolved) == BINDING_VALUE_MATERIALIZED,
               "the stored contextual alias has an independently resolvable ground target");
         result = (CettaGsltTermCursorV1){thirteen, &frame};
         CHECK(bindings_resolve_term_cursor_v1(&context,
@@ -334,7 +336,8 @@ static void activation_cursor_resolution(Arena *arena) {
     BindingValue preview;
     CHECK(bindings_resolve_value_preview(&builder.current,
               binding_value_from_atom(source), &preview) && preview.skeleton == source &&
-          preview.kind == BINDING_VALUE_MATERIALIZED && preview.epoch == 0u &&
+          binding_value_kind(preview) == BINDING_VALUE_MATERIALIZED &&
+          cetta_frame_identity_is_none(binding_value_epoch(preview)) &&
           bindings_resolve_term_cursor_v1(&context,
               (CettaGsltTermCursorV1){source, NULL}, &result) ==
               CETTA_GSLT_TERM_VIEW_OK_V1 && result.source == source && result.scope == NULL,
@@ -358,8 +361,8 @@ static void activation_cursor_resolution(Arena *arena) {
 }
 
 static void alias_root_query_controls(Arena *arena) {
-    Atom *source = atom_var_with_id(arena, "alias-query-source", UINT64_C(990301));
-    Atom *other = atom_var_with_id(arena, "alias-query-other", UINT64_C(990302));
+    Atom *source = atom_var_with_id(arena, "alias-query-source", var_id_from_base(UINT64_C(990301)));
+    Atom *other = atom_var_with_id(arena, "alias-query-other", var_id_from_base(UINT64_C(990302)));
     Atom *seven = atom_int(arena, 7);
     Atom *written_call = atom_expr2(arena, atom_symbol(arena, "alias-query-written"), source);
     Bindings rows;
@@ -368,27 +371,33 @@ static void alias_root_query_controls(Arena *arena) {
           bindings_add_var(&rows, other, seven) && bindings_prepare_logical_write(&rows),
           "construct an owned ordinary-row inventory for alias observation");
     rows.entries[1].var_id = source->var_id;
-    rows.entries[1].value = (BindingValue){.skeleton = NULL, .epoch = 19u,
-        .kind = BINDING_VALUE_CONTEXTUAL};
+    rows.entries[1].value = binding_value_make(
+        NULL, (CettaFrameIdentity){19u}, BINDING_VALUE_CONTEXTUAL);
     bindings_invalidate_after_key_rewrite(&rows);
     BindingValue newest = bindings_lookup_value_id(&rows, source->var_id);
-    CHECK(newest.skeleton == NULL && newest.epoch == 19u &&
-          newest.kind == BINDING_VALUE_CONTEXTUAL,
+    CHECK(newest.skeleton == NULL &&
+          cetta_frame_identity_eq(binding_value_epoch(newest), (CettaFrameIdentity){19u}) &&
+          binding_value_kind(newest) == BINDING_VALUE_CONTEXTUAL,
           "the newest null row retains its metadata and shadows an older bound value");
     BindingValue result = binding_value_from_atom(seven);
     CHECK(bindings_resolve_value_preview(&rows, binding_value_from_atom(source), &result) &&
-          result.skeleton == source && result.epoch == 0u &&
-          result.kind == BINDING_VALUE_MATERIALIZED && rows.len == 2u,
+          result.skeleton == source &&
+          cetta_frame_identity_is_none(binding_value_epoch(result)) &&
+          binding_value_kind(result) == BINDING_VALUE_MATERIALIZED && rows.len == 2u,
           "a null shadow leaves the source open without resurrecting its older alias");
     CHECK(bindings_resolve_value_preview(&rows,
-              binding_value_from_persistent_context(written_call, 17u), &result) &&
-          result.skeleton == written_call && result.epoch == 17u &&
-          result.kind == BINDING_VALUE_CONTEXTUAL_PERSISTENT &&
+              binding_value_from_persistent_context(written_call, (CettaFrameIdentity){17u}), &result) &&
+          result.skeleton == written_call &&
+          cetta_frame_identity_eq(binding_value_epoch(result), (CettaFrameIdentity){17u}) &&
+          binding_value_kind(result) == BINDING_VALUE_CONTEXTUAL_PERSISTENT &&
           written_call->expr.elems[1] == source,
           "terminal root observation retains written children and the complete contextual operand");
     bindings_free(&rows);
 
-    VarId private_id = CETTA_VARIANT_PRIVATE_SLOT_TAG | UINT64_C(27);
+    VarId private_id = {
+        .base = UINT64_C(27),
+        .epoch = CETTA_VARIANT_PRIVATE_SLOT_EPOCH,
+    };
     Atom *private_variable = atom_var_with_id(arena, "alias-query-private", private_id);
     bindings_init(&rows);
     CHECK(atom_var_id_is_private_variant(private_id) &&
@@ -401,7 +410,7 @@ static void alias_root_query_controls(Arena *arena) {
     bindings_free(&rows);
 
     CETTA_FRAME_IDENTITY_SCOPE(identities);
-    CettaFrameIdentity epoch = 0u;
+    CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
     BindingsBuilder builder;
     CHECK(cetta_frame_identity_scope_try(&identities, &epoch) &&
           bindings_builder_init(&builder, NULL), "acquire a live identity for a mixed alias chain");
@@ -414,14 +423,14 @@ static void alias_root_query_controls(Arena *arena) {
     BindingValue contextual = binding_value_from_context(source, epoch);
     BindingValue first_edge = bindings_lookup_value_id(
         &builder.current, var_epoch_id(source->var_id, epoch));
-    CHECK(first_edge.skeleton == source && first_edge.kind == BINDING_VALUE_MATERIALIZED,
+    CHECK(first_edge.skeleton == source && binding_value_kind(first_edge) == BINDING_VALUE_MATERIALIZED,
           "one mixed-chain lookup changes context without replacing the source pointer");
     CHECK(bindings_resolve_value_preview(&builder.current, contextual, &result) &&
-          result.skeleton == seven && result.kind == BINDING_VALUE_MATERIALIZED &&
-          result.epoch == 0u,
+          result.skeleton == seven && binding_value_kind(result) == BINDING_VALUE_MATERIALIZED &&
+          cetta_frame_identity_is_none(binding_value_epoch(result)),
           "root observation follows the frame edge and then the independent ordinary edge");
     CHECK(bindings_resolve_value_exact(&builder.current, contextual, &result) &&
-          result.skeleton == seven && result.kind == BINDING_VALUE_MATERIALIZED,
+          result.skeleton == seven && binding_value_kind(result) == BINDING_VALUE_MATERIALIZED,
           "exact type-root observation follows the same mixed-domain alias chain");
     Atom *held = atom_expr3(arena, atom_symbol(arena, "+"),
         atom_int(arena, 1), atom_int(arena, 2));
@@ -432,8 +441,9 @@ static void alias_root_query_controls(Arena *arena) {
               binding_value_from_atom(body)),
           "return a materialized compound whose child belongs to the ordinary image");
     CHECK(bindings_resolve_value_preview(&builder.current, contextual, &result) &&
-          result.skeleton == body && result.epoch == 0u &&
-          result.kind == BINDING_VALUE_MATERIALIZED &&
+          result.skeleton == body &&
+          cetta_frame_identity_is_none(binding_value_epoch(result)) &&
+          binding_value_kind(result) == BINDING_VALUE_MATERIALIZED &&
           result.skeleton->expr.elems[1] == other &&
           result.skeleton->expr.elems[2] == held &&
           result.skeleton->expr.elems[3] == other,

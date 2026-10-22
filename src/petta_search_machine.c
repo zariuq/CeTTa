@@ -1719,8 +1719,19 @@ static bool petta_machine_grounded_call(
         return machine->host.grounded_call(machine->host.context,
             machine->space, &machine->heap, head, arguments,
             argument_count, outcome);
-    return grounded_call(
-        &machine->heap, head, arguments, argument_count, outcome);
+    if (!grounded_call(
+            &machine->heap, head, arguments, argument_count, outcome))
+        return false;
+    if (outcome->kind == CETTA_CALL_VALUE &&
+        outcome->result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+        machine->host.complete_value && outcome->term) {
+        outcome->term = machine->host.complete_value(
+            machine->host.context, machine->space, &machine->heap,
+            outcome->term);
+        if (!outcome->term)
+            return false;
+    }
+    return true;
 }
 
 static bool petta_machine_try_plain_scalar_truth(
@@ -10125,6 +10136,7 @@ static bool petta_transfer_hosts_equal(
     if (left->evaluate != right->evaluate) return false;
     if (left->evaluate_planned != right->evaluate_planned) return false;
     if (left->apply_ready_values != right->apply_ready_values) return false;
+    if (left->complete_value != right->complete_value) return false;
     if (left->prepare_he_type != right->prepare_he_type) return false;
     if (left->reduce_he_call != right->reduce_he_call) return false;
     if (left->external_he_sources != right->external_he_sources) return false;
@@ -18657,6 +18669,42 @@ static bool petta_machine_foldall_install_goals(
     return payload && petta_machine_delay_install(machine, payload);
 }
 
+/* A host that marks completed values marks a matched space candidate only
+ * where `match_pattern` can bind an expression from `candidate`: a variable
+ * or list-spine pattern may bind `candidate` itself, while a plain tuple
+ * pattern binds only within `candidate`'s children. */
+static Atom *petta_machine_complete_match_candidate(
+    PettaMachineImpl *machine, Space *space,
+    Atom *match_pattern, Atom *candidate) {
+    if (!machine->host.complete_value || !candidate ||
+        candidate->kind != ATOM_EXPR || !atom_has_vars(match_pattern))
+        return candidate;
+    if (match_pattern->kind == ATOM_EXPR &&
+        !atom_is_list_rest(match_pattern) &&
+        !petta_semantics_is_open_cons_value(match_pattern) &&
+        !petta_semantics_is_open_cons_value(candidate)) {
+        if (candidate->expr.len != match_pattern->expr.len)
+            return candidate;
+        if (match_pattern->expr.len > 0u &&
+            match_pattern->expr.elems[0]->kind == ATOM_SYMBOL &&
+            candidate->expr.elems[0]->kind == ATOM_SYMBOL &&
+            match_pattern->expr.elems[0] != candidate->expr.elems[0])
+            return candidate;
+        bool child_expr = false;
+        for (CettaExprIndex i = 0u; i < candidate->expr.len; i++) {
+            if (candidate->expr.elems[i] &&
+                candidate->expr.elems[i]->kind == ATOM_EXPR) {
+                child_expr = true;
+                break;
+            }
+        }
+        if (!child_expr)
+            return candidate;
+    }
+    return machine->host.complete_value(
+        machine->host.context, space, &machine->heap, candidate);
+}
+
 static bool petta_machine_advance_choice(
     PettaMachineImpl *machine, PettaChoice *choice,
     PettaMachineStep *failure, bool restore_choice_state,
@@ -20427,7 +20475,10 @@ static bool petta_machine_advance_choice(
         if (match_count == 0u)
             return false;
 
-        Atom *fresh = atom_has_vars(first_match)
+        first_match = petta_machine_complete_match_candidate(
+            machine, choice->as.match.space,
+            choice->as.match.pattern, first_match);
+        Atom *fresh = first_match && atom_has_vars(first_match)
             ? petta_machine_freshen_in_scope(
                   machine, first_match, &frame_identity_scope)
             : first_match;
@@ -20502,6 +20553,12 @@ static bool petta_machine_advance_choice(
             if (match_pattern != authored)
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_MATCH_PIN_RESOLVED_PATTERN);
+            candidate = petta_machine_complete_match_candidate(
+                machine, choice->as.match.space, match_pattern, candidate);
+            if (!candidate) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
             if (petta_machine_match_candidate_by_structure(
                     authored, match_pattern, candidate)) {
                     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
@@ -20592,6 +20649,12 @@ static bool petta_machine_advance_choice(
         if (match_pattern != authored)
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_MATCH_PIN_RESOLVED_PATTERN);
+        candidate = petta_machine_complete_match_candidate(
+            machine, choice->as.match.space, match_pattern, candidate);
+        if (!candidate) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
         if (petta_machine_match_candidate_by_structure(
                 authored, match_pattern, candidate)) {
                 CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
