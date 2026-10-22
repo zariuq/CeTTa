@@ -1133,6 +1133,11 @@ SpacePreparedRegisterStep space_prepared_equation_execute_register_step(
 SpacePreparedRegisterStep space_prepared_equation_run_register_loop(
     const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
     size_t max_steps, Atom **result_out);
+/* As above, and reports in `completed_out` the steps taken (0 when not
+ * applicable), so a caller with a step budget can charge them. */
+SpacePreparedRegisterStep space_prepared_equation_run_register_loop_counted(
+    const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
+    size_t max_steps, Atom **result_out, size_t *completed_out);
 SpacePreparedRegisterStep space_prepared_equation_run_register_recursion(
     const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
     size_t max_calls, Atom **result_out);

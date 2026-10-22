@@ -650,6 +650,169 @@ static inline __attribute__((always_inline)) void prime_ordinary_capsule_stack_l
         control->completion=CETTA_EVAL_INCOMPLETE_CAPACITY;
 }
 
+static PrimeNativeControl *prime_inline_quantum_adopt(
+    PrimeEvalStackDriver *source, Space *space, Atom *expression, int fuel,
+    const Bindings *environment, CettaObservationDemand demand) {
+    if (!source || source != g_prime_eval_stack_driver || source->control ||
+        source->running_task || source->active_task ||
+        source->root_call_running || source->raw_call_depth ||
+        source->bind_depth || source->poison_depth ||
+        source->capacity_blocked || source->failed ||
+        source->stream_pending ||
+        source->prepared_pure_cache.execution_scratch_ready ||
+        !source->root_target || !source->arena ||
+        (!source->task_ready && !source->top) ||
+        cetta_parallel_worker_active() ||
+        cetta_native_cost_observer_active() ||
+        cetta_shared_transition_guard_held_by_current_thread() ||
+        eval_current_language_id() != CETTA_LANGUAGE_PRIME ||
+        active_search_table_mode() != CETTA_TABLE_MODE_NONE ||
+        !prime_native_control_admits(space, source->arena, expression, false))
+        return NULL;
+    size_t count = source->frame_depth;
+    if (count > SIZE_MAX / sizeof(PrimeEvalStackFrame *) ||
+        source->continuations.depth != count ||
+        source->continuations.top != (CettaOwnedFrameLink *)source->top)
+        return NULL;
+    PrimeEvalStackFrame **frames = count ? calloc(count, sizeof(*frames)) : NULL;
+    if (count && !frames)
+        return NULL;
+    size_t found = 0u;
+    size_t alternative_frames = 0u;
+    for (PrimeEvalStackFrame *frame = source->top; frame;
+         frame = (PrimeEvalStackFrame *)frame->continuation.next) {
+        if (found == count || frame->arena != source->arena ||
+            frame->control_sequence || frame->control_pending ||
+            frame->control_queued || frame->control_retired ||
+            frame->control_closed || frame->control_nested ||
+            frame->control_nested_operation ||
+            frame->kind == PRIME_EVAL_STACK_FRAME_STREAM_RESUME ||
+            (frame->kind >= PRIME_EVAL_STACK_FRAME_CONTROL_SCORE &&
+             frame->kind != PRIME_EVAL_STACK_FRAME_CHOICE))
+            goto decline;
+        if (prime_eval_stack_frame_holds_alternative(frame) &&
+            ++alternative_frames > 1u)
+            goto decline;
+        if (frame->kind == PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH) {
+            const PrimeNeedEquationContinuation *eq = frame->equation_search;
+            if (!eq ||
+                eq->state == PRIME_NEED_EQUATION_SEARCH_WAIT_FORCE ||
+                (eq->state == PRIME_NEED_EQUATION_SEARCH_WAIT_PUBLICATION &&
+                 frame->child.len != 0u))
+                goto decline;
+        }
+        frames[found++] = frame;
+    }
+    if (found != count)
+        goto decline;
+    for (size_t i = 0u; i < count; i++)
+        if (!prime_ordinary_target(source, frames, count, frames[i]->target))
+            goto decline;
+    if (source->task_ready &&
+        (!prime_ordinary_target(source, frames, count, source->task.target) ||
+         source->task.arena != source->arena))
+        goto decline;
+    PrimeNativeControl *control = calloc(1u, sizeof(*control));
+    if (!control)
+        goto decline;
+    if (!prime_native_control_initialize(
+            control, space, source->arena, expression, fuel, false,
+            demand, NULL, environment, NULL, NULL, false) ||
+        control->registry_read.incomplete)
+        goto release;
+    control->reclaims_frames = !control->weight_analysis && !control->weight_keys;
+    size_t capacity = 16u;
+    if (count > SIZE_MAX / 2u)
+        goto release;
+    while (capacity < count * 2u) {
+        if (capacity > SIZE_MAX / 2u)
+            goto release;
+        capacity *= 2u;
+    }
+    control->frame_index = calloc(capacity, sizeof(*control->frame_index));
+    control->frame_index_capacity = capacity;
+    control->changed_frames = count ? calloc(count, sizeof(*control->changed_frames)) : NULL;
+    control->changed_capacity = count;
+    if (!control->frame_index || (count && !control->changed_frames))
+        goto release;
+    PrimeNativeWork *ready = calloc(1u, sizeof(*ready));
+    if (!ready)
+        goto release;
+    ready->owner = control;
+    CettaOwnedContinuation initial = {
+        .payload = ready, .provider = &prime_native_work_provider};
+    if (!cetta_continuation_hub_append(&control->hub, &initial)) {
+        free(ready);
+        goto release;
+    }
+    OutcomeSet *target = source->root_target;
+    prime_ordinary_move_outcomes(&control->output, target);
+    for (size_t i = count; i > 0u; i--) {
+        PrimeEvalStackFrame *frame = frames[i - 1u];
+        if (frame->target == target)
+            frame->target = &control->output;
+        if (frame->kind == PRIME_EVAL_STACK_FRAME_CHOICE)
+            frame->kind = PRIME_EVAL_STACK_FRAME_ALTERNATIVES;
+        if (frame->kind == PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH &&
+            frame->equation_search->state ==
+                PRIME_NEED_EQUATION_SEARCH_WAIT_PUBLICATION) {
+            OutcomeSet *old_target = &frame->child;
+            OutcomeSet *new_target = frame->target;
+            for (size_t j = 0u; j < i - 1u; j++)
+                if (frames[j]->target == old_target)
+                    frames[j]->target = new_target;
+            if (source->task_ready && source->task.target == old_target)
+                source->task.target = new_target;
+            frame->equation_search->state =
+                PRIME_NEED_EQUATION_SEARCH_BUILD_PUBLICATION;
+        }
+    }
+    if (source->task_ready && source->task.target == target)
+        source->task.target = &control->output;
+    if (source->task_ready &&
+        source->task.kind == PRIME_EVAL_STACK_TASK_BRANCH)
+        source->task.kind = PRIME_EVAL_STACK_TASK_CALL;
+    control->driver = *source;
+    control->driver.control = control;
+    control->driver.ordinary_ordered = false;
+    control->driver.answer_limit = 0u;
+    control->driver.streaming = true;
+    control->driver.nested = true;
+    control->driver.continuations = (CettaOwnedFrameStack){0};
+    control->driver.root_target = &control->output;
+    control->driver.collection_admitted = false;
+    control->driver.top = NULL;
+    for (size_t i = count; i > 0u; i--) {
+        PrimeEvalStackFrame *frame = frames[i - 1u];
+        prime_native_control_register_frame(control, frame);
+        control->driver.top = frame;
+    }
+    if (control->driver.task_ready) {
+        ready->task = control->driver.task;
+        ready->task_initialized = true;
+        ready->parent = control->driver.top;
+        if (ready->parent)
+            ready->parent->control_pending++;
+        memset(&control->driver.task, 0, sizeof(control->driver.task));
+        control->driver.task_ready = false;
+    } else {
+        ready->frame = control->driver.top;
+        ready->frame->control_queued = true;
+    }
+    control->driver.top = NULL;
+    g_prime_eval_stack_driver = &control->driver;
+    prime_native_control_scan(control);
+    g_prime_eval_stack_driver = source;
+    memset(source, 0, sizeof(*source));
+    free(frames);
+    return control;
+release:
+    prime_native_control_destroy(control);
+decline:
+    free(frames);
+    return NULL;
+}
+
 static void prime_ordinary_capsule_stack_run(PrimeNativeControl *control,uint64_t grant) {
     PrimeEvalStackDriver *driver=&control->driver;
     assert(driver->capsule_stack && driver->control==control && !control->cost_enabled);

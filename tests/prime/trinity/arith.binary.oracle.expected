@@ -276,5 +276,5 @@
 [False]
 [True]
 [(Undetermined (hol:define-not-terminating (= (spin (bit0 $p)) (spin (bit0 $p))) (spin (bit0 $p)) (admit-by set-solution coinductive)))]
-[(Undetermined hol:define-bound-obligations 3)]
+[(Undetermined hol:define-bound-obligations 2)]
 [(Undetermined hol:define-bound-obligation)]
