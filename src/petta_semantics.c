@@ -3800,6 +3800,34 @@ bool petta_semantics_lambda_body(
     return true;
 }
 
+bool petta_semantics_lambda_arity(
+        const Atom *atom, CettaExprLen *arity) {
+    if (arity)
+        *arity = 0u;
+    int64_t identity = 0;
+    if (!atom_petta_callable_identity(atom, &identity))
+        return false;
+    CettaExprLen count = 0u;
+    const Atom *body = atom;
+    for (;;) {
+        int64_t nested_identity = 0;
+        Atom *next = NULL;
+        if (!atom_petta_callable_identity(body, &nested_identity) ||
+            nested_identity != identity ||
+            !petta_semantics_lambda_body(body, &next))
+            break;
+        if (count == UINT64_MAX)
+            return false;
+        count++;
+        body = next;
+    }
+    if (count == 0u)
+        return false;
+    if (arity)
+        *arity = count;
+    return true;
+}
+
 bool petta_semantics_is_mm2_exec(SymbolId head) {
     const PeTTaSymbolIds *ids = petta_symbol_ids();
     return ids->table && head != SYMBOL_ID_NONE && head == ids->mm2_exec;
@@ -3827,8 +3855,8 @@ bool petta_semantics_closure_remaining(const Atom *atom,
         !petta_semantics_lambda_body(base, NULL))
         return false;
     CettaExprLen parameters = 0u;
-    for (Atom *body = base; petta_semantics_lambda_body(body, &body);)
-        parameters++;
+    if (!petta_semantics_lambda_arity(base, &parameters))
+        return false;
     if (parameters < bound->expr.len)
         return false;
     if (remaining)

@@ -519,6 +519,7 @@ struct CettaPreparedPureProgram {
      * allocating the same scalar on every loop iteration. */
     Atom boolean_atoms[2];
     bool boolean_atoms_ready;
+    bool exports_boolean_results;
     CettaPreparedPureConstructValue construct_value;
     CettaPreparedPureConstructsExpression constructs_expression;
     CettaPreparedPureOpaqueValue opaque_value;
@@ -529,6 +530,7 @@ struct CettaPreparedPureProgram {
     bool total_structural_equality;
     CettaMatchDecisionSemanticIdentity match_decision_semantics;
     bool closed_program;
+    bool accepts_open_values;
     bool answer_producer;
     bool allow_callable_templates;
     uint32_t root;
@@ -2998,6 +3000,27 @@ static uint8_t prepared_pure_undefined_type_operands(
     return operands;
 }
 
+/* A structural bind consumes a pattern value. A source occurrence that
+ * computes its pattern must stay with the owning evaluator; treating its
+ * syntax as a template would erase bindings supplied by a consumer. */
+static bool prepared_pure_compile_inert_bind_pattern(
+        CettaPreparedPureProgram *program,
+        PreparedPureCompileContext *context, Atom *pattern,
+        const void *source_view, uint32_t *pattern_index_out) {
+    CettaPreparedPureSourceRole role =
+        prepared_pure_source_role(program, source_view);
+    if (role == CETTA_PREPARED_PURE_SOURCE_CALL ||
+        role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL ||
+        role == CETTA_PREPARED_PURE_SOURCE_DECLINE ||
+        (role == CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED &&
+         program->source_view.role && pattern->kind == ATOM_EXPR &&
+         !prepared_pure_template_head_is_inert(program, pattern)))
+        return prepared_pure_reject(
+            program, "binding pattern requires source evaluation", pattern);
+    return prepared_pure_compile_bind_pattern(
+        program, context, pattern, pattern_index_out);
+}
+
 /* A bind sequence (let*) from pair `index` on: the pair's value, then its
  * pattern bound for the rest, as nested binds ending in the body. */
 static bool prepared_pure_compile_bind_sequence(
@@ -3026,8 +3049,10 @@ static bool prepared_pure_compile_bind_sequence(
             pair->expr.elems[1]);
     size_t saved_bindings = context->len;
     uint32_t pattern_index = 0u;
-    if (!prepared_pure_compile_bind_pattern(
-            program, context, pair->expr.elems[0], &pattern_index))
+    if (!prepared_pure_compile_inert_bind_pattern(
+            program, context, pair->expr.elems[0],
+            prepared_pure_source_child(program, pair_view, 0u),
+            &pattern_index))
         return prepared_pure_reject(
             program, "let* pattern is outside the fragment",
             pair->expr.elems[0]);
@@ -3139,8 +3164,16 @@ static Atom *prepared_pure_boolean_atom(
     const CettaPreparedPureProgram *program, Arena *arena, bool value) {
     if (!program || !program->boolean_value)
         return NULL;
-    return program->boolean_atoms_ready
-        ? (Atom *)&program->boolean_atoms[value ? 1u : 0u]
+    if (!program->boolean_atoms_ready)
+        return program->boolean_value(arena, value);
+    Atom *cached = (Atom *)&program->boolean_atoms[value ? 1u : 0u];
+    if (!program->exports_boolean_results)
+        return cached;
+    /* A parent consumer may outlive this private program. Symbols have
+     * canonical table-owned leaves; other Boolean spellings are made in
+     * the execution arena whose results the consumer already retains. */
+    return cached->kind == ATOM_SYMBOL
+        ? atom_symbol_canonical(cached->sym_id)
         : program->boolean_value(arena, value);
 }
 
@@ -4271,8 +4304,10 @@ static bool prepared_pure_compile_eval_with_role(
         if (expression_view_state ==
             CETTA_PREPARED_PURE_EXPRESSION_OBSERVE) {
             if (!expression_view.projected ||
-                expression_view.observation !=
-                    CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION)
+                (expression_view.observation !=
+                     CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION &&
+                 expression_view.observation !=
+                     CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE))
                 return prepared_pure_reject(
                     program, "invalid dialect value observation", source);
             /* PeTTa's is-expr observes the value of its operand. */
@@ -4607,8 +4642,9 @@ static bool prepared_pure_compile_eval_with_role(
                     source->expr.elems[2]);
             size_t saved_bindings = context->len;
             uint32_t pattern_index = 0u;
-            if (!prepared_pure_compile_bind_pattern(
+            if (!prepared_pure_compile_inert_bind_pattern(
                     program, context, source->expr.elems[1],
+                    prepared_pure_source_child(program, source_view, 1u),
                     &pattern_index))
                 return prepared_pure_reject(
                     program, "let pattern is outside the fragment",
@@ -8583,6 +8619,49 @@ continue_call:
         program, equation->root, call_base);
 }
 
+/* This is a capability of the compiled value algebra, not a property of
+ * the current arguments. In particular, a match test or an evaluated slot
+ * must never acquire it merely because its last invocation was ground. */
+static bool prepared_pure_open_value_program(
+    const CettaPreparedPureProgram *program) {
+    if (!program || program->closed_program || program->answer_producer ||
+        program->call_mode != CETTA_GSLT_PURE_CALL_EAGER)
+        return false;
+    for (size_t index = 0u; index < program->node_len; index++) {
+        const PreparedPureNode *node = &program->nodes[index];
+        switch (node->kind) {
+        case PREPARED_PURE_LITERAL:
+            if (!node->atom || atom_has_vars(node->atom) ||
+                atom_is_error(node->atom) || atom_is_petta_no_result(node->atom))
+                return false;
+            break;
+        case PREPARED_PURE_SLOT:
+            if (node->auxiliary != program->accumulator_slot &&
+                node->auxiliary != program->item_slot)
+                return false;
+            break;
+        case PREPARED_PURE_BUILD:
+            break;
+        case PREPARED_PURE_IF:
+            if (node->child_count != 3u)
+                return false;
+            break;
+        case PREPARED_PURE_OBSERVE:
+            if (node->child_count > 1u ||
+                (node->child_count == 0u &&
+                 (!node->atom || atom_has_vars(node->atom))) ||
+                (node->auxiliary != CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE &&
+                 node->auxiliary != CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION &&
+                 node->auxiliary != PREPARED_PURE_OBSERVE_ATOM_EXPRESSION))
+                return false;
+            break;
+        default:
+            return false;
+        }
+    }
+    return true;
+}
+
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     Space *space, Atom *expression,
     VarId accumulator_var, VarId item_var,
@@ -8642,6 +8721,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
         cetta_prepared_pure_program_free(program);
         return NULL;
     }
+    program->accepts_open_values = prepared_pure_open_value_program(program);
     return program;
 }
 
@@ -10427,6 +10507,34 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
         expression_view, pattern_view,
         source_view, entry_arguments_are_values,
         total_structural_equality, match_decision_semantics, true);
+}
+
+bool cetta_prepared_pure_program_accepts_open_values(
+    const CettaPreparedPureProgram *program) {
+    return program && program->accepts_open_values;
+}
+
+static bool prepared_pure_is_cached_boolean(const Atom *atom, void *context) {
+    const CettaPreparedPureProgram *program = context;
+    return atom == &program->boolean_atoms[0] ||
+           atom == &program->boolean_atoms[1];
+}
+
+bool cetta_prepared_pure_program_use_exportable_booleans(
+    CettaPreparedPureProgram *program) {
+    if (!program || program->closed_program || program->code_ready ||
+        program->frame_len || program->value_len || program->slot_len)
+        return false;
+    if (program->boolean_atoms_ready) {
+        for (size_t index = 0u; index < program->node_len; index++) {
+            if (program->nodes[index].atom && atom_graph_any(
+                    program->nodes[index].atom, prepared_pure_is_cached_boolean,
+                    program))
+                return false;
+        }
+    }
+    program->exports_boolean_results = true;
+    return true;
 }
 
 bool cetta_prepared_pure_program_is_current(
@@ -12498,8 +12606,10 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
                           arena, values[0]->kind == ATOM_EXPR)
                     : NULL;
             } else {
-                if (node->auxiliary !=
-                        CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION ||
+                if ((node->auxiliary !=
+                         CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION &&
+                     node->auxiliary !=
+                         CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE) ||
                     count > 1u) {
                     decline = "invalid value observation descriptor";
                     goto declined;
@@ -12508,7 +12618,11 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
                 value = operand
                     ? prepared_pure_boolean_atom(
                           program,
-                          arena, petta_semantics_is_closed_list(operand))
+                          arena,
+                          node->auxiliary ==
+                                  CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE
+                              ? operand->kind == ATOM_VAR
+                              : petta_semantics_is_closed_list(operand))
                     : NULL;
             }
             if (!value) {
@@ -13553,8 +13667,10 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
             continue;
         }
         if (node->kind == PREPARED_PURE_OBSERVE) {
-            if (node->auxiliary !=
-                    CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION ||
+            if ((node->auxiliary !=
+                     CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION &&
+                 node->auxiliary !=
+                     CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE) ||
                 node->child_count > 1u)
                 return prepared_pure_runtime_decline(
                     program, "invalid value observation descriptor", node);
@@ -13565,7 +13681,10 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 ? prepared_pure_boolean_atom(
                       program,
                       arena,
-                      petta_semantics_is_closed_list(operand))
+                      node->auxiliary ==
+                              CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE
+                          ? operand->kind == ATOM_VAR
+                          : petta_semantics_is_closed_list(operand))
                 : NULL;
             program->value_len = frame->value_base;
             if (!result || !prepared_pure_push_value(program, result))

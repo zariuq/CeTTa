@@ -52,12 +52,10 @@ def documents():
         "numeric-computed": "(Result (is-var $x) (min (+ 2 3) (progn ignored 7)) (max 5 (+ 3 4)))",
         "undefined": "(Result (is-var $x) (// (+ 2 3) (prog1 2 ignored)) (numeric-eq 1 1.0))",
         "host-child": "(progn (println! leaf) ignored (Result (is-var $x)))",
-        "host-domain": "(prog1 (Result (is-var $x) (min 3.5 2.5)) ignored)",
+        "scalar-minmax": "(prog1 (Result (is-var $x) (min 3.5 2.5)) ignored)",
     }
     for name, body in operations.items():
         allowed = ["println!/1"] if name == "host-child" else []
-        if name == "host-domain":
-            allowed = ["min/2"]
         yield name, f"(= (composition-run $x) {body})\n!(composition-run $free)\n", allowed
 
     typed = {
@@ -193,8 +191,22 @@ def main():
                 if not (counters.get("open-equation-answer", 0) or
                         counters.get("open-equation-host-transfer", 0)):
                     raise AssertionError(f"{name}: tier neither answered nor transferred its continuation")
-                if name.startswith("typed-") and not counters.get("open-equation-typed-call", 0):
-                    raise AssertionError(f"{name}: typed call did not enter the tier")
+                if name.startswith("typed-"):
+                    wrapped = counters.get("open-equation-typed-call", 0)
+                    erased = counters.get(
+                        "open-equation-identity-typed-call", 0)
+                    identity_contract = (
+                        name.startswith("typed-translated-") or
+                        any(name.startswith(
+                            f"typed-registry-{head}-{arity}-")
+                            for head in ("fold", "chain")
+                            for arity in (0, 1)))
+                    if identity_contract and (not erased or wrapped):
+                        raise AssertionError(
+                            f"{name}: identity contract kept its wrapper")
+                    if not identity_contract and (not wrapped or erased):
+                        raise AssertionError(
+                            f"{name}: guarded contract lost its wrapper")
             if args.petta_root and profile is None:
                 swi = subprocess.run(["bash", "run.sh", "--silent", str(path)],
                                      cwd=args.petta_root, capture_output=True,

@@ -1122,7 +1122,46 @@ CLASSICS.append("""(= (divide-computed $x) (/ 10 (- $x 2)))
 !(catch (collapse (dynamic-forward (superpose (divide-or-value)) 1)))
 """)
 
+def occurs_reuse_document(depth):
+    # Two unbound names defeat the singleton-support shortcut. The first
+    # check exhausts the large graph; the second finds a cycle in that same
+    # graph. Its previously visited nodes must not survive the logical reset.
+    term = '$other'
+    for _ in range(depth):
+        term = f'(Branch $needle {term})'
+    return f"""(: same-term (-> Atom Atom %Undefined%))
+(= (same-term $x $x) hit)
+(: twice (-> Atom Atom %Undefined%))
+(= (twice $term $needle)
+   (let $first (same-term $fresh $term) (same-term $needle $term)))
+(: accept-term (-> Atom %Undefined%))
+(= (accept-term $term) (same-term $fresh $term))
+!(collapse (twice {term} $needle))
+!(accept-term {term})
+"""
+
+
 PETTA_FIXED = [
+    (occurs_reuse_document(24), "()\nhit\n"),
+    (occurs_reuse_document(64), "()\nhit\n"),
+    ("""(: overloaded-length (-> Atom Number))
+(: overloaded-length (-> Atom %Undefined%))
+(= (overloaded-length $xs)
+   (case $xs ((End 0) ((Link $head $tail) (+ 1 (overloaded-length $tail))))))
+(= (wrapped-overloaded-length $xs) (overloaded-length $xs))
+!(collapse (wrapped-overloaded-length (Link a (Link b End))))
+""", "(2 2 2 2 2 2 2 2)\n"),
+    ("""(: alias-length (-> Atom %Undefined%))
+(= (alias-length $xs)
+   (case $xs ((End 0) ((Link $head $xs) (+ 1 (alias-length $xs))))))
+(= (wrapped-alias-length $xs) (alias-length $xs))
+!(collapse (wrapped-alias-length (Link a End)))
+(: ordinary-length (-> Atom %Undefined%))
+(= (ordinary-length $xs)
+   (case $xs ((End 0) ((Link $head $tail) (+ 1 (ordinary-length $tail))))))
+(= (wrapped-ordinary-length $xs) (ordinary-length $xs))
+!(wrapped-ordinary-length (Link a (Link b End)))
+""", "()\n2\n"),
     ("""(= (nat) Z)
 (= (nat) (S (nat)))
 (= (nat2 $u) Z)

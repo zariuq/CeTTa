@@ -106,6 +106,11 @@ def main():
     small, large = measurements
     assert small["rss_kib"] < parent_peak // 2, (parent_peak, small)
     assert large["rss_kib"] > small["rss_kib"] + (96 << 10), measurements
+    precise = paired_measure(
+        [sys.executable, "-c", "print(sum(range(1000000)))"],
+        out, dict(os.environ), out / "precise-wall", 10, None, True)
+    assert precise["rc"] == 0 and precise["perf_wall"] > 0, precise
+    assert precise["instructions"] > 0 and precise["cycles"] > 0, precise
     timed = paired_measure([sys.executable, "-c", "import time; time.sleep(5)"],
                            out, dict(os.environ), out / "cancel", 0.1, None, False)
     assert timed["timed_out"] and timed["rc"] != 0 and timed["rss_kib"] is None, timed
