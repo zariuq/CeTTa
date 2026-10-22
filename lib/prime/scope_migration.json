@@ -84,8 +84,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "6f07f5da066face9a59951dd3bc1a17c953e0cd96816b21dc480b3406b179c65",
-      "output_sha256": "e2c180120b24bd4ebafa7f8e8cbefa905a379d921f18041d73c4f06ac2c9e4e9",
+      "source_sha256": "e23a03c7df9edf81c6e628c2d82d459e6ca98605b2eaa5beceb982487889f638",
+      "output_sha256": "458ac9339dfec1df511cf3ee3ad87daea698bfe81e8d6bcd06c77397ea4658a6",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -148,9 +148,9 @@
     {
       "source": "io.metta",
       "output": "io.metta",
-      "source_sha256": "7ddf9f8a83d3b20d2a5f97a057af97207c4478727ca7d6fd134d23d4b270a111",
-      "output_sha256": "c504eb08aa3f58a7960de3dc4abce9c4065d81b005c873e0bcb054d89498648e",
-      "edits": 15,
+      "source_sha256": "f85b9cc26f9d7282cf2187e13247c2d4a0f3644adbe855e23ad3b54bfb6acd68",
+      "output_sha256": "9f0a0fb796d80f63c7d2e4bea02e7d6f66d190551b8d722a916f1b28d4929bf4",
+      "edits": 16,
       "code_diagnostics": 0
     },
     {
@@ -412,9 +412,9 @@
     {
       "source": "postings.metta",
       "output": "postings.metta",
-      "source_sha256": "99537c85870abdc9067a7f4ceaa4fdd8e9672cd023df7d81df8ced20cce93b66",
-      "output_sha256": "3893bfebe713d77dc31604dbea7f79acf6877b1b611318eade7504db29f31eb3",
-      "edits": 43,
+      "source_sha256": "f5b6166c09adf9bd05ec229a4fe0db9c95d644cba125e697b1260a6691dee7ed",
+      "output_sha256": "aaf1beb8e6a2ffb45036d2f61341c21d7759b51bb47c8d30fdb073f90bd34ee7",
+      "edits": 44,
       "code_diagnostics": 0
     },
     {

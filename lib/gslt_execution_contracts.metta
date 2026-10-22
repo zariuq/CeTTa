@@ -779,6 +779,7 @@
   (query-head __cetta_lib_fs_close world-write)
   (query-head __cetta_lib_io_submit world-write)
   (query-head __cetta_lib_io_poll world-write)
+  (query-head __cetta_lib_io_http_read relational-query)
   (query-head __cetta_lib_io_cancel world-write)
   (query-head __cetta_lib_mork_space_new world-write)
   (query-head __cetta_lib_mork_space_include world-write)

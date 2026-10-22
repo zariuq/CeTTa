@@ -18,6 +18,7 @@ with tempfile.TemporaryDirectory(prefix="cetta-io-library-") as directory:
         program.write_text(f'''!(import! &self io)
 !(io:capabilities)
 !(io:poll)
+!(io:http-read 999 0 16)
 !(io:submit (http:request "GET" "http://127.0.0.1:{port}/one" () "" 2000 1024))
 !(io:wait 5000)
 !(io:poll)
@@ -45,7 +46,7 @@ with tempfile.TemporaryDirectory(prefix="cetta-io-library-") as directory:
             capabilities = lines.pop(0)
             assert capabilities.startswith("(") and capabilities.endswith(")"), capabilities
             assert "http" in capabilities[1:-1].split(), capabilities
-            assert lines == ['(io:idle)', '(io:pending 1)',
+            assert lines == ['(io:idle)', '(io:unknown 999)', '(io:pending 1)',
                              '(io:event 1 (http:response 200 "one"))',
                              '(io:idle)', '(io:idle)',
                              '(io:pending 2)', '(io:event 2 (http:response 302 ""))',
