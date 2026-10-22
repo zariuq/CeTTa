@@ -6123,13 +6123,41 @@ typedef struct {
     bool failed;
 } SpaceEffectGraph;
 
+typedef struct {
+    SymbolId head;
+    CettaGsltQueryEffect effect;
+    bool occupied;
+} SpaceGeneratedEffectCacheEntry;
+
+enum { SPACE_GENERATED_EFFECT_CACHE_CAP = 256u };
+static _Thread_local SpaceGeneratedEffectCacheEntry
+    g_space_generated_effect_cache[SPACE_GENERATED_EFFECT_CACHE_CAP];
+static _Thread_local uint64_t g_space_generated_effect_table_instance;
+
 static CettaGsltQueryEffect space_generated_query_head_effect(
     SymbolId head) {
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (g_space_generated_effect_table_instance != instance) {
+        memset(g_space_generated_effect_cache, 0,
+               sizeof(g_space_generated_effect_cache));
+        g_space_generated_effect_table_instance = instance;
+    }
+    size_t slot = ((size_t)head * (size_t)UINT32_C(2654435761)) &
+        (SPACE_GENERATED_EFFECT_CACHE_CAP - 1u);
+    SpaceGeneratedEffectCacheEntry *cached =
+        &g_space_generated_effect_cache[slot];
+    if (cached->occupied && cached->head == head)
+        return cached->effect;
+    CettaGsltQueryEffect result = CETTA_GSLT_QUERY_EFFECT_PURE;
 #define SPACE_QUERY_EFFECT_HEAD(field, effect) \
-    if (head == g_builtin_syms.field) return (effect);
+    if (head == g_builtin_syms.field) { result = (effect); goto done; }
     CETTA_GSLT_QUERY_EFFECT_HEAD_ROWS(SPACE_QUERY_EFFECT_HEAD)
 #undef SPACE_QUERY_EFFECT_HEAD
-    return CETTA_GSLT_QUERY_EFFECT_PURE;
+done:
+    *cached = (SpaceGeneratedEffectCacheEntry){
+        .head = head, .effect = result, .occupied = true,
+    };
+    return result;
 }
 
 static bool space_generated_fold_control(

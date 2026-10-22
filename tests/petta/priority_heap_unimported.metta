@@ -1,0 +1,1 @@
+!(println! (empty_heap))

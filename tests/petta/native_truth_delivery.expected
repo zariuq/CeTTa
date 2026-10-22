@@ -1,0 +1,10 @@
+true
+yes
+no
+(yes)
+(absolute "/c")
+(relative "c")
+string
+yes
+("/once")
+(yes no yes)
