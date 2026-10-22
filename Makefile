@@ -46526,3 +46526,24 @@ bench-binding-support-substitution: $(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN)
 	@$(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN) bench
 	@printf '%s\n' 'Unbound subtree beside a bound field'
 	@$(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN) bench-mixed
+
+PETTA_SELECTOR_FINGERPRINT_TEST_BIN = runtime/test_petta_selector_fingerprint-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats)
+PETTA_SELECTOR_FINGERPRINT_TEST_OBJS = $(filter-out src/main.% src/petta_specializer.%,$(OBJ))
+$(PETTA_SELECTOR_FINGERPRINT_TEST_BIN): tests/support/test_petta_selector_fingerprint.c src/petta_specializer.c src/subst_tree.h src/symbol_index.h $(PETTA_SELECTOR_FINGERPRINT_TEST_OBJS) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(PETTA_SELECTOR_FINGERPRINT_TEST_OBJS) $(LDFLAGS)
+
+.PHONY: test-petta-selector-fingerprint
+test-petta-selector-fingerprint: $(PETTA_SELECTOR_FINGERPRINT_TEST_BIN) $(BIN) benchmarks/selector_lookup.metta
+	@$(PETTA_SELECTOR_FINGERPRINT_TEST_BIN)
+	@set -eu; for fingerprint_reference in 0 1; do \
+		for region_reference in 0 1; do \
+			actual=$$(CETTA_PETTA_SPECIALIZER_FINGERPRINT_REFERENCE=$$fingerprint_reference \
+				CETTA_OPEN_EQUATIONS_REFERENCE=$$region_reference \
+				CETTA_PREPARED_PURE_REFERENCE=$$region_reference \
+				$(CETTA_BIN_INVOKE) --lang petta benchmarks/selector_lookup.metta); \
+			test "$$actual" = 28; \
+		done; \
+	done
+	@echo 'PASS: captured selector offsets agree with exact lookup on ordinary and compiled routes'
+
+test-all test-petta-specializer-prepare: test-petta-selector-fingerprint
