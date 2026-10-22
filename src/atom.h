@@ -113,7 +113,9 @@ typedef enum {
     /* An opaque authority object of the shared seal substrate (seal.h): a
      * brand facet, a capsule or a key.  Its only identity is the object
      * itself; no printed form, number or payload reconstructs one. */
-    GV_SEAL
+    GV_SEAL,
+    /* Immutable library values with representation-independent equality. */
+    GV_STRUCTURAL
 } GroundedKind;
 
 typedef enum {
@@ -808,6 +810,10 @@ void  arena_account_external_bytes(Arena *a, size_t size);
 Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
                                     void (*retain)(void *),
                                     void (*release)(void *));
+/* A conservative transitive payload footprint, charged once per arena owner.
+ * The callback must not allocate or re-enter that arena. Copies keep it. */
+Atom *atom_native_handle_identifier_tracked(Arena *a, int64_t id, void *owner,
+    void (*retain)(void *), void (*release)(void *), size_t (*footprint)(void *));
 /* Compare the retained authority, not just the printed integer. */
 bool atom_native_handle_identifier_matches(const Atom *atom, const void *owner,
                                            void (*retain)(void *),
@@ -1191,6 +1197,41 @@ size_t atom_seal_display_text(const Atom *atom, char *buffer, size_t capacity);
 uint64_t atom_seal_identity(const Atom *atom);
 /* The type symbol name of a GV_SEAL atom, or NULL. */
 const char *atom_seal_type_name(const Atom *atom);
+
+/* A structural value begins with a pointer to its process-lifetime class
+ * descriptor. It owns its complete immutable data, contains no variables or
+ * capabilities, and has thread-safe retain/release. All layouts of one
+ * semantic type use the same descriptor. compare is a total order with
+ * compare(a,b)==0 iff equal(a,b); equal values have identical hash values.
+ * Display is a bounded description, not a serialization or authority token.
+ * Explicit inspection may materialize ordinary data. Storage codecs are
+ * separate: no portable encoding is inferred from this callback table. */
+typedef struct CettaStructuralClass {
+    const char *type_name;
+    void (*retain)(void *value);
+    void (*release)(void *value);
+    bool (*equal)(const void *left, const void *right);
+    int (*compare)(const void *left, const void *right);
+    uint64_t (*hash)(const void *value);
+    size_t (*display)(const void *value, char *buffer, size_t capacity);
+    Atom *(*inspect)(const void *value, Arena *arena);
+    size_t (*retained_bytes)(const void *value);
+} CettaStructuralClass;
+
+static inline const CettaStructuralClass *cetta_structural_class(const void *value) {
+    return value ? *(const CettaStructuralClass *const *)value : NULL;
+}
+static inline bool atom_is_structural(const Atom *atom) {
+    return atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_STRUCTURAL;
+}
+Atom *atom_structural(Arena *arena, void *value);
+bool atom_structural_equal(const Atom *left, const Atom *right);
+int atom_structural_compare(const Atom *left, const Atom *right);
+uint64_t atom_structural_hash(const Atom *atom);
+size_t atom_structural_display(const Atom *atom, char *buffer, size_t capacity);
+const char *atom_structural_type_name(const Atom *atom);
+Atom *atom_structural_inspect(const Atom *atom, Arena *arena);
+size_t atom_structural_retained_bytes(const Atom *atom);
 
 /* A node of a rational term's graph (term_graph.h), the payload of a
  * GV_TERM_GRAPH atom: one record per node for the graph's life, so two atoms

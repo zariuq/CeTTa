@@ -62,6 +62,7 @@ test-fail-atomic-build-v1:
 # In particular, included configuration/dependency makefiles must not trigger
 # native artifact regeneration before that qualification runs.
 GSLT_SOURCE_LEAN_ONLY_GOALS_V1 := qualify-plain-bnf-authored-source-lean-v1 qualify-ebnf-authored-source-lean-v1 qualify-plain-bnf-selected-native-type-lean-v1 qualify-tptp-reader-source-lean-v1
+GSLT_SOURCE_LEAN_ONLY_GOALS_V1 += qualify-tensor-support-lean qualify-prepared-scalar-lean
 GSLT_SOURCE_LEAN_ONLY_V1 := $(if $(filter $(GSLT_SOURCE_LEAN_ONLY_GOALS_V1),$(MAKECMDGOALS)),$(if $(filter-out $(GSLT_SOURCE_LEAN_ONLY_GOALS_V1),$(MAKECMDGOALS)),,1),)
 ifneq ($(GSLT_SOURCE_LEAN_ONLY_V1),1)
 include src/generated/cetta_execution_contracts.generated.mk
@@ -743,6 +744,7 @@ SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presenta
 SRC += src/library_proc.c
 SRC += src/library_fs.c
 SRC += src/petta_priority_heap.c
+SRC += src/library_postings.c src/tensor.c src/tensor_screening.c src/library_tensor.c src/library_group.c
 SRC += src/str_stream.c
 SRC += src/relational_plan.c src/relational_cursor.c
 SRC += src/space_path_index.c
@@ -3336,6 +3338,14 @@ PRIME_PRACTICAL_TESTS = \
 	tests/prime/practical/atp_superposition_replay.metta \
 	tests/prime/practical/atp_agenda_example.metta \
 	tests/prime/practical/need_control_branch_discriminators.metta
+PRIME_NORMAL_TESTS = \
+	tests/prime/need_application.metta \
+	tests/prime/need_demand_modes.metta \
+	tests/prime/conformance/abt_let_scope.metta \
+	tests/prime/conformance/type_judgments.metta \
+	tests/prime/conformance/resource_policy.metta \
+	tests/prime/search_controller_frontier.metta \
+	examples/prime/dependent_telescope.metta
 PRIME_FAST_TESTS = $(PRIME_CONFORMANCE_TESTS) $(PRIME_EXAMPLE_TESTS) $(PRIME_PRACTICAL_TESTS)
 # Per-test wall-clock cap for the prime conformance/completion gates.  A clean
 # prime_02_completion_resources run is a few seconds; a pathological blow-up
@@ -3841,7 +3851,7 @@ $(FRAME_IDENTITY_TEST_BIN): tests/test_frame_identity.c src/atom.c src/binding/f
 	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_frame_identity.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
 
 .PHONY: test-frame-identity
-test: test-frame-identity
+test-all: test-frame-identity
 test-frame-identity: $(FRAME_IDENTITY_TEST_BIN)
 	@$(call cetta_exec,./$(FRAME_IDENTITY_TEST_BIN))
 
@@ -3862,7 +3872,7 @@ $(LAYOUT_WORDS_TEST_BIN): tests/test_layout_words.c $(LAYOUT_WORDS_HEADER) src/b
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_layout_words.c $(LDFLAGS)
 
-test: test-layout-words
+test-all: test-layout-words
 test-layout-words: $(LAYOUT_WORDS_TEST_BIN)
 	@$(call cetta_exec,./$(LAYOUT_WORDS_TEST_BIN))
 
@@ -3960,7 +3970,7 @@ $(BINDING_FRAME_RELOCATION_TEST_BIN): tests/test_binding_frame_relocation.c $(SY
 	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_binding_frame_relocation.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
 .PHONY: test-binding-frame-relocation
-test: test-binding-frame-relocation
+test-all: test-binding-frame-relocation
 test-binding-frame-relocation: $(BINDING_FRAME_RELOCATION_TEST_BIN)
 	@$(call cetta_exec,./$(BINDING_FRAME_RELOCATION_TEST_BIN))
 
@@ -3988,7 +3998,7 @@ $(NATIVE_TERM_DEPTH_TEST_BIN): tests/test_native_term_depth.c src/parser.c src/p
 	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_native_term_depth.c src/parser.c src/name_key.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
 .PHONY: test-native-term-depth
-test: test-native-term-depth
+test-all: test-native-term-depth
 test-native-term-depth: $(NATIVE_TERM_DEPTH_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_TERM_DEPTH_TEST_BIN))
 
@@ -4123,7 +4133,7 @@ $(TERM_ORDER_GRAPH_TEST_BIN): tests/test_term_order_graph.c src/petta_semantics.
 	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/test_term_order_graph.c src/petta_semantics.c src/term_graph.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
 
 .PHONY: test-term-order-graph
-test: test-term-order-graph
+test-all: test-term-order-graph
 test-term-order-graph: $(TERM_ORDER_GRAPH_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_ORDER_GRAPH_TEST_BIN))
 
@@ -4134,7 +4144,7 @@ $(TERM_MATCH_GRAPH_TEST_BIN): tests/test_term_match_graph.c src/petta_semantics.
 	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/test_term_match_graph.c src/petta_semantics.c src/term_graph.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
 
 .PHONY: test-term-match-graph
-test: test-term-match-graph
+test-all: test-term-match-graph
 test-term-match-graph: $(TERM_MATCH_GRAPH_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_MATCH_GRAPH_TEST_BIN))
 
@@ -4155,12 +4165,12 @@ $(TERM_MATCH_FAULTS_TEST_BIN): tests/test_term_match_faults.c src/petta_semantic
 	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=abort -o $@ tests/test_term_match_faults.c src/petta_semantics.c src/term_graph.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
 
 .PHONY: test-term-match-faults
-test: test-term-match-faults
+test-all: test-term-match-faults
 test-term-match-faults: $(TERM_MATCH_FAULTS_TEST_BIN)
 	@$(call cetta_exec,./$(TERM_MATCH_FAULTS_TEST_BIN))
 
 .PHONY: test-term-match-mutations
-test: test-term-match-mutations
+test-all: test-term-match-mutations
 test-term-match-mutations: $(BUILD_CONFIG_HEADER)
 	@python3 tests/support/check_term_match_mutations.py --cc '$(CC)' \
 		--flags '$(CPPFLAGS) $(CFLAGS)' --libs '$(LDFLAGS)' \
@@ -4172,7 +4182,7 @@ $(PATTERN_BINDINGS_TEST_BIN): tests/test_pattern_bindings.c src/petta_semantics.
 	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/test_pattern_bindings.c src/petta_semantics.c src/term_graph.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
 .PHONY: test-pattern-bindings
-test: test-pattern-bindings
+test-all: test-pattern-bindings
 test-pattern-bindings: $(PATTERN_BINDINGS_TEST_BIN)
 	@$(call cetta_exec,./$(PATTERN_BINDINGS_TEST_BIN))
 
@@ -4182,7 +4192,7 @@ $(RULE_BINDING_TEST_BIN): tests/test_rule_binding.c src/binding/rule.c src/rule_
 	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/test_rule_binding.c src/binding/rule.c src/petta_semantics.c src/term_graph.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
 .PHONY: test-rule-binding
-test: test-rule-binding
+test-all: test-rule-binding
 test-rule-binding: $(RULE_BINDING_TEST_BIN)
 	@$(call cetta_exec,./$(RULE_BINDING_TEST_BIN))
 
@@ -4192,7 +4202,7 @@ $(RULE_CURSOR_TEST_BIN): tests/test_rule_cursor.c src/rule_binding.h src/space.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_rule_cursor.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
 
 .PHONY: test-rule-cursor
-test: test-rule-cursor
+test-all: test-rule-cursor
 test-rule-cursor: $(RULE_CURSOR_TEST_BIN)
 	@$(call cetta_exec,./$(RULE_CURSOR_TEST_BIN))
 
@@ -4202,7 +4212,7 @@ $(PATTERN_QUERY_CURSOR_TEST_BIN): tests/test_pattern_query_cursor.c $(FALLBACK_E
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_pattern_query_cursor.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
 
 .PHONY: test-pattern-query-cursor test-pattern-queries
-test: test-pattern-query-cursor test-pattern-queries
+test-all: test-pattern-query-cursor test-pattern-queries
 test-pattern-query-cursor: $(PATTERN_QUERY_CURSOR_TEST_BIN)
 	@$(call cetta_exec,./$(PATTERN_QUERY_CURSOR_TEST_BIN))
 
@@ -4211,7 +4221,7 @@ $(PATTERN_OCCURRENCE_DROP_BIN): tests/test_pattern_query_cursor.c tests/test_pat
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Wl,--wrap=space_occurrence_cursor_next -o $@ tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
 
 .PHONY: test-pattern-occurrence-mutation
-test: test-pattern-occurrence-mutation
+test-all: test-pattern-occurrence-mutation
 test-pattern-occurrence-mutation: $(PATTERN_QUERY_CURSOR_TEST_BIN) $(PATTERN_OCCURRENCE_DROP_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
 	@$(NATIVE_MUTATION_GATE) $(PATTERN_QUERY_CURSOR_TEST_BIN) $(PATTERN_OCCURRENCE_DROP_BIN) 'PETTA_MACHINE_STEP_EXHAUSTED && count == total'
 
@@ -4223,7 +4233,7 @@ $(PATTERN_SCOPE_MUTANT_BIN): $(PATTERN_SCOPE_MUTANT_SRC) tests/test_pattern_bind
 	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/test_pattern_bindings.c src/petta_semantics.c src/term_graph.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c $(PATTERN_SCOPE_MUTANT_SRC) $(filter-out src/match.c,$(MATCH_STANDALONE_SRC)) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
 .PHONY: test-pattern-scope-mutation
-test: test-pattern-scope-mutation
+test-all: test-pattern-scope-mutation
 test-pattern-scope-mutation: $(PATTERN_BINDINGS_TEST_BIN) $(PATTERN_SCOPE_MUTANT_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
 	@$(NATIVE_MUTATION_GATE) $(PATTERN_BINDINGS_TEST_BIN) $(PATTERN_SCOPE_MUTANT_BIN) 'atom_eq(ordinary, shared)'
 
@@ -4231,32 +4241,32 @@ test-pattern-queries: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_pattern_queries.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-pattern-templates
-test: test-pattern-templates
+test-all: test-pattern-templates
 test-pattern-templates: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_pattern_templates.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-pattern-api
-test: test-pattern-api
+test-all: test-pattern-api
 test-pattern-api: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_pattern_api.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-pattern-adapters
-test: test-pattern-adapters
+test-all: test-pattern-adapters
 test-pattern-adapters: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_pattern_adapters.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-pattern-clauses
-test: test-pattern-clauses
+test-all: test-pattern-clauses
 test-pattern-clauses: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_pattern_clauses.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-pattern-clients
-test: test-pattern-clients
+test-all: test-pattern-clients
 test-pattern-clients: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_pattern_clients.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-import-space-capture
-test: test-import-space-capture
+test-all: test-import-space-capture
 test-import-space-capture: $(BIN)
 	@set -eu -o pipefail; \
 	for reference in 0 1; do \
@@ -4267,27 +4277,27 @@ test-import-space-capture: $(BIN)
 	echo 'PASS: captured module identity survives nested imports, initialization and rollback'
 
 .PHONY: test-pattern-model
-test: test-pattern-model
+test-all: test-pattern-model
 test-pattern-model: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_pattern_model.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-pattern-search-model
-test: test-pattern-search-model
+test-all: test-pattern-search-model
 test-pattern-search-model: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_pattern_search_model.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-pattern-interruption
-test: test-pattern-interruption
+test-all: test-pattern-interruption
 test-pattern-interruption: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_pattern_interruption.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-pattern-clause-model
-test: test-pattern-clause-model
+test-all: test-pattern-clause-model
 test-pattern-clause-model: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_pattern_clause_model.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-directional-rules
-test: test-directional-rules
+test-all: test-directional-rules
 test-directional-rules: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_directional_rules.py "$(CETTA_SCRIPT_BIN)"
 
@@ -4300,7 +4310,7 @@ test-pattern: test-term-match-graph test-term-match-faults test-term-match-mutat
 	test-pattern-interruption test-directional-rules test-import-space-capture
 
 .PHONY: test-chaining-tutorial
-test: test-chaining-tutorial
+test-all: test-chaining-tutorial
 test-chaining-tutorial: $(BIN) test-pattern-clients
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_chaining_tutorial.py "$(CETTA_SCRIPT_BIN)"
 
@@ -4318,12 +4328,12 @@ test-pattern-lean-models:
 	@python3 tests/support/check_pattern_lean_models.py --mettapedia "$(METTAPEDIA_ROOT)" \
 		--receipt "$(PATTERN_MODEL_RECEIPT)"
 
-test: test-term-order-predicates
+test-all: test-term-order-predicates
 test-term-order-predicates: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_term_order_predicates.py "$(CETTA_SCRIPT_BIN)"
 
 .PHONY: test-petta-profile-conservativity test-petta-profile-gate-unit test-petta-upstream-profiles
-test test-profiles: test-petta-profile-conservativity test-petta-profile-gate-unit
+test-all test-profiles: test-petta-profile-conservativity test-petta-profile-gate-unit
 test-petta-profile-conservativity: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_profile_conservativity.py "$(CETTA_SCRIPT_BIN)"
 
@@ -4349,7 +4359,7 @@ $(MIXED_EXACT_TEST_BIN): $(MIXED_EXACT_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) 
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 .PHONY: test-match-mixed-exact
-test: test-match-mixed-exact
+test-all: test-match-mixed-exact
 test-match-mixed-exact: $(MIXED_EXACT_TEST_BIN)
 	@$(call cetta_exec,./$(MIXED_EXACT_TEST_BIN))
 
@@ -4359,7 +4369,7 @@ $(MATCH_CLOSED_NUMERIC_TEST_BIN): tests/test_match_closed_numeric.c $(SYMBOL_STA
 	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/test_match_closed_numeric.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
 .PHONY: test-match-closed-numeric
-test: test-match-closed-numeric
+test-all: test-match-closed-numeric
 test-match-closed-numeric: $(MATCH_CLOSED_NUMERIC_TEST_BIN)
 	@$(call cetta_exec,./$(MATCH_CLOSED_NUMERIC_TEST_BIN))
 	@CETTA_MATCH_CLOSED_EXPRESSION_DECISION_REFERENCE=1 $(call cetta_exec,./$(MATCH_CLOSED_NUMERIC_TEST_BIN))
@@ -4389,7 +4399,7 @@ $(ATOM_HASH_CACHE_TEST_BIN): tests/test_atom_hash_cache.c $(SYMBOL_STANDALONE_SR
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_hash_cache.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(LDFLAGS)
 
 .PHONY: test-atom-hash-cache
-test: test-atom-hash-cache
+test-all: test-atom-hash-cache
 test-atom-hash-cache: $(ATOM_HASH_CACHE_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_HASH_CACHE_TEST_BIN))
 
@@ -4399,7 +4409,7 @@ $(ATOM_STRING_STORAGE_TEST_BIN): tests/test_atom_string_storage.c $(SYMBOL_STAND
 	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_atom_string_storage.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(LDFLAGS)
 
 .PHONY: test-atom-string-storage
-test: test-atom-string-storage
+test-all: test-atom-string-storage
 test-atom-string-storage: $(ATOM_STRING_STORAGE_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_STRING_STORAGE_TEST_BIN))
 
@@ -4408,7 +4418,7 @@ $(ATOM_SUFFIX_TEST_BIN): tests/test_atom_suffix.c $(SYMBOL_STANDALONE_SRC) src/a
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_suffix.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(LDFLAGS)
 
 .PHONY: test-atom-suffix
-test: test-atom-suffix
+test-all: test-atom-suffix
 test-atom-suffix: $(ATOM_SUFFIX_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_SUFFIX_TEST_BIN))
 
@@ -4417,7 +4427,7 @@ $(ATOM_GENERATIONS_TEST_BIN): tests/test_atom_generations.c $(SYMBOL_STANDALONE_
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_generations.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(LDFLAGS)
 
 .PHONY: test-atom-generations
-test: test-atom-generations
+test-all: test-atom-generations
 test-atom-generations: $(ATOM_GENERATIONS_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_GENERATIONS_TEST_BIN))
 
@@ -4429,7 +4439,7 @@ $(ATOM_INTERN_VARS_TEST_BIN): tests/test_atom_intern_vars.c $(SYMBOL_STANDALONE_
 -include $(ATOM_INTERN_VARS_TEST_BIN).d
 
 .PHONY: test-atom-intern-vars
-test: test-atom-intern-vars
+test-all: test-atom-intern-vars
 test-atom-intern-vars: $(ATOM_INTERN_VARS_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_INTERN_VARS_TEST_BIN))
 
@@ -4446,7 +4456,7 @@ runtime/test_prime_need_native_handles-$(BUILD_OBJ_TAG): tests/test_prime_need_n
 	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_need_native_handles.c src/prime_need.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c $(LDFLAGS)
 
 .PHONY: test-prime-need-native-handles
-test: test-prime-need-native-handles
+test-all: test-prime-need-native-handles
 test-prime-need-native-handles: runtime/test_prime_need_native_handles-$(BUILD_OBJ_TAG)
 	@$(call cetta_exec,./runtime/test_prime_need_native_handles-$(BUILD_OBJ_TAG))
 
@@ -4837,7 +4847,7 @@ test-prime-need-match-pattern: $(BIN) tests/prime/need_match_pattern_values.mett
 # A Need cell in a case pattern is forced when the selection reaches its
 # branch, never before, and each value continues the selection from there,
 # over a scrutinee evaluated once.
-test: test-prime-need-case-pattern
+test-all: test-prime-need-case-pattern
 test-prime-need-case-pattern: $(BIN) tests/prime/need_case_pattern_values.metta \
 		tests/prime/need_case_pattern_values.expected
 	@set -eu -o pipefail; \
@@ -5191,7 +5201,7 @@ $(CHAIN_AGGREGATION_TEST_BIN): $(CHAIN_AGGREGATION_TEST_OBJ) $(FALLBACK_EVAL_TES
 	$(CC) $(CFLAGS) -o $@ $(CHAIN_AGGREGATION_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
 
 .PHONY: test-chain-aggregation
-test: test-chain-aggregation
+test-all: test-chain-aggregation
 test-chain-aggregation: $(CHAIN_AGGREGATION_TEST_BIN)
 	@$(call cetta_exec,./$(CHAIN_AGGREGATION_TEST_BIN))
 
@@ -5214,11 +5224,11 @@ $(RELATIONAL_NAVIGATION_TEST_BIN): $(RELATIONAL_NAVIGATION_TEST_OBJ) $(FALLBACK_
 	$(CC) $(CFLAGS) -o $@ $(RELATIONAL_NAVIGATION_TEST_OBJ) $(filter-out src/relational_cursor.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(LDFLAGS)
 
 .PHONY: test-relational-navigation test-relational-navigation-reference
-test: test-relational-navigation
+test-all: test-relational-navigation
 test-relational-navigation: $(RELATIONAL_NAVIGATION_TEST_BIN)
 	@$(call cetta_exec,./$(RELATIONAL_NAVIGATION_TEST_BIN))
 
-test: test-relational-navigation-reference
+test-all: test-relational-navigation-reference
 test-relational-navigation-reference: $(RELATIONAL_NAVIGATION_TEST_BIN)
 	@CETTA_SANITIZER_REPEATABLE=$(SANITIZER_REPEATABLE) \
 		CETTA_WRAPPED_BIN="$(abspath $(RELATIONAL_NAVIGATION_TEST_BIN))" \
@@ -5226,7 +5236,7 @@ test-relational-navigation-reference: $(RELATIONAL_NAVIGATION_TEST_BIN)
 		"$(if $(filter 1,$(SANITIZER_REPEATABLE)),$(abspath $(CETTA_EXEC_WRAPPER)),$(abspath $(RELATIONAL_NAVIGATION_TEST_BIN)))"
 
 .PHONY: test-relational-navigation-mutations
-test: test-relational-navigation-mutations
+test-all: test-relational-navigation-mutations
 test-relational-navigation-mutations: $(RELATIONAL_NAVIGATION_TEST_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/relational-navigation-mutations-$(BUILD_OBJ_TAG); \
@@ -5260,7 +5270,7 @@ $(PRODUCER_SCHEDULE_TEST_BIN): tests/test_producer_schedule.c src/producer_sched
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc tests/test_producer_schedule.c src/producer_schedule.c src/fallible_alloc.c -Wl,--wrap=calloc -o $@ $(LDFLAGS)
 
 .PHONY: test-producer-dependencies test-producer-schedule
-test: test-producer-dependencies test-producer-schedule
+test-all: test-producer-dependencies test-producer-schedule
 test-producer-dependencies: $(PRODUCER_DEPENDENCIES_TEST_BIN)
 	@$(PRODUCER_DEPENDENCIES_TEST_BIN)
 test-producer-schedule: $(PRODUCER_SCHEDULE_TEST_BIN)
@@ -5271,7 +5281,7 @@ $(SHARED_OCCURRENCE_LOG_TEST_BIN): tests/test_shared_occurrence_log.c src/occurr
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc tests/test_shared_occurrence_log.c src/occurrence_log.c -Wl,--wrap=malloc,--wrap=calloc -o $@ $(LDFLAGS)
 
 .PHONY: test-shared-occurrence-log
-test: test-shared-occurrence-log
+test-all: test-shared-occurrence-log
 test-shared-occurrence-log: $(SHARED_OCCURRENCE_LOG_TEST_BIN)
 	@$(SHARED_OCCURRENCE_LOG_TEST_BIN)
 
@@ -5283,7 +5293,7 @@ $(SHARED_RETURN_PRODUCER_TEST_BIN): $(SHARED_RETURN_PRODUCER_TEST_OBJ) $(FALLBAC
 	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=malloc,--wrap=calloc $(LDFLAGS)
 
 .PHONY: test-shared-return-producer
-test: test-shared-return-producer
+test-all: test-shared-return-producer
 test-shared-return-producer: $(SHARED_RETURN_PRODUCER_TEST_BIN)
 	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN))
 
@@ -5295,7 +5305,7 @@ $(OWNED_RETURN_IMAGE_TEST_BIN): $(OWNED_RETURN_IMAGE_TEST_OBJ) $(FALLBACK_EVAL_T
 	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=calloc $(LDFLAGS)
 
 .PHONY: test-owned-return-image
-test: test-owned-return-image
+test-all: test-owned-return-image
 test-owned-return-image: $(OWNED_RETURN_IMAGE_TEST_BIN)
 	@$(call cetta_exec,./$(OWNED_RETURN_IMAGE_TEST_BIN))
 
@@ -5317,7 +5327,7 @@ $(RECURSIVE_PRODUCERS_BENCH_BIN): $(RECURSIVE_PRODUCERS_BENCH_OBJ) $(FALLBACK_EV
 bench-recursive-producers: $(RECURSIVE_PRODUCERS_BENCH_BIN)
 	@$(call cetta_exec,./$(RECURSIVE_PRODUCERS_BENCH_BIN)) 32 1 1 3 0
 
-test: test-recursive-producer-mutations
+test-all: test-recursive-producer-mutations
 test-recursive-producer-mutations: $(RECURSIVE_PRODUCERS_TEST_BIN)
 	@python3 tests/support/mutate_recursive_producers.py \
 		--compile '$(CC) $(CPPFLAGS) $(CFLAGS)' --link '$(CC) $(CFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=clock_gettime,--wrap=cetta_fallible_malloc,--wrap=cetta_fallible_calloc,--wrap=cetta_fallible_realloc' \
@@ -5325,22 +5335,22 @@ test-recursive-producer-mutations: $(RECURSIVE_PRODUCERS_TEST_BIN)
 		--out runtime/bootstrap/recursive-producer-mutations-$(BUILD_OBJ_TAG) \
 		$(FALLBACK_EVAL_TEST_LINK_OBJ)
 
-test: test-recursive-producers
+test-all: test-recursive-producers
 test-recursive-producers: $(RECURSIVE_PRODUCERS_TEST_BIN)
 	@$(RECURSIVE_PRODUCERS_TEST_BIN)
 
 .PHONY: test-producer-support
-test: test-producer-support
+test-all: test-producer-support
 test-producer-support: $(BIN)
 	@python3 tests/support/check_producer_support.py $(abspath $(BIN)) \
 		--output-directory runtime/bootstrap/producer-support-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,) \
 		$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
 
-test: test-producer-reads
+test-all: test-producer-reads
 test-producer-reads: $(PRODUCER_READS_TEST_BIN)
 	@$(PRODUCER_READS_TEST_BIN)
 
-test: test-relational-plan
+test-all: test-relational-plan
 test-relational-plan: $(RELATIONAL_PLAN_TEST_BIN)
 	@$(call cetta_exec,./$(RELATIONAL_PLAN_TEST_BIN))
 
@@ -5354,7 +5364,7 @@ $(RELATIONAL_PLAN_FAULT_TEST_BIN): $(RELATIONAL_PLAN_FAULT_TEST_OBJ) $(FALLBACK_
 		-Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc $(LDFLAGS)
 
 .PHONY: test-relational-plan-faults
-test: test-relational-plan-faults
+test-all: test-relational-plan-faults
 test-relational-plan-faults: $(RELATIONAL_PLAN_FAULT_TEST_BIN)
 	@$(call cetta_exec,./$(RELATIONAL_PLAN_FAULT_TEST_BIN))
 
@@ -5371,14 +5381,14 @@ bench-relational-join: $(RELATIONAL_JOIN_BENCH_BIN)
 	@$(call cetta_exec,./$(RELATIONAL_JOIN_BENCH_BIN)) dense 8 3
 
 .PHONY: test-relational-plan-dialects
-test: test-relational-plan-dialects
+test-all: test-relational-plan-dialects
 test-relational-plan-dialects: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_relational_plan.py \
 		./$(BIN) --output-directory runtime/bootstrap/relational-plan-dialects-$(BUILD_OBJ_TAG) \
 		$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
 
 .PHONY: test-relational-plan-mutations
-test: test-relational-plan-mutations
+test-all: test-relational-plan-mutations
 test-relational-plan-mutations: $(RELATIONAL_PLAN_TEST_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/relational-plan-mutations-$(BUILD_OBJ_TAG); \
@@ -5407,14 +5417,14 @@ test-relational-plan-mutations: $(RELATIONAL_PLAN_TEST_BIN) $(BIN) lib/proc.mett
 	done
 
 .PHONY: test-chain-aggregation-dialects
-test: test-chain-aggregation-dialects
+test-all: test-chain-aggregation-dialects
 test-chain-aggregation-dialects: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_chain_aggregation.py \
 		./$(BIN) --output-directory runtime/bootstrap/chain-aggregation-dialects-$(BUILD_OBJ_TAG) \
 		$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),--stats,)
 
 .PHONY: test-mam-path-corpus
-test: test-mam-path-corpus
+test-all: test-mam-path-corpus
 test-mam-path-corpus: $(BIN)
 	@python3 benchmarks/mam_families/path_panel.py \
 		runtime/bootstrap/mam-path-corpus-$(BUILD_OBJ_TAG) --scale smoke
@@ -5424,7 +5434,7 @@ test-mam-path-corpus: $(BIN)
 		--engines cetta-petta,cetta-he --trials 1
 
 .PHONY: test-mam-join-corpus
-test: test-mam-join-corpus
+test-all: test-mam-join-corpus
 test-mam-join-corpus: $(BIN)
 	@python3 benchmarks/mam_families/join_panel.py \
 		runtime/bootstrap/mam-join-corpus-$(BUILD_OBJ_TAG) --scale smoke
@@ -5434,13 +5444,13 @@ test-mam-join-corpus: $(BIN)
 		--engines cetta-petta,cetta-he --trials 1
 
 .PHONY: test-mam-measurement
-test: test-mam-measurement
+test-all: test-mam-measurement
 test-mam-measurement:
 	@python3 tests/support/check_mam_measurement.py \
 		runtime/bootstrap/mam-measurement-controls-$(BUILD_OBJ_TAG)
 
 .PHONY: test-chain-aggregation-mutations
-test: test-chain-aggregation-mutations
+test-all: test-chain-aggregation-mutations
 test-chain-aggregation-mutations: $(CHAIN_AGGREGATION_TEST_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/chain-aggregation-mutations-$(BUILD_OBJ_TAG); \
@@ -5462,7 +5472,7 @@ test-chain-aggregation-mutations: $(CHAIN_AGGREGATION_TEST_BIN) $(BIN) lib/proc.
 	done
 
 .PHONY: test-occurrence-merge-mutations
-test: test-occurrence-merge-mutations
+test-all: test-occurrence-merge-mutations
 test-occurrence-merge-mutations: $(STABLE_OCCURRENCE_TRANSPORT_TEST_BIN) $(BIN) lib/proc.metta tests/support/check_native_mutation_rejected.metta
 	@set -eu; \
 	mutation_dir=runtime/bootstrap/occurrence-merge-mutations-$(BUILD_OBJ_TAG); \
@@ -6353,7 +6363,7 @@ define compile_c_object
 	mv "$$tmp_obj" "$@"
 endef
 
-test test-prime: test-atomic-object-publication
+test-all test-prime: test-atomic-object-publication
 .PHONY: test-atomic-object-publication
 test-atomic-object-publication:
 	@python3 scripts/check_atomic_object_publication.py
@@ -7931,17 +7941,17 @@ $(PARSER_ACTION_BYTECODE_V1_STREAM_OBJ): $(PARSER_ACTION_BYTECODE_V1_STREAM_SRC)
 
 # stdlib objects depend on the generated blob header
 src/cetta_stdlib.$(BUILD_OBJ_TAG).o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(STDLIB_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 src/cetta_stdlib.$(BUILD_OBJ_TAG).runtime-stats.o: src/cetta_stdlib.c src/cetta_stdlib.h $(STDLIB_BLOB) $(STDLIB_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 # Native ABT objects depend on the blob generated from the importable equation.
 src/abt.$(BUILD_OBJ_TAG).o: src/abt.c src/abt.h src/atom_blob.h $(ABT_DEFAULT_SIGNATURES_BLOB) $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 src/abt.$(BUILD_OBJ_TAG).runtime-stats.o: src/abt.c src/abt.h src/atom_blob.h $(ABT_DEFAULT_SIGNATURES_BLOB) $(ABT_DEFAULT_SIGNATURES_BLOB_STAMP) $(BUILD_CONFIG_HEADER)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
 
 $(RULE_MACHINE_PROGRAM_GENERATED_V1): \
 		$(RULE_MACHINE_CORE_GSLT_V1) \
@@ -18511,9 +18521,62 @@ test-list-library-petta-v1:
 		ENABLE_PRIME_NEED_HEAP_INDEX=0 ENABLE_PRIME_EVAL_STACK=0 \
 		test-list-library-petta-v1-body
 
+# The ordinary gate is deliberately one small, representative suite.  New
+# feature targets do not attach themselves to it: focused development invokes
+# them directly, while test-all and main-readiness retain the complete matrix.
+NORMAL_TEST_TARGETS := \
+	$(BIN) \
+	test-test-target-scope \
+	test-manifest-strict \
+	test-fail-atomic-build-v1 \
+	test-library-spellings-v1 \
+	test-main-corpus-default \
+	test-term-match-graph \
+	test-pattern-queries \
+	test-atom-deep-copy-iterative \
+	test-frame-identity \
+	test-owned-return-image \
+	test-query-and-space-boundaries \
+	test-prepared-pure-answer-producer \
+	test-petta-native-value-boundaries \
+	test-petta-oem-single-sequence \
+	test-petta-callability-refresh \
+	test-petta-add-atoms-batch-v1 \
+	test-petta-tier-composition \
+	test-language-versions \
+	test-prime-normal-fixtures \
+	test-numerical-substrate-smoke \
+	test-application-panel
+
+.PHONY: test test-all test-test-target-scope
+test: $(NORMAL_TEST_TARGETS)
+test-all: test
+
+test-test-target-scope:
+	@count=$$(for makefile in $(MAKEFILE_LIST); do \
+		grep -Ec '^test:' "$$makefile" || true; \
+	done | awk '{ total += $$1 } END { print total + 0 }'); \
+	if [ "$$count" -ne 1 ]; then \
+		echo "FAIL: ordinary test dependencies must be declared exactly once ($$count found)" >&2; \
+		exit 1; \
+	fi; \
+	multi=$$(for makefile in $(MAKEFILE_LIST); do \
+		grep -HEn '^test[[:space:]]+[^:]+:' "$$makefile" || true; \
+	done); \
+	if [ -n "$$multi" ]; then \
+		echo 'FAIL: a multi-target rule can silently extend the ordinary test gate' >&2; \
+		printf '%s\n' "$$multi" >&2; \
+		exit 1; \
+	fi; \
+	if ! grep -q 'make -j1 BUILD="$$BUILD_MODE" test-all' scripts/promote_runtime.sh; then \
+		echo 'FAIL: runtime promotion must use the exhaustive test gate' >&2; \
+		exit 1; \
+	fi; \
+	echo 'PASS: ordinary test scope is centralized; exhaustive targets cannot attach implicitly'
+
 # Configuration probes recursively build shared generated sources and objects.
-# Serialize the aggregate gate; each individual build may still use its jobserver.
-.NOTPARALLEL: test test-mettazero
+# Serialize aggregate gates; each individual build may still use its jobserver.
+.NOTPARALLEL: test test-all test-mettazero
 
 .PHONY: test-builtin-policy-lookup
 test-builtin-policy-lookup:
@@ -18522,24 +18585,24 @@ test-builtin-policy-lookup:
 		tests/support/test_builtin_policy_lookup.c src/lang.c $(LDFLAGS)
 	@$(call cetta_exec,./runtime/test_builtin_policy_lookup-$(BUILD_OBJ_TAG))
 
-test test-profiles: test-builtin-policy-lookup
+test-all test-profiles: test-builtin-policy-lookup
 
-test: test-absolute-module-import
-test: test-list-value-v1
-test: test-list-value-lanes
-test: test-list-library-petta-v1
-test: test-string-atoms-v1
-test: test-string-layer-v1
-test: test-plain-bnf-meta-parser-v1
-test: test-plain-bnf-meta-parser-no-python-build-dependency-v1
-test: test-bnf-native-entry-v1
-test: test-plain-bnf-semantic-generator-no-python-build-dependency-v1
+test-all: test-absolute-module-import
+test-all: test-list-value-v1
+test-all: test-list-value-lanes
+test-all: test-list-library-petta-v1
+test-all: test-string-atoms-v1
+test-all: test-string-layer-v1
+test-all: test-plain-bnf-meta-parser-v1
+test-all: test-plain-bnf-meta-parser-no-python-build-dependency-v1
+test-all: test-bnf-native-entry-v1
+test-all: test-plain-bnf-semantic-generator-no-python-build-dependency-v1
 test-lean: test-plain-bnf-typed-admission-v1
 test-lean: test-plain-bnf-semantic-generated-artifact-current-v1
-test: test-plain-bnf-reader-v1
-test: test-plain-bnf-denotation-v1
+test-all: test-plain-bnf-reader-v1
+test-all: test-plain-bnf-denotation-v1
 
-test: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
+test-all: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
 
 .PHONY: test-lean test-rhocalc-lean test-lean-corpus
 # Gates that check CeTTa against a Mettapedia checkout, some with its Lean
@@ -18619,9 +18682,18 @@ test-lean-corpus: $(BIN)
 	echo "Mettapedia corpus: $$pass passed, $$fail failed"; \
 	[ $$fail -eq 0 ]
 
-.PHONY: test-main-corpus
-test: test-main-corpus
-test-main-corpus: $(BIN)
+.PHONY: test-main-corpus test-main-corpus-default
+test-all: test-main-corpus
+test-main-corpus: test-main-corpus-default
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-step-rules
+	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
+		$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-lane-core-body; \
+	fi
+ifeq ($(ENABLE_PATHMAP_SPACE),1)
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-lane-body
+endif
+
+test-main-corpus-default: $(BIN)
 	@pass=0; fail=0; skip=0; no_exp=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
 	for f in tests/test_*.metta tests/spec_*.metta tests/he_*.metta; do \
@@ -18704,14 +18776,6 @@ test-main-corpus: $(BIN)
 	if [ $$no_exp -gt 0 ]; then summary="$$summary, $$no_exp no .expected file"; fi; \
 	echo "$$summary"; \
 	[ $$fail -eq 0 ]
-	@$(MAKE) -s BUILD=$(BUILD_CANON) test-step-rules
-	@if [ "$(MORK_BUILD_HAS_BRIDGE)" = "1" ] || [ -n "$(CETTA_MORK_SPACE_BRIDGE_LIB)" ]; then \
-		$(MAKE) -s BUILD=$(BUILD_CANON) test-mork-lane-core-body; \
-	fi
-ifeq ($(ENABLE_PATHMAP_SPACE),1)
-	@$(MAKE) -s BUILD=$(BUILD_CANON) test-pathmap-lane-body
-endif
-
 test-light: test test-width-tuple-stack test-wide-typed-call-stack
 
 test-correctness: test
@@ -21241,11 +21305,11 @@ probe-heavy-diagnostics: $(BIN)
 	echo "---"; \
 	echo "$$count heavy diagnostic probes"
 
-# Native NIK regression checks remain in `test`. Experimental cross-realization
+# Native NIK regression checks remain in `test-all`. Experimental cross-realization
 # proof qualification is opt-in: run `make test-prime-nik-v1` when working on
 # that subsystem; it is outside the routine correctness and sanitizer gates.
 test-correctness-all:
-	@$(MAKE) -s BUILD=$(BUILD_CANON) test
+	@$(MAKE) -s BUILD=$(BUILD_CANON) test-all
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-prime-all
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mam-symbolic-battery
 	@$(MAKE) -s BUILD=$(BUILD_CANON) test-mam-held-symbolic
@@ -23493,6 +23557,30 @@ test-prime: test-prime-fast-fixtures
 
 .PHONY: test-prime-fast-fixtures
 test-prime-fast-fixtures: test-prime-capability-opening
+.PHONY: test-prime-normal-fixtures
+test-prime-normal-fixtures: $(BIN) test-prime-capability-opening
+	@pass=0; fail=0; \
+	for f in $(PRIME_NORMAL_TESTS); do \
+		exp="$${f%.metta}.expected"; \
+		if [ ! -f "$$exp" ]; then \
+			echo "FAIL: $$f (missing $$exp)"; fail=$$((fail + 1)); continue; \
+		fi; \
+		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+		status=$$?; \
+		if [ $$status -ne 0 ]; then \
+			echo "FAIL: $$f (exit $$status; timeout limit $(PRIME_COMPLETION_TIMEOUT)s)"; \
+			fail=$$((fail + 1)); continue; \
+		fi; \
+		if [ "$$result" = "$$(cat "$$exp")" ]; then \
+			pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -30; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "Prime normal gate: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
 .PHONY: test-prime-capability-opening
 test-prime-capability-opening: $(BIN) $(PRIME_CAPABILITY_OPEN_TEST_BIN)
 	@$(call cetta_exec,./$(PRIME_CAPABILITY_OPEN_TEST_BIN))
@@ -23505,7 +23593,7 @@ $(PRIME_CAPABILITY_OPEN_TEST_BIN): tests/test_prime_capability_opening.c src/eva
 
 # The evaluator paths Prime shares with PeTTa and HE are exercised here too,
 # so a change on those paths cannot regress Prime unseen.
-test: test-prime-fast-fixtures
+test-all: test-prime-fast-fixtures
 test-prime-fast-fixtures: $(BIN)
 	@pass=0; fail=0; \
 	for f in $(PRIME_FAST_TESTS); do \
@@ -24563,14 +24651,14 @@ test-he-compiled-reader-v1: $(HE_COMPILED_READER_TEST_BIN) $(BIN)
 test-parser-word-grounding-v1: $(PARSER_WORD_GROUNDING_TEST_BIN)
 	./$(PARSER_WORD_GROUNDING_TEST_BIN)
 
-test: test-parser-word-grounding-v1
+test-all: test-parser-word-grounding-v1
 
 .PHONY: test-petta-compiled-reader-v1
 test-petta-compiled-reader-v1: test-petta-compiled-reader-direct-generated-v1 $(PETTA_COMPILED_READER_TEST_BIN) $(BIN)
 	@result=$$(./$(PETTA_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PeTTaCompiledReaderV1Summary 24 24 0 source-pass 1 two-stage 1)')" -ne 1 ]; then \
+		grep -Fxc '(PeTTaCompiledReaderV1Summary 33 33 0 source-pass 1 two-stage 1)')" -ne 1 ]; then \
 		echo "FAIL: compiled PeTTa reader exact integration summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -26321,7 +26409,9 @@ endif
 test-petta-activation-scalar-argument-segment: $(BIN)
 	@set -eu; \
 	fixture=tests/petta/search_machine_activation_scalar_argument_segment.metta; \
-	expected=$$(cat tests/petta/search_machine_activation_scalar_argument_segment.expected); \
+	expected_file=tests/petta/search_machine_activation_scalar_argument_segment.expected; \
+	if [ "$(LIB_PROLOG_ENABLED)" != 1 ]; then expected_file=tests/petta/search_machine_activation_scalar_argument_segment.native.expected; fi; \
+	expected=$$(cat "$$expected_file"); \
 	status=0; \
 	optimized=$$(./$(BIN) --lang petta --quiet "$$fixture" 2>&1) || \
 		status=$$?; statuses="$$status"; status=0; \
@@ -26347,7 +26437,9 @@ test-petta-activation-scalar-argument-segment: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
 	fixture=tests/petta/search_machine_activation_scalar_argument_segment.metta; \
-	expected=$$(cat tests/petta/search_machine_activation_scalar_argument_segment.expected); \
+	expected_file=tests/petta/search_machine_activation_scalar_argument_segment.expected; \
+	if [ "$(LIB_PROLOG_ENABLED)" != 1 ]; then expected_file=tests/petta/search_machine_activation_scalar_argument_segment.native.expected; fi; \
+	expected=$$(cat "$$expected_file"); \
 	status=0; \
 	optimized=$$(./$(BIN) --emit-runtime-stats --lang petta --quiet \
 		"$$fixture" 2>&1) || status=$$?; statuses="$$status"; status=0; \
@@ -28534,7 +28626,7 @@ test-petta-exact-index-frontier: $(BIN) tests/petta/exact_index_frontier.metta t
 # The same under HE's rules, where a number matches a number of the other
 # kind, NaN does not match itself, and a row with no head matches every
 # pattern.  The expected output is upstream HE's.
-test: test-he-exact-index-frontier
+test-all: test-he-exact-index-frontier
 test-he-exact-index-frontier: $(BIN) tests/he/exact_index_frontier.metta tests/he/exact_index_frontier.expected
 	@set -eu; \
 	actual=$$($(CETTA_BIN_INVOKE) --lang he --profile he-compat tests/he/exact_index_frontier.metta 2>&1); \
@@ -29321,6 +29413,23 @@ test-petta-session-match-decisions: $(BIN)
 	echo "PASS: compiled match decisions serve later queries while current"
 
 .PHONY: test-petta-prepared-code
+.PHONY: test-prepared-scalar-tree
+test-all: test-prepared-scalar-tree
+runtime/test_prepared_scalar_tree-$(BUILD_OBJ_TAG): tests/test_prepared_scalar_tree.c src/prepared_pure_machine.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -I. -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS) $(LDFLAGS)
+test-prepared-scalar-tree: runtime/test_prepared_scalar_tree-$(BUILD_OBJ_TAG) $(BIN)
+	python3 tests/support/check_prepared_scalar_tree.py --native ./$< --cetta ./$(BIN)
+
+.PHONY: qualify-prepared-scalar-lean
+qualify-prepared-scalar-lean:
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	test -f "$$lean_root/lakefile.lean" || \
+		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
+	cd "$$lean_root"; \
+	lake build Mettapedia.Machines.RegisterCode \
+		Mettapedia.GSLT.Dynamics.PartialRegionPlan; \
+	lake env lean -DwarningAsError=true Mettapedia/Machines/ScalarTreeRegion.lean
 # A closed pure call runs as register code lowered from its equations, and
 # so do an answer producer's steps that cannot choose: every instruction
 # kind, each way a call enters its equation, and the calls that leave to the
@@ -31090,7 +31199,7 @@ test-he-typed-constructor-equation-result: $(BIN) \
 	done; \
 	echo 'PASS: a constructor signature decides argument demand in equation results'
 
-test: test-he-typed-constructor-equation-result
+test-all: test-he-typed-constructor-equation-result
 
 # A value passed to a parameter that is not Atom-typed is interpreted at the
 # call, directly or through a variable; an Atom-typed parameter keeps it.  The
@@ -31112,7 +31221,7 @@ test-he-untyped-parameter-interprets-data: $(BIN) \
 	done; \
 	echo 'PASS: an argument is interpreted at a parameter that is not Atom-typed, as upstream HE and PeTTa do'
 
-test: test-he-untyped-parameter-interprets-data
+test-all: test-he-untyped-parameter-interprets-data
 
 # A head that repeats a variable unifies the arguments it meets there, aliases
 # included: (G $a $b) against (G $b c) binds $b to $a, then both to c, which
@@ -31145,7 +31254,7 @@ test-repeated-head-aliases: $(BIN) \
 	done; \
 	echo 'PASS: a repeated head variable unifies the arguments it meets, aliases included, as upstream HE and PeTTa do'
 
-test: test-repeated-head-aliases
+test-all: test-repeated-head-aliases
 
 # chain binds its destination in its template; a NotReducible body leaves its
 # call unreduced.  Both hold in every HE profile, with and without frequent
@@ -31153,7 +31262,7 @@ test: test-repeated-head-aliases
 HE_PROFILE_LANES = he "he --profile he-compat" "he --profile extended" "he --profile he-prime"
 
 .PHONY: test-he-chain-destination test-he-not-reducible
-test: test-he-chain-destination test-he-not-reducible
+test-all: test-he-chain-destination test-he-not-reducible
 test-he-chain-destination: $(BIN) tests/he/chain_destination_binder.metta \
 		tests/he/chain_destination_binder.expected
 	@set -eu -o pipefail; \
@@ -31188,7 +31297,7 @@ test-he-not-reducible: $(BIN) tests/he/not_reducible_boundary.metta \
 # arguments are evaluated is a value in he; he-compat evaluates it again
 # where Rust HE does.
 .PHONY: test-he-evaluated-values
-test: test-he-evaluated-values
+test-all: test-he-evaluated-values
 test-he-evaluated-values: $(BIN) tests/he/evaluated_values.metta \
 		tests/he/evaluated_values.expected \
 		tests/he/evaluated_values_typed.metta \
@@ -31225,7 +31334,7 @@ test-he-evaluated-values: $(BIN) tests/he/evaluated_values.metta \
 # head to the evaluator.  An equation extending get-type does not take part
 # in HE's typing of a call (unlike PeTTa's guard).
 .PHONY: test-he-typed-calls-prepared
-test: test-he-typed-calls-prepared
+test-all: test-he-typed-calls-prepared
 test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
 		tests/he/typed_calls_prepared.expected \
 		tests/he/typed_calls_authored_classifier.metta \
@@ -31252,7 +31361,7 @@ test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
 # expansion that does not end, as a macro calling itself, is left to the
 # canonical evaluator; turning the machine off changes no answer.
 .PHONY: test-he-macro-definitions-prepared
-test: test-he-macro-definitions-prepared
+test-all: test-he-macro-definitions-prepared
 test-he-macro-definitions-prepared: $(BIN) \
 		tests/he/macro_definitions_prepared.metta \
 		tests/he/macro_definitions_prepared.expected
@@ -31279,7 +31388,7 @@ test-he-macro-definitions-prepared: $(BIN) \
 # malformed argument is left to the canonical evaluator.  Turning the
 # machine off changes no answer.
 .PHONY: test-he-instruction-definitions-prepared
-test: test-he-instruction-definitions-prepared
+test-all: test-he-instruction-definitions-prepared
 test-he-instruction-definitions-prepared: $(BIN) \
 		tests/he/instruction_definitions_prepared.metta \
 		tests/he/instruction_definitions_prepared.expected
@@ -31305,7 +31414,7 @@ test-he-instruction-definitions-prepared: $(BIN) \
 # variable given to an Expression parameter must hold an expression.
 # Turning the machine off changes no answer.
 .PHONY: test-he-function-definitions-prepared
-test: test-he-function-definitions-prepared
+test-all: test-he-function-definitions-prepared
 test-he-function-definitions-prepared: $(BIN) \
 		tests/he/function_definitions_prepared.metta \
 		tests/he/function_definitions_prepared.expected
@@ -31334,7 +31443,7 @@ test-he-function-definitions-prepared: $(BIN) \
 # type, so it compiles only for a definition that answers that argument.
 # Turning the machine off changes no answer.
 .PHONY: test-he-syntax-returns-prepared
-test: test-he-syntax-returns-prepared
+test-all: test-he-syntax-returns-prepared
 test-he-syntax-returns-prepared: $(BIN) tests/he/syntax_returns_prepared.metta \
 		tests/he/syntax_returns_prepared.expected
 	@set -eu -o pipefail; \
@@ -31356,7 +31465,7 @@ test-he-syntax-returns-prepared: $(BIN) tests/he/syntax_returns_prepared.metta \
 # counts; a symbol is not a call.  The prepared machine's precheck reports each
 # head's effect.  Turning the machine off changes no answer.
 .PHONY: test-he-effect-classification
-test: test-he-effect-classification
+test-all: test-he-effect-classification
 test-he-effect-classification: $(BIN) tests/he/effect_classification.metta \
 		tests/he/effect_classification.expected
 	@set -eu -o pipefail; \
@@ -31390,7 +31499,7 @@ test-he-effect-classification: $(BIN) tests/he/effect_classification.metta \
 # canonical driver, the same programs at a depth those can finish answer
 # the same.
 .PHONY: test-he-completed-delivery
-test: test-he-completed-delivery
+test-all: test-he-completed-delivery
 test-he-completed-delivery: $(BIN) tests/he/completed_delivery.metta \
 		tests/he/completed_delivery.expected \
 		tests/he/completed_delivery_open.metta \
@@ -31559,7 +31668,7 @@ endif
 # the key still matches every key, and counts and removals see string rows.
 # Turning the machine off changes no answer.
 .PHONY: test-he-string-keys-indexed
-test: test-he-string-keys-indexed
+test-all: test-he-string-keys-indexed
 test-he-string-keys-indexed: $(BIN) tests/he/string_keys_indexed.metta \
 		tests/he/string_keys_indexed.expected
 	@set -eu -o pipefail; \
@@ -31578,7 +31687,7 @@ test-he-string-keys-indexed: $(BIN) tests/he/string_keys_indexed.metta \
 # answers alike, and PeTTa (SWI-PeTTa where PETTA_ORACLE_ROOT is set) answers
 # the same schedule.
 .PHONY: test-match-effect-schedule
-test: test-match-effect-schedule
+test-all: test-match-effect-schedule
 test-match-effect-schedule: $(BIN) tests/he/match_effect_schedule.metta \
 		tests/he/match_effect_schedule.expected \
 		tests/he/match_effect_schedule.petta.expected
@@ -31609,7 +31718,7 @@ test-match-effect-schedule: $(BIN) tests/he/match_effect_schedule.metta \
 # A type variable matches each type answer, so its call stays with PeTTa's
 # guard too.  Turning the machine off changes no answer.
 .PHONY: test-petta-typed-calls-prepared
-test: test-petta-typed-calls-prepared
+test-all: test-petta-typed-calls-prepared
 test-petta-typed-calls-prepared: $(BIN) \
 		tests/petta/typed_calls_prepared.metta \
 		tests/petta/typed_calls_prepared.expected \
@@ -31641,7 +31750,7 @@ test-petta-typed-calls-prepared: $(BIN) \
 # variable operator names the code to run and stays with the evaluator.
 # Turning the machine off changes no answer.
 .PHONY: test-petta-eval-over-values-prepared
-test: test-petta-eval-over-values-prepared
+test-all: test-petta-eval-over-values-prepared
 test-petta-eval-over-values-prepared: $(BIN) \
 		tests/petta/eval_over_values_prepared.metta \
 		tests/petta/eval_over_values_prepared.expected
@@ -31663,7 +31772,7 @@ test-petta-eval-over-values-prepared: $(BIN) \
 # True.  he-compat keeps Rust HE's message for a space argument that is not
 # a space.
 .PHONY: test-he-stdlib-builtin-definitions
-test: test-he-stdlib-builtin-definitions
+test-all: test-he-stdlib-builtin-definitions
 test-he-stdlib-builtin-definitions: $(BIN) \
 		tests/he/stdlib_builtin_definitions.metta \
 		tests/he/stdlib_builtin_definitions.expected \
@@ -31682,7 +31791,7 @@ test-he-stdlib-builtin-definitions: $(BIN) \
 # PeTTa's parse and sread read with the session's PeTTa reader, as SWI PeTTa
 # reads both with one term reader.
 .PHONY: test-petta-parse-term-reader
-test: test-petta-parse-term-reader
+test-all: test-petta-parse-term-reader
 test-petta-parse-term-reader: $(BIN) tests/petta/parse_term_reader.metta \
 		tests/petta/parse_term_reader.expected
 	@set -eu -o pipefail; \
@@ -31695,7 +31804,7 @@ test-petta-parse-term-reader: $(BIN) tests/petta/parse_term_reader.metta \
 # float, string and number rows are found and removed as SWI-PeTTa finds and
 # removes them.
 .PHONY: test-petta-exact-index-leaf-records
-test: test-petta-exact-index-leaf-records
+test-all: test-petta-exact-index-leaf-records
 test-petta-exact-index-leaf-records: $(BIN) tests/petta/exact_index_leaf_records.metta \
 		tests/petta/exact_index_leaf_records.expected
 	@set -eu -o pipefail; \
@@ -31713,7 +31822,7 @@ $(ATOM_CONSTRUCTOR_FIELDS_TEST_BIN): tests/test_atom_constructor_fields.c $(SYMB
 	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_atom_constructor_fields.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
 
 .PHONY: test-atom-constructor-fields
-test: test-atom-constructor-fields
+test-all: test-atom-constructor-fields
 test-atom-constructor-fields: $(ATOM_CONSTRUCTOR_FIELDS_TEST_BIN)
 	@$(call cetta_exec,./$(ATOM_CONSTRUCTOR_FIELDS_TEST_BIN))
 
@@ -32232,7 +32341,7 @@ $(EXECUTION_CONTRACTS_TEST_BIN): tests/test_execution_contracts_generated.c \
 		tests/test_execution_contracts_generated.c $(LDFLAGS)
 
 .PHONY: test-prepared-pure-answer-producer
-test: test-prepared-pure-answer-producer
+test-all: test-prepared-pure-answer-producer
 test-prepared-pure-answer-producer: $(PREPARED_PURE_ANSWER_TEST_BIN)
 	@$(call cetta_exec,./$(PREPARED_PURE_ANSWER_TEST_BIN))
 
@@ -32241,12 +32350,12 @@ test-prepared-pure-answer-producer: $(PREPARED_PURE_ANSWER_TEST_BIN)
 test-he-shared-execution: $(BIN)
 	@python3 tests/support/test_he_shared_execution.py $(BIN)
 
-test: test-owned-resumable-consumers test-he-shared-execution
+test-all: test-owned-resumable-consumers test-he-shared-execution
 test-owned-resumable-consumers: $(BIN)
 	@python3 tests/support/test_owned_resumable_consumers.py ./$(BIN) --gmp $(ENABLE_GMP)
 
 .PHONY: test-effects-v1 test-process-scope-v1 test-process-scope-fork-v1 test-list-drop-v1
-test: test-effects-v1 test-process-scope-v1 test-list-drop-v1
+test-all: test-effects-v1 test-process-scope-v1 test-list-drop-v1
 test-process-scope-v1: $(BIN) tests/support/check_process_scope_v1.py
 	@python3 tests/support/check_process_scope_v1.py ./$(BIN)
 test-process-scope-fork-v1:
@@ -32269,7 +32378,7 @@ $(FILESYSTEM_NATIVE_TEST_V1): tests/support/test_filesystem_observations_v1.c sr
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_filesystem_observations_v1.c src/library_fs.c src/native_handle.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(LDFLAGS) -Wl,--gc-sections,--wrap=read,--wrap=__read_chk,--wrap=readdir,--wrap=malloc,--wrap=strdup,--wrap=fstatat,--wrap=closedir,--wrap=rename
 
 .PHONY: test-filesystem-v1
-test: test-filesystem-v1
+test-all: test-filesystem-v1
 test-filesystem-v1: $(BIN) $(FILESYSTEM_NATIVE_TEST_V1) tests/support/check_filesystem_v1.py
 	@mkdir -p runtime/filesystem-native-v1-$(BUILD_OBJ_TAG)
 	@$(call cetta_exec,./$(FILESYSTEM_NATIVE_TEST_V1)) runtime/filesystem-native-v1-$(BUILD_OBJ_TAG)
@@ -32281,7 +32390,7 @@ $(TEXT_STREAMING_NATIVE_TEST_V1): tests/support/test_text_streaming_v1.c src/str
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_text_streaming_v1.c src/str_stream.c src/str_natives.c src/string_ops.c src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(LDFLAGS) -Wl,--gc-sections
 
 .PHONY: test-text-streaming-v1
-test: test-text-streaming-v1
+test-all: test-text-streaming-v1
 test-text-streaming-v1: $(BIN) $(TEXT_STREAMING_NATIVE_TEST_V1) tests/support/check_text_streaming_v1.py
 	@$(call cetta_exec,./$(TEXT_STREAMING_NATIVE_TEST_V1))
 	@python3 tests/support/check_text_streaming_v1.py ./$(BIN) --output runtime/text-streaming-v1-$(BUILD_OBJ_TAG)
@@ -32300,7 +32409,7 @@ test-filesystem-core-body-v1: test-filesystem-v1 test-text-streaming-v1 \
 	@echo "PASS: filesystem delivery controls (HE/PeTTa primary, frozen Prime compatibility; independent test oracles may use Python)"
 
 .PHONY: test-filesystem-consumer-v1
-test: test-filesystem-consumer-v1
+test-all: test-filesystem-consumer-v1
 test-filesystem-consumer-v1: $(BIN) scripts/check_precise_vocabulary.metta tests/support/check_precise_vocabulary_v1.py
 	@python3 tests/support/check_precise_vocabulary_v1.py ./$(BIN) --output runtime/vocabulary-native-v1-$(BUILD_OBJ_TAG)
 
@@ -32440,7 +32549,7 @@ test-prepared-pure-dispatch-authority: $(BIN)
 # on declared steps (declarations integer folds break are never folded
 # natively); in the runtime-stats lane every native route was taken and a
 # step declared over Numbers stays native.
-test: test-native-fold
+test-all: test-native-fold
 test-native-fold: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_native_fold_differential.py ./$(BIN)
 test-native-fold-stats: $(BIN)
@@ -32455,7 +32564,7 @@ endif
 # authored rounds on fixed and seeded programs, declined shapes included; in
 # the runtime-stats lane, every admitted program took the semi-naive rounds
 # and no declined one did.
-test: test-exec-saturation
+test-all: test-exec-saturation
 test-exec-saturation: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_exec_saturation_differential.py ./$(BIN) --machine 1 $(if $(filter 1,$(ENABLE_LIB_PROLOG)),--constraints,)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_exec_saturation_differential.py ./$(BIN) --lang petta --machine 0 $(if $(filter 1,$(ENABLE_LIB_PROLOG)),--constraints,)
@@ -32484,7 +32593,7 @@ endif
 # possible one keeps no alternative, with every answer unchanged (first-match
 # commitment, repeated variables, arms that differ below their roots).  The
 # answers are SWI-PeTTa's; both routes, with and without forced collections.
-test: test-petta-selection-region
+test-all: test-petta-selection-region
 test-petta-semantics: test-petta-selection-region
 test-petta-selection-region: $(BIN)
 	@set -eu; \
@@ -32504,7 +32613,7 @@ test-petta-selection-region: $(BIN)
 	echo "PASS: calls, case arms, typed calls and superpose select by structure with their answers unchanged"
 
 .PHONY: test-petta-oem-single-sequence
-test: test-petta-oem-single-sequence
+test-all: test-petta-oem-single-sequence
 test-petta-semantics: test-petta-oem-single-sequence
 test-petta-oem-single-sequence: $(BIN)
 	@set -eu; \
@@ -32520,7 +32629,7 @@ test-petta-oem-single-sequence: $(BIN)
 	echo "PASS: one-child sequences preserve values, choices, effects, failure, payloads and equation cuts"
 
 .PHONY: test-petta-late-foreign-continuation
-test: test-petta-late-foreign-continuation
+test-all: test-petta-late-foreign-continuation
 test-petta-search-machine: test-petta-late-foreign-continuation
 test-petta-late-foreign-continuation: $(BIN)
 	@set -eu; \
@@ -32549,7 +32658,7 @@ test-petta-late-foreign-continuation: $(BIN)
 	echo "PASS: late registration preserves aliases, delayed constraints, collection, commitment, recovery and older alternatives"
 
 .PHONY: test-petta-tier-composition
-test: test-petta-tier-composition
+test-all: test-petta-tier-composition
 test-petta-semantics: test-petta-tier-composition
 test-open-equations: test-petta-tier-composition
 test-petta-tier-composition: $(BIN)
@@ -32576,7 +32685,7 @@ test-petta-tier-composition: $(BIN)
 # space effects, and major collections that reclaim promoted garbage.  The
 # fixture's answers are SWI-PeTTa's; the seeded differential compares with
 # canonical equation search.
-test: test-petta-oem-collection-stress
+test-all: test-petta-oem-collection-stress
 test-petta-oem-collection-stress: $(BIN)
 	@set -eu; \
 	for stress in 0 1; do \
@@ -32605,7 +32714,7 @@ test-petta-oem-collection-stress: $(BIN)
 # so 200,000 items take a fraction of a second.  A kept alternative per step
 # made every collection walk each kept version of the queue (about 15 s).
 # The answers are SWI-PeTTa's.
-test: test-petta-oem-queue-drain
+test-all: test-petta-oem-queue-drain
 test-petta-oem-queue-drain: $(BIN)
 	@set -eu; \
 	actual=$$(timeout $$(( 10 * $${CETTA_WALL_TIME_SCALE:-1} )) \
@@ -32624,7 +32733,7 @@ test-petta-oem-queue-drain: $(BIN)
 # unread, as PeTTa's translator does: a value that shares its subterms, a
 # tree of 2^40 nodes unshared, costs nothing to quote.  Reading it took time
 # exponential in its depth.  The answers are SWI-PeTTa's.
-test: test-petta-eval-quoted-values
+test-all: test-petta-eval-quoted-values
 test-petta-eval-quoted-values: $(BIN)
 	@set -eu; \
 	for route in tier machine; do \
@@ -37880,7 +37989,7 @@ check-generated:
 	fi; \
 	echo "PASS: $(words $(TRACKED_GENERATED_CHECKED_V1)) tracked generated outputs are what their sources generate$(if $(TRACKED_GENERATED_ORDINARY_FLAVOR_V1),, ($(words $(TRACKED_GENERATED_FLAVOR_SEALED_V1)) sealed by the ordinary build left to it))"
 
-test: check-generated
+test-all: check-generated
 
 .PHONY: test-gslt-provider-generation-v1
 test-gslt-provider-generation-v1: \
@@ -41493,13 +41602,13 @@ $(LANGUAGE_DEF_PARSER_PACK_V1_TEST_BIN): \
 	mv "$$tmp_out" $@
 
 JSON_DIRECT_V1_TEST_BIN = runtime/test-json-direct-v1-$(BUILD_OBJ_TAG)
-$(JSON_DIRECT_V1_TEST_BIN): tests/support/test_json_direct_v1.c src/library_json.c src/library_json.h $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) $(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) $(BUILD_CONFIG_HEADER)
+$(JSON_DIRECT_V1_TEST_BIN): tests/support/test_json_direct_v1.c src/library_json.c src/library_json.h src/petta_semantics.c $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) $(LANGUAGE_DEF_PARSER_PACK_V1_HEADERS) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
 	@set -eu; \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-json-direct-v1.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections \
-		-o "$$tmp_out" tests/support/test_json_direct_v1.c src/library_json.c $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) \
+		-o "$$tmp_out" tests/support/test_json_direct_v1.c src/library_json.c src/petta_semantics.c $(JSON_GSLT_EMBEDDED_C_V1) $(LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES) \
 		-Wl,--gc-sections -ldl -lm -pthread $(if $(filter 1,$(ENABLE_GMP)),$(GMP_LDFLAGS),); \
 	mv "$$tmp_out" $@
 
@@ -41642,56 +41751,56 @@ test-parser-values-v1: $(PARSER_VALUES_V1_TEST_BIN)
 test-parser-values-public-v1: $(BIN) tools/test_parser_values_v1.py
 	python3 tools/test_parser_values_v1.py --cetta $(BIN) --output runtime/parser-values-public-$(BUILD_OBJ_TAG)
 
-test: test-parser-values-v1 test-parser-values-public-v1
+test-all: test-parser-values-v1 test-parser-values-public-v1
 
 .PHONY: test-parser-predictive-public-v1
 test-parser-predictive-public-v1: $(BIN) tools/test_parser_predictive_v1.py
 	python3 tools/test_parser_predictive_v1.py --cetta $(BIN) --output runtime/parser-predictive-public-$(BUILD_OBJ_TAG)
 
-test: test-parser-predictive-public-v1
+test-all: test-parser-predictive-public-v1
 
 .PHONY: test-parser-predictive-compiler-v1
 test-parser-predictive-compiler-v1: $(PARSER_PREDICTIVE_ANALYZER_V1) tests/test_parser_predictive_compiler_v1.py tools/parser_predictive_v1.py
 	python3 tests/test_parser_predictive_compiler_v1.py
 
-test: test-parser-predictive-compiler-v1
+test-all: test-parser-predictive-compiler-v1
 
 .PHONY: test-parser-artifact-publication-v1
 test-parser-artifact-publication-v1: tests/test_parser_artifact_publication_v1.py tools/parser_artifact_publication_v1.py tests/test_parser_artifact_build_v1.py tools/parser_artifact_build_v1.py
 	@python3 tests/test_parser_artifact_publication_v1.py
 	@python3 tests/test_parser_artifact_build_v1.py
 
-test: test-parser-artifact-publication-v1
+test-all: test-parser-artifact-publication-v1
 
 .PHONY: test-parser-deep-public-v1
 test-parser-deep-public-v1: $(BIN) tools/test_parser_deep_v1.py
 	python3 tools/test_parser_deep_v1.py --cetta $(BIN) --output runtime/parser-deep-public-$(BUILD_OBJ_TAG)
 
-test: test-parser-deep-public-v1
+test-all: test-parser-deep-public-v1
 
 .PHONY: test-parser-frontends-public-v1
 test-parser-frontends-public-v1: $(BIN) tools/test_parser_frontends_v1.py
 	python3 tools/test_parser_frontends_v1.py --cetta $(BIN) --output runtime/parser-frontends-public-$(BUILD_OBJ_TAG)
 
-test: test-parser-frontends-public-v1
+test-all: test-parser-frontends-public-v1
 
 .PHONY: test-prime-native-values-public-v1
 test-prime-native-values-public-v1: $(BIN) tools/test_prime_native_values_v1.py
 	python3 tools/test_prime_native_values_v1.py --cetta $(BIN) --output runtime/prime-native-values-public-$(BUILD_OBJ_TAG)
 
-test: test-prime-native-values-public-v1
+test-all: test-prime-native-values-public-v1
 
 .PHONY: test-parser-artifacts-public-v1
 test-parser-artifacts-public-v1: $(BIN)
 	@python3 tools/test_parser_artifacts_v1.py --cetta $(BIN) --output runtime/parser-artifacts-public-$(BUILD_OBJ_TAG)
 
-test: test-parser-artifacts-public-v1
+test-all: test-parser-artifacts-public-v1
 
 .PHONY: test-parser-baking-public-v1
 test-parser-baking-public-v1: $(BIN) tools/test_parser_baking_v1.py
 	@python3 tools/test_parser_baking_v1.py --cetta $(BIN) --output runtime/parser-baking-public-$(BUILD_OBJ_TAG)
 
-test: test-parser-baking-public-v1
+test-all: test-parser-baking-public-v1
 
 PARSER_PUBLIC_WORK_V1_TEST_OBJ = $(BOOTSTRAP_TMPDIR)/test_parser_public_work_v1.$(BUILD_OBJ_TAG).o
 PARSER_PUBLIC_WORK_V1_TEST_BIN = runtime/test-parser-public-work-v1-$(BUILD_OBJ_TAG)
@@ -41718,7 +41827,7 @@ test-parser-public-work-v1: $(PARSER_PUBLIC_WORK_V1_TEST_BIN)
 	@mkdir -p runtime/parser-public-work
 	@$(PARSER_PUBLIC_WORK_V1_TEST_BIN)
 
-test: test-parser-public-work-v1
+test-all: test-parser-public-work-v1
 -include $(PARSER_PUBLIC_WORK_V1_TEST_OBJ:.o=.d)
 
 PARSER_ARTIFACT_BENCH_OBJ = $(BOOTSTRAP_TMPDIR)/bench_parser_artifacts_v1.$(BUILD_OBJ_TAG).o
@@ -41754,7 +41863,7 @@ test-regular-token-value-compiler-v1: $(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_BIN
 		langdef/bnf/bnfc_lexical_policy_v1.metta
 	@$(REGULAR_TOKEN_VALUE_COMPILER_V1_TEST_BIN)
 
-test: test-regular-token-value-compiler-v1
+test-all: test-regular-token-value-compiler-v1
 
 REGEX_SELECTION_V1_TEST_BIN = runtime/test_regex_selection_v1-$(BUILD_OBJ_TAG)
 REGEX_SELECTION_V1_TEST_SOURCES = tests/support/test_regex_selection_v1.c \
@@ -41778,7 +41887,7 @@ test-regex-portable-differential-v1: $(REGEX_SELECTION_V1_TEST_BIN) $(BIN)
 		--output runtime/regex-generated-workflow-v1
 	python3 tools/test_regex_workflow_v1.py --cetta $(BIN) --count-identities 40 \
 		--output runtime/regex-count-identities-v1
-test: test-regex-selection-v1 test-regex-workflow-v1 test-regex-portable-differential-v1
+test-all: test-regex-selection-v1 test-regex-workflow-v1 test-regex-portable-differential-v1
 
 REGEX_SELECTION_BAKED_V1_IMAGE = $(EQUATION_PREPARED_V1_DIR)/capture-example.crp
 REGEX_SELECTION_BAKED_V1_C = $(EQUATION_PREPARED_V1_DIR)/capture-example.generated.c
@@ -41795,7 +41904,7 @@ $(REGEX_SELECTION_BAKED_V1_BIN): tests/support/test_regex_selection_baked_v1.c $
 .PHONY: test-regex-selection-baked-v1
 test-regex-selection-baked-v1: $(REGEX_SELECTION_BAKED_V1_BIN)
 	@$(REGEX_SELECTION_BAKED_V1_BIN)
-test: test-regex-selection-baked-v1
+test-all: test-regex-selection-baked-v1
 
 REGEX_EXTENDED_BAKED_V1_IMAGE = $(EQUATION_PREPARED_V1_DIR)/extended-example.crp
 REGEX_EXTENDED_BAKED_V1_C = $(EQUATION_PREPARED_V1_DIR)/extended-example.generated.c
@@ -41812,7 +41921,7 @@ $(REGEX_EXTENDED_BAKED_V1_BIN): tests/support/test_regex_extended_baked_v1.c $(R
 .PHONY: test-regex-extended-baked-v1
 test-regex-extended-baked-v1: $(REGEX_EXTENDED_BAKED_V1_BIN)
 	@$(REGEX_EXTENDED_BAKED_V1_BIN)
-test: test-regex-extended-baked-v1
+test-all: test-regex-extended-baked-v1
 
 UNICODE_CLASS_V1_SOURCES = native/unicode_class_v1.c native/unicode_class_equality_v1.c \
 	langdef/unicode/generated/unicode_ucd16_v1.generated.c
@@ -41873,7 +41982,7 @@ test-regex-class-source-v1: $(REGEX_CLASS_SOURCE_V1_TEST_BIN)
 	@$(REGEX_CLASS_SOURCE_V1_TEST_BIN)
 test-regex-extended-v1: $(REGEX_EXTENDED_V1_TEST_BIN)
 	@$(REGEX_EXTENDED_V1_TEST_BIN)
-test: test-regex-class-source-v1 test-regex-extended-v1
+test-all: test-regex-class-source-v1 test-regex-extended-v1
 
 REGEX_RELATION_V1_TEST_BIN = runtime/test-regex-relation-v1-$(BUILD_OBJ_TAG)
 $(REGEX_RELATION_V1_TEST_BIN): tests/support/test_regex_relation_v1.c \
@@ -41895,15 +42004,15 @@ test-regex-frontend-equivalence-v1: $(BIN) $(PARSER_CORRIDOR_AUTHORITY_MUTATOR_V
 	python3 tools/test_regex_frontend_equivalence_v1.py --cetta ./$(BIN) \
 		--authority-mutator ./$(PARSER_CORRIDOR_AUTHORITY_MUTATOR_V1_BIN) \
 		--output runtime/regex-frontend-equivalence-v1-$(BUILD_OBJ_TAG)
-test: test-regex-frontend-equivalence-v1
-test: test-regex-fastpaths-public-v1
+test-all: test-regex-frontend-equivalence-v1
+test-all: test-regex-fastpaths-public-v1
 .PHONY: test-regex-frontend-composition-v1
 test-regex-frontend-composition-v1: $(BIN)
 	python3 tools/test_regex_frontend_composition_v1.py --cetta ./$(BIN) \
 		--output runtime/regex-frontend-composition-v1-$(BUILD_OBJ_TAG)
-test: test-regex-frontend-composition-v1
+test-all: test-regex-frontend-composition-v1
 .PHONY: test-regex-relation-public-v1
-test: test-regex-relation-v1
+test-all: test-regex-relation-v1
 
 PARSER_FAMILY_SELECTION_V1_TEST_OBJ = tests/support/test_parser_family_selection_v1.$(BUILD_OBJ_TAG).o
 PARSER_FAMILY_SELECTION_V1_TEST_BIN = runtime/test-parser-family-selection-v1-$(BUILD_OBJ_TAG)
@@ -41936,13 +42045,13 @@ $(PARSER_DETERMINISTIC_CORRIDOR_V1_BIN): $(PARSER_DETERMINISTIC_CORRIDOR_V1_SRC)
 .PHONY: test-parser-deterministic-corridor-v1
 test-parser-deterministic-corridor-v1: $(PARSER_DETERMINISTIC_CORRIDOR_V1_BIN)
 	@$(PARSER_DETERMINISTIC_CORRIDOR_V1_BIN)
-test: test-parser-deterministic-corridor-v1
+test-all: test-parser-deterministic-corridor-v1
 test-parser-family-selection-v1: $(PARSER_FAMILY_SELECTION_V1_TEST_BIN)
 	@$(PARSER_FAMILY_SELECTION_V1_TEST_BIN)
 test-parser-family-selection-public-v1: $(BIN)
 	python3 tools/test_parser_family_selection_v1.py --cetta ./$(BIN) --output runtime/parser-family-selection-v1-$(BUILD_OBJ_TAG)
 .PHONY: test-parser-family-selection-public-v1
-test: test-parser-family-selection-v1
+test-all: test-parser-family-selection-v1
 -include $(PARSER_FAMILY_SELECTION_V1_TEST_OBJ:.o=.d)
 
 REGEX_EXECUTION_POLICY_V1_TEST_BIN = runtime/test-regex-execution-policy-v1-$(BUILD_OBJ_TAG)
@@ -41955,7 +42064,7 @@ $(REGEX_EXECUTION_POLICY_V1_TEST_BIN): tests/support/test_regex_execution_policy
 .PHONY: test-regex-execution-policy-v1
 test-regex-execution-policy-v1: $(REGEX_EXECUTION_POLICY_V1_TEST_BIN)
 	@$(REGEX_EXECUTION_POLICY_V1_TEST_BIN)
-test: test-regex-execution-policy-v1
+test-all: test-regex-execution-policy-v1
 
 # This gate uses only native facilities at execution time. Optional foreign
 # providers are not prerequisites of the authored regex implementation.
@@ -41968,7 +42077,7 @@ test-regex-v1: test-regex-selection-v1 test-regex-selection-baked-v1 \
 	test-parser-family-selection-public-v1 test-regex-relation-public-v1
 test-regex-v1: test-regex-frontend-equivalence-v1 test-regex-fastpaths-public-v1 test-parser-deterministic-corridor-v1
 test-regex-v1: test-regex-frontend-composition-v1
-test: test-unicode-class-v1 test-unicode-presentation-v1 test-regex-profile-v1 \
+test-all: test-unicode-class-v1 test-unicode-presentation-v1 test-regex-profile-v1 \
 	test-regex-text-v1 test-regex-search-injection-v1
 
 REGULAR_PATTERN_BAKED_V1_IMAGE = $(EQUATION_PREPARED_V1_DIR)/example.crp
@@ -41989,14 +42098,14 @@ $(REGULAR_PATTERN_BAKED_V1_TEST_BIN): tests/support/test_regular_pattern_baked_v
 .PHONY: test-regular-pattern-baked-v1
 test-regular-pattern-baked-v1: $(REGULAR_PATTERN_BAKED_V1_TEST_BIN)
 	@$(REGULAR_PATTERN_BAKED_V1_TEST_BIN)
-test: test-regular-pattern-baked-v1
+test-all: test-regular-pattern-baked-v1
 
 .PHONY: test-lbnf-token-values-v1
 test-lbnf-token-values-v1: $(BIN) tests/langdef/bnf/token_parser_values_v1.metta \
 		tools/test_lbnf_token_values_v1.py lib/langdef.metta lib/petta/langdef.metta
 	python3 tools/test_lbnf_token_values_v1.py --cetta $(BIN)
 
-test: test-lbnf-token-values-v1
+test-all: test-lbnf-token-values-v1
 
 .PHONY: test-lbnf-values-v1
 test-lbnf-values-v1: $(BIN) tools/test_lbnf_values_v1.py \
@@ -42004,7 +42113,7 @@ test-lbnf-values-v1: $(BIN) tools/test_lbnf_values_v1.py \
 	python3 tools/test_lbnf_values_v1.py --cetta $(BIN) \
 		--scratch runtime/lbnf-values-v1-$(BUILD_OBJ_TAG)
 
-test: test-lbnf-values-v1
+test-all: test-lbnf-values-v1
 
 .PHONY: test-lbnf-reference-tools-v1
 test-lbnf-reference-tools-v1: tools/test_lbnf_reference_ast_v1.py \
@@ -42014,7 +42123,7 @@ test-lbnf-reference-tools-v1: tools/test_lbnf_reference_ast_v1.py \
 	python3 -m unittest discover -s tools -p test_lbnf_glr_completion_v1.py
 	python3 -m unittest discover -s tests/support -p test_lbnf_reference_v1.py
 
-test: test-lbnf-reference-tools-v1
+test-all: test-lbnf-reference-tools-v1
 
 MODULE_VALUES_V1_TEST_OBJ = $(BOOTSTRAP_TMPDIR)/test_module_values_v1.$(BUILD_OBJ_TAG).o
 LD_PATTERN_ADMISSION_V1_TEST_OBJ = $(BOOTSTRAP_TMPDIR)/test_language_def_pattern_admission_v1.$(BUILD_OBJ_TAG).o
@@ -42030,7 +42139,7 @@ $(LD_PATTERN_ADMISSION_V1_TEST_BIN): $(LD_PATTERN_ADMISSION_V1_TEST_OBJ) $(FALLB
 test-language-def-pattern-admission-v1: $(LD_PATTERN_ADMISSION_V1_TEST_BIN)
 	@$(LD_PATTERN_ADMISSION_V1_TEST_BIN)
 
-test: test-language-def-pattern-admission-v1
+test-all: test-language-def-pattern-admission-v1
 -include $(LD_PATTERN_ADMISSION_V1_TEST_OBJ:.o=.d)
 
 MODULE_VALUES_V1_TEST_BIN = runtime/test-module-values-v1-$(BUILD_OBJ_TAG)
@@ -42045,7 +42154,7 @@ $(MODULE_VALUES_V1_TEST_BIN): $(MODULE_VALUES_V1_TEST_OBJ) $(FALLBACK_EVAL_TEST_
 test-module-values-v1: $(MODULE_VALUES_V1_TEST_BIN)
 	@$(MODULE_VALUES_V1_TEST_BIN)
 
-test: test-module-values-v1
+test-all: test-module-values-v1
 -include $(MODULE_VALUES_V1_TEST_OBJ:.o=.d)
 
 .PHONY: test-module-chainer-export-v1 test-module-workflow-v1 test-module-chainer-v1
@@ -42068,7 +42177,7 @@ test-module-workflow-v1: $(BIN) test-module-values-v1 test-language-def-pattern-
 test-module-portable-v1: $(BIN)
 	python3 tools/test_module_portable_v1.py --cetta "./$(BIN)" --output runtime/module-portable-v1
 
-test: test-module-portable-v1
+test-all: test-module-portable-v1
 
 test-module-chainer-v1: $(BIN) test-module-chainer-export-v1
 	@test -n "$(strip $(PETTA_CHAINER_ROOT))" || \
@@ -42079,13 +42188,13 @@ test-module-chainer-v1: $(BIN) test-module-chainer-export-v1
 		--chainer-root "$(PETTA_CHAINER_ROOT)" --petta-root "$(PETTA_ORACLE_ROOT)" \
 		--output runtime/module-workflow-chainer
 
-test: test-module-chainer-export-v1
+test-all: test-module-chainer-export-v1
 
 .PHONY: test-module-inventory-v1
 test-module-inventory-v1: tests/test_module_inventory_v1.py tools/qualify_module_values_v1.py
 	@python3 tests/test_module_inventory_v1.py
 
-test: test-module-inventory-v1
+test-all: test-module-inventory-v1
 
 .PHONY: test-language-def-parser-pack-v1
 test-language-def-parser-pack-v1:
@@ -42273,7 +42382,7 @@ test-composable-syntax-v1: $(BIN) lib/langdef.metta lib/petta/langdef.metta \
 		tools/test_composable_syntax_v1.py examples/langdef/composable_syntax_v1.metta
 	python3 tools/test_composable_syntax_v1.py --cetta $(BIN)
 
-test: test-gslt-origin-join-v1 test-composable-syntax-v1
+test-all: test-gslt-origin-join-v1 test-composable-syntax-v1
 
 PETTA_OPEN_CONS_SUMMARY_V1_TEST_OBJ = runtime/bootstrap/test_petta_open_cons_summary_v1.$(BUILD_OBJ_TAG).o
 PETTA_OPEN_CONS_SUMMARY_V1_TEST_BIN = runtime/test_petta_open_cons_summary_v1-$(BUILD_OBJ_TAG)
@@ -42440,7 +42549,7 @@ test-ebnf-deep-deterministic-regression-v1:
 		test-ebnf-deep-deterministic-regression-v1-body
 
 .PHONY: test-ebnf-projection-gate-reporting-v1
-test: test-ebnf-projection-gate-reporting-v1
+test-all: test-ebnf-projection-gate-reporting-v1
 test-ebnf-projection-gate-reporting-v1:
 	@mkdir -p "$(BOOTSTRAP_TMPDIR)"
 	@evidence=$$(mktemp -d "$(BOOTSTRAP_TMPDIR)/ebnf-gate-reporting.XXXXXX"); \
@@ -43751,9 +43860,140 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # The libraries that run on real PeTTa; the remaining native libraries run
 # on the CeTTa host's PeTTa lane, over natives real PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
-LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io re holkernel mm0kernel
+LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list system fs io re postings tensor tensor_descriptors embedding holkernel mm0kernel
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re holkernel mm0kernel
-.PHONY: test-library-spellings-v1
+.PHONY: test-library-spellings-v1 test-list-prefix-search test-tensor-support
+test-list-prefix-search: $(BIN)
+	python3 tests/support/check_prefix_search.py --cetta ./$(BIN)
+
+.PHONY: test-list-numeric-sequences
+test-list-numeric-sequences: $(BIN)
+	python3 tests/support/check_list_numeric_sequences.py --cetta ./$(BIN)
+
+test-all: test-list-numeric-sequences
+
+runtime/test_postings-$(BUILD_OBJ_TAG): tests/support/test_postings.c src/library_postings.c src/library_postings.h src/tensor.c src/tensor.h src/native_handle.c src/atom.c src/binding/frame_identity.c src/name_key.c $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_NATIVE_HANDLE_TEST_HOOKS \
+		-Wl,--wrap=malloc,--wrap=calloc -o $@ tests/support/test_postings.c \
+		src/library_postings.c src/tensor.c src/native_handle.c src/atom.c src/binding/frame_identity.c src/name_key.c \
+		$(SYMBOL_STANDALONE_SRC) $(LDFLAGS)
+
+.PHONY: test-postings
+test-postings: $(BIN) runtime/test_postings-$(BUILD_OBJ_TAG)
+	./runtime/test_postings-$(BUILD_OBJ_TAG)
+	python3 tests/support/check_postings.py --cetta ./$(BIN)
+	python3 tests/support/check_postings_sources.py --cetta ./$(BIN)
+
+.PHONY: test-group-sums
+test-group-sums: $(BIN)
+	python3 tests/support/check_group_sums.py --cetta ./$(BIN)
+
+.PHONY: test-json-codec-boundary
+test-json-codec-boundary: $(BIN)
+	python3 tests/test_json_direct_codec_v1.py ./$(BIN)
+
+runtime/test_tensor-$(BUILD_OBJ_TAG): tests/support/test_tensor.c src/tensor.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-tensor
+test-tensor: $(BIN) runtime/test_tensor-$(BUILD_OBJ_TAG)
+	./runtime/test_tensor-$(BUILD_OBJ_TAG)
+	python3 tests/support/check_tensor.py --cetta ./$(BIN)
+	python3 tests/support/check_tensor_bulk.py --cetta ./$(BIN)
+
+runtime/test_tensor_screening-$(BUILD_OBJ_TAG): tests/support/test_tensor_screening.c src/tensor_screening.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_screening.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+.PHONY: test-tensor-screening
+runtime/test_tensor_screen_rounding-$(BUILD_OBJ_TAG): tests/support/test_tensor_screen_rounding.c src/tensor_screening.c src/tensor_screening.h src/tensor.c src/tensor.h src/atom.c src/atom.h src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_screen_rounding.c src/tensor.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS)
+
+test-tensor-screening: $(BIN) runtime/test_tensor_screening-$(BUILD_OBJ_TAG) runtime/test_tensor_screen_rounding-$(BUILD_OBJ_TAG)
+	./runtime/test_tensor_screening-$(BUILD_OBJ_TAG)
+	./runtime/test_tensor_screen_rounding-$(BUILD_OBJ_TAG)
+	python3 tests/support/check_tensor_screening.py --cetta ./$(BIN)
+
+test-all: test-tensor-screening
+
+.PHONY: test-embedding
+test-embedding: $(BIN)
+	python3 tests/support/check_embedding.py --cetta ./$(BIN)
+
+.PHONY: test-numerical-substrate-smoke
+test-numerical-substrate-smoke: $(BIN)
+	@result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta@1.0.6 \
+		tests/petta/numerical_substrate_smoke.metta 2>&1); \
+	status=$$?; \
+	if [ $$status -ne 0 ]; then \
+		printf '%s\n' "$$result" >&2; \
+		exit $$status; \
+	fi; \
+	printf '%s\n' "$$result" | \
+		diff -u tests/petta/numerical_substrate_smoke.expected -; \
+	echo 'Numerical substrate smoke: JSON, tensor, postings and embeddings passed'
+
+.PHONY: test-embedding-http
+test-embedding-http: $(BIN)
+	python3 tests/support/check_embedding_http.py --cetta ./$(BIN)
+
+# Optional CPU interchange provider; supply an external DLPack 1.x header.
+# These are not dependencies of ordinary runtime builds or tests.
+DLPACK_CPPFLAGS ?=
+TENSOR_DLPACK_SRC = src/tensor_dlpack.c src/tensor.c src/atom.c src/symbol.c src/scalar_trie.c src/binding/frame_identity.c
+DLPACK_CONFIG_ID = $(strip $(shell { printf '%s\n' '$(CC)' '$(DLPACK_CPPFLAGS)' '$(CFLAGS)'; } | sha256sum | cut -c1-16))
+TENSOR_DLPACK_BIN = runtime/test_tensor_dlpack-$(BUILD_OBJ_TAG).dlpack-$(DLPACK_CONFIG_ID)
+TENSOR_DLPACK_LIB = runtime/libtensor_dlpack-$(BUILD_OBJ_TAG).dlpack-$(DLPACK_CONFIG_ID).so
+$(TENSOR_DLPACK_BIN): tests/support/test_tensor_dlpack.c src/tensor_dlpack.h src/tensor.h src/generated/tensor_descriptors.generated.h $(TENSOR_DLPACK_SRC)
+	$(CC) -Isrc -I. $(DLPACK_CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_dlpack.c $(TENSOR_DLPACK_SRC) -pthread -lm -ldl
+	$(CC) -Isrc -I. $(DLPACK_CPPFLAGS) $(CFLAGS) -MM -MP -MT $@ tests/support/test_tensor_dlpack.c $(TENSOR_DLPACK_SRC) > $@.d
+$(TENSOR_DLPACK_LIB): src/tensor_dlpack.h src/tensor.h src/generated/tensor_descriptors.generated.h $(TENSOR_DLPACK_SRC)
+	$(CC) -Isrc -I. $(DLPACK_CPPFLAGS) $(CFLAGS) -shared -fPIC -o $@ $(TENSOR_DLPACK_SRC) -pthread -lm -ldl
+	$(CC) -Isrc -I. $(DLPACK_CPPFLAGS) $(CFLAGS) -MM -MP -MT $@ $(TENSOR_DLPACK_SRC) > $@.d
+-include $(wildcard $(TENSOR_DLPACK_BIN).d $(TENSOR_DLPACK_LIB).d)
+.PHONY: test-tensor-dlpack test-tensor-dlpack-numpy
+test-tensor-dlpack: $(TENSOR_DLPACK_BIN)
+	./$(TENSOR_DLPACK_BIN)
+test-tensor-dlpack-numpy: $(TENSOR_DLPACK_LIB)
+	python3 tests/support/check_tensor_dlpack.py --library ./$(TENSOR_DLPACK_LIB)
+
+test-all: test-list-prefix-search
+test-all: test-postings
+test-all: test-group-sums
+test-all: test-tensor
+test-all: test-embedding
+test-all: test-json-codec-boundary
+
+test-tensor-support: $(BIN)
+	@set -eu; \
+	got=$$(./$(BIN) --no-results --lang petta@1.0.6 --profile extended \
+		tests/langdef/tensor/support_runtime_v1.metta); \
+	test "$$got" = "$$(cat tests/langdef/tensor/support_runtime_v1.expected)"; \
+	echo '(TensorSupport 6 0)'
+
+test-all: test-tensor-support
+
+.PHONY: qualify-tensor-support-lean
+qualify-tensor-support-lean:
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	test -f "$$lean_root/lakefile.lean" || \
+		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
+	client="$(abspath tests/langdef/tensor/support_contract_v1.lean)"; \
+	descriptors="$(abspath langdef/tensor/generated/Descriptors.lean)"; \
+	cd "$$lean_root"; \
+	lake build Mettapedia.Algebra.SupportTensorRounding \
+		Mettapedia.Algebra.SupportTensorScreening \
+		Mettapedia.Algebra.SupportTensorLayout \
+		Mettapedia.Algebra.SupportTensorSchedule \
+		Mettapedia.Algebra.SupportTensorObservers \
+		Mettapedia.Algorithms.Retrieval.GroupedFold \
+		Mettapedia.Algorithms.Retrieval.PrefixSearch \
+		Mettapedia.GSLT.LanguageDef.ModuleSource.Commands \
+		Mettapedia.GSLT.LanguageDef.ModuleSource.Controls; \
+	lake env lean -DwarningAsError=true "$$client"; \
+	lake env lean -DwarningAsError=true "$$descriptors"
+
 test-library-spellings-v1: $(LIBRARY_SPELLING_TOOL_V1) \
 		tests/support/test_library_spelling_v1.py \
 		$(foreach lib,$(LIBRARY_PETTA_SPELLING_SOURCES_V1),lib/$(lib).metta lib/petta/$(lib).metta) \
@@ -43807,7 +44047,7 @@ refresh-petta-reference-vocabulary-v1:
 	bash tests/support/petta_reference_vocabulary_v1.sh \
 		"$(PETTA_REFERENCE_ROOT)" $(PETTA_REFERENCE_VOCABULARY_V1)
 
-test: test-library-spellings-v1 test-petta-vocabulary-v1
+test-all: test-library-spellings-v1 test-petta-vocabulary-v1
 
 # A checked certificate as compact records (the TSTP derivation): the
 # fixture's refutation is searched, replayed by the trace checker, related
@@ -44588,7 +44828,7 @@ $(EXACT_INTEGER_CORE_TEST_BIN): tests/test_exact_integer_core.c $(EXACT_INTEGER_
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_exact_integer_core.c $(LDFLAGS)
 
 .PHONY: test-exact-integer-core
-test: test-exact-integer-core
+test-all: test-exact-integer-core
 test-exact-integer-core: $(EXACT_INTEGER_CORE_TEST_BIN)
 	@$(call cetta_exec,./$(EXACT_INTEGER_CORE_TEST_BIN))
 
@@ -44856,7 +45096,7 @@ runtime/test-fixpoint: tests/test_fixpoint.c src/fixpoint.c src/fixpoint.h
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -o $@ tests/test_fixpoint.c src/fixpoint.c
 
 .PHONY: test-fixpoint
-test: test-fixpoint
+test-all: test-fixpoint
 test-fixpoint: runtime/test-fixpoint
 	@runtime/test-fixpoint
 
@@ -44868,12 +45108,12 @@ runtime/test-linux-stack-bounds: tests/test_linux_stack_bounds.c src/linux_stack
 	$(CC) -std=c11 -O2 -Wall -Wextra -Werror -Isrc -pthread -o $@ $<
 
 .PHONY: test-linux-stack-bounds
-test: test-linux-stack-bounds
+test-all: test-linux-stack-bounds
 test-linux-stack-bounds: runtime/test-linux-stack-bounds
 	@runtime/test-linux-stack-bounds
 
 .PHONY: test-proc-child
-test: test-proc-child
+test-all: test-proc-child
 test-proc-child: $(PROC_CHILD_TEST_BIN) $(PROC_CHILD_FALLBACK_TEST_BIN)
 	@$(PROC_CHILD_TEST_BIN)
 	@$(PROC_CHILD_FALLBACK_TEST_BIN)
@@ -45126,7 +45366,7 @@ test-petta-add-atoms-batch-v1: $(BIN) \
 	diff -u tests/petta/add_atoms_override.expected "$$actual"; \
 	echo '(PettaAddAtomsBatchV1Summary 5 1 0)'
 
-test: test-petta-add-atoms-batch-v1
+test-all: test-petta-add-atoms-batch-v1
 
 .PHONY: test-petta-prepared-sum-by-v1
 test-petta-prepared-sum-by-v1: $(BIN) \
@@ -45144,10 +45384,10 @@ test-petta-prepared-sum-by-v1: $(BIN) \
 	done; \
 	echo '(PreparedSumByV1Summary 8 2 0)'
 
-test: test-petta-prepared-sum-by-v1
+test-all: test-petta-prepared-sum-by-v1
 
 .PHONY: test-petta-priority-heap-native test-petta-priority-heap-native-stats
-test: test-petta-priority-heap-native
+test-all: test-petta-priority-heap-native
 test-petta-priority-heap-native: $(BIN) \
 		tests/petta/priority_heap_native.metta \
 		tests/petta/priority_heap_native.expected \
@@ -45201,7 +45441,7 @@ else
 endif
 
 .PHONY: test-petta-open-equation-negative-certificate
-test: test-petta-open-equation-negative-certificate
+test-all: test-petta-open-equation-negative-certificate
 test-petta-open-equation-negative-certificate: $(BIN) \
 		tests/petta/open_equation_negative_certificate.metta \
 		tests/petta/open_equation_negative_certificate.expected
@@ -45741,7 +45981,7 @@ test-bounded-select-wide-count: $(BIN)
 	@echo "PASS: bounded selection preserves 64-bit demand without truncation"
 
 test-bounded-select-threads: test-bounded-select-wide-count
-test: test-bounded-select-wide-count
+test-all: test-bounded-select-wide-count
 
 .PHONY: test-petta-variable-inventory-order
 test-petta-variable-inventory-order: $(BIN)
@@ -45763,7 +46003,7 @@ test-run-report:
 test-run-cli: $(BIN) test-run-report
 	@python3 tests/support/check_run_cli.py $(BIN) --artifacts runtime $(if $(filter 1,$(LIB_PROLOG_ENABLED)),--lib-prolog,)
 
-test: test-run-cli
+test-all: test-run-cli
 
 .PHONY: test-error-presentation
 test-error-presentation: $(BIN)
@@ -45773,7 +46013,7 @@ else
 	@printf 'SKIP: Python diagnostic controls require the Python adapter\n'
 endif
 
-test: test-error-presentation
+test-all: test-error-presentation
 
 .PHONY: test-run-guard
 test-run-guard:
@@ -45811,16 +46051,16 @@ test-supervise:
 	@printf 'SKIP: supervised-task controls require ENABLE_DURABLE=1\n'
 endif
 
-test: test-supervise
+test-all: test-supervise
 
 .PHONY: test-answer-storage
-test: test-answer-storage
+test-all: test-answer-storage
 test-petta-search-machine: test-answer-storage
 test-answer-storage: $(ANSWER_STORAGE_TEST_BIN)
 	@$(call cetta_exec,./$(ANSWER_STORAGE_TEST_BIN))
 
 .PHONY: test-petta-fixed-input-identity
-test: test-petta-fixed-input-identity
+test-all: test-petta-fixed-input-identity
 test-petta-fixed-input-identity: $(BIN)
 	@set -eu; \
 	actual=$$($(CETTA_BIN_INVOKE) --lang petta --profile extended \
@@ -45839,7 +46079,7 @@ $(ANSWER_STORAGE_TEST_OBJ): tests/support/test_answer_storage.c src/answer_stora
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -c -o $@ $<
 
-test: test-petta-space-head-chains
+test-all: test-petta-space-head-chains
 test-petta-space-head-chains: $(BIN)
 	@set -eu; \
 	actual=$$($(CETTA_BIN_INVOKE) --lang petta \
@@ -45851,7 +46091,7 @@ test-petta-space-head-chains: $(BIN)
 	fi; \
 	echo 'PASS: declarations and equations are read through the chain of their head'
 
-test: test-petta-space-marked-removal
+test-all: test-petta-space-marked-removal
 test-petta-space-marked-removal: $(BIN)
 	@set -eu; \
 	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
@@ -45862,7 +46102,7 @@ test-petta-space-marked-removal: $(BIN)
 		exit 1; \
 	fi; \
 	echo 'PASS: removed rows leave the others in order for every reader, running matches included'
-test: test-petta-path-index-bound-lead
+test-all: test-petta-path-index-bound-lead
 test-petta-path-index-bound-lead: $(BIN)
 	@set -eu; \
 	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
@@ -45874,7 +46114,7 @@ test-petta-path-index-bound-lead: $(BIN)
 	fi; \
 	echo 'PASS: a lookup whose bound field leads reads the position index of that field, kept through removal by marks'
 
-test: test-petta-path-index-open-rows
+test-all: test-petta-path-index-open-rows
 test-petta-path-index-open-rows: $(BIN)
 	@set -eu; \
 	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
@@ -45886,7 +46126,7 @@ test-petta-path-index-open-rows: $(BIN)
 	fi; \
 	echo 'PASS: position indexes keep open rows of several heads as candidates'
 
-test: test-petta-program-rule-rows
+test-all: test-petta-program-rule-rows
 test-petta-program-rule-rows: $(BIN)
 	@set -eu; \
 	actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 $(CETTA_BIN_INVOKE) --lang petta \
@@ -45906,11 +46146,11 @@ test-petta-program-rule-rows: $(BIN)
 # compared exactly.
 .PHONY: test-petta-language-versions
 .PHONY: test-language-versions
-test: test-language-versions
+test-all: test-language-versions
 test-language-versions: $(BIN)
 	@python3 tests/support/check_language_versions.py $(BIN)
 
-test: test-petta-language-versions
+test-all: test-petta-language-versions
 test-petta-language-versions: $(BIN)
 	@set -eu; \
 	dir=tests/petta/language_versions; failures=0; \
@@ -45943,7 +46183,7 @@ test-petta-language-versions: $(BIN)
 # match pattern is literal structure, and a specialization chosen through a
 # cons pattern is not reused for a list passed flat.
 .PHONY: test-petta-pattern-structure
-test: test-petta-pattern-structure
+test-all: test-petta-pattern-structure
 test-petta-pattern-structure: $(BIN)
 	@set -eu; \
 	for fixture in typed_space_constructor_pattern specializer_route_cons_positions; do \
@@ -45963,38 +46203,38 @@ $(ARENA_RETAINED_OWNERSHIP_TEST_BIN): tests/test_arena_retained_ownership.c src/
 	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_NOOP=1 $(CFLAGS) -o $@ tests/test_arena_retained_ownership.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
 
 .PHONY: test-arena-retained-ownership
-test: test-arena-retained-ownership
+test-all: test-arena-retained-ownership
 test-arena-retained-ownership: $(ARENA_RETAINED_OWNERSHIP_TEST_BIN)
 	@$(call cetta_exec,./$(ARENA_RETAINED_OWNERSHIP_TEST_BIN))
 
 .PHONY: test-query-and-space-boundaries
-test: test-query-and-space-boundaries
+test-all: test-query-and-space-boundaries
 test-query-and-space-boundaries: $(BIN)
 	@python3 tests/support/check_query_and_space_boundaries.py $(BIN)
 
 .PHONY: test-exec-batches
-test: test-exec-batches
+test-all: test-exec-batches
 test-exec-batches: $(BIN)
 	@python3 tests/support/check_exec_batches.py --cetta $(abspath $(BIN)) \
 		--out runtime/exec-batches-$$(date +%s%N)
 
 .PHONY: test-application-panel
-test: test-application-panel
+test-all: test-application-panel
 test-application-panel:
 	@python3 tests/support/test_application_panel.py
 
 .PHONY: test-result-ledger
-test: test-result-ledger
+test-all: test-result-ledger
 test-result-ledger:
 	@python3 tests/support/test_result_ledger.py
 
 .PHONY: test-petta-versioned-imports
-test: test-petta-versioned-imports
+test-all: test-petta-versioned-imports
 test-petta-versioned-imports: $(BIN)
 	python3 tests/support/check_petta_versioned_imports.py $(BIN)
 
 .PHONY: test-petta-release-reference
-test: test-petta-release-reference
+test-all: test-petta-release-reference
 test-petta-release-reference: $(BIN)
 	python3 tools/check_petta_release_reference.py --cetta $(BIN)
 
@@ -46009,7 +46249,7 @@ $(PETTA_BUILTIN_REGISTRY_TEST_BIN): tests/support/test_petta_builtin_registry.c 
 	mv "$$tmp_out" $@
 
 .PHONY: test-petta-builtin-registry test-petta-builtin-contracts
-test: test-petta-builtin-registry test-petta-builtin-contracts
+test-all: test-petta-builtin-registry test-petta-builtin-contracts
 test-petta-builtin-registry: $(PETTA_BUILTIN_REGISTRY_TEST_BIN)
 	@$(call cetta_exec,./$(PETTA_BUILTIN_REGISTRY_TEST_BIN))
 test-petta-builtin-contracts: $(BIN)
@@ -46046,7 +46286,7 @@ $(PETTA_CALLABILITY_REFRESH_TEST_BIN): $(PETTA_CALLABILITY_REFRESH_TEST_OBJ) $(P
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 .PHONY: test-petta-callability-refresh
-test: test-petta-callability-refresh
+test-all: test-petta-callability-refresh
 test-petta-callability-refresh: $(BIN) $(PETTA_CALLABILITY_REFRESH_TEST_BIN)
 	@$(call cetta_exec,./$(PETTA_CALLABILITY_REFRESH_TEST_BIN))
 	@python3 tests/support/check_petta_callability_refresh.py ./$(BIN)
@@ -46121,7 +46361,7 @@ test-regex-trie-v1: $(REGEX_TRIE_V1_TEST_BIN)
 test-regex-trie-fault-v1: $(REGEX_TRIE_V1_FAULT_BIN)
 	@$(REGEX_TRIE_V1_FAULT_BIN)
 test-regex-v1: test-regex-trie-v1 test-regex-trie-fault-v1
-test: test-regex-trie-v1 test-regex-trie-fault-v1
+test-all: test-regex-trie-v1 test-regex-trie-fault-v1
 
 REGEX_CACHE_V1_TEST_OBJ = tests/support/test_regex_cache_v1.$(BUILD_OBJ_TAG).o
 REGEX_CACHE_V1_TEST_BIN = runtime/test-regex-cache-v1-$(BUILD_OBJ_TAG)
@@ -46134,17 +46374,17 @@ $(REGEX_CACHE_V1_TEST_BIN): $(REGEX_CACHE_V1_TEST_OBJ) $(filter-out src/library_
 test-regex-cache-v1: $(REGEX_CACHE_V1_TEST_BIN)
 	@$(REGEX_CACHE_V1_TEST_BIN)
 test-regex-v1: test-regex-cache-v1
-test: test-regex-cache-v1
+test-all: test-regex-cache-v1
 
 .PHONY: test-tptp-resources-v1
 test-tptp-resources-v1: $(BIN) tests/support/check_tptp_resources_v1.py
 	@python3 tests/support/check_tptp_resources_v1.py --cetta "$(BIN)"
-test: test-tptp-resources-v1
+test-all: test-tptp-resources-v1
 
 .PHONY: test-langdef-equation-defaults-v1
 test-langdef-equation-defaults-v1: $(BIN) tools/test_deterministic_equation_defaults_v1.py
 	@python3 tools/test_deterministic_equation_defaults_v1.py --cetta "$(BIN)"
-test: test-langdef-equation-defaults-v1
+test-all: test-langdef-equation-defaults-v1
 
 PETTA_LIST_CARRIER_SUPPORT_TEST_BIN = runtime/test_petta_list_carrier_support-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats)
 PETTA_LIST_CARRIER_SUPPORT_TEST_OBJ = $(filter-out src/main.% src/petta_search_machine.%,$(OBJ))
@@ -46198,7 +46438,7 @@ $(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN): tests/support/test_binding_support_sub
 test-binding-support-substitution: $(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN)
 	@$(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN)
 
-test-petta-search-machine test: test-binding-support-substitution
+test-petta-search-machine test-all: test-binding-support-substitution
 
 .PHONY: test-prepared-result-observer
 test-prepared-result-observer: $(BIN) tests/petta/prepared_result_observer.metta tests/petta/prepared_result_observer.expected tests/petta/prepared_result_observer_extended.expected
@@ -46217,7 +46457,7 @@ test-prepared-result-observer: $(BIN) tests/petta/prepared_result_observer.metta
 	done
 	@echo "PASS: completed-value admission preserves result demand, pattern evaluation, aliases and effect order"
 
-test-petta-search-machine test: test-prepared-result-observer
+test-petta-search-machine test-all: test-prepared-result-observer
 
 .PHONY: test-branch-pattern-admission
 test-branch-pattern-admission: $(BIN) tests/petta/branch_pattern_admission.metta tests/petta/branch_pattern_admission.expected tests/petta/branch_pattern_admission_extended.expected
@@ -46236,7 +46476,7 @@ test-branch-pattern-admission: $(BIN) tests/petta/branch_pattern_admission.metta
 	done
 	@echo "PASS: branch-local patterns preserve aliases, condition choices, earlier bindings and demanded results"
 
-test-petta-search-machine test: test-branch-pattern-admission
+test-petta-search-machine test-all: test-branch-pattern-admission
 
 .PHONY: test-native-truth-delivery
 test-native-truth-delivery: $(BIN) tests/petta/native_truth_delivery.metta tests/petta/native_truth_delivery.expected
@@ -46252,7 +46492,7 @@ test-native-truth-delivery: $(BIN) tests/petta/native_truth_delivery.metta tests
 	done
 	@echo "PASS: prepared native truth uses dialect values across lexical calls and constructor patterns"
 
-test-petta-search-machine test: test-native-truth-delivery
+test-petta-search-machine test-all: test-native-truth-delivery
 
 .PHONY: test-additive-fold-regions
 test-additive-fold-regions: $(BIN) tests/petta/additive_fold_region.metta tests/petta/additive_fold_region.expected tests/petta/source_drop_region.metta tests/petta/source_drop_region.expected
@@ -46267,7 +46507,7 @@ test-additive-fold-regions: $(BIN) tests/petta/additive_fold_region.metta tests/
 	done
 	@echo "PASS: additive source folds and borrowed suffixes preserve scope, guards, partial inputs and occurrence counts"
 
-test-petta-search-machine test: test-additive-fold-regions
+test-petta-search-machine test-all: test-additive-fold-regions
 
 OEM_ALGEBRAIC_REGIONS_TEST_BIN = runtime/test_oem_algebraic_regions-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats)
 OEM_ALGEBRAIC_REGIONS_TEST_OBJS = $(filter-out src/main.% src/open_equation_machine.%,$(OBJ))
@@ -46278,7 +46518,7 @@ $(OEM_ALGEBRAIC_REGIONS_TEST_BIN): tests/support/test_oem_algebraic_regions.c sr
 test-oem-algebraic-regions: $(OEM_ALGEBRAIC_REGIONS_TEST_BIN)
 	@$(OEM_ALGEBRAIC_REGIONS_TEST_BIN)
 
-test-petta-search-machine test: test-oem-algebraic-regions
+test-petta-search-machine test-all: test-oem-algebraic-regions
 
 .PHONY: bench-binding-support-substitution
 bench-binding-support-substitution: $(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN)

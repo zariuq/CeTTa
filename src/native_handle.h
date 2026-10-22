@@ -34,6 +34,11 @@ bool cetta_native_handle_arg(Atom *arg, const char *expected_kind, uint64_t *id_
 bool cetta_native_handle_alloc(struct CettaLibraryContext *ctx, const char *kind,
                                void *resource, CettaNativeHandleFreeFn free_resource,
                                uint64_t *id_out);
+/* Immutable resources can declare a conservative transitive payload footprint
+ * for arena pacing. Registry metadata remains separately measured. */
+bool cetta_native_handle_alloc_sized(struct CettaLibraryContext *ctx, const char *kind,
+    void *resource, CettaNativeHandleFreeFn free_resource, size_t payload_bytes,
+    uint64_t *id_out);
 void *cetta_native_handle_get(struct CettaLibraryContext *ctx, const char *kind,
                               uint64_t id);
 /* Resolve an owning value, requiring its retained identifier to belong to the

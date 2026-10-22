@@ -2,7 +2,7 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
-!(import! &self langdef)
+!(import! &self (library langdef))
 (: module:assemble (-> Atom Atom Atom Atom Atom Atom %Undefined%))
 (: module:inspect (-> Atom Atom))
 (: module:try-interpret (-> Atom Atom Atom %Undefined%))

@@ -1,0 +1,8 @@
+!(import! &self (library lib_combinatorics))
+!(chooseKl (a b c) 2)
+!(chooseKl () 0)
+!(chooseKl () 1)
+!(chooseKl (a) 2)
+!(chooseKl (a a b) 2)
+!(collapse (range 3 3))
+!(takeK 2 (a b c))

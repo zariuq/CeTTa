@@ -1009,6 +1009,75 @@ bool cetta_json_direct_v1_project(Arena *arena,
     return true;
 }
 
+static bool jd_scalar_shape(JsonDirectV1 *p,const size_t *shape,size_t rank,CettaJsonScalarKindV1 kind,
+    CettaJsonScalarConsumerV1 consume,void *context) {
+    size_t *counts=rank ? calloc(rank,sizeof(*counts)) : NULL;
+    if(rank && !counts) return jd_error(p,CETTA_JSON_RUNTIME_V1_ALLOCATION_FAILURE,"numeric array counters"),false;
+    size_t depth=0,ordinal=0;
+    jd_ws(p);
+    if(rank && !jd_take(p,JD_ARRAY_OPEN)) goto shape_error;
+    for(;;) {
+        jd_ws(p);
+        if(rank && counts[depth]==shape[depth]) {
+            if(!jd_take(p,JD_ARRAY_CLOSE)) goto shape_error;
+            if(!depth) break;
+            depth--; counts[depth]++; continue;
+        }
+        if(rank && counts[depth]) {
+            if(!jd_take(p,JD_ELEMENT_COMMA)) goto shape_error;
+            jd_ws(p);
+        }
+        if(rank && depth+1<rank) {
+            if(!jd_take(p,JD_ARRAY_OPEN)) goto shape_error;
+            counts[++depth]=0; continue;
+        }
+        JsonLookaheadV1 look=jd_value_lookahead(p);
+        if(kind==CETTA_JSON_SCALAR_NUMBER_V1 ? look!=JD_LOOK_NUMBER : (look!=JD_LOOK_TRUE && look!=JD_LOOK_FALSE)) goto shape_error;
+        size_t start=p->at;
+        if(!(kind==CETTA_JSON_SCALAR_NUMBER_V1 ? jd_project_number(p) : jd_project_scalar(p,look))) { free(counts); return false; }
+        if(consume && !consume(context,p->bytes+start,p->at-start,ordinal)) {
+            free(counts); return jd_error(p,CETTA_JSON_RUNTIME_V1_MALFORMED_VALUE,"an admitted numeric sink value"),false;
+        }
+        if(ordinal==SIZE_MAX) { free(counts); return jd_error(p,CETTA_JSON_RUNTIME_V1_RESOURCE_LIMIT,"a representable numeric array size"),false; }
+        ordinal++;
+        if(!rank) break;
+        counts[depth]++;
+    }
+    free(counts); jd_ws(p);
+    if(p->at==p->len) return true;
+    return jd_error(p,CETTA_JSON_RUNTIME_V1_BAD_ARGUMENT,"end of the selected numeric array"),false;
+shape_error:
+    free(counts);
+    return jd_error(p,CETTA_JSON_RUNTIME_V1_BAD_ARGUMENT,"the declared rectangular numeric array shape"),false;
+}
+
+bool cetta_json_direct_v1_scalar_array(const uint8_t *bytes,size_t len,Atom *path,
+    const size_t *shape,size_t rank,CettaJsonScalarKindV1 kind,uint32_t depth_limit,CettaJsonScalarConsumerV1 consume,
+    void *context,bool *found,CettaJsonRuntimeV1Status *status,char *error,size_t error_size) {
+    if(found) *found=false;
+    if(status) *status=CETTA_JSON_RUNTIME_V1_BAD_ARGUMENT;
+    if(!bytes || !path || path->kind!=ATOM_EXPR || !consume || !found || (rank && !shape) || rank>SIZE_MAX/sizeof(size_t) ||
+        (kind!=CETTA_JSON_SCALAR_NUMBER_V1 && kind!=CETTA_JSON_SCALAR_BOOLEAN_V1)) return false;
+    for(CettaExprIndex i=0;i<path->expr.len;i++) {
+        const uint8_t *text; size_t n;
+        if(!jd_project_path_key(path->expr.elems[i],&text,&n) && !jd_project_path_index(path->expr.elems[i],&n)) return false;
+    }
+    JsonDirectV1 p={.bytes=bytes,.len=len,.ordinary=true,.depth_limit=depth_limit,.error=error,.error_size=error_size};
+    size_t start=0,end=0; jd_ws(&p);
+    bool ok=jd_project_span(&p,path,found,&start,&end); jd_ws(&p);
+    if(ok && p.at!=len) { jd_error(&p,CETTA_JSON_RUNTIME_V1_SYNTAX_REJECTED,"end of JSON text"); ok=false; }
+    if(ok && *found) {
+        JsonDirectV1 selected={.bytes=bytes+start,.len=end-start,.ordinary=true,.error=error,.error_size=error_size};
+        /* Shape admission is independent of conversion and has no callback. */
+        ok=jd_scalar_shape(&selected,shape,rank,kind,NULL,NULL);
+        if(ok) { selected.at=selected.scalar=0; ok=jd_scalar_shape(&selected,shape,rank,kind,consume,context); }
+        if(!ok) p.status=selected.status;
+    }
+    if(!ok) *found=false;
+    if(status) *status=ok ? CETTA_JSON_RUNTIME_V1_OK : p.status;
+    return ok;
+}
+
 bool cetta_json_direct_v1_lines(FILE *input, bool ordinary, bool petta,
     uint32_t depth_limit, CettaJsonLineConsumerV1 consume, void *context,
     size_t *failed_line, char *error, size_t error_size) {

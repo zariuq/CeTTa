@@ -1,7 +1,7 @@
 JSON data for scripts and indexed applications
 =============================================
 
-The ordinary surface has one spelling: json:parse, json:stringify, json:get.
+The ordinary API has one spelling: json:parse, json:stringify, json:get.
 Parsing uses the predictive realization generated from the RFC-8259 grammar;
 it does not build diagnostic forests or scalar atoms for each character.
 json:pretty emits the same value with two-space indentation through the same
@@ -62,7 +62,7 @@ return (JsonFoundV1 ordinal value) or JsonMissingV1, distinguishing an absent
 member from an explicitly present null. json:get-all returns
 (JsonMatchesV1 (values ...)); json:members returns (JsonMembersV1 (pairs ...)).
 There is no implicit duplicate-key collapse or first/last policy change.
-This is a breaking surface migration: applications using previous spellings
+This is a breaking API migration: applications using previous spellings
 or scalar return shapes must migrate before adopting this library version.
 Only the namespaced API is exported; no second spelling is retained.
 
