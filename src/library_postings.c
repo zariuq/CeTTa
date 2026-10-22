@@ -4,10 +4,26 @@
 #include "name_key.h"
 #include "tensor.h"
 #include "space.h"
+#include "space_match_backend.h"
+#include "shared_transition.h"
+#include "generated/postings_descriptors.generated.h"
 
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Minimal library/unit builds may omit the Space execution provider.  The
+ * borrowed observer is an optional capability there and declines before use. */
+extern SpaceMatchPullVisitResult space_match_backend_try_visit_atoms_direct(
+    Space *, Arena *, CettaMorkAtomVisitor, void *) __attribute__((weak));
+extern void space_match_backend_clear_error(void) __attribute__((weak));
+extern bool space_contains_only_exact_atoms(Space *) __attribute__((weak));
+extern CettaCount space_length64(const Space *) __attribute__((weak));
+extern Atom *space_get_at64(const Space *, CettaIndex) __attribute__((weak));
+extern void cetta_shared_transition_guard_enter(CettaSharedTransitionGuard *)
+    __attribute__((weak));
+extern void cetta_shared_transition_guard_leave(CettaSharedTransitionGuard *)
+    __attribute__((weak));
 
 /* A prepared observation owns its complete snapshot. The offsets count
  * occurrences, including repeated positions; keys retain source row order. */
@@ -37,6 +53,60 @@ typedef struct {
 
 static const char *const index_kind = "postings-index-v1";
 static const char *const table_kind = "postings-table-v1";
+
+typedef enum {
+    POSTINGS_COUNT_MODE_UNKNOWN = 0,
+#define POSTINGS_COUNT_MODE_ENUM(id, wire, family, extent, result) \
+    POSTINGS_COUNT_MODE_##id,
+    CETTA_POSTINGS_COUNT_MODE_ROWS(POSTINGS_COUNT_MODE_ENUM)
+#undef POSTINGS_COUNT_MODE_ENUM
+} PostingsCountMode;
+
+typedef enum {
+    POSTINGS_COUNT_FAMILY_INDEX,
+    POSTINGS_COUNT_FAMILY_TABLE,
+    POSTINGS_COUNT_FAMILY_EITHER,
+} PostingsCountFamily;
+
+typedef enum {
+    POSTINGS_COUNT_EXTENT_PREFIX,
+    POSTINGS_COUNT_EXTENT_COMPLETE,
+    POSTINGS_COUNT_EXTENT_METADATA,
+} PostingsCountExtent;
+
+typedef enum {
+    POSTINGS_COUNT_RESULT_ROWS,
+    POSTINGS_COUNT_RESULT_TENSOR,
+    POSTINGS_COUNT_RESULT_STATISTICS,
+} PostingsCountResult;
+
+typedef struct {
+    PostingsCountMode mode;
+    const char *wire;
+    PostingsCountFamily family;
+    PostingsCountExtent extent;
+    PostingsCountResult result;
+} PostingsCountModeSpec;
+
+static const PostingsCountModeSpec postings_count_modes[] = {
+#define POSTINGS_COUNT_MODE_SPEC(id, wire, family, extent, result) \
+    {POSTINGS_COUNT_MODE_##id, wire, POSTINGS_COUNT_FAMILY_##family, \
+     POSTINGS_COUNT_EXTENT_##extent, POSTINGS_COUNT_RESULT_##result},
+    CETTA_POSTINGS_COUNT_MODE_ROWS(POSTINGS_COUNT_MODE_SPEC)
+#undef POSTINGS_COUNT_MODE_SPEC
+};
+
+static const PostingsCountModeSpec *postings_count_mode_spec(Atom *value) {
+    if (!value || value->kind != ATOM_SYMBOL)
+        return NULL;
+    for (size_t index = 0u;
+         index < sizeof(postings_count_modes) / sizeof(postings_count_modes[0]);
+         index++) {
+        if (atom_is_symbol(value, postings_count_modes[index].wire))
+            return &postings_count_modes[index];
+    }
+    return NULL;
+}
 
 static Atom *fallback(Arena *arena) {
     return atom_symbol(arena, "Postings:Fallback");
@@ -147,6 +217,60 @@ static int flat_table_posting_compare(const void *left, const void *right) {
     return (a->position > b->position) - (a->position < b->position);
 }
 
+static Atom *publish_flat_table(CettaLibraryContext *context, Arena *arena,
+                                PostingsTable *table,
+                                FlatTablePosting *flat, size_t count) {
+    if (count) qsort(flat, count, sizeof(*flat), flat_table_posting_compare);
+    table->key_count = (size_t)name_key_count(table->keys);
+    table->count = count;
+    for (size_t i = 0u; i < count; i++)
+        if (i == 0u || flat[i].key != flat[i - 1u].key ||
+            flat[i].group != flat[i - 1u].group)
+            table->groups++;
+
+    table->key_group_offsets = calloc(
+        table->key_count + 1u, sizeof(*table->key_group_offsets));
+    table->labels = table->groups
+        ? malloc(table->groups * sizeof(*table->labels)) : NULL;
+    table->offsets = malloc((table->groups + 1u) * sizeof(*table->offsets));
+    table->positions = count ? malloc(count * sizeof(*table->positions)) : NULL;
+    if (!table->key_group_offsets || (table->groups && !table->labels) ||
+        !table->offsets || (count && !table->positions)) {
+        free(flat);
+        release_table(table);
+        return fallback(arena);
+    }
+
+    size_t group = 0u;
+    for (size_t i = 0u; i < count; i++) {
+        bool first = i == 0u || flat[i].key != flat[i - 1u].key ||
+                     flat[i].group != flat[i - 1u].group;
+        if (first) {
+            table->labels[group] = flat[i].group;
+            table->offsets[group] = i;
+            table->key_group_offsets[flat[i].key]++;
+            group++;
+        }
+        table->positions[i] = flat[i].position;
+    }
+    table->offsets[table->groups] = count;
+    for (size_t key = 1u; key <= table->key_count; key++)
+        table->key_group_offsets[key] += table->key_group_offsets[key - 1u];
+    free(flat);
+
+    uint64_t id = 0u;
+    if (!cetta_native_handle_alloc(
+            context, table_kind, table, release_table, &id)) {
+        release_table(table);
+        return fallback(arena);
+    }
+    Atom *result = cetta_native_handle_owned_atom(
+        context, arena, table_kind, id);
+    if (!result)
+        (void)cetta_native_handle_close(context, table_kind, id);
+    return result ? result : fallback(arena);
+}
+
 /* Compile blocks shaped as (outer-keys group position).  Validation of the
  * complete carrier precedes publication of a handle.  Internal allocations
  * may be abandoned freely because no partially built table is observable. */
@@ -214,55 +338,222 @@ static Atom *prepare_blocks(CettaLibraryContext *context, Arena *arena,
             return NULL;
         }
     }
-    if (count) qsort(flat, count, sizeof(*flat), flat_table_posting_compare);
-    table->key_count = (size_t)name_key_count(table->keys);
-    table->count = count;
-    for (size_t i = 0u; i < count; i++)
-        if (i == 0u || flat[i].key != flat[i - 1u].key ||
-            flat[i].group != flat[i - 1u].group)
-            table->groups++;
+    return publish_flat_table(context, arena, table, flat, count);
+}
 
-    table->key_group_offsets = calloc(
-        table->key_count + 1u, sizeof(*table->key_group_offsets));
-    table->labels = table->groups
-        ? malloc(table->groups * sizeof(*table->labels)) : NULL;
-    table->offsets = malloc((table->groups + 1u) * sizeof(*table->offsets));
-    table->positions = count ? malloc(count * sizeof(*table->positions)) : NULL;
-    if (!table->key_group_offsets || (table->groups && !table->labels) ||
-        !table->offsets || (count && !table->positions)) {
-        free(flat);
-        release_table(table);
-        return fallback(arena);
+typedef struct {
+    PostingsTable *table;
+    FlatTablePosting *flat;
+    size_t count;
+    size_t capacity;
+    size_t rows;
+    Atom *head;
+    Atom **prefix;
+    size_t prefix_count;
+    Atom **forbidden;
+    size_t forbidden_count;
+    size_t keys_field;
+    size_t group_field;
+    size_t position_field;
+    size_t maximum_field;
+    bool invalid;
+    bool unsupported;
+    bool allocation_failure;
+    bool interrupted;
+} SpaceBlockBuilder;
+
+static bool space_block_push(SpaceBlockBuilder *builder, Atom *key,
+                             int64_t group, int64_t position) {
+    if (!name_key_is_admissible(key)) {
+        builder->invalid = true;
+        return true;
     }
-
-    size_t group = 0u;
-    for (size_t i = 0u; i < count; i++) {
-        bool first = i == 0u || flat[i].key != flat[i - 1u].key ||
-                     flat[i].group != flat[i - 1u].group;
-        if (first) {
-            table->labels[group] = flat[i].group;
-            table->offsets[group] = i;
-            table->key_group_offsets[flat[i].key]++;
-            group++;
+    if (builder->count == builder->capacity) {
+        size_t capacity = builder->capacity ? builder->capacity * 2u : 1024u;
+        if (capacity < builder->capacity ||
+            capacity > SIZE_MAX / sizeof(*builder->flat)) {
+            builder->allocation_failure = true;
+            return false;
         }
-        table->positions[i] = flat[i].position;
+        FlatTablePosting *flat = realloc(
+            builder->flat, capacity * sizeof(*flat));
+        if (!flat) {
+            builder->allocation_failure = true;
+            return false;
+        }
+        builder->flat = flat;
+        builder->capacity = capacity;
     }
-    table->offsets[table->groups] = count;
-    for (size_t key = 1u; key <= table->key_count; key++)
-        table->key_group_offsets[key] += table->key_group_offsets[key - 1u];
-    free(flat);
+    NameId id = name_key_intern(builder->table->keys, key);
+    if (id == NAME_ID_NONE) {
+        builder->allocation_failure = true;
+        return false;
+    }
+    builder->flat[builder->count++] = (FlatTablePosting){
+        .key = id,
+        .group = group,
+        .position = position,
+    };
+    return true;
+}
 
-    uint64_t id = 0u;
-    if (!cetta_native_handle_alloc(
-            context, table_kind, table, release_table, &id)) {
-        release_table(table);
+static bool space_block_visit(Atom *row, void *raw_builder) {
+    SpaceBlockBuilder *builder = raw_builder;
+    if (!builder || !row) return false;
+    builder->rows++;
+    if ((builder->rows & 1023u) == 0u && eval_native_interrupted()) {
+        builder->interrupted = true;
+        return false;
+    }
+    if (row->kind != ATOM_EXPR || row->expr.len == 0u)
+        return true;
+    Atom *row_head = row->expr.elems[0];
+    for (size_t index = 0u; index < builder->forbidden_count; index++) {
+        if (atom_eq(row_head, builder->forbidden[index])) {
+            builder->unsupported = true;
+            return true;
+        }
+    }
+    if (!atom_eq(row_head, builder->head))
+        return true;
+    if ((size_t)row->expr.len <= builder->maximum_field) {
+        builder->invalid = true;
+        return true;
+    }
+    Atom **keys = NULL;
+    size_t key_count = 0u;
+    Atom *group = row->expr.elems[builder->group_field];
+    Atom *position = row->expr.elems[builder->position_field];
+    if (!sequence(row->expr.elems[builder->keys_field], &keys, &key_count) ||
+        !group || group->kind != ATOM_GROUNDED ||
+        group->ground.gkind != GV_INT ||
+        !position || position->kind != ATOM_GROUNDED ||
+        position->ground.gkind != GV_INT) {
+        builder->invalid = true;
+        return true;
+    }
+    for (size_t index = 0u; index < builder->prefix_count; index++)
+        if (!space_block_push(builder, builder->prefix[index],
+                              group->ground.ival, position->ground.ival))
+            return false;
+    for (size_t index = 0u; index < key_count; index++)
+        if (!space_block_push(builder, keys[index],
+                              group->ground.ival, position->ground.ival))
+            return false;
+    return true;
+}
+
+static bool nonnegative_field(Atom *value, size_t *field) {
+    if (!value || value->kind != ATOM_GROUNDED ||
+        value->ground.gkind != GV_INT || value->ground.ival < 0 ||
+        (uint64_t)value->ground.ival > SIZE_MAX)
+        return false;
+    *field = (size_t)value->ground.ival;
+    return true;
+}
+
+static SpaceMatchPullVisitResult visit_native_space_blocks(
+        Space *source, SpaceBlockBuilder *builder) {
+    if (!space_contains_only_exact_atoms || !space_length64 ||
+        !space_get_at64 || !cetta_shared_transition_guard_enter ||
+        !cetta_shared_transition_guard_leave ||
+        !source || !builder || source->overlay_base ||
+        space_has_dependencies(source) ||
+        (source->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         source->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
+        !space_contains_only_exact_atoms(source))
+        return SPACE_MATCH_PULL_VISIT_DECLINED;
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    CettaCount count = space_length64(source);
+    for (CettaIndex index = 0u; index < count; index++) {
+        Atom *row = space_get_at64(source, index);
+        if (!row || !space_block_visit(row, builder))
+            return SPACE_MATCH_PULL_VISIT_TERMINATED;
+    }
+    return SPACE_MATCH_PULL_VISIT_COMPLETE;
+}
+
+/* Borrow an exact source snapshot and project its declared block rows directly
+ * into the same immutable table representation used by prepare_blocks.  This
+ * is an attempt: unsupported source/layout cases publish nothing and let the
+ * authored block construction remain the semantic authority. */
+static Atom *prepare_space_blocks(CettaLibraryContext *context, Arena *arena,
+                                  Atom *request) {
+    const char *reference = getenv("CETTA_POSTINGS_SPACE_REFERENCE");
+    if (reference && *reference && strcmp(reference, "0"))
+        return fallback(arena);
+    if (!request || request->kind != ATOM_EXPR || request->expr.len != 3u ||
+        !atom_is_symbol(request->expr.elems[0], "Postings:SpaceBlocks") ||
+        eval_current_effective_fuel_limit() >= 0)
+        return fallback(arena);
+    Atom *source_atom = request->expr.elems[1];
+    Atom *layout = request->expr.elems[2];
+    if (!source_atom || source_atom->kind != ATOM_GROUNDED ||
+        source_atom->ground.gkind != GV_SPACE || !source_atom->ground.ptr ||
+        !layout || layout->kind != ATOM_EXPR || layout->expr.len != 7u ||
+        !atom_is_symbol(layout->expr.elems[0], "Postings:BlockLayout") ||
+        !layout->expr.elems[1] || layout->expr.elems[1]->kind != ATOM_SYMBOL)
+        return fallback(arena);
+
+    Atom **prefix = NULL, **forbidden = NULL;
+    size_t prefix_count = 0u, forbidden_count = 0u;
+    SpaceBlockBuilder builder = {.head = layout->expr.elems[1]};
+    if (!nonnegative_field(layout->expr.elems[2], &builder.keys_field) ||
+        !nonnegative_field(layout->expr.elems[3], &builder.group_field) ||
+        !nonnegative_field(layout->expr.elems[4], &builder.position_field) ||
+        !sequence(layout->expr.elems[5], &prefix, &prefix_count) ||
+        !sequence(layout->expr.elems[6], &forbidden, &forbidden_count))
+        return fallback(arena);
+    builder.maximum_field = builder.keys_field;
+    if (builder.group_field > builder.maximum_field)
+        builder.maximum_field = builder.group_field;
+    if (builder.position_field > builder.maximum_field)
+        builder.maximum_field = builder.position_field;
+    for (size_t index = 0u; index < prefix_count; index++)
+        if (!name_key_is_admissible(prefix[index])) return fallback(arena);
+    for (size_t index = 0u; index < forbidden_count; index++)
+        if (!forbidden[index] || forbidden[index]->kind != ATOM_SYMBOL)
+            return fallback(arena);
+    builder.prefix = prefix;
+    builder.prefix_count = prefix_count;
+    builder.forbidden = forbidden;
+    builder.forbidden_count = forbidden_count;
+
+    builder.table = calloc(1, sizeof(*builder.table));
+    if (!builder.table) return fallback(arena);
+    arena_init(&builder.table->reference_arena);
+    builder.table->keys = name_key_table_new(64u);
+    if (!builder.table->keys) {
+        release_table(builder.table);
         return fallback(arena);
     }
-    Atom *result = cetta_native_handle_owned_atom(
-        context, arena, table_kind, id);
-    if (!result)
-        (void)cetta_native_handle_close(context, table_kind, id);
-    return result ? result : fallback(arena);
+
+    Space *source = source_atom->ground.ptr;
+    if (eval_resolve_space_read) source = eval_resolve_space_read(source);
+    Arena scratch;
+    arena_init(&scratch);
+    SpaceMatchPullVisitResult visited = space_match_backend_try_visit_atoms_direct
+        ? space_match_backend_try_visit_atoms_direct(
+            source, &scratch, space_block_visit, &builder)
+        : SPACE_MATCH_PULL_VISIT_DECLINED;
+    if (visited == SPACE_MATCH_PULL_VISIT_DECLINED)
+        visited = visit_native_space_blocks(source, &builder);
+    arena_free(&scratch);
+    if (builder.interrupted) {
+        free(builder.flat);
+        release_table(builder.table);
+        return NULL;
+    }
+    if (visited != SPACE_MATCH_PULL_VISIT_COMPLETE || builder.invalid ||
+        builder.unsupported || builder.allocation_failure) {
+        free(builder.flat);
+        release_table(builder.table);
+        if (space_match_backend_clear_error)
+            space_match_backend_clear_error();
+        return fallback(arena);
+    }
+    return publish_flat_table(
+        context, arena, builder.table, builder.flat, builder.count);
 }
 
 typedef struct { int64_t key, position; } FlatPosting;
@@ -323,6 +614,9 @@ static Atom *prepare_events(CettaLibraryContext *context, Arena *arena, Atom *ev
 
 static Atom *prepare(CettaLibraryContext *context, Arena *arena, Atom *groups) {
     Atom *blocks = NULL;
+    if (groups && groups->kind == ATOM_EXPR && groups->expr.len == 3u &&
+        atom_is_symbol(groups->expr.elems[0], "Postings:SpaceBlocks"))
+        return prepare_space_blocks(context, arena, groups);
     if (tagged_payload(groups, "Postings:Blocks", &blocks))
         return prepare_blocks(context, arena, blocks);
     if (groups && groups->kind == ATOM_EXPR && groups->expr.len == 2 &&
@@ -693,32 +987,29 @@ bool cetta_postings_call(CettaLibraryContext *context, Arena *arena,
         } else if (op == g_builtin_syms.lib_postings_inspect) {
             result = table ? table_inspect(arena, table)
                            : observe(arena, index, NULL, false, true);
-        } else if (nargs == 3u && atom_is_symbol(args[1], "stats")) {
-            result = table ? table_stats(arena, table) : stats(arena, index);
-        } else if (table && nargs == 3u &&
-                   (atom_is_symbol(args[1], "table-before") ||
-                    atom_is_symbol(args[1], "table-all") ||
-                    atom_is_symbol(args[1], "table-tensor-before") ||
-                    atom_is_symbol(args[1], "table-tensor-all"))) {
-            bool all = atom_is_symbol(args[1], "table-all") ||
-                       atom_is_symbol(args[1], "table-tensor-all");
-            bool tensor_result = atom_is_symbol(args[1], "table-tensor-before") ||
-                                 atom_is_symbol(args[1], "table-tensor-all");
-            result = table_counts(arena, table, args[2], all, tensor_result);
-        } else if (index && nargs == 3u &&
-                   (atom_is_symbol(args[1], "tensor-before") ||
-                    atom_is_symbol(args[1], "tensor-all"))) {
-            result = tensor_counts(
-                arena, index, args[2], atom_is_symbol(args[1], "tensor-all"));
-        } else if (nargs == 3u &&
-                   !atom_is_symbol(args[1], "all") &&
-                   !atom_is_symbol(args[1], "before")) {
-            result = fault(arena, "mode");
-        } else if (index) {
-            result = observe(
-                arena, index, args[2], atom_is_symbol(args[1], "all"), false);
         } else {
-            result = fault(arena, "mode");
+            const PostingsCountModeSpec *mode =
+                postings_count_mode_spec(args[1]);
+            if (!mode ||
+                (mode->family == POSTINGS_COUNT_FAMILY_INDEX && !index) ||
+                (mode->family == POSTINGS_COUNT_FAMILY_TABLE && !table)) {
+                result = fault(arena, "mode");
+            } else if (mode->result == POSTINGS_COUNT_RESULT_STATISTICS) {
+                result = table ? table_stats(arena, table) : stats(arena, index);
+            } else if (mode->family == POSTINGS_COUNT_FAMILY_TABLE) {
+                result = table_counts(
+                    arena, table, args[2],
+                    mode->extent == POSTINGS_COUNT_EXTENT_COMPLETE,
+                    mode->result == POSTINGS_COUNT_RESULT_TENSOR);
+            } else if (mode->result == POSTINGS_COUNT_RESULT_TENSOR) {
+                result = tensor_counts(
+                    arena, index, args[2],
+                    mode->extent == POSTINGS_COUNT_EXTENT_COMPLETE);
+            } else {
+                result = observe(
+                    arena, index, args[2],
+                    mode->extent == POSTINGS_COUNT_EXTENT_COMPLETE, false);
+            }
         }
     }
     *out = result ? cetta_call_completed_value(result) : cetta_call_interrupted();
