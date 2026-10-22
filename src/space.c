@@ -3697,6 +3697,7 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_STRUCTURAL:
         case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -3741,6 +3742,7 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_STRUCTURAL:
         case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -5106,6 +5108,7 @@ static void space_reset_moved_from(Space *s) {
     s->revision = 0;
     s->equation_revision = 0;
     s->declaration_revision = 0;
+    s->declares_subtypes = false;
     s->prefix_epoch = space_fresh_prefix_epoch();
     space_native_storage_init_empty(s, space_default_universe());
     space_match_backend_init(s);
@@ -5140,6 +5143,7 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->revision = 0;
     s->equation_revision = 0;
     s->declaration_revision = 0;
+    s->declares_subtypes = false;
     s->prefix_epoch = space_fresh_prefix_epoch();
     space_match_backend_init(s);
     space_attach_to_universe(s, s->native.universe);
@@ -9644,6 +9648,10 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
         return atom_symbol_literal(a, "Bindings");
     case GV_FOREIGN:
         return atom_symbol_literal(a, "Foreign");
+    case GV_STRUCTURAL: {
+        const char *name = atom_structural_type_name(atom);
+        return name ? atom_symbol(a, name) : atom_undefined_type(a);
+    }
     case GV_SEAL: {
         /* Sealed, SealFacet or Key: the kind of authority, never its brand. */
         const char *name = atom_seal_type_name(atom);

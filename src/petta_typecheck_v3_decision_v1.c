@@ -202,6 +202,10 @@ static Atom *v3_quoted_wire_type(
         return atom_symbol(arena, "TStr");
     case GV_BOOL:
         return atom_symbol(arena, "TBool");
+    case GV_STRUCTURAL: {
+        const char *name=atom_structural_type_name(value);
+        return name ? v3_expr1(arena,"TNominal",atom_symbol(arena,name)) : NULL;
+    }
     default:
         return atom_symbol(arena, "TUndefined");
     }

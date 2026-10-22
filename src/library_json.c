@@ -3,6 +3,7 @@
 #include "eval.h"
 #include "json_embedded_sources_v1.h"
 #include "lang.h"
+#include "petta_semantics.h"
 #include "native/json_nik_v1.h"
 #include "native/json_value_v1.h"
 #include "native/json_direct_v1.h"
@@ -134,6 +135,13 @@ static Atom *json_lane_value(Arena *arena, Atom *value) {
 
 /* A value entering the codec, in the codec's own spelling. */
 static Atom *json_codec_value(Arena *arena, Atom *value) {
+    /* Normalize evaluated PeTTa cons carriers at the language boundary.
+     * Summary checks leave ordinary parsed values allocation-free here. */
+    if (json_lane_is_petta() &&
+        petta_semantics_value_contains_observable_open_cons(value)) {
+        value = petta_semantics_materialize_value(arena, value);
+        if (!value) return NULL;
+    }
     return json_lane_is_petta()
         ? json_respell_booleans(arena, value, false)
         : value;
@@ -547,22 +555,27 @@ typedef enum {
 } JsonNativeLookupStep;
 
 typedef struct {
-    Atom *pairs;
+    Atom *const *pairs;
+    CettaExprLen count;
     const char *wanted;
     size_t wanted_len;
     CettaExprIndex next;
 } JsonNativeLookupCursor;
 
 static bool json_native_lookup_cursor_init(
-    JsonNativeLookupCursor *cursor, Atom *object, Atom *key) {
+    JsonNativeLookupCursor *cursor, Arena *arena, Atom *object, Atom *key) {
     const char *wanted = json_text(key);
-    if (!cursor || !json_expr_is(object, "JsonObject", 2u) ||
-        !object->expr.elems[1] ||
-        object->expr.elems[1]->kind != ATOM_EXPR || !wanted) {
+    Atom *const *pairs;
+    CettaExprLen count;
+    if (!cursor || !json_expr_is(object, "JsonObject", 2u) || !wanted) {
         return false;
     }
+    Atom *members = object->expr.elems[1];
+    if (json_lane_is_petta()) members = petta_semantics_closed_list(arena, members);
+    if (!atom_sequence_view(members, &pairs, &count)) return false;
     *cursor = (JsonNativeLookupCursor){
-        .pairs = object->expr.elems[1],
+        .pairs = pairs,
+        .count = count,
         .wanted = wanted,
         .wanted_len = key->kind == ATOM_GROUNDED
             ? atom_string_len(key) : strlen(wanted),
@@ -575,11 +588,11 @@ static JsonNativeLookupStep json_native_lookup_cursor_next(
     CettaExprIndex *ordinal_out) {
     if (value_out)
         *value_out = NULL;
-    if (!cursor || !cursor->pairs)
+    if (!cursor || (cursor->count && !cursor->pairs))
         return JSON_NATIVE_LOOKUP_MALFORMED;
-    while (cursor->next < cursor->pairs->expr.len) {
+    while (cursor->next < cursor->count) {
         CettaExprIndex ordinal = cursor->next++;
-        Atom *pair = cursor->pairs->expr.elems[ordinal];
+        Atom *pair = cursor->pairs[ordinal];
         if (!json_expr_is(pair, "JsonPair", 3u) ||
             !json_text(pair->expr.elems[1])) {
             return JSON_NATIVE_LOOKUP_MALFORMED;
@@ -638,7 +651,7 @@ static Atom *json_lookup(CettaJsonLibraryRuntimeV1 *runtime,
          * member structure and keys, never rescan unrelated string payloads. */
         JsonNativeLookupCursor cursor;
         if (!json_native_lookup_cursor_init(
-                &cursor, object, args[1])) {
+                &cursor, arena, object, args[1])) {
             return json_failure(arena, head, args, nargs, "JsonLookupV1",
                                 "JsonMalformedValueV1", "expected JSON object and text key");
         }
@@ -647,8 +660,8 @@ static Atom *json_lookup(CettaJsonLibraryRuntimeV1 *runtime,
         Atom **values = NULL;
         if (mode == 0 && !ordinary_codec) {
             values = malloc(sizeof(*values) *
-                (cursor.pairs->expr.len
-                    ? (size_t)cursor.pairs->expr.len : 1u));
+                (cursor.count
+                    ? (size_t)cursor.count : 1u));
             if (!values) return json_failure(arena, head, args, nargs, "JsonLookupV1",
                 "JsonAllocationFailureV1", "out of memory collecting JSON values");
         }
@@ -759,7 +772,7 @@ bool cetta_json_library_borrowed_value_v1(
         return false;
     }
     JsonNativeLookupCursor cursor;
-    if (!json_native_lookup_cursor_init(&cursor, args[0], args[1]))
+    if (!json_native_lookup_cursor_init(&cursor, arena, args[0], args[1]))
         return false;
     Atom *selected = NULL;
     JsonNativeLookupStep step = json_native_lookup_cursor_next(

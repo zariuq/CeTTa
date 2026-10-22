@@ -1601,6 +1601,9 @@ static void he_canonical_resume_dispatch(HeCanonicalFrame *frame) {
                 frame->has_non_functions = true;
                 continue;
             }
+            if (grounded_op_is_sequence_constructor(head) &&
+                get_function_arg_count(frame->types[i]) != nargs)
+                continue;
             frame->has_functions = true;
             Atom *fresh = cetta_instantiate_frame_syntax(a, frame->types[i]);
             ApplicabilityErrors errors;

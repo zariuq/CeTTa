@@ -39,6 +39,12 @@ bool cetta_decimal_real_double_v1(const char *text, double *out);
  * a separate inspection view. */
 bool cetta_decimal_real_nearest_v1(const char *text, double *out);
 
+/* Conversion after the caller's decimal lexical validator has accepted the
+ * complete spelling (integer, decimal or exponent). This performs no second
+ * syntax interpretation. It consumes the full C-locale spelling and retains
+ * IEEE overflow/underflow and signed zero, like the ordinary JSON projection. */
+bool cetta_decimal_nearest_validated_v1(const char *text, double *out);
+
 /* The canonical real spelling of the shortest decimal that reads back as the
  * given finite double: 0.1 is 0.1, 0.30000000000000004 keeps its digits. */
 bool cetta_decimal_real_from_double_v1(double value, char **out);

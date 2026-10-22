@@ -3835,6 +3835,8 @@ static bool grounded_dispatch_is_deterministic_equations_run_data(
 static bool grounded_dispatch_accepts_data_arg(Atom *head, uint32_t arg_index) {
     if (!head || head->kind != ATOM_SYMBOL)
         return false;
+    if (grounded_op_sequence_data_arg(head->sym_id, arg_index))
+        return true;
     if (grounded_op_is_pattern(head->sym_id)) {
         if (head->sym_id == g_builtin_syms.pat_solve ||
             head->sym_id == g_builtin_syms.pat_is_instance ||
@@ -14540,6 +14542,8 @@ static Atom *hyperpose_clone_atom_materialized(
                 ? atom_foreign(
                       owner, (CettaForeignValue *)src->ground.ptr)
                 : NULL;
+        case GV_STRUCTURAL:
+            return atom_structural(owner, src->ground.ptr);
         case GV_SEAL:
             /* A seal object is immutable and counts its holders atomically:
              * every branch shares the one identity. */
@@ -15174,6 +15178,8 @@ static Atom *hyperpose_transfer_atom(HyperposeResourceTransfer *transfer,
                boundary preserves their published identity. */
             return atom_foreign(
                 owner, (CettaForeignValue *)source->ground.ptr);
+        case GV_STRUCTURAL:
+            return atom_structural(owner, source->ground.ptr);
         case GV_SEAL:
             /* An authority object crosses as itself: the result boundary
              * neither copies nor re-mints it. */
@@ -21843,6 +21849,7 @@ static bool profiled_type_cache_result_stable(Atom *atom) {
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_STRUCTURAL:
         case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -24581,6 +24588,9 @@ static void prime_need_normalize_observation_in(
     PrimeNeedObservationPolicy policy);
 
 static bool prime_need_library_native_head(Atom *head) {
+    if (head && head->kind == ATOM_SYMBOL &&
+        (symbol_flags(g_symbols, head->sym_id) & CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP))
+        return true;
     const char *name = head && head->kind == ATOM_SYMBOL
         ? atom_name_cstr(head) : NULL;
     return name && strncmp(name, "__cetta_lib_", 12u) == 0;
@@ -35090,15 +35100,15 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             s, a, etype, atom, fuel, current_env, preserve_bindings, os)) {
         return true;
     }
-    if (!profile_disabled_whole_call_syntax &&
-        op->kind == ATOM_SYMBOL &&
-        (head_id == g_builtin_syms.range_atom ||
-         head_id == g_builtin_syms.repeat_atom)) {
-        Atom *direct = dispatch_native_op(s, a, op,
-                                          atom->expr.elems + 1,
-                                          atom->expr.len - 1);
-        if (direct) {
-            outcome_set_add(os, direct, &_empty);
+    /* Arity failure belongs to the operation, not to each overloaded type.
+     * No operand demand is performed on this rejected call. Valid arities
+     * still take the ordinary per-operand data/strict interpretation below. */
+    if (!profile_disabled_whole_call_syntax && op->kind == ATOM_SYMBOL &&
+        grounded_op_is_sequence_constructor(head_id) &&
+        !grounded_op_sequence_accepts_arity(head_id, nargs)) {
+        Atom *error = dispatch_native_op(s, a, op, atom->expr.elems + 1, nargs);
+        if (error) {
+            outcome_set_add(os, error, &_empty);
             return true;
         }
     }
@@ -35221,6 +35231,9 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
         if (he_selected_function_type)
             break;
         if (is_function_type(op_types[ti])) {
+            if (grounded_op_is_sequence_constructor(head_id) &&
+                get_function_arg_count(op_types[ti]) != nargs)
+                continue;
             has_func_type = true;
             ApplicabilityErrors errors;
             applicability_errors_init(&errors);
@@ -48500,11 +48513,25 @@ static bool prepared_pure_closed_call_plan(
     return true;
 }
 
+/* A library's scalar consumer uses the ordinary closed-call admission, not
+ * a second callback interpretation or an implicit evaluator re-entry. */
+CettaPreparedPureProgram *eval_prepare_pure_value_call(
+    Space *space, Arena *owner, Atom *call) {
+    PreparedPureClosedCallPlan plan;
+    if (!prepared_pure_closed_call_plan(space, owner, call,
+            current_eval_fuel_limit(), true, NULL, &plan))
+        return NULL;
+    return cetta_prepared_pure_program_compile_closed(
+        space, call, plan.call_mode, plan.boolean_value, plan.construct_value,
+        plan.constructs_expression, plan.opaque_value, plan.register_view,
+        plan.expression_view, plan.pattern_view, &plan.source_view, true,
+        plan.total_structural_equality,
+        prepared_pure_match_decision_semantics(plan.call_mode));
+}
+
 /* A closed call's result, copied out of the storage that dies when the call
  * is released: its scratch above the call's mark and its collection
- * survivors.  Their atoms record their copies in place, so the copy keeps
- * the result's sharing without a table; anything else the result reaches
- * is copied, or shared when the destination already owns it, as usual. */
+ * survivors. Their atoms record their copies in place, preserving sharing. */
 static Atom *prepared_pure_closed_result_copy(
     Arena *destination, Atom *result, Arena *scratch, ArenaMark mark,
     CettaPreparedPureProgram *program) {

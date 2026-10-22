@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -97,6 +98,14 @@ raise SystemExit(subprocess.call(['cc', *args]))
         return subprocess.check_output([str(exe)], text=True, timeout=args.timeout).strip()
 
     try:
+        makefile = (ROOT / 'Makefile').read_text()
+        for source in ('abt', 'cetta_stdlib'):
+            for suffix in ('.o', '.runtime-stats.o'):
+                target = 'src/' + source + '.$(BUILD_OBJ_TAG)' + suffix
+                rule = re.search(r'^' + re.escape(target) + r':[^\n]*\n(\t[^\n]*)',
+                                 makefile, re.M)
+                check(rule is not None and '$(call compile_c_object,' in rule[1],
+                      target + ' uses the exercised publication boundary')
         seed = launch("seed")
         await_open("seed", seed)
         check(release("seed", seed) == 0 and linked_value() == "7", "initial object links")
