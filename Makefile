@@ -5,6 +5,8 @@ LLVM_CLANG ?= clang
 .DEFAULT_GOAL := all
 .DELETE_ON_ERROR:
 
+
+
 # Pure grammar targets must select their configuration before Make reads
 # generated dependencies or queries optional foreign-runtime configuration.
 # Explicit settings still apply; unrelated and mixed goals keep their defaults.
@@ -742,6 +744,7 @@ SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presenta
 SRC += src/library_proc.c
 SRC += src/library_fs.c
 SRC += src/library_postings.c src/tensor.c src/tensor_screening.c src/library_tensor.c src/library_group.c
+SRC += src/petta_priority_heap.c
 SRC += src/str_stream.c
 SRC += src/relational_plan.c src/relational_cursor.c
 SRC += src/space_path_index.c
@@ -25090,7 +25093,7 @@ else
 endif
 .PHONY: test-lib-prolog-build-config
 
-test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8 test-petta-libpl-query-release test-foreign-region
+test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8 test-petta-libpl-query-release test-foreign-region test-petta-foreign-observer
 	@actual=$$(mktemp runtime/petta-libpl.XXXXXX); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
 	CETTA_PETTA_SEARCH_MACHINE=1 ./$(BIN) --lang petta \
@@ -29728,6 +29731,28 @@ test-petta-import-batches: $(BIN)
 	fi
 
 .PHONY: test-petta-libpl-query-release
+PETTA_FOREIGN_OBSERVER_TEST_OBJ = runtime/bootstrap/test_petta_foreign_observer.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+PETTA_FOREIGN_OBSERVER_TEST_BIN = runtime/test_petta_foreign_observer-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+-include $(PETTA_FOREIGN_OBSERVER_TEST_OBJ:.o=.d)
+
+$(PETTA_FOREIGN_OBSERVER_TEST_OBJ): tests/support/test_petta_foreign_observer.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -c -o $@ $<
+
+$(PETTA_FOREIGN_OBSERVER_TEST_BIN): $(PETTA_FOREIGN_OBSERVER_TEST_OBJ) $(PETTA_SEARCH_MACHINE_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+.PHONY: test-petta-foreign-observer
+test-petta-foreign-observer: $(BIN) $(if $(filter 1,$(LIB_PROLOG_ENABLED)),$(PETTA_FOREIGN_OBSERVER_TEST_BIN),)
+	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
+		$(call cetta_exec,./$(PETTA_FOREIGN_OBSERVER_TEST_BIN)) \
+			tests/petta/fixtures/observer_shadow.pl \
+			tests/petta/fixtures/observer_wrapper.pl; \
+	else \
+		echo "SKIP: foreign observer gate requires embedded Prolog"; \
+	fi
+
 test-petta-libpl-query-release: $(BIN) $(if $(filter 1,$(LIB_PROLOG_ENABLED)),$(PETTA_LIBPL_QUERY_RELEASE_CHECK_BIN),)
 	@set -eu; if [ "$(LIB_PROLOG_ENABLED)" = 1 ]; then \
 		$(PETTA_LIBPL_QUERY_RELEASE_CHECK_BIN) \
@@ -45361,6 +45386,354 @@ test-petta-prepared-sum-by-v1: $(BIN) \
 
 test-all: test-petta-prepared-sum-by-v1
 
+.PHONY: test-petta-priority-heap-native test-petta-priority-heap-native-stats
+test-all: test-petta-priority-heap-native
+test-petta-priority-heap-native: $(BIN) \
+		tests/petta/priority_heap_native.metta \
+		tests/petta/priority_heap_native.expected \
+		tests/petta/priority_heap_unimported.metta \
+		tests/petta/priority_heap_unimported.expected
+	@CETTA_PETTA_NATIVE_PRIORITY_HEAP=1 \
+		$(CETTA_BIN_INVOKE) --no-results --lang petta \
+		tests/petta/priority_heap_unimported.metta | \
+		diff -u tests/petta/priority_heap_unimported.expected -
+ifeq ($(LIB_PROLOG_ENABLED),1)
+	@set -eu; \
+	for machine in 0 1; do \
+		for native in 0 1; do \
+			CETTA_PETTA_SEARCH_MACHINE=$$machine \
+			CETTA_PETTA_NATIVE_PRIORITY_HEAP=$$native \
+				$(CETTA_BIN_INVOKE) --no-results --lang petta \
+				tests/petta/priority_heap_native.metta | \
+				diff -u tests/petta/priority_heap_native.expected -; \
+		done; \
+	done; \
+	echo 'PASS: native persistent priority heaps preserve SWI pairing-heap answers on both PeTTa routes'
+else
+	@echo 'SKIP: native priority-heap differential requires the optional Prolog adapter'
+endif
+
+test-petta-priority-heap-native-stats: $(BIN) \
+		tests/petta/priority_heap_native.metta \
+		tests/petta/priority_heap_native.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+ifeq ($(LIB_PROLOG_ENABLED),1)
+	@set -eu; \
+	report=$$(CETTA_PETTA_NATIVE_PRIORITY_HEAP=1 \
+		$(CETTA_BIN_INVOKE) --emit-runtime-stats --no-results --lang petta \
+		tests/petta/priority_heap_native.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/priority_heap_native.expected)"; \
+	value() { printf '%s\n' "$$report" | awk -v key="$$1" \
+		'$$1 == "runtime-counter" && $$2 == key { print $$3 }'; }; \
+	test "$$(value petta-priority-heap-attempt)" = 13; \
+	test "$$(value petta-priority-heap-commit)" = 13; \
+	test "$$(value petta-priority-heap-decline)" = 0; \
+	test "$$(value petta-priority-heap-meld)" = 5; \
+	test "$$(value petta-priority-heap-child-copy)" = 2; \
+	echo 'PASS: native priority-heap receipts partition the exact pairing-heap work'
+else
+	@echo 'SKIP: native priority-heap receipts require the optional Prolog adapter'
+endif
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-priority-heap-native-stats
+endif
+
+.PHONY: test-petta-open-equation-negative-certificate
+test-all: test-petta-open-equation-negative-certificate
+test-petta-open-equation-negative-certificate: $(BIN) \
+		tests/petta/open_equation_negative_certificate.metta \
+		tests/petta/open_equation_negative_certificate.expected
+ifeq ($(LIB_PROLOG_ENABLED),1)
+	@set -eu; \
+	report=$$(CETTA_OPEN_EQUATIONS_DEBUG=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/open_equation_negative_certificate.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^open-equations decline '); \
+	test "$$answers" = "$$(cat tests/petta/open_equation_negative_certificate.expected)"; \
+	rejections=$$(printf '%s\n' "$$report" | \
+		grep -c '^open-equations decline negative-certificate-target/2:' || true); \
+	test "$$rejections" = 3; \
+	echo 'PASS: stable compilation refusals survive unrelated appends and relevant appends invalidate them'
+else
+	@echo 'SKIP: the negative-certificate fixture uses callPredicate through the optional Prolog adapter'
+endif
+
+.PHONY: test-petta-oem-member-stats
+test-open-equations: test-petta-oem-member-stats \
+		test-petta-oem-open-cons-projection-stats \
+		test-petta-oem-minmax-stats \
+		test-petta-oem-named-partial-stats \
+		test-petta-oem-pure-callable-stats \
+		test-petta-oem-ground-case-stats \
+		test-petta-oem-algebraic-length-stats \
+		test-petta-oem-algebraic-append-stats \
+		test-petta-oem-algebraic-project-map-stats \
+		test-petta-oem-algebraic-contains-stats \
+		test-petta-oem-sealed-continuation-stats
+test-petta-oem-member-stats: $(BIN) \
+		tests/petta/oem_string_members.metta \
+		tests/petta/oem_string_members.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/oem_string_members.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/oem_string_members.expected)"; \
+	members=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && $$2 == "open-equation-member" { print $$3 }'); \
+	test "$$members" = 1000; \
+	echo 'PASS: ground unique is-member observations stay in the open-equation region; relational multiplicity stays exact'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-member-stats
+endif
+
+.PHONY: test-petta-oem-open-cons-projection-stats
+test-petta-oem-open-cons-projection-stats: $(BIN) \
+		tests/petta/oem_open_cons_projection.metta \
+		tests/petta/oem_open_cons_projection.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/oem_open_cons_projection.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/oem_open_cons_projection.expected)"; \
+	projections=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && \
+		 $$2 == "open-equation-open-cons-projection" { print $$3 }'); \
+	test "$$projections" = 2004; \
+	echo 'PASS: open-cons head and tail projections stay in the equation region without materializing the list'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-open-cons-projection-stats
+endif
+
+.PHONY: test-petta-oem-minmax-stats
+test-petta-oem-minmax-stats: $(BIN) \
+		tests/petta/oem_minmax_scalar.metta \
+		tests/petta/oem_minmax_scalar.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/oem_minmax_scalar.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/oem_minmax_scalar.expected)"; \
+	selected=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && $$2 == "open-equation-minmax" \
+		 { print $$3 }'); \
+	test "$$selected" = 2000; \
+	echo 'PASS: ready scalar min/max selects one original operand inside the equation region'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-minmax-stats
+endif
+
+.PHONY: test-petta-oem-named-partial-stats
+test-petta-oem-named-partial-stats: $(BIN) \
+		tests/petta/oem_named_partial.metta \
+		tests/petta/oem_named_partial.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/oem_named_partial.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/oem_named_partial.expected)"; \
+	entered=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && \
+		 $$2 == "open-equation-partial-enter" { print $$3 }'); \
+	test "$$entered" = 1000; \
+	echo 'PASS: named partial completion enters the admitted relation without crossing the host'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-named-partial-stats
+endif
+
+.PHONY: test-petta-oem-pure-callable-stats
+test-petta-oem-pure-callable-stats: $(BIN) \
+		tests/petta/oem_pure_callable.metta \
+		tests/petta/oem_pure_callable.expected \
+		tests/petta/oem_open_callable.metta \
+		tests/petta/oem_open_callable.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/oem_pure_callable.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/oem_pure_callable.expected)"; \
+	callables=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && \
+		 $$2 == "open-equation-pure-callable" { print $$3 }'); \
+	test "$$callables" = 1001; \
+	partials=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && \
+		 $$2 == "open-equation-lambda-partial" { print $$3 }'); \
+	test "$$partials" = 1; \
+	values=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && \
+		 $$2 == "open-equation-callable-value" { print $$3 }'); \
+	test "$$values" = 1004; \
+	echo 'PASS: exact pure lexical callables reuse a cursor-owned prepared plan; effects and arity boundaries retain canonical dispatch'; \
+	for stress in 0 1; do \
+		report=$$(CETTA_OEM_COLLECT_STRESS=$$stress $(CETTA_BIN_INVOKE) \
+			--emit-runtime-stats --lang petta tests/petta/oem_open_callable.metta 2>&1); \
+		answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+		test "$$answers" = "$$(cat tests/petta/oem_open_callable.expected)"; \
+		callables=$$(printf '%s\n' "$$report" | awk \
+			'$$1 == "runtime-counter" && \
+			 $$2 == "open-equation-pure-callable" { print $$3 }'); \
+		test "$$callables" -ge 1018; \
+	done; \
+	echo 'PASS: structural callables retain live aliases across later bindings and collections'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-pure-callable-stats
+endif
+
+
+.PHONY: test-petta-oem-relational-callable-stats
+test-open-equations: test-petta-oem-relational-callable-stats
+test-petta-oem-relational-callable-stats: $(BIN) \
+		tests/petta/oem_relational_callable.metta \
+		tests/petta/oem_relational_callable.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	for stress in 0 1; do \
+		report=$$(CETTA_OEM_COLLECT_STRESS=$$stress $(CETTA_BIN_INVOKE) \
+			--emit-runtime-stats --lang petta tests/petta/oem_relational_callable.metta 2>&1); \
+		answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+		test "$$answers" = "$$(cat tests/petta/oem_relational_callable.expected)"; \
+		entered=$$(printf '%s\n' "$$report" | awk \
+			'$$1 == "runtime-counter" && \
+			 $$2 == "open-equation-partial-enter" { print $$3 }'); \
+		test "$$entered" -ge 1000; \
+	done; \
+	echo 'PASS: captured relational bodies share the continuation machine, preserving duplicates, aliases, mutation, effects and cut refusal'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-relational-callable-stats
+endif
+
+.PHONY: test-petta-oem-ground-case-stats
+test-petta-oem-ground-case-stats: $(BIN) \
+		tests/petta/oem_ground_case.metta \
+		tests/petta/oem_ground_case.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/oem_ground_case.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/oem_ground_case.expected)"; \
+	matches=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && \
+		 $$2 == "open-equation-ground-case-match" { print $$3 }'); \
+	test "$$matches" = 1006; \
+	echo 'PASS: ground constructor and logical-list cases match directly; repeated variables retain exact semantics'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-ground-case-stats
+endif
+
+.PHONY: test-petta-oem-algebraic-length-stats
+test-petta-oem-algebraic-length-stats: $(BIN) \
+		tests/petta/oem_algebraic_length.metta \
+		tests/petta/oem_algebraic_length.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/oem_algebraic_length.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/oem_algebraic_length.expected)"; \
+	folds=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && \
+		 $$2 == "open-equation-algebraic-length" { print $$3 }'); \
+	test "$$folds" = 1; \
+	echo 'PASS: the exact structural length recurrence runs as one constructor-spine fold; near recurrences retain ordinary execution'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-algebraic-length-stats
+endif
+
+.PHONY: test-petta-oem-algebraic-append-stats
+test-petta-oem-algebraic-append-stats: $(BIN) \
+		tests/petta/oem_algebraic_append.metta \
+		tests/petta/oem_algebraic_append.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/oem_algebraic_append.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/oem_algebraic_append.expected)"; \
+	folds=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && \
+		 $$2 == "open-equation-algebraic-append" { print $$3 }'); \
+	test "$$folds" = 1; \
+	echo 'PASS: the exact structural append recurrence shares its right operand and rebuilds its left prefix once; near recurrences retain ordinary execution'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-algebraic-append-stats
+endif
+
+.PHONY: test-petta-oem-algebraic-project-map-stats
+test-petta-oem-algebraic-project-map-stats: $(BIN) \
+		tests/petta/oem_algebraic_project_map.metta \
+		tests/petta/oem_algebraic_project_map.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/oem_algebraic_project_map.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/oem_algebraic_project_map.expected)"; \
+	folds=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && \
+		 $$2 == "open-equation-algebraic-project-map" { print $$3 }'); \
+	test "$$folds" = 1; \
+	echo 'PASS: the exact projection-map recurrence scans and rebuilds one constructor spine; changed projections retain ordinary execution'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-algebraic-project-map-stats
+endif
+
+.PHONY: test-petta-oem-algebraic-contains-stats
+test-petta-oem-algebraic-contains-stats: $(BIN) \
+		tests/petta/oem_algebraic_contains.metta \
+		tests/petta/oem_algebraic_contains.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/oem_algebraic_contains.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/oem_algebraic_contains.expected)"; \
+	folds=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && \
+		 $$2 == "open-equation-algebraic-contains" { print $$3 }'); \
+	test "$$folds" = 2; \
+	echo 'PASS: exact short-circuit constructor membership runs as one spine fold; nonlinear patterns retain ordinary unification'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-algebraic-contains-stats
+endif
+
+.PHONY: test-petta-oem-sealed-continuation-stats
+test-petta-oem-sealed-continuation-stats: $(BIN) \
+		tests/petta/oem_sealed_continuation.metta \
+		tests/petta/oem_sealed_continuation.expected
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@set -eu; \
+	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+		tests/petta/oem_sealed_continuation.metta 2>&1); \
+	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
+	test "$$answers" = "$$(cat tests/petta/oem_sealed_continuation.expected)"; \
+	continuations=$$(printf '%s\n' "$$report" | awk \
+		'$$1 == "runtime-counter" && \
+		 $$2 == "open-equation-sealed-continuation" { print $$3 }'); \
+	test "$$continuations" = 1002; \
+	echo 'PASS: sealed keeps code and environment in the equation region and suspends only its freshened computation'
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-petta-oem-sealed-continuation-stats
+endif
+
 .PHONY: test-json-gslt-library-body
 test-json-gslt-library-body: $(BIN) \
 		lib/json.metta lib/petta/json.metta lib/prime/json.metta \
@@ -46012,3 +46385,144 @@ test-all: test-tptp-resources-v1
 test-langdef-equation-defaults-v1: $(BIN) tools/test_deterministic_equation_defaults_v1.py
 	@python3 tools/test_deterministic_equation_defaults_v1.py --cetta "$(BIN)"
 test-all: test-langdef-equation-defaults-v1
+
+PETTA_LIST_CARRIER_SUPPORT_TEST_BIN = runtime/test_petta_list_carrier_support-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats)
+PETTA_LIST_CARRIER_SUPPORT_TEST_OBJ = $(filter-out src/main.% src/petta_search_machine.%,$(OBJ))
+$(PETTA_LIST_CARRIER_SUPPORT_TEST_BIN): tests/support/test_petta_list_carrier_support.c src/petta_search_machine.c $(PETTA_LIST_CARRIER_SUPPORT_TEST_OBJ) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ $< $(PETTA_LIST_CARRIER_SUPPORT_TEST_OBJ) $(LDFLAGS) -Wl,--gc-sections
+
+.PHONY: test-petta-list-carrier-support
+test-petta-list-carrier-support: $(PETTA_LIST_CARRIER_SUPPORT_TEST_BIN) $(BIN) tests/petta/binding_list_support.metta tests/petta/binding_list_support.expected
+	@$(PETTA_LIST_CARRIER_SUPPORT_TEST_BIN)
+	@set -eu; for reference in 0 1; do \
+		answers=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference CETTA_PREPARED_PURE_REFERENCE=$$reference $(CETTA_BIN_INVOKE) --lang petta tests/petta/binding_list_support.metta 2>&1); \
+		test "$$answers" = "$$(cat tests/petta/binding_list_support.expected)"; \
+	done
+
+test-petta-search-machine: test-petta-list-carrier-support
+
+OEM_CALLABLE_GUARD_TEST_BIN = runtime/test_oem_callable_guard-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats)
+OEM_CALLABLE_GUARD_TEST_SRC = src/atom.c src/symbol.c src/scalar_trie.c src/binding/frame_identity.c src/name_key.c
+$(OEM_CALLABLE_GUARD_TEST_BIN): tests/support/test_oem_callable_guard.c src/open_equation_machine.c $(OEM_CALLABLE_GUARD_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 -ffunction-sections -fdata-sections -o $@ $< $(OEM_CALLABLE_GUARD_TEST_SRC) $(LDFLAGS) -Wl,--gc-sections
+
+.PHONY: test-oem-callable-guard
+test-oem-callable-guard: $(OEM_CALLABLE_GUARD_TEST_BIN) $(BIN) tests/petta/oem_callable_guard.metta tests/petta/oem_callable_guard.expected tests/petta/captured_callable_symbols.metta tests/petta/captured_callable_symbols.expected
+	@$(OEM_CALLABLE_GUARD_TEST_BIN)
+	@set -eu; for case in oem_callable_guard captured_callable_symbols; do \
+		for reference in 0 1; do for stress in 0 1; do \
+			answers=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference CETTA_PREPARED_PURE_REFERENCE=$$reference CETTA_OEM_COLLECT_STRESS=$$stress $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$case.metta 2>&1); \
+			test "$$answers" = "$$(cat tests/petta/$$case.expected)"; \
+		done; done; \
+	done
+
+test-petta-search-machine: test-oem-callable-guard
+
+OEM_COMPONENT_GROUND_TEST_BIN = runtime/test_oem_component_ground-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats)
+OEM_COMPONENT_GROUND_TEST_OBJS = $(filter-out src/main.% src/open_equation_machine.%,$(OBJ))
+$(OEM_COMPONENT_GROUND_TEST_BIN): tests/support/test_oem_component_ground.c src/open_equation_machine.c $(OEM_COMPONENT_GROUND_TEST_OBJS) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -fno-builtin-realloc -o $@ $< $(OEM_COMPONENT_GROUND_TEST_OBJS) $(LDFLAGS) -Wl,--wrap=realloc
+
+.PHONY: test-oem-component-ground
+test-oem-component-ground: $(OEM_COMPONENT_GROUND_TEST_BIN)
+	@$(OEM_COMPONENT_GROUND_TEST_BIN)
+
+test-petta-search-machine: test-oem-component-ground
+
+BINDING_SUPPORT_SUBSTITUTION_TEST_BIN = runtime/test_binding_support_substitution-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats)
+BINDING_SUPPORT_SUBSTITUTION_TEST_OBJS = $(filter-out src/main.%,$(OBJ))
+$(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN): tests/support/test_binding_support_substitution.c $(BINDING_SUPPORT_SUBSTITUTION_TEST_OBJS) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(BINDING_SUPPORT_SUBSTITUTION_TEST_OBJS) $(LDFLAGS)
+
+.PHONY: test-binding-support-substitution
+test-binding-support-substitution: $(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN)
+	@$(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN)
+
+test-petta-search-machine test-all: test-binding-support-substitution
+
+.PHONY: test-prepared-result-observer
+test-prepared-result-observer: $(BIN) tests/petta/prepared_result_observer.metta tests/petta/prepared_result_observer.expected tests/petta/prepared_result_observer_extended.expected
+	@set -eu; for observer_profile in plain extended; do \
+		expected=tests/petta/prepared_result_observer.expected; profile_args=; \
+		if [ "$$observer_profile" = extended ]; then \
+			expected=tests/petta/prepared_result_observer_extended.expected; \
+			profile_args='--profile extended'; \
+		fi; \
+		for pure_reference in 0 1; do for open_reference in 0 1; do for stress in 0 1; do \
+			answers=$$(CETTA_PREPARED_PURE_REFERENCE=$$pure_reference CETTA_OPEN_EQUATIONS_REFERENCE=$$open_reference CETTA_OEM_COLLECT_STRESS=$$stress $(CETTA_BIN_INVOKE) --lang petta $$profile_args tests/petta/prepared_result_observer.metta 2>&1); \
+			if [ "$$answers" != "$$(cat "$$expected")" ]; then \
+				printf '%s\n' "$$answers"; exit 1; \
+			fi; \
+		done; done; done; \
+	done
+	@echo "PASS: completed-value admission preserves result demand, pattern evaluation, aliases and effect order"
+
+test-petta-search-machine test-all: test-prepared-result-observer
+
+.PHONY: test-branch-pattern-admission
+test-branch-pattern-admission: $(BIN) tests/petta/branch_pattern_admission.metta tests/petta/branch_pattern_admission.expected tests/petta/branch_pattern_admission_extended.expected
+	@set -eu; for branch_profile in plain extended; do \
+		expected=tests/petta/branch_pattern_admission.expected; profile_args=; \
+		if [ "$$branch_profile" = extended ]; then \
+			expected=tests/petta/branch_pattern_admission_extended.expected; \
+			profile_args='--profile extended'; \
+		fi; \
+		for pure_reference in 0 1; do for open_reference in 0 1; do for stress in 0 1; do \
+			answers=$$(CETTA_PREPARED_PURE_REFERENCE=$$pure_reference CETTA_OPEN_EQUATIONS_REFERENCE=$$open_reference CETTA_OEM_COLLECT_STRESS=$$stress $(CETTA_BIN_INVOKE) --lang petta $$profile_args tests/petta/branch_pattern_admission.metta 2>&1); \
+			if [ "$$answers" != "$$(cat "$$expected")" ]; then \
+				printf '%s\n' "$$answers"; exit 1; \
+			fi; \
+		done; done; done; \
+	done
+	@echo "PASS: branch-local patterns preserve aliases, condition choices, earlier bindings and demanded results"
+
+test-petta-search-machine test-all: test-branch-pattern-admission
+
+.PHONY: test-native-truth-delivery
+test-native-truth-delivery: $(BIN) tests/petta/native_truth_delivery.metta tests/petta/native_truth_delivery.expected
+	@set -eu; for truth_profile in plain extended; do \
+		profile_args=; \
+		if [ "$$truth_profile" = extended ]; then profile_args='--profile extended'; fi; \
+		for pure_reference in 0 1; do for open_reference in 0 1; do for stress in 0 1; do \
+			answers=$$(CETTA_PREPARED_PURE_REFERENCE=$$pure_reference CETTA_OPEN_EQUATIONS_REFERENCE=$$open_reference CETTA_OEM_COLLECT_STRESS=$$stress $(CETTA_BIN_INVOKE) --lang petta $$profile_args tests/petta/native_truth_delivery.metta 2>&1); \
+			if [ "$$answers" != "$$(cat tests/petta/native_truth_delivery.expected)" ]; then \
+				printf '%s\n' "$$answers"; exit 1; \
+			fi; \
+		done; done; done; \
+	done
+	@echo "PASS: prepared native truth uses dialect values across lexical calls and constructor patterns"
+
+test-petta-search-machine test-all: test-native-truth-delivery
+
+.PHONY: test-additive-fold-regions
+test-additive-fold-regions: $(BIN) tests/petta/additive_fold_region.metta tests/petta/additive_fold_region.expected tests/petta/source_drop_region.metta tests/petta/source_drop_region.expected
+	@set -eu; for fold_profile in plain extended; do \
+		profile_args=; if [ "$$fold_profile" = extended ]; then profile_args='--profile extended'; fi; \
+		for reference in 0 1; do for stress in 0 1; do \
+			for case in additive_fold_region source_drop_region; do \
+				answers=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference CETTA_PREPARED_PURE_REFERENCE=$$reference CETTA_OEM_COLLECT_STRESS=$$stress $(CETTA_BIN_INVOKE) --lang petta $$profile_args tests/petta/$$case.metta 2>&1); \
+				test "$$answers" = "$$(cat tests/petta/$$case.expected)" || { printf '%s\n' "$$answers"; exit 1; }; \
+			done; \
+		done; done; \
+	done
+	@echo "PASS: additive source folds and borrowed suffixes preserve scope, guards, partial inputs and occurrence counts"
+
+test-petta-search-machine test-all: test-additive-fold-regions
+
+OEM_ALGEBRAIC_REGIONS_TEST_BIN = runtime/test_oem_algebraic_regions-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats)
+OEM_ALGEBRAIC_REGIONS_TEST_OBJS = $(filter-out src/main.% src/open_equation_machine.%,$(OBJ))
+$(OEM_ALGEBRAIC_REGIONS_TEST_BIN): tests/support/test_oem_algebraic_regions.c src/open_equation_machine.c $(OEM_ALGEBRAIC_REGIONS_TEST_OBJS) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(OEM_ALGEBRAIC_REGIONS_TEST_OBJS) $(LDFLAGS)
+
+.PHONY: test-oem-algebraic-regions
+test-oem-algebraic-regions: $(OEM_ALGEBRAIC_REGIONS_TEST_BIN)
+	@$(OEM_ALGEBRAIC_REGIONS_TEST_BIN)
+
+test-petta-search-machine test-all: test-oem-algebraic-regions
+
+.PHONY: bench-binding-support-substitution
+bench-binding-support-substitution: $(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN)
+	@printf '%s\n' 'Unbound whole term'
+	@$(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN) bench
+	@printf '%s\n' 'Unbound subtree beside a bound field'
+	@$(BINDING_SUPPORT_SUBSTITUTION_TEST_BIN) bench-mixed

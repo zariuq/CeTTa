@@ -41,6 +41,16 @@ static Atom *parse_one(Arena *arena, const char *source) {
     return result;
 }
 
+static void test_choice_collection_retry_threshold(void) {
+    assert(petta_machine_choice_collection_retry_threshold(100u, 64u) == 164u);
+    assert(petta_machine_choice_collection_retry_threshold(100u, 0u) == 100u);
+    assert(petta_machine_choice_collection_retry_threshold(
+               SIZE_MAX - 7u, 8u) == SIZE_MAX);
+    assert(petta_machine_choice_collection_retry_threshold(
+               SIZE_MAX, 1u) == SIZE_MAX);
+    puts("PASS: unsupported choice-heap collection retries are windowed and saturating");
+}
+
 static bool transient_plan_is_value(PettaProgram *program, Atom *atom,
                                     PettaTranslationEnvironment *environment) {
     const PettaPlanNode *plan = petta_program_plan_transient(program, atom, environment);
@@ -13253,6 +13263,7 @@ int main(int argc, char **argv) {
     assert_type_pure_symbol_facts();
     puts("PASS: type-pure grounded symbol facts");
     test_search_context_checkpoint_capabilities();
+    test_choice_collection_retry_threshold();
     test_flat_fold_overlay_admission(&answers);
     test_native_runtime_named_arity();
     test_semantic_form_facts();

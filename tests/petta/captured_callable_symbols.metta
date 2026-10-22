@@ -1,0 +1,7 @@
+(= (guard-inspect $graph $stamp)
+   (let $f (|-> ($unused) (Result (is-var $graph) $stamp)) ($f ignored)))
+!(collapse (let $value (superpose (first second))
+   (let $live $value (guard-inspect $live stamp))))
+!(guard-inspect first stamp)
+!(guard-inspect is-var stamp)
+!(guard-inspect second stamp)

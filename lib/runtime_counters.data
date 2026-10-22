@@ -1134,4 +1134,67 @@
   (1072 PREPARED_FILTER_COMMIT "prepared-filter-commit")
   (1073 PREPARED_FILTER_DECLINE "prepared-filter-decline")
   (1074 PREPARED_FILTER_SAFETY_CHECK "prepared-filter-safety-check")
-  (1075 PREPARED_FILTER_SAFETY_REUSE "prepared-filter-safety-reuse")))
+  (1075 PREPARED_FILTER_SAFETY_REUSE "prepared-filter-safety-reuse")
+  ; A registered SWI pairing-heap call realized without crossing the Prolog
+  ; boundary. Attempts include safe declines; commits publish one exact
+  ; answer. Melds and copied child slots expose the persistent-heap cost.
+  (1076 PETTA_PRIORITY_HEAP_ATTEMPT "petta-priority-heap-attempt")
+  (1077 PETTA_PRIORITY_HEAP_COMMIT "petta-priority-heap-commit")
+  (1078 PETTA_PRIORITY_HEAP_DECLINE "petta-priority-heap-decline")
+  (1079 PETTA_PRIORITY_HEAP_MELD "petta-priority-heap-meld")
+  (1080 PETTA_PRIORITY_HEAP_CHILD_COPY "petta-priority-heap-child-copy")
+  ; Ground closed is-member observations whose matching multiplicity is at
+  ; most one, answered inside the open-equation region.
+  (1081 OPEN_EQUATION_MEMBER "open-equation-member")
+  ; Head and tail observations of an already-resolved open-cons value. The
+  ; selected child remains in the cursor's region; no list is materialized.
+  (1082 OPEN_EQUATION_OPEN_CONS_PROJECTION
+        "open-equation-open-cons-projection")
+  ; Binary min/max over ready Int/Float operands, selected by the same
+  ; comparison as PeTTa's canonical expansion.
+  (1083 OPEN_EQUATION_MINMAX "open-equation-minmax")
+  ; Completion of an unforgeable partial with a named base directly enters
+  ; the current admitted relation after concatenating stored and new values.
+  (1084 OPEN_EQUATION_PARTIAL_ENTER "open-equation-partial-enter")
+  ; Exact applications of privately tagged one- and two-place lexical
+  ; callables realized by a cursor-owned determinate pure plan.
+  (1085 OPEN_EQUATION_PURE_CALLABLE "open-equation-pure-callable")
+  ; Under-application of a private lexical callable, retaining the ready
+  ; argument prefix in the canonical partial carrier.
+  (1086 OPEN_EQUATION_LAMBDA_PARTIAL "open-equation-lambda-partial")
+  ; A privately tagged callable carrier delivered by a generic host step as
+  ; the value it already is. Only an outer application may execute it.
+  (1087 OPEN_EQUATION_CALLABLE_VALUE "open-equation-callable-value")
+  ; Case arms matched as constructor decision trees over ground values;
+  ; open values and list-carrier equivalences retain full unification.
+  (1088 OPEN_EQUATION_GROUND_CASE_MATCH
+        "open-equation-ground-case-match")
+  ; A sole full signature whose preparation has no rejecting type guard,
+  ; executed without a one-alternative dispatch wrapper.
+  (1089 OPEN_EQUATION_IDENTITY_TYPED_CALL
+        "open-equation-identity-typed-call")
+  ; PeTTa sealed prepared as code plus environment inside the equation
+  ; region; only its freshened computation suspends to the host.
+  (1090 OPEN_EQUATION_SEALED_CONTINUATION
+        "open-equation-sealed-continuation")
+  ; Exact source-recognized structural length recurrences executed as one
+  ; least-work constructor-spine loop.
+  (1091 OPEN_EQUATION_ALGEBRAIC_LENGTH
+        "open-equation-algebraic-length")
+  ; Exact source-recognized structural append recurrences executed by
+  ; sharing the right operand and rebuilding the left prefix once.
+  (1092 OPEN_EQUATION_ALGEBRAIC_APPEND
+        "open-equation-algebraic-append")
+  ; Exact source-recognized projection-map recurrences executed by one
+  ; input-spine scan and one output-prefix construction.
+  (1093 OPEN_EQUATION_ALGEBRAIC_PROJECT_MAP
+        "open-equation-algebraic-project-map")
+  ; Exact source-recognized short-circuit constructor-membership folds.
+  (1094 OPEN_EQUATION_ALGEBRAIC_CONTAINS
+        "open-equation-algebraic-contains")
+  ; Nonnegative source-certified decrement-and-tail folds.
+  (1095 OPEN_EQUATION_ALGEBRAIC_DROP "open-equation-algebraic-drop")
+  ; Source-certified additive folds over proper recursive child fields.
+  (1096 OPEN_EQUATION_ALGEBRAIC_SCALAR_SUM "open-equation-algebraic-scalar-sum")
+  ; Nodes inspected by additive fold attempts, including declined prefixes.
+  (1097 OPEN_EQUATION_ALGEBRAIC_SCALAR_NODE "open-equation-algebraic-scalar-node")))

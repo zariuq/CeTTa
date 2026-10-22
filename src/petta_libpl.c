@@ -77,6 +77,8 @@ struct CettaLibPrologRuntime {
     /* The static-import! clauses are in the module (installed on first use),
      * and the module the imported files are consulted into. */
     bool static_import_ready;
+    bool cyclic_observer_checked;
+    bool cyclic_observer_current;
     char *static_module_name;
     size_t static_module_name_len;
     uint64_t instance_id;
@@ -151,6 +153,7 @@ static void petta_libpl_advance_revision(
     CettaLibPrologRuntime *runtime) {
     if (!runtime)
         return;
+    runtime->cyclic_observer_checked = false;
     uint64_t capability = atomic_load_explicit(
         &runtime->capability_revision, memory_order_relaxed);
     atomic_store_explicit(
@@ -4257,6 +4260,66 @@ static bool petta_libpl_registered_call(
     return ok;
 }
 
+
+/* A failed cyclic-term observation has no database effects only through
+ * the reference wrapper and the system implementation. Unknown calls and
+ * carried constraints retain the ordinary opaque-effect boundary. */
+static bool petta_libpl_cyclic_observer_current(
+    CettaLibPrologRuntime *runtime) {
+    if (runtime->cyclic_observer_checked)
+        return runtime->cyclic_observer_current;
+    static const char certificate[] =
+        "certificate(M,("
+        "system:predicate_property(M:cyclic_term(_),implementation_module(system)),"
+        "system:predicate_property(M:cyclic_term(_),built_in),"
+        "system:predicate_property(M:cyclic_term(_),foreign),"
+        "system:predicate_property(M:call(_),implementation_module(system)),"
+        "system:predicate_property(M:callPredicate(_,_),implementation_module(M)),"
+        "system:predicate_property(M:callPredicate(_,_),number_of_clauses(1)),"
+        "system:clause(M:callPredicate(G,R),B),"
+        "system:var(G),system:(R==true),system:(B==call(G))))";
+    fid_t frame = PL_open_foreign_frame();
+    term_t pair = frame ? PL_new_term_ref() : 0;
+    term_t arguments = pair ? PL_new_term_refs(2) : 0;
+    bool built = arguments && PL_chars_to_term(certificate, pair) &&
+        PL_get_arg(1, pair, arguments) &&
+        PL_unify_atom_chars(arguments, runtime->module_name) &&
+        PL_get_arg(2, pair, arguments + 1);
+    predicate_t call = built ? PL_predicate("call", 1, "system") : 0;
+    qid_t query = call ? PL_open_query(NULL,
+        PL_Q_NODEBUG | PL_Q_CATCH_EXCEPTION | PL_Q_EXT_STATUS,
+        call, arguments + 1) : 0;
+    bool current = false;
+    if (query) {
+        int status = PL_next_solution(query);
+        current = status == PL_S_TRUE || status == PL_S_LAST;
+        if (petta_libpl_release_query(NULL, NULL, query,
+                PETTA_LIBPL_RELEASE_CLOSE) != PETTA_LIBPL_RELEASE_OK)
+            current = false;
+        if (status == PL_S_EXCEPTION) PL_clear_exception();
+    } else if (!built) {
+        /* An optional provenance probe cannot publish its own exception. */
+        PL_clear_exception();
+    }
+    if (frame) PL_discard_foreign_frame(frame);
+    runtime->cyclic_observer_current = current;
+    runtime->cyclic_observer_checked = true;
+    return current;
+}
+
+static bool petta_libpl_failed_observer_admitted(
+    CettaLibPrologRuntime *runtime, Atom *body, bool answers_success,
+    const PettaLibplDelay *delay) {
+    if (!answers_success || (delay && delay->carried))
+        return false;
+    Atom *goal = body;
+    Atom *unwrapped = NULL;
+    if (petta_libpl_predicate_body(body, &unwrapped)) goal = unwrapped;
+    return goal && goal->kind == ATOM_EXPR && goal->expr.len == 2u &&
+        petta_libpl_atom_is_symbol(goal->expr.elems[0], "cyclic_term") &&
+        petta_libpl_cyclic_observer_current(runtime);
+}
+
 /*
  * Run one goal in the embedded Prolog: every solution is an outcome carrying
  * the bindings of the goal's free variables.  With `answers_success`, the
@@ -4304,6 +4367,8 @@ static bool petta_libpl_call_goal(
     Atom *success = answers_success
         ? petta_semantics_success_value(arena)
         : atom_var_with_id(arena, "$", fresh_var_id());
+    bool read_only_failure = petta_libpl_failed_observer_admitted(
+        runtime, body, answers_success, delay);
     bool solved = false;
     bool attempted = success != NULL;
     bool ok = attempted && petta_libpl_run_query(
@@ -4314,7 +4379,8 @@ static bool petta_libpl_call_goal(
      * caller, which propagates it as a MeTTa error. */
     if (!ok && raised && *raised)
         ok = true;
-    if (attempted)
+    if (attempted && !(read_only_failure && ok && !solved &&
+                       (!raised || !*raised)))
         petta_libpl_advance_revision(runtime);
     if (succeeded)
         *succeeded = solved;
