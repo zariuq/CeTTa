@@ -1,0 +1,13 @@
+observer-prefix
+(ObservedPair Wrap 7)
+direct
+nested
+alias
+branch-a
+branch-b
+(choice)
+()
+repeated
+computed
+42
+effect

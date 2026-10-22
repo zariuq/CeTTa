@@ -51,6 +51,13 @@ OPTIONAL_MORK_INIT_FAILURE_RE = re.compile(
     r"current_predicate\(mork/3\)->writeln\(\"MORK init: done\"\);"
     r"writeln\(\"MORK init: failed\"\)\)\n"
 )
+OPTIONAL_JANUS_INIT_FAILURE_RE = re.compile(
+    r"\AERROR: [^\n]*/swipy/janus\.pl:[0-9]+:\n"
+    r"ERROR:    [^\n]*/swipy/janus\.pl:[0-9]+: Initialization goal "
+    r"raised exception:\n"
+    r"ERROR:    open_shared_object/3: libpython[^ \n]*: cannot open "
+    r"shared object file: No such file or directory\n"
+)
 VARIABLE_TERMINATORS = frozenset(" \t\r\n()[]{}\",")
 TEST_DIAGNOSTIC_SUFFIXES = (". ✅ ", ". ❌ ")
 SPECIALIZER_DIAGNOSTIC_RE = re.compile(
@@ -390,6 +397,7 @@ def normalize_oracle_stderr(
         if normalized.startswith(PYTHON_RUNTIME_WARNING):
             normalized = normalized[len(PYTHON_RUNTIME_WARNING):]
         normalized = OPTIONAL_MORK_INIT_FAILURE_RE.sub("", normalized, count=1)
+        normalized = OPTIONAL_JANUS_INIT_FAILURE_RE.sub("", normalized, count=1)
         if normalized == previous:
             break
     return normalized
@@ -413,6 +421,7 @@ def normalization_contract() -> dict[str, Any]:
         "drop_exact_leading_oracle_stderr": [
             PYTHON_RUNTIME_WARNING,
             "optional MORK library_path/1 initialization failure block",
+            "optional Janus missing-libpython initialization failure block",
         ],
         "max_captured_output_bytes": MAX_CAPTURE_BYTES,
     }
