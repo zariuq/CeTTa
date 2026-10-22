@@ -1,0 +1,73 @@
+Prepared numerical expression regions
+====================================
+
+Ordinary authored equations can retain intermediate Int/Float/Bool values
+inside a bounded prepared region without allocating an Atom for every
+arithmetic step. This is an execution representation, not a new public
+numeric type or a format-specific aggregation primitive.
+
+For example, the body of
+
+  (= (affine $x) (+ (* $x 0.5) 1.0))
+
+can execute two operations and publish one result. Its argument is already a
+value. A call, forced argument, binding, constructor, choice or effect is a
+region boundary; the compiler does not move its evaluation into this region.
+No common-subexpression elimination or floating reassociation is performed.
+
+Admission and refusal
+---------------------
+
+The existing generated operation contracts must positively admit each
+intrinsic. A bounded source traversal records every local read, including
+repeated occurrences, for register liveness. Postorder lowering emits fresh
+compact registers. The current realization selects multi-operation trees
+with literal Float evidence; integer-only code keeps its direct register
+implementation. This is a cost policy, not a change to integer semantics.
+
+At execution, supported numeric operands use the existing compact grounded
+scalar interpreter. Checked integer overflow, BigInt/Rational operands,
+unsupported payloads, and representation-sensitive Boolean observations
+refuse this realization. Refusal restarts the original operation tree before
+publishing an intermediate or performing an effect. Ordinary evaluator and
+dialect policies remain authoritative.
+
+The final truth value crosses the dialect's Boolean constructor. Other
+results cross the ordinary scalar materialization boundary. Live input
+locals remain collector roots across surrounding calls. No collection or
+interrupt safe point occurs inside the small fixed-size region.
+
+Scope and formal correspondence
+-------------------------------
+
+Mettapedia.Machines.ScalarTreeRegion proves the ordered partial scalar-tree
+compiler correct, connects this fragment to the existing RegisterCode
+lowering, preserves the local-read footprint, and instantiates exact bounded
+fallback. Its primitive operations are parameters; these theorems are not a
+verification of native C or concrete IEEE implementations.
+
+  make qualify-prepared-scalar-lean METTAPEDIA_LEAN_ROOT=path/to/mettapedia
+
+This optimization applies to ordinary prepared numerical equations. Packed
+tensor callback fusion, general query planning and application search costs
+are separate work; this region does not by itself establish Python parity.
+
+Qualification and measurements
+------------------------------
+
+  make test-prepared-scalar-tree
+  python3 tests/support/benchmark_prepared_scalar_tree.py \
+    --cetta path/to/cetta --output path/to/new-results --repeat 5
+
+The focused controls compare fused, unfused, node, collecting and semantic-
+fuel routes across PeTTa, HE and Prime. They include bitwise Float output via
+tensor encoding, signed zero, non-associative cancellation, integer overflow,
+Rational refusal, choices, effects, stale programs and collector liveness.
+The native control also compares unpublished allocation volume.
+
+CETTA_PREPARED_PURE_SCALAR_TREE_REFERENCE=1 disables region lowering for a
+matched control. Existing single-operation scalar dispatch remains enabled.
+The benchmark may additionally accept --before to compare an earlier binary.
+It records input loading, preparation, work, whole-process time, CPU usage
+and sampled child peak RSS separately. Its finite dyadic workloads are not a
+universal numerical-performance claim; exact outputs must agree first.

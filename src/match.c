@@ -11059,6 +11059,8 @@ static bool simple_match_leaf(Atom *pattern, Atom *target) {
         case GV_FOREIGN:
         case GV_SEAL:
             return pattern->ground.ptr == target->ground.ptr;
+        case GV_STRUCTURAL:
+            return atom_structural_equal(pattern, target);
         /* A rational term is equal to any node with its unfolding. */
         case GV_TERM_GRAPH:
         case GV_BINDINGS:
@@ -13984,6 +13986,7 @@ static bool stored_grounded_equal(Atom *left,
     case GV_CAPTURE:
     case GV_BINDINGS:
     case GV_FOREIGN:
+    case GV_STRUCTURAL:
     case GV_SEAL:
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:

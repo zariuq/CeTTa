@@ -519,6 +519,10 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_retain(
 /* The head and arity of each equation occurrence the program compiled. */
 size_t cetta_prepared_pure_program_equation_count(
     const CettaPreparedPureProgram *program);
+/* Number of bounded, already-ready scalar regions in the compiled code.
+ * This reports admission, not an assertion that every region was executed. */
+size_t cetta_prepared_pure_program_scalar_tree_count(
+    const CettaPreparedPureProgram *program);
 bool cetta_prepared_pure_program_equation_signature(
     const CettaPreparedPureProgram *program, size_t index,
     SymbolId *head_out, uint32_t *arity_out);

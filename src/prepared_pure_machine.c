@@ -377,6 +377,9 @@ typedef enum {
     /* BUILD where the dialect's constructor builds the expression itself. */
     PREPARED_PURE_CODE_BUILD_EXPRESSION,
     PREPARED_PURE_CODE_REGISTER,
+    /* A bounded register-only tree over already-ready locals/literals.
+     * Its operand list names every local read, for ordinary liveness. */
+    PREPARED_PURE_CODE_SCALAR_TREE,
     PREPARED_PURE_CODE_INTRINSIC,
     PREPARED_PURE_CODE_OBSERVE,
     /* A true operand continues; a false one continues at `target`. */
@@ -397,6 +400,8 @@ typedef enum {
 } PreparedPureCodeKind;
 
 #define PREPARED_PURE_CODE_LITERAL UINT32_C(0x80000000)
+#define PREPARED_PURE_SCALAR_LITERAL UINT32_C(0x80000000)
+#define PREPARED_PURE_SCALAR_LOCAL UINT32_C(0x40000000)
 
 typedef struct {
     uint8_t kind;
@@ -405,7 +410,8 @@ typedef struct {
     uint32_t first_operand;
     uint32_t operand_count;
     /* BRANCH and BRANCH_REGISTER: where a false condition continues; JUMP:
-     * where it goes; BUILD_EXPRESSION: its head, code_heads[target]. */
+     * where it goes; BUILD_EXPRESSION: its head, code_heads[target];
+     * SCALAR_TREE: its first compact instruction, scalar_code[target]. */
     uint32_t target;
     /* CALL and TAIL_CALL: the registers the body reads after the call
      * returns, code_live[first_live, +live_count); none after a tail call. */
@@ -417,6 +423,8 @@ typedef struct {
     /* CALL and TAIL_CALL: the kind of its head's entry when the call has
      * the entry's arity, GENERAL otherwise (PreparedPureCodeEntryKind). */
     uint8_t entry;
+    /* SCALAR_TREE only: bounded compact register instruction count. */
+    uint8_t scalar_count;
 } PreparedPureCode;
 
 /* An activation of register code: its next instruction, and its registers
@@ -639,6 +647,11 @@ struct CettaPreparedPureProgram {
     uint32_t *code_operands;
     size_t code_operand_len;
     size_t code_operand_cap;
+    /* Triples: operation node, left operand, right operand. Literals refer
+     * to existing nodes; this code adds no Atom roots. */
+    uint32_t *scalar_code;
+    size_t scalar_code_len;
+    size_t scalar_code_cap;
     Atom **code_literals;
     size_t code_literal_len;
     size_t code_literal_cap;
@@ -1443,7 +1456,10 @@ static bool prepared_pure_trim_dead_slots(
         if (program->slot_live[i]) {
             if (program->slots[i])
                 live++;
-        } else if (program->slots[i]) {
+        } else {
+            /* An unwritten temporary has no value to inspect. The body
+             * writes it before use, but a collection may precede that
+             * write. Clear every dead register without reading its bits. */
             program->slots[i] = NULL;
             trimmed++;
         }
@@ -1656,7 +1672,9 @@ static bool prepared_pure_code_trim_dead_registers(
         if (program->slot_live[i]) {
             if (program->slots[i])
                 live++;
-        } else if (program->slots[i]) {
+        } else {
+            /* Dead registers include temporaries not written yet. Never
+             * inspect their bits, even to count reclaimed references. */
             program->slots[i] = NULL;
             trimmed++;
         }
@@ -7317,6 +7335,7 @@ static bool prepared_pure_grounded_intrinsic_type_equal(
     case GV_CAPTURE:
     case GV_BINDINGS:
     case GV_FOREIGN:
+    case GV_STRUCTURAL:
     case GV_SEAL:
     case GV_TERM_GRAPH:
     case GV_INTERNAL_TAG:
@@ -7770,11 +7789,97 @@ static inline Atom *prepared_pure_immediate_value(
  * exact integer or a truth computed here may have none. */
 typedef struct {
     Atom *atom;
-    int64_t integer;
+    union { int64_t integer; double floating; };
     bool is_integer;
+    bool is_float;
     bool is_boolean;
     bool boolean;
 } PreparedPureScalar;
+
+static bool prepared_pure_scalar_tree_reference_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("CETTA_PREPARED_PURE_SCALAR_TREE_REFERENCE");
+        enabled = value && *value && strcmp(value, "0") != 0;
+    }
+    return enabled != 0;
+}
+
+static inline PreparedPureScalar prepared_pure_scalar_atom(Atom *atom) {
+    PreparedPureScalar value = {.atom = atom};
+    if (atom && atom->kind == ATOM_GROUNDED) {
+        if (atom->ground.gkind == GV_INT) {
+            value.is_integer = true;
+            value.integer = atom->ground.ival;
+        } else if (atom->ground.gkind == GV_FLOAT) {
+            value.is_float = true;
+            value.floating = atom->ground.fval;
+        }
+    }
+    return value;
+}
+
+static bool prepared_pure_scalar_plain(
+    const PreparedPureScalar *value, CettaPlainScalar *plain) {
+    if (value->is_integer) {
+        *plain = (CettaPlainScalar){.kind = CETTA_PLAIN_SCALAR_INT,
+            .as.integer = value->integer};
+        return true;
+    }
+    if (value->is_float) {
+        *plain = (CettaPlainScalar){.kind = CETTA_PLAIN_SCALAR_FLOAT,
+            .as.floating = value->floating};
+        return true;
+    }
+    if (value->is_boolean) {
+        *plain = (CettaPlainScalar){.kind = CETTA_PLAIN_SCALAR_BOOL,
+            .as.boolean = value->boolean};
+        return true;
+    }
+    return grounded_plain_scalar_from_atom(value->atom, plain);
+}
+
+/* Reuse the successful ordinary intrinsic arm. The generated register arm
+ * itself still denotes exact integers; a float is never relabelled as one. */
+static bool prepared_pure_scalar_float_operation(
+    const PreparedPureNode *node, const PreparedPureScalar *left,
+    const PreparedPureScalar *right, PreparedPureScalar *out) {
+    CettaGsltPreparedPureIntrinsicInstruction instruction;
+    if ((!left->is_float && !right->is_float) || !node->atom ||
+        node->atom->kind != ATOM_SYMBOL ||
+        !prepared_pure_intrinsic_program(node->atom->sym_id, 2u, &instruction) ||
+        instruction != CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH)
+        return false;
+    CettaPlainScalar arguments[2], result;
+    if (!prepared_pure_scalar_plain(left, &arguments[0]) ||
+        !prepared_pure_scalar_plain(right, &arguments[1]) ||
+        !grounded_try_plain_scalar_operation(node->atom, arguments, 2u, &result) ||
+        (node->result_kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN &&
+         result.kind != CETTA_PLAIN_SCALAR_BOOL))
+        return false;
+    if (result.kind == CETTA_PLAIN_SCALAR_FLOAT) {
+        out->is_float = true;
+        out->floating = result.as.floating;
+    } else if (result.kind == CETTA_PLAIN_SCALAR_BOOL) {
+        out->is_boolean = true;
+        out->boolean = result.as.boolean;
+    } else {
+        out->is_integer = true;
+        out->integer = result.as.integer;
+    }
+    return true;
+}
+
+static Atom *prepared_pure_scalar_leaf(
+    const PreparedPureScalar *value, Atom *storage) {
+    if (value->atom) return value->atom;
+    if (value->is_integer) atom_scalar_leaf_int(storage, value->integer);
+    else if (value->is_float) atom_scalar_leaf_float(storage, value->floating);
+    /* A computed truth's Atom representation belongs to boolean_value.
+     * Leave a representation observation to the boxed dialect boundary. */
+    else return NULL;
+    return storage;
+}
 
 static Atom *prepared_pure_inline_value(
     CettaPreparedPureProgram *program, Arena *arena,
@@ -7803,10 +7908,10 @@ static bool prepared_pure_scalar_operands_share_type(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_UNDEFINED_TYPE_OPERAND);
         return true;
     }
-    bool left_number = left->is_integer ||
+    bool left_number = left->is_integer || left->is_float ||
         (left->atom && left->atom->kind == ATOM_GROUNDED &&
          prepared_pure_numeric_ground_kind(left->atom->ground.gkind));
-    bool right_number = right->is_integer ||
+    bool right_number = right->is_integer || right->is_float ||
         (right->atom && right->atom->kind == ATOM_GROUNDED &&
          prepared_pure_numeric_ground_kind(right->atom->ground.gkind));
     if ((left_number && right_number) ||
@@ -7825,6 +7930,11 @@ static bool prepared_pure_inline_register_scalar(
     const PreparedPureNode *node, uint32_t local_base, uint32_t depth,
     uint32_t *budget, PreparedPureScalar *out);
 
+static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_scalar_binary(
+    CettaPreparedPureProgram *program, const PreparedPureNode *node,
+    const PreparedPureScalar *left_value, const PreparedPureScalar *right_value,
+    PreparedPureScalar *out);
+
 /* A node's value held unboxed where no step is needed: an immediate or
  * inline value, or a register arm decided on unboxed operands.  False
  * leaves the node to its frame. */
@@ -7839,11 +7949,7 @@ static bool prepared_pure_inline_scalar(
             program, arena, node, local_base, depth, budget);
     }
     if (atom) {
-        out->atom = atom;
-        if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_INT) {
-            out->is_integer = true;
-            out->integer = atom->ground.ival;
-        }
+        *out = prepared_pure_scalar_atom(atom);
         return true;
     }
     if (node->kind != PREPARED_PURE_REGISTER || node->child_count != 2u ||
@@ -7875,6 +7981,15 @@ static bool PREPARED_PURE_NOINLINE prepared_pure_inline_register_scalar(
             &program->nodes[program->children[node->first_child + 1u]],
             local_base, depth - 1u, budget, &right))
         return false;
+    return prepared_pure_scalar_binary(program, node, &left, &right, out);
+}
+
+static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_scalar_binary(
+    CettaPreparedPureProgram *program, const PreparedPureNode *node,
+    const PreparedPureScalar *left_value, const PreparedPureScalar *right_value,
+    PreparedPureScalar *out) {
+    PreparedPureScalar left = *left_value, right = *right_value;
+    *out = (PreparedPureScalar){0};
     if (node->instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
         if (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
             (!program->total_structural_equality &&
@@ -7882,7 +7997,6 @@ static bool PREPARED_PURE_NOINLINE prepared_pure_inline_register_scalar(
                  program, node, &left, &right)))
             return false;
         bool equal;
-        Atom integer_leaf;
         if (left.atom && right.atom) {
             /* Two integers are equal by value, as value equality has it. */
             equal = left.atom->kind == ATOM_GROUNDED &&
@@ -7893,22 +8007,21 @@ static bool PREPARED_PURE_NOINLINE prepared_pure_inline_register_scalar(
                 : atom_value_eq(left.atom, right.atom);
         } else if (left.is_integer && right.is_integer) {
             equal = left.integer == right.integer;
-        } else if (left.is_integer && right.atom) {
-            atom_scalar_leaf_int(&integer_leaf, left.integer);
-            equal = atom_value_eq(&integer_leaf, right.atom);
-        } else if (right.is_integer && left.atom) {
-            atom_scalar_leaf_int(&integer_leaf, right.integer);
-            equal = atom_value_eq(left.atom, &integer_leaf);
         } else {
-            return false;
+            Atom left_storage, right_storage;
+            Atom *left_value = prepared_pure_scalar_leaf(&left, &left_storage);
+            Atom *right_value = prepared_pure_scalar_leaf(&right, &right_storage);
+            if (!left_value || !right_value) return false;
+            equal = atom_value_eq(left_value, right_value);
         }
         out->is_boolean = true;
         out->boolean = equal;
         return true;
     }
+    if (!left.is_integer || !right.is_integer)
+        return prepared_pure_scalar_float_operation(node, &left, &right, out);
     CettaGsltRegisterOperandDiscipline discipline;
-    if (!left.is_integer || !right.is_integer ||
-        !cetta_gslt_register_operand_discipline(
+    if (!cetta_gslt_register_operand_discipline(
             node->instruction, &discipline) ||
         discipline != CETTA_GSLT_REGISTER_OPERANDS_EXACT_INTEGER_OPERANDS)
         return false;
@@ -7964,6 +8077,8 @@ static Atom *prepared_pure_inline_value(
                     program, arena, scalar.boolean);
             if (scalar.atom)
                 return scalar.atom;
+            if (scalar.is_float)
+                return atom_float(arena, scalar.floating);
             return scalar.is_integer ? atom_int(arena, scalar.integer) : NULL;
         }
     }
@@ -9594,6 +9709,77 @@ static bool prepared_pure_code_operand(
     return true;
 }
 
+/* Admit only bounded trees of pure register operations whose leaves already
+ * hold values. Calls, forced slots, bindings and constructors are boundaries:
+ * hoisting them could change failure, effect or termination order. */
+static bool prepared_pure_code_scalar_tree(
+    PreparedPureCodeLowering *lowering, uint32_t index, uint32_t depth,
+    uint32_t *budget, uint32_t *operations, uint32_t *locals, uint32_t *count,
+    uint32_t *tape, uint32_t *tape_count, bool *floating) {
+    CettaPreparedPureProgram *program = lowering->program;
+    if (index >= program->node_len || *budget == 0u) return false;
+    (*budget)--;
+    const PreparedPureNode *node = &program->nodes[index];
+    if (node->kind == PREPARED_PURE_LITERAL) {
+        CettaPlainScalar value;
+        if (!grounded_plain_scalar_from_atom(node->atom, &value)) return false;
+        *floating |= value.kind == CETTA_PLAIN_SCALAR_FLOAT;
+        tape[(*tape_count)++] = index;
+        return true;
+    }
+    if (node->kind == PREPARED_PURE_SLOT) {
+        if (node->auxiliary >= lowering->local_count ||
+            *count >= PREPARED_PURE_INLINE_NODES) return false;
+        locals[(*count)++] = node->auxiliary;
+        tape[(*tape_count)++] = index;
+        return true;
+    }
+    if (depth == 0u || node->kind != PREPARED_PURE_REGISTER ||
+        node->child_count != 2u || !node->atom ||
+        !grounded_is_plain_scalar_tree_operator(node->atom, 2u) ||
+        node->first_child > program->child_len ||
+        2u > program->child_len - node->first_child) return false;
+    CettaGsltPreparedPureIntrinsicInstruction intrinsic;
+    if (!prepared_pure_intrinsic_program(node->atom->sym_id,2u,&intrinsic) ||
+        intrinsic != CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) return false;
+    (*operations)++;
+    if (!prepared_pure_code_scalar_tree(lowering,
+               program->children[node->first_child], depth-1u,
+               budget, operations, locals, count, tape, tape_count, floating) ||
+        !prepared_pure_code_scalar_tree(lowering,
+               program->children[node->first_child+1u], depth-1u,
+               budget, operations, locals, count, tape, tape_count, floating))
+        return false;
+    tape[(*tape_count)++] = index;
+    return true;
+}
+
+/* Lower the admitted postorder tree to register operations. Locals and
+ * literals are operands, not runtime push instructions; each computed value
+ * has a fresh compact register. Repeated occurrences are not deduplicated. */
+static bool prepared_pure_scalar_registers(CettaPreparedPureProgram *program,
+    const uint32_t *tape, uint32_t count, uint32_t *code, uint32_t *operations) {
+    uint32_t stack[PREPARED_PURE_INLINE_NODES], height = 0u;
+    *operations = 0u;
+    for (uint32_t i=0u; i<count; i++) {
+        const PreparedPureNode *node = &program->nodes[tape[i]];
+        if (node->kind == PREPARED_PURE_LITERAL) {
+            if (tape[i] >= PREPARED_PURE_SCALAR_LOCAL) return false;
+            stack[height++] = PREPARED_PURE_SCALAR_LITERAL | tape[i];
+        } else if (node->kind == PREPARED_PURE_SLOT) {
+            if (node->auxiliary >= PREPARED_PURE_SCALAR_LOCAL) return false;
+            stack[height++] = PREPARED_PURE_SCALAR_LOCAL | node->auxiliary;
+        } else {
+            if (height < 2u || node->kind != PREPARED_PURE_REGISTER) return false;
+            uint32_t right = stack[--height], left = stack[--height];
+            uint32_t op = (*operations)++;
+            code[op*3u] = tape[i]; code[op*3u+1u] = left; code[op*3u+2u] = right;
+            stack[height++] = op;
+        }
+    }
+    return height == 1u && *operations > 0u;
+}
+
 /* The operands of a node's children, left to right, in a new array. */
 static bool prepared_pure_code_operands(
     PreparedPureCodeLowering *lowering, uint32_t first_child,
@@ -9648,6 +9834,41 @@ static bool prepared_pure_code_node(
     case PREPARED_PURE_REGISTER:
     case PREPARED_PURE_INTRINSIC:
     case PREPARED_PURE_OBSERVE: {
+        if (node.kind == PREPARED_PURE_REGISTER && node.child_count == 2u &&
+            node.first_child < program->child_len &&
+            2u <= program->child_len-node.first_child &&
+            program->children[node.first_child] < program->node_len &&
+            program->children[node.first_child+1u] < program->node_len &&
+            (program->nodes[program->children[node.first_child]].kind == PREPARED_PURE_REGISTER ||
+             program->nodes[program->children[node.first_child+1u]].kind == PREPARED_PURE_REGISTER) &&
+            !prepared_pure_scalar_tree_reference_enabled()) {
+            uint32_t locals[PREPARED_PURE_INLINE_NODES];
+            uint32_t tape[PREPARED_PURE_INLINE_NODES], tape_count = 0u;
+            bool floating = false;
+            uint32_t count = 0u, operations = 0u;
+            uint32_t budget = PREPARED_PURE_INLINE_NODES;
+            if (prepared_pure_code_scalar_tree(lowering, node_index,
+                    PREPARED_PURE_INLINE_DEPTH, &budget, &operations,
+                    locals, &count, tape, &tape_count, &floating) &&
+                operations > 1u && floating) {
+                uint32_t compact[PREPARED_PURE_INLINE_NODES*3u], op_count = 0u;
+                if (!prepared_pure_scalar_registers(program,tape,tape_count,compact,&op_count))
+                    return false;
+                uint32_t words = op_count*3u;
+                if (program->scalar_code_len > UINT32_MAX-words ||
+                    !prepared_pure_reserve((void **)&program->scalar_code,
+                        sizeof(*program->scalar_code), &program->scalar_code_cap,
+                        program->scalar_code_len+words)) return false;
+                uint32_t first = (uint32_t)program->scalar_code_len;
+                memcpy(program->scalar_code+first,compact,words*sizeof(*compact));
+                program->scalar_code_len += words;
+                return prepared_pure_code_emit(program,
+                    (PreparedPureCode){.kind = PREPARED_PURE_CODE_SCALAR_TREE,
+                        .destination = destination, .auxiliary = node_index,
+                        .target = first, .scalar_count = (uint8_t)op_count,
+                        .returns = tail}, locals, count, NULL);
+            }
+        }
         uint32_t *operands = NULL;
         if (!prepared_pure_code_operands(
                 lowering, node.first_child, node.child_count, depth,
@@ -9869,6 +10090,7 @@ static bool prepared_pure_code_liveness(
              code->kind == PREPARED_PURE_CODE_BUILD ||
              code->kind == PREPARED_PURE_CODE_BUILD_EXPRESSION ||
              code->kind == PREPARED_PURE_CODE_REGISTER ||
+             code->kind == PREPARED_PURE_CODE_SCALAR_TREE ||
              code->kind == PREPARED_PURE_CODE_INTRINSIC ||
              code->kind == PREPARED_PURE_CODE_OBSERVE ||
              code->kind == PREPARED_PURE_CODE_CALL);
@@ -12358,34 +12580,29 @@ static PREPARED_PURE_NOINLINE bool prepared_pure_code_safe_point(
  * integers without overflow.  False leaves it to the boxed arm. */
 static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_code_register_scalar(
     const CettaPreparedPureProgram *program, const PreparedPureNode *node,
-    Atom *left_atom, Atom *right_atom, PreparedPureScalar *out) {
-    PreparedPureScalar left = {.atom = left_atom};
-    PreparedPureScalar right = {.atom = right_atom};
-    if (left_atom->kind == ATOM_GROUNDED &&
-        left_atom->ground.gkind == GV_INT) {
-        left.is_integer = true;
-        left.integer = left_atom->ground.ival;
-    }
-    if (right_atom->kind == ATOM_GROUNDED &&
-        right_atom->ground.gkind == GV_INT) {
-        right.is_integer = true;
-        right.integer = right_atom->ground.ival;
-    }
-    *out = (PreparedPureScalar){0};
+    Atom *left_atom, Atom *right_atom, CettaPlainScalar *out) {
+    bool left_integer = left_atom->kind == ATOM_GROUNDED &&
+        left_atom->ground.gkind == GV_INT;
+    bool right_integer = right_atom->kind == ATOM_GROUNDED &&
+        right_atom->ground.gkind == GV_INT;
     if (node->instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
+        PreparedPureScalar left = {.atom = left_atom};
+        PreparedPureScalar right = {.atom = right_atom};
         if (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
             (!program->total_structural_equality &&
              !prepared_pure_scalar_operands_share_type(
                  program, node, &left, &right)))
             return false;
-        out->is_boolean = true;
-        out->boolean = left.is_integer && right.is_integer
-            ? left.integer == right.integer
-            : atom_value_eq(left_atom, right_atom);
+        *out = (CettaPlainScalar){
+            .kind = CETTA_PLAIN_SCALAR_BOOL,
+            .as.boolean = left_integer && right_integer
+                ? left_atom->ground.ival == right_atom->ground.ival
+                : atom_value_eq(left_atom, right_atom),
+        };
         return true;
     }
     CettaGsltRegisterOperandDiscipline discipline;
-    if (!left.is_integer || !right.is_integer ||
+    if (!left_integer || !right_integer ||
         !cetta_gslt_register_operand_discipline(
             node->instruction, &discipline) ||
         discipline != CETTA_GSLT_REGISTER_OPERANDS_EXACT_INTEGER_OPERANDS)
@@ -12396,20 +12613,40 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_code_register_scalar(
     CettaGsltRegisterResultKind kind = node->result_kind;
     if (!cetta_gslt_register_execute_small_binary(
             node->instruction, &integer, &boolean,
-            left.integer, right.integer, &kind, &promote) ||
+            left_atom->ground.ival, right_atom->ground.ival, &kind, &promote) ||
         promote || kind != node->result_kind)
         return false;
     if (kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
-        out->is_integer = true;
-        out->integer = integer;
+        *out = (CettaPlainScalar){
+            .kind = CETTA_PLAIN_SCALAR_INT, .as.integer = integer};
         return true;
     }
     if (kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN) {
-        out->is_boolean = true;
-        out->boolean = boolean;
+        *out = (CettaPlainScalar){
+            .kind = CETTA_PLAIN_SCALAR_BOOL, .as.boolean = boolean};
         return true;
     }
     return false;
+}
+
+/* Keep general float dispatch off the small-integer register arm: that arm
+ * remains a call-free inline operation, including in the branch executor. */
+static PREPARED_PURE_NOINLINE bool prepared_pure_code_float_scalar(
+    const PreparedPureNode *node, Atom *left_atom, Atom *right_atom,
+    CettaPlainScalar *out) {
+    CettaGsltPreparedPureIntrinsicInstruction instruction;
+    CettaPlainScalar arguments[2];
+    if (!node->atom || node->atom->kind != ATOM_SYMBOL ||
+        !prepared_pure_intrinsic_program(node->atom->sym_id, 2u, &instruction) ||
+        instruction != CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH ||
+        !grounded_plain_scalar_from_atom(left_atom, &arguments[0]) ||
+        !grounded_plain_scalar_from_atom(right_atom, &arguments[1]) ||
+        (arguments[0].kind != CETTA_PLAIN_SCALAR_FLOAT &&
+         arguments[1].kind != CETTA_PLAIN_SCALAR_FLOAT))
+        return false;
+    return grounded_try_plain_scalar_operation(node->atom, arguments, 2u, out) &&
+        (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
+         out->kind == CETTA_PLAIN_SCALAR_BOOL);
 }
 
 /* The value of a register node on its operand values, as its frame
@@ -12417,15 +12654,18 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_code_register_scalar(
 static PREPARED_PURE_ALWAYS_INLINE Atom *prepared_pure_code_register(
     const CettaPreparedPureProgram *program, Arena *arena,
     const PreparedPureNode *node, Atom *const *values, uint32_t count) {
-    PreparedPureScalar scalar;
+    CettaPlainScalar scalar;
     if (count == 2u &&
-        prepared_pure_code_register_scalar(
-            program, node, values[0], values[1], &scalar)) {
-        if (scalar.is_boolean)
+        (prepared_pure_code_register_scalar(
+            program, node, values[0], values[1], &scalar) ||
+         prepared_pure_code_float_scalar(node, values[0], values[1], &scalar))) {
+        if (scalar.kind == CETTA_PLAIN_SCALAR_BOOL)
             return prepared_pure_boolean_atom(
-                program, arena, scalar.boolean);
-        if (scalar.is_integer)
-            return atom_int(arena, scalar.integer);
+                program, arena, scalar.as.boolean);
+        if (scalar.kind == CETTA_PLAIN_SCALAR_INT)
+            return atom_int(arena, scalar.as.integer);
+        if (scalar.kind == CETTA_PLAIN_SCALAR_FLOAT)
+            return atom_float(arena, scalar.as.floating);
     }
     Atom *value = prepared_pure_execute_register(
         program, arena, node->instruction, node->result_kind,
@@ -12435,6 +12675,99 @@ static PREPARED_PURE_ALWAYS_INLINE Atom *prepared_pure_code_register(
             program, arena, node->result_kind, node->atom, values, count);
     return value && !(value->kind == ATOM_EXPR && atom_is_error(value))
         ? value : NULL;
+}
+
+static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_scalar_operand(
+    const CettaPreparedPureProgram *program, const CettaPlainScalar *registers,
+    uint32_t operand, uint32_t local_base, CettaPlainScalar *out) {
+    if (operand & PREPARED_PURE_SCALAR_LITERAL) {
+        uint32_t index = operand & ~PREPARED_PURE_SCALAR_LITERAL;
+        return grounded_plain_scalar_from_atom(
+            index < program->node_len ? program->nodes[index].atom : NULL, out);
+    }
+    if (operand & PREPARED_PURE_SCALAR_LOCAL) {
+        size_t index = (size_t)local_base +
+            (operand & ~PREPARED_PURE_SCALAR_LOCAL);
+        return grounded_plain_scalar_from_atom(
+            index < program->slot_len ? program->slots[index] : NULL, out);
+    }
+    *out = registers[operand];
+    return true;
+}
+
+static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_scalar_numbers(
+    const PreparedPureNode *node, const CettaPlainScalar *arguments,
+    CettaPlainScalar *out) {
+    if (arguments[0].kind == CETTA_PLAIN_SCALAR_BOOL ||
+        arguments[1].kind == CETTA_PLAIN_SCALAR_BOOL)
+        return false;
+    if (arguments[0].kind == CETTA_PLAIN_SCALAR_INT &&
+        arguments[1].kind == CETTA_PLAIN_SCALAR_INT) {
+        bool boolean = false, promote = false;
+        int64_t integer = 0;
+        if (node->instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
+            *out = (CettaPlainScalar){.kind = CETTA_PLAIN_SCALAR_BOOL,
+                .as.boolean = arguments[0].as.integer == arguments[1].as.integer};
+            return true;
+        }
+        CettaGsltRegisterResultKind kind = node->result_kind;
+        if (!cetta_gslt_register_execute_small_binary(node->instruction, &integer,
+                &boolean, arguments[0].as.integer, arguments[1].as.integer,
+                &kind, &promote) || promote || kind != node->result_kind)
+            return false;
+        if (kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN)
+            *out = (CettaPlainScalar){
+                .kind = CETTA_PLAIN_SCALAR_BOOL, .as.boolean = boolean};
+        else if (kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER)
+            *out = (CettaPlainScalar){
+                .kind = CETTA_PLAIN_SCALAR_INT, .as.integer = integer};
+        else
+            return false;
+        return true;
+    }
+    return grounded_try_plain_scalar_operation(node->atom, arguments, 2u, out) &&
+        (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
+         out->kind == CETTA_PLAIN_SCALAR_BOOL);
+}
+
+/* A compact scalar region has no calls, effects, safepoints or published
+ * intermediates. Refusal re-enters the broader boxed operation tree. The
+ * literal float evidence selects this realization; exact-integer code keeps
+ * its measured call-free register realization. */
+static PREPARED_PURE_NOINLINE Atom *prepared_pure_scalar_region(
+    CettaPreparedPureProgram *program, Arena *arena,
+    const PreparedPureCode *code, uint32_t local_base) {
+    CettaPlainScalar registers[PREPARED_PURE_INLINE_NODES];
+    if (code->target > program->scalar_code_len ||
+        (uint32_t)code->scalar_count * 3u >
+            program->scalar_code_len - code->target ||
+        code->scalar_count > PREPARED_PURE_INLINE_NODES)
+        return NULL;
+    for (uint32_t i = 0u; i < code->scalar_count; i++) {
+        const uint32_t *instruction = &program->scalar_code[code->target + i * 3u];
+        uint32_t index = instruction[0];
+        if (index >= program->node_len)
+            return NULL;
+        const PreparedPureNode *node = &program->nodes[index];
+        CettaPlainScalar arguments[2];
+        if (!prepared_pure_scalar_operand(
+                program, registers, instruction[1], local_base, &arguments[0]) ||
+            !prepared_pure_scalar_operand(
+                program, registers, instruction[2], local_base, &arguments[1]) ||
+            !prepared_pure_scalar_numbers(node, arguments, &registers[i]))
+            goto boxed;
+    }
+    if (code->scalar_count > 0u) {
+        const CettaPlainScalar *value = &registers[code->scalar_count - 1u];
+        if (value->kind == CETTA_PLAIN_SCALAR_BOOL)
+            return prepared_pure_boolean_atom(program, arena, value->as.boolean);
+        return grounded_plain_scalar_materialize(arena, value);
+    }
+boxed:;
+    uint32_t budget = PREPARED_PURE_INLINE_NODES;
+    return prepared_pure_inline_value(
+        program, arena, &program->nodes[code->auxiliary], local_base,
+        PREPARED_PURE_INLINE_DEPTH, &budget);
 }
 
 /* Run the program's register code from its root.  Activations are on
@@ -12539,6 +12872,18 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
                 returned = value;
                 goto return_value;
             }
+            registers[code->destination] = value;
+            continue;
+        }
+        case PREPARED_PURE_CODE_SCALAR_TREE: {
+            const PreparedPureNode *node = &program->nodes[code->auxiliary];
+            Atom *value = prepared_pure_scalar_region(program,arena,code,frame->base);
+            if (!value) {
+                decline_node = node;
+                decline = "scalar tree declined";
+                goto declined;
+            }
+            if (code->returns) { returned = value; goto return_value; }
             registers[code->destination] = value;
             continue;
         }
@@ -12665,11 +13010,11 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
                 prepared_pure_code_value(program, registers, operands[0]),
                 prepared_pure_code_value(program, registers, operands[1]),
             };
-            PreparedPureScalar scalar;
+            CettaPlainScalar scalar;
             if (prepared_pure_code_register_scalar(
                     program, node, values[0], values[1], &scalar) &&
-                scalar.is_boolean) {
-                if (!scalar.boolean)
+                scalar.kind == CETTA_PLAIN_SCALAR_BOOL) {
+                if (!scalar.as.boolean)
                     frame->pc = code->target;
                 continue;
             }
@@ -13852,6 +14197,15 @@ size_t cetta_prepared_pure_program_equation_count(
     return program ? program->equation_len : 0u;
 }
 
+size_t cetta_prepared_pure_program_scalar_tree_count(
+    const CettaPreparedPureProgram *program) {
+    size_t count = 0u;
+    if (program)
+        for (size_t i = 0u; i < program->code_len; i++)
+            count += program->code[i].kind == PREPARED_PURE_CODE_SCALAR_TREE;
+    return count;
+}
+
 bool cetta_prepared_pure_program_equation_signature(
     const CettaPreparedPureProgram *program, size_t index,
     SymbolId *head_out, uint32_t *arity_out) {
@@ -13929,6 +14283,7 @@ void cetta_prepared_pure_program_free(
     free(program->context_reads);
     free(program->code);
     free(program->code_operands);
+    free(program->scalar_code);
     free(program->code_literals);
     free(program->code_heads);
     free(program->code_entries);

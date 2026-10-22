@@ -491,7 +491,8 @@ static Atom *json_from_ordinary_scalar(JsonValueCtxV1 *ctx, Atom *value) {
 
 typedef struct {
     Atom *source;
-    Atom *items;
+    Atom *const *items;
+    CettaExprLen count;
     Atom **converted;
     Atom *key;
     CettaExprIndex index;
@@ -500,7 +501,7 @@ typedef struct {
 
 static Atom *json_convert_child(JsonValueCtxV1 *ctx, JsonConvertFrameV1 *frame,
                                 bool to_ordinary) {
-    Atom *child = frame->items->expr.elems[frame->index];
+    Atom *child = frame->items[frame->index];
     if (!frame->object) return child;
     if (to_ordinary) {
         JsonBytesV1 utf8 = {.limit = CETTA_STRING_BYTES_MAX, .ctx = ctx};
@@ -549,8 +550,9 @@ static Atom *json_convert_value(JsonValueCtxV1 *ctx, Atom *value, bool to_ordina
         if (!json_value_work(ctx, 1u)) goto failed;
         bool object = json_expr_is(current, to_ordinary ? "JsonObjectV1" : "JsonObject", 2u);
         if (object || json_expr_is(current, to_ordinary ? "JsonArrayV1" : "JsonArray", 2u)) {
-            Atom *items = current->expr.elems[1];
-            if (!items || items->kind != ATOM_EXPR) {
+            Atom *const *items;
+            CettaExprLen count;
+            if (!atom_sequence_view(current->expr.elems[1], &items, &count)) {
                 json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed JSON container");
                 goto failed;
             }
@@ -561,11 +563,11 @@ static Atom *json_convert_value(JsonValueCtxV1 *ctx, Atom *value, bool to_ordina
                 if (!grown) goto allocation;
                 frames = grown; cap = next;
             }
-            Atom **converted = ctx->arena && items->expr.len ? calloc(items->expr.len, sizeof(*converted)) : NULL;
-            if (ctx->arena && items->expr.len && !converted) goto allocation;
-            frames[len++] = (JsonConvertFrameV1){.source = current, .items = items,
+            Atom **converted = ctx->arena && count ? calloc(count, sizeof(*converted)) : NULL;
+            if (ctx->arena && count && !converted) goto allocation;
+            frames[len++] = (JsonConvertFrameV1){.source = current, .items = items, .count = count,
                 .converted = converted, .object = object};
-            if (!items->expr.len) goto closed;
+            if (!count) goto closed;
             current = json_convert_child(ctx, &frames[len-1u], to_ordinary);
             if (!current) goto failed;
             continue;
@@ -581,7 +583,7 @@ static Atom *json_convert_value(JsonValueCtxV1 *ctx, Atom *value, bool to_ordina
                             frame->key, current, atom_symbol(ctx->arena, "JsonNoSourceSpanV1"));
             if (ctx->arena) frame->converted[frame->index] = current;
             frame->index++;
-            if (frame->index < frame->items->expr.len) {
+            if (frame->index < frame->count) {
                 current = json_convert_child(ctx, frame, to_ordinary);
                 if (!current) goto failed;
                 break;
@@ -590,7 +592,7 @@ closed:
             frame = &frames[len-1u];
             current = ctx->arena ? json_app1(ctx->arena, frame->object ? (to_ordinary || ctx->ordinary_copy ? "JsonObject" : "JsonObjectV1") :
                                (to_ordinary || ctx->ordinary_copy ? "JsonArray" : "JsonArrayV1"),
-                               atom_expr(ctx->arena, frame->converted, frame->items->expr.len)) : frame->source;
+                               atom_expr(ctx->arena, frame->converted, frame->count)) : frame->source;
             free(frame->converted); len--;
         }
     }
@@ -838,7 +840,7 @@ static bool json_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out,
     return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
 }
 
-typedef struct { Atom *items; CettaExprIndex index; bool object; } JsonEmitFrameV1;
+typedef struct { Atom *const *items; CettaExprLen count, index; bool object; } JsonEmitFrameV1;
 
 static bool json_emit_indent(JsonBytesV1 *out, size_t depth) {
     if (!json_bytes_char(out, '\n')) return false;
@@ -849,7 +851,7 @@ static bool json_emit_indent(JsonBytesV1 *out, size_t depth) {
 
 static Atom *json_emit_child(JsonValueCtxV1 *ctx, JsonEmitFrameV1 *frame, JsonBytesV1 *out,
                              bool ordinary, bool pretty, size_t depth) {
-    Atom *child = frame->items->expr.elems[frame->index];
+    Atom *child = frame->items[frame->index];
     if (frame->index && !json_bytes_char(out, ',')) return NULL;
     if (pretty && !json_emit_indent(out, depth)) return NULL;
     if (!frame->object) return child;
@@ -886,8 +888,9 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, 
         if (!json_value_work(ctx, 1u)) goto failed;
         bool object = json_expr_is(current, ordinary ? "JsonObject" : "JsonObjectV1", 2u);
         if (object || json_expr_is(current, ordinary ? "JsonArray" : "JsonArrayV1", 2u)) {
-            Atom *items = current->expr.elems[1];
-            if (!items || items->kind != ATOM_EXPR) {
+            Atom *const *items;
+            CettaExprLen count;
+            if (!atom_sequence_view(current->expr.elems[1], &items, &count)) {
                 json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
                 goto failed;
             }
@@ -899,8 +902,8 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, 
                 if (!grown) goto allocation;
                 frames = grown; cap = next;
             }
-            frames[len++] = (JsonEmitFrameV1){.items = items, .object = object};
-            if (!items->expr.len) goto closed;
+            frames[len++] = (JsonEmitFrameV1){.items = items, .count = count, .object = object};
+            if (!count) goto closed;
             current = json_emit_child(ctx, &frames[len-1u], out, ordinary, pretty, len);
             if (!current) goto failed;
             continue;
@@ -908,14 +911,14 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, 
         if (!json_emit_scalar(ctx, current, out, ordinary)) goto failed;
         while (len) {
             JsonEmitFrameV1 *frame = &frames[len-1u];
-            if (++frame->index < frame->items->expr.len) {
+            if (++frame->index < frame->count) {
                 current = json_emit_child(ctx, frame, out, ordinary, pretty, len);
                 if (!current) goto failed;
                 break;
             }
 closed:
             frame = &frames[len-1u];
-            if (pretty && frame->items->expr.len && !json_emit_indent(out, len-1u)) goto failed;
+            if (pretty && frame->count && !json_emit_indent(out, len-1u)) goto failed;
             if (!json_bytes_char(out, frame->object ? '}' : ']')) goto failed;
             len--;
         }

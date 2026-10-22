@@ -1,0 +1,396 @@
+Packed support-aware tensors and numeric prefix queries
+======================================================
+
+The tensor value model is a finite coordinate function returning an optional
+scalar. An absent coordinate is different from a present coordinate holding
+zero. Filling absence is an explicit interpretation into a total function;
+the presence mask is needed to recover the original value.
+
+langdef/tensor/Support.module supplies the support constructors and their
+presence/fill operations. The ordinary module-core reader assembles it and
+the existing LanguageDef executor runs its rules. Constructors themselves
+have no root rewrite. Tests instantiate the abstract scalar sort with two
+fixture values rather than giving the library a special-purpose scalar type.
+
+tests/langdef/tensor/support_contract_v1.lean reads that same source and proves
+preservation and reflection of its root observations. The support-aware
+mathematical model lives in Mettapedia.Algebra.SupportTensor. It connects
+sparse contraction and extracted rows to Mathlib matrix multiplication and
+the existing finite-coordinate and sparse-linear-map libraries. Its algebraic
+hypotheses are not assertions about arbitrary IEEE operations. The packed
+implementation is src/tensor.c and the public dispatcher is
+src/library_tensor.c. Formal algorithm/representation laws and native
+implementation qualification are distinct evidence.
+
+Mettapedia.Algebra.SupportTensorRounding reuses the finite-prediction
+ordered-fold theorem to transport explicit operation-error bounds through
+extracted tensor rows. Its budget counts stored entries, including zeroes.
+This mathematical bridge does not admit the stochastic native provider for
+arbitrary signed embeddings or establish concrete IEEE error constants.
+
+Ordinary numerical values
+-------------------------
+
+Import the tensor library (explicitly (library tensor) in primary PeTTa).
+Ordinary values retain immutable packed scalar storage. Printing gives a
+bounded description, not a serialization. tensor:inspect explicitly returns
+(TensorData dtype shape ((flat-coordinate scalar) ...)); it is not needed by
+the numerical kernels. A general structural native-value class handles
+retention, equality, ordering, hashing and inspection independently of the
+evaluator's tensor operations.
+
+Initial dtypes are bool, index (unsigned 64-bit), i64, u8, f32 and f64.
+Constructors name their destination dtype explicitly. tensor:promote allows
+only generated whole-source-type exact conversions; i64 -> f64 is not one.
+tensor:cast defaults to exact, nearest explicitly permits floating rounding,
+and truncate explicitly permits removing fractions for integer destinations.
+Integer overflow never wraps. NaN payload/sign bits widen reversibly; exact
+narrowing refuses discarded payload bits. Signed floating zero is retained.
+
+  tensor:from-values dtype shape values
+  tensor:from-json dtype shape text path
+  tensor:from-coo dtype shape entries [reject|first|last|sum|(combine f)]
+  tensor:from-coordinates shape index-vector value-vector [duplicate-policy]
+  tensor:shape value                  tensor:dtype value
+  tensor:layout value                 tensor:at value coordinate
+  tensor:entries value
+  tensor:gather value index-vector
+  tensor:merge left right reject|first|last|sum
+  tensor:zip-map dtype inputs projection captures
+  tensor:copy value                   tensor:convert value dense|coo|csr|csc
+  tensor:view value shape strides storage-offset
+  tensor:reshape value shape
+  tensor:cast value dtype [exact|nearest|truncate]
+  tensor:promote value dtype
+  tensor:sum value [sequential|fixed4]
+  tensor:matvec matrix vector [sequential|fixed4]
+  tensor:top-k scores [mask] k
+  tensor:normalize value              tensor:all-finite value
+  tensor:encode value                 tensor:decode bytes
+
+The JSON typed-scalar sink validates the entire document and selected shape
+before its first borrowed-slice callback. Conversion writes an unpublished
+packed buffer; refusal discards it. No scalar Atom per number is necessary.
+from-coordinates consumes complete index/value vectors directly, so JSON COO
+arrays can feed a sparse value without a scalar-entry syntax intermediate.
+
+Sparse coordinates are canonical and unique after duplicate resolution.
+First, Last and arbitrary Combine follow actual input occurrence order.
+Combine validates/coerces each input and every intermediate result at the
+named dtype, and preserves authored choices and effects. Unsupported native
+callback execution uses this authored route. It does not invent an error for
+the absence of a callback compiler.
+
+entries extracts packed coordinate/value vectors without scalar syntax.
+gather preserves the requested output positions: an absent source coordinate
+remains absent, and repeated indices remain distinct output occurrences.
+merge visits the left stored stream and then the right stream, applying the
+ordinary COO duplicate policy. It never fills missing values implicitly.
+
+zip-map is an authored ordered callback observer over a nonempty sequence of
+equally shaped tensors with equal support. Captured arguments precede scalar
+arguments; stored coordinates are visited in ascending order. The result is
+COO even when all coordinates are present. A pure single-valued prepared
+callback can consume packed scalar rows directly. Unsupported callbacks run
+the ordinary authored observer in the actual calling space. Unpublished
+scratch is discarded on optimization decline; choice, effects and configured
+fuel remain on the ordinary path. This initial native specialization admits
+f64 destinations and f64/f32/i64/u8 inputs. The reference is not restricted to
+those numerical kernels.
+
+SupportTensorObservers proves the independent accumulator loop agrees with
+the monadic reference, preserves coordinate occurrences and lookup, and
+instantiates bounded admission with exact authored fallback. Its gather law
+preserves absent source entries without compressing the output positions.
+These algorithmic laws do not verify the C callback compiler or IEEE math.
+
+Dense and sparse values with equal dtype, shape, support and scalar bits have
+equal hashes and unify regardless of layout. NaNs compare by stored bits for
+this structural observation, not IEEE numerical equality. Missing and present
+zero remain distinct. A sparse value with holes cannot be converted to dense
+without a separately requested fill operation; none is implicit here.
+
+Views use signed element strides and an offset in the retained storage owner,
+not an implicitly rebased offset in the preceding view. Negative/broadcast
+strides are checked. A view retains its source storage after the original
+value is released. copy materializes independent logical row-order storage.
+reshape is the logical operation: it preserves a contiguous view's selected
+offset and copies noncontiguous dense inputs in logical order. Sparse reshape
+retains flat support coordinates. Flattening a query view must use reshape,
+not a new storage-relative view at offset zero.
+
+Ordered numerical observations
+------------------------------
+
+Floating sum/matvec return f64 results, including for f32 inputs. Default
+sequential reductions preserve stored-coordinate order. Sparse matvec skips
+absent entries and requires a fully present vector; it does not assert an
+IEEE equivalence to injecting absent zero multiplications. The fixed4 policy
+is a separately requested four-lane, left-associated reduction.
+
+Independent dense rows may interleave their work without changing any row's
+left-to-right sum. SupportTensorSchedule proves this for an arbitrary step,
+without associativity. SupportTensorLayout proves that pointer-table slicing
+recovers packed rows, and that row/column compression preserves complete
+Option-valued COO lookup, including stored zeroes.
+
+Top-k visits enabled stored scores, uses coordinate-ascending ties, and
+rejects enabled nonfinite scores even for k=0. A sparse Boolean mask treats
+absence as disabled. Stable scaled normalization refuses zero/nonfinite rows.
+
+Builders and derived owners
+---------------------------
+
+  tensor:builder dtype shape [duplicate-policy]
+  tensor:put builder coordinate value
+  tensor:freeze builder               tensor:close builder
+  tensor:freeze-log builder
+
+Builders are owned capabilities with open/frozen/closed states. Freeze seals
+all aliases; later writes fail. Freeze-log explicitly exposes the validated
+occurrence log and seals aliases before arbitrary Combine callbacks execute.
+Its log is not a portable capability or a certificate.
+
+  tensor:cosine-index matrix [screened]
+  tensor:index-source index
+  tensor:cosine-scores index vector
+  tensor:cosine-retrieve index vector [mask] k
+  tensor:close index
+
+A cosine index owns its actual immutable source and derived normalization.
+The screened preparation also owns a screen derived from that normalization;
+callers cannot combine a raw source with another owner's compact matrix.
+cosine-retrieve returns TensorRanking Exact with aligned selected scores.
+The ordinary index uses full masked scoring for this observation; the screened
+index may prune only under the screen's admission conditions. cosine-scores
+always retains its full source-row score observation in either mode.
+No caller-supplied, merely same-shaped normalization/certificate is accepted.
+The ordinary index never claims a screening certificate and scores all
+enabled rows. The separately requested screened index may publish only its
+owner-bound CompleteSuperset receipt, and exact reranking remains the sole
+Exact result. Screening authority is not inferred from a normalization cache.
+
+Interchange and embeddings
+-------------------------
+
+CTN1 preserves its existing dense i64/f64/u8/f32 codes and scalar bits.
+Sparse transport and additional dtype codes are refused, not silently
+densified or reinterpreted. Decoding reconstructs derived state, never
+certificate authority.
+
+The optional src/tensor_dlpack.c provider consumes external DLPack 1.x
+headers. DLPACK_CPPFLAGS supplies their include location; a nonstandard header
+can define CETTA_DLPACK_HEADER. CPU scalar-lane imports validate shapes,
+strides, offsets and a caller-supplied readable allocation span, then copy.
+Managed consume operations invoke the producer deleter exactly once, also on
+refusal. Exports are fresh independently writable copies. Versioned exports
+set IS_COPIED; a copy=False request cannot be fulfilled by claiming a view.
+Sparse layouts require an explicit dense conversion first. This provider is
+an optional C interchange boundary, not an automatic Python model runtime.
+
+lib/embedding.metta supplies configured batch profiles, content/profile keys,
+strict dimension/order/protocol checks, a typed numeric JSON sink, caller-owned
+HTTP completion delivery, local caching and dot/cosine ranking. It supports
+supplied vectors and configured Qwen-compatible services without hosting a
+model. Configured identity is not remote model attestation. Collections,
+persistence and database replacement remain the collection layer's job.
+
+embedding:index / embedding:rank-cosine expose the full source-row score
+vector. embedding:retrieval-index / embedding:retrieve-cosine request only
+selected scores, using owner-bound masked screening and exact reranking.
+Both routes accept a Boolean tensor mask or all and preserve source-coordinate
+tie order. Retrieval returns
+
+  (Embedding:Retrieved profile content-key source-row-count indices scores)
+
+Here scores are aligned with indices, not indexed by source row. The distinct
+Embedding:Ranked result retains its full-score meaning. embedding:matches
+handles both observations and checks the supplied identity count; only the
+selected rows become ordinary match atoms. index-close supports both index
+types. Resource ownership also releases their native handles automatically.
+The retrieval index retains the actual raw matrix and a screen derived from
+its normalization. Unsupported screening uses ordinary masked ranking.
+Embedding retrieval remains optional; faster arithmetic alone does not imply
+improved premise recall or proof-search performance.
+
+examples/tensor_sparse_embedding_v2.metta is a network-free script.
+
+Numeric prefix queries
+----------------------
+
+After importing the list library, list:lower-bound-number takes an ascending
+numeric sequence and a bound. It returns the number of positions strictly
+below the bound. Duplicates count separately; an empty input returns zero.
+Prepare with sort-numbers-atom once, then reuse the sorted immutable sequence.
+The operation does not re-sort or revalidate the whole input at every query.
+
+  (list:lower-bound-number (-3 0 0 7) 0)  -> 1
+  (list:lower-bound-number (-3 0 0 7) 1)  -> 3
+  (list:lower-bound-number () 4)         -> 0
+
+Sortedness and total numeric ordering are required. An unsorted sequence or
+a sequence containing NaN does not have the counting guarantee. The authored
+algorithm probes only a logarithmic number of positions; evaluator costs and
+representation movement are measured separately.
+
+Mettapedia.Algorithms.Retrieval.PrefixSearch proves the binary interval loop
+equals an independent occurrence count under sortedness, and gives an
+unordered counterexample. The shared MeTTa implementation uses exact even
+division for its midpoint and needs no new native primitive.
+
+Source revision observation
+---------------------------
+
+postings:sources-current takes a finite sequence of (source expected-revision)
+pairs and returns whether every source still has its recorded revision. Each
+source is a live Space value, not its name or a same-shaped replacement.
+The empty observation is true. Every call reads the current sources; no
+verdict is cached and this Boolean is not a screening certificate.
+
+The native region validates the complete carrier before reading sources,
+uses the ordinary revision getter's import/transaction view, and creates no
+per-row scalar syntax. It admits nonnegative native integer revisions.
+Other carriers and numeric kinds, or configured semantic fuel, select
+postings:sources-current-reference. Later source-read failures are not hidden
+by an earlier mismatch. Comparison on the reference path follows the dialect,
+including Prime's distinction between Int and Float representations.
+
+SourceRevisionObserver proves capture, independent accumulator/filtered-row
+correspondence and exact partial-region fallback in the algorithmic model.
+Pointer ownership and native execution remain implementation obligations.
+
+Owner-bound screening and exact reranking
+----------------------------------------
+
+  tensor:screen-index matrix
+  tensor:screen index query [mask] k
+  tensor:screen-candidates receipt
+  tensor:screen-info receipt
+  tensor:rerank receipt
+
+screen-index retains the actual immutable matrix view. A receipt retains that
+index, the actual query view, optional mask view and k. Rerank accepts only the
+receipt: there is no public argument for replacing its source, query, mask, k
+or bounds. index-source
+works on these indexes and receipts as well as the cosine index. tensor:close
+invalidates aliases early; arena ownership also releases them when their last
+arena owner disappears. An existing receipt remains usable after the caller
+closes its index because the receipt independently retains it.
+
+Ordinary results stay packed. screen-info explicitly returns
+
+  (TensorScreenInfo guarantee profile k source query mask candidates lower upper)
+
+guarantee is CompleteSuperset or Unscreened. The recorded numerical admission
+profile is NearestGradualSequential; FullScanFallback has NoBounds instead of
+numerical bounds. Bounds and candidate indices are immutable tensor values,
+not expanded scalar syntax. Printing/reparsing a handle identifier cannot
+recreate its owning authority, and importing arrays of bounds cannot create
+a receipt. These are implementation contracts, not portable proof objects.
+
+rerank returns (TensorRanking Exact indices scores), with scores aligned to
+original row coordinates. Exact means the existing sequential matvec/top-k
+observation, not exact real arithmetic or an alternative reduction schedule.
+Coordinate-ascending ties are preserved. The contract concerns returned
+values, not a C floating-exception-flag trace for unselected arithmetic.
+
+The initial accelerated profile stores a compact f32 copy of a dense finite
+f64 source. Difference and magnitude budgets derive from those retained
+views. Query scoring still uses binary64 sequential arithmetic. For n columns,
+unit roundoff u and minimum subnormal eta, the conservative radius is
+
+  Q * difference + 4*n*u * (Q * magnitude) + 8*n*eta
+
+where Q bounds query magnitudes and n*u <= 1/4. All bound arithmetic rounds
+outward. Admission checks nearest rounding, gradual underflow in both scalar
+formats, finite bounds and an overflow margin. The native column bound derives
+from the generated f64 precision descriptor. A receipt whose floating
+environment no longer matches uses ordinary full scanning during reranking.
+
+The mask is a rank-one Bool tensor of source-row length, or all. Absent and
+false entries both disable a row. The threshold is the min(k, eligible-count)-th
+largest eligible lower bound. Only eligible upper bounds at least that
+threshold are retained, including all boundary ties. Only selected rows
+need exact scores. The packed selected-row kernel interleaves independent
+accumulators without reassociating a row; other layouts use ordinary matvec
+then gather. Finite sparse selected-row scoring uses indexed windows in the
+canonical stored-coordinate sequence, retaining each row's arithmetic order.
+Missing sparse entries do not become extra floating operations.
+Unsupported compaction or numerical admission, or forced reference execution,
+retains all eligible rows. Exact mask projection can still avoid scoring
+ineligible rows; it does not rely on an approximate numerical certificate.
+A changed rounding environment rebuilds all eligible rows before discarding
+the old numerical screen. Sparse eligibility traverses stored entries rather
+than the logical row domain. Zero-width inputs do not prepare per-row compact
+budgets. Unsupported row kernels use ordinary matvec followed by gather.
+
+The exact observation concerns requested numerical values, not replication of
+an allocation failure from an unrequested full-score intermediate. A sparse
+mask can select one row from a very large logical domain without building a
+dense score vector over that domain. Unmasked unrepresentable result vectors
+are rejected before traversing their row axis.
+
+Mettapedia.Algebra.SupportTensorScreening proves the local rounded-trace
+budget, source/compact perturbation transport, interval enclosure, stable
+top-k identity preservation and independent-row interleaving. Trace assumptions
+remain separate from native IEEE/compiler conformance. The relative-plus-
+absolute model includes underflow; see S. M. Rump, Error Estimation of
+Floating-Point Summation and Dot Product:
+https://www.tuhh.de/ti3/paper/rump/Ru10b.pdf
+
+Screening is optional, not a universal matvec replacement. Preparation retains
+a compact matrix in addition to the source. Small cached matrices or queries
+retaining most rows can favor the direct kernel. The benchmark separates
+preparation, screening, refinement, direct queries and memory, and checks equal
+scores and stable IDs before timing observations are accepted.
+
+Filtered collection/embedding adapters select eligible rows before computing
+the threshold; filtering an already selected top-k can lose valid answers.
+The support-aware Lean eligibility model and masked threshold theorem prove
+stable reranking over the eligible domain. The support-directed eligibility
+theorem justifies visiting stored coordinates instead of all logical rows;
+its cardinality bound is not a native runtime-complexity proof.
+These results do not verify the native kernels,
+storage implementation or the construction of an application's eligibility
+mask. The application must still enforce its own evidence chronology.
+
+The separate authored zip-map wrapper still has an unrecognized-input
+qualification gap: it can produce no result instead of retaining the call.
+Recognized tensor callbacks retain their tested ordinary fallback. Native
+primitive refusal and this authored-wrapper gap are not the same boundary.
+
+An expanded forced-collection control also exposes a Prime authored-fallback
+gap in tests/support/check_tensor_bulk.py: a 128-value callback computes the
+correct native tensor, then loses the answer before the enclosing function
+returns and reports NoReturn. The standard-budget control passes. This lane
+is not collection-qualified; no library workaround is enabled for it.
+
+Owned native resources may declare a conservative immutable transitive payload
+footprint. It is charged once per arena owner and preserved across copies;
+closing a resource prevents new copies from charging its released payload.
+The footprint may overcount shared storage and is not physical RSS. This uses
+the generic arena-owner mechanism, with no tensor case in the evaluator.
+CETTA_TENSOR_SCREEN_REFERENCE and CETTA_NATIVE_HANDLE_HOLDS_REFERENCE select
+full-scan and per-identifier ownership diagnostic controls, respectively.
+
+Qualification
+-------------
+
+  make test-list-prefix-search test-tensor-support
+  make test-tensor test-tensor-screening test-postings test-group-sums test-embedding
+  make test-embedding-http ENABLE_HTTP=1
+  make qualify-tensor-support-lean METTAPEDIA_LEAN_ROOT=path/to/mettapedia
+
+The prefix suite compares both evaluator routes against Python's bisect and
+an independent linear count, including duplicates, negative and large exact
+integers, empty inputs, floats and both supported sequence representations.
+The tensor source controls cover both fill cases, both presence cases, inert
+data and a type-mismatched constructor. The Lean source client is checked
+with the project's pinned MeTTapedia environment.
+
+Optional provider controls are test-tensor-dlpack and
+test-tensor-dlpack-numpy (the latter additionally needs NumPy). Performance
+drivers benchmark_tensor.py and benchmark_postings.py check observations
+before timings and report preparation separately. The tensor driver measures
+native kernels, not whole-evaluator parity; unresolved gaps are not hidden by
+comparing different dtypes or implicit reduction policies.

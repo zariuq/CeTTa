@@ -294,3 +294,30 @@ uint32_t name_key_count(const NameKeyTable *table) {
     pthread_mutex_unlock((pthread_mutex_t *)&table->mutex);
     return count;
 }
+
+bool name_key_table_retained_bytes(const NameKeyTable *table, size_t *out) {
+    if (!table || !out) return false;
+    pthread_mutex_lock((pthread_mutex_t *)&table->mutex);
+    size_t bytes = sizeof(*table), charge = 0u;
+#define NAME_KEY_CHARGE(count, width)                                         \
+    do {                                                                       \
+        if (__builtin_mul_overflow((size_t)(count), (size_t)(width), &charge) ||\
+            __builtin_add_overflow(bytes, charge, &bytes)) {                   \
+            pthread_mutex_unlock((pthread_mutex_t *)&table->mutex);            \
+            return false;                                                      \
+        }                                                                      \
+    } while (0)
+    NAME_KEY_CHARGE(table->bucket_count, sizeof(*table->buckets));
+    NAME_KEY_CHARGE(table->by_id_cap, sizeof(*table->by_id));
+    NAME_KEY_CHARGE(table->len, sizeof(NameKeyEntry));
+    if (__builtin_add_overflow(bytes, table->arena.reserved_bytes, &bytes) ||
+        __builtin_add_overflow(bytes, table->arena.external_bytes, &bytes) ||
+        __builtin_add_overflow(bytes, table->arena.symbol_cache_bytes, &bytes)) {
+        pthread_mutex_unlock((pthread_mutex_t *)&table->mutex);
+        return false;
+    }
+#undef NAME_KEY_CHARGE
+    pthread_mutex_unlock((pthread_mutex_t *)&table->mutex);
+    *out = bytes;
+    return true;
+}

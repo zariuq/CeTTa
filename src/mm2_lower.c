@@ -817,6 +817,7 @@ static bool bridge_encode_atom_rec(Arena *a, Atom *atom, BridgeVarMap *vars,
             return false;
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_STRUCTURAL:
         case GV_SEAL:
         case GV_TERM_GRAPH:
             if (out_error)
@@ -941,6 +942,7 @@ static bool bridge_encode_atom_id_rec(Arena *a,
             return false;
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_STRUCTURAL:
         case GV_SEAL:
         case GV_TERM_GRAPH:
             if (out_error)

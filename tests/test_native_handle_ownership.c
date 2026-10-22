@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static const char *kind = "test.owned-resource";
 static _Atomic unsigned released;
@@ -82,6 +83,51 @@ static void expect_live(CettaLibraryContext *ctx, uint64_t id) {
 
 static void expect_dead(CettaLibraryContext *ctx, uint64_t id) {
     assert(!cetta_native_handle_get(ctx, kind, id));
+}
+
+static void exercise_payload_accounting(void) {
+    enum { payload_bytes = 65536, copies = 128 };
+    unsigned before_releases = atomic_load(&released);
+    CettaLibraryContext *ctx = calloc(1, sizeof(*ctx));
+    assert(ctx); ctx->native_handle_next_id = 1;
+    Arena source, survivor, closed_copy;
+    arena_init_detached(&source); arena_init_detached(&survivor);
+    arena_init_detached(&closed_copy);
+    uint64_t id;
+    void *payload = malloc(payload_bytes);
+    assert(payload && cetta_native_handle_alloc_sized(ctx, kind, payload,
+        release_resource, payload_bytes, &id));
+    Atom *handle = cetta_native_handle_owned_atom(ctx, &source, kind, id);
+    assert(handle && source.external_bytes >= payload_bytes);
+    Atom *copy = atom_deep_copy(&survivor, handle);
+    assert(copy && survivor.external_bytes >= payload_bytes);
+    ArenaMark mark = arena_mark(&survivor);
+    size_t charged = survivor.external_bytes;
+    for (unsigned i = 0; i < copies; i++)
+        assert(atom_int_copy(&survivor, handle->expr.elems[2]));
+    const char *reference = getenv("CETTA_NATIVE_HANDLE_HOLDS_REFERENCE");
+    if (reference && *reference && strcmp(reference, "0"))
+        assert(survivor.external_bytes >= charged + (size_t)copies * payload_bytes);
+    else assert(survivor.external_bytes == charged);
+    arena_reset(&survivor, mark);
+    arena_free(&source);
+    assert(cetta_native_handle_get_owned(ctx, copy, kind) == payload);
+    assert(atomic_load(&released) == before_releases);
+    arena_free(&survivor);
+    assert(cetta_native_handle_count(ctx) == 0 && atomic_load(&released) == before_releases + 1);
+
+    arena_init_detached(&source);
+    payload = malloc(payload_bytes);
+    assert(payload && cetta_native_handle_alloc_sized(ctx, kind, payload,
+        release_resource, payload_bytes, &id));
+    handle = cetta_native_handle_owned_atom(ctx, &source, kind, id);
+    assert(handle && cetta_native_handle_close(ctx, kind, id));
+    assert(atom_deep_copy(&closed_copy, handle));
+    assert(closed_copy.external_bytes < payload_bytes);
+    arena_free(&source); arena_free(&closed_copy);
+    cetta_native_handle_cleanup_all(ctx); free(ctx);
+    assert(atomic_load(&released) == before_releases + 2);
+    puts("native handle payload: one arena charge, cross-arena retention, rollback and closed-copy checks passed");
 }
 
 static void *copy_worker(void *input) {
@@ -403,6 +449,7 @@ int main(void) {
 #ifdef CETTA_NATIVE_HANDLE_ALLOCATION_TEST
     exercise_allocation_failures();
 #endif
+    exercise_payload_accounting();
     symbol_table_free(&symbols);
     g_symbols = NULL;
     puts("native handle ownership: release, escape, alias, reset, teardown and concurrent-copy checks passed");

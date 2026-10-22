@@ -11,6 +11,38 @@
 ;   cons/first/rest satisfy first(cons x xs)=x and rest(cons x xs)=xs.
 ; first, rest, at, and cons retain the native partiality of car-atom,
 ; cdr-atom, index-atom, and cons-atom outside their stated domains.
+
+; Group numeric pairs in first-key order, reducing each key's occurrences
+; in their input order, starting from integer zero. This does not reassociate
+; floating-point additions. Unsupported values and integer overflow restart
+; through the authored fold before any native result is published.
+(: __cetta_lib_list_group_sums (-> Atom Atom))
+(: __cetta_lib_list_group_sums_blocks (-> Atom Atom))
+(= (list:group-sums-number-blocks $blocks)
+   (function
+     (let $items (list:to-expression $blocks)
+       (case (__cetta_lib_list_group_sums_blocks $items)
+         (((List:GroupedSums $rows) (return $rows))
+          ($other
+            (let* (($flat (foldl-atom $items () $out $block (union-atom $out $block)))
+                   ($fallback-rows (list:group-sums-number-reference $flat)))
+              (return $fallback-rows))))))))
+(= (list:group-sums-number $entries)
+   (function
+     (let $items (list:to-expression $entries)
+       (case (__cetta_lib_list_group_sums $items)
+         (((List:GroupedSums $rows) (return $rows))
+          ($other (let $fallback-rows (list:group-sums-number-reference $items)
+                    (return $fallback-rows))))))))
+(= (list:group-sums-number-reference $entries)
+   (let* (($all-keys (map-atom $entries $row (car-atom $row)))
+          ($keys (unique-atom $all-keys)))
+     (map-atom $keys $key
+       (let* (($rows (filter-atom $entries $row
+                        (let $row-key (car-atom $row) (== $row-key $key))))
+              ($amount (foldl-atom $rows 0 $total $row
+                         (let $value (index-atom $row 1) (+ $total $value)))))
+         ($key $amount)))))
 ; Explicit inductive lists and the representation isomorphism live in clist.
 
 ; The list value of a sequence's elements, and the expression of them.
@@ -309,6 +341,21 @@
 (= (list:sort-numbers $xs)
    (sort-numbers-atom $xs))
 
+; Binary partition of an ascending numeric sequence. The caller supplies
+; sorted, totally ordered numbers (no NaN); sorting belongs at preparation,
+; not at every query. Duplicate occurrences are counted independently.
+; The returned index is the number of elements strictly below the bound.
+(= (list:lower-bound-number $xs $bound)
+   (list:lower-bound-number-in $xs $bound 0 (size-atom $xs)))
+
+(= (list:lower-bound-number-in $xs $bound $lo $hi)
+   (if (>= $lo $hi) $lo
+     (let* (($distance (- $hi $lo))
+            ($middle (+ $lo (/ (- $distance (% $distance 2)) 2))))
+       (if (< (index-atom $xs $middle) $bound)
+         (list:lower-bound-number-in $xs $bound (+ $middle 1) $hi)
+         (list:lower-bound-number-in $xs $bound $lo $middle)))))
+
 ; An expression takes the primitive's own path; a list value's elements do,
 ; and a list returns.
 (= (list:map $xs $var $body)
@@ -333,11 +380,16 @@
          (foldl-atom $items $init $acc $item $step))
        (foldl-atom $xs $init $acc $item $step)))
 
+; Use the registered library primitives in every profile. The raw grounded
+; spellings belong to extended dialect vocabularies, not primary PeTTa.
+(: __cetta_lib_list_range (-> %Undefined% Expression))
+(: __cetta_lib_list_range (-> %Undefined% %Undefined% Expression))
+(: __cetta_lib_list_repeat (-> %Undefined% Atom Expression))
 (= (list:range $end)
-   (range-atom $end))
+   (__cetta_lib_list_range $end))
 
 (= (list:range $start $end)
-   (range-atom $start $end))
+   (__cetta_lib_list_range $start $end))
 
 (= (list:repeat $count $item)
-   (repeat-atom $count $item))
+   (__cetta_lib_list_repeat $count $item))

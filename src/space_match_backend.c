@@ -6594,6 +6594,7 @@ static bool imported_flatten_atom_id(ImportedFlatBuilder *b,
         case GV_CAPTURE:
         case GV_BINDINGS:
         case GV_FOREIGN:
+        case GV_STRUCTURAL:
         case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:

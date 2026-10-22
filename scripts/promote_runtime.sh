@@ -10,7 +10,7 @@ BUILD_MODE="${BUILD:-python}"
 
 cd "$ROOT"
 
-make -j1 BUILD="$BUILD_MODE" test
+make -j1 BUILD="$BUILD_MODE" test-all
 make -j1 BUILD="$BUILD_MODE" test-profiles
 make -j1 BUILD="$BUILD_MODE" ENABLE_RUNTIME_STATS=1 test-runtime-stats
 make -j1 BUILD="$BUILD_MODE" tail-recursion-check
@@ -24,7 +24,7 @@ ln -sfn "$(basename "$ARTIFACT")" "$RUNTIME_DIR/cetta-current"
     printf 'artifact=%s\n' "$(basename "$ARTIFACT")"
     printf 'created_at=%s\n' "$(date -Iseconds)"
     printf 'build=%s\n' "$BUILD_MODE"
-    printf 'verified_with=make -j1 BUILD=%s test; make -j1 BUILD=%s test-profiles; make -j1 BUILD=%s ENABLE_RUNTIME_STATS=1 test-runtime-stats; make -j1 BUILD=%s tail-recursion-check\n' \
+    printf 'verified_with=make -j1 BUILD=%s test-all; make -j1 BUILD=%s test-profiles; make -j1 BUILD=%s ENABLE_RUNTIME_STATS=1 test-runtime-stats; make -j1 BUILD=%s tail-recursion-check\n' \
         "$BUILD_MODE" "$BUILD_MODE" "$BUILD_MODE" "$BUILD_MODE"
     printf 'source_binary=%s\n' "$ROOT/cetta"
 } > "$META"

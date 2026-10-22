@@ -1,0 +1,21 @@
+Module TensorSupport {
+  Theory Support() {
+    Empty
+    Types { Scalar; Cell; Presence; }
+    Terms {
+      "Absent" . |- "tensor:absent" : Cell;
+      "Present" . value:Scalar |- "tensor:present" value : Cell;
+      "Missing" . |- "tensor:missing" : Presence;
+      "Stored" . |- "tensor:stored" : Presence;
+      "PresenceOf" . cell:Cell |- "tensor:presence" cell : Presence;
+      "Fill" . cell:Cell, default:Scalar |- "tensor:fill" cell default : Scalar;
+    }
+    Rewrites {
+      MissingPresence : (PresenceOf (Absent)) ~> (Missing);
+      StoredPresence : (PresenceOf (Present value)) ~> (Stored);
+      FillAbsent : (Fill (Absent) default) ~> default;
+      FillPresent : (Fill (Present value) default) ~> value;
+    }
+  }
+  theory Support()
+}
