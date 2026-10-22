@@ -12,3 +12,7 @@
 [((answer x) (answer y))]
 [(answer a)]
 [(s (s leaf))]
+[(answer cf)]
+[((answer cf) (answer cf2))]
+[18000]
+[(18000 18000)]

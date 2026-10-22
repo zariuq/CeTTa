@@ -156,11 +156,16 @@
           (MIL.Choice r-father r-father)
           (MIL.Choice r-father r-father))))))
 
+; This finite template has two consistent hypotheses. Choose the least one
+; in atom order so the displayed program is independent of search scheduling.
+; The complete candidate bag, including its multiplicity, stays available.
 (= (gp:generated)
-   (select
-     (mil:prime:typed-consistent-template-candidate
-       &gp-kb &gp-kb (gp:examples)
-       MIL.T.SharedChoiceChain (MIL.Rel Atom Atom) 100000)))
+   (car-atom
+     (sort-atom
+       (collapse
+         (mil:prime:typed-consistent-template-candidate
+           &gp-kb &gp-kb (gp:examples)
+           MIL.T.SharedChoiceChain (MIL.Rel Atom Atom) 100000)))))
 
 (= (gp:bench-summary)
    (let* (($untyped (gp:untyped-candidate-data))

@@ -311,3 +311,16 @@
        (unify $x A $f failed))))
 !(let $f (prime-need:cache-query) ($f ignored))
 !((lam f (f ignored)) (prime-need:cache-query))
+
+; A scalar result may be demanded now, but a returned closure still retains
+; its written argument in both the dependent domain and the suspended body.
+!((lam x x) (+ 1 2))
+!((lam x (Pair x x)) (+ 1 2))
+!((lam x (lam (y : (Vec x)) (Pair x y))) (+ 1 2))
+(= (prime-need:scalar-closure $x) (lam (y : (Vec $x)) (Pair $x y)))
+!(prime-need:scalar-closure (+ 1 2))
+!((lam x (lam (y : (Vec x)) (Pair x y))) 3)
+
+; A literal pattern demands the scalar before the equation can apply.
+(= (prime-need:scalar-matched 3) matched-scalar)
+!(prime-need:scalar-matched (+ 1 2))

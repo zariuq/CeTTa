@@ -14756,7 +14756,7 @@ static Atom *prepared_mpz_materialize_call(
 
 static SpacePreparedRegisterStep prepared_mpz_run_register_loop(
     const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
-    size_t max_steps, Atom **result_out) {
+    size_t max_steps, Atom **result_out, size_t *completed_out) {
     if (!plan || !call || !result_arena || !result_out || max_steps == 0u ||
         !plan->register_guard || !plan->register_base ||
         !plan->register_tail || call->kind != ATOM_EXPR ||
@@ -14847,6 +14847,8 @@ prepared_mpz_materialize:
         *result_out = prepared_mpz_materialize_call(
             plan, banks[active], result_arena);
 prepared_mpz_done:
+    if (completed_out)
+        *completed_out = completed;
     prepared_mpz_scratch_clear(&scratch);
     for (unsigned bank = 0u; bank < 2u; bank++)
         for (CettaExprIndex i = 0u; i < plan->arity; i++)
@@ -15359,18 +15361,29 @@ static SpacePreparedRegisterStep prepared_mpz_run_register_recursion(
 SpacePreparedRegisterStep space_prepared_equation_run_register_loop(
     const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
     size_t max_steps, Atom **result_out) {
+    return space_prepared_equation_run_register_loop_counted(
+        plan, call, result_arena, max_steps, result_out, NULL);
+}
+
+SpacePreparedRegisterStep space_prepared_equation_run_register_loop_counted(
+    const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
+    size_t max_steps, Atom **result_out, size_t *completed_out) {
     enum { REGISTER_LOOP_NURSERY_BYTES = 8u * 1024u * 1024u };
     if (result_out)
         *result_out = NULL;
+    if (completed_out)
+        *completed_out = 0u;
     if (!plan || !call || !result_arena || !result_out || max_steps == 0u)
         return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
 
 #if CETTA_BUILD_WITH_GMP
     SpacePreparedRegisterStep mpz_outcome =
         prepared_mpz_run_register_loop(
-            plan, call, result_arena, max_steps, result_out);
+            plan, call, result_arena, max_steps, result_out, completed_out);
     if (mpz_outcome != SPACE_PREPARED_REGISTER_NOT_APPLICABLE)
         return mpz_outcome;
+    if (completed_out)
+        *completed_out = 0u;
 #endif
 
     Arena semispaces[2];
@@ -15438,6 +15451,9 @@ SpacePreparedRegisterStep space_prepared_equation_run_register_loop(
         if (!*result_out)
             outcome = SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
     }
+    if (completed_out)
+        *completed_out = outcome == SPACE_PREPARED_REGISTER_NOT_APPLICABLE
+            ? 0u : completed;
     arena_free(&semispaces[0]);
     arena_free(&semispaces[1]);
     return outcome;
