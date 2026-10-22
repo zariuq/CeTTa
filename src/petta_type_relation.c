@@ -330,6 +330,10 @@ static bool petta_type_list_push(PeTTaTypeList *list, Atom *type) {
 /* A number's, a string's or a truth value's type, which no declaration
  * overrides; NULL for every other atom. */
 static Atom *petta_type_of_literal(Arena *arena, const Atom *atom) {
+    if(atom_is_structural(atom)) {
+        const char *name=atom_structural_type_name(atom);
+        return name ? atom_symbol(arena,name) : NULL;
+    }
     if (atom->kind == ATOM_GROUNDED) {
         switch (atom->ground.gkind) {
         case GV_INT:
@@ -1054,6 +1058,10 @@ static SymbolId petta_type_interned(_Atomic(SymbolId) *slot, const char *name) {
 /* The type petta_type_of_literal gives, as a symbol; none for other atoms. */
 static SymbolId petta_type_inert_literal(const Atom *atom) {
     static _Atomic(SymbolId) number, string, truth_type;
+    if(atom_is_structural(atom)) {
+        const char *name=atom_structural_type_name(atom);
+        return name ? symbol_intern_cstr(g_symbols,name) : SYMBOL_ID_NONE;
+    }
     if (atom->kind == ATOM_GROUNDED) {
         switch (atom->ground.gkind) {
         case GV_INT:

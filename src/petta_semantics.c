@@ -3362,6 +3362,8 @@ static int petta_compare_grounded_atoms(
         return petta_compare_u64(
             (uint64_t)(uintptr_t)left->ground.ptr,
             (uint64_t)(uintptr_t)right->ground.ptr);
+    case GV_STRUCTURAL:
+        return atom_structural_compare(left, right);
     case GV_SEAL:
         /* Seal objects order by their private identity key: the order is
          * consistent with identity equality and exposes no address. */

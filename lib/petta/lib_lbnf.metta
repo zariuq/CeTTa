@@ -2,7 +2,7 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
-!(import! &self langdef)
+!(import! &self (library langdef))
 (: lbnf:document-from-ast (-> Atom Atom %Undefined%))
 (: lbnf:lower-document (-> Atom Atom Atom Atom %Undefined%))
 (: lbnf:finish-read (-> Atom %Undefined%))

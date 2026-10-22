@@ -474,13 +474,20 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
         CETTA_MARK_TYPE_PURE_GROUNDED)
 #undef CETTA_MARK_TYPE_PURE_GROUNDED
 
+#define CETTA_MARK_PUBLIC_LIBRARY_GROUNDED(field) \
+    symbol_table_add_flags(st, builtins->field, \
+        CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP | CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP);
+    CETTA_PUBLIC_LIBRARY_NATIVE_SYMBOL_FIELDS(CETTA_MARK_PUBLIC_LIBRARY_GROUNDED)
+#undef CETTA_MARK_PUBLIC_LIBRARY_GROUNDED
+
     /* The library ABI reserves this prefix for native grounded operators.
        Mark builtins eagerly; later dynamically interned ABI names retain the
        name-based fallback in is_grounded_op. */
 #define CETTA_MARK_LIBRARY_GROUNDED(field, text) do { \
     if (strncmp((text), "__cetta_lib_", 12u) == 0) \
         symbol_table_add_flags( \
-            st, builtins->field, CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP); \
+            st, builtins->field, CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP | \
+                CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP); \
 } while (0);
     CETTA_BUILTIN_SYMBOLS(CETTA_MARK_LIBRARY_GROUNDED)
 #undef CETTA_MARK_LIBRARY_GROUNDED

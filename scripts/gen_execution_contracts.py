@@ -689,6 +689,44 @@ class Spec:
                 "native prepared-pure intrinsic heads must cover every "
                 "declared intrinsic instruction")
 
+        self.sequence_value_constructor_heads: list[tuple[str, str, int, int]] = []
+        for entry in entries(native, "sequence-value-constructor-head"):
+            if len(entry) != 4:
+                raise SpecError(
+                    f"malformed sequence-value-constructor-head: {sexpr(entry)}")
+            name = atom_text(entry[1], "sequence value constructor head")
+            arities_form = entry[2]
+            if not is_form(arities_form, "arities") or len(arities_form) < 2:
+                raise SpecError("sequence value constructor must declare arities")
+            arities = [atom_text(value, "sequence constructor arity")
+                       for value in arities_form[1:]]
+            if any(not arity.isdigit() or not 0 <= int(arity) <= 16
+                   for arity in arities):
+                raise SpecError("sequence constructor arities must be unique in [0, 16]")
+            numeric_arities = [int(arity) for arity in arities]
+            if len(set(numeric_arities)) != len(numeric_arities):
+                raise SpecError("sequence constructor arities must be unique in [0, 16]")
+            arity_mask = sum(1 << arity for arity in numeric_arities)
+            mask_text = atom_text(entry[3], "sequence held-operand mask")
+            if name not in symbol_fields:
+                raise SpecError(
+                    f"sequence value constructor head {name} has no symbol-table entry")
+            if not mask_text.isdigit() or not 0 <= int(mask_text) <= 0xffff:
+                raise SpecError("sequence held-operand mask must be in [0, 65535]")
+            if int(mask_text) >> max(numeric_arities):
+                raise SpecError("sequence held operand is outside the declared arities")
+            self.sequence_value_constructor_heads.append(
+                (name, symbol_fields[name], arity_mask, int(mask_text)))
+        if len({field for _, field, _, _ in self.sequence_value_constructor_heads}) != \
+                len(self.sequence_value_constructor_heads):
+            raise SpecError("sequence value constructor heads must be unique")
+        for _, field, _, mask in self.sequence_value_constructor_heads:
+            if mask and any(intrinsic_field == field
+                            for _, intrinsic_field, _, _, _
+                            in self.prepared_intrinsic_heads):
+                raise SpecError(
+                    "a held-operand constructor cannot have strict-all prepared admission")
+
         self.fold_control_heads: list[tuple[str, str, int, str]] = []
         for entry in entries(native, "fold-control-head"):
             if len(entry) != 4:
@@ -1359,6 +1397,10 @@ def render_header(spec: Spec) -> str:
         for _, field, arity, discipline, instruction
         in spec.prepared_intrinsic_heads
     )
+    sequence_value_constructor_rows = " \\\n".join(
+        f"    X({field}, {arity_mask}u, {mask}u)"
+        for _, field, arity_mask, mask in spec.sequence_value_constructor_heads
+    )
     fold_control_constants = "\n".join(
         f"    CETTA_GSLT_FOLD_CONTROL_{c_enum(value)} = {index},"
         for index, value in enumerate(spec.fold_control_kinds)
@@ -1713,6 +1755,9 @@ typedef enum {{
 
 #define CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(X) \
 {prepared_intrinsic_head_rows}
+
+#define CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(X) \
+{sequence_value_constructor_rows}
 
 typedef enum {{
 {fold_control_constants}

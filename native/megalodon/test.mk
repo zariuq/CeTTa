@@ -87,4 +87,4 @@ test-megalodon: test-megalodon-core test-megalodon-metta test-seal
 test-megalodon-tptp: $(BIN) prepare-tptp-compact-morphism-v1-body
 	$(call megalodon_dual_lane,integration)
 
-test: test-megalodon
+test-all: test-megalodon

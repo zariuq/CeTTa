@@ -88,6 +88,7 @@ typedef struct {
     void *owner;
     void (*retain)(void *);
     void (*release)(void *);
+    size_t (*footprint)(void *);
 } NativeHandleIdentifier;
 
 /* Large byte values travel through many publication arenas. Retain their
@@ -912,6 +913,7 @@ static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
         }
         case GV_INTERNAL_TAG:
             break;
+        case GV_STRUCTURAL:
         case GV_SEAL:
             /* A seal object is a heap record retained by the arena's hold,
              * not storage of any arena. */
@@ -1850,6 +1852,12 @@ static uint32_t atom_hash_leaf_compute(Atom *a) {
             h = ((h << 5) + h) ^ (uint32_t)(key >> 32);
             break;
         }
+        case GV_STRUCTURAL: {
+            uint64_t key = atom_structural_hash(a);
+            h = ((h << 5) + h) ^ (uint32_t)key;
+            h = ((h << 5) + h) ^ (uint32_t)(key >> 32);
+            break;
+        }
         case GV_INTERNAL_TAG:
             h = ((h << 5) + h) ^ (uint32_t)(a->ground.ival & 0xFFFFFFFF);
             break;
@@ -2267,6 +2275,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
         case GV_INTERNAL_TAG:
+        case GV_STRUCTURAL:
         case GV_SEAL:
             h = hashcons_index_mix(
                 h, (uint64_t)(uintptr_t)atom->ground.ptr);
@@ -3382,6 +3391,7 @@ bool atom_grounded_kind_is_term_stable(GroundedKind gkind) {
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
     case GV_INTERNAL_TAG:
+    case GV_STRUCTURAL:
     case GV_SEAL:
         return false;
     }
@@ -4047,8 +4057,27 @@ Atom *atom_int(Arena *a, int64_t val) {
 Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
                                     void (*retain)(void *),
                                     void (*release)(void *)) {
+    return atom_native_handle_identifier_tracked(a, id, owner, retain, release, NULL);
+}
+
+Atom *atom_native_handle_identifier_tracked(Arena *a, int64_t id, void *owner,
+    void (*retain)(void *), void (*release)(void *), size_t (*footprint)(void *)) {
     if (!a || !owner || !retain || !release)
         return NULL;
+    static _Thread_local int arena_holds = -1;
+    if (arena_holds < 0) {
+        const char *reference = getenv("CETTA_NATIVE_HANDLE_HOLDS_REFERENCE");
+        arena_holds = !(reference && reference[0] != '\0' && reference[0] != '0');
+    }
+    if (arena_holds) {
+        bool held = arena_retained_owner_set_find(a->retained_owners, owner, release);
+        if (!arena_retain_owner(a, owner, retain, release)) return NULL;
+        if (!held && footprint) arena_account_external_bytes(a, footprint(owner));
+    } else {
+        retain(owner);
+        arena_register_finalizer(a, release, owner);
+        if (footprint) arena_account_external_bytes(a, footprint(owner));
+    }
     NativeHandleIdentifier *value = arena_alloc(a, sizeof(*value));
     *value = (NativeHandleIdentifier){
         .atom = {
@@ -4067,9 +4096,8 @@ Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
         .owner = owner,
         .retain = retain,
         .release = release,
+        .footprint = footprint,
     };
-    retain(owner);
-    arena_register_finalizer(a, release, owner);
     return &value->atom;
 }
 
@@ -4096,9 +4124,8 @@ Atom *atom_int_copy(Arena *a, const Atom *source) {
             return (Atom *)source;
         const NativeHandleIdentifier *value =
             (const NativeHandleIdentifier *)source;
-        return atom_native_handle_identifier(a, source->ground.ival,
-                                              value->owner, value->retain,
-                                              value->release);
+        return atom_native_handle_identifier_tracked(a, source->ground.ival,
+            value->owner, value->retain, value->release, value->footprint);
     }
 #endif
     return atom_int(a, source->ground.ival);
@@ -4436,6 +4463,74 @@ const char *atom_seal_type_name(const Atom *atom) {
     void *object = atom_seal_object(atom);
     const CettaSealHold *hold = cetta_seal_hold_of(object);
     return hold && hold->type_name ? hold->type_name(object) : NULL;
+}
+
+Atom *atom_structural(Arena *arena, void *value) {
+    const CettaStructuralClass *type = cetta_structural_class(value);
+    if (!arena || !type || !type->type_name || !type->retain || !type->release ||
+        !type->equal || !type->compare || !type->hash || !type->display ||
+        !type->inspect || !type->retained_bytes) return NULL;
+    bool held = arena_retained_owner_set_find(arena->retained_owners, value, type->release);
+    if (!arena_retain_owner(arena, value, type->retain, type->release)) return NULL;
+    if (!held) arena_account_external_bytes(arena, type->retained_bytes(value));
+    Atom *atom = arena_alloc(arena, sizeof(*atom));
+    *atom = atom_grounded_leaf(arena, GV_STRUCTURAL);
+    atom->ground.ptr = value;
+    /* The independent retained owner closes the syntax lifetime. This does
+     * not grant admission to scalar codecs, interning or backend transfer. */
+    atom->flags |= ATOM_FLAG_ARENA_CLOSED;
+    return atom;
+}
+
+static const CettaStructuralClass *atom_structural_class(const Atom *atom) {
+    return atom_is_structural(atom) ? cetta_structural_class(atom->ground.ptr) : NULL;
+}
+
+bool atom_structural_equal(const Atom *left, const Atom *right) {
+    const CettaStructuralClass *type = atom_structural_class(left);
+    return type && type == atom_structural_class(right) &&
+        (left->ground.ptr == right->ground.ptr || type->equal(left->ground.ptr, right->ground.ptr));
+}
+
+int atom_structural_compare(const Atom *left, const Atom *right) {
+    const CettaStructuralClass *a = atom_structural_class(left), *b = atom_structural_class(right);
+    if (!a || !b) return a ? 1 : b ? -1 : 0;
+    if (a != b) {
+        if (g_symbols) {
+            int order = symbol_compare(g_symbols,
+                symbol_intern_cstr(g_symbols, a->type_name),
+                symbol_intern_cstr(g_symbols, b->type_name));
+            if (order) return order < 0 ? -1 : 1;
+        }
+        return (uintptr_t)a < (uintptr_t)b ? -1 : 1;
+    }
+    return a->compare(left->ground.ptr, right->ground.ptr);
+}
+
+uint64_t atom_structural_hash(const Atom *atom) {
+    const CettaStructuralClass *type = atom_structural_class(atom);
+    return type ? type->hash(atom->ground.ptr) : 0u;
+}
+
+size_t atom_structural_display(const Atom *atom, char *buffer, size_t capacity) {
+    const CettaStructuralClass *type = atom_structural_class(atom);
+    if (!type) { if (capacity && buffer) buffer[0] = '\0'; return 0u; }
+    return type->display(atom->ground.ptr, buffer, capacity);
+}
+
+const char *atom_structural_type_name(const Atom *atom) {
+    const CettaStructuralClass *type = atom_structural_class(atom);
+    return type ? type->type_name : NULL;
+}
+
+Atom *atom_structural_inspect(const Atom *atom, Arena *arena) {
+    const CettaStructuralClass *type = atom_structural_class(atom);
+    return type && arena ? type->inspect(atom->ground.ptr, arena) : NULL;
+}
+
+size_t atom_structural_retained_bytes(const Atom *atom) {
+    const CettaStructuralClass *type = atom_structural_class(atom);
+    return type ? type->retained_bytes(atom->ground.ptr) : 0u;
 }
 
 static bool atom_tree_is_seal(const Atom *atom, void *context) {
@@ -6601,6 +6696,9 @@ static bool atom_compare_driver(Atom *left, Atom *right,
             case GV_SEAL:
                 equal = a->ground.ptr == b->ground.ptr;
                 break;
+            case GV_STRUCTURAL:
+                equal = atom_structural_equal(a, b);
+                break;
             case GV_BINDINGS: {
                 const CettaBindingsValue *va = a->ground.ptr;
                 const CettaBindingsValue *vb = b->ground.ptr;
@@ -7206,6 +7304,9 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
             break;
         case GV_FOREIGN:
             out = atom_foreign(dst, (CettaForeignValue *)src->ground.ptr);
+            break;
+        case GV_STRUCTURAL:
+            out = atom_structural(dst, src->ground.ptr);
             break;
         case GV_SEAL:
             /* A copied reference keeps the object's identity. */
@@ -8211,6 +8312,18 @@ static void atom_print_mode(
                 hold->print_petta(a->ground.ptr, out);
             else
                 fprintf(out, "<foreign %p>", a->ground.ptr);
+            break;
+        }
+        case GV_STRUCTURAL: {
+            char text[256];
+            size_t length = atom_structural_display(a, text, sizeof(text));
+            if (length < sizeof(text)) fputs(text, out);
+            else {
+                char *long_text = cetta_malloc(length + 1u);
+                atom_structural_display(a, long_text, length + 1u);
+                fputs(long_text, out);
+                free(long_text);
+            }
             break;
         }
         case GV_SEAL: {

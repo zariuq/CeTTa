@@ -730,6 +730,45 @@ static bool value_cost(size_t size) {
     return ok;
 }
 
+typedef struct { size_t count,refuse; double total; } NumericSinkTest;
+static bool test_numeric_consume(void *raw,const uint8_t *bytes,size_t len,size_t ordinal) {
+    NumericSinkTest *sink=raw; char text[64];
+    CHECK(ordinal==sink->count); sink->count++;
+    if(ordinal==sink->refuse || len>=sizeof(text)) return false;
+    memcpy(text,bytes,len); text[len]='\0'; sink->total+=strtod(text,NULL); return true;
+}
+static void numeric_observer(void) {
+    Arena arena; arena_init_detached(&arena);
+    Atom *path=atom_expr(&arena,(Atom *[]){atom_string(&arena,"v")},1),*root=atom_expr(&arena,NULL,0);
+    const char *sources[]={"{\"v\":[[1,2],[-3e0,4.0]],\"ignored\":\"λ\"}",
+        "{\"v\":[[1,2],[3,4]],\"bad\":[}", "{\"v\":[[1],[2,3]]}", "{\"v\":[[1,2],[3,\"x\"]]}",
+        "{\"missing\":[]}", "{\"v\":[[1,2],[3,4]],\"v\":\"ignored duplicate\"}"};
+    for(size_t i=0;i<sizeof(sources)/sizeof(*sources);i++) {
+        bool found=false; CettaJsonRuntimeV1Status status; char error[128]={0}; NumericSinkTest sink={.refuse=SIZE_MAX};
+        bool ok=cetta_json_direct_v1_scalar_array((const uint8_t *)sources[i],strlen(sources[i]),path,
+            (size_t[]){2,2},2,CETTA_JSON_SCALAR_NUMBER_V1,0,test_numeric_consume,&sink,&found,&status,error,sizeof(error));
+        bool valid=i==0 || i>=4;
+        CHECK(ok==valid); CHECK(found==(i==0 || i==5));
+        CHECK(sink.count==(i==0 || i==5 ? 4u : 0u));
+        if(i==0) CHECK(sink.total==4);
+    }
+    NumericSinkTest sink={.refuse=SIZE_MAX}; bool found; CettaJsonRuntimeV1Status status;
+    CHECK(cetta_json_direct_v1_scalar_array((const uint8_t *)"-1.25",5,root,NULL,0,CETTA_JSON_SCALAR_NUMBER_V1,0,test_numeric_consume,&sink,&found,&status,NULL,0));
+    CHECK(found && sink.count==1 && sink.total==-1.25);
+    sink=(NumericSinkTest){.refuse=SIZE_MAX};
+    CHECK(cetta_json_direct_v1_scalar_array((const uint8_t *)"[]",2,root,(size_t[]){0,99},2,CETTA_JSON_SCALAR_NUMBER_V1,0,test_numeric_consume,&sink,&found,&status,NULL,0));
+    CHECK(found && !sink.count);
+    sink=(NumericSinkTest){.refuse=1};
+    CHECK(!cetta_json_direct_v1_scalar_array((const uint8_t *)"[1,2,3]",7,root,(size_t[]){3},1,CETTA_JSON_SCALAR_NUMBER_V1,0,test_numeric_consume,&sink,&found,&status,NULL,0));
+    CHECK(!found && sink.count==2);
+    sink=(NumericSinkTest){.refuse=SIZE_MAX};
+    CHECK(!cetta_json_direct_v1_scalar_array((const uint8_t *)"[true,0]",8,root,(size_t[]){2},1,CETTA_JSON_SCALAR_BOOLEAN_V1,0,test_numeric_consume,&sink,&found,&status,NULL,0));
+    CHECK(!sink.count && !found);
+    CHECK(!cetta_json_direct_v1_scalar_array((const uint8_t *)"[true]",6,root,(size_t[]){1},1,CETTA_JSON_SCALAR_NUMBER_V1,0,test_numeric_consume,&sink,&found,&status,NULL,0));
+    CHECK(!sink.count && !found);
+    arena_free(&arena);
+}
+
 int main(int argc,char **argv) {
     SymbolTable symbols; symbol_table_init(&symbols); g_symbols=&symbols;
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
@@ -743,7 +782,7 @@ int main(int argc,char **argv) {
         ok = end && *end == '\0' && end != argv[2] && argv[2][0] != '-' && size <= SIZE_MAX;
         if (ok) ok = value_cost((size_t)size);
     }
-    else if(ok && argc==1) { unit(runtime); printf("JsonDirectSummary %u %u\n",passed,failed); ok=!failed; }
+    else if(ok && argc==1) { unit(runtime); numeric_observer(); printf("JsonDirectSummary %u %u\n",passed,failed); ok=!failed; }
     else if(ok && argc==3 && !strncmp(argv[1],"--corpus",8)) ok=corpus(runtime,argv[2],!fast_only);
     else if(ok && argc==3) ok=lines(runtime,argv[2],!fast_only);
     else ok=false;

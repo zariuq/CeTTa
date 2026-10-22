@@ -15,6 +15,7 @@
 #include <gmp.h>
 #endif
 #include "exact_integer.h"
+#include "generated/cetta_execution_contracts.generated.h"
 #include <inttypes.h>
 #include <string.h>
 #include <math.h>
@@ -317,6 +318,18 @@ static bool petta_repra_render(
                 petta_repra_append_string(output, atom->ground.sval,
                                           atom->ground.slen);
                 break;
+            case GV_STRUCTURAL: {
+                char text[256];
+                size_t length = atom_structural_display(atom, text, sizeof(text));
+                if (length < sizeof(text)) sb_append(output, text);
+                else {
+                    char *long_text = cetta_malloc(length + 1u);
+                    atom_structural_display(atom, long_text, length + 1u);
+                    sb_append(output, long_text);
+                    free(long_text);
+                }
+                break;
+            }
             case GV_SEAL: {
                 /* The public observer, (Sealed NICK): never authority. */
                 char text[256];
@@ -2822,7 +2835,10 @@ static Atom *grounded_range_atom(Arena *a, Atom *head, Atom **args, uint32_t nar
     if (end <= start)
         return atom_expr(a, NULL, 0);
 
-    CettaExprLen len = (CettaExprLen)(end - start);
+    /* end > start, but their signed difference need not fit int64_t.
+     * Unsigned subtraction represents the full positive distance exactly;
+     * the allocation-size check below rejects an unmaterializable range. */
+    CettaExprLen len = (uint64_t)end - (uint64_t)start;
     if (!cetta_expr_len_mul_fits_size(len, sizeof(Atom *))) {
         return grounded_raise(a, head, args, nargs,
                               atom_symbol(a, "RangeTooLarge"));
@@ -3252,6 +3268,33 @@ static Atom *grounded_petta_math_result(Arena *a, SymbolId head_id,
     return prolog ? prolog : native;
 }
 
+bool grounded_op_is_sequence_constructor(SymbolId id) {
+#define SEQUENCE_CONSTRUCTOR(field, arities, mask) if (id == g_builtin_syms.field) return true;
+    CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(SEQUENCE_CONSTRUCTOR)
+#undef SEQUENCE_CONSTRUCTOR
+    return false;
+}
+
+bool grounded_op_sequence_accepts_arity(SymbolId id, uint32_t arity) {
+    if (arity > 16u)
+        return false;
+#define SEQUENCE_CONSTRUCTOR(field, arities, mask) \
+    if (id == g_builtin_syms.field) return ((arities) & (1u << arity)) != 0u;
+    CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(SEQUENCE_CONSTRUCTOR)
+#undef SEQUENCE_CONSTRUCTOR
+    return false;
+}
+
+bool grounded_op_sequence_data_arg(SymbolId id, uint32_t argument_index) {
+    if (argument_index >= 16u)
+        return false;
+#define SEQUENCE_CONSTRUCTOR(field, arities, mask) \
+    if (id == g_builtin_syms.field) return ((mask) & (1u << argument_index)) != 0u;
+    CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(SEQUENCE_CONSTRUCTOR)
+#undef SEQUENCE_CONSTRUCTOR
+    return false;
+}
+
 bool grounded_call(Arena *a, Atom *head, Atom **args, uint32_t nargs,
                    CettaCallOutcome *out) {
     /* An operation run inside another, by a callback, keeps the enclosing
@@ -3268,6 +3311,9 @@ bool grounded_call(Arena *a, Atom *head, Atom **args, uint32_t nargs,
         *out = cetta_call_raised(result);
     else if (atom_is_petta_no_result(result))
         *out = cetta_call_failure();
+    else if (!raised && head->kind == ATOM_SYMBOL &&
+             grounded_op_is_sequence_constructor(head->sym_id))
+        *out = cetta_call_completed_value(result);
     else
         *out = cetta_call_value(result);
     return true;
@@ -3576,11 +3622,13 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         head_id == g_builtin_syms.foldl_atom_in_space)
         return grounded_foldl_in_space(a, head, args, nargs);
 
-    if (head_id == g_builtin_syms.range_atom)
-        return grounded_range_atom(a, head, args, nargs);
+    if (head_id == g_builtin_syms.range_atom ||
+        head_id == g_builtin_syms.lib_list_range)
+        return grounded_range_atom(a, atom_symbol_id(a, g_builtin_syms.range_atom), args, nargs);
 
-    if (head_id == g_builtin_syms.repeat_atom)
-        return grounded_repeat_atom(a, head, args, nargs);
+    if (head_id == g_builtin_syms.repeat_atom ||
+        head_id == g_builtin_syms.lib_list_repeat)
+        return grounded_repeat_atom(a, atom_symbol_id(a, g_builtin_syms.repeat_atom), args, nargs);
 
     /*
      * Pure atom observers are also used directly by the PeTTa machine after

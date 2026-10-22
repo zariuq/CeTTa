@@ -2,7 +2,7 @@
 ; do not edit.  The PeTTa spelling of the library: the same program with the
 ; HE-only native wrappers spelled as PeTTa calls.
 
-!(import! &self langdef)
+!(import! &self (library langdef))
 (: re:compile-value (-> Atom %Undefined%))
 (: re:compile (-> %Undefined% %Undefined%))
 (: re:compile-with (-> %Undefined% Atom %Undefined%))

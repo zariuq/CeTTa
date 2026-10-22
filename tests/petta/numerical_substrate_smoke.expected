@@ -1,0 +1,10 @@
+true
+true
+true
+true
+(JsonSmoke 1 true)
+JsonRejected
+(TensorSmoke tensor:absent (tensor:present 0.0) (TensorData f64 (3) ((0 2.0) (2 0.0))))
+(Tensor:Fault element-count-mismatch)
+(PostingsSmoke ((2 2)) (("f" ((2 (1 1 4)))) ("g" ((3 (0))))) ())
+(EmbeddingSmoke ((Embedding:Match 1 fruit 0.0) (Embedding:Match 2 moon 0.0)))

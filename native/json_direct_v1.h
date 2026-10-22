@@ -24,6 +24,21 @@ bool cetta_json_direct_v1_project(Arena *arena,
 
 bool cetta_json_direct_v1_number_valid(const uint8_t *bytes, size_t len);
 
+/* A rectangular typed-scalar observer. The whole document and selected shape
+ * are validated before the first callback. Scalar spellings are borrowed slices,
+ * never Atom intermediates. The consumer writes to unpublished storage: a
+ * conversion refusal may occur after earlier callbacks and must not publish
+ * their partial buffer. A missing path succeeds with found=false, no callback.
+ * Rank zero observes a scalar number. This uses the same grammar-derived
+ * decisions and lexical automaton as the ordinary/inspection consumers. */
+typedef bool (*CettaJsonScalarConsumerV1)(void *context,
+    const uint8_t *spelling, size_t length, size_t ordinal);
+typedef enum { CETTA_JSON_SCALAR_NUMBER_V1, CETTA_JSON_SCALAR_BOOLEAN_V1 } CettaJsonScalarKindV1;
+bool cetta_json_direct_v1_scalar_array(const uint8_t *bytes, size_t len,
+    Atom *path, const size_t *shape, size_t rank, CettaJsonScalarKindV1 kind, uint32_t depth_limit,
+    CettaJsonScalarConsumerV1 consume, void *context, bool *found,
+    CettaJsonRuntimeV1Status *status, char *error, size_t error_size);
+
 /* The value is borrowed until consume returns. Each row has a separate arena;
  * a consumer retaining a value must copy it. Rows already delivered survive a
  * later parse failure. Empty lines are ignored. No whole-file allocation. */

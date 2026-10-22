@@ -229,6 +229,7 @@
     "lib_zar.pl": "d2e160b3cfb447dfe33b014e39b39321cdba26b08d2aee026b305b13c2b4d6d1"
   },
   "library_adaptations": {
+    "lib_combinatorics.metta": "b09bee3369ff93e5b41465054f24588ee97d3a23e9ee7f4411b5c046156c3097",
     "lib_he.metta": "fabd076c5449d6eca0f84b671425015fc2c0264c26848a82ad9c384ff3181f69",
     "lib_import.metta": "804bb2bc4af7c8b4889be5d71f3cff378444c1ee5b60b4dd3ddb72f9558757a6",
     "lib_memo.metta": "5c045f4c029e041aba98b2719914e7084c60a8357c703f31306460095b69ffc4",
