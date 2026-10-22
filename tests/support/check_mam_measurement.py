@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Check calibrated instruction comparisons, child memory accounting and cancellation."""
 import argparse
+import hashlib
+import json
 import os
 from pathlib import Path
 import resource
 import sys
+import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "benchmarks/mam_families"))
-from run import paired_measure, runtime_counter_receipt, runtime_counters
+from run import git_source_identity, paired_measure, runtime_counter_receipt, runtime_counters
 from cost_gate import instruction_gate
 
 
@@ -84,6 +87,34 @@ def check_runtime_counters():
     print("PASS: runtime receipt parser accepts one total nonnegative vector and rejects absent, malformed and duplicate rows")
 
 
+def check_source_identity(out):
+    root = Path(tempfile.mkdtemp(prefix='source-snapshot-', dir=out))
+    source = root/'main.pl'
+    source.write_text('answer(42).\n')
+    # This directory may sit inside another repository. Its parent's HEAD
+    # cannot identify the actual program executed from this snapshot.
+    try:
+        git_source_identity(root)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('enclosing repository accepted as source identity')
+    raw = json.dumps({'files': [{'path': source.name,
+        'sha256': hashlib.sha256(source.read_bytes()).hexdigest()}]}).encode()
+    (root/'source-manifest.json').write_bytes(raw)
+    assert git_source_identity(root) == hashlib.sha256(raw).hexdigest()
+    for content, extra in [('answer(43).\n', False), ('answer(42).\n', True)]:
+        source.write_text(content)
+        if extra:
+            (root/'unlisted.pl').write_text('answer(99).\n')
+        try:
+            git_source_identity(root)
+        except ValueError:
+            continue
+        raise AssertionError('changed or incomplete source snapshot accepted')
+    print('PASS: source identity rejects enclosing repositories, altered snapshots and unlisted files')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("out", type=Path)
@@ -92,6 +123,7 @@ def main():
     check_runtime_counters()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
+    check_source_identity(out)
     # A measurement of the child must not inherit this launcher's high-water mark.
     retained = bytearray(64 << 20)
     assert retained[0] == 0

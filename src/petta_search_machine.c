@@ -5987,6 +5987,11 @@ static size_t petta_machine_nursery_window(
     return window > floor ? window : floor;
 }
 
+size_t petta_machine_choice_collection_retry_threshold(
+    size_t nursery_live, size_t retry_window) {
+    return petta_size_add_saturating(nursery_live, retry_window);
+}
+
 static size_t petta_machine_next_major_threshold(
     size_t tenured_live) {
     size_t window = petta_machine_collect_sizes()->major_window;
@@ -9861,10 +9866,14 @@ static bool petta_machine_maybe_collect(
         machine->stats.maximum_binding_entries = binding_count;
     if (machine->choice_len != 0u) {
         if (nursery_live >= machine->heap_collect_after) {
-            if (!petta_choice_heap_evacuation_supported(machine))
+            if (!petta_choice_heap_evacuation_supported(machine)) {
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PETTA_CHOICE_HEAP_COLLECTION_DECLINED);
-            else if (!petta_machine_collect_choice_heap(machine))
+                machine->heap_collect_after =
+                    petta_machine_choice_collection_retry_threshold(
+                        nursery_live,
+                        petta_machine_nursery_window(machine));
+            } else if (!petta_machine_collect_choice_heap(machine))
                 return false;
         }
         if (builder->growth_count <
