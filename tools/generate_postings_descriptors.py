@@ -20,7 +20,8 @@ PETTA = ROOT / "lib/petta/postings_descriptors.metta"
 
 WIRES = {
     "before", "all", "tensor-before", "tensor-all", "table-before",
-    "table-all", "table-tensor-before", "table-tensor-all", "stats",
+    "table-all", "table-tensor-before", "table-tensor-all", "table-fold-before",
+    "table-fold-columns-before", "stats",
 }
 
 PUBLIC_KEYS = {
@@ -32,6 +33,10 @@ PUBLIC_KEYS = {
     "TableAll": "table-all",
     "TableTensorBefore": "table-tensor-before",
     "TableTensorAll": "table-tensor-all",
+    "TableFoldBefore": "table-fold-before",
+    "TableFoldColumnsBefore": "table-fold-columns-before",
+    "FoldTable": "fold-table",
+    "FoldColumns": "fold-columns",
     "Stats": "stats",
     "PrepareIndex": "prepare-index",
     "PrepareTable": "prepare-table",
@@ -52,17 +57,17 @@ def descriptor_pattern(value):
                        for argument in linked(arguments)]
 
 
-def tables(binary: Path):
+def read_descriptor_module(binary: Path, runtime: str, expected_name: str):
     run = subprocess.run(
         [str(binary), "--no-results", "--lang", "petta@1.0.6", "--profile",
-         "extended", "tests/langdef/postings/descriptors_runtime_v1.metta"],
+         "extended", runtime],
         cwd=ROOT, text=True, capture_output=True, check=True,
     )
     values = parse_sexprs(run.stdout)
     if len(values) != 1:
         raise ValueError("module reader did not return one document")
     _, name, imports, theories, _, _, _ = record(values[0], "ModuleValueV1", 7)
-    if (name != StringLiteral("PostingsDescriptors") or
+    if (name != StringLiteral(expected_name) or
             imports != Symbol("LNil") or len(linked(theories)) != 1):
         raise ValueError("unexpected descriptor module structure")
     _, parameters, body = record(linked(theories)[0], "ModuleTheoryV1", 3)
@@ -89,8 +94,15 @@ def tables(binary: Path):
     if parameters != Symbol("LNil") or base != Symbol("ModuleEmptyV1"):
         raise ValueError("descriptor module must be a closed table")
 
-    modes, observations, seen = [], [], set()
-    for declaration in linked(equations):
+    return term_spellings, linked(equations)
+
+
+def tables(binary: Path):
+    term_spellings, equations = read_descriptor_module(
+        binary, "tests/langdef/postings/descriptors_runtime_v1.metta", "PostingsDescriptors")
+
+    modes, observations, projections, column_types, seen = [], [], [], [], set()
+    for declaration in equations:
         _, equation = record(declaration, "ModuleDeclarationV1", 2)
         _, context, left, right = record(equation, "ModuleEquationV1", 4)
         if context != Symbol("LNil"):
@@ -112,17 +124,42 @@ def tables(binary: Path):
                           *(nullary(arg) for arg in arguments[1:])))
         elif kind == "PostingsObservation" and target == "Observe":
             observations.append((key, *(nullary(arg) for arg in arguments)))
+        elif kind == "PostingsProjection" and target == "Projection" and arguments:
+            wire_name = nullary(arguments[0])
+            wire = term_spellings.get(wire_name)
+            fields = [nullary(arg) for arg in arguments[1:]]
+            schemas = {
+                "BlockLayout": ("Postings:BlockLayout", {
+                    "RowHead", "RowWidth", "KeysField", "GroupField",
+                    "PositionField", "PrefixKeys", "ForbiddenHeads"}),
+                "ColumnsLayout": ("Postings:Columns", {"LabelsColumn", "ValueColumns"}),
+            }
+            if (key not in schemas or wire != schemas[key][0] or
+                    len(fields) != len(set(fields)) or set(fields) != schemas[key][1]):
+                raise ValueError("invalid projection schema")
+            projections.append((key, wire_name, wire, fields))
+        elif kind == "PostingsColumnDType" and target == "ColumnDType" and len(arguments) == 2:
+            wire_name, leaf = map(nullary, arguments)
+            wire = term_spellings.get(wire_name)
+            admitted = {"I64": ("i64", "IntegerLeaf"), "F64": ("f64", "FloatingLeaf")}
+            if key not in admitted or (wire, leaf) != admitted[key]:
+                raise ValueError("unsupported exact column leaf type")
+            column_types.append((key, wire_name, wire, leaf))
         else:
             raise ValueError("unsupported descriptor equation")
     if {wire for _, _, wire, *_ in modes} != WIRES:
         raise ValueError("count-mode table must define every native wire mode exactly once")
     if not observations:
         raise ValueError("observation table must be nonempty")
-    return modes, observations
+    if {key for key, *_ in projections} != {"BlockLayout", "ColumnsLayout"}:
+        raise ValueError("block and columns projection schemas are required")
+    if {key for key, *_ in column_types} != {"I64", "F64"}:
+        raise ValueError("integer and floating column leaf types are required")
+    return modes, observations, projections, column_types
 
 
 def generated(binary: Path):
-    modes, observations = tables(binary)
+    modes, observations, projections, column_types = tables(binary)
     digest = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
     header = [
         "/* Generated from the shared .module reader; do not edit. */",
@@ -141,6 +178,26 @@ def generated(binary: Path):
     for index, (key, *policies) in enumerate(observations):
         suffix = " \\" if index + 1 < len(observations) else ""
         header.append(f'    X("{PUBLIC_KEYS[key]}", "{"|".join(policies)}"){suffix}')
+    _, projection_wire_name, projection_wire, fields = next(
+        row for row in projections if row[0] == "BlockLayout")
+    header += [
+        f'#define CETTA_POSTINGS_BLOCK_LAYOUT_HEAD "{projection_wire}"',
+        f'#define CETTA_POSTINGS_BLOCK_LAYOUT_LENGTH {len(fields) + 1}u',
+    ]
+    for index, field in enumerate(fields, 1):
+        header.append(f'#define CETTA_POSTINGS_BLOCK_{field.upper()} {index}u')
+    _, column_wire_name, column_wire, column_fields = next(
+        row for row in projections if row[0] == "ColumnsLayout")
+    header += [
+        f'#define CETTA_POSTINGS_COLUMNS_HEAD "{column_wire}"',
+        f'#define CETTA_POSTINGS_COLUMNS_LENGTH {len(column_fields) + 1}u',
+    ]
+    for index, field in enumerate(column_fields, 1):
+        header.append(f'#define CETTA_POSTINGS_COLUMNS_{field.upper()} {index}u')
+    header.append("#define CETTA_POSTINGS_COLUMN_DTYPE_ROWS(X) \\")
+    for index, (key, _wire_name, wire, leaf) in enumerate(column_types):
+        suffix = " \\" if index + 1 < len(column_types) else ""
+        header.append(f'    X({key}, "{wire}", {str(leaf == "FloatingLeaf").lower()}){suffix}')
     header.extend(["#endif", ""])
 
     lean = [
@@ -208,6 +265,56 @@ def generated(binary: Path):
         "    sourceObservationRows = encodedObservationRows := by",
         "  decide +kernel", "",
         "#print axioms observation_rows_match_source", "",
+    ]
+    lean += [
+        "def blockProjectionFields : List String := [" +
+        ", ".join(f'\"{field}\"' for field in fields) + "]", "",
+        "def sourceBlockProjection : List Pattern :=",
+        "  language.equations.filterMap fun equation =>",
+        "    match equation.left with",
+        '    | Pattern.apply "PostingsProjection" [Pattern.apply "BlockLayout" []] =>',
+        "        some equation.right",
+        "    | _ => none", "",
+        "theorem block_projection_fields_match_source :",
+        '    sourceBlockProjection = [Pattern.apply "Projection"',
+        f'      (Pattern.apply "{projection_wire_name}" [] ::',
+        "        blockProjectionFields.map (fun field => Pattern.apply field []))] := by",
+        "  decide +kernel", "",
+        "#print axioms block_projection_fields_match_source", "",
+    ]
+    lean += [
+        "def columnsLayoutFields : List String := [" +
+        ", ".join(f'\"{field}\"' for field in column_fields) + "]", "",
+    ]
+    lean += [
+        "def columnTypeRows : List (String × String × String × String) := [",
+        *(f'  ("{key}", "{wire_name}", "{wire}", "{leaf}")' +
+          ("," if index + 1 < len(column_types) else "")
+          for index, (key, wire_name, wire, leaf) in enumerate(column_types)),
+        "]", "",
+        "def sourceColumnTypeRows : List (String × Pattern) :=",
+        "  language.equations.filterMap fun equation =>",
+        "    match equation.left with",
+        '    | Pattern.apply "PostingsColumnDType" [Pattern.apply label []] =>',
+        "        some (label, equation.right)",
+        "    | _ => none", "",
+        "theorem column_types_match_source :",
+        "    sourceColumnTypeRows = columnTypeRows.map (fun (label, wireName, _wire, leaf) =>",
+        '      (label, Pattern.apply "ColumnDType" [Pattern.apply wireName [], Pattern.apply leaf []])) := by',
+        "  decide +kernel", "",
+        "def sourceColumnsProjection : List Pattern :=",
+        "  language.equations.filterMap fun equation =>",
+        "    match equation.left with",
+        '    | Pattern.apply "PostingsProjection" [Pattern.apply "ColumnsLayout" []] =>',
+        "        some equation.right",
+        "    | _ => none", "",
+        "theorem columns_projection_fields_match_source :",
+        '    sourceColumnsProjection = [Pattern.apply "Projection"',
+        f'      (Pattern.apply "{column_wire_name}" [] ::',
+        "        columnsLayoutFields.map (fun field => Pattern.apply field []))] := by",
+        "  decide +kernel", "",
+        "#print axioms column_types_match_source",
+        "#print axioms columns_projection_fields_match_source", "",
         "end CeTTaPostingsDescriptors", "",
     ]
 
@@ -226,6 +333,19 @@ def generated(binary: Path):
             f'(= (postings:observation-descriptor {PUBLIC_KEYS[key]}) '
             f'(PostingsPolicy {PUBLIC_KEYS[key]} ({" ".join(policies)})))'
         )
+    variables = {"LabelsColumn": "$labels", "ValueColumns": "$columns"}
+    pattern = f'({column_wire} {" ".join(variables[field] for field in column_fields)})'
+    first, second = (variables[field] for field in column_fields)
+    metta += [
+        '(: postings:column-result (-> %Undefined% %Undefined% %Undefined%))',
+        '(: postings:column-labels (-> %Undefined% %Undefined%))',
+        '(: postings:column-values (-> %Undefined% %Undefined%))',
+        '(= (postings:column-result $labels $columns) '
+        f'(let* (($last (cons-atom {second} ())) ($tail (cons-atom {first} $last)) '
+        f'($record (cons-atom {column_wire} $tail))) (__cetta_lib_list_to_expression $record)))',
+        f'(= (postings:column-labels {pattern}) $labels)',
+        f'(= (postings:column-values {pattern}) $columns)',
+    ]
     metta_text = "\n".join(metta) + "\n"
     return "\n".join(header), "\n".join(lean), metta_text, spelling(metta_text, "petta")
 

@@ -48,6 +48,39 @@
          ($key $amount))))))
 ; Explicit inductive lists and the representation isomorphism live in clist.
 
+; Stable first-matching-key encoding. Codes retain every occurrence; keys
+; follow first introduction, and firsts records each key's source position.
+; The native table requires matching-compatible stable keys. Other keys use
+; this ordered search, rather than silently changing equality or deduplicating
+; the input. A code identifies a representative, not a mutable space entry.
+(: __cetta_lib_list_factorize (-> Atom Atom))
+(= (list:factorize $xs)
+   (function
+     (let $items (list:to-expression $xs)
+       (case (__cetta_lib_list_factorize $items)
+         (((List:Factorization $keys $codes $firsts)
+            (return (List:Factorization $keys $codes $firsts)))
+          ($other (let $answer (list:factorize-reference $items) (return $answer)){$answer}))){$keys $codes $firsts $other}){$items}))
+(= (list:factorize-reference $xs)
+   (list-internal:factorize (list:to-expression $xs) 0 () () ()))
+(= (list-internal:key-position $key $keys $position)
+   (if (== (size-atom $keys) 0) List:NewKey
+     (if (== $key (car-atom $keys)) (List:KeyPosition $position)
+       (list-internal:key-position $key (cdr-atom $keys) (+ $position 1)))))
+(= (list-internal:factorize $remaining $position $keys $reversed $firsts)
+   (if (== (size-atom $remaining) 0)
+     (List:Factorization $keys (list:reverse $reversed) $firsts)
+     (let* (($key (car-atom $remaining)) ($tail (cdr-atom $remaining)))
+       (case (list-internal:key-position $key $keys 0)
+         (((List:KeyPosition $code)
+            (list-internal:factorize $tail (+ $position 1) $keys
+              (cons-atom $code $reversed) $firsts))
+          (List:NewKey
+            (list-internal:factorize $tail (+ $position 1)
+              (union-atom $keys (cons-atom $key ()))
+              (cons-atom (size-atom $keys) $reversed)
+              (union-atom $firsts (cons-atom $position ())))))){$code}){$key $tail}))
+
 ; The list value of a sequence's elements, and the expression of them.
 (= (list:from-expression $xs)
    (__cetta_lib_list_from_expression $xs))

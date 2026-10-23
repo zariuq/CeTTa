@@ -279,6 +279,9 @@
   ; expression result abandons the speculative program and is replayed by
   ; the canonical evaluator.
   (instruction library-value-dispatch)
+  ; Computed truths use the caller's Boolean constructor. A value projection
+  ; keeps its original carrier instead of reinterpreting data as a truth.
+  (instruction boolean-dispatch)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
   (rule intrinsic-is-pure
@@ -712,6 +715,7 @@
   (query-head tensor:from-json relational-query)
   (query-head __cetta_lib_list_group_sums relational-query)
   (query-head __cetta_lib_list_group_sums_blocks relational-query)
+  (query-head __cetta_lib_list_factorize relational-query)
   (query-head tensor:from-coo relational-query)
   (query-head tensor:from-coordinates relational-query)
   (query-head tensor:inspect relational-query)
@@ -964,6 +968,10 @@
   (prepared-pure-intrinsic-head
     / 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
+    and 2 strict-all boolean-dispatch)
+  (prepared-pure-intrinsic-head
+    or 2 strict-all boolean-dispatch)
+  (prepared-pure-intrinsic-head
     abs-math 1 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     log-math 2 strict-all grounded-dispatch)
@@ -977,6 +985,8 @@
     index-atom 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     unique-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    intersection-atom 2 strict-all grounded-dispatch (dialects petta))
   (prepared-pure-intrinsic-head
     remove-all-atom 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head

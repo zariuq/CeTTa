@@ -2289,9 +2289,33 @@ static bool prepared_pure_integer_head(
         kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
 }
 
+bool cetta_prepared_pure_intrinsic_scope_supported(SymbolId head, CettaExprLen arity) {
+    (void)head;
+    (void)arity;
+#define INTRINSIC_SCOPE(field, expected_arity, dialects)                  \
+    if (head == g_builtin_syms.field && arity == (expected_arity)) {     \
+        if (!eval_current_language_id) return false;                    \
+        uint32_t dialect = 0u;                                          \
+        switch (eval_current_language_id()) {                           \
+        case CETTA_LANGUAGE_HE:                                         \
+            dialect = CETTA_GSLT_INTRINSIC_DIALECT_HE; break;           \
+        case CETTA_LANGUAGE_PETTA:                                      \
+            dialect = CETTA_GSLT_INTRINSIC_DIALECT_PETTA; break;        \
+        case CETTA_LANGUAGE_PRIME:                                      \
+            dialect = CETTA_GSLT_INTRINSIC_DIALECT_PRIME; break;        \
+        default: break;                                                 \
+        }                                                              \
+        return ((dialects) & dialect) != 0u;                             \
+    }
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_SCOPE_ROWS(INTRINSIC_SCOPE)
+#undef INTRINSIC_SCOPE
+    return true;
+}
+
 static bool prepared_pure_intrinsic_program(
     SymbolId head, CettaExprLen arity,
     CettaGsltPreparedPureIntrinsicInstruction *instruction_out) {
+    if (!cetta_prepared_pure_intrinsic_scope_supported(head, arity)) return false;
 #define PREPARED_PURE_INTRINSIC(                                        \
     field, expected_arity, discipline, instruction)                    \
     if (head == g_builtin_syms.field && arity == (expected_arity)) {    \
@@ -8037,13 +8061,21 @@ static Atom *prepared_pure_execute_intrinsic(
     const CettaPreparedPureProgram *program, Arena *arena,
     CettaGsltPreparedPureIntrinsicInstruction instruction,
     Atom *head, Atom *const *arguments, uint32_t arity) {
-    if (!program || !program->construct_value || !arena || !head ||
-        !arguments)
+    if (!program || !program->construct_value || !arena || !head || head->kind != ATOM_SYMBOL ||
+        !arguments || !cetta_prepared_pure_intrinsic_scope_supported(atom_symbol_current_id(head), arity))
         return NULL;
     switch (instruction) {
-    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH: {
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH:
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH: {
         Atom *result = grounded_dispatch(
             arena, head, (Atom **)arguments, arity);
+        if (instruction == CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH) {
+            if (prepared_pure_is_true(result))
+                return prepared_pure_boolean_atom(program, arena, true);
+            if (prepared_pure_is_false(result))
+                return prepared_pure_boolean_atom(program, arena, false);
+            return NULL;
+        }
         return result && !atom_is_empty_or_error(result) ? result : NULL;
     }
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH:

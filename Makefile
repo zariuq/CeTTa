@@ -3650,6 +3650,7 @@ PATHMAP_REQUIRED_TESTS = \
 	tests/test_pathmap_scientific_float_roundtrip_regression.metta \
 	tests/test_pathmap_indexed_query_work.metta \
 	tests/test_pathmap_indexed_opening_identity_regression.metta \
+	tests/test_pathmap_scoped_queries.metta \
 	tests/test_space_batch_copy_optimizer_guards.metta \
 	tests/test_pathmap_backend_primary_growth_regression.metta \
 	tests/test_pathmap_fc_depth3_count_regression.metta \
@@ -4408,6 +4409,39 @@ test-bindings-lookup-index: $(BINDINGS_LOOKUP_INDEX_TEST_BIN) test-match-worklis
 	fi; \
 	echo "PASS: binding-index falsifiers kill lazy-tail and stale-root mutations"
 .PHONY: test-bindings-lookup-index
+
+FRAME_SUPPORT_INVENTORY_TEST_BIN = runtime/test_frame_support_inventory-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,)
+$(FRAME_SUPPORT_INVENTORY_TEST_BIN): tests/support/test_frame_support_inventory.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) -DCETTA_TEST_HOOKS=1 -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -o $@ tests/support/test_frame_support_inventory.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+
+.PHONY: test-frame-support-inventory
+test-frame-support-inventory: $(FRAME_SUPPORT_INVENTORY_TEST_BIN)
+	@$(call cetta_exec,./$(FRAME_SUPPORT_INVENTORY_TEST_BIN))
+
+test-bindings-lookup-index test-petta-search-machine: test-frame-support-inventory
+
+SEQUENCE_VALUE_VIEW_TEST_BIN = runtime/test_sequence_value_view-$(BUILD_OBJ_TAG)
+$(SEQUENCE_VALUE_VIEW_TEST_BIN): tests/support/test_sequence_value_view.c src/petta_semantics.c src/petta_semantics.h src/atom.h src/match.h $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_TEST_SEQUENCE_READ_BOUND=1 -ffunction-sections -fdata-sections -Wl,--gc-sections -Wl,--wrap=bindings_observe_value_root -o $@ tests/support/test_sequence_value_view.c src/petta_semantics.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+
+.PHONY: test-sequence-value-view
+test-sequence-value-view: $(SEQUENCE_VALUE_VIEW_TEST_BIN)
+	@$(call cetta_exec,./$(SEQUENCE_VALUE_VIEW_TEST_BIN))
+
+test-petta-search-machine: test-sequence-value-view
+
+ROOT_SUBSTITUTION_TEST_BIN = runtime/test_root_substitution-$(BUILD_OBJ_TAG)
+$(ROOT_SUBSTITUTION_TEST_BIN): tests/support/test_root_substitution.c src/petta_semantics.c src/petta_semantics.h src/atom.h src/match.h $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/support/test_root_substitution.c src/petta_semantics.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+
+.PHONY: test-root-substitution
+test-root-substitution: $(ROOT_SUBSTITUTION_TEST_BIN)
+	@$(call cetta_exec,./$(ROOT_SUBSTITUTION_TEST_BIN))
+
+test-bindings-lookup-index test-petta-search-machine: test-root-substitution
 
 TERM_ORDER_GRAPH_TEST_BIN = runtime/test_term_order_graph-$(BUILD_OBJ_TAG)
 $(TERM_ORDER_GRAPH_TEST_BIN): tests/test_term_order_graph.c src/petta_semantics.c src/petta_semantics.h src/term_graph.c src/term_graph.h src/stats.h src/atom.c $(SYMBOL_STANDALONE_SRC) src/symbol.h src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(BUILD_CONFIG_HEADER)
@@ -6983,6 +7017,7 @@ $(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN): tests/test_pathmap_backend_
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 test-pathmap-backend-primary-destructive-abi: $(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN))
+	@$(call cetta_exec,./$(PATHMAP_BACKEND_PRIMARY_DESTRUCTIVE_ABI_TEST_BIN)) --fallback-cache-only
 else
 test-pathmap-backend-primary-destructive-abi:
 	$(call reexec_pathmap_bridge_or_skip,pathmap backend-primary destructive ABI,$@)
@@ -7088,6 +7123,7 @@ $(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN): tests/test_pathmap_semi_naive_abi.c $(SYMBOL
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 test-pathmap-semi-naive-abi: $(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN)
 	@$(call cetta_exec,./$(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN))
+	@$(call cetta_exec,./$(PATHMAP_SEMI_NAIVE_ABI_TEST_BIN) --auto-source-view)
 else
 test-pathmap-semi-naive-abi:
 	$(call reexec_pathmap_bridge_or_skip,pathmap semi-naive ABI,$@)
@@ -19498,6 +19534,7 @@ NORMAL_TEST_TARGETS := \
 	test-library-spellings-v1 \
 	test-main-corpus-default \
 	test-term-match-graph \
+	test-frame-support-inventory \
 	test-pattern-queries \
 	test-atom-deep-copy-iterative \
 	test-frame-identity \
@@ -26587,6 +26624,30 @@ else
 endif
 .PHONY: test-lib-prolog-build-config
 
+.PHONY: test-petta-libpl-read-evidence
+test-petta-libpl: test-petta-libpl-read-evidence
+test-petta-libpl-read-evidence: $(BIN)
+	@set -eu; \
+	if [ "$(LIB_PROLOG_ENABLED)" != 1 ]; then \
+		echo "SKIP: foreign read evidence requires embedded Prolog"; exit 0; \
+	fi; \
+	for route in normal ordinary; do \
+		reference=; \
+		if [ "$$route" = ordinary ]; then reference=1; fi; \
+		for stem in libpl_read_certificate libpl_read_images; do \
+		actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+			CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			CETTA_PREPARED_PURE_REFERENCE=$$reference \
+			$(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/$$stem.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+			echo "FAIL: scoped foreign read evidence ($$route / $$stem)"; \
+			printf '%s\n' "$$actual"; exit 1; \
+		fi; \
+		done; \
+	done; \
+	echo "PASS: foreign read evidence preserves cycles, live bindings, opaque aliases, residuals and new-answer boundaries"
+
 test-petta-libpl: $(BIN) test-petta-libpl-explicit-utf8 test-petta-libpl-query-release test-foreign-region test-petta-foreign-observer
 	@actual=$$(mktemp runtime/petta-libpl.XXXXXX); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
@@ -30639,6 +30700,29 @@ test-petta-projection-grown-frames: $(BIN)
 	done; \
 	echo "PASS: bindings naming grown frame slots survive compaction, on the tier and in the machine"
 
+.PHONY: test-petta-scoped-sequence-values
+test-petta-search-machine test-petta-semantics: test-petta-scoped-sequence-values
+test-petta-scoped-sequence-values: $(BIN)
+	@set -eu; \
+	for ordinary in 0 1; do \
+		for stress in 0 1; do \
+			for case in scoped_sequence_observation compiled_sequence_size; do \
+			actual=$$(CETTA_PETTA_SEARCH_MACHINE=1 \
+				CETTA_OPEN_EQUATIONS_REFERENCE=$$ordinary \
+				CETTA_PREPARED_PURE_REFERENCE=$$ordinary \
+				CETTA_PETTA_COLLECT_STRESS=$$stress CETTA_OEM_COLLECT_STRESS=$$stress $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$case.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$case.expected)" ]; then \
+				echo "FAIL: $$case (ordinary=$$ordinary stress=$$stress)"; \
+				diff <(cat tests/petta/$$case.expected) \
+					<(printf '%s\n' "$$actual") | head -30; \
+				exit 1; \
+			fi; \
+			done; \
+		done; \
+	done; \
+	echo "PASS: scoped sequence values preserve aliases, data, choices, effects and collection lifetimes"
+
 .PHONY: test-petta-metatype-registered-functions
 # get-metatype as SWI-PeTTa's: Grounded for truth values and registered
 # functions (its builtins and the program's own), Symbol for other symbols.
@@ -31478,13 +31562,15 @@ test-petta-semantics: test-petta-cardinality-observers
 test-petta-cardinality-observers: $(BIN)
 	@set -eu; \
 	for route in 0 1; do \
-		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/collection_cardinality_observers.metta 2>&1); \
-		if [ "$$actual" != "$$(cat tests/petta/collection_cardinality_observers.expected)" ]; then \
-			echo "FAIL: collection cardinality observations on route $$route"; \
-			diff <(cat tests/petta/collection_cardinality_observers.expected) \
-				<(printf '%s\n' "$$actual") | head -20; \
-			exit 1; \
-		fi; \
+		for fixture in collection_cardinality_observers count_match_trial; do \
+			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$fixture.metta 2>&1); \
+			if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+				echo "FAIL: $$fixture on route $$route"; \
+				diff <(cat tests/petta/$$fixture.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
 	done; \
 	echo "PASS: cardinality preserves occurrences, effects, data and caught faults"
 
@@ -45785,7 +45871,7 @@ test-all: test-list-numeric-sequences
 runtime/test_postings-$(BUILD_OBJ_TAG): tests/support/test_postings.c src/library_postings.c src/library_postings.h src/generated/postings_descriptors.generated.h src/tensor.c src/tensor.h src/native_handle.c src/atom.c src/binding/frame_identity.c src/name_key.c $(SYMBOL_STANDALONE_SRC) $(SHARED_TRANSITION_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_NATIVE_HANDLE_TEST_HOOKS \
-		-Wl,--wrap=malloc,--wrap=calloc -o $@ tests/support/test_postings.c \
+		-Wl,--wrap=malloc,--wrap=calloc,--wrap=cetta_shared_transition_guard_acquire,--wrap=cetta_shared_transition_guard_release -o $@ tests/support/test_postings.c \
 		src/library_postings.c src/tensor.c src/native_handle.c src/atom.c src/binding/frame_identity.c src/name_key.c \
 		$(SYMBOL_STANDALONE_SRC) $(SHARED_TRANSITION_STANDALONE_SRC) $(LDFLAGS)
 
@@ -45795,6 +45881,42 @@ test-postings: $(BIN) runtime/test_postings-$(BUILD_OBJ_TAG)
 	python3 tests/support/check_postings.py --cetta ./$(BIN)
 	python3 tests/support/check_postings_sources.py --cetta ./$(BIN)
 
+.PHONY: test-postings-fold
+test-postings-fold: $(BIN)
+	python3 tests/support/check_postings_fold.py --cetta ./$(BIN)
+
+.PHONY: test-collection-ingress qualify-collection-ingress-lean
+test-collection-ingress: $(BIN)
+	python3 tools/generate_collection_ingress.py --cetta ./$(BIN) --check
+	python3 tests/support/check_collection_ingress.py --cetta ./$(BIN)
+
+qualify-collection-ingress-lean:
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	test -f "$$lean_root/lakefile.lean" || \
+		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
+	contract="$(abspath langdef/collections/generated/Ingress.lean)"; \
+	cd "$$lean_root"; \
+	lake env lean -DwarningAsError=true "$$contract"
+
+test-all: test-collection-ingress
+
+.PHONY: test-collection-keys test-flatten-fold qualify-collection-keys-lean
+test-collection-keys: $(BIN)
+	python3 tools/generate_collection_keys.py --cetta ./$(BIN) --check
+	python3 tests/support/check_collection_keys.py --cetta ./$(BIN)
+
+test-flatten-fold: $(BIN)
+	python3 tests/support/check_flatten_fold.py --cetta ./$(BIN)
+
+qualify-collection-keys-lean:
+	@set -eu; \
+	contract="$(abspath langdef/collections/generated/KeyEncoding.lean)"; \
+	cd "$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	lake env lean -DwarningAsError=true "$$contract"
+
+test-all: test-collection-keys test-flatten-fold
+
 .PHONY: test-postings-descriptors qualify-postings-descriptors-lean
 test-postings-descriptors: $(BIN) tools/generate_postings_descriptors.py \
 		langdef/postings/Descriptors.module \
@@ -45802,10 +45924,10 @@ test-postings-descriptors: $(BIN) tools/generate_postings_descriptors.py \
 		langdef/postings/generated/Descriptors.lean \
 		lib/postings_descriptors.metta lib/petta/postings_descriptors.metta
 	python3 tools/generate_postings_descriptors.py --cetta ./$(BIN) --check
-	@got=$$(./$(BIN) --no-results --lang petta@1.0.6 --profile extended \
+	@set -eu; got=$$(./$(BIN) --no-results --lang petta@1.0.6 --profile extended \
 		tests/langdef/postings/descriptors_surface_v1.metta); \
 	test "$$got" = "$$(cat tests/langdef/postings/descriptors_surface_v1.expected)"; \
-	echo '(PostingsDescriptorSurface 3 0)'
+	echo '(PostingsDescriptorSurface 5 0)'
 
 qualify-postings-descriptors-lean:
 	@set -eu; \
@@ -45889,7 +46011,7 @@ test-tensor-dlpack-numpy: $(TENSOR_DLPACK_LIB)
 	python3 tests/support/check_tensor_dlpack.py --library ./$(TENSOR_DLPACK_LIB)
 
 test-all: test-list-prefix-search
-test-all: test-postings
+test-all: test-postings test-postings-fold
 test-all: test-postings-descriptors
 test-all: test-group-sums
 test-all: test-tensor
@@ -47066,7 +47188,16 @@ test-all: test-linux-stack-bounds
 test-linux-stack-bounds: runtime/test-linux-stack-bounds
 	@runtime/test-linux-stack-bounds
 
-.PHONY: test-proc-child
+.PHONY: test-proc-child test-proc-capture
+PROC_CAPTURE_TEST_BIN = runtime/test-proc-capture
+$(PROC_CAPTURE_TEST_BIN): tests/support/test_proc_capture.c src/proc_capture.h
+	@mkdir -p runtime
+	$(CC) -std=c11 -Wall -Wextra -Werror -O2 -Isrc -o $@ $<
+
+test-proc-capture: $(PROC_CAPTURE_TEST_BIN)
+	@$(PROC_CAPTURE_TEST_BIN)
+
+test-proc-child: test-proc-capture
 test-all: test-proc-child
 test-proc-child: $(PROC_CHILD_TEST_BIN) $(PROC_CHILD_FALLBACK_TEST_BIN)
 	@$(PROC_CHILD_TEST_BIN)
@@ -47298,7 +47429,7 @@ test-io-json-bridge-body: $(BIN)
 test-io-json-bridge:
 	@$(MAKE) --no-print-directory \
 		BUILD=core CETTA_TEST_ISOLATED=1 \
-		ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_SIWC=0 \
 		test-io-json-bridge-body
 
 JSON_PROJECTION_REFINEMENT_LEAN_V1 ?= \
@@ -47831,8 +47962,8 @@ test-json-gslt: \
 .PHONY: test-io
 test-io: test-io-json-bridge
 	@$(MAKE) -s BUILD=core ENABLE_HTTP=1 test-io-syntax test-io-runtime
-	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-no-http test-io-rho-bridge
-	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-browser
+	@$(MAKE) -s BUILD=core CETTA_TEST_ISOLATED=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_SIWC=0 test-io-no-http test-io-rho-bridge
+	@$(MAKE) -s BUILD=core CETTA_TEST_ISOLATED=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_SIWC=0 test-io-browser
 
 .PHONY: test-petta-imported-host-bridges
 ifeq ($(LIB_PROLOG_ENABLED),1)
@@ -49802,3 +49933,9 @@ test-petta-selector-fingerprint: $(PETTA_SELECTOR_FINGERPRINT_TEST_BIN) $(BIN) b
 	@echo 'PASS: captured selector offsets agree with exact lookup on ordinary and compiled routes'
 
 test-all test-petta-specializer-prepare: test-petta-selector-fingerprint
+
+.PHONY: test-petta-contextual-case
+test-petta-contextual-case: $(BIN) tests/support/check_petta_contextual_case.py
+	python3 tests/support/check_petta_contextual_case.py --cetta ./$(BIN)
+
+test-all: test-petta-contextual-case

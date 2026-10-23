@@ -1389,6 +1389,11 @@ struct PettaMachineImpl {
     PettaGoalTrailEntry *goal_trail;
     size_t goal_trail_len;
     size_t goal_trail_cap;
+    /* Derived witnesses into the current log, never rollback authority.
+     * Slots may reuse an entry only within the current write interval. */
+    size_t *goal_last_trailed;
+    size_t goal_last_trailed_cap;
+    size_t goal_trail_write_floor;
     size_t protected_goal_height;
     PettaChoice *choices;
     size_t choice_len;
@@ -4674,17 +4679,49 @@ bool petta_machine_table_maintain(
     return ok;
 }
 
+/* Both stored choices and dispatch-local rollback marks start a new interval.
+ * No saved payload before this floor can replace a write after the mark. */
+static size_t petta_goal_trail_checkpoint(PettaMachineImpl *machine) {
+    if (!machine)
+        return 0u;
+    machine->goal_trail_write_floor = machine->goal_trail_len;
+    return machine->goal_trail_len;
+}
+
+static bool petta_goal_trail_cached(
+    PettaMachineImpl *machine, size_t index) {
+    if (index >= machine->goal_last_trailed_cap) {
+        size_t old_cap = machine->goal_last_trailed_cap;
+        if (!petta_machine_reserve(
+                (void **)&machine->goal_last_trailed,
+                &machine->goal_last_trailed_cap,
+                index + 1u, sizeof(*machine->goal_last_trailed)))
+            return false;
+        for (size_t i = old_cap; i < machine->goal_last_trailed_cap; i++)
+            machine->goal_last_trailed[i] = SIZE_MAX;
+    }
+    size_t at = machine->goal_last_trailed[index];
+    /* Rollback and compaction can leave stale positions in this cache.
+     * Bounds plus the actual entry's slot revalidate each witness. A miss
+     * merely records another complete payload in the authoritative log. */
+    return at >= machine->goal_trail_write_floor &&
+        at < machine->goal_trail_len &&
+        machine->goal_trail[at].index == index;
+}
+
 static bool petta_goal_trail_record_overwrite(
     PettaMachineImpl *machine, size_t index) {
     if (!machine || machine->choice_len == 0u ||
         index >= machine->protected_goal_height) {
         return machine != NULL;
     }
-    /* Consecutive writes after the newest choice checkpoint need only the
-     * oldest saved value. No live choice observes their intermediate value. */
-    if (machine->goal_trail_len >
-            machine->choices[machine->choice_len - 1u].goal_trail_mark &&
+    /* Keep the common consecutive-write check ahead of the indexed lookup.
+     * Nonconsecutive writes in this interval also need only their first
+     * saved payload; every intervening rollback observer has its own floor. */
+    if (machine->goal_trail_len > machine->goal_trail_write_floor &&
         machine->goal_trail[machine->goal_trail_len - 1u].index == index)
+        return true;
+    if (petta_goal_trail_cached(machine, index))
         return true;
     if (index >= machine->goal_initialized_len ||
         !petta_machine_reserve(
@@ -4694,6 +4731,8 @@ static bool petta_goal_trail_record_overwrite(
             sizeof(*machine->goal_trail))) {
         return false;
     }
+    if (index < machine->goal_last_trailed_cap)
+        machine->goal_last_trailed[index] = machine->goal_trail_len;
     machine->goal_trail[machine->goal_trail_len++] =
         (PettaGoalTrailEntry){
             .index = index,
@@ -4712,6 +4751,7 @@ static bool petta_goal_trail_rollback(
     PettaMachineImpl *machine, size_t mark) {
     if (!machine || mark > machine->goal_trail_len)
         return false;
+    machine->goal_trail_write_floor = mark;
     while (machine->goal_trail_len > mark) {
         const PettaGoalTrailEntry *entry =
             &machine->goal_trail[--machine->goal_trail_len];
@@ -4815,6 +4855,7 @@ static bool petta_goal_trail_compact_at_collection(
         machine->choices[boundaries[i].choice_index].goal_trail_mark =
             boundaries[i].after;
     machine->goal_trail_len = write;
+    machine->goal_trail_write_floor = write;
     machine->stats.choice_continuation_trail_compactions++;
     machine->stats.choice_continuation_trail_discarded += old_len - write;
     free(boundaries);
@@ -5209,6 +5250,7 @@ static bool petta_choice_push_at_goal_trail_mark(
          * observer.  Start the next choice era at an empty trail.
          */
         machine->goal_trail_len = 0u;
+        machine->goal_trail_write_floor = 0u;
         machine->protected_goal_height = 0u;
         goal_trail_mark = 0u;
     }
@@ -5216,6 +5258,7 @@ static bool petta_choice_push_at_goal_trail_mark(
         choice.heap_mark = arena_mark(&machine->heap);
         choice.heap_mark_captured = true;
     }
+    petta_goal_trail_checkpoint(machine);
     choice.goal_trail_mark = goal_trail_mark;
     choice.type_obligation_mark = machine->type_obligation_len;
     choice.previous_protected_goal_height =
@@ -5299,7 +5342,7 @@ static bool petta_choice_restore(
 static bool petta_choice_push(
     PettaMachineImpl *machine, PettaChoice choice) {
     return petta_choice_push_at_goal_trail_mark(
-        machine, choice, machine->goal_trail_len);
+        machine, choice, petta_goal_trail_checkpoint(machine));
 }
 
 static void petta_choice_pop(PettaMachineImpl *machine) {
@@ -5316,6 +5359,7 @@ static void petta_choice_pop(PettaMachineImpl *machine) {
     if (machine->choice_len == 0u) {
         machine->protected_goal_height = 0u;
         machine->goal_trail_len = 0u;
+        machine->goal_trail_write_floor = 0u;
     }
 }
 
@@ -9515,6 +9559,7 @@ static CettaContinuationStatus petta_continuation_restore(
     saved->control.goal_initialized_len = 0u;
     destination->goal_trail = saved->control.goal_trail;
     destination->goal_trail_len = saved->control.goal_trail_len;
+    petta_goal_trail_checkpoint(destination);
     destination->goal_trail_cap = saved->control.goal_trail_len;
     saved->control.goal_trail = NULL;
     saved->control.goal_trail_len = 0u;
@@ -10725,6 +10770,7 @@ static bool petta_machine_collect_deterministic_heap(
                machine->goal_len * sizeof(*next_goals));
     machine->goal_initialized_len = machine->goal_len;
     machine->goal_trail_len = 0u;
+    machine->goal_trail_write_floor = 0u;
     machine->protected_goal_height = 0u;
     if (machine->visible_len > 0u)
         memcpy(machine->visible, next_visible,
@@ -11755,9 +11801,19 @@ static PettaEquationSlotMatch petta_machine_equation_slot_match(
         (!machine->host.equation_result_payload_observed ||
          machine->host.equation_result_payload_observed(
              machine->host.context));
+    /* Closed inputs can leave RHS-local variables. The case consumer and
+     * unmetered, untraced IF consumer retain the source frame. Finite fuel
+     * keeps its established goal boundaries. */
     bool activation_candidate =
         petta_equation_body_activation_enabled() &&
-        !payload_observed && !query_closed &&
+        !payload_observed &&
+        (!query_closed || (equation_template && rhs->kind == ATOM_EXPR &&
+            ((rhs->expr.len == 3u && atom_is_symbol_id(
+                 rhs->expr.elems[0], g_builtin_syms.case_text)) ||
+             (rhs_plan && rhs_plan->control == PETTA_PLAN_CONTROL_IF &&
+              machine->host.unlimited_transition_budget &&
+              !petta_machine_trace_enabled() &&
+              (rhs->expr.len == 3u || rhs->expr.len == 4u))))) &&
         term_universe_atom_is_stable(rhs);
     PettaActivationPlanAdmission activation_admission =
         PETTA_ACTIVATION_PLAN_DECLINED_MALFORMED;
@@ -12013,6 +12069,17 @@ static bool petta_push_solve_activation_planned(
             .activation_source_fields =
                 PETTA_ACTIVATION_SOURCE_FIRST,
         });
+}
+
+static bool petta_push_solve_scoped_planned(
+    PettaMachineImpl *machine, Atom *source, Atom *expected,
+    uint32_t barrier, const PettaPlanNode *plan,
+    const PettaEquationTemplate *equation_template,
+    CettaFrameIdentity epoch, uint32_t first_entry) {
+    return cetta_frame_identity_is_none(epoch)
+        ? petta_push_solve_planned(machine, source, expected, barrier, plan)
+        : petta_push_solve_activation_planned(machine, source, expected, barrier,
+              plan, equation_template, epoch, first_entry);
 }
 
 /* Preserve the consumer's collection observation while an equation result is
@@ -14813,7 +14880,7 @@ petta_match_decision_select_candidates(
     const PettaSpaceQueryView *query,
     const PettaEquationCandidate *candidates, size_t candidate_count,
     const PettaEquationCandidate *snapshot_identity,
-    bool deep_admissible,
+    bool deep_admissible, uint64_t observable_arguments,
     const uint32_t **selected, size_t *selected_count,
     bool *structurally_verified) {
     if (structurally_verified)
@@ -14829,12 +14896,13 @@ petta_match_decision_select_candidates(
      * authoritative equation matcher immediately performs the same rejection
      * with complete binding semantics.  Avoid compiling and interpreting a
      * second matcher for the common singleton relation. */
-    if (candidate_count == 1u ||
+    if (candidate_count == 1u || observable_arguments == 0u ||
         setting == PETTA_MATCH_DECISION_SETTING_OFF) {
         return petta_match_decision_source_order(
             machine, candidate_count, selected, selected_count);
     }
-    if (!petta_machine_reserve(
+    bool verify_structure = observable_arguments == UINT64_MAX;
+    if (verify_structure && (!petta_machine_reserve(
             (void **)&machine->match_decision_pattern_roots,
             &machine->match_decision_pattern_roots_cap,
             candidate_count,
@@ -14843,19 +14911,20 @@ petta_match_decision_select_candidates(
             (void **)&machine->match_decision_pattern_roots_known,
             &machine->match_decision_pattern_roots_known_cap,
             candidate_count,
-            sizeof(*machine->match_decision_pattern_roots_known))) {
+            sizeof(*machine->match_decision_pattern_roots_known)))) {
         return CETTA_MATCH_DECISION_SELECT_ERROR;
     }
-    memset(machine->match_decision_pattern_roots_known, 0,
+    if (verify_structure)
+        memset(machine->match_decision_pattern_roots_known, 0,
            candidate_count *
                sizeof(*machine->match_decision_pattern_roots_known));
     PettaMatchDecisionContext context = {
         .machine = machine,
         .candidates = candidates,
         .candidate_count = candidate_count,
-        .pattern_roots = machine->match_decision_pattern_roots,
-        .pattern_roots_known =
-            machine->match_decision_pattern_roots_known,
+        .pattern_roots = verify_structure ? machine->match_decision_pattern_roots : NULL,
+        .pattern_roots_known = verify_structure
+            ? machine->match_decision_pattern_roots_known : NULL,
     };
     CettaMatchDecisionMode mode =
         petta_match_decision_mode(deep_admissible);
@@ -14866,7 +14935,7 @@ petta_match_decision_select_candidates(
     if (!decision)
         return CETTA_MATCH_DECISION_SELECT_ERROR;
     CettaMatchDecisionVerifyCandidateFn verifier =
-        petta_match_decision_verifier(mode);
+        verify_structure ? petta_match_decision_verifier(mode) : NULL;
 
     CettaMatchDecisionStats before = {0};
     CettaMatchDecisionStats after = {0};
@@ -14908,7 +14977,7 @@ petta_match_decision_select_candidates(
      * policy: a call open at every discriminator attempts its equations in
      * source order, and the LHS matcher decides. */
     if (!cetta_match_decision_discriminator_bound_view_v1(
-            decision, &fields, UINT64_MAX)) {
+            decision, &fields, observable_arguments)) {
         if (arguments != inline_arguments)
             free(arguments);
         machine->stats.match_decision_discriminator_unbound_skips++;
@@ -14919,7 +14988,7 @@ petta_match_decision_select_candidates(
         verifier == petta_match_decision_verify_shape_candidate) {
         state = cetta_match_decision_select_view_v1(
             decision, machine->space, machine->host.match_decision_semantics,
-            &fields, UINT64_MAX,
+            &fields, observable_arguments,
             petta_match_decision_verify_shape_view_candidate, &context,
             selected, selected_count);
         if (state == CETTA_MATCH_DECISION_SELECT_READY)
@@ -14928,7 +14997,7 @@ petta_match_decision_select_candidates(
         Atom *whole = petta_machine_materialize_space_query(machine, query);
         state = whole ? cetta_match_decision_select(
             decision, machine->space, machine->host.match_decision_semantics,
-            whole, UINT64_MAX, verifier, &context, selected, selected_count)
+            whole, observable_arguments, verifier, &context, selected, selected_count)
             : CETTA_MATCH_DECISION_SELECT_ERROR;
         if (state == CETTA_MATCH_DECISION_SELECT_READY && verifier)
             *structurally_verified = true;
@@ -14937,12 +15006,12 @@ petta_match_decision_select_candidates(
             ? cetta_match_decision_select(
                   decision, machine->space,
                   machine->host.match_decision_semantics,
-                  query->whole, UINT64_MAX, verifier,
+                  query->whole, observable_arguments, verifier,
                   &context, selected, selected_count)
             : cetta_match_decision_select_parts(
                   decision, machine->space,
                   machine->host.match_decision_semantics,
-                  query->head, query->arguments, query->arity, UINT64_MAX,
+                  query->head, query->arguments, query->arity, observable_arguments,
                   selected, selected_count);
         if (state == CETTA_MATCH_DECISION_SELECT_READY &&
             *selected_count > 1u && source_fields && verifier) {
@@ -14963,7 +15032,7 @@ petta_match_decision_select_candidates(
                 state = cetta_match_decision_select(
                     decision, machine->space,
                     machine->host.match_decision_semantics,
-                    resolved, UINT64_MAX,
+                    resolved, observable_arguments,
                     verifier,
                     &context, selected, selected_count);
                 if (state == CETTA_MATCH_DECISION_SELECT_READY)
@@ -21369,15 +21438,6 @@ static bool petta_machine_cells_may_meet(const Atom *lhs, const Atom *whole) {
     return true;
 }
 
-/* Every equation of a list call is a candidate, in source order. */
-static __attribute__((noinline)) uint32_t *petta_machine_every_candidate(
-        size_t count) {
-    uint32_t *every = malloc(sizeof(*every) * (count ? count : 1u));
-    for (size_t index = 0u; every && index < count; index++)
-        every[index] = (uint32_t)index;
-    return every;
-}
-
 /* HE completes a producer before its consumer reads it: the producer's
  * answers are collected in an owned choice and yielded, normalized, to
  * `*expected`, which becomes the fresh variable the producer answers to.
@@ -21787,7 +21847,6 @@ static bool petta_machine_start_space_query(
     bool has_statically_eligible_guard = false;
     bool has_ground_template = false;
     bool candidates_structurally_verified = false;
-    uint32_t *every_candidate = NULL;
     uint64_t structural_verification_mutation_epoch = 0u;
     PettaMachineAuthorityToken structural_verification_authority = {0};
     bool structural_verification_authority_pinned = false;
@@ -21826,21 +21885,26 @@ static bool petta_machine_start_space_query(
                 machine, &structural_verification_authority);
         CettaMatchDecisionSelectState selection =
             CETTA_MATCH_DECISION_SELECT_ERROR;
-        if (list_query || head == SYMBOL_ID_NONE) {
-            every_candidate = petta_machine_every_candidate(source_len);
-            selected = every_candidate;
-            selected_count = every_candidate ? source_len : 0u;
-            candidates_structurally_verified = false;
-            if (every_candidate)
-                selection = CETTA_MATCH_DECISION_SELECT_READY;
-        } else {
-            selection = petta_match_decision_select_candidates(
-                machine, head, query,
-                source_candidates, source_len,
-                stable_catalog_identity ? source_candidates : NULL,
-                deep_admissible, &selected, &selected_count,
-                &candidates_structurally_verified);
+        uint64_t observable_arguments = UINT64_MAX;
+        if (list_query) {
+            /* The fixed readiness word can retain a conservative prefix.
+             * A carrier argument is opaque to the structural index; other
+             * arguments still refute impossible equations. The list-aware
+             * matcher remains authoritative for every surviving candidate. */
+            observable_arguments = 0u;
+            CettaExprLen known = query->arity < 63u ? query->arity : 63u;
+            for (CettaExprIndex index = 0u; index < known; index++) {
+                Atom *argument = list_query->expr.elems[index + 1u];
+                if (!atom_structural_may_have_list_carrier(argument))
+                    observable_arguments |= UINT64_C(1) << index;
+            }
         }
+        selection = petta_match_decision_select_candidates(
+            machine, head, query,
+            source_candidates, source_len,
+            stable_catalog_identity ? source_candidates : NULL,
+            deep_admissible, observable_arguments, &selected, &selected_count,
+            &candidates_structurally_verified);
         uint64_t verification_epoch_after =
             space_global_mutation_epoch();
         PettaMachineAuthorityToken confirmed_authority = {0};
@@ -21867,8 +21931,7 @@ static bool petta_machine_start_space_query(
             candidates_structurally_verified = false;
         }
         if (selection != CETTA_MATCH_DECISION_SELECT_READY) {
-            free(every_candidate);
-            petta_program_candidate_snapshot_lease_release(
+                    petta_program_candidate_snapshot_lease_release(
                 &candidate_lease);
             machine->terminal = true;
             machine->terminal_step =
@@ -21884,8 +21947,7 @@ static bool petta_machine_start_space_query(
             selection_head_failures += pruned;
         }
         if (selected_count > SIZE_MAX / sizeof(*equations)) {
-            free(every_candidate);
-            petta_program_candidate_snapshot_lease_release(
+                    petta_program_candidate_snapshot_lease_release(
                 &candidate_lease);
             machine->terminal = true;
             machine->terminal_step = PETTA_MACHINE_STEP_CAPACITY;
@@ -21893,8 +21955,7 @@ static bool petta_machine_start_space_query(
         }
         for (size_t index = 0u; index < selected_count; index++) {
             if (selected[index] >= source_len) {
-                free(every_candidate);
-                petta_program_candidate_snapshot_lease_release(
+                            petta_program_candidate_snapshot_lease_release(
                     &candidate_lease);
                 free(equations);
                 machine->terminal = true;
@@ -21985,9 +22046,8 @@ static bool petta_machine_start_space_query(
             equation_len++;
         }
     }
-    /* Selection entries retain indices, never this temporary all-row list.
-     * Release it before any producer or open-answer handoff can return. */
-    free(every_candidate);
+    /* The loop above is the candidate list's last reader; every exit below
+     * leaves after it. */
 
     /* The whole body of a `once` takes its witness from the open tier's
      * first-witness portfolio, closed or open, before any other route. */
@@ -22104,7 +22164,7 @@ static bool petta_machine_start_space_query(
             count_collection_result);
 
     size_t entry_depth = machine->choice_len;
-    size_t goal_trail_mark = machine->goal_trail_len;
+    size_t goal_trail_mark = petta_goal_trail_checkpoint(machine);
     uint64_t call_occurrence = 0u;
     if (machine->host.begin_relation_call) {
         call_occurrence = machine->host.begin_relation_call(
@@ -24249,7 +24309,7 @@ static bool petta_machine_publish_count_weight(
     }
     Atom *witness = petta_semantics_success_value(&machine->heap);
     size_t goal_mark = machine->goal_len;
-    size_t trail_mark = machine->goal_trail_len;
+    size_t trail_mark = petta_goal_trail_checkpoint(machine);
     if (!witness || !petta_goal_push(
             machine,
             &(PettaGoal){
@@ -26027,7 +26087,7 @@ static __attribute__((noinline)) bool petta_machine_map_atom(
             machine->host.map_single_result(
                 machine->host.context, machine->space,
                 &machine->heap, items, mapper_or_binder, body,
-                environment, &prepared_result);
+                petta_plan_child(plan, 3u), environment, &prepared_result);
         if (prepared == PETTA_MACHINE_FOLD_VALUE) {
             return prepared_result &&
                 petta_push_unify(
@@ -26277,7 +26337,7 @@ static __attribute__((noinline)) bool petta_machine_foldl_atom(
                 machine->host.context, machine->space,
                 &machine->heap, items, initial,
                 accumulator_binder, item_binder, step,
-                environment, &prepared_result);
+                petta_plan_child(plan, 5u), environment, &prepared_result);
         if (prepared == PETTA_MACHINE_FOLD_VALUE) {
             return prepared_result &&
                 petta_push_unify(
@@ -26491,7 +26551,7 @@ static __attribute__((noinline)) bool petta_machine_filter_atom(
             machine->host.filter_single_result(
                 machine->host.context, machine->space,
                 &machine->heap, items, mapper_or_binder, body,
-                environment, &prepared_result);
+                petta_plan_child(plan, 3u), environment, &prepared_result);
         if (prepared == PETTA_MACHINE_FOLD_VALUE) {
             return prepared_result &&
                 petta_push_unify(
@@ -30502,6 +30562,14 @@ static bool petta_machine_ready_case_trial(PettaMachineImpl *machine,
         : petta_machine_unify(machine, pattern, key);
 }
 
+/* Default is a source occurrence, not a value classification. A variable
+ * or computed pattern can evaluate to Empty and still match it as data. */
+static bool petta_case_default_arm(const Atom *arm, const PettaPlanNode *plan) {
+    return plan ? plan->literal_case_default
+        : arm && arm->kind == ATOM_EXPR && arm->expr.len == 2u &&
+          atom_is_symbol_id(arm->expr.elems[0], g_builtin_syms.empty);
+}
+
 /* Canonical case needs the same delayed trial boundary. Source plans stay
  * with their original arm indices; only ready successors enter these slices. */
 static bool petta_machine_push_delayed_case(PettaMachineImpl *machine,
@@ -30515,14 +30583,17 @@ static bool petta_machine_push_delayed_case(PettaMachineImpl *machine,
         Atom *branch = arms->expr.elems[index];
         if (!branch || branch->kind != ATOM_EXPR || branch->expr.len != 2u)
             continue;
-        Atom *pattern = branch->expr.elems[0];
-        if (!pattern || (pattern->kind == ATOM_SYMBOL &&
-                        atom_symbol_current_id(pattern) == g_builtin_syms.empty))
+        Atom *pattern = goal->fourth ? goal->fourth->expr.elems[index]
+                                      : branch->expr.elems[0];
+        if (!pattern || petta_case_default_arm(
+                branch, petta_plan_child(goal->second_plan, index)))
             continue;
         if (remaining > UINT32_MAX - 2u ||
-            !petta_push_solve_planned(machine, branch->expr.elems[1], expected,
+            !petta_push_solve_scoped_planned(machine, branch->expr.elems[1], expected,
                 goal->barrier, petta_plan_child(
-                    petta_plan_child(goal->second_plan, index), 1u)) ||
+                    petta_plan_child(goal->second_plan, index), 1u),
+                goal->activation_template, goal->activation_epoch,
+                goal->activation_first_entry) ||
             !petta_goal_push(machine, &(PettaGoal){
                 .kind = PETTA_GOAL_CASE_SELECT, .barrier = goal->barrier,
                 .first = key, .second = pattern, .ready_branches = true,
@@ -31778,6 +31849,206 @@ static bool petta_machine_he_data_values(
     return true;
 }
 
+/* Case preparation and ordered selection are shared by materialized calls
+ * and source activations. Normal arms retain source bodies until selected.
+ * The Empty default still materializes at its escaping choice boundary. */
+static bool petta_machine_push_case(PettaMachineImpl *machine,
+    const PettaGoal *goal, Atom *expression, Atom *expected,
+    const PettaPlanNode *plan, PettaMachineStep *failure) {
+    Atom *branches = expression->expr.elems[2];
+    if (!branches || branches->kind != ATOM_EXPR)
+        return petta_machine_unify_resolved(
+            machine, expression, expected);
+    Atom *patterns = NULL;
+    Atom *pattern_draft = NULL;
+    bool activation = !cetta_frame_identity_is_none(goal->activation_epoch) &&
+        goal->activation_source_fields == PETTA_ACTIVATION_SOURCE_FIRST;
+    if (activation) {
+        Atom *draft = atom_expr_builder_begin(&machine->heap, branches->expr.len);
+        if (!draft) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        for (CettaExprIndex index = 0u; index < branches->expr.len; index++) {
+            Atom *branch = branches->expr.elems[index];
+            if (!branch || branch->kind != ATOM_EXPR || branch->expr.len != 2u) {
+                draft->expr.elems[index] = atom_unit(&machine->heap);
+                continue;
+            }
+            PettaGoal pattern_goal = *goal;
+            pattern_goal.plan = petta_plan_child(
+                petta_plan_child(petta_plan_child(plan, 2u), index), 0u);
+            Atom *pattern = petta_machine_materialize_activation_source(
+                machine, &pattern_goal, branch->expr.elems[0]);
+            draft->expr.elems[index] = pattern;
+            if (!draft->expr.elems[index]) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+        }
+        pattern_draft = draft;
+    }
+    Atom *value = petta_fresh_variable(machine);
+    if (!value) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    /* PeTTa prepares every pattern before it selects one: each
+     * function-headed subterm is evaluated, in the arms' order, and the
+     * match reads its value.  Only arms that hold one change. */
+    PettaRelationalHeadAction *preparation = NULL;
+    size_t preparation_len = 0u;
+    size_t preparation_cap = 0u;
+    Atom **arms = NULL;
+    bool prepared_ok = true;
+    for (CettaExprIndex index = 0u;
+         prepared_ok && index < branches->expr.len; index++) {
+        Atom *branch = branches->expr.elems[index];
+        if (!branch || branch->kind != ATOM_EXPR || branch->expr.len != 2u ||
+            petta_case_default_arm(branch,
+                petta_plan_child(petta_plan_child(plan, 2u), index)))
+            continue;
+        Atom *pattern = pattern_draft ? pattern_draft->expr.elems[index]
+                                     : branch->expr.elems[0];
+        if (!petta_machine_callable_root(machine, pattern, NULL) &&
+            !petta_machine_contains_callable(machine, pattern, false, NULL, NULL))
+            continue;
+        if (!activation && !arms) {
+            arms = cetta_malloc(sizeof(*arms) *
+                                (size_t)branches->expr.len);
+            memcpy(arms, branches->expr.elems,
+                   sizeof(*arms) * (size_t)branches->expr.len);
+        }
+        Atom *prepared = NULL;
+        prepared_ok = petta_relational_head_project(
+                machine, pattern, NULL, CETTA_FRAME_IDENTITY_NONE,
+                &preparation, &preparation_len, &preparation_cap,
+                &prepared) && prepared;
+        if (activation) {
+            pattern_draft->expr.elems[index] = prepared;
+        } else {
+            Atom *arm[2] = {prepared, branch->expr.elems[1]};
+            arms[index] = prepared_ok ? atom_expr(&machine->heap, arm, 2u) : NULL;
+            prepared_ok = prepared_ok && arms[index];
+        }
+    }
+    if (prepared_ok && arms) {
+        branches = atom_expr(&machine->heap, arms,
+                             branches->expr.len);
+        prepared_ok = branches != NULL;
+    }
+    free(arms);
+    if (!prepared_ok) {
+        free(preparation);
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    if (activation) {
+        patterns = atom_expr_builder_finish(&machine->heap, pattern_draft);
+        if (!patterns) {
+            free(preparation);
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+    }
+    size_t entry_choice_len = machine->choice_len;
+    size_t default_choice_index = SIZE_MAX;
+    for (CettaExprIndex index = 0u;
+         index < branches->expr.len; index++) {
+        Atom *branch = branches->expr.elems[index];
+        if (!branch || branch->kind != ATOM_EXPR ||
+            branch->expr.len != 2u ||
+            !petta_case_default_arm(branch,
+                petta_plan_child(petta_plan_child(plan, 2u), index))) {
+            continue;
+        }
+        Atom *default_body = branch->expr.elems[1];
+        if (activation) {
+            PettaGoal body_goal = *goal;
+            body_goal.plan = petta_plan_child(
+                petta_plan_child(petta_plan_child(plan, 2u), index), 1u);
+            default_body = petta_machine_materialize_activation_source(
+                machine, &body_goal, default_body);
+            if (!default_body) {
+                free(preparation);
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+        }
+        PettaChoice default_choice = {
+            .kind = PETTA_CHOICE_CASE_DEFAULT,
+            .manufacture_epoch = machine->manufacture_epoch,
+            .binding_mark = bindings_builder_save(
+                search_context_builder(&machine->search)),
+            .goal_height = machine->goal_len,
+            .barrier = goal->barrier,
+            .as.case_default = {
+                .saw_answer = false,
+                .expression = default_body,
+                .expected = expected,
+                .plan = petta_plan_child(
+                    petta_plan_child(
+                        petta_plan_child(plan, 2u), index),
+                    1u),
+            },
+        };
+        if (!petta_choice_push(machine, default_choice)) {
+            free(preparation);
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        default_choice_index = machine->choice_len - 1u;
+        break;
+    }
+    /* The key runs before the preparation, as PeTTa translates a case;
+     * under an Empty default the preparation runs first. */
+    bool pushed = petta_goal_push(
+        machine,
+        &(PettaGoal){
+            .kind = PETTA_GOAL_CASE_SELECT,
+            .barrier = goal->barrier,
+            .first = value,
+            .second = branches,
+            .fourth = patterns,
+            .activation_template = activation ? goal->activation_template : NULL,
+            .activation_epoch = activation ? goal->activation_epoch : CETTA_FRAME_IDENTITY_NONE,
+            .activation_first_entry = activation ? goal->activation_first_entry : 0u,
+            .activation_source_fields = activation ? PETTA_ACTIVATION_SOURCE_SECOND : 0u,
+            .third = expected,
+            .second_plan = petta_plan_child(plan, 2u),
+            .choice_index = default_choice_index,
+        });
+    bool key_first = default_choice_index == SIZE_MAX;
+    if (pushed && !key_first)
+        pushed = petta_push_solve_scoped_planned(
+            machine, expression->expr.elems[1], value,
+            goal->barrier, petta_plan_child(plan, 1u),
+            activation ? goal->activation_template : NULL,
+            activation ? goal->activation_epoch : CETTA_FRAME_IDENTITY_NONE,
+            activation ? goal->activation_first_entry : 0u);
+    for (size_t index = preparation_len; pushed && index > 0u;
+         index--) {
+        const PettaRelationalHeadAction *step =
+            &preparation[index - 1u];
+        pushed = petta_push_solve(machine, step->pattern, step->value,
+                                  goal->barrier);
+    }
+    if (pushed && key_first)
+        pushed = petta_push_solve_scoped_planned(
+            machine, expression->expr.elems[1], value,
+            goal->barrier, petta_plan_child(plan, 1u),
+            activation ? goal->activation_template : NULL,
+            activation ? goal->activation_epoch : CETTA_FRAME_IDENTITY_NONE,
+            activation ? goal->activation_first_entry : 0u);
+    free(preparation);
+    if (!pushed) {
+        petta_choice_truncate(machine, entry_choice_len);
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    return true;
+}
+
 static bool petta_machine_dispatch_activation_solve(
     PettaMachineImpl *machine, const PettaGoal *goal,
     PettaMachineStep *failure) {
@@ -31934,6 +32205,19 @@ activation_tail_segment:;
     /* DATA with executable descendants has no generic strictness license.
      * Materialize it at the canonical fallback below; typed or generated
      * constructor rows may reintroduce a narrower direct view later. */
+
+    if (source->kind == ATOM_EXPR && source->expr.len == 3u &&
+        atom_is_symbol_id(source->expr.elems[0], g_builtin_syms.case_text) &&
+        source->expr.elems[2]->kind == ATOM_EXPR) {
+        Atom *arms = source->expr.elems[2];
+        bool literal_arms = true;
+        for (CettaExprIndex index = 0u; index < arms->expr.len; index++)
+            if (!arms->expr.elems[index] || arms->expr.elems[index]->kind == ATOM_VAR)
+                literal_arms = false;
+        if (literal_arms)
+            return petta_machine_push_case(machine, goal, source, goal->second,
+                                           goal->plan, failure);
+    }
 
     bool grounded_handled = false;
     bool grounded_result =
@@ -34754,135 +35038,9 @@ static bool petta_machine_dispatch_solve(
         return true;
     }
 
-    if (head_id == g_builtin_syms.case_text && nargs == 2u) {
-        Atom *branches = expression->expr.elems[2];
-        if (!branches || branches->kind != ATOM_EXPR)
-            return petta_machine_unify_resolved(
-                machine, expression, expected);
-        Atom *value = petta_fresh_variable(machine);
-        if (!value) {
-            *failure = PETTA_MACHINE_STEP_CAPACITY;
-            return false;
-        }
-        /* PeTTa prepares every pattern before it selects one: each
-         * function-headed subterm is evaluated, in the arms' order, and the
-         * match reads its value.  Only arms that hold one change. */
-        PettaRelationalHeadAction *preparation = NULL;
-        size_t preparation_len = 0u;
-        size_t preparation_cap = 0u;
-        Atom **arms = NULL;
-        bool prepared_ok = true;
-        for (CettaExprIndex index = 0u;
-             prepared_ok && index < branches->expr.len; index++) {
-            Atom *branch = branches->expr.elems[index];
-            if (!branch || branch->kind != ATOM_EXPR ||
-                branch->expr.len != 2u ||
-                atom_is_symbol_id(branch->expr.elems[0],
-                                  g_builtin_syms.empty) ||
-                (!petta_machine_callable_root(
-                     machine, branch->expr.elems[0], NULL) &&
-                 !petta_machine_contains_callable(
-                     machine, branch->expr.elems[0], false, NULL, NULL)))
-                continue;
-            if (!arms) {
-                arms = cetta_malloc(sizeof(*arms) *
-                                    (size_t)branches->expr.len);
-                memcpy(arms, branches->expr.elems,
-                       sizeof(*arms) * (size_t)branches->expr.len);
-            }
-            Atom *prepared = NULL;
-            prepared_ok = petta_relational_head_project(
-                    machine, branch->expr.elems[0], NULL, CETTA_FRAME_IDENTITY_NONE,
-                    &preparation, &preparation_len, &preparation_cap,
-                    &prepared) && prepared;
-            Atom *arm[2] = {prepared, branch->expr.elems[1]};
-            arms[index] = prepared_ok
-                ? atom_expr(&machine->heap, arm, 2u) : NULL;
-            prepared_ok = prepared_ok && arms[index];
-        }
-        if (prepared_ok && arms) {
-            branches = atom_expr(&machine->heap, arms,
-                                 branches->expr.len);
-            prepared_ok = branches != NULL;
-        }
-        free(arms);
-        if (!prepared_ok) {
-            free(preparation);
-            *failure = PETTA_MACHINE_STEP_CAPACITY;
-            return false;
-        }
-        size_t entry_choice_len = machine->choice_len;
-        size_t default_choice_index = SIZE_MAX;
-        for (CettaExprIndex index = 0u;
-             index < branches->expr.len; index++) {
-            Atom *branch = branches->expr.elems[index];
-            if (!branch || branch->kind != ATOM_EXPR ||
-                branch->expr.len != 2u ||
-                branch->expr.elems[0]->kind != ATOM_SYMBOL ||
-                atom_symbol_current_id(branch->expr.elems[0]) != g_builtin_syms.empty) {
-                continue;
-            }
-            PettaChoice default_choice = {
-                .kind = PETTA_CHOICE_CASE_DEFAULT,
-                .manufacture_epoch = machine->manufacture_epoch,
-        .binding_mark = bindings_builder_save(
-                    search_context_builder(&machine->search)),
-                .goal_height = machine->goal_len,
-                .barrier = goal->barrier,
-                .as.case_default = {
-                    .saw_answer = false,
-                    .expression = branch->expr.elems[1],
-                    .expected = expected,
-                    .plan = petta_plan_child(
-                        petta_plan_child(
-                            petta_plan_child(plan, 2u), index),
-                        1u),
-                },
-            };
-            if (!petta_choice_push(machine, default_choice)) {
-                *failure = PETTA_MACHINE_STEP_CAPACITY;
-                return false;
-            }
-            default_choice_index = machine->choice_len - 1u;
-            break;
-        }
-        /* The key runs before the preparation, as PeTTa translates a case;
-         * under an Empty default the preparation runs first. */
-        bool pushed = petta_goal_push(
-            machine,
-            &(PettaGoal){
-                .kind = PETTA_GOAL_CASE_SELECT,
-                .barrier = goal->barrier,
-                .first = value,
-                .second = branches,
-                .third = expected,
-                .second_plan = petta_plan_child(plan, 2u),
-                .choice_index = default_choice_index,
-            });
-        bool key_first = default_choice_index == SIZE_MAX;
-        if (pushed && !key_first)
-            pushed = petta_push_solve_planned(
-                machine, expression->expr.elems[1], value,
-                goal->barrier, petta_plan_child(plan, 1u));
-        for (size_t index = preparation_len; pushed && index > 0u;
-             index--) {
-            const PettaRelationalHeadAction *step =
-                &preparation[index - 1u];
-            pushed = petta_push_solve(machine, step->pattern, step->value,
-                                      goal->barrier);
-        }
-        if (pushed && key_first)
-            pushed = petta_push_solve_planned(
-                machine, expression->expr.elems[1], value,
-                goal->barrier, petta_plan_child(plan, 1u));
-        free(preparation);
-        if (!pushed) {
-            petta_choice_truncate(machine, entry_choice_len);
-            *failure = PETTA_MACHINE_STEP_CAPACITY;
-            return false;
-        }
-        return true;
-    }
+    if (head_id == g_builtin_syms.case_text && nargs == 2u)
+        return petta_machine_push_case(machine, goal, expression,
+                                       expected, plan, failure);
 
     bool numeric_min = head_id == g_builtin_syms.petta_min;
     bool numeric_max = head_id == g_builtin_syms.petta_max;
@@ -34987,6 +35145,40 @@ static bool petta_machine_dispatch_solve(
             machine, expression->expr.elems[1],
             condition, goal->barrier,
             petta_plan_child(plan, 1u));
+    }
+
+    if (form == PETTA_FORM_LET && nargs == 3u &&
+        machine->host.append_private_collection &&
+        !machine->host.literal_binding_patterns &&
+        !machine->host.begin_relation_call && !machine->host.record_equation_use &&
+        !petta_machine_trace_enabled() &&
+        expression->expr.elems[1]->kind == ATOM_VAR &&
+        expression->expr.elems[2]->kind == ATOM_EXPR &&
+        expression->expr.elems[3]->kind == ATOM_EXPR &&
+        expression->expr.elems[3]->expr.len == 3u &&
+        atom_is_symbol_id(expression->expr.elems[3]->expr.elems[0], g_builtin_syms.add_atoms) &&
+        (!petta_plan_child(plan, 2u) || petta_plan_child(plan, 2u)->role != PETTA_PLAN_VALUE) &&
+        (!petta_plan_child(plan, 3u) || petta_plan_child(plan, 3u)->role != PETTA_PLAN_VALUE)) {
+        Atom *binder = expression->expr.elems[1];
+        bool visible = false;
+        for (size_t i = 0u; i < machine->visible_len; i++)
+            if (var_id_eq(machine->visible[i].id, binder->var_id) ||
+                var_id_eq(machine->visible[i].context_id, binder->var_id))
+                visible = true;
+        CettaCallOutcome appended = cetta_call_failure();
+        if (!visible && machine->host.append_private_collection(
+                machine->host.context, machine->space, &machine->heap,
+                binder, expression->expr.elems[2], expression->expr.elems[3],
+                petta_plan_child(plan, 2u), environment, &appended)) {
+            if (appended.kind == CETTA_CALL_INTERRUPTED) {
+                *failure = PETTA_MACHINE_STEP_SUSPENDED;
+                return false;
+            }
+            if (appended.kind == CETTA_CALL_RAISED)
+                return petta_machine_raise_error(machine, appended.term);
+            return appended.kind == CETTA_CALL_VALUE && appended.term &&
+                   petta_machine_unify(machine, appended.term, expected);
+        }
     }
 
     if (form == PETTA_FORM_LET && nargs == 3u &&
@@ -35416,7 +35608,7 @@ static bool petta_machine_dispatch_solve(
     if (form == PETTA_FORM_CATCH && nargs == 1u) {
         Atom *result = petta_fresh_variable(machine);
         size_t goal_mark = machine->goal_len;
-        size_t goal_trail_mark = machine->goal_trail_len;
+        size_t goal_trail_mark = petta_goal_trail_checkpoint(machine);
         if (!result ||
             !petta_goal_push(
                 machine,
@@ -36068,6 +36260,56 @@ static bool petta_machine_open_dispatch_handler(
                machine, goal->plan, goal->barrier);
 }
 
+/* Arguments have completed before this continuation. Structural projection
+ * reads their live value closures, and matching consumes the selected child
+ * with its lexical context. No borrowed frame pointer survives the read. */
+static bool petta_machine_try_ready_sequence_value(
+        PettaMachineImpl *machine, const PettaGoal *goal, bool *handled) {
+    *handled = false;
+    Atom *call = goal->first;
+    if (!call || !goal->second || call->kind != ATOM_EXPR ||
+        call->expr.len != 2u || !call->expr.elems[0] ||
+        call->expr.elems[0]->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId operation = atom_symbol_current_id(call->expr.elems[0]);
+    bool size = goal->kind == PETTA_GOAL_LIST_SIZE_READY;
+    PettaSequenceCallInterpretation interpretation = petta_plan_sequence_call(
+        goal->plan, operation, 1u, machine->host.raises_empty_car
+            ? CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD : CETTA_SEQUENCE_PETTA_VALUE);
+    if (!size && interpretation.call.projection == CETTA_SEQUENCE_PROJECTION_NONE)
+        return false;
+    const Bindings *environment = search_context_bindings(&machine->search);
+    PettaSequenceValueView sequence;
+    if (!petta_semantics_sequence_value_view(environment,
+            binding_value_from_atom(call->expr.elems[1]), &sequence))
+        return false;
+    if (size) {
+        if (!sequence.sequence || sequence.length > (uint64_t)INT64_MAX)
+            return false;
+        *handled = true;
+        Atom *result = atom_int(&machine->heap, (int64_t)sequence.length);
+        if (!result)
+            return false;
+        return petta_machine_unify(machine, result, goal->second);
+    }
+    CettaSequenceProjectionView projection = cetta_sequence_projection_view(
+        interpretation.call, sequence.value.skeleton, sequence.sequence,
+        sequence.elements, sequence.length);
+    if (projection.result != CETTA_SEQUENCE_PROJECT_ELEMENT &&
+        projection.result != CETTA_SEQUENCE_PROJECT_SUFFIX &&
+        projection.result != CETTA_SEQUENCE_PROJECT_UNIT)
+        return false;
+    /* Once admitted, allocation or unification failure belongs to this
+     * operation; it must not retry through another execution route. */
+    *handled = true;
+    BindingValue result = cetta_sequence_projection_materialize_value(
+        &machine->heap, &projection, sequence.value, sequence.list);
+    if (!result.skeleton)
+        return false;
+    return petta_machine_unify_values(machine, result,
+        binding_value_from_atom(goal->second));
+}
+
 static bool petta_machine_dispatch_goal(
     PettaMachineImpl *machine, PettaGoal goal,
     PettaMachineStep *failure) {
@@ -36147,6 +36389,14 @@ static bool petta_machine_dispatch_goal(
 
     const Bindings *environment =
         search_context_bindings(&machine->search);
+
+    if (goal.kind == PETTA_GOAL_LIST_UNARY_READY ||
+        goal.kind == PETTA_GOAL_LIST_SIZE_READY) {
+        bool handled;
+        bool result = petta_machine_try_ready_sequence_value(machine, &goal, &handled);
+        if (handled)
+            return result;
+    }
 
     if (goal.kind == PETTA_GOAL_COMPLETION_YIELD) {
         if (goal.choice_index >= machine->choice_len) {
@@ -37103,7 +37353,7 @@ static bool petta_machine_dispatch_goal(
         if (!count)
             return false;
         size_t goal_mark = machine->goal_len;
-        size_t trail_mark = machine->goal_trail_len;
+        size_t trail_mark = petta_goal_trail_checkpoint(machine);
         if (!petta_goal_push(
                 machine,
                 &(PettaGoal){
@@ -37877,9 +38127,10 @@ static bool petta_machine_dispatch_goal(
             if (!branch || branch->kind != ATOM_EXPR ||
                 branch->expr.len != 2u)
                 continue;
-            Atom *pattern = branch->expr.elems[0];
-            if (pattern->kind == ATOM_SYMBOL &&
-                atom_symbol_current_id(pattern) == g_builtin_syms.empty) {
+            Atom *pattern = goal.fourth ? goal.fourth->expr.elems[index]
+                                       : branch->expr.elems[0];
+            if (petta_case_default_arm(
+                    branch, petta_plan_child(goal.second_plan, index))) {
                 continue;
             }
             BindingsBuilder *builder =
@@ -37891,13 +38142,15 @@ static bool petta_machine_dispatch_goal(
                     : petta_machine_unify(machine, pattern, first);
             if (!matched)
                 continue;
-            if (!petta_push_solve_planned(
+            if (!petta_push_solve_scoped_planned(
                     machine, branch->expr.elems[1], expected,
                     goal.barrier,
                     petta_plan_child(
                         petta_plan_child(
                             goal.second_plan, index),
-                        1u))) {
+                        1u),
+                    goal.activation_template, goal.activation_epoch,
+                    goal.activation_first_entry)) {
                 *failure = PETTA_MACHINE_STEP_CAPACITY;
                 return false;
             }
@@ -39486,6 +39739,7 @@ static void petta_machine_destroy_local(PettaMachineImpl *impl) {
     free(impl->choices);
     free(impl->goals);
     free(impl->goal_trail);
+    free(impl->goal_last_trailed);
     free(impl->visible);
     free(impl->type_obligations);
     if (impl->match_decision_repository ==
@@ -40103,7 +40357,7 @@ petta_machine_start_match_conjunction_leg(
         }
 
         size_t goal_mark = machine->goal_len;
-        size_t goal_trail_mark = machine->goal_trail_len;
+        size_t goal_trail_mark = petta_goal_trail_checkpoint(machine);
         bool continuation_ready = false;
         Atom *leg_expected = identity;
         if (has_next) {

@@ -25,3 +25,13 @@ true
 union
 (foo (1 2 3))
 cons
+(0 1)
+(9 9)
+(2 2)
+()
+()
+()
+((+ 1 2) (+ 1 2))
+()
+true
+(Converted ((+ 1 2) kept) List ((+ 1 2) kept))

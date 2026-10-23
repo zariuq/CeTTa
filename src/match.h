@@ -151,6 +151,19 @@ static inline BindingValue binding_value_from_context_kind(
             : binding_value_from_atom(skeleton);
 }
 
+/* New syntax borrows its children, not the parent's persistent ownership.
+ * Keep an open value's lexical frame while giving the new node its ordinary
+ * execution lifetime. This also serves derived rests in structural matching. */
+static inline BindingValue binding_value_with_derived_skeleton(
+        BindingValue source, Atom *derived) {
+    source.skeleton = derived;
+    if (binding_value_kind(source) == BINDING_VALUE_CONTEXTUAL_PERSISTENT)
+        binding_value_set_kind(&source, BINDING_VALUE_CONTEXTUAL);
+    else if (!atom_has_vars(derived))
+        source = binding_value_from_atom(derived);
+    return source;
+}
+
 static inline VarId binding_value_variable_id(BindingValue value) {
     if (!value.skeleton || value.skeleton->kind != ATOM_VAR)
         return VAR_ID_NONE;
@@ -710,8 +723,9 @@ bool bindings_builder_register_frame_schema(
     BindingsBuilder *builder, BindingsFrameSchema *schema, CettaFrameIdentity epoch);
 bool bindings_builder_register_complete_frame_schema(
     BindingsBuilder *builder, BindingsFrameSchema *schema, CettaFrameIdentity epoch);
-/* Runtime-created slots extend the activation's value array, leaving its
- * prepared syntax inventory immutable. No source-id inventory is collected. */
+/* Runtime-created slots extend the logical activation domain; backing is
+ * reserved when a slot is written. The prepared syntax inventory remains
+ * immutable, and no source-id inventory is collected. */
 Atom *bindings_builder_new_variable(BindingsBuilder *builder, Arena *arena,
                                     CettaFrameIdentity frame);
 /* One continuation-owned activation frame.  Writes remain private while a
@@ -770,6 +784,13 @@ Atom     *binding_variable_atom(Arena *a, const Binding *binding);
  * retains its lexical context; false means the chain cannot certify a root. */
 bool      bindings_resolve_value_preview(
               Bindings *b, BindingValue value, BindingValue *out);
+/* A demand-local read under the current acyclic substitution evidence.
+ * Open contextual results also require their generation-checked frame to
+ * be present. The value keeps its lexical and ownership kind. The caller
+ * consumes it before writes, rollback, collection or owner release; this
+ * operation does not acquire ownership or authorize syntax evaluation. */
+bool bindings_observe_value_root(
+    const Bindings *bindings, BindingValue source, BindingValue *out);
 /* Resolve a type substitution by variable identity. */
 bool      bindings_resolve_value_exact(
               Bindings *b, BindingValue value, BindingValue *out);
@@ -1112,6 +1133,10 @@ bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb,
 /* ── Variable renaming (standardization apart, à la Vampire) ───────────── */
 
 #ifdef CETTA_TEST_HOOKS
+/* Observe the ordered, distinct qualified coordinates of a value. Capacity
+ * refusal reports the required count without publishing a partial list. */
+bool bindings_frame_support_test(BindingValue value, VarId *out, size_t capacity,
+                                 size_t *count_out);
 /* Drop only the derived VarId index so projection-path tests can observe
  * whether an operation rebuilds it.  Logical bindings are unchanged. */
 void bindings_lookup_index_test_clear(Bindings *bindings);

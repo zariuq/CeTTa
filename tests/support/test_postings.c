@@ -3,6 +3,8 @@
 #include "library_postings.h"
 #include "native_handle.h"
 #include "space.h"
+#include "space_match_backend.h"
+#include "shared_transition.h"
 #include <assert.h>
 #include <stdlib.h>
 
@@ -15,6 +17,43 @@ Space *eval_resolve_space_read(Space *source) {
     return source == redirect_from ? redirect_to : source;
 }
 static unsigned checks;
+/* A small read-provider spy checks the observer's protected interval and
+ * source-view admission without constructing a second runtime test matrix. */
+static unsigned read_depth, admissions, direct_visits, native_visits;
+static bool exact_source = true;
+static Atom *observed_row;
+void __wrap_cetta_shared_transition_guard_acquire(CettaSharedTransitionGuard *guard) {
+    read_depth++;
+    guard->held = true;
+}
+void __wrap_cetta_shared_transition_guard_release(CettaSharedTransitionGuard *guard) {
+    assert(guard->held && read_depth);
+    read_depth--;
+    guard->held = false;
+}
+bool space_contains_only_exact_atoms(Space *space) {
+    assert(space && read_depth);
+    admissions++;
+    return exact_source;
+}
+CettaCount space_length64(const Space *space) {
+    assert(space && read_depth);
+    return 1u;
+}
+Atom *space_get_at64(const Space *space, CettaIndex index) {
+    assert(space && read_depth && index == 0u);
+    native_visits++;
+    return observed_row;
+}
+SpaceMatchPullVisitResult space_match_backend_try_visit_atoms_direct(
+    Space *space, Arena *scratch, CettaMorkAtomVisitor visitor, void *context) {
+    assert(space && scratch && read_depth);
+    direct_visits++;
+    if (space->match_backend.kind != SPACE_ENGINE_PATHMAP)
+        return SPACE_MATCH_PULL_VISIT_DECLINED;
+    return visitor(observed_row, context)
+        ? SPACE_MATCH_PULL_VISIT_COMPLETE : SPACE_MATCH_PULL_VISIT_TERMINATED;
+}
 static long fail_after = -1;
 bool eval_native_interrupted(void) { return interrupted; }
 int eval_current_effective_fuel_limit(void) { return semantic_fuel; }
@@ -38,7 +77,48 @@ static Atom *invoke(CettaLibraryContext *context, Arena *arena, SymbolId head,
     return result.term;
 }
 
+static void protected_projection(CettaLibraryContext *context, Arena *arena) {
+    Space space = {0};
+    Atom *empty = atom_expr(arena, NULL, 0u);
+    Atom *head = atom_symbol(arena, "Block");
+    observed_row = atom_expr(arena, (Atom *[]){head,
+        atom_expr(arena, (Atom *[]){atom_string(arena, "k")}, 1u),
+        atom_int(arena, 2), atom_int(arena, 3)}, 4u);
+    Atom *layout = atom_expr(arena, (Atom *[]){
+        atom_symbol(arena, "Postings:BlockLayout"), head, atom_int(arena, 4),
+        atom_int(arena, 1), atom_int(arena, 2), atom_int(arena, 3), empty, empty}, 8u);
+    Atom *request = atom_expr3(arena, atom_symbol(arena, "Postings:SpaceBlocks"),
+                               atom_space(arena, &space), layout);
+    for (unsigned route = 0u; route < 2u; route++) {
+        space.match_backend.kind = route ? SPACE_ENGINE_PATHMAP : SPACE_ENGINE_NATIVE;
+        for (unsigned view = 0u; view < 4u; view++) {
+            space.overlay_base = view == 1u ? &space : NULL;
+            space.dep_count = view == 2u ? 1u : 0u;
+            exact_source = view != 3u;
+            admissions = direct_visits = native_visits = 0u;
+            Atom *answer = invoke(context, arena, g_builtin_syms.lib_postings_prepare,
+                                   (Atom *[]){request}, 1u);
+            check(read_depth == 0u);
+            if (view) {
+                check(atom_is_symbol(answer, "Postings:Fallback"));
+                check(direct_visits == 0u && native_visits == 0u);
+                check(admissions == (view == 3u ? 1u : 0u));
+            } else {
+                uint64_t id;
+                check(cetta_native_handle_arg(answer, "postings-table-v1", &id));
+                check(admissions == 1u && direct_visits == 1u);
+                check(native_visits == (route ? 0u : 1u));
+                (void)invoke(context, arena, g_builtin_syms.lib_postings_close,
+                             (Atom *[]){answer}, 1u);
+            }
+            check(cetta_native_handle_count(context) == 0u);
+        }
+    }
+    exact_source = true;
+}
+
 int main(void) {
+    cetta_shared_transition_scope_enter();
     SymbolTable symbols;
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
@@ -49,6 +129,7 @@ int main(void) {
     Arena source, handle, survivor, results;
     arena_init_detached(&source); arena_init_detached(&handle);
     arena_init_detached(&survivor); arena_init_detached(&results);
+    protected_projection(context, &source);
     /* Only the revision getter observes these initialized read records. The
      * language-level gate below uses actual new-space owners and mutation. */
     Space original_source = {.revision = 7u}, shadow_source = {.revision = 8u};
@@ -221,6 +302,8 @@ int main(void) {
     arena_free(&survivor); arena_free(&results);
     cetta_native_handle_cleanup_all(context);
     free(context); symbol_table_free(&symbols); g_symbols = NULL;
+    assert(read_depth == 0u);
+    cetta_shared_transition_scope_leave();
     printf("PostingsOwnership %u 0\n", checks);
     return 0;
 }

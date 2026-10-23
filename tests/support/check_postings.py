@@ -151,7 +151,7 @@ def main():
         ($added (add-atoms $source
           ((Block ("a" "a") 2 4) (Other ignored) (Block ("b") 1 3))))
         ($attempt (postings:prepare-space-blocks-attempt $source
-          (Postings:BlockLayout Block 1 2 3 ("base") (Overlay)))))
+          (Postings:BlockLayout Block 4 1 2 3 ("base") (Overlay)))))
    (case $attempt
      (((NativeHandle "postings-table-v1" $id)
         (== (postings:inspect-table $attempt)
@@ -162,20 +162,41 @@ def main():
         ($added (add-atoms $source
           ((Block ("a") 2 4) (Overlay "a" 2 5)))))
    (== (postings:prepare-space-blocks-attempt $source
-         (Postings:BlockLayout Block 1 2 3 () (Overlay)))
+         (Postings:BlockLayout Block 4 1 2 3 () (Overlay)))
        Postings:Fallback))
 !(let* (($source (new-space))
         ($added (add-atom $source (Block ("before") 0 1)))
         ($snapshot (postings:prepare-space-blocks-attempt $source
-          (Postings:BlockLayout Block 1 2 3 () (Overlay))))
+          (Postings:BlockLayout Block 4 1 2 3 () (Overlay))))
         ($mutated (add-atom $source (Block ("after") 0 2))))
    (== (postings:inspect-table $snapshot) (("before" ((0 (1)))))))
 '''
+    # Exact constructor matching ignores a wrong-width row; the optimized
+    # attempt must decline before publishing, then the authored projection
+    # observes only valid rows. Both shorter and longer rows are adversarial.
+    for row in ['(Block ("bad") 0)', '(Block ("bad") 0 1 extra)',
+                '(Block ("bad") 0 1 extra more)']:
+        space_source += f'''!(let* (($s (new-space))
+          ($added (add-atoms $s ((Block ("ok") 2 3) {row})))
+          ($attempt (postings:prepare-space-blocks-attempt $s
+            (Postings:BlockLayout Block 4 1 2 3 () ())))
+          ($ordinary (postings:prepare-blocks
+            (collapse (match $s (Block $keys $group $position)
+              ($keys $group $position))))))
+          (== (Observation $attempt (postings:inspect-table $ordinary))
+              (Observation Postings:Fallback (("ok" ((2 (3))))))))\n'''
+    for layout in ['(Postings:BlockLayout Block 4 4 2 3 () ())',
+                   '(Postings:BlockLayout Block 0 1 2 3 () ())',
+                   '(Postings:BlockLayout Block -1 1 2 3 () ())',
+                   '(Postings:BlockLayout Block 4 1 2 3 () () extra)']:
+        space_source += f'''!(let $s (new-space)
+          (== (postings:prepare-space-blocks-attempt $s {layout})
+            Postings:Fallback))\n'''
     run = subprocess.run(
         [str(args.cetta.resolve()), '--lang', 'petta@1.0.6', '-e', space_source],
         cwd=ROOT, capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, (run.stdout, run.stderr)
-    assert run.stdout.splitlines()[-3:] == ['true', 'true', 'true'], run.stdout
+    assert run.stdout.splitlines()[-10:] == ['true'] * 10, run.stdout
 
     for extra, environment in [([], dict(os.environ, CETTA_POSTINGS_SPACE_REFERENCE='1')),
                                (['--fuel', '100000'], os.environ.copy())]:
@@ -185,12 +206,12 @@ def main():
 !(let* (($source (new-space))
         ($added (add-atom $source (Block ("a") 2 4))))
    (== (postings:prepare-space-blocks-attempt $source
-         (Postings:BlockLayout Block 1 2 3 () ()))
+         (Postings:BlockLayout Block 4 1 2 3 () ()))
        Postings:Fallback))
 '''], cwd=ROOT, env=environment, capture_output=True, text=True, timeout=30)
         assert run.returncode == 0, (extra, run.stdout, run.stderr)
         assert run.stdout.splitlines()[-1:] == ['true'], (extra, run.stdout)
-    total += 5
+    total += 12
     print(f'Postings {total} 0')
 
 
