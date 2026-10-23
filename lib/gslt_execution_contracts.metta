@@ -301,13 +301,28 @@
   (instruction library-value-dispatch)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
+  ; A sequential connective demands its first operand.  When that value is
+  ; the head's absorbing value it is the answer, and the second operand is
+  ; never demanded.  Any other value demands the second operand, and the
+  ; instruction runs on both values as a strict one does.
+  (operand-discipline short-circuit)
   (rule intrinsic-is-pure
     (= (effects (prepared-pure-intrinsic $instruction $arguments)) pure))
   (law failed-intrinsic-replays-canonically
     (implies
       (not (intrinsic-applicable $instruction $arguments))
       (= (intrinsic-execution $instruction $arguments)
-         canonical-evaluator))))
+         canonical-evaluator)))
+  (law absorbed-operand-is-not-demanded
+    (implies
+      (= (short-circuit-absorbing $head) $first)
+      (= (intrinsic-execution short-circuit ($head $first $second))
+         $first)))
+  (law open-connective-is-strict
+    (implies
+      (not (= (short-circuit-absorbing $head) $first))
+      (= (intrinsic-execution short-circuit ($head $first $second))
+         (intrinsic-execution strict-all ($head $first $second))))))
 
 (gslt determinate-fold-continuation
   (sort Control)
@@ -785,6 +800,7 @@
   (query-head tensor:from-json relational-query)
   (query-head __cetta_lib_list_group_sums relational-query)
   (query-head __cetta_lib_list_group_sums_blocks relational-query)
+  (query-head __cetta_lib_list_factorize relational-query)
   (query-head tensor:from-coo relational-query)
   (query-head tensor:from-coordinates relational-query)
   (query-head tensor:inspect relational-query)
@@ -1035,6 +1051,19 @@
     numeric-eq 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     / 2 strict-all grounded-dispatch)
+  ; HE and PeTTa evaluate both operands of a connective.  Prime's
+  ; connectives demand their second operand only when the first leaves the
+  ; value open: False decides and, True decides or.
+  (prepared-pure-intrinsic-head
+    and 2 strict-all grounded-dispatch (dialects he petta))
+  (prepared-pure-intrinsic-head
+    and 2 short-circuit grounded-dispatch (dialects prime))
+  (prepared-pure-intrinsic-head
+    or 2 strict-all grounded-dispatch (dialects he petta))
+  (prepared-pure-intrinsic-head
+    or 2 short-circuit grounded-dispatch (dialects prime))
+  (short-circuit-absorbing and 2 False)
+  (short-circuit-absorbing or 2 True)
   (prepared-pure-intrinsic-head
     abs-math 1 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
@@ -1049,6 +1078,8 @@
     index-atom 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     unique-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    intersection-atom 2 strict-all grounded-dispatch (dialects petta))
   (prepared-pure-intrinsic-head
     remove-all-atom 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head

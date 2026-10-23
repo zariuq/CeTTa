@@ -2,9 +2,14 @@ true
 true
 true
 true
+true
+(KeyEncodingSmoke (List:Factorization ("b" "a") (0 1 0) (0 1)))
 (JsonSmoke 1 true)
 JsonRejected
 (TensorSmoke tensor:absent (tensor:present 0.0) (TensorData f64 (3) ((0 2.0) (2 0.0))))
 (Tensor:Fault element-count-mismatch)
+(TensorBooleanSmoke (TensorData f64 (4) ((0 0.0) (1 1.0) (2 1.0) (3 3.0))))
+(TensorIntersectionSmoke (TensorData f64 (4) ((0 0.0) (1 1.0) (2 0.0) (3 1.0))))
 (PostingsSmoke ((2 2)) (("f" ((2 (1 1 4)))) ("g" ((3 (0))))) ())
+(PostingsColumnsSmoke (TensorData i64 (1) ((0 2))) ((TensorData i64 (1) ((0 2))) (TensorData f64 (1) ((0 0.5)))))
 (EmbeddingSmoke ((Embedding:Match 1 fruit 0.0) (Embedding:Match 2 moon 0.0)))

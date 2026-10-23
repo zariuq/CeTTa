@@ -113,7 +113,7 @@ def main() -> None:
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     selected = set(args.only.split(',')) if args.only else None
-    known={'jetta','patrick','hm','parse','proof','affine','mutation','graph','bio','bio-index','bio-mork','selectors'}
+    known={'jetta','patrick','hm','parse','proof','affine','mutation','graph','bio','bio-index','bio-mork','selectors','contextual','admission','checkpoints','foreign-read'}
     if selected and selected-known:
         ap.error('unknown families: '+', '.join(sorted(selected-known)))
     rows = []
@@ -156,6 +156,111 @@ def main() -> None:
             emit(f'selector_lookup_{size}', 'selectors', 'size', {'petta': text},
                  [str(size * (size - 1) // 2)], {'selectors': size},
                  notes='Distinct captured offsets share a constructor prefix. The independent oracle sums 0 through size-1. PeTTa application semantics; no HE adapter.')
+
+    if not selected or 'contextual' in selected:
+        for size in ([16, 128] if args.scale == 'smoke' else [16, 128, 1024, 4096]):
+            cells = ' '.join(f'$held{index}' for index in range(size))
+            for operation in ('size', 'head'):
+                observer = '(size-atom $items)' if operation == 'size' else '(car-atom (cdr-atom $items))'
+                source = f'''(= (scoped-items) (Data 1 {cells}))
+(= (scoped-repeat $n $items $acc)
+   (if (> $n 0)
+       (scoped-repeat (- $n 1) $items (+ $acc {observer}))
+       $acc))
+!(scoped-repeat 64 (scoped-items) 0)
+'''
+                emit(f'scoped_sequence_{operation}_{size}', 'contextual', 'transport',
+                     {'petta': source}, [str(64 * (size + 2) if operation == 'size' else 64)],
+                     {'open_elements': size, 'calls': 64, 'observer': operation},
+                     notes='A completed tuple has many open coordinates. Projection retains the selected lexical value; size observes logical arity. Compare ordinary and normal execution separately.')
+        for size in ([16, 64] if args.scale == 'smoke' else [16, 64, 256, 1024]):
+            key = size // 2
+            equations = "\n".join(
+                f"(= (carrier-pick $list key-{index}) {index})" for index in range(size))
+            source = equations + f"""
+(= (carrier-repeat $n $list)
+   (if (< $n 1) 0
+       (let $v (carrier-pick $list key-{key})
+         (+ $v (carrier-repeat (- $n 1) $list)))))
+!(carrier-repeat 2000 (cons first $tail))
+"""
+            emit(f'opaque_argument_selection_{size}', 'contextual', 'selection',
+                 {'petta': source}, [str(2000 * key)], {'equations': size, 'calls': 2000},
+                 notes='An open list is opaque to structural selection; the independent bound key selects one equation. Exact matching remains authoritative.')
+        body, separator, _ = (ROOT/'benchmarks/contextual_case.metta').read_text().rpartition('\n!')
+        if not separator:
+            raise ValueError('contextual case example must end in a query')
+        for size in ([16, 64] if args.scale == 'smoke' else [16, 64, 256, 1024]):
+            argument = '(Link item ' * size + 'End' + ')' * size
+            source = body + f'\n!(contextual-case-length {argument})\n'
+            emit(f'contextual_case_{size}', 'contextual', 'transport',
+                 {'petta': source}, [str(size)], {'depth': size},
+                 notes='Fresh RHS-local pattern variables and retained case bodies. Compare normal and ordinary evaluator configurations separately.')
+        for size in ([16, 64] if args.scale == 'smoke' else [16, 64, 256, 1024]):
+            locals_ = ' '.join(f'$local{index}' for index in range(size))
+            source = f'''(= (pick-if $n) (if (> $n 0) $n (Unused {locals_})))
+(= (repeat-if $n $acc)
+   (if (> $n 0) (repeat-if (- $n 1) (+ $acc (pick-if 1))) $acc))
+!(repeat-if 2000 0)
+'''
+            emit(f'contextual_if_{size}', 'contextual', 'transport',
+                 {'petta': source, 'he': source}, ['2000'],
+                 {'unused_variables': size, 'calls': 2000},
+                 notes='A closed call selects a small result while the unselected branch has a large variable inventory. Logical coordinates remain available independently of backing storage. Finite fuel retains its ordinary route.')
+
+    if not selected or 'foreign-read' in selected:
+        body, separator, _ = (ROOT/'benchmarks/foreign_nested_lists.metta').read_text().rpartition('\n!')
+        if not separator:
+            raise ValueError('foreign read example must end in a query')
+        fixture = (ROOT/'tests/petta/fixtures/libpl_read_certificate.pl').resolve()
+        body = body.replace('"tests/petta/fixtures/libpl_read_certificate.pl"',
+                            json.dumps(str(fixture)))
+        calls = 100 if args.scale == 'smoke' else 1000
+        for depth in ([16, 64] if args.scale == 'smoke' else [16, 64, 192, 384]):
+            emit(f'foreign_nested_lists_{depth}', 'foreign-read', 'transport',
+                 {'petta': body + f'\n!(foreign-nested-lists {calls} {depth})\n'},
+                 ['true', 'true', str(calls)], {'depth': depth, 'calls': calls},
+                 dependencies={'petta': [str(fixture)]},
+                 notes='Requires the ordinary Prolog library provider. The same predicate builds a nested singleton list for each call; the native boundary materializes it before the outer size observation. Include dependency identity and complete setup output.')
+
+        body, separator, _ = (ROOT/'benchmarks/foreign_open_image.metta').read_text().rpartition('\n!')
+        if not separator:
+            raise ValueError('foreign image example must end in a query')
+        fixture = (ROOT/'tests/petta/fixtures/foreign_open_image.pl').resolve()
+        body = body.replace('"tests/petta/fixtures/foreign_open_image.pl"',
+                            json.dumps(str(fixture)))
+        calls = 100 if args.scale == 'smoke' else 1000
+        for depth in ([16, 64] if args.scale == 'smoke' else [16, 64, 192, 384]):
+            emit(f'foreign_open_image_{depth}', 'foreign-read', 'transport',
+                 {'petta': body + f'\n!(foreign-open-images {calls} {depth})\n'},
+                 ['true', 'true', str(calls)], {'depth': depth, 'calls': calls},
+                 dependencies={'petta': [str(fixture)]},
+                 notes='Same eager image observer with repeated logical variable identities. Later binding and alias behavior has separate correctness controls.')
+
+    if not selected or 'checkpoints' in selected:
+        body, separator, _ = (ROOT/'benchmarks/checkpoint_writes.metta').read_text().rpartition('\n!')
+        if not separator:
+            raise ValueError('checkpoint example must end in a query')
+        expected = [f'(result {side} {number} {side})'
+                    for side in ['first', 'second'] for number in [10, 20]]
+        for size in ([16, 64] if args.scale == 'smoke' else [32, 128, 512, 2048]):
+            emit(f'checkpoint_writes_{size}', 'checkpoints', 'rollback',
+                 {'petta': body + f'\n!(checkpoint-writes {size})\n'}, expected,
+                 {'steps_per_answer': size, 'answers': len(expected)},
+                 notes='Two live alternatives retain branch-local continuations. Repeated writes preserve all four ordered answers and their shared tags; compare ordinary execution separately.')
+
+    if not selected or 'admission' in selected:
+        steps = {'smoke': 2000, 'measure': 20000, 'paper': 200000}[args.scale]
+        for size in ([16, 64] if args.scale == 'smoke' else [16, 32, 64, 128]):
+            source = '\n'.join(
+                f'(= (admission-{index} $n $shared) '
+                f'(case (> $n 0) ((True (admission-{(index + 1) % size} '
+                f'(- $n 1) $shared)) (False $n))))'
+                for index in range(size))
+            source += f'\n!(admission-0 {steps} $input)\n'
+            emit(f'admission_reuse_{size}', 'admission', 'reuse',
+                 {'petta': source}, ['0'], {'heads': size, 'steps': steps},
+                 notes='An open argument keeps a live call context. Repeated admission sees a fixed program and several relation heads; compare ordinary and compiled execution separately.')
 
     sizes = {
         'smoke': {'fibonacci': [15], 'interpreter': [2], 'differentiation': [2],

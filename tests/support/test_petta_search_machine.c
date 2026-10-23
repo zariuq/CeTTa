@@ -1343,6 +1343,51 @@ static void test_typing_operator_identity(void) {
     puts("PASS: typing operator identities preserve sparse ranges and table replacement");
 }
 
+static void test_compact_exact_integer_adapter(Arena *arena) {
+    Atom *operators[] = {atom_symbol_id(arena, g_builtin_syms.op_plus),
+                         atom_symbol_id(arena, g_builtin_syms.op_minus),
+                         atom_symbol_id(arena, g_builtin_syms.op_mul)};
+    const int64_t edges[] = {INT64_MIN, INT64_MIN + 1, -1, 0, 1, INT64_MAX};
+    uint64_t state = UINT64_C(0x72a1398e507fc4bd);
+    unsigned checks = 0u;
+    for (unsigned operation = 0u; operation < 3u; operation++) {
+        for (unsigned trial = 0u; trial < 4132u; trial++) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            int64_t left = trial < 36u ? edges[trial / 6u] : (int64_t)state;
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            int64_t right = trial < 36u ? edges[trial % 6u] : (int64_t)state;
+            __int128 expected = operation == 0u ? (__int128)left + right
+                : operation == 1u ? (__int128)left - right : (__int128)left * right;
+            bool fits = expected >= INT64_MIN && expected <= INT64_MAX;
+            CettaPlainScalar arguments[2] = {
+                {.kind = CETTA_PLAIN_SCALAR_INT, .as.integer = left},
+                {.kind = CETTA_PLAIN_SCALAR_INT, .as.integer = right}};
+            CettaPlainScalar out = {.kind = CETTA_PLAIN_SCALAR_FLOAT, .as.floating = 123.25};
+            bool accepted = grounded_try_plain_scalar_operation(
+                operators[operation], arguments, 2u, &out);
+            assert(accepted == fits);
+            assert(fits ? out.kind == CETTA_PLAIN_SCALAR_INT && out.as.integer == expected
+                        : out.kind == CETTA_PLAIN_SCALAR_FLOAT && out.as.floating == 123.25);
+            /* Publication may alias either operand; refusal publishes nothing. */
+            for (unsigned alias = 0u; alias < 2u; alias++) {
+                CettaPlainScalar aliased[2] = {arguments[0], arguments[1]};
+                assert(grounded_try_plain_scalar_operation(
+                    operators[operation], aliased, 2u, &aliased[alias]) == fits);
+                assert(aliased[alias].kind == CETTA_PLAIN_SCALAR_INT);
+                assert(aliased[alias].as.integer ==
+                    (fits ? (int64_t)expected : arguments[alias].as.integer));
+                checks++;
+            }
+            checks++;
+        }
+    }
+    printf("PASS: %u compact exact-integer boundary, refusal and alias controls\n", checks);
+}
+
 static void test_plain_scalar_truth_dispatch(Arena *arena) {
     Atom *one = atom_int(arena, 1);
     Atom *two = atom_int(arena, 2);
@@ -1503,6 +1548,7 @@ static void test_plain_scalar_truth_dispatch(Arena *arena) {
         division, compact, 2u, &compact_result));
 
     puts("PASS: boxed and compact plain-scalar algebras agree with exact refusal");
+    test_compact_exact_integer_adapter(arena);
 }
 
 static void assert_type_pure_symbol_facts(void) {
@@ -4640,6 +4686,164 @@ static void test_program_case_safety_projection(
            PETTA_RELATION_SAFETY_UNSAFE);
     petta_program_free(program);
     space_free(&space);
+}
+
+static void test_program_safety_cache_scope(
+        TermUniverse *universe, Arena *arena) {
+    enum { HEADS = 192 };
+    const char *bodies[] = {"(id $x)", "(println! $x)", "($x value)"};
+    const PettaRelationSafety expected[] = {
+        PETTA_RELATION_SAFETY_STATIC,
+        PETTA_RELATION_SAFETY_UNSAFE,
+        PETTA_RELATION_SAFETY_GUARDED_DYNAMIC,
+    };
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space spaces[2];
+    SymbolId heads[HEADS];
+    for (unsigned s = 0u; s < 2u; s++) {
+        space_init_with_universe(&spaces[s], universe);
+        for (unsigned i = 0u; i < HEADS; i++) {
+            char name[64], equation[192];
+            snprintf(name, sizeof name, "cache-scope-%u", i);
+            heads[i] = symbol_intern_cstr(g_symbols, name);
+            for (unsigned arity = 1u; arity <= 2u; arity++) {
+                snprintf(equation, sizeof equation, "(= (%s $x%s) %s)",
+                    name, arity == 2u ? " $y" : "",
+                    bodies[(i + s + arity - 1u) % 3u]);
+                add_compiled_program_equation(
+                    program, &spaces[s], arena, equation);
+            }
+        }
+    }
+    /* More inquiries than cache slots, with independent expected answers.
+     * Reordering revisits evicted keys and mixes spaces, arities and all
+     * three admission outcomes without depending on the cache's hash. */
+    for (unsigned pass = 0u; pass < 3u; pass++) {
+        for (unsigned step = 0u; step < HEADS; step++) {
+            unsigned i = (step * 73u + pass * 17u) % HEADS;
+            for (unsigned s = 0u; s < 2u; s++) {
+                for (unsigned arity = 1u; arity <= 2u; arity++) {
+                    PettaRelationSafety want =
+                        expected[(i + s + arity - 1u) % 3u];
+                    assert(petta_program_relation_safety(
+                        program, &spaces[s], heads[i], arity) == want);
+                    assert(petta_program_relation_safety(
+                        program, &spaces[s], heads[i], arity) == want);
+                }
+            }
+        }
+    }
+
+    Space *space = &spaces[0];
+    SymbolId changing = symbol_intern_cstr(g_symbols, "cache-changing");
+    Atom *equation = add_compiled_program_equation(program, space, arena,
+        "(= (cache-changing $x) (id $x))");
+    assert(petta_program_relation_safety(program, space, changing, 1u) ==
+           PETTA_RELATION_SAFETY_STATIC);
+    SpaceProgramToken before = space_program_token(space);
+    space_add(space, parse_one(arena, "(cache-unrelated-data 17)"));
+    assert(space_program_token_eq(before, space_program_token(space)));
+    assert(petta_program_relation_safety(program, space, changing, 1u) ==
+           PETTA_RELATION_SAFETY_STATIC);
+    assert(space_remove(space, equation));
+    petta_program_note_remove_one(program, space, equation);
+    assert(petta_program_relation_safety(program, space, changing, 1u) ==
+           PETTA_RELATION_SAFETY_UNSAFE);
+    equation = add_compiled_program_equation(program, space, arena,
+        "(= (cache-changing $x) (println! $x))");
+    assert(petta_program_relation_safety(program, space, changing, 1u) ==
+           PETTA_RELATION_SAFETY_UNSAFE);
+    assert(space_remove(space, equation));
+    petta_program_note_remove_one(program, space, equation);
+    add_compiled_program_equation(program, space, arena,
+        "(= (cache-changing $x) (id $x))");
+    assert(petta_program_relation_safety(program, space, changing, 1u) ==
+           PETTA_RELATION_SAFETY_STATIC);
+
+    /* An unavailable source plan is a transient refusal. Installing the
+     * plan changes no Space token, but must reopen that classification. */
+    Atom *late = parse_one(arena, "(= (cache-late-plan $x) (id $x))");
+    CettaCount index = space_length64(space);
+    space_add(space, late);
+    late = space_get_at64(space, index);
+    SymbolId late_head = symbol_intern_cstr(g_symbols, "cache-late-plan");
+    before = space_program_token(space);
+    assert(petta_program_relation_safety(program, space, late_head, 1u) ==
+           PETTA_RELATION_SAFETY_UNSAFE);
+    const PettaPlanNode *plan = petta_program_plan_dynamic_add(program, late);
+    assert(plan && petta_program_note_add(program, space, late, plan));
+    assert(space_program_token_eq(before, space_program_token(space)));
+    assert(petta_program_relation_safety(program, space, late_head, 1u) ==
+           PETTA_RELATION_SAFETY_STATIC);
+
+    petta_program_free(program);
+    space_free(&spaces[1]);
+    space_free(&spaces[0]);
+    puts("PASS: safety-cache eviction preserves space, arity, revisions and transient refusals");
+}
+
+static void frame_prefix_transitions(Arena *arena) {
+    enum { SLOTS = 1024 };
+    VarId sources[SLOTS];
+    for (uint32_t i = 0; i < SLOTS; i++)
+        sources[i] = var_id_from_base(i + 1u);
+    BindingsFrameSchema *schema = bindings_frame_schema_new(sources, SLOTS);
+    assert(schema);
+    CETTA_FRAME_IDENTITY_SCOPE(owner);
+    CettaFrameIdentity epoch;
+    assert(cetta_frame_identity_scope_try(&owner, &epoch));
+    Bindings seed;
+    bindings_init(&seed);
+    assert(bindings_register_complete_frame_schema(&seed, schema, epoch));
+    BindingsBuilder builder;
+    assert(bindings_builder_init(&builder, &seed));
+    uint32_t mark = bindings_builder_save(&builder);
+    const unsigned slots[] = {0u, 15u, 16u, 17u, 63u, 64u, 65u, 511u, 1023u};
+    Bindings captured;
+    bindings_init(&captured);
+    for (unsigned i = 0; i < sizeof slots / sizeof slots[0]; i++) {
+        unsigned slot = slots[i];
+        VarId id = var_epoch_id(sources[slot], epoch);
+        Atom *variable = atom_var_with_id(arena, "late-slot", id);
+        Atom *number = atom_int(arena, 100u + slot);
+        assert(!bindings_lookup_value_id(&builder.current, id).skeleton);
+        assert(match_atoms_builder(variable, number, &builder, arena));
+        assert(atom_eq(bindings_lookup_value_id(&builder.current, id).skeleton, number));
+        assert(!bindings_lookup_value_id(&seed, id).skeleton);
+        if (slot == 16u)
+            assert(bindings_clone(&captured, &builder.current));
+    }
+    VarId high = var_epoch_id(sources[SLOTS - 1u], epoch);
+    assert(!bindings_lookup_value_id(&captured, high).skeleton);
+    assert(bindings_lookup_value_id(&builder.current, high).skeleton);
+    Atom *dynamic = bindings_builder_new_variable(&builder, arena, epoch);
+    assert(dynamic && !bindings_lookup_value_id(&builder.current, dynamic->var_id).skeleton);
+    assert(match_atoms_builder(dynamic, atom_int(arena, 2000), &builder, arena));
+    assert(!bindings_lookup_value_id(&captured, dynamic->var_id).skeleton);
+    bindings_builder_rollback(&builder, mark);
+    for (unsigned i = 0; i < sizeof slots / sizeof slots[0]; i++) {
+        VarId id = var_epoch_id(sources[slots[i]], epoch);
+        assert(!bindings_lookup_value_id(&builder.current, id).skeleton);
+    }
+    assert(bindings_lookup_value_id(&captured, var_epoch_id(sources[16], epoch)).skeleton);
+    bindings_free(&captured);
+    bindings_builder_free(&builder);
+    bindings_free(&seed);
+
+    bindings_init(&seed);
+    assert(bindings_register_contextual_frame(&seed, sources, SLOTS, epoch));
+    assert(bindings_builder_init(&builder, &seed));
+    mark = bindings_builder_save(&builder);
+    assert(bindings_builder_register_complete_frame_schema(&builder, schema, epoch));
+    bindings_builder_rollback(&builder, mark);
+    assert(!bindings_lookup_value_id(&builder.current, high).skeleton);
+    Atom *variable = atom_var_with_id(arena, "restored-tail", high);
+    assert(match_atoms_builder(variable, atom_int(arena, 7), &builder, arena));
+    assert(!bindings_lookup_value_id(&seed, high).skeleton);
+    bindings_builder_free(&builder);
+    bindings_free(&seed);
+    bindings_frame_schema_release(schema);
 }
 
 static bool test_program_equation_snapshot_lease(
@@ -9985,6 +10189,52 @@ static void test_marked_goal_trail_compaction(
     petta_machine_destroy(&machine);
 }
 
+static void test_checkpoint_goal_writes(
+    Space *space, Arena *persistent, Arena *answers) {
+    add_equation(space, persistent,
+        "(= (checkpoint-drain $n $tag)"
+        " (if (> $n 0)"
+        "  (let $prior (- $n 1)"
+        "   (let $again (+ $prior 1)"
+        "    (if (== $again $n) (checkpoint-drain $prior $tag) Empty)))"
+        "  $tag))");
+    add_equation(space, persistent,
+        "(= (checkpoint-writes $n)"
+        " (chain (superpose (first second)) $side"
+        "  (chain (superpose (10 20)) $number"
+        "   (chain (checkpoint-drain $n $side) $tag"
+        "    (result $side $number $tag)))))");
+    const unsigned sizes[] = {32u, 128u, 512u, 2048u};
+    const char *expected[] = {
+        "(result first 10 first)", "(result first 20 first)",
+        "(result second 10 second)", "(result second 20 second)",
+    };
+    for (size_t size = 0u; size < sizeof(sizes) / sizeof(*sizes); size++) {
+        Atom *query = atom_expr2(
+            answers, atom_symbol(answers, "checkpoint-writes"),
+            atom_int(answers, sizes[size]));
+        PettaMachine machine;
+        assert(query && petta_machine_init(
+            &machine, space, answers, query, NULL, NULL));
+        Atom *answer = NULL;
+        Bindings environment;
+        for (size_t i = 0u; i < sizeof(expected) / sizeof(*expected); i++) {
+            assert(petta_machine_next(&machine, &answer, &environment) ==
+                   PETTA_MACHINE_STEP_ANSWER);
+            assert(atom_alpha_eq(answer, parse_one(answers, expected[i])));
+            bindings_free(&environment);
+        }
+        assert(petta_machine_next(&machine, &answer, &environment) ==
+               PETTA_MACHINE_STEP_EXHAUSTED);
+        bindings_free(&environment);
+        PettaMachineStats stats;
+        assert(petta_machine_stats(&machine, &stats));
+        assert(stats.choice_continuation_items_trailed > 0u);
+        petta_machine_destroy(&machine);
+    }
+    puts("PASS: checkpoint writes preserve nested ordered alternatives and shared tags across the size ladder");
+}
+
 static void test_choice_heap_instant_reclaiming(
     Space *space, Arena *persistent, Arena *answers) {
     enum {
@@ -14477,6 +14727,8 @@ int main(int argc, char **argv) {
     test_compiled_host_read_observations(&universe, &persistent);
     test_compiled_terminal_host(&universe, &persistent);
     test_program_case_safety_projection(&universe, &persistent);
+    test_program_safety_cache_scope(&universe, &persistent);
+    frame_prefix_transitions(&persistent);
     space_init_with_universe(&space, &universe);
 
     test_library_context_initialization();
@@ -14601,6 +14853,8 @@ int main(int argc, char **argv) {
     test_choice_major_payloads(&space, &persistent, &answers);
     test_plain_host_plan_snapshot();
     test_marked_goal_trail_compaction(
+        &space, &persistent, &answers);
+    test_checkpoint_goal_writes(
         &space, &persistent, &answers);
 
     add_equation(&space, &persistent, "(= (f 1) one)");

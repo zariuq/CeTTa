@@ -32,7 +32,7 @@ typedef struct {
     _Atomic size_t holds;
     size_t bytes, stored;
     unsigned char *values;
-    size_t *coordinates; /* NULL is fully present dense storage. */
+    size_t *coordinates; /* COO only; compressed layouts own segment/minor indexes. */
     bool sparse;
 } TensorStorage;
 
@@ -43,6 +43,8 @@ struct CettaTensor {
     CettaTensorDType dtype;
     CettaTensorLayout layout;
     size_t rank, count, offset, segment_count;
+    /* CSC permutation maps canonical row-order entries to physical entries.
+     * Values themselves follow the physical compressed layout. */
     size_t *shape, *segments, *permutation, *minor;
     ptrdiff_t *strides;
     _Atomic uint64_t hash;
@@ -166,6 +168,17 @@ static size_t ordinal(const CettaTensor *t, size_t flat) {
 }
 static size_t locate(const CettaTensor *t, size_t flat) {
     if (!t->storage->sparse) return t->contiguous ? t->offset + flat : ordinal(t, flat);
+    if (t->layout == CETTA_TENSOR_CSR || t->layout == CETTA_TENSOR_CSC) {
+        size_t columns = t->shape[1];
+        size_t major = t->layout == CETTA_TENSOR_CSR ? flat / columns : flat % columns;
+        size_t minor = t->layout == CETTA_TENSOR_CSR ? flat % columns : flat / columns;
+        size_t lo = t->segments[major], hi = t->segments[major + 1];
+        while (lo < hi) {
+            size_t mid = lo + (hi-lo)/2;
+            if (t->minor[mid] < minor) lo = mid+1; else hi = mid;
+        }
+        return lo < t->segments[major+1] && t->minor[lo] == minor ? lo : SIZE_MAX;
+    }
     size_t lo = 0, hi = t->storage->stored;
     while (lo < hi) {
         size_t mid = lo + (hi-lo)/2;
@@ -192,7 +205,24 @@ static void scalar_from_bits(void *p,size_t width,uint64_t bits) {
     else memcpy(p,&bits,8);
 }
 static size_t stored_coordinate(const CettaTensor *t, size_t i) {
-    return t->storage->sparse ? t->storage->coordinates[i] : i;
+    if (!t->storage->sparse) return i;
+    if (t->layout == CETTA_TENSOR_COO) return t->storage->coordinates[i];
+    size_t physical = t->permutation ? t->permutation[i] : i;
+    size_t lo = 0, hi = t->segment_count;
+    while (lo < hi) {
+        size_t mid = lo + (hi-lo)/2;
+        if (t->segments[mid+1] <= physical) lo = mid+1; else hi = mid;
+    }
+    return t->layout == CETTA_TENSOR_CSR
+        ? lo*t->shape[1] + t->minor[physical]
+        : t->minor[physical]*t->shape[1] + lo;
+}
+/* Every semantic observer consumes canonical logical order. The physical
+ * column order of CSC must not silently become a reduction schedule. */
+static const unsigned char *stored_value(const CettaTensor *t, size_t i) {
+    if (!t->storage->sparse) return element(t, i);
+    size_t physical = t->permutation ? t->permutation[i] : i;
+    return t->storage->values + physical*cetta_tensor_itemsize(t->dtype);
 }
 
 CettaTensorStatus cetta_tensor_entries(const CettaTensor *t,
@@ -209,7 +239,7 @@ CettaTensorStatus cetta_tensor_entries(const CettaTensor *t,
     for (size_t i = 0; i < n; i++) {
         size_t coordinate = stored_coordinate(t, i);
         keys[i] = coordinate;
-        const void *value = t->storage->sparse ? t->storage->values + i * width : element(t, coordinate);
+        const void *value = stored_value(t, i);
         memcpy(data + i * width, value, width);
     }
     CettaTensorStatus status = cetta_tensor_new_take(
@@ -297,7 +327,7 @@ static uint64_t calculate_hash(const CettaTensor *t) {
     for (size_t i = 0; i < n; i++) {
         size_t coordinate = stored_coordinate(t, i);
         h = hash_word(h, coordinate);
-        const unsigned char *p = t->storage->sparse ? t->storage->values + i*width : element(t, coordinate);
+        const unsigned char *p = stored_value(t, i);
         h = hash_word(h, scalar_bits(p,width));
     }
     return h;
@@ -432,7 +462,7 @@ size_t cetta_tensor_retained_bytes(const CettaTensor *t) {
     size_t bytes = sizeof(*t) + sizeof(*t->storage), charge;
 #define CHARGE(n,w) do { if (__builtin_mul_overflow((size_t)(n),(size_t)(w),&charge) || __builtin_add_overflow(bytes,charge,&bytes)) return SIZE_MAX; } while(0)
     CHARGE(t->rank,sizeof(size_t)+sizeof(ptrdiff_t)); CHARGE(t->storage->bytes,1);
-    if (t->storage->sparse) CHARGE(t->storage->stored,sizeof(size_t));
+    if (t->storage->coordinates) CHARGE(t->storage->stored,sizeof(size_t));
     if (t->segments) CHARGE(t->segment_count+1,sizeof(size_t));
     if (t->permutation) CHARGE(t->storage->stored,sizeof(size_t));
     if (t->minor) CHARGE(t->storage->stored,sizeof(size_t));
@@ -479,8 +509,19 @@ CettaTensorStatus cetta_tensor_view(const CettaTensor *t,const size_t *shape,
 }
 CettaTensorStatus cetta_tensor_copy(const CettaTensor *t,CettaTensor **out) {
     if (!t || !out) return CETTA_TENSOR_VALUE;
-    if (t->storage->sparse) return cetta_tensor_coo(t->dtype,t->shape,t->rank,t->storage->coordinates,
-        t->storage->values,t->storage->stored,CETTA_TENSOR_REJECT,out);
+    *out = NULL;
+    if (t->storage->sparse) {
+        size_t n=t->storage->stored, width=cetta_tensor_itemsize(t->dtype);
+        TensorStorage *storage=storage_new(n,width,true);
+        if(!storage) return CETTA_TENSOR_NOMEM;
+        for(size_t i=0;i<n;i++) {
+            storage->coordinates[i]=stored_coordinate(t,i);
+            memcpy(storage->values+i*width,stored_value(t,i),width);
+        }
+        CettaTensorStatus status=descriptor(storage,t->dtype,t->shape,t->rank,t->count,out);
+        storage_release(storage);
+        return status;
+    }
     size_t width=cetta_tensor_itemsize(t->dtype),bytes=t->count*width;
     unsigned char *data=bytes ? malloc(bytes) : NULL;
     if (bytes && !data) return CETTA_TENSOR_NOMEM;
@@ -496,6 +537,12 @@ CettaTensorStatus cetta_tensor_reshape(const CettaTensor *t,const size_t *shape,
     size_t count=0; CettaTensorStatus status=cetta_tensor_coordinate_count(shape,rank,&count);
     if(status!=CETTA_TENSOR_OK) return status;
     if(count!=t->count) return CETTA_TENSOR_SHAPE;
+    if(t->layout==CETTA_TENSOR_CSR || t->layout==CETTA_TENSOR_CSC) {
+        CettaTensor *copy=NULL;
+        status=cetta_tensor_copy(t,&copy);
+        if(status==CETTA_TENSOR_OK) status=cetta_tensor_reshape(copy,shape,rank,out);
+        cetta_tensor_release(copy); return status;
+    }
     if(!t->storage->sparse && !t->contiguous) {
         CettaTensor *copy=NULL; status=cetta_tensor_copy(t,&copy);
         if(status==CETTA_TENSOR_OK) status=cetta_tensor_reshape(copy,shape,rank,out);
@@ -516,11 +563,19 @@ CettaTensorStatus cetta_tensor_convert(const CettaTensor *t,CettaTensorLayout la
         /* Layout conversion cannot fill holes. */
         if (cetta_tensor_stored(t) != t->count) return CETTA_TENSOR_SHAPE;
         if (!t->storage->sparse) return cetta_tensor_copy(t,out);
-        return cetta_tensor_new(t->dtype,t->shape,t->rank,t->storage->values,t->storage->bytes,out);
+        if(t->count>PTRDIFF_MAX) return CETTA_TENSOR_OVERFLOW;
+        size_t width=cetta_tensor_itemsize(t->dtype);
+        TensorStorage *storage=storage_new(t->count,width,false);
+        if(!storage) return CETTA_TENSOR_NOMEM;
+        for(size_t i=0;i<t->count;i++)
+            memcpy(storage->values+i*width,stored_value(t,i),width);
+        CettaTensorStatus status=descriptor(storage,t->dtype,t->shape,t->rank,t->count,out);
+        storage_release(storage); return status;
     }
     if (layout != CETTA_TENSOR_COO && t->rank != 2) return CETTA_TENSOR_SHAPE;
     CettaTensorStatus s;
-    if (!t->storage->sparse) {
+    if (layout == CETTA_TENSOR_COO) {
+        if(t->storage->sparse) return cetta_tensor_copy(t,out);
         if(t->count>SIZE_MAX/sizeof(size_t)) return CETTA_TENSOR_OVERFLOW;
         size_t width=cetta_tensor_itemsize(t->dtype), *coords=t->count ? malloc(t->count*sizeof(size_t)) : NULL;
         unsigned char *values=t->count ? malloc(t->count*width) : NULL;
@@ -528,12 +583,16 @@ CettaTensorStatus cetta_tensor_convert(const CettaTensor *t,CettaTensorLayout la
         for (size_t i=0;i<t->count;i++) { coords[i]=i; memcpy(values+i*width,element(t,i),width); }
         s=cetta_tensor_coo(t->dtype,t->shape,t->rank,coords,values,t->count,CETTA_TENSOR_REJECT,out);
         free(coords); free(values);
-    } else {
-        s=descriptor(t->storage,t->dtype,t->shape,t->rank,t->count,out);
+        return s;
     }
+    size_t stored=cetta_tensor_stored(t), width=cetta_tensor_itemsize(t->dtype);
+    TensorStorage *storage=storage_new(stored,width,false);
+    if(!storage) return CETTA_TENSOR_NOMEM;
+    storage->sparse=true;
+    s=descriptor(storage,t->dtype,t->shape,t->rank,t->count,out);
+    storage_release(storage);
     if (s != CETTA_TENSOR_OK) return s;
     CettaTensor *v=*out; v->layout=layout;
-    if (layout == CETTA_TENSOR_COO) return CETTA_TENSOR_OK;
     v->segment_count=t->shape[layout == CETTA_TENSOR_CSR ? 0 : 1];
     if (v->segment_count >= SIZE_MAX/sizeof(size_t)) s=CETTA_TENSOR_OVERFLOW;
     else {
@@ -544,7 +603,7 @@ CettaTensorStatus cetta_tensor_convert(const CettaTensor *t,CettaTensorLayout la
         else {
             size_t columns=v->shape[1];
             for(size_t i=0;i<v->storage->stored;i++) {
-                size_t flat=v->storage->coordinates[i], group=layout == CETTA_TENSOR_CSR ? flat/columns : flat%columns;
+                size_t flat=stored_coordinate(t,i), group=layout == CETTA_TENSOR_CSR ? flat/columns : flat%columns;
                 v->segments[group+1]++;
             }
             for(size_t i=0;i<v->segment_count;i++) v->segments[i+1]+=v->segments[i];
@@ -553,10 +612,11 @@ CettaTensorStatus cetta_tensor_convert(const CettaTensor *t,CettaTensorLayout la
             else {
                 if(v->segment_count) memcpy(next,v->segments,v->segment_count*sizeof(size_t));
                 for(size_t i=0;i<v->storage->stored;i++) {
-                    size_t flat=v->storage->coordinates[i],group=layout == CETTA_TENSOR_CSR ? flat/columns : flat%columns;
+                    size_t flat=stored_coordinate(t,i),group=layout == CETTA_TENSOR_CSR ? flat/columns : flat%columns;
                     size_t target=next[group]++;
-                    if(v->permutation) v->permutation[target]=i;
+                    if(v->permutation) v->permutation[i]=target;
                     v->minor[target]=layout==CETTA_TENSOR_CSR ? flat%columns : flat/columns;
+                    memcpy(v->storage->values+target*width,stored_value(t,i),width);
                 }
                 free(next);
             }
@@ -579,8 +639,8 @@ int cetta_tensor_compare(const CettaTensor *a,const CettaTensor *b) {
     }
     for(size_t i=0;i<n;i++) {
         size_t x=stored_coordinate(a,i),y=stored_coordinate(b,i); CMP(x,y);
-        const void *ap=a->storage->sparse ? a->storage->values+i*width : element(a,x);
-        const void *bp=b->storage->sparse ? b->storage->values+i*width : element(b,y);
+        const void *ap=stored_value(a,i);
+        const void *bp=stored_value(b,i);
         int c=memcmp(ap,bp,width); if(c) return c<0 ? -1 : 1;
     }
 #undef CMP
@@ -694,7 +754,7 @@ CettaTensorStatus cetta_tensor_cast(const CettaTensor *t,CettaTensorDType target
     if(!out) return CETTA_TENSOR_VALUE;
     *out=NULL;
     if(!t || (unsigned)mode>CETTA_TENSOR_CAST_TRUNCATE) return CETTA_TENSOR_VALUE;
-    size_t width=cetta_tensor_itemsize(target),source_width=cetta_tensor_itemsize(t->dtype),n=cetta_tensor_stored(t);
+    size_t width=cetta_tensor_itemsize(target),n=cetta_tensor_stored(t);
     if(!width) return CETTA_TENSOR_DTYPE;
     if(t->dtype==target) { cetta_tensor_retain((void *)t); *out=(CettaTensor *)t; return CETTA_TENSOR_OK; }
     if(n>SIZE_MAX/width) return CETTA_TENSOR_OVERFLOW;
@@ -702,7 +762,7 @@ CettaTensorStatus cetta_tensor_cast(const CettaTensor *t,CettaTensorDType target
     if(n && !data) return CETTA_TENSOR_NOMEM;
     CettaTensorStatus status=CETTA_TENSOR_OK;
     for(size_t i=0;i<n;i++) {
-        const void *input=t->storage->sparse ? t->storage->values+i*source_width : element(t,i);
+        const void *input=stored_value(t,i);
         status=cast_scalar(t->dtype,input,target,data+i*width,mode);
         if(status!=CETTA_TENSOR_OK) break;
     }
@@ -712,7 +772,11 @@ CettaTensorStatus cetta_tensor_cast(const CettaTensor *t,CettaTensorDType target
             if(status==CETTA_TENSOR_OK) data=NULL;
         } else {
             CettaTensor *coo=NULL;
-            status=cetta_tensor_coo(target,t->shape,t->rank,t->storage->coordinates,data,n,CETTA_TENSOR_REJECT,&coo);
+            size_t *coordinates=n ? malloc(n*sizeof(*coordinates)) : NULL;
+            if(n && !coordinates) { free(data); return CETTA_TENSOR_NOMEM; }
+            for(size_t i=0;i<n;i++) coordinates[i]=stored_coordinate(t,i);
+            status=cetta_tensor_coo(target,t->shape,t->rank,coordinates,data,n,CETTA_TENSOR_REJECT,&coo);
+            free(coordinates);
             if(status==CETTA_TENSOR_OK) status=cetta_tensor_convert(coo,t->layout,out);
             cetta_tensor_release(coo);
         }
@@ -745,10 +809,10 @@ CettaTensorStatus cetta_tensor_normalize_rows(const CettaTensor *t,CettaTensor *
     if(rows && (!scale || !squares)) { free(scale); free(squares); return CETTA_TENSOR_NOMEM; }
     for(size_t row=0;row<rows;row++) squares[row]=1;
     CettaTensorStatus status=CETTA_TENSOR_OK;
-    size_t n=cetta_tensor_stored(t),width=cetta_tensor_itemsize(t->dtype);
+    size_t n=cetta_tensor_stored(t);
     for(size_t i=0;i<n;i++) {
         size_t coordinate=stored_coordinate(t,i),row=coordinate/columns;
-        const void *p=t->storage->sparse ? t->storage->values+i*width : element(t,coordinate);
+        const void *p=stored_value(t,i);
         double x=fabs(read_float(t->dtype,p));
         if(!isfinite(x)) { status=CETTA_TENSOR_VALUE; goto done; }
         if(!x) continue;
@@ -764,7 +828,7 @@ CettaTensorStatus cetta_tensor_normalize_rows(const CettaTensor *t,CettaTensor *
     if(!storage) { status=CETTA_TENSOR_NOMEM; goto done; }
     for(size_t i=0;i<n;i++) {
         size_t coordinate=stored_coordinate(t,i),row=coordinate/columns;
-        const void *p=t->storage->sparse ? t->storage->values+i*width : element(t,coordinate);
+        const void *p=stored_value(t,i);
         double value=(read_float(t->dtype,p)/scale[row])/squares[row];
         memcpy(storage->values+8*i,&value,8);
         if(storage->sparse) storage->coordinates[i]=coordinate;
@@ -776,11 +840,11 @@ done:
 }
 CettaTensorStatus cetta_tensor_sum(const CettaTensor *t,CettaTensorSchedule schedule,CettaTensorScalar *out) {
     if(!t || !out || (unsigned)schedule>CETTA_TENSOR_FIXED4) return CETTA_TENSOR_VALUE;
-    memset(out,0,sizeof(*out)); size_t n=cetta_tensor_stored(t),width=cetta_tensor_itemsize(t->dtype);
+    memset(out,0,sizeof(*out)); size_t n=cetta_tensor_stored(t);
     if(t->dtype==CETTA_TENSOR_F32 || t->dtype==CETTA_TENSOR_F64) {
         double lanes[4]={0,0,0,0};
         for(size_t i=0;i<n;i++) {
-            const void *value=t->storage->sparse ? t->storage->values+i*width : element(t,i);
+            const void *value=stored_value(t,i);
             lanes[schedule==CETTA_TENSOR_FIXED4 ? i%4 : 0]+=read_float(t->dtype,value);
         }
         out->f64=schedule==CETTA_TENSOR_FIXED4 ? ((lanes[0]+lanes[1])+lanes[2])+lanes[3] : lanes[0];
@@ -788,7 +852,7 @@ CettaTensorStatus cetta_tensor_sum(const CettaTensor *t,CettaTensorSchedule sche
     }
     if(t->dtype==CETTA_TENSOR_BOOL) return CETTA_TENSOR_DTYPE;
     for(size_t i=0;i<n;i++) {
-        const void *value=t->storage->sparse ? t->storage->values+i*width : element(t,i);
+        const void *value=stored_value(t,i);
         CettaTensorStatus s=scalar_add(t->dtype,out,value); if(s!=CETTA_TENSOR_OK) return s;
     }
     return CETTA_TENSOR_OK;
@@ -892,17 +956,17 @@ CettaTensorStatus cetta_tensor_matvec_rows(const CettaTensor *matrix,const Cetta
     if(matrix->storage->sparse && cetta_tensor_all_finite(matrix) && cetta_tensor_all_finite(query)) {
         double *values=calloc(count,sizeof(*values));
         if(!values) { free(ids); return CETTA_TENSOR_NOMEM; }
-        size_t columns=matrix->shape[1],width=cetta_tensor_itemsize(matrix->dtype);
+        size_t columns=matrix->shape[1];
         for(size_t row=0;row<count;row++) {
             size_t first=(size_t)ids[row]*columns,last=first+columns;
             size_t lo=0,hi=matrix->storage->stored;
             while(lo<hi) {
                 size_t mid=lo+(hi-lo)/2;
-                if(matrix->storage->coordinates[mid]<first) lo=mid+1; else hi=mid;
+                if(stored_coordinate(matrix,mid)<first) lo=mid+1; else hi=mid;
             }
-            for(size_t i=lo;i<matrix->storage->stored && matrix->storage->coordinates[i]<last;i++) {
-                size_t column=matrix->storage->coordinates[i]-first;
-                double product=read_float(matrix->dtype,matrix->storage->values+i*width)*
+            for(size_t i=lo;i<matrix->storage->stored && stored_coordinate(matrix,i)<last;i++) {
+                size_t column=stored_coordinate(matrix,i)-first;
+                double product=read_float(matrix->dtype,stored_value(matrix,i))*
                     read_float(query->dtype,element(query,column));
                 values[row]+=product;
             }
@@ -938,13 +1002,39 @@ CettaTensorStatus cetta_tensor_matvec_rows(const CettaTensor *matrix,const Cetta
     return status;
 }
 
-/* Prepared compressed indices remove coordinate division and generic lookup
- * from the numerical loop. Canonical COO remains the equality/inspection
- * carrier; these plans neither prune explicit zeroes nor reorder row sums. */
+/* Compressed indexes remove coordinate division and generic lookup from the
+ * numerical loop. Independent row accumulators retain their column order;
+ * canonical observations use stored_coordinate/stored_value, not a COO copy. */
 #define PACKED_SPARSE(name,read_m,mwidth,read_q,qwidth) \
-static void name(const CettaTensor *m,const unsigned char *q,CettaTensorSchedule schedule,double *answer) { \
+static CettaTensorStatus name(const CettaTensor *m,const unsigned char *q,CettaTensorSchedule schedule,double *answer) { \
     const unsigned char *values=m->storage->values; \
     size_t rows=m->shape[0],cols=m->shape[1],cursor=0; \
+    if(m->layout==CETTA_TENSOR_CSC) { \
+        if(schedule==CETTA_TENSOR_FIXED4) { \
+            if(rows>SIZE_MAX/(4*sizeof(double))) return CETTA_TENSOR_OVERFLOW; \
+            double *lanes=rows ? calloc(rows,4*sizeof(double)) : NULL; \
+            uint8_t *occurrences=rows ? calloc(rows,sizeof(uint8_t)) : NULL; \
+            if(rows && (!lanes || !occurrences)) { free(lanes); free(occurrences); return CETTA_TENSOR_NOMEM; } \
+            for(size_t col=0;col<cols;col++) { \
+                double query=read_q(q+col*(qwidth)); \
+                for(size_t i=m->segments[col];i<m->segments[col+1];i++) { \
+                    size_t row=m->minor[i],lane=occurrences[row]; \
+                    occurrences[row]=(uint8_t)((lane+1u)%4u); \
+                    lanes[lane*rows+row]+=read_m(values+i*(mwidth))*query; \
+                } \
+            } \
+            for(size_t row=0;row<rows;row++) { \
+                answer[row]=((lanes[row]+lanes[rows+row])+lanes[2*rows+row])+lanes[3*rows+row]; \
+            } \
+            free(lanes); free(occurrences); return CETTA_TENSOR_OK; \
+        } \
+        for(size_t col=0;col<cols;col++) { \
+            double query=read_q(q+col*(qwidth)); \
+            for(size_t i=m->segments[col];i<m->segments[col+1];i++) \
+                answer[m->minor[i]]+=read_m(values+i*(mwidth))*query; \
+        } \
+        return CETTA_TENSOR_OK; \
+    } \
     for(size_t row=0;row<rows;row++) { \
         size_t base=row*cols,end; \
         if(m->layout==CETTA_TENSOR_CSR) { cursor=m->segments[row]; end=m->segments[row+1]; } \
@@ -965,6 +1055,7 @@ static void name(const CettaTensor *m,const unsigned char *q,CettaTensorSchedule
             answer[row]=((lanes[0]+lanes[1])+lanes[2])+lanes[3]; \
         } \
     } \
+    return CETTA_TENSOR_OK; \
 }
 PACKED_SPARSE(sparse_f64_f64,packed_f64,8,packed_f64,8)
 PACKED_SPARSE(sparse_f64_f32,packed_f64,8,packed_f32,4)
@@ -984,14 +1075,31 @@ CettaTensorStatus cetta_tensor_matvec(const CettaTensor *m,const CettaTensor *v,
     if(rows>SIZE_MAX/sizeof(double)) return CETTA_TENSOR_OVERFLOW;
     double *answer=rows ? calloc(rows,sizeof(double)) : NULL;
     if(rows && !answer) return CETTA_TENSOR_NOMEM;
-    if(cols && m->storage->sparse && !v->storage->sparse && v->contiguous &&
+    if(cols && m->storage->sparse &&
+        !v->storage->sparse && v->contiguous &&
         cetta_tensor_all_finite(m) && cetta_tensor_all_finite(v)) {
         size_t vw=cetta_tensor_itemsize(v->dtype);
         const unsigned char *query=v->storage->values+v->offset*vw;
-        void (*multiply)(const CettaTensor *,const unsigned char *,CettaTensorSchedule,double *)=
+        CettaTensorStatus (*multiply)(const CettaTensor *,const unsigned char *,CettaTensorSchedule,double *)=
             m->dtype==CETTA_TENSOR_F64 ? (v->dtype==CETTA_TENSOR_F64 ? sparse_f64_f64 : sparse_f64_f32) :
                 (v->dtype==CETTA_TENSOR_F64 ? sparse_f32_f64 : sparse_f32_f32);
-        multiply(m,query,schedule,answer);
+        CettaTensorStatus s=multiply(m,query,schedule,answer);
+        if(s==CETTA_TENSOR_OK)
+            s=cetta_tensor_new_take(CETTA_TENSOR_F64,&rows,1,answer,rows*sizeof(double),out);
+        if(s!=CETTA_TENSOR_OK) free(answer);
+        return s;
+    }
+    if(m->layout==CETTA_TENSOR_CSC && schedule==CETTA_TENSOR_SEQUENTIAL) {
+        /* Columns are ascending, so each independent row sees its original
+         * column schedule even though the rows are interleaved. */
+        for(size_t column=0;column<cols;column++) {
+            double q=read_float(v->dtype,element(v,column));
+            for(size_t j=m->segments[column];j<m->segments[column+1];j++) {
+                size_t row=m->minor[j];
+                double product=read_float(m->dtype,m->storage->values+j*cetta_tensor_itemsize(m->dtype))*q;
+                answer[row]+=product;
+            }
+        }
         CettaTensorStatus s=cetta_tensor_new_take(CETTA_TENSOR_F64,&rows,1,answer,rows*sizeof(double),out);
         if(s!=CETTA_TENSOR_OK) free(answer);
         return s;
@@ -1014,26 +1122,13 @@ CettaTensorStatus cetta_tensor_matvec(const CettaTensor *m,const CettaTensor *v,
         return s;
     }
     size_t cursor=0;
-    if(m->layout==CETTA_TENSOR_CSC && schedule==CETTA_TENSOR_SEQUENTIAL) {
-        for(size_t column=0;column<cols;column++) {
-            double q=read_float(v->dtype,element(v,column));
-            for(size_t j=m->segments[column];j<m->segments[column+1];j++) {
-                size_t index=m->permutation[j],row=m->storage->coordinates[index]/cols;
-                double product=read_float(m->dtype,m->storage->values+index*cetta_tensor_itemsize(m->dtype))*q;
-                answer[row]+=product;
-            }
-        }
-        CettaTensorStatus s=cetta_tensor_new_take(CETTA_TENSOR_F64,&rows,1,answer,rows*sizeof(double),out);
-        if(s!=CETTA_TENSOR_OK) free(answer);
-        return s;
-    }
     for(size_t row=0;row<rows;row++) {
         double lanes[4]={0,0,0,0}; size_t j=0;
         if(m->layout==CETTA_TENSOR_CSR) cursor=m->segments[row];
         if(m->storage->sparse) {
-            while(cursor<m->storage->stored && m->storage->coordinates[cursor]/cols==row) {
-                size_t flat=m->storage->coordinates[cursor],col=flat%cols;
-                double product=read_float(m->dtype,m->storage->values+cursor*cetta_tensor_itemsize(m->dtype))*read_float(v->dtype,element(v,col));
+            while(cursor<m->storage->stored && stored_coordinate(m,cursor)/cols==row) {
+                size_t flat=stored_coordinate(m,cursor),col=flat%cols;
+                double product=read_float(m->dtype,stored_value(m,cursor))*read_float(v->dtype,element(v,col));
                 lanes[schedule==CETTA_TENSOR_FIXED4 ? j%4 : 0]+=product; j++; cursor++;
             }
         } else for(size_t col=0;col<cols;col++) {
@@ -1067,7 +1162,7 @@ CettaTensorStatus cetta_tensor_top_k(const CettaTensor *scores,const CettaTensor
     for(size_t i=0;i<n;i++) {
         size_t coordinate=stored_coordinate(scores,i); const uint8_t *enabled=mask ? element(mask,coordinate) : NULL;
         if(mask && (!enabled || !*enabled)) continue;
-        const void *value=scores->storage->sparse ? scores->storage->values+i*cetta_tensor_itemsize(scores->dtype) : element(scores,coordinate);
+        const void *value=stored_value(scores,i);
         double score=read_float(scores->dtype,value);
         if(!isfinite(score)) { free(ranked); return CETTA_TENSOR_VALUE; }
         RankedRow candidate={score,coordinate};

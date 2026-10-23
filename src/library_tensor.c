@@ -369,6 +369,36 @@ static bool zip_contract_supported(void) {
     return false;
 }
 
+static bool callback_encoding(CettaTensorDType dtype, CettaTensorCallbackEncoding *encoding) {
+    switch (dtype) {
+#define CALLBACK_INPUT(name, representation) \
+    case CETTA_TENSOR_##name: *encoding = representation; return true;
+    CETTA_TENSOR_CALLBACK_INPUT_ROWS(CALLBACK_INPUT)
+#undef CALLBACK_INPUT
+    default: return false;
+    }
+}
+
+static Atom *callback_atom(Arena *arena, CettaTensorCallbackEncoding encoding,
+                          CettaTensorScalar value, Atom *leaf) {
+    switch (encoding) {
+    case CETTA_TENSOR_CALLBACK_SIGNED64ATOM:
+        atom_scalar_leaf_int(leaf, value.i64); break;
+    case CETTA_TENSOR_CALLBACK_UNSIGNED8ATOM:
+        atom_scalar_leaf_int(leaf, value.u8); break;
+    case CETTA_TENSOR_CALLBACK_FLOAT32ATOM:
+        atom_scalar_leaf_float(leaf, value.f32); break;
+    case CETTA_TENSOR_CALLBACK_FLOAT64ATOM:
+        atom_scalar_leaf_float(leaf, value.f64); break;
+    case CETTA_TENSOR_CALLBACK_UNSIGNED64ATOM:
+        if (value.index > INT64_MAX)
+            return scalar_atom(arena, CETTA_TENSOR_INDEX, value);
+        atom_scalar_leaf_int(leaf, (int64_t)value.index); break;
+    default: return NULL;
+    }
+    return leaf;
+}
+
 /* Only unpublished scratch is used by the prepared callback. A declined
  * callback restarts the complete authored map; it is never an empty answer. */
 static Atom *zip_map(Space *space, Arena *destination, Atom **args) {
@@ -381,6 +411,7 @@ static Atom *zip_map(Space *space, Arena *destination, Atom **args) {
         !args[2] || args[2]->kind != ATOM_SYMBOL)
         return NULL;
     CettaTensor *tensors[64];
+    CettaTensorCallbackEncoding encodings[64];
     for (size_t i = 0; i < captured; i++)
         if (!captures[i] || captures[i]->kind != ATOM_GROUNDED ||
             (captures[i]->ground.gkind != GV_INT && captures[i]->ground.gkind != GV_FLOAT))
@@ -388,9 +419,7 @@ static Atom *zip_map(Space *space, Arena *destination, Atom **args) {
     for (size_t i = 0; i < count; i++) {
         tensors[i] = cetta_tensor_from_atom(inputs[i]);
         if (!tensors[i]) return NULL;
-        CettaTensorDType d = cetta_tensor_dtype(tensors[i]);
-        if (d != CETTA_TENSOR_F64 && d != CETTA_TENSOR_F32 &&
-            d != CETTA_TENSOR_I64 && d != CETTA_TENSOR_U8)
+        if (!callback_encoding(cetta_tensor_dtype(tensors[i]), &encodings[i]))
             return NULL;
         if (i && (cetta_tensor_rank(tensors[i]) != cetta_tensor_rank(tensors[0]) ||
             cetta_tensor_stored(tensors[i]) != cetta_tensor_stored(tensors[0]) ||
@@ -444,12 +473,8 @@ static Atom *zip_map(Space *space, Arena *destination, Atom **args) {
             if (cetta_tensor_stored(tensors[i]) != n ||
                 cetta_tensor_get(tensors[i], coordinate, &present, &scalar_value) != CETTA_TENSOR_OK || !present)
                 goto cleanup;
-            switch (cetta_tensor_dtype(tensors[i])) {
-            case CETTA_TENSOR_I64: atom_scalar_leaf_int(&leaves[i], scalar_value.i64); break;
-            case CETTA_TENSOR_U8: atom_scalar_leaf_int(&leaves[i], scalar_value.u8); break;
-            case CETTA_TENSOR_F32: atom_scalar_leaf_float(&leaves[i], scalar_value.f32); break;
-            default: atom_scalar_leaf_float(&leaves[i], scalar_value.f64); break;
-            }
+            call_args[captured + i + 1] = callback_atom(&scratch, encodings[i], scalar_value, &leaves[i]);
+            if (!call_args[captured + i + 1]) goto cleanup;
         }
         Atom *call = atom_expr(&scratch, call_args, count + captured + 1), *value = NULL;
         if (!cetta_prepared_pure_program_rebind_closed_entry_call(program, call) ||

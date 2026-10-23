@@ -39,6 +39,14 @@ typedef enum {
     PREPARED_PURE_DECLINE,
 } PreparedPureNodeKind;
 
+/* An intrinsic node's operand discipline, held in its auxiliary field:
+ * strict, or short-circuit with the truth value of its first operand that
+ * is the node's answer, its second operand never evaluated.  Any other
+ * first value evaluates the second, and the instruction runs on both. */
+#define PREPARED_PURE_INTRINSIC_STRICT UINT32_C(0)
+#define PREPARED_PURE_INTRINSIC_ABSORBS_FALSE UINT32_C(1)
+#define PREPARED_PURE_INTRINSIC_ABSORBS_TRUE UINT32_C(2)
+
 /* An observation that tests a value against a bind pattern carries the
  * pattern's index under this flag. */
 #define PREPARED_PURE_OBSERVE_PATTERN_TEST UINT32_C(0x80000000)
@@ -2289,22 +2297,110 @@ static bool prepared_pure_integer_head(
         kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
 }
 
-static bool prepared_pure_intrinsic_program(
+/* Whether the running language reads a generated intrinsic row scoped to
+ * `dialects`.  A row scoped to every dialect is unscoped and holds in
+ * every language. */
+static bool prepared_pure_intrinsic_row_holds(uint32_t dialects) {
+    if (dialects == CETTA_GSLT_INTRINSIC_DIALECT_ALL)
+        return true;
+    if (!eval_current_language_id)
+        return false;
+    switch (eval_current_language_id()) {
+    case CETTA_LANGUAGE_HE:
+        return (dialects & CETTA_GSLT_INTRINSIC_DIALECT_HE) != 0u;
+    case CETTA_LANGUAGE_PETTA:
+        return (dialects & CETTA_GSLT_INTRINSIC_DIALECT_PETTA) != 0u;
+    case CETTA_LANGUAGE_PRIME:
+        return (dialects & CETTA_GSLT_INTRINSIC_DIALECT_PRIME) != 0u;
+    default:
+        return false;
+    }
+}
+
+bool cetta_prepared_pure_intrinsic_row(
     SymbolId head, CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
     CettaGsltPreparedPureIntrinsicInstruction *instruction_out) {
-#define PREPARED_PURE_INTRINSIC(                                        \
-    field, expected_arity, discipline, instruction)                    \
-    if (head == g_builtin_syms.field && arity == (expected_arity)) {    \
-        if ((discipline) !=                                             \
-            CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL)    \
-            return false;                                               \
+#define PREPARED_PURE_INTRINSIC_ROW(                                    \
+    field, expected_arity, discipline, instruction, dialects)          \
+    if (head == g_builtin_syms.field && arity == (expected_arity) &&    \
+        prepared_pure_intrinsic_row_holds(dialects)) {                  \
+        if (discipline_out)                                             \
+            *discipline_out = (discipline);                             \
         if (instruction_out)                                            \
             *instruction_out = (instruction);                           \
         return true;                                                    \
     }
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(
-        PREPARED_PURE_INTRINSIC)
-#undef PREPARED_PURE_INTRINSIC
+        PREPARED_PURE_INTRINSIC_ROW)
+#undef PREPARED_PURE_INTRINSIC_ROW
+    return false;
+}
+
+/* A strict intrinsic: every operand is evaluated, then the instruction
+ * runs on their values.  The paths that evaluate every operand before they
+ * dispatch read only these rows.  A short-circuit row compiles to an
+ * intrinsic node that the frame executor and the inline evaluator run
+ * (PREPARED_PURE_INTRINSIC_ABSORBS_FALSE/TRUE); every other path declines
+ * it. */
+static bool prepared_pure_intrinsic_program(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out) {
+    CettaGsltPreparedPureIntrinsicOperandDiscipline discipline;
+    CettaGsltPreparedPureIntrinsicInstruction instruction;
+    if (!cetta_prepared_pure_intrinsic_row(
+            head, arity, &discipline, &instruction) ||
+        discipline != CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL)
+        return false;
+    if (instruction_out)
+        *instruction_out = instruction;
+    return true;
+}
+
+/* Whether a program compiles a row of `discipline`.  A connective's value
+ * may be a refused one, an error or a residual form, which a branch
+ * condition then refuses at run time.  A serviced program cannot replay a
+ * refusal, and its branch does not yet hand such a value to the canonical
+ * service, so a serviced program sees no short-circuit row: it compiles the
+ * connective as it compiles any other dialect-owned form. */
+static bool prepared_pure_discipline_visible(
+    bool service_source_nodes,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline discipline) {
+    return !service_source_nodes ||
+        discipline != CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT;
+}
+
+/* The generated row `program` compiles for `head` at `arity`. */
+static bool prepared_pure_program_intrinsic_row(
+    const CettaPreparedPureProgram *program, SymbolId head,
+    CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out) {
+    CettaGsltPreparedPureIntrinsicOperandDiscipline discipline;
+    CettaGsltPreparedPureIntrinsicInstruction instruction;
+    if (!cetta_prepared_pure_intrinsic_row(
+            head, arity, &discipline, &instruction) ||
+        !prepared_pure_discipline_visible(
+            program && program->service_source_nodes, discipline))
+        return false;
+    if (discipline_out)
+        *discipline_out = discipline;
+    if (instruction_out)
+        *instruction_out = instruction;
+    return true;
+}
+
+/* The truth value that answers a short-circuit head without its second
+ * operand. */
+static bool prepared_pure_short_circuit_absorbing(
+    SymbolId head, CettaExprLen arity, bool *absorbing_out) {
+#define PREPARED_PURE_SHORT_CIRCUIT(field, expected_arity, absorbing)   \
+    if (head == g_builtin_syms.field && arity == (expected_arity)) {    \
+        *absorbing_out = (absorbing);                                   \
+        return true;                                                    \
+    }
+    CETTA_GSLT_PREPARED_PURE_SHORT_CIRCUIT_ROWS(PREPARED_PURE_SHORT_CIRCUIT)
+#undef PREPARED_PURE_SHORT_CIRCUIT
     return false;
 }
 
@@ -3268,8 +3364,8 @@ static PreparedPureHeadRole prepared_pure_head_role(
     if (prepared_pure_control_program(atom_symbol_current_id(head), arity, NULL) ||
         prepared_pure_register_program(program,
             atom_symbol_current_id(head), arity, NULL, NULL) ||
-        prepared_pure_intrinsic_program(
-            atom_symbol_current_id(head), arity, NULL) ||
+        cetta_prepared_pure_intrinsic_row(
+            atom_symbol_current_id(head), arity, NULL, NULL) ||
         is_grounded_op(atom_symbol_current_id(head)) ||
         prepared_pure_builtin_syntax(atom_symbol_current_id(head))) {
         return PREPARED_PURE_HEAD_CALLABLE;
@@ -3390,8 +3486,9 @@ static bool prepared_pure_compile_template(
             CettaExprLen payload_arity = source->expr.len - 1u;
             if (prepared_pure_register_program(program,
                     atom_symbol_current_id(payload_head), payload_arity, NULL, NULL) ||
-                prepared_pure_intrinsic_program(
-                    atom_symbol_current_id(payload_head), payload_arity, NULL) ||
+                prepared_pure_program_intrinsic_row(
+                    program, atom_symbol_current_id(payload_head),
+                    payload_arity, NULL, NULL) ||
                 prepared_pure_control_program(
                     atom_symbol_current_id(payload_head), payload_arity, NULL)) {
                 return prepared_pure_compile_eval(
@@ -5168,9 +5265,28 @@ static bool prepared_pure_compile_eval_with_role(
         return ok;
     }
 
+    CettaGsltPreparedPureIntrinsicOperandDiscipline intrinsic_discipline;
     CettaGsltPreparedPureIntrinsicInstruction intrinsic_instruction;
-    if (prepared_pure_intrinsic_program(
-            head, arity, &intrinsic_instruction)) {
+    if (prepared_pure_program_intrinsic_row(
+            program, head, arity, &intrinsic_discipline,
+            &intrinsic_instruction)) {
+        uint32_t operand_discipline = PREPARED_PURE_INTRINSIC_STRICT;
+        if (intrinsic_discipline ==
+                CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT) {
+            bool absorbing = false;
+            if (!prepared_pure_short_circuit_absorbing(head, arity, &absorbing))
+                return prepared_pure_reject(
+                    program, "short-circuit head has no absorbing value",
+                    source);
+            operand_discipline = absorbing
+                ? PREPARED_PURE_INTRINSIC_ABSORBS_TRUE
+                : PREPARED_PURE_INTRINSIC_ABSORBS_FALSE;
+        } else if (intrinsic_discipline !=
+                   CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL) {
+            return prepared_pure_reject(
+                program, "intrinsic operand discipline has no executor",
+                source);
+        }
         if (program->call_mode == CETTA_GSLT_PURE_CALL_CALL_BY_NEED &&
             (intrinsic_instruction ==
                  CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS ||
@@ -5204,6 +5320,7 @@ static bool prepared_pure_compile_eval_with_role(
                 .atom = head_atom,
                 .head = head,
                 .intrinsic_instruction = intrinsic_instruction,
+                .auxiliary = operand_discipline,
             },
             children, arity, node_out);
         free(children);
@@ -7774,6 +7891,18 @@ static bool prepared_pure_is_false(Atom *atom) {
             atom->ground.gkind == GV_BOOL && !atom->ground.bval);
 }
 
+/* Whether the first operand value of a short-circuit intrinsic node is its
+ * answer, so that its second operand is not evaluated. */
+static inline bool prepared_pure_intrinsic_absorbed(
+    const PreparedPureNode *node, Atom *first) {
+    if (node->kind != PREPARED_PURE_INTRINSIC || !first)
+        return false;
+    if (node->auxiliary == PREPARED_PURE_INTRINSIC_ABSORBS_FALSE)
+        return prepared_pure_is_false(first);
+    return node->auxiliary == PREPARED_PURE_INTRINSIC_ABSORBS_TRUE &&
+        prepared_pure_is_true(first);
+}
+
 /* PeTTa `if` takes the else branch for any other non-empty, non-error value.
  * A variable still belongs to the general machine, which tries both branches. */
 static bool prepared_pure_petta_else_value(Atom *condition) {
@@ -8041,8 +8170,10 @@ static Atom *prepared_pure_execute_intrinsic(
     const CettaPreparedPureProgram *program, Arena *arena,
     CettaGsltPreparedPureIntrinsicInstruction instruction,
     Atom *head, Atom *const *arguments, uint32_t arity) {
-    if (!program || !program->construct_value || !arena || !head ||
-        !arguments)
+    if (!program || !program->construct_value || !arena || !head || head->kind != ATOM_SYMBOL ||
+        !arguments ||
+        !cetta_prepared_pure_intrinsic_row(
+            atom_symbol_current_id(head), arity, NULL, NULL))
         return NULL;
     switch (instruction) {
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH: {
@@ -8672,6 +8803,10 @@ static Atom *prepared_pure_inline_value(
             local_base, depth - 1u, budget);
         if (!operands[i])
             return NULL;
+        /* A short-circuit node answers its absorbing first value; its
+         * second operand is not evaluated. */
+        if (i == 0u && prepared_pure_intrinsic_absorbed(node, operands[0]))
+            return operands[0];
     }
     if (node->kind == PREPARED_PURE_BUILD) {
         if (node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
@@ -8761,6 +8896,14 @@ prepared_pure_finish_children(
     }
     uint32_t budget = PREPARED_PURE_INLINE_NODES;
     while (frame->child_index < node->child_count) {
+        /* A short-circuit node whose first value it absorbs is ready with
+         * that one value; its second operand is not evaluated. */
+        if (__builtin_expect(frame->child_index == 1u &&
+                node->kind == PREPARED_PURE_INTRINSIC &&
+                node->auxiliary != PREPARED_PURE_INTRINSIC_STRICT, 0) &&
+            prepared_pure_intrinsic_absorbed(
+                node, program->values[frame->value_base]))
+            return PREPARED_PURE_CHILDREN_READY;
         uint32_t child =
             program->children[node->first_child + frame->child_index];
         Atom *value = prepared_pure_inline_value(
@@ -9722,7 +9865,8 @@ static bool prepared_pure_compile_closed_entry_call(
      * relations.  Let compile_eval lower their concrete occurrences. */
     if (prepared_pure_register_program(
             program, head, arity, NULL, NULL) ||
-        prepared_pure_intrinsic_program(head, arity, NULL)) {
+        prepared_pure_program_intrinsic_row(
+            program, head, arity, NULL, NULL)) {
         return true;
     }
     bool defined = false;
@@ -10243,6 +10387,11 @@ static bool prepared_pure_lower_node(
     case PREPARED_PURE_REGISTER:
     case PREPARED_PURE_INTRINSIC:
     case PREPARED_PURE_OBSERVE: {
+        /* A step evaluates every operand; a short-circuit node is left to
+         * the frame executor. */
+        if (node.kind == PREPARED_PURE_INTRINSIC &&
+            node.auxiliary != PREPARED_PURE_INTRINSIC_STRICT)
+            return false;
         uint32_t *operands = NULL;
         uint32_t lowered = 0u;
         if (!prepared_pure_lower_operands(
@@ -10585,6 +10734,11 @@ static bool prepared_pure_code_node(
     case PREPARED_PURE_REGISTER:
     case PREPARED_PURE_INTRINSIC:
     case PREPARED_PURE_OBSERVE: {
+        /* Register code evaluates every operand; a short-circuit node is
+         * left to the frame executor. */
+        if (node.kind == PREPARED_PURE_INTRINSIC &&
+            node.auxiliary != PREPARED_PURE_INTRINSIC_STRICT)
+            return false;
         if (node.kind == PREPARED_PURE_REGISTER && node.child_count == 2u &&
             node.first_child < program->child_len &&
             2u <= program->child_len-node.first_child &&
@@ -11383,14 +11537,18 @@ prepared_pure_program_compile_closed_mode(
     if (expression->kind == ATOM_EXPR && expression->expr.len > 0u) {
         Atom *root_head = expression->expr.elems[0];
         CettaExprLen root_arity = expression->expr.len - 1u;
+        CettaGsltPreparedPureIntrinsicOperandDiscipline root_discipline;
         bool generated_expression =
             root_head && root_head->kind == ATOM_SYMBOL &&
             (prepared_pure_control_program(
                  atom_symbol_current_id(root_head), root_arity, NULL) ||
              prepared_pure_register_program(
                  NULL, atom_symbol_current_id(root_head), root_arity, NULL, NULL) ||
-             prepared_pure_intrinsic_program(
-                 atom_symbol_current_id(root_head), root_arity, NULL));
+             (cetta_prepared_pure_intrinsic_row(
+                  atom_symbol_current_id(root_head), root_arity,
+                  &root_discipline, NULL) &&
+              prepared_pure_discipline_visible(
+                  service_source_nodes, root_discipline)));
         HeMacroArgument macro_arguments[HE_MACRO_MAX_ARITY];
         if (!generated_expression && root_head &&
             root_head->kind == ATOM_SYMBOL &&
@@ -15080,6 +15238,17 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
             continue;
         frame = &program->frames[program->frame_len - 1u];
         node = &program->nodes[frame->node];
+        /* A short-circuit node that absorbed its first value answers that
+         * value, a completed truth value. */
+        if (__builtin_expect(node->kind == PREPARED_PURE_INTRINSIC &&
+                node->auxiliary != PREPARED_PURE_INTRINSIC_STRICT, 0) &&
+            program->value_len == (size_t)frame->value_base + 1u &&
+            prepared_pure_intrinsic_absorbed(
+                node, program->values[frame->value_base])) {
+            prepared_pure_value_role(program, frame->value_base, true);
+            program->frame_len--;
+            continue;
+        }
         if (program->value_len !=
             (size_t)frame->value_base + node->child_count)
             return prepared_pure_runtime_decline(

@@ -128,7 +128,9 @@ PREPARED_PURE_INTRINSIC_INSTRUCTIONS = {
     "concatenate-expressions",
     "library-value-dispatch",
 }
-PREPARED_PURE_INTRINSIC_OPERAND_DISCIPLINES = {"strict-all"}
+PREPARED_PURE_INTRINSIC_OPERAND_DISCIPLINES = {"strict-all", "short-circuit"}
+# The dialects an intrinsic row can be scoped to, in mask-bit order.
+INTRINSIC_DIALECTS = ("he", "petta", "prime")
 
 # Representation interpretation for value-allocation.  The presentation uses
 # semantic leaf classes; this backend maps them to CeTTa's GroundedKind tags.
@@ -715,11 +717,15 @@ class Spec:
                 len(self.register_heads):
             raise SpecError("register heads must be unique by symbol and arity")
 
+        # A row without a dialect scope, like one naming every dialect, holds
+        # in every language.  Rows for one head and arity may differ in
+        # operand discipline between dialects, so each row carries its own
+        # scope and no dialect sees two rows.
         self.prepared_intrinsic_heads: list[
-            tuple[str, str, int, str, str]
+            tuple[str, str, int, str, str, tuple[str, ...]]
         ] = []
         for entry in entries(native, "prepared-pure-intrinsic-head"):
-            if len(entry) != 5:
+            if len(entry) not in (5, 6):
                 raise SpecError(
                     f"malformed prepared-pure-intrinsic-head: "
                     f"{sexpr(entry)}")
@@ -745,6 +751,15 @@ class Spec:
                 raise SpecError(
                     f"prepared-pure intrinsic head {name} names undeclared "
                     f"instruction {instruction}")
+            dialects = INTRINSIC_DIALECTS
+            if len(entry) == 6:
+                scope = entry[5]
+                if not isinstance(scope, list) or len(scope) < 2 or scope[0] != "dialects":
+                    raise SpecError("intrinsic scope must name nonempty dialects")
+                dialects = tuple(atom_text(value, "intrinsic dialect") for value in scope[1:])
+                if (not set(dialects) <= set(INTRINSIC_DIALECTS) or
+                        len(dialects) != len(set(dialects))):
+                    raise SpecError("intrinsic dialects must be unique known language names")
             if (instruction == "deconstruct-nonempty-expression" and
                     int(arity_text) != 1):
                 raise SpecError(
@@ -755,24 +770,67 @@ class Spec:
                     } and int(arity_text) != 2):
                 raise SpecError(
                     f"{instruction} requires arity two")
+            # The open case runs the canonical operation on both values.
+            if discipline == "short-circuit" and (
+                    int(arity_text) != 2 or
+                    instruction != "grounded-dispatch"):
+                raise SpecError(
+                    f"short-circuit head {name} must be a binary "
+                    "grounded dispatch")
             self.prepared_intrinsic_heads.append((
                 name, symbol_fields[name], int(arity_text), discipline,
-                instruction))
+                instruction, dialects))
         if not self.prepared_intrinsic_heads:
             raise SpecError(
                 "at least one prepared-pure intrinsic head is required")
-        if len({(field, arity) for _, field, arity, _, _
-                in self.prepared_intrinsic_heads}) != \
-                len(self.prepared_intrinsic_heads):
+        if len({(field, arity, dialect)
+                for _, field, arity, _, _, dialects
+                in self.prepared_intrinsic_heads
+                for dialect in dialects}) != \
+                sum(len(dialects) for *_, dialects
+                    in self.prepared_intrinsic_heads):
             raise SpecError(
-                "prepared-pure intrinsic heads must be unique by symbol "
-                "and arity")
-        if {instruction for _, _, _, _, instruction
+                "prepared-pure intrinsic heads must be unique by symbol, "
+                "arity and dialect")
+        if {instruction for _, _, _, _, instruction, _
                 in self.prepared_intrinsic_heads} != \
                 set(self.prepared_intrinsic_instructions):
             raise SpecError(
                 "native prepared-pure intrinsic heads must cover every "
                 "declared intrinsic instruction")
+        self.short_circuit_absorbing: list[tuple[str, str, int, bool]] = []
+        for entry in entries(native, "short-circuit-absorbing"):
+            if len(entry) != 4:
+                raise SpecError(
+                    f"malformed short-circuit-absorbing: {sexpr(entry)}")
+            name = atom_text(entry[1], "short-circuit head")
+            arity_text = atom_text(entry[2], "short-circuit arity")
+            value = atom_text(entry[3], "short-circuit absorbing value")
+            if value not in ("True", "False"):
+                raise SpecError(
+                    f"short-circuit head {name} must absorb a truth value")
+            if not any(row_name == name and str(arity) == arity_text and
+                       discipline == "short-circuit"
+                       for row_name, _, arity, discipline, _, _
+                       in self.prepared_intrinsic_heads):
+                raise SpecError(
+                    f"short-circuit-absorbing names {name}/{arity_text}, "
+                    "which no short-circuit head declares")
+            self.short_circuit_absorbing.append(
+                (name, symbol_fields[name], int(arity_text),
+                 value == "True"))
+        if len({(field, arity) for _, field, arity, _
+                in self.short_circuit_absorbing}) != \
+                len(self.short_circuit_absorbing):
+            raise SpecError("short-circuit absorbing values must be unique")
+        for name, field, arity, discipline, _, _ in \
+                self.prepared_intrinsic_heads:
+            if discipline == "short-circuit" and not any(
+                    absorbing_field == field and absorbing_arity == arity
+                    for _, absorbing_field, absorbing_arity, _
+                    in self.short_circuit_absorbing):
+                raise SpecError(
+                    f"short-circuit head {name} declares no absorbing value")
 
         self.sequence_value_constructor_heads: list[tuple[str, str, int, int]] = []
         for entry in entries(native, "sequence-value-constructor-head"):
@@ -807,7 +865,7 @@ class Spec:
             raise SpecError("sequence value constructor heads must be unique")
         for _, field, _, mask in self.sequence_value_constructor_heads:
             if mask and any(intrinsic_field == field
-                            for _, intrinsic_field, _, _, _
+                            for _, intrinsic_field, _, _, _, _
                             in self.prepared_intrinsic_heads):
                 raise SpecError(
                     "a held-operand constructor cannot have strict-all prepared admission")
@@ -1494,10 +1552,28 @@ def render_header(spec: Spec) -> str:
         f"    X({field}, {arity}u, "
         f"CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_"
         f"{c_enum(discipline)}, "
-        f"CETTA_GSLT_PREPARED_PURE_INTRINSIC_{c_enum(instruction)})"
-        for _, field, arity, discipline, instruction
+        f"CETTA_GSLT_PREPARED_PURE_INTRINSIC_{c_enum(instruction)}, " +
+        ("CETTA_GSLT_INTRINSIC_DIALECT_ALL"
+         if set(dialects) == set(INTRINSIC_DIALECTS) else
+         " | ".join(
+             f"CETTA_GSLT_INTRINSIC_DIALECT_{c_enum(dialect)}"
+             for dialect in dialects)) + ")"
+        for _, field, arity, discipline, instruction, dialects
         in spec.prepared_intrinsic_heads
     )
+    short_circuit_rows = " \\\n".join(
+        f"    X({field}, {arity}u, {'true' if absorbing else 'false'})"
+        for _, field, arity, absorbing in spec.short_circuit_absorbing
+    )
+    short_circuit_macro = \
+        "#define CETTA_GSLT_PREPARED_PURE_SHORT_CIRCUIT_ROWS(X)"
+    if short_circuit_rows:
+        short_circuit_macro += " \\\n" + short_circuit_rows
+    intrinsic_dialect_constants = "\n".join(
+        f"    CETTA_GSLT_INTRINSIC_DIALECT_{c_enum(dialect)} = {1 << index}u,"
+        for index, dialect in enumerate(INTRINSIC_DIALECTS)
+    ) + f"\n    CETTA_GSLT_INTRINSIC_DIALECT_ALL = " \
+        f"{(1 << len(INTRINSIC_DIALECTS)) - 1}u,"
     sequence_value_constructor_rows = " \\\n".join(
         f"    X({field}, {arity_mask}u, {mask}u)"
         for _, field, arity_mask, mask in spec.sequence_value_constructor_heads
@@ -1900,8 +1976,17 @@ typedef enum {{
 {prepared_intrinsic_operand_constants}
 }} CettaGsltPreparedPureIntrinsicOperandDiscipline;
 
+typedef enum {{
+{intrinsic_dialect_constants}
+}} CettaGsltPreparedPureIntrinsicDialect;
+
+/* X(head, arity, operand discipline, instruction, dialects): no dialect
+ * reads two rows for one head and arity. */
 #define CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(X) \
 {prepared_intrinsic_head_rows}
+
+/* X(head, arity, absorbing truth value) for every short-circuit row. */
+{short_circuit_macro}
 
 #define CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(X) \
 {sequence_value_constructor_rows}

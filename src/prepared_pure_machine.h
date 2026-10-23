@@ -139,6 +139,15 @@ bool cetta_prepared_pure_closed_own_execution(
  * or %Undefined%), which the machine checks where HE casts them. */
 bool cetta_prepared_pure_call_policy_supported(
     Space *space, SymbolId head, CettaExprLen arity);
+/* The running language's generated intrinsic row for `head` at `arity`:
+ * its operand discipline and instruction.  Source admission, lowering and
+ * execution read the same rows; a row scoped to dialects holds only in
+ * them, and the generator gives no language two rows for one head and
+ * arity. */
+bool cetta_prepared_pure_intrinsic_row(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out);
 typedef Atom *(*CettaPreparedPureBooleanValue)(Arena *arena, bool value);
 typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);

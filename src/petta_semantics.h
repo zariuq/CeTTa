@@ -580,6 +580,33 @@ bool petta_semantics_is_nonlist_carrier(const Atom *value);
 bool petta_semantics_sequence_view(
     const Atom *value, Atom *const **elements, CettaExprLen *length);
 
+/* A logical sequence read through one stable binding image. Elements borrow
+ * the resolved parent's lexical context; no substituted tuple is built.
+ * Unbound roots, rational nodes, relational cons spines, counted collections, list patterns and
+ * unavailable substitution evidence defer to their existing interpreters. */
+typedef struct {
+    BindingValue value;
+    Atom *const *elements;
+    CettaExprLen length;
+    bool sequence;
+    bool list;
+} PettaSequenceValueView;
+
+/* The reader follows root aliases in its own authoritative binding store.
+ * Every returned value retains the context needed by its children. The store
+ * and borrowed syntax must remain stable throughout the read; the observer
+ * neither owns values nor licenses their evaluation. */
+typedef struct {
+    bool (*root)(const void *context, BindingValue source, BindingValue *out);
+    const void *context;
+} PettaSequenceValueReader;
+
+bool petta_semantics_sequence_value_read(
+    PettaSequenceValueReader reader, BindingValue source, PettaSequenceValueView *out);
+
+bool petta_semantics_sequence_value_view(
+    const Bindings *bindings, BindingValue source, PettaSequenceValueView *out);
+
 
 /* A projection interprets one already-prepared argument. Dispatch authority,
  * argument effects, type guards and HE completion stay with the enclosing
@@ -664,23 +691,34 @@ static inline CettaSequenceProjectionView cetta_sequence_projection_view(
     return view;
 }
 
+/* A selected element keeps its source context. A new suffix node has the
+ * execution lifetime of derived syntax, independently of that source's
+ * persistence. The caller interprets the result under its language policy. */
+static inline BindingValue cetta_sequence_projection_materialize_value(
+        Arena *arena, const CettaSequenceProjectionView *view,
+        BindingValue source, bool source_is_list) {
+    if (!arena || !view)
+        return binding_value_from_atom(NULL);
+    if (view->result == CETTA_SEQUENCE_PROJECT_ELEMENT)
+        return binding_value_with_skeleton(source, view->elements[0]);
+    if (view->result == CETTA_SEQUENCE_PROJECT_UNIT)
+        return binding_value_from_atom(atom_unit(arena));
+    if (view->result != CETTA_SEQUENCE_PROJECT_SUFFIX)
+        return binding_value_from_atom(NULL);
+    Atom *tail = view->representation == CETTA_SEQUENCE_KEEP_SOURCE_REPRESENTATION &&
+           source_is_list
+        ? atom_list(arena, view->elements + 1u, view->length - 1u)
+        : atom_expr_suffix(arena, view->source, 1u);
+    return tail ? binding_value_with_derived_skeleton(source, tail)
+                : binding_value_from_atom(NULL);
+}
+
 /* Materialization is distinct from result interpretation. HE's library
  * answer protocol may evaluate the returned value; PeTTa keeps it as data. */
 static inline Atom *cetta_sequence_projection_materialize(
-    Arena *arena, const CettaSequenceProjectionView *view) {
-    if (!arena || !view)
-        return NULL;
-    if (view->result == CETTA_SEQUENCE_PROJECT_ELEMENT)
-        return view->elements[0];
-    if (view->result == CETTA_SEQUENCE_PROJECT_UNIT)
-        return atom_unit(arena);
-    if (view->result != CETTA_SEQUENCE_PROJECT_SUFFIX)
-        return NULL;
-    return view->representation == CETTA_SEQUENCE_KEEP_SOURCE_REPRESENTATION &&
-           atom_is_list(view->source)
-        ? atom_sequence_like(arena, view->source,
-                             view->elements + 1u, view->length - 1u)
-        : atom_expr_suffix(arena, view->source, 1u);
+        Arena *arena, const CettaSequenceProjectionView *view) {
+    return view ? cetta_sequence_projection_materialize_value(arena, view,
+        binding_value_from_atom(view->source), atom_is_list(view->source)).skeleton : NULL;
 }
 
 /* Closed callable carriers are already PeTTa values.  A generated evaluator

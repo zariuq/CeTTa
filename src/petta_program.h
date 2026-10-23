@@ -167,6 +167,9 @@ struct PettaPlanNode {
     PettaPlanControl control;
     PettaPlanContinuation continuation;
     PettaPlanOutput output;
+    /* Authored (Empty body), distinct from a variable pattern bound to Empty.
+     * The arm occurrence keeps this fact through translation and substitution. */
+    bool literal_case_default;
     CettaExprIndex output_child;
     bool contains_cardinality_call;
     bool contains_call;

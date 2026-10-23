@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "space.h"
 #include "space_match_backend.h"
@@ -257,7 +258,241 @@ static void run_transitive_closure_gate(
     space_free(&old);
 }
 
-int main(void) {
+
+/* Local overlay coordinates must not address the inherited base prefix. */
+static void test_local_overlay_rows(TermUniverse *universe, Arena *arena,
+        SymbolId edge, SymbolId a, SymbolId b, SymbolId c) {
+    const SpaceEngine engines[] = {SPACE_ENGINE_NATIVE,
+        SPACE_ENGINE_NATIVE_CANDIDATE_EXACT, SPACE_ENGINE_PATHMAP};
+    for (size_t k = 0; k < sizeof(engines) / sizeof(engines[0]); k++) {
+        Space base, overlay;
+        space_init_with_universe(&base, universe);
+        base.kind = SPACE_KIND_HASH;
+        assert(space_match_backend_try_set(&base, engines[k]));
+        space_add(&base, edge_fact(arena, edge, b, c));
+        space_init_overlay(&overlay, &base);
+        space_add(&overlay, edge_fact(arena, edge, a, b));
+        SubstMatchSet matches;
+        space_subst_query(&overlay, arena, edge_fact(arena, edge, a, b), &matches);
+        assert(matches.len == 1u);
+        assert(matches.items[0].atom_idx == 1u);
+        smset_free(&matches);
+        space_subst_query(&overlay, arena, edge_fact(arena, edge, b, c), &matches);
+        assert(matches.len == 1u);
+        assert(matches.items[0].atom_idx == 0u);
+        smset_free(&matches);
+        space_free(&overlay);
+        space_free(&base);
+    }
+}
+
+typedef struct {
+    VarId variable;
+    SymbolId expected;
+    uint64_t count;
+} ScopedQueryWitness;
+
+static bool scoped_query_row(const Bindings *bindings, void *context) {
+    ScopedQueryWitness *witness = context;
+    BindingValue value = bindings_lookup_value_id((Bindings *)bindings,
+                                                  witness->variable);
+    assert(value.skeleton && value.skeleton->kind == ATOM_SYMBOL);
+    assert(value.skeleton->sym_id == witness->expected);
+    witness->count++;
+    return true;
+}
+
+static void test_scoped_exact_queries(TermUniverse *universe, Arena *arena,
+        SymbolId edge, SymbolId a, SymbolId b, SymbolId c) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_HASH;
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
+    space_add(&space, edge_fact(arena, edge, a, b));
+    space_add(&space, edge_fact(arena, edge, b, c));
+    space_add(&space, edge_fact(arena, edge, b, c));
+    assert(space_contains_only_exact_atoms(&space));
+    CETTA_FRAME_IDENTITY_SCOPE(identity_scope);
+    CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&identity_scope);
+    VarId slot = var_epoch_id(var_id_from_base(99001u), epoch);
+    Atom *variable = atom_var_with_id(arena, "scoped-row", slot);
+    Atom *suffix = atom_expr3(arena, atom_symbol_id(arena, edge), variable,
+                              atom_symbol_id(arena, c));
+    assert(space_match_backend_can_try_visit_bindings_indexed(&space, suffix));
+    ScopedQueryWitness witness = {slot, b, 0u};
+    assert(space_match_backend_visit_bindings_direct(&space, arena, suffix,
+                                                    scoped_query_row, &witness));
+    assert(witness.count == 2u);
+    Atom *prefix = atom_expr3(arena, atom_symbol_id(arena, edge),
+                              atom_symbol_id(arena, a), variable);
+    witness.count = 0u;
+    assert(space_match_backend_visit_bindings_direct(&space, arena, prefix,
+                                                    scoped_query_row, &witness));
+    assert(witness.count == 1u);
+
+    /* A repeated complete variable id still means one logical cell. */
+    Atom *diagonal = atom_expr3(arena, atom_symbol_id(arena, edge), variable, variable);
+    SubstMatchSet matches;
+    space_subst_query(&space, arena, diagonal, &matches);
+    assert(matches.len == 0u);
+    smset_free(&matches);
+
+    /* Stored-side variables revoke the exact-frontier shortcut immediately. */
+    Atom *open = atom_expr3(arena, atom_symbol_id(arena, edge),
+                            atom_var_with_id(arena, "stored", fresh_var_id()),
+                            atom_symbol_id(arena, c));
+    AtomId open_id = term_universe_store_atom_id(universe, NULL, open);
+    assert(open_id != CETTA_ATOM_ID_NONE);
+    space_add_atom_id(&space, open_id);
+    assert(space_match_backend_try_visit_bindings_indexed(&space, arena, suffix,
+             scoped_query_row, &witness) == SPACE_MATCH_PULL_VISIT_DECLINED);
+    assert(!space_match_backend_visit_bindings_direct(&space, arena, suffix,
+                                                     scoped_query_row, &witness));
+    space_subst_query(&space, arena, suffix, &matches);
+    assert(matches.len == 3u);
+    smset_free(&matches);
+    assert(space_remove_atom_id(&space, open_id));
+    assert(space_contains_only_exact_atoms(&space));
+    witness.count = 0u;
+    assert(space_match_backend_visit_bindings_direct(&space, arena, suffix,
+                                                    scoped_query_row, &witness));
+    assert(witness.count == 2u);
+
+    /* Ordered observers keep the insertion occurrence view. */
+    assert(space_match_backend_require_logical_order(&space, arena));
+    assert(!space_match_backend_can_try_visit_bindings_indexed(&space, suffix));
+    space_subst_query(&space, arena, suffix, &matches);
+    assert(matches.len == 2u);
+    for (CettaIndex i = 0u; i < matches.len; i++) {
+        BindingValue value = bindings_lookup_value_id(&matches.items[i].bindings, slot);
+        assert(value.skeleton && atom_is_symbol_id(value.skeleton, b));
+    }
+    smset_free(&matches);
+    space_free(&space);
+
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_HASH;
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
+    assert(space_match_backend_require_logical_order(&space, arena));
+    space_add(&space, edge_fact(arena, edge, c, b));
+    space_add(&space, edge_fact(arena, edge, a, b));
+    space_add(&space, edge_fact(arena, edge, c, b));
+    assert(space_match_backend_require_logical_order(&space, arena));
+    Atom *ordered = atom_expr3(arena, atom_symbol_id(arena, edge), variable,
+                               atom_symbol_id(arena, b));
+    const SymbolId expected[] = {c, a, c};
+    space_subst_query(&space, arena, ordered, &matches);
+    assert(matches.len == 3u);
+    for (CettaIndex i = 0u; i < matches.len; i++) {
+        BindingValue value = bindings_lookup_value_id(&matches.items[i].bindings, slot);
+        assert(value.skeleton && atom_is_symbol_id(value.skeleton, expected[i]));
+        assert(matches.items[i].atom_idx == i);
+    }
+    smset_free(&matches);
+    space_free(&space);
+}
+
+static void test_ordered_backend_compatibility(TermUniverse *universe,
+        Arena *arena) {
+    assert(!space_match_backend_accepts_space(NULL, SPACE_ENGINE_NATIVE));
+    const SpaceKind kinds[] = {SPACE_KIND_ATOM, SPACE_KIND_HASH,
+                               SPACE_KIND_QUEUE, SPACE_KIND_STACK};
+    const SpaceEngine engines[] = {SPACE_ENGINE_NATIVE,
+        SPACE_ENGINE_NATIVE_CANDIDATE_EXACT, SPACE_ENGINE_PATHMAP, SPACE_ENGINE_MORK};
+    for (size_t k = 0u; k < sizeof(kinds) / sizeof(kinds[0]); k++) {
+        Space space;
+        space_init_with_universe(&space, universe);
+        space.kind = kinds[k];
+        for (size_t e = 0u; e < sizeof(engines) / sizeof(engines[0]); e++) {
+            bool expected = k < 2u || e < 2u;
+            assert(space_match_backend_accepts_space(&space, engines[e]) == expected);
+        }
+        assert(!space_match_backend_accepts_space(&space, (SpaceEngine)99));
+        if (space_is_ordered(&space)) {
+            Atom *first = atom_symbol(arena, "ordered-z");
+            Atom *second = atom_symbol(arena, "ordered-a");
+            space_add(&space, first);
+            space_add(&space, second);
+            SpaceReadToken before = space_read_token(&space);
+            assert(!space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
+            assert(!space_match_backend_try_set(&space, SPACE_ENGINE_MORK));
+            assert(space_read_token_matches_live_space(before, &space));
+            assert(space.match_backend.kind == SPACE_ENGINE_NATIVE);
+            assert(space_match_backend_try_set(&space, SPACE_ENGINE_NATIVE_CANDIDATE_EXACT));
+            Atom *value = NULL;
+            assert(space_pop(&space, &value));
+            assert(atom_eq(value, kinds[k] == SPACE_KIND_QUEUE ? first : second));
+            assert(space_pop(&space, &value));
+            assert(atom_eq(value, kinds[k] == SPACE_KIND_QUEUE ? second : first));
+        }
+        space_free(&space);
+    }
+}
+
+static void test_auto_source_view(TermUniverse *universe, Arena *arena) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_HASH;
+    assert(space_match_backend_try_set(&space, SPACE_ENGINE_PATHMAP));
+    Atom *head = atom_symbol(arena, "auto-edge");
+    for (int left = 0; left < 256; left++)
+        for (int offset = 0; offset < 4; offset++)
+            space_add(&space, atom_expr3(arena, head, atom_int(arena, left),
+                                         atom_int(arena, (left + offset) % 256)));
+    CETTA_FRAME_IDENTITY_SCOPE(identity_scope);
+    CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&identity_scope);
+    VarId id = var_epoch_id(var_id_from_base(99101u), epoch);
+    Atom *variable = atom_var_with_id(arena, "auto-query", id);
+    Atom *query = atom_expr3(arena, head, variable, atom_int(arena, 7));
+    SubstMatchSet matches;
+    space_subst_query(&space, arena, query, &matches);
+    assert(matches.len == 4u);
+    for (CettaIndex i = 0u; i < matches.len; i++) {
+        BindingValue value = bindings_lookup_value_id(&matches.items[i].bindings, id);
+        assert(value.skeleton && value.skeleton->kind == ATOM_GROUNDED);
+        assert(value.skeleton->ground.gkind == GV_INT);
+        assert(value.skeleton->ground.ival >= 4 && value.skeleton->ground.ival <= 7);
+    }
+    smset_free(&matches);
+    Atom *diagonal = atom_expr3(arena, head, variable, variable);
+    space_subst_query(&space, arena, diagonal, &matches);
+    assert(matches.len == 256u);
+    smset_free(&matches);
+
+    /* Warm candidate indexes must retain both new variable occurrences,
+     * even when their view and the bridge enumerate rows differently. */
+    Atom *open = atom_expr3(arena, head,
+        atom_var_with_id(arena, "stored", fresh_var_id()), atom_int(arena, 7));
+    AtomId open_id = term_universe_store_atom_id(universe, NULL, open);
+    space_add_atom_id(&space, open_id);
+    space_add_atom_id(&space, open_id);
+    space_subst_query(&space, arena, query, &matches);
+    assert(matches.len == 6u);
+    VarId open_results[2];
+    unsigned opened = 0u;
+    for (CettaIndex i = 0u; i < matches.len; i++) {
+        BindingValue value = bindings_lookup_value_id(&matches.items[i].bindings, id);
+        BindingValue resolved;
+        assert(bindings_resolve_value_preview(&matches.items[i].bindings, value, &resolved));
+        if (resolved.skeleton && resolved.skeleton->kind == ATOM_VAR) {
+            assert(opened < 2u);
+            open_results[opened++] = binding_value_variable_id(resolved);
+        }
+    }
+    assert(opened == 2u && !var_id_eq(open_results[0], open_results[1]));
+    smset_free(&matches);
+    space_subst_query(&space, arena, diagonal, &matches);
+    assert(matches.len == 258u);
+    smset_free(&matches);
+    assert(space_remove_atom_id(&space, open_id));
+    space_subst_query(&space, arena, query, &matches);
+    assert(matches.len == 5u);
+    assert(space_match_backend_last_error_code() == SPACE_MATCH_BACKEND_ERROR_NONE);
+    smset_free(&matches);
+    space_free(&space);
+}
+
+int main(int argc, char **argv) {
     const VarId x_var = var_id_from_base(1001);
     const VarId y_var = var_id_from_base(1002);
     const VarId z_var = var_id_from_base(1003);
@@ -285,13 +520,29 @@ int main(void) {
     uint64_t count = 0;
     RowWitness witness;
 
-    assert(setenv("CETTA_PATHMAP_QUERY_INDEX", "1", 1) == 0);
+    bool automatic = argc == 2 && strcmp(argv[1], "--auto-source-view") == 0;
+    assert(argc == 1 || automatic);
+    if (automatic)
+        assert(unsetenv("CETTA_PATHMAP_QUERY_INDEX") == 0);
+    else
+        assert(setenv("CETTA_PATHMAP_QUERY_INDEX", "1", 1) == 0);
     init_test_symbols(&symbols);
     term_universe_init(&universe);
     arena_init(&persistent);
     term_universe_set_persistent_arena(&universe, &persistent);
     g_persistent_arena = &persistent;
     arena_init(&arena);
+    test_ordered_backend_compatibility(&universe, &arena);
+    if (automatic) {
+        test_auto_source_view(&universe, &arena);
+        arena_free(&arena);
+        g_persistent_arena = NULL;
+        term_universe_free(&universe);
+        arena_free(&persistent);
+        symbol_table_free(&symbols);
+        puts("PASS: AUTO source-view coordinates and incremental indexes");
+        return 0;
+    }
 
     space_init_with_universe(&known, &universe);
     known.kind = SPACE_KIND_HASH;
@@ -302,6 +553,9 @@ int main(void) {
     a_sym = symbol_intern_cstr(g_symbols, "a");
     b_sym = symbol_intern_cstr(g_symbols, "b");
     c_sym = symbol_intern_cstr(g_symbols, "c");
+    test_local_overlay_rows(&universe, &arena, edge, a_sym, b_sym, c_sym);
+    test_scoped_exact_queries(&universe, &arena, edge, a_sym, b_sym, c_sym);
+
     edge_ab = term_universe_store_atom_id(
         &universe, NULL, edge_fact(&arena, edge, a_sym, b_sym));
     edge_bc = term_universe_store_atom_id(

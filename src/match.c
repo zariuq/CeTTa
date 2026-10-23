@@ -939,7 +939,7 @@ bool bindings_contains_private_variant_slots(const Bindings *b) {
                 const BindingsFrameIndexEntry *frame = &b->frame_index->frames[i];
                 uint32_t count = 0u;
                 for (uint32_t slot = 0u; slot < frame->slot_len; slot++)
-                    count += atom_contains_private_variant_var(frame->values[slot].skeleton);
+                    count += atom_contains_private_variant_var(bindings_frame_slot_value(frame, slot).skeleton);
                 assert(count == frame->private_value_count);
                 framed_private += count;
             }
@@ -1440,13 +1440,16 @@ static bool bindings_value_collect_frame_ids(
         Atom *atom = task.atom;
         if (!atom || !atom_has_vars(atom))
             continue;
-        if (atom->kind == ATOM_VAR) {
+        /* The same exact constructor fact applies below a mixed root: a
+         * singleton subtree contributes one qualified coordinate. */
+        VarId subtree_support = atom_single_variable_id(atom);
+        if (!var_id_is_none(subtree_support)) {
             CettaFrameIdentity epoch = binding_value_is_contextual(value)
-                ? binding_value_epoch(value) : var_epoch_suffix(atom->var_id);
-            if (cetta_frame_identity_is_none(epoch) || variant_private_var_id(atom->var_id))
+                ? binding_value_epoch(value) : var_epoch_suffix(subtree_support);
+            if (cetta_frame_identity_is_none(epoch) || variant_private_var_id(subtree_support))
                 continue;
             VarId id = var_epoch_id(
-                var_source_id(atom->var_id), epoch);
+                var_source_id(subtree_support), epoch);
             bool known = false;
             if (!known_set) {
                 for (size_t index = 0u; index < id_len; index++) {
@@ -1552,6 +1555,27 @@ fail:
     free(known_set);
     return false;
 }
+
+#ifdef CETTA_TEST_HOOKS
+bool bindings_frame_support_test(BindingValue value, VarId *out, size_t capacity,
+                                 size_t *count_out) {
+    VarId inline_ids[16];
+    VarId *ids = inline_ids;
+    size_t count = 0u;
+    bool ok = count_out && (out || capacity == 0u) &&
+        bindings_value_collect_frame_ids(value, &ids, &count, inline_ids,
+            sizeof(inline_ids) / sizeof(inline_ids[0]));
+    if (ok) {
+        *count_out = count;
+        ok = count <= capacity;
+        if (ok && count != 0u)
+            memcpy(out, ids, count * sizeof(*out));
+    }
+    if (ids != inline_ids)
+        free(ids);
+    return ok;
+}
+#endif
 
 #if CETTA_BUILD_WITH_RUNTIME_STATS
 static bool bindings_materialized_value_has_epoch_variable(
@@ -2288,13 +2312,13 @@ bool bindings_iterator_next(BindingsIterator *iterator, Binding *binding_out) {
         const BindingsFrameIndexEntry *frame = &index->frames[iterator->frame];
         while (iterator->slot < frame->slot_len) {
             uint32_t slot = iterator->slot++;
-            if (!frame->values[slot].skeleton)
+            if (!bindings_frame_slot_value(frame, slot).skeleton)
                 continue;
             *binding_out = (Binding){
                 .var_id = var_epoch_id(bindings_frame_slot_source_id(frame, slot), frame->epoch),
                 .spelling = bindings_frame_slot_spelling(frame, slot),
                 .name_key = bindings_frame_slot_name_key(frame, slot),
-                .value = frame->values[slot],
+                .value = bindings_frame_slot_value(frame, slot),
             };
             return true;
         }
@@ -2375,8 +2399,8 @@ bool bindings_frame_state_read_slot(const BindingsFrameStateView *view,
         .spelling = declared ? bindings_frame_slot_spelling(frame, slot) : SYMBOL_ID_NONE,
         .name_key = declared ? bindings_frame_slot_name_key(frame, slot) : NULL,
         .declared_in_schema = declared,
-        .value = frame->values[slot],
-        .write_version = frame->write_version[slot],
+        .value = bindings_frame_slot_value(frame, slot),
+        .write_version = bindings_frame_slot_version(frame, slot),
     };
     return true;
 }
@@ -2445,7 +2469,14 @@ bool bindings_retain_frame_state(Bindings *dst, const Bindings *src) {
             if (!bindings_frame_index_find_slot(target,
                     bindings_frame_slot_source_id(source, slot), &target_slot))
                 return false;
-            target->write_version[target_slot] = source->write_version[slot];
+            /* A slot past the backing prefix has version zero; only a
+             * different version needs the target's prefix to grow. */
+            uint64_t version = bindings_frame_slot_version(source, slot);
+            if (bindings_frame_slot_version(target, target_slot) == version)
+                continue;
+            if (!bindings_frame_index_entry_reserve_slots(target, target_slot + 1u))
+                return false;
+            target->write_version[target_slot] = version;
         }
     }
     return true;
@@ -2458,7 +2489,8 @@ size_t bindings_frame_binding_count(const Bindings *bindings, BindingsFrameRef r
 }
 
 static bool bindings_resolve_value_root(
-        Bindings *bindings, BindingValue value, BindingValue *out) {
+        Bindings *bindings, BindingValue value, BindingValue *out,
+        bool count_apply_lookups) {
     if (!out || !value.skeleton)
         return false;
     if (!bindings_has_bound_values(bindings)) {
@@ -2468,6 +2500,8 @@ static bool bindings_resolve_value_root(
     size_t remaining = bindings_dereference_limit(bindings);
     while (value.skeleton->kind == ATOM_VAR) {
         VarId id = binding_value_variable_id(value);
+        if (count_apply_lookups)
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_APPLY);
         BindingValue next = bindings_lookup_value(bindings, value);
         if (!next.skeleton ||
             (next.skeleton->kind == ATOM_VAR && var_id_eq(binding_value_variable_id(next), id)))
@@ -2482,12 +2516,31 @@ static bool bindings_resolve_value_root(
 
 bool bindings_resolve_value_preview(
         Bindings *bindings, BindingValue value, BindingValue *out) {
-    return bindings_resolve_value_root(bindings, value, out);
+    return bindings_resolve_value_root(bindings, value, out, false);
+}
+
+bool bindings_observe_value_root(
+        const Bindings *bindings, BindingValue source, BindingValue *out) {
+    if (!out)
+        return false;
+    *out = binding_value_from_atom(NULL);
+    if ((bindings && bindings->cycle_state != BINDINGS_CYCLE_ACYCLIC) ||
+        binding_value_kind(source) > BINDING_VALUE_CONTEXTUAL_PERSISTENT)
+        return false;
+    BindingValue value;
+    if (!bindings_resolve_value_root((Bindings *)bindings, source, &value, false) ||
+        binding_value_kind(value) > BINDING_VALUE_CONTEXTUAL_PERSISTENT ||
+        (binding_value_is_contextual(value) && atom_has_vars(value.skeleton) &&
+         (!bindings || !bindings_frame_index_find_ref_const(
+             bindings->frame_index, binding_value_frame_ref(value)))))
+        return false;
+    *out = value;
+    return true;
 }
 
 bool bindings_resolve_value_exact(
         Bindings *bindings, BindingValue value, BindingValue *out) {
-    return bindings_resolve_value_root(bindings, value, out);
+    return bindings_resolve_value_root(bindings, value, out, false);
 }
 
 static bool binding_value_may_contain_unbound_var(Bindings *b, BindingValue value);
@@ -2892,9 +2945,9 @@ static void bindings_rhs_variable_bloom_rebuild(Bindings *bindings) {
                 &bindings->frame_index->frames[frame_index];
             for (uint32_t slot = 0u;
                  slot < frame->slot_len; slot++) {
-                if (frame->values[slot].skeleton) {
+                if (bindings_frame_slot_value(frame, slot).skeleton) {
                     bindings_rhs_variable_bloom_add(
-                        bindings, frame->values[slot]);
+                        bindings, bindings_frame_slot_value(frame, slot));
                 }
             }
         }
@@ -3831,7 +3884,7 @@ bool bindings_promote_logical_atoms_with_session(
                 if (name_key &&
                     !atom_deep_copy_session_settled(session, name_key))
                     foreign_name_keys = true;
-                Atom *value = frame->values[slot].skeleton;
+                Atom *value = bindings_frame_slot_value(frame, slot).skeleton;
                 if (value &&
                     !atom_deep_copy_session_settled(session, value))
                     foreign_values = true;
@@ -3877,11 +3930,11 @@ bool bindings_promote_logical_atoms_with_session(
                 return false;
             }
             for (uint32_t slot = 0u; foreign_values && slot < frame->slot_len; slot++) {
-                if (!frame->values[slot].skeleton) {
+                if (!bindings_frame_slot_value(frame, slot).skeleton) {
                     continue;
                 }
                 Atom *copy = atom_deep_copy_session_copy(
-                    session, frame->values[slot].skeleton);
+                    session, bindings_frame_slot_value(frame, slot).skeleton);
                 if (!copy) {
                     if (retained_source) bindings_frame_index_entry_drop(&source);
                     return false;
@@ -3933,8 +3986,8 @@ bool bindings_logical_atoms_satisfy(
                     !predicate(bindings_frame_slot_name_key(frame, slot), context)) {
                     return false;
                 }
-                if (frame->values[slot].skeleton &&
-                    !predicate(frame->values[slot].skeleton, context)) {
+                if (bindings_frame_slot_value(frame, slot).skeleton &&
+                    !predicate(bindings_frame_slot_value(frame, slot).skeleton, context)) {
                     return false;
                 }
             }
@@ -4010,7 +4063,7 @@ bool bindings_logical_has_registry_refs(const Bindings *bindings) {
                     return true;
                 }
                 if (atom_has_registry_refs(
-                        frame->values[slot].skeleton)) {
+                        bindings_frame_slot_value(frame, slot).skeleton)) {
                     return true;
                 }
             }
@@ -4136,7 +4189,7 @@ static bool bindings_rewrite_value_id_inplace(
         uint32_t slot = 0u;
         if (!frame || !bindings_frame_index_find_slot(
                 frame, var_source_id(id), &slot) ||
-            !frame->values[slot].skeleton ||
+            !bindings_frame_slot_value(frame, slot).skeleton ||
             !bindings_frame_index_record(bindings, id, value)) {
             return false;
         }
@@ -4230,7 +4283,7 @@ static bool bindings_frame_index_lookup_value(
     uint32_t slot = 0u;
     if (!bindings_frame_index_find_coordinate(bindings, var_id, &frame, &slot))
         return true;
-    *value_out = frame->values[slot];
+    *value_out = bindings_frame_slot_value(frame, slot);
     return true;
 }
 
@@ -4252,7 +4305,7 @@ static bool bindings_frame_index_lookup_value_slot(
         CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_FRAME_COORDINATE);
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
-    *value_out = frame->values[slot];
+    *value_out = bindings_frame_slot_value(frame, slot);
     return true;
 }
 
@@ -4287,7 +4340,7 @@ static bool bindings_frame_index_lookup_context_id(
         CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_FRAME_COORDINATE);
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
-    *value_out = frame->values[slot];
+    *value_out = bindings_frame_slot_value(frame, slot);
     return true;
 }
 
@@ -4319,7 +4372,7 @@ static bool bindings_frame_index_lookup_value_ref(
         CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_FRAME_COORDINATE);
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_BINDINGS_LOOKUP_AUTHORITATIVE);
-    *value_out = frame->values[slot];
+    *value_out = bindings_frame_slot_value(frame, slot);
     return true;
 }
 
@@ -5271,6 +5324,24 @@ static inline Atom *bindings_apply_value_rewrite_vars(Bindings *b, Arena *a, Bin
      * non-variable atoms). */
     if (!rewrite_var && !atom_has_vars(atom))
         return atom;
+    /* In an acyclic store, root aliases do not depend on a substitution
+     * traversal's active path. Resolve them with the shared root service
+     * before constructing that traversal's memo and work stack. The terminal
+     * value retains its own lexical scope; open expressions still receive
+     * the original full substitution below. Custom rewrites and cyclic or
+     * unknown stores retain their independent traversal. */
+    if (!rewrite_var && atom->kind == ATOM_VAR &&
+        b->cycle_state == BINDINGS_CYCLE_ACYCLIC) {
+        BindingValue root;
+        if (bindings_resolve_value_root(b, value, &root, true)) {
+            value = root;
+            atom = value.skeleton;
+            if (atom->kind == ATOM_VAR)
+                return binding_value_materialize(a, value);
+            if (!atom_has_vars(atom))
+                return atom;
+        }
+    }
     if (!rewrite_var && atom->kind == ATOM_EXPR &&
         binding_value_kind(value) == BINDING_VALUE_MATERIALIZED) {
         VarId support = atom_single_variable_id(atom);
@@ -5395,13 +5466,13 @@ static BindingValue bindings_lookup_value_since(Bindings *b, VarId id,
     uint32_t slot = 0u;
     if (bindings_frame_index_find_coordinate(
             b, id, &frame, &slot)) {
-        bool frame_write_present = frame->values[slot].skeleton &&
+        bool frame_write_present = bindings_frame_slot_value(frame, slot).skeleton &&
             (first_entry == 0u ||
              (frame->has_activation_write_boundary &&
-              frame->write_version[slot] >
+              bindings_frame_slot_version(frame, slot) >
                   frame->activation_write_boundary));
         return frame_write_present
-            ? frame->values[slot]
+            ? bindings_frame_slot_value(frame, slot)
             : binding_value_from_atom(NULL);
     }
     if (binding_id_has_frame(id))
@@ -6631,8 +6702,8 @@ static int bindings_observed_frame_slot_compare(
         const void *left_raw, const void *right_raw) {
     const BindingsObservedFrameSlot *left = left_raw;
     const BindingsObservedFrameSlot *right = right_raw;
-    uint64_t left_version = left->frame->write_version[left->slot];
-    uint64_t right_version = right->frame->write_version[right->slot];
+    uint64_t left_version = bindings_frame_slot_version(left->frame, left->slot);
+    uint64_t right_version = bindings_frame_slot_version(right->frame, right->slot);
     if (left_version != right_version)
         return left_version < right_version ? -1 : 1;
     VarId left_id = var_epoch_id(
@@ -6674,7 +6745,7 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
                     &b->frame_index->frames[frame_index];
                 for (uint32_t slot = 0u;
                      slot < frame->slot_len; slot++) {
-                    if (!frame->values[slot].skeleton)
+                    if (!bindings_frame_slot_value(frame, slot).skeleton)
                         continue;
                     observed[observed_len++] =
                         (BindingsObservedFrameSlot){frame, slot};
@@ -6693,7 +6764,7 @@ Atom *bindings_to_atom(Arena *a, const Bindings *b) {
                     a, bindings_frame_slot_spelling(frame, slot),
                     bindings_frame_slot_name_key(frame, slot), id);
                 Atom *value = binding_value_materialize(
-                    a, frame->values[slot]);
+                    a, bindings_frame_slot_value(frame, slot));
                 if (!key || !value)
                     return NULL;
                 assigns[next_assignment++] = atom_expr2(a, key, value);
@@ -6876,8 +6947,8 @@ static bool bindings_builder_record_frame_slot_value(
         return false;
     }
     BindingsFrameUndoEntry undo = {
-        .previous_value = frame->values[slot],
-        .previous_write_version = frame->write_version[slot],
+        .previous_value = bindings_frame_slot_value(frame, slot),
+        .previous_write_version = bindings_frame_slot_version(frame, slot),
         .frame_ref = ref,
         .source_id = var_base_id(id),
         .slot = slot,
@@ -7637,7 +7708,7 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
         /* Presentation may detach the directory; copy the value before that
          * boundary and keep only the stable reference afterward. RHS admission
          * below may also move sparse slots, so the write resolves them again. */
-        existing = framed_entry->values[framed_slot];
+        existing = bindings_frame_slot_value(framed_entry, framed_slot);
         if (!bindings_frame_index_ensure_presentation_slot(
                 &bb->current, framed_ref, framed_slot,
                 var_id, spelling, name_key)) {
@@ -9323,7 +9394,7 @@ static Atom *binding_value_instantiate_ground_node(
         BindingValue root;
         if (!bindings_resolve_value_root(
                 bindings, binding_value_from_context_kind(
-                    skeleton, epoch, kind), &root) ||
+                    skeleton, epoch, kind), &root, false) ||
             !root.skeleton || atom_has_vars(root.skeleton))
             return NULL;
         return root.skeleton;
@@ -10074,8 +10145,15 @@ static bool bindings_projection_copy_live_frame_values(
         }
         target->activation_write_boundary = source->activation_write_boundary;
         target->has_activation_write_boundary = source->has_activation_write_boundary;
-        target->write_version[target_slot] = source->write_version[source_slot];
-        BindingValue value = source->values[source_slot];
+        /* A slot past the backing prefix reads as unbound with version zero;
+         * only a different version needs that prefix to grow. */
+        uint64_t source_version = bindings_frame_slot_version(source, source_slot);
+        if (bindings_frame_slot_version(target, target_slot) != source_version) {
+            if (!bindings_frame_index_entry_reserve_slots(target, target_slot + 1u))
+                return false;
+            target->write_version[target_slot] = source_version;
+        }
+        BindingValue value = bindings_frame_slot_value(source, source_slot);
         if (!value.skeleton)
             continue;
         if (!bindings_frame_index_prepare_value_context(dst, NULL, &value, false))
@@ -10090,8 +10168,7 @@ static bool bindings_projection_copy_live_frame_values(
             return false;
         }
         bindings_rhs_variable_bloom_add(dst, value);
-        target->write_version[target_slot] =
-            source->write_version[source_slot];
+        target->write_version[target_slot] = source_version;
     }
     return true;
 }
@@ -10842,7 +10919,7 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
                 !bindings_frame_index_find_coordinate(
                     &projected, id,
                     &projected_frame, &projected_slot) ||
-                !projected_frame->values[projected_slot].skeleton) {
+                !bindings_frame_slot_value(projected_frame, projected_slot).skeleton) {
                 continue;
             }
             undo.frame_ref = bindings_frame_ref_from_entry(
@@ -11222,17 +11299,6 @@ static MatchListOutcome match_list_meet(Arena *a, Atom *left, Atom *right,
     }
     return m->left_rest && m->right_rest ? MATCH_LIST_ELEMENTS
                                          : MATCH_LIST_INCOMPLETE;
-}
-
-/* The value of a derived rest: that side's context over new syntax, which
- * no persistent owner holds. */
-static BindingValue match_list_derived_value(BindingValue side, Atom *derived) {
-    side.skeleton = derived;
-    if (binding_value_kind(side) == BINDING_VALUE_CONTEXTUAL_PERSISTENT)
-        binding_value_set_kind(&side, BINDING_VALUE_CONTEXTUAL);
-    else if (!atom_has_vars(derived))
-        side = binding_value_from_atom(derived);
-    return side;
 }
 
 /* ── One-way pattern matching ───────────────────────────────────────────── */
@@ -12399,10 +12465,10 @@ retry_pair:
                 !decoded_match_push(
                     &work,
                     (MatchTerm){.value = meet.left_derived
-                        ? match_list_derived_value(left_value, meet.left_rest)
+                        ? binding_value_with_derived_skeleton(left_value, meet.left_rest)
                         : binding_value_with_skeleton(left_value, meet.left_rest)},
                     (MatchTerm){.value = meet.right_derived
-                        ? match_list_derived_value(right_value, meet.right_rest)
+                        ? binding_value_with_derived_skeleton(right_value, meet.right_rest)
                         : binding_value_with_skeleton(right_value, meet.right_rest)}))
                 goto fail;
             for (CettaExprIndex i = meet.prefix; i >= 1u; i--) {
@@ -13045,7 +13111,8 @@ static bool rule_frame_region_borrow(
     BindingsFrameIndexEntry *frame = bindings_frame_index_find_frame(
         builder->current.frame_index, epoch);
     if (!frame || !frame->schema_complete ||
-        frame->schema->len > 64u ||
+        frame->schema->len > BINDINGS_DIRECT_FRAME_SLOT_CAP ||
+        frame->cap < frame->slot_len ||
         frame->schema->source_ids != view->variable_ids ||
         atomic_load_explicit(
             &builder->current.frame_index->references,
@@ -14511,10 +14578,10 @@ retry_pair:
             if (meet.left_rest) {
                 MatchTerm left_rest = left_term, right_rest = right_term;
                 left_rest.value = meet.left_derived
-                    ? match_list_derived_value(left_term.value, meet.left_rest)
+                    ? binding_value_with_derived_skeleton(left_term.value, meet.left_rest)
                     : binding_value_with_skeleton(left_value, meet.left_rest);
                 right_rest.value = meet.right_derived
-                    ? match_list_derived_value(right_term.value, meet.right_rest)
+                    ? binding_value_with_derived_skeleton(right_term.value, meet.right_rest)
                     : binding_value_with_skeleton(right_value, meet.right_rest);
                 if (!epoch_match_push(
                         &work, left_rest, right_rest,
@@ -16383,8 +16450,14 @@ static bool bindings_compare_frames(const BindingsFrameIndex *a,
      * separate from comparing the live initialized frame inventory. */
     for (uint32_t i=0u;i<a->len;i++) {
         const BindingsFrameIndexEntry *x=&a->frames[i],*y=&b->frames[i];
-        if (!cetta_checkpoint_extent(x->values,x->slot_len,x->cap,y->values,y->slot_len,y->cap) ||
-            (x->slot_len&&(!x->write_version||!y->write_version))) return false;
+        /* Only a prefix of the logical slots may be backed; a slot past it
+         * is unbound with version zero (slot_store_internal.h). The extents
+         * compared are the logical ones, read through the slot accessors. */
+        uint32_t x_rows=x->slot_len<x->cap?x->slot_len:x->cap;
+        uint32_t y_rows=y->slot_len<y->cap?y->slot_len:y->cap;
+        if (x->slot_len!=y->slot_len ||
+            (x_rows&&(!x->values||!x->write_version)) ||
+            (y_rows&&(!y->values||!y->write_version))) return false;
         BC_S("binding.frame_slot",i,i);
         BC_F("binding.frame_storage",(uintptr_t)x,(uintptr_t)y);
         BC_FRAME("binding.frame_epoch",x->epoch,y->epoch);
@@ -16411,8 +16484,10 @@ static bool bindings_compare_frames(const BindingsFrameIndex *a,
         }
         for (uint32_t j=0u;j<x->slot_len;j++) {
             BC_S("binding.value_slot",j,j);
-            if (!bindings_compare_value(x->values[j],y->values[j],read)) return false;
-            BC_S("binding.write_version",x->write_version[j],y->write_version[j]);
+            if (!bindings_compare_value(bindings_frame_slot_value(x,j),
+                                        bindings_frame_slot_value(y,j),read)) return false;
+            BC_S("binding.write_version",bindings_frame_slot_version(x,j),
+                 bindings_frame_slot_version(y,j));
         }
     }
     return bindings_compare_frame_table(a,read,false)&&bindings_compare_frame_table(b,read,true);

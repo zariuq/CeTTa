@@ -1,0 +1,5 @@
+!(import! &self "../../../lib/petta/lib_module.metta")
+!(let* (($reader (langdef:load-baked-parser "module-core-reader"))
+        ($module (module:read-file $reader "collection-ingress" "langdef/collections/Ingress.module"))
+        ($closed (langdef:close-parser $reader)))
+  (println! $module))

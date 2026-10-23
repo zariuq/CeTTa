@@ -1848,18 +1848,18 @@ bool grounded_try_plain_scalar_operation(
         }
         if (arguments[0].kind == CETTA_PLAIN_SCALAR_INT &&
             arguments[1].kind == CETTA_PLAIN_SCALAR_INT) {
-            __int128 result = head_id == g_builtin_syms.op_plus
-                ? (__int128)arguments[0].as.integer +
-                    (__int128)arguments[1].as.integer
+            CettaExactIntegerV1Operation operation =
+                head_id == g_builtin_syms.op_plus
+                ? CETTA_EXACT_INTEGER_V1_ADD
                 : head_id == g_builtin_syms.op_minus
-                    ? (__int128)arguments[0].as.integer -
-                        (__int128)arguments[1].as.integer
-                    : (__int128)arguments[0].as.integer *
-                        (__int128)arguments[1].as.integer;
-            if (result < INT64_MIN || result > INT64_MAX)
+                    ? CETTA_EXACT_INTEGER_V1_SUB : CETTA_EXACT_INTEGER_V1_MUL;
+            int64_t result = 0;
+            if (cetta_exact_integer_small(operation,
+                    arguments[0].as.integer, arguments[1].as.integer,
+                    &result) != CETTA_EXACT_INTEGER_VALUE)
                 return false;
             value_out->kind = CETTA_PLAIN_SCALAR_INT;
-            value_out->as.integer = (int64_t)result;
+            value_out->as.integer = result;
             return true;
         }
         double left = grounded_plain_scalar_as_double(&arguments[0]);
@@ -3742,12 +3742,16 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         Atom *const *elems;
         CettaExprLen len;
         bool to_list = head_id == g_builtin_syms.lib_list_from_expression;
-        if (!atom_sequence_view(args[0], &elems, &len))
+        Atom *value = args[0];
+        if (grounded_current_language_is_petta() &&
+            petta_semantics_is_open_cons_value(value))
+            value = petta_semantics_materialize_closed_logical_list(a, value);
+        if (!atom_sequence_view(value, &elems, &len))
             return atom_error(
                 a, grounded_call_expr(a, head, args, nargs),
                 atom_symbol(a, "ExpectedListOrExpression"));
-        if (atom_is_list(args[0]) == to_list)
-            return args[0];
+        if (atom_is_list(value) == to_list)
+            return value;
         return to_list ? atom_list(a, elems, len)
                        : atom_sequence_like(a, NULL, elems, len);
     }
@@ -3761,41 +3765,42 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         /* A list's elements are read as an expression's are. */
         Atom *const *elems = NULL;
         CettaExprLen len = 0u;
-        bool sequence = grounded_current_language_is_petta()
+        bool petta = grounded_current_language_is_petta();
+        bool sequence = petta
             ? petta_semantics_sequence_view(argument, &elems, &len)
             : atom_sequence_view(argument, &elems, &len);
         /* PeTTa's car-atom and cdr-atom are total: a cell gives its head or
          * tail, and anything but a non-empty list gives ().  PeTTa's typed
          * line raises on car-atom of the empty sequence. */
-        if (grounded_current_language_is_petta()) {
-            if (petta_semantics_is_cons_constraint(argument))
-                return argument->expr.elems[
-                    head_id == g_builtin_syms.car_atom ? 1u : 2u];
-            CettaSequenceProjectionView view = cetta_sequence_projection_view(
-                cetta_sequence_projection_call(head_id, nargs,
-                    eval_current_petta_typed_line &&
-                            eval_current_petta_typed_line()
-                        ? CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD
-                        : CETTA_SEQUENCE_PETTA_VALUE),
-                argument, sequence, elems, len);
-            if (view.result == CETTA_SEQUENCE_PROJECT_RAISE) {
-                g_grounded_raised = true;
-                return petta_semantics_empty_head_error(a);
-            }
-            if (!sequence || len == 0u)
-                return atom_unit(a);
+        if (petta && petta_semantics_is_cons_constraint(argument))
+            return argument->expr.elems[
+                head_id == g_builtin_syms.car_atom ? 1u : 2u];
+        CettaSequenceProjectionPolicy policy = !petta ? CETTA_SEQUENCE_STRICT_VALUE
+            : eval_current_petta_typed_line && eval_current_petta_typed_line()
+                ? CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD : CETTA_SEQUENCE_PETTA_VALUE;
+        CettaSequenceProjectionView view = cetta_sequence_projection_view(
+            cetta_sequence_projection_call(head_id, nargs, policy),
+            argument, sequence, elems, len);
+        if (view.result == CETTA_SEQUENCE_PROJECT_RAISE) {
+            g_grounded_raised = true;
+            return petta_semantics_empty_head_error(a);
         }
-        if (sequence && len > 0u) {
-            Atom *part = head_id == g_builtin_syms.car_atom
+        if (view.result == CETTA_SEQUENCE_PROJECT_ELEMENT ||
+            view.result == CETTA_SEQUENCE_PROJECT_SUFFIX) {
+            /* The rest keeps the sequence's kind and, like the view, leaves
+             * an elaborated template's own list out. */
+            Atom *part = view.result == CETTA_SEQUENCE_PROJECT_ELEMENT
                 ? elems[0]
                 : atom_sequence_rest(a, argument, elems, len);
-            if (head_id == g_builtin_syms.cdr_atom &&
+            if (view.result == CETTA_SEQUENCE_PROJECT_SUFFIX &&
                 atom_is_he_evaluated(argument) && part &&
                 part->kind == ATOM_EXPR && part->expr.len > 0u &&
                 !atom_has_vars(part))
                 part = atom_he_evaluated_copy(a, part);
             return held ? atom_prime_held_wrap(a, part) : part;
         }
+        if (view.result != CETTA_SEQUENCE_PROJECT_ARGUMENT_ERROR)
+            return cetta_sequence_projection_materialize(a, &view);
         return grounded_raise(
             a, head, args, nargs,
             atom_string(
@@ -3976,6 +3981,17 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
 
     /* ── Expression introspection ─────────────────────────────────────── */
     if ((head_id == g_builtin_syms.size || head_id == g_builtin_syms.size_atom) && nargs == 1) {
+        if (grounded_current_language_is_petta() &&
+            petta_semantics_is_open_cons_value(args[0])) {
+            CettaExprLen length;
+            /* Prepared consumers can share a private spine. Its physical
+             * arity is not its logical list length. Unresolved tails remain
+             * the relational evaluator's, not a guessed finite length. */
+            if (!petta_semantics_logical_list_length(args[0], &length) ||
+                length > INT64_MAX)
+                return NULL;
+            return atom_int(a, (int64_t)length);
+        }
         int64_t counted_collection = 0;
         if (atom_counted_collection_count(
                 args[0], &counted_collection)) {
@@ -4026,6 +4042,25 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             if (!elements)
                 return NULL;
             args[0] = elements;
+        }
+        if (grounded_current_language_is_petta() &&
+            petta_semantics_is_open_cons_value(args[0])) {
+            if (args[1]->kind != ATOM_GROUNDED ||
+                args[1]->ground.gkind != GV_INT || args[1]->ground.ival < 0)
+                return atom_petta_no_result(a);
+            PeTTaLogicalListCursor cursor;
+            petta_semantics_logical_list_cursor_init(&cursor, args[0]);
+            for (int64_t index = 0;; index++) {
+                Atom *item = NULL;
+                PeTTaLogicalListStep step =
+                    petta_semantics_logical_list_cursor_next(&cursor, &item);
+                if (step == PETTA_LOGICAL_LIST_INVALID)
+                    return NULL;
+                if (step == PETTA_LOGICAL_LIST_END)
+                    return atom_petta_no_result(a);
+                if (index == args[1]->ground.ival)
+                    return item;
+            }
         }
         if (args[0]->kind != ATOM_EXPR) {
             if (args[0]->kind == ATOM_GROUNDED)

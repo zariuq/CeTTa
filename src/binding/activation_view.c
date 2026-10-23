@@ -58,10 +58,10 @@ bool bindings_activation_read_slot(
                 authority, frame->source_ids[source_slot], &slot))
             return false;
     }
-    *present_out = authority->write_version[slot] > frame->first_write_version &&
-        authority->values[slot].skeleton != NULL;
+    *present_out = bindings_frame_slot_version(authority, slot) > frame->first_write_version &&
+        bindings_frame_slot_value(authority, slot).skeleton != NULL;
     if (*present_out)
-        *value_out = authority->values[slot];
+        *value_out = bindings_frame_slot_value(authority, slot);
     return true;
 }
 

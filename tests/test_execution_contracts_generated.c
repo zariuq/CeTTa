@@ -512,13 +512,44 @@ static void test_generated_sequence_representations(void) {
 static void test_generated_prepared_intrinsic_program(void) {
     unsigned rows = 0u;
     bool saw_division = false, saw_sort_numbers = false;
+    unsigned and_strict = 0u, and_short = 0u;
+    unsigned or_strict = 0u, or_short = 0u;
+    bool saw_intersection = false;
     bool saw_remove_all = false, saw_unkey = false;
     bool saw_retain_top_k = false, saw_cons = false, saw_union = false;
     unsigned dual_numeric_heads = 0u;
+    struct IntrinsicRow {
+        const char *field;
+        unsigned arity;
+        unsigned dialects;
+    };
+#define INTRINSIC_ROW(field, arity, discipline, instruction, dialects) \
+    {#field, (arity), (dialects)},
+    const struct IntrinsicRow scoped[] = {
+        CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(INTRINSIC_ROW)
+    };
+#undef INTRINSIC_ROW
+    const size_t scoped_count = sizeof(scoped) / sizeof(scoped[0]);
+    /* No dialect reads two rows for one head and arity. */
+    for (size_t i = 0u; i < scoped_count; i++)
+        for (size_t j = i + 1u; j < scoped_count; j++)
+            if (strcmp(scoped[i].field, scoped[j].field) == 0 &&
+                scoped[i].arity == scoped[j].arity)
+                assert((scoped[i].dialects & scoped[j].dialects) == 0u);
 #define COUNT_PREPARED_INTRINSIC_HEAD(                                  \
-    field, arity, discipline, instruction) do {                         \
+    field, arity, discipline, instruction, dialects) do {               \
+    assert((dialects) != 0u);                                           \
+    assert(((dialects) & ~CETTA_GSLT_INTRINSIC_DIALECT_ALL) == 0u);    \
     assert((discipline) ==                                              \
-           CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL);     \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL || \
+           (discipline) ==                                              \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT); \
+    if ((discipline) ==                                                 \
+        CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT) {    \
+        assert((arity) == 2u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+    }                                                                   \
     rows++;                                                             \
     if (strcmp(#field, "sort_numbers_atom") == 0) {                    \
         saw_sort_numbers = true;                                        \
@@ -531,6 +562,24 @@ static void test_generated_prepared_intrinsic_program(void) {
         assert((arity) == 2u);                                          \
         assert((instruction) ==                                         \
                CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+    }                                                                   \
+    if (strcmp(#field, "op_and") == 0 ||                             \
+        strcmp(#field, "op_or") == 0) {                               \
+        bool is_and = strcmp(#field, "op_and") == 0;                  \
+        bool strict = (discipline) ==                                  \
+            CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL;     \
+        assert((arity) == 2u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+        *(is_and ? (strict ? &and_strict : &and_short)                  \
+                 : (strict ? &or_strict : &or_short)) |= (dialects);    \
+    }                                                                   \
+    if (strcmp(#field, "intersection_atom") == 0) {                  \
+        saw_intersection = true;                                       \
+        assert((arity) == 2u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+        assert((dialects) == CETTA_GSLT_INTRINSIC_DIALECT_PETTA);        \
     }                                                                   \
     if (strcmp(#field, "op_plus") == 0 ||                             \
         strcmp(#field, "op_minus") == 0 ||                            \
@@ -569,7 +618,29 @@ static void test_generated_prepared_intrinsic_program(void) {
     assert(saw_division && saw_sort_numbers && saw_remove_all);
     assert(saw_retain_top_k && saw_unkey);
     assert(saw_cons && saw_union);
+    assert(saw_intersection);
     assert(dual_numeric_heads == 8u);
+    /* HE and PeTTa evaluate both operands of a connective; Prime demands
+     * the second only when the first leaves the value open. */
+    assert(and_strict == (CETTA_GSLT_INTRINSIC_DIALECT_HE |
+                          CETTA_GSLT_INTRINSIC_DIALECT_PETTA));
+    assert(or_strict == and_strict);
+    assert(and_short == CETTA_GSLT_INTRINSIC_DIALECT_PRIME);
+    assert(or_short == and_short);
+    unsigned short_circuit_rows = 0u;
+    bool saw_and_absorbs_false = false, saw_or_absorbs_true = false;
+#define CHECK_SHORT_CIRCUIT(field, arity, absorbing) do {               \
+    short_circuit_rows++;                                               \
+    assert((arity) == 2u);                                              \
+    if (strcmp(#field, "op_and") == 0)                                \
+        saw_and_absorbs_false = !(absorbing);                          \
+    if (strcmp(#field, "op_or") == 0)                                 \
+        saw_or_absorbs_true = (absorbing);                              \
+} while (0);
+    CETTA_GSLT_PREPARED_PURE_SHORT_CIRCUIT_ROWS(CHECK_SHORT_CIRCUIT)
+#undef CHECK_SHORT_CIRCUIT
+    assert(short_circuit_rows == 2u);
+    assert(saw_and_absorbs_false && saw_or_absorbs_true);
 }
 
 static void test_generated_sequence_constructor_policy(void) {
@@ -615,7 +686,7 @@ static void test_generated_sequence_constructor_policy(void) {
             assert(policy->held_mask == 2u);
         }
         /* Strict-all code cannot erase a constructor's held operand. */
-#define CHECK_PREPARED_CONSTRUCTOR(symbol_field, arity, discipline, instruction) \
+#define CHECK_PREPARED_CONSTRUCTOR(symbol_field, arity, discipline, instruction, dialects) \
         if (strcmp(policy->field, #symbol_field) == 0) { \
             assert(policy->held_mask == 0u); \
             assert((policy->arities & (1u << (arity))) != 0u); \
