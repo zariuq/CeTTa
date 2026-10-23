@@ -1836,18 +1836,18 @@ bool grounded_try_plain_scalar_operation(
         }
         if (arguments[0].kind == CETTA_PLAIN_SCALAR_INT &&
             arguments[1].kind == CETTA_PLAIN_SCALAR_INT) {
-            __int128 result = head_id == g_builtin_syms.op_plus
-                ? (__int128)arguments[0].as.integer +
-                    (__int128)arguments[1].as.integer
+            CettaExactIntegerV1Operation operation =
+                head_id == g_builtin_syms.op_plus
+                ? CETTA_EXACT_INTEGER_V1_ADD
                 : head_id == g_builtin_syms.op_minus
-                    ? (__int128)arguments[0].as.integer -
-                        (__int128)arguments[1].as.integer
-                    : (__int128)arguments[0].as.integer *
-                        (__int128)arguments[1].as.integer;
-            if (result < INT64_MIN || result > INT64_MAX)
+                    ? CETTA_EXACT_INTEGER_V1_SUB : CETTA_EXACT_INTEGER_V1_MUL;
+            int64_t result = 0;
+            if (cetta_exact_integer_small(operation,
+                    arguments[0].as.integer, arguments[1].as.integer,
+                    &result) != CETTA_EXACT_INTEGER_VALUE)
                 return false;
             value_out->kind = CETTA_PLAIN_SCALAR_INT;
-            value_out->as.integer = (int64_t)result;
+            value_out->as.integer = result;
             return true;
         }
         double left = grounded_plain_scalar_as_double(&arguments[0]);
@@ -3666,37 +3666,28 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         /* A list's elements are read as an expression's are. */
         Atom *const *elems = NULL;
         CettaExprLen len = 0u;
-        bool sequence = grounded_current_language_is_petta()
+        bool petta = grounded_current_language_is_petta();
+        bool sequence = petta
             ? petta_semantics_sequence_view(argument, &elems, &len)
             : atom_sequence_view(argument, &elems, &len);
         /* PeTTa's car-atom and cdr-atom are total: a cell gives its head or
          * tail, and anything but a non-empty list gives ().  PeTTa's typed
          * line raises on car-atom of the empty sequence. */
-        if (grounded_current_language_is_petta()) {
-            if (petta_semantics_is_cons_constraint(argument))
-                return argument->expr.elems[
-                    head_id == g_builtin_syms.car_atom ? 1u : 2u];
-            CettaSequenceProjectionView view = cetta_sequence_projection_view(
-                cetta_sequence_projection_call(head_id, nargs,
-                    eval_current_petta_typed_line &&
-                            eval_current_petta_typed_line()
-                        ? CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD
-                        : CETTA_SEQUENCE_PETTA_VALUE),
-                argument, sequence, elems, len);
-            if (view.result == CETTA_SEQUENCE_PROJECT_RAISE) {
-                g_grounded_raised = true;
-                return petta_semantics_empty_head_error(a);
-            }
-            if (!sequence || len == 0u)
-                return atom_unit(a);
+        if (petta && petta_semantics_is_cons_constraint(argument))
+            return argument->expr.elems[
+                head_id == g_builtin_syms.car_atom ? 1u : 2u];
+        CettaSequenceProjectionPolicy policy = !petta ? CETTA_SEQUENCE_STRICT_VALUE
+            : eval_current_petta_typed_line && eval_current_petta_typed_line()
+                ? CETTA_SEQUENCE_PETTA_RAISE_EMPTY_HEAD : CETTA_SEQUENCE_PETTA_VALUE;
+        CettaSequenceProjectionView view = cetta_sequence_projection_view(
+            cetta_sequence_projection_call(head_id, nargs, policy),
+            argument, sequence, elems, len);
+        if (view.result == CETTA_SEQUENCE_PROJECT_RAISE) {
+            g_grounded_raised = true;
+            return petta_semantics_empty_head_error(a);
         }
-        if (sequence && len > 0u) {
-            if (head_id == g_builtin_syms.car_atom)
-                return elems[0];
-            return atom_is_list(argument)
-                ? atom_sequence_like(a, argument, elems + 1u, len - 1u)
-                : atom_expr_suffix(a, argument, 1u);
-        }
+        if (view.result != CETTA_SEQUENCE_PROJECT_ARGUMENT_ERROR)
+            return cetta_sequence_projection_materialize(a, &view);
         return grounded_raise(
             a, head, args, nargs,
             atom_string(

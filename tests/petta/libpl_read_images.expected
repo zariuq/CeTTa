@@ -1,0 +1,24 @@
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+1
+true
+separate
+true
+shared
+true
+(1 1 1)
+((alpha alpha) (beta beta))
+(independent-left independent-right)
+()
+((a (a a)) (b (b b)))
+(allowed other)
+((input_datum) (result_datum))

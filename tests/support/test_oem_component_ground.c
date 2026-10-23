@@ -137,12 +137,204 @@ static void trial_restores_first_slot_stores(void) {
     arena_free(&cursor.region); arena_free(&cursor.names); arena_free(&source);
 }
 
+static void counted_matches_restore_young_cells(void) {
+    for (unsigned framed = 0u; framed < 2u; framed++) {
+        for (unsigned nested = 0u; nested < 2u; nested++) {
+            CettaOpenEquationProgram program = {0};
+            program.spelling = symbol_intern_cstr(g_symbols, "count-cell");
+            CettaOpenEquationCursor *cursor = calloc(1u, sizeof(*cursor));
+            assert(cursor);
+            cursor->program = &program;
+            assert(cetta_frame_identity_acquire(&cursor->epoch));
+            arena_init_detached(&cursor->region);
+            arena_init_detached(&cursor->names);
+            Arena source;
+            arena_init_detached(&source);
+            TermUniverse universe;
+            term_universe_init(&universe);
+            term_universe_set_persistent_arena(&universe, &source);
+            Space space;
+            space_init_with_universe(&space, &universe);
+            if (framed)
+                assert(oem_push_frame(cursor, &program, 0u, NULL, NULL, 0u));
+            Atom *cell = oem_new_cell(cursor);
+            Atom *head = atom_symbol(&source, "count-edge");
+            Atom *a = atom_symbol(&source, "a");
+            Atom *b = atom_symbol(&source, "b");
+            Atom *c = atom_symbol(&source, "c");
+            Atom *pattern = atom_expr3(&cursor->region, head, cell, cell);
+            Atom *query = oem_resolve_mode(cursor, pattern, true);
+            assert(cell && pattern && query);
+            space_add(&space, atom_expr3(&source, head, a, b));
+            space_add(&space, atom_expr3(&source, head, b, c));
+            space_add(&space, atom_expr3(&source, head, c, c));
+            space_add(&space, atom_expr3(&source, head,
+                atom_var_with_id(&source, "stored", fresh_var_id()), c));
+            OemTrial outer;
+            if (nested)
+                oem_trial_begin(cursor, &outer);
+            for (unsigned repeated = 0u; repeated < 4u; repeated++) {
+                uint64_t count = 0u;
+                uint32_t trail = cursor->trail_len;
+                uint32_t cells = cursor->cell_len;
+                assert(oem_match_count(cursor, &space, pattern, query,
+                                      repeated % 2u != 0u, &count) == OEM_RUN_CALLED);
+                assert(count == 2u);
+                assert(cursor->cell_len == cells && cursor->trail_len == trail);
+                assert(!cursor->cells[0] && cursor->trial_active == (nested != 0u));
+                checks += 4u;
+            }
+            if (nested)
+                oem_trial_end(cursor, &outer, OEM_UNIFY_FAIL);
+            if (framed)
+                oem_pop_frame(cursor);
+            space_free(&space);
+            term_universe_free(&universe);
+            arena_free(&source);
+            cursor->program = NULL;
+            cetta_open_equation_cursor_close(cursor);
+        }
+    }
+}
+
+/* Compare the shared root reader with the former whole-substitution route.
+ * The reference explicitly classifies the substituted header rather than
+ * calling the new reader or its constructor-role decoder. */
+static bool reference_sequence_size(Atom *value, CettaExprLen *length) {
+    if (!value || value->kind != ATOM_EXPR)
+        return false;
+    if (value->expr.len == 0u) {
+        *length = 0u;
+        return true;
+    }
+    Atom *head = value->expr.elems[0];
+    if ((value->expr.len == 2u && atom_is_internal_tag(
+             head, CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND)) ||
+        (value->expr.len == 3u && (atom_is_internal_tag(
+             head, CETTA_INTERNAL_TAG_PETTA_PARTIAL) || atom_is_internal_tag(
+             head, CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE))))
+        return false;
+    if (value->expr.len == 3u) {
+        Atom *domain = value->expr.elems[1];
+        if (domain->kind == ATOM_EXPR && domain->expr.len == 2u &&
+            atom_is_internal_tag(domain->expr.elems[0],
+                CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY))
+            return false;
+    }
+    *length = value->expr.len - (atom_is_list(value) ? 1u : 0u);
+    return true;
+}
+
+static void sequence_sizes_follow_cells_and_rollback(void) {
+    CettaOpenEquationProgram program = {0};
+    program.spelling = symbol_intern_cstr(g_symbols, "size-cells");
+    CettaOpenEquationCursor cursor = {.program = &program, .epoch = {23u}};
+    arena_init_detached(&cursor.names);
+    arena_init_detached(&cursor.region);
+    Atom *x = oem_new_cell(&cursor);
+    Atom *alias = oem_new_cell(&cursor);
+    Atom *head = oem_new_cell(&cursor);
+    Atom *domain = oem_new_cell(&cursor);
+    Atom *domain_head = oem_new_cell(&cursor);
+    Atom *tag = atom_symbol(&cursor.region, "Data");
+    assert(x && alias && head && domain && domain_head && tag);
+    unsigned widths[] = {0u, 1u, 2u, 3u, 4u, 64u, 4096u};
+    for (unsigned index = 0u; index < sizeof widths / sizeof widths[0]; index++) {
+        unsigned width = widths[index];
+        Atom **items = width ? malloc(width * sizeof(*items)) : NULL;
+        assert(!width || items);
+        for (unsigned item = 0u; item < width; item++)
+            items[item] = item ? x : tag;
+        Atom *tuple = atom_expr(&cursor.region, items, width);
+        free(items);
+        OemFrame mark = {.mark = arena_mark(&cursor.region), .cell_mark = cursor.cell_len};
+        cursor.frames = &mark;
+        cursor.frame_len = 1u;
+        assert(oem_unify(&cursor, alias, tuple) == OEM_UNIFY_OK);
+        for (unsigned bound = 0u; bound < 2u; bound++) {
+            if (bound)
+                assert(oem_unify(&cursor, x, atom_int(&cursor.region, 7)) == OEM_UNIFY_OK);
+            uint32_t before_resolve = cursor.resolve_cap;
+            Atom *result = NULL;
+            assert(oem_sequence_size_value(&cursor, g_builtin_syms.size_atom, alias, &result));
+            assert(result && result->kind == ATOM_GROUNDED && result->ground.ival == width);
+            assert(cursor.resolve_cap == before_resolve);
+            Atom *whole = oem_resolve_mode(&cursor, alias, true);
+            CettaExprLen expected = UINT32_MAX;
+            assert(reference_sequence_size(whole, &expected) && expected == width);
+            checks += 3u;
+        }
+        oem_restore(&cursor, &mark);
+        assert(oem_deref(&cursor, alias) == alias && oem_deref(&cursor, x) == x);
+        Atom *result = tag;
+        assert(!oem_sequence_size_value(&cursor, g_builtin_syms.size_atom, alias, &result));
+        assert(!result);
+        checks += 2u;
+        cursor.frames = NULL;
+        cursor.frame_len = 0u;
+    }
+    /* A bound head or callable domain can change the interpretation without
+     * changing the source tuple's cached structural summary. */
+    Atom *triple = atom_expr3(&cursor.region, head, domain, x);
+    Atom *pair = atom_expr2(&cursor.region, domain_head, tag);
+    OemFrame mark = {.mark = arena_mark(&cursor.region), .cell_mark = cursor.cell_len};
+    cursor.frames = &mark;
+    cursor.frame_len = 1u;
+    assert(oem_unify(&cursor, domain, pair) == OEM_UNIFY_OK);
+    for (unsigned private = 0u; private < 2u; private++) {
+        if (private)
+            assert(oem_unify(&cursor, domain_head, atom_internal_tag(
+                &cursor.region, CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY)) == OEM_UNIFY_OK);
+        Atom *result = NULL;
+        bool admitted = oem_sequence_size_value(
+            &cursor, g_builtin_syms.size_atom, triple, &result);
+        CettaExprLen expected = 0u;
+        bool sequence = reference_sequence_size(oem_resolve_mode(&cursor, triple, true), &expected);
+        assert(admitted == sequence && admitted == !private);
+        if (admitted)
+            assert(result && result->ground.ival == expected);
+        else
+            assert(!result);
+        checks += 2u;
+    }
+    oem_restore(&cursor, &mark);
+    Atom *result = NULL;
+    assert(oem_unify(&cursor, head, atom_internal_tag(
+        &cursor.region, CETTA_INTERNAL_TAG_PETTA_PARTIAL)) == OEM_UNIFY_OK);
+    assert(!oem_sequence_size_value(&cursor, g_builtin_syms.size_atom, triple, &result));
+    oem_restore(&cursor, &mark);
+    assert(oem_unify(&cursor, head, atom_internal_tag(
+        &cursor.region, CETTA_INTERNAL_TAG_COUNTED_COLLECTION)) == OEM_UNIFY_OK);
+    assert(!oem_sequence_size_value(&cursor, g_builtin_syms.size_atom, triple, &result));
+    oem_restore(&cursor, &mark);
+    assert(oem_unify(&cursor, head, atom_internal_tag(
+        &cursor.region, CETTA_INTERNAL_TAG_LIST)) == OEM_UNIFY_OK);
+    assert(oem_sequence_size_value(&cursor, g_builtin_syms.size, triple, &result));
+    assert(result && result->ground.ival == 2);
+    oem_restore(&cursor, &mark);
+    assert(!oem_sequence_size_value(&cursor, g_builtin_syms.car_atom, triple, &result));
+    BindingValue ignored;
+    assert(!oem_sequence_value_root(&cursor,
+        binding_value_from_context(triple, (CettaFrameIdentity){29u}), &ignored));
+    checks += 7u;
+    cursor.frames = NULL;
+    cursor.frame_len = 0u;
+    free(cursor.cells); free(cursor.cell_names); free(cursor.trail);
+    free(cursor.stores); free(cursor.remembered_cells); free(cursor.remembered_slots);
+    free(cursor.pairs); free(cursor.walk); free(cursor.resolve_stack); free(cursor.resolve_results);
+    free(cursor.occurs_close); free(cursor.occurs_seen.buckets); free(cursor.occurs_seen.dense);
+    free(cursor.ground_facts);
+    arena_free(&cursor.region); arena_free(&cursor.names);
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
     g_symbols = &symbols;
     trial_restores_first_slot_stores();
+    counted_matches_restore_young_cells();
+    sequence_sizes_follow_cells_and_rollback();
     CettaOpenEquationProgram program = {0};
     program.spelling = symbol_intern_cstr(&symbols, "v");
     CettaOpenEquationCursor cursor = {0};
@@ -224,9 +416,9 @@ int main(void) {
                actual == reference(&cursor, 3u, root));
         checks++;
     }
-    printf("PASS: %llu independent occurrence checks; closed components with "
+    printf("PASS: %llu independent occurrence and root-read checks; closed components with "
            "open siblings, duplicate open DAGs, aliases, cycles, rollback "
-           "and optional-allocation failure\n", (unsigned long long)checks);
+           "logical headers and optional-allocation failure\n", (unsigned long long)checks);
     free(cursor.cells);
     free(cursor.cell_names);
     free(cursor.trail);

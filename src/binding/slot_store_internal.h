@@ -7,6 +7,9 @@
 #include "../match.h"
 #include "../stats.h"
 #include "frame_schema_internal.h"
+#include <assert.h>
+
+#define BINDINGS_DIRECT_FRAME_SLOT_CAP 64u
 
 typedef struct BindingsFrameIndexEntry {
     CettaFrameIdentity epoch;
@@ -17,8 +20,8 @@ typedef struct BindingsFrameIndexEntry {
     uint64_t *write_version;
     uint32_t bound_value_count;
     uint32_t private_value_count;
-    uint32_t slot_len;
-    uint32_t cap;
+    uint32_t slot_len; /* logical coordinates, including runtime additions */
+    uint32_t cap;      /* physical backing; it may cover only a prefix */
     uint64_t activation_write_boundary;
     bool has_activation_write_boundary;
     /* True only when the schema was admitted from the complete variable
@@ -26,6 +29,27 @@ typedef struct BindingsFrameIndexEntry {
      * may extend an incomplete schema, but a complete schema is closed. */
     bool schema_complete;
 } BindingsFrameIndexEntry;
+
+/* The caller has admitted this coordinate through the logical schema. A
+ * slot outside the backing prefix is unbound with version zero; writing it
+ * grows the prefix. Checked builds validate that entrance invariant. */
+static inline BindingValue bindings_frame_slot_value(
+        const BindingsFrameIndexEntry *entry, uint32_t slot) {
+#if CETTA_PROVENANCE_ASSERT
+    assert(entry && slot < entry->slot_len);
+#endif
+    return __builtin_expect(slot < entry->cap, 1)
+        ? entry->values[slot] : binding_value_from_atom(NULL);
+}
+
+static inline uint64_t bindings_frame_slot_version(
+        const BindingsFrameIndexEntry *entry, uint32_t slot) {
+#if CETTA_PROVENANCE_ASSERT
+    assert(entry && slot < entry->slot_len);
+#endif
+    return __builtin_expect(slot < entry->cap, 1)
+        ? entry->write_version[slot] : 0u;
+}
 
 struct BindingsFrameUndoEntry {
     BindingValue previous_value;
