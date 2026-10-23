@@ -100,10 +100,17 @@ static bool pathmap_indexed_query_enabled(void) {
     return pathmap_indexed_query_mode() != PATHMAP_QUERY_INDEX_MODE_OFF;
 }
 
-/* The flat catalog duplicates relation rows and access paths.  In automatic
- * mode reserve that cost for conjunction planning; a one-factor query can
- * descend the counted PathMap directly.  Explicit enablement remains useful
- * for mechanism tests and workload-specific experiments. */
+/* A suffix query can reuse the ordinary candidate service over a scoped
+ * native view. Reserve the separate Rust catalog for multi-factor planning
+ * and explicitly forced one-factor experiments. A bound prefix still uses
+ * direct counted-trie traversal while no native view is resident. */
+static bool pathmap_single_factor_prefers_native_selection(
+    const Atom *query) {
+    return pathmap_indexed_query_mode() == PATHMAP_QUERY_INDEX_MODE_AUTO &&
+           query && space_path_index_leads(query) &&
+           space_path_index_may_select(query);
+}
+
 static bool pathmap_indexed_single_factor_enabled(void) {
     return pathmap_indexed_query_mode() == PATHMAP_QUERY_INDEX_MODE_FORCED;
 }
@@ -967,7 +974,9 @@ static bool match_space_atom_epoch(Space *s, CettaIndex atom_idx, Atom *query,
                                    Bindings *b, Arena *a, CettaFrameIdentity epoch) {
     if (!s || !query || !b || atom_idx >= s->native.len)
         return false;
-    AtomId atom_id = space_get_atom_id_at64(s, atom_idx);
+    /* The selector names a local candidate row. An overlay offset or the
+     * bridge's public iteration order may name a different occurrence. */
+    AtomId atom_id = space_match_backend_candidate_atom_id_at64(s, atom_idx);
     return match_atoms_atom_id_epoch(query, s->native.universe, atom_id, b, a, epoch);
 }
 
@@ -6035,6 +6044,12 @@ bool space_match_backend_visit_bindings_direct(
         space_has_dependencies(s))
         return false;
 
+    /* The native occurrence query performs this read under its own snapshot.
+     * Decline before calling the receiver; a hint must publish no partial row. */
+    if (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
+        pathmap_single_factor_prefers_native_selection(query))
+        return false;
+
     indexed_result = space_match_backend_try_visit_bindings_indexed(
         s, a, query, visitor, ctx);
     if (indexed_result != SPACE_MATCH_PULL_VISIT_DECLINED) {
@@ -6046,8 +6061,7 @@ bool space_match_backend_visit_bindings_direct(
     case SPACE_ENGINE_PATHMAP:
         if (imported_logical_len(s) == 0)
             return true;
-        if (imported_atom_has_epoch_vars(query) ||
-            imported_atom_has_bridge_vars(query)) {
+        if (imported_atom_has_bridge_vars(query)) {
             return false;
         }
         /* Ground queries can bind stored-side variables too. The query-only
@@ -6082,12 +6096,13 @@ bool space_match_backend_visit_bindings_direct(
 bool space_match_backend_can_try_visit_bindings_indexed(
     const Space *s,
     const Atom *query) {
+    /* This is a syntactic hint, not admission authority. In particular it
+     * does not refresh a space summary or certify stored-side variables. */
     return s && query && !space_is_ordered(s) &&
            !space_has_dependencies(s) &&
            s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
            !s->match_backend.pathmap.bridge.preserve_logical_order &&
            pathmap_indexed_single_factor_enabled() &&
-           !imported_atom_has_epoch_vars((Atom *)query) &&
            !imported_atom_has_bridge_vars((Atom *)query);
 }
 
@@ -6104,6 +6119,13 @@ space_match_backend_try_visit_bindings_indexed(
 
     if (!a || !visitor ||
         !space_match_backend_can_try_visit_bindings_indexed(s, query)) {
+        return SPACE_MATCH_PULL_VISIT_DECLINED;
+    }
+    /* Frame coordinates only rename query cells on an exact frontier.
+     * Check that current frontier under the physical read transition; a
+     * preflight result must not outlive mutations or grant this authority. */
+    if (imported_atom_has_epoch_vars(query) &&
+        !space_contains_only_exact_atoms(s)) {
         return SPACE_MATCH_PULL_VISIT_DECLINED;
     }
     if (imported_logical_len(s) == 0)
@@ -7875,6 +7897,9 @@ static bool imported_shadow_refresh_from_projection(Space *s) {
             }
         }
     }
+    /* Projection can enumerate the same remaining occurrences in a new
+     * order. Index positions belong to the replaced native view. */
+    native_note_remove(s);
     free(s->native.atom_ids);
     s->native.atom_ids = next_ids;
     s->native.atom_id_width_bits = next_bits;
@@ -8715,11 +8740,34 @@ static CettaIndex pathmap_local_candidates(Space *s, Atom *pattern,
     return n;
 }
 
+static bool pathmap_local_query_native_view(Space *space, Arena *arena,
+    Atom *query, SubstMatchSet *out) {
+    Arena *persistent = eval_current_persistent_arena();
+    if (!space_match_backend_materialize_native_storage(
+            space, persistent ? persistent : arena)) {
+        smset_init(out);
+        return false;
+    }
+    native_candidate_exact_query(space, arena, query, out);
+    return true;
+}
+
 static void pathmap_local_query(Space *s, Arena *a, Atom *query,
                                 SubstMatchSet *out) {
     BindingSet direct_matches;
     ImportedBridgeState *st = &s->match_backend.pathmap.bridge;
-    bool epoch_query = imported_atom_has_epoch_vars(query);
+    if (pathmap_indexed_query_mode() == PATHMAP_QUERY_INDEX_MODE_AUTO &&
+        !space_is_ordered(s) && !st->preserve_logical_order &&
+        (st->native_shadow_synced ||
+         pathmap_single_factor_prefers_native_selection(query))) {
+        if (pathmap_local_query_native_view(s, a, query, out))
+            return;
+        /* A derived view is optional here and has published no answer.
+         * Its refusal leaves the authoritative bridge traversal available. */
+        space_match_backend_clear_error();
+    }
+    bool epoch_query = imported_atom_has_epoch_vars(query) &&
+        !space_contains_only_exact_atoms(s);
     bool bridge_query = imported_atom_has_bridge_vars(query);
     bool var_query = atom_has_vars(query);
     bool indexed_vars = false;
@@ -8733,7 +8781,9 @@ static void pathmap_local_query(Space *s, Arena *a, Atom *query,
          * authored-order native view; no bridge row is published first. */
         uint64_t indexed_count = 0u;
         Atom *factor = query;
-        if (pathmap_indexed_single_factor_enabled() && !epoch_query &&
+        if (!st->native_shadow_synced &&
+            pathmap_indexed_single_factor_enabled() &&
+            !epoch_query &&
             !bridge_query &&
             pathmap_order_pinned_index_pattern_safe(query) &&
             pathmap_local_count_conjunction(
@@ -8759,13 +8809,7 @@ static void pathmap_local_query(Space *s, Arena *a, Atom *query,
             }
             space_match_backend_clear_error();
         }
-        Arena *persist = eval_current_persistent_arena();
-        if (!space_match_backend_materialize_native_storage(
-                s, persist ? persist : a)) {
-            smset_init(out);
-            return;
-        }
-        native_candidate_exact_query(s, a, query, out);
+        pathmap_local_query_native_view(s, a, query, out);
         return;
     }
     if (imported_logical_len(s) == 0) {
@@ -9790,8 +9834,10 @@ static void pathmap_local_note_add(Space *s, AtomId atom_id, Atom *atom,
     /* This hook runs after the native append.  Any live bridge update below
        mirrors that same atom; otherwise native storage remains authoritative. */
     st->native_shadow_synced = true;
-    if (st->preserve_logical_order)
-        native_note_add(s, atom_id, atom, atom_idx);
+    /* Any native view may have acquired candidate indexes, independently of
+     * whether the observer requires order. The append updates those same
+     * services before either backend is queried again. */
+    native_note_add(s, atom_id, atom, atom_idx);
     if (st->preserve_logical_order &&
         space_atom_id_requires_authored_order(s, atom_id, atom)) {
         return;
@@ -9925,8 +9971,7 @@ static void pathmap_local_note_add(Space *s, AtomId atom_id, Atom *atom,
 
 static void pathmap_local_note_remove(Space *s) {
     ImportedBridgeState *st = &s->match_backend.pathmap.bridge;
-    if (st->preserve_logical_order)
-        native_note_remove(s);
+    native_note_remove(s);
     imported_projection_clear(st);
     imported_flat_state_clear(st);
     st->bridge_active = false;
@@ -9967,7 +10012,8 @@ static void native_candidate_exact_query(Space *s, Arena *a, Atom *query,
         s->match_backend.kind == SPACE_ENGINE_NATIVE ||
         s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT ||
         (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
-         s->match_backend.pathmap.bridge.preserve_logical_order);
+         (s->match_backend.pathmap.bridge.preserve_logical_order ||
+          s->match_backend.pathmap.bridge.native_shadow_synced));
     CettaIndex ncand =
         native_index_authoritative
             ? native_candidates(s, query, &candidates)
@@ -11065,8 +11111,27 @@ void space_match_backend_free(Space *s) {
         s->match_backend.ops->free(s);
 }
 
+bool space_match_backend_accepts_space(const Space *s, SpaceEngine kind) {
+    if (!s)
+        return false;
+    switch (s->kind) {
+    case SPACE_KIND_STACK:
+    case SPACE_KIND_QUEUE:
+        return kind == SPACE_ENGINE_NATIVE ||
+               kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT;
+    case SPACE_KIND_ATOM:
+    case SPACE_KIND_HASH:
+        return kind == SPACE_ENGINE_NATIVE ||
+               kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT ||
+               kind == SPACE_ENGINE_PATHMAP || kind == SPACE_ENGINE_MORK;
+    default:
+        return false;
+    }
+}
+
 bool space_match_backend_try_set(Space *s, SpaceEngine kind) {
-    if (space_match_backend_unavailable_reason(kind))
+    if (!space_match_backend_accepts_space(s, kind) ||
+        space_match_backend_unavailable_reason(kind))
         return false;
     const SpaceMatchBackendOps *ops = NULL;
     switch (kind) {
