@@ -453,25 +453,37 @@ typedef enum {
     PETTA_VALUE_COMPOUND,
 } PeTTaValueRepresentation;
 
+/* Decode the bounded constructor coordinates that determine a value's
+ * public role. Readers with a lexical environment resolve these coordinates
+ * before using the same decoder as a materialized atom. */
+static inline PeTTaValueRepresentation atom_petta_expression_representation(
+        CettaExprLen length, const Atom *head,
+        CettaExprLen domain_length, const Atom *domain_head) {
+    if (length == 2u && atom_is_internal_tag(
+            head, CETTA_INTERNAL_TAG_PETTA_PROLOG_COMPOUND))
+        return PETTA_VALUE_COMPOUND;
+    if (length == 3u) {
+        if (atom_is_internal_tag(head, CETTA_INTERNAL_TAG_PETTA_PARTIAL))
+            return PETTA_VALUE_COMPOUND;
+        if (atom_is_internal_tag(head, CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE) ||
+            (domain_length == 2u && atom_is_internal_tag(
+                domain_head, CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY)))
+            return PETTA_VALUE_REGISTERED_CALLABLE;
+    }
+    return PETTA_VALUE_ORDINARY;
+}
+
 static inline PeTTaValueRepresentation atom_petta_value_representation(
         const Atom *atom) {
     if (!atom || atom->kind != ATOM_EXPR ||
         ((atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u &&
          (atom->structural_facts & ATOM_STRUCTURAL_HAS_PETTA_NONLIST) == 0u))
         return PETTA_VALUE_ORDINARY;
-    if (atom_is_petta_prolog_compound(atom) || atom_is_petta_partial(atom))
-        return PETTA_VALUE_COMPOUND;
-    if (atom->expr.len == 3u) {
-        if (atom_is_internal_tag(atom->expr.elems[0],
-                CETTA_INTERNAL_TAG_PETTA_NULLARY_CALLABLE))
-            return PETTA_VALUE_REGISTERED_CALLABLE;
-        const Atom *domain = atom->expr.elems[1];
-        if (domain && domain->kind == ATOM_EXPR && domain->expr.len == 2u &&
-            atom_is_internal_tag(domain->expr.elems[0],
-                CETTA_INTERNAL_TAG_PETTA_CALLABLE_IDENTITY))
-            return PETTA_VALUE_REGISTERED_CALLABLE;
-    }
-    return PETTA_VALUE_ORDINARY;
+    const Atom *domain = atom->expr.len == 3u ? atom->expr.elems[1] : NULL;
+    bool domain_pair = domain && domain->kind == ATOM_EXPR && domain->expr.len == 2u;
+    return atom_petta_expression_representation(
+        atom->expr.len, atom->expr.len ? atom->expr.elems[0] : NULL,
+        domain_pair ? 2u : 0u, domain_pair ? domain->expr.elems[0] : NULL);
 }
 
 /* Only privately constructed callable values carry an identity. Authored

@@ -54974,6 +54974,13 @@ petta_lowered_to_shared_form:
                 &_empty);
             return;
         }
+        if (!space_match_backend_accepts_space(target, kind)) {
+            result_set_free(&backend_rs);
+            outcome_set_add(os,
+                atom_error(a, atom, atom_symbol(a, "UnsupportedSpaceKind")),
+                &_empty);
+            return;
+        }
         const char *reason = space_match_backend_unavailable_reason(kind);
         if (reason) {
             result_set_free(&backend_rs);

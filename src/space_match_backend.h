@@ -329,6 +329,9 @@ bool space_match_backend_u32_bound_checked(uint64_t value,
 
 void space_match_backend_init(Space *s);
 void space_match_backend_free(Space *s);
+/* Semantic compatibility is separate from adapter availability. A rejected
+ * engine/kind combination must leave the current storage unchanged. */
+bool space_match_backend_accepts_space(const Space *s, SpaceEngine kind);
 bool space_match_backend_try_set(Space *s, SpaceEngine kind);
 bool space_match_backend_needs_atom_on_add(const Space *s, AtomId atom_id);
 void space_match_backend_note_add(Space *s, AtomId atom_id, Atom *atom,

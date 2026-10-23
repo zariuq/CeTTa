@@ -400,7 +400,10 @@ typedef struct {
     CettaCount scanned_len;
 } PettaCallabilityScan;
 
+/* Four ways retain colliding inquiries without increasing entry capacity.
+ * Hashing selects a bank; reuse still checks the complete program token. */
 #define PETTA_TABLE_SAFETY_CACHE_CAP 128u
+#define PETTA_TABLE_SAFETY_CACHE_WAYS 4u
 
 /* Keyed on the space program (equation and declaration occurrences), not on
  * the data revision: safety reads the relation's equations and their plans plus
@@ -466,6 +469,8 @@ struct PettaProgram {
     Arena transient_plan_atoms;
     PettaTableSafetyCacheEntry
         table_safety_cache[PETTA_TABLE_SAFETY_CACHE_CAP];
+    uint8_t table_safety_next[PETTA_TABLE_SAFETY_CACHE_CAP /
+                              PETTA_TABLE_SAFETY_CACHE_WAYS];
 };
 
 struct PettaProgramRevisionView {
@@ -2652,6 +2657,9 @@ static PettaPlanNode *petta_plan_build_in(
             ok = false;
             break;
         }
+        node->literal_case_default = atom->kind == ATOM_EXPR &&
+            atom->expr.len == 2u && atom_is_symbol_id(
+                atom->expr.elems[0], g_builtin_syms.empty);
         if (translation && environment &&
             petta_translation_value_cached(program, environment, atom)) {
             node->role = PETTA_PLAN_VALUE;
@@ -2895,6 +2903,7 @@ static bool petta_plan_collapse_values(
             *node = (PettaPlanNode){
                 .role = PETTA_PLAN_VALUE,
                 .output = PETTA_PLAN_OUTPUT_VALUE,
+                .literal_case_default = node->literal_case_default,
             };
             continue;
         }
@@ -2907,6 +2916,7 @@ static bool petta_plan_collapse_values(
             *node = (PettaPlanNode){
                 .role = PETTA_PLAN_VALUE,
                 .output = PETTA_PLAN_OUTPUT_VALUE,
+                .literal_case_default = node->literal_case_default,
             };
             continue;
         }
@@ -2967,6 +2977,7 @@ static void petta_plan_node_key(
              (uint64_t)node->open_template_admitted << 5 |
              (uint64_t)node->has_equation_variable_slot << 6 |
              (uint64_t)node->dispatch_handler << 7 |
+             (uint64_t)node->literal_case_default << 8 |
              (uint64_t)node->plain_scalar_tree_operations << 32;
     key[7] = (uint64_t)node->equation_variable_slot;
     key[8] = (uint64_t)(uintptr_t)node->deterministic_region;
@@ -6757,7 +6768,9 @@ static bool petta_table_safety_push_case(
  * These forms are pure provided every executable child is pure.  Forms
  * which invoke an argument as a callable (map/fold/forall), perform I/O or
  * mutation, cross an FFI boundary, or alter search commitment are excluded.
- * Exclusion only disables tabling; ordinary evaluation remains available.
+ * Exclusion refuses this conservative classification; it does not prove that
+ * the call has effects. Tabling and contextual activation consume the result
+ * under their own admission rules. Ordinary evaluation remains available.
  */
 static bool petta_table_safety_form_is_pure(
     PeTTaForm form, bool *opaque) {
@@ -7120,8 +7133,9 @@ static size_t petta_table_safety_cache_slot(
     hash ^= (uint64_t)head * UINT64_C(0xbf58476d1ce4e5b9);
     hash ^= (uint64_t)arity * UINT64_C(0x94d049bb133111eb);
     hash ^= hash >> 32u;
-    return (size_t)hash &
-           (PETTA_TABLE_SAFETY_CACHE_CAP - 1u);
+    return ((size_t)hash &
+            (PETTA_TABLE_SAFETY_CACHE_CAP / PETTA_TABLE_SAFETY_CACHE_WAYS - 1u)) *
+           PETTA_TABLE_SAFETY_CACHE_WAYS;
 }
 
 PettaRelationSafety petta_program_relation_safety(
@@ -7138,16 +7152,31 @@ PettaRelationSafety petta_program_relation_safety(
 
     size_t cache_slot =
         petta_table_safety_cache_slot(space, head, arity);
-    PettaTableSafetyCacheEntry *cached =
-        &program->table_safety_cache[cache_slot];
     SpaceProgramToken program_token = space_program_token(space);
-    if (cached->occupied &&
-        cached->head == head &&
-        cached->arity == arity &&
-        space_program_token_eq(cached->program, program_token)) {
-        cetta_runtime_stats_inc(
-            CETTA_RUNTIME_COUNTER_PETTA_RELATION_SAFETY_CACHE_HIT);
-        return cached->safety;
+    PettaTableSafetyCacheEntry *cached = NULL;
+    for (size_t way = 0u; way < PETTA_TABLE_SAFETY_CACHE_WAYS; way++) {
+        PettaTableSafetyCacheEntry *entry =
+            &program->table_safety_cache[cache_slot + way];
+        if (entry->occupied && entry->head == head && entry->arity == arity &&
+            entry->program.space == program_token.space &&
+            entry->program.instance_id == program_token.instance_id) {
+            if (space_program_token_eq(entry->program, program_token)) {
+                cetta_runtime_stats_inc(
+                    CETTA_RUNTIME_COUNTER_PETTA_RELATION_SAFETY_CACHE_HIT);
+                return entry->safety;
+            }
+            /* Reuse this key's obsolete observation; never keep two revisions
+             * of it merely because another way happens to be empty. */
+            cached = entry;
+        } else if (!entry->occupied && !cached) {
+            cached = entry;
+        }
+    }
+    if (!cached) {
+        uint8_t *next = &program->table_safety_next[
+            cache_slot / PETTA_TABLE_SAFETY_CACHE_WAYS];
+        cached = &program->table_safety_cache[cache_slot + *next];
+        *next = (uint8_t)((*next + 1u) % PETTA_TABLE_SAFETY_CACHE_WAYS);
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_RELATION_SAFETY_CACHE_MISS);
