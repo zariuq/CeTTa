@@ -28,6 +28,50 @@ static int compare_name(const void *left, const void *right) {
     return strcmp(*(const char *const *)left, *(const char *const *)right);
 }
 
+/* Follow every epsilon edge, including assertions without testing them.
+ * The resulting ASCII set overapproximates possible first scalars. All
+ * non-ASCII scalars remain admitted. Nullable, unknown and extended graphs
+ * decline; failing to allocate this optional analysis also declines. */
+static void prepare_first_ascii(CettaReProgramV1 *p) {
+    if (p->extended || p->literal_trie) return;
+    size_t n = p->instruction_len;
+    if (n > SIZE_MAX / sizeof(uint32_t)) return;
+    uint8_t *seen = calloc(n, 1u);
+    uint32_t *pending = malloc(n * sizeof(*pending));
+    if (!seen || !pending) goto done;
+    size_t len = 1u; pending[0] = p->entry; seen[p->entry] = 1u;
+    while (len) {
+        CettaReInstructionV1 op = p->instructions[pending[--len]];
+        switch (op.opcode) {
+        case CETTA_RE_V1_FAIL: break;
+        case CETTA_RE_V1_CHAR:
+            if (op.argument < 128u)
+                p->first_ascii[op.argument / 64u] |= UINT64_C(1) << (op.argument % 64u);
+            break;
+        case CETTA_RE_V1_CLASS:
+            for (uint32_t i = 0; i < op.second; ++i) {
+                CettaReRangeV1 range = p->ranges[op.argument + i];
+                for (uint32_t cp = range.low; cp < 128u && cp <= range.high; ++cp)
+                    p->first_ascii[cp / 64u] |= UINT64_C(1) << (cp % 64u);
+            }
+            break;
+        case CETTA_RE_V1_SPLIT: case CETTA_RE_V1_JUMP:
+        case CETTA_RE_V1_SAVE: case CETTA_RE_V1_ASSERT: {
+            uint32_t targets[2] = {op.next, op.second};
+            unsigned count = op.opcode == CETTA_RE_V1_SPLIT ? 2u : 1u;
+            for (unsigned i = 0; i < count; ++i) if (!seen[targets[i]]) {
+                seen[targets[i]] = 1u; pending[len++] = targets[i];
+            }
+            break;
+        }
+        default: goto done;
+        }
+    }
+    p->first_ascii_valid = p->first_ascii[0] != UINT64_MAX || p->first_ascii[1] != UINT64_MAX;
+done:
+    free(seen); free(pending);
+}
+
 static bool re_program(const CettaReProgramSpecV1 *s, CettaReProgramV1 **out,
                         char *error, size_t error_size, bool accelerate) {
     if (!s || !out || !s->instructions || !s->instruction_len ||
@@ -108,7 +152,10 @@ static bool re_program(const CettaReProgramSpecV1 *s, CettaReProgramV1 **out,
         free(names);
         if (duplicate) { cetta_re_v1_release(p); return re_error(error, error_size, "duplicate capture name"); }
     }
-    if (accelerate) p->literal_trie = cetta_re_v1_literal_trie_build(p);
+    if (accelerate) {
+        p->literal_trie = cetta_re_v1_literal_trie_build(p);
+        prepare_first_ascii(p);
+    }
     CettaReProgramV1 *old = *out; *out = p; cetta_re_v1_release(old);
     return true;
 }
@@ -285,6 +332,35 @@ typedef struct {
 } ReRun;
 typedef struct { uint32_t *pc; size_t *captures, len; } ReThreads;
 
+void cetta_re_v1_workspace_free(CettaReWorkspaceV1 *w) {
+    if (!w) return;
+    free(w->seen); free(w->stack); free(w->stack_captures); free(w->working);
+    free(w->pc[0]); free(w->pc[1]); free(w->captures[0]); free(w->captures[1]);
+    free(w->initial); free(w->best);
+    *w = (CettaReWorkspaceV1){0};
+}
+static bool workspace_prepare(CettaReWorkspaceV1 *w, size_t n, size_t slots) {
+    if (w->instructions == n && w->slots == slots) return true;
+    cetta_re_v1_workspace_free(w);
+    if (!slots || n == SIZE_MAX || n + 1u > SIZE_MAX / slots / sizeof(size_t) ||
+        n + 1u > SIZE_MAX / sizeof(uint32_t)) return false;
+    w->seen = malloc(n); w->stack = malloc((n + 1u) * sizeof(*w->stack));
+    w->stack_captures = malloc((n + 1u) * slots * sizeof(size_t));
+    w->working = malloc(slots * sizeof(size_t));
+    w->pc[0] = malloc(n * sizeof(uint32_t)); w->pc[1] = malloc(n * sizeof(uint32_t));
+    w->captures[0] = malloc(n * slots * sizeof(size_t));
+    w->captures[1] = malloc(n * slots * sizeof(size_t));
+    w->initial = malloc(slots * sizeof(size_t)); w->best = malloc(slots * sizeof(size_t));
+    if (!w->seen || !w->stack || !w->stack_captures || !w->working ||
+        !w->pc[0] || !w->pc[1] || !w->captures[0] || !w->captures[1] || !w->initial || !w->best) {
+        cetta_re_v1_workspace_free(w); return false;
+    }
+    w->instructions = n; w->slots = slots;
+    return true;
+}
+static CettaReResultV1 find_regular(const CettaReProgramV1 *, const uint8_t *, size_t,
+    size_t, CettaReModeV1, const CettaReExecutionPolicyV1 *, CettaReWorkspaceV1 *, bool);
+
 static bool assertion(ReRun *r, uint32_t which, size_t pos) {
     uint32_t before = 0, after = 0; size_t ignored = 0;
     bool has_before = pos > 0, has_after = pos < r->byte_len;
@@ -368,15 +444,31 @@ CettaReResultV1 cetta_re_v1_find_valid_utf8(const CettaReProgramV1 *p, const uin
 }
 CettaReResultV1 cetta_re_v1_find_policy_valid_utf8(const CettaReProgramV1 *p, const uint8_t *bytes, size_t len,
     size_t start, CettaReModeV1 mode, const CettaReExecutionPolicyV1 *policy) {
+    CettaReWorkspaceV1 workspace = {0};
+    CettaReResultV1 result = cetta_re_v1_find_workspace_valid_utf8(p, bytes, len, start, mode, policy, &workspace);
+    cetta_re_v1_workspace_free(&workspace);
+    return result;
+}
+CettaReResultV1 cetta_re_v1_find_workspace_valid_utf8(const CettaReProgramV1 *p, const uint8_t *bytes, size_t len,
+    size_t start, CettaReModeV1 mode, const CettaReExecutionPolicyV1 *policy, CettaReWorkspaceV1 *workspace) {
+    if (!workspace) return (CettaReResultV1){.outcome = CETTA_RE_V1_INVALID_ARGUMENT};
     if (p && p->literal_trie &&
         !(len && !bytes) && start <= len && mode <= CETTA_RE_V1_FULL &&
         (mode != CETTA_RE_V1_FULL || !start) &&
         (start == len || (bytes[start] & 0xc0u) != 0x80u))
         return cetta_re_v1_literal_find(p, bytes, len, start, mode, policy);
-    return cetta_re_v1_find_reference_valid_utf8(p, bytes, len, start, mode, policy);
+    return find_regular(p, bytes, len, start, mode, policy, workspace, true);
 }
 CettaReResultV1 cetta_re_v1_find_reference_valid_utf8(const CettaReProgramV1 *p, const uint8_t *bytes, size_t len,
     size_t start, CettaReModeV1 mode, const CettaReExecutionPolicyV1 *policy) {
+    CettaReWorkspaceV1 workspace = {0};
+    CettaReResultV1 result = find_regular(p, bytes, len, start, mode, policy, &workspace, false);
+    cetta_re_v1_workspace_free(&workspace);
+    return result;
+}
+static CettaReResultV1 find_regular(const CettaReProgramV1 *p, const uint8_t *bytes, size_t len,
+    size_t start, CettaReModeV1 mode, const CettaReExecutionPolicyV1 *policy, CettaReWorkspaceV1 *w,
+    bool accelerate) {
     CettaReResultV1 result = {.outcome = CETTA_RE_V1_INVALID_ARGUMENT};
     if (!p || (len && !bytes) || start > len || mode > CETTA_RE_V1_FULL ||
         (mode == CETTA_RE_V1_FULL && start)) return result;
@@ -384,26 +476,32 @@ CettaReResultV1 cetta_re_v1_find_reference_valid_utf8(const CettaReProgramV1 *p,
     if (p->extended) return cetta_re_v1_extended_find(p, bytes, len, start, mode, policy);
     uint32_t cp = 0; size_t after = 0;
     size_t n = p->instruction_len, slots = (size_t)p->group_len * 2u;
-    if (n > SIZE_MAX / slots / sizeof(size_t) || n + 1u > SIZE_MAX / slots / sizeof(size_t)) {
+    if (!workspace_prepare(w, n, slots)) {
         result.outcome = CETTA_RE_V1_ALLOCATION_FAILURE; return result;
     }
     ReRun r = {.program = p, .bytes = bytes, .byte_len = len, .slots = slots,
+        .seen = w->seen, .stack = w->stack, .stack_captures = w->stack_captures, .working = w->working,
         .budget = policy ? policy->work_budget : 0u, .policy = policy};
-    ReThreads current = {0}, next = {0};
-    r.seen = calloc(n, 1u); r.stack = malloc((n + 1u) * sizeof(*r.stack));
-    r.stack_captures = malloc((n + 1u) * slots * sizeof(size_t)); r.working = malloc(slots * sizeof(size_t));
-    current.pc = malloc(n * sizeof(uint32_t)); next.pc = malloc(n * sizeof(uint32_t));
-    current.captures = malloc(n * slots * sizeof(size_t)); next.captures = malloc(n * slots * sizeof(size_t));
-    size_t *initial = malloc(slots * sizeof(size_t)), *best = malloc(slots * sizeof(size_t));
-    if (!r.seen || !r.stack || !r.stack_captures || !r.working || !current.pc || !next.pc ||
-        !current.captures || !next.captures || !initial || !best) {
-        result.outcome = CETTA_RE_V1_ALLOCATION_FAILURE; goto done;
-    }
+    ReThreads current = {.pc = w->pc[0], .captures = w->captures[0]},
+        next = {.pc = w->pc[1], .captures = w->captures[1]};
+    size_t *initial = w->initial, *best = w->best;
+    memset(r.seen, 0, n);
     for (size_t i = 0; i < slots; ++i) initial[i] = SIZE_MAX;
     bool found = false;
+    /* A caller-supplied work bound retains the original transition schedule. */
+    bool filter = accelerate && p->first_ascii_valid && !r.budget && mode == CETTA_RE_V1_SEARCH;
     result.outcome = CETTA_RE_V1_NO_MATCH;
     for (size_t pos = start;; pos = after) {
         bool at_end = pos == len;
+        if (filter && !found && !current.len && !at_end && bytes[pos] < 128u &&
+            !(p->first_ascii[bytes[pos] / 64u] & (UINT64_C(1) << (bytes[pos] % 64u)))) {
+            if (policy && policy->cancelled && policy->cancelled(policy->context)) {
+                r.incomplete = r.cancelled = true; break;
+            }
+            memset(r.seen, 0, n);
+            after = pos + 1u;
+            continue;
+        }
         if (!at_end) (void)decode(bytes, len, pos, &cp, &after);
         if (!found && (mode == CETTA_RE_V1_SEARCH || pos == start)) {
             initial[0] = pos;
@@ -450,10 +548,7 @@ CettaReResultV1 cetta_re_v1_find_reference_valid_utf8(const CettaReProgramV1 *p,
             }
         }
     }
-done:
     result.state_visits = r.visits;
-    free(r.seen); free(r.stack); free(r.stack_captures); free(r.working);
-    free(current.pc); free(next.pc); free(current.captures); free(next.captures); free(initial); free(best);
     return result;
 }
 void cetta_re_v1_result_free(CettaReResultV1 *r) { if (r) { free(r->groups); *r = (CettaReResultV1){0}; } }
@@ -467,7 +562,14 @@ CettaReResultV1 cetta_re_v1_next(const CettaReProgramV1 *p, CettaReCursorV1 *cur
 }
 CettaReResultV1 cetta_re_v1_next_policy(const CettaReProgramV1 *p, CettaReCursorV1 *cursor,
                                       const CettaReExecutionPolicyV1 *policy) {
-    if (!p || !cursor) return (CettaReResultV1){.outcome = CETTA_RE_V1_INVALID_ARGUMENT};
+    CettaReWorkspaceV1 workspace = {0};
+    CettaReResultV1 result = cetta_re_v1_next_workspace(p, cursor, policy, &workspace);
+    cetta_re_v1_workspace_free(&workspace);
+    return result;
+}
+CettaReResultV1 cetta_re_v1_next_workspace(const CettaReProgramV1 *p, CettaReCursorV1 *cursor,
+    const CettaReExecutionPolicyV1 *policy, CettaReWorkspaceV1 *workspace) {
+    if (!p || !cursor || !workspace) return (CettaReResultV1){.outcome = CETTA_RE_V1_INVALID_ARGUMENT};
     if (cursor->finished) return (CettaReResultV1){.outcome = CETTA_RE_V1_NO_MATCH};
     CettaReCursorV1 *published = cursor, working = *cursor;
     cursor = &working;
@@ -477,8 +579,8 @@ CettaReResultV1 cetta_re_v1_next_policy(const CettaReProgramV1 *p, CettaReCursor
         if (budget && used == budget) return (CettaReResultV1){.outcome = CETTA_RE_V1_INCOMPLETE, .state_visits = used};
         CettaReExecutionPolicyV1 remaining = policy ? *policy : (CettaReExecutionPolicyV1){0};
         remaining.work_budget = budget ? budget - used : 0u;
-        CettaReResultV1 r = cetta_re_v1_find_policy_valid_utf8(p, cursor->bytes, cursor->byte_len,
-            cursor->cursor, CETTA_RE_V1_SEARCH, &remaining);
+        CettaReResultV1 r = cetta_re_v1_find_workspace_valid_utf8(p, cursor->bytes, cursor->byte_len,
+            cursor->cursor, CETTA_RE_V1_SEARCH, &remaining, workspace);
         used += r.state_visits; r.state_visits = used;
         if (r.outcome != CETTA_RE_V1_FOUND) {
             if (r.outcome == CETTA_RE_V1_NO_MATCH) { cursor->finished = true; *published = *cursor; }
