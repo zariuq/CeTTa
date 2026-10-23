@@ -508,9 +508,9 @@
     {
       "source": "stdlib.metta",
       "output": "stdlib.metta",
-      "source_sha256": "84d231ee080820283c046d8afa804d42d1496837881ae9425eebc2631ba1d733",
-      "output_sha256": "2c48512ff5254d844152b9fa35da1bb1feedb2a8377fe4765f15ff0cf648be6e",
-      "edits": 62,
+      "source_sha256": "bb9b8aaeec9ebd2ec7d8affb69c9f78f2332cc6b832438521fb7bfb2d95c091a",
+      "output_sha256": "4d6c074844c886b7b68cdb19853bc857d44655b784f659a61c8b4deae4e6c822",
+      "edits": 63,
       "code_diagnostics": 2
     },
     {

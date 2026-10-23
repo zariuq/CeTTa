@@ -32554,7 +32554,7 @@ test-prime-compiled-reader-v1: test-prime-compiled-reader-direct-generated-v1 te
 	@result=$$(./$(PRIME_COMPILED_READER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeCompiledReaderV1Summary 187 187 0 cases 77)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeCompiledReaderV1Summary 206 206 0 cases 85)')" -ne 1 ]; then \
 		echo "FAIL: compiled Prime reader exact differential summary absent or duplicated"; \
 		exit 1; \
 	fi; \

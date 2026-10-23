@@ -17083,9 +17083,16 @@ static void direct_walk_stack_free(DirectWalkStack *stack) {
     stack->cap = 0;
 }
 
+/* Push a choice's branches, the elements of the one sequence view, last
+ * first.  False for an expression the view declines (a braces node, a list
+ * pattern): it has no known branches, and the walk declines it. */
 static bool direct_walk_stack_push_superpose(DirectWalkStack *stack, Atom *list) {
-    for (CettaExprIndex i = list->expr.len; i > 0; i--) {
-        if (!direct_walk_stack_push(stack, list->expr.elems[i - 1]))
+    Atom *const *branches = NULL;
+    CettaExprLen branch_len = 0u;
+    if (!atom_sequence_view(list, &branches, &branch_len))
+        return false;
+    for (CettaExprIndex i = branch_len; i > 0; i--) {
+        if (!direct_walk_stack_push(stack, branches[i - 1]))
             return false;
     }
     return true;
@@ -17098,8 +17105,12 @@ static bool hyperpose_static_branch_list(Atom *atom, Atom **list_out) {
         return false;
     }
     Atom *list = expr_arg(atom, 0);
-    /* A list's branches are read by the general hyperpose. */
-    if (!list || list->kind != ATOM_EXPR || atom_is_list_form(list))
+    /* A list's branches are read by the general hyperpose; an expression
+     * the sequence view declines has no known branches. */
+    Atom *const *branches = NULL;
+    CettaExprLen branch_len = 0u;
+    if (!list || atom_is_list_form(list) ||
+        !atom_sequence_view(list, &branches, &branch_len))
         return false;
     if (list_out) *list_out = list;
     return true;
@@ -19850,8 +19861,13 @@ static bool prime_need_stream_emit_static_choice(
         !active_builtin_allowed("hyperpose"))
         return false;
     Atom *branches = expr_arg(stream_expr, 0u);
-    if (!branches || branches->kind != ATOM_EXPR ||
-        atom_is_list_form(branches))
+    /* A list's branches are read by the general choice.  Any other branch
+     * is an element of the one sequence view; an expression the view
+     * declines (a braces node, a list pattern) has no known branches. */
+    Atom *const *branch_elems = NULL;
+    CettaExprLen branch_len = 0u;
+    if (!branches || atom_is_list_form(branches) ||
+        !atom_sequence_view(branches, &branch_elems, &branch_len))
         return false;
     /* A pure choice is observed as one expression: its first answer or
      * prefix carries the fairness duty over all of its branches, so a branch
@@ -19864,16 +19880,16 @@ static bool prime_need_stream_emit_static_choice(
 #endif
     if (recognized)
         *recognized = true;
-    for (CettaExprIndex i = 0u; i < branches->expr.len; i++) {
+    for (CettaExprIndex i = 0u; i < branch_len; i++) {
         bool nested_recognized = false;
         if (prime_need_stream_emit_static_choice(
-                s, a, branches->expr.elems[i], fuel, sink,
+                s, a, branch_elems[i], fuel, sink,
                 &nested_recognized))
             return true;
         if (nested_recognized)
             continue;
         (void)metta_eval_bind_visit_demand(
-            s, a, branches->expr.elems[i], fuel,
+            s, a, branch_elems[i], fuel,
             CETTA_SEARCH_POLICY_ORDER_NATIVE,
             sink->remaining == 1u
                 ? (CettaObservationDemand){
@@ -21322,8 +21338,15 @@ static inline __attribute__((always_inline)) PreparedFoldResult prepared_unary_c
         prepared_unary_collection_count(kind, PREPARED_UNARY_DECLINE);
         return PREPARED_FOLD_NOT_APPLICABLE;
     }
+    /* The items are the elements of the one sequence view (a list's after
+     * its tag); an expression the view declines is left to the authored
+     * map or filter. */
+    Atom *const *collection_items = NULL;
+    CettaExprLen collection_len = 0u;
     if (!closed_body || !closed_items ||
         closed_items->kind != ATOM_EXPR ||
+        !atom_sequence_view(closed_items, &collection_items,
+                            &collection_len) ||
         hyperpose_atom_has_thread_local_resource(closed_body) ||
         hyperpose_atom_has_thread_local_resource(closed_items)) {
         arena_reset(result_arena, result_mark);
@@ -21343,7 +21366,7 @@ static inline __attribute__((always_inline)) PreparedFoldResult prepared_unary_c
         return PREPARED_FOLD_NOT_APPLICABLE;
     }
 
-    if (closed_items->expr.len == 0u &&
+    if (collection_len == 0u &&
         observation != PREPARED_UNARY_SUM_NUMBERS) {
         arena_reset(result_arena, result_mark);
         return PREPARED_FOLD_NOT_APPLICABLE;
@@ -21422,7 +21445,7 @@ static inline __attribute__((always_inline)) PreparedFoldResult prepared_unary_c
         observation != PREPARED_UNARY_SUM_NUMBERS;
     Atom *draft = sequence_observation
         ? atom_expr_builder_begin(
-              result_arena, closed_items->expr.len)
+              result_arena, collection_len)
         : NULL;
     Atom *truth = observation == PREPARED_UNARY_SELECT_TRUE_SOURCES
         ? boolean_value(result_arena, true)
@@ -21446,14 +21469,14 @@ static inline __attribute__((always_inline)) PreparedFoldResult prepared_unary_c
 
     for (CettaExprIndex index = 0u;
          outcome == PREPARED_FOLD_VALUE &&
-         index < closed_items->expr.len; index++) {
+         index < collection_len; index++) {
         if (!space_read_token_is_current(replay_read)) {
             outcome = PREPARED_FOLD_NOT_APPLICABLE;
             break;
         }
         arena_reset(&nursery, nursery_origin);
         Atom *candidate = NULL;
-        Atom *item = closed_items->expr.elems[index];
+        Atom *item = collection_items[index];
         if (!cetta_prepared_pure_program_is_current(program) ||
             !cetta_prepared_pure_program_execute_controlled(
                 program, &nursery, item, item,
@@ -21533,6 +21556,12 @@ static inline __attribute__((always_inline)) PreparedFoldResult prepared_unary_c
             draft->expr.len = published_len;
             *result_out = atom_expr_builder_finish(
                 result_arena, draft);
+            /* The sequence built is of the kind of the one it read: a map
+             * or filter of a list is a list. */
+            if (*result_out && atom_is_list(closed_items))
+                *result_out = atom_list(
+                    result_arena, (*result_out)->expr.elems,
+                    (*result_out)->expr.len);
         } else {
             *result_out = grounded_plain_scalar_materialize(
                 result_arena, &total);
@@ -21640,10 +21669,27 @@ static PreparedFoldResult prepared_retain_top_k_by_number_single_result(
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PREPARED_KEYED_TOP_K_ADMISSION);
 
+    /* Keys and items pair up as elements of the one sequence view (a list's
+     * after its tag); the items retained are of the source's kind. */
+    bool list_source = atom_is_list(source_items);
+    Atom *key_items = atom_is_list(keys)
+        ? atom_expr_suffix(&scratch, keys, 1u) : keys;
+    Atom *value_items = list_source
+        ? atom_expr_suffix(&scratch, source_items, 1u) : source_items;
     Atom *selected = NULL;
-    if (!grounded_retain_top_k_numeric_projection(
-            &scratch, keys, source_items,
+    if (!key_items || !value_items ||
+        !grounded_retain_top_k_numeric_projection(
+            &scratch, key_items, value_items,
             closed_count->ground.ival, &selected) || !selected) {
+        arena_free(&scratch);
+        cetta_runtime_stats_inc(
+            CETTA_RUNTIME_COUNTER_PREPARED_KEYED_TOP_K_DECLINE);
+        return PREPARED_FOLD_NOT_APPLICABLE;
+    }
+    if (list_source && selected->kind == ATOM_EXPR)
+        selected = atom_list(&scratch, selected->expr.elems,
+                             selected->expr.len);
+    if (!selected) {
         arena_free(&scratch);
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_KEYED_TOP_K_DECLINE);
@@ -22361,6 +22407,14 @@ static inline __attribute__((always_inline)) PreparedFoldResult prepared_foldl_s
         hyperpose_atom_has_thread_local_resource(closed_initial)) {
         return PREPARED_FOLD_NOT_APPLICABLE;
     }
+    /* The items are the elements of the one sequence view (a list's after
+     * its tag); an expression the view declines is left to the authored
+     * fold. */
+    Atom *const *fold_items = NULL;
+    CettaExprLen fold_item_len = 0u;
+    if (!representation &&
+        !atom_sequence_view(closed_items, &fold_items, &fold_item_len))
+        return PREPARED_FOLD_NOT_APPLICABLE;
     bool sequence_trace = representation && traced;
     if (sequence_trace) {
         fputs("[prepared-sequence] items=", stderr);
@@ -22524,9 +22578,9 @@ static inline __attribute__((always_inline)) PreparedFoldResult prepared_foldl_s
                 break;
             sequence_cursor = tail;
         } else {
-            if (index >= closed_items->expr.len)
+            if (index >= fold_item_len)
                 break;
-            item = closed_items->expr.elems[index++];
+            item = fold_items[index++];
         }
         if (!space_read_token_is_current(safety.read)) {
             outcome = PREPARED_FOLD_NOT_APPLICABLE;
@@ -30661,6 +30715,18 @@ typedef enum {
     PRIME_NEED_REIFY_PATTERN_QUERY,
 } PrimeNeedReifyMode;
 
+/* Whether a pending demand's origin is already a value: closed, holding no
+ * observable cell, and in constructor normal form (an undefined symbol, a
+ * grounded value, a constructor form of such values), so evaluating it
+ * returns it unchanged and runs nothing.  Such a demand and its origin
+ * denote one value. */
+static bool prime_need_origin_is_value(Space *s, Arena *a, Atom *origin) {
+    return origin && s && !atom_has_vars(origin) &&
+           !atom_prime_held_is(origin) &&
+           !prime_need_atom_has_observable_ref(origin) &&
+           atom_is_constructor_normal_form(s, a, origin, -1);
+}
+
 static bool prime_need_completed_persistence_value(
     const PrimeNeedCellView *cell, uint32_t rights, bool preserve_demand) {
     return cell && !preserve_demand &&
@@ -31038,7 +31104,22 @@ prime_need_reification_run(PrimeNeedReification *state,
                 frame->waiting_for_payload = true;
                 frame->resolving_thunk = thunk_id;
                 Atom **payload_destination = frame->destination;
-                if (persist_sharing) {
+                /* A pending implicit demand whose origin is already a value
+                 * is stored as that value: evaluating it would return the
+                 * origin and run nothing, so the store keeps one
+                 * representation of the value whichever route produced it
+                 * (a literal pattern, remove-atom and add-atom-nodup then
+                 * meet it).  A demand that computes is stored as a demand
+                 * and never forced, and so is an explicit suspension, whose
+                 * identity and rights are its own, and a reference without
+                 * force authority. */
+                bool value_origin = persist_sharing &&
+                    !frame->preserve_demand &&
+                    (rights & CETTA_PRIME_NEED_RIGHT_FORCE) != 0u &&
+                    prime_need_origin_is_value(
+                        ready_space ? ready_space : g_eval_root_space,
+                        arena, cell.origin);
+                if (persist_sharing && !value_origin) {
                     if (cell.storage_key == 0u ||
                         cell.storage_key > (uint64_t)INT64_MAX)
                         goto fail;
@@ -50745,7 +50826,11 @@ static bool prime_eval_stack_schedule_alternatives(
         driver->raw_call_depth != 1u || !prime_eval_stack_target_is_owned(target))
         return false;
     Atom *list = expr_arg(atom, 0u);
-    if (!list || list->kind != ATOM_EXPR || atom_is_list_rest(list))
+    /* The alternatives are the elements of the one sequence view; an
+     * expression it declines has no known alternatives. */
+    Atom *const *alternatives = NULL;
+    CettaExprLen alternative_len = 0u;
+    if (!list || !atom_sequence_view(list, &alternatives, &alternative_len))
         return false;
     PrimeEvalStackFrame *frame = prime_eval_stack_frame_new(PRIME_EVAL_STACK_FRAME_ALTERNATIVES);
     frame->space = space;
@@ -50756,7 +50841,7 @@ static bool prime_eval_stack_schedule_alternatives(
     frame->preserve_bindings = preserve_bindings;
     frame->target = target;
     frame->evaluator_id = g_prime_need_evaluator_id;
-    frame->index = atom_is_list(list) ? 1u : 0u;
+    frame->index = 0u;
     if (!prime_eval_stack_capture_dynamic_env(&frame->env, environment)) {
         prime_eval_stack_frame_free(frame);
         return false;
@@ -50767,14 +50852,17 @@ static bool prime_eval_stack_schedule_alternatives(
 }
 
 static void prime_eval_stack_resume_alternatives(PrimeEvalStackFrame *frame) {
+    /* A collection may move the list; derive the view again. */
     Atom *list = expr_arg(frame->atom, 0u);
-    if (frame->index == list->expr.len) {
+    Atom *const *alternatives = NULL;
+    CettaExprLen alternative_len = 0u;
+    if (!list || !atom_sequence_view(list, &alternatives, &alternative_len) ||
+        frame->index >= alternative_len) {
         prime_eval_stack_pop();
         return;
     }
-    assert(frame->index < list->expr.len);
     if (!prime_eval_stack_schedule_call(frame->space, frame->arena,
-            list->expr.elems[frame->index], frame->etype, frame->fuel,
+            alternatives[frame->index], frame->etype, frame->fuel,
             frame->preserve_bindings, -1, &frame->env, &frame->env,
             frame->evaluator_id, frame->target)) {
         g_prime_eval_stack_driver->capacity_blocked = true;
@@ -50988,13 +51076,16 @@ static bool prime_eval_stack_schedule_choice(
         !prime_eval_stack_target_is_owned(target))
         return false;
     Atom *list = expr_arg(atom, 0u);
-    if (!list || list->kind != ATOM_EXPR || atom_is_list_rest(list))
+    /* The branches are the elements of the one sequence view (a list's
+     * after its tag); an expression it declines has no known branches. */
+    Atom *const *branches = NULL;
+    CettaExprLen branch_len = 0u;
+    if (!list || !atom_sequence_view(list, &branches, &branch_len))
         return false;
-    CettaExprIndex first = atom_is_list(list) ? 1u : 0u;
     bool later_work = false;
-    for (CettaExprIndex i = first + 1u; !later_work && i < list->expr.len; i++)
+    for (CettaExprIndex i = 1u; !later_work && i < branch_len; i++)
         later_work = prime_eval_stack_branch_computes(
-            s, a, list->expr.elems[i], fuel);
+            s, a, branches[i], fuel);
     if (!later_work)
         return false;
     PrimeEvalStackFrame *frame =
@@ -51006,7 +51097,7 @@ static bool prime_eval_stack_schedule_choice(
     frame->etype = etype;
     frame->fuel = fuel;
     frame->preserve_bindings = preserve_bindings;
-    frame->index = first;
+    frame->index = 0u;
     frame->evaluator_id = g_prime_need_evaluator_id;
     /* Every branch runs in the world the choice was reached in: the Need
      * state active now, not the one active when the run resumes the choice
@@ -51025,12 +51116,14 @@ static void prime_eval_stack_resume_choice(PrimeEvalStackFrame *frame) {
     /* A collection may move the branch list while a branch runs; the call
      * atom is the authoritative root, so the view is derived again. */
     Atom *list = expr_arg(frame->atom, 0u);
-    if (!list || list->kind != ATOM_EXPR ||
-        frame->index >= list->expr.len) {
+    Atom *const *branches = NULL;
+    CettaExprLen branch_len = 0u;
+    if (!list || !atom_sequence_view(list, &branches, &branch_len) ||
+        frame->index >= branch_len) {
         prime_eval_stack_pop();
         return;
     }
-    Atom *branch = list->expr.elems[frame->index++];
+    Atom *branch = branches[frame->index++];
     if (prime_eval_stack_set_task(
             PRIME_EVAL_STACK_TASK_BRANCH, frame->space, frame->arena,
             branch, frame->etype, frame->fuel, frame->preserve_bindings, -1,
@@ -75155,7 +75248,11 @@ static void bind_publish_value(Arena *a, Atom *atom, Atom *first,
     Bindings empty;
     bindings_init(&empty);
     Atom *val = first ? first : val_expr;
-    if (active_profile_uses_rust_he_compat_semantics() && first &&
+    /* An error raised while the value is evaluated is the answer, and the
+     * name stays unbound: it is never swallowed into a binding.  An Error
+     * term written as the value is data and is bound. */
+    if ((active_profile_uses_rust_he_compat_semantics() ||
+         eval_current_language_id() == CETTA_LANGUAGE_PRIME) && first &&
         atom_is_error(val) && !atom_is_error(val_expr)) {
         outcome_set_add_prefixed(a, os, val, &empty, outer, preserve);
         return;
@@ -78099,42 +78196,44 @@ static __attribute__((noinline)) void metta_hyperpose_cooperative_branches(
     CettaLanguageId language_id, const Bindings *environment,
     const Bindings *empty, OutcomeSet *os) {
     Atom *list = expr_arg((*call), 0);
-    /* A list's alternatives are its elements; a list pattern's are not
-     * known. */
-    CettaExprIndex first_alternative = atom_is_list(list) ? 1u : 0u;
-    if (list->kind == ATOM_EXPR && !atom_is_list_rest(list)) {
-        for (CettaExprIndex i = first_alternative; i < list->expr.len; i++) {
-            OutcomeSet branch;
-            outcome_set_init(&branch);
-            __attribute__((cleanup(eval_gc_outcome_suspension_end)))
-            EvalGcOutcomeSuspension branch_suspension = {0};
-            eval_gc_outcome_suspension_begin(
-                &branch_suspension, caller_root, os, &branch);
-            /* As on the threaded path, an answer binds the caller's
-             * variables its branch binds (concurrent_and). */
-            Atom *branch_expr = list->expr.elems[i];
-            Atom *caller_vars = language_id == CETTA_LANGUAGE_PETTA &&
-                    preserve_bindings
-                ? hyperpose_branch_caller_vars(a, branch_expr) : NULL;
-            __attribute__((cleanup(petta_export_variables_scope_leave)))
-            PettaExportVariablesScope export_scope = {0};
-            if (caller_vars)
-                petta_export_variables_scope_enter(
-                    &export_scope, caller_vars, branch_expr);
-            eval_petta_relational_host_branch(
-                s, a, (*expected), branch_expr, fuel, empty,
-                environment, preserve_bindings, &branch);
-            petta_export_variables_scope_leave(&export_scope);
-            eval_gc_outcome_suspension_end(&branch_suspension);
-            list = expr_arg((*call), 0);
-            for (CettaCount j = 0; j < branch.len; j++) {
-                Atom *branch_atom = outcome_atom_materialize(a, &branch.items[j]);
-                if (atom_is_legacy_empty_sentinel(branch_atom))
-                    continue;
-                outcome_set_add_existing(os, &branch.items[j]);
-            }
-            outcome_set_free(&branch);
+    /* The branches are the elements of the one sequence view (a list's
+     * after its tag); an expression it declines has no known branches.  The
+     * view is derived again after each branch, as the list is. */
+    Atom *const *alternatives = NULL;
+    CettaExprLen alternative_len = 0u;
+    for (CettaExprIndex i = 0u;
+         atom_sequence_view(list, &alternatives, &alternative_len) &&
+         i < alternative_len; i++) {
+        OutcomeSet branch;
+        outcome_set_init(&branch);
+        __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+        EvalGcOutcomeSuspension branch_suspension = {0};
+        eval_gc_outcome_suspension_begin(
+            &branch_suspension, caller_root, os, &branch);
+        /* As on the threaded path, an answer binds the caller's
+         * variables its branch binds (concurrent_and). */
+        Atom *branch_expr = alternatives[i];
+        Atom *caller_vars = language_id == CETTA_LANGUAGE_PETTA &&
+                preserve_bindings
+            ? hyperpose_branch_caller_vars(a, branch_expr) : NULL;
+        __attribute__((cleanup(petta_export_variables_scope_leave)))
+        PettaExportVariablesScope export_scope = {0};
+        if (caller_vars)
+            petta_export_variables_scope_enter(
+                &export_scope, caller_vars, branch_expr);
+        eval_petta_relational_host_branch(
+            s, a, (*expected), branch_expr, fuel, empty,
+            environment, preserve_bindings, &branch);
+        petta_export_variables_scope_leave(&export_scope);
+        eval_gc_outcome_suspension_end(&branch_suspension);
+        list = expr_arg((*call), 0);
+        for (CettaCount j = 0; j < branch.len; j++) {
+            Atom *branch_atom = outcome_atom_materialize(a, &branch.items[j]);
+            if (atom_is_legacy_empty_sentinel(branch_atom))
+                continue;
+            outcome_set_add_existing(os, &branch.items[j]);
         }
+        outcome_set_free(&branch);
     }
 }
 
@@ -78183,33 +78282,35 @@ static __attribute__((noinline)) MettaDispatchResult metta_sequence_dispatch(
             return METTA_DISPATCH_HANDLED;
 #endif
         Atom *list = expr_arg((*call), 0);
-        /* A list's alternatives are its elements; a list pattern's are not
-         * known. */
-        CettaExprIndex first_alternative = atom_is_list(list) ? 1u : 0u;
-        if (list->kind == ATOM_EXPR && !atom_is_list_rest(list)) {
-            for (CettaExprIndex i = first_alternative; i < list->expr.len; i++) {
-                OutcomeSet branch;
-                outcome_set_init(&branch);
-                __attribute__((cleanup(eval_gc_outcome_suspension_end)))
-                EvalGcOutcomeSuspension branch_suspension = {0};
-                eval_gc_outcome_suspension_begin(
-                    &branch_suspension, caller_root, os, &branch);
-                eval_petta_relational_host_branch(
-                    s, a, (*expected), list->expr.elems[i], fuel, empty,
-                    CURRENT_ENV, preserve_bindings, &branch);
-                eval_gc_outcome_suspension_end(&branch_suspension);
-                /* Collection may move the represented branch list while the
-                 * child runs.  The call atom is the authoritative root, so
-                 * derive the view again before reading the next occurrence. */
-                list = expr_arg((*call), 0);
-                for (CettaCount j = 0; j < branch.len; j++) {
-                    Atom *branch_atom = outcome_atom_materialize(a, &branch.items[j]);
-                    if (atom_is_legacy_empty_sentinel(branch_atom))
-                        continue;
-                    outcome_set_add_existing(os, &branch.items[j]);
-                }
-                outcome_set_free(&branch);
+        /* The alternatives are the elements of the one sequence view (a
+         * list's after its tag); an expression it declines (a list pattern,
+         * a braces node) has no known alternatives. */
+        Atom *const *alternatives = NULL;
+        CettaExprLen alternative_len = 0u;
+        for (CettaExprIndex i = 0u;
+             atom_sequence_view(list, &alternatives, &alternative_len) &&
+             i < alternative_len; i++) {
+            OutcomeSet branch;
+            outcome_set_init(&branch);
+            __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+            EvalGcOutcomeSuspension branch_suspension = {0};
+            eval_gc_outcome_suspension_begin(
+                &branch_suspension, caller_root, os, &branch);
+            eval_petta_relational_host_branch(
+                s, a, (*expected), alternatives[i], fuel, empty,
+                CURRENT_ENV, preserve_bindings, &branch);
+            eval_gc_outcome_suspension_end(&branch_suspension);
+            /* Collection may move the represented branch list while the
+             * child runs.  The call atom is the authoritative root, so
+             * derive the view again before reading the next occurrence. */
+            list = expr_arg((*call), 0);
+            for (CettaCount j = 0; j < branch.len; j++) {
+                Atom *branch_atom = outcome_atom_materialize(a, &branch.items[j]);
+                if (atom_is_legacy_empty_sentinel(branch_atom))
+                    continue;
+                outcome_set_add_existing(os, &branch.items[j]);
             }
+            outcome_set_free(&branch);
         }
         return METTA_DISPATCH_HANDLED;
     }
@@ -78380,8 +78481,12 @@ static __attribute__((noinline)) MettaDispatchResult metta_sequence_dispatch(
                 elems[i + 1] = tail_elems[i];
             outcome_set_add(os, atom_sequence_like(a, tl, elems, tail_len + 1),
                             empty);
-        } else if (tl->kind == ATOM_EXPR && !atom_is_list_rest(tl)) {
-            /* The same expression as copying the tail after the head, in
+        } else if (tl->kind == ATOM_EXPR &&
+                   atom_sequence_view(tl, &tail_elems, &tail_len)) {
+            /* A tail the sequence view declines (a list pattern, a braces
+             * node) is no sequence the head could join: it is refused below
+             * and its internal tag never becomes an element.
+             * The same expression as copying the tail after the head, in
              * amortized constant time when the tail has room below it
              * (PrefixBuffer.claimable_iff_free_below), so a list built by
              * repeated cons-atom costs its length, not its square. */
@@ -79534,7 +79639,16 @@ static __attribute__((noinline)) MettaDispatchResult metta_let_dispatch(
 
         __attribute__((cleanup(direct_walk_preflight_free)))
         DirectWalkPreflight source_preflight = {0};
-        if (direct_outcome_walk_prepare(
+        /* A streaming consumer owns the rest of this let, including its
+         * effects. Keep source alternatives in that same continuation;
+         * the bulk visitor would run every body before observing the bound. */
+        bool stream_source = false;
+#if CETTA_PRIME_EVAL_STACK
+        stream_source = g_prime_eval_stack_driver &&
+            g_prime_eval_stack_driver->streaming &&
+            prime_eval_stack_target_is_owned(os);
+#endif
+        if (!stream_source && direct_outcome_walk_prepare(
                 s, a, source, fuel, &source_preflight)) {
             PrimeLetVisitCtx visit = {
                 .s = s,

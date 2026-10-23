@@ -2816,12 +2816,23 @@ static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t
     Atom *op_expr = args[4];
     Atom *space = args[5];
 
+    /* The items are the elements of the one sequence view: a list's after
+     * its tag.  An expression the view declines (a braces node, a list
+     * pattern) is not a sequence and is not folded. */
+    Atom *const *items = NULL;
+    CettaExprLen item_len = 0u;
+    if (!atom_sequence_view(list, &items, &item_len))
+        return NULL;
     Atom *head_item;
     Atom *tail;
-    if (list->expr.len == 0)
+    if (item_len == 0)
         return atom_expr2(a, atom_symbol(a, "return"), init);
-    head_item = list->expr.elems[0];
-    tail = atom_expr_suffix(a, list, 1u);
+    head_item = items[0];
+    /* The rest is folded as the expression of the remaining items, a view
+     * of the same storage, so each step costs the same whatever the kind:
+     * a fold's value does not depend on the sequence's kind. */
+    tail = atom_is_list(list) ? atom_expr_suffix(a, list, 2u)
+                              : atom_sequence_rest(a, list, items, item_len);
 
     Atom *step_op = cetta_fold_bind_step_atom(a, op_expr,
                                               acc_var, init,
@@ -3505,9 +3516,23 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             sequence_result = true;
         }
         bool any_list = false;
-        for (uint32_t i = 0u; i < nargs && i < 2u; i++)
-            if ((sequences & (1u << i)) && atom_is_list(args[i]))
+        for (uint32_t i = 0u; i < nargs && i < 2u; i++) {
+            if (!(sequences & (1u << i)))
+                continue;
+            /* An expression the one sequence view declines (a braces node,
+             * for which no set form is defined yet, or a list pattern) is
+             * not a sequence: none of its internal tags is read as an
+             * element, and the operation does not reduce, as size-atom
+             * does not.  PeTTa's carriers keep their answers above. */
+            Atom *const *view_elems = NULL;
+            CettaExprLen view_len = 0u;
+            if (!grounded_current_language_is_petta() &&
+                args[i]->kind == ATOM_EXPR &&
+                !atom_sequence_view(args[i], &view_elems, &view_len))
+                return NULL;
+            if (atom_is_list(args[i]))
                 any_list = true;
+        }
         if (any_list) {
             Atom *elements[2] = {args[0], nargs > 1u ? args[1] : NULL};
             const Atom *kind = NULL;

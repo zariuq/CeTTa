@@ -798,22 +798,25 @@
     (let $t (repr $type) (println! (format-args "  {} {}" ($t $desc))))))
 
 ; Higher-order list combinators from HE stdlib. These depend on `sealed` so
-; recursive calls do not accidentally capture the user variable.
+; recursive calls do not accidentally capture the user variable.  A sequence
+; of any kind is read through its elements: the empty one ends the recursion
+; and is itself the empty result, so a list filters or maps to a list.
 (= (filter-atom $list $var $filter)
   (function
-    (eval
-      (if-equal $list ()
-        (return ())
-        (chain (decons-atom $list) $ht
-          (unify ($head $tail) $ht
-            (chain (eval (sealed ($var) $filter)) $sealedfilter
-              (chain (eval (filter-atom $tail $var $sealedfilter)) $tail-filtered
-                (chain (eval (atom-subst $head $var $sealedfilter)) $filter-expr
-                  (chain $filter-expr $is-filtered
-                    (eval (if $is-filtered
-                      (chain (cons-atom $head $tail-filtered) $res (return $res))
-                      (return $tail-filtered)))))))
-            (empty)))))))
+    (chain (eval (size-atom $list)) $size
+      (eval
+        (if-equal $size 0
+          (return $list)
+          (chain (decons-atom $list) $ht
+            (unify ($head $tail) $ht
+              (chain (eval (sealed ($var) $filter)) $sealedfilter
+                (chain (eval (filter-atom $tail $var $sealedfilter)) $tail-filtered
+                  (chain (eval (atom-subst $head $var $sealedfilter)) $filter-expr
+                    (chain $filter-expr $is-filtered
+                      (eval (if $is-filtered
+                        (chain (cons-atom $head $tail-filtered) $res (return $res))
+                        (return $tail-filtered)))))))
+              (empty))))))))
 
 (= (filter-atom $list $filter)
   (function
@@ -832,18 +835,19 @@
 ; machine.  When admission declines, this equation remains the authoritative
 ; relational definition, including failure, nondeterminism, and multiplicity.
 (= (_minimal-map-atom $list $var $map)
-  (eval
-    (if-equal $list ()
-      (return ())
-      (chain (decons-atom $list) $ht
-        (unify ($head $tail) $ht
-          (chain (eval (sealed ($var) $map)) $sealedmap
-            (chain (eval (map-atom $tail $var $sealedmap)) $tail-mapped
-              (chain (eval (atom-subst $head $var $sealedmap)) $map-expr
-                (chain $map-expr $head-mapped
-                  (chain (cons-atom $head-mapped $tail-mapped) $res
-                    (return $res))))))
-          (empty))))))
+  (chain (eval (size-atom $list)) $size
+    (eval
+      (if-equal $size 0
+        (return $list)
+        (chain (decons-atom $list) $ht
+          (unify ($head $tail) $ht
+            (chain (eval (sealed ($var) $map)) $sealedmap
+              (chain (eval (map-atom $tail $var $sealedmap)) $tail-mapped
+                (chain (eval (atom-subst $head $var $sealedmap)) $map-expr
+                  (chain $map-expr $head-mapped
+                    (chain (cons-atom $head-mapped $tail-mapped) $res
+                      (return $res))))))
+            (empty)))))))
 
 
 (@doc work-count
