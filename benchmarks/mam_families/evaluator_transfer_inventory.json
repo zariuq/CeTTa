@@ -409,6 +409,18 @@
         {
           "file": "src/atom.h",
           "symbol": "atom_petta_expression_representation"
+        },
+        {
+          "file": "src/eval.c",
+          "symbol": "EvalNativeDemand"
+        },
+        {
+          "file": "src/eval.c",
+          "symbol": "eval_native_application_on"
+        },
+        {
+          "file": "src/eval.c",
+          "symbol": "eval_native_for_caller"
         }
       ],
       "admission": "Readiness, type authority, computation/data provenance and result demand are separate judgments.",
@@ -508,7 +520,7 @@
           ]
         }
       ],
-      "case_source_evidence": "literal_case_default is derived from the authored arm, retained during value-plan collapse and included in plan content identity. A variable or computed pattern that evaluates to Empty remains a data pattern. Current source plans govern classification; printed shape alone is insufficient.",
+      "case_source_evidence": "literal_case_default is derived from the authored arm, retained during value-plan collapse and included in plan content identity. A variable or computed pattern that evaluates to Empty remains a data pattern. Current source plans govern classification; printed shape alone is insufficient. Computed intrinsic Booleans use the prepared program's representation constructor, as ordinary dialect returns do; raw grounded Boolean leaves cannot select their own publication spelling.",
       "typed_native_caller_census": {
         "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
         "family": "ready-call-and-result-contracts",
@@ -518,6 +530,42 @@
           "reference": 2
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      },
+      "native_entry_contract": {
+        "admission": "The direct native entry reports refusal separately from the actual CettaCallOutcome. An entered failure, interruption or invalid returned value cannot authorize replay.",
+        "demand": "Ready arguments, immediate arguments and untyped immediate admission have explicit caller-selected obligations; metadata availability does not select them.",
+        "delivery": "Ordinary direct attempts share one delivery implementation; ready PeTTa calls retain delayed obligations for the existing search-machine service.",
+        "proof": "Mettapedia.Machines.NativeCallReturn.Invocation: two-stage refinement, exact entered-call effects and counts, logical-world preservation on refusal, impossibility of recovering admission after failure erasure, and closed-literal role normalization."
+      },
+      "primitive_result_roles": {
+        "source": "lib/gslt_execution_contracts.metta:prepared-pure-intrinsic-head",
+        "computation": "boolean-dispatch uses the program Boolean constructor; exact-register Boolean results retain their existing constructor boundary.",
+        "data": "grounded-dispatch data projections retain their original carrier, including Boolean payloads.",
+        "proof": "Mettapedia.Machines.PrimitiveResultRole: typed-source/native-plan refinement, data preservation, state preservation and invalid truth-result separation."
+      },
+      "head_interpretation": "Prepared equation-head admission now reuses petta_program_head_is_intrinsic rather than interpreting all interned builtin names as operations. Authored equations and extension arities still establish relational callability; quote and structural specializer marks retain their own semantics.",
+      "shared_operation_decoding": {
+        "source": "lib/gslt_execution_contracts.metta",
+        "generated": "src/generated/cetta_execution_contracts.generated.h",
+        "consumers": [
+          "ordinary fold admission",
+          "space effect scanning and register lowering",
+          "prepared primitive compilation and execution"
+        ],
+        "contract": "Exact head/arity decoding preserves instruction and operand discipline. Dialect availability, readiness, source authority and permission to speculate remain separate checks. Unrestricted scope does not establish that an operation exists."
+      },
+      "invocation_arguments": {
+        "representation": "src/owned_execution.h:CettaInvocation; BindingValue head and two borrowed argument spans",
+        "consumers": [
+          "ordinary native admission",
+          "all seven native dispatch consumers including HE canonical/raw completion",
+          "ready-value PeTTa handoff",
+          "prepared library intrinsics",
+          "three partial-application syntax consumers"
+        ],
+        "scope": "Storage does not establish readiness, type validity or source authority. Logical resolution reads the entrance world. A resolved vector cannot be reused across mutation or rollback. Native/result ABI vectors may borrow only within their synchronous lifetime.",
+        "materialization": "One explicit syntax builder qualifies lexical identities without evaluating operands. A contiguous unqualified native vector is borrowed unchanged.",
+        "proof": "Mettapedia.Machines.NativeCallReturn.Arguments.Input: split array lookup refines independent flat argument order and observations in every current world."
       }
     },
     {
@@ -535,10 +583,14 @@
         {
           "file": "src/prepared_pure_machine.c",
           "symbol": "cetta_prepared_pure_answer_cursor_return"
+        },
+        {
+          "file": "src/owned_execution.h",
+          "symbol": "CettaCallReturnCursor"
         }
       ],
       "admission": "Value, failure, raised error, interruption and suspension remain distinct; acceptance and publication retain their owner.",
-      "remaining_transfer": "Extend existing adapters instead of introducing a second universal outcome type.",
+      "remaining_transfer": "Native result delivery now shares CettaCallReturnCursor and sequence_native_call across ready PeTTa calls and HE native-return boundaries. General invocation plans, foreign constraint delivery and dialect elaboration still need migration to the common computation representation.",
       "measure": [
         "returns accepted",
         "pending returns",
@@ -563,7 +615,9 @@
         {
           "file": "src/owned_execution.h",
           "symbols": [
-            "CettaOwnedReturn"
+            "CettaOwnedReturn",
+            "CettaCallReturnCursor",
+            "cetta_call_return_next"
           ]
         },
         {
@@ -603,6 +657,14 @@
           "symbols": [
             "CettaOwnedReturn"
           ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "sequence_native_call",
+            "emit_completed_native_call",
+            "petta_eval_machine_apply_ready_values"
+          ]
         }
       ],
       "typed_native_caller_census": {
@@ -614,6 +676,13 @@
           "reference": 6
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      },
+      "native_return_contract": {
+        "representation": "Producer metadata distinguishes an expression, one completed value and an ordered completed frontier. Payload shape grants no execution authority.",
+        "lifetime": "The cursor borrows payload storage and the current logical environment. It allocates no value wrapper; its caller retains both through pending acceptance.",
+        "completion": "The first incomplete cause survives subsequent returns. Malformed producer results interrupt with host failure, rather than certifying an empty frontier.",
+        "proof": "Mettapedia.Machines.NativeCallReturn: independent list refinement, exact ordered prefixes, split resumption, final-return certificates, live context identities and matching publication-allowance bounds. Argument preparation preserves ordered identities and borrows exactly unchanged vectors. Native C correspondence remains separate.",
+        "arguments": "Synchronous native vectors are borrowed and read-only. The direct argument preparer borrows an unchanged vector and allocates on the first changed identity, preserving preparation order and source storage. Escaping Atom ownership and prepared result views remain separate contracts."
       }
     },
     {
@@ -1873,7 +1942,7 @@
       }
     }
   ],
-  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 329 linked C sources in both build configurations, and admission/validity/cost obligations. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open.",
+  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 329 linked C sources in both build configurations, and admission/validity/cost obligations. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open. The typed-use census describes its recorded build cohorts; pre-main edits require a renewed census before current caller completeness can be claimed.",
   "review_reconciliation": [
     {
       "idea": "Shared call contract over existing engines",

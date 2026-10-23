@@ -438,7 +438,8 @@ typedef struct {
      * `end` is how an applied operation ended, as for `evaluate`: RAISED
      * with its error, which adds no answer.  Optional. */
     bool (*apply_ready_values)(
-        void *context, Space *space, Arena *arena, Atom *expression,
+        void *context, Space *space, Arena *arena,
+        const CettaInvocation *invocation,
         const Bindings *environment, OutcomeSet *outcomes,
         CettaCallOutcome *end);
     /* Create a new translation event at an explicit forcing boundary such as

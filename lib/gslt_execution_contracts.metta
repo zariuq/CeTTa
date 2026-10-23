@@ -276,6 +276,9 @@
   ; expression result abandons the speculative program and is replayed by
   ; the canonical evaluator.
   (instruction library-value-dispatch)
+  ; A truth computation uses the caller's Boolean constructor. Grounded data
+  ; projections preserve their carrier even when that carrier is Boolean.
+  (instruction boolean-dispatch)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
   (rule intrinsic-is-pure
@@ -958,9 +961,9 @@
   (prepared-pure-intrinsic-head
     / 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
-    and 2 strict-all grounded-dispatch)
+    and 2 strict-all boolean-dispatch)
   (prepared-pure-intrinsic-head
-    or 2 strict-all grounded-dispatch)
+    or 2 strict-all boolean-dispatch)
   (prepared-pure-intrinsic-head
     abs-math 1 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head

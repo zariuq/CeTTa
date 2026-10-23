@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 1555cc12ccca9eb0379a3632c4d69bea91fbc437dab076ff681e04d8268eee47
+ * Source SHA-256: 23ddaf6765fe63cc4dbba55e34d59254fb696864a18aa0f9b25ef3cbb967ddca
  */
 
 #include <stdbool.h>
@@ -439,12 +439,33 @@ static inline bool cetta_gslt_register_operand_discipline(
     X(op_ge, 2u, CETTA_GSLT_REGISTER_RESULT_BOOLEAN, CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_GREATER_EQUAL) \
     X(numeric_eq, 2u, CETTA_GSLT_REGISTER_RESULT_BOOLEAN, CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_EQUAL)
 
+/* Decode immutable operation metadata. Dialect availability, source authority
+ * and operand readiness are checked independently by each consumer. */
+static inline bool cetta_gslt_register_head_program(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltRegisterResultKind *kind_out,
+    CettaGsltRegisterInstruction *instruction_out,
+    const BuiltinSyms *builtins) {
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_REGISTER_HEAD(field, expected_arity, result_kind, instruction) \
+    if (head == builtins->field && arity == (expected_arity)) { \
+        if (kind_out) *kind_out = (result_kind); \
+        if (instruction_out) *instruction_out = (instruction); \
+        return true; \
+    }
+    CETTA_GSLT_REGISTER_HEAD_ROWS(CETTA_REGISTER_HEAD)
+#undef CETTA_REGISTER_HEAD
+    return false;
+}
+
 typedef enum {
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH = 0,
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION = 1,
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS = 2,
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS = 3,
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH = 4,
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH = 5,
 } CettaGsltPreparedPureIntrinsicInstruction;
 
 typedef enum {
@@ -469,8 +490,8 @@ typedef enum {
     X(op_ge, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
     X(numeric_eq, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
     X(op_div, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
-    X(op_and, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
-    X(op_or, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
+    X(op_and, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH) \
+    X(op_or, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH) \
     X(abs_math, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
     X(log_math, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
     X(car_atom, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
@@ -515,6 +536,39 @@ typedef enum {
     X(lib_str, 3u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
     X(lib_str, 4u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH) \
     X(lib_str_value, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH)
+
+static inline bool cetta_gslt_prepared_intrinsic_program(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out,
+    const BuiltinSyms *builtins) {
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_INTRINSIC_HEAD(field, expected_arity, discipline, instruction) \
+    if (head == builtins->field && arity == (expected_arity)) { \
+        if (discipline_out) *discipline_out = (discipline); \
+        if (instruction_out) *instruction_out = (instruction); \
+        return true; \
+    }
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(CETTA_INTRINSIC_HEAD)
+#undef CETTA_INTRINSIC_HEAD
+    return false;
+}
+
+/* Unlisted heads are unrestricted here; this check does not establish that
+ * an intrinsic exists or that the current execution route can run it. */
+static inline bool cetta_gslt_prepared_intrinsic_scope(
+    SymbolId head, CettaExprLen arity, uint32_t dialect,
+    const BuiltinSyms *builtins) {
+    if (!builtins)
+        return false;
+#define CETTA_INTRINSIC_SCOPE(field, expected_arity, dialects) \
+    if (head == builtins->field && arity == (expected_arity)) \
+        return ((dialects) & dialect) != 0u;
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_SCOPE_ROWS(CETTA_INTRINSIC_SCOPE)
+#undef CETTA_INTRINSIC_SCOPE
+    return true;
+}
 
 #define CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(X)     X(range_atom, 6u, 0u) \
     X(lib_list_range, 6u, 0u) \
@@ -637,6 +691,21 @@ static inline bool cetta_gslt_pure_call_whnf_disjoint(
     X(if_text, 3u, CETTA_GSLT_FOLD_CONTROL_BRANCH) \
     X(eval, 1u, CETTA_GSLT_FOLD_CONTROL_EVALUATE) \
     X(function, 1u, CETTA_GSLT_FOLD_CONTROL_EVALUATE)
+
+static inline bool cetta_gslt_fold_control_program(
+    SymbolId head, CettaExprLen arity, CettaGsltFoldControl *control_out,
+    const BuiltinSyms *builtins) {
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_FOLD_CONTROL(field, expected_arity, control) \
+    if (head == builtins->field && arity == (expected_arity)) { \
+        if (control_out) *control_out = (control); \
+        return true; \
+    }
+    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(CETTA_FOLD_CONTROL)
+#undef CETTA_FOLD_CONTROL
+    return false;
+}
 
 /* Representation rows for sequence consumers.  The runtime resolves these
  * names in the active symbol table; library constructors therefore remain

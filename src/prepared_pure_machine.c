@@ -1828,19 +1828,6 @@ copy_finished:
     (void)reclaimed;
 }
 
-static bool prepared_pure_control_program(
-    SymbolId head, CettaExprLen arity,
-    CettaGsltFoldControl *control_out) {
-#define PREPARED_PURE_CONTROL(field, expected_arity, control) \
-    if (head == g_builtin_syms.field && arity == (expected_arity)) { \
-        if (control_out) \
-            *control_out = (control); \
-        return true; \
-    }
-    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(PREPARED_PURE_CONTROL)
-#undef PREPARED_PURE_CONTROL
-    return false;
-}
 
 static bool prepared_pure_register_program(
     const CettaPreparedPureProgram *program,
@@ -1849,21 +1836,19 @@ static bool prepared_pure_register_program(
     CettaGsltRegisterInstruction *instruction_out) {
     /* A register instruction realizes an operation the current dialect
      * defines; one it leaves undefined is data. */
-#define PREPARED_PURE_REGISTER(field, expected_arity, result_kind, instruction) \
-    if (head == g_builtin_syms.field && arity == (expected_arity) && \
-        (!grounded_op_is_cetta_only(head) || is_grounded_op(head))) { \
-        if (kind_out) \
-            *kind_out = (result_kind); \
-        if (instruction_out) \
-            *instruction_out = (instruction); \
-        return true; \
-    }
-    CETTA_GSLT_REGISTER_HEAD_ROWS(PREPARED_PURE_REGISTER)
-#undef PREPARED_PURE_REGISTER
-    if (!program || !program->register_view)
-        return false;
     CettaGsltRegisterResultKind kind;
     CettaGsltRegisterInstruction instruction;
+    if (cetta_gslt_register_head_program(
+            head, arity, &kind, &instruction, &g_builtin_syms) &&
+        (!grounded_op_is_cetta_only(head) || is_grounded_op(head))) {
+        if (kind_out)
+            *kind_out = kind;
+        if (instruction_out)
+            *instruction_out = instruction;
+        return true;
+    }
+    if (!program || !program->register_view)
+        return false;
     CettaGsltRegisterOperandDiscipline discipline;
     if (!program->register_view(
             head, arity, &kind, &instruction) ||
@@ -1909,46 +1894,27 @@ static bool prepared_pure_integer_head(
 }
 
 bool cetta_prepared_pure_intrinsic_scope_supported(SymbolId head, CettaExprLen arity) {
-    (void)head;
-    (void)arity;
-#define INTRINSIC_SCOPE(field, expected_arity, dialects)                  \
-    if (head == g_builtin_syms.field && arity == (expected_arity)) {     \
-        if (!eval_current_language_id) return false;                    \
-        uint32_t dialect = 0u;                                          \
-        switch (eval_current_language_id()) {                           \
-        case CETTA_LANGUAGE_HE:                                         \
-            dialect = CETTA_GSLT_INTRINSIC_DIALECT_HE; break;           \
-        case CETTA_LANGUAGE_PETTA:                                      \
-            dialect = CETTA_GSLT_INTRINSIC_DIALECT_PETTA; break;        \
-        case CETTA_LANGUAGE_PRIME:                                      \
-            dialect = CETTA_GSLT_INTRINSIC_DIALECT_PRIME; break;        \
-        default: break;                                                 \
-        }                                                              \
-        return ((dialects) & dialect) != 0u;                             \
+    uint32_t dialect = 0u;
+    if (eval_current_language_id) {
+        switch (eval_current_language_id()) {
+        case CETTA_LANGUAGE_HE: dialect = CETTA_GSLT_INTRINSIC_DIALECT_HE; break;
+        case CETTA_LANGUAGE_PETTA: dialect = CETTA_GSLT_INTRINSIC_DIALECT_PETTA; break;
+        case CETTA_LANGUAGE_PRIME: dialect = CETTA_GSLT_INTRINSIC_DIALECT_PRIME; break;
+        default: break;
+        }
     }
-    CETTA_GSLT_PREPARED_PURE_INTRINSIC_SCOPE_ROWS(INTRINSIC_SCOPE)
-#undef INTRINSIC_SCOPE
-    return true;
+    return cetta_gslt_prepared_intrinsic_scope(
+        head, arity, dialect, &g_builtin_syms);
 }
 
-static bool prepared_pure_intrinsic_program(
+bool cetta_prepared_pure_intrinsic_program(
     SymbolId head, CettaExprLen arity,
     CettaGsltPreparedPureIntrinsicInstruction *instruction_out) {
-    if (!cetta_prepared_pure_intrinsic_scope_supported(head, arity)) return false;
-#define PREPARED_PURE_INTRINSIC(                                        \
-    field, expected_arity, discipline, instruction)                    \
-    if (head == g_builtin_syms.field && arity == (expected_arity)) {    \
-        if ((discipline) !=                                             \
-            CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL)    \
-            return false;                                               \
-        if (instruction_out)                                            \
-            *instruction_out = (instruction);                           \
-        return true;                                                    \
-    }
-    CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(
-        PREPARED_PURE_INTRINSIC)
-#undef PREPARED_PURE_INTRINSIC
-    return false;
+    CettaGsltPreparedPureIntrinsicOperandDiscipline discipline;
+    return cetta_prepared_pure_intrinsic_scope_supported(head, arity) &&
+        cetta_gslt_prepared_intrinsic_program(
+            head, arity, &discipline, instruction_out, &g_builtin_syms) &&
+        discipline == CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL;
 }
 
 static bool prepared_pure_builtin_syntax(SymbolId head) {
@@ -2640,8 +2606,8 @@ bool cetta_prepared_pure_single_result_requires_answer_effect(
         return false;
 
     CettaGsltFoldControl control;
-    if (!prepared_pure_control_program(
-            expression->expr.elems[0]->sym_id, 3u, &control) ||
+    if (!cetta_gslt_fold_control_program(
+            expression->expr.elems[0]->sym_id, 3u, &control, &g_builtin_syms) ||
         control != CETTA_GSLT_FOLD_CONTROL_BRANCH)
         return false;
 
@@ -2774,8 +2740,8 @@ prepared_pure_compile_guarded_equation(
         return PREPARED_PURE_GUARDED_EQUATION_NOT_APPLICABLE;
 
     CettaGsltFoldControl control;
-    if (!prepared_pure_control_program(
-            rhs->expr.elems[0]->sym_id, 3u, &control) ||
+    if (!cetta_gslt_fold_control_program(
+            rhs->expr.elems[0]->sym_id, 3u, &control, &g_builtin_syms) ||
         control != CETTA_GSLT_FOLD_CONTROL_BRANCH)
         return PREPARED_PURE_GUARDED_EQUATION_NOT_APPLICABLE;
     bool then_zero = prepared_pure_expression_is_zero(
@@ -2891,10 +2857,10 @@ static PreparedPureHeadRole prepared_pure_head_role(
     }
 
     CettaExprLen arity = source->expr.len - 1u;
-    if (prepared_pure_control_program(head->sym_id, arity, NULL) ||
+    if (cetta_gslt_fold_control_program(head->sym_id, arity, NULL, &g_builtin_syms) ||
         prepared_pure_register_program(program,
             head->sym_id, arity, NULL, NULL) ||
-        prepared_pure_intrinsic_program(
+        cetta_prepared_pure_intrinsic_program(
             head->sym_id, arity, NULL) ||
         is_grounded_op(head->sym_id) ||
         prepared_pure_builtin_syntax(head->sym_id)) {
@@ -2989,10 +2955,10 @@ static bool prepared_pure_compile_template(
             CettaExprLen payload_arity = source->expr.len - 1u;
             if (prepared_pure_register_program(program,
                     payload_head->sym_id, payload_arity, NULL, NULL) ||
-                prepared_pure_intrinsic_program(
+                cetta_prepared_pure_intrinsic_program(
                     payload_head->sym_id, payload_arity, NULL) ||
-                prepared_pure_control_program(
-                    payload_head->sym_id, payload_arity, NULL)) {
+                cetta_gslt_fold_control_program(
+                    payload_head->sym_id, payload_arity, NULL, &g_builtin_syms)) {
                 return prepared_pure_compile_eval(
                     program, context, source, source_view,
                     depth, node_out);
@@ -3636,7 +3602,7 @@ static bool prepared_pure_compile_function(
                 ? call->expr.len - 1u : 0u;
             /* One evaluation step of a grounded operation is its value. */
             grounded_step = call_head != SYMBOL_ID_NONE &&
-                (prepared_pure_intrinsic_program(
+                (cetta_prepared_pure_intrinsic_program(
                      call_head, call_arity, NULL) ||
                  prepared_pure_register_program(
                      program, call_head, call_arity, NULL, NULL));
@@ -4649,7 +4615,7 @@ static bool prepared_pure_compile_eval_with_role(
             children, 2u, node_out);
     }
     CettaGsltFoldControl control;
-    if (prepared_pure_control_program(head, arity, &control)) {
+    if (cetta_gslt_fold_control_program(head, arity, &control, &g_builtin_syms)) {
         if (control == CETTA_GSLT_FOLD_CONTROL_EVALUATE) {
             return arity == 1u && prepared_pure_compile_eval(
                 program, context, source->expr.elems[1],
@@ -4753,7 +4719,7 @@ static bool prepared_pure_compile_eval_with_role(
     }
 
     CettaGsltPreparedPureIntrinsicInstruction intrinsic_instruction;
-    if (prepared_pure_intrinsic_program(
+    if (cetta_prepared_pure_intrinsic_program(
             head, arity, &intrinsic_instruction)) {
         uint32_t *children = NULL;
         if (!prepared_pure_compile_children(
@@ -7513,17 +7479,30 @@ static Atom *prepared_pure_execute_intrinsic(
         !arguments || !cetta_prepared_pure_intrinsic_scope_supported(head->sym_id, arity))
         return NULL;
     switch (instruction) {
-    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH: {
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH:
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH: {
         Atom *result = grounded_dispatch(
             arena, head, (Atom **)arguments, arity);
+        if (instruction == CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH) {
+            if (prepared_pure_is_true(result))
+                return prepared_pure_boolean_atom(program, arena, true);
+            if (prepared_pure_is_false(result))
+                return prepared_pure_boolean_atom(program, arena, false);
+            return NULL;
+        }
         return result && !atom_is_empty_or_error(result) ? result : NULL;
     }
-    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH:
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH: {
+        CettaInvocation invocation = {
+            .head = binding_value_from_atom(head),
+            .supplied = {.atoms = arguments, .count = arity},
+        };
         return program->source_view.native_value
             ? program->source_view.native_value(
                   program->source_view.native_context,
-                  program->space, arena, head, arguments, arity)
+                  program->space, arena, &invocation)
             : NULL;
+    }
     /* The structural intrinsics read an expression's children or a list's
      * elements, and build a result of the same kind; a list pattern is
      * declined to the canonical evaluator. */
@@ -7644,7 +7623,7 @@ static Atom *prepared_pure_execute_register_intrinsic(
     Atom *head, Atom *const *arguments, uint32_t arity) {
     CettaGsltPreparedPureIntrinsicInstruction intrinsic_instruction;
     if (!head || head->kind != ATOM_SYMBOL ||
-        !prepared_pure_intrinsic_program(
+        !cetta_prepared_pure_intrinsic_program(
             head->sym_id, arity, &intrinsic_instruction) ||
         intrinsic_instruction !=
             CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH)
@@ -7731,7 +7710,7 @@ static bool prepared_pure_eval_dynamic_register_value(
         bool is_register = prepared_pure_register_program(
             program, head->sym_id, arity, &result_kind, &instruction);
         bool is_intrinsic = !is_register &&
-            prepared_pure_intrinsic_program(
+            cetta_prepared_pure_intrinsic_program(
                 head->sym_id, arity, &intrinsic_instruction);
         if (!is_register && !is_intrinsic)
             return false;
@@ -7871,7 +7850,7 @@ static bool prepared_pure_scalar_float_operation(
     CettaGsltPreparedPureIntrinsicInstruction instruction;
     if ((!left->is_float && !right->is_float) || !node->atom ||
         node->atom->kind != ATOM_SYMBOL ||
-        !prepared_pure_intrinsic_program(node->atom->sym_id, 2u, &instruction) ||
+        !cetta_prepared_pure_intrinsic_program(node->atom->sym_id, 2u, &instruction) ||
         instruction != CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH)
         return false;
     CettaPlainScalar arguments[2], result;
@@ -8981,7 +8960,7 @@ static bool prepared_pure_compile_closed_entry_call(
     SymbolId head = expression->expr.elems[0]->sym_id;
     CettaExprLen arity = expression->expr.len - 1u;
     CettaGsltFoldControl control;
-    if (prepared_pure_control_program(head, arity, &control)) {
+    if (cetta_gslt_fold_control_program(head, arity, &control, &g_builtin_syms)) {
         /* A Need control's operands are invocation data while its scheduling
          * discipline is generated language semantics.  Compile that fixed
          * discipline once and demand only the operands selected at runtime.
@@ -9019,7 +8998,7 @@ static bool prepared_pure_compile_closed_entry_call(
      * relations.  Let compile_eval lower their concrete occurrences. */
     if (prepared_pure_register_program(
             program, head, arity, NULL, NULL) ||
-        prepared_pure_intrinsic_program(head, arity, NULL)) {
+        cetta_prepared_pure_intrinsic_program(head, arity, NULL)) {
         return true;
     }
     bool defined = false;
@@ -9764,7 +9743,7 @@ static bool prepared_pure_code_scalar_tree(
         node->first_child > program->child_len ||
         2u > program->child_len - node->first_child) return false;
     CettaGsltPreparedPureIntrinsicInstruction intrinsic;
-    if (!prepared_pure_intrinsic_program(node->atom->sym_id,2u,&intrinsic) ||
+    if (!cetta_prepared_pure_intrinsic_program(node->atom->sym_id,2u,&intrinsic) ||
         intrinsic != CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) return false;
     (*operations)++;
     if (!prepared_pure_code_scalar_tree(lowering,
@@ -10643,11 +10622,11 @@ prepared_pure_program_compile_closed_mode(
         CettaExprLen root_arity = expression->expr.len - 1u;
         bool generated_expression =
             root_head && root_head->kind == ATOM_SYMBOL &&
-            (prepared_pure_control_program(
-                 root_head->sym_id, root_arity, NULL) ||
+            (cetta_gslt_fold_control_program(
+                 root_head->sym_id, root_arity, NULL, &g_builtin_syms) ||
              prepared_pure_register_program(
                  NULL, root_head->sym_id, root_arity, NULL, NULL) ||
-             prepared_pure_intrinsic_program(
+             cetta_prepared_pure_intrinsic_program(
                  root_head->sym_id, root_arity, NULL));
         HeMacroArgument macro_arguments[HE_MACRO_MAX_ARITY];
         if (!generated_expression && root_head &&
@@ -12661,7 +12640,7 @@ static PREPARED_PURE_NOINLINE bool prepared_pure_code_float_scalar(
     CettaGsltPreparedPureIntrinsicInstruction instruction;
     CettaPlainScalar arguments[2];
     if (!node->atom || node->atom->kind != ATOM_SYMBOL ||
-        !prepared_pure_intrinsic_program(node->atom->sym_id, 2u, &instruction) ||
+        !cetta_prepared_pure_intrinsic_program(node->atom->sym_id, 2u, &instruction) ||
         instruction != CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH ||
         !grounded_plain_scalar_from_atom(left_atom, &arguments[0]) ||
         !grounded_plain_scalar_from_atom(right_atom, &arguments[1]) ||
@@ -13516,8 +13495,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                         program, "call arity exceeds the prepared machine", NULL);
                 uint32_t arity = (uint32_t)(source->expr.len - 1u);
                 CettaGsltFoldControl control;
-                if (prepared_pure_control_program(
-                        head, arity, &control)) {
+                if (cetta_gslt_fold_control_program(
+                        head, arity, &control, &g_builtin_syms)) {
                     frame->value_base = (uint32_t)program->value_len;
                     if (control == CETTA_GSLT_FOLD_CONTROL_EVALUATE &&
                         arity == 1u) {
@@ -13554,7 +13533,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                         head, arity, &result_kind, &instruction);
                 if (!generated_value_program) {
                     generated_value_program =
-                        prepared_pure_intrinsic_program(
+                        cetta_prepared_pure_intrinsic_program(
                             head, arity, &intrinsic_instruction);
                 }
                 if (generated_value_program) {
@@ -13689,7 +13668,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                     program, head->sym_id, arity,
                     &result_kind, &instruction);
                 bool is_intrinsic = !is_register &&
-                    prepared_pure_intrinsic_program(
+                    cetta_prepared_pure_intrinsic_program(
                         head->sym_id, arity, &intrinsic_instruction);
                 if (!is_register && !is_intrinsic)
                     return prepared_pure_runtime_decline(

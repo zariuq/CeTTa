@@ -1,0 +1,146 @@
+Native return delivery
+======================
+
+A native operation runs once and reports a CettaCallOutcome. Its tag and
+result_form determine the next action; the payload's spelling does not.
+
+  VALUE / EXPRESSION          Caller interpretation may still be required.
+  VALUE / COMPLETED_VALUE     One completed value, including code-shaped data.
+  VALUE / COMPLETED_FRONTIER  Ordered completed occurrences, with duplicates.
+  FAILURE                    No further occurrence.
+  RAISED                     A fault for the enclosing handler.
+  INTERRUPTED                Unfinished execution, never logical exhaustion.
+  SUSPENDED                  A conditional value with its delayed goals.
+
+CettaCallReturnCursor lends these occurrences without invoking the operation,
+interpreting syntax, allocating term wrappers or capturing a substitution.
+Only VALUE / COMPLETED_FRONTIER expands an array. A completed value whose
+payload is itself an expression remains one value.
+
+The caller keeps the source storage and Bindings alive. Returned occurrences
+retain that environment's identity: later binding refinements are observed
+through the same environment. Keeping a cursor does not acquire payload
+ownership. Independent publication uses the existing owned-return image
+protocol where required.
+
+The cursor also implements CettaOwnedExecutionNext. Owned sequencing retains
+an unaccepted return and resumes it before asking for another. A zero delivery
+allowance does not pull the producer. Accepted occurrences are not replayed.
+Cancellation releases the computation owner; borrowed cursor storage remains
+with its caller.
+
+A final-return certificate states that this producer has no later occurrence.
+It does not solve delayed constraints, interpret returned syntax or grant
+source authority. Completion is used only after the consumer accepts and any
+external authority certificate is revalidated.
+
+CettaEvalCompletion records the first incomplete cause. Later successful
+returns and later faults preserve it. A malformed native frontier or payload
+interrupts the evaluator with host failure; it is not an empty answer stream.
+
+Dialect boundaries
+------------------
+
+The evaluator's sequence_native_call enters completed results directly into
+their value continuation. An expression result instead resumes the caller's
+saved interpretation and expected type. HE keeps its return-type judgment and
+empty-frontier policy. PeTTa's ready-call adapter keeps its Boolean spelling
+and no-result policy. Foreign conditional answers retain their separate delay
+service; the cursor alone does not supply a constraint solver.
+
+Prepared intrinsic operations use their program's Boolean constructor for a
+computed truth. This constructor owns its representation and lifetime. A
+native Boolean leaf cannot bypass the dialect boundary merely because the
+operation ran inside a compiled region.
+The execution-contract presentation marks truth computations with
+boolean-dispatch. A grounded data projection preserves its original carrier;
+the result's Boolean shape does not grant permission to convert it.
+
+Native argument vectors are borrowed for synchronous dispatch. Direct native
+preparation keeps an unchanged source vector, allocating a replacement on the
+first changed argument identity. It preserves argument order and preparation
+and never writes into the source. A native operation may neither modify nor
+retain the vector itself. Owning an escaping value and retaining a prepared
+result view remain separate lifetime decisions.
+
+Native admission and invocation
+-------------------------------
+
+eval_native_application_on returns false only when the direct route declines.
+An admitted call reports its actual CettaCallOutcome, including logical failure
+and interruption. A missing value from a handled VALUE result is a host failure;
+it cannot reopen admission and replay the operation.
+
+EvalNativeDemand distinguishes ready arguments, immediate arguments and the
+ordinary HE entry that must establish an untyped boundary. Selecting these
+obligations no longer depends on whether the caller requests result metadata.
+Ordinary caller attempts share one delivery implementation before trying an
+applied source representation. Remaining atom-only clients use the explicit
+native_outcome_expression projection after the call has been admitted.
+
+PeTTa ready calls retain conditional-answer obligations in the OutcomeSet that
+the search machine installs into its delay service. Malformed obligations are
+refused. Raised errors and logical failure stay control outcomes at the PeTTa
+native sequence boundary, while a completed Error datum remains a value.
+
+Streamed cardinality produces a closed integer. At native entry this immediate
+literal needs no executable value delimiter. This normalization leaves code-
+shaped results' completion provenance intact and does not add a source-fuel
+step. Other streamed-consumer entries keep their own result metadata.
+
+Qualification
+-------------
+
+Mettapedia.Machines.NativeCallReturn relates the array cursor to an independent
+ordered list semantics. It proves exact prefixes, split resumption, final
+certificates, later-context observations and a matching publication-allowance
+lower bound. The bound counts delivered occurrences, not hardware work,
+allocation or total evaluator cost. Pointer validity, C correspondence and
+borrowed lifetimes remain native obligations.
+
+The argument preparation laws compare copy-on-replacement with independent
+eager preparation and characterize exactly when the original vector can be
+borrowed. They assume immutable identities and pure preparation; they do not
+license reordering evaluation or moving an effect across call admission.
+
+The invocation model independently relates two explicit machine stages to
+direct admission and invocation, and proves that entered failure cannot select
+authored fallback. It also proves that erasing failure into refusal loses the
+information needed to recover admission, and separates literal normalization
+from the invalid normalization of code-shaped payloads.
+
+The native producer controls exercise tagged data, duplicate aliases, raised
+faults, conditional answers, first-cause retention, refusal and cancellation.
+The existing PeTTa specialization fixture distinguishes raw grounded Boolean
+spelling from the prepared program's declared spelling. Dispatch-error controls
+retain exact separate goldens for Prolog-backed and native arithmetic faults.
+
+Shared operation interpretation
+-------------------------------
+
+The generated head/arity decoders are shared by ordinary fold admission,
+Space effect analysis, register lowering and prepared compilation. They read
+immutable operation descriptions; they neither prepare operands nor authorize
+execution. Scope availability, source revisions, call policies and readiness
+remain separate evidence. An unrestricted scope is not an existing operation.
+The strict intrinsic interpretation is shared by ordinary and prepared callers.
+
+Invocation operands
+-------------------
+
+CettaInvocation retains a BindingValue head and separate captured/supplied
+argument spans. A span borrows ordinary Atom pointers or contextual
+BindingValues. It owns no storage and carries no readiness, typing or source
+permission. The containing frame keeps every storage and lexical owner live.
+
+Arity admission reads only metadata. Argument lookup preserves lexical
+identity and occurrence order without constructing an application. Logical
+resolution reads the current Bindings at this entrance, before native work;
+its result is not a certificate valid after writes, rollback or owner release.
+Native consumers borrow one contiguous unqualified vector unchanged. Split
+or contextual operands are reified only when the consumer needs that ABI.
+
+The explicit syntax observer uses one expression builder and does not apply
+branch substitutions or evaluate operands. Ordinary partial application and
+prepared expansion share it. Publication and independent escape retain their
+existing ownership services; a borrowed invocation is not a captured closure.

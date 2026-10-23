@@ -16,4 +16,12 @@ typedef enum {
     CETTA_EVAL_INCOMPLETE_HOST_FAILURE,
 } CettaEvalCompletion;
 
+/* Completion is an identity; the first incomplete cause survives nested
+ * delivery. A later successful or interrupted child cannot replace it. */
+static inline void cetta_eval_completion_record(
+        CettaEvalCompletion *current, CettaEvalCompletion observed) {
+    if (*current == CETTA_EVAL_COMPLETE)
+        *current = observed;
+}
+
 #endif

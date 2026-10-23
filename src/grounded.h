@@ -25,7 +25,9 @@ typedef struct {
 
 /* Try to dispatch a grounded operation.
    If head is a known grounded op and args are valid, returns result atom.
-   Otherwise returns NULL (not a grounded op). */
+   Otherwise returns NULL (not a grounded op). The argument vector is borrowed
+   for the synchronous call: operations neither modify nor retain the vector.
+   An escaping result must own any vector storage it needs. */
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs);
 
 /* Run a grounded operation and report what it did (call_outcome.h): its

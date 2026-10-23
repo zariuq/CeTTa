@@ -927,17 +927,16 @@ static void he_canonical_resume_caller(HeCanonicalFrame *frame) {
     }
     bool direct = !frame->type || atom_is_symbol_id(frame->type, g_builtin_syms.undefined_type);
     if (!frame->preserve_bindings && bindings_logically_empty(&frame->env) && direct) {
-        CettaCallOutcome producer = cetta_call_value(NULL);
-        Atom *value = prime_need_atom_has_observable_ref(applied) ? NULL
-            : eval_grounded_application_outcome_on(frame->space, a, applied,
-                &frame->env, frame->fuel, false, &producer);
-        if (producer.kind == CETTA_CALL_INTERRUPTED)
+        CettaCallOutcome producer;
+        bool handled = !prime_need_atom_has_observable_ref(applied) &&
+            eval_native_application_on(frame->space, a, applied,
+                &frame->env, frame->fuel, EVAL_NATIVE_UNTYPED_IMMEDIATE_ARGUMENTS,
+                &producer);
+        Atom *value = NULL;
+        if (handled && sequence_native_call(frame->space, a, producer, false,
+                frame->type, &frame->env, he_relay_sink(frame, &frame->child),
+                &value))
             return;
-        if (value && producer.result_form != CETTA_CALL_RESULT_EXPRESSION) {
-            emit_completed_native_call(frame->space, a, producer, value,
-                frame->type, &frame->env, he_relay_sink(frame, &frame->child));
-            return;
-        }
         if (value && (value->kind != ATOM_EXPR || atom_eq(value, applied))) {
             if (!atom_is_legacy_empty_sentinel(value))
                 outcome_set_add(he_relay_sink(frame, &frame->child),
@@ -1473,24 +1472,23 @@ static void he_canonical_dispatch_call(HeCanonicalFrame *frame, Outcome *call) {
         }
         if (head->kind == ATOM_SYMBOL && is_grounded_op(head->sym_id)) {
             CettaCallOutcome produced;
-            bool handled = dispatch_native_call(frame->space, a, head,
-                source->expr.elems + 1u, nargs, &produced);
-            Atom *value = handled ? eval_call_outcome_atom(a, produced) : NULL;
-            if (handled && produced.kind == CETTA_CALL_INTERRUPTED)
+            bool handled = dispatch_native_invocation(frame->space, a,
+                &(CettaInvocation){.head = binding_value_from_atom(head),
+                    .supplied = {.atoms = source->expr.elems + 1u, .count = nargs}},
+                &produced);
+            Atom *value = NULL;
+            if (handled && sequence_native_call(
+                    frame->space, a, produced, eval_grounded_result_is_final(),
+                    return_type, env, sink, &value))
                 return;
             if (value) {
-                if (produced.result_form != CETTA_CALL_RESULT_EXPRESSION ||
-                    eval_grounded_result_is_final())
-                    emit_completed_native_call(frame->space, a, produced,
-                        value, return_type, env, sink);
+                if (frame->typed)
+                    he_canonical_tail_push(frame, value, return_type,
+                        env, sink);
                 else
-                    if (frame->typed)
-                        he_canonical_tail_push(frame, value, return_type,
-                            env, sink);
-                    else
-                        he_canonical_push(HE_CANONICAL_CALLER, frame->space, a,
-                            value, return_type, frame->fuel, env,
-                            frame->preserve_bindings, sink);
+                    he_canonical_push(HE_CANONICAL_CALLER, frame->space, a,
+                        value, return_type, frame->fuel, env,
+                        frame->preserve_bindings, sink);
                 return;
             }
         }

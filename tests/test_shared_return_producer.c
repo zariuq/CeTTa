@@ -1,6 +1,10 @@
+#define _POSIX_C_SOURCE 200809L
 #include "shared_return_producer.h"
+#include "grounded.h"
+#include "library.h"
 #include "parser.h"
 #include "prepared_pure_machine.h"
+#include "binding/frame_identity.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -11,6 +15,66 @@
 #include <string.h>
 
 static unsigned fail_malloc, fail_calloc;
+static unsigned native_mode, native_calls;
+static Atom *malformed_frontier(Arena *arena, Atom *value) {
+    Atom *prototype = atom_expr2(arena, value, value);
+    Atom *frontier = arena_alloc(arena, sizeof(*frontier));
+    *frontier = *prototype;
+    frontier->arena_id = arena->identity;
+    frontier->expr.elems = arena_alloc(arena, 2u * sizeof(Atom *));
+    frontier->expr.elems[0] = value;
+    frontier->expr.elems[1] = NULL;
+    return frontier;
+}
+bool __real_grounded_call(Arena *arena, Atom *head, Atom **args,
+                          uint32_t arity, CettaCallOutcome *outcome);
+bool __wrap_grounded_call(Arena *arena, Atom *head, Atom **args,
+                         uint32_t arity, CettaCallOutcome *outcome) {
+    if (!native_mode || !atom_is_symbol_id(head, g_builtin_syms.readln_bang))
+        return __real_grounded_call(arena, head, args, arity, outcome);
+    ++native_calls;
+    /* A broken boundary must fail the count assertion rather than loop. */
+    if (native_calls > 3u) {
+        *outcome = cetta_call_interrupted();
+        return true;
+    }
+    size_t position = 0u;
+    Atom *code = parse_sexpr(arena, "(function (return (readln!)))", &position);
+    Atom *error = atom_error(arena, atom_symbol(arena, "native"),
+                            atom_symbol(arena, "datum"));
+    switch (native_mode) {
+    case 1: *outcome = cetta_call_completed_value(code); break;
+    case 2:
+        *outcome = cetta_call_completed_frontier(
+            atom_expr(arena, (Atom *[]){code, code, error}, 3u));
+        break;
+    case 3: *outcome = cetta_call_failure(); break;
+    case 4: *outcome = cetta_call_interrupted(); break;
+    case 5: *outcome = cetta_call_value(NULL); break;
+    case 6:
+    case 7:
+        *outcome = cetta_call_suspended(atom_int(arena, 9), native_mode == 6u
+            ? atom_expr2(arena, atom_unit(arena), atom_unit(arena))
+            : atom_symbol(arena, "malformed-delayed-payload"));
+        break;
+    case 8: *outcome = cetta_call_raised(error); break;
+    case 9: *outcome = cetta_call_completed_value(error); break;
+    case 10:
+        *outcome = (CettaCallOutcome){.kind = (CettaCallOutcomeKind)99,
+                                    .term = atom_int(arena, 9)};
+        break;
+    case 11:
+        *outcome = (CettaCallOutcome){.kind = CETTA_CALL_VALUE,
+            .term = atom_int(arena, 9), .result_form = (CettaCallResultForm)99};
+        break;
+    case 12: {
+        *outcome = cetta_call_completed_frontier(malformed_frontier(arena, code));
+        break;
+    }
+    default: abort();
+    }
+    return true;
+}
 void *__real_malloc(size_t size);
 void *__real_calloc(size_t count, size_t size);
 void *__wrap_malloc(size_t size) {
@@ -505,7 +569,388 @@ static void test_real_prepared_producer(void) {
     puts("PASS: one real prepared relation supplies ordered duplicate occurrences to independent consumers without retaining source storage");
 }
 
+typedef struct {
+    Atom **values;
+    const Bindings *environment;
+    size_t count, attempts;
+    bool refuse;
+} NativeRecipient;
+
+static bool accept_native_return(void *context,
+                                 const CettaOwnedReturn *returned) {
+    NativeRecipient *recipient = context;
+    ++recipient->attempts;
+    assert(returned->environment == recipient->environment);
+    assert(returned->outcome.kind == CETTA_CALL_VALUE);
+    if (recipient->refuse)
+        return false;
+    assert(returned->outcome.term == recipient->values[recipient->count]);
+    ++recipient->count;
+    return true;
+}
+
+static void test_native_return_cursor(void) {
+    Arena arena;
+    arena_init(&arena);
+    Bindings environment;
+    bindings_init(&environment);
+    Atom *code = parse(&arena, "(function (return (println! held)))");
+    Atom *error_data = parse(&arena, "(Error payload reason)");
+    Atom *empty_data = parse(&arena, "Empty");
+    Atom *variable = parse(&arena, "$shared");
+    Atom *delayed = atom_expr2(&arena, atom_symbol(&arena, "check"), variable);
+    Atom *values[] = {code, error_data, empty_data, variable, variable};
+    Atom *frontier = atom_expr(&arena, values, 5u);
+    Atom *empty_frontier = atom_expr(&arena, NULL, 0u);
+    Atom *broken_frontier = malformed_frontier(&arena, code);
+    struct {
+        CettaCallOutcome call;
+        Atom **values;
+        size_t count;
+        CettaCallOutcomeKind kind;
+        CettaCallResultForm form;
+        CettaEvalCompletion completion;
+        Atom *delayed;
+    } cases[] = {
+        {cetta_call_value(code), values, 1u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_EXPRESSION, CETTA_EVAL_COMPLETE, NULL},
+        {cetta_call_completed_value(code), values, 1u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_COMPLETED_VALUE, CETTA_EVAL_COMPLETE, NULL},
+        {cetta_call_completed_value(error_data), values + 1u, 1u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_COMPLETED_VALUE, CETTA_EVAL_COMPLETE, NULL},
+        {cetta_call_completed_value(empty_data), values + 2u, 1u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_COMPLETED_VALUE, CETTA_EVAL_COMPLETE, NULL},
+        {cetta_call_completed_frontier(frontier), values, 5u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_COMPLETED_VALUE, CETTA_EVAL_COMPLETE, NULL},
+        {cetta_call_completed_value(frontier), &frontier, 1u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_COMPLETED_VALUE, CETTA_EVAL_COMPLETE, NULL},
+        {cetta_call_completed_frontier(empty_frontier), NULL, 0u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_COMPLETED_VALUE, CETTA_EVAL_COMPLETE, NULL},
+        {cetta_call_failure(), NULL, 0u, CETTA_CALL_FAILURE,
+         CETTA_CALL_RESULT_EXPRESSION, CETTA_EVAL_COMPLETE, NULL},
+        {cetta_call_raised(error_data), values + 1u, 1u, CETTA_CALL_RAISED,
+         CETTA_CALL_RESULT_EXPRESSION, CETTA_EVAL_COMPLETE, NULL},
+        {cetta_call_suspended(variable, delayed), values + 3u, 1u,
+         CETTA_CALL_SUSPENDED, CETTA_CALL_RESULT_EXPRESSION,
+         CETTA_EVAL_COMPLETE, delayed},
+        {cetta_call_interrupted(), NULL, 0u, CETTA_CALL_INTERRUPTED,
+         CETTA_CALL_RESULT_EXPRESSION, CETTA_EVAL_INCOMPLETE_CANCELLED, NULL},
+        {cetta_call_completed_frontier(code->expr.elems[0]), NULL, 0u,
+         CETTA_CALL_VALUE, CETTA_CALL_RESULT_COMPLETED_VALUE,
+         CETTA_EVAL_INCOMPLETE_HOST_FAILURE, NULL},
+        {cetta_call_value(NULL), NULL, 0u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_EXPRESSION, CETTA_EVAL_INCOMPLETE_HOST_FAILURE, NULL},
+        {{.kind = CETTA_CALL_VALUE, .term = code,
+          .result_form = (CettaCallResultForm)99}, NULL, 0u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_EXPRESSION, CETTA_EVAL_INCOMPLETE_HOST_FAILURE, NULL},
+        {{.kind = (CettaCallOutcomeKind)99, .term = code}, NULL, 0u,
+         CETTA_CALL_VALUE, CETTA_CALL_RESULT_EXPRESSION,
+         CETTA_EVAL_INCOMPLETE_HOST_FAILURE, NULL},
+        {cetta_call_completed_frontier(broken_frontier), values, 1u,
+         CETTA_CALL_VALUE, CETTA_CALL_RESULT_COMPLETED_VALUE,
+         CETTA_EVAL_INCOMPLETE_HOST_FAILURE, NULL},
+    };
+    size_t checks = 0u;
+    for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+        CettaCallReturnCursor cursor = {
+            .outcome = cases[i].call, .environment = &environment,
+        };
+        CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+        CettaOwnedReturn returned;
+        for (size_t j = 0u; j < cases[i].count; ++j) {
+            assert(cetta_call_return_next(&cursor, &returned, &completion) ==
+                   CETTA_OWNED_EXECUTION_RETURN);
+            assert(returned.outcome.kind == cases[i].kind);
+            assert(returned.outcome.term == cases[i].values[j]);
+            assert(returned.outcome.result_form == cases[i].form);
+            assert(returned.outcome.delayed == cases[i].delayed);
+            assert(returned.environment == &environment);
+            assert(returned.final == (cases[i].completion == CETTA_EVAL_COMPLETE &&
+                                      j + 1u == cases[i].count));
+            ++checks;
+        }
+        CettaOwnedExecutionStep terminal = cases[i].completion == CETTA_EVAL_COMPLETE
+            ? CETTA_OWNED_EXECUTION_COMPLETE : CETTA_OWNED_EXECUTION_INTERRUPTED;
+        assert(cetta_call_return_next(&cursor, &returned, &completion) == terminal);
+        assert(completion == cases[i].completion);
+        assert(cetta_call_return_next(&cursor, &returned, &completion) == terminal);
+        ++checks;
+    }
+    CettaCallReturnCursor cursor = {
+        .outcome = cetta_call_completed_frontier(frontier),
+        .environment = &environment,
+    };
+    CettaOwnedExecution execution;
+    cetta_owned_execution_init(&execution, &cursor, cetta_call_return_next, NULL);
+    NativeRecipient recipient = {values, &environment, 0u, 0u, true};
+    fail_malloc = fail_calloc = 1u;
+    assert(cetta_owned_execution_sequence(&execution, 0u,
+        accept_native_return, &recipient) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(!cursor.position && !recipient.attempts);
+    assert(cetta_owned_execution_sequence(&execution, 5u,
+        accept_native_return, &recipient) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(cursor.position == 1u && execution.has_pending && !recipient.count);
+    assert(cetta_owned_execution_sequence(&execution, 0u,
+        accept_native_return, &recipient) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(recipient.attempts == 1u && cursor.position == 1u);
+    recipient.refuse = false;
+    assert(cetta_owned_execution_sequence(&execution, 1u,
+        accept_native_return, &recipient) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(recipient.count == 1u && cursor.position == 1u);
+    assert(cetta_owned_execution_sequence(&execution, 4u,
+        accept_native_return, &recipient) == CETTA_OWNED_EXECUTION_COMPLETE);
+    assert(recipient.count == 5u && recipient.attempts == 6u);
+    assert(fail_malloc == 1u && fail_calloc == 1u);
+    fail_malloc = fail_calloc = 0u;
+    cetta_owned_execution_cancel(&execution);
+    assert(execution.completion == CETTA_EVAL_INCOMPLETE_CANCELLED);
+    assert(cursor.position == 5u && recipient.count == 5u);
+
+    cursor = (CettaCallReturnCursor){
+        .outcome = cetta_call_completed_frontier(frontier),
+        .environment = &environment, .position = 3u,
+    };
+    CettaOwnedReturn returned;
+    CettaEvalCompletion completion = CETTA_EVAL_INCOMPLETE_FUEL;
+    assert(cetta_call_return_next(&cursor, &returned, &completion) ==
+           CETTA_OWNED_EXECUTION_RETURN);
+    assert(returned.outcome.term == variable);
+    assert(bindings_add_var(&environment, variable, atom_int(&arena, 17)));
+    assert(cetta_call_return_next(&cursor, &returned, &completion) ==
+           CETTA_OWNED_EXECUTION_RETURN);
+    Atom *bound = bindings_lookup_value_id((Bindings *)returned.environment,
+                                           variable->var_id).skeleton;
+    assert(bound && bound->kind == ATOM_GROUNDED && bound->ground.ival == 17);
+    assert(completion == CETTA_EVAL_INCOMPLETE_FUEL);
+    for (unsigned reason = CETTA_EVAL_COMPLETE;
+         reason <= CETTA_EVAL_INCOMPLETE_HOST_FAILURE; ++reason) {
+        for (unsigned fault = 0u; fault < 2u; ++fault) {
+            cursor = (CettaCallReturnCursor){
+                .outcome = fault ? cetta_call_value(NULL) : cetta_call_interrupted(),
+                .environment = &environment,
+            };
+            completion = (CettaEvalCompletion)reason;
+            assert(cetta_call_return_next(&cursor, &returned, &completion) ==
+                   CETTA_OWNED_EXECUTION_INTERRUPTED);
+            CettaEvalCompletion expected = reason ? (CettaEvalCompletion)reason
+                : fault ? CETTA_EVAL_INCOMPLETE_HOST_FAILURE
+                        : CETTA_EVAL_INCOMPLETE_CANCELLED;
+            assert(completion == expected);
+            ++checks;
+        }
+    }
+    bindings_free(&environment);
+    arena_free(&arena);
+    printf("PASS: %zu native return observations preserve provenance, control, "
+           "ordered aliases, pending acceptance and live bindings without allocation\n",
+           checks);
+}
+
+static void test_native_evaluator_boundary(void) {
+    for (unsigned dialect = 0u; dialect < 2u; dialect++) {
+        CettaLibraryContext *context = calloc(1u, sizeof(*context));
+        assert(context);
+        cetta_library_context_init_for_language_profile(context,
+            dialect ? CETTA_LANGUAGE_HE : CETTA_LANGUAGE_PETTA, NULL);
+        eval_set_library_context(context);
+        Arena arena;
+        arena_init(&arena);
+        arena_set_hashcons(&arena, NULL);
+        TermUniverse universe;
+        term_universe_init(&universe);
+        term_universe_set_persistent_arena(&universe, &arena);
+        Space space;
+        space_init_with_universe(&space, &universe);
+        Registry registry;
+        registry_init(&registry);
+        registry_bind_id(&registry, g_builtin_syms.self, atom_space(&arena, &space));
+        for (unsigned mode = 1u; mode <= 12u; mode++) {
+            if (dialect && mode == 7u)
+                continue;
+            native_mode = mode;
+            native_calls = 0u;
+            Atom *source = parse(&arena, (mode >= 3u && mode <= 5u) || mode >= 10u
+                ? "(let $ignored (readln!) (readln!))" : "(readln!)");
+            EvalOutcome outcome;
+            eval_outcome_init(&outcome);
+            eval_top_with_registry_outcome(&space, &arena, &arena, &registry,
+                                          source, &outcome, NULL, NULL);
+            if (native_calls != 1u)
+                fprintf(stderr, "native boundary dialect=%u mode=%u calls=%u\n",
+                        dialect, mode, native_calls);
+            assert(native_calls == 1u);
+            if (mode == 1u || mode == 2u) {
+                assert(outcome.completion == CETTA_EVAL_COMPLETE);
+                /* HE's enclosing completion prefers successful alternatives
+                 * to Error values. The shared producer still lends all three
+                 * occurrences, and PeTTa publishes all three. */
+                CettaCount expected_count = mode == 1u ? 1u : dialect ? 2u : 3u;
+                if (outcome.results.len != expected_count) {
+                    fprintf(stderr, "native boundary dialect=%u mode=%u rows=%llu\n",
+                            dialect, mode, (unsigned long long)outcome.results.len);
+                    for (CettaCount i = 0u; i < outcome.results.len; i++) {
+                        atom_print(outcome.results.items[i], stderr);
+                        fputc('\n', stderr);
+                    }
+                }
+                assert(outcome.results.len == expected_count);
+                Atom *expected = parse(&arena, "(function (return (readln!)))");
+                assert(atom_eq(outcome.results.items[0], expected));
+                if (mode == 2u) {
+                    assert(atom_eq(outcome.results.items[1], expected));
+                    if (!dialect)
+                        assert(atom_is_error(outcome.results.items[2]));
+                }
+                assert(!outcome.petta_raised_error);
+            } else if (mode == 3u) {
+                assert(outcome.completion == CETTA_EVAL_COMPLETE);
+                assert(outcome.results.len == 0u);
+            } else if (mode == 4u) {
+                assert(outcome.completion == CETTA_EVAL_INCOMPLETE_CANCELLED);
+            } else if (mode == 5u || mode >= 10u) {
+                assert(outcome.completion == CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+            } else if (mode == 6u) {
+                assert(outcome.completion == CETTA_EVAL_COMPLETE);
+                assert(outcome.results.len == 1u);
+                assert(atom_eq(outcome.results.items[0], atom_int(&arena, 9)));
+            } else if (mode == 7u) {
+                assert(outcome.completion == CETTA_EVAL_INCOMPLETE_CAPACITY);
+            } else {
+                assert(outcome.completion == CETTA_EVAL_COMPLETE);
+                assert(outcome.results.len == 1u);
+                assert(atom_is_error(outcome.results.items[0]));
+                assert(mode == 9u ? !outcome.petta_raised_error
+                                 : dialect || outcome.petta_raised_error);
+            }
+            eval_outcome_free(&outcome);
+        }
+        native_mode = 0u;
+        registry_free(&registry);
+        space_free(&space);
+        term_universe_free(&universe);
+        cetta_library_context_free(context);
+        eval_set_library_context(NULL);
+        free(context);
+        arena_free(&arena);
+    }
+    puts("PASS: 23 real evaluator boundaries preserve entered-call effects, tagged data, errors, constraints and interruption without replay");
+}
+
+static void test_invocation_operands(void) {
+    Arena source, result;
+    arena_init_detached(&source);
+    arena_init_detached(&result);
+    Atom *head = atom_symbol(&source, "invoke");
+    Atom *atoms[16];
+    BindingValue values[16];
+    Atom *code = parse(&source, "(function (return (readln!)))");
+    for (unsigned i = 0u; i < 16u; i++) {
+        atoms[i] = i % 3u ? atom_int(&source, i) : code;
+        values[i] = binding_value_from_atom(atoms[i]);
+    }
+    unsigned observations = 0u;
+    for (unsigned first = 0u; first <= 8u; first++) {
+        for (unsigned second = 0u; second <= 8u; second++) {
+            for (unsigned contextual = 0u; contextual < 2u; contextual++) {
+                CettaInvocation call = {
+                    .head = binding_value_from_atom(head),
+                    .captured = {.atoms = atoms, .count = first},
+                    .supplied = {.atoms = contextual ? NULL : atoms + first,
+                        .values = contextual ? values + first : NULL,
+                        .count = second},
+                };
+                CettaExprLen arity = UINT64_MAX;
+                assert(cetta_invocation_arity(&call, &arity));
+                assert(arity == first + second);
+                for (CettaExprIndex i = 0u; i < arity; i++)
+                    assert(cetta_invocation_argument(&call, i).skeleton == atoms[i]);
+                Atom *syntax = cetta_invocation_materialize(&result, &call);
+                assert(syntax && syntax->kind == ATOM_EXPR &&
+                    syntax->expr.len == arity + 1u && syntax->expr.elems[0] == head);
+                for (CettaExprIndex i = 0u; i < arity; i++)
+                    assert(syntax->expr.elems[i + 1u] == atoms[i]);
+                if (!contextual && first == 0u)
+                    assert(cetta_invocation_borrow_arguments(&call) == atoms);
+                else if (!contextual && second == 0u)
+                    assert(cetta_invocation_borrow_arguments(&call) == atoms);
+                else if (first && second)
+                    assert(!cetta_invocation_borrow_arguments(&call));
+                Atom **native = cetta_invocation_materialize_arguments(&result, &call);
+                assert(native);
+                for (CettaExprIndex i = 0u; i < arity; i++)
+                    assert(native[i] == atoms[i]);
+                if (cetta_invocation_borrow_arguments(&call))
+                    assert(native == cetta_invocation_borrow_arguments(&call));
+                observations++;
+            }
+        }
+    }
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    CettaFrameIdentity left = cetta_frame_identity_scope_fresh(&identities);
+    CettaFrameIdentity right = cetta_frame_identity_scope_fresh(&identities);
+    VarId id = var_id_from_base(101u);
+    Atom *x = atom_var_with_id(&source, "same", id);
+    BindingValue scoped[] = {binding_value_from_context(x, left),
+        binding_value_from_context(x, right), binding_value_from_context(x, left)};
+    CettaInvocation call = {.head = binding_value_from_atom(head),
+        .supplied = {.values = scoped, .count = 3u}};
+    Atom *syntax = cetta_invocation_materialize(&result, &call);
+    assert(syntax && !cetta_invocation_borrow_arguments(&call));
+    assert(var_id_eq(syntax->expr.elems[1]->var_id, var_epoch_id(id, left)));
+    assert(var_id_eq(syntax->expr.elems[2]->var_id, var_epoch_id(id, right)));
+    assert(var_id_eq(syntax->expr.elems[1]->var_id, syntax->expr.elems[3]->var_id));
+    BindingsBuilder builder;
+    assert(bindings_builder_init(&builder, NULL));
+    assert(bindings_builder_register_contextual_frame(&builder, &id, 1u, left));
+    assert(bindings_builder_register_contextual_frame(&builder, &id, 1u, right));
+    uint32_t mark = bindings_builder_save(&builder);
+    CettaInvocation unresolved = {.head = binding_value_from_atom(code)};
+    assert(!cetta_invocation_resolve_arguments(
+        &result, &builder.current, &call, true, &unresolved));
+    assert(unresolved.head.skeleton == code);
+    for (unsigned round = 0u; round < 2u; round++) {
+        assert(bindings_builder_add_id_fresh(&builder, var_epoch_id(id, left),
+            SYMBOL_ID_NONE, atom_int(&source, 11 + round)));
+        assert(bindings_builder_add_id_fresh(&builder, var_epoch_id(id, right),
+            SYMBOL_ID_NONE, atom_int(&source, 23 + round)));
+        Atom *observed = bindings_apply(&builder.current, &result, syntax);
+        assert(observed->expr.elems[1]->ground.ival == 11 + round);
+        assert(observed->expr.elems[2]->ground.ival == 23 + round);
+        assert(observed->expr.elems[3]->ground.ival == 11 + round);
+        BindingValue argument = cetta_invocation_argument(&call, 1u);
+        Atom *ready = bindings_apply_value(&builder.current, &result, argument);
+        assert(ready && ready->ground.ival == 23 + round);
+        CettaInvocation resolved;
+        assert(cetta_invocation_resolve_arguments(
+            &result, &builder.current, &call, true, &resolved));
+        Atom **arguments = cetta_invocation_materialize_arguments(&result, &resolved);
+        assert(arguments && arguments[0]->ground.ival == 11 + round &&
+            arguments[1]->ground.ival == 23 + round &&
+            arguments[2]->ground.ival == 11 + round);
+        bindings_builder_rollback(&builder, mark);
+    }
+    CettaInvocation corrupt = {.head = binding_value_from_atom(head),
+        .captured = {.atoms = (Atom *const *)(uintptr_t)1u, .count = UINT64_MAX},
+        .supplied = {.atoms = atoms, .count = 1u}};
+    size_t before = arena_accounted_live_bytes(&result);
+    CettaExprLen untouched = 77u;
+    assert(!cetta_invocation_arity(&corrupt, &untouched) && untouched == 77u);
+    assert(!cetta_invocation_materialize(&result, &corrupt));
+    assert(arena_accounted_live_bytes(&result) == before);
+    corrupt = (CettaInvocation){.head = binding_value_from_atom(head),
+        .supplied = {.atoms = atoms, .values = values, .count = 1u}};
+    assert(!cetta_invocation_arity(&corrupt, &untouched));
+    assert(!cetta_invocation_materialize(&result, &corrupt));
+    assert(arena_accounted_live_bytes(&result) == before);
+    bindings_builder_free(&builder);
+    arena_free(&result);
+    arena_free(&source);
+    printf("PASS: %u split invocation observations retain aliases and code-shaped data; lexical worlds, rollback and arity-before-read controls pass\n", observations);
+}
+
 int main(void) {
+    assert(setenv("CETTA_OPEN_EQUATIONS_REFERENCE", "1", 1) == 0);
+    assert(setenv("CETTA_PREPARED_PURE_REFERENCE", "1", 1) == 0);
     SymbolTable symbols;
     VarInternTable variables;
     symbol_table_init(&symbols);
@@ -518,6 +963,9 @@ int main(void) {
     test_construction_and_terminal_states();
     test_pending_return_detachment();
     test_real_prepared_producer();
+    test_native_return_cursor();
+    test_native_evaluator_boundary();
+    test_invocation_operands();
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;
