@@ -24,6 +24,8 @@ def countModeRows : List (String × String × String × String × String × Stri
   ("TableAll", "WireTableAll", "table-all", "Table", "Complete", "Rows"),
   ("TableTensorBefore", "WireTableTensorBefore", "table-tensor-before", "Table", "Prefix", "Tensor"),
   ("TableTensorAll", "WireTableTensorAll", "table-tensor-all", "Table", "Complete", "Tensor"),
+  ("TableFoldBefore", "WireTableFoldBefore", "table-fold-before", "Table", "Prefix", "FoldRows"),
+  ("TableFoldColumnsBefore", "WireTableFoldColumnsBefore", "table-fold-columns-before", "Table", "Prefix", "FoldColumns"),
   ("Stats", "WireStats", "stats", "Either", "Metadata", "Statistics")
 ]
 
@@ -47,10 +49,12 @@ theorem count_mode_rows_match_source :
 
 def observationRows : List (String × List String) := [
   ("PrepareIndex", ["SourceOccurrenceOrder", "DuplicateOccurrences", "NumericPositionsAscending", "CompleteValidation", "AtomicPublication", "OwnedSnapshot", "AuthoredFallback"]),
-  ("PrepareTable", ["FirstOuterKeyOrder", "DuplicateOccurrences", "NumericGroupOrder", "NumericPositionsAscending", "CompleteValidation", "AtomicPublication", "OwnedSnapshot", "AuthoredFallback"]),
-  ("PrepareSpaceTableAttempt", ["BorrowedSource", "DeclaredProjection", "FirstOuterKeyOrder", "DuplicateOccurrences", "NumericGroupOrder", "NumericPositionsAscending", "CompleteValidation", "AtomicPublication", "OwnedSnapshot", "AuthoredFallback"]),
+  ("PrepareTable", ["MatchingCompatibleKeys", "FirstOuterKeyOrder", "DuplicateOccurrences", "NumericGroupOrder", "NumericPositionsAscending", "CompleteValidation", "AtomicPublication", "OwnedSnapshot", "AuthoredFallback"]),
+  ("PrepareSpaceTableAttempt", ["BorrowedSource", "DeclaredProjection", "MatchingCompatibleKeys", "ExactRowWidth", "ProtectedStandaloneSource", "FirstOuterKeyOrder", "DuplicateOccurrences", "NumericGroupOrder", "NumericPositionsAscending", "CompleteValidation", "AtomicPublication", "OwnedSnapshot", "AuthoredFallback"]),
   ("Inspect", ["SourceOccurrenceOrder", "DuplicateOccurrences", "OwnedSnapshot"]),
   ("Counts", ["DuplicateOccurrences", "NumericPositionsAscending", "AuthoredFallback"]),
+  ("FoldTable", ["QueryOrder", "NumericGroupOrder", "MatchingCompatibleKeys", "ProjectedGroupIdentity", "OriginalGroupCallback", "IndependentGroupStates", "ExpressionState", "SingleAnswerNumericState", "CompleteValidation", "AtomicPublication", "AuthoredFallback"]),
+  ("FoldColumns", ["QueryOrder", "NumericGroupOrder", "MatchingCompatibleKeys", "ProjectedGroupIdentity", "OriginalGroupCallback", "IndependentGroupStates", "ExpressionState", "SingleAnswerNumericState", "FirstGroupEncounterOrder", "DeclaredLeafDTypes", "DenseColumns", "CompleteValidation", "AtomicPublication", "AuthoredFallback"]),
   ("SourcesCurrent", ["ExactSourceRevision", "CompleteValidation", "AuthoredFallback"]),
   ("Close", ["CloseInvalidatesAliases"])
 ]
@@ -72,5 +76,57 @@ theorem observation_rows_match_source :
   decide +kernel
 
 #print axioms observation_rows_match_source
+
+def blockProjectionFields : List String := ["RowHead", "RowWidth", "KeysField", "GroupField", "PositionField", "PrefixKeys", "ForbiddenHeads"]
+
+def sourceBlockProjection : List Pattern :=
+  language.equations.filterMap fun equation =>
+    match equation.left with
+    | Pattern.apply "PostingsProjection" [Pattern.apply "BlockLayout" []] =>
+        some equation.right
+    | _ => none
+
+theorem block_projection_fields_match_source :
+    sourceBlockProjection = [Pattern.apply "Projection"
+      (Pattern.apply "WireBlockLayout" [] ::
+        blockProjectionFields.map (fun field => Pattern.apply field []))] := by
+  decide +kernel
+
+#print axioms block_projection_fields_match_source
+
+def columnsLayoutFields : List String := ["LabelsColumn", "ValueColumns"]
+
+def columnTypeRows : List (String × String × String × String) := [
+  ("I64", "WireI64", "i64", "IntegerLeaf"),
+  ("F64", "WireF64", "f64", "FloatingLeaf")
+]
+
+def sourceColumnTypeRows : List (String × Pattern) :=
+  language.equations.filterMap fun equation =>
+    match equation.left with
+    | Pattern.apply "PostingsColumnDType" [Pattern.apply label []] =>
+        some (label, equation.right)
+    | _ => none
+
+theorem column_types_match_source :
+    sourceColumnTypeRows = columnTypeRows.map (fun (label, wireName, _wire, leaf) =>
+      (label, Pattern.apply "ColumnDType" [Pattern.apply wireName [], Pattern.apply leaf []])) := by
+  decide +kernel
+
+def sourceColumnsProjection : List Pattern :=
+  language.equations.filterMap fun equation =>
+    match equation.left with
+    | Pattern.apply "PostingsProjection" [Pattern.apply "ColumnsLayout" []] =>
+        some equation.right
+    | _ => none
+
+theorem columns_projection_fields_match_source :
+    sourceColumnsProjection = [Pattern.apply "Projection"
+      (Pattern.apply "WireColumns" [] ::
+        columnsLayoutFields.map (fun field => Pattern.apply field []))] := by
+  decide +kernel
+
+#print axioms column_types_match_source
+#print axioms columns_projection_fields_match_source
 
 end CeTTaPostingsDescriptors

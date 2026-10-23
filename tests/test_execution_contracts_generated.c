@@ -460,6 +460,8 @@ static void test_generated_sequence_representations(void) {
 static void test_generated_prepared_intrinsic_program(void) {
     unsigned rows = 0u;
     bool saw_division = false, saw_sort_numbers = false;
+    bool saw_and = false, saw_or = false;
+    bool saw_intersection = false;
     bool saw_remove_all = false, saw_unkey = false;
     bool saw_retain_top_k = false, saw_cons = false, saw_union = false;
     unsigned dual_numeric_heads = 0u;
@@ -476,6 +478,20 @@ static void test_generated_prepared_intrinsic_program(void) {
     }                                                                   \
     if (strcmp(#field, "op_div") == 0) {                              \
         saw_division = true;                                            \
+        assert((arity) == 2u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+    }                                                                   \
+    if (strcmp(#field, "op_and") == 0 ||                             \
+        strcmp(#field, "op_or") == 0) {                               \
+        assert((arity) == 2u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+        if (strcmp(#field, "op_and") == 0) saw_and = true;            \
+        else saw_or = true;                                              \
+    }                                                                   \
+    if (strcmp(#field, "intersection_atom") == 0) {                  \
+        saw_intersection = true;                                       \
         assert((arity) == 2u);                                          \
         assert((instruction) ==                                         \
                CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
@@ -517,7 +533,24 @@ static void test_generated_prepared_intrinsic_program(void) {
     assert(saw_division && saw_sort_numbers && saw_remove_all);
     assert(saw_retain_top_k && saw_unkey);
     assert(saw_cons && saw_union);
+    assert(saw_and && saw_or);
+    assert(saw_intersection);
     assert(dual_numeric_heads == 8u);
+    bool saw_intersection_scope = false;
+#define CHECK_INTRINSIC_SCOPE(field, arity, dialects) do {               \
+    assert((dialects) != 0u);                                           \
+    assert(((dialects) & ~(CETTA_GSLT_INTRINSIC_DIALECT_HE |             \
+        CETTA_GSLT_INTRINSIC_DIALECT_PETTA |                            \
+        CETTA_GSLT_INTRINSIC_DIALECT_PRIME)) == 0u);                    \
+    if (strcmp(#field, "intersection_atom") == 0) {                  \
+        assert((arity) == 2u);                                          \
+        assert((dialects) == CETTA_GSLT_INTRINSIC_DIALECT_PETTA);        \
+        saw_intersection_scope = true;                                 \
+    }                                                                  \
+} while (0);
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_SCOPE_ROWS(CHECK_INTRINSIC_SCOPE)
+#undef CHECK_INTRINSIC_SCOPE
+    assert(saw_intersection_scope);
 }
 
 static void test_generated_sequence_constructor_policy(void) {

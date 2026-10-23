@@ -346,6 +346,7 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_list_repeat, "__cetta_lib_list_repeat") \
     X(lib_list_group_sums, "__cetta_lib_list_group_sums") \
     X(lib_list_group_sums_blocks, "__cetta_lib_list_group_sums_blocks") \
+    X(lib_list_factorize, "__cetta_lib_list_factorize") \
     X(lib_postings_prepare, "__cetta_lib_postings_prepare") \
     X(lib_postings_own, "__cetta_lib_postings_own") \
     X(lib_postings_counts, "__cetta_lib_postings_counts") \

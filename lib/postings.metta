@@ -3,6 +3,7 @@
 ; Every snapshot has the same owned capability lifetime. Unsupported packing
 ; retains an ordinary snapshot and uses the authored observations below.
 !(import! &self tensor)
+!(import! &self postings_descriptors)
 (: __cetta_lib_postings_prepare (-> Atom Atom))
 (: __cetta_lib_postings_own (-> Atom Atom))
 (: __cetta_lib_postings_counts (-> Atom Atom Atom Atom))
@@ -24,6 +25,7 @@
 (: postings:close (-> %Undefined% %Undefined%))
 (: postings:stats (-> %Undefined% %Undefined%))
 (: postings:sources-current (-> %Undefined% %Undefined%))
+(: postings:columns-from-rows (-> %Undefined% %Undefined% %Undefined%))
 
 ; A revision observation, not a cached verdict or a certificate. Every pair
 ; names the actual source and its expected revision. Unsupported carriers
@@ -104,6 +106,10 @@
 ; A declared projection may borrow an exact immutable space snapshot and feed
 ; the same table builder without first constructing its ordinary block tree.
 ; This is deliberately an attempt: its caller owns the authored fallback.
+; (Postings:BlockLayout head row-width keys-field group-field position-field
+;   prefix-keys forbidden-heads) uses zero-based fields, including the head
+; at zero. Row width counts the head too. A mismatched width declines before
+; projection; this does not broaden the caller's exact constructor match.
 (= (postings:prepare-space-blocks-attempt $source $layout)
    (function
      (chain
@@ -143,7 +149,16 @@
    (case (__cetta_lib_postings_inspect $handle)
      (((Postings:Blocks $blocks)
         (postings:prepare-events (postings:block-events $blocks $key)))
-      ($other $other))))
+      ((Postings:Fault $reason) (Postings:Fault $reason))
+      ($table
+        (let $events
+          (collapse
+            (let ($observed $groups) (superpose $table)
+              (if (== $observed $key)
+                (let ($group $positions) (superpose $groups)
+                  (let $position (superpose $positions) ($group $position)))
+                (superpose ()))))
+          (postings:prepare-events $events))))))
 
 (= (postings:table-reference-inspect $blocks)
    (let $all (postings:block-keys $blocks)
@@ -210,6 +225,118 @@
           (postings:counts-tensor
             (postings:table-reference-index $handle $key) $size))
         ($result $result)))))
+
+; Each query is (key payload). Its positive prefix counts visit groups in
+; numeric order; queries retain caller order. The callback receives the
+; previous numeric state product, group, count and payload, and returns a new
+; state product (optionally headed by a fixed constructor). Groups appear in
+; first-encounter order. No reassociation or
+; multiplication by counts is implicit: the callback authors that meaning.
+; A packed state is an expression product. Other carriers (including native
+; list values) use the authored fold without changing their metatype.
+(= (postings:fold-table-before
+      (NativeHandle "postings-table-v1" $id) $queries $bound $initial $step)
+   (postings:fold-table-by-before (NativeHandle "postings-table-v1" $id)
+     $queries $bound postings:group-identity $initial $step))
+(= (postings:group-identity $group $payload) $group)
+
+; The projection receives the original group and query payload. Equal projected
+; keys share a state, while the step still receives the original group. This
+; changes grouping, never the traversal schedule within a projected group.
+(= (postings:fold-table-by-before
+      (NativeHandle "postings-table-v1" $id) $queries $bound $project $initial $step)
+   (let* (($handle (NativeHandle "postings-table-v1" $id))
+          ($space (context-space))
+          ($answer (postings:try-table-counts $handle table-fold-before
+            ($space $queries $bound $project $initial $step))))
+     (case $answer
+       ((Postings:Fallback
+          (postings:fold-table-by-reference $handle $queries $bound $project $initial $step))
+        ($result $result)))))
+(= (postings:fold-table-reference $handle $queries $bound $initial $step)
+   (postings:fold-table-by-reference $handle $queries $bound
+     postings:group-identity $initial $step))
+
+; Observe numeric states as typed dense columns, retaining first-group order.
+; The ordinary fold and explicit tensor constructors define the fallback.
+(= (postings:fold-table-columns-before
+      (NativeHandle "postings-table-v1" $id) $queries $bound $project $initial $step $dtypes)
+   (let* (($handle (NativeHandle "postings-table-v1" $id))
+          ($space (context-space))
+          ($answer (postings:try-table-counts $handle table-fold-columns-before
+            ($space $queries $bound $project $initial $step $dtypes))))
+     (case $answer
+       ((Postings:Fallback
+          (postings:columns-from-rows $dtypes
+            (postings:fold-table-by-reference $handle $queries $bound $project $initial $step)))
+        ((Postings:Fault mode)
+          (postings:columns-from-rows $dtypes
+            (postings:fold-table-by-reference $handle $queries $bound $project $initial $step)))
+        ($result $result)))))
+(= (postings:column-fields $row)
+   (let $pair (postings:sequence $row)
+     (if (not (== (get-metatype $pair) Expression)) Postings:InvalidColumnState
+       (if (not (== (size-atom $pair) 2)) Postings:InvalidColumnState
+         (let $state (postings:sequence (index-atom $pair 1))
+           (if (not (== (get-metatype $state) Expression)) Postings:InvalidColumnState
+             (if (== (size-atom $state) 0) ()
+               (let $head (car-atom $state)
+                 (if (== (get-metatype $head) Symbol)
+                   (cdr-atom $state) $state)))))))))
+(= (postings:columns-from-rows $dtypes $rows)
+   (case $rows
+     (((Postings:Fault $reason) $rows)
+      ($observed
+        (let* (($items (postings:sequence $observed))
+               ($types (postings:sequence $dtypes)))
+          (if (not (and (== (get-metatype $items) Expression)
+                        (== (get-metatype $types) Expression)))
+            (Postings:Fault column-sequence)
+            (let* (($count (size-atom $items))
+                   ($width (size-atom $types))
+                   ($fields (map-atom $items $row (postings:column-fields $row)))
+                   ($invalid (filter-atom $fields $state
+                     (if (== $state Postings:InvalidColumnState) True
+                       (not (== (size-atom $state) $width))))))
+              (if (not (== $invalid ())) (Postings:Fault column-state)
+                (let* (($labels (tensor:from-values i64 ($count)
+                         (map-atom $items $row (car-atom $row))))
+                       (($column-count $columns)
+                         (foldl-atom $types (0 ()) $progress $dtype
+                           (let ($column $values) $progress
+                             (let $value (tensor:from-values $dtype ($count)
+                                   (map-atom $fields $state (index-atom $state $column)))
+                               ((+ $column 1) (union-atom $values ($value))))))))
+                  (postings:columns-validated $labels $types $columns))))))))))
+(= (postings:columns-validated $labels $types $columns)
+   (let ($count $valid)
+     (foldl-atom $types (0 True) $progress $dtype
+       (let ($index $valid) $progress
+         ((+ $index 1)
+           (and $valid (== (tensor:dtype (index-atom $columns $index)) $dtype)))))
+     (if (and $valid (== (tensor:dtype $labels) i64))
+       (postings:column-result $labels $columns) (Postings:Fault column-value))))
+(= (postings:fold-table-by-reference $handle $queries $bound $project $initial $step)
+   (case (postings:stats $handle)
+     (((Postings:Fault $reason) (Postings:Fault $reason))
+      ($valid
+        (let* (($blocks (map-atom $queries $query
+                  (let ($key $payload) $query
+                    (let $counts (postings:table-counts-before $handle $key $bound 0)
+                      (map-atom $counts $entry
+                        (let ($group $count) $entry
+                          (let $projected ($project $group $payload)
+                            ($projected $group $count $payload))))))))
+               ($events (foldl-atom $blocks () $out $block (union-atom $out $block)))
+               ($group-keys (map-atom $events $event (index-atom $event 0)))
+               ($groups (unique-atom $group-keys)))
+          (map-atom $groups $group
+            (let $state
+              (foldl-atom $events $initial $state $entry
+                (let ($observed $source-group $count $payload) $entry
+                  (if (== $observed $group)
+                    ($step $state $source-group $count $payload) $state)))
+              ($group $state))))))))
 (= (postings:inspect (NativeHandle "postings-index-v1" $id))
    (function (chain (eval (__cetta_lib_postings_inspect (NativeHandle "postings-index-v1" $id)))
      $result (return $result))))

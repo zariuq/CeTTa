@@ -24795,7 +24795,7 @@ static __attribute__((noinline)) bool petta_machine_map_atom(
             machine->host.map_single_result(
                 machine->host.context, machine->space,
                 &machine->heap, items, mapper_or_binder, body,
-                environment, &prepared_result);
+                petta_plan_child(plan, 3u), environment, &prepared_result);
         if (prepared == PETTA_MACHINE_FOLD_VALUE) {
             return prepared_result &&
                 petta_push_unify(
@@ -25045,7 +25045,7 @@ static __attribute__((noinline)) bool petta_machine_foldl_atom(
                 machine->host.context, machine->space,
                 &machine->heap, items, initial,
                 accumulator_binder, item_binder, step,
-                environment, &prepared_result);
+                petta_plan_child(plan, 5u), environment, &prepared_result);
         if (prepared == PETTA_MACHINE_FOLD_VALUE) {
             return prepared_result &&
                 petta_push_unify(
@@ -25259,7 +25259,7 @@ static __attribute__((noinline)) bool petta_machine_filter_atom(
             machine->host.filter_single_result(
                 machine->host.context, machine->space,
                 &machine->heap, items, mapper_or_binder, body,
-                environment, &prepared_result);
+                petta_plan_child(plan, 3u), environment, &prepared_result);
         if (prepared == PETTA_MACHINE_FOLD_VALUE) {
             return prepared_result &&
                 petta_push_unify(
@@ -33593,6 +33593,40 @@ static bool petta_machine_dispatch_solve(
             machine, expression->expr.elems[1],
             condition, goal->barrier,
             petta_plan_child(plan, 1u));
+    }
+
+    if (form == PETTA_FORM_LET && nargs == 3u &&
+        machine->host.append_private_collection &&
+        !machine->host.literal_binding_patterns &&
+        !machine->host.begin_relation_call && !machine->host.record_equation_use &&
+        !petta_machine_trace_enabled() &&
+        expression->expr.elems[1]->kind == ATOM_VAR &&
+        expression->expr.elems[2]->kind == ATOM_EXPR &&
+        expression->expr.elems[3]->kind == ATOM_EXPR &&
+        expression->expr.elems[3]->expr.len == 3u &&
+        atom_is_symbol_id(expression->expr.elems[3]->expr.elems[0], g_builtin_syms.add_atoms) &&
+        (!petta_plan_child(plan, 2u) || petta_plan_child(plan, 2u)->role != PETTA_PLAN_VALUE) &&
+        (!petta_plan_child(plan, 3u) || petta_plan_child(plan, 3u)->role != PETTA_PLAN_VALUE)) {
+        Atom *binder = expression->expr.elems[1];
+        bool visible = false;
+        for (size_t i = 0u; i < machine->visible_len; i++)
+            if (var_id_eq(machine->visible[i].id, binder->var_id) ||
+                var_id_eq(machine->visible[i].context_id, binder->var_id))
+                visible = true;
+        CettaCallOutcome appended = cetta_call_failure();
+        if (!visible && machine->host.append_private_collection(
+                machine->host.context, machine->space, &machine->heap,
+                binder, expression->expr.elems[2], expression->expr.elems[3],
+                petta_plan_child(plan, 2u), environment, &appended)) {
+            if (appended.kind == CETTA_CALL_INTERRUPTED) {
+                *failure = PETTA_MACHINE_STEP_SUSPENDED;
+                return false;
+            }
+            if (appended.kind == CETTA_CALL_RAISED)
+                return petta_machine_raise_error(machine, appended.term);
+            return appended.kind == CETTA_CALL_VALUE && appended.term &&
+                   petta_machine_unify(machine, appended.term, expected);
+        }
     }
 
     if (form == PETTA_FORM_LET && nargs == 3u &&

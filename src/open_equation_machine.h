@@ -105,6 +105,11 @@ typedef struct {
     /* Whether a let binder that only counting operations read takes its
      * producer's count, as the search machine's let/count fusion does. */
     bool count_fusion;
+    /* Keep a producer and its observing continuation together when the host
+     * offers a compositional consumer. This is only a lowering boundary:
+     * the host still admits the operation or executes its authored source. */
+    bool (*preserve_collection_observer)(void *context, Atom *expression,
+                                         const struct PettaPlanNode *plan);
     /* The host's answer materializer beside `collapse`: `reify` where the
      * profile offers it. */
     SymbolId reify_head;

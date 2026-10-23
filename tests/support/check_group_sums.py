@@ -84,6 +84,19 @@ def main():
             assert result.returncode == 0 and lines[-len(calls):] == [truth]*len(calls), (language, reference, result.stdout[-3000:], result.stderr)
             assert lines[-len(calls)-2:-len(calls)] == [kind]*2, (language, reference, result.stdout[:500])
             checks += len(calls)+2
+    # One collection-observation fixture, not another dialect/backend matrix.
+    # The hash selector is extended-profile syntax, with occurrence semantics.
+    source = (ROOT / 'tests/petta/collection_observation.metta').read_text()
+    source += '''\n!(let* (($s (new-space hash))
+        ($added (add-atoms $s ((K a) (K a) (K b)))))
+      (HashOccurrences (size-atom (collapse (match $s (K $v) $v)))))\n'''
+    result = subprocess.run([str(args.cetta.resolve()), '--lang', 'petta@1.0.6',
+                             '--profile', 'extended', '-e', source], cwd=ROOT,
+                            text=True, capture_output=True, timeout=30)
+    expected = (ROOT / 'tests/petta/collection_observation.expected').read_text()
+    assert result.returncode == 0 and result.stdout == expected + '(HashOccurrences 3)\n', (
+        result.stdout, result.stderr)
+    checks += 6
     print(f'GroupedSums {checks} 0')
 
 

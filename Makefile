@@ -43885,6 +43885,42 @@ test-postings: $(BIN) runtime/test_postings-$(BUILD_OBJ_TAG)
 	python3 tests/support/check_postings.py --cetta ./$(BIN)
 	python3 tests/support/check_postings_sources.py --cetta ./$(BIN)
 
+.PHONY: test-postings-fold
+test-postings-fold: $(BIN)
+	python3 tests/support/check_postings_fold.py --cetta ./$(BIN)
+
+.PHONY: test-collection-ingress qualify-collection-ingress-lean
+test-collection-ingress: $(BIN)
+	python3 tools/generate_collection_ingress.py --cetta ./$(BIN) --check
+	python3 tests/support/check_collection_ingress.py --cetta ./$(BIN)
+
+qualify-collection-ingress-lean:
+	@set -eu; \
+	lean_root="$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	test -f "$$lean_root/lakefile.lean" || \
+		{ echo 'Set METTAPEDIA_LEAN_ROOT to the MeTTapedia Lean project' >&2; exit 2; }; \
+	contract="$(abspath langdef/collections/generated/Ingress.lean)"; \
+	cd "$$lean_root"; \
+	lake env lean -DwarningAsError=true "$$contract"
+
+test-all: test-collection-ingress
+
+.PHONY: test-collection-keys test-flatten-fold qualify-collection-keys-lean
+test-collection-keys: $(BIN)
+	python3 tools/generate_collection_keys.py --cetta ./$(BIN) --check
+	python3 tests/support/check_collection_keys.py --cetta ./$(BIN)
+
+test-flatten-fold: $(BIN)
+	python3 tests/support/check_flatten_fold.py --cetta ./$(BIN)
+
+qualify-collection-keys-lean:
+	@set -eu; \
+	contract="$(abspath langdef/collections/generated/KeyEncoding.lean)"; \
+	cd "$(METTAPEDIA_LEAN_CHECKOUT)"; \
+	lake env lean -DwarningAsError=true "$$contract"
+
+test-all: test-collection-keys test-flatten-fold
+
 .PHONY: test-postings-descriptors qualify-postings-descriptors-lean
 test-postings-descriptors: $(BIN) tools/generate_postings_descriptors.py \
 		langdef/postings/Descriptors.module \
@@ -43892,10 +43928,10 @@ test-postings-descriptors: $(BIN) tools/generate_postings_descriptors.py \
 		langdef/postings/generated/Descriptors.lean \
 		lib/postings_descriptors.metta lib/petta/postings_descriptors.metta
 	python3 tools/generate_postings_descriptors.py --cetta ./$(BIN) --check
-	@got=$$(./$(BIN) --no-results --lang petta@1.0.6 --profile extended \
+	@set -eu; got=$$(./$(BIN) --no-results --lang petta@1.0.6 --profile extended \
 		tests/langdef/postings/descriptors_surface_v1.metta); \
 	test "$$got" = "$$(cat tests/langdef/postings/descriptors_surface_v1.expected)"; \
-	echo '(PostingsDescriptorSurface 3 0)'
+	echo '(PostingsDescriptorSurface 5 0)'
 
 qualify-postings-descriptors-lean:
 	@set -eu; \
@@ -43979,7 +44015,7 @@ test-tensor-dlpack-numpy: $(TENSOR_DLPACK_LIB)
 	python3 tests/support/check_tensor_dlpack.py --library ./$(TENSOR_DLPACK_LIB)
 
 test-all: test-list-prefix-search
-test-all: test-postings
+test-all: test-postings test-postings-fold
 test-all: test-postings-descriptors
 test-all: test-group-sums
 test-all: test-tensor

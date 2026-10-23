@@ -1,0 +1,24 @@
+Module CollectionIngress {
+  Theory Descriptors() {
+    Empty Types { Descriptor; } Terms {
+      "Append". |- "Append" : Descriptor;
+      "WireAppend". |- "add-atoms" : Descriptor;
+      "Destination". |- "Destination" : Descriptor;
+      "Collection". |- "Collection" : Descriptor;
+      "SourceOrder". |- "SourceOrder" : Descriptor;
+      "DuplicateOccurrences". |- "DuplicateOccurrences" : Descriptor;
+      "PrivateBinding". |- "PrivateBinding" : Descriptor;
+      "PureProducer". |- "PureProducer" : Descriptor;
+      "ReadyInputs". |- "ReadyInputs" : Descriptor;
+      "EagerProjection". |- "EagerProjection" : Descriptor;
+      "CompleteValidation". |- "CompleteValidation" : Descriptor;
+      "DataOnly". |- "DataOnly" : Descriptor;
+      "AtomicPublication". |- "AtomicPublication" : Descriptor;
+      "AuthoredFallback". |- "AuthoredFallback" : Descriptor;
+    } Equations {
+      (CollectionConsumer (Append)) == (Consumer (WireAppend) (Destination) (Collection));
+      (CollectionObservation (Append)) == (Observe (SourceOrder) (DuplicateOccurrences) (PrivateBinding) (PureProducer) (ReadyInputs) (EagerProjection) (CompleteValidation) (DataOnly) (AtomicPublication) (AuthoredFallback));
+    }
+  }
+  theory Descriptors()
+}

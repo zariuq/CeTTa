@@ -2,6 +2,9 @@
 !(import! &self (library tensor))
 !(import! &self (library postings))
 !(import! &self (library embedding))
+!(import! &self (library list))
+
+!(KeyEncodingSmoke (list:factorize ("b" "a" "b")))
 
 !(let $value (json:parse "{\"x\":1,\"ok\":true}")
    (JsonSmoke (json:get $value "x") (json:get $value "ok")))
@@ -16,12 +19,36 @@
      (tensor:inspect $value)))
 !(tensor:from-values f64 (2) (1.0))
 
+(= (numerical-smoke:boolean-mask $left $right)
+   (+ (if (and (> $left 0.0) (> $right 0)) 2.0 0.0)
+      (if (or (> $left 0.0) (> $right 0)) 1.0 0.0)))
+!(let* (($left (tensor:from-values f64 (4) (0.0 0.0 1.0 1.0)))
+         ($right (tensor:from-values i64 (4) (0 1 0 1))))
+   (case (__cetta_lib_tensor_try_zip_map f64 ($left $right) numerical-smoke:boolean-mask ())
+     (((Tensor:Mapped $value) (TensorBooleanSmoke (tensor:inspect $value)))
+      ($other (TensorBooleanNotAdmitted $other)))))
+
+(= (numerical-smoke:intersection-size $value)
+   (size-atom (intersection-atom (cons-atom $value ()) (1 3))))
+!(let $input (tensor:from-values index (4) (0 1 2 3))
+   (case (__cetta_lib_tensor_try_zip_map f64 ($input) numerical-smoke:intersection-size ())
+     (((Tensor:Mapped $value) (TensorIntersectionSmoke (tensor:inspect $value)))
+      ($other (TensorIntersectionNotAdmitted $other)))))
+
 !(let* (($index (postings:prepare-blocks
                    ((("f" "f") 2 1) (("f") 2 4) (("g") 3 0))))
          ($counts (postings:table-counts-before $index "f" 4 5))
          ($seen (postings:inspect-table $index))
          ($closed (postings:close $index)))
    (PostingsSmoke $counts $seen $closed))
+
+(= (numerical-smoke:summary (Summary $count $sum) $group $uses $weight)
+   (Summary (+ $count $uses) (+ $sum (* $weight $uses))))
+!(let* (($index (postings:prepare-blocks ((("f" "f") 2 1))))
+         ($columns (postings:fold-table-columns-before $index (("f" 0.25)) 2
+           postings:group-identity (Summary 0 0.0) numerical-smoke:summary (i64 f64))))
+   (PostingsColumnsSmoke (tensor:inspect (postings:column-labels $columns))
+     (map-atom (postings:column-values $columns) $value (tensor:inspect $value))))
 
 !(let* (($profile (EmbeddingProfile
                     "fixture" "supplied" "fixture-v1" 3

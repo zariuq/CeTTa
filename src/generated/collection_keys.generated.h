@@ -1,0 +1,12 @@
+/* Generated from CollectionKeyEncoding; do not edit. */
+#ifndef CETTA_COLLECTION_KEYS_GENERATED_H
+#define CETTA_COLLECTION_KEYS_GENERATED_H
+#define CETTA_COLLECTION_KEYS_SHA256 "80e2657bbd82a57ba5aa2eb27d2c9238bbe81188ef5782de8155d4ad4fdbe2bd"
+#define CETTA_COLLECTION_KEYS_HEAD "__cetta_lib_list_factorize"
+#define CETTA_COLLECTION_KEYS_RESULT "List:Factorization"
+#define CETTA_COLLECTION_KEYS_RESULT_WIDTH 4u
+#define CETTA_COLLECTION_KEYS_KEYS 1u
+#define CETTA_COLLECTION_KEYS_CODES 2u
+#define CETTA_COLLECTION_KEYS_FIRSTPOSITIONS 3u
+#define CETTA_COLLECTION_KEYS_POLICY "FirstMatchingRepresentative|ZeroBasedCodes|SourceOrder|DuplicateOccurrences|MatchingCompatibleKeys|CompleteValidation|AuthoredFallback"
+#endif

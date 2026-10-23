@@ -1,6 +1,9 @@
 #include "library_group.h"
 #include "eval.h"
 #include "petta_semantics.h"
+#include "name_key.h"
+#include "shared_transition.h"
+#include "generated/collection_keys.generated.h"
 #include <math.h>
 #include <stdlib.h>
 
@@ -90,4 +93,68 @@ bool cetta_group_sum_call(Arena *a,Atom *head,Atom **args,uint32_t nargs,CettaCa
 fallback:
     free(slots); free(groups); free(flat);
     *out=cetta_call_completed_value(atom_symbol(a,"List:GroupSumsFallback")); return true;
+}
+
+bool cetta_key_factorize_call(Space *space, Arena *arena, Atom *head, Atom **args,
+    uint32_t nargs, CettaCallOutcome *out) {
+    if (!atom_is_symbol(head, CETTA_COLLECTION_KEYS_HEAD)) return false;
+    CETTA_SCOPED_SHARED_TRANSITION(key_encoding_read);
+    NameKeyTable *table = NULL;
+    NameId *codes = NULL;
+    size_t *firsts = NULL;
+    Atom *const *items = NULL;
+    CettaExprLen length = 0;
+    const char *reference = getenv("CETTA_KEY_ENCODING_REFERENCE");
+    bool interrupted = eval_native_interrupted();
+    if (interrupted || !space || nargs != 1 ||
+        (reference && *reference && strcmp(reference, "0")) ||
+        strcmp(CETTA_COLLECTION_KEYS_POLICY,
+          "FirstMatchingRepresentative|ZeroBasedCodes|SourceOrder|DuplicateOccurrences|MatchingCompatibleKeys|CompleteValidation|AuthoredFallback") ||
+        space_equations_may_match_known_head(space, g_builtin_syms.op_eq) ||
+        space_directional_rules_may_match_known_head(space, g_builtin_syms.op_eq) ||
+        !atom_sequence_view(args[0], &items, &length) || length >= UINT32_MAX ||
+        length > SIZE_MAX / sizeof(*codes) || length > SIZE_MAX / sizeof(*firsts))
+        goto declined;
+    /* Hashing and authored equality must agree for every key, not merely
+     * for the first representative. The numeric fallback is intentional. */
+    for (size_t index = 0; index < length; index++) {
+        if ((index & 1023u) == 0u && (interrupted = eval_native_interrupted())) goto declined;
+        if (!name_key_is_admissible(items[index]) || atom_structural_may_have_nan(items[index]) ||
+            atom_tree_any(items[index], promoted_numeric_key, NULL)) goto declined;
+    }
+    table = name_key_table_new(64u);
+    codes = length ? malloc((size_t)length * sizeof(*codes)) : NULL;
+    firsts = length ? malloc((size_t)length * sizeof(*firsts)) : NULL;
+    if (!table || (length && (!codes || !firsts))) goto declined;
+    for (size_t index = 0; index < length; index++) {
+        if ((index & 1023u) == 0u && (interrupted = eval_native_interrupted())) goto declined;
+        uint32_t previous = name_key_count(table);
+        NameId id = name_key_intern(table, items[index]);
+        if (id == NAME_ID_NONE) goto declined;
+        codes[index] = id;
+        if (id > previous) firsts[id - 1u] = index;
+    }
+    size_t count = name_key_count(table);
+    Atom **key_values = count ? arena_alloc(arena, count * sizeof(*key_values)) : NULL;
+    Atom **first_values = count ? arena_alloc(arena, count * sizeof(*first_values)) : NULL;
+    Atom **code_values = length ? arena_alloc(arena, (size_t)length * sizeof(*code_values)) : NULL;
+    for (size_t index = 0; index < count; index++) {
+        key_values[index] = atom_deep_copy(arena, (Atom *)name_key_lookup(table, (NameId)(index + 1u)));
+        first_values[index] = atom_int(arena, (int64_t)firsts[index]);
+    }
+    for (size_t index = 0; index < length; index++)
+        code_values[index] = atom_int(arena, (int64_t)codes[index] - 1);
+    Atom *fields[CETTA_COLLECTION_KEYS_RESULT_WIDTH] = {0};
+    fields[0] = atom_symbol(arena, CETTA_COLLECTION_KEYS_RESULT);
+    fields[CETTA_COLLECTION_KEYS_KEYS] = atom_expr(arena, key_values, count);
+    fields[CETTA_COLLECTION_KEYS_CODES] = atom_expr(arena, code_values, length);
+    fields[CETTA_COLLECTION_KEYS_FIRSTPOSITIONS] = atom_expr(arena, first_values, count);
+    *out = cetta_call_completed_value(atom_expr(arena, fields, CETTA_COLLECTION_KEYS_RESULT_WIDTH));
+    free(codes); free(firsts); name_key_table_delete(table);
+    return true;
+declined:
+    free(codes); free(firsts); name_key_table_delete(table);
+    *out = interrupted ? cetta_call_interrupted() :
+        cetta_call_completed_value(atom_symbol(arena, "List:FactorizeFallback"));
+    return true;
 }

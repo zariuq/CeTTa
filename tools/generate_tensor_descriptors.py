@@ -71,7 +71,7 @@ def tables(binary):
         base, _ = base[1:]
     if parameters != Symbol('LNil') or base != Symbol('ModuleEmptyV1'):
         raise ValueError('descriptor module must be a closed table')
-    scalars, layouts, policies = [], [], []
+    scalars, layouts, policies, callback_inputs = [], [], [], []
     seen = set()
     for declaration in linked(equations):
         _, equation = record(declaration, 'ModuleDeclarationV1', 2)
@@ -91,6 +91,8 @@ def tables(binary):
                             nullary(args[2]), natural(args[3], 'Precision')))
         elif kind == 'TensorLayout' and target == 'LayoutPolicy' and len(args) == 2:
             layouts.append((key, *(nullary(arg) for arg in args)))
+        elif kind == 'TensorCallbackInput' and target == 'ScalarAtomInput' and len(args) == 1:
+            callback_inputs.append((key, nullary(args[0])))
         elif kind == 'TensorObservation' and target == 'Observe':
             policies.append((kind, key, *(nullary(arg) for arg in args)))
         elif kind == 'TensorTransport' and target == 'DenseOnly':
@@ -102,17 +104,41 @@ def tables(binary):
     if any(code > 255 or width not in (1, 4, 8) or precision > width*8
            for _, code, width, _, precision in scalars):
         raise ValueError('unsupported scalar descriptor')
-    return scalars, layouts, policies
+    validate_callback_inputs(scalars, callback_inputs)
+    return scalars, layouts, policies, callback_inputs
+
+
+def validate_callback_inputs(scalars, inputs):
+    representations = {
+        'i64': ('Signed64Atom', 8, 'Signed', 64),
+        'f64': ('Float64Atom', 8, 'Floating', 53),
+        'u8': ('Unsigned8Atom', 1, 'Unsigned', 8),
+        'f32': ('Float32Atom', 4, 'Floating', 24),
+        'index': ('Unsigned64Atom', 8, 'Unsigned', 64),
+    }
+    layouts = {name: (width, family, precision) for name, _, width, family, precision in scalars}
+    if not inputs or any(name not in layouts or name not in representations or
+                         (encoding, *layouts[name]) != representations[name]
+                         for name, encoding in inputs):
+        raise ValueError('unsupported callback scalar encoding')
 
 
 def generated(binary):
-    scalars, layouts, policies = tables(binary)
+    scalars, layouts, policies, callback_inputs = tables(binary)
     digest = hashlib.sha256((ROOT / 'langdef/tensor/Descriptors.module').read_bytes()).hexdigest()
     header = ['/* Generated from the shared .module reader; do not edit. */',
               '#ifndef CETTA_TENSOR_DESCRIPTORS_GENERATED_H', '#define CETTA_TENSOR_DESCRIPTORS_GENERATED_H',
               f'#define CETTA_TENSOR_DESCRIPTORS_SHA256 "{digest}"', '#define CETTA_TENSOR_DTYPE_ROWS(X) \\']
     for i, (name, code, width, family, precision) in enumerate(scalars):
         header.append(f'    X({name.upper()}, {code}, "{name}", {width}, {family}, {precision})' + (' \\' if i+1 < len(scalars) else ''))
+    header.append('typedef enum {')
+    for _, encoding in callback_inputs:
+        header.append(f'    CETTA_TENSOR_CALLBACK_{encoding.upper()},')
+    header.append('} CettaTensorCallbackEncoding;')
+    header.append('#define CETTA_TENSOR_CALLBACK_INPUT_ROWS(X) \\')
+    for i, (name, encoding) in enumerate(callback_inputs):
+        header.append(f'    X({name.upper()}, CETTA_TENSOR_CALLBACK_{encoding.upper()})' +
+                      (' \\' if i+1 < len(callback_inputs) else ''))
     header.append('#define CETTA_TENSOR_LAYOUT_ROWS(X) \\')
     for i, (name, support, order) in enumerate(layouts):
         header.append(f'    X({name.upper()}, {i}, "{name}", {support}, {order})' + (' \\' if i+1 < len(layouts) else ''))
@@ -202,16 +228,34 @@ def generated(binary):
         'theorem observation_rows_match_source : sourceObservationRows = encodedObservationRows := by',
         '  decide +kernel', '',
         '#print axioms observation_rows_match_source', '',
+        'def callbackInputRows : List (String × String) := [']
+    lean += [f'  ("{name}", "{encoding}")' + (',' if i+1 < len(callback_inputs) else '')
+             for i, (name, encoding) in enumerate(callback_inputs)]
+    lean += [']', '',
+        'def sourceCallbackInputRows : List (String × Pattern) :=',
+        '  language.equations.filterMap fun equation =>',
+        '    match equation.left with',
+        '    | Pattern.apply "TensorCallbackInput" [Pattern.apply label []] => some (label, equation.right)',
+        '    | _ => none', '',
+        'def encodedCallbackInputRows : List (String × Pattern) :=',
+        '  callbackInputRows.map fun (label, encoding) =>',
+        '    (label, Pattern.apply "ScalarAtomInput" [Pattern.apply encoding []])', '',
+        'theorem callback_input_rows_match_source : sourceCallbackInputRows = encodedCallbackInputRows := by',
+        '  decide +kernel', '',
+        '#print axioms callback_input_rows_match_source', '',
         'end CeTTaTensorDescriptors', '']
     metta=['; Generated from TensorDescriptors; do not edit.',
            '(: tensor:dtype-descriptor (-> Atom Atom))',
            '(: tensor:layout-descriptor (-> Atom Atom))',
            '(: tensor:observation-descriptor (-> Atom Atom))',
            '(: tensor:transport-descriptor (-> Atom Atom))']
+    metta.append('(: tensor:callback-input-descriptor (-> Atom Atom))')
     for name,code,width,family,precision in scalars:
         metta.append(f'(= (tensor:dtype-descriptor {name}) (TensorDType {name} {code} {width} {family} {precision}))')
     for name,support,order in layouts:
         metta.append(f'(= (tensor:layout-descriptor {name}) (TensorLayout {name} {support} {order}))')
+    for name, encoding in callback_inputs:
+        metta.append(f'(= (tensor:callback-input-descriptor {name}) (TensorCallbackInput {name} {encoding}))')
     for kind,key,*values in policies:
         operation='transport' if kind=='TensorTransport' else 'observation'
         metta.append(f'(= (tensor:{operation}-descriptor {key}) (TensorPolicy {key} ({" ".join(values)})))')

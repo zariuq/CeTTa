@@ -6,9 +6,11 @@
 #include "space.h"
 #include "space_match_backend.h"
 #include "shared_transition.h"
+#include "prepared_pure_machine.h"
 #include "generated/postings_descriptors.generated.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,6 +26,15 @@ extern void cetta_shared_transition_guard_enter(CettaSharedTransitionGuard *)
     __attribute__((weak));
 extern void cetta_shared_transition_guard_leave(CettaSharedTransitionGuard *)
     __attribute__((weak));
+/* Minimal provider tests need no evaluator. The compiled fold is optional
+ * there, just as direct source traversal is. */
+#pragma weak eval_prepare_pure_value_call
+#pragma weak cetta_prepared_pure_program_rebind_closed_entry_call
+#pragma weak cetta_prepared_pure_program_execute_closed_controlled
+#pragma weak cetta_prepared_pure_program_release_closed_execution
+#pragma weak cetta_prepared_pure_program_clear_closed_entry_call
+#pragma weak cetta_prepared_pure_program_is_current
+#pragma weak cetta_prepared_pure_program_free
 
 /* A prepared observation owns its complete snapshot. The offsets count
  * occurrences, including repeated positions; keys retain source row order. */
@@ -78,6 +89,8 @@ typedef enum {
     POSTINGS_COUNT_RESULT_ROWS,
     POSTINGS_COUNT_RESULT_TENSOR,
     POSTINGS_COUNT_RESULT_STATISTICS,
+    POSTINGS_COUNT_RESULT_FOLDROWS,
+    POSTINGS_COUNT_RESULT_FOLDCOLUMNS,
 } PostingsCountResult;
 
 typedef struct {
@@ -110,6 +123,22 @@ static const PostingsCountModeSpec *postings_count_mode_spec(Atom *value) {
 
 static Atom *fallback(Arena *arena) {
     return atom_symbol(arena, "Postings:Fallback");
+}
+
+static bool promoted_key_scalar(const Atom *value, void *context) {
+    (void)context;
+    return value->kind==ATOM_GROUNDED &&
+        (value->ground.gkind==GV_FLOAT || value->ground.gkind==GV_BIGINT ||
+         value->ground.gkind==GV_RATIONAL);
+}
+
+/* Authored matching may equate different numeric representations, recursively
+ * inside a key. The structural name index cannot accelerate that equivalence.
+ * Both ingress and lookup must decline: checking only ingress misses a later
+ * floating query against an integer key. */
+static bool postings_key_is_exact(Atom *key) {
+    return name_key_is_admissible(key) &&
+        !atom_tree_any(key,promoted_key_scalar,NULL);
 }
 
 static Atom *fault(Arena *arena, const char *reason) {
@@ -292,7 +321,7 @@ static Atom *prepare_blocks(CettaLibraryContext *context, Arena *arena,
             return fallback(arena);
         }
         for (size_t key = 0u; key < key_count; key++)
-            if (!name_key_is_admissible(keys[key])) return fallback(arena);
+            if (!postings_key_is_exact(keys[key])) return fallback(arena);
         count += key_count;
         if ((row & 1023u) == 0u && eval_native_interrupted()) return NULL;
     }
@@ -355,7 +384,7 @@ typedef struct {
     size_t keys_field;
     size_t group_field;
     size_t position_field;
-    size_t maximum_field;
+    size_t row_width;
     bool invalid;
     bool unsupported;
     bool allocation_failure;
@@ -364,7 +393,7 @@ typedef struct {
 
 static bool space_block_push(SpaceBlockBuilder *builder, Atom *key,
                              int64_t group, int64_t position) {
-    if (!name_key_is_admissible(key)) {
+    if (!postings_key_is_exact(key)) {
         builder->invalid = true;
         return true;
     }
@@ -416,7 +445,7 @@ static bool space_block_visit(Atom *row, void *raw_builder) {
     }
     if (!atom_eq(row_head, builder->head))
         return true;
-    if ((size_t)row->expr.len <= builder->maximum_field) {
+    if ((size_t)row->expr.len != builder->row_width) {
         builder->invalid = true;
         return true;
     }
@@ -454,16 +483,12 @@ static bool nonnegative_field(Atom *value, size_t *field) {
 
 static SpaceMatchPullVisitResult visit_native_space_blocks(
         Space *source, SpaceBlockBuilder *builder) {
-    if (!space_contains_only_exact_atoms || !space_length64 ||
-        !space_get_at64 || !cetta_shared_transition_guard_enter ||
-        !cetta_shared_transition_guard_leave ||
-        !source || !builder || source->overlay_base ||
-        space_has_dependencies(source) ||
+    /* The caller holds the shared read guard and admits the source before
+     * choosing either physical visitor. Neither route composes views. */
+    if (!space_length64 || !space_get_at64 || !source || !builder ||
         (source->match_backend.kind != SPACE_ENGINE_NATIVE &&
-         source->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
-        !space_contains_only_exact_atoms(source))
+         source->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return SPACE_MATCH_PULL_VISIT_DECLINED;
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
     CettaCount count = space_length64(source);
     for (CettaIndex index = 0u; index < count; index++) {
         Atom *row = space_get_at64(source, index);
@@ -471,6 +496,31 @@ static SpaceMatchPullVisitResult visit_native_space_blocks(
             return SPACE_MATCH_PULL_VISIT_TERMINATED;
     }
     return SPACE_MATCH_PULL_VISIT_COMPLETE;
+}
+
+static SpaceMatchPullVisitResult visit_exact_space_blocks(
+        Space *source, SpaceBlockBuilder *builder) {
+    if (!space_contains_only_exact_atoms ||
+        !cetta_shared_transition_guard_enter ||
+        !cetta_shared_transition_guard_leave)
+        return SPACE_MATCH_PULL_VISIT_DECLINED;
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    if (eval_resolve_space_read) source = eval_resolve_space_read(source);
+    if (!source || source->overlay_base || space_has_dependencies(source) ||
+        !space_contains_only_exact_atoms(source))
+        return SPACE_MATCH_PULL_VISIT_DECLINED;
+    Arena scratch;
+    arena_init(&scratch);
+    SpaceMatchPullVisitResult visited = space_match_backend_try_visit_atoms_direct
+        ? space_match_backend_try_visit_atoms_direct(
+            source, &scratch, space_block_visit, builder)
+        : SPACE_MATCH_PULL_VISIT_DECLINED;
+    if (visited == SPACE_MATCH_PULL_VISIT_DECLINED)
+        visited = visit_native_space_blocks(source, builder);
+    arena_free(&scratch);
+    /* Keys have been interned into the private builder. Sorting and handle
+     * publication do not need to retain the source's shared read guard. */
+    return visited;
 }
 
 /* Borrow an exact source snapshot and project its declared block rows directly
@@ -490,27 +540,35 @@ static Atom *prepare_space_blocks(CettaLibraryContext *context, Arena *arena,
     Atom *layout = request->expr.elems[2];
     if (!source_atom || source_atom->kind != ATOM_GROUNDED ||
         source_atom->ground.gkind != GV_SPACE || !source_atom->ground.ptr ||
-        !layout || layout->kind != ATOM_EXPR || layout->expr.len != 7u ||
-        !atom_is_symbol(layout->expr.elems[0], "Postings:BlockLayout") ||
-        !layout->expr.elems[1] || layout->expr.elems[1]->kind != ATOM_SYMBOL)
+        !layout || layout->kind != ATOM_EXPR ||
+        layout->expr.len != CETTA_POSTINGS_BLOCK_LAYOUT_LENGTH ||
+        !atom_is_symbol(layout->expr.elems[0], CETTA_POSTINGS_BLOCK_LAYOUT_HEAD) ||
+        !layout->expr.elems[CETTA_POSTINGS_BLOCK_ROWHEAD] ||
+        layout->expr.elems[CETTA_POSTINGS_BLOCK_ROWHEAD]->kind != ATOM_SYMBOL)
         return fallback(arena);
 
     Atom **prefix = NULL, **forbidden = NULL;
     size_t prefix_count = 0u, forbidden_count = 0u;
-    SpaceBlockBuilder builder = {.head = layout->expr.elems[1]};
-    if (!nonnegative_field(layout->expr.elems[2], &builder.keys_field) ||
-        !nonnegative_field(layout->expr.elems[3], &builder.group_field) ||
-        !nonnegative_field(layout->expr.elems[4], &builder.position_field) ||
-        !sequence(layout->expr.elems[5], &prefix, &prefix_count) ||
-        !sequence(layout->expr.elems[6], &forbidden, &forbidden_count))
+    SpaceBlockBuilder builder = {
+        .head = layout->expr.elems[CETTA_POSTINGS_BLOCK_ROWHEAD]};
+    if (!nonnegative_field(layout->expr.elems[CETTA_POSTINGS_BLOCK_ROWWIDTH],
+                           &builder.row_width) || !builder.row_width ||
+        !nonnegative_field(layout->expr.elems[CETTA_POSTINGS_BLOCK_KEYSFIELD],
+                           &builder.keys_field) ||
+        !nonnegative_field(layout->expr.elems[CETTA_POSTINGS_BLOCK_GROUPFIELD],
+                           &builder.group_field) ||
+        !nonnegative_field(layout->expr.elems[CETTA_POSTINGS_BLOCK_POSITIONFIELD],
+                           &builder.position_field) ||
+        builder.keys_field >= builder.row_width ||
+        builder.group_field >= builder.row_width ||
+        builder.position_field >= builder.row_width ||
+        !sequence(layout->expr.elems[CETTA_POSTINGS_BLOCK_PREFIXKEYS],
+                  &prefix, &prefix_count) ||
+        !sequence(layout->expr.elems[CETTA_POSTINGS_BLOCK_FORBIDDENHEADS],
+                  &forbidden, &forbidden_count))
         return fallback(arena);
-    builder.maximum_field = builder.keys_field;
-    if (builder.group_field > builder.maximum_field)
-        builder.maximum_field = builder.group_field;
-    if (builder.position_field > builder.maximum_field)
-        builder.maximum_field = builder.position_field;
     for (size_t index = 0u; index < prefix_count; index++)
-        if (!name_key_is_admissible(prefix[index])) return fallback(arena);
+        if (!postings_key_is_exact(prefix[index])) return fallback(arena);
     for (size_t index = 0u; index < forbidden_count; index++)
         if (!forbidden[index] || forbidden[index]->kind != ATOM_SYMBOL)
             return fallback(arena);
@@ -528,17 +586,8 @@ static Atom *prepare_space_blocks(CettaLibraryContext *context, Arena *arena,
         return fallback(arena);
     }
 
-    Space *source = source_atom->ground.ptr;
-    if (eval_resolve_space_read) source = eval_resolve_space_read(source);
-    Arena scratch;
-    arena_init(&scratch);
-    SpaceMatchPullVisitResult visited = space_match_backend_try_visit_atoms_direct
-        ? space_match_backend_try_visit_atoms_direct(
-            source, &scratch, space_block_visit, &builder)
-        : SPACE_MATCH_PULL_VISIT_DECLINED;
-    if (visited == SPACE_MATCH_PULL_VISIT_DECLINED)
-        visited = visit_native_space_blocks(source, &builder);
-    arena_free(&scratch);
+    SpaceMatchPullVisitResult visited = visit_exact_space_blocks(
+        source_atom->ground.ptr, &builder);
     if (builder.interrupted) {
         free(builder.flat);
         release_table(builder.table);
@@ -807,7 +856,7 @@ static Atom *table_counts(Arena *arena, PostingsTable *table, Atom *request,
     Atom **parts = NULL;
     size_t length = 0u;
     if (!sequence(request, &parts, &length) || length != 3u ||
-        !name_key_is_admissible(parts[0]) ||
+        !postings_key_is_exact(parts[0]) ||
         !parts[1] || parts[1]->kind != ATOM_GROUNDED ||
         parts[1]->ground.gkind != GV_INT ||
         !parts[2] || parts[2]->kind != ATOM_GROUNDED ||
@@ -881,6 +930,303 @@ static Atom *table_counts(Arena *arena, PostingsTable *table, Atom *request,
     Atom *result = cetta_tensor_atom(arena, tensor);
     cetta_tensor_release(tensor);
     return result;
+}
+
+typedef struct { bool real; union { int64_t integer; double floating; }; } FoldNumber;
+typedef struct {
+    int64_t *labels;
+    FoldNumber *states;
+    size_t *slots;
+    size_t used, capacity, width;
+} TableFold;
+
+typedef struct { CettaTensorDType dtype; bool real; } FoldColumnType;
+
+static bool fold_column_type(Atom *value, FoldColumnType *type) {
+#define COLUMN_TYPE(dtype, wire, floating) \
+    if (atom_is_symbol(value, wire)) { \
+        *type=(FoldColumnType){CETTA_TENSOR_##dtype, floating}; return true; \
+    }
+    CETTA_POSTINGS_COLUMN_DTYPE_ROWS(COLUMN_TYPE)
+#undef COLUMN_TYPE
+    return false;
+}
+
+/* Column storage is transposed directly from the private scalar table.
+ * Its exact leaf-type gate is stricter than the authored constructors:
+ * any required conversion takes that ordinary route before publication. */
+static Atom *fold_columns(Arena *arena, const TableFold *fold,
+                          const FoldColumnType *types) {
+    CettaTensor *labels=NULL, *columns[32]={0};
+    Atom *result=NULL;
+    size_t size=fold->used;
+    if (size>SIZE_MAX/sizeof(int64_t) ||
+        cetta_tensor_new(CETTA_TENSOR_I64,&size,1u,fold->labels,
+                         size*sizeof(int64_t),&labels)!=CETTA_TENSOR_OK)
+        goto cleanup;
+    for (size_t column=0; column<fold->width; column++) {
+        size_t width=cetta_tensor_itemsize(types[column].dtype);
+        if (width!=sizeof(int64_t) || width!=sizeof(double) || size>SIZE_MAX/width)
+            goto cleanup;
+        unsigned char *data=size ? malloc(size*width) : NULL;
+        if (size && !data) goto cleanup;
+        bool valid=true;
+        for (size_t row=0; row<size; row++) {
+            if ((row&1023u)==0u && eval_native_interrupted()) { valid=false; break; }
+            FoldNumber value=fold->states[row*fold->width+column];
+            if (value.real!=types[column].real) { valid=false; break; }
+            if (value.real) memcpy(data+row*width,&value.floating,width);
+            else memcpy(data+row*width,&value.integer,width);
+        }
+        if (!valid) { free(data); goto cleanup; }
+        if (cetta_tensor_new_take(types[column].dtype,&size,1u,data,size*width,
+                                 &columns[column])!=CETTA_TENSOR_OK) {
+            free(data); goto cleanup;
+        }
+    }
+    Atom *values[32], *record[CETTA_POSTINGS_COLUMNS_LENGTH];
+    record[0]=atom_symbol(arena,CETTA_POSTINGS_COLUMNS_HEAD);
+    record[CETTA_POSTINGS_COLUMNS_LABELSCOLUMN]=cetta_tensor_atom(arena,labels);
+    for (size_t column=0; column<fold->width; column++)
+        values[column]=cetta_tensor_atom(arena,columns[column]);
+    record[CETTA_POSTINGS_COLUMNS_VALUECOLUMNS]=atom_expr(arena,values,fold->width);
+    result=atom_expr(arena,record,CETTA_POSTINGS_COLUMNS_LENGTH);
+cleanup:
+    cetta_tensor_release(labels);
+    for (size_t column=0; column<fold->width; column++) cetta_tensor_release(columns[column]);
+    return result;
+}
+
+static bool fold_number(Atom *value, FoldNumber *number) {
+    if (!value || value->kind != ATOM_GROUNDED) return false;
+    if (value->ground.gkind == GV_INT) {
+        *number = (FoldNumber){.real=false, .integer=value->ground.ival};
+        return true;
+    }
+    if (value->ground.gkind != GV_FLOAT || !isfinite(value->ground.fval))
+        return false;
+    *number = (FoldNumber){.real=true, .floating=value->ground.fval};
+    return true;
+}
+
+static bool fold_payload(Atom *value) {
+    FoldNumber ignored;
+    if (fold_number(value, &ignored)) return true;
+    Atom **items; size_t count;
+    if (!sequence(value, &items, &count) || count > 64u) return false;
+    for (size_t i=0; i<count; i++)
+        if (!fold_number(items[i], &ignored)) return false;
+    return true;
+}
+
+static size_t fold_hash(int64_t label) {
+    uint64_t hash=(uint64_t)label;
+    hash^=hash>>30; hash*=UINT64_C(0xbf58476d1ce4e5b9);
+    hash^=hash>>27; hash*=UINT64_C(0x94d049bb133111eb);
+    return (size_t)(hash^(hash>>31));
+}
+
+static bool fold_grow(TableFold *fold) {
+    size_t capacity=fold->capacity ? fold->capacity*2u : 16u;
+    if (capacity < fold->capacity || capacity > SIZE_MAX/(2*sizeof(size_t)) ||
+        capacity > SIZE_MAX/(fold->width*sizeof(FoldNumber)) ||
+        capacity > SIZE_MAX/sizeof(int64_t)) return false;
+    int64_t *labels=realloc(fold->labels,capacity*sizeof(*labels));
+    if (!labels) return false;
+    fold->labels=labels;
+    FoldNumber *states=realloc(fold->states,capacity*fold->width*sizeof(*states));
+    if (!states) return false;
+    fold->states=states;
+    size_t *slots=calloc(capacity*2u,sizeof(*slots));
+    if (!slots) return false;
+    for (size_t i=0; i<fold->used; i++) {
+        size_t slot=fold_hash(labels[i])&(capacity*2u-1u);
+        while (slots[slot]) slot=(slot+1u)&(capacity*2u-1u);
+        slots[slot]=i+1u;
+    }
+    free(fold->slots); fold->slots=slots; fold->capacity=capacity;
+    return true;
+}
+
+static bool fold_contract_supported(void) {
+#define OBSERVATION(name, policy) \
+    if (!strcmp(name,"fold-table")) return !strcmp(policy, \
+        "QueryOrder|NumericGroupOrder|MatchingCompatibleKeys|ProjectedGroupIdentity|OriginalGroupCallback|IndependentGroupStates|ExpressionState|SingleAnswerNumericState|CompleteValidation|AtomicPublication|AuthoredFallback");
+    CETTA_POSTINGS_OBSERVATION_ROWS(OBSERVATION)
+#undef OBSERVATION
+    return false;
+}
+static bool fold_columns_contract_supported(void) {
+#define OBSERVATION(name, policy) \
+    if (!strcmp(name,"fold-columns")) return !strcmp(policy, \
+        "QueryOrder|NumericGroupOrder|MatchingCompatibleKeys|ProjectedGroupIdentity|OriginalGroupCallback|IndependentGroupStates|ExpressionState|SingleAnswerNumericState|FirstGroupEncounterOrder|DeclaredLeafDTypes|DenseColumns|CompleteValidation|AtomicPublication|AuthoredFallback");
+    CETTA_POSTINGS_OBSERVATION_ROWS(OBSERVATION)
+#undef OBSERVATION
+    return false;
+}
+static bool postings_callback_stop(void *context) {
+    (void)context; return eval_native_interrupted();
+}
+
+/* Numeric state is kept in an unpublished table. The existing pure-call
+ * compiler owns callback meaning and admission; this loop only supplies
+ * each group's previous state and the next exact prefix count. */
+static Atom *table_fold(Arena *arena, PostingsTable *table, Atom *request, bool columns) {
+    const char *reference=getenv("CETTA_POSTINGS_FOLD_REFERENCE");
+    if (table->reference || !fold_contract_supported() ||
+        (columns && !fold_columns_contract_supported()) ||
+        (reference && *reference && strcmp(reference,"0")) ||
+        eval_current_effective_fuel_limit() >= 0 ||
+        !eval_prepare_pure_value_call ||
+        !cetta_prepared_pure_program_rebind_closed_entry_call ||
+        !cetta_prepared_pure_program_execute_closed_controlled ||
+        !cetta_prepared_pure_program_release_closed_execution ||
+        !cetta_prepared_pure_program_clear_closed_entry_call ||
+        !cetta_prepared_pure_program_is_current || !cetta_prepared_pure_program_free)
+        return fallback(arena);
+    Atom **parts, **queries, **initial; size_t length, count, width;
+    if (!sequence(request,&parts,&length) || length!=(columns ? 7u : 6u) ||
+        !parts[0] || parts[0]->kind!=ATOM_GROUNDED || parts[0]->ground.gkind!=GV_SPACE ||
+        !parts[0]->ground.ptr || !sequence(parts[1],&queries,&count) ||
+        !parts[2] || parts[2]->kind!=ATOM_GROUNDED || parts[2]->ground.gkind!=GV_INT ||
+        !parts[3] || parts[3]->kind!=ATOM_SYMBOL ||
+        !parts[4] || parts[4]->kind!=ATOM_EXPR ||
+        !sequence(parts[4],&initial,&width) || !width || width>33u ||
+        !parts[5] || parts[5]->kind!=ATOM_SYMBOL)
+        return fallback(arena);
+    Atom *tag=initial[0] && initial[0]->kind==ATOM_SYMBOL ? initial[0] : NULL;
+    if (tag) { initial++; width--; }
+    if (!width || width>32u) return fallback(arena);
+    FoldNumber seed[32];
+    for (size_t i=0; i<width; i++) if (!fold_number(initial[i],&seed[i])) return fallback(arena);
+    FoldColumnType types[32];
+    if (columns) {
+        Atom **requested; size_t column_count;
+        if (!sequence(parts[6],&requested,&column_count) || column_count!=width)
+            return fallback(arena);
+        for (size_t i=0; i<width; i++)
+            if (!fold_column_type(requested[i],&types[i])) return fallback(arena);
+    }
+    for (size_t i=0; i<count; i++) {
+        Atom **query; size_t arity;
+        if (!sequence(queries[i],&query,&arity) || arity!=2u ||
+            !postings_key_is_exact(query[0]) || !fold_payload(query[1]))
+            return fallback(arena);
+    }
+    if (!count) {
+        TableFold empty={.width=width};
+        Atom *result=columns ? fold_columns(arena,&empty,types) : atom_expr(arena,NULL,0u);
+        return result ? result : fallback(arena);
+    }
+    Space *space=parts[0]->ground.ptr;
+    if (eval_resolve_space_read) space=eval_resolve_space_read(space);
+    Arena owner,scratch;
+    arena_init(&owner); arena_set_hashcons(&owner,NULL);
+    arena_init(&scratch); arena_set_hashcons(&scratch,NULL);
+    (void)arena_alloc(&scratch,1u);
+    ArenaMark origin=arena_mark(&scratch);
+    Atom leaves[32], group_leaf, count_leaf, *state_items[33];
+    size_t offset=tag ? 1u : 0u;
+    if (tag) state_items[0]=tag;
+    for (size_t i=0; i<width; i++) {
+        if (seed[i].real) atom_scalar_leaf_float(&leaves[i],seed[i].floating);
+        else atom_scalar_leaf_int(&leaves[i],seed[i].integer);
+        state_items[offset+i]=&leaves[i];
+    }
+    atom_scalar_leaf_int(&group_leaf,0); atom_scalar_leaf_int(&count_leaf,1);
+    Atom *state=atom_expr(&owner,state_items,width+offset);
+    Atom **first_query=NULL; size_t first_arity=0;
+    (void)sequence(queries[0],&first_query,&first_arity);
+    Atom *key_items[]={parts[3],&group_leaf,first_query[1]};
+    Atom *key_prototype=atom_expr(&owner,key_items,3u);
+    CettaPreparedPureProgram *key_program=eval_prepare_pure_value_call(space,&owner,key_prototype);
+    Atom *call_items[]={parts[5],state,&group_leaf,&count_leaf,first_query[1]};
+    Atom *prototype=atom_expr(&owner,call_items,5u);
+    CettaPreparedPureProgram *program=eval_prepare_pure_value_call(space,&owner,prototype);
+    TableFold fold={.width=width};
+    Atom *result=NULL;
+    if (!program || !key_program) goto cleanup;
+    for (size_t query_index=0; query_index<count; query_index++) {
+        Atom **query=NULL; size_t arity=0;
+        (void)sequence(queries[query_index],&query,&arity);
+        NameId id=name_key_find(table->keys,query[0]);
+        if (id==NAME_ID_NONE) continue;
+        for (size_t group=table->key_group_offsets[id-1u]; group<table->key_group_offsets[id]; group++) {
+            if (eval_native_interrupted()) goto cleanup;
+            size_t count=lower_bound(table->positions,table->offsets[group],
+                                     table->offsets[group+1u],parts[2]->ground.ival);
+            if (!count) continue;
+            if (count>INT64_MAX) goto cleanup;
+            atom_scalar_leaf_int(&group_leaf,table->labels[group]);
+            key_items[2]=query[1];
+            Atom *key_call=atom_expr(&scratch,key_items,3u), *key_answer=NULL;
+            if (!cetta_prepared_pure_program_rebind_closed_entry_call(key_program,key_call) ||
+                !cetta_prepared_pure_program_execute_closed_controlled(key_program,&scratch,
+                    65536u,postings_callback_stop,NULL,&key_answer) ||
+                !key_answer || key_answer->kind!=ATOM_GROUNDED ||
+                key_answer->ground.gkind!=GV_INT)
+                goto cleanup;
+            int64_t label=key_answer->ground.ival;
+            cetta_prepared_pure_program_release_closed_execution(key_program);
+            cetta_prepared_pure_program_clear_closed_entry_call(key_program);
+            if (fold.used==fold.capacity && !fold_grow(&fold)) goto cleanup;
+            size_t slot=fold_hash(label)&(fold.capacity*2u-1u);
+            while (fold.slots[slot] && fold.labels[fold.slots[slot]-1u]!=label)
+                slot=(slot+1u)&(fold.capacity*2u-1u);
+            if (!fold.slots[slot]) {
+                fold.labels[fold.used]=label;
+                memcpy(fold.states+fold.used*width,seed,width*sizeof(*seed));
+                fold.slots[slot]=++fold.used;
+            }
+            FoldNumber *previous=fold.states+(fold.slots[slot]-1u)*width;
+            for (size_t i=0; i<width; i++) {
+                if (previous[i].real) atom_scalar_leaf_float(&leaves[i],previous[i].floating);
+                else atom_scalar_leaf_int(&leaves[i],previous[i].integer);
+            }
+            atom_scalar_leaf_int(&group_leaf,table->labels[group]);
+            atom_scalar_leaf_int(&count_leaf,(int64_t)count);
+            call_items[1]=atom_expr(&scratch,state_items,width+offset);
+            call_items[4]=query[1];
+            Atom *call=atom_expr(&scratch,call_items,5u), *answer=NULL;
+            Atom **values; size_t lanes;
+            if (!cetta_prepared_pure_program_rebind_closed_entry_call(program,call) ||
+                !cetta_prepared_pure_program_execute_closed_controlled(program,&scratch,
+                    65536u,postings_callback_stop,NULL,&answer) ||
+                !answer || answer->kind!=ATOM_EXPR ||
+                !sequence(answer,&values,&lanes) || lanes!=width+offset ||
+                (tag && !atom_eq(tag,values[0])))
+                goto cleanup;
+            for (size_t i=0; i<width; i++)
+                if (!fold_number(values[offset+i],&previous[i])) goto cleanup;
+            cetta_prepared_pure_program_release_closed_execution(program);
+            cetta_prepared_pure_program_clear_closed_entry_call(program);
+            arena_reset(&scratch,origin);
+        }
+    }
+    if (!cetta_prepared_pure_program_is_current(program) ||
+        !cetta_prepared_pure_program_is_current(key_program)) goto cleanup;
+    if (columns) {
+        result=fold_columns(arena,&fold,types);
+        goto cleanup;
+    }
+    Atom **rows=fold.used ? arena_alloc(arena,fold.used*sizeof(*rows)) : NULL;
+    for (size_t group=0; group<fold.used; group++) {
+        Atom *values[33];
+        if (tag) values[0]=atom_deep_copy(arena,tag);
+        for (size_t i=0; i<width; i++) {
+            FoldNumber value=fold.states[group*width+i];
+            values[offset+i]=value.real ? atom_float(arena,value.floating) : atom_int(arena,value.integer);
+        }
+        rows[group]=atom_expr2(arena,atom_int(arena,fold.labels[group]),atom_expr(arena,values,width+offset));
+    }
+    result=atom_expr(arena,rows,fold.used);
+cleanup:
+    cetta_prepared_pure_program_free(program);
+    cetta_prepared_pure_program_free(key_program);
+    free(fold.labels); free(fold.states); free(fold.slots);
+    arena_free(&scratch); arena_free(&owner);
+    if (eval_native_interrupted()) return NULL;
+    return result ? result : fallback(arena);
 }
 
 static Atom *table_stats(Arena *arena, PostingsTable *table) {
@@ -996,6 +1342,10 @@ bool cetta_postings_call(CettaLibraryContext *context, Arena *arena,
                 result = fault(arena, "mode");
             } else if (mode->result == POSTINGS_COUNT_RESULT_STATISTICS) {
                 result = table ? table_stats(arena, table) : stats(arena, index);
+            } else if (mode->result == POSTINGS_COUNT_RESULT_FOLDROWS ||
+                       mode->result == POSTINGS_COUNT_RESULT_FOLDCOLUMNS) {
+                result = table_fold(arena,table,args[2],
+                    mode->result == POSTINGS_COUNT_RESULT_FOLDCOLUMNS);
             } else if (mode->family == POSTINGS_COUNT_FAMILY_TABLE) {
                 result = table_counts(
                     arena, table, args[2],
