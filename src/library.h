@@ -416,7 +416,9 @@ bool cetta_library_print_loaded_modules(CettaLibraryContext *ctx, FILE *out,
 /* A native operation of an active library, and what it did
  * (call_outcome.h): a library operation's value, or a foreign call's
  * outcome, whose failure PeTTa raises.  False when no active library
- * defines `head` for these arguments. */
+ * defines `head` for these arguments. The vector is borrowed and read-only
+ * for this synchronous call; an operation may not retain its address. Atom
+ * lifetimes and borrowed result views have their separate contracts below. */
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out);

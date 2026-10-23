@@ -2,6 +2,78 @@
 
 #include <string.h>
 
+bool cetta_invocation_resolve_arguments(
+        Arena *arena, const Bindings *environment, const CettaInvocation *call,
+        bool closed_only, CettaInvocation *resolved) {
+    CettaExprLen arity = 0u;
+    if (!arena || !resolved || !cetta_invocation_arity(call, &arity) ||
+        !cetta_expr_len_mul_fits_size(arity, sizeof(Atom *)))
+        return false;
+    Atom *const *borrowed = cetta_invocation_borrow_arguments(call);
+    Atom **arguments = borrowed ? (Atom **)borrowed
+        : arena_alloc(arena, sizeof(*arguments) * (arity ? (size_t)arity : 1u));
+    for (CettaExprIndex index = 0u; index < arity; index++) {
+        BindingValue operand = cetta_invocation_argument(call, index);
+        Atom *value = binding_value_kind(operand) == BINDING_VALUE_MATERIALIZED
+            ? bindings_apply_if_vars(environment, arena, operand.skeleton)
+            : bindings_apply_value(environment, arena, operand);
+        if (!value || (closed_only && atom_has_vars(value)))
+            return false;
+        if (arguments == borrowed && value != borrowed[index]) {
+            arguments = arena_alloc(arena, sizeof(*arguments) * (size_t)arity);
+            memcpy(arguments, borrowed, sizeof(*arguments) * (size_t)index);
+        }
+        if (arguments != borrowed)
+            arguments[index] = value;
+    }
+    *resolved = (CettaInvocation){.head = call->head,
+        .supplied = {.atoms = arguments, .count = arity}};
+    return true;
+}
+
+Atom **cetta_invocation_materialize_arguments(
+        Arena *arena, const CettaInvocation *call) {
+    CettaExprLen arity = 0u;
+    if (!arena || !cetta_invocation_arity(call, &arity) ||
+        !cetta_expr_len_mul_fits_size(arity, sizeof(Atom *)))
+        return NULL;
+    Atom *const *borrowed = cetta_invocation_borrow_arguments(call);
+    if (borrowed)
+        return (Atom **)borrowed;
+    Atom **arguments = arena_alloc(
+        arena, sizeof(*arguments) * (arity ? (size_t)arity : 1u));
+    for (CettaExprIndex index = 0u; index < arity; index++) {
+        arguments[index] = binding_value_materialize(
+            arena, cetta_invocation_argument(call, index));
+        if (!arguments[index])
+            return NULL;
+    }
+    return arguments;
+}
+
+Atom *cetta_invocation_materialize(Arena *arena, const CettaInvocation *call) {
+    CettaExprLen arity = 0u;
+    if (!arena || !cetta_invocation_arity(call, &arity) ||
+        arity == UINT64_MAX ||
+        !cetta_expr_len_mul_fits_size(arity + 1u, sizeof(Atom *)))
+        return NULL;
+    Atom *head = binding_value_materialize(arena, call->head);
+    if (!head)
+        return NULL;
+    Atom *draft = atom_expr_builder_begin(arena, arity + 1u);
+    if (!draft)
+        return NULL;
+    draft->expr.elems[0] = head;
+    for (CettaExprIndex index = 0u; index < arity; index++) {
+        Atom *argument = binding_value_materialize(
+            arena, cetta_invocation_argument(call, index));
+        if (!argument)
+            return NULL;
+        draft->expr.elems[index + 1u] = argument;
+    }
+    return atom_expr_builder_finish(arena, draft);
+}
+
 void cetta_owned_execution_init(CettaOwnedExecution *execution,
     void *computation, CettaOwnedExecutionNext next,
     CettaOwnedExecutionRelease release) {

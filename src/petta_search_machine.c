@@ -15700,35 +15700,13 @@ static bool petta_machine_expand_partial_application(
         return true;
     }
     *recognized = true;
-    CettaExprLen extra = application->expr.len - 1u;
-    if (!base || !bound || bound->kind != ATOM_EXPR ||
-        bound->expr.len > UINT64_MAX - extra - 1u) {
-        return false;
-    }
-    CettaExprLen combined = bound->expr.len + extra + 1u;
-    if (!cetta_expr_len_mul_fits_size(
-            combined, sizeof(Atom *))) {
-        return false;
-    }
-    Atom **elements = arena_alloc(
-        &machine->heap,
-        sizeof(*elements) * (size_t)combined);
-    if (!elements)
-        return false;
-    elements[0] = base;
-    if (bound->expr.len > 0u) {
-        memcpy(
-            elements + 1u, bound->expr.elems,
-            sizeof(*elements) * (size_t)bound->expr.len);
-    }
-    if (extra > 0u) {
-        memcpy(
-            elements + 1u + bound->expr.len,
-            application->expr.elems + 1u,
-            sizeof(*elements) * (size_t)extra);
-    }
-    *expanded = atom_expr(
-        &machine->heap, elements, combined);
+    CettaInvocation invocation = {
+        .head = binding_value_from_atom(base),
+        .captured = {.atoms = bound->expr.elems, .count = bound->expr.len},
+        .supplied = {.atoms = application->expr.elems + 1u,
+                     .count = application->expr.len - 1u},
+    };
+    *expanded = cetta_invocation_materialize(&machine->heap, &invocation);
     return *expanded != NULL;
 }
 
@@ -37324,12 +37302,20 @@ static bool petta_machine_dispatch_goal(
     /* The arguments of a strict-ready application are values the machine
      * computed: a variable's value, a result, a datum.  Hand them over as
      * they are; evaluating the call again would evaluate their contents. */
+    CettaInvocation invocation = {0};
+    if (first && first->kind == ATOM_EXPR && first->expr.len) {
+        invocation = (CettaInvocation){
+            .head = binding_value_from_atom(first->expr.elems[0]),
+            .supplied = {.atoms = first->expr.elems + 1u,
+                         .count = first->expr.len - 1u},
+        };
+    }
     bool evaluated =
         goal.kind == PETTA_GOAL_HOST_STRICT_READY &&
         machine->host.apply_ready_values &&
         machine->host.apply_ready_values(
             machine->host.context, machine->space, &machine->heap,
-            first, &host_environment, outcomes, &end);
+            &invocation, &host_environment, outcomes, &end);
     if (!evaluated) {
         evaluated = machine->host.evaluate_planned
             ? machine->host.evaluate_planned(
