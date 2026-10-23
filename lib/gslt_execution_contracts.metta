@@ -706,6 +706,7 @@
   (query-head tensor:from-json relational-query)
   (query-head __cetta_lib_list_group_sums relational-query)
   (query-head __cetta_lib_list_group_sums_blocks relational-query)
+  (query-head __cetta_lib_list_factorize relational-query)
   (query-head tensor:from-coo relational-query)
   (query-head tensor:from-coordinates relational-query)
   (query-head tensor:inspect relational-query)
@@ -957,6 +958,10 @@
   (prepared-pure-intrinsic-head
     / 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
+    and 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    or 2 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
     abs-math 1 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     log-math 2 strict-all grounded-dispatch)
@@ -970,6 +975,8 @@
     index-atom 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     unique-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    intersection-atom 2 strict-all grounded-dispatch (dialects petta))
   (prepared-pure-intrinsic-head
     remove-all-atom 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head

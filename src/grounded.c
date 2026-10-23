@@ -3645,12 +3645,16 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         Atom *const *elems;
         CettaExprLen len;
         bool to_list = head_id == g_builtin_syms.lib_list_from_expression;
-        if (!atom_sequence_view(args[0], &elems, &len))
+        Atom *value = args[0];
+        if (grounded_current_language_is_petta() &&
+            petta_semantics_is_open_cons_value(value))
+            value = petta_semantics_materialize_closed_logical_list(a, value);
+        if (!atom_sequence_view(value, &elems, &len))
             return atom_error(
                 a, grounded_call_expr(a, head, args, nargs),
                 atom_symbol(a, "ExpectedListOrExpression"));
-        if (atom_is_list(args[0]) == to_list)
-            return args[0];
+        if (atom_is_list(value) == to_list)
+            return value;
         return to_list ? atom_list(a, elems, len)
                        : atom_sequence_like(a, NULL, elems, len);
     }
@@ -3873,6 +3877,17 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
 
     /* ── Expression introspection ─────────────────────────────────────── */
     if ((head_id == g_builtin_syms.size || head_id == g_builtin_syms.size_atom) && nargs == 1) {
+        if (grounded_current_language_is_petta() &&
+            petta_semantics_is_open_cons_value(args[0])) {
+            CettaExprLen length;
+            /* Prepared consumers can share a private spine. Its physical
+             * arity is not its logical list length. Unresolved tails remain
+             * the relational evaluator's, not a guessed finite length. */
+            if (!petta_semantics_logical_list_length(args[0], &length) ||
+                length > INT64_MAX)
+                return NULL;
+            return atom_int(a, (int64_t)length);
+        }
         int64_t counted_collection = 0;
         if (atom_counted_collection_count(
                 args[0], &counted_collection)) {
@@ -3912,6 +3927,25 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     }
 
     if (head_id == g_builtin_syms.index_atom && nargs == 2) {
+        if (grounded_current_language_is_petta() &&
+            petta_semantics_is_open_cons_value(args[0])) {
+            if (args[1]->kind != ATOM_GROUNDED ||
+                args[1]->ground.gkind != GV_INT || args[1]->ground.ival < 0)
+                return atom_petta_no_result(a);
+            PeTTaLogicalListCursor cursor;
+            petta_semantics_logical_list_cursor_init(&cursor, args[0]);
+            for (int64_t index = 0;; index++) {
+                Atom *item = NULL;
+                PeTTaLogicalListStep step =
+                    petta_semantics_logical_list_cursor_next(&cursor, &item);
+                if (step == PETTA_LOGICAL_LIST_INVALID)
+                    return NULL;
+                if (step == PETTA_LOGICAL_LIST_END)
+                    return atom_petta_no_result(a);
+                if (index == args[1]->ground.ival)
+                    return item;
+            }
+        }
         if (args[0]->kind != ATOM_EXPR) {
             if (args[0]->kind == ATOM_GROUNDED)
                 return grounded_bad_arg_type(a, head, args, nargs, 1,

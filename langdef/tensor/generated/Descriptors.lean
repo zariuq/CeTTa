@@ -118,4 +118,27 @@ theorem observation_rows_match_source : sourceObservationRows = encodedObservati
 
 #print axioms observation_rows_match_source
 
+def callbackInputRows : List (String × String) := [
+  ("i64", "Signed64Atom"),
+  ("f64", "Float64Atom"),
+  ("u8", "Unsigned8Atom"),
+  ("f32", "Float32Atom"),
+  ("index", "Unsigned64Atom")
+]
+
+def sourceCallbackInputRows : List (String × Pattern) :=
+  language.equations.filterMap fun equation =>
+    match equation.left with
+    | Pattern.apply "TensorCallbackInput" [Pattern.apply label []] => some (label, equation.right)
+    | _ => none
+
+def encodedCallbackInputRows : List (String × Pattern) :=
+  callbackInputRows.map fun (label, encoding) =>
+    (label, Pattern.apply "ScalarAtomInput" [Pattern.apply encoding []])
+
+theorem callback_input_rows_match_source : sourceCallbackInputRows = encodedCallbackInputRows := by
+  decide +kernel
+
+#print axioms callback_input_rows_match_source
+
 end CeTTaTensorDescriptors

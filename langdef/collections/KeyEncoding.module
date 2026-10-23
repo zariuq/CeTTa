@@ -1,0 +1,24 @@
+Module CollectionKeyEncoding {
+  Theory Descriptors() {
+    Empty Types { Descriptor; } Terms {
+      "Factorize". |- "Factorize" : Descriptor;
+      "WireFactorize". |- "__cetta_lib_list_factorize" : Descriptor;
+      "WireResult". |- "List:Factorization" : Descriptor;
+      "Keys". |- "Keys" : Descriptor;
+      "Codes". |- "Codes" : Descriptor;
+      "FirstPositions". |- "FirstPositions" : Descriptor;
+      "FirstMatchingRepresentative". |- "FirstMatchingRepresentative" : Descriptor;
+      "ZeroBasedCodes". |- "ZeroBasedCodes" : Descriptor;
+      "SourceOrder". |- "SourceOrder" : Descriptor;
+      "DuplicateOccurrences". |- "DuplicateOccurrences" : Descriptor;
+      "MatchingCompatibleKeys". |- "MatchingCompatibleKeys" : Descriptor;
+      "CompleteValidation". |- "CompleteValidation" : Descriptor;
+      "AuthoredFallback". |- "AuthoredFallback" : Descriptor;
+    } Equations {
+      (CollectionOperation (Factorize)) == (Operation (WireFactorize) (Keys));
+      (CollectionResult (Factorize)) == (Result (WireResult) (Keys) (Codes) (FirstPositions));
+      (CollectionObservation (Factorize)) == (Observe (FirstMatchingRepresentative) (ZeroBasedCodes) (SourceOrder) (DuplicateOccurrences) (MatchingCompatibleKeys) (CompleteValidation) (AuthoredFallback));
+    }
+  }
+  theory Descriptors()
+}

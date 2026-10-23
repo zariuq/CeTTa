@@ -48,6 +48,7 @@
 #include "langdef_pack.h"
 #include "native/syntax_gslt_v1.h"
 #include "generated/cetta_execution_contracts.generated.h"
+#include "generated/collection_ingress.generated.h"
 #include <inttypes.h>
 #include <limits.h>
 #include <stdatomic.h>
@@ -16578,6 +16579,7 @@ static bool prepared_fold_register_program(
 
 static bool prepared_fold_intrinsic_program(
     SymbolId head, CettaExprLen arity) {
+    if (!cetta_prepared_pure_intrinsic_scope_supported(head, arity)) return false;
 #define PREPARED_FOLD_INTRINSIC(                                      \
     field, expected_arity, discipline, instruction)                  \
     if (head == g_builtin_syms.field && arity == (expected_arity)) {  \
@@ -16588,6 +16590,17 @@ static bool prepared_fold_intrinsic_program(
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(
         PREPARED_FOLD_INTRINSIC)
 #undef PREPARED_FOLD_INTRINSIC
+    return false;
+}
+
+static bool prepared_fold_concatenation_instruction(SymbolId head) {
+#define PREPARED_CONCATENATION(field, arity, discipline, instruction) \
+    if (head == g_builtin_syms.field) \
+        return (arity) == 2u && \
+            (discipline) == CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL && \
+            (instruction) == CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS;
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(PREPARED_CONCATENATION)
+#undef PREPARED_CONCATENATION
     return false;
 }
 
@@ -16623,7 +16636,7 @@ static bool prepared_fold_safety_head(
 }
 
 static bool prepared_fold_expression_replay_safe(
-    PreparedFoldSafety *safety, Atom *expression);
+    PreparedFoldSafety *safety, Atom *expression, const PettaPlanNode *plan);
 
 /* A user equation is replay-safe when its complete dependency component is
  * made only from generated fold controls, generated exact operations, inert
@@ -16667,7 +16680,7 @@ static bool prepared_fold_user_head_replay_safe(
         if (!space_equation_occurrence_resolve(id, &occurrence) ||
             atom_head_symbol_id(occurrence.lhs) != head ||
             !prepared_fold_expression_replay_safe(
-                safety, occurrence.rhs)) {
+                safety, occurrence.rhs, NULL)) {
             safety->heads[entry_index].state =
                 PREPARED_FOLD_HEAD_UNSAFE;
             return false;
@@ -16683,9 +16696,13 @@ static bool prepared_fold_user_head_replay_safe(
 }
 
 static bool prepared_fold_expression_replay_safe(
-    PreparedFoldSafety *safety, Atom *expression) {
+    PreparedFoldSafety *safety, Atom *expression, const PettaPlanNode *plan) {
     if (!safety || !expression)
         return false;
+    /* A captured value may contain call-shaped data. Its occurrence plan,
+     * not the substituted spelling, establishes that it is not executed. */
+    if (plan && plan->role == PETTA_PLAN_VALUE)
+        return true;
     if (expression->kind != ATOM_EXPR || expression->expr.len == 0u)
         return true;
     Atom *head = expression->expr.elems[0];
@@ -16724,15 +16741,16 @@ static bool prepared_fold_expression_replay_safe(
                 return false;
             for (CettaExprIndex i = 0u; i < pairs->expr.len; i++) {
                 Atom *pair = pairs->expr.elems[i];
+                const PettaPlanNode *pair_plan = petta_plan_child(petta_plan_child(plan, 1u), i);
                 if (!pair || pair->kind != ATOM_EXPR || pair->expr.len != 2u ||
                     !pair->expr.elems[0] ||
                     pair->expr.elems[0]->kind != ATOM_VAR ||
                     !prepared_fold_expression_replay_safe(
-                        safety, pair->expr.elems[1]))
+                        safety, pair->expr.elems[1], petta_plan_child(pair_plan, 1u)))
                     return false;
             }
             return prepared_fold_expression_replay_safe(
-                safety, expression->expr.elems[2]);
+                safety, expression->expr.elems[2], petta_plan_child(plan, 2u));
         }
         CettaExprIndex first =
             control == CETTA_GSLT_FOLD_CONTROL_BIND ? 2u : 1u;
@@ -16747,7 +16765,7 @@ static bool prepared_fold_expression_replay_safe(
         }
         for (CettaExprIndex i = first; i < expression->expr.len; i++)
             if (!prepared_fold_expression_replay_safe(
-                    safety, expression->expr.elems[i])) {
+                    safety, expression->expr.elems[i], petta_plan_child(plan, i))) {
                 return false;
             }
         return true;
@@ -16756,7 +16774,7 @@ static bool prepared_fold_expression_replay_safe(
         prepared_fold_intrinsic_program(head_id, arity)) {
         for (CettaExprIndex i = 1u; i < expression->expr.len; i++)
             if (!prepared_fold_expression_replay_safe(
-                    safety, expression->expr.elems[i])) {
+                    safety, expression->expr.elems[i], petta_plan_child(plan, i))) {
                 return false;
             }
         return true;
@@ -16775,7 +16793,7 @@ static bool prepared_fold_expression_replay_safe(
         return true;
     for (CettaExprIndex i = 1u; i < expression->expr.len; i++)
         if (!prepared_fold_expression_replay_safe(
-                safety, expression->expr.elems[i])) {
+                safety, expression->expr.elems[i], petta_plan_child(plan, i))) {
             return false;
         }
     return prepared_fold_user_head_replay_safe(safety, head_id);
@@ -17215,6 +17233,7 @@ typedef enum {
     PREPARED_UNARY_VALUES = 0,
     PREPARED_UNARY_SELECT_TRUE_SOURCES,
     PREPARED_UNARY_SUM_NUMBERS,
+    PREPARED_UNARY_VISIT_VALUES,
 } PreparedUnaryCollectionObservation;
 
 static PreparedFoldResult prepared_unary_collection_single_result(
@@ -17222,7 +17241,8 @@ static PreparedFoldResult prepared_unary_collection_single_result(
     Atom *body_expression, const Bindings *outer_environment,
     int fuel, PreparedUnaryCollectionObservation observation,
     bool preserve_internal_values,
-    Atom **source_items_out, Atom **result_out) {
+    Atom **source_items_out, Atom **result_out,
+    PettaMachineBorrowedItemConsumer consume_item, void *consumer_context) {
     PreparedUnaryCollectionKind kind =
         observation == PREPARED_UNARY_SELECT_TRUE_SOURCES
             ? PREPARED_UNARY_COLLECTION_FILTER
@@ -17308,6 +17328,18 @@ static PreparedFoldResult prepared_unary_collection_single_result(
     SpaceReadToken replay_read = space_read_token(s);
     bool replay_safe = prepared_collection_cached_replay_safe(
         s, closed_body, kind);
+    CettaPreparedPureSourceView source_view =
+        prepared_pure_source_view_for_language(eval_current_language_id(), body_expression);
+    if (!replay_safe && source_view.root) {
+        /* Retain the existing context-independent cache. The additional
+         * occurrence-qualified check is local: its result must not be
+         * reused for identical spelling with different source/value roles. */
+        PreparedFoldSafety safety = {.space = s, .read = replay_read};
+        replay_safe = prepared_fold_expression_replay_safe(
+            &safety, closed_body, (const PettaPlanNode *)source_view.root) &&
+            space_read_token_is_current(replay_read);
+        free(safety.heads);
+    }
     if (!replay_safe) {
         prepared_unary_collection_debug(
             kind,
@@ -17340,9 +17372,6 @@ static PreparedFoldResult prepared_unary_collection_single_result(
             ? petta_prepared_pure_pattern_view : NULL;
     CettaPreparedPureExpressionViewFn expression_view =
         prepared_pure_expression_view_for_language(language_id);
-    CettaPreparedPureSourceView source_view =
-        prepared_pure_source_view_for_language(
-            language_id, body_expression);
     VarId unused_accumulator = fresh_var_id();
     if (var_id_eq(unused_accumulator, item_binder->var_id))
         unused_accumulator = fresh_var_id();
@@ -17375,7 +17404,7 @@ static PreparedFoldResult prepared_unary_collection_single_result(
     arena_set_hashcons(&nursery, NULL);
     ArenaMark nursery_origin = arena_mark(&nursery);
     bool sequence_observation =
-        observation != PREPARED_UNARY_SUM_NUMBERS;
+        observation == PREPARED_UNARY_VALUES || observation == PREPARED_UNARY_SELECT_TRUE_SOURCES;
     Atom *draft = sequence_observation
         ? atom_expr_builder_begin(
               result_arena, closed_items->expr.len)
@@ -17394,7 +17423,8 @@ static PreparedFoldResult prepared_unary_collection_single_result(
         .as.integer = 0,
     };
     PreparedFoldResult outcome =
-        (sequence_observation ? draft != NULL : plus != NULL) &&
+        (sequence_observation ? draft != NULL :
+         observation == PREPARED_UNARY_VISIT_VALUES ? consume_item != NULL : plus != NULL) &&
         (observation != PREPARED_UNARY_SELECT_TRUE_SOURCES ||
          (truth && falsehood))
         ? PREPARED_FOLD_VALUE : PREPARED_FOLD_NOT_APPLICABLE;
@@ -17434,7 +17464,12 @@ static PreparedFoldResult prepared_unary_collection_single_result(
             outcome = PREPARED_FOLD_NOT_APPLICABLE;
             break;
         }
-        if (observation == PREPARED_UNARY_SELECT_TRUE_SOURCES) {
+        if (observation == PREPARED_UNARY_VISIT_VALUES) {
+            if (!consume_item(consumer_context, candidate)) {
+                outcome = PREPARED_FOLD_NOT_APPLICABLE;
+                break;
+            }
+        } else if (observation == PREPARED_UNARY_SELECT_TRUE_SOURCES) {
             bool keep = false;
             bool boolean = language_id == CETTA_LANGUAGE_PETTA
                 ? petta_semantics_truth_value(candidate, &keep)
@@ -17489,6 +17524,8 @@ static PreparedFoldResult prepared_unary_collection_single_result(
             draft->expr.len = published_len;
             *result_out = atom_expr_builder_finish(
                 result_arena, draft);
+        } else if (observation == PREPARED_UNARY_VISIT_VALUES) {
+            *result_out = atom_unit(result_arena);
         } else {
             *result_out = grounded_plain_scalar_materialize(
                 result_arena, &total);
@@ -17517,7 +17554,7 @@ static PreparedFoldResult prepared_map_single_result(
     return prepared_unary_collection_single_result(
         s, result_arena, items, item_binder, body_expression,
         outer_environment, fuel, PREPARED_UNARY_VALUES,
-        preserve_internal_values, source_items_out, result_out);
+        preserve_internal_values, source_items_out, result_out, NULL, NULL);
 }
 
 /* Map a pure numeric projection and fold its values through Number's
@@ -17533,7 +17570,7 @@ static PreparedFoldResult prepared_sum_by_single_result(
     return prepared_unary_collection_single_result(
         s, result_arena, items, item_binder, key_expression,
         outer_environment, fuel, PREPARED_UNARY_SUM_NUMBERS,
-        false, NULL, result_out);
+        false, NULL, result_out, NULL, NULL);
 }
 
 /* The public list operation denotes map(key) followed by exact numeric top-k
@@ -17668,7 +17705,7 @@ static PreparedFoldResult prepared_filter_single_result(
         return prepared_unary_collection_single_result(
             s, result_arena, items, item_binder, predicate_expression,
             outer_environment, fuel, PREPARED_UNARY_SELECT_TRUE_SOURCES,
-            true, NULL, result_out);
+            true, NULL, result_out, NULL, NULL);
     }
 
     Arena scratch;
@@ -17681,7 +17718,7 @@ static PreparedFoldResult prepared_filter_single_result(
     PreparedFoldResult mapped = prepared_unary_collection_single_result(
         s, &scratch, items, item_binder, predicate_expression,
         outer_environment, fuel, PREPARED_UNARY_SELECT_TRUE_SOURCES,
-        true, NULL, &selected);
+        true, NULL, &selected, NULL, NULL);
     if (mapped != PREPARED_FOLD_VALUE) {
         arena_free(&scratch);
         return mapped;
@@ -18306,7 +18343,7 @@ static PreparedFoldResult prepared_foldl_single_result(
         .read = space_read_token(s),
     };
     bool replay_safe =
-        prepared_fold_expression_replay_safe(&safety, closed_step) &&
+        prepared_fold_expression_replay_safe(&safety, closed_step, NULL) &&
         space_read_token_is_current(safety.read);
     free(safety.heads);
     if (!replay_safe)
@@ -19786,8 +19823,13 @@ static bool emit_add_atoms_from_evaluated_tuple(
     Atom *ready_items = bindings_logically_empty(current_env)
         ? items
         : bindings_apply_if_vars(current_env, a, items);
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA)
+        ready_items = petta_semantics_flatten_closed_open_cons(a, ready_items);
+    Atom *const *logical_items = NULL;
+    CettaExprLen item_count = 0u;
     if (!ready_space || !ready_items ||
-        ready_items->kind != ATOM_EXPR ||
+        !atom_sequence_view(ready_items, &logical_items, &item_count) ||
+        petta_semantics_is_open_cons_value(ready_items) ||
         atom_is_error(ready_items) ||
         petta_semantics_is_nonlist_carrier(ready_items)) {
         return false;
@@ -19829,18 +19871,18 @@ static bool emit_add_atoms_from_evaluated_tuple(
      * atomic batch. */
     bool metadata = false;
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
-        for (CettaExprIndex i = 0u; i < ready_items->expr.len; i++) {
+        for (CettaExprIndex i = 0u; i < item_count; i++) {
             if (petta_program_atom_affects_metadata(
-                    ready_items->expr.elems[i])) {
+                    logical_items[i])) {
                 metadata = true;
                 break;
             }
         }
     }
     if (metadata) {
-        for (CettaExprIndex i = 0u; i < ready_items->expr.len; i++) {
+        for (CettaExprIndex i = 0u; i < item_count; i++) {
             EvalSpaceMutationEffect effect = eval_apply_space_addition(
-                target, a, call_atom, ready_items->expr.elems[i], false);
+                target, a, call_atom, logical_items[i], false);
             if (effect.error) {
                 outcome_set_add(os, effect.error, &empty);
                 return true;
@@ -19855,9 +19897,9 @@ static bool emit_add_atoms_from_evaluated_tuple(
     /* Type checking is observational and must finish before the optimized
      * publication.  A rejection is reported at the same public call rather
      * than being mislabeled as a capacity failure. */
-    for (CettaExprIndex i = 0u; i < ready_items->expr.len; i++) {
+    for (CettaExprIndex i = 0u; i < item_count; i++) {
         Atom *type_error = eval_petta_program_mutation_error(
-            a, call_atom, target, ready_items->expr.elems[i],
+            a, call_atom, target, logical_items[i],
             PETTA_TYPECHECK_MUTATION_ADD);
         if (type_error) {
             outcome_set_add(os, type_error, &empty);
@@ -19867,8 +19909,7 @@ static bool emit_add_atoms_from_evaluated_tuple(
 
     Arena *dst = eval_storage_arena(a);
     if (!space_admit_atoms_batch_from_source_arena(
-            target, dst, a, ready_items->expr.elems,
-            ready_items->expr.len)) {
+            target, dst, a, logical_items, item_count)) {
         outcome_set_add(
             os,
             space_term_universe_or_symbol_error(
@@ -19877,9 +19918,9 @@ static bool emit_add_atoms_from_evaluated_tuple(
         return true;
     }
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
-        for (CettaExprIndex i = 0u; i < ready_items->expr.len; i++)
+        for (CettaExprIndex i = 0u; i < item_count; i++)
             petta_specializer_note_mutation(
-                target, ready_items->expr.elems[i]);
+                target, logical_items[i]);
     }
     outcome_set_add(os, atom_unit(a), &empty);
     return true;
@@ -23380,7 +23421,7 @@ static bool prepared_collection_cached_replay_safe(
     }
     PreparedFoldSafety safety = {.space = space, .read = space_read_token(space)};
     prepared_unary_collection_count(kind, PREPARED_UNARY_SAFETY_CHECK);
-    bool safe = prepared_fold_expression_replay_safe(&safety, body);
+    bool safe = prepared_fold_expression_replay_safe(&safety, body, NULL);
     bool current = space_read_token_is_current(safety.read);
     free(safety.heads);
     if (cache && current) {
@@ -44914,13 +44955,88 @@ static bool petta_eval_machine_type_calls(
                                     calls, count, hold_body);
 }
 
+/* The ordinary left fold of sequence concatenation from () is one ordered
+ * flattening. Validation precedes construction; no callback is executed by
+ * this realization. Child values share the same ready-value ownership
+ * boundary as the ordinary union operation. */
+static PettaMachineFoldResult petta_eval_flatten_fold(
+    PettaEvalMachineContext *owner, Space *space, Arena *arena,
+    Atom *items, Atom *initial, Atom *accumulator, Atom *item,
+    Atom *step, const PettaPlanNode *plan, const Bindings *environment,
+    Atom **out) {
+    const char *reference = getenv("CETTA_FLATTEN_FOLD_REFERENCE");
+    if (!owner || owner->transaction || owner->fuel >= 0 || !space || !arena ||
+        !plan || plan->role != PETTA_PLAN_STATIC_CALL ||
+        eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        cetta_profile_uses_petta_typing(active_profile()) ||
+        prime_need_receipt_observer_requested() || gslt_match_chain_trace_active() ||
+        (reference && *reference && strcmp(reference, "0")) ||
+        !initial || initial->kind != ATOM_EXPR || initial->expr.len != 0u ||
+        !accumulator || accumulator->kind != ATOM_VAR || !item || item->kind != ATOM_VAR ||
+        var_id_eq(accumulator->var_id, item->var_id) ||
+        !cetta_observation_environment_var_is_private(environment, accumulator->var_id) ||
+        !cetta_observation_environment_var_is_private(environment, item->var_id) ||
+        !step || step->kind != ATOM_EXPR || step->expr.len != 3u ||
+        step->expr.elems[0]->kind != ATOM_SYMBOL ||
+        !prepared_fold_concatenation_instruction(step->expr.elems[0]->sym_id) ||
+        !atom_eq(step->expr.elems[1], accumulator) || !atom_eq(step->expr.elems[2], item))
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    CETTA_SCOPED_SHARED_TRANSITION(flatten_read);
+    if (eval_space_has_equations(space, step->expr.elems[0]->sym_id))
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    Atom *ready = bindings_apply_if_vars(environment, arena, items);
+    if (!ready || atom_has_vars(ready) || hyperpose_atom_has_thread_local_resource(ready))
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    Atom *const *blocks = NULL;
+    CettaExprLen block_count = 0, total = 0;
+    if (!atom_sequence_view(ready, &blocks, &block_count))
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    for (CettaExprIndex index = 0; index < block_count; index++) {
+        CettaExprLen count = 0;
+        if ((index & 1023u) == 0u && eval_native_interrupted())
+            return PETTA_MACHINE_FOLD_INTERRUPTED;
+        if (!petta_semantics_logical_list_length(blocks[index], &count) ||
+            count > UINT64_MAX - total)
+            return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+        total += count;
+    }
+    if (!cetta_expr_len_mul_fits_size(total, sizeof(Atom *)))
+        return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    Atom *result = atom_expr_builder_begin(arena, total);
+    if (!result) return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    CettaExprLen next = 0;
+    for (CettaExprIndex index = 0; index < block_count; index++) {
+        PeTTaLogicalListCursor cursor;
+        petta_semantics_logical_list_cursor_init(&cursor, blocks[index]);
+        Atom *value = NULL;
+        while (petta_semantics_logical_list_cursor_next(&cursor, &value) == PETTA_LOGICAL_LIST_ITEM) {
+            if ((next & 1023u) == 0u && eval_native_interrupted())
+                return PETTA_MACHINE_FOLD_INTERRUPTED;
+            result->expr.elems[next++] = value;
+        }
+    }
+    if (next != total) return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    *out = atom_expr_builder_finish(arena, result);
+    const char *debug = getenv("CETTA_FLATTEN_FOLD_DEBUG");
+    if (*out && debug && *debug && strcmp(debug, "0"))
+        fprintf(stderr, "flatten-fold blocks=%" PRIu64 " items=%" PRIu64 "\n",
+            (uint64_t)block_count, (uint64_t)total);
+    return *out ? PETTA_MACHINE_FOLD_VALUE : PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+}
+
 static PettaMachineFoldResult petta_eval_machine_foldl_single_result(
     void *context, Space *space, Arena *arena,
     Atom *items, Atom *initial,
     Atom *accumulator_binder, Atom *item_binder,
-    Atom *step_expression, const Bindings *environment,
+    Atom *step_expression, const PettaPlanNode *step_plan, const Bindings *environment,
     Atom **result_out) {
     PettaEvalMachineContext *eval_context = context;
+    PettaMachineFoldResult flattened = petta_eval_flatten_fold(
+        eval_context, space, arena, items, initial, accumulator_binder, item_binder,
+        step_expression, step_plan, environment, result_out);
+    if (flattened != PETTA_MACHINE_FOLD_NOT_APPLICABLE) return flattened;
+    __attribute__((cleanup(petta_source_plan_scope_leave))) PettaSourcePlanScope source_scope = {0};
+    petta_source_plan_scope_enter(&source_scope, step_plan, step_expression);
     PreparedFoldResult result = prepared_foldl_single_result(
         space, arena, items, initial,
         accumulator_binder, item_binder, step_expression,
@@ -44951,10 +45067,12 @@ static bool petta_eval_machine_foldl_producer(
 static PettaMachineFoldResult petta_eval_machine_map_single_result(
     void *context, Space *space, Arena *arena,
     Atom *items, Atom *item_binder, Atom *body_expression,
-    const Bindings *environment, Atom **result_out) {
+    const PettaPlanNode *body_plan, const Bindings *environment, Atom **result_out) {
     PettaEvalMachineContext *eval_context = context;
     if (!eval_context || eval_context->transaction)
         return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    __attribute__((cleanup(petta_source_plan_scope_leave))) PettaSourcePlanScope source_scope = {0};
+    petta_source_plan_scope_enter(&source_scope, body_plan, body_expression);
     PreparedFoldResult result = prepared_map_single_result(
         space, arena, items, item_binder, body_expression,
         environment, eval_context->fuel, true, NULL, result_out);
@@ -44972,10 +45090,12 @@ static PettaMachineFoldResult petta_eval_machine_map_single_result(
 static PettaMachineFoldResult petta_eval_machine_filter_single_result(
     void *context, Space *space, Arena *arena,
     Atom *items, Atom *item_binder, Atom *predicate_expression,
-    const Bindings *environment, Atom **result_out) {
+    const PettaPlanNode *body_plan, const Bindings *environment, Atom **result_out) {
     PettaEvalMachineContext *eval_context = context;
     if (!eval_context || eval_context->transaction)
         return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+    __attribute__((cleanup(petta_source_plan_scope_leave))) PettaSourcePlanScope source_scope = {0};
+    petta_source_plan_scope_enter(&source_scope, body_plan, predicate_expression);
     PreparedFoldResult result = prepared_filter_single_result(
         space, arena, items, item_binder, predicate_expression,
         environment, eval_context->fuel, result_out);
@@ -45015,6 +45135,198 @@ petta_eval_machine_pull_collection_single_result(
         return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
     }
     return PETTA_MACHINE_FOLD_NOT_APPLICABLE;
+}
+
+typedef struct {
+    Space *target;
+    Arena *storage;
+    Arena scratch;
+    ArenaMark origin;
+    AtomId *ids;
+    size_t length, capacity;
+    bool flatten;
+} EvalPrivateIngress;
+
+/* Only canonical identities survive a producer callback. No borrowed Atom
+ * or private cons cell escapes its scratch lifetime. */
+static bool eval_private_ingress_item(void *context, Atom *item) {
+    EvalPrivateIngress *ingress = context;
+    arena_reset(&ingress->scratch, ingress->origin);
+    if (petta_semantics_value_contains_observable_open_cons(item))
+        item = petta_semantics_flatten_closed_open_cons(&ingress->scratch, item);
+    if (!item || (item->kind == ATOM_GROUNDED && item->ground.gkind == GV_INTERNAL_TAG) ||
+        atom_has_vars(item) || !term_universe_atom_is_stable(item) ||
+        petta_program_atom_affects_metadata(item))
+        return false;
+    if (ingress->length == ingress->capacity) {
+        size_t capacity = ingress->capacity ? ingress->capacity * 2u : 256u;
+        if (capacity < ingress->capacity || capacity > SIZE_MAX / sizeof(AtomId))
+            return false;
+        AtomId *grown = realloc(ingress->ids, capacity * sizeof(*grown));
+        if (!grown) return false;
+        ingress->ids = grown;
+        ingress->capacity = capacity;
+    }
+    AtomId id = term_universe_store_atom_id(
+        ingress->target->native.universe, ingress->storage, item);
+    if (id == CETTA_ATOM_ID_NONE) return false;
+    ingress->ids[ingress->length++] = id;
+    return true;
+}
+
+static bool eval_private_ingress_batch(void *context, Atom *batch) {
+    EvalPrivateIngress *ingress = context;
+    if (!ingress->flatten) return eval_private_ingress_item(context, batch);
+    PeTTaLogicalListCursor cursor;
+    petta_semantics_logical_list_cursor_init(&cursor, batch);
+    for (;;) {
+        Atom *item = NULL;
+        PeTTaLogicalListStep next = petta_semantics_logical_list_cursor_next(&cursor, &item);
+        if (next == PETTA_LOGICAL_LIST_END) return true;
+        if (next != PETTA_LOGICAL_LIST_ITEM || !eval_private_ingress_item(context, item))
+            return false;
+    }
+}
+
+static bool petta_eval_machine_append_private_collection(
+    void *context, Space *space, Arena *arena,
+    Atom *binder, Atom *producer, Atom *body,
+    const PettaPlanNode *producer_plan,
+    const Bindings *environment, CettaCallOutcome *result) {
+    PettaEvalMachineContext *owner = context;
+    const char *reference = getenv("CETTA_COLLECTION_INGRESS_REFERENCE");
+    if (!owner || owner->transaction || !space || !arena || !environment ||
+        !result || !binder || binder->kind != ATOM_VAR ||
+        var_id_is_none(binder->var_id) || !producer || !body ||
+        (reference && *reference && strcmp(reference, "0")) ||
+        owner->fuel >= 0 || g_eval_payload_transactional ||
+        eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        cetta_profile_uses_petta_typing(active_eval_session()->profile) ||
+        prime_need_receipt_observer_requested() ||
+        active_search_table_mode() != CETTA_TABLE_MODE_NONE || gslt_match_chain_trace_active() ||
+        strcmp(CETTA_COLLECTION_INGRESS_POLICY,
+            "SourceOrder|DuplicateOccurrences|PrivateBinding|PureProducer|ReadyInputs|EagerProjection|CompleteValidation|DataOnly|AtomicPublication|AuthoredFallback") ||
+        body->kind != ATOM_EXPR ||
+        expr_nargs(body) != CETTA_COLLECTION_INGRESS_ARITY ||
+        !atom_is_symbol(body->expr.elems[0], CETTA_COLLECTION_INGRESS_HEAD) ||
+        !atom_eq(body->expr.elems[CETTA_COLLECTION_INGRESS_COLLECTION], binder) ||
+        cetta_observation_atom_contains_var(producer, binder->var_id) ||
+        cetta_observation_atom_contains_var(
+            body->expr.elems[CETTA_COLLECTION_INGRESS_DESTINATION], binder->var_id) ||
+        !cetta_observation_environment_var_is_private(environment, binder->var_id))
+        return false;
+
+    CETTA_SCOPED_SHARED_TRANSITION(ingress_read);
+    if (!add_atoms_public_syntax_has_no_override(space) ||
+        eval_space_has_equations(space, g_builtin_syms.add_atom))
+        return false;
+    Atom *mapping = producer;
+    const PettaPlanNode *mapping_plan = producer_plan;
+    bool flatten = false;
+    if (expr_head_is_id(producer, g_builtin_syms.foldl_atom) && expr_nargs(producer) == 5u) {
+        Atom *initial = expr_arg(producer, 1u);
+        Atom *accumulator = expr_arg(producer, 2u), *batch = expr_arg(producer, 3u);
+        Atom *step = expr_arg(producer, 4u);
+        if (!initial || initial->kind != ATOM_EXPR || initial->expr.len ||
+            accumulator->kind != ATOM_VAR || batch->kind != ATOM_VAR ||
+            var_id_eq(accumulator->var_id, batch->var_id) ||
+            !expr_head_is_id(step, g_builtin_syms.union_atom) || expr_nargs(step) != 2u ||
+            !atom_eq(expr_arg(step, 0u), accumulator) || !atom_eq(expr_arg(step, 1u), batch) ||
+            eval_space_has_equations(space, g_builtin_syms.foldl_atom) ||
+            eval_space_has_equations(space, g_builtin_syms.union_atom))
+            return false;
+        flatten = true;
+        mapping = expr_arg(producer, 0u);
+        mapping_plan = producer_plan && producer_plan->child_count > 1u
+            ? &producer_plan->children[1] : NULL;
+    }
+    if (!expr_head_is_id(mapping, g_builtin_syms.map_atom) || expr_nargs(mapping) != 3u ||
+        eval_space_has_equations(space, g_builtin_syms.map_atom))
+        return false;
+    Atom *input = expr_arg(mapping, 0u), *item_binder = expr_arg(mapping, 1u);
+    Atom *projection = expr_arg(mapping, 2u);
+    const PettaPlanNode *input_plan = mapping_plan && mapping_plan->child_count > 1u
+        ? &mapping_plan->children[1] : NULL;
+    const PettaPlanNode *projection_plan = mapping_plan && mapping_plan->child_count > 3u
+        ? &mapping_plan->children[3] : NULL;
+    if ((input->kind != ATOM_VAR && (!input_plan || input_plan->role != PETTA_PLAN_VALUE)) ||
+        item_binder->kind != ATOM_VAR ||
+        !cetta_observation_environment_var_is_private(environment, item_binder->var_id))
+        return false;
+    Atom *ready_input = bindings_apply_if_vars(environment, arena, input);
+    ready_input = petta_semantics_flatten_closed_open_cons(arena, ready_input);
+    Atom *const *input_elements = NULL;
+    CettaExprLen input_count = 0u;
+    if (!ready_input || petta_semantics_is_open_cons_value(ready_input) ||
+        !atom_sequence_view(ready_input, &input_elements, &input_count))
+        return false;
+    ready_input = atom_sequence_like(arena, NULL, input_elements, input_count);
+    Atom *target_value = bindings_apply_if_vars(environment, arena,
+        body->expr.elems[CETTA_COLLECTION_INGRESS_DESTINATION]);
+    target_value = target_value ? resolve_registry_refs(arena, target_value) : NULL;
+    Space *target = target_value ? resolve_registry_space_payload(g_registry, target_value) : NULL;
+    /* Resolving a ready capability does not run a destination computation
+     * before the source. Views and non-native publication keep their route. */
+    if (!target || target->overlay_base || space_has_dependencies(target) ||
+        target->match_backend.kind != SPACE_ENGINE_NATIVE ||
+        target->kind != SPACE_KIND_ATOM || !target->native.universe ||
+        !target->native.universe->persistent_arena ||
+        target->native.universe->persistent_arena == arena)
+        return false;
+    uint64_t epoch = target->native.universe->storage_epoch;
+    EvalPrivateIngress ingress = {.target = target,
+        .storage = target->native.universe->persistent_arena, .flatten = flatten};
+    arena_init(&ingress.scratch);
+    arena_set_hashcons(&ingress.scratch, NULL);
+    ingress.origin = arena_mark(&ingress.scratch);
+    __attribute__((cleanup(petta_source_plan_scope_leave))) PettaSourcePlanScope source_scope = {0};
+    petta_source_plan_scope_enter(&source_scope, projection_plan, projection);
+    Atom *completed = NULL;
+    PreparedFoldResult pulled = prepared_unary_collection_single_result(
+        space, arena, ready_input, item_binder, projection, environment, owner->fuel,
+        PREPARED_UNARY_VISIT_VALUES, true, NULL, &completed, eval_private_ingress_batch, &ingress);
+    bool handled = false;
+    if (pulled == PREPARED_FOLD_INTERRUPTED) {
+        *result = cetta_call_interrupted();
+        handled = true;
+    } else if (pulled == PREPARED_FOLD_VALUE &&
+               target->native.universe->storage_epoch == epoch) {
+        /* This is the first destination mutation. The native data-only batch
+         * publishes its occurrence length only after its storage is ready. */
+        if (space_add_atom_ids_batch(target, ingress.ids, ingress.length)) {
+            space_execution_analysis_note_mutation(target);
+            *result = cetta_call_completed_value(atom_unit(arena));
+            const char *debug = getenv("CETTA_COLLECTION_INGRESS_DEBUG");
+            if (debug && *debug && strcmp(debug, "0"))
+                fprintf(stderr, "collection-ingress committed rows=%zu\n", ingress.length);
+        } else {
+            *result = cetta_call_raised(space_term_universe_or_symbol_error(
+                arena, body, target, "AddAtomsFailed"));
+        }
+        handled = true;
+    }
+    free(ingress.ids);
+    arena_free(&ingress.scratch);
+    return handled;
+}
+
+static bool petta_eval_preserve_collection_observer(
+    void *context, Atom *expression, const PettaPlanNode *plan) {
+    (void)context;
+    if (!expression || expression->kind != ATOM_EXPR || expression->expr.len != 4u ||
+        !plan || plan->control != PETTA_PLAN_CONTROL_LET ||
+        expression->expr.elems[1]->kind != ATOM_VAR)
+        return false;
+    Atom *producer = expression->expr.elems[2], *body = expression->expr.elems[3];
+    if (!producer || producer->kind != ATOM_EXPR ||
+        (!expr_head_is_id(producer, g_builtin_syms.map_atom) &&
+         !expr_head_is_id(producer, g_builtin_syms.foldl_atom)) ||
+        !body || body->kind != ATOM_EXPR ||
+        expr_nargs(body) != CETTA_COLLECTION_INGRESS_ARITY ||
+        !atom_is_symbol(body->expr.elems[0], CETTA_COLLECTION_INGRESS_HEAD))
+        return false;
+    return atom_eq(body->expr.elems[CETTA_COLLECTION_INGRESS_COLLECTION],
+                   expression->expr.elems[1]);
 }
 
 static bool petta_eval_machine_named_state(
@@ -46039,6 +46351,8 @@ static PettaMachineHost petta_eval_machine_host(
             petta_eval_machine_filter_single_result,
         .pull_collection_single_result =
             petta_eval_machine_pull_collection_single_result,
+        .append_private_collection =
+            petta_eval_machine_append_private_collection,
         .named_state = petta_eval_machine_named_state,
         .admit_ground_atom = petta_eval_machine_admit_ground_atom,
         .prepare_call = g_he_shared_execution
@@ -49649,6 +49963,8 @@ static CettaOpenEquationHost petta_eval_open_compile_host(
         .retains_variable_identity = eval_current_pattern_module_enabled()
             ? petta_eval_open_retains_variable_identity : NULL,
         .count_fusion = count_fusion,
+        .preserve_collection_observer = language == CETTA_LANGUAGE_PETTA
+            ? petta_eval_preserve_collection_observer : NULL,
         .reify_head = reify_head,
         .bounded_collections = language == CETTA_LANGUAGE_PETTA,
         .evaluates_instances = language == CETTA_LANGUAGE_HE,

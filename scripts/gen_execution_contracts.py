@@ -633,8 +633,9 @@ class Spec:
         self.prepared_intrinsic_heads: list[
             tuple[str, str, int, str, str]
         ] = []
+        self.prepared_intrinsic_scopes: list[tuple[str, int, tuple[str, ...]]] = []
         for entry in entries(native, "prepared-pure-intrinsic-head"):
-            if len(entry) != 5:
+            if len(entry) not in (5, 6):
                 raise SpecError(
                     f"malformed prepared-pure-intrinsic-head: "
                     f"{sexpr(entry)}")
@@ -660,6 +661,16 @@ class Spec:
                 raise SpecError(
                     f"prepared-pure intrinsic head {name} names undeclared "
                     f"instruction {instruction}")
+            if len(entry) == 6:
+                scope = entry[5]
+                if not isinstance(scope, list) or len(scope) < 2 or scope[0] != "dialects":
+                    raise SpecError("intrinsic scope must name nonempty dialects")
+                dialects = tuple(atom_text(value, "intrinsic dialect") for value in scope[1:])
+                if (not set(dialects) <= {"he", "petta", "prime"} or
+                        len(dialects) != len(set(dialects))):
+                    raise SpecError("intrinsic dialects must be unique known language names")
+                self.prepared_intrinsic_scopes.append(
+                    (symbol_fields[name], int(arity_text), dialects))
             if (instruction == "deconstruct-nonempty-expression" and
                     int(arity_text) != 1):
                 raise SpecError(
@@ -1397,6 +1408,14 @@ def render_header(spec: Spec) -> str:
         for _, field, arity, discipline, instruction
         in spec.prepared_intrinsic_heads
     )
+    prepared_intrinsic_scope_rows = " \\\n".join(
+        f"    X({field}, {arity}u, " + " | ".join(
+            f"CETTA_GSLT_INTRINSIC_DIALECT_{c_enum(dialect)}" for dialect in dialects) + ")"
+        for field, arity, dialects in spec.prepared_intrinsic_scopes
+    )
+    prepared_intrinsic_scope_macro = "#define CETTA_GSLT_PREPARED_PURE_INTRINSIC_SCOPE_ROWS(X)"
+    if prepared_intrinsic_scope_rows:
+        prepared_intrinsic_scope_macro += " \\\n" + prepared_intrinsic_scope_rows
     sequence_value_constructor_rows = " \\\n".join(
         f"    X({field}, {arity_mask}u, {mask}u)"
         for _, field, arity_mask, mask in spec.sequence_value_constructor_heads
@@ -1752,6 +1771,14 @@ typedef enum {{
 typedef enum {{
 {prepared_intrinsic_operand_constants}
 }} CettaGsltPreparedPureIntrinsicOperandDiscipline;
+
+typedef enum {{
+    CETTA_GSLT_INTRINSIC_DIALECT_HE = 1u,
+    CETTA_GSLT_INTRINSIC_DIALECT_PETTA = 2u,
+    CETTA_GSLT_INTRINSIC_DIALECT_PRIME = 4u,
+}} CettaGsltPreparedPureIntrinsicDialect;
+
+{prepared_intrinsic_scope_macro}
 
 #define CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(X) \
 {prepared_intrinsic_head_rows}

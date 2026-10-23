@@ -104,6 +104,64 @@ static void support_duplicates(void) {
     check(cetta_tensor_convert(t,CETTA_TENSOR_DENSE,&zero)==CETTA_TENSOR_SHAPE);
     cetta_tensor_release(t);
 }
+static void compressed_observers(void) {
+    const size_t coordinates[]={0,1,2,3,5,6,7,12,17}, shape[]={3,6}, n=9;
+    const double values[]={1e16,1,-1e16,1,5,2,-0.0,3,4};
+    for(unsigned layout=CETTA_TENSOR_CSR;layout<=CETTA_TENSOR_CSC;layout++) {
+        CettaTensor *coo=NULL,*packed=NULL,*keys=NULL,*data=NULL,*copy=NULL;
+        CettaTensor *normalized=NULL,*reference_normal=NULL,*cast=NULL,*reference_cast=NULL;
+        CettaTensor *query=NULL,*products[2]={NULL,NULL},*product=NULL;
+        CettaTensorScalar sums[2], observed;
+        ok(cetta_tensor_coo(CETTA_TENSOR_F64,shape,2,coordinates,values,n,CETTA_TENSOR_REJECT,&coo));
+        uint64_t hash=cetta_tensor_hash(coo);
+        size_t coo_bytes=cetta_tensor_retained_bytes(coo);
+        for(unsigned schedule=0;schedule<2;schedule++)
+            ok(cetta_tensor_sum(coo,(CettaTensorSchedule)schedule,&sums[schedule]));
+        ok(cetta_tensor_normalize_rows(coo,&reference_normal));
+        ok(cetta_tensor_cast(coo,CETTA_TENSOR_F32,CETTA_TENSOR_CAST_NEAREST,&reference_cast));
+        ok(cetta_tensor_new(CETTA_TENSOR_F64,(size_t[]){6},1,
+            (double[]){1,1,1,1,1,1},48,&query));
+        for(unsigned schedule=0;schedule<2;schedule++)
+            ok(cetta_tensor_matvec(coo,query,(CettaTensorSchedule)schedule,&products[schedule]));
+        check(!cetta_tensor_equal(products[0],products[1]));
+        ok(cetta_tensor_convert(coo,(CettaTensorLayout)layout,&packed));
+        cetta_tensor_release(coo); /* The compressed owner must stand alone. */
+        size_t segments=shape[layout==CETTA_TENSOR_CSR ? 0 : 1]+1;
+        size_t extra=segments*sizeof(size_t)+(layout==CETTA_TENSOR_CSC ? n*sizeof(size_t) : 0);
+        check(cetta_tensor_retained_bytes(packed)==coo_bytes+extra);
+        check(cetta_tensor_hash(packed)==hash);
+        ok(cetta_tensor_entries(packed,&keys,&data));
+        for(size_t i=0;i<n;i++) {
+            bool present;
+            ok(cetta_tensor_get(keys,i,&present,&observed));
+            check(present && observed.index==coordinates[i]);
+            ok(cetta_tensor_get(data,i,&present,&observed));
+            check(present && memcmp(&observed.f64,&values[i],8)==0);
+        }
+        for(unsigned schedule=0;schedule<2;schedule++) {
+            ok(cetta_tensor_sum(packed,(CettaTensorSchedule)schedule,&observed));
+            check(memcmp(&observed.f64,&sums[schedule].f64,8)==0);
+            ok(cetta_tensor_matvec(packed,query,(CettaTensorSchedule)schedule,&product));
+            check(cetta_tensor_equal(product,products[schedule]));
+            cetta_tensor_release(product); cetta_tensor_release(products[schedule]);
+        }
+        cetta_tensor_release(query);
+        ok(cetta_tensor_copy(packed,&copy));
+        check(cetta_tensor_equal(packed,copy)); cetta_tensor_release(copy);
+        ok(cetta_tensor_reshape(packed,(size_t[]){18},1,&copy));
+        bool present;
+        ok(cetta_tensor_get(copy,7,&present,&observed)); check(present && signbit(observed.f64));
+        ok(cetta_tensor_get(copy,8,&present,&observed)); check(!present);
+        cetta_tensor_release(copy);
+        ok(cetta_tensor_normalize_rows(packed,&normalized));
+        check(cetta_tensor_equal(normalized,reference_normal));
+        ok(cetta_tensor_cast(packed,CETTA_TENSOR_F32,CETTA_TENSOR_CAST_NEAREST,&cast));
+        check(cetta_tensor_equal(cast,reference_cast));
+        cetta_tensor_release(cast); cetta_tensor_release(reference_cast);
+        cetta_tensor_release(normalized); cetta_tensor_release(reference_normal);
+        cetta_tensor_release(data); cetta_tensor_release(keys); cetta_tensor_release(packed);
+    }
+}
 static uint32_t random_word=83;
 static uint32_t rng(void) { random_word=random_word*1664525u+1013904223u; return random_word; }
 static void kernels(void) {
@@ -342,7 +400,7 @@ static void owned_atoms(void) {
 }
 int main(void) {
     SymbolTable symbols; symbol_table_init(&symbols); symbol_table_init_builtins(&symbols,&g_builtin_syms); g_symbols=&symbols;
-    dense_views(); support_duplicates(); kernels(); normalized_and_ordered(); dense_schedules(); casts(); packed_observers(); owned_atoms();
+    dense_views(); support_duplicates(); compressed_observers(); kernels(); normalized_and_ordered(); dense_schedules(); casts(); packed_observers(); owned_atoms();
     symbol_table_free(&symbols); g_symbols=NULL;
     printf("TensorNative %u 0\n",checks); return 0;
 }

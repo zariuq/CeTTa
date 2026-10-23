@@ -68,6 +68,11 @@ Module TensorDescriptors {
       "FiniteEnabledDescending". |- "FiniteEnabledDescending" : Descriptor;
       "CoordinateAscendingTies". |- "CoordinateAscendingTies" : Descriptor;
       "CTN1". |- "CTN1" : Descriptor;
+      "Signed64Atom". |- "Signed64Atom" : Descriptor;
+      "Unsigned8Atom". |- "Unsigned8Atom" : Descriptor;
+      "Float32Atom". |- "Float32Atom" : Descriptor;
+      "Float64Atom". |- "Float64Atom" : Descriptor;
+      "Unsigned64Atom". |- "Unsigned64Atom" : Descriptor;
     } Equations {
       (TensorDType (i64)) == (ScalarLayout (Code1) (Bytes8) (Signed) (Precision64));
       (TensorDType (f64)) == (ScalarLayout (Code2) (Bytes8) (Floating) (Precision53));
@@ -75,6 +80,11 @@ Module TensorDescriptors {
       (TensorDType (f32)) == (ScalarLayout (Code4) (Bytes4) (Floating) (Precision24));
       (TensorDType (bool)) == (ScalarLayout (Code5) (Bytes1) (Boolean) (Precision1));
       (TensorDType (index)) == (ScalarLayout (Code6) (Bytes8) (Unsigned) (Precision64));
+      (TensorCallbackInput (i64)) == (ScalarAtomInput (Signed64Atom));
+      (TensorCallbackInput (f64)) == (ScalarAtomInput (Float64Atom));
+      (TensorCallbackInput (u8)) == (ScalarAtomInput (Unsigned8Atom));
+      (TensorCallbackInput (f32)) == (ScalarAtomInput (Float32Atom));
+      (TensorCallbackInput (index)) == (ScalarAtomInput (Unsigned64Atom));
       (TensorLayout (dense)) == (LayoutPolicy (AllPresent) (RowMajorOrStrided));
       (TensorLayout (coo)) == (LayoutPolicy (ExplicitSupport) (CoordinateAscending));
       (TensorLayout (csr)) == (LayoutPolicy (ExplicitSupport) (RowCompressed));

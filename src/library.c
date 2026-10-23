@@ -5368,8 +5368,12 @@ static Atom *cetta_library_dispatch_str(Arena *a, Atom *head,
     }
     CettaStrRefusal refusal = {0};
     Atom *result = count == native->arity ? native->fn(a, operands, &refusal) : NULL;
-    if (result)
+    if (result) {
+        /* A successful string operation has produced data, even when that
+         * data is a sequence or a symbol naming an executable expression. */
+        *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
         return result;
+    }
     size_t public_len = strlen(name) + 5u;
     char *public_name = arena_alloc(a, public_len);
     snprintf(public_name, public_len, "str:%s", name);
@@ -11729,6 +11733,7 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out) {
     if (ctx && cetta_group_sum_call(a, head, args, nargs, out)) return true;
+    if (ctx && cetta_key_factorize_call(space, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_TENSOR) &&
         cetta_tensor_call(ctx, space, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_POSTINGS) &&

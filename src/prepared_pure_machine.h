@@ -20,6 +20,9 @@ typedef struct CettaPreparedPureProgram CettaPreparedPureProgram;
  * or %Undefined%), which the machine checks where HE casts them. */
 bool cetta_prepared_pure_call_policy_supported(
     Space *space, SymbolId head, CettaExprLen arity);
+/* Authored dialect restrictions are shared by source admission, lowering
+ * and execution. Unscoped intrinsics retain their existing policy. */
+bool cetta_prepared_pure_intrinsic_scope_supported(SymbolId head, CettaExprLen arity);
 typedef Atom *(*CettaPreparedPureBooleanValue)(Arena *arena, bool value);
 typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);

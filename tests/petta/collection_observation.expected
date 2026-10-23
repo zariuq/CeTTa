@@ -1,0 +1,6 @@
+true
+(Occurrences (7 7 9) 3 (7 9))
+(Snapshot (a) (a b))
+(Evidence ((k 4)) ((k 2)))
+(Schedule 0.0 1.0)
+(Summary 2 25)
