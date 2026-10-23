@@ -20,6 +20,7 @@
 #include "library_io.h"
 #include "library_proc.h"
 #include "proc_child.h"
+#include "proc_capture.h"
 #include "library_fs.h"
 #include "library_postings.h"
 #include "library_tensor.h"
@@ -2632,19 +2633,16 @@ static bool library_git_captured(char *argv[], char *errbuf,
                 : "git-module! failed to spawn git");
         return false;
     }
-    if (errbuf_sz > 0) errbuf[0] = '\0';
-    size_t used = 0;
-    ssize_t got = 0;
-    while ((got = read(output, errbuf + used,
-                       errbuf_sz > used + 1 ? errbuf_sz - used - 1 : 0)) > 0) {
-        used += (size_t)got;
-        if (errbuf_sz <= used + 1) break;
-    }
+    bool output_ok = cetta_proc_capture_prefix_and_drain(output, errbuf, errbuf_sz);
     close(output);
-    if (errbuf_sz > 0) errbuf[used] = '\0';
     if (!library_reap_captured(pid, report, status_out)) {
         if (errbuf_sz > 0)
             snprintf(errbuf, errbuf_sz, "git-module! failed to wait for git");
+        return false;
+    }
+    if (!output_ok) {
+        if (errbuf_sz > 0)
+            snprintf(errbuf, errbuf_sz, "git-module! failed to read git output");
         return false;
     }
     return true;
@@ -2692,27 +2690,19 @@ static bool run_petta_build_command(const char *repo_path,
         return false;
     }
 
-    if (errbuf_sz > 0)
-        errbuf[0] = '\0';
-    size_t used = 0u;
-    ssize_t got;
-    while ((got = read(
-                output, errbuf + used,
-                errbuf_sz > used + 1u
-                    ? errbuf_sz - used - 1u : 0u)) > 0) {
-        used += (size_t)got;
-        if (errbuf_sz <= used + 1u)
-            break;
-    }
+    bool output_ok = cetta_proc_capture_prefix_and_drain(output, errbuf, errbuf_sz);
     close(output);
-    if (errbuf_sz > 0)
-        errbuf[used] = '\0';
 
     int status = 0;
     if (!library_reap_captured(pid, report, &status)) {
         if (errbuf_sz > 0)
             snprintf(errbuf, errbuf_sz,
                      "git-import! failed to wait for build");
+        return false;
+    }
+    if (!output_ok) {
+        if (errbuf_sz > 0)
+            snprintf(errbuf, errbuf_sz, "git-import! failed to read build output");
         return false;
     }
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0)

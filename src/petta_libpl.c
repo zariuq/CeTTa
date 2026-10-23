@@ -16,6 +16,7 @@
 
 #include <SWI-Prolog.h>
 
+#include <assert.h>
 #include <limits.h>
 #include <pthread.h>
 #include <signal.h>
@@ -189,9 +190,9 @@ typedef struct {
     /* A retained client can recognize an unbound variable outside the small
      * argument map. The callback reads its owned identity, never its spelling. */
     Atom *(*native_variable)(void *context, Arena *arena, term_t variable);
-    /* Convert a term that is not a finite tree to its graph
-     * (petta_libpl_graph_from_term); set only to convert a solution again
-     * after it failed as a tree, so the tree path never tests for cycles. */
+    /* Retry a solution as graphs after tree conversion failed. This selects
+     * a fallback representation, independently of an acyclicity certificate
+     * acquired during one non-mutating structural read. */
     bool cyclic_graphs;
     /* The call's delayed goals, when its caller keeps them
      * (petta_libpl_delay_collect). */
@@ -207,6 +208,13 @@ typedef struct {
 } PettaLibplBackVar;
 
 typedef struct {
+    atom_t identity;
+    uint64_t runtime;
+    uint32_t arena;
+    Atom *value;
+} PettaLibplBackReference;
+
+typedef struct {
     PettaLibplBackVar *items;
     size_t len;
     size_t cap;
@@ -216,6 +224,12 @@ typedef struct {
     size_t *known;
     size_t known_len;
     bool known_ready;
+    /* One opaque identity map for this read's bindings, value and delays.
+     * The owning runtime's PL_record retains each identity. No entry crosses
+     * a producer step or grants another runtime or arena ownership. */
+    PettaLibplBackReference *references;
+    size_t reference_len;
+    size_t reference_cap;
 } PettaLibplBackVarMap;
 
 static void petta_libpl_var_map_free(PettaLibplVarMap *variables) {
@@ -224,6 +238,7 @@ static void petta_libpl_var_map_free(PettaLibplVarMap *variables) {
 }
 
 static void petta_libpl_back_map_free(PettaLibplBackVarMap *variables) {
+    free(variables->references);
     free(variables->known);
     free(variables->items);
 }
@@ -1232,6 +1247,45 @@ static Atom *petta_libpl_plref_atom(
     if (!result)
         (void)petta_libpl_plref_release(runtime, &handle);
     return result;
+}
+
+/* Decoding one opaque leaf repeatedly must not invent distinct native
+ * identities for the same answer. A fresh producer answer has a fresh map;
+ * registry release and stale-handle checks remain the runtime's protocol. */
+static Atom *petta_libpl_back_reference(
+    CettaLibPrologRuntime *runtime, Arena *arena, term_t term,
+    PettaLibplBackVarMap *back) {
+    atom_t identity = 0;
+    if (!runtime || !arena || !back)
+        return NULL;
+    if (!PL_get_atom(term, &identity))
+        return petta_libpl_plref_atom(runtime, arena, term);
+    for (size_t index = 0u; index < back->reference_len; index++) {
+        PettaLibplBackReference *entry = &back->references[index];
+        if (entry->identity == identity && entry->runtime == runtime->instance_id &&
+            entry->arena == arena->identity)
+            return entry->value;
+    }
+    if (back->reference_len == back->reference_cap) {
+        size_t next = back->reference_cap ? back->reference_cap * 2u : 4u;
+        if (next <= back->reference_cap ||
+            next > SIZE_MAX / sizeof(*back->references))
+            return NULL;
+        PettaLibplBackReference *grown = cetta_realloc(
+            back->references, next * sizeof(*grown));
+        if (!grown)
+            return NULL;
+        back->references = grown;
+        back->reference_cap = next;
+    }
+    Atom *value = petta_libpl_plref_atom(runtime, arena, term);
+    if (!value)
+        return NULL;
+    back->references[back->reference_len++] = (PettaLibplBackReference){
+        .identity = identity, .runtime = runtime->instance_id,
+        .arena = arena->identity, .value = value,
+    };
+    return value;
 }
 
 typedef struct {
@@ -2822,11 +2876,33 @@ static Atom *petta_libpl_back_variable(
     return variable;
 }
 
+enum {
+    PETTA_LIBPL_READ_VISIBLE_COMPOUNDS = 1u << 0,
+    /* Evidence for this term and its reachable children, only during the
+     * current non-mutating decode. It is never retained across a query step.
+     * The variable callback reads attributes and allocates native atoms;
+     * neither it nor the structural getters bind the source terms. */
+    PETTA_LIBPL_READ_ACYCLIC = 1u << 1,
+};
+
+static Atom *petta_libpl_from_term_read(
+    Arena *arena, term_t term,
+    PettaLibplVarMap *variables,
+    PettaLibplBackVarMap *unknown,
+    unsigned read_mode, uint32_t depth);
+
 static Atom *petta_libpl_from_term_mode(
     Arena *arena, term_t term,
     PettaLibplVarMap *variables,
     PettaLibplBackVarMap *unknown,
-    bool visible_compounds, uint32_t depth);
+    bool visible_compounds, uint32_t depth) {
+    /* Every independent entry starts without a structural certificate,
+     * including a new answer or a cyclic-graph retry. Presentation policy
+     * and the local read evidence occupy the existing mode argument. */
+    return petta_libpl_from_term_read(
+        arena, term, variables, unknown,
+        visible_compounds ? PETTA_LIBPL_READ_VISIBLE_COMPOUNDS : 0u, depth);
+}
 
 static Atom *petta_libpl_from_term(
     Arena *arena, term_t term,
@@ -2842,11 +2918,14 @@ static Atom *petta_libpl_from_list(
     Arena *arena, term_t term,
     PettaLibplVarMap *variables,
     PettaLibplBackVarMap *unknown,
-    bool visible_compounds, uint32_t depth) {
+    unsigned read_mode, uint32_t depth) {
+    bool subtree_acyclic = (read_mode & PETTA_LIBPL_READ_ACYCLIC) != 0u;
     if (!arena || !term || !variables || !unknown ||
-        depth > 1024u || !PL_is_acyclic(term)) {
+        depth > 1024u || (!subtree_acyclic && !PL_is_acyclic(term))) {
         return NULL;
     }
+    /* The successful whole-list check also covers nested heads. Rechecking
+     * every nested singleton list would walk the same graph quadratically. */
 
     term_t cursor = PL_new_term_ref();
     term_t head = PL_new_term_ref();
@@ -2880,9 +2959,9 @@ static Atom *petta_libpl_from_list(
                       sizeof(*items) * next);
             capacity = next;
         }
-        Atom *item = petta_libpl_from_term_mode(
+        Atom *item = petta_libpl_from_term_read(
             arena, head, variables, unknown,
-            visible_compounds, depth + 1u);
+            read_mode | PETTA_LIBPL_READ_ACYCLIC, depth + 1u);
         if (!item) {
             free(items);
             return NULL;
@@ -3039,6 +3118,12 @@ static uint32_t petta_libpl_graph_node(PettaLibplGraphBuild *build,
                 node = CETTA_TERM_GRAPH_NO_NODE;
         }
         return node;
+    }
+    if (type == PL_BLOB) {
+        Atom *leaf = petta_libpl_back_reference(
+            g_petta_libpl_active_runtime, build->arena, term, build->unknown);
+        return leaf ? term_graph_add_leaf(build->graph, leaf)
+                    : CETTA_TERM_GRAPH_NO_NODE;
     }
     PettaLibplVarMap variables = {0};
     PettaLibplBackVarMap unknown = {0};
@@ -3281,15 +3366,22 @@ static SymbolId petta_libpl_atom_term_symbol(
     return symbol;
 }
 
-static Atom *petta_libpl_from_term_mode(
+static Atom *petta_libpl_from_term_read(
     Arena *arena, term_t term,
     PettaLibplVarMap *variables,
     PettaLibplBackVarMap *unknown,
-    bool visible_compounds, uint32_t depth) {
+    unsigned read_mode, uint32_t depth) {
+    bool subtree_acyclic = (read_mode & PETTA_LIBPL_READ_ACYCLIC) != 0u;
+    bool visible_compounds = (read_mode & PETTA_LIBPL_READ_VISIBLE_COMPOUNDS) != 0u;
     if (!arena || !term || !variables || !unknown ||
         depth > 1024u) {
         return NULL;
     }
+#if defined(CETTA_PROVENANCE_ASSERT) && CETTA_PROVENANCE_ASSERT
+    /* Checked builds independently validate inherited evidence before use.
+     * This diagnostic deliberately repeats work erased in ordinary builds. */
+    assert(!subtree_acyclic || PL_is_acyclic(term));
+#endif
 
     int type = PL_term_type(term);
     if (type == PL_VARIABLE) {
@@ -3362,14 +3454,17 @@ static Atom *petta_libpl_from_term_mode(
         return symbol == SYMBOL_ID_NONE
             ? NULL : atom_symbol_id(arena, symbol);
     }
-    if (variables->cyclic_graphs &&
-        (type == PL_TERM || PL_is_pair(term)) && !PL_is_acyclic(term))
-        return petta_libpl_graph_from_term(arena, term, variables, unknown,
-                                           depth);
+    if (!subtree_acyclic && variables->cyclic_graphs &&
+        (type == PL_TERM || PL_is_pair(term))) {
+        if (!PL_is_acyclic(term))
+            return petta_libpl_graph_from_term(
+                arena, term, variables, unknown, depth);
+        read_mode |= PETTA_LIBPL_READ_ACYCLIC;
+    }
     if (PL_is_list(term)) {
         return petta_libpl_from_list(
             arena, term, variables, unknown,
-            visible_compounds, depth + 1u);
+            read_mode, depth + 1u);
     }
     if (PL_is_pair(term)) {
         /*
@@ -3385,12 +3480,12 @@ static Atom *petta_libpl_from_term_mode(
             return NULL;
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PETTA_LIBPL_STRUCTURAL_LIST_CELL_FROM_PROLOG);
-        Atom *head_atom = petta_libpl_from_term_mode(
+        Atom *head_atom = petta_libpl_from_term_read(
             arena, head, variables, unknown,
-            visible_compounds, depth + 1u);
-        Atom *tail_atom = petta_libpl_from_term_mode(
+            read_mode, depth + 1u);
+        Atom *tail_atom = petta_libpl_from_term_read(
             arena, tail, variables, unknown,
-            visible_compounds, depth + 1u);
+            read_mode, depth + 1u);
         if (!head_atom || !tail_atom)
             return NULL;
         return petta_semantics_open_cons_value(
@@ -3402,8 +3497,8 @@ static Atom *petta_libpl_from_term_mode(
          * clause references, stream handles, other blobs — crosses as a
          * recorded opaque handle rather than failing the whole call.
          */
-        return petta_libpl_plref_atom(
-            g_petta_libpl_active_runtime, arena, term);
+        return petta_libpl_back_reference(
+            g_petta_libpl_active_runtime, arena, term, unknown);
     }
 
     atom_t name = 0;
@@ -3441,10 +3536,9 @@ static Atom *petta_libpl_from_term_mode(
         ok = PL_get_arg_sz(
                  index + 1u, term, argument) &&
              (items[index + 1u] =
-                  petta_libpl_from_term_mode(
+                  petta_libpl_from_term_read(
                       arena, argument, variables,
-                      unknown, visible_compounds,
-                      depth + 1u));
+                      unknown, read_mode, depth + 1u));
     }
     Atom *body = ok
         ? atom_expr(
@@ -3884,6 +3978,46 @@ static bool petta_libpl_solution_bindings(
     return ok;
 }
 
+/* This summary is used only after the read's resource-creation history is
+ * validated. Logical variables are immutable identities from the same read
+ * map; borrowing their syntax neither captures nor freezes later bindings. */
+static bool petta_libpl_read_image_shareable(const Atom *value) {
+    const uint32_t flags = ATOM_FLAG_HAS_REGISTRY_REFS |
+        ATOM_FLAG_HAS_IDENTITY_GROUNDED |
+        ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE | ATOM_FLAG_HE_EVALUATED;
+    const uint32_t facts = ATOM_STRUCTURAL_FACTS_VALID |
+        ATOM_STRUCTURAL_HAS_INTERNAL_TAG | ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID |
+        ATOM_STRUCTURAL_HAS_NAN | ATOM_STRUCTURAL_HAS_RATIONAL |
+        ATOM_STRUCTURAL_HAS_HE_EVALUATED;
+    return value && (value->flags & flags) == 0u &&
+        (value->structural_facts & facts) == ATOM_STRUCTURAL_FACTS_VALID;
+}
+
+/* The binding environment already owns the decoded images. A returned
+ * value may borrow one only during this same source read and receiver arena.
+ * Resource creation is checked separately: opaque foreign handles currently
+ * have ordinary structural syntax and cannot be excluded by Atom flags alone. */
+static Atom *petta_libpl_solution_image(
+    term_t result_term, PettaLibplVarMap *variables, Bindings *bindings,
+    CettaLibPrologRuntime *runtime, uint64_t generation) {
+    if (!result_term || !runtime || runtime != g_petta_libpl_active_runtime ||
+        generation != runtime->plref_next_generation ||
+        !eval_current_language_id ||
+        eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        !PL_is_compound(result_term))
+        return NULL;
+    for (size_t index = 0u; index < variables->len; index++) {
+        PettaLibplVar *variable = &variables->items[index];
+        if (!PL_same_compound(variable->term, result_term))
+            continue;
+        BindingValue value = bindings_lookup_value_id(bindings, variable->id);
+        return binding_value_kind(value) == BINDING_VALUE_MATERIALIZED &&
+            petta_libpl_read_image_shareable(value.skeleton)
+                ? value.skeleton : NULL;
+    }
+    return NULL;
+}
+
 static bool petta_libpl_emit_solution(
     Arena *arena, term_t result_term,
     Atom *constant_result,
@@ -3896,17 +4030,29 @@ static bool petta_libpl_emit_solution(
     /* One map from the solution's own unbound variables to fresh ones, for
      * its bindings, its value and its delayed goals alike. */
     PettaLibplBackVarMap unknown = {0};
+    CettaLibPrologRuntime *runtime = g_petta_libpl_active_runtime;
+    uint64_t generation = runtime ? runtime->plref_next_generation : 0u;
     Bindings bindings;
     if (!petta_libpl_solution_bindings(
             arena, variables, &unknown, &bindings)) {
         petta_libpl_back_map_free(&unknown);
         return false;
     }
-    Atom *result = constant_result
-        ? constant_result
-        : petta_libpl_from_term(
-              arena, result_term, variables,
-              &unknown, 0u);
+    Atom *result = constant_result;
+    if (!result) {
+        result = petta_libpl_solution_image(
+            result_term, variables, &bindings, runtime, generation);
+#if defined(CETTA_PROVENANCE_ASSERT) && CETTA_PROVENANCE_ASSERT
+        if (result) {
+            Atom *independent = petta_libpl_from_term(
+                arena, result_term, variables, &unknown, 0u);
+            assert(independent && atom_eq(result, independent));
+        }
+#endif
+    }
+    if (!result)
+        result = petta_libpl_from_term(
+            arena, result_term, variables, &unknown, 0u);
     Atom *delayed = NULL;
     bool read = result &&
         (!variables->delay ||
