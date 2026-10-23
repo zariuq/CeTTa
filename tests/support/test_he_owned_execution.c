@@ -285,8 +285,8 @@ static void collected_bindings(void) {
     Atom *body = parse(&f.scratch, "(let $answer (collapse (down 3000)) (Held $held $held))");
     Atom *query = atom_expr2(&f.scratch, atom_symbol(&f.scratch, "collapse"), body);
     Atom *variable = body->expr.elems[3]->expr.elems[1];
-    check(variable->kind == ATOM_VAR && variable->var_id ==
-        body->expr.elems[3]->expr.elems[2]->var_id, "query uses one caller variable");
+    check(variable->kind == ATOM_VAR && var_id_eq(variable->var_id,
+        body->expr.elems[3]->expr.elems[2]->var_id), "query uses one caller variable");
     Bindings bindings;
     bindings_init(&bindings);
     check(bindings_add_var(&bindings, variable, held), "input logical binding");
@@ -1285,6 +1285,208 @@ static void let_function_boundary(void) {
     checking_case = "owned execution";
 }
 
+typedef struct {
+    unsigned producer, consumer, keys, atomic_calls, releases, admissions;
+} ReleaseProbeCounts;
+
+typedef struct {
+    ReleaseProbeCounts *counts;
+    Atom *answer;
+    void *keys[3], *atomic_payload;
+    unsigned length;
+} ReleaseProbe;
+
+static ReleaseProbe *release_probe_new(ReleaseProbeCounts *counts, Atom *answer) {
+    ReleaseProbe *probe = calloc(1u, sizeof(*probe));
+    check(probe != NULL, "allocate release probe owner");
+    probe->counts = counts; probe->answer = answer; probe->length = 3u;
+    for (unsigned i = 0u; i < probe->length; i++) {
+        probe->keys[i] = malloc(i + 1u);
+        check(probe->keys[i] != NULL, "allocate release probe child");
+    }
+    probe->atomic_payload = malloc(7u);
+    check(probe->atomic_payload != NULL, "allocate atomic release child");
+    return probe;
+}
+
+static CettaOwnedReleaseStep release_probe_poll(void *raw, uint64_t allowance,
+    bool allow_atomic, uint64_t *used) {
+    ReleaseProbe *probe = raw;
+    uint64_t spent = 0u;
+    while (spent < allowance) {
+        if (probe->length) {
+            unsigned last = --probe->length;
+            void *child = probe->keys[last]; probe->keys[last] = NULL;
+            check(child != NULL, "release actual child exactly once");
+            free(child); probe->counts->keys++;
+        } else if (probe->atomic_payload) {
+            if (!allow_atomic) {
+                if (used) *used = spent;
+                return CETTA_OWNED_RELEASE_ATOMIC;
+            }
+            free(probe->atomic_payload); probe->atomic_payload = NULL;
+            probe->counts->atomic_calls++;
+        } else break;
+        spent++;
+    }
+    if (used) *used = spent;
+    return probe->length || probe->atomic_payload
+        ? CETTA_OWNED_RELEASE_PENDING : CETTA_OWNED_RELEASE_COMPLETE;
+}
+
+static void release_probe_free(void *raw) {
+    ReleaseProbe *probe = raw;
+    while (release_probe_poll(probe, UINT64_MAX, true, NULL) !=
+        CETTA_OWNED_RELEASE_COMPLETE) {}
+    probe->counts->releases++;
+    free(probe);
+}
+
+static CettaOwnedExecutionStep release_probe_next(void *raw,
+    CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    ReleaseProbe *probe = raw;
+    probe->counts->producer++;
+    *returned = (CettaOwnedReturn){.outcome = cetta_call_completed_value(probe->answer)};
+    *completion = CETTA_EVAL_COMPLETE;
+    return CETTA_OWNED_EXECUTION_RETURN;
+}
+
+static bool release_probe_refuse(void *raw, const CettaOwnedReturn *returned) {
+    (void)returned;
+    ReleaseProbeCounts *counts = raw;
+    counts->consumer++;
+    return false;
+}
+static CettaOwnedTaskAdmission release_probe_admit(void *raw) {
+    ReleaseProbeCounts *counts=raw;counts->admissions++;
+    return CETTA_OWNED_TASK_ADMISSION_READY;
+}
+
+static void retained_task_release(void) {
+    Arena arena;arena_init_detached(&arena);
+    for (unsigned queued=0u;queued<2u;queued++) for (uint64_t grant=1u;grant<=17u;grant=grant==1u?2u:grant==2u?17u:18u) {
+        ReleaseProbeCounts counts={0},peer_counts={0};
+        CettaOwnedExecution source={0},peer_source={0};CettaOwnedTask task={0},peer={0};
+        cetta_owned_execution_init(&source,release_probe_new(&counts,atom_int(&arena,7)),
+            release_probe_next,release_probe_free);
+        check(cetta_owned_execution_set_release_poll(&source,release_probe_poll),"task installs actual child cleanup");
+        source.relocatable=true;
+        cetta_owned_execution_init(&peer_source,release_probe_new(&peer_counts,atom_int(&arena,9)),
+            release_probe_next,release_probe_free);peer_source.relocatable=true;
+        check(cetta_owned_task_init(&task,&source,release_probe_admit,release_probe_refuse,&counts) &&
+            cetta_owned_task_init(&peer,&peer_source,release_probe_admit,release_probe_refuse,&peer_counts),
+            "initialize independent task and peer owners");
+        CettaReadyQueue queue={.capacity=2u};
+        if (queued) check(cetta_ready_admit(&queue,&task.ready)==READY_ADMITTED,"queue retiring task");
+        check(cetta_ready_admit(&queue,&peer.ready)==READY_ADMITTED,"queue live peer");
+        check(cetta_owned_task_poll(&task,true).step==CETTA_OWNED_EXECUTION_PAUSED && task.execution.has_pending,
+            "task starts with a refused borrowed return");
+        CettaOwnedTask before;memcpy(&before,&task,sizeof(before));
+        CettaOwnedTaskAccount account={0};uint64_t used=99u;
+        check(cetta_owned_task_cancel_poll(&task,0u,true,&used,&account,NULL,NULL)==CETTA_OWNED_RELEASE_PENDING &&
+            !used && !memcmp(&before,&task,sizeof(before)) && !account.phase_count,
+            "zero task cleanup preserves membership, callback context and loan");
+        unsigned admissions=counts.admissions;
+        check(cetta_owned_task_cancel_poll(&task,1u,false,&used,&account,NULL,NULL)==CETTA_OWNED_RELEASE_PENDING &&
+            used==1u && account.retirements==queued && account.cleanup_polls==1u && account.cleanup_work==1u &&
+            account.phase_count==queued+1u && !account.phase_overflow && !task.ready.owner &&
+            task.execution.retiring && !task.execution.has_pending && queue.count==1u,
+            "first task cleanup separates producer membership retirement from paid cancellation");
+        if (queued) check(account.phases[0]==CETTA_OWNED_TASK_PHASE_RETIREMENT,"membership event precedes cleanup completion");
+        check(account.phases[queued]==CETTA_OWNED_TASK_PHASE_CLEANUP,"actual cleanup has its own event");
+        check(cetta_owned_task_visit(&queue,true).task==&peer && peer_counts.producer==1u && peer_counts.consumer==1u,
+            "live peer progresses while cancelled owner remains held");
+        check(cetta_owned_task_poll(&task,true).step==CETTA_OWNED_EXECUTION_INTERRUPTED &&
+            counts.admissions==admissions && counts.producer==1u && counts.consumer==1u,
+            "direct task polling cannot reenter cancelled production or delivery");
+        uint64_t total=1u;CettaOwnedReleaseStep status;
+        do {
+            status=cetta_owned_task_cancel_poll(&task,grant,false,&used,&account,NULL,NULL);
+            check(used<=grant && !account.retirements && account.cleanup_polls==1u &&
+                account.cleanup_work==used && !account.producer && !account.consumer && !account.admission,
+                "cleanup accounts actual used units without ordinary callbacks");
+            total+=used;
+        } while(status==CETTA_OWNED_RELEASE_PENDING);
+        check(status==CETTA_OWNED_RELEASE_ATOMIC && total==4u && counts.keys==3u &&
+            !counts.atomic_calls && !counts.releases && task.execution.computation,
+            "task retains its exact owner at the unadmitted atomic child");
+        check(cetta_owned_task_cancel_poll(&task,1u,true,&used,&account,NULL,NULL)==CETTA_OWNED_RELEASE_PENDING &&
+            used==1u && task.execution.release_ready && !counts.releases,"child completion retains wrapper");
+        check(cetta_owned_task_cancel_poll(&task,1u,false,&used,&account,NULL,NULL)==CETTA_OWNED_RELEASE_COMPLETE &&
+            used==1u && counts.releases==1u && !task.execution.computation,"task wrapper releases separately once");
+        check(cetta_owned_task_cancel_poll(&task,17u,true,&used,&account,NULL,NULL)==CETTA_OWNED_RELEASE_COMPLETE &&
+            !used && !account.cleanup_polls && !account.phase_count,"empty task emits no further cleanup request");
+        cetta_owned_task_cancel(&task);cetta_owned_task_cancel(&peer);
+        check(!queue.count && counts.releases==1u && peer_counts.releases==1u,"independent owners retire exactly once");
+    }
+    arena_free(&arena);
+    puts("PASS: retained task cleanup preserves zero grants, peer service and exact queue/request/work accounts");
+}
+
+static void retained_owner_release(void) {
+    Arena arena; arena_init_detached(&arena);
+    ReleaseProbeCounts counts = {0};
+    ReleaseProbe *probe = release_probe_new(&counts, atom_int(&arena, 7));
+    CettaOwnedExecution execution, destination = {0};
+    cetta_owned_execution_init(&execution, probe, release_probe_next, release_probe_free);
+    execution.relocatable = true;
+    check(cetta_owned_execution_set_release_poll(&execution, release_probe_poll),
+        "install retained cleanup at the existing owner");
+    check(!execution.relocatable && !cetta_owned_execution_move(&destination, &execution) &&
+        execution.computation == probe && !destination.computation,
+        "new cleanup capture invalidates the old relocation qualification");
+    execution.relocatable = true;
+    check(cetta_owned_execution_sequence(&execution, 1u, release_probe_refuse, &counts) ==
+        CETTA_OWNED_EXECUTION_PAUSED && execution.has_pending,
+        "refused answer retains actual borrowed return before cancellation");
+    CettaOwnedExecution before;
+    memcpy(&before, &execution, sizeof(before));
+    uint64_t used = 91u;
+    check(cetta_owned_execution_cancel_poll(&execution, 0u, false, &used) ==
+        CETTA_OWNED_RELEASE_PENDING && !used && !memcmp(&before, &execution, sizeof(before)),
+        "zero cleanup grant preserves complete owner and borrowed return");
+    check(cetta_owned_execution_cancel_poll(&execution, 1u, false, &used) ==
+        CETTA_OWNED_RELEASE_PENDING && used == 1u && execution.retiring &&
+        execution.computation == probe && !execution.has_pending && !counts.keys,
+        "logical cancellation suppresses loans before releasing child storage");
+    check(cetta_owned_execution_sequence(&execution, 1u, release_probe_refuse, &counts) ==
+        CETTA_OWNED_EXECUTION_INTERRUPTED && counts.producer == 1u && counts.consumer == 1u,
+        "retirement never calls the producer or consumer again");
+    memcpy(&before, &execution, sizeof(before));
+    check(!cetta_owned_execution_move(&destination, &execution) &&
+        !memcmp(&before, &execution, sizeof(before)) && !destination.computation,
+        "ordinary relocation permission does not qualify a retiring provider");
+    check(cetta_owned_execution_cancel_poll(&execution, 2u, false, &used) ==
+        CETTA_OWNED_RELEASE_PENDING && used == 2u && counts.keys == 2u &&
+        !counts.releases && execution.computation == probe,
+        "partial cleanup retains owner and exact remaining child position");
+    check(cetta_owned_execution_cancel_poll(&execution, 100u, false, &used) ==
+        CETTA_OWNED_RELEASE_ATOMIC && used == 1u && counts.keys == 3u &&
+        !counts.atomic_calls && !counts.releases && execution.computation == probe,
+        "unadmitted atomic child keeps the owner after the exact sliced prefix");
+    check(cetta_owned_execution_cancel_poll(&execution, 1u, true, &used) ==
+        CETTA_OWNED_RELEASE_PENDING && used == 1u && execution.release_ready &&
+        counts.atomic_calls == 1u && !counts.releases && execution.computation == probe,
+        "completed child cleanup still retains its wrapper until release is paid");
+    check(cetta_owned_execution_cancel_poll(&execution, 1u, false, &used) ==
+        CETTA_OWNED_RELEASE_COMPLETE && used == 1u && counts.releases == 1u &&
+        !execution.computation, "final wrapper release consumes its own action once");
+    cetta_owned_execution_cancel(&execution);
+    check(counts.keys == 3u && counts.atomic_calls == 1u && counts.releases == 1u,
+        "repeated cancellation cannot repeat child or wrapper release");
+
+    ReleaseProbeCounts legacy = {0};
+    probe = release_probe_new(&legacy, atom_int(&arena, 9));
+    cetta_owned_execution_init(&execution, probe, release_probe_next, release_probe_free);
+    check(cetta_owned_execution_cancel_poll(&execution, 100u, false, &used) ==
+        CETTA_OWNED_RELEASE_ATOMIC && used == 1u && execution.computation == probe &&
+        !legacy.keys && !legacy.releases, "legacy void release requires explicit atomic admission");
+    cetta_owned_execution_cancel(&execution);
+    check(!execution.computation && legacy.keys == 3u && legacy.atomic_calls == 1u &&
+        legacy.releases == 1u, "synchronous cancellation drains the same actual cleanup state");
+    arena_free(&arena);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable variables;
@@ -1294,6 +1496,8 @@ int main(void) {
     g_symbols = &symbols;
     g_var_intern = &variables;
     eval_set_library_context(NULL);
+    retained_owner_release();
+    retained_task_release();
     prefix_and_interleave();
     collected_bindings();
     effect_prefixes();

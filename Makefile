@@ -116,6 +116,8 @@ ENABLE_PRIME_RECEIPT_PRIMARY_INDEX ?= 0
 ENABLE_PRIME_CAUSAL_RECEIPTS ?= 0
 ENABLE_PRIME_NEED_HEAP_INDEX ?= 1
 ENABLE_PRIME_NEED_CLOSURE_CAPTURE ?= 0
+# Automatic continuation entry for unrestricted Prime calls. Bounded consumers
+# and explicitly retained operations use the common engine in either setting.
 ENABLE_PRIME_EVAL_STACK ?= 1
 ENABLE_LIB_PROLOG ?= auto
 ENABLE_HTTP ?= 0
@@ -129,13 +131,13 @@ ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
 CETTA_PROC_FORK_SPAWN ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 720
+PRIME_NEED_ALGEBRA_CHECKS := 788
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 729
+PRIME_NEED_ALGEBRA_CHECKS := 797
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -1270,6 +1272,8 @@ RHOCALC_ABT_SUBSTITUTION_TEST_SRC = tests/support/test_rhocalc_abt_substitution.
 RHOCALC_ABT_SUBSTITUTION_TEST_OBJ = runtime/bootstrap/test_rhocalc_abt_substitution.$(BUILD_OBJ_TAG).o
 RHOCALC_ABT_SUBSTITUTION_TEST_BIN = runtime/test_rhocalc_abt_substitution-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ = $(filter-out src/rhocalc_core.%,$(FALLBACK_EVAL_TEST_LINK_OBJ))
+RHOCALC_WORK_CENSUS_OBJ = runtime/bootstrap/test_rhocalc_work_census.$(BUILD_OBJ_TAG).o
+RHOCALC_WORK_CENSUS_BIN = runtime/test_rhocalc_work_census-$(BUILD_OBJ_TAG)
 LIB_PARSE_GLL_UTF8_FOREST_TEST_SRC = tests/support/test_lib_parse_gll_utf8_forest.c
 LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ = runtime/bootstrap/test_lib_parse_gll_utf8_forest.$(BUILD_OBJ_TAG).o
 LIB_PARSE_GLL_UTF8_FOREST_TEST_BIN = runtime/test_lib_parse_gll_utf8_forest-$(BUILD_OBJ_TAG)
@@ -3365,7 +3369,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_judgment_operands.metta \
 	tests/prime/need_activation_operand.metta \
 	tests/prime/need_native_operands.metta \
-	tests/prime/ready_values.metta \
+	tests/prime/need_quote_preservation.metta \
 	tests/prime/data_atom_path_a.metta \
 	tests/prime/cardinality_observer_dynamic_space.metta \
 	tests/prime/quote_head_matching.metta \
@@ -5292,12 +5296,11 @@ test-prime-eval-stack: $(BIN)
 	echo "PASS: explicit Prime stack preserves branch order, bag multiplicity, call-time choice, and HE isolation"
 
 test-prime-eval-stack-stats: $(BIN)
-	@if [ "$(ENABLE_PRIME_EVAL_STACK)" != 1 ] || \
-	    [ "$(ENABLE_RUNTIME_STATS)" != 1 ]; then \
-		echo "FAIL: enable the explicit Prime stack and runtime stats for this gate"; \
+	@if [ "$(ENABLE_RUNTIME_STATS)" != 1 ]; then \
+		echo "FAIL: enable runtime stats for this gate"; \
 		exit 1; \
 	fi
-	@CETTA_BIN="$(abspath $(BIN))" \
+	@CETTA_BIN="$(abspath $(BIN))" CETTA_PRIME_EVAL_STACK_AUTOMATIC="$(ENABLE_PRIME_EVAL_STACK)" \
 		./scripts/test_prime_eval_stack_stats.sh
 
 test-prime-need-he-noninterference: $(BIN)
@@ -6412,7 +6415,7 @@ $(REGISTRY_RESOLVER_TEST_BIN): $(REGISTRY_RESOLVER_TEST_OBJ) $(REGISTRY_RESOLVER
 test-registry-resolver: $(REGISTRY_RESOLVER_TEST_BIN)
 	@result=$$(./$(REGISTRY_RESOLVER_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
-	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(RegistryResolverSummary 56 56 0)')" -ne 1 ]; then \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(RegistryResolverSummary 74 74 0)')" -ne 1 ]; then \
 		echo "FAIL: structural registry resolver exact summary absent or duplicated"; \
 		exit 1; \
 	fi; \
@@ -7117,6 +7120,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(PRIME_READER_AST_ORACLE_OBJ:.o=.d) \
 	$(PAYLOAD_MAP_CAPACITY_TEST_OBJ:.o=.d) \
 	$(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ:.o=.d) \
+	$(RHOCALC_WORK_CENSUS_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_OBJ:.o=.d) \
 	$(OSLF_NATIVE_TYPE_VM_V1_TEST_OBJ:.o=.d) \
 	$(GSLT_RIGID_COORDINATE_DISPATCH_V1_TEST_OBJ:.o=.d) \
@@ -8143,12 +8147,25 @@ $(RHOCALC_ABT_SUBSTITUTION_TEST_BIN): $(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ) $(RHO
 	@set -eu; \
 	tmp_out=$$(mktemp "$(BOOTSTRAP_TMPDIR)/test-rhocalc-abt-substitution.XXXXXX"); \
 	trap 'rm -f "$$tmp_out"' EXIT INT TERM; \
-	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS) -Wl,--wrap=eval_top_with_registry_completion; \
+	$(CC) $(CFLAGS) -o "$$tmp_out" $^ $(LDFLAGS) -Wl,--wrap=eval_top_with_registry_completion \
+		-Wl,--wrap=eval_track_new_space -Wl,--wrap=space_free; \
 	mv "$$tmp_out" $@
 
-$(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) src/rhocalc_core.c $(BUILD_CONFIG_HEADER)
+$(RHOCALC_ABT_SUBSTITUTION_TEST_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) src/rhocalc_core.c src/segmented_array.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+$(RHOCALC_WORK_CENSUS_OBJ): $(RHOCALC_ABT_SUBSTITUTION_TEST_SRC) src/rhocalc_core.c src/segmented_array.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -finstrument-functions -DCETTA_RHO_WORK_CENSUS=1)
+
+$(RHOCALC_WORK_CENSUS_BIN): $(RHOCALC_WORK_CENSUS_OBJ) $(RHOCALC_ABT_SUBSTITUTION_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -Wl,--wrap=eval_top_with_registry_completion \
+		-Wl,--wrap=eval_track_new_space -Wl,--wrap=space_free
+
+.PHONY: census-rhocalc-structural-work
+census-rhocalc-structural-work: $(RHOCALC_WORK_CENSUS_BIN)
+	@CETTA_RHO_WORK_CENSUS=1 ./$(RHOCALC_WORK_CENSUS_BIN)
 
 $(LIB_PARSE_GLL_UTF8_FOREST_TEST_BIN): $(LIB_PARSE_GLL_UTF8_FOREST_TEST_OBJ) $(LIB_PARSE_GLL_UTF8_FOREST_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -24820,6 +24837,8 @@ test-prime-route-agreement: $(BIN)
 	@pass=0; fail=0; \
 	for f in tests/prime/routes/*.metta \
 		tests/prime/need_lexical_scope.metta tests/prime/need_storage_boundary.metta \
+		tests/prime/need_quote_preservation.metta \
+		tests/prime/need_demand_modes.metta tests/prime/scoped/effectful_fusion.metta \
 		tests/prime/practical/atp_direct_example.metta; do \
 		exp="$${f%.metta}.expected"; \
 		for route in default reference fuel; do \
@@ -48287,7 +48306,7 @@ $(NATIVE_LEASES_TEST_BIN): tests/test_native_leases.c $(FALLBACK_EVAL_TEST_LINK_
 $(NATIVE_CONTROL_LEASES_TEST_BIN): tests/test_native_control_leases.c src/eval.c src/table_store.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_native_control_leases.c \
-		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o src/table_store.$(BUILD_OBJ_TAG).o src/table_store.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o src/table_store.$(BUILD_OBJ_TAG).o src/table_store.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=calloc
 $(NATIVE_PARENT_CHECKPOINT_TEST_BIN): $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) tests/native_parent_checkpoint_compare.inc tests/native_parent_recording_compare.inc tests/native_parent_run_scope.inc src/prime_native_checkpoint.inc src/eval.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) \

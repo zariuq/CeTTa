@@ -85,7 +85,7 @@ static bool nonce(char out[33]) {
     }
     out[32]=0; return true;
 }
-void cetta_host_decision_free(CettaHostDecision *d) {
+static void host_decision_dispose(CettaHostDecision *d) {
     if (!d) return;
     clear_evaluation(d);
     cetta_durable_observation_free(d->observation);
@@ -97,6 +97,10 @@ void cetta_host_decision_free(CettaHostDecision *d) {
     }
     free(d->input); free(d->actor); free(d->program);
     free(d->spaces); free(d->channels); free(d);
+}
+void cetta_host_decision_free(CettaHostDecision *d) {
+    while (cetta_host_decision_release_poll(&d,UINT64_MAX,true,NULL,NULL)!=
+            CETTA_OWNED_RELEASE_COMPLETE) {}
 }
 const CettaDurableSnapshot *cetta_host_view(const CettaHostDecision *d, size_t i) {
     return d && i<2+d->space_count ? cetta_durable_observation_view(d->observation,i) : NULL;
@@ -485,7 +489,7 @@ static bool host_plan_receipt_append(HostPlanReceiptBuilder *builder,
     if (!units) return true;
     CettaHostPlanReceipt *receipt=&builder->out->receipt;
     if (!builder->complete || receipt->count>=CETTA_HOST_PLAN_RECEIPT_CAPACITY ||
-        tag>CETTA_HOST_PLAN_SETUP || (unsigned)kind>=CETTA_COST_KIND_COUNT) {
+        tag>CETTA_HOST_PLAN_DECISION_RELEASE || (unsigned)kind>=CETTA_COST_KIND_COUNT) {
         builder->complete=false;return false;
     }
     CettaNativeCostEvent event={0};
@@ -575,6 +579,12 @@ static void host_plan_receipt_observe(void *raw,CettaOwnedTaskPhase phase,
         (void)host_plan_receipt_append(builder,CETTA_HOST_PLAN_RETIREMENT,
             CETTA_COST_FRAME_RETIRE,1u);
         break;
+    case CETTA_OWNED_TASK_PHASE_CLEANUP:
+        (void)host_plan_receipt_append(builder,CETTA_HOST_PLAN_CLEANUP_WORK,
+            CETTA_COST_FRAME_RETIRE,detail);
+        (void)host_plan_receipt_append(builder,CETTA_HOST_PLAN_CLEANUP_POLL,
+            CETTA_COST_ANALYSIS_STEP,1u);
+        break;
     case CETTA_OWNED_TASK_PHASE_ROTATION:
     default:
         builder->complete=false;
@@ -590,15 +600,18 @@ bool cetta_host_plan_receipt_summarize(const CettaHostPlanReceipt *receipt,
     CettaHostPlanReceiptSummary *summary) {
     if (!receipt || !summary || !receipt->complete ||
         receipt->count>CETTA_HOST_PLAN_RECEIPT_CAPACITY ||
-        receipt->step>CETTA_OWNED_EXECUTION_INTERRUPTED)
+        (unsigned)receipt->step>CETTA_OWNED_EXECUTION_INTERRUPTED ||
+        (receipt->cleanup && (unsigned)receipt->cleanup_status>CETTA_OWNED_RELEASE_ATOMIC))
         return false;
     *summary=(CettaHostPlanReceiptSummary){
-        .step=receipt->step,.initial_pending=receipt->initial_pending};
+        .step=receipt->step,.initial_pending=receipt->initial_pending,
+        .cleanup=receipt->cleanup,.cleanup_status=receipt->cleanup_status};
     uint64_t identity=0u,origin=0u,occurrence=0u;
     for(uint8_t i=0u;i<receipt->count;i++) {
         const CettaHostPlanOccurrence *item=&receipt->occurrences[i];
         const CettaNativeCostEvent *event=&item->event;
-        if (item->tag>CETTA_HOST_PLAN_SETUP || !event->identity ||
+        if ((unsigned)item->tag>CETTA_HOST_PLAN_DECISION_RELEASE ||
+            (receipt->cleanup && item->tag<=CETTA_HOST_PLAN_FINAL_CURRENT) || !event->identity ||
             !event->origin || !event->occurrence || !event->units ||
             event->repetitions!=1u || (unsigned)event->kind>=CETTA_COST_KIND_COUNT ||
             event->identity<=identity || event->occurrence<=occurrence ||
@@ -649,6 +662,21 @@ bool cetta_host_plan_receipt_summarize(const CettaHostPlanReceipt *receipt,
             if (event->kind!=CETTA_COST_FRAME_RETIRE || event->units!=1u)
                 return false;
             summary->retirements++;break;
+        case CETTA_HOST_PLAN_CLEANUP_WORK:
+            if (!receipt->cleanup || event->kind!=CETTA_COST_FRAME_RETIRE ||
+                !add_exact(&summary->cleanup_work,event->units)) return false;
+            break;
+        case CETTA_HOST_PLAN_CLEANUP_POLL:
+            if (!receipt->cleanup || event->kind!=CETTA_COST_ANALYSIS_STEP ||
+                event->units!=1u) return false;
+            summary->cleanup_polls++;break;
+        case CETTA_HOST_PLAN_RETURN_CLEANUP:
+        case CETTA_HOST_PLAN_DECISION_RELEASE:
+            if (!receipt->cleanup || event->kind!=CETTA_COST_FRAME_RETIRE ||
+                event->units!=1u) return false;
+            if (item->tag==CETTA_HOST_PLAN_RETURN_CLEANUP) summary->return_cleanup++;
+            else summary->decision_release++;
+            break;
         }
     }
     return true;
@@ -726,13 +754,115 @@ CettaDurableStatus cetta_host_plan_poll_accounted(
     if (report_setup && exact) d->evaluation->setup_reported=true;
     return DURABLE_OK;
 }
+static CettaOwnedReleaseStep host_cleanup_poll(CettaHostDecision **owner,
+    uint64_t allowance,bool allow_atomic,bool release_decision,uint64_t *used,
+    CettaHostPlanPollAccount *out) {
+    if (used) *used=0u;
+    if (out) *out=(CettaHostPlanPollAccount){0};
+    CettaHostDecision *d=owner?*owner:NULL;
+    CettaHostEvaluation *e=d?d->evaluation:NULL;
+    bool pending=d && (release_decision || (e && e->retained &&
+        (d->planner.execution.computation || d->planner.ready.owner ||
+         e->return_copy || e->return_marked)));
+    CettaOwnedReleaseStep status=pending?CETTA_OWNED_RELEASE_PENDING:CETTA_OWNED_RELEASE_COMPLETE;
+    HostPlanReceiptBuilder builder={.decision=d,.out=out,.complete=true};
+    if (out) {
+        out->visit.task=e && e->retained?&d->planner:NULL;
+        out->visit.step=CETTA_OWNED_EXECUTION_INTERRUPTED;
+        out->receipt.cleanup=true;
+        out->receipt.step=out->visit.step;
+        out->receipt.initial_pending=e && e->retained && d->planner.execution.has_pending;
+    }
+    uint64_t spent=0u;
+    if (!allowance || !d) goto done;
+    if (out && !cetta_native_cost_event_source_init(&builder.events)) builder.complete=false;
+    if (release_decision && e && !e->retained) {
+        e->cancelled=true;e->outcome.completion=CETTA_EVAL_INCOMPLETE_CANCELLED;
+    }
+    if (e && e->retained) {
+        if (out && !e->setup_reported) {
+            out->setup=e->setup_work;
+            (void)host_plan_receipt_append(&builder,CETTA_HOST_PLAN_SETUP,
+                CETTA_COST_ANALYSIS_STEP,out->setup.inspections);
+            if (builder.complete) e->setup_reported=true;
+        }
+        if (!e->cancelled) {
+            (void)cetta_host_outcome(d);
+            e->cancelled=true;
+            e->outcome.completion=CETTA_EVAL_INCOMPLETE_CANCELLED;
+            if (e->return_copy || e->return_marked) {
+                /* Copy disposal may call retained-object destructors. Stop
+                 * production first, but hold its source until that dependent
+                 * destination state has been retired. */
+                (void)cetta_owned_task_cancel_poll(&d->planner,1u,false,
+                    &spent,out?&out->protocol:NULL,out?host_plan_receipt_observe:NULL,&builder);
+                status=CETTA_OWNED_RELEASE_PENDING;
+                goto done;
+            }
+        }
+        if (e->return_copy || e->return_marked) {
+            if (spent==allowance) {status=CETTA_OWNED_RELEASE_PENDING;goto done;}
+            if (!allow_atomic) {status=CETTA_OWNED_RELEASE_ATOMIC;goto done;}
+            host_return_copy_clear(e,true);spent++;
+            if (out) {
+                out->return_cleanup++;
+                (void)host_plan_receipt_append(&builder,CETTA_HOST_PLAN_RETURN_CLEANUP,
+                    CETTA_COST_FRAME_RETIRE,1u);
+            }
+        }
+        uint64_t source_used=0u;
+        status=cetta_owned_task_cancel_poll(&d->planner,allowance-spent,allow_atomic,
+            &source_used,out?&out->protocol:NULL,out?host_plan_receipt_observe:NULL,&builder);
+        spent+=source_used;
+        if (status!=CETTA_OWNED_RELEASE_COMPLETE) goto done;
+    }
+    status=CETTA_OWNED_RELEASE_COMPLETE;
+    if (release_decision) {
+        if (spent==allowance) {status=CETTA_OWNED_RELEASE_PENDING;goto done;}
+        if (!allow_atomic) {status=CETTA_OWNED_RELEASE_ATOMIC;goto done;}
+        host_decision_dispose(d);*owner=NULL;spent++;
+        if (out) {
+            out->visit.task=NULL;
+            out->decision_release++;
+            (void)host_plan_receipt_append(&builder,CETTA_HOST_PLAN_DECISION_RELEASE,
+                CETTA_COST_FRAME_RETIRE,1u);
+        }
+    }
+done:
+    if (used) *used=spent;
+    if (out) {
+        out->cleanup_status=status;
+        out->receipt.cleanup_status=status;
+        out->receipt.complete=builder.complete;
+        CettaHostPlanReceiptSummary summary={0};
+        if (!cetta_host_plan_receipt_summarize(&out->receipt,&summary) ||
+            summary.total!=builder.issued_total ||
+            summary.setup_work!=out->setup.inspections ||
+            summary.retirements!=out->protocol.retirements ||
+            summary.cleanup_polls!=out->protocol.cleanup_polls ||
+            summary.cleanup_work!=out->protocol.cleanup_work ||
+            summary.return_cleanup!=out->return_cleanup ||
+            summary.decision_release!=out->decision_release ||
+            out->protocol.admission || out->protocol.producer ||
+            out->protocol.consumer || out->protocol.final_is_current ||
+            out->protocol.rotations || out->protocol.phase_overflow ||
+            out->protocol.phase_count!=out->protocol.retirements+out->protocol.cleanup_polls ||
+            spent!=out->protocol.cleanup_work+out->return_cleanup+out->decision_release)
+            out->receipt.complete=false;
+    }
+    return status;
+}
+CettaOwnedReleaseStep cetta_host_plan_cancel_poll(CettaHostDecision *d,
+    uint64_t allowance,bool allow_atomic,uint64_t *used,CettaHostPlanPollAccount *out) {
+    return host_cleanup_poll(&d,allowance,allow_atomic,false,used,out);
+}
+CettaOwnedReleaseStep cetta_host_decision_release_poll(CettaHostDecision **owner,
+    uint64_t allowance,bool allow_atomic,uint64_t *used,CettaHostPlanPollAccount *out) {
+    return host_cleanup_poll(owner,allowance,allow_atomic,true,used,out);
+}
 void cetta_host_plan_cancel(CettaHostDecision *d) {
-    if (!d || !d->evaluation || !d->evaluation->retained || d->evaluation->cancelled) return;
-    (void)cetta_host_outcome(d);
-    host_return_copy_clear(d->evaluation,true);
-    cetta_owned_task_cancel(&d->planner);
-    d->evaluation->cancelled=true;
-    d->evaluation->outcome.completion=CETTA_EVAL_INCOMPLETE_CANCELLED;
+    while (cetta_host_plan_cancel_poll(d,UINT64_MAX,true,NULL,NULL)!=
+            CETTA_OWNED_RELEASE_COMPLETE) {}
 }
 CettaDurableStatus cetta_host_accept(CettaHostDecision *d,
     size_t selected, CettaHostCommit *commit) {

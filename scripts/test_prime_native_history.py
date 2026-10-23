@@ -622,7 +622,11 @@ def diagnostic_controls(recording=True):
                 off_err = (d / (name + '-off.stderr')).read_text()
                 on_err = (d / (name + '-on.stderr')).read_text()
                 expected = [] if empty else [['Pair', 1, 1], ['Pair', 3, 3]]
-                ok = len(off) == len(on) == 1 and not off_err and '[factive ' in on_err
+                # A named source can use the synchronous force or the retained
+                # force cursor. Diagnostics must observe the route actually
+                # taken without changing its values, work or history.
+                force_traced = '[factive ' in on_err or '[sforce ' in on_err
+                ok = len(off) == len(on) == 1 and not off_err and force_traced
                 for label, observation in (('off', off), ('on', on)):
                     ok = ok and bool(observation)
                     if observation:

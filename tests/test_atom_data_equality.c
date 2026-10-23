@@ -146,6 +146,46 @@ int main(void) {
                                    atom_expr2(&arena, leaves[0], atom_int(&arena, 19))),
           "integer-shaped native holders and their enclosing expressions are not data keys");
 
+    StateCell first = {.value = atom_int(&arena, 1)}, second = {.value = atom_int(&arena, 1)};
+    Atom *state_a = atom_state(&arena, &first), *state_b = atom_state(&arena, &second);
+    CHECK(atom_eq(state_a, state_b) && !atom_capture_identical(state_a, state_b),
+          "capture identity distinguishes equal-valued mutable cells without changing ordinary equality");
+    Atom *state_alias = atom_deep_copy(&arena, state_a);
+    CHECK(atom_capture_identical(state_a, state_alias), "copied wrappers keep the same captured resource");
+    first.value = atom_int(&arena, 7);
+    CHECK(atom_capture_identical(state_a, state_alias) && !atom_capture_identical(state_a, state_b),
+          "resource mutation does not change which captured handle was read");
+    CHECK(atom_capture_identical(shared(&arena, state_a, 10000u), shared(&arena, state_alias, 10000u)) &&
+          !atom_capture_identical(shared(&arena, state_a, 10000u), shared(&arena, state_b, 10000u)),
+          "the same resource policy applies beneath deep shared input graphs");
+    Atom *context = atom_prime_context_bind(&arena, NULL, atom_symbol(&arena, "key"), state_a);
+    Atom *context_copy = atom_deep_copy(&arena, context);
+    Atom *context_other = atom_prime_context_bind(&arena, NULL, atom_symbol(&arena, "key"), state_b);
+    CHECK(atom_capture_identical(context, context_copy) && !atom_capture_identical(context, context_other),
+          "immutable context copies retain nested resource identity");
+    Atom *cap = atom_prime_need_capability_with_rights(&arena, 11u, 12u, 13u,
+        CETTA_PRIME_NEED_RIGHT_ALL);
+    CHECK(atom_capture_identical(cap, atom_deep_copy(&arena, cap)) &&
+          !atom_capture_identical(cap, atom_prime_need_capability_with_rights(&arena, 11u, 12u, 13u,
+              CETTA_PRIME_NEED_RIGHT_INSPECT)) &&
+          !atom_capture_identical(cap, atom_prime_need_capability_with_rights(&arena, 11u, 12u, 14u,
+              CETTA_PRIME_NEED_RIGHT_ALL)), "captured capabilities preserve authority and rights");
+    CHECK(atom_capture_identical(nan_left, atom_deep_copy(&arena, nan_left)) &&
+          !atom_capture_identical(atom_float(&arena, 0.0), atom_float(&arena, -0.0)),
+          "captured numeric representation compares exact bits rather than language truth equality");
+    Atom *marked = atom_expr2(&arena, leaves[0], leaves[1]);
+    Atom *unmarked = atom_deep_copy(&arena, marked);
+    marked->flags |= ATOM_FLAG_HE_EVALUATED;
+    CHECK(!atom_capture_identical(marked, unmarked), "captured data and executable-source roles remain distinct");
+    unsigned other_holds = 0u;
+    Atom *other_identifier = atom_native_handle_identifier(&arena, 19,
+        &other_holds, retain_identifier, release_identifier);
+    CHECK(atom_capture_identical(identifier, atom_deep_copy(&arena, identifier)) &&
+          !atom_capture_identical(identifier, other_identifier) &&
+          !atom_capture_identical(identifier, atom_int(&arena, 19)),
+          "integer-shaped handles retain their actual owner and lifetime protocol");
+    CHECK(!atom_capture_identical(cycle, cycle), "capture inspection does not certify a malformed cyclic expression");
+
     arena_free(&arena);
     CHECK(identifier_holds == 0u, "exact key inspection does not retain a native holder");
     symbol_table_free(&symbols);

@@ -309,8 +309,8 @@ static bool prime_native_region_measure(PrimeNativeRegionCapture *capture,
     atom_deep_copy_session_storage_census(copy, &census);
     cetta_storage_array(&census, capture->nodes, capture->capacity, sizeof(*capture->nodes), 0u);
     cetta_storage_array(&census, capture->stack, capture->capacity, sizeof(*capture->stack), 0u);
-    cetta_storage_array(&census, capture->index.slots, capture->index.cap,
-        sizeof(*capture->index.slots), 0u);
+    for (const CettaSegmentedBlock *block=capture->index.slots.blocks;block;block=block->next)
+        cetta_storage_array(&census,block,block->bytes,1u,0u);
     cetta_storage_finish(&census);
     cetta_native_cost_charge(CETTA_COST_STORAGE_PROBE,census.probes);
     bool okay = !census.incomplete && !census.overflow &&

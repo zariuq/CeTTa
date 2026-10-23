@@ -112,3 +112,107 @@
 !(match &prime-need:stored (CompletedAgain $code) (eval $code))
 !(add-atom &prime-need:stored (CompletedCode (+ 1 2)))
 !(reify (match &prime-need:stored (CompletedCode $code) $code))
+
+
+; A native payload returns the State from its actual logical world. The
+; write remains isolated, and returning the cell must retain its new value.
+!(import! &self rhometta)
+!(rhometta:values
+  (rhometta:run-canonical
+    (rho:par
+      (rho:send (rho:quote rho:nil)
+        (rho:eval-payload
+          (quote (let $cell (new-state 0)
+                   (chain (change-state! $cell 7) $done $cell)))))
+      (rho:recv (rho:quote rho:nil) $answer (rho:drop $answer)))))
+
+; Explicit quotation crossing builds deferred code. If an enclosing caller
+; has already produced a State, the service captures that caller's logical
+; value before creating its isolated image. Two uses retain one image.
+(: prime-need:defer (-> Atom Atom))
+(= (prime-need:defer $payload) (rho:eval-payload (quote $payload){$payload}))
+(: prime-need:run-payload (-> Atom %Undefined%))
+(= (prime-need:run-payload $node)
+   (rhometta:values
+     (rhometta:run-canonical
+       (rho:par
+         (rho:send (rho:quote rho:nil) $node)
+         (rho:recv (rho:quote rho:nil) $answer (rho:drop $answer))))))
+(: prime-need:through-rho (-> Atom %Undefined%))
+(= (prime-need:through-rho $payload)
+   (prime-need:run-payload (prime-need:defer $payload)))
+!(prime-need:defer (println! "DeferredCodeMustRemainInert"))
+!(prime-need:through-rho
+   (let $cell (new-state 0) (chain (change-state! $cell 7) $done $cell)))
+!(prime-need:through-rho
+   (let $cell (new-state 0) (chain (change-state! $cell 7) $done (Pair $cell $cell))))
+
+; A stored reference is discovered when the payload reads it. Capturing the
+; Space alone must not erase the current logical value of its stored State.
+!(let $cell (new-state 0)
+   (let $store (new-space)
+     (chain (add-atom $store $cell) $added
+       (chain (change-state! $cell 7) $changed
+         (prime-need:run-payload
+           (rho:eval-payload (quote (get-state (get-atoms $store))){$store}))))))
+!(let $cell (new-state 0)
+   (let $store (new-space)
+     (chain (add-atom $store $cell) $added
+       (chain (change-state! $cell 7) $changed
+         (prime-need:run-payload
+           (rho:eval-payload
+             (quote (let $found (get-atoms $store) (Pair $found $found))){$store}))))))
+
+; Frozen scalar observations and current reads answer different questions.
+; Equal contents do not make separate cells aliases. The same program over
+; one shared cell observes both reads change; no handle comparison is used.
+(= (prime-need:observe-write $left $right)
+   (chain (get-state $left) $before-left
+     (chain (get-state $right) $before-right
+       (chain (change-state! $left 9) $changed
+         (chain (get-state $left) $after-left
+           (chain (get-state $right) $after-right
+             (Comparisons
+               (frozen (== $before-left $before-right))
+               (current (== $after-left $after-right))
+               (values $after-left $after-right))))))))
+!(DistinctResources
+   (prime-need:observe-write (new-state 7) (new-state 7)))
+!(let $cell (new-state 7)
+   (AliasedResource (prime-need:observe-write $cell $cell)))
+
+; Restrict the client to its selected cell. Two separate cells now expose
+; the same read/write trace; the actual mutation remains observable.
+(= (prime-need:observe-selected-write $cell)
+   (chain (get-state $cell) $before
+     (chain (change-state! $cell 9) $changed
+       (chain (get-state $cell) $after
+         (Trace $before $after)))))
+!(SelectedOnly
+   (prime-need:observe-selected-write (new-state 7))
+   (prime-need:observe-selected-write (new-state 7)))
+
+; Equal leaf readings do not reveal whether two paths share one descendant.
+; Writing through the left path does: the right read changes only in the
+; shared diamond.  This client observes values and effects explicitly; it
+; does not assume a meaning for equality between live resource handles.
+(= (prime-need:observe-diamond $left $right)
+   (chain (get-state $left) $left-leaf
+     (chain (get-state $right) $right-leaf
+       (chain (get-state $left-leaf) $before-left
+         (chain (get-state $right-leaf) $before-right
+           (chain (change-state! $left-leaf 9) $changed
+             (chain (get-state $left-leaf) $after-left
+               (chain (get-state $right-leaf) $after-right
+                 (Diamond
+                   (before $before-left $before-right)
+                   (after $after-left $after-right))))))))))
+!(let $leaf (new-state 7)
+   (let $left (new-state $leaf)
+     (let $right (new-state $leaf)
+       (SharedDiamond (prime-need:observe-diamond $left $right)))))
+!(let $left-leaf (new-state 7)
+   (let $right-leaf (new-state 7)
+     (let $left (new-state $left-leaf)
+       (let $right (new-state $right-leaf)
+         (DuplicatedDiamond (prime-need:observe-diamond $left $right))))))

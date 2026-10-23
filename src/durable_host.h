@@ -131,6 +131,10 @@ typedef enum {
     CETTA_HOST_PLAN_FINAL_CURRENT,
     CETTA_HOST_PLAN_RETIREMENT,
     CETTA_HOST_PLAN_SETUP,
+    CETTA_HOST_PLAN_CLEANUP_WORK,
+    CETTA_HOST_PLAN_CLEANUP_POLL,
+    CETTA_HOST_PLAN_RETURN_CLEANUP,
+    CETTA_HOST_PLAN_DECISION_RELEASE,
 } CettaHostPlanTag;
 typedef struct CettaHostPlanOccurrence {
     CettaHostPlanTag tag;
@@ -142,14 +146,19 @@ typedef struct CettaHostPlanReceipt {
     CettaOwnedExecutionStep step;
     uint8_t count;
     bool initial_pending,complete;
+    bool cleanup;
+    CettaOwnedReleaseStep cleanup_status;
 } CettaHostPlanReceipt;
 typedef struct CettaHostPlanReceiptSummary {
     CettaOwnedExecutionStep step;
     CettaOwnedTaskAdmission last_admission;
     uint64_t admission,producer,consumer,final_is_current,retirements;
     uint64_t setup_work,source_work,total;
+    uint64_t cleanup_polls,cleanup_work,return_cleanup,decision_release;
     CettaPrimeReturnWork returns;
     bool initial_pending;
+    bool cleanup;
+    CettaOwnedReleaseStep cleanup_status;
 } CettaHostPlanReceiptSummary;
 typedef struct {
     CettaOwnedVisit visit;
@@ -160,6 +169,8 @@ typedef struct {
      * destination-arena bytes stay a separate physical/storage observation. */
     CettaHostSetupWork setup;
     CettaPrimeReturnWork returns;
+    CettaOwnedReleaseStep cleanup_status;
+    uint64_t return_cleanup,decision_release;
     /* Issued synchronously at callback completion, before the next protocol
      * action. A provider/consumer delta is one explicit settlement occurrence;
      * this order is not reconstructed later from the aggregate fields. */
@@ -180,6 +191,26 @@ bool cetta_host_plan_receipt_total(
 /* Cancel planning without consuming durable input or attempting commitment.
  * Completed data stays readable; the outcome becomes incomplete/cancelled. */
 void cetta_host_plan_cancel(CettaHostDecision *);
+/* Retained cancellation through the same task cleanup provider. Zero is inert.
+ * First positive cancellation snapshots earned work, marks the outcome
+ * cancelled and removes producer membership. Pending source and destination
+ * copy storage remain owned by this decision. A pending destination copy is
+ * retired before its source owner; its destructor/reset is an indivisible
+ * service requiring atomic work-placement permission. The initial stop keeps
+ * the source alive even when the caller also grants indivisible cleanup.
+ * Allowance counts cleanup units; poll and queue work have separate receipts.
+ * A NULL account selects the unobserved path, with no receipt construction.
+ * This retains completed data and never attempts durable publication. */
+CettaOwnedReleaseStep cetta_host_plan_cancel_poll(CettaHostDecision *,
+    uint64_t allowance, bool allow_atomic, uint64_t *used,
+    CettaHostPlanPollAccount *);
+/* Compose plan cancellation with final evaluation/decision disposal. Final
+ * disposal is still indivisible and needs its own unit and atomic grant.
+ * Pending replies retain *owner and all its contexts. COMPLETE nulls *owner;
+ * the caller must then stop using borrowed task/outcome references. */
+CettaOwnedReleaseStep cetta_host_decision_release_poll(CettaHostDecision **owner,
+    uint64_t allowance, bool allow_atomic, uint64_t *used,
+    CettaHostPlanPollAccount *);
 /* Borrowed inspection only; invalidated by re-evaluation or decision free. */
 const EvalOutcome *cetta_host_outcome(const CettaHostDecision *decision);
 /* Wake a blocked decision only after its dependencies change. Copies metadata

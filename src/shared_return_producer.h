@@ -54,7 +54,23 @@ typedef enum {
     CETTA_SHARED_RETURN_NO_CONSUMERS,
     CETTA_SHARED_RETURN_DETACHED,
     CETTA_SHARED_RETURN_INVALID,
+    CETTA_SHARED_RETURN_APPENDED,
 } CettaSharedReturnStep;
+
+/* Admit one already-earned return from a resident computation to the same
+ * occurrence log used by an owned producer. This does not step, move, cancel
+ * or complete that computation. APPENDED alone permits its publication cursor
+ * to advance. Every refusal leaves the borrowed return with its caller; retry
+ * must present that return, not rerun the source. Capture protects the complete
+ * graph, and compatibility is checked both before and after capture.
+ *
+ * The caller owns the log, cohort and actual source completion. Empty or full
+ * storage is never evidence of exhaustion. A completed or full log refuses
+ * before capture, so it does not allocate another retained image. */
+CettaSharedReturnStep cetta_shared_return_capture_append(
+    CettaOccurrenceLog *log, const CettaOwnedReturn *returned,
+    CettaSharedReturnCapture capture, CettaSharedReturnCompatible compatible,
+    void *context);
 
 typedef enum {
     CETTA_SHARED_DELIVERY_ANSWER,

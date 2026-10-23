@@ -97,6 +97,20 @@ typedef CettaOwnedExecutionStep (*CettaOwnedExecutionNext)(
     void *computation, CettaOwnedReturn *returned,
     CettaEvalCompletion *completion);
 typedef void (*CettaOwnedExecutionRelease)(void *computation);
+/* A cleanup provider consumes its own retained disposal state. COMPLETE
+ * leaves only the enclosing owner for `release`; it never frees that owner.
+ * ATOMIC requests permission for an indivisible service still owned here.
+ * With no such permission, that service is not invoked. Neither a request
+ * count nor atomic permission establishes a physical work bound. Permission
+ * here selects a work-placement profile; it grants no source/effect authority
+ * and does not weaken the provider's lifetime requirements. */
+typedef enum {
+    CETTA_OWNED_RELEASE_PENDING,
+    CETTA_OWNED_RELEASE_COMPLETE,
+    CETTA_OWNED_RELEASE_ATOMIC,
+} CettaOwnedReleaseStep;
+typedef CettaOwnedReleaseStep (*CettaOwnedReleasePoll)(void *computation,
+    uint64_t allowance, bool allow_atomic, uint64_t *used);
 /* A read-only check of a final certificate after the consumer accepts.
  * It cannot step the producer. False preserves ordinary continuation, so a
  * changed source is reported without replaying the accepted occurrence. */
@@ -114,12 +128,13 @@ typedef enum {
     CETTA_OWNED_TASK_PHASE_CONSUMER,
     CETTA_OWNED_TASK_PHASE_FINAL_CURRENT,
     CETTA_OWNED_TASK_PHASE_RETIREMENT,
+    CETTA_OWNED_TASK_PHASE_CLEANUP,
 } CettaOwnedTaskPhase;
 #define CETTA_OWNED_TASK_PHASE_CAPACITY 8u
 
 /* Optional synchronous observation of a completed service action. `detail`
  * is the returned admission or execution verdict, the consumer/final Boolean,
- * or zero for rotation and retirement. The observer may update only its own
+ * cleanup service units, or zero for rotation and retirement. The observer may update only its own
  * state; it must not reenter or mutate the task, execution or queue. */
 typedef void (*CettaOwnedTaskAccountObserver)(void *context,
     CettaOwnedTaskPhase phase, uint64_t detail);
@@ -131,6 +146,7 @@ typedef void (*CettaOwnedTaskAccountObserver)(void *context,
 typedef struct {
     uint64_t admission, producer, consumer, final_is_current;
     uint64_t rotations, retirements;
+    uint64_t cleanup_polls, cleanup_work;
     uint8_t phases[CETTA_OWNED_TASK_PHASE_CAPACITY], phase_count;
     bool phase_overflow;
 } CettaOwnedTaskAccount;
@@ -138,7 +154,7 @@ typedef struct {
 static inline void cetta_owned_task_account_record(
     CettaOwnedTaskAccount *account,CettaOwnedTaskAccountObserver observer,
     void *observer_context,CettaOwnedTaskPhase phase,uint64_t detail) {
-    if (phase>CETTA_OWNED_TASK_PHASE_RETIREMENT) {
+    if (phase>CETTA_OWNED_TASK_PHASE_CLEANUP) {
         if (account) account->phase_overflow=true;
         return;
     }
@@ -154,6 +170,7 @@ typedef struct {
     void *computation;
     CettaOwnedExecutionNext next;
     CettaOwnedExecutionRelease release;
+    CettaOwnedReleasePoll release_poll;
     /* NULL is for certificates independent of mutable external authority. */
     CettaOwnedExecutionFinalIsCurrent final_is_current;
     CettaOwnedReturn pending;
@@ -164,6 +181,7 @@ typedef struct {
     uint64_t accepted;
     bool has_pending;
     bool terminal;
+    bool retiring, release_ready;
     /* Set by an adapter whose captures and enclosing services remain valid
      * after this driver moves. Self-references to this driver are not rebased.
      * Ordinary initialization leaves such transport unqualified. */
@@ -175,6 +193,24 @@ typedef struct {
 void cetta_owned_execution_init(CettaOwnedExecution *execution,
     void *computation, CettaOwnedExecutionNext next,
     CettaOwnedExecutionRelease release);
+
+/* Install before advancing the owner. Pending cleanup retains the complete
+ * computation and callback context. Providers must use no more than the
+ * allowance, make progress on a positive permitted grant, and complete on
+ * finite owned storage. Unknown foreign services require atomic permission.
+ * Installation clears any prior relocation qualification: an adapter must
+ * qualify the complete new callback/capture configuration before marking it
+ * movable again. The caller holds all lifetime dependencies through release. */
+bool cetta_owned_execution_set_release_poll(CettaOwnedExecution *execution,
+    CettaOwnedReleasePoll poll);
+/* Zero allowance is inert. A positive cancellation first ends answer loans
+ * and suppresses further producer/consumer calls, retaining storage until
+ * cleanup completes and the final release action runs. Each action consumes
+ * one of the provider's declared units; their prices remain separate.
+ * ATOMIC retains the owner for another grant or synchronous cancellation. */
+CettaOwnedReleaseStep cetta_owned_execution_cancel_poll(
+    CettaOwnedExecution *execution, uint64_t allowance, bool allow_atomic,
+    uint64_t *used);
 
 /* Move an adapter-qualified owner, including its pending loan and paid prefix.
  * Destination must be zero-initialized or cancelled. Refusal changes neither
@@ -258,8 +294,9 @@ CettaOwnedExecutionStep cetta_owned_execution_sequence_with(
         execution, allowance, next, consume, consumer, NULL, NULL, NULL);
 }
 
-/* Releases abandoned execution without undoing accepted returns or effects.
- * The caller must publish any retained borrowed return before this call. */
+/* Synchronous release explicitly admits indivisible cleanup services and
+ * drains the same retained provider. It neither undoes accepted effects nor
+ * publishes a pending loan; retained borrowed returns must be published first. */
 void cetta_owned_execution_cancel(CettaOwnedExecution *execution);
 
 /* A selected host service connects the existing queue to actual owned calls.
@@ -337,6 +374,19 @@ CettaOwnedVisit cetta_owned_task_poll_accounted(
 CettaOwnedVisit cetta_owned_task_poll_observed(
     CettaOwnedTask *task, bool poll, CettaOwnedTaskAccount *account,
     CettaOwnedTaskAccountObserver observer,void *observer_context);
+
+/* A positive cleanup grant removes producer membership once, then advances
+ * the existing retained execution cleanup. The grant bounds cleanup service
+ * units; queue removal and the poll itself have separate account entries.
+ * Zero preserves membership and the complete execution. Pending/atomic replies
+ * keep the task and callback context alive; ordinary admission, production and
+ * delivery are never invoked. Atomic permission admits work placement only.
+ * The host must retain every context until COMPLETE and serialize all calls.
+ * The optional account is reset, and the observer has the same restrictions
+ * as poll_observed. A completed empty task has no further cleanup poll. */
+CettaOwnedReleaseStep cetta_owned_task_cancel_poll(CettaOwnedTask *,
+    uint64_t allowance, bool allow_atomic, uint64_t *used,
+    CettaOwnedTaskAccount *, CettaOwnedTaskAccountObserver, void *observer_context);
 
 /* Remove this membership and release its computation. Independent captured
  * returns and other tasks retain their own shares. No effect is rolled back. */

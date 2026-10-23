@@ -19,10 +19,17 @@ static bool prime_ordinary_source_presentation_current(const PrimeNativeTopEpiso
     if (before->len!=now->len || registry_state_count(now)) return false;
     for (uint32_t i=0u;i<before->len;i++) {
         const RegistryEntry *a=&before->entries[i],*b=&now->entries[i];
-        if (a->key!=b->key || !atom_eq(a->value,b->value)) return false;
-        if (a->key==SYMBOL_ID_NONE && !atom_eq(
-            (Atom *)registry_entry_name_key(before,i),
-            (Atom *)registry_entry_name_key(now,i))) return false;
+        if (a->key!=b->key || (a->value!=b->value &&
+            !atom_capture_identical(a->value,b->value))) return false;
+        if (a->key==SYMBOL_ID_NONE) {
+            if (!!a->text_key.hold.token != !!b->text_key.hold.token) return false;
+            if (a->text_key.hold.token) {
+                if (a->text_key.length!=b->text_key.length ||
+                    memcmp(a->text_key.bytes,b->text_key.bytes,a->text_key.length)) return false;
+            } else if (!atom_capture_identical(
+                (Atom *)registry_entry_name_key(before,i),
+                (Atom *)registry_entry_name_key(now,i))) return false;
+        }
     }
     return true;
 }
@@ -867,7 +874,7 @@ static bool prime_ordinary_owned_entry(Space *space,Arena *output,Arena *persist
     outcome->prime_observation=owned;owned->entered=true;
     CettaPrimeObservationReturn *previous=g_prime_ordinary_return;g_prime_ordinary_return=owned;
     eval_top_with_registry_core(space,output,persistent,registry,expression,NULL,
-        &outcome->results,outcome,NULL,NULL,&owned->top);
+        &outcome->results,outcome,NULL,NULL,&owned->top,NULL);
     g_prime_ordinary_return=previous;
     if (!owned->ordinary_control || owned->top.committed) {
         /* A declined promotion completed through the original serial body. */

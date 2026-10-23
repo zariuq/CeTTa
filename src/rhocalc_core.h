@@ -6,6 +6,7 @@
 
 #include "atom.h"
 #include "space.h"
+#include "owned_execution.h"
 
 typedef struct CettaLibraryContext CettaLibraryContext;
 typedef struct ResultSet ResultSet;
@@ -42,7 +43,9 @@ typedef enum {
 /* The provider owns the evaluator continuation, not the transactional world.
  * Its calls receive the rebound space/registry with the world's redirects
  * and library selected. The provider scopes its own evaluator registers.
- * A step appends complete result occurrences; PENDING never means exhaustion.
+ * A step appends complete result occurrences in their retained logical world;
+ * a resource descriptor is read after DONE before promotion. PENDING never
+ * means exhaustion.
  * A zero grant is inert. Open, steps and close may have separately declared
  * atomic costs. The enclosing caller supplies current source/authority scope. */
 typedef struct RhocalcPayloadProvider {
@@ -51,6 +54,13 @@ typedef struct RhocalcPayloadProvider {
     RhocalcPayloadStatus (*step)(void *job, uint64_t allowance,
                                   ResultSet *results);
     void (*close)(void *job);
+    /* Optional descriptor after DONE in this exact occurrence's logical world.
+     * The provider retains that world and all descriptor storage until close.
+     * A successful read is coherent for both slots; false is refusal, never
+     * permission to use the cell's physical fallback. The cell identity is
+     * unchanged, including the affine check across result occurrences. */
+    bool (*result_state)(void *job, CettaCount result_index, StateCell *cell,
+                         Atom **value, Atom **content_type);
 } RhocalcPayloadProvider;
 
 typedef struct {
@@ -104,6 +114,10 @@ typedef struct {
      * these overlapping diagnostics must not be added as a total invoice.
      * Payload rendering and allocation retain their separate atomic prices. */
     uint64_t validation_steps, normalization_steps, key_steps, key_bytes;
+    /* Semantic-task transitions and the actual delegated binding-walk actions.
+     * Both overlap driver/selector transitions; normalization remains in its
+     * existing counters. These are work currencies, not elapsed-time bounds. */
+    uint64_t substitution_steps, substitution_apply_steps, substitution_memo_steps;
     uint64_t construction_children, construction_bytes;
     /* Subsets of the phase totals above, never extra invoice units. Physical
      * hash placement can change these when an equivalent graph is relocated;
@@ -158,13 +172,18 @@ typedef struct {
  * completes before replacing the previous winner. Final canonical successor
  * construction retains its body copy, row merge and child assembly; only a
  * completed root becomes the next process. A normalized variable-free body
- * preserves its syntax sharing under literal substitution. Deferred payloads
- * still run and retain every result occurrence. Payload atom rendering,
+ * preserves its syntax sharing under literal substitution. Semantic substitution
+ * retains scoped capture queries, alpha-renaming, normalized-name replies,
+ * matched-only drop exposure, child assembly and the existing binding walker
+ * for raw payload data. Each deferred result is classified before normalization;
+ * definite nonprocess data is wrapped unchanged, while refused checking fails
+ * the invocation. The actual normalized reply then determines substitution.
+ * Deferred payloads still run and retain every result occurrence.
  * Compaction and export retain the existing graph-copy session; the old
  * generation remains live until compaction commits. Canonical export keeps
  * that copied graph; other orderings use the retained normalizer. Payload atom
- * rendering, scalar/name construction, allocation, variable-bearing
- * substitution and cleanup retain atomic services, including generation
+ * rendering, scalar/name construction, allocation and cleanup retain atomic
+ * services, including interning constructors, generation
  * retirement and control-owner destruction after a completed transfer.
  * The eager-copy opener retains its initial copy cost; the held
  * opener below avoids that copy with a stronger input-lifetime contract.
@@ -206,6 +225,15 @@ RhocalcRunAccount rhocalc_run_account(const RhocalcRun *run);
 bool rhocalc_run_last_comm(const RhocalcRun *run, RhocalcCommAddress *out);
 RhocalcPayloadFailure rhocalc_run_payload_failure(const RhocalcRun *run);
 const char *rhocalc_run_error(const RhocalcRun *run);
+/* Cancel and release owned storage, retaining its exact cleanup position.
+ * Zero allowance is inert. Normalizer keys and frames retire individually;
+ * other owner/copy/payload/arena services currently request atomic permission.
+ * ATOMIC keeps the run and its remaining owners intact. A successful final
+ * action clears *run; the caller holds context/resource dependencies until
+ * then. A retiring run cannot be advanced or publish a new result. Units
+ * count cleanup actions, not allocator work or a physical latency bound. */
+CettaOwnedReleaseStep rhocalc_run_release_poll(RhocalcRun **run,
+    uint64_t allowance, bool allow_atomic, uint64_t *used);
 void rhocalc_run_close(RhocalcRun *run);
 
 const char *rhocalc_semantic_profile_name(RhocalcSemanticProfileId profile);

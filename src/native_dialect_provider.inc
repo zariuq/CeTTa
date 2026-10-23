@@ -513,6 +513,7 @@ static bool prime_native_return_receiver(const PrimeEvalStackFrame *frame) {
          (frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_ATOM ||
           frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_CHILDREN ||
           frame->kind == PRIME_EVAL_STACK_FRAME_FORCE ||
+          (frame->kind == PRIME_EVAL_STACK_FRAME_ALTERNATIVES && frame->ref) ||
           frame->kind == PRIME_EVAL_STACK_FRAME_BIND_FINISH)));
 }
 
@@ -537,7 +538,8 @@ static const PrimeNativeReturnAdvice *prime_native_frame_next_return(
     if (!frame || ((frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_ATOM ||
                    frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_CHILDREN) &&
                   frame->state != PRIME_EVAL_STACK_FRAME_WAIT_CALL)) return NULL;
-    CettaCount index = frame->kind == PRIME_EVAL_STACK_FRAME_BIND_FINISH
+    CettaCount index = (frame->kind == PRIME_EVAL_STACK_FRAME_BIND_FINISH ||
+        (frame->kind == PRIME_EVAL_STACK_FRAME_ALTERNATIVES && frame->ref))
         ? frame->stream_forwarded : frame->index;
     if (frame->kind == PRIME_EVAL_STACK_FRAME_DIALECT_SOURCE &&
         index >= frame->child.len && !frame->control_pending &&

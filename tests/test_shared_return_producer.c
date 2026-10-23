@@ -593,6 +593,64 @@ static void test_credit_allocation_refusal(void) {
     puts("PASS: failed credit allocation preserves the parent purse; a live lease owns its parent lifetime");
 }
 
+static void test_resident_capture(void) {
+    Account account = {.compatible = true};
+    CettaOwnedExecution execution = new_execution(&account, 1u);
+    Computation *resident = execution.computation;
+    CettaOwnedReturn borrowed;
+    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+    assert(next_return(resident, &borrowed, &completion) == CETTA_OWNED_EXECUTION_RETURN);
+    CettaOccurrenceLog *log = cetta_occurrence_log_new(2u, 1u);
+    assert(log);
+    CettaOwnedReturn original = borrowed;
+    account.refuse_capture = true;
+    assert(cetta_shared_return_capture_append(log, &borrowed, capture,
+        compatible, &account) == CETTA_SHARED_RETURN_CAPTURE_REFUSED);
+    account.refuse_capture = false;
+    account.change_during_capture = true;
+    assert(cetta_shared_return_capture_append(log, &borrowed, capture,
+        compatible, &account) == CETTA_SHARED_RETURN_CONTEXT_REFUSED);
+    assert(account.freed == 1u);
+    account.change_during_capture = false;
+    account.compatible = true;
+    account.fail_log_reserve = true;
+    assert(cetta_shared_return_capture_append(log, &borrowed, capture,
+        compatible, &account) == CETTA_SHARED_RETURN_CAPACITY);
+    assert(account.freed == 2u && !fail_malloc);
+    assert(cetta_shared_return_capture_append(log, &borrowed, capture,
+        compatible, &account) == CETTA_SHARED_RETURN_APPENDED);
+    assert(account.effects == 1u && account.next_calls == 1u && !account.released);
+    assert(borrowed.outcome.term == original.outcome.term &&
+        borrowed.environment == original.environment &&
+        borrowed.outcome.delayed == original.outcome.delayed);
+    unsigned captures = account.captures;
+    assert(cetta_shared_return_capture_append(log, &borrowed, capture,
+        compatible, &account) == CETTA_SHARED_RETURN_BACKPRESSURE);
+    assert(account.captures == captures);
+    CettaOccurrenceReply a = cetta_occurrence_log_peek(log, 0u);
+    CettaOccurrenceReply b = cetta_occurrence_log_peek(log, 1u);
+    assert(a.kind == CETTA_OCCURRENCE_ANSWER && b.kind == CETTA_OCCURRENCE_ANSWER &&
+        a.position == 0u && b.position == 0u && a.value == b.value);
+    Captured *saved = (Captured *)a.value;
+    ++saved->shares;
+    cetta_occurrence_log_complete(log);
+    assert(cetta_shared_return_capture_append(log, &borrowed, capture,
+        compatible, &account) == CETTA_SHARED_RETURN_COMPLETE);
+    assert(account.captures == captures);
+    cetta_occurrence_log_free(log);
+    assert(account.freed == 2u && !account.released);
+    cetta_owned_execution_cancel(&execution);
+    assert(account.released == 1u);
+    assert(saved->returned.outcome.kind == CETTA_CALL_SUSPENDED &&
+        saved->returned.outcome.delayed && saved->returned.environment);
+    assert(strcmp(atom_to_string(&saved->arena,
+        bindings_apply(&saved->bindings, &saved->arena,
+            saved->returned.outcome.term)), "(closure 7 7 7)") == 0);
+    release_capture(saved);
+    assert(account.freed == 3u);
+    puts("PASS: resident capture retries one earned occurrence without polling, moving or releasing its producer");
+}
+
 int main(void) {
     test_credit_allocation_refusal();
     SymbolTable symbols;
@@ -606,6 +664,7 @@ int main(void) {
     test_authority_and_detachment();
     test_construction_and_terminal_states();
     test_pending_return_detachment();
+    test_resident_capture();
     test_real_prepared_producer(false);
     test_real_prepared_producer(true);
     symbol_table_free(&symbols);

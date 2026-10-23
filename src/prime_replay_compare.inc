@@ -108,6 +108,7 @@ static bool prime_replay_compare_cell(const PrimeNeedCellView *a,const PrimeNeed
     RC_S("cell.value_role",a->value_role,b->value_role);
     RC_I("cell.value_producer",CETTA_CHECKPOINT_NEED_THUNK,a->value_producer_thunk,b->value_producer_thunk);
     RC_I("cell.value_producer_update",CETTA_CHECKPOINT_NEED_SERIAL,a->value_producer_update,b->value_producer_update);
+    RC_I("cell.update",CETTA_CHECKPOINT_NEED_SERIAL,a->update_id,b->update_id);
     RC_A("cell.cached",a->cached,b->cached);
     RC_I("cell.authority",CETTA_CHECKPOINT_NEED_AUTHORITY,a->authority_id,b->authority_id);
     RC_I("cell.evaluator",CETTA_CHECKPOINT_NEED_EVALUATOR,a->evaluator_id,b->evaluator_id);
@@ -132,15 +133,63 @@ static bool prime_replay_compare_semantics(const CettaMatchDecisionSemanticIdent
 #undef RS
     return true;
 }
+static bool prime_replay_compare_equation_metadata(const PrimeNeedEquationMetadata *a,
+    size_t an, const PrimeNeedEquationMetadata *b, size_t bn,
+    const CettaCheckpointCompare *read) {
+    if(!cetta_checkpoint_extent(a->items,an,a->capacity,b->items,bn,b->capacity))return false;
+    RC_P("equation.packet_metadata",a->items,b->items);
+    RC_F("equation.packet_capacity",a->capacity,b->capacity);
+    RC_S("equation.packet_observations",a->has_observations,b->has_observations);
+    for(size_t i=0u;i<an;i++) {
+        RC_S("equation.packet_index",i,i);
+        RC_S("equation.packet_plan",a->items[i].plan_index,b->items[i].plan_index);
+        RC_S("equation.packet_kind",a->items[i].kind,b->items[i].kind);
+    }
+    return true;
+}
+static bool prime_replay_compare_pattern_request(const PrimeNeedPatternRequest *a,
+    const PrimeNeedPatternRequest *b,const CettaCheckpointCompare *read) {
+    if(!prime_need_pattern_request_valid(a)||!prime_need_pattern_request_valid(b)||
+        a->length!=b->length)return false;
+    RC_S("observation.demand",a->demand,b->demand);
+    RC_S("observation.length",a->length,b->length);
+    RC_F("observation.capacity",a->capacity,b->capacity);
+    RC_P("observation.path",a->path,b->path);
+    for(size_t i=0u;i<a->length;i++) {
+        RC_S("observation.index",i,i);
+        RC_S("observation.coordinate",a->path[i],b->path[i]);
+    }
+    return true;
+}
+static bool prime_replay_compare_pattern_readiness(const PrimeNeedPatternReadiness *a,
+    const PrimeNeedPatternReadiness *b,const CettaCheckpointCompare *read) {
+    RC_P("observation.readiness",a,b);if(!a||!b)return !a&&!b;
+    if(!cetta_checkpoint_extent(a->paths,a->length,a->capacity,b->paths,b->length,b->capacity))return false;
+    RC_S("observation.ready_length",a->length,b->length);
+    RC_F("observation.ready_capacity",a->capacity,b->capacity);
+    RC_P("observation.ready_paths",a->paths,b->paths);
+    for(size_t i=0u;i<a->length;i++) {
+        RC_S("observation.ready_index",i,i);
+        if(a->paths[i].demand!=PRIME_NEED_PATTERN_FULL_VALUE ||
+           b->paths[i].demand!=PRIME_NEED_PATTERN_FULL_VALUE ||
+           !prime_replay_compare_pattern_request(&a->paths[i],&b->paths[i],read))return false;
+    }
+    return true;
+}
 static bool prime_replay_compare_equation(const PrimeNeedEquationContinuation *a,
     const PrimeNeedEquationContinuation *b,const CettaCheckpointCompare *read) {
     RC_P("equation",a,b);if(!a||!b)return !a&&!b;
+    if(a->cohort_owner||b->cohort_owner)return false;
     if(a->space!=b->space||a->plan_count!=b->plan_count||(a->plan_count&&(!a->plans||!b->plans)))return false;
 #define RE(f) RC_FIELDS("equation",a,b,f)
     RE(state);RE(fuel);RE(preserve_bindings);RE(frontier);RE(plan_count);RE(current_covered_by_match);
+    RE(current_observation_fault);
+    RE(inspect_incrementally);RE(publication_returns_to_search);
     RE(force_argument);RE(publication_index);RE(publication_raw_with_ref);RE(publication_pair_probes);
     RE(publication_descendants);RE(publication_fallbacks);
 #undef RE
+    if(!prime_replay_compare_pattern_request(&a->inspection,&b->inspection,read)||
+        !prime_replay_compare_pattern_readiness(a->observed,b->observed,read))return false;
     RC_P("equation.space",a->space,b->space);if(!read->arena(read->context,"equation.arena",a->arena,b->arena))return false;
     RC_A("equation.call",a->original_call,b->original_call);
     RC_I("equation.occurrence",CETTA_CHECKPOINT_SOURCE_OCCURRENCE,a->source_occurrence_id,b->source_occurrence_id);
@@ -158,12 +207,16 @@ static bool prime_replay_compare_equation(const PrimeNeedEquationContinuation *a
         if(an&&(!x->demand||!y->demand))return false;
         for(size_t j=0u;j<an;j++)RC_S("equation.demand",x->demand[j],y->demand[j]);
         if(!prime_replay_compare_outcomes(&x->results,&y->results,read))return false;
+        if(!prime_replay_compare_equation_metadata(&x->result_metadata,x->results.len,
+            &y->result_metadata,y->results.len,read))return false;
     }
     const OutcomeSet *as[]={&a->work,&a->current,&a->raw_results,&a->residuals,&a->publication,&a->forced_worlds};
     const OutcomeSet *bs[]={&b->work,&b->current,&b->raw_results,&b->residuals,&b->publication,&b->forced_worlds};
     for(size_t i=0u;i<6u;i++){RC_S("equation.outcome_role",i,i);if(!prime_replay_compare_outcomes(as[i],bs[i],read))return false;}
-    if(!prime_replay_compare_indices(a->raw_plan_indices,a->raw_results.len,a->raw_plan_indices_cap,
-        b->raw_plan_indices,b->raw_results.len,b->raw_plan_indices_cap,read)||
+    if(!prime_replay_compare_equation_metadata(&a->raw_metadata,a->raw_results.len,
+        &b->raw_metadata,b->raw_results.len,read)||
+        !prime_replay_compare_equation_metadata(&a->publication_metadata,a->publication.len,
+        &b->publication_metadata,b->publication.len,read)||
         !prime_replay_compare_indices(a->current_plan_indices,a->current_plan_count,a->current_plan_count,
         b->current_plan_indices,b->current_plan_count,b->current_plan_count,read)||
         !prime_replay_compare_indices(a->pending_plan_indices,a->pending_plan_count,a->pending_plan_count,
@@ -173,6 +226,8 @@ static bool prime_replay_compare_equation(const PrimeNeedEquationContinuation *a
     for(size_t i=0u;i<a->work.len;i++) {
         const PrimeNeedEquationWorkMeta *x=&a->work_meta[i],*y=&b->work_meta[i];
         RC_S("equation.work_meta_index",i,i);RC_S("equation.covered",x->covered_by_match,y->covered_by_match);
+        if(!prime_replay_compare_pattern_readiness(x->observed,y->observed,read))return false;
+        RC_S("equation.observation_fault",x->observation_fault,y->observation_fault);
         if(!prime_replay_compare_indices(x->plan_indices,x->plan_count,x->plan_count,y->plan_indices,y->plan_count,y->plan_count,read))return false;
     }
     return prime_replay_compare_atoms(a->root_atoms,a->root_atom_count,b->root_atoms,b->root_atom_count,read)&&
@@ -191,7 +246,8 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
     RF(index);RF(branch_index);RF(variable_branches_active);RF(normalization_child_index);RF(tuple_bind);
     RF(normalization_value_ready);RF(normalization_return_value_ready);RF(normalization_result_form);
     RF(strict_argument);RF(strict_mode);RF(strict_error_is_data);RF(weight_index);RF(weight_ownership_parked);
-    RF(source_argument_universal_demand);RF(stream_forwarded);
+    RF(source_argument_universal_demand);RF(stream_forwarded);RF(control_shell_refs);
+    RF(shared_need_wait);RF(force_empty_lexical_env);RF(ordinary_ordered);
 #undef RF
     _Static_assert(offsetof(PrimeEvalStackFrame,continuation)==0u,
         "frame continuation identifies its enclosing frame");
@@ -200,6 +256,10 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
     RC_P("frame.control_next",a->control_next,b->control_next);
     RC_P("frame.previous",a->control_previous,b->control_previous);RC_P("frame.parent",a->control_parent,b->control_parent);
     RC_P("frame.stream_consumer",a->stream_consumer,b->stream_consumer);
+    RC_P("frame.force_producer",a->force_producer,b->force_producer);
+    RC_P("frame.force_waiters",a->force_waiters,b->force_waiters);
+    RC_P("frame.force_waiter_next",a->force_waiter_next,b->force_waiter_next);
+    RC_P("frame.open_force_next",a->open_force_next,b->open_force_next);
     RC_I("frame.nested_handle",CETTA_CHECKPOINT_NATIVE_HANDLE,a->control_nested_handle,b->control_nested_handle);
     RC_I("frame.weight_dependency",CETTA_CHECKPOINT_SOURCE_OCCURRENCE,a->weight_dependency,b->weight_dependency);
     RC_I("frame.thunk",CETTA_CHECKPOINT_NEED_THUNK,a->thunk_id,b->thunk_id);
@@ -241,6 +301,7 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
         !prime_replay_compare_atoms(a->control_child_bounds,a->control_child_bound_length,b->control_child_bounds,b->control_child_bound_length,read)||
         !prime_replay_compare_indices(a->control_selection,a->control_selection_length,a->control_selection_length,
         b->control_selection,b->control_selection_length,b->control_selection_length,read)||
+        !prime_replay_compare_read(a->force_source_read,b->force_source_read,read)||
         !prime_replay_compare_cell(&a->cell,&b->cell,read)||
         !prime_need_snapshot_compare(&a->before,&b->before,read)||
         !prime_need_snapshot_compare(&a->evaluating,&b->evaluating,read))return false;
@@ -294,6 +355,7 @@ static bool prime_replay_compare_registry_view(const RegistryReadView *a,
     RC_F("registry_view.inactive_source",(uintptr_t)a->active_source,(uintptr_t)b->active_source);
     RC_F("registry_view.inactive_parent",(uintptr_t)a->active_parent,(uintptr_t)b->active_parent);
     if(!read->arena(read->context,"registry_view.arena",a->arena,b->arena))return false;
+    RC_S("registry_view.passive",a->passive,b->passive);
     RC_S("registry_view.stale",a->stale,b->stale);RC_S("registry_view.incomplete",a->incomplete,b->incomplete);
     RC_A("registry_view.stale_name",a->stale_name,b->stale_name);
     RC_A("registry_view.stale_expected",a->stale_expected,b->stale_expected);
@@ -540,6 +602,7 @@ static bool prime_replay_compare_prepared_cache(const PreparedPureProgramCache *
 static bool prime_replay_compare_driver(const PrimeEvalStackDriver *a,
     const PrimeEvalStackDriver *b,const CettaCheckpointCompare *read) {
     if(a->active_task||b->active_task||a->running_task||b->running_task||
+        a->prepared_opaque_frames||b->prepared_opaque_frames||
         a->root_call_running||b->root_call_running||a->continuations.top||b->continuations.top||
         a->continuations.depth||b->continuations.depth)return false;
     RC_P("driver.top",a->top,b->top);RC_P("driver.control",a->control,b->control);
@@ -553,6 +616,9 @@ static bool prime_replay_compare_driver(const PrimeEvalStackDriver *a,
     DD(pure_authority);DD(running_task);DD(heap_phase);DD(collection_admitted);DD(failed);DD(capacity_blocked);
     DD(ownership_parked);DD(streaming);DD(answer_limit);DD(nested);DD(root_call_running);DD(frame_depth);
     DD(gc_survivor_floor_bytes);DD(continuation_generation);
+    DD(root_weak_head);DD(ordinary_ordered);DD(ordinary_shared_source);DD(ordinary_ready_queue);
+    DD(ordinary_refill);DD(ordinary_descendants);DD(capsule_stack);DD(capsule_frontier);
+    DD(prepared_opaque_frames);
 #undef DD
     if(a->task_ready!=b->task_ready)return false;
     return (!a->task_ready||prime_replay_compare_task(&a->task,&b->task,read))&&
@@ -758,6 +824,7 @@ static bool prime_replay_compare_control_fields_in(const PrimeNativeControl *a,
     CC(frame_sequence);CC(open_source_frames);CC(active_allowance);CC(active_spent);
     CC(key_generation);CC(active_scoring);CC(pure_authority);CC(worker_execution);
     CC(effect_pending);CC(need_pending);CC(open_frames);CC(failed);CC(invalidated);
+    CC(reclaims_frames);
     CC(completion);CC(owned_arena);CC(resource_pending);CC(cost_enabled);
     CC(breakpoint_hit);CC(breakpoint_incomplete);CC(breakpoint_operation);CC(breakpoint_checks);
     CC(breakpoint_resource_commit);
@@ -808,6 +875,11 @@ static bool prime_replay_compare_control_fields_in(const PrimeNativeControl *a,
     for(;p&&q;p=p->control_next,q=q->control_next)
         if(!p->control_retired||!q->control_retired||!prime_replay_compare_frame(p,q,read))return false;
     if(p||q||!prime_replay_frame_index_valid(a,read,false)||!prime_replay_frame_index_valid(b,read,true))return false;
+    if(a->reclaimed_frames||b->reclaimed_frames)return false;
+    for(size_t i=0u;i<sizeof(a->open_force_buckets)/sizeof(*a->open_force_buckets);i++) {
+        RC_S("force_bucket.index",i,i);
+        RC_P("force_bucket.frame",a->open_force_buckets[i],b->open_force_buckets[i]);
+    }
     RC_S("frame_index.count",a->frame_index_count,b->frame_index_count);
     RC_F("frame_index.capacity",a->frame_index_capacity,b->frame_index_capacity);
     RC_F("frame_index.storage",(uintptr_t)a->frame_index,(uintptr_t)b->frame_index);

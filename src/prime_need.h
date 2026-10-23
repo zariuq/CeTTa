@@ -83,6 +83,9 @@ typedef struct {
 typedef struct {
     PrimeNeedCacheState cache_state;
     PrimeNeedValueRole value_role;
+    /* Identity of the actual cell update. A qualified view import keeps it
+     * while adding a fresh record to the recipient's history. */
+    uint64_t update_id;
     /* Optional direct producer of this VALUE update, in the same session.
      * Both identities are zero for ordinary results. The update identity
      * distinguishes sibling completions of the same producer cell. */
@@ -102,6 +105,42 @@ typedef struct {
     size_t capture_var_count;
 #endif
 } PrimeNeedCellView;
+
+/* Operational Need-read support for one resident production. The admitted
+ * common context, force entrance and query payloads are borrowed and must
+ * remain owned by the host. The force entrance descends from that context;
+ * it fixes both the expected reads and the beginning of produced updates.
+ * This captures Need cells and stored-cell lookup/absence, not the surrounding
+ * registry, Space, logical bindings, resource authority or scheduling policy.
+ * A host must qualify those separately before reusing a production. */
+typedef struct PrimeNeedReadCapture PrimeNeedReadCapture;
+typedef struct PrimeNeedReadScope {
+    PrimeNeedReadCapture *capture;
+    struct PrimeNeedReadScope *previous;
+} PrimeNeedReadScope;
+
+PrimeNeedReadCapture *prime_need_read_capture_new(const PrimeNeedSnapshot *context,
+                                                const PrimeNeedSnapshot *entrance);
+void prime_need_read_capture_free(PrimeNeedReadCapture *capture);
+/* Freeze the currently earned support for a row. Subsequent reads cannot
+ * mutate this copy. Payload ownership remains with the enclosing host. */
+PrimeNeedReadCapture *prime_need_read_capture_copy(const PrimeNeedReadCapture *capture);
+bool prime_need_read_capture_complete(const PrimeNeedReadCapture *capture);
+void prime_need_read_scope_enter(PrimeNeedReadScope *scope, PrimeNeedReadCapture *capture);
+void prime_need_read_scope_leave(PrimeNeedReadScope *scope);
+
+/* Install an already-earned completion and its introduced cells in a
+ * descendant of the admitted common context. Only updates after the force
+ * entrance are transported; unrelated caller history preceding that force
+ * is not a production. Read/absence and write conflicts are checked before
+ * publication. This neither runs the source nor identifies
+ * sibling histories. The host retains source payload owners, merges the
+ * qualified bindings/resources/factors, and commits its reader cursor only
+ * after the complete return has been accepted. Refusal leaves out unchanged.
+ * An incomplete capture is never permission to reuse. */
+bool prime_need_snapshot_import_production(Arena *owner,
+    const PrimeNeedReadCapture *capture, const PrimeNeedSnapshot *production,
+    uint64_t thunk_id, const PrimeNeedSnapshot *recipient, PrimeNeedSnapshot *out);
 
 /* Borrowed immutable history, newest update first. The snapshot's arena
  * owners must remain alive while this cursor or its payload views are used.
@@ -272,6 +311,13 @@ bool prime_need_snapshot_common_ancestor(const PrimeNeedSnapshot *left,
 bool prime_need_snapshot_settled_ancestor(const PrimeNeedSnapshot *base,
                                           const PrimeNeedSnapshot *snapshot,
                                           PrimeNeedSnapshot *out);
+/* A sufficient cell-identity condition for discarding an extension: every
+ * suffix frame belongs to a fresh anonymous, unimported cell above the base's
+ * storage-key watermark. Updates to caller cells and stable named/imported
+ * identities must survive. The caller separately checks returned references,
+ * logical bindings, effects and weights before actually discarding anything. */
+bool prime_need_snapshot_suffix_is_private(const PrimeNeedSnapshot *base,
+                                            const PrimeNeedSnapshot *snapshot);
 bool prime_need_snapshot_promote(Arena *dst,
                                  PrimeNeedSnapshot *snapshot);
 /* Full-path composition with a caller-owned Atom copy session. Preserve
@@ -408,6 +454,12 @@ bool prime_need_snapshot_retry_evaluation(
 bool prime_need_snapshot_lookup(const PrimeNeedSnapshot *snapshot,
                                 uint64_t thunk_id,
                                 PrimeNeedCellView *out);
+/* Find the existing branch-local cell for a stored key and its instantiated
+ * origin, using the same identity policy as persisted allocation. This read
+ * neither allocates nor forces a cell. Refusal leaves the output unchanged. */
+bool prime_need_snapshot_find_imported_cell(
+    const PrimeNeedSnapshot *snapshot, uint64_t import_key,
+    Atom *origin, uint64_t *out_thunk_id);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 /* Observation identity of the latest VALUE/STABLE_FAULT update.  It is fresh
  * for each successful cache transition, preserved by whole/suffix promotion,
@@ -506,6 +558,11 @@ bool prime_need_branch_state_read(
 bool prime_need_branch_state_write(
     Arena *owner, const PrimeNeedBranchState *base, StateCell *cell,
     Atom *before, Atom *after, PrimeNeedBranchState *out);
+/* Successful lookup writes NULL only for an absent logical update. Refusal
+ * leaves the output untouched; it must not license a physical-value fallback.
+ * The caller retains the immutable state and all its payload owners. */
+bool prime_need_branch_state_lookup(
+    const PrimeNeedBranchState *state, StateCell *cell, Atom **out_value);
 bool prime_need_branch_state_value(
     const PrimeNeedBranchState *state, StateCell *cell, Atom **out_value);
 

@@ -7711,12 +7711,14 @@ static AtomDataEqualityEntry *atom_data_equality_find(
     return &memo->entries[slot];
 }
 
-static bool atom_data_equality_grow(AtomDataEqualityMemo *memo) {
+static bool atom_data_equality_grow(AtomDataEqualityMemo *memo, bool recoverable) {
     if (memo->capacity > SIZE_MAX / 2u / sizeof(*memo->entries))
         return false;
     size_t next = memo->capacity * 2u;
     AtomDataEqualityMemo grown = {.count = memo->count, .capacity = next};
-    grown.entries = cetta_malloc(next * sizeof(*grown.entries));
+    grown.entries = recoverable ? malloc(next * sizeof(*grown.entries))
+                                : cetta_malloc(next * sizeof(*grown.entries));
+    if (!grown.entries) return false;
     memset(grown.entries, 0, next * sizeof(*grown.entries));
     for (size_t i = 0u; i < memo->capacity; ++i) {
         AtomDataEqualityEntry entry = memo->entries[i];
@@ -7747,6 +7749,7 @@ typedef struct {
     Atom *left, *right;
     CettaExprIndex next_child;
     bool entered;
+    bool context_pair;
 } AtomDataEqualityFrame;
 
 static bool atom_data_leaf_identical(Atom *left, Atom *right) {
@@ -7765,8 +7768,33 @@ static bool atom_data_leaf_identical(Atom *left, Atom *right) {
     return atom_eq(left, right);
 }
 
+static bool atom_capture_leaf_identical(Atom *left, Atom *right) {
+    if (left->kind != ATOM_GROUNDED) return atom_data_leaf_identical(left, right);
+    if (left->ground.gkind != right->ground.gkind) return false;
+    if (left->ground.gkind == GV_INT &&
+        (left->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID)) {
+        const NativeHandleIdentifier *a = (const void *)left, *b = (const void *)right;
+        return left->ground.ival == right->ground.ival && a->owner == b->owner &&
+            a->lifetime == b->lifetime && a->retain == b->retain &&
+            a->release == b->release && a->storage == b->storage;
+    }
+    if (atom_scalar_data(left) || left->ground.gkind == GV_INTERNAL_TAG)
+        return atom_data_leaf_identical(left, right);
+    if (left->ground.gkind == GV_PRIME_NEED_CAPABILITY) {
+        const CettaPrimeNeedCapability *a = atom_prime_need_capability_value(left);
+        const CettaPrimeNeedCapability *b = atom_prime_need_capability_value(right);
+        return a && b && a->session_id == b->session_id && a->thunk_id == b->thunk_id &&
+            a->authority_id == b->authority_id && a->rights == b->rights;
+    }
+    if (left->ground.gkind == GV_TERM_GRAPH) {
+        const CettaTermGraphRef *a = left->ground.ptr, *b = right->ground.ptr;
+        return a && b && a->graph == b->graph && a->node == b->node;
+    }
+    return left->ground.ptr && left->ground.ptr == right->ground.ptr;
+}
+
 static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated,
-                                 bool exact) {
+                                 bool exact, bool capture) {
     if (!left || !right)
         return false;
     if (validated && left == right)
@@ -7781,36 +7809,53 @@ static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated,
     while (count) {
         AtomDataEqualityFrame *frame = &frames[count - 1u];
         Atom *a = frame->left, *b = frame->right;
-        if (validated && a == b) {
-            count--;
-            continue;
+        const CettaPrimeContext *ca = frame->context_pair ? (const void *)a : NULL;
+        const CettaPrimeContext *cb = frame->context_pair ? (const void *)b : NULL;
+        if (frame->context_pair) {
+            if (!ca || !cb) {
+                if (ca != cb) goto done;
+                count--;
+                continue;
+            }
+            if (ca->depth != cb->depth || ca->flags != cb->flags) goto done;
+        } else {
+            if (validated && a == b) {
+                count--;
+                continue;
+            }
+            if (!a || !b || a->kind != b->kind) goto done;
+            if (capture && ((a->flags ^ b->flags) & ATOM_FLAG_HE_EVALUATED)) goto done;
+            if (exact && ((a->structural_facts | b->structural_facts) &
+                          ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID)) {
+                if (!capture || ((a->structural_facts ^ b->structural_facts) &
+                                 ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID)) goto done;
+            }
+            if (capture && a->kind == ATOM_GROUNDED &&
+                a->ground.gkind == GV_PRIME_CONTEXT && b->ground.gkind == GV_PRIME_CONTEXT) {
+                frame->left = (Atom *)a->ground.prime_context;
+                frame->right = (Atom *)b->ground.prime_context;
+                frame->context_pair = true;
+                continue;
+            }
         }
-        if (!a || !b || a->kind != b->kind)
-            goto done;
-        if (exact && ((a->structural_facts | b->structural_facts) &
-                      ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID))
-            goto done;
-        bool named = exact && a->kind == ATOM_VAR &&
+        bool named = !frame->context_pair && exact && a->kind == ATOM_VAR &&
                      (a->name_key || b->name_key);
         if (named && (!var_id_eq(a->var_id, b->var_id) || !a->name_key || !b->name_key))
             goto done;
-        if (a->kind != ATOM_EXPR && !named) {
+        if (!frame->context_pair && a->kind != ATOM_EXPR && !named) {
             bool data_a = atom_scalar_data(a) ||
-                (exact && a->kind == ATOM_GROUNDED &&
-                 a->ground.gkind == GV_INTERNAL_TAG);
+                (exact && a->kind == ATOM_GROUNDED && a->ground.gkind == GV_INTERNAL_TAG);
             bool data_b = atom_scalar_data(b) ||
-                (exact && b->kind == ATOM_GROUNDED &&
-                 b->ground.gkind == GV_INTERNAL_TAG);
-            if (!data_a || !data_b ||
-                !(exact ? atom_data_leaf_identical(a, b) : atom_eq(a, b)))
-                goto done;
+                (exact && b->kind == ATOM_GROUNDED && b->ground.gkind == GV_INTERNAL_TAG);
+            if (capture ? !atom_capture_leaf_identical(a, b) :
+                (!data_a || !data_b ||
+                 !(exact ? atom_data_leaf_identical(a, b) : atom_eq(a, b)))) goto done;
             count--;
             continue;
         }
-        if (!named && a->expr.len != b->expr.len)
-            goto done;
+        if (!frame->context_pair && !named && a->expr.len != b->expr.len) goto done;
         if (!frame->entered) {
-            if (memo.count >= memo.capacity / 2u && !atom_data_equality_grow(&memo))
+            if (memo.count >= memo.capacity / 2u && !atom_data_equality_grow(&memo, capture))
                 goto done;
             AtomDataEqualityEntry *entry = atom_data_equality_find(&memo, a, b);
             if (entry->left) {
@@ -7823,21 +7868,34 @@ static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated,
             memo.count++;
             frame->entered = true;
         }
-        if (frame->next_child < (named ? 1u : a->expr.len)) {
+        CettaExprIndex children = frame->context_pair ? 3u : named ? 1u : a->expr.len;
+        if (frame->next_child < children) {
             CettaExprIndex index = frame->next_child++;
-            AtomDataEqualityFrame child = {
-                .left = named ? a->name_key : a->expr.elems[index],
-                .right = named ? b->name_key : b->expr.elems[index],
-            };
+            AtomDataEqualityFrame child = {0};
+            if (frame->context_pair) {
+                child.left = index == 0u ? ca->key : index == 1u ? ca->value : (Atom *)ca->parent;
+                child.right = index == 0u ? cb->key : index == 1u ? cb->value : (Atom *)cb->parent;
+                child.context_pair = index == 2u;
+            } else {
+                child.left = named ? a->name_key : a->expr.elems[index];
+                child.right = named ? b->name_key : b->expr.elems[index];
+            }
             if (count == capacity) {
                 if (capacity > SIZE_MAX / 2u / sizeof(*frames))
                     goto done;
-                capacity *= 2u;
+                size_t next_capacity = capacity * 2u;
+                AtomDataEqualityFrame *next;
                 if (frames == inline_frames) {
-                    frames = cetta_malloc(capacity * sizeof(*frames));
-                    memcpy(frames, inline_frames, count * sizeof(*frames));
+                    next = capture ? malloc(next_capacity * sizeof(*frames))
+                                   : cetta_malloc(next_capacity * sizeof(*frames));
+                    if (!next) goto done;
+                    memcpy(next, inline_frames, count * sizeof(*frames));
                 } else
-                    frames = cetta_realloc(frames, capacity * sizeof(*frames));
+                    next = capture ? realloc(frames, next_capacity * sizeof(*frames))
+                                   : cetta_realloc(frames, next_capacity * sizeof(*frames));
+                if (!next) goto done;
+                frames = next;
+                capacity = next_capacity;
             }
             frames[count++] = child;
         } else {
@@ -7855,15 +7913,19 @@ done:
 }
 
 bool atom_data_equal(Atom *left, Atom *right) {
-    return atom_data_equal_impl(left, right, false, false);
+    return atom_data_equal_impl(left, right, false, false, false);
 }
 
 bool atom_data_equal_validated(Atom *left, Atom *right) {
-    return atom_data_equal_impl(left, right, true, false);
+    return atom_data_equal_impl(left, right, true, false, false);
 }
 
 bool atom_data_identical(Atom *left, Atom *right) {
-    return atom_data_equal_impl(left, right, false, true);
+    return atom_data_equal_impl(left, right, false, true, false);
+}
+
+bool atom_capture_identical(Atom *left, Atom *right) {
+    return atom_data_equal_impl(left, right, false, true, true);
 }
 
 /* ── Printing ───────────────────────────────────────────────────────────── */

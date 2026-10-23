@@ -6542,7 +6542,9 @@ static Atom *rename_vars_walk(Arena *a, Atom *root, RenameVariable rename,
                 break;
             }
             result = frame->draft
-                ? atom_expr_builder_finish(a, frame->draft) : source;
+                ? (atom_is_he_evaluated(source)
+                    ? atom_expr_rebuild(a, source, frame->draft->expr.elems, source->expr.len)
+                    : atom_expr_builder_finish(a, frame->draft)) : source;
             if (!result || !freshen_epoch_memo_store(&memo, source, result))
                 goto fail;
             len--;
@@ -16106,6 +16108,95 @@ static bool bindings_current_binding_equal_in_other(
         context->other, binding->var_id);
     context->equal = binding_value_equal(other, binding->value);
     return context->equal;
+}
+
+static bool binding_capture_value_equal(Arena *arena, BindingValue left, BindingValue right) {
+    if (!left.skeleton || !right.skeleton) return left.skeleton == right.skeleton;
+    if (left.context == right.context)
+        return atom_capture_identical(left.skeleton, right.skeleton);
+    Atom *a = binding_value_materialize(arena, left);
+    Atom *b = binding_value_materialize(arena, right);
+    return a && b && atom_capture_identical(a, b);
+}
+
+static bool bindings_capture_frame_equal(Arena *arena,
+    const BindingsFrameStateView *left, const BindingsFrameStateView *right) {
+    if (left->ref.identity.word != right->ref.identity.word ||
+        left->slot_count != right->slot_count ||
+        left->schema_slot_count != right->schema_slot_count ||
+        left->schema_revision != right->schema_revision ||
+        left->schema_complete != right->schema_complete ||
+        left->has_activation_write_boundary != right->has_activation_write_boundary ||
+        (left->has_activation_write_boundary &&
+         left->activation_write_boundary != right->activation_write_boundary)) return false;
+    for (uint32_t i = 0u; i < left->slot_count; i++) {
+        BindingsFrameSlotStateView a, b;
+        if (!bindings_frame_state_read_slot(left, i, &a) ||
+            !bindings_frame_state_read_slot(right, i, &b) ||
+            !var_id_eq(a.source_id, b.source_id) || !var_id_eq(a.var_id, b.var_id) ||
+            a.spelling != b.spelling || a.declared_in_schema != b.declared_in_schema ||
+            (a.name_key != b.name_key && !atom_capture_identical(a.name_key, b.name_key)) ||
+            !binding_capture_value_equal(arena, a.value, b.value)) return false;
+    }
+    return true;
+}
+
+bool bindings_capture_equal(Arena *arena, Bindings *left, Bindings *right) {
+    if (!arena || !left || !right) return false;
+    size_t left_values = 0u, right_values = 0u;
+    uint32_t left_frames = 0u, right_frames = 0u;
+    if (!bindings_current_binding_count(left, &left_values) ||
+        !bindings_current_binding_count(right, &right_values) || left_values != right_values ||
+        !bindings_frame_state_count(left, &left_frames) ||
+        !bindings_frame_state_count(right, &right_frames) || left_frames != right_frames ||
+        left->eq_len != right->eq_len) return false;
+    BindingsIterator values = {.bindings = left};
+    Binding binding;
+    size_t visited = 0u;
+    while (bindings_iterator_next(&values, &binding)) {
+        visited++;
+        BindingValue other = bindings_lookup_value_id(right, binding.var_id);
+        if (!other.skeleton || !binding_capture_value_equal(arena, binding.value, other)) return false;
+    }
+    if (visited != left_values) return false;
+    BindingsFrameStateIterator frames = {.bindings = left};
+    for (uint32_t i = 0u; i < left_frames; i++) {
+        BindingsFrameStateView a, b;
+        if (!bindings_frame_state_next(&frames, &a)) return false;
+        BindingsFrameStateIterator candidates = {.bindings = right};
+        bool found = false;
+        for (uint32_t j = 0u; j < right_frames; j++) {
+            if (!bindings_frame_state_next(&candidates, &b)) return false;
+            if (a.ref.identity.word != b.ref.identity.word) continue;
+            found = bindings_capture_frame_equal(arena, &a, &b);
+            break;
+        }
+        if (!found) return false;
+    }
+    bool inline_matched[BINDINGS_TEMP_STACK_CAP] = {0};
+    bool *matched = right->eq_len > BINDINGS_TEMP_STACK_CAP
+        ? calloc(right->eq_len, sizeof(*matched)) : inline_matched;
+    if (!matched) return false;
+    bool equal = true;
+    for (uint32_t i = 0u; equal && i < left->eq_len; i++) {
+        const BindingConstraint *a = &left->constraints[i];
+        bool found = false;
+        for (uint32_t j = 0u; j < right->eq_len; j++) {
+            if (matched[j]) continue;
+            const BindingConstraint *b = &right->constraints[j];
+            if ((binding_capture_value_equal(arena, a->lhs, b->lhs) &&
+                 binding_capture_value_equal(arena, a->rhs, b->rhs)) ||
+                (binding_capture_value_equal(arena, a->lhs, b->rhs) &&
+                 binding_capture_value_equal(arena, a->rhs, b->lhs))) {
+                matched[j] = true;
+                found = true;
+                break;
+            }
+        }
+        equal = found;
+    }
+    if (matched != inline_matched) free(matched);
+    return equal;
 }
 
 bool bindings_eq(Bindings *a, Bindings *b) {

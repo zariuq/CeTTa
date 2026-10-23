@@ -78,6 +78,13 @@
 #include "parallel_executor.h"
 #include "stats.h"
 #include "term_canon.h"
+#include "segmented_array.h"
+
+extern const RhocalcPayloadProvider *eval_payload_synchronous_provider(void)
+    __attribute__((weak));
+extern Atom *eval_open_payload_code(Arena *, Atom *) __attribute__((weak));
+extern bool eval_payload_frame_source_state(CettaEvalPayloadFrame *,Arena *,
+    StateCell *,Atom **,Atom **) __attribute__((weak));
 
 #ifndef CETTA_RHOCOST_COMMIT_AUDIT
 #define CETTA_RHOCOST_COMMIT_AUDIT 0
@@ -116,6 +123,7 @@ typedef struct {
     Atom **items;
     uint32_t len;
     uint32_t cap;
+    bool borrowed;
 } RhoAtomVec;
 
 typedef struct {
@@ -124,6 +132,49 @@ typedef struct {
     uint32_t ordinal;
     uint32_t binders;
 } RhoKeyedAtom;
+
+/* Indexed rows share the retained merge algorithm. Atomic callers may use
+ * contiguous backing; retained callers prepare and retire fixed blocks. */
+typedef struct {
+    void *linear;
+    uint32_t capacity;
+    bool paged;
+    CettaSegmentedArray pages;
+} RhoSortBuffer;
+
+static void *rho_sort_buffer_at(const RhoSortBuffer *buffer,
+                               uint32_t index, size_t size) {
+    return buffer->paged ? cetta_segmented_array_at(&buffer->pages, index)
+        : (char *)buffer->linear + (size_t)index * size;
+}
+
+static RhoKeyedAtom *rho_keyed_row(const RhoSortBuffer *buffer, uint32_t index) {
+    return rho_sort_buffer_at(buffer, index, sizeof(RhoKeyedAtom));
+}
+
+static CettaSegmentedStep rho_sort_buffer_prepare(RhoSortBuffer *buffer,
+                                                 uint32_t index, size_t size) {
+    if (!buffer->paged)
+        return index < buffer->capacity ? CETTA_SEGMENTED_READY : CETTA_SEGMENTED_REFUSED;
+    if (!buffer->pages.element_size && !cetta_segmented_array_init(&buffer->pages, size))
+        return CETTA_SEGMENTED_REFUSED;
+    return cetta_segmented_array_prepare(&buffer->pages, index);
+}
+
+static bool rho_sort_buffer_has_storage(const RhoSortBuffer *buffer) {
+    return buffer->paged ? buffer->pages.blocks != NULL : buffer->linear != NULL;
+}
+
+static bool rho_sort_buffer_release_one(RhoSortBuffer *buffer) {
+    if (buffer->paged) return cetta_segmented_array_release_one(&buffer->pages);
+    free(buffer->linear);
+    buffer->linear = NULL; buffer->capacity = 0u;
+    return true;
+}
+
+static void rho_sort_buffer_free(RhoSortBuffer *buffer) {
+    while (!rho_sort_buffer_release_one(buffer)) {}
+}
 
 /* A completed standalone key also records its contribution to the enclosing
  * monotone alpha counter. Quoted binders contribute only inside the quote. */
@@ -164,10 +215,13 @@ typedef struct {
 } RhoEndpoint;
 
 typedef struct {
-    RhoEndpoint *items;
+    RhoSortBuffer storage;
     uint32_t len;
-    uint32_t cap;
 } RhoEndpointVec;
+
+static RhoEndpoint *rho_endpoint_at(const RhoEndpointVec *vec, uint32_t index) {
+    return rho_sort_buffer_at(&vec->storage,index,sizeof(RhoEndpoint));
+}
 
 typedef struct {
     CettaNodeMemo memo;
@@ -486,41 +540,11 @@ static Atom *rho_value_proc(Arena *arena, Atom *value) {
 }
 
 static bool rho_is_builtin_quote(Atom *atom) {
-    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 2 &&
-           atom->expr.elems[0]->kind == ATOM_SYMBOL &&
-           atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.quote);
+    return atom_is_quotation(atom);
 }
 
 static Atom *rho_unquote_payload_atom(Atom *atom) {
     return rho_is_builtin_quote(atom) ? atom->expr.elems[1] : atom;
-}
-
-static bool rho_atom_contains_var_id(Atom *atom, VarId var_id) {
-    if (!atom || !atom_has_vars(atom)) return false;
-    if (atom->kind == ATOM_VAR) return var_id_eq(atom->var_id, var_id);
-    if (atom->kind != ATOM_EXPR) return false;
-    for (CettaExprIndex i = 0; i < atom->expr.len; i++) {
-        if (rho_atom_contains_var_id(atom->expr.elems[i], var_id)) return true;
-    }
-    return false;
-}
-
-static Atom *rho_atom_replace_var(Arena *arena, Atom *atom, VarId var_id,
-                                  Atom *replacement) {
-    Bindings subst;
-    Atom *result;
-
-    if (!atom_has_vars(atom)) return atom;
-    bindings_init(&subst);
-    if (!bindings_add_id(&subst, var_id, replacement ? atom_symbol_current_id(replacement)
-                                                     : SYMBOL_ID_NONE,
-                         replacement)) {
-        bindings_free(&subst);
-        return atom;
-    }
-    result = bindings_apply_if_vars(&subst, arena, atom);
-    bindings_free(&subst);
-    return result;
 }
 
 static void rho_scope_init(RhoScope *scope) {
@@ -557,19 +581,16 @@ static bool rho_scope_push(RhoScope *scope, VarId var_id) {
 }
 
 static void rho_vec_init(RhoAtomVec *vec) {
-    vec->items = NULL;
-    vec->len = 0;
-    vec->cap = 0;
+    *vec=(RhoAtomVec){0};
 }
 
 static void rho_vec_free(RhoAtomVec *vec) {
-    free(vec->items);
-    vec->items = NULL;
-    vec->len = 0;
-    vec->cap = 0;
+    if (!vec->borrowed) free(vec->items);
+    *vec=(RhoAtomVec){0};
 }
 
 static bool rho_vec_push(RhoAtomVec *vec, Atom *atom) {
+    if (vec->borrowed || vec->len==UINT32_MAX) return false;
     if (vec->len == vec->cap) {
         uint32_t next_cap = vec->cap ? vec->cap * 2u : 8u;
         Atom **next = cetta_realloc(vec->items, sizeof(Atom *) * next_cap);
@@ -617,39 +638,53 @@ static bool rho_successor_set_acc_grow(RhoSuccessorSetAcc *acc) {
 }
 
 static void rho_endpoint_vec_init(RhoEndpointVec *vec) {
-    vec->items = NULL;
-    vec->len = 0;
-    vec->cap = 0;
+    *vec=(RhoEndpointVec){0};
 }
 
 static void rho_endpoint_vec_free(RhoEndpointVec *vec) {
-    for (uint32_t i = 0; i < vec->len; i++) {
-        if (vec->items[i].key_owned) free(vec->items[i].key);
+    for (uint32_t i=0u;i<vec->len;i++) {
+        RhoEndpoint *row=rho_endpoint_at(vec,i);
+        if (row->key_owned) free(row->key);
     }
-    free(vec->items);
-    vec->items = NULL;
-    vec->len = 0;
-    vec->cap = 0;
+    rho_sort_buffer_free(&vec->storage);
+    *vec=(RhoEndpointVec){0};
+}
+
+static bool rho_endpoint_vec_release_one(RhoEndpointVec *vec) {
+    if (vec->len) {
+        RhoEndpoint *row=rho_endpoint_at(vec,--vec->len);
+        char *key=row->key_owned ? row->key : NULL;
+        row->key=NULL;row->key_owned=false;
+        free(key);
+        return true;
+    }
+    if (rho_sort_buffer_has_storage(&vec->storage)) {
+        rho_sort_buffer_release_one(&vec->storage);
+        return true;
+    }
+    return false;
 }
 
 static bool rho_endpoint_vec_push(RhoEndpointVec *vec,
                                   uint32_t component_index,
                                   RhoView view,
                                   char *key, bool key_owned) {
-    if (vec->len == vec->cap) {
-        uint32_t next_cap = vec->cap ? vec->cap * 2u : 8u;
-        RhoEndpoint *next = cetta_realloc(vec->items,
-                                          sizeof(RhoEndpoint) * next_cap);
+    if (vec->len==UINT32_MAX) return false;
+    if (vec->storage.paged) {
+        if (rho_sort_buffer_prepare(&vec->storage,vec->len,sizeof(RhoEndpoint))!=CETTA_SEGMENTED_READY)
+            return false;
+    } else if (vec->len==vec->storage.capacity) {
+        uint32_t capacity=vec->storage.capacity;
+        if (capacity>UINT32_MAX/2u) return false;
+        uint32_t next_cap=capacity ? capacity*2u : 8u;
+        if ((uint64_t)next_cap>SIZE_MAX/sizeof(RhoEndpoint)) return false;
+        RhoEndpoint *next=cetta_realloc(vec->storage.linear,sizeof(RhoEndpoint)*next_cap);
         if (!next) return false;
-        vec->items = next;
-        vec->cap = next_cap;
+        vec->storage.linear=next;
+        vec->storage.capacity=next_cap;
     }
-    vec->items[vec->len].component_index = component_index;
-    vec->items[vec->len].view = view;
-    vec->items[vec->len].key = key;
-    vec->items[vec->len].direct_value_channel = NULL;
-    vec->items[vec->len].key_owned = key_owned;
-    vec->len++;
+    *rho_endpoint_at(vec,vec->len++)=(RhoEndpoint){.component_index=component_index,
+        .view=view,.key=key,.key_owned=key_owned};
     return true;
 }
 
@@ -1586,8 +1621,8 @@ typedef struct {
 } RhoKeyFrame;
 
 typedef struct {
-    RhoKeyFrame *frames;
-    size_t length, capacity;
+    CettaRecordStack frames;
+    RhoKeyFrame pending_frame;
     RhoAlphaEnv env;
     uint32_t base;
     RhoStr text;
@@ -1596,18 +1631,14 @@ typedef struct {
     bool done;
 } RhoKeyCursor;
 
+static RhoKeyFrame *rho_key_frame_at(RhoKeyCursor *cursor, uint32_t index) {
+    return cetta_record_stack_at(&cursor->frames,index,&cursor->pending_frame);
+}
+
 static bool rho_key_cursor_push(RhoKeyCursor *cursor, Atom *atom, bool name) {
     if (!atom) return rho_str_fail(&cursor->text);
-    if (cursor->length == cursor->capacity) {
-        size_t capacity = cursor->capacity ? cursor->capacity * 2u : 16u;
-        if (capacity <= cursor->capacity || capacity > SIZE_MAX / sizeof(*cursor->frames))
-            return rho_str_fail(&cursor->text);
-        RhoKeyFrame *frames = realloc(cursor->frames, capacity * sizeof(*frames));
-        if (!frames) return rho_str_fail(&cursor->text);
-        cursor->frames = frames;
-        cursor->capacity = capacity;
-    }
-    cursor->frames[cursor->length++] = (RhoKeyFrame){.atom = atom, .name = name};
+    if (!cetta_record_stack_request(&cursor->frames,sizeof(RhoKeyFrame))) return false;
+    cursor->pending_frame=(RhoKeyFrame){.atom = atom, .name = name};
     return true;
 }
 
@@ -1616,7 +1647,9 @@ static RhoKeyCursor *rho_key_cursor_new_at(Atom *atom, bool name, uint32_t next_
     if (!cursor) return NULL;
     cursor->env.next_index = next_index;
     if (!rho_key_cursor_push(cursor, atom, name)) {
-        free(cursor->frames); free(cursor); return NULL;
+        while (cursor->frames.length) (void)cetta_record_stack_pop(&cursor->frames);
+        (void)cetta_record_stack_free_storage(&cursor->frames);
+        free(cursor);return NULL;
     }
     return cursor;
 }
@@ -1625,10 +1658,38 @@ static RhoKeyCursor *rho_key_cursor_new(Atom *atom, bool name) {
     return rho_key_cursor_new_at(atom, name, 0u);
 }
 
+static bool rho_key_cursor_release_frames_one(RhoKeyCursor *cursor) {
+    if (!cursor) return false;
+    if (cursor->frames.length) {
+        (void)cetta_record_stack_pop(&cursor->frames);
+        return true;
+    }
+    if (cursor->frames.slots.blocks) {
+        cetta_record_stack_release_storage_one(&cursor->frames);
+        return true;
+    }
+    return false;
+}
+
+static bool rho_key_cursor_release_one(RhoKeyCursor **owner) {
+    if (!owner || !*owner) return false;
+    RhoKeyCursor *cursor=*owner;
+    if (rho_key_cursor_release_frames_one(cursor)) return true;
+    if (cursor->text.data) {
+        free(cursor->text.data);cursor->text.data=NULL;
+    } else if (cursor->env.items) {
+        rho_alpha_free(&cursor->env);
+    } else {
+        free(cursor);*owner=NULL;
+    }
+    return true;
+}
+
 static void rho_key_cursor_free(RhoKeyCursor *cursor) {
     if (!cursor) return;
     free(cursor->text.data);
-    free(cursor->frames);
+    while (cursor->frames.length) (void)cetta_record_stack_pop(&cursor->frames);
+    (void)cetta_record_stack_free_storage(&cursor->frames);
     rho_alpha_free(&cursor->env);
     free(cursor);
 }
@@ -1643,9 +1704,17 @@ static bool rho_key_cursor_advance(RhoKeyCursor *cursor) {
         } else cursor->pending = NULL;
         return true;
     }
-    if (!cursor->length) { cursor->done = true; return true; }
-    RhoKeyFrame *frame = &cursor->frames[cursor->length - 1u];
-    if (frame->stage == UINT32_MAX) { cursor->length--; return true; }
+    if (cursor->frames.pending)
+        return cetta_record_stack_prepare(&cursor->frames,&cursor->pending_frame)!=CETTA_SEGMENTED_REFUSED;
+    if (!cursor->frames.length) {
+        if (cursor->frames.slots.blocks) {
+            cetta_record_stack_release_storage_one(&cursor->frames);
+            return true;
+        }
+        cursor->done=true;return true;
+    }
+    RhoKeyFrame *frame = rho_key_frame_at(cursor,cursor->frames.length - 1u);
+    if (frame->stage == UINT32_MAX) { if (!cetta_record_stack_pop(&cursor->frames)) return false; return true; }
     if (frame->name) {
         if (frame->atom->kind == ATOM_VAR) {
             switch (frame->stage) {
@@ -1797,9 +1866,10 @@ static void rho_process_key_cache_release_keys(RhoProcessKeyCache *cache) {
      * Repeated source/role lookups borrow that product without another put. */
     for (size_t i=0u;i<cache->memo.inline_len;i++)
         rho_key_product_free((RhoKeyProduct *)cache->memo.inline_slots[i].value);
-    for (size_t i=0u;i<cache->memo.cap;i++)
-        if (cache->memo.slots[i].node)
-            rho_key_product_free((RhoKeyProduct *)cache->memo.slots[i].value);
+    for (size_t i=0u;i<cache->memo.cap;i++) {
+        const CettaNodeMemoSlot *entry=cetta_node_memo_entry(&cache->memo,i);
+        if (entry && entry->node) rho_key_product_free((RhoKeyProduct *)entry->value);
+    }
     cetta_node_memo_free(&cache->memo);
 }
 
@@ -2080,236 +2150,15 @@ static Atom *rho_normalize_proc(Arena *arena, Atom *proc) {
  * unquotes it (*@P -> P): this is the calculus's only dequotation, and it
  * happens exclusively here, under a matched COMM. */
 
-static bool rho_proc_has_free_var(Atom *proc, VarId var_id);
-
-static bool rho_name_has_free_var(Atom *name, VarId var_id) {
-    if (!name) return false;
-    if (name->kind == ATOM_VAR) return var_id_eq(name->var_id, var_id);
-    RhoView view = rho_view(name);
-    if (view.kind == RHO_QUOTE && view.nargs == 1) {
-        return rho_proc_has_free_var(view.args[0], var_id);
-    }
-    return false;
-}
-
-static bool rho_proc_has_free_var(Atom *proc, VarId var_id) {
-    RhoView view = rho_view(proc);
-    switch (view.kind) {
-    case RHO_NIL:
-        return false;
-    case RHO_PAR:
-        for (uint32_t i = 0; i < view.nargs; i++) {
-            if (rho_proc_has_free_var(view.args[i], var_id)) return true;
-        }
-        return false;
-    case RHO_SEND:
-        return view.nargs == 2 &&
-               (rho_name_has_free_var(view.args[0], var_id) ||
-                rho_proc_has_free_var(view.args[1], var_id));
-    case RHO_RECV:
-    case RHO_RECV_PERSISTENT:
-        if (view.nargs != 3) return false;
-        if (rho_name_has_free_var(view.args[0], var_id)) return true;
-        if (view.args[1]->kind == ATOM_VAR &&
-            var_id_eq(view.args[1]->var_id, var_id)) {
-            return false;
-        }
-        return rho_proc_has_free_var(view.args[2], var_id);
-    case RHO_DROP:
-        return view.nargs == 1 && rho_name_has_free_var(view.args[0], var_id);
-    case RHO_VAL:
-    case RHO_EVAL_PAYLOAD:
-        return view.nargs == 1 && rho_atom_contains_var_id(view.args[0], var_id);
-    case RHO_QUOTE:
-    case RHO_BAD:
-        break;
-    }
-    return false;
-}
+/* The synchronous entry drains the same retained semantic task provider used
+ * by canonical COMM. Its definition follows the shared normalization cursor. */
+static Atom *rho_subst_proc(Arena *arena, Atom *proc,
+                            VarId var_id, Atom *replacement_name);
+static Atom *rho_subst_payload_proc(Arena *arena, Atom *proc,
+                                    VarId var_id, Atom *payload);
 
 static Atom *rho_fresh_var_like(Arena *arena, Atom *var) {
-    VarId id = fresh_var_id();
-    return atom_var_like(arena, var, id);
-}
-
-static Atom *rho_rename_proc(Arena *arena, Atom *proc,
-                             VarId old_id, Atom *replacement_name);
-
-static Atom *rho_rename_name(Arena *arena, Atom *name,
-                             VarId old_id, Atom *replacement_name) {
-    Atom *norm = rho_normalize_name(arena, name);
-    if (!norm) return NULL;
-    if (norm->kind == ATOM_VAR && var_id_eq(norm->var_id, old_id)) {
-        return replacement_name;
-    }
-    return norm;
-}
-
-static Atom *rho_rename_proc(Arena *arena, Atom *proc,
-                             VarId old_id, Atom *replacement_name) {
-    RhoView view = rho_view(proc);
-    switch (view.kind) {
-    case RHO_NIL:
-        return rho_nil(arena);
-    case RHO_PAR: {
-        Atom **args = arena_alloc(arena, sizeof(Atom *) * view.nargs);
-        for (uint32_t i = 0; i < view.nargs; i++) {
-            args[i] = rho_rename_proc(arena, view.args[i], old_id,
-                                      replacement_name);
-        }
-        return rho_normalize_proc(arena, rho_call(arena, "rho:par",
-                                                  args, view.nargs));
-    }
-    case RHO_SEND:
-        return rho_normalize_proc(arena,
-            rho_binary(arena, "rho:send",
-                       rho_rename_name(arena, view.args[0], old_id,
-                                       replacement_name),
-                       rho_rename_proc(arena, view.args[1], old_id,
-                                       replacement_name)));
-    case RHO_RECV:
-    case RHO_RECV_PERSISTENT: {
-        const char *head = view.kind == RHO_RECV_PERSISTENT
-            ? "rho:recv-persistent" : "rho:recv";
-        if (view.args[1]->kind == ATOM_VAR &&
-            var_id_eq(view.args[1]->var_id, old_id)) {
-            return rho_ternary(arena, head,
-                               rho_rename_name(arena, view.args[0], old_id,
-                                               replacement_name),
-                               rho_copy_var(arena, view.args[1]),
-                               rho_normalize_proc(arena, view.args[2]));
-        }
-        return rho_normalize_proc(arena,
-            rho_ternary(arena, head,
-                        rho_rename_name(arena, view.args[0], old_id,
-                                        replacement_name),
-                        rho_copy_var(arena, view.args[1]),
-                        rho_rename_proc(arena, view.args[2], old_id,
-                                        replacement_name)));
-    }
-    case RHO_DROP:
-        return rho_unary(arena, "rho:drop",
-                         rho_rename_name(arena, view.args[0], old_id,
-                                         replacement_name));
-    case RHO_VAL:
-        return rho_value_proc(arena,
-                              rho_atom_replace_var(arena, view.args[0], old_id,
-                                                   replacement_name));
-    case RHO_EVAL_PAYLOAD:
-        return rho_unary(arena, "rho:eval-payload",
-                         rho_atom_replace_var(arena, view.args[0], old_id,
-                                              replacement_name));
-    case RHO_QUOTE:
-    case RHO_BAD:
-        break;
-    }
-    return proc;
-}
-
-static Atom *rho_subst_proc(Arena *arena, Atom *proc,
-                            VarId var_id, Atom *replacement_name);
-static Atom *rho_subst_name(Arena *arena, Atom *name,
-                            VarId var_id, Atom *replacement_name);
-static Atom *rho_subst_name_mark(Arena *arena, Atom *name,
-                                 VarId var_id, Atom *replacement_name,
-                                 bool *matched);
-
-static Atom *rho_subst_name(Arena *arena, Atom *name,
-                            VarId var_id, Atom *replacement_name) {
-    return rho_subst_name_mark(arena, name, var_id, replacement_name, NULL);
-}
-
-static Atom *rho_subst_name_mark(Arena *arena, Atom *name,
-                                 VarId var_id, Atom *replacement_name,
-                                 bool *matched) {
-    Atom *norm = rho_normalize_name(arena, name);
-    if (matched) *matched = false;
-    if (!norm) return NULL;
-    if (norm->kind == ATOM_VAR) {
-        if (var_id_eq(norm->var_id, var_id)) {
-            if (matched) *matched = true;
-            return replacement_name;
-        }
-        return norm;
-    }
-    return norm;
-}
-
-static Atom *rho_subst_proc(Arena *arena, Atom *proc,
-                            VarId var_id, Atom *replacement_name) {
-    RhoView view = rho_view(proc);
-    switch (view.kind) {
-    case RHO_NIL:
-        return rho_nil(arena);
-    case RHO_PAR: {
-        Atom **args = arena_alloc(arena, sizeof(Atom *) * view.nargs);
-        for (uint32_t i = 0; i < view.nargs; i++) {
-            args[i] = rho_subst_proc(arena, view.args[i], var_id,
-                                     replacement_name);
-        }
-        return rho_normalize_proc(arena, rho_call(arena, "rho:par",
-                                                  args, view.nargs));
-    }
-    case RHO_SEND:
-        return rho_normalize_proc(arena,
-            rho_binary(arena, "rho:send",
-                       rho_subst_name(arena, view.args[0],
-                                      var_id, replacement_name),
-                       rho_subst_proc(arena, view.args[1],
-                                      var_id, replacement_name)));
-    case RHO_RECV:
-    case RHO_RECV_PERSISTENT: {
-        const char *head = view.kind == RHO_RECV_PERSISTENT
-            ? "rho:recv-persistent" : "rho:recv";
-        if (view.args[1]->kind == ATOM_VAR &&
-            var_id_eq(view.args[1]->var_id, var_id)) {
-            return rho_ternary(arena, head,
-                               rho_subst_name(arena, view.args[0],
-                                              var_id, replacement_name),
-                               rho_copy_var(arena, view.args[1]),
-                               rho_normalize_proc(arena, view.args[2]));
-        }
-        {
-            Atom *binder = rho_copy_var(arena, view.args[1]);
-            Atom *body = view.args[2];
-            if (binder->kind == ATOM_VAR &&
-                rho_name_has_free_var(replacement_name, binder->var_id)) {
-                Atom *fresh = rho_fresh_var_like(arena, binder);
-                body = rho_rename_proc(arena, body, binder->var_id, fresh);
-                binder = fresh;
-            }
-            return rho_normalize_proc(arena,
-                rho_ternary(arena, head,
-                            rho_subst_name(arena, view.args[0],
-                                           var_id, replacement_name),
-                            binder,
-                            rho_subst_proc(arena, body,
-                                           var_id, replacement_name)));
-        }
-    }
-    case RHO_DROP: {
-        bool matched = false;
-        Atom *name = rho_subst_name_mark(arena, view.args[0], var_id,
-                                         replacement_name, &matched);
-        RhoView name_view = rho_view(name);
-        if (matched && name_view.kind == RHO_QUOTE && name_view.nargs == 1) {
-            return rho_normalize_proc(arena, name_view.args[0]);
-        }
-        return rho_unary(arena, "rho:drop", rho_normalize_name(arena, name));
-    }
-    case RHO_VAL:
-        return rho_value_proc(arena,
-                              rho_atom_replace_var(arena, view.args[0], var_id,
-                                                   replacement_name));
-    case RHO_EVAL_PAYLOAD:
-        return rho_unary(arena, "rho:eval-payload",
-                         rho_atom_replace_var(arena, view.args[0], var_id,
-                                              replacement_name));
-    case RHO_QUOTE:
-    case RHO_BAD:
-        break;
-    }
-    return proc;
+    return atom_var_like(arena, var, fresh_var_id());
 }
 
 static bool rho_abt_scope_index(const RhoScope *scope, VarId var_id,
@@ -2757,11 +2606,11 @@ static bool rho_collect_endpoints(RhoAtomVec *components,
     for (uint32_t i=0u;i<components->len;i++)
         if (!rho_collect_endpoint(components,i,sends,recvs)) return false;
     if (sends->len > 1) {
-        qsort(sends->items, sends->len, sizeof(RhoEndpoint),
+        qsort(sends->storage.linear, sends->len, sizeof(RhoEndpoint),
               rho_endpoint_cmp_key);
     }
     if (recvs->len > 1) {
-        qsort(recvs->items, recvs->len, sizeof(RhoEndpoint),
+        qsort(recvs->storage.linear, recvs->len, sizeof(RhoEndpoint),
               rho_endpoint_cmp_key);
     }
     return true;
@@ -2801,7 +2650,7 @@ static bool rho_collect_endpoints_for_single_comm(
         if (!target) continue;
         if (!rho_endpoint_vec_push(target, i, view, NULL,true)) return false;
         if (!rho_endpoint_prepare_single_comm_key(
-                &target->items[target->len - 1u])) {
+                rho_endpoint_at(target,target->len-1u))) {
             return false;
         }
     }
@@ -2897,6 +2746,8 @@ typedef struct {
     int len, cap;
     StateCell *inline_orig[16];
     StateCell *inline_clone[16];
+    CettaEvalPayloadFrame *source_frame;
+    Arena *source_arena;
 } RhoStateCloneMap;
 
 static bool rho_map_next_capacity(int current_cap, int min_needed,
@@ -3022,6 +2873,20 @@ static StateCell *rho_state_clone_for(const RhoStateCloneMap *map,
     return NULL;
 }
 
+static StateCell *rho_state_visible(StateCell *cell) {
+    return eval_resolve_state_read ? eval_resolve_state_read(cell) : cell;
+}
+
+static bool rho_state_source_descriptor(const RhoStateCloneMap *map,StateCell *cell,
+    Atom **value,Atom **content_type) {
+    if (!cell || !value || !content_type) return false;
+    if (map->source_frame && eval_payload_frame_source_state)
+        return eval_payload_frame_source_state(map->source_frame,map->source_arena,
+            cell,value,content_type);
+    *value=cell->value;*content_type=cell->content_type;
+    return true;
+}
+
 /* Add `orig` to the map (deduped), creating its copy-on-write overlay.  Returns
  * false only on allocation failure or if the map is full. */
 static bool rho_overlay_map_bind_pair(RhoOverlayMap *map,Space *orig,Space *overlay);
@@ -3074,15 +2939,26 @@ static bool rho_state_clone_map_note(RhoStateCloneMap *map, StateCell *orig,
                                      bool *inserted) {
     if (inserted)
         *inserted = false;
-    if (!orig || rho_state_clone_for(map, orig))
+    if (!map) return false;
+    if (!orig)
         return true;
-    if (!rho_state_clone_map_ensure(map, map->len + 1))
-        return false;
-    map->orig[map->len] = orig;
-    map->clone[map->len] = NULL;
-    map->len++;
-    if (inserted)
-        *inserted = true;
+    /* Discovery precedes materialization. A recorded source with a pending
+     * NULL image is already known, including on a resource backedge. */
+    for (int i=0;i<map->len;i++)
+        if (map->orig[i]==orig) return true;
+    StateCell *visible=rho_state_visible(orig);
+    if (!visible) return false;
+    bool known=false;
+    for (int i=0;i<map->len;i++) known=known || map->orig[i]==visible;
+    int needed=(known ? 0 : 1)+(orig!=visible ? 1 : 0);
+    if (map->len>INT_MAX-needed || !rho_state_clone_map_ensure(map,map->len+needed)) return false;
+    if (!known) {
+        map->orig[map->len]=visible;map->clone[map->len++]=NULL;
+    }
+    if (orig!=visible) {
+        map->orig[map->len]=orig;map->clone[map->len++]=NULL;
+    }
+    if (inserted) *inserted=!known;
     return true;
 }
 
@@ -3170,11 +3046,12 @@ static bool rho_collect_state_ptrs_into_map(RhoStateCloneMap *map, Atom *atom) {
             bool inserted = false;
             if (!rho_state_clone_map_note(map, cell, &inserted))
                 return false;
+            cell=rho_state_visible(cell);
             if (inserted && cell) {
-                if (!rho_collect_state_ptrs_into_map(map, cell->value))
-                    return false;
-                if (!rho_collect_state_ptrs_into_map(map, cell->content_type))
-                    return false;
+                Atom *value=NULL,*content_type=NULL;
+                if (!rho_state_source_descriptor(map,cell,&value,&content_type) ||
+                    !rho_collect_state_ptrs_into_map(map,value) ||
+                    !rho_collect_state_ptrs_into_map(map,content_type)) return false;
             }
         }
         return true;
@@ -3196,6 +3073,12 @@ static bool rho_state_clone_map_materialize(RhoStateCloneMap *map,
     for (int i = 0; i < map->len; i++) {
         if (map->clone[i])
             continue;
+        StateCell *visible=rho_state_visible(map->orig[i]);
+        for (int j=0;j<i;j++)
+            if (rho_state_visible(map->orig[j])==visible) {
+                map->clone[i]=map->clone[j];break;
+            }
+        if (map->clone[i]) continue;
         map->clone[i] = cetta_malloc(sizeof(StateCell));
         if (!map->clone[i])
             return false;
@@ -3203,23 +3086,31 @@ static bool rho_state_clone_map_materialize(RhoStateCloneMap *map,
         map->clone[i]->content_type = NULL;
         map->clone[i]->payload_owner_epoch = owner_epoch;
         map->clone[i]->payload_export_owner_epoch = 0;
-        if (!eval_payload_track_scratch_state(map->clone[i]))
+        if (!eval_payload_track_scratch_state(map->clone[i])) {
+            free(map->clone[i]);
+            map->clone[i] = NULL;
             return false;
+        }
     }
     for (int i = 0; i < map->len; i++) {
-        StateCell *orig = map->orig[i];
+        StateCell *orig = rho_state_visible(map->orig[i]);
         StateCell *clone = map->clone[i];
         if (!orig || !clone)
             continue;
-        if (orig->value) {
+        bool filled=false;
+        for (int j=0;j<i;j++) filled=filled || map->clone[j]==clone;
+        if (filled) continue;
+        Atom *value=NULL,*content_type=NULL;
+        if (!rho_state_source_descriptor(map,orig,&value,&content_type)) return false;
+        if (value) {
             clone->value =
-                rho_atom_rebind_resources(owner, orig->value, space_map, map);
+                rho_atom_rebind_resources(owner,value,space_map,map);
             if (!clone->value)
                 return false;
         }
-        if (orig->content_type) {
+        if (content_type) {
             clone->content_type = rho_atom_rebind_resources(
-                owner, orig->content_type, space_map, map);
+                owner,content_type,space_map,map);
             if (!clone->content_type)
                 return false;
         }
@@ -3303,6 +3194,9 @@ typedef struct {
     StateCell **stable;
     uint64_t *export_owner_epoch;
     CettaCount len, cap;
+    const RhocalcPayloadProvider *provider;
+    void *provider_job;
+    CettaCount result_index;
 } RhoPromotedStateMap;
 
 static Space *rho_promoted_space_for(const RhoPromotedSpaceMap *map,
@@ -3485,14 +3379,20 @@ static Space *rho_promote_payload_space(Arena *persistent,
     stable = arena_alloc(persistent, sizeof(Space));
     if (!stable)
         return NULL;
-    if (!rho_promoted_space_bind(promoted_spaces, visible, stable,
-                                 export_owner_epoch, alias_fault))
-        return NULL;
     space_init_with_universe(stable,
                              visible ? visible->native.universe : NULL);
     stable->kind = visible->kind;
     stable->payload_owner_epoch = 0;
     stable->payload_export_owner_epoch = export_owner_epoch;
+    /* Cleanup ownership precedes recursive exposure. A later refusal can
+     * leave backedges from other private shells to this initialized space. */
+    if (!eval_track_new_space(stable)) {
+        space_free(stable);
+        return NULL;
+    }
+    if (!rho_promoted_space_bind(promoted_spaces, visible, stable,
+                                 export_owner_epoch, alias_fault))
+        return NULL;
     if (!space_match_backend_try_set(stable, visible->match_backend.kind))
         return NULL;
 
@@ -3514,7 +3414,6 @@ static Space *rho_promote_payload_space(Arena *persistent,
             space_add(stable, stored);
         }
     }
-    eval_track_new_space(stable);
     return stable;
 }
 
@@ -3552,9 +3451,14 @@ static StateCell *rho_promote_payload_state(Arena *persistent,
     if (!rho_promoted_state_bind(promoted_states, visible, stable,
                                  export_owner_epoch, alias_fault))
         return NULL;
-    if (visible->value) {
+    Atom *value=visible->value, *content_type=visible->content_type;
+    if (promoted_states->provider && promoted_states->provider->result_state &&
+        !promoted_states->provider->result_state(promoted_states->provider_job,
+            promoted_states->result_index,visible,&value,&content_type))
+        return NULL;
+    if (value) {
         stable->value =
-            rho_promote_payload_atom(persistent, persistent, visible->value,
+            rho_promote_payload_atom(persistent, persistent, value,
                                      space_map, state_map,
                                      promoted_spaces, promoted_states,
                                      owner_epoch, export_owner_epoch,
@@ -3562,10 +3466,10 @@ static StateCell *rho_promote_payload_state(Arena *persistent,
         if (!stable->value)
             return NULL;
     }
-    if (visible->content_type) {
+    if (content_type) {
         stable->content_type =
             rho_promote_payload_atom(persistent, persistent,
-                                     visible->content_type,
+                                     content_type,
                                      space_map, state_map,
                                      promoted_spaces, promoted_states,
                                      owner_epoch, export_owner_epoch,
@@ -3590,23 +3494,20 @@ static Atom *rho_promote_payload_atom(Arena *arena,
     if (!arena || !persistent || !atom)
         return NULL;
     if (atom->kind == ATOM_GROUNDED) {
+        /* A stored row can reveal a resource absent from the initial root
+         * inventory. Its publication still uses the same canonical image
+         * and affine owner check before descending into its actual slots. */
         if (atom->ground.gkind == GV_SPACE) {
             Space *orig = (Space *)atom->ground.ptr;
             Space *visible = orig;
             Space *overlay = space_map ? rho_overlay_for(space_map, orig) : NULL;
             if (overlay)
                 visible = overlay;
-            if (overlay || (visible && (visible->overlay_base ||
-                                        visible->payload_owner_epoch == owner_epoch))) {
-                Space *stable =
-                    rho_promote_payload_space(persistent, visible,
-                                              space_map, state_map,
-                                              promoted_spaces, promoted_states,
-                                              owner_epoch,
-                                              export_owner_epoch,
-                                              alias_fault);
-                return stable ? atom_space(arena, stable) : NULL;
-            }
+            if (!overlay && eval_resolve_space_read) visible=eval_resolve_space_read(visible);
+            Space *stable = rho_promote_payload_space(persistent,visible,
+                space_map,state_map,promoted_spaces,promoted_states,
+                owner_epoch,export_owner_epoch,alias_fault);
+            return stable?atom_space(arena,stable):NULL;
         } else if (atom->ground.gkind == GV_STATE) {
             StateCell *orig = (StateCell *)atom->ground.ptr;
             StateCell *visible = orig;
@@ -3614,17 +3515,11 @@ static Atom *rho_promote_payload_atom(Arena *arena,
                 state_map ? rho_state_clone_for(state_map, orig) : NULL;
             if (clone)
                 visible = clone;
-            if (clone || (visible &&
-                          visible->payload_owner_epoch == owner_epoch)) {
-                StateCell *stable =
-                    rho_promote_payload_state(persistent, visible,
-                                              space_map, state_map,
-                                              promoted_spaces, promoted_states,
-                                              owner_epoch,
-                                              export_owner_epoch,
-                                              alias_fault);
-                return stable ? atom_state(arena, stable) : NULL;
-            }
+            if (!clone) visible=rho_state_visible(visible);
+            StateCell *stable = rho_promote_payload_state(persistent,visible,
+                space_map,state_map,promoted_spaces,promoted_states,
+                owner_epoch,export_owner_epoch,alias_fault);
+            return stable?atom_state(arena,stable):NULL;
         }
         return atom_deep_copy(arena, atom);
     }
@@ -3683,14 +3578,17 @@ static RhoPayloadJob *rho_payload_open(Arena *arena,
     const RhocalcEvalContext *context,Atom *expression) {
     if (!arena || !context || !context->space || !expression) return NULL;
     const RhocalcPayloadProvider *provider=context->payload_provider;
+    if (!provider && eval_payload_synchronous_provider)
+        provider=eval_payload_synchronous_provider();
     if (provider && (!provider->open || !provider->step || !provider->close)) return NULL;
     RhoPayloadJob *job=calloc(1u,sizeof(*job));
     if (!job) return NULL;
     job->arena=arena;job->context=*context;
+    job->context.payload_provider=provider;
     job->persistent=context->persistent_arena?context->persistent_arena:
         eval_current_persistent_arena();
     if (!job->persistent) job->persistent=arena;
-    job->payload=rho_unquote_payload_atom(expression);
+    job->payload=expression;
     job->owner_epoch=eval_next_payload_owner_epoch();
     result_set_init(&job->results);
     job->frame=eval_payload_frame_open(job->persistent);
@@ -3698,6 +3596,11 @@ static RhoPayloadJob *rho_payload_open(Arena *arena,
     return job;
 }
 static bool rho_payload_prepare(RhoPayloadJob *job) {
+    job->payload=eval_open_payload_code?eval_open_payload_code(job->arena,job->payload):
+        rho_unquote_payload_atom(job->payload);
+    if (!job->payload) return false;
+    job->state_map.source_frame=job->frame;
+    job->state_map.source_arena=job->persistent;
     /* Overlay the self space, every registry-bound space, and every baked space
      * literal in the payload term. State cells are rebound separately below. */
     if (!rho_overlay_map_add(&job->map, job->context.space))
@@ -3718,12 +3621,12 @@ static bool rho_payload_prepare(RhoPayloadJob *job) {
     if (!rho_collect_state_ptrs_into_map(&job->state_map, job->payload))
         return false;
     for (int i = 0; i < job->state_map.len; i++) {
-        StateCell *cell = job->state_map.orig[i];
+        StateCell *cell = rho_state_visible(job->state_map.orig[i]);
         if (cell) {
-            if (!rho_collect_space_ptrs_into_map(&job->map, cell->value))
-                return false;
-            if (!rho_collect_space_ptrs_into_map(&job->map, cell->content_type))
-                return false;
+            Atom *value=NULL,*content_type=NULL;
+            if (!rho_state_source_descriptor(&job->state_map,cell,&value,&content_type) ||
+                !rho_collect_space_ptrs_into_map(&job->map,value) ||
+                !rho_collect_space_ptrs_into_map(&job->map,content_type)) return false;
         }
     }
 
@@ -3783,7 +3686,10 @@ static bool rho_payload_promote(RhoPayloadJob *job) {
             return false;
     }
 
+    job->promoted_states.provider=job->context.payload_provider;
+    job->promoted_states.provider_job=job->provider_job;
     for (CettaCount r = 0; r < out->len; r++) {
+        job->promoted_states.result_index=r;
         out->items[r] =
             rho_promote_payload_atom(job->arena, job->persistent, out->items[r],
                                      &job->map, &job->state_map,
@@ -3878,14 +3784,6 @@ static bool rho_eval_payload_results(Arena *arena,
     rho_payload_close(job);return okay;
 }
 
-static Atom *rho_embed_payload_result_name(Arena *arena, Atom *result) {
-    if (!arena || !result) return NULL;
-    if (rhocalc_process_well_formed_with_eval_payloads(result)) {
-        return rho_unary(arena, "rho:quote", rho_normalize_proc(arena, result));
-    }
-    return rho_unary(arena, "rho:quote", rho_value_proc(arena, result));
-}
-
 /* ── COMM continuations and successor emission ──────────────────────────────
  *
  * A matched send/receive pair yields the receiver body with the sent name
@@ -3923,15 +3821,8 @@ static bool rho_compute_comm_continuations(Arena *arena,
             return false;
         }
         for (CettaCount i = 0; i < payload_results.len; i++) {
-            Atom *replacement =
-                rho_embed_payload_result_name(arena, payload_results.items[i]);
-            Atom *body;
-            if (!replacement) {
-                result_set_free(&payload_results);
-                return false;
-            }
-            body = rho_subst_proc(arena, recv.args[2], recv.args[1]->var_id,
-                                  replacement);
+            Atom *body = rho_subst_payload_proc(arena, recv.args[2],
+                recv.args[1]->var_id, payload_results.items[i]);
             if (!body || !rho_vec_push(out_bodies, body)) {
                 result_set_free(&payload_results);
                 return false;
@@ -4169,8 +4060,21 @@ static void rho_key_bound_note(RhoKeyBound *cmp, const RhoStr *candidate) {
  * The base components are already in rho_par_from_vec order.  Body components
  * are sorted with the same key/ordinal comparator and merged into that base.
  * Once a candidate is known to exceed bound, construction stops early. */
+typedef struct {
+    RhoKeyProduct *product;
+    bool owned;
+} RhoComponentKey;
+
+static RhoComponentKey *rho_component_key_row(const RhoSortBuffer *keys, uint32_t index) {
+    return rho_sort_buffer_at(keys,index,sizeof(RhoComponentKey));
+}
+
+static RhoKeyProduct *rho_component_key_at(const RhoSortBuffer *keys, uint32_t index) {
+    return rho_component_key_row(keys,index)->product;
+}
+
 static bool rho_reaction_key_against_bound(
-    RhoAtomVec *components, RhoKeyProduct **component_keys,
+    RhoAtomVec *components, RhoSortBuffer *component_keys,
     uint32_t send_index, uint32_t recv_index, Atom *body,
     const char *bound, char **out_key, int *out_order) {
     RhoKeyedAtom *body_items = NULL;
@@ -4247,7 +4151,7 @@ static bool rho_reaction_key_against_bound(
             if (base_pos >= components->len) {
                 next = body_items[body_pos++].atom;
             } else if (body_pos >= body_len ||
-                       strcmp(component_keys[base_pos]->text,
+                       strcmp(rho_component_key_at(component_keys,base_pos)->text,
                               body_items[body_pos].key) <= 0) {
                 next = components->items[base_pos++];
             } else {
@@ -4311,11 +4215,11 @@ static void rho_key_probe_advance(RhoKeyProbe *probe) {
 
 typedef struct {
     RhoAtomVec *components;
-    RhoKeyProduct **component_keys;
+    RhoSortBuffer *component_keys;
     uint32_t send_index;
     uint32_t recv_index;
     Atom *body;
-    RhoKeyedAtom *body_items;
+    RhoSortBuffer body_items;
     uint32_t body_len;
     uint32_t total;
     bool retain_recv;
@@ -4359,21 +4263,21 @@ typedef struct {
 static void rho_reaction_key_view_free(RhoReactionKeyView *view) {
     if (!view) return;
     for (uint32_t i = 0u; i < view->body_len; i++) {
-        free(view->body_items[i].key);
+        free(rho_keyed_row(&view->body_items, i)->key);
     }
-    free(view->body_items);
+    rho_sort_buffer_free(&view->body_items);
     *view = (RhoReactionKeyView){0};
 }
 
 static bool rho_reaction_key_view_init(
     RhoReactionKeyView *view, RhoAtomVec *components,
-    RhoKeyProduct **component_keys, uint32_t send_index,
+    RhoSortBuffer *component_keys, uint32_t send_index,
     uint32_t recv_index, Atom *body) {
     if (!view || !components || !component_keys || !body ||
         send_index>=components->len || recv_index>=components->len || send_index==recv_index)
         return false;
     *view=(RhoReactionKeyView){.components=components,.component_keys=component_keys,
-        .send_index=send_index,.recv_index=recv_index,.body=body,
+        .send_index=send_index,.recv_index=recv_index,.body=body,.body_items={.paged=true},
         .retain_recv=rho_view(components->items[recv_index]).kind==RHO_RECV_PERSISTENT};
     RhoView body_view=rho_view(body);
     uint32_t length=body_view.kind==RHO_PAR ? body_view.nargs : body_view.kind==RHO_NIL ? 0u : 1u;
@@ -4409,8 +4313,8 @@ static RhoKeyStep rho_reaction_component_cursor_next(
     if (base && body) {
         if (!cursor->merge_live) {
             if (!rho_key_probe_init(&cursor->merge,
-                    view->component_keys[cursor->base_pos]->text,
-                    view->body_items[cursor->body_pos].key)) return RHO_KEY_REFUSED;
+                    rho_component_key_at(view->component_keys,cursor->base_pos)->text,
+                    rho_keyed_row(&view->body_items, cursor->body_pos)->key)) return RHO_KEY_REFUSED;
             cursor->merge_live=true;
         }
         rho_key_probe_advance(&cursor->merge);
@@ -4420,11 +4324,11 @@ static RhoKeyStep rho_reaction_component_cursor_next(
     }
     if (base) {
         uint32_t index=cursor->base_pos++;
-        RhoKeyProduct *product=view->component_keys[index];
+        RhoKeyProduct *product=rho_component_key_at(view->component_keys,index);
         *out=(RhoReactionRow){.atom=view->components->items[index],
             .key=product->text,.binders=product->binders,.ordinal=index};
     } else {
-        const RhoKeyedAtom *item=&view->body_items[cursor->body_pos++];
+        const RhoKeyedAtom *item=rho_keyed_row(&view->body_items,cursor->body_pos++);
         *out=(RhoReactionRow){.atom=item->atom,.key=item->key,.binders=item->binders,
             .ordinal=item->ordinal,.from_body=true};
     }
@@ -4703,8 +4607,8 @@ static bool rho_machine_collect_normalized_components(
  * pause/cancel may discard that pass without freeing or duplicating a key.
  * One advance performs one setup, byte comparison/copy, or pass swap. */
 typedef struct {
-    void *items, *scratch;
-    uint32_t length, capacity, scratch_capacity;
+    RhoSortBuffer items, scratch;
+    uint32_t length;
     uint32_t width, output, left, left_end, right, right_end;
     RhoKeyProbe key_probe;
     bool endpoints, probe_initialized, range_ready, done;
@@ -4715,40 +4619,40 @@ static size_t rho_stable_sort_item_size(const RhoStableSort *sort) {
 }
 
 static const char *rho_stable_sort_key(const RhoStableSort *sort, uint32_t index) {
-    return sort->endpoints ? ((RhoEndpoint *)sort->items)[index].key
-                           : ((RhoKeyedAtom *)sort->items)[index].key;
+    return sort->endpoints ? ((RhoEndpoint *)rho_sort_buffer_at(&sort->items,
+        index,sizeof(RhoEndpoint)))->key : rho_keyed_row(&sort->items,index)->key;
 }
 
 static uint32_t rho_stable_sort_ordinal(const RhoStableSort *sort, uint32_t index) {
-    return sort->endpoints ? ((RhoEndpoint *)sort->items)[index].component_index
-                           : ((RhoKeyedAtom *)sort->items)[index].ordinal;
+    return sort->endpoints ? ((RhoEndpoint *)rho_sort_buffer_at(&sort->items,
+        index,sizeof(RhoEndpoint)))->component_index : rho_keyed_row(&sort->items,index)->ordinal;
 }
 
 static void rho_stable_sort_free(RhoStableSort *sort) {
-    free(sort->scratch);
+    rho_sort_buffer_free(&sort->scratch);
     *sort = (RhoStableSort){0};
 }
 
-static bool rho_stable_sort_init(RhoStableSort *sort, void *items,
-                                 uint32_t length, uint32_t capacity, bool endpoints) {
-    *sort = (RhoStableSort){.items = items, .length = length, .capacity = capacity,
+static bool rho_stable_sort_init(RhoStableSort *sort, RhoSortBuffer items,
+                                 uint32_t length, bool endpoints) {
+    *sort = (RhoStableSort){.items = items, .length = length,
         .width = 1u, .endpoints = endpoints, .done = length < 2u};
-    if (sort->done) return true;
+    sort->scratch.paged = items.paged;
+    if (sort->done || items.paged) return true;
     size_t size = rho_stable_sort_item_size(sort);
     if (length > SIZE_MAX / size) return false;
-    sort->scratch = malloc((size_t)length * size);
-    sort->scratch_capacity = length;
-    return sort->scratch != NULL;
+    sort->scratch.linear = malloc((size_t)length * size);
+    sort->scratch.capacity = length;
+    return sort->scratch.linear != NULL;
 }
 
 static bool rho_stable_sort_advance(RhoStableSort *sort) {
     if (sort->done) return true;
     if (!sort->range_ready) {
         if (sort->output == sort->length) {
-            void *old = sort->items;
-            uint32_t capacity = sort->capacity;
-            sort->items = sort->scratch; sort->capacity = sort->scratch_capacity;
-            sort->scratch = old; sort->scratch_capacity = capacity;
+            RhoSortBuffer old = sort->items;
+            sort->items = sort->scratch;
+            sort->scratch = old;
             if (sort->width >= sort->length - sort->width) sort->done = true;
             else { sort->width *= 2u; sort->output = 0u; }
             return true;
@@ -4767,6 +4671,9 @@ static bool rho_stable_sort_advance(RhoStableSort *sort) {
     if (sort->left == sort->left_end && sort->right == sort->right_end) {
         sort->range_ready = false; return true;
     }
+    CettaSegmentedStep prepared = rho_sort_buffer_prepare(&sort->scratch,
+        sort->output,rho_stable_sort_item_size(sort));
+    if (prepared != CETTA_SEGMENTED_READY) return prepared == CETTA_SEGMENTED_PENDING;
     bool take_left = sort->right == sort->right_end;
     if (!take_left && sort->left < sort->left_end) {
         if (!sort->probe_initialized) {
@@ -4784,8 +4691,8 @@ static bool rho_stable_sort_advance(RhoStableSort *sort) {
     }
     size_t size = rho_stable_sort_item_size(sort);
     uint32_t from = take_left ? sort->left++ : sort->right++;
-    memcpy((char *)sort->scratch + (size_t)sort->output++ * size,
-           (const char *)sort->items + (size_t)from * size, size);
+    memcpy(rho_sort_buffer_at(&sort->scratch,sort->output++,size),
+           rho_sort_buffer_at(&sort->items,from,size),size);
     sort->probe_initialized = false;
     return true;
 }
@@ -4803,17 +4710,20 @@ static void rho_endpoint_sort_free(RhoEndpointSort *sort) {
 
 static bool rho_endpoint_sort_init(RhoEndpointSort *sort, RhoEndpointVec *vector) {
     *sort = (RhoEndpointSort){.vector = vector};
-    bool okay = rho_stable_sort_init(&sort->sort, vector->items, vector->len,
-                                     vector->cap, true);
-    sort->done = sort->sort.done;
+    RhoSortBuffer items=vector->storage;
+    bool okay = rho_stable_sort_init(&sort->sort, items, vector->len, true);
     return okay;
 }
 
 static bool rho_endpoint_sort_advance(RhoEndpointSort *sort) {
-    bool okay = rho_stable_sort_advance(&sort->sort);
-    sort->vector->items = sort->sort.items;
-    sort->vector->cap = sort->sort.capacity;
-    sort->done = sort->sort.done;
+    if (sort->sort.done) {
+        if (rho_sort_buffer_has_storage(&sort->sort.scratch))
+            rho_sort_buffer_release_one(&sort->sort.scratch);
+        else sort->done=true;
+        return true;
+    }
+    bool okay=rho_stable_sort_advance(&sort->sort);
+    sort->vector->storage=sort->sort.items;
     return okay;
 }
 
@@ -4828,37 +4738,58 @@ typedef struct {
     unsigned memo_stage;
 } RhoCheckFrame;
 
+typedef enum {
+    RHO_CHECK_PENDING, RHO_CHECK_COMPLETE, RHO_CHECK_INCOMPATIBLE, RHO_CHECK_REFUSED
+} RhoCheckStatus;
+
 typedef struct {
-    RhoCheckFrame *frames;
-    size_t length, capacity;
-    bool allow_payloads;
+    CettaRecordStack frames;
+    RhoCheckFrame pending_frame;
+    bool allow_payloads, quiet_shape;
+    RhoCheckStatus status;
     CettaNodeMemo memo;
     CettaNodeMemoCursor memo_cursor;
+    char diagnostic[sizeof(g_rhocalc_validation_error)];
 } RhoCheckCursor;
+
+static RhoCheckFrame *rho_check_frame_at(RhoCheckCursor *cursor, uint32_t index) {
+    return cetta_record_stack_at(&cursor->frames,index,&cursor->pending_frame);
+}
+
+/* After rejection or caller cancellation, no source interpretation remains.
+ * Pure checker records and memo backing retire one actual owner at a time. */
+static bool rho_check_cursor_retire_one(RhoCheckCursor *cursor) {
+    if (cursor->frames.length) {
+        (void)cetta_record_stack_pop(&cursor->frames);
+    } else if (cursor->frames.slots.blocks) {
+        cetta_record_stack_release_storage_one(&cursor->frames);
+    } else if (cursor->memo_cursor.grown.blocks) {
+        cetta_segmented_array_release_one(&cursor->memo_cursor.grown);
+    } else if (cursor->memo.slots.blocks) {
+        cetta_node_memo_release_one(&cursor->memo);
+    } else return false;
+    return true;
+}
 
 static void rho_check_cursor_free(RhoCheckCursor *cursor) {
     cetta_node_memo_cancel(&cursor->memo_cursor);
     cetta_node_memo_free(&cursor->memo);
-    free(cursor->frames);
+    while (cursor->frames.length) (void)cetta_record_stack_pop(&cursor->frames);
+    (void)cetta_record_stack_free_storage(&cursor->frames);
     *cursor=(RhoCheckCursor){0};
 }
 
 static bool rho_check_cursor_push(RhoCheckCursor *cursor, Atom *atom, bool name) {
-    if (cursor->length == cursor->capacity) {
-        size_t capacity = cursor->capacity ? cursor->capacity * 2u : 16u;
-        if (capacity <= cursor->capacity || capacity > SIZE_MAX / sizeof(*cursor->frames))
-            return false;
-        RhoCheckFrame *frames = realloc(cursor->frames, capacity * sizeof(*frames));
-        if (!frames) return false;
-        cursor->frames = frames; cursor->capacity = capacity;
-    }
-    cursor->frames[cursor->length++] = (RhoCheckFrame){.atom = atom, .name = name};
+    if (!cetta_record_stack_request(&cursor->frames,sizeof(RhoCheckFrame))) return false;
+    cursor->pending_frame=(RhoCheckFrame){.atom = atom, .name = name};
     return true;
 }
 
-static bool rho_check_cursor_advance(RhoCheckCursor *cursor, RhocalcRunAccount *account) {
-    if (!cursor->length) return true;
-    RhoCheckFrame *frame = &cursor->frames[cursor->length - 1u];
+static bool rho_check_cursor_step(RhoCheckCursor *cursor, RhocalcRunAccount *account) {
+    if (cursor->frames.pending)
+        return cetta_record_stack_prepare(&cursor->frames,&cursor->pending_frame)!=CETTA_SEGMENTED_REFUSED;
+    if (!cursor->frames.length) return true;
+    RhoCheckFrame *frame = rho_check_frame_at(cursor,cursor->frames.length - 1u);
     if (!frame->memo_stage || frame->memo_stage==2u) {
         if (!rho_run_charge(&account->validation_memo_steps,1u)) return false;
         if (!cursor->memo_cursor.memo) {
@@ -4870,21 +4801,31 @@ static bool rho_check_cursor_advance(RhoCheckCursor *cursor, RhocalcRunAccount *
         }
         CettaNodeMemoStatus status=cetta_node_memo_advance(&cursor->memo_cursor);
         if (status==CETTA_NODE_MEMO_PENDING) return true;
-        cetta_node_memo_cancel(&cursor->memo_cursor);
         if (status==CETTA_NODE_MEMO_REFUSED) {
             rho_validation_set("rho grammar memo refused");
             return false;
         }
-        if (status==CETTA_NODE_MEMO_FOUND || status==CETTA_NODE_MEMO_STORED)
-            cursor->length--;
-        else frame->memo_stage=1u;
+        cetta_node_memo_cancel(&cursor->memo_cursor);
+        if (status==CETTA_NODE_MEMO_FOUND || status==CETTA_NODE_MEMO_STORED) {
+            if (!cetta_record_stack_pop(&cursor->frames)) return false;
+        } else frame->memo_stage=1u;
         return true;
     }
     if (!frame->entered) {
         frame->entered = true;
         frame->view = rho_view(frame->atom);
-        if (!frame->name) return rho_check_proc_shape(frame->atom, frame->view, cursor->allow_payloads);
-        return rho_check_name_shape(frame->atom, frame->view);
+        char diagnostic[sizeof(g_rhocalc_validation_error)];
+        if (cursor->quiet_shape)
+            memcpy(diagnostic,g_rhocalc_validation_error,sizeof(diagnostic));
+        bool accepted = frame->name ? rho_check_name_shape(frame->atom,frame->view)
+            : rho_check_proc_shape(frame->atom,frame->view,cursor->allow_payloads);
+        if (!accepted) {
+            cursor->status=RHO_CHECK_INCOMPATIBLE;
+            if (cursor->quiet_shape)
+                memcpy(g_rhocalc_validation_error,diagnostic,sizeof(diagnostic));
+            else memcpy(cursor->diagnostic,g_rhocalc_validation_error,sizeof(cursor->diagnostic));
+        }
+        return accepted;
     }
     if (frame->name) {
         if (frame->atom->kind != ATOM_VAR && !frame->position++)
@@ -4914,11 +4855,40 @@ static bool rho_check_cursor_advance(RhoCheckCursor *cursor, RhocalcRunAccount *
     return true;
 }
 
+/* Shape rejection is evidence that an atom is data here. Failed preparation
+ * or memo growth supplies no such evidence and remains an explicit refusal. */
+static RhoCheckStatus rho_check_cursor_advance(
+        RhoCheckCursor *cursor, RhocalcRunAccount *account) {
+    if (cursor->status==RHO_CHECK_INCOMPATIBLE) {
+        if (!cursor->frames.length && !cursor->frames.slots.blocks &&
+            (cursor->memo_cursor.grown.blocks || cursor->memo.slots.blocks) &&
+            !rho_run_charge(&account->validation_memo_steps,1u)) return RHO_CHECK_REFUSED;
+        if (rho_check_cursor_retire_one(cursor)) return RHO_CHECK_PENDING;
+        if (!cursor->quiet_shape)
+            memcpy(g_rhocalc_validation_error,cursor->diagnostic,sizeof(cursor->diagnostic));
+        return RHO_CHECK_INCOMPATIBLE;
+    }
+    if (cursor->status!=RHO_CHECK_PENDING) return cursor->status;
+    if (!cursor->frames.length && cursor->frames.slots.blocks) {
+        cetta_record_stack_release_storage_one(&cursor->frames);
+        return cursor->status;
+    }
+    if (!cursor->frames.length && cursor->memo.slots.blocks) {
+        if (!rho_run_charge(&account->validation_memo_steps,1u)) cursor->status=RHO_CHECK_REFUSED;
+        else cetta_node_memo_release_one(&cursor->memo);
+        return cursor->status;
+    }
+    if (!rho_check_cursor_step(cursor,account)) {
+        if (cursor->status==RHO_CHECK_PENDING) cursor->status=RHO_CHECK_REFUSED;
+    } else if (!cursor->frames.length && !cursor->frames.slots.blocks && !cursor->memo.slots.blocks) cursor->status=RHO_CHECK_COMPLETE;
+    return cursor->status==RHO_CHECK_INCOMPATIBLE ? RHO_CHECK_PENDING : cursor->status;
+}
+
 typedef struct {
     Atom *atom, *left, *result;
     RhoView view, flattened;
-    RhoKeyedAtom *items;
-    uint32_t length, capacity, position, flatten_position, stage;
+    RhoSortBuffer items;
+    uint32_t length, position, flatten_position, stage;
     RhoKeyCursor *key;
     RhoStableSort sort;
     AtomExprAssembly *assembly;
@@ -4927,8 +4897,8 @@ typedef struct {
 } RhoNormalizeFrame;
 
 typedef struct {
-    RhoNormalizeFrame *frames;
-    size_t length, capacity;
+    CettaRecordStack frames;
+    RhoNormalizeFrame pending_frame;
     Arena *arena;
     Atom *returned;
     bool done;
@@ -4936,57 +4906,86 @@ typedef struct {
     CettaNodeMemoCursor memo_cursor;
 } RhoNormalizeCursor;
 
+static RhoNormalizeFrame *rho_normalize_frame_at(RhoNormalizeCursor *cursor, uint32_t index) {
+    return cetta_record_stack_at(&cursor->frames,index,&cursor->pending_frame);
+}
+
 static void rho_normalize_frame_free(RhoNormalizeFrame *frame) {
     rho_key_cursor_free(frame->key);
     rho_stable_sort_free(&frame->sort);
     atom_expr_assembly_free(frame->assembly);
-    for (uint32_t i = 0u; i < frame->length; i++) free(frame->items[i].key);
-    free(frame->items);
+    for (uint32_t i = 0u; i < frame->length; i++) free(rho_keyed_row(&frame->items,i)->key);
+    rho_sort_buffer_free(&frame->items);
     *frame = (RhoNormalizeFrame){0};
+}
+
+static bool rho_normalize_record_pop(RhoNormalizeCursor *cursor) {
+    if (!cursor->frames.length) return false;
+    RhoNormalizeFrame *frame=rho_normalize_frame_at(cursor,cursor->frames.length-1u);
+    if (!frame || frame->length || frame->key || frame->assembly ||
+        rho_sort_buffer_has_storage(&frame->items) ||
+        rho_sort_buffer_has_storage(&frame->sort.scratch)) return false;
+    return cetta_record_stack_pop(&cursor->frames);
+}
+
+/* Drain the actual primary key permutation, never its borrowed sort scratch.
+ * Every yield leaves released entries outside the owned prefix. No source
+ * syntax, allocator metadata or cleanup catalogue is traversed to begin. */
+static void rho_normalize_cursor_release_one(RhoNormalizeCursor *cursor) {
+    assert(cursor && cursor->frames.length);
+    RhoNormalizeFrame *frame = rho_normalize_frame_at(cursor,cursor->frames.length - 1u);
+    if (frame->length) {
+        uint32_t last = --frame->length;
+        RhoKeyedAtom *row = rho_keyed_row(&frame->items,last);
+        char *key = row->key;
+        row->key = NULL;
+        free(key);
+    } else if (rho_key_cursor_release_one(&frame->key)) {
+        /* The nested key owner and its backing retire before this record. */
+    } else if (frame->assembly) {
+        atom_expr_assembly_free(frame->assembly);frame->assembly=NULL;
+    } else if (rho_sort_buffer_has_storage(&frame->sort.scratch)) {
+        rho_sort_buffer_release_one(&frame->sort.scratch);
+    } else if (rho_sort_buffer_has_storage(&frame->items)) {
+        rho_sort_buffer_release_one(&frame->items);
+    } else {
+        rho_normalize_frame_free(frame);
+        (void)rho_normalize_record_pop(cursor);
+    }
 }
 
 static void rho_normalize_cursor_free(RhoNormalizeCursor *cursor) {
     cetta_node_memo_cancel(&cursor->memo_cursor);
     cetta_node_memo_free(&cursor->memo);
-    for (size_t i = 0u; i < cursor->length; i++) rho_normalize_frame_free(&cursor->frames[i]);
-    free(cursor->frames);
+    while (cursor->frames.length) rho_normalize_cursor_release_one(cursor);
+    (void)cetta_record_stack_free_storage(&cursor->frames);
     *cursor = (RhoNormalizeCursor){0};
 }
 
 static bool rho_normalize_cursor_push(RhoNormalizeCursor *cursor, Atom *atom, bool name) {
     if (!atom) return false;
-    if (cursor->length == cursor->capacity) {
-        size_t capacity = cursor->capacity ? cursor->capacity * 2u : 16u;
-        if (capacity <= cursor->capacity || capacity > SIZE_MAX / sizeof(*cursor->frames))
-            return false;
-        RhoNormalizeFrame *frames = realloc(cursor->frames, capacity * sizeof(*frames));
-        if (!frames) return false;
-        cursor->frames = frames; cursor->capacity = capacity;
-    }
-    cursor->frames[cursor->length++] = (RhoNormalizeFrame){.atom = atom, .name = name};
+    if (!cetta_record_stack_request(&cursor->frames,sizeof(RhoNormalizeFrame))) return false;
+    cursor->pending_frame=(RhoNormalizeFrame){.atom = atom, .name = name,.items={.paged=true}};
     return true;
 }
 
 static bool rho_normalize_cursor_return(RhoNormalizeCursor *cursor, Atom *atom) {
     if (!atom) return false;
-    RhoNormalizeFrame *frame=&cursor->frames[cursor->length-1u];
+    RhoNormalizeFrame *frame=rho_normalize_frame_at(cursor,cursor->frames.length-1u);
     frame->result=atom;
     frame->memo_stage=2u;
     return true;
 }
 
-static bool rho_normalize_append(RhoNormalizeFrame *frame, Atom *atom) {
-    if (frame->length == frame->capacity) {
-        uint32_t capacity = frame->capacity ? frame->capacity * 2u : 8u;
-        if (capacity <= frame->capacity || (size_t)capacity > SIZE_MAX / sizeof(*frame->items))
-            return false;
-        RhoKeyedAtom *items = realloc(frame->items, (size_t)capacity * sizeof(*items));
-        if (!items) return false;
-        frame->items = items; frame->capacity = capacity;
-    }
-    frame->items[frame->length] = (RhoKeyedAtom){.atom = atom, .ordinal = frame->length};
+static CettaSegmentedStep rho_normalize_append(RhoNormalizeFrame *frame, Atom *atom) {
+    if (frame->length == UINT32_MAX) return CETTA_SEGMENTED_REFUSED;
+    CettaSegmentedStep status = rho_sort_buffer_prepare(&frame->items,
+        frame->length,sizeof(RhoKeyedAtom));
+    if (status != CETTA_SEGMENTED_READY) return status;
+    *rho_keyed_row(&frame->items,frame->length) =
+        (RhoKeyedAtom){.atom=atom,.ordinal=frame->length};
     frame->length++;
-    return true;
+    return CETTA_SEGMENTED_READY;
 }
 
 /* One action visits a constructor, advances one child/key/sort position,
@@ -4995,7 +4994,18 @@ static bool rho_normalize_append(RhoNormalizeFrame *frame, Atom *atom) {
  * provider costs. No provisional term becomes machine.current. */
 static bool rho_normalize_cursor_advance(RhoNormalizeCursor *cursor, RhocalcRunAccount *account) {
     if (cursor->done) return true;
-    RhoNormalizeFrame *frame = &cursor->frames[cursor->length - 1u];
+    if (cursor->frames.pending)
+        return cetta_record_stack_prepare(&cursor->frames,&cursor->pending_frame)!=CETTA_SEGMENTED_REFUSED;
+    if (!cursor->frames.length) {
+        if (cursor->frames.slots.blocks) {
+            cetta_record_stack_release_storage_one(&cursor->frames);
+        } else if (cursor->memo.slots.blocks) {
+            if (!rho_run_charge(&account->normalization_memo_steps,1u)) return false;
+            cetta_node_memo_release_one(&cursor->memo);
+        } else cursor->done=true;
+        return true;
+    }
+    RhoNormalizeFrame *frame = rho_normalize_frame_at(cursor,cursor->frames.length - 1u);
     if (!frame->memo_stage || frame->memo_stage==2u) {
         if (!rho_run_charge(&account->normalization_memo_steps,1u)) return false;
         if (!cursor->memo_cursor.memo) {
@@ -5009,16 +5019,16 @@ static bool rho_normalize_cursor_advance(RhoNormalizeCursor *cursor, RhocalcRunA
         if (status==CETTA_NODE_MEMO_PENDING) return true;
         Atom *result=status==CETTA_NODE_MEMO_FOUND
             ? (Atom *)cursor->memo_cursor.value : frame->result;
-        cetta_node_memo_cancel(&cursor->memo_cursor);
         if (status==CETTA_NODE_MEMO_REFUSED) {
             rho_validation_set("rho normalization memo refused");
             return false;
         }
+        cetta_node_memo_cancel(&cursor->memo_cursor);
         if (status==CETTA_NODE_MEMO_FOUND || status==CETTA_NODE_MEMO_STORED) {
             rho_normalize_frame_free(frame);
             cursor->returned=result;
-            cursor->length--;
-            cursor->done=!cursor->length;
+            if (!rho_normalize_record_pop(cursor)) return false;
+            cursor->done=!cursor->frames.length && !cursor->frames.slots.blocks && !cursor->memo.slots.blocks;
         } else frame->memo_stage=1u;
         return true;
     }
@@ -5086,8 +5096,11 @@ static bool rho_normalize_cursor_advance(RhoNormalizeCursor *cursor, RhocalcRunA
             return rho_normalize_cursor_push(cursor, frame->view.args[frame->position++], false);
         }
         if (frame->length < 2u) {
-            Atom *out = frame->length ? frame->items[0].atom : rho_nil(cursor->arena);
-            return rho_normalize_cursor_return(cursor, out);
+            frame->result = frame->length ? rho_keyed_row(&frame->items,0u)->atom
+                : rho_nil(cursor->arena);
+            if (!frame->result) return false;
+            frame->position=0u;frame->stage=9u;
+            return true;
         }
         frame->position = 0u; frame->stage = 4u;
         return true;
@@ -5096,23 +5109,30 @@ static bool rho_normalize_cursor_advance(RhoNormalizeCursor *cursor, RhocalcRunA
         if (child.kind == RHO_PAR) {
             frame->flattened = child; frame->flatten_position = 0u; frame->stage = 3u;
         } else {
-            if (child.kind != RHO_NIL && !rho_normalize_append(frame, cursor->returned)) return false;
+            if (child.kind != RHO_NIL) {
+                CettaSegmentedStep status = rho_normalize_append(frame,cursor->returned);
+                if (status != CETTA_SEGMENTED_READY) return status == CETTA_SEGMENTED_PENDING;
+            }
             frame->stage = 1u;
         }
         return true;
     }
     case 3u:
-        if (frame->flatten_position < frame->flattened.nargs)
-            return rho_normalize_append(frame, frame->flattened.args[frame->flatten_position++]);
+        if (frame->flatten_position < frame->flattened.nargs) {
+            CettaSegmentedStep status = rho_normalize_append(frame,
+                frame->flattened.args[frame->flatten_position]);
+            if (status == CETTA_SEGMENTED_READY) frame->flatten_position++;
+            return status != CETTA_SEGMENTED_REFUSED;
+        }
         frame->stage = 1u; return true;
     case 4u:
         if (frame->position == frame->length) {
-            if (!rho_stable_sort_init(&frame->sort, frame->items, frame->length, frame->capacity, false))
+            if (!rho_stable_sort_init(&frame->sort, frame->items, frame->length, false))
                 return false;
             frame->stage = 5u; return true;
         }
         if (!frame->key) {
-            frame->key = rho_key_cursor_new(frame->items[frame->position].atom, false);
+            frame->key = rho_key_cursor_new(rho_keyed_row(&frame->items,frame->position)->atom, false);
             return frame->key != NULL;
         }
         if (!rho_run_charge(&account->key_steps, 1u)) return false;
@@ -5120,19 +5140,23 @@ static bool rho_normalize_cursor_advance(RhoNormalizeCursor *cursor, RhocalcRunA
         if (!rho_key_cursor_advance(frame->key) ||
             !rho_run_charge(&account->key_bytes, frame->key->text.len - before)) return false;
         if (frame->key->done) {
-            frame->items[frame->position++].key = rho_str_take(&frame->key->text, "");
+            rho_keyed_row(&frame->items,frame->position++)->key = rho_str_take(&frame->key->text, "");
             rho_key_cursor_free(frame->key); frame->key = NULL;
-            return frame->items[frame->position - 1u].key != NULL;
+            return rho_keyed_row(&frame->items,frame->position - 1u)->key != NULL;
         }
         return true;
     case 5u: {
-        bool okay = rho_stable_sort_advance(&frame->sort);
-        frame->items = frame->sort.items; frame->capacity = frame->sort.capacity;
-        if (!okay) return false;
-        if (frame->sort.done) {
-            rho_stable_sort_free(&frame->sort);
-            frame->stage = 6u;
+        if (!frame->sort.done) {
+            bool okay = rho_stable_sort_advance(&frame->sort);
+            frame->items = frame->sort.items;
+            return okay;
         }
+        if (rho_sort_buffer_has_storage(&frame->sort.scratch)) {
+            rho_sort_buffer_release_one(&frame->sort.scratch);
+            return true;
+        }
+        rho_stable_sort_free(&frame->sort);
+        frame->stage = 6u;
         return true;
     }
     case 6u:
@@ -5147,7 +5171,7 @@ static bool rho_normalize_cursor_advance(RhoNormalizeCursor *cursor, RhocalcRunA
         if (frame->position > frame->length) { frame->stage = 8u; return true; }
         if (!rho_run_charge(&account->construction_children, 1u)) return false;
         if (!atom_expr_assembly_append(frame->assembly, frame->position
-                ? frame->items[frame->position - 1u].atom
+                ? rho_keyed_row(&frame->items,frame->position - 1u)->atom
                 : atom_symbol_id(cursor->arena, rho_head_symbol_id("rho:par")))) return false;
         frame->position++;
         return true;
@@ -5159,17 +5183,466 @@ static bool rho_normalize_cursor_advance(RhoNormalizeCursor *cursor, RhocalcRunA
         return true;
     case 9u:
         if (frame->position < frame->length) {
-            free(frame->items[frame->position].key);
-            frame->items[frame->position++].key = NULL;
+            free(rho_keyed_row(&frame->items,frame->position)->key);
+            rho_keyed_row(&frame->items,frame->position++)->key = NULL;
             return true;
         } else {
-            Atom *out = frame->result;
-            free(frame->items); frame->items = NULL; frame->length = 0u;
-            return rho_normalize_cursor_return(cursor, out);
+            frame->length=0u;frame->stage=10u;
+            return true;
         }
+    case 10u:
+        if (rho_sort_buffer_has_storage(&frame->items)) {
+            rho_sort_buffer_release_one(&frame->items);
+            return true;
+        }
+        return rho_normalize_cursor_return(cursor,frame->result);
     default:
         return false;
     }
+}
+
+/* Semantic substitution retains the actual replies of normalization, capture
+ * queries, alpha-renaming and payload application. A quotation is opaque to
+ * substitution after name normalization; capture queries inspect its free
+ * variables. Only a matched name reply may expose a quoted drop payload. */
+typedef enum {
+    RHO_SUBST_PROC, RHO_SUBST_NAME, RHO_SUBST_FREE_PROC,
+    RHO_SUBST_FREE_NAME, RHO_SUBST_FREE_ATOM,
+    RHO_SUBST_NORMAL_PROC, RHO_SUBST_NORMAL_NAME, RHO_SUBST_APPLY,
+    RHO_SUBST_COMM, RHO_SUBST_ROLE_COUNT
+} RhoSubstitutionRole;
+
+typedef struct {
+    Atom *source, *replacement, *channel, *binder, *body;
+    VarId variable;
+    RhoView view;
+    AtomExprAssembly *assembly;
+    Atom **interned_children;
+    CettaExprIndex position;
+    RhoSubstitutionRole role;
+    unsigned stage;
+    bool rename;
+} RhoSubstitutionFrame;
+
+typedef struct {
+    CettaRecordStack frames;
+    RhoSubstitutionFrame pending_frame;
+    Arena *arena;
+    uint32_t arena_identity;
+    uint64_t arena_epoch;
+    HashConsTable *hashcons;
+    Atom *returned;
+    bool query, matched, done, bindings_live;
+    RhoNormalizeCursor normalization;
+    RhoCheckCursor check;
+    Bindings bindings;
+    BindingsApplySession *application;
+    RhocalcRunAccount account;
+} RhoSubstitutionCursor;
+
+static RhoSubstitutionFrame *rho_substitution_frame_at(RhoSubstitutionCursor *cursor, uint32_t index) {
+    return cetta_record_stack_at(&cursor->frames,index,&cursor->pending_frame);
+}
+
+static void rho_substitution_frame_free(RhoSubstitutionFrame *frame) {
+    atom_expr_assembly_free(frame->assembly);
+    free(frame->interned_children);
+    *frame = (RhoSubstitutionFrame){0};
+}
+
+static bool rho_substitution_record_pop(RhoSubstitutionCursor *cursor) {
+    if (!cursor->frames.length) return false;
+    RhoSubstitutionFrame *frame=rho_substitution_frame_at(cursor,cursor->frames.length-1u);
+    if (!frame || frame->assembly || frame->interned_children) return false;
+    return cetta_record_stack_pop(&cursor->frames);
+}
+
+/* Retire candidate-local storage before its source generation can reset.
+ * Paid work survives that retirement in the enclosing selector's account. */
+static void rho_substitution_cursor_clear(RhoSubstitutionCursor *cursor) {
+    RhocalcRunAccount account = cursor->account;
+    bindings_apply_session_free(cursor->application);
+    if (cursor->bindings_live) bindings_free(&cursor->bindings);
+    rho_normalize_cursor_free(&cursor->normalization);
+    rho_check_cursor_free(&cursor->check);
+    while (cursor->frames.length) {
+        rho_substitution_frame_free(rho_substitution_frame_at(cursor,cursor->frames.length-1u));
+        (void)rho_substitution_record_pop(cursor);
+    }
+    (void)cetta_record_stack_free_storage(&cursor->frames);
+    *cursor = (RhoSubstitutionCursor){.account = account};
+}
+
+static bool rho_substitution_push(RhoSubstitutionCursor *cursor,
+        RhoSubstitutionRole role, Atom *source, VarId variable,
+        Atom *replacement, bool rename) {
+    if (!source) return false;
+    if (!cetta_record_stack_request(&cursor->frames,sizeof(RhoSubstitutionFrame))) return false;
+    cursor->pending_frame=(RhoSubstitutionFrame){
+        .role = role, .source = source, .variable = variable,
+        .replacement = replacement, .rename = rename};
+    return true;
+}
+
+static bool rho_substitution_begin(RhoSubstitutionCursor *cursor, Arena *arena,
+        Atom *source, VarId variable, Atom *replacement) {
+    if (!arena || !source || !replacement || cursor->frames.length || cursor->arena)
+        return false;
+    cursor->arena = arena;cursor->arena_identity = arena->identity;
+    cursor->arena_epoch = arena->reset_epoch;cursor->hashcons = arena->hashcons;
+    cursor->normalization.arena = arena;
+    return rho_substitution_push(cursor, RHO_SUBST_PROC, source, variable, replacement, false);
+}
+
+static bool rho_substitution_begin_payload(RhoSubstitutionCursor *cursor, Arena *arena,
+        Atom *body, VarId variable, Atom *payload) {
+    if (!body || !rho_substitution_begin(cursor,arena,payload,variable,payload)) return false;
+    rho_substitution_frame_at(cursor,0)->role=RHO_SUBST_COMM;
+    rho_substitution_frame_at(cursor,0)->body=body;
+    return true;
+}
+
+static bool rho_substitution_return(RhoSubstitutionCursor *cursor,
+        Atom *result, bool query, bool matched) {
+    rho_substitution_frame_free(rho_substitution_frame_at(cursor,cursor->frames.length-1u));
+    if (!rho_substitution_record_pop(cursor)) return false;
+    cursor->returned = result;cursor->query = query;cursor->matched = matched;
+    cursor->done = !cursor->frames.length && !cursor->frames.slots.blocks;
+    return true;
+}
+
+static bool rho_substitution_return_atom(RhoSubstitutionCursor *cursor, Atom *result) {
+    return result && rho_substitution_return(cursor, result, false, false);
+}
+
+static bool rho_substitution_child(RhoSubstitutionCursor *cursor,
+        RhoSubstitutionFrame *frame, RhoSubstitutionRole role, Atom *source) {
+    return rho_substitution_push(cursor, role, source,
+        frame->variable, frame->replacement, frame->rename);
+}
+
+static bool rho_substitution_advance(RhoSubstitutionCursor *cursor) {
+    if (cursor->done) return true;
+    if (!cursor->arena ||
+            cursor->arena->identity != cursor->arena_identity ||
+            cursor->arena->reset_epoch != cursor->arena_epoch ||
+            cursor->arena->hashcons != cursor->hashcons ||
+            !rho_run_charge(&cursor->account.substitution_steps, 1u)) return false;
+    if (cursor->frames.pending)
+        return cetta_record_stack_prepare(&cursor->frames,&cursor->pending_frame)!=CETTA_SEGMENTED_REFUSED;
+    if (!cursor->frames.length) {
+        if (cursor->frames.slots.blocks) cetta_record_stack_release_storage_one(&cursor->frames);
+        else cursor->done=true;
+        return true;
+    }
+    RhoSubstitutionFrame *frame = rho_substitution_frame_at(cursor,cursor->frames.length - 1u);
+    Arena *arena = cursor->arena;
+
+    if (frame->role == RHO_SUBST_COMM) {
+        switch (frame->stage) {
+        case 0u:
+            cursor->check.allow_payloads=true;cursor->check.quiet_shape=true;
+            frame->stage=1u;
+            return rho_check_cursor_push(&cursor->check,frame->source,false);
+        case 1u: {
+            if (!rho_run_charge(&cursor->account.validation_steps,1u)) return false;
+            uint64_t before=cursor->account.validation_memo_steps;
+            RhoCheckStatus status=rho_check_cursor_advance(&cursor->check,&cursor->account);
+            if (!rho_run_charge(&cursor->account.substitution_memo_steps,
+                    cursor->account.validation_memo_steps-before)) return false;
+            if (status==RHO_CHECK_REFUSED) return false;
+            if (status==RHO_CHECK_PENDING) return true;
+            rho_check_cursor_free(&cursor->check);
+            frame->stage=2u;
+            if (status==RHO_CHECK_COMPLETE)
+                return rho_substitution_child(cursor,frame,RHO_SUBST_NORMAL_PROC,frame->source);
+            cursor->returned=rho_value_proc(arena,frame->source);
+            return cursor->returned!=NULL;
+        }
+        case 2u:
+            frame->replacement=rho_unary(arena,"rho:quote",cursor->returned);
+            if (!frame->replacement) return false;
+            frame->stage=3u;
+            return rho_substitution_child(cursor,frame,RHO_SUBST_PROC,frame->body);
+        case 3u: return rho_substitution_return_atom(cursor,cursor->returned);
+        default: return false;
+        }
+    }
+
+    if (frame->role == RHO_SUBST_NORMAL_PROC || frame->role == RHO_SUBST_NORMAL_NAME) {
+        bool name = frame->role == RHO_SUBST_NORMAL_NAME;
+        /* Synchronous interning profiles retain their ordinary constructor
+         * provider. Canonical retained invocations use private draft storage. */
+        if (arena->hashcons)
+            return rho_substitution_return_atom(cursor, name
+                ? rho_normalize_name(arena, frame->source)
+                : rho_normalize_proc(arena, frame->source));
+        if (!frame->stage) {
+            if (cursor->normalization.frames.length) return false;
+            cursor->normalization.done = false;
+            cursor->normalization.returned = NULL;frame->stage = 1u;
+            return rho_normalize_cursor_push(&cursor->normalization, frame->source, name);
+        }
+        uint64_t before_memo = cursor->account.normalization_memo_steps;
+        if (!rho_run_charge(&cursor->account.normalization_steps, 1u)) return false;
+        bool okay = rho_normalize_cursor_advance(&cursor->normalization, &cursor->account);
+        if (!rho_run_charge(&cursor->account.substitution_memo_steps,
+                cursor->account.normalization_memo_steps - before_memo)) return false;
+        if (!okay) return false;
+        return !cursor->normalization.done ||
+            rho_substitution_return_atom(cursor, cursor->normalization.returned);
+    }
+
+    if (frame->role == RHO_SUBST_APPLY) {
+        if (!frame->stage) {
+            if (!atom_has_vars(frame->source))
+                return rho_substitution_return_atom(cursor, frame->source);
+            bindings_init(&cursor->bindings);cursor->bindings_live = true;
+            if (!bindings_add_id(&cursor->bindings, frame->variable,
+                    atom_symbol_current_id(frame->replacement), frame->replacement))
+                return false;
+            cursor->application = bindings_apply_session_new(&cursor->bindings,
+                arena, binding_value_from_atom(frame->source), false);
+            if (!cursor->application) return false;
+            frame->stage = 1u;return true;
+        }
+        Atom *result = NULL;uint64_t used = 0u;
+        BindingsApplyStatus status = bindings_apply_session_advance(
+            cursor->application, 1u, &result, &used);
+        if (used > 1u || !rho_run_charge(&cursor->account.substitution_apply_steps, used) ||
+                status == BINDINGS_APPLY_REFUSED) return false;
+        if (status == BINDINGS_APPLY_PENDING) return true;
+        bindings_apply_session_free(cursor->application);cursor->application = NULL;
+        bindings_free(&cursor->bindings);cursor->bindings_live = false;
+        return rho_substitution_return_atom(cursor, result);
+    }
+
+    if (frame->role == RHO_SUBST_FREE_ATOM) {
+        if (!frame->stage) {
+            if (!atom_has_vars(frame->source))
+                return rho_substitution_return(cursor, NULL, false, false);
+            if (frame->source->kind == ATOM_VAR)
+                return rho_substitution_return(cursor, NULL,
+                    var_id_eq(frame->source->var_id, frame->variable), false);
+            if (frame->source->kind != ATOM_EXPR)
+                return rho_substitution_return(cursor, NULL, false, false);
+            frame->stage = 1u;
+        } else if (cursor->query)
+            return rho_substitution_return(cursor, NULL, true, false);
+        if (frame->position == frame->source->expr.len)
+            return rho_substitution_return(cursor, NULL, false, false);
+        Atom *child = frame->source->expr.elems[frame->position++];
+        return rho_substitution_child(cursor, frame, RHO_SUBST_FREE_ATOM, child);
+    }
+
+    if (frame->role == RHO_SUBST_FREE_NAME) {
+        if (frame->stage)
+            return rho_substitution_return(cursor, NULL, cursor->query, false);
+        if (frame->source->kind == ATOM_VAR)
+            return rho_substitution_return(cursor, NULL,
+                var_id_eq(frame->source->var_id, frame->variable), false);
+        frame->view = rho_view(frame->source);
+        if (frame->view.kind != RHO_QUOTE || frame->view.nargs != 1u)
+            return rho_substitution_return(cursor, NULL, false, false);
+        frame->stage = 1u;
+        return rho_substitution_child(cursor, frame, RHO_SUBST_FREE_PROC, frame->view.args[0]);
+    }
+
+    if (frame->role == RHO_SUBST_FREE_PROC) {
+        if (!frame->stage) {
+            frame->view = rho_view(frame->source);frame->stage = 1u;
+        } else if (cursor->query)
+            return rho_substitution_return(cursor, NULL, true, false);
+        RhoView *view = &frame->view;
+        switch (view->kind) {
+        case RHO_PAR:
+            if (frame->position < view->nargs)
+                return rho_substitution_child(cursor, frame, RHO_SUBST_FREE_PROC,
+                    view->args[frame->position++]);
+            break;
+        case RHO_SEND:
+        case RHO_RECV:
+        case RHO_RECV_PERSISTENT:
+            if (!frame->position++)
+                return rho_substitution_child(cursor, frame, RHO_SUBST_FREE_NAME, view->args[0]);
+            if (frame->position == 2u && (view->kind == RHO_SEND ||
+                    view->args[1]->kind != ATOM_VAR ||
+                    !var_id_eq(view->args[1]->var_id, frame->variable)))
+                return rho_substitution_child(cursor, frame, RHO_SUBST_FREE_PROC,
+                    view->args[view->kind == RHO_SEND ? 1u : 2u]);
+            break;
+        case RHO_DROP:
+        case RHO_VAL:
+        case RHO_EVAL_PAYLOAD:
+            if (!frame->position++)
+                return rho_substitution_child(cursor, frame,
+                    view->kind == RHO_DROP ? RHO_SUBST_FREE_NAME : RHO_SUBST_FREE_ATOM,
+                    view->args[0]);
+            break;
+        default: break;
+        }
+        return rho_substitution_return(cursor, NULL, false, false);
+    }
+
+    if (frame->role == RHO_SUBST_NAME) {
+        if (!frame->stage) {
+            frame->stage = 1u;
+            return rho_substitution_child(cursor, frame, RHO_SUBST_NORMAL_NAME, frame->source);
+        }
+        bool matched = cursor->returned && cursor->returned->kind == ATOM_VAR &&
+            var_id_eq(cursor->returned->var_id, frame->variable);
+        return rho_substitution_return(cursor, matched ? frame->replacement : cursor->returned,
+            false, matched && !frame->rename);
+    }
+
+    if (!frame->stage) {
+        frame->view = rho_view(frame->source);
+        switch (frame->view.kind) {
+        case RHO_NIL: return rho_substitution_return_atom(cursor, rho_nil(arena));
+        case RHO_PAR:
+            if (frame->view.nargs == UINT32_MAX) return false;
+            if (!rho_run_charge(&cursor->account.construction_bytes,
+                    sizeof(Atom) + ((uint64_t)frame->view.nargs + 1u) * sizeof(Atom *)))
+                return false;
+            if (arena->hashcons) {
+                frame->interned_children = calloc(frame->view.nargs + 1u, sizeof(Atom *));
+                if (!frame->interned_children) return false;
+            } else {
+                frame->assembly = atom_expr_assembly_new(arena, frame->view.nargs + 1u);
+                if (!frame->assembly) return false;
+            }
+            frame->stage = 1u;return true;
+        case RHO_RECV:
+        case RHO_RECV_PERSISTENT:
+            frame->binder = rho_copy_var(arena, frame->view.args[1]);
+            frame->body = frame->view.args[2];
+            if (!frame->binder) return false;
+            if (var_id_eq(frame->binder->var_id, frame->variable)) {
+                frame->stage = 12u;
+                return rho_substitution_child(cursor, frame, RHO_SUBST_NAME, frame->view.args[0]);
+            }
+            if (!frame->rename) {
+                frame->stage = 10u;
+                return rho_substitution_push(cursor, RHO_SUBST_FREE_NAME,
+                    frame->replacement, frame->binder->var_id, NULL, false);
+            }
+            frame->stage = 14u;
+            return rho_substitution_child(cursor, frame, RHO_SUBST_NAME, frame->view.args[0]);
+        case RHO_SEND:
+        case RHO_DROP:
+            frame->stage = 20u;
+            return rho_substitution_child(cursor, frame, RHO_SUBST_NAME, frame->view.args[0]);
+        case RHO_VAL:
+        case RHO_EVAL_PAYLOAD:
+            frame->stage = 30u;
+            return rho_substitution_child(cursor, frame, RHO_SUBST_APPLY, frame->view.args[0]);
+        default: return rho_substitution_return_atom(cursor, frame->source);
+        }
+    }
+
+    switch (frame->stage) {
+    case 1u: {
+        Atom *head = atom_symbol_id(arena, rho_head_symbol_id("rho:par"));
+        if (!head || !rho_run_charge(&cursor->account.construction_children, 1u)) return false;
+        if (frame->assembly) {
+            if (!atom_expr_assembly_append(frame->assembly, head)) return false;
+        } else frame->interned_children[0] = head;
+        frame->stage = 2u;return true;
+    }
+    case 2u:
+        if (frame->position < frame->view.nargs) {
+            frame->stage = 3u;
+            return rho_substitution_child(cursor, frame, RHO_SUBST_PROC,
+                frame->view.args[frame->position]);
+        }
+        frame->body = frame->assembly ? atom_expr_assembly_finish(frame->assembly)
+            : atom_expr(arena, frame->interned_children, frame->view.nargs + 1u);
+        if (!frame->body) return false;
+        frame->stage = 40u;
+        return rho_substitution_child(cursor, frame, RHO_SUBST_NORMAL_PROC, frame->body);
+    case 3u:
+        if (!cursor->returned || !rho_run_charge(&cursor->account.construction_children, 1u))
+            return false;
+        if (frame->assembly) {
+            if (!atom_expr_assembly_append(frame->assembly, cursor->returned)) return false;
+        } else frame->interned_children[frame->position + 1u] = cursor->returned;
+        frame->position++;frame->stage = 2u;return true;
+    case 10u:
+        if (cursor->query) {
+            Atom *fresh = rho_fresh_var_like(arena, frame->binder);
+            if (!fresh) return false;
+            VarId old = frame->binder->var_id;
+            frame->binder = fresh;frame->stage = 11u;
+            return rho_substitution_push(cursor, RHO_SUBST_PROC, frame->body, old, fresh, true);
+        }
+        frame->stage = 14u;
+        return rho_substitution_child(cursor, frame, RHO_SUBST_NAME, frame->view.args[0]);
+    case 11u:
+        frame->body = cursor->returned;frame->stage = 14u;
+        return rho_substitution_child(cursor, frame, RHO_SUBST_NAME, frame->view.args[0]);
+    case 12u:
+        frame->channel = cursor->returned;frame->stage = 15u;
+        return rho_substitution_child(cursor, frame, RHO_SUBST_NORMAL_PROC, frame->body);
+    case 14u:
+        frame->channel = cursor->returned;frame->stage = 15u;
+        return rho_substitution_child(cursor, frame, RHO_SUBST_PROC, frame->body);
+    case 15u:
+        frame->body = rho_ternary(arena,
+            frame->view.kind == RHO_RECV ? "rho:recv" : "rho:recv-persistent",
+            frame->channel, frame->binder, cursor->returned);
+        if (!frame->body) return false;
+        frame->stage = 40u;
+        return rho_substitution_child(cursor, frame, RHO_SUBST_NORMAL_PROC, frame->body);
+    case 20u:
+        if (frame->view.kind == RHO_SEND) {
+            frame->channel = cursor->returned;frame->stage = 21u;
+            return rho_substitution_child(cursor, frame, RHO_SUBST_PROC, frame->view.args[1]);
+        }
+        if (frame->rename)
+            return rho_substitution_return_atom(cursor, rho_unary(arena, "rho:drop", cursor->returned));
+        {
+            RhoView name = rho_view(cursor->returned);
+            if (cursor->matched && name.kind == RHO_QUOTE && name.nargs == 1u) {
+                frame->stage = 40u;
+                return rho_substitution_child(cursor, frame, RHO_SUBST_NORMAL_PROC, name.args[0]);
+            }
+            frame->stage = 22u;
+            return rho_substitution_child(cursor, frame, RHO_SUBST_NORMAL_NAME, cursor->returned);
+        }
+    case 21u:
+        frame->body = rho_binary(arena, "rho:send", frame->channel, cursor->returned);
+        if (!frame->body) return false;
+        frame->stage = 40u;
+        return rho_substitution_child(cursor, frame, RHO_SUBST_NORMAL_PROC, frame->body);
+    case 22u:
+        return rho_substitution_return_atom(cursor, rho_unary(arena, "rho:drop", cursor->returned));
+    case 30u:
+        return rho_substitution_return_atom(cursor, frame->view.kind == RHO_VAL
+            ? rho_value_proc(arena, cursor->returned)
+            : rho_unary(arena, "rho:eval-payload", cursor->returned));
+    case 40u: return rho_substitution_return_atom(cursor, cursor->returned);
+    default: return false;
+    }
+}
+
+static Atom *rho_subst_proc(Arena *arena, Atom *proc,
+        VarId variable, Atom *replacement) {
+    RhoSubstitutionCursor cursor = {0};
+    bool okay = rho_substitution_begin(&cursor, arena, proc, variable, replacement);
+    while (okay && !cursor.done) okay = rho_substitution_advance(&cursor);
+    Atom *result = okay ? cursor.returned : NULL;
+    rho_substitution_cursor_clear(&cursor);
+    return result;
+}
+
+static Atom *rho_subst_payload_proc(Arena *arena, Atom *proc,
+        VarId variable, Atom *payload) {
+    RhoSubstitutionCursor cursor={0};
+    bool okay=rho_substitution_begin_payload(&cursor,arena,proc,variable,payload);
+    while (okay && !cursor.done) okay=rho_substitution_advance(&cursor);
+    Atom *result=okay ? cursor.returned : NULL;
+    rho_substitution_cursor_clear(&cursor);
+    return result;
 }
 
 /* Body preparation holds only completed key products in the owned prefix.
@@ -5185,7 +5658,7 @@ typedef struct {
 } RhoReactionViewCursor;
 
 static bool rho_reaction_view_cursor_begin(RhoReactionViewCursor *cursor,
-    RhoReactionKeyView *view, RhoAtomVec *components, RhoKeyProduct **component_keys,
+    RhoReactionKeyView *view, RhoAtomVec *components, RhoSortBuffer *component_keys,
     uint32_t send, uint32_t recv, Atom *body) {
     *cursor=(RhoReactionViewCursor){.view=view,.body=rho_view(body)};
     if (!rho_reaction_key_view_init(view,components,component_keys,send,recv,body)) return false;
@@ -5206,15 +5679,14 @@ static bool rho_reaction_view_cursor_advance(RhoReactionViewCursor *cursor) {
     RhoReactionKeyView *view=cursor->view;
     switch (cursor->stage) {
     case 0u:
-        if ((size_t)cursor->expected>SIZE_MAX/sizeof(*view->body_items)) return false;
-        view->body_items=cursor->expected
-            ? malloc((size_t)cursor->expected*sizeof(*view->body_items)) : NULL;
-        if (cursor->expected && !view->body_items) return false;
         cursor->stage=1u;
         return true;
     case 1u:
         if (view->body_len<cursor->expected) {
             uint32_t i=view->body_len;
+            CettaSegmentedStep prepared = rho_sort_buffer_prepare(&view->body_items,
+                i,sizeof(RhoKeyedAtom));
+            if (prepared != CETTA_SEGMENTED_READY) return prepared == CETTA_SEGMENTED_PENDING;
             Atom *atom=cursor->body.kind==RHO_PAR ? cursor->body.args[i] : view->body;
             if (!cursor->key.atom && !rho_process_key_cursor_begin(&cursor->key,NULL,atom,false)) return false;
             if (!rho_process_key_cursor_advance(&cursor->key,NULL)) return false;
@@ -5223,24 +5695,29 @@ static bool rho_reaction_view_cursor_advance(RhoReactionViewCursor *cursor) {
             RhoKeyProduct *product=rho_process_key_cursor_take(&cursor->key,&owned);
             rho_process_key_cursor_free(&cursor->key);
             if (!product || !owned) return false;
-            view->body_items[view->body_len++]=(RhoKeyedAtom){.atom=atom,.key=product->text,
+            *rho_keyed_row(&view->body_items,view->body_len++)=(RhoKeyedAtom){.atom=atom,.key=product->text,
                 .ordinal=i,.binders=product->binders};
             product->text=NULL;rho_key_product_free(product);
             return true;
         }
-        if (!rho_stable_sort_init(&cursor->sort,view->body_items,view->body_len,cursor->expected,false)) return false;
+        if (!rho_stable_sort_init(&cursor->sort,view->body_items,view->body_len,false)) return false;
         cursor->stage=2u;
         return true;
     case 2u: {
         bool okay=rho_stable_sort_advance(&cursor->sort);
         view->body_items=cursor->sort.items;
         if (!okay) return false;
-        if (cursor->sort.done) {
-            rho_stable_sort_free(&cursor->sort);
-            cursor->done=true;
-        }
+        if (cursor->sort.done) cursor->stage=3u;
         return true;
     }
+    case 3u:
+        if (rho_sort_buffer_has_storage(&cursor->sort.scratch)) {
+            rho_sort_buffer_release_one(&cursor->sort.scratch);
+            return true;
+        }
+        rho_stable_sort_free(&cursor->sort);
+        cursor->done=true;
+        return true;
     default:
         return false;
     }
@@ -5287,7 +5764,7 @@ static bool rho_reaction_build_cursor_begin(RhoReactionBuildCursor *cursor,
     uint32_t retained=view->components->len-(view->retain_recv ? 1u : 2u);
     RhoView body=rho_view(view->body);
     uint32_t length=body.kind==RHO_PAR ? body.nargs : body.kind==RHO_NIL ? 0u : 1u;
-    if (view->body_len!=length || (length && !view->body_items) ||
+    if (view->body_len!=length || (length && !rho_keyed_row(&view->body_items,length-1u)) ||
         length>UINT32_MAX-retained || view->total!=retained+length) return false;
     *cursor=(RhoReactionBuildCursor){.view=view,.arena=arena};
     rho_reaction_component_cursor_init(&cursor->merge,view);
@@ -5396,6 +5873,7 @@ typedef enum {
     RHO_CANONICAL_PAIR,
     RHO_CANONICAL_PAYLOAD,
     RHO_CANONICAL_PAYLOAD_BODY,
+    RHO_CANONICAL_SUBSTITUTION,
     RHO_CANONICAL_BODY,
     RHO_CANONICAL_BODY_PREPARE,
     RHO_CANONICAL_COMPARE,
@@ -5419,6 +5897,7 @@ typedef struct {
     ArenaMark pair_mark;
     RhoAtomVec bodies;
     RhoPayloadJob *payload;
+    RhoSubstitutionCursor substitution;
     CettaCount payload_position;
     RhoCanonicalPhase phase;
     uint32_t recv_pos, send_pos, recv_start, send_start, recv_end, send_end;
@@ -5440,8 +5919,8 @@ typedef struct {
     RhoKeyProbe preparation_order;
     bool preparation_order_initialized;
     RhoProcessKeyCursor key_job;
-    RhoKeyProduct **component_keys;
-    bool *component_key_owned;
+    RhoSortBuffer component_keys;
+    uint32_t component_key_count;
     bool best_view_ready,candidate_ready,comparison_live,found,done,quiescent;
     bool retire_selected;
 } RhoCanonicalCursor;
@@ -5450,9 +5929,13 @@ static void rho_canonical_cursor_init(RhoCanonicalCursor *cursor, RhoMachine *ma
     *cursor = (RhoCanonicalCursor){.machine=machine,
         .phase=RHO_CANONICAL_PREPARE,.best_ordinal=UINT64_MAX};
     arena_init(&cursor->scratch);
+    arena_set_hashcons(&cursor->scratch, NULL);
     arena_init_detached(&cursor->selected[0]);
     arena_init_detached(&cursor->selected[1]);
     rho_vec_init(&cursor->bodies);
+    cursor->component_keys.paged=true;
+    machine->sends.storage.paged=true;
+    machine->recvs.storage.paged=true;
     assert(!machine->comm_index_loaded && !machine->components.len &&
         !machine->sends.len && !machine->recvs.len);
 }
@@ -5463,23 +5946,50 @@ static void rho_canonical_cursor_free(RhoCanonicalCursor *cursor) {
     rho_process_key_cursor_free(&cursor->key_job);
     rho_reaction_view_cursor_free(&cursor->view_job);
     atom_deep_copy_session_free(cursor->best_copy);
+    rho_substitution_cursor_clear(&cursor->substitution);
     rho_payload_close(cursor->payload);
     rho_endpoint_sort_free(&cursor->endpoint_sort);
     if (cursor->comparison_live) rho_reaction_compare_free(&cursor->comparison);
     if (cursor->candidate_ready) rho_reaction_key_view_free(&cursor->candidate_view);
     if (cursor->best_view_ready) rho_reaction_key_view_free(&cursor->best_view);
-    if (cursor->component_keys && cursor->component_key_owned) {
-        for (uint32_t i=0u;i<machine->components.len;i++)
-            if (cursor->component_key_owned[i]) rho_key_product_free(cursor->component_keys[i]);
+    for (uint32_t i=0u;i<cursor->component_key_count;i++) {
+        RhoComponentKey *row=rho_component_key_row(&cursor->component_keys,i);
+        if (row->owned) rho_key_product_free(row->product);
     }
-    free(cursor->component_keys);
-    free(cursor->component_key_owned);
+    rho_sort_buffer_free(&cursor->component_keys);
     rho_vec_free(&cursor->bodies);
     rho_machine_clear_comm_index(machine);
     arena_free(&cursor->selected[0]);
     arena_free(&cursor->selected[1]);
     arena_free(&cursor->scratch);
     *cursor=(RhoCanonicalCursor){0};
+}
+
+/* The producer has stopped before this entry: either a completed selection
+ * has captured its address, or cancellation has revoked further advances.
+ * Its remaining job destructors dispose their own owners without reading
+ * these borrowed records. Source arenas and the key cache stay alive until
+ * those jobs and this indexed storage have both been retired. */
+static bool rho_canonical_storage_release_one(RhoCanonicalCursor *cursor) {
+    if (rho_sort_buffer_has_storage(&cursor->endpoint_sort.sort.scratch)) {
+        rho_sort_buffer_release_one(&cursor->endpoint_sort.sort.scratch);
+        return true;
+    }
+    if (rho_endpoint_vec_release_one(&cursor->machine->sends) ||
+        rho_endpoint_vec_release_one(&cursor->machine->recvs)) return true;
+    if (cursor->component_key_count) {
+        RhoComponentKey *row=rho_component_key_row(&cursor->component_keys,
+            --cursor->component_key_count);
+        RhoKeyProduct *product=row->owned ? row->product : NULL;
+        *row=(RhoComponentKey){0};
+        rho_key_product_free(product);
+        return true;
+    }
+    if (rho_sort_buffer_has_storage(&cursor->component_keys)) {
+        rho_sort_buffer_release_one(&cursor->component_keys);
+        return true;
+    }
+    return false;
 }
 
 static bool rho_canonical_cursor_prepare(RhoCanonicalCursor *cursor) {
@@ -5490,6 +6000,12 @@ static bool rho_canonical_cursor_prepare(RhoCanonicalCursor *cursor) {
         machine->current_canonical_order=true;
     }
     cursor->process_view=rho_view(machine->current);
+    /* The normalized source generation stays alive through selection and all
+     * borrowed-key consumers. Collection checks one source occurrence at a
+     * time; it need not allocate another copy of this immutable flat list. */
+    RhoView *view=&cursor->process_view;
+    machine->components=(RhoAtomVec){.items=view->kind==RHO_PAR ? view->args : &machine->current,
+        .cap=view->kind==RHO_PAR ? view->nargs : 1u,.borrowed=true};
     cursor->phase=RHO_CANONICAL_COLLECT;
     return true;
 }
@@ -5511,8 +6027,8 @@ static bool rho_canonical_cursor_body(RhoCanonicalCursor *cursor) {
     cursor->candidate_ordinal=cursor->next_ordinal++;
     cursor->body_candidates++;
     if (!rho_reaction_view_cursor_begin(&cursor->view_job,&cursor->candidate_view,&machine->components,
-            cursor->component_keys,machine->sends.items[cursor->send].component_index,
-            machine->recvs.items[cursor->recv].component_index,cursor->bodies.items[cursor->body]))
+            &cursor->component_keys,rho_endpoint_at(&machine->sends,cursor->send)->component_index,
+            rho_endpoint_at(&machine->recvs,cursor->recv)->component_index,cursor->bodies.items[cursor->body]))
         return false;
     cursor->phase=RHO_CANONICAL_BODY_PREPARE;
     return true;
@@ -5541,7 +6057,8 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
     if (cursor->done) return true;
     if (cursor->phase<RHO_CANONICAL_ALIGN || cursor->phase==RHO_CANONICAL_BODY_PREPARE ||
         cursor->phase==RHO_CANONICAL_CHOOSE_COPY || cursor->phase==RHO_CANONICAL_CHOOSE_REMAP ||
-        cursor->phase==RHO_CANONICAL_DISCARD || cursor->phase==RHO_CANONICAL_BUILD)
+        cursor->phase==RHO_CANONICAL_DISCARD || cursor->phase==RHO_CANONICAL_BUILD ||
+        cursor->phase==RHO_CANONICAL_SUBSTITUTION)
         cursor->preparation_steps++;
     switch (cursor->phase) {
     case RHO_CANONICAL_PREPARE:
@@ -5550,43 +6067,47 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
         RhoView *view=&cursor->process_view;
         if (view->kind==RHO_NIL) cursor->phase=RHO_CANONICAL_ALLOCATE;
         else if (view->kind!=RHO_PAR) {
-            if (!rho_vec_push(&machine->components,machine->current)) return false;
+            machine->components.len=1u;
             cursor->phase=RHO_CANONICAL_ALLOCATE;
         } else if (cursor->preparation_position<view->nargs) {
-            Atom *part=view->args[cursor->preparation_position++];
+            Atom *part=view->args[cursor->preparation_position];
             RhoKind kind=rho_view(part).kind;
-            if (kind==RHO_NIL || kind==RHO_PAR || !rho_vec_push(&machine->components,part))
-                return false;
+            if (kind==RHO_NIL || kind==RHO_PAR) return false;
+            machine->components.len++;
+            cursor->preparation_position++;
         } else cursor->phase=RHO_CANONICAL_ALLOCATE;
         return true;
     }
     case RHO_CANONICAL_ALLOCATE:
-        cursor->component_keys=calloc(machine->components.len,sizeof(*cursor->component_keys));
-        cursor->component_key_owned=calloc(machine->components.len,sizeof(*cursor->component_key_owned));
-        if (machine->components.len && (!cursor->component_keys || !cursor->component_key_owned))
-            return false;
         cursor->preparation_position=0u;
         cursor->phase=RHO_CANONICAL_KEYS;
         return true;
     case RHO_CANONICAL_KEYS:
         if (cursor->preparation_position<machine->components.len) {
             uint32_t i=cursor->preparation_position;
-            if (!cursor->component_keys[i]) {
+            CettaSegmentedStep prepared=rho_sort_buffer_prepare(&cursor->component_keys,
+                i,sizeof(RhoComponentKey));
+            if (prepared!=CETTA_SEGMENTED_READY) return prepared==CETTA_SEGMENTED_PENDING;
+            RhoComponentKey *row=rho_component_key_row(&cursor->component_keys,i);
+            if (i==cursor->component_key_count) {
+                *row=(RhoComponentKey){0};
+                cursor->component_key_count++;
+            }
+            if (!row->product) {
                 if (!cursor->key_job.atom && !rho_process_key_cursor_begin(&cursor->key_job,
                         &machine->process_key_cache,machine->components.items[i],false)) return false;
                 if (!rho_process_key_cursor_advance(&cursor->key_job,&cursor->memo_steps)) return false;
                 if (cursor->key_job.done) {
-                    cursor->component_keys[i]=rho_process_key_cursor_take(&cursor->key_job,
-                        &cursor->component_key_owned[i]);
+                    row->product=rho_process_key_cursor_take(&cursor->key_job,&row->owned);
                     rho_process_key_cursor_free(&cursor->key_job);
-                    if (!cursor->component_keys[i]) return false;
+                    if (!row->product) return false;
                 }
                 return true;
             }
             if (i) {
                 if (!cursor->preparation_order_initialized) {
                     if (!rho_key_probe_init(&cursor->preparation_order,
-                            cursor->component_keys[i-1u]->text,cursor->component_keys[i]->text)) return false;
+                            rho_component_key_at(&cursor->component_keys,i-1u)->text,row->product->text)) return false;
                     cursor->preparation_order_initialized=true;
                 }
                 rho_key_probe_advance(&cursor->preparation_order);
@@ -5609,6 +6130,11 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
             else if ((view.kind==RHO_RECV || view.kind==RHO_RECV_PERSISTENT) && view.nargs==3u)
                 target=&machine->recvs;
             if (!target) {cursor->preparation_position++;return true;}
+            /* Reserve before taking a completed key. A pending/failed block
+             * install retains the exact key producer and source occurrence. */
+            CettaSegmentedStep prepared=rho_sort_buffer_prepare(&target->storage,
+                target->len,sizeof(RhoEndpoint));
+            if (prepared!=CETTA_SEGMENTED_READY) return prepared==CETTA_SEGMENTED_PENDING;
             if (!cursor->key_job.atom && !rho_process_key_cursor_begin(&cursor->key_job,
                     &machine->process_key_cache,view.args[0],true)) return false;
             if (!rho_process_key_cursor_advance(&cursor->key_job,&cursor->memo_steps)) return false;
@@ -5651,8 +6177,8 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
             return true;
         }
         bool ready=false;int order=0;
-        if (!rho_canonical_cursor_channel_probe(cursor,&machine->recvs.items[cursor->recv_pos],
-                &machine->sends.items[cursor->send_pos],&ready,&order)) return false;
+        if (!rho_canonical_cursor_channel_probe(cursor,rho_endpoint_at(&machine->recvs,cursor->recv_pos),
+                rho_endpoint_at(&machine->sends,cursor->send_pos),&ready,&order)) return false;
         if (!ready) return true;
         if (order<0) cursor->recv_pos++;
         else if (order>0) cursor->send_pos++;
@@ -5668,8 +6194,8 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
             cursor->phase=RHO_CANONICAL_SEND_RANGE;return true;
         }
         bool ready=false;int order=0;
-        if (!rho_canonical_cursor_channel_probe(cursor,&machine->recvs.items[cursor->recv_end],
-                &machine->recvs.items[cursor->recv_start],&ready,&order)) return false;
+        if (!rho_canonical_cursor_channel_probe(cursor,rho_endpoint_at(&machine->recvs,cursor->recv_end),
+                rho_endpoint_at(&machine->recvs,cursor->recv_start),&ready,&order)) return false;
         if (!ready) return true;
         if (!order) cursor->recv_end++;
         else cursor->phase=RHO_CANONICAL_SEND_RANGE;
@@ -5678,8 +6204,8 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
     case RHO_CANONICAL_SEND_RANGE: {
         if (cursor->send_end<machine->sends.len) {
             bool ready=false;int order=0;
-            if (!rho_canonical_cursor_channel_probe(cursor,&machine->sends.items[cursor->send_end],
-                    &machine->sends.items[cursor->send_start],&ready,&order)) return false;
+            if (!rho_canonical_cursor_channel_probe(cursor,rho_endpoint_at(&machine->sends,cursor->send_end),
+                    rho_endpoint_at(&machine->sends,cursor->send_start),&ready,&order)) return false;
             if (!ready) return true;
             if (!order) {cursor->send_end++;return true;}
         }
@@ -5696,8 +6222,8 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
         cursor->pair_mark=arena_mark(&cursor->scratch);
         cursor->matching_pairs++;
         if (machine->eval_context &&
-            rho_view(machine->sends.items[cursor->send].view.args[1]).kind==RHO_EVAL_PAYLOAD) {
-            Atom *expression=rho_view(machine->sends.items[cursor->send].view.args[1]).args[0];
+            rho_view(rho_endpoint_at(&machine->sends,cursor->send)->view.args[1]).kind==RHO_EVAL_PAYLOAD) {
+            Atom *expression=rho_view(rho_endpoint_at(&machine->sends,cursor->send)->view.args[1]).args[0];
             cursor->payload=rho_payload_open(&cursor->scratch,machine->eval_context,expression);
             if (!cursor->payload) return false;
             cursor->payload_position=0u;
@@ -5708,13 +6234,21 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
          * variable anywhere in it, literal substitution is the identity and
          * can retain its syntax sharing. A deferred producer still owns its
          * evaluation and occurrence count, even when the binder is unused. */
-        if (rho_view(machine->sends.items[cursor->send].view.args[1]).kind!=RHO_EVAL_PAYLOAD &&
-            !atom_has_vars(machine->recvs.items[cursor->recv].view.args[2])) {
-            if (!rho_vec_push(&cursor->bodies,machine->recvs.items[cursor->recv].view.args[2]))
+        if (rho_view(rho_endpoint_at(&machine->sends,cursor->send)->view.args[1]).kind!=RHO_EVAL_PAYLOAD &&
+            !atom_has_vars(rho_endpoint_at(&machine->recvs,cursor->recv)->view.args[2])) {
+            if (!rho_vec_push(&cursor->bodies,rho_endpoint_at(&machine->recvs,cursor->recv)->view.args[2]))
                 return false;
-        } else if (!rho_compute_comm_continuations(&cursor->scratch,
-                &machine->sends.items[cursor->send],&machine->recvs.items[cursor->recv],
-                machine->eval_context,&cursor->bodies)) return false;
+        } else if (rho_view(rho_endpoint_at(&machine->sends,cursor->send)->view.args[1]).kind!=RHO_EVAL_PAYLOAD) {
+            /* The source machine already normalized this literal payload.
+             * Retain that actual source rather than re-running a whole walk. */
+            Atom *replacement=rho_unary(&cursor->scratch,"rho:quote",
+                rho_endpoint_at(&machine->sends,cursor->send)->view.args[1]);
+            RhoView *receive=&rho_endpoint_at(&machine->recvs,cursor->recv)->view;
+            if (!replacement || !rho_substitution_begin(&cursor->substitution,
+                    &cursor->scratch,receive->args[2],receive->args[1]->var_id,replacement))
+                return false;
+            cursor->phase=RHO_CANONICAL_SUBSTITUTION;return true;
+        }
         cursor->body=0u;
         cursor->phase=RHO_CANONICAL_BODY;
         return true;
@@ -5726,15 +6260,27 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
     }
     case RHO_CANONICAL_PAYLOAD_BODY:
         if (cursor->payload_position<cursor->payload->results.len) {
-            Atom *replacement=rho_embed_payload_result_name(&cursor->scratch,
-                cursor->payload->results.items[cursor->payload_position]);
-            RhoView *receive=&machine->recvs.items[cursor->recv].view;
-            Atom *body=replacement?rho_subst_proc(&cursor->scratch,receive->args[2],
-                receive->args[1]->var_id,replacement):NULL;
-            if (!body || !rho_vec_push(&cursor->bodies,body)) return false;
-            cursor->payload_position++;
+            RhoView *receive=&rho_endpoint_at(&machine->recvs,cursor->recv)->view;
+            if (!rho_substitution_begin_payload(&cursor->substitution,&cursor->scratch,
+                    receive->args[2],receive->args[1]->var_id,
+                    cursor->payload->results.items[cursor->payload_position]))
+                return false;
+            cursor->phase=RHO_CANONICAL_SUBSTITUTION;
         } else {
             rho_payload_close(cursor->payload);cursor->payload=NULL;
+            cursor->body=0u;cursor->phase=RHO_CANONICAL_BODY;
+        }
+        return true;
+    case RHO_CANONICAL_SUBSTITUTION:
+        if (!rho_substitution_advance(&cursor->substitution)) return false;
+        if (!cursor->substitution.done) return true;
+        if (!cursor->substitution.returned ||
+                !rho_vec_push(&cursor->bodies,cursor->substitution.returned)) return false;
+        rho_substitution_cursor_clear(&cursor->substitution);
+        if (cursor->payload) {
+            cursor->payload_position++;
+            cursor->phase=RHO_CANONICAL_PAYLOAD_BODY;
+        } else {
             cursor->body=0u;cursor->phase=RHO_CANONICAL_BODY;
         }
         return true;
@@ -5795,7 +6341,7 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
     }
     case RHO_CANONICAL_CHOOSE_REMAP:
         if (cursor->remap_position<cursor->candidate_view.body_len) {
-            RhoKeyedAtom *item=&cursor->candidate_view.body_items[cursor->remap_position++];
+            RhoKeyedAtom *item=rho_keyed_row(&cursor->candidate_view.body_items,cursor->remap_position++);
             RhoView copy=rho_view(cursor->prepared_best_body);
             if (copy.kind==RHO_PAR) {
                 if (item->ordinal>=copy.nargs) return false;
@@ -5822,7 +6368,11 @@ static bool rho_canonical_cursor_advance(RhoCanonicalCursor *cursor) {
     case RHO_CANONICAL_DISCARD:
         if (cursor->candidate_ready) {
             if (cursor->candidate_view.body_len) {
-                free(cursor->candidate_view.body_items[--cursor->candidate_view.body_len].key);
+                free(rho_keyed_row(&cursor->candidate_view.body_items,--cursor->candidate_view.body_len)->key);
+                return true;
+            }
+            if (rho_sort_buffer_has_storage(&cursor->candidate_view.body_items)) {
+                rho_sort_buffer_release_one(&cursor->candidate_view.body_items);
                 return true;
             }
             rho_reaction_key_view_free(&cursor->candidate_view);
@@ -5878,6 +6428,17 @@ static void rho_canonical_cursor_account(const RhoCanonicalCursor *cursor,
         RhocalcRunAccount *account) {
     account->preparation_steps+=cursor->preparation_steps;
     account->selector_memo_steps+=cursor->memo_steps;
+    account->substitution_steps+=cursor->substitution.account.substitution_steps;
+    account->substitution_apply_steps+=cursor->substitution.account.substitution_apply_steps;
+    account->substitution_memo_steps+=cursor->substitution.account.substitution_memo_steps;
+    account->validation_steps+=cursor->substitution.account.validation_steps;
+    account->validation_memo_steps+=cursor->substitution.account.validation_memo_steps;
+    account->normalization_steps+=cursor->substitution.account.normalization_steps;
+    account->normalization_memo_steps+=cursor->substitution.account.normalization_memo_steps;
+    account->key_steps+=cursor->substitution.account.key_steps;
+    account->key_bytes+=cursor->substitution.account.key_bytes;
+    account->construction_children+=cursor->substitution.account.construction_children;
+    account->construction_bytes+=cursor->substitution.account.construction_bytes;
     account->reaction_build_steps+=cursor->build.steps;
     account->reaction_copy_steps+=cursor->build.copy_steps;
     account->reaction_merge_steps+=cursor->build.merge_steps;
@@ -5988,14 +6549,14 @@ static bool rho_machine_try_single_comm_successor(
         for (uint32_t s = 0u; s < sends.len; s++) {
             bool equal = false;
             if (!rho_single_comm_channels_equal(
-                    &recvs.items[r], &sends.items[s], &equal)) {
+                    rho_endpoint_at(&recvs,r), rho_endpoint_at(&sends,s), &equal)) {
                 ok = false;
                 goto done;
             }
             if (!equal) continue;
             if (selected_send) goto done;
-            selected_recv = &recvs.items[r];
-            selected_send = &sends.items[s];
+            selected_recv = rho_endpoint_at(&recvs,r);
+            selected_send = rho_endpoint_at(&sends,s);
         }
     }
 
@@ -6709,7 +7270,7 @@ static bool rho_emit_comm_results_range(
     for (uint32_t r = recv_start; r < recv_end; r++) {
         for (uint32_t s = send_start; s < send_end; s++) {
             if (!rho_emit_comm_results(arena, components,
-                                       &sends->items[s], &recvs->items[r],
+                                       rho_endpoint_at(sends,s), rho_endpoint_at(recvs,r),
                                        eval_context, out)) {
                 return false;
             }
@@ -6762,7 +7323,7 @@ static bool rhocalc_try_quiet_macro_step(
     }
     while (recv_pos < recvs.len && send_pos < sends.len) {
         int cmp = rho_endpoint_key_compare(
-            &recvs.items[recv_pos], &sends.items[send_pos]);
+            rho_endpoint_at(&recvs,recv_pos), rho_endpoint_at(&sends,send_pos));
         if (cmp < 0) {
             recv_pos++;
             continue;
@@ -6782,14 +7343,14 @@ static bool rhocalc_try_quiet_macro_step(
         group->send_start = send_start;
         while (recv_pos < recvs.len &&
                rho_endpoint_key_compare(
-                   &recvs.items[recv_pos],
-                   &recvs.items[recv_start]) == 0) {
+                   rho_endpoint_at(&recvs,recv_pos),
+                   rho_endpoint_at(&recvs,recv_start)) == 0) {
             recv_pos++;
         }
         while (send_pos < sends.len &&
                rho_endpoint_key_compare(
-                   &sends.items[send_pos],
-                   &sends.items[send_start]) == 0) {
+                   rho_endpoint_at(&sends,send_pos),
+                   rho_endpoint_at(&sends,send_start)) == 0) {
             send_pos++;
         }
         group->recv_end = recv_pos;
@@ -6801,8 +7362,8 @@ static bool rhocalc_try_quiet_macro_step(
             continue;
         }
 
-        group->send = &sends.items[send_start];
-        group->recv = &recvs.items[recv_start];
+        group->send = rho_endpoint_at(&sends,send_start);
+        group->recv = rho_endpoint_at(&recvs,recv_start);
         if (group->recv->view.kind == RHO_RECV_PERSISTENT) {
             group->reject_reason = RHO_MACRO_REJECT_NONQUIET;
             exact_groups++;
@@ -11061,7 +11622,7 @@ static bool rho_collect_successors(Arena *arena, Atom *proc,
 
     while (recv_pos < recvs.len && send_pos < sends.len) {
         int cmp = rho_endpoint_key_compare(
-            &recvs.items[recv_pos], &sends.items[send_pos]);
+            rho_endpoint_at(&recvs,recv_pos), rho_endpoint_at(&sends,send_pos));
         if (cmp < 0) {
             recv_pos++;
             continue;
@@ -11075,22 +11636,22 @@ static bool rho_collect_successors(Arena *arena, Atom *proc,
         uint32_t send_start = send_pos;
         while (recv_pos < recvs.len &&
                rho_endpoint_key_compare(
-                   &recvs.items[recv_pos],
-                   &recvs.items[recv_start]) == 0) {
+                   rho_endpoint_at(&recvs,recv_pos),
+                   rho_endpoint_at(&recvs,recv_start)) == 0) {
             recv_pos++;
         }
         while (send_pos < sends.len &&
                rho_endpoint_key_compare(
-                   &sends.items[send_pos],
-                   &sends.items[send_start]) == 0) {
+                   rho_endpoint_at(&sends,send_pos),
+                   rho_endpoint_at(&sends,send_start)) == 0) {
             send_pos++;
         }
 
         for (uint32_t r = recv_start; r < recv_pos; r++) {
             for (uint32_t s = send_start; s < send_pos; s++) {
                 if (!rho_emit_comm_results(arena, &components,
-                                           &sends.items[s],
-                                           &recvs.items[r],
+                                           rho_endpoint_at(&sends,s),
+                                           rho_endpoint_at(&recvs,r),
                                            eval_context, out)) {
                     rho_endpoint_vec_free(&sends);
                     rho_endpoint_vec_free(&recvs);
@@ -11125,6 +11686,7 @@ typedef enum {
     RHO_RUN_VALIDATE,
     RHO_RUN_NORMALIZE,
     RHO_RUN_SELECT,
+    RHO_RUN_SELECTOR_RETIRE,
     RHO_RUN_COMMIT,
     RHO_RUN_COMPACT,
     RHO_RUN_COMPACT_COPY,
@@ -11149,6 +11711,7 @@ struct RhocalcRun {
     RhoRunPhase phase;
     RhocalcRunStatus status;
     bool cursor_live, quiescent, atomic_selection, has_pending_comm, has_last_comm;
+    bool retiring, normalization_retired;
     char error[256];
 };
 
@@ -11248,9 +11811,11 @@ static bool rho_run_advance(RhocalcRun *run) {
         run->phase=RHO_RUN_SELECT;
         return true;
     case RHO_RUN_VALIDATE:
-        if (!rho_run_charge(&run->account.validation_steps,1u) ||
-            !rho_check_cursor_advance(&run->check,&run->account)) return rho_run_fail(run);
-        if (!run->check.length) {
+        if (!rho_run_charge(&run->account.validation_steps,1u)) return rho_run_fail(run);
+        RhoCheckStatus checked=rho_check_cursor_advance(&run->check,&run->account);
+        if (checked==RHO_CHECK_REFUSED || checked==RHO_CHECK_INCOMPATIBLE)
+            return rho_run_fail(run);
+        if (checked==RHO_CHECK_COMPLETE) {
             rho_check_cursor_free(&run->check);
             run->normalization.arena=machine->arena;
             if (!rho_normalize_cursor_push(&run->normalization,run->input,false)) return rho_run_fail(run);
@@ -11287,13 +11852,20 @@ static bool rho_run_advance(RhocalcRun *run) {
                 RhoCanonicalCursor *cursor=&run->cursor;
                 run->pending_comm=(RhocalcCommAddress){
                     .source_reductions=run->result.reductions_taken,
-                    .send_component=machine->sends.items[cursor->best_send].component_index,
-                    .recv_component=machine->recvs.items[cursor->best_recv].component_index,
+                    .send_component=rho_endpoint_at(&machine->sends,cursor->best_send)->component_index,
+                    .recv_component=rho_endpoint_at(&machine->recvs,cursor->best_recv)->component_index,
                     .body_index=cursor->best_body_index,
                     .candidate_ordinal=cursor->best_ordinal};
             }
-            rho_run_retire_cursor(run);
+            run->phase=RHO_RUN_SELECTOR_RETIRE;
+            return true;
         }
+        run->phase=RHO_RUN_COMMIT;
+        return true;
+    case RHO_RUN_SELECTOR_RETIRE:
+        run->account.selector_steps++;
+        if (rho_canonical_storage_release_one(&run->cursor)) return true;
+        rho_run_retire_cursor(run);
         run->phase=RHO_RUN_COMMIT;
         return true;
     case RHO_RUN_COMMIT:
@@ -11377,7 +11949,7 @@ static bool rho_run_advance(RhocalcRun *run) {
 RhocalcRunStatus rhocalc_run_poll(RhocalcRun *run, uint64_t allowance, uint64_t *used) {
     uint64_t spent=0u;
     if (used) *used=0u;
-    if (!run) return RHOCALC_RUN_FAILED;
+    if (!run || run->retiring) return RHOCALC_RUN_FAILED;
     if (allowance && run->status==RHOCALC_RUN_PENDING) rho_validation_clear();
     while (spent<allowance && run->status==RHOCALC_RUN_PENDING) {
         if (run->account.driver_steps==UINT64_MAX) {
@@ -11394,7 +11966,7 @@ RhocalcRunStatus rhocalc_run_poll(RhocalcRun *run, uint64_t allowance, uint64_t 
 }
 
 bool rhocalc_run_result(const RhocalcRun *run, RhoReductionResult *out) {
-    if (!run || !out || run->status!=RHOCALC_RUN_DONE) return false;
+    if (!run || run->retiring || !out || run->status!=RHOCALC_RUN_DONE) return false;
     *out=run->result;
     return true;
 }
@@ -11422,14 +11994,57 @@ const char *rhocalc_run_error(const RhocalcRun *run) {
     return run && run->error[0] ? run->error : NULL;
 }
 
+CettaOwnedReleaseStep rhocalc_run_release_poll(RhocalcRun **owner,
+    uint64_t allowance, bool allow_atomic, uint64_t *used) {
+    uint64_t spent = 0u;
+    if (used) *used = 0u;
+    if (!owner || !*owner) return CETTA_OWNED_RELEASE_COMPLETE;
+    RhocalcRun *run = *owner;
+    if (!allowance) return CETTA_OWNED_RELEASE_PENDING;
+    if (!run->retiring) { run->retiring = true; spent++; }
+    while (spent < allowance) {
+        if (run->normalization.frames.length) {
+            rho_normalize_cursor_release_one(&run->normalization);
+        } else if (run->normalization.frames.slots.blocks) {
+            cetta_record_stack_release_storage_one(&run->normalization.frames);
+        } else if (run->normalization.memo_cursor.grown.blocks) {
+            cetta_segmented_array_release_one(&run->normalization.memo_cursor.grown);
+        } else if (run->normalization.memo.slots.blocks) {
+            cetta_node_memo_release_one(&run->normalization.memo);
+        } else if (!run->normalization_retired) {
+            rho_normalize_cursor_free(&run->normalization);
+            run->normalization_retired = true;
+        } else if (run->cursor_live && rho_canonical_storage_release_one(&run->cursor)) {
+            /* One row disposition or backing block; opaque jobs and cache
+             * finalizers remain retained for their separate admission. */
+        } else {
+            /* Copy metadata, nested payloads, canonical caches and arena
+             * finalizers retain their existing indivisible providers.
+             * A responsive caller must retain this owner until that work
+             * is separately admitted; no pending prefix is discarded. */
+            if (!allow_atomic) {
+                if (used) *used = spent;
+                return CETTA_OWNED_RELEASE_ATOMIC;
+            }
+            atom_deep_copy_session_free(run->transfer);
+            rho_run_retire_cursor(run);
+            rho_check_cursor_free(&run->check);
+            rho_machine_free(&run->machine);
+            free(run);
+            *owner = NULL;
+            spent++;
+            if (used) *used = spent;
+            return CETTA_OWNED_RELEASE_COMPLETE;
+        }
+        spent++;
+    }
+    if (used) *used = spent;
+    return CETTA_OWNED_RELEASE_PENDING;
+}
+
 void rhocalc_run_close(RhocalcRun *run) {
-    if (!run) return;
-    atom_deep_copy_session_free(run->transfer);
-    rho_run_retire_cursor(run);
-    rho_check_cursor_free(&run->check);
-    rho_normalize_cursor_free(&run->normalization);
-    rho_machine_free(&run->machine);
-    free(run);
+    while (rhocalc_run_release_poll(&run, UINT64_MAX, true, NULL) !=
+            CETTA_OWNED_RELEASE_COMPLETE) {}
 }
 
 bool rhocalc_reduce_to_quiescence_with_eval_context(

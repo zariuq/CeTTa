@@ -70,6 +70,24 @@ static bool copy_recorded_receipt(CopyRelation *r,const PrimeNeedReceipt *s,cons
     return good;
 }
 #endif
+static bool copy_pattern_request(CopyRelation *r,const PrimeNeedPatternRequest *a,
+    const PrimeNeedPatternRequest *b) {
+    if(a->length!=b->length || a->capacity!=b->capacity || a->demand!=b->demand ||
+       a->length>a->capacity || (a->capacity&&(!a->path||!b->path)))return r->valid=false;
+    if(!copy_identity(r,12,a->path,b->path))return false;
+    for(size_t i=0u;i<a->length;i++)if(a->path[i]!=b->path[i])return r->valid=false;
+    return true;
+}
+static bool copy_pattern_readiness(CopyRelation *r,const PrimeNeedPatternReadiness *a,
+    const PrimeNeedPatternReadiness *b) {
+    if(!copy_identity(r,13,a,b))return false;
+    if(!a||!b)return !a&&!b;
+    if(a->length!=b->length || a->capacity!=b->capacity || a->length>a->capacity ||
+       (a->capacity&&(!a->paths||!b->paths)))return r->valid=false;
+    if(!copy_identity(r,14,a->paths,b->paths))return false;
+    for(size_t i=0u;i<a->length;i++)if(!copy_pattern_request(r,&a->paths[i],&b->paths[i]))return false;
+    return true;
+}
 static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *d,CopyRelation *r) {
     *r=(CopyRelation){.valid=true};
     if(s->selected_length!=d->selected_length||s->selected_delivered!=d->selected_delivered||
@@ -100,6 +118,11 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
     if(sa||da)r->valid=false;
     const PrimeEvalStackFrame *sf=s->frames,*df=d->frames;
     for(;sf&&df;sf=sf->control_next,df=df->control_next){
+        copy_identity(r,15,sf,df);
+        copy_identity(r,15,sf->force_producer,df->force_producer);
+        copy_identity(r,15,sf->force_waiters,df->force_waiters);
+        copy_identity(r,15,sf->force_waiter_next,df->force_waiter_next);
+        copy_identity(r,15,sf->open_force_next,df->open_force_next);
         if(sf->kind!=df->kind||sf->state!=df->state||sf->control_sequence!=df->control_sequence||sf->index!=df->index||
            sf->normalization_value_ready!=df->normalization_value_ready||
            sf->normalization_return_value_ready!=df->normalization_return_value_ready||
@@ -131,11 +154,20 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
             const OutcomeSet *x[]={&a->work,&a->current,&a->raw_results,&a->residuals,&a->publication,&a->forced_worlds};
             const OutcomeSet *y[]={&b->work,&b->current,&b->raw_results,&b->residuals,&b->publication,&b->forced_worlds};
             if(a->state!=b->state||a->plan_count!=b->plan_count||a->frontier!=b->frontier)r->valid=false;
+            if(a->inspect_incrementally!=b->inspect_incrementally ||
+               a->publication_returns_to_search!=b->publication_returns_to_search)r->valid=false;
+            copy_pattern_request(r,&a->inspection,&b->inspection);
+            copy_pattern_readiness(r,a->observed,b->observed);
+            if(a->work.len!=b->work.len)return r->valid=false;
+            for(size_t i=0u;i<a->work.len;i++)
+                copy_pattern_readiness(r,a->work_meta[i].observed,b->work_meta[i].observed);
             for(size_t i=0;i<6;i++)copy_outcomes(r,x[i],y[i]);
             for(size_t i=0;i<a->plan_count;i++)copy_outcomes(r,&a->plans[i].results,&b->plans[i].results);
         }
     }
     if(sf||df)r->valid=false;
+    for(size_t i=0u;i<sizeof(s->open_force_buckets)/sizeof(*s->open_force_buckets);i++)
+        copy_identity(r,15,s->open_force_buckets[i],d->open_force_buckets[i]);
     size_t queued=cetta_continuation_hub_length(&s->hub);
     if(queued!=cetta_continuation_hub_length(&d->hub)||s->parked_count!=d->parked_count)return false;
     for(size_t i=0;i<queued+s->parked_count;i++){

@@ -22,6 +22,7 @@ static unsigned failures = 0u;
 static bool same_cell_metadata(const PrimeNeedCellView *left,
                                const PrimeNeedCellView *right) {
     if (left->cache_state != right->cache_state ||
+        left->update_id != right->update_id ||
         left->origin != right->origin || left->cached != right->cached ||
         left->authority_id != right->authority_id ||
         left->evaluator_id != right->evaluator_id ||
@@ -36,7 +37,7 @@ static bool same_cell_metadata(const PrimeNeedCellView *left,
         left->capture_var_count != right->capture_var_count)
         return false;
     for (size_t index = 0u; index < left->capture_var_count; index++)
-        if (left->capture_var_ids[index] != right->capture_var_ids[index])
+        if (!var_id_eq(left->capture_var_ids[index], right->capture_var_ids[index]))
             return false;
 #endif
     return true;
@@ -251,7 +252,7 @@ static bool history_transport_controls(const PrimeNeedSnapshot *before,
             a.cell.capture_var_count != b.cell.capture_var_count)
             return false;
         for (size_t i = 0; i < a.cell.capture_var_count; i++)
-            if (a.cell.capture_var_ids[i] != b.cell.capture_var_ids[i])
+            if (!var_id_eq(a.cell.capture_var_ids[i], b.cell.capture_var_ids[i]))
                 return false;
 #endif
     }
@@ -2418,6 +2419,356 @@ static void check_forwarded_production(Arena *arena, Arena *promoted_arena) {
     }
 }
 
+static void check_production_view_import(void) {
+    Arena source, receiving, persistent;
+    arena_init_detached(&source);
+    arena_init_detached(&receiving);
+    arena_init_detached(&persistent);
+    PrimeNeedSnapshot root = {0}, base = {0}, next = {0}, running = {0},
+        produced = {0}, recipient = {0}, imported = {0};
+    prime_need_snapshot_init(&root);
+    uint64_t a = 0u, b = 0u, c = 0u;
+    uint64_t evaluator = prime_need_fresh_evaluator_id();
+    Atom *value = atom_int(&source, 17);
+    bool ready = prime_need_snapshot_begin(&root) &&
+        prime_need_snapshot_allocate(&source, &root, atom_symbol(&source, "a"), &next, &a) &&
+        prime_need_snapshot_allocate(&source, &next, atom_symbol(&source, "b"), &base, &b) &&
+        prime_need_snapshot_allocate(&source, &base, atom_symbol(&source, "c"), &next, &c);
+    base = next;
+    CHECK(ready, "production-view source has three independently addressable cells");
+    PrimeNeedReadCapture *capture = prime_need_read_capture_new(&base, &base);
+    CHECK(capture != NULL, "production captures its actual entrance Need view");
+    if (!ready || !capture) goto cleanup;
+    PrimeNeedReadScope scope;
+    prime_need_read_scope_enter(&scope, capture);
+    PrimeNeedCellView cell;
+    uint64_t missing = PRIME_NEED_NAMED_CELL_BIT | UINT64_C(591233);
+    CHECK(!prime_need_snapshot_lookup(&base, missing, &cell),
+          "a missing named cell is a real negative dependency");
+    CHECK(prime_need_snapshot_start_evaluation(&source, &base, a, evaluator, &running) &&
+          prime_need_snapshot_resolve_value(&source, &running, a, evaluator, value, &produced),
+          "EMPTY, own EVALUATING and completed VALUE form one production");
+    prime_need_read_scope_leave(&scope);
+    CHECK(prime_need_read_capture_complete(capture), "own cache transitions keep capture complete");
+    CHECK(prime_need_snapshot_start_evaluation(&source, &base, b, evaluator, &running) &&
+          prime_need_snapshot_resolve_value(&source, &running, b, evaluator,
+              atom_int(&source, 29), &recipient), "the recipient independently completes b");
+    CHECK(!prime_need_snapshot_is_ancestor(&produced, &recipient) &&
+          !prime_need_snapshot_is_ancestor(&recipient, &produced),
+          "independent production and reader have different history spines");
+    PrimeNeedSnapshot refused = recipient;
+    CHECK(!prime_need_snapshot_merge(&refused, &produced) &&
+          same_snapshot_metadata(&refused, &recipient), "ordinary sibling merge remains refused");
+    CHECK(prime_need_snapshot_import_production(&receiving, capture, &produced, a,
+              &recipient, &imported), "qualified import carries a beside the reader's unrelated b");
+    PrimeNeedCellView earned = {0}, delivered = {0}, retained = {0};
+    CHECK(prime_need_snapshot_lookup(&produced, a, &earned) &&
+          prime_need_snapshot_lookup(&imported, a, &delivered) &&
+          prime_need_snapshot_lookup(&imported, b, &retained) &&
+          delivered.update_id == earned.update_id && delivered.cached == value &&
+          atom_eq(retained.cached, atom_int(&source, 29)),
+          "import preserves canonical production identity and the recipient's own value");
+    CHECK(prime_need_snapshot_is_ancestor(&recipient, &imported) &&
+          !prime_need_snapshot_is_ancestor(&produced, &imported) &&
+          imported.max_storage_key >= recipient.max_storage_key &&
+          imported.max_storage_key >= produced.max_storage_key,
+          "fresh administrative frames retain ancestry and never lower the storage watermark");
+    PrimeNeedSnapshot repeated;
+    CHECK(prime_need_snapshot_import_production(&receiving, capture, &produced, a,
+              &imported, &repeated) && same_snapshot_metadata(&repeated, &imported),
+          "delivering the same earned view again does not create another history update");
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    uint64_t source_update = 0u, received_update = 0u;
+    CHECK(prime_need_snapshot_cached_update_id(&produced, a, &source_update) &&
+          prime_need_snapshot_cached_update_id(&imported, a, &received_update) &&
+          source_update == received_update, "optional observation sees the canonical production token");
+#endif
+    PrimeNeedSnapshot other;
+    CHECK(prime_need_snapshot_start_evaluation(&source, &base, a, evaluator, &running) &&
+          prime_need_snapshot_resolve_value(&source, &running, a, evaluator, value, &other),
+          "another equal-valued completion is a distinct physical production");
+    refused = imported;
+    CHECK(!prime_need_snapshot_import_production(&receiving, capture, &other, a,
+              &imported, &refused) && same_snapshot_metadata(&refused, &imported),
+          "equal payloads cannot replace a selected production");
+    CHECK(prime_need_snapshot_allocate_named(&source, &recipient,
+              atom_symbol(&source, "appeared"), missing, &other),
+          "a formerly missing named cell appears");
+    refused = recipient;
+    CHECK(!prime_need_snapshot_import_production(&receiving, capture, &produced, a,
+              &other, &refused) && same_snapshot_metadata(&refused, &recipient),
+          "negative lookup invalidation refuses without publishing any destination");
+
+    PrimeNeedReadCapture *frozen = prime_need_read_capture_copy(capture);
+    prime_need_read_scope_enter(&scope, capture);
+    CHECK(prime_need_snapshot_lookup(&base, b, &cell), "later work observes another entrance cell");
+    prime_need_read_scope_leave(&scope);
+    refused = recipient;
+    CHECK(frozen && prime_need_snapshot_import_production(&receiving, frozen, &produced,
+              a, &recipient, &next) &&
+          !prime_need_snapshot_import_production(&receiving, capture, &produced,
+              a, &recipient, &refused) && same_snapshot_metadata(&refused, &recipient),
+          "a frozen row keeps its earned support while later reads constrain later rows");
+
+    PrimeNeedReadCapture *outer = prime_need_read_capture_new(&base, &base);
+    CHECK(outer != NULL, "a containing production owns separate support");
+    if (outer && frozen) {
+        prime_need_read_scope_enter(&scope, outer);
+        bool built = prime_need_snapshot_import_production(&receiving, frozen, &produced,
+            a, &base, &next) &&
+            prime_need_snapshot_start_evaluation(&receiving, &next, c, evaluator, &running) &&
+            prime_need_snapshot_resolve_value(&receiving, &running, c, evaluator,
+                atom_int(&source, 31), &next);
+        prime_need_read_scope_leave(&scope);
+        refused = recipient;
+        CHECK(built && prime_need_read_capture_complete(outer) &&
+              !prime_need_snapshot_import_production(&receiving, outer, &next, c,
+                  &other, &refused) && same_snapshot_metadata(&refused, &recipient),
+              "nested reuse inherits negative dependencies even without repeating the lookup");
+    }
+    prime_need_read_capture_free(outer);
+
+    PrimeNeedSnapshot foreign;
+    prime_need_snapshot_init(&foreign);
+    CHECK(prime_need_snapshot_begin(&foreign) &&
+          prime_need_snapshot_allocate_ready_value(&source, &foreign, value, &foreign, &c),
+          "a foreign session supplies a successful lookup discriminator");
+    prime_need_read_scope_enter(&scope, capture);
+    CHECK(prime_need_snapshot_lookup(&foreign, c, &cell) && cell.cached == value,
+          "unrepresentable evidence never changes the source's actual lookup result");
+    prime_need_read_scope_leave(&scope);
+    CHECK(!prime_need_read_capture_complete(capture), "foreign-session reads make reuse evidence incomplete");
+    refused = recipient;
+    CHECK(!prime_need_snapshot_import_production(&receiving, capture, &produced, a,
+              &recipient, &refused) && same_snapshot_metadata(&refused, &recipient),
+          "incomplete dependency evidence cannot authorize an import");
+    CHECK(prime_need_snapshot_promote(&persistent, &imported),
+          "the existing promotion owner captures the complete imported view");
+    uint64_t preserved_update = earned.update_id;
+    prime_need_read_capture_free(frozen);
+    prime_need_read_capture_free(capture);
+    capture = NULL;
+    arena_free(&receiving);
+    arena_free(&source);
+    CHECK(prime_need_snapshot_lookup(&imported, a, &cell) &&
+          cell.update_id == preserved_update && atom_eq(cell.cached, atom_int(&persistent, 17)) &&
+          prime_need_snapshot_lookup(&imported, b, &cell) &&
+          atom_eq(cell.cached, atom_int(&persistent, 29)),
+          "imported cells and production identity survive both original arena retirements");
+    arena_free(&persistent);
+    return;
+cleanup:
+    prime_need_read_capture_free(capture);
+    arena_free(&persistent);
+    arena_free(&receiving);
+    arena_free(&source);
+}
+
+static void check_production_view_write_cut(void) {
+    Arena arena;
+    arena_init_detached(&arena);
+    PrimeNeedSnapshot root={0}, base={0}, running={0}, left={0}, right={0},
+        produced={0}, imported={0}, outer_result={0};
+    uint64_t a=0u,b=0u,c=0u;
+    uint64_t evaluator=prime_need_fresh_evaluator_id();
+    Atom *one=atom_int(&arena,1),*two=atom_int(&arena,2),*answer=atom_int(&arena,23);
+    bool ready=prime_need_snapshot_begin(&root) &&
+        prime_need_snapshot_allocate(&arena,&root,atom_symbol(&arena,"choice-a"),&base,&a) &&
+        prime_need_snapshot_allocate(&arena,&base,atom_symbol(&arena,"choice-b"),&base,&b) &&
+        prime_need_snapshot_allocate(&arena,&base,atom_symbol(&arena,"choice-c"),&base,&c) &&
+        prime_need_snapshot_start_evaluation(&arena,&base,a,evaluator,&running) &&
+        prime_need_snapshot_resolve_value(&arena,&running,a,evaluator,one,&left) &&
+        prime_need_snapshot_start_evaluation(&arena,&base,a,evaluator,&running) &&
+        prime_need_snapshot_resolve_value(&arena,&running,a,evaluator,two,&right);
+    CHECK(ready,"reader worlds share admitted cells but select different a productions before forcing b");
+    if (!ready) goto done;
+    PrimeNeedReadCapture *capture=prime_need_read_capture_new(&base,&left);
+    PrimeNeedReadCapture *bad=prime_need_read_capture_new(&right,&left);
+    CHECK(capture && !bad,"a force write-cut must actually extend its admitted common context");
+    prime_need_read_capture_free(bad);
+    if (!capture) goto done;
+    PrimeNeedReadScope scope;
+    prime_need_read_scope_enter(&scope,capture);
+    ready=prime_need_snapshot_start_evaluation(&arena,&left,b,evaluator,&running) &&
+        prime_need_snapshot_resolve_value(&arena,&running,b,evaluator,answer,&produced);
+    prime_need_read_scope_leave(&scope);
+    CHECK(ready && prime_need_read_capture_complete(capture),
+          "b completes after a=1 without reading a");
+    PrimeNeedCellView held,earned;
+    CHECK(ready && prime_need_snapshot_import_production(&arena,capture,&produced,b,&right,&imported) &&
+          prime_need_snapshot_lookup(&imported,a,&held) && held.cached==two &&
+          prime_need_snapshot_lookup(&produced,b,&earned) &&
+          prime_need_snapshot_lookup(&imported,b,&held) && held.cached==answer &&
+          held.update_id==earned.update_id,
+          "independent b imports into a=2 without copying the producer's earlier a=1 choice");
+    CHECK(prime_need_snapshot_is_ancestor(&right,&imported) &&
+          !prime_need_snapshot_is_ancestor(&left,&imported),
+          "transport retains recipient ancestry instead of identifying sibling worlds");
+    PrimeNeedSnapshot refused=right;
+    CHECK(!prime_need_snapshot_merge(&refused,&produced) && same_snapshot_metadata(&refused,&right),
+          "the common snapshot merge does not gain permission to merge siblings");
+
+    PrimeNeedReadCapture *frozen=prime_need_read_capture_copy(capture);
+    prime_need_read_scope_enter(&scope,capture);
+    CHECK(prime_need_snapshot_lookup(&left,a,&held) && held.cached==one,
+          "later source work explicitly observes its a=1 prefix");
+    prime_need_read_scope_leave(&scope);
+    CHECK(!prime_need_snapshot_import_production(&arena,capture,&produced,b,&right,&refused) &&
+          same_snapshot_metadata(&refused,&right),
+          "an actually read caller choice prevents reuse in the conflicting world");
+    CHECK(frozen && prime_need_snapshot_import_production(&arena,frozen,&produced,b,&right,&imported),
+          "the frozen earlier completion retains its smaller actual read support");
+
+    PrimeNeedReadCapture *outer=prime_need_read_capture_new(&base,&right);
+    if (outer && frozen) {
+        prime_need_read_scope_enter(&scope,outer);
+        ready=prime_need_snapshot_import_production(&arena,frozen,&produced,b,&right,&imported) &&
+            prime_need_snapshot_start_evaluation(&arena,&imported,c,evaluator,&running) &&
+            prime_need_snapshot_resolve_forwarded_value(&arena,&running,c,evaluator,
+                answer,b,&outer_result);
+        prime_need_read_scope_leave(&scope);
+        CHECK(ready && prime_need_read_capture_complete(outer) &&
+              prime_need_snapshot_import_production(&arena,outer,&outer_result,c,&left,&imported) &&
+              prime_need_snapshot_lookup(&imported,a,&held) && held.cached==one &&
+              prime_need_snapshot_forwarded_value_source(&imported,c,&held) &&
+              held.update_id==earned.update_id,
+              "nested imported support and forwarded provenance cross only the independent prefix");
+    } else CHECK(false,"nested write-cut capture allocation");
+    prime_need_read_capture_free(outer);
+    prime_need_read_capture_free(frozen);
+    prime_need_read_capture_free(capture);
+done:
+    arena_free(&arena);
+}
+
+static void check_production_view_dependencies(void) {
+    Arena arena;
+    arena_init_detached(&arena);
+    PrimeNeedSnapshot root = {0}, base = {0}, running = {0}, produced = {0},
+        recipient = {0}, imported = {0}, next = {0};
+    uint64_t a = 0u, b = 0u, child = 0u;
+    uint64_t evaluator = prime_need_fresh_evaluator_id();
+    Atom *origin = atom_symbol(&arena, "stored-source");
+    Atom *value = atom_int(&arena, 23);
+    bool ready = prime_need_snapshot_begin(&root) &&
+        prime_need_snapshot_allocate(&arena, &root, origin, &next, &a) &&
+        prime_need_snapshot_allocate(&arena, &next, origin, &base, &b);
+    CHECK(ready, "descriptor controls allocate the shared entrance");
+    if (!ready) goto cleanup;
+    PrimeNeedReadCapture *capture = prime_need_read_capture_new(&base, &base);
+    PrimeNeedReadCapture *outer = prime_need_read_capture_new(&base, &base);
+    CHECK(capture && outer, "nested Need captures have distinct owners");
+    if (!capture || !outer) {
+        prime_need_read_capture_free(capture);
+        prime_need_read_capture_free(outer);
+        goto cleanup;
+    }
+    PrimeNeedReadScope parent, inner;
+    prime_need_read_scope_enter(&parent, outer);
+    prime_need_read_scope_enter(&inner, capture);
+    uint64_t descriptor = UINT64_C(10000000), found = 777u;
+    CHECK(!prime_need_snapshot_find_imported_cell(&base, descriptor, origin, &found) && found == 777u,
+          "a missing stored descriptor preserves its caller output while earning absence");
+    CHECK(prime_need_snapshot_start_evaluation(&arena, &base, a, evaluator, &running) &&
+          prime_need_snapshot_resolve_value(&arena, &running, a, evaluator, value, &produced),
+          "the descriptor-reading production completes");
+    prime_need_read_scope_leave(&inner);
+    prime_need_read_scope_leave(&parent);
+    CHECK(prime_need_snapshot_allocate_persisted(&arena, &base, origin, descriptor,
+              &recipient, &child), "a previously absent descriptor becomes present");
+    PrimeNeedSnapshot refused = base;
+    CHECK(!prime_need_snapshot_import_production(&arena, capture, &produced, a,
+              &recipient, &refused) && same_snapshot_metadata(&refused, &base),
+          "stored-query absence detects a new cell even though its thunk was not known");
+    CHECK(!prime_need_snapshot_import_production(&arena, outer, &produced, a,
+              &recipient, &refused) && same_snapshot_metadata(&refused, &base),
+          "the outer scope receives nested positive and negative Need observations");
+    CHECK(prime_need_snapshot_allocate_persisted(&arena, &base,
+              atom_symbol(&arena, "different-stored-source"), descriptor, &recipient, &child) &&
+          prime_need_snapshot_import_production(&arena, capture, &produced, a,
+              &recipient, &imported),
+          "another origin under the same import key does not invalidate a distinct query");
+    prime_need_read_capture_free(capture);
+    prime_need_read_capture_free(outer);
+
+    capture = prime_need_read_capture_new(&base, &base);
+    CHECK(capture != NULL, "persisted child production captures its entrance");
+    if (!capture) goto cleanup;
+    prime_need_read_scope_enter(&inner, capture);
+    uint64_t shared_key = base.max_storage_key + UINT64_C(10000000);
+    ready = prime_need_snapshot_start_evaluation(&arena, &base, a, evaluator, &running) &&
+        prime_need_snapshot_allocate_persisted(&arena, &running, origin, shared_key, &next, &child) &&
+        prime_need_snapshot_resolve_value(&arena, &next, a, evaluator, value, &produced);
+    prime_need_read_scope_leave(&inner);
+    uint64_t other_child = 0u;
+    CHECK(ready && prime_need_snapshot_allocate_persisted(&arena, &base,
+              atom_symbol(&arena, "other-persisted-child"), shared_key, &recipient, &other_child) &&
+          child != other_child, "independent branches can allocate one requested key for different cells");
+    refused = base;
+    CHECK(!prime_need_snapshot_import_production(&arena, capture, &produced, a,
+              &recipient, &refused) && same_snapshot_metadata(&refused, &base),
+          "different thunk identities do not license a physical storage-key collision");
+    prime_need_read_capture_free(capture);
+
+    capture = prime_need_read_capture_new(&base, &base);
+    CHECK(capture != NULL, "forwarding retains a production-local read capture");
+    if (!capture) goto cleanup;
+    prime_need_read_scope_enter(&inner, capture);
+    ready = prime_need_snapshot_start_evaluation(&arena, &base, a, evaluator, &running) &&
+        prime_need_snapshot_allocate(&arena, &running, origin, &next, &child) &&
+        prime_need_snapshot_start_evaluation(&arena, &next, child, evaluator, &running) &&
+        prime_need_snapshot_resolve_value(&arena, &running, child, evaluator, value, &next) &&
+        prime_need_snapshot_resolve_forwarded_value(&arena, &next, a, evaluator,
+            value, child, &produced);
+    prime_need_read_scope_leave(&inner);
+    CHECK(ready && prime_need_read_capture_complete(capture),
+          "a source can allocate and complete a child then forward its value");
+    CHECK(prime_need_snapshot_start_evaluation(&arena, &base, b, evaluator, &running) &&
+          prime_need_snapshot_resolve_value(&arena, &running, b, evaluator,
+              atom_int(&arena, 41), &recipient) &&
+          prime_need_snapshot_import_production(&arena, capture, &produced, a,
+              &recipient, &imported), "the complete forwarded view imports beside independent work");
+    PrimeNeedCellView cell, source;
+    CHECK(prime_need_snapshot_lookup(&imported, a, &cell) &&
+          cell.value_producer_thunk == child &&
+          prime_need_snapshot_forwarded_value_source(&imported, a, &source) &&
+          source.update_id == cell.value_producer_update && atom_eq(source.cached, value),
+          "forwarded provenance survives fresh recipient history records");
+    prime_need_read_capture_free(capture);
+
+    capture = prime_need_read_capture_new(&base, &base);
+    CHECK(capture != NULL, "unfinished-descendant controls capture their entrance");
+    if (!capture) goto cleanup;
+    prime_need_read_scope_enter(&inner, capture);
+    ready = prime_need_snapshot_start_evaluation(&arena, &base, a, evaluator, &running) &&
+        prime_need_snapshot_allocate(&arena, &running, origin, &next, &child) &&
+        prime_need_snapshot_start_evaluation(&arena, &next, child, evaluator, &running) &&
+        prime_need_snapshot_resolve_value(&arena, &running, a, evaluator, value, &produced);
+    prime_need_read_scope_leave(&inner);
+    refused = recipient;
+    CHECK(ready && !prime_need_snapshot_import_production(&arena, capture, &produced, a,
+              &recipient, &refused) && same_snapshot_metadata(&refused, &recipient),
+          "an introduced live evaluator cannot be imported as a completed cache view");
+    prime_need_read_capture_free(capture);
+
+    capture = prime_need_read_capture_new(&base, &base);
+    CHECK(capture != NULL, "stable-fault controls capture their entrance");
+    if (!capture) goto cleanup;
+    prime_need_read_scope_enter(&inner, capture);
+    Atom *fault = atom_expr3(&arena, atom_symbol(&arena, "Error"), origin,
+                             atom_symbol(&arena, "stable-fault"));
+    ready = prime_need_snapshot_start_evaluation(&arena, &base, a, evaluator, &running) &&
+        prime_need_snapshot_resolve_stable_fault(&arena, &running, a, evaluator, fault, &produced);
+    prime_need_read_scope_leave(&inner);
+    CHECK(ready && prime_need_snapshot_import_production(&arena, capture, &produced, a,
+              &recipient, &imported) && prime_need_snapshot_lookup(&imported, a, &cell) &&
+          cell.cache_state == PRIME_NEED_CACHE_STABLE_FAULT && cell.cached == fault,
+          "an earned stable fault remains a fault when delivered into another reader");
+    prime_need_read_capture_free(capture);
+cleanup:
+    arena_free(&arena);
+}
+
 /* Compare lineage queries with independently retained parent indices, then
  * repeat after transporting every prefix and destroying the source arena. */
 static void check_snapshot_prefix_transport(void) {
@@ -2479,6 +2830,73 @@ done:
     if (input_alive) arena_free(&input);
 }
 
+static void check_private_need_suffix(Arena *arena, Arena *promoted_arena) {
+    PrimeNeedSnapshot root = {0}, base = {0}, running = {0}, completed = {0};
+    PrimeNeedSnapshot local = {0}, local_running = {0}, local_done = {0};
+    uint64_t inherited = 0u, fresh = 0u;
+    uint64_t evaluator = prime_need_fresh_evaluator_id();
+    Atom *origin = atom_symbol(arena, "private-suffix-choice");
+    Atom *value = atom_symbol(arena, "chosen-value");
+    bool ready = prime_need_snapshot_begin(&root) &&
+        prime_need_snapshot_allocate(arena, &root, origin, &base, &inherited);
+    CHECK(ready, "private-suffix control starts with a caller-owned cell");
+    if (!ready) return;
+    CHECK(prime_need_snapshot_suffix_is_private(&base, &base),
+          "an unchanged heap has no caller-cell update to retain");
+    CHECK(prime_need_snapshot_start_evaluation(arena, &base, inherited,
+              evaluator, &running) &&
+              !prime_need_snapshot_suffix_is_private(&base, &running),
+          "starting an inherited cell is not private temporary work");
+    PrimeNeedCellView before = {0}, after = {0};
+    CHECK(prime_need_snapshot_resolve_value(arena, &running, inherited,
+              evaluator, value, &completed) &&
+              !prime_need_snapshot_suffix_is_private(&base, &completed) &&
+              prime_need_snapshot_lookup(&base, inherited, &before) &&
+              prime_need_snapshot_lookup(&completed, inherited, &after) &&
+              before.cache_state == PRIME_NEED_CACHE_EMPTY &&
+              after.cache_state == PRIME_NEED_CACHE_VALUE && after.cached == value,
+          "a completed caller choice survives even when its returned value is scalar");
+    CHECK(prime_need_snapshot_allocate(arena, &base, origin, &local, &fresh) &&
+              prime_need_snapshot_start_evaluation(arena, &local, fresh,
+                  evaluator, &local_running) &&
+              prime_need_snapshot_resolve_value(arena, &local_running, fresh,
+                  evaluator, value, &local_done) &&
+              prime_need_snapshot_suffix_is_private(&base, &local_done),
+          "a wholly local cell may be allocated and forced in a private suffix");
+    PrimeNeedSnapshot promoted = local_done;
+    CHECK(prime_need_snapshot_promote(promoted_arena, &promoted) &&
+              prime_need_snapshot_suffix_is_private(&base, &promoted),
+          "private suffix admission follows history identity across promotion");
+    CHECK(!prime_need_snapshot_suffix_is_private(&completed, &local_done),
+          "a sibling history cannot be discarded as an extension");
+    PrimeNeedSnapshot named = {0};
+    CHECK(prime_need_snapshot_allocate_named(arena, &base, origin,
+              PRIME_NEED_NAMED_CELL_BIT | UINT64_C(1002), &named) &&
+              !prime_need_snapshot_suffix_is_private(&base, &named),
+          "a newly demanded named cell retains its stable public identity");
+    PrimeNeedSnapshot imported = {0};
+    uint64_t imported_id = 0u;
+    CHECK(prime_need_snapshot_allocate_persisted(arena, &base, origin,
+              local_done.max_storage_key + 1u, &imported, &imported_id) &&
+              !prime_need_snapshot_suffix_is_private(&base, &imported),
+          "an imported cell is retained even above the caller's old watermark");
+    PrimeNeedSnapshot watermark = base;
+    watermark.max_storage_key = local_done.max_storage_key;
+    CHECK(!prime_need_snapshot_suffix_is_private(&watermark, &local_done),
+          "a retained watermark conservatively prevents reclassifying old keys");
+    PrimeNeedSnapshot absent = {0}, foreign = {0};
+    CHECK(prime_need_snapshot_begin(&foreign) &&
+              !prime_need_snapshot_suffix_is_private(&absent, &local_done) &&
+              !prime_need_snapshot_suffix_is_private(&foreign, &local_done) &&
+              !prime_need_snapshot_suffix_is_private(NULL, &local_done) &&
+              !prime_need_snapshot_suffix_is_private(&base, NULL),
+          "absent and foreign worlds supply no suffix-discard permission");
+    promoted = completed;
+    CHECK(prime_need_snapshot_promote(promoted_arena, &promoted) &&
+              !prime_need_snapshot_suffix_is_private(&base, &promoted),
+          "relocating a caller-cell update does not make it private");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -2498,9 +2916,13 @@ int main(void) {
     arena_init(&promoted_arena);
 
     interleaved_history_controls(&arena, &promoted_arena, &branch_arena);
+    check_production_view_import();
+    check_production_view_write_cut();
+    check_production_view_dependencies();
     check_snapshot_prefix_transport();
     check_branch_shared_prefix_compatibility();
     check_forwarded_production(&arena, &promoted_arena);
+    check_private_need_suffix(&arena, &promoted_arena);
 
     PrimeNeedBranchState identity_carrier;
     prime_need_branch_state_init(&identity_carrier);
@@ -2760,7 +3182,7 @@ int main(void) {
           "an ordinary answer leaves its cell a computation");
 
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
-    VarId capture_ids[] = {202u, 101u, 202u};
+    VarId capture_ids[] = {var_id_from_base(202u), var_id_from_base(101u), var_id_from_base(202u)};
     PrimeNeedSnapshot captured;
     uint64_t captured_id = 0u;
     PrimeNeedCellView captured_cell;
@@ -2771,8 +3193,8 @@ int main(void) {
                   &captured, captured_id, &captured_cell) &&
               captured_cell.capture_known &&
               captured_cell.capture_var_count == 2u &&
-              captured_cell.capture_var_ids[0] == 101u &&
-              captured_cell.capture_var_ids[1] == 202u,
+              var_id_eq(captured_cell.capture_var_ids[0], var_id_from_base(101u)) &&
+              var_id_eq(captured_cell.capture_var_ids[1], var_id_from_base(202u)),
           "closure allocation stores a canonical exact capture set");
     PrimeNeedSnapshot captured_evaluating;
     CHECK(prime_need_snapshot_start_evaluation(
@@ -2783,8 +3205,8 @@ int main(void) {
                   &captured_cell) &&
               captured_cell.capture_known &&
               captured_cell.capture_var_count == 2u &&
-              captured_cell.capture_var_ids[0] == 101u &&
-              captured_cell.capture_var_ids[1] == 202u,
+              var_id_eq(captured_cell.capture_var_ids[0], var_id_from_base(101u)) &&
+              var_id_eq(captured_cell.capture_var_ids[1], var_id_from_base(202u)),
           "cache transitions preserve exact closure captures");
     PrimeNeedSnapshot empty_capture;
     uint64_t empty_capture_id = 0u;
@@ -2812,7 +3234,7 @@ int main(void) {
               capture_ids, 3u, &captured_persisted,
               &captured_persisted_id),
           "persisted closure allocation admits an exact capture set");
-    VarId same_capture_ids[] = {101u, 202u};
+    VarId same_capture_ids[] = {var_id_from_base(101u), var_id_from_base(202u)};
     PrimeNeedSnapshot captured_reused;
     uint64_t captured_reused_id = 0u;
     CHECK(prime_need_snapshot_allocate_persisted_closure(
@@ -2822,7 +3244,7 @@ int main(void) {
               captured_reused_id == captured_persisted_id &&
               captured_reused.top == captured_persisted.top,
           "persisted closure identity accepts the same capture set");
-    VarId conflicting_capture_id = 303u;
+    VarId conflicting_capture_id = var_id_from_base(303u);
     CHECK(!prime_need_snapshot_allocate_persisted_closure(
               &arena, &captured_persisted, term, UINT64_C(8128),
               &conflicting_capture_id, 1u, &captured_reused,
@@ -2936,7 +3358,7 @@ int main(void) {
           prime_need_snapshot_resolve_value(&arena, &evaluating,
               thunk_id, evaluator_id, ready_value, &ordinary),
           "the same source has distinct produced-value and demand-result updates");
-    PrimeNeedCellView ready_cell, ordinary_cell;
+    PrimeNeedCellView ready_cell = {0}, ordinary_cell = {0};
     CHECK(prime_need_snapshot_lookup(&ready, thunk_id, &ready_cell) &&
           prime_need_snapshot_lookup(&ordinary, thunk_id, &ordinary_cell) &&
           ready_cell.cache_state == PRIME_NEED_CACHE_VALUE &&
@@ -2945,10 +3367,9 @@ int main(void) {
           ready_cell.cached == ordinary_cell.cached &&
           ready_cell.origin == term && ordinary_cell.origin == term,
           "ready syntax is an immutable update property, not pointer classification");
-    uint64_t ready_update = 0u, ordinary_update = 0u;
-    CHECK(prime_need_snapshot_cached_update_id(&ready, thunk_id, &ready_update) &&
-          prime_need_snapshot_cached_update_id(&ordinary, thunk_id, &ordinary_update) &&
-          ready_update != ordinary_update &&
+    uint64_t ready_update = ready_cell.update_id;
+    CHECK(ready_update && ordinary_cell.update_id &&
+          ready_update != ordinary_cell.update_id &&
           !prime_need_snapshot_is_ancestor(&ready, &ordinary) &&
           !prime_need_snapshot_is_ancestor(&ordinary, &ready),
           "sibling equal-value productions keep different update identities");
@@ -2965,8 +3386,7 @@ int main(void) {
           prime_need_snapshot_lookup(&ready_image, thunk_id, &ready_cell) &&
           ready_cell.value_role == PRIME_NEED_VALUE_READY &&
           atom_eq(ready_cell.cached, ready_value) &&
-          prime_need_snapshot_cached_update_id(&ready_image, thunk_id, &ordinary_update) &&
-          ordinary_update == ready_update,
+          ready_cell.update_id == ready_update,
           "full promotion preserves ready role, content, and update identity");
     Arena role_suffix, role_image;
     arena_init_detached(&role_suffix);
@@ -3100,8 +3520,8 @@ int main(void) {
                   &captured_cell) &&
               captured_cell.capture_known &&
               captured_cell.capture_var_count == 2u &&
-              captured_cell.capture_var_ids[0] == 101u &&
-              captured_cell.capture_var_ids[1] == 202u &&
+              var_id_eq(captured_cell.capture_var_ids[0], var_id_from_base(101u)) &&
+              var_id_eq(captured_cell.capture_var_ids[1], var_id_from_base(202u)) &&
               history_transport_controls(&captured_evaluating, &captured_promoted),
           "promotion preserves exact closure captures");
     PrimeNeedHistoryIterator captured_history;
@@ -3114,8 +3534,8 @@ int main(void) {
               captured_top.cell.capture_var_count == 2u &&
               captured_previous.cell.capture_var_count == 2u &&
               captured_top.cell.capture_var_ids != captured_previous.cell.capture_var_ids &&
-              captured_top.cell.capture_var_ids[0] == captured_previous.cell.capture_var_ids[0] &&
-              captured_top.cell.capture_var_ids[1] == captured_previous.cell.capture_var_ids[1],
+              var_id_eq(captured_top.cell.capture_var_ids[0], captured_previous.cell.capture_var_ids[0]) &&
+              var_id_eq(captured_top.cell.capture_var_ids[1], captured_previous.cell.capture_var_ids[1]),
           "promoted historical updates preserve capture contents in separate arrays");
 #endif
 

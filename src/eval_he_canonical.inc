@@ -166,9 +166,7 @@ static bool he_canonical_query_closed(bool source_closed) {
 
 static void metta_call_impl(Space *s, Arena *a, Atom *atom, Atom *etype,
     int fuel, bool preserve_bindings, const Bindings *initial_env,
-#if CETTA_PRIME_EVAL_STACK
     int strict_ready_argument,
-#endif
     OutcomeSet *os);
 
 static bool he_canonical_enabled(void) {
@@ -1467,7 +1465,7 @@ static void he_canonical_resume_state(HeCanonicalFrame *frame) {
         return;
     }
     if (atom_head_symbol_id(frame->atom) == g_builtin_syms.get_state) {
-        StateCell *cell = payload_resolve_state_read(state_ref->ground.ptr);
+        StateCell *cell = eval_resolve_state_read(state_ref->ground.ptr);
         outcome_set_add_prefixed(a, frame->target, payload_rebind_resources(a, cell->value),
             &reference->env, &frame->env, frame->preserve_bindings);
         frame->index++;
@@ -3004,9 +3002,7 @@ static void he_canonical_call_run(HeCanonicalFrame *frame, OutcomeSet *sink) {
         metta_call_impl(frame->space, frame->arena, frame->atom,
             frame->type, frame->fuel, frame->preserve_bindings,
             &frame->env,
-#if CETTA_PRIME_EVAL_STACK
             -1,
-#endif
             sink);
 }
 
@@ -3445,8 +3441,7 @@ CettaHeExecution *eval_he_owned_begin(Space *space, Registry *registry,
     bindings_init(&owner->input_environment);
     he_canonical_ambient_capture(&owner->ambient);
     owner->ambient.execution = cetta_malloc(sizeof(*owner->ambient.execution));
-    *owner->ambient.execution = (EvalExecutionContext){
-        .root_space = space, .scoped = true};
+    eval_execution_context_init(owner->ambient.execution,space,true);
     owner->ambient.registry = registry;
     owner->ambient.root_space = space;
     owner->ambient.temporary_spaces = (TempSpaceSet){0};

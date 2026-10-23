@@ -6,8 +6,80 @@
 (reject 1)
 (accept 2)
 (produce 1)
+(literal 1)
+(computed 1)
+(sequential 1)
+(prefix 1)
+(prefix 2)
+(complete 1)
+(complete 2)
+(complete 3)
+(guard 1)
+(guard 2)
+(symbol first)
+(captured first)
+(duplicate first)
+(duplicate second)
+(duplicate first)
+(duplicate second)
+(duplicate third)
+(cohort-read 1)
+(cohort-A 1)
+(cohort-read 1)
+(cohort-A 1)
+(cohort-read 2)
+(cohort-A 2)
+(cohort-read 1)
+(cohort-A 1)
+(cohort-read 2)
+(cohort-A 2)
+(cohort-B 1)
+(cohort-read 1)
+(cohort-A 1)
+(cohort-read 2)
+(cohort-A 2)
+(cohort-B 1)
+(cohort-B 2)
+(cohort-read 1)
+(cohort-read 2)
+(cohort-A 1)
+(cohort-A 2)
+(cohort-B 1)
+(cohort-B 2)
+(cohort-read 1)
+(cohort-read 2)
+after-source-fault
 [(s (s (s leaf)))]
 [b]
 [2]
 [11]
 [30]
+[()]
+[()]
+[()]
+[(1 2)]
+[(1 2 3)]
+[2]
+[1]
+[A]
+[(A A)]
+[(A A B)]
+[box]
+[((Pair A A) (Pair B B))]
+[((A 1) (A 2) (B 1) (B 2))]
+[((A 1) (A 2))]
+[(A 1)]
+[((A 1) (A 2))]
+[((A 1) (A 2) (B 1))]
+[((A 1) (A 2) (B 1) (B 2))]
+[((A 1) (A 2) (B 1) (B 2))]
+[(Right 1)]
+[((D 1) (D 2) (D 1))]
+[(A 1)]
+[((A 1) (B 1) (cohort-tag (Other 0)))]
+[(Error bad SourceFault)]
+[((Error bad SourceFault) (A 2) (B 2))]
+[HeaderReady]
+[(HeaderReady (Error (println! diagnostic-is-data) InspectionFault))]
+[(HeaderReady (Error (println! diagnostic-is-data) InspectionFault))]
+[(HeaderReady DetailReady DetailReady)]

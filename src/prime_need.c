@@ -40,6 +40,7 @@ struct PrimeNeedFrame {
     bool arena_bloom_complete;
     uint64_t session_id;
     uint64_t serial;
+    uint64_t update_id;
     uint64_t thunk_id;
     uint64_t depth;
     uint64_t authority_id;
@@ -866,7 +867,7 @@ static uint64_t prime_need_fresh_thunk_id(void) {
 static int prime_need_var_id_compare(const void *left, const void *right) {
     VarId l = *(const VarId *)left;
     VarId r = *(const VarId *)right;
-    return l < r ? -1 : (l > r ? 1 : 0);
+    return var_id_cmp(l, r);
 }
 
 static bool prime_need_capture_copy(
@@ -886,9 +887,9 @@ static bool prime_need_capture_copy(
     qsort(copy, count, sizeof(*copy), prime_need_var_id_compare);
     size_t unique_count = 0u;
     for (size_t i = 0u; i < count; i++) {
-        if (copy[i] == VAR_ID_NONE)
+        if (var_id_is_none(copy[i]))
             return false;
-        if (unique_count == 0u || copy[unique_count - 1u] != copy[i])
+        if (unique_count == 0u || !var_id_eq(copy[unique_count - 1u], copy[i]))
             copy[unique_count++] = copy[i];
     }
     *out_ids = copy;
@@ -903,8 +904,10 @@ static bool prime_need_capture_equal(
         return false;
     if (count == 0u)
         return true;
-    return cell->capture_var_ids && ids &&
-        memcmp(cell->capture_var_ids, ids, count * sizeof(*ids)) == 0;
+    if (!cell->capture_var_ids || !ids) return false;
+    for (size_t i = 0u; i < count; i++)
+        if (!var_id_eq(cell->capture_var_ids[i], ids[i])) return false;
+    return true;
 }
 #endif
 
@@ -1227,6 +1230,7 @@ static void prime_need_frame_summarize(PrimeNeedFrame *frame, Arena *owner,
 static bool prime_need_snapshot_push(Arena *owner,
                                      const PrimeNeedSnapshot *base,
                                      uint64_t serial,
+                                     uint64_t update_id,
                                      uint64_t thunk_id,
                                      uint64_t authority_id,
                                      uint64_t evaluator_id,
@@ -1284,6 +1288,7 @@ static bool prime_need_snapshot_push(Arena *owner,
         );
     frame->session_id = base->session_id;
     frame->serial = serial;
+    frame->update_id = update_id ? update_id : serial;
     frame->thunk_id = thunk_id;
     frame->depth = base->top ? base->top->depth + 1u : 1u;
     frame->lineage_skip = prime_need_frame_at_depth(
@@ -1341,6 +1346,7 @@ static void prime_need_cell_view_from_frame(
     const PrimeNeedFrame *frame, PrimeNeedCellView *out) {
     out->cache_state = frame->cache_state;
     out->value_role = frame->value_role;
+    out->update_id = frame->update_id;
     out->value_producer_thunk = frame->value_producer_thunk;
     out->value_producer_update = frame->value_producer_update;
     out->origin = frame->origin;
@@ -1389,7 +1395,7 @@ PrimeNeedHistoryStep prime_need_snapshot_history_next(
         return PRIME_NEED_HISTORY_DONE;
     if (!frame || iterator->remaining == 0u ||
         frame->session_id != iterator->session_id ||
-        frame->depth != iterator->remaining || frame->serial == 0u ||
+        frame->depth != iterator->remaining || frame->serial == 0u || frame->update_id == 0u ||
         frame->thunk_id == 0u || frame->authority_id == 0u || !frame->origin ||
         ((frame->parent == NULL) != (iterator->remaining == 1u))) {
         iterator->invalid = true;
@@ -1408,7 +1414,35 @@ PrimeNeedHistoryStep prime_need_snapshot_history_next(
     return PRIME_NEED_HISTORY_ENTRY;
 }
 
-static inline __attribute__((always_inline)) bool prime_need_snapshot_lookup_frame(
+typedef enum {
+    PRIME_NEED_READ_CELL,
+    PRIME_NEED_READ_STORAGE,
+    PRIME_NEED_READ_IMPORT,
+} PrimeNeedReadKind;
+
+typedef struct {
+    PrimeNeedReadKind kind;
+    uint64_t key;
+    Atom *origin;
+    uint64_t thunk_id;
+    uint64_t update_id;
+} PrimeNeedReadDependency;
+
+struct PrimeNeedReadCapture {
+    PrimeNeedSnapshot context;
+    PrimeNeedSnapshot entrance;
+    PrimeNeedReadDependency *reads;
+    size_t length;
+    size_t capacity;
+    bool complete;
+};
+
+static _Thread_local PrimeNeedReadScope *g_prime_need_read_scope;
+static _Thread_local bool g_prime_need_read_observing;
+static void prime_need_capture_observe(const PrimeNeedSnapshot *,
+    PrimeNeedReadKind, uint64_t, Atom *);
+
+static inline __attribute__((always_inline)) bool prime_need_snapshot_lookup_frame_raw(
     const PrimeNeedSnapshot *snapshot, uint64_t thunk_id,
     PrimeNeedCellView *out, const PrimeNeedFrame **frame_out) {
     cetta_native_cost_charge(CETTA_COST_HEAP_LOOKUP, 1u);
@@ -1474,10 +1508,37 @@ static inline __attribute__((always_inline)) bool prime_need_snapshot_lookup_fra
     return false;
 }
 
+static inline __attribute__((always_inline)) bool prime_need_snapshot_lookup_frame(
+    const PrimeNeedSnapshot *snapshot, uint64_t thunk_id,
+    PrimeNeedCellView *out, const PrimeNeedFrame **frame_out) {
+    bool found = prime_need_snapshot_lookup_frame_raw(snapshot, thunk_id, out, frame_out);
+    if (g_prime_need_read_scope && !g_prime_need_read_observing)
+        prime_need_capture_observe(snapshot, PRIME_NEED_READ_CELL, thunk_id, NULL);
+    return found;
+}
+
 bool prime_need_snapshot_lookup(const PrimeNeedSnapshot *snapshot,
                                 uint64_t thunk_id,
                                 PrimeNeedCellView *out) {
     return prime_need_snapshot_lookup_frame(snapshot, thunk_id, out, NULL);
+}
+
+bool prime_need_snapshot_suffix_is_private(const PrimeNeedSnapshot *base,
+                                            const PrimeNeedSnapshot *snapshot) {
+    if (!prime_need_snapshot_present(base) ||
+        !prime_need_snapshot_present(snapshot) ||
+        base->session_id != snapshot->session_id ||
+        !prime_need_snapshot_is_ancestor(base, snapshot))
+        return false;
+    uint64_t floor = base->top ? base->top->depth : 0u;
+    for (const PrimeNeedFrame *frame = snapshot->top;
+         frame && frame->depth > floor; frame = frame->parent) {
+        if ((frame->thunk_id & PRIME_NEED_NAMED_CELL_BIT) != 0u ||
+            frame->import_key != 0u ||
+            frame->storage_key <= base->max_storage_key)
+            return false;
+    }
+    return true;
 }
 
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
@@ -1495,12 +1556,12 @@ bool prime_need_snapshot_cached_update_id(
     if (!prime_need_snapshot_lookup_frame(snapshot, thunk_id, &cell, &frame) ||
         !prime_need_frame_completed(frame))
         return false;
-    *out = frame->serial;
+    *out = frame->update_id;
     return true;
 }
 #endif
 
-static bool prime_need_snapshot_find_storage_key(
+static bool prime_need_snapshot_find_storage_key_raw(
     const PrimeNeedSnapshot *snapshot, uint64_t storage_key,
     uint64_t *out_thunk_id) {
     if (!snapshot || storage_key == 0u ||
@@ -1520,7 +1581,7 @@ static bool prime_need_snapshot_find_storage_key(
     return false;
 }
 
-static bool prime_need_snapshot_find_imported_cell(
+static bool prime_need_snapshot_find_imported_cell_raw(
     const PrimeNeedSnapshot *snapshot, uint64_t import_key,
     Atom *origin, uint64_t *out_thunk_id) {
     if (!snapshot || import_key == 0u || !origin ||
@@ -1539,6 +1600,264 @@ static bool prime_need_snapshot_find_imported_cell(
         }
     }
     return false;
+}
+
+static bool prime_need_capture_query(const PrimeNeedSnapshot *snapshot,
+    PrimeNeedReadKind kind, uint64_t key, Atom *origin,
+    uint64_t *thunk_id, uint64_t *update_id) {
+    *thunk_id = 0u;
+    *update_id = 0u;
+    if (!snapshot || !prime_need_snapshot_present(snapshot) || !key)
+        return false;
+    if (kind == PRIME_NEED_READ_CELL) {
+        PrimeNeedCellView cell;
+        if (prime_need_snapshot_lookup_frame_raw(snapshot, key, &cell, NULL)) {
+            *thunk_id = key;
+            *update_id = cell.update_id;
+        }
+    } else if (kind == PRIME_NEED_READ_STORAGE) {
+        (void)prime_need_snapshot_find_storage_key_raw(snapshot, key, thunk_id);
+    } else if (kind == PRIME_NEED_READ_IMPORT && origin) {
+        (void)prime_need_snapshot_find_imported_cell_raw(snapshot, key, origin, thunk_id);
+    } else return false;
+    return true;
+}
+
+PrimeNeedReadCapture *prime_need_read_capture_new(const PrimeNeedSnapshot *context,
+                                                const PrimeNeedSnapshot *entrance) {
+    if (!context || !entrance || !prime_need_snapshot_present(context) ||
+        !prime_need_snapshot_is_ancestor(context, entrance)) return NULL;
+    PrimeNeedReadCapture *capture = calloc(1u, sizeof(*capture));
+    if (!capture) return NULL;
+    capture->context = *context;
+    capture->entrance = *entrance;
+    capture->complete = true;
+    return capture;
+}
+
+void prime_need_read_capture_free(PrimeNeedReadCapture *capture) {
+    if (!capture) return;
+    for (PrimeNeedReadScope *scope = g_prime_need_read_scope; scope; scope = scope->previous)
+        assert(scope->capture != capture);
+    free(capture->reads);
+    free(capture);
+}
+
+PrimeNeedReadCapture *prime_need_read_capture_copy(const PrimeNeedReadCapture *capture) {
+    if (!capture) return NULL;
+    PrimeNeedReadCapture *copy = prime_need_read_capture_new(&capture->context, &capture->entrance);
+    if (!copy) return NULL;
+    if (capture->length) {
+        if (capture->length > SIZE_MAX / sizeof(*copy->reads)) {
+            free(copy);
+            return NULL;
+        }
+        copy->reads = malloc(capture->length * sizeof(*copy->reads));
+        if (!copy->reads) {
+            free(copy);
+            return NULL;
+        }
+        memcpy(copy->reads, capture->reads, capture->length * sizeof(*copy->reads));
+    }
+    copy->length = copy->capacity = capture->length;
+    copy->complete = capture->complete;
+    return copy;
+}
+
+bool prime_need_read_capture_complete(const PrimeNeedReadCapture *capture) {
+    return capture && capture->complete;
+}
+
+void prime_need_read_scope_enter(PrimeNeedReadScope *scope, PrimeNeedReadCapture *capture) {
+    assert(scope != NULL);
+    scope->capture = capture;
+    scope->previous = g_prime_need_read_scope;
+    g_prime_need_read_scope = scope;
+}
+
+void prime_need_read_scope_leave(PrimeNeedReadScope *scope) {
+    assert(scope && g_prime_need_read_scope == scope);
+    g_prime_need_read_scope = scope->previous;
+    scope->capture = NULL;
+    scope->previous = NULL;
+}
+
+/* A source reads its own evolving cache while it runs. Record the entrance
+ * observation for that query, not an impossible demand that EMPTY, EVALUATING
+ * and VALUE all hold in the recipient at once. Its produced updates are
+ * checked separately during import. Observation failure invalidates reuse
+ * evidence; it never changes the result of the source's actual lookup. */
+static void prime_need_capture_observe(const PrimeNeedSnapshot *snapshot,
+    PrimeNeedReadKind kind, uint64_t key, Atom *origin) {
+    bool previous = g_prime_need_read_observing;
+    g_prime_need_read_observing = true;
+    for (PrimeNeedReadScope *scope = g_prime_need_read_scope; scope; scope = scope->previous) {
+        PrimeNeedReadCapture *capture = scope->capture;
+        if (!capture || !capture->complete) continue;
+        if (!snapshot || !key || !prime_need_snapshot_is_ancestor(&capture->entrance, snapshot)) {
+            capture->complete = false;
+            continue;
+        }
+        bool present = false;
+        for (size_t i = 0u; i < capture->length; i++) {
+            const PrimeNeedReadDependency *read = &capture->reads[i];
+            if (read->kind == kind && read->key == key &&
+                (kind != PRIME_NEED_READ_IMPORT || atom_capture_identical(read->origin, origin))) {
+                present = true;
+                break;
+            }
+        }
+        if (present) continue;
+        PrimeNeedReadDependency read = {.kind = kind, .key = key, .origin = origin};
+        if (!prime_need_capture_query(&capture->entrance, kind, key, origin,
+                                      &read.thunk_id, &read.update_id)) {
+            capture->complete = false;
+            continue;
+        }
+        if (capture->length == capture->capacity) {
+            size_t capacity = capture->capacity ? capture->capacity * 2u : 8u;
+            if (capacity <= capture->capacity || capacity > SIZE_MAX / sizeof(*capture->reads)) {
+                capture->complete = false;
+                continue;
+            }
+            PrimeNeedReadDependency *reads = realloc(capture->reads, capacity * sizeof(*reads));
+            if (!reads) {
+                capture->complete = false;
+                continue;
+            }
+            capture->reads = reads;
+            capture->capacity = capacity;
+        }
+        capture->reads[capture->length++] = read;
+    }
+    g_prime_need_read_observing = previous;
+}
+
+static bool prime_need_snapshot_find_storage_key(const PrimeNeedSnapshot *snapshot,
+    uint64_t storage_key, uint64_t *out_thunk_id) {
+    bool found = prime_need_snapshot_find_storage_key_raw(snapshot, storage_key, out_thunk_id);
+    if (g_prime_need_read_scope && !g_prime_need_read_observing)
+        prime_need_capture_observe(snapshot, PRIME_NEED_READ_STORAGE, storage_key, NULL);
+    return found;
+}
+
+bool prime_need_snapshot_find_imported_cell(const PrimeNeedSnapshot *snapshot,
+    uint64_t import_key, Atom *origin, uint64_t *out_thunk_id) {
+    bool found = prime_need_snapshot_find_imported_cell_raw(snapshot, import_key, origin, out_thunk_id);
+    if (g_prime_need_read_scope && !g_prime_need_read_observing)
+        prime_need_capture_observe(snapshot, PRIME_NEED_READ_IMPORT, import_key, origin);
+    return found;
+}
+
+/* A recipient may already hold this exact earned update from another reader.
+ * That is different from independently producing an equal cached payload. */
+static bool prime_need_import_has_earned_update(const PrimeNeedSnapshot *production,
+    const PrimeNeedSnapshot *recipient, uint64_t floor, uint64_t thunk_id) {
+    PrimeNeedCellView earned, held;
+    const PrimeNeedFrame *frame = NULL;
+    return thunk_id &&
+        prime_need_snapshot_lookup_frame_raw(production, thunk_id, &earned, &frame) &&
+        frame->depth > floor &&
+        prime_need_snapshot_lookup_frame_raw(recipient, thunk_id, &held, NULL) &&
+        earned.update_id == held.update_id;
+}
+
+bool prime_need_snapshot_import_production(Arena *owner,
+    const PrimeNeedReadCapture *capture, const PrimeNeedSnapshot *production,
+    uint64_t thunk_id, const PrimeNeedSnapshot *recipient, PrimeNeedSnapshot *out) {
+    if (!prime_need_owner_admissible(owner) || !capture || !capture->complete ||
+        !production || !recipient || !out || !thunk_id ||
+        !prime_need_snapshot_is_ancestor(&capture->entrance, production) ||
+        !prime_need_snapshot_is_ancestor(&capture->context, recipient)) return false;
+    uint64_t floor = capture->entrance.top ? capture->entrance.top->depth : 0u;
+    PrimeNeedCellView original, completed;
+    const PrimeNeedFrame *completion = NULL;
+    if (!prime_need_snapshot_lookup_frame_raw(&capture->entrance, thunk_id, &original, NULL) ||
+        original.cache_state != PRIME_NEED_CACHE_EMPTY ||
+        !prime_need_snapshot_lookup_frame_raw(production, thunk_id, &completed, &completion) ||
+        completion->depth <= floor ||
+        (completed.cache_state != PRIME_NEED_CACHE_VALUE &&
+         completed.cache_state != PRIME_NEED_CACHE_STABLE_FAULT)) return false;
+
+    for (size_t i = 0u; i < capture->length; i++) {
+        const PrimeNeedReadDependency *read = &capture->reads[i];
+        uint64_t actual_thunk, actual_update;
+        if (!prime_need_capture_query(recipient, read->kind, read->key, read->origin,
+                                     &actual_thunk, &actual_update)) return false;
+        if (actual_thunk == read->thunk_id && actual_update == read->update_id) continue;
+        uint64_t earned_thunk, earned_update;
+        if (!prime_need_capture_query(production, read->kind, read->key, read->origin,
+                                     &earned_thunk, &earned_update) ||
+            actual_thunk != earned_thunk || actual_update != earned_update ||
+            !prime_need_import_has_earned_update(production, recipient, floor, actual_thunk))
+            return false;
+    }
+
+    uint64_t extent = production->top->depth - floor;
+    if (extent > SIZE_MAX / sizeof(const PrimeNeedFrame *)) return false;
+    const PrimeNeedFrame **updates = extent ? malloc((size_t)extent * sizeof(*updates)) : NULL;
+    if (extent && !updates) return false;
+    PrimeNeedThunkSet seen = {0};
+    size_t count = 0u;
+    bool valid = true;
+    for (const PrimeNeedFrame *frame = production->top;
+         valid && frame && frame->depth > floor; frame = frame->parent) {
+        int added = prime_need_thunk_set_insert(&seen, frame->thunk_id);
+        if (added < 0) { valid = false; break; }
+        if (!added) continue;
+        if (frame->cache_state == PRIME_NEED_CACHE_EVALUATING) { valid = false; break; }
+        PrimeNeedCellView held = {0}, entrance = {0};
+        bool holds = prime_need_snapshot_lookup_frame_raw(recipient, frame->thunk_id, &held, NULL);
+        if (holds && held.update_id == frame->update_id) continue;
+        bool existed = prime_need_snapshot_lookup_frame_raw(
+            &capture->entrance, frame->thunk_id, &entrance, NULL);
+        if (holds != existed || (holds && held.update_id != entrance.update_id)) {
+            valid = false;
+            break;
+        }
+        /* Independent branches may each admit a requested persisted key
+         * above their entrance watermark. Different thunk identities alone
+         * do not make those physical keys distinct. Reuse cannot silently
+         * renumber an earned payload's stored references. */
+        uint64_t occupied = 0u;
+        if (!existed && frame->storage_key &&
+            prime_need_snapshot_find_storage_key_raw(recipient, frame->storage_key, &occupied) &&
+            occupied != frame->thunk_id) {
+            valid = false;
+            break;
+        }
+        updates[count++] = frame;
+    }
+    free(seen.slots);
+    if (!valid) { free(updates); return false; }
+
+    PrimeNeedSnapshot imported = *recipient;
+    for (size_t i = count; i > 0u; i--) {
+        const PrimeNeedFrame *frame = updates[i - 1u];
+        PrimeNeedSnapshot next;
+        if (!prime_need_snapshot_push(owner, &imported, 0u, frame->update_id,
+            frame->thunk_id, frame->authority_id, frame->evaluator_id,
+            frame->storage_key, frame->import_key, frame->source_occurrence_id,
+            frame->source_argument_index, frame->cache_state, frame->value_role,
+            frame->value_producer_thunk, frame->value_producer_update,
+            frame->origin, frame->cached,
+#if CETTA_PRIME_NEED_CLOSURE_CAPTURE
+            frame->capture_known, frame->capture_var_ids, frame->capture_var_count,
+#endif
+            &next)) { free(updates); return false; }
+        imported = next;
+    }
+    free(updates);
+    if (production->max_storage_key > imported.max_storage_key)
+        imported.max_storage_key = production->max_storage_key;
+    /* A nested production inherits the external support of reused rows. */
+    if (g_prime_need_read_scope && !g_prime_need_read_observing)
+        for (size_t i = 0u; i < capture->length; i++) {
+            PrimeNeedReadDependency read = capture->reads[i];
+            prime_need_capture_observe(recipient, read.kind, read.key, read.origin);
+        }
+    *out = imported;
+    return true;
 }
 
 static bool prime_need_snapshot_allocate_with_storage_key(
@@ -1611,7 +1930,7 @@ static bool prime_need_snapshot_allocate_with_storage_key(
     if (authority_id == 0u)
         return false;
     if (!prime_need_snapshot_push(
-            owner, base, 0u, thunk_id, authority_id, 0u, storage_key,
+            owner, base, 0u, 0u, thunk_id, authority_id, 0u, storage_key,
             import_key, source_occurrence_id, source_argument_index,
             ready ? PRIME_NEED_CACHE_VALUE : PRIME_NEED_CACHE_EMPTY,
             ready ? PRIME_NEED_VALUE_READY : PRIME_NEED_VALUE_DEMAND_RESULT,
@@ -1694,7 +2013,7 @@ bool prime_need_snapshot_allocate_named(
     if (authority_id == 0u)
         return false;
     return prime_need_snapshot_push(
-        owner, base, 0u, thunk_id, authority_id, 0u, 0u, 0u, 0u, 0u,
+        owner, base, 0u, 0u, thunk_id, authority_id, 0u, 0u, 0u, 0u, 0u,
         PRIME_NEED_CACHE_EMPTY, PRIME_NEED_VALUE_DEMAND_RESULT, 0u, 0u, term, NULL,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         /* The term is closed: it captures no variable. */
@@ -1785,7 +2104,7 @@ static bool prime_need_snapshot_transition(
         return false;
     }
     return prime_need_snapshot_push(
-        owner, base, 0u, thunk_id, previous.authority_id,
+        owner, base, 0u, 0u, thunk_id, previous.authority_id,
         next == PRIME_NEED_CACHE_EVALUATING ? evaluator_id : 0u,
         previous.storage_key, previous.import_key,
         previous.source_occurrence_id, previous.source_argument_index,
@@ -1832,7 +2151,7 @@ bool prime_need_snapshot_resolve_forwarded_value(
     return prime_need_snapshot_transition(
         owner, base, thunk_id, PRIME_NEED_CACHE_EVALUATING,
         PRIME_NEED_CACHE_VALUE, evaluator_id, value,
-        producer.value_role, producer_thunk_id, update->serial, out);
+        producer.value_role, producer_thunk_id, update->update_id, out);
 }
 
 bool prime_need_snapshot_forwarded_value_source(
@@ -1847,8 +2166,8 @@ bool prime_need_snapshot_forwarded_value_source(
         !prime_need_snapshot_lookup_frame(snapshot, consumer.value_producer_thunk,
             &producer, &producer_update) ||
         producer.cache_state != PRIME_NEED_CACHE_VALUE ||
-        producer_update->serial != consumer.value_producer_update ||
-        producer_update->serial >= consumer_update->serial)
+        producer_update->update_id != consumer.value_producer_update ||
+        producer_update->update_id >= consumer_update->update_id)
         return false;
     *source = producer;
     return true;
@@ -1975,7 +2294,7 @@ bool prime_need_snapshot_promote_with_session(
 #endif
         PrimeNeedSnapshot next;
         if (!prime_need_snapshot_push(
-                dst, &promoted, path[i]->serial, path[i]->thunk_id,
+                dst, &promoted, path[i]->serial, path[i]->update_id, path[i]->thunk_id,
                 path[i]->authority_id, path[i]->evaluator_id,
                 path[i]->storage_key, path[i]->import_key,
                 path[i]->source_occurrence_id,
@@ -2330,7 +2649,7 @@ bool prime_need_snapshot_promote_suffix_with_session(
 #endif
         PrimeNeedSnapshot next;
         if (!prime_need_snapshot_push(
-                dst, &promoted, path[i]->serial, path[i]->thunk_id,
+                dst, &promoted, path[i]->serial, path[i]->update_id, path[i]->thunk_id,
                 path[i]->authority_id, path[i]->evaluator_id,
                 path[i]->storage_key, path[i]->import_key,
                 path[i]->source_occurrence_id,
@@ -3913,7 +4232,7 @@ bool prime_need_receipt_observe_cached_cell(
             .thunk_id = thunk_id,
             .source_occurrence_id = frame->source_occurrence_id,
             .source_argument_index = frame->source_argument_index,
-            .producer_update_id = frame->serial,
+            .producer_update_id = frame->update_id,
             .producer_completed = completed,
             .after = outcome,
         }, branch_local, out);
@@ -4121,11 +4440,13 @@ bool prime_need_receipt_resample_branch_local(
 }
 #endif
 
-bool prime_need_branch_state_value(const PrimeNeedBranchState *state,
+bool prime_need_branch_state_lookup(const PrimeNeedBranchState *state,
                                    StateCell *cell, Atom **out_value) {
-    if (!state || !cell || !out_value ||
-        !prime_need_branch_state_present(state))
-        return false;
+    if (!state || !cell || !out_value) return false;
+    if (!prime_need_branch_state_present(state)) {
+        *out_value = NULL;
+        return true;
+    }
     PrimeNeedReceiptFrames frames = {0};
     if (!prime_need_receipt_collect_all(state->top, &frames))
         return false;
@@ -4142,9 +4463,17 @@ bool prime_need_branch_state_value(const PrimeNeedBranchState *state,
             latest = frame;
     }
     prime_need_receipt_frames_free(&frames);
-    if (!latest || !latest->event.after)
+    if (latest && !latest->event.after) return false;
+    *out_value = latest ? latest->event.after : NULL;
+    return true;
+}
+
+bool prime_need_branch_state_value(const PrimeNeedBranchState *state,
+    StateCell *cell, Atom **out_value) {
+    Atom *value = NULL;
+    if (!out_value || !prime_need_branch_state_lookup(state,cell,&value) || !value)
         return false;
-    *out_value = latest->event.after;
+    *out_value = value;
     return true;
 }
 
@@ -5704,6 +6033,7 @@ bool prime_need_snapshot_compare(const PrimeNeedSnapshot *left,
         PN_SCALAR("need.depth",a->depth,b->depth);
         PN_ID("need.frame_session",CETTA_CHECKPOINT_NEED_SESSION,a->session_id,b->session_id);
         PN_ID("need.serial",CETTA_CHECKPOINT_NEED_SERIAL,a->serial,b->serial);
+        PN_ID("need.update",CETTA_CHECKPOINT_NEED_SERIAL,a->update_id,b->update_id);
         PN_ID("need.thunk",CETTA_CHECKPOINT_NEED_THUNK,a->thunk_id,b->thunk_id);
         PN_ID("need.authority",CETTA_CHECKPOINT_NEED_AUTHORITY,a->authority_id,b->authority_id);
         PN_ID("need.evaluator",CETTA_CHECKPOINT_NEED_EVALUATOR,a->evaluator_id,b->evaluator_id);

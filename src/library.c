@@ -617,12 +617,10 @@ static void library_context_init_services(CettaLibraryContext *ctx,
         ctx->prime_relational_plan_enabled ||
         portable_relational_control_requested;
     bool native_weight_profile = false;
-#if CETTA_PRIME_EVAL_STACK
     native_weight_profile = language_id == CETTA_LANGUAGE_PRIME ||
         (profile && (profile->id == CETTA_PROFILE_PETTA_EXTENDED ||
                      profile->id == CETTA_PROFILE_HE_EXTENDED ||
                      cetta_profile_uses_petta_typing(profile)));
-#endif
     ctx->petta_program = needs_occurrence_program
         ? petta_program_new_with_rules_and_host_intrinsics(
             CETTA_RULE_SYNTAX_ORDINARY |
@@ -634,10 +632,8 @@ static void library_context_init_services(CettaLibraryContext *ctx,
                                          : cetta_prime_host_intrinsic_head)
                 : (native_weight_profile ? eval_native_weight_head : NULL))
         : NULL;
-#if CETTA_PRIME_EVAL_STACK
     if (ctx->petta_program && native_weight_profile)
         petta_program_enable_graded_equations(ctx->petta_program);
-#endif
     const CettaLanguageVersion *program_version =
         cetta_language_version_of(language_id, profile);
     /* HE resolves a call's head when the call runs, and PeTTa's typed line
@@ -5270,6 +5266,36 @@ static void library_native_execution_release(void *raw) {
     free(job);
 }
 
+static CettaOwnedReleaseStep library_native_execution_release_poll(void *raw,
+    uint64_t allowance, bool allow_atomic, uint64_t *used) {
+    LibraryNativeExecution *job = raw;
+    uint64_t spent = 0u;
+    if (used) *used = 0u;
+    if (job->run) {
+        CettaOwnedReleaseStep status = rhocalc_run_release_poll(&job->run,
+            allowance, allow_atomic, &spent);
+        if (status != CETTA_OWNED_RELEASE_COMPLETE) {
+            if (used) *used = spent;
+            return status;
+        }
+    }
+    if (job->values) {
+        if (spent == allowance) {
+            if (used) *used = spent;
+            return CETTA_OWNED_RELEASE_PENDING;
+        }
+        if (!allow_atomic) {
+            if (used) *used = spent;
+            return CETTA_OWNED_RELEASE_ATOMIC;
+        }
+        rhocalc_values_close(job->values);
+        job->values = NULL;
+        spent++;
+    }
+    if (used) *used = spent;
+    return CETTA_OWNED_RELEASE_COMPLETE;
+}
+
 static CettaOwnedExecutionStep library_native_execution_next(void *raw,
     CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
     LibraryNativeExecution *job = raw;
@@ -5352,6 +5378,9 @@ bool cetta_library_native_execution_open(CettaLibraryContext *ctx, Space *space,
     job->context.payload_provider = payload;
     cetta_owned_execution_init(out, job, library_native_execution_next,
         library_native_execution_release);
+    bool cleanup_installed = cetta_owned_execution_set_release_poll(
+        out, library_native_execution_release_poll);
+    assert(cleanup_installed); (void)cleanup_installed;
     out->final_is_current = library_native_execution_current;
     return true;
 }

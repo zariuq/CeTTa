@@ -63,7 +63,7 @@ static bool he_compat_host_read_raw(Space *s, Arena *a, Atom *invocation,
     *declared_type = atom_undefined_type(a);
     if (head == g_builtin_syms.get_state) {
         if (argument->kind == ATOM_GROUNDED && argument->ground.gkind == GV_STATE) {
-            StateCell *cell = payload_resolve_state_read(argument->ground.ptr);
+            StateCell *cell = eval_resolve_state_read(argument->ground.ptr);
             outcome_set_add_prefixed(a, raw, payload_rebind_resources(a, cell->value),
                 env, outer, true);
         } else {

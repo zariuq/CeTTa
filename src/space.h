@@ -1225,6 +1225,7 @@ typedef struct RegistryReadView {
     Registry consulted;
     Arena *arena;
     bool initialized;
+    bool passive;
     bool stale;
     bool incomplete;
     const char *refusal;
@@ -1237,6 +1238,11 @@ typedef struct RegistryReadView {
 
 bool registry_read_view_init(RegistryReadView *view, Registry *source,
                             Arena *arena);
+/* Observe the value selected by existing admitted views without changing it.
+ * Both present and absent names enter the dependency set. Failed recording
+ * invalidates reuse evidence but preserves the lookup result. Atom wrappers
+ * and immutable data are copied; external resource owners remain borrowed. */
+bool registry_read_view_init_passive(RegistryReadView *view, Arena *arena);
 void registry_read_view_free(RegistryReadView *view);
 bool registry_read_view_validate(RegistryReadView *view, Registry *source);
 RegistryReadView *registry_read_view_enter(RegistryReadView *view,

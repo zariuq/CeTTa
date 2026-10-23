@@ -62,8 +62,23 @@ static bool load_prime_policy(const char *path,Space *space,Arena *arena) {
     }
     free(forms);return okay;
 }
-static bool record(CettaDurableStore *store, char *line, Output *out) {
+static bool record(CettaDurableStore *store,CettaActivityRuntime *runtime,char *line,Output *out) {
     if (!strcmp(line,"quit")) { stopped=1; return true; }
+    if (!strncmp(line,"cleanup\t",8u)) {
+        const char *command=line+8u;
+        FILE *frame=open_memstream(&out->data,&out->size);if(!frame)return false;
+        if (!strcmp(command,"status")) {
+            CettaActivityStats stats;cetta_activity_stats(runtime,&stats);
+            fprintf(frame,"cleanup {\"polls\":%" PRIu64 ",\"completed\":%" PRIu64
+                ",\"atomic_waits\":%" PRIu64 ",\"ready\":%zu}\n",
+                stats.cleanup_polls,stats.cleanup_completed,stats.cleanup_atomic_waits,stats.ready);
+        } else if (!strcmp(command,"allow") || !strcmp(command,"hold")) {
+            bool allowed=!strcmp(command,"allow");
+            bool selected=cetta_activity_set_cleanup_atomic(runtime,allowed);
+            fprintf(frame,"cleanup %s\n",selected?(allowed?"allowed":"held"):"ordinary");
+        } else {fclose(frame);return false;}
+        return fclose(frame)==0;
+    }
     char *save=NULL, *kind=strtok_r(line,"\t",&save);
     char *id=strtok_r(NULL,"\t",&save), *owner=strtok_r(NULL,"\t",&save), *generation=strtok_r(NULL,"\t",&save);
     int64_t gen=0,due=0,period=0;
@@ -112,13 +127,15 @@ static CettaDurableStatus results(CettaDurableStore *store, Cursor *cursor, Outp
     arena_free(&arena); cetta_durable_snapshot_free(&values); return s;
 }
 int main(int argc, char **argv) {
-    if (argc<5 || argc>8) {
-        fprintf(stderr,"usage: activity-service JOURNAL LISTENER WORKER READY-CAPACITY [PRIME-POLICY [QUANTUM [WORK-LIMIT]]]\n");
+    if (argc<5 || argc>10) {
+        fprintf(stderr,"usage: activity-service JOURNAL LISTENER WORKER READY-CAPACITY [PRIME-POLICY [QUANTUM [WORK-LIMIT [CLEANUP-QUANTUM [ATOMIC-CLEANUP]]]]]\n");
         return 64;
     }
-    bool prime=argc>=6;int64_t quantum=32,work=2000000;
+    bool prime=argc>=6;int64_t quantum=32,work=2000000,cleanup=0,atomic_cleanup=0;
     if ((argc>=7 && (!number(argv[6],&quantum) || quantum<=0)) ||
-        (argc>=8 && (!number(argv[7],&work) || work<0))) return 64;
+        (argc>=8 && (!number(argv[7],&work) || work<0)) ||
+        (argc>=9 && (!number(argv[8],&cleanup) || cleanup<0)) ||
+        (argc>=10 && (!number(argv[9],&atomic_cleanup) || atomic_cleanup<0 || atomic_cleanup>1))) return 64;
     struct sigaction action={0}; action.sa_handler=stop; sigemptyset(&action.sa_mask);
     sigaction(SIGTERM,&action,NULL); sigaction(SIGINT,&action,NULL);
     signal(SIGPIPE,SIG_IGN);
@@ -157,6 +174,8 @@ int main(int argc, char **argv) {
         .fuel=2000000,
         .ready_capacity=capacity,
         .worker_peer_capacity=capacity,
+        .cleanup_quantum=(uint64_t)cleanup,
+        .allow_atomic_cleanup=atomic_cleanup!=0,
     };
     if(prime)config.planning=(CettaHostPlanLimits){.quantum=(uint64_t)quantum,.work_limit=(uint64_t)work,
         .preparation_inspections=1000000,.preparation_bytes=64u*1024u*1024u,.results=2,
@@ -186,7 +205,7 @@ int main(int argc, char **argv) {
             char *end=strchr(input,'\n');
             if (s==DURABLE_OK && end) {
                 *end=0;
-                if (!record(store,input,&output)) s=DURABLE_INVALID;
+                if (!record(store,runtime,input,&output)) s=DURABLE_INVALID;
                 size_t consumed=(size_t)(end+1-input); used-=consumed;
                 memmove(input,end+1,used); input[used]=0;
             }
@@ -218,6 +237,9 @@ int main(int argc, char **argv) {
         ",\"plan_admission\":%" PRIu64 ",\"plan_producer\":%" PRIu64
         ",\"plan_consumer\":%" PRIu64 ",\"plan_final\":%" PRIu64
         ",\"plan_rotations\":%" PRIu64 ",\"plan_retirements\":%" PRIu64
+        ",\"plan_cleanup_polls\":%" PRIu64 ",\"plan_cleanup_work\":%" PRIu64
+        ",\"cleanup_polls\":%" PRIu64 ",\"cleanup_completed\":%" PRIu64
+        ",\"cleanup_atomic_waits\":%" PRIu64 ",\"cleanup_units\":%" PRIu64
         ",\"slot_admission\":%" PRIu64 ",\"slot_preparation\":%" PRIu64
         ",\"slot_execution\":%" PRIu64 ",\"slot_delivery\":%" PRIu64
         ",\"slot_teardown\":%" PRIu64 ",\"slot_arrivals\":%" PRIu64
@@ -232,6 +254,8 @@ int main(int argc, char **argv) {
         stats.plan_protocol.admission,stats.plan_protocol.producer,
         stats.plan_protocol.consumer,stats.plan_protocol.final_is_current,
         stats.plan_protocol.rotations,stats.plan_protocol.retirements,
+        stats.plan_protocol.cleanup_polls,stats.plan_protocol.cleanup_work,
+        stats.cleanup_polls,stats.cleanup_completed,stats.cleanup_atomic_waits,stats.cleanup_units,
         stats.slot_admission,stats.slot_preparation,stats.slot_execution,
         stats.slot_delivery,stats.slot_teardown,stats.slot_arrivals,
         stats.slot_bookkeeping,stats.slot_units,stats.max_slot_units,

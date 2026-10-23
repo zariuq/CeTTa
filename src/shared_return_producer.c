@@ -63,35 +63,53 @@ void cetta_shared_return_producer_free(CettaSharedReturnProducer *producer) {
     free(producer);
 }
 
-static bool capture_return(void *context, const CettaOwnedReturn *returned) {
-    CettaSharedReturnProducer *producer = context;
-    if (!producer->compatible(producer->context)) {
-        producer->refusal = CETTA_SHARED_RETURN_CONTEXT_REFUSED;
-        return false;
-    }
+CettaSharedReturnStep cetta_shared_return_capture_append(
+    CettaOccurrenceLog *log, const CettaOwnedReturn *returned,
+    CettaSharedReturnCapture capture, CettaSharedReturnCompatible compatible,
+    void *context) {
+    if (!log || !returned || !capture || !compatible)
+        return CETTA_SHARED_RETURN_INVALID;
+    if (!compatible(context))
+        return CETTA_SHARED_RETURN_CONTEXT_REFUSED;
+    CettaOccurrenceLogInfo info;
+    if (!cetta_occurrence_log_info(log, &info))
+        return CETTA_SHARED_RETURN_INVALID;
+    if (info.completed)
+        return CETTA_SHARED_RETURN_COMPLETE;
+    if (info.rows == info.limit)
+        return CETTA_SHARED_RETURN_BACKPRESSURE;
+    if (info.past_end == UINT64_MAX)
+        return CETTA_SHARED_RETURN_CAPACITY;
     CettaSharedReturnRow row = {0};
-    if (!producer->capture(producer->context, returned, &row)) {
-        producer->refusal = CETTA_SHARED_RETURN_CAPTURE_REFUSED;
-        return false;
-    }
-    if (!producer->compatible(producer->context)) {
+    if (!capture(context, returned, &row))
+        return CETTA_SHARED_RETURN_CAPTURE_REFUSED;
+    if (!compatible(context)) {
         if (row.release)
             row.release(row.owner);
-        producer->refusal = CETTA_SHARED_RETURN_CONTEXT_REFUSED;
-        return false;
+        return CETTA_SHARED_RETURN_CONTEXT_REFUSED;
     }
     CettaOccurrenceAdmission admission = row.returned
-        ? cetta_occurrence_log_append(producer->log, (CettaOccurrenceRow){
+        ? cetta_occurrence_log_append(log, (CettaOccurrenceRow){
             .value = row.returned, .owner = row.owner, .release = row.release,
         }) : CETTA_OCCURRENCE_APPEND_INVALID;
     if (admission == CETTA_OCCURRENCE_APPENDED)
-        return true;
+        return CETTA_SHARED_RETURN_APPENDED;
     if (row.release)
         row.release(row.owner);
-    producer->refusal = admission == CETTA_OCCURRENCE_BACKPRESSURE
+    return admission == CETTA_OCCURRENCE_BACKPRESSURE
         ? CETTA_SHARED_RETURN_BACKPRESSURE
         : admission == CETTA_OCCURRENCE_CAPACITY
             ? CETTA_SHARED_RETURN_CAPACITY : CETTA_SHARED_RETURN_CAPTURE_REFUSED;
+}
+
+static bool capture_return(void *context, const CettaOwnedReturn *returned) {
+    CettaSharedReturnProducer *producer = context;
+    CettaSharedReturnStep step = cetta_shared_return_capture_append(
+        producer->log, returned, producer->capture, producer->compatible,
+        producer->context);
+    if (step == CETTA_SHARED_RETURN_APPENDED)
+        return true;
+    producer->refusal = step;
     return false;
 }
 

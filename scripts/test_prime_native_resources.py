@@ -488,9 +488,9 @@ def causal_world_readout(gate, resource_checker=None):
     # Prepared matching really runs on the pool; source publication remains
     # with the coordinator. The causal view forgets independent source order,
     # not worker timing or a competing consumer's chosen result.
-    payload = '(Fact (' + ' '.join(str(i) for i in range(4096)) + '))'
+    payload = '(Fact (' + ' '.join(str(i) for i in range(8192)) + '))'
     controlled = ('(search-policy (control FIFO (resources (Transaction worlds)) '
-                  '(workers 2) (quantum 8192) (budget 100000) '
+                  '(workers 2) (quantum 16384) (budget 200000) '
                   '(receipts True) (costs native-events-v1)))')
     for kind in ('read', 'take'):
         rows = [payload,

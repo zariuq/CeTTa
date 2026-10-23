@@ -127,7 +127,8 @@ bool cetta_owned_execution_move(CettaOwnedExecution *destination,
     CettaOwnedExecution *source) {
     if (!destination || !source || destination == source ||
         destination->computation || destination->has_pending ||
-        !source->computation || !source->next || !source->relocatable)
+        !source->computation || !source->next || !source->relocatable ||
+        source->retiring)
         return false;
     *destination = *source;
     *source = (CettaOwnedExecution){
@@ -143,17 +144,81 @@ CettaOwnedExecutionStep cetta_owned_execution_sequence(
         execution ? execution->next : NULL,consume,consumer);
 }
 
-void cetta_owned_execution_cancel(CettaOwnedExecution *execution) {
-    if (!execution)
-        return;
-    if (execution->computation && execution->release)
-        execution->release(execution->computation);
-    execution->computation = NULL;
+bool cetta_owned_execution_set_release_poll(CettaOwnedExecution *execution,
+    CettaOwnedReleasePoll poll) {
+    if (!execution || !execution->computation || !execution->release ||
+        !poll || execution->retiring || execution->terminal ||
+        execution->has_pending || execution->accepted || execution->release_poll)
+        return false;
+    execution->release_poll = poll;
+    /* An earlier move certificate did not cover this callback's captures. */
+    execution->relocatable = false;
+    return true;
+}
+
+static void owned_execution_begin_retirement(CettaOwnedExecution *execution) {
     execution->has_pending = false;
     memset(&execution->pending, 0, sizeof(execution->pending));
     execution->terminal = true;
     execution->stop = CETTA_OWNED_EXECUTION_INTERRUPTED;
     execution->completion = CETTA_EVAL_INCOMPLETE_CANCELLED;
+    execution->retiring = true;
+}
+
+CettaOwnedReleaseStep cetta_owned_execution_cancel_poll(
+    CettaOwnedExecution *execution, uint64_t allowance, bool allow_atomic,
+    uint64_t *used) {
+    uint64_t spent = 0u;
+    if (used) *used = 0u;
+    if (!execution || !execution->computation)
+        return CETTA_OWNED_RELEASE_COMPLETE;
+    if (!allowance) return CETTA_OWNED_RELEASE_PENDING;
+    if (!execution->retiring) {
+        owned_execution_begin_retirement(execution);
+        spent++;
+    }
+    while (spent < allowance) {
+        if (execution->release_ready) {
+            if (execution->release)
+                execution->release(execution->computation);
+            execution->computation = NULL;
+            spent++;
+            if (used) *used = spent;
+            return CETTA_OWNED_RELEASE_COMPLETE;
+        }
+        if (!execution->release_poll) {
+            if (!allow_atomic) {
+                if (used) *used = spent;
+                return CETTA_OWNED_RELEASE_ATOMIC;
+            }
+            execution->release_ready = true;
+            continue;
+        }
+        uint64_t used_cleanup = 0u;
+        CettaOwnedReleaseStep status = execution->release_poll(
+            execution->computation, allowance - spent, allow_atomic,
+            &used_cleanup);
+        assert(used_cleanup <= allowance - spent);
+        assert(status >= CETTA_OWNED_RELEASE_PENDING &&
+            status <= CETTA_OWNED_RELEASE_ATOMIC);
+        spent += used_cleanup;
+        if (status == CETTA_OWNED_RELEASE_COMPLETE)
+            execution->release_ready = true;
+        else {
+            if (used) *used = spent;
+            return status;
+        }
+    }
+    if (used) *used = spent;
+    return CETTA_OWNED_RELEASE_PENDING;
+}
+
+void cetta_owned_execution_cancel(CettaOwnedExecution *execution) {
+    if (!execution) return;
+    while (cetta_owned_execution_cancel_poll(execution, UINT64_MAX, true,
+            NULL) != CETTA_OWNED_RELEASE_COMPLETE) {}
+    /* Empty/uninitialized owners also acquire the existing terminal verdict. */
+    owned_execution_begin_retirement(execution);
 }
 
 bool cetta_owned_task_init(CettaOwnedTask *task, CettaOwnedExecution *execution,
@@ -280,9 +345,36 @@ CettaOwnedVisit cetta_owned_task_visit_accounted(
     return owned_task_poll((CettaOwnedTask *)link,poll,account,NULL,NULL);
 }
 
+CettaOwnedReleaseStep cetta_owned_task_cancel_poll(CettaOwnedTask *task,
+    uint64_t allowance, bool allow_atomic, uint64_t *used,
+    CettaOwnedTaskAccount *account, CettaOwnedTaskAccountObserver observer,
+    void *observer_context) {
+    if (used) *used=0u;
+    if (account) *account=(CettaOwnedTaskAccount){0};
+    if (!task) return CETTA_OWNED_RELEASE_COMPLETE;
+    if (!allowance) return task->ready.owner || task->execution.computation
+        ? CETTA_OWNED_RELEASE_PENDING : CETTA_OWNED_RELEASE_COMPLETE;
+    if (task->ready.owner) {
+        cetta_ready_remove(task->ready.owner, &task->ready);
+        if (account) account->retirements++;
+        cetta_owned_task_account_record(account,observer,observer_context,
+            CETTA_OWNED_TASK_PHASE_RETIREMENT,0u);
+    }
+    if (!task->execution.computation) return CETTA_OWNED_RELEASE_COMPLETE;
+    uint64_t spent=0u;
+    CettaOwnedReleaseStep status=cetta_owned_execution_cancel_poll(
+        &task->execution,allowance,allow_atomic,&spent);
+    if (account) { account->cleanup_polls++;account->cleanup_work=spent; }
+    cetta_owned_task_account_record(account,observer,observer_context,
+        CETTA_OWNED_TASK_PHASE_CLEANUP,spent);
+    if (used) *used=spent;
+    return status;
+}
+
 void cetta_owned_task_cancel(CettaOwnedTask *task) {
     if (!task) return;
-    if (task->ready.owner)
-        cetta_ready_remove(task->ready.owner, &task->ready);
-    cetta_owned_execution_cancel(&task->execution);
+    while (cetta_owned_task_cancel_poll(task,UINT64_MAX,true,NULL,NULL,NULL,NULL)!=
+            CETTA_OWNED_RELEASE_COMPLETE) {}
+    /* Preserve the synchronous cancellation verdict for an empty/moved task. */
+    owned_execution_begin_retirement(&task->execution);
 }

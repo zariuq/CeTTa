@@ -1469,6 +1469,14 @@ bool atom_alpha_eq_scoped(Atom *left, Atom *right,
 
 /* Compare bindings as a set of (var,value) pairs, ignoring entry order. */
 bool bindings_eq(Bindings *a, Bindings *b);
+/* Exact captured logical inputs: current assignments, delayed constraints
+ * and contextual frame authority, including unbound slots. Uses captured
+ * atom identity beneath values; it does not merge or compare the independent
+ * Need, branch-state, history or factor carriers. Storage layout, ownership
+ * placement and administrative write clocks are not logical inputs here.
+ * The caller retains both images and separately qualifies their carriers.
+ * Lookup may populate the ordinary binding indexes, as for bindings_eq. */
+bool bindings_capture_equal(Arena *arena, Bindings *left, Bindings *right);
 char *arena_tagged_var_name(Arena *a, const char *name, CettaFrameIdentity suffix);
 
 /* ── Loop-binding rejection (occurs check, HE spec metta.md line 435) ── */

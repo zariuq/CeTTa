@@ -9563,29 +9563,34 @@ Atom *registry_lookup_ref(Registry *r, Atom *ref) {
 
 static _Thread_local RegistryReadView *g_registry_read_view;
 
-static Atom *registry_read_raw(Registry *source, SymbolId key, Atom *name,
+static uint32_t registry_read_index(Registry *source, SymbolId key, Atom *name,
                                bool symbolic) {
     if (!source)
-        return NULL;
+        return UINT32_MAX;
     if (symbolic) {
         uint32_t index = key != SYMBOL_ID_NONE
             ? registry_id_index(source, key) : registry_symbol_index(source, name);
-        return index == UINT32_MAX ? NULL : source->entries[index].value;
+        return index;
     }
     NameId id = NAME_ID_NONE;
     if (key == SYMBOL_ID_NONE) {
         if (!name || !source->name_keys)
-            return NULL;
+            return UINT32_MAX;
         id = name_key_find(source->name_keys, name);
         if (id == NAME_ID_NONE)
-            return NULL;
+            return UINT32_MAX;
     }
     uint32_t index = registry_index_find(source, key, id, 0);
+    return index;
+}
+
+static Atom *registry_read_raw(Registry *source, SymbolId key, Atom *name, bool symbolic) {
+    uint32_t index = registry_read_index(source, key, name, symbolic);
     return index == UINT32_MAX ? NULL : source->entries[index].value;
 }
 
 static bool registry_read_same(Atom *left, Atom *right) {
-    return left == right || (left && right && atom_eq(left, right));
+    return left == right || (left && right && atom_capture_identical(left, right));
 }
 
 static bool registry_read_refuse(RegistryReadView *view, const char *reason) {
@@ -9606,6 +9611,29 @@ static void registry_read_stale(RegistryReadView *view, SymbolId key,
     view->stale_actual = actual ? atom_deep_copy(view->arena, actual) : NULL;
 }
 
+/* The observer records what the computation received, after any enclosing
+ * frozen-view selection. A later different observation makes this static
+ * dependency set ineligible for reuse; neither read is changed or suppressed. */
+static void registry_read_observe(RegistryReadView *view, SymbolId key,
+    Atom *name, bool symbolic, Atom *selected) {
+    if (view->incomplete) return;
+    uint32_t index = registry_read_index(&view->consulted, key, name, symbolic);
+    if (index != UINT32_MAX) {
+        registry_read_stale(view, key, name, view->consulted.entries[index].value, selected);
+        return;
+    }
+    Atom *captured = selected ? atom_deep_copy(view->arena, selected) : NULL;
+    if (selected && !captured) {
+        registry_read_refuse(view, "ObservedValueCopy");
+        return;
+    }
+    bool recorded = key != SYMBOL_ID_NONE
+        ? registry_bind_id_checked(&view->consulted, key, captured)
+        : symbolic ? registry_bind_symbol(&view->consulted, name, captured)
+                   : registry_bind_name(&view->consulted, name, captured);
+    if (!recorded) registry_read_refuse(view, "ObservedDependencyInsert");
+}
+
 /* Called by both physical lookup paths, including absent names.  Every
  * nested observer sees the same live lookup, while evaluation uses the
  * innermost admitted value.  Continuing this quantum cannot acquire the
@@ -9616,7 +9644,7 @@ static Atom *registry_read_intercept(Registry *source, SymbolId key,
     bool selected = false;
     for (RegistryReadView *view = g_registry_read_view; view;
          view = view->active_parent) {
-        if (view->active_source != source)
+        if (view->active_source != source || view->passive)
             continue;
         Atom *expected = registry_read_raw(&view->initial, key, name, symbolic);
         if (!selected) {
@@ -9631,6 +9659,9 @@ static Atom *registry_read_intercept(Registry *source, SymbolId key,
             registry_read_refuse(view, "DependencyInsert");
         registry_read_stale(view, key, name, expected, actual);
     }
+    for (RegistryReadView *view = g_registry_read_view; view; view = view->active_parent)
+        if (view->active_source == source && view->passive)
+            registry_read_observe(view, key, name, symbolic, result);
     return result;
 }
 
@@ -9642,7 +9673,8 @@ static Atom *registry_read_intercept_text(Registry *source,
         Atom *name = atom_symbol_data_n(view->arena, bytes, length);
         if (!name) {
             registry_read_refuse(view, "DependencyName");
-            return NULL;
+            if (!view->passive) return NULL;
+            continue;
         }
         return registry_read_intercept(source, SYMBOL_ID_NONE, name, true, actual);
     }
@@ -9663,7 +9695,7 @@ bool registry_read_view_init(RegistryReadView *view, Registry *source,
     Registry *visible = source;
     for (RegistryReadView *outer = g_registry_read_view; outer;
          outer = outer->active_parent) {
-        if (outer->active_source == source) {
+        if (outer->active_source == source && !outer->passive) {
             visible = &outer->initial;
             if (outer->incomplete)
                 return registry_read_refuse(view, "InheritedIncomplete");
@@ -9680,6 +9712,17 @@ bool registry_read_view_init(RegistryReadView *view, Registry *source,
         if (!registry_copy_entry(&view->initial, visible, i, value))
             return registry_read_refuse(view, "InitialCapture");
     }
+    return true;
+}
+
+bool registry_read_view_init_passive(RegistryReadView *view, Arena *arena) {
+    if (!view || !arena) return false;
+    memset(view, 0, sizeof(*view));
+    registry_init(&view->initial);
+    registry_init(&view->consulted);
+    view->arena = arena;
+    view->initialized = true;
+    view->passive = true;
     return true;
 }
 

@@ -5,7 +5,7 @@
 
 enum {
     NODE_MEMO_INLINE, NODE_MEMO_TABLE, NODE_MEMO_RESERVE, NODE_MEMO_CLEAR,
-    NODE_MEMO_SOURCE, NODE_MEMO_DESTINATION, NODE_MEMO_PUBLISH
+    NODE_MEMO_SOURCE, NODE_MEMO_DESTINATION, NODE_MEMO_PUBLISH, NODE_MEMO_RETIRE
 };
 
 static size_t node_memo_slot(const void *node, uint32_t aux, size_t cap) {
@@ -20,7 +20,7 @@ void cetta_node_memo_find_begin(CettaNodeMemoCursor *cursor,
     const CettaNodeMemo *memo, const void *node, uint32_t aux) {
     *cursor = (CettaNodeMemoCursor){.memo=memo, .node=node, .aux=aux,
         .revision=memo ? memo->revision : 0u,
-        .status=memo && node ? CETTA_NODE_MEMO_PENDING : CETTA_NODE_MEMO_REFUSED};
+        .status=memo && node && !memo->retiring ? CETTA_NODE_MEMO_PENDING : CETTA_NODE_MEMO_REFUSED};
 }
 
 void cetta_node_memo_store_begin(CettaNodeMemoCursor *cursor,
@@ -32,14 +32,24 @@ void cetta_node_memo_store_begin(CettaNodeMemoCursor *cursor,
 
 void cetta_node_memo_cancel(CettaNodeMemoCursor *cursor) {
     if (!cursor) return;
-    free(cursor->grown);
+    cetta_segmented_array_free(&cursor->grown);
     *cursor=(CettaNodeMemoCursor){0};
 }
 
-void cetta_node_memo_free(CettaNodeMemo *memo) {
-    if (!memo) return;
-    free(memo->slots);
+bool cetta_node_memo_release_one(CettaNodeMemo *memo) {
+    if (!memo) return true;
+    memo->retiring=true;
+    if (!cetta_segmented_array_release_one(&memo->slots)) return false;
     *memo=(CettaNodeMemo){0};
+    return true;
+}
+
+void cetta_node_memo_free(CettaNodeMemo *memo) {
+    while (!cetta_node_memo_release_one(memo)) {}
+}
+
+static CettaNodeMemoSlot *node_memo_entry(CettaNodeMemo *memo,size_t index) {
+    return (CettaNodeMemoSlot *)cetta_node_memo_entry(memo,index);
 }
 
 static CettaNodeMemoStatus node_memo_observed(CettaNodeMemoCursor *cursor,
@@ -52,7 +62,7 @@ static CettaNodeMemoStatus node_memo_observed(CettaNodeMemoCursor *cursor,
         return cursor->status=CETTA_NODE_MEMO_REFUSED;
     CettaNodeMemoSlot *target=cursor->phase==NODE_MEMO_INLINE
         ? &cursor->writer->inline_slots[cursor->position-1u]
-        : &cursor->writer->slots[cursor->slot];
+        : node_memo_entry(cursor->writer,cursor->slot);
     target->value=cursor->value;
     cursor->revision=++cursor->writer->revision;
     return cursor->status=CETTA_NODE_MEMO_STORED;
@@ -71,7 +81,7 @@ static CettaNodeMemoStatus node_memo_absent(CettaNodeMemoCursor *cursor) {
         cursor->phase=NODE_MEMO_RESERVE;
         return cursor->status;
     } else {
-        memo->slots[cursor->slot]=
+        *node_memo_entry(memo,cursor->slot)=
             (CettaNodeMemoSlot){cursor->node,cursor->aux,cursor->value};
         memo->len++;
     }
@@ -82,7 +92,7 @@ static CettaNodeMemoStatus node_memo_absent(CettaNodeMemoCursor *cursor) {
 CettaNodeMemoStatus cetta_node_memo_advance(CettaNodeMemoCursor *cursor) {
     if (cursor->status!=CETTA_NODE_MEMO_PENDING) return cursor->status;
     const CettaNodeMemo *memo=cursor->memo;
-    if (!memo || memo->revision!=cursor->revision || cursor->steps==UINT64_MAX)
+    if (!memo || memo->retiring || memo->revision!=cursor->revision || cursor->steps==UINT64_MAX)
         return cursor->status=CETTA_NODE_MEMO_REFUSED;
     cursor->steps++;
     switch (cursor->phase) {
@@ -101,7 +111,8 @@ CettaNodeMemoStatus cetta_node_memo_advance(CettaNodeMemoCursor *cursor) {
     case NODE_MEMO_TABLE: {
         if (cursor->inspected++==memo->cap)
             return cursor->status=CETTA_NODE_MEMO_REFUSED;
-        CettaNodeMemoSlot *entry=&memo->slots[cursor->slot];
+        const CettaNodeMemoSlot *entry=cetta_node_memo_entry(memo,cursor->slot);
+        if (!entry) return cursor->status=CETTA_NODE_MEMO_REFUSED;
         cursor->probes++;
         if (!entry->node) return node_memo_absent(cursor);
         if (entry->node==cursor->node && entry->aux==cursor->aux)
@@ -111,22 +122,27 @@ CettaNodeMemoStatus cetta_node_memo_advance(CettaNodeMemoCursor *cursor) {
     }
     case NODE_MEMO_RESERVE: {
         size_t cap=memo->cap ? memo->cap*2u : 64u;
-        size_t old_bytes=memo->cap*sizeof(*memo->slots);
-        if (cap<memo->cap || cap>SIZE_MAX/sizeof(*memo->slots) ||
-            cap*sizeof(*memo->slots)>cursor->byte_limit ||
-            old_bytes>cursor->byte_limit-cap*sizeof(*memo->slots))
+        if (cap<memo->cap || cap>UINT32_MAX ||
+            !cetta_segmented_array_init(&cursor->grown,sizeof(CettaNodeMemoSlot)))
             return cursor->status=CETTA_NODE_MEMO_REFUSED;
-        cursor->grown=malloc(cap*sizeof(*cursor->grown));
-        if (!cursor->grown) return cursor->status=CETTA_NODE_MEMO_REFUSED;
         cursor->grow_cap=cap;
-        cursor->allocated_bytes=cap*sizeof(*cursor->grown);
         cursor->clear_position=cursor->copy_position=0u;
         cursor->phase=NODE_MEMO_CLEAR;
         return cursor->status;
     }
     case NODE_MEMO_CLEAR:
         if (cursor->clear_position<cursor->grow_cap) {
-            cursor->grown[cursor->clear_position++]=(CettaNodeMemoSlot){0};
+            if (memo->slots.live_bytes>cursor->byte_limit)
+                return cursor->status=CETTA_NODE_MEMO_REFUSED;
+            size_t before=cursor->grown.live_bytes;
+            CettaSegmentedStep status=cetta_segmented_array_prepare_limit(&cursor->grown,
+                (uint32_t)cursor->clear_position,cursor->byte_limit-memo->slots.live_bytes);
+            cursor->allocated_bytes+=cursor->grown.live_bytes-before;
+            if (status==CETTA_SEGMENTED_REFUSED) return cursor->status=CETTA_NODE_MEMO_REFUSED;
+            if (status==CETTA_SEGMENTED_PENDING) return cursor->status;
+            CettaNodeMemoSlot *slot=cetta_segmented_array_at(&cursor->grown,
+                (uint32_t)cursor->clear_position++);
+            *slot=(CettaNodeMemoSlot){0};
             return cursor->status;
         }
         cursor->phase=NODE_MEMO_SOURCE;
@@ -136,7 +152,7 @@ CettaNodeMemoStatus cetta_node_memo_advance(CettaNodeMemoCursor *cursor) {
             cursor->phase=NODE_MEMO_PUBLISH;
             return cursor->status;
         }
-        cursor->carried=memo->slots[cursor->copy_position++];
+        cursor->carried=*cetta_node_memo_entry(memo,cursor->copy_position++);
         cursor->probes++;
         if (cursor->carried.node) {
             cursor->slot=node_memo_slot(cursor->carried.node,cursor->carried.aux,cursor->grow_cap);
@@ -147,19 +163,28 @@ CettaNodeMemoStatus cetta_node_memo_advance(CettaNodeMemoCursor *cursor) {
         if (cursor->inspected++==cursor->grow_cap)
             return cursor->status=CETTA_NODE_MEMO_REFUSED;
         cursor->probes++;
-        if (!cursor->grown[cursor->slot].node) {
-            cursor->grown[cursor->slot]=cursor->carried;
+        CettaNodeMemoSlot *slot=cetta_segmented_array_at(&cursor->grown,(uint32_t)cursor->slot);
+        if (!slot->node) {
+            *slot=cursor->carried;
             cursor->phase=NODE_MEMO_SOURCE;
         } else cursor->slot=(cursor->slot+1u)&(cursor->grow_cap-1u);
         return cursor->status;
-    case NODE_MEMO_PUBLISH:
+    case NODE_MEMO_PUBLISH: {
         if (cursor->writer->revision==UINT64_MAX)
             return cursor->status=CETTA_NODE_MEMO_REFUSED;
-        free(cursor->writer->slots);
+        CettaSegmentedArray old=cursor->writer->slots;
         cursor->writer->slots=cursor->grown;
         cursor->writer->cap=cursor->grow_cap;
-        cursor->grown=NULL;
+        cursor->grown=old;
         cursor->revision=++cursor->writer->revision;
+        cursor->phase=NODE_MEMO_RETIRE;
+        return cursor->status;
+    }
+    case NODE_MEMO_RETIRE:
+        if (cursor->grown.blocks) {
+            cetta_segmented_array_release_one(&cursor->grown);
+            return cursor->status;
+        }
         cursor->slot=node_memo_slot(cursor->node,cursor->aux,cursor->writer->cap);
         cursor->inspected=0u; cursor->phase=NODE_MEMO_TABLE;
         return cursor->status;

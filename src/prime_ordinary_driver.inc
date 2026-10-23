@@ -766,6 +766,8 @@ static PrimeNativeControl *prime_inline_quantum_adopt(
         if (frame->kind == PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH) {
             const PrimeNeedEquationContinuation *eq = frame->equation_search;
             if (!eq ||
+                eq->cohort_owner || eq->inspect_incrementally ||
+                eq->publication_returns_to_search ||
                 eq->state == PRIME_NEED_EQUATION_SEARCH_WAIT_FORCE ||
                 (eq->state == PRIME_NEED_EQUATION_SEARCH_WAIT_PUBLICATION &&
                  (frame->child.len != 0u ||

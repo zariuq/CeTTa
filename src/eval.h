@@ -461,6 +461,9 @@ bool eval_current_pattern_module_enabled(void) __attribute__((weak));
 uint32_t eval_current_pattern_control_arity(SymbolId head) __attribute__((weak));
 SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
 Space *eval_resolve_space_read(Space *space) __attribute__((weak));
+/* Resolve the captured transactional state view. This supplies neither an
+ * owner lifetime nor permission to mutate the returned resource. */
+StateCell *eval_resolve_state_read(StateCell *cell) __attribute__((weak));
 /* Resolve a transactional view and register its live-space dependency with
  * every active retained/native observer. Ordinary execution has a cold
  * no-observer fast path. */
@@ -553,14 +556,20 @@ bool eval_prime_hol_guest_running(void);
  * owner epoch distinguishes payload-local scratch from shared resources. */
 bool eval_set_payload_transactional(bool v);
 bool eval_payload_transactional(void);
+/* Open a quoted deferred payload with its host's ordinary code-opening
+ * semantics. Prime preserves its authored ownership and freshens owned names;
+ * opening does not execute the code or grant permission to execute it. */
+Atom *eval_open_payload_code(Arena *arena, Atom *quoted);
 uint64_t eval_set_payload_owner_epoch(uint64_t epoch);
 uint64_t eval_payload_owner_epoch(void);
 uint64_t eval_next_payload_owner_epoch(void);
 bool eval_payload_redirects_begin(Arena *owner);
 void eval_payload_redirects_end(void);
-/* A frame retains its parent redirects and scratch resources independently of
- * activation. Its arena and the borrowed base-resource owners remain held by
- * the caller. Frames and activation scopes stay on their creating thread. */
+/* A frame retains its parent redirects, scratch resources and complete
+ * captured Need environment independently of activation. A validity lease
+ * detects retirement/reset of borrowed invocation banks without retaining a
+ * frame-bank cycle. Output, State/Space and service owners remain caller-held.
+ * Frames and activation scopes stay on their creating thread. */
 typedef struct CettaEvalPayloadFrame CettaEvalPayloadFrame;
 typedef struct {
     CettaEvalPayloadFrame *previous, *entered;
@@ -570,11 +579,22 @@ bool eval_payload_frame_enter(CettaEvalPayloadFrame *frame,
                                CettaEvalPayloadScope *scope);
 void eval_payload_frame_leave(CettaEvalPayloadScope *scope);
 void eval_payload_frame_close(CettaEvalPayloadFrame *frame);
+/* Read the world captured when this selected frame opened. The frame owns
+ * its environment; retirement or reset of borrowed invocation banks refuses
+ * before reading. External resource/service owners stay caller-held.
+ * False is service refusal, never permission for a physical-cell fallback.
+ * Neither slot is executed. */
+bool eval_payload_frame_source_state(CettaEvalPayloadFrame *frame,Arena *arena,
+    StateCell *cell,Atom **value,Atom **content_type);
 /* Optional ordinary Prime stack provider for the rho payload protocol. The
  * caller keeps source services selected on every open/step/close. Its grant
  * counts stack/return phases, not the work of atomic native operations. */
 struct RhocalcPayloadProvider;
 const struct RhocalcPayloadProvider *eval_prime_payload_provider(void);
+/* Ordinary synchronous Prime evaluation with per-result logical resource
+ * views retained until close, including builds without the stack provider.
+ * NULL selects the existing evaluator for other language profiles. */
+const struct RhocalcPayloadProvider *eval_payload_synchronous_provider(void);
 bool eval_payload_note_space_redirect(Space *orig, Space *redirect);
 bool eval_payload_note_state_redirect(StateCell *orig, StateCell *redirect);
 bool eval_payload_track_scratch_space(Space *space);
@@ -582,8 +602,9 @@ bool eval_payload_track_scratch_state(StateCell *cell);
 /* Track a `new-space`-created space (persistent-arena struct) so its heap
  * internals are released at session teardown; eval_cleanup_owned_new_spaces
  * frees the ones not bound in the registry (registry-bound ones are freed by
- * the registry teardown pass). */
-void eval_track_new_space(Space *space);
+ * the registry teardown pass). Return false before exposing an unowned
+ * initialized shell; cleanup ownership does not publish its contents. */
+bool eval_track_new_space(Space *space);
 void eval_cleanup_owned_new_spaces_for_current_thread(void);
 void eval_drain_owned_new_spaces_for_current_thread(void);
 void eval_match_decision_cache_free_for_current_thread(void);

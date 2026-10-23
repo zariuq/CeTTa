@@ -44,6 +44,77 @@ static PrimeNeedReceiptGraphStatus collect_with_fault(
     return status;
 }
 
+static void check_production_support_refusal(Arena *arena) {
+    PrimeNeedSnapshot root = {0}, base = {0}, running = {0}, produced = {0};
+    uint64_t thunk = 0u;
+    Atom *value = atom_int(arena, 43);
+    assert(prime_need_snapshot_begin(&root));
+    assert(prime_need_snapshot_allocate(arena, &root, value, &base, &thunk));
+    PrimeNeedReadCapture *capture = prime_need_read_capture_new(&base, &base);
+    assert(capture);
+    PrimeNeedReadScope scope;
+    prime_need_read_scope_enter(&scope, capture);
+    PrimeNeedCellView cell;
+    fail_at = 0u; allocation_count = 0u; probing = true;
+    bool found = prime_need_snapshot_lookup(&base, thunk, &cell);
+    probing = false;
+    prime_need_read_scope_leave(&scope);
+    assert(found && cell.cache_state == PRIME_NEED_CACHE_EMPTY && allocation_count == 1u);
+    assert(!prime_need_read_capture_complete(capture));
+    prime_need_read_capture_free(capture);
+
+    capture = prime_need_read_capture_new(&base, &base);
+    assert(capture);
+    prime_need_read_scope_enter(&scope, capture);
+    uint64_t evaluator = prime_need_fresh_evaluator_id();
+    assert(prime_need_snapshot_start_evaluation(arena, &base, thunk, evaluator, &running));
+    assert(prime_need_snapshot_resolve_value(arena, &running, thunk, evaluator, value, &produced));
+    prime_need_read_scope_leave(&scope);
+    assert(prime_need_read_capture_complete(capture));
+    for (size_t i = 0u; i < 2u; i++) {
+        fail_at = i; allocation_count = 0u; probing = true;
+        PrimeNeedReadCapture *copy = prime_need_read_capture_copy(capture);
+        probing = false;
+        assert(!copy && allocation_count == i + 1u);
+        assert(prime_need_read_capture_complete(capture));
+    }
+    for (size_t i = 0u; i < 2u; i++) {
+        PrimeNeedSnapshot out = root;
+        fail_at = i; allocation_count = 0u; probing = true;
+        bool imported = prime_need_snapshot_import_production(arena, capture, &produced,
+            thunk, &base, &out);
+        probing = false;
+        assert(!imported && allocation_count == i + 1u &&
+            memcmp(&out, &root, sizeof(out)) == 0);
+    }
+    PrimeNeedSnapshot imported;
+    assert(prime_need_snapshot_import_production(arena, capture, &produced, thunk, &base, &imported));
+    assert(prime_need_snapshot_lookup(&imported, thunk, &cell) && cell.cached == value);
+    prime_need_read_capture_free(capture);
+    puts("PASS: 5 production-support allocation refusals preserve lookups, evidence and destination");
+}
+
+static void check_capture_allocation_refusal(Arena *arena) {
+    Atom *left=atom_int(arena,7),*right=atom_int(arena,7);
+    for (unsigned i=0u;i<192u;i++) {
+        left=atom_expr2(arena,left,left);
+        right=atom_expr2(arena,right,right);
+    }
+    fail_at=SIZE_MAX;allocation_count=0u;probing=true;
+    bool agrees=atom_capture_identical(left,right);
+    probing=false;
+    size_t allocations=allocation_count;
+    assert(agrees && allocations>=4u);
+    for (size_t i=0u;i<allocations;i++) {
+        fail_at=i;allocation_count=0u;probing=true;
+        agrees=atom_capture_identical(left,right);
+        probing=false;
+        assert(!agrees && allocation_count==i+1u);
+        assert(atom_capture_identical(left,right));
+    }
+    printf("PASS: %zu captured-input allocation refusals preserve both source DAGs\n",allocations);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -51,6 +122,7 @@ int main(void) {
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
     g_symbols = &symbols;
     arena_init(&arena);
+    check_capture_allocation_refusal(&arena);
     PrimeNeedReceipt receipt = {0};
     PrimeNeedReceiptGraph graph = {0};
     assert(collect_with_fault(&receipt, &graph, 0u) ==
@@ -117,6 +189,7 @@ int main(void) {
            PRIME_NEED_RECEIPT_GRAPH_COMPLETE && graph.length == 80u);
     prime_need_receipt_graph_free(&graph);
     prime_need_receipt_graph_free(&complete);
+    check_production_support_refusal(&arena);
     prime_need_receipt_graph_free(&graph);
     arena_free(&arena);
     symbol_table_free(&symbols);

@@ -232,6 +232,36 @@ static void native_service_controls(CettaLibraryContext *ctx,Space *space,Regist
             CETTA_OWNED_EXECUTION_COMPLETE && delivery.calls==3u);
         cetta_owned_execution_cancel(&execution);
         assert(!execution.computation);
+
+        CettaOwnedExecution cancelled={0};NativeDelivery abandoned={0};
+        assert(cetta_library_native_execution_open(ctx,space,&persistent,parse(calls[i]),
+            eval_prime_payload_provider(),&cancelled) && cancelled.release_poll);
+        for(unsigned poll=0u;poll<2u;poll++)
+            assert(cetta_owned_execution_sequence(&cancelled,1u,native_service_delivery,&abandoned)==
+                CETTA_OWNED_EXECUTION_PAUSED);
+        void *held=cancelled.computation;
+        CettaOwnedExecution before;
+        memcpy(&before,&cancelled,sizeof(before));
+        uint64_t used=19u;
+        assert(cetta_owned_execution_cancel_poll(&cancelled,0u,false,&used)==
+            CETTA_OWNED_RELEASE_PENDING && !used && !memcmp(&before,&cancelled,sizeof(before)));
+        assert(cetta_owned_execution_cancel_poll(&cancelled,1u,false,&used)==
+            CETTA_OWNED_RELEASE_PENDING && used==1u && cancelled.retiring &&
+            !cancelled.has_pending && cancelled.computation==held);
+        CettaOwnedReleaseStep cleanup;
+        do {
+            cleanup=cetta_owned_execution_cancel_poll(&cancelled,7u,false,&used);
+            assert(used<=7u && cancelled.computation==held &&
+                cleanup!=CETTA_OWNED_RELEASE_COMPLETE);
+        } while(cleanup==CETTA_OWNED_RELEASE_PENDING);
+        assert(cleanup==CETTA_OWNED_RELEASE_ATOMIC && !cancelled.accepted);
+        unsigned deliveries=abandoned.calls;
+        assert(cetta_owned_execution_sequence(&cancelled,1u,native_service_delivery,&abandoned)==
+            CETTA_OWNED_EXECUTION_INTERRUPTED && abandoned.calls==deliveries);
+        assert(cetta_owned_execution_cancel_poll(&cancelled,64u,true,&used)==
+            CETTA_OWNED_RELEASE_COMPLETE && !cancelled.computation && used==2u);
+        cetta_owned_execution_cancel(&cancelled);
+        assert(!cancelled.computation && !cancelled.accepted);
     }
     CettaOwnedExecution invalid={0};NativeDelivery refused={0};
     assert(cetta_library_native_execution_open(ctx,space,&persistent,
@@ -262,6 +292,7 @@ static void native_service_controls(CettaLibraryContext *ctx,Space *space,Regist
         eval_prime_source_owner_release(source);
     }
     puts("PASS: owned Rho services retain one completed data occurrence across refused delivery and exact retry");
+    puts("PASS: actual native Rho and value adapters retain cancelled owners until explicitly admitted cleanup");
 }
 
 static CettaHostCommit duty_accept(CettaHostDecision *d) {

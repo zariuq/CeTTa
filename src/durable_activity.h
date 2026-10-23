@@ -19,6 +19,12 @@ typedef struct {
      * retained host planner. Work purse/preparation/results have explicit
      * limits; fuel applies only to the synchronous policy. */
     CettaHostPlanLimits planning;
+    /* Zero preserves synchronous disposal. A positive finite quantum retains
+     * cancelled decisions in FIFO order for cleanup service visits. Atomic
+     * cleanup permission admits indivisible providers; it grants no source
+     * authority and establishes no physical duration bound. */
+    uint64_t cleanup_quantum;
+    bool allow_atomic_cleanup;
 } CettaActivityConfig;
 typedef struct {
     uint64_t steps, accepted, published, blocked, timer_events, worker_requests;
@@ -27,6 +33,7 @@ typedef struct {
     uint64_t plan_setup, plan_setup_bytes;
     uint64_t plan_preparation, plan_transport;
     uint64_t plan_receipt_events, plan_receipt_units;
+    uint64_t cleanup_polls,cleanup_completed,cleanup_atomic_waits,cleanup_units;
     CettaOwnedTaskAccount plan_protocol;
     uint64_t slot_admission, slot_preparation, slot_execution, slot_delivery;
     uint64_t slot_teardown, slot_arrivals, slot_bookkeeping, slot_units;
@@ -71,6 +78,9 @@ CettaDurableStatus cetta_activity_step(CettaActivityRuntime *runtime, unsigned v
  * boundary; their finite configured capacities bound the loops counted here. */
 CettaDurableStatus cetta_activity_step_accounted(CettaActivityRuntime *runtime,
     unsigned visits, CettaActivitySlotAccount *account);
+/* Host-thread work-placement policy for retained cleanup. A parked atomic
+ * cleanup resumes its exact owner after a grant; no plan is restarted. */
+bool cetta_activity_set_cleanup_atomic(CettaActivityRuntime *, bool allowed);
 /* Wait on the worker's listener/connected peers, an optional native intake fd,
  * and the next absolute timer deadline. Does not consume a hint or evaluate.
  * Outstanding unvisited candidates force a recheck. Caller reads intake and

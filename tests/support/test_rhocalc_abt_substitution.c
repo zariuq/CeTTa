@@ -6,6 +6,16 @@
 #include <string.h>
 #include <stdatomic.h>
 
+/* Keep the common backing owner inside this test's allocation/free hooks,
+ * including when eval.h imports the memo interface before the Rho owner. */
+static void *block_test_calloc(size_t,size_t);
+static void resource_test_free(void *);
+#define calloc block_test_calloc
+#define free resource_test_free
+#include "segmented_array.h"
+#undef calloc
+#undef free
+
 #include "parser.h"
 #include "eval.h"
 
@@ -17,6 +27,14 @@
 #include "parallel_executor.h"
 #include "stats.h"
 
+#if CETTA_RHO_WORK_CENSUS
+typedef struct {
+    uint64_t entries, views, grammar, normalization, process_normalization, keys, frees, realloc_bytes, malloc_bytes, calloc_bytes, allocation_calls;
+} RhoWorkSample;
+static _Thread_local bool rho_work_active;
+static _Thread_local RhoWorkSample rho_work_sample;
+#endif
+
 /* Compile the real key owner so allocation controls can reach its failure
  * boundaries without adding hooks to production code. Other allocators keep
  * their ordinary implementation. The counter is local to this test thread. */
@@ -24,18 +42,285 @@ static _Thread_local size_t key_allocations;
 static _Thread_local size_t key_fail_at;
 static _Thread_local bool key_failure_injected;
 static void *key_test_realloc(void *pointer, size_t size) {
+#if CETTA_RHO_WORK_CENSUS
+    if (rho_work_active) rho_work_sample.realloc_bytes += size;
+#endif
     if (key_fail_at && ++key_allocations == key_fail_at) {
         key_failure_injected = true;
         return NULL;
     }
     return realloc(pointer, size);
 }
+static _Thread_local size_t block_allocation_calls, block_fail_at, block_last_request;
+static _Thread_local bool block_failure_injected;
+static void *block_test_calloc(size_t count, size_t size) {
+#if CETTA_RHO_WORK_CENSUS
+    if (rho_work_active) {
+        rho_work_sample.calloc_bytes += count*size;
+        rho_work_sample.allocation_calls++;
+    }
+#endif
+    block_allocation_calls++;
+    block_last_request=count*size;
+    if (block_fail_at && block_allocation_calls == block_fail_at) {
+        block_failure_injected=true;
+        return NULL;
+    }
+    return calloc(count,size);
+}
+#if CETTA_RHO_WORK_CENSUS
+static void *block_test_malloc(size_t size) {
+    if (rho_work_active) {
+        rho_work_sample.malloc_bytes += size;
+        rho_work_sample.allocation_calls++;
+    }
+    return malloc(size);
+}
+#endif
 #ifndef CETTA_RHO_TEST_CORE_SOURCE
 #define CETTA_RHO_TEST_CORE_SOURCE "../../src/rhocalc_core.c"
 #endif
+static _Thread_local bool resource_tracking_refusal;
+static _Thread_local StateCell *resource_refused_cell;
+static _Thread_local unsigned resource_refused_frees;
+bool resource_test_track_state(StateCell *cell) {
+    if (resource_tracking_refusal) {
+        resource_tracking_refusal=false;
+        resource_refused_cell=cell;
+        return false;
+    }
+    return eval_payload_track_scratch_state(cell);
+}
+static _Thread_local bool key_retirement_tracking;
+static _Thread_local char *retirement_keys[257];
+static _Thread_local unsigned retirement_key_count, retirement_key_frees[257];
+static _Thread_local size_t retirement_nonnull_frees;
+static void resource_test_free(void *pointer) {
+    if (key_retirement_tracking && pointer) {
+        retirement_nonnull_frees++;
+        for (unsigned i=0u;i<retirement_key_count;i++)
+            if (pointer==retirement_keys[i]) retirement_key_frees[i]++;
+    }
+    if (pointer && pointer==resource_refused_cell) {
+        resource_refused_cell=NULL;
+        resource_refused_frees++;
+    }
+    free(pointer);
+}
+#define eval_payload_track_scratch_state resource_test_track_state
+#define free resource_test_free
+static _Thread_local bool resource_space_active, resource_space_tracking_refusal;
+static _Thread_local bool resource_space_storage_refusal, resource_space_storage_failed;
+static _Thread_local Space *resource_owned_spaces[8], *resource_partial_space;
+static _Thread_local unsigned resource_owned_count, resource_owned_frees;
+bool __real_eval_track_new_space(Space *);
+bool __wrap_eval_track_new_space(Space *space) {
+    if (resource_space_active && resource_space_tracking_refusal) {
+        resource_space_tracking_refusal=false;
+        resource_partial_space=space;
+        return false;
+    }
+    bool accepted=__real_eval_track_new_space(space);
+    if (resource_space_active && accepted && resource_owned_count<8u)
+        resource_owned_spaces[resource_owned_count++]=space;
+    return accepted;
+}
+void __real_space_free(Space *);
+void __wrap_space_free(Space *space) {
+    if (resource_space_active && space) {
+        if (space==resource_partial_space) resource_owned_frees++;
+        else for (unsigned i=0;i<resource_owned_count;i++)
+            if (space==resource_owned_spaces[i]) {resource_owned_frees++;break;}
+    }
+    __real_space_free(space);
+}
+static bool resource_test_admit_atom(Space *space,Arena *arena,Atom *atom) {
+    if (resource_space_active && resource_space_storage_refusal &&
+        atom && atom->kind==ATOM_GROUNDED && atom->ground.gkind==GV_INT &&
+        atom->ground.ival==22) {
+        resource_space_storage_refusal=false;
+        resource_partial_space=space;
+        return false;
+    }
+    return space_admit_atom(space,arena,atom);
+}
+static Atom *resource_test_store_atom(Space *space,Arena *arena,Atom *atom) {
+    if (resource_space_active && space==resource_partial_space &&
+        atom && atom->kind==ATOM_GROUNDED && atom->ground.gkind==GV_INT &&
+        atom->ground.ival==22) {resource_space_storage_failed=true;return NULL;}
+    return space_store_atom(space,arena,atom);
+}
+#define space_admit_atom resource_test_admit_atom
+#define space_store_atom resource_test_store_atom
 #define realloc key_test_realloc
+#define calloc block_test_calloc
+#if CETTA_RHO_WORK_CENSUS
+#define malloc block_test_malloc
+#endif
 #include CETTA_RHO_TEST_CORE_SOURCE
 #undef realloc
+#undef calloc
+#if CETTA_RHO_WORK_CENSUS
+#undef malloc
+#endif
+#undef space_admit_atom
+#undef space_store_atom
+#undef free
+#undef eval_payload_track_scratch_state
+
+#if CETTA_RHO_WORK_CENSUS
+/* Compiler instrumentation observes calls to the actual included owner.
+ * Linked providers are outside this count. Allocation request sizes are
+ * reported separately: a bounded number of calls does not bound their work. */
+void __cyg_profile_func_enter(void *, void *) __attribute__((no_instrument_function));
+void __cyg_profile_func_exit(void *, void *) __attribute__((no_instrument_function));
+void __cyg_profile_func_enter(void *function, void *caller) {
+    (void)caller;
+    if (!rho_work_active) return;
+    rho_work_sample.entries++;
+    rho_work_sample.views += function == (void *)rho_view;
+    rho_work_sample.grammar += function == (void *)rho_check_proc ||
+        function == (void *)rho_check_name;
+    rho_work_sample.normalization += function == (void *)rho_normalize_proc ||
+        function == (void *)rho_normalize_name;
+    rho_work_sample.process_normalization += function == (void *)rho_normalize_proc;
+    rho_work_sample.keys += function == (void *)rho_key_proc_into ||
+        function == (void *)rho_key_name_into;
+    rho_work_sample.frees += function == (void *)resource_test_free;
+}
+void __cyg_profile_func_exit(void *function, void *caller) {
+    (void)function; (void)caller;
+}
+
+static void rho_work_max(RhoWorkSample *maximum, RhoWorkSample sample) {
+#define RHO_WORK_MAX(field) if (sample.field > maximum->field) maximum->field = sample.field
+    RHO_WORK_MAX(entries); RHO_WORK_MAX(views); RHO_WORK_MAX(grammar);
+    RHO_WORK_MAX(normalization); RHO_WORK_MAX(keys); RHO_WORK_MAX(frees);
+    RHO_WORK_MAX(process_normalization);
+    RHO_WORK_MAX(realloc_bytes); RHO_WORK_MAX(malloc_bytes);
+    RHO_WORK_MAX(calloc_bytes); RHO_WORK_MAX(allocation_calls);
+#undef RHO_WORK_MAX
+}
+
+static int retained_work_census(void) {
+    const unsigned widths[] = {8u, 128u, 2048u, 32768u};
+    const char *phases[] = {"LOAD", "VALIDATE", "NORMALIZE", "SELECT", "SELECTOR_RETIRE", "COMMIT",
+        "COMPACT", "COMPACT_COPY", "COMPACT_COMMIT", "EXPORT", "EXPORT_COPY", "EXPORT_NORMALIZE",
+        "CANCEL_RELEASE_POLL", "CANCEL_ATOMIC_TAIL", "OPEN", "CLOSE", "CANCEL_CLOSE"};
+    enum { phase_count = RHO_RUN_EXPORT_NORMALIZE + 6u };
+    _Static_assert(sizeof(phases)/sizeof(*phases) == phase_count, "census phase inventory");
+    RhoWorkSample samples[2][4][phase_count] = {0};
+    for (unsigned atomic = 0u; atomic < 2u; atomic++) {
+        for (size_t wi = 0u; wi < sizeof(widths)/sizeof(*widths); wi++) {
+            Arena source, result;
+            arena_init_detached(&source); arena_init_detached(&result);
+            Atom *leaf = rho_binary(&source, "rho:send",
+                rho_unary(&source, "rho:quote", rho_nil(&source)), rho_nil(&source));
+            Atom **children = malloc(((size_t)widths[wi]+1u)*sizeof(*children));
+            if (!children) return 1;
+            children[0] = atom_symbol(&source, "rho:par");
+            for (unsigned i = 0u; i < widths[wi]; i++) children[i+1u] = leaf;
+            Atom *input = atom_expr(&source, children, widths[wi]+1u);
+            free(children);
+            RhoRuntimeProfile profile = {RHO_SCHEDULER_CANONICAL, 1u, 1u, false};
+            rho_work_sample = (RhoWorkSample){0}; rho_work_active = true;
+            RhocalcRun *run = rho_run_open(&result, input, &profile, NULL, atomic, true);
+            rho_work_active = false;
+            if (!run) return 1;
+            samples[atomic][wi][phase_count-3u] = rho_work_sample;
+            uint64_t polls = 0u;
+            while (run->status == RHOCALC_RUN_PENDING) {
+                unsigned phase = run->phase;
+                rho_work_sample = (RhoWorkSample){0}; rho_work_active = true;
+                uint64_t used = 0u;
+                RhocalcRunStatus status = rhocalc_run_poll(run, 1u, &used);
+                rho_work_active = false;
+                if (phase > RHO_RUN_EXPORT_NORMALIZE || status == RHOCALC_RUN_FAILED ||
+                    used > 1u || ++polls > 100000000u) return 1;
+                rho_work_max(&samples[atomic][wi][phase], rho_work_sample);
+            }
+            RhoReductionResult answer = {0};
+            if (!rhocalc_run_result(run, &answer)) return 1;
+            RhoView view = rho_view(answer.residual);
+            if (view.kind != RHO_PAR || view.nargs != widths[wi]) return 1;
+            for (unsigned i = 0u; i < view.nargs; i++)
+                if (!atom_eq(view.args[i], leaf)) return 1;
+            rho_work_sample = (RhoWorkSample){0}; rho_work_active = true;
+            rhocalc_run_close(run);
+            rho_work_active = false;
+            samples[atomic][wi][phase_count-2u] = rho_work_sample;
+            if (!atomic) {
+                run = rho_run_open(&result, input, &profile, NULL, false, true);
+                if (!run) return 1;
+                while (run->status == RHOCALC_RUN_PENDING &&
+                    !(run->phase == RHO_RUN_NORMALIZE && run->normalization.frames.length &&
+                      rho_normalize_frame_at(&run->normalization,0)->stage == 5u)) {
+                    if (rhocalc_run_poll(run, 1u, NULL) == RHOCALC_RUN_FAILED) return 1;
+                }
+                if (run->status != RHOCALC_RUN_PENDING || run->machine.current) return 1;
+                rho_work_sample = (RhoWorkSample){0}; rho_work_active = true;
+                rhocalc_run_close(run);
+                rho_work_active = false;
+                samples[atomic][wi][phase_count-1u] = rho_work_sample;
+                run = rho_run_open(&result, input, &profile, NULL, false, true);
+                if (!run) return 1;
+                while (run->status == RHOCALC_RUN_PENDING &&
+                    !(run->phase == RHO_RUN_NORMALIZE && run->normalization.frames.length &&
+                      rho_normalize_frame_at(&run->normalization,0)->stage == 5u)) {
+                    if (rhocalc_run_poll(run, 1u, NULL) == RHOCALC_RUN_FAILED) return 1;
+                }
+                if (run->status != RHOCALC_RUN_PENDING || run->machine.current) return 1;
+                CettaOwnedReleaseStep released;
+                do {
+                    uint64_t used = 0u;
+                    rho_work_sample = (RhoWorkSample){0}; rho_work_active = true;
+                    released = rhocalc_run_release_poll(&run, 1u, false, &used);
+                    rho_work_active = false;
+                    if (!run || used > 1u || released == CETTA_OWNED_RELEASE_COMPLETE) return 1;
+                    rho_work_max(&samples[atomic][wi][RHO_RUN_EXPORT_NORMALIZE+1u], rho_work_sample);
+                } while (released == CETTA_OWNED_RELEASE_PENDING);
+                if (released != CETTA_OWNED_RELEASE_ATOMIC) return 1;
+                rho_work_sample = (RhoWorkSample){0}; rho_work_active = true;
+                released = rhocalc_run_release_poll(&run, 1u, true, NULL);
+                rho_work_active = false;
+                if (run || released != CETTA_OWNED_RELEASE_COMPLETE) return 1;
+                samples[atomic][wi][RHO_RUN_EXPORT_NORMALIZE+2u] = rho_work_sample;
+            }
+            for (unsigned phase = 0u; phase < phase_count; phase++) {
+                RhoWorkSample sample = samples[atomic][wi][phase];
+                if (!sample.entries) continue;
+                printf("{\"profile\":\"%s\",\"width\":%u,\"phase\":\"%s\","
+                    "\"max_owner_entries\":%" PRIu64 ",\"max_views\":%" PRIu64 ","
+                    "\"max_recursive_grammar\":%" PRIu64 ",\"max_recursive_normalization\":%" PRIu64 ","
+                    "\"max_recursive_process_normalization\":%" PRIu64 ","
+                    "\"max_recursive_keys\":%" PRIu64 ",\"max_free_calls\":%" PRIu64 ","
+                    "\"max_realloc_request_bytes\":%" PRIu64 ","
+                    "\"max_malloc_request_bytes\":%" PRIu64 ","
+                    "\"max_calloc_request_bytes\":%" PRIu64 ","
+                    "\"max_allocation_calls\":%" PRIu64 "}\n",
+                    atomic ? "atomic" : "retained", widths[wi], phases[phase],
+                    sample.entries, sample.views, sample.grammar, sample.normalization, sample.process_normalization,
+                    sample.keys, sample.frees, sample.realloc_bytes, sample.malloc_bytes,
+                    sample.calloc_bytes, sample.allocation_calls);
+            }
+            arena_free(&result); arena_free(&source);
+        }
+    }
+    unsigned growing = 0u;
+    for (unsigned atomic = 0u; atomic < 2u; atomic++)
+        for (unsigned phase = 0u; phase < phase_count; phase++) {
+            RhoWorkSample small = samples[atomic][0][phase], large = samples[atomic][3][phase];
+            if (large.entries > 2u*small.entries ||
+                large.realloc_bytes > 2u*small.realloc_bytes ||
+                large.malloc_bytes > 2u*small.malloc_bytes ||
+                large.calloc_bytes > 2u*small.calloc_bytes) growing++;
+        }
+    printf("{\"width_growing_phase_observations\":%u,\"universal_bound_proved\":false,"
+        "\"linked_provider_work_measured\":false}\n", growing);
+    return samples[1][2][RHO_RUN_LOAD].normalization > widths[2] &&
+        !samples[0][2][RHO_RUN_LOAD].normalization ? 0 : 1;
+}
+#endif
 
 static uint64_t payload_callbacks;
 CettaEvalCompletion __real_eval_top_with_registry_completion(
@@ -216,6 +501,9 @@ static bool same_account(RhocalcRunAccount a, RhocalcRunAccount b) {
         a.comparison_text_probes==b.comparison_text_probes &&
         a.preparation_steps==b.preparation_steps && a.channel_scan_probes==b.channel_scan_probes &&
         a.validation_steps==b.validation_steps && a.normalization_steps==b.normalization_steps &&
+        a.substitution_steps==b.substitution_steps &&
+        a.substitution_apply_steps==b.substitution_apply_steps &&
+        a.substitution_memo_steps==b.substitution_memo_steps &&
         a.key_steps==b.key_steps && a.key_bytes==b.key_bytes &&
         a.construction_children==b.construction_children && a.construction_bytes==b.construction_bytes &&
         a.validation_memo_steps==b.validation_memo_steps &&
@@ -246,8 +534,11 @@ static bool same_account(RhocalcRunAccount a, RhocalcRunAccount b) {
 static bool nonmemo_account(RhocalcRunAccount *account) {
     RETAIN_CHECK(account->validation_memo_steps<=account->validation_steps &&
         account->normalization_memo_steps<=account->normalization_steps &&
+        account->substitution_memo_steps<=account->substitution_steps &&
         account->selector_memo_steps<=account->preparation_steps &&
         account->selector_memo_steps<=account->selector_steps);
+    RETAIN_CHECK(account->substitution_memo_steps<=account->validation_memo_steps ||
+        account->substitution_memo_steps-account->validation_memo_steps<=account->normalization_memo_steps);
     uint64_t rest=account->driver_steps;
     RETAIN_CHECK(account->validation_memo_steps<=rest);rest-=account->validation_memo_steps;
     RETAIN_CHECK(account->normalization_memo_steps<=rest);rest-=account->normalization_memo_steps;
@@ -257,6 +548,12 @@ static bool nonmemo_account(RhocalcRunAccount *account) {
     account->normalization_steps-=account->normalization_memo_steps;
     account->selector_steps-=account->selector_memo_steps;
     account->preparation_steps-=account->selector_memo_steps;
+    RETAIN_CHECK(account->substitution_memo_steps<=account->selector_steps &&
+        account->substitution_memo_steps<=account->preparation_steps);
+    account->selector_steps-=account->substitution_memo_steps;
+    account->preparation_steps-=account->substitution_memo_steps;
+    account->substitution_steps-=account->substitution_memo_steps;
+    account->substitution_memo_steps=0u;
     account->validation_memo_steps=account->normalization_memo_steps=account->selector_memo_steps=0u;
     return true;
 }
@@ -584,15 +881,15 @@ static bool retained_reaction_preparation_tests(void) {
     Atom *source=rho_normalize_proc(&arena,rho_par_from_vec_in_order(&arena,&source_parts));
     RETAIN_CHECK(source);
     RhoView source_view=rho_view(source);
-    RhoAtomVec components={0};RhoKeyProduct *keys[13]={0};
+    RhoAtomVec components={0};RhoComponentKey key_rows[13]={0};RhoSortBuffer keys={.linear=key_rows,.capacity=13};
     uint32_t send=UINT32_MAX,recv=UINT32_MAX;
     for (uint32_t i=0u;i<source_view.nargs;i++) {
         RETAIN_CHECK(rho_vec_push(&components,source_view.args[i]));
         RhoProcessKeyCursor job={0};
         RETAIN_CHECK(rho_process_key_cursor_begin(&job,NULL,source_view.args[i],false));
         while (!job.done) RETAIN_CHECK(rho_process_key_cursor_advance(&job,NULL));
-        bool owned=false;keys[i]=rho_process_key_cursor_take(&job,&owned);
-        RETAIN_CHECK(keys[i] && owned);rho_process_key_cursor_free(&job);
+        bool owned=false;rho_component_key_row(&keys,i)->product=rho_process_key_cursor_take(&job,&owned);
+        RETAIN_CHECK(rho_component_key_row(&keys,i)->product && owned);rho_process_key_cursor_free(&job);
         RhoView part=rho_view(source_view.args[i]);
         if (part.kind==RHO_SEND) send=i;
         if (part.kind==RHO_RECV && atom_eq(part.args[0],rho_view(parts[1]).args[0])) recv=i;
@@ -611,7 +908,7 @@ static bool retained_reaction_preparation_tests(void) {
     for (size_t i=0u;i<N;i++) {
         Atom *body=rho_normalize_proc(&arena,read_process(&arena,bodies[i]));RETAIN_CHECK(body);
         RhoReactionViewCursor job={0};
-        RETAIN_CHECK(rho_reaction_view_cursor_begin(&job,&views[i],&components,keys,send,recv,body));
+        RETAIN_CHECK(rho_reaction_view_cursor_begin(&job,&views[i],&components,&keys,send,recv,body));
         while (!job.done) RETAIN_CHECK(rho_reaction_view_cursor_advance(&job));
         RETAIN_CHECK(rho_reaction_view_cursor_take(&job));rho_reaction_view_cursor_free(&job);
     }
@@ -665,18 +962,26 @@ static bool retained_reaction_preparation_tests(void) {
     }
     RETAIN_CHECK(saw_component_wait && saw_byte_wait && saw_shift && saw_merge);
     for (size_t i=0u;i<N;i++) rho_reaction_key_view_free(&views[i]);
-    for (uint32_t i=0u;i<components.len;i++) rho_key_product_free(keys[i]);
+    for (uint32_t i=0u;i<components.len;i++) rho_key_product_free(rho_component_key_row(&keys,i)->product);
     rho_vec_free(&components);arena_free(&arena);
     puts("PASS: retained reaction products, quote counters, merge bytes, asymmetric pending replies and contextual comparison oracle");
     return true;
 }
 
-/* Hold the entire prepared machine graph fixed, not merely its original
- * input. With a fresh empty cache over those same addresses, batching the
- * selector preserves its FULL account including every physical memo probe. */
-static bool retained_fixed_selector_tests(void) {
+/* Literal variable-free bodies retain the complete prepared source graph,
+ * so each fresh cursor probes the same addresses. Variable-bearing bodies
+ * allocate real substitution replies: their fresh physical hash placement
+ * is not fixed by holding only the machine's input graph. */
+static bool retained_selector_batching_case(bool fixed_graph) {
+    retained_current=fixed_graph ? "exact invoice over the fixed closed-body graph"
+        : "fresh semantic-substitution graphs across selector batching";
     Arena arena;arena_init(&arena);
-    const char *text="(rho:par (rho:send $c rho:nil) (rho:send $c (rho:send $payload rho:nil)) "
+    const char *text=fixed_graph
+        ? "(rho:par (rho:send $c rho:nil) (rho:send $c (rho:send $payload rho:nil)) "
+          "(rho:recv $c $x (rho:send (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) rho:nil)) "
+          "(rho:recv $c $x (rho:par (rho:send (rho:quote rho:nil) rho:nil) "
+          "(rho:send (rho:quote (rho:send (rho:quote rho:nil) rho:nil)) rho:nil))))"
+        : "(rho:par (rho:send $c rho:nil) (rho:send $c (rho:send $payload rho:nil)) "
         "(rho:recv $c $x (rho:recv $a $y (rho:send $y rho:nil))) "
         "(rho:recv $c $x (rho:par (rho:send $b rho:nil) (rho:recv $a $y rho:nil))))";
     Atom *input=read_process(&arena,text);RETAIN_CHECK(input);
@@ -716,7 +1021,8 @@ static bool retained_fixed_selector_tests(void) {
         rho_canonical_cursor_account(&cursor,&account);
         RETAIN_CHECK(cursor.found && cursor.next && account.selector_memo_steps);
         if (!i) {reference=account;answer=cursor.next;ordinal=cursor.best_ordinal;}
-        else RETAIN_CHECK(same_account(reference,account) && atom_eq(answer,cursor.next) &&
+        else RETAIN_CHECK((fixed_graph ? same_account(reference,account)
+                            : same_nonmemo_account(reference,account)) && atom_eq(answer,cursor.next) &&
             ordinal==cursor.best_ordinal);
         rho_canonical_cursor_free(&cursor);
     }
@@ -733,7 +1039,13 @@ static bool retained_fixed_selector_tests(void) {
         RETAIN_CHECK(machine.current==held_source);
     }
     rho_machine_free(&machine);arena_free(&arena);
-    puts("PASS: fixed prepared graph retains exact complete selector/memo account across poll batching");
+    return true;
+}
+
+static bool retained_fixed_selector_tests(void) {
+    RETAIN_CHECK(retained_selector_batching_case(true) &&
+        retained_selector_batching_case(false));
+    puts("PASS: fixed prepared graph retains the full memo invoice; fresh substitution graphs preserve semantics and the non-memo projection");
     return true;
 }
 
@@ -751,7 +1063,8 @@ static bool retained_reaction_build_case(uint32_t kept,uint32_t width,bool dupli
     }
     Atom *original=rho_par_from_vec(&arena,&parts);rho_vec_free(&parts);RETAIN_CHECK(original);
     RhoView initial=rho_view(original);uint32_t send_index=UINT32_MAX,recv_index=UINT32_MAX;
-    RhoKeyProduct **keys=calloc(initial.nargs,sizeof(*keys));RETAIN_CHECK(keys);
+    RhoComponentKey *key_rows=calloc(initial.nargs,sizeof(*key_rows));
+    RhoSortBuffer keys={.linear=key_rows,.capacity=initial.nargs};RETAIN_CHECK(key_rows);
     for (uint32_t i=0u;i<initial.nargs;i++) {
         RETAIN_CHECK(rho_vec_push(&components,initial.args[i]));
         if (initial.args[i]==send) send_index=i;
@@ -759,8 +1072,8 @@ static bool retained_reaction_build_case(uint32_t kept,uint32_t width,bool dupli
         RhoProcessKeyCursor key={0};
         RETAIN_CHECK(rho_process_key_cursor_begin(&key,NULL,initial.args[i],false));
         while (!key.done) RETAIN_CHECK(rho_process_key_cursor_advance(&key,NULL));
-        bool owned=false;keys[i]=rho_process_key_cursor_take(&key,&owned);
-        RETAIN_CHECK(keys[i] && owned);rho_process_key_cursor_free(&key);
+        bool owned=false;rho_component_key_row(&keys,i)->product=rho_process_key_cursor_take(&key,&owned);
+        RETAIN_CHECK(rho_component_key_row(&keys,i)->product && owned);rho_process_key_cursor_free(&key);
     }
     RETAIN_CHECK(send_index<components.len && recv_index<components.len);
     Atom *leaf=read_process(&source,"(rho:send (rho:quote rho:nil) rho:nil)");
@@ -775,7 +1088,7 @@ static bool retained_reaction_build_case(uint32_t kept,uint32_t width,bool dupli
         : width ? body_parts[0] : rho_nil(&source);
     free(body_parts);RETAIN_CHECK(body);
     RhoReactionKeyView view={0};RhoReactionViewCursor preparation={0};
-    RETAIN_CHECK(rho_reaction_view_cursor_begin(&preparation,&view,&components,keys,
+    RETAIN_CHECK(rho_reaction_view_cursor_begin(&preparation,&view,&components,&keys,
         send_index,recv_index,body));
     while (!preparation.done) RETAIN_CHECK(rho_reaction_view_cursor_advance(&preparation));
     RETAIN_CHECK(rho_reaction_view_cursor_take(&preparation));rho_reaction_view_cursor_free(&preparation);
@@ -833,10 +1146,10 @@ static bool retained_reaction_build_case(uint32_t kept,uint32_t width,bool dupli
     RETAIN_CHECK(cuts[3]);
     if (width && kept) RETAIN_CHECK(cuts[1]);
     if (total>1u) RETAIN_CHECK(cuts[2]);
-    if (width>1u && !duplicate) RETAIN_CHECK(view.body_items[0].ordinal!=0u);
+    if (width>1u && !duplicate) RETAIN_CHECK(rho_keyed_row(&view.body_items,0u)->ordinal!=0u);
     rho_reaction_key_view_free(&view);
-    for (uint32_t i=0u;i<components.len;i++) rho_key_product_free(keys[i]);
-    free(keys);rho_vec_free(&components);arena_free(&source);
+    for (uint32_t i=0u;i<components.len;i++) rho_key_product_free(rho_component_key_row(&keys,i)->product);
+    free(key_rows);rho_vec_free(&components);arena_free(&source);
     /* Complete results own copied body storage and retain original base
      * resources. Dropping the source body and all key/control owners is safe. */
     RETAIN_CHECK(atom_eq(saved,oracle));
@@ -941,21 +1254,21 @@ static bool retained_reaction_tie_tests(void) {
     Atom *second=read_process(&source,"(rho:send (rho:quote rho:nil) rho:nil)");
     Atom *body=rho_binary(&source,"rho:par",first,second);
     Atom *items[]={send,recv,base};RhoAtomVec components={.items=items,.len=3u,.cap=3u};
-    RhoKeyProduct *keys[3]={0};
+    RhoComponentKey key_rows[3]={0};RhoSortBuffer keys={.linear=key_rows,.capacity=3};
     RETAIN_CHECK(base!=first && first!=second && atom_eq(base,first) && atom_eq(first,second));
     for (uint32_t i=0u;i<3u;i++) {
         RhoProcessKeyCursor key={0};bool owned=false;
         RETAIN_CHECK(rho_process_key_cursor_begin(&key,NULL,items[i],false));
         while (!key.done) RETAIN_CHECK(rho_process_key_cursor_advance(&key,NULL));
-        keys[i]=rho_process_key_cursor_take(&key,&owned);RETAIN_CHECK(keys[i] && owned);
+        rho_component_key_row(&keys,i)->product=rho_process_key_cursor_take(&key,&owned);RETAIN_CHECK(rho_component_key_row(&keys,i)->product && owned);
         rho_process_key_cursor_free(&key);
     }
     RhoReactionKeyView view={0};RhoReactionViewCursor preparation={0};
-    RETAIN_CHECK(rho_reaction_view_cursor_begin(&preparation,&view,&components,keys,0u,1u,body));
+    RETAIN_CHECK(rho_reaction_view_cursor_begin(&preparation,&view,&components,&keys,0u,1u,body));
     while (!preparation.done) RETAIN_CHECK(rho_reaction_view_cursor_advance(&preparation));
     RETAIN_CHECK(rho_reaction_view_cursor_take(&preparation));rho_reaction_view_cursor_free(&preparation);
-    RETAIN_CHECK(!strcmp(keys[2]->text,view.body_items[0].key) &&
-        !strcmp(view.body_items[0].key,view.body_items[1].key));
+    RETAIN_CHECK(!strcmp(rho_component_key_row(&keys,2)->product->text,rho_keyed_row(&view.body_items,0u)->key) &&
+        !strcmp(rho_keyed_row(&view.body_items,0u)->key,rho_keyed_row(&view.body_items,1u)->key));
     RhoReactionComponentCursor merge={0};rho_reaction_component_cursor_init(&merge,&view);
     for (uint32_t i=0u;i<3u;i++) {
         RhoReactionRow row={0};RhoKeyStep status;
@@ -965,7 +1278,7 @@ static bool retained_reaction_tie_tests(void) {
     }
     RhoReactionRow end={0};RETAIN_CHECK(rho_reaction_component_cursor_next(&merge,&end)==RHO_KEY_END);
     rho_reaction_key_view_free(&view);
-    for (uint32_t i=0u;i<3u;i++) rho_key_product_free(keys[i]);
+    for (uint32_t i=0u;i<3u;i++) rho_key_product_free(rho_component_key_row(&keys,i)->product);
     arena_free(&source);arena_free(&arena);
     puts("PASS: equal reset keys keep the base occurrence first and distinct body origins in original order");
     return true;
@@ -1223,6 +1536,8 @@ static bool memo_fill(CettaNodeMemo *memo, const void *const *keys, size_t count
     return true;
 }
 
+static size_t storage_blocks(const CettaSegmentedArray *array);
+
 static bool retained_node_memo_tests(void) {
     retained_current="source/role memo, resumable collision growth and cancellation";
     unsigned char storage[8192];
@@ -1239,21 +1554,21 @@ static bool retained_node_memo_tests(void) {
         uint64_t before=cursor.probes;
         cetta_node_memo_advance(&cursor);
         RETAIN_CHECK(cursor.probes-before<=1u && ++total<10000u);
-        clearing|=cursor.grown && cursor.clear_position && cursor.clear_position<cursor.grow_cap;
-        moving|=cursor.grown && cursor.copy_position && cursor.copy_position<memo.cap;
-        collision|=cursor.grown && cursor.inspected>1u;
+        clearing|=cursor.grown.blocks && cursor.clear_position && cursor.clear_position<cursor.grow_cap;
+        moving|=cursor.grown.blocks && cursor.copy_position && cursor.copy_position<memo.cap;
+        collision|=cursor.grown.blocks && cursor.inspected>1u;
     }
     RETAIN_CHECK(cursor.status==CETTA_NODE_MEMO_STORED && clearing && moving && collision && memo.cap==128u);
     cetta_node_memo_cancel(&cursor); cetta_node_memo_free(&memo);
     for (uint64_t cut=0u;cut<=total;cut++) {
         RETAIN_CHECK(memo_fill(&memo,keys,40u));
         cetta_node_memo_store_begin(&cursor,&memo,keys[40],0u,99u,SIZE_MAX);
-        RETAIN_CHECK(cursor.status==CETTA_NODE_MEMO_PENDING && !cursor.steps && !cursor.probes && !cursor.grown);
+        RETAIN_CHECK(cursor.status==CETTA_NODE_MEMO_PENDING && !cursor.steps && !cursor.probes && !cursor.grown.blocks);
         for (uint64_t step=0u;step<cut;step++) {
             uint64_t before=cursor.probes;
             cetta_node_memo_advance(&cursor);
             RETAIN_CHECK(cursor.probes-before<=1u && cursor.steps==step+1u);
-            if (cursor.grown) RETAIN_CHECK(memo.cap==64u);
+            if (cursor.grown.blocks && memo.cap!=cursor.grow_cap) RETAIN_CHECK(memo.cap==64u);
         }
         bool inserted=cursor.status==CETTA_NODE_MEMO_STORED;
         cetta_node_memo_cancel(&cursor);
@@ -1266,6 +1581,15 @@ static bool retained_node_memo_tests(void) {
         cetta_node_memo_free(&memo);
     }
     RETAIN_CHECK(memo_fill(&memo,keys,40u));
+    size_t old_backing=memo.slots.live_bytes;
+    RETAIN_CHECK(old_backing>64u*sizeof(CettaNodeMemoSlot));
+    cetta_node_memo_store_begin(&cursor,&memo,keys[40],0u,99u,old_backing);
+    while (cursor.status==CETTA_NODE_MEMO_PENDING) {
+        cetta_node_memo_advance(&cursor);
+        RETAIN_CHECK(memo.slots.live_bytes+cursor.grown.live_bytes<=old_backing);
+    }
+    RETAIN_CHECK(cursor.status==CETTA_NODE_MEMO_REFUSED && memo.cap==64u);
+    cetta_node_memo_cancel(&cursor);
     cetta_node_memo_store_begin(&cursor,&memo,keys[40],0u,99u,64u*sizeof(CettaNodeMemoSlot));
     while (cursor.status==CETTA_NODE_MEMO_PENDING) cetta_node_memo_advance(&cursor);
     RETAIN_CHECK(cursor.status==CETTA_NODE_MEMO_REFUSED && memo.cap==64u && memo.len==32u);
@@ -1287,7 +1611,62 @@ static bool retained_node_memo_tests(void) {
     RETAIN_CHECK(!cetta_node_memo_store_checked(&memo,keys[42],0u,9u,NULL,NULL,SIZE_MAX));
     RETAIN_CHECK(cetta_node_memo_find(&memo,keys[41],0u,&value) && value==456u);
     cetta_node_memo_free(&memo);
-    printf("PASS: retained source/role memo preserves committed entries across %" PRIu64 " growth/collision cuts\n",total+1u);
+    /* Two 64-row pages plus four directories constitute the replacement.
+     * Admission counts both table generations until the old one retires. */
+    size_t replacement_bytes=4u*(sizeof(CettaSegmentedBlock)+128u*sizeof(CettaSegmentedBlock *))+
+        2u*(sizeof(CettaSegmentedBlock)+64u*sizeof(CettaNodeMemoSlot));
+    for(unsigned tight=0u;tight<2u;tight++) {
+        RETAIN_CHECK(memo_fill(&memo,keys,40u));
+        size_t budget=memo.slots.live_bytes+replacement_bytes-tight;
+        cetta_node_memo_store_begin(&cursor,&memo,keys[40],0u,99u,budget);
+        while(cursor.status==CETTA_NODE_MEMO_PENDING) {
+            size_t before_blocks=storage_blocks(&cursor.grown);
+            bool retiring=memo.cap==cursor.grow_cap && cursor.grown.blocks;
+            cetta_node_memo_advance(&cursor);
+            RETAIN_CHECK(memo.slots.live_bytes+cursor.grown.live_bytes<=budget &&
+                cursor.allocated_bytes<=replacement_bytes);
+            if(retiring) RETAIN_CHECK(before_blocks-storage_blocks(&cursor.grown)<=1u);
+            for(size_t i=0u;i<40u;i++) {
+                uintptr_t kept=999u;
+                RETAIN_CHECK(cetta_node_memo_find(&memo,keys[i],0u,&kept) && kept==i%7u);
+            }
+        }
+        RETAIN_CHECK(tight ? cursor.status==CETTA_NODE_MEMO_REFUSED && memo.cap==64u :
+            cursor.status==CETTA_NODE_MEMO_STORED && memo.cap==128u &&
+                cursor.allocated_bytes==replacement_bytes);
+        cetta_node_memo_cancel(&cursor);
+        size_t blocks=storage_blocks(&memo.slots),released=0u;
+        while(memo.slots.blocks) {
+            size_t before=memo.slots.live_bytes;
+            bool done=cetta_node_memo_release_one(&memo);released++;
+            RETAIN_CHECK(memo.slots.live_bytes<before && storage_blocks(&memo.slots)+released==blocks);
+            if(!done) {
+                CettaNodeMemoCursor rejected={0};
+                cetta_node_memo_find_begin(&rejected,&memo,keys[0],0u);
+                RETAIN_CHECK(rejected.status==CETTA_NODE_MEMO_REFUSED);
+            }
+        }
+        RETAIN_CHECK(!memo.retiring && !memo.cap && !memo.len);
+    }
+    /* A lower-half collision cluster cannot detect publication after half a
+     * table scan. Pin a real upper-half occupied slot as an independent case;
+     * the reference checks every previously committed lookup after each cut. */
+    const void *upper_keys[41];size_t upper_count=0u;
+    for(size_t i=0u;i<sizeof(storage) && upper_count<41u;i++)
+        if(memo_collision_key(&storage[i])==63u) upper_keys[upper_count++]=&storage[i];
+    RETAIN_CHECK(upper_count==41u && memo_fill(&memo,upper_keys,40u) && memo.cap==64u);
+    RETAIN_CHECK(cetta_node_memo_entry(&memo,63u)->node!=NULL);
+    cetta_node_memo_store_begin(&cursor,&memo,upper_keys[40],0u,99u,SIZE_MAX);
+    while(cursor.status==CETTA_NODE_MEMO_PENDING) {
+        cetta_node_memo_advance(&cursor);
+        for(unsigned i=0u;i<40u;i++) {
+            uintptr_t kept=999u;
+            RETAIN_CHECK(cetta_node_memo_find(&memo,upper_keys[i],0u,&kept) && kept==i%7u);
+        }
+    }
+    RETAIN_CHECK(cursor.status==CETTA_NODE_MEMO_STORED && memo.cap==128u);
+    cetta_node_memo_cancel(&cursor);cetta_node_memo_free(&memo);
+    printf("PASS: retained source/role memo preserves committed entries across %" PRIu64 " growth/collision cuts, exact backing-budget thresholds and one-block replacement/disposal steps\n",total+1u);
     return true;
 }
 
@@ -1370,8 +1749,8 @@ static bool retained_preparation_tests(void) {
                 RETAIN_CHECK(!run->machine.current &&
                     rhocalc_run_poll(run, 0u, &used) == RHOCALC_RUN_PENDING && !used &&
                     same_account(before, rhocalc_run_account(run)));
-                if (quantum == 1u && run->normalization.length) {
-                    RhoNormalizeFrame *frame = &run->normalization.frames[run->normalization.length - 1u];
+                if (quantum == 1u && run->normalization.frames.length) {
+                    RhoNormalizeFrame *frame = rho_normalize_frame_at(&run->normalization,run->normalization.frames.length - 1u);
                     unsigned cut = frame->key && frame->key->text.len > 1u ? 2u :
                         frame->stage == 5u && frame->sort.output ? 3u :
                         frame->assembly && frame->position > 1u ? 4u :
@@ -1479,8 +1858,8 @@ static bool retained_preparation_tests(void) {
     RhocalcRun *deep_run = rhocalc_run_open_held(&result, deep, &profile, NULL);
     RETAIN_CHECK(deep_run && deep_oracle);
     while (deep_run->phase != RHO_RUN_SELECT) {
-        if (deep_run->normalization.length > 16u) {
-            RhoNormalizeFrame *frame = &deep_run->normalization.frames[deep_run->normalization.length-1u];
+        if (deep_run->normalization.frames.length > 16u) {
+            RhoNormalizeFrame *frame = rho_normalize_frame_at(&deep_run->normalization,deep_run->normalization.frames.length-1u);
             if (!nested_sort_cut && frame->stage == 5u && frame->sort.output)
                 nested_sort_cut = deep_run->account.driver_steps;
         }
@@ -1491,7 +1870,7 @@ static bool retained_preparation_tests(void) {
     rhocalc_run_close(deep_run);
     deep_run = rhocalc_run_open_held(&result, deep, &profile, NULL);
     RETAIN_CHECK(deep_run && rhocalc_run_poll(deep_run, nested_sort_cut, NULL) == RHOCALC_RUN_PENDING &&
-        deep_run->normalization.length > 16u && !deep_run->machine.current);
+        deep_run->normalization.frames.length > 16u && !deep_run->machine.current);
     rhocalc_run_close(deep_run);
     arena_free(&result); arena_free(&source);
     printf("PASS: held rho input, retained validation/normalization/keys/sort/assembly, "
@@ -1557,6 +1936,1232 @@ static bool retained_value_observation_tests(void) {
     return true;
 }
 
+static bool semantic_substitution_case(Arena *arena, Atom *source,
+        VarId variable, Atom *replacement, Atom *expected) {
+    RhoSubstitutionCursor cursor={0};
+    RETAIN_CHECK(rho_substitution_begin(&cursor,arena,source,variable,replacement));
+    while (!cursor.done) {
+        uint64_t before=cursor.account.substitution_steps;
+        RETAIN_CHECK(rho_substitution_advance(&cursor) &&
+            cursor.account.substitution_steps==before+1u);
+    }
+    RETAIN_CHECK(cursor.returned && atom_eq(cursor.returned,expected));
+    uint64_t paid=cursor.account.substitution_steps;
+    RETAIN_CHECK(rho_substitution_advance(&cursor) && cursor.account.substitution_steps==paid);
+    rho_substitution_cursor_clear(&cursor);
+    RETAIN_CHECK(!cursor.returned && !cursor.arena && !cursor.frames.length &&
+        cursor.account.substitution_steps==paid);
+    return true;
+}
+
+static bool retained_payload_substitution_tests(void) {
+    retained_current="deferred result classification distinguishes data from refused preparation";
+    Arena source,work;arena_init_detached(&source);arena_init_detached(&work);
+    Atom *x=atom_var_with_id(&source,"payload",fresh_var_id());
+    Atom *y=atom_var_with_id(&source,"bound",fresh_var_id());
+    Atom *nil=rho_nil(&source);
+    Atom *channel=rho_unary(&source,"rho:quote",nil);
+    Atom *drop=rho_unary(&source,"rho:drop",x);
+    Atom *seven=rho_value_proc(&source,atom_int(&source,7));
+    Atom *par_children[]={nil,seven};
+    Atom *valid=rho_call(&source,"rho:par",par_children,2u);
+    Atom *ordinary=atom_expr2(&source,atom_symbol(&source,"ordinary"),atom_int(&source,11));
+    Atom *bad_send=rho_binary(&source,"rho:send",channel,ordinary);
+    Atom *bad_receive=rho_ternary(&source,"rho:recv",channel,atom_int(&source,0),nil);
+    Atom *persistent=rho_ternary(&source,"rho:recv-persistent",channel,y,rho_unary(&source,"rho:drop",y));
+    Atom *payloads[]={valid,ordinary,bad_send,bad_receive,channel,persistent,atom_int(&source,5)};
+    Atom *expected[]={seven,rho_value_proc(&source,ordinary),rho_value_proc(&source,bad_send),
+        rho_value_proc(&source,bad_receive),rho_value_proc(&source,channel),persistent,
+        rho_value_proc(&source,payloads[6])};
+    bool saw_check=false,saw_reply=false;
+    for (size_t i=0u;i<sizeof(payloads)/sizeof(*payloads);i++) {
+        RhoSubstitutionCursor cursor={0};
+        RETAIN_CHECK(rho_substitution_begin_payload(&cursor,&work,drop,x->var_id,payloads[i]));
+        while (!cursor.done) {
+            const char *other=cursor.account.substitution_steps%2u
+                ? "odd invocation diagnostic" : "even invocation diagnostic";
+            rho_validation_clear();rho_validation_set("%s",other);
+            RETAIN_CHECK(rho_substitution_advance(&cursor));
+            const char *diagnostic=rhocalc_last_validation_error();
+            RETAIN_CHECK(diagnostic && strcmp(diagnostic,other)==0);
+            saw_check=saw_check || cursor.check.frames.length>0u;
+            if (cursor.frames.length==1u && rho_substitution_frame_at(&cursor,0)->role==RHO_SUBST_COMM &&
+                    rho_substitution_frame_at(&cursor,0)->stage==2u) {
+                Atom *reply=cursor.returned;
+                uint64_t normalized=cursor.account.normalization_steps;
+                RETAIN_CHECK(reply && rho_substitution_advance(&cursor));
+                RhoView quote=rho_view(rho_substitution_frame_at(&cursor,0)->replacement);
+                RETAIN_CHECK(rho_substitution_frame_at(&cursor,0)->stage==3u &&
+                    quote.kind==RHO_QUOTE && quote.nargs==1u && quote.args[0]==reply &&
+                    cursor.account.normalization_steps==normalized);
+                saw_reply=true;
+            }
+        }
+        RETAIN_CHECK(cursor.returned && atom_eq(cursor.returned,expected[i]) &&
+            cursor.account.validation_steps>0u);
+        rho_substitution_cursor_clear(&cursor);
+    }
+    RETAIN_CHECK(saw_check && saw_reply);
+
+    /* A real memo storage refusal after a checked prefix supplies no evidence
+     * that the whole process is incompatible. It must not become val(data). */
+    Atom *many[12];
+    for (size_t i=0u;i<12u;i++) many[i]=rho_value_proc(&source,atom_int(&source,(int64_t)i));
+    Atom *wide=rho_call(&source,"rho:par",many,12u);
+    RhoSubstitutionCursor cursor={0};
+    RETAIN_CHECK(rho_substitution_begin_payload(&cursor,&work,drop,x->var_id,wide));
+    bool refused=false,injected=false;
+    while (!cursor.done && !refused) {
+        if (!injected && cursor.check.memo.inline_len>=8u && cursor.check.memo_cursor.writer) {
+            cursor.check.memo_cursor.byte_limit=0u;injected=true;
+        }
+        refused=!rho_substitution_advance(&cursor);
+    }
+    RETAIN_CHECK(injected && refused && !cursor.done && !cursor.returned &&
+        cursor.check.status==RHO_CHECK_REFUSED && cursor.account.validation_steps>0u &&
+        cursor.account.substitution_memo_steps>0u);
+    rho_substitution_cursor_clear(&cursor);rho_validation_clear();
+    arena_free(&work);arena_free(&source);
+    puts("PASS: retained deferred-result admission preserves raw data, normalizes actual process replies and refuses incomplete grammar checking");
+    return true;
+}
+
+static bool retained_semantic_substitution_tests(void) {
+    retained_current="actual semantic substitution replies, scope, opacity and fresh binders";
+    Arena source;arena_init_detached(&source);
+    Atom *x=atom_var_with_id(&source,"same",fresh_var_id());
+    Atom *other=atom_var_with_id(&source,"same",fresh_var_id());
+    Atom *same=atom_var_with_id(&source,"other-spelling",x->var_id);
+    Atom *name_key=atom_expr2(&source,atom_symbol(&source,"Name"),atom_int(&source,17));
+    Atom *y=atom_var_with_name_key(&source,name_key,fresh_var_id());
+    Atom *nil=rho_nil(&source);
+    Atom *channel=rho_unary(&source,"rho:quote",nil);
+    Atom *seven=rho_value_proc(&source,atom_int(&source,7));
+    Atom *replacement=rho_unary(&source,"rho:quote",seven);
+    Atom *drop=rho_unary(&source,"rho:drop",x);
+    Atom *inert=rho_unary(&source,"rho:drop",replacement);
+    Atom *normalized_match=rho_unary(&source,"rho:drop",rho_unary(&source,"rho:quote",drop));
+    Atom *quoted=rho_unary(&source,"rho:quote",rho_binary(&source,"rho:send",x,nil));
+    Atom *opaque=rho_binary(&source,"rho:send",quoted,nil);
+    Atom *self=rho_unary(&source,"rho:quote",drop);
+    Atom *children[]={nil,drop};
+    Atom *shadow_body=rho_call(&source,"rho:par",children,2u);
+    Atom *pair=atom_expr3(&source,atom_symbol(&source,"Pair"),x,x);
+    Atom *applied_pair=atom_expr3(&source,atom_symbol(&source,"Pair"),replacement,replacement);
+    for (unsigned interning=0u;interning<2u;interning++) {
+        HashConsTable intern;hashcons_init_compact(&intern);
+        Arena arena;arena_init_detached(&arena);
+        if (interning) arena_set_hashcons(&arena,&intern);
+        RETAIN_CHECK(semantic_substitution_case(&arena,drop,x->var_id,replacement,seven));
+        RETAIN_CHECK(semantic_substitution_case(&arena,inert,x->var_id,replacement,inert));
+        RETAIN_CHECK(semantic_substitution_case(&arena,normalized_match,x->var_id,replacement,seven));
+        RETAIN_CHECK(semantic_substitution_case(&arena,opaque,x->var_id,replacement,opaque));
+        RETAIN_CHECK(semantic_substitution_case(&arena,drop,other->var_id,replacement,drop));
+        RETAIN_CHECK(semantic_substitution_case(&arena,rho_unary(&source,"rho:drop",same),
+            x->var_id,replacement,seven));
+        RETAIN_CHECK(semantic_substitution_case(&arena,drop,x->var_id,self,drop));
+        RETAIN_CHECK(semantic_substitution_case(&arena,drop,x->var_id,quoted,
+            rho_binary(&source,"rho:send",x,nil)));
+        RETAIN_CHECK(semantic_substitution_case(&arena,rho_value_proc(&source,pair),
+            x->var_id,replacement,rho_value_proc(&source,applied_pair)));
+        for (unsigned persistent=0u;persistent<2u;persistent++) {
+            const char *head=persistent ? "rho:recv-persistent" : "rho:recv";
+            Atom *receiver=rho_ternary(&source,head,x,x,shadow_body);
+            Atom *expected=rho_ternary(&source,head,replacement,x,drop);
+            RETAIN_CHECK(semantic_substitution_case(&arena,receiver,x->var_id,replacement,expected));
+        }
+        arena_free(&arena);hashcons_free(&intern);
+    }
+
+    /* Free-variable queries inspect quotations; substitution leaves their
+     * surviving syntax opaque. Each colliding binder is minted once. */
+    Atom *drop_y=rho_unary(&source,"rho:drop",y);
+    Atom *open_replacement=rho_unary(&source,"rho:quote",drop_y);
+    Atom *inner=rho_ternary(&source,"rho:recv",y,y,drop);
+    Atom *outer=rho_ternary(&source,"rho:recv",channel,y,inner);
+    Arena arena;arena_init_detached(&arena);
+    RhoSubstitutionCursor cursor={0};
+    RETAIN_CHECK(rho_substitution_begin(&cursor,&arena,outer,x->var_id,open_replacement));
+    bool held_fresh=false;
+    while (!cursor.done) {
+        size_t saved=SIZE_MAX;Atom *saved_source=NULL;VarId saved_id=VAR_ID_NONE;
+        for (size_t i=0u;i<cursor.frames.length;i++) {
+            RhoSubstitutionFrame *frame=rho_substitution_frame_at(&cursor,i);
+            if (frame->role==RHO_SUBST_PROC && frame->binder &&
+                    (frame->view.kind==RHO_RECV || frame->view.kind==RHO_RECV_PERSISTENT) &&
+                    !var_id_eq(frame->binder->var_id,frame->view.args[1]->var_id)) {
+                saved=i;saved_source=frame->source;saved_id=frame->binder->var_id;break;
+            }
+        }
+        RETAIN_CHECK(rho_substitution_advance(&cursor));
+        if (saved<cursor.frames.length && rho_substitution_frame_at(&cursor,saved)->source==saved_source) {
+            RETAIN_CHECK(rho_substitution_frame_at(&cursor,saved)->binder &&
+                var_id_eq(rho_substitution_frame_at(&cursor,saved)->binder->var_id,saved_id));
+            held_fresh=true;
+        }
+    }
+    RETAIN_CHECK(held_fresh);
+    RhoView first=rho_view(cursor.returned);
+    RETAIN_CHECK(first.kind==RHO_RECV && first.nargs==3u && first.args[1]->kind==ATOM_VAR);
+    RhoView second=rho_view(first.args[2]);
+    RETAIN_CHECK(second.kind==RHO_RECV && second.nargs==3u &&
+        second.args[0]->kind==ATOM_VAR && second.args[1]->kind==ATOM_VAR);
+    RhoView exposed=rho_view(second.args[2]);
+    RETAIN_CHECK(exposed.kind==RHO_DROP && exposed.nargs==1u && exposed.args[0]->kind==ATOM_VAR &&
+        !var_id_eq(first.args[1]->var_id,y->var_id) &&
+        !var_id_eq(second.args[1]->var_id,y->var_id) &&
+        !var_id_eq(first.args[1]->var_id,second.args[1]->var_id) &&
+        var_id_eq(second.args[0]->var_id,first.args[1]->var_id) &&
+        var_id_eq(exposed.args[0]->var_id,y->var_id) &&
+        atom_eq(first.args[1]->name_key,name_key) && atom_eq(second.args[1]->name_key,name_key));
+    rho_substitution_cursor_clear(&cursor);
+
+    /* One source pointer has different meaning outside and inside a binder. */
+    Atom *scoped[]={drop,rho_ternary(&source,"rho:recv",channel,x,drop)};
+    Atom *scoped_expected[]={seven,rho_ternary(&source,"rho:recv",channel,x,drop)};
+    Atom *expected=rho_normalize_proc(&source,rho_call(&source,"rho:par",scoped_expected,2u));
+    RETAIN_CHECK(semantic_substitution_case(&arena,rho_call(&source,"rho:par",scoped,2u),
+        x->var_id,replacement,expected));
+
+    /* Payload substitution uses the binding interpreter even when raw data
+     * has receive-shaped syntax. It is not a Rho lexical binder there. */
+    Atom *raw=rho_ternary(&source,"rho:recv",channel,x,drop);
+    Bindings bindings;bindings_init(&bindings);
+    RETAIN_CHECK(bindings_add_id(&bindings,x->var_id,SYMBOL_ID_NONE,replacement));
+    Atom *raw_expected=bindings_apply_if_vars(&bindings,&source,raw);
+    RETAIN_CHECK(raw_expected && semantic_substitution_case(&arena,rho_value_proc(&source,raw),
+        x->var_id,replacement,rho_value_proc(&source,raw_expected)));
+    bindings_free(&bindings);
+
+    Atom *composite_children[]={outer,rho_value_proc(&source,pair)};
+    Atom *composite=rho_call(&source,"rho:par",composite_children,2u);
+    /* A free variable in raw payload head slot zero is also a capture risk. */
+    Atom *head_data=atom_expr2(&source,y,atom_int(&source,29));
+    Atom *head_replacement=rho_unary(&source,"rho:quote",rho_value_proc(&source,head_data));
+    cursor=(RhoSubstitutionCursor){0};
+    RETAIN_CHECK(rho_substitution_begin(&cursor,&arena,composite,x->var_id,head_replacement));
+    while (!cursor.done) RETAIN_CHECK(rho_substitution_advance(&cursor));
+    uint64_t complete_steps=cursor.account.substitution_steps;
+    RETAIN_CHECK(cursor.account.substitution_apply_steps>0u &&
+        cursor.account.normalization_steps>0u && cursor.account.construction_children>0u);
+    RhoView combined=rho_view(cursor.returned);
+    RETAIN_CHECK(combined.kind==RHO_PAR && combined.nargs==2u);
+    Atom *capture_checked=NULL;
+    for (size_t i=0u;i<combined.nargs;i++) {
+        RhoView member=rho_view(combined.args[i]);
+        if (member.kind==RHO_RECV) capture_checked=combined.args[i];
+    }
+    RETAIN_CHECK(capture_checked);
+    RhoView captured=rho_view(capture_checked);
+    RETAIN_CHECK(captured.nargs==3u && captured.args[1]->kind==ATOM_VAR &&
+        !var_id_eq(captured.args[1]->var_id,y->var_id));
+    rho_substitution_cursor_clear(&cursor);
+    arena_free(&arena);
+
+    bool roles[RHO_SUBST_ROLE_COUNT]={0};bool renamed=false,application=false;
+    uint64_t unfinished_cuts=0u;
+    for (uint64_t cut=0u;cut<complete_steps;cut++) {
+        Arena work;arena_init_detached(&work);
+        cursor=(RhoSubstitutionCursor){0};
+        RETAIN_CHECK(rho_substitution_begin(&cursor,&work,composite,x->var_id,head_replacement));
+        while (!cursor.done && cursor.account.substitution_steps<cut)
+            RETAIN_CHECK(rho_substitution_advance(&cursor));
+        for (size_t i=0u;i<cursor.frames.length;i++) {
+            roles[rho_substitution_frame_at(&cursor,i)->role]=true;
+            renamed=renamed || rho_substitution_frame_at(&cursor,i)->rename;
+        }
+        if (!cursor.done) unfinished_cuts++;
+        application=application || cursor.application!=NULL;
+        uint64_t paid=cursor.account.substitution_steps;
+        VarId before=fresh_var_id();
+        rho_substitution_cursor_clear(&cursor);
+        VarId after=fresh_var_id();
+        RETAIN_CHECK(!cursor.returned && !cursor.arena && !cursor.application &&
+            !cursor.frames.length && cursor.account.substitution_steps==paid && after.base>before.base);
+        arena_free(&work);
+    }
+    RETAIN_CHECK(roles[RHO_SUBST_PROC] && roles[RHO_SUBST_NAME] &&
+        roles[RHO_SUBST_FREE_PROC] && roles[RHO_SUBST_FREE_NAME] &&
+        roles[RHO_SUBST_FREE_ATOM] && unfinished_cuts>0u &&
+        roles[RHO_SUBST_NORMAL_PROC] && roles[RHO_SUBST_NORMAL_NAME] &&
+        roles[RHO_SUBST_APPLY] && renamed && application);
+    for (unsigned profile=0u;profile<2u;profile++) {
+        Arena work;arena_init_detached(&work);
+        ArenaMark mark=arena_mark(&work);
+        cursor=(RhoSubstitutionCursor){0};
+        RETAIN_CHECK(rho_substitution_begin(&cursor,&work,composite,x->var_id,head_replacement) &&
+            rho_substitution_advance(&cursor) && !cursor.done);
+        uint64_t paid=cursor.account.substitution_steps;
+        HashConsTable intern;hashcons_init_compact(&intern);
+        if (profile) arena_set_hashcons(&work,&intern);
+        else arena_reset(&work,mark);
+        RETAIN_CHECK(!rho_substitution_advance(&cursor) && !cursor.done &&
+            cursor.account.substitution_steps==paid);
+        rho_substitution_cursor_clear(&cursor);
+        arena_set_hashcons(&work,NULL);arena_free(&work);hashcons_free(&intern);
+    }
+    arena_free(&source);
+    puts("PASS: semantic substitution retains actual normalization/capture replies, distinct fresh binders, opaque quotes, payload interpretation, paid work and cancellation");
+    return true;
+}
+
+static bool payload_resource_cycle_tests(void) {
+    retained_current="pending resource discovery, cyclic state images and affine export owners";
+    Arena source,owner;arena_init_detached(&source);arena_init_detached(&owner);
+    StateCell self={0},left={0},right={0};
+    Atom *self_ref=atom_state(&source,&self);
+    Atom *left_ref=atom_state(&source,&left),*right_ref=atom_state(&source,&right);
+    self.value=self_ref;self.content_type=atom_symbol(&source,"SelfType");
+    left.value=atom_expr3(&source,atom_symbol(&source,"Pair"),right_ref,right_ref);
+    left.content_type=self_ref;
+    right.value=left_ref;right.content_type=atom_symbol(&source,"MutualType");
+    RhoStateCloneMap states={0};RhoOverlayMap spaces={0};
+    bool inserted=false;
+    RETAIN_CHECK(rho_state_clone_map_note(&states,&self,&inserted) && inserted &&
+        states.len==1 && !states.clone[0]);
+    RETAIN_CHECK(rho_state_clone_map_note(&states,&self,&inserted) && !inserted &&
+        states.len==1 && !states.clone[0]);
+    RETAIN_CHECK(rho_collect_state_ptrs_into_map(&states,self_ref) && states.len==1);
+    RETAIN_CHECK(rho_collect_state_ptrs_into_map(&states,left_ref) && states.len==3);
+    RETAIN_CHECK(rho_collect_state_ptrs_into_map(&states,right_ref) && states.len==3);
+    CettaEvalPayloadFrame *frame=eval_payload_frame_open(&owner);
+    CettaEvalPayloadScope scope={0};
+    RETAIN_CHECK(frame && eval_payload_frame_enter(frame,&scope));
+    uint64_t epoch=eval_next_payload_owner_epoch();
+    uint64_t previous=eval_set_payload_owner_epoch(epoch);
+    RETAIN_CHECK(rho_state_clone_map_materialize(&states,&owner,&spaces,epoch));
+    StateCell *self_image=rho_state_clone_for(&states,&self);
+    StateCell *left_image=rho_state_clone_for(&states,&left);
+    StateCell *right_image=rho_state_clone_for(&states,&right);
+    RETAIN_CHECK(self_image && left_image && right_image &&
+        self_image!=&self && left_image!=&left && right_image!=&right &&
+        self_image!=left_image && left_image!=right_image);
+    RETAIN_CHECK(self_image->value->kind==ATOM_GROUNDED &&
+        self_image->value->ground.gkind==GV_STATE && self_image->value->ground.ptr==self_image);
+    RETAIN_CHECK(left_image->value->kind==ATOM_EXPR && left_image->value->expr.len==3u &&
+        left_image->value->expr.elems[1]->ground.ptr==right_image &&
+        left_image->value->expr.elems[2]->ground.ptr==right_image &&
+        right_image->value->ground.ptr==left_image && left_image->content_type->ground.ptr==self_image);
+    RETAIN_CHECK(self_image->payload_owner_epoch==epoch && left_image->payload_owner_epoch==epoch &&
+        right_image->payload_owner_epoch==epoch && self.value==self_ref && right.value==left_ref);
+    RhoPromotedSpaceMap promoted_spaces={0};RhoPromotedStateMap promoted_states={0};
+    bool alias=false;
+    Atom *first=rho_promote_payload_atom(&owner,&owner,self_ref,&spaces,&states,
+        &promoted_spaces,&promoted_states,epoch,1u,&alias);
+    Atom *second=rho_promote_payload_atom(&owner,&owner,left_ref,&spaces,&states,
+        &promoted_spaces,&promoted_states,epoch,1u,&alias);
+    Atom *same=rho_promote_payload_atom(&owner,&owner,left_ref,&spaces,&states,
+        &promoted_spaces,&promoted_states,epoch,1u,&alias);
+    RETAIN_CHECK(first && second && same && !alias && promoted_states.len==3u &&
+        second->ground.ptr==same->ground.ptr && first->ground.ptr!=self_image);
+    StateCell *stable_self=first->ground.ptr,*stable_left=second->ground.ptr;
+    StateCell *stable_right=stable_left->value->expr.elems[1]->ground.ptr;
+    RETAIN_CHECK(stable_self->value->ground.ptr==stable_self &&
+        stable_right->value->ground.ptr==stable_left &&
+        stable_left->value->expr.elems[2]->ground.ptr==stable_right &&
+        stable_left->content_type->ground.ptr==stable_self);
+    RETAIN_CHECK(!rho_promote_payload_atom(&owner,&owner,left_ref,&spaces,&states,
+        &promoted_spaces,&promoted_states,epoch,2u,&alias) && alias);
+    rho_promoted_space_map_free(&promoted_spaces);rho_promoted_state_map_free(&promoted_states);
+    rho_state_clone_map_free(&states);rho_overlay_map_free(&spaces);
+    eval_set_payload_owner_epoch(previous);eval_payload_frame_leave(&scope);eval_payload_frame_close(frame);
+    /* Only completed exported images are read after the scratch frame dies. */
+    RETAIN_CHECK(stable_self->value->ground.ptr==stable_self &&
+        stable_right->value->ground.ptr==stable_left &&
+        stable_self->payload_owner_epoch==0u && stable_left->payload_export_owner_epoch==1u);
+    arena_free(&source);arena_free(&owner);
+    puts("PASS: pending resource discovery terminates self/mutual state cycles and preserves private images and affine export ownership");
+    return true;
+}
+
+static bool payload_resource_view_tests(void) {
+    retained_current="raw and captured-visible state aliases share one isolated child image";
+    Arena source,owner;arena_init_detached(&source);arena_init_detached(&owner);
+    StateCell base={.value=atom_symbol(&source,"Base")};
+    StateCell visible={.value=atom_symbol(&source,"Parent")};
+    StateCell other={.value=atom_symbol(&source,"Other")};
+    Atom *raw=atom_state(&source,&base),*alias=atom_state(&source,&visible);
+    Registry registry;registry_init(&registry);
+    registry_bind(&registry,"&resource-raw",raw);registry_bind(&registry,"&resource-visible",alias);
+    Space world;space_init(&world);
+    RhocalcEvalContext context={.space=&world,.registry=&registry,.persistent_arena=&owner};
+    bool transactional=eval_set_payload_transactional(true);
+    CettaEvalPayloadFrame *parent=eval_payload_frame_open(&owner);
+    CettaEvalPayloadScope parent_scope={0},caller_scope={0},child_scope={0};
+    RETAIN_CHECK(parent && eval_payload_frame_enter(parent,&parent_scope) &&
+        eval_payload_note_state_redirect(&base,&visible));
+    RhoPayloadJob *job=rho_payload_open(&owner,&context,
+        atom_expr2(&source,atom_symbol(&source,"quote"),atom_symbol(&source,"payload-data")));
+    RETAIN_CHECK(job);
+    eval_payload_frame_leave(&parent_scope);eval_payload_frame_close(parent);
+    CettaEvalPayloadFrame *caller=eval_payload_frame_open(&owner);
+    RETAIN_CHECK(caller && eval_payload_frame_enter(caller,&caller_scope) &&
+        eval_payload_note_state_redirect(&base,&other));
+    uint64_t callbacks=payload_callbacks;
+    RETAIN_CHECK(rho_payload_step(job,0u)==RHOCALC_PAYLOAD_PENDING &&
+        job->phase==RHO_PAYLOAD_PREPARE && payload_callbacks==callbacks);
+    RETAIN_CHECK(rho_payload_step(job,1u)==RHOCALC_PAYLOAD_PENDING &&
+        job->phase==RHO_PAYLOAD_EVALUATE && payload_callbacks==callbacks &&
+        eval_resolve_state_read(&base)==&other);
+    StateCell *image=rho_state_clone_for(&job->state_map,&base);
+    RETAIN_CHECK(job->state_map.len==2 && image && image!=&base && image!=&visible &&
+        image==rho_state_clone_for(&job->state_map,&visible) &&
+        atom_is_symbol(image->value,"Parent"));
+    Atom *first=registry_lookup(&job->local_registry,"&resource-raw");
+    Atom *second=registry_lookup(&job->local_registry,"&resource-visible");
+    RETAIN_CHECK(first && second && first->ground.ptr==image && second->ground.ptr==image);
+    RETAIN_CHECK(eval_payload_frame_enter(job->frame,&child_scope) &&
+        eval_resolve_state_read(&base)==image && eval_resolve_state_read(&visible)==image);
+    image->value=atom_symbol(&owner,"Child");
+    RETAIN_CHECK(atom_is_symbol(visible.value,"Parent") && atom_is_symbol(base.value,"Base"));
+    eval_payload_frame_leave(&child_scope);
+    rho_payload_close(job);
+    RETAIN_CHECK(eval_resolve_state_read(&base)==&other);
+    eval_payload_frame_leave(&caller_scope);eval_payload_frame_close(caller);
+    eval_set_payload_transactional(transactional);
+    registry_free(&registry);space_free(&world);arena_free(&source);arena_free(&owner);
+    puts("PASS: payload preparation uses the captured parent view and coalesces raw/visible state aliases without changing its caller");
+    return true;
+}
+
+static bool payload_resource_tracking_refusal_test(void) {
+    retained_current="refused scratch tracking releases the unowned state shell";
+    Arena owner;arena_init_detached(&owner);
+    StateCell original={0};
+    RhoStateCloneMap states={0};RhoOverlayMap spaces={0};bool inserted=false;
+    RETAIN_CHECK(rho_state_clone_map_note(&states,&original,&inserted) && inserted);
+    CettaEvalPayloadFrame *frame=eval_payload_frame_open(&owner);
+    CettaEvalPayloadScope scope={0};
+    RETAIN_CHECK(frame && eval_payload_frame_enter(frame,&scope));
+    resource_tracking_refusal=true;resource_refused_frees=0u;resource_refused_cell=NULL;
+    bool materialized=rho_state_clone_map_materialize(&states,&owner,&spaces,1u);
+    bool released=!materialized && !resource_tracking_refusal &&
+        resource_refused_frees==1u && !resource_refused_cell && !states.clone[0];
+    /* Clean a deliberately regressed producer before reporting its failed
+     * ownership assertion; a fixture leak is not evidence of this contract. */
+    if (resource_refused_cell) {free(resource_refused_cell);resource_refused_cell=NULL;}
+    rho_state_clone_map_free(&states);rho_overlay_map_free(&spaces);
+    eval_payload_frame_leave(&scope);eval_payload_frame_close(frame);arena_free(&owner);
+    RETAIN_CHECK(released);
+    puts("PASS: refused state tracking releases the unowned shell before returning");
+    return true;
+}
+
+static bool payload_space_cleanup_owner_test(bool cycle,bool refuse_tracking) {
+    retained_current=refuse_tracking ? "refused space tracking precedes recursive exposure" :
+        cycle ? "refused cyclic space graph retains one lifetime owner per shell" :
+                "refused partial space has a lifetime owner";
+    Arena owner;arena_init_detached(&owner);
+    Space parent,child;space_init(&parent);space_init(&child);
+    parent.payload_owner_epoch=child.payload_owner_epoch=1u;
+    if (cycle) {
+        space_add(&parent,atom_space(&owner,&child));
+        space_add(&child,atom_space(&owner,&parent));
+    } else space_add(&parent,atom_int(&owner,11));
+    space_add(&parent,atom_int(&owner,22));
+    RhoOverlayMap overlays={0};RhoStateCloneMap states={0};
+    RhoPromotedSpaceMap promoted_spaces={0};RhoPromotedStateMap promoted_states={0};
+    bool alias=false;
+    memset(resource_owned_spaces,0,sizeof(resource_owned_spaces));
+    resource_owned_count=resource_owned_frees=0u;resource_partial_space=NULL;
+    resource_space_active=true;resource_space_tracking_refusal=refuse_tracking;
+    resource_space_storage_refusal=!refuse_tracking;resource_space_storage_failed=false;
+    Space *image=rho_promote_payload_space(&owner,&parent,&overlays,&states,
+        &promoted_spaces,&promoted_states,1u,1u,&alias);
+    unsigned expected=refuse_tracking ? 0u : cycle ? 2u : 1u;
+    bool failed=!image && !alias && !resource_space_tracking_refusal &&
+        resource_owned_count==expected &&
+        (refuse_tracking || (!resource_space_storage_refusal && resource_space_storage_failed));
+    if (!refuse_tracking && resource_partial_space)
+        failed=failed && resource_partial_space->instance_id!=0u &&
+            space_length64(resource_partial_space)==1u;
+    eval_cleanup_owned_new_spaces(NULL,NULL);
+    bool retired=resource_owned_frees==(refuse_tracking ? 1u : expected) &&
+        resource_partial_space && resource_partial_space->instance_id==0u;
+    for (unsigned i=0;i<resource_owned_count;i++)
+        retired=retired && resource_owned_spaces[i]->instance_id==0u;
+    /* Release a deliberately unowned baseline after collecting its assertion.
+     * Cleanup failures are tested directly, not counted as sanitizer crashes. */
+    if (resource_partial_space && resource_partial_space->instance_id)
+        space_free(resource_partial_space);
+    resource_space_active=false;
+    rho_promoted_space_map_free(&promoted_spaces);rho_promoted_state_map_free(&promoted_states);
+    rho_overlay_map_free(&overlays);rho_state_clone_map_free(&states);
+    bool sources_intact=space_length64(&parent)==2u && space_length64(&child)==(cycle ? 1u : 0u);
+    space_free(&parent);space_free(&child);arena_free(&owner);
+    RETAIN_CHECK(failed && retired && sources_intact);
+    return true;
+}
+
+typedef struct {
+    RhocalcRun *run;
+    unsigned *releases, *producer_calls;
+} RetainedRhoOwner;
+
+static CettaOwnedReleaseStep retained_rho_owner_release_poll(void *raw,
+    uint64_t allowance, bool atomic, uint64_t *used) {
+    RetainedRhoOwner *owner = raw;
+    return rhocalc_run_release_poll(&owner->run, allowance, atomic, used);
+}
+
+static void retained_rho_owner_release(void *raw) {
+    RetainedRhoOwner *owner = raw;
+    rhocalc_run_close(owner->run);
+    ++*owner->releases;
+    free(owner);
+}
+
+static CettaOwnedExecutionStep retained_rho_owner_next(void *raw,
+    CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    (void)returned; (void)completion;
+    RetainedRhoOwner *owner = raw;
+    ++*owner->producer_calls;
+    return CETTA_OWNED_EXECUTION_PAUSED;
+}
+
+static size_t dense_storage_blocks(uint32_t length) {
+    if (!length) return 0u;
+    return 1u + ((uint64_t)length+63u)/64u +
+        ((uint64_t)length+8191u)/8192u +
+        ((uint64_t)length+1048575u)/1048576u +
+        ((uint64_t)length+134217727u)/134217728u;
+}
+
+static size_t storage_blocks(const CettaSegmentedArray *array) {
+    size_t count=0u;
+    for (CettaSegmentedBlock *block=array->blocks;block;block=block->next) count++;
+    return count;
+}
+
+static bool segmented_storage_tests(void) {
+    retained_current="bounded indexed storage: high indices, failure/retry, revocation and retirement";
+    CettaSegmentedArray array={0};
+    RETAIN_CHECK(!cetta_segmented_array_init(&array,0u));
+    RETAIN_CHECK(!cetta_segmented_array_init(&array,CETTA_SEGMENTED_MAX_ELEMENT_SIZE+1u));
+    RETAIN_CHECK(cetta_segmented_array_init(&array,sizeof(uint64_t)));
+    const uint32_t indices[]={0u,1u,63u,64u,8191u,8192u,1048576u,134217728u,UINT32_MAX};
+    uint64_t *addresses[sizeof(indices)/sizeof(*indices)]={0};
+    for (size_t i=0u;i<sizeof(indices)/sizeof(*indices);i++) {
+        unsigned pending=0u;
+        CettaSegmentedStep status;
+        do {
+            size_t before=storage_blocks(&array),calls=block_allocation_calls;
+            status=cetta_segmented_array_prepare(&array,indices[i]);
+            RETAIN_CHECK(status!=CETTA_SEGMENTED_REFUSED && block_allocation_calls-calls<=1u &&
+                storage_blocks(&array)-before==(status==CETTA_SEGMENTED_PENDING));
+            pending+=status==CETTA_SEGMENTED_PENDING;
+        } while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(pending<=5u);
+        addresses[i]=cetta_segmented_array_at(&array,indices[i]);
+        RETAIN_CHECK(addresses[i] && *addresses[i]==0u);
+        *addresses[i]=(uint64_t)i+17u;
+        for(size_t j=0u;j<=i;j++)
+            RETAIN_CHECK(cetta_segmented_array_at(&array,indices[j])==addresses[j] &&
+                *addresses[j]==j+17u);
+    }
+    size_t blocks=storage_blocks(&array),retired=0u;
+    while (array.blocks) {
+        bool done=cetta_segmented_array_release_one(&array);
+        retired++;
+        RETAIN_CHECK(!cetta_segmented_array_at(&array,0u) &&
+            storage_blocks(&array)+retired==blocks && done==!array.blocks);
+        if (!done) RETAIN_CHECK(cetta_segmented_array_prepare(&array,0u)==CETTA_SEGMENTED_REFUSED);
+    }
+    RETAIN_CHECK(!array.element_size && !array.retiring && !array.root);
+    for(size_t fail=1u;fail<=5u;fail++) {
+        RETAIN_CHECK(cetta_segmented_array_init(&array,sizeof(uint64_t)));
+        block_allocation_calls=0u;block_fail_at=fail;block_failure_injected=false;
+        CettaSegmentedStep status;
+        do { status=cetta_segmented_array_prepare(&array,UINT32_MAX); }
+        while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(status==CETTA_SEGMENTED_REFUSED && block_failure_injected &&
+            storage_blocks(&array)==fail-1u && !cetta_segmented_array_at(&array,UINT32_MAX));
+        CettaSegmentedBlock *held=array.blocks;
+        block_fail_at=0u;
+        unsigned resumed=0u;
+        do {status=cetta_segmented_array_prepare(&array,UINT32_MAX);resumed++;}
+        while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(status==CETTA_SEGMENTED_READY && resumed==7u-fail &&
+            storage_blocks(&array)==5u);
+        bool retained=!held;
+        for(CettaSegmentedBlock *block=array.blocks;block;block=block->next)
+            retained|=block==held;
+        RETAIN_CHECK(retained);
+        uint64_t *value=cetta_segmented_array_at(&array,UINT32_MAX);
+        RETAIN_CHECK(value);*value=99u;
+        RETAIN_CHECK(cetta_segmented_array_prepare(&array,UINT32_MAX)==CETTA_SEGMENTED_READY && *value==99u);
+        cetta_segmented_array_free(&array);
+    }
+    /* A failed extension must preserve initialized cells, not merely the
+     * empty prefix. The high index takes a disjoint route below one root. */
+    for(size_t fail=1u;fail<=4u;fail++) {
+        RETAIN_CHECK(cetta_segmented_array_init(&array,sizeof(uint64_t)));
+        while(cetta_segmented_array_prepare(&array,0u)==CETTA_SEGMENTED_PENDING) {}
+        uint64_t *first=cetta_segmented_array_at(&array,0u);
+        RETAIN_CHECK(first);*first=731u;
+        block_allocation_calls=0u;block_fail_at=fail;block_failure_injected=false;
+        CettaSegmentedStep status;
+        do {status=cetta_segmented_array_prepare(&array,UINT32_MAX);}
+        while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(status==CETTA_SEGMENTED_REFUSED && block_failure_injected &&
+            cetta_segmented_array_at(&array,0u)==first && *first==731u);
+        block_fail_at=0u;
+        do {status=cetta_segmented_array_prepare(&array,UINT32_MAX);}
+        while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(status==CETTA_SEGMENTED_READY &&
+            cetta_segmented_array_at(&array,0u)==first && *first==731u);
+        cetta_segmented_array_free(&array);
+    }
+    RETAIN_CHECK(cetta_segmented_array_init(&array,sizeof(uint64_t)));
+    size_t request=sizeof(CettaSegmentedBlock)+CETTA_SEGMENTED_DIRECTORY_CELLS*sizeof(CettaSegmentedBlock *);
+    size_t calls=block_allocation_calls;
+    RETAIN_CHECK(cetta_segmented_array_prepare_limit(&array,0u,request-1u)==CETTA_SEGMENTED_REFUSED &&
+        !array.blocks && !array.live_bytes && block_allocation_calls==calls);
+    RETAIN_CHECK(cetta_segmented_array_prepare_limit(&array,0u,request)==CETTA_SEGMENTED_PENDING &&
+        array.live_bytes==request);
+    CettaSegmentedBlock *held=array.blocks;
+    RETAIN_CHECK(cetta_segmented_array_prepare_limit(&array,0u,2u*request-1u)==CETTA_SEGMENTED_REFUSED &&
+        array.blocks==held && array.live_bytes==request);
+    RETAIN_CHECK(cetta_segmented_array_prepare_limit(&array,0u,2u*request)==CETTA_SEGMENTED_PENDING &&
+        array.live_bytes==2u*request);
+    size_t previous=array.live_bytes;
+    RETAIN_CHECK(!cetta_segmented_array_release_one(&array) && array.live_bytes==previous-request);
+    RETAIN_CHECK(cetta_segmented_array_release_one(&array) && !array.live_bytes);
+    puts("PASS: bounded indexed storage preserves addresses and initialized values, covers uint32 indices, retries nine allocation boundaries, enforces actual backing budgets and retires one block per step");
+    return true;
+}
+
+typedef struct {
+    uint64_t serial, progress;
+    unsigned char payload[352];
+} TestFixedRecord;
+
+static bool prepare_test_record(CettaRecordStack *stack,TestFixedRecord *pending) {
+    CettaSegmentedStep status;
+    do {
+        size_t before=block_allocation_calls;
+        status=cetta_record_stack_prepare(stack,pending);
+        RETAIN_CHECK(status!=CETTA_SEGMENTED_REFUSED && block_allocation_calls-before<=1u);
+        if(block_allocation_calls!=before)
+            RETAIN_CHECK(block_last_request<=sizeof(CettaSegmentedBlock)+128u*sizeof(void *));
+    } while(status==CETTA_SEGMENTED_PENDING);
+    return true;
+}
+
+static bool retained_record_stack_tests(void) {
+    retained_current="fixed-record stack request, failure preservation, pointer stability and LIFO ownership";
+    CettaRecordStack stack={0};TestFixedRecord pending={0};
+    RETAIN_CHECK(sizeof(pending)>CETTA_SEGMENTED_MAX_ELEMENT_SIZE &&
+        !cetta_record_stack_request(&stack,0u) && !stack.length && !stack.record_size);
+    TestFixedRecord *addresses[129]={0};
+    for(unsigned i=0u;i<129u;i++) {
+        pending=(TestFixedRecord){.serial=i,.progress=3u*i};
+        pending.payload[sizeof(pending.payload)-1u]=(unsigned char)(0xa5u^i);
+        if(i) addresses[i-1u]->progress++;
+        size_t calls=block_allocation_calls;
+        RETAIN_CHECK(cetta_record_stack_request(&stack,sizeof(pending)) && stack.length==i+1u &&
+            stack.pending && block_allocation_calls==calls &&
+            cetta_record_stack_at(&stack,i,&pending)==&pending);
+        CettaRecordStack held=stack;
+        RETAIN_CHECK(!cetta_record_stack_request(&stack,sizeof(pending)) &&
+            !memcmp(&held,&stack,sizeof(stack)) &&
+            cetta_record_stack_release_storage_one(&stack)==CETTA_SEGMENTED_REFUSED &&
+            !memcmp(&held,&stack,sizeof(stack)));
+        RETAIN_CHECK(prepare_test_record(&stack,&pending));
+        addresses[i]=cetta_record_stack_at(&stack,i,&pending);
+        RETAIN_CHECK(addresses[i] && addresses[i]!=&pending && addresses[i]->serial==i &&
+            addresses[i]->progress==3u*i && !stack.pending && !memcmp(addresses[i],&pending,sizeof(pending)));
+        for(unsigned j=0u;j<i;j++)
+            RETAIN_CHECK(cetta_record_stack_at(&stack,j,&pending)==addresses[j] &&
+                addresses[j]->serial==j && addresses[j]->progress==3u*j+1u);
+    }
+    CettaRecordStack held=stack;
+    RETAIN_CHECK(!cetta_record_stack_request(&stack,sizeof(pending)+1u) &&
+        !memcmp(&held,&stack,sizeof(stack)));
+    for(unsigned i=129u;i>0u;i--) {
+        TestFixedRecord *top=cetta_record_stack_at(&stack,i-1u,&pending);
+        RETAIN_CHECK(top==addresses[i-1u] && top->serial==i-1u);
+        retirement_key_count=0u;retirement_nonnull_frees=0u;key_retirement_tracking=true;
+        bool popped=cetta_record_stack_pop(&stack);
+        key_retirement_tracking=false;
+        RETAIN_CHECK(popped && retirement_nonnull_frees==1u && stack.length==i-1u &&
+            !cetta_record_stack_at(&stack,i-1u,&pending));
+    }
+    RETAIN_CHECK(!cetta_record_stack_pop(&stack));
+    /* Reuse reads an actually cleared slot, not a stale freed record. */
+    pending=(TestFixedRecord){.serial=733u};
+    RETAIN_CHECK(cetta_record_stack_request(&stack,sizeof(pending)) && prepare_test_record(&stack,&pending) &&
+        ((TestFixedRecord *)cetta_record_stack_at(&stack,0u,&pending))->serial==733u &&
+        cetta_record_stack_pop(&stack));
+    size_t blocks=storage_blocks(&stack.slots),releases=0u;
+    do {
+        size_t before=storage_blocks(&stack.slots);
+        CettaSegmentedStep status=cetta_record_stack_release_storage_one(&stack);releases++;
+        RETAIN_CHECK(status!=CETTA_SEGMENTED_REFUSED && before-storage_blocks(&stack.slots)<=1u);
+        if(status==CETTA_SEGMENTED_READY) break;
+    } while(true);
+    RETAIN_CHECK(releases==blocks && !stack.slots.blocks);
+    /* Four directories, one pointer page, then one record allocation. Every
+     * failure retains the accepted typed value, including partially installed backing. */
+    for(unsigned failure=1u;failure<=6u;failure++) {
+        stack=(CettaRecordStack){0};pending=(TestFixedRecord){.serial=991u,.progress=42u};
+        RETAIN_CHECK(cetta_record_stack_request(&stack,sizeof(pending)));
+        block_fail_at=block_allocation_calls+failure;block_failure_injected=false;
+        CettaSegmentedStep status;
+        do {status=cetta_record_stack_prepare(&stack,&pending);} while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(status==CETTA_SEGMENTED_REFUSED && block_failure_injected && stack.pending &&
+            stack.length==1u && cetta_record_stack_at(&stack,0u,&pending)==&pending &&
+            pending.serial==991u && pending.progress==42u);
+        block_fail_at=0u;
+        RETAIN_CHECK(prepare_test_record(&stack,&pending) &&
+            ((TestFixedRecord *)cetta_record_stack_at(&stack,0u,&pending))->serial==991u &&
+            cetta_record_stack_pop(&stack) && cetta_record_stack_free_storage(&stack));
+    }
+    /* A failed next-page install or fixed record leaves all committed frames
+     * and their already-earned progress unchanged. */
+    for(unsigned failure=1u;failure<=2u;failure++) {
+        stack=(CettaRecordStack){0};
+        for(unsigned i=0u;i<64u;i++) {
+            pending=(TestFixedRecord){.serial=i,.progress=i+11u};
+            RETAIN_CHECK(cetta_record_stack_request(&stack,sizeof(pending)) && prepare_test_record(&stack,&pending));
+            addresses[i]=cetta_record_stack_at(&stack,i,&pending);
+        }
+        pending=(TestFixedRecord){.serial=64u,.progress=123u};
+        RETAIN_CHECK(cetta_record_stack_request(&stack,sizeof(pending)));
+        block_fail_at=block_allocation_calls+failure;block_failure_injected=false;
+        CettaSegmentedStep status;
+        do {status=cetta_record_stack_prepare(&stack,&pending);} while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(status==CETTA_SEGMENTED_REFUSED && block_failure_injected && stack.pending && stack.length==65u);
+        for(unsigned i=0u;i<64u;i++)
+            RETAIN_CHECK(cetta_record_stack_at(&stack,i,&pending)==addresses[i] &&
+                addresses[i]->serial==i && addresses[i]->progress==i+11u);
+        block_fail_at=0u;
+        /* Cancellation may drop the pending value without first allocating it. */
+        size_t calls=block_allocation_calls;
+        RETAIN_CHECK(cetta_record_stack_pop(&stack) && !stack.pending && stack.length==64u &&
+            block_allocation_calls==calls);
+        while(stack.length) RETAIN_CHECK(cetta_record_stack_pop(&stack));
+        RETAIN_CHECK(cetta_record_stack_free_storage(&stack));
+    }
+    CettaRecordStack exhausted={.record_size=sizeof(pending),.length=UINT32_MAX};held=exhausted;
+    RETAIN_CHECK(!cetta_record_stack_request(&exhausted,sizeof(pending)) && !memcmp(&held,&exhausted,sizeof(held)));
+    puts("PASS: fixed-record stacks preserve queued requests and earlier addresses, retry eight real allocation failures, reject live backing disposal and drain cleared LIFO slots/blocks");
+    return true;
+}
+
+static bool retained_frame_provider_refusal_tests(void) {
+    retained_current="all four actual typed frame providers retain refused push ownership";
+    for(unsigned kind=0u;kind<4u;kind++) for(unsigned failure=1u;failure<=6u;failure++) {
+        Arena source,result;arena_init_detached(&source);arena_init_detached(&result);
+        Atom *nil=rho_nil(&source),*replacement=rho_unary(&source,"rho:quote",nil);
+        RhoKeyCursor *key=NULL;RhoCheckCursor check={0};RhoNormalizeCursor normalize={.arena=&result};
+        RhoSubstitutionCursor substitution={0};CettaRecordStack *stack=NULL;void *pending=NULL;
+        if(kind==0u) {
+            key=rho_key_cursor_new(nil,false);RETAIN_CHECK(key);
+            stack=&key->frames;pending=&key->pending_frame;
+        } else if(kind==1u) {
+            RETAIN_CHECK(rho_check_cursor_push(&check,nil,false));stack=&check.frames;pending=&check.pending_frame;
+        } else if(kind==2u) {
+            RETAIN_CHECK(rho_normalize_cursor_push(&normalize,nil,false));stack=&normalize.frames;pending=&normalize.pending_frame;
+        } else {
+            RETAIN_CHECK(rho_substitution_begin(&substitution,&result,nil,VAR_ID_NONE,replacement));
+            stack=&substitution.frames;pending=&substitution.pending_frame;
+        }
+        RETAIN_CHECK(stack->pending && stack->length==1u && cetta_record_stack_at(stack,0u,pending)==pending);
+        block_fail_at=block_allocation_calls+failure;block_failure_injected=false;
+        bool failed=false;RhocalcRunAccount account={0};
+        for(unsigned steps=0u;steps<16u && !failed;steps++) {
+            if(kind==0u) failed=!rho_key_cursor_advance(key);
+            else if(kind==1u) failed=rho_check_cursor_advance(&check,&account)==RHO_CHECK_REFUSED;
+            else if(kind==2u) failed=!rho_normalize_cursor_advance(&normalize,&account);
+            else failed=!rho_substitution_advance(&substitution);
+        }
+        RETAIN_CHECK(failed && block_failure_injected && stack->pending && stack->length==1u &&
+            cetta_record_stack_at(stack,0u,pending)==pending && !normalize.returned && !substitution.returned &&
+            !normalize.done && !substitution.done && (!key || !key->done));
+        block_fail_at=0u;
+        rho_key_cursor_free(key);rho_check_cursor_free(&check);rho_normalize_cursor_free(&normalize);
+        rho_substitution_cursor_clear(&substitution);arena_free(&result);arena_free(&source);
+    }
+    puts("PASS: check/key/normalization/substitution retain exact pending frames through 24 actual backing/record allocation refusals without publishing results");
+    return true;
+}
+
+static bool retained_rejected_payload_retirement_test(void) {
+    retained_current="deep rejected payload retains checker cleanup before its caller advances";
+    Arena source,result;arena_init_detached(&source);arena_init_detached(&result);
+    Atom *nil=rho_nil(&source),*name=rho_unary(&source,"rho:quote",nil);
+    Atom *payload=atom_int(&source,17);
+    for(unsigned i=0u;i<128u;i++) payload=rho_binary(&source,"rho:send",name,payload);
+    RhoSubstitutionCursor cursor={0};
+    RETAIN_CHECK(rho_substitution_begin_payload(&cursor,&result,nil,VAR_ID_NONE,payload));
+    bool retained_rejection=false;
+    for(unsigned polls=0u;polls<200000u && !cursor.done;polls++) {
+        retirement_key_count=0u;retirement_nonnull_frees=0u;key_retirement_tracking=true;
+        bool okay=rho_substitution_advance(&cursor);
+        key_retirement_tracking=false;
+        RETAIN_CHECK(okay && retirement_nonnull_frees<=1u);
+        if(cursor.check.status==RHO_CHECK_INCOMPATIBLE && cursor.check.frames.length) {
+            retained_rejection=true;
+            RETAIN_CHECK(!cursor.returned && rho_substitution_frame_at(&cursor,0u)->stage==1u);
+        }
+    }
+    RETAIN_CHECK(cursor.done && retained_rejection && atom_eq(cursor.returned,nil));
+    rho_substitution_cursor_clear(&cursor);
+    /* Non-quiet errors survive intervening peer diagnostics; quiet shape
+     * interpretation leaves the current caller diagnostic alone. */
+    for(unsigned quiet=0u;quiet<2u;quiet++) {
+        RhoCheckCursor check={.quiet_shape=quiet};RhocalcRunAccount account={0};
+        RETAIN_CHECK(rho_check_cursor_push(&check,payload,false));
+        rho_validation_clear();if(quiet) rho_validation_set("earlier diagnostic");
+        bool saw_retirement=false;
+        char expected[256]={0};RhoCheckStatus status=RHO_CHECK_PENDING;
+        for(unsigned polls=0u;polls<200000u && status==RHO_CHECK_PENDING;polls++) {
+            status=rho_check_cursor_advance(&check,&account);
+            if(check.status==RHO_CHECK_INCOMPATIBLE && check.frames.length && !saw_retirement) {
+                saw_retirement=true;snprintf(expected,sizeof(expected),"%s",rhocalc_last_validation_error());
+                rho_validation_clear();rho_validation_set("peer diagnostic");
+            }
+        }
+        RETAIN_CHECK(status==RHO_CHECK_INCOMPATIBLE && saw_retirement && !check.frames.length &&
+            !check.frames.slots.blocks && !check.memo.slots.blocks && !check.memo_cursor.grown.blocks &&
+            !strcmp(rhocalc_last_validation_error(),quiet ? "peer diagnostic" : expected));
+        rho_check_cursor_free(&check);
+    }
+    arena_free(&result);arena_free(&source);
+    puts("PASS: deep incompatible payloads finish retained checker disposal before body interpretation and preserve quiet/error diagnostics");
+    return true;
+}
+
+static bool retained_nested_key_retirement_test(void) {
+    retained_current="actual normalization cancellation retires a deep in-flight key stack one action at a time";
+    Arena source,result;arena_init_detached(&source);arena_init_detached(&result);
+    Atom *nil=rho_nil(&source),*name=rho_unary(&source,"rho:quote",nil),*deep=nil;
+    for(unsigned i=0u;i<128u;i++) deep=rho_binary(&source,"rho:send",name,deep);
+    Atom *input=rho_binary(&source,"rho:par",deep,rho_binary(&source,"rho:send",name,nil));
+    RhoRuntimeProfile profile={RHO_SCHEDULER_CANONICAL,1u,1u,false};
+    RhocalcRun *run=rhocalc_run_open_held(&result,input,&profile,NULL);RETAIN_CHECK(run);
+    bool reached=false;
+    for(unsigned polls=0u;polls<200000u && !reached;polls++) {
+        if(run->phase==RHO_RUN_NORMALIZE && run->normalization.frames.length==1u) {
+            RhoNormalizeFrame *frame=rho_normalize_frame_at(&run->normalization,0u);
+            reached=frame->key && frame->key->frames.length>=64u;
+        }
+        if(!reached) RETAIN_CHECK(rhocalc_run_poll(run,1u,NULL)==RHOCALC_RUN_PENDING);
+    }
+    RETAIN_CHECK(reached && !run->machine.current);
+    CettaOwnedReleaseStep status;uint64_t used=0u;
+    do {
+        retirement_key_count=0u;retirement_nonnull_frees=0u;key_retirement_tracking=true;
+        status=rhocalc_run_release_poll(&run,1u,false,&used);
+        key_retirement_tracking=false;
+        RETAIN_CHECK(run && used<=1u && retirement_nonnull_frees<=1u && status!=CETTA_OWNED_RELEASE_COMPLETE);
+    } while(status==CETTA_OWNED_RELEASE_PENDING);
+    RETAIN_CHECK(status==CETTA_OWNED_RELEASE_ATOMIC && !run->normalization.frames.slots.blocks &&
+        !run->normalization.frames.length && !run->machine.current);
+    RETAIN_CHECK(rhocalc_run_release_poll(&run,1u,true,NULL)==CETTA_OWNED_RELEASE_COMPLETE && !run);
+    arena_free(&result);arena_free(&source);
+    puts("PASS: deep pending key frames, text and pointer backing retire before their enclosing normalization record");
+    return true;
+}
+
+static bool retained_frame_pop_admission_tests(void) {
+    retained_current="actual normalization frame payload inventory precedes record/backing release";
+    for(unsigned committed=0u;committed<2u;committed++) {
+        Arena source;arena_init_detached(&source);RhoNormalizeCursor cursor={0};
+        RETAIN_CHECK(rho_normalize_cursor_push(&cursor,rho_nil(&source),false));
+        RhoNormalizeFrame *frame=rho_normalize_frame_at(&cursor,0u);
+        CettaSegmentedStep status;
+        do {status=rho_sort_buffer_prepare(&frame->items,0u,sizeof(RhoKeyedAtom));}
+        while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(status==CETTA_SEGMENTED_READY);
+        char *key=strdup("owned-frame-key");RETAIN_CHECK(key);
+        *rho_keyed_row(&frame->items,0u)=(RhoKeyedAtom){.key=key,.ordinal=7u};frame->length=1u;
+        if(committed) {
+            do {status=cetta_record_stack_prepare(&cursor.frames,&cursor.pending_frame);}
+            while(status==CETTA_SEGMENTED_PENDING);
+            RETAIN_CHECK(status==CETTA_SEGMENTED_READY);
+            frame=rho_normalize_frame_at(&cursor,0u);
+            RETAIN_CHECK(frame!=&cursor.pending_frame && rho_keyed_row(&frame->items,0u)->key==key);
+        }
+        RETAIN_CHECK(!rho_normalize_record_pop(&cursor) && cursor.frames.length==1u &&
+            rho_keyed_row(&frame->items,0u)->key==key &&
+            cetta_record_stack_release_storage_one(&cursor.frames)==CETTA_SEGMENTED_REFUSED);
+        retirement_key_count=1u;retirement_keys[0]=key;retirement_key_frees[0]=0u;
+        key_retirement_tracking=true;
+        while(cursor.frames.length) {
+            retirement_nonnull_frees=0u;rho_normalize_cursor_release_one(&cursor);
+            RETAIN_CHECK(retirement_nonnull_frees<=1u);
+        }
+        key_retirement_tracking=false;
+        RETAIN_CHECK(retirement_key_frees[0]==1u && cetta_record_stack_free_storage(&cursor.frames));
+        rho_normalize_cursor_free(&cursor);arena_free(&source);
+    }
+    retirement_key_count=0u;
+    puts("PASS: actual typed pending/installed frame pop refuses owned keys/backing and retires the moved inventory exactly once");
+    return true;
+}
+
+static bool retained_sort_retirement_tests(void) {
+    retained_current="actual partial merge and block-retirement cancellation";
+    enum { width=257u };
+    for(unsigned cut=0u;cut<7u;cut++) {
+        Arena source,result;
+        arena_init_detached(&source);arena_init_detached(&result);
+        Atom *leaf=rho_binary(&source,"rho:send",
+            rho_unary(&source,"rho:quote",rho_nil(&source)),rho_nil(&source));
+        Atom *children[width+1u];children[0]=atom_symbol(&source,"rho:par");
+        for(unsigned i=0u;i<width;i++) children[i+1u]=leaf;
+        Atom *input=atom_expr(&source,children,width+1u);
+        RhoRuntimeProfile profile={RHO_SCHEDULER_CANONICAL,1u,1u,false};
+        RhocalcRun *run=rhocalc_run_open_held(&result,input,&profile,NULL);
+        RETAIN_CHECK(run);
+        bool reached=false;
+        for(uint64_t steps=0u;steps<200000u && !reached;steps++) {
+            RhoNormalizeFrame *frame=run->normalization.frames.length ? rho_normalize_frame_at(&run->normalization,0) : NULL;
+            if(frame && frame->stage==5u) {
+                RhoStableSort *sort=&frame->sort;
+                reached=cut==0u ? !sort->scratch.pages.blocks && !sort->output :
+                    cut==1u ? sort->scratch.pages.blocks && !sort->output && sort->width==1u :
+                    cut==2u ? sort->output>64u && sort->output<width && sort->width==1u :
+                    cut==3u ? sort->output==width && !sort->range_ready && !sort->done :
+                    cut==4u ? sort->width==2u && !sort->output :
+                    cut==5u ? sort->scratch.pages.retiring : false;
+            } else if(frame && cut==6u)
+                reached=frame->stage==10u && frame->items.pages.retiring;
+            if(!reached) RETAIN_CHECK(rhocalc_run_poll(run,1u,NULL)==RHOCALC_RUN_PENDING);
+        }
+        RETAIN_CHECK(reached && !run->machine.current);
+        RhoNormalizeFrame *frame=rho_normalize_frame_at(&run->normalization,0);
+        retirement_key_count=0u;memset(retirement_key_frees,0,sizeof(retirement_key_frees));
+        for(uint32_t i=0u;i<frame->length;i++) {
+            char *key=rho_keyed_row(&frame->items,i)->key;
+            if(key) retirement_keys[retirement_key_count++]=key;
+        }
+        RETAIN_CHECK(retirement_key_count==(cut==6u ? 0u : width));
+        key_retirement_tracking=true;
+        CettaOwnedReleaseStep status;
+        do {
+            uint64_t used=0u;retirement_nonnull_frees=0u;
+            status=rhocalc_run_release_poll(&run,1u,false,&used);
+            RETAIN_CHECK(run && used<=1u && retirement_nonnull_frees<=1u &&
+                status!=CETTA_OWNED_RELEASE_COMPLETE);
+        } while(status==CETTA_OWNED_RELEASE_PENDING);
+        key_retirement_tracking=false;
+        RETAIN_CHECK(status==CETTA_OWNED_RELEASE_ATOMIC);
+        for(unsigned i=0u;i<retirement_key_count;i++) RETAIN_CHECK(retirement_key_frees[i]==1u);
+        RETAIN_CHECK(rhocalc_run_release_poll(&run,1u,true,NULL)==CETTA_OWNED_RELEASE_COMPLETE && !run);
+        arena_free(&result);arena_free(&source);
+    }
+    puts("PASS: actual normalization cancellation retires each key once across scratch installation, partial/full merge passes, owner swap and incremental scratch/primary disposal");
+    return true;
+}
+
+/* The independently sorted flat array is an occurrence/key oracle. During
+ * every retained pass only the complete primary owns keys; scratch borrows. */
+static bool retained_endpoint_storage_tests(void) {
+    retained_current="paged endpoint sorting, complete-primary ownership and incremental scratch retirement";
+    const unsigned widths[]={0u,1u,2u,3u,63u,64u,65u,129u};
+    for (unsigned trial=0u;trial<sizeof(widths)/sizeof(*widths);trial++) {
+        unsigned width=widths[trial];
+        RhoEndpointVec vec={.storage={.paged=true}};
+        RhoEndpoint oracle[129]={0};char *keys[129]={0};
+        for (unsigned i=0u;i<width;i++) {
+            char text[32];snprintf(text,sizeof(text),"channel-%03u",(i*17u)%11u);
+            keys[i]=strdup(text);RETAIN_CHECK(keys[i]);
+            CettaSegmentedStep step;
+            do {
+                size_t calls=block_allocation_calls;
+                step=rho_sort_buffer_prepare(&vec.storage,vec.len,sizeof(RhoEndpoint));
+                RETAIN_CHECK(step!=CETTA_SEGMENTED_REFUSED && block_allocation_calls-calls<=1u && vec.len==i);
+            } while(step==CETTA_SEGMENTED_PENDING);
+            RETAIN_CHECK(rho_endpoint_vec_push(&vec,i,(RhoView){0},keys[i],true));
+            oracle[i]=(RhoEndpoint){.component_index=i,.key=keys[i],.key_owned=true};
+        }
+        qsort(oracle,width,sizeof(*oracle),rho_endpoint_cmp_key);
+        RhoEndpointSort sort={0};RETAIN_CHECK(rho_endpoint_sort_init(&sort,&vec));
+        uint64_t steps=0u;
+        while(!sort.done) {
+            bool seen[129]={0};
+            for(unsigned i=0u;i<width;i++) {
+                const RhoEndpoint *row=rho_endpoint_at(&vec,i);
+                RETAIN_CHECK(row && row->component_index<width && !seen[row->component_index] &&
+                    row->key==keys[row->component_index] && row->key_owned);
+                seen[row->component_index]=true;
+            }
+            size_t calls=block_allocation_calls;retirement_nonnull_frees=0u;key_retirement_tracking=true;
+            RETAIN_CHECK(rho_endpoint_sort_advance(&sort) && ++steps<50000u);
+            key_retirement_tracking=false;
+            RETAIN_CHECK(block_allocation_calls-calls<=1u && retirement_nonnull_frees<=1u);
+        }
+        RETAIN_CHECK(!sort.sort.scratch.pages.blocks);
+        for(unsigned i=0u;i<width;i++)
+            RETAIN_CHECK(rho_endpoint_at(&vec,i)->component_index==oracle[i].component_index &&
+                rho_endpoint_at(&vec,i)->key==oracle[i].key);
+        rho_endpoint_sort_free(&sort);
+        retirement_key_count=width;memset(retirement_key_frees,0,sizeof(retirement_key_frees));
+        for(unsigned i=0u;i<width;i++) retirement_keys[i]=keys[i];
+        key_retirement_tracking=true;
+        for(;;) {
+            retirement_nonnull_frees=0u;
+            bool pending=rho_endpoint_vec_release_one(&vec);
+            RETAIN_CHECK(retirement_nonnull_frees<=1u);
+            if(!pending) break;
+        }
+        key_retirement_tracking=false;
+        for(unsigned i=0u;i<width;i++) RETAIN_CHECK(retirement_key_frees[i]==1u);
+        rho_endpoint_vec_free(&vec);
+    }
+    retirement_key_count=0u;
+    puts("PASS: paged endpoint passes retain every key occurrence, agree with the flat ordinal oracle at eight boundary widths, and retire scratch/keys one action at a time");
+    return true;
+}
+
+static bool retained_selector_storage_tests(void) {
+    /* Five allocation boundaries per first page; cuts include a partially
+     * installed path, a partially written pass, a swapped pass and retirement. */
+    for(unsigned trial=0u;trial<10u;trial++) {
+        retained_current="actual selector storage refusal/cancellation, borrowed source generation and delayed publication";
+        Arena source,result;arena_init_detached(&source);arena_init_detached(&result);
+        enum {width=129u};
+        Atom *leaf=rho_binary(&source,"rho:send",
+            rho_unary(&source,"rho:quote",rho_nil(&source)),rho_nil(&source));
+        Atom *children[width+1u];children[0]=atom_symbol(&source,"rho:par");
+        for(unsigned i=0u;i<width;i++) children[i+1u]=leaf;
+        Atom *input=atom_expr(&source,children,width+1u);
+        RhoRuntimeProfile profile={RHO_SCHEDULER_CANONICAL,1u,1u,false};
+        RhocalcRun *run=rhocalc_run_open_held(&result,input,&profile,NULL);RETAIN_CHECK(run);
+        bool reached=false;
+        for(unsigned actions=0u;actions<200000u && !reached;actions++) {
+            RhoCanonicalCursor *cursor=&run->cursor;
+            if(run->cursor_live) {
+                RhoStableSort *sort=&cursor->endpoint_sort.sort;
+                if(trial<2u) reached=cursor->phase==RHO_CANONICAL_KEYS &&
+                    cursor->preparation_position==0u &&
+                    (trial ? cursor->component_keys.pages.blocks!=NULL : !cursor->component_keys.pages.blocks);
+                else if(trial<4u) reached=cursor->phase==RHO_CANONICAL_ENDPOINTS &&
+                    (trial==2u ? !run->machine.sends.storage.pages.blocks : run->machine.sends.len==65u);
+                else if(trial<9u && cursor->phase==RHO_CANONICAL_SORT_SENDS)
+                    reached=trial==4u ? sort->range_ready && !sort->scratch.pages.blocks && !sort->output :
+                        trial==5u ? sort->scratch.pages.blocks && !sort->output :
+                        trial==6u ? sort->width==1u && sort->output>64u && sort->output<width :
+                        trial==7u ? sort->width==2u && !sort->output : sort->scratch.pages.retiring;
+                else if(trial==9u) reached=run->phase==RHO_RUN_SELECTOR_RETIRE &&
+                    cursor->component_keys.pages.retiring;
+            }
+            if(!reached) RETAIN_CHECK(rhocalc_run_poll(run,1u,NULL)==RHOCALC_RUN_PENDING);
+        }
+        RETAIN_CHECK(reached && run->machine.current && run->machine.components.borrowed &&
+            run->machine.components.items==rho_view(run->machine.current).args);
+        RhoReductionResult unpublished;RETAIN_CHECK(!rhocalc_run_result(run,&unpublished));
+        if(trial==0u || trial==2u || trial==4u) {
+            Atom *held=run->machine.current;unsigned position=run->cursor.preparation_position;
+            block_fail_at=block_allocation_calls+1u;block_failure_injected=false;
+            RETAIN_CHECK(rhocalc_run_poll(run,1u,NULL)==RHOCALC_RUN_FAILED && block_failure_injected &&
+                run->machine.current==held && run->cursor.preparation_position==position &&
+                !rhocalc_run_result(run,&unpublished));
+            block_fail_at=0u;
+        }
+        RhocalcRun identity;memcpy(&identity,run,sizeof(identity));uint64_t used=99u;
+        RETAIN_CHECK(rhocalc_run_release_poll(&run,0u,false,&used)==CETTA_OWNED_RELEASE_PENDING &&
+            !used && !memcmp(run,&identity,sizeof(identity)));
+        CettaOwnedReleaseStep status;
+        do {
+            retirement_key_count=0u;retirement_nonnull_frees=0u;key_retirement_tracking=true;
+            status=rhocalc_run_release_poll(&run,1u,false,&used);
+            key_retirement_tracking=false;
+            RETAIN_CHECK(run && used<=1u && retirement_nonnull_frees<=1u && status!=CETTA_OWNED_RELEASE_COMPLETE);
+        } while(status==CETTA_OWNED_RELEASE_PENDING);
+        RETAIN_CHECK(status==CETTA_OWNED_RELEASE_ATOMIC && !run->machine.sends.len &&
+            !run->machine.recvs.len && !run->machine.sends.storage.pages.blocks &&
+            !run->machine.recvs.storage.pages.blocks && !run->cursor.component_key_count &&
+            !run->cursor.component_keys.pages.blocks && !run->cursor.endpoint_sort.sort.scratch.pages.blocks);
+        RETAIN_CHECK(rhocalc_run_release_poll(&run,1u,true,NULL)==CETTA_OWNED_RELEASE_COMPLETE && !run);
+        arena_free(&result);arena_free(&source);
+    }
+    puts("PASS: actual selector cancellation at ten retained storage cuts preserves source borrowing, refuses three provider boundaries without publication, and drains indexed backing before opaque cleanup");
+    return true;
+}
+
+static bool retained_memo_refusal_tests(void) {
+    retained_current="grammar/normalization memo refusal retains partial backing until admitted cleanup";
+    for(unsigned normalize=0u;normalize<2u;normalize++) {
+        Arena source,result;
+        arena_init_detached(&source);arena_init_detached(&result);
+        enum {width=129u};
+        Atom *children[width+1u];children[0]=atom_symbol(&source,"rho:par");
+        for(unsigned i=0u;i<width;i++) children[i+1u]=rho_binary(&source,"rho:send",
+            rho_unary(&source,"rho:quote",rho_nil(&source)),rho_nil(&source));
+        Atom *input=atom_expr(&source,children,width+1u);
+        RhoRuntimeProfile profile={RHO_SCHEDULER_CANONICAL,1u,1u,false};
+        RhocalcRun *run=rhocalc_run_open_held(&result,input,&profile,NULL);
+        RETAIN_CHECK(run);
+        CettaNodeMemoCursor *pending=normalize ? &run->normalization.memo_cursor : &run->check.memo_cursor;
+        bool reached=false;
+        for(unsigned steps=0u;steps<200000u && !reached;steps++) {
+            reached=run->phase==(normalize ? RHO_RUN_NORMALIZE : RHO_RUN_VALIDATE) &&
+                pending->grow_cap==128u && pending->clear_position==64u;
+            if(!reached) RETAIN_CHECK(rhocalc_run_poll(run,1u,NULL)==RHOCALC_RUN_PENDING);
+        }
+        RETAIN_CHECK(reached && pending->writer && pending->grown.blocks &&
+            !run->machine.current);
+        CettaSegmentedBlock *held=pending->grown.blocks;
+        size_t backing=pending->grown.live_bytes;
+        pending->byte_limit=pending->writer->slots.live_bytes+backing;
+        uint64_t used=0u;
+        RETAIN_CHECK(rhocalc_run_poll(run,1u,&used)==RHOCALC_RUN_FAILED && used==1u &&
+            pending->status==CETTA_NODE_MEMO_REFUSED && pending->grown.blocks==held &&
+            pending->grown.live_bytes==backing && !run->machine.current);
+        RhoReductionResult absent={0};
+        RETAIN_CHECK(!rhocalc_run_result(run,&absent));
+        CettaOwnedReleaseStep status;
+        do {
+            status=rhocalc_run_release_poll(&run,1u,false,&used);
+            RETAIN_CHECK(run && used<=1u && status!=CETTA_OWNED_RELEASE_COMPLETE);
+        } while(status==CETTA_OWNED_RELEASE_PENDING);
+        RETAIN_CHECK(status==CETTA_OWNED_RELEASE_ATOMIC);
+        if(!normalize) RETAIN_CHECK(run->check.memo_cursor.grown.blocks==held);
+        RETAIN_CHECK(rhocalc_run_release_poll(&run,1u,true,NULL)==CETTA_OWNED_RELEASE_COMPLETE && !run);
+        arena_free(&result);arena_free(&source);
+    }
+    puts("PASS: real grammar/normalization memo refusal retains partial replacement backing and no published answer until cleanup is admitted");
+    return true;
+}
+
+static bool retained_release_tests(void) {
+    retained_current = "actual normalizer cleanup, atomic tail and retained owner";
+    const unsigned widths[] = {8u, 128u, 2048u, 32768u};
+    for (unsigned trial = 0u; trial < sizeof(widths)/sizeof(*widths); trial++) {
+        Arena source, result;
+        arena_init_detached(&source); arena_init_detached(&result);
+        Atom *leaf = rho_binary(&source, "rho:send",
+            rho_unary(&source, "rho:quote", rho_nil(&source)), rho_nil(&source));
+        Atom **children = malloc(((size_t)widths[trial] + 1u)*sizeof(*children));
+        RETAIN_CHECK(children);
+        children[0] = atom_symbol(&source, "rho:par");
+        for (unsigned i = 0u; i < widths[trial]; i++) children[i+1u] = leaf;
+        Atom *input = atom_expr(&source, children, widths[trial]+1u);
+        free(children);
+        RhoRuntimeProfile profile = {RHO_SCHEDULER_CANONICAL, 1u, 1u, false};
+        RhocalcRun *run = rhocalc_run_open_held(&result, input, &profile, NULL);
+        RETAIN_CHECK(run);
+        while (!(run->phase == RHO_RUN_NORMALIZE && run->normalization.frames.length &&
+            rho_normalize_frame_at(&run->normalization,0)->stage == 5u))
+            RETAIN_CHECK(rhocalc_run_poll(run, 1u, NULL) == RHOCALC_RUN_PENDING);
+        RETAIN_CHECK(run->normalization.frames.length == 1u && !run->machine.current);
+        size_t blocks=dense_storage_blocks(widths[trial]);
+        RETAIN_CHECK(storage_blocks(&rho_normalize_frame_at(&run->normalization,0)->items.pages)==blocks);
+        RhocalcRun *identity = run;
+        RhocalcRun before;
+        memcpy(&before, run, sizeof(before));
+        uint64_t used = 37u;
+        RETAIN_CHECK(rhocalc_run_release_poll(&run, 0u, false, &used) ==
+            CETTA_OWNED_RELEASE_PENDING && !used && run == identity &&
+            !memcmp(&before, run, sizeof(before)));
+        RhocalcRunAccount paid = rhocalc_run_account(run);
+        RETAIN_CHECK(rhocalc_run_release_poll(&run, 1u, false, &used) ==
+            CETTA_OWNED_RELEASE_PENDING && used == 1u && run == identity &&
+            run->retiring && rho_normalize_frame_at(&run->normalization,0)->length == widths[trial]);
+        uint64_t retirement_work = used;
+        RhoReductionResult unpublished;
+        RETAIN_CHECK(rhocalc_run_poll(run, 1u, &used) == RHOCALC_RUN_FAILED &&
+            !used && !rhocalc_run_result(run, &unpublished));
+        CettaOwnedReleaseStep status;
+        do {
+            unsigned grant = trial & 1u ? 7u : 1u;
+            status = rhocalc_run_release_poll(&run, grant, false, &used);
+            RETAIN_CHECK(run == identity && used <= grant &&
+                status != CETTA_OWNED_RELEASE_COMPLETE &&
+                same_account(paid, rhocalc_run_account(run)));
+            retirement_work += used;
+        } while (status == CETTA_OWNED_RELEASE_PENDING);
+        RETAIN_CHECK(status == CETTA_OWNED_RELEASE_ATOMIC &&
+            retirement_work == (uint64_t)widths[trial] + blocks + 8u &&
+            !run->normalization.frames.slots.blocks && run->normalization_retired);
+        memcpy(&before, run, sizeof(before));
+        RETAIN_CHECK(rhocalc_run_release_poll(&run, 19u, false, &used) ==
+            CETTA_OWNED_RELEASE_ATOMIC && !used && run == identity &&
+            !memcmp(&before, run, sizeof(before)));
+        RETAIN_CHECK(rhocalc_run_release_poll(&run, 1u, true, &used) ==
+            CETTA_OWNED_RELEASE_COMPLETE && used == 1u && !run);
+        RETAIN_CHECK(rhocalc_run_release_poll(&run, 0u, false, &used) ==
+            CETTA_OWNED_RELEASE_COMPLETE && !used &&
+            rhocalc_process_well_formed(input));
+
+        run = rhocalc_run_open_held(&result, input, &profile, NULL);
+        RETAIN_CHECK(run);
+        while (!(run->phase == RHO_RUN_NORMALIZE && run->normalization.frames.length &&
+            rho_normalize_frame_at(&run->normalization,0)->stage == 5u))
+            RETAIN_CHECK(rhocalc_run_poll(run, 1u, NULL) == RHOCALC_RUN_PENDING);
+        unsigned releases = 0u, producer_calls = 0u;
+        RetainedRhoOwner *shell = malloc(sizeof(*shell));
+        RETAIN_CHECK(shell);
+        *shell = (RetainedRhoOwner){run, &releases, &producer_calls};
+        CettaOwnedExecution execution;
+        cetta_owned_execution_init(&execution, shell, retained_rho_owner_next,
+            retained_rho_owner_release);
+        RETAIN_CHECK(cetta_owned_execution_set_release_poll(&execution,
+            retained_rho_owner_release_poll));
+        uint64_t coupled_work = 0u;
+        do {
+            status = cetta_owned_execution_cancel_poll(&execution, 1u, false, &used);
+            RETAIN_CHECK(used <= 1u && execution.computation == shell &&
+                status != CETTA_OWNED_RELEASE_COMPLETE && !producer_calls && !releases);
+            coupled_work += used;
+        } while (status == CETTA_OWNED_RELEASE_PENDING);
+        RETAIN_CHECK(status == CETTA_OWNED_RELEASE_ATOMIC &&
+            coupled_work == (uint64_t)widths[trial] + blocks + 9u && shell->run == run);
+        RETAIN_CHECK(cetta_owned_execution_cancel_poll(&execution, 1u, true, &used) ==
+            CETTA_OWNED_RELEASE_PENDING && used == 1u && !shell->run &&
+            execution.release_ready && execution.computation == shell && !releases);
+        coupled_work += used;
+        RETAIN_CHECK(cetta_owned_execution_cancel_poll(&execution, 1u, false, &used) ==
+            CETTA_OWNED_RELEASE_COMPLETE && used == 1u && !execution.computation && releases == 1u);
+        coupled_work += used;
+        RETAIN_CHECK(coupled_work == (uint64_t)widths[trial] + blocks + 11u && !producer_calls);
+        cetta_owned_execution_cancel(&execution);
+        RETAIN_CHECK(releases == 1u && rhocalc_process_well_formed(input));
+        arena_free(&result); arena_free(&source);
+    }
+    const unsigned depths[] = {16u, 1024u};
+    for (unsigned trial = 0u; trial < sizeof(depths)/sizeof(*depths); trial++) {
+        Arena source, result;
+        arena_init_detached(&source); arena_init_detached(&result);
+        Atom *nil = rho_nil(&source), *name = rho_unary(&source, "rho:quote", nil);
+        Atom *input = nil;
+        for (unsigned i = 0u; i < depths[trial]; i++)
+            input = rho_binary(&source, "rho:send", name, input);
+        RhoRuntimeProfile profile = {RHO_SCHEDULER_CANONICAL, 1u, 1u, false};
+        RhocalcRun *run = rhocalc_run_open_held(&result, input, &profile, NULL);
+        RETAIN_CHECK(run);
+        while (!(run->phase == RHO_RUN_NORMALIZE && run->normalization.frames.length >= depths[trial]))
+            RETAIN_CHECK(rhocalc_run_poll(run, 1u, NULL) == RHOCALC_RUN_PENDING);
+        uint64_t frames=run->normalization.frames.length,work=0u,used=0u;
+        size_t pointer_blocks=dense_storage_blocks((size_t)frames-run->normalization.frames.pending);
+        RETAIN_CHECK(storage_blocks(&run->normalization.frames.slots)==pointer_blocks);
+        CettaOwnedReleaseStep status;
+        do {
+            status = rhocalc_run_release_poll(&run, 1u, false, &used);
+            RETAIN_CHECK(run && used <= 1u && status != CETTA_OWNED_RELEASE_COMPLETE);
+            work += used;
+        } while (status == CETTA_OWNED_RELEASE_PENDING);
+        RETAIN_CHECK(status == CETTA_OWNED_RELEASE_ATOMIC && work == frames + pointer_blocks + 2u);
+        RETAIN_CHECK(rhocalc_run_release_poll(&run, 1u, true, &used) ==
+            CETTA_OWNED_RELEASE_COMPLETE && !run && used == 1u);
+        Atom *current = input;
+        for (unsigned i = 0u; i < depths[trial]; i++) {
+            RhoView view = rho_view(current);
+            RETAIN_CHECK(view.kind == RHO_SEND && view.args[0] == name);
+            current = view.args[1];
+        }
+        RETAIN_CHECK(current == nil);
+        arena_free(&result); arena_free(&source);
+    }
+    printf("PASS: retained normalizer retirement preserves owner, paid prefix and atomic tail at four widths and two depths\n");
+    printf("PASS: actual coupled owner/Rho cleanup invoice is width+row-backing-blocks+11, with separate begin, acknowledgement and wrapper release\n");
+    return true;
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -1568,14 +3173,28 @@ int main(void) {
     g_var_intern = NULL;
     arena_init(&arena);
 
+#if CETTA_RHO_WORK_CENSUS
+    if (getenv("CETTA_RHO_WORK_CENSUS")) {
+        int status = retained_work_census();
+        arena_free(&arena); symbol_table_free(&symbols); g_symbols = NULL;
+        return status;
+    }
+#endif
+
     bool abt_ok = rhocalc_abt_substitution_correspondence_selftest(&arena);
     bool text_key_ok =
         rhocalc_atom_text_key_correspondence_selftest(&arena);
-    bool retained_ok=key_failure_tests() && retained_node_memo_tests() &&
+    bool retained_ok=payload_resource_tracking_refusal_test() &&
+        payload_space_cleanup_owner_test(false,true) &&
+        payload_space_cleanup_owner_test(false,false) &&
+        payload_space_cleanup_owner_test(true,false) && payload_resource_view_tests() && payload_resource_cycle_tests() &&
+        retained_payload_substitution_tests() && retained_semantic_substitution_tests() &&
+        key_failure_tests() && retained_node_memo_tests() &&
         retained_reaction_preparation_tests() && retained_fixed_selector_tests() &&
         retained_reaction_build_tests() && retained_reaction_tie_tests() && retained_closed_reaction_tests() &&
         retained_generation_tests() && retained_run_tests() &&
-        retained_preparation_tests() && retained_shared_preparation_tests() && retained_value_observation_tests();
+        retained_preparation_tests() && retained_shared_preparation_tests() && retained_value_observation_tests() &&
+        segmented_storage_tests() && retained_record_stack_tests() && retained_frame_provider_refusal_tests() && retained_rejected_payload_retirement_test() && retained_nested_key_retirement_test() && retained_frame_pop_admission_tests() && retained_endpoint_storage_tests() && retained_selector_storage_tests() && retained_memo_refusal_tests() && retained_sort_retirement_tests() && retained_release_tests();
     unsigned passed = (abt_ok ? 1u : 0u) + (text_key_ok ? 1u : 0u) + (retained_ok ? 1u : 0u);
 
     arena_free(&arena);

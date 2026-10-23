@@ -47,16 +47,20 @@ static void compact_joins(void) {
  cetta_native_cost_scope_leave(&scope);
  cetta_native_cost_free(&parent);cetta_native_cost_free(&left);
 
- cetta_native_cost_init_compact(&parent);cetta_native_cost_init_compact(&left);cetta_native_cost_init_compact(&right);
- cetta_native_cost_append(&left,CETTA_COST_CAPTURE,3u,2u);cetta_native_cost_append(&right,CETTA_COST_CAPTURE,5u,3u);
- CettaNativeCostSegment segments[]={
-  {.ledger=&left,.occurrence=2u,.order=1u,.worker=0u},
-  {.ledger=&right,.occurrence=3u,.order=2u,.worker=1u}};
- cetta_native_cost_scope_enter(&scope,&parent,1u);
- CHECK(cetta_native_cost_join_segments(segments,2u,2u));
- CHECK(parent.total.work==8u && parent.total.span==5u && parent.total.parallel && !parent.total.trace_incomplete && !parent.events);
- cetta_native_cost_scope_leave(&scope);
- cetta_native_cost_free(&parent);cetta_native_cost_free(&left);cetta_native_cost_free(&right);
+ for (unsigned distinct_worker=0u;distinct_worker<2u;distinct_worker++) {
+  cetta_native_cost_init_compact(&parent);cetta_native_cost_init_compact(&left);cetta_native_cost_init_compact(&right);
+  cetta_native_cost_append(&left,CETTA_COST_CAPTURE,3u,2u);cetta_native_cost_append(&right,CETTA_COST_CAPTURE,5u,3u);
+  CettaNativeCostSegment segments[]={
+   {.ledger=&left,.occurrence=2u,.order=1u,.worker=0u},
+   {.ledger=&right,.occurrence=3u,.order=2u,.worker=distinct_worker,
+    .worker_predecessor=distinct_worker?0u:left.identity}};
+  cetta_native_cost_scope_enter(&scope,&parent,1u);
+  CHECK(cetta_native_cost_join_segments(segments,2u,2u));
+  CHECK(parent.total.work==8u && parent.total.span==(distinct_worker?5u:8u) &&
+   parent.total.parallel==(distinct_worker!=0u) && !parent.total.trace_incomplete && !parent.events);
+  cetta_native_cost_scope_leave(&scope);
+  cetta_native_cost_free(&parent);cetta_native_cost_free(&left);cetta_native_cost_free(&right);
+ }
 }
 
 int main(void) {

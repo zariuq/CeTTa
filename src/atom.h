@@ -1745,6 +1745,14 @@ bool atom_data_equal_validated(Atom *left, Atom *right);
  * variables retain their identity, spelling and structural name. No runtime
  * handle, value comparison callback or persistent cache participates. */
 bool atom_data_identical(Atom *left, Atom *right);
+/* Agreement of captured inputs, independent of language-level equality.
+ * Immutable data and Prime contexts are compared structurally; value/code
+ * marks, variable identities and names are retained. State/Space and opaque
+ * service leaves retain object identity; Need capabilities retain their full
+ * session/cell/authority/rights tuple. No foreign equality callback runs.
+ * This borrows the complete graphs and resource owners; agreement grants no
+ * lifetime, current-resource observation or invocation authority. */
+bool atom_capture_identical(Atom *left, Atom *right);
 /* MeTTa's ==: a comparison that never binds.  Expressions compare element
  * by element, and a NaN equals nothing, even itself.
  * PeTTa: numbers are equal when their values are, whatever their
