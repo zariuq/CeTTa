@@ -29,14 +29,20 @@ RULES = """
 
 def run(binary, directory, n, quadratic):
     insertion = "(push $i $xs)"
+    env = dict(os.environ, CETTA_PETTA_SEARCH_MACHINE="1")
     if quadratic:
         insertion = "(touch $i (push $i $xs))"
+        # The control's repeated evaluations must run where this counter
+        # observes them.  The prepared machine compiles the touching loop,
+        # its evaluation of a closed term included, and then repeats it
+        # without translation work.
+        env["CETTA_PREPARED_PURE_REFERENCE"] = "1"
     source = RULES.replace("INSERT", insertion)
     source += f"!(length-of (grow 0 {n} ()) 0)\n"
     path = Path(directory) / f"{'quadratic' if quadratic else 'linear'}-{n}.metta"
     path.write_text(source)
     proc = subprocess.run([binary, "--lang", "petta", "--emit-runtime-stats", str(path)],
-                          cwd=ROOT, env=dict(os.environ, CETTA_PETTA_SEARCH_MACHINE="1"),
+                          cwd=ROOT, env=env,
                           capture_output=True, text=True, timeout=120)
     if proc.returncode or proc.stdout.strip() != str(n):
         raise AssertionError(f"Wrong answer at {n}: {proc.returncode}, {proc.stdout}, {proc.stderr}")

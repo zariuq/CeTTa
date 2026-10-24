@@ -453,6 +453,12 @@ typedef struct {
                                   Atom *const *arguments, uint32_t arity,
                                   Atom **result_out);
     void (*release_pure_callable)(void *context, void *prepared);
+    /* A named relation's value over closed arguments, computed by the
+     * prepared machine where it compiles the relation, in `arena`.  NULL
+     * declines: the region runs the relation's equations itself. */
+    Atom *(*execute_pure_relation)(void *context, Space *space, Arena *arena,
+                                   SymbolId head, Atom *const *arguments,
+                                   uint32_t arity);
     /* A lexical body with choices or effects, compiled into this same
      * continuation machine. Comes retained; NULL declines before execution. */
     CettaOpenEquationProgram *(*compile_callable)(void *context, Space *space,

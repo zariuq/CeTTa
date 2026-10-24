@@ -48650,6 +48650,19 @@ static bool petta_eval_term_variables_are_operands(const Atom *term) {
     return true;
 }
 
+/* Whether a case's arms include one whose pattern is written Empty. */
+static bool petta_case_arms_write_empty(const Atom *arms) {
+    if (!arms || arms->kind != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex index = 0u; index < arms->expr.len; index++) {
+        const Atom *arm = arms->expr.elems[index];
+        if (arm && arm->kind == ATOM_EXPR && arm->expr.len == 2u &&
+            atom_is_symbol_id(arm->expr.elems[0], g_builtin_syms.empty))
+            return true;
+    }
+    return false;
+}
+
 static CettaPreparedPureExpressionViewState
 petta_prepared_pure_expression_view(
     const Atom *expression, CettaPreparedPureExpressionView *view) {
@@ -48765,6 +48778,13 @@ petta_prepared_pure_expression_view(
             : CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION;
         return CETTA_PREPARED_PURE_EXPRESSION_OBSERVE;
     }
+    /* PeTTa's case commits to the first arm whose pattern matches the
+     * key's value, as SWI-PeTTa's chain of if-then-else does.  A written
+     * Empty arm answers a key that has no value, which the canonical
+     * machine owns. */
+    if (head == g_builtin_syms.case_text && arity == 2u &&
+        !petta_case_arms_write_empty(expression->expr.elems[2]))
+        return CETTA_PREPARED_PURE_EXPRESSION_SELECT;
     if (form == PETTA_FORM_CONS)
         return CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
     return petta_program_head_is_intrinsic(head)
@@ -49233,13 +49253,13 @@ static Atom *prepared_pure_closed_call_try(
         arena_free(machine_arena);
     else
         arena_reset(machine_arena, machine_arena_mark);
-    if (program_is_cached && !result && !interrupted) {
-        prepared_pure_program_cache_remove(
-            program_cache, program);
-        program = NULL;
-        program_is_cached = false;
-    } else if (!program_is_cached && result && program_cache &&
-               cacheable_program) {
+    /* A program stays cached whatever one execution answers.  Each
+     * execution leaves it reset (release_closed_execution), and a decline
+     * depends on the call's arguments, which the next call's need not
+     * share: compiling it again at every call that declines costs more
+     * than running it. */
+    if (!program_is_cached && (result || !interrupted) && program_cache &&
+        cacheable_program) {
         CettaPreparedPureProgram *cache_candidate = program;
         if (call_mode == CETTA_GSLT_PURE_CALL_EAGER &&
             !cache_entry_arguments_are_values) {
@@ -50495,6 +50515,67 @@ static void petta_eval_open_release_pure_callable(
     cetta_prepared_pure_program_free(prepared);
 }
 
+/* A named relation called from the open tier answers on the prepared machine
+ * where the machine's own prepared calls would: the same closed-call entry,
+ * program cache and refusals (petta_machine_prepared_call_blocked), so the
+ * tier a call runs in depends on its callee, not on its caller.  NULL
+ * declines without effect. */
+static Atom *petta_eval_open_execute_pure_relation(
+        void *context, Space *space, Arena *arena, SymbolId head,
+        Atom *const *arguments, uint32_t arity) {
+    PettaEvalMachineContext *eval_context = context;
+    CettaLibraryContext *library =
+        eval_context ? eval_context->library_context : NULL;
+    if (!eval_context || !library || !space || !arena ||
+        head == SYMBOL_ID_NONE ||
+        eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        eval_context->transaction || eval_context->fuel >= 0 ||
+        eval_context->diagnostic_transition_limit != 0u ||
+        eval_context->typecheck_ops ||
+        (eval_context->controller_admitted &&
+         g_active_search_controller_auto) ||
+        prepared_pure_reference_enabled() ||
+        cetta_library_petta_translator_rule_contains(library, head) ||
+        cetta_library_petta_tabled_relation_contains(library, head, arity) ||
+        cetta_library_petta_memo_contains(library, head, arity) ||
+        petta_eval_machine_prepared_pure_call_declined(
+            context, space, head, arity))
+        return NULL;
+    for (uint32_t index = 0u; index < arity; index++) {
+        if (!arguments[index] || atom_has_vars(arguments[index]) ||
+            atom_has_registry_refs(arguments[index]) ||
+            hyperpose_atom_has_thread_local_resource(arguments[index]))
+            return NULL;
+    }
+    ArenaMark mark = arena_mark(arena);
+    Atom **elements = arena_alloc(arena, sizeof(*elements) * ((size_t)arity + 1u));
+    Atom *call = NULL;
+    if (elements && (elements[0] = atom_symbol_id(arena, head))) {
+        for (uint32_t index = 0u; index < arity; index++)
+            elements[index + 1u] = arguments[index];
+        call = atom_expr(arena, elements, arity + 1u);
+    }
+    Atom *result = call
+        ? petta_eval_machine_execute_prepared_pure_call(
+              context, space, arena, call)
+        : NULL;
+    /* A returned head that a foreign registry calls at this arity still
+     * needs ordinary dispatch (petta_machine_extension_callable).  A fresh
+     * variable in the value is none of the region's cells; the region's own
+     * equations make it one. */
+    if (!result || atom_is_error(result) ||
+        atom_is_legacy_empty_sentinel(result) || atom_has_vars(result) ||
+        hyperpose_atom_has_thread_local_resource(result) ||
+        (result->kind == ATOM_EXPR && result->expr.len > 0u &&
+         result->expr.elems[0]->kind == ATOM_SYMBOL &&
+         petta_eval_extension_named_arity(
+             result->expr.elems[0]->sym_id, result->expr.len - 1u).exact)) {
+        arena_reset(arena, mark);
+        return NULL;
+    }
+    return result;
+}
+
 /* The search machine's ready path for a ground add-atom, for a running
  * cursor: declined where the machine's ready dispatch would not take it, an
  * operation the host overrides. */
@@ -50579,6 +50660,7 @@ static CettaOpenEquationCursor *petta_eval_machine_open_relation_cursor(
         .prepare_pure_callable = petta_eval_open_prepare_pure_callable,
         .execute_pure_callable = petta_eval_open_execute_pure_callable,
         .release_pure_callable = petta_eval_open_release_pure_callable,
+        .execute_pure_relation = he ? NULL : petta_eval_open_execute_pure_relation,
         .compile_callable = petta_eval_open_compile_callable,
         .open_head_is_data = !he,
         .program_current = petta_eval_open_program_current,

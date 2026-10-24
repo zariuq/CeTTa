@@ -16,3 +16,7 @@ no
 (Cons 1 (Cons 2 Nil))
 (Cons 3 (Cons 1 Nil))
 (Cons 2 (Cons 1 Nil))
+1250025000
+(one 1)
+(many (Cons 7 Nil))
+empty-list

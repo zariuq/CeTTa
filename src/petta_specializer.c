@@ -75,6 +75,12 @@ typedef struct {
     size_t direct_dependency_cap;
     /* The program's equation revision when the direct calls were checked. */
     uint64_t direct_revision;
+    /* A closure shape's record (petta_specializer_first_sight): a ring of
+     * the fingerprints of the shape's values seen once, whose second
+     * sighting specializes that value. */
+    uint64_t *sightings;
+    uint32_t sighting_len;
+    uint32_t sighting_next;
 } PettaSpecializationRecord;
 
 typedef struct {
@@ -142,11 +148,25 @@ typedef struct {
 typedef struct PettaSpecializerSemanticCache
     PettaSpecializerSemanticCache;
 
+/* A closure value and its shape (petta_selector_shape_of). */
+typedef struct {
+    Atom *value;
+    Atom *shape;
+} PettaShapeMemo;
+
 typedef struct {
     Space *space;
     PettaProgram *program;
     Arena *persistent;
     Arena scratch;
+    /* Closure shapes, one per closure value, kept for the context's life:
+     * bindings and candidates hold them across the scratch arena's resets,
+     * and the same value always gives the same shape. */
+    Arena shapes;
+    bool shapes_ready;
+    PettaShapeMemo *shape_memo;
+    size_t shape_memo_len;
+    size_t shape_memo_cap;
     PettaSpecializerSemanticCache *semantic_cache;
     SymbolId *visiting;
     size_t visiting_len;
@@ -156,6 +176,13 @@ typedef struct {
     bool invalidated;
     bool declined;
 } PettaSpecializerContext;
+
+static void petta_specializer_context_free(PettaSpecializerContext *context) {
+    arena_free(&context->scratch);
+    if (context->shapes_ready)
+        arena_free(&context->shapes);
+    free(context->shape_memo);
+}
 
 typedef struct {
     bool eligible;
@@ -1781,7 +1808,7 @@ static bool petta_specializer_relation_factor(
     arena_set_hashcons(&context.scratch, NULL);
     *relevance = petta_relation_specialization_relevance(
         &context, source);
-    arena_free(&context.scratch);
+    petta_specializer_context_free(&context);
     if (context.invalidated) {
         *relevance = PETTA_RELATION_RELEVANCE_UNKNOWN;
         return false;
@@ -1805,7 +1832,7 @@ petta_specializer_relation_execution_admission(
     PettaRelationRelevance relevance =
         petta_relation_specialization_relevance(
             &context, source);
-    arena_free(&context.scratch);
+    petta_specializer_context_free(&context);
     if (context.invalidated)
         return PETTA_SPECIALIZER_RELATION_INVALIDATED;
     return relevance == PETTA_RELATION_RELEVANCE_IRRELEVANT
@@ -1832,6 +1859,112 @@ static bool petta_value_specializable(
            petta_symbol_is_callable(context, atom->sym_id);
 }
 
+/* A closure's shape: the partial application with every bound argument
+ * that is data replaced by a fresh variable, a hole of the specialized head.
+ * A callable symbol among the arguments stays, and a partial is shaped in
+ * turn: what a specialization calls is part of its key, what the closure
+ * carries is not.  SWI-PeTTa keys a specialization by the written closure,
+ * whose carried values are still variables there.  The value itself when
+ * nothing it carries is data; NULL when out of memory. */
+static Atom *petta_selector_shape(
+    PettaSpecializerContext *context, Atom *value, uint32_t depth) {
+    Atom *base = NULL;
+    Atom *arguments = NULL;
+    if (depth > 64u ||
+        !petta_semantics_partial_view(value, &base, &arguments))
+        return value;
+    CettaExprLen count = arguments->expr.len;
+    if (count == 0u)
+        return value;
+    if (!cetta_expr_len_mul_fits_size(count, sizeof(Atom *)))
+        return NULL;
+    Atom **shaped = arena_alloc(
+        &context->shapes, sizeof(*shaped) * (size_t)count);
+    if (!shaped)
+        return NULL;
+    bool changed = false;
+    for (CettaExprIndex index = 0u; index < count; index++) {
+        Atom *argument = arguments->expr.elems[index];
+        Atom *kept = argument;
+        if (petta_semantics_partial_view(argument, NULL, NULL))
+            kept = petta_selector_shape(context, argument, depth + 1u);
+        else if (argument->kind != ATOM_SYMBOL ||
+                 !petta_symbol_is_callable(context, argument->sym_id))
+            kept = atom_var_with_id(
+                &context->shapes, "carried", fresh_var_id());
+        if (!kept)
+            return NULL;
+        changed = changed || kept != argument;
+        shaped[index] = kept;
+    }
+    if (!changed)
+        return value;
+    Atom *shaped_arguments = atom_sequence_like(
+        &context->shapes, arguments, shaped, count);
+    return shaped_arguments
+        ? atom_expr3(&context->shapes, value->expr.elems[0], base,
+                     shaped_arguments)
+        : NULL;
+}
+
+/* The shape of a selecting value, made once per value for the context: a
+ * closure's (petta_selector_shape), anything else the value itself.  NULL
+ * when out of memory. */
+static Atom *petta_selector_shape_of(
+    PettaSpecializerContext *context, Atom *value) {
+    if (!petta_semantics_partial_view(value, NULL, NULL))
+        return value;
+    for (size_t index = 0u; index < context->shape_memo_len; index++) {
+        if (atom_eq(context->shape_memo[index].value, value))
+            return context->shape_memo[index].shape;
+    }
+    if (!context->shapes_ready) {
+        arena_init(&context->shapes);
+        arena_set_runtime_kind(
+            &context->shapes, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
+        arena_set_hashcons(&context->shapes, NULL);
+        context->shapes_ready = true;
+    }
+    Atom *kept = atom_deep_copy(&context->shapes, value);
+    Atom *shape = kept ? petta_selector_shape(context, kept, 0u) : NULL;
+    if (!shape ||
+        !petta_reserve((void **)&context->shape_memo,
+                       &context->shape_memo_cap,
+                       context->shape_memo_len + 1u,
+                       sizeof(*context->shape_memo)))
+        return NULL;
+    context->shape_memo[context->shape_memo_len++] =
+        (PettaShapeMemo){.value = kept, .shape = shape};
+    return shape;
+}
+
+/* Whether a selector selects a value: equal to it, or, for a shape, a
+ * value of that same shape (petta_selector_shape): the same structure and
+ * representation, each hole holding data or a hole, never a callable,
+ * which a shape of its own keeps. */
+static bool petta_selector_admits(
+    PettaSpecializerContext *context, const Atom *selector, Atom *value,
+    uint32_t depth) {
+    if (!atom_has_vars(selector))
+        return atom_eq((Atom *)selector, value);
+    if (selector->kind == ATOM_VAR)
+        return !petta_semantics_partial_view(value, NULL, NULL) &&
+            (value->kind != ATOM_SYMBOL ||
+             !petta_symbol_is_callable(context, value->sym_id));
+    if (depth > 64u || selector->kind != ATOM_EXPR ||
+        value->kind != ATOM_EXPR ||
+        selector->expr.len != value->expr.len ||
+        atom_is_list_form(selector) != atom_is_list_form(value))
+        return false;
+    for (CettaExprIndex index = 0u; index < selector->expr.len; index++) {
+        if (!petta_selector_admits(
+                context, selector->expr.elems[index],
+                value->expr.elems[index], depth + 1u))
+            return false;
+    }
+    return true;
+}
+
 /*
  * Source matching can bind a source-pattern variable only to a subtree of a
  * ready call.  The cons-constraint exception constructs an internal open-cons
@@ -1845,6 +1978,10 @@ static bool petta_value_specializable(
  * budget declines specialization for this call and leaves it to the ordinary
  * evaluator; it must not turn a bounded rejection test into an unbounded
  * optimization attempt.  Later calls receive their own relevance check.
+ * The forest is read breadth-first, nearest the call first: a closure passed
+ * beside a long data argument is found within the budget, which a depth-first
+ * walk would spend on the data, declining every call of a recursion over it
+ * until little data is left.
  * The outer call head is deliberately excluded because source equations pin
  * it to the selected relation head; nested expression heads remain visible
  * because a nested source variable may bind them.
@@ -1865,6 +2002,7 @@ petta_query_arguments_may_supply_specializable_value(
         PETTA_RELEVANCE_NODE_LIMIT = 64,
     };
     CettaGsltTermCursorV1 stack[PETTA_RELEVANCE_STACK_CAPACITY];
+    size_t next = 0u;
     size_t length = 0u;
     size_t visited = 0u;
     if (!context || (arity > 0u && !arguments && !views)) {
@@ -1879,12 +2017,12 @@ petta_query_arguments_may_supply_specializable_value(
             : (CettaGsltTermCursorV1){.source = arguments[index]};
     }
 
-    while (length > 0u) {
+    while (next < length) {
         if (visited++ >= PETTA_RELEVANCE_NODE_LIMIT)
             return PETTA_RELEVANCE_NODE_BUDGET;
         CettaGsltTermCursorV1 cursor;
         if (cetta_gslt_term_cursor_resolve_root_v1(
-                observer, stack[--length], &cursor) !=
+                observer, stack[next++], &cursor) !=
                 CETTA_GSLT_TERM_VIEW_OK_V1)
             return PETTA_RELEVANCE_YES;
         Atom *atom = cursor.source;
@@ -1919,8 +2057,14 @@ petta_query_arguments_may_supply_specializable_value(
                 return PETTA_RELEVANCE_YES;
         }
         if ((size_t)atom->expr.len >
-            PETTA_RELEVANCE_STACK_CAPACITY - length) {
+            PETTA_RELEVANCE_STACK_CAPACITY - (length - next)) {
             return PETTA_RELEVANCE_YES;
+        }
+        if ((size_t)atom->expr.len >
+            PETTA_RELEVANCE_STACK_CAPACITY - length) {
+            memmove(stack, stack + next, (length - next) * sizeof(*stack));
+            length -= next;
+            next = 0u;
         }
         CettaExprIndex first = head->kind == ATOM_SYMBOL ? 1u : 0u;
         visited += first;
@@ -1955,6 +2099,7 @@ petta_query_values_may_supply_specializable_value(
         PETTA_VALUE_RELEVANCE_NODE_LIMIT = 64,
     };
     BindingValue stack[PETTA_VALUE_RELEVANCE_STACK_CAPACITY];
+    size_t next = 0u;
     size_t length = 0u;
     size_t visited = 0u;
     if (!context || !environment || (arity > 0u && !arguments) ||
@@ -1964,12 +2109,12 @@ petta_query_values_may_supply_specializable_value(
     for (CettaExprIndex index = 0u; index < arity; index++)
         stack[length++] = arguments[index];
 
-    while (length > 0u) {
+    while (next < length) {
         if (visited++ >= PETTA_VALUE_RELEVANCE_NODE_LIMIT)
             return PETTA_RELEVANCE_NODE_BUDGET;
         BindingValue value;
         if (!bindings_resolve_value_preview(
-                environment, stack[--length], &value) ||
+                environment, stack[next++], &value) ||
             !value.skeleton) {
             return PETTA_RELEVANCE_YES;
         }
@@ -2008,8 +2153,14 @@ petta_query_values_may_supply_specializable_value(
             }
         }
         if ((size_t)atom->expr.len >
-            PETTA_VALUE_RELEVANCE_STACK_CAPACITY - length) {
+            PETTA_VALUE_RELEVANCE_STACK_CAPACITY - (length - next)) {
             return PETTA_RELEVANCE_YES;
+        }
+        if ((size_t)atom->expr.len >
+            PETTA_VALUE_RELEVANCE_STACK_CAPACITY - length) {
+            memmove(stack, stack + next, (length - next) * sizeof(*stack));
+            length -= next;
+            next = 0u;
         }
         CettaExprIndex first = head->kind == ATOM_SYMBOL ? 1u : 0u;
         visited += first;
@@ -2209,7 +2360,7 @@ petta_specializer_query_execution_admission_core(
                     &context, source);
         }
     }
-    arena_free(&context.scratch);
+    petta_specializer_context_free(&context);
 
     if (context.invalidated)
         return PETTA_SPECIALIZER_RELATION_INVALIDATED;
@@ -2300,7 +2451,7 @@ petta_specializer_query_value_execution_admission(
             petta_relation_specialization_relevance(
                 &context, source);
     }
-    arena_free(&context.scratch);
+    petta_specializer_context_free(&context);
 
     if (context.invalidated)
         return PETTA_SPECIALIZER_RELATION_INVALIDATED;
@@ -2593,8 +2744,10 @@ static bool petta_record_set_selectors(
             context->capacity = true;
             return false;
         }
-        selector->fingerprint_known = petta_selector_fingerprint(
-            selector->value, &selector->fingerprint);
+        /* A shape's holes take any value, which no fingerprint states. */
+        selector->fingerprint_known = !atom_has_vars(selector->value) &&
+            petta_selector_fingerprint(
+                selector->value, &selector->fingerprint);
     }
     return true;
 }
@@ -2609,6 +2762,7 @@ petta_find_record_for_call(
     }
     PettaSelectorObservation observations[8];
     size_t observation_len = 0u;
+    PettaSpecializationRecord *shaped = NULL;
     bool fingerprints = petta_selector_fingerprint_enabled();
     uint64_t instance = space_instance_id(context->space);
     for (size_t record_index = 0u;
@@ -2639,10 +2793,16 @@ petta_find_record_for_call(
             if (!petta_value_specializable(context, actual) ||
                 (fingerprints && !petta_selector_may_equal(
                     selector, actual, observations, &observation_len)) ||
-                !atom_eq(actual, selector->value)) {
+                !petta_selector_admits(context, selector->value, actual, 0u)) {
                 matches = false;
                 break;
             }
+        }
+        if (matches && record->sightings) {
+            /* A specialization of the value itself may follow. */
+            if (!shaped)
+                shaped = record;
+            continue;
         }
         if (matches) {
             if (petta_specializer_trace_enabled()) {
@@ -2656,7 +2816,7 @@ petta_find_record_for_call(
             return record;
         }
     }
-    return NULL;
+    return shaped;
 }
 
 static bool petta_record_add(
@@ -3011,7 +3171,7 @@ static bool petta_specialization_selectors_match(
         Atom *actual = petta_atom_at_path(
             call, selector->path, selector->path_len);
         if (!petta_value_specializable(context, actual) ||
-            !atom_eq(actual, selector->value))
+            !petta_selector_admits(context, selector->value, actual, 0u))
             return false;
     }
     return true;
@@ -3772,6 +3932,166 @@ static bool petta_materialize_specialization(
     return true;
 }
 
+enum { PETTA_SPECIALIZER_SIGHTINGS = 64u };
+
+/* Whether `variable` occurs in an argument of a call in `rhs`, where it is
+ * passed on (petta_analyze_forwarded_calls); true when the walk cannot be
+ * made. */
+static bool petta_variable_is_passed(
+    PettaSpecializerContext *context, Atom *rhs, VarId variable) {
+    PettaAtomVector stack = {0};
+    if (!petta_atom_vector_push(&stack, rhs))
+        return true;
+    bool passed = false;
+    while (!passed && stack.len > 0u) {
+        Atom *atom = stack.items[--stack.len];
+        if (atom->kind != ATOM_EXPR)
+            continue;
+        bool call = atom->expr.len > 1u &&
+            atom->expr.elems[0]->kind == ATOM_SYMBOL &&
+            petta_symbol_is_callable(context, atom->expr.elems[0]->sym_id);
+        for (CettaExprIndex index = 0u;
+             !passed && index < atom->expr.len; index++) {
+            passed = (call && index > 0u &&
+                      petta_atom_contains_variable(
+                          atom->expr.elems[index], variable)) ||
+                !petta_atom_vector_push(&stack, atom->expr.elems[index]);
+        }
+    }
+    free(stack.items);
+    return passed;
+}
+
+/* Whether an equation of the relation may pass a selected closure on.  An
+ * equation whose head has a ground value at a selector's path never binds
+ * the closure; one that reads it with a pattern, or binds a term around it,
+ * counts as passing it. */
+static bool petta_relation_passes_selectors(
+    PettaSpecializerContext *context, const PettaAtomVector *equations,
+    const PettaSpecializationBindings *selectors) {
+    for (size_t index = 0u; index < equations->len; index++) {
+        Atom *equation = equations->items[index];
+        if (!equation || equation->kind != ATOM_EXPR ||
+            equation->expr.len != 3u)
+            return true;
+        for (size_t selector = 0u; selector < selectors->len; selector++) {
+            const PettaSpecializationBinding *binding =
+                &selectors->items[selector];
+            Atom *at = binding->positional
+                ? petta_atom_at_path(equation->expr.elems[1], binding->path,
+                                     binding->path_len)
+                : NULL;
+            if (at && !atom_has_vars(at))
+                continue;
+            if (!at || at->kind != ATOM_VAR ||
+                petta_variable_is_passed(context, equation->expr.elems[2],
+                                         at->var_id))
+                return true;
+        }
+    }
+    return false;
+}
+
+/* The fingerprint of the values a call passes at a record's selectors; false
+ * when one is not positional or has no fingerprint. */
+static bool petta_record_call_print(
+    const PettaSpecializationRecord *record, Atom *call, uint64_t *out) {
+    uint64_t print = UINT64_C(1469598103934665603);
+    for (size_t index = 0u; index < record->selector_len; index++) {
+        const PettaSpecializationBinding *selector = &record->selectors[index];
+        uint64_t value_print = 0u;
+        Atom *value = selector->positional
+            ? petta_atom_at_path(call, selector->path, selector->path_len)
+            : NULL;
+        if (!value || !petta_selector_fingerprint(value, &value_print))
+            return false;
+        print = petta_selector_mix(print, value_print);
+    }
+    *out = print;
+    return true;
+}
+
+/* Note a value's sighting in its shape's ring; whether it was seen before. */
+static bool petta_record_sight(PettaSpecializationRecord *record,
+                               uint64_t print) {
+    for (uint32_t index = 0u; index < record->sighting_len; index++) {
+        if (record->sightings[index] == print)
+            return true;
+    }
+    record->sightings[record->sighting_next] = print;
+    record->sighting_next =
+        (record->sighting_next + 1u) % PETTA_SPECIALIZER_SIGHTINGS;
+    if (record->sighting_len < PETTA_SPECIALIZER_SIGHTINGS)
+        record->sighting_len++;
+    return false;
+}
+
+/* Whether a closure value is seen for the first time, and so runs the
+ * relation as written instead of being specialized.  It is asked only of a
+ * relation no equation of which passes its closures on, which applies each
+ * a fixed number of times per answer: its calls with a value count the
+ * value's applications.  A value is specialized at its second sighting, as
+ * a tiered compiler compiles what it has seen run: a closure applied once
+ * never pays for a specialization, and one applied again pays one
+ * unspecialized call.  Values are told apart within their shape
+ * (petta_selector_shape), whose record keeps a ring of the values'
+ * fingerprints and is made here at the shape's first sighting.  A closure
+ * that carries no data, or a value without a fingerprint, is specialized
+ * at once, as is any closure passed on, whose calls the relation's run
+ * makes without coming back here. */
+static bool petta_specializer_first_sight(
+    PettaSpecializerContext *context, SymbolId source,
+    const PettaAtomVector *equations,
+    const PettaSpecializationBindings *candidates, Atom *call) {
+    PettaSpecializationBindings shapes = {0};
+    if (!petta_reserve((void **)&shapes.items, &shapes.cap,
+                       candidates->len, sizeof(*shapes.items))) {
+        context->capacity = true;
+        return false;
+    }
+    bool abstracted = false;
+    for (size_t index = 0u; index < candidates->len; index++) {
+        PettaSpecializationBinding shape = candidates->items[index];
+        shape.value = petta_selector_shape_of(context, shape.value);
+        if (!shape.value) {
+            context->capacity = true;
+            free(shapes.items);
+            return false;
+        }
+        abstracted = abstracted || atom_has_vars(shape.value);
+        shapes.items[shapes.len++] = shape;
+    }
+    bool first = false;
+    SymbolId symbol = abstracted
+        ? petta_specialized_symbol(context, source, &shapes)
+        : SYMBOL_ID_NONE;
+    if (symbol != SYMBOL_ID_NONE) {
+        PettaSpecializationRecord *record =
+            petta_find_record(context->space, source, symbol);
+        /* A shape's record routes calls that meet any of the relation's
+         * equations, so its sightings are kept only for a relation none of
+         * whose equations passes the closure on. */
+        if (!record &&
+            !petta_relation_passes_selectors(context, equations, candidates)) {
+            record = petta_create_record(context, source, symbol, &shapes);
+            if (record) {
+                record->negative = true;
+                record->sightings = cetta_malloc(
+                    sizeof(*record->sightings) * PETTA_SPECIALIZER_SIGHTINGS);
+            }
+        }
+        uint64_t print = 0u;
+        first = record && record->sightings &&
+            petta_record_call_print(record, call, &print) &&
+            !petta_record_sight(record, print);
+        if (first && petta_specializer_trace_enabled())
+            fprintf(stderr, "[petta-specializer] first sighting %s\n",
+                    symbol_bytes(g_symbols, symbol));
+    }
+    free(shapes.items);
+    return first;
+}
+
 static bool petta_specializer_analyze_call(
     PettaSpecializerContext *context, Atom *call,
     bool materialize, PettaSpecializationAnalysis *analysis) {
@@ -3793,6 +4113,17 @@ static bool petta_specializer_analyze_call(
     if (routed && !petta_record_direct_calls_hold(context, routed)) {
         petta_specializer_invalidate(
             context->space, routed->specialized, false);
+        routed = NULL;
+    }
+    if (routed && routed->sightings) {
+        /* A closure shape's record: a value seen before is specialized now,
+         * by the analysis below; another runs as written. */
+        uint64_t print = 0u;
+        if (petta_record_call_print(routed, call, &print) &&
+            !petta_record_sight(routed, print)) {
+            analysis->eligible = true;
+            return true;
+        }
         routed = NULL;
     }
     if (routed) {
@@ -3842,6 +4173,10 @@ static bool petta_specializer_analyze_call(
     PettaAtomVector equations = {0};
     PettaSpecializationBindings candidates = {0};
     bool productive = false;
+    /* Whether a candidate is passed on to a call (a recursive call, a
+     * fold's body, another relation), which may apply it any number of
+     * times for this one call. */
+    bool passed = false;
     bool ok = petta_collect_source_equations(
         context, source, &equations);
     for (size_t equation_index = 0u;
@@ -3921,6 +4256,7 @@ static bool petta_specializer_analyze_call(
                 break;
             }
             productive = productive || direct || downstream;
+            passed = passed || forwarded;
         }
         bindings_free(&higher_order);
         bindings_free(&bindings);
@@ -3947,6 +4283,11 @@ static bool petta_specializer_analyze_call(
     if (known) {
         analysis->productive = known->productive;
         analysis->specialized = specialized;
+    } else if (ok && candidates.len > 0u && productive && materialize &&
+               !passed &&
+               petta_specializer_first_sight(context, source, &equations,
+                                             &candidates, call)) {
+        /* A closure seen for the first time runs the relation as written. */
     } else if (ok && candidates.len > 0u && productive) {
         if (materialize &&
             !petta_materialize_specialization(
@@ -4055,7 +4396,7 @@ PettaSpecializeResult petta_specializer_prepare_call(
     }
 
     free(context.visiting);
-    arena_free(&context.scratch);
+    petta_specializer_context_free(&context);
     if (!ok || context.capacity) {
         while (g_petta_specializations.len >
                record_checkpoint) {
@@ -4116,6 +4457,10 @@ static void petta_record_release_owned(
     free(record->selectors);
     free(record->artifacts);
     free(record->direct_dependencies);
+    free(record->sightings);
+    record->sightings = NULL;
+    record->sighting_len = 0u;
+    record->sighting_next = 0u;
     record->selectors = NULL;
     record->selector_len = 0u;
     record->artifacts = NULL;
