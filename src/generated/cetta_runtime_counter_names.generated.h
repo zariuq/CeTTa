@@ -1105,6 +1105,7 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
   [CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ALGEBRAIC_DROP] = "open-equation-algebraic-drop",
   [CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ALGEBRAIC_SCALAR_SUM] = "open-equation-algebraic-scalar-sum",
   [CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ALGEBRAIC_SCALAR_NODE] = "open-equation-algebraic-scalar-node",
+  [CETTA_RUNTIME_COUNTER_OPEN_EQUATION_NATIVE_CALL] = "open-equation-native-call",
 };
 
 #endif

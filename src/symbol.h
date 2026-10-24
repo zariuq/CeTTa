@@ -16,6 +16,7 @@ enum {
     CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP = 1u << 0,
     CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP = 1u << 1,
     CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP = 1u << 2,
+    CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP = 1u << 3,
 };
 
 typedef struct {
@@ -760,7 +761,11 @@ static inline SymbolSpelling symbol_spelling(
     X(size_atom) \
     X(index_atom) \
     X(range_atom) \
-    X(repeat_atom)
+    X(repeat_atom) \
+    X(lib_list_range) \
+    X(lib_list_repeat) \
+    X(lib_list_from_expression) \
+    X(lib_list_to_expression)
 
 /* Builtin grounded operations whose result type is a pure function of their
    argument atoms.  Compile this effect/type license into SymbolEntry flags

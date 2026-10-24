@@ -58,6 +58,76 @@ static void test_operation_metadata(void) {
     assert(!cetta_gslt_fold_control_program(15u, 3u, NULL, NULL));
 }
 
+static void test_control_operand_plans(void) {
+    const BuiltinSyms builtins = {.let = 21u, .chain = 22u, .if_text = 23u,
+        .let_star = 24u, .eval = 25u, .function = 26u};
+    const unsigned operands[] = {17u, 29u, 43u};
+    unsigned observations = 0u;
+    for (SymbolId head = 21u; head <= 26u; head++) {
+        for (unsigned arity = 0u; arity <= 5u; arity++) {
+            /* Independent source grammar: a let holds pattern, producer,
+             * body; chain holds producer, pattern, body. No generated row
+             * is used to compute this reference. */
+            unsigned operation = CETTA_CONTROL_NONE;
+            unsigned source = 0u, first = 0u, last = 0u;
+            if ((head == 21u || head == 22u) && arity == 3u) {
+                operation = CETTA_CONTROL_SEQUENCE;
+                source = head == 21u ? 29u : 17u;
+                first = head == 21u ? 17u : 29u;
+                last = 43u;
+            } else if (head == 23u && (arity == 2u || arity == 3u)) {
+                operation = CETTA_CONTROL_BRANCH;
+                source = 17u; first = 29u;
+                last = arity == 3u ? 43u : 0u;
+            } else if (head == 24u && arity == 2u) {
+                operation = CETTA_CONTROL_SEQUENCE_MANY;
+                source = 17u; last = 29u;
+            } else if ((head == 25u || head == 26u) && arity == 1u) {
+                operation = head == 25u ? CETTA_CONTROL_FORCE : CETTA_CONTROL_RETURN_SCOPE;
+                source = 17u;
+            }
+            CettaControlOperationPlan plan = {255u, 77u, 88u, 99u};
+            uint32_t before = cetta_control_operation_key(plan);
+            assert(cetta_control_operation_decode(head, arity, &plan, &builtins) ==
+                (operation != CETTA_CONTROL_NONE));
+            if (!operation) {
+                assert(cetta_control_operation_key(plan) == before);
+                continue;
+            }
+            assert(plan.operation == operation && plan.source < arity);
+            assert(operands[plan.source] == source);
+            if (plan.first == CETTA_CONTROL_OPERAND_ABSENT)
+                assert(!first);
+            else
+                assert(plan.first < arity && operands[plan.first] == first);
+            if (plan.last == CETTA_CONTROL_OPERAND_ABSENT)
+                assert(!last);
+            else
+                assert(plan.last < arity && operands[plan.last] == last);
+            CettaGsltFoldControl lowered = CETTA_GSLT_FOLD_CONTROL_BRANCH;
+            bool eligible = head != 22u && !(head == 23u && arity == 2u);
+            assert(cetta_control_operation_lower_fold(plan, &lowered) == eligible);
+            if (!eligible)
+                assert(lowered == CETTA_GSLT_FOLD_CONTROL_BRANCH);
+            if (operation == CETTA_CONTROL_SEQUENCE) {
+                assert(cetta_control_operation_binding_layout(plan, plan.source));
+                plan.first = plan.source;
+                assert(!cetta_control_operation_binding_layout(plan, plan.source));
+                assert(!cetta_control_operation_lower_fold(plan, &lowered));
+            }
+            observations++;
+        }
+    }
+    CettaControlOperationPlan force, scope;
+    assert(cetta_control_operation_decode(25u, 1u, &force, &builtins));
+    assert(cetta_control_operation_decode(26u, 1u, &scope, &builtins));
+    assert(cetta_control_operation_key(force) != cetta_control_operation_key(scope));
+    assert(!cetta_control_operation_decode(25u, UINT64_MAX, &force, &builtins));
+    assert(!cetta_control_operation_decode(999u, 1u, NULL, &builtins));
+    assert(!cetta_control_operation_decode(25u, 1u, NULL, NULL));
+    assert(observations == 7u);
+}
+
 static void test_query_head_rows(void) {
     unsigned rows = 0u;
     bool saw_match = false, saw_get_atoms = false, saw_mork_match = false;
@@ -953,6 +1023,7 @@ static void test_generated_tuple_machine_roots(void) {
 
 int main(void) {
     test_operation_metadata();
+    test_control_operand_plans();
     test_query_head_rows();
     test_row_dispositions();
     test_observation_and_lifetime();

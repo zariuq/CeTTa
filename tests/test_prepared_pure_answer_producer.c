@@ -136,8 +136,10 @@ static void test_completed_occurrences(void) {
 }
 
 static void test_intrinsic_boolean_representation(void) {
-    const char *bodies[] = {"(or False True)", "(and True False)"};
-    for (size_t i = 0u; i < 2u; ++i) {
+    const char *bodies[] = {"(or False True)", "(and True False)",
+        "(not True)", "(not False)"};
+    const bool truths[] = {true, false, false, true};
+    for (size_t i = 0u; i < sizeof(bodies) / sizeof(*bodies); ++i) {
         char equation[96];
         snprintf(equation, sizeof(equation), "(= (truth) %s)", bodies[i]);
         const char *equations[] = {equation};
@@ -146,7 +148,7 @@ static void test_intrinsic_boolean_representation(void) {
             init_with_view(&fixture, equations, 1u, "(truth)", NULL,
                 dialect ? petta_semantics_boolean_value : atom_bool);
             fixture.expected[0] = dialect
-                ? (i ? "false" : "true") : (i ? "False" : "True");
+                ? (truths[i] ? "true" : "false") : (truths[i] ? "True" : "False");
             uint64_t tails = 0u;
             assert(run(&fixture, &tails) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
             assert(fixture.answers == 1u);
@@ -163,6 +165,13 @@ static void test_intrinsic_result_roles(void) {
     } cases[] = {
         {"(and True False)", "false"},
         {"(or False True)", "true"},
+        {"(not True)", "false"},
+        {"(not False)", "true"},
+        {"(not (and True False))", "true"},
+        {"(and (not True) (not False))", "false"},
+        {"(or (not True) (not False))", "true"},
+        {"(if (not (and True False)) yes no)", "yes"},
+        {"(if (and (not True) (not False)) yes no)", "no"},
         {"(< 0.5 1.0)", "true"},
         {"(> 0.5 1.0)", "false"},
         {"(<= 0.5 1.0)", "true"},
@@ -185,6 +194,45 @@ static void test_intrinsic_result_roles(void) {
         destroy(&fixture);
     }
     puts("PASS: computed truth roles and Boolean-valued data projections keep their distinct representations");
+}
+
+static Atom *collapsed_boolean(Arena *arena, bool value) {
+    (void)value;
+    return atom_bool(arena, false);
+}
+
+static Atom *inverted_boolean(Arena *arena, bool value) {
+    return atom_bool(arena, !value);
+}
+
+static void test_boolean_representation_admission(void) {
+    Arena arena;
+    arena_init(&arena);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &arena);
+    Space space;
+    space_init_with_universe(&space, &universe);
+    assert(space_admit_atom(&space, &arena,
+        parse(&arena, "(= (encoded-truth) (not False))")));
+    CettaPreparedPureBooleanValue encoders[] = {
+        atom_bool, collapsed_boolean, inverted_boolean};
+    for (size_t index = 0u; index < 3u; index++) {
+        CettaPreparedPureProgram *program =
+            cetta_prepared_pure_program_compile_closed_answers(
+                &space, parse(&arena, "(encoded-truth)"),
+                CETTA_GSLT_PURE_CALL_EAGER, encoders[index], atom_expr,
+                cetta_prepared_pure_constructs_expression_always,
+                NULL, NULL, NULL, NULL, NULL, true, true,
+                (CettaMatchDecisionSemanticIdentity){
+                    .compiler_identity = cetta_match_decision_compiler_identity()});
+        assert((program != NULL) == (index == 0u));
+        cetta_prepared_pure_program_free(program);
+    }
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&arena);
+    puts("PASS: Boolean representation admission refuses collapsed truths and inverted scalar polarity");
 }
 
 static void test_late_decline_is_not_completion(void) {
@@ -1821,6 +1869,7 @@ int main(void) {
     test_completed_occurrences();
     test_intrinsic_boolean_representation();
     test_intrinsic_result_roles();
+    test_boolean_representation_admission();
     test_late_decline_is_not_completion();
     test_visitor_stop_and_reentry();
     test_interrupt_without_answers();

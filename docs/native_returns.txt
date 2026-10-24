@@ -78,6 +78,12 @@ Ordinary caller attempts share one delivery implementation before trying an
 applied source representation. Remaining atom-only clients use the explicit
 native_outcome_expression projection after the call has been admitted.
 
+The atom-only caller and the Prolog eval/2 callback consume the same tagged
+completion service as ordinary native sequences. Completed data crosses that
+boundary as data, without function/return syntax. Explicit failure contributes
+no occurrence; a value named Empty remains a value. The callback's projection
+removes only PeTTa's private no-result token and preserves its error boundary.
+
 PeTTa ready calls retain conditional-answer obligations in the OutcomeSet that
 the search machine installs into its delay service. Malformed obligations are
 refused. Raised errors and logical failure stay control outcomes at the PeTTa
@@ -108,6 +114,12 @@ direct admission and invocation, and proves that entered failure cannot select
 authored fallback. It also proves that erasing failure into refusal loses the
 information needed to recover admission, and separates literal normalization
 from the invalid normalization of code-shaped payloads.
+
+The invocation protocol also inhabits the shared resumable MachineCore.
+Split slices retain the entire frame and its debit. Resuming an entered
+failure preserves the post-call world and one entry; restarting source can
+repeat that effect. These counts are protocol transitions, not C activations
+or another dialect's semantic fuel.
 
 The native producer controls exercise tagged data, duplicate aliases, raised
 faults, conditional answers, first-cause retention, refusal and cancellation.
@@ -144,3 +156,91 @@ The explicit syntax observer uses one expression builder and does not apply
 branch substitutions or evaluate operands. Ordinary partial application and
 prepared expansion share it. Publication and independent escape retain their
 existing ownership services; a borrowed invocation is not a captured closure.
+
+Source control operations
+-------------------------
+
+CettaControlOperationPlan describes an operation and its operand coordinates
+in four bytes. Coordinates exclude the head. The execution-contract presentation
+declares sequencing, branching, a sequence of bindings, force and return scope.
+Let and chain elaborate to sequencing with different operand orders; a missing
+branch is absent metadata. It is not an ordinary Empty value.
+
+PeTTa source plans carry this description. Ordinary source execution, HE control
+frames and compiled Region/OEM paths read its coordinates. Each dialect retains
+its matching, demand, completion, handler and fuel policy. The description grants
+no source authority, type evidence, ownership or permission to speculate.
+
+Prepared fold instructions are an explicit restricted lowering of those plans.
+A direct body entry realizes force and return scope only within that already
+admitted fragment; they remain different source operations. Unsupported layouts
+decline before execution. An ordinary suspension gains no Need memoization.
+
+Mettapedia.Machines.ExecutionControl compares the indexed operand reader with
+independent source-list destructuring, proves admitted coordinate bounds and
+keeps force distinct from a return scope. These are source-layout laws; native
+pointer conformance and whole-evaluator correspondence are separate obligations.
+
+Boolean representation
+----------------------
+
+A prepared program's Boolean constructor supplies distinct false/true images.
+Preparation refuses collapsed images and inverted canonical polarity. Plain
+symbol or Bool images are program-owned; the input decoder and output constructor
+use that same representation through nested operations and branches.
+
+Boolean instructions reuse the shared scalar operation implementation without
+allocating intermediate Atoms. Completed data projections preserve their carrier.
+PrimitiveResultRole.BooleanCodec proves decode/encode and unary/binary truth
+transport, and refusal of collapsed encodings. These laws concern the declared
+Boolean domain, not arbitrary native callbacks or arbitrary data interpretations.
+
+Compiled native invocation and residual delivery
+
+The OEM uses the same borrowed CettaInvocation and native entry service as
+ordinary calls. A generated strict, pure library description is a candidate
+operation layout. The host separately checks current language/profile policy,
+untyped call admission, absence of authored/translated/tabled/memoized dispatch,
+closed operands and unmetered execution. HE retains its own completion adapter.
+
+OEM_RUN_DECLINED belongs to an inline realization that leaves its caller to
+select the alternate route. OEM_RUN_HOST names an actually published host
+continuation. Every inline helper uses this distinction; the body runner
+interprets the outcome independently of the helper's origin. An unpublished
+HOST or an escaped internal decline is a provider fault.
+
+Value-only service callbacks commit entry when they return true. A missing
+result then faults in ordinary and compiled execution, without retrying the
+operation. A committed space or named-state write also prevents whole-call
+fallback. Interrupt and activation-budget stops retain their exact cursor,
+including its committed effects, and may resume it.
+
+Neither an executed failure nor an empty frontier permits native replay.
+Single values meet the existing destination directly; raises retain their
+scope. Conditional answers, interruption and completed frontiers transfer the
+actual CettaCallOutcome, result role and delayed roots to a NATIVE_RETURN goal.
+
+The return graph and delayed roots share an export session before their
+producer can retire. The transport pair is metadata and is never interpreted
+as source code. Ordinary ready calls and these entered returns share the same
+PeTTa completion implementation and CettaCallReturnCursor. Goal operands and
+the existing metadata union carry the result; a successful single-value call
+needs no host goal or universal value wrapper.
+
+CettaOpenEquationStats.native_calls counts entered native calls, including
+failure and interruption. A refusal does not increment it. host_goals includes
+cold result transport when required, without another native invocation.
+The generated open-equation-native-call runtime counter exposes these accepted
+entries to evaluator controls; declaring a test function alone does not prove
+that a compiled backend executed it.
+
+PeTTa ready-value delivery preserves an ordinary symbol named Empty. Native
+zero answers use FAILURE; a foreign adapter classifies zero results before
+collapsing nonempty value data. The legacy private PeTTa no-result token is
+projected to FAILURE at library entry. HE keeps its own Empty completion policy.
+
+NativeCallReturn.NativeDelivery connects inline delivery and the retained
+array/offset cursor to the ordered reference and the post-invocation world.
+An entered empty frontier remains distinct from admission refusal. Existing
+cursor split-resumption laws apply to the retained state. The models do not
+claim native C correspondence or arbitrary effectful-native admission.

@@ -3150,6 +3150,21 @@ static bool prepared_pure_cache_boolean_atoms(
     arena_init_detached(&temporary);
     Atom *falsity = program->boolean_value(&temporary, false);
     Atom *truth = program->boolean_value(&temporary, true);
+    /* A representation must distinguish the truths and preserve the
+     * polarity of any canonical Boolean names or scalar Bool leaves. */
+    bool false_truth = false, true_truth = true;
+    if (!falsity || !truth || atom_eq(falsity, truth) ||
+        (falsity->kind == ATOM_GROUNDED && falsity->ground.gkind == GV_BOOL &&
+         falsity->ground.bval) ||
+        (truth->kind == ATOM_GROUNDED && truth->ground.gkind == GV_BOOL &&
+         !truth->ground.bval) ||
+        (falsity->kind == ATOM_SYMBOL &&
+         petta_semantics_truth_value(falsity, &false_truth) && false_truth) ||
+        (truth->kind == ATOM_SYMBOL &&
+         petta_semantics_truth_value(truth, &true_truth) && !true_truth)) {
+        arena_free(&temporary);
+        return false;
+    }
     bool supported = falsity && truth &&
         ((falsity->kind == ATOM_SYMBOL && truth->kind == ATOM_SYMBOL) ||
          (falsity->kind == ATOM_GROUNDED && truth->kind == ATOM_GROUNDED &&
@@ -7218,26 +7233,50 @@ static PreparedPureSelection prepared_pure_select_equation(
     return result;
 }
 
-static bool prepared_pure_is_true(Atom *atom) {
-    bool petta_value = false;
+static bool prepared_pure_read_boolean(
+        const CettaPreparedPureProgram *program, Atom *atom, bool *value) {
+    if (!atom || !value)
+        return false;
+    if (program && program->boolean_atoms_ready && atom->kind == ATOM_SYMBOL &&
+        program->boolean_atoms[0].kind == ATOM_SYMBOL) {
+        if (atom->sym_id == program->boolean_atoms[0].sym_id) {
+            *value = false;
+            return true;
+        }
+        if (atom->sym_id == program->boolean_atoms[1].sym_id) {
+            *value = true;
+            return true;
+        }
+    }
     if (eval_current_language_id &&
         eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
-        petta_semantics_truth_value(atom, &petta_value))
-        return petta_value;
-    return atom_is_symbol_id(atom, g_builtin_syms.true_text) ||
-           (atom && atom->kind == ATOM_GROUNDED &&
-            atom->ground.gkind == GV_BOOL && atom->ground.bval);
+        petta_semantics_truth_value(atom, value))
+        return true;
+    if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_BOOL) {
+        *value = atom->ground.bval;
+        return true;
+    }
+    if (atom_is_symbol_id(atom, g_builtin_syms.true_text)) {
+        *value = true;
+        return true;
+    }
+    if (atom_is_symbol_id(atom, g_builtin_syms.false_text)) {
+        *value = false;
+        return true;
+    }
+    return false;
 }
 
-static bool prepared_pure_is_false(Atom *atom) {
-    bool petta_value = true;
-    if (eval_current_language_id &&
-        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
-        petta_semantics_truth_value(atom, &petta_value))
-        return !petta_value;
-    return atom_is_symbol_id(atom, g_builtin_syms.false_text) ||
-           (atom && atom->kind == ATOM_GROUNDED &&
-            atom->ground.gkind == GV_BOOL && !atom->ground.bval);
+static bool prepared_pure_is_true(
+        const CettaPreparedPureProgram *program, Atom *atom) {
+    bool value;
+    return prepared_pure_read_boolean(program, atom, &value) && value;
+}
+
+static bool prepared_pure_is_false(
+        const CettaPreparedPureProgram *program, Atom *atom) {
+    bool value;
+    return prepared_pure_read_boolean(program, atom, &value) && !value;
 }
 
 /* PeTTa `if` takes the else branch for any other non-empty, non-error value.
@@ -7479,18 +7518,25 @@ static Atom *prepared_pure_execute_intrinsic(
         !arguments || !cetta_prepared_pure_intrinsic_scope_supported(head->sym_id, arity))
         return NULL;
     switch (instruction) {
-    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH:
-    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH: {
-        Atom *result = grounded_dispatch(
-            arena, head, (Atom **)arguments, arity);
-        if (instruction == CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH) {
-            if (prepared_pure_is_true(result))
-                return prepared_pure_boolean_atom(program, arena, true);
-            if (prepared_pure_is_false(result))
-                return prepared_pure_boolean_atom(program, arena, false);
-            return NULL;
-        }
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH: {
+        Atom *result = grounded_dispatch(arena, head, (Atom **)arguments, arity);
         return result && !atom_is_empty_or_error(result) ? result : NULL;
+    }
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH: {
+        if (arity != 1u && arity != 2u)
+            return NULL;
+        CettaPlainScalar inputs[2], result;
+        for (uint32_t index = 0u; index < arity; index++) {
+            inputs[index].kind = CETTA_PLAIN_SCALAR_BOOL;
+            if (!prepared_pure_read_boolean(
+                    program, arguments[index], &inputs[index].as.boolean))
+                return NULL;
+        }
+        /* One scalar implementation computes truth; the program owns its
+         * input and output representation. No intermediate Atom is needed. */
+        return grounded_try_plain_scalar_operation(head, inputs, arity, &result) &&
+                result.kind == CETTA_PLAIN_SCALAR_BOOL
+            ? prepared_pure_boolean_atom(program, arena, result.as.boolean) : NULL;
     }
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH: {
         CettaInvocation invocation = {
@@ -7635,9 +7681,9 @@ static Atom *prepared_pure_execute_register_intrinsic(
          * owned by the calling dialect, just as for the exact register arm. */
         if (!program->boolean_value)
             return NULL;
-        if (prepared_pure_is_true(result))
+        if (prepared_pure_is_true(program, result))
             return prepared_pure_boolean_atom(program, arena, true);
-        if (prepared_pure_is_false(result))
+        if (prepared_pure_is_false(program, result))
             return prepared_pure_boolean_atom(program, arena, false);
         return NULL;
     }
@@ -8144,10 +8190,10 @@ static PreparedPureTruth prepared_pure_inline_truth(
     if (condition.is_boolean)
         return condition.boolean
             ? PREPARED_PURE_TRUTH_TRUE : PREPARED_PURE_TRUTH_FALSE;
-    if (condition.atom && prepared_pure_is_true(condition.atom))
+    if (condition.atom && prepared_pure_is_true(program, condition.atom))
         return PREPARED_PURE_TRUTH_TRUE;
     if (condition.atom &&
-        (prepared_pure_is_false(condition.atom) ||
+        (prepared_pure_is_false(program, condition.atom) ||
          prepared_pure_petta_else_value(condition.atom)))
         return PREPARED_PURE_TRUTH_FALSE;
     return PREPARED_PURE_TRUTH_NOT_BOOLEAN;
@@ -8808,7 +8854,10 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     program->source_program = space_program_token(space);
     program->equation_projection = space_equation_token(space);
     program->boolean_value = boolean_value;
-    (void)prepared_pure_cache_boolean_atoms(program);
+    if (!prepared_pure_cache_boolean_atoms(program)) {
+        cetta_prepared_pure_program_free(program);
+        return NULL;
+    }
     program->construct_value = construct_value;
     program->constructs_expression = constructs_expression;
     program->opaque_value = opaque_value;
@@ -10645,7 +10694,10 @@ prepared_pure_program_compile_closed_mode(
     program->source_program = space_program_token(space);
     program->equation_projection = space_equation_token(space);
     program->boolean_value = boolean_value;
-    (void)prepared_pure_cache_boolean_atoms(program);
+    if (!prepared_pure_cache_boolean_atoms(program)) {
+        cetta_prepared_pure_program_free(program);
+        return NULL;
+    }
     program->construct_value = construct_value;
     program->constructs_expression = constructs_expression;
     program->opaque_value = opaque_value;
@@ -11683,10 +11735,10 @@ static PreparedPureRunResult prepared_pure_answer_cursor_run(
         case PREPARED_PURE_STEP_BRANCH: {
             Atom *condition = step->slot < body->frame_slot_count
                 ? program->slots[step->slot] : NULL;
-            if (condition && prepared_pure_is_true(condition))
+            if (condition && prepared_pure_is_true(program, condition))
                 pc++;
             else if (condition &&
-                     (prepared_pure_is_false(condition) ||
+                     (prepared_pure_is_false(program, condition) ||
                       prepared_pure_petta_else_value(condition)))
                 pc = step->target;
             else
@@ -12997,9 +13049,9 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
         case PREPARED_PURE_CODE_BRANCH: {
             Atom *condition =
                 prepared_pure_code_value(program, registers, operands[0]);
-            if (prepared_pure_is_true(condition))
+            if (prepared_pure_is_true(program, condition))
                 continue;
-            if (prepared_pure_is_false(condition) ||
+            if (prepared_pure_is_false(program, condition) ||
                 prepared_pure_petta_else_value(condition)) {
                 frame->pc = code->target;
                 continue;
@@ -13027,9 +13079,9 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
                 decline = "operation declined";
                 goto declined;
             }
-            if (prepared_pure_is_true(condition))
+            if (prepared_pure_is_true(program, condition))
                 continue;
-            if (prepared_pure_is_false(condition) ||
+            if (prepared_pure_is_false(program, condition) ||
                 prepared_pure_petta_else_value(condition)) {
                 frame->pc = code->target;
                 continue;
@@ -13610,9 +13662,9 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 Atom *condition =
                     program->values[--program->value_len];
                 CettaExprIndex branch;
-                if (prepared_pure_is_true(condition))
+                if (prepared_pure_is_true(program, condition))
                     branch = 2u;
-                else if (prepared_pure_is_false(condition) ||
+                else if (prepared_pure_is_false(program, condition) ||
                          prepared_pure_petta_else_value(condition))
                     branch = 3u;
                 else
@@ -13888,9 +13940,9 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                         program, "branch condition produced wrong arity",
                         node);
                 Atom *condition = program->values[--program->value_len];
-                truth = prepared_pure_is_true(condition)
+                truth = prepared_pure_is_true(program, condition)
                     ? PREPARED_PURE_TRUTH_TRUE
-                    : prepared_pure_is_false(condition) ||
+                    : prepared_pure_is_false(program, condition) ||
                         prepared_pure_petta_else_value(condition)
                         ? PREPARED_PURE_TRUTH_FALSE
                         : PREPARED_PURE_TRUTH_NOT_BOOLEAN;

@@ -43,6 +43,7 @@
 #include <stdint.h>
 
 #include "atom.h"
+#include "call_outcome.h"
 #include "space.h"
 
 typedef struct CettaOpenEquationProgram CettaOpenEquationProgram;
@@ -57,6 +58,7 @@ typedef enum {
 typedef struct CettaOpenEquationCursor CettaOpenEquationCursor;
 struct PettaProgram;
 struct PettaPlanNode;
+typedef struct CettaInvocation CettaInvocation;
 
 /* The host authorities the compiler consults. */
 typedef struct {
@@ -237,7 +239,7 @@ typedef enum {
      * continue in the host, rather than importing those constraints into
      * the region's store. */
     CETTA_OPEN_EQUATION_COLLECTION,
-    /* A pure runtime service failed; the handoff reason distinguishes
+    /* A runtime service or committed execution failed; the reason distinguishes
      * capacity, stack exhaustion and provider faults from logical failure. */
     CETTA_OPEN_EQUATION_FAULT,
 } CettaOpenEquationStep;
@@ -323,12 +325,22 @@ typedef struct {
     /* The host's truth value, in `arena`, as a grounded operation's truth
      * result becomes when the search machine runs the operation. */
     Atom *(*boolean_value)(void *context, Arena *arena, bool value);
+    /* A synchronous invocation over already computed, closed operands.
+     * False refuses before any native work. True transfers the complete
+     * tagged result, including failure, interruption and delayed roots.
+     * The host admits current source/type/profile policy independently of
+     * the generated operation layout. Borrowed operands live through entry;
+     * returned payloads belong to `arena`. */
+    bool (*invoke_native)(void *context, Space *space, Arena *arena,
+                           const CettaInvocation *invocation,
+                           CettaCallOutcome *outcome);
     /* The search machine's own path for `(add-atom space payload)` with a
      * ground payload, which it takes once the call's arguments are values:
      * the payload joins `target` and `result_out` is the host's result or
      * error, built in `arena`.  False where the machine would evaluate the
      * call otherwise (an override of the operation, a transaction, a
-     * payload that changes the program), before any effect. */
+     * payload that changes the program), before any effect. True commits
+     * entry; a missing result is a provider fault, never a refusal. */
     bool (*admit_ground_atom)(void *context, Space *root, Space *target,
                               Arena *arena, Atom *call, Atom **result_out);
     /* The search machine's own path for PeTTa's named state over values:
@@ -337,7 +349,8 @@ typedef struct {
      * the host's answer, built in `arena`.  False where the machine would
      * do otherwise (an unset name, which raises; a transaction; a value
      * with an unbound cell; an override of the operation), before any
-     * effect. */
+     * effect. True commits entry even if a malformed producer omits its
+     * result; the cursor faults without replaying that operation. */
     bool (*named_state)(void *context, Space *root, Arena *arena, Atom *call,
                         Atom **result_out);
     /* The host's search constrains an equation's destination by the
@@ -402,7 +415,8 @@ typedef struct {
      * closures whose evaluations that may give more than one answer are
      * tails or a collection's, whose collections' values are not read, and
      * which have no case and no superpose.  Once the cursor has changed a
-     * space, a handoff is a fault: the host cannot run the call again. */
+     * space, a non-resumable handoff is a fault: the host cannot run the
+     * call again. Interrupt and budget stops retain the exact cursor. */
     bool raises_he_errors;
     /* Empty-head access follows the version captured when the cursor opens. */
     bool raises_empty_car;
@@ -534,6 +548,9 @@ typedef enum {
     CETTA_OPEN_EQUATION_HOST_READY_MATCH,
     CETTA_OPEN_EQUATION_HOST_READY_MATCH_ROW,
     CETTA_OPEN_EQUATION_HOST_READY_FOLD,
+    /* The native already ran. The host consumes its tagged return packet;
+     * this mode never interprets or invokes an original application. */
+    CETTA_OPEN_EQUATION_HOST_NATIVE_RETURN,
 } CettaOpenEquationHostMode;
 
 /* The goal of the newest HOST step and its destination, built in the answer
@@ -550,6 +567,8 @@ bool cetta_open_equation_cursor_host_goal(
     Atom **destination_out, Atom *const **vars_out,
     uint32_t *var_count_out, const struct PettaPlanNode **plan_out,
     CettaOpenEquationHostMode *mode_out, bool *recovers_out);
+bool cetta_open_equation_cursor_host_return(
+    const CettaOpenEquationCursor *cursor, CettaCallOutcome *outcome);
 /* A terminal host goal needs no cursor continuation or alternatives. Its
  * exported query values share fresh variables with the goal and destination;
  * install these bindings before transferring the goal to the host. The normal
@@ -690,6 +709,7 @@ typedef struct {
     uint64_t collections;
     uint64_t match_candidates;
     uint64_t host_goals;
+    uint64_t native_calls;
 } CettaOpenEquationStats;
 void cetta_open_equation_cursor_stats(const CettaOpenEquationCursor *cursor,
                                       CettaOpenEquationStats *stats_out);

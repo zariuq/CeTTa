@@ -5324,12 +5324,31 @@ $(SHARED_RETURN_PRODUCER_TEST_OBJ): tests/test_shared_return_producer.c src/shar
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
 
 $(SHARED_RETURN_PRODUCER_TEST_BIN): $(SHARED_RETURN_PRODUCER_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=malloc,--wrap=calloc,--wrap=grounded_call $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=malloc,--wrap=calloc,--wrap=grounded_call,--wrap=cetta_library_call_native $(LDFLAGS)
 
 .PHONY: test-shared-return-producer
 test-all: test-shared-return-producer
 test-shared-return-producer: $(SHARED_RETURN_PRODUCER_TEST_BIN)
 	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN))
+	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN)) --prime-native
+
+.PHONY: test-oem-native-returns
+test-all: test-oem-native-returns
+test-oem-native-returns: $(BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) $(SHARED_RETURN_PRODUCER_TEST_BIN) \
+  tests/petta/native_return_empty_data.metta tests/petta/native_return_empty_data.expected \
+  tests/petta/entered_service_effects.metta tests/petta/entered_service_effects.expected
+	@$(call cetta_exec,./$(PETTA_SEARCH_MACHINE_TEST_BIN)) --native-return
+	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN)) --native-reference
+	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN)) --oem-native
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+		"CETTA_OPEN_EQUATIONS_REFERENCE=1" \
+		"CETTA_PREPARED_PURE_REFERENCE=1 CETTA_OPEN_EQUATIONS_REFERENCE=1"; do \
+		for fixture in native_return_empty_data entered_service_effects; do \
+			env $$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$fixture.metta \
+				| diff -u tests/petta/$$fixture.expected -; \
+		done; \
+	done
 
 $(OWNED_RETURN_IMAGE_TEST_OBJ): tests/test_owned_return_image.c src/owned_return_image.h src/shared_return_producer.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -23779,7 +23798,7 @@ test-petta-extended-collections: $(BIN)
 test-profiles: $(BIN) test-bounded-select-threads test-petta-extended-collections test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-he-compiled-reader-v1 test-petta-compiled-reader-v1 test-prime-compiled-reader-v1 test-import-modes test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime-crossdialect test-prime-need-he-noninterference
 	@pass=0; fail=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
-	profiles=$$($(CETTA_BIN_INVOKE) --list-profiles 2>&1); \
+	profiles=$$($(CETTA_BIN_INVOKE) --lang he --list-profiles 2>&1); \
 	if printf '%s\n' "$$profiles" | grep -Eq '^he[[:space:]]' && \
 	   printf '%s\n' "$$profiles" | grep -Eq '^he-compat[[:space:]]' && \
 	   printf '%s\n' "$$profiles" | grep -Eq '^extended[[:space:]]' && \
@@ -31451,6 +31470,31 @@ test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
 # let written as HE's library writes it compiles as the native one does.  An
 # expansion that does not end, as a macro calling itself, is left to the
 # canonical evaluator; turning the machine off changes no answer.
+.PHONY: test-prepared-pure-not
+test-all: test-prepared-pure-not
+test-prepared-pure-not: $(BIN) tests/petta/prepared_not.metta \
+		tests/petta/prepared_not.expected tests/he/prepared_not.metta \
+		tests/he/prepared_not.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+		"CETTA_PREPARED_PURE_REFERENCE=1 CETTA_OPEN_EQUATIONS_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/prepared_not.metta \
+			| diff -u tests/petta/prepared_not.expected -; \
+		for lane in he "he --profile he-compat" "he --profile extended"; do \
+			env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+				tests/he/prepared_not.metta \
+				| diff -u tests/he/prepared_not.expected -; \
+		done; \
+	done; \
+	for language in petta he; do \
+		trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) \
+			--lang $$language tests/$$language/prepared_not.metta 2>&1 >/dev/null); \
+		grep -q 'bodies lowered to register code' <<<"$$trace"; \
+		! grep -q 'outside the pure machine fragment' <<<"$$trace"; \
+	done; \
+	echo 'PASS: prepared not preserves PeTTa failure and HE type errors across execution routes'
+
 .PHONY: test-he-macro-definitions-prepared
 test-all: test-he-macro-definitions-prepared
 test-he-macro-definitions-prepared: $(BIN) \
@@ -33193,14 +33237,19 @@ else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 test-prepared-keyed-top-k-stats
 endif
 
+.PHONY: test-execution-control-plans
+test-all test-petta-search-machine test-he-contract-suite: test-execution-control-plans
+test-execution-control-plans: $(EXECUTION_CONTRACTS_TEST_BIN)
+	@PYTHONDONTWRITEBYTECODE=1 python3 tests/support/check_execution_control_plans.py
+	@$(EXECUTION_CONTRACTS_TEST_BIN)
+
 .PHONY: test-gslt-execution-contracts
 test-gslt-execution-contracts: $(BIN) $(EXECUTION_CONTRACTS_TEST_BIN) \
-		test-prepared-pure-call-machine
+		test-prepared-pure-call-machine test-execution-control-plans
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@PYTHONDONTWRITEBYTECODE=1 $(EXECUTION_CONTRACTS_GENERATOR) \
 		--cetta ./$(BIN) --check --check-fold-runtime
-	@$(EXECUTION_CONTRACTS_TEST_BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
 		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--lang he tests/generated/execution_contracts.metta 2>&1); \
@@ -46019,12 +46068,15 @@ test-io: test-io-json-bridge
 
 .PHONY: test-petta-imported-host-bridges
 ifeq ($(LIB_PROLOG_ENABLED),1)
-test-petta-imported-host-bridges: $(BIN)
+test-petta-imported-host-bridges: $(BIN) \
+  tests/petta/libpl_native_return_data.metta tests/petta/libpl_native_return_data.expected
 	@set -eu; \
 	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-imported-host.XXXXXX"); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
 	$(CETTA_BIN_INVOKE) --lang petta tests/petta/libpl_native_eval.metta > "$$actual"; \
 	diff -u tests/petta/libpl_native_eval.expected "$$actual"; \
+	$(CETTA_BIN_INVOKE) --lang petta tests/petta/libpl_native_return_data.metta > "$$actual"; \
+	diff -u tests/petta/libpl_native_return_data.expected "$$actual"; \
 	$(CETTA_BIN_INVOKE) --lang petta tests/petta/libpl_eval_errors.metta > "$$actual"; \
 	diff -u tests/petta/libpl_eval_errors.expected "$$actual"; \
 	$(CETTA_BIN_INVOKE) --lang petta tests/petta/imported_swrite.metta > "$$actual"; \

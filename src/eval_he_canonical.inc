@@ -53,6 +53,7 @@ typedef struct {
     CettaOwnedFrameLink link;
     HeCanonicalKind kind;
     unsigned phase;
+    CettaControlOperationPlan control;
     Space *space;
     Arena *arena;
     Atom *atom;
@@ -968,6 +969,8 @@ static bool he_canonical_control_schedule(Space *s, Arena *a, Atom *atom,
     HeCanonicalFrame *frame = he_canonical_push(HE_CANONICAL_CONTROL,
         s, a, atom, type, fuel, env, preserve, os);
     if (frame) {
+        cetta_control_operation_decode(atom_head_symbol_id(atom), expr_nargs(atom),
+            &frame->control, &g_builtin_syms);
         frame->live[0] = source;
         frame->query_closed = query_closed;
         frame->selected = direct_source;
@@ -1177,7 +1180,7 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
     HeCanonicalConsumedSource consumed = {frame, frame->index};
     Atom *value = outcome_atom_materialize(a, source);
     bool single = frame->child.len == 1u;
-    if (head == g_builtin_syms.let && frame->phase == 1u) {
+    if (frame->control.operation == CETTA_CONTROL_SEQUENCE && frame->phase == 1u) {
         frame->has_functions = frame->child.len > 0u;
         for (CettaCount i = 0u; i < frame->child.len; i++) {
             Atom *candidate = outcome_atom_materialize(a, &frame->child.items[i]);
@@ -1223,13 +1226,13 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
                 atom_symbol(a, "not"), atom_bool(a, true))), &empty);
         return;
     }
-    if (head == g_builtin_syms.if_text) {
+    if (frame->control.operation == CETTA_CONTROL_BRANCH) {
         bool truth = is_true_atom(value);
         bool falsity = is_false_atom(value);
         if (truth || falsity) {
             frame->index++;
-            Atom *body = truth ? expr_arg(frame->atom, 1)
-                : expr_nargs(frame->atom) == 3u ? expr_arg(frame->atom, 2)
+            Atom *body = truth ? expr_arg(frame->atom, frame->control.first)
+                : frame->control.last != CETTA_CONTROL_OPERAND_ABSENT ? expr_arg(frame->atom, frame->control.last)
                 : legacy_empty_sentinel(a);
             if (he_not_reducible(body)) {
                 outcome_set_add(&frame->paths,
@@ -1255,8 +1258,8 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
             if (initialized && bindings_builder_add_var_fresh(&refined, value,
                     atom_symbol_id(a, branch ? g_builtin_syms.false_text
                         : g_builtin_syms.true_text))) {
-                Atom *body = !branch ? expr_arg(frame->atom, 1)
-                    : expr_nargs(frame->atom) == 3u ? expr_arg(frame->atom, 2)
+                Atom *body = !branch ? expr_arg(frame->atom, frame->control.first)
+                    : frame->control.last != CETTA_CONTROL_OPERAND_ABSENT ? expr_arg(frame->atom, frame->control.last)
                     : legacy_empty_sentinel(a);
                 if (he_not_reducible(body))
                     outcome_set_add(&frame->paths,
@@ -1293,7 +1296,7 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
         }
         return;
     }
-    assert(head == g_builtin_syms.let);
+    assert(frame->control.operation == CETTA_CONTROL_SEQUENCE);
     frame->index++;
     if (atom_is_legacy_empty_sentinel(value))
         return;
@@ -1305,8 +1308,8 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
         outcome_set_add(&frame->paths, value, &empty);
         return;
     }
-    Atom *pattern = expr_arg(frame->atom, 0);
-    Atom *body = expr_arg(frame->atom, 2);
+    Atom *pattern = expr_arg(frame->atom, frame->control.first);
+    Atom *body = expr_arg(frame->atom, frame->control.last);
     BindingsBuilder matched;
     if (!bindings_builder_init(&matched, &source->env))
         return;
@@ -1322,7 +1325,7 @@ static void he_canonical_resume_control(HeCanonicalFrame *frame) {
             bindings_init(&empty);
             bool retained = frame->selected
                 ? !(pattern->kind == ATOM_VAR &&
-                    !atom_contains_vars(expr_arg(frame->atom, 2u)))
+                    !atom_contains_vars(expr_arg(frame->atom, frame->control.last)))
                 : !single || (frame->preserve_bindings && !frame->query_closed);
             he_canonical_control_body(frame, body, retained
                 ? bindings_builder_bindings(&matched) : &empty,

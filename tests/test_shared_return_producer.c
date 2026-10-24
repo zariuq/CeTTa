@@ -1,10 +1,14 @@
 #define _POSIX_C_SOURCE 200809L
 #include "shared_return_producer.h"
 #include "grounded.h"
+#include "foreign.h"
 #include "library.h"
 #include "parser.h"
 #include "prepared_pure_machine.h"
+#include "petta_program.h"
+#include "stats.h"
 #include "binding/frame_identity.h"
+#include "binding/term_cursor.h"
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -26,18 +30,10 @@ static Atom *malformed_frontier(Arena *arena, Atom *value) {
     frontier->expr.elems[1] = NULL;
     return frontier;
 }
-bool __real_grounded_call(Arena *arena, Atom *head, Atom **args,
-                          uint32_t arity, CettaCallOutcome *outcome);
-bool __wrap_grounded_call(Arena *arena, Atom *head, Atom **args,
-                         uint32_t arity, CettaCallOutcome *outcome) {
-    if (!native_mode || !atom_is_symbol_id(head, g_builtin_syms.readln_bang))
-        return __real_grounded_call(arena, head, args, arity, outcome);
-    ++native_calls;
-    /* A broken boundary must fail the count assertion rather than loop. */
-    if (native_calls > 3u) {
-        *outcome = cetta_call_interrupted();
-        return true;
-    }
+static bool oem_native_fixture;
+static bool oem_native_enabled;
+
+static void native_fixture_outcome(Arena *arena, CettaCallOutcome *outcome) {
     size_t position = 0u;
     Atom *code = parse_sexpr(arena, "(function (return (readln!)))", &position);
     Atom *error = atom_error(arena, atom_symbol(arena, "native"),
@@ -71,10 +67,45 @@ bool __wrap_grounded_call(Arena *arena, Atom *head, Atom **args,
         *outcome = cetta_call_completed_frontier(malformed_frontier(arena, code));
         break;
     }
+    case 13: *outcome = cetta_call_completed_frontier(atom_unit(arena)); break;
+    case 14: *outcome = cetta_call_completed_value(atom_symbol(arena, "Empty")); break;
     default: abort();
     }
+}
+
+bool __real_grounded_call(Arena *arena, Atom *head, Atom **args,
+                          uint32_t arity, CettaCallOutcome *outcome);
+bool __wrap_grounded_call(Arena *arena, Atom *head, Atom **args,
+                         uint32_t arity, CettaCallOutcome *outcome) {
+    if (!native_mode || !atom_is_symbol_id(head, g_builtin_syms.readln_bang))
+        return __real_grounded_call(arena, head, args, arity, outcome);
+    ++native_calls;
+    /* A broken boundary must fail the count assertion rather than loop. */
+    if (native_calls > 3u) {
+        *outcome = cetta_call_interrupted();
+        return true;
+    }
+    native_fixture_outcome(arena, outcome);
     return true;
 }
+bool __real_cetta_library_call_native(CettaLibraryContext *context, Space *space,
+    Arena *arena, Atom *head, Atom **arguments, uint32_t arity,
+    CettaCallOutcome *outcome);
+bool __wrap_cetta_library_call_native(CettaLibraryContext *context, Space *space,
+    Arena *arena, Atom *head, Atom **arguments, uint32_t arity,
+    CettaCallOutcome *outcome) {
+    if (!oem_native_fixture || !native_mode ||
+        !atom_is_symbol_id(head, g_builtin_syms.lib_str))
+        return __real_cetta_library_call_native(context, space, arena, head,
+                                                 arguments, arity, outcome);
+    ++native_calls;
+    if (native_calls > 3u)
+        *outcome = cetta_call_interrupted();
+    else
+        native_fixture_outcome(arena, outcome);
+    return true;
+}
+
 void *__real_malloc(size_t size);
 void *__real_calloc(size_t count, size_t size);
 void *__wrap_malloc(size_t size) {
@@ -746,7 +777,7 @@ static void test_native_return_cursor(void) {
            checks);
 }
 
-static void test_native_evaluator_boundary(void) {
+static void test_native_evaluator_boundary(bool oem) {
     for (unsigned dialect = 0u; dialect < 2u; dialect++) {
         CettaLibraryContext *context = calloc(1u, sizeof(*context));
         assert(context);
@@ -764,17 +795,64 @@ static void test_native_evaluator_boundary(void) {
         Registry registry;
         registry_init(&registry);
         registry_bind_id(&registry, g_builtin_syms.self, atom_space(&arena, &space));
-        for (unsigned mode = 1u; mode <= 12u; mode++) {
-            if (dialect && mode == 7u)
+        if (oem) {
+            Atom *import_error = NULL;
+            assert(cetta_library_import(context, "str", &space, &arena, &arena,
+                &registry, -1, &import_error));
+            assert(!import_error);
+            const char *equations[] = {
+                "(= (native-packet $x) (case $x ((go "
+                "(__cetta_lib_str byte-slice \"abc\" 0 1)))))",
+                "(= (native-follow $x) (case $x ((go (let $unused "
+                "(__cetta_lib_str byte-slice \"abc\" 0 1) (readln!))))))",
+            };
+            for (unsigned index = 0u; index < 2u; index++) {
+                Atom *equation = parse(&arena, equations[index]);
+                if (!dialect) {
+                    assert(context->petta_program);
+                    const PettaPlanNode *plan = petta_program_plan_dynamic_add(
+                        context->petta_program, equation);
+                    assert(plan);
+                    CettaCount before = space_length64(&space);
+                    space_add(&space, equation);
+                    Atom *stored = space_get_at64(&space, before);
+                    assert(stored && petta_program_note_add(
+                        context->petta_program, &space, stored, plan));
+                } else {
+                    assert(space_admit_atom(&space, &arena, equation));
+                }
+            }
+        }
+        for (unsigned mode = 1u; mode <= 14u; mode++) {
+            if (dialect && (mode == 7u || mode == 14u))
                 continue;
             native_mode = mode;
             native_calls = 0u;
-            Atom *source = parse(&arena, (mode >= 3u && mode <= 5u) || mode >= 10u
-                ? "(let $ignored (readln!) (readln!))" : "(readln!)");
+            bool observes_zero = (mode >= 3u && mode <= 5u) ||
+                (mode >= 10u && mode <= 13u);
+            Atom *source = parse(&arena, oem
+                ? observes_zero ? "(native-follow go)" : "(native-packet go)"
+                : observes_zero ? "(let $ignored (readln!) (readln!))" : "(readln!)");
             EvalOutcome outcome;
             eval_outcome_init(&outcome);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+            cetta_runtime_stats_reset();
+            cetta_runtime_stats_enable();
+#endif
             eval_top_with_registry_outcome(&space, &arena, &arena, &registry,
                                           source, &outcome, NULL, NULL);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+            CettaRuntimeStats stats;
+            cetta_runtime_stats_snapshot(&stats);
+            uint64_t entered = stats.counters[
+                CETTA_RUNTIME_COUNTER_OPEN_EQUATION_NATIVE_CALL];
+            uint64_t expected_entry = oem_native_enabled && !dialect ? 1u : 0u;
+            if (entered != expected_entry)
+                fprintf(stderr, "native route dialect=%u mode=%u entered=%llu expected=%llu\n",
+                    dialect, mode, (unsigned long long)entered,
+                    (unsigned long long)expected_entry);
+            assert(entered == expected_entry);
+#endif
             if (native_calls != 1u)
                 fprintf(stderr, "native boundary dialect=%u mode=%u calls=%u\n",
                         dialect, mode, native_calls);
@@ -802,7 +880,11 @@ static void test_native_evaluator_boundary(void) {
                         assert(atom_is_error(outcome.results.items[2]));
                 }
                 assert(!outcome.petta_raised_error);
-            } else if (mode == 3u) {
+            } else if (mode == 14u) {
+                assert(outcome.completion == CETTA_EVAL_COMPLETE);
+                assert(outcome.results.len == 1u);
+                assert(atom_is_symbol_id(outcome.results.items[0], g_builtin_syms.empty));
+            } else if (mode == 3u || mode == 13u) {
                 assert(outcome.completion == CETTA_EVAL_COMPLETE);
                 assert(outcome.results.len == 0u);
             } else if (mode == 4u) {
@@ -824,7 +906,54 @@ static void test_native_evaluator_boundary(void) {
             }
             eval_outcome_free(&outcome);
         }
+        if (oem && !dialect) {
+            const char *observers[] = {
+                "(once (native-packet go))",
+                "(collapse (native-packet go))",
+                "(let $callee native-packet ($callee go))",
+                "(let $callee native-packet ($callee go))",
+            };
+            const unsigned modes[] = {2u, 2u, 8u, 9u};
+            for (unsigned observer = 0u; observer < 4u; observer++) {
+                native_mode = modes[observer];
+                native_calls = 0u;
+                EvalOutcome outcome;
+                eval_outcome_init(&outcome);
+                eval_top_with_registry_outcome(&space, &arena, &arena, &registry,
+                    parse(&arena, observers[observer]), &outcome, NULL, NULL);
+                assert(native_calls == 1u);
+                assert(outcome.completion == CETTA_EVAL_COMPLETE);
+                assert(!outcome.petta_raised_error);
+                assert(outcome.results.len == (observer == 2u ? 0u : 1u));
+                if (observer == 1u) {
+                    Atom *frontier = outcome.results.items[0];
+                    assert(frontier->kind == ATOM_EXPR && frontier->expr.len == 3u);
+                    assert(atom_eq(frontier->expr.elems[0], frontier->expr.elems[1]));
+                    assert(atom_is_error(frontier->expr.elems[2]));
+                } else if (observer == 3u) {
+                    assert(atom_is_error(outcome.results.items[0]));
+                } else if (observer == 0u) {
+                    assert(atom_eq(outcome.results.items[0], parse(&arena,
+                        "(function (return (readln!)))")));
+                }
+                eval_outcome_free(&outcome);
+            }
+            puts("PASS: entered native once, collection and dynamic recovery observers preserve prefixes and error data");
+        }
         native_mode = 0u;
+#if CETTA_BUILD_WITH_PYTHON
+        if (!dialect) {
+            /* PeTTa py-call accepts a call expression alone. No matching
+             * clause is an entered zero-answer call, not the datum Empty. */
+            Atom *argument = atom_symbol(&arena, "not-a-call-expression");
+            CettaCallOutcome no_answer;
+            assert(cetta_foreign_call_native(context->foreign_runtime, &space,
+                &arena, atom_symbol_id(&arena, g_builtin_syms.py_call),
+                &argument, 1u, &no_answer));
+            assert(no_answer.kind == CETTA_CALL_FAILURE);
+            puts("PASS: entered foreign zero is tagged failure independently of Empty data");
+        }
+#endif
         registry_free(&registry);
         space_free(&space);
         term_universe_free(&universe);
@@ -833,7 +962,132 @@ static void test_native_evaluator_boundary(void) {
         free(context);
         arena_free(&arena);
     }
-    puts("PASS: 23 real evaluator boundaries preserve entered-call effects, tagged data, errors, constraints and interruption without replay");
+    printf("PASS: 26 real evaluator boundaries preserve entered-call effects, tagged data, errors, constraints and interruption without replay (%s)\n",
+        oem ? "library entry and dialect fallback" : "ordinary entry");
+}
+
+static void test_prime_native_return_boundary(void) {
+    CettaLibraryContext *context = calloc(1u, sizeof(*context));
+    assert(context);
+    cetta_library_context_init_for_language_profile(
+        context, CETTA_LANGUAGE_PRIME, NULL);
+    eval_set_library_context(context);
+    Arena arena;
+    arena_init(&arena);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &arena);
+    Space space;
+    space_init_with_universe(&space, &universe);
+    Registry registry;
+    registry_init(&registry);
+    registry_bind_id(&registry, g_builtin_syms.self, atom_space(&arena, &space));
+    Atom *import_error = NULL;
+    assert(cetta_library_import(context, "str", &space, &arena, &arena,
+        &registry, -1, &import_error));
+    assert(!import_error);
+    bool previous_fixture = oem_native_fixture;
+    oem_native_fixture = true;
+    const unsigned modes[] = {1u, 2u, 3u, 4u, 9u};
+    for (unsigned index = 0u; index < sizeof(modes) / sizeof(*modes); index++) {
+        native_mode = modes[index];
+        native_calls = 0u;
+        EvalOutcome outcome;
+        eval_outcome_init(&outcome);
+        eval_top_with_registry_outcome(&space, &arena, &arena, &registry,
+            parse(&arena, "(__cetta_lib_str byte-slice \"abc\" 0 1)"),
+            &outcome, NULL, NULL);
+        if (native_calls != 1u)
+            fprintf(stderr, "Prime native mode=%u calls=%u results=%llu completion=%u\n",
+                native_mode, native_calls, (unsigned long long)outcome.results.len,
+                outcome.completion);
+        assert(native_calls == 1u);
+        assert(outcome.completion == (native_mode == 4u
+            ? CETTA_EVAL_INCOMPLETE_CANCELLED : CETTA_EVAL_COMPLETE));
+        assert(!outcome.petta_raised_error);
+        if (native_mode == 3u || native_mode == 4u) {
+            assert(outcome.results.len == 0u);
+        } else if (native_mode == 2u) {
+            assert(outcome.results.len == 3u);
+            assert(atom_eq(outcome.results.items[0], outcome.results.items[1]));
+            assert(atom_eq(outcome.results.items[0],
+                parse(&arena, "(function (return (readln!)))")));
+            assert(atom_is_error(outcome.results.items[2]));
+        } else {
+            assert(outcome.results.len == 1u);
+            if (native_mode == 9u)
+                assert(atom_is_error(outcome.results.items[0]));
+            else
+                assert(atom_eq(outcome.results.items[0],
+                    parse(&arena, "(function (return (readln!)))")));
+        }
+        eval_outcome_free(&outcome);
+    }
+    native_mode = 0u;
+    oem_native_fixture = previous_fixture;
+    registry_free(&registry);
+    space_free(&space);
+    term_universe_free(&universe);
+    cetta_library_context_free(context);
+    eval_set_library_context(NULL);
+    free(context);
+    arena_free(&arena);
+    puts("PASS: Prime native data, duplicate frontiers, failure, cancellation and Error data retain their control roles");
+}
+
+static void test_native_provider_ownership(void) {
+    Arena arena;
+    arena_init(&arena);
+    const char *library_heads[] = {
+        "__cetta_lib_str", "__cetta_lib_json_parse_v1",
+        "__cetta_lib_future_operation", "tensor:sum",
+    };
+    for (size_t index = 0u; index < sizeof(library_heads) / sizeof(*library_heads);
+         index++) {
+        Atom *head = atom_symbol(&arena, library_heads[index]);
+        assert(grounded_op_is_library_native(head->sym_id));
+        CettaCallOutcome outcome;
+        assert(!grounded_call(&arena, head, NULL, 0u, &outcome));
+    }
+    const char *other_heads[] = {
+        "+", "not", "Empty", "__cetta_library_future", "__cetta_lib",
+    };
+    for (size_t index = 0u; index < sizeof(other_heads) / sizeof(*other_heads);
+         index++)
+        assert(!grounded_op_is_library_native(
+            atom_symbol(&arena, other_heads[index])->sym_id));
+    Atom *arguments[] = {atom_int(&arena, 2), atom_int(&arena, 3)};
+    CettaCallOutcome sum;
+    assert(grounded_call(&arena, atom_symbol(&arena, "+"), arguments, 2u, &sum));
+    assert(sum.kind == CETTA_CALL_VALUE && atom_eq(sum.term, atom_int(&arena, 5)));
+    /* Library spelling does not imply exclusive library ownership. */
+    const char *core_library_heads[] = {
+        "__cetta_lib_list_range", "__cetta_lib_list_repeat",
+        "__cetta_lib_list_from_expression", "__cetta_lib_list_to_expression",
+    };
+    Atom *list = atom_list(&arena, arguments, 2u);
+    Atom *expression = atom_expr(&arena, arguments, 2u);
+    for (unsigned index = 0u; index < 4u; index++) {
+        Atom *head = atom_symbol(&arena, core_library_heads[index]);
+        Atom *operands[] = {index == 2u ? expression : list, atom_int(&arena, 2)};
+        if (index < 2u) {
+            operands[0] = atom_int(&arena, index ? 2 : 0);
+            if (index)
+                operands[1] = atom_symbol(&arena, "x");
+        }
+        CettaCallOutcome returned;
+        assert(grounded_call(&arena, head, operands, index < 2u ? 2u : 1u,
+                             &returned));
+        assert(returned.kind == CETTA_CALL_VALUE && returned.term);
+        if (index < 2u) {
+            Atom *expected = parse(&arena, index ? "(x x)" : "(0 1)");
+            assert(atom_eq(returned.term, expected));
+        } else {
+            assert(atom_eq(returned.term, index == 2u ? list : expression));
+        }
+    }
+    arena_free(&arena);
+    puts("PASS: library provider exclusion preserves core execution and lexical boundaries");
 }
 
 static void test_invocation_operands(void) {
@@ -903,6 +1157,22 @@ static void test_invocation_operands(void) {
     assert(bindings_builder_init(&builder, NULL));
     assert(bindings_builder_register_contextual_frame(&builder, &id, 1u, left));
     assert(bindings_builder_register_contextual_frame(&builder, &id, 1u, right));
+    BindingsTermCursorContextV1 cursor_context = {&builder.current, NULL};
+    CettaGsltTermCursorV1 cursors[3];
+    for (unsigned i = 0u; i < 3u; i++)
+        assert(bindings_value_term_cursor_v1(&builder.current, scoped[i],
+            &cursors[i]) == CETTA_GSLT_TERM_VIEW_OK_V1);
+    assert(cursors[0].scope && cursors[0].scope == cursors[2].scope &&
+        cursors[0].scope != cursors[1].scope);
+    CettaGsltTermCursorV1 refused = {code, NULL};
+    CettaFrameIdentity absent = cetta_frame_identity_scope_fresh(&identities);
+    assert(bindings_value_term_cursor_v1(&builder.current,
+        binding_value_from_context(x, absent), &refused) ==
+        CETTA_GSLT_TERM_VIEW_DEFER_V1);
+    assert(!refused.source && !refused.scope);
+    assert(bindings_value_term_cursor_v1(&builder.current,
+        binding_value_from_atom(code), &refused) == CETTA_GSLT_TERM_VIEW_OK_V1);
+    assert(refused.source == code && !refused.scope);
     uint32_t mark = bindings_builder_save(&builder);
     CettaInvocation unresolved = {.head = binding_value_from_atom(code)};
     assert(!cetta_invocation_resolve_arguments(
@@ -917,6 +1187,17 @@ static void test_invocation_operands(void) {
         assert(observed->expr.elems[1]->ground.ival == 11 + round);
         assert(observed->expr.elems[2]->ground.ival == 23 + round);
         assert(observed->expr.elems[3]->ground.ival == 11 + round);
+        for (unsigned i = 0u; i < 3u; i++) {
+            CettaGsltTermCursorV1 current;
+            /* Borrow again after writes: directory entries are read loans,
+             * not evidence that can be retained through mutation. */
+            assert(bindings_value_term_cursor_v1(&builder.current, scoped[i],
+                &cursors[i]) == CETTA_GSLT_TERM_VIEW_OK_V1);
+            assert(bindings_resolve_scoped_term_cursor_v1(&cursor_context,
+                cursors[i], &current) == CETTA_GSLT_TERM_VIEW_OK_V1);
+            assert(atom_eq(current.source, observed->expr.elems[i + 1u]));
+            assert(!current.scope);
+        }
         BindingValue argument = cetta_invocation_argument(&call, 1u);
         Atom *ready = bindings_apply_value(&builder.current, &result, argument);
         assert(ready && ready->ground.ival == 23 + round);
@@ -928,6 +1209,14 @@ static void test_invocation_operands(void) {
             arguments[1]->ground.ival == 23 + round &&
             arguments[2]->ground.ival == 11 + round);
         bindings_builder_rollback(&builder, mark);
+        for (unsigned i = 0u; i < 3u; i++) {
+            CettaGsltTermCursorV1 current;
+            assert(bindings_value_term_cursor_v1(&builder.current, scoped[i],
+                &cursors[i]) == CETTA_GSLT_TERM_VIEW_OK_V1);
+            assert(bindings_resolve_scoped_term_cursor_v1(&cursor_context,
+                cursors[i], &current) == CETTA_GSLT_TERM_VIEW_OK_V1);
+            assert(current.source == x && current.scope == cursors[i].scope);
+        }
     }
     CettaInvocation corrupt = {.head = binding_value_from_atom(head),
         .captured = {.atoms = (Atom *const *)(uintptr_t)1u, .count = UINT64_MAX},
@@ -948,8 +1237,15 @@ static void test_invocation_operands(void) {
     printf("PASS: %u split invocation observations retain aliases and code-shaped data; lexical worlds, rollback and arity-before-read controls pass\n", observations);
 }
 
-int main(void) {
-    assert(setenv("CETTA_OPEN_EQUATIONS_REFERENCE", "1", 1) == 0);
+int main(int argc, char **argv) {
+    bool reference_native = argc == 2 && strcmp(argv[1], "--native-reference") == 0;
+    bool prime_native = argc == 2 && strcmp(argv[1], "--prime-native") == 0;
+    assert(argc == 1 || reference_native || prime_native ||
+           (argc == 2 && strcmp(argv[1], "--oem-native") == 0));
+    oem_native_fixture = argc == 2 && !prime_native;
+    oem_native_enabled = oem_native_fixture && !reference_native;
+    assert(setenv("CETTA_OPEN_EQUATIONS_REFERENCE",
+                  oem_native_fixture && !reference_native ? "0" : "1", 1) == 0);
     assert(setenv("CETTA_PREPARED_PURE_REFERENCE", "1", 1) == 0);
     SymbolTable symbols;
     VarInternTable variables;
@@ -958,14 +1254,20 @@ int main(void) {
     g_symbols = &symbols;
     var_intern_init(&variables);
     g_var_intern = &variables;
-    test_refusal_and_owned_graph();
-    test_authority_and_detachment();
-    test_construction_and_terminal_states();
-    test_pending_return_detachment();
-    test_real_prepared_producer();
-    test_native_return_cursor();
-    test_native_evaluator_boundary();
-    test_invocation_operands();
+    if (prime_native) {
+        test_prime_native_return_boundary();
+    } else if (!oem_native_fixture) {
+        test_refusal_and_owned_graph();
+        test_authority_and_detachment();
+        test_construction_and_terminal_states();
+        test_pending_return_detachment();
+        test_real_prepared_producer();
+        test_native_return_cursor();
+        test_native_provider_ownership();
+        test_invocation_operands();
+    }
+    if (!prime_native)
+        test_native_evaluator_boundary(oem_native_fixture);
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;
