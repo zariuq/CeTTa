@@ -72,6 +72,11 @@ def main():
                 for case, definition, reason in cases:
                     if name == 'omit-admission' and reason != 'UncheckedAdmission': continue
                     if name == 'omit-matched-values' and reason != 'UncheckedMatchedValue': continue
+                    # Prime returns a stored atom as a completed value; its matched
+                    # body runs only through an explicit eval, which the analysis
+                    # refuses on its own. HE and PeTTa run matched bodies, so this
+                    # omission changes their best answer and is killed there.
+                    if name == 'omit-matched-values' and language == 'prime': continue
                     source_text = slow + definition + '(=w (licence-answer) Visible 1) '
                     for width in (1, 2):
                         for declared in (False, True):

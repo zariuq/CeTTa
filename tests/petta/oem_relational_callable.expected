@@ -1,0 +1,14 @@
+true
+true
+true
+((Triple done done first) (Triple done done first) (Triple done done second))
+((left payload) (right payload))
+((Seen left right payload))
+(Both (Pair left (Old (Pair right before))) ((Pair left (Old (Pair right after))) (Pair left (New (Pair right after)))))
+true
+()
+done
+1000
+((Triple left right first))
+()
+(Record done done 1729 "leased literal")

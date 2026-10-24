@@ -550,21 +550,19 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
             fuel, &env, false, true, NULL, NULL, NULL, &raw);
         if (!invoked) {
             CettaCallOutcome outcome;
-            invoked = dispatch_native_call(
-                s, a, op, atom->expr.elems + 1u, nargs, &outcome);
+            invoked = dispatch_native_invocation(s, a,
+                &(CettaInvocation){.head = binding_value_from_atom(op),
+                    .supplied = {.atoms = atom->expr.elems + 1u, .count = nargs}},
+                &outcome);
             if (invoked) {
-                if (outcome.kind == CETTA_CALL_FAILURE) {
-                    outcome_set_add(&raw, legacy_empty_sentinel(a), &env);
-                } else if (outcome.kind != CETTA_CALL_INTERRUPTED) {
-                    Atom *result = eval_call_outcome_atom(a, outcome);
-                    if (result && outcome.result_form != CETTA_CALL_RESULT_EXPRESSION) {
-                        emit_completed_native_call(
-                            s, a, outcome, result, atom_symbol(a, "Atom"), &env, os);
-                        outcome_set_free(&raw);
-                        return;
-                    } else if (result)
-                        outcome_set_add(&raw, result, &env);
+                Atom *result = NULL;
+                if (sequence_native_call(s, a, outcome, false,
+                        atom_symbol(a, "Atom"), &env, os, &result)) {
+                    outcome_set_free(&raw);
+                    return;
                 }
+                if (result)
+                    outcome_set_add(&raw, result, &env);
             }
         }
     }

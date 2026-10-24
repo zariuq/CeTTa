@@ -1,6 +1,6 @@
 #define _GNU_SOURCE
 #include "atom.h"
-#include "tensor.h"
+#include "tensor_dense_v1.h"
 #include "string_literal.h"
 #include "lang.h"
 #include "petta_numeric.h"
@@ -51,13 +51,13 @@ Atom *term_graph_open_value(Arena *arena, Atom *atom) CETTA_ATOM_OPTIONAL_IMPORT
 
 /* Standalone atom tests need not link the optional tensor operations. They
  * cannot construct a tensor without its payload implementation. */
-void cetta_tensor_retain(void *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
-void cetta_tensor_release(void *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
-size_t cetta_tensor_retained_bytes(const CettaTensor *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
-bool cetta_tensor_equal(const CettaTensor *left, const CettaTensor *right)
+void cetta_dense_tensor_v1_retain(void *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
+void cetta_dense_tensor_v1_release(void *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
+size_t cetta_dense_tensor_v1_retained_bytes(const CettaDenseTensorV1 *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
+bool cetta_dense_tensor_v1_equal(const CettaDenseTensorV1 *left, const CettaDenseTensorV1 *right)
     CETTA_ATOM_OPTIONAL_IMPORT;
-uint32_t cetta_tensor_hash(const CettaTensor *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
-void cetta_tensor_print(const CettaTensor *tensor, FILE *out) CETTA_ATOM_OPTIONAL_IMPORT;
+uint32_t cetta_dense_tensor_v1_hash(const CettaDenseTensorV1 *tensor) CETTA_ATOM_OPTIONAL_IMPORT;
+void cetta_dense_tensor_v1_print(const CettaDenseTensorV1 *tensor, FILE *out) CETTA_ATOM_OPTIONAL_IMPORT;
 
 #define CETTA_ATOM_DEEP_COPY_MEMO_INLINE_CAP 64u
 
@@ -120,6 +120,7 @@ typedef struct {
     void (*retain)(void *);
     void (*release)(void *);
     CettaStorageVisitor storage;
+    size_t (*footprint)(void *);
 } NativeHandleIdentifier;
 
 /* Large byte values travel through many publication arenas. Retain their
@@ -997,6 +998,7 @@ static void provenance_check_atom(Atom *root, Atom *atom, const char *site,
         }
         case GV_INTERNAL_TAG:
             break;
+        case GV_STRUCTURAL:
         case GV_SEAL:
             /* A seal object is a heap record retained by the arena's hold,
              * not storage of any arena. */
@@ -2013,7 +2015,7 @@ static uint32_t atom_hash_leaf_compute(Atom *a) {
             break;
         }
         case GV_TENSOR:
-            h = ((h << 5) + h) ^ cetta_tensor_hash(a->ground.ptr);
+            h = ((h << 5) + h) ^ cetta_dense_tensor_v1_hash(a->ground.ptr);
             break;
         case GV_SPACE:
         case GV_STATE:
@@ -2029,6 +2031,12 @@ static uint32_t atom_hash_leaf_compute(Atom *a) {
              * objects (even of equal payload) usually differ. */
             uint64_t key = atom_seal_identity(a);
             h = ((h << 5) + h) ^ (uint32_t)(key & 0xFFFFFFFFu);
+            h = ((h << 5) + h) ^ (uint32_t)(key >> 32);
+            break;
+        }
+        case GV_STRUCTURAL: {
+            uint64_t key = atom_structural_hash(a);
+            h = ((h << 5) + h) ^ (uint32_t)key;
             h = ((h << 5) + h) ^ (uint32_t)(key >> 32);
             break;
         }
@@ -2477,6 +2485,7 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
         case GV_INTERNAL_TAG:
+        case GV_STRUCTURAL:
         case GV_SEAL:
             h = hashcons_index_mix(
                 h, (uint64_t)(uintptr_t)atom->ground.ptr);
@@ -3613,6 +3622,7 @@ bool atom_grounded_kind_is_term_stable(GroundedKind gkind) {
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
     case GV_INTERNAL_TAG:
+    case GV_STRUCTURAL:
     case GV_SEAL:
         return false;
     }
@@ -4521,9 +4531,31 @@ Atom *atom_int(Arena *a, int64_t val) {
 
 static Atom *atom_native_handle_identifier_with_lifetime(Arena *a, int64_t id,
         void *owner, void *lifetime, void (*retain)(void *),
-        void (*release)(void *), CettaStorageVisitor storage) {
+        void (*release)(void *), CettaStorageVisitor storage,
+        size_t (*footprint)(void *)) {
     if (!a || !owner || !lifetime || !retain || !release)
         return NULL;
+    static _Thread_local int arena_holds = -1;
+    if (arena_holds < 0) {
+        const char *reference = getenv("CETTA_NATIVE_HANDLE_HOLDS_REFERENCE");
+        arena_holds = !(reference && reference[0] != '\0' && reference[0] != '0');
+    }
+    bool held = arena_holds &&
+        arena_retained_owner_set_find(a->retained_owners, lifetime, release);
+    if (arena_holds) {
+        if (!arena_retain_owner_with_storage(a, lifetime, retain, release, storage))
+            return NULL;
+    } else {
+        retain(lifetime);
+        arena_register_finalizer(a, release, lifetime);
+        a->finalizers->storage = storage;
+    }
+    if (!held) {
+        a->finalizers->external_owner = true;
+        size_t bytes = footprint ? footprint(owner) : 0u;
+        a->finalizers->accounted_payload_bytes = bytes;
+        arena_account_external_bytes(a, bytes);
+    }
     NativeHandleIdentifier *value = arena_alloc(a, sizeof(*value));
     *value = (NativeHandleIdentifier){
         .atom = {
@@ -4544,18 +4576,28 @@ static Atom *atom_native_handle_identifier_with_lifetime(Arena *a, int64_t id,
         .retain = retain,
         .release = release,
         .storage = storage,
+        .footprint = footprint,
     };
-    retain(lifetime);
-    arena_register_finalizer(a, release, lifetime);
-    a->finalizers->storage = storage;
-    a->finalizers->external_owner = true;
     return &value->atom;
 }
 
 Atom *atom_native_handle_identifier_with_storage(Arena *a, int64_t id, void *owner,
         void (*retain)(void *), void (*release)(void *), CettaStorageVisitor storage) {
     return atom_native_handle_identifier_with_lifetime(a, id, owner, owner,
-        retain, release, storage);
+        retain, release, storage, NULL);
+}
+
+Atom *atom_native_handle_identifier_tracked_with_storage(Arena *a, int64_t id,
+        void *owner, void (*retain)(void *), void (*release)(void *),
+        CettaStorageVisitor storage, size_t (*footprint)(void *)) {
+    return atom_native_handle_identifier_with_lifetime(a, id, owner, owner,
+        retain, release, storage, footprint);
+}
+
+Atom *atom_native_handle_identifier_tracked(Arena *a, int64_t id, void *owner,
+        void (*retain)(void *), void (*release)(void *), size_t (*footprint)(void *)) {
+    return atom_native_handle_identifier_tracked_with_storage(a, id, owner,
+        retain, release, NULL, footprint);
 }
 
 Atom *atom_native_handle_identifier_with_carrier(Arena *a, const Atom *source,
@@ -4567,7 +4609,7 @@ Atom *atom_native_handle_identifier_with_carrier(Arena *a, const Atom *source,
         return NULL;
     const NativeHandleIdentifier *value = (const NativeHandleIdentifier *)source;
     return atom_native_handle_identifier_with_lifetime(a, source->ground.ival,
-        value->owner, lifetime, retain, release, storage);
+        value->owner, lifetime, retain, release, storage, value->footprint);
 }
 
 Atom *atom_native_handle_identifier(Arena *a, int64_t id, void *owner,
@@ -4606,7 +4648,7 @@ Atom *atom_int_copy(Arena *a, const Atom *source) {
         const NativeHandleIdentifier *value =
             (const NativeHandleIdentifier *)source;
         return atom_native_handle_identifier_with_lifetime(a, source->ground.ival,
-            value->owner, value->lifetime, value->retain, value->release, value->storage);
+            value->owner, value->lifetime, value->retain, value->release, value->storage, value->footprint);
     }
 #endif
     return atom_int(a, source->ground.ival);
@@ -4899,15 +4941,15 @@ Atom *atom_foreign(Arena *a, CettaForeignValue *value) {
     return at;
 }
 
-Atom *atom_tensor(Arena *a, CettaTensor *value) {
-    if (!a || !value || !cetta_tensor_retain || !cetta_tensor_release ||
-        !cetta_tensor_retained_bytes)
+Atom *atom_tensor(Arena *a, CettaDenseTensorV1 *value) {
+    if (!a || !value || !cetta_dense_tensor_v1_retain || !cetta_dense_tensor_v1_release ||
+        !cetta_dense_tensor_v1_retained_bytes)
         return NULL;
-    cetta_tensor_retain(value);
-    arena_register_finalizer(a, cetta_tensor_release, value);
+    cetta_dense_tensor_v1_retain(value);
+    arena_register_finalizer(a, cetta_dense_tensor_v1_release, value);
     /* Charge each retained view conservatively so allocation pressure cannot
      * hide in external buffers. Shared views may overcount the same storage. */
-    arena_account_external_bytes(a, cetta_tensor_retained_bytes(value));
+    arena_account_external_bytes(a, cetta_dense_tensor_v1_retained_bytes(value));
     Atom *at = arena_alloc(a, sizeof(*at));
     *at = (Atom){
         .kind = ATOM_GROUNDED,
@@ -4967,6 +5009,74 @@ const char *atom_seal_type_name(const Atom *atom) {
     void *object = atom_seal_object(atom);
     const CettaSealHold *hold = cetta_seal_hold_of(object);
     return hold && hold->type_name ? hold->type_name(object) : NULL;
+}
+
+Atom *atom_structural(Arena *arena, void *value) {
+    const CettaStructuralClass *type = cetta_structural_class(value);
+    if (!arena || !type || !type->type_name || !type->retain || !type->release ||
+        !type->equal || !type->compare || !type->hash || !type->display ||
+        !type->inspect || !type->retained_bytes) return NULL;
+    bool held = arena_retained_owner_set_find(arena->retained_owners, value, type->release);
+    if (!arena_retain_owner(arena, value, type->retain, type->release)) return NULL;
+    if (!held) arena_account_external_bytes(arena, type->retained_bytes(value));
+    Atom *atom = arena_alloc(arena, sizeof(*atom));
+    *atom = atom_grounded_leaf(arena, GV_STRUCTURAL);
+    atom->ground.ptr = value;
+    /* The independent retained owner closes the syntax lifetime. This does
+     * not grant admission to scalar codecs, interning or backend transfer. */
+    atom->flags |= ATOM_FLAG_ARENA_CLOSED;
+    return atom;
+}
+
+static const CettaStructuralClass *atom_structural_class(const Atom *atom) {
+    return atom_is_structural(atom) ? cetta_structural_class(atom->ground.ptr) : NULL;
+}
+
+bool atom_structural_equal(const Atom *left, const Atom *right) {
+    const CettaStructuralClass *type = atom_structural_class(left);
+    return type && type == atom_structural_class(right) &&
+        (left->ground.ptr == right->ground.ptr || type->equal(left->ground.ptr, right->ground.ptr));
+}
+
+int atom_structural_compare(const Atom *left, const Atom *right) {
+    const CettaStructuralClass *a = atom_structural_class(left), *b = atom_structural_class(right);
+    if (!a || !b) return a ? 1 : b ? -1 : 0;
+    if (a != b) {
+        if (g_symbols) {
+            int order = symbol_compare(g_symbols,
+                symbol_intern_cstr(g_symbols, a->type_name),
+                symbol_intern_cstr(g_symbols, b->type_name));
+            if (order) return order < 0 ? -1 : 1;
+        }
+        return (uintptr_t)a < (uintptr_t)b ? -1 : 1;
+    }
+    return a->compare(left->ground.ptr, right->ground.ptr);
+}
+
+uint64_t atom_structural_hash(const Atom *atom) {
+    const CettaStructuralClass *type = atom_structural_class(atom);
+    return type ? type->hash(atom->ground.ptr) : 0u;
+}
+
+size_t atom_structural_display(const Atom *atom, char *buffer, size_t capacity) {
+    const CettaStructuralClass *type = atom_structural_class(atom);
+    if (!type) { if (capacity && buffer) buffer[0] = '\0'; return 0u; }
+    return type->display(atom->ground.ptr, buffer, capacity);
+}
+
+const char *atom_structural_type_name(const Atom *atom) {
+    const CettaStructuralClass *type = atom_structural_class(atom);
+    return type ? type->type_name : NULL;
+}
+
+Atom *atom_structural_inspect(const Atom *atom, Arena *arena) {
+    const CettaStructuralClass *type = atom_structural_class(atom);
+    return type && arena ? type->inspect(atom->ground.ptr, arena) : NULL;
+}
+
+size_t atom_structural_retained_bytes(const Atom *atom) {
+    const CettaStructuralClass *type = atom_structural_class(atom);
+    return type ? type->retained_bytes(atom->ground.ptr) : 0u;
 }
 
 static bool atom_tree_is_seal(const Atom *atom, void *context) {
@@ -7386,7 +7496,7 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                                                     atom_rational_cstr(b)) == 0;
                 break;
             case GV_TENSOR:
-                equal = cetta_tensor_equal(a->ground.ptr, b->ground.ptr);
+                equal = cetta_dense_tensor_v1_equal(a->ground.ptr, b->ground.ptr);
                 break;
             case GV_SPACE:
             case GV_CAPTURE:
@@ -7394,6 +7504,9 @@ static bool atom_compare_driver(Atom *left, Atom *right,
             case GV_TERM_GRAPH:
             case GV_SEAL:
                 equal = a->ground.ptr == b->ground.ptr;
+                break;
+            case GV_STRUCTURAL:
+                equal = atom_structural_equal(a, b);
                 break;
             case GV_BINDINGS: {
                 const CettaBindingsValue *va = a->ground.ptr;
@@ -8319,6 +8432,9 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
             break;
         case GV_TENSOR:
             out = atom_tensor(dst, src->ground.ptr);
+            break;
+        case GV_STRUCTURAL:
+            out = atom_structural(dst, src->ground.ptr);
             break;
         case GV_SEAL:
             /* A copied reference keeps the object's identity. */
@@ -10408,7 +10524,7 @@ static void atom_print_mode(
                 term_graph_print(a->ground.ptr, out, petta);
             break;
         case GV_TENSOR:
-            cetta_tensor_print(a->ground.ptr, out);
+            cetta_dense_tensor_v1_print(a->ground.ptr, out);
             break;
         case GV_FOREIGN: {
             const CettaForeignHold *hold = a->ground.ptr;
@@ -10416,6 +10532,18 @@ static void atom_print_mode(
                 hold->print_petta(a->ground.ptr, out);
             else
                 fprintf(out, "<foreign %p>", a->ground.ptr);
+            break;
+        }
+        case GV_STRUCTURAL: {
+            char text[256];
+            size_t length = atom_structural_display(a, text, sizeof(text));
+            if (length < sizeof(text)) fputs(text, out);
+            else {
+                char *long_text = cetta_malloc(length + 1u);
+                atom_structural_display(a, long_text, length + 1u);
+                fputs(long_text, out);
+                free(long_text);
+            }
             break;
         }
         case GV_SEAL: {
@@ -10650,7 +10778,9 @@ static void arena_storage_visit(const void *raw, CettaStorageCensus *census) {
     if (arena->symbol_cache && arena->symbol_cache->owner_ready)
         arena_storage_census(&arena->symbol_cache->owner, census);
     for (const ArenaFinalizer *node = arena->finalizers; node; node = node->next) {
-        if (!node->external_owner) continue;
+        if (!node->external_owner ||
+            arena_retained_owner_set_find(arena->retained_owners, node->ptr, node->fn))
+            continue;
         if (node->storage) node->storage(node->ptr, census);
         else cetta_storage_refuse(census, "OpaqueNativeHandleOwner");
     }

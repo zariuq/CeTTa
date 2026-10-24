@@ -1,0 +1,10 @@
+/* Generated from CollectionIngress; do not edit. */
+#ifndef CETTA_COLLECTION_INGRESS_GENERATED_H
+#define CETTA_COLLECTION_INGRESS_GENERATED_H
+#define CETTA_COLLECTION_INGRESS_SHA256 "8ccb340c696f7e1131d5713a4da521d662fe3c027fa4aac7eb4ef7ffc7fea32b"
+#define CETTA_COLLECTION_INGRESS_HEAD "add-atoms"
+#define CETTA_COLLECTION_INGRESS_ARITY 2u
+#define CETTA_COLLECTION_INGRESS_DESTINATION 1u
+#define CETTA_COLLECTION_INGRESS_COLLECTION 2u
+#define CETTA_COLLECTION_INGRESS_POLICY "SourceOrder|DuplicateOccurrences|PrivateBinding|PureProducer|ReadyInputs|EagerProjection|CompleteValidation|DataOnly|AtomicPublication|AuthoredFallback"
+#endif

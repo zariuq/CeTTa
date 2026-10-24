@@ -85,6 +85,8 @@
 
     (rule member-cetta-prime-token-start-plain-scalar
       (head (member cetta-prime-token-start-plain-scalar ?codepoint))
+      ; A plain word does not start with `!`: the marker alone is the
+      ; query marker, and a word led by it is read by its own rule.
       (body
         (different ?codepoint (cp 9))
         (different ?codepoint (cp 10))
@@ -92,6 +94,7 @@
         (different ?codepoint (cp 12))
         (different ?codepoint (cp 13))
         (different ?codepoint (cp 32))
+        (different ?codepoint (cp 33))
         (different ?codepoint (cp 34))
         (different ?codepoint (cp 36))
         (different ?codepoint (cp 38))
@@ -168,6 +171,7 @@
         (different ?codepoint (cp 12))
         (different ?codepoint (cp 13))
         (different ?codepoint (cp 32))
+        (different ?codepoint (cp 33))
         (different ?codepoint (cp 34))
         (different ?codepoint (cp 36))
         (different ?codepoint (cp 38))

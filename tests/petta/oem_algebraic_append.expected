@@ -1,0 +1,3 @@
+(Link a (Link b (Link c End)))
+(OtherLink a (OtherLink b (Link c End)))
+(Link c End)

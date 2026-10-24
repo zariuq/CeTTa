@@ -7,7 +7,6 @@ import argparse
 import json
 from pathlib import Path
 import random
-import re
 import subprocess
 import time
 
@@ -19,13 +18,7 @@ from petta_machine_stats import (
 
 
 SCHEMA = "cetta-petta-live-sample-v4"
-OPTIONAL_JANUS_INIT_FAILURE_RE = re.compile(
-    r"ERROR: .*?/swipy/janus\.pl:[0-9]+:\n"
-    r"ERROR:    .*?/swipy/janus\.pl:[0-9]+: Initialization goal "
-    r"raised exception:\n"
-    r"ERROR:    open_shared_object/3: libpython[^ \n]*: cannot open "
-    r"shared object file: No such file or directory\n"
-)
+OPTIONAL_JANUS_INIT_FAILURE_RE = corpus.OPTIONAL_JANUS_INIT_FAILURE_RE
 
 # Keep the population hermetic and bounded.  Selection is random within each
 # semantic stratum; the recorded seed makes every run exactly reproducible.

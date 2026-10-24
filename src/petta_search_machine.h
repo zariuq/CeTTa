@@ -552,9 +552,15 @@ typedef struct {
      * `end` is how an applied operation ended, as for `evaluate`: RAISED
      * with its error, which adds no answer.  Optional. */
     bool (*apply_ready_values)(
-        void *context, Space *space, Arena *arena, Atom *expression,
+        void *context, Space *space, Arena *arena,
+        const CettaInvocation *invocation,
         const Bindings *environment, OutcomeSet *outcomes,
         CettaCallOutcome *end);
+    /* Mark a completed datum (a native operation's completed value or a
+     * matched space row) so later demand treats its closed expressions as
+     * values rather than re-executing them as code. */
+    Atom *(*complete_value)(
+        void *context, Space *space, Arena *arena, Atom *value);
     /* HE interpretation owns source demand and first-applicable overload
      * selection. Terminal judgments return values; an admitted application
      * returns fresh signatures with each correlated result contract. Arrays
@@ -616,7 +622,7 @@ typedef struct {
         void *context, Space *space, Arena *arena,
         Atom *items, Atom *initial,
         Atom *accumulator_binder, Atom *item_binder,
-        Atom *step_expression, const Bindings *environment,
+        Atom *step_expression, const PettaPlanNode *step_plan, const Bindings *environment,
         Atom **result_out);
     /* Sequence a closed numeric producer directly into a lexical fold.
      * A completed value is ready for unification. An expression result is
@@ -632,7 +638,7 @@ typedef struct {
     PettaMachineFoldResult (*map_single_result)(
         void *context, Space *space, Arena *arena,
         Atom *items, Atom *item_binder, Atom *body_expression,
-        const Bindings *environment, Atom **result_out);
+        const PettaPlanNode *body_plan, const Bindings *environment, Atom **result_out);
     /* A generated determinate predicate may own a lexical filter.  It keeps
      * each source occurrence whose unique pure result is the active
      * language's true value, preserving order and duplicates.  Any effect,
@@ -641,7 +647,7 @@ typedef struct {
     PettaMachineFoldResult (*filter_single_result)(
         void *context, Space *space, Arena *arena,
         Atom *items, Atom *item_binder, Atom *predicate_expression,
-        const Bindings *environment, Atom **result_out);
+        const PettaPlanNode *body_plan, const Bindings *environment, Atom **result_out);
     /* Pull a determinate, effect-free collection without materializing its
      * spine.  The callback is the consumer algebra; length is only its first
      * use.  NOT_APPLICABLE leaves canonical evaluation authoritative. */
@@ -650,6 +656,14 @@ typedef struct {
         const Bindings *environment,
         PettaMachineBorrowedItemConsumer consume_item,
         void *consumer_context);
+    /* Consume a private let-bound pure collection directly into a data
+     * append. The host stages all rows before publication; false leaves the
+     * original let authoritative, including effects and visible bindings. */
+    bool (*append_private_collection)(
+        void *context, Space *space, Arena *arena,
+        Atom *binder, Atom *producer, Atom *body,
+        const PettaPlanNode *producer_plan,
+        const Bindings *environment, CettaCallOutcome *result);
     /*
      * Named-state arguments have already been evaluated by the PeTTa
      * machine.  The host owns only registry lookup/mutation; it must not
@@ -1324,5 +1338,11 @@ typedef struct {
 
 bool petta_machine_stats(
     const PettaMachine *machine, PettaMachineStats *stats);
+
+/* After an unsupported choice-heap collection, retry only after another
+ * amortization window of nursery growth.  Saturation means no finite retry
+ * remains representable; it never wraps into an immediate retry loop. */
+size_t petta_machine_choice_collection_retry_threshold(
+    size_t nursery_live, size_t retry_window);
 
 #endif /* CETTA_PETTA_SEARCH_MACHINE_H */

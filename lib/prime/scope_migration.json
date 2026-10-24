@@ -58,6 +58,14 @@
       "code_diagnostics": 0
     },
     {
+      "source": "embedding.metta",
+      "output": "embedding.metta",
+      "source_sha256": "88ca2af433ceed407aacf398abb5710536d7ac5b50482f1089971b431371138c",
+      "output_sha256": "63612564d7e6a7d90d3c61101c20ab9f6295d8d574f16517997b99d501604870",
+      "edits": 23,
+      "code_diagnostics": 0
+    },
+    {
       "source": "fs.metta",
       "output": "fs.metta",
       "source_sha256": "3333204f956e968d6562941ce6967ef0cb0d39de7a9ebf39826bc109df82ecf9",
@@ -76,8 +84,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "91bda8b0c82927d145e8a1b785d998168d49903223f71dc36acaa0506fc47f8f",
-      "output_sha256": "17ae2479c518979abe480bbd23af95d9ef89386eebe149c5998e0602c6ee8edf",
+      "source_sha256": "a1f26031a7f4bd28091bdb0c61cae874d1ff9f63d797040d9320ab8d1c13754d",
+      "output_sha256": "62ebb855c886b1f01011449fb3a472efc2abbd7fdba3313d3b0921d68ae82796",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -140,8 +148,8 @@
     {
       "source": "io.metta",
       "output": "io.metta",
-      "source_sha256": "7ddf9f8a83d3b20d2a5f97a057af97207c4478727ca7d6fd134d23d4b270a111",
-      "output_sha256": "c504eb08aa3f58a7960de3dc4abce9c4065d81b005c873e0bcb054d89498648e",
+      "source_sha256": "4ce6605e044a168802630ee5ff9e5f8c7b0f03b5bc58790e108bdd38cbfab544",
+      "output_sha256": "c542efa88dea1bca3e42ce13513e8b81ea60eb8dc32c24466c57800e53b6e11b",
       "edits": 15,
       "code_diagnostics": 0
     },
@@ -284,9 +292,9 @@
     {
       "source": "list.metta",
       "output": "list.metta",
-      "source_sha256": "7d3aa69d85a05f5e19985154fc2e4d8f75d1425d4c1a2013cd632d6bfbf27ca6",
-      "output_sha256": "ee496ef7607de06f9fb48e00cb64eb6f025177c92ae91a31c4897d1ca401d683",
-      "edits": 45,
+      "source_sha256": "5de0bf6f40a53fbe38244b19a505a33e07ddf17a61e1fb2e237dce64129175e9",
+      "output_sha256": "5892ee45d90de1a58b8a1e59da9f88f728d227a0115e6e201501b833950cb14c",
+      "edits": 60,
       "code_diagnostics": 0
     },
     {
@@ -402,6 +410,14 @@
       "code_diagnostics": 0
     },
     {
+      "source": "postings.metta",
+      "output": "postings.metta",
+      "source_sha256": "061bc68d4b7424460f44bf6c4a5c4a75c9098b918e7287814c18d8f6ed1582e5",
+      "output_sha256": "d422c8b23e5b54c27bcfc9a1c8dea51d049890cbb2c37751d3bd984553acad7c",
+      "edits": 57,
+      "code_diagnostics": 0
+    },
+    {
       "source": "prime_metadata.metta",
       "output": "prime_metadata.metta",
       "source_sha256": "8b7e30d90b55bb8f25a64ed56c7efd6c214a1037a03111ce3cb2bffd16799f89",
@@ -460,17 +476,17 @@
     {
       "source": "sqlite.metta",
       "output": "sqlite.metta",
-      "source_sha256": "84d1900833b66450d822aaf7ed7a5e3991bcde82e586b221a539694999f8ab85",
-      "output_sha256": "a12178105e91975d83ff2804b2d3fa0b36b1878fe16c4faa18df44d3d7fc095f",
-      "edits": 2,
+      "source_sha256": "5fa16ce85a38432cb58e2652288997406b3a6adc011a68857251a4fcf50b188d",
+      "output_sha256": "bc53c29af9f4cc4e00916fb6aa1ee8c3e8a5aa3a36b1e7d62c4098ec44d0c10a",
+      "edits": 3,
       "code_diagnostics": 0
     },
     {
       "source": "stdlib.metta",
       "output": "stdlib.metta",
-      "source_sha256": "84d231ee080820283c046d8afa804d42d1496837881ae9425eebc2631ba1d733",
-      "output_sha256": "2c48512ff5254d844152b9fa35da1bb1feedb2a8377fe4765f15ff0cf648be6e",
-      "edits": 62,
+      "source_sha256": "bb9b8aaeec9ebd2ec7d8affb69c9f78f2332cc6b832438521fb7bfb2d95c091a",
+      "output_sha256": "4d6c074844c886b7b68cdb19853bc857d44655b784f659a61c8b4deae4e6c822",
+      "edits": 63,
       "code_diagnostics": 2
     },
     {
@@ -487,6 +503,14 @@
       "source_sha256": "2e089e8e8729956f9ef016cb9e508eca1cc0dd330825e377e93ee71d83edad2a",
       "output_sha256": "aed728e015eb1d0f013263bbb19cd1715e13b628b3a7d7b200d35db6287e8c66",
       "edits": 19,
+      "code_diagnostics": 0
+    },
+    {
+      "source": "tensor.metta",
+      "output": "tensor.metta",
+      "source_sha256": "4214ce0b315c7e7f4fe699c43609103ecf59563554db90dba62eec462d7f1a37",
+      "output_sha256": "9ff45540681718322365bc9feaa7b0fa9e3b4b40a9008e32b719f1b40102246c",
+      "edits": 16,
       "code_diagnostics": 0
     },
     {

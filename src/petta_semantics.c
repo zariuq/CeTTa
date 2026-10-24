@@ -1,7 +1,7 @@
 #include "petta_semantics.h"
-#include "tensor.h"
+#include "tensor_dense_v1.h"
 
-int cetta_tensor_compare(const CettaTensor *, const CettaTensor *) __attribute__((weak));
+int cetta_dense_tensor_v1_compare(const CettaDenseTensorV1 *, const CettaDenseTensorV1 *) __attribute__((weak));
 
 #include "space.h"
 #include "stats.h"
@@ -3367,7 +3367,9 @@ static int petta_compare_grounded_atoms(
             (uint64_t)(uintptr_t)left->ground.ptr,
             (uint64_t)(uintptr_t)right->ground.ptr);
     case GV_TENSOR:
-        return cetta_tensor_compare(left->ground.ptr, right->ground.ptr);
+        return cetta_dense_tensor_v1_compare(left->ground.ptr, right->ground.ptr);
+    case GV_STRUCTURAL:
+        return atom_structural_compare(left, right);
     case GV_SEAL:
         /* Seal objects order by their private identity key: the order is
          * consistent with identity equality and exposes no address. */
@@ -3808,6 +3810,34 @@ bool petta_semantics_lambda_body(
     return true;
 }
 
+bool petta_semantics_lambda_arity(
+        const Atom *atom, CettaExprLen *arity) {
+    if (arity)
+        *arity = 0u;
+    int64_t identity = 0;
+    if (!atom_petta_callable_identity(atom, &identity))
+        return false;
+    CettaExprLen count = 0u;
+    const Atom *body = atom;
+    for (;;) {
+        int64_t nested_identity = 0;
+        Atom *next = NULL;
+        if (!atom_petta_callable_identity(body, &nested_identity) ||
+            nested_identity != identity ||
+            !petta_semantics_lambda_body(body, &next))
+            break;
+        if (count == UINT64_MAX)
+            return false;
+        count++;
+        body = next;
+    }
+    if (count == 0u)
+        return false;
+    if (arity)
+        *arity = count;
+    return true;
+}
+
 bool petta_semantics_is_mm2_exec(SymbolId head) {
     const PeTTaSymbolIds *ids = petta_symbol_ids();
     return ids->table && head != SYMBOL_ID_NONE && head == ids->mm2_exec;
@@ -3835,8 +3865,8 @@ bool petta_semantics_closure_remaining(const Atom *atom,
         !petta_semantics_lambda_body(base, NULL))
         return false;
     CettaExprLen parameters = 0u;
-    for (Atom *body = base; petta_semantics_lambda_body(body, &body);)
-        parameters++;
+    if (!petta_semantics_lambda_arity(base, &parameters))
+        return false;
     if (parameters < bound->expr.len)
         return false;
     if (remaining)
@@ -3952,4 +3982,83 @@ bool petta_semantics_sequence_view(
     const Atom *value, Atom *const **elements, CettaExprLen *length) {
     return !petta_semantics_is_nonlist_carrier(value) &&
            atom_sequence_view(value, elements, length);
+}
+
+bool petta_semantics_sequence_value_read(
+        PettaSequenceValueReader reader, BindingValue source, PettaSequenceValueView *out) {
+    if (!out)
+        return false;
+    *out = (PettaSequenceValueView){0};
+    if (!reader.root)
+        return false;
+    BindingValue root;
+    if (!reader.root(reader.context, source, &root))
+        return false;
+    Atom *atom = root.skeleton;
+    if (atom->kind == ATOM_VAR || atom_is_rational_node(atom) ||
+        (atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) == 0u)
+        return false;
+    PettaSequenceValueView view = {.value = root};
+    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u) {
+        view.sequence = atom->kind == ATOM_EXPR;
+        view.elements = view.sequence ? atom->expr.elems : NULL;
+        *out = view;
+        return true;
+    }
+    if (!atom_has_vars(atom)) {
+        if (petta_semantics_is_open_cons_value(atom) || atom_is_rational_value(atom) ||
+            atom_is_list_rest(atom) || atom_is_internal_tag(
+                atom->expr.elems[0], CETTA_INTERNAL_TAG_COUNTED_COLLECTION))
+            return false;
+        view.sequence = petta_semantics_sequence_view(atom, &view.elements, &view.length);
+        view.list = view.sequence && atom_is_list(atom);
+        *out = view;
+        return true;
+    }
+    BindingValue head;
+    if (!reader.root(reader.context,
+            binding_value_with_skeleton(root, atom->expr.elems[0]), &head))
+        return false;
+    if (atom_is_internal_tag(head.skeleton, CETTA_INTERNAL_TAG_PETTA_OPEN_CONS) ||
+        atom_is_internal_tag(head.skeleton, CETTA_INTERNAL_TAG_COUNTED_COLLECTION) ||
+        atom_is_internal_tag(head.skeleton, CETTA_INTERNAL_TAG_RATIONAL) ||
+        atom_is_internal_tag(head.skeleton, CETTA_INTERNAL_TAG_LIST_REST))
+        return false;
+    CettaExprLen domain_length = 0u;
+    Atom *domain_head = NULL;
+    if (atom->expr.len == 3u) {
+        BindingValue domain;
+        if (!reader.root(reader.context,
+                binding_value_with_skeleton(root, atom->expr.elems[1]), &domain))
+            return false;
+        if (domain.skeleton->kind == ATOM_EXPR && domain.skeleton->expr.len == 2u) {
+            BindingValue tag;
+            if (!reader.root(reader.context,
+                    binding_value_with_skeleton(domain, domain.skeleton->expr.elems[0]),
+                    &tag))
+                return false;
+            domain_length = 2u;
+            domain_head = tag.skeleton;
+        }
+    }
+    if (atom_petta_expression_representation(atom->expr.len, head.skeleton,
+            domain_length, domain_head) == PETTA_VALUE_ORDINARY) {
+        view.list = atom_is_internal_tag(head.skeleton, CETTA_INTERNAL_TAG_LIST);
+        view.sequence = true;
+        view.elements = atom->expr.elems + (view.list ? 1u : 0u);
+        view.length = atom->expr.len - (view.list ? 1u : 0u);
+    }
+    *out = view;
+    return true;
+}
+
+static bool petta_sequence_bindings_root(
+        const void *bindings, BindingValue source, BindingValue *out) {
+    return bindings_observe_value_root(bindings, source, out);
+}
+
+bool petta_semantics_sequence_value_view(
+        const Bindings *bindings, BindingValue source, PettaSequenceValueView *out) {
+    return petta_semantics_sequence_value_read(
+        (PettaSequenceValueReader){petta_sequence_bindings_root, bindings}, source, out);
 }

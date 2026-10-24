@@ -945,9 +945,17 @@ def weight_order(gate):
     gate.passed_case('a law needs weight order, and weight order owns its key and selection')
 
 
+def matched_body(language):
+    """Stored code runs where the program runs it.  In Prime a bare variable
+    template returns the stored atom as a completed value, so the matched
+    body is evaluated explicitly; HE and PeTTa run the matched body itself."""
+    return '(eval $code)' if language == 'prime' else '$code'
+
+
 def weight_licence_dependency_cases(language):
     """Programs whose delayed dependency makes Hidden the actual best."""
     tenth, half = ('0.1', '0.5') if language == 'petta' else ('1/10', '1/2')
+    code = matched_body(language)
     slow = '(= (licence-slow $n $v) (if (== $n 0) $v (licence-slow (- $n 1) $v))) '
     predicate = '(= (licence-predicate $w) (licence-slow 120 (licence-verdict))) '
     predicate += '(=w (licence-verdict) True 20) '
@@ -963,11 +971,11 @@ def weight_licence_dependency_cases(language):
          f'(where {tenth} (admit licence-predicate)))) ', 'UncheckedAdmission'),
         ('matched executable body', '(stored-computation (weight:where Hidden 20)) ' +
          f'(=w (licence-answer) (licence-slow 120 '
-         f'(match &self (stored-computation $code) $code)) {tenth}) ', 'UncheckedMatchedValue'),
+         f'(match &self (stored-computation $code) {code})) {tenth}) ', 'UncheckedMatchedValue'),
         ('graded matched executable body',
          f'(stored-computation (weight:where Hidden 40) {half}) ' +
          f'(=w (licence-answer) (licence-slow 120 '
-         f'(match &self (stored-computation $code $w) $code (where $w))) {tenth}) ',
+         f'(match &self (stored-computation $code $w) {code} (where $w))) {tenth}) ',
          'UncheckedMatchedValue'),
     ]
     return slow, tenth, definitions
@@ -1009,7 +1017,8 @@ def weight_licence_dependencies(gate):
 
     # Duplicate matched code is still two derivations after licence refusal.
     source = slow + f'(stored-computation (weight:where Hidden 20)) ' * 2
-    source += f'(=w (licence-answer) (match &self (stored-computation $code) $code) {tenth}) '
+    code = matched_body(getattr(gate, 'language', 'prime'))
+    source += f'(=w (licence-answer) (match &self (stored-computation $code) {code}) {tenth}) '
     source += '(=w (licence-answer) Visible 1) '
     for width in (1, 2):
         trees, _ = gate.run('duplicate matched code', source +

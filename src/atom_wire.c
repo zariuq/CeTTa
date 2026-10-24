@@ -1,17 +1,17 @@
 #include "atom_wire.h"
-#include "tensor.h"
+#include "tensor_dense_v1.h"
 #include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-CettaTensorStatus cetta_tensor_encode(const CettaTensor *, unsigned char **, size_t *)
+CettaDenseTensorV1Status cetta_dense_tensor_v1_encode(const CettaDenseTensorV1 *, unsigned char **, size_t *)
     __attribute__((weak));
-CettaTensorStatus cetta_tensor_encoded_size(const CettaTensor *, size_t *)
+CettaDenseTensorV1Status cetta_dense_tensor_v1_encoded_size(const CettaDenseTensorV1 *, size_t *)
     __attribute__((weak));
-CettaTensorStatus cetta_tensor_decode(const unsigned char *, size_t, CettaTensor **)
+CettaDenseTensorV1Status cetta_dense_tensor_v1_decode(const unsigned char *, size_t, CettaDenseTensorV1 **)
     __attribute__((weak));
-void cetta_tensor_release(void *) __attribute__((weak));
+void cetta_dense_tensor_v1_release(void *) __attribute__((weak));
 
 _Static_assert(sizeof(double) == 8 && DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
                "CAV1 requires binary64");
@@ -72,15 +72,15 @@ static CettaAtomWireStatus encode(Writer *w, const Atom *a, unsigned depth) {
         case GV_BIGINT: tag = 'J'; text = atom_bigint_cstr(a); if (text) len = strlen(text); break;
         case GV_RATIONAL: tag = 'Q'; text = atom_rational_cstr(a); if (text) len = strlen(text); break;
         case GV_TENSOR: {
-            if (!cetta_tensor_encode || !cetta_tensor_encoded_size) return ATOM_WIRE_UNSUPPORTED;
+            if (!cetta_dense_tensor_v1_encode || !cetta_dense_tensor_v1_encoded_size) return ATOM_WIRE_UNSUPPORTED;
             unsigned char *encoded; size_t size;
-            CettaTensorStatus result = cetta_tensor_encoded_size(a->ground.ptr, &size);
-            if (result != CETTA_TENSOR_OK) return ATOM_WIRE_INVALID;
+            CettaDenseTensorV1Status result = cetta_dense_tensor_v1_encoded_size(a->ground.ptr, &size);
+            if (result != CETTA_DENSE_TENSOR_V1_OK) return ATOM_WIRE_INVALID;
             size_t room = CETTA_ATOM_WIRE_BYTES - w->size;
             if (room < 5u || size > room - 5u) return ATOM_WIRE_LIMIT;
-            result = cetta_tensor_encode(a->ground.ptr, &encoded, &size);
-            if (result != CETTA_TENSOR_OK)
-                return result == CETTA_TENSOR_NOMEM ? ATOM_WIRE_NOMEM : ATOM_WIRE_INVALID;
+            result = cetta_dense_tensor_v1_encode(a->ground.ptr, &encoded, &size);
+            if (result != CETTA_DENSE_TENSOR_V1_OK)
+                return result == CETTA_DENSE_TENSOR_V1_NOMEM ? ATOM_WIRE_NOMEM : ATOM_WIRE_INVALID;
             tag = 'A';
             CettaAtomWireStatus status = size > CETTA_ATOM_WIRE_BYTES ? ATOM_WIRE_LIMIT :
                 append(w, &tag, 1u);
@@ -172,15 +172,15 @@ static CettaAtomWireStatus decode(Reader *r, Arena *arena, unsigned depth, Atom 
         }
         *out = atom_expr(arena, items, n);
     } else if (tag == 'A') {
-        if (!cetta_tensor_decode || !cetta_tensor_release) return ATOM_WIRE_UNSUPPORTED;
+        if (!cetta_dense_tensor_v1_decode || !cetta_dense_tensor_v1_release) return ATOM_WIRE_UNSUPPORTED;
         if (!read_number(r, 4u, &n) || n > r->size - r->pos) return ATOM_WIRE_CORRUPT;
-        CettaTensor *tensor = NULL;
-        CettaTensorStatus status = cetta_tensor_decode(r->bytes + r->pos, (size_t)n, &tensor);
-        if (status != CETTA_TENSOR_OK)
-            return status == CETTA_TENSOR_NOMEM ? ATOM_WIRE_NOMEM : ATOM_WIRE_CORRUPT;
+        CettaDenseTensorV1 *tensor = NULL;
+        CettaDenseTensorV1Status status = cetta_dense_tensor_v1_decode(r->bytes + r->pos, (size_t)n, &tensor);
+        if (status != CETTA_DENSE_TENSOR_V1_OK)
+            return status == CETTA_DENSE_TENSOR_V1_NOMEM ? ATOM_WIRE_NOMEM : ATOM_WIRE_CORRUPT;
         r->pos += (size_t)n;
         *out = atom_tensor(arena, tensor);
-        cetta_tensor_release(tensor);
+        cetta_dense_tensor_v1_release(tensor);
     } else if (tag == 'S' || tag == 'T' || tag == 'J' || tag == 'Q') {
         if (!read_number(r, 4, &n) || n > r->size - r->pos ||
             ((tag == 'J' || tag == 'Q') && memchr(r->bytes + r->pos, 0, n)))

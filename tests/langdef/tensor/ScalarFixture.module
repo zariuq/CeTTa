@@ -1,0 +1,10 @@
+import "TensorSupport" as tensor
+Module TensorScalarFixture {
+  Theory Concrete() {
+    tensor.Support() Terms {
+      "FixtureLeft" . |- "left" : Scalar;
+      "FixtureRight" . |- "right" : Scalar;
+    }
+  }
+  theory Concrete()
+}

@@ -8,7 +8,7 @@ import subprocess
 
 EXPORTS = (
     ("runtime_counters.export", "cetta_runtime_counters.generated.h"),
-    ("runtime_counter_names.export", "cetta_runtime_counter_names.generated.inc"),
+    ("runtime_counter_names.export", "cetta_runtime_counter_names.generated.h"),
 )
 
 

@@ -795,6 +795,10 @@ static Atom *type_fact_wire_cardinality_v1(
 static Atom *type_fact_literal_type_v1(Arena *arena, const Atom *expression) {
     if (!arena || !expression)
         return NULL;
+    if(atom_is_structural(expression)) {
+        const char *name=atom_structural_type_name(expression);
+        return name ? type_fact_expr1_v1(arena,"TNominal",atom_symbol(arena,name)) : NULL;
+    }
     if (expression->kind == ATOM_GROUNDED) {
         switch (expression->ground.gkind) {
         case GV_INT:
@@ -919,6 +923,10 @@ static Atom *type_fact_infer_result_v1(
         return NULL;
     }
     Atom *literal = NULL;
+    if(atom_is_structural(expression)) {
+        const char *name=atom_structural_type_name(expression);
+        return name ? atom_symbol(arena,name) : NULL;
+    }
     if (expression->kind == ATOM_GROUNDED) {
         switch (expression->ground.gkind) {
         case GV_INT:

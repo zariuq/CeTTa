@@ -206,13 +206,15 @@ static AtomId petta_projection_expression(
     void *raw, const AtomId *children, size_t len) {
     PeTTaProjectionContextV1 *context = raw;
     if (!context || !context->form_active || !context->universe ||
-        len > UINT16_MAX || (len > 0u && !children))
+        (len > 0u && !children))
         return CETTA_ATOM_ID_NONE;
     if (context->data_symbols)
         for (size_t i = 0u; i < len; i++)
             if (!tu_hdr(context->universe, children[i]))
                 return petta_projection_owned_sequence(
                     context, children, len, false, CETTA_ATOM_ID_NONE);
+    /* The term universe checks its storage bound. The header's 16-bit
+     * inline length is only a summary, not the expression arity limit. */
     return tu_expr_from_ids(
         context->universe, children, (CettaExprLen)len);
 }

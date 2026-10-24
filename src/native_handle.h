@@ -38,6 +38,11 @@ bool cetta_native_handle_alloc(struct CettaLibraryContext *ctx, const char *kind
 /* The resource remains quiescent while its ownership is inspected. */
 bool cetta_native_handle_set_storage(struct CettaLibraryContext *ctx, const char *kind,
     uint64_t id, CettaStorageVisitor storage);
+/* Immutable resources can declare a conservative transitive payload footprint
+ * for arena pacing. Registry metadata remains separately measured. */
+bool cetta_native_handle_alloc_sized(struct CettaLibraryContext *ctx, const char *kind,
+    void *resource, CettaNativeHandleFreeFn free_resource, size_t payload_bytes,
+    uint64_t *id_out);
 void *cetta_native_handle_get(struct CettaLibraryContext *ctx, const char *kind,
                               uint64_t id);
 /* Resolve only a holder belonging to this exact live registry owner. Equal

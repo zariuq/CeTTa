@@ -1054,8 +1054,13 @@ static bool native_dialect_reduce_he_call(void *raw, Space *space, Arena *arena,
     }
     if (is_grounded_op(head) && petta_semantics_form(head) == PETTA_FORM_NONE) {
         *handled = true; *interpret = true;
+        CettaInvocation invocation = {
+            .head = binding_value_from_atom(call->expr.elems[0]),
+            .supplied = {.atoms = call->expr.elems + 1u,
+                         .count = call->expr.len - 1u},
+        };
         if (petta_eval_machine_apply_ready_values(&owner->context,space,arena,
-                call,environment,values,end)) return true;
+                &invocation,environment,values,end)) return true;
         /* Open or non-scalar ready values keep the host's own interpretation
          * and refusal behavior. The full host service returns completed
          * values, including delimited data; only the direct primitive above

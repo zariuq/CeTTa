@@ -79,11 +79,11 @@ static const GSLTDirectScalarClassV1 prime_reader_direct_v1_class_2_cetta_prime_
     .point_len = UINT32_C(15),
     .complement = true,
 };
-static const uint32_t prime_reader_direct_v1_class_3_cetta_prime_list_token_start_plain_scalar_points[] = {UINT32_C(9), UINT32_C(10), UINT32_C(11), UINT32_C(12), UINT32_C(13), UINT32_C(32), UINT32_C(34), UINT32_C(36), UINT32_C(38), UINT32_C(40), UINT32_C(41), UINT32_C(42), UINT32_C(59), UINT32_C(64), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(124), UINT32_C(125)};
+static const uint32_t prime_reader_direct_v1_class_3_cetta_prime_list_token_start_plain_scalar_points[] = {UINT32_C(9), UINT32_C(10), UINT32_C(11), UINT32_C(12), UINT32_C(13), UINT32_C(32), UINT32_C(33), UINT32_C(34), UINT32_C(36), UINT32_C(38), UINT32_C(40), UINT32_C(41), UINT32_C(42), UINT32_C(59), UINT32_C(64), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(124), UINT32_C(125)};
 static const uint8_t prime_reader_direct_v1_class_3_cetta_prime_list_token_start_plain_scalar_ascii[] = {
     1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1,
+    0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1,
     0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1,
@@ -101,7 +101,7 @@ static const uint8_t prime_reader_direct_v1_class_3_cetta_prime_list_token_start
 static const GSLTDirectScalarClassV1 prime_reader_direct_v1_class_3_cetta_prime_list_token_start_plain_scalar = {
     .ascii = prime_reader_direct_v1_class_3_cetta_prime_list_token_start_plain_scalar_ascii,
     .points = prime_reader_direct_v1_class_3_cetta_prime_list_token_start_plain_scalar_points,
-    .point_len = UINT32_C(19),
+    .point_len = UINT32_C(20),
     .complement = true,
 };
 static const uint32_t prime_reader_direct_v1_class_4_cetta_prime_newline_scalar_points[] = {UINT32_C(10)};
@@ -278,11 +278,11 @@ static const GSLTDirectScalarClassV1 prime_reader_direct_v1_class_10_cetta_prime
     .point_len = UINT32_C(15),
     .complement = true,
 };
-static const uint32_t prime_reader_direct_v1_class_11_cetta_prime_token_start_plain_scalar_points[] = {UINT32_C(9), UINT32_C(10), UINT32_C(11), UINT32_C(12), UINT32_C(13), UINT32_C(32), UINT32_C(34), UINT32_C(36), UINT32_C(38), UINT32_C(40), UINT32_C(41), UINT32_C(42), UINT32_C(59), UINT32_C(64), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
+static const uint32_t prime_reader_direct_v1_class_11_cetta_prime_token_start_plain_scalar_points[] = {UINT32_C(9), UINT32_C(10), UINT32_C(11), UINT32_C(12), UINT32_C(13), UINT32_C(32), UINT32_C(33), UINT32_C(34), UINT32_C(36), UINT32_C(38), UINT32_C(40), UINT32_C(41), UINT32_C(42), UINT32_C(59), UINT32_C(64), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
 static const uint8_t prime_reader_direct_v1_class_11_cetta_prime_token_start_plain_scalar_ascii[] = {
     1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1,
+    0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1,
     0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
     1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1,
@@ -300,7 +300,7 @@ static const uint8_t prime_reader_direct_v1_class_11_cetta_prime_token_start_pla
 static const GSLTDirectScalarClassV1 prime_reader_direct_v1_class_11_cetta_prime_token_start_plain_scalar = {
     .ascii = prime_reader_direct_v1_class_11_cetta_prime_token_start_plain_scalar_ascii,
     .points = prime_reader_direct_v1_class_11_cetta_prime_token_start_plain_scalar_points,
-    .point_len = UINT32_C(18),
+    .point_len = UINT32_C(19),
     .complement = true,
 };
 static const uint32_t prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar_points[] = {UINT32_C(9), UINT32_C(10), UINT32_C(11), UINT32_C(12), UINT32_C(13), UINT32_C(32)};
@@ -362,27 +362,39 @@ static const uint32_t prime_reader_direct_v1_token_2_boundary_literals[] = {UINT
 static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_token_2_boundary_classes[] = {
     &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
 };
+static const uint32_t prime_reader_direct_v1_token_3_literal[] = {UINT32_C(33)};
 static const uint32_t prime_reader_direct_v1_token_3_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
 static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_token_3_boundary_classes[] = {
     &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
 };
-static const uint32_t prime_reader_direct_v1_token_4_literal[] = {UINT32_C(36)};
 static const uint32_t prime_reader_direct_v1_token_4_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
 static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_token_4_boundary_classes[] = {
     &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
 };
-static const uint32_t prime_reader_direct_v1_token_5_literal[] = {UINT32_C(36)};
+static const uint32_t prime_reader_direct_v1_token_5_literal[] = {UINT32_C(33)};
 static const uint32_t prime_reader_direct_v1_token_5_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
 static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_token_5_boundary_classes[] = {
+    &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
+};
+static const uint32_t prime_reader_direct_v1_token_6_literal[] = {UINT32_C(36)};
+static const uint32_t prime_reader_direct_v1_token_6_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
+static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_token_6_boundary_classes[] = {
+    &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
+};
+static const uint32_t prime_reader_direct_v1_token_7_literal[] = {UINT32_C(36)};
+static const uint32_t prime_reader_direct_v1_token_7_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
+static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_token_7_boundary_classes[] = {
     &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
 };
 static const GSLTDirectTokenRuleV1 prime_reader_direct_v1_token_rules[] = {
     {.literal = prime_reader_direct_v1_token_0_literal, .literal_len = UINT32_C(1), .first = NULL, .tail = NULL, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_token_0_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_token_0_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
     {.literal = prime_reader_direct_v1_token_1_literal, .literal_len = UINT32_C(1), .first = &prime_reader_direct_v1_class_10_cetta_prime_token_start_nonat_scalar, .tail = &prime_reader_direct_v1_class_9_cetta_prime_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_token_1_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_token_1_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
     {.literal = prime_reader_direct_v1_token_2_literal, .literal_len = UINT32_C(1), .first = NULL, .tail = NULL, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_token_2_boundary_literals, .literal_len = UINT32_C(4), .classes = prime_reader_direct_v1_token_2_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
-    {.literal = NULL, .literal_len = UINT32_C(0), .first = &prime_reader_direct_v1_class_11_cetta_prime_token_start_plain_scalar, .tail = &prime_reader_direct_v1_class_9_cetta_prime_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_token_3_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_token_3_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
-    {.literal = prime_reader_direct_v1_token_4_literal, .literal_len = UINT32_C(1), .first = NULL, .tail = NULL, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_token_4_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_token_4_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_ANONYMOUS_VARIABLE, .strip_literal = false},
-    {.literal = prime_reader_direct_v1_token_5_literal, .literal_len = UINT32_C(1), .first = &prime_reader_direct_v1_class_10_cetta_prime_token_start_nonat_scalar, .tail = &prime_reader_direct_v1_class_9_cetta_prime_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_token_5_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_token_5_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_VARIABLE, .strip_literal = true},
+    {.literal = prime_reader_direct_v1_token_3_literal, .literal_len = UINT32_C(1), .first = &prime_reader_direct_v1_class_9_cetta_prime_token_scalar, .tail = &prime_reader_direct_v1_class_9_cetta_prime_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_token_3_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_token_3_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
+    {.literal = NULL, .literal_len = UINT32_C(0), .first = &prime_reader_direct_v1_class_11_cetta_prime_token_start_plain_scalar, .tail = &prime_reader_direct_v1_class_9_cetta_prime_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_token_4_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_token_4_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
+    {.literal = prime_reader_direct_v1_token_5_literal, .literal_len = UINT32_C(1), .first = NULL, .tail = NULL, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_token_5_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_token_5_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false, .meta_free = true},
+    {.literal = prime_reader_direct_v1_token_6_literal, .literal_len = UINT32_C(1), .first = NULL, .tail = NULL, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_token_6_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_token_6_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_ANONYMOUS_VARIABLE, .strip_literal = false},
+    {.literal = prime_reader_direct_v1_token_7_literal, .literal_len = UINT32_C(1), .first = &prime_reader_direct_v1_class_10_cetta_prime_token_start_nonat_scalar, .tail = &prime_reader_direct_v1_class_9_cetta_prime_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_token_7_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_token_7_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_VARIABLE, .strip_literal = true},
 };
 static const uint32_t prime_reader_direct_v1_list_token_0_literal[] = {UINT32_C(38)};
 static const uint32_t prime_reader_direct_v1_list_token_0_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
@@ -399,33 +411,45 @@ static const uint32_t prime_reader_direct_v1_list_token_2_boundary_literals[] = 
 static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_list_token_2_boundary_classes[] = {
     &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
 };
+static const uint32_t prime_reader_direct_v1_list_token_3_literal[] = {UINT32_C(33)};
 static const uint32_t prime_reader_direct_v1_list_token_3_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
 static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_list_token_3_boundary_classes[] = {
     &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
 };
-static const uint32_t prime_reader_direct_v1_list_token_4_literal[] = {UINT32_C(36)};
 static const uint32_t prime_reader_direct_v1_list_token_4_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
 static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_list_token_4_boundary_classes[] = {
     &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
 };
-static const uint32_t prime_reader_direct_v1_list_token_5_literal[] = {UINT32_C(36)};
+static const uint32_t prime_reader_direct_v1_list_token_5_literal[] = {UINT32_C(33)};
 static const uint32_t prime_reader_direct_v1_list_token_5_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
 static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_list_token_5_boundary_classes[] = {
     &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
 };
-static const uint32_t prime_reader_direct_v1_list_token_6_literal[] = {UINT32_C(124)};
+static const uint32_t prime_reader_direct_v1_list_token_6_literal[] = {UINT32_C(36)};
 static const uint32_t prime_reader_direct_v1_list_token_6_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
 static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_list_token_6_boundary_classes[] = {
+    &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
+};
+static const uint32_t prime_reader_direct_v1_list_token_7_literal[] = {UINT32_C(36)};
+static const uint32_t prime_reader_direct_v1_list_token_7_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
+static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_list_token_7_boundary_classes[] = {
+    &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
+};
+static const uint32_t prime_reader_direct_v1_list_token_8_literal[] = {UINT32_C(124)};
+static const uint32_t prime_reader_direct_v1_list_token_8_boundary_literals[] = {UINT32_C(34), UINT32_C(40), UINT32_C(41), UINT32_C(59), UINT32_C(91), UINT32_C(93), UINT32_C(123), UINT32_C(125)};
+static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_list_token_8_boundary_classes[] = {
     &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
 };
 static const GSLTDirectTokenRuleV1 prime_reader_direct_v1_list_token_rules[] = {
     {.literal = prime_reader_direct_v1_list_token_0_literal, .literal_len = UINT32_C(1), .first = NULL, .tail = NULL, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_0_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_0_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
     {.literal = prime_reader_direct_v1_list_token_1_literal, .literal_len = UINT32_C(1), .first = &prime_reader_direct_v1_class_2_cetta_prime_list_token_start_nonat_scalar, .tail = &prime_reader_direct_v1_class_1_cetta_prime_list_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_1_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_1_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
     {.literal = prime_reader_direct_v1_list_token_2_literal, .literal_len = UINT32_C(1), .first = NULL, .tail = NULL, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_2_boundary_literals, .literal_len = UINT32_C(4), .classes = prime_reader_direct_v1_list_token_2_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
-    {.literal = NULL, .literal_len = UINT32_C(0), .first = &prime_reader_direct_v1_class_3_cetta_prime_list_token_start_plain_scalar, .tail = &prime_reader_direct_v1_class_1_cetta_prime_list_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_3_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_3_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
-    {.literal = prime_reader_direct_v1_list_token_4_literal, .literal_len = UINT32_C(1), .first = NULL, .tail = NULL, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_4_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_4_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_ANONYMOUS_VARIABLE, .strip_literal = false},
-    {.literal = prime_reader_direct_v1_list_token_5_literal, .literal_len = UINT32_C(1), .first = &prime_reader_direct_v1_class_2_cetta_prime_list_token_start_nonat_scalar, .tail = &prime_reader_direct_v1_class_1_cetta_prime_list_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_5_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_5_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_VARIABLE, .strip_literal = true},
-    {.literal = prime_reader_direct_v1_list_token_6_literal, .literal_len = UINT32_C(1), .first = &prime_reader_direct_v1_class_1_cetta_prime_list_token_scalar, .tail = &prime_reader_direct_v1_class_1_cetta_prime_list_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_6_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_6_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
+    {.literal = prime_reader_direct_v1_list_token_3_literal, .literal_len = UINT32_C(1), .first = &prime_reader_direct_v1_class_1_cetta_prime_list_token_scalar, .tail = &prime_reader_direct_v1_class_1_cetta_prime_list_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_3_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_3_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
+    {.literal = NULL, .literal_len = UINT32_C(0), .first = &prime_reader_direct_v1_class_3_cetta_prime_list_token_start_plain_scalar, .tail = &prime_reader_direct_v1_class_1_cetta_prime_list_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_4_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_4_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
+    {.literal = prime_reader_direct_v1_list_token_5_literal, .literal_len = UINT32_C(1), .first = NULL, .tail = NULL, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_5_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_5_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false, .meta_free = true},
+    {.literal = prime_reader_direct_v1_list_token_6_literal, .literal_len = UINT32_C(1), .first = NULL, .tail = NULL, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_6_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_6_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_ANONYMOUS_VARIABLE, .strip_literal = false},
+    {.literal = prime_reader_direct_v1_list_token_7_literal, .literal_len = UINT32_C(1), .first = &prime_reader_direct_v1_class_2_cetta_prime_list_token_start_nonat_scalar, .tail = &prime_reader_direct_v1_class_1_cetta_prime_list_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_7_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_7_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_VARIABLE, .strip_literal = true},
+    {.literal = prime_reader_direct_v1_list_token_8_literal, .literal_len = UINT32_C(1), .first = &prime_reader_direct_v1_class_1_cetta_prime_list_token_scalar, .tail = &prime_reader_direct_v1_class_1_cetta_prime_list_token_scalar, .boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_token_8_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_token_8_boundary_classes, .class_len = UINT32_C(1)}, .projection = GSLT_DIRECT_TOKEN_PROJECTION_WORD, .strip_literal = false},
 };
 static const uint32_t prime_reader_direct_v1_list_prefix_0_literal[] = {UINT32_C(64)};
 static const uint32_t prime_reader_direct_v1_list_prefix_1_literal[] = {UINT32_C(42)};
@@ -450,11 +474,11 @@ static const GSLTDirectScalarClassV1 *const prime_reader_direct_v1_binding_mark_
 const GSLTDirectPrefixReaderV1Plan prime_reader_direct_v1_plan = {
     .presentation_name = "CeTTaPrimeReaderSyntaxV1",
     .fragment = "deterministic-prefix-sexpr-direct-v1",
-    .syntax_digest = "ee59690524b86a9033a93bc79a92b7663db133253392a35649a21ab134a11569",
-    .class_digest = "28b277283a12d8ff89b27141352ca56d8eb7550ef5c04420aa99900cee708574",
-    .projection_digest = "17f99c3681d429dfa78bb06e6ed445acfd8e80dc934fcd165ba92f84e3ed82a5",
-    .compiler_digest = "390cb93da6ed7eb572fda402b8221e108d281503fecfc5f689a817aded88d947",
-    .composition_digest = "1d9886b0d27f150be1e66b0a352cccdd4e81732397966363ee5d38f13b17cdba",
+    .syntax_digest = "9ebff276d385e9ccf9ca27d702c38b381e599cffdb1220ac6bd134877f522912",
+    .class_digest = "edaede0449e519dcac925a24b9f4e13eb79ff16ec25068a05e7a5fc65901eee2",
+    .projection_digest = "0ac09675aa316978a3d3e27dfaf3cf5754bcdadd5867cee70b82e5e9fbddf4a4",
+    .compiler_digest = "2eaed456b4b2dd5eca5ca9e792a5853f1b1530f7c4df4e3fdc5d5bcacc36669d",
+    .composition_digest = "86aae5f5b12fe70b99a31053f5d027e321e7da2fdb036fb318002e30e32f0d48",
     .profile = "cetta-prime-v1",
     .whitespace = &prime_reader_direct_v1_class_12_cetta_prime_whitespace_scalar,
     .comment_marker = UINT32_C(59),
@@ -474,13 +498,13 @@ const GSLTDirectPrefixReaderV1Plan prime_reader_direct_v1_plan = {
     .prefix_rules = prime_reader_direct_v1_prefix_rules,
     .prefix_rule_len = UINT32_C(4),
     .token_rules = prime_reader_direct_v1_token_rules,
-    .token_rule_len = UINT32_C(6),
+    .token_rule_len = UINT32_C(8),
     .list_open = UINT32_C(91),
     .list_close = UINT32_C(93),
     .list_rest = UINT32_C(124),
     .list_bar_boundary = {.allow_eof = true, .literals = prime_reader_direct_v1_list_bar_boundary_literals, .literal_len = UINT32_C(8), .classes = prime_reader_direct_v1_list_bar_boundary_classes, .class_len = UINT32_C(1)},
     .list_token_rules = prime_reader_direct_v1_list_token_rules,
-    .list_token_rule_len = UINT32_C(7),
+    .list_token_rule_len = UINT32_C(9),
     .list_prefix_rules = prime_reader_direct_v1_list_prefix_rules,
     .meta_open = UINT32_C(91),
     .meta_close = UINT32_C(93),

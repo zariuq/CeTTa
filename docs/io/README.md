@@ -322,6 +322,8 @@ space service's schema. SQL and bound parameters are caller-selected:
 ```metta
 (sqlite:query "history.sqlite3" "SELECT id,result FROM calls WHERE id=?"
               ("call-id") 10000)
+(sqlite:observe "ledger.sqlite3" "SELECT state FROM tasks WHERE id=?"
+                ("task-id") 1000)
 (sqlite:transaction "history.sqlite3" immediate
   ((sqlite:statement "INSERT INTO notes VALUES (?,?)" ("task-id" "finding"))
    (sqlite:statement "SELECT rowid FROM notes WHERE task=?" ("task-id"))) 10000)
@@ -335,6 +337,19 @@ across a model call or asynchronous wait. The busy duration is caller-selected.
 There are no row quotas or SQL filters. SQL `NULL` is `sqlite:null`; BLOBs are
 `(sqlite:blob bytes)` and TEXT, INTEGER and REAL retain their storage types.
 
+`sqlite:observe` takes the arguments of `sqlite:query` and returns the same
+result, without changing the database it reads. It opens an existing file
+read-only and fails with `(sqlite:error io 14 "database file does not exist"
+failed)` rather than creating a missing one. A statement runs only when
+SQLite reports that it cannot write (`sqlite3_stmt_readonly`); writes, schema
+changes, `BEGIN IMMEDIATE`, `VACUUM`, journal-mode and checkpoint pragmas fail
+before they run, as do `ATTACH` and SQL holding more than one statement. The
+read-only connection and `PRAGMA query_only` are further layers. A WAL
+database is read at its last committed state while another process holds a
+write transaction. The observer never checkpoints; like any SQLite reader it
+uses the `-wal` and `-shm` files, creating them for an idle WAL database that
+has none, and never writes the database file itself.
+
 Errors carry category, SQLite code, message and outcome. A commit I/O failure
 may report `unknown-outcome`; it is never automatically replayed. The library
 does not rebuild tables, change rowids, stamp a schema version, force WAL or
@@ -347,4 +362,5 @@ file-lock ownership. `SQLITE_CFLAGS` and `SQLITE_LIBS` can select an SDK or
 Python environment; otherwise the build uses pkg-config or ordinary system
 linkage. `ENABLE_SQLITE=1` enables this library independently of native durability. The native SQLite parity test
 checks existing rowids and types, atomic rollback, unbounded result selection,
-and shared linkage with an embedded Python reader.
+read-only observation beside a live WAL writer, and shared linkage with an
+embedded Python reader.

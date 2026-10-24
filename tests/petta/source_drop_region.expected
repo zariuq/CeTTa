@@ -1,0 +1,10 @@
+(Cell c Stop)
+Other
+Stop
+Stop
+(Cell b (Cell c Stop))
+()
+Stop
+(first second)
+Stop
+()

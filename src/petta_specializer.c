@@ -4,6 +4,7 @@
 #include "eval.h"
 #include "fixpoint.h"
 #include "symbol_index.h"
+#include "subst_tree.h"
 #include "grounded.h"
 #include "match.h"
 #include "petta_semantics.h"
@@ -31,6 +32,8 @@ typedef struct {
      * `cons` pattern: a list the call passes as a flat expression keeps its
      * head at another position than the pattern's cell does. */
     bool positional;
+    bool fingerprint_known;
+    uint64_t fingerprint;
 } PettaSpecializationBinding;
 
 typedef struct {
@@ -167,7 +170,7 @@ static _Thread_local PettaSpecializationRecords
     g_petta_specializations = {0};
 
 enum {
-    PETTA_CALLABLE_CACHE_SLOTS = 256,
+    PETTA_CALLABLE_CACHE_SLOTS = 4096,
     PETTA_NAMED_ARITY_CACHE_SLOTS = 256,
     PETTA_RELATION_RELEVANCE_CACHE_SLOTS = 256,
     PETTA_QUERY_FOREST_CACHE_SLOTS = 1024,
@@ -2436,6 +2439,116 @@ static PettaSpecializationRecord *petta_find_record(
     return NULL;
 }
 
+
+static uint64_t petta_selector_mix(uint64_t hash, uint64_t token) {
+    return (hash ^ token) * UINT64_C(1099511628211);
+}
+
+/* A bounded structural observation under PeTTa term equality. A differing
+ * fingerprint refutes equality; a collision still takes atom_eq. Opaque
+ * payloads contribute only their kind, so mutable contents never enter a
+ * stored fingerprint. Rational unfoldings and unknown metadata decline.
+ * The same expansion budget bounds the ordinary discrimination indexes. */
+static bool petta_selector_fingerprint(const Atom *root, uint64_t *out) {
+    if (!root || !out ||
+        !(root->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) ||
+        atom_structural_has_rational(root))
+        return false;
+    struct {
+        const Atom *atom;
+        unsigned depth;
+    } stack[CETTA_INDEX_CHILD_TOKEN_LIMIT + 1u];
+    size_t length = 1u;
+    stack[0].atom = root;
+    stack[0].depth = 0u;
+    CettaIndexExpansionBudget budget = cetta_index_expansion_budget();
+    uint64_t hash = UINT64_C(1469598103934665603);
+    while (length) {
+        const Atom *atom = stack[--length].atom;
+        unsigned depth = stack[length].depth;
+        if (!atom)
+            return false;
+        hash = petta_selector_mix(hash, atom->kind);
+        switch (atom->kind) {
+        case ATOM_SYMBOL:
+            hash = petta_selector_mix(hash,
+                                      atom_symbol_current_id(atom));
+            break;
+        case ATOM_VAR:
+            hash = petta_selector_mix(hash, atom->var_id.base);
+            hash = petta_selector_mix(hash, atom->var_id.epoch.word);
+            break;
+        case ATOM_GROUNDED:
+            hash = petta_selector_mix(hash, atom->ground.gkind);
+            if (atom->ground.gkind == GV_INT ||
+                atom->ground.gkind == GV_INTERNAL_TAG) {
+                hash = petta_selector_mix(hash, (uint64_t)atom->ground.ival);
+            } else if (atom->ground.gkind == GV_BOOL) {
+                hash = petta_selector_mix(hash, atom->ground.bval);
+            } else if (atom->ground.gkind == GV_STRING) {
+                hash = petta_selector_mix(hash, atom->ground.slen);
+                size_t bytes = atom->ground.slen < 16u ? atom->ground.slen : 16u;
+                for (size_t index = 0u; index < bytes; index++)
+                    hash = petta_selector_mix(
+                        hash, (unsigned char)atom->ground.sval[index]);
+            }
+            break;
+        case ATOM_EXPR:
+            hash = petta_selector_mix(hash, atom->expr.len);
+            if (!cetta_index_expand_expression(&budget, depth, atom->expr.len)) {
+                hash = petta_selector_mix(hash, UINT64_MAX);
+                break;
+            }
+            for (CettaExprIndex index = atom->expr.len; index > 0u; index--) {
+                if (length >= CETTA_INDEX_CHILD_TOKEN_LIMIT + 1u)
+                    return false;
+                stack[length].atom = atom->expr.elems[index - 1u];
+                stack[length++].depth = depth + 1u;
+            }
+            break;
+        }
+    }
+    *out = hash;
+    return true;
+}
+
+typedef struct {
+    const Atom *atom;
+    uint64_t fingerprint;
+    bool known;
+} PettaSelectorObservation;
+
+static bool petta_selector_fingerprint_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *reference = getenv("CETTA_PETTA_SPECIALIZER_FINGERPRINT_REFERENCE");
+        enabled = !reference || !*reference || strcmp(reference, "0") == 0;
+    }
+    /* HE can equate distinct numeric representations. Its selectors retain
+     * the complete comparison, even after a PeTTa observation in this thread. */
+    return enabled && eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+}
+
+/* Borrowed observations live only through this synchronous lookup. An
+ * overflow merely uses exact comparison; no value is retained or omitted. */
+static bool petta_selector_may_equal(
+    const PettaSpecializationBinding *selector, Atom *actual,
+    PettaSelectorObservation *observations, size_t *length) {
+    if (!selector->fingerprint_known || actual == selector->value)
+        return true;
+    for (size_t index = 0u; index < *length; index++) {
+        if (observations[index].atom == actual)
+            return !observations[index].known ||
+                observations[index].fingerprint == selector->fingerprint;
+    }
+    if (*length == 8u)
+        return true;
+    PettaSelectorObservation *observation = &observations[(*length)++];
+    observation->atom = actual;
+    observation->known = petta_selector_fingerprint(actual, &observation->fingerprint);
+    return !observation->known || observation->fingerprint == selector->fingerprint;
+}
+
 static bool petta_record_set_selectors(
     PettaSpecializerContext *context,
     PettaSpecializationRecord *record,
@@ -2481,6 +2594,8 @@ static bool petta_record_set_selectors(
             context->capacity = true;
             return false;
         }
+        selector->fingerprint_known = petta_selector_fingerprint(
+            selector->value, &selector->fingerprint);
     }
     return true;
 }
@@ -2493,6 +2608,9 @@ petta_find_record_for_call(
         !petta_specializer_route_cache_enabled()) {
         return NULL;
     }
+    PettaSelectorObservation observations[8];
+    size_t observation_len = 0u;
+    bool fingerprints = petta_selector_fingerprint_enabled();
     uint64_t instance = space_instance_id(context->space);
     for (size_t record_index = 0u;
          record_index < g_petta_specializations.len;
@@ -2520,6 +2638,8 @@ petta_find_record_for_call(
             Atom *actual = petta_atom_at_path(
                 call, selector->path, selector->path_len);
             if (!petta_value_specializable(context, actual) ||
+                (fingerprints && !petta_selector_may_equal(
+                    selector, actual, observations, &observation_len)) ||
                 !atom_eq(actual, selector->value)) {
                 matches = false;
                 break;
@@ -2562,6 +2682,51 @@ static bool petta_record_add(
     return true;
 }
 
+/* Membership only: a missing specialized head refutes an artifact lookup.
+ * Space identity, alpha equality and source order remain authoritative below.
+ * Failed index construction retains the linear route until the next edit. */
+static _Thread_local CettaSymbolIndex g_petta_artifact_heads;
+static _Thread_local bool g_petta_artifact_heads_attempted;
+static _Thread_local bool g_petta_artifact_heads_complete;
+
+static void petta_artifact_heads_clear(void) {
+    cetta_symbol_index_free(&g_petta_artifact_heads);
+    g_petta_artifact_heads_attempted = false;
+    g_petta_artifact_heads_complete = false;
+}
+
+static void petta_artifact_head_added(SymbolId head) {
+    if (!g_petta_artifact_heads_attempted || !g_petta_artifact_heads_complete ||
+        cetta_symbol_index_find(&g_petta_artifact_heads, head) != SIZE_MAX)
+        return;
+    /* Appending one record extends a complete membership index. Rebuilding
+     * all earlier heads here would make repeated specialization quadratic. */
+    if (!cetta_symbol_index_put(&g_petta_artifact_heads, head, 0u)) {
+        cetta_symbol_index_free(&g_petta_artifact_heads);
+        g_petta_artifact_heads_complete = false;
+    }
+}
+
+static bool petta_artifact_head_possible(SymbolId head) {
+    if (g_petta_specializations.len < SNODE_HASH_THRESHOLD)
+        return true;
+    if (!g_petta_artifact_heads_attempted) {
+        g_petta_artifact_heads_attempted = true;
+        g_petta_artifact_heads_complete = true;
+        for (size_t index = 0u; index < g_petta_specializations.len; index++) {
+            SymbolId key = g_petta_specializations.items[index].specialized;
+            if (cetta_symbol_index_find(&g_petta_artifact_heads, key) == SIZE_MAX &&
+                !cetta_symbol_index_put(&g_petta_artifact_heads, key, 0u)) {
+                cetta_symbol_index_free(&g_petta_artifact_heads);
+                g_petta_artifact_heads_complete = false;
+                break;
+            }
+        }
+    }
+    return !g_petta_artifact_heads_complete ||
+        cetta_symbol_index_find(&g_petta_artifact_heads, head) != SIZE_MAX;
+}
+
 static PettaSpecializationRecord *petta_create_record(
     PettaSpecializerContext *context, SymbolId source,
     SymbolId specialized,
@@ -2583,6 +2748,7 @@ static PettaSpecializationRecord *petta_create_record(
         space_instance_id(context->space);
     record->source = source;
     record->specialized = specialized;
+    petta_artifact_head_added(specialized);
     if (!petta_record_set_selectors(
             context, record, candidates)) {
         context->capacity = true;
@@ -3125,9 +3291,12 @@ static Atom *petta_specializer_keep_dispatches(
     PeTTaForm form = head_id == SYMBOL_ID_NONE
         ? PETTA_FORM_NONE : petta_semantics_form(head_id);
     CettaExprLen len = atom->expr.len;
+    /* A closure's captured tuple holds values. Its first slot is not an
+     * executable head, even when specialization selects a callable there. */
     if (head_id == g_builtin_syms.quote ||
         head_id == g_builtin_syms.return_text ||
-        form == PETTA_FORM_PREDICATE)
+        form == PETTA_FORM_PREDICATE ||
+        petta_semantics_runtime_callable_value(atom))
         return atom;
     if (!cetta_expr_len_mul_fits_size(len, sizeof(Atom *))) {
         context->capacity = true;
@@ -3976,6 +4145,7 @@ static void petta_remove_record_at(size_t index) {
         g_petta_specializations.items[
             g_petta_specializations.len - 1u];
     g_petta_specializations.len--;
+    petta_artifact_heads_clear();
 }
 
 static bool petta_record_depends_on(
@@ -4108,9 +4278,9 @@ void petta_specializer_note_import(Space *space) {
     }
 }
 
-const PettaSpecializerPatternNode *
-petta_specializer_pattern_root(
-    Space *space, Atom *equation) {
+static const PettaSpecializationArtifact *
+petta_specializer_equation_artifact(
+    Space *space, Atom *equation, bool pattern) {
     if (!space || !equation ||
         equation->kind != ATOM_EXPR ||
         equation->expr.len != 3u ||
@@ -4126,7 +4296,7 @@ petta_specializer_pattern_root(
         lhs->expr.elems[0]->kind == ATOM_SYMBOL
             ? atom_symbol_current_id(lhs->expr.elems[0])
             : SYMBOL_ID_NONE;
-    if (head == SYMBOL_ID_NONE)
+    if (head == SYMBOL_ID_NONE || !petta_artifact_head_possible(head))
         return NULL;
     uint64_t instance = space_instance_id(space);
     for (size_t record_index = 0u;
@@ -4139,16 +4309,17 @@ petta_specializer_pattern_root(
             record->specialized != head) {
             continue;
         }
-        petta_specializer_trace_atom(
-            "pattern query: ", equation);
+        if (pattern)
+            petta_specializer_trace_atom("pattern query: ", equation);
         for (size_t artifact_index = 0u;
              artifact_index < record->artifact_len;
              artifact_index++) {
             PettaSpecializationArtifact *artifact =
                 &record->artifacts[artifact_index];
             bool same =
+                (pattern || artifact->rhs_plan) &&
                 atom_alpha_eq(artifact->atom, equation);
-            if (petta_specializer_trace_enabled()) {
+            if (pattern && petta_specializer_trace_enabled()) {
                 fprintf(
                     stderr,
                     "[petta-specializer] pattern lookup "
@@ -4159,57 +4330,27 @@ petta_specializer_pattern_root(
                 petta_specializer_trace_atom(
                     "pattern artifact: ", artifact->atom);
             }
-            if (artifact->pattern && same) {
-                return artifact->pattern;
+            if (same && (pattern ? artifact->pattern != NULL
+                                         : artifact->rhs_plan != NULL)) {
+                return artifact;
             }
         }
     }
     return NULL;
 }
 
+const PettaSpecializerPatternNode *
+petta_specializer_pattern_root(Space *space, Atom *equation) {
+    const PettaSpecializationArtifact *artifact =
+        petta_specializer_equation_artifact(space, equation, true);
+    return artifact ? artifact->pattern : NULL;
+}
+
 const PettaPlanNode *
-petta_specializer_equation_plan(
-    Space *space, Atom *equation) {
-    if (!space || !equation ||
-        equation->kind != ATOM_EXPR ||
-        equation->expr.len != 3u ||
-        !atom_is_symbol_id(
-            equation->expr.elems[0],
-            g_builtin_syms.equals)) {
-        return NULL;
-    }
-    Atom *lhs = equation->expr.elems[1];
-    SymbolId head =
-        lhs && lhs->kind == ATOM_EXPR &&
-        lhs->expr.len > 0u &&
-        lhs->expr.elems[0]->kind == ATOM_SYMBOL
-            ? atom_symbol_current_id(lhs->expr.elems[0])
-            : SYMBOL_ID_NONE;
-    if (head == SYMBOL_ID_NONE)
-        return NULL;
-    uint64_t instance = space_instance_id(space);
-    for (size_t record_index = 0u;
-         record_index < g_petta_specializations.len;
-         record_index++) {
-        PettaSpecializationRecord *record =
-            &g_petta_specializations.items[record_index];
-        if (record->space != space ||
-            record->space_instance != instance ||
-            record->specialized != head) {
-            continue;
-        }
-        for (size_t artifact_index = 0u;
-             artifact_index < record->artifact_len;
-             artifact_index++) {
-            PettaSpecializationArtifact *artifact =
-                &record->artifacts[artifact_index];
-            if (artifact->rhs_plan &&
-                atom_alpha_eq(artifact->atom, equation)) {
-                return artifact->rhs_plan;
-            }
-        }
-    }
-    return NULL;
+petta_specializer_equation_plan(Space *space, Atom *equation) {
+    const PettaSpecializationArtifact *artifact =
+        petta_specializer_equation_artifact(space, equation, false);
+    return artifact ? artifact->rhs_plan : NULL;
 }
 
 bool petta_specializer_pattern_is_structural(
@@ -4230,6 +4371,7 @@ petta_specializer_pattern_child(
 }
 
 void petta_specializer_reset_thread(void) {
+    petta_artifact_heads_clear();
     for (size_t index = 0u;
          index < g_petta_specializations.len; index++) {
         petta_record_release_owned(

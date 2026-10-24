@@ -5,4 +5,112 @@ Open defects in the Prime evaluator, with reproducers, observed behaviour
 and current diagnosis.  An entry is removed by the change that fixes it,
 together with a regression test.
 
-None currently open.
+
+PK-3  Library loops nest a C frame per item; a let in a loop body grows
+------------------------------------------------------------------------
+
+Reproducers (n items written out as a literal list):
+
+    ; A: add-atoms over a let-bound list of n rows (r 0) ... (r n-1)
+    !(bind! &s (new-space))
+    !(let $rows ((r 0) (r 1) ... (r 1499)) (add-atoms &s $rows))
+    !(space-len &s)
+
+    ; B: a pure filter
+    !(size-atom (filter-atom (0 1 ... 999) $x (> $x 5)))
+
+    ; C: a fold whose step binds with let
+    !(foldl-atom (0 1 ... 1999) 0 $a $x (let $y (+ $x 1) (+ $a $y)))
+
+Observed:
+    A: (Incomplete stack-exhausted) from n = 1350, with 1346 rows stored;
+       n = 1340 completes.
+    B: (Incomplete stack-exhausted) at n = 1000; n = 180 completes.
+    C: correct answers up to n = 2000, but the instruction count grows
+       cubically: 6.46e9, 4.38e10, 1.39e11 and 3.20e11 at n = 500, 1000,
+       1500 and 2000.  The same fold with an effectful step
+       (let $u (add-atom &s (e $x)) ...), and map-atom with that step,
+       complete at n = 1500 and exceed 120 s at n = 3000.
+
+Diagnosis:
+  1. The library loops are minimal-MeTTa programs,
+     (chain (eval step) $v (eval (recur ...))), written for an eval that
+     takes one step.  Prime's eval is the counit: it evaluates its argument
+     to values with eval_for_caller, a nested native call, before running
+     them.  The recursive (eval (recur ...)) therefore runs the rest of the
+     loop inside that call, one C frame per item.
+  2. At n = 500 about 80% of the time goes to cetta_frame_identity_retain
+     and _release, bindings_frame_index_entry_free and
+     bindings_frame_index_detach, and bindings_frame_schema_retain and
+     _release.  Each step's let frame stays in the environment that the
+     next step clones and releases, so that environment grows with the
+     loop.
+
+Repair direction: give the library spelling its own one-step eval (a
+distinct head that the scope migrator writes into lib/prime), and drop a
+let's frame when its scope ends, or prune bindings that neither the value
+nor the continuation can reach.
+
+
+PK-4  A streamed fold is quadratic in the number of answers
+-----------------------------------------------------------
+
+Reproducer:
+
+    (= (range $lo $hi) (if (< $lo $hi) $lo (empty)))
+    (= (range $lo $hi) (if (< (+ $lo 1) $hi) (range (+ $lo 1) $hi) (empty)))
+    !(fold (range 0 4000) 0 $a $x (+ $a $x))
+
+Observed: correct answers (499500, 1999000 and 7998000 for 1000, 2000 and
+4000 answers) in 1.56e9, 4.73e9 and 1.62e10 instructions.  A
+right-recursive choice generator,
+(= (gen $n) (if (> $n 0) (superpose ($n (gen (- $n 1)))) (empty))), gives
+(Incomplete stack-exhausted) for !(fold (gen 1000) 0 $a $x (+ $a 1)).
+
+Diagnosis:
+  1. The k-th answer is produced k levels down a chain of frames that
+     forward answers.  Every native call made there classifies its target
+     with prime_eval_stack_target_weak_head, which walks the owner chain:
+     16.8% of the time at 2000 answers, 30% at 4000.
+  2. Answers are deep-copied as they are forwarded
+     (atom_deep_copy_session_new, about 12% of the time).
+
+Repair direction: record a target's owner classification in its frame
+when the frame is pushed, and let a frame that only forwards its child's
+answers be replaced by its child.
+
+
+PK-5  Held values reach sequence operations as a tag and their syntax
+---------------------------------------------------------------------
+
+Reproducers:
+
+    (: hold (-> (Data Atom) (Data Atom)))
+    (= (hold $x) $x)
+    !(let $h (hold (c a b)) (superpose $h))
+    !(let $h (hold (c c a)) (unique-atom $h))
+    !(let $h (hold (c a b)) (sort-atom $h))
+    !(let $h (hold ((+ 1 2) (+ 3 4))) (map-atom $h $x (w $x)))
+
+Observed, in order:
+
+    <internal-tag 13>, (c a b)
+    (c c a)
+    ((c a b) <internal-tag 13>)
+    ((w <internal-tag 13>) (w (3 7)))
+
+foldl-atom over (hold (c a b)) counts two elements.  car-atom, cdr-atom,
+size-atom, index-atom and cons-atom read the payload, as the held-value
+rule in atom.h says syntax observers do.
+
+Diagnosis: a held value is CETTA_INTERNAL_TAG_PRIME_HELD applied to its
+payload, and atom_sequence_view does not see through it.  Operations that
+read elements through the view, or directly, see two elements, the tag and
+the payload, and hand the payload out unheld, so held syntax runs without
+an explicit evaluation.
+
+Repair direction: the sequence view reads a held value's payload and
+reports that it was held; each consumer wraps the fragments it hands out
+as held, as car-atom and index-atom already do.  Open: whether a
+rearranging operation (sort-atom, unique-atom) returns a held expression
+or an unheld expression of held fragments.

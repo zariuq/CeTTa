@@ -1425,6 +1425,12 @@ static ParserReadValue parser_read_scoped(
     /* Prefix operands consume one term; touching suffixes belong to the
      * completed prefix. Container children consume their own suffixes. */
     bool term_only = false;
+    /* The term just delivered is the query marker `!` written alone.  It
+     * marks the term after it and is no head, so a bracket or brace
+     * touching it opens that term, as a parenthesis after it does: `![a]`
+     * and `!{a}` read as `! [a]` and `! {a}`.  A longer word that starts
+     * with `!` is an ordinary word. */
+    bool exec_marker = false;
     ParserReadStack stack;
     stack.frames = stack.inline_frames;
     stack.len = 0u;
@@ -1518,6 +1524,8 @@ read_trimmed_node:
         word[length] = '\0';
         result = backend->ids ? backend->word(&context, word, length)
             : (ParserReadValue){.atom = parser_read_word_atom(arena, word, length, scope)};
+        exec_marker = length == 1u &&
+            word[0] == parser_syntax_compact_char(PARSER_SYNTAX_EXEC);
         goto term_delivered;
     }
 
@@ -1573,8 +1581,11 @@ term_delivered:
     if (backend->ids ? result.id == CETTA_ATOM_ID_NONE : result.atom == NULL)
         goto fail;
     /* Layout ends the suffix chain. The saved term is never read again and
-     * each suffix is constructed in the same requesting backend. */
-    if (!term_only && g_universal_name_syntax_enabled &&
+     * each suffix is constructed in the same requesting backend.  The query
+     * marker takes no suffix. */
+    if (exec_marker) {
+        exec_marker = false;
+    } else if (!term_only && g_universal_name_syntax_enabled &&
         parser_more(text, text_len, *pos) && (text[*pos] == '[' || text[*pos] == '{')) {
         if (depth <= 1)
             goto fail;
@@ -1723,10 +1734,13 @@ Atom *parser_read_source_form_n(Arena *a, const char *text, size_t text_len) {
 
     size_t pos = 0;
     skip_whitespace_and_comments(text, text_len, &pos);
+    /* The marker alone is the query marker; in Prime's universal name
+     * syntax a bracket or brace ends it, as it ends every word. */
     bool is_exec = parser_more(text, text_len, pos) &&
                    text[pos] == parser_syntax_compact_char(PARSER_SYNTAX_EXEC) &&
                    parser_more(text, text_len, pos + 1u) &&
-                   !is_token_char(text[pos + 1u]);
+                   !is_token_char_in(text[pos + 1u],
+                                     g_universal_name_syntax_enabled);
     if (is_exec)
         pos++;
 
@@ -1916,6 +1930,7 @@ static bool parser_render_grounded(FILE *out, Atom *atom) {
     case GV_BINDINGS:
     case GV_TENSOR:
     case GV_FOREIGN:
+    case GV_STRUCTURAL:
     case GV_SEAL:
     case GV_TERM_GRAPH:
     case GV_PRIME_NEED_CAPABILITY:

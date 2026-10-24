@@ -139,6 +139,21 @@ bool cetta_prepared_pure_closed_own_execution(
  * or %Undefined%), which the machine checks where HE casts them. */
 bool cetta_prepared_pure_call_policy_supported(
     Space *space, SymbolId head, CettaExprLen arity);
+/* The running language's generated intrinsic row for `head` at `arity`:
+ * its operand discipline and instruction.  Source admission, lowering and
+ * execution read the same rows; a row scoped to dialects holds only in
+ * them, and the generator gives no language two rows for one head and
+ * arity. */
+bool cetta_prepared_pure_intrinsic_row(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out);
+/* The strict rows of the running language: shared interpretation of the
+ * authored strict primitive fragment.  This is operation metadata, not
+ * source authority or permission to speculate. */
+bool cetta_prepared_pure_intrinsic_program(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out);
 typedef Atom *(*CettaPreparedPureBooleanValue)(Arena *arena, bool value);
 typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);
@@ -162,6 +177,7 @@ typedef bool (*CettaPreparedPureRegisterViewFn)(
     CettaGsltRegisterInstruction *instruction);
 typedef enum {
     CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION = 0,
+    CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE,
 } CettaPreparedPureValueObservation;
 typedef enum {
     CETTA_PREPARED_PURE_EXPRESSION_DEFAULT = 0,
@@ -284,7 +300,7 @@ typedef struct {
     void *native_context;
     Atom *(*native_value)(
         void *context, Space *space, Arena *arena,
-        Atom *head, Atom *const *arguments, uint32_t arity);
+        const CettaInvocation *invocation);
 } CettaPreparedPureSourceView;
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
@@ -414,6 +430,17 @@ bool cetta_prepared_pure_program_is_current(
 bool cetta_prepared_pure_program_returns_optional(
     const CettaPreparedPureProgram *program);
 
+/* The compiled node graph only selects, constructs, or observes values.
+ * It neither interprets argument syntax nor matches/binds caller variables.
+ * A live unresolved branch condition can still decline at execution. */
+bool cetta_prepared_pure_program_accepts_open_values(
+    const CettaPreparedPureProgram *program);
+
+/* For a fresh open-input node program, select canonical or execution-arena
+ * ownership for Boolean values that may outlive this private plan.
+ * Refuses a plan whose literals already retain its inline Boolean cache. */
+bool cetta_prepared_pure_program_use_exportable_booleans(
+    CettaPreparedPureProgram *program);
 /* Rebind the runtime arguments of a previously compiled closed entry call.
  * The head, arity and argument role promised at compilation must still hold;
  * this low-level operation cannot recheck a dialect's value predicate. */
@@ -752,6 +779,10 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_retain(
 
 /* The head and arity of each equation occurrence the program compiled. */
 size_t cetta_prepared_pure_program_equation_count(
+    const CettaPreparedPureProgram *program);
+/* Number of bounded, already-ready scalar regions in the compiled code.
+ * This reports admission, not an assertion that every region was executed. */
+size_t cetta_prepared_pure_program_scalar_tree_count(
     const CettaPreparedPureProgram *program);
 bool cetta_prepared_pure_program_equation_signature(
     const CettaPreparedPureProgram *program, size_t index,

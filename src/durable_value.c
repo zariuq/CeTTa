@@ -1,17 +1,17 @@
 #define _POSIX_C_SOURCE 200809L
 #include "durable_value.h"
-#include "tensor.h"
+#include "tensor_dense_v1.h"
 #include <float.h>
 #include <stdlib.h>
 #include <string.h>
 
-CettaTensorStatus cetta_tensor_encode(const CettaTensor *, unsigned char **, size_t *)
+CettaDenseTensorV1Status cetta_dense_tensor_v1_encode(const CettaDenseTensorV1 *, unsigned char **, size_t *)
     __attribute__((weak));
-CettaTensorStatus cetta_tensor_encoded_size(const CettaTensor *, size_t *)
+CettaDenseTensorV1Status cetta_dense_tensor_v1_encoded_size(const CettaDenseTensorV1 *, size_t *)
     __attribute__((weak));
-CettaTensorStatus cetta_tensor_decode(const unsigned char *, size_t, CettaTensor **)
+CettaDenseTensorV1Status cetta_dense_tensor_v1_decode(const unsigned char *, size_t, CettaDenseTensorV1 **)
     __attribute__((weak));
-void cetta_tensor_release(void *) __attribute__((weak));
+void cetta_dense_tensor_v1_release(void *) __attribute__((weak));
 
 #define VALUE_BYTES (1024u*1024u)
 #define VALUE_NODES 100000u
@@ -68,15 +68,15 @@ static CettaDurableStatus encode(Writer *w, const Atom *a, unsigned depth) {
         case GV_BIGINT: tag='J'; text=atom_bigint_cstr(a); break;
         case GV_RATIONAL: tag='Q'; text=atom_rational_cstr(a); break;
         case GV_TENSOR: {
-            if (!cetta_tensor_encode || !cetta_tensor_encoded_size) return DURABLE_INVALID;
+            if (!cetta_dense_tensor_v1_encode || !cetta_dense_tensor_v1_encoded_size) return DURABLE_INVALID;
             unsigned char *encoded; size_t size;
-            CettaTensorStatus result=cetta_tensor_encoded_size(a->ground.ptr,&size);
-            if (result!=CETTA_TENSOR_OK) return DURABLE_INVALID;
+            CettaDenseTensorV1Status result=cetta_dense_tensor_v1_encoded_size(a->ground.ptr,&size);
+            if (result!=CETTA_DENSE_TENSOR_V1_OK) return DURABLE_INVALID;
             size_t room=VALUE_BYTES-w->length;
             if (room<5u || size>room-5u) return DURABLE_LIMIT;
-            result=cetta_tensor_encode(a->ground.ptr,&encoded,&size);
-            if (result!=CETTA_TENSOR_OK)
-                return result==CETTA_TENSOR_NOMEM?DURABLE_NOMEM:DURABLE_INVALID;
+            result=cetta_dense_tensor_v1_encode(a->ground.ptr,&encoded,&size);
+            if (result!=CETTA_DENSE_TENSOR_V1_OK)
+                return result==CETTA_DENSE_TENSOR_V1_NOMEM?DURABLE_NOMEM:DURABLE_INVALID;
             tag='A';
             CettaDurableStatus status=size>VALUE_BYTES?DURABLE_LIMIT:append(w,&tag,1);
             if (status==DURABLE_OK) status=number(w,size,4);
@@ -197,15 +197,15 @@ static CettaDurableStatus decode(Reader *r, Arena *arena, unsigned depth, Atom *
         if (n && atom_is_symbol(items[0],"NativeHandle")) return DURABLE_INVALID;
         *out=atom_expr(arena,items,n);
     } else if (tag=='A') {
-        if (!cetta_tensor_decode || !cetta_tensor_release) return DURABLE_INVALID;
+        if (!cetta_dense_tensor_v1_decode || !cetta_dense_tensor_v1_release) return DURABLE_INVALID;
         if (!read_number(r,4,&n) || n>r->size-r->pos) return DURABLE_CORRUPT;
-        CettaTensor *tensor=NULL;
-        CettaTensorStatus status=cetta_tensor_decode(r->data+r->pos,(size_t)n,&tensor);
-        if (status!=CETTA_TENSOR_OK)
-            return status==CETTA_TENSOR_NOMEM?DURABLE_NOMEM:DURABLE_CORRUPT;
+        CettaDenseTensorV1 *tensor=NULL;
+        CettaDenseTensorV1Status status=cetta_dense_tensor_v1_decode(r->data+r->pos,(size_t)n,&tensor);
+        if (status!=CETTA_DENSE_TENSOR_V1_OK)
+            return status==CETTA_DENSE_TENSOR_V1_NOMEM?DURABLE_NOMEM:DURABLE_CORRUPT;
         r->pos+=(size_t)n;
         *out=atom_tensor(arena,tensor);
-        cetta_tensor_release(tensor);
+        cetta_dense_tensor_v1_release(tensor);
     } else if (tag=='S'||tag=='T'||tag=='J'||tag=='Q') {
         if (!read_number(r,4,&n) || n>r->size-r->pos ||
             (tag!='T' && memchr(r->data+r->pos,0,n)))

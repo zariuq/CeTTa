@@ -1,0 +1,2172 @@
+{
+  "schema": "cetta-evaluator-transfer-inventory-v1",
+  "scope": "Named technique families and inspected source anchors. Caller-by-caller coverage and full strongest-SWI acceptance remain open.",
+  "measurement_routes": {
+    "ordinary": "CETTA_OPEN_EQUATIONS_REFERENCE=1 and CETTA_PREPARED_PURE_REFERENCE=1; ordinary selection and binding services remain enabled",
+    "production": "normal dialect configuration",
+    "independent_reference": "feature-specific reference controls; preserve complete observations, not only printed scalar results"
+  },
+  "families": [
+    {
+      "id": "ordered-head-candidates",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/space.c",
+          "symbol": "space_equation_cursor_member_next"
+        },
+        {
+          "file": "src/petta_program.c",
+          "symbol": "petta_program_candidate_snapshot_lease_profiled"
+        }
+      ],
+      "admission": "Keep exact and wildcard occurrences in source order; retain the logical-update snapshot.",
+      "remaining_transfer": "Measure overlays and candidate-catalog reconciliation separately.",
+      "measure": [
+        "candidate scans",
+        "snapshot cache hits",
+        "copied candidate records"
+      ],
+      "validity": "The entered cursor leases its occurrence snapshot. New entries consult current space/program identities; a later mutation must not rewrite an already-entered logical-update snapshot.",
+      "source_occurrences": [
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "petta_program_candidate_snapshot_lease_profiled"
+          ]
+        },
+        {
+          "file": "src/petta_program.c",
+          "symbols": [
+            "petta_program_candidate_snapshot_lease_profiled"
+          ]
+        },
+        {
+          "file": "src/space.c",
+          "symbols": [
+            "space_equation_cursor_member_next"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "ordered-head-candidates",
+        "counts": {
+          "call": 4,
+          "reference": 4
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "argument-selection",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_match_decision_select_candidates"
+        },
+        {
+          "file": "src/match_decision.c",
+          "symbol": "match_decision_select_query"
+        }
+      ],
+      "admission": "Discard only refuted candidates under current source, binding and callability observations. Plain PeTTa does not require a table declaration.",
+      "remaining_transfer": "Independent arguments now remain observable when another argument contains a list carrier. The fixed observation word is conservative beyond its represented prefix. Audit all-open discriminators, transaction/profile restrictions, and repeated whole-query materialization.",
+      "measure": [
+        "equation inputs",
+        "survivors",
+        "linear fallbacks",
+        "verification work"
+      ],
+      "validity": "A conservative decision uses the current binding view and source/classifier authority. It cannot carry a bound discriminator through rollback or mutation without revalidation.",
+      "source_occurrences": [
+        {
+          "file": "src/match_decision.c",
+          "symbols": [
+            "match_decision_select_query"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "petta_match_decision_select_candidates"
+          ]
+        }
+      ],
+      "caller_coverage": [
+        {
+          "caller": "petta_machine_start_space_query",
+          "route": "ordinary PeTTa, including opaque list arguments",
+          "mechanism": "per-argument observation mask; source-order fallback; exact list-aware matcher for all survivors",
+          "control": "tests/support/check_petta_contextual_case.py"
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "argument-selection",
+        "counts": {
+          "call": 4,
+          "reference": 4
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "compiled-head-matching",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/match.c",
+          "symbol": "match_atoms_epoch_view_builder_rule_local_planned"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_match_ground_template"
+        }
+      ],
+      "admission": "Pattern plans must preserve nonlinear variables, scope, occurs checks and authoritative fallback.",
+      "remaining_transfer": "Identify ordinary candidate entry points still reinterpreting an available pattern plan.",
+      "measure": [
+        "pattern instructions",
+        "unification attempts",
+        "freshened nodes"
+      ],
+      "validity": "The equation and its compiled pattern share a retained source identity. Variable scope, nonlinear correlation and current bindings remain matcher inputs.",
+      "source_occurrences": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_match_ground_template"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "match_atoms_epoch_view_builder_rule_local_planned"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "compiled-head-matching",
+        "counts": {
+          "call": 2,
+          "reference": 2
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "source-owned-activation",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_unify_activation_source"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "match_atoms_activation_view_builder_current"
+        }
+      ],
+      "admission": "Authored syntax plus a registered live frame denotes the value; return policy and delayed constraints remain authoritative.",
+      "remaining_transfer": "Scoped CASE and unmetered, untraced closed IF consumers retain source plus frame. Other closed consumers, escaping publication and call delivery remain open. Finite fuel preserves its established transition boundaries.",
+      "measure": [
+        "binding_apply_calls",
+        "materialized bytes",
+        "unification allocations"
+      ],
+      "validity": "The syntax owner, frame incarnation and branch store must stay live. An epoch alone does not authorize borrowing after frame retirement.",
+      "source_occurrences": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "match_atoms_activation_view_builder_current",
+            "petta_machine_unify_activation_source"
+          ]
+        }
+      ],
+      "caller_coverage": [
+        {
+          "caller": "petta_machine_push_case",
+          "route": "ordinary and scoped solve dispatch",
+          "mechanism": "shared pattern preparation, first-success matching and delayed-constraint trial ordering",
+          "source_fields": [
+            "case body",
+            "lexical activation frame",
+            "prepared pattern vector"
+          ],
+          "control": "tests/support/check_petta_contextual_case.py"
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "source-owned-activation",
+        "counts": {
+          "call": 4,
+          "reference": 4
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "dense-and-exclusive-frame-slots",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/binding/slot_store.c",
+          "symbol": "bindings_frame_index_write_resolved_slot"
+        },
+        {
+          "file": "src/match.h",
+          "symbol": "BindingsExclusiveFrame"
+        },
+        {
+          "file": "src/binding/slot_store_internal.h",
+          "symbols": [
+            "bindings_frame_slot_value",
+            "bindings_frame_slot_version"
+          ]
+        }
+      ],
+      "admission": "One authoritative assignment per frame slot; writes and schema changes obey rollback and ownership.",
+      "remaining_transfer": "All contextual frame readers share prefix-backed storage; exclusive candidate storage retains its dense local representation. Continue evidence transport and liveness at publication; reduced allocation alone does not establish smaller retained environments.",
+      "measure": [
+        "frame lookups",
+        "frame registrations",
+        "trail writes"
+      ],
+      "validity": "The generational frame handle and immutable schema remain logical authority. Physical growth may relocate arrays. Copy-on-write snapshots, versions, rollback and newly admitted zero cells retain their own obligations.",
+      "source_occurrences": [
+        {
+          "file": "src/binding/activation_view.c",
+          "symbols": [
+            "bindings_frame_slot_value",
+            "bindings_frame_slot_version"
+          ]
+        },
+        {
+          "file": "src/binding/slot_store.c",
+          "symbols": [
+            "bindings_frame_index_write_resolved_slot",
+            "bindings_frame_slot_value",
+            "bindings_frame_slot_version"
+          ]
+        },
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "BindingsExclusiveFrame",
+            "bindings_frame_index_write_resolved_slot",
+            "bindings_frame_slot_value",
+            "bindings_frame_slot_version"
+          ]
+        },
+        {
+          "file": "src/match.h",
+          "symbols": [
+            "BindingsExclusiveFrame"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "BindingsExclusiveFrame"
+          ]
+        }
+      ],
+      "backing_contract": "Logical slot_len is supplied by the schema. Physical cap may cover only a prefix. Reads require an admitted logical coordinate; an unbacked slot is unbound at version zero. Writes grow backing, while raw array borrows require the whole logical range to be backed. The existing 64-slot direct region remains fully backed.",
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "dense-and-exclusive-frame-slots",
+        "counts": {
+          "type": 46,
+          "call": 40,
+          "reference": 40
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "scoped-borrowed-reads",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/binding/term_cursor.h",
+          "symbol": "bindings_resolve_scoped_term_cursor_v1"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_resolve_cursor"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_observe_value_root"
+        },
+        {
+          "file": "src/petta_semantics.c",
+          "symbol": "petta_semantics_sequence_value_view"
+        },
+        {
+          "file": "src/petta_semantics.h",
+          "symbol": "PettaSequenceValueView"
+        },
+        {
+          "file": "src/petta_semantics.c",
+          "symbol": "petta_semantics_sequence_value_read"
+        },
+        {
+          "file": "src/petta_semantics.h",
+          "symbol": "PettaSequenceValueReader"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_sequence_value_root"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_sequence_size_value"
+        }
+      ],
+      "admission": "Borrowed scopes remain valid only during the stable read; children inherit their resolved parent context.",
+      "remaining_transfer": "Ordinary ready head/tail and flat length plus compiled static/dynamic pure size calls now share the contextual sequence reader. Each binding store supplies its own root authority; no second substitution state is built. Argument preparation, dispatch, guards and result policy remain with the enclosing call. Other strict consumers and compiled projection still materialize; unsupported private storage retains its interpreter.",
+      "measure": [
+        "nodes read",
+        "materialized nodes",
+        "borrow refusals"
+      ],
+      "validity": "No write, rollback, collection, frame-directory replacement or owner release may intervene in the borrowed read. Reads do not grant execution authority.",
+      "source_occurrences": [
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "bindings_resolve_cursor"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "PettaSequenceValueReader",
+            "PettaSequenceValueView",
+            "oem_sequence_size_value",
+            "oem_sequence_value_root",
+            "petta_semantics_sequence_value_read"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "PettaSequenceValueView",
+            "bindings_resolve_scoped_term_cursor_v1",
+            "petta_semantics_sequence_value_view"
+          ]
+        },
+        {
+          "file": "src/petta_semantics.c",
+          "symbols": [
+            "PettaSequenceValueReader",
+            "PettaSequenceValueView",
+            "bindings_observe_value_root",
+            "petta_semantics_sequence_value_read"
+          ]
+        },
+        {
+          "file": "src/petta_semantics.h",
+          "symbols": [
+            "PettaSequenceValueReader",
+            "PettaSequenceValueView"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "scoped-borrowed-reads",
+        "counts": {
+          "type": 12,
+          "call": 8,
+          "reference": 11
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "ready-call-and-result-contracts",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/petta_type_policy.h",
+          "symbol": "PettaTypeCall"
+        },
+        {
+          "file": "src/petta_search_machine.h",
+          "symbol": "PettaAnalysisService"
+        },
+        {
+          "file": "src/call_outcome.h",
+          "symbol": "CettaCallResultForm"
+        },
+        {
+          "file": "src/atom.h",
+          "symbol": "atom_petta_expression_representation"
+        },
+        {
+          "file": "src/eval.c",
+          "symbol": "EvalNativeDemand"
+        },
+        {
+          "file": "src/eval.c",
+          "symbol": "eval_native_application_on"
+        },
+        {
+          "file": "src/eval.c",
+          "symbol": "eval_native_for_caller"
+        }
+      ],
+      "admission": "Readiness, type authority, computation/data provenance and result demand are separate judgments.",
+      "remaining_transfer": "Prepared occurrence plans retain argument demand and projection policy; bounded constructor-role decoding is now shared by concrete atoms and contextual value observations. Complete call argument transport still needs to preserve lexical values, ownership and current evidence without building whole substituted applications.",
+      "measure": [
+        "admission attempts",
+        "repeated checks",
+        "call nodes constructed"
+      ],
+      "validity": "Readiness, source interpretation, type evidence and result demand have distinct scopes. Changed declarations and mutable classifier dependencies reopen guards.",
+      "source_occurrences": [
+        {
+          "file": "src/atom.h",
+          "symbols": [
+            "atom_petta_expression_representation"
+          ]
+        },
+        {
+          "file": "src/call_outcome.h",
+          "symbols": [
+            "CettaCallResultForm"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "PettaAnalysisService",
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/library.c",
+          "symbols": [
+            "CettaCallResultForm"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/petta_contract_core.c",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/petta_program.c",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/petta_program.h",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "PettaAnalysisService",
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.h",
+          "symbols": [
+            "PettaAnalysisService",
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/petta_semantics.c",
+          "symbols": [
+            "atom_petta_expression_representation"
+          ]
+        },
+        {
+          "file": "src/petta_type_policy.c",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/petta_type_policy.h",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        },
+        {
+          "file": "src/petta_type_relation.c",
+          "symbols": [
+            "PettaTypeCall"
+          ]
+        }
+      ],
+      "case_source_evidence": "literal_case_default is derived from the authored arm, retained during value-plan collapse and included in plan content identity. A variable or computed pattern that evaluates to Empty remains a data pattern. Current source plans govern classification; printed shape alone is insufficient. Computed intrinsic Booleans use the prepared program's representation constructor, as ordinary dialect returns do; raw grounded Boolean leaves cannot select their own publication spelling.",
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "ready-call-and-result-contracts",
+        "counts": {
+          "type": 49,
+          "call": 2,
+          "reference": 2
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      },
+      "native_entry_contract": {
+        "admission": "The direct native entry reports refusal separately from the actual CettaCallOutcome. An entered failure, interruption or invalid returned value cannot authorize replay.",
+        "demand": "Ready arguments, immediate arguments and untyped immediate admission have explicit caller-selected obligations; metadata availability does not select them.",
+        "delivery": "Ordinary direct attempts share one delivery implementation; ready PeTTa calls retain delayed obligations for the existing search-machine service.",
+        "proof": "Mettapedia.Machines.NativeCallReturn.Invocation: two-stage refinement, exact entered-call effects and counts, logical-world preservation on refusal, impossibility of recovering admission after failure erasure, and closed-literal role normalization."
+      },
+      "primitive_result_roles": {
+        "source": "lib/gslt_execution_contracts.metta:prepared-pure-intrinsic-head",
+        "computation": "boolean-dispatch uses the program Boolean constructor; exact-register Boolean results retain their existing constructor boundary.",
+        "data": "grounded-dispatch data projections retain their original carrier, including Boolean payloads.",
+        "proof": "Mettapedia.Machines.PrimitiveResultRole: typed-source/native-plan refinement, data preservation, state preservation and invalid truth-result separation."
+      },
+      "head_interpretation": "Prepared equation-head admission now reuses petta_program_head_is_intrinsic rather than interpreting all interned builtin names as operations. Authored equations and extension arities still establish relational callability; quote and structural specializer marks retain their own semantics.",
+      "shared_operation_decoding": {
+        "source": "lib/gslt_execution_contracts.metta",
+        "generated": "src/generated/cetta_execution_contracts.generated.h",
+        "consumers": [
+          "ordinary fold admission",
+          "space effect scanning and register lowering",
+          "prepared primitive compilation and execution"
+        ],
+        "contract": "Exact head/arity decoding preserves instruction and operand discipline. Dialect availability, readiness, source authority and permission to speculate remain separate checks. Unrestricted scope does not establish that an operation exists."
+      },
+      "invocation_arguments": {
+        "representation": "src/owned_execution.h:CettaInvocation; BindingValue head and two borrowed argument spans",
+        "consumers": [
+          "ordinary native admission",
+          "all seven native dispatch consumers including HE canonical/raw completion",
+          "ready-value PeTTa handoff",
+          "prepared library intrinsics",
+          "three partial-application syntax consumers"
+        ],
+        "scope": "Storage does not establish readiness, type validity or source authority. Logical resolution reads the entrance world. A resolved vector cannot be reused across mutation or rollback. Native/result ABI vectors may borrow only within their synchronous lifetime.",
+        "materialization": "One explicit syntax builder qualifies lexical identities without evaluating operands. A contiguous unqualified native vector is borrowed unchanged.",
+        "proof": "Mettapedia.Machines.NativeCallReturn.Arguments.Input: split array lookup refines independent flat argument order and observations in every current world."
+      }
+    },
+    {
+      "id": "outcome-and-owned-return",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/owned_execution.h",
+          "symbol": "CettaOwnedReturn"
+        },
+        {
+          "file": "src/eval_owned_execution.inc",
+          "symbol": "cetta_owned_execution_sequence"
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbol": "cetta_prepared_pure_answer_cursor_return"
+        },
+        {
+          "file": "src/owned_execution.h",
+          "symbol": "CettaCallReturnCursor"
+        }
+      ],
+      "admission": "Value, failure, raised error, interruption and suspension remain distinct; acceptance and publication retain their owner.",
+      "remaining_transfer": "Native result delivery now shares CettaCallReturnCursor and sequence_native_call across ready PeTTa calls and HE native-return boundaries. General invocation plans, foreign constraint delivery and dialect elaboration still need migration to the common computation representation.",
+      "measure": [
+        "returns accepted",
+        "pending returns",
+        "copies at publication"
+      ],
+      "validity": "The producer owns payload and environment through pending delivery. Accepted occurrences are not replayed; cancellation releases pending ownership.",
+      "source_occurrences": [
+        {
+          "file": "src/eval_owned_execution.inc",
+          "symbols": [
+            "CettaOwnedReturn",
+            "cetta_owned_execution_sequence",
+            "cetta_prepared_pure_answer_cursor_return"
+          ]
+        },
+        {
+          "file": "src/owned_execution.c",
+          "symbols": [
+            "CettaOwnedReturn"
+          ]
+        },
+        {
+          "file": "src/owned_execution.h",
+          "symbols": [
+            "CettaOwnedReturn",
+            "CettaCallReturnCursor",
+            "cetta_call_return_next"
+          ]
+        },
+        {
+          "file": "src/owned_return_image.c",
+          "symbols": [
+            "CettaOwnedReturn"
+          ]
+        },
+        {
+          "file": "src/owned_return_image.h",
+          "symbols": [
+            "CettaOwnedReturn"
+          ]
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbols": [
+            "CettaOwnedReturn",
+            "cetta_prepared_pure_answer_cursor_return"
+          ]
+        },
+        {
+          "file": "src/prepared_pure_machine.h",
+          "symbols": [
+            "CettaOwnedReturn"
+          ]
+        },
+        {
+          "file": "src/shared_return_producer.c",
+          "symbols": [
+            "CettaOwnedReturn",
+            "cetta_owned_execution_sequence"
+          ]
+        },
+        {
+          "file": "src/shared_return_producer.h",
+          "symbols": [
+            "CettaOwnedReturn"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "sequence_native_call",
+            "emit_completed_native_call",
+            "petta_eval_machine_apply_ready_values"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "outcome-and-owned-return",
+        "counts": {
+          "type": 25,
+          "call": 5,
+          "reference": 6
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      },
+      "native_return_contract": {
+        "representation": "Producer metadata distinguishes an expression, one completed value and an ordered completed frontier. Payload shape grants no execution authority.",
+        "lifetime": "The cursor borrows payload storage and the current logical environment. It allocates no value wrapper; its caller retains both through pending acceptance.",
+        "completion": "The first incomplete cause survives subsequent returns. Malformed producer results interrupt with host failure, rather than certifying an empty frontier.",
+        "proof": "Mettapedia.Machines.NativeCallReturn: independent list refinement, exact ordered prefixes, split resumption, final-return certificates, live context identities and matching publication-allowance bounds. Argument preparation preserves ordered identities and borrows exactly unchanged vectors. Native C correspondence remains separate.",
+        "arguments": "Synchronous native vectors are borrowed and read-only. The direct argument preparer borrows an unchanged vector and allocates on the first changed identity, preserving preparation order and source storage. Escaping Atom ownership and prepared result views remain separate contracts."
+      }
+    },
+    {
+      "id": "continuation-frame-stack",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/owned_execution.h",
+          "symbol": "CettaOwnedFrameStack"
+        },
+        {
+          "file": "src/eval_he_canonical.inc",
+          "symbol": "cetta_owned_frame_push"
+        }
+      ],
+      "admission": "The adapter owns roots and demand; stack links grant no evaluation or lifetime authority.",
+      "remaining_transfer": "Share operational services while preserving PeTTa search order and HE completion boundaries.",
+      "measure": [
+        "frame pushes",
+        "handoffs",
+        "retained frames"
+      ],
+      "validity": "Links borrow stable frame addresses until popped. The dialect adapter retains roots, entered code, demand and scoped control.",
+      "source_occurrences": [
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "CettaOwnedFrameStack",
+            "cetta_owned_frame_push"
+          ]
+        },
+        {
+          "file": "src/eval_he_boundary.inc",
+          "symbols": [
+            "CettaOwnedFrameStack",
+            "cetta_owned_frame_push"
+          ]
+        },
+        {
+          "file": "src/eval_he_canonical.inc",
+          "symbols": [
+            "CettaOwnedFrameStack",
+            "cetta_owned_frame_push"
+          ]
+        },
+        {
+          "file": "src/owned_execution.h",
+          "symbols": [
+            "CettaOwnedFrameStack"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "continuation-frame-stack",
+        "counts": {
+          "type": 9,
+          "call": 3,
+          "reference": 3
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "immutable-syntax-and-generation-sharing",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/atom.c",
+          "symbol": "atom_settled_for_arena"
+        },
+        {
+          "file": "src/owned_return_image.c",
+          "symbol": "cetta_owned_return_image_capture"
+        }
+      ],
+      "admission": "Reuse must preserve the term/context identity and keep every reachable owner valid; opaque values require their own ownership descriptor.",
+      "remaining_transfer": "Remove unnecessary copies at certified boundaries and measure retention of source capsules.",
+      "measure": [
+        "deep copies",
+        "copied bytes",
+        "retained owners",
+        "RSS"
+      ],
+      "validity": "Sharing requires a live immutable owner with matching generation. An escaped value must own or retain its reachable graph; reachability does not bound whole-owner retention.",
+      "source_occurrences": [
+        {
+          "file": "native/deterministic_equation_plan_v1.c",
+          "symbols": [
+            "atom_settled_for_arena"
+          ]
+        },
+        {
+          "file": "src/atom.c",
+          "symbols": [
+            "atom_settled_for_arena"
+          ]
+        },
+        {
+          "file": "src/shared_return_producer.c",
+          "symbols": [
+            "cetta_owned_return_image_capture"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "immutable-syntax-and-generation-sharing",
+        "counts": {
+          "call": 5,
+          "reference": 5
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "suffix-and-list-views",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/atom.c",
+          "symbol": "atom_expr_suffix"
+        },
+        {
+          "file": "src/petta_semantics.c",
+          "symbol": "petta_semantics_flat_list_spine"
+        },
+        {
+          "file": "src/petta_semantics.h",
+          "symbol": "cetta_sequence_projection_materialize_value"
+        },
+        {
+          "file": "src/match.h",
+          "symbol": "binding_value_with_derived_skeleton"
+        }
+      ],
+      "admission": "Logical list tags, rest tails, multiplicity and element identity must remain visible.",
+      "remaining_transfer": "Head/tail materialization now has one context-preserving kernel shared by ordinary values, grounded operations and the compiled equation adapter. Derived suffix nodes use the same ownership downgrade as existing list matching. Ordinary closed-sequence size reuses the structural view; broader source/owner transport and application-level cost acceptance remain open.",
+      "measure": [
+        "suffix allocations",
+        "list materialization",
+        "tail walks"
+      ],
+      "validity": "A view keeps its underlying buffer alive. Normalized open-list shape can change with bindings and cannot be inferred from a raw header alone.",
+      "source_occurrences": [
+        {
+          "file": "src/atom.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        },
+        {
+          "file": "src/grounded.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        },
+        {
+          "file": "src/he_macro_expansion.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        },
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "binding_value_with_derived_skeleton"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "atom_expr_suffix",
+            "petta_semantics_flat_list_spine"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "atom_expr_suffix",
+            "cetta_sequence_projection_materialize_value",
+            "petta_semantics_flat_list_spine"
+          ]
+        },
+        {
+          "file": "src/petta_semantics.c",
+          "symbols": [
+            "atom_expr_suffix",
+            "petta_semantics_flat_list_spine"
+          ]
+        },
+        {
+          "file": "src/petta_semantics.h",
+          "symbols": [
+            "atom_expr_suffix",
+            "binding_value_with_derived_skeleton",
+            "cetta_sequence_projection_materialize_value"
+          ]
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        },
+        {
+          "file": "src/term_graph.c",
+          "symbols": [
+            "atom_expr_suffix"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "suffix-and-list-views",
+        "counts": {
+          "call": 29,
+          "reference": 29
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "variable-support-and-groundness",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/atom.h",
+          "symbol": "atom_single_variable_id"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_apply_value_rewrite_vars"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_values_reach_cell"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_resolve_value_root"
+        }
+      ],
+      "admission": "Immutable direct support is stable; its images depend on the current logical store and lexical frame. Ordered frame inventory reuses an exact singleton fact at each subtree, qualifies its full coordinate under the value's current context, and retains the first occurrence only.",
+      "remaining_transfer": "Canonical substitution now prepares root aliases with the shared root service before constructing memo and traversal state. Terminal values retain lexical scope; open expressions still receive complete substitution at the original demand point. Custom variable rewrites and unknown/cyclic evidence keep the independent traversal. General call/value transport remains open; the caller-only delayed-image experiment remains private.",
+      "measure": [
+        "support reads",
+        "binding lookups",
+        "graph visits"
+      ],
+      "validity": "Syntactic support belongs to immutable structure. Contextual groundness follows live bindings and rollback; branch-local results cannot become syntax-only facts.",
+      "source_occurrences": [
+        {
+          "file": "src/atom.c",
+          "symbols": [
+            "atom_single_variable_id"
+          ]
+        },
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "atom_single_variable_id",
+            "bindings_apply_value_rewrite_vars",
+            "bindings_resolve_value_root"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "atom_single_variable_id"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "atom_single_variable_id",
+            "petta_machine_values_reach_cell"
+          ]
+        }
+      ],
+      "caller_coverage": [
+        {
+          "caller": "bindings_frame_index_note_value_context",
+          "route": "ordinary binding registration and contextual value transport",
+          "control": "tests/support/test_frame_support_inventory.c"
+        }
+      ],
+      "models": [
+        "Mettapedia.Machines.SubtreeSupportInventory"
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "variable-support-and-groundness",
+        "counts": {
+          "call": 25,
+          "reference": 25
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "occurs-check-certificates",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_unify"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_builder_add_id_internal_with_cycle_evidence"
+        }
+      ],
+      "admission": "Only proved groundness or fresh-frame noninterference can omit a cycle search.",
+      "remaining_transfer": "Map each ordinary binding entry to its strongest available evidence; keep uncertain cases on the exact check.",
+      "measure": [
+        "occurs walks",
+        "certificate hits",
+        "visited nodes"
+      ],
+      "validity": "A fresh cell certificate must name the incarnation and disjoint support that justify omitting a cycle walk. Unknown or overflowing support uses the authoritative walker.",
+      "source_occurrences": [
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "bindings_builder_add_id_internal_with_cycle_evidence"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_unify"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "occurs-check-certificates",
+        "counts": {
+          "call": 24,
+          "reference": 24
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "rollback-and-conditional-trailing",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/binding/slot_store.c",
+          "symbol": "bindings_builder_restore_frame_values"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_trial_begin"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_goal_trail_record_overwrite"
+        }
+      ],
+      "admission": "Every future rollback observes the same assignments, aliases, constraints and services.",
+      "remaining_transfer": "Share the write/rollback contract; evaluate direct slots and conditional logging where lifetime frontiers permit it.",
+      "measure": [
+        "trail entries",
+        "undo bytes",
+        "binding writes"
+      ],
+      "validity": "Only writes that cannot survive the current rollback boundary may omit a trail entry. PeTTa choice marks do not establish HE snapshot policy.",
+      "source_occurrences": [
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "bindings_builder_restore_frame_values"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_trial_begin"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "petta_goal_trail_record_overwrite"
+          ]
+        }
+      ],
+      "qualified_transfer": "Trials record activity independently of the initial cell frontier. Failed trials restore first slot stores; successful nested trials preserve their undo obligations for an enclosing trial or choice. Zero-frontier, nested-failure and later-choice controls exercise the collector boundary. Continuation overwrites use revalidated log-position witnesses to retain the first complete goal payload per write interval. Stored choices, dispatch-local marks, rollback, compaction and continuation restoration fence cache reuse; the logical trail remains authoritative.",
+      "continuation_contract": {
+        "witness": "The proposed position is after the current floor, inside the current log, and its actual entry names the same slot. No payload or rollback result comes from the cache.",
+        "invalidation": "New marks advance the write floor; rollback and log replacement establish a new floor. Truncated, compacted or reused positions remain hints and are checked against actual entries.",
+        "ownership": "The machine owns its position vector. Owned continuation restore transfers the actual log and fences all preexisting position hints. Destruction releases the derived vector.",
+        "proof": "Mettapedia/Machines/WitnessedUndoLog.lean; validated online omission preserves all fenced rollback marks. Complete-payload coalescing is entry-minimal for one interval under the all-store observer. Native C correspondence remains separate.",
+        "limits": "The native implementation has conservative extra interval boundaries and retains capacity slack. The theorem does not establish globally optimal space or execution time."
+      },
+      "caller_coverage": [
+        {
+          "caller": "oem_match_count",
+          "route": "compiled PeTTa match cardinality, including non-linear patterns and stored variables",
+          "mechanism": "Reuse OemTrial to establish the local trailing frontier, then restore every candidate attempt and the outer trial context. A saved allocation length alone is insufficient.",
+          "control": [
+            "tests/support/test_oem_component_ground.c",
+            "tests/petta/count_match_trial.metta"
+          ],
+          "model": "Mettapedia.Machines.TrialCounting"
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "rollback-and-conditional-trailing",
+        "counts": {
+          "call": 6,
+          "reference": 6
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "reachable-binding-projection",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_project_reachable_selected"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_project_reachable_sparse"
+        }
+      ],
+      "admission": "Retain transitive support, constraints and rollback-visible roots; preserve entry order and frame ownership.",
+      "remaining_transfer": "Avoid repeated support extraction and unnecessary frame reconstruction only where measured profitable.",
+      "measure": [
+        "projected bindings",
+        "support traversals",
+        "projection allocation"
+      ],
+      "validity": "Projection uses the current root group, shared variable map and environment. Independently freshening correlated components is invalid.",
+      "source_occurrences": [
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "bindings_project_reachable_selected",
+            "bindings_project_reachable_sparse"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "reachable-binding-projection",
+        "counts": {
+          "call": 4,
+          "reference": 4
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "choice-collection-scheduling",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_maybe_collect"
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_choice_collection_retry_threshold"
+        }
+      ],
+      "admission": "Collection admission and rollback roots remain unchanged; failed collection scheduling uses saturating growth thresholds.",
+      "remaining_transfer": "Price declined scans, successful collection, retained memory and delayed collection after choice-shape changes.",
+      "measure": [
+        "declines",
+        "successful collections",
+        "nursery bytes",
+        "RSS"
+      ],
+      "validity": "Retry thresholds schedule an attempt and grant no collection authority. Collection admission and live-root preservation remain unchanged.",
+      "source_occurrences": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "petta_machine_choice_collection_retry_threshold",
+            "petta_machine_maybe_collect"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "choice-collection-scheduling",
+        "counts": {
+          "call": 2,
+          "reference": 2
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "revision-local-plan-validity",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/eval.c",
+          "symbol": "prepared_pure_program_cache_prepare_revision"
+        },
+        {
+          "file": "src/producer_reads.c",
+          "symbol": "cetta_producer_reads_valid"
+        }
+      ],
+      "admission": "A plan is reusable only while every source and authority dependency it consulted is current.",
+      "remaining_transfer": "Unify exact dependency validation. Relation safety already ignores data-only mutations through SpaceProgramToken, but relevant equation/declaration changes still invalidate its whole-space observation. Four-way cache banks address hash eviction, not dependency locality. Unknown foreign writes retain a global dependency.",
+      "measure": [
+        "invalidations",
+        "recompilation",
+        "validation reads"
+      ],
+      "validity": "A plan records its source, declarations, space and foreign authority reads. Absence is a dependency; unknown writes remain globally conservative.",
+      "source_occurrences": [
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "prepared_pure_program_cache_prepare_revision"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "cetta_producer_reads_valid"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "revision-local-plan-validity",
+        "counts": {
+          "call": 8,
+          "reference": 8
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "stable-negative-admission",
+      "disposition": "transferable",
+      "source": [
+        {
+          "file": "src/eval.c",
+          "symbol": "prepared_pure_program_cache_has_decline_head"
+        },
+        {
+          "file": "src/eval.c",
+          "symbol": "petta_eval_open_program_lookup_locked"
+        },
+        {
+          "file": "src/petta_program.c",
+          "symbol": "petta_program_relation_safety"
+        }
+      ],
+      "admission": "Only a dependency-qualified stable result of this admission procedure may be cached. A refusal is not a proof that the rejected program is semantically impure; transient resource failure is not reusable refusal.",
+      "remaining_transfer": "Share positive/negative dependency discipline and measure repeated failed admission across routes.",
+      "measure": [
+        "refusal attempts",
+        "negative cache hits",
+        "invalidations"
+      ],
+      "validity": "Only a stable semantic refusal is reusable under its complete dependency footprint. Interrupt, allocation failure and transient capacity are not permanent refusals.",
+      "source_occurrences": [
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "petta_eval_open_program_lookup_locked",
+            "petta_program_relation_safety",
+            "prepared_pure_program_cache_has_decline_head"
+          ]
+        },
+        {
+          "file": "src/petta_program.c",
+          "symbols": [
+            "petta_program_relation_safety"
+          ]
+        }
+      ],
+      "qualified_transfer": "The shared relation-safety cache retains 128 entries in four-way banks. Hits require exact head, arity, Space instance and complete program token. Missing source plans and allocation failures remain uncached. Eviction, source mutation, same-name cross-space calls and late plan installation have independent controls.",
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "stable-negative-admission",
+        "counts": {
+          "call": 11,
+          "reference": 11
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "foreign-observer-authority",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "petta_libpl_advance_revision"
+        },
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "cyclic_observer_current"
+        }
+      ],
+      "admission": "Exact builtin and wrapper provenance plus no carried effects justify the specific read-only failure rule.",
+      "remaining_transfer": "Extend effect summaries only with truthful predicate dependencies and mutation/override controls.",
+      "measure": [
+        "foreign checks",
+        "revision changes",
+        "plan revalidation"
+      ],
+      "validity": "Read-only classification must be proved for the actual foreign target and current provider authority. Unknown writes invalidate conservatively.",
+      "source_occurrences": [
+        {
+          "file": "src/petta_libpl.c",
+          "symbols": [
+            "cyclic_observer_current",
+            "petta_libpl_advance_revision"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "foreign-observer-authority",
+        "counts": {
+          "member": 2,
+          "call": 9,
+          "reference": 9
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "plain-scalar-operations",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/grounded.c",
+          "symbol": "grounded_try_plain_scalar_operation"
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbol": "prepared_pure_scalar_binary"
+        },
+        {
+          "file": "src/exact_integer.h",
+          "symbol": "cetta_exact_integer_small"
+        }
+      ],
+      "admission": "Preserve integer promotion, float order, operand demand, type checks and dialect Boolean representation.",
+      "remaining_transfer": "Ordinary arithmetic, fold algebra and the compact scalar adapter now use the canonical checked-integer kernel for bounded add/subtract/multiply. Float, comparison, promotion and guest-override policies retain their own contracts; further consolidation needs those semantic distinctions.",
+      "measure": [
+        "scalar calls",
+        "boxed intermediates",
+        "declines"
+      ],
+      "validity": "The selected intrinsic must be unoverridden in the current source. Exact arithmetic, floating order and dialect truth values remain part of the result contract.",
+      "source_occurrences": [
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "grounded_try_plain_scalar_operation"
+          ]
+        },
+        {
+          "file": "src/fold_algebra.c",
+          "symbols": [
+            "cetta_exact_integer_small"
+          ]
+        },
+        {
+          "file": "src/generated/cetta_execution_contracts.generated.h",
+          "symbols": [
+            "cetta_exact_integer_small"
+          ]
+        },
+        {
+          "file": "src/grounded.c",
+          "symbols": [
+            "cetta_exact_integer_small"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "grounded_try_plain_scalar_operation"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "grounded_try_plain_scalar_operation"
+          ]
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbols": [
+            "grounded_try_plain_scalar_operation",
+            "prepared_pure_scalar_binary"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "plain-scalar-operations",
+        "counts": {
+          "call": 15,
+          "reference": 15
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "deterministic-scalar-segments",
+      "disposition": "restricted_by_semantics",
+      "source": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_evaluate_activation_scalar_tree"
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbol": "prepared_pure_scalar_region"
+        }
+      ],
+      "admission": "A segment has the admitted effect, type and fuel contract; refusal preserves original evaluation.",
+      "remaining_transfer": "Share operation and liveness machinery, retaining different entry/result policies.",
+      "measure": [
+        "segment entries",
+        "fallbacks",
+        "intermediate allocations"
+      ],
+      "validity": "Admission includes source/effect authority, value shapes and complete result behavior. Ready operands alone do not establish purity or checked results.",
+      "source_occurrences": [
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "petta_machine_evaluate_activation_scalar_tree"
+          ]
+        },
+        {
+          "file": "src/prepared_pure_machine.c",
+          "symbols": [
+            "prepared_pure_scalar_region"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "deterministic-scalar-segments",
+        "counts": {
+          "call": 4,
+          "reference": 4
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "source-derived-folds",
+      "disposition": "restricted_by_semantics",
+      "source": [
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_algebraic_append"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_scalar_sum"
+        },
+        {
+          "file": "src/native_fold.c",
+          "symbol": "cetta_native_foldall"
+        }
+      ],
+      "admission": "The source recurrence, recursive call protocol and observer must authorize the fold.",
+      "remaining_transfer": "Share scans, value operations and ownership plumbing with ordinary execution; preserve non-admitted source behavior.",
+      "measure": [
+        "nodes inspected",
+        "constructed nodes",
+        "fold admission"
+      ],
+      "validity": "The authored fold, matching/unification behavior, arithmetic and current definitions must support the lowering. Failed admission retains ordinary execution.",
+      "source_occurrences": [
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "cetta_native_foldall"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_algebraic_append",
+            "oem_scalar_sum"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "cetta_native_foldall"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "source-derived-folds",
+        "counts": {
+          "call": 4,
+          "reference": 4
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "semi-naive-and-relational-cursors",
+      "disposition": "restricted_by_semantics",
+      "source": [
+        {
+          "file": "src/exec_saturation.c",
+          "symbol": "cetta_exec_saturate"
+        },
+        {
+          "file": "src/relational_cursor.c",
+          "symbol": "cetta_relational_count_cursor_advance"
+        },
+        {
+          "file": "src/fixpoint.c",
+          "symbol": "cetta_fixpoint_least"
+        }
+      ],
+      "admission": "The admitted closure/count observer determines duplicate handling, ordering, effects and resumption; navigation quantum is not dialect fuel.",
+      "remaining_transfer": "Reuse worklists, indexes and cursor lifecycle; do not replace arbitrary budgeted search with closure.",
+      "measure": [
+        "delta proposals",
+        "join probes",
+        "publication events"
+      ],
+      "validity": "The observer must permit the region algebra. Set closure does not justify dropping ordered occurrences, effects, bounded prefixes or proof provenance.",
+      "source_occurrences": [
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "cetta_exec_saturate"
+          ]
+        },
+        {
+          "file": "src/eval_work.inc",
+          "symbols": [
+            "cetta_relational_count_cursor_advance"
+          ]
+        },
+        {
+          "file": "src/fixpoint.c",
+          "symbols": [
+            "cetta_fixpoint_least"
+          ]
+        },
+        {
+          "file": "src/petta_specializer.c",
+          "symbols": [
+            "cetta_fixpoint_least"
+          ]
+        },
+        {
+          "file": "src/space.c",
+          "symbols": [
+            "cetta_fixpoint_least"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "semi-naive-and-relational-cursors",
+        "counts": {
+          "call": 6,
+          "reference": 6
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "private-retention-and-flat-match-experiments",
+      "disposition": "rejected_by_measurements",
+      "source": [
+        {
+          "file": "src/match.c",
+          "symbol": "bindings_reachable_vars_add_value"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_match_ground_template"
+        }
+      ],
+      "admission": "Correct output is necessary but does not establish an application gain.",
+      "remaining_transfer": "Support-union memo, flat matcher variants and append-right-unit candidate remain outside production until stronger cost and lifetime evidence.",
+      "measure": [
+        "wall time",
+        "instructions",
+        "peak RSS"
+      ],
+      "validity": "These candidates supply no production authority. Their observations and costs remain retained evidence until a revised candidate passes its own gates.",
+      "source_occurrences": [
+        {
+          "file": "src/match.c",
+          "symbols": [
+            "bindings_reachable_vars_add_value"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_match_ground_template"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "private-retention-and-flat-match-experiments",
+        "counts": {
+          "call": 9,
+          "reference": 9
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "specialization-selector-refutation",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_specializer.c",
+          "symbol": "petta_selector_fingerprint"
+        },
+        {
+          "file": "src/subst_tree.h",
+          "symbol": "cetta_index_expand_expression"
+        }
+      ],
+      "admission": "Bounded physical-structure observations under PeTTa term equality; unknown metadata and rational unfoldings decline. Every survivor retains exact comparison.",
+      "remaining_transfer": "The record scan remains linear. Other consumers require their own equality/observation policy before reusing this prefilter.",
+      "measure": [
+        "ordinary selector comparisons",
+        "bounded node reads",
+        "wall time",
+        "instructions",
+        "RSS"
+      ],
+      "validity": "Only immutable structural fields enter the stored fingerprint. Actual observations are local to one synchronous lookup; PeTTa structural equality is required. Every survivor still receives exact equality.",
+      "source_occurrences": [
+        {
+          "file": "src/petta_specializer.c",
+          "symbols": [
+            "cetta_index_expand_expression",
+            "petta_selector_fingerprint"
+          ]
+        },
+        {
+          "file": "src/space.c",
+          "symbols": [
+            "cetta_index_expand_expression"
+          ]
+        },
+        {
+          "file": "src/space_match_backend.c",
+          "symbols": [
+            "cetta_index_expand_expression"
+          ]
+        },
+        {
+          "file": "src/subst_tree.c",
+          "symbols": [
+            "cetta_index_expand_expression"
+          ]
+        }
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "specialization-selector-refutation",
+        "counts": {
+          "call": 11,
+          "reference": 11
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "specialization-artifact-head-index",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_specializer.c",
+          "symbol": "petta_specializer_equation_artifact"
+        },
+        {
+          "file": "src/symbol_index.h",
+          "symbol": "cetta_symbol_index_find"
+        }
+      ],
+      "admission": "A complete head-membership index can only reject an absent specialized head. Space identity, alpha equality, payload permission and occurrence order remain authoritative.",
+      "validity": "Record creation extends a complete index incrementally; removal and thread reset invalidate it. Incomplete allocation uses the original traversal. Small catalogs remain linear.",
+      "current_consumers": [
+        "src/petta_search_machine.c:petta_match_decision_source_pattern_root",
+        "src/eval.c:petta_prepared_pure_head_relational"
+      ],
+      "remaining_transfer": "Selective lookup within a present head remains linear. Other code/site caches need their own dependency footprints.",
+      "measure": [
+        "catalog scans",
+        "index construction",
+        "ordinary and normal application cost",
+        "retained index bytes"
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "specialization-artifact-head-index",
+        "counts": {
+          "call": 11,
+          "reference": 11
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      },
+      "source_occurrences": [
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "cetta_symbol_index_find"
+          ]
+        },
+        {
+          "file": "src/petta_specializer.c",
+          "symbols": [
+            "cetta_symbol_index_find",
+            "petta_specializer_equation_artifact"
+          ]
+        },
+        {
+          "file": "src/space.c",
+          "symbols": [
+            "cetta_symbol_index_find"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "foreign-structural-read-evidence",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "petta_libpl_from_term_mode"
+        },
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "petta_libpl_from_term_read"
+        },
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "petta_libpl_from_list"
+        }
+      ],
+      "admission": "A successful whole-term acyclicity check, or inherited evidence on a direct child during the same non-mutating Prolog-term read. Presentation policy remains independent.",
+      "validity": "Every independent read starts uncertified. No evidence survives a query step, a new answer or a graph-decoding retry. The flag describes only the Prolog source graph; it establishes neither native groundness, interpretation, type nor ownership. Structural getters and the inspected internal variable callback do not bind source terms.",
+      "remaining_transfer": "Reuse an established source-shape fact at other readers only under equivalent read/lifetime contracts. Retained summaries and lazy root-only foreign views need separate admission and evaluation.",
+      "measure": [
+        "validation calls",
+        "nested-list depth",
+        "materialized nodes",
+        "whole-process wall time",
+        "instructions",
+        "peak RSS"
+      ],
+      "source_occurrences": [
+        {
+          "file": "src/petta_libpl.c",
+          "symbols": [
+            "petta_libpl_from_list",
+            "petta_libpl_from_term_mode",
+            "petta_libpl_from_term_read"
+          ]
+        }
+      ],
+      "qualified_transfer": "Recursive finite-list decoding inherits successful source acyclicity checks. The evidence and presentation bit use the existing internal policy argument, preserving the decoder call arity. Checked builds independently revalidate inherited facts. The existing graph fallback and depth guard remain in force.",
+      "proof": "Mettapedia/Machines/AcyclicReadScope.lean proves hereditary source acyclicity, ordered-image/depth preservation, mutation and cycle counterexamples, and a nested-chain validation/read cost bound against the existing complete-survey comparison class. Native validators/getters, variable maps and C refinement remain separate obligations.",
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "foreign-structural-read-evidence",
+        "counts": {
+          "call": 11,
+          "reference": 11
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "scoped-foreign-image-handoff",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "petta_libpl_solution_image"
+        },
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "petta_libpl_read_image_shareable"
+        },
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "petta_libpl_back_reference"
+        },
+        {
+          "file": "src/petta_libpl.c",
+          "symbol": "petta_libpl_emit_solution"
+        }
+      ],
+      "admission": "PeTTa result reads may reuse a materialized binding image of the physically same compound during the same answer, variable map and destination arena. Reject resource registrations during the binding read, identity/thread-local or registry resources, internal tags, rational nodes, NaNs and HE occurrence marks. Logical variables retain complete identities and remain live.",
+      "validity": "All hints are local to one synchronous emission. No image or opaque-identity map crosses a producer step. Every read map has an independent opaque-identity map keyed by the exact foreign atom, owning runtime and destination arena. The runtime recorded term retains each opaque source; the map adds no ownership authority. Atom flags alone do not detect syntactically represented opaque handles.",
+      "remaining_transfer": "Solver-client result emission and HE result handoff retain their existing routes. Broader reuse requires the corresponding native variable-map, observation and owner laws. Existing global provider shutdown and cross-answer opaque identity remain separate obligations.",
+      "measure": [
+        "root decodes",
+        "candidate inspections",
+        "successful handoffs",
+        "stable refusals",
+        "opaque registrations",
+        "whole-process wall time",
+        "instructions",
+        "peak RSS"
+      ],
+      "source_occurrences": [
+        {
+          "file": "src/petta_libpl.c",
+          "symbols": [
+            "petta_libpl_back_reference",
+            "petta_libpl_emit_solution",
+            "petta_libpl_read_image_shareable",
+            "petta_libpl_solution_image"
+          ]
+        }
+      ],
+      "qualified_transfer": "Implemented ordinary/compiled PeTTa result handoff through the existing Bindings/BindingValue interfaces. Opaque alias repair is shared by tree and rational-graph readers. Checked builds independently decode and compare each selected result. Qualification is pinned per artifact; uniform cost and provider-leak acceptance remain open.",
+      "proof": "Mettapedia/Machines/ForeignImageHandoff.lean proves scoped ordered observations, live-binding observation, resource-history admission and explicit candidate/decode work bounds. ForeignReferenceAliases.lean proves the append-only exact identity map, fresh/distinct handles and ordered duplicate delivery. Native summaries, FLI identity, read-map extension, allocator behavior and C lifetimes remain separate obligations.",
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "scoped-foreign-image-handoff",
+        "counts": {
+          "call": 8,
+          "reference": 8
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    },
+    {
+      "id": "backend-scoped-query-and-local-coordinate-reuse",
+      "disposition": "already_shared",
+      "source": [
+        {
+          "file": "src/space_match_backend.c",
+          "symbol": "match_space_atom_epoch"
+        },
+        {
+          "file": "src/space_match_backend.c",
+          "symbol": "space_match_backend_try_visit_bindings_indexed"
+        },
+        {
+          "file": "src/space_match_backend.c",
+          "symbol": "pathmap_single_factor_prefers_native_selection"
+        },
+        {
+          "file": "src/space_match_backend.c",
+          "symbol": "space_match_backend_accepts_space"
+        }
+      ],
+      "admission": "Local candidate coordinates read through the candidate-view accessor; public bridge iteration and composed overlay coordinates may name different occurrences. Publication translates into the composed occurrence view. Scoped Rust query cursors require the current exact frontier. AUTO suffix reads reuse the existing native-shadow candidate service; explicitly forced and multi-factor Rust catalogs retain independent admission.",
+      "validity": "Syntactic preflight grants no authority. Exact-frontier admission runs inside the current physical read transition. Stored variables, dependencies, logical-order requirements and bridge-internal variables retain authoritative alternatives. Synchronized native views share incremental append/removal maintenance; replacing a projection invalidates indexes over its previous coordinates. Optional derived-view refusal publishes no answer and retains the authoritative traversal. An ordered queue/stack cannot switch to the current unordered engine adapter. Both the public setter and native mutation entry use one compatibility predicate before touching storage.",
+      "remaining_transfer": "Qualify native-shadow retention and candidate costs across the remaining observers. Forced Rust-index experiments and AUTO realization share semantic matching obligations; neither is a global optimality claim.",
+      "measure": [
+        "candidate scans",
+        "native-shadow projection",
+        "index construction",
+        "ordered repeated-query wall time",
+        "instructions",
+        "RSS"
+      ],
+      "source_occurrences": [
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "space_match_backend_accepts_space",
+            "space_match_backend_try_visit_bindings_indexed"
+          ]
+        },
+        {
+          "file": "src/gslt_revisioned_space_provider_v1.c",
+          "symbols": [
+            "space_match_backend_try_visit_bindings_indexed"
+          ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "space_match_backend_try_visit_bindings_indexed"
+          ]
+        },
+        {
+          "file": "src/space_match_backend.c",
+          "symbols": [
+            "match_space_atom_epoch",
+            "pathmap_single_factor_prefers_native_selection",
+            "space_match_backend_accepts_space",
+            "space_match_backend_try_visit_bindings_indexed"
+          ]
+        }
+      ],
+      "caller_coverage": [
+        {
+          "caller": "overlay_subst_query",
+          "route": "ordinary native, native-candidate-exact and PathMap overlay matching",
+          "control": "tests/test_pathmap_semi_naive_abi.c"
+        },
+        {
+          "caller": "space_match_backend_visit_bindings_direct",
+          "route": "direct indexed and complete query consumers with frame-qualified variables",
+          "control": [
+            "tests/test_pathmap_semi_naive_abi.c",
+            "tests/test_pathmap_scoped_queries.metta"
+          ]
+        },
+        {
+          "caller": "space_match_backend_try_set",
+          "route": "native clients and both language backend setter spellings",
+          "control": "tests/test_ordered_backend_admission.metta"
+        }
+      ],
+      "models": [
+        "Mettapedia.Machines.OverlayCandidateCoordinates",
+        "Mettapedia.Machines.OrderedBackendAdmission"
+      ],
+      "typed_native_caller_census": {
+        "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
+        "family": "backend-scoped-query-and-local-coordinate-reuse",
+        "counts": {
+          "call": 14,
+          "reference": 14
+        },
+        "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      }
+    }
+  ],
+  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 329 linked C sources in both build configurations, and admission/validity/cost obligations. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open. The typed-use census describes its recorded build cohorts; pre-main edits require a renewed census before current caller completeness can be claimed.",
+  "review_reconciliation": [
+    {
+      "idea": "Shared call contract over existing engines",
+      "state": "incremental_foundation_present",
+      "native": [
+        "src/owned_execution.h",
+        "src/call_outcome.h",
+        "src/petta_type_policy.h",
+        "src/binding/term_cursor.h"
+      ],
+      "next": "Join demand, scoped evidence and argument transport through existing interfaces; retain direct lowering for ordinary scalar calls."
+    },
+    {
+      "idea": "Arity preflight and live argument guard",
+      "state": "already_integrated_and_extended",
+      "native": [
+        "src/open_equation_machine.c:oem_lexical_callable_step",
+        "src/open_equation_machine.c:oem_callable_argument_guard"
+      ],
+      "next": "Measure remaining contextual resolution after an admitted pure entry and underapplication; do not reapply the older patch."
+    },
+    {
+      "idea": "Borrow captured and supplied argument spans",
+      "state": "transferable_with_collector_obligation",
+      "native": [
+        "src/open_equation_machine.c:oem_expand_partial_application",
+        "src/open_equation_machine.c:oem_apply_step",
+        "src/open_equation_machine.c:oem_collect_slots"
+      ],
+      "next": "Validate borrowed-span owner lifetime and collection memo identity, including slices of unequal lengths. oem_collect_slots mutates activation locals only; young argument vectors are copied and old argument vectors remain unchanged. Avoid allocating a replacement array of wrapper records."
+    },
+    {
+      "idea": "Contextual selected-path reads",
+      "state": "partly_shared",
+      "native": [
+        "src/binding/term_cursor.h",
+        "src/prepared_pure_machine.c"
+      ],
+      "next": "Share successful reads with prepared consumers and preserve live aliases, rollback and normalization-sensitive list fallback."
+    },
+    {
+      "idea": "Capped exact support frontiers",
+      "state": "investigate_measured_coverage",
+      "native": [
+        "src/open_equation_machine.c:oem_occurs",
+        "src/open_equation_machine.c:oem_occurs_tabled",
+        "src/atom.h:atom_single_variable_id"
+      ],
+      "next": "Measure support cardinality weighted by avoided traversal; compare construction, relocation and retention costs before adding a two- or four-cell summary."
+    },
+    {
+      "idea": "Safe-for-space capture and joint export",
+      "state": "partly_shared",
+      "native": [
+        "src/open_equation_machine.c:oem_value_source",
+        "src/owned_return_image.c",
+        "src/atom.c"
+      ],
+      "next": "Measure reachable bytes separately from retained-owner bytes. Preserve one relocation map per correlated export group."
+    },
+    {
+      "idea": "Separate code, dispatch and observation caches",
+      "state": "partly_shared",
+      "native": [
+        "src/open_equation_machine.c:oem_callable_program",
+        "src/eval.c",
+        "src/producer_reads.h"
+      ],
+      "next": "Unify dependency validation without merging source validity with live-cell validity; keep transient failure distinct from stable refusal."
+    },
+    {
+      "idea": "Ordered log plus membership index plus delta",
+      "state": "semantically_restricted",
+      "native": [
+        "src/relational_cursor.c",
+        "src/exec_saturation.c"
+      ],
+      "next": "Preserve occurrence order, duplicate derivations, authored round counters and budgeted prefixes. Compiler-owned emission changes need their own admission."
+    },
+    {
+      "idea": "Observer-directed fields and destination specialization",
+      "state": "semantically_restricted",
+      "native": [
+        "src/open_equation_machine.c:oem_store_slot",
+        "src/prepared_pure_machine.c"
+      ],
+      "next": "Prove alias, early-constraint and source-version obligations before discarding data or moving equality checks."
+    },
+    {
+      "idea": "Complete residual transfer",
+      "state": "partly_shared",
+      "native": [
+        "src/owned_execution.h",
+        "src/open_equation_machine.c:cetta_open_equation_cursor_host_continuation_supported"
+      ],
+      "next": "Prove and test complete continuation, entered-code, constraint, older-alternative and budget state. Post-effect fallback must not restart the source call."
+    },
+    {
+      "idea": "Costed reads and native correspondence",
+      "state": "proof_work_continues",
+      "native": [
+        "src/binding/term_cursor.h",
+        "src/subst_tree.h"
+      ],
+      "next": "Connect actual scoped reads, opening, exports and compiler read footprints to the existing Lean models. Bounds exclude unmodelled native allocation and wall time."
+    },
+    {
+      "idea": "Universal CBPV interpreter before parity",
+      "state": "deferred_pending_evidence",
+      "native": [
+        "src/owned_execution.h"
+      ],
+      "next": "Use value/computation/continuation separation through existing contracts. The consolidated theory separates algebra, representation, typing and execution and does not select one universal interpreter. Adopt runtime abstractions only when adapters disappear and ordinary-call cost is preserved or improved."
+    }
+  ],
+  "non_prolog_comparisons": [
+    {
+      "system": "Souffle",
+      "url": "https://souffle-lang.github.io/handtuning",
+      "application": "Profile-guided indexed access and bounded experiments; CeTTa retains its ordered operational observer."
+    },
+    {
+      "system": "MLIR",
+      "url": "https://mlir.llvm.org/docs/Rationale/SideEffectsAndSpeculation/",
+      "application": "Effects and speculation permission are separate from structural value equality. Reuse requires the same value context and a valid effect history; structural flags alone cannot authorize native handle creation elision. CeTTa retains its own ordered, live-binding observation contract.",
+      "additional_url": "https://github.com/llvm/llvm-project/blob/main/mlir/lib/Transforms/CSE.cpp"
+    },
+    {
+      "system": "Koka / Perceus",
+      "url": "https://www.microsoft.com/en-us/research/publication/perceus-garbage-free-reference-counting-with-reuse/",
+      "application": "Ownership and reuse under explicit control flow; no automatic transfer to cyclic logical graphs."
+    },
+    {
+      "system": "Self",
+      "url": "https://bibliography.selflanguage.org/pics.html",
+      "application": "Retain several exact lookup results where a monomorphic cache thrashes; CeTTa keeps its own full source-token validation and does not equate an admission cache with a call-site inline cache."
+    },
+    {
+      "system": "Lua",
+      "url": "https://www.lua.org/doc/jucs05.pdf",
+      "application": "Choose physical storage from access shape and retain lexical identity across escape. CeTTa retains an explicit schema rather than inferring its logical domain from present values."
+    },
+    {
+      "system": "Rust initialization discipline",
+      "url": "https://doc.rust-lang.org/std/mem/union.MaybeUninit.html",
+      "application": "Physical allocation and initialized readable values are different facts. CeTTa does not read uninitialized backing; implicit logical slots return an explicit unbound value."
+    },
+    {
+      "system": "SQLite rollback journal and savepoints",
+      "url": "https://raw.githubusercontent.com/sqlite/sqlite/master/src/pager.c",
+      "additional_url": "https://sqlite.org/lang_savepoint.html",
+      "application": "Record an old payload before the first write needed by a rollback observer; nested savepoints establish separate obligations. This is an undo-log comparison, not an adoption of database durability or concurrency semantics."
+    },
+    {
+      "system": "GHC static-argument and worker/wrapper practice",
+      "url": "https://downloads.haskell.org/~ghc/9.6.7/docs/libraries/ghc-9.6.7/src/GHC.Core.Opt.StaticArgs.html",
+      "application": "Reuse a stable recursive invariant and retain efficient physical call entry. CeTTa passes source-read evidence within its existing policy argument; the graph theorem and native read scope determine when it is valid."
+    },
+    {
+      "system": "OCaml block headers",
+      "url": "https://github.com/ocaml/ocaml/blob/trunk/runtime/caml/mlvalues.h",
+      "application": "Tags and field counts are read from the value header without walking all fields. CeTTa first resolves the logical constructor through its current binding authority and refuses private storage; physical expression shape alone is insufficient. This comparison supplies a representation practice, not a semantics or optimality proof."
+    }
+  ],
+  "ordinary_baseline_coverage": {
+    "workloads": 12,
+    "routes": [
+      "normal",
+      "OEM and prepared-pure disabled"
+    ],
+    "status": "20 completed observations; four ordinary-route observations reached the explicit 45-second diagnostic limit",
+    "unfinished": [
+      "Ambient",
+      "lambda",
+      "rho n5 canonical",
+      "rho n5 standard"
+    ],
+    "limits": "Single-run route census, not performance acceptance. Timeouts remain incomplete observations. Separate repeated paired cohorts qualify individual changes."
+  },
+  "theory_reconciliation": [
+    {
+      "construction": "Mettapedia/TypeTheory/DisplayedEvidence.lean",
+      "application": "Positive evidence preservation is weaker than reflection. Reusing a stable admission refusal requires the same classified inquiry and dependencies; forward representation transport alone cannot transport refutations. No universal property-negation claim follows from a conservative classifier refusal."
+    },
+    {
+      "construction": "Mettapedia/GSLT/LanguageDef/BagNormalForm.lean",
+      "application": "Algebraic normal-form invariance does not establish representation-sensitive readback or typing. Ordered and multiplicity-sensitive consumers keep their own representation and observation premises."
+    },
+    {
+      "construction": "Mettapedia/GSLT/Core/OperationalPathFibration.lean",
+      "application": "Faithful retained-history readback requires its injectivity premise. Equal final answers do not establish equality of resumable continuations or budgeted publication prefixes."
+    },
+    {
+      "construction": "Mettapedia/GSLT/Causality/ResourceInteraction.lean",
+      "application": "Transporting an effect description does not grant native scheduling authority. Read dependencies and actual execution diamonds remain separate obligations."
+    },
+    {
+      "topic": "Scoped query coordinates and reversible cardinality trials",
+      "modules": [
+        "Mettapedia.Machines.OverlayCandidateCoordinates",
+        "Mettapedia.Machines.TrialCounting",
+        "Mettapedia.Machines.SubstitutionDemand"
+      ],
+      "boundary": "Ordered occurrence transport and independent restored trials are proved in explicit models. The substitution-demand model also covers a private runtime proposal withheld by cost measurements. Native frontier summaries, C lifetimes, complete compiler correspondence and whole-runtime optimality remain obligations."
+    }
+  ],
+  "cross_tree_reconciliation": [
+    {
+      "cohort": "2026-10-23-space-kinds-pathmap-collections",
+      "handoff_sha256": "4daf1b49ab7a3d1452ad61221554ba23e23788270e61f79ea14eddb318dab6ad",
+      "accepted": [
+        "Frame-renamed query variables do not prevent exact-frontier indexed matching.",
+        "Reuse synchronized native-shadow indexes and distinguish prefix from suffix access shape.",
+        "Read local candidate coordinates through the candidate-view accessor; bridge iteration may have a different order.",
+        "Keep syntactic route hints separate from live admission.",
+        "Reuse native candidate services for AUTO suffix reads rather than duplicating a one-factor Rust catalog; a private paired pilot reduces its measured footprint about 30%. Full final qualification remains separate."
+      ],
+      "separately_discovered": "A scoped-query control exposed missing trial coverage in OEM cardinality matching. The existing reversible trial protocol now covers that consumer.",
+      "separate_semantic_design": [
+        "New space disciplines and cross-engine algebra choices",
+        "Canonical bag/set collapse and dictionary surface",
+        "Additional Prime fold and binder elaboration"
+      ],
+      "representation_lesson": "Sequence tags are representation data. Existing shared sequence views must remain authoritative for list consumers; this package does not import new collection syntax or change the Prime policy."
+    }
+  ]
+}

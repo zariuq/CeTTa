@@ -207,6 +207,17 @@ static bool petta_machine_pattern_candidate(PettaMachineImpl *machine,
     machine->stats.match_candidates++;
     Atom *state = choice->as.match.template;
     CETTA_FRAME_IDENTITY_SCOPE(frame);
+    if (machine->host.complete_value &&
+        atom_head_symbol_id(state->expr.elems[PAT_QUERY_SOURCE]) !=
+            g_builtin_syms.pat_query) {
+        candidate = machine->host.complete_value(
+            machine->host.context, choice->as.match.space,
+            &machine->heap, candidate);
+        if (!candidate) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+    }
     Atom *row = atom_has_vars(candidate)
         ? petta_machine_freshen_atom(machine, candidate,
             cetta_frame_identity_scope_fresh(&frame)) : candidate;

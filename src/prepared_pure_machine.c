@@ -39,6 +39,14 @@ typedef enum {
     PREPARED_PURE_DECLINE,
 } PreparedPureNodeKind;
 
+/* An intrinsic node's operand discipline, held in its auxiliary field:
+ * strict, or short-circuit with the truth value of its first operand that
+ * is the node's answer, its second operand never evaluated.  Any other
+ * first value evaluates the second, and the instruction runs on both. */
+#define PREPARED_PURE_INTRINSIC_STRICT UINT32_C(0)
+#define PREPARED_PURE_INTRINSIC_ABSORBS_FALSE UINT32_C(1)
+#define PREPARED_PURE_INTRINSIC_ABSORBS_TRUE UINT32_C(2)
+
 /* An observation that tests a value against a bind pattern carries the
  * pattern's index under this flag. */
 #define PREPARED_PURE_OBSERVE_PATTERN_TEST UINT32_C(0x80000000)
@@ -396,6 +404,9 @@ typedef enum {
     /* BUILD where the dialect's constructor builds the expression itself. */
     PREPARED_PURE_CODE_BUILD_EXPRESSION,
     PREPARED_PURE_CODE_REGISTER,
+    /* A bounded register-only tree over already-ready locals/literals.
+     * Its operand list names every local read, for ordinary liveness. */
+    PREPARED_PURE_CODE_SCALAR_TREE,
     PREPARED_PURE_CODE_INTRINSIC,
     PREPARED_PURE_CODE_OBSERVE,
     /* A true operand continues; a false one continues at `target`. */
@@ -418,6 +429,8 @@ typedef enum {
 } PreparedPureCodeKind;
 
 #define PREPARED_PURE_CODE_LITERAL UINT32_C(0x80000000)
+#define PREPARED_PURE_SCALAR_LITERAL UINT32_C(0x80000000)
+#define PREPARED_PURE_SCALAR_LOCAL UINT32_C(0x40000000)
 
 typedef struct {
     uint8_t kind;
@@ -426,7 +439,8 @@ typedef struct {
     uint32_t first_operand;
     uint32_t operand_count;
     /* BRANCH and BRANCH_REGISTER: where a false condition continues; JUMP:
-     * where it goes; BUILD_EXPRESSION: its head, code_heads[target]. */
+     * where it goes; BUILD_EXPRESSION: its head, code_heads[target];
+     * SCALAR_TREE: its first compact instruction, scalar_code[target]. */
     uint32_t target;
     /* CALL and TAIL_CALL: the registers the body reads after the call
      * returns, code_live[first_live, +live_count); none after a tail call. */
@@ -438,6 +452,8 @@ typedef struct {
     /* CALL and TAIL_CALL: the kind of its head's entry when the call has
      * the entry's arity, GENERAL otherwise (PreparedPureCodeEntryKind). */
     uint8_t entry;
+    /* SCALAR_TREE only: bounded compact register instruction count. */
+    uint8_t scalar_count;
 } PreparedPureCode;
 
 /* An activation of register code: its next instruction, and its registers
@@ -540,6 +556,7 @@ struct CettaPreparedPureProgram {
      * allocating the same scalar on every loop iteration. */
     Atom boolean_atoms[2];
     bool boolean_atoms_ready;
+    bool exports_boolean_results;
     CettaPreparedPureConstructValue construct_value;
     CettaPreparedPureConstructsExpression constructs_expression;
     CettaPreparedPureOpaqueValue opaque_value;
@@ -553,6 +570,7 @@ struct CettaPreparedPureProgram {
     /* Checked by the embedding evaluator before compilation.  Rebinding a
      * cached entry preserves this role as part of the cache key. */
     bool entry_arguments_are_values;
+    bool accepts_open_values;
     bool answer_producer;
     bool allow_callable_templates;
     bool service_source_nodes;
@@ -669,6 +687,11 @@ struct CettaPreparedPureProgram {
     uint32_t *code_operands;
     size_t code_operand_len;
     size_t code_operand_cap;
+    /* Triples: operation node, left operand, right operand. Literals refer
+     * to existing nodes; this code adds no Atom roots. */
+    uint32_t *scalar_code;
+    size_t scalar_code_len;
+    size_t scalar_code_cap;
     Atom **code_literals;
     size_t code_literal_len;
     size_t code_literal_cap;
@@ -1817,7 +1840,10 @@ static bool prepared_pure_trim_dead_slots(
         if (program->slot_live[i]) {
             if (program->slots[i])
                 live++;
-        } else if (program->slots[i]) {
+        } else {
+            /* An unwritten temporary has no value to inspect. The body
+             * writes it before use, but a collection may precede that
+             * write. Clear every dead register without reading its bits. */
             program->slots[i] = NULL;
             trimmed++;
         }
@@ -2035,7 +2061,9 @@ static bool prepared_pure_code_trim_dead_registers(
         if (program->slot_live[i]) {
             if (program->slots[i])
                 live++;
-        } else if (program->slots[i]) {
+        } else {
+            /* Dead registers include temporaries not written yet. Never
+             * inspect their bits, even to count reclaimed references. */
             program->slots[i] = NULL;
             trimmed++;
         }
@@ -2189,19 +2217,6 @@ copy_finished:
     (void)reclaimed;
 }
 
-static bool prepared_pure_control_program(
-    SymbolId head, CettaExprLen arity,
-    CettaGsltFoldControl *control_out) {
-#define PREPARED_PURE_CONTROL(field, expected_arity, control) \
-    if (head == g_builtin_syms.field && arity == (expected_arity)) { \
-        if (control_out) \
-            *control_out = (control); \
-        return true; \
-    }
-    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(PREPARED_PURE_CONTROL)
-#undef PREPARED_PURE_CONTROL
-    return false;
-}
 
 static bool prepared_pure_register_program(
     const CettaPreparedPureProgram *program,
@@ -2210,21 +2225,19 @@ static bool prepared_pure_register_program(
     CettaGsltRegisterInstruction *instruction_out) {
     /* A register instruction realizes an operation the current dialect
      * defines; one it leaves undefined is data. */
-#define PREPARED_PURE_REGISTER(field, expected_arity, result_kind, instruction) \
-    if (head == g_builtin_syms.field && arity == (expected_arity) && \
-        (!grounded_op_is_cetta_only(head) || is_grounded_op(head))) { \
-        if (kind_out) \
-            *kind_out = (result_kind); \
-        if (instruction_out) \
-            *instruction_out = (instruction); \
-        return true; \
-    }
-    CETTA_GSLT_REGISTER_HEAD_ROWS(PREPARED_PURE_REGISTER)
-#undef PREPARED_PURE_REGISTER
-    if (!program || !program->register_view)
-        return false;
     CettaGsltRegisterResultKind kind;
     CettaGsltRegisterInstruction instruction;
+    if (cetta_gslt_register_head_program(
+            head, arity, &kind, &instruction, &g_builtin_syms) &&
+        (!grounded_op_is_cetta_only(head) || is_grounded_op(head))) {
+        if (kind_out)
+            *kind_out = kind;
+        if (instruction_out)
+            *instruction_out = instruction;
+        return true;
+    }
+    if (!program || !program->register_view)
+        return false;
     CettaGsltRegisterOperandDiscipline discipline;
     if (!program->register_view(
             head, arity, &kind, &instruction) ||
@@ -2269,22 +2282,96 @@ static bool prepared_pure_integer_head(
         kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER;
 }
 
-static bool prepared_pure_intrinsic_program(
+/* The intrinsic dialect bit of the running language.  Outside the three
+ * dialects it is none, and only rows scoped to every dialect hold. */
+static uint32_t prepared_pure_intrinsic_dialect(void) {
+    if (!eval_current_language_id)
+        return 0u;
+    switch (eval_current_language_id()) {
+    case CETTA_LANGUAGE_HE:
+        return CETTA_GSLT_INTRINSIC_DIALECT_HE;
+    case CETTA_LANGUAGE_PETTA:
+        return CETTA_GSLT_INTRINSIC_DIALECT_PETTA;
+    case CETTA_LANGUAGE_PRIME:
+        return CETTA_GSLT_INTRINSIC_DIALECT_PRIME;
+    default:
+        return 0u;
+    }
+}
+
+bool cetta_prepared_pure_intrinsic_row(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out) {
+    return cetta_gslt_prepared_intrinsic_program(
+        head, arity, prepared_pure_intrinsic_dialect(),
+        discipline_out, instruction_out, &g_builtin_syms);
+}
+
+/* A strict intrinsic: every operand is evaluated, then the instruction
+ * runs on their values.  The paths that evaluate every operand before they
+ * dispatch read only these rows.  A short-circuit row compiles to an
+ * intrinsic node that the frame executor and the inline evaluator run
+ * (PREPARED_PURE_INTRINSIC_ABSORBS_FALSE/TRUE); every other path declines
+ * it. */
+bool cetta_prepared_pure_intrinsic_program(
     SymbolId head, CettaExprLen arity,
     CettaGsltPreparedPureIntrinsicInstruction *instruction_out) {
-#define PREPARED_PURE_INTRINSIC(                                        \
-    field, expected_arity, discipline, instruction)                    \
+    CettaGsltPreparedPureIntrinsicOperandDiscipline discipline;
+    CettaGsltPreparedPureIntrinsicInstruction instruction;
+    if (!cetta_prepared_pure_intrinsic_row(
+            head, arity, &discipline, &instruction) ||
+        discipline != CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL)
+        return false;
+    if (instruction_out)
+        *instruction_out = instruction;
+    return true;
+}
+
+/* Whether a program compiles a row of `discipline`.  A connective's value
+ * may be a refused one, an error or a residual form, which a branch
+ * condition then refuses at run time.  A serviced program cannot replay a
+ * refusal, and its branch does not yet hand such a value to the canonical
+ * service, so a serviced program sees no short-circuit row: it compiles the
+ * connective as it compiles any other dialect-owned form. */
+static bool prepared_pure_discipline_visible(
+    bool service_source_nodes,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline discipline) {
+    return !service_source_nodes ||
+        discipline != CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT;
+}
+
+/* The generated row `program` compiles for `head` at `arity`. */
+static bool prepared_pure_program_intrinsic_row(
+    const CettaPreparedPureProgram *program, SymbolId head,
+    CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out) {
+    CettaGsltPreparedPureIntrinsicOperandDiscipline discipline;
+    CettaGsltPreparedPureIntrinsicInstruction instruction;
+    if (!cetta_prepared_pure_intrinsic_row(
+            head, arity, &discipline, &instruction) ||
+        !prepared_pure_discipline_visible(
+            program && program->service_source_nodes, discipline))
+        return false;
+    if (discipline_out)
+        *discipline_out = discipline;
+    if (instruction_out)
+        *instruction_out = instruction;
+    return true;
+}
+
+/* The truth value that answers a short-circuit head without its second
+ * operand. */
+static bool prepared_pure_short_circuit_absorbing(
+    SymbolId head, CettaExprLen arity, bool *absorbing_out) {
+#define PREPARED_PURE_SHORT_CIRCUIT(field, expected_arity, absorbing)   \
     if (head == g_builtin_syms.field && arity == (expected_arity)) {    \
-        if ((discipline) !=                                             \
-            CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL)    \
-            return false;                                               \
-        if (instruction_out)                                            \
-            *instruction_out = (instruction);                           \
+        *absorbing_out = (absorbing);                                   \
         return true;                                                    \
     }
-    CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(
-        PREPARED_PURE_INTRINSIC)
-#undef PREPARED_PURE_INTRINSIC
+    CETTA_GSLT_PREPARED_PURE_SHORT_CIRCUIT_ROWS(PREPARED_PURE_SHORT_CIRCUIT)
+#undef PREPARED_PURE_SHORT_CIRCUIT
     return false;
 }
 
@@ -2993,8 +3080,8 @@ bool cetta_prepared_pure_single_result_requires_answer_effect(
         return false;
 
     CettaGsltFoldControl control;
-    if (!prepared_pure_control_program(
-            atom_symbol_current_id(expression->expr.elems[0]), 3u, &control) ||
+    if (!cetta_gslt_fold_control_program(
+            atom_symbol_current_id(expression->expr.elems[0]), 3u, &control, &g_builtin_syms) ||
         control != CETTA_GSLT_FOLD_CONTROL_BRANCH)
         return false;
 
@@ -3127,8 +3214,8 @@ prepared_pure_compile_guarded_equation(
         return PREPARED_PURE_GUARDED_EQUATION_NOT_APPLICABLE;
 
     CettaGsltFoldControl control;
-    if (!prepared_pure_control_program(
-            atom_symbol_current_id(rhs->expr.elems[0]), 3u, &control) ||
+    if (!cetta_gslt_fold_control_program(
+            atom_symbol_current_id(rhs->expr.elems[0]), 3u, &control, &g_builtin_syms) ||
         control != CETTA_GSLT_FOLD_CONTROL_BRANCH)
         return PREPARED_PURE_GUARDED_EQUATION_NOT_APPLICABLE;
     bool then_zero = prepared_pure_expression_is_zero(
@@ -3245,11 +3332,11 @@ static PreparedPureHeadRole prepared_pure_head_role(
         return PREPARED_PURE_HEAD_UNKNOWN;
 
     CettaExprLen arity = source->expr.len - 1u;
-    if (prepared_pure_control_program(atom_symbol_current_id(head), arity, NULL) ||
+    if (cetta_gslt_fold_control_program(atom_symbol_current_id(head), arity, NULL, &g_builtin_syms) ||
         prepared_pure_register_program(program,
             atom_symbol_current_id(head), arity, NULL, NULL) ||
-        prepared_pure_intrinsic_program(
-            atom_symbol_current_id(head), arity, NULL) ||
+        cetta_prepared_pure_intrinsic_row(
+            atom_symbol_current_id(head), arity, NULL, NULL) ||
         is_grounded_op(atom_symbol_current_id(head)) ||
         prepared_pure_builtin_syntax(atom_symbol_current_id(head))) {
         return PREPARED_PURE_HEAD_CALLABLE;
@@ -3370,10 +3457,11 @@ static bool prepared_pure_compile_template(
             CettaExprLen payload_arity = source->expr.len - 1u;
             if (prepared_pure_register_program(program,
                     atom_symbol_current_id(payload_head), payload_arity, NULL, NULL) ||
-                prepared_pure_intrinsic_program(
-                    atom_symbol_current_id(payload_head), payload_arity, NULL) ||
-                prepared_pure_control_program(
-                    atom_symbol_current_id(payload_head), payload_arity, NULL)) {
+                prepared_pure_program_intrinsic_row(
+                    program, atom_symbol_current_id(payload_head),
+                    payload_arity, NULL, NULL) ||
+                cetta_gslt_fold_control_program(
+                    atom_symbol_current_id(payload_head), payload_arity, NULL, &g_builtin_syms)) {
                 return prepared_pure_compile_eval(
                     program, context, source, source_view,
                     depth, node_out);
@@ -3423,6 +3511,27 @@ static uint8_t prepared_pure_undefined_type_operands(
     return operands;
 }
 
+/* A structural bind consumes a pattern value. A source occurrence that
+ * computes its pattern must stay with the owning evaluator; treating its
+ * syntax as a template would erase bindings supplied by a consumer. */
+static bool prepared_pure_compile_inert_bind_pattern(
+        CettaPreparedPureProgram *program,
+        PreparedPureCompileContext *context, Atom *pattern,
+        const void *source_view, uint32_t *pattern_index_out) {
+    CettaPreparedPureSourceRole role =
+        prepared_pure_source_role(program, source_view);
+    if (role == CETTA_PREPARED_PURE_SOURCE_CALL ||
+        role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL ||
+        role == CETTA_PREPARED_PURE_SOURCE_DECLINE ||
+        (role == CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED &&
+         program->source_view.role && pattern->kind == ATOM_EXPR &&
+         !prepared_pure_template_head_is_inert(program, pattern)))
+        return prepared_pure_reject(
+            program, "binding pattern requires source evaluation", pattern);
+    return prepared_pure_compile_bind_pattern(
+        program, context, pattern, pattern_index_out);
+}
+
 /* A bind sequence (let*) from pair `index` on: the pair's value, then its
  * pattern bound for the rest, as nested binds ending in the body. */
 static bool prepared_pure_compile_bind_sequence(
@@ -3451,8 +3560,10 @@ static bool prepared_pure_compile_bind_sequence(
             pair->expr.elems[1]);
     size_t saved_bindings = context->len;
     uint32_t pattern_index = 0u;
-    if (!prepared_pure_compile_bind_pattern(
-            program, context, pair->expr.elems[0], &pattern_index))
+    if (!prepared_pure_compile_inert_bind_pattern(
+            program, context, pair->expr.elems[0],
+            prepared_pure_source_child(program, pair_view, 0u),
+            &pattern_index))
         return prepared_pure_reject(
             program, "let* pattern is outside the fragment",
             pair->expr.elems[0]);
@@ -3564,8 +3675,16 @@ static Atom *prepared_pure_boolean_atom(
     const CettaPreparedPureProgram *program, Arena *arena, bool value) {
     if (!program || !program->boolean_value)
         return NULL;
-    return program->boolean_atoms_ready
-        ? (Atom *)&program->boolean_atoms[value ? 1u : 0u]
+    if (!program->boolean_atoms_ready)
+        return program->boolean_value(arena, value);
+    Atom *cached = (Atom *)&program->boolean_atoms[value ? 1u : 0u];
+    if (!program->exports_boolean_results)
+        return cached;
+    /* A parent consumer may outlive this private program. Symbols have
+     * canonical table-owned leaves; other Boolean spellings are made in
+     * the execution arena whose results the consumer already retains. */
+    return cached->kind == ATOM_SYMBOL
+        ? atom_symbol_canonical(atom_symbol_current_id(cached))
         : program->boolean_value(arena, value);
 }
 
@@ -3986,7 +4105,7 @@ static bool prepared_pure_compile_function(
                 ? call->expr.len - 1u : 0u;
             /* One evaluation step of a grounded operation is its value. */
             grounded_step = call_head != SYMBOL_ID_NONE &&
-                (prepared_pure_intrinsic_program(
+                (cetta_prepared_pure_intrinsic_program(
                      call_head, call_arity, NULL) ||
                  prepared_pure_register_program(
                      program, call_head, call_arity, NULL, NULL));
@@ -4706,8 +4825,10 @@ static bool prepared_pure_compile_eval_with_role(
         if (expression_view_state ==
             CETTA_PREPARED_PURE_EXPRESSION_OBSERVE) {
             if (!expression_view.projected ||
-                expression_view.observation !=
-                    CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION)
+                (expression_view.observation !=
+                     CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION &&
+                 expression_view.observation !=
+                     CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE))
                 return prepared_pure_reject(
                     program, "invalid dialect value observation", source);
             /* PeTTa's is-expr observes the value of its operand. */
@@ -5012,7 +5133,7 @@ static bool prepared_pure_compile_eval_with_role(
             children, 2u, node_out);
     }
     CettaGsltFoldControl control;
-    if (prepared_pure_control_program(head, arity, &control)) {
+    if (cetta_gslt_fold_control_program(head, arity, &control, &g_builtin_syms)) {
         if (control == CETTA_GSLT_FOLD_CONTROL_EVALUATE) {
             return arity == 1u && prepared_pure_compile_eval(
                 program, context, source->expr.elems[1],
@@ -5047,8 +5168,9 @@ static bool prepared_pure_compile_eval_with_role(
                     source->expr.elems[2]);
             size_t saved_bindings = context->len;
             uint32_t pattern_index = 0u;
-            if (!prepared_pure_compile_bind_pattern(
+            if (!prepared_pure_compile_inert_bind_pattern(
                     program, context, source->expr.elems[1],
+                    prepared_pure_source_child(program, source_view, 1u),
                     &pattern_index))
                 return prepared_pure_reject(
                     program, "let pattern is outside the fragment",
@@ -5114,9 +5236,28 @@ static bool prepared_pure_compile_eval_with_role(
         return ok;
     }
 
+    CettaGsltPreparedPureIntrinsicOperandDiscipline intrinsic_discipline;
     CettaGsltPreparedPureIntrinsicInstruction intrinsic_instruction;
-    if (prepared_pure_intrinsic_program(
-            head, arity, &intrinsic_instruction)) {
+    if (prepared_pure_program_intrinsic_row(
+            program, head, arity, &intrinsic_discipline,
+            &intrinsic_instruction)) {
+        uint32_t operand_discipline = PREPARED_PURE_INTRINSIC_STRICT;
+        if (intrinsic_discipline ==
+                CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT) {
+            bool absorbing = false;
+            if (!prepared_pure_short_circuit_absorbing(head, arity, &absorbing))
+                return prepared_pure_reject(
+                    program, "short-circuit head has no absorbing value",
+                    source);
+            operand_discipline = absorbing
+                ? PREPARED_PURE_INTRINSIC_ABSORBS_TRUE
+                : PREPARED_PURE_INTRINSIC_ABSORBS_FALSE;
+        } else if (intrinsic_discipline !=
+                   CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL) {
+            return prepared_pure_reject(
+                program, "intrinsic operand discipline has no executor",
+                source);
+        }
         if (program->call_mode == CETTA_GSLT_PURE_CALL_CALL_BY_NEED &&
             (intrinsic_instruction ==
                  CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS ||
@@ -5150,6 +5291,7 @@ static bool prepared_pure_compile_eval_with_role(
                 .atom = head_atom,
                 .head = head,
                 .intrinsic_instruction = intrinsic_instruction,
+                .auxiliary = operand_discipline,
             },
             children, arity, node_out);
         free(children);
@@ -7720,6 +7862,18 @@ static bool prepared_pure_is_false(Atom *atom) {
             atom->ground.gkind == GV_BOOL && !atom->ground.bval);
 }
 
+/* Whether the first operand value of a short-circuit intrinsic node is its
+ * answer, so that its second operand is not evaluated. */
+static inline bool prepared_pure_intrinsic_absorbed(
+    const PreparedPureNode *node, Atom *first) {
+    if (node->kind != PREPARED_PURE_INTRINSIC || !first)
+        return false;
+    if (node->auxiliary == PREPARED_PURE_INTRINSIC_ABSORBS_FALSE)
+        return prepared_pure_is_false(first);
+    return node->auxiliary == PREPARED_PURE_INTRINSIC_ABSORBS_TRUE &&
+        prepared_pure_is_true(first);
+}
+
 /* PeTTa `if` takes the else branch for any other non-empty, non-error value.
  * A variable still belongs to the general machine, which tries both branches. */
 static bool prepared_pure_petta_else_value(Atom *condition) {
@@ -7806,6 +7960,7 @@ static bool prepared_pure_grounded_intrinsic_type_equal(
     case GV_BINDINGS:
     case GV_TENSOR:
     case GV_FOREIGN:
+    case GV_STRUCTURAL:
     case GV_SEAL:
     case GV_TERM_GRAPH:
     case GV_INTERNAL_TAG:
@@ -7986,21 +8141,36 @@ static Atom *prepared_pure_execute_intrinsic(
     const CettaPreparedPureProgram *program, Arena *arena,
     CettaGsltPreparedPureIntrinsicInstruction instruction,
     Atom *head, Atom *const *arguments, uint32_t arity) {
-    if (!program || !program->construct_value || !arena || !head ||
-        !arguments)
+    if (!program || !program->construct_value || !arena || !head || head->kind != ATOM_SYMBOL ||
+        !arguments ||
+        !cetta_prepared_pure_intrinsic_row(
+            atom_symbol_current_id(head), arity, NULL, NULL))
         return NULL;
     switch (instruction) {
-    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH: {
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH:
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH: {
         Atom *result = grounded_dispatch(
             arena, head, (Atom **)arguments, arity);
+        if (instruction == CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH) {
+            if (prepared_pure_is_true(result))
+                return prepared_pure_boolean_atom(program, arena, true);
+            if (prepared_pure_is_false(result))
+                return prepared_pure_boolean_atom(program, arena, false);
+            return NULL;
+        }
         return result && !atom_is_empty_or_error(result) ? result : NULL;
     }
-    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH:
+    case CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH: {
+        CettaInvocation invocation = {
+            .head = binding_value_from_atom(head),
+            .supplied = {.atoms = arguments, .count = arity},
+        };
         return program->source_view.native_value
             ? program->source_view.native_value(
                   program->source_view.native_context,
-                  program->space, arena, head, arguments, arity)
+                  program->space, arena, &invocation)
             : NULL;
+    }
     /* The structural intrinsics read an expression's children or a list's
      * elements, and build a result of the same kind; a list pattern is
      * declined to the canonical evaluator. */
@@ -8131,7 +8301,7 @@ static Atom *prepared_pure_execute_register_intrinsic(
     Atom *head, Atom *const *arguments, uint32_t arity) {
     CettaGsltPreparedPureIntrinsicInstruction intrinsic_instruction;
     if (!head || head->kind != ATOM_SYMBOL ||
-        !prepared_pure_intrinsic_program(
+        !cetta_prepared_pure_intrinsic_program(
             atom_symbol_current_id(head), arity, &intrinsic_instruction) ||
         intrinsic_instruction !=
             CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH)
@@ -8228,7 +8398,7 @@ static bool prepared_pure_eval_dynamic_register_value(
         bool is_register = prepared_pure_register_program(
             program, atom_symbol_current_id(head), arity, &result_kind, &instruction);
         bool is_intrinsic = !is_register &&
-            prepared_pure_intrinsic_program(
+            cetta_prepared_pure_intrinsic_program(
                 atom_symbol_current_id(head), arity, &intrinsic_instruction);
         if (!is_register && !is_intrinsic)
             return false;
@@ -8310,11 +8480,97 @@ static inline Atom *prepared_pure_immediate_value(
  * exact integer or a truth computed here may have none. */
 typedef struct {
     Atom *atom;
-    int64_t integer;
+    union { int64_t integer; double floating; };
     bool is_integer;
+    bool is_float;
     bool is_boolean;
     bool boolean;
 } PreparedPureScalar;
+
+static bool prepared_pure_scalar_tree_reference_enabled(void) {
+    static _Thread_local int enabled = -1;
+    if (enabled < 0) {
+        const char *value = getenv("CETTA_PREPARED_PURE_SCALAR_TREE_REFERENCE");
+        enabled = value && *value && strcmp(value, "0") != 0;
+    }
+    return enabled != 0;
+}
+
+static inline PreparedPureScalar prepared_pure_scalar_atom(Atom *atom) {
+    PreparedPureScalar value = {.atom = atom};
+    if (atom && atom->kind == ATOM_GROUNDED) {
+        if (atom->ground.gkind == GV_INT) {
+            value.is_integer = true;
+            value.integer = atom->ground.ival;
+        } else if (atom->ground.gkind == GV_FLOAT) {
+            value.is_float = true;
+            value.floating = atom->ground.fval;
+        }
+    }
+    return value;
+}
+
+static bool prepared_pure_scalar_plain(
+    const PreparedPureScalar *value, CettaPlainScalar *plain) {
+    if (value->is_integer) {
+        *plain = (CettaPlainScalar){.kind = CETTA_PLAIN_SCALAR_INT,
+            .as.integer = value->integer};
+        return true;
+    }
+    if (value->is_float) {
+        *plain = (CettaPlainScalar){.kind = CETTA_PLAIN_SCALAR_FLOAT,
+            .as.floating = value->floating};
+        return true;
+    }
+    if (value->is_boolean) {
+        *plain = (CettaPlainScalar){.kind = CETTA_PLAIN_SCALAR_BOOL,
+            .as.boolean = value->boolean};
+        return true;
+    }
+    return grounded_plain_scalar_from_atom(value->atom, plain);
+}
+
+/* Reuse the successful ordinary intrinsic arm. The generated register arm
+ * itself still denotes exact integers; a float is never relabelled as one. */
+static bool prepared_pure_scalar_float_operation(
+    const PreparedPureNode *node, const PreparedPureScalar *left,
+    const PreparedPureScalar *right, PreparedPureScalar *out) {
+    CettaGsltPreparedPureIntrinsicInstruction instruction;
+    if ((!left->is_float && !right->is_float) || !node->atom ||
+        node->atom->kind != ATOM_SYMBOL ||
+        !cetta_prepared_pure_intrinsic_program(atom_symbol_current_id(node->atom), 2u, &instruction) ||
+        instruction != CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH)
+        return false;
+    CettaPlainScalar arguments[2], result;
+    if (!prepared_pure_scalar_plain(left, &arguments[0]) ||
+        !prepared_pure_scalar_plain(right, &arguments[1]) ||
+        !grounded_try_plain_scalar_operation(node->atom, arguments, 2u, &result) ||
+        (node->result_kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN &&
+         result.kind != CETTA_PLAIN_SCALAR_BOOL))
+        return false;
+    if (result.kind == CETTA_PLAIN_SCALAR_FLOAT) {
+        out->is_float = true;
+        out->floating = result.as.floating;
+    } else if (result.kind == CETTA_PLAIN_SCALAR_BOOL) {
+        out->is_boolean = true;
+        out->boolean = result.as.boolean;
+    } else {
+        out->is_integer = true;
+        out->integer = result.as.integer;
+    }
+    return true;
+}
+
+static Atom *prepared_pure_scalar_leaf(
+    const PreparedPureScalar *value, Atom *storage) {
+    if (value->atom) return value->atom;
+    if (value->is_integer) atom_scalar_leaf_int(storage, value->integer);
+    else if (value->is_float) atom_scalar_leaf_float(storage, value->floating);
+    /* A computed truth's Atom representation belongs to boolean_value.
+     * Leave a representation observation to the boxed dialect boundary. */
+    else return NULL;
+    return storage;
+}
 
 static Atom *prepared_pure_inline_value(
     CettaPreparedPureProgram *program, Arena *arena,
@@ -8343,10 +8599,10 @@ static bool prepared_pure_scalar_operands_share_type(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_UNDEFINED_TYPE_OPERAND);
         return true;
     }
-    bool left_number = left->is_integer ||
+    bool left_number = left->is_integer || left->is_float ||
         (left->atom && left->atom->kind == ATOM_GROUNDED &&
          prepared_pure_numeric_ground_kind(left->atom->ground.gkind));
-    bool right_number = right->is_integer ||
+    bool right_number = right->is_integer || right->is_float ||
         (right->atom && right->atom->kind == ATOM_GROUNDED &&
          prepared_pure_numeric_ground_kind(right->atom->ground.gkind));
     if ((left_number && right_number) ||
@@ -8365,6 +8621,11 @@ static bool prepared_pure_inline_register_scalar(
     const PreparedPureNode *node, uint32_t local_base, uint32_t depth,
     uint32_t *budget, PreparedPureScalar *out);
 
+static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_scalar_binary(
+    CettaPreparedPureProgram *program, const PreparedPureNode *node,
+    const PreparedPureScalar *left_value, const PreparedPureScalar *right_value,
+    PreparedPureScalar *out);
+
 /* A node's value held unboxed where no step is needed: an immediate or
  * inline value, or a register arm decided on unboxed operands.  False
  * leaves the node to its frame. */
@@ -8379,11 +8640,7 @@ static bool prepared_pure_inline_scalar(
             program, arena, node, local_base, depth, budget);
     }
     if (atom) {
-        out->atom = atom;
-        if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_INT) {
-            out->is_integer = true;
-            out->integer = atom->ground.ival;
-        }
+        *out = prepared_pure_scalar_atom(atom);
         return true;
     }
     if (node->kind != PREPARED_PURE_REGISTER || node->child_count != 2u ||
@@ -8415,6 +8672,15 @@ static bool PREPARED_PURE_NOINLINE prepared_pure_inline_register_scalar(
             &program->nodes[program->children[node->first_child + 1u]],
             local_base, depth - 1u, budget, &right))
         return false;
+    return prepared_pure_scalar_binary(program, node, &left, &right, out);
+}
+
+static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_scalar_binary(
+    CettaPreparedPureProgram *program, const PreparedPureNode *node,
+    const PreparedPureScalar *left_value, const PreparedPureScalar *right_value,
+    PreparedPureScalar *out) {
+    PreparedPureScalar left = *left_value, right = *right_value;
+    *out = (PreparedPureScalar){0};
     if (node->instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
         if (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
             (!program->total_structural_equality &&
@@ -8422,7 +8688,6 @@ static bool PREPARED_PURE_NOINLINE prepared_pure_inline_register_scalar(
                  program, node, &left, &right)))
             return false;
         bool equal;
-        Atom integer_leaf;
         if (left.atom && right.atom &&
             prepared_pure_equality_reads_fields(
                 program, left.atom, right.atom))
@@ -8437,22 +8702,21 @@ static bool PREPARED_PURE_NOINLINE prepared_pure_inline_register_scalar(
                 : atom_value_eq(left.atom, right.atom);
         } else if (left.is_integer && right.is_integer) {
             equal = left.integer == right.integer;
-        } else if (left.is_integer && right.atom) {
-            atom_scalar_leaf_int(&integer_leaf, left.integer);
-            equal = atom_value_eq(&integer_leaf, right.atom);
-        } else if (right.is_integer && left.atom) {
-            atom_scalar_leaf_int(&integer_leaf, right.integer);
-            equal = atom_value_eq(left.atom, &integer_leaf);
         } else {
-            return false;
+            Atom left_storage, right_storage;
+            Atom *left_value = prepared_pure_scalar_leaf(&left, &left_storage);
+            Atom *right_value = prepared_pure_scalar_leaf(&right, &right_storage);
+            if (!left_value || !right_value) return false;
+            equal = atom_value_eq(left_value, right_value);
         }
         out->is_boolean = true;
         out->boolean = equal;
         return true;
     }
+    if (!left.is_integer || !right.is_integer)
+        return prepared_pure_scalar_float_operation(node, &left, &right, out);
     CettaGsltRegisterOperandDiscipline discipline;
-    if (!left.is_integer || !right.is_integer ||
-        !cetta_gslt_register_operand_discipline(
+    if (!cetta_gslt_register_operand_discipline(
             node->instruction, &discipline) ||
         discipline != CETTA_GSLT_REGISTER_OPERANDS_EXACT_INTEGER_OPERANDS)
         return false;
@@ -8509,6 +8773,8 @@ static Atom *prepared_pure_inline_value(
                     program, arena, scalar.boolean);
             if (scalar.atom)
                 return scalar.atom;
+            if (scalar.is_float)
+                return atom_float(arena, scalar.floating);
             return scalar.is_integer ? atom_int(arena, scalar.integer) : NULL;
         }
     }
@@ -8521,6 +8787,10 @@ static Atom *prepared_pure_inline_value(
             local_base, depth - 1u, budget);
         if (!operands[i])
             return NULL;
+        /* A short-circuit node answers its absorbing first value; its
+         * second operand is not evaluated. */
+        if (i == 0u && prepared_pure_intrinsic_absorbed(node, operands[0]))
+            return operands[0];
     }
     if (node->kind == PREPARED_PURE_BUILD) {
         if (node->auxiliary == PREPARED_PURE_BUILD_DATA_HEAD &&
@@ -8610,6 +8880,14 @@ prepared_pure_finish_children(
     }
     uint32_t budget = PREPARED_PURE_INLINE_NODES;
     while (frame->child_index < node->child_count) {
+        /* A short-circuit node whose first value it absorbs is ready with
+         * that one value; its second operand is not evaluated. */
+        if (__builtin_expect(frame->child_index == 1u &&
+                node->kind == PREPARED_PURE_INTRINSIC &&
+                node->auxiliary != PREPARED_PURE_INTRINSIC_STRICT, 0) &&
+            prepared_pure_intrinsic_absorbed(
+                node, program->values[frame->value_base]))
+            return PREPARED_PURE_CHILDREN_READY;
         uint32_t child =
             program->children[node->first_child + frame->child_index];
         Atom *value = prepared_pure_inline_value(
@@ -9310,6 +9588,49 @@ continue_call:
         program, equation->root, call_base);
 }
 
+/* This is a capability of the compiled value algebra, not a property of
+ * the current arguments. In particular, a match test or an evaluated slot
+ * must never acquire it merely because its last invocation was ground. */
+static bool prepared_pure_open_value_program(
+    const CettaPreparedPureProgram *program) {
+    if (!program || program->closed_program || program->answer_producer ||
+        program->call_mode != CETTA_GSLT_PURE_CALL_EAGER)
+        return false;
+    for (size_t index = 0u; index < program->node_len; index++) {
+        const PreparedPureNode *node = &program->nodes[index];
+        switch (node->kind) {
+        case PREPARED_PURE_LITERAL:
+            if (!node->atom || atom_has_vars(node->atom) ||
+                atom_is_error(node->atom) || atom_is_petta_no_result(node->atom))
+                return false;
+            break;
+        case PREPARED_PURE_SLOT:
+            if (node->auxiliary != program->accumulator_slot &&
+                node->auxiliary != program->item_slot)
+                return false;
+            break;
+        case PREPARED_PURE_BUILD:
+            break;
+        case PREPARED_PURE_IF:
+            if (node->child_count != 3u)
+                return false;
+            break;
+        case PREPARED_PURE_OBSERVE:
+            if (node->child_count > 1u ||
+                (node->child_count == 0u &&
+                 (!node->atom || atom_has_vars(node->atom))) ||
+                (node->auxiliary != CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE &&
+                 node->auxiliary != CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION &&
+                 node->auxiliary != PREPARED_PURE_OBSERVE_ATOM_EXPRESSION))
+                return false;
+            break;
+        default:
+            return false;
+        }
+    }
+    return true;
+}
+
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     Space *space, Atom *expression,
     VarId accumulator_var, VarId item_var,
@@ -9369,6 +9690,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
         cetta_prepared_pure_program_free(program);
         return NULL;
     }
+    program->accepts_open_values = prepared_pure_open_value_program(program);
     return program;
 }
 
@@ -9489,7 +9811,7 @@ static bool prepared_pure_compile_closed_entry_call(
     SymbolId head = atom_symbol_current_id(expression->expr.elems[0]);
     CettaExprLen arity = expression->expr.len - 1u;
     CettaGsltFoldControl control;
-    if (prepared_pure_control_program(head, arity, &control)) {
+    if (cetta_gslt_fold_control_program(head, arity, &control, &g_builtin_syms)) {
         /* A Need control's operands are invocation data while its scheduling
          * discipline is generated language semantics.  Compile that fixed
          * discipline once and demand only the operands selected at runtime.
@@ -9527,7 +9849,8 @@ static bool prepared_pure_compile_closed_entry_call(
      * relations.  Let compile_eval lower their concrete occurrences. */
     if (prepared_pure_register_program(
             program, head, arity, NULL, NULL) ||
-        prepared_pure_intrinsic_program(head, arity, NULL)) {
+        prepared_pure_program_intrinsic_row(
+            program, head, arity, NULL, NULL)) {
         return true;
     }
     bool defined = false;
@@ -10048,6 +10371,11 @@ static bool prepared_pure_lower_node(
     case PREPARED_PURE_REGISTER:
     case PREPARED_PURE_INTRINSIC:
     case PREPARED_PURE_OBSERVE: {
+        /* A step evaluates every operand; a short-circuit node is left to
+         * the frame executor. */
+        if (node.kind == PREPARED_PURE_INTRINSIC &&
+            node.auxiliary != PREPARED_PURE_INTRINSIC_STRICT)
+            return false;
         uint32_t *operands = NULL;
         uint32_t lowered = 0u;
         if (!prepared_pure_lower_operands(
@@ -10261,6 +10589,77 @@ static bool prepared_pure_code_operand(
     return true;
 }
 
+/* Admit only bounded trees of pure register operations whose leaves already
+ * hold values. Calls, forced slots, bindings and constructors are boundaries:
+ * hoisting them could change failure, effect or termination order. */
+static bool prepared_pure_code_scalar_tree(
+    PreparedPureCodeLowering *lowering, uint32_t index, uint32_t depth,
+    uint32_t *budget, uint32_t *operations, uint32_t *locals, uint32_t *count,
+    uint32_t *tape, uint32_t *tape_count, bool *floating) {
+    CettaPreparedPureProgram *program = lowering->program;
+    if (index >= program->node_len || *budget == 0u) return false;
+    (*budget)--;
+    const PreparedPureNode *node = &program->nodes[index];
+    if (node->kind == PREPARED_PURE_LITERAL) {
+        CettaPlainScalar value;
+        if (!grounded_plain_scalar_from_atom(node->atom, &value)) return false;
+        *floating |= value.kind == CETTA_PLAIN_SCALAR_FLOAT;
+        tape[(*tape_count)++] = index;
+        return true;
+    }
+    if (node->kind == PREPARED_PURE_SLOT) {
+        if (node->auxiliary >= lowering->local_count ||
+            *count >= PREPARED_PURE_INLINE_NODES) return false;
+        locals[(*count)++] = node->auxiliary;
+        tape[(*tape_count)++] = index;
+        return true;
+    }
+    if (depth == 0u || node->kind != PREPARED_PURE_REGISTER ||
+        node->child_count != 2u || !node->atom ||
+        !grounded_is_plain_scalar_tree_operator(node->atom, 2u) ||
+        node->first_child > program->child_len ||
+        2u > program->child_len - node->first_child) return false;
+    CettaGsltPreparedPureIntrinsicInstruction intrinsic;
+    if (!cetta_prepared_pure_intrinsic_program(atom_symbol_current_id(node->atom),2u,&intrinsic) ||
+        intrinsic != CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) return false;
+    (*operations)++;
+    if (!prepared_pure_code_scalar_tree(lowering,
+               program->children[node->first_child], depth-1u,
+               budget, operations, locals, count, tape, tape_count, floating) ||
+        !prepared_pure_code_scalar_tree(lowering,
+               program->children[node->first_child+1u], depth-1u,
+               budget, operations, locals, count, tape, tape_count, floating))
+        return false;
+    tape[(*tape_count)++] = index;
+    return true;
+}
+
+/* Lower the admitted postorder tree to register operations. Locals and
+ * literals are operands, not runtime push instructions; each computed value
+ * has a fresh compact register. Repeated occurrences are not deduplicated. */
+static bool prepared_pure_scalar_registers(CettaPreparedPureProgram *program,
+    const uint32_t *tape, uint32_t count, uint32_t *code, uint32_t *operations) {
+    uint32_t stack[PREPARED_PURE_INLINE_NODES], height = 0u;
+    *operations = 0u;
+    for (uint32_t i=0u; i<count; i++) {
+        const PreparedPureNode *node = &program->nodes[tape[i]];
+        if (node->kind == PREPARED_PURE_LITERAL) {
+            if (tape[i] >= PREPARED_PURE_SCALAR_LOCAL) return false;
+            stack[height++] = PREPARED_PURE_SCALAR_LITERAL | tape[i];
+        } else if (node->kind == PREPARED_PURE_SLOT) {
+            if (node->auxiliary >= PREPARED_PURE_SCALAR_LOCAL) return false;
+            stack[height++] = PREPARED_PURE_SCALAR_LOCAL | node->auxiliary;
+        } else {
+            if (height < 2u || node->kind != PREPARED_PURE_REGISTER) return false;
+            uint32_t right = stack[--height], left = stack[--height];
+            uint32_t op = (*operations)++;
+            code[op*3u] = tape[i]; code[op*3u+1u] = left; code[op*3u+2u] = right;
+            stack[height++] = op;
+        }
+    }
+    return height == 1u && *operations > 0u;
+}
+
 /* The operands of a node's children, left to right, in a new array. */
 static bool prepared_pure_code_operands(
     PreparedPureCodeLowering *lowering, uint32_t first_child,
@@ -10319,6 +10718,46 @@ static bool prepared_pure_code_node(
     case PREPARED_PURE_REGISTER:
     case PREPARED_PURE_INTRINSIC:
     case PREPARED_PURE_OBSERVE: {
+        /* Register code evaluates every operand; a short-circuit node is
+         * left to the frame executor. */
+        if (node.kind == PREPARED_PURE_INTRINSIC &&
+            node.auxiliary != PREPARED_PURE_INTRINSIC_STRICT)
+            return false;
+        if (node.kind == PREPARED_PURE_REGISTER && node.child_count == 2u &&
+            node.first_child < program->child_len &&
+            2u <= program->child_len-node.first_child &&
+            program->children[node.first_child] < program->node_len &&
+            program->children[node.first_child+1u] < program->node_len &&
+            (program->nodes[program->children[node.first_child]].kind == PREPARED_PURE_REGISTER ||
+             program->nodes[program->children[node.first_child+1u]].kind == PREPARED_PURE_REGISTER) &&
+            !prepared_pure_scalar_tree_reference_enabled()) {
+            uint32_t locals[PREPARED_PURE_INLINE_NODES];
+            uint32_t tape[PREPARED_PURE_INLINE_NODES], tape_count = 0u;
+            bool floating = false;
+            uint32_t count = 0u, operations = 0u;
+            uint32_t budget = PREPARED_PURE_INLINE_NODES;
+            if (prepared_pure_code_scalar_tree(lowering, node_index,
+                    PREPARED_PURE_INLINE_DEPTH, &budget, &operations,
+                    locals, &count, tape, &tape_count, &floating) &&
+                operations > 1u && floating) {
+                uint32_t compact[PREPARED_PURE_INLINE_NODES*3u], op_count = 0u;
+                if (!prepared_pure_scalar_registers(program,tape,tape_count,compact,&op_count))
+                    return false;
+                uint32_t words = op_count*3u;
+                if (program->scalar_code_len > UINT32_MAX-words ||
+                    !prepared_pure_reserve((void **)&program->scalar_code,
+                        sizeof(*program->scalar_code), &program->scalar_code_cap,
+                        program->scalar_code_len+words)) return false;
+                uint32_t first = (uint32_t)program->scalar_code_len;
+                memcpy(program->scalar_code+first,compact,words*sizeof(*compact));
+                program->scalar_code_len += words;
+                return prepared_pure_code_emit(program,
+                    (PreparedPureCode){.kind = PREPARED_PURE_CODE_SCALAR_TREE,
+                        .destination = destination, .auxiliary = node_index,
+                        .target = first, .scalar_count = (uint8_t)op_count,
+                        .returns = tail}, locals, count, NULL);
+            }
+        }
         uint32_t *operands = NULL;
         if (!prepared_pure_code_operands(
                 lowering, node.first_child, node.child_count, depth,
@@ -10541,6 +10980,7 @@ static bool prepared_pure_code_liveness(
              code->kind == PREPARED_PURE_CODE_BUILD ||
              code->kind == PREPARED_PURE_CODE_BUILD_EXPRESSION ||
              code->kind == PREPARED_PURE_CODE_REGISTER ||
+             code->kind == PREPARED_PURE_CODE_SCALAR_TREE ||
              code->kind == PREPARED_PURE_CODE_INTRINSIC ||
              code->kind == PREPARED_PURE_CODE_OBSERVE ||
              code->kind == PREPARED_PURE_CODE_CALL);
@@ -11081,14 +11521,18 @@ prepared_pure_program_compile_closed_mode(
     if (expression->kind == ATOM_EXPR && expression->expr.len > 0u) {
         Atom *root_head = expression->expr.elems[0];
         CettaExprLen root_arity = expression->expr.len - 1u;
+        CettaGsltPreparedPureIntrinsicOperandDiscipline root_discipline;
         bool generated_expression =
             root_head && root_head->kind == ATOM_SYMBOL &&
-            (prepared_pure_control_program(
-                 atom_symbol_current_id(root_head), root_arity, NULL) ||
+            (cetta_gslt_fold_control_program(
+                 atom_symbol_current_id(root_head), root_arity, NULL, &g_builtin_syms) ||
              prepared_pure_register_program(
                  NULL, atom_symbol_current_id(root_head), root_arity, NULL, NULL) ||
-             prepared_pure_intrinsic_program(
-                 atom_symbol_current_id(root_head), root_arity, NULL));
+             (cetta_prepared_pure_intrinsic_row(
+                  atom_symbol_current_id(root_head), root_arity,
+                  &root_discipline, NULL) &&
+              prepared_pure_discipline_visible(
+                  service_source_nodes, root_discipline)));
         HeMacroArgument macro_arguments[HE_MACRO_MAX_ARITY];
         if (!generated_expression && root_head &&
             root_head->kind == ATOM_SYMBOL &&
@@ -11283,6 +11727,34 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_optional(
         expression_view, pattern_view, source_view, entry_arguments_are_values,
         total_structural_equality, match_decision_semantics, false, false,
         PREPARED_PURE_RESULT_OPTIONAL);
+}
+
+bool cetta_prepared_pure_program_accepts_open_values(
+    const CettaPreparedPureProgram *program) {
+    return program && program->accepts_open_values;
+}
+
+static bool prepared_pure_is_cached_boolean(const Atom *atom, void *context) {
+    const CettaPreparedPureProgram *program = context;
+    return atom == &program->boolean_atoms[0] ||
+           atom == &program->boolean_atoms[1];
+}
+
+bool cetta_prepared_pure_program_use_exportable_booleans(
+    CettaPreparedPureProgram *program) {
+    if (!program || program->closed_program || program->code_ready ||
+        program->frame_len || program->value_len || program->slot_len)
+        return false;
+    if (program->boolean_atoms_ready) {
+        for (size_t index = 0u; index < program->node_len; index++) {
+            if (program->nodes[index].atom && atom_graph_any(
+                    program->nodes[index].atom, prepared_pure_is_cached_boolean,
+                    program))
+                return false;
+        }
+    }
+    program->exports_boolean_results = true;
+    return true;
 }
 
 bool cetta_prepared_pure_program_is_current(
@@ -13209,21 +13681,14 @@ static PREPARED_PURE_NOINLINE bool prepared_pure_code_safe_point(
  * integers without overflow.  False leaves it to the boxed arm. */
 static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_code_register_scalar(
     const CettaPreparedPureProgram *program, const PreparedPureNode *node,
-    Atom *left_atom, Atom *right_atom, PreparedPureScalar *out) {
-    PreparedPureScalar left = {.atom = left_atom};
-    PreparedPureScalar right = {.atom = right_atom};
-    if (left_atom->kind == ATOM_GROUNDED &&
-        left_atom->ground.gkind == GV_INT) {
-        left.is_integer = true;
-        left.integer = left_atom->ground.ival;
-    }
-    if (right_atom->kind == ATOM_GROUNDED &&
-        right_atom->ground.gkind == GV_INT) {
-        right.is_integer = true;
-        right.integer = right_atom->ground.ival;
-    }
-    *out = (PreparedPureScalar){0};
+    Atom *left_atom, Atom *right_atom, CettaPlainScalar *out) {
+    bool left_integer = left_atom->kind == ATOM_GROUNDED &&
+        left_atom->ground.gkind == GV_INT;
+    bool right_integer = right_atom->kind == ATOM_GROUNDED &&
+        right_atom->ground.gkind == GV_INT;
     if (node->instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
+        PreparedPureScalar left = {.atom = left_atom};
+        PreparedPureScalar right = {.atom = right_atom};
         if (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
             prepared_pure_equality_reads_fields(
                 program, left_atom, right_atom) ||
@@ -13231,14 +13696,16 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_code_register_scalar(
              !prepared_pure_scalar_operands_share_type(
                  program, node, &left, &right)))
             return false;
-        out->is_boolean = true;
-        out->boolean = left.is_integer && right.is_integer
-            ? left.integer == right.integer
-            : atom_value_eq(left_atom, right_atom);
+        *out = (CettaPlainScalar){
+            .kind = CETTA_PLAIN_SCALAR_BOOL,
+            .as.boolean = left_integer && right_integer
+                ? left_atom->ground.ival == right_atom->ground.ival
+                : atom_value_eq(left_atom, right_atom),
+        };
         return true;
     }
     CettaGsltRegisterOperandDiscipline discipline;
-    if (!left.is_integer || !right.is_integer ||
+    if (!left_integer || !right_integer ||
         !cetta_gslt_register_operand_discipline(
             node->instruction, &discipline) ||
         discipline != CETTA_GSLT_REGISTER_OPERANDS_EXACT_INTEGER_OPERANDS)
@@ -13249,20 +13716,40 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_code_register_scalar(
     CettaGsltRegisterResultKind kind = node->result_kind;
     if (!cetta_gslt_register_execute_small_binary(
             node->instruction, &integer, &boolean,
-            left.integer, right.integer, &kind, &promote) ||
+            left_atom->ground.ival, right_atom->ground.ival, &kind, &promote) ||
         promote || kind != node->result_kind)
         return false;
     if (kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER) {
-        out->is_integer = true;
-        out->integer = integer;
+        *out = (CettaPlainScalar){
+            .kind = CETTA_PLAIN_SCALAR_INT, .as.integer = integer};
         return true;
     }
     if (kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN) {
-        out->is_boolean = true;
-        out->boolean = boolean;
+        *out = (CettaPlainScalar){
+            .kind = CETTA_PLAIN_SCALAR_BOOL, .as.boolean = boolean};
         return true;
     }
     return false;
+}
+
+/* Keep general float dispatch off the small-integer register arm: that arm
+ * remains a call-free inline operation, including in the branch executor. */
+static PREPARED_PURE_NOINLINE bool prepared_pure_code_float_scalar(
+    const PreparedPureNode *node, Atom *left_atom, Atom *right_atom,
+    CettaPlainScalar *out) {
+    CettaGsltPreparedPureIntrinsicInstruction instruction;
+    CettaPlainScalar arguments[2];
+    if (!node->atom || node->atom->kind != ATOM_SYMBOL ||
+        !cetta_prepared_pure_intrinsic_program(atom_symbol_current_id(node->atom), 2u, &instruction) ||
+        instruction != CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH ||
+        !grounded_plain_scalar_from_atom(left_atom, &arguments[0]) ||
+        !grounded_plain_scalar_from_atom(right_atom, &arguments[1]) ||
+        (arguments[0].kind != CETTA_PLAIN_SCALAR_FLOAT &&
+         arguments[1].kind != CETTA_PLAIN_SCALAR_FLOAT))
+        return false;
+    return grounded_try_plain_scalar_operation(node->atom, arguments, 2u, out) &&
+        (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
+         out->kind == CETTA_PLAIN_SCALAR_BOOL);
 }
 
 /* The value of a register node on its operand values, as its frame
@@ -13270,15 +13757,18 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_code_register_scalar(
 static PREPARED_PURE_ALWAYS_INLINE Atom *prepared_pure_code_register(
     const CettaPreparedPureProgram *program, Arena *arena,
     const PreparedPureNode *node, Atom *const *values, uint32_t count) {
-    PreparedPureScalar scalar;
+    CettaPlainScalar scalar;
     if (count == 2u &&
-        prepared_pure_code_register_scalar(
-            program, node, values[0], values[1], &scalar)) {
-        if (scalar.is_boolean)
+        (prepared_pure_code_register_scalar(
+            program, node, values[0], values[1], &scalar) ||
+         prepared_pure_code_float_scalar(node, values[0], values[1], &scalar))) {
+        if (scalar.kind == CETTA_PLAIN_SCALAR_BOOL)
             return prepared_pure_boolean_atom(
-                program, arena, scalar.boolean);
-        if (scalar.is_integer)
-            return atom_int(arena, scalar.integer);
+                program, arena, scalar.as.boolean);
+        if (scalar.kind == CETTA_PLAIN_SCALAR_INT)
+            return atom_int(arena, scalar.as.integer);
+        if (scalar.kind == CETTA_PLAIN_SCALAR_FLOAT)
+            return atom_float(arena, scalar.as.floating);
     }
     Atom *value = prepared_pure_execute_register(
         program, arena, node->instruction, node->result_kind,
@@ -13288,6 +13778,99 @@ static PREPARED_PURE_ALWAYS_INLINE Atom *prepared_pure_code_register(
             program, arena, node->result_kind, node->atom, values, count);
     return value && !(value->kind == ATOM_EXPR && atom_is_error(value))
         ? value : NULL;
+}
+
+static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_scalar_operand(
+    const CettaPreparedPureProgram *program, const CettaPlainScalar *registers,
+    uint32_t operand, uint32_t local_base, CettaPlainScalar *out) {
+    if (operand & PREPARED_PURE_SCALAR_LITERAL) {
+        uint32_t index = operand & ~PREPARED_PURE_SCALAR_LITERAL;
+        return grounded_plain_scalar_from_atom(
+            index < program->node_len ? program->nodes[index].atom : NULL, out);
+    }
+    if (operand & PREPARED_PURE_SCALAR_LOCAL) {
+        size_t index = (size_t)local_base +
+            (operand & ~PREPARED_PURE_SCALAR_LOCAL);
+        return grounded_plain_scalar_from_atom(
+            index < program->slot_len ? program->slots[index] : NULL, out);
+    }
+    *out = registers[operand];
+    return true;
+}
+
+static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_scalar_numbers(
+    const PreparedPureNode *node, const CettaPlainScalar *arguments,
+    CettaPlainScalar *out) {
+    if (arguments[0].kind == CETTA_PLAIN_SCALAR_BOOL ||
+        arguments[1].kind == CETTA_PLAIN_SCALAR_BOOL)
+        return false;
+    if (arguments[0].kind == CETTA_PLAIN_SCALAR_INT &&
+        arguments[1].kind == CETTA_PLAIN_SCALAR_INT) {
+        bool boolean = false, promote = false;
+        int64_t integer = 0;
+        if (node->instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
+            *out = (CettaPlainScalar){.kind = CETTA_PLAIN_SCALAR_BOOL,
+                .as.boolean = arguments[0].as.integer == arguments[1].as.integer};
+            return true;
+        }
+        CettaGsltRegisterResultKind kind = node->result_kind;
+        if (!cetta_gslt_register_execute_small_binary(node->instruction, &integer,
+                &boolean, arguments[0].as.integer, arguments[1].as.integer,
+                &kind, &promote) || promote || kind != node->result_kind)
+            return false;
+        if (kind == CETTA_GSLT_REGISTER_RESULT_BOOLEAN)
+            *out = (CettaPlainScalar){
+                .kind = CETTA_PLAIN_SCALAR_BOOL, .as.boolean = boolean};
+        else if (kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER)
+            *out = (CettaPlainScalar){
+                .kind = CETTA_PLAIN_SCALAR_INT, .as.integer = integer};
+        else
+            return false;
+        return true;
+    }
+    return grounded_try_plain_scalar_operation(node->atom, arguments, 2u, out) &&
+        (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
+         out->kind == CETTA_PLAIN_SCALAR_BOOL);
+}
+
+/* A compact scalar region has no calls, effects, safepoints or published
+ * intermediates. Refusal re-enters the broader boxed operation tree. The
+ * literal float evidence selects this realization; exact-integer code keeps
+ * its measured call-free register realization. */
+static PREPARED_PURE_NOINLINE Atom *prepared_pure_scalar_region(
+    CettaPreparedPureProgram *program, Arena *arena,
+    const PreparedPureCode *code, uint32_t local_base) {
+    CettaPlainScalar registers[PREPARED_PURE_INLINE_NODES];
+    if (code->target > program->scalar_code_len ||
+        (uint32_t)code->scalar_count * 3u >
+            program->scalar_code_len - code->target ||
+        code->scalar_count > PREPARED_PURE_INLINE_NODES)
+        return NULL;
+    for (uint32_t i = 0u; i < code->scalar_count; i++) {
+        const uint32_t *instruction = &program->scalar_code[code->target + i * 3u];
+        uint32_t index = instruction[0];
+        if (index >= program->node_len)
+            return NULL;
+        const PreparedPureNode *node = &program->nodes[index];
+        CettaPlainScalar arguments[2];
+        if (!prepared_pure_scalar_operand(
+                program, registers, instruction[1], local_base, &arguments[0]) ||
+            !prepared_pure_scalar_operand(
+                program, registers, instruction[2], local_base, &arguments[1]) ||
+            !prepared_pure_scalar_numbers(node, arguments, &registers[i]))
+            goto boxed;
+    }
+    if (code->scalar_count > 0u) {
+        const CettaPlainScalar *value = &registers[code->scalar_count - 1u];
+        if (value->kind == CETTA_PLAIN_SCALAR_BOOL)
+            return prepared_pure_boolean_atom(program, arena, value->as.boolean);
+        return grounded_plain_scalar_materialize(arena, value);
+    }
+boxed:;
+    uint32_t budget = PREPARED_PURE_INLINE_NODES;
+    return prepared_pure_inline_value(
+        program, arena, &program->nodes[code->auxiliary], local_base,
+        PREPARED_PURE_INLINE_DEPTH, &budget);
 }
 
 /* Run the program's register code from its root.  Activations are on
@@ -13418,6 +14001,18 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
             registers[code->destination] = value;
             continue;
         }
+        case PREPARED_PURE_CODE_SCALAR_TREE: {
+            const PreparedPureNode *node = &program->nodes[code->auxiliary];
+            Atom *value = prepared_pure_scalar_region(program,arena,code,frame->base);
+            if (!value) {
+                decline_node = node;
+                decline = "scalar tree declined";
+                goto declined;
+            }
+            if (code->returns) { returned = value; goto return_value; }
+            registers[code->destination] = value;
+            continue;
+        }
         case PREPARED_PURE_CODE_BUILD:
         case PREPARED_PURE_CODE_REGISTER:
         case PREPARED_PURE_CODE_INTRINSIC:
@@ -13482,8 +14077,10 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
                           arena, values[0]->kind == ATOM_EXPR)
                     : NULL;
             } else {
-                if (node->auxiliary !=
-                        CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION ||
+                if ((node->auxiliary !=
+                         CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION &&
+                     node->auxiliary !=
+                         CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE) ||
                     count > 1u) {
                     decline = "invalid value observation descriptor";
                     goto declined;
@@ -13492,7 +14089,11 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
                 value = operand
                     ? prepared_pure_boolean_atom(
                           program,
-                          arena, petta_semantics_is_closed_list(operand))
+                          arena,
+                          node->auxiliary ==
+                                  CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE
+                              ? operand->kind == ATOM_VAR
+                              : petta_semantics_is_closed_list(operand))
                     : NULL;
             }
             if (!value) {
@@ -13535,11 +14136,11 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
                 prepared_pure_code_value(program, registers, operands[0]),
                 prepared_pure_code_value(program, registers, operands[1]),
             };
-            PreparedPureScalar scalar;
+            CettaPlainScalar scalar;
             if (prepared_pure_code_register_scalar(
                     program, node, values[0], values[1], &scalar) &&
-                scalar.is_boolean) {
-                if (!scalar.boolean)
+                scalar.kind == CETTA_PLAIN_SCALAR_BOOL) {
+                if (!scalar.as.boolean)
                     frame->pc = code->target;
                 continue;
             }
@@ -14070,8 +14671,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
                         program, "call arity exceeds the prepared machine", NULL);
                 uint32_t arity = (uint32_t)(source->expr.len - 1u);
                 CettaGsltFoldControl control;
-                if (prepared_pure_control_program(
-                        head, arity, &control)) {
+                if (cetta_gslt_fold_control_program(
+                        head, arity, &control, &g_builtin_syms)) {
                     frame->value_base = (uint32_t)program->value_len;
                     if (control == CETTA_GSLT_FOLD_CONTROL_EVALUATE &&
                         arity == 1u) {
@@ -14108,7 +14709,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
                         head, arity, &result_kind, &instruction);
                 if (!generated_value_program) {
                     generated_value_program =
-                        prepared_pure_intrinsic_program(
+                        cetta_prepared_pure_intrinsic_program(
                             head, arity, &intrinsic_instruction);
                 }
                 if (generated_value_program) {
@@ -14271,7 +14872,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
                     program, atom_symbol_current_id(head), arity,
                     &result_kind, &instruction);
                 bool is_intrinsic = !is_register &&
-                    prepared_pure_intrinsic_program(
+                    cetta_prepared_pure_intrinsic_program(
                         atom_symbol_current_id(head), arity, &intrinsic_instruction);
                 if (!is_register && !is_intrinsic)
                     return prepared_pure_runtime_decline(
@@ -14621,6 +15222,17 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
             continue;
         frame = &program->frames[program->frame_len - 1u];
         node = &program->nodes[frame->node];
+        /* A short-circuit node that absorbed its first value answers that
+         * value, a completed truth value. */
+        if (__builtin_expect(node->kind == PREPARED_PURE_INTRINSIC &&
+                node->auxiliary != PREPARED_PURE_INTRINSIC_STRICT, 0) &&
+            program->value_len == (size_t)frame->value_base + 1u &&
+            prepared_pure_intrinsic_absorbed(
+                node, program->values[frame->value_base])) {
+            prepared_pure_value_role(program, frame->value_base, true);
+            program->frame_len--;
+            continue;
+        }
         if (program->value_len !=
             (size_t)frame->value_base + node->child_count)
             return prepared_pure_runtime_decline(
@@ -14719,8 +15331,10 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
             continue;
         }
         if (node->kind == PREPARED_PURE_OBSERVE) {
-            if (node->auxiliary !=
-                    CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION ||
+            if ((node->auxiliary !=
+                     CETTA_PREPARED_PURE_OBSERVE_IS_EXPRESSION &&
+                 node->auxiliary !=
+                     CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE) ||
                 node->child_count > 1u)
                 return prepared_pure_runtime_decline(
                     program, "invalid value observation descriptor", node);
@@ -14731,7 +15345,10 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
                 ? prepared_pure_boolean_atom(
                       program,
                       arena,
-                      petta_semantics_is_closed_list(operand))
+                      node->auxiliary ==
+                              CETTA_PREPARED_PURE_OBSERVE_IS_VARIABLE
+                          ? operand->kind == ATOM_VAR
+                          : petta_semantics_is_closed_list(operand))
                 : NULL;
             program->value_len = frame->value_base;
             if (!result || !prepared_pure_push_value(program, result))
@@ -15712,6 +16329,15 @@ size_t cetta_prepared_pure_program_equation_count(
     return program ? program->equation_len : 0u;
 }
 
+size_t cetta_prepared_pure_program_scalar_tree_count(
+    const CettaPreparedPureProgram *program) {
+    size_t count = 0u;
+    if (program)
+        for (size_t i = 0u; i < program->code_len; i++)
+            count += program->code[i].kind == PREPARED_PURE_CODE_SCALAR_TREE;
+    return count;
+}
+
 bool cetta_prepared_pure_program_equation_signature(
     const CettaPreparedPureProgram *program, size_t index,
     SymbolId *head_out, uint32_t *arity_out) {
@@ -15792,6 +16418,7 @@ void cetta_prepared_pure_program_free(
     free(program->context_reads);
     free(program->code);
     free(program->code_operands);
+    free(program->scalar_code);
     free(program->code_literals);
     free(program->code_heads);
     free(program->code_entries);

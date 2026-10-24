@@ -25,7 +25,11 @@
 #include "library_space_service.h"
 #include "library_proc.h"
 #include "proc_child.h"
+#include "proc_capture.h"
 #include "library_fs.h"
+#include "library_postings.h"
+#include "library_tensor.h"
+#include "library_group.h"
 #include "library_re.h"
 #include "library_proc_run.h"
 #include "library_sqlite.h"
@@ -153,6 +157,8 @@ enum {
     CETTA_LIBRARY_SQLITE = 1u << 20,
     CETTA_LIBRARY_SIWC = 1u << 21,
     CETTA_LIBRARY_RE = 1u << 22,
+    CETTA_LIBRARY_POSTINGS = 1u << 23,
+    CETTA_LIBRARY_TENSOR = 1u << 24,
 #if CETTA_BUILD_WITH_JSON_GSLT
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
@@ -174,6 +180,8 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"fs", CETTA_LIBRARY_FS, NULL},
     {"str", CETTA_LIBRARY_STR, NULL},
     {"re", CETTA_LIBRARY_RE, NULL},
+    {"postings", CETTA_LIBRARY_POSTINGS, NULL},
+    {"tensor", CETTA_LIBRARY_TENSOR, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -2648,34 +2656,6 @@ static bool git_cache_root(CettaLibraryContext *ctx, char *out, size_t out_sz,
     return true;
 }
 
-static void drain_subprocess_output(
-    int fd, char *output, size_t output_size) {
-    char discard[4096];
-    size_t used = 0u;
-    if (output && output_size > 0u)
-        output[0] = '\0';
-
-    for (;;) {
-        char *destination = discard;
-        size_t capacity = sizeof(discard);
-        if (output && output_size > used + 1u) {
-            destination = output + used;
-            capacity = output_size - used - 1u;
-        }
-        ssize_t got = read(fd, destination, capacity);
-        if (got > 0) {
-            if (destination != discard)
-                used += (size_t)got;
-            continue;
-        }
-        if (got < 0 && errno == EINTR)
-            continue;
-        break;
-    }
-    if (output && output_size > 0u)
-        output[used] = '\0';
-}
-
 /* Helper launches (git, build commands) go through the shared child setup
  * (proc_child.h): nothing allocates after fork, every descriptor but the
  * output pipe is closed on exec, signals are reset and stdin reads
@@ -2810,11 +2790,16 @@ static bool library_git_captured(char *argv[], char *errbuf,
                 : "git-module! failed to spawn git");
         return false;
     }
-    drain_subprocess_output(output, errbuf, errbuf_sz);
+    bool output_ok = cetta_proc_capture_prefix_and_drain(output, errbuf, errbuf_sz);
     close(output);
     if (!library_reap_captured(pid, report, status_out)) {
         if (errbuf_sz > 0)
             snprintf(errbuf, errbuf_sz, "git-module! failed to wait for git");
+        return false;
+    }
+    if (!output_ok) {
+        if (errbuf_sz > 0)
+            snprintf(errbuf, errbuf_sz, "git-module! failed to read git output");
         return false;
     }
     return true;
@@ -2862,7 +2847,7 @@ static bool run_petta_build_command(const char *repo_path,
         return false;
     }
 
-    drain_subprocess_output(output, errbuf, errbuf_sz);
+    bool output_ok = cetta_proc_capture_prefix_and_drain(output, errbuf, errbuf_sz);
     close(output);
 
     int status = 0;
@@ -2870,6 +2855,11 @@ static bool run_petta_build_command(const char *repo_path,
         if (errbuf_sz > 0)
             snprintf(errbuf, errbuf_sz,
                      "git-import! failed to wait for build");
+        return false;
+    }
+    if (!output_ok) {
+        if (errbuf_sz > 0)
+            snprintf(errbuf, errbuf_sz, "git-import! failed to read build output");
         return false;
     }
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
@@ -6015,8 +6005,12 @@ static Atom *cetta_library_dispatch_str(Arena *a, Atom *head,
     }
     CettaStrRefusal refusal = {0};
     Atom *result = count == native->arity ? native->fn(a, operands, &refusal) : NULL;
-    if (result)
+    if (result) {
+        /* A successful string operation has produced data, even when that
+         * data is a sequence or a symbol naming an executable expression. */
+        *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
         return result;
+    }
     size_t public_len = strlen(name) + 5u;
     char *public_name = arena_alloc(a, public_len);
     snprintf(public_name, public_len, "str:%s", name);
@@ -12448,6 +12442,12 @@ static Atom *cetta_library_dispatch_native_value(
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out) {
+    if (ctx && cetta_group_sum_call(a, head, args, nargs, out)) return true;
+    if (ctx && cetta_key_factorize_call(space, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_TENSOR) &&
+        cetta_tensor_call(ctx, space, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_POSTINGS) &&
+        cetta_postings_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_RE) &&
         cetta_re_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_FS) &&

@@ -7970,13 +7970,19 @@ PrimeIterationStep prime_semantics_iteration_step(Arena *arena, Atom *call,
         return PRIME_ITERATION_DECLINE;
     bool fold = view.param_count == 2u;
     Atom *list = call->expr.elems[1];
-    if (!list || list->kind != ATOM_EXPR || atom_is_list(list) ||
-        atom_is_list_rest(list) || (fold && !space)) {
-        /* The library reads it, without the record. */
+    /* The elements are those of the one sequence view.  A list, and an
+     * expression the view declines (a braces node, a list pattern), are
+     * read by the library, without the record: a list by its elements, and
+     * the other as the library refuses it. */
+    Atom *const *elements = NULL;
+    CettaExprLen element_len = 0u;
+    if (!list || atom_is_list(list) ||
+        !atom_sequence_view(list, &elements, &element_len) ||
+        (fold && !space)) {
         *out = atom_expr(arena, call->expr.elems, call->expr.len - 1u);
         return *out ? PRIME_ITERATION_REENTER : PRIME_ITERATION_DECLINE;
     }
-    if (list->expr.len == 0u) {
+    if (element_len == 0u) {
         *out = fold ? call->expr.elems[2] : list;
         return fold ? PRIME_ITERATION_REENTER : PRIME_ITERATION_VALUE;
     }
@@ -7986,14 +7992,16 @@ PrimeIterationStep prime_semantics_iteration_step(Arena *arena, Atom *call,
                        fold ? call->expr.elems[view.first_param + 1u] : NULL};
     if (!prime_scope_activate(arena, &body, &own, params, view.param_count))
         return PRIME_ITERATION_DECLINE;
-    Atom *head = list->expr.elems[0];
+    Atom *head = elements[0];
     Atom *values[2] = {fold ? call->expr.elems[2] : head,
                        fold ? head : NULL};
     for (CettaExprIndex p = 0u; p < view.param_count; p++) {
         body = prime_subst_in(arena, body, params[p], values[p], false);
         if (!body) return PRIME_ITERATION_DECLINE;
     }
-    Atom *rest = atom_expr(arena, list->expr.elems + 1u, list->expr.len - 1u);
+    /* The rest shares the list's storage where it can
+     * (atom_sequence_rest), so a step does not copy the remaining items. */
+    Atom *rest = atom_sequence_rest(arena, list, elements, element_len);
     Atom *recur = rest ? prime_iter_with(arena, call, 1u, rest) : NULL;
     if (!recur) return PRIME_ITERATION_DECLINE;
     Atom *chain = atom_symbol_id(arena, g_builtin_syms.chain);

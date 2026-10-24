@@ -162,6 +162,10 @@ typedef struct {
     GSLTDirectBoundaryV1 boundary;
     GSLTDirectTokenProjectionV1 projection;
     bool strip_literal;
+    /* The query marker written alone: a term that takes no meta-argument,
+     * so a bracket or brace touching it opens the next term.  Only a word
+     * of one literal can be one. */
+    bool meta_free;
 } GSLTDirectTokenRuleV1;
 
 typedef struct {

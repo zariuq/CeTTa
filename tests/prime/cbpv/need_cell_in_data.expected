@@ -1,5 +1,0 @@
-[()]
-[(W (Ret (VConst one)) 0 Nil Nil Nil)]
-[(W (Ret (VClo Nil (Return (Const one)))) 0 Nil Nil Nil)]
-[(W (Ret (VConst one)) 0 Nil Nil Nil)]
-[(W (Ret (VConst one)) 0 Nil Nil Nil)]

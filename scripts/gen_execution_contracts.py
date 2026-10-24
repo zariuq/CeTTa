@@ -123,12 +123,15 @@ REGISTER_INSTRUCTION_ATOM_C: dict[str, tuple[str, str]] = {
 # set states only which abstract instructions the C backend can execute.
 PREPARED_PURE_INTRINSIC_INSTRUCTIONS = {
     "grounded-dispatch",
+    "boolean-dispatch",
     "deconstruct-nonempty-expression",
     "construct-expression-cons",
     "concatenate-expressions",
     "library-value-dispatch",
 }
-PREPARED_PURE_INTRINSIC_OPERAND_DISCIPLINES = {"strict-all"}
+PREPARED_PURE_INTRINSIC_OPERAND_DISCIPLINES = {"strict-all", "short-circuit"}
+# The dialects an intrinsic row can be scoped to, in mask-bit order.
+INTRINSIC_DIALECTS = ("he", "petta", "prime")
 
 # Representation interpretation for value-allocation.  The presentation uses
 # semantic leaf classes; this backend maps them to CeTTa's GroundedKind tags.
@@ -715,11 +718,15 @@ class Spec:
                 len(self.register_heads):
             raise SpecError("register heads must be unique by symbol and arity")
 
+        # A row without a dialect scope, like one naming every dialect, holds
+        # in every language.  Rows for one head and arity may differ in
+        # operand discipline between dialects, so each row carries its own
+        # scope and no dialect sees two rows.
         self.prepared_intrinsic_heads: list[
-            tuple[str, str, int, str, str]
+            tuple[str, str, int, str, str, tuple[str, ...]]
         ] = []
         for entry in entries(native, "prepared-pure-intrinsic-head"):
-            if len(entry) != 5:
+            if len(entry) not in (5, 6):
                 raise SpecError(
                     f"malformed prepared-pure-intrinsic-head: "
                     f"{sexpr(entry)}")
@@ -745,6 +752,15 @@ class Spec:
                 raise SpecError(
                     f"prepared-pure intrinsic head {name} names undeclared "
                     f"instruction {instruction}")
+            dialects = INTRINSIC_DIALECTS
+            if len(entry) == 6:
+                scope = entry[5]
+                if not isinstance(scope, list) or len(scope) < 2 or scope[0] != "dialects":
+                    raise SpecError("intrinsic scope must name nonempty dialects")
+                dialects = tuple(atom_text(value, "intrinsic dialect") for value in scope[1:])
+                if (not set(dialects) <= set(INTRINSIC_DIALECTS) or
+                        len(dialects) != len(set(dialects))):
+                    raise SpecError("intrinsic dialects must be unique known language names")
             if (instruction == "deconstruct-nonempty-expression" and
                     int(arity_text) != 1):
                 raise SpecError(
@@ -755,24 +771,107 @@ class Spec:
                     } and int(arity_text) != 2):
                 raise SpecError(
                     f"{instruction} requires arity two")
+            # A connective computes a truth value: the open case runs the
+            # canonical operation on both values and answers in the
+            # caller's Boolean constructor.
+            if discipline == "short-circuit" and (
+                    int(arity_text) != 2 or
+                    instruction != "boolean-dispatch"):
+                raise SpecError(
+                    f"short-circuit head {name} must be a binary "
+                    "boolean dispatch")
             self.prepared_intrinsic_heads.append((
                 name, symbol_fields[name], int(arity_text), discipline,
-                instruction))
+                instruction, dialects))
         if not self.prepared_intrinsic_heads:
             raise SpecError(
                 "at least one prepared-pure intrinsic head is required")
-        if len({(field, arity) for _, field, arity, _, _
-                in self.prepared_intrinsic_heads}) != \
-                len(self.prepared_intrinsic_heads):
+        if len({(field, arity, dialect)
+                for _, field, arity, _, _, dialects
+                in self.prepared_intrinsic_heads
+                for dialect in dialects}) != \
+                sum(len(dialects) for *_, dialects
+                    in self.prepared_intrinsic_heads):
             raise SpecError(
-                "prepared-pure intrinsic heads must be unique by symbol "
-                "and arity")
-        if {instruction for _, _, _, _, instruction
+                "prepared-pure intrinsic heads must be unique by symbol, "
+                "arity and dialect")
+        if {instruction for _, _, _, _, instruction, _
                 in self.prepared_intrinsic_heads} != \
                 set(self.prepared_intrinsic_instructions):
             raise SpecError(
                 "native prepared-pure intrinsic heads must cover every "
                 "declared intrinsic instruction")
+        self.short_circuit_absorbing: list[tuple[str, str, int, bool]] = []
+        for entry in entries(native, "short-circuit-absorbing"):
+            if len(entry) != 4:
+                raise SpecError(
+                    f"malformed short-circuit-absorbing: {sexpr(entry)}")
+            name = atom_text(entry[1], "short-circuit head")
+            arity_text = atom_text(entry[2], "short-circuit arity")
+            value = atom_text(entry[3], "short-circuit absorbing value")
+            if value not in ("True", "False"):
+                raise SpecError(
+                    f"short-circuit head {name} must absorb a truth value")
+            if not any(row_name == name and str(arity) == arity_text and
+                       discipline == "short-circuit"
+                       for row_name, _, arity, discipline, _, _
+                       in self.prepared_intrinsic_heads):
+                raise SpecError(
+                    f"short-circuit-absorbing names {name}/{arity_text}, "
+                    "which no short-circuit head declares")
+            self.short_circuit_absorbing.append(
+                (name, symbol_fields[name], int(arity_text),
+                 value == "True"))
+        if len({(field, arity) for _, field, arity, _
+                in self.short_circuit_absorbing}) != \
+                len(self.short_circuit_absorbing):
+            raise SpecError("short-circuit absorbing values must be unique")
+        for name, field, arity, discipline, _, _ in \
+                self.prepared_intrinsic_heads:
+            if discipline == "short-circuit" and not any(
+                    absorbing_field == field and absorbing_arity == arity
+                    for _, absorbing_field, absorbing_arity, _
+                    in self.short_circuit_absorbing):
+                raise SpecError(
+                    f"short-circuit head {name} declares no absorbing value")
+
+        self.sequence_value_constructor_heads: list[tuple[str, str, int, int]] = []
+        for entry in entries(native, "sequence-value-constructor-head"):
+            if len(entry) != 4:
+                raise SpecError(
+                    f"malformed sequence-value-constructor-head: {sexpr(entry)}")
+            name = atom_text(entry[1], "sequence value constructor head")
+            arities_form = entry[2]
+            if not is_form(arities_form, "arities") or len(arities_form) < 2:
+                raise SpecError("sequence value constructor must declare arities")
+            arities = [atom_text(value, "sequence constructor arity")
+                       for value in arities_form[1:]]
+            if any(not arity.isdigit() or not 0 <= int(arity) <= 16
+                   for arity in arities):
+                raise SpecError("sequence constructor arities must be unique in [0, 16]")
+            numeric_arities = [int(arity) for arity in arities]
+            if len(set(numeric_arities)) != len(numeric_arities):
+                raise SpecError("sequence constructor arities must be unique in [0, 16]")
+            arity_mask = sum(1 << arity for arity in numeric_arities)
+            mask_text = atom_text(entry[3], "sequence held-operand mask")
+            if name not in symbol_fields:
+                raise SpecError(
+                    f"sequence value constructor head {name} has no symbol-table entry")
+            if not mask_text.isdigit() or not 0 <= int(mask_text) <= 0xffff:
+                raise SpecError("sequence held-operand mask must be in [0, 65535]")
+            if int(mask_text) >> max(numeric_arities):
+                raise SpecError("sequence held operand is outside the declared arities")
+            self.sequence_value_constructor_heads.append(
+                (name, symbol_fields[name], arity_mask, int(mask_text)))
+        if len({field for _, field, _, _ in self.sequence_value_constructor_heads}) != \
+                len(self.sequence_value_constructor_heads):
+            raise SpecError("sequence value constructor heads must be unique")
+        for _, field, _, mask in self.sequence_value_constructor_heads:
+            if mask and any(intrinsic_field == field
+                            for _, intrinsic_field, _, _, _, _
+                            in self.prepared_intrinsic_heads):
+                raise SpecError(
+                    "a held-operand constructor cannot have strict-all prepared admission")
 
         self.fold_control_heads: list[tuple[str, str, int, str]] = []
         for entry in entries(native, "fold-control-head"):
@@ -1456,9 +1555,31 @@ def render_header(spec: Spec) -> str:
         f"    X({field}, {arity}u, "
         f"CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_"
         f"{c_enum(discipline)}, "
-        f"CETTA_GSLT_PREPARED_PURE_INTRINSIC_{c_enum(instruction)})"
-        for _, field, arity, discipline, instruction
+        f"CETTA_GSLT_PREPARED_PURE_INTRINSIC_{c_enum(instruction)}, " +
+        ("CETTA_GSLT_INTRINSIC_DIALECT_ALL"
+         if set(dialects) == set(INTRINSIC_DIALECTS) else
+         " | ".join(
+             f"CETTA_GSLT_INTRINSIC_DIALECT_{c_enum(dialect)}"
+             for dialect in dialects)) + ")"
+        for _, field, arity, discipline, instruction, dialects
         in spec.prepared_intrinsic_heads
+    )
+    short_circuit_rows = " \\\n".join(
+        f"    X({field}, {arity}u, {'true' if absorbing else 'false'})"
+        for _, field, arity, absorbing in spec.short_circuit_absorbing
+    )
+    short_circuit_macro = \
+        "#define CETTA_GSLT_PREPARED_PURE_SHORT_CIRCUIT_ROWS(X)"
+    if short_circuit_rows:
+        short_circuit_macro += " \\\n" + short_circuit_rows
+    intrinsic_dialect_constants = "\n".join(
+        f"    CETTA_GSLT_INTRINSIC_DIALECT_{c_enum(dialect)} = {1 << index}u,"
+        for index, dialect in enumerate(INTRINSIC_DIALECTS)
+    ) + f"\n    CETTA_GSLT_INTRINSIC_DIALECT_ALL = " \
+        f"{(1 << len(INTRINSIC_DIALECTS)) - 1}u,"
+    sequence_value_constructor_rows = " \\\n".join(
+        f"    X({field}, {arity_mask}u, {mask}u)"
+        for _, field, arity_mask, mask in spec.sequence_value_constructor_heads
     )
     fold_control_constants = "\n".join(
         f"    CETTA_GSLT_FOLD_CONTROL_{c_enum(value)} = {index},"
@@ -1850,6 +1971,26 @@ static inline bool cetta_gslt_register_operand_discipline(
 #define CETTA_GSLT_REGISTER_HEAD_ROWS(X) \
 {register_head_rows}
 
+/* Decode immutable operation metadata. Dialect availability, source authority
+ * and operand readiness are checked independently by each consumer. */
+static inline bool cetta_gslt_register_head_program(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltRegisterResultKind *kind_out,
+    CettaGsltRegisterInstruction *instruction_out,
+    const BuiltinSyms *builtins) {{
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_REGISTER_HEAD(field, expected_arity, result_kind, instruction) \\
+    if (head == builtins->field && arity == (expected_arity)) {{ \\
+        if (kind_out) *kind_out = (result_kind); \\
+        if (instruction_out) *instruction_out = (instruction); \\
+        return true; \\
+    }}
+    CETTA_GSLT_REGISTER_HEAD_ROWS(CETTA_REGISTER_HEAD)
+#undef CETTA_REGISTER_HEAD
+    return false;
+}}
+
 typedef enum {{
 {prepared_intrinsic_instruction_constants}
 }} CettaGsltPreparedPureIntrinsicInstruction;
@@ -1858,8 +1999,45 @@ typedef enum {{
 {prepared_intrinsic_operand_constants}
 }} CettaGsltPreparedPureIntrinsicOperandDiscipline;
 
+typedef enum {{
+{intrinsic_dialect_constants}
+}} CettaGsltPreparedPureIntrinsicDialect;
+
+/* X(head, arity, operand discipline, instruction, dialects): no dialect
+ * reads two rows for one head and arity. */
 #define CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(X) \
 {prepared_intrinsic_head_rows}
+
+/* X(head, arity, absorbing truth value) for every short-circuit row. */
+{short_circuit_macro}
+
+/* The row that `dialect`, one CETTA_GSLT_INTRINSIC_DIALECT_* bit, reads for
+ * `head` at `arity`: its operand discipline and instruction.  A row scoped
+ * to every dialect holds in every language.  This is operation metadata,
+ * not source authority or permission to speculate. */
+static inline bool cetta_gslt_prepared_intrinsic_program(
+    SymbolId head, CettaExprLen arity, uint32_t dialect,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out,
+    const BuiltinSyms *builtins) {{
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_INTRINSIC_HEAD(field, expected_arity, discipline, instruction, \\
+                             dialects) \\
+    if (head == builtins->field && arity == (expected_arity) && \\
+        ((dialects) == CETTA_GSLT_INTRINSIC_DIALECT_ALL || \\
+         ((dialects) & dialect) != 0u)) {{ \\
+        if (discipline_out) *discipline_out = (discipline); \\
+        if (instruction_out) *instruction_out = (instruction); \\
+        return true; \\
+    }}
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(CETTA_INTRINSIC_HEAD)
+#undef CETTA_INTRINSIC_HEAD
+    return false;
+}}
+
+#define CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(X) \
+{sequence_value_constructor_rows}
 
 typedef enum {{
 {fold_control_constants}
@@ -1920,6 +2098,21 @@ static inline bool cetta_gslt_pure_call_whnf_disjoint(
 /* Executable control arms for the generated determinate-fold program. */
 #define CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(X) \
 {fold_control_rows}
+
+static inline bool cetta_gslt_fold_control_program(
+    SymbolId head, CettaExprLen arity, CettaGsltFoldControl *control_out,
+    const BuiltinSyms *builtins) {{
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_FOLD_CONTROL(field, expected_arity, control) \\
+    if (head == builtins->field && arity == (expected_arity)) {{ \\
+        if (control_out) *control_out = (control); \\
+        return true; \\
+    }}
+    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(CETTA_FOLD_CONTROL)
+#undef CETTA_FOLD_CONTROL
+    return false;
+}}
 
 /* Representation rows for sequence consumers.  The runtime resolves these
  * names in the active symbol table; library constructors therefore remain

@@ -1,3 +1,0 @@
-[((1 1) ((demand-changed eager (discarded-contributes-answers) (argument 2 (k 1 coin))) (demand-applied eager (demanded GSLT.Dynamics.DemandAgreement.eagerShared_eq_lazyShared_iff) (argument 1 (k (k 1 coin) coin))) (demand-changed eager (discarded-contributes-answers) (argument 2 (k (k 1 coin) coin)))))]
-[((1) ((demand-kept lazy (may-discard-answers) (argument 2 (k 1 coin))) (demand-applied eager (demanded GSLT.Dynamics.DemandAgreement.eagerShared_eq_lazyShared_iff) (argument 1 (k (k 1 coin) coin))) (demand-kept lazy (may-discard-answers) (argument 2 (k (k 1 coin) coin)))))]
-[((1) ((demand-kept lazy (may-discard-answers) (argument 1 (k2 coin 1)))))]

@@ -1754,7 +1754,9 @@ static uint32_t gslt_direct_prefix_at_meta(
 /* `allow_mark`: the token is read directly in a touching bracket, where
  * the binding mark is a word. */
 static AtomId gslt_direct_prefix_parse_token(
-    GSLTDirectPrefixStateV1 *state, bool in_list, bool allow_mark) {
+    GSLTDirectPrefixStateV1 *state, bool in_list, bool allow_mark,
+    bool *meta_free_out) {
+    *meta_free_out = false;
     const GSLTDirectTokenRuleV1 *rules =
         in_list ? state->plan->list_token_rules : state->plan->token_rules;
     uint32_t rule_len = in_list ? state->plan->list_token_rule_len
@@ -1815,6 +1817,7 @@ static AtomId gslt_direct_prefix_parse_token(
         if (result == CETTA_ATOM_ID_NONE)
             return CETTA_ATOM_ID_NONE;
         state->cursor = probe;
+        *meta_free_out = rule->meta_free;
         return result;
     }
     return CETTA_ATOM_ID_NONE;
@@ -1921,6 +1924,9 @@ static AtomId gslt_direct_prefix_parse_atom(
         /* Directly in a touching bracket the binding mark is a word. */
         bool allow_mark = frame_len > 0u && frames[frame_len - 1u].list &&
                           frames[frame_len - 1u].meta;
+        /* The term read is the query marker written alone, which takes no
+         * meta-argument. */
+        bool term_meta_free = false;
         result = CETTA_ATOM_ID_NONE;
         if (frame_len >= depth) {
             gslt_direct_reader_v1_error(
@@ -2007,7 +2013,8 @@ static AtomId gslt_direct_prefix_parse_atom(
                      state->error_buf[0] != '\0'))
                     goto done;
                 result = gslt_direct_prefix_parse_token(state, in_list,
-                                                        allow_mark);
+                                                        allow_mark,
+                                                        &term_meta_free);
             }
         }
         if (prefix || expression || list || braces) {
@@ -2030,8 +2037,11 @@ static AtomId gslt_direct_prefix_parse_atom(
             state->tokens++;
             state->reductions++;
             frame = frame_len > 0u ? &frames[frame_len - 1u] : NULL;
-            uint32_t meta_open = frame && frame->prefix
+            uint32_t meta_open = (frame && frame->prefix) || term_meta_free
                 ? 0u : gslt_direct_prefix_at_meta(state);
+            /* Only the term just read can be the marker; a form closed
+             * below is not. */
+            term_meta_free = false;
             if (meta_open != 0u) {
                 /* A bracket or brace touching the term opens a
                  * meta-argument.  A prefix form's payload takes none: the
@@ -2353,7 +2363,13 @@ static bool gslt_direct_prefix_token_rule_set_valid(
             (rule->projection ==
                  GSLT_DIRECT_TOKEN_PROJECTION_ANONYMOUS_VARIABLE &&
              (!has_literal || has_classes || rule->strip_literal)) ||
-            (rule->strip_literal && !has_literal)) {
+            (rule->strip_literal && !has_literal) ||
+            /* The query marker is one literal word, in a language whose
+             * terms take meta-arguments. */
+            (rule->meta_free &&
+             (!has_literal || has_classes || rule->strip_literal ||
+              rule->projection != GSLT_DIRECT_TOKEN_PROJECTION_WORD ||
+              !plan->binding_mark))) {
             gslt_direct_reader_v1_error(
                 error_buf, error_buf_size,
                 "invalid source-derived token rule");
@@ -2489,6 +2505,7 @@ static bool gslt_direct_prefix_list_plan_valid(
                                                         plan->list_open)) ||
             rule->projection != inner->projection ||
             rule->strip_literal != inner->strip_literal ||
+            rule->meta_free != inner->meta_free ||
             rule->literal_len != inner->literal_len ||
             (rule->first == NULL) != (inner->first == NULL) ||
             (rule->literal_len > 0u &&

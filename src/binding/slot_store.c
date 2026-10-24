@@ -147,11 +147,12 @@ bool bindings_frame_index_entry_detach(
     uint64_t *write_version = entry->cap > 0u
         ? cetta_malloc((size_t)entry->cap * sizeof(*write_version))
         : NULL;
-    if (entry->slot_len > 0u) {
+    uint32_t copied = entry->slot_len < entry->cap ? entry->slot_len : entry->cap;
+    if (copied > 0u) {
         memcpy(values, entry->values,
-               (size_t)entry->slot_len * sizeof(*values));
+               (size_t)copied * sizeof(*values));
         memcpy(write_version, entry->write_version,
-               (size_t)entry->slot_len * sizeof(*write_version));
+               (size_t)copied * sizeof(*write_version));
     }
     atomic_init(storage_references, 1u);
     bindings_frame_storage_account(bindings_frame_storage_bytes(entry->cap), 0u);
@@ -165,8 +166,45 @@ bool bindings_frame_index_entry_detach(
         CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_DETACH);
     cetta_runtime_stats_add(
         CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_COPIED_SLOT,
-        entry->slot_len);
+        copied);
     return true;
+}
+
+static bool bindings_frame_reserve_value_prefix(
+        BindingsFrameIndexEntry *frame, uint32_t needed) {
+    if (needed <= frame->cap)
+        return true;
+    if (!bindings_frame_index_entry_detach(frame))
+        return false;
+    uint32_t cap = frame->cap ? frame->cap : 8u;
+    while (cap < needed) {
+        if (cap > UINT32_MAX / 2u) {
+            cap = needed;
+            break;
+        }
+        cap *= 2u;
+    }
+    if ((size_t)cap > SIZE_MAX / sizeof(*frame->values) ||
+        (size_t)cap > SIZE_MAX / sizeof(*frame->write_version))
+        return false;
+    frame->values = cetta_realloc(frame->values,
+        (size_t)cap * sizeof(*frame->values));
+    frame->write_version = cetta_realloc(frame->write_version,
+        (size_t)cap * sizeof(*frame->write_version));
+    memset(frame->values + frame->cap, 0,
+        (size_t)(cap - frame->cap) * sizeof(*frame->values));
+    memset(frame->write_version + frame->cap, 0,
+        (size_t)(cap - frame->cap) * sizeof(*frame->write_version));
+    bindings_frame_storage_account(bindings_frame_storage_bytes(cap),
+                                    bindings_frame_storage_bytes(frame->cap));
+    frame->cap = cap;
+    return true;
+}
+
+bool bindings_frame_index_entry_reserve_slots(
+        BindingsFrameIndexEntry *frame, uint32_t needed) {
+    return frame && needed <= frame->slot_len &&
+           bindings_frame_reserve_value_prefix(frame, needed);
 }
 
 /* Place an entry in the handle table; the caller has reserved room. */
@@ -320,10 +358,12 @@ static bool bindings_frame_index_initialize_entry(
     if (!index || !entry || !source_ids || source_len == 0u || cetta_frame_identity_is_none(epoch))
         return false;
     BindingsFrameIndexEntry storage = {0};
+    uint32_t initial = source_len < BINDINGS_DIRECT_FRAME_SLOT_CAP
+        ? source_len : BINDINGS_DIRECT_FRAME_SLOT_CAP;
     uint32_t spare = index->spare_len;
     while (spare > 0u) {
         spare--;
-        if (index->spares[spare].cap < source_len)
+        if (index->spares[spare].cap < initial)
             continue;
         storage = index->spares[spare];
         index->spare_len--;
@@ -342,12 +382,12 @@ static bool bindings_frame_index_initialize_entry(
             cetta_malloc(sizeof(*storage.storage_references));
         atomic_init(storage.storage_references, 1u);
         storage.values = cetta_malloc(
-            (size_t)source_len * sizeof(*storage.values));
+            (size_t)initial * sizeof(*storage.values));
         storage.write_version = cetta_malloc(
-            (size_t)source_len * sizeof(*storage.write_version));
-        storage.cap = source_len;
+            (size_t)initial * sizeof(*storage.write_version));
+        storage.cap = initial;
         bindings_frame_storage_account(
-            bindings_frame_storage_bytes(source_len), 0u);
+            bindings_frame_storage_bytes(initial), 0u);
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_STORAGE_ALLOC);
     }
@@ -373,10 +413,11 @@ static bool bindings_frame_index_initialize_entry(
     storage.activation_write_boundary = 0u;
     storage.has_activation_write_boundary = false;
     storage.schema_complete = false;
+    uint32_t initialized = source_len < storage.cap ? source_len : storage.cap;
     memset(storage.values, 0,
-           (size_t)source_len * sizeof(*storage.values));
+           (size_t)initialized * sizeof(*storage.values));
     memset(storage.write_version, 0,
-           (size_t)source_len * sizeof(*storage.write_version));
+           (size_t)initialized * sizeof(*storage.write_version));
     *entry = storage;
     return true;
 }
@@ -443,29 +484,13 @@ bool bindings_frame_index_grow_slots(Bindings *bindings,
         bindings->frame_index, identity);
     if (!bindings_frame_index_entry_detach(frame))
         return false;
-    if (needed > frame->cap) {
-        uint32_t cap = frame->cap > 0u ? frame->cap : 8u;
-        while (cap < needed) {
-            if (cap > UINT32_MAX / 2u) {
-                cap = needed;
-                break;
-            }
-            cap *= 2u;
-        }
-        if ((size_t)cap > SIZE_MAX / sizeof(*frame->values) ||
-            (size_t)cap > SIZE_MAX / sizeof(*frame->write_version))
-            return false;
-        frame->values = cetta_realloc(frame->values, (size_t)cap * sizeof(*frame->values));
-        frame->write_version = cetta_realloc(
-            frame->write_version, (size_t)cap * sizeof(*frame->write_version));
-        bindings_frame_storage_account(bindings_frame_storage_bytes(cap),
-                                       bindings_frame_storage_bytes(frame->cap));
-        frame->cap = cap;
+    uint32_t initialized = needed < frame->cap ? needed : frame->cap;
+    if (initialized > frame->slot_len) {
+        memset(frame->values + frame->slot_len, 0,
+            (size_t)(initialized - frame->slot_len) * sizeof(*frame->values));
+        memset(frame->write_version + frame->slot_len, 0,
+            (size_t)(initialized - frame->slot_len) * sizeof(*frame->write_version));
     }
-    memset(frame->values + frame->slot_len, 0,
-        (size_t)(needed - frame->slot_len) * sizeof(*frame->values));
-    memset(frame->write_version + frame->slot_len, 0,
-        (size_t)(needed - frame->slot_len) * sizeof(*frame->write_version));
     frame->slot_len = needed;
     bindings->frame_index->schema_revision++;
     if (bindings->frame_index->max_schema_len < needed)
@@ -620,7 +645,8 @@ bool bindings_frame_index_ensure_presentation(
 bool bindings_frame_index_replace_slot_value(
         BindingsFrameIndex *index, BindingsFrameIndexEntry *frame,
         uint32_t slot, BindingValue value) {
-    if (!index || !frame || slot >= frame->slot_len)
+    if (!index || !frame || slot >= frame->slot_len ||
+        !bindings_frame_reserve_value_prefix(frame, slot + 1u))
         return false;
     bool current_bound = frame->values[slot].skeleton != NULL;
     bool replacement_bound = value.skeleton != NULL;
@@ -725,7 +751,7 @@ bool bindings_frame_index_fill_slot(
         BindingsFrameIndex *index, BindingsFrameIndexEntry *frame,
         uint32_t slot, BindingValue value) {
     if (!index || !frame || slot >= frame->slot_len || !value.skeleton ||
-        frame->values[slot].skeleton ||
+        bindings_frame_slot_value(frame, slot).skeleton ||
         index->write_clock == UINT64_MAX ||
         !bindings_frame_index_replace_slot_value(index, frame, slot, value))
         return false;
@@ -910,8 +936,8 @@ bool bindings_frame_index_register_kind(
                     high = middle;
             }
             assert(low < merged_len && var_id_eq(merged_ids[low], source_id));
-            merged_values[low] = existing->values[slot];
-            merged_versions[low] = existing->write_version[slot];
+            merged_values[low] = bindings_frame_slot_value(existing, slot);
+            merged_versions[low] = bindings_frame_slot_version(existing, slot);
             merged_schema->spellings[low] =
                 existing->schema->spellings[slot];
             merged_schema->name_keys[low] =
@@ -1028,7 +1054,14 @@ static bool bindings_frame_index_merge_lineage(
         if (!bindings_frame_index_find_slot(target,
                 bindings_frame_slot_source_id(source, slot), &target_slot))
             return false;
-        target->write_version[target_slot] = source->write_version[slot];
+        /* A slot past the backing prefix has version zero; only a different
+         * version needs the target's prefix to grow. */
+        uint64_t version = bindings_frame_slot_version(source, slot);
+        if (bindings_frame_slot_version(target, target_slot) == version)
+            continue;
+        if (!bindings_frame_reserve_value_prefix(target, target_slot + 1u))
+            return false;
+        target->write_version[target_slot] = version;
     }
     return true;
 }
@@ -1509,7 +1542,7 @@ bool bindings_builder_restore_frame_values(
                 bb->current.frame_index, current_frame);
         }
         if (!bindings_frame_ref_is_valid(ref) ||
-            current_frame->write_version[slot] !=
+            bindings_frame_slot_version(current_frame, slot) !=
                 undo->written_write_version) {
             return false;
         }
@@ -1577,13 +1610,17 @@ static bool bindings_builder_restore_frame_registration_count(
                         &current_slot)) {
                     return false;
                 }
-                frame->values[previous_slot] =
-                    frame->values[current_slot];
-                frame->write_version[previous_slot] =
-                    frame->write_version[current_slot];
-                if (frame->values[previous_slot].skeleton)
+                BindingValue value = bindings_frame_slot_value(frame, current_slot);
+                uint64_t version = bindings_frame_slot_version(frame, current_slot);
+                if (previous_slot < frame->cap || value.skeleton || version) {
+                    if (!bindings_frame_reserve_value_prefix(frame, previous_slot + 1u))
+                        return false;
+                    frame->values[previous_slot] = value;
+                    frame->write_version[previous_slot] = version;
+                }
+                if (value.skeleton)
                     retained_bound_value_count++;
-                if (atom_has_private_variant_vars(frame->values[previous_slot].skeleton))
+                if (atom_has_private_variant_vars(value.skeleton))
                     retained_private_value_count++;
             }
             if (index->bound_value_count < frame->bound_value_count)

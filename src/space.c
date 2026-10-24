@@ -3967,6 +3967,7 @@ static bool atom_is_exact_indexable(const Atom *atom) {
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_STRUCTURAL:
         case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -4012,6 +4013,7 @@ static bool atom_id_is_exact_indexable(const Space *s, AtomId atom_id) {
         case GV_BINDINGS:
         case GV_TENSOR:
         case GV_FOREIGN:
+        case GV_STRUCTURAL:
         case GV_SEAL:
         case GV_TERM_GRAPH:
         case GV_PRIME_NEED_CAPABILITY:
@@ -5561,6 +5563,7 @@ static void space_reset_moved_from(Space *s) {
     s->revision = 0;
     s->equation_revision = 0;
     s->declaration_revision = 0;
+    s->declares_subtypes = false;
     s->prefix_epoch = space_fresh_prefix_epoch();
     space_native_storage_init_empty(s, space_default_universe());
     space_match_backend_init(s);
@@ -5595,6 +5598,7 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->revision = 0;
     s->equation_revision = 0;
     s->declaration_revision = 0;
+    s->declares_subtypes = false;
     s->prefix_epoch = space_fresh_prefix_epoch();
     space_match_backend_init(s);
     space_attach_to_universe(s, s->native.universe);
@@ -6913,28 +6917,43 @@ typedef struct {
     bool failed;
 } SpaceEffectGraph;
 
+typedef struct {
+    SymbolId head;
+    CettaGsltQueryEffect effect;
+    bool occupied;
+} SpaceGeneratedEffectCacheEntry;
+
+enum { SPACE_GENERATED_EFFECT_CACHE_CAP = 256u };
+static _Thread_local SpaceGeneratedEffectCacheEntry
+    g_space_generated_effect_cache[SPACE_GENERATED_EFFECT_CACHE_CAP];
+static _Thread_local uint64_t g_space_generated_effect_table_instance;
+
 static CettaGsltQueryEffect space_generated_query_head_effect(
     SymbolId head) {
+    uint64_t instance = symbol_table_instance_id(g_symbols);
+    if (g_space_generated_effect_table_instance != instance) {
+        memset(g_space_generated_effect_cache, 0,
+               sizeof(g_space_generated_effect_cache));
+        g_space_generated_effect_table_instance = instance;
+    }
+    size_t slot = ((size_t)head * (size_t)UINT32_C(2654435761)) &
+        (SPACE_GENERATED_EFFECT_CACHE_CAP - 1u);
+    SpaceGeneratedEffectCacheEntry *cached =
+        &g_space_generated_effect_cache[slot];
+    if (cached->occupied && cached->head == head)
+        return cached->effect;
+    CettaGsltQueryEffect result = CETTA_GSLT_QUERY_EFFECT_PURE;
 #define SPACE_QUERY_EFFECT_HEAD(field, effect) \
-    if (head == g_builtin_syms.field) return (effect);
+    if (head == g_builtin_syms.field) { result = (effect); goto done; }
     CETTA_GSLT_QUERY_EFFECT_HEAD_ROWS(SPACE_QUERY_EFFECT_HEAD)
 #undef SPACE_QUERY_EFFECT_HEAD
-    return CETTA_GSLT_QUERY_EFFECT_PURE;
+done:
+    *cached = (SpaceGeneratedEffectCacheEntry){
+        .head = head, .effect = result, .occupied = true,
+    };
+    return result;
 }
 
-static bool space_generated_fold_control(
-    SymbolId head, CettaExprLen arity,
-    CettaGsltFoldControl *control_out) {
-#define SPACE_FOLD_CONTROL(field, expected_arity, control) \
-    if (head == g_builtin_syms.field && arity == (expected_arity)) { \
-        if (control_out) \
-            *control_out = (control); \
-        return true; \
-    }
-    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(SPACE_FOLD_CONTROL)
-#undef SPACE_FOLD_CONTROL
-    return false;
-}
 
 static uint64_t space_effect_cache_hash(SymbolId head) {
     uint64_t key = (uint64_t)head * UINT64_C(0x9e3779b97f4a7c15);
@@ -7504,8 +7523,9 @@ static bool space_effect_scan_rhs(
                     graph->nodes[node_index].base_effect,
                     CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD);
         } else {
-            has_control = space_generated_fold_control(
-                atom_symbol_current_id(head), authored_len - 1u, &control);
+            has_control = cetta_gslt_fold_control_program(
+                atom_symbol_current_id(head), authored_len - 1u, &control,
+                &g_builtin_syms);
             bool grounded = is_grounded_op(atom_symbol_current_id(head));
             bool defined = space_equations_may_match_known_head(
                 graph->space, atom_symbol_current_id(head));
@@ -11155,6 +11175,10 @@ Atom *get_grounded_type(Arena *a, Atom *atom) {
         return atom_symbol_literal(a, "Tensor");
     case GV_FOREIGN:
         return atom_symbol_literal(a, "Foreign");
+    case GV_STRUCTURAL: {
+        const char *name = atom_structural_type_name(atom);
+        return name ? atom_symbol(a, name) : atom_undefined_type(a);
+    }
     case GV_SEAL: {
         /* Sealed, SealFacet or Key: the kind of authority, never its brand. */
         const char *name = atom_seal_type_name(atom);
@@ -13928,18 +13952,17 @@ static bool prepared_register_head_program(
     CettaGsltRegisterInstruction *instruction_out) {
     /* A register instruction realizes an operation the current dialect
      * defines; one it leaves undefined is data. */
-#define PREPARED_REGISTER_HEAD(field, expected_arity, result_kind, instruction) \
-    if (head == g_builtin_syms.field && arity == (expected_arity) && \
-        (!grounded_op_is_cetta_only(head) || is_grounded_op(head))) { \
-        if (kind_out) \
-            *kind_out = (result_kind); \
-        if (instruction_out) \
-            *instruction_out = (instruction); \
-        return true; \
-    }
-    CETTA_GSLT_REGISTER_HEAD_ROWS(PREPARED_REGISTER_HEAD)
-#undef PREPARED_REGISTER_HEAD
-    return false;
+    CettaGsltRegisterResultKind kind;
+    CettaGsltRegisterInstruction instruction;
+    if (!cetta_gslt_register_head_program(
+            head, arity, &kind, &instruction, &g_builtin_syms) ||
+        (grounded_op_is_cetta_only(head) && !is_grounded_op(head)))
+        return false;
+    if (kind_out)
+        *kind_out = kind;
+    if (instruction_out)
+        *instruction_out = instruction;
+    return true;
 }
 
 static bool prepared_register_head_kind(

@@ -22,10 +22,6 @@
 (: io:cancel (-> Number Expression))
 (: io:signal (-> Number Number Expression))
 
-(: __cetta_lib_io_capabilities (-> Atom Atom))
-(: __cetta_lib_io_submit (-> Atom Atom))
-(: __cetta_lib_io_poll (-> Atom Atom))
-(: __cetta_lib_io_cancel (-> Atom Atom))
 
 (: http:request (-> Atom Atom Expression String Number Number Atom))
 (: http:request (-> Atom Atom Expression String Number Number Bool Atom))

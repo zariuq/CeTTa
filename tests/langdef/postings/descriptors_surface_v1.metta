@@ -1,0 +1,6 @@
+!(import! &self (library postings_descriptors))
+!(let $descriptor (postings:count-mode-descriptor table-tensor-before) (println! $descriptor))
+!(let $descriptor (postings:count-mode-descriptor table-fold-columns-before) (println! $descriptor))
+!(let $descriptor (postings:observation-descriptor prepare-table) (println! $descriptor))
+!(let $descriptor (postings:observation-descriptor prepare-space-table-attempt) (println! $descriptor))
+!(let $descriptor (postings:observation-descriptor fold-columns) (println! $descriptor))

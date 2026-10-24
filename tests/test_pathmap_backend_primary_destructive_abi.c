@@ -1,6 +1,9 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "space.h"
 #include "space_match_backend.h"
@@ -597,7 +600,14 @@ static void test_batch_mutation_transaction(Arena *arena,
     space_free(&batch);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    bool fallback_only = argc == 2 &&
+        strcmp(argv[1], "--fallback-cache-only") == 0;
+    if (argc != 1 && !fallback_only)
+        return 2;
+    /* Indexed packet tests and legacy fallback lifetime run in separate
+     * processes, so each retains its intended, immutable query policy. */
+    assert(setenv("CETTA_PATHMAP_QUERY_INDEX", fallback_only ? "0" : "1", 1) == 0);
     SymbolTable symbols;
     Arena persistent;
     TermUniverse universe;
@@ -625,6 +635,16 @@ int main(void) {
     term_universe_set_persistent_arena(&universe, &persistent);
     g_persistent_arena = &persistent;
     arena_init(&arena);
+    if (fallback_only) {
+        test_fallback_bucket_lifetime(&arena, &universe);
+        arena_free(&arena);
+        g_persistent_arena = NULL;
+        term_universe_free(&universe);
+        arena_free(&persistent);
+        symbol_table_free(&symbols);
+        puts("PASS: PathMap fallback-bucket lifetime ABI");
+        return 0;
+    }
     space_init_with_universe(&space, &universe);
     space.kind = SPACE_KIND_HASH;
 
@@ -662,7 +682,6 @@ int main(void) {
     test_native_fallback_index_append(&arena, &universe);
     test_ground_count_stays_shadow_free(
         &arena, &universe, edge_sym, a_sym, b_sym, c_sym);
-    test_fallback_bucket_lifetime(&arena, &universe);
 
     space_add_atom_id(&space, id_ab);
     space_add_atom_id(&space, id_bc);

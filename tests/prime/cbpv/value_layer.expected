@@ -1,6 +1,0 @@
-[()]
-[(Ok (heads heads)), (Ok (heads tails)), (Ok (tails heads)), (Ok (tails tails))]
-[(Ok (heads heads)), (Ok (tails tails))]
-[(Ok (heads heads)), (Ok (heads tails)), (Ok (tails heads)), (Ok (tails tails))]
-[(Ok (heads heads)), (Ok (tails tails))]
-[(Ok (seven heads)), (Ok (seven tails))]

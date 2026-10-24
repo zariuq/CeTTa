@@ -54,6 +54,29 @@ typedef struct {
     CettaCallResultForm result_form;
 } CettaCallOutcome;
 
+/* Check the tag and top-level payload shape under the caller's borrowed
+ * storage lifetime. This does not establish pointer ownership or inspect
+ * future frontier elements; the cursor validates each element when reached. */
+static inline bool cetta_call_outcome_shape_valid(CettaCallOutcome outcome) {
+    switch (outcome.kind) {
+    case CETTA_CALL_FAILURE:
+    case CETTA_CALL_INTERRUPTED:
+        return true;
+    case CETTA_CALL_RAISED:
+    case CETTA_CALL_SUSPENDED:
+        return outcome.term != NULL;
+    case CETTA_CALL_VALUE:
+        if (!outcome.term)
+            return false;
+        if (outcome.result_form == CETTA_CALL_RESULT_COMPLETED_FRONTIER)
+            return outcome.term->kind == ATOM_EXPR &&
+                (!outcome.term->expr.len || outcome.term->expr.elems != NULL);
+        return outcome.result_form == CETTA_CALL_RESULT_EXPRESSION ||
+               outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE;
+    }
+    return false;
+}
+
 static inline CettaCallOutcome cetta_call_value(Atom *value) {
     return (CettaCallOutcome){.kind = CETTA_CALL_VALUE, .term = value};
 }

@@ -7,7 +7,7 @@ import shlex
 import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
-SOURCES = ("tests/test_tensor.c", "src/tensor.c", "src/atom.c", "src/symbol.c",
+SOURCES = ("tests/test_tensor.c", "src/tensor_dense_v1.c", "src/atom.c", "src/symbol.c",
            "src/scalar_trie.c", "src/binding/frame_identity.c", "src/atom_wire.c",
            "src/durable_value.c")
 
@@ -58,7 +58,7 @@ def main():
     # Exercise the portable rounding-admission branch on the same machine,
     # retaining the original numerical providers. FTZ/DAZ controls in the unit
     # fixture must still force a complete candidate set.
-    original = (ROOT / "src/tensor.c").read_text()
+    original = (ROOT / "src/tensor_dense_v1.c").read_text()
     anchor = '#if CETTA_HAS_AVX4\n    /* FTZ and DAZ violate the absolute underflow allowance below. */'
     if original.count(anchor) != 1:
         raise RuntimeError("Portable admission anchor changed")
@@ -67,29 +67,29 @@ def main():
     target = source.with_suffix(".o")
     compile_source(source, target)
     inputs = list(objects)
-    inputs[SOURCES.index("src/tensor.c")] = target
+    inputs[SOURCES.index("src/tensor_dense_v1.c")] = target
     run("portable-admission", inputs)
     controls = (
-        ("missing-view-hold", "src/tensor.c",
+        ("missing-view-hold", "src/tensor_dense_v1.c",
          "size_t old = atomic_fetch_add_explicit(&tensor->storage->holds, 1u, memory_order_relaxed);\n"
          "        if (!old || old == SIZE_MAX) abort();", "/* missing hold */"),
-        ("mutating-saved-input", "src/tensor.c",
+        ("mutating-saved-input", "src/tensor_dense_v1.c",
          "memcpy((*out)->storage->data + index * width, element, width);",
          "memcpy(tensor->storage->data + index * width, element, width);"),
-        ("overflow-before-zero-axis", "src/tensor.c",
+        ("overflow-before-zero-axis", "src/tensor_dense_v1.c",
          "    for (size_t i = 0; i < rank; ++i) {\n"
-         "        if (!shape[i]) { *count = 0u; *bytes = 0u; return CETTA_TENSOR_OK; }\n    }\n",
+         "        if (!shape[i]) { *count = 0u; *bytes = 0u; return CETTA_DENSE_TENSOR_V1_OK; }\n    }\n",
          ""),
-        ("reversed-decoder", "src/tensor.c",
+        ("reversed-decoder", "src/tensor_dense_v1.c",
          "value |= (uint64_t)src[i] << (8u * i);",
          "value |= (uint64_t)src[i] << (8u * (width - 1u - i));"),
         ("unaccounted-buffer", "src/atom.c",
-         "arena_account_external_bytes(a, cetta_tensor_retained_bytes(value));",
+         "arena_account_external_bytes(a, cetta_dense_tensor_v1_retained_bytes(value));",
          "/* omitted allocation charge */"),
-        ("screening-drops-boundary-tie", "src/tensor.c",
+        ("screening-drops-boundary-tie", "src/tensor_dense_v1.c",
          "double threshold = count ? lo[heap[0]] : INFINITY;",
          "double threshold = count ? nextafter(lo[heap[0]], INFINITY) : INFINITY;"),
-        ("screening-ignores-error", "src/tensor.c",
+        ("screening-ignores-error", "src/tensor_dense_v1.c",
          "double radius = add_up(mul_up(multiplier, add_up(error, mul_up(relative, magnitude))), underflow);",
          "double radius = 0 * (multiplier + error + relative + magnitude + underflow);"),
     )

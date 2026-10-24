@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Raw native SQLite parity: values, identities, atomic plans and shared linkage."""
+"""Raw native SQLite parity: values, identities, atomic plans, read-only
+observation and shared linkage."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -9,6 +11,12 @@ import tempfile
 import unittest
 ROOT = Path(__file__).resolve().parents[2]
 Q = lambda value: json.dumps(str(value), ensure_ascii=False)
+LANGUAGES = ('he', 'petta', 'prime')
+
+def snapshot(path):
+    """The bytes and modification time an observation must leave unchanged."""
+    status = path.stat()
+    return hashlib.sha256(path.read_bytes()).hexdigest(), status.st_size, status.st_mtime_ns
 
 @unittest.skipUnless(os.environ.get('CETTA_BIN'), 'set CETTA_BIN to a SQLite build')
 class NativeSqlite(unittest.TestCase):
@@ -71,6 +79,107 @@ class NativeSqlite(unittest.TestCase):
             self.guest(d, f'''!(case (sqlite:query {Q(path)} "SELECT id FROM rows_kept ORDER BY id" () 10000)
                 (((sqlite:result $_ $rows $_ $_) (progn (assert (== (size-atom $rows) 2500)) (println! SQLITE_OK)))))
 ''')
+
+    def test_observing_a_missing_database_fails_without_creating_it(self):
+        for lang in LANGUAGES:
+            with self.subTest(lang=lang), tempfile.TemporaryDirectory() as d:
+                path = Path(d) / 'absent.sqlite3'
+                self.guest(d, f'''!(case (sqlite:observe {Q(path)} "SELECT 1" () 1000)
+   (((sqlite:error io 14 "database file does not exist" failed) (println! SQLITE_OK))))
+''', lang)
+                self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ['probe.metta'])
+
+    def test_observation_refuses_statements_that_write_or_attach(self):
+        for lang in LANGUAGES:
+            with self.subTest(lang=lang), tempfile.TemporaryDirectory() as d:
+                path, other, copy = (Path(d) / name for name in ('history.sqlite3', 'other.sqlite3', 'copy.sqlite3'))
+                with sqlite3.connect(path) as db:
+                    db.execute('CREATE TABLE items (id TEXT PRIMARY KEY, value TEXT)')
+                    db.execute("INSERT INTO items VALUES ('kept', 'λ')")
+                db.close()
+                before = snapshot(path)
+                # Each refusal precedes execution: SQLite reports the prepared
+                # statement can write, ATTACH is not authorized, or SQL holds
+                # more than one statement.
+                writes = (8, 'sqlite:observe runs only statements that do not write')
+                refused = [('INSERT INTO items VALUES (?,?)', '("added" "x")', *writes),
+                           ('UPDATE items SET value=?', '("changed")', *writes),
+                           ('DELETE FROM items', '()', *writes),
+                           ('CREATE TABLE created (id INTEGER)', '()', *writes),
+                           ('CREATE TEMP TABLE scratch (id INTEGER)', '()', *writes),
+                           ('BEGIN IMMEDIATE', '()', *writes),
+                           ('PRAGMA user_version=7', '()', *writes),
+                           ('PRAGMA journal_mode=WAL', '()', *writes),
+                           ('PRAGMA wal_checkpoint(TRUNCATE)', '()', *writes),
+                           ('VACUUM INTO ?', f'({Q(copy)})', *writes),
+                           ('ATTACH DATABASE ? AS other', f'({Q(other)})', 23, 'sqlite:observe does not attach databases'),
+                           ('SELECT 1; DELETE FROM items', '()', 21, 'sqlite:observe runs one statement')]
+                result = self.guest(d, ''.join(f'''!(case (sqlite:observe {Q(path)} {Q(sql)} {parameters} 1000)
+   (((sqlite:error sql {code} {Q(message)} failed) (println! SQLITE_REFUSED))))
+''' for sql, parameters, code, message in refused) + '!(println! SQLITE_OK)\n', lang)
+                self.assertEqual(result.count('SQLITE_REFUSED'), len(refused), result)
+                self.assertEqual(snapshot(path), before)
+                self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ['history.sqlite3', 'probe.metta'])
+                with sqlite3.connect(path) as db:
+                    self.assertEqual(db.execute('SELECT * FROM items').fetchall(), [('kept', 'λ')])
+                    self.assertEqual(db.execute('PRAGMA user_version').fetchone()[0], 0)
+                    self.assertEqual(db.execute('PRAGMA journal_mode').fetchone()[0], 'delete')
+                db.close()
+
+    def test_observation_reads_committed_wal_state_beside_an_open_writer(self):
+        for lang in LANGUAGES:
+            with self.subTest(lang=lang), tempfile.TemporaryDirectory() as d:
+                path = Path(d) / 'ledger.sqlite3'
+                wal = path.with_name(path.name + '-wal')
+                writer = sqlite3.connect(path, isolation_level=None)
+                try:
+                    self.assertEqual(writer.execute('PRAGMA journal_mode=WAL').fetchone()[0], 'wal')
+                    writer.execute('PRAGMA wal_autocheckpoint=0')
+                    writer.execute('CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)')
+                    writer.executemany('INSERT INTO items VALUES (?,?)', [(1, 'one'), (2, 'two')])
+                    writer.execute('BEGIN IMMEDIATE')
+                    writer.execute("INSERT INTO items VALUES (3, 'uncommitted')")
+                    database, log = snapshot(path), snapshot(wal)
+                    self.guest(d, f'''!(case (sqlite:observe {Q(path)} "SELECT id,value FROM items ORDER BY id" () 1000)
+   (((sqlite:result ("id" "value") ((1 "one") (2 "two")) 0 0) (println! SQLITE_OK))))
+''', lang)
+                    # Committed frames stay in the WAL: no checkpoint copied them.
+                    self.assertEqual(snapshot(path), database)
+                    self.assertEqual(snapshot(wal), log)
+                    self.assertTrue(writer.in_transaction)
+                    writer.execute('COMMIT')
+                finally:
+                    writer.close()
+                # The writer's close checkpointed its WAL; an idle database
+                # file is read in place too.
+                database = snapshot(path)
+                self.guest(d, f'''!(case (sqlite:observe {Q(path)} "SELECT count(*) FROM items" () 1000)
+   (((sqlite:result $_ ((3)) 0 0) (println! SQLITE_OK))))
+''', lang)
+                self.assertEqual(snapshot(path), database)
+
+    def test_observation_binds_parameters(self):
+        for lang in LANGUAGES:
+            with self.subTest(lang=lang), tempfile.TemporaryDirectory() as d:
+                path = Path(d) / 'history.sqlite3'
+                with sqlite3.connect(path) as db:
+                    db.execute('CREATE TABLE calls (id TEXT PRIMARY KEY, n INTEGER, r REAL, t TEXT, absent TEXT)')
+                    db.executemany('INSERT INTO calls VALUES (?,?,?,?,?)',
+                                   [('call-1', 7, 1.25, 'λ', None), ('call-2', 8, 2.5, 'other', 'x')])
+                db.close()
+                before = snapshot(path)
+                result = self.guest(d, f'''!(case (sqlite:observe {Q(path)} "SELECT id FROM calls WHERE id=? AND n=? AND r=? AND t=? AND absent IS ?"
+                       ("call-1" 7 1.25 "λ" sqlite:null) 1000)
+   (((sqlite:result ("id") (("call-1")) 0 0) (println! SQLITE_BOUND))))
+!(case (sqlite:observe {Q(path)} "SELECT typeof(?),typeof(?),typeof(?),typeof(?),typeof(?),typeof(?)"
+                       ("t" 1 1.5 sqlite:null (sqlite:blob "b") word) 1000)
+   (((sqlite:result $_ (("text" "integer" "real" "null" "blob" "text")) 0 0) (println! SQLITE_BOUND))))
+!(case (sqlite:observe {Q(path)} "SELECT id FROM calls WHERE id=?" () 1000)
+   (((sqlite:error sql 25 "parameter count does not match SQL" failed) (println! SQLITE_BOUND))))
+!(println! SQLITE_OK)
+''', lang)
+                self.assertEqual(result.count('SQLITE_BOUND'), 3, result)
+                self.assertEqual(snapshot(path), before)
 
     def test_embedded_python_and_native_use_one_shared_sqlite(self):
         linkage = subprocess.check_output(['ldd', os.environ['CETTA_BIN']], text=True)

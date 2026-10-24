@@ -25,7 +25,9 @@ typedef struct {
 
 /* Try to dispatch a grounded operation.
    If head is a known grounded op and args are valid, returns result atom.
-   Otherwise returns NULL (not a grounded op). */
+   Otherwise returns NULL (not a grounded op). The argument vector is borrowed
+   for the synchronous call: operations neither modify nor retain the vector.
+   An escaping result must own any vector storage it needs. */
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs);
 
 /* Run a grounded operation and report what it did (call_outcome.h): its
@@ -89,6 +91,12 @@ bool grounded_compare_numeric_atoms(Atom *left, Atom *right, int *ordering);
 
 /* Check if a symbol is a known grounded op head (by SymbolId). */
 bool is_grounded_op(SymbolId id);
+
+/* Source-declared sequence constructors return completed data, and may hold
+ * individual operands. Unlisted heads keep their existing call contract. */
+bool grounded_op_is_sequence_constructor(SymbolId id);
+bool grounded_op_sequence_accepts_arity(SymbolId id, uint32_t arity);
+bool grounded_op_sequence_data_arg(SymbolId id, uint32_t argument_index);
 
 /* Structural ordering has a separate profile licence from numeric order. */
 static inline bool grounded_op_is_term_order(SymbolId id) {

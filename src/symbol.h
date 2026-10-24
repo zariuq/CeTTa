@@ -27,6 +27,7 @@ enum {
     CETTA_SYMBOL_FLAG_BUILTIN = 1u << 3,
     CETTA_SYMBOL_FLAG_PETTA_ONLY_BUILTIN = 1u << 5,
     CETTA_SYMBOL_FLAG_BUILTIN_CONSTRUCTOR = 1u << 6,
+    CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP = 1u << 7,
 };
 
 typedef struct {
@@ -386,20 +387,20 @@ static inline SymbolSpelling symbol_spelling(
     X(sort_atom, "sort-atom") \
     X(retain_top_k_keyed_atom, "retain-top-k-keyed-atom") \
     /* Compact native tensor operations, wrapped by lib_tensor.metta. */ \
-    X(tensor_from, "__cetta_lib_tensor_from") \
-    X(tensor_full, "__cetta_lib_tensor_full") \
-    X(tensor_shape, "__cetta_lib_tensor_shape") \
-    X(tensor_dtype, "__cetta_lib_tensor_dtype") \
-    X(tensor_to_expr, "__cetta_lib_tensor_to_expr") \
-    X(tensor_reshape, "__cetta_lib_tensor_reshape") \
-    X(tensor_copy, "__cetta_lib_tensor_copy") \
-    X(tensor_with, "__cetta_lib_tensor_with") \
-    X(tensor_add, "__cetta_lib_tensor_add") \
-    X(tensor_mul, "__cetta_lib_tensor_mul") \
-    X(tensor_sum, "__cetta_lib_tensor_sum") \
-    X(tensor_dot, "__cetta_lib_tensor_dot") \
-    X(tensor_encode, "__cetta_lib_tensor_encode") \
-    X(tensor_decode, "__cetta_lib_tensor_decode") \
+    X(dense_v1_tensor_from, "__cetta_lib_tensor_from") \
+    X(dense_v1_tensor_full, "__cetta_lib_tensor_full") \
+    X(dense_v1_tensor_shape, "__cetta_lib_tensor_shape") \
+    X(dense_v1_tensor_dtype, "__cetta_lib_tensor_dtype") \
+    X(dense_v1_tensor_to_expr, "__cetta_lib_tensor_to_expr") \
+    X(dense_v1_tensor_reshape, "__cetta_lib_tensor_reshape") \
+    X(dense_v1_tensor_copy, "__cetta_lib_tensor_copy") \
+    X(dense_v1_tensor_with, "__cetta_lib_tensor_with") \
+    X(dense_v1_tensor_add, "__cetta_lib_tensor_add") \
+    X(dense_v1_tensor_mul, "__cetta_lib_tensor_mul") \
+    X(dense_v1_tensor_sum, "__cetta_lib_tensor_sum") \
+    X(dense_v1_tensor_dot, "__cetta_lib_tensor_dot") \
+    X(dense_v1_tensor_encode, "__cetta_lib_tensor_encode") \
+    X(dense_v1_tensor_decode, "__cetta_lib_tensor_decode") \
     X(unkey_atom, "unkey-atom") \
     X(sort_strings, "sort-strings") \
     /* ── Grounded math functions ── */ \
@@ -441,6 +442,57 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_list_from_expression, "__cetta_lib_list_from_expression") \
     X(lib_list_to_expression, "__cetta_lib_list_to_expression") \
     X(lib_list_range, "__cetta_lib_list_range") \
+    X(lib_list_repeat, "__cetta_lib_list_repeat") \
+    X(lib_list_group_sums, "__cetta_lib_list_group_sums") \
+    X(lib_list_group_sums_blocks, "__cetta_lib_list_group_sums_blocks") \
+    X(lib_list_factorize, "__cetta_lib_list_factorize") \
+    X(lib_postings_prepare, "__cetta_lib_postings_prepare") \
+    X(lib_postings_own, "__cetta_lib_postings_own") \
+    X(lib_postings_counts, "__cetta_lib_postings_counts") \
+    X(lib_postings_sources_current, "__cetta_lib_postings_sources_current") \
+    X(lib_postings_inspect, "__cetta_lib_postings_inspect") \
+    X(lib_postings_close, "__cetta_lib_postings_close") \
+    X(tensor_from_values, "tensor:from-values") \
+    X(tensor_from_json, "tensor:from-json") \
+    X(tensor_from_coo, "tensor:from-coo") \
+    X(tensor_from_coordinates, "tensor:from-coordinates") \
+    X(tensor_inspect, "tensor:inspect") \
+    X(tensor_entries, "tensor:entries") \
+    X(tensor_gather, "tensor:gather") \
+    X(tensor_merge, "tensor:merge") \
+    X(tensor_zip_map, "tensor:zip-map") \
+    X(lib_tensor_try_zip_map, "__cetta_lib_tensor_try_zip_map") \
+    X(tensor_shape, "tensor:shape") \
+    X(tensor_dtype, "tensor:dtype") \
+    X(tensor_layout, "tensor:layout") \
+    X(tensor_at, "tensor:at") \
+    X(tensor_copy, "tensor:copy") \
+    X(tensor_convert, "tensor:convert") \
+    X(tensor_cast, "tensor:cast") \
+    X(tensor_promote, "tensor:promote") \
+    X(tensor_view, "tensor:view") \
+    X(tensor_reshape, "tensor:reshape") \
+    X(tensor_sum, "tensor:sum") \
+    X(tensor_matvec, "tensor:matvec") \
+    X(tensor_top_k, "tensor:top-k") \
+    X(tensor_encode, "tensor:encode") \
+    X(tensor_decode, "tensor:decode") \
+    X(tensor_builder, "tensor:builder") \
+    X(tensor_put, "tensor:put") \
+    X(tensor_freeze, "tensor:freeze") \
+    X(tensor_freeze_log, "tensor:freeze-log") \
+    X(tensor_close, "tensor:close") \
+    X(tensor_all_finite, "tensor:all-finite") \
+    X(tensor_normalize, "tensor:normalize") \
+    X(tensor_cosine_index, "tensor:cosine-index") \
+    X(tensor_cosine_scores, "tensor:cosine-scores") \
+    X(tensor_cosine_retrieve, "tensor:cosine-retrieve") \
+    X(tensor_index_source, "tensor:index-source") \
+    X(tensor_screen_index, "tensor:screen-index") \
+    X(tensor_screen, "tensor:screen") \
+    X(tensor_screen_candidates, "tensor:screen-candidates") \
+    X(tensor_screen_info, "tensor:screen-info") \
+    X(tensor_rerank, "tensor:rerank") \
     X(lib_system_args, "__cetta_lib_system_args") \
     X(lib_system_arg, "__cetta_lib_system_arg") \
     X(lib_system_arg_count, "__cetta_lib_system_arg_count") \
@@ -510,6 +562,7 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_proc_run, "__cetta_lib_proc_run") \
     X(lib_sqlite_query, "__cetta_lib_sqlite_query") \
     X(lib_sqlite_transaction, "__cetta_lib_sqlite_transaction") \
+    X(lib_sqlite_observe, "__cetta_lib_sqlite_observe") \
     X(lib_json_capabilities_v1, "__cetta_lib_json_capabilities_v1") \
     X(lib_json_parse_v1, "__cetta_lib_json_parse_v1") \
     X(lib_json_to_legacy_v1, "__cetta_lib_json_to_legacy_v1") \
@@ -781,6 +834,21 @@ static inline SymbolSpelling symbol_spelling(
     X(petta_min) X(petta_max) X(petta_decons)
 #define CETTA_BUILTIN_CONSTRUCTOR_SYMBOL_FIELDS(X) \
     X(prime_data) X(subtype)
+
+/* Libraries may publish native primitives under their public names. The
+ * shared registry supplies dispatch and operand-observation capability;
+ * no evaluator needs to recognize a library's spelling or value type. */
+#define CETTA_PUBLIC_LIBRARY_NATIVE_SYMBOL_FIELDS(X) \
+    X(tensor_from_values) X(tensor_from_json) X(tensor_from_coo) X(tensor_from_coordinates) X(tensor_inspect) \
+    X(tensor_shape) X(tensor_dtype) X(tensor_layout) X(tensor_at) \
+    X(tensor_entries) X(tensor_gather) X(tensor_merge) \
+    X(tensor_copy) X(tensor_convert) X(tensor_cast) X(tensor_promote) X(tensor_view) X(tensor_reshape) X(tensor_sum) \
+    X(tensor_matvec) X(tensor_top_k) X(tensor_encode) X(tensor_decode) \
+    X(tensor_builder) X(tensor_put) X(tensor_freeze) X(tensor_freeze_log) X(tensor_close) \
+    X(tensor_all_finite) X(tensor_normalize) X(tensor_cosine_index) \
+    X(tensor_cosine_scores) X(tensor_cosine_retrieve) X(tensor_index_source) \
+    X(tensor_screen_index) X(tensor_screen) X(tensor_screen_candidates) \
+    X(tensor_screen_info) X(tensor_rerank)
 
 /* Builtins whose grounded-operation capability is independent of language
    and profile.  symbol_table_init_builtins compiles this declaration into

@@ -22,6 +22,7 @@ typedef struct CettaNativeHandleSlot {
     void *resource;
     CettaNativeHandleFreeFn free_resource;
     CettaStorageVisitor storage;
+    size_t payload_bytes;
     NativeHandleSegment *segment;
     struct CettaNativeHandleSlot *next_free;
 } CettaNativeHandleSlot;
@@ -54,6 +55,7 @@ typedef struct CettaNativeHandleOwner {
     void *resource;
     CettaNativeHandleFreeFn free_resource;
     CettaStorageVisitor storage;
+    size_t payload_bytes;
 } CettaNativeHandleOwner;
 
 static void native_handle_release(void *ptr);
@@ -82,6 +84,7 @@ static NativeHandleRetirement native_handle_extract(CettaNativeHandleOwner *owne
     retired.resource = owner->resource;
     retired.free_resource = owner->free_resource;
     owner->resource = NULL;
+    owner->payload_bytes = 0;
     owner->free_resource = NULL;
     owner->storage = NULL;
     if (owner->references == 0u)
@@ -222,6 +225,7 @@ static NativeHandleRetirement native_handle_detach(CettaNativeHandleSlot *slot) 
     slot->kind = NULL;
     slot->free_resource = NULL;
     slot->storage = NULL;
+    slot->payload_bytes = 0;
     native_handle_index_remove(registry, slot->id);
     slot->next_free = segment->free_slots;
     segment->free_slots = slot;
@@ -268,6 +272,14 @@ static void native_handle_release(void *ptr) {
     }
     pthread_mutex_unlock(&native_handle_mutex);
     native_handle_retire(retired);
+}
+
+static size_t native_handle_payload_bytes(void *ptr) {
+    CettaNativeHandleOwner *owner = ptr;
+    pthread_mutex_lock(&native_handle_mutex);
+    size_t bytes = owner->resource ? owner->payload_bytes : 0;
+    pthread_mutex_unlock(&native_handle_mutex);
+    return bytes;
 }
 
 #ifdef CETTA_NATIVE_HANDLE_TEST_HOOKS
@@ -337,6 +349,7 @@ Atom *cetta_native_handle_owned_atom(CettaLibraryContext *ctx, Arena *a,
             .resource = slot->resource,
             .free_resource = slot->free_resource,
             .storage = slot->storage,
+            .payload_bytes = slot->payload_bytes,
         };
         slot->resource = owner;
         slot->free_resource = native_handle_release;
@@ -345,10 +358,13 @@ Atom *cetta_native_handle_owned_atom(CettaLibraryContext *ctx, Arena *a,
     if (owner->references == SIZE_MAX)
         abort();
     ++owner->references;
+    bool tracked_payload = owner->payload_bytes != 0;
     pthread_mutex_unlock(&native_handle_mutex);
-    Atom *identifier = atom_native_handle_identifier_with_storage(
-        a, (int64_t)id, owner, native_handle_retain, native_handle_release, native_handle_storage);
+    Atom *identifier = atom_native_handle_identifier_tracked_with_storage(
+        a, (int64_t)id, owner, native_handle_retain, native_handle_release,
+        native_handle_storage, tracked_payload ? native_handle_payload_bytes : NULL);
     native_handle_release(owner);
+    if (!identifier) return NULL;
     return atom_expr(a, (Atom *[]){atom_symbol(a, "NativeHandle"),
                                   atom_string(a, kind), identifier}, 3);
 }
@@ -368,6 +384,12 @@ bool cetta_native_handle_arg(Atom *arg, const char *expected_kind, uint64_t *id_
 bool cetta_native_handle_alloc(struct CettaLibraryContext *ctx, const char *kind,
                                void *resource, CettaNativeHandleFreeFn free_resource,
                                uint64_t *id_out) {
+    return cetta_native_handle_alloc_sized(ctx, kind, resource, free_resource, 0, id_out);
+}
+
+bool cetta_native_handle_alloc_sized(struct CettaLibraryContext *ctx, const char *kind,
+    void *resource, CettaNativeHandleFreeFn free_resource, size_t payload_bytes,
+    uint64_t *id_out) {
     if (!ctx || !kind || !resource || !id_out) return false;
     pthread_mutex_lock(&native_handle_mutex);
     if (ctx->native_handle_next_id == 0) {
@@ -395,6 +417,7 @@ bool cetta_native_handle_alloc(struct CettaLibraryContext *ctx, const char *kind
     slot->resource = resource;
     slot->free_resource = free_resource;
     slot->storage = NULL;
+    slot->payload_bytes = payload_bytes;
     registry->index[native_handle_index_at(registry, slot->id)] =
         (NativeHandleIndexEntry){slot->id, slot};
     ++registry->live;

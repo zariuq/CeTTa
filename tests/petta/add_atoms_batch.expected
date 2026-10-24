@@ -3,3 +3,6 @@
 2
 ()
 5
+true
+(LogicalBatch 3 (a b a))
+(LogicalBatch 2 (a b))

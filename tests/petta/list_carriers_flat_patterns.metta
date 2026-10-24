@@ -48,3 +48,31 @@
 !(f (union (1 2) (3)))
 !(foo (cons 1 (2 3)))
 !(f (quote (cons 1 (2 3))))
+
+; A prepared map may retain private cons spines between consumers. Indexed
+; and length observations read logical elements, not the carrier's fields.
+(= (carrier-rows $xs)
+   (map-atom $xs $row
+     (let ($ordinal (CarrierFields $value)) $row
+       (cons-atom $ordinal (cons-atom $value ())))))
+(= (carrier-observe $index)
+   (let $rows (carrier-rows ((0 (CarrierFields 9)) (1 (CarrierFields 9))))
+     (map-atom $rows $row (index-atom $row $index))))
+!(carrier-observe 0)
+!(carrier-observe 1)
+!(let $rows (carrier-rows ((0 (CarrierFields 9)) (1 (CarrierFields 9))))
+   (map-atom $rows $row (size-atom $row)))
+!(collapse (carrier-observe 2))
+!(collapse (carrier-observe -1))
+!(collapse (carrier-observe 1.0))
+
+; A lexical collection body reads a captured expression as its value, even
+; when the expression's spelling names a callable builtin.
+!(let $held (quote (+ 1 2)) (map-atom (a b) $x $held))
+!(let $held (quote (== 1 1)) (filter-atom (a b) $x $held))
+
+!(import! &self (library list))
+!(let $spine (cons-atom (quote (+ 1 2)) (cons-atom kept ()))
+   (Converted (list:to-expression $spine)
+     (get-metatype (list:from-expression $spine))
+     (list:to-expression (list:from-expression $spine))))

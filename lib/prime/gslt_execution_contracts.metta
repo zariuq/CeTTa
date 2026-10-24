@@ -302,15 +302,33 @@
   ; expression result abandons the speculative program and is replayed by
   ; the canonical evaluator.
   (instruction library-value-dispatch)
+  ; A truth computation uses the caller's Boolean constructor. Grounded data
+  ; projections preserve their carrier even when that carrier is Boolean.
+  (instruction boolean-dispatch)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
+  ; A sequential connective demands its first operand.  When that value is
+  ; the head's absorbing value it is the answer, and the second operand is
+  ; never demanded.  Any other value demands the second operand, and the
+  ; instruction runs on both values as a strict one does.
+  (operand-discipline short-circuit)
   (rule intrinsic-is-pure
     (= (effects (prepared-pure-intrinsic $instruction $arguments)) pure))
   (law failed-intrinsic-replays-canonically
     (implies
       (not (intrinsic-applicable $instruction $arguments))
       (= (intrinsic-execution $instruction $arguments)
-         canonical-evaluator))))
+         canonical-evaluator)))
+  (law absorbed-operand-is-not-demanded
+    (implies
+      (= (short-circuit-absorbing $head) $first)
+      (= (intrinsic-execution short-circuit ($head $first $second))
+         $first)))
+  (law open-connective-is-strict
+    (implies
+      (not (= (short-circuit-absorbing $head) $first))
+      (= (intrinsic-execution short-circuit ($head $first $second))
+         (intrinsic-execution strict-all ($head $first $second))))))
 
 (gslt determinate-fold-continuation
   (sort Control)
@@ -778,6 +796,56 @@
   (query-head __cetta_lib_system_cwd relational-query)
   (query-head __cetta_lib_system_monotonic_ns relational-query)
   (query-head __cetta_lib_proc_spawn world-write)
+  (query-head __cetta_lib_postings_prepare world-write)
+  (query-head __cetta_lib_postings_own world-write)
+  (query-head __cetta_lib_postings_counts relational-query)
+  (query-head __cetta_lib_postings_sources_current relational-query)
+  (query-head __cetta_lib_postings_inspect relational-query)
+  (query-head __cetta_lib_postings_close world-write)
+  (query-head tensor:from-values relational-query)
+  (query-head tensor:from-json relational-query)
+  (query-head __cetta_lib_list_group_sums relational-query)
+  (query-head __cetta_lib_list_group_sums_blocks relational-query)
+  (query-head __cetta_lib_list_factorize relational-query)
+  (query-head tensor:from-coo relational-query)
+  (query-head tensor:from-coordinates relational-query)
+  (query-head tensor:inspect relational-query)
+  (query-head tensor:entries relational-query)
+  (query-head tensor:gather relational-query)
+  (query-head tensor:merge relational-query)
+  (query-head tensor:zip-map relational-query)
+  (query-head __cetta_lib_tensor_try_zip_map relational-query)
+  (query-head tensor:shape relational-query)
+  (query-head tensor:dtype relational-query)
+  (query-head tensor:layout relational-query)
+  (query-head tensor:at relational-query)
+  (query-head tensor:copy relational-query)
+  (query-head tensor:convert relational-query)
+  (query-head tensor:cast relational-query)
+  (query-head tensor:promote relational-query)
+  (query-head tensor:view relational-query)
+  (query-head tensor:reshape relational-query)
+  (query-head tensor:sum relational-query)
+  (query-head tensor:matvec relational-query)
+  (query-head tensor:top-k relational-query)
+  (query-head tensor:encode relational-query)
+  (query-head tensor:decode relational-query)
+  (query-head tensor:builder world-write)
+  (query-head tensor:put world-write)
+  (query-head tensor:freeze world-write)
+  (query-head tensor:freeze-log world-write)
+  (query-head tensor:close world-write)
+  (query-head tensor:all-finite relational-query)
+  (query-head tensor:normalize relational-query)
+  (query-head tensor:cosine-index world-write)
+  (query-head tensor:cosine-scores relational-query)
+  (query-head tensor:cosine-retrieve relational-query)
+  (query-head tensor:index-source relational-query)
+  (query-head tensor:screen-index relational-query)
+  (query-head tensor:screen relational-query)
+  (query-head tensor:screen-candidates relational-query)
+  (query-head tensor:screen-info relational-query)
+  (query-head tensor:rerank relational-query)
   (query-head __cetta_lib_proc_poll world-write)
   (query-head __cetta_lib_proc_wait world-write)
   (query-head __cetta_lib_proc_status relational-query)
@@ -989,8 +1057,23 @@
     numeric-eq 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     / 2 strict-all grounded-dispatch)
+  ; HE and PeTTa evaluate both operands of a connective.  Prime's
+  ; connectives demand their second operand only when the first leaves the
+  ; value open: False decides and, True decides or.
+  (prepared-pure-intrinsic-head
+    and 2 strict-all boolean-dispatch (dialects he petta))
+  (prepared-pure-intrinsic-head
+    and 2 short-circuit boolean-dispatch (dialects prime))
+  (prepared-pure-intrinsic-head
+    or 2 strict-all boolean-dispatch (dialects he petta))
+  (prepared-pure-intrinsic-head
+    or 2 short-circuit boolean-dispatch (dialects prime))
+  (short-circuit-absorbing and 2 False)
+  (short-circuit-absorbing or 2 True)
   (prepared-pure-intrinsic-head
     abs-math 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    log-math 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     car-atom 1 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
@@ -1001,6 +1084,8 @@
     index-atom 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     unique-atom 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    intersection-atom 2 strict-all grounded-dispatch (dialects petta))
   (prepared-pure-intrinsic-head
     remove-all-atom 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
@@ -1016,7 +1101,16 @@
   (prepared-pure-intrinsic-head
     range-atom 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
-    repeat-atom 2 strict-all grounded-dispatch)
+    __cetta_lib_list_range 1 strict-all grounded-dispatch)
+  (prepared-pure-intrinsic-head
+    __cetta_lib_list_range 2 strict-all grounded-dispatch)
+  ; A constructor returns completed sequence data. Its payload positions are
+  ; held, not strict scalar operands; the strict-all prepared IR must decline
+  ; repeat until it has an instruction with this operand discipline.
+  (sequence-value-constructor-head range-atom (arities 1 2) 0)
+  (sequence-value-constructor-head __cetta_lib_list_range (arities 1 2) 0)
+  (sequence-value-constructor-head repeat-atom (arities 2) 2)
+  (sequence-value-constructor-head __cetta_lib_list_repeat (arities 2) 2)
   (prepared-pure-intrinsic-head
     decons-atom 1 strict-all deconstruct-nonempty-expression)
   (prepared-pure-intrinsic-head
