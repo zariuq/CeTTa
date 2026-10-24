@@ -965,6 +965,8 @@
   (prepared-pure-intrinsic-head
     or 2 strict-all boolean-dispatch)
   (prepared-pure-intrinsic-head
+    not 1 strict-all boolean-dispatch)
+  (prepared-pure-intrinsic-head
     abs-math 1 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     log-math 2 strict-all grounded-dispatch)

@@ -31446,6 +31446,34 @@ test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
 	! grep -F -q 'atom=(inc $$acc)' <<<"$$trace"; \
 	echo 'PASS: typed heads run in the prepared machine with HE casts, type errors and arity, in every HE profile'
 
+# `not` is a prepared intrinsic: the prepared machine negates a truth value,
+# and any other value leaves the call to the canonical evaluator.  Both routes
+# answer as the reference engines do: SWI-PeTTa fails on a value that is not
+# a truth value, and HE raises a type error.
+.PHONY: test-prepared-pure-not
+test-all: test-prepared-pure-not
+test-prepared-pure-not: $(BIN) tests/petta/prepared_not.metta \
+		tests/petta/prepared_not.expected tests/he/prepared_not.metta \
+		tests/he/prepared_not.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/prepared_not.metta \
+			| diff -u tests/petta/prepared_not.expected -; \
+		for lane in he "he --profile he-compat" "he --profile extended"; do \
+			env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+				tests/he/prepared_not.metta \
+				| diff -u tests/he/prepared_not.expected -; \
+		done; \
+	done; \
+	for language in petta he; do \
+		trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) \
+			--lang $$language tests/$$language/prepared_not.metta 2>&1 >/dev/null); \
+		grep -q 'bodies lowered to register code' <<<"$$trace"; \
+		! grep -q 'outside the pure machine fragment' <<<"$$trace"; \
+	done; \
+	echo 'PASS: not runs in the prepared machine, and other values keep the reference answer in PeTTa and HE'
+
 # A definition that takes arguments as they are written (an Atom parameter)
 # is expanded where it is called in the prepared machine, as HE runs it, so a
 # let written as HE's library writes it compiles as the native one does.  An
