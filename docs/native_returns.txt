@@ -244,3 +244,49 @@ array/offset cursor to the ordered reference and the post-invocation world.
 An entered empty frontier remains distinct from admission refusal. Existing
 cursor split-resumption laws apply to the retained state. The models do not
 claim native C correspondence or arbitrary effectful-native admission.
+
+Ordinary invocation continuations
+
+Activation slots, ready slots, immediate arguments, strict-ready host calls
+and entered OEM returns use one search-machine delivery decision. A single
+value meets its destination directly. Frontiers, conditional answers and
+incomplete returns retain their tags through the shared completion service;
+none is converted into a tuple and substituted for the whole result stream.
+This does not add a goal transition to ordinary single-value delivery.
+
+The canonical row-collection, batch-mutation and sequence-constructor arity
+consumers read tagged native returns directly. Only the HE one-step reflective
+observer still requests executable return syntax. Row decoding owns its quote
+removal and evaluation demand. An entered empty collection does not decline
+the operation. Arity observation remains dialect-owned: the HE preflight does
+not remove PeTTa's eager argument work or its partial/over-application protocol.
+
+ContextualCBPV gives an operational kernel for sequencing, invocation,
+ordinary suspensions, ordered choice, failure, scoped handlers and native
+effects. Its native entry changes the world once and installs a retained
+worker. Pulling a worker can commit further effects and returns each answer's
+own branch context; it does not repeat native entry. Resumption restores the
+caller lexical scope while retaining the answer's logical updates.
+A handler records its choice floor, so catching a raise drops
+protected alternatives and preserves outer choices. Source charges are
+explicit chronological occurrences, separately metered from administrative
+transitions and physical slice allowance. Logical-store rollback, dialect
+elaboration adequacy and native C correspondence remain separate refinement
+obligations.
+
+A pending check remains part of a conditional return even when a caller asks
+to project away substitutions. Projection materializes both the value and
+check under the merged context, then retains their reachable bindings and
+branch state. A preserved-environment return also transports its delayed root.
+The existing whole-outcome relocation owns both roots after the source retires.
+Transport does not interpret a client's check protocol. Registration and
+discharge belong to the consuming relational/constraint machine.
+Row collection applies the same quote/collection observation to ordinary and
+conditional values. Each resulting occurrence carries the pending check;
+an empty collection produces no row and never reenters the native provider.
+
+ConditionalContextProjection reuses the finite Horn worklist to compute the
+least support closed under store reads. It proves both directions of finite
+substitution preservation for the value and check, including transitive reads
+and unreachable cycles. Native graph relocation and attributed-variable
+correspondence are separate obligations tested at the runtime boundary.
