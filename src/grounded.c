@@ -4121,6 +4121,9 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         bool bv;
         if (get_bool_arg(args[0], &bv))
             return bv ? atom_false(a) : atom_true(a);
+        /* SWI-PeTTa's not/2 holds of a truth value alone: any other value
+         * fails there, as its and/2, or/2 and xor/2 do, where HE raises a
+         * type error. */
         if (args[0]->kind == ATOM_GROUNDED)
             return grounded_current_language_is_petta()
                 ? atom_petta_no_result(a)

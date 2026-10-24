@@ -7,6 +7,7 @@
 #include "native/regex_source_v1.h"
 #include "native/regex_text_v1.h"
 #include "native/regex_trie_v1.h"
+#include "native/regex_selection_internal_v1.h"
 #include "native/unicode_class_v1.h"
 #include <pthread.h>
 #include <stdlib.h>
@@ -616,13 +617,14 @@ static Atom *render_matches(Arena *arena, const CettaReProgramV1 *program,
             "expected $digits/${name}/$$ text or constructed re:text/re:group parts");
     }
     CettaByteBuffer buffer; cetta_byte_buffer_init(&buffer);
+    CettaReWorkspaceV1 workspace = {0};
     CettaReCursorV1 cursor = {.bytes = bytes, .byte_len = len};
     Atom *list = atom_symbol(arena, "LNil"), **tail = &list, *answer = NULL;
     size_t previous = 0;
     CettaReExecutionPolicyV1 policy = {.cancelled = match_cancelled};
     for (;;) {
         if (eval_native_interrupted()) { *interrupted = true; break; }
-        CettaReResultV1 result = cetta_re_v1_next_policy(program, &cursor, &policy);
+        CettaReResultV1 result = cetta_re_v1_next_workspace(program, &cursor, &policy, &workspace);
         if (result.outcome == CETTA_RE_V1_CANCELLED) {
             cetta_re_v1_result_free(&result); *interrupted = true; break;
         }
@@ -653,6 +655,7 @@ static Atom *render_matches(Arena *arena, const CettaReProgramV1 *program,
         }
         previous = result.groups[0].end; cetta_re_v1_result_free(&result);
     }
+    cetta_re_v1_workspace_free(&workspace);
     free(parts); cetta_byte_buffer_free(&buffer); return answer;
 }
 /* Compile a constructed or lowered pattern under an optional capture layout.
@@ -959,11 +962,15 @@ bool cetta_re_call(CettaLibraryContext *ctx, Arena *a, Atom *head, Atom **args,
     CettaReCursorV1 cursor = {.bytes = text, .byte_len = len};
     Atom *list = atom_symbol(a, "LNil"), **tail = &list;
     CettaReExecutionPolicyV1 policy = {.work_budget = budget, .cancelled = match_cancelled};
+    CettaReWorkspaceV1 workspace = {0};
     for (;;) {
-        if (eval_native_interrupted()) { *out = cetta_call_interrupted(); return true; }
-        CettaReResultV1 r = all ? cetta_re_v1_next_policy(p, &cursor, &policy) :
+        if (eval_native_interrupted()) {
+            cetta_re_v1_workspace_free(&workspace); *out = cetta_call_interrupted(); return true;
+        }
+        CettaReResultV1 r = all ? cetta_re_v1_next_workspace(p, &cursor, &policy, &workspace) :
             cetta_re_v1_find_policy_valid_utf8(p, text, len, 0, mode, &policy);
         if (r.outcome == CETTA_RE_V1_CANCELLED) {
+            cetta_re_v1_workspace_free(&workspace);
             cetta_re_v1_result_free(&r); *out = cetta_call_interrupted(); return true;
         }
         value = match_value(a, p, &r);
@@ -979,6 +986,7 @@ bool cetta_re_call(CettaLibraryContext *ctx, Arena *a, Atom *head, Atom **args,
         *tail = cell; tail = &cell->expr.elems[2];
         cetta_re_v1_result_free(&r);
     }
+    cetta_re_v1_workspace_free(&workspace);
     goto completed;
 handle:
     value = failure(a, "re:invalid-handle", "expected a live compiled pattern owner"); goto completed;

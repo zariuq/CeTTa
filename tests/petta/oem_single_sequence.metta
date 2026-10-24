@@ -26,7 +26,10 @@
 !(collapse (single-cut))
 !(collapse (single-field-cut))
 !(collapse (single-fail))
-!(let (Error $kind $context) (catch (single-raise)) $kind)
+; The sequence forwards the child's exception. Its provider-specific spelling
+; is checked by arithmetic conformance, not by this sequencing control.
+!(let (Error $kind $context) (catch (single-raise))
+   (let (Error $direct $direct-context) (catch (/ 1 0)) (== $kind $direct)))
 !(single-effect)
 !(collapse (multiple-progn))
 !(collapse (multiple-prog1))

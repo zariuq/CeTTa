@@ -10,7 +10,7 @@ done
 ((Box kept) (Box kept))
 (tail tail outside)
 ()
-(evaluation_error zero_divisor)
+true
 ()
 ()
 done

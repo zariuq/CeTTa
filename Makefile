@@ -31465,11 +31465,10 @@ test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
 	! grep -F -q 'atom=(inc $$acc)' <<<"$$trace"; \
 	echo 'PASS: typed heads run in the prepared machine with HE casts, type errors and arity, in every HE profile'
 
-# A definition that takes arguments as they are written (an Atom parameter)
-# is expanded where it is called in the prepared machine, as HE runs it, so a
-# let written as HE's library writes it compiles as the native one does.  An
-# expansion that does not end, as a macro calling itself, is left to the
-# canonical evaluator; turning the machine off changes no answer.
+# `not` is a prepared intrinsic: the prepared machine negates a truth value,
+# and any other value leaves the call to the canonical evaluator.  Both routes
+# answer as the reference engines do: SWI-PeTTa fails on a value that is not
+# a truth value, and HE raises a type error.
 .PHONY: test-prepared-pure-not
 test-all: test-prepared-pure-not
 test-prepared-pure-not: $(BIN) tests/petta/prepared_not.metta \
@@ -31495,6 +31494,11 @@ test-prepared-pure-not: $(BIN) tests/petta/prepared_not.metta \
 	done; \
 	echo 'PASS: prepared not preserves PeTTa failure and HE type errors across execution routes'
 
+# A definition that takes arguments as they are written (an Atom parameter)
+# is expanded where it is called in the prepared machine, as HE runs it, so a
+# let written as HE's library writes it compiles as the native one does.  An
+# expansion that does not end, as a macro calling itself, is left to the
+# canonical evaluator; turning the machine off changes no answer.
 .PHONY: test-he-macro-definitions-prepared
 test-all: test-he-macro-definitions-prepared
 test-he-macro-definitions-prepared: $(BIN) \
@@ -42203,7 +42207,7 @@ $(REGEX_EXECUTION_POLICY_V1_TEST_BIN): tests/support/test_regex_execution_policy
 		native/regex_selection_internal_v1.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_regex_execution_policy_v1.c \
-		native/regex_selection_v1.c native/regex_trie_v1.c native/regex_extended_v1.c src/scalar_trie.c -lm -pthread
+		native/regex_trie_v1.c native/regex_extended_v1.c src/scalar_trie.c -lm -pthread
 .PHONY: test-regex-execution-policy-v1
 test-regex-execution-policy-v1: $(REGEX_EXECUTION_POLICY_V1_TEST_BIN)
 	@$(REGEX_EXECUTION_POLICY_V1_TEST_BIN)
@@ -46107,6 +46111,7 @@ endif
 test-petta-search-machine: test-petta-imported-host-bridges
 ifeq ($(ENABLE_PYTHON)$(LIB_PROLOG_ENABLED),11)
 test-petta-libpl: test-petta-imported-python-host-bridge
+endif
 
 # The native result protocol distinguishes a missing answer, a completed
 # observer value, and ordinary data with the same expression shape.
@@ -46140,7 +46145,6 @@ ifeq ($(ENABLE_PYTHON),1)
 		fi; \
 	done; \
 	echo "PASS: Python results retain call-shaped data on both routes"
-endif
 endif
 
 .PHONY: test-gslt2parse-schema-v1 test-gslt2parse-schema-v1-native test-gslt2parse-c-horn-v1-native test-gslt2parse-c-horn-v1-differential test-gslt2parse-parser-action-bytecode-v1 test-gslt2parse-lookahead-semantics-v1 test-gslt2parse-parser-pack-guard-compiler-v1 test-gslt2parse-parser-pack-guard-regular-v1 test-gslt2parse-parser-pack-lr1-v1 test-gslt2parse-parser-pack-guard-plan-he-v1 test-gslt2parse-parser-pack-guard-plan-prime-v1 test-gslt2parse-parser-pack-abi-v1-native test-gslt2parse-parser-pack-abi-v1-matrix test-gslt2parse-parser-term-projection-v1-native test-gslt2parse-parser-atom-projection-v1-native test-gslt2parse-parser-atom-projection-closure-v1 test-gslt2parse-semantic-mask-span-compiler-v1 test-gslt2parse-parser-pack-gll-v1-native test-gslt2parse-parser-pack-gll-v1-matrix test-gslt2parse-regular-span-dfa-v1-native test-gslt2parse-regular-span-dfa-v1-matrix test-term-universe-backend-add-abi bench-space-scale-ladder
@@ -46502,7 +46506,7 @@ $(PETTA_CALLABILITY_REFRESH_TEST_BIN): $(PETTA_CALLABILITY_REFRESH_TEST_OBJ) $(P
 test-all: test-petta-callability-refresh
 test-petta-callability-refresh: $(BIN) $(PETTA_CALLABILITY_REFRESH_TEST_BIN)
 	@$(call cetta_exec,./$(PETTA_CALLABILITY_REFRESH_TEST_BIN))
-	@python3 tests/support/check_petta_callability_refresh.py ./$(BIN)
+	@python3 tests/support/check_petta_callability_refresh.py ./$(BIN) --lib-prolog $(LIB_PROLOG_ENABLED)
 
 .PHONY: test-borrowed-query-views
 BORROWED_QUERY_VIEW_TEST_OBJ = runtime/bootstrap/test_borrowed_query_view.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o

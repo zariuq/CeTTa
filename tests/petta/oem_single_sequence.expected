@@ -14,7 +14,7 @@ done
 (true)
 ((Box true))
 ()
-(evaluation_error zero_divisor)
+true
 true
 (one two)
 (one two)
