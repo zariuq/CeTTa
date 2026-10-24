@@ -368,8 +368,15 @@ static bool parent_copy_equation(PrimeParentCopy *copy,
         if(!parent_copy_equation_metadata(copy,&s->result_metadata,&p->result_metadata,s->results.len))return false;
     }
     if(!parent_copy_equation_metadata(copy,&source->raw_metadata,&image->raw_metadata,source->raw_results.len) ||
-       !parent_copy_equation_metadata(copy,&source->publication_metadata,&image->publication_metadata,source->publication.len))return false;
+       !parent_copy_equation_metadata(copy,&source->publication_metadata,&image->publication_metadata,source->publication.len) ||
+       !parent_copy_equation_metadata(copy,&source->residual_metadata,&image->residual_metadata,source->residuals.len) ||
+       !parent_copy_equation_metadata(copy,&source->forced_world_metadata,&image->forced_world_metadata,source->forced_worlds.len))return false;
     image->current_plan_count=source->current_plan_count;PC_ARRAY(image,source,current_plan_indices,source->current_plan_count);
+    image->current_work_slot=source->current_work_slot;
+    image->current_world_order=source->current_world_order;
+    image->world_order_extent=source->world_order_extent;
+    if(source->current.len && source->current_work_slot>source->work.len)
+        return parent_copy_refuse(copy,"CurrentWorkSlot");
     image->pending_plan_count=source->pending_plan_count;PC_ARRAY(image,source,pending_plan_indices,source->pending_plan_count);
     image->current_covered_by_match=source->current_covered_by_match;image->force_argument=source->force_argument;
     image->current_observation_fault=source->current_observation_fault;

@@ -194,6 +194,99 @@ class Gate:
                             name, expected_output, receipt)
                         self.passed_case(name + ': exact effects and answer occurrences')
 
+    def ordered_readiness(self):
+        """Earlier rules expose earned answers before later inspections."""
+        cases = [
+            ('unequal arguments',
+             '(= (ready-call A $u) first) (= (ready-call $u B) second) '
+             '(= (ready-tail) (chain (println! forbidden-ready-tail) $u B))',
+             '(ready-call (superpose (A X)) (ready-tail))',
+             [('once', ['first'], []), ('select 1', ['first'], [])]),
+        ]
+        source = ' '.join(f'(= (ready-source) (Box {tag} (ready-field {tag})))'
+                          for tag in ('A', 'B', 'C'))
+        heads = ('(= (ready-view (Box $tag $x)) Early) '
+                 '(= (ready-view (Box $tag 7)) $tag) ')
+        fields = '(= (ready-field $tag) (chain (println! (inspect $tag)) $u 7))'
+        early = ['Early'] * 3
+        cases += [
+            ('unmatched worlds preserve source order',
+             '(= (residual-source) (Box A (residual-tail))) '
+             '(= (residual-source) (Box (residual-head) B)) '
+             '(= (residual-tail) (chain (println! (inspect tail-A)) $u 8)) '
+             '(= (residual-head) (chain (println! (inspect head-B)) $u 8)) '
+             '(= (residual-view (Box 7 $x)) Rule0) '
+             '(= (residual-view (Box $x 7)) Rule1)', '(residual-view (residual-source))',
+             [('select 3', [['residual-view', ['Box', 'A', 8]],
+                            ['residual-view', ['Box', 8, 'B']]], ['head-B', 'tail-A'])]),
+            ('duplicate unmatched worlds remain separate',
+             '(= (residual-source) (Box A (residual-tail))) '
+             '(= (residual-source) (Box (residual-head) B)) '
+             '(= (residual-tail) (chain (println! (inspect tail-A)) $u (superpose (8 8)))) '
+             '(= (residual-head) (chain (println! (inspect head-B)) $u 8)) '
+             '(= (residual-view (Box 7 $x)) Rule0) '
+             '(= (residual-view (Box $x 7)) Rule1)', '(residual-view (residual-source))',
+             [('select 4', [['residual-view', ['Box', 'A', 8]],
+                            ['residual-view', ['Box', 'A', 8]],
+                            ['residual-view', ['Box', 8, 'B']]], ['head-B', 'tail-A'])]),
+            ('middle world forks before a parked earlier reader',
+             '(= (fork-source) (Box A A (fork-tail))) '
+             '(= (fork-source) (Box B (fork-head) 7)) '
+             '(= (fork-source) (Box C A 7)) '
+             '(= (fork-head) (chain (println! (inspect head-B)) $u (superpose (A A)))) '
+             '(= (fork-tail) (chain (println! (inspect tail-A)) $u 7)) '
+             '(= (fork-view (Box $tag A $x)) Early) '
+             '(= (fork-view (Box $tag $x 7)) $tag)', '(fork-view (fork-source))',
+             [('select 1', ['Early'], []), ('select 4', ['Early'] * 4, ['head-B']),
+              ('select 5', ['Early'] * 4 + ['A'], ['head-B', 'tail-A']),
+              ('select 9', ['Early'] * 4 + ['A', 'B', 'C'], ['head-B', 'tail-A'])]),
+            ('three worlds', source + heads + fields, '(ready-view (ready-source))',
+             [('select 1', early[:1], []), ('select 3', early, []),
+              ('select 4', early + ['A'], ['A']),
+              ('select 5', early + ['A', 'B'], ['A', 'B']),
+              ('select 7', early + ['A', 'B', 'C'], ['A', 'B', 'C']),
+              ('collapse', early + ['A', 'B', 'C'], ['A', 'B', 'C'])]),
+            ('duplicate physical first rule', source +
+             '(= (ready-view (Box $tag $x)) Early) ' + heads + fields,
+             '(ready-view (ready-source))',
+             [('select 6', early * 2, []),
+              ('select 7', early * 2 + ['A'], ['A']),
+              ('select 10', early * 2 + ['A', 'B', 'C'], ['A', 'B', 'C'])]),
+            ('empty leading body', source +
+             '(= (ready-view (Box $tag $x)) (empty)) '
+             '(= (ready-view (Box $tag 7)) $tag) ' + fields,
+             '(ready-view (ready-source))',
+             [('once', ['A'], ['A']), ('select 4', ['A', 'B', 'C'], ['A', 'B', 'C'])]),
+            ('empty later field', source + heads +
+             '(= (ready-field $tag) (chain (println! (inspect $tag)) $u '
+             '  (if (== $tag A) (empty) 7)))', '(ready-view (ready-source))',
+             [('select 3', early, []), ('select 4', early + ['B'], ['A', 'B']),
+              ('select 7', early + ['B', 'C'], ['A', 'B', 'C'])]),
+            ('fault in later field', source + heads +
+             '(= (ready-field $tag) (chain (println! (inspect $tag)) $u '
+             '  (if (== $tag A) (Error bad ReadinessFault) 7)))',
+             '(ready-view (ready-source))',
+             [('select 3', early, []),
+              ('select 4', early + [['Error', 'bad', 'ReadinessFault']], ['A'])]),
+        ]
+        routes = [('default', (), {}),
+                  ('reference', (), {'CETTA_PRIME_RELATIONAL_PLAN_REFERENCE': '1'}),
+                  ('fuel', ('--fuel', '1000000'), {})]
+        for label, definitions, term, observations in cases:
+            for observer, answers, inspected in observations:
+                for route, arguments, environment in routes:
+                    name = f'ordered readiness: {label}, {observer}, {route}'
+                    trees, _ = self.run(name, definitions + f'!({observer} {term})',
+                                        arguments=arguments, environment=environment)
+                    expected = [answers] if observer in ('once', 'select 1') else [[answers]]
+                    assert trees == expected, (name, expected, trees)
+                    effects = [line for line in self.receipts[-1]['stdout'].splitlines()
+                               if not line.startswith('[')]
+                    assert effects == [f'(inspect {tag})' for tag in inspected], (
+                        name, inspected, self.receipts[-1])
+                    assert not self.receipts[-1]['stderr'], self.receipts[-1]
+                    self.passed_case(name)
+
     def run_file(self, name, path, **kwargs):
         path = path.resolve()
         return self.run(name, path.read_text(), source_path=path, **kwargs)
@@ -871,12 +964,14 @@ def main():
         elif args.first_answer_only:
             gate.first_answer_shapes()
             gate.ordered_pattern_cohorts()
+            gate.ordered_readiness()
             gate.deferred_pattern_observations()
             gate.queued_pattern_observations()
         else:
             gate.fixed()
             gate.first_answer_shapes()
             gate.ordered_pattern_cohorts()
+            gate.ordered_readiness()
             gate.deferred_pattern_observations()
             gate.queued_pattern_observations()
             if not args.no_timing:

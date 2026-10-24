@@ -69,12 +69,108 @@ static void fresh_read_storage(void) {
     arena_free(&consumer);
 }
 
+static void suffix_import_cases(void) {
+    Arena source, recipient_owner, survivor;
+    arena_init(&source); arena_init(&recipient_owner); arena_init(&survivor);
+    CettaWeightLedger empty = {0}, common = {0}, entrance = {0}, production = {0};
+    CettaWeightLedger recipient = {0}, imported = {0};
+    CHECK(cetta_weight_ledger_append(&source, &empty, 1u, 101u, atom_int(&source, 2), &common) &&
+        cetta_weight_ledger_append(&source, &common, 2u, 102u, atom_int(&source, 3), &entrance) &&
+        cetta_weight_ledger_append(&source, &entrance, 3u, 103u, atom_int(&source, 7), &production) &&
+        cetta_weight_ledger_append(&source, &production, 4u, 104u, atom_int(&source, 7), &production),
+        "a producer earns two equal but physically distinct factors after force entrance");
+    CHECK(cetta_weight_ledger_append(&recipient_owner, &common, 5u, 105u,
+        atom_int(&recipient_owner, 11), &recipient), "another reader has its own earlier choice");
+    CHECK(cetta_weight_ledger_import_suffix(&survivor, &entrance, &production, &recipient, &imported) &&
+        imported.length == 4u, "only the earned suffix joins the recipient's earlier world");
+    const CettaWeightFactor **items = cetta_weight_ledger_ordered(&imported);
+    CHECK(items && items[0]->occurrence == 1u && items[1]->occurrence == 5u &&
+        items[2]->occurrence == 3u && items[3]->occurrence == 4u &&
+        items[1]->value->ground.ival == 11 && items[2]->value->ground.ival == 7 &&
+        items[3]->value->ground.ival == 7,
+        "no earlier producer choice leaks and equal earned factors retain both identities");
+    free(items);
+    CettaWeightLedger again = {0};
+    CHECK(cetta_weight_ledger_import_suffix(&survivor, &entrance, &production, &imported, &again) &&
+        cetta_weight_ledger_equal(&again, &imported), "reimport charges no factor twice");
+    CettaWeightLedger held = {0};
+    CHECK(cetta_weight_ledger_append(&recipient_owner, &recipient, 3u, 103u,
+        atom_int(&recipient_owner, 7), &held) &&
+        cetta_weight_ledger_append(&recipient_owner, &held, 6u, 106u,
+        atom_int(&recipient_owner, 13), &held) &&
+        cetta_weight_ledger_import_suffix(&survivor, &entrance, &production, &held, &again),
+        "an unrelated recipient factor can follow an already imported earned prefix");
+    items = cetta_weight_ledger_ordered(&again);
+    CHECK(items && again.length == 5u && items[2]->occurrence == 3u &&
+        items[3]->occurrence == 6u && items[4]->occurrence == 4u,
+        "recipient order stays intact before the remaining earned suffix");
+    free(items);
+    CettaWeightLedger refused = again, saved = again;
+    CHECK(cetta_weight_ledger_append(&recipient_owner, &recipient, 4u, 104u,
+        atom_int(&recipient_owner, 7), &held) &&
+        !cetta_weight_ledger_import_suffix(&survivor, &entrance, &production, &held, &refused) &&
+        refused.last == saved.last, "a hole in the shared earned prefix refuses without publishing");
+    CHECK(cetta_weight_ledger_append(&recipient_owner, &held, 3u, 103u,
+        atom_int(&recipient_owner, 7), &held) &&
+        !cetta_weight_ledger_import_suffix(&survivor, &entrance, &production, &held, &refused) &&
+        refused.last == saved.last, "reversed earned factors cannot impersonate a shared prefix");
+    for (unsigned change = 0u; change < 2u; change++) {
+        CHECK(cetta_weight_ledger_append(&recipient_owner, &recipient, 3u,
+            change ? 999u : 103u, atom_int(&recipient_owner, change ? 7 : 8), &held) &&
+            !cetta_weight_ledger_import_suffix(&survivor, &entrance, &production, &held, &refused) &&
+            refused.last == saved.last, "changed payload or dependency cannot reuse an earned identity");
+    }
+    CettaWeightLedger wrong_entrance = {0};
+    CHECK(cetta_weight_ledger_append(&source, &common, 2u, 902u, atom_int(&source, 3),
+        &wrong_entrance) && !cetta_weight_ledger_import_suffix(&survivor, &wrong_entrance,
+        &production, &recipient, &refused) && refused.last == saved.last,
+        "the claimed entrance must be the actual production prefix");
+
+    CettaWeightLedger handled = {0}, selected = {0}, claimed = {0};
+    CHECK(cetta_weight_ledger_handle(&source, &production, &entrance, 910u, &handled, &selected) &&
+        selected.length == 2u && cetta_weight_ledger_import_suffix(&survivor,
+        &entrance, &handled, &recipient, &claimed) && claimed.claim_count == 2u &&
+        cetta_weight_ledger_handler(&claimed, 3u) == 910u &&
+        cetta_weight_ledger_handler(&claimed, 4u) == 910u &&
+        !cetta_weight_ledger_handler(&claimed, 1u) && !cetta_weight_ledger_handler(&claimed, 5u),
+        "new post-entrance claims travel with their original earned factors only");
+    CHECK(cetta_weight_ledger_import_suffix(&survivor, &entrance, &handled, &claimed, &again) &&
+        cetta_weight_ledger_equal(&again, &claimed), "the same handler claim is idempotent");
+    CettaWeightLedger rival = {0};
+    CHECK(cetta_weight_ledger_handle(&survivor, &imported, &recipient, 911u, &rival, &selected) &&
+        !cetta_weight_ledger_import_suffix(&survivor, &entrance, &handled, &rival, &refused) &&
+        refused.last == saved.last, "a competing handler cannot take the same earned factors");
+    CettaWeightLedger all_claimed = {0};
+    CHECK(cetta_weight_ledger_handle(&source, &production, &empty, 912u,
+        &all_claimed, &selected) && !cetta_weight_ledger_import_suffix(&survivor,
+        &entrance, &all_claimed, &recipient, &refused) && refused.last == saved.last,
+        "a new claim cannot import an absent pre-entrance factor by accident");
+    CHECK(cetta_weight_ledger_import_suffix(&survivor, &entrance, &all_claimed, &entrance, &again) &&
+        again.claim_count == 4u && cetta_weight_ledger_handler(&again, 2u) == 912u,
+        "a new pre-entrance claim needs the identical factor already present in the recipient");
+    CettaWeightLedger claimed_entrance = {0}, inherited = {0};
+    CHECK(cetta_weight_ledger_handle(&source, &entrance, &empty, 913u,
+        &claimed_entrance, &selected) && cetta_weight_ledger_append(&source,
+        &claimed_entrance, 3u, 103u, atom_int(&source, 7), &inherited) &&
+        cetta_weight_ledger_import_suffix(&survivor, &claimed_entrance, &inherited, &recipient, &again) &&
+        !again.claim_count && again.length == 3u,
+        "inherited pre-entrance claims remain outside the imported production cut");
+    arena_free(&source); arena_free(&recipient_owner);
+    items = cetta_weight_ledger_ordered(&claimed);
+    CHECK(items && items[0]->value->ground.ival == 2 && items[1]->value->ground.ival == 11 &&
+        items[2]->dependency == 103u && items[3]->value->ground.ival == 7 &&
+        cetta_weight_ledger_handler(&claimed, 4u) == 910u,
+        "all imported payloads and claims outlive both source and recipient arenas");
+    free(items); arena_free(&survivor);
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
     g_symbols = &symbols;
     fresh_read_storage();
+    suffix_import_cases();
     Arena source, survivor;
     arena_init(&source);
     arena_init(&survivor);

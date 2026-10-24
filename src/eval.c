@@ -42295,6 +42295,7 @@ typedef enum {
 typedef struct {
     size_t plan_index;
     PrimeNeedEquationPacketKind kind;
+    uint64_t world_order;
 } PrimeNeedEquationPacketInfo;
 
 /* Scalar metadata accompanies the existing rooted OutcomeSet. A packet's
@@ -42304,6 +42305,11 @@ typedef struct {
     size_t capacity;
     bool has_observations;
 } PrimeNeedEquationMetadata;
+
+static void prime_need_equation_metadata_free(PrimeNeedEquationMetadata *metadata) {
+    free(metadata->items);
+    *metadata = (PrimeNeedEquationMetadata){0};
+}
 
 static void prime_need_equation_metadata_record(PrimeNeedEquationMetadata *metadata,
     CettaCount position, PrimeNeedEquationPacketInfo info) {
@@ -42329,6 +42335,37 @@ static bool prime_need_equation_metadata_reserve(
     metadata->items = items;
     metadata->capacity = capacity;
     return true;
+}
+
+typedef struct {
+    size_t index;
+    const PrimeNeedEquationPacketInfo *info;
+} PrimeNeedEquationPacketPosition;
+
+static int prime_need_equation_packet_position_compare(const void *left, const void *right) {
+    const PrimeNeedEquationPacketPosition *a = left, *b = right;
+    cetta_native_cost_charge(CETTA_COST_ANALYSIS_STEP, 1u);
+    if (a->info->plan_index != b->info->plan_index)
+        return a->info->plan_index < b->info->plan_index ? -1 : 1;
+    if (a->info->world_order != b->info->world_order)
+        return a->info->world_order < b->info->world_order ? -1 : 1;
+    return a->index < b->index ? -1 : a->index != b->index;
+}
+
+/* Physical packets remain distinct, including equal answers from one world.
+ * One scalar ordering serves both early staging and final publication. */
+static PrimeNeedEquationPacketPosition *prime_need_equation_packet_order(
+    const PrimeNeedEquationMetadata *metadata, size_t count, size_t plans) {
+    if (!count || !metadata->items || count > metadata->capacity ||
+        count > SIZE_MAX / sizeof(PrimeNeedEquationPacketPosition)) return NULL;
+    PrimeNeedEquationPacketPosition *order = malloc(count * sizeof(*order));
+    if (!order) return NULL;
+    for (size_t i = 0u; i < count; i++) {
+        if (metadata->items[i].plan_index >= plans) { free(order); return NULL; }
+        order[i] = (PrimeNeedEquationPacketPosition){i, &metadata->items[i]};
+    }
+    qsort(order, count, sizeof(*order), prime_need_equation_packet_position_compare);
+    return order;
 }
 
 static bool prime_need_equation_packet_move(OutcomeSet *rows,
@@ -42445,6 +42482,7 @@ typedef struct {
     OutcomeSet *raw_results;
     PrimeNeedEquationMetadata *metadata;
     size_t plan_index;
+    uint64_t world_order;
     Atom *equation;
     uint64_t source_occurrence_id;
     uint64_t rule_occurrence_id;
@@ -42476,6 +42514,7 @@ typedef struct {
     bool covered_by_match;
     PrimeNeedPatternReadiness *observed;
     bool observation_fault;
+    uint64_t world_order;
 } PrimeNeedEquationWorkMeta;
 
 typedef enum {
@@ -42483,6 +42522,7 @@ typedef enum {
     PRIME_NEED_EQUATION_SEARCH_WAIT_FORCE,
     PRIME_NEED_EQUATION_SEARCH_BUILD_PUBLICATION,
     PRIME_NEED_EQUATION_SEARCH_WAIT_PUBLICATION,
+    PRIME_NEED_EQUATION_SEARCH_PUBLISH_RESIDUALS,
 } PrimeNeedEquationContinuationState;
 
 typedef enum {
@@ -42532,10 +42572,17 @@ typedef struct PrimeNeedEquationContinuation {
     OutcomeSet forced_worlds;
     PrimeNeedEquationMetadata raw_metadata;
     PrimeNeedEquationMetadata publication_metadata;
+    PrimeNeedEquationMetadata residual_metadata;
+    PrimeNeedEquationMetadata forced_world_metadata;
     PrimeNeedEquationWorkMeta *work_meta;
     size_t work_meta_cap;
     size_t *current_plan_indices;
     size_t current_plan_count;
+    /* The selected query keeps its depth-first slot while another rule's
+     * earlier work runs. Replacing it with forced children uses that slot. */
+    CettaCount current_work_slot;
+    uint64_t current_world_order;
+    uint64_t world_order_extent;
     bool current_covered_by_match;
     bool current_observation_fault;
     size_t *pending_plan_indices;
@@ -42875,7 +42922,7 @@ static inline __attribute__((always_inline)) bool prime_need_collect_raw_equatio
     if (outcome_set_add_move(raw->raw_results, result, &merged)) {
         prime_need_equation_metadata_record(raw->metadata, position,
             (PrimeNeedEquationPacketInfo){.plan_index = raw->plan_index,
-                .kind = PRIME_NEED_PACKET_BODY});
+                .kind = PRIME_NEED_PACKET_BODY, .world_order = raw->world_order});
         raw->matched = true;
         if (count_equations) cetta_native_cost_equations_admitted(1u);
     } else goto refused;
@@ -49891,6 +49938,8 @@ static void prime_need_equation_continuation_free(
     prime_need_pattern_request_free(&continuation->inspection);
     free(continuation->raw_metadata.items);
     free(continuation->publication_metadata.items);
+    free(continuation->residual_metadata.items);
+    free(continuation->forced_world_metadata.items);
     free(continuation->root_atoms);
     prime_need_equation_plans_free(
         continuation->plans, continuation->plan_count);
@@ -49976,18 +50025,60 @@ static bool prime_need_equation_work_push(
     return true;
 }
 
+static bool prime_need_equation_ordered_progress(void) {
+    PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
+    return driver && driver->streaming &&
+        (!prime_eval_stack_queued(driver) || driver->ordinary_ordered);
+}
+
+static bool prime_need_equation_first_plan(const PrimeNeedEquationContinuation *continuation,
+    const size_t *indices, size_t count, size_t *first) {
+    if (!indices || !count) return false;
+    size_t selected = continuation->plan_count;
+    for (size_t i = 0u; i < count; i++) {
+        cetta_native_cost_charge(CETTA_COST_ANALYSIS_STEP, 1u);
+        if (indices[i] >= continuation->plan_count) return false;
+        if (indices[i] < selected) selected = indices[i];
+    }
+    *first = selected;
+    return true;
+}
+
+/* A rule's source worlds retain their original depth-first order. Only an
+ * earlier authored rule may move ahead of the next world in that order. */
+static bool prime_need_equation_work_next(const PrimeNeedEquationContinuation *continuation,
+    CettaCount *index, size_t *first) {
+    if (!continuation->work.len) return false;
+    size_t selected = continuation->plan_count;
+    CettaCount position = continuation->work.len - 1u;
+    for (CettaCount i = continuation->work.len; i > 0u; i--) {
+        const PrimeNeedEquationWorkMeta *meta = &continuation->work_meta[i - 1u];
+        size_t plan;
+        if (!prime_need_equation_first_plan(continuation, meta->plan_indices,
+                meta->plan_count, &plan)) return false;
+        if (plan < selected) { selected = plan; position = i - 1u; }
+    }
+    *index = position;
+    *first = selected;
+    return true;
+}
+
 static bool prime_need_equation_work_pop(
     PrimeNeedEquationContinuation *continuation) {
     if (!continuation || continuation->work.len == 0u ||
         continuation->current.len != 0u)
         return false;
     CettaCount index = continuation->work.len - 1u;
+    size_t first;
+    if (prime_need_equation_ordered_progress() &&
+        !prime_need_equation_work_next(continuation, &index, &first)) return false;
     Outcome *slot = outcome_set_push_slot(&continuation->current);
     if (!slot)
         return false;
     outcome_init(slot);
     outcome_move(slot, &continuation->work.items[index]);
-    continuation->work.len--;
+    continuation->current_work_slot = index;
+    continuation->current_world_order = continuation->work_meta[index].world_order;
     continuation->current_plan_indices =
         continuation->work_meta[index].plan_indices;
     continuation->current_plan_count =
@@ -49996,8 +50087,121 @@ static bool prime_need_equation_work_pop(
         continuation->work_meta[index].covered_by_match;
     continuation->current_observation_fault = continuation->work_meta[index].observation_fault;
     continuation->observed = continuation->work_meta[index].observed;
-    memset(&continuation->work_meta[index], 0,
-           sizeof(continuation->work_meta[index]));
+    for (CettaCount i = index + 1u; i < continuation->work.len; i++) {
+        outcome_move(&continuation->work.items[i - 1u], &continuation->work.items[i]);
+        continuation->work_meta[i - 1u] = continuation->work_meta[i];
+    }
+    continuation->work.len--;
+    memset(&continuation->work_meta[continuation->work.len], 0,
+           sizeof(*continuation->work_meta));
+    return true;
+}
+
+static bool prime_need_equation_work_precedes_current(
+    const PrimeNeedEquationContinuation *continuation,
+    const size_t *indices, size_t count, bool *precedes) {
+    *precedes = false;
+    if (!continuation->work.len) return true;
+    size_t current, first;
+    CettaCount index;
+    if (!prime_need_equation_first_plan(continuation, indices, count, &current) ||
+        !prime_need_equation_work_next(continuation, &index, &first)) return false;
+    *precedes = first < current ||
+        (first == current && index >= continuation->current_work_slot);
+    return true;
+}
+
+/* Reserve before transferring either owner. Parking observes no new value
+ * and keeps readiness, match coverage and the complete query environment. */
+static bool prime_need_equation_park_current(PrimeNeedEquationContinuation *continuation) {
+    CettaCount count = continuation->work.len, slot = continuation->current_work_slot;
+    if (continuation->current.len != 1u || slot > count ||
+        !prime_need_equation_work_reserve(continuation, (size_t)count + 1u) ||
+        !outcome_set_ensure_one(&continuation->work)) return false;
+    outcome_init(&continuation->work.items[count]);
+    for (CettaCount i = count; i > slot; i--) {
+        outcome_move(&continuation->work.items[i], &continuation->work.items[i - 1u]);
+        continuation->work_meta[i] = continuation->work_meta[i - 1u];
+    }
+    outcome_move(&continuation->work.items[slot], &continuation->current.items[0]);
+    continuation->work_meta[slot] = (PrimeNeedEquationWorkMeta){
+        .plan_indices = continuation->current_plan_indices,
+        .plan_count = continuation->current_plan_count,
+        .covered_by_match = continuation->current_covered_by_match,
+        .observed = continuation->observed,
+        .observation_fault = continuation->current_observation_fault,
+        .world_order = continuation->current_world_order,
+    };
+    continuation->work.len++;
+    continuation->current.len = 0u;
+    continuation->current_plan_indices = NULL;
+    continuation->current_plan_count = 0u;
+    continuation->current_covered_by_match = false;
+    continuation->current_observation_fault = false;
+    continuation->observed = NULL;
+    continuation->current_work_slot = 0u;
+    continuation->current_world_order = 0u;
+    prime_need_pattern_request_free(&continuation->inspection);
+    return true;
+}
+
+static void prime_need_equation_work_reverse(PrimeNeedEquationContinuation *continuation,
+    CettaCount first, CettaCount end) {
+    while (first < end && first < --end) {
+        Outcome temporary;
+        outcome_init(&temporary);
+        outcome_move(&temporary, &continuation->work.items[first]);
+        outcome_move(&continuation->work.items[first], &continuation->work.items[end]);
+        outcome_move(&continuation->work.items[end], &temporary);
+        outcome_free_fields(&temporary);
+        PrimeNeedEquationWorkMeta meta = continuation->work_meta[first];
+        continuation->work_meta[first] = continuation->work_meta[end];
+        continuation->work_meta[end] = meta;
+        cetta_native_cost_charge(CETTA_COST_ANALYSIS_STEP, 1u);
+        first++;
+    }
+}
+
+/* Newly forced worlds replace their parent's original slot. Stable rotation
+ * keeps earlier and later worlds in place even after selecting a middle row. */
+static void prime_need_equation_work_insert_appended(PrimeNeedEquationContinuation *continuation,
+    CettaCount first) {
+    CettaCount slot = continuation->current_work_slot;
+    assert(slot <= first && first <= continuation->work.len);
+    if (slot == first || first == continuation->work.len) return;
+    prime_need_equation_work_reverse(continuation, slot, first);
+    prime_need_equation_work_reverse(continuation, first, continuation->work.len);
+    prime_need_equation_work_reverse(continuation, slot, continuation->work.len);
+}
+
+/* Leaf worlds have dense depth-first coordinates. A split replaces one
+ * leaf by an ordered interval, shifting later retained packets together.
+ * Independent seeds earned at the parent retain its first coordinate. */
+static bool prime_need_equation_split_world(PrimeNeedEquationContinuation *continuation,
+    CettaCount count, CettaCount prior_worlds) {
+    if (count < 2u || !prime_need_equation_ordered_progress()) return true;
+    uint64_t extra = (uint64_t)count - 1u;
+    if (continuation->world_order_extent > UINT64_MAX - extra) return false;
+    uint64_t here = continuation->current_world_order;
+    if (here > continuation->world_order_extent) return false;
+    for (CettaCount i = 0u; i < continuation->work.len; i++)
+        if (continuation->work_meta[i].world_order > continuation->world_order_extent) return false;
+    PrimeNeedEquationMetadata *metadata[] = {&continuation->raw_metadata,
+        &continuation->publication_metadata, &continuation->residual_metadata,
+        &continuation->forced_world_metadata};
+    CettaCount lengths[] = {continuation->raw_results.len, continuation->publication.len,
+        continuation->residuals.len, prior_worlds};
+    for (size_t set = 0u; set < 4u; set++)
+        for (CettaCount i = 0u; i < lengths[set]; i++)
+            if (metadata[set]->items[i].world_order > continuation->world_order_extent) return false;
+    for (CettaCount i = 0u; i < continuation->work.len; i++)
+        if (continuation->work_meta[i].world_order > here)
+            continuation->work_meta[i].world_order += extra;
+    for (size_t set = 0u; set < 4u; set++)
+        for (CettaCount i = 0u; i < lengths[set]; i++)
+            if (metadata[set]->items[i].world_order > here)
+                metadata[set]->items[i].world_order += extra;
+    continuation->world_order_extent += extra;
     return true;
 }
 
@@ -50009,6 +50213,8 @@ static void prime_need_equation_current_clear(
     free(continuation->current_plan_indices);
     continuation->current_plan_indices = NULL;
     continuation->current_plan_count = 0u;
+    continuation->current_work_slot = 0u;
+    continuation->current_world_order = 0u;
     continuation->current_covered_by_match = false;
     continuation->current_observation_fault = false;
     prime_need_pattern_readiness_free(continuation->observed);
@@ -50030,8 +50236,12 @@ static bool prime_need_equation_forced_world_push(
     Bindings semantic_world;
     bindings_init(&semantic_world);
     bindings_prime_assign(&semantic_world, env);
-    bool pushed = prime_need_equation_outcome_push(
+    CettaCount position = worlds->len;
+    bool pushed = prime_need_equation_metadata_reserve(
+        &continuation->forced_world_metadata, position) && prime_need_equation_outcome_push(
         worlds, continuation->original_call, &semantic_world);
+    if (pushed) prime_need_equation_metadata_record(&continuation->forced_world_metadata,
+        position, (PrimeNeedEquationPacketInfo){.kind = PRIME_NEED_PACKET_OBSERVATION});
     bindings_free(&semantic_world);
     return pushed;
 }
@@ -52991,45 +53201,65 @@ static bool prime_need_equation_body_depends_on_cells(Atom *body) {
 /* Stage only rules preceding every still-pending rule. A seed retaining a
  * cell needs the existing descendant-world reconciliation, so it also stops
  * this prefix. Later seeds remain rooted in the same search owner. */
+static bool prime_need_equation_packet_ready(PrimeNeedEquationPacketInfo info,
+    size_t limit, size_t pending, uint64_t world) {
+    return info.plan_index < limit &&
+        (info.plan_index != pending || info.world_order <= world);
+}
+
 static int prime_need_equation_stage_ready_prefix(
     PrimeNeedEquationContinuation *continuation, size_t pending_plan) {
-    if (continuation->work.len || continuation->publication.len ||
-        !continuation->raw_results.len)
-        return 0;
-    size_t limit = pending_plan;
-    for (CettaCount i = 0u; i < continuation->raw_results.len; i++) {
-        size_t plan = continuation->raw_metadata.items[i].plan_index;
-        if (plan >= limit) continue;
-        if (continuation->raw_metadata.items[i].kind == PRIME_NEED_PACKET_OBSERVATION)
-            continue;
-        Atom *body = outcome_atom_materialize(continuation->arena,
-            &continuation->raw_results.items[i]);
-        if (!body) return -1;
-        if (prime_need_equation_body_depends_on_cells(body)) limit = plan;
+    if (continuation->publication.len || !continuation->raw_results.len) return 0;
+    size_t limit = pending_plan, waiting = continuation->plan_count;
+    uint64_t waiting_world = UINT64_MAX;
+    if (continuation->work.len) {
+        CettaCount index;
+        if (!prime_need_equation_work_next(continuation, &index, &waiting)) return -1;
+        waiting_world = continuation->work_meta[index].world_order;
+        if (waiting < limit && limit - waiting > 1u) limit = waiting + 1u;
     }
-    if (!limit) return 0;
-    for (size_t plan = 0u; plan < limit; plan++)
-        for (CettaCount i = 0u; i < continuation->raw_results.len; i++) {
-            if (continuation->raw_metadata.items[i].plan_index != plan) continue;
-            if (!prime_need_equation_packet_copy(&continuation->publication,
-                    &continuation->publication_metadata, &continuation->raw_results.items[i],
-                    continuation->raw_metadata.items[i])) {
-                prime_need_equation_outcome_set_clear(&continuation->publication);
-                continuation->publication_metadata.has_observations = false;
-                return -1;
-            }
+    size_t count = (size_t)continuation->raw_results.len;
+    PrimeNeedEquationPacketPosition *order = prime_need_equation_packet_order(
+        &continuation->raw_metadata, count, continuation->plan_count);
+    if (!order) return -1;
+    for (size_t i = 0u; i < count; i++) {
+        size_t index = order[i].index;
+        PrimeNeedEquationPacketInfo info = continuation->raw_metadata.items[index];
+        if (!prime_need_equation_packet_ready(info, limit, waiting, waiting_world) ||
+            info.kind == PRIME_NEED_PACKET_OBSERVATION) continue;
+        __attribute__((cleanup(prime_need_active_leave))) PrimeNeedActiveGuard active;
+        prime_need_active_enter(&active, &continuation->raw_results.items[index].env);
+        Atom *body = outcome_atom_materialize(continuation->arena,
+            &continuation->raw_results.items[index]);
+        if (!body) { free(order); return -1; }
+        if (prime_need_equation_body_depends_on_cells(body)) limit = info.plan_index;
+    }
+    for (size_t i = 0u; i < count; i++) {
+        size_t index = order[i].index;
+        PrimeNeedEquationPacketInfo info = continuation->raw_metadata.items[index];
+        if (!prime_need_equation_packet_ready(info, limit, waiting, waiting_world)) continue;
+        if (!prime_need_equation_packet_copy(&continuation->publication,
+                &continuation->publication_metadata, &continuation->raw_results.items[index], info)) {
+            prime_need_equation_outcome_set_clear(&continuation->publication);
+            continuation->publication_metadata.has_observations = false;
+            free(order);
+            return -1;
         }
+    }
+    free(order);
     if (!continuation->publication.len) return 0;
     CettaCount kept = 0u;
+    continuation->raw_metadata.has_observations = false;
     for (CettaCount i = 0u; i < continuation->raw_results.len; i++) {
-        if (continuation->raw_metadata.items[i].plan_index < limit) {
+        PrimeNeedEquationPacketInfo info = continuation->raw_metadata.items[i];
+        if (prime_need_equation_packet_ready(info, limit, waiting, waiting_world)) {
             outcome_free_fields(&continuation->raw_results.items[i]);
             continue;
         }
-        if (kept != i)
-            outcome_move(&continuation->raw_results.items[kept],
-                         &continuation->raw_results.items[i]);
-        continuation->raw_metadata.items[kept++] = continuation->raw_metadata.items[i];
+        if (kept != i) outcome_move(&continuation->raw_results.items[kept],
+                                   &continuation->raw_results.items[i]);
+        continuation->raw_metadata.items[kept++] = info;
+        continuation->raw_metadata.has_observations |= info.kind == PRIME_NEED_PACKET_OBSERVATION;
     }
     continuation->raw_results.len = kept;
     continuation->publication_index = 0u;
@@ -53046,12 +53276,32 @@ static void prime_eval_stack_resume_equation_search_ready(
         !prime_need_equation_refresh_plan_roots(continuation))
         goto capacity_failure;
 
+    bool ordered = prime_need_equation_ordered_progress();
+    if (ordered && continuation->current.len) {
+        bool precedes;
+        if (!prime_need_equation_work_precedes_current(continuation,
+                continuation->current_plan_indices, continuation->current_plan_count,
+                &precedes)) goto capacity_failure;
+        if (precedes) {
+            if (!prime_need_equation_park_current(continuation))
+                g_prime_eval_stack_driver->capacity_blocked = true;
+            return;
+        }
+    }
+
     if (continuation->current.len == 0u) {
         if (continuation->work.len == 0u) {
             continuation->inspect_incrementally = false;
             prime_need_pattern_request_free(&continuation->inspection);
             continuation->state =
                 PRIME_NEED_EQUATION_SEARCH_BUILD_PUBLICATION;
+            return;
+        }
+        int staged = ordered ? prime_need_equation_stage_ready_prefix(
+            continuation, continuation->plan_count) : 0;
+        if (staged) {
+            if (staged > 0) continuation->state = PRIME_NEED_EQUATION_SEARCH_BUILD_PUBLICATION;
+            else g_prime_eval_stack_driver->capacity_blocked = true;
             return;
         }
         if (!prime_need_equation_work_pop(continuation))
@@ -53063,7 +53313,8 @@ static void prime_eval_stack_resume_equation_search_ready(
         if (!prime_need_equation_packet_move(&continuation->raw_results,
                 &continuation->raw_metadata, current, (PrimeNeedEquationPacketInfo){
                     .plan_index = continuation->current_plan_indices[0],
-                    .kind = PRIME_NEED_PACKET_OBSERVATION})) {
+                    .kind = PRIME_NEED_PACKET_OBSERVATION,
+                    .world_order = continuation->current_world_order})) {
             g_prime_eval_stack_driver->capacity_blocked = true;
             return;
         }
@@ -53175,6 +53426,7 @@ static void prime_eval_stack_resume_equation_search_ready(
             .raw_results = &receiver->raw_results,
             .metadata = &receiver->raw_metadata,
             .plan_index = plan_index,
+            .world_order = receiver == continuation ? continuation->current_world_order : 0u,
             .equation = plan->equation,
             .source_occurrence_id =
                 continuation->source_occurrence_id,
@@ -53203,12 +53455,23 @@ static void prime_eval_stack_resume_equation_search_ready(
             OutcomeSet *residuals = continuation->cohort_owner
                 ? &continuation->cohort_owner->residuals
                 : &continuation->residuals;
+            PrimeNeedEquationContinuation *owner = continuation->cohort_owner
+                ? continuation->cohort_owner : continuation;
             CettaCount first = residuals->len;
+            if (!prime_need_equation_metadata_reserve(&owner->residual_metadata, first)) {
+                g_prime_eval_stack_driver->capacity_blocked = true;
+                prime_need_active_leave(&active);
+                return;
+            }
             outcome_set_add(
                 residuals, query, &current->env);
-            if (residuals->len > first)
+            if (residuals->len > first) {
                 residuals->items[first].result_form =
                     CETTA_CALL_RESULT_EXPRESSION;
+                prime_need_equation_metadata_record(&owner->residual_metadata, first,
+                    (PrimeNeedEquationPacketInfo){.kind = PRIME_NEED_PACKET_OBSERVATION,
+                        .world_order = owner == continuation ? continuation->current_world_order : 0u});
+            }
 #endif
         }
         prime_need_active_leave(&active);
@@ -53236,6 +53499,23 @@ static void prime_eval_stack_resume_equation_search_ready(
             g_prime_eval_stack_driver->capacity_blocked = true;
         prime_need_active_leave(&active);
         return;
+    }
+
+    if (ordered) {
+        bool precedes;
+        if (!prime_need_equation_work_precedes_current(continuation, pending,
+                pending_count, &precedes)) { free(pending); goto capacity_failure; }
+        if (precedes) {
+            free(continuation->current_plan_indices);
+            continuation->current_plan_indices = pending;
+            continuation->current_plan_count = pending_count;
+            continuation->current_covered_by_match = covered;
+            prime_need_active_leave(&active);
+            active_entered = false;
+            if (!prime_need_equation_park_current(continuation))
+                g_prime_eval_stack_driver->capacity_blocked = true;
+            return;
+        }
     }
 
     free(continuation->pending_plan_indices);
@@ -53274,6 +53554,8 @@ static void prime_eval_stack_resume_equation_search_ready(
      * reconciliation; it is not safe to duplicate it in every forced world. */
     for (CettaCount i = 0u;
          frame->control_force_stream && i < continuation->raw_results.len; i++) {
+        __attribute__((cleanup(prime_need_active_leave))) PrimeNeedActiveGuard seed_active;
+        prime_need_active_enter(&seed_active, &continuation->raw_results.items[i].env);
         Atom *body = outcome_atom_materialize(
             continuation->arena, &continuation->raw_results.items[i]);
         if (!body || prime_need_equation_body_depends_on_cells(body))
@@ -53343,6 +53625,10 @@ static void prime_eval_stack_resume_equation_search_forced(
     PrimeEvalAuthorityGuard authority =
         prime_eval_authority_enter(frame->pure_authority);
     PrimeNeedEquationContinuation *continuation = frame->equation_search;
+    __attribute__((cleanup(prime_need_equation_metadata_free)))
+    PrimeNeedEquationMetadata branch_metadata = {0};
+    bool retryable = false;
+    CettaCount prior_worlds = 0u, work_before = 0u;
     if (!continuation || continuation->current.len != 1u ||
         !continuation->pending_plan_indices ||
         continuation->pending_plan_count == 0u ||
@@ -53358,6 +53644,11 @@ static void prime_eval_stack_resume_equation_search_forced(
 
     OutcomeSet branches;
     outcome_set_init_with_owner(&branches, continuation->arena);
+    bool ordered_worlds = prime_need_equation_ordered_progress() &&
+        continuation->inspect_incrementally && !frame->control_force_stream;
+    retryable = ordered_worlds;
+    prior_worlds = continuation->forced_worlds.len;
+    work_before = continuation->work.len;
     CettaCount first = frame->control_force_stream ? frame->index : 0u;
     CettaCount end = frame->control_force_stream && first < frame->child.len
         ? first + 1u : frame->child.len;
@@ -53372,17 +53663,30 @@ static void prime_eval_stack_resume_equation_search_forced(
             continuation->arena, forced);
         if (!value || atom_is_legacy_empty_sentinel(value))
             continue;
-        if (!frame->control_force_stream && !cached_delivery &&
-            !prime_need_equation_forced_world_push(continuation, &forced->env))
-            continue;
+        CettaCount world_before = continuation->forced_worlds.len;
+        if (!frame->control_force_stream && !cached_delivery) {
+            if (!prime_need_equation_forced_world_push(continuation, &forced->env)) {
+                outcome_set_free(&branches);
+                goto capacity_failure;
+            }
+            if (ordered_worlds && continuation->forced_worlds.len > world_before)
+                continuation->forced_world_metadata.items[world_before].world_order =
+                    (uint64_t)(value_index - first);
+        }
         if (atom_is_error(value)) {
             if (continuation->inspect_incrementally) {
                 CettaCount before = branches.len;
+                if (ordered_worlds && !prime_need_equation_metadata_reserve(&branch_metadata, before)) {
+                    outcome_set_free(&branches);
+                    goto capacity_failure;
+                }
                 outcome_set_add_existing(&branches, forced);
                 if (branches.len != before + 1u) {
                     outcome_set_free(&branches);
                     goto capacity_failure;
                 }
+                if (ordered_worlds) prime_need_equation_metadata_record(&branch_metadata, before,
+                    (PrimeNeedEquationPacketInfo){.world_order = (uint64_t)(value_index - first)});
                 continue;
             }
             outcome_set_add_prefixed_outcome(
@@ -53409,13 +53713,17 @@ static void prime_eval_stack_resume_equation_search_forced(
                     continuation->arena, value, &returned);
             Atom *branch = value ? prime_need_pattern_request_replace(
                 continuation->arena, query, &continuation->inspection, value) : NULL;
-            bool pushed = branch && prime_need_equation_outcome_push(
+            CettaCount before = branches.len;
+            bool pushed = branch && (!ordered_worlds ||
+                prime_need_equation_metadata_reserve(&branch_metadata, before)) && prime_need_equation_outcome_push(
                 &branches, branch, &returned);
             bindings_free(&returned);
             if (!pushed) {
                 outcome_set_free(&branches);
                 goto capacity_failure;
             }
+            if (ordered_worlds) prime_need_equation_metadata_record(&branch_metadata, before,
+                (PrimeNeedEquationPacketInfo){.world_order = (uint64_t)(value_index - first)});
             continue;
         }
 
@@ -53639,6 +53947,21 @@ static void prime_eval_stack_resume_equation_search_forced(
             goto capacity_failure;
         }
     }
+    /* Prepare every child and its readiness before changing retained ranks.
+     * A refused preparation can retry the same earned source rows. */
+    if (ordered_worlds) {
+        if (!prime_need_equation_split_world(continuation, end - first, prior_worlds)) {
+            outcome_set_free(&branches);
+            goto capacity_failure;
+        }
+        for (CettaCount i = prior_worlds; i < continuation->forced_worlds.len; i++)
+            continuation->forced_world_metadata.items[i].world_order += continuation->current_world_order;
+    }
+    for (CettaCount i = work_before; i < continuation->work.len; i++)
+        continuation->work_meta[i].world_order = continuation->current_world_order +
+            (ordered_worlds ? branch_metadata.items[branches.len - 1u - (i - work_before)].world_order : 0u);
+    retryable = false;
+    prime_need_equation_work_insert_appended(continuation, work_before);
     outcome_set_free(&branches);
     prime_need_equation_outcome_set_clear(&frame->child);
     prime_need_equation_current_clear(continuation);
@@ -53649,6 +53972,20 @@ static void prime_eval_stack_resume_equation_search_forced(
     return;
 
 capacity_failure:
+    if (retryable) {
+        while (continuation->work.len > work_before) {
+            CettaCount i = --continuation->work.len;
+            free(continuation->work_meta[i].plan_indices);
+            prime_need_pattern_readiness_free(continuation->work_meta[i].observed);
+            memset(&continuation->work_meta[i], 0, sizeof(*continuation->work_meta));
+            outcome_free_fields(&continuation->work.items[i]);
+        }
+        while (continuation->forced_worlds.len > prior_worlds)
+            outcome_free_fields(&continuation->forced_worlds.items[--continuation->forced_worlds.len]);
+        continuation->forced_world_metadata.has_observations = prior_worlds != 0u;
+        g_prime_eval_stack_driver->capacity_blocked = true;
+        return;
+    }
     eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
     if (g_prime_eval_stack_driver->top == frame)
         prime_eval_stack_pop();
@@ -53685,41 +54022,15 @@ static bool prime_need_equation_build_publication(
         continuation->forced_worlds.len);
 
     size_t raw_count = (size_t)continuation->raw_results.len;
-    size_t *counts = NULL;
-    size_t *positions = NULL;
-    size_t *order = NULL;
-    if (raw_count > 0u) {
-        if (!continuation->raw_metadata.items ||
-            continuation->plan_count >
-                SIZE_MAX / sizeof(*counts) - 1u ||
-            raw_count > SIZE_MAX / sizeof(*order))
-            return false;
-        counts = cetta_malloc(
-            sizeof(*counts) * (continuation->plan_count + 1u));
-        positions = cetta_malloc(
-            sizeof(*positions) * continuation->plan_count);
-        order = cetta_malloc(sizeof(*order) * raw_count);
-        memset(counts, 0,
-               sizeof(*counts) * (continuation->plan_count + 1u));
-        for (size_t index = 0u; index < raw_count; index++) {
-            size_t plan_index = continuation->raw_metadata.items[index].plan_index;
-            if (plan_index >= continuation->plan_count)
-                goto failure;
-            counts[plan_index + 1u]++;
-        }
-        for (size_t plan_index = 1u;
-             plan_index <= continuation->plan_count; plan_index++)
-            counts[plan_index] += counts[plan_index - 1u];
-        memcpy(positions, counts,
-               sizeof(*positions) * continuation->plan_count);
-        for (size_t index = 0u; index < raw_count; index++) {
-            size_t plan_index = continuation->raw_metadata.items[index].plan_index;
-            order[positions[plan_index]++] = index;
-        }
-    }
+    PrimeNeedEquationPacketPosition *order = raw_count ? prime_need_equation_packet_order(
+        &continuation->raw_metadata, raw_count, continuation->plan_count) : NULL;
+    size_t world_count = (size_t)continuation->forced_worlds.len;
+    PrimeNeedEquationPacketPosition *world_order = world_count ? prime_need_equation_packet_order(
+        &continuation->forced_world_metadata, world_count, 1u) : NULL;
+    if ((raw_count && !order) || (world_count && !world_order)) goto failure;
 
     for (size_t position = 0u; position < raw_count; position++) {
-        CettaCount index = (CettaCount)order[position];
+        CettaCount index = (CettaCount)order[position].index;
         Outcome *raw = &continuation->raw_results.items[index];
         PrimeNeedEquationPacketInfo info = continuation->raw_metadata.items[index];
         if (info.kind == PRIME_NEED_PACKET_OBSERVATION) {
@@ -53737,9 +54048,8 @@ static bool prime_need_equation_build_publication(
         bool published_in_descendant = false;
         if (raw_has_ref) {
             continuation->publication_raw_with_ref++;
-            for (CettaCount world_index = 0u;
-                 world_index < continuation->forced_worlds.len;
-                 world_index++) {
+            for (size_t world_position = 0u; world_position < world_count; world_position++) {
+                CettaCount world_index = (CettaCount)world_order[world_position].index;
                 continuation->publication_pair_probes++;
                 const Bindings *world =
                     &continuation->forced_worlds.items[world_index].env;
@@ -53765,8 +54075,10 @@ static bool prime_need_equation_build_publication(
                     if (merged == CETTA_MATCH_REFUTED) continue;
                     goto failure;
                 }
+                PrimeNeedEquationPacketInfo descendant = info;
+                descendant.world_order = continuation->forced_world_metadata.items[world_index].world_order;
                 bool pushed = prime_need_equation_publication_push(
-                    continuation, raw_atom, &published, info);
+                    continuation, raw_atom, &published, descendant);
                 bindings_free(&published);
                 if (!pushed)
                     goto failure;
@@ -53781,8 +54093,7 @@ static bool prime_need_equation_build_publication(
             continuation->publication_fallbacks++;
         }
     }
-    free(counts);
-    free(positions);
+    free(world_order);
     free(order);
     return true;
 
@@ -53795,8 +54106,7 @@ failure:
     continuation->publication_pair_probes = original_probes;
     continuation->publication_descendants = original_descendants;
     continuation->publication_fallbacks = original_fallbacks;
-    free(counts);
-    free(positions);
+    free(world_order);
     free(order);
     return false;
 }
@@ -53817,6 +54127,29 @@ static void prime_need_equation_record_publication_stats(
     cetta_runtime_stats_add(
         CETTA_RUNTIME_COUNTER_PRIME_NEED_PUBLICATION_FALLBACK,
         continuation->publication_fallbacks);
+}
+
+static void prime_eval_stack_resume_equation_residuals(PrimeEvalStackFrame *frame) {
+    PrimeNeedEquationContinuation *continuation = frame->equation_search;
+    size_t count = (size_t)continuation->residuals.len;
+    PrimeNeedEquationPacketPosition *order = count ? prime_need_equation_packet_order(
+        &continuation->residual_metadata, count, 1u) : NULL;
+    if (count && !order) { g_prime_eval_stack_driver->capacity_blocked = true; return; }
+    for (; continuation->publication_index < count; continuation->publication_index++) {
+        size_t index = order[continuation->publication_index].index;
+        __attribute__((cleanup(prime_need_active_leave))) PrimeNeedActiveGuard active;
+        prime_need_active_enter(&active, &continuation->residuals.items[index].env);
+        if (outcome_set_prepare_existing_move(frame->target,
+                &continuation->residuals.items[index]) != OUTCOME_APPEND_COMMITTED) {
+            free(order);
+            g_prime_eval_stack_driver->capacity_blocked = true;
+            return;
+        }
+    }
+    free(order);
+    OutcomeSet *published = frame->target;
+    prime_eval_stack_pop();
+    prime_eval_stack_stream_note(published);
 }
 
 static void prime_eval_stack_resume_equation_publication(
@@ -53992,18 +54325,9 @@ static void prime_eval_stack_resume_equation_publication(
         return;
     }
     prime_need_equation_record_publication_stats(continuation);
-    for (CettaCount index = 0u;
-         index < continuation->residuals.len; index++) {
-        __attribute__((cleanup(prime_need_active_leave)))
-        PrimeNeedActiveGuard active;
-        prime_need_active_enter(&active,
-            &continuation->residuals.items[index].env);
-        outcome_set_add_existing_move(
-            frame->target, &continuation->residuals.items[index]);
-    }
-    OutcomeSet *published = frame->target;
-    prime_eval_stack_pop();
-    prime_eval_stack_stream_note(published);
+    continuation->state = PRIME_NEED_EQUATION_SEARCH_PUBLISH_RESIDUALS;
+    continuation->publication_index = 0u;
+    prime_eval_stack_resume_equation_residuals(frame);
     return;
 
 capacity_failure:
@@ -54024,6 +54348,9 @@ static void prime_eval_stack_resume_equation_search(
     case PRIME_NEED_EQUATION_SEARCH_BUILD_PUBLICATION:
     case PRIME_NEED_EQUATION_SEARCH_WAIT_PUBLICATION:
         prime_eval_stack_resume_equation_publication(frame);
+        return;
+    case PRIME_NEED_EQUATION_SEARCH_PUBLISH_RESIDUALS:
+        prime_eval_stack_resume_equation_residuals(frame);
         return;
     }
     assert(false);
@@ -56747,6 +57074,10 @@ static void prime_native_equation_storage(const PrimeNeedEquationContinuation *s
         sizeof(*state->raw_metadata.items), 0u);
     cetta_storage_array(census, state->publication_metadata.items, state->publication_metadata.capacity,
         sizeof(*state->publication_metadata.items), 0u);
+    cetta_storage_array(census, state->residual_metadata.items, state->residual_metadata.capacity,
+        sizeof(*state->residual_metadata.items), 0u);
+    cetta_storage_array(census, state->forced_world_metadata.items, state->forced_world_metadata.capacity,
+        sizeof(*state->forced_world_metadata.items), 0u);
     cetta_storage_array(census, state->inspection.path, state->inspection.capacity,
         sizeof(*state->inspection.path), 0u);
     prime_need_pattern_readiness_storage(state->observed, census);

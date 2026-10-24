@@ -144,6 +144,7 @@ static bool prime_replay_compare_equation_metadata(const PrimeNeedEquationMetada
         RC_S("equation.packet_index",i,i);
         RC_S("equation.packet_plan",a->items[i].plan_index,b->items[i].plan_index);
         RC_S("equation.packet_kind",a->items[i].kind,b->items[i].kind);
+        RC_S("equation.packet_world",a->items[i].world_order,b->items[i].world_order);
     }
     return true;
 }
@@ -184,6 +185,8 @@ static bool prime_replay_compare_equation(const PrimeNeedEquationContinuation *a
 #define RE(f) RC_FIELDS("equation",a,b,f)
     RE(state);RE(fuel);RE(preserve_bindings);RE(frontier);RE(plan_count);RE(current_covered_by_match);
     RE(current_observation_fault);
+    RE(current_work_slot);
+    RE(current_world_order);RE(world_order_extent);
     RE(inspect_incrementally);RE(publication_returns_to_search);
     RE(force_argument);RE(publication_index);RE(publication_raw_with_ref);RE(publication_pair_probes);
     RE(publication_descendants);RE(publication_fallbacks);
@@ -217,6 +220,10 @@ static bool prime_replay_compare_equation(const PrimeNeedEquationContinuation *a
         &b->raw_metadata,b->raw_results.len,read)||
         !prime_replay_compare_equation_metadata(&a->publication_metadata,a->publication.len,
         &b->publication_metadata,b->publication.len,read)||
+        !prime_replay_compare_equation_metadata(&a->residual_metadata,a->residuals.len,
+        &b->residual_metadata,b->residuals.len,read)||
+        !prime_replay_compare_equation_metadata(&a->forced_world_metadata,a->forced_worlds.len,
+        &b->forced_world_metadata,b->forced_worlds.len,read)||
         !prime_replay_compare_indices(a->current_plan_indices,a->current_plan_count,a->current_plan_count,
         b->current_plan_indices,b->current_plan_count,b->current_plan_count,read)||
         !prime_replay_compare_indices(a->pending_plan_indices,a->pending_plan_count,a->pending_plan_count,
@@ -228,6 +235,7 @@ static bool prime_replay_compare_equation(const PrimeNeedEquationContinuation *a
         RC_S("equation.work_meta_index",i,i);RC_S("equation.covered",x->covered_by_match,y->covered_by_match);
         if(!prime_replay_compare_pattern_readiness(x->observed,y->observed,read))return false;
         RC_S("equation.observation_fault",x->observation_fault,y->observation_fault);
+        RC_S("equation.work_world",x->world_order,y->world_order);
         if(!prime_replay_compare_indices(x->plan_indices,x->plan_count,x->plan_count,y->plan_indices,y->plan_count,y->plan_count,read))return false;
     }
     return prime_replay_compare_atoms(a->root_atoms,a->root_atom_count,b->root_atoms,b->root_atom_count,read)&&

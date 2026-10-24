@@ -88,6 +88,15 @@ static bool copy_pattern_readiness(CopyRelation *r,const PrimeNeedPatternReadine
     for(size_t i=0u;i<a->length;i++)if(!copy_pattern_request(r,&a->paths[i],&b->paths[i]))return false;
     return true;
 }
+static bool copy_equation_metadata(CopyRelation *r,const PrimeNeedEquationMetadata *a,
+    const PrimeNeedEquationMetadata *b,size_t count) {
+    if(a->capacity!=b->capacity || a->has_observations!=b->has_observations ||
+       count>a->capacity || !copy_identity(r,16,a->items,b->items))return r->valid=false;
+    for(size_t i=0u;i<count;i++)if(a->items[i].plan_index!=b->items[i].plan_index ||
+        a->items[i].kind!=b->items[i].kind || a->items[i].world_order!=b->items[i].world_order)
+        return r->valid=false;
+    return true;
+}
 static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *d,CopyRelation *r) {
     *r=(CopyRelation){.valid=true};
     if(s->selected_length!=d->selected_length||s->selected_delivered!=d->selected_delivered||
@@ -154,15 +163,28 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
             const OutcomeSet *x[]={&a->work,&a->current,&a->raw_results,&a->residuals,&a->publication,&a->forced_worlds};
             const OutcomeSet *y[]={&b->work,&b->current,&b->raw_results,&b->residuals,&b->publication,&b->forced_worlds};
             if(a->state!=b->state||a->plan_count!=b->plan_count||a->frontier!=b->frontier)r->valid=false;
+            if(a->current_work_slot!=b->current_work_slot)r->valid=false;
+            if(a->current_world_order!=b->current_world_order ||
+               a->world_order_extent!=b->world_order_extent)r->valid=false;
             if(a->inspect_incrementally!=b->inspect_incrementally ||
                a->publication_returns_to_search!=b->publication_returns_to_search)r->valid=false;
             copy_pattern_request(r,&a->inspection,&b->inspection);
             copy_pattern_readiness(r,a->observed,b->observed);
             if(a->work.len!=b->work.len)return r->valid=false;
-            for(size_t i=0u;i<a->work.len;i++)
+            for(size_t i=0u;i<a->work.len;i++) {
+                if(a->work_meta[i].world_order!=b->work_meta[i].world_order)r->valid=false;
                 copy_pattern_readiness(r,a->work_meta[i].observed,b->work_meta[i].observed);
+            }
+            copy_equation_metadata(r,&a->raw_metadata,&b->raw_metadata,a->raw_results.len);
+            copy_equation_metadata(r,&a->publication_metadata,&b->publication_metadata,a->publication.len);
+            copy_equation_metadata(r,&a->residual_metadata,&b->residual_metadata,a->residuals.len);
+            copy_equation_metadata(r,&a->forced_world_metadata,&b->forced_world_metadata,a->forced_worlds.len);
             for(size_t i=0;i<6;i++)copy_outcomes(r,x[i],y[i]);
-            for(size_t i=0;i<a->plan_count;i++)copy_outcomes(r,&a->plans[i].results,&b->plans[i].results);
+            for(size_t i=0;i<a->plan_count;i++) {
+                copy_outcomes(r,&a->plans[i].results,&b->plans[i].results);
+                copy_equation_metadata(r,&a->plans[i].result_metadata,&b->plans[i].result_metadata,
+                    a->plans[i].results.len);
+            }
         }
     }
     if(sf||df)r->valid=false;

@@ -3003,6 +3003,7 @@ static NeedWorldCopyResult measure_owned_need_worlds(Arena *arena, const Outcome
     NeedWorldCopyResult result = {(size_t)continuation.forced_worlds.len, ledger.total};
     assert(!ledger.total.trace_incomplete && !ledger.total.overflow);
     outcome_set_free(&continuation.forced_worlds);
+    free(continuation.forced_world_metadata.items);
     cetta_native_cost_free(&ledger);
     return result;
 }
@@ -11690,6 +11691,7 @@ static void equation_observation_packet_cases(void) {
         &image, 1u, &compare));
 #endif
     free(image.items); free(continuation.raw_metadata.items); free(continuation.publication_metadata.items);
+    free(continuation.forced_world_metadata.items);
     outcome_free_fields(&source); outcome_set_free(&output);
     outcome_set_free(&continuation.current); outcome_set_free(&continuation.raw_results);
     outcome_set_free(&continuation.publication); outcome_set_free(&continuation.forced_worlds);
@@ -11945,6 +11947,87 @@ static void equation_publication_retry_cases(void) {
     space_free(&space); arena_free(&arena);
 }
 
+static void equation_ordered_world_retry_case(void) {
+    Arena arena; arena_init(&arena);
+    Space space; space_init(&space);
+    CettaLibraryContext context;
+    cetta_library_context_init_for_language_profile(&context, CETTA_LANGUAGE_PRIME,
+        cetta_profile_prime_default());
+    CettaLibraryContext *previous_context = g_library_context;
+    eval_set_library_context(&context);
+    Arena *previous_owner = g_prime_need_owner, *previous_episode = g_prime_need_episode_owner;
+    g_prime_need_owner = g_prime_need_episode_owner = &arena;
+    Atom *roots[] = {parse_one(&arena, "(= (rank-inspect 7) ready)")};
+    PrimeNeedEquationPlan plan = {.equation = roots[0]};
+    Atom *query = parse_one(&arena, "(rank-inspect (field))");
+    PrimeNeedEquationContinuation state = {.arena = &arena, .space = &space,
+        .original_call = query, .plans = &plan, .plan_count = 1u,
+        .root_atoms = roots, .root_atom_count = 1u, .fuel = -1,
+        .inspect_incrementally = true, .current_work_slot = 1u,
+        .current_world_order = 1u, .world_order_extent = 2u,
+        .state = PRIME_NEED_EQUATION_SEARCH_WAIT_FORCE};
+    outcome_set_init(&state.work); outcome_set_init(&state.current);
+    outcome_set_init(&state.raw_results); outcome_set_init(&state.forced_worlds);
+    Bindings env; bindings_init(&env);
+    size_t index = 0u;
+    CHECK(prime_need_equation_work_push(&state, query, &env, &index, 1u, false, NULL));
+    state.work_meta[0].world_order = 2u;
+    outcome_set_add(&state.current, query, &env);
+    state.current_plan_indices = malloc(sizeof(size_t));
+    state.pending_plan_indices = malloc(sizeof(size_t));
+    CHECK(state.current_plan_indices && state.pending_plan_indices);
+    state.current_plan_indices[0] = state.pending_plan_indices[0] = 0u;
+    state.current_plan_count = state.pending_plan_count = 1u;
+    state.inspection.path = malloc(sizeof(CettaExprIndex));
+    CHECK(state.inspection.path);
+    state.inspection.path[0] = 1u; state.inspection.length = state.inspection.capacity = 1u;
+    state.inspection.demand = PRIME_NEED_PATTERN_WEAK_HEAD;
+    CHECK(prime_need_equation_metadata_reserve(&state.forced_world_metadata, 0u));
+    Outcome later; outcome_init(&later); later.atom = atom_symbol(&arena, "later");
+    CHECK(prime_need_equation_packet_copy(&state.raw_results, &state.raw_metadata, &later,
+        (PrimeNeedEquationPacketInfo){.world_order = 2u}));
+    PrimeEvalStackFrame frame = {.kind = PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH,
+        .equation_search = &state, .space = &space, .arena = &arena};
+    outcome_set_init(&frame.child); frame.child_initialized = true;
+    outcome_set_add(&frame.child, atom_int(&arena, 7), &env);
+    outcome_set_add(&frame.child, atom_int(&arena, 7), &env);
+    PrimeEvalStackDriver driver = {.top = &frame, .streaming = true};
+    PrimeEvalStackDriver *previous_driver = g_prime_eval_stack_driver;
+    g_prime_eval_stack_driver = &driver;
+    /* The forced-world insertion has succeeded when the first branch
+     * metadata allocation refuses. No source row or rank is consumed. */
+    br_return_realloc_owner = NULL; br_return_realloc_refusals = 1u;
+    prime_eval_stack_resume_equation_search_forced(&frame);
+    CHECK(!br_return_realloc_refusals && driver.capacity_blocked && driver.top == &frame &&
+        state.state == PRIME_NEED_EQUATION_SEARCH_WAIT_FORCE && state.current.len == 1u &&
+        frame.child.len == 2u && state.work.len == 1u && !state.forced_worlds.len &&
+        state.world_order_extent == 2u && state.work_meta[0].world_order == 2u &&
+        state.raw_metadata.items[0].world_order == 2u);
+    driver.capacity_blocked = false;
+    prime_eval_stack_resume_equation_search_forced(&frame);
+    CHECK(!driver.capacity_blocked && driver.top == &frame && !state.current.len &&
+        !frame.child.len && state.state == PRIME_NEED_EQUATION_SEARCH_READY &&
+        state.work.len == 3u && state.world_order_extent == 3u &&
+        state.work_meta[0].world_order == 3u && state.work_meta[1].world_order == 2u &&
+        state.work_meta[2].world_order == 1u && state.raw_metadata.items[0].world_order == 3u);
+    state.world_order_extent = UINT64_MAX;
+    CHECK(!prime_need_equation_split_world(&state, 2u, state.forced_worlds.len) &&
+        state.world_order_extent == UINT64_MAX && state.work_meta[0].world_order == 3u);
+    for (CettaCount i = 0u; i < state.work.len; i++) {
+        free(state.work_meta[i].plan_indices);
+        prime_need_pattern_readiness_free(state.work_meta[i].observed);
+    }
+    free(state.work_meta); free(state.raw_metadata.items); free(state.forced_world_metadata.items);
+    prime_need_pattern_request_free(&state.inspection);
+    outcome_set_free(&state.work); outcome_set_free(&state.current);
+    outcome_set_free(&state.raw_results); outcome_set_free(&state.forced_worlds);
+    outcome_set_free(&frame.child); outcome_free_fields(&later); bindings_free(&env);
+    g_prime_eval_stack_driver = previous_driver;
+    g_prime_need_owner = previous_owner; g_prime_need_episode_owner = previous_episode;
+    eval_set_library_context(previous_context); cetta_library_context_free(&context);
+    space_free(&space); arena_free(&arena);
+}
+
 static void equation_observation_cohort_cases(void) {
     Arena arena;
     arena_init(&arena);
@@ -12009,6 +12092,7 @@ static void ordinary_source_shared_cases(void) {
     equation_observation_packet_cases();
     equation_observation_readiness_cases();
     equation_publication_retry_cases();
+    equation_ordered_world_retry_case();
     equation_observation_cohort_cases();
     ordinary_source_resident_log_case();
     work_credit_cases();

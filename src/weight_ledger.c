@@ -405,6 +405,87 @@ bool cetta_weight_ledger_merge(CettaWeightLedger *destination,
     return ok;
 }
 
+static size_t factor_position(const CettaWeightFactor *const *items,
+    size_t count, uint64_t occurrence) {
+    for (size_t i = 0u; i < count; i++)
+        if (items[i]->occurrence == occurrence) return i;
+    return count;
+}
+
+static bool captured_factor_equal(const CettaWeightFactor *left,
+    const CettaWeightFactor *right) {
+    return left->occurrence == right->occurrence &&
+        left->dependency == right->dependency &&
+        atom_capture_identical(left->value, right->value);
+}
+
+bool cetta_weight_ledger_import_suffix(Arena *owner,
+    const CettaWeightLedger *entrance, const CettaWeightLedger *production,
+    const CettaWeightLedger *recipient, CettaWeightLedger *out) {
+    if (!owner || !entrance || !production || !recipient || !out ||
+        entrance->length > production->length ||
+        production->claim_count > SIZE_MAX / sizeof(CettaWeightClaim *)) return false;
+    const CettaWeightFactor **before = cetta_weight_ledger_ordered(entrance);
+    const CettaWeightFactor **earned = cetta_weight_ledger_ordered(production);
+    const CettaWeightFactor **held = cetta_weight_ledger_ordered(recipient);
+    const CettaWeightClaim **claims = production->claim_count
+        ? malloc(production->claim_count * sizeof(*claims)) : NULL;
+    bool valid = (!recipient->length || held) &&
+        (!production->claim_count || claims) &&
+        ordered_extends(production, entrance, earned, before);
+    for (size_t i = 0u; valid && i < entrance->length; i++)
+        valid = captured_factor_equal(before[i], earned[i]);
+
+    size_t first_missing = production->length;
+    size_t previous_position = 0u;
+    bool reused = false;
+    for (size_t i = entrance->length; valid && i < production->length; i++) {
+        size_t position = factor_position(held, recipient->length, earned[i]->occurrence);
+        if (position == recipient->length) {
+            if (first_missing == production->length) first_missing = i;
+        } else {
+            valid = first_missing == production->length &&
+                (!reused || position > previous_position) &&
+                captured_factor_equal(earned[i], held[position]);
+            previous_position = position;
+            reused = true;
+        }
+    }
+    size_t claim_count = 0u;
+    for (const CettaWeightClaim *claim = production->claims; valid && claim;
+         claim = claim->previous) {
+        if (claim_count == production->claim_count || !claim->occurrence || !claim->handler) {
+            valid = false;
+            break;
+        }
+        claims[claim_count++] = claim;
+        if (cetta_weight_ledger_handler(entrance, claim->occurrence) == claim->handler)
+            continue;
+        size_t position = factor_position(earned, production->length, claim->occurrence);
+        size_t receiver = factor_position(held, recipient->length, claim->occurrence);
+        uint64_t handler = cetta_weight_ledger_handler(recipient, claim->occurrence);
+        valid = position < production->length && (!handler || handler == claim->handler) &&
+            (position >= entrance->length ||
+             (receiver < recipient->length && captured_factor_equal(earned[position], held[receiver])));
+    }
+    valid = valid && claim_count == production->claim_count;
+
+    CettaWeightLedger imported = *recipient;
+    if (valid) valid = cetta_weight_ledger_promote(owner, &imported);
+    for (size_t i = first_missing; valid && i < production->length; i++)
+        valid = append_owned(&imported, owner, earned[i]->occurrence,
+            earned[i]->dependency, earned[i]->value);
+    /* Retain the authored claim path order as well as its ownership map. */
+    for (size_t i = claim_count; valid && i > 0u; i--) {
+        const CettaWeightClaim *claim = claims[i - 1u];
+        if (cetta_weight_ledger_handler(entrance, claim->occurrence) != claim->handler)
+            valid = claim_owned(&imported, owner, claim->occurrence, claim->handler);
+    }
+    free(before); free(earned); free(held); free(claims);
+    if (valid) *out = imported;
+    return valid;
+}
+
 bool cetta_weight_ledger_compare(const CettaWeightLedger *left,
     const CettaWeightLedger *right, const CettaCheckpointCompare *read) {
     if (!left || !right || !cetta_checkpoint_compare_valid(read)) return false;

@@ -1,3 +1,4 @@
+(SensorRequested A)
 [()]
 [(World (Cons False Nil) (Ok done) 0 Nil), (World (Cons True Nil) (Ok done) 0 Nil)]
 [(Ok one)]
@@ -20,3 +21,5 @@
 [done, done]
 [one]
 [(P heads heads), (P tails tails)]
+[Ready]
+[(Ready Ready Ready A)]

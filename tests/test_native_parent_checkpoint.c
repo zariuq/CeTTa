@@ -90,10 +90,17 @@ static void one(unsigned client,unsigned cut){
  const char *rows[]={"(=w (coin) 2 3)","(=w (coin) 2 3)","(=w (coin) 5 7)","(=w (weigh-by-self $x) $x $x)","(= (paired $x) (Pair $x $x))","(D 3)","(D 3)","(= (accepted $x) Mystery)","(=w (priced) Cheap 1)","(=w (priced) Costly 3)","(= (offers) (match &self (D $x) (Offer $x) (where $x)))",
  "(= (stuck A C) value)","(=w (field) 7 5)","(=w (field) 7 5)",
  "(=w (inspect (Pair $x $x) (Box $n)) Header 3)",
- "(=w (inspect (Pair $x $x) (Box 7)) Detail 11)"};
+ "(=w (inspect (Pair $x $x) (Box 7)) Detail 11)",
+ "(= (rank-source) (Box A A (rank-tail)))", "(= (rank-source) (Box B (rank-head) 7))",
+ "(= (rank-source) (Box C A 7))", "(= (rank-head) (superpose (A A)))", "(= (rank-tail) (superpose (7 8)))",
+ "(= (rank-view (Box $tag A $x)) Early)", "(= (rank-view (Box $tag $x 7)) $tag)",
+ "(= (rank-residual-source) (Box A (rank-residual-tail)))", "(= (rank-residual-source) (Box (rank-residual-head) B))",
+ "(= (rank-residual-tail) (superpose (8 8)))", "(= (rank-residual-head) 8)",
+ "(= (rank-residual-view (Box 7 $x)) Rule0)", "(= (rank-residual-view (Box $x 7)) Rule1)"};
  for(size_t i=0;i<sizeof(rows)/sizeof(*rows);i++)space_add(&space,parse(&syntax,rows[i]));
  const char *programs[]={"(Pair (weight:where 2 3) (weight:where 5 7))","(paired (weigh-by-self (coin)))","(match &self (D $x) $x (where 2))","(weight:where 7 Mystery (admit accepted))","(weight:read (algebra 0 1 + *) (paired (weigh-by-self (coin))))","(weight:read (algebra 1000000 0 min +) (priced))","(weight:read (algebra 1000000 0 min +) (offers))","(superpose (A B C))","(superpose (A A A))","(superpose (A A A))","(superpose (3 1))","(superpose ())",
- "(inspect (Pair (stuck $v B) (stuck $v B)) (Box (field)))"};
+ "(inspect (Pair (stuck $v B) (stuck $v B)) (Box (field)))",
+ "(rank-view (rank-source))", "(rank-residual-view (rank-residual-source))"};
  PrimeNativeControl *source=malloc(sizeof(*source));assert(source);CettaSearchPolicySpec policy={.native_control=true,.all=true,.retain=true,.workers=1u,.work_budget=UINT64_MAX,.costs=true};
  if(client>=5u&&client<=6u){policy.by_weight=true;policy.descending=false;policy.priority=2;policy.age_share=2;policy.weight_law=prime_need_symbols()->law_nonnegative_sum;}
  if(client>=7u&&client<=11u){policy.selection=client<=9u?1:2;policy.all=false;policy.goal_pattern=parse(&syntax,"$bundle");policy.goal_expression=client>=10u?policy.goal_pattern:parse(&syntax,client==8u?"False":"True");}
@@ -106,6 +113,8 @@ static void one(unsigned client,unsigned cut){
  prime_need_answer_observer_changed();
 #endif
  assert(prime_native_control_init(source,&space,&syntax,parse(&syntax,programs[client]),-1,true,(CettaObservationDemand){.completion=policy.selection?CETTA_OBSERVATION_FINITE_PREFIX:CETTA_OBSERVATION_COMPLETE_BAG,.prefix_limit=client==10u?3u:policy.selection?2u:0u},&policy,&inherited,NULL,NULL));
+ /* Exercise the serial ordered-driver profile used by ordinary sources. */
+ if(client>=13u)source->driver.ordinary_ordered=true;
  bindings_free(&inherited);
  Result a={0},b={0},prefix={0};arena_init(&a.storage);arena_init(&b.storage);arena_init(&prefix.storage);
  prime_native_control_run(source,cut,policy.selection?checkpoint_first_seen:seen,&prefix);
@@ -255,7 +264,7 @@ static void one(unsigned client,unsigned cut){
   }
   free(observed);
  }
- static const size_t expected[]={1u,3u,2u,0u,3u,2u,2u,2u,0u,2u,2u,0u,3u};
+ static const size_t expected[]={1u,3u,2u,0u,3u,2u,2u,2u,0u,2u,2u,0u,3u,7u,3u};
  CHECK(prefix.count+a.count==expected[client]);
  CHECK(prefix.count+b.count==expected[client]);
  if(client==3u)CHECK(pending&&!closed);
@@ -512,7 +521,7 @@ int main(void){SymbolTable syms;symbol_table_init(&syms);symbol_table_init_built
  return_advice_copy_cases();
  opaque_service_copy_cases();
  const unsigned cuts[]={0,1,3,7,13,19,31,49,79,149,163,401};
- for(unsigned c=0;c<13;c++)for(size_t i=0;i<sizeof(cuts)/sizeof(*cuts);i++)one(c,cuts[i]);
+ for(unsigned c=0;c<15;c++)for(size_t i=0;i<sizeof(cuts)/sizeof(*cuts);i++)one(c,cuts[i]);
  for(unsigned cut=80u;cut<=128u;cut+=4u)one(12u,cut);
  printf("INSPECTION_COPIES %zu CURRENT_READINESS %zu WORK_READINESS %zu\n",
   inspection_copies,readiness_copies,work_readiness_copies);
