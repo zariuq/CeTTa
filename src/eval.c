@@ -2219,7 +2219,7 @@ static bool prime_need_explicit_suspension_origin(Atom *atom,
     return true;
 }
 static bool emit_unquoted_mork_rows(Space *s, Arena *a, SymbolId internal_head_id,
-                                    Atom *syntax_atom, uint32_t nargs,
+                                    uint32_t nargs,
                                     Atom **args, bool evaluate_rows, int fuel,
                                     OutcomeSet *os);
 static bool emit_direct_mork_match_rows(Space *s, Arena *a, Atom *syntax_atom,
@@ -2421,7 +2421,7 @@ static bool emit_generic_mork_handle_atoms_syntax(
         return true;
     }
     return emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_atoms,
-                                   syntax_atom, 1, args, false, fuel, os);
+                                   1, args, false, fuel, os);
 }
 
 static bool emit_generic_mork_handle_match_syntax(
@@ -2434,7 +2434,7 @@ static bool emit_generic_mork_handle_match_syntax(
         return true;
     }
     return emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_match,
-                                   syntax_atom, 3, args, true, fuel, os);
+                                   3, args, true, fuel, os);
 }
 
 static Atom *guard_mork_space_syntax(Arena *a, Atom *call, Space *space,
@@ -3796,7 +3796,7 @@ static Atom *outcome_preview_atom(const Outcome *out) {
     return record ? record->result : NULL;
 }
 
-static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs);
+static bool dispatch_native_op(Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs, CettaCallOutcome *outcome);
 static bool dispatch_native_invocation(Space *s, Arena *a,
                                        const CettaInvocation *invocation,
                                        CettaCallOutcome *outcome);
@@ -5182,6 +5182,7 @@ static void outcome_set_add_existing_with_env(Arena *a,
     outcome_init(slot);
     slot->kind = src->kind;
     slot->atom = src->atom;
+    slot->delayed = src->delayed;
     bindings_assert_no_private_variant_slots(&src->env);
     bindings_assert_no_private_variant_slots(env);
     if (!(src->kind == CETTA_OUTCOME_ANSWER_REF
@@ -5417,6 +5418,62 @@ static bool outcome_set_add_compacted_variant(Arena *a, OutcomeSet *os,
     return true;
 }
 
+/* A conditional return still owns logical work when substitutions are not
+ * requested. Materialize both roots, retaining only their reachable context.
+ * Clone first: materialization may inflate answer references or variant slots. */
+static __attribute__((cold, noinline)) void outcome_set_add_conditional_prefixed(
+        Arena *arena, OutcomeSet *outcomes, const Outcome *source,
+        const Bindings *outer) {
+    Outcome contextual, projected;
+    outcome_init(&projected);
+    Bindings merged;
+    const Bindings *effective = NULL;
+    if (!outcome_clone(&contextual, source, NULL) ||
+        (contextual.kind == CETTA_OUTCOME_ANSWER_REF &&
+         !outcome_inflate_answer_ref(arena, &contextual))) {
+        outcome_free_fields(&contextual);
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return;
+    }
+    if (!bindings_effective_merge(&merged, &effective, outer,
+                                   &contextual.env, true)) {
+        outcome_free_fields(&contextual);
+        return;
+    }
+    if (effective && effective != &contextual.env) {
+        Bindings combined;
+        if (!bindings_clone(&combined, effective)) {
+            if (effective == &merged)
+                bindings_free(&merged);
+            outcome_free_fields(&contextual);
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return;
+        }
+        bindings_free(&contextual.env);
+        bindings_move(&contextual.env, &combined);
+    }
+    contextual.materialized_atom = NULL;
+    projected.atom = outcome_atom_materialize(arena, &contextual);
+    projected.delayed = bindings_apply_if_vars(
+        &contextual.env, arena, contextual.delayed);
+    Atom *roots[] = {projected.atom, projected.delayed};
+    bool valid = projected.atom && projected.delayed &&
+        bindings_project_reachable(&contextual.env, roots, 2u, &projected.env) &&
+        bindings_capture_active_need(&projected.env);
+    if (valid) {
+        CettaCount before = outcomes->len;
+        outcome_set_add_existing(outcomes, &projected);
+        if (outcomes->len == before)
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+    } else {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    }
+    outcome_free_fields(&projected);
+    outcome_free_fields(&contextual);
+    if (effective == &merged)
+        bindings_free(&merged);
+}
+
 static void outcome_set_add_prefixed_outcome(Arena *a, OutcomeSet *os,
                                              const Outcome *src,
                                              const Bindings *outer_env,
@@ -5425,6 +5482,10 @@ static void outcome_set_add_prefixed_outcome(Arena *a, OutcomeSet *os,
     bindings_init(&empty);
     bindings_assert_no_private_variant_slots(&src->env);
     bindings_assert_no_private_variant_slots(outer_env);
+    if (!preserve_bindings && src->delayed) {
+        outcome_set_add_conditional_prefixed(a, os, src, outer_env);
+        return;
+    }
     if (!preserve_bindings) {
         if (variant_instance_present(&src->variant)) {
             if (outcome_set_add_compacted_variant(a, os, src, outer_env))
@@ -7944,15 +8005,14 @@ static bool dispatch_native_invocation(Space *s, Arena *a,
     return false;
 }
 
-static Atom *dispatch_native_op(Space *s, Arena *a, Atom *head,
-                                Atom **args, uint32_t nargs) {
-    CettaCallOutcome outcome;
-    if (!dispatch_native_invocation(s, a,
+/* The vector ABI owns its borrowed descriptor here; source dispatchers
+ * retain their own continuation frames without the invocation metadata. */
+static __attribute__((noinline)) bool dispatch_native_op(
+        Space *s, Arena *a, Atom *head, Atom **args, uint32_t nargs,
+        CettaCallOutcome *outcome) {
+    return dispatch_native_invocation(s, a,
         &(CettaInvocation){.head = binding_value_from_atom(head),
-            .supplied = {.atoms = args, .count = nargs}},
-        &outcome))
-        return NULL;
-    return native_outcome_expression(a, outcome);
+            .supplied = {.atoms = args, .count = nargs}}, outcome);
 }
 
 static Atom *native_outcome_expression(Arena *a, CettaCallOutcome outcome) {
@@ -23075,6 +23135,23 @@ static bool sequence_native_call(
     return false;
 }
 
+/* This complete invocation owns only boundary metadata. Admission remains
+ * distinct from the number or form of the results it delivers. */
+static __attribute__((noinline)) bool dispatch_native_value_call(
+        Space *space, Arena *arena, Atom *head, Atom **arguments, uint32_t arity,
+        const Bindings *environment, OutcomeSet *outcomes, uint64_t *finished_ns) {
+    CettaCallOutcome outcome;
+    bool admitted = dispatch_native_op(space, arena, head, arguments, arity, &outcome);
+    if (finished_ns)
+        *finished_ns = eval_monotonic_ns();
+    if (admitted) {
+        Atom *expression = NULL;
+        sequence_native_call(space, arena, outcome, true, NULL, environment,
+                             outcomes, &expression);
+    }
+    return admitted;
+}
+
 /* ── Check if function type is applicable (TypeCheck.lean:55-116) ──────── */
 
 typedef HeTypeErrors ApplicabilityErrors;
@@ -32021,8 +32098,34 @@ static bool handle_match(Space *s, Arena *a, Atom *atom, int fuel,
                                   true);
 }
 
+static void emit_unquoted_mork_value(Space *space, Arena *arena, Atom *payload,
+        bool evaluate_rows, int fuel, const Bindings *environment,
+        OutcomeSet *outcomes) {
+    if (atom_is_error(payload)) {
+        emit_completed_native_value(space, arena, payload, NULL, environment, outcomes);
+        return;
+    }
+    if (payload->kind == ATOM_EXPR && payload->expr.len == 2u &&
+        atom_is_symbol_id(payload->expr.elems[0], g_builtin_syms.quote))
+        payload = payload->expr.elems[1];
+    if (payload->kind != ATOM_EXPR) {
+        outcome_set_add(outcomes, payload, environment);
+        return;
+    }
+    for (CettaExprIndex index = 0u; index < payload->expr.len; index++) {
+        Atom *row = payload->expr.elems[index];
+        if (row->kind == ATOM_EXPR && row->expr.len == 2u &&
+            atom_is_symbol_id(row->expr.elems[0], g_builtin_syms.quote))
+            row = row->expr.elems[1];
+        if (evaluate_rows)
+            eval_for_caller(space, arena, NULL, row, fuel, environment, false, outcomes);
+        else
+            outcome_set_add(outcomes, row, environment);
+    }
+}
+
 static bool emit_unquoted_mork_rows(Space *s, Arena *a, SymbolId internal_head_id,
-                                    Atom *syntax_atom, uint32_t nargs,
+                                    uint32_t nargs,
                                     Atom **args, bool evaluate_rows, int fuel,
                                     OutcomeSet *os) {
     Bindings _empty;
@@ -32032,38 +32135,32 @@ static bool emit_unquoted_mork_rows(Space *s, Arena *a, SymbolId internal_head_i
     for (uint32_t i = 0; i < nargs; i++) {
         resolved_args[i] = resolve_registry_refs(a, args[i]);
     }
-    Atom *result = dispatch_native_op(s, a, internal_head, resolved_args, nargs);
-    if (!result)
+    CettaCallOutcome outcome;
+    if (!dispatch_native_op(s, a, internal_head, resolved_args, nargs, &outcome))
         return false;
-    if (atom_is_error(result)) {
-        outcome_set_add(os, result, &_empty);
+    if ((outcome.kind != CETTA_CALL_VALUE &&
+         outcome.kind != CETTA_CALL_SUSPENDED) ||
+        !cetta_call_outcome_shape_valid(outcome)) {
+        Atom *expression = NULL;
+        sequence_native_call(s, a, outcome, true, NULL, &_empty, os,
+                             &expression);
         return true;
     }
-    Atom *payload = result;
-    if (payload->kind == ATOM_EXPR && payload->expr.len == 2 &&
-        atom_is_symbol_id(payload->expr.elems[0], g_builtin_syms.quote)) {
-        payload = payload->expr.elems[1];
+    CettaCallReturnCursor cursor = {.outcome = outcome, .environment = &_empty};
+    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+    CettaOwnedReturn returned;
+    while (cetta_call_return_next(&cursor, &returned, &completion) ==
+           CETTA_OWNED_EXECUTION_RETURN) {
+        CettaCount previous = os->len;
+        emit_unquoted_mork_value(s, a, returned.outcome.term, evaluate_rows,
+                                  fuel, returned.environment, os);
+        if (returned.outcome.kind == CETTA_CALL_SUSPENDED)
+            for (CettaCount index = previous; index < os->len; index++)
+                os->items[index].delayed = returned.outcome.delayed;
     }
-    if (payload->kind == ATOM_EXPR) {
-        for (CettaExprIndex i = 0; i < payload->expr.len; i++) {
-            Atom *row = payload->expr.elems[i];
-            if (row->kind == ATOM_EXPR && row->expr.len == 2 &&
-                atom_is_symbol_id(row->expr.elems[0], g_builtin_syms.quote)) {
-                row = row->expr.elems[1];
-            }
-            if (evaluate_rows) {
-                eval_for_caller(s, a, NULL, row, fuel, &_empty, false, os);
-            } else {
-                outcome_set_add(os, row, &_empty);
-            }
-        }
-        return true;
-    }
-    if (payload != syntax_atom) {
-        outcome_set_add(os, payload, &_empty);
-        return true;
-    }
-    return false;
+    if (completion != CETTA_EVAL_COMPLETE)
+        eval_mark_interrupted(completion);
+    return true;
 }
 
 typedef struct {
@@ -35163,7 +35260,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             return true;
         }
         if (emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_atoms,
-                                    atom, nargs, atom->expr.elems + 1,
+                                    nargs, atom->expr.elems + 1,
                                     false, fuel, os)) {
             return true;
         }
@@ -35174,7 +35271,7 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
             return true;
         }
         if (emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_match,
-                                    atom, nargs, atom->expr.elems + 1,
+                                    nargs, atom->expr.elems + 1,
                                     true, fuel, os)) {
             return true;
         }
@@ -35215,11 +35312,9 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
     if (!profile_disabled_whole_call_syntax && op->kind == ATOM_SYMBOL &&
         grounded_op_is_sequence_constructor(head_id) &&
         !grounded_op_sequence_accepts_arity(head_id, nargs)) {
-        Atom *error = dispatch_native_op(s, a, op, atom->expr.elems + 1, nargs);
-        if (error) {
-            outcome_set_add(os, error, &_empty);
+        if (dispatch_native_value_call(s, a, op, atom->expr.elems + 1u,
+                                       nargs, &_empty, os, NULL))
             return true;
-        }
     }
     if (op->kind == ATOM_SYMBOL &&
         (head_id == g_builtin_syms.lib_mork_space_add_atoms ||
@@ -35244,21 +35339,18 @@ handle_dispatch(Space *s, Arena *a, Atom *atom, Atom *etype, int fuel,
                                         resolve_finished_ns - resolve_started_ns);
             }
         }
-        Atom *direct = dispatch_native_op(s, a, op, resolved_args, nargs);
-        if (emit_timing &&
+        bool timed_batch = emit_timing &&
             (head_id == g_builtin_syms.mork_add_atoms ||
              head_id == g_builtin_syms.lib_mork_space_add_atoms ||
-             head_id == g_builtin_syms.lib_mork_space_add_stream)) {
-            uint64_t dispatch_finished_ns = eval_monotonic_ns();
-            if (dispatch_finished_ns >= dispatch_started_ns) {
-                cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_DISPATCH_NS,
-                                        dispatch_finished_ns - dispatch_started_ns);
-            }
-        }
-        if (direct) {
-            outcome_set_add(os, direct, &_empty);
+             head_id == g_builtin_syms.lib_mork_space_add_stream);
+        uint64_t dispatch_finished_ns = 0u;
+        bool admitted = dispatch_native_value_call(s, a, op, resolved_args,
+            nargs, &_empty, os, timed_batch ? &dispatch_finished_ns : NULL);
+        if (timed_batch && dispatch_finished_ns >= dispatch_started_ns)
+            cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MORK_ADD_BATCH_DISPATCH_NS,
+                                    dispatch_finished_ns - dispatch_started_ns);
+        if (admitted)
             return true;
-        }
     }
     if (op->kind == ATOM_SYMBOL) {
         Atom *resolved_head = registry_lookup_atom(op);
@@ -52642,14 +52734,14 @@ petta_lowered_to_shared_form:
             return;
         }
         if (emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_atoms,
-                                    atom, nargs, atom->expr.elems + 1,
+                                    nargs, atom->expr.elems + 1,
                                     false, fuel, os)) {
             return;
         }
     }
     if (head_id == g_builtin_syms.mork_match_syntax && nargs == 3) {
         if (emit_unquoted_mork_rows(s, a, g_builtin_syms.lib_mork_space_match,
-                                    atom, nargs, atom->expr.elems + 1,
+                                    nargs, atom->expr.elems + 1,
                                     true, fuel, os)) {
             return;
         }
@@ -57608,10 +57700,12 @@ static void he_one_step_ready_call(Space *s, Arena *a, Atom *atom,
             result_set_add(rs, he_one_step_request(a, atom, atom));
             return;
         }
-        Atom *direct = dispatch_native_op(s, a, head,
-            atom->expr.elems + 1u, atom->expr.len - 1u);
-        if (direct) {
-            result_set_add(rs, direct);
+        CettaCallOutcome outcome;
+        if (dispatch_native_op(s, a, head, atom->expr.elems + 1u,
+                               atom->expr.len - 1u, &outcome)) {
+            Atom *direct = native_outcome_expression(a, outcome);
+            if (direct)
+                result_set_add(rs, direct);
             return;
         }
     }

@@ -20,6 +20,8 @@
 
 static unsigned fail_malloc, fail_calloc;
 static unsigned native_mode, native_calls;
+static SymbolId projection_head = SYMBOL_ID_NONE;
+static unsigned projection_calls;
 static Atom *malformed_frontier(Arena *arena, Atom *value) {
     Atom *prototype = atom_expr2(arena, value, value);
     Atom *frontier = arena_alloc(arena, sizeof(*frontier));
@@ -69,6 +71,15 @@ static void native_fixture_outcome(Arena *arena, CettaCallOutcome *outcome) {
     }
     case 13: *outcome = cetta_call_completed_frontier(atom_unit(arena)); break;
     case 14: *outcome = cetta_call_completed_value(atom_symbol(arena, "Empty")); break;
+    case 15:
+    case 16: {
+        Atom *quoted = atom_expr2(arena, atom_symbol_id(arena, g_builtin_syms.quote), code);
+        Atom *rows = atom_expr2(arena, atom_symbol_id(arena, g_builtin_syms.quote),
+                               atom_expr2(arena, quoted, quoted));
+        *outcome = native_mode == 15u ? cetta_call_completed_value(rows)
+            : cetta_call_completed_frontier(atom_expr2(arena, rows, rows));
+        break;
+    }
     default: abort();
     }
 }
@@ -77,9 +88,13 @@ bool __real_grounded_call(Arena *arena, Atom *head, Atom **args,
                           uint32_t arity, CettaCallOutcome *outcome);
 bool __wrap_grounded_call(Arena *arena, Atom *head, Atom **args,
                          uint32_t arity, CettaCallOutcome *outcome) {
-    if (!native_mode || !atom_is_symbol_id(head, g_builtin_syms.readln_bang))
+    if (!native_mode ||
+        (!atom_is_symbol_id(head, g_builtin_syms.readln_bang) &&
+         !atom_is_symbol_id(head, projection_head)))
         return __real_grounded_call(arena, head, args, arity, outcome);
     ++native_calls;
+    if (atom_is_symbol_id(head, projection_head))
+        projection_calls++;
     /* A broken boundary must fail the count assertion rather than loop. */
     if (native_calls > 3u) {
         *outcome = cetta_call_interrupted();
@@ -966,6 +981,131 @@ static void test_native_evaluator_boundary(bool oem) {
         oem ? "library entry and dialect fallback" : "ordinary entry");
 }
 
+static void test_native_projection_consumers(void) {
+    unsigned checks = 0u;
+    const char *setting = getenv("CETTA_PETTA_SEARCH_MACHINE");
+    char *previous = setting ? strdup(setting) : NULL;
+    assert(!setting || previous);
+    for (unsigned dialect = 0u; dialect < 2u; dialect++) {
+        CettaLibraryContext *context = calloc(1u, sizeof(*context));
+        assert(context);
+        cetta_library_context_init_for_language_profile(context,
+            dialect ? CETTA_LANGUAGE_HE : CETTA_LANGUAGE_PETTA, NULL);
+        eval_set_library_context(context);
+        Arena arena;
+        arena_init(&arena);
+        TermUniverse universe;
+        term_universe_init(&universe);
+        term_universe_set_persistent_arena(&universe, &arena);
+        Space space;
+        space_init_with_universe(&space, &universe);
+        Registry registry;
+        registry_init(&registry);
+        registry_bind_id(&registry, g_builtin_syms.self, atom_space(&arena, &space));
+        const SymbolId heads[] = {g_builtin_syms.lib_mork_space_atoms,
+            g_builtin_syms.lib_mork_space_add_atoms, g_builtin_syms.lib_list_range};
+        const char *sources[] = {"(mork:get-atoms opaque)",
+            "(__cetta_lib_mork_space_add_atoms opaque ())", "(__cetta_lib_list_range (readln!) 1 2)"};
+        const unsigned modes[] = {1u, 2u, 3u, 4u, 5u, 6u,
+            8u, 9u, 10u, 11u, 13u, 14u, 15u, 16u};
+        for (unsigned client = 0u; client < 3u; client++) {
+            /* PeTTa's eager/over-application protocol can evaluate arguments
+             * before this native arity consumer. HE owns the preflight. */
+            if (client == 2u && !dialect)
+                continue;
+            /* Arity preflight is a canonical source consumer. The search
+             * machine also owns partial/over-application, a different call
+             * protocol from this already rejected native entrance. */
+            assert(setenv("CETTA_PETTA_SEARCH_MACHINE", client == 2u ? "0" : "1", 1) == 0);
+            eval_set_library_context(context);
+            projection_head = heads[client];
+            for (unsigned index = 0u; index < sizeof(modes) / sizeof(*modes); index++) {
+                native_mode = modes[index];
+                if ((client == 0u && (native_mode == 1u || native_mode == 2u)) ||
+                    (client != 0u && native_mode >= 15u))
+                    continue;
+                native_calls = 0u;
+                projection_calls = 0u;
+                EvalOutcome outcome;
+                eval_outcome_init(&outcome);
+                eval_top_with_registry_outcome(&space, &arena, &arena, &registry,
+                    parse(&arena, sources[client]), &outcome, NULL, NULL);
+                if (native_calls != 1u || projection_calls != 1u)
+                    fprintf(stderr, "native projection dialect=%u client=%u mode=%u calls=%u entries=%u\n",
+                        dialect, client, native_mode, native_calls, projection_calls);
+                assert(native_calls == 1u && projection_calls == 1u);
+                bool invalid = native_mode == 5u ||
+                    native_mode == 10u || native_mode == 11u;
+                CettaEvalCompletion expected_completion = native_mode == 4u
+                    ? CETTA_EVAL_INCOMPLETE_CANCELLED : invalid
+                    ? CETTA_EVAL_INCOMPLETE_HOST_FAILURE : CETTA_EVAL_COMPLETE;
+                if (outcome.completion != expected_completion)
+                    fprintf(stderr, "native projection dialect=%u client=%u mode=%u completion=%u expected=%u\n",
+                        dialect, client, native_mode, outcome.completion, expected_completion);
+                assert(outcome.completion == expected_completion);
+                if (native_mode == 8u) {
+                    assert(dialect || outcome.petta_raised_error);
+                } else {
+                    assert(!outcome.petta_raised_error);
+                    bool zero = native_mode == 3u || native_mode == 13u;
+                    CettaCount count = zero ?
+                        (dialect && !(client == 0u && native_mode == 13u) ? 1u : 0u)
+                        : native_mode == 4u || invalid ? 0u
+                        : native_mode == 2u ? (dialect ? 2u : 3u)
+                        : native_mode == 15u ? 2u : native_mode == 16u ? 4u : 1u;
+                    if (outcome.results.len != count) {
+                        fprintf(stderr, "native projection dialect=%u client=%u mode=%u count=%llu expected=%llu\n",
+                            dialect, client, native_mode,
+                            (unsigned long long)outcome.results.len, (unsigned long long)count);
+                        for (CettaCount i = 0u; i < outcome.results.len; i++) {
+                            atom_print(outcome.results.items[i], stderr);
+                            fputc('\n', stderr);
+                        }
+                    }
+                    assert(outcome.results.len == count);
+                    for (CettaCount i = 0u; i < count; i++) {
+                        if (zero) {
+                            assert(atom_is_empty(outcome.results.items[i]));
+                            continue;
+                        }
+                        Atom *expected = native_mode == 9u || (native_mode == 2u && i == 2u)
+                            ? atom_error(&arena, atom_symbol(&arena, "native"), atom_symbol(&arena, "datum"))
+                            : native_mode == 14u ? atom_symbol(&arena, "Empty")
+                            : native_mode == 6u ? atom_int(&arena, 9)
+                            : parse(&arena, "(function (return (readln!)))");
+                        if (!atom_eq(outcome.results.items[i], expected)) {
+                            fprintf(stderr, "native projection dialect=%u client=%u mode=%u item=%llu\n",
+                                dialect, client, native_mode, (unsigned long long)i);
+                            atom_print(outcome.results.items[i], stderr);
+                            fputs(" expected ", stderr);
+                            atom_print(expected, stderr);
+                            fputc('\n', stderr);
+                        }
+                        assert(atom_eq(outcome.results.items[i], expected));
+                    }
+                }
+                eval_outcome_free(&outcome);
+                checks++;
+            }
+        }
+        native_mode = 0u;
+        projection_head = SYMBOL_ID_NONE;
+        registry_free(&registry);
+        space_free(&space);
+        term_universe_free(&universe);
+        cetta_library_context_free(context);
+        eval_set_library_context(NULL);
+        free(context);
+        arena_free(&arena);
+    }
+    if (previous)
+        assert(setenv("CETTA_PETTA_SEARCH_MACHINE", previous, 1) == 0);
+    else
+        assert(unsetenv("CETTA_PETTA_SEARCH_MACHINE") == 0);
+    free(previous);
+    printf("PASS: %u native row, mutation and arity consumers preserve tagged returns without operand demand or replay\n", checks);
+}
+
 static void test_prime_native_return_boundary(void) {
     CettaLibraryContext *context = calloc(1u, sizeof(*context));
     assert(context);
@@ -1265,6 +1405,7 @@ int main(int argc, char **argv) {
         test_native_return_cursor();
         test_native_provider_ownership();
         test_invocation_operands();
+        test_native_projection_consumers();
     }
     if (!prime_native)
         test_native_evaluator_boundary(oem_native_fixture);
