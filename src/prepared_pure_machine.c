@@ -389,6 +389,9 @@ typedef enum {
     PREPARED_PURE_CODE_JUMP,
     /* Bind pattern `auxiliary` against the operand. */
     PREPARED_PURE_CODE_MATCH,
+    /* MATCH, where an operand the pattern does not match continues at
+     * `target`. */
+    PREPARED_PURE_CODE_MATCH_ELSE,
     /* destination <- head `auxiliary` applied to the operands */
     PREPARED_PURE_CODE_CALL,
     /* Head `auxiliary` applied to the operands answers for this body. */
@@ -409,8 +412,9 @@ typedef struct {
     uint32_t auxiliary;
     uint32_t first_operand;
     uint32_t operand_count;
-    /* BRANCH and BRANCH_REGISTER: where a false condition continues; JUMP:
-     * where it goes; BUILD_EXPRESSION: its head, code_heads[target];
+    /* BRANCH and BRANCH_REGISTER: where a false condition continues;
+     * MATCH_ELSE: where a mismatch continues; JUMP: where it goes;
+     * BUILD_EXPRESSION: its head, code_heads[target];
      * SCALAR_TREE: its first compact instruction, scalar_code[target]. */
     uint32_t target;
     /* CALL and TAIL_CALL: the registers the body reads after the call
@@ -537,6 +541,9 @@ struct CettaPreparedPureProgram {
     CettaGsltPureCallMode call_mode;
     bool total_structural_equality;
     CettaMatchDecisionSemanticIdentity match_decision_semantics;
+    /* Nodes before this index hold binds whose values were found safe to
+     * compute first (prepared_pure_binds_meet_destinations). */
+    uint32_t checked_bind_nodes;
     bool closed_program;
     bool accepts_open_values;
     bool answer_producer;
@@ -2850,7 +2857,8 @@ static PreparedPureHeadRole prepared_pure_head_role(
             return PREPARED_PURE_HEAD_UNKNOWN;
         if (state == CETTA_PREPARED_PURE_EXPRESSION_PROJECT ||
             state == CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT ||
-            state == CETTA_PREPARED_PURE_EXPRESSION_OBSERVE)
+            state == CETTA_PREPARED_PURE_EXPRESSION_OBSERVE ||
+            state == CETTA_PREPARED_PURE_EXPRESSION_SELECT)
             return PREPARED_PURE_HEAD_CALLABLE;
         if (state != CETTA_PREPARED_PURE_EXPRESSION_DEFAULT)
             return PREPARED_PURE_HEAD_UNKNOWN;
@@ -3008,21 +3016,50 @@ static uint8_t prepared_pure_undefined_type_operands(
     return operands;
 }
 
-/* A structural bind consumes a pattern value. A source occurrence that
- * computes its pattern must stay with the owning evaluator; treating its
- * syntax as a template would erase bindings supplied by a consumer. */
-static bool prepared_pure_compile_inert_bind_pattern(
-        CettaPreparedPureProgram *program,
-        PreparedPureCompileContext *context, Atom *pattern,
-        const void *source_view, uint32_t *pattern_index_out) {
+/* Whether no part of a pattern computes: the dialect's plan calls none of
+ * its subterms, and where the dialect plans its source, no subterm the plan
+ * leaves unspecified has a head not proved inert.  PeTTa evaluates a
+ * pattern's function-headed subterms, at any depth, before it matches. */
+static bool prepared_pure_bind_pattern_is_inert(
+        CettaPreparedPureProgram *program, Atom *pattern,
+        const void *source_view, uint32_t depth) {
     CettaPreparedPureSourceRole role =
         prepared_pure_source_role(program, source_view);
     if (role == CETTA_PREPARED_PURE_SOURCE_CALL ||
         role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL ||
-        role == CETTA_PREPARED_PURE_SOURCE_DECLINE ||
+        role == CETTA_PREPARED_PURE_SOURCE_DECLINE)
+        return false;
+    if (pattern->kind != ATOM_EXPR)
+        return true;
+    if (depth > PREPARED_PURE_MAX_COMPILE_DEPTH ||
         (role == CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED &&
-         program->source_view.role && pattern->kind == ATOM_EXPR &&
+         program->source_view.role &&
          !prepared_pure_template_head_is_inert(program, pattern)))
+        return false;
+    for (CettaExprIndex index = 0u; index < pattern->expr.len; index++) {
+        Atom *child = pattern->expr.elems[index];
+        /* A head that is no expression is judged with its expression. */
+        if (index == 0u && child->kind != ATOM_EXPR)
+            continue;
+        if (!prepared_pure_bind_pattern_is_inert(
+                program, child,
+                prepared_pure_source_child(program, source_view, index),
+                depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* A structural bind consumes a pattern value. A source occurrence that
+ * computes its pattern, or any part of it, must stay with the owning
+ * evaluator; treating its syntax as a template would erase bindings
+ * supplied by a consumer. */
+static bool prepared_pure_compile_inert_bind_pattern(
+        CettaPreparedPureProgram *program,
+        PreparedPureCompileContext *context, Atom *pattern,
+        const void *source_view, uint32_t *pattern_index_out) {
+    if (!prepared_pure_bind_pattern_is_inert(program, pattern, source_view,
+                                             0u))
         return prepared_pure_reject(
             program, "binding pattern requires source evaluation", pattern);
     return prepared_pure_compile_bind_pattern(
@@ -4157,6 +4194,144 @@ static bool prepared_pure_ground_data(CettaPreparedPureProgram *program,
     return data;
 }
 
+/* One arm of a selection over the value `held` names: a pattern test of
+ * that value chooses between the arm's body, under the pattern's bind, and
+ * `otherwise`, the arms after it. */
+static bool prepared_pure_compile_select_arm(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    Atom *held, Atom *arm, const void *arm_view, uint32_t otherwise,
+    uint32_t depth, uint32_t *node_out) {
+    Atom *pattern = arm->expr.elems[0];
+    uint32_t target = 0u;
+    if (!prepared_pure_compile_template(
+            program, context, held, NULL, depth + 1u, true, &target))
+        return false;
+    size_t saved_bindings = context->len;
+    uint32_t saved_next_slot = context->next_slot;
+    uint32_t test_pattern = 0u;
+    if (!prepared_pure_compile_inert_bind_pattern(
+            program, context, pattern,
+            prepared_pure_source_child(program, arm_view, 0u),
+            &test_pattern))
+        return prepared_pure_reject(
+            program, "selection pattern is outside the fragment", pattern);
+    context->len = saved_bindings;
+    context->next_slot = saved_next_slot;
+    /* The test reads only its value: a pattern that compares against a
+     * variable bound before it is left to the canonical evaluator. */
+    const PreparedPureBindPattern *tested =
+        &program->bind_patterns[test_pattern];
+    for (uint32_t i = 0u; i < tested->var_count; i++) {
+        if (program->bind_vars[tested->first_var + i].prebound)
+            return prepared_pure_reject(
+                program, "selection pattern compares a bound variable",
+                pattern);
+    }
+    uint32_t test = 0u;
+    if (!prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_OBSERVE,
+                .auxiliary = PREPARED_PURE_OBSERVE_PATTERN_TEST |
+                             test_pattern,
+            },
+            &target, 1u, &test))
+        return false;
+    uint32_t bind_pattern = 0u;
+    if (!prepared_pure_compile_bind_pattern(
+            program, context, pattern, &bind_pattern))
+        return false;
+    uint32_t body = 0u;
+    bool body_ok = prepared_pure_compile_eval(
+        program, context, arm->expr.elems[1],
+        prepared_pure_source_child(program, arm_view, 1u), depth + 1u,
+        &body);
+    context->len = saved_bindings;
+    if (!body_ok)
+        return prepared_pure_reject(
+            program, "selection body is outside the fragment",
+            arm->expr.elems[1]);
+    uint32_t bound[2] = {target, body};
+    uint32_t then_node = 0u;
+    if (!prepared_pure_add_node(
+            program,
+            (PreparedPureNode){
+                .kind = PREPARED_PURE_BIND,
+                .auxiliary = bind_pattern,
+            },
+            bound, 2u, &then_node))
+        return false;
+    uint32_t branch[3] = {test, then_node, otherwise};
+    return prepared_pure_add_node(
+        program, (PreparedPureNode){.kind = PREPARED_PURE_IF},
+        branch, 3u, node_out);
+}
+
+/* A committed first-match selection (CETTA_PREPARED_PURE_EXPRESSION_SELECT):
+ * the key's value is bound once to a fresh variable, and the arms, last to
+ * first, become pattern tests of it.  After the last arm nothing answers:
+ * a single-answer program declines to the canonical evaluator, and an
+ * answer producer answers zero. */
+static bool prepared_pure_compile_select(
+    CettaPreparedPureProgram *program, PreparedPureCompileContext *context,
+    Atom *source, const void *source_view, uint32_t depth,
+    uint32_t *node_out) {
+    Atom *arms = source->expr.len == 3u ? source->expr.elems[2] : NULL;
+    if (!arms || arms->kind != ATOM_EXPR || arms->expr.len == 0u)
+        return prepared_pure_reject(
+            program, "selection arms are outside the fragment", source);
+    for (CettaExprIndex index = 0u; index < arms->expr.len; index++) {
+        Atom *arm = arms->expr.elems[index];
+        if (!arm || arm->kind != ATOM_EXPR || arm->expr.len != 2u)
+            return prepared_pure_reject(
+                program, "selection arm is not a pattern and a body", arms);
+    }
+    uint32_t key = 0u;
+    if (!prepared_pure_compile_eval(
+            program, context, source->expr.elems[1],
+            prepared_pure_source_child(program, source_view, 1u),
+            depth + 1u, &key))
+        return prepared_pure_reject(
+            program, "selection key is outside the fragment",
+            source->expr.elems[1]);
+    Arena *arena = prepared_pure_syntax_arena(program);
+    Atom *held = arena
+        ? atom_var_with_id(arena, "__select_key", fresh_var_id()) : NULL;
+    if (!held)
+        return false;
+    size_t saved_bindings = context->len;
+    uint32_t held_pattern = 0u;
+    if (!prepared_pure_compile_bind_pattern(
+            program, context, held, &held_pattern))
+        return false;
+    const void *arms_view =
+        prepared_pure_source_child(program, source_view, 2u);
+    uint32_t next = 0u;
+    bool ok = prepared_pure_add_node(
+        program,
+        (PreparedPureNode){
+            .kind = program->answer_producer ? PREPARED_PURE_ZERO
+                                             : PREPARED_PURE_DECLINE,
+        },
+        NULL, 0u, &next);
+    for (CettaExprIndex index = arms->expr.len; ok && index-- > 0u;)
+        ok = prepared_pure_compile_select_arm(
+            program, context, held, arms->expr.elems[index],
+            prepared_pure_source_child(program, arms_view, index), next,
+            depth, &next);
+    context->len = saved_bindings;
+    if (!ok)
+        return false;
+    uint32_t children[2] = {key, next};
+    return prepared_pure_add_node(
+        program,
+        (PreparedPureNode){
+            .kind = PREPARED_PURE_BIND,
+            .auxiliary = held_pattern,
+        },
+        children, 2u, node_out);
+}
+
 static bool prepared_pure_compile_eval_with_role(
     CettaPreparedPureProgram *program,
     PreparedPureCompileContext *context,
@@ -4353,6 +4528,10 @@ static bool prepared_pure_compile_eval_with_role(
                 },
                 &child, 1u, node_out);
         }
+        if (expression_view_state ==
+            CETTA_PREPARED_PURE_EXPRESSION_SELECT)
+            return prepared_pure_compile_select(
+                program, context, source, source_view, depth, node_out);
         if (expression_view_state ==
             CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY) {
             return prepared_pure_reject(
@@ -5955,6 +6134,226 @@ static bool prepared_pure_compile_head(
     return true;
 }
 
+/* PeTTa unifies a let's pattern with its value's output before the value's
+ * goals run (SWI-PeTTa writes `Pv = V` ahead of them): the pattern is the
+ * destination of the value's call, which meets each equation's exposed
+ * output before that equation's body runs.  The prepared machine computes
+ * the value first.  The two agree unless an exposed output the pattern
+ * cannot meet still has calls to make: the destination prunes them, and a
+ * value computed first makes them, possibly forever.  A program with such a
+ * bind is left to the canonical evaluator. */
+
+typedef struct {
+    uint32_t head;
+    const Atom *pattern;
+} PreparedPureDestinationVisit;
+
+typedef struct {
+    PreparedPureDestinationVisit *items;
+    size_t len;
+    size_t cap;
+} PreparedPureDestinationVisits;
+
+/* Whether a call is reached anywhere under `node_index`. */
+static bool prepared_pure_node_makes_call(
+    const CettaPreparedPureProgram *program, uint32_t node_index,
+    uint32_t depth) {
+    if (node_index >= program->node_len || depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return true;
+    const PreparedPureNode *node = &program->nodes[node_index];
+    if (node->kind == PREPARED_PURE_CALL ||
+        node->kind == PREPARED_PURE_EVAL_SLOT ||
+        node->kind == PREPARED_PURE_EVAL_ENTRY_ARGUMENT)
+        return true;
+    for (uint32_t i = 0u; i < node->child_count; i++) {
+        if (node->first_child + i >= program->child_len ||
+            prepared_pure_node_makes_call(
+                program, program->children[node->first_child + i],
+                depth + 1u))
+            return true;
+    }
+    return false;
+}
+
+/* Whether some variable occurs more than once in `pattern`; a pattern too
+ * large to read here counts as one that does. */
+static bool prepared_pure_pattern_repeats_variable(const Atom *pattern) {
+    enum { PREPARED_PURE_PATTERN_READ = 64u };
+    const Atom *seen[PREPARED_PURE_PATTERN_READ];
+    const Atom *stack[PREPARED_PURE_PATTERN_READ];
+    uint32_t seen_len = 0u;
+    uint32_t length = 0u;
+    stack[length++] = pattern;
+    while (length) {
+        const Atom *atom = stack[--length];
+        if (atom->kind == ATOM_VAR) {
+            for (uint32_t i = 0u; i < seen_len; i++) {
+                if (var_id_eq(seen[i]->var_id, atom->var_id))
+                    return true;
+            }
+            if (seen_len == PREPARED_PURE_PATTERN_READ)
+                return true;
+            seen[seen_len++] = atom;
+            continue;
+        }
+        if (atom->kind != ATOM_EXPR)
+            continue;
+        for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+            if (length == PREPARED_PURE_PATTERN_READ)
+                return true;
+            stack[length++] = atom->expr.elems[i];
+        }
+    }
+    return false;
+}
+
+static bool prepared_pure_value_meets(
+    CettaPreparedPureProgram *program, uint32_t node_index,
+    const Atom *pattern, PreparedPureDestinationVisits *visits,
+    uint32_t depth);
+
+/* Whether the equations of head `head_index`, called with destination
+ * `pattern`, can each be computed first. */
+static bool prepared_pure_call_meets(
+    CettaPreparedPureProgram *program, uint32_t head_index,
+    const Atom *pattern, PreparedPureDestinationVisits *visits,
+    uint32_t depth) {
+    if (head_index >= program->head_len ||
+        !program->heads[head_index].compiled)
+        return false;
+    for (size_t i = 0u; i < visits->len; i++) {
+        if (visits->items[i].head == head_index &&
+            visits->items[i].pattern == pattern)
+            return true;
+    }
+    if (!prepared_pure_reserve(
+            (void **)&visits->items, sizeof(*visits->items), &visits->cap,
+            visits->len + 1u))
+        return false;
+    visits->items[visits->len++] = (PreparedPureDestinationVisit){
+        .head = head_index, .pattern = pattern,
+    };
+    const PreparedPureHead *head = &program->heads[head_index];
+    for (uint32_t i = 0u; i < head->equation_count; i++) {
+        uint32_t equation = head->first_equation + i;
+        if (equation >= program->equation_len ||
+            !prepared_pure_value_meets(
+                program, program->equations[equation].root, pattern, visits,
+                depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+/* Whether the value of `node_index`, whose destination is `pattern`, can be
+ * computed first: every exposed output it reaches that the pattern cannot
+ * meet makes no call.  Uncertain meetings count as clashes. */
+static bool prepared_pure_value_meets(
+    CettaPreparedPureProgram *program, uint32_t node_index,
+    const Atom *pattern, PreparedPureDestinationVisits *visits,
+    uint32_t depth) {
+    if (node_index >= program->node_len ||
+        depth > PREPARED_PURE_MAX_COMPILE_DEPTH)
+        return false;
+    if (pattern->kind == ATOM_VAR)
+        return true;
+    const PreparedPureNode *node = &program->nodes[node_index];
+    const uint32_t *children = node->child_count &&
+            node->first_child < program->child_len
+        ? &program->children[node->first_child] : NULL;
+    switch (node->kind) {
+    case PREPARED_PURE_LITERAL:
+    case PREPARED_PURE_SLOT:
+    case PREPARED_PURE_ENTRY_ARGUMENT:
+    case PREPARED_PURE_REGISTER:
+    case PREPARED_PURE_INTRINSIC:
+    case PREPARED_PURE_OBSERVE:
+    case PREPARED_PURE_DECLINE:
+    case PREPARED_PURE_ZERO:
+        /* No call of its own reaches the destination: a builtin's
+         * operands are computed first in both orders. */
+        return true;
+    case PREPARED_PURE_IF:
+        return node->child_count == 3u && children &&
+            prepared_pure_value_meets(program, children[1], pattern, visits,
+                                      depth + 1u) &&
+            prepared_pure_value_meets(program, children[2], pattern, visits,
+                                      depth + 1u);
+    case PREPARED_PURE_BIND:
+        return node->child_count == 2u && children &&
+            prepared_pure_value_meets(program, children[1], pattern, visits,
+                                      depth + 1u);
+    case PREPARED_PURE_CALL:
+        return prepared_pure_call_meets(program, node->auxiliary, pattern,
+                                        visits, depth + 1u);
+    case PREPARED_PURE_BUILD: {
+        /* A constructor meets an expression pattern of its length whose
+         * head it spells; each field then meets its part of the pattern. */
+        const PreparedPureNode *head = children
+            ? &program->nodes[children[0]] : NULL;
+        bool meets = children && pattern->kind == ATOM_EXPR &&
+            !atom_is_list_form(pattern) &&
+            pattern->expr.len == node->child_count && head &&
+            head->kind == PREPARED_PURE_LITERAL && head->atom &&
+            pattern->expr.elems[0] &&
+            (pattern->expr.elems[0]->kind == ATOM_VAR ||
+             atom_eq(head->atom, pattern->expr.elems[0]));
+        if (!meets)
+            return !prepared_pure_node_makes_call(program, node_index, 0u);
+        for (uint32_t i = 1u; i < node->child_count; i++) {
+            if (!prepared_pure_value_meets(
+                    program, children[i], pattern->expr.elems[i], visits,
+                    depth + 1u))
+                return false;
+        }
+        return true;
+    }
+    default:
+        return !prepared_pure_node_makes_call(program, node_index, 0u);
+    }
+}
+
+/* Whether every bind compiled since the last check can compute its value
+ * first (prepared_pure_value_meets).  A pattern with a repeated variable
+ * relates its parts, which this reading does not follow: such a bind over
+ * a call is refused. */
+static bool prepared_pure_binds_meet_destinations(
+    CettaPreparedPureProgram *program) {
+    /* HE evaluates a let's value before matching its pattern. */
+    if (program->match_decision_semantics.language_id !=
+        CETTA_LANGUAGE_PETTA) {
+        program->checked_bind_nodes = program->node_len;
+        return true;
+    }
+    bool meets = true;
+    PreparedPureDestinationVisits visits = {0};
+    for (uint32_t i = program->checked_bind_nodes;
+         meets && i < program->node_len; i++) {
+        const PreparedPureNode *node = &program->nodes[i];
+        if (node->kind != PREPARED_PURE_BIND || node->child_count != 2u ||
+            node->first_child >= program->child_len ||
+            node->auxiliary >= program->bind_pattern_len)
+            continue;
+        const Atom *pattern =
+            program->bind_patterns[node->auxiliary].pattern;
+        uint32_t bound = program->children[node->first_child];
+        if (!pattern || pattern->kind == ATOM_VAR)
+            continue;
+        visits.len = 0u;
+        meets = prepared_pure_pattern_repeats_variable(pattern)
+            ? !prepared_pure_node_makes_call(program, bound, 0u)
+            : prepared_pure_value_meets(program, bound, pattern, &visits, 0u);
+        if (!meets)
+            prepared_pure_reject(
+                program, "a let's pattern would prune calls computed first",
+                (Atom *)pattern);
+    }
+    free(visits.items);
+    if (meets)
+        program->checked_bind_nodes = program->node_len;
+    return meets;
+}
+
 static bool prepared_pure_compile_pending_heads(
     CettaPreparedPureProgram *program) {
     if (!program)
@@ -5964,7 +6363,8 @@ static bool prepared_pure_compile_pending_heads(
             !prepared_pure_compile_head(program, i))
             return false;
     }
-    return space_program_token_is_current(program->source_program);
+    return space_program_token_is_current(program->source_program) &&
+        prepared_pure_binds_meet_destinations(program);
 }
 
 static bool prepared_pure_runtime_head_index(
@@ -9858,6 +10258,35 @@ static bool prepared_pure_code_operands(
 
 /* Lower one node into code that puts its value in `destination`, or, in
  * tail position, answers it for the body. */
+/* Whether an if's then branch binds the pattern its condition tests, to
+ * the value the test reads: the test and the bind are then one match.
+ * `*body_out` is the bind's body. */
+static bool prepared_pure_code_test_binds(
+    const CettaPreparedPureProgram *program,
+    const PreparedPureNode *condition, uint32_t then_node,
+    uint32_t *body_out) {
+    if ((condition->auxiliary & PREPARED_PURE_OBSERVE_PATTERN_TEST) == 0u ||
+        condition->child_count != 1u ||
+        condition->first_child >= program->child_len ||
+        then_node >= program->node_len)
+        return false;
+    uint32_t tested =
+        condition->auxiliary & ~PREPARED_PURE_OBSERVE_PATTERN_TEST;
+    const PreparedPureNode *then = &program->nodes[then_node];
+    if (tested >= program->bind_pattern_len ||
+        then->kind != PREPARED_PURE_BIND || then->child_count != 2u ||
+        then->auxiliary >= program->bind_pattern_len ||
+        then->first_child > program->child_len ||
+        2u > program->child_len - then->first_child ||
+        program->children[then->first_child] !=
+            program->children[condition->first_child] ||
+        program->bind_patterns[then->auxiliary].pattern !=
+            program->bind_patterns[tested].pattern)
+        return false;
+    *body_out = program->children[then->first_child + 1u];
+    return true;
+}
+
 static bool prepared_pure_code_node(
     PreparedPureCodeLowering *lowering, uint32_t node_index, bool tail,
     uint32_t destination, uint32_t depth) {
@@ -9984,7 +10413,25 @@ static bool prepared_pure_code_node(
         const PreparedPureNode *condition =
             &program->nodes[condition_node];
         bool emitted = false;
-        if (condition->kind == PREPARED_PURE_REGISTER &&
+        uint32_t bind_body = 0u;
+        if (condition->kind == PREPARED_PURE_OBSERVE &&
+            prepared_pure_code_test_binds(
+                program, condition, then_node, &bind_body)) {
+            /* The pattern test and the then branch's bind of the same
+             * pattern to the same value, as one match. */
+            uint32_t bound = 0u;
+            emitted = prepared_pure_code_operand(
+                          lowering, program->children[condition->first_child],
+                          depth + 1u, &bound) &&
+                prepared_pure_code_emit(
+                    program,
+                    (PreparedPureCode){
+                        .kind = PREPARED_PURE_CODE_MATCH_ELSE,
+                        .auxiliary = program->nodes[then_node].auxiliary,
+                    },
+                    &bound, 1u, &branch);
+            then_node = bind_body;
+        } else if (condition->kind == PREPARED_PURE_REGISTER &&
             condition->child_count == 2u) {
             /* The condition's register operation and the branch on its
              * value, as one instruction. */
@@ -10121,11 +10568,39 @@ static bool prepared_pure_code_liveness(
             code->kind != PREPARED_PURE_CODE_JUMP && !code->returns;
         bool jumps = code->kind == PREPARED_PURE_CODE_JUMP ||
             code->kind == PREPARED_PURE_CODE_BRANCH ||
-            code->kind == PREPARED_PURE_CODE_BRANCH_REGISTER;
+            code->kind == PREPARED_PURE_CODE_BRANCH_REGISTER ||
+            code->kind == PREPARED_PURE_CODE_MATCH_ELSE;
+        bool matches = code->kind == PREPARED_PURE_CODE_MATCH ||
+            code->kind == PREPARED_PURE_CODE_MATCH_ELSE;
         if (falls_through) {
             const uint64_t *next = &live_in[(size_t)(index + 1u - start) * words];
             for (size_t w = 0u; w < words; w++)
                 out[w] |= next[w];
+        }
+        /* A match binds its locals on the way it continues, and a
+         * MATCH_ELSE only there: its mismatch leaves them for `target`.
+         * The locals it compares against it reads either way. */
+        const PreparedPureBindPattern *bind_pattern = NULL;
+        if (matches) {
+            bind_pattern = &program->bind_patterns[code->auxiliary];
+            if (bind_pattern->first_var > program->bind_var_len ||
+                bind_pattern->var_count >
+                    program->bind_var_len - bind_pattern->first_var) {
+                ok = false;
+                break;
+            }
+            for (uint32_t i = 0u; i < bind_pattern->var_count; i++) {
+                const PreparedPureBindVar *binding =
+                    &program->bind_vars[bind_pattern->first_var + i];
+                if (binding->slot >= register_count) {
+                    ok = false;
+                    break;
+                }
+                if (!binding->prebound)
+                    prepared_pure_code_live_clear(out, binding->slot);
+            }
+            if (!ok)
+                break;
         }
         if (jumps) {
             if (code->target <= index || code->target > end) {
@@ -10174,26 +10649,12 @@ static bool prepared_pure_code_liveness(
                     program->code_live[program->code_live_len++] = reg;
             }
         }
-        if (code->kind == PREPARED_PURE_CODE_MATCH) {
-            const PreparedPureBindPattern *pattern =
-                &program->bind_patterns[code->auxiliary];
-            if (pattern->first_var > program->bind_var_len ||
-                pattern->var_count >
-                    program->bind_var_len - pattern->first_var) {
-                ok = false;
-                break;
-            }
-            for (uint32_t i = 0u; i < pattern->var_count; i++) {
+        if (bind_pattern) {
+            for (uint32_t i = 0u; i < bind_pattern->var_count; i++) {
                 const PreparedPureBindVar *binding =
-                    &program->bind_vars[pattern->first_var + i];
-                if (binding->slot >= register_count) {
-                    ok = false;
-                    break;
-                }
+                    &program->bind_vars[bind_pattern->first_var + i];
                 if (binding->prebound)
                     prepared_pure_code_live_set(out, binding->slot);
-                else
-                    prepared_pure_code_live_clear(out, binding->slot);
             }
         }
         const uint32_t *operands =
@@ -13092,13 +13553,19 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
         case PREPARED_PURE_CODE_JUMP:
             frame->pc = code->target;
             continue;
-        case PREPARED_PURE_CODE_MATCH: {
+        case PREPARED_PURE_CODE_MATCH:
+        case PREPARED_PURE_CODE_MATCH_ELSE: {
             Atom *value =
                 prepared_pure_code_value(program, registers, operands[0]);
             PreparedPureMatchState matched =
                 prepared_pure_match_bind_pattern(
                     program, &program->bind_patterns[code->auxiliary],
                     frame->base, value);
+            if (matched == PREPARED_PURE_MATCH_MISMATCH &&
+                code->kind == PREPARED_PURE_CODE_MATCH_ELSE) {
+                frame->pc = code->target;
+                continue;
+            }
             if (matched != PREPARED_PURE_MATCH_MATCHED) {
                 decline = matched == PREPARED_PURE_MATCH_MISMATCH
                     ? "let pattern did not match"
@@ -13482,7 +13949,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                             CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY ||
                         state == CETTA_PREPARED_PURE_EXPRESSION_ZERO ||
                         state ==
-                            CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT) {
+                            CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT ||
+                        state == CETTA_PREPARED_PURE_EXPRESSION_SELECT) {
                         return prepared_pure_runtime_decline(
                             program,
                             "dynamic dialect form requires canonical evaluation",

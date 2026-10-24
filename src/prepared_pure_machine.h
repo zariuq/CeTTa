@@ -68,6 +68,12 @@ typedef enum {
      * declines, the caller must discard the attempt and run the original
      * expression. Never valid for a producer that publishes answers. */
     CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT,
+    /* A committed first-match selection: operand 1's value is tested
+     * against the patterns of operand 2's (pattern body) arms in order, and
+     * the first that matches answers its body under the pattern's bindings.
+     * No matching arm answers nothing.  A pattern any part of which
+     * computes is left to the canonical evaluator. */
+    CETTA_PREPARED_PURE_EXPRESSION_SELECT,
 } CettaPreparedPureExpressionViewState;
 typedef enum {
     CETTA_PREPARED_PURE_PROJECT_SOURCE = 0,

@@ -388,6 +388,11 @@ typedef struct {
     /* Some two equations differ in their heads' first structural tests,
      * which a call can then decide between as it enters. */
     bool first_tests_differ;
+    /* A named relation a body of which calls it, whose calls the prepared
+     * machine may answer (oem_pure_relation_value): its recursion then runs
+     * past one prepared entry.  Cleared when the prepared machine declines
+     * it, for every cursor of this program; a race costs one attempt. */
+    _Atomic uint8_t pure_handoff;
     /* An exact source-recognized algebraic fold.  These constructor ids are
      * only an execution certificate for the relation whose complete source
      * recurrence was checked; they do not give similarly named functions
@@ -4691,6 +4696,23 @@ static void oem_note_entry_guard(const OemCompile *compile,
     }
 }
 
+/* Whether a step from `first` on calls a relation `head` at `arity`: the
+ * steps a relation's equations compiled to, its controls' bodies among
+ * them, call the relation itself. */
+static bool oem_steps_call_relation(const CettaOpenEquationProgram *program,
+                                    uint32_t first, SymbolId head,
+                                    uint32_t arity) {
+    for (uint32_t index = first; index < program->step_len; index++) {
+        const OemStep *step = &program->steps[index];
+        if ((step->kind == OEM_S_CALL || step->kind == OEM_S_TAIL) &&
+            step->relation < program->relation_len &&
+            program->relations[step->relation].head == head &&
+            program->relations[step->relation].arity == arity)
+            return true;
+    }
+    return false;
+}
+
 static bool oem_compile_equation(CettaOpenEquationProgram *program,
                                  PettaProgram *petta,
                                  const CettaOpenEquationHost *host,
@@ -6217,6 +6239,7 @@ static bool oem_compile_relation(CettaOpenEquationProgram *program,
     program->trusted_relation = relation_index;
     /* Equations of this arity, in declaration order. */
     uint32_t first = program->equation_len;
+    uint32_t first_step = program->step_len;
     bool ok = true;
     for (size_t index = 0u; ok && index < candidate_count; index++) {
         if (candidates[index].activation_layout.binding != CETTA_RULE_BIND_UNIFY) {
@@ -6263,6 +6286,11 @@ static bool oem_compile_relation(CettaOpenEquationProgram *program,
     program->relations[relation_index].first_equation = first;
     program->relations[relation_index].equation_count =
         program->equation_len - first;
+    atomic_init(&program->relations[relation_index].pure_handoff,
+                !program->relations[relation_index].local &&
+                    !program->relations[relation_index].body_is_data &&
+                    oem_steps_call_relation(program, first_step, head,
+                                            arity));
     if (algebraic_drop) {
         program->relations[relation_index].algebraic_fold =
             OEM_ALGEBRAIC_FOLD_DROP;
@@ -16118,6 +16146,57 @@ static OemRun oem_frame_unmatched_value(CettaOpenEquationCursor *cursor,
     return oem_unmatched_value(cursor, relation, args, cont, entry, value_out);
 }
 
+/* Whether a call's destination is a cell no term has bound: the cursor's
+ * own, or the output hole the caller's continuation passes.  A demanded
+ * destination meets each equation's exposed output before its body runs,
+ * which prunes equations a value computed first would run. */
+static inline bool oem_destination_open(
+        const CettaOpenEquationCursor *cursor, const OemCont *cont) {
+    Atom *destination = cursor->destination;
+    if (cont) {
+        const OemTemplate *pattern = &cont->program->templates[cont->pattern];
+        if (pattern->kind != OEM_T_SLOT)
+            return false;
+        destination = cont->locals[pattern->slot];
+        if (!destination)
+            return true;
+    }
+    uint32_t index = 0u;
+    return destination &&
+        oem_is_cell(cursor, oem_deref(cursor, destination), &index);
+}
+
+/* A named relation that calls itself, and that the prepared machine
+ * compiles, answers a closed call there, as the host's own calls of it do:
+ * its whole recursion then runs on the prepared machine.  NULL leaves the
+ * call to the region's equations, and a decline is the program's: every
+ * cursor's later calls of the relation run its equations. */
+static __attribute__((noinline)) Atom *oem_pure_relation_value(
+        CettaOpenEquationCursor *cursor,
+        const CettaOpenEquationProgram *version, uint32_t relation_index,
+        Atom **args) {
+    enum { OEM_PURE_RELATION_INLINE_ARGS = 16u };
+    OemRelation *relation = &version->relations[relation_index];
+    uint32_t arity = relation->arity;
+    Atom *arguments[OEM_PURE_RELATION_INLINE_ARGS];
+    bool closed = arity <= OEM_PURE_RELATION_INLINE_ARGS;
+    for (uint32_t index = 0u; closed && index < arity; index++) {
+        arguments[index] = args[index]
+            ? oem_resolve_operand(cursor, args[index]) : NULL;
+        closed = arguments[index] && !atom_has_vars(arguments[index]) &&
+            !atom_has_registry_refs(arguments[index]);
+    }
+    Atom *value = closed
+        ? cursor->runtime.execute_pure_relation(
+              cursor->runtime.context, version->space, &cursor->region,
+              relation->head, arguments, arity)
+        : NULL;
+    if (!value)
+        atomic_store_explicit(&relation->pure_handoff, 0u,
+                              memory_order_relaxed);
+    return value;
+}
+
 /* A call's entry from the body that makes it.  Selection runs on the
  * call's arguments as it would on a frame just pushed, in the same state:
  * the first equation it admits is activated here, and a frame is pushed,
@@ -16149,6 +16228,18 @@ static inline __attribute__((always_inline)) OemRun oem_enter(CettaOpenEquationC
             return OEM_RUN_FAILED;
         if (algebraic == OEM_ALGEBRAIC_HANDOFF)
             return OEM_RUN_HANDOFF;
+    }
+    if (!he &&
+        atomic_load_explicit(&relation->pure_handoff, memory_order_relaxed) &&
+        cursor->runtime.execute_pure_relation &&
+        !cursor->runtime.activation_budget && !cursor->runtime.depth_bound &&
+        oem_version_current(cursor, version) &&
+        oem_destination_open(cursor, cont)) {
+        Atom *value = oem_pure_relation_value(cursor, version, relation_index,
+                                              args);
+        if (value)
+            return oem_direct_relation_value(cursor, value, cont, entry,
+                                             value_out);
     }
     uint32_t count = relation->equation_count;
     bool indexed = relation->indexed;
