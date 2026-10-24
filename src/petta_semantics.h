@@ -6,6 +6,7 @@
 #include "atom.h"
 #include "grounded.h"
 #include "match.h"
+#include "generated/cetta_execution_contracts.generated.h"
 
 struct Space;
 
@@ -73,6 +74,25 @@ typedef enum {
     PETTA_FORM_AND_THEN,
     PETTA_FORM_OR_ELSE,
 } PeTTaForm;
+
+/* Elaborate an already classified authored control occurrence. PeTTa's
+ * value-binding spelling has the same operand layout; its matching demand
+ * remains the caller's policy. No evaluation or source authority is inferred. */
+static inline CettaControlOperationPlan petta_semantics_elaborate_control(
+        SymbolId head, PeTTaForm form, CettaExprLen arity) {
+    if (form == PETTA_FORM_IF)
+        head = g_builtin_syms.if_text;
+    else if (form == PETTA_FORM_LET || form == PETTA_FORM_VALUE_LET)
+        head = g_builtin_syms.let;
+    else if (form == PETTA_FORM_CHAIN)
+        head = g_builtin_syms.chain;
+    else if (head != g_builtin_syms.let_star)
+        return (CettaControlOperationPlan){0};
+    CettaControlOperationPlan plan = {0};
+    cetta_control_operation_decode(head, arity, &plan, &g_builtin_syms);
+    return plan;
+}
+
 
 typedef struct {
     bool known;

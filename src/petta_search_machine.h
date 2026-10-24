@@ -442,6 +442,13 @@ typedef struct {
         const CettaInvocation *invocation,
         const Bindings *environment, OutcomeSet *outcomes,
         CettaCallOutcome *end);
+    /* Complete a native invocation that has already executed. No refusal
+     * or native replay is permitted here; terminal faults go through end.
+     * Its values retain their provenance and conditional roots. */
+    void (*deliver_native_return)(
+        void *context, Arena *arena, CettaCallOutcome outcome,
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end);
     /* Create a new translation event at an explicit forcing boundary such as
      * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
      * NULL declines because the host could not establish the event. */
@@ -540,7 +547,8 @@ typedef struct {
      * has been substituted.  The host owns storage, typing, and program
      * observation through the shared admit authority.  Returning false
      * declines to ordinary host evaluation.  On true, `*result` is the
-     * language success value or an error atom.
+     * language success value or an error atom. True commits entry; a
+     * missing result is a host fault and cannot reopen ordinary evaluation.
      */
     bool (*admit_ground_atom)(
         void *context, Space *space, Arena *arena,

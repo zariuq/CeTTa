@@ -1,0 +1,13 @@
+!(change-state! service-counter 0)
+(= (service-open-arithmetic $x)
+   (let $ignored (change-state! service-counter (+ (get-state service-counter) 1))
+        (+ $x 1)))
+!(== (let $error (catch (service-open-arithmetic $unbound)) (car-atom $error)) Error)
+!(== (get-state service-counter) 1)
+
+!(change-state! service-counter 0)
+(= (service-ordered-returns)
+   (let $ignored (change-state! service-counter (+ (get-state service-counter) 1))
+        (superpose (a a))))
+!(== (collapse (service-ordered-returns)) (a a))
+!(== (get-state service-counter) 1)

@@ -1197,4 +1197,6 @@
   ; Source-certified additive folds over proper recursive child fields.
   (1096 OPEN_EQUATION_ALGEBRAIC_SCALAR_SUM "open-equation-algebraic-scalar-sum")
   ; Nodes inspected by additive fold attempts, including declined prefixes.
-  (1097 OPEN_EQUATION_ALGEBRAIC_SCALAR_NODE "open-equation-algebraic-scalar-node")))
+  (1097 OPEN_EQUATION_ALGEBRAIC_SCALAR_NODE "open-equation-algebraic-scalar-node")
+  ; Accepted direct native entries; a refusal performs no native call.
+  (1098 OPEN_EQUATION_NATIVE_CALL "open-equation-native-call")))

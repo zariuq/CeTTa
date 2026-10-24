@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 23ddaf6765fe63cc4dbba55e34d59254fb696864a18aa0f9b25ef3cbb967ddca
+ * Source SHA-256: e51dfdd0914c1ea02fd1907af2e2fd7cf32c23a4758e628328218ea16f7bc4cb
  */
 
 #include <stdbool.h>
@@ -492,6 +492,7 @@ typedef enum {
     X(op_div, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
     X(op_and, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH) \
     X(op_or, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH) \
+    X(op_not, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH) \
     X(abs_math, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
     X(log_math, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
     X(car_atom, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH) \
@@ -685,26 +686,122 @@ static inline bool cetta_gslt_pure_call_whnf_disjoint(
            right_head_rigid && !heads_equal;
 }
 
-/* Executable control arms for the generated determinate-fold program. */
+/* Source control plans carry only operation and operand coordinates. Source
+ * authority, lexical owners, demand and result completion remain independent.
+ * Absence is metadata, never an ordinary Empty value. */
+typedef enum {
+    CETTA_CONTROL_NONE = 0,
+    CETTA_CONTROL_SEQUENCE = 1,
+    CETTA_CONTROL_BRANCH = 2,
+    CETTA_CONTROL_SEQUENCE_MANY = 3,
+    CETTA_CONTROL_FORCE = 4,
+    CETTA_CONTROL_RETURN_SCOPE = 5,
+} CettaControlOperation;
+
+#define CETTA_CONTROL_OPERAND_ABSENT UINT8_MAX
+typedef struct {
+    uint8_t operation;
+    uint8_t source;
+    uint8_t first;
+    uint8_t last;
+} CettaControlOperationPlan;
+_Static_assert(sizeof(CettaControlOperationPlan) == 4u, "control plan must remain four bytes");
+
+/* The two three-operand sequence layouts have different source positions.
+ * Physical lowerings can admit one layout without changing the operation. */
+static inline bool cetta_control_operation_binding_layout(
+    CettaControlOperationPlan plan, uint8_t producer_index) {
+    return producer_index <= 1u && plan.operation == CETTA_CONTROL_SEQUENCE &&
+        plan.source == producer_index && plan.first == 1u - producer_index &&
+        plan.last == 2u;
+}
+
+static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan plan) {
+    return (uint32_t)plan.operation | (uint32_t)plan.source << 8u |
+        (uint32_t)plan.first << 16u | (uint32_t)plan.last << 24u;
+}
+
+#define CETTA_CONTROL_PLAN_HEAD_ROWS(X)     X(let, 3u, CETTA_CONTROL_SEQUENCE, 1u, 0u, 2u) \
+    X(chain, 3u, CETTA_CONTROL_SEQUENCE, 0u, 1u, 2u) \
+    X(if_text, 2u, CETTA_CONTROL_BRANCH, 0u, 1u, CETTA_CONTROL_OPERAND_ABSENT) \
+    X(if_text, 3u, CETTA_CONTROL_BRANCH, 0u, 1u, 2u) \
+    X(let_star, 2u, CETTA_CONTROL_SEQUENCE_MANY, 0u, CETTA_CONTROL_OPERAND_ABSENT, 1u) \
+    X(eval, 1u, CETTA_CONTROL_FORCE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
+    X(function, 1u, CETTA_CONTROL_RETURN_SCOPE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT)
+
+/* Arity admission performs no operand read. Refusal leaves the output intact. */
+static inline bool cetta_control_operation_decode(
+    SymbolId head, CettaExprLen arity, CettaControlOperationPlan *plan_out,
+    const BuiltinSyms *builtins) {
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_CONTROL_HEAD(field, expected_arity, op, source_arg, first_arg, last_arg) \
+    if (head == builtins->field && arity == (expected_arity)) { \
+        if (plan_out) *plan_out = (CettaControlOperationPlan){ \
+            .operation = (op), .source = (source_arg), \
+            .first = (first_arg), .last = (last_arg)}; \
+        return true; \
+    }
+    CETTA_CONTROL_PLAN_HEAD_ROWS(CETTA_CONTROL_HEAD)
+#undef CETTA_CONTROL_HEAD
+    return false;
+}
+
+/* This lowering is used only after the caller admits the pure fold fragment.
+ * Its direct body entry does not erase a general function's return scope. */
+static inline bool cetta_control_operation_lower_fold(
+    CettaControlOperationPlan plan, CettaGsltFoldControl *control_out) {
+    if (plan.operation == CETTA_CONTROL_SEQUENCE &&
+        plan.source == 1u &&
+        plan.first == 0u &&
+        plan.last == 2u) {
+        if (control_out) *control_out = CETTA_GSLT_FOLD_CONTROL_BIND;
+        return true;
+    }
+    if (plan.operation == CETTA_CONTROL_BRANCH &&
+        plan.source == 0u &&
+        plan.first == 1u &&
+        plan.last == 2u) {
+        if (control_out) *control_out = CETTA_GSLT_FOLD_CONTROL_BRANCH;
+        return true;
+    }
+    if (plan.operation == CETTA_CONTROL_SEQUENCE_MANY &&
+        plan.source == 0u &&
+        plan.first == CETTA_CONTROL_OPERAND_ABSENT &&
+        plan.last == 1u) {
+        if (control_out) *control_out = CETTA_GSLT_FOLD_CONTROL_BIND_SEQUENCE;
+        return true;
+    }
+    if (plan.operation == CETTA_CONTROL_FORCE &&
+        plan.source == 0u &&
+        plan.first == CETTA_CONTROL_OPERAND_ABSENT &&
+        plan.last == CETTA_CONTROL_OPERAND_ABSENT) {
+        if (control_out) *control_out = CETTA_GSLT_FOLD_CONTROL_EVALUATE;
+        return true;
+    }
+    if (plan.operation == CETTA_CONTROL_RETURN_SCOPE &&
+        plan.source == 0u &&
+        plan.first == CETTA_CONTROL_OPERAND_ABSENT &&
+        plan.last == CETTA_CONTROL_OPERAND_ABSENT) {
+        if (control_out) *control_out = CETTA_GSLT_FOLD_CONTROL_EVALUATE;
+        return true;
+    }
+    return false;
+}
+
+/* The physical fold instruction inventory is derived from the same plans. */
 #define CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(X)     X(let, 3u, CETTA_GSLT_FOLD_CONTROL_BIND) \
-    X(let_star, 2u, CETTA_GSLT_FOLD_CONTROL_BIND_SEQUENCE) \
     X(if_text, 3u, CETTA_GSLT_FOLD_CONTROL_BRANCH) \
+    X(let_star, 2u, CETTA_GSLT_FOLD_CONTROL_BIND_SEQUENCE) \
     X(eval, 1u, CETTA_GSLT_FOLD_CONTROL_EVALUATE) \
     X(function, 1u, CETTA_GSLT_FOLD_CONTROL_EVALUATE)
 
 static inline bool cetta_gslt_fold_control_program(
     SymbolId head, CettaExprLen arity, CettaGsltFoldControl *control_out,
     const BuiltinSyms *builtins) {
-    if (!builtins || head == SYMBOL_ID_NONE)
-        return false;
-#define CETTA_FOLD_CONTROL(field, expected_arity, control) \
-    if (head == builtins->field && arity == (expected_arity)) { \
-        if (control_out) *control_out = (control); \
-        return true; \
-    }
-    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(CETTA_FOLD_CONTROL)
-#undef CETTA_FOLD_CONTROL
-    return false;
+    CettaControlOperationPlan plan;
+    return cetta_control_operation_decode(head, arity, &plan, builtins) &&
+        cetta_control_operation_lower_fold(plan, control_out);
 }
 
 /* Representation rows for sequence consumers.  The runtime resolves these

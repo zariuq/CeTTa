@@ -219,7 +219,9 @@ int main(void) {
     assert(petta_selector_fingerprint(left, &second) && first == second);
     compare(left, right);
 
-    Atom unknown = {.kind = ATOM_EXPR, .expr = {.elems = wide_fields, .len = 1u}};
+    Atom unknown;
+    atom_header_copy(&unknown, atom_expr(&source, wide_fields, 1u));
+    unknown.structural_facts = 0u;
     assert(!petta_selector_fingerprint(&unknown, &first));
     unknown.structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_RATIONAL;
     assert(!petta_selector_fingerprint(&unknown, &first));

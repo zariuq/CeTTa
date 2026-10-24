@@ -28,6 +28,10 @@ bool cetta_prepared_pure_intrinsic_scope_supported(SymbolId head, CettaExprLen a
 bool cetta_prepared_pure_intrinsic_program(
     SymbolId head, CettaExprLen arity,
     CettaGsltPreparedPureIntrinsicInstruction *instruction_out);
+/* A pure constructor, called during preparation as well as execution. Its
+ * false/true images must be distinct and preserve canonical Boolean polarity.
+ * Plain symbol/Bool images are cached by the program and decoded at Boolean
+ * operation/branch boundaries. Data projections do not acquire that role. */
 typedef Atom *(*CettaPreparedPureBooleanValue)(Arena *arena, bool value);
 typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);

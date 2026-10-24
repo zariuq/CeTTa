@@ -17,22 +17,30 @@ typedef struct {
     CettaExprLen count;
 } CettaArgumentSpan;
 
-typedef struct {
+typedef struct CettaInvocation {
     BindingValue head;
     CettaArgumentSpan captured;
     CettaArgumentSpan supplied;
 } CettaInvocation;
 
+static inline bool cetta_argument_span_valid(const CettaArgumentSpan *span) {
+    return span && (!span->count || (!!span->atoms != !!span->values));
+}
+
+/* Reads a single admitted operand without changing its lexical coordinate. */
+static inline BindingValue cetta_argument_span_value(
+        const CettaArgumentSpan *span, CettaExprIndex index) {
+    assert(index < span->count);
+    return span->values ? span->values[index]
+        : binding_value_from_atom(span->atoms[index]);
+}
+
 /* Arity admission observes no operand and performs no allocation. */
 static inline bool cetta_invocation_arity(
         const CettaInvocation *call, CettaExprLen *arity) {
     if (!call || !arity || !call->head.skeleton ||
-        (call->captured.count &&
-         ((!call->captured.atoms && !call->captured.values) ||
-          (call->captured.atoms && call->captured.values))) ||
-        (call->supplied.count &&
-         ((!call->supplied.atoms && !call->supplied.values) ||
-          (call->supplied.atoms && call->supplied.values))) ||
+        !cetta_argument_span_valid(&call->captured) ||
+        !cetta_argument_span_valid(&call->supplied) ||
         call->captured.count > UINT64_MAX - call->supplied.count)
         return false;
     *arity = call->captured.count + call->supplied.count;
@@ -48,9 +56,7 @@ static inline BindingValue cetta_invocation_argument(
         index -= span->count;
         span = &call->supplied;
     }
-    assert(index < span->count);
-    return span->values ? span->values[index]
-        : binding_value_from_atom(span->atoms[index]);
+    return cetta_argument_span_value(span, index);
 }
 
 /* A contiguous unqualified vector can be loaned to an existing native ABI.

@@ -289,6 +289,24 @@
       (= (intrinsic-execution $instruction $arguments)
          canonical-evaluator))))
 
+(gslt execution-control-plans
+  (sort Operation)
+  (value sequence)
+  (value branch)
+  (value sequence-many)
+  (value force)
+  (value return-scope)
+  ; Coordinates address arguments, excluding the head. A plan describes
+  ; source layout; source authority and evaluation strategy remain separate.
+  ; The final field names an optional lowering to the admitted fold fragment.
+  (source-head let 3 sequence (operands 1 0 2) (fold bind))
+  (source-head chain 3 sequence (operands 0 1 2) (fold none))
+  (source-head if 2 branch (operands 0 1 absent) (fold none))
+  (source-head if 3 branch (operands 0 1 2) (fold branch))
+  (source-head let* 2 sequence-many (operands 0 absent 1) (fold bind-sequence))
+  (source-head eval 1 force (operands 0 absent absent) (fold evaluate))
+  (source-head function 1 return-scope (operands 0 absent absent) (fold evaluate)))
+
 (gslt determinate-fold-continuation
   (sort Control)
   (value bind)
@@ -650,6 +668,7 @@
               value-allocation
               register-expression-execution
               prepared-pure-intrinsic-execution
+              execution-control-plans
               determinate-fold-continuation
               determinate-pure-call-continuation
               evaluator-root-frames))
@@ -965,6 +984,8 @@
   (prepared-pure-intrinsic-head
     or 2 strict-all boolean-dispatch)
   (prepared-pure-intrinsic-head
+    not 1 strict-all boolean-dispatch)
+  (prepared-pure-intrinsic-head
     abs-math 1 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     log-math 2 strict-all grounded-dispatch)
@@ -1067,11 +1088,6 @@
     __cetta_lib_str 4 strict-all library-value-dispatch)
   (prepared-pure-intrinsic-head
     __cetta_lib_str_value 2 strict-all library-value-dispatch)
-  (fold-control-head let 3 bind)
-  (fold-control-head let* 2 bind-sequence)
-  (fold-control-head if 3 branch)
-  (fold-control-head eval 1 evaluate)
-  (fold-control-head function 1 evaluate)
   (sequence-representation clist clist:to-list ClistNil ClistCons)
   (sequence-fold-consumer clist clist:foldl 5 0)
   (sequence-fold-target clist list:foldl)

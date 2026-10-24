@@ -230,6 +230,7 @@ class Spec:
         intrinsic = find_form(
             forms, "gslt", "prepared-pure-intrinsic-execution")
         fold = find_form(forms, "gslt", "determinate-fold-continuation")
+        control_plans = find_form(forms, "gslt", "execution-control-plans")
         pure_call = find_form(
             forms, "gslt", "determinate-pure-call-continuation")
         frames = find_form(forms, "gslt", "evaluator-root-frames")
@@ -739,35 +740,68 @@ class Spec:
                 raise SpecError(
                     "a held-operand constructor cannot have strict-all prepared admission")
 
+        self.control_operations = declared_values(control_plans, "control operation")
+        slot_shapes = {
+            "sequence": (True, True, True),
+            "branch": (True, True, None),
+            "sequence-many": (True, False, True),
+            "force": (True, False, False),
+            "return-scope": (True, False, False),
+        }
+        if set(self.control_operations) != set(slot_shapes):
+            raise SpecError("control operations must have a native operand-layout scheme")
+        fold_schemes = {
+            ("sequence", 3, (1, 0, 2)): "bind",
+            ("branch", 3, (0, 1, 2)): "branch",
+            ("sequence-many", 2, (0, None, 1)): "bind-sequence",
+            ("force", 1, (0, None, None)): "evaluate",
+            ("return-scope", 1, (0, None, None)): "evaluate",
+        }
+        self.control_plans = []
         self.fold_control_heads: list[tuple[str, str, int, str]] = []
-        for entry in entries(native, "fold-control-head"):
-            if len(entry) != 4:
-                raise SpecError(
-                    f"malformed fold-control-head: {sexpr(entry)}")
-            name = atom_text(entry[1], "fold control head")
-            arity_text = atom_text(entry[2], "fold control arity")
-            control = atom_text(entry[3], "fold control kind")
-            if name not in symbol_fields:
-                raise SpecError(
-                    f"fold control head {name} has no symbol-table entry")
+        for entry in entries(control_plans, "source-head"):
+            if len(entry) != 6 or not is_form(entry[4], "operands") or not is_form(entry[5], "fold"):
+                raise SpecError(f"malformed control source-head: {sexpr(entry)}")
+            name = atom_text(entry[1], "control head")
+            arity_text = atom_text(entry[2], "control arity")
+            operation = atom_text(entry[3], "control operation")
+            if name not in symbol_fields or operation not in slot_shapes:
+                raise SpecError("control source head or operation has no native interpretation")
             if not arity_text.isdigit() or not 1 <= int(arity_text) <= 16:
-                raise SpecError("fold control arity must be in [1, 16]")
-            if control not in self.fold_control_kinds:
-                raise SpecError(
-                    f"fold control head {name} names undeclared control "
-                    f"{control}")
-            if int(arity_text) != len(self.fold_control_operands[control]):
-                raise SpecError(
-                    f"fold control head {name} arity does not match the "
-                    f"declared operands of {control}")
-            self.fold_control_heads.append(
-                (name, symbol_fields[name], int(arity_text), control))
-        if not self.fold_control_heads:
-            raise SpecError("at least one fold control head is required")
-        if len({(field, arity) for _, field, arity, _
-                in self.fold_control_heads}) != len(self.fold_control_heads):
-            raise SpecError(
-                "fold control heads must be unique by symbol and arity")
+                raise SpecError("control arity must be in [1, 16]")
+            arity = int(arity_text)
+            coordinates = []
+            for item in entry[4][1:]:
+                coordinate = atom_text(item, "control coordinate")
+                if coordinate == "absent":
+                    coordinates.append(None)
+                elif coordinate.isdigit() and int(coordinate) < arity:
+                    coordinates.append(int(coordinate))
+                else:
+                    raise SpecError("control coordinate is outside the admitted arity")
+            if len(coordinates) != 3:
+                raise SpecError("a control plan needs source, first and last coordinates")
+            if any(required is not None and (coordinate is not None) != required
+                   for required, coordinate in zip(slot_shapes[operation], coordinates)):
+                raise SpecError("control coordinate presence disagrees with its operation")
+            present = [coordinate for coordinate in coordinates if coordinate is not None]
+            if sorted(present) != list(range(arity)):
+                raise SpecError("control coordinates must cover each operand exactly once")
+            if len(entry[5]) != 2:
+                raise SpecError("a control plan names exactly one optional fold lowering")
+            lowering = atom_text(entry[5][1], "control fold lowering")
+            coordinates = tuple(coordinates)
+            if lowering != "none":
+                if (lowering not in self.fold_control_kinds or
+                        fold_schemes.get((operation, arity, coordinates)) != lowering):
+                    raise SpecError("control plan has no matching fold lowering scheme")
+                self.fold_control_heads.append((name, symbol_fields[name], arity, lowering))
+            self.control_plans.append((name, symbol_fields[name], arity, operation, coordinates, lowering))
+        if (not self.control_plans or
+                len({(field, arity) for _, field, arity, _, _, _ in self.control_plans}) != len(self.control_plans)):
+            raise SpecError("control plans must be nonempty and unique by source head and arity")
+        if {operation for _, _, _, operation, _, _ in self.control_plans} != set(self.control_operations):
+            raise SpecError("control source plans must cover every declared operation")
 
         self.sequence_representations: list[
             tuple[str, str, str, str]
@@ -1460,6 +1494,24 @@ def render_header(spec: Spec) -> str:
         f"CETTA_GSLT_FOLD_CONTROL_{c_enum(control)})"
         for _, field, arity, control in spec.fold_control_heads
     )
+    control_operation_constants = "\n".join(
+        f"    CETTA_CONTROL_{c_enum(value)} = {index + 1},"
+        for index, value in enumerate(spec.control_operations))
+    def control_coordinate(value):
+        return "CETTA_CONTROL_OPERAND_ABSENT" if value is None else f"{value}u"
+    control_plan_rows = " \\\n".join(
+        f"    X({field}, {arity}u, CETTA_CONTROL_{c_enum(operation)}, " +
+        ", ".join(control_coordinate(value) for value in coordinates) + ")"
+        for _, field, arity, operation, coordinates, _ in spec.control_plans)
+    control_fold_cases = "\n".join(
+        f"    if (plan.operation == CETTA_CONTROL_{c_enum(operation)} &&\n"
+        f"        plan.source == {control_coordinate(coordinates[0])} &&\n"
+        f"        plan.first == {control_coordinate(coordinates[1])} &&\n"
+        f"        plan.last == {control_coordinate(coordinates[2])}) {{\n"
+        f"        if (control_out) *control_out = CETTA_GSLT_FOLD_CONTROL_{c_enum(lowering)};\n"
+        f"        return true;\n    }}"
+        for _, _, _, operation, coordinates, lowering in spec.control_plans
+        if lowering != "none")
     sequence_representation_rows = " \\\n".join(
         f'    X("{key}", "{materializer}", "{empty}", "{cons}")'
         for key, materializer, empty, cons
@@ -1896,23 +1948,76 @@ static inline bool cetta_gslt_pure_call_whnf_disjoint(
            right_head_rigid && !heads_equal;
 }}
 
-/* Executable control arms for the generated determinate-fold program. */
+/* Source control plans carry only operation and operand coordinates. Source
+ * authority, lexical owners, demand and result completion remain independent.
+ * Absence is metadata, never an ordinary Empty value. */
+typedef enum {{
+    CETTA_CONTROL_NONE = 0,
+{control_operation_constants}
+}} CettaControlOperation;
+
+#define CETTA_CONTROL_OPERAND_ABSENT UINT8_MAX
+typedef struct {{
+    uint8_t operation;
+    uint8_t source;
+    uint8_t first;
+    uint8_t last;
+}} CettaControlOperationPlan;
+_Static_assert(sizeof(CettaControlOperationPlan) == 4u, "control plan must remain four bytes");
+
+/* The two three-operand sequence layouts have different source positions.
+ * Physical lowerings can admit one layout without changing the operation. */
+static inline bool cetta_control_operation_binding_layout(
+    CettaControlOperationPlan plan, uint8_t producer_index) {{
+    return producer_index <= 1u && plan.operation == CETTA_CONTROL_SEQUENCE &&
+        plan.source == producer_index && plan.first == 1u - producer_index &&
+        plan.last == 2u;
+}}
+
+static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan plan) {{
+    return (uint32_t)plan.operation | (uint32_t)plan.source << 8u |
+        (uint32_t)plan.first << 16u | (uint32_t)plan.last << 24u;
+}}
+
+#define CETTA_CONTROL_PLAN_HEAD_ROWS(X) \
+{control_plan_rows}
+
+/* Arity admission performs no operand read. Refusal leaves the output intact. */
+static inline bool cetta_control_operation_decode(
+    SymbolId head, CettaExprLen arity, CettaControlOperationPlan *plan_out,
+    const BuiltinSyms *builtins) {{
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_CONTROL_HEAD(field, expected_arity, op, source_arg, first_arg, last_arg) \\
+    if (head == builtins->field && arity == (expected_arity)) {{ \\
+        if (plan_out) *plan_out = (CettaControlOperationPlan){{ \\
+            .operation = (op), .source = (source_arg), \\
+            .first = (first_arg), .last = (last_arg)}}; \\
+        return true; \\
+    }}
+    CETTA_CONTROL_PLAN_HEAD_ROWS(CETTA_CONTROL_HEAD)
+#undef CETTA_CONTROL_HEAD
+    return false;
+}}
+
+/* This lowering is used only after the caller admits the pure fold fragment.
+ * Its direct body entry does not erase a general function's return scope. */
+static inline bool cetta_control_operation_lower_fold(
+    CettaControlOperationPlan plan, CettaGsltFoldControl *control_out) {{
+{control_fold_cases}
+    return false;
+}}
+
+/* The physical fold instruction inventory is derived from the same plans. */
 #define CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(X) \
 {fold_control_rows}
 
 static inline bool cetta_gslt_fold_control_program(
     SymbolId head, CettaExprLen arity, CettaGsltFoldControl *control_out,
     const BuiltinSyms *builtins) {{
-    if (!builtins || head == SYMBOL_ID_NONE)
-        return false;
-#define CETTA_FOLD_CONTROL(field, expected_arity, control) \\
-    if (head == builtins->field && arity == (expected_arity)) {{ \\
-        if (control_out) *control_out = (control); \\
-        return true; \\
-    }}
-    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(CETTA_FOLD_CONTROL)
-#undef CETTA_FOLD_CONTROL
-    return false;
+    CettaControlOperationPlan plan;
+    return cetta_control_operation_decode(head, arity, &plan, builtins) &&
+        cetta_control_operation_lower_fold(plan, control_out);
 }}
 
 /* Representation rows for sequence consumers.  The runtime resolves these

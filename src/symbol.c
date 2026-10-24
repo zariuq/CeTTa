@@ -462,7 +462,8 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
 
 #define CETTA_MARK_STATIC_GROUNDED(field) \
     symbol_table_add_flags( \
-        st, builtins->field, CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP);
+        st, builtins->field, CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP | \
+            CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP);
     CETTA_STATIC_GROUNDED_SYMBOL_FIELDS(CETTA_MARK_STATIC_GROUNDED)
 #undef CETTA_MARK_STATIC_GROUNDED
 
