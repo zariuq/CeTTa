@@ -299,6 +299,9 @@
   ; expression result abandons the speculative program and is replayed by
   ; the canonical evaluator.
   (instruction library-value-dispatch)
+  ; A truth computation uses the caller's Boolean constructor. Grounded data
+  ; projections preserve their carrier even when that carrier is Boolean.
+  (instruction boolean-dispatch)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
   ; A sequential connective demands its first operand.  When that value is
@@ -1055,13 +1058,13 @@
   ; connectives demand their second operand only when the first leaves the
   ; value open: False decides and, True decides or.
   (prepared-pure-intrinsic-head
-    and 2 strict-all grounded-dispatch (dialects he petta))
+    and 2 strict-all boolean-dispatch (dialects he petta))
   (prepared-pure-intrinsic-head
-    and 2 short-circuit grounded-dispatch (dialects prime))
+    and 2 short-circuit boolean-dispatch (dialects prime))
   (prepared-pure-intrinsic-head
-    or 2 strict-all grounded-dispatch (dialects he petta))
+    or 2 strict-all boolean-dispatch (dialects he petta))
   (prepared-pure-intrinsic-head
-    or 2 short-circuit grounded-dispatch (dialects prime))
+    or 2 short-circuit boolean-dispatch (dialects prime))
   (short-circuit-absorbing and 2 False)
   (short-circuit-absorbing or 2 True)
   (prepared-pure-intrinsic-head

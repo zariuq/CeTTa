@@ -6954,19 +6954,6 @@ done:
     return result;
 }
 
-static bool space_generated_fold_control(
-    SymbolId head, CettaExprLen arity,
-    CettaGsltFoldControl *control_out) {
-#define SPACE_FOLD_CONTROL(field, expected_arity, control) \
-    if (head == g_builtin_syms.field && arity == (expected_arity)) { \
-        if (control_out) \
-            *control_out = (control); \
-        return true; \
-    }
-    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(SPACE_FOLD_CONTROL)
-#undef SPACE_FOLD_CONTROL
-    return false;
-}
 
 static uint64_t space_effect_cache_hash(SymbolId head) {
     uint64_t key = (uint64_t)head * UINT64_C(0x9e3779b97f4a7c15);
@@ -7536,8 +7523,9 @@ static bool space_effect_scan_rhs(
                     graph->nodes[node_index].base_effect,
                     CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD);
         } else {
-            has_control = space_generated_fold_control(
-                atom_symbol_current_id(head), authored_len - 1u, &control);
+            has_control = cetta_gslt_fold_control_program(
+                atom_symbol_current_id(head), authored_len - 1u, &control,
+                &g_builtin_syms);
             bool grounded = is_grounded_op(atom_symbol_current_id(head));
             bool defined = space_equations_may_match_known_head(
                 graph->space, atom_symbol_current_id(head));
@@ -13921,18 +13909,17 @@ static bool prepared_register_head_program(
     CettaGsltRegisterInstruction *instruction_out) {
     /* A register instruction realizes an operation the current dialect
      * defines; one it leaves undefined is data. */
-#define PREPARED_REGISTER_HEAD(field, expected_arity, result_kind, instruction) \
-    if (head == g_builtin_syms.field && arity == (expected_arity) && \
-        (!grounded_op_is_cetta_only(head) || is_grounded_op(head))) { \
-        if (kind_out) \
-            *kind_out = (result_kind); \
-        if (instruction_out) \
-            *instruction_out = (instruction); \
-        return true; \
-    }
-    CETTA_GSLT_REGISTER_HEAD_ROWS(PREPARED_REGISTER_HEAD)
-#undef PREPARED_REGISTER_HEAD
-    return false;
+    CettaGsltRegisterResultKind kind;
+    CettaGsltRegisterInstruction instruction;
+    if (!cetta_gslt_register_head_program(
+            head, arity, &kind, &instruction, &g_builtin_syms) ||
+        (grounded_op_is_cetta_only(head) && !is_grounded_op(head)))
+        return false;
+    if (kind_out)
+        *kind_out = kind;
+    if (instruction_out)
+        *instruction_out = instruction;
+    return true;
 }
 
 static bool prepared_register_head_kind(

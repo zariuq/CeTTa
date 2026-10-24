@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 37e54d917342b83331bc8e1d2c75e6cafcff5f7e74103e64583ffe6e3f4eb422
+ * Source SHA-256: a1f26031a7f4bd28091bdb0c61cae874d1ff9f63d797040d9320ab8d1c13754d
  */
 
 #include <stdbool.h>
@@ -532,12 +532,33 @@ static inline bool cetta_gslt_register_operand_discipline(
     X(op_ge, 2u, CETTA_GSLT_REGISTER_RESULT_BOOLEAN, CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_GREATER_EQUAL) \
     X(numeric_eq, 2u, CETTA_GSLT_REGISTER_RESULT_BOOLEAN, CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_EQUAL)
 
+/* Decode immutable operation metadata. Dialect availability, source authority
+ * and operand readiness are checked independently by each consumer. */
+static inline bool cetta_gslt_register_head_program(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltRegisterResultKind *kind_out,
+    CettaGsltRegisterInstruction *instruction_out,
+    const BuiltinSyms *builtins) {
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_REGISTER_HEAD(field, expected_arity, result_kind, instruction) \
+    if (head == builtins->field && arity == (expected_arity)) { \
+        if (kind_out) *kind_out = (result_kind); \
+        if (instruction_out) *instruction_out = (instruction); \
+        return true; \
+    }
+    CETTA_GSLT_REGISTER_HEAD_ROWS(CETTA_REGISTER_HEAD)
+#undef CETTA_REGISTER_HEAD
+    return false;
+}
+
 typedef enum {
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH = 0,
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_DECONSTRUCT_NONEMPTY_EXPRESSION = 1,
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONSTRUCT_EXPRESSION_CONS = 2,
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_CONCATENATE_EXPRESSIONS = 3,
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_LIBRARY_VALUE_DISPATCH = 4,
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH = 5,
 } CettaGsltPreparedPureIntrinsicInstruction;
 
 typedef enum {
@@ -563,10 +584,10 @@ typedef enum {
     X(op_ge, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_ALL) \
     X(numeric_eq, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_ALL) \
     X(op_div, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_ALL) \
-    X(op_and, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_HE | CETTA_GSLT_INTRINSIC_DIALECT_PETTA) \
-    X(op_and, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_PRIME) \
-    X(op_or, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_HE | CETTA_GSLT_INTRINSIC_DIALECT_PETTA) \
-    X(op_or, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_PRIME) \
+    X(op_and, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_HE | CETTA_GSLT_INTRINSIC_DIALECT_PETTA) \
+    X(op_and, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT, CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_PRIME) \
+    X(op_or, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_HE | CETTA_GSLT_INTRINSIC_DIALECT_PETTA) \
+    X(op_or, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT, CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_PRIME) \
     X(abs_math, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_ALL) \
     X(log_math, 2u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_ALL) \
     X(car_atom, 1u, CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL, CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH, CETTA_GSLT_INTRINSIC_DIALECT_ALL) \
@@ -617,6 +638,31 @@ typedef enum {
 #define CETTA_GSLT_PREPARED_PURE_SHORT_CIRCUIT_ROWS(X) \
     X(op_and, 2u, false) \
     X(op_or, 2u, true)
+
+/* The row that `dialect`, one CETTA_GSLT_INTRINSIC_DIALECT_* bit, reads for
+ * `head` at `arity`: its operand discipline and instruction.  A row scoped
+ * to every dialect holds in every language.  This is operation metadata,
+ * not source authority or permission to speculate. */
+static inline bool cetta_gslt_prepared_intrinsic_program(
+    SymbolId head, CettaExprLen arity, uint32_t dialect,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out,
+    const BuiltinSyms *builtins) {
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_INTRINSIC_HEAD(field, expected_arity, discipline, instruction, \
+                             dialects) \
+    if (head == builtins->field && arity == (expected_arity) && \
+        ((dialects) == CETTA_GSLT_INTRINSIC_DIALECT_ALL || \
+         ((dialects) & dialect) != 0u)) { \
+        if (discipline_out) *discipline_out = (discipline); \
+        if (instruction_out) *instruction_out = (instruction); \
+        return true; \
+    }
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(CETTA_INTRINSIC_HEAD)
+#undef CETTA_INTRINSIC_HEAD
+    return false;
+}
 
 #define CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(X)     X(range_atom, 6u, 0u) \
     X(lib_list_range, 6u, 0u) \
@@ -739,6 +785,21 @@ static inline bool cetta_gslt_pure_call_whnf_disjoint(
     X(if_text, 3u, CETTA_GSLT_FOLD_CONTROL_BRANCH) \
     X(eval, 1u, CETTA_GSLT_FOLD_CONTROL_EVALUATE) \
     X(function, 1u, CETTA_GSLT_FOLD_CONTROL_EVALUATE)
+
+static inline bool cetta_gslt_fold_control_program(
+    SymbolId head, CettaExprLen arity, CettaGsltFoldControl *control_out,
+    const BuiltinSyms *builtins) {
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_FOLD_CONTROL(field, expected_arity, control) \
+    if (head == builtins->field && arity == (expected_arity)) { \
+        if (control_out) *control_out = (control); \
+        return true; \
+    }
+    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(CETTA_FOLD_CONTROL)
+#undef CETTA_FOLD_CONTROL
+    return false;
+}
 
 /* Representation rows for sequence consumers.  The runtime resolves these
  * names in the active symbol table; library constructors therefore remain

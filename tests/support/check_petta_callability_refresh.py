@@ -9,6 +9,7 @@ import subprocess
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('cetta', type=Path)
+    parser.add_argument('--lib-prolog', type=int, choices=(0, 1), required=True)
     args = parser.parse_args()
     binary = args.cetta.resolve()
     fixtures = Path(__file__).resolve().parents[1] / 'petta/language_versions'
@@ -23,7 +24,8 @@ def main():
                                ('42\n' if modern else '(later 41)\n'),
             # Foreign import makes direct calls available without refreshing
             # the MeTTa caller's earlier translation in either version.
-            'late_foreign': '(succ 41)\ntrue\n42\n(succ 41)\n',
+            'late_foreign': ('(succ 41)\ntrue\n42\n(succ 41)\n' if args.lib_prolog else
+                             '(succ 41)\n(import_prolog_function succ)\n(succ 41)\n(succ 41)\n'),
         }
         for machine in ('0', '1'):
             environment = dict(os.environ, CETTA_PETTA_SEARCH_MACHINE=machine)

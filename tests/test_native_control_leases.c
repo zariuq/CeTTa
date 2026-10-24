@@ -11050,24 +11050,28 @@ static void prepared_native_admission_case(void) {
         &registry, 1000000, &error) && !error);
     Atom *head = atom_symbol_id(&arena, g_builtin_syms.lib_json_parse);
     Atom *arguments[] = {atom_string(&arena, "42")};
+    const CettaInvocation invocation = {
+        .head = binding_value_from_atom(head),
+        .supplied = {.atoms = arguments, .count = 1u},
+    };
     br_library_tracking = true;
     br_library_prepared_calls = br_library_calls = 0u;
     Atom *value = eval_prepared_pure_native_value(
-        &context, &space, &arena, head, arguments, 1u);
+        &context, &space, &arena, &invocation);
     CHECK(value && value->kind == ATOM_GROUNDED && value->ground.gkind == GV_INT &&
         value->ground.ival == 42 && br_library_prepared_calls == 1u);
     PrimeEvalStackDriver *previous = g_prime_eval_stack_driver;
     PrimeNativeControl control = {0}; control.driver.control = &control;
     g_prime_eval_stack_driver = &control.driver;
     br_library_prepared_calls = br_library_calls = 0u;
-    CHECK(!eval_prepared_pure_native_value(&context, &space, &arena, head, arguments, 1u));
+    CHECK(!eval_prepared_pure_native_value(&context, &space, &arena, &invocation));
     CHECK(!br_library_prepared_calls && !br_library_calls);
     g_prime_eval_stack_driver = previous;
     EvalCompletionTracker tracker = {.completion = CETTA_EVAL_COMPLETE,
         .budget_limited = true, .parent = g_eval_completion_tracker};
     EvalCompletionTracker *prior_tracker = g_eval_completion_tracker;
     g_eval_completion_tracker = &tracker;
-    CHECK(!eval_prepared_pure_native_value(&context, &space, &arena, head, arguments, 1u));
+    CHECK(!eval_prepared_pure_native_value(&context, &space, &arena, &invocation));
     CHECK(!br_library_prepared_calls && !br_library_calls &&
         tracker.completion == CETTA_EVAL_COMPLETE);
     g_eval_completion_tracker = prior_tracker;

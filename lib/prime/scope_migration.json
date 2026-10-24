@@ -84,8 +84,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "37e54d917342b83331bc8e1d2c75e6cafcff5f7e74103e64583ffe6e3f4eb422",
-      "output_sha256": "4c37b5d268923e2f3b40c27bd92c59c1b0f834a7f633465fb00e76b7e29a8d7a",
+      "source_sha256": "a1f26031a7f4bd28091bdb0c61cae874d1ff9f63d797040d9320ab8d1c13754d",
+      "output_sha256": "62ebb855c886b1f01011449fb3a472efc2abbd7fdba3313d3b0921d68ae82796",
       "edits": 4,
       "code_diagnostics": 0
     },

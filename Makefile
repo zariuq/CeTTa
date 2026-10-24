@@ -4428,10 +4428,10 @@ test-frame-support-inventory: $(FRAME_SUPPORT_INVENTORY_TEST_BIN)
 
 test-bindings-lookup-index test-petta-search-machine: test-frame-support-inventory
 
-SEQUENCE_VALUE_VIEW_TEST_BIN = runtime/test_sequence_value_view-$(BUILD_OBJ_TAG)
-$(SEQUENCE_VALUE_VIEW_TEST_BIN): tests/support/test_sequence_value_view.c src/petta_semantics.c src/petta_semantics.h src/atom.h src/match.h $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+SEQUENCE_VALUE_VIEW_TEST_BIN = runtime/test_sequence_value_view-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,)
+$(SEQUENCE_VALUE_VIEW_TEST_BIN): tests/support/test_sequence_value_view.c src/petta_semantics.c src/stats.c src/petta_semantics.h src/atom.h src/match.h $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_TEST_SEQUENCE_READ_BOUND=1 -ffunction-sections -fdata-sections -Wl,--gc-sections -Wl,--wrap=bindings_observe_value_root -o $@ tests/support/test_sequence_value_view.c src/petta_semantics.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_TEST_SEQUENCE_READ_BOUND=1 -ffunction-sections -fdata-sections -Wl,--gc-sections -Wl,--wrap=bindings_observe_value_root -o $@ tests/support/test_sequence_value_view.c src/petta_semantics.c src/stats.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
 .PHONY: test-sequence-value-view
 test-sequence-value-view: $(SEQUENCE_VALUE_VIEW_TEST_BIN)
@@ -4439,10 +4439,10 @@ test-sequence-value-view: $(SEQUENCE_VALUE_VIEW_TEST_BIN)
 
 test-petta-search-machine: test-sequence-value-view
 
-ROOT_SUBSTITUTION_TEST_BIN = runtime/test_root_substitution-$(BUILD_OBJ_TAG)
-$(ROOT_SUBSTITUTION_TEST_BIN): tests/support/test_root_substitution.c src/petta_semantics.c src/petta_semantics.h src/atom.h src/match.h $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
+ROOT_SUBSTITUTION_TEST_BIN = runtime/test_root_substitution-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,)
+$(ROOT_SUBSTITUTION_TEST_BIN): tests/support/test_root_substitution.c src/petta_semantics.c src/stats.c src/petta_semantics.h src/atom.h src/match.h $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/support/test_root_substitution.c src/petta_semantics.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/support/test_root_substitution.c src/petta_semantics.c src/stats.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(LDFLAGS)
 
 .PHONY: test-root-substitution
 test-root-substitution: $(ROOT_SUBSTITUTION_TEST_BIN)
@@ -6178,7 +6178,7 @@ $(SHARED_RETURN_PRODUCER_TEST_OBJ): tests/test_shared_return_producer.c src/shar
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
 
 $(SHARED_RETURN_PRODUCER_TEST_BIN): $(SHARED_RETURN_PRODUCER_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=malloc,--wrap=calloc $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=malloc,--wrap=calloc,--wrap=grounded_call $(LDFLAGS)
 
 .PHONY: test-shared-return-producer
 test-all: test-shared-return-producer
@@ -30398,15 +30398,20 @@ test-petta-existence-value-templates: $(BIN) tests/petta/existence_value_templat
 # An error raised inside a call dispatched at run time fails that path alone,
 # in any exploration order, and specialization keeps the handler; argument
 # errors, Error values and direct calls keep their own behaviour.
-test-petta-dispatch-error-scope: $(BIN)
+test-petta-dispatch-error-scope: $(BIN) tests/petta/dispatch_error_scope.expected \
+		tests/petta/dispatch_error_scope.native.expected
 	@set -eu; \
+	expected=tests/petta/dispatch_error_scope.expected; \
+	if [ "$(LIB_PROLOG_ENABLED)" != 1 ]; then \
+		expected=tests/petta/dispatch_error_scope.native.expected; \
+	fi; \
 	for route in tier machine; do \
 		if [ $$route = machine ]; then reference=1; else reference=; fi; \
 		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
 			--lang petta tests/petta/dispatch_error_scope.metta 2>&1); \
-		if [ "$$actual" != "$$(cat tests/petta/dispatch_error_scope.expected)" ]; then \
+		if [ "$$actual" != "$$(cat "$$expected")" ]; then \
 			echo "FAIL: dispatch error scope on the $$route route"; \
-			diff <(cat tests/petta/dispatch_error_scope.expected) \
+			diff <(cat "$$expected") \
 				<(printf '%s\n' "$$actual") | head -20; \
 			exit 1; \
 		fi; \
@@ -34156,7 +34161,7 @@ test-pathmap-indexed-query-work: $(BIN)
 	echo "PASS: counted PathMap indexed pull query (oracle differential/cold/warm/multiplicity/work bounds)"
 
 $(EXECUTION_CONTRACTS_TEST_BIN): tests/test_execution_contracts_generated.c \
-		$(EXECUTION_CONTRACTS_GENERATED_H) $(BUILD_CONFIG_HEADER)
+		$(EXECUTION_CONTRACTS_GENERATED_H) $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ \
 		tests/test_execution_contracts_generated.c $(LDFLAGS)
@@ -34486,14 +34491,17 @@ test-all: test-petta-tier-composition
 test-petta-semantics: test-petta-tier-composition
 test-open-equations: test-petta-tier-composition
 test-petta-tier-composition: $(BIN)
+	@python3 tests/support/check_head_interpretation.py ./$(BIN) \
+		--output runtime/head-interpretation-$$(date +%s%N)
 	@set -eu; \
 	for fixture in tier_sequences tier_primitives; do \
+		expected=tests/petta/$$fixture$(if $(filter 1,$(LIB_PROLOG_ENABLED)),,.native).expected; \
 		for reference in 0 1; do \
 			actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
 				--lang petta tests/petta/$$fixture.metta 2>&1); \
-			if [ "$$actual" != "$$(cat tests/petta/$$fixture.expected)" ]; then \
+			if [ "$$actual" != "$$(cat "$$expected")" ]; then \
 				echo "FAIL: $$fixture (reference $$reference)"; \
-				diff -u tests/petta/$$fixture.expected <(printf '%s\n' "$$actual"); \
+				diff -u "$$expected" <(printf '%s\n' "$$actual"); \
 				exit 1; \
 			fi; \
 		done; \
@@ -44071,7 +44079,7 @@ $(REGEX_EXECUTION_POLICY_V1_TEST_BIN): tests/support/test_regex_execution_policy
 		native/regex_selection_internal_v1.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_regex_execution_policy_v1.c \
-		native/regex_selection_v1.c native/regex_trie_v1.c native/regex_extended_v1.c src/scalar_trie.c -lm -pthread
+		native/regex_trie_v1.c native/regex_extended_v1.c src/scalar_trie.c -lm -pthread
 .PHONY: test-regex-execution-policy-v1
 test-regex-execution-policy-v1: $(REGEX_EXECUTION_POLICY_V1_TEST_BIN)
 	@$(REGEX_EXECUTION_POLICY_V1_TEST_BIN)
@@ -48011,6 +48019,7 @@ endif
 test-petta-search-machine: test-petta-imported-host-bridges
 ifeq ($(ENABLE_PYTHON)$(LIB_PROLOG_ENABLED),11)
 test-petta-libpl: test-petta-imported-python-host-bridge
+endif
 
 # The native result protocol distinguishes a missing answer, a completed
 # observer value, and ordinary data with the same expression shape.
@@ -48044,7 +48053,6 @@ ifeq ($(ENABLE_PYTHON),1)
 		fi; \
 	done; \
 	echo "PASS: Python results retain call-shaped data on both routes"
-endif
 endif
 
 .PHONY: test-gslt2parse-schema-v1 test-gslt2parse-schema-v1-native test-gslt2parse-c-horn-v1-native test-gslt2parse-c-horn-v1-differential test-gslt2parse-parser-action-bytecode-v1 test-gslt2parse-lookahead-semantics-v1 test-gslt2parse-parser-pack-guard-compiler-v1 test-gslt2parse-parser-pack-guard-regular-v1 test-gslt2parse-parser-pack-lr1-v1 test-gslt2parse-parser-pack-guard-plan-he-v1 test-gslt2parse-parser-pack-guard-plan-prime-v1 test-gslt2parse-parser-pack-abi-v1-native test-gslt2parse-parser-pack-abi-v1-matrix test-gslt2parse-parser-term-projection-v1-native test-gslt2parse-parser-atom-projection-v1-native test-gslt2parse-parser-atom-projection-closure-v1 test-gslt2parse-semantic-mask-span-compiler-v1 test-gslt2parse-parser-pack-gll-v1-native test-gslt2parse-parser-pack-gll-v1-matrix test-gslt2parse-regular-span-dfa-v1-native test-gslt2parse-regular-span-dfa-v1-matrix test-term-universe-backend-add-abi bench-space-scale-ladder
@@ -49680,7 +49688,7 @@ $(PETTA_CALLABILITY_REFRESH_TEST_BIN): $(PETTA_CALLABILITY_REFRESH_TEST_OBJ) $(P
 test-all: test-petta-callability-refresh
 test-petta-callability-refresh: $(BIN) $(PETTA_CALLABILITY_REFRESH_TEST_BIN)
 	@$(call cetta_exec,./$(PETTA_CALLABILITY_REFRESH_TEST_BIN))
-	@python3 tests/support/check_petta_callability_refresh.py ./$(BIN)
+	@python3 tests/support/check_petta_callability_refresh.py ./$(BIN) --lib-prolog $(LIB_PROLOG_ENABLED)
 
 .PHONY: test-borrowed-query-views
 BORROWED_QUERY_VIEW_TEST_OBJ = runtime/bootstrap/test_borrowed_query_view.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o

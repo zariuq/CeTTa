@@ -123,6 +123,7 @@ REGISTER_INSTRUCTION_ATOM_C: dict[str, tuple[str, str]] = {
 # set states only which abstract instructions the C backend can execute.
 PREPARED_PURE_INTRINSIC_INSTRUCTIONS = {
     "grounded-dispatch",
+    "boolean-dispatch",
     "deconstruct-nonempty-expression",
     "construct-expression-cons",
     "concatenate-expressions",
@@ -770,13 +771,15 @@ class Spec:
                     } and int(arity_text) != 2):
                 raise SpecError(
                     f"{instruction} requires arity two")
-            # The open case runs the canonical operation on both values.
+            # A connective computes a truth value: the open case runs the
+            # canonical operation on both values and answers in the
+            # caller's Boolean constructor.
             if discipline == "short-circuit" and (
                     int(arity_text) != 2 or
-                    instruction != "grounded-dispatch"):
+                    instruction != "boolean-dispatch"):
                 raise SpecError(
                     f"short-circuit head {name} must be a binary "
-                    "grounded dispatch")
+                    "boolean dispatch")
             self.prepared_intrinsic_heads.append((
                 name, symbol_fields[name], int(arity_text), discipline,
                 instruction, dialects))
@@ -1968,6 +1971,26 @@ static inline bool cetta_gslt_register_operand_discipline(
 #define CETTA_GSLT_REGISTER_HEAD_ROWS(X) \
 {register_head_rows}
 
+/* Decode immutable operation metadata. Dialect availability, source authority
+ * and operand readiness are checked independently by each consumer. */
+static inline bool cetta_gslt_register_head_program(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltRegisterResultKind *kind_out,
+    CettaGsltRegisterInstruction *instruction_out,
+    const BuiltinSyms *builtins) {{
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_REGISTER_HEAD(field, expected_arity, result_kind, instruction) \\
+    if (head == builtins->field && arity == (expected_arity)) {{ \\
+        if (kind_out) *kind_out = (result_kind); \\
+        if (instruction_out) *instruction_out = (instruction); \\
+        return true; \\
+    }}
+    CETTA_GSLT_REGISTER_HEAD_ROWS(CETTA_REGISTER_HEAD)
+#undef CETTA_REGISTER_HEAD
+    return false;
+}}
+
 typedef enum {{
 {prepared_intrinsic_instruction_constants}
 }} CettaGsltPreparedPureIntrinsicInstruction;
@@ -1987,6 +2010,31 @@ typedef enum {{
 
 /* X(head, arity, absorbing truth value) for every short-circuit row. */
 {short_circuit_macro}
+
+/* The row that `dialect`, one CETTA_GSLT_INTRINSIC_DIALECT_* bit, reads for
+ * `head` at `arity`: its operand discipline and instruction.  A row scoped
+ * to every dialect holds in every language.  This is operation metadata,
+ * not source authority or permission to speculate. */
+static inline bool cetta_gslt_prepared_intrinsic_program(
+    SymbolId head, CettaExprLen arity, uint32_t dialect,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out,
+    const BuiltinSyms *builtins) {{
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_INTRINSIC_HEAD(field, expected_arity, discipline, instruction, \\
+                             dialects) \\
+    if (head == builtins->field && arity == (expected_arity) && \\
+        ((dialects) == CETTA_GSLT_INTRINSIC_DIALECT_ALL || \\
+         ((dialects) & dialect) != 0u)) {{ \\
+        if (discipline_out) *discipline_out = (discipline); \\
+        if (instruction_out) *instruction_out = (instruction); \\
+        return true; \\
+    }}
+    CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(CETTA_INTRINSIC_HEAD)
+#undef CETTA_INTRINSIC_HEAD
+    return false;
+}}
 
 #define CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(X) \
 {sequence_value_constructor_rows}
@@ -2050,6 +2098,21 @@ static inline bool cetta_gslt_pure_call_whnf_disjoint(
 /* Executable control arms for the generated determinate-fold program. */
 #define CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(X) \
 {fold_control_rows}
+
+static inline bool cetta_gslt_fold_control_program(
+    SymbolId head, CettaExprLen arity, CettaGsltFoldControl *control_out,
+    const BuiltinSyms *builtins) {{
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_FOLD_CONTROL(field, expected_arity, control) \\
+    if (head == builtins->field && arity == (expected_arity)) {{ \\
+        if (control_out) *control_out = (control); \\
+        return true; \\
+    }}
+    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(CETTA_FOLD_CONTROL)
+#undef CETTA_FOLD_CONTROL
+    return false;
+}}
 
 /* Representation rows for sequence consumers.  The runtime resolves these
  * names in the active symbol table; library constructors therefore remain

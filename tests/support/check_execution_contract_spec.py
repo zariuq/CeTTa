@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'scripts'))
 import gen_execution_contracts as contracts  # noqa: E402
 
-SHORT_AND = '    and 2 short-circuit grounded-dispatch (dialects prime))'
+SHORT_AND = '    and 2 short-circuit boolean-dispatch (dialects prime))'
 ABSORB_OR = '  (short-circuit-absorbing or 2 True)'
 ABS_MATH = '    abs-math 1 strict-all grounded-dispatch)'
 
@@ -18,7 +18,7 @@ REFUSED = (
     ('a dialect reads two rows for one head',
      SHORT_AND,
      SHORT_AND + '\n  (prepared-pure-intrinsic-head\n'
-     '    and 2 strict-all grounded-dispatch (dialects prime))',
+     '    and 2 strict-all boolean-dispatch (dialects prime))',
      'unique by symbol, arity and dialect'),
     ('a short-circuit head without its absorbing value',
      ABSORB_OR, '', 'declares no absorbing value'),
@@ -29,8 +29,11 @@ REFUSED = (
      ABSORB_OR, ABSORB_OR + '\n  (short-circuit-absorbing + 2 False)',
      'which no short-circuit head declares'),
     ('a short-circuit head that is not binary',
-     ABS_MATH, '    abs-math 1 short-circuit grounded-dispatch)',
-     'must be a binary grounded dispatch'),
+     ABS_MATH, '    abs-math 1 short-circuit boolean-dispatch)',
+     'must be a binary boolean dispatch'),
+    ('a short-circuit head that computes no truth value',
+     SHORT_AND, '    and 2 short-circuit grounded-dispatch (dialects prime))',
+     'must be a binary boolean dispatch'),
     ('a discipline the presentation does not declare',
      '  (operand-discipline short-circuit)', '',
      'names undeclared operand discipline short-circuit'),
