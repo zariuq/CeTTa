@@ -682,7 +682,13 @@
         "lifetime": "The cursor borrows payload storage and the current logical environment. It allocates no value wrapper; its caller retains both through pending acceptance.",
         "completion": "The first incomplete cause survives subsequent returns. Malformed producer results interrupt with host failure, rather than certifying an empty frontier.",
         "proof": "Mettapedia.Machines.NativeCallReturn: independent list refinement, exact ordered prefixes, split resumption, final-return certificates, live context identities and matching publication-allowance bounds. Argument preparation preserves ordered identities and borrows exactly unchanged vectors. Native C correspondence remains separate.",
-        "arguments": "Synchronous native vectors are borrowed and read-only. The direct argument preparer borrows an unchanged vector and allocates on the first changed identity, preserving preparation order and source storage. Escaping Atom ownership and prepared result views remain separate contracts."
+        "arguments": "Synchronous native vectors are borrowed and read-only. The direct argument preparer borrows an unchanged vector and allocates on the first changed identity, preserving preparation order and source storage. Escaping Atom ownership and prepared result views remain separate contracts.",
+        "ordinary_consumers": {
+          "shared": "Six search-machine delivery sites share scalar delivery and tagged non-scalar completion, including the entered OEM return goal.",
+          "canonical": "Row collections, batch mutations and sequence-constructor arity preflight consume CettaCallOutcome directly.",
+          "reflection": "HE one-step reflection retains explicit syntax projection; this is an observation boundary.",
+          "scope": "HE arity preflight does not erase PeTTa eager/over-application work. Prepared-native nullable execution and callee-owned workers remain open."
+        }
       }
     },
     {
@@ -2147,6 +2153,14 @@
         "Mettapedia.Machines.SubstitutionDemand"
       ],
       "boundary": "Ordered occurrence transport and independent restored trials are proved in explicit models. The substitution-demand model also covers a private runtime proposal withheld by cost measurements. Native frontier summaries, C lifetimes, complete compiler correspondence and whole-runtime optimality remain obligations."
+    },
+    {
+      "construction": "Mettapedia/Machines/ContextualCBPV.lean",
+      "application": "Contextual computation/continuation transitions retain generic native workers, per-answer branch contexts, ordered occurrences, lexical captures and scoped handler choice floors. Pull effects do not reenter native factories. Explicit source occurrences and semantic charges have a conserved purse independent of physical slices. Logical-store rollback, dialect elaboration and native C correspondence remain open joins."
+    },
+    {
+      "construction": "Mettapedia/Machines/ConditionalContextProjection.lean",
+      "application": "The existing finite Horn worklist closes value and pending-check support under current store bindings. Restriction to the computed least context preserves finite substitution derivations in both directions. Canonical projection retains both roots; prefix merging transports conditional metadata, and existing whole-outcome relocation preserves ownership. Native graph and attributed-variable correspondence remain separate obligations."
     }
   ],
   "cross_tree_reconciliation": [

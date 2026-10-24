@@ -954,6 +954,8 @@ PRODUCER_SCHEDULE_TEST_BIN = runtime/test_producer_schedule-$(BUILD_OBJ_TAG)$(if
 SHARED_OCCURRENCE_LOG_TEST_BIN = runtime/test_shared_occurrence_log-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 SHARED_RETURN_PRODUCER_TEST_OBJ = runtime/bootstrap/test_shared_return_producer.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 SHARED_RETURN_PRODUCER_TEST_BIN = runtime/test_shared_return_producer-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ = runtime/bootstrap/test_native_conditional_context.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+NATIVE_CONDITIONAL_CONTEXT_TEST_BIN = runtime/test_native_conditional_context-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 ANSWER_STORAGE_TEST_OBJ = runtime/bootstrap/test_answer_storage.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 ANSWER_STORAGE_TEST_BIN = runtime/test_answer_storage-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 OWNED_RETURN_IMAGE_TEST_OBJ = runtime/bootstrap/test_owned_return_image.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -5332,6 +5334,18 @@ test-shared-return-producer: $(SHARED_RETURN_PRODUCER_TEST_BIN)
 	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN))
 	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN)) --prime-native
 
+$(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ): tests/test_native_conditional_context.c src/eval.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
+
+$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN): $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ) $(filter-out src/eval.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call $(LDFLAGS)
+
+.PHONY: test-native-conditional-context
+test-all: test-native-conditional-context
+test-native-conditional-context: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)
+	@$(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN))
+
 .PHONY: test-oem-native-returns
 test-all: test-oem-native-returns
 test-oem-native-returns: $(BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) $(SHARED_RETURN_PRODUCER_TEST_BIN) \
@@ -6261,6 +6275,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(IO_RUNTIME_MUTATION_OBJ:.o=.d) \
 	$(PREPARED_PURE_ANSWER_TEST_OBJ:.o=.d) \
 	$(SHARED_RETURN_PRODUCER_TEST_OBJ:.o=.d) \
+	$(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ:.o=.d) \
 	$(ANSWER_STORAGE_TEST_OBJ:.o=.d) \
 	$(OWNED_RETURN_IMAGE_TEST_OBJ:.o=.d) \
 	$(FALLBACK_EVAL_TEST_OBJ:.o=.d) \

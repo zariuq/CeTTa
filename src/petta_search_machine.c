@@ -26620,9 +26620,66 @@ static bool petta_machine_activation_plain_scalar_truth(
     PettaMachineImpl *machine, const PettaGoal *goal,
     bool *truth_out, uint32_t *operations_out);
 
+/* The operation has entered. Non-scalar returns retain their provenance and
+ * conditional roots through the same delivery service as an OEM handoff. */
+static __attribute__((cold, noinline)) bool petta_machine_deliver_native_slow(
+        PettaMachineImpl *machine, CettaCallOutcome outcome, Atom *expected,
+        uint32_t barrier, PettaMachineStep *failure) {
+    if (!machine->host.deliver_native_return) {
+        *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+        return false;
+    }
+    const Bindings *environment = search_context_bindings(&machine->search);
+    OutcomeSet *outcomes = cetta_malloc(sizeof(*outcomes));
+    if (!outcomes) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    outcome_set_init_with_owner(outcomes, &machine->heap);
+    CettaCallOutcome end = cetta_call_failure();
+    machine->host.deliver_native_return(machine->host.context,
+        &machine->heap, outcome, environment, outcomes, &end);
+    if (end.kind != CETTA_CALL_FAILURE) {
+        outcome_set_free(outcomes);
+        free(outcomes);
+        return end.kind == CETTA_CALL_RAISED
+            ? petta_machine_raise_error(machine, end.term) : false;
+    }
+    if (!petta_machine_factor_outcome_prefixes(machine, outcomes, environment)) {
+        outcome_set_free(outcomes);
+        free(outcomes);
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    return petta_machine_start_outcome_choice(machine, outcomes, expected, barrier);
+}
+
+static inline bool petta_machine_deliver_native_return(
+        PettaMachineImpl *machine, CettaCallOutcome outcome, Atom *expected,
+        uint32_t barrier, bool recovers, bool resolved,
+        PettaMachineStep *failure) {
+    if (outcome.kind == CETTA_CALL_FAILURE)
+        return false;
+    if (outcome.kind == CETTA_CALL_RAISED && outcome.term)
+        return !recovers && petta_machine_raise_error(machine, outcome.term);
+    if (outcome.kind != CETTA_CALL_VALUE ||
+        !cetta_call_outcome_shape_valid(outcome) ||
+        outcome.result_form == CETTA_CALL_RESULT_COMPLETED_FRONTIER)
+        return petta_machine_deliver_native_slow(
+            machine, outcome, expected, barrier, failure);
+    Atom *value = outcome.term;
+    if (atom_is_petta_no_result(value))
+        return false;
+    bool truth = false;
+    if (petta_semantics_truth_value(value, &truth))
+        value = petta_machine_boolean_value(machine, truth);
+    return resolved ? petta_machine_unify_resolved(machine, value, expected)
+                    : petta_machine_unify(machine, value, expected);
+}
+
 static bool petta_machine_try_activation_pure_grounded(
         PettaMachineImpl *machine, const PettaGoal *goal,
-        bool *handled_out) {
+        bool *handled_out, PettaMachineStep *failure) {
     if (handled_out)
         *handled_out = false;
     if (!machine || !goal || !handled_out || !goal->second)
@@ -26646,25 +26703,13 @@ static bool petta_machine_try_activation_pure_grounded(
             machine, goal->first->expr.elems[0],
             arguments, argument_count, &outcome))
         return false;
-    Atom *direct = outcome.term;
-    if (outcome.kind == CETTA_CALL_VALUE && !direct)
-        return false;
     *handled_out = true;
     machine->stats.pure_grounded_slot_frame_entries++;
-    /* The arguments are frame values, so the error is the operation's own. */
-    if (outcome.kind == CETTA_CALL_RAISED) {
-        return !petta_machine_plan_recovers_dispatch(machine, goal->plan) &&
-               petta_machine_raise_error(machine, direct);
-    }
-    if (outcome.kind != CETTA_CALL_VALUE)
-        return false;
-    machine->stats.pure_grounded_slot_frame_direct_dispatches++;
-    if (!scalar_truth &&
-        petta_semantics_truth_value(direct, &truth)) {
-        direct = petta_machine_boolean_value(machine, truth);
-    }
-    return direct && petta_machine_unify(
-        machine, direct, goal->second);
+    if (outcome.kind == CETTA_CALL_VALUE)
+        machine->stats.pure_grounded_slot_frame_direct_dispatches++;
+    return petta_machine_deliver_native_return(machine, outcome, goal->second,
+        goal->barrier, petta_machine_plan_recovers_dispatch(machine, goal->plan),
+        false, failure);
 }
 
 /* A ready grounded call is already a register tuple: its argument
@@ -26676,7 +26721,7 @@ static bool petta_machine_try_activation_pure_grounded(
  * complete structure. */
 static bool petta_machine_try_ready_grounded_slots(
         PettaMachineImpl *machine, const PettaGoal *goal,
-        bool *handled_out) {
+        bool *handled_out, PettaMachineStep *failure) {
     if (handled_out)
         *handled_out = false;
     if (!machine || !goal || !handled_out || !goal->first ||
@@ -26732,24 +26777,12 @@ static bool petta_machine_try_ready_grounded_slots(
     if (!petta_machine_grounded_call(
             machine, head, arguments, (uint32_t)nargs, &outcome))
         return false;
-    Atom *result = outcome.term;
     *handled_out = true;
     machine->stats.pure_grounded_slot_frame_entries++;
-    if (outcome.kind == CETTA_CALL_RAISED)
-        return petta_machine_raise_error(machine, result);
-    if (outcome.kind != CETTA_CALL_VALUE)
-        return false;
-    machine->stats.pure_grounded_slot_frame_direct_dispatches++;
-    bool truth = false;
-    if (petta_semantics_truth_value(result, &truth)) {
-        result = machine->host.boolean_value
-            ? machine->host.boolean_value(
-                  machine->host.context, &machine->heap, truth)
-            : petta_semantics_boolean_value(
-                  &machine->heap, truth);
-    }
-    return result && petta_machine_unify(
-        machine, result, goal->second);
+    if (outcome.kind == CETTA_CALL_VALUE)
+        machine->stats.pure_grounded_slot_frame_direct_dispatches++;
+    return petta_machine_deliver_native_return(machine, outcome, goal->second,
+        goal->barrier, false, false, failure);
 }
 
 /* A ready relational call already has values in the authoritative
@@ -30920,7 +30953,7 @@ activation_tail_segment:;
     bool grounded_handled = false;
     bool grounded_result =
         petta_machine_try_activation_pure_grounded(
-            machine, goal, &grounded_handled);
+            machine, goal, &grounded_handled, failure);
     if (grounded_handled)
         return grounded_result;
 
@@ -32184,22 +32217,11 @@ static bool petta_machine_dispatch_solve(
                     : petta_machine_grounded_call(
                           machine, goal->first->expr.elems[0],
                           arguments, (uint32_t)nargs, &outcome)) {
-                Atom *direct = outcome.term;
-                if (outcome.kind == CETTA_CALL_RAISED) {
-                    return !petta_machine_plan_recovers_dispatch(
-                               machine, plan) &&
-                           petta_machine_raise_error(machine, direct);
-                }
-                if (outcome.kind != CETTA_CALL_VALUE)
-                    return false;
-                machine->stats
-                    .pure_grounded_slot_frame_direct_dispatches++;
-                if (!scalar_truth &&
-                    petta_semantics_truth_value(direct, &truth)) {
-                    direct = petta_machine_boolean_value(machine, truth);
-                }
-                return direct && petta_machine_unify(
-                    machine, direct, goal->second);
+                if (outcome.kind == CETTA_CALL_VALUE)
+                    machine->stats.pure_grounded_slot_frame_direct_dispatches++;
+                return petta_machine_deliver_native_return(machine, outcome,
+                    goal->second, goal->barrier,
+                    petta_machine_plan_recovers_dispatch(machine, plan), false, failure);
             }
         }
     }
@@ -34584,26 +34606,9 @@ static bool petta_machine_dispatch_solve(
             if (petta_machine_grounded_call(
                     machine, head, arguments,
                     (uint32_t)nargs, &outcome)) {
-                Atom *direct = outcome.term;
-                if (outcome.kind == CETTA_CALL_RAISED) {
-                    return !petta_machine_plan_recovers_dispatch(
-                               machine, plan) &&
-                           petta_machine_raise_error(machine, direct);
-                }
-                if (outcome.kind != CETTA_CALL_VALUE)
-                    return false;
-                bool truth = false;
-                if (petta_semantics_truth_value(direct, &truth)) {
-                    direct = machine->host.boolean_value
-                        ? machine->host.boolean_value(
-                              machine->host.context,
-                              &machine->heap, truth)
-                        : petta_semantics_boolean_value(
-                              &machine->heap, truth);
-                }
-                return direct &&
-                       petta_machine_unify_resolved(
-                           machine, direct, expected);
+                return petta_machine_deliver_native_return(machine, outcome,
+                    expected, goal->barrier,
+                    petta_machine_plan_recovers_dispatch(machine, plan), true, failure);
             }
         }
     }
@@ -35000,36 +35005,13 @@ static bool petta_machine_dispatch_goal(
         search_context_bindings(&machine->search);
 
     if (goal.kind == PETTA_GOAL_NATIVE_RETURN) {
-        if (!machine->host.deliver_native_return) {
-            *failure = PETTA_MACHINE_STEP_HOST_ERROR;
-            return false;
-        }
-        OutcomeSet *outcomes = cetta_malloc(sizeof(*outcomes));
-        outcome_set_init_with_owner(outcomes, &machine->heap);
-        CettaCallOutcome end = cetta_call_failure();
         CettaCallOutcome outcome = {
             .kind = goal.native_return.kind,
             .term = goal.first, .delayed = goal.third,
             .result_form = goal.native_return.form,
         };
-        machine->host.deliver_native_return(machine->host.context,
-            &machine->heap, outcome, environment, outcomes, &end);
-        if (end.kind != CETTA_CALL_FAILURE) {
-            outcome_set_free(outcomes);
-            free(outcomes);
-            if (end.kind == CETTA_CALL_RAISED)
-                return petta_machine_raise_error(machine, end.term);
-            return false;
-        }
-        if (!petta_machine_factor_outcome_prefixes(machine, outcomes,
-                                                    environment)) {
-            outcome_set_free(outcomes);
-            free(outcomes);
-            *failure = PETTA_MACHINE_STEP_CAPACITY;
-            return false;
-        }
-        return petta_machine_start_outcome_choice(
-            machine, outcomes, goal.second, goal.barrier);
+        return petta_machine_deliver_native_return(machine, outcome,
+            goal.second, goal.barrier, false, false, failure);
     }
 
     if (goal.kind == PETTA_GOAL_LIST_UNARY_READY ||
@@ -35170,7 +35152,7 @@ static bool petta_machine_dispatch_goal(
         goal.kind == PETTA_GOAL_HOST_STRICT_READY) {
         bool handled = false;
         bool dispatched = petta_machine_try_ready_grounded_slots(
-            machine, &goal, &handled);
+            machine, &goal, &handled, failure);
         if (handled)
             return dispatched;
     }
@@ -37276,21 +37258,8 @@ static bool petta_machine_dispatch_goal(
                 machine, head,
                 first->expr.elems + 1u,
                 (uint32_t)(first->expr.len - 1u), &outcome)) {
-            if (outcome.kind == CETTA_CALL_RAISED)
-                return petta_machine_raise_error(machine, outcome.term);
-            if (outcome.kind != CETTA_CALL_VALUE)
-                return false;
-            Atom *value = outcome.term;
-            bool truth = false;
-            if (petta_semantics_truth_value(value, &truth)) {
-                value = machine->host.boolean_value
-                    ? machine->host.boolean_value(
-                          machine->host.context,
-                          &machine->heap, truth)
-                    : petta_semantics_boolean_value(
-                          &machine->heap, truth);
-            }
-            return petta_machine_unify(machine, value, second);
+            return petta_machine_deliver_native_return(machine, outcome,
+                second, goal.barrier, false, false, failure);
         }
         bool admitted = false;
         if (!petta_machine_try_admit_ground_atom(
