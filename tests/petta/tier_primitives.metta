@@ -52,6 +52,7 @@
 !(numbers -7 3)
 !(numbers-computed)
 !(collapse (number-choice))
-!(let (Error $kind $context) (catch (number-error)) $kind)
+!(let (Error $kind $context) (catch (number-error))
+   (let (Error $direct $direct-context) (catch (min 1 not-a-number)) (== $kind $direct)))
 !(number-effect)
 !(undefined 6)

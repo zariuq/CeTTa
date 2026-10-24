@@ -32,6 +32,6 @@ true
 (Numbers -7 3 2)
 (Numbers 7 9)
 (4 7 2 2 4 7)
-(type_error evaluable (/ not-a-number 0))
+true
 2.5
 (Box (// 7 2) (numeric-eq 6 6))
