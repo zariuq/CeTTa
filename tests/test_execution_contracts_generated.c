@@ -9,6 +9,55 @@
  * algebra (join laws, classification) and that the heads the pull consumers
  * admit are present.  It deliberately does not pin the row count: adding a
  * relational head to the spec must regenerate cleanly, not fail here. */
+static void test_operation_metadata(void) {
+    const BuiltinSyms builtins = {
+        .op_plus = 11u, .op_and = 12u, .intersection_atom = 13u,
+        .let = 14u, .if_text = 15u, .car_atom = 16u,
+    };
+    CettaGsltRegisterResultKind kind = CETTA_GSLT_REGISTER_RESULT_BOOLEAN;
+    CettaGsltRegisterInstruction register_op =
+        CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL;
+    assert(cetta_gslt_register_head_program(
+        11u, 2u, &kind, &register_op, &builtins));
+    assert(kind == CETTA_GSLT_REGISTER_RESULT_EXACT_INTEGER);
+    assert(register_op == CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_ADD);
+    assert(!cetta_gslt_register_head_program(
+        11u, 1u, &kind, &register_op, &builtins));
+    assert(register_op == CETTA_GSLT_REGISTER_INSTRUCTION_INTEGER_ADD);
+    assert(!cetta_gslt_register_head_program(
+        SYMBOL_ID_NONE, 2u, NULL, NULL, &builtins));
+    CettaGsltPreparedPureIntrinsicOperandDiscipline operands;
+    CettaGsltPreparedPureIntrinsicInstruction intrinsic;
+    assert(cetta_gslt_prepared_intrinsic_program(
+        12u, 2u, &operands, &intrinsic, &builtins));
+    assert(operands == CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL);
+    assert(intrinsic == CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH);
+    assert(cetta_gslt_prepared_intrinsic_program(
+        16u, 1u, NULL, &intrinsic, &builtins));
+    assert(intrinsic == CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);
+    assert(!cetta_gslt_prepared_intrinsic_program(
+        999u, 1u, NULL, NULL, &builtins));
+    assert(cetta_gslt_prepared_intrinsic_scope(
+        13u, 2u, CETTA_GSLT_INTRINSIC_DIALECT_PETTA, &builtins));
+    assert(!cetta_gslt_prepared_intrinsic_scope(
+        13u, 2u, CETTA_GSLT_INTRINSIC_DIALECT_HE, &builtins));
+    assert(!cetta_gslt_prepared_intrinsic_scope(
+        13u, 2u, CETTA_GSLT_INTRINSIC_DIALECT_PRIME, &builtins));
+    /* Unrestricted scope is not evidence that an operation exists. */
+    assert(cetta_gslt_prepared_intrinsic_scope(
+        999u, 1u, CETTA_GSLT_INTRINSIC_DIALECT_HE, &builtins));
+    assert(!cetta_gslt_prepared_intrinsic_program(
+        999u, 1u, NULL, NULL, &builtins));
+    CettaGsltFoldControl control;
+    assert(cetta_gslt_fold_control_program(14u, 3u, &control, &builtins));
+    assert(control == CETTA_GSLT_FOLD_CONTROL_BIND);
+    assert(cetta_gslt_fold_control_program(15u, 3u, &control, &builtins));
+    assert(control == CETTA_GSLT_FOLD_CONTROL_BRANCH);
+    assert(!cetta_gslt_fold_control_program(15u, 2u, &control, &builtins));
+    assert(control == CETTA_GSLT_FOLD_CONTROL_BRANCH);
+    assert(!cetta_gslt_fold_control_program(15u, 3u, NULL, NULL));
+}
+
 static void test_query_head_rows(void) {
     unsigned rows = 0u;
     bool saw_match = false, saw_get_atoms = false, saw_mork_match = false;
@@ -907,6 +956,7 @@ static void test_generated_tuple_machine_roots(void) {
 }
 
 int main(void) {
+    test_operation_metadata();
     test_query_head_rows();
     test_row_dispositions();
     test_observation_and_lifetime();

@@ -34,7 +34,8 @@ static Atom *parse(Arena *arena, const char *text) {
 
 static void init_with_view(Fixture *fixture, const char *const *equations,
                            size_t count, const char *call,
-                           CettaPreparedPureExpressionViewFn expression_view) {
+                           CettaPreparedPureExpressionViewFn expression_view,
+                           CettaPreparedPureBooleanValue boolean_value) {
     memset(fixture, 0, sizeof(*fixture));
     fixture->unmatched_call = CETTA_PREPARED_PURE_UNMATCHED_DECLINES;
     fixture->limits = (CettaPreparedPureAnswerLimits){
@@ -54,7 +55,7 @@ static void init_with_view(Fixture *fixture, const char *const *equations,
                                parse(&fixture->source, equations[index])));
     fixture->program = cetta_prepared_pure_program_compile_closed_answers(
         &fixture->space, parse(&fixture->source, call),
-        CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
+        CETTA_GSLT_PURE_CALL_EAGER, boolean_value, atom_expr,
         cetta_prepared_pure_constructs_expression_always,
         NULL, NULL, expression_view, NULL, NULL, true, true,
         (CettaMatchDecisionSemanticIdentity){
@@ -76,7 +77,7 @@ static void init_with_view(Fixture *fixture, const char *const *equations,
 
 static void init(Fixture *fixture, const char *const *equations,
                  size_t count, const char *call) {
-    init_with_view(fixture, equations, count, call, NULL);
+    init_with_view(fixture, equations, count, call, NULL, atom_bool);
 }
 
 static void destroy(Fixture *fixture) {
@@ -92,6 +93,9 @@ static bool visit(Atom *answer, void *context) {
     assert(answer);
     if (fixture->answers < 4u && fixture->expected[fixture->answers]) {
         char *text = atom_to_string(&fixture->source, answer);
+        if (!text || strcmp(text, fixture->expected[fixture->answers]) != 0)
+            fprintf(stderr, "prepared answer: observed %s, expected %s\n",
+                    text ? text : "<null>", fixture->expected[fixture->answers]);
         assert(text && strcmp(text, fixture->expected[fixture->answers]) == 0);
     }
     fixture->answers++;
@@ -130,6 +134,58 @@ static void test_completed_occurrences(void) {
     assert(run(&fixture, &tails) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
     assert(fixture.answers == 3u && tails == 2u);
     destroy(&fixture);
+}
+
+static void test_intrinsic_boolean_representation(void) {
+    const char *bodies[] = {"(or False True)", "(and True False)"};
+    for (size_t i = 0u; i < 2u; ++i) {
+        char equation[96];
+        snprintf(equation, sizeof(equation), "(= (truth) %s)", bodies[i]);
+        const char *equations[] = {equation};
+        for (size_t dialect = 0u; dialect < 2u; ++dialect) {
+            Fixture fixture;
+            init_with_view(&fixture, equations, 1u, "(truth)", NULL,
+                dialect ? petta_semantics_boolean_value : atom_bool);
+            fixture.expected[0] = dialect
+                ? (i ? "false" : "true") : (i ? "False" : "True");
+            uint64_t tails = 0u;
+            assert(run(&fixture, &tails) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
+            assert(fixture.answers == 1u);
+            destroy(&fixture);
+        }
+    }
+    puts("PASS: prepared intrinsic truths use the program's Boolean representation");
+}
+
+static void test_intrinsic_result_roles(void) {
+    const struct {
+        const char *body;
+        const char *answer;
+    } cases[] = {
+        {"(and True False)", "false"},
+        {"(or False True)", "true"},
+        {"(< 0.5 1.0)", "true"},
+        {"(> 0.5 1.0)", "false"},
+        {"(<= 0.5 1.0)", "true"},
+        {"(>= 0.5 1.0)", "false"},
+        {"(numeric-eq 0.5 0.5)", "true"},
+        {"(car-atom (True marker))", "True"},
+        {"(car-atom (False marker))", "False"},
+    };
+    for (size_t i = 0u; i < sizeof(cases) / sizeof(*cases); i++) {
+        char equation[128];
+        snprintf(equation, sizeof(equation), "(= (result-role) %s)", cases[i].body);
+        const char *equations[] = {equation};
+        Fixture fixture;
+        init_with_view(&fixture, equations, 1u, "(result-role)", NULL,
+                       petta_semantics_boolean_value);
+        fixture.expected[0] = cases[i].answer;
+        uint64_t tails = 0u;
+        assert(run(&fixture, &tails) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
+        assert(fixture.answers == 1u);
+        destroy(&fixture);
+    }
+    puts("PASS: computed truth roles and Boolean-valued data projections keep their distinct representations");
 }
 
 static void test_late_decline_is_not_completion(void) {
@@ -1514,7 +1570,7 @@ static void test_continuation_guard_and_zero(void) {
         "(= (kept) (let $x (letter) (if (keep $x) (Kept $x) (empty))))",
     };
     Fixture fixture;
-    init_with_view(&fixture, equations, 7u, "(kept)", zero_view);
+    init_with_view(&fixture, equations, 7u, "(kept)", zero_view, atom_bool);
     fixture.expected[0] = "(Kept a)";
     fixture.expected[1] = "(Kept c)";
     uint64_t tails = 0u;
@@ -1567,7 +1623,7 @@ static void test_continuation_zero_operand(void) {
         "(= (bad) (Pair (gen) (empty)))",
     };
     Fixture fixture;
-    init_with_view(&fixture, equations, 3u, "(bad)", zero_view);
+    init_with_view(&fixture, equations, 3u, "(bad)", zero_view, atom_bool);
     uint64_t tails = 0u;
     assert(run(&fixture, &tails) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
     assert(fixture.answers == 0u);
@@ -2185,7 +2241,7 @@ static void test_cursor_final_frontier(void) {
     destroy(&fixture);
 
     const char *pending[] = {"(= (final-pick 0) 0)", "(= (final-pick 0) (empty))"};
-    init_with_view(&fixture, pending, 2u, "(final-pick 0)", zero_view);
+    init_with_view(&fixture, pending, 2u, "(final-pick 0)", zero_view, atom_bool);
     cursor = open_cursor(&fixture, true);
     expect_answer(&fixture, cursor, "0");
     /* It would fail, but establishing that requires executing the next body. */
@@ -2705,7 +2761,7 @@ static void test_optional_register_worker(void) {
         "(= (spin $x) (spin $x))",
     };
     Fixture fixture;
-    init_with_view(&fixture, equations, 6u, "(pick Nil)", zero_view);
+    init_with_view(&fixture, equations, 6u, "(pick Nil)", zero_view, atom_bool);
     assert(run(&fixture, NULL) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
     assert(fixture.answers == 0u);
     CettaPreparedPureProgram *optional = compile_optional(&fixture, "(pick Nil)", true);
@@ -2749,7 +2805,7 @@ static void test_optional_register_worker(void) {
     assert(!answer && !compile_optional(&fixture, "(pick Nil)", true));
     cetta_prepared_pure_program_free(optional);
     destroy(&fixture);
-    init_with_view(&fixture, equations, 6u, "(wrap Nil)", zero_view);
+    init_with_view(&fixture, equations, 6u, "(wrap Nil)", zero_view, atom_bool);
     assert(run(&fixture, NULL) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
     assert(!fixture.answers);
     optional = compile_optional(&fixture, "(wrap Nil)", true);
@@ -2839,7 +2895,7 @@ static void test_optional_retained_prefix_and_delivery(void) {
     };
     for (size_t case_index = 0u; case_index < 2u; case_index++) {
         Fixture fixture;
-        init_with_view(&fixture, equations, 2u, calls[case_index], zero_view);
+        init_with_view(&fixture, equations, 2u, calls[case_index], zero_view, atom_bool);
         CettaPreparedPureProgram *optional = compile_optional(&fixture, calls[case_index], true);
         assert(optional);
         CettaPreparedPureClosedExecution *whole = cetta_prepared_pure_closed_open_optional(
@@ -2942,7 +2998,7 @@ static void test_optional_retained_refusals(void) {
     const char *calls[] = {"(walk (Cons 1 Nil))", "(bad 0)", "(spin seed)"};
     for (size_t case_index = 0u; case_index < 3u; case_index++) {
         Fixture fixture;
-        init_with_view(&fixture, equations, 4u, calls[case_index], zero_view);
+        init_with_view(&fixture, equations, 4u, calls[case_index], zero_view, atom_bool);
         CettaPreparedPureProgram *optional = compile_optional(&fixture, calls[case_index], true);
         assert(optional);
         CettaPreparedPureClosedExecution *execution = cetta_prepared_pure_closed_open_optional(
@@ -3031,7 +3087,7 @@ static void test_shared_result_preparation(void) {
         "(= (bad $x) (/ 1 $x))",
     };
     Fixture fixture;
-    init_with_view(&fixture, equations, 7u, "(scalar 7)", zero_view);
+    init_with_view(&fixture, equations, 7u, "(scalar 7)", zero_view, atom_bool);
     CettaPreparedPureProgram *program = compile_result(&fixture, "(scalar 7)", true);
     Atom *answer = NULL;
     assert(program && !cetta_prepared_pure_program_returns_optional(program));
@@ -3130,7 +3186,7 @@ static void test_closed_owned_return_modes(void) {
     };
     const char *calls[]={"(scalar 5)","(optional (Cons 7 Nil))","(optional Nil)","(empty-datum)"};
     for(unsigned which=0u;which<4u;which++) {
-        Fixture fixture;init_with_view(&fixture,equations,4u,calls[which],zero_view);
+        Fixture fixture;init_with_view(&fixture,equations,4u,calls[which],zero_view,atom_bool);
         CettaPreparedPureProgram *program=(which==1u || which==2u)
             ? compile_optional(&fixture,calls[which],true):compile_scalar(&fixture,calls[which]);
         assert(program);
@@ -3192,7 +3248,7 @@ static void test_closed_owned_prefix_and_stale_boundary(void) {
     };
     for(unsigned which=0u;which<7u;which++) {
         const char *call=which==3u?"(bad 0)":(which==4u || which==5u)?"(spin seed)":"(scalar 5)";
-        Fixture fixture;init_with_view(&fixture,equations,3u,call,zero_view);
+        Fixture fixture;init_with_view(&fixture,equations,3u,call,zero_view,atom_bool);
         CettaPreparedPureProgram *program=compile_scalar(&fixture,call);assert(program);
         CettaPreparedPureClosedExecution *closed=
             cetta_prepared_pure_closed_open(program,&fixture.scratch,&fixture);
@@ -3265,6 +3321,8 @@ int main(void) {
     test_spelled_value_across_prepared_choices();
 #endif
     test_completed_occurrences();
+    test_intrinsic_boolean_representation();
+    test_intrinsic_result_roles();
     test_late_decline_is_not_completion();
     test_visitor_stop_and_reentry();
     test_interrupt_without_answers();

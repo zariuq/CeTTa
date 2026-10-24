@@ -142,6 +142,11 @@ bool cetta_prepared_pure_call_policy_supported(
 /* Authored dialect restrictions are shared by source admission, lowering
  * and execution. Unscoped intrinsics retain their existing policy. */
 bool cetta_prepared_pure_intrinsic_scope_supported(SymbolId head, CettaExprLen arity);
+/* Shared interpretation of the authored strict primitive fragment. This is
+ * operation metadata, not source authority or permission to speculate. */
+bool cetta_prepared_pure_intrinsic_program(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out);
 typedef Atom *(*CettaPreparedPureBooleanValue)(Arena *arena, bool value);
 typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);
@@ -288,7 +293,7 @@ typedef struct {
     void *native_context;
     Atom *(*native_value)(
         void *context, Space *space, Arena *arena,
-        Atom *head, Atom *const *arguments, uint32_t arity);
+        const CettaInvocation *invocation);
 } CettaPreparedPureSourceView;
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
