@@ -152,6 +152,21 @@ PROFILE_CASES = [
      "!(use (maker evidence))\n", "[7]\n"),
 ]
 
+HEAD_AUTHORITY_CASES = [
+    ("last", "(= (last $items) 88)\n!(last (a b b))\n", "[88]\n"),
+    ("reverse", "(= (reverse $items) 88)\n!(reverse (a b b))\n", "[88]\n"),
+    ("member", "(= (member $x $items) 88)\n!(member a (a b))\n", "[88]\n"),
+    ("min", "(= (min $a $b) 88)\n!(min 2 3)\n", "[88]\n"),
+    ("max", "(= (max $a $b) 88)\n!(max 2 3)\n", "[88]\n"),
+    ("unknown-last", "!(last (a b b))\n", "[(last (a b b))]\n"),
+    ("nested-last", "(= (last $items) 88)\n"
+     "(= (wrap $x) (Pair (last $x) (last $x)))\n!(wrap (a b b))\n",
+     "[(Pair 88 88)]\n"),
+    ("duplicate-last", "(= (last $items) 88)\n(= (last $items) 88)\n"
+     "!(last (a b b))\n", "[88, 88]\n"),
+    ("other-arity", "(= (last $x $y) 88)\n!(last a b)\n", "[88]\n"),
+]
+
 DEEP_CASES = [
     ("ordinary-tail", "(= (down $n) (if (== $n 0) done "
      "(down (- $n 1))))\n!(down 20000)\n", "[done]\n"),
@@ -273,6 +288,24 @@ def main():
                         r"(?:goal_host|equation_match_attempts)=([0-9]+)", result.stderr)):
                     raise AssertionError((name, "pattern callback bypassed admission"))
                 observations += 1
+        # A backend's intrinsic name does not override an authored HE head.
+        # All three worker switches are independent of source authority.
+        for name, source, expected in HEAD_AUTHORITY_CASES:
+            path = Path(directory) / ("head-authority-" + name + ".metta")
+            path.write_text(source)
+            for shared in ("0", "1"):
+                for prepared in ("0", "1"):
+                    for opened in ("0", "1"):
+                        env = dict(os.environ, CETTA_HE_SHARED_EXECUTION=shared,
+                                   CETTA_PREPARED_PURE_REFERENCE=prepared,
+                                   CETTA_OPEN_EQUATIONS_REFERENCE=opened)
+                        result = subprocess.run(
+                            [str(binary), "--lang", "he", str(path)], cwd=root,
+                            env=env, capture_output=True, text=True, timeout=30)
+                        if (result.returncode, result.stdout, result.stderr) != (0, expected, ""):
+                            raise AssertionError((name, shared, prepared, opened,
+                                result.returncode, result.stdout, result.stderr))
+                        observations += 1
         for name, source, expected in PROFILE_CASES:
             path = Path(directory) / (name + ".metta")
             path.write_text(source)

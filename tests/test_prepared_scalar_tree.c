@@ -21,7 +21,7 @@ static CettaPreparedPureProgram *compile(Space *space, Arena *source, const char
         atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
         NULL, NULL, NULL, NULL, NULL, true, true,
         (CettaMatchDecisionSemanticIdentity){
-            .compiler_identity = cetta_match_decision_compiler_identity()});
+            .compiler_identity = cetta_match_decision_compiler_identity()}, NULL);
 }
 
 int main(void) {

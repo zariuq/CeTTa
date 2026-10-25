@@ -5339,12 +5339,13 @@ $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ): tests/test_native_conditional_context.c 
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
 
 $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN): $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ) $(filter-out src/eval.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize $(LDFLAGS)
 
 .PHONY: test-native-conditional-context
 test-all: test-native-conditional-context
 test-native-conditional-context: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN))
+	@CETTA_PREPARED_PURE_REFERENCE=1 $(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)) --worker-availability
 
 .PHONY: test-oem-native-returns
 test-all: test-oem-native-returns
@@ -24850,10 +24851,10 @@ test-petta-prepared-activation-call: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
 	stats=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/search_machine_prepared_activation_call.metta 2>&1 >/dev/null); \
-	commits=$$(printf '%s\n' "$$stats" | awk '$$1 == "runtime-counter" && ($$2 == "prepared-pure-call-commit" || $$2 == "open-equation-choice") {sum += $$3} END {print sum+0}'); \
+	commits=$$(printf '%s\n' "$$stats" | awk '$$1 == "runtime-counter" && ($$2 == "prepared-pure-call-commit" || $$2 == "open-equation-choice" || $$2 == "petta-answer-producer-choice") {sum += $$3} END {print sum+0}'); \
 	test "$${commits:-0}" -ge 4; \
 	reference=$$(./$(BIN) --fuel 1000000 --emit-runtime-stats --lang petta tests/petta/search_machine_prepared_activation_call.metta 2>&1 >/dev/null); \
-	commits=$$(printf '%s\n' "$$reference" | awk '$$1 == "runtime-counter" && ($$2 == "prepared-pure-call-commit" || $$2 == "open-equation-choice") {sum += $$3} END {print sum+0}'); \
+	commits=$$(printf '%s\n' "$$reference" | awk '$$1 == "runtime-counter" && ($$2 == "prepared-pure-call-commit" || $$2 == "open-equation-choice" || $$2 == "petta-answer-producer-choice") {sum += $$3} END {print sum+0}'); \
 	test "$${commits:-missing}" = 0; \
 	echo 'PASS: nested activation calls reach a compiled executor, while finite fuel retains exact accounting'
 endif

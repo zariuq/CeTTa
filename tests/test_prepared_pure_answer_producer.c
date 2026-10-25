@@ -411,7 +411,7 @@ static void test_entry_interpretation_precedes_equations(void) {
                     cetta_prepared_pure_constructs_expression_always,
                     NULL, NULL, entry_view,
                     NULL, NULL, ready != 0u, true,
-                    (CettaMatchDecisionSemanticIdentity){0});
+                    (CettaMatchDecisionSemanticIdentity){0}, NULL);
             assert(program);
             Atom *answer = NULL;
             assert(cetta_prepared_pure_program_execute_closed(
@@ -445,7 +445,7 @@ static void test_entry_interpretation_precedes_equations(void) {
                 cetta_prepared_pure_constructs_expression_always,
                 NULL, NULL, entry_view,
                 NULL, NULL, true, true,
-                (CettaMatchDecisionSemanticIdentity){0});
+                (CettaMatchDecisionSemanticIdentity){0}, NULL);
         assert(program);
         Atom *answer = NULL;
         assert(cetta_prepared_pure_program_execute_closed(
@@ -477,7 +477,7 @@ static void test_single_result_projection(void) {
             cetta_prepared_pure_constructs_expression_always,
             NULL, NULL, entry_view,
             NULL, NULL, true, true,
-            (CettaMatchDecisionSemanticIdentity){0});
+            (CettaMatchDecisionSemanticIdentity){0}, NULL);
     assert(program);
     Atom *answer = NULL;
     assert(cetta_prepared_pure_program_execute_closed(
@@ -516,7 +516,7 @@ static void test_single_result_projection(void) {
         CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
         cetta_prepared_pure_constructs_expression_always,
         NULL, NULL, entry_view, NULL, NULL, true, true,
-        (CettaMatchDecisionSemanticIdentity){0});
+        (CettaMatchDecisionSemanticIdentity){0}, NULL);
     assert(!program);
     destroy(&fixture);
 }
@@ -1348,7 +1348,7 @@ static void test_context_reconstruction_observes_interrupt(void) {
                 (CettaMatchDecisionSemanticIdentity){
                     .compiler_identity =
                         cetta_match_decision_compiler_identity(),
-                });
+                }, NULL);
         assert(program);
         context_stop_on_out = interrupted;
         context_stop_requested = false;
