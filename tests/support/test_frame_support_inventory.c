@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "match.h"
+#include "binding/slot_store_internal.h"
 #include "variant_shape.h"
 #include "tests/test_runtime_stats_stubs.h"
 
@@ -55,6 +56,48 @@ static Atom *spine(Arena *arena, Atom *tag, Atom *leaf, unsigned depth) {
 }
 
 static unsigned checks;
+
+static void frame_chronology_preserves_implicit_slots(CettaFrameIdentity epoch) {
+    const uint32_t widths[] = {2u, 65u, 257u};
+    for (unsigned i = 0u; i < sizeof widths / sizeof widths[0]; i++) {
+        Bindings source, retained, merged, captured;
+        bindings_init(&source); bindings_init(&retained);
+        bindings_init(&merged); bindings_init(&captured);
+        VarId first = var_id_from_base(1u);
+        assert(bindings_frame_index_register(&source, &first, 1u, epoch));
+        assert(bindings_frame_index_grow_slots(&source, epoch, widths[i]));
+        BindingsFrameIndexEntry *frame = bindings_frame_index_find_frame(source.frame_index, epoch);
+        uint32_t written = widths[i] > 5u ? 5u : 1u;
+        assert(bindings_frame_index_replace_slot_version(frame, written, 91u));
+        source.frame_index->write_clock = 91u;
+        assert(bindings_clone(&captured, &source));
+        assert(bindings_retain_frame_state(&retained, &source));
+        assert(bindings_try_merge(&merged, &source));
+        const Bindings *images[] = {&source, &retained, &merged, &captured};
+        for (unsigned image = 0u; image < 4u; image++) {
+            BindingsFrameStateIterator iterator = {.bindings = images[image]};
+            BindingsFrameStateView view;
+            assert(bindings_frame_state_next(&iterator, &view));
+            assert(view.slot_count == widths[i] && view.write_clock == 91u);
+            for (uint32_t slot = 0u; slot < widths[i]; slot++) {
+                BindingsFrameSlotStateView state;
+                assert(bindings_frame_state_read_slot(&view, slot, &state));
+                assert(!state.value.skeleton && state.write_version == (slot == written ? 91u : 0u));
+                checks++;
+            }
+        }
+        assert(bindings_frame_index_detach(&source));
+        frame = bindings_frame_index_find_frame(source.frame_index, epoch);
+        assert(bindings_frame_index_replace_slot_version(frame, written, 92u));
+        const BindingsFrameIndexEntry *old = bindings_frame_index_find_frame_const(captured.frame_index, epoch);
+        assert(bindings_frame_slot_version(old, written) == 91u);
+        if (widths[i] > BINDINGS_DIRECT_FRAME_SLOT_CAP)
+            assert(frame->cap < frame->slot_len && old->cap < old->slot_len);
+        bindings_free(&captured); bindings_free(&merged);
+        bindings_free(&retained); bindings_free(&source);
+    }
+}
+
 static void compare(BindingValue value) {
     VarId actual[128], expected[128];
     size_t length = 0u;
@@ -120,6 +163,7 @@ int main(int argc, char **argv) {
         assert(measurements != 0u);
     } else {
         assert(argc == 1);
+        frame_chronology_preserves_implicit_slots(first);
         Atom *children[128];
         for (unsigned i = 0u; i < 128u; i++) {
             VarId id = var_id_from_base(1000u + i % 32u);

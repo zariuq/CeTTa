@@ -17857,6 +17857,7 @@ static bool hyperpose_external_unsafe_head(Atom *head) {
            symbol_name_equals(head, "fs:close") ||
            symbol_name_equals(head, "io:submit") ||
            symbol_name_equals(head, "io:poll") ||
+           symbol_name_equals(head, "io:http-read") ||
            symbol_name_equals(head, "io:wait") ||
            symbol_name_equals(head, "io:wait-ready") ||
            symbol_name_equals(head, "io:cancel") ||
@@ -17881,6 +17882,7 @@ static bool hyperpose_internal_unsafe_head(SymbolId head_id, Atom *head) {
         head_id == g_builtin_syms.lib_io_submit ||
         head_id == g_builtin_syms.lib_io_poll ||
         head_id == g_builtin_syms.lib_io_status ||
+        head_id == g_builtin_syms.lib_io_http_read ||
         head_id == g_builtin_syms.lib_io_wait ||
         head_id == g_builtin_syms.lib_io_wait_ready ||
         head_id == g_builtin_syms.lib_io_cancel ||
@@ -28651,9 +28653,10 @@ static bool sequence_native_call(
         }
     }
     /* A suspended answer holds while its delayed goals hold.  HE and PeTTa
-     * deliver it here with those goals to the delay service.  Prime's
-     * ordinary delivery cannot carry them, so there, as for every atom-only
-     * client, eval_call_outcome_atom refuses it as a host failure. */
+     * deliver it here, and the continuation's OutcomeSet retains those
+     * goals for the delay service.  Prime's ordinary delivery cannot carry
+     * them, so there, as for every atom-only client, eval_call_outcome_atom
+     * refuses it as a host failure. */
     Atom *value = outcome.kind == CETTA_CALL_SUSPENDED &&
             eval_current_language_id() != CETTA_LANGUAGE_PRIME
         ? outcome.term : eval_call_outcome_atom(a, outcome);

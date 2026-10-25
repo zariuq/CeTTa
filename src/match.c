@@ -2469,14 +2469,9 @@ bool bindings_retain_frame_state(Bindings *dst, const Bindings *src) {
             if (!bindings_frame_index_find_slot(target,
                     bindings_frame_slot_source_id(source, slot), &target_slot))
                 return false;
-            /* A slot past the backing prefix has version zero; only a
-             * different version needs the target's prefix to grow. */
-            uint64_t version = bindings_frame_slot_version(source, slot);
-            if (bindings_frame_slot_version(target, target_slot) == version)
-                continue;
-            if (!bindings_frame_index_entry_reserve_slots(target, target_slot + 1u))
+            if (!bindings_frame_index_replace_slot_version(
+                    target, target_slot, bindings_frame_slot_version(source, slot)))
                 return false;
-            target->write_version[target_slot] = version;
         }
     }
     return true;
@@ -10150,11 +10145,9 @@ static bool bindings_projection_copy_live_frame_values(
         /* A slot past the backing prefix reads as unbound with version zero;
          * only a different version needs that prefix to grow. */
         uint64_t source_version = bindings_frame_slot_version(source, source_slot);
-        if (bindings_frame_slot_version(target, target_slot) != source_version) {
-            if (!bindings_frame_index_entry_reserve_slots(target, target_slot + 1u))
-                return false;
-            target->write_version[target_slot] = source_version;
-        }
+        if (!bindings_frame_index_replace_slot_version(
+                target, target_slot, source_version))
+            return false;
         BindingValue value = bindings_frame_slot_value(source, source_slot);
         if (!value.skeleton)
             continue;

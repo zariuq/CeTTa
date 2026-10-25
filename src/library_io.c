@@ -90,6 +90,13 @@ typedef struct CettaIoRequest {
     bool response_too_large;
     bool response_budget_exceeded;
     bool response_has_nul;
+    /* Evaluator-thread inspection state for the opt-in text view. Raw bytes
+     * remain owned by the worker until ordinary completion is consumed. */
+    size_t response_inspected, response_utf8_prefix;
+    uint32_t response_utf8_value, response_utf8_min;
+    unsigned response_utf8_remaining;
+    bool response_utf8_invalid;
+    bool response_credential_reflected;
     bool ready;
     struct CettaIoRuntime *runtime;
 #if CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
@@ -166,6 +173,8 @@ static Atom *io_public_head(Arena *arena, Atom *head) {
         return atom_symbol(arena, "io:poll");
     if (id == g_builtin_syms.lib_io_status)
         return atom_symbol(arena, "io:status");
+    if (id == g_builtin_syms.lib_io_http_read)
+        return atom_symbol(arena, "io:http-read");
     if (id == g_builtin_syms.lib_io_wait)
         return atom_symbol(arena, "io:wait");
     if (id == g_builtin_syms.lib_io_wait_ready)
@@ -531,6 +540,35 @@ static Atom *io_http_source(Arena *arena, const CettaIoRequest *request) {
                       atom_int(arena, (int64_t)request->id));
 }
 
+static bool io_bytes_contain(const unsigned char *bytes, size_t size,
+                             const char *pattern) {
+    size_t pattern_size = pattern ? strlen(pattern) : 0u;
+    if (!pattern_size || pattern_size > size || !bytes) return false;
+    const unsigned char *cursor = bytes;
+    size_t remaining = size;
+    while (remaining >= pattern_size) {
+        const unsigned char *candidate = memchr(
+            cursor, (unsigned char)pattern[0], remaining - pattern_size + 1u);
+        if (!candidate) return false;
+        if (!memcmp(candidate, pattern, pattern_size)) return true;
+        size_t consumed = (size_t)(candidate - cursor) + 1u;
+        cursor += consumed;
+        remaining -= consumed;
+    }
+    return false;
+}
+
+static bool io_response_has_credential(const CettaIoRequest *request,
+                                       const unsigned char *bytes,
+                                       size_t size) {
+    if (request->response_credential_reflected) return true;
+    for (CettaIoHeader *header = request->headers; header; header = header->next)
+        if (header->credential_secret &&
+            io_bytes_contain(bytes, size, header->credential_secret))
+            return true;
+    return false;
+}
+
 #if CETTA_BUILD_HTTP_PROVIDER_EMSCRIPTEN
 static bool io_response_append(CettaIoRequest *request,
                                const char *data, size_t total) {
@@ -782,6 +820,260 @@ static void io_http_pump(CettaIoRuntime *runtime, uint64_t selected_id) {
 }
 
 #endif
+
+#if CETTA_BUILD_HTTP_PROVIDER_CURL
+typedef struct {
+    size_t response_size;
+    bool terminal, complete;
+} CettaIoHttpSnapshot;
+
+static CettaHttpReadStatus io_http_request_read(CettaIoRuntime *runtime,
+        CettaIoRequest *request, size_t offset, size_t max_bytes,
+        CettaHttpRead *out) {
+    if (!request->ready)
+        return cetta_http_worker_read(runtime->worker, request->id, offset,
+                                      max_bytes, out);
+    if (!out || max_bytes > CETTA_HTTP_READ_MAX_BYTES)
+        return HTTP_READ_INVALID;
+    memset(out, 0, sizeof(*out));
+    if (offset > request->response_len) return HTTP_READ_OFFSET;
+    unsigned char *copy = malloc(max_bytes + 1u);
+    if (!copy) return HTTP_READ_NOMEM;
+    size_t size = request->response_len - offset;
+    if (size > max_bytes) size = max_bytes;
+    if (size) memcpy(copy, request->response + offset, size);
+    copy[size] = 0;
+    *out = (CettaHttpRead){.id=request->id, .offset=offset, .bytes=copy,
+        .bytes_size=size, .response_size=request->response_len,
+        .terminal=true,
+        .complete=request->transport_code==0 && !request->response_too_large &&
+                  !request->response_budget_exceeded};
+    return HTTP_READ_OK;
+}
+
+static size_t io_http_credential_guard(const CettaIoRequest *request) {
+    size_t longest = 0u;
+    for (CettaIoHeader *header = request->headers; header; header = header->next)
+        if (header->credential_secret) {
+            size_t size = strlen(header->credential_secret);
+            if (size > longest) longest = size;
+        }
+    return longest ? longest - 1u : 0u;
+}
+
+static void io_http_inspect_utf8(CettaIoRequest *request, unsigned char byte,
+                                 size_t position) {
+    if (request->response_utf8_invalid) return;
+    if (!request->response_utf8_remaining) {
+        if (byte <= 0x7fu) {
+            if (!byte) request->response_has_nul = true;
+            request->response_utf8_prefix = position + 1u;
+        } else if (byte >= 0xc2u && byte <= 0xdfu) {
+            request->response_utf8_value = byte & 0x1fu;
+            request->response_utf8_min = 0x80u;
+            request->response_utf8_remaining = 1u;
+        } else if (byte >= 0xe0u && byte <= 0xefu) {
+            request->response_utf8_value = byte & 0x0fu;
+            request->response_utf8_min = 0x800u;
+            request->response_utf8_remaining = 2u;
+        } else if (byte >= 0xf0u && byte <= 0xf4u) {
+            request->response_utf8_value = byte & 0x07u;
+            request->response_utf8_min = 0x10000u;
+            request->response_utf8_remaining = 3u;
+        } else request->response_utf8_invalid = true;
+        return;
+    }
+    if (byte < 0x80u || byte > 0xbfu) {
+        request->response_utf8_invalid = true;
+        return;
+    }
+    request->response_utf8_value =
+        (request->response_utf8_value << 6u) | (uint32_t)(byte & 0x3fu);
+    if (--request->response_utf8_remaining) return;
+    uint32_t value = request->response_utf8_value;
+    if (value < request->response_utf8_min || value > 0x10ffffu ||
+        (value >= 0xd800u && value <= 0xdfffu)) {
+        request->response_utf8_invalid = true;
+        return;
+    }
+    request->response_utf8_prefix = position + 1u;
+}
+
+/* Inspect each raw response byte once on the evaluator thread. Credential
+ * windows overlap by the longest-secret length minus one, so a match divided
+ * across worker snapshots is still found before any matching byte is exposed. */
+static bool io_http_inspect(CettaIoRuntime *runtime, CettaIoRequest *request,
+                            CettaIoHttpSnapshot *snapshot,
+                            CettaHttpReadStatus *failure) {
+    CettaHttpRead metadata = {0};
+    *failure = io_http_request_read(runtime, request, 0u, 0u, &metadata);
+    if (*failure != HTTP_READ_OK) return false;
+    *snapshot = (CettaIoHttpSnapshot){metadata.response_size,
+                                     metadata.terminal, metadata.complete};
+    cetta_http_read_free(&metadata);
+    if (request->response_inspected > snapshot->response_size) {
+        *failure = HTTP_READ_OFFSET;
+        return false;
+    }
+    size_t guard = io_http_credential_guard(request);
+    while (request->response_inspected < snapshot->response_size) {
+        size_t cursor = request->response_inspected;
+        size_t overlap = cursor < guard ? cursor : guard;
+        size_t start = cursor - overlap;
+        size_t capacity = CETTA_HTTP_READ_MAX_BYTES - overlap;
+        size_t remaining = snapshot->response_size - cursor;
+        size_t fresh = remaining < capacity ? remaining : capacity;
+        size_t end = cursor + fresh;
+        CettaHttpRead part = {0};
+        *failure = io_http_request_read(runtime, request, start, end - start,
+                                        &part);
+        if (*failure != HTTP_READ_OK || part.bytes_size != end - start) {
+            cetta_http_read_free(&part);
+            if (*failure == HTTP_READ_OK) *failure = HTTP_READ_OFFSET;
+            return false;
+        }
+        if (io_response_has_credential(request, part.bytes, part.bytes_size))
+            request->response_credential_reflected = true;
+        for (size_t index = cursor; index < end; ++index)
+            io_http_inspect_utf8(request, part.bytes[index - start], index);
+        request->response_inspected = end;
+        cetta_http_read_free(&part);
+    }
+    return true;
+}
+
+static Atom *io_http_text_error(Arena *arena, CettaIoRequest *request,
+                                const char *reason) {
+    return atom_error(arena, io_http_source(arena, request),
+        atom_expr2(arena, atom_symbol(arena, "http:error"),
+                   atom_symbol(arena, reason)));
+}
+
+/* Credential withholding is counted in raw bytes and can land inside an
+ * otherwise valid scalar. Move that exposure boundary back to the scalar's
+ * lead byte; at most three preceding bytes need inspection. */
+static bool io_http_round_utf8_boundary(CettaIoRuntime *runtime,
+        CettaIoRequest *request, size_t utf8_prefix, size_t *safe,
+        CettaHttpReadStatus *failure) {
+    if (!*safe || *safe >= utf8_prefix) return true;
+    size_t start = *safe > 3u ? *safe - 3u : 0u;
+    CettaHttpRead part = {0};
+    *failure = io_http_request_read(runtime, request, start,
+                                    *safe - start + 1u, &part);
+    if (*failure != HTTP_READ_OK || part.bytes_size != *safe - start + 1u) {
+        cetta_http_read_free(&part);
+        if (*failure == HTTP_READ_OK) *failure = HTTP_READ_OFFSET;
+        return false;
+    }
+    while (*safe > start) {
+        unsigned char byte = part.bytes[*safe - start];
+        if (byte < 0x80u || byte > 0xbfu) break;
+        --*safe;
+    }
+    cetta_http_read_free(&part);
+    return true;
+}
+#endif
+
+static Atom *io_http_read(CettaIoRuntime *runtime, Arena *arena,
+                          Atom *head, Atom **args, uint32_t nargs) {
+    int64_t signed_id, signed_offset, signed_max;
+    if (nargs != 3u ||
+        !io_nonnegative_int_arg(args[0], &signed_id) || !signed_id ||
+        !io_nonnegative_int_arg(args[1], &signed_offset) ||
+        !io_nonnegative_int_arg(args[2], &signed_max) || !signed_max ||
+        (uint64_t)signed_offset > SIZE_MAX ||
+        (uint64_t)signed_max > CETTA_HTTP_READ_MAX_BYTES)
+        return io_error(arena, head, args, nargs,
+            "expected (io:http-read positive-id nonnegative-byte-offset positive-max-bytes<=65536)");
+    CettaIoRequest *request = io_request_find(runtime, (uint64_t)signed_id);
+    if (!request)
+        return atom_expr2(arena, atom_symbol(arena, "io:unknown"),
+                          atom_int(arena, signed_id));
+    if (request->provider != IO_HTTP)
+        return io_error(arena, head, args, nargs,
+                        "io:http-read requires an HTTP request handle");
+#if CETTA_BUILD_HTTP_PROVIDER_CURL
+    if (!runtime || !runtime->worker)
+        return io_error(arena, head, args, nargs,
+                        "native HTTP incremental reads are unavailable");
+    CettaIoHttpSnapshot snapshot = {0};
+    CettaHttpReadStatus failure = HTTP_READ_OK;
+    if (!io_http_inspect(runtime, request, &snapshot, &failure)) {
+        if (failure == HTTP_READ_UNKNOWN)
+            return atom_expr2(arena, atom_symbol(arena, "io:unknown"),
+                              atom_int(arena, signed_id));
+        return io_error(arena, head, args, nargs,
+                        failure == HTTP_READ_NOMEM ? "out of memory reading HTTP response" :
+                        "HTTP response snapshot is unavailable");
+    }
+    if (request->response_credential_reflected)
+        return io_http_text_error(arena, request, "credential-in-response");
+    if (request->response_has_nul)
+        return io_http_text_error(arena, request, "non-text-response");
+    if (request->response_utf8_invalid ||
+        (snapshot.complete && request->response_utf8_remaining))
+        return io_http_text_error(arena, request, "non-utf8-response");
+
+    size_t guard = io_http_credential_guard(request);
+    size_t raw_safe = snapshot.response_size;
+    if (!snapshot.complete && guard)
+        raw_safe = raw_safe > guard ? raw_safe - guard : 0u;
+    size_t safe = request->response_utf8_prefix < raw_safe
+        ? request->response_utf8_prefix : raw_safe;
+    if (!io_http_round_utf8_boundary(runtime, request,
+            request->response_utf8_prefix, &safe, &failure))
+        return io_error(arena, head, args, nargs,
+                        failure == HTTP_READ_NOMEM ? "out of memory reading HTTP response" :
+                        "HTTP response snapshot is unavailable");
+    size_t offset = (size_t)signed_offset;
+    size_t maximum = (size_t)signed_max;
+    if (offset > safe)
+        return io_error(arena, head, args, nargs,
+                        "HTTP byte offset exceeds the currently readable prefix");
+    size_t available = safe - offset;
+    bool caller_limited = available > maximum;
+    if (available > maximum) available = maximum;
+    CettaHttpRead part = {0};
+    failure = io_http_request_read(runtime, request, offset, available, &part);
+    if (failure != HTTP_READ_OK || part.bytes_size != available) {
+        cetta_http_read_free(&part);
+        return io_error(arena, head, args, nargs,
+                        "HTTP response changed while copying a readable prefix");
+    }
+    if (available && part.bytes[0] >= 0x80u && part.bytes[0] <= 0xbfu) {
+        cetta_http_read_free(&part);
+        return io_error(arena, head, args, nargs,
+                        "HTTP byte offset is not a UTF-8 boundary");
+    }
+    size_t emit = 0u;
+    while (emit < available) {
+        unsigned char byte = part.bytes[emit];
+        size_t width = byte <= 0x7fu ? 1u : byte <= 0xdfu ? 2u :
+                       byte <= 0xefu ? 3u : 4u;
+        if (width > available - emit) break;
+        emit += width;
+    }
+    if (available && !emit && caller_limited) {
+        cetta_http_read_free(&part);
+        return io_error(arena, head, args, nargs,
+                        "HTTP max-bytes cannot contain the next UTF-8 scalar");
+    }
+    const char *phase = !snapshot.terminal ? "waiting" :
+                        snapshot.complete ? "complete" : "failed";
+    Atom *items[] = {atom_symbol(arena, "http:chunk"),
+        atom_int(arena, (int64_t)(offset + emit)),
+        atom_string_n(arena, (const char *)part.bytes, emit),
+        atom_symbol(arena, phase)};
+    Atom *result = atom_expr(arena, items, 4u);
+    cetta_http_read_free(&part);
+    return result;
+#else
+    (void)request;
+    return io_error(arena, head, args, nargs,
+                    "incremental HTTP reads require the native provider");
+#endif
+}
 
 static uint64_t io_now_ms(void) {
     struct timespec now; clock_gettime(CLOCK_MONOTONIC, &now);
@@ -1132,13 +1424,11 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
 }
 
 static Atom *io_http_result(Arena *arena, CettaIoRequest *request) {
-    for (CettaIoHeader *h = request->headers; h; h = h->next) {
-        if (h->credential_secret && request->response &&
-            strstr(request->response, h->credential_secret))
-            return atom_error(arena, io_http_source(arena, request),
-                atom_expr2(arena, atom_symbol(arena, "http:error"),
-                           atom_symbol(arena, "credential-in-response")));
-    }
+    if (io_response_has_credential(request,
+            (const unsigned char *)request->response, request->response_len))
+        return atom_error(arena, io_http_source(arena, request),
+            atom_expr2(arena, atom_symbol(arena, "http:error"),
+                       atom_symbol(arena, "credential-in-response")));
     if (request->response_budget_exceeded)
         return atom_error(arena, io_http_source(arena, request),
             atom_expr2(arena, atom_symbol(arena, "http:error"),
@@ -1425,6 +1715,8 @@ Atom *cetta_io_dispatch(CettaIoRuntime *runtime, Arena *arena,
         return io_poll(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_status)
         return io_status(runtime, arena, head, args, nargs);
+    if (id == g_builtin_syms.lib_io_http_read)
+        return io_http_read(runtime, arena, head, args, nargs);
     if (id == g_builtin_syms.lib_io_wait)
         return io_wait(runtime, arena, head, args, nargs, false);
     if (id == g_builtin_syms.lib_io_wait_ready)

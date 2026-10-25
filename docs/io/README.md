@@ -66,8 +66,9 @@ utilities; `format-time` takes a format, epoch seconds and `local` or `utc`.
 
 With `ENABLE_HTTP=1`, native requests run on one curl owner thread per I/O
 runtime. The evaluator can sleep or compute without polling to drive transfers.
-Only C bytes cross the thread boundary; `io:poll` and `io:wait` create arena atoms
-on the evaluator thread. The browser backend continues to use browser callbacks.
+Only C bytes cross the thread boundary; `io:poll`, `io:wait`, and the opt-in
+`io:http-read` create arena atoms on the evaluator thread. The browser backend
+continues to use browser callbacks.
 The native provider requires libcurl 7.85 or newer with thread-safe global
 initialization and asynchronous DNS; otherwise HTTP capability is unavailable.
 
@@ -88,6 +89,42 @@ runtime session. The unselected operations retain their original behavior.
 without consuming the result. `phase` is `waiting` or `ready`; body byte
 activity is transport metadata and never certifies an application answer.
 Consumed handles answer `io:unknown`. Progress inspection is native-only.
+
+Native callers that explicitly want incremental model output may read a bounded
+response-text snapshot while its owned HTTP handle is still pending:
+
+```metta
+(io:http-read handle byte-offset max-bytes)
+; => (http:chunk next-byte-offset "text" waiting|complete|failed)
+```
+
+The call is non-consuming, permits 1 through 65536 bytes, performs no network
+send or retry, and leaves the ordinary full completion available to `io:poll`
+or `io:wait`. Offsets and limits count raw response bytes. Returned strings
+contain only complete, valid UTF-8 scalars and no NUL; malformed text is
+refused, while an incomplete trailing scalar is withheld. If the caller's limit
+cannot contain the next scalar, the call asks for a larger limit rather than
+splitting it. Unknown/consumed
+handles return `io:unknown`; non-HTTP handles and non-native HTTP providers are
+refused.
+
+Credential aliases receive additional conservative screening. Before releasing
+any text, the evaluator-side adapter cumulatively scans the raw response for
+every host-resolved credential. While more bytes may arrive, it withholds a
+suffix of `longest-credential-byte-length - 1`, rounded back to a UTF-8
+boundary. Thus a reflected credential that is divided across network writes or
+read calls is detected before any byte of that credential is released. A clean,
+complete transport may release the screened suffix; failed or locally truncated
+transports retain the ambiguous suffix permanently. Exact credential reflection
+returns `credential-in-response` and remains rejected by final-result
+validation. This policy can delay short credentialed streams or yield an empty
+`waiting`/`failed` chunk.
+
+Chunk status describes only the transport snapshot; `complete` does not mean a
+cursor has read every byte, and `waiting`, `complete`, or `failed` grants no
+permission to parse, evaluate, execute, or act on provisional text. Consumers
+must keep the returned byte offset and use the existing terminal result path
+for the full response and its validation.
 
 `io:try-submit request`, `io:try-status handle` and
 `io:try-wait handle milliseconds` provide explicit error boundaries in each

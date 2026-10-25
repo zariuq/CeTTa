@@ -297,7 +297,7 @@ static bool scoped_query_row(const Bindings *bindings, void *context) {
     BindingValue value = bindings_lookup_value_id((Bindings *)bindings,
                                                   witness->variable);
     assert(value.skeleton && value.skeleton->kind == ATOM_SYMBOL);
-    assert(value.skeleton->sym_id == witness->expected);
+    assert(atom_symbol_current_id(value.skeleton) == witness->expected);
     witness->count++;
     return true;
 }

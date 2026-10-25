@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: a1f26031a7f4bd28091bdb0c61cae874d1ff9f63d797040d9320ab8d1c13754d
+ * Source SHA-256: 3cfe21fd67f6074111d76347fd8c5a1f2a30e7e0c812b281c9aa565cc5ee44da
  */
 
 #include <stdbool.h>
@@ -234,6 +234,7 @@ static inline bool cetta_gslt_progress_inline(CettaGsltProgressAdvice progress) 
     X(lib_fs_close, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_io_submit, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_io_poll, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_io_http_read, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(lib_io_cancel, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_mork_space_new, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_mork_space_include, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \

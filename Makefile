@@ -45903,12 +45903,12 @@ test-list-numeric-sequences: $(BIN)
 
 test-all: test-list-numeric-sequences
 
-runtime/test_postings-$(BUILD_OBJ_TAG): tests/support/test_postings.c src/library_postings.c src/library_postings.h src/generated/postings_descriptors.generated.h src/tensor.c src/tensor.h src/native_handle.c src/atom.c src/binding/frame_identity.c src/name_key.c $(SYMBOL_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
+runtime/test_postings-$(BUILD_OBJ_TAG): tests/support/test_postings.c src/library_postings.c src/library_postings.h src/generated/postings_descriptors.generated.h src/tensor.c src/tensor.h src/native_handle.c src/atom.c src/binding/frame_identity.c src/name_key.c $(SYMBOL_STANDALONE_SRC) $(SHARED_TRANSITION_STANDALONE_SRC) $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_NATIVE_HANDLE_TEST_HOOKS \
-		-Wl,--wrap=malloc,--wrap=calloc -o $@ tests/support/test_postings.c \
+		-Wl,--wrap=malloc,--wrap=calloc,--wrap=cetta_shared_transition_guard_acquire,--wrap=cetta_shared_transition_guard_release -o $@ tests/support/test_postings.c \
 		src/library_postings.c src/tensor.c src/native_handle.c src/atom.c src/binding/frame_identity.c src/name_key.c \
-		$(SYMBOL_STANDALONE_SRC) $(LDFLAGS)
+		$(SYMBOL_STANDALONE_SRC) $(SHARED_TRANSITION_STANDALONE_SRC) $(LDFLAGS)
 
 .PHONY: test-postings
 test-postings: $(BIN) runtime/test_postings-$(BUILD_OBJ_TAG)
@@ -47464,7 +47464,7 @@ test-io-json-bridge-body: $(BIN)
 test-io-json-bridge:
 	@$(MAKE) --no-print-directory \
 		BUILD=core CETTA_TEST_ISOLATED=1 \
-		ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 \
+		ENABLE_JSON_GSLT=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_SIWC=0 \
 		test-io-json-bridge-body
 
 JSON_PROJECTION_REFINEMENT_LEAN_V1 ?= \
@@ -47997,8 +47997,8 @@ test-json-gslt: \
 .PHONY: test-io
 test-io: test-io-json-bridge
 	@$(MAKE) -s BUILD=core ENABLE_HTTP=1 test-io-syntax test-io-runtime
-	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-no-http test-io-rho-bridge
-	@$(MAKE) -s BUILD=core ENABLE_HTTP=0 test-io-browser
+	@$(MAKE) -s BUILD=core CETTA_TEST_ISOLATED=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_SIWC=0 test-io-no-http test-io-rho-bridge
+	@$(MAKE) -s BUILD=core CETTA_TEST_ISOLATED=1 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_SIWC=0 test-io-browser
 
 .PHONY: test-petta-imported-host-bridges
 ifeq ($(LIB_PROLOG_ENABLED),1)

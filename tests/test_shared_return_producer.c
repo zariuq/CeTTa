@@ -844,6 +844,10 @@ static void test_native_evaluator_boundary(void) {
             eval_outcome_init(&outcome);
             eval_top_with_registry_outcome(&space, &arena, &arena, &registry,
                                           source, &outcome, NULL, NULL);
+            if (mode == 6u && outcome.completion != CETTA_EVAL_COMPLETE)
+                fprintf(stderr, "suspended boundary dialect=%u completion=%u rows=%llu\n",
+                        dialect, (unsigned)outcome.completion,
+                        (unsigned long long)outcome.results.len);
             if (native_calls != 1u)
                 fprintf(stderr, "native boundary dialect=%u mode=%u calls=%u\n",
                         dialect, mode, native_calls);
@@ -885,6 +889,10 @@ static void test_native_evaluator_boundary(void) {
             } else if (mode == 7u) {
                 assert(outcome.completion == CETTA_EVAL_INCOMPLETE_CAPACITY);
             } else {
+                if (outcome.completion != CETTA_EVAL_COMPLETE)
+                    fprintf(stderr, "native boundary dialect=%u mode=%u completion=%u rows=%llu\n",
+                            dialect, mode, (unsigned)outcome.completion,
+                            (unsigned long long)outcome.results.len);
                 assert(outcome.completion == CETTA_EVAL_COMPLETE);
                 assert(outcome.results.len == 1u);
                 assert(atom_is_error(outcome.results.items[0]));

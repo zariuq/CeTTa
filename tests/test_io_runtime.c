@@ -243,19 +243,27 @@ static void test_process_owner(CettaIoRuntime *runtime, Arena *arena) {
     unlink(output); rmdir(directory);
 }
 
-static Atom *http_request_full(Arena *arena, const char *method,
-                               const char *url, const char *body,
-                               int64_t timeout_ms, int64_t max_bytes) {
+static Atom *http_request_with_headers(Arena *arena, const char *method,
+                                       const char *url, Atom *headers,
+                                       const char *body, int64_t timeout_ms,
+                                       int64_t max_bytes) {
     Atom *items[7] = {
         atom_symbol(arena, "http:request"),
         atom_string(arena, method),
         atom_string(arena, url),
-        atom_expr(arena, NULL, 0u),
+        headers,
         atom_string(arena, body),
         atom_int(arena, timeout_ms),
         atom_int(arena, max_bytes),
     };
     return atom_expr(arena, items, 7u);
+}
+
+static Atom *http_request_full(Arena *arena, const char *method,
+                               const char *url, const char *body,
+                               int64_t timeout_ms, int64_t max_bytes) {
+    return http_request_with_headers(arena, method, url,
+        atom_expr(arena, NULL, 0u), body, timeout_ms, max_bytes);
 }
 
 static Atom *http_request(Arena *arena, const char *url,
@@ -311,6 +319,47 @@ static bool response_too_large(Atom *atom, int64_t bound) {
            reason->expr.elems[2]->ground.ival == bound;
 }
 
+static bool http_error_kind(Atom *atom, const char *kind) {
+    if (!atom_is_error(atom)) return false;
+    Atom *reason = atom->expr.elems[2];
+    return reason && reason->kind == ATOM_EXPR && reason->expr.len >= 2u &&
+           atom_is_symbol(reason->expr.elems[0], "http:error") &&
+           atom_is_symbol(reason->expr.elems[1], kind);
+}
+
+static bool io_unknown(Atom *atom, int64_t id) {
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len == 2u &&
+           atom_is_symbol(atom->expr.elems[0], "io:unknown") &&
+           atom->expr.elems[1]->kind == ATOM_GROUNDED &&
+           atom->expr.elems[1]->ground.gkind == GV_INT &&
+           atom->expr.elems[1]->ground.ival == id;
+}
+
+static bool http_chunk_parts(Atom *atom, int64_t *next_out,
+                             const char **text_out, size_t *size_out,
+                             const char **phase_out) {
+    if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 4u ||
+        !atom_is_symbol(atom->expr.elems[0], "http:chunk") ||
+        atom->expr.elems[1]->kind != ATOM_GROUNDED ||
+        atom->expr.elems[1]->ground.gkind != GV_INT ||
+        atom->expr.elems[2]->kind != ATOM_GROUNDED ||
+        atom->expr.elems[2]->ground.gkind != GV_STRING ||
+        atom->expr.elems[3]->kind != ATOM_SYMBOL)
+        return false;
+    *next_out = atom->expr.elems[1]->ground.ival;
+    *text_out = atom->expr.elems[2]->ground.sval;
+    *size_out = atom->expr.elems[2]->ground.slen;
+    *phase_out = atom_name_cstr(atom->expr.elems[3]);
+    return true;
+}
+
+static Atom *http_read(CettaIoRuntime *runtime, Arena *arena, int64_t id,
+                       int64_t offset, int64_t maximum) {
+    Atom *args[] = {atom_int(arena, id), atom_int(arena, offset),
+                    atom_int(arena, maximum)};
+    return dispatch(runtime, arena, "__cetta_lib_io_http_read", args, 3u);
+}
+
 static Atom *poll_until_event(CettaIoRuntime *runtime, Arena *arena,
                               int attempts) {
     for (int i = 0; i < attempts; i++) {
@@ -342,6 +391,272 @@ static void make_url(char *out, size_t out_size, const char *base,
         fprintf(stderr, "base URL too long\n");
         exit(2);
     }
+}
+
+static void test_incremental_http(CettaIoRuntime *runtime, Arena *arena,
+                                  const char *base) {
+    static const char expected[] = "first-\xe2\x82\xac-last";
+    Atom *unknown = http_read(runtime, arena, 999999, 0, 16);
+    CHECK(io_unknown(unknown, 999999), "incremental read refuses an unknown handle");
+
+    Atom *timer = atom_expr2(arena, atom_symbol(arena, "timer:after"),
+                             atom_int(arena, 1000));
+    int64_t timer_id = 0;
+    CHECK(pending_id(dispatch(runtime, arena, "__cetta_lib_io_submit", &timer, 1u),
+                     &timer_id), "non-HTTP read refusal fixture starts");
+    CHECK(atom_is_error(http_read(runtime, arena, timer_id, 0, 16)),
+          "incremental read refuses a non-HTTP provider handle");
+    Atom *timer_arg = atom_int(arena, timer_id);
+    CHECK(!atom_is_error(dispatch(runtime, arena, "__cetta_lib_io_cancel",
+                                  &timer_arg, 1u)),
+          "non-HTTP read refusal fixture is released");
+
+    char endpoint[512];
+    make_url(endpoint, sizeof(endpoint), base, "/incremental");
+    Atom *request = http_request(arena, endpoint, 128);
+    int64_t id = 0;
+    CHECK(pending_id(dispatch(runtime, arena, "__cetta_lib_io_submit",
+                              &request, 1u), &id),
+          "incremental response fixture is admitted");
+    CHECK(atom_is_error(http_read(runtime, arena, id, 0, 0)),
+          "incremental reads require a positive byte bound");
+    CHECK(atom_is_error(http_read(runtime, arena, id, 4096, 16)),
+          "incremental reads reject offsets beyond the readable prefix");
+
+    char assembled[128] = {0};
+    size_t assembled_size = 0u;
+    int64_t offset = 0;
+    bool saw_early = false, complete = false;
+    for (unsigned attempt = 0u; attempt < 6000u && !complete; ++attempt) {
+        Atom *chunk = http_read(runtime, arena, id, offset, 4);
+        int64_t next = 0; const char *text = NULL, *phase = NULL; size_t size = 0u;
+        if (!http_chunk_parts(chunk, &next, &text, &size, &phase)) {
+            pause_one_ms();
+            continue;
+        }
+        CHECK(size <= 4u && next == offset + (int64_t)size,
+              "incremental chunks obey byte bounds and monotone offsets");
+        if (size && !saw_early) {
+            Atom *same = http_read(runtime, arena, id, offset, 4);
+            int64_t same_next = 0; const char *same_text = NULL, *same_phase = NULL;
+            size_t same_size = 0u;
+            CHECK(!strcmp(phase, "waiting") &&
+                  http_chunk_parts(same, &same_next, &same_text, &same_size,
+                                   &same_phase) && same_next == next &&
+                  same_size == size && !memcmp(same_text, text, size),
+                  "response bytes are available before HTTP completion and reads are non-consuming");
+            Atom *id_arg = atom_int(arena, id);
+            CHECK(idle(dispatch(runtime, arena, "__cetta_lib_io_poll", &id_arg, 1u)),
+                  "early response bytes do not fabricate a terminal event");
+            saw_early = true;
+        }
+        if (size) {
+            bool fits = size < sizeof(assembled) - assembled_size;
+            CHECK(fits,
+                  "incremental fixture fits its local collection bound");
+            if (!fits) break;
+            memcpy(assembled + assembled_size, text, size);
+            assembled_size += size;
+            assembled[assembled_size] = 0;
+            offset = next;
+        }
+        complete = !strcmp(phase, "complete") &&
+                   assembled_size == sizeof(expected) - 1u;
+        if (!size && !complete) pause_one_ms();
+    }
+    CHECK(saw_early && complete && assembled_size == sizeof(expected) - 1u &&
+          !memcmp(assembled, expected, sizeof(expected) - 1u),
+          "bounded UTF-8 chunks reconstruct the exact response");
+    Atom *id_arg = atom_int(arena, id);
+    Atom *event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id_arg, 1u);
+    int64_t event_id = 0; Atom *result = NULL;
+    CHECK(event_parts(event, &event_id, &result) && event_id == id &&
+          http_response(result, 200, expected),
+          "incremental reads leave the full final response unchanged");
+    CHECK(io_unknown(http_read(runtime, arena, id, 0, 16), id),
+          "a consumed incremental handle is unknown");
+
+    make_url(endpoint, sizeof(endpoint), base, "/incremental-truncate");
+    request = http_request(arena, endpoint, 23);
+    CHECK(pending_id(dispatch(runtime, arena, "__cetta_lib_io_submit",
+                              &request, 1u), &id),
+          "incremental truncation fixture is admitted");
+    Atom *failed_chunk = NULL;
+    for (unsigned attempt = 0u; attempt < 5000u; ++attempt) {
+        failed_chunk = http_read(runtime, arena, id, 0, 64);
+        int64_t next = 0; const char *text = NULL, *phase = NULL; size_t size = 0u;
+        if (http_chunk_parts(failed_chunk, &next, &text, &size, &phase) &&
+            !strcmp(phase, "failed")) break;
+        pause_one_ms();
+    }
+    int64_t next = 0; const char *text = NULL, *phase = NULL; size_t size = 0u;
+    CHECK(http_chunk_parts(failed_chunk, &next, &text, &size, &phase) &&
+          !strcmp(phase, "failed") &&
+          size == strlen("truncate-safe-prefix-") &&
+          !memcmp(text, "truncate-safe-prefix-", size),
+          "limit failure exposes only its retained provisional prefix as failed");
+    id_arg = atom_int(arena, id);
+    event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id_arg, 1u);
+    CHECK(event_parts(event, &event_id, &result) && event_id == id &&
+          response_too_large(result, 23),
+          "incremental truncation preserves the terminal size error");
+
+    make_url(endpoint, sizeof(endpoint), base, "/incremental-fail");
+    request = http_request(arena, endpoint, 128);
+    CHECK(pending_id(dispatch(runtime, arena, "__cetta_lib_io_submit",
+                              &request, 1u), &id),
+          "incremental transport-failure fixture is admitted");
+    failed_chunk = NULL;
+    for (unsigned attempt = 0u; attempt < 5000u; ++attempt) {
+        failed_chunk = http_read(runtime, arena, id, 0, 64);
+        if (http_chunk_parts(failed_chunk, &next, &text, &size, &phase) &&
+            !strcmp(phase, "failed")) break;
+        pause_one_ms();
+    }
+    CHECK(http_chunk_parts(failed_chunk, &next, &text, &size, &phase) &&
+          !strcmp(phase, "failed") && size == strlen("failure-safe-prefix") &&
+          !memcmp(text, "failure-safe-prefix", size),
+          "transport failure marks retained response text as provisional failure");
+    id_arg = atom_int(arena, id);
+    event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id_arg, 1u);
+    CHECK(event_parts(event, &event_id, &result) && event_id == id &&
+          http_error_kind(result, "transport"),
+          "incremental transport failure preserves the terminal transport error");
+
+    make_url(endpoint, sizeof(endpoint), base, "/incremental-cancel");
+    request = http_request(arena, endpoint, 128);
+    CHECK(pending_id(dispatch(runtime, arena, "__cetta_lib_io_submit",
+                              &request, 1u), &id),
+          "incremental cancellation fixture is admitted");
+    bool saw_cancel_prefix = false;
+    for (unsigned attempt = 0u; attempt < 5000u; ++attempt) {
+        Atom *chunk = http_read(runtime, arena, id, 0, 64);
+        if (http_chunk_parts(chunk, &next, &text, &size, &phase) && size &&
+            !strcmp(phase, "waiting")) { saw_cancel_prefix = true; break; }
+        pause_one_ms();
+    }
+    CHECK(saw_cancel_prefix, "cancellation fixture first exposes pending text");
+    id_arg = atom_int(arena, id);
+    CHECK(!atom_is_error(dispatch(runtime, arena, "__cetta_lib_io_cancel", &id_arg, 1u)) &&
+          io_unknown(http_read(runtime, arena, id, 0, 64), id),
+          "cancellation retires the incremental read handle without a completion");
+
+    make_url(endpoint, sizeof(endpoint), base, "/incremental-invalid-utf8");
+    request = http_request(arena, endpoint, 128);
+    CHECK(pending_id(dispatch(runtime, arena, "__cetta_lib_io_submit",
+                              &request, 1u), &id),
+          "malformed UTF-8 fixture is admitted");
+    Atom *invalid = NULL;
+    for (unsigned attempt = 0u; attempt < 5000u; ++attempt) {
+        invalid = http_read(runtime, arena, id, 0, 64);
+        if (http_error_kind(invalid, "non-utf8-response")) break;
+        pause_one_ms();
+    }
+    CHECK(http_error_kind(invalid, "non-utf8-response"),
+          "incremental text explicitly refuses malformed UTF-8");
+    id_arg = atom_int(arena, id);
+    event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id_arg, 1u);
+    CHECK(event_parts(event, &event_id, &result) && event_id == id &&
+          result && result->kind == ATOM_EXPR && result->expr.len == 3u &&
+          atom_is_symbol(result->expr.elems[0], "http:response") &&
+          result->expr.elems[2]->kind == ATOM_GROUNDED &&
+          result->expr.elems[2]->ground.gkind == GV_STRING &&
+          result->expr.elems[2]->ground.slen == strlen("valid-prefix-") + 1u &&
+          (unsigned char)result->expr.elems[2]->ground.sval[strlen("valid-prefix-")] == 0xffu,
+          "the opt-in UTF-8 view does not alter the legacy final response bytes");
+
+    char scope[512];
+    make_url(scope, sizeof(scope), base, "/");
+    CHECK(!setenv("CETTA_IO_AUTH_STREAM_URL_PREFIX", scope, 1) &&
+          !setenv("CETTA_IO_AUTH_STREAM_HEADER", "Authorization", 1) &&
+          !setenv("CETTA_IO_AUTH_STREAM_ENV", "CETTA_IO_STREAM_SECRET", 1) &&
+          !setenv("CETTA_IO_AUTH_STREAM_PREFIX", "Bearer ", 1) &&
+          !setenv("CETTA_IO_STREAM_SECRET", "split-secret-credential", 1),
+          "credential split fixture configures a scoped fake credential");
+    Atom *credential = atom_expr2(arena, atom_symbol(arena, "http:credential"),
+                                  atom_string(arena, "STREAM"));
+    Atom *headers = atom_expr(arena, &credential, 1u);
+
+    make_url(endpoint, sizeof(endpoint), base, "/credential-utf8-guard");
+    request = http_request_with_headers(arena, "GET", endpoint, headers,
+                                        "", 4000, 256);
+    CHECK(pending_id(dispatch(runtime, arena, "__cetta_lib_io_submit",
+                              &request, 1u), &id),
+          "credential UTF-8 boundary fixture is admitted");
+    bool saw_guard_boundary = false;
+    for (unsigned attempt = 0u; attempt < 5000u; ++attempt) {
+        Atom *chunk = http_read(runtime, arena, id, 0, 64);
+        if (http_chunk_parts(chunk, &next, &text, &size, &phase) &&
+            next == 1 && size == 1u && text[0] == 'A' &&
+            !strcmp(phase, "waiting")) {
+            saw_guard_boundary = true;
+            break;
+        }
+        pause_one_ms();
+    }
+    Atom *guarded = http_read(runtime, arena, id, 1, 64);
+    CHECK(saw_guard_boundary &&
+          http_chunk_parts(guarded, &next, &text, &size, &phase) &&
+          next == 1 && size == 0u && !strcmp(phase, "waiting"),
+          "credential withholding rounds a mid-scalar guard down without a fatal UTF-8 error");
+    id_arg = atom_int(arena, id);
+    event = NULL;
+    for (unsigned attempt = 0u; attempt < 5000u; ++attempt) {
+        event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id_arg, 1u);
+        if (!idle(event)) break;
+        pause_one_ms();
+    }
+    CHECK(event_parts(event, &event_id, &result) && event_id == id &&
+          http_response(result, 200,
+                        "A\xe2\x82\xac" "abcdefghijklmnopqrstUVWXYZ"),
+          "UTF-8 guard rounding leaves the complete credentialed response unchanged");
+
+    make_url(endpoint, sizeof(endpoint), base, "/credential-stream");
+    request = http_request_with_headers(arena, "GET", endpoint, headers,
+                                        "", 3000, 256);
+    CHECK(pending_id(dispatch(runtime, arena, "__cetta_lib_io_submit",
+                              &request, 1u), &id),
+          "credentialed incremental fixture is admitted");
+    char exposed[256] = {0}; size_t exposed_size = 0u; offset = 0;
+    bool credential_blocked = false, credential_early = false;
+    for (unsigned attempt = 0u; attempt < 6000u && !credential_blocked; ++attempt) {
+        Atom *chunk = http_read(runtime, arena, id, offset, 64);
+        if (http_error_kind(chunk, "credential-in-response")) {
+            credential_blocked = true;
+            break;
+        }
+        if (http_chunk_parts(chunk, &next, &text, &size, &phase)) {
+            if (size) {
+                bool fits = size < sizeof(exposed) - exposed_size;
+                CHECK(fits,
+                      "credential-screened commentary fits the local bound");
+                if (!fits) break;
+                memcpy(exposed + exposed_size, text, size);
+                exposed_size += size; exposed[exposed_size] = 0; offset = next;
+                if (!strcmp(phase, "waiting")) credential_early = true;
+            }
+        }
+        pause_one_ms();
+    }
+    CHECK(credential_early && credential_blocked &&
+          strstr(exposed, "split") == NULL &&
+          strstr(exposed, "split-secret-credential") == NULL,
+          "rolling withholding prevents a credential split across chunks from leaking");
+    id_arg = atom_int(arena, id);
+    event = NULL;
+    for (unsigned attempt = 0u; attempt < 5000u; ++attempt) {
+        event = dispatch(runtime, arena, "__cetta_lib_io_poll", &id_arg, 1u);
+        if (!idle(event)) break;
+        pause_one_ms();
+    }
+    CHECK(event_parts(event, &event_id, &result) && event_id == id &&
+          http_error_kind(result, "credential-in-response"),
+          "credential reflection remains rejected by final-result validation");
+    unsetenv("CETTA_IO_AUTH_STREAM_URL_PREFIX");
+    unsetenv("CETTA_IO_AUTH_STREAM_HEADER");
+    unsetenv("CETTA_IO_AUTH_STREAM_ENV");
+    unsetenv("CETTA_IO_AUTH_STREAM_PREFIX");
+    unsetenv("CETTA_IO_STREAM_SECRET");
 }
 
 int main(int argc, char **argv) {
@@ -408,6 +723,8 @@ int main(int argc, char **argv) {
         g_symbols = NULL;
         return failures == 0u ? 0 : 1;
     }
+
+    test_incremental_http(runtime, &arena, argv[1]);
 
     char one_url[512];
     char two_url[512];

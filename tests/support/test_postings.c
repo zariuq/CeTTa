@@ -22,14 +22,11 @@ static unsigned checks;
 static unsigned read_depth, admissions, direct_visits, native_visits;
 static bool exact_source = true;
 static Atom *observed_row;
-/* The guard's inline halves (shared_transition.h) take the out-of-line ones
- * only inside a concurrent-evaluation scope; the spy keeps one open. */
-_Thread_local unsigned cetta_shared_transition_scope_depth = 1u;
-void cetta_shared_transition_guard_acquire(CettaSharedTransitionGuard *guard) {
+void __wrap_cetta_shared_transition_guard_acquire(CettaSharedTransitionGuard *guard) {
     read_depth++;
     guard->held = true;
 }
-void cetta_shared_transition_guard_release(CettaSharedTransitionGuard *guard) {
+void __wrap_cetta_shared_transition_guard_release(CettaSharedTransitionGuard *guard) {
     assert(guard->held && read_depth);
     read_depth--;
     guard->held = false;
@@ -121,6 +118,7 @@ static void protected_projection(CettaLibraryContext *context, Arena *arena) {
 }
 
 int main(void) {
+    cetta_shared_transition_scope_enter();
     SymbolTable symbols;
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
@@ -304,6 +302,8 @@ int main(void) {
     arena_free(&survivor); arena_free(&results);
     cetta_native_handle_cleanup_all(context);
     free(context); symbol_table_free(&symbols); g_symbols = NULL;
+    assert(read_depth == 0u);
+    cetta_shared_transition_scope_leave();
     printf("PostingsOwnership %u 0\n", checks);
     return 0;
 }

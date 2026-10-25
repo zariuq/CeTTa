@@ -3261,7 +3261,7 @@ static void test_closed_owned_return_modes(void) {
     };
     const char *calls[]={"(scalar 5)","(optional (Cons 7 Nil))","(optional Nil)","(empty-datum)"};
     for(unsigned which=0u;which<4u;which++) {
-        Fixture fixture;init_with_view(&fixture,equations,4u,calls[which],zero_view, atom_bool);
+        Fixture fixture;init_with_view(&fixture,equations,4u,calls[which],zero_view,atom_bool);
         CettaPreparedPureProgram *program=(which==1u || which==2u)
             ? compile_optional(&fixture,calls[which],true):compile_scalar(&fixture,calls[which]);
         assert(program);
@@ -3323,7 +3323,7 @@ static void test_closed_owned_prefix_and_stale_boundary(void) {
     };
     for(unsigned which=0u;which<7u;which++) {
         const char *call=which==3u?"(bad 0)":(which==4u || which==5u)?"(spin seed)":"(scalar 5)";
-        Fixture fixture;init_with_view(&fixture,equations,3u,call,zero_view, atom_bool);
+        Fixture fixture;init_with_view(&fixture,equations,3u,call,zero_view,atom_bool);
         CettaPreparedPureProgram *program=compile_scalar(&fixture,call);assert(program);
         CettaPreparedPureClosedExecution *closed=
             cetta_prepared_pure_closed_open(program,&fixture.scratch,&fixture);

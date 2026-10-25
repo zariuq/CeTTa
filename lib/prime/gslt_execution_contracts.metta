@@ -302,8 +302,8 @@
   ; expression result abandons the speculative program and is replayed by
   ; the canonical evaluator.
   (instruction library-value-dispatch)
-  ; A truth computation uses the caller's Boolean constructor. Grounded data
-  ; projections preserve their carrier even when that carrier is Boolean.
+  ; Computed truths use the caller's Boolean constructor. A value projection
+  ; keeps its original carrier instead of reinterpreting data as a truth.
   (instruction boolean-dispatch)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
@@ -877,6 +877,7 @@
   (query-head __cetta_lib_fs_close world-write)
   (query-head __cetta_lib_io_submit world-write)
   (query-head __cetta_lib_io_poll world-write)
+  (query-head __cetta_lib_io_http_read relational-query)
   (query-head __cetta_lib_io_cancel world-write)
   (query-head __cetta_lib_mork_space_new world-write)
   (query-head __cetta_lib_mork_space_include world-write)

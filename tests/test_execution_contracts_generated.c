@@ -73,6 +73,7 @@ static void test_query_head_rows(void) {
     bool saw_get_type = false, saw_get_type_space = false;
     bool saw_add_atom = false, saw_remove_atom = false;
     unsigned saw_space_contracts = 0u;
+    bool saw_http_read = false;
 #define COUNT_HEAD(head, effect) do { \
     assert((effect) != CETTA_GSLT_QUERY_EFFECT_PURE); \
     rows++; \
@@ -80,6 +81,8 @@ static void test_query_head_rows(void) {
         saw_add_atom = (effect) == CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE; \
     if (strcmp(#head, "remove_atom") == 0) \
         saw_remove_atom = (effect) == CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE; \
+    if (strcmp(#head, "lib_io_http_read") == 0) \
+        saw_http_read = (effect) == CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY; \
     if (strcmp(#head, "match") == 0) saw_match = true; \
     if (strcmp(#head, "get_atoms") == 0) saw_get_atoms = true; \
     if (strcmp(#head, "mork_match_syntax") == 0) saw_mork_match = true; \
@@ -112,6 +115,7 @@ static void test_query_head_rows(void) {
     assert(saw_get_type && saw_get_type_space);
     assert(saw_add_atom && saw_remove_atom);
     assert(saw_space_contracts == 10u);
+    assert(saw_http_read);
 
     /* Joining is union over the two flags. */
     assert(cetta_gslt_query_effect_join(

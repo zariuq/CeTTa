@@ -201,12 +201,6 @@ static bool bindings_frame_reserve_value_prefix(
     return true;
 }
 
-bool bindings_frame_index_entry_reserve_slots(
-        BindingsFrameIndexEntry *frame, uint32_t needed) {
-    return frame && needed <= frame->slot_len &&
-           bindings_frame_reserve_value_prefix(frame, needed);
-}
-
 /* Place an entry in the handle table; the caller has reserved room. */
 static void bindings_frame_table_insert(
         BindingsFrameIndex *index, BindingsFrameIndexEntry *entry) {
@@ -642,6 +636,19 @@ bool bindings_frame_index_ensure_presentation(
         bindings, ref, slot, id, spelling, name_key);
 }
 
+bool bindings_frame_index_replace_slot_version(
+        BindingsFrameIndexEntry *frame, uint32_t slot, uint64_t version) {
+    if (!frame || slot >= frame->slot_len)
+        return false;
+    if (bindings_frame_slot_version(frame, slot) == version)
+        return true;
+    if (!bindings_frame_index_entry_detach(frame) ||
+        !bindings_frame_reserve_value_prefix(frame, slot + 1u))
+        return false;
+    frame->write_version[slot] = version;
+    return true;
+}
+
 bool bindings_frame_index_replace_slot_value(
         BindingsFrameIndex *index, BindingsFrameIndexEntry *frame,
         uint32_t slot, BindingValue value) {
@@ -1054,14 +1061,9 @@ static bool bindings_frame_index_merge_lineage(
         if (!bindings_frame_index_find_slot(target,
                 bindings_frame_slot_source_id(source, slot), &target_slot))
             return false;
-        /* A slot past the backing prefix has version zero; only a different
-         * version needs the target's prefix to grow. */
-        uint64_t version = bindings_frame_slot_version(source, slot);
-        if (bindings_frame_slot_version(target, target_slot) == version)
-            continue;
-        if (!bindings_frame_reserve_value_prefix(target, target_slot + 1u))
+        if (!bindings_frame_index_replace_slot_version(
+                target, target_slot, bindings_frame_slot_version(source, slot)))
             return false;
-        target->write_version[target_slot] = version;
     }
     return true;
 }

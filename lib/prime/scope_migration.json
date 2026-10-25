@@ -84,8 +84,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "a1f26031a7f4bd28091bdb0c61cae874d1ff9f63d797040d9320ab8d1c13754d",
-      "output_sha256": "62ebb855c886b1f01011449fb3a472efc2abbd7fdba3313d3b0921d68ae82796",
+      "source_sha256": "3cfe21fd67f6074111d76347fd8c5a1f2a30e7e0c812b281c9aa565cc5ee44da",
+      "output_sha256": "aaab8d29ccca5e6b871bf67ca76708cfd8f5c33e1faef9e9f1e4a5336bd322a1",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -148,9 +148,9 @@
     {
       "source": "io.metta",
       "output": "io.metta",
-      "source_sha256": "4ce6605e044a168802630ee5ff9e5f8c7b0f03b5bc58790e108bdd38cbfab544",
-      "output_sha256": "c542efa88dea1bca3e42ce13513e8b81ea60eb8dc32c24466c57800e53b6e11b",
-      "edits": 15,
+      "source_sha256": "f85b9cc26f9d7282cf2187e13247c2d4a0f3644adbe855e23ad3b54bfb6acd68",
+      "output_sha256": "9f0a0fb796d80f63c7d2e4bea02e7d6f66d190551b8d722a916f1b28d4929bf4",
+      "edits": 16,
       "code_diagnostics": 0
     },
     {

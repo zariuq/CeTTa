@@ -232,6 +232,8 @@ def main():
                     '[(TensorData f64 (4) ((0 0.0) (1 0.0) (2 1.0) (3 1.0)))]',
                     '[(TensorData f64 (4) ((0 1.0) (1 1.0) (2 1.0) (3 1.0)))]'], observations[0]
             if name == 'strict-boolean':
+                # HE and PeTTa evaluate both operands. Prime's control form
+                # short-circuits; its independent canonical run above agrees.
                 effects = 0 if language == 'prime' else 6
                 assert observations[0][1].count('BulkBooleanEffect') == effects, (language, observations[0][1])
             if name != 'domain': assert observations[0][0] == 0 and observations[0][1].splitlines()[-1]

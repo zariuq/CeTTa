@@ -16,6 +16,10 @@ void cetta_http_result_free(CettaHttpResult *r) {
     if (r) { free(r->body); memset(r,0,sizeof(*r)); }
 }
 
+void cetta_http_read_free(CettaHttpRead *r) {
+    if (r) { free(r->bytes); memset(r,0,sizeof(*r)); }
+}
+
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
 #include <curl/curl.h>
 #include <limits.h>
@@ -601,6 +605,35 @@ bool cetta_http_worker_progress(CettaHttpWorker *w, uint64_t id, CettaHttpProgre
     pthread_mutex_unlock(&w->mutex); return j!=NULL;
 }
 
+CettaHttpReadStatus cetta_http_worker_read(CettaHttpWorker *w, uint64_t id,
+        size_t offset, size_t max_bytes, CettaHttpRead *out) {
+    if (out) memset(out,0,sizeof(*out));
+    if (!w || !id || !out || max_bytes>CETTA_HTTP_READ_MAX_BYTES)
+        return HTTP_READ_INVALID;
+    unsigned char *copy=malloc(max_bytes+1u);
+    if (!copy) return HTTP_READ_NOMEM;
+    pthread_mutex_lock(&w->mutex);
+    Job *j=find_job(w,id);
+    CettaHttpReadStatus status=HTTP_READ_OK;
+    if (!j) status=HTTP_READ_UNKNOWN;
+    else if (offset>j->result.body_size) status=HTTP_READ_OFFSET;
+    else {
+        size_t n=j->result.body_size-offset;
+        if (n>max_bytes) n=max_bytes;
+        if (n) memcpy(copy,j->result.body+offset,n);
+        copy[n]=0;
+        bool terminal=j->state==OBSERVING || j->state==READY;
+        *out=(CettaHttpRead){.id=id,.offset=offset,.bytes=copy,.bytes_size=n,
+            .response_size=j->result.body_size,.terminal=terminal,
+            .complete=terminal && j->result.transport_code==CURLE_OK &&
+                !j->result.cancelled && !j->result.response_too_large &&
+                !j->result.response_budget_exceeded && !j->result.allocation_failed};
+        copy=NULL;
+    }
+    pthread_mutex_unlock(&w->mutex);
+    free(copy); return status;
+}
+
 uint64_t cetta_http_worker_wait(CettaHttpWorker *w,uint64_t generation,uint32_t timeout_ms) {
     if (!w) return generation;
     struct timespec deadline; clock_gettime(CLOCK_MONOTONIC,&deadline);
@@ -626,6 +659,13 @@ size_t cetta_http_worker_free(CettaHttpWorker *w) {
 void cetta_http_worker_set_wakeup_fd(CettaHttpWorker *w,int fd) { (void)w; (void)fd; }
 bool cetta_http_worker_progress(CettaHttpWorker *w,uint64_t id,CettaHttpProgress *out) {
     (void)w; (void)id; (void)out; return false;
+}
+CettaHttpReadStatus cetta_http_worker_read(CettaHttpWorker *w,uint64_t id,
+        size_t offset,size_t max_bytes,CettaHttpRead *out) {
+    (void)w; (void)id; (void)offset; (void)max_bytes;
+    if (out) memset(out,0,sizeof(*out));
+    return out && id && max_bytes<=CETTA_HTTP_READ_MAX_BYTES
+        ? HTTP_READ_UNAVAILABLE : HTTP_READ_INVALID;
 }
 CettaHttpWorkerStatus cetta_http_worker_new(const CettaHttpWorkerLimits *l,
     const CettaHttpWorkerHooks *h,CettaHttpWorker **out) {

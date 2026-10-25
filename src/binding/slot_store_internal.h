@@ -152,11 +152,10 @@ bool bindings_frame_index_replace_slot_value(
         BindingsFrameIndex *index, BindingsFrameIndexEntry *frame,
         uint32_t slot, BindingValue value);
 
-/* Back every slot below `needed` (within the logical schema) so that the
- * caller may write those coordinates directly. Growing the backing detaches
- * the entry's shared storage first. */
-bool bindings_frame_index_entry_reserve_slots(
-        BindingsFrameIndexEntry *frame, uint32_t needed);
+/* Copy a slot's chronology without requiring its implicit unbound tail to
+ * have physical backing. A nonzero version acquires storage before writing. */
+bool bindings_frame_index_replace_slot_version(
+        BindingsFrameIndexEntry *frame, uint32_t slot, uint64_t version);
 
 bool bindings_frame_index_write_slot_ref(
         Bindings *bindings, BindingsFrameRef ref, uint32_t slot,
