@@ -492,9 +492,9 @@
     {
       "source": "str.metta",
       "output": "str.metta",
-      "source_sha256": "5d2b3f73f072d77c820e6a43c65486fe30e80ed117f1c88eb0207b2804f69405",
-      "output_sha256": "80e7f06e90058449c4c0869e289143d8119f5b446b612e035c1290d0a209f1e8",
-      "edits": 41,
+      "source_sha256": "507426679d3258af3f3675bb29e271e6d71dd0dcbd7c9f484d8aa5a90af038f9",
+      "output_sha256": "ed6c7af8cdf9bab761daf9d4bd5ef3f432e57ab74fdfb79992ea28b36092ddf9",
+      "edits": 42,
       "code_diagnostics": 0
     },
     {
@@ -627,7 +627,7 @@
     {
       "source": "json.metta",
       "generator": "library_spelling.py",
-      "output_sha256": "84736068c0491d998dd672036381588d4d28ac9c42e758b7bea4753887d7122c"
+      "output_sha256": "88787eb11e263f7c38abcfb50edfcfcbe86089916023faca5531ecca7b99c324"
     },
     {
       "source": "lib_tensor.metta",
