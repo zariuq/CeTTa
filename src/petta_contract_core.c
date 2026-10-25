@@ -998,15 +998,14 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
     if (plan->control.operation == CETTA_CONTROL_BRANCH &&
         (expr->expr.len == 3u || expr->expr.len == 4u))
         return contract_if(scan, expr, plan, depth, out);
+    if (plan->control.operation == CETTA_CONTROL_FAILURE) {
+        *out = (ContractValue){.bottom = true};
+        return true;
+    }
     if (plan->control.operation != CETTA_CONTROL_NONE)
         return false;
     bool static_call = head->kind == ATOM_SYMBOL &&
         plan->role == PETTA_PLAN_STATIC_CALL;
-    if (static_call && expr->expr.len == 1u &&
-        head->sym_id == g_builtin_syms.empty_form) {
-        *out = (ContractValue){.bottom = true};
-        return true;
-    }
     if (static_call && expr->expr.len == 4u &&
         head->sym_id == g_builtin_syms.match)
         return contract_match(scan, expr, plan, depth, out);
@@ -1091,8 +1090,7 @@ static bool contract_returns_pattern(Atom *rhs, const PettaPlanNode *plan,
         return true;
     if (!plan || rhs->kind != ATOM_EXPR || rhs->expr.len == 0u)
         return false;
-    if (rhs->expr.len == 1u &&
-        atom_is_symbol_id(rhs->expr.elems[0], g_builtin_syms.empty_form))
+    if (plan->control.operation == CETTA_CONTROL_FAILURE)
         return true;
     if (cetta_control_operation_binding_layout(plan->control, 1u) && rhs->expr.len == 4u)
         return contract_returns_pattern(rhs->expr.elems[3],

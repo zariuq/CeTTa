@@ -11763,8 +11763,6 @@ bool cetta_library_call_native_prepared_view(
         Atom *value = NULL;
         if (cetta_json_library_borrowed_value_v1(
                 ctx->json_runtime, a, head, args, nargs, &value)) {
-            if (!value)
-                return false;
             *out = cetta_call_completed_value(value);
             return true;
         }

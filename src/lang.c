@@ -276,6 +276,11 @@ cetta_language_portable_relational_contract(CettaLanguageId id) {
                 : CETTA_PORTABLE_RELATIONAL_NONE;
 }
 
+CettaCallResultPolicy cetta_language_call_result_policy(CettaLanguageId id) {
+    return id == CETTA_LANGUAGE_PETTA ? CETTA_CALL_RESULT_BY_DESTINATION
+                                    : CETTA_CALL_RESULT_BY_VALUE;
+}
+
 void cetta_language_print_inventory(FILE *out) {
     size_t count = sizeof(CETTA_LANGUAGES) / sizeof(CETTA_LANGUAGES[0]);
     const char *last_canonical = NULL;

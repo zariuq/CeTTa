@@ -7,3 +7,8 @@ none
 ()
 (pair (Cons 1 (Cons 3 (Cons 5 Nil))) (Cons 2 (Cons 4 Nil)))
 4
+()
+()
+()
+()
+()
