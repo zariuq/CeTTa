@@ -11,6 +11,7 @@
 (= (json:stringify-reference $value) (__cetta_lib_json_stringify $value JsonReferenceV1))
 (= (json:stringify $value) (__cetta_lib_json_stringify $value))
 (= (json:pretty $value) (__cetta_lib_json_stringify $value JsonPrettyV1))
+(= (json:stringify-python $value) (__cetta_lib_json_stringify $value JsonPythonV1))
 (= (json:inspect-stringify $value) (__cetta_lib_json_stringify_v1 $value))
 (= (json:inspect-stringify-reference $value) (__cetta_lib_json_stringify_v1 $value JsonReferenceV1))
 (= (json:from-inspection $value) (__cetta_lib_json_from_inspection_v1 $value))

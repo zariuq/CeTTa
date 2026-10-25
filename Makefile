@@ -47853,6 +47853,7 @@ endif
 test-json-gslt-library-body: $(BIN) \
 		lib/json.metta lib/petta/json.metta lib/prime/json.metta \
 		examples/json_scripting_v1.metta tests/support/check_json_workflows_v1.py \
+		tests/support/check_json_python_emission_v1.py \
 		tests/test_json_direct_reference.metta tests/test_json_direct_reference.expected tests/test_json_direct_reference.petta.expected \
 		tests/test_json_gslt_hostile_constructors.metta \
 		tests/test_json_gslt_hostile_constructors.expected \
@@ -47904,6 +47905,7 @@ test-json-gslt-library-body: $(BIN) \
 	diff -u tests/test_json_direct_reference.expected "$$actual"; \
 	python3 tests/test_json_deep_v1.py "$(BIN)"; \
 	python3 tests/support/check_json_workflows_v1.py --cetta "$(BIN)"; \
+	python3 tests/support/check_json_python_emission_v1.py --cetta "$(BIN)"; \
 	echo "(JsonGsltLibrarySummary 25 25 0)"
 
 .PHONY: test-json-gslt-library

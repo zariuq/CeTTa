@@ -109,6 +109,16 @@ bool cetta_json_value_v1_emit_pretty(CettaJsonNumberValidatorV1 number_validator
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size);
 
+/* The same traversal emitting what Python's json.dumps writes with default
+ * arguments: ", " and ": " separators, floats in Python's shortest repr
+ * (NaN, Infinity and -Infinity for non-finite values), and every scalar
+ * outside printable ASCII escaped as lowercase \\uXXXX, with surrogate pairs. */
+bool cetta_json_value_v1_emit_python(CettaJsonNumberValidatorV1 number_validator,
+    Atom *value, bool ordinary_input,
+    uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
+    uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
+    char *error_buf, size_t error_buf_size);
+
 const char *cetta_json_value_v1_status_name(CettaJsonValueV1Status status);
 
 #endif /* CETTA_JSON_VALUE_V1_H */

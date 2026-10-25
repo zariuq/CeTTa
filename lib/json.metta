@@ -111,6 +111,14 @@
      (chain (eval (__cetta_lib_json_stringify $value JsonPrettyV1)) $result
        (return $result))))
 
+; Python's json.dumps with default arguments, byte for byte: ", " and ": "
+; separators, floats in Python's shortest repr, and ASCII escapes.
+(: json:stringify-python (-> %Undefined% Atom))
+(= (json:stringify-python $value)
+   (function
+     (chain (eval (__cetta_lib_json_stringify $value JsonPythonV1)) $result
+       (return $result))))
+
 (: json:inspect-stringify (-> %Undefined% Atom))
 (= (json:inspect-stringify $value)
    (function

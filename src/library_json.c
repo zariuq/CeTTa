@@ -605,10 +605,11 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
     CettaJsonValueV1Status status;
     bool reference = nargs == 2u && atom_is_symbol(args[1], "JsonReferenceV1");
     bool pretty = nargs == 2u && atom_is_symbol(args[1], "JsonPrettyV1");
+    bool python = nargs == 2u && atom_is_symbol(args[1], "JsonPythonV1");
     const CettaJsonRuntimeV1 *parser = NULL;
     Atom *result;
     char error[512] = {0};
-    if (nargs != 1u && !reference && !pretty) {
+    if (nargs != 1u && !reference && !pretty && !python) {
         return json_failure_or_error(
             arena, head, args, nargs, ordinary,
             "JsonStringifyV1", "JsonBadArgumentV1",
@@ -625,6 +626,9 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
     if (reference) parser = cetta_json_nik_v1_borrow_selected_runtime(runtime->parser_host);
     Atom *input = json_codec_value(arena, args[0]);
     bool ok = pretty ? cetta_json_value_v1_emit_pretty(
+            cetta_json_direct_v1_number_valid, input, ordinary, 0u, 0u, 0u,
+            &bytes, &len, &status, error, sizeof(error)) :
+        python ? cetta_json_value_v1_emit_python(
             cetta_json_direct_v1_number_valid, input, ordinary, 0u, 0u, 0u,
             &bytes, &len, &status, error, sizeof(error)) :
         reference ? cetta_json_value_v1_stringify(

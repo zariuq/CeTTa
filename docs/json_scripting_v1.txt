@@ -6,6 +6,13 @@ Parsing uses the predictive realization generated from the RFC-8259 grammar;
 it does not build diagnostic forests or scalar atoms for each character.
 json:pretty emits the same value with two-space indentation through the same
 iterative emitter, without constructing and reparsing minified text first.
+json:stringify-python emits, through the same traversal, the bytes Python's
+json.dumps writes with default arguments: ", " and ": " separators, members
+in order, floats in Python's shortest repr (1e-05, 2.5e-07, -0.0, 1e+16, and
+NaN, Infinity or -Infinity for non-finite values, as json.dumps writes them),
+and every scalar outside printable ASCII escaped as lowercase \uXXXX, with a
+surrogate pair above U+FFFF. Use it where another program compares the bytes
+a Python implementation wrote.
 
 Values are ordinary data:
 
