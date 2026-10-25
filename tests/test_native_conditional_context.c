@@ -1068,6 +1068,24 @@ static unsigned closed_failure_cache(void) {
                 assert(cached == compiled);
             checks++;
         }
+        if (!language) {
+            PettaEvalMachineContext context = {.library_context = library,
+                .fuel = -1, .prepared_pure_cache = {.root_space = &space}};
+            SymbolId head = symbol_intern_cstr(g_symbols, "failure-cache");
+            for (unsigned index = 0u; index < 4u; index++) {
+                Atom *call = fixture_atom(&source, calls[index]);
+                CettaCallOutcome returned;
+                assert(petta_eval_open_execute_pure_relation(&context, &space,
+                    &source, head, call->expr.elems + 1u, 1u, &returned));
+                assert(returned.kind == (index % 2u == 0u
+                    ? CETTA_CALL_FAILURE : CETTA_CALL_VALUE));
+                if (returned.kind == CETTA_CALL_VALUE)
+                    assert(returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+                        atom_eq(returned.term, atom_int(&source, 7)));
+                checks++;
+            }
+            prepared_pure_program_cache_free(&context.prepared_pure_cache);
+        }
         equation = fixture_atom(&source, "(= (failure-cache $p) 8)");
         if (!language) {
             const PettaPlanNode *plan = petta_program_plan_dynamic_add(

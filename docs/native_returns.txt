@@ -569,11 +569,21 @@ Prime adapters retain their value-first policy. The policy is immutable for
 that language identity; it is not a branch-local groundness or ownership fact.
 
 Prepared source views carry the same policy. One source-bind constructor admits
-value-first lowering for a fresh receiver, an inert value tree or closed finite
-work admitted by the existing operation contracts. Calls, slot-dependent
-observations and native operations need stronger evidence and retain ordinary
-entry. Closed arguments and an effect-free relation alone cannot erase the
-receiver: matching can refine a variable or reject a recursive body.
+value-first lowering at once for a fresh receiver, an inert value tree or closed
+finite work admitted by the existing operation contracts. Calls, slot-dependent
+observations and native operations need destination evidence, read once the
+program's callees compile; without it they retain ordinary entry. The
+destination meets every output skeleton the value reaches before the calls
+beneath it: constructor fields as written, an if branch once its condition is
+computed, a let body ahead of the let's value, a called equation's output in
+its head. The evidence is that the destination certainly meets each such
+skeleton (a constructor spelling the pattern's head at its length, a literal
+matching its part, any other value facing a receiving variable), or that what
+a clash would prune is itself a value tree or closed finite work, judged per if
+branch and per equation. A variable that already has a value receives nothing,
+and a pattern that repeats a variable keeps ordinary entry. Closed arguments
+and an effect-free relation alone cannot erase the receiver: matching can
+refine a variable or reject a recursive body.
 
 The fused condition selector queues its selected activation. The call stores
 its remaining equations before that body executes. A failed body then resumes

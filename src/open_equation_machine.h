@@ -453,6 +453,12 @@ typedef struct {
                                   Atom *const *arguments, uint32_t arity,
                                   Atom **result_out);
     void (*release_pure_callable)(void *context, void *prepared);
+    /* A named pure relation over closed arguments. False leaves it to the
+     * region's equations; true transfers a completed value, logical failure
+     * or interruption. Payloads belong to `arena`, never to worker scratch. */
+    bool (*execute_pure_relation)(void *context, Space *space, Arena *arena,
+                                  SymbolId head, Atom *const *arguments,
+                                  uint32_t arity, CettaCallOutcome *outcome);
     /* A lexical body with choices or effects, compiled into this same
      * continuation machine. Comes retained; NULL declines before execution. */
     CettaOpenEquationProgram *(*compile_callable)(void *context, Space *space,
