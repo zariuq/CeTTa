@@ -747,6 +747,10 @@ class Spec:
             "sequence-many": (True, False, True),
             "force": (True, False, False),
             "return-scope": (True, False, False),
+            "ordered-choice": (True, False, False),
+            "failure": (False, False, False),
+            "scoped-commit": (False, False, False),
+            "handle": (True, False, False),
         }
         if set(self.control_operations) != set(slot_shapes):
             raise SpecError("control operations must have a native operand-layout scheme")
@@ -758,17 +762,27 @@ class Spec:
             ("return-scope", 1, (0, None, None)): "evaluate",
         }
         self.control_plans = []
+        self.control_forms = []
         self.fold_control_heads: list[tuple[str, str, int, str]] = []
-        for entry in entries(control_plans, "source-head"):
+        control_entries = [(None, entry) for entry in entries(control_plans, "source-head")]
+        for entry in entries(control_plans, "dialect-form"):
+            if len(entry) != 7 or entry[1] != "petta":
+                raise SpecError("a dialect control form needs a registered dialect and operand layout")
+            control_entries.append(("petta", [entry[0], *entry[2:]]))
+        native_forms = set(re.findall(r"\bPETTA_FORM_[A-Z_]+\b",
+            (ROOT / "src/petta_semantics.h").read_text().split("} PeTTaForm;", 1)[0]))
+        for dialect, entry in control_entries:
             if len(entry) != 6 or not is_form(entry[4], "operands") or not is_form(entry[5], "fold"):
                 raise SpecError(f"malformed control source-head: {sexpr(entry)}")
             name = atom_text(entry[1], "control head")
             arity_text = atom_text(entry[2], "control arity")
             operation = atom_text(entry[3], "control operation")
-            if name not in symbol_fields or operation not in slot_shapes:
+            field = symbol_fields.get(name) if dialect is None else "PETTA_FORM_" + c_enum(name)
+            if (not field or operation not in slot_shapes or
+                    (dialect is not None and field not in native_forms)):
                 raise SpecError("control source head or operation has no native interpretation")
-            if not arity_text.isdigit() or not 1 <= int(arity_text) <= 16:
-                raise SpecError("control arity must be in [1, 16]")
+            if not arity_text.isdigit() or not 0 <= int(arity_text) <= 16:
+                raise SpecError("control arity must be in [0, 16]")
             arity = int(arity_text)
             coordinates = []
             for item in entry[4][1:]:
@@ -792,15 +806,18 @@ class Spec:
             lowering = atom_text(entry[5][1], "control fold lowering")
             coordinates = tuple(coordinates)
             if lowering != "none":
-                if (lowering not in self.fold_control_kinds or
+                if (dialect is not None or lowering not in self.fold_control_kinds or
                         fold_schemes.get((operation, arity, coordinates)) != lowering):
                     raise SpecError("control plan has no matching fold lowering scheme")
                 self.fold_control_heads.append((name, symbol_fields[name], arity, lowering))
-            self.control_plans.append((name, symbol_fields[name], arity, operation, coordinates, lowering))
+            target = self.control_plans if dialect is None else self.control_forms
+            target.append((name, field, arity, operation, coordinates, lowering))
         if (not self.control_plans or
                 len({(field, arity) for _, field, arity, _, _, _ in self.control_plans}) != len(self.control_plans)):
             raise SpecError("control plans must be nonempty and unique by source head and arity")
-        if {operation for _, _, _, operation, _, _ in self.control_plans} != set(self.control_operations):
+        if len({(field, arity) for _, field, arity, _, _, _ in self.control_forms}) != len(self.control_forms):
+            raise SpecError("dialect control forms must be unique by form and arity")
+        if {operation for _, _, _, operation, _, _ in self.control_plans + self.control_forms} != set(self.control_operations):
             raise SpecError("control source plans must cover every declared operation")
 
         self.sequence_representations: list[
@@ -1503,6 +1520,10 @@ def render_header(spec: Spec) -> str:
         f"    X({field}, {arity}u, CETTA_CONTROL_{c_enum(operation)}, " +
         ", ".join(control_coordinate(value) for value in coordinates) + ")"
         for _, field, arity, operation, coordinates, _ in spec.control_plans)
+    control_form_rows = " \\\n".join(
+        f"    X({field}, {arity}u, CETTA_CONTROL_{c_enum(operation)}, " +
+        ", ".join(control_coordinate(value) for value in coordinates) + ")"
+        for _, field, arity, operation, coordinates, _ in spec.control_forms)
     control_fold_cases = "\n".join(
         f"    if (plan.operation == CETTA_CONTROL_{c_enum(operation)} &&\n"
         f"        plan.source == {control_coordinate(coordinates[0])} &&\n"
@@ -1981,6 +2002,11 @@ static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan pla
 
 #define CETTA_CONTROL_PLAN_HEAD_ROWS(X) \
 {control_plan_rows}
+
+/* Dialect classification admits these forms before reading their operands.
+ * The enum names are expanded only by the owning dialect adapter. */
+#define CETTA_PETTA_CONTROL_FORM_ROWS(X) \
+{control_form_rows}
 
 /* Arity admission performs no operand read. Refusal leaves the output intact. */
 static inline bool cetta_control_operation_decode(

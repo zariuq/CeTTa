@@ -1,5 +1,6 @@
 #include "atom.h"
 #include "generated/cetta_execution_contracts.generated.h"
+#include "petta_semantics.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -60,10 +61,11 @@ static void test_operation_metadata(void) {
 
 static void test_control_operand_plans(void) {
     const BuiltinSyms builtins = {.let = 21u, .chain = 22u, .if_text = 23u,
-        .let_star = 24u, .eval = 25u, .function = 26u};
+        .let_star = 24u, .eval = 25u, .function = 26u,
+        .superpose = 27u, .empty_form = 28u};
     const unsigned operands[] = {17u, 29u, 43u};
     unsigned observations = 0u;
-    for (SymbolId head = 21u; head <= 26u; head++) {
+    for (SymbolId head = 21u; head <= 28u; head++) {
         for (unsigned arity = 0u; arity <= 5u; arity++) {
             /* Independent source grammar: a let holds pattern, producer,
              * body; chain holds producer, pattern, body. No generated row
@@ -85,6 +87,11 @@ static void test_control_operand_plans(void) {
             } else if ((head == 25u || head == 26u) && arity == 1u) {
                 operation = head == 25u ? CETTA_CONTROL_FORCE : CETTA_CONTROL_RETURN_SCOPE;
                 source = 17u;
+            } else if (head == 27u && arity == 1u) {
+                operation = CETTA_CONTROL_ORDERED_CHOICE;
+                source = 17u;
+            } else if (head == 28u && arity == 0u) {
+                operation = CETTA_CONTROL_FAILURE;
             }
             CettaControlOperationPlan plan = {255u, 77u, 88u, 99u};
             uint32_t before = cetta_control_operation_key(plan);
@@ -94,8 +101,11 @@ static void test_control_operand_plans(void) {
                 assert(cetta_control_operation_key(plan) == before);
                 continue;
             }
-            assert(plan.operation == operation && plan.source < arity);
-            assert(operands[plan.source] == source);
+            assert(plan.operation == operation);
+            if (operation == CETTA_CONTROL_FAILURE)
+                assert(plan.source == CETTA_CONTROL_OPERAND_ABSENT);
+            else
+                assert(plan.source < arity && operands[plan.source] == source);
             if (plan.first == CETTA_CONTROL_OPERAND_ABSENT)
                 assert(!first);
             else
@@ -105,7 +115,7 @@ static void test_control_operand_plans(void) {
             else
                 assert(plan.last < arity && operands[plan.last] == last);
             CettaGsltFoldControl lowered = CETTA_GSLT_FOLD_CONTROL_BRANCH;
-            bool eligible = head != 22u && !(head == 23u && arity == 2u);
+            bool eligible = head <= 26u && head != 22u && !(head == 23u && arity == 2u);
             assert(cetta_control_operation_lower_fold(plan, &lowered) == eligible);
             if (!eligible)
                 assert(lowered == CETTA_GSLT_FOLD_CONTROL_BRANCH);
@@ -125,7 +135,27 @@ static void test_control_operand_plans(void) {
     assert(!cetta_control_operation_decode(25u, UINT64_MAX, &force, &builtins));
     assert(!cetta_control_operation_decode(999u, 1u, NULL, &builtins));
     assert(!cetta_control_operation_decode(25u, 1u, NULL, NULL));
-    assert(observations == 7u);
+    assert(observations == 9u);
+    for (unsigned arity = 0u; arity <= 5u; arity++) {
+        CettaControlOperationPlan commit = petta_semantics_elaborate_control(
+            SYMBOL_ID_NONE, PETTA_FORM_CUT, arity);
+        CettaControlOperationPlan handler = petta_semantics_elaborate_control(
+            SYMBOL_ID_NONE, PETTA_FORM_CATCH, arity);
+        assert(commit.operation == (arity == 0u
+            ? CETTA_CONTROL_SCOPED_COMMIT : CETTA_CONTROL_NONE));
+        assert(handler.operation == (arity == 1u
+            ? CETTA_CONTROL_HANDLE : CETTA_CONTROL_NONE));
+        CettaGsltFoldControl untouched = CETTA_GSLT_FOLD_CONTROL_BRANCH;
+        assert(!cetta_control_operation_lower_fold(commit, &untouched));
+        assert(!cetta_control_operation_lower_fold(handler, &untouched));
+        assert(untouched == CETTA_GSLT_FOLD_CONTROL_BRANCH);
+        if (arity == 0u)
+            assert(commit.source == CETTA_CONTROL_OPERAND_ABSENT);
+        if (arity == 1u)
+            assert(handler.source == 0u &&
+                handler.first == CETTA_CONTROL_OPERAND_ABSENT &&
+                handler.last == CETTA_CONTROL_OPERAND_ABSENT);
+    }
 }
 
 static void test_query_head_rows(void) {
