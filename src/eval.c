@@ -37184,25 +37184,18 @@ static void prime_public_eval_prove(
     outcome_set_free(&candidates);
 }
 
-typedef enum {
-    PREPARED_MINIMAL_WORKER_DECLINED,
-    PREPARED_MINIMAL_WORKER_EMIT,
-    PREPARED_MINIMAL_WORKER_REENTER,
-    PREPARED_MINIMAL_WORKER_INTERRUPTED,
-} PreparedMinimalWorkerResult;
-
-static Atom *prepared_pure_closed_call_try(
+static bool prepared_pure_closed_call_try(
     Space *space, Arena *arena, Atom *call, int fuel,
     bool arguments_are_values, bool preserve_result,
-    PreparedPureProgramCache *program_cache);
+    PreparedPureProgramCache *program_cache, CettaCallOutcome *outcome);
 
-/* Both ordinary interpretation and raw invocation share these worker
- * admissions.  The worker emits the same return instruction, or the same
- * authored sequence fallback, without deciding the consumer's demand. */
-static PreparedMinimalWorkerResult prepared_minimal_worker_call(
+/* The worker shares call admission and typed completion. A raw one-step
+ * observer alone projects completed data into a return instruction; a
+ * source fallback remains an explicitly unfinished computation. */
+static bool prepared_minimal_worker_call(
     Space *s, Arena *a, Atom *atom, const Bindings *outer_environment,
-    int fuel, Atom **instruction_out) {
-    *instruction_out = NULL;
+    int fuel, CettaCallOutcome *outcome) {
+    *outcome = (CettaCallOutcome){0};
     SymbolId head_id = atom_head_symbol_id(atom);
     CettaExprLen nargs = atom && atom->kind == ATOM_EXPR && atom->expr.len
         ? expr_nargs(atom) : 0u;
@@ -37214,13 +37207,13 @@ static PreparedMinimalWorkerResult prepared_minimal_worker_call(
             expr_arg(atom, 2u), outer_environment, fuel,
             false, NULL, &mapped_value);
         if (mapped == PREPARED_FOLD_VALUE) {
-            *instruction_out = atom_expr2(
-                a, atom_symbol_id(a, g_builtin_syms.return_text),
-                mapped_value);
-            return PREPARED_MINIMAL_WORKER_EMIT;
+            *outcome = cetta_call_completed_value(mapped_value);
+            return true;
         }
-        if (mapped == PREPARED_FOLD_INTERRUPTED)
-            return PREPARED_MINIMAL_WORKER_INTERRUPTED;
+        if (mapped == PREPARED_FOLD_INTERRUPTED) {
+            *outcome = cetta_call_interrupted();
+            return true;
+        }
     }
 
     if (head_id == g_builtin_syms.minimal_sum_by && nargs == 2u) {
@@ -37236,11 +37229,13 @@ static PreparedMinimalWorkerResult prepared_minimal_worker_call(
                 projection, outer_environment, fuel, &sum)
             : PREPARED_FOLD_NOT_APPLICABLE;
         if (summed == PREPARED_FOLD_VALUE) {
-            *instruction_out = sum;
-            return PREPARED_MINIMAL_WORKER_REENTER;
+            *outcome = cetta_call_value(sum);
+            return true;
         }
-        if (summed == PREPARED_FOLD_INTERRUPTED)
-            return PREPARED_MINIMAL_WORKER_INTERRUPTED;
+        if (summed == PREPARED_FOLD_INTERRUPTED) {
+            *outcome = cetta_call_interrupted();
+            return true;
+        }
     }
 
     if (head_id == g_builtin_syms.minimal_retain_top_k_by_number &&
@@ -37252,13 +37247,13 @@ static PreparedMinimalWorkerResult prepared_minimal_worker_call(
                 expr_arg(atom, 2u), expr_arg(atom, 3u),
                 outer_environment, fuel, &retained_value);
         if (retained == PREPARED_FOLD_VALUE) {
-            *instruction_out = atom_expr2(
-                a, atom_symbol_id(a, g_builtin_syms.return_text),
-                retained_value);
-            return PREPARED_MINIMAL_WORKER_EMIT;
+            *outcome = cetta_call_completed_value(retained_value);
+            return true;
         }
-        if (retained == PREPARED_FOLD_INTERRUPTED)
-            return PREPARED_MINIMAL_WORKER_INTERRUPTED;
+        if (retained == PREPARED_FOLD_INTERRUPTED) {
+            *outcome = cetta_call_interrupted();
+            return true;
+        }
     }
 
     if (head_id == g_builtin_syms.minimal_foldl_atom && nargs == 6u) {
@@ -37277,20 +37272,20 @@ static PreparedMinimalWorkerResult prepared_minimal_worker_call(
             NULL,
             &fold_value);
         if (folded == PREPARED_FOLD_VALUE) {
-            *instruction_out = atom_expr2(
-                a, atom_symbol_id(a, g_builtin_syms.return_text),
-                fold_value);
-            return PREPARED_MINIMAL_WORKER_EMIT;
+            *outcome = cetta_call_completed_value(fold_value);
+            return true;
         }
-        if (folded == PREPARED_FOLD_INTERRUPTED)
-            return PREPARED_MINIMAL_WORKER_INTERRUPTED;
+        if (folded == PREPARED_FOLD_INTERRUPTED) {
+            *outcome = cetta_call_interrupted();
+            return true;
+        }
     }
 
     if (head_id == g_builtin_syms.minimal_foldl_sequence && nargs == 7u) {
         PreparedSequenceRepresentation representation;
         if (!prepared_sequence_representation_lookup(
                 expr_arg(atom, 0u), &representation)) {
-            return PREPARED_MINIMAL_WORKER_DECLINED;
+            return false;
         }
         Atom *space_atom = expr_arg(atom, 6u);
         Space *fold_space =
@@ -37332,13 +37327,17 @@ static PreparedMinimalWorkerResult prepared_minimal_worker_call(
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PREPARED_SEQUENCE_ERASURE_ADMISSION);
             }
-            Atom *produced = erased
-                ? (erased_is_value
-                    ? erased_source
-                    : prepared_pure_closed_call_try(
-                    fold_space, &producer_scratch, erased_source,
-                    fuel, false, true, NULL))
-                : NULL;
+            CettaCallOutcome produced_return = {0};
+            bool produced_ready = erased && (erased_is_value
+                ? (produced_return = cetta_call_completed_value(erased_source), true)
+                : prepared_pure_closed_call_try(fold_space, &producer_scratch,
+                    erased_source, fuel, false, true, NULL, &produced_return));
+            if (produced_ready && produced_return.kind != CETTA_CALL_VALUE) {
+                *outcome = produced_return;
+                arena_free(&producer_scratch);
+                return true;
+            }
+            Atom *produced = produced_ready ? produced_return.term : NULL;
             if (produced) {
                 folded = prepared_foldl_single_result(
                     fold_space, a,
@@ -37354,13 +37353,13 @@ static PreparedMinimalWorkerResult prepared_minimal_worker_call(
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PREPARED_SEQUENCE_ERASURE_COMMIT);
             }
-            *instruction_out = atom_expr2(
-                a, atom_symbol_id(a, g_builtin_syms.return_text),
-                fold_value);
-            return PREPARED_MINIMAL_WORKER_EMIT;
+            *outcome = cetta_call_completed_value(fold_value);
+            return true;
         }
-        if (folded == PREPARED_FOLD_INTERRUPTED)
-            return PREPARED_MINIMAL_WORKER_INTERRUPTED;
+        if (folded == PREPARED_FOLD_INTERRUPTED) {
+            *outcome = cetta_call_interrupted();
+            return true;
+        }
         if (erasure_attempted) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PREPARED_SEQUENCE_ERASURE_DECLINE);
@@ -37420,11 +37419,25 @@ static PreparedMinimalWorkerResult prepared_minimal_worker_call(
                 finish_fold,
             },
             4u);
-        *instruction_out = fallback;
-        return PREPARED_MINIMAL_WORKER_REENTER;
+        *outcome = cetta_call_value(fallback);
+        return true;
     }
 
-    return PREPARED_MINIMAL_WORKER_DECLINED;
+    return false;
+}
+
+/* One-step observers retain the authored instruction view. Ordinary worker
+ * completion stays typed until that observation is actually requested. */
+static Atom *prepared_minimal_worker_readback(Arena *arena, CettaCallOutcome outcome) {
+    if (outcome.kind == CETTA_CALL_VALUE &&
+        outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE)
+        return atom_expr2(arena, atom_symbol_id(arena, g_builtin_syms.return_text),
+            outcome.term);
+    if (outcome.kind == CETTA_CALL_VALUE &&
+        outcome.result_form == CETTA_CALL_RESULT_EXPRESSION)
+        return outcome.term;
+    eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    return NULL;
 }
 
 /* HE's get-type takes an optional second argument, the space it types its
@@ -43720,11 +43733,11 @@ static PettaSpecializeResult petta_eval_machine_prepare_call(
         call, prepared_call);
 }
 
-static Atom *prepared_pure_closed_call_try(
+static bool prepared_pure_closed_call_try(
     Space *space, Arena *destination, Atom *call, int fuel,
     bool entry_arguments_are_values,
     bool preserve_internal_values,
-    PreparedPureProgramCache *program_cache);
+    PreparedPureProgramCache *program_cache, CettaCallOutcome *outcome);
 
 static bool prepared_pure_program_cache_has_decline_head(
     PreparedPureProgramCache *cache, Space *space, SymbolId head,
@@ -43852,12 +43865,12 @@ static bool petta_eval_machine_open_relation_declined(
     void *context, Space *space, SymbolId head, CettaExprLen arity,
     bool evaluate_result);
 
-static Atom *petta_eval_machine_execute_prepared_pure_call(
+static bool petta_eval_machine_execute_prepared_pure_call(
     void *context, Space *space, Arena *result_arena,
-    Atom *prepared_call) {
+    Atom *prepared_call, CettaCallOutcome *outcome) {
     return prepared_pure_closed_call_try(
         space, result_arena, prepared_call, -1, true, true,
-        petta_eval_machine_prepared_pure_cache(context));
+        petta_eval_machine_prepared_pure_cache(context), outcome);
 }
 
 /* The same decline the closed-call entry reads first, asked by head so the
@@ -49320,11 +49333,14 @@ static Atom *prepared_pure_closed_result_copy(
     return copy;
 }
 
-static Atom *prepared_pure_closed_call_try(
+static bool prepared_pure_closed_call_try(
     Space *space, Arena *destination, Atom *call, int fuel,
     bool entry_arguments_are_values,
     bool preserve_internal_values,
-    PreparedPureProgramCache *program_cache) {
+    PreparedPureProgramCache *program_cache, CettaCallOutcome *outcome) {
+    if (!outcome)
+        return false;
+    *outcome = (CettaCallOutcome){0};
     CETTA_SCOPED_SHARED_TRANSITION(prepared_pure_observation);
     if (program_cache && program_cache->entries) {
         CettaLanguageId early_language_id =
@@ -49353,14 +49369,14 @@ static Atom *prepared_pure_closed_call_try(
                  early_total_structural_equality))) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
-            return NULL;
+            return false;
         }
     }
     PreparedPureClosedCallPlan plan;
     if (!prepared_pure_closed_call_plan(
             space, destination, call, fuel,
             entry_arguments_are_values, program_cache, &plan))
-        return NULL;
+        return false;
     CettaLanguageId language_id = plan.language_id;
     CettaPreparedPureBooleanValue boolean_value = plan.boolean_value;
     CettaPreparedPureConstructValue construct_value =
@@ -49391,7 +49407,7 @@ static Atom *prepared_pure_closed_call_try(
     if (compilation_declined) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
-        return NULL;
+        return false;
     }
     program_is_cached = program != NULL;
     if (!program &&
@@ -49401,7 +49417,7 @@ static Atom *prepared_pure_closed_call_try(
             "answer effect is outside the single-result machine", call);
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
-        return NULL;
+        return false;
     }
     bool answer_frontend_refusal = false;
     if (!program) {
@@ -49435,7 +49451,7 @@ static Atom *prepared_pure_closed_call_try(
         prepared_pure_precheck_debug("program compilation failed", call);
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
-        return NULL;
+        return false;
     }
     if (cetta_prepared_pure_program_has_native_calls(program)) {
         /* This consumer has no entered-return continuation. Cache its
@@ -49451,7 +49467,7 @@ static Atom *prepared_pure_closed_call_try(
                 language_id, call_mode, false,
                 cache_entry_arguments_are_values, total_structural_equality);
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
-        return NULL;
+        return false;
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_ADMISSION);
@@ -49470,17 +49486,17 @@ static Atom *prepared_pure_closed_call_try(
         machine_arena = &local_machine_arena;
     }
     ArenaMark machine_arena_mark = arena_mark(machine_arena);
-    Atom *machine_result = NULL;
+    CettaCallOutcome returned;
     size_t machine_nursery_budget =
         prepared_pure_nursery_budget_bytes();
-    bool executed = cetta_prepared_pure_program_execute_closed_controlled(
+    bool handled = cetta_prepared_pure_program_execute_closed_controlled(
         program, machine_arena, machine_nursery_budget,
-        eval_prepared_pure_interrupt_poll, NULL,
-        &machine_result);
-    bool interrupted = !executed &&
-        (eval_unwinding() || eval_cancel_check());
-    (void)interrupted;
-    Atom *result = executed && machine_result
+        eval_prepared_pure_interrupt_poll, NULL, &returned);
+    bool interrupted = (handled && returned.kind == CETTA_CALL_INTERRUPTED) ||
+        (!handled && (eval_unwinding() || eval_cancel_check()));
+    Atom *machine_result = handled && returned.kind == CETTA_CALL_VALUE
+        ? returned.term : NULL;
+    Atom *result = machine_result
         ? (language_id == CETTA_LANGUAGE_PETTA && !preserve_internal_values
                ? petta_semantics_materialize_value(
                      destination, machine_result)
@@ -49488,18 +49504,26 @@ static Atom *prepared_pure_closed_call_try(
                      destination, machine_result, machine_arena,
                      machine_arena_mark, program))
         : NULL;
+    if (handled && returned.kind == CETTA_CALL_VALUE && !result) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        interrupted = true;
+    }
+    if (interrupted)
+        *outcome = cetta_call_interrupted();
+    else if (handled)
+        *outcome = result ? cetta_call_completed_value(result) : returned;
     cetta_prepared_pure_program_release_closed_execution(program);
     cetta_prepared_pure_program_clear_closed_entry_call(program);
     if (machine_arena_is_local)
         arena_free(machine_arena);
     else
         arena_reset(machine_arena, machine_arena_mark);
-    if (program_is_cached && !result && !interrupted) {
+    if (program_is_cached && !handled && !interrupted) {
         prepared_pure_program_cache_remove(
             program_cache, program);
         program = NULL;
         program_is_cached = false;
-    } else if (!program_is_cached && result && program_cache &&
+    } else if (!program_is_cached && handled && !interrupted && program_cache &&
                cacheable_program) {
         CettaPreparedPureProgram *cache_candidate = program;
         if (call_mode == CETTA_GSLT_PURE_CALL_EAGER &&
@@ -49537,15 +49561,15 @@ static Atom *prepared_pure_closed_call_try(
     }
     if (program && !program_is_cached)
         cetta_prepared_pure_program_free(program);
-    if (!result && !interrupted) {
+    if (!handled && !interrupted) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_EXECUTION_DECLINE);
     }
     cetta_runtime_stats_inc(
-        result
+        handled && !interrupted
             ? CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_COMMIT
             : CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
-    return result;
+    return handled || interrupted;
 }
 
 /* Answers published into the destination as the enumeration visits them.
@@ -49624,37 +49648,45 @@ static bool prepared_pure_answer_buffer_return(void *context,
  * those values.  An argument that route declines, or a typed head, whose
  * signature decides which arguments are evaluated, leaves the call to the
  * canonical evaluator. */
-static Atom *prepared_pure_answers_entry_call(
+static bool prepared_pure_answers_entry_call(
     Space *space, Arena *destination, Atom *call, int fuel,
-    PreparedPureProgramCache *program_cache) {
+    PreparedPureProgramCache *program_cache, CettaCallOutcome *outcome) {
     if (!space || !destination || !call || call->kind != ATOM_EXPR ||
         call->expr.len < 2u || call->expr.len - 1u > 64u ||
         !call->expr.elems[0] ||
         call->expr.elems[0]->kind != ATOM_SYMBOL ||
         !space_head_call_untyped(
             space, call->expr.elems[0]->sym_id, call->expr.len - 1u))
-        return NULL;
+        return false;
     Atom *elements[65];
     elements[0] = call->expr.elems[0];
     for (CettaExprIndex index = 1u; index < call->expr.len; index++) {
         Atom *argument = call->expr.elems[index];
         if (!argument || atom_has_vars(argument))
-            return NULL;
+            return false;
         if (!atom_eval_is_immediate_value(argument, fuel) &&
             !atom_is_constructor_normal_form(
                 space, destination, argument, fuel)) {
-            argument = prepared_pure_closed_call_try(
-                space, destination, argument, fuel, false, false,
-                program_cache);
+            CettaCallOutcome returned;
+            if (!prepared_pure_closed_call_try(
+                    space, destination, argument, fuel, false, false,
+                    program_cache, &returned))
+                return false;
+            if (returned.kind != CETTA_CALL_VALUE) {
+                *outcome = returned;
+                return true;
+            }
+            argument = returned.term;
             if (!argument || atom_has_vars(argument) ||
                 (!atom_eval_is_immediate_value(argument, fuel) &&
                  !atom_is_constructor_normal_form(
                      space, destination, argument, fuel)))
-                return NULL;
+                return false;
         }
         elements[index] = argument;
     }
-    return atom_expr(destination, elements, call->expr.len);
+    *outcome = cetta_call_value(atom_expr(destination, elements, call->expr.len));
+    return outcome->term != NULL;
 }
 
 static CettaPreparedPureAnswersResult
@@ -49691,14 +49723,20 @@ prepared_pure_closed_answers_try(
                 plan.call_mode, true, true,
                 plan.total_structural_equality))
             return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
-        Atom *entry = prepared_pure_answers_entry_call(
-            space, destination, call, fuel, program_cache);
-        if (!entry ||
+        CettaCallOutcome entry;
+        if (!prepared_pure_answers_entry_call(
+                space, destination, call, fuel, program_cache, &entry))
+            return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+        if (entry.kind == CETTA_CALL_FAILURE)
+            return CETTA_PREPARED_PURE_ANSWERS_COMPLETE;
+        if (entry.kind == CETTA_CALL_INTERRUPTED)
+            return CETTA_PREPARED_PURE_ANSWERS_STOPPED;
+        if (entry.kind != CETTA_CALL_VALUE ||
             !prepared_pure_closed_call_plan(
-                space, destination, entry, fuel, true,
+                space, destination, entry.term, fuel, true,
                 program_cache, &plan))
             return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
-        call = entry;
+        call = entry.term;
     }
     if (!plan.cache_entry_arguments_are_values ||
         !plan.cacheable_program)
@@ -51603,6 +51641,7 @@ tail_call: ;
     }
 
     Atom *prepared_pure_result = NULL;
+    CettaCallOutcome prepared_return;
     /* HE casts what a call answers to the type the call is expected to have
      * (he_cast_computed_answer).  A typed head's range meets that type before
      * HE evaluates anything, and its errors name the call: the canonical
@@ -51615,8 +51654,16 @@ tail_call: ;
     if (!he_expected_typed_head &&
         !prepared_sequence_fold_consumer_requires_authored_expansion(
             head, nargs)) {
-        prepared_pure_result = prepared_pure_closed_call_try(
-            s, a, atom, fuel, false, false, program_cache);
+        if (prepared_pure_closed_call_try(
+                s, a, atom, fuel, false, false, program_cache, &prepared_return)) {
+            if (prepared_return.kind == CETTA_CALL_FAILURE) {
+                petta_directive_note_answer(atom, false);
+                return;
+            }
+            if (prepared_return.kind == CETTA_CALL_INTERRUPTED)
+                return;
+            prepared_pure_result = prepared_return.term;
+        }
     }
     if (!prepared_pure_result &&
         (eval_unwinding() || eval_cancel_check()))
@@ -57291,17 +57338,25 @@ petta_lowered_to_shared_form:
         return;
     }
 
-    Atom *worker_instruction = NULL;
-    PreparedMinimalWorkerResult worker_result = prepared_minimal_worker_call(
-        s, a, atom, CURRENT_ENV, fuel, &worker_instruction);
-    if (worker_result == PREPARED_MINIMAL_WORKER_EMIT) {
-        outcome_set_add(os, worker_instruction, &_empty);
+    CettaCallOutcome worker_return;
+    if (prepared_minimal_worker_call(s, a, atom, CURRENT_ENV, fuel, &worker_return)) {
+        if (!cetta_call_outcome_shape_valid(worker_return)) {
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+            return;
+        }
+        if (worker_return.kind != CETTA_CALL_VALUE)
+            return;
+        /* This entry observes one minimal instruction. Completed worker
+         * data gains its syntax delimiter only at this explicit observer. */
+        Atom *instruction = prepared_minimal_worker_readback(a, worker_return);
+        if (!instruction)
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        else if (worker_return.result_form == CETTA_CALL_RESULT_EXPRESSION)
+            TAIL_REENTER(instruction);
+        else
+            outcome_set_add(os, instruction, &_empty);
         return;
     }
-    if (worker_result == PREPARED_MINIMAL_WORKER_REENTER)
-        TAIL_REENTER(worker_instruction);
-    if (worker_result == PREPARED_MINIMAL_WORKER_INTERRUPTED)
-        return;
 
 generic_dispatch:
     {

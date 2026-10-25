@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: dc044504fe1cd16dd5004bd49f2f4065b7ccb8a143f39b38bef7a3dc175499f5
+ * Source SHA-256: 012f9ea1a70fe499814c6b339597bbb959d4a6b1610e76c6c11e772d2ed1bb31
  */
 
 #include <stdbool.h>
@@ -700,6 +700,9 @@ typedef enum {
     CETTA_CONTROL_FAILURE = 7,
     CETTA_CONTROL_SCOPED_COMMIT = 8,
     CETTA_CONTROL_HANDLE = 9,
+    CETTA_CONTROL_RETURN_VALUE = 10,
+    CETTA_CONTROL_CONSTRUCT = 11,
+    CETTA_CONTROL_INVOKE = 12,
 } CettaControlOperation;
 
 #define CETTA_CONTROL_OPERAND_ABSENT UINT8_MAX
@@ -710,6 +713,29 @@ typedef struct {
     uint8_t last;
 } CettaControlOperationPlan;
 _Static_assert(sizeof(CettaControlOperationPlan) == 4u, "control plan must remain four bytes");
+
+#define CETTA_CONTROL_RETURN_VALUE_PLAN ((CettaControlOperationPlan){CETTA_CONTROL_RETURN_VALUE, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT})
+#define CETTA_CONTROL_CONSTRUCT_PLAN ((CettaControlOperationPlan){CETTA_CONTROL_CONSTRUCT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT})
+#define CETTA_CONTROL_INVOKE_PLAN ((CettaControlOperationPlan){CETTA_CONTROL_INVOKE, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT})
+
+/* Fixed-layout control forms are distinct from occurrence-level value,
+ * construction and invocation plans. This grants no callee admission. */
+static inline bool cetta_control_operation_is_control_form(CettaControlOperationPlan plan) {
+    switch (plan.operation) {
+    case CETTA_CONTROL_SEQUENCE:
+    case CETTA_CONTROL_BRANCH:
+    case CETTA_CONTROL_SEQUENCE_MANY:
+    case CETTA_CONTROL_FORCE:
+    case CETTA_CONTROL_RETURN_SCOPE:
+    case CETTA_CONTROL_ORDERED_CHOICE:
+    case CETTA_CONTROL_FAILURE:
+    case CETTA_CONTROL_SCOPED_COMMIT:
+    case CETTA_CONTROL_HANDLE:
+        return true;
+    default:
+        return false;
+    }
+}
 
 /* The two three-operand sequence layouts have different source positions.
  * Physical lowerings can admit one layout without changing the operation. */

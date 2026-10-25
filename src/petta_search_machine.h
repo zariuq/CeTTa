@@ -556,11 +556,11 @@ typedef struct {
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
-    /* Execute a closed, revision-pinned determinate pure call through the
-     * shared generated machine.  NULL declines to canonical equation search. */
-    Atom *(*execute_prepared_pure_call)(
+    /* A closed revision-pinned pure call returns its completed value,
+     * logical failure or interruption. Only false declines the realization. */
+    bool (*execute_prepared_pure_call)(
         void *context, Space *space, Arena *result_arena,
-        Atom *prepared_call);
+        Atom *prepared_call, CettaCallOutcome *outcome);
     /* A revision-keyed program fact: the relation has already declined
      * prepared compilation, so no closed call of it executes there.  Read
      * before a call is proved closed or materialized; false means only

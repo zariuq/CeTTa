@@ -285,11 +285,14 @@ bool cetta_prepared_pure_program_execute_closed(
     size_t nursery_budget_bytes,
     Atom **result_out);
 
+/* True carries a completed value, logical failure or interruption. False
+ * declines the pure realization. Failure never becomes an ordinary datum.
+ * Value storage has the same borrowed lifetime as execute_closed above. */
 bool cetta_prepared_pure_program_execute_closed_controlled(
     CettaPreparedPureProgram *program, Arena *arena,
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context, Atom **result_out);
+    void *interrupt_context, CettaCallOutcome *outcome);
 
 typedef bool (*CettaPreparedPureAnswerVisitorFn)(
     Atom *answer, void *context);

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # The last field requires the shared machine. Intrinsic demands and closed
 # calls can select their existing qualified realizations.
 CASES = [
+    ('raw-expansion-after-failure', '(= (miss $p) (let (Pair $x $y) $p 7))\n!(miss (Single 3))\n!(eval (_minimal-map-atom (1 2) $x (return $x)))\n', '[(eval (if-equal (1 2) () (return ()) (chain (decons-atom (1 2)) $ht#0 (unify ($head#0 $tail#0) $ht#0 (chain (eval (sealed ($x) (return $x))) $sealedmap#0 (chain (eval (map-atom $tail#0 $x $sealedmap#0)) $tail-mapped#0 (chain (eval (atom-subst $head#0 $x $sealedmap#0)) $map-expr#0 (chain $map-expr#0 $head-mapped#0 (chain (cons-atom $head-mapped#0 $tail-mapped#0) $res#0 (return $res#0)))))) (empty)))))]\n', False),
     ("shared-dag-type-input", "(= (dag $n $leaf) (if (== $n 0) $leaf "
      "(let $t (dag (- $n 1) $leaf) (node $t $t))))\n"
      "!(== (dag 40 1) (dag 40 1.0))\n"
@@ -247,25 +248,57 @@ FUEL_CASES = [
 ]
 
 
-def private_names(text):
-    """Compare fresh private frames by a bijection; caller names stay literal."""
-    names = {}
+VARIABLE_OR_STRING = re.compile(r'"(?:\\.|[^"\\])*"|\$[^\s()\[\],"]+')
 
-    def rename(match):
-        suffix = match.group(0)
-        return names.setdefault(suffix, "#" + str(len(names)))
 
-    return re.sub(r"#[0-9]+", rename, text)
+def source_variables(text):
+    return {match.group(0) for match in VARIABLE_OR_STRING.finditer(text)
+            if match.group(0).startswith('$')}
+
+
+def private_names(text, protected=()):
+    """Compare variable suffixes bijectively; all other text stays literal."""
+    protected = set(protected)
+    names, parts, start = {}, [], 0
+    for match in VARIABLE_OR_STRING.finditer(text):
+        token = match.group(0)
+        if not token.startswith('$') or token in protected:
+            continue
+        scoped = re.fullmatch(r'(.*)#([0-9]+)', token)
+        if scoped is None:
+            continue
+        parts.append(text[start:match.start()])
+        identity = names.setdefault(scoped[2], len(names))
+        parts.append(('private-variable', scoped[1], identity))
+        start = match.end()
+    parts.append(text[start:])
+    return tuple(parts)
+
+
+def check_private_observer():
+    left = '($local#31 $local#31 $other#31 $caller "literal#17" symbol#19)'
+    right = '($local#42 $local#42 $other#42 $caller "literal#17" symbol#19)'
+    assert private_names(left) == private_names(right)
+    for changed in [right.replace('$local#42 $local#42', '$local#42 $local#43'),
+                    right.replace('$other', '$changed'),
+                    right.replace('$caller', '$different'),
+                    right.replace('literal#17', 'literal#18'),
+                    right.replace('symbol#19', 'symbol#20')]:
+        assert private_names(left) != private_names(changed)
+    assert private_names('$caller#0', {'$caller#0'}) != private_names(
+        '$caller#42', {'$caller#0'})
 
 
 def main():
     binary = Path(sys.argv[1]).resolve()
     root = Path(__file__).resolve().parents[2]
+    check_private_observer()
     observations = 0
     with tempfile.TemporaryDirectory(prefix="he-shared-", dir=root / "runtime") as directory:
         for name, source, expected, compiled in CASES:
             path = Path(directory) / (name + ".metta")
             path.write_text(source)
+            protected = source_variables(source)
             for canonical, enabled in (("0", "0"), ("0", "1"),
                                        ("1", "0"), ("1", "1"), (None, None)):
                 env = dict(os.environ, CETTA_PETTA_MACHINE_STATS="1")
@@ -278,7 +311,7 @@ def main():
                 result = subprocess.run([str(binary), "--lang", "he", str(path)],
                                         cwd=root, env=env, capture_output=True,
                                         text=True, timeout=30)
-                if result.returncode or private_names(result.stdout) != expected:
+                if result.returncode or private_names(result.stdout, protected) != private_names(expected, protected):
                     raise AssertionError((name, canonical, enabled, result.returncode,
                                           result.stdout, result.stderr))
                 if enabled != "0" and compiled and "PETTA_MACHINE_STATS" not in result.stderr:

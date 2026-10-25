@@ -76,6 +76,26 @@ frontiers retain their computation role. Payload spelling cannot change it.
 Native admission and invocation
 -------------------------------
 
+The controlled closed-pure worker reports CettaCallOutcome as well. A matched
+let pattern that fails is logical exhaustion, not refusal of the realization.
+The caller completes that branch without reopening an answer producer or
+ordinary equation entry. The same rule applies inside a prepared answer step.
+Cancellation remains incomplete work. Unsupported arithmetic retains ordinary
+error interpretation instead of being relabelled as exhaustion.
+
+Compilation may remain cached after a particular input fails. This caches the
+revision-pinned program, never the failed answer: the next input is evaluated
+anew, and changed declarations reopen admission. Releasing execution clears
+the argument loans and temporary roots on either success or failure.
+
+Minimal collection workers return typed data or pending computation. Their
+two one-step observers share the explicit instruction readback: completed
+data acquires a return delimiter there, while pending source retains its
+expression role. Failure emits no instruction; no Empty datum is introduced.
+NativeCallReturn.MinimalObservation checks this readback against an independent
+source observer. Private-name observation and native correspondence remain
+separate obligations.
+
 eval_native_application_on returns false only when the direct route declines.
 An admitted call reports its actual CettaCallOutcome, including logical failure
 and interruption. A missing value from a handled VALUE result is a host failure;
@@ -237,6 +257,16 @@ PeTTa completion implementation and CettaCallReturnCursor. Goal operands and
 the existing metadata union carry the result; a successful single-value call
 needs no host goal or universal value wrapper.
 
+The OEM cursor's next, next_above and continue interfaces carry the same
+CettaCallOutcome. ANSWER transfers COMPLETED_VALUE; RAISE transfers raised
+control. Host, collection, cut and stop events retain their actual cursor
+state and have no return payload. The ordinary consumer validates the tag
+before using the returned bindings. It never reclassifies a completed answer
+through the foreign registry, even when its syntax names a callable head.
+This applies equally to the first answer, a resumed alternative and a return
+from an entered host continuation. Query-variable aliases and the answer
+arena's lifetime are unchanged; no per-value or cursor field was added.
+
 CettaOpenEquationStats.native_calls counts entered native calls, including
 failure and interruption. A refusal does not increment it. host_goals includes
 cold result transport when required, without another native invocation.
@@ -285,6 +315,27 @@ elaboration adequacy and native C correspondence remain separate refinement
 obligations.
 
 Scoped computation plans
+
+Source occurrences also carry explicit return-value, construct and invoke
+plans. Source roles establish interpretation authority; an operation does not
+grant current callee admission, type evidence or ownership. The compiler
+stores these operations without enlarging the four-byte plan. Ordinary value
+and constructor consumers execute them, and OEM recognizes invocation as a
+positive operation rather than the absence of a control form.
+
+An existing adapter node with no operation can still elaborate from its own
+source role. This is a migration boundary, not permission to reclassify source
+from a current registry. A constructor's independently compiled children still
+execute, and its head remains data after a later function registration. A
+retired callable follows the dialect's existing live-dispatch protocol.
+Fixed-layout control-form admission is separate from these basic operations;
+receiving an explicit invocation tag does not disable a qualified lowering.
+
+ExecutionControl.Occurrence proves source-role classification and its join to
+the contextual kernel. Constructor decomposition and callee obligations are
+explicit dialect services in that law; it does not claim their whole-program
+adequacy or a native C refinement. Remaining argument elaboration and adapter
+migration must preserve those boundaries.
 
 The generated control vocabulary distinguishes commitment from error handling.
 PeTTa's already classified cut and catch forms select these plans through its

@@ -29559,6 +29559,8 @@ qualify-prepared-scalar-lean:
 # kind, each way a call enters its equation, and the calls that leave to the
 # evaluator answer as SWI-PeTTa's, on register code, on the node executor,
 # and on register code collecting in a one-megabyte nursery.
+# Thirteen queries prepare once each; the final nondeterminate query also
+# prepares an answer worker. A matched call's failure never reopens entry.
 test-petta-prepared-code: $(BIN)
 	@set -eu; \
 	for run in code node collecting; do \
@@ -29579,9 +29581,9 @@ test-petta-prepared-code: $(BIN)
 		--lang petta tests/petta/prepared_code.metta 2>&1 >/dev/null); \
 	lowered=$$(printf '%s\n' "$$trace" | \
 		grep -c 'prepared-pure code: bodies lowered to register code' || true); \
-	if [ "$$lowered" -ne 16 ] || \
+	if [ "$$lowered" -ne 14 ] || \
 	   printf '%s\n' "$$trace" | grep -q 'left to the node executor'; then \
-		echo "FAIL: prepared register code: $$lowered of 16 programs lowered"; \
+		echo "FAIL: prepared register code: $$lowered of 14 programs lowered"; \
 		exit 1; \
 	fi; \
 	echo "PASS: closed pure calls answer as SWI-PeTTa on register code"

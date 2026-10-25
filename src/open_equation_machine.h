@@ -486,12 +486,15 @@ CettaOpenEquationCursor *cetta_open_equation_cursor_open(
     Atom *const *query_vars, uint32_t query_var_count,
     const CettaOpenEquationRuntime *runtime);
 
-/* The next answer: its value and the value of every query variable, in the
- * order they were given (a variable left unbound reports itself, as the
- * atom in `query_vars`). */
+/* The next event. ANSWER writes a COMPLETED_VALUE return: the region has
+ * already interpreted its source occurrence, including any typed data
+ * demand. RAISE writes a RAISED return. Other events have no return payload;
+ * their step and cursor state describe the pending work or stop reason.
+ * Query values follow their original order (an unbound variable reports
+ * itself as the atom in `query_vars`). The answer arena owns all payloads. */
 CettaOpenEquationStep cetta_open_equation_cursor_next(
     CettaOpenEquationCursor *cursor, Atom *const *query_vars,
-    Atom **value_out, Atom ***query_values_out);
+    CettaCallOutcome *returned, Atom ***query_values_out);
 
 /* Whether an alternative remains after the last answer: false means the
  * enumeration is exhausted. */
@@ -506,7 +509,7 @@ bool cetta_open_equation_cursor_pending(
  * and `_pending` are depth 0. */
 CettaOpenEquationStep cetta_open_equation_cursor_next_above(
     CettaOpenEquationCursor *cursor, uint32_t base, Atom *const *query_vars,
-    Atom **value_out, Atom ***query_values_out);
+    CettaCallOutcome *returned, Atom ***query_values_out);
 bool cetta_open_equation_cursor_pending_above(
     const CettaOpenEquationCursor *cursor, uint32_t base);
 
@@ -661,7 +664,7 @@ bool cetta_open_equation_cursor_accept(
 /* Run on from an accepted answer: the frames at depth `base` and above. */
 CettaOpenEquationStep cetta_open_equation_cursor_continue(
     CettaOpenEquationCursor *cursor, Atom *const *query_vars, uint32_t base,
-    Atom **value_out, Atom ***query_values_out);
+    CettaCallOutcome *returned, Atom ***query_values_out);
 
 /* The cursor borrows the ground parts of its call's arguments from the
  * host's store, which holds them for as long as the cursor may run.  Before
