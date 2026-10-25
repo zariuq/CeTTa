@@ -11274,7 +11274,7 @@ static bool petta_machine_immediate_value(
     Atom *atom, const PettaPlanNode *plan) {
     if (!atom)
         return false;
-    if (plan && plan->role == PETTA_PLAN_VALUE)
+    if (petta_plan_computation(plan).operation == CETTA_CONTROL_RETURN_VALUE)
         return true;
     if (atom->kind != ATOM_EXPR || atom->expr.len == 0u ||
         atom_is_list_form(atom))
@@ -11295,24 +11295,31 @@ static bool petta_machine_immediate_value(
  * so none is evaluated again as code.  SWI-PeTTa passes elements and
  * accumulators to the callable as Prolog terms in the same way.  They are
  * the same for every call, so they are constants, not allocations. */
-static const PettaPlanNode petta_machine_value_places[3];
+static const PettaPlanNode petta_machine_value_places[3] = {
+    {.control = CETTA_CONTROL_RETURN_VALUE_PLAN},
+    {.control = CETTA_CONTROL_RETURN_VALUE_PLAN},
+    {.control = CETTA_CONTROL_RETURN_VALUE_PLAN},
+};
 /* A ready callable head still dispatches under the dialect's implicit
  * handler when its generated application has no authored occurrence plan.
  * Its arguments retain their ordinary evaluation roles; recovery starts
  * only after argument evaluation, at LAMBDA_READY. */
 static const PettaPlanNode petta_machine_unplanned_callable_application = {
     .role = PETTA_PLAN_DYNAMIC_CALL,
+    .control = CETTA_CONTROL_INVOKE_PLAN,
     .dispatch_handler = true,
 };
 static const PettaPlanNode petta_machine_value_applications[2] = {
     {
         .role = PETTA_PLAN_DYNAMIC_CALL,
+        .control = CETTA_CONTROL_INVOKE_PLAN,
         .dispatch_handler = true,
         .child_count = 2u,
         .children = petta_machine_value_places,
     },
     {
         .role = PETTA_PLAN_DYNAMIC_CALL,
+        .control = CETTA_CONTROL_INVOKE_PLAN,
         .dispatch_handler = true,
         .child_count = 3u,
         .children = petta_machine_value_places,
@@ -11363,8 +11370,11 @@ static const PettaPlanNode *petta_machine_value_application(
     if (!root || !places)
         return NULL;
     memset(places, 0, sizeof(*places) * (size_t)length);
+    for (CettaExprIndex index = 0u; index < length; index++)
+        places[index].control = CETTA_CONTROL_RETURN_VALUE_PLAN;
     *root = (PettaPlanNode){
         .role = PETTA_PLAN_DYNAMIC_CALL,
+        .control = CETTA_CONTROL_INVOKE_PLAN,
         .dispatch_handler = true,
         .child_count = length,
         .children = places,
@@ -11525,9 +11535,10 @@ static bool petta_push_evaluated_expression_range_planned(
          * data parent the parent's reading already decided it. */
         if (machine->host.normal_data_value && source->kind == ATOM_EXPR &&
             !atom_has_vars(source) &&
-            (!element_plan || element_plan->role == PETTA_PLAN_DATA) &&
+            (!element_plan || petta_plan_computation(element_plan).operation ==
+                 CETTA_CONTROL_CONSTRUCT) &&
             !(final_kind == PETTA_GOAL_UNIFY && !atom_has_vars(expression)) &&
-            (!plan || plan->role != PETTA_PLAN_DATA) &&
+            petta_plan_computation(plan).operation != CETTA_CONTROL_CONSTRUCT &&
             machine->host.normal_data_value(machine->host.context,
                 machine->space, &machine->heap, resolved)) {
             ready_elements[index] = resolved;
@@ -15840,9 +15851,11 @@ static bool petta_machine_equation_remainder_plan(
     for (CettaExprIndex index = 1u;
          index < application->expr.len; index++) {
         children[index].role = PETTA_PLAN_VALUE;
+        children[index].control = CETTA_CONTROL_RETURN_VALUE_PLAN;
     }
     *root = (PettaPlanNode){
         .role = PETTA_PLAN_DYNAMIC_CALL,
+        .control = CETTA_CONTROL_INVOKE_PLAN,
         .dispatch_handler = true,
         .child_count = application->expr.len,
         .children = children,
@@ -20130,8 +20143,12 @@ static size_t petta_machine_prune_empty_guard_candidates(
     return write;
 }
 
-static Atom *petta_machine_execute_prepared_call(
-        PettaMachineImpl *machine, Atom *call, Atom *expected);
+static bool petta_machine_execute_prepared_call(
+        PettaMachineImpl *machine, Atom *call, Atom *expected,
+        CettaCallOutcome *outcome);
+static bool petta_machine_deliver_prepared_return(PettaMachineImpl *machine,
+        CettaCallOutcome outcome, Atom *expected, uint32_t barrier,
+        bool resolved, PettaMachineStep *failure);
 /* Whether a value is an error (an expression headed by Error), read through
  * variable links at its root and head only.  False when a link cannot be
  * certified; the caller then reads the substituted value. */
@@ -20448,10 +20465,18 @@ static bool petta_machine_start_space_query(
         if (!determinate_declined &&
             petta_machine_space_query_closed(machine, query)) {
             Atom *call = petta_machine_materialize_space_query(machine, query);
-            Atom *result = call
-                ? petta_machine_execute_prepared_call(machine, call, expected) : NULL;
-            if (result)
-                return petta_machine_unify(machine, result, expected);
+            CettaCallOutcome returned;
+            if (call && petta_machine_execute_prepared_call(
+                    machine, call, expected, &returned)) {
+                PettaMachineStep failure = PETTA_MACHINE_STEP_EXHAUSTED;
+                bool answered = petta_machine_deliver_prepared_return(
+                    machine, returned, expected, barrier, false, &failure);
+                if (!answered && failure != PETTA_MACHINE_STEP_EXHAUSTED) {
+                    machine->terminal = true;
+                    machine->terminal_step = failure;
+                }
+                return answered;
+            }
             determinate_declined = true;
             bool taken = false;
             bool answered = petta_machine_collect_closed_answers(
@@ -26564,7 +26589,7 @@ static bool petta_machine_type_pure_call_ready(
         return true;
     if (plan->execution == PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS)
         return true;
-    return plan->control.operation == CETTA_CONTROL_NONE &&
+    return !cetta_control_operation_is_control_form(plan->control) &&
         (plan->role == PETTA_PLAN_STATIC_CALL ||
          plan->role == PETTA_PLAN_DATA);
 }
@@ -26721,6 +26746,23 @@ static inline bool petta_machine_deliver_native_return(
         value = petta_machine_boolean_value(machine, truth);
     return resolved ? petta_machine_unify_resolved(machine, value, expected)
                     : petta_machine_unify(machine, value, expected);
+}
+
+/* The prepared program has already selected its Boolean/data codec. Its
+ * completed value keeps that carrier; other control uses native delivery. */
+static bool petta_machine_deliver_prepared_return(PettaMachineImpl *machine,
+        CettaCallOutcome outcome, Atom *expected, uint32_t barrier,
+        bool resolved, PettaMachineStep *failure) {
+    if (outcome.kind != CETTA_CALL_VALUE)
+        return petta_machine_deliver_native_return(machine, outcome, expected,
+            barrier, false, resolved, failure);
+    if (!cetta_call_outcome_shape_valid(outcome) ||
+        outcome.result_form != CETTA_CALL_RESULT_COMPLETED_VALUE) {
+        *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+        return false;
+    }
+    return resolved ? petta_machine_unify_resolved(machine, outcome.term, expected)
+                    : petta_machine_unify(machine, outcome.term, expected);
 }
 
 static bool petta_machine_try_activation_pure_grounded(
@@ -27280,7 +27322,7 @@ petta_machine_evaluate_activation_scalar_tree_reference_node(
         source->expr.elems[0]->kind != ATOM_SYMBOL ||
         plan->role != PETTA_PLAN_STATIC_CALL ||
         plan->execution != PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS ||
-        plan->control.operation != CETTA_CONTROL_NONE ||
+        cetta_control_operation_is_control_form(plan->control) ||
         !plan->contains_call ||
         *operations == UINT32_MAX) {
         return PETTA_ACTIVATION_CALL_VIEW_DECLINED;
@@ -27516,7 +27558,7 @@ petta_machine_evaluate_activation_scalar_tree_program(
             node_plan->role != PETTA_PLAN_STATIC_CALL ||
             node_plan->execution !=
                 PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS ||
-            node_plan->control.operation != CETTA_CONTROL_NONE ||
+            cetta_control_operation_is_control_form(node_plan->control) ||
             !node_plan->contains_call || !node_source ||
             node_source->kind != ATOM_EXPR ||
             node_source->expr.len !=
@@ -28623,18 +28665,19 @@ static bool petta_machine_space_query_closed(
     return view->closed_state == PETTA_QUERY_CLOSED_YES;
 }
 
-static Atom *petta_machine_execute_prepared_call(
-        PettaMachineImpl *machine, Atom *call, Atom *expected) {
+static bool petta_machine_execute_prepared_call(
+        PettaMachineImpl *machine, Atom *call, Atom *expected,
+        CettaCallOutcome *outcome) {
     if (!machine->host.execute_prepared_pure_call ||
         !petta_machine_value_result_admitted(machine, expected) ||
         petta_machine_prepared_call_blocked(machine, call))
-        return NULL;
-    Atom *result = machine->host.execute_prepared_pure_call(
-        machine->host.context, machine->space, &machine->heap, call);
+        return false;
+    bool handled = machine->host.execute_prepared_pure_call(
+        machine->host.context, machine->space, &machine->heap, call, outcome);
     /* A foreign registry can make a returned data head callable without a
      * Space revision change. Such results still need ordinary dispatch. */
-    return result && !petta_machine_extension_callable(machine, result)
-        ? result : NULL;
+    return handled && (outcome->kind != CETTA_CALL_VALUE || !outcome->term ||
+        !petta_machine_extension_callable(machine, outcome->term));
 }
 
 /* A closed call the determinate route declined, answered by the host's
@@ -29698,7 +29741,7 @@ static uint64_t petta_open_cursor_activations(
 static CettaOpenEquationStep petta_machine_witness_run(
     PettaMachineImpl *machine, PettaOpenAnswers *open, Atom *call,
     Atom *destination, CettaOpenEquationCursor **cursor, uint32_t bound,
-    uint64_t quantum, Atom **value_out, Atom ***values_out) {
+    uint64_t quantum, CettaCallOutcome *returned, Atom ***values_out) {
     if (!*cursor) {
         *cursor = machine->host.open_relation_cursor(
             machine->host.context, machine->space, &machine->heap,
@@ -29717,7 +29760,7 @@ static CettaOpenEquationStep petta_machine_witness_run(
             *cursor, petta_open_cursor_activations(*cursor) + quantum);
     }
     return cetta_open_equation_cursor_next(
-        *cursor, open->vars, value_out, values_out);
+        *cursor, open->vars, returned, values_out);
 }
 
 static bool petta_open_cursor_over_budget(
@@ -29744,7 +29787,7 @@ static bool petta_open_cursor_over_budget(
  */
 static CettaOpenEquationStep petta_machine_first_witness_portfolio(
     PettaMachineImpl *machine, PettaOpenAnswers *open, Atom *call,
-    Atom *destination, Atom **value_out, Atom ***values_out) {
+    Atom *destination, CettaCallOutcome *returned, Atom ***values_out) {
     CettaOpenEquationCursor *depth_first = NULL;
     CettaOpenEquationCursor *deepening = NULL;
     uint32_t bound = 1u;
@@ -29753,7 +29796,7 @@ static CettaOpenEquationStep petta_machine_first_witness_portfolio(
         uint64_t quantum = (uint64_t)PETTA_WITNESS_FIRST_BUDGET << round;
         step = petta_machine_witness_run(
             machine, open, call, destination, &depth_first, 0u, quantum,
-            value_out, values_out);
+            returned, values_out);
         if (step == CETTA_OPEN_EQUATION_ANSWER ||
             step == CETTA_OPEN_EQUATION_EXHAUSTED ||
             step == CETTA_OPEN_EQUATION_FAULT) {
@@ -29770,7 +29813,7 @@ static CettaOpenEquationStep petta_machine_first_witness_portfolio(
             cetta_open_equation_cursor_set_budget(depth_first, 0u);
             open->cursor = depth_first;
             return cetta_open_equation_cursor_next(
-                depth_first, open->vars, value_out, values_out);
+                depth_first, open->vars, returned, values_out);
         }
         uint64_t left = quantum;
         while (left > 0u) {
@@ -29778,7 +29821,7 @@ static CettaOpenEquationStep petta_machine_first_witness_portfolio(
                 ? petta_open_cursor_activations(deepening) : 0u;
             step = petta_machine_witness_run(
                 machine, open, call, destination, &deepening, bound, left,
-                value_out, values_out);
+                returned, values_out);
             if (step == CETTA_OPEN_EQUATION_ANSWER ||
                 step == CETTA_OPEN_EQUATION_FAULT ||
                 (step == CETTA_OPEN_EQUATION_EXHAUSTED &&
@@ -29803,6 +29846,21 @@ plain:
     cetta_open_equation_cursor_close(depth_first);
     cetta_open_equation_cursor_close(deepening);
     return CETTA_OPEN_EQUATION_HANDOFF;
+}
+
+/* Host and control events retain their own cursor state. Published answers
+ * carry an already interpreted value; a producer violating that contract
+ * cannot ask the consumer to guess a replacement role from payload syntax. */
+static bool petta_open_return_valid(CettaOpenEquationStep step,
+        CettaCallOutcome returned) {
+    if (step == CETTA_OPEN_EQUATION_ANSWER)
+        return returned.kind == CETTA_CALL_VALUE &&
+            returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+            cetta_call_outcome_shape_valid(returned);
+    if (step == CETTA_OPEN_EQUATION_RAISE)
+        return returned.kind == CETTA_CALL_RAISED &&
+            cetta_call_outcome_shape_valid(returned);
+    return true;
 }
 
 static __attribute__((noinline)) bool petta_machine_start_open_answers(
@@ -29868,7 +29926,7 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
         machine->answer_variable &&
         machine->answer_variable->kind == ATOM_VAR &&
         var_id_eq(expected->var_id, machine->answer_variable->var_id);
-    Atom *value = NULL;
+    CettaCallOutcome returned = cetta_call_failure();
     Atom **values = NULL;
     CettaOpenEquationStep step = CETTA_OPEN_EQUATION_HANDOFF;
     if (machine->host.answer_authority_token(
@@ -29876,7 +29934,7 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
         if (evaluate_result && !count_only &&
             petta_machine_first_witness_call(machine))
             step = petta_machine_first_witness_portfolio(
-                machine, open, call, destination, &value, &values);
+                machine, open, call, destination, &returned, &values);
         if (!open->cursor) {
             open->cursor = machine->host.open_relation_cursor(
                 machine->host.context, machine->space, &machine->heap,
@@ -29891,7 +29949,7 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
                 cetta_open_equation_cursor_set_collection_raise_policy(open->cursor,
                     machine->host.raises_abort_collections);
                 step = cetta_open_equation_cursor_next(
-                    open->cursor, open->vars, &value, &values);
+                    open->cursor, open->vars, &returned, &values);
             }
         }
     }
@@ -29899,11 +29957,16 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
         petta_answer_choice_release(&choice);
         return false;
     }
+    if (!petta_open_return_valid(step, returned)) {
+        machine->terminal = true;
+        machine->terminal_step = PETTA_MACHINE_STEP_HOST_ERROR;
+        *taken_out = true;
+        petta_answer_choice_release(&choice);
+        return false;
+    }
     /* A cut goes through an accepted host answer, which a first run has
      * none of; it is declined with the handoffs. */
-    if ((step == CETTA_OPEN_EQUATION_ANSWER &&
-         petta_machine_extension_callable(machine, value)) ||
-        step == CETTA_OPEN_EQUATION_CUT)
+    if (step == CETTA_OPEN_EQUATION_CUT)
         step = CETTA_OPEN_EQUATION_HANDOFF;
     if (step == CETTA_OPEN_EQUATION_HANDOFF) {
         cetta_runtime_stats_inc(
@@ -29951,7 +30014,7 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
             machine->terminal_step = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
-        return petta_machine_raise_error(machine, value);
+        return petta_machine_raise_error(machine, returned.term);
     }
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ANSWER);
     if (!petta_open_answer_weigh(machine, open, choice.barrier)) {
@@ -30040,7 +30103,7 @@ static __attribute__((noinline)) bool petta_machine_resume_open_answer_choice(
     PettaOpenAnswers *open = choice->as.answers.open;
     open->cold_active = false;
     PettaMachineAuthorityToken authority = {0};
-    Atom *value = NULL;
+    CettaCallOutcome returned = cetta_call_failure();
     Atom **values = NULL;
     /* A change of the host's authorities between answers is the cursor's to
      * observe: the calls it has entered keep their equations, and the calls
@@ -30057,12 +30120,16 @@ static __attribute__((noinline)) bool petta_machine_resume_open_answer_choice(
         choice->as.answers.authority = authority;
     }
     CettaOpenEquationStep step = cetta_open_equation_cursor_next_above(
-        open->cursor, choice->as.answers.open_base, open->vars, &value,
+        open->cursor, choice->as.answers.open_base, open->vars, &returned,
         &values);
     CettaOpenEquationHandoff reason =
         cetta_open_equation_cursor_handoff(open->cursor);
     if (step == CETTA_OPEN_EQUATION_EXHAUSTED)
         return false;
+    if (!petta_open_return_valid(step, returned)) {
+        *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+        return false;
+    }
     /* The choice being resumed is among those the cut drops: the choice
      * now newest resumes in its place. */
     if (step == CETTA_OPEN_EQUATION_CUT)
@@ -30085,11 +30152,6 @@ static __attribute__((noinline)) bool petta_machine_resume_open_answer_choice(
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
-    if (step == CETTA_OPEN_EQUATION_ANSWER &&
-        petta_machine_extension_callable(machine, value)) {
-        step = CETTA_OPEN_EQUATION_HANDOFF;
-        reason = CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED;
-    }
     if (step == CETTA_OPEN_EQUATION_HANDOFF ||
         step == CETTA_OPEN_EQUATION_FAULT) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_STOP);
@@ -30097,7 +30159,7 @@ static __attribute__((noinline)) bool petta_machine_resume_open_answer_choice(
         return false;
     }
     if (step == CETTA_OPEN_EQUATION_RAISE)
-        return petta_machine_open_raise(machine, open, value, failure);
+        return petta_machine_open_raise(machine, open, returned.term, failure);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ANSWER);
     if (!petta_open_answer_weigh(machine, open, choice->barrier) ||
         !petta_open_answer_push(machine, open, values, choice->barrier)) {
@@ -30280,7 +30342,7 @@ static __attribute__((noinline)) bool petta_machine_open_resume(
     }
     bool last = machine->choice_len == holder + 1u;
     uint32_t base = 0u;
-    Atom *value = NULL;
+    CettaCallOutcome returned = cetta_call_failure();
     Atom **values = NULL;
     CettaOpenEquationStep step = CETTA_OPEN_EQUATION_HANDOFF;
     if (cetta_open_equation_cursor_accept(
@@ -30291,21 +30353,22 @@ static __attribute__((noinline)) bool petta_machine_open_resume(
             return false;
         }
         step = cetta_open_equation_cursor_continue(
-            open->cursor, open->vars, base, &value, &values);
+            open->cursor, open->vars, base, &returned, &values);
     } else if (cetta_open_equation_cursor_handoff(open->cursor) ==
                CETTA_OPEN_EQUATION_HANDOFF_NONE) {
         step = CETTA_OPEN_EQUATION_EXHAUSTED;
     }
     if (step == CETTA_OPEN_EQUATION_EXHAUSTED)
         return false;
+    if (!petta_open_return_valid(step, returned)) {
+        *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+        return false;
+    }
     /* The goal fails into the choice the cut leaves newest. */
     if (step == CETTA_OPEN_EQUATION_CUT) {
         petta_machine_open_cut(machine, open, failure);
         return false;
     }
-    if (step == CETTA_OPEN_EQUATION_ANSWER &&
-        petta_machine_extension_callable(machine, value))
-        step = CETTA_OPEN_EQUATION_HANDOFF;
     if (step == CETTA_OPEN_EQUATION_HANDOFF ||
         step == CETTA_OPEN_EQUATION_FAULT) {
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_STOP);
@@ -30333,7 +30396,7 @@ static __attribute__((noinline)) bool petta_machine_open_resume(
         return false;
     }
     if (step == CETTA_OPEN_EQUATION_RAISE)
-        return petta_machine_open_raise(machine, open, value, failure);
+        return petta_machine_open_raise(machine, open, returned.term, failure);
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ANSWER);
     if (!petta_open_answer_weigh(machine, open, goal->barrier)) {
         *failure = PETTA_MACHINE_STEP_CAPACITY;
@@ -30605,7 +30668,7 @@ static Atom *petta_machine_materialize_closed_activation_call(
  * value that is not a truth value, declines to the ordinary path. */
 static bool petta_machine_activation_prepared_condition(
         PettaMachineImpl *machine, const PettaGoal *goal, Atom *source,
-        bool *truth_out) {
+        CettaCallOutcome *outcome) {
     Atom *condition = source->expr.elems[1];
     const PettaPlanNode *condition_plan = petta_plan_child(goal->plan, 1u);
     if (!machine->host.execute_prepared_pure_call || !condition_plan ||
@@ -30653,9 +30716,7 @@ static bool petta_machine_activation_prepared_condition(
             return false;
         call = petta_machine_materialize_space_query(machine, &query.query);
     }
-    Atom *value = call ? petta_machine_execute_prepared_call(machine, call, NULL)
-                       : NULL;
-    return value && petta_semantics_truth_value(value, truth_out);
+    return call && petta_machine_execute_prepared_call(machine, call, NULL, outcome);
 }
 
 /*
@@ -31137,18 +31198,27 @@ activation_tail_segment:;
                                 : PETTA_ACTIVATION_SOURCE_THIRD,
                     };
                     decided = true;
-                } else if (!region_hole &&
-                           petta_machine_activation_prepared_condition(
-                               machine, goal, source, &truth)) {
-                    CettaExprIndex child = truth ? 2u : 3u;
-                    selected = (PettaIfBranchSelection){
-                        .branch = source->expr.elems[child],
-                        .plan = petta_plan_child(goal->plan, child),
-                        .activation_source_bit = truth
-                            ? PETTA_ACTIVATION_SOURCE_SECOND
-                            : PETTA_ACTIVATION_SOURCE_THIRD,
-                    };
-                    decided = true;
+                } else if (!region_hole) {
+                    CettaCallOutcome returned;
+                    if (petta_machine_activation_prepared_condition(
+                            machine, goal, source, &returned)) {
+                        if (returned.kind != CETTA_CALL_VALUE ||
+                            !cetta_call_outcome_shape_valid(returned) ||
+                            returned.result_form != CETTA_CALL_RESULT_COMPLETED_VALUE)
+                            return petta_machine_deliver_prepared_return(machine,
+                                returned, goal->second, goal->barrier, false, failure);
+                        if (petta_semantics_truth_value(returned.term, &truth)) {
+                            CettaExprIndex child = truth ? 2u : 3u;
+                            selected = (PettaIfBranchSelection){
+                                .branch = source->expr.elems[child],
+                                .plan = petta_plan_child(goal->plan, child),
+                                .activation_source_bit = truth
+                                    ? PETTA_ACTIVATION_SOURCE_SECOND
+                                    : PETTA_ACTIVATION_SOURCE_THIRD,
+                            };
+                            decided = true;
+                        }
+                    }
                 }
                 if (decided) {
                     cetta_runtime_stats_inc(
@@ -32024,11 +32094,14 @@ static const PettaPlanNode *petta_machine_completion_plan(
     if (!root || !children)
         return NULL;
     memset(children, 0, sizeof(*children) * (size_t)places);
+    for (CettaExprIndex index = 0u; index < places; index++)
+        children[index].control = CETTA_CONTROL_RETURN_VALUE_PLAN;
     if (source && length > 1u)
         memcpy(children + 1u + held, source->children + 1u,
                sizeof(*children) * (size_t)(length - 1u));
     *root = (PettaPlanNode){
         .role = PETTA_PLAN_DYNAMIC_CALL,
+        .control = CETTA_CONTROL_INVOKE_PLAN,
         .contains_call = source ? source->contains_call : true,
         .dispatch_handler = source ? source->dispatch_handler : true,
         .child_count = places,
@@ -32236,8 +32309,8 @@ static bool petta_machine_dispatch_solve(
      * the complete substituted term; the authoritative matcher dereferences
      * constructor fields on demand. */
     if (goal->kind == PETTA_GOAL_SOLVE && plan &&
-        plan->role == PETTA_PLAN_DATA &&
         plan->execution == PETTA_PLAN_EXEC_CONSTRUCTOR_SLOTS &&
+        petta_plan_computation(plan).operation == CETTA_CONTROL_CONSTRUCT &&
         goal->first &&
         goal->first->kind == ATOM_EXPR &&
         goal->first->expr.len > 1u) {
@@ -32412,6 +32485,8 @@ static bool petta_machine_dispatch_solve(
         }
     }
 
+    CettaControlOperation computation = petta_plan_computation(plan).operation;
+
     bool resolved_value_reference = false;
     if (goal->kind == PETTA_GOAL_SOLVE &&
         goal->first && goal->first->kind != ATOM_VAR &&
@@ -32477,7 +32552,7 @@ static bool petta_machine_dispatch_solve(
     */
     if (goal->kind == PETTA_GOAL_SOLVE &&
         (resolved_value_reference ||
-         (plan && plan->role == PETTA_PLAN_VALUE) ||
+         computation == CETTA_CONTROL_RETURN_VALUE ||
          (goal->first && goal->first->kind == ATOM_VAR))) {
         return petta_machine_return_value(
             machine, expression, expected);
@@ -32672,7 +32747,7 @@ static bool petta_machine_dispatch_solve(
      * independently compiled roles, so `(data-head (known-call ...))` still
      * evaluates the known child exactly as PeTTa's translator does.
      */
-    if (plan && plan->role == PETTA_PLAN_DATA) {
+    if (computation == CETTA_CONTROL_CONSTRUCT) {
         if (!petta_push_data_expression_planned(
                 machine, expression, expected,
                 1u, goal->barrier, plan)) {
@@ -37007,9 +37082,10 @@ static bool petta_machine_dispatch_goal(
                     : symbol_bytes(g_symbols, prepared_head));
         }
         if (!count_collection_result && ordinary_ready_call) {
-            Atom *pure_result = petta_machine_execute_prepared_call(machine, first, second);
-            if (pure_result)
-                return petta_machine_unify_resolved(machine, pure_result, second);
+            CettaCallOutcome returned;
+            if (petta_machine_execute_prepared_call(machine, first, second, &returned))
+                return petta_machine_deliver_prepared_return(
+                    machine, returned, second, goal.barrier, true, failure);
         }
         if (!count_collection_result && !translated &&
             !relation_declared_tabled &&

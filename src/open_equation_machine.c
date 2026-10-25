@@ -1517,7 +1517,7 @@ static bool oem_relation_call(Atom *expr, const PettaPlanNode *plan) {
      * Their already callable occurrences at other arities use the ordinary
      * equation protocol, despite the form mark on the source plan. */
     return (plan->execution == PETTA_PLAN_EXEC_RELATION_SLOTS &&
-            plan->control.operation == CETTA_CONTROL_NONE &&
+            petta_plan_computation(plan).operation == CETTA_CONTROL_INVOKE &&
             petta_semantics_form(head) == PETTA_FORM_NONE) ||
         (petta_semantics_runtime_head(head) == PETTA_RUNTIME_HEAD_DATA &&
          !petta_semantics_special_form_reads(head, expr->expr.len - 1u));
@@ -1679,7 +1679,7 @@ static const PettaPlanNode *oem_fold_recursion_plan(
         application->role != PETTA_PLAN_STATIC_CALL ||
         application->execution != PETTA_PLAN_EXEC_RELATION_SLOTS ||
         !application->relation_head_admitted ||
-        application->control.operation != CETTA_CONTROL_NONE)
+        petta_plan_computation(application).operation != CETTA_CONTROL_INVOKE)
         return NULL;
     PettaPlanNode *root = arena_alloc(&program->atoms, sizeof(*root));
     PettaPlanNode *children =
@@ -1872,10 +1872,10 @@ static bool oem_data_node(Atom *expr, const PettaPlanNode *plan) {
         Atom *head = expr->expr.elems[0];
         if (head->kind == ATOM_SYMBOL)
             return plan->role == PETTA_PLAN_DATA &&
-                plan->control.operation == CETTA_CONTROL_NONE &&
+                !cetta_control_operation_is_control_form(plan->control) &&
                 petta_semantics_form(head->sym_id) == PETTA_FORM_NONE;
         if (plan->role != PETTA_PLAN_DYNAMIC_CALL ||
-            plan->control.operation != CETTA_CONTROL_NONE)
+            cetta_control_operation_is_control_form(plan->control))
             return false;
         if (oem_inert_head(head))
             return true;
@@ -2351,7 +2351,7 @@ static bool oem_apply_call(Atom *expr, const PettaPlanNode *plan) {
     const PettaPlanNode *head_plan = petta_plan_child(plan, 0u);
     Atom *head = expr->expr.elems[0];
     return plan->role == PETTA_PLAN_DYNAMIC_CALL &&
-        plan->control.operation == CETTA_CONTROL_NONE &&
+        !cetta_control_operation_is_control_form(plan->control) &&
         plan->child_count == expr->expr.len && head_plan &&
         ((head->kind == ATOM_EXPR &&
           (head_plan->role == PETTA_PLAN_STATIC_CALL ||
@@ -2382,8 +2382,11 @@ static const PettaPlanNode *oem_ready_static_plan(
     if (!root || !children)
         return NULL;
     memset(children, 0, sizeof(*children) * (size_t)source->child_count);
+    for (CettaExprIndex index = 0u; index < source->child_count; index++)
+        children[index].control = CETTA_CONTROL_RETURN_VALUE_PLAN;
     *root = (PettaPlanNode){
         .role = PETTA_PLAN_STATIC_CALL,
+        .control = CETTA_CONTROL_INVOKE_PLAN,
         .execution = source->execution,
         .contains_call = true,
         .dispatch_handler = source->dispatch_handler,
@@ -3511,7 +3514,7 @@ static bool oem_build_tail_native(OemCompile *compile, Atom *expr,
     if ((cetta_control_operation_binding_layout(plan->control, 1u) && expr->expr.len == 4u) ||
         (plan->control.operation == CETTA_CONTROL_SEQUENCE_MANY && expr->expr.len == 3u))
         return oem_build_bindings(compile, expr, plan, depth, true, out);
-    if (plan->control.operation != CETTA_CONTROL_NONE &&
+    if (cetta_control_operation_is_control_form(plan->control) &&
         plan->control.operation != CETTA_CONTROL_ORDERED_CHOICE &&
         plan->control.operation != CETTA_CONTROL_FAILURE &&
         plan->control.operation != CETTA_CONTROL_SCOPED_COMMIT &&
@@ -16758,9 +16761,9 @@ static CettaOpenEquationStep oem_cursor_run(
 
 CettaOpenEquationStep cetta_open_equation_cursor_next(
     CettaOpenEquationCursor *cursor, Atom *const *query_vars,
-    Atom **value_out, Atom ***query_values_out) {
+    CettaCallOutcome *returned, Atom ***query_values_out) {
     return cetta_open_equation_cursor_next_above(cursor, 0u, query_vars,
-                                                 value_out, query_values_out);
+                                                 returned, query_values_out);
 }
 
 /* An interrupt stops between alternatives, where the region is consistent:
@@ -16803,7 +16806,20 @@ static bool oem_cursor_enter(CettaOpenEquationCursor *cursor,
  * Interrupt and activation-budget stops keep the exact live cursor and
  * can resume it; other handoffs cannot restart an entered effect. */
 static CettaOpenEquationStep oem_cursor_outcome(
-    const CettaOpenEquationCursor *cursor, CettaOpenEquationStep step) {
+    CettaOpenEquationCursor *cursor, CettaOpenEquationStep step,
+    Atom *value, CettaCallOutcome *returned) {
+    /* Only a completed RET (or the dialect's unmatched-call value) can
+     * publish ANSWER. Host work leaves its actual continuation in the
+     * cursor and returns HOST instead; the answer's shape cannot reopen it. */
+    if (step == CETTA_OPEN_EQUATION_ANSWER ||
+        step == CETTA_OPEN_EQUATION_RAISE) {
+        if (!value) {
+            cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_SERVICE_ERROR;
+            return CETTA_OPEN_EQUATION_FAULT;
+        }
+        *returned = step == CETTA_OPEN_EQUATION_ANSWER
+            ? cetta_call_completed_value(value) : cetta_call_raised(value);
+    }
     if (step == CETTA_OPEN_EQUATION_HANDOFF &&
         cursor->effected &&
         cursor->handoff != CETTA_OPEN_EQUATION_HANDOFF_INTERRUPT &&
@@ -16814,13 +16830,15 @@ static CettaOpenEquationStep oem_cursor_outcome(
 
 CettaOpenEquationStep cetta_open_equation_cursor_next_above(
     CettaOpenEquationCursor *cursor, uint32_t base, Atom *const *query_vars,
-    Atom **value_out, Atom ***query_values_out) {
-    if (!oem_cursor_enter(cursor, query_vars, value_out, query_values_out))
+    CettaCallOutcome *returned, Atom ***query_values_out) {
+    Atom *value = NULL;
+    if (!returned ||
+        !oem_cursor_enter(cursor, query_vars, &value, query_values_out))
         return CETTA_OPEN_EQUATION_HANDOFF;
-    CettaOpenEquationStep step = oem_cursor_run(cursor, base, value_out,
+    CettaOpenEquationStep step = oem_cursor_run(cursor, base, &value,
                                                 query_values_out);
     cursor->query_vars = NULL;
-    return oem_cursor_outcome(cursor, step);
+    return oem_cursor_outcome(cursor, step, value, returned);
 }
 
 bool cetta_open_equation_cursor_pending_above(
@@ -17839,13 +17857,9 @@ bool cetta_open_equation_cursor_accept(
 
 CettaOpenEquationStep cetta_open_equation_cursor_continue(
     CettaOpenEquationCursor *cursor, Atom *const *query_vars, uint32_t base,
-    Atom **value_out, Atom ***query_values_out) {
-    if (!oem_cursor_enter(cursor, query_vars, value_out, query_values_out))
-        return CETTA_OPEN_EQUATION_HANDOFF;
-    CettaOpenEquationStep step =
-        oem_cursor_run(cursor, base, value_out, query_values_out);
-    cursor->query_vars = NULL;
-    return oem_cursor_outcome(cursor, step);
+    CettaCallOutcome *returned, Atom ***query_values_out) {
+    return cetta_open_equation_cursor_next_above(cursor, base, query_vars,
+                                                 returned, query_values_out);
 }
 
 /* Run the frames at depth `base` and above.  A host frame met at the top

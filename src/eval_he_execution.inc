@@ -2172,11 +2172,12 @@ static bool he_shared_execution_try(Space *space, Arena *arena, Atom *source,
         bindings_init(&empty);
         const Bindings *outer = environment ? environment : &empty;
         PreparedPureProgramCache *cache = eval_execution_prepared_cache();
-        Atom *single = prepared_pure_closed_call_try(
-            space, arena, source, fuel, false, false, cache);
-        if (single) {
-            outcome_set_add_prefixed(arena, outcomes, single, &empty, outer,
-                preserve_bindings);
+        CettaCallOutcome returned;
+        if (prepared_pure_closed_call_try(
+                space, arena, source, fuel, false, false, cache, &returned)) {
+            if (returned.kind == CETTA_CALL_VALUE)
+                outcome_set_add_prefixed(arena, outcomes, returned.term, &empty,
+                    outer, preserve_bindings);
             return true;
         }
         if (eval_unwinding() || eval_cancel_check())

@@ -13,6 +13,28 @@ import tempfile
 # live-declaration and held-argument contracts where the reference differs.
 # Cases include refusals of fusion: they must retain ordinary evaluation.
 CASES = [
+    ('invocation-oem-completed-first', 'petta', '(: g (-> Atom Atom))\n(= (g $v) (min 3 1))\n!(g 5)\n', '(min 3 1)\n', 0),
+    ('invocation-oem-completed-resumed', 'petta', '(: g (-> Atom Atom))\n(= (g $v) (min 3 1))\n(= (r $n) 0)\n(= (r $n) (g 5))\n(= (r $n) (g 5))\n!(r 2)\n', '0\n(min 3 1)\n(min 3 1)\n', 0),
+    ('invocation-oem-completed-host', 'petta', '(: g (-> Atom Atom))\n(= (g $v) (min 3 1))\n(= (r $n) 0)\n(= (r $n) (let $_ (println! once) (g 5)))\n!(r 2)\n', 'once\n0\n(min 3 1)\n', 0),
+    ('invocation-oem-completed-control-data', 'petta', '(: g (-> Atom Atom))\n(= (g 1) (empty))\n(= (g 2) (Error payload Data))\n(= (g 3) (println! forbidden))\n(= (r $n) 0)\n(= (r $n) (g $n))\n!(r 1)\n!(r 2)\n!(r 3)\n', '0\n(empty)\n0\n(Error payload Data)\n0\n(println! forbidden)\n', 0),
+    ('prepared-failure-readback-map', 'he', '!(eval (_minimal-map-atom (1 2) $x (+ $x 1)))\n', '[(return (2 3))]\n', 0),
+    ('prepared-failure-readback-code', 'he', '!(eval (_minimal-map-atom ((println! forbidden)) $x $x))\n', '[(return ((println! forbidden)))]\n', 0),
+    ('prepared-failure-readback-run', 'he', '!(function (eval (_minimal-map-atom ((println! forbidden)) $x $x)))\n', '[((println! forbidden))]\n', 0),
+    ('prepared-failure-readback-sum', 'he', '(= (project $x) $x)\n!(eval (_minimal-sum-by (1 2) project))\n', '[3]\n', 0),
+    ('prepared-failure-cache-reuse', 'petta', '(= (miss $p) (let (Pair $x $y) $p 7))\n!(miss (Single 3))\n!(miss (Pair 4 5))\n!(miss (Single 8))\n!(miss (Pair 6 7))\n', '7\n7\n', 0),
+    ('prepared-failure-cache-reuse', 'he', '(= (miss $p) (let (Pair $x $y) $p 7))\n!(miss (Single 3))\n!(miss (Pair 4 5))\n!(miss (Single 8))\n!(miss (Pair 6 7))\n', '[7]\n[7]\n', 0),
+    ('prepared-failure-argument-short-circuit', 'petta', '(= (miss $p) (let (Pair $x $y) $p 7))\n(= (touch $x) (let $_ (println! forbidden) $x))\n(= (pair $a $b) (Pair $a $b))\n!(pair (miss (Single 3)) (touch 2))\n', '', 0),
+    ('prepared-failure-argument-short-circuit', 'he', '(= (miss $p) (let (Pair $x $y) $p 7))\n(= (touch $x) (let $_ (println! forbidden) $x))\n(= (pair $a $b) (Pair $a $b))\n!(pair (miss (Single 3)) (touch 2))\n', '', 0),
+    ('prepared-failure-condition-short-circuit', 'petta', '(= (miss $p) (let (Pair $x $y) $p 7))\n(= (branch $p) (if (miss $p) (println! forbidden-then) (println! forbidden-else)))\n(= (branch $p) fallback)\n!(branch (Single 3))\n', 'fallback\n', 0),
+    ('prepared-failure-condition-short-circuit', 'he', '(= (miss $p) (let (Pair $x $y) $p 7))\n(= (branch $p) (if (miss $p) (println! forbidden-then) (println! forbidden-else)))\n(= (branch $p) fallback)\n!(branch (Single 3))\n', '[fallback]\n', 0),
+    ('prepared-failure-code-data', 'petta', '(= (carry $x) $x)\n!(carry (quote (empty)))\n!(carry Empty)\n', '(empty)\nEmpty\n', 0),
+    ('prepared-failure-raised-fallback', 'petta', '(= (fraction $x) (/ 1 $x))\n!(car-atom (catch (fraction 0)))\n', 'Error\n', 0),
+    ('prepared-failure-mutation', 'petta', '(= (miss $p) (let (Pair $x $y) $p 7))\n!(miss (Single 3))\n!(let $_ (add-atom &self (= (miss $p) 8)) (miss (Single 3)))\n', '8\n', 0),
+    ('prepared-failure-mutation', 'he', '(= (miss $p) (let (Pair $x $y) $p 7))\n!(miss (Single 3))\n!(let $_ (add-atom &self (= (miss $p) 8)) (miss (Single 3)))\n', '[8]\n', 0),
+    ('source-plan-completed-code', 'petta', '(= (emit $x) (println! forbidden))\n!(let $v (quote (emit 7)) $v)\n', '(emit 7)\n', 0),
+    ('source-plan-constructor-fields', 'petta', '(= (emit $x) (let $_ (println! child) $x))\n!(Packet (emit 3) (quote (emit 4)))\n', 'child\n(Packet 3 (emit 4))\n', 0),
+    ('source-plan-constructor-authority', 'petta', '(= (build $x) (Packet $x))\n!(let $_ (add-atom &self (= (Packet $x) (println! forbidden))) (build 7))\n', '(Packet 7)\n', 0),
+    ('source-plan-call-retirement', 'petta', '(= (known $x) (Pair $x))\n(= (run $x) (known $x))\n!(let $_ (remove-atom &self (= (known $x) (Pair $x))) (run 7))\n', '(known 7)\n', 0),
     ('scope-caller-alternatives', 'petta', '(= (inner) (let $_ (cut) 1))\n(= (inner) 2)\n(= (outer) (let $before (superpose (a b)) (Pair $before (inner))))\n!(outer)\n', '(Pair a 1)\n(Pair b 1)\n', 0),
     ('scope-earlier-subgoal-and-later-duplicates', 'petta', '(= (inner) (superpose (1 2)))\n(= (outer) (let $x (inner) (let $_ (cut) (let $later (superpose (7 7)) (Pair $x $later)))))\n(= (outer) discarded)\n!(outer)\n', '(Pair 1 7)\n(Pair 1 7)\n', 0),
     ('scope-handler-transparency', 'petta', '(= (outer) (catch (let $_ (cut) (/ 1 0))))\n(= (outer) 9)\n!(let $answers (collapse (outer)) (size-atom $answers))\n', '1\n', 0),
@@ -95,7 +117,7 @@ def main():
             source = Path(directory) / (name + "-" + language + ".metta")
             source.write_text(text)
             variants = itertools.product(('0', '1'), repeat=2) if (
-                name.startswith(('choice-', 'result-demand-', 'invocation-', 'scope-')) or
+                name.startswith(('choice-', 'result-demand-', 'invocation-', 'scope-', 'source-plan-', 'prepared-failure-')) or
                 name == 'nested-choice-activation-owner') else [(None, None)]
             for switches in variants:
                 environment = dict(os.environ)
@@ -105,7 +127,7 @@ def main():
                 observations += 1
                 # Destination controls use reference PeTTa. Extended binding
                 # forms permit authored alternatives and retain their own tests.
-                profile = [] if name.startswith(('result-demand-', 'invocation-', 'scope-')) else ["--profile", "extended"]
+                profile = [] if name.startswith(('result-demand-', 'invocation-', 'scope-', 'source-plan-', 'prepared-failure-')) else ["--profile", "extended"]
                 result = subprocess.run([str(binary), "--lang", language, *profile,
                     str(source)], capture_output=True, text=True, timeout=30, env=environment)
                 if result.returncode != expected_exit or result.stdout != expected:

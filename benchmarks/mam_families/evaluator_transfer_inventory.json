@@ -2176,7 +2176,7 @@
       "native": [
         "src/owned_execution.h"
       ],
-      "next": "Complete ordinary and specialized elaboration/refinement beyond shared invocation, sequencing, ordered choice/failure and the scoped commitment/handler slice. Preserve dialect-owned demand, source fuel and actual residuals; physical worker count follows semantic obligations and measurements."
+      "next": "Complete source-argument elaboration and remove unelaborated adapter boundaries after qualifying explicit return/construction/invocation plans. Preserve source authority independently of current callee admission; then finish HE/Prime adapters, specialized lowering/refinement and duplicate retirement."
     }
   ],
   "non_prolog_comparisons": [
@@ -2271,7 +2271,7 @@
     },
     {
       "construction": "Mettapedia/Machines/ContextualCBPV.lean",
-      "application": "Contextual computation/continuation transitions retain generic native workers, per-answer branch contexts, ordered occurrences, lexical captures and scoped handler choice floors. Pull effects do not reenter native factories. Explicit source occurrences and semantic charges have a conserved purse independent of physical slices. Logical-store rollback, dialect elaboration and native C correspondence remain open joins. Explicit call delimiters and commitment retain the outside choice suffix, the successful branch and committed effects. The concrete stack transition refines ScopedCommit CPS commitment; ExecutionControl joins dialect-form layouts to contextual commitment and Error-to-value handlers. Runtime qualification of this scoped extension is in progress."
+      "application": "Contextual computation/continuation transitions retain generic native workers, per-answer branch contexts, ordered occurrences, lexical captures and scoped handler choice floors. Pull effects do not reenter native factories. Explicit source occurrences and semantic charges have a conserved purse independent of physical slices. Logical-store rollback, dialect elaboration and native C correspondence remain open joins. Explicit call delimiters and commitment retain the outside choice suffix, the successful branch and committed effects. The concrete stack transition refines ScopedCommit CPS commitment; ExecutionControl joins dialect-form layouts to contextual commitment and Error-to-value handlers. Runtime qualification of this scoped extension is in progress. ExecutionControl.Occurrence also joins explicit return/construction/invocation classification to the kernel without granting new source authority; constructor decomposition and callee contracts remain dialect obligations."
     },
     {
       "construction": "Mettapedia/Machines/ConditionalContextProjection.lean",

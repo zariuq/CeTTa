@@ -840,10 +840,11 @@ static unsigned prepared_native_consumers(void) {
         {
             PreparedPureProgramCache cache = {.root_space = &space};
             Atom *call = fixture_atom(&arena, "(native-box 1)");
+            CettaCallOutcome returned;
             prepared_mode = prepared_calls = prepared_attempts = 0u;
             for (unsigned retry = 0u; retry < 2u; retry++)
                 assert(!prepared_pure_closed_call_try(&space, &arena, call, -1,
-                    true, true, &cache));
+                    true, true, &cache, &returned));
             assert(prepared_calls == 0u && prepared_attempts == 0u);
             PreparedPureClosedCallPlan plan;
             assert(prepared_pure_closed_call_plan(&space, &arena, call, -1, true,
@@ -1011,6 +1012,89 @@ static unsigned prepared_native_consumers(void) {
     return checks;
 }
 
+static unsigned closed_failure_cache(void) {
+    unsigned checks = 0u;
+    for (unsigned language = 0u; language < 2u; language++) {
+        CettaLibraryContext *library = calloc(1u, sizeof(*library));
+        assert(library);
+        cetta_library_context_init_for_language_profile(library,
+            language ? CETTA_LANGUAGE_HE : CETTA_LANGUAGE_PETTA, NULL);
+        eval_set_library_context(library);
+        Arena source;
+        arena_init(&source);
+        TermUniverse universe;
+        term_universe_init(&universe);
+        term_universe_set_persistent_arena(&universe, &source);
+        Space space;
+        space_init_with_universe(&space, &universe);
+        Atom *equation = fixture_atom(&source,
+            "(= (failure-cache $p) (let (Pair $x $y) $p 7))");
+        if (!language) {
+            const PettaPlanNode *plan = petta_program_plan_dynamic_add(
+                library->petta_program, equation);
+            assert(plan);
+            CettaCount position = space_length64(&space);
+            space_add(&space, equation);
+            assert(petta_program_note_add(library->petta_program, &space,
+                space_get_at64(&space, position), plan));
+        } else
+            assert(space_admit_atom(&space, &source, equation));
+        PreparedPureProgramCache cache = {.root_space = &space};
+        CettaPreparedPureProgram *compiled = NULL;
+        const char *calls[] = {"(failure-cache (Single 3))", "(failure-cache (Pair 4 5))",
+            "(failure-cache (Single 8))", "(failure-cache (Pair 6 7))"};
+        for (unsigned index = 0u; index < 4u; index++) {
+            Atom *call = fixture_atom(&source, calls[index]);
+            CettaCallOutcome returned;
+            assert(prepared_pure_closed_call_try(&space, &source, call, -1,
+                true, true, &cache, &returned));
+            if (index % 2u == 0u)
+                assert(returned.kind == CETTA_CALL_FAILURE && !returned.term);
+            else
+                assert(returned.kind == CETTA_CALL_VALUE &&
+                    returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+                    atom_eq(returned.term, atom_int(&source, 7)));
+            PreparedPureClosedCallPlan plan;
+            assert(prepared_pure_closed_call_plan(&space, &source, call, -1, true,
+                &cache, &plan));
+            bool declined = false;
+            CettaPreparedPureProgram *cached = prepared_pure_program_cache_lookup(
+                &cache, &space, call, plan.source_view.root, plan.language_id,
+                plan.call_mode, false, true, plan.total_structural_equality, &declined);
+            assert(cached && !declined);
+            if (index == 0u)
+                compiled = cached;
+            else
+                assert(cached == compiled);
+            checks++;
+        }
+        equation = fixture_atom(&source, "(= (failure-cache $p) 8)");
+        if (!language) {
+            const PettaPlanNode *plan = petta_program_plan_dynamic_add(
+                library->petta_program, equation);
+            assert(plan);
+            CettaCount position = space_length64(&space);
+            space_add(&space, equation);
+            assert(petta_program_note_add(library->petta_program, &space,
+                space_get_at64(&space, position), plan));
+        } else
+            assert(space_admit_atom(&space, &source, equation));
+        CettaCallOutcome returned;
+        assert(!prepared_pure_closed_call_try(&space, &source,
+            fixture_atom(&source, calls[0]), -1, true, true, &cache, &returned));
+        assert(returned.kind != CETTA_CALL_FAILURE);
+        checks++;
+        prepared_pure_program_cache_free(&cache);
+        space_free(&space);
+        term_universe_free(&universe);
+        arena_free(&source);
+        eval_set_library_context(NULL);
+        cetta_library_context_free(library);
+        free(library);
+    }
+    return checks;
+}
+
 static unsigned scalar_callable_admission(void) {
     CettaLibraryContext *library = calloc(1u, sizeof(*library));
     assert(library);
@@ -1174,6 +1258,69 @@ static bool invocation_candidate_snapshot(void *opaque, Space *space, SymbolId h
         admission->program, space, head, lease, stats);
 }
 
+static unsigned source_computation_plans(void) {
+    Arena source;
+    arena_init(&source);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &source);
+    Space space;
+    space_init_with_universe(&space, &universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Atom *equation = fixture_atom(&source, "(= (source-probe $x) $x)");
+    const PettaPlanNode *definition = petta_program_plan_dynamic_add(program, equation);
+    space_add(&space, equation);
+    assert(petta_program_note_add(program, &space, space_get_at64(&space, 0u), definition));
+    const struct { const char *source; PettaPlanRole authority; unsigned operation; } cases[] = {
+        {"$v", PETTA_PLAN_VALUE, CETTA_CONTROL_RETURN_VALUE},
+        {"()", PETTA_PLAN_DATA, CETTA_CONTROL_CONSTRUCT},
+        {"(source-packet 7)", PETTA_PLAN_DATA, CETTA_CONTROL_CONSTRUCT},
+        {"(source-probe 7)", PETTA_PLAN_STATIC_CALL, CETTA_CONTROL_INVOKE},
+        {"($f 7)", PETTA_PLAN_DYNAMIC_CALL, CETTA_CONTROL_INVOKE},
+    };
+    for (size_t index = 0u; index < sizeof(cases) / sizeof(*cases); index++) {
+        const PettaPlanNode *plan = petta_program_plan_current(
+            program, fixture_atom(&source, cases[index].source));
+        assert(plan && plan->role == cases[index].authority);
+        assert(plan->control.operation == cases[index].operation);
+        assert(petta_plan_computation(plan).operation == cases[index].operation);
+    }
+    const PettaPlanNode *data = petta_program_plan_current(program,
+        fixture_atom(&source, "(source-packet (source-probe 7))"));
+    assert(data && data->control.operation == CETTA_CONTROL_CONSTRUCT &&
+        data->children[1].control.operation == CETTA_CONTROL_INVOKE);
+    PettaTranslationEnvironment translation = {.host_identity = program,
+        .admission_revision = 1u};
+    Atom *inert = fixture_atom(&source, "(source-packet 7)");
+    const PettaPlanNode *translated = petta_program_plan_transient(
+        program, inert, &translation);
+    assert(translated && translated->role == PETTA_PLAN_VALUE &&
+        translated->control.operation == CETTA_CONTROL_RETURN_VALUE);
+    const PettaPlanNode *cached = petta_program_plan_transient(
+        program, inert, &translation);
+    assert(cached && cached->role == PETTA_PLAN_VALUE &&
+        cached->control.operation == CETTA_CONTROL_RETURN_VALUE);
+    const PettaPlanNode *variable = petta_program_plan_transient(
+        program, fixture_atom(&source, "$v"), &translation);
+    assert(variable && variable->role == PETTA_PLAN_VALUE &&
+        variable->control.operation == CETTA_CONTROL_RETURN_VALUE);
+    const PettaPlanNode *mixed = petta_program_plan_transient(program,
+        fixture_atom(&source, "(source-packet (source-probe 7) (plain 9))"),
+        &translation);
+    assert(mixed && mixed->control.operation == CETTA_CONTROL_CONSTRUCT &&
+        mixed->children[0].role == PETTA_PLAN_VALUE &&
+        mixed->children[0].control.operation == CETTA_CONTROL_RETURN_VALUE);
+    assert(mixed->children[1].control.operation == CETTA_CONTROL_INVOKE &&
+        mixed->children[2].role == PETTA_PLAN_VALUE &&
+        mixed->children[2].control.operation == CETTA_CONTROL_RETURN_VALUE);
+    petta_program_free(program);
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&source);
+    return 11u;
+}
+
 static unsigned ordinary_invocation_consumers(void) {
     Arena source;
     arena_init(&source);
@@ -1283,7 +1430,7 @@ int main(int argc, char **argv) {
     assert(argc == 1 || availability_only);
     unsigned checks = prepared_worker_availability();
     if (!availability_only)
-        checks += ordinary_invocation_consumers() + shared_compilation_refusals() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
+        checks += source_computation_plans() + ordinary_invocation_consumers() + shared_compilation_refusals() + closed_failure_cache() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;

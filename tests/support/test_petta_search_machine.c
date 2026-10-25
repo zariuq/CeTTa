@@ -41,6 +41,36 @@ static Atom *parse_one(Arena *arena, const char *source) {
     return result;
 }
 
+/* Existing structural controls project values only after checking the
+ * cursor's return tag. No syntax test can convert a completed answer into
+ * another invocation; host events have no answer to project. */
+static CettaOpenEquationStep test_open_cursor_value_continue(
+        CettaOpenEquationCursor *cursor, Atom *const *query_vars, uint32_t base,
+        Atom **value, Atom ***query_values) {
+    CettaCallOutcome returned = cetta_call_failure();
+    CettaOpenEquationStep step = cetta_open_equation_cursor_continue(
+        cursor, query_vars, base, &returned, query_values);
+    *value = NULL;
+    if (step == CETTA_OPEN_EQUATION_ANSWER) {
+        assert(returned.kind == CETTA_CALL_VALUE &&
+               returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+               cetta_call_outcome_shape_valid(returned));
+        *value = returned.term;
+    } else if (step == CETTA_OPEN_EQUATION_RAISE) {
+        assert(returned.kind == CETTA_CALL_RAISED &&
+               cetta_call_outcome_shape_valid(returned));
+        *value = returned.term;
+    }
+    return step;
+}
+
+static CettaOpenEquationStep test_open_cursor_value_next(
+        CettaOpenEquationCursor *cursor, Atom *const *query_vars,
+        Atom **value, Atom ***query_values) {
+    return test_open_cursor_value_continue(cursor, query_vars, 0u,
+                                           value, query_values);
+}
+
 static void test_choice_collection_retry_threshold(void) {
     assert(petta_machine_choice_collection_retry_threshold(100u, 64u) == 164u);
     assert(petta_machine_choice_collection_retry_threshold(100u, 0u) == 100u);
@@ -3498,7 +3528,7 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     assert(cursor);
     Atom *result = NULL;
     Atom **values = NULL;
-    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+    assert(test_open_cursor_value_next(cursor, query_vars, &result, &values)
            == CETTA_OPEN_EQUATION_ANSWER);
     assert(result && values && values[0] == variable);
     cetta_open_equation_cursor_close(cursor);
@@ -3515,13 +3545,13 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     cursor = cetta_open_equation_cursor_open(
         compiled, &answers, args, 1u, variable, query_vars, 1u, NULL);
     assert(cursor);
-    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+    assert(test_open_cursor_value_next(cursor, query_vars, &result, &values)
            == CETTA_OPEN_EQUATION_EXHAUSTED);
     cetta_open_equation_cursor_close(cursor);
     cursor = cetta_open_equation_cursor_open(
         compiled, &answers, args, 1u, NULL, query_vars, 1u, NULL);
     assert(cursor);
-    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+    assert(test_open_cursor_value_next(cursor, query_vars, &result, &values)
            == CETTA_OPEN_EQUATION_ANSWER);
     cetta_open_equation_cursor_close(cursor);
 
@@ -3537,7 +3567,7 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     cursor = cetta_open_equation_cursor_open(
         collector, &answers, args, 1u, NULL, query_vars, 1u, NULL);
     assert(cursor);
-    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+    assert(test_open_cursor_value_next(cursor, query_vars, &result, &values)
            == CETTA_OPEN_EQUATION_ANSWER);
     assert(result->kind == ATOM_EXPR && result->expr.len == 2u);
     cetta_open_equation_cursor_close(cursor);
@@ -3569,7 +3599,7 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     cursor = cetta_open_equation_cursor_open(
         compiled, &answers, args, 1u, NULL, query_vars, 1u, NULL);
     assert(cursor);
-    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+    assert(test_open_cursor_value_next(cursor, query_vars, &result, &values)
            == CETTA_OPEN_EQUATION_ANSWER);
     cetta_open_equation_cursor_close(cursor);
     node = result;
@@ -3597,7 +3627,7 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     cursor = cetta_open_equation_cursor_open(
         compiled, &answers, args, 1u, NULL, query_vars, 1u, NULL);
     assert(cursor);
-    assert(cetta_open_equation_cursor_next(cursor, query_vars, &result, &values)
+    assert(test_open_cursor_value_next(cursor, query_vars, &result, &values)
            == CETTA_OPEN_EQUATION_ANSWER);
     assert(values && values[0] == variable);
     cetta_open_equation_cursor_close(cursor);
@@ -3614,6 +3644,63 @@ static void test_compiled_graph_transport(TermUniverse *universe, Arena *arena) 
     arena_free(&answers);
     space_free(&space);
     puts("PASS: compiled graph transport preserves sharing, open cells and answer lifetime");
+}
+
+static void test_compiled_return_provenance(
+        TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+    const char *equations[] = {
+        "(= (completed $x) (min $x $x))",
+        "(= (completed $x) (empty))",
+        "(= (completed $x) (Error payload Data))",
+    };
+    for (size_t index = 0u; index < 3u; index++)
+        add_compiled_program_equation(program, &space, arena, equations[index]);
+    CettaOpenEquationHost host = {.entry_body_is_data = true};
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "completed"), 1u,
+        &host, NULL);
+    assert(compiled);
+    Arena answers;
+    arena_init(&answers);
+    Atom *variable = parse_one(arena, "$open");
+    Atom *arguments[] = {variable};
+    Atom *query_vars[] = {variable};
+    CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+        compiled, &answers, arguments, 1u, NULL, query_vars, 1u, NULL);
+    assert(cursor);
+    Atom *retained[3];
+    for (size_t index = 0u; index < 3u; index++) {
+        CettaCallOutcome returned = cetta_call_failure();
+        Atom **values = NULL;
+        assert(cetta_open_equation_cursor_next(cursor, query_vars,
+            &returned, &values) == CETTA_OPEN_EQUATION_ANSWER);
+        assert(returned.kind == CETTA_CALL_VALUE &&
+               returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+               cetta_call_outcome_shape_valid(returned));
+        retained[index] = returned.term;
+        if (index == 0u) {
+            assert(retained[index]->expr.len == 3u);
+            assert(retained[index]->expr.elems[1] == values[0]);
+            assert(retained[index]->expr.elems[2] == values[0]);
+        }
+        cetta_open_equation_cursor_suspend(cursor);
+    }
+    CettaCallOutcome end = cetta_call_failure();
+    assert(cetta_open_equation_cursor_next(cursor, query_vars,
+        &end, NULL) == CETTA_OPEN_EQUATION_EXHAUSTED);
+    cetta_open_equation_cursor_close(cursor);
+    assert(atom_alpha_eq(retained[0], parse_one(&answers, "(min $x $x)")));
+    assert(atom_eq(retained[1], parse_one(&answers, "(empty)")));
+    assert(atom_eq(retained[2], parse_one(&answers, "(Error payload Data)")));
+    cetta_open_equation_program_release(compiled);
+    petta_program_free(program);
+    arena_free(&answers);
+    space_free(&space);
+    puts("PASS: compiled answers retain completion, aliases and ownership across resumption");
 }
 
 static void test_compiled_stable_host_answer(
@@ -3641,7 +3728,7 @@ static void test_compiled_stable_host_answer(
             compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
         assert(cursor);
         Atom *value = NULL;
-        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+        assert(test_open_cursor_value_next(cursor, NULL, &value, NULL) ==
                CETTA_OPEN_EQUATION_HOST);
         Atom *goal = NULL, *destination = NULL;
         Atom *const *variables = NULL;
@@ -3671,7 +3758,7 @@ static void test_compiled_stable_host_answer(
         assert(cetta_open_equation_cursor_accept(
             cursor, NULL, variables, host_values, count, true, 0u, &base));
         free(host_values);
-        assert(cetta_open_equation_cursor_continue(
+        assert(test_open_cursor_value_continue(
             cursor, NULL, base, &value, NULL) ==
             CETTA_OPEN_EQUATION_ANSWER);
         assert(atom_eq(value, source));
@@ -3733,7 +3820,7 @@ static void test_compiled_borrowed_suffix(TermUniverse *universe, Arena *arena) 
         assert(cursor);
         Atom *value = NULL;
         Atom **query_values = NULL;
-        assert(cetta_open_equation_cursor_next(cursor, query_vars, &value,
+        assert(test_open_cursor_value_next(cursor, query_vars, &value,
             &query_values) == CETTA_OPEN_EQUATION_HOST);
         CettaOpenEquationStats before, after;
         cetta_open_equation_cursor_stats(cursor, &before);
@@ -3767,7 +3854,7 @@ static void test_compiled_borrowed_suffix(TermUniverse *universe, Arena *arena) 
             assert(cetta_open_equation_cursor_accept(cursor, query_vars,
                 variables, values, count, true, 0u, &base));
             free(values);
-            assert(cetta_open_equation_cursor_continue(cursor, query_vars, base,
+            assert(test_open_cursor_value_continue(cursor, query_vars, base,
                 &value, &query_values) == CETTA_OPEN_EQUATION_ANSWER);
             assert(query_values && atom_eq(query_values[0],
                 parse_one(&answers, "((payload kept) 4 5)")));
@@ -3994,7 +4081,7 @@ static void test_compiled_entry_joins(TermUniverse *universe, Arena *arena) {
             extended = true;
         }
         Atom *value = NULL;
-        CettaOpenEquationStep step = cetta_open_equation_cursor_next(
+        CettaOpenEquationStep step = test_open_cursor_value_next(
             cursor, NULL, &value, NULL);
         if (stale) {
             for (unsigned index = 0u; index < 32u; index++) {
@@ -4005,13 +4092,13 @@ static void test_compiled_entry_joins(TermUniverse *universe, Arena *arena) {
                 snprintf(answer, sizeof(answer), "%u", index + 1u);
                 uint32_t base = test_compiled_accept_host_value(
                     cursor, &answers, source, answer);
-                step = cetta_open_equation_cursor_continue(
+                step = test_open_cursor_value_continue(
                     cursor, NULL, base, &value, NULL);
             }
         }
         assert(step == CETTA_OPEN_EQUATION_ANSWER);
         assert(atom_alpha_eq(value, parse_one(&answers, result)));
-        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+        assert(test_open_cursor_value_next(cursor, NULL, &value, NULL) ==
                CETTA_OPEN_EQUATION_EXHAUSTED);
         cetta_open_equation_cursor_close(cursor);
     }
@@ -4059,7 +4146,7 @@ static void test_compiled_builtin_entry(TermUniverse *universe, Arena *arena) {
             compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
         assert(cursor);
         Atom *value = NULL;
-        CettaOpenEquationStep step = cetta_open_equation_cursor_next(
+        CettaOpenEquationStep step = test_open_cursor_value_next(
             cursor, NULL, &value, NULL);
         if (test >= 2u) {
             assert(step == CETTA_OPEN_EQUATION_HOST);
@@ -4070,17 +4157,17 @@ static void test_compiled_builtin_entry(TermUniverse *universe, Arena *arena) {
             extended = true;
             uint32_t base = test_compiled_accept_host_value(cursor, &answers,
                 "(println! before-max)", "()");
-            step = cetta_open_equation_cursor_continue(cursor, NULL, base,
+            step = test_open_cursor_value_continue(cursor, NULL, base,
                 &value, NULL);
             assert(step == CETTA_OPEN_EQUATION_HOST);
             base = test_compiled_accept_host_value(cursor, &answers,
                 "(max (+ 1 2) 2)", "authored");
-            step = cetta_open_equation_cursor_continue(cursor, NULL, base,
+            step = test_open_cursor_value_continue(cursor, NULL, base,
                 &value, NULL);
         }
         assert(step == CETTA_OPEN_EQUATION_ANSWER);
         assert(atom_alpha_eq(value, parse_one(&answers, results[test])));
-        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+        assert(test_open_cursor_value_next(cursor, NULL, &value, NULL) ==
                CETTA_OPEN_EQUATION_EXHAUSTED);
         cetta_open_equation_cursor_close(cursor);
         cetta_open_equation_program_release(compiled);
@@ -4093,15 +4180,15 @@ static void test_compiled_builtin_entry(TermUniverse *universe, Arena *arena) {
             cursor = cetta_open_equation_cursor_open(
                 compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
             assert(cursor);
-            assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+            assert(test_open_cursor_value_next(cursor, NULL, &value, NULL) ==
                    CETTA_OPEN_EQUATION_HOST);
             uint32_t base = test_compiled_accept_host_value(cursor, &answers,
                 "(max 1 2)", "authored");
-            assert(cetta_open_equation_cursor_continue(cursor, NULL, base,
+            assert(test_open_cursor_value_continue(cursor, NULL, base,
                 &value, NULL) == CETTA_OPEN_EQUATION_ANSWER);
             assert(atom_alpha_eq(value, parse_one(&answers,
                 test == 0u ? "authored" : "(Row authored)")));
-            assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+            assert(test_open_cursor_value_next(cursor, NULL, &value, NULL) ==
                    CETTA_OPEN_EQUATION_EXHAUSTED);
             cetta_open_equation_cursor_close(cursor);
             cetta_open_equation_program_release(compiled);
@@ -4167,7 +4254,7 @@ static void test_compiled_comparison_entry(TermUniverse *universe,
             Atom *value = NULL;
             CettaOpenEquationStep step = CETTA_OPEN_EQUATION_EXHAUSTED;
             if (scenario == 2u) {
-                step = cetta_open_equation_cursor_next(
+                step = test_open_cursor_value_next(
                     cursor, NULL, &value, NULL);
                 assert(step == CETTA_OPEN_EQUATION_HOST);
             }
@@ -4179,23 +4266,23 @@ static void test_compiled_comparison_entry(TermUniverse *universe,
             if (scenario == 2u) {
                 uint32_t base = test_compiled_accept_host_value(
                     cursor, &answers, "(eval checkpoint)", "checkpoint");
-                step = cetta_open_equation_cursor_continue(
+                step = test_open_cursor_value_continue(
                     cursor, NULL, base, &value, NULL);
             } else {
-                step = cetta_open_equation_cursor_next(
+                step = test_open_cursor_value_next(
                     cursor, NULL, &value, NULL);
             }
             if (scenario != 0u) {
                 assert(step == CETTA_OPEN_EQUATION_HOST);
                 uint32_t base = test_compiled_accept_host_value(
                     cursor, &answers, source, "(changed shape)");
-                step = cetta_open_equation_cursor_continue(
+                step = test_open_cursor_value_continue(
                     cursor, NULL, base, &value, NULL);
             }
             assert(step == CETTA_OPEN_EQUATION_ANSWER);
             assert(atom_alpha_eq(value, parse_one(&answers,
                 scenario ? "(changed shape)" : results[condition])));
-            assert(cetta_open_equation_cursor_next(
+            assert(test_open_cursor_value_next(
                 cursor, NULL, &value, NULL) == CETTA_OPEN_EQUATION_EXHAUSTED);
             cetta_open_equation_cursor_close(cursor);
             cetta_open_equation_program_release(compiled);
@@ -4239,7 +4326,7 @@ static void test_compiled_builtin_entry_binders(TermUniverse *universe,
             compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
         assert(cursor);
         Atom *value = NULL;
-        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+        assert(test_open_cursor_value_next(cursor, NULL, &value, NULL) ==
                CETTA_OPEN_EQUATION_HOST);
         if (stale) {
             add_compiled_program_equation(program, &space, arena,
@@ -4248,7 +4335,7 @@ static void test_compiled_builtin_entry_binders(TermUniverse *universe,
         }
         uint32_t base = test_compiled_accept_host_value(cursor, &answers,
             "(println! checkpoint)", "()");
-        CettaOpenEquationStep step = cetta_open_equation_cursor_continue(
+        CettaOpenEquationStep step = test_open_cursor_value_continue(
             cursor, NULL, base, &value, NULL);
         if (stale) {
             assert(step == CETTA_OPEN_EQUATION_HOST);
@@ -4257,13 +4344,13 @@ static void test_compiled_builtin_entry_binders(TermUniverse *universe,
             base = test_compiled_accept_host_value(cursor, &answers,
                 "(let* (($first (max 1 2)) ($next (+ $first 1))) "
                 "(Pair $first $next $first))", "(Pair 7 8 7)");
-            step = cetta_open_equation_cursor_continue(cursor, NULL, base,
+            step = test_open_cursor_value_continue(cursor, NULL, base,
                 &value, NULL);
         }
         assert(step == CETTA_OPEN_EQUATION_ANSWER);
         assert(atom_alpha_eq(value, parse_one(&answers,
             stale ? "(Pair 7 8 7)" : "(Pair 2 3 2)")));
-        assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+        assert(test_open_cursor_value_next(cursor, NULL, &value, NULL) ==
                CETTA_OPEN_EQUATION_EXHAUSTED);
         cetta_open_equation_cursor_close(cursor);
         cetta_open_equation_program_release(compiled);
@@ -4422,7 +4509,7 @@ static void test_compiled_type_guard_protocol(TermUniverse *universe, Arena *are
             cetta_open_equation_cursor_set_type_guard(
                 cursor, &test, test_compiled_type_guard);
             Atom *value = NULL;
-            CettaOpenEquationStep step = cetta_open_equation_cursor_next(
+            CettaOpenEquationStep step = test_open_cursor_value_next(
                 cursor, NULL, &value, NULL);
             if (modes[i] == CETTA_OPEN_TYPE_ANSWERS ||
                 modes[i] == CETTA_OPEN_TYPE_PROVED) {
@@ -4430,7 +4517,7 @@ static void test_compiled_type_guard_protocol(TermUniverse *universe, Arena *are
                 while (step == CETTA_OPEN_EQUATION_ANSWER) {
                     assert(atom_is_symbol(value, "guard-unit-result"));
                     emitted++;
-                    step = cetta_open_equation_cursor_next(cursor, NULL, &value, NULL);
+                    step = test_open_cursor_value_next(cursor, NULL, &value, NULL);
                 }
                 assert(step == CETTA_OPEN_EQUATION_EXHAUSTED);
                 if (emitted != (modes[i] == CETTA_OPEN_TYPE_PROVED ? 1u : count))
@@ -4508,7 +4595,7 @@ static void test_compiled_terminal_host(TermUniverse *universe, Arena *arena) {
     assert(cursor);
     Atom *value = NULL;
     Atom **query_values = NULL;
-    assert(cetta_open_equation_cursor_next(cursor, query_vars, &value,
+    assert(test_open_cursor_value_next(cursor, query_vars, &value,
         &query_values) == CETTA_OPEN_EQUATION_HOST);
     assert(cetta_open_equation_cursor_host_terminal(cursor, &query_values));
     assert(cetta_open_equation_cursor_program_at(cursor, 0u) == compiled);
@@ -4541,22 +4628,22 @@ static void test_compiled_terminal_host(TermUniverse *universe, Arena *arena) {
     assert(cetta_open_equation_cursor_accept(cursor, query_vars, host_vars,
         host_values, host_count, true, 0u, &base));
     free(host_values);
-    assert(cetta_open_equation_cursor_continue(cursor, query_vars, base,
+    assert(test_open_cursor_value_continue(cursor, query_vars, base,
         &value, &query_values) == CETTA_OPEN_EQUATION_ANSWER);
     assert(atom_alpha_eq(value, parse_one(&answers, "(Row (Box 17))")));
     assert(atom_eq(query_values[0], value));
-    assert(cetta_open_equation_cursor_next(cursor, query_vars, &value,
+    assert(test_open_cursor_value_next(cursor, query_vars, &value,
         &query_values) == CETTA_OPEN_EQUATION_EXHAUSTED);
     cetta_open_equation_cursor_close(cursor);
     cursor = cetta_open_equation_cursor_open(
         compiled, &answers, args, 1u, NULL, NULL, 0u, NULL);
     assert(cursor);
-    assert(cetta_open_equation_cursor_next(cursor, NULL, &value, NULL) ==
+    assert(test_open_cursor_value_next(cursor, NULL, &value, NULL) ==
         CETTA_OPEN_EQUATION_HOST);
     assert(cetta_open_equation_cursor_host_terminal(cursor, &query_values));
     base = test_compiled_accept_host_value(cursor, &answers,
         "(eval opaque)", "19");
-    assert(cetta_open_equation_cursor_continue(cursor, NULL, base,
+    assert(test_open_cursor_value_continue(cursor, NULL, base,
         &value, NULL) == CETTA_OPEN_EQUATION_ANSWER);
     assert(atom_alpha_eq(value, parse_one(&answers, "(Row (Box 19))")));
     cetta_open_equation_cursor_close(cursor);
@@ -4575,7 +4662,7 @@ static void test_compiled_terminal_host(TermUniverse *universe, Arena *arena) {
     cursor = cetta_open_equation_cursor_open(compiled, &answers, sharing_args,
         1u, output, sharing_vars, 2u, NULL);
     assert(cursor);
-    assert(cetta_open_equation_cursor_next(cursor, sharing_vars, &value,
+    assert(test_open_cursor_value_next(cursor, sharing_vars, &value,
         &query_values) == CETTA_OPEN_EQUATION_HOST);
     assert(cetta_open_equation_cursor_host_terminal(cursor, &query_values));
     assert(cetta_open_equation_cursor_host_goal(cursor, &goal, &destination,
@@ -4602,7 +4689,7 @@ static void test_compiled_terminal_host(TermUniverse *universe, Arena *arena) {
         cursor = cetta_open_equation_cursor_open(
             compiled, &answers, NULL, 0u, NULL, NULL, 0u, NULL);
         assert(cursor);
-        assert(cetta_open_equation_cursor_next(cursor, NULL, &value,
+        assert(test_open_cursor_value_next(cursor, NULL, &value,
             &query_values) == CETTA_OPEN_EQUATION_HOST);
         query_values = NULL;
         if (cetta_open_equation_cursor_host_terminal(cursor, &query_values))
@@ -5132,7 +5219,7 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, ascription);
     assert(ascription_plan);
     assert(ascription_plan->role == PETTA_PLAN_DATA);
-    assert(ascription_plan->control.operation == CETTA_CONTROL_NONE);
+    assert(ascription_plan->control.operation == CETTA_CONTROL_CONSTRUCT);
     assert(
         ascription_plan->execution ==
         PETTA_PLAN_EXEC_CONSTRUCTOR_SLOTS);
@@ -5277,7 +5364,7 @@ static void test_constructor_slot_frame_plans(
     assert(
         nested_plain_scalar_plan->execution ==
         PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS);
-    assert(nested_plain_scalar_plan->control.operation == CETTA_CONTROL_NONE);
+    assert(nested_plain_scalar_plan->control.operation == CETTA_CONTROL_INVOKE);
     assert(nested_plain_scalar_plan->contains_call);
     const PettaDeterministicRegionProgram *nested_plain_scalar_region =
         nested_plain_scalar_plan->deterministic_region;
@@ -5408,7 +5495,7 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, relation_call);
     assert(relation_plan);
     assert(relation_plan->role == PETTA_PLAN_STATIC_CALL);
-    assert(relation_plan->control.operation == CETTA_CONTROL_NONE);
+    assert(relation_plan->control.operation == CETTA_CONTROL_INVOKE);
     assert(
         relation_plan->execution ==
         PETTA_PLAN_EXEC_RELATION_SLOTS);
@@ -13588,7 +13675,7 @@ static void test_entered_service_returns(TermUniverse *universe, Arena *arena) {
                     compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
                 assert(fixture.cursor);
                 Atom *value = NULL;
-                CettaOpenEquationStep step = cetta_open_equation_cursor_next(
+                CettaOpenEquationStep step = test_open_cursor_value_next(
                     fixture.cursor, NULL, &value, NULL);
                 if (step != expected[mode])
                     fprintf(stderr, "service kind=%u mode=%u raises=%u step=%u cause=%u attempts=%u effects=%u\n",
@@ -13598,7 +13685,7 @@ static void test_entered_service_returns(TermUniverse *universe, Arena *arena) {
                 assert(step == expected[mode]);
                 if (mode == 0u) {
                     assert(atom_is_symbol(value, "true"));
-                    assert(cetta_open_equation_cursor_next(fixture.cursor, NULL,
+                    assert(test_open_cursor_value_next(fixture.cursor, NULL,
                         &value, NULL) == CETTA_OPEN_EQUATION_EXHAUSTED);
                 } else if (mode == 1u) {
                     Atom *goal = NULL, *destination = NULL;
@@ -13619,13 +13706,13 @@ static void test_entered_service_returns(TermUniverse *universe, Arena *arena) {
                     assert(cetta_open_equation_cursor_handoff(fixture.cursor) ==
                         CETTA_OPEN_EQUATION_HANDOFF_BUDGET);
                     cetta_open_equation_cursor_set_budget(fixture.cursor, 0u);
-                    assert(cetta_open_equation_cursor_next(fixture.cursor, NULL,
+                    assert(test_open_cursor_value_next(fixture.cursor, NULL,
                         &value, NULL) == CETTA_OPEN_EQUATION_ANSWER);
                     assert(atom_is_symbol(value, "finished"));
-                    assert(cetta_open_equation_cursor_next(fixture.cursor, NULL,
+                    assert(test_open_cursor_value_next(fixture.cursor, NULL,
                         &value, NULL) == CETTA_OPEN_EQUATION_ANSWER);
                     assert(atom_is_symbol(value, "finished"));
-                    assert(cetta_open_equation_cursor_next(fixture.cursor, NULL,
+                    assert(test_open_cursor_value_next(fixture.cursor, NULL,
                         &value, NULL) == CETTA_OPEN_EQUATION_EXHAUSTED);
                 }
                 assert(fixture.attempts == 1u);
@@ -13760,7 +13847,7 @@ static void test_compiled_native_returns(TermUniverse *universe, Arena *arena) {
         assert(cursor);
         Atom *value = NULL;
         CettaOpenEquationStep step =
-            cetta_open_equation_cursor_next(cursor, NULL, &value, NULL);
+            test_open_cursor_value_next(cursor, NULL, &value, NULL);
         CettaOpenEquationStats stats;
         cetta_open_equation_cursor_stats(cursor, &stats);
         assert(fixture.attempts == 1u);
@@ -13841,7 +13928,7 @@ static void test_compiled_native_returns(TermUniverse *universe, Arena *arena) {
         compiled, &answers, arguments, 1u, NULL, query_variables, 1u, &runtime);
     assert(cursor);
     Atom *value = NULL;
-    assert(cetta_open_equation_cursor_next(cursor, query_variables, &value, NULL) ==
+    assert(test_open_cursor_value_next(cursor, query_variables, &value, NULL) ==
            CETTA_OPEN_EQUATION_HOST);
     assert(fixture.attempts == 0u && fixture.entries == 0u);
     cetta_open_equation_cursor_close(cursor);
@@ -13919,6 +14006,7 @@ int main(int argc, char **argv) {
     test_program_metadata_projection(&answers);
     test_program_callability_head_kinds(&answers);
     test_compiled_graph_transport(&universe, &persistent);
+    test_compiled_return_provenance(&universe, &persistent);
     test_compiled_stable_host_answer(&universe, &persistent);
     test_compiled_native_returns(&universe, &persistent);
     test_entered_service_returns(&universe, &persistent);

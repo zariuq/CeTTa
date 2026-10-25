@@ -13,6 +13,7 @@ def main():
     spec = Spec(text)
     assert len(spec.control_plans) == 9
     assert len(spec.control_forms) == 2
+    assert set(spec.implicit_operations) == {'return-value', 'construct', 'invoke'}
     assert len(spec.fold_control_heads) == 5
     row = '(source-head let 3 sequence (operands 1 0 2) (fold bind))'
     assert text.count(row) == 1
@@ -58,8 +59,19 @@ def main():
         except SpecError:
             continue
         raise AssertionError(('invalid dialect control plan was admitted', after))
-    print('PASS: control source plans preserve binding orders, force/return scopes, '
-          'choice/failure and dialect commit/handler scopes; eighteen corruptions refused')
+    implicit = '(implicit-operation return-value)'
+    for corrupted in [
+            text.replace(implicit, implicit + '\n  ' + implicit),
+            text.replace(implicit, '(implicit-operation missing)'),
+            text.replace(implicit, implicit + '\n  (implicit-operation invoke extra)'),
+            text.replace(row, '(source-head let 0 invoke (operands absent absent absent) (fold none))')]:
+        try:
+            Spec(corrupted)
+        except SpecError:
+            continue
+        raise AssertionError('implicit computation bypassed occurrence admission')
+    print('PASS: computation plans preserve basic occurrences, control layouts and '
+          'dialect scopes; twenty-two corruptions refused')
 
 
 if __name__ == '__main__':

@@ -136,6 +136,18 @@ static void test_control_operand_plans(void) {
     assert(!cetta_control_operation_decode(999u, 1u, NULL, &builtins));
     assert(!cetta_control_operation_decode(25u, 1u, NULL, NULL));
     assert(observations == 9u);
+    CettaControlOperationPlan basic[] = {CETTA_CONTROL_RETURN_VALUE_PLAN,
+        CETTA_CONTROL_CONSTRUCT_PLAN, CETTA_CONTROL_INVOKE_PLAN};
+    for (size_t index = 0u; index < sizeof(basic) / sizeof(*basic); index++) {
+        CettaControlOperationPlan operation = basic[index];
+        assert(!cetta_control_operation_is_control_form(operation));
+        assert(operation.source == CETTA_CONTROL_OPERAND_ABSENT &&
+            operation.first == CETTA_CONTROL_OPERAND_ABSENT &&
+            operation.last == CETTA_CONTROL_OPERAND_ABSENT);
+        CettaGsltFoldControl untouched = CETTA_GSLT_FOLD_CONTROL_BRANCH;
+        assert(!cetta_control_operation_lower_fold(operation, &untouched));
+        assert(untouched == CETTA_GSLT_FOLD_CONTROL_BRANCH);
+    }
     for (unsigned arity = 0u; arity <= 5u; arity++) {
         CettaControlOperationPlan commit = petta_semantics_elaborate_control(
             SYMBOL_ID_NONE, PETTA_FORM_CUT, arity);

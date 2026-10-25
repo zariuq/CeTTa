@@ -751,6 +751,9 @@ class Spec:
             "failure": (False, False, False),
             "scoped-commit": (False, False, False),
             "handle": (True, False, False),
+            "return-value": (False, False, False),
+            "construct": (False, False, False),
+            "invoke": (False, False, False),
         }
         if set(self.control_operations) != set(slot_shapes):
             raise SpecError("control operations must have a native operand-layout scheme")
@@ -763,6 +766,14 @@ class Spec:
         }
         self.control_plans = []
         self.control_forms = []
+        self.implicit_operations = []
+        for entry in entries(control_plans, "implicit-operation"):
+            if len(entry) != 2:
+                raise SpecError("an implicit operation names exactly one scheme")
+            self.implicit_operations.append(atom_text(entry[1], "implicit operation"))
+        if (set(self.implicit_operations) != {"return-value", "construct", "invoke"} or
+                len(self.implicit_operations) != len(set(self.implicit_operations))):
+            raise SpecError("implicit operations must name the native value, constructor and call schemes")
         self.fold_control_heads: list[tuple[str, str, int, str]] = []
         control_entries = [(None, entry) for entry in entries(control_plans, "source-head")]
         for entry in entries(control_plans, "dialect-form"):
@@ -777,6 +788,8 @@ class Spec:
             name = atom_text(entry[1], "control head")
             arity_text = atom_text(entry[2], "control arity")
             operation = atom_text(entry[3], "control operation")
+            if operation in self.implicit_operations:
+                raise SpecError("an implicit operation needs occurrence admission, not a source-head row")
             field = symbol_fields.get(name) if dialect is None else "PETTA_FORM_" + c_enum(name)
             if (not field or operation not in slot_shapes or
                     (dialect is not None and field not in native_forms)):
@@ -817,7 +830,8 @@ class Spec:
             raise SpecError("control plans must be nonempty and unique by source head and arity")
         if len({(field, arity) for _, field, arity, _, _, _ in self.control_forms}) != len(self.control_forms):
             raise SpecError("dialect control forms must be unique by form and arity")
-        if {operation for _, _, _, operation, _, _ in self.control_plans + self.control_forms} != set(self.control_operations):
+        if ({operation for _, _, _, operation, _, _ in self.control_plans + self.control_forms}
+                | set(self.implicit_operations)) != set(self.control_operations):
             raise SpecError("control source plans must cover every declared operation")
 
         self.sequence_representations: list[
@@ -1524,6 +1538,14 @@ def render_header(spec: Spec) -> str:
         f"    X({field}, {arity}u, CETTA_CONTROL_{c_enum(operation)}, " +
         ", ".join(control_coordinate(value) for value in coordinates) + ")"
         for _, field, arity, operation, coordinates, _ in spec.control_forms)
+    implicit_plan_definitions = "\n".join(
+        f"#define CETTA_CONTROL_{c_enum(operation)}_PLAN "
+        f"((CettaControlOperationPlan){{CETTA_CONTROL_{c_enum(operation)}, "
+        "CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT})"
+        for operation in spec.implicit_operations)
+    control_form_cases = "\n".join(
+        f"    case CETTA_CONTROL_{c_enum(operation)}:"
+        for operation in spec.control_operations if operation not in spec.implicit_operations)
     control_fold_cases = "\n".join(
         f"    if (plan.operation == CETTA_CONTROL_{c_enum(operation)} &&\n"
         f"        plan.source == {control_coordinate(coordinates[0])} &&\n"
@@ -1985,6 +2007,19 @@ typedef struct {{
     uint8_t last;
 }} CettaControlOperationPlan;
 _Static_assert(sizeof(CettaControlOperationPlan) == 4u, "control plan must remain four bytes");
+
+{implicit_plan_definitions}
+
+/* Fixed-layout control forms are distinct from occurrence-level value,
+ * construction and invocation plans. This grants no callee admission. */
+static inline bool cetta_control_operation_is_control_form(CettaControlOperationPlan plan) {{
+    switch (plan.operation) {{
+{control_form_cases}
+        return true;
+    default:
+        return false;
+    }}
+}}
 
 /* The two three-operand sequence layouts have different source positions.
  * Physical lowerings can admit one layout without changing the operation. */

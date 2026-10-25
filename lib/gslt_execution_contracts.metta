@@ -300,6 +300,14 @@
   (value failure)
   (value scoped-commit)
   (value handle)
+  (value return-value)
+  (value construct)
+  (value invoke)
+  ; These operations are selected by dialect elaboration of an occurrence,
+  ; without giving its value or constructor head new source-call authority.
+  (implicit-operation return-value)
+  (implicit-operation construct)
+  (implicit-operation invoke)
   ; Coordinates address arguments, excluding the head. A plan describes
   ; source layout; source authority and evaluation strategy remain separate.
   ; The final field names an optional lowering to the admitted fold fragment.

@@ -11732,13 +11732,13 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context,
-    Atom **result_out);
+    Atom **result_out, CettaCallOutcome *outcome);
 
 static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
     CettaPreparedPureProgram *program, Arena *arena, uint32_t first_code,
     uint32_t register_count, bool step, size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context, Atom **result_out);
+    void *interrupt_context, Atom **result_out, CettaCallOutcome *outcome);
 
 static bool PREPARED_PURE_HOT PREPARED_PURE_NOINLINE prepared_pure_run_owned_code_from(
     CettaPreparedPureProgram *program, Arena *arena, uint32_t first_code,
@@ -12062,10 +12062,12 @@ static PREPARED_PURE_ALWAYS_INLINE Atom *prepared_pure_ready_register(
         ? value : NULL;
 }
 
-/* The value of an EVAL or RETURN step over the installed locals. */
-static Atom *prepared_pure_answer_step_value(
+/* An EVAL or RETURN over the installed locals keeps logical exhaustion
+ * separate from a worker that cannot realize the step. */
+static bool prepared_pure_answer_step_return(
     CettaPreparedPureAnswerCursor *cursor, const PreparedPureStep *step,
-    uint32_t slot_count, bool *limit_hit) {
+    uint32_t slot_count, bool *limit_hit, CettaCallOutcome *outcome) {
+    *outcome = (CettaCallOutcome){0};
     CettaPreparedPureProgram *program = cursor->program;
     Atom *value = NULL;
     size_t live_before = arena_accounted_live_bytes(cursor->arena);
@@ -12075,10 +12077,11 @@ static Atom *prepared_pure_answer_step_value(
                 program, cursor->arena, program->slots, slot_count,
                 step->node, 0u, &cursor->limits, &scratch, limit_hit,
                 &value))
-            return NULL;
+            return false;
         if (!cursor->owns_arena)
             cursor->scratch_remaining = scratch;
-        return value;
+        *outcome = cetta_call_completed_value(value);
+        return true;
     }
     /* Native-aware CPS splits computations at ready operand boundaries.
      * A scalar leaf uses the same bounded operation as the node machine;
@@ -12105,9 +12108,10 @@ static Atom *prepared_pure_answer_step_value(
         if (value) {
             if (!prepared_pure_answer_cursor_charge(cursor, live_before)) {
                 *limit_hit = true;
-                return NULL;
+                return false;
             }
-            return value;
+            *outcome = cetta_call_completed_value(value);
+            return true;
         }
     }
     /* A step's region runs as its register code when the program has
@@ -12115,18 +12119,21 @@ static Atom *prepared_pure_answer_step_value(
     bool evaluated = program->code_ready && step->coded
         ? prepared_pure_run_code_from(
               program, cursor->arena, step->first_code,
-              step->register_count, true, 0u, NULL, NULL, &value)
+              step->register_count, true, 0u, NULL, NULL, &value, outcome)
         : prepared_pure_program_execute_internal(
               program, cursor->arena, NULL, NULL, NULL, step->node,
-              slot_count, true, 0u, NULL, NULL, &value);
+              slot_count, true, 0u, NULL, NULL, &value, outcome);
     program->frame_len = 0u;
     program->value_len = 0u;
     program->slot_len = slot_count;
     if (!prepared_pure_answer_cursor_charge(cursor, live_before)) {
         *limit_hit = true;
-        return NULL;
+        return false;
     }
-    return evaluated ? value : NULL;
+    if (evaluated)
+        *outcome = cetta_call_completed_value(value);
+    return evaluated || outcome->kind == CETTA_CALL_FAILURE ||
+        outcome->kind == CETTA_CALL_INTERRUPTED;
 }
 
 /* Enter the call of a CALL or TAIL step.  A CALL records where its answers
@@ -12325,8 +12332,18 @@ static PreparedPureRunResult prepared_pure_answer_cursor_run(
         case PREPARED_PURE_STEP_EVAL:
         case PREPARED_PURE_STEP_RETURN: {
             ArenaMark mark = arena_mark(cursor->arena);
-            Atom *result = prepared_pure_answer_step_value(
-                cursor, step, body->frame_slot_count, &limit_hit);
+            CettaCallOutcome returned;
+            bool handled = prepared_pure_answer_step_return(
+                cursor, step, body->frame_slot_count, &limit_hit, &returned);
+            if (handled && returned.kind == CETTA_CALL_FAILURE)
+                return PREPARED_PURE_RUN_CONTINUE;
+            if (handled && returned.kind == CETTA_CALL_INTERRUPTED) {
+                (void)prepared_pure_answer_cursor_handoff(
+                    cursor, CETTA_PREPARED_PURE_HANDOFF_INTERRUPT);
+                return PREPARED_PURE_RUN_HANDOFF;
+            }
+            Atom *result = handled && returned.kind == CETTA_CALL_VALUE
+                ? returned.term : NULL;
             if (!result && cursor->native_started && !limit_hit) {
                 PreparedPureStep pending = *step;
                 pending.auxiliary = step->kind == PREPARED_PURE_STEP_RETURN;
@@ -13766,7 +13783,7 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context, Atom **result_out,
     CettaPreparedPureAnswerCursor *cursor,
-    const PreparedPureContinuation *continuation) {
+    const PreparedPureContinuation *continuation, CettaCallOutcome *outcome) {
     if (!prepared_pure_reserve(
             (void **)&program->slots, sizeof(*program->slots),
             &program->slot_cap, register_count ? register_count : 1u) ||
@@ -14046,11 +14063,9 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                     program, &program->bind_patterns[code->auxiliary],
                     frame->base, value);
             if (matched != PREPARED_PURE_MATCH_MATCHED) {
-                if (cursor && matched == PREPARED_PURE_MATCH_MISMATCH)
+                if (matched == PREPARED_PURE_MATCH_MISMATCH)
                     goto empty;
-                decline = matched == PREPARED_PURE_MATCH_MISMATCH
-                    ? "let pattern did not match"
-                    : "let pattern matcher failed";
+                decline = "let pattern matcher failed";
                 goto declined;
             }
             continue;
@@ -14063,6 +14078,8 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                         program, arena, false, nursery_budget_bytes,
                         gc_anchor, &gc_trigger_bytes, interrupt_poll,
                         interrupt_context)) {
+                    if (outcome)
+                        *outcome = cetta_call_interrupted();
                     if (cursor) {
                         (void)prepared_pure_answer_cursor_handoff(cursor,
                             CETTA_PREPARED_PURE_HANDOFF_INTERRUPT);
@@ -14298,6 +14315,8 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                     program, arena, true, nursery_budget_bytes,
                     gc_anchor, &gc_trigger_bytes, interrupt_poll,
                     interrupt_context)) {
+                if (outcome)
+                    *outcome = cetta_call_interrupted();
                 if (cursor) {
                     (void)prepared_pure_answer_cursor_handoff(cursor,
                         CETTA_PREPARED_PURE_HANDOFF_INTERRUPT);
@@ -14358,6 +14377,8 @@ declined:
     program->code_frame_len = 0u;
     return prepared_pure_runtime_decline(program, decline, decline_node);
 empty:
+    if (outcome)
+        *outcome = cetta_call_failure();
 residual:
     program->code_frame_len = 0u;
     return false;
@@ -14369,10 +14390,10 @@ static bool PREPARED_PURE_HOT prepared_pure_run_code_from(
     CettaPreparedPureProgram *program, Arena *arena, uint32_t first_code,
     uint32_t register_count, bool step, size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context, Atom **result_out) {
+    void *interrupt_context, Atom **result_out, CettaCallOutcome *outcome) {
     return prepared_pure_run_code_worker(program, arena, first_code, register_count,
         step, nursery_budget_bytes, interrupt_poll, interrupt_context, result_out,
-        NULL, NULL);
+        NULL, NULL, outcome);
 }
 
 static bool PREPARED_PURE_HOT PREPARED_PURE_NOINLINE prepared_pure_run_owned_code_from(
@@ -14386,7 +14407,7 @@ static bool PREPARED_PURE_HOT PREPARED_PURE_NOINLINE prepared_pure_run_owned_cod
         return false;
     return prepared_pure_run_code_worker(program, arena, first_code, register_count,
         step, nursery_budget_bytes, interrupt_poll, interrupt_context, result_out,
-        cursor, continuation);
+        cursor, continuation, NULL);
 }
 
 /* Run the root of a program that answers once: its locals cleared, then
@@ -14395,7 +14416,7 @@ static bool prepared_pure_run_code(
     CettaPreparedPureProgram *program, Arena *arena,
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context, Atom **result_out) {
+    void *interrupt_context, Atom **result_out, CettaCallOutcome *outcome) {
     uint32_t root_registers = program->root_register_count;
     if (!prepared_pure_reserve(
             (void **)&program->slots, sizeof(*program->slots),
@@ -14413,7 +14434,7 @@ static bool prepared_pure_run_code(
     }
     return prepared_pure_run_code_from(
         program, arena, program->root_first_code, root_registers, false,
-        nursery_budget_bytes, interrupt_poll, interrupt_context, result_out);
+        nursery_budget_bytes, interrupt_poll, interrupt_context, result_out, outcome);
 }
 
 /* `step_node`, when not PREPARED_PURE_RUNTIME_NODE, evaluates that node of an
@@ -14427,9 +14448,11 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
     void *interrupt_context,
-    Atom **result_out) {
+    Atom **result_out, CettaCallOutcome *outcome) {
     if (result_out)
         *result_out = NULL;
+    if (outcome)
+        *outcome = (CettaCallOutcome){0};
     bool step = step_node != PREPARED_PURE_RUNTIME_NODE;
     if (!program || !arena || !result_out ||
         program->closed_program != closed ||
@@ -14462,7 +14485,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
         !program->answer_producer)
         return prepared_pure_run_code(
             program, arena, nursery_budget_bytes, interrupt_poll,
-            interrupt_context, result_out);
+            interrupt_context, result_out, outcome);
     if (step) {
         program->slot_len = step_slot_count;
     } else {
@@ -14493,6 +14516,8 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
         if (interrupt_poll &&
             (interrupt_poll_steps++ & 255u) == 0u &&
             interrupt_poll(interrupt_context)) {
+            if (outcome)
+                *outcome = cetta_call_interrupted();
             return prepared_pure_runtime_decline(
                 program, "execution interrupted", NULL);
         }
@@ -14950,12 +14975,14 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_internal(
                 prepared_pure_match_bind_pattern(
                     program, &program->bind_patterns[node->auxiliary],
                     frame->local_base, value);
+            if (matched == PREPARED_PURE_MATCH_MISMATCH) {
+                if (outcome)
+                    *outcome = cetta_call_failure();
+                return false;
+            }
             if (matched != PREPARED_PURE_MATCH_MATCHED)
                 return prepared_pure_runtime_decline(
-                    program, matched == PREPARED_PURE_MATCH_MISMATCH
-                        ? "let pattern did not match"
-                        : "let pattern matcher failed",
-                    node);
+                    program, "let pattern matcher failed", node);
             *frame = (PreparedPureFrame){
                 .node = program->children[node->first_child + 1u],
                 .local_base = frame->local_base,
@@ -15214,7 +15241,7 @@ bool cetta_prepared_pure_program_execute(
     return prepared_pure_program_execute_internal(
         program, arena, accumulator, item, NULL,
         PREPARED_PURE_RUNTIME_NODE, 0u, false, 0u,
-        NULL, NULL, result_out);
+        NULL, NULL, result_out, NULL);
 }
 
 bool cetta_prepared_pure_program_execute_controlled(
@@ -15225,29 +15252,42 @@ bool cetta_prepared_pure_program_execute_controlled(
     return prepared_pure_program_execute_internal(
         program, arena, accumulator, item, NULL,
         PREPARED_PURE_RUNTIME_NODE, 0u, false, 0u,
-        interrupt_poll, interrupt_context, result_out);
+        interrupt_poll, interrupt_context, result_out, NULL);
 }
 
 bool cetta_prepared_pure_program_execute_closed(
     CettaPreparedPureProgram *program, Arena *arena,
     size_t nursery_budget_bytes,
     Atom **result_out) {
-    return prepared_pure_program_execute_internal(
-        program, arena, NULL, NULL, NULL,
-        PREPARED_PURE_RUNTIME_NODE, 0u, true,
-        nursery_budget_bytes, NULL, NULL, result_out);
+    if (!result_out)
+        return false;
+    *result_out = NULL;
+    CettaCallOutcome outcome;
+    bool handled = cetta_prepared_pure_program_execute_closed_controlled(
+        program, arena, nursery_budget_bytes, NULL, NULL, &outcome);
+    if (!handled || outcome.kind != CETTA_CALL_VALUE)
+        return false;
+    *result_out = outcome.term;
+    return true;
 }
 
 bool cetta_prepared_pure_program_execute_closed_controlled(
     CettaPreparedPureProgram *program, Arena *arena,
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context, Atom **result_out) {
-    return prepared_pure_program_execute_internal(
+    void *interrupt_context, CettaCallOutcome *outcome) {
+    if (!outcome)
+        return false;
+    Atom *value = NULL;
+    bool completed = prepared_pure_program_execute_internal(
         program, arena, NULL, NULL, NULL,
         PREPARED_PURE_RUNTIME_NODE, 0u, true,
         nursery_budget_bytes, interrupt_poll, interrupt_context,
-        result_out);
+        &value, outcome);
+    if (completed)
+        *outcome = cetta_call_completed_value(value);
+    return completed || outcome->kind == CETTA_CALL_FAILURE ||
+        outcome->kind == CETTA_CALL_INTERRUPTED;
 }
 
 bool cetta_prepared_pure_program_execute_closed_expression_controlled(
@@ -15259,7 +15299,7 @@ bool cetta_prepared_pure_program_execute_closed_expression_controlled(
         program, arena, NULL, NULL, expression,
         PREPARED_PURE_RUNTIME_NODE, 0u, true,
         nursery_budget_bytes, interrupt_poll, interrupt_context,
-        result_out);
+        result_out, NULL);
 }
 
 static bool prepared_pure_value_has_callable_node(
