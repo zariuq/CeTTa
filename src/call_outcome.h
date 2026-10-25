@@ -41,7 +41,20 @@ typedef enum {
     CETTA_CALL_RESULT_COMPLETED_VALUE,
     /* `term` is an ordered expression of completed answers. */
     CETTA_CALL_RESULT_COMPLETED_FRONTIER,
+    /* `term` holds ordered expressions awaiting dialect completion. */
+    CETTA_CALL_RESULT_EXPRESSION_FRONTIER,
 } CettaCallResultForm;
+
+static inline bool cetta_call_result_is_frontier(CettaCallResultForm form) {
+    return form == CETTA_CALL_RESULT_COMPLETED_FRONTIER ||
+           form == CETTA_CALL_RESULT_EXPRESSION_FRONTIER;
+}
+
+static inline CettaCallResultForm cetta_call_frontier_element_form(
+        CettaCallResultForm form) {
+    return form == CETTA_CALL_RESULT_COMPLETED_FRONTIER
+        ? CETTA_CALL_RESULT_COMPLETED_VALUE : CETTA_CALL_RESULT_EXPRESSION;
+}
 
 typedef struct {
     CettaCallOutcomeKind kind;
@@ -68,7 +81,7 @@ static inline bool cetta_call_outcome_shape_valid(CettaCallOutcome outcome) {
     case CETTA_CALL_VALUE:
         if (!outcome.term)
             return false;
-        if (outcome.result_form == CETTA_CALL_RESULT_COMPLETED_FRONTIER)
+        if (cetta_call_result_is_frontier(outcome.result_form))
             return outcome.term->kind == ATOM_EXPR &&
                 (!outcome.term->expr.len || outcome.term->expr.elems != NULL);
         return outcome.result_form == CETTA_CALL_RESULT_EXPRESSION ||
@@ -89,6 +102,11 @@ static inline CettaCallOutcome cetta_call_completed_value(Atom *value) {
 static inline CettaCallOutcome cetta_call_completed_frontier(Atom *values) {
     return (CettaCallOutcome){.kind = CETTA_CALL_VALUE, .term = values,
                               .result_form = CETTA_CALL_RESULT_COMPLETED_FRONTIER};
+}
+
+static inline CettaCallOutcome cetta_call_expression_frontier(Atom *expressions) {
+    return (CettaCallOutcome){.kind = CETTA_CALL_VALUE, .term = expressions,
+                              .result_form = CETTA_CALL_RESULT_EXPRESSION_FRONTIER};
 }
 
 static inline CettaCallOutcome cetta_call_failure(void) {

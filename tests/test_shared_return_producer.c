@@ -533,6 +533,38 @@ static void test_pending_return_detachment(void) {
     puts("PASS: detaching and re-owning a pending return preserves its exact loan and never replays producer work");
 }
 
+typedef struct {
+    Arena *arena;
+    CettaCallReturnCursor body;
+    unsigned entries, answers;
+    bool refuse;
+} PreparedBind;
+
+static bool prepared_bind_body(void *context, const CettaOwnedReturn *returned,
+        CettaOwnedExecution *execution) {
+    PreparedBind *bind = context;
+    bind->entries++;
+    bind->body = (CettaCallReturnCursor){
+        .outcome = cetta_call_completed_frontier(atom_expr2(
+            bind->arena, returned->outcome.term, returned->outcome.term)),
+        .environment = returned->environment,
+    };
+    cetta_owned_execution_init(execution, &bind->body, cetta_call_return_next, NULL);
+    return true;
+}
+
+static bool prepared_bind_publish(void *context, const CettaOwnedReturn *returned) {
+    PreparedBind *bind = context;
+    if (bind->refuse)
+        return false;
+    const char *expected[] = {"(pair 7 7)", "(pair 7 7)",
+        "(pair 7 7)", "(pair 7 7)", "(pair 9 9)", "(pair 9 9)"};
+    assert(bind->answers < 6u && returned->outcome.kind == CETTA_CALL_VALUE);
+    assert(strcmp(atom_to_string(bind->arena, returned->outcome.term),
+                  expected[bind->answers++]) == 0);
+    return true;
+}
+
 static void test_real_prepared_producer(void) {
     Arena source;
     arena_init(&source);
@@ -594,6 +626,26 @@ static void test_real_prepared_producer(void) {
     }
     assert(cetta_shared_return_producer_advance(producer, 1u) == CETTA_SHARED_RETURN_COMPLETE);
     assert(log_info(producer).completed);
+    CettaPreparedPureAnswerCursor *bound_cursor =
+        cetta_prepared_pure_answer_cursor_open(program, &options);
+    assert(bound_cursor);
+    CettaOwnedExecution source_execution, bound_execution;
+    cetta_prepared_pure_answer_cursor_own_execution(&source_execution, bound_cursor);
+    CettaOwnedBind sequence;
+    PreparedBind bound = {.arena = &source, .refuse = true};
+    assert(cetta_owned_bind_open(&bound_execution, &sequence, &source_execution,
+                                 prepared_bind_body, &bound));
+    assert(cetta_owned_execution_sequence(&bound_execution, 1u,
+        prepared_bind_publish, &bound) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(bound.entries == 1u && !bound.answers);
+    bound.refuse = false;
+    CettaOwnedExecutionStep bound_step = CETTA_OWNED_EXECUTION_PAUSED;
+    for (unsigned i = 0u; bound_step == CETTA_OWNED_EXECUTION_PAUSED && i < 16u; i++)
+        bound_step = cetta_owned_execution_sequence(&bound_execution, 1u,
+            prepared_bind_publish, &bound);
+    assert(bound_step == CETTA_OWNED_EXECUTION_COMPLETE && bound.entries == 3u &&
+           bound.answers == 6u);
+    cetta_owned_execution_cancel(&bound_execution);
     /* Program changes refuse even a cached completion. Published caller
      * answers are independently retained and remain readable afterward. */
     assert(space_admit_atom(&space, &source, parse(&source, "(= (pick Nil) extra)")));
@@ -657,6 +709,7 @@ static void test_native_return_cursor(void) {
         CettaCallResultForm form;
         CettaEvalCompletion completion;
         Atom *delayed;
+        bool select_expressions;
     } cases[] = {
         {cetta_call_value(code), values, 1u, CETTA_CALL_VALUE,
          CETTA_CALL_RESULT_EXPRESSION, CETTA_EVAL_COMPLETE, NULL},
@@ -668,10 +721,16 @@ static void test_native_return_cursor(void) {
          CETTA_CALL_RESULT_COMPLETED_VALUE, CETTA_EVAL_COMPLETE, NULL},
         {cetta_call_completed_frontier(frontier), values, 5u, CETTA_CALL_VALUE,
          CETTA_CALL_RESULT_COMPLETED_VALUE, CETTA_EVAL_COMPLETE, NULL},
+        {cetta_call_expression_frontier(frontier), values, 5u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_EXPRESSION, CETTA_EVAL_COMPLETE, NULL, true},
+        {cetta_call_expression_frontier(frontier), &frontier, 1u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_EXPRESSION_FRONTIER, CETTA_EVAL_COMPLETE, NULL},
         {cetta_call_completed_value(frontier), &frontier, 1u, CETTA_CALL_VALUE,
          CETTA_CALL_RESULT_COMPLETED_VALUE, CETTA_EVAL_COMPLETE, NULL},
         {cetta_call_completed_frontier(empty_frontier), NULL, 0u, CETTA_CALL_VALUE,
          CETTA_CALL_RESULT_COMPLETED_VALUE, CETTA_EVAL_COMPLETE, NULL},
+        {cetta_call_expression_frontier(empty_frontier), NULL, 0u, CETTA_CALL_VALUE,
+         CETTA_CALL_RESULT_EXPRESSION, CETTA_EVAL_COMPLETE, NULL, true},
         {cetta_call_failure(), NULL, 0u, CETTA_CALL_FAILURE,
          CETTA_CALL_RESULT_EXPRESSION, CETTA_EVAL_COMPLETE, NULL},
         {cetta_call_raised(error_data), values + 1u, 1u, CETTA_CALL_RAISED,
@@ -695,11 +754,15 @@ static void test_native_return_cursor(void) {
         {cetta_call_completed_frontier(broken_frontier), values, 1u,
          CETTA_CALL_VALUE, CETTA_CALL_RESULT_COMPLETED_VALUE,
          CETTA_EVAL_INCOMPLETE_HOST_FAILURE, NULL},
+        {cetta_call_expression_frontier(broken_frontier), values, 1u,
+         CETTA_CALL_VALUE, CETTA_CALL_RESULT_EXPRESSION,
+         CETTA_EVAL_INCOMPLETE_HOST_FAILURE, NULL, true},
     };
     size_t checks = 0u;
     for (size_t i = 0u; i < sizeof(cases) / sizeof(cases[0]); ++i) {
         CettaCallReturnCursor cursor = {
             .outcome = cases[i].call, .environment = &environment,
+            .select_expressions = cases[i].select_expressions,
         };
         CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
         CettaOwnedReturn returned;
@@ -1377,6 +1440,582 @@ static void test_invocation_operands(void) {
     printf("PASS: %u split invocation observations retain aliases and code-shaped data; lexical worlds, rollback and arity-before-read controls pass\n", observations);
 }
 
+typedef struct {
+    Arena arena;
+    Bindings environments[3];
+    CettaCallOutcome packets[3];
+    unsigned count, source_position, source_pulls, effects, factories;
+    unsigned body_position, body_count, body_pulls;
+    unsigned release_order[8], releases;
+    const CettaOwnedReturn *borrowed;
+    bool body_live, decline, malformed_body, body_pause, body_handoff;
+    bool compatible, source_released;
+} BindFixture;
+
+static CettaOwnedExecutionStep bind_source_next(void *context,
+        CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    BindFixture *fixture = context;
+    fixture->source_pulls++;
+    assert(!fixture->body_live);
+    if (!fixture->compatible) {
+        *completion = CETTA_EVAL_INCOMPLETE_INVALIDATED;
+        return CETTA_OWNED_EXECUTION_HANDOFF;
+    }
+    if (fixture->source_position == fixture->count)
+        return CETTA_OWNED_EXECUTION_COMPLETE;
+    unsigned position = fixture->source_position++;
+    fixture->effects++;
+    *returned = (CettaOwnedReturn){.outcome = fixture->packets[position],
+        .environment = &fixture->environments[position],
+        .final = fixture->source_position == fixture->count};
+    return CETTA_OWNED_EXECUTION_RETURN;
+}
+
+static bool bind_source_current(void *context) {
+    return ((BindFixture *)context)->compatible;
+}
+
+static void bind_source_release(void *context) {
+    BindFixture *fixture = context;
+    assert(!fixture->body_live && !fixture->source_released);
+    fixture->source_released = true;
+    fixture->release_order[fixture->releases++] = 2u;
+    for (unsigned i = 0u; i < 3u; i++)
+        bindings_free(&fixture->environments[i]);
+    arena_free(&fixture->arena);
+}
+
+static CettaOwnedExecutionStep bind_body_next(void *context,
+        CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    BindFixture *fixture = context;
+    (void)completion;
+    fixture->body_pulls++;
+    assert(fixture->body_live && fixture->borrowed &&
+           fixture->borrowed->outcome.term && !fixture->source_released);
+    assert(fixture->borrowed->environment ==
+           &fixture->environments[fixture->source_position - 1u]);
+    if (fixture->body_pause) {
+        fixture->body_pause = false;
+        return CETTA_OWNED_EXECUTION_PAUSED;
+    }
+    if (fixture->body_handoff)
+        return CETTA_OWNED_EXECUTION_HANDOFF;
+    if (fixture->body_position == fixture->body_count)
+        return CETTA_OWNED_EXECUTION_COMPLETE;
+    fixture->body_position++;
+    *returned = *fixture->borrowed;
+    returned->final = fixture->body_position == fixture->body_count;
+    return CETTA_OWNED_EXECUTION_RETURN;
+}
+
+static void bind_body_release(void *context) {
+    BindFixture *fixture = context;
+    assert(fixture->body_live && !fixture->source_released &&
+           fixture->borrowed->outcome.term);
+    fixture->body_live = false;
+    fixture->release_order[fixture->releases++] = 1u;
+}
+
+static void bind_make_body(BindFixture *fixture,
+        const CettaOwnedReturn *returned, CettaOwnedExecution *body) {
+    fixture->borrowed = returned;
+    fixture->body_position = 0u;
+    fixture->body_live = true;
+    cetta_owned_execution_init(body, fixture, bind_body_next, bind_body_release);
+}
+
+static bool bind_continue(void *context, const CettaOwnedReturn *returned,
+        CettaOwnedExecution *body) {
+    BindFixture *fixture = context;
+    fixture->factories++;
+    assert(returned->outcome.kind == CETTA_CALL_VALUE ||
+           returned->outcome.kind == CETTA_CALL_SUSPENDED);
+    if (fixture->decline)
+        return false;
+    if (fixture->malformed_body) {
+        *body = (CettaOwnedExecution){0};
+        return true;
+    }
+    bind_make_body(fixture, returned, body);
+    return true;
+}
+
+static CettaOwnedExecution bind_fixture(BindFixture *fixture,
+        CettaOwnedBind *bind, unsigned count) {
+    *fixture = (BindFixture){.count = count, .body_count = 2u, .compatible = true};
+    arena_init(&fixture->arena);
+    for (unsigned i = 0u; i < 3u; i++) {
+        bindings_init(&fixture->environments[i]);
+        fixture->packets[i] = cetta_call_suspended(atom_int(&fixture->arena, i + 1u),
+            atom_symbol(&fixture->arena, "pending-check"));
+    }
+    CettaOwnedExecution source, execution;
+    cetta_owned_execution_init(&source, fixture, bind_source_next, bind_source_release);
+    source.final_is_current = bind_source_current;
+    assert(cetta_owned_bind_open(&execution, bind, &source, bind_continue, fixture));
+    assert(!source.computation);
+    return execution;
+}
+
+typedef struct {
+    BindFixture *fixture;
+    unsigned count;
+    int64_t values[8];
+    CettaCallOutcomeKind kinds[8];
+    bool refuse, invalidate;
+} BindRecipient;
+
+static bool bind_collect(void *context, const CettaOwnedReturn *returned) {
+    BindRecipient *recipient = context;
+    BindFixture *fixture = recipient->fixture;
+    assert(returned->environment == &fixture->environments[fixture->source_position - 1u]);
+    if (recipient->refuse)
+        return false;
+    assert(recipient->count < 8u);
+    recipient->kinds[recipient->count] = returned->outcome.kind;
+    Atom *value = returned->outcome.term;
+    recipient->values[recipient->count++] = value->kind == ATOM_GROUNDED &&
+        value->ground.gkind == GV_INT ? value->ground.ival : INT64_MIN;
+    if (returned->outcome.kind == CETTA_CALL_SUSPENDED)
+        assert(atom_is_symbol(returned->outcome.delayed, "pending-check"));
+    if (recipient->invalidate)
+        fixture->compatible = false;
+    return true;
+}
+
+static CettaOwnedExecutionStep bind_drain(CettaOwnedExecution *execution,
+        BindRecipient *recipient, uint64_t allowance) {
+    for (unsigned attempts = 0u; attempts < 32u; attempts++) {
+        CettaOwnedExecutionStep step = cetta_owned_execution_sequence(
+            execution, allowance, bind_collect, recipient);
+        if (step != CETTA_OWNED_EXECUTION_PAUSED)
+            return step;
+    }
+    assert(false);
+    return CETTA_OWNED_EXECUTION_INTERRUPTED;
+}
+
+static void test_owned_bind(void) {
+    for (uint64_t allowance = 1u; allowance <= 8u; allowance++) {
+        BindFixture fixture;
+        CettaOwnedBind bind;
+        CettaOwnedExecution execution = bind_fixture(&fixture, &bind, 3u);
+        BindRecipient recipient = {.fixture = &fixture, .refuse = true};
+        assert(cetta_owned_execution_sequence(&execution, 0u, bind_collect, &recipient) ==
+               CETTA_OWNED_EXECUTION_PAUSED);
+        assert(!fixture.effects && !fixture.factories);
+        assert(cetta_owned_execution_sequence(&execution, 1u, bind_collect, &recipient) ==
+               CETTA_OWNED_EXECUTION_PAUSED);
+        assert(fixture.effects == 1u && fixture.factories == 1u && fixture.body_pulls == 1u);
+        assert(bind.producer.has_pending && bind.body.has_pending);
+        recipient.refuse = false;
+        assert(bind_drain(&execution, &recipient, allowance) == CETTA_OWNED_EXECUTION_COMPLETE);
+        assert(recipient.count == 6u && fixture.effects == 3u && fixture.factories == 3u);
+        for (unsigned i = 0u; i < 6u; i++)
+            assert(recipient.values[i] == (int64_t)(i / 2u + 1u));
+        cetta_owned_execution_cancel(&execution);
+        cetta_owned_execution_cancel(&execution);
+        assert(fixture.releases == 4u && fixture.release_order[3] == 2u);
+    }
+    for (unsigned mode = 0u; mode < 9u; mode++) {
+        BindFixture fixture;
+        CettaOwnedBind bind;
+        CettaOwnedExecution execution = bind_fixture(&fixture, &bind, 1u);
+        BindRecipient recipient = {.fixture = &fixture};
+        if (mode == 0u) fixture.body_count = 0u;
+        if (mode == 1u) fixture.body_pause = true;
+        if (mode == 2u) fixture.packets[0] = cetta_call_failure();
+        if (mode == 3u) fixture.packets[0] = cetta_call_raised(atom_int(&fixture.arena, 7));
+        if (mode == 4u) fixture.packets[0] = cetta_call_interrupted();
+        if (mode == 5u) fixture.malformed_body = true;
+        if (mode == 6u) fixture.packets[0] = cetta_call_completed_value(
+            atom_error(&fixture.arena, atom_int(&fixture.arena, 1), atom_int(&fixture.arena, 2)));
+        if (mode == 7u) fixture.packets[0] = cetta_call_completed_value(
+            parse(&fixture.arena, "(function (return (readln!)))"));
+        if (mode == 8u) fixture.packets[0] = cetta_call_value(NULL);
+        CettaOwnedExecutionStep step = bind_drain(&execution, &recipient, 1u);
+        if (mode < 4u || mode == 6u || mode == 7u)
+            assert(step == CETTA_OWNED_EXECUTION_COMPLETE);
+        else assert(step == CETTA_OWNED_EXECUTION_INTERRUPTED);
+        if (mode == 0u || mode == 2u) assert(!recipient.count);
+        if (mode == 1u) assert(recipient.count == 2u && fixture.factories == 1u);
+        if (mode == 3u) assert(recipient.count == 1u && !fixture.factories &&
+                               recipient.kinds[0] == CETTA_CALL_RAISED);
+        if (mode == 4u) assert(execution.completion == CETTA_EVAL_INCOMPLETE_CANCELLED);
+        if (mode == 5u || mode == 8u)
+            assert(execution.completion == CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        if (mode == 6u || mode == 7u)
+            assert(recipient.count == 2u && fixture.factories == 1u &&
+                   recipient.kinds[0] == CETTA_CALL_VALUE && recipient.values[0] == INT64_MIN);
+        cetta_owned_execution_cancel(&execution);
+    }
+    BindFixture fixture;
+    CettaOwnedBind bind;
+    CettaOwnedExecution execution = bind_fixture(&fixture, &bind, 1u);
+    BindRecipient recipient = {.fixture = &fixture};
+    fixture.decline = true;
+    assert(bind_drain(&execution, &recipient, 1u) == CETTA_OWNED_EXECUTION_HANDOFF);
+    const CettaOwnedReturn *pending = cetta_owned_bind_pending(&bind);
+    assert(pending && fixture.effects == 1u && fixture.factories == 1u);
+    assert(bind_drain(&execution, &recipient, 1u) == CETTA_OWNED_EXECUTION_HANDOFF);
+    CettaOwnedExecution ordinary;
+    bind_make_body(&fixture, pending, &ordinary);
+    assert(cetta_owned_bind_resume(&execution, &bind, &ordinary));
+    assert(bind_drain(&execution, &recipient, 1u) == CETTA_OWNED_EXECUTION_COMPLETE);
+    assert(recipient.count == 2u && fixture.effects == 1u && fixture.factories == 1u);
+    cetta_owned_execution_cancel(&execution);
+
+    execution = bind_fixture(&fixture, &bind, 1u);
+    recipient = (BindRecipient){.fixture = &fixture, .invalidate = true};
+    assert(bind_drain(&execution, &recipient, 1u) == CETTA_OWNED_EXECUTION_HANDOFF);
+    assert(execution.completion == CETTA_EVAL_INCOMPLETE_INVALIDATED &&
+           fixture.effects == 1u && fixture.factories == 1u && recipient.count == 2u);
+    cetta_owned_execution_cancel(&execution);
+
+    execution = bind_fixture(&fixture, &bind, 2u);
+    recipient = (BindRecipient){.fixture = &fixture};
+    fixture.body_handoff = true;
+    assert(bind_drain(&execution, &recipient, 1u) == CETTA_OWNED_EXECUTION_HANDOFF);
+    assert(bind.has_body && bind.producer.has_pending && !cetta_owned_bind_pending(&bind));
+    assert(!cetta_owned_bind_resume(&execution, &bind, &bind.body));
+    cetta_owned_execution_cancel(&execution);
+    assert(fixture.releases == 2u && fixture.release_order[0] == 1u &&
+           fixture.release_order[1] == 2u && fixture.effects == 1u);
+    puts("PASS: shared bind retains packet context, ordered multiplicity, zero, refusal, split execution, handoff, finality and release order");
+}
+
+static unsigned prepared_native_attempts;
+static bool prepared_native_call(void *context, Space *space, Arena *arena,
+        const CettaInvocation *invocation, CettaCallOutcome *outcome) {
+    (void)context; (void)space;
+    CettaExprLen arity;
+    assert(cetta_invocation_arity(invocation, &arity) && arity == 1u);
+    prepared_native_attempts++;
+    if (native_mode == 18u)
+        return false;
+    native_calls++;
+    Atom *const *arguments = cetta_invocation_borrow_arguments(invocation);
+    if (native_mode == 20u && arguments[0]->kind == ATOM_EXPR &&
+        arguments[0]->expr.len == 2u && atom_is_symbol(arguments[0]->expr.elems[0], "Save"))
+        *outcome = cetta_call_completed_value(atom_expr2(arena,
+            atom_symbol(arena, "Saved"), arguments[0]->expr.elems[1]));
+    else if (!native_mode || native_mode == 20u || (native_mode == 19u && native_calls <= 20000u))
+        *outcome = cetta_call_completed_value(atom_int(arena, 7));
+    else if (native_mode == 19u) {
+        Atom *rows[] = {atom_int(arena, 7), atom_int(arena, 7), atom_int(arena, 9)};
+        *outcome = cetta_call_completed_frontier(atom_expr(arena, rows, 3u));
+    }
+    else if (native_mode == 17u)
+        *outcome = cetta_call_value(parse(arena, "(+ 4 5)"));
+    else
+        native_fixture_outcome(arena, outcome);
+    return true;
+}
+
+typedef struct {
+    Arena *arena;
+    unsigned count;
+    bool refuse;
+    bool raised;
+} PreparedNativeRecipient;
+
+static bool prepared_native_publish(void *context, const CettaOwnedReturn *returned) {
+    PreparedNativeRecipient *recipient = context;
+    if (recipient->refuse)
+        return false;
+    recipient->count++;
+    if (native_mode == 8u) {
+        assert(returned->outcome.kind == CETTA_CALL_RAISED);
+        recipient->raised = true;
+        return true;
+    }
+    assert(returned->outcome.kind == CETTA_CALL_VALUE);
+    Atom *value = returned->outcome.term;
+    assert(value && value->kind == ATOM_EXPR && value->expr.len == 3u);
+    assert(atom_is_symbol_id(value->expr.elems[0], symbol_intern_cstr(g_symbols, "Box")));
+    assert(atom_eq(value->expr.elems[1], value->expr.elems[2]));
+    if (!native_mode)
+        assert(atom_eq(value->expr.elems[1], atom_int(recipient->arena, 7)));
+    if (native_mode == 17u || native_mode == 18u || native_mode == 6u)
+        assert(atom_eq(value->expr.elems[1], atom_int(recipient->arena, 9)));
+    return true;
+}
+
+static bool prepared_native_interrupt_poll(void *context) {
+    unsigned *after = context;
+    return native_calls >= *after;
+}
+
+typedef struct { unsigned count; int64_t expected; } PreparedNativeLoopRecipient;
+static bool prepared_native_loop_publish(void *context, const CettaOwnedReturn *returned) {
+    PreparedNativeLoopRecipient *recipient = context;
+    assert(returned->outcome.kind == CETTA_CALL_VALUE &&
+        returned->outcome.term->kind == ATOM_GROUNDED &&
+        returned->outcome.term->ground.gkind == GV_INT &&
+        returned->outcome.term->ground.ival == recipient->expected);
+    recipient->count++;
+    return true;
+}
+
+typedef struct { unsigned count; bool refuse; } PreparedNativeLiveRecipient;
+static bool prepared_native_live_publish(void *context, const CettaOwnedReturn *returned) {
+    PreparedNativeLiveRecipient *recipient = context;
+    Atom *term = returned->outcome.term;
+    assert(returned->outcome.kind == CETTA_CALL_VALUE && term && term->kind == ATOM_EXPR &&
+        term->expr.len == 3u && atom_is_symbol(term->expr.elems[0], "Box"));
+    assert(term->expr.elems[1]->ground.gkind == GV_INT && term->expr.elems[1]->ground.ival == 140000);
+    assert(term->expr.elems[2]->ground.gkind == GV_INT &&
+        term->expr.elems[2]->ground.ival == (recipient->count == 2u ? 9 : 7));
+    if (recipient->refuse)
+        return false;
+    recipient->count++;
+    return true;
+}
+
+typedef struct { int64_t tag; unsigned count; bool refuse; } PreparedNativeSavedRecipient;
+static bool prepared_native_saved_publish(void *context, const CettaOwnedReturn *returned) {
+    PreparedNativeSavedRecipient *recipient = context;
+    Atom *value = returned->outcome.term;
+    assert(returned->outcome.kind == CETTA_CALL_VALUE && value &&
+        value->kind == ATOM_EXPR && value->expr.len == 2u &&
+        atom_is_symbol(value->expr.elems[0], "Saved") &&
+        value->expr.elems[1]->kind == ATOM_GROUNDED &&
+        value->expr.elems[1]->ground.gkind == GV_INT &&
+        value->expr.elems[1]->ground.ival == recipient->tag);
+    if (recipient->refuse)
+        return false;
+    recipient->count++;
+    return true;
+}
+
+static void test_prepared_native_continuation(void) {
+    Arena source;
+    arena_init(&source);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &source);
+    Space space;
+    space_init_with_universe(&space, &universe);
+    assert(space_admit_atom(&space, &source, parse(&source,
+        "(= (native-box $x) (let $v (__cetta_lib_json_parse_v1 $x) (native-after $v)))")));
+    assert(space_admit_atom(&space, &source, parse(&source,
+        "(= (native-after $v) (Box $v $v))")));
+    CettaPreparedPureSourceView view = {.native_call = prepared_native_call};
+    CettaPreparedPureProgram *program = cetta_prepared_pure_program_compile_closed_answers(
+        &space, parse(&source, "(native-box 1)"), CETTA_GSLT_PURE_CALL_EAGER,
+        atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
+        NULL, NULL, NULL, NULL, &view, true, true,
+        (CettaMatchDecisionSemanticIdentity){
+            .compiler_identity = cetta_match_decision_compiler_identity()});
+    assert(program);
+    CettaPreparedPureAnswerCursorOptions options = {
+        .limits = {.max_transitions = 1024u, .max_scratch_bytes = 1024u * 1024u,
+                   .construct_allocation_bound = atom_expr_allocation_bound},
+        .allow_continuations = true,
+    };
+    unsigned modes[] = {0u, 1u, 2u, 3u, 4u, 6u, 8u, 9u, 13u, 14u, 17u, 18u};
+    for (size_t i = 0u; i < sizeof(modes) / sizeof(modes[0]); i++) {
+        native_mode = modes[i]; native_calls = prepared_native_attempts = 0u;
+        CettaPreparedPureAnswerCursor *cursor =
+            cetta_prepared_pure_answer_cursor_open(program, &options);
+        assert(cursor);
+        CettaOwnedExecution execution;
+        cetta_prepared_pure_answer_cursor_own_execution(&execution, cursor);
+        PreparedNativeRecipient recipient = {.arena = &source};
+        assert(cetta_owned_execution_sequence(&execution, 0u,
+            prepared_native_publish, &recipient) == CETTA_OWNED_EXECUTION_PAUSED);
+        assert(prepared_native_attempts == 0u);
+        CettaOwnedExecutionStep stop = cetta_owned_execution_sequence(&execution,
+            UINT64_MAX, prepared_native_publish, &recipient);
+        CettaCallReturnCursor completion = {0};
+        if (native_mode == 17u || native_mode == 18u || native_mode == 6u) {
+            assert(stop == CETTA_OWNED_EXECUTION_HANDOFF && recipient.count == 0u);
+            CettaInvocation call;
+            bool entered;
+            const CettaOwnedReturn *pending;
+            assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &call, &entered, &pending));
+            assert(entered == (native_mode != 18u));
+            if (native_mode == 6u)
+                assert(pending && pending->outcome.kind == CETTA_CALL_SUSPENDED && pending->outcome.delayed);
+            if (native_mode == 17u)
+                assert(pending && pending->outcome.result_form == CETTA_CALL_RESULT_EXPRESSION);
+            completion = (CettaCallReturnCursor){.outcome = cetta_call_completed_value(atom_int(&source, 9))};
+            CettaOwnedExecution replacement;
+            cetta_owned_execution_init(&replacement, &completion, cetta_call_return_next, NULL);
+            assert(cetta_prepared_pure_answer_cursor_resume_native(&execution, &replacement));
+            assert(!replacement.computation);
+            stop = cetta_owned_execution_sequence(&execution, UINT64_MAX,
+                prepared_native_publish, &recipient);
+        }
+        if (native_mode == 4u)
+            assert(stop == CETTA_OWNED_EXECUTION_INTERRUPTED && recipient.count == 0u);
+        else {
+            assert(stop == CETTA_OWNED_EXECUTION_COMPLETE);
+            unsigned expected = native_mode == 2u ? 3u :
+                native_mode == 3u || native_mode == 13u ? 0u : 1u;
+            assert(recipient.count == expected);
+        }
+        assert(prepared_native_attempts == 1u && native_calls == (native_mode == 18u ? 0u : 1u));
+        cetta_owned_execution_cancel(&execution);
+    }
+    native_mode = 0u;
+    assert(space_admit_atom(&space, &source, parse(&source,
+        "(= (native-loop $n $sum) (if (> $n 0) (native-loop (- $n 1) "
+        "(+ $sum (__cetta_lib_json_parse_v1 $n))) $sum))")));
+    for (unsigned series = 0u; series < 2u; series++) {
+        unsigned iterations = series ? 257u : 17u;
+        char call[64];
+        snprintf(call, sizeof(call), "(native-loop %u 0)", iterations);
+        CettaPreparedPureProgram *loop = cetta_prepared_pure_program_compile_closed_answers(
+            &space, parse(&source, call), CETTA_GSLT_PURE_CALL_EAGER,
+            atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
+            NULL, NULL, NULL, NULL, &view, true, true,
+            (CettaMatchDecisionSemanticIdentity){
+                .compiler_identity = cetta_match_decision_compiler_identity()});
+        assert(loop);
+        options.limits.max_transitions = series ? 65u : 3u;
+        CettaPreparedPureAnswerCursor *bounded = cetta_prepared_pure_answer_cursor_open(loop, &options);
+        assert(bounded);
+        CettaOwnedExecution execution;
+        cetta_prepared_pure_answer_cursor_own_execution(&execution, bounded);
+        native_calls = prepared_native_attempts = 0u;
+        PreparedNativeLoopRecipient answers = {.expected = (int64_t)iterations * 7};
+        unsigned refills = 0u;
+        for (;;) {
+            CettaOwnedExecutionStep stop = cetta_owned_execution_sequence(&execution,
+                UINT64_MAX, prepared_native_loop_publish, &answers);
+            if (stop == CETTA_OWNED_EXECUTION_COMPLETE)
+                break;
+            assert(stop == CETTA_OWNED_EXECUTION_HANDOFF &&
+                execution.completion == CETTA_EVAL_COMPLETE);
+            assert(cetta_prepared_pure_answer_cursor_frame_count(bounded) == 1u);
+            assert(!cetta_prepared_pure_answer_cursor_resume_transitions(&execution, 0u));
+            assert(cetta_prepared_pure_answer_cursor_resume_transitions(&execution,
+                options.limits.max_transitions));
+            refills++;
+        }
+        assert(answers.count == 1u && refills > 1u && native_calls == iterations &&
+            prepared_native_attempts == iterations);
+        cetta_owned_execution_cancel(&execution);
+        cetta_prepared_pure_program_free(loop);
+    }
+    for (unsigned after = 0u; after < 2u; after++) {
+        CettaPreparedPureProgram *loop = cetta_prepared_pure_program_compile_closed_answers(
+            &space, parse(&source, "(native-loop 20000 0)"), CETTA_GSLT_PURE_CALL_EAGER,
+            atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
+            NULL, NULL, NULL, NULL, &view, true, true,
+            (CettaMatchDecisionSemanticIdentity){
+                .compiler_identity = cetta_match_decision_compiler_identity()});
+        assert(loop);
+        options.limits.max_transitions = 100000u;
+        options.interrupt_poll = prepared_native_interrupt_poll;
+        options.interrupt_context = &after;
+        options.interrupt_poll_interval = 1u;
+        native_calls = prepared_native_attempts = 0u;
+        CettaPreparedPureAnswerCursor *cursor = cetta_prepared_pure_answer_cursor_open(loop, &options);
+        assert(cursor);
+        CettaOwnedExecution interrupted;
+        cetta_prepared_pure_answer_cursor_own_execution(&interrupted, cursor);
+        PreparedNativeLoopRecipient recipient = {.expected = 140000};
+        assert(cetta_owned_execution_sequence(&interrupted, UINT64_MAX,
+            prepared_native_loop_publish, &recipient) == CETTA_OWNED_EXECUTION_INTERRUPTED);
+        assert(interrupted.completion == CETTA_EVAL_INCOMPLETE_CANCELLED &&
+            recipient.count == 0u && native_calls == after && prepared_native_attempts == after);
+        cetta_owned_execution_cancel(&interrupted);
+        cetta_prepared_pure_program_free(loop);
+    }
+    options.interrupt_poll = NULL;
+    options.interrupt_context = NULL;
+    const char *retained_equations[] = {
+        "(= (native-inner $x) (__cetta_lib_json_parse_v1 $x))",
+        "(= (native-outer $x) (let $v (native-inner $x) (Box $x $v)))",
+        "(= (native-retain $n) (native-outer (native-loop $n 0)))",
+    };
+    for (size_t i = 0u; i < sizeof(retained_equations) / sizeof(retained_equations[0]); i++)
+        assert(space_admit_atom(&space, &source, parse(&source, retained_equations[i])));
+    CettaPreparedPureProgram *retained = cetta_prepared_pure_program_compile_closed_answers(
+        &space, parse(&source, "(native-retain 20000)"), CETTA_GSLT_PURE_CALL_EAGER,
+        atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
+        NULL, NULL, NULL, NULL, &view, true, true,
+        (CettaMatchDecisionSemanticIdentity){
+            .compiler_identity = cetta_match_decision_compiler_identity()});
+    assert(retained);
+    options.limits.max_transitions = 100000u;
+    CettaPreparedPureAnswerCursor *first = cetta_prepared_pure_answer_cursor_open(retained, &options);
+    assert(first);
+    CettaOwnedExecution held;
+    cetta_prepared_pure_answer_cursor_own_execution(&held, first);
+    native_mode = 19u; native_calls = prepared_native_attempts = 0u;
+    PreparedNativeLiveRecipient recipient = {.refuse = true};
+    assert(cetta_owned_execution_sequence(&held, UINT64_MAX, prepared_native_live_publish,
+        &recipient) == CETTA_OWNED_EXECUTION_PAUSED);
+    assert(held.has_pending && recipient.count == 0u && native_calls == 20001u);
+    CettaPreparedPureAnswerCursor *second = cetta_prepared_pure_answer_cursor_open(retained, &options);
+    assert(second);
+    CettaOwnedExecution reentered;
+    cetta_prepared_pure_answer_cursor_own_execution(&reentered, second);
+    native_mode = 0u;
+    PreparedNativeLiveRecipient nested = {0};
+    assert(cetta_owned_execution_sequence(&reentered, UINT64_MAX, prepared_native_live_publish,
+        &nested) == CETTA_OWNED_EXECUTION_COMPLETE);
+    assert(nested.count == 1u && native_calls == 40002u);
+    cetta_owned_execution_cancel(&reentered);
+    recipient.refuse = false;
+    assert(cetta_owned_execution_sequence(&held, UINT64_MAX, prepared_native_live_publish,
+        &recipient) == CETTA_OWNED_EXECUTION_COMPLETE);
+    assert(recipient.count == 3u && native_calls == 40002u && prepared_native_attempts == 40002u);
+    cetta_owned_execution_cancel(&held);
+    cetta_prepared_pure_program_free(retained);
+    assert(space_admit_atom(&space, &source, parse(&source,
+        "(= (native-save $n $tag) (let $saved (__cetta_lib_json_parse_v1 (Save $tag)) "
+        "(let $ignored (native-loop $n 0) $saved)))")));
+    for (unsigned series = 0u; series < 2u; series++) {
+        unsigned iterations = series ? 65536u : 2u;
+        char call[80];
+        snprintf(call, sizeof(call), "(native-save %u 41)", iterations);
+        CettaPreparedPureProgram *saved = cetta_prepared_pure_program_compile_closed_answers(
+            &space, parse(&source, call), CETTA_GSLT_PURE_CALL_EAGER,
+            atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
+            NULL, NULL, NULL, NULL, &view, true, true,
+            (CettaMatchDecisionSemanticIdentity){
+                .compiler_identity = cetta_match_decision_compiler_identity()});
+        assert(saved);
+        native_mode = 20u; native_calls = prepared_native_attempts = 0u;
+        CettaPreparedPureAnswerCursor *first = cetta_prepared_pure_answer_cursor_open(saved, &options);
+        assert(first);
+        CettaOwnedExecution held;
+        cetta_prepared_pure_answer_cursor_own_execution(&held, first);
+        PreparedNativeSavedRecipient recipient = {.tag = 41, .refuse = true};
+        assert(cetta_owned_execution_sequence(&held, UINT64_MAX,
+            prepared_native_saved_publish, &recipient) == CETTA_OWNED_EXECUTION_PAUSED);
+        assert(held.has_pending && native_calls == iterations + 1u);
+        assert((cetta_prepared_pure_program_closed_survivor_arena(saved) != NULL) == (series != 0u));
+        snprintf(call, sizeof(call), "(native-save %u 99)", iterations);
+        assert(cetta_prepared_pure_program_rebind_closed_entry_call(saved, parse(&source, call)));
+        CettaPreparedPureAnswerCursor *second = cetta_prepared_pure_answer_cursor_open(saved, &options);
+        assert(second);
+        CettaOwnedExecution reentered;
+        cetta_prepared_pure_answer_cursor_own_execution(&reentered, second);
+        PreparedNativeSavedRecipient nested = {.tag = 99};
+        assert(cetta_owned_execution_sequence(&reentered, UINT64_MAX,
+            prepared_native_saved_publish, &nested) == CETTA_OWNED_EXECUTION_COMPLETE);
+        assert(nested.count == 1u && native_calls == 2u * (iterations + 1u));
+        cetta_owned_execution_cancel(&reentered);
+        recipient.refuse = false;
+        assert(cetta_owned_execution_sequence(&held, UINT64_MAX,
+            prepared_native_saved_publish, &recipient) == CETTA_OWNED_EXECUTION_COMPLETE);
+        assert(recipient.count == 1u && native_calls == 2u * (iterations + 1u));
+        cetta_owned_execution_cancel(&held);
+        cetta_prepared_pure_program_free(saved);
+    }
+    native_mode = 0u;
+    cetta_prepared_pure_program_free(program);
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&source);
+    puts("PASS: prepared native continuations preserve tagged data, frontiers, zero, control and replacement without replay");
+}
+
 int main(int argc, char **argv) {
     bool reference_native = argc == 2 && strcmp(argv[1], "--native-reference") == 0;
     bool prime_native = argc == 2 && strcmp(argv[1], "--prime-native") == 0;
@@ -1403,6 +2042,8 @@ int main(int argc, char **argv) {
         test_pending_return_detachment();
         test_real_prepared_producer();
         test_native_return_cursor();
+        test_owned_bind();
+        test_prepared_native_continuation();
         test_native_provider_ownership();
         test_invocation_operands();
         test_native_projection_consumers();

@@ -2774,7 +2774,7 @@ static PettaPlanNode *petta_plan_build_in(
             if (head == g_builtin_syms.quote && nargs == 1u) {
                 node->output = PETTA_PLAN_OUTPUT_QUOTED_CHILD;
                 node->output_child = 1u;
-            } else if (form == PETTA_FORM_CUT && nargs == 0u) {
+            } else if (node->control.operation == CETTA_CONTROL_SCOPED_COMMIT) {
                 node->output = PETTA_PLAN_OUTPUT_TRUE;
             } else {
                 CettaExprIndex child = 0u;

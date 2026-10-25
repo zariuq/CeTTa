@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: e51dfdd0914c1ea02fd1907af2e2fd7cf32c23a4758e628328218ea16f7bc4cb
+ * Source SHA-256: dc044504fe1cd16dd5004bd49f2f4065b7ccb8a143f39b38bef7a3dc175499f5
  */
 
 #include <stdbool.h>
@@ -696,6 +696,10 @@ typedef enum {
     CETTA_CONTROL_SEQUENCE_MANY = 3,
     CETTA_CONTROL_FORCE = 4,
     CETTA_CONTROL_RETURN_SCOPE = 5,
+    CETTA_CONTROL_ORDERED_CHOICE = 6,
+    CETTA_CONTROL_FAILURE = 7,
+    CETTA_CONTROL_SCOPED_COMMIT = 8,
+    CETTA_CONTROL_HANDLE = 9,
 } CettaControlOperation;
 
 #define CETTA_CONTROL_OPERAND_ABSENT UINT8_MAX
@@ -727,7 +731,14 @@ static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan pla
     X(if_text, 3u, CETTA_CONTROL_BRANCH, 0u, 1u, 2u) \
     X(let_star, 2u, CETTA_CONTROL_SEQUENCE_MANY, 0u, CETTA_CONTROL_OPERAND_ABSENT, 1u) \
     X(eval, 1u, CETTA_CONTROL_FORCE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
-    X(function, 1u, CETTA_CONTROL_RETURN_SCOPE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT)
+    X(function, 1u, CETTA_CONTROL_RETURN_SCOPE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
+    X(superpose, 1u, CETTA_CONTROL_ORDERED_CHOICE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
+    X(empty_form, 0u, CETTA_CONTROL_FAILURE, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT)
+
+/* Dialect classification admits these forms before reading their operands.
+ * The enum names are expanded only by the owning dialect adapter. */
+#define CETTA_PETTA_CONTROL_FORM_ROWS(X)     X(PETTA_FORM_CUT, 0u, CETTA_CONTROL_SCOPED_COMMIT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
+    X(PETTA_FORM_CATCH, 1u, CETTA_CONTROL_HANDLE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT)
 
 /* Arity admission performs no operand read. Refusal leaves the output intact. */
 static inline bool cetta_control_operation_decode(
