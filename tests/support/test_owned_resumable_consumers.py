@@ -13,6 +13,8 @@ import tempfile
 # live-declaration and held-argument contracts where the reference differs.
 # Cases include refusals of fusion: they must retain ordinary evaluation.
 CASES = [
+    ('invocation-case-failure', 'petta', '(= (only-nil $x) (case $x ((Nil 7))))\n!(only-nil (Cons 1 Nil))\n!(only-nil Nil)\n', '7\n', 0),
+    ('invocation-oem-prepared-failure', 'petta', '(= (descend $n $x) (if (== $n 0) (case $x ((Nil 7))) (descend (- $n 1) $x)))\n(= (r $x) 0)\n(= (r $x) (descend 3 $x))\n!(r (Cons 1 Nil))\n!(r Nil)\n', '0\n0\n7\n', 0),
     ('invocation-oem-completed-first', 'petta', '(: g (-> Atom Atom))\n(= (g $v) (min 3 1))\n!(g 5)\n', '(min 3 1)\n', 0),
     ('invocation-oem-completed-resumed', 'petta', '(: g (-> Atom Atom))\n(= (g $v) (min 3 1))\n(= (r $n) 0)\n(= (r $n) (g 5))\n(= (r $n) (g 5))\n!(r 2)\n', '0\n(min 3 1)\n(min 3 1)\n', 0),
     ('invocation-oem-completed-host', 'petta', '(: g (-> Atom Atom))\n(= (g $v) (min 3 1))\n(= (r $n) 0)\n(= (r $n) (let $_ (println! once) (g 5)))\n!(r 2)\n', 'once\n0\n(min 3 1)\n', 0),

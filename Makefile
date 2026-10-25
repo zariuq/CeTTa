@@ -18615,6 +18615,8 @@ NORMAL_TEST_TARGETS := \
 	test-petta-callability-refresh \
 	test-petta-add-atoms-batch-v1 \
 	test-petta-tier-composition \
+	test-evaluator-tax-routes \
+	test-petta-closure-specialization \
 	test-language-versions \
 	test-prime-normal-fixtures \
 	test-numerical-substrate-smoke \
@@ -28778,10 +28780,15 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 		exit 1; \
 	fi; \
 	report=$$(CETTA_PETTA_COLLECT_STRESS=1 ./$(BIN) --emit-runtime-stats --lang petta tests/petta/suspended_alternatives.metta 2>&1); \
+	if [ "$$(printf '%s\n' "$$report" | grep -v '^runtime-counter ')" != "$$(cat tests/petta/suspended_alternatives.expected)" ]; then \
+		echo "FAIL: suspended calls under collection stress: answers differ"; \
+		exit 1; \
+	fi; \
+	report=$$(CETTA_PREPARED_PURE_REFERENCE=1 CETTA_PETTA_COLLECT_STRESS=1 ./$(BIN) --emit-runtime-stats --lang petta tests/petta/suspended_alternatives.metta 2>&1); \
 	majors=$$(counter petta-choice-heap-major-collections); declined=$$(counter petta-choice-heap-collection-declined); \
 	if [ "$$(printf '%s\n' "$$report" | grep -v '^runtime-counter ')" != "$$(cat tests/petta/suspended_alternatives.expected)" ] || \
 			[ "$$majors" -lt 1 ] || [ "$$declined" != 0 ]; then \
-		echo "FAIL: collections with suspended calls: $$majors major collections, $$declined declined, or answers differ"; \
+		echo "FAIL: search-machine collections with suspended calls: $$majors major collections, $$declined declined, or answers differ"; \
 		exit 1; \
 	fi; \
 	report=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/transaction_budget.metta 2>&1); \
@@ -29559,8 +29566,8 @@ qualify-prepared-scalar-lean:
 # kind, each way a call enters its equation, and the calls that leave to the
 # evaluator answer as SWI-PeTTa's, on register code, on the node executor,
 # and on register code collecting in a one-megabyte nursery.
-# Thirteen queries prepare once each; the final nondeterminate query also
-# prepares an answer worker. A matched call's failure never reopens entry.
+# Eighteen queries contribute one lowering each; distinct additionally
+# prepares its argument worker. Failed let/case calls never reopen entry.
 test-petta-prepared-code: $(BIN)
 	@set -eu; \
 	for run in code node collecting; do \
@@ -29581,12 +29588,71 @@ test-petta-prepared-code: $(BIN)
 		--lang petta tests/petta/prepared_code.metta 2>&1 >/dev/null); \
 	lowered=$$(printf '%s\n' "$$trace" | \
 		grep -c 'prepared-pure code: bodies lowered to register code' || true); \
-	if [ "$$lowered" -ne 14 ] || \
+	if [ "$$lowered" -ne 19 ] || \
 	   printf '%s\n' "$$trace" | grep -q 'left to the node executor'; then \
-		echo "FAIL: prepared register code: $$lowered of 14 programs lowered"; \
+		echo "FAIL: prepared register code: $$lowered of 19 programs lowered"; \
 		exit 1; \
 	fi; \
 	echo "PASS: closed pure calls answer as SWI-PeTTa on register code"
+
+.PHONY: test-petta-closure-specialization
+test-petta-semantics: test-petta-closure-specialization
+# Closures and let destinations answer as SWI-PeTTa on every route: a
+# relation that only applies a closure is specialized for a value from the
+# value's second call, and one that passes it on at its first; a let whose
+# pattern would prune calls its value makes stays with the canonical
+# machine, and one whose pattern certainly meets what its value reaches
+# runs on the prepared machine; a closure passed beside a long data
+# argument is specialized at its relation's first call, with no relevance
+# scan cut short; and closures of one shape share one lifted relation,
+# which neither a relation binding its closure again nor a typed one gets.
+test-petta-closure-specialization: $(BIN)
+	@set -eu; \
+	for stem in closure_sightings let_destination_calls \
+		let_destination_admitted specializer_closure_beside_data \
+		closure_lifting; do \
+		for route in "" CETTA_PREPARED_PURE_REFERENCE=1 \
+			CETTA_OPEN_EQUATIONS_REFERENCE=1 \
+			"CETTA_OPEN_EQUATIONS_REFERENCE=1 CETTA_PREPARED_PURE_REFERENCE=1"; do \
+			actual=$$(env $$route CETTA_PETTA_SEARCH_MACHINE=1 timeout 120 \
+				$(CETTA_BIN_INVOKE) --lang petta tests/petta/$$stem.metta 2>&1 || true); \
+			if [ "$$actual" != "$$(cat tests/petta/$$stem.expected)" ]; then \
+				echo "FAIL: $$stem [$${route:-default}]"; \
+				diff <(cat tests/petta/$$stem.expected) \
+					<(printf '%s\n' "$$actual") | head -20; \
+				exit 1; \
+			fi; \
+		done; \
+	done; \
+	trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/let_destination_admitted.metta 2>&1 >/dev/null); \
+	if printf '%s\n' "$$trace" | grep -q 'result destination' || \
+	   ! printf '%s\n' "$$trace" | grep -q 'bodies lowered to register code'; then \
+		echo "FAIL: lets whose patterns meet their values left the prepared machine"; \
+		exit 1; \
+	fi; \
+	trace=$$(CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_SPECIALIZER_TRACE=1 \
+		$(CETTA_BIN_INVOKE) --lang petta tests/petta/closure_lifting.metta 2>&1 >/dev/null); \
+	lifted=$$(printf '%s\n' "$$trace" | \
+		grep -c 'lifted equation: (= (fold-flat_Lift_\[partial(tally,\[VAR,VAR\])\]' || true); \
+	if [ "$$lifted" -ne 2 ] || \
+	   printf '%s\n' "$$trace" | grep -q 'derived equation: (= (fold-flat_Spec_\[partial(tally' || \
+	   ! printf '%s\n' "$$trace" | grep -q 'derived equation: (= (again_Spec_' || \
+	   ! printf '%s\n' "$$trace" | grep -q 'derived equation: (= (typed-fold_Spec_'; then \
+		echo "FAIL: closures of one shape: $$lifted of 2 lifted equations, or a control was lifted"; \
+		exit 1; \
+	fi; \
+	stats=$$(CETTA_PETTA_SEARCH_MACHINE=1 CETTA_PETTA_MACHINE_STATS=1 \
+		$(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/specializer_closure_beside_data.metta 2>&1 >/dev/null); \
+	count() { printf '%s\n' "$$stats" | grep -o "specializer_prepare_$$1=[0-9]*" | \
+		awk -F= '{ total += $$2 } END { print total + 0 }'; }; \
+	bounded=$$(count relevance_bounded); rewritten=$$(count rewritten); \
+	if [ "$$bounded" -ne 0 ] || [ "$$rewritten" -ne 3 ]; then \
+		echo "FAIL: closures beside data: $$bounded scans cut short, $$rewritten of 3 calls specialized"; \
+		exit 1; \
+	fi; \
+	echo "PASS: closures and let destinations answer as SWI-PeTTa on four routes; lets their patterns meet stay prepared; closures beside data specialize at once; closures of one shape share a lifted relation"
 
 .PHONY: test-petta-tier-small-space-rows
 # A match over a small space on the tier reads the space's rows once per
@@ -31511,6 +31577,19 @@ test-prepared-pure-not: $(BIN) tests/petta/prepared_not.metta \
 		! grep -q 'outside the pure machine fragment' <<<"$$trace"; \
 	done; \
 	echo 'PASS: prepared not preserves PeTTa failure and HE type errors across execution routes'
+
+# Loops over regex matches, written as the native balancing scan writes them,
+# keep the machine they run in: no step leaves it for a host goal, the shapes
+# the prepared machine compiles are compiled, and every route answers alike.
+# bench-evaluator-tax also counts one step's instructions against a budget.
+.PHONY: test-evaluator-tax-routes bench-evaluator-tax
+test-all: test-evaluator-tax-routes
+test-evaluator-tax-routes: $(BIN) tests/support/check_evaluator_tax_routes.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_evaluator_tax_routes.py ./$(BIN)
+
+bench-evaluator-tax: $(BIN) tests/support/check_evaluator_tax_routes.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_evaluator_tax_routes.py ./$(BIN) \
+		--instructions --repeats 160
 
 # A definition that takes arguments as they are written (an Atom parameter)
 # is expanded where it is called in the prepared machine, as HE runs it, so a
@@ -45847,12 +45926,18 @@ else
 endif
 
 .PHONY: test-petta-oem-ground-case-stats
+# The open tier's own case matching runs where the prepared machine, which
+# compiles these cases, is off; with it on, the answers are the same.
 test-petta-oem-ground-case-stats: $(BIN) \
 		tests/petta/oem_ground_case.metta \
 		tests/petta/oem_ground_case.expected
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
-	report=$$($(CETTA_BIN_INVOKE) --emit-runtime-stats --lang petta \
+	answers=$$($(CETTA_BIN_INVOKE) --lang petta \
+		tests/petta/oem_ground_case.metta 2>&1); \
+	test "$$answers" = "$$(cat tests/petta/oem_ground_case.expected)"; \
+	report=$$(CETTA_PREPARED_PURE_REFERENCE=1 $(CETTA_BIN_INVOKE) \
+		--emit-runtime-stats --lang petta \
 		tests/petta/oem_ground_case.metta 2>&1); \
 	answers=$$(printf '%s\n' "$$report" | grep -v '^runtime-counter '); \
 	test "$$answers" = "$$(cat tests/petta/oem_ground_case.expected)"; \
