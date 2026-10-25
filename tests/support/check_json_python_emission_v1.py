@@ -25,6 +25,14 @@ def string_literal(text):
     return '"' + "".join(CONTROL_ESCAPES.get(c, c) for c in text) + '"'
 
 
+def string_expression(text):
+    # The reader has no NUL escape, so text holding NUL is built from its
+    # codepoints.
+    if "\x00" not in text:
+        return string_literal(text)
+    return "(str:from-codepoints (%s))" % " ".join(str(ord(c)) for c in text)
+
+
 def float_literal(value):
     return "%.16e" % value
 
@@ -93,7 +101,7 @@ def random_value(rng, depth=0):
 
 
 def emitted(cetta, terms):
-    lines = ["!(import! &self (library json))"]
+    lines = ["!(import! &self (library json))", "!(import! &self (library str))"]
     lines += ["!(println! %s)" % expression for expression in terms]
     with tempfile.TemporaryDirectory() as directory:
         program = Path(directory) / "emit.metta"
@@ -129,13 +137,13 @@ def main():
     expected = [json.dumps(value) for value in values] + [json.dumps(json.loads(overflow))]
     values = values + [overflow]
     # Each value again under random json.dumps options.
-    separators = [(", ", ": "), (",", ":"), (" ; ", " = ")]
+    separators = [(", ", ": "), (",", ":"), (" ; ", " = "), ("\x00", "\x00\x00"), (",\x00", ":")]
     for value in values[:-1]:
         ascii_, sort, (item, key) = rng.random() < 0.5, rng.random() < 0.5, rng.choice(separators)
-        options = "((ensure-ascii %s) (sort-keys %s) (separators %s %s))" % (
-            "True" if ascii_ else "False", "True" if sort else "False",
-            string_literal(item), string_literal(key))
-        terms.append("(json:stringify-python-with %s %s)" % (term(value), options))
+        options = "((ensure-ascii %s) (sort-keys %s) (separators $item $key))" % (
+            "True" if ascii_ else "False", "True" if sort else "False")
+        terms.append("(let $item %s (let $key %s (json:stringify-python-with %s %s)))" % (
+            string_expression(item), string_expression(key), term(value), options))
         expected.append(json.dumps(value, ensure_ascii=ascii_, sort_keys=sort, separators=(item, key)))
         values.append(value)
     actual = emitted(args.cetta, terms)

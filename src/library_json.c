@@ -627,10 +627,11 @@ static int json_python_options(Atom *spec, CettaJsonPythonOptionsV1 *options) {
             const char *item = json_text(option->expr.elems[1]);
             const char *key = json_text(option->expr.elems[2]);
             if (!item || !key) return -1;
+            /* Byte lengths, not C string lengths: a separator may hold NUL. */
             options->item_separator = item;
-            options->item_separator_len = strlen(item);
+            options->item_separator_len = atom_string_len(option->expr.elems[1]);
             options->key_separator = key;
-            options->key_separator_len = strlen(key);
+            options->key_separator_len = atom_string_len(option->expr.elems[2]);
         } else {
             return -1;
         }
