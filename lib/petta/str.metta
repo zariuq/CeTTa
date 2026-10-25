@@ -16,6 +16,8 @@
 (= (str:compare $lhs $rhs) (__cetta_lib_str compare $lhs $rhs))
 (= (str:codepoint-count $text) (__cetta_lib_str codepoint-count $text))
 (= (str:utf8-error $text) (__cetta_lib_str utf8-error $text))
+(= (str:unicode-category $code) (__cetta_lib_str unicode-category $code))
+(= (str:unicode-version) (__cetta_lib_str unicode-version))
 (= (str:codepoints $text) (__cetta_lib_str codepoints $text))
 (= (str:from-codepoints $codepoints) (__cetta_lib_str from-codepoints $codepoints))
 (= (str:is-all-in $class $text) (__cetta_lib_str is-all-in $class $text))

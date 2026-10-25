@@ -47,6 +47,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
+#include <sys/random.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -4601,6 +4602,19 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
             return atom_float(a, (double)now.tv_sec + (double)now.tv_nsec / 1e9);
         }
         if (!strcmp(operation, "pid") && nargs == 1) return atom_int(a, getpid());
+        if (!strcmp(operation, "uuid4-hex") && nargs == 1) {
+            /* Version 4 in the high nibble of byte 6, the RFC 4122 variant in
+             * the two high bits of byte 8, as uuid.UUID(version=4) sets them. */
+            unsigned char bytes[16];
+            char hex[33];
+            if (getentropy(bytes, sizeof(bytes)))
+                return library_signature_error(a, head, args, nargs, "cannot read random bytes");
+            bytes[6] = (unsigned char)((bytes[6] & 0x0fu) | 0x40u);
+            bytes[8] = (unsigned char)((bytes[8] & 0x3fu) | 0x80u);
+            for (size_t i = 0u; i < sizeof(bytes); i++)
+                snprintf(hex + 2u * i, 3u, "%02x", bytes[i]);
+            return atom_string(a, hex);
+        }
         if (!strcmp(operation, "pid-alive") && nargs == 2) {
             int pid;
             if (!library_int_arg(args[1], &pid) || pid <= 0)

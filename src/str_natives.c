@@ -3,6 +3,7 @@
 #include "native_sha256.h"
 
 #include "string_ops.h"
+#include "unicode_category15.h"
 #include "str_stream.h"
 #include "utf8.h"
 
@@ -307,6 +308,37 @@ static Atom *str_utf8_error(Arena *a, Atom *const *args, CettaStrRefusal *r) {
         at = next;
     }
     return atom_symbol(a, "StrUtf8WellFormedV1");
+}
+
+/* The Unicode 15.0.0 General_Category of a code point, given as an integer
+ * or as a text of one scalar, spelled as Python 3.12's unicodedata.category
+ * spells it: "Lu", "Nd", "Cn". Surrogates, which no text holds, are Cs. */
+static Atom *str_unicode_category(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len;
+    uint32_t code, width;
+    if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT) {
+        if (args[0]->ground.ival < 0 || args[0]->ground.ival > 0x10ffff)
+            return str_expects(r, "expected a code point from 0 to 1114111");
+        code = (uint32_t)args[0]->ground.ival;
+    } else if (!str_text(args[0], &text, &len) ||
+               !cetta_utf8_decode_one((const uint8_t *)text, len, 0u, &code, &width) ||
+               width != len) {
+        return str_expects(r, "expected a code point or a text of one scalar");
+    }
+    size_t low = 0u, high = CETTA_UNICODE_CATEGORY15_RUNS;
+    while (high - low > 1u) {
+        size_t middle = low + (high - low) / 2u;
+        if (cetta_unicode_category15_starts[middle] <= code) low = middle;
+        else high = middle;
+    }
+    return atom_string(a, cetta_unicode_category15_names[cetta_unicode_category15_values[low]]);
+}
+
+static Atom *str_unicode_version(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    (void)args;
+    (void)r;
+    return atom_string(a, cetta_unicode_category15_version);
 }
 
 /* The codepoints of a text as a list value of one-codepoint strings, so that
@@ -709,6 +741,8 @@ static const CettaStrNative str_natives[] = {
     {"compare", 2u, 0u, str_compare, CETTA_STR_RESULT_ATOM},
     {"codepoint-count", 1u, 0u, str_codepoint_count, CETTA_STR_RESULT_ATOM},
     {"utf8-error", 1u, 0u, str_utf8_error, CETTA_STR_RESULT_STRUCTURE},
+    {"unicode-category", 1u, 0u, str_unicode_category, CETTA_STR_RESULT_ATOM},
+    {"unicode-version", 0u, 0u, str_unicode_version, CETTA_STR_RESULT_ATOM},
     {"codepoints", 1u, 0u, str_codepoints, CETTA_STR_RESULT_STRUCTURE},
     {"from-codepoints", 1u, 1u << 0, str_from_codepoints, CETTA_STR_RESULT_ATOM},
     {"is-all-in", 2u, 0u, str_all_in, CETTA_STR_RESULT_ATOM},

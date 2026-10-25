@@ -7,6 +7,7 @@
 (: system:runtime-root (-> String))
 (= (system:wall-time) (__cetta_lib_system_host wall-time))
 (= (system:pid) (__cetta_lib_system_host pid))
+(= (system:uuid4-hex) (__cetta_lib_system_host uuid4-hex))
 (= (system:pid-alive? $pid) (__cetta_lib_system_host pid-alive $pid))
 (= (system:format-time $format $timestamp $zone) (__cetta_lib_system_host format-time $format $timestamp $zone))
 (= (system:read-line) (__cetta_lib_system_read_line ()))

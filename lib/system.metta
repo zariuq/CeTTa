@@ -8,6 +8,11 @@
 (= (system:pid)
    (function (case (__cetta_lib_system_host pid)
      (($result (return $result))))))
+; uuid.uuid4().hex: sixteen bytes from the kernel's random source, with the
+; version 4 and RFC 4122 variant bits set, as 32 lowercase hexadecimal digits.
+(= (system:uuid4-hex)
+   (function (case (__cetta_lib_system_host uuid4-hex)
+     (($result (return $result))))))
 (= (system:pid-alive? $pid)
    (function (case (__cetta_lib_system_host pid-alive $pid)
      (($result (return $result))))))

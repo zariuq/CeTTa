@@ -16,6 +16,12 @@ Operations
   fs:close filesystem-owner
   fs:walk-open directory-path
   fs:walk-next walker follow|no-follow excluded-basename-tuple
+  fs:open-write path flags mode
+  fs:write-all writer text
+  fs:sync file-owner
+  fs:lock file-owner exclusive|shared
+  fs:unlock file-owner
+  fs:make-directories path mode
   system:entry-directory
 
 Paths are strings or symbol spellings without embedded NUL. This is an OS
@@ -94,6 +100,37 @@ names. HE still interprets a caller's bare bound value in a computation
 position according to its ordinary semantics. To publish assembled data
 without that interpretation, use its existing function/return or quoted-data
 boundary. This does not change HE into PeTTa's value-passing dialect.
+
+Writers, locks and directories
+------------------------------
+open-write opens a descriptor for writing as Python's os.open does and returns
+an owned (NativeHandle "file-writer" id). flags is a list of the strings
+"append", "create", "truncate" and "exclusive", in any order; strings, because
+a PeTTa list headed by a function name such as append would be called. mode is
+the creation mode, narrowed by the umask or a default ACL as the kernel does;
+384 is 0o600 and 438 is 0o666.
+
+write-all writes every byte of a text, NUL included, continuing after short
+writes and resumed signals, and returns (fs:written bytes). A fault returns
+fs:failed whose progress counts every byte the owner has written, at a known
+position. Unlike a reader's fault it is not sticky: the owner stays open for
+another write, a sync or close. Interruption raised during a signal stops the
+loop with EINTR and the same progress.
+
+sync is fsync. lock is a whole-file flock on the owner's open file
+description, waiting while another holder conflicts, as fcntl.flock does;
+unlock releases it. sync, lock, unlock and close accept readers and writers.
+Closing the owner, its last holder's release, context teardown or the end of
+the process closes the descriptor and so releases its lock. A lock taken here
+and one taken by fcntl.flock on the same file exclude each other.
+
+make-directories runs Python 3.12's Path.mkdir(mode, parents=True,
+exist_ok=True) on the path as pathlib spells it: repeated slashes and "."
+parts are dropped and ".." parts kept. A missing parent is made with mode
+0777 (511) before the path is tried again; the last directory gets mode. An
+existing directory, or a symlink to one, is accepted. Any other refusal is
+fs:failed with its errno, naming the directory whose mkdir refused, which may
+be a parent. Success returns (). None of these operations fsyncs a directory.
 
 Reusable walking
 ----------------

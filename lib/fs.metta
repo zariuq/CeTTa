@@ -163,6 +163,55 @@
    (function (chain (eval (__cetta_lib_fs_close $owner)) $result
      (return $result))))
 
+; A writer owns a descriptor opened as Python's os.open opens one for writing.
+; flags lists "append", "create", "truncate" and "exclusive"; mode is the
+; creation mode, which the umask narrows (384 is 0o600, 438 is 0o666).
+; write-all writes every byte of a text and answers (fs:written bytes); a
+; fault keeps the owner open and its progress counts the owner's bytes in all.
+; sync is fsync. lock takes exclusive or shared, waiting for a conflicting
+; holder, as fcntl.flock does; unlock releases it. Syncing, locking and
+; closing accept readers too. Closing, the last holder's release, or the
+; process's end closes the descriptor, which releases its lock.
+(: __cetta_lib_fs_open_write (-> Atom Atom Atom Atom))
+(: __cetta_lib_fs_write_all (-> Atom Atom Atom))
+(: __cetta_lib_fs_sync (-> Atom Atom))
+(: __cetta_lib_fs_lock (-> Atom Atom Atom))
+(: __cetta_lib_fs_unlock (-> Atom Atom))
+(: fs:open-write (-> %Undefined% %Undefined% %Undefined% Atom))
+(: fs:write-all (-> %Undefined% %Undefined% Atom))
+(: fs:sync (-> %Undefined% Atom))
+(: fs:lock (-> %Undefined% %Undefined% Atom))
+(: fs:unlock (-> %Undefined% Atom))
+(= (fs:open-write $path $flags $mode)
+   (function (chain (eval (__cetta_lib_fs_open_write $path $flags $mode)) $result
+     (return $result))))
+
+(= (fs:write-all $owner $text)
+   (function (chain (eval (__cetta_lib_fs_write_all $owner $text)) $result
+     (return $result))))
+
+(= (fs:sync $owner)
+   (function (chain (eval (__cetta_lib_fs_sync $owner)) $result
+     (return $result))))
+
+(= (fs:lock $owner $mode)
+   (function (chain (eval (__cetta_lib_fs_lock $owner $mode)) $result
+     (return $result))))
+
+(= (fs:unlock $owner)
+   (function (chain (eval (__cetta_lib_fs_unlock $owner)) $result
+     (return $result))))
+
+; Path.mkdir(mode, parents=True, exist_ok=True) as Python 3.12 runs it: missing
+; parents get mode 0777 (511) and the last directory the given mode, both
+; narrowed by the umask. An existing directory is accepted; any other refusal
+; is (fs:failed ...) naming the directory whose mkdir refused.
+(: __cetta_lib_fs_make_directories (-> Atom Atom Atom))
+(: fs:make-directories (-> %Undefined% %Undefined% Atom))
+(= (fs:make-directories $path $mode)
+   (function (chain (eval (__cetta_lib_fs_make_directories $path $mode)) $result
+     (return $result))))
+
 ; A walker owns every open directory in its traversal. current observes the
 ; pending entry without advancing; step applies one explicit descent decision.
 (: __cetta_lib_fs_walk_open (-> Atom Atom))

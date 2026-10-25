@@ -68,6 +68,17 @@
    (function
      (chain (eval (__cetta_lib_str utf8-error $text)) $result (return $result))))
 
+; The Unicode 15.0.0 General_Category of a code point, given as an integer or as
+; a text of one scalar, as Python 3.12's unicodedata.category spells it: "Lu",
+; "Nd", "Zs", "Cn". str:unicode-version names the Unicode version of the table.
+(= (str:unicode-category $code)
+   (function
+     (chain (eval (__cetta_lib_str unicode-category $code)) $result (return $result))))
+
+(= (str:unicode-version)
+   (function
+     (chain (eval (__cetta_lib_str unicode-version)) $result (return $result))))
+
 ; The codepoints of a text as a list value of one-codepoint strings, so that
 ; [$c | $rest] matches over its characters.
 (= (str:codepoints $text)
