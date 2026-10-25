@@ -119,6 +119,15 @@
      (chain (eval (__cetta_lib_json_stringify $value JsonPythonV1)) $result
        (return $result))))
 
+; The same with json.dumps options, any subset of (ensure-ascii B),
+; (sort-keys B) and (separators ITEM KEY), for example
+; ((ensure-ascii False) (sort-keys True)).
+(: json:stringify-python-with (-> %Undefined% %Undefined% Atom))
+(= (json:stringify-python-with $value $options)
+   (function
+     (chain (eval (__cetta_lib_json_stringify $value (JsonPythonV1 $options))) $result
+       (return $result))))
+
 (: json:inspect-stringify (-> %Undefined% Atom))
 (= (json:inspect-stringify $value)
    (function

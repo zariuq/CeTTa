@@ -109,12 +109,24 @@ bool cetta_json_value_v1_emit_pretty(CettaJsonNumberValidatorV1 number_validator
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size);
 
-/* The same traversal emitting what Python's json.dumps writes with default
- * arguments: ", " and ": " separators, floats in Python's shortest repr
- * (NaN, Infinity and -Infinity for non-finite values), and every scalar
- * outside printable ASCII escaped as lowercase \\uXXXX, with surrogate pairs. */
+/* Python json.dumps options: ensure_ascii, sort_keys and separators. */
+typedef struct {
+    bool ensure_ascii;
+    bool sort_keys;
+    const char *item_separator;
+    size_t item_separator_len;
+    const char *key_separator;
+    size_t key_separator_len;
+} CettaJsonPythonOptionsV1;
+
+/* The same traversal emitting what Python's json.dumps writes: floats in
+ * Python's shortest repr (NaN, Infinity and -Infinity for non-finite values),
+ * the given separators, keys in code point order when sorted, and, with
+ * ensure_ascii, every scalar outside printable ASCII escaped as lowercase
+ * \\uXXXX with surrogate pairs. NULL options are json.dumps's defaults:
+ * ASCII escapes, member order kept, ", " and ": ". */
 bool cetta_json_value_v1_emit_python(CettaJsonNumberValidatorV1 number_validator,
-    Atom *value, bool ordinary_input,
+    Atom *value, bool ordinary_input, const CettaJsonPythonOptionsV1 *options,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size);

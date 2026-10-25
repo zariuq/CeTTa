@@ -17,8 +17,15 @@ typedef struct {
     CettaJsonNumberValidatorV1 number_validator;
     bool ordinary_copy;
     bool legacy_tags;
-    /* Emit what Python's json.dumps writes with default arguments. */
+    /* Emit what Python's json.dumps writes: its float spellings and
+     * separators always, ASCII escapes and key order per option. */
     bool python;
+    bool ascii;
+    bool sort_keys;
+    const char *item_separator;
+    size_t item_separator_len;
+    const char *key_separator;
+    size_t key_separator_len;
     uint64_t work;
     uint32_t work_limit;
     uint32_t depth_limit;
@@ -922,7 +929,7 @@ static bool json_emit_string(JsonValueCtxV1 *ctx, Atom *string,
                     hex[(scalar >> 4u) & 0xfu], hex[scalar & 0xfu]};
                 if (!json_bytes_append(out, escape, sizeof(escape)))
                     return false;
-            } else if (ctx->python && scalar > 0x7eu) {
+            } else if (ctx->ascii && scalar > 0x7eu) {
                 if (!json_append_ascii_scalar(out, scalar)) return false;
             } else if (!json_utf8_append_scalar(out, scalar)) {
                 return false;
@@ -946,9 +953,9 @@ static bool json_emit_native_text(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 
     size_t begin = 0u;
     for (size_t at = 0u; at < len; at++) {
         uint8_t c = (uint8_t)text[at];
-        if (c >= 0x20u && c != '"' && c != '\\' && (!ctx->python || c < 0x7fu)) continue;
+        if (c >= 0x20u && c != '"' && c != '\\' && (!ctx->ascii || c < 0x7fu)) continue;
         if (!json_bytes_append(out, text + begin, at - begin)) return false;
-        if (ctx->python && c >= 0x7fu) {
+        if (ctx->ascii && c >= 0x7fu) {
             /* The text is valid UTF-8: the lead byte gives the sequence length. */
             size_t width = c < 0x80u ? 1u : c < 0xe0u ? 2u : c < 0xf0u ? 3u : 4u;
             uint32_t scalar = width == 1u ? c : width == 2u ? (c & 0x1fu)
@@ -1092,7 +1099,50 @@ static bool json_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out,
     return json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
 }
 
-typedef struct { Atom *const *items; CettaExprLen count, index; bool object; } JsonEmitFrameV1;
+typedef struct {
+    Atom *const *items;
+    CettaExprLen count, index;
+    bool object;
+    Atom **sorted;   /* owned copy when keys are sorted */
+} JsonEmitFrameV1;
+
+typedef struct { Atom *member; size_t index; } JsonKeyedMemberV1;
+
+static int json_member_key_order(const void *left_ptr, const void *right_ptr) {
+    const JsonKeyedMemberV1 *left = left_ptr, *right = right_ptr;
+    const char *a = json_text(left->member->expr.elems[1]);
+    const char *b = json_text(right->member->expr.elems[1]);
+    size_t a_len = a ? json_text_len(left->member->expr.elems[1], a) : 0u;
+    size_t b_len = b ? json_text_len(right->member->expr.elems[1], b) : 0u;
+    /* UTF-8 byte order is code point order, as Python sorts str keys. */
+    int order = memcmp(a ? a : "", b ? b : "", a_len < b_len ? a_len : b_len);
+    if (order) return order;
+    if (a_len != b_len) return a_len < b_len ? -1 : 1;
+    return left->index < right->index ? -1 : left->index > right->index ? 1 : 0;
+}
+
+/* Members ordered by key, or NULL with ctx carrying the failure. */
+static Atom **json_sorted_members(JsonValueCtxV1 *ctx, Atom *const *items, CettaExprLen count) {
+    JsonKeyedMemberV1 *keyed = malloc(sizeof(*keyed) * count);
+    Atom **sorted = malloc(sizeof(*sorted) * count);
+    if (!keyed || !sorted) {
+        free(keyed); free(sorted);
+        json_value_error(ctx, CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE, "out of memory sorting JSON keys");
+        return NULL;
+    }
+    for (CettaExprLen index = 0u; index < count; index++) {
+        if (!json_expr_is(items[index], "JsonPair", 3u) || !json_text(items[index]->expr.elems[1])) {
+            free(keyed); free(sorted);
+            json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed ordinary JSON member");
+            return NULL;
+        }
+        keyed[index] = (JsonKeyedMemberV1){.member = items[index], .index = index};
+    }
+    qsort(keyed, count, sizeof(*keyed), json_member_key_order);
+    for (CettaExprLen index = 0u; index < count; index++) sorted[index] = keyed[index].member;
+    free(keyed);
+    return sorted;
+}
 
 static bool json_emit_indent(JsonBytesV1 *out, size_t depth) {
     if (!json_bytes_char(out, '\n')) return false;
@@ -1104,21 +1154,24 @@ static bool json_emit_indent(JsonBytesV1 *out, size_t depth) {
 static Atom *json_emit_child(JsonValueCtxV1 *ctx, JsonEmitFrameV1 *frame, JsonBytesV1 *out,
                              bool ordinary, bool pretty, size_t depth) {
     Atom *child = frame->items[frame->index];
-    if (frame->index && !json_bytes_char(out, ',')) return NULL;
-    if (frame->index && ctx->python && !json_bytes_char(out, ' ')) return NULL;
+    if (frame->index && !(ctx->python
+            ? json_bytes_append(out, ctx->item_separator, ctx->item_separator_len)
+            : json_bytes_char(out, ','))) return NULL;
     if (pretty && !json_emit_indent(out, depth)) return NULL;
     if (!frame->object) return child;
     if (ordinary && json_expr_is(child, "JsonPair", 3u) &&
-        json_emit_native_text(ctx, child->expr.elems[1], out, false) && json_bytes_char(out, ':') &&
-        (!(pretty || ctx->python) || json_bytes_char(out, ' ')))
+        json_emit_native_text(ctx, child->expr.elems[1], out, false) &&
+        (ctx->python ? json_bytes_append(out, ctx->key_separator, ctx->key_separator_len)
+                     : json_bytes_char(out, ':') && (!pretty || json_bytes_char(out, ' '))))
         return child->expr.elems[2];
     if (json_expr_is(child, "JsonMemberV1", 5u) &&
         child->expr.elems[1] && child->expr.elems[1]->kind == ATOM_GROUNDED &&
         child->expr.elems[1]->ground.gkind == GV_INT &&
         child->expr.elems[1]->ground.ival == (int64_t)frame->index &&
         json_member_span_valid(child->expr.elems[4]) &&
-        json_emit_string(ctx, child->expr.elems[2], out) && json_bytes_char(out, ':') &&
-        (!(pretty || ctx->python) || json_bytes_char(out, ' ')))
+        json_emit_string(ctx, child->expr.elems[2], out) &&
+        (ctx->python ? json_bytes_append(out, ctx->key_separator, ctx->key_separator_len)
+                     : json_bytes_char(out, ':') && (!pretty || json_bytes_char(out, ' '))))
         return child->expr.elems[3];
     if (ctx->status == CETTA_JSON_VALUE_V1_OK)
         json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
@@ -1155,7 +1208,19 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, 
                 if (!grown) goto allocation;
                 frames = grown; cap = next;
             }
-            frames[len++] = (JsonEmitFrameV1){.items = items, .count = count, .object = object};
+            Atom **sorted = NULL;
+            if (object && ctx->sort_keys && count > 1u) {
+                if (!ordinary) {
+                    json_value_error(ctx, CETTA_JSON_VALUE_V1_BAD_ARGUMENT,
+                                     "sorted keys need ordinary JSON values");
+                    goto failed;
+                }
+                sorted = json_sorted_members(ctx, items, count);
+                if (!sorted) goto failed;
+                items = sorted;
+            }
+            frames[len++] = (JsonEmitFrameV1){.items = items, .count = count, .object = object,
+                                              .sorted = sorted};
             if (!count) goto closed;
             current = json_emit_child(ctx, &frames[len-1u], out, ordinary, pretty, len);
             if (!current) goto failed;
@@ -1173,6 +1238,7 @@ closed:
             frame = &frames[len-1u];
             if (pretty && frame->count && !json_emit_indent(out, len-1u)) goto failed;
             if (!json_bytes_char(out, frame->object ? '}' : ']')) goto failed;
+            free(frame->sorted);
             len--;
         }
         if (!len) { free(frames); return true; }
@@ -1180,12 +1246,13 @@ closed:
 allocation:
     json_value_error(ctx, CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE, "out of memory emitting JSON continuations");
 failed:
+    for (size_t open = 0u; open < len; open++) free(frames[open].sorted);
     free(frames); return false;
 }
 
 static bool json_stringify_impl(
     const CettaJsonRuntimeV1 *runtime, CettaJsonNumberValidatorV1 number_validator,
-    Atom *value, bool ordinary_input, bool pretty, bool python,
+    Atom *value, bool ordinary_input, bool pretty, const CettaJsonPythonOptionsV1 *python,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out,
     CettaJsonValueV1Status *status,
@@ -1216,7 +1283,7 @@ static bool json_stringify_impl(
     arena_init_detached(&normalized_arena);
     arena_init_detached(&reparsed_arena);
     bool fused_ordinary = ordinary_input && !runtime;
-    if (fused_ordinary && !json_validate_ordinary(value, python, work_limit,
+    if (fused_ordinary && !json_validate_ordinary(value, python != NULL, work_limit,
             depth_limit, &convert_status, error_buf, error_buf_size)) {
         if (status) *status = convert_status;
         goto done;
@@ -1229,7 +1296,13 @@ static bool json_stringify_impl(
     }
     ctx = (JsonValueCtxV1){
         .number_validator = number_validator,
-        .python = python,
+        .python = python != NULL,
+        .ascii = python && python->ensure_ascii,
+        .sort_keys = python && python->sort_keys,
+        .item_separator = python ? python->item_separator : NULL,
+        .item_separator_len = python ? python->item_separator_len : 0u,
+        .key_separator = python ? python->key_separator : NULL,
+        .key_separator_len = python ? python->key_separator_len : 0u,
         .work_limit = work_limit,
         .depth_limit = depth_limit,
         .status = CETTA_JSON_VALUE_V1_OK,
@@ -1284,7 +1357,7 @@ bool cetta_json_value_v1_stringify(
         if (status) *status = CETTA_JSON_VALUE_V1_BAD_ARGUMENT;
         return false;
     }
-    return json_stringify_impl(runtime, NULL, value, ordinary_input, false, false, work_limit,
+    return json_stringify_impl(runtime, NULL, value, ordinary_input, false, NULL, work_limit,
         depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
 }
 
@@ -1293,7 +1366,7 @@ bool cetta_json_value_v1_emit(CettaJsonNumberValidatorV1 number_validator,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size) {
-    return json_stringify_impl(NULL, number_validator, value, ordinary_input, false, false, work_limit,
+    return json_stringify_impl(NULL, number_validator, value, ordinary_input, false, NULL, work_limit,
         depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
 }
 
@@ -1302,16 +1375,22 @@ bool cetta_json_value_v1_emit_pretty(CettaJsonNumberValidatorV1 number_validator
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size) {
-    return json_stringify_impl(NULL, number_validator, value, ordinary_input, true, false, work_limit,
+    return json_stringify_impl(NULL, number_validator, value, ordinary_input, true, NULL, work_limit,
         depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
 }
 
 bool cetta_json_value_v1_emit_python(CettaJsonNumberValidatorV1 number_validator,
-    Atom *value, bool ordinary_input,
+    Atom *value, bool ordinary_input, const CettaJsonPythonOptionsV1 *options,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size) {
-    return json_stringify_impl(NULL, number_validator, value, ordinary_input, false, true, work_limit,
+    static const CettaJsonPythonOptionsV1 defaults = {
+        .ensure_ascii = true, .sort_keys = false,
+        .item_separator = ", ", .item_separator_len = 2u,
+        .key_separator = ": ", .key_separator_len = 2u,
+    };
+    return json_stringify_impl(NULL, number_validator, value, ordinary_input, false,
+        options ? options : &defaults, work_limit,
         depth_limit, byte_limit, bytes_out, byte_len_out, status, error_buf, error_buf_size);
 }
 

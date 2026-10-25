@@ -12,7 +12,11 @@ in order, floats in Python's shortest repr (1e-05, 2.5e-07, -0.0, 1e+16, and
 NaN, Infinity or -Infinity for non-finite values, as json.dumps writes them),
 and every scalar outside printable ASCII escaped as lowercase \uXXXX, with a
 surrogate pair above U+FFFF. Use it where another program compares the bytes
-a Python implementation wrote.
+a Python implementation wrote. json:stringify-python-with takes json.dumps
+options as a list of (ensure-ascii B), (sort-keys B) and (separators ITEM KEY),
+for example ((ensure-ascii False) (sort-keys True) (separators "," ":")).
+Sorted keys follow code point order, as Python sorts str keys; unknown options
+are refused.
 
 Values are ordinary data:
 

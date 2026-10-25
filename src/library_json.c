@@ -596,6 +596,48 @@ static bool json_is_canonical_v1(Atom *value) {
            json_expr_is(value, "JsonBoolV1", 2u);
 }
 
+static bool json_option_bool(Atom *atom, bool *value) {
+    if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_BOOL) {
+        *value = atom->ground.bval;
+        return true;
+    }
+    if (atom_is_symbol(atom, "True") || atom_is_symbol(atom, "true")) { *value = true; return true; }
+    if (atom_is_symbol(atom, "False") || atom_is_symbol(atom, "false")) { *value = false; return true; }
+    return false;
+}
+
+/* (JsonPythonV1 ((ensure-ascii B) (sort-keys B) (separators ITEM KEY))): any
+ * subset, unknown options refused. 0 when spec is not this form. */
+static int json_python_options(Atom *spec, CettaJsonPythonOptionsV1 *options) {
+    if (!spec || spec->kind != ATOM_EXPR || spec->expr.len != 2u ||
+        !atom_is_symbol(spec->expr.elems[0], "JsonPythonV1"))
+        return 0;
+    Atom *const *items;
+    CettaExprLen count;
+    if (!atom_sequence_view(spec->expr.elems[1], &items, &count)) return -1;
+    for (CettaExprLen index = 0u; index < count; index++) {
+        Atom *option = items[index];
+        if (!option || option->kind != ATOM_EXPR || option->expr.len < 2u) return -1;
+        Atom *name = option->expr.elems[0];
+        if (atom_is_symbol(name, "ensure-ascii") && option->expr.len == 2u) {
+            if (!json_option_bool(option->expr.elems[1], &options->ensure_ascii)) return -1;
+        } else if (atom_is_symbol(name, "sort-keys") && option->expr.len == 2u) {
+            if (!json_option_bool(option->expr.elems[1], &options->sort_keys)) return -1;
+        } else if (atom_is_symbol(name, "separators") && option->expr.len == 3u) {
+            const char *item = json_text(option->expr.elems[1]);
+            const char *key = json_text(option->expr.elems[2]);
+            if (!item || !key) return -1;
+            options->item_separator = item;
+            options->item_separator_len = strlen(item);
+            options->key_separator = key;
+            options->key_separator_len = strlen(key);
+        } else {
+            return -1;
+        }
+    }
+    return 1;
+}
+
 static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
                             Arena *arena, Atom *head,
                             Atom **args, uint32_t nargs,
@@ -605,7 +647,19 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
     CettaJsonValueV1Status status;
     bool reference = nargs == 2u && atom_is_symbol(args[1], "JsonReferenceV1");
     bool pretty = nargs == 2u && atom_is_symbol(args[1], "JsonPrettyV1");
-    bool python = nargs == 2u && atom_is_symbol(args[1], "JsonPythonV1");
+    CettaJsonPythonOptionsV1 python_options = {
+        .ensure_ascii = true, .sort_keys = false,
+        .item_separator = ", ", .item_separator_len = 2u,
+        .key_separator = ": ", .key_separator_len = 2u,
+    };
+    int python_spec = nargs == 2u ? json_python_options(args[1], &python_options) : 0;
+    bool python = nargs == 2u && (atom_is_symbol(args[1], "JsonPythonV1") || python_spec == 1);
+    if (python_spec < 0) {
+        return json_failure_or_error(
+            arena, head, args, nargs, ordinary,
+            "JsonStringifyV1", "JsonBadArgumentV1",
+            "expected options (ensure-ascii B), (sort-keys B) or (separators ITEM KEY)");
+    }
     const CettaJsonRuntimeV1 *parser = NULL;
     Atom *result;
     char error[512] = {0};
@@ -629,7 +683,7 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
             cetta_json_direct_v1_number_valid, input, ordinary, 0u, 0u, 0u,
             &bytes, &len, &status, error, sizeof(error)) :
         python ? cetta_json_value_v1_emit_python(
-            cetta_json_direct_v1_number_valid, input, ordinary, 0u, 0u, 0u,
+            cetta_json_direct_v1_number_valid, input, ordinary, &python_options, 0u, 0u, 0u,
             &bytes, &len, &status, error, sizeof(error)) :
         reference ? cetta_json_value_v1_stringify(
             parser, input, ordinary,

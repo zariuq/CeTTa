@@ -94,7 +94,7 @@ def random_value(rng, depth=0):
 
 def emitted(cetta, terms):
     lines = ["!(import! &self (library json))"]
-    lines += ["!(println! (json:stringify-python %s))" % expression for expression in terms]
+    lines += ["!(println! %s)" % expression for expression in terms]
     with tempfile.TemporaryDirectory() as directory:
         program = Path(directory) / "emit.metta"
         program.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -102,7 +102,9 @@ def emitted(cetta, terms):
                                 capture_output=True, text=True, timeout=600)
     if result.returncode:
         raise SystemExit("engine exited %d: %s" % (result.returncode, result.stderr[-2000:]))
-    printed = [line for line in result.stdout.splitlines() if line.startswith('"')]
+    # Split on newlines only: raw U+2028 and friends occur inside strings when
+    # ensure_ascii is off, and str.splitlines would break lines there.
+    printed = [line for line in result.stdout.split("\n") if line.startswith('"')]
     return [re.sub(r"\\(.)", r"\1", line[1:-1]) for line in printed]
 
 
@@ -122,9 +124,20 @@ def main():
     # PeTTa arithmetic refuses to overflow, but a parsed exponent overflow
     # projects to infinity; json.dumps spells it Infinity.
     overflow = "[1e999, -1e999, 1.5]"
-    terms = [term(value) for value in values] + ['(json:parse "%s")' % overflow]
+    terms = ["(json:stringify-python %s)" % term(value) for value in values]
+    terms.append('(json:stringify-python (json:parse "%s"))' % overflow)
     expected = [json.dumps(value) for value in values] + [json.dumps(json.loads(overflow))]
-    values.append(overflow)
+    values = values + [overflow]
+    # Each value again under random json.dumps options.
+    separators = [(", ", ": "), (",", ":"), (" ; ", " = ")]
+    for value in values[:-1]:
+        ascii_, sort, (item, key) = rng.random() < 0.5, rng.random() < 0.5, rng.choice(separators)
+        options = "((ensure-ascii %s) (sort-keys %s) (separators %s %s))" % (
+            "True" if ascii_ else "False", "True" if sort else "False",
+            string_literal(item), string_literal(key))
+        terms.append("(json:stringify-python-with %s %s)" % (term(value), options))
+        expected.append(json.dumps(value, ensure_ascii=ascii_, sort_keys=sort, separators=(item, key)))
+        values.append(value)
     actual = emitted(args.cetta, terms)
     if len(actual) != len(values):
         raise SystemExit("expected %d results, read %d" % (len(values), len(actual)))
