@@ -260,6 +260,55 @@ static Atom *str_codepoint_count(Arena *a, Atom *const *args, CettaStrRefusal *r
     return atom_int(a, (int64_t)count);
 }
 
+/* The first malformed UTF-8 sequence of a text, as decoders that report
+ * maximal subparts locate it: the offset where the sequence starts, the end of
+ * its longest valid prefix, the byte at the start, and why it stops (an
+ * invalid start byte, an invalid continuation byte, or the end of the data).
+ * Overlong forms, surrogates and values above U+10FFFF stop at their second
+ * byte. Well-formed text gives StrUtf8WellFormedV1. */
+static Atom *str_utf8_error_at(Arena *a, size_t start, size_t end, uint8_t byte,
+                               const char *reason) {
+    Atom *items[5] = {atom_symbol(a, "StrUtf8ErrorV1"), atom_int(a, (int64_t)start),
+                      atom_int(a, (int64_t)end), atom_int(a, (int64_t)byte),
+                      atom_symbol(a, reason)};
+    return atom_expr(a, items, 5u);
+}
+
+static Atom *str_utf8_error(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len;
+    if (!str_text(args[0], &text, &len))
+        return str_expects(r, "expected text argument");
+    const uint8_t *bytes = (const uint8_t *)text;
+    size_t at = 0u;
+    while (at < len) {
+        uint8_t lead = bytes[at];
+        if (lead < 0x80u) { at++; continue; }
+        size_t need;
+        uint8_t low = 0x80u, high = 0xbfu;
+        if (lead >= 0xc2u && lead <= 0xdfu) need = 1u;
+        else if (lead == 0xe0u) { need = 2u; low = 0xa0u; }
+        else if ((lead >= 0xe1u && lead <= 0xecu) || lead == 0xeeu || lead == 0xefu) need = 2u;
+        else if (lead == 0xedu) { need = 2u; high = 0x9fu; }
+        else if (lead == 0xf0u) { need = 3u; low = 0x90u; }
+        else if (lead >= 0xf1u && lead <= 0xf3u) need = 3u;
+        else if (lead == 0xf4u) { need = 3u; high = 0x8fu; }
+        else return str_utf8_error_at(a, at, at + 1u, lead, "invalid-start-byte");
+        size_t next = at + 1u;
+        for (size_t k = 0u; k < need; k++, next++) {
+            if (next >= len)
+                return str_utf8_error_at(a, at, next, lead, "unexpected-end-of-data");
+            uint8_t follow = bytes[next];
+            bool valid = k == 0u ? follow >= low && follow <= high
+                                 : follow >= 0x80u && follow <= 0xbfu;
+            if (!valid)
+                return str_utf8_error_at(a, at, next, lead, "invalid-continuation-byte");
+        }
+        at = next;
+    }
+    return atom_symbol(a, "StrUtf8WellFormedV1");
+}
+
 /* The codepoints of a text as a list value of one-codepoint strings, so that
  * [$c | $rest] matches over its characters. */
 static Atom *str_codepoints(Arena *a, Atom *const *args, CettaStrRefusal *r) {
@@ -659,6 +708,7 @@ static const CettaStrNative str_natives[] = {
     {"trim", 1u, 0u, str_trim, CETTA_STR_RESULT_ATOM},
     {"compare", 2u, 0u, str_compare, CETTA_STR_RESULT_ATOM},
     {"codepoint-count", 1u, 0u, str_codepoint_count, CETTA_STR_RESULT_ATOM},
+    {"utf8-error", 1u, 0u, str_utf8_error, CETTA_STR_RESULT_STRUCTURE},
     {"codepoints", 1u, 0u, str_codepoints, CETTA_STR_RESULT_STRUCTURE},
     {"from-codepoints", 1u, 1u << 0, str_from_codepoints, CETTA_STR_RESULT_ATOM},
     {"is-all-in", 2u, 0u, str_all_in, CETTA_STR_RESULT_ATOM},

@@ -20874,6 +20874,7 @@ test-string-layer-v1: $(BIN)
 	if [ "$$written" != "610062" ] || [ "$$read_back" != "[3]" ]; then \
 		echo "FAIL: a file keeps a string's bytes: wrote $$written, read $$read_back"; exit 1; \
 	fi; \
+	python3 tests/support/check_str_utf8_error_v1.py --cetta "./$(BIN)"; \
 	echo "PASS: string layer, and a string holding NUL in six lanes and in a file"
 
 # The list value's atom contract: construction and normal form, printing,

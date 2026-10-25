@@ -61,6 +61,13 @@
    (function
      (chain (eval (__cetta_lib_str codepoint-count $text)) $result (return $result))))
 
+; The first malformed UTF-8 sequence of a text: (StrUtf8ErrorV1 start end byte
+; reason), with reason invalid-start-byte, invalid-continuation-byte or
+; unexpected-end-of-data; StrUtf8WellFormedV1 when there is none.
+(= (str:utf8-error $text)
+   (function
+     (chain (eval (__cetta_lib_str utf8-error $text)) $result (return $result))))
+
 ; The codepoints of a text as a list value of one-codepoint strings, so that
 ; [$c | $rest] matches over its characters.
 (= (str:codepoints $text)
