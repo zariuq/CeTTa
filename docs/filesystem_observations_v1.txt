@@ -8,7 +8,7 @@ retain their interfaces. text_stream still denotes an in-memory text cursor.
 
 Operations
 ----------
-  fs:metadata path follow|no-follow
+  fs:metadata path follow|no-follow|follow-modified|no-follow-modified
   fs:open-directory path
   fs:next-entry directory-owner
   fs:open-read path
@@ -26,6 +26,9 @@ Opening a reader follows the ordinary OS path resolution rules.
 metadata returns (fs:info kind size (fs:identity device inode)). Size is a
 signed integer; device and inode are opaque decimal strings for equality.
 They are not persistent file identities or filesystem snapshot certificates.
+The -modified link modes follow or not as their prefix says and append
+(fs:modified seconds nanoseconds), the modification time since the epoch,
+for cache keys that must notice a replaced file of the same size.
 Kinds include regular, directory, symlink, fifo, socket, character-device,
 block-device and unknown.
 
@@ -104,7 +107,7 @@ walk-next is a MeTTa policy over four owned primitives:
 
   fs:walk-current walker
   fs:walk-step walker skip|descend|descend-follow
-  fs:walk-metadata walker follow|no-follow
+  fs:walk-metadata walker follow|no-follow|follow-modified|no-follow-modified
   fs:close walker
 
 current observes without advancing: fs:walk-ready before the first step,

@@ -2,6 +2,7 @@
 """Owned filesystem observations across the core-C language hosts."""
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 
@@ -162,6 +163,10 @@ def main():
         assert b"(fs:info regular 4 (fs:identity" in observed, observed
         observed = run(language, "metadata_links_positive", path=link)
         assert b"fs:info symlink" in observed and b"fs:info regular 4" in observed, observed
+        os.utime(data, ns=(1_700_000_000_000_000_000, 1_700_000_000_123_456_789))
+        observed = run(language, "metadata_modified_positive", path=data)
+        assert b"(fs:modified 1700000000 123456789))" in observed, observed
+        assert observed.count(b"(fs:info regular 4 (fs:identity") == 2, observed
         observed = run(language, "metadata_missing_negative", path=output / "absent")
         assert b"fs:failed fs:missing metadata" in observed, observed
         # A native answer must not run host equations that happen to share

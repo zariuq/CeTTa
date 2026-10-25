@@ -14,6 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef __linux__
+#include <sys/syscall.h>
+#endif
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -280,15 +283,22 @@ static void *execute(void *resource) {
     pthread_sigmask(SIG_BLOCK, &broken, NULL);
     size_t sent = 0;
     bool child_exited = false;
+    /* Child exit wakes the loop at once, as in library_proc_run.c. Without
+     * a pidfd, the 20 ms tick still bounds the wait, as before. */
+    int exited_fd = -1;
+#ifdef SYS_pidfd_open
+    exited_fd = (int)syscall(SYS_pidfd_open, pid, 0);
+#endif
     uint64_t started = monotonic_ms();
     while (!child_exited || output[0][0] >= 0 || output[1][0] >= 0) {
         if (cancelled(job)) { job->cancelled = true; break; }
         if (job->timeout_ms && monotonic_ms() - started >= job->timeout_ms) { job->timed_out = true; break; }
         if (job->host_error) break;
         if (input[1] >= 0 && sent == job->input_len) { close(input[1]); input[1] = -1; }
-        struct pollfd fds[4] = {{job->wake[0], POLLIN, 0},
-            {input[1], POLLOUT, 0}, {output[0][0], POLLIN, 0}, {output[1][0], POLLIN, 0}};
-        int ready = poll(fds, 4, 20);
+        struct pollfd fds[5] = {{job->wake[0], POLLIN, 0},
+            {input[1], POLLOUT, 0}, {output[0][0], POLLIN, 0}, {output[1][0], POLLIN, 0},
+            {child_exited ? -1 : exited_fd, POLLIN, 0}};
+        int ready = poll(fds, 5, 20);
         if (ready < 0 && errno != EINTR) { job->host_error = errno; break; }
         if (input[1] >= 0 && (fds[1].revents & (POLLOUT | POLLHUP | POLLERR))) {
             size_t remaining = job->input_len - sent;
@@ -311,6 +321,7 @@ static void *execute(void *resource) {
             else if (observed < 0 && errno != EINTR) { job->host_error = errno; break; }
         }
     }
+    if (exited_fd >= 0) close(exited_fd);
     if (job->owned_tree) {
         /* Pipe revocation covers parent death too, including death before
          * the supervisor starts. No parent-PID or startup-signal race. */

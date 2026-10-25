@@ -167,7 +167,8 @@ static const char *entry_hint(unsigned char type) {
 }
 
 static Atom *metadata_value(Arena *arena, const struct stat *info,
-                             const char *operation, const char *path, uint64_t observed) {
+                             const char *operation, const char *path, uint64_t observed,
+                             bool modified) {
     if (info->st_size < 0 || (uintmax_t)info->st_size > INT64_MAX)
         return os_failed(arena, operation, path, EOVERFLOW, observed, true);
     /* Device and inode are opaque equality keys, not signed integers. Their
@@ -175,17 +176,30 @@ static Atom *metadata_value(Arena *arena, const struct stat *info,
     char device[3u * sizeof(uintmax_t) + 1u], inode[sizeof(device)];
     snprintf(device, sizeof(device), "%ju", (uintmax_t)info->st_dev);
     snprintf(inode, sizeof(inode), "%ju", (uintmax_t)info->st_ino);
+    Atom *identity = atom_expr3(arena, atom_symbol(arena, "fs:identity"),
+        atom_string(arena, device), atom_string(arena, inode));
+    if (!modified)
+        return atom_expr(arena, (Atom *[]){atom_symbol(arena, "fs:info"),
+            atom_symbol(arena, mode_kind(info->st_mode)), atom_int(arena, info->st_size),
+            identity}, 4u);
+    /* The *-modified link modes add the modification time, in whole
+     * seconds and nanoseconds, as a cache key needs it. */
+#ifdef __APPLE__
+    struct timespec when = info->st_mtimespec;
+#else
+    struct timespec when = info->st_mtim;
+#endif
     return atom_expr(arena, (Atom *[]){atom_symbol(arena, "fs:info"),
         atom_symbol(arena, mode_kind(info->st_mode)), atom_int(arena, info->st_size),
-        atom_expr3(arena, atom_symbol(arena, "fs:identity"),
-            atom_string(arena, device), atom_string(arena, inode))}, 4u);
+        identity, atom_expr3(arena, atom_symbol(arena, "fs:modified"),
+            atom_int(arena, (int64_t)when.tv_sec), atom_int(arena, (int64_t)when.tv_nsec))}, 5u);
 }
 
-static Atom *metadata(Arena *arena, const char *path, bool follow) {
+static Atom *metadata(Arena *arena, const char *path, bool follow, bool modified) {
     struct stat info;
     if ((follow ? stat(path, &info) : lstat(path, &info)) < 0)
         return os_failed(arena, "metadata", path, errno, 0u, true);
-    return metadata_value(arena, &info, "metadata", path, 0u);
+    return metadata_value(arena, &info, "metadata", path, 0u, modified);
 }
 
 static char *joined_path(const char *parent, const char *name) {
@@ -332,7 +346,7 @@ static Atom *walk_step(Arena *arena, FsWalk *walk, Atom *action) {
     return walk_current(arena, walk);
 }
 
-static Atom *walk_metadata(Arena *arena, FsWalk *walk, bool follow) {
+static Atom *walk_metadata(Arena *arena, FsWalk *walk, bool follow, bool modified) {
     if (walk->fault || walk->ended) return walk_current(arena, walk);
     if (!walk->name)
         return failed(arena, "fs:invalid-argument", "walk-metadata", walk->root, 0,
@@ -341,7 +355,7 @@ static Atom *walk_metadata(Arena *arena, FsWalk *walk, bool follow) {
     if (fstatat(dirfd(walk->top->directory), walk->name, &info,
                 follow ? 0 : AT_SYMLINK_NOFOLLOW) < 0)
         return os_failed(arena, "walk-metadata", walk->path, errno, walk->observed, true);
-    return metadata_value(arena, &info, "walk-metadata", walk->path, walk->observed);
+    return metadata_value(arena, &info, "walk-metadata", walk->path, walk->observed, modified);
 }
 
 static Atom *close_walk(CettaLibraryContext *ctx, Arena *arena, FsWalk *walk, uint64_t id) {
@@ -425,6 +439,14 @@ static Atom *read_chunk(Arena *arena, FsCursor *cursor, int64_t requested) {
     return result;
 }
 
+/* follow and no-follow, each also with a -modified variant that adds the
+ * modification time to the answer. */
+static bool link_mode(Atom *atom, bool *follow, bool *modified) {
+    *follow = atom_is_symbol(atom, "follow") || atom_is_symbol(atom, "follow-modified");
+    *modified = atom_is_symbol(atom, "follow-modified") || atom_is_symbol(atom, "no-follow-modified");
+    return *follow || *modified || atom_is_symbol(atom, "no-follow");
+}
+
 bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
                    Atom **args, uint32_t nargs, CettaCallOutcome *out) {
     if (!head || head->kind != ATOM_SYMBOL) return false;
@@ -462,9 +484,9 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
         op == g_builtin_syms.lib_fs_open_directory || op == g_builtin_syms.lib_fs_walk_open) {
         if (!path) goto argument;
         if (op == g_builtin_syms.lib_fs_metadata) {
-            if (!atom_is_symbol(args[1], "follow") && !atom_is_symbol(args[1], "no-follow"))
-                goto argument;
-            value = metadata(arena, path, atom_is_symbol(args[1], "follow"));
+            bool follow, modified;
+            if (!link_mode(args[1], &follow, &modified)) goto argument;
+            value = metadata(arena, path, follow, modified);
         } else if (op == g_builtin_syms.lib_fs_walk_open) value = open_walk(ctx, arena, path);
         else value = open_cursor(ctx, arena, path, op == g_builtin_syms.lib_fs_open_directory);
         goto completed;
@@ -481,9 +503,9 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
         if (op == g_builtin_syms.lib_fs_close) value = close_walk(ctx, arena, walk, id);
         else if (op == g_builtin_syms.lib_fs_walk_step) value = walk_step(arena, walk, args[1]);
         else if (op == g_builtin_syms.lib_fs_walk_metadata) {
-            if (!atom_is_symbol(args[1], "follow") && !atom_is_symbol(args[1], "no-follow"))
-                goto argument;
-            value = walk_metadata(arena, walk, atom_is_symbol(args[1], "follow"));
+            bool follow, modified;
+            if (!link_mode(args[1], &follow, &modified)) goto argument;
+            value = walk_metadata(arena, walk, follow, modified);
         } else value = walk_current(arena, walk);
         goto completed;
     }
@@ -517,7 +539,7 @@ handle:
     goto completed;
 argument:
     value = failed(arena, "fs:invalid-argument", name, path, 0, observed, position_known,
-                   "expected a path, owner, nonnegative byte count or follow/no-follow policy");
+                   "expected a path, owner, nonnegative byte count or follow/no-follow (or -modified) policy");
 completed:
     *out = cetta_call_completed_value(value);
     return true;
