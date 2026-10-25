@@ -1023,6 +1023,8 @@ PRODUCER_SCHEDULE_TEST_BIN = runtime/test_producer_schedule-$(BUILD_OBJ_TAG)$(if
 SHARED_OCCURRENCE_LOG_TEST_BIN = runtime/test_shared_occurrence_log-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 SHARED_RETURN_PRODUCER_TEST_OBJ = runtime/bootstrap/test_shared_return_producer.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 SHARED_RETURN_PRODUCER_TEST_BIN = runtime/test_shared_return_producer-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ = runtime/bootstrap/test_native_conditional_context.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
+NATIVE_CONDITIONAL_CONTEXT_TEST_BIN = runtime/test_native_conditional_context-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 ANSWER_STORAGE_TEST_OBJ = runtime/bootstrap/test_answer_storage.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 ANSWER_STORAGE_TEST_BIN = runtime/test_answer_storage-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 OWNED_RETURN_IMAGE_TEST_OBJ = runtime/bootstrap/test_owned_return_image.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -6181,12 +6183,44 @@ $(SHARED_RETURN_PRODUCER_TEST_OBJ): tests/test_shared_return_producer.c src/shar
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
 
 $(SHARED_RETURN_PRODUCER_TEST_BIN): $(SHARED_RETURN_PRODUCER_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=malloc,--wrap=calloc,--wrap=grounded_call $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=malloc,--wrap=calloc,--wrap=grounded_call,--wrap=cetta_library_call_native $(LDFLAGS)
 
 .PHONY: test-shared-return-producer
 test-all: test-shared-return-producer
 test-shared-return-producer: $(SHARED_RETURN_PRODUCER_TEST_BIN)
 	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN))
+	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN)) --prime-native
+
+$(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ): tests/test_native_conditional_context.c src/eval.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
+
+$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN): $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ) $(filter-out src/eval.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize $(LDFLAGS)
+
+.PHONY: test-native-conditional-context
+test-all: test-native-conditional-context
+test-native-conditional-context: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)
+	@$(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN))
+	@CETTA_PREPARED_PURE_REFERENCE=1 $(call cetta_exec,./$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN)) --worker-availability
+
+.PHONY: test-oem-native-returns
+test-all: test-oem-native-returns
+test-oem-native-returns: $(BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN) $(SHARED_RETURN_PRODUCER_TEST_BIN) \
+  tests/petta/native_return_empty_data.metta tests/petta/native_return_empty_data.expected \
+  tests/petta/entered_service_effects.metta tests/petta/entered_service_effects.expected
+	@$(call cetta_exec,./$(PETTA_SEARCH_MACHINE_TEST_BIN)) --native-return
+	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN)) --native-reference
+	@$(call cetta_exec,./$(SHARED_RETURN_PRODUCER_TEST_BIN)) --oem-native
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+		"CETTA_OPEN_EQUATIONS_REFERENCE=1" \
+		"CETTA_PREPARED_PURE_REFERENCE=1 CETTA_OPEN_EQUATIONS_REFERENCE=1"; do \
+		for fixture in native_return_empty_data entered_service_effects; do \
+			env $$route $(CETTA_BIN_INVOKE) --lang petta tests/petta/$$fixture.metta \
+				| diff -u tests/petta/$$fixture.expected -; \
+		done; \
+	done
 
 $(OWNED_RETURN_IMAGE_TEST_OBJ): tests/test_owned_return_image.c src/owned_return_image.h src/shared_return_producer.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
@@ -7123,6 +7157,7 @@ DEPS = $(OBJ:.o=.d) $(STAGE0_OBJ:.o=.d) \
 	$(IO_RUNTIME_MUTATION_OBJ:.o=.d) \
 	$(PREPARED_PURE_ANSWER_TEST_OBJ:.o=.d) \
 	$(SHARED_RETURN_PRODUCER_TEST_OBJ:.o=.d) \
+	$(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ:.o=.d) \
 	$(ANSWER_STORAGE_TEST_OBJ:.o=.d) \
 	$(OWNED_RETURN_IMAGE_TEST_OBJ:.o=.d) \
 	$(FALLBACK_EVAL_TEST_OBJ:.o=.d) \
@@ -25295,7 +25330,7 @@ test-petta-extended-collections: $(BIN)
 test-profiles: $(BIN) test-bounded-select-threads test-petta-extended-collections test-manifest test-forbidden-availability-errors test-git-module-profiles test-symbolid-guard test-fallback-eval-session test-he-compiled-reader-v1 test-petta-compiled-reader-v1 test-prime-compiled-reader-v1 test-import-modes test-he-prime-search-mutation test-he-prime-scheme-mutation test-prime-crossdialect test-prime-need-he-noninterference
 	@pass=0; fail=0; \
 	cache_dir="$(GIT_TEST_CACHE_DIR)"; mkdir -p "$$cache_dir"; export CETTA_GIT_MODULE_CACHE_DIR="$$cache_dir"; \
-	profiles=$$($(CETTA_BIN_INVOKE) --list-profiles 2>&1); \
+	profiles=$$($(CETTA_BIN_INVOKE) --lang he --list-profiles 2>&1); \
 	if printf '%s\n' "$$profiles" | grep -Eq '^he[[:space:]]' && \
 	   printf '%s\n' "$$profiles" | grep -Eq '^he-compat[[:space:]]' && \
 	   printf '%s\n' "$$profiles" | grep -Eq '^extended[[:space:]]' && \
@@ -26342,10 +26377,10 @@ test-petta-prepared-activation-call: $(BIN)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@set -eu; \
 	stats=$$(./$(BIN) --emit-runtime-stats --lang petta tests/petta/search_machine_prepared_activation_call.metta 2>&1 >/dev/null); \
-	commits=$$(printf '%s\n' "$$stats" | awk '$$1 == "runtime-counter" && ($$2 == "prepared-pure-call-commit" || $$2 == "open-equation-choice") {sum += $$3} END {print sum+0}'); \
+	commits=$$(printf '%s\n' "$$stats" | awk '$$1 == "runtime-counter" && ($$2 == "prepared-pure-call-commit" || $$2 == "open-equation-choice" || $$2 == "petta-answer-producer-choice") {sum += $$3} END {print sum+0}'); \
 	test "$${commits:-0}" -ge 4; \
 	reference=$$(./$(BIN) --fuel 1000000 --emit-runtime-stats --lang petta tests/petta/search_machine_prepared_activation_call.metta 2>&1 >/dev/null); \
-	commits=$$(printf '%s\n' "$$reference" | awk '$$1 == "runtime-counter" && ($$2 == "prepared-pure-call-commit" || $$2 == "open-equation-choice") {sum += $$3} END {print sum+0}'); \
+	commits=$$(printf '%s\n' "$$reference" | awk '$$1 == "runtime-counter" && ($$2 == "prepared-pure-call-commit" || $$2 == "open-equation-choice" || $$2 == "petta-answer-producer-choice") {sum += $$3} END {print sum+0}'); \
 	test "$${commits:-missing}" = 0; \
 	echo 'PASS: nested activation calls reach a compiled executor, while finite fuel retains exact accounting'
 endif
@@ -33196,6 +33231,35 @@ test-he-typed-calls-prepared: $(BIN) tests/he/typed_calls_prepared.metta \
 	! grep -F -q 'atom=(inc $$acc)' <<<"$$trace"; \
 	echo 'PASS: typed heads run in the prepared machine with HE casts, type errors and arity, in every HE profile'
 
+# `not` is a prepared intrinsic: the prepared machine negates a truth value,
+# and any other value leaves the call to the canonical evaluator.  Both routes
+# answer as the reference engines do: SWI-PeTTa fails on a value that is not
+# a truth value, and HE raises a type error.
+.PHONY: test-prepared-pure-not
+test-all: test-prepared-pure-not
+test-prepared-pure-not: $(BIN) tests/petta/prepared_not.metta \
+		tests/petta/prepared_not.expected tests/he/prepared_not.metta \
+		tests/he/prepared_not.expected
+	@set -eu -o pipefail; \
+	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
+		"CETTA_PREPARED_PURE_REFERENCE=1 CETTA_OPEN_EQUATIONS_REFERENCE=1"; do \
+		env $$route $(CETTA_BIN_INVOKE) --lang petta \
+			tests/petta/prepared_not.metta \
+			| diff -u tests/petta/prepared_not.expected -; \
+		for lane in he "he --profile he-compat" "he --profile extended"; do \
+			env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
+				tests/he/prepared_not.metta \
+				| diff -u tests/he/prepared_not.expected -; \
+		done; \
+	done; \
+	for language in petta he; do \
+		trace=$$(CETTA_PREPARED_PURE_DEBUG=1 $(CETTA_BIN_INVOKE) \
+			--lang $$language tests/$$language/prepared_not.metta 2>&1 >/dev/null); \
+		grep -q 'bodies lowered to register code' <<<"$$trace"; \
+		! grep -q 'outside the pure machine fragment' <<<"$$trace"; \
+	done; \
+	echo 'PASS: prepared not preserves PeTTa failure and HE type errors across execution routes'
+
 # A definition that takes arguments as they are written (an Atom parameter)
 # is expanded where it is called in the prepared machine, as HE runs it, so a
 # let written as HE's library writes it compiles as the native one does.  An
@@ -34973,14 +35037,20 @@ test-prime: test-execution-contract-spec
 test-execution-contract-spec:
 	@PYTHONDONTWRITEBYTECODE=1 python3 tests/support/check_execution_contract_spec.py
 
+.PHONY: test-execution-control-plans
+test-all test-petta-search-machine test-he-contract-suite: test-execution-control-plans
+test-execution-control-plans: $(EXECUTION_CONTRACTS_TEST_BIN)
+	@PYTHONDONTWRITEBYTECODE=1 python3 tests/support/check_execution_control_plans.py
+	@$(EXECUTION_CONTRACTS_TEST_BIN)
+
 .PHONY: test-gslt-execution-contracts
 test-gslt-execution-contracts: $(BIN) $(EXECUTION_CONTRACTS_TEST_BIN) \
-		test-prepared-pure-call-machine test-execution-contract-spec
+		test-prepared-pure-call-machine test-execution-contract-spec \
+		test-execution-control-plans
 ifeq ($(ENABLE_PATHMAP_SPACE),1)
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 	@PYTHONDONTWRITEBYTECODE=1 $(EXECUTION_CONTRACTS_GENERATOR) \
 		--cetta ./$(BIN) --check --check-fold-runtime
-	@$(EXECUTION_CONTRACTS_TEST_BIN)
 	@result=$$(CETTA_PATHMAP_QUERY_INDEX=1 CETTA_PATHMAP_PULL_CONSUMERS=1 \
 		$(CETTA_BIN_INVOKE) --emit-runtime-stats --profile extended \
 		--lang he tests/generated/execution_contracts.metta 2>&1); \
@@ -48002,12 +48072,15 @@ test-io: test-io-json-bridge
 
 .PHONY: test-petta-imported-host-bridges
 ifeq ($(LIB_PROLOG_ENABLED),1)
-test-petta-imported-host-bridges: $(BIN)
+test-petta-imported-host-bridges: $(BIN) \
+  tests/petta/libpl_native_return_data.metta tests/petta/libpl_native_return_data.expected
 	@set -eu; \
 	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-imported-host.XXXXXX"); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
 	$(CETTA_BIN_INVOKE) --lang petta tests/petta/libpl_native_eval.metta > "$$actual"; \
 	diff -u tests/petta/libpl_native_eval.expected "$$actual"; \
+	$(CETTA_BIN_INVOKE) --lang petta tests/petta/libpl_native_return_data.metta > "$$actual"; \
+	diff -u tests/petta/libpl_native_return_data.expected "$$actual"; \
 	$(CETTA_BIN_INVOKE) --lang petta tests/petta/libpl_eval_errors.metta > "$$actual"; \
 	diff -u tests/petta/libpl_eval_errors.expected "$$actual"; \
 	$(CETTA_BIN_INVOKE) --lang petta tests/petta/imported_swrite.metta > "$$actual"; \

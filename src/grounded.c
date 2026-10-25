@@ -690,6 +690,16 @@ static bool grounded_op_capabilities_apply(uint8_t capabilities) {
         eval_current_profile_enables_dependent_telescope();
 }
 
+bool grounded_op_is_library_native(SymbolId head) {
+    uint32_t flags = symbol_flags(g_symbols, head);
+    if (flags & CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP)
+        return true;
+    if (flags & CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP)
+        return false;
+    const char *name = symbol_bytes(g_symbols, head);
+    return name && strncmp(name, "__cetta_lib_", 12u) == 0;
+}
+
 bool is_grounded_op(SymbolId id) {
     if (id == SYMBOL_ID_NONE)
         return false;
@@ -3438,10 +3448,22 @@ static Atom *grounded_dispatch_rational(Arena *a, Atom *head, Atom **args,
     return grounded_dispatch_open(a, head, opened, nargs);
 }
 
+/* The dense tensor provider in grounded_dispatch_open is the core
+ * implementation of the __cetta_lib_tensor_ ABI family, which it recognizes
+ * by name, including names interned at run time. */
+static bool grounded_op_dense_tensor_family(SymbolId head) {
+    const char *name = symbol_bytes(g_symbols, head);
+    return name && strncmp(name, "__cetta_lib_tensor_", 19u) == 0;
+}
+
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
     if (cetta_speculative_active() && !cetta_speculative_op_allowed(atom_symbol_current_id(head)))
         return is_grounded_op(atom_symbol_current_id(head)) ? cetta_effect_denied(a) : NULL;
+    if (!(symbol_flags(g_symbols, atom_symbol_current_id(head)) & CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP) &&
+        grounded_op_is_library_native(atom_symbol_current_id(head)) &&
+        !grounded_op_dense_tensor_family(atom_symbol_current_id(head)))
+        return NULL;
     for (uint32_t i = 0u; i < nargs; i++) {
         if (atom_structural_has_rational(args[i]))
             return grounded_dispatch_rational(a, head, args, nargs);
@@ -4245,8 +4267,13 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         bool bv;
         if (get_bool_arg(args[0], &bv))
             return bv ? atom_false(a) : atom_true(a);
+        /* SWI-PeTTa's not/2 holds of a truth value alone: any other value
+         * fails there, as its and/2, or/2 and xor/2 do, where HE raises a
+         * type error. */
         if (args[0]->kind == ATOM_GROUNDED)
-            return grounded_bool_bad_arg(a, head, args, nargs, 1, args[0]);
+            return grounded_current_language_is_petta()
+                ? atom_petta_no_result(a)
+                : grounded_bool_bad_arg(a, head, args, nargs, 1, args[0]);
         return NULL;
     }
     if ((head_id == g_builtin_syms.op_and || head_id == g_builtin_syms.op_or || head_id == g_builtin_syms.op_xor) && nargs != 2)

@@ -28,6 +28,7 @@ enum {
     CETTA_SYMBOL_FLAG_PETTA_ONLY_BUILTIN = 1u << 5,
     CETTA_SYMBOL_FLAG_BUILTIN_CONSTRUCTOR = 1u << 6,
     CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP = 1u << 7,
+    CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP = 1u << 8,
 };
 
 typedef struct {
@@ -957,8 +958,11 @@ static inline SymbolSpelling symbol_spelling(
     X(size_atom) \
     X(index_atom) \
     X(range_atom) \
+    X(repeat_atom) \
     X(lib_list_range) \
-    X(repeat_atom)
+    X(lib_list_repeat) \
+    X(lib_list_from_expression) \
+    X(lib_list_to_expression)
 
 /* Grounded value operations without ambient observations or mutation, given
  * closed values from the host. This is also an execution permission list:

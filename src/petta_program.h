@@ -31,17 +31,6 @@ typedef enum {
     PETTA_PLAN_EXEC_RELATION_SLOTS,
 } PettaPlanExecution;
 
-/* Control decisions which are intrinsic to one authored occurrence.  These
- * tags are compiled program data, so an equation activation does not
- * repeatedly recover the same decision from its head symbol. */
-typedef enum {
-    PETTA_PLAN_CONTROL_NONE = 0,
-    PETTA_PLAN_CONTROL_IF,
-    PETTA_PLAN_CONTROL_LET,
-    PETTA_PLAN_CONTROL_CHAIN,
-    PETTA_PLAN_CONTROL_LET_STAR,
-} PettaPlanControl;
-
 /* Source-derived continuation boundaries.  These tags refine the existing
  * plan tree across parent/child edges; they do not reclassify either child.
  * The anonymous-hole form records that an open producer must retain every
@@ -164,7 +153,7 @@ typedef struct PettaRegionHoleProgram {
 struct PettaPlanNode {
     PettaPlanRole role;
     PettaPlanExecution execution;
-    PettaPlanControl control;
+    CettaControlOperationPlan control;
     PettaPlanContinuation continuation;
     PettaPlanOutput output;
     /* Authored (Empty body), distinct from a variable pattern bound to Empty.

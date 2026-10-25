@@ -1124,7 +1124,7 @@ static bool prime_native_need_scalar_share_admitted(Space *space, Atom *origin) 
         cetta_prepared_pure_constructs_expression_always, NULL,
         cetta_prepared_pure_register_view, view, NULL, &source, false,
         active_composition_uses_total_structural_eq(),
-        prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_CALL_BY_NEED));
+        prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_CALL_BY_NEED), NULL);
     bool admitted = certificate && cetta_prepared_pure_program_is_current(certificate) &&
         cetta_prepared_pure_program_all_heads_determinate(certificate);
     cetta_prepared_pure_program_free(certificate);

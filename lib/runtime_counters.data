@@ -1211,4 +1211,6 @@
   (1136 OPEN_EQUATION_ALGEBRAIC_CONTAINS "open-equation-algebraic-contains")
   (1137 OPEN_EQUATION_ALGEBRAIC_DROP "open-equation-algebraic-drop")
   (1138 OPEN_EQUATION_ALGEBRAIC_SCALAR_SUM "open-equation-algebraic-scalar-sum")
-  (1139 OPEN_EQUATION_ALGEBRAIC_SCALAR_NODE "open-equation-algebraic-scalar-node")))
+  (1139 OPEN_EQUATION_ALGEBRAIC_SCALAR_NODE "open-equation-algebraic-scalar-node")
+  ; Accepted direct native entries; a refusal performs no native call.
+  (1140 OPEN_EQUATION_NATIVE_CALL "open-equation-native-call")))

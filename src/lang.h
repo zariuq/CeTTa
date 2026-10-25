@@ -49,6 +49,14 @@ typedef enum {
     CETTA_PORTABLE_RELATIONAL_EAGER_STRUCTURAL_EQUATIONS_V1,
 } CettaPortableRelationalContract;
 
+/* A call's result protocol is independent of argument readiness and of the
+ * provenance on a completed return. Destination passing retains the caller's
+ * logical receiver while the producer runs. */
+typedef enum {
+    CETTA_CALL_RESULT_BY_VALUE = 0,
+    CETTA_CALL_RESULT_BY_DESTINATION,
+} CettaCallResultPolicy;
+
 typedef struct {
     CettaLanguageId id;
     const char *name;
@@ -74,6 +82,7 @@ bool cetta_relative_module_policy_from_name(const char *name,
 CettaRelativeModulePolicy cetta_language_relative_module_policy(CettaLanguageId id);
 CettaPortableRelationalContract
 cetta_language_portable_relational_contract(CettaLanguageId id);
+CettaCallResultPolicy cetta_language_call_result_policy(CettaLanguageId id);
 void cetta_language_print_inventory(FILE *out);
 
 #endif /* CETTA_LANG_H */

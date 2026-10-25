@@ -5557,6 +5557,24 @@ static const BindingsFrameIndexEntry *bindings_cursor_scope_entry(
         ? entry : NULL;
 }
 
+CettaGsltTermViewStatusV1 bindings_value_term_cursor_v1(
+        const Bindings *bindings, BindingValue value,
+        CettaGsltTermCursorV1 *target_out) {
+    if (target_out)
+        *target_out = (CettaGsltTermCursorV1){0};
+    if (!bindings || !value.skeleton || !target_out)
+        return CETTA_GSLT_TERM_VIEW_INVALID_V1;
+    const void *scope = NULL;
+    if (binding_value_is_contextual(value) && atom_has_vars(value.skeleton)) {
+        scope = bindings_frame_index_find_frame_const(
+            bindings->frame_index, binding_value_epoch(value));
+        if (!scope)
+            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+    }
+    *target_out = (CettaGsltTermCursorV1){value.skeleton, scope};
+    return CETTA_GSLT_TERM_VIEW_OK_V1;
+}
+
 static CettaGsltTermViewStatusV1 bindings_resolve_cursor(
         void *raw_context, CettaGsltTermCursorV1 source,
         CettaGsltTermCursorV1 *target_out, bool scoped) {
@@ -5603,17 +5621,9 @@ static CettaGsltTermViewStatusV1 bindings_resolve_cursor(
     if ((!scoped && binding_value_is_contextual(value) && atom_has_vars(value.skeleton)) ||
         !bindings_resolve_value_preview((Bindings *)context->bindings, value, &value))
         return CETTA_GSLT_TERM_VIEW_DEFER_V1;
-    const void *scope = NULL;
-    if (binding_value_is_contextual(value) && atom_has_vars(value.skeleton)) {
-        if (!scoped)
-            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
-        scope = bindings_frame_index_find_frame_const(
-            context->bindings->frame_index, binding_value_epoch(value));
-        if (!scope)
-            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
-    }
-    *target_out = (CettaGsltTermCursorV1){value.skeleton, scope};
-    return CETTA_GSLT_TERM_VIEW_OK_V1;
+    if (!scoped && binding_value_is_contextual(value) && atom_has_vars(value.skeleton))
+        return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+    return bindings_value_term_cursor_v1(context->bindings, value, target_out);
 }
 
 CettaGsltTermViewStatusV1 bindings_resolve_term_cursor_v1(

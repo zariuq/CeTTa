@@ -961,8 +961,15 @@ static bool he_execution_source_admitted(HeExecutionAdmission *admission,
         bool library_stream = expression && !admission->stream &&
             he_library_stream_aggregate(admission->space, term) !=
                 SYMBOL_ID_NONE;
+        /* Some PeTTa machine operations, such as relational list reads,
+         * have no PeTTaForm tag. Their spelling grants no HE execution
+         * permission. Grounded and shared builtin operations retain their
+         * separately checked HE adapters below. */
         if (!intrinsic && head != SYMBOL_ID_NONE && !collection &&
-            !library_stream && petta_semantics_form(head) != PETTA_FORM_NONE)
+            !library_stream &&
+            (petta_semantics_form(head) != PETTA_FORM_NONE ||
+             (petta_program_head_is_intrinsic(head) &&
+              !is_grounded_op(head) && !symbol_id_is_builtin(head))))
             return false;
         if ((head == g_builtin_syms.if_text ||
              head == g_builtin_syms.empty_form) &&

@@ -5172,7 +5172,7 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, ascription);
     assert(ascription_plan);
     assert(ascription_plan->role == PETTA_PLAN_DATA);
-    assert(ascription_plan->control == PETTA_PLAN_CONTROL_NONE);
+    assert(ascription_plan->control.operation == CETTA_CONTROL_NONE);
     assert(
         ascription_plan->execution ==
         PETTA_PLAN_EXEC_CONSTRUCTOR_SLOTS);
@@ -5183,14 +5183,14 @@ static void test_constructor_slot_frame_plans(
     const PettaPlanNode *if_control_plan =
         petta_program_plan_current(program, if_control);
     assert(if_control_plan);
-    assert(if_control_plan->control == PETTA_PLAN_CONTROL_IF);
+    assert(if_control_plan->control.operation == CETTA_CONTROL_BRANCH);
 
     Atom *anonymous_hole = parse_one(
         persistent, "(let $_ (open-producer) kept)");
     const PettaPlanNode *anonymous_hole_plan =
         petta_program_plan_current(program, anonymous_hole);
     assert(anonymous_hole_plan);
-    assert(anonymous_hole_plan->control == PETTA_PLAN_CONTROL_LET);
+    assert(cetta_control_operation_binding_layout(anonymous_hole_plan->control, 1u));
     assert(
         anonymous_hole_plan->continuation ==
         PETTA_PLAN_CONTINUATION_AFTER_ANONYMOUS_HOLE);
@@ -5219,8 +5219,7 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, let_star_control);
     assert(let_star_control_plan);
     assert(
-        let_star_control_plan->control ==
-        PETTA_PLAN_CONTROL_LET_STAR);
+        let_star_control_plan->control.operation == CETTA_CONTROL_SEQUENCE_MANY);
 
     Atom *dependent_arrow = parse_one(
         persistent, "(-> (: $value Number) Result)");
@@ -5318,7 +5317,7 @@ static void test_constructor_slot_frame_plans(
     assert(
         nested_plain_scalar_plan->execution ==
         PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS);
-    assert(nested_plain_scalar_plan->control == PETTA_PLAN_CONTROL_NONE);
+    assert(nested_plain_scalar_plan->control.operation == CETTA_CONTROL_NONE);
     assert(nested_plain_scalar_plan->contains_call);
     const PettaDeterministicRegionProgram *nested_plain_scalar_region =
         nested_plain_scalar_plan->deterministic_region;
@@ -5449,7 +5448,7 @@ static void test_constructor_slot_frame_plans(
         petta_program_plan_current(program, relation_call);
     assert(relation_plan);
     assert(relation_plan->role == PETTA_PLAN_STATIC_CALL);
-    assert(relation_plan->control == PETTA_PLAN_CONTROL_NONE);
+    assert(relation_plan->control.operation == CETTA_CONTROL_NONE);
     assert(
         relation_plan->execution ==
         PETTA_PLAN_EXEC_RELATION_SLOTS);
@@ -14655,12 +14654,407 @@ static void test_sequence_projection_views(Arena *arena) {
     puts("PASS: projection views preserve identity, empty-value policy and separate materialization");
 }
 
+/* A service's acceptance bit owns the entered effect, even if its result
+ * violates the producer protocol. Budget suspension retains that same entry. */
+typedef struct {
+    unsigned mode, attempts, effects, host_evaluations;
+    CettaOpenEquationCursor *cursor;
+    const CettaOpenEquationProgram *program;
+    CettaOpenEquationRead read;
+} ServiceReturnFixture;
+
+static bool test_service_builtin_allowed(void *opaque, SymbolId head) {
+    (void)opaque;
+    return head == g_builtin_syms.add_atom;
+}
+
+static bool test_service_current(void *opaque, Space *space,
+                                  const CettaOpenEquationProgram *program) {
+    ServiceReturnFixture *fixture = opaque;
+    return program == fixture->program &&
+        cetta_open_equation_program_refresh(program, space, &fixture->read);
+}
+
+static bool test_service_effect(void *opaque, Space *root, Arena *arena,
+                                 Atom **result) {
+    ServiceReturnFixture *fixture = opaque;
+    fixture->attempts++;
+    *result = NULL;
+    if (fixture->mode == 1u)
+        return false;
+    fixture->effects++;
+    assert(space_admit_atom(root, arena,
+        atom_expr2(arena, atom_symbol(arena, "ServiceEffect"),
+                   atom_int(arena, fixture->effects))));
+    if (fixture->mode == 3u)
+        cetta_open_equation_cursor_set_budget(fixture->cursor, 1u);
+    if (fixture->mode == 4u)
+        cetta_open_equation_cursor_set_budget(fixture->cursor, 1000000u);
+    if (fixture->mode != 2u)
+        *result = atom_symbol(arena, "true");
+    return true;
+}
+
+static bool test_service_admit(void *opaque, Space *root, Space *target,
+    Arena *arena, Atom *call, Atom **result) {
+    (void)root; (void)call;
+    return test_service_effect(opaque, target, arena, result);
+}
+
+static bool test_service_state(void *opaque, Space *root, Arena *arena,
+                                 Atom *call, Atom **result) {
+    (void)call;
+    return test_service_effect(opaque, root, arena, result);
+}
+
+static bool test_service_ordinary_admit(void *opaque, Space *space,
+    Arena *arena, Atom *call, Atom **result) {
+    (void)call;
+    return test_service_effect(opaque, space, arena, result);
+}
+
+static bool test_service_ordinary_fallback(void *opaque, Space *space,
+    Arena *arena, Atom *call, const Bindings *environment,
+    OutcomeSet *outcomes, CettaCallOutcome *end, const CettaDelayView *delay) {
+    (void)delay;
+    ServiceReturnFixture *fixture = opaque;
+    fixture->host_evaluations++;
+    assert(call->kind == ATOM_EXPR && call->expr.len == 3u);
+    fixture->effects++;
+    assert(space_admit_atom(space, arena,
+        atom_expr2(arena, atom_symbol(arena, "ServiceEffect"),
+                   atom_int(arena, fixture->effects))));
+    outcome_set_add(outcomes, atom_symbol(arena, "true"), environment);
+    *end = cetta_call_failure();
+    return true;
+}
+
+static void test_entered_service_returns(TermUniverse *universe, Arena *arena) {
+    const CettaOpenEquationStep expected[] = {
+        CETTA_OPEN_EQUATION_ANSWER, CETTA_OPEN_EQUATION_HOST,
+        CETTA_OPEN_EQUATION_FAULT, CETTA_OPEN_EQUATION_HANDOFF,
+        CETTA_OPEN_EQUATION_FAULT,
+    };
+    for (unsigned kind = 0u; kind < 2u; kind++) {
+        PettaProgram *program = petta_program_new();
+        assert(program);
+        Space space;
+        space_init_with_universe(&space, universe);
+        const char *operation = kind
+            ? "(change-state! service-name 7)"
+            : "(add-atom &self (ServicePayload 7))";
+        char source[512];
+        snprintf(source, sizeof(source), "(= (service-once) %s)", operation);
+        add_compiled_program_equation(program, &space, arena, source);
+        snprintf(source, sizeof(source),
+            "(= (service-budget) (let $ignored %s (superpose (finished finished))))",
+            operation);
+        add_compiled_program_equation(program, &space, arena, source);
+        snprintf(source, sizeof(source),
+            "(= (service-again) (let $ignored %s %s))", operation, operation);
+        add_compiled_program_equation(program, &space, arena, source);
+        for (unsigned mode = 0u; mode < 5u; mode++) {
+            const char *head = mode == 3u ? "service-budget"
+                : mode == 4u ? "service-again" : "service-once";
+            CettaOpenEquationHost host = {
+                .capture_reads = true,
+                .builtin_allowed = test_service_builtin_allowed,
+            };
+            const char *reason = NULL;
+            CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+                program, &space, symbol_intern_cstr(g_symbols, head), 0u,
+                &host, &reason);
+            if (!compiled)
+                fprintf(stderr, "service compile %u/%u: %s\n", kind, mode, reason);
+            assert(compiled);
+            for (unsigned raises = 0u; raises < 2u; raises++) {
+                Arena answers;
+                arena_init(&answers);
+                ServiceReturnFixture fixture = {
+                    .mode = mode, .program = compiled,
+                    .read = cetta_open_equation_program_read(compiled),
+                };
+                CettaOpenEquationRuntime runtime = {
+                    .context = &fixture, .program_current = test_service_current,
+                    .admit_ground_atom = test_service_admit,
+                    .named_state = test_service_state, .raises_he_errors = raises,
+                };
+                CettaCount before = space_length64(&space);
+                fixture.cursor = cetta_open_equation_cursor_open(
+                    compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
+                assert(fixture.cursor);
+                Atom *value = NULL;
+                CettaOpenEquationStep step = cetta_open_equation_cursor_next(
+                    fixture.cursor, NULL, &value, NULL);
+                if (step != expected[mode])
+                    fprintf(stderr, "service kind=%u mode=%u raises=%u step=%u cause=%u attempts=%u effects=%u\n",
+                        kind, mode, raises, step,
+                        cetta_open_equation_cursor_handoff(fixture.cursor),
+                        fixture.attempts, fixture.effects);
+                assert(step == expected[mode]);
+                if (mode == 0u) {
+                    assert(atom_is_symbol(value, "true"));
+                    assert(cetta_open_equation_cursor_next(fixture.cursor, NULL,
+                        &value, NULL) == CETTA_OPEN_EQUATION_EXHAUSTED);
+                } else if (mode == 1u) {
+                    Atom *goal = NULL, *destination = NULL;
+                    Atom *const *variables = NULL;
+                    uint32_t count = 0u;
+                    const PettaPlanNode *plan = NULL;
+                    CettaOpenEquationHostMode host_mode;
+                    bool recovers = false;
+                    assert(cetta_open_equation_cursor_host_goal(fixture.cursor,
+                        &goal, &destination, &variables, &count, &plan,
+                        &host_mode, &recovers));
+                    assert(goal && destination);
+                } else if (mode == 2u || mode == 4u) {
+                    assert(cetta_open_equation_cursor_handoff(fixture.cursor) ==
+                        (mode == 2u ? CETTA_OPEN_EQUATION_HANDOFF_SERVICE_ERROR
+                                    : CETTA_OPEN_EQUATION_HANDOFF_UNSUPPORTED));
+                } else {
+                    assert(cetta_open_equation_cursor_handoff(fixture.cursor) ==
+                        CETTA_OPEN_EQUATION_HANDOFF_BUDGET);
+                    cetta_open_equation_cursor_set_budget(fixture.cursor, 0u);
+                    assert(cetta_open_equation_cursor_next(fixture.cursor, NULL,
+                        &value, NULL) == CETTA_OPEN_EQUATION_ANSWER);
+                    assert(atom_is_symbol(value, "finished"));
+                    assert(cetta_open_equation_cursor_next(fixture.cursor, NULL,
+                        &value, NULL) == CETTA_OPEN_EQUATION_ANSWER);
+                    assert(atom_is_symbol(value, "finished"));
+                    assert(cetta_open_equation_cursor_next(fixture.cursor, NULL,
+                        &value, NULL) == CETTA_OPEN_EQUATION_EXHAUSTED);
+                }
+                assert(fixture.attempts == 1u);
+                assert(fixture.effects == (mode == 1u ? 0u : 1u));
+                assert(space_length64(&space) == before + fixture.effects);
+                cetta_open_equation_cursor_close(fixture.cursor);
+                arena_free(&answers);
+            }
+            cetta_open_equation_program_release(compiled);
+        }
+        petta_program_free(program);
+        space_free(&space);
+    }
+    for (unsigned mode = 0u; mode < 3u; mode++) {
+        Space space;
+        space_init_with_universe(&space, universe);
+        ServiceReturnFixture fixture = {.mode = mode};
+        PettaMachineHost host = {
+            .context = &fixture, .classify = test_admit_ground_atom_classify,
+            .admit_ground_atom = test_service_ordinary_admit,
+            .evaluate = test_service_ordinary_fallback,
+        };
+        PettaMachine machine;
+        Atom *query = parse_one(arena, "(add-atom &self (ServicePayload 7))");
+        assert(petta_machine_init(&machine, &space, arena, query, NULL, &host));
+        Atom *value = NULL;
+        Bindings environment;
+        bindings_init(&environment);
+        PettaMachineStep step = petta_machine_next(&machine, &value, &environment);
+        assert(step == (mode == 2u ? PETTA_MACHINE_STEP_HOST_ERROR
+                                   : PETTA_MACHINE_STEP_ANSWER));
+        if (mode != 2u)
+            assert(atom_is_symbol(value, "true"));
+        assert(fixture.attempts == 1u && fixture.effects == 1u);
+        assert(fixture.host_evaluations == (mode == 1u ? 1u : 0u));
+        assert(space_length64(&space) == 1u);
+        bindings_free(&environment);
+        petta_machine_destroy(&machine);
+        space_free(&space);
+    }
+    puts("PASS: 23 entered-service controls preserve effects, refusal, faults and exact budget resumption");
+}
+
+typedef struct {
+    unsigned mode;
+    unsigned attempts;
+    unsigned entries;
+} NativeReturnFixture;
+
+static bool test_compiled_native_invoke(void *opaque, Space *space, Arena *arena,
+    const CettaInvocation *invocation, CettaCallOutcome *outcome) {
+    (void)space;
+    NativeReturnFixture *fixture = opaque;
+    fixture->attempts++;
+    if (fixture->mode == 11u)
+        return false;
+    fixture->entries++;
+    CettaExprLen arity = 0u;
+    assert(cetta_invocation_arity(invocation, &arity) && arity == 4u);
+    assert(atom_is_symbol_id(invocation->head.skeleton, g_builtin_syms.lib_str));
+    Atom *const *arguments = cetta_invocation_borrow_arguments(invocation);
+    assert(arguments && atom_eq(arguments[0], atom_symbol(arena, "byte-slice")));
+    assert(atom_eq(arguments[1], atom_string(arena, "abc")));
+    assert(arguments[2]->ground.ival == 0 && arguments[3]->ground.ival == 1);
+    Atom *code = parse_one(arena, "(function (return (readln!)))");
+    switch (fixture->mode) {
+    case 0: *outcome = cetta_call_value(atom_int(arena, 7)); break;
+    case 1: *outcome = cetta_call_completed_value(code); break;
+    case 2:
+        *outcome = cetta_call_completed_frontier(
+            atom_expr2(arena, code, code));
+        break;
+    case 3: *outcome = cetta_call_failure(); break;
+    case 4:
+        *outcome = cetta_call_raised(atom_error(arena,
+            atom_symbol(arena, "native"), atom_symbol(arena, "raised")));
+        break;
+    case 5: *outcome = cetta_call_interrupted(); break;
+    case 6: {
+        Atom *variable = atom_var(arena, "$conditional");
+        *outcome = cetta_call_suspended(
+            atom_expr2(arena, atom_symbol(arena, "payload"), variable),
+            atom_expr2(arena, atom_symbol(arena, "condition"), variable));
+        break;
+    }
+    case 7: *outcome = cetta_call_value(NULL); break;
+    case 8:
+        *outcome = (CettaCallOutcome){.kind = (CettaCallOutcomeKind)99,
+                                    .term = code};
+        break;
+    case 9:
+        *outcome = (CettaCallOutcome){.kind = CETTA_CALL_VALUE, .term = code,
+                                    .result_form = (CettaCallResultForm)99};
+        break;
+    case 10: {
+        Atom *frontier = atom_expr2(arena, code, code);
+        frontier->expr.elems[1] = NULL;
+        *outcome = cetta_call_completed_frontier(frontier);
+        break;
+    }
+    case 12: *outcome = cetta_call_completed_frontier(atom_unit(arena)); break;
+    default: abort();
+    }
+    return true;
+}
+
+static void test_compiled_native_returns(TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    Space space;
+    space_init_with_universe(&space, universe);
+    add_compiled_program_equation(program, &space, arena,
+        "(= (native-packet) (__cetta_lib_str byte-slice \"abc\" 0 1))");
+    add_compiled_program_equation(program, &space, arena,
+        "(= (native-open $x) (__cetta_lib_str byte-slice $x 0 1))");
+    const char *reason = NULL;
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "native-packet"),
+        0u, NULL, &reason);
+    if (!compiled) fprintf(stderr, "native packet compile: %s\n", reason);
+    assert(compiled);
+    for (unsigned mode = 0u; mode <= 12u; mode++) {
+        Arena answers;
+        arena_init(&answers);
+        arena_set_hashcons(&answers, NULL);
+        NativeReturnFixture fixture = {.mode = mode};
+        CettaOpenEquationRuntime runtime = {
+            .context = &fixture, .invoke_native = test_compiled_native_invoke,
+        };
+        CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+            compiled, &answers, NULL, 0u, NULL, NULL, 0u, &runtime);
+        assert(cursor);
+        Atom *value = NULL;
+        CettaOpenEquationStep step =
+            cetta_open_equation_cursor_next(cursor, NULL, &value, NULL);
+        CettaOpenEquationStats stats;
+        cetta_open_equation_cursor_stats(cursor, &stats);
+        assert(fixture.attempts == 1u);
+        assert(fixture.entries == (mode == 11u ? 0u : 1u));
+        assert(stats.native_calls == fixture.entries);
+        CettaCallOutcome returned = cetta_call_failure();
+        if (mode <= 1u) {
+            assert(step == CETTA_OPEN_EQUATION_ANSWER && stats.host_goals == 0u);
+            assert(atom_eq(value, mode == 0u ? atom_int(&answers, 7)
+                : parse_one(&answers, "(function (return (readln!)))")));
+        } else if (mode == 3u) {
+            assert(step == CETTA_OPEN_EQUATION_EXHAUSTED && stats.host_goals == 0u);
+        } else if (mode == 4u) {
+            assert(step == CETTA_OPEN_EQUATION_RAISE && value && atom_is_error(value));
+        } else if (mode >= 7u && mode <= 10u) {
+            assert(step == CETTA_OPEN_EQUATION_FAULT && stats.host_goals == 0u);
+        } else {
+            Atom *goal = NULL, *destination = NULL;
+            Atom *const *variables = NULL;
+            uint32_t count = 0u;
+            const PettaPlanNode *plan = NULL;
+            CettaOpenEquationHostMode host_mode;
+            bool recovers = false;
+            if (step != CETTA_OPEN_EQUATION_HOST || stats.host_goals != 1u)
+                fprintf(stderr, "native packet mode=%u step=%d host-goals=%llu\n",
+                    mode, (int)step, (unsigned long long)stats.host_goals);
+            assert(step == CETTA_OPEN_EQUATION_HOST && stats.host_goals == 1u);
+            assert(cetta_open_equation_cursor_host_goal(cursor, &goal,
+                &destination, &variables, &count, &plan, &host_mode, &recovers));
+            if (mode == 11u) {
+                assert(host_mode == CETTA_OPEN_EQUATION_HOST_SOLVE);
+                assert(goal->kind == ATOM_EXPR && goal->expr.len == 5u);
+                assert(atom_is_symbol_id(goal->expr.elems[0], g_builtin_syms.lib_str));
+                assert(!cetta_open_equation_cursor_host_return(cursor, &returned));
+            } else {
+                assert(host_mode == CETTA_OPEN_EQUATION_HOST_NATIVE_RETURN);
+                assert(cetta_open_equation_cursor_host_return(cursor, &returned));
+                if (mode == 2u || mode == 12u) {
+                    assert(returned.kind == CETTA_CALL_VALUE);
+                    assert(returned.result_form == CETTA_CALL_RESULT_COMPLETED_FRONTIER);
+                    if (mode == 2u)
+                        assert(returned.term->expr.elems[0] == returned.term->expr.elems[1]);
+                    else
+                        assert(returned.term->expr.len == 0u);
+                } else if (mode == 5u) {
+                    assert(returned.kind == CETTA_CALL_INTERRUPTED && !returned.term);
+                } else {
+                    assert(returned.kind == CETTA_CALL_SUSPENDED && returned.delayed);
+                    assert(var_id_eq(returned.term->expr.elems[1]->var_id,
+                                      returned.delayed->expr.elems[1]->var_id));
+                }
+            }
+        }
+        cetta_open_equation_cursor_close(cursor);
+        /* Exported returns remain readable after their producer retires. */
+        if (mode == 2u)
+            assert(atom_eq(returned.term->expr.elems[0],
+                parse_one(&answers, "(function (return (readln!)))")));
+        if (mode == 6u)
+            assert(var_id_eq(returned.term->expr.elems[1]->var_id,
+                              returned.delayed->expr.elems[1]->var_id));
+        arena_free(&answers);
+    }
+    cetta_open_equation_program_release(compiled);
+    compiled = cetta_open_equation_program_compile(program, &space,
+        symbol_intern_cstr(g_symbols, "native-open"), 1u, NULL, &reason);
+    assert(compiled);
+    Arena answers;
+    arena_init(&answers);
+    Atom *variable = atom_var(&answers, "$open");
+    Atom *arguments[] = {variable};
+    Atom *query_variables[] = {variable};
+    NativeReturnFixture fixture = {0};
+    CettaOpenEquationRuntime runtime = {
+        .context = &fixture, .invoke_native = test_compiled_native_invoke,
+    };
+    CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+        compiled, &answers, arguments, 1u, NULL, query_variables, 1u, &runtime);
+    assert(cursor);
+    Atom *value = NULL;
+    assert(cetta_open_equation_cursor_next(cursor, query_variables, &value, NULL) ==
+           CETTA_OPEN_EQUATION_HOST);
+    assert(fixture.attempts == 0u && fixture.entries == 0u);
+    cetta_open_equation_cursor_close(cursor);
+    arena_free(&answers);
+    cetta_open_equation_program_release(compiled);
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: native invocation retains admission, tagged returns, aliases, delayed roots and escaped lifetime without replay");
+}
+
 int main(int argc, char **argv) {
     bool worker_only = argc == 2 && strcmp(argv[1], "--worker-ownership") == 0;
     bool resume_only = argc == 2 && strcmp(argv[1], "--resume-contract") == 0;
     bool arity_only = argc == 2 && strcmp(argv[1], "--arity-contract") == 0;
-    if (argc != 1 && !worker_only && !resume_only && !arity_only) {
-        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract]\n", stderr);
+    bool native_only = argc == 2 && strcmp(argv[1], "--native-return") == 0;
+    if (argc != 1 && !worker_only && !resume_only && !arity_only && !native_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--native-return]\n", stderr);
         return 2;
     }
     Arena persistent;
@@ -14683,6 +15077,11 @@ int main(int argc, char **argv) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    if (native_only) {
+        test_compiled_native_returns(&universe, &persistent);
+    test_entered_service_returns(&universe, &persistent);
+        goto release_owners;
+    }
     if (arity_only) {
         test_type_call_arity(&answers);
         test_type_call_facts(&answers);
@@ -14717,6 +15116,8 @@ int main(int argc, char **argv) {
     test_program_callability_head_kinds(&answers);
     test_compiled_graph_transport(&universe, &persistent);
     test_compiled_stable_host_answer(&universe, &persistent);
+    test_compiled_native_returns(&universe, &persistent);
+    test_entered_service_returns(&universe, &persistent);
     test_compiled_borrowed_suffix(&universe, &persistent);
     test_compiled_dependency_appends(&universe, &persistent);
     test_compiled_type_guard_protocol(&universe, &persistent);

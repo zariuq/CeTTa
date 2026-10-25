@@ -451,6 +451,8 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
     SymbolId head = atom_head_symbol_id(atom);
     CettaExprLen nargs = atom->kind == ATOM_EXPR && atom->expr.len
         ? expr_nargs(atom) : 0u;
+    CettaControlOperationPlan control = {0};
+    cetta_control_operation_decode(head, nargs, &control, &g_builtin_syms);
     bool invoked = false;
     Atom *prepared = NULL;
     PreparedMinimalWorkerResult worker =
@@ -490,8 +492,8 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
             outcome_set_add(&raw, types[i], &env);
         free(types);
         invoked = true;
-    } else if (head == g_builtin_syms.superpose && nargs == 1u) {
-        Atom *list = expr_arg(atom, 0);
+    } else if (control.operation == CETTA_CONTROL_ORDERED_CHOICE) {
+        Atom *list = expr_arg(atom, control.source);
         Atom *const *elements;
         CettaExprLen count;
         if (!atom_sequence_view(list, &elements, &count)) {
@@ -500,8 +502,20 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
         } else if (count == 0u) {
             outcome_set_add(&raw, legacy_empty_sentinel(a), &env);
         } else {
-            for (CettaExprIndex i = 0u; i < count; i++)
-                outcome_set_add(&raw, elements[i], &env);
+            Atom frontier = {.kind = ATOM_EXPR, .expr = {
+                .elems = (Atom **)elements, .len = count}};
+            CettaCallReturnCursor cursor = {
+                .outcome = cetta_call_expression_frontier(&frontier),
+                .environment = &env,
+                .select_expressions = true,
+            };
+            CettaOwnedReturn returned;
+            CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+            while (cetta_call_return_next(&cursor, &returned, &completion) ==
+                    CETTA_OWNED_EXECUTION_RETURN)
+                outcome_set_add(&raw, returned.outcome.term, returned.environment);
+            if (completion != CETTA_EVAL_COMPLETE)
+                eval_mark_incomplete(completion);
         }
         invoked = true;
     } else if (head == g_builtin_syms.match && nargs == 3u && g_registry) {

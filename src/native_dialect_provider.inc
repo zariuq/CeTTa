@@ -1185,7 +1185,8 @@ static bool native_dialect_schedule_type(PrimeNativeControl *control, Space *spa
             .compiler_identity=cetta_match_decision_compiler_identity()};
     PettaMachineHost host = petta_eval_machine_host(&owner->context,fuel,false,
         owner->portable,true,!owner->portable &&
-        petta_eval_machine_source_output_constraints_required(space,expression),
+        cetta_language_call_result_policy(eval_current_language_id()) ==
+            CETTA_CALL_RESULT_BY_DESTINATION,
         type_obligations,identity);
     host.externalize_equation_choices = true;
     host.admit_branch_capture = native_dialect_admit_capture;

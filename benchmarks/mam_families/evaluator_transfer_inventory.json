@@ -155,6 +155,11 @@
           "reference": 2
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      },
+      "worklist_representation": {
+        "source": "src/open_equation_machine.c:oem_unify",
+        "rule": "Keep the active pair local and defer only its siblings. Preserve the existing exact matcher, chronological pair order, full suffix coordinates, partial stores and rollback authority.",
+        "proof": "Mettapedia.Machines.UnificationWorklist; exact inspection prefixes and residuals, with native C and allocation/capacity correspondence separate."
       }
     },
     {
@@ -566,6 +571,45 @@
         "scope": "Storage does not establish readiness, type validity or source authority. Logical resolution reads the entrance world. A resolved vector cannot be reused across mutation or rollback. Native/result ABI vectors may borrow only within their synchronous lifetime.",
         "materialization": "One explicit syntax builder qualifies lexical identities without evaluating operands. A contiguous unqualified native vector is borrowed unchanged.",
         "proof": "Mettapedia.Machines.NativeCallReturn.Arguments.Input: split array lookup refines independent flat argument order and observations in every current world."
+      },
+      "common_control_slice": {
+        "operations": [
+          "ordered-choice",
+          "failure"
+        ],
+        "plan_bytes": 4,
+        "source_rows": 9,
+        "nullary_failure": "No operand is read after arity admission.",
+        "consumers": [
+          "petta_semantics_control_plan",
+          "petta_machine_dispatch_solve",
+          "oem_build_control",
+          "oem_build_value_native",
+          "he_raw_collect",
+          "contract_eval"
+        ],
+        "scope": "Ordered source choice and failure share decoding and return selection; logical rollback and dialect completion keep their existing owners. No fold lowering is admitted for the two operations.",
+        "activation_reuse": "The worker admits only its supported sequence, branch, binding, force and return-scope operations. Ordered choice and failure retain their existing checkpoint/owner boundary; decoding alone grants no activation-reuse permission.",
+        "typed_contracts": "petta_contract_core consumes the failure plan as bottom before the generic unsupported-control refusal. Empty data and held syntax do not receive that fact."
+      },
+      "result_destination_contract": {
+        "source": [
+          "src/lang.h:CettaCallResultPolicy",
+          "src/eval.c:prepared_pure_source_view_for_language",
+          "src/eval_work.inc:eval_work_start_general_reopened",
+          "src/prepared_pure_machine.c:prepared_pure_compile_source_bind"
+        ],
+        "rule": "Argument readiness, source result matching, return provenance and ownership remain independent. PeTTa keeps its destination; value-first source binds require fresh-receiver, inert-value or closed finite-operation admission. Purity alone does not establish termination or mode independence.",
+        "control": "Plain PeTTa controls cover recursion rejection, prebound receivers, variable observations, duplicate answers, argument effects and retained callee alternatives; expected results were checked against frozen SWI-PeTTa1.0.6.",
+        "proof": "Mettapedia.Machines.InvocationResultDemand; contextual kernel execution and separating controls, with native correspondence open."
+      },
+      "borrowed_ordinary_invocation": {
+        "source": "src/petta_search_machine.c:petta_machine_try_ready_relation_invocation",
+        "input": "CettaInvocation; captured then supplied spans over the current logical environment.",
+        "admission": "Reuse the existing language-owned ready-relation inquiry, including specialization, arity, declarations and foreign dispatch. Preserve observed/finite-fuel entry boundaries. Refusal is before callee entry; a handled failure cannot replay.",
+        "consumer": "Ordinary CALL_READY and unlimited APPLY_READY use the same service. Admitted private partials omit the eager syntax expansion; consumers can still request concrete query syntax.",
+        "validation": "Native consumer controls intercept expansion, including empty captures, complete captures, refusal and finite-fuel paths. Public controls retain declared error-scope, held-operand and mutation laws.",
+        "proof": "Mettapedia.Machines.ContextualInvocation; independent argument readers, contextual kernel entry and subsequent slices. Native C admission/lifetimes remain separate."
       }
     },
     {
@@ -587,10 +631,14 @@
         {
           "file": "src/owned_execution.h",
           "symbol": "CettaCallReturnCursor"
+        },
+        {
+          "file": "src/owned_execution.c",
+          "symbol": "cetta_owned_bind_open"
         }
       ],
       "admission": "Value, failure, raised error, interruption and suspension remain distinct; acceptance and publication retain their owner.",
-      "remaining_transfer": "Native result delivery now shares CettaCallReturnCursor and sequence_native_call across ready PeTTa calls and HE native-return boundaries. General invocation plans, foreign constraint delivery and dialect elaboration still need migration to the common computation representation.",
+      "remaining_transfer": "Owned residual, ordinary prepared-native and closed PeTTa search-machine continuations share tagged returns and pending ownership. Scalar consumers refuse native-required plans before entry with a result-demand-specific cache key. General invocation plans, OEM lexical workers, constraint registration and remaining dialect elaboration still need migration.",
       "measure": [
         "returns accepted",
         "pending returns",
@@ -682,7 +730,75 @@
         "lifetime": "The cursor borrows payload storage and the current logical environment. It allocates no value wrapper; its caller retains both through pending acceptance.",
         "completion": "The first incomplete cause survives subsequent returns. Malformed producer results interrupt with host failure, rather than certifying an empty frontier.",
         "proof": "Mettapedia.Machines.NativeCallReturn: independent list refinement, exact ordered prefixes, split resumption, final-return certificates, live context identities and matching publication-allowance bounds. Argument preparation preserves ordered identities and borrows exactly unchanged vectors. Native C correspondence remains separate.",
-        "arguments": "Synchronous native vectors are borrowed and read-only. The direct argument preparer borrows an unchanged vector and allocates on the first changed identity, preserving preparation order and source storage. Escaping Atom ownership and prepared result views remain separate contracts."
+        "arguments": "Synchronous native vectors are borrowed and read-only. The direct argument preparer borrows an unchanged vector and allocates on the first changed identity, preserving preparation order and source storage. Escaping Atom ownership and prepared result views remain separate contracts.",
+        "ordinary_consumers": {
+          "shared": "Six search-machine delivery sites share scalar delivery and tagged non-scalar completion, including the entered OEM return goal.",
+          "canonical": "Row collections, batch mutations and sequence-constructor arity preflight consume CettaCallOutcome directly.",
+          "reflection": "HE one-step reflection retains explicit syntax projection; this is an observation boundary.",
+          "scope": "HE arity preflight retains its own demand policy. Ordinary closed calls and closed PeTTa search callees use the same typed prepared-return driver. General constraint registration and OEM lexical completion remain open."
+        },
+        "prepared_ordinary": {
+          "entry": "eval_prepared_pure_native_call",
+          "lowering": "Every native-required user call lowers to an explicit CPS invocation. Register execution lowers these same steps. Callee refusal and physical-budget exit share exact ready-call handoff; pending native packets retain initialized live slots and waiting callers.",
+          "caller": "prepared_pure_closed_answers_try and petta_machine_pull_prepared_answer via prepared_pure_next_return",
+          "completion": "A replacement worker completes an entered expression without invoking the source native again. Grounded faults after native entry retain a ready invocation.",
+          "scope": "Closed eager calls accept completed ground values and ordered native frontiers. Search worker selection includes a single equation; scalar consumers decline native-required code before entry. Dynamic heads, unsupported call arities and open source values retain ordinary execution. HE native branches retain ordinary held-operand/type completion until its adapter is joined.",
+          "authority": "Reuse the owned-answer source, library, declaration, foreign identity and capability snapshot. Revalidate after an ordinary completion worker before reading saved code.",
+          "source_fuel": "Decline under explicit or inherited semantic fuel. Physical refill preserves the actual frontier and current authority; it does not replenish source fuel. Producer and publication allowances remain independent.",
+          "retirement": "CPS entry and register-budget handoff share exhausted-caller retirement. Native producer loans remain live until child retirement. The 65-step control rejects retained exhausted frames and repeated native work.",
+          "ownership": "Native-capable search cursors detach entry operands before effects. Stable call admission owns the authority callback; parent collection, cancellation and interleaved readers preserve independent pending returns.",
+          "availability": "Host construction omits prepared workers when reference execution or semantic fuel makes them unavailable. This is a configuration fact, not failed native execution."
+        }
+      },
+      "sequencing_contract": {
+        "state": "CettaOwnedBind",
+        "pending": "Producer acceptance is deferred until its child retires. Consumer refusal retains the child return.",
+        "handoff": "Declined child admission retains the actual producer packet; replacement does not reenter source work. An entered child retains its own residual.",
+        "finality": "Final certificates are checked after continuation effects and actual consumption.",
+        "work": "One next operation pulls at most one producer occurrence; an empty child may pause without publishing an answer.",
+        "callers": [
+          {
+            "file": "src/eval_owned_execution.inc",
+            "symbol": "eval_owned_residual_body",
+            "role": "runtime residual continuation"
+          },
+          {
+            "file": "tests/test_shared_return_producer.c",
+            "symbol": "test_real_prepared_producer",
+            "role": "real compiled cursor composition control"
+          },
+          {
+            "file": "src/prepared_pure_machine.c",
+            "symbol": "cetta_prepared_pure_answer_cursor_resume_native",
+            "role": "runtime native-result replacement retaining the producer loan"
+          }
+        ],
+        "scope": "Owned residual continuations, native-result replacement and compiled-cursor composition. Ready-data collection retains its measured native leaf. No new fixed-catalog benchmark cells.",
+        "rejected_transfer": {
+          "consumer": "emit_unquoted_mork_rows",
+          "reason": "At 8192 rows x 64 invocations, the first generic body used 2.68x baseline instructions and 2.33x wall time. Borrowed direct-row and inlined/normalized pilots still exceeded the 5% cost bar. The native bulk-data leaf is retained.",
+          "baseline": "b29e972a",
+          "scope": "Private matched harness; screening measurements, not application acceptance."
+        }
+      },
+      "native_completion_slice": {
+        "roles": "Completed frontiers lend data. Expression frontiers remain one pending computation until native completion; qualified source choice selects expressions incrementally.",
+        "callers": [
+          "sequence_native_call",
+          "petta_eval_machine_deliver_native_return",
+          "prepared_native_completion_next",
+          "PETTA_CHOICE_SUPERPOSE",
+          "he_raw_collect"
+        ],
+        "implementation": "CettaCallReturnCursor carries the admitted selection stage. complete_native_expression_frontier buffers native computation before caller delivery, captures its lexical environment in a private owner, and preserves first incomplete cause independently of an enclosing tracker.",
+        "control": "Entered interrupted native and host calls stop without branch fallback or re-entry. A ready completed frontier may publish a valid prefix; an uncompleted malformed packet publishes none.",
+        "evidence": "Generated library-value-dispatch metadata qualifies legacy single values at both entry workers. Explicit computation roles are preserved.",
+        "models": [
+          "NativeCallReturn",
+          "ExecutionControl.Selection",
+          "OwnedBind.NativeCompletion"
+        ],
+        "remaining": "General C elaboration/refinement, semantic source-fuel joins, HE typed completion and Prime adapter migration remain open."
       }
     },
     {
@@ -1233,6 +1349,11 @@
           "reference": 8
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
+      },
+      "shared_refusal_contract": {
+        "source": "cetta_prepared_pure_program_compile_closed",
+        "scope": "With ready eager arguments and current source, scalar compilation may certify answer refusal through an explicit terminal dialect refusal or an answer-excluding projection gate reached before the first demand observation. Publish under the existing answer-demand key. Scalar failure alone supplies no answer fact.",
+        "proof": "Mettapedia.Machines.CompilerDemandTrace: independent script interpreter, demand observer, common terminal and explicit-gate refusal laws, their answer-refusal join, and separating controls for earlier demand, handled probes, resource failure and scalar-only refusal. C correspondence and source-stamp completeness remain separate."
       }
     },
     {
@@ -2051,11 +2172,11 @@
     },
     {
       "idea": "Universal CBPV interpreter before parity",
-      "state": "deferred_pending_evidence",
+      "state": "common_semantics_migration_in_progress",
       "native": [
         "src/owned_execution.h"
       ],
-      "next": "Use value/computation/continuation separation through existing contracts. The consolidated theory separates algebra, representation, typing and execution and does not select one universal interpreter. Adopt runtime abstractions only when adapters disappear and ordinary-call cost is preserved or improved."
+      "next": "Complete ordinary and specialized elaboration/refinement beyond shared invocation, sequencing, ordered choice/failure and the scoped commitment/handler slice. Preserve dialect-owned demand, source fuel and actual residuals; physical worker count follows semantic obligations and measurements."
     }
   ],
   "non_prolog_comparisons": [
@@ -2147,6 +2268,30 @@
         "Mettapedia.Machines.SubstitutionDemand"
       ],
       "boundary": "Ordered occurrence transport and independent restored trials are proved in explicit models. The substitution-demand model also covers a private runtime proposal withheld by cost measurements. Native frontier summaries, C lifetimes, complete compiler correspondence and whole-runtime optimality remain obligations."
+    },
+    {
+      "construction": "Mettapedia/Machines/ContextualCBPV.lean",
+      "application": "Contextual computation/continuation transitions retain generic native workers, per-answer branch contexts, ordered occurrences, lexical captures and scoped handler choice floors. Pull effects do not reenter native factories. Explicit source occurrences and semantic charges have a conserved purse independent of physical slices. Logical-store rollback, dialect elaboration and native C correspondence remain open joins. Explicit call delimiters and commitment retain the outside choice suffix, the successful branch and committed effects. The concrete stack transition refines ScopedCommit CPS commitment; ExecutionControl joins dialect-form layouts to contextual commitment and Error-to-value handlers. Runtime qualification of this scoped extension is in progress."
+    },
+    {
+      "construction": "Mettapedia/Machines/ConditionalContextProjection.lean",
+      "application": "The existing finite Horn worklist closes value and pending-check support under current store bindings. Restriction to the computed least context preserves finite substitution derivations in both directions. Canonical projection retains both roots; prefix merging transports conditional metadata, and existing whole-outcome relocation preserves ownership. Native graph and attributed-variable correspondence remain separate obligations."
+    },
+    {
+      "construction": "Mettapedia/Machines/OwnedBind.lean",
+      "application": "A finite contextual bind lowers to the existing explicit child-frame driver. Independent recursive traces establish ordered multiplicity, held packet context, admission handoff versus zero, replacement-worker suffixes and split effect/history laws. Native live-worker and ownership correspondence remain separate obligations."
+    },
+    {
+      "construction": "Mettapedia/Machines/InvocationResultDemand.lean",
+      "application": "Common-kernel result protocol controls separate finite closed entry from result-sensitive recursion and retain a callee's later alternatives after a selected body fails. These do not establish the full C classifier correspondence."
+    },
+    {
+      "construction": "Mettapedia/Machines/UnificationWorklist.lean",
+      "application": "An active register and deferred siblings refine an explicit worklist at every inspection allowance, retaining partial stores, faults, chronology and exact residuals. The cost model counts stack traffic; bounded native allocation and C correspondence remain separate."
+    },
+    {
+      "construction": "Mettapedia/Machines/ContextualInvocation.lean",
+      "application": "Borrowed ready invocations join the existing native field-reader and certified partial-expansion models to contextual CBPV entry. Exact post-entry computations and continuations agree, including ordered arguments, lexical scopes, source debits and arbitrary later slices; native admission and C correspondence remain separate."
     }
   ],
   "cross_tree_reconciliation": [

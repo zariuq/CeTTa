@@ -52,22 +52,30 @@ typedef struct {
     CettaExprLen count;
 } CettaArgumentSpan;
 
-typedef struct {
+typedef struct CettaInvocation {
     BindingValue head;
     CettaArgumentSpan captured;
     CettaArgumentSpan supplied;
 } CettaInvocation;
 
+static inline bool cetta_argument_span_valid(const CettaArgumentSpan *span) {
+    return span && (!span->count || (!!span->atoms != !!span->values));
+}
+
+/* Reads a single admitted operand without changing its lexical coordinate. */
+static inline BindingValue cetta_argument_span_value(
+        const CettaArgumentSpan *span, CettaExprIndex index) {
+    assert(index < span->count);
+    return span->values ? span->values[index]
+        : binding_value_from_atom(span->atoms[index]);
+}
+
 /* Arity admission observes no operand and performs no allocation. */
 static inline bool cetta_invocation_arity(
         const CettaInvocation *call, CettaExprLen *arity) {
     if (!call || !arity || !call->head.skeleton ||
-        (call->captured.count &&
-         ((!call->captured.atoms && !call->captured.values) ||
-          (call->captured.atoms && call->captured.values))) ||
-        (call->supplied.count &&
-         ((!call->supplied.atoms && !call->supplied.values) ||
-          (call->supplied.atoms && call->supplied.values))) ||
+        !cetta_argument_span_valid(&call->captured) ||
+        !cetta_argument_span_valid(&call->supplied) ||
         call->captured.count > UINT64_MAX - call->supplied.count)
         return false;
     *arity = call->captured.count + call->supplied.count;
@@ -83,9 +91,7 @@ static inline BindingValue cetta_invocation_argument(
         index -= span->count;
         span = &call->supplied;
     }
-    assert(index < span->count);
-    return span->values ? span->values[index]
-        : binding_value_from_atom(span->atoms[index]);
+    return cetta_argument_span_value(span, index);
 }
 
 /* A contiguous unqualified vector can be loaned to an existing native ABI.
@@ -169,14 +175,19 @@ typedef enum {
     CETTA_OWNED_EXECUTION_INTERRUPTED,
 } CettaOwnedExecutionStep;
 
-/* A native call already ran. This cursor lends its returned occurrences;
- * advancing it neither invokes the operation nor interprets any payload.
+/* An entered call or qualified choice lends its returned occurrences;
+ * advancing this cursor neither invokes a producer nor interprets a payload.
  * The caller retains the payloads and logical environment through delivery.
- * Only VALUE/COMPLETED_FRONTIER expands into several completed values. */
+ * Completed frontiers lend data occurrences. An expression frontier stays
+ * one pending computation unless an admitted choice view selects its
+ * individual expressions for interpretation. */
 typedef struct {
     CettaCallOutcome outcome;
     const Bindings *environment;
     CettaExprIndex position;
+    /* An admitted choice view selects expression occurrences. Otherwise an
+     * expression frontier remains one computation for native completion. */
+    bool select_expressions;
 } CettaCallReturnCursor;
 
 static inline CettaOwnedExecutionStep cetta_call_return_next(
@@ -193,7 +204,9 @@ static inline CettaOwnedExecutionStep cetta_call_return_next(
         cetta_eval_completion_record(completion, CETTA_EVAL_INCOMPLETE_CANCELLED);
         return CETTA_OWNED_EXECUTION_INTERRUPTED;
     case CETTA_CALL_VALUE:
-        if (outcome.result_form == CETTA_CALL_RESULT_COMPLETED_FRONTIER) {
+        if (outcome.result_form == CETTA_CALL_RESULT_COMPLETED_FRONTIER ||
+            (outcome.result_form == CETTA_CALL_RESULT_EXPRESSION_FRONTIER &&
+             cursor->select_expressions)) {
             Atom *frontier = outcome.term;
             if (cursor->position >= frontier->expr.len)
                 return CETTA_OWNED_EXECUTION_COMPLETE;
@@ -202,7 +215,8 @@ static inline CettaOwnedExecutionStep cetta_call_return_next(
                 break;
             cursor->position++;
             *returned = (CettaOwnedReturn){
-                .outcome = cetta_call_completed_value(value),
+                .outcome = {.kind = CETTA_CALL_VALUE, .term = value,
+                    .result_form = cetta_call_frontier_element_form(outcome.result_form)},
                 .environment = cursor->environment,
                 .final = cursor->position == frontier->expr.len,
             };
@@ -428,10 +442,57 @@ CettaOwnedExecutionStep cetta_owned_execution_sequence_with(
         execution, allowance, next, consume, consumer, NULL, NULL, NULL);
 }
 
+/* Borrow one pending occurrence without acknowledging it. A continuation
+ * keeps this loan until its child retires; repeated loans do not step the
+ * producer. Acceptance validates the final certificate at that later point. */
+CettaOwnedExecutionStep cetta_owned_execution_loan(
+    CettaOwnedExecution *execution, const CettaOwnedReturn **returned);
+bool cetta_owned_execution_accept(CettaOwnedExecution *execution);
+
 /* Synchronous release explicitly admits indivisible cleanup services and
  * drains the same retained provider. It neither undoes accepted effects nor
  * publishes a pending loan; retained borrowed returns must be published first. */
 void cetta_owned_execution_cancel(CettaOwnedExecution *execution);
+
+/* Build the computation following one value occurrence. The producer keeps
+ * that value and its environment live until this computation finishes.
+ * False declines continuation admission before its execution; the sequence
+ * retains the actual return for another worker, never the original call.
+ * Body ownership transfers on true only. On false the factory retains its
+ * own allocations and must not leave an owned body in the output. */
+typedef bool (*CettaOwnedBindBody)(void *context,
+    const CettaOwnedReturn *returned, CettaOwnedExecution *body);
+
+typedef struct {
+    CettaOwnedExecution producer;
+    CettaOwnedExecution body;
+    CettaOwnedBindBody continuation;
+    void *context;
+    bool has_body;
+    bool body_returned;
+    bool forwarded;
+    bool awaiting_body;
+} CettaOwnedBind;
+
+/* Move producer ownership into fresh caller-supplied sequence storage.
+ * Logical failure skips the continuation; raised control is forwarded.
+ * Each next call pulls at most one producer occurrence. An empty body may
+ * pause without publication, so infinite zero-producing work stays resumable.
+ * Answers borrow body storage until the next call. Finality is checked after
+ * the real consumer accepts, including changes made by the continuation. */
+bool cetta_owned_bind_open(CettaOwnedExecution *execution,
+    CettaOwnedBind *bind, CettaOwnedExecution *producer,
+    CettaOwnedBindBody continuation, void *context);
+
+/* A continuation-admission handoff retains the complete producer packet. */
+const CettaOwnedReturn *cetta_owned_bind_pending(const CettaOwnedBind *bind);
+
+/* Move an admitted replacement body into that handoff. The producer is not
+ * stepped or reentered, and its pending return remains owned until body exit.
+ * A handoff inside an entered body instead retains body itself; its adapter
+ * must transfer that residual rather than restart continuation admission. */
+bool cetta_owned_bind_resume(CettaOwnedExecution *execution,
+    CettaOwnedBind *bind, CettaOwnedExecution *body);
 
 /* A selected host service connects the existing queue to actual owned calls.
  * Task addresses and callback context remain stable until cancellation. This
