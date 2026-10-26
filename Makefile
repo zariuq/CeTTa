@@ -795,6 +795,7 @@ SRC = src/ready_queue.c src/symbol.c src/scalar_trie.c src/atom.c src/term_graph
 SRC += src/weight_ledger.c src/ordinal_priority.c src/native_cost.c src/native_cost_graph.c src/resource_wave.c src/native_space_agenda.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
+SRC += src/expand_user.c
 SRC += src/library_fs.c
 SRC += src/petta_priority_heap.c
 SRC += src/library_postings.c src/tensor.c src/tensor_screening.c src/library_tensor.c src/library_group.c
@@ -34219,6 +34220,19 @@ $(FORMAT_FIXED_NATIVE_TEST_V1): tests/support/test_format_fixed_bound_v1.c src/s
 test-all: test-format-fixed-v1
 test-format-fixed-v1: $(FORMAT_FIXED_NATIVE_TEST_V1)
 	@$(call cetta_exec,./$(FORMAT_FIXED_NATIVE_TEST_V1))
+
+# The account lookup through wrapped account-database and allocator seams.
+EXPANDUSER_SEAMS_TEST_V1 = runtime/test-expanduser-seams-v1-$(BUILD_OBJ_TAG)
+$(EXPANDUSER_SEAMS_TEST_V1): tests/support/test_expanduser_seams_v1.c src/expand_user.c src/expand_user.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_expanduser_seams_v1.c src/expand_user.c \
+		-Wl,--wrap=malloc,--wrap=realloc,--wrap=free,--wrap=strndup,--wrap=getpwnam_r,--wrap=getpwuid_r
+
+.PHONY: test-expanduser-v1
+test-all: test-expanduser-v1
+test-expanduser-v1: $(BIN) tests/support/check_expanduser_v1.py $(EXPANDUSER_SEAMS_TEST_V1)
+	@$(call cetta_exec,./$(EXPANDUSER_SEAMS_TEST_V1))
+	@python3 tests/support/check_expanduser_v1.py ./$(BIN)
 
 .PHONY: test-text-streaming-v1
 test-all: test-text-streaming-v1

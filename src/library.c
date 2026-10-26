@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "library.h"
+#include "expand_user.h"
 #include "errno_names.h"
 #include "effect_policy.h"
 
@@ -4651,6 +4652,28 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
             for (const CettaErrnoName *entry = cetta_errno_names; entry->name; entry++)
                 if (!strcmp(entry->name, name)) return atom_int(a, entry->value);
             return atom_unit(a);
+        }
+        /* os.path.expanduser as CPython 3.12's posixpath has it; see
+         * src/expand_user.c. MemoryError is reported, as CPython raises it. */
+        if (!strcmp(operation, "expanduser") && nargs == 2) {
+            const char *path = library_text_arg(args[1]);
+            if (!path) return library_signature_error(a, head, args, nargs, "expected a path as text");
+            char *expanded = NULL;
+            size_t expanded_length = 0u;
+            switch (cetta_expand_user(path, strlen(path), CETTA_STRING_BYTES_MAX, &expanded, &expanded_length)) {
+            case CETTA_EXPAND_USER_EXPANDED: {
+                Atom *value = atom_string_n(a, expanded, expanded_length);
+                free(expanded);
+                return value;
+            }
+            case CETTA_EXPAND_USER_UNCHANGED:
+                return atom_string(a, path);
+            case CETTA_EXPAND_USER_TOO_LONG:
+                return library_signature_error(a, head, args, nargs, "the expanded path is longer than a string can be");
+            case CETTA_EXPAND_USER_NO_MEMORY:
+                break;
+            }
+            return library_signature_error(a, head, args, nargs, "out of memory reading the account database");
         }
         if (!strcmp(operation, "format-time") && nargs == 4) {
             const char *format = library_text_arg(args[1]), *zone = library_text_arg(args[3]);
