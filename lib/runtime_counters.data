@@ -1199,4 +1199,15 @@
   ; Nodes inspected by additive fold attempts, including declined prefixes.
   (1097 OPEN_EQUATION_ALGEBRAIC_SCALAR_NODE "open-equation-algebraic-scalar-node")
   ; Accepted direct native entries; a refusal performs no native call.
-  (1098 OPEN_EQUATION_NATIVE_CALL "open-equation-native-call")))
+  (1098 OPEN_EQUATION_NATIVE_CALL "open-equation-native-call")
+  ; Cons cells a reader read back as the flat list they spell.  A complete
+  ; list is built flat, so only a list whose tail was open when it was built
+  ; is read this way.
+  (1099 PETTA_LIST_CELLS_FLATTENED "petta-list-cells-flattened")
+  ; The ordered rows of each head and length that a query selecting by its
+  ; head alone reads lazily: indexes built, rows they were built over,
+  ; cursors that read one, and rows those cursors offered.
+  (1100 SPACE_HEAD_INDEX_BUILD "space-head-index-build")
+  (1101 SPACE_HEAD_INDEX_BUILD_ROW "space-head-index-build-row")
+  (1102 SPACE_HEAD_INDEX_CURSOR "space-head-index-cursor")
+  (1103 SPACE_HEAD_INDEX_ROW "space-head-index-row")))

@@ -26,4 +26,9 @@ bool cetta_equation_presentation_exact(
     Arena *scratch, Space *space, const char *head_name,
     const char *const *sources, size_t count);
 
+/* The same, for equations already parsed: `expected` are `(= lhs rhs)`. */
+bool cetta_equation_presentation_exact_atoms(
+    Arena *scratch, Space *space, SymbolId head,
+    Atom *const *expected, size_t expected_count);
+
 #endif /* CETTA_EQUATION_PRESENTATION_H */
