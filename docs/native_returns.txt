@@ -26,7 +26,14 @@ through the same environment. Keeping a cursor does not acquire payload
 ownership. Independent publication uses the existing owned-return image
 protocol where required.
 
-The cursor also implements CettaOwnedExecutionNext. Owned sequencing retains
+Space occurrence cursors likewise lend an optional payload with the selected
+logical coordinate in one `next` transition. The payload is read from that
+same physical occurrence, in either the current or detached pinned view.
+Capture metadata is established after index preparation, which may contract
+marked storage. Selection performs no authoritative matching, and the loan
+adds no payload ownership.
+
+CettaCallReturnCursor also implements CettaOwnedExecutionNext. Owned sequencing retains
 an unaccepted return and resumes it before asking for another. A zero delivery
 allowance does not pull the producer. Accepted occurrences are not replayed.
 Cancellation releases the computation owner; borrowed cursor storage remains
@@ -420,6 +427,22 @@ borrows until each child retires. Logical zero leaves no child. Raised control
 bypasses the value continuation. Interrupted and malformed results keep their
 own incomplete causes. A private Empty or Error spelling does not choose any
 of these machine states.
+
+The search-machine entry lends immutable argument graphs until its parent
+heap is reclaimed. A synchronous completed native call keeps that loan. The
+existing external-owner guard protects the synchronous pull from caller
+relocation during reentrant completion and ends before the consumer resumes.
+A native residual owns the frontier, actual tagged packet and live locals
+before suspension. Register readback and step execution use this same retain
+boundary. A completed register region copies its answer out of reusable
+program storage only when collection created survivor storage.
+
+Cursor.NativeBorrowedReturn checks graph transport, ordered control traces,
+duplicate occurrences, finite event prefixes and release safety against an
+eager-transfer model. Its graph observer forgets storage homes; payload
+contents, C root enumeration, copy-session sharing and authored source fuel
+remain separate obligations. Native controls cover borrowed identity and
+aliased residuals after source reclamation.
 
 native_boundary lends either an unentered ready invocation or its actual
 pending packet. resume_native takes a replacement producer through the existing

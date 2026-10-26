@@ -976,6 +976,11 @@ static bool prepared_native_completion_open(Space *space,
 static CettaOwnedExecutionStep prepared_pure_next_return(Space *space,
         CettaPreparedPureAnswerCursor *cursor, uint64_t transition_refill,
         CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    /* Entry values may still belong to the caller. Reentrant completion
+     * cannot relocate that owner until this pull returns its typed result. */
+    __attribute__((cleanup(eval_gc_external_owner_guard_leave)))
+    EvalGcExternalOwnerGuard borrowed = {0};
+    eval_gc_external_owner_guard_enter(&borrowed);
     for (;;) {
         CettaOwnedExecutionStep step = cetta_prepared_pure_answer_cursor_return(
             cursor, returned, completion);
