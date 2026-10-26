@@ -7,6 +7,7 @@
 #include "atom.h"
 #include "space.h"
 #include "symbol.h"
+#include "prime_level.h"
 
 /* Draft scoped judgment bubbles beside the existing `type:` vocabulary.
  *
@@ -78,6 +79,17 @@ void prime_scoped_judgment_note_theorem_instance(uint64_t instance);
  * admission did not publish. Membership does not replace the current
  * signature, dependency or execution-permission checks. */
 bool prime_scoped_judgment_admitted(Arena *a, Space *space, Atom *record);
+
+/* A constructed constant keeps the signature and dependency context under
+ * which its definition, datatype or family was admitted. A bare declaration
+ * has no construction record. Unavailable support never becomes an opaque
+ * replacement for the constructed constant. This inspection publishes nothing. */
+bool prime_scoped_constant_context_current(Arena *arena, Space *space, Atom *name,
+    CettaPrimeLevelBudgetV1 *budget, Atom **reason);
+
+/* Build the read-only signature view before a caller pins a mutation token.
+ * Creating that private view is not a change to the user's mathematical scope. */
+void prime_scoped_prepare_context(Space *space);
 
 /* A number that changes whenever what is admitted may have changed. */
 uint64_t prime_scoped_judgment_admission_epoch(void);

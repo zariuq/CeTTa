@@ -2781,6 +2781,14 @@ prime_resolve_declared_regular_name(
             true, CETTA_PRIME_REGULAR_KERNEL_UNDECIDED,
             (CettaPrimeRegularTermElaborationV1){0}, unavailable);
     }
+    if (!builtin && !prime_scoped_constant_context_current(arena, space, name, budget, &unavailable)) {
+        free(declared_types);
+        return prime_declared_elaboration(true,
+            budget->limited && budget->remaining == 0u
+                ? CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED
+                : CETTA_PRIME_REGULAR_KERNEL_UNDECIDED,
+            (CettaPrimeRegularTermElaborationV1){0}, unavailable);
+    }
 
     if ((size_t)declared_count > SIZE_MAX / sizeof(Atom *) ||
         (size_t)declared_count > SIZE_MAX / sizeof(size_t)) {
@@ -3346,6 +3354,7 @@ CettaPrimeRegularKernelResult prime_semantics_check_declared_intrinsic_v1(
         .reason = "intrinsic-declaration-authority-unavailable",
     };
     CettaNikDirectAuthorityTokenV1 token;
+    prime_scoped_prepare_context(space);
     if (!arena || !space || !term || !expected || !budget ||
         !cetta_prime_typing_direct_authority_token_v1(
             space, UINT32_C(0x4445434c), &token))
@@ -3430,11 +3439,12 @@ static void prime_kernel_query_record(
 
 static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
     Space *space, Arena *arena, Atom *term, Atom *expected,
-    PrimeResourceLedger *ledger, bool synthesize) {
+    PrimeResourceLedger *ledger, bool synthesize, bool normalize) {
     if (!space || !arena || !term || !ledger ||
         (!synthesize && !expected))
         return (PrimeRegularTermCheckingDecision){0};
 
+    prime_scoped_prepare_context(space);
     CettaNikDirectAuthorityTokenV1 authority_token;
     if (!cetta_prime_typing_direct_authority_token_v1(
             space, UINT32_C(0x4445434c), &authority_token))
@@ -3493,7 +3503,7 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
         expected_lowered = expected_elaboration.lowered;
     }
 
-    if (declarations.count == 0u &&
+    if (!normalize && declarations.count == 0u &&
         (synthesize || !prime_kernel_query_capturing())) {
         prime_regular_declaration_context_free(&declarations);
         return (PrimeRegularTermCheckingDecision){0};
@@ -3622,7 +3632,16 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
     }
 
     CettaPrimeRegularKernelResult result;
-    if (synthesize) {
+    CettaPrimeRegularKernelNormalFormV1 computed = {0};
+    if (normalize) {
+        computed =
+            cetta_prime_regular_kernel_normalize_intrinsic_instantiating_levels_v1(
+                arena, context, elaborated.term,
+                declarations.level_parameters,
+                declarations.level_parameter_count, &budget);
+        result = (CettaPrimeRegularKernelResult){
+            computed.status, computed.type, computed.reason};
+    } else if (synthesize) {
         result =
             cetta_prime_regular_kernel_synth_intrinsic_instantiating_levels_v1(
                 arena, context, elaborated.term,
@@ -3654,6 +3673,25 @@ static PrimeRegularTermCheckingDecision prime_resolve_declared_regular_term(
               arena, &result, synthesize
                   ? "declared-regular-synthesis"
                   : "declared-regular-checking");
+    if (normalize && result.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+        Atom *normal = prime_regular_declaration_quote_intrinsic(
+            arena, &declarations, computed.term);
+        Atom *source_type = prime_regular_declaration_quote_intrinsic(
+            arena, &declarations, computed.source_type);
+        normal = normal ? cetta_prime_regular_term_quote_named_v1(arena, normal) : NULL;
+        source_type = source_type
+            ? cetta_prime_regular_term_quote_named_v1(arena, source_type) : NULL;
+        Atom *normal_type = quoted_type
+            ? cetta_prime_regular_term_quote_named_v1(arena, quoted_type) : NULL;
+        if (normal && source_type && normal_type) {
+            Atom *fields[] = {prime_sym(arena, "TypeNormalForm"),
+                              term, normal, source_type, normal_type};
+            detail = atom_expr(arena, fields, 5u);
+        } else {
+            result.status = CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE;
+            detail = prime_expr1(arena, "normal-form-quotation-failed");
+        }
+    }
     prime_regular_declaration_context_free(&declarations);
     prime_account_regular_kernel(
         ledger, synthesize ? PRIME_RESOURCE_SYNTHESIS
@@ -3821,7 +3859,7 @@ static Atom *prime_synth_declared_regular(
     Atom **canonical_term_out) {
     PrimeRegularTermCheckingDecision decision =
         prime_resolve_declared_regular_term(
-            space, arena, term, NULL, ledger, true);
+            space, arena, term, NULL, ledger, true, false);
     if (!decision.owned) return NULL;
     if (decision.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
         if (canonical_term_out)
@@ -4025,7 +4063,7 @@ static Atom *prime_check_or_analyze(
     if (CETTA_PRIME_REGULAR_KERNEL_NATIVE_ADMISSION_ACTIVE) {
         PrimeRegularTermCheckingDecision declared =
             prime_resolve_declared_regular_term(
-                space, a, term, expected, ledger, false);
+                space, a, term, expected, ledger, false, false);
         if (declared.owned) {
             prime_select_checking_route(
                 route_out,
@@ -5637,6 +5675,27 @@ static Atom *prime_judge_raw(Arena *a, Space *space, Atom *judgment,
         return prime_synth(
             space, a, judgment, judgment->expr.elems[1], ledger,
             NULL, NULL, canonical_term_out);
+    }
+
+    /* Computation is an operation over the admitted typing environment;
+     * it adds no inference rule to the typing calculus. */
+    if (strcmp(name, "type:normalize") == 0) {
+        if (judgment->expr.len != 2u)
+            return prime_refuted(a, judgment,
+                                 prime_expr1(a, "type:normalize-arity"));
+        PrimeRegularTermCheckingDecision decision =
+            prime_resolve_declared_regular_term(
+                space, a, judgment->expr.elems[1], NULL, ledger, true, true);
+        if (!decision.owned)
+            return prime_undetermined(a, judgment,
+                                     prime_expr1(a, "outside-normalization-fragment"));
+        if (decision.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+            return prime_established(a, judgment, decision.detail);
+        if (decision.status == CETTA_PRIME_REGULAR_KERNEL_REFUTED)
+            return prime_refuted(a, judgment, decision.detail);
+        if (decision.status == CETTA_PRIME_REGULAR_KERNEL_BUDGET_EXHAUSTED)
+            return prime_incomplete(a, judgment, decision.detail);
+        return prime_undetermined(a, judgment, decision.detail);
     }
 
     if (strcmp(name, "nik:check") == 0) {
@@ -13792,6 +13851,15 @@ static bool prime_head_has_type_rule(Arena *arena, Space *space, Atom *head) {
     return admitted;
 }
 
+bool prime_semantics_head_has_computation(Space *space, const Atom *head) {
+    if (!space || !head || head->kind != ATOM_SYMBOL) return false;
+    Arena scratch;
+    arena_init_detached(&scratch);
+    bool found = prime_head_has_type_rule(&scratch, space, (Atom *)head);
+    arena_free(&scratch);
+    return found;
+}
+
 /* The equation by which a definition admitted through its scrutinee-first
  * form passes its arguments to that form, `name x1 ... xn = form xp1 ... xpn`:
  * the one rule of `name`, whose patterns are its variables and whose right
@@ -13991,12 +14059,12 @@ static Atom *prime_reduce_covered_call_in_region(
         }
     }
 
-    /* A negative evaluator fuel is unlimited. One covered call still has a
-     * finite kernel budget. Running that budget out leaves the call in place. */
-    uint64_t steps = fuel < 0 || (uint64_t)fuel > 100000u
-        ? 100000u : (uint64_t)fuel;
+    /* The selected evaluator allowance also governs declaration checking.
+     * An unlimited call must not silently acquire a fixed internal ceiling
+     * when its admitted dependency graph grows. Explicit fuel remains bounded. */
+    uint64_t steps = fuel < 0 ? 0u : (uint64_t)fuel;
     CettaPrimeRegularKernelBudget budget;
-    cetta_prime_regular_kernel_budget_init(&budget, true, steps);
+    cetta_prime_regular_kernel_budget_init(&budget, fuel >= 0, steps);
     PrimeRegularDeclarationContext declarations = {0};
     bool saved_open = g_prime_admit_open_parameters;
     unsigned saved_budget = g_prime_open_parameter_budget;
@@ -14398,6 +14466,20 @@ static Atom *prime_judge_accounted_body(
             *canonical_term_out = written_canonical;
         verdict = combined;
     }
+    /* Implicit elaboration changes the term checked by the kernel, not the
+     * expression the caller asked to compute. Keep that authored expression
+     * beside the computed value, including when parameters were inferred. */
+    if (explicit_judgment != judgment &&
+        atom_is_symbol(judgment->expr.elems[0], "type:normalize") &&
+        prime_verdict_is(verdict, "Established")) {
+        Atom *evidence = verdict->expr.elems[3];
+        if (evidence && evidence->kind == ATOM_EXPR && evidence->expr.len == 5u &&
+            atom_is_symbol(evidence->expr.elems[0], "TypeNormalForm")) {
+            Atom *fields[] = {evidence->expr.elems[0], judgment->expr.elems[1],
+                evidence->expr.elems[2], evidence->expr.elems[3], evidence->expr.elems[4]};
+            verdict = prime_established(a, judgment, atom_expr(a, fields, 5u));
+        }
+    }
     if (resources_out) *resources_out = prime_resource_observation(&ledger);
     return steps_limited ? prime_attach_ledger(a, verdict, &ledger) : verdict;
 }
@@ -14419,6 +14501,7 @@ static bool prime_is_native_typing_judgment(Atom *judgment) {
     if (!name) return false;
     if ((strcmp(name, "type:formed") == 0 ||
          strcmp(name, "type:of") == 0 ||
+         strcmp(name, "type:normalize") == 0 ||
          strcmp(name, "type:refine") == 0) && judgment->expr.len == 2) {
         return true;
     }
@@ -14477,6 +14560,114 @@ Atom *prime_semantics_judge_typing_accounted(
     return prime_judge_accounted(
         a, space, judgment, steps_limited, steps, resources_out,
         canonical_term_out);
+}
+
+/* Flatten only the application constructor of named kernel readback.
+ * Binder annotations and their scopes remain structurally unchanged. */
+Atom *prime_semantics_flat_named_term(Arena *a, Atom *term) {
+    if (!term || term->kind != ATOM_EXPR || term->expr.len == 0u) return term;
+    if (term->expr.len == 3u && is_symbol_named(term->expr.elems[0], "app")) {
+        size_t count = 0u;
+        Atom *head = term;
+        while (head->kind == ATOM_EXPR && head->expr.len == 3u &&
+               is_symbol_named(head->expr.elems[0], "app")) {
+            count++;
+            head = head->expr.elems[1];
+        }
+        if (!cetta_expr_len_mul_fits_size(count + 1u, sizeof(Atom *))) return NULL;
+        Atom **items = arena_alloc(a, sizeof(*items) * (count + 1u));
+        items[0] = prime_semantics_flat_named_term(a, head);
+        Atom *cursor = term;
+        for (size_t i = count; i > 0u; i--) {
+            items[i] = prime_semantics_flat_named_term(a, cursor->expr.elems[2]);
+            cursor = cursor->expr.elems[1];
+        }
+        for (size_t i = 0u; i <= count; i++) if (!items[i]) return NULL;
+        return atom_expr(a, items, (CettaExprLen)(count + 1u));
+    }
+    if (!cetta_expr_len_mul_fits_size(term->expr.len, sizeof(Atom *))) return NULL;
+    Atom **items = arena_alloc(a, sizeof(*items) * (size_t)term->expr.len);
+    bool changed = false;
+    for (CettaExprIndex i = 0u; i < term->expr.len; i++) {
+        items[i] = prime_semantics_flat_named_term(a, term->expr.elems[i]);
+        if (!items[i]) return NULL;
+        changed = changed || items[i] != term->expr.elems[i];
+    }
+    return changed ? atom_expr(a, items, term->expr.len) : term;
+}
+
+static Atom *prime_admitted_verdict_evidence(Atom *verdict) {
+    if (!verdict || verdict->kind != ATOM_EXPR || verdict->expr.len != 4u ||
+        !is_symbol_named(verdict->expr.elems[0], "PrimeVerdict")) return NULL;
+    Atom *evidence = verdict->expr.elems[3];
+    if (evidence && evidence->kind == ATOM_EXPR && evidence->expr.len >= 2u &&
+        is_symbol_named(evidence->expr.elems[0], "PrimeEvidenceV1"))
+        evidence = evidence->expr.elems[1];
+    return evidence;
+}
+
+static void prime_resource_import_observation(
+    PrimeResourceLedger *ledger, const CettaPrimeTypingResourceObservationV1 *observation) {
+    ledger->typing.steps_spent = prime_u64_add_sat(
+        ledger->typing.steps_spent, observation->spent);
+    ledger->typing.steps_remaining = observation->remaining;
+    uint64_t phases[] = {observation->formation, observation->synthesis,
+        observation->normalization, observation->checking,
+        observation->refinement, observation->evaluation};
+    for (size_t i = 0u; i < PRIME_RESOURCE_PHASE_COUNT; i++) {
+        ledger->phase_spent[i] = prime_u64_add_sat(ledger->phase_spent[i], phases[i]);
+        ledger->typing.work_steps_observed = prime_u64_add_sat(
+            ledger->typing.work_steps_observed, phases[i]);
+    }
+}
+
+Atom *prime_semantics_evaluate_admitted(
+    Arena *a, Space *space, Atom *term, bool steps_limited, uint64_t steps) {
+    if (!a || !space || !term || (steps_limited && steps == 0u)) return NULL;
+    prime_scoped_prepare_context(space);
+    Atom *judgment = prime_expr2(a, "type:normalize", term);
+    CettaNikDirectAuthorityTokenV1 token;
+    if (!cetta_prime_typing_direct_authority_token_v1(
+            space, UINT32_C(0x4d415448), &token))
+        return prime_undetermined(a, judgment, prime_expr1(a, "admitted-scope-unavailable"));
+    PrimeResourceLedger ledger;
+    prime_resource_init(&ledger, steps_limited, steps);
+    CettaPrimeTypingResourceObservationV1 observation = {0};
+    Atom *verdict = prime_semantics_judge_typing_accounted(
+        a, space, judgment, steps_limited, steps, &observation, NULL);
+    prime_resource_import_observation(&ledger, &observation);
+    Atom *evidence = prime_admitted_verdict_evidence(verdict);
+    if (!prime_verdict_is(verdict, "Established")) return verdict;
+    if (!evidence || evidence->kind != ATOM_EXPR || evidence->expr.len != 5u ||
+        !is_symbol_named(evidence->expr.elems[0], "TypeNormalForm"))
+        return prime_undetermined(a, judgment, prime_expr1(a, "normal-form-readback-unavailable"));
+    Atom *value = prime_semantics_flat_named_term(a, evidence->expr.elems[2]);
+    if (!value)
+        return prime_undetermined(a, judgment, prime_expr1(a, "normal-form-readback-unavailable"));
+    if (steps_limited && observation.remaining == 0u) {
+        verdict = prime_incomplete(a, judgment, prime_expr1(a, "normal-form-readback-budget"));
+    } else {
+        Atom *check = prime_expr3(a, "type:eq", evidence->expr.elems[2], value);
+        verdict = prime_semantics_judge_typing_accounted(
+            a, space, check, steps_limited, observation.remaining, &observation, NULL);
+        prime_resource_import_observation(&ledger, &observation);
+        if (prime_verdict_is(verdict, "Established")) {
+            Atom *fields[] = {evidence->expr.elems[0], evidence->expr.elems[1],
+                value, evidence->expr.elems[3], evidence->expr.elems[4]};
+            verdict = prime_established(a, judgment, atom_expr(a, fields, 5u));
+        } else if (prime_verdict_is(verdict, "Incomplete")) {
+            verdict = prime_incomplete(a, judgment, prime_expr1(a, "normal-form-readback-budget"));
+        } else {
+            /* A failed printer check does not refute the source program. */
+            verdict = prime_undetermined(a, judgment,
+                prime_expr2(a, "normal-form-readback-unchecked",
+                    prime_admitted_verdict_evidence(verdict)));
+        }
+    }
+    if (!cetta_prime_typing_direct_authority_token_v1_is_current(
+            &token, space, UINT32_C(0x4d415448)))
+        verdict = prime_undetermined(a, judgment, prime_expr1(a, "declaration-revision-changed"));
+    return steps_limited ? prime_attach_ledger(a, verdict, &ledger) : verdict;
 }
 
 static Atom *prime_kernel_query_type(
@@ -14990,18 +15181,26 @@ bool cetta_prime_typing_direct_authority_token_v1(
             policy_identity, NULL, token);
     }
 
+    /* Scoped declaration validation reads a lazily built private signature
+     * view. Build that view before pinning the global mutation observation;
+     * otherwise its own initialization would invalidate the first check. */
+    prime_scoped_prepare_context((Space *)space);
+
     uint64_t epoch_before = space_global_mutation_epoch();
+    uint64_t admission_before = prime_scoped_judgment_admission_epoch();
     SpaceReadToken read = space_read_token(space);
     uint64_t epoch_after = space_global_mutation_epoch();
+    uint64_t admission_after = prime_scoped_judgment_admission_epoch();
     if (epoch_before != epoch_after ||
+        admission_before != admission_after ||
         !space_read_token_matches_live_space(read, space)) {
         if (token) *token = (CettaNikDirectAuthorityTokenV1){0};
         return false;
     }
 
     CettaNikDirectAuthorityTokenV1 mutable = {
-        .words = {read.instance_id, read.revision, epoch_after},
-        .length = 3u,
+        .words = {read.instance_id, read.revision, epoch_after, admission_after},
+        .length = 4u,
     };
     return cetta_nik_direct_authority_v1_token(
         &cetta_prime_typing_direct_authority_v1,

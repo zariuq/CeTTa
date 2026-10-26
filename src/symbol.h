@@ -728,6 +728,7 @@ static inline SymbolSpelling symbol_spelling(
     X(petta_min, "min") \
     X(petta_max, "max") \
     X(type_colon_of, "type:of") \
+    X(type_colon_normalize, "type:normalize") \
     X(type_colon_check, "type:check") \
     X(type_colon_analyze, "type:analyze") \
     X(type_colon_eq, "type:eq") \

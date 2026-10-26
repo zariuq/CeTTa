@@ -67,11 +67,14 @@
 ; The right-hand sides of a symbol's equations, each as sealed code.  A
 ; quotation is sealed, so a body enters code by lift; `as-written` holds it
 ; (a Data parameter), so lifting it runs nothing.
+; Read the head before comparing its syntax: inspected functions can have
+; different declared types, so typed equality is not this comparison.
 (: as-written (-> (Data Atom) Atom))
 (= (as-written $x) $x)
 (= (bodies-of $h)
    (collapse (match &self (= $lhs $rhs)
-     (if (== (car-atom $lhs) $h) (lift (as-written $rhs)) (empty)))))
+     (let $head (car-atom $lhs)
+       (if (noreduce-eq $head $h) (lift (as-written $rhs)) (empty))))))
 (: effect-in (-> (Data Atom) Number (Data Atom)))
 (= (effect-in $e $depth)
    (let $hs (heads $e)

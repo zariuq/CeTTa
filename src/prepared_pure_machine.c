@@ -4829,6 +4829,16 @@ static bool prepared_pure_compile_eval_with_role(
         if (source->kind != ATOM_EXPR)
             return prepared_pure_reject(
                 program, "source data is not an expression", source);
+        /* A source planner may know only equation-table calls. A dialect's
+         * declared computation still owns that source occurrence. Completed
+         * values and opaque quotations have already returned above. */
+        if (program->expression_view) {
+            CettaPreparedPureExpressionView dialect_view = {0};
+            if (program->expression_view(program->space, source, &dialect_view) ==
+                CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY)
+                return prepared_pure_reject(program,
+                    "dialect-owned source requires canonical evaluation", source);
+        }
         for (CettaExprIndex index = 0u;
              index < source->expr.len; index++) {
             if (!prepared_pure_source_child(

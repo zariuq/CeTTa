@@ -3508,6 +3508,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/scoped/lang_step.metta \
 	tests/prime/scoped/fusion_reuse.metta \
 	tests/prime/scoped/map_fusion_dtt.metta \
+	tests/prime/scoped/definition_normalization.metta \
 	tests/prime/scoped/native_dependency_revisions.metta \
 	tests/prime/scoped/induction_append_nil.metta \
 	tests/prime/scoped/induction_curriculum.metta \
@@ -7864,6 +7865,23 @@ test-prime-scoped-conversion: $(PRIME_SCOPED_CONVERSION_TEST_BIN)
 	@"$(PRIME_SCOPED_CONVERSION_TEST_BIN)"
 
 test-prime: test-prime-scoped-conversion
+
+.PHONY: test-prime-mathematical-workspace
+test-prime-mathematical-workspace: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tools/test_prime_mathematical_workspace.py \
+		--binary "$(abspath $(BIN))"
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tools/test_prime_admitted_top_k.py \
+		--binary "$(abspath $(BIN))"
+
+.PHONY: run-prime-mathematical-workspace
+run-prime-mathematical-workspace: $(BIN)
+	@$(CETTA_BIN_INVOKE) --lang prime examples/prime/mathematical_workspace.metta
+
+.PHONY: run-prime-mathematical-routes
+run-prime-mathematical-routes: $(BIN)
+	@$(CETTA_BIN_INVOKE) --lang prime examples/prime/mathematical_routes.metta
+
+test-prime: test-prime-mathematical-workspace
 
 $(PRIME_LEVEL_TEST_BIN): $(PRIME_LEVEL_TEST_OBJ) $(PRIME_LEVEL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p $(BOOTSTRAP_TMPDIR) $(dir $@)
@@ -24914,6 +24932,7 @@ $(PRIME_CALL_FAILURE_TEST_BIN): tests/test_prime_call_failure_zero.c src/eval.c 
 
 .PHONY: test-prime-fuel-verdicts
 test-prime-fast-fixtures: test-prime-fuel-verdicts
+test-prime-fast-fixtures: test-prime-mathematical-workspace
 # A query that runs out of fuel is reported as incomplete in its place, the
 # run goes on, and the run exits 1.
 test-prime-fuel-verdicts: $(BIN)
@@ -24954,7 +24973,9 @@ test-prime-route-agreement: $(BIN)
 		tests/prime/need_lexical_scope.metta tests/prime/need_storage_boundary.metta \
 		tests/prime/need_quote_preservation.metta \
 		tests/prime/need_demand_modes.metta tests/prime/scoped/effectful_fusion.metta \
-		tests/prime/practical/atp_direct_example.metta; do \
+		tests/prime/practical/atp_direct_example.metta \
+		examples/prime/metagol_higher_order_map.metta \
+		examples/prime/metaprogramming/show_06_inspecting_rewriter.metta; do \
 		exp="$${f%.metta}.expected"; \
 		for route in default reference fuel; do \
 			flags=""; envs=""; \

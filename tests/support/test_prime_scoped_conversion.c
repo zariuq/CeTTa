@@ -2,6 +2,7 @@
 #include "prime_regular_kernel.h"
 #include "prime_scoped_judgments.h"
 #include "prime_semantics.h"
+#include "prime_typing_authority.h"
 #include "space.h"
 #include "stats.h"
 #include "symbol.h"
@@ -196,10 +197,43 @@ static void check_admission_revocation(Arena *arena, TermUniverse *universe) {
     }
     expect_admission(arena, working, record, true,
                      "the actual working-space clone receives admission");
+    CettaNikDirectAuthorityTokenV1 before_withdrawal;
+    const uint32_t token_policy = UINT32_C(0x54455354);
+    checks++;
+    if (!cetta_prime_typing_direct_authority_token_v1(
+            working, token_policy, &before_withdrawal) ||
+        !cetta_prime_typing_direct_authority_token_v1_is_current(
+            &before_withdrawal, working, token_policy)) {
+        failures++;
+        fprintf(stderr, "FAIL: could not pin a stable admission authority\n");
+    }
+    uint64_t before_revision = space_revision(working);
+    uint64_t before_mutation = space_global_mutation_epoch();
     (void)prime_scoped_judgment_judge(arena, working,
         parse_one(arena, "(set:recheck withdrawnAdmission)"), false, 0u);
     expect_admission(arena, working, record, false,
                      "failed rechecking withdraws that exact artifact");
+    checks++;
+    if (space_revision(working) != before_revision ||
+        space_global_mutation_epoch() != before_mutation) {
+        failures++;
+        fprintf(stderr, "FAIL: withdrawal control changed syntax as well as admission\n");
+    }
+    checks++;
+    if (cetta_prime_typing_direct_authority_token_v1_is_current(
+            &before_withdrawal, working, token_policy)) {
+        failures++;
+        fprintf(stderr, "FAIL: a withdrawn admission retained its authority token\n");
+    }
+    CettaNikDirectAuthorityTokenV1 after_withdrawal;
+    checks++;
+    if (!cetta_prime_typing_direct_authority_token_v1(
+            working, token_policy, &after_withdrawal) ||
+        !cetta_prime_typing_direct_authority_token_v1_is_current(
+            &after_withdrawal, working, token_policy)) {
+        failures++;
+        fprintf(stderr, "FAIL: withdrawal prevented a fresh authority observation\n");
+    }
     expect_admission(arena, &withdrawn, record, true,
                      "an uncommitted working-space withdrawal does not change its parent");
     space_replace_contents(&withdrawn, working);
@@ -579,6 +613,58 @@ static uint64_t minimum_judgment_steps(Arena *arena, Space *space,
             lower = middle;
     }
     return upper;
+}
+
+static void check_case_compilation_allowance(Arena *arena, TermUniverse *universe) {
+    Space theory;
+    space_init_with_universe(&theory, universe);
+    Atom *decl = prime_scoped_judgment_judge(arena, &theory, parse_one(arena,
+        "(set:inductive BudgetNat (u 0) (: budgetZero BudgetNat)"
+        " (: budgetSucc (-> BudgetNat BudgetNat)))"), false, 0u);
+    Atom *publication = decl && decl->kind == ATOM_EXPR && decl->expr.len == 4u
+        ? decl->expr.elems[3] : NULL;
+    checks++;
+    if (!publication || publication->kind != ATOM_EXPR ||
+        publication->expr.len < 2u ||
+        !atom_is_symbol(publication->expr.elems[0], "SetPublish")) {
+        failures++;
+        fprintf(stderr, "FAIL: case-budget control could not declare its datatype\n");
+        space_free(&theory);
+        return;
+    }
+    for (CettaExprIndex i = 1u; i < publication->expr.len; i++) {
+        Atom *entry = publication->expr.elems[i];
+        space_add(&theory, entry);
+        prime_scoped_judgment_admit(arena, &theory, entry);
+    }
+    Atom *query = parse_one(arena,
+        "(set:define budgetMin (-> BudgetNat BudgetNat BudgetNat)"
+        " (= (budgetMin budgetZero $n) budgetZero)"
+        " (= (budgetMin (budgetSucc $m) budgetZero) budgetZero)"
+        " (= (budgetMin (budgetSucc $m) (budgetSucc $n))"
+        "    (budgetSucc (budgetMin $m $n))))");
+    uint64_t revision = space_revision(&theory);
+    uint64_t needed = minimum_judgment_steps(arena, &theory, query);
+    checks++;
+    if (needed < 2u) {
+        failures++;
+        fprintf(stderr, "FAIL: case compilation has no finite shared allowance\n");
+    } else {
+        expect_judgment_status(arena, &theory, query,
+            "case compilation zero allowance", true, 0u, "Incomplete");
+        expect_judgment_status(arena, &theory, query,
+            "case compilation below shared allowance", true, needed - 1u, "Incomplete");
+        expect_judgment_status(arena, &theory, query,
+            "case compilation exact shared allowance", true, needed, "Established");
+        expect_judgment_status(arena, &theory, query,
+            "case compilation increased allowance", true, needed + 7u, "Established");
+    }
+    checks++;
+    if (space_revision(&theory) != revision) {
+        failures++;
+        fprintf(stderr, "FAIL: case compilation checking published into its source\n");
+    }
+    space_free(&theory);
 }
 
 static bool kernel_synthesis_is_established(
@@ -1052,6 +1138,8 @@ int main(void) {
         failures++;
         fprintf(stderr, "FAIL: definition checking mutated the authored theory\n");
     }
+
+    check_case_compilation_allowance(&arena, &universe);
 
     g_var_intern = NULL;
     g_symbols = NULL;

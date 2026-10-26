@@ -1,0 +1,66 @@
+Editing standard APIs in Prime
+=============================
+
+Standard public definitions are ordinary occurrences in the program space.
+Additional equations contribute alternatives; removing the original equations
+removes their behavior. Types and equations can both be inspected and edited.
+
+    (= (get-type $x)
+       (if (== (% $x 2) 0) EvenNumber (empty)))
+    !(collapse (get-type 2))
+
+This returns Number and EvenNumber. Ordinary function contracts consult the
+selected get-type relation for arguments and completed results. A function
+declared to return EvenNumber must actually produce a value classified that
+way. The classifier's implementation uses intrinsic typing for its own
+operations, so checking it does not recursively invoke itself as a guard.
+For a custom classifier, an absent answer or %Undefined% does not satisfy a
+concrete nominal contract. Ordinary metatype/held-data positions retain their
+existing behavior.
+An exhausted classification remains incomplete and cannot establish a type
+rejection. Arbitrary classifier programs can still diverge without a budget.
+
+The standard source remains available independently of the local copies:
+
+    !(std:definitions get-type)
+    !(std:get-type 2)
+
+std:definitions returns the original type declarations and equations as data,
+one answer per occurrence. Open variables stay syntax during inspection.
+Qualified standard operations select their original implementation.
+
+Restoring is ordinary programming:
+
+    !(let $definition (std:definitions get-type)
+        (add-atom &self $definition))
+
+This adds the original rows; it does not erase user extensions or remove
+duplicates. To remove only the standard copies, use remove-atom with those
+same rows. The new occurrence order after re-adding is observable. The
+originals describe the standard definitions loaded for this session; editing
+a working copy does not edit that retained source. Other imported modules
+continue to provide their own module spaces and source definitions.
+
+If the public restoration helpers were edited too, use their originals:
+
+    !(std:let $definition (std:definitions add-atom)
+        (std:add-atom &self $definition))
+
+Native delegates and compiled calls are used only while the definitions they
+depend on remain valid. A modified standard API goes through ordinary equation
+evaluation, including its alternative results. Restoring the standard rows
+does not restore other APIs they may call: dependencies remain explicit.
+Relational regions using the standard unifier currently stay with Prime's
+canonical continuation owner; the relational accelerator has not yet earned
+caller-binding preservation through that delegate. This can cost performance,
+but preserves the same binding results across execution routes.
+
+Public classification and checked publication have different contracts. A
+get-type extension supplies runtime classification. A public type:check equation
+can supply an additional ordinary answer. Neither mints a checked theorem;
+native theorem publication still checks the proof under its selected context.
+Existing qualified original names cannot be redefined. Additional names in
+the std: namespace may be defined by the program.
+
+Run examples/prime/standard_api.metta for extension, rejection, inspection,
+removal, qualified access and restoration in one small program.

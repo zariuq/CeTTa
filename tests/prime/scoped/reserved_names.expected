@@ -1,20 +1,13 @@
-(Error (= (size $x) (my-size $x)) (reserved-name size builtin))
-(Error (: size (-> Expression Number)) (reserved-name size builtin))
-(Error (= (+ $a $b) (my-plus $a $b)) (reserved-name + grounded-operation))
-(Error (= (try $v $c) (go $c $v)) (reserved-name try judgment))
-(Error (= (if $c $a $b) (my-if $c $a $b)) (reserved-name if evaluator-form))
-(Error (= (collect $x) (my-collect $x)) (reserved-name collect builtin))
+[(3 42)]
+(Error (= (std:+ $a $b) 99) (reserved-name std:+ standard-original))
+(Error (: std:get-type (-> Atom BogusType)) (reserved-name std:get-type standard-original))
+[(Error (add-atom &self (= (std:if $c $a $b) forged)) (reserved-name std:if standard-original))]
 [3]
-[3]
-[yes]
-[(Error (add-atom &self (= (once $x) (my-once $x))) (reserved-name once builtin))]
-[(Error (add-atom &self (: repr (-> Number Number))) (reserved-name repr grounded-operation))]
-[1]
+[(), ()]
 [42]
-[7]
+[(), ()]
+[(42 3)]
 [nat]
-[(Refuted (hol:reserved-name repr grounded-operation))]
-[(Refuted (hol:reserved-name size builtin))]
 [plus1]
 [(succ zero)]
 [and]

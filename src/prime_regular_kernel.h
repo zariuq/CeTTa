@@ -224,6 +224,14 @@ cetta_prime_regular_kernel_synth_intrinsic_instantiating_levels_v1(
     const uint64_t *parameters, size_t parameter_count,
     CettaPrimeRegularKernelBudget *budget);
 
+/* Normalize the same closed universe instance selected by synthesis. The
+ * input, computed term and computed type are checked in that one context. */
+CettaPrimeRegularKernelNormalFormV1
+cetta_prime_regular_kernel_normalize_intrinsic_instantiating_levels_v1(
+    Arena *arena, Atom *context, Atom *term,
+    const uint64_t *parameters, size_t parameter_count,
+    CettaPrimeRegularKernelBudget *budget);
+
 CettaPrimeRegularKernelResult
 cetta_prime_regular_kernel_check_intrinsic_instantiating_levels_v1(
     Arena *arena, Atom *context, Atom *term, Atom *expected,

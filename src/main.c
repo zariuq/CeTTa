@@ -4299,6 +4299,12 @@ static int cetta_main(int argc, char **argv) {
     /* Add grounded op type declarations (HE stdlib implicit types) */
     if (lang->id != CETTA_LANGUAGE_PETTA)
         main_add_builtin_type_decls(&space, &arena, lang->id, profile);
+    if (lang->id == CETTA_LANGUAGE_PRIME &&
+        !eval_prime_install_standard_library(&space, &arena)) {
+        fprintf(stderr, "error: Prime standard definitions could not be installed\n");
+        rc = 1;
+        goto cleanup;
+    }
     /* HE's standard library is a module &self imports: its atoms answer
        queries after the program's own and are not removable through &self.
        Prime keeps its library defaults as removable atoms of &self. */
@@ -4940,9 +4946,9 @@ process_petta_document:
                    n, block_end, NULL, NULL)) {
             block_end++;
         }
-        /* Prime refuses an equation or a type declaration for a name it
-         * interprets itself, in its place in the output, and loads the rest
-         * of the program (cetta_prime_reserved_definition_error). */
+        /* Apply Prime's public naming policy at the authored statement.
+         * A protected-original collision does not prevent later statements
+         * from loading (cetta_prime_reserved_definition_error). */
         Atom *refused = NULL;
         if (lang->id == CETTA_LANGUAGE_PRIME) {
             for (int k = i; k < block_end && !refused; k++) {

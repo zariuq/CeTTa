@@ -1,0 +1,10 @@
+; Control APIs keep their original non-strict behavior as one alternative.
+(= (if $condition $yes $no) extra-if)
+!(collapse (if True 1 (undefined-branch)))
+!(std:if True 1 (undefined-branch))
+(= (let $pattern $value $body) extra-let)
+!(collapse (let $x 2 (+ $x 1)))
+!(std:let $x 2 (+ $x 1))
+(= (quote $body) extra-quote)
+!(collapse (quote (+ 1 2)))
+!(std:quote (+ 1 2))
