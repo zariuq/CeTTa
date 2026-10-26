@@ -675,6 +675,18 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
         value = access(path, permissions) == 0 ? atom_true(arena) : atom_false(arena);
         goto completed;
     }
+    /* os.chmod(path, mode), which follows a symbolic link; an owner's mode is
+     * set below, as os.fchmod sets it. */
+    if (op == g_builtin_syms.lib_fs_set_mode && path) {
+        mode_t mode;
+        if (!mode_arg(args[1], &mode)) goto argument;
+        int status;
+        do status = chmod(path, mode);
+        while (status < 0 && errno == EINTR && !eval_native_interrupted());
+        value = status < 0 ? os_failed(arena, name, path, errno, 0u, true)
+                           : atom_symbol(arena, "fs:mode-set");
+        goto completed;
+    }
     if (op == g_builtin_syms.lib_fs_open_write || op == g_builtin_syms.lib_fs_make_directories) {
         int flags = 0;
         mode_t mode;

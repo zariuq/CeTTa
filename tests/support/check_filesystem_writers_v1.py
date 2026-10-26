@@ -4,7 +4,7 @@
 fs:open-write, fs:lock and fs:make-directories are compared with os.open,
 fcntl.flock and Path.mkdir(parents=True, exist_ok=True): created modes,
 errno values and the paths errors name. fs:set-mode, fs:remove and fs:access
-are compared with os.fchmod, os.unlink and os.access. Locks are checked across
+are compared with os.fchmod and os.chmod, os.unlink and os.access. Locks are checked across
 processes in both directions, and native and Python writers append to one file
 under the same lock while every line stays whole and in each writer's order.
 """
@@ -252,6 +252,56 @@ def mode_cases(engine, failures):
     return 2 * len(modes) + 1
 
 
+def path_mode_cases(engine, failures):
+    """os.chmod(path, mode) against fs:set-mode on paths: outcomes, errno
+    values, named paths and the modes left, links followed."""
+    cases = [("file", 0o600), ("file", 0o4755), ("closed-file", 0o640), ("directory", 0o750), ("link", 0o604),
+             ("dangling", 0o600), ("missing", 0o600), ("file/inside", 0o600), ("closed/file", 0o600), ("", 0o600)]
+    trees, outcomes = {}, {}
+    for owner in ("python", "native"):
+        root = engine.work / ("path-mode-" + owner)
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir()
+        (root / "file").write_text("x")
+        (root / "directory").mkdir()
+        (root / "target").write_text("t")
+        (root / "link").symlink_to("target")
+        (root / "dangling").symlink_to("missing-target")
+        (root / "closed").mkdir()
+        (root / "closed/file").write_text("x")
+        (root / "closed").chmod(0o600)
+        # Written, flushed and closed before its mode is set, as a replaced file is.
+        descriptor = os.open(root / "closed-file", os.O_WRONLY | os.O_CREAT, 0o644)
+        os.write(descriptor, b"cetta\n")
+        os.close(descriptor)
+        if owner == "python":
+            for index, (name, mode) in enumerate(cases):
+                try:
+                    os.chmod(root / name if name else "", mode)
+                    outcomes[(owner, index)] = ("ok",)
+                except OSError as error:
+                    outcomes[(owner, index)] = ("error", error.errno,
+                                                str(error.filename).replace(str(root), "ROOT"))
+        else:
+            source = "!(import! &self (library fs))\n" + "".join(
+                "!(println! (RESULT (fs:set-mode %s %d)))\n" % (literal(str(root / name) if name else ""), mode)
+                for name, mode in cases)
+            for index, text in enumerate(engine.results(source)):
+                outcome = ("ok",) if text == "fs:mode-set" else native_outcome(text)
+                if outcome[0] == "error":
+                    outcome = ("error", outcome[1], outcome[2].replace(str(root), "ROOT"))
+                outcomes[(owner, index)] = outcome
+        (root / "closed").chmod(0o700)
+        trees[owner] = tree(root)
+    for index, (name, mode) in enumerate(cases):
+        if outcomes.get(("native", index)) != outcomes[("python", index)]:
+            failures.append(("set-mode path %r %o" % (name, mode), outcomes.get(("native", index)),
+                             outcomes[("python", index)]))
+    if trees["native"] != trees["python"]:
+        failures.append(("set-mode path trees", trees["native"], trees["python"]))
+    return len(cases) + 1
+
+
 def remove_cases(engine, failures):
     """os.unlink against fs:remove: outcomes, errno values, named paths and the tree left."""
     cases = ["file", "missing", "directory", "link", "dangling", "file/inside", "closed/file", ""]
@@ -431,6 +481,7 @@ def main():
             checked = make_directory_cases(engine, failures)
             checked += open_cases(engine, failures)
             checked += mode_cases(engine, failures)
+            checked += path_mode_cases(engine, failures)
             checked += remove_cases(engine, failures)
             checked += access_cases(engine, failures)
             checked += lock_cases(engine, failures)
