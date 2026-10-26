@@ -29,6 +29,7 @@
 #include "library_fs.h"
 #include "library_postings.h"
 #include "library_tensor.h"
+#include "library_crypto.h"
 #include "library_group.h"
 #include "library_re.h"
 #include "library_proc_run.h"
@@ -164,6 +165,8 @@ enum {
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
 };
+/* Bits 0 to 33 are taken by the libraries above and the native modules. */
+#define CETTA_LIBRARY_CRYPTO (UINT64_C(1) << 34)
 
 _Static_assert((CETTA_NATIVE_IMPORT_GPARSE &
                 (((CettaLibraryMask)CETTA_LIBRARY_TENSOR << 1) - 1)) == 0,
@@ -187,6 +190,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"re", CETTA_LIBRARY_RE, NULL},
     {"postings", CETTA_LIBRARY_POSTINGS, NULL},
     {"tensor", CETTA_LIBRARY_TENSOR, NULL},
+    {"crypto", CETTA_LIBRARY_CRYPTO, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -12283,6 +12287,8 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
         cetta_postings_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_RE) &&
         cetta_re_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_CRYPTO) &&
+        cetta_crypto_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_FS) &&
         cetta_fs_call(ctx, a, head, args, nargs, out)) return true;
     /* lib/proc offers two families: owned process jobs (spawn, poll, wait,

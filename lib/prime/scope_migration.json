@@ -540,6 +540,11 @@
   ],
   "delegated": [
     {
+      "source": "crypto.metta",
+      "generator": "library_spelling.py",
+      "output_sha256": "c10b88490c77e73b240d08f5ebf3e7098820e69c67785836241e35f9150f6c8d"
+    },
+    {
       "source": "hol_light/data.metta",
       "dialect": "petta",
       "generator": "petta-prime-guest-v1",

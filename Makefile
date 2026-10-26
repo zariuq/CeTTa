@@ -933,6 +933,16 @@ SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	native/decimal_value_v1.c \
 	native/tptp_official_snapshot_v1.c \
 	experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.c
+# lib/crypto: BIP-340 Schnorr signatures and NIP-44 v2 over the vendored
+# libsecp256k1 (MIT, vendor/secp256k1) with its extrakeys, schnorrsig and
+# ECDH modules.  The vendored sources keep their own warnings.
+SECP256K1_SRC = vendor/secp256k1/src/secp256k1.c vendor/secp256k1/src/precomputed_ecmult.c \
+	vendor/secp256k1/src/precomputed_ecmult_gen.c
+SECP256K1_OBJ = $(foreach variant,$(BUILD_OBJ_TAG).o $(BUILD_OBJ_TAG).stage0.o $(BUILD_OBJ_TAG).runtime-stats.o,\
+	$(SECP256K1_SRC:.c=.$(variant)))
+SRC += src/library_crypto.c src/crypto_primitives.c $(SECP256K1_SRC)
+$(SECP256K1_OBJ): CFLAGS := $(filter-out -Werror,$(CFLAGS)) -Wno-unused-function \
+	-DENABLE_MODULE_EXTRAKEYS=1 -DENABLE_MODULE_SCHNORRSIG=1 -DENABLE_MODULE_ECDH=1
 PARSER_BUILD_MANIFEST ?= langdef/parsers/baked_v1.json
 PARSER_BUILD_MANIFEST_KEY := $(shell python3 tools/parser_artifact_build_v1.py --manifest "$(PARSER_BUILD_MANIFEST)" --manifest-key)
 PARSER_BAKED_HEADER = runtime/generated/parser_baked_v1.$(BUILD_OBJ_TAG).$(PARSER_BUILD_MANIFEST_KEY).h
@@ -34226,6 +34236,18 @@ test-text-streaming-v1: $(BIN) $(TEXT_STREAMING_NATIVE_TEST_V1) tests/support/ch
 	@$(call cetta_exec,./$(TEXT_STREAMING_NATIVE_TEST_V1))
 	@python3 tests/support/check_text_streaming_v1.py ./$(BIN) --output runtime/text-streaming-v1-$(BUILD_OBJ_TAG)
 
+CRYPTO_NATIVE_TEST_V1 = runtime/test-crypto-primitives-v1-$(BUILD_OBJ_TAG)
+$(CRYPTO_NATIVE_TEST_V1): tests/support/test_crypto_primitives_v1.c src/crypto_primitives.c src/crypto_primitives.h src/native_sha256.c src/native_sha256.h
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc -o $@ tests/support/test_crypto_primitives_v1.c src/crypto_primitives.c src/native_sha256.c
+
+.PHONY: test-crypto-v1
+test-all: test-crypto-v1
+test-crypto-v1: $(BIN) $(CRYPTO_NATIVE_TEST_V1) tests/support/check_crypto_v1.py
+	@$(call cetta_exec,./$(CRYPTO_NATIVE_TEST_V1))
+	@python3 tests/support/check_crypto_v1.py ./$(BIN)
+
+.PHONY: test-filesystem-core-v1 test-filesystem-core-body-v1
 .PHONY: test-filesystem-core-v1 test-filesystem-core-body-v1
 test-filesystem-core-v1:
 	+$(MAKE) BUILD=core ENABLE_PYTHON=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_GMP=0 \
@@ -45879,8 +45901,8 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
 	system fs proc sqlite shell cwp io durable space_service llm llm/io llm/command llm/compat \
-	re postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
-LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re holkernel mm0kernel
+	re crypto postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
+LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re crypto holkernel mm0kernel
 LIBRARY_PETTA_SPELLING_SOURCES_V1 += lib_tensor
 LIBRARY_PRIME_SPELLING_SOURCES_V1 += lib_tensor
 .PHONY: test-library-spellings-v1
