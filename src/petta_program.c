@@ -2719,8 +2719,10 @@ static PettaPlanNode *petta_plan_build_in(
                 head == g_builtin_syms.size;
             node->contains_deferred_occurrence_transport =
                 petta_head_transports_source_occurrences(head);
-            node->control = petta_semantics_elaborate_control(
+            CettaComputationPlan computation = petta_semantics_elaborate_computation(
                 head, form, atom->expr.len - 1u);
+            node->control = computation.control;
+            node->invocation = computation.invocation;
             node->plain_scalar_tree =
                 grounded_is_plain_scalar_tree_operator(
                     head_atom, atom->expr.len - 1u);
@@ -2768,7 +2770,9 @@ static PettaPlanNode *petta_plan_build_in(
                 !petta_semantics_nullary_lambda_body(head_atom, NULL);
         }
 
-        node->control = petta_plan_computation(node);
+        node->control = petta_plan_computation(node).control;
+        if (node->role != PETTA_PLAN_STATIC_CALL)
+            node->invocation = (CettaInvocationPlan){0};
         if (node->control.operation == CETTA_CONTROL_CONSTRUCT) {
             node->output = PETTA_PLAN_OUTPUT_CONSTRUCTOR;
         } else if (head_atom->kind == ATOM_SYMBOL) {
@@ -2783,13 +2787,9 @@ static PettaPlanNode *petta_plan_build_in(
             } else if (node->control.operation == CETTA_CONTROL_SCOPED_COMMIT) {
                 node->output = PETTA_PLAN_OUTPUT_TRUE;
             } else {
-                CettaExprIndex child = 0u;
-                if (form == PETTA_FORM_PROGN && nargs > 0u)
-                    child = nargs;
-                else if (form == PETTA_FORM_TRACE && nargs == 2u)
+                CettaExprIndex child = cetta_control_operation_series_result(node->control, nargs);
+                if (form == PETTA_FORM_TRACE && nargs == 2u)
                     child = 2u;
-                else if (form == PETTA_FORM_PROG1 && nargs > 0u)
-                    child = 1u;
                 else if ((form == PETTA_FORM_LET ||
                           form == PETTA_FORM_CHAIN) && nargs == 3u)
                     child = 3u;
@@ -2967,7 +2967,8 @@ enum { PETTA_PLAN_NODE_KEY_WORDS = 11 };
 static void petta_plan_node_key(
     const PettaPlanNode *node,
     uint64_t key[PETTA_PLAN_NODE_KEY_WORDS]) {
-    key[0] = (uint64_t)node->role;
+    key[0] = (uint64_t)node->role |
+             (uint64_t)cetta_invocation_plan_key(node->invocation) << 32u;
     key[1] = (uint64_t)node->execution;
     key[2] = cetta_control_operation_key(node->control);
     key[3] = (uint64_t)node->continuation;

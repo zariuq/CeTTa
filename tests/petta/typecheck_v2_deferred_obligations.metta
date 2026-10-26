@@ -24,3 +24,9 @@
      (let $typed (the (List Number) ($x))
           (let (superpose (7 8)) $x $typed)))
    ((7) (8)))
+
+; The formal admits Error as data before its argument is evaluated.
+; A postcondition alone is too late to establish this interpretation.
+(: preparation-error-data (-> (| Number (Error $detail $context)) Number))
+(= (preparation-error-data $value) 7)
+!(preparation-error-data (Error payload context))

@@ -2293,6 +2293,64 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
     return hashcons_index_finalize(h);
 }
 
+/* An atom the spread hash takes whole, through atom_hash: a leaf, or a term
+ * atom_hash reads through its rational unfolding.  Every other expression is
+ * read child by child, as atom_hash folds it, so atoms atom_eq equates hash
+ * alike. */
+static inline bool atom_spread_whole(const Atom *atom) {
+    return !atom || atom->kind != ATOM_EXPR ||
+           (term_graph_view_hash && atom_structural_has_rational(atom));
+}
+
+typedef struct {
+    Atom *node;
+    CettaExprIndex next;
+    uint64_t hash;
+} AtomSpreadFrame;
+
+uint64_t atom_spread_hash(Atom *atom) {
+    const uint64_t seed = UINT64_C(0x243f6a8885a308d3);
+    if (atom_spread_whole(atom))
+        return hashcons_index_finalize(
+            hashcons_index_mix(seed, atom_hash(atom)));
+    AtomSpreadFrame inline_frames[32];
+    AtomSpreadFrame *frames = inline_frames;
+    size_t cap = sizeof(inline_frames) / sizeof(inline_frames[0]);
+    size_t len = 0u;
+    frames[len++] = (AtomSpreadFrame){
+        atom, 0u, hashcons_index_mix(seed, atom->expr.len)};
+    for (;;) {
+        AtomSpreadFrame *top = &frames[len - 1u];
+        if (top->next < top->node->expr.len) {
+            Atom *child = top->node->expr.elems[top->next++];
+            if (atom_spread_whole(child)) {
+                top->hash = hashcons_index_mix(top->hash, atom_hash(child));
+                continue;
+            }
+            if (len == cap) {
+                size_t grown = cap * 2u;
+                if (frames == inline_frames) {
+                    frames = cetta_malloc(sizeof(*frames) * grown);
+                    memcpy(frames, inline_frames, sizeof(inline_frames));
+                } else {
+                    frames = cetta_realloc(frames, sizeof(*frames) * grown);
+                }
+                cap = grown;
+            }
+            frames[len++] = (AtomSpreadFrame){
+                child, 0u, hashcons_index_mix(seed, child->expr.len)};
+            continue;
+        }
+        uint64_t done = hashcons_index_finalize(top->hash);
+        if (--len == 0u) {
+            if (frames != inline_frames)
+                free(frames);
+            return done;
+        }
+        frames[len - 1u].hash = hashcons_index_mix(frames[len - 1u].hash, done);
+    }
+}
+
 /* Interning keeps every distinct term: a float by its bits, so 0.0 and -0.0
  * stay two atoms, and never a numeric promotion across kinds; a variable by
  * its id, its spelling and its structural name, so each keeps its own name.

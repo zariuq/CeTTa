@@ -159,6 +159,7 @@ struct PettaPlanNode {
     /* Authored (Empty body), distinct from a variable pattern bound to Empty.
      * The arm occurrence keeps this fact through translation and substitution. */
     bool literal_case_default;
+    CettaInvocationPlan invocation;
     CettaExprIndex output_child;
     bool contains_cardinality_call;
     bool contains_call;
@@ -206,19 +207,21 @@ struct PettaPlanNode {
 /* Source roles establish interpretation authority. The computation plan
  * states what executes with that authority; it does not grant callee or
  * lifetime admission. Unelaborated adapter nodes keep their existing role. */
-static inline CettaControlOperationPlan petta_plan_computation(
+static inline CettaComputationPlan petta_plan_computation(
         const PettaPlanNode *plan) {
     if (!plan)
-        return (CettaControlOperationPlan){0};
-    if (plan->control.operation != CETTA_CONTROL_NONE)
-        return plan->control;
+        return (CettaComputationPlan){0};
+    CettaComputationPlan computation = {plan->control, plan->invocation};
+    if (computation.control.operation != CETTA_CONTROL_NONE)
+        return computation;
     switch (plan->role) {
-    case PETTA_PLAN_VALUE: return CETTA_CONTROL_RETURN_VALUE_PLAN;
-    case PETTA_PLAN_DATA: return CETTA_CONTROL_CONSTRUCT_PLAN;
+    case PETTA_PLAN_VALUE: computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN; break;
+    case PETTA_PLAN_DATA: computation.control = CETTA_CONTROL_CONSTRUCT_PLAN; break;
     case PETTA_PLAN_STATIC_CALL:
-    case PETTA_PLAN_DYNAMIC_CALL: return CETTA_CONTROL_INVOKE_PLAN;
-    default: return (CettaControlOperationPlan){0};
+    case PETTA_PLAN_DYNAMIC_CALL: computation.control = CETTA_CONTROL_INVOKE_PLAN; break;
+    default: break;
     }
+    return computation;
 }
 
 typedef struct PettaEquationTemplateC0 PettaEquationTemplateC0;

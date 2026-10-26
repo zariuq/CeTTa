@@ -610,6 +610,101 @@
         "consumer": "Ordinary CALL_READY and unlimited APPLY_READY use the same service. Admitted private partials omit the eager syntax expansion; consumers can still request concrete query syntax.",
         "validation": "Native consumer controls intercept expansion, including empty captures, complete captures, refusal and finite-fuel paths. Public controls retain declared error-scope, held-operand and mutation laws.",
         "proof": "Mettapedia.Machines.ContextualInvocation; independent argument readers, contextual kernel entry and subsequent slices. Native C admission/lifetimes remain separate."
+      },
+      "common_sequence_execution": {
+        "source": "src/petta_search_machine.c:petta_machine_schedule_sequence",
+        "representation": "Generated three-byte order plan over the existing four-byte operation plan; no additional hot-frame fields.",
+        "consumers": [
+          "ordinary relational and literal sequence goals",
+          "activation-backed relational and literal sequence goals"
+        ],
+        "contract": "The selected dialect order keeps the body last. Each operand retains its lexical coordinate, live binding state, continuation mark and source-transition boundary. Separately admitted identity, count and anonymous-hole lowerings remain distinct.",
+        "controls": [
+          "tests/support/test_owned_resumable_consumers.py",
+          "tests/test_execution_contracts_generated.c"
+        ],
+        "models": [
+          "Mettapedia.Machines.ExecutionControl.SequenceExecution",
+          "Mettapedia.Machines.ContextualInvocation.FreshReadback"
+        ],
+        "remaining": "Whole-runtime source accounting, generalized operand ownership and complete ordinary-call lowering remain open."
+      },
+      "common_argument_execution": {
+        "source": "src/petta_search_machine.c:petta_push_argument_sequence",
+        "inputs": "Adapter-selected ready destinations, demand mask, source range, continuation and lexical activation. No additional hot-frame fields.",
+        "contract": "Source computations run in written order. Requested completion checks run after their argument and before later computations. The exact prior continuation height is retained for local early return.",
+        "controls": [
+          "tests/support/test_owned_resumable_consumers.py",
+          "tests/support/test_petta_search_machine.c:test_resume_contract",
+          "tests/support/test_he_shared_execution.py:constructor-fault-before-divergence"
+        ],
+        "proof": "Mettapedia.Machines.ContextualInvocation.ArgumentWorklist: reverse assembly, source-word refinement, charge conservation, pending prefixes and contextual metered interpretation. Native charge and error-policy correspondence remain open.",
+        "remaining": "Complete shared program ownership and native charge/packet-write correspondence remain open."
+      },
+      "call_preparation": {
+        "source": "lib/gslt_execution_contracts.metta:preparation-step",
+        "consumers": [
+          "ordinary argument sequencing",
+          "activation argument sequencing",
+          "typed argument preparation",
+          "typed result installation and delivery"
+        ],
+        "representation": "One-byte selected stage plan; no additional value or frame fields.",
+        "stages": [
+          "install-type",
+          "compute",
+          "check-return",
+          "check-type",
+          "bind"
+        ],
+        "contract": "Literal demand precedes argument execution. Type installation and completed-value checking are distinct. Telescope binding follows acceptance; result checks straddle body execution.",
+        "models": [
+          "Mettapedia.Machines.ContextualInvocation.Preparation"
+        ],
+        "controls": [
+          "tests/test_execution_contracts_generated.c:test_call_preparation_plans",
+          "tests/support/test_petta_search_machine.c:test_preparation_installation_contract",
+          "tests/support/test_owned_resumable_consumers.py",
+          "tests/petta/typecheck_v2_deferred_obligations.metta"
+        ],
+        "remaining": "Prepared/OEM compilation must consume the same preparation meaning, with independently admitted specialization."
+      },
+      "forcing_continuation": {
+        "source": [
+          "src/petta_semantics.h:petta_semantics_elaborate_control",
+          "src/petta_search_machine.c:PETTA_GOAL_FORCE_READY"
+        ],
+        "contract": "An admitted source eval fixes FORCE before operand delivery. Reduce retains value dispatch; payload/wrapper syntax does not recover continuation authority. Unknown form classification remains unadmitted.",
+        "models": [
+          "Mettapedia.Machines.ExecutionControl.Forcing"
+        ],
+        "controls": [
+          "tests/support/test_owned_resumable_consumers.py:forcing-*",
+          "tests/support/test_petta_search_machine.c:test_resume_contract",
+          "tests/test_native_conditional_context.c:source_computation_plans"
+        ],
+        "remaining": "HE one-step reflection and general native elaboration correspondence remain separate."
+      },
+      "episode_accounting": {
+        "source": "src/eval_completion.h:CettaEvalEpisode",
+        "consumers": [
+          "eval_completion_step",
+          "eval_completion_child_begin",
+          "eval_completion_child_end",
+          "metta_eval_outcome",
+          "owned native return delivery"
+        ],
+        "contract": "A nested episode borrows bounded credit, settles actual work once, retires its parent link and preserves the first incomplete cause. Existing source charging points and depth fuel are retained. Worker physical allowances do not refill semantic credit.",
+        "models": [
+          "Mettapedia.Machines.ContextualCBPV.EpisodeAccounting",
+          "Mettapedia.Machines.NativeCallReturn.recordCompletion"
+        ],
+        "controls": [
+          "tests/test_native_conditional_context.c:episode_accounting",
+          "tests/test_native_conditional_context.c:evaluator_episode_consumers",
+          "tests/support/test_petta_search_machine.c:test_resume_contract"
+        ],
+        "remaining": "Native source-occurrence charge assignment, all specialized-worker lowerings and complete C/pointer correspondence remain open."
       }
     },
     {
@@ -2291,7 +2386,7 @@
     },
     {
       "construction": "Mettapedia/Machines/ContextualInvocation.lean",
-      "application": "Borrowed ready invocations join the existing native field-reader and certified partial-expansion models to contextual CBPV entry. Exact post-entry computations and continuations agree, including ordered arguments, lexical scopes, source debits and arbitrary later slices; native admission and C correspondence remain separate."
+      "application": "Borrowed ready invocations join the existing native field-reader and certified partial-expansion models to contextual CBPV entry. Exact post-entry computations and continuations agree, including ordered arguments, lexical scopes, source debits and arbitrary later slices; native admission and C correspondence remain separate. InvocationLayout additionally relates source list destructuring to compiled array ranges and contextual argument worklists, including body identity, lexical operands, duplicates and stale-head rejection. Native descriptor, demand, charging and C correspondence obligations remain explicit."
     }
   ],
   "cross_tree_reconciliation": [
