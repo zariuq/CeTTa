@@ -13,8 +13,62 @@ def main():
     spec = Spec(text)
     assert len(spec.control_plans) == 9
     assert len(spec.control_forms) == 2
+    assert len(spec.variadic_forms) == 2
+    series = '(variadic-form petta prog1 sequence-first)'
+    for before, after in [
+            (series, series + '\n  ' + series),
+            (series, series.replace('petta', 'he')),
+            (series, series.replace('prog1', 'unregistered')),
+            (series, series.replace('sequence-first', 'sequence-last')),
+            (series, series.replace('sequence-first', 'sequence')),
+            (series, ''),
+            (series, series.replace('sequence-first)', 'sequence-first extra)')),
+            ('(source-head empty 0 failure (operands absent absent absent) (fold none))',
+             '(source-head empty 0 sequence-first (operands absent absent absent) (fold none))')]:
+        try:
+            Spec(text.replace(before, after))
+        except SpecError:
+            continue
+        raise AssertionError(('invalid variadic sequence was admitted', after))
     assert set(spec.implicit_operations) == {'return-value', 'construct', 'invoke'}
     assert len(spec.fold_control_heads) == 5
+    assert len(spec.invocation_heads) == 10 and len(spec.invocation_forms) == 10
+    invocation = '(invocation-head member 2 relational-member 0 2)'
+    predicate = '(invocation-form petta predicate 1 predicate-value 0 1)'
+    operation = '(invocation-operation host)'
+    for before, after in [
+            (invocation, invocation + '\n  ' + invocation),
+            (invocation, invocation.replace('member 2', 'unknown 2')),
+            (invocation, invocation.replace('relational-member', 'unknown')),
+            (invocation, invocation.replace(' 0 2)', ' 1 2)')),
+            (invocation, invocation.replace(' 0 2)', ' 0 3)')),
+            (invocation, invocation.replace('member 2', 'member 256')),
+            (invocation, invocation.replace('member 2', 'member -1')),
+            (predicate, predicate.replace('petta predicate', 'he predicate')),
+            (predicate, predicate.replace('petta predicate', 'petta unknown')),
+            (predicate, predicate + '\n  ' + predicate),
+            (operation, operation + '\n  ' + operation),
+            (operation, ''),
+            (invocation, '')]:
+        try:
+            Spec(text.replace(before, after))
+        except SpecError:
+            continue
+        raise AssertionError(('invalid invocation plan was admitted', after))
+    preparation = '(preparation-step install-type 0)'
+    for corrupted in [
+            text.replace(preparation, preparation + '\n  ' + preparation),
+            text.replace(preparation, '(preparation-step unknown 0)'),
+            text.replace(preparation, '(preparation-step install-type 1)'),
+            text.replace(preparation, '(preparation-step install-type 5)'),
+            text.replace(preparation, '(preparation-step install-type -1)'),
+            text.replace(preparation, '(preparation-step install-type 0 extra)'),
+            text.replace(preparation, '')]:
+        try:
+            Spec(corrupted)
+        except SpecError:
+            continue
+        raise AssertionError('invalid preparation stage layout was admitted')
     row = '(source-head let 3 sequence (operands 1 0 2) (fold bind))'
     assert text.count(row) == 1
     corruptions = [
@@ -70,8 +124,17 @@ def main():
         except SpecError:
             continue
         raise AssertionError('implicit computation bypassed occurrence admission')
-    print('PASS: computation plans preserve basic occurrences, control layouts and '
-          'dialect scopes; twenty-two corruptions refused')
+    sequence = '(sequence-order source-first source first last)'
+    for corrupted in [text.replace(sequence, sequence + '\n  ' + sequence),
+                      text.replace(sequence, '(sequence-order source-first source last first)'),
+                      text.replace(sequence, '(sequence-order source-first source source last)')]:
+        try:
+            Spec(corrupted)
+        except SpecError:
+            continue
+        raise AssertionError('invalid executable sequence order was admitted')
+    print('PASS: computation plans preserve basic occurrences, control layouts, '
+          'sequence order and dialect scopes; malformed plans refused')
 
 
 if __name__ == '__main__':

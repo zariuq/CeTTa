@@ -21909,6 +21909,29 @@ main-readiness-rho-adaptive:
 	done
 	@python3 scripts/rhocalc_benchmark_regression.py
 
+main-readiness-consolidation: $(BIN)
+	@test -n "$(CETTA_CONSOLIDATION_BASELINE_BIN)" && \
+		test -n "$(CETTA_CONSOLIDATION_BASELINE_RECEIPT)" && \
+		test -n "$(CETTA_CONSOLIDATION_BASELINE_SHA256)"
+	@python3 scripts/rhocalc_threaded_bench.py "$(abspath $(BIN))" \
+		--baseline-bin "$(CETTA_CONSOLIDATION_BASELINE_BIN)" \
+		--baseline-receipt "$(CETTA_CONSOLIDATION_BASELINE_RECEIPT)" \
+		--baseline-receipt-sha256 "$(CETTA_CONSOLIDATION_BASELINE_SHA256)" \
+		--baseline-source-commit c632ecd1479fc766dcdf0efafd4cbc311213af6d \
+		--mode standard --runs 5 --threads 1,2,4,8 --seed 0xC377A \
+		--csv runtime/consolidation/rhocalc_threaded_standard_current.csv
+	@python3 scripts/rhocalc_cost_threaded_bench.py "$(abspath $(BIN))" \
+		--baseline-bin "$(CETTA_CONSOLIDATION_BASELINE_BIN)" \
+		--baseline-receipt "$(CETTA_CONSOLIDATION_BASELINE_RECEIPT)" \
+		--baseline-receipt-sha256 "$(CETTA_CONSOLIDATION_BASELINE_SHA256)" \
+		--baseline-source-commit c632ecd1479fc766dcdf0efafd4cbc311213af6d \
+		--mode heavy --runs 5 --threads 1,2,4,8 \
+		--csv runtime/consolidation/rhocalc_cost_threaded_heavy_current.csv
+	@python3 scripts/rhocalc_benchmark_regression.py \
+		--matrix-dir runtime/consolidation --require-paired --max-ratio 1.05 --min-slack 0 \
+		--baseline-commit c632ecd1479fc766dcdf0efafd4cbc311213af6d \
+		--baseline-sha256 "$$(sha256sum "$(CETTA_CONSOLIDATION_BASELINE_BIN)" | cut -d' ' -f1)"
+
 main-readiness-routine:
 	@python3 scripts/cetta_main_readiness.py --tier routine
 
@@ -32693,8 +32716,10 @@ test-pathmap-indexed-query-work: $(BIN)
 $(EXECUTION_CONTRACTS_TEST_BIN): tests/test_execution_contracts_generated.c \
 		$(EXECUTION_CONTRACTS_GENERATED_H) $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -MMD -MP -MF $@.d -MT $@ -o $@ \
 		tests/test_execution_contracts_generated.c $(LDFLAGS)
+
+-include $(EXECUTION_CONTRACTS_TEST_BIN).d
 
 .PHONY: test-prepared-pure-answer-producer
 test-all: test-prepared-pure-answer-producer
@@ -32710,12 +32735,14 @@ test-all: test-owned-resumable-consumers test-he-shared-execution
 test-owned-resumable-consumers: $(BIN)
 	@python3 tests/support/test_owned_resumable_consumers.py ./$(BIN) --gmp $(ENABLE_GMP)
 
-.PHONY: test-effects-v1 test-process-scope-v1 test-process-scope-fork-v1 test-list-drop-v1
-test-all: test-effects-v1 test-process-scope-v1 test-list-drop-v1
+.PHONY: test-effects-v1 test-process-scope-v1 test-process-stream-v1 test-process-scope-fork-v1 test-list-drop-v1
+test-all: test-effects-v1 test-process-scope-v1 test-process-stream-v1 test-list-drop-v1
 test-process-scope-v1: $(BIN) tests/support/check_process_scope_v1.py
 	@python3 tests/support/check_process_scope_v1.py ./$(BIN)
+test-process-stream-v1: $(BIN) tests/support/check_process_stream.py tests/support/proc_fixture_v1.c
+	@python3 tests/support/check_process_stream.py ./$(BIN)
 test-process-scope-fork-v1:
-	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-process-scope-v1
+	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-process-scope-v1 test-process-stream-v1
 test-list-drop-v1: $(BIN) lib/list.metta tests/list_value/list_drop.metta tests/list_value/list_drop.expected
 	@set -e; for language in he petta@1.0.6 prime; do \
 		library=list; test $$language != petta@1.0.6 || library='(library list)'; \
@@ -46993,3 +47020,5 @@ test-petta-contextual-case: $(BIN) tests/support/check_petta_contextual_case.py
 	python3 tests/support/check_petta_contextual_case.py --cetta ./$(BIN)
 
 test-all: test-petta-contextual-case
+
+.PHONY: main-readiness-consolidation

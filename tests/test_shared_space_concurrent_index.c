@@ -129,9 +129,9 @@ static bool validate_occurrence_cursors(Space *space, Atom *pattern) {
         CettaCount count = 0u;
         bool seen[BASE_ROW_COUNT + 1u] = {false};
         SpaceOccurrenceCursorStep step;
-        while ((step = space_occurrence_cursor_next(current, &index)) ==
+        Atom *atom = NULL;
+        while ((step = space_occurrence_cursor_next(current, &index, &atom)) ==
                SPACE_OCCURRENCE_CURSOR_ITEM) {
-            Atom *atom = space_occurrence_cursor_atom(current, index);
             if (!atom || atom->kind != ATOM_EXPR || atom->expr.len != 2u) {
                 ok = false;
                 break;

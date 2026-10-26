@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Ordered HE observations at compiled and raw continuation boundaries."""
+import json
 import os
 from pathlib import Path
 import re
@@ -13,6 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 # The last field requires the shared machine. Intrinsic demands and closed
 # calls can select their existing qualified realizations.
 CASES = [
+    ('private-name-sharing', '(= (one) (Box $hole))\n!(let $a (one) (let $as (cons-atom $a ()) (== (format-args "{}" $as) (format-args "{}" $as))))\n', '[True]\n', False),
+    ('private-name-distinctness', '(= (one) (Box $hole))\n!(let $a (one) (let $b (one) (let $as (cons-atom $a ()) (let $bs (cons-atom $b ()) (== (format-args "{}" $as) (format-args "{}" $bs))))))\n', '[False]\n', False),
+    ('private-looking-literal', '! "literal $hole#17"\n', '["literal $hole#17"]\n', False),
     ('raw-expansion-after-failure', '(= (miss $p) (let (Pair $x $y) $p 7))\n!(miss (Single 3))\n!(eval (_minimal-map-atom (1 2) $x (return $x)))\n', '[(eval (if-equal (1 2) () (return ()) (chain (decons-atom (1 2)) $ht#0 (unify ($head#0 $tail#0) $ht#0 (chain (eval (sealed ($x) (return $x))) $sealedmap#0 (chain (eval (map-atom $tail#0 $x $sealedmap#0)) $tail-mapped#0 (chain (eval (atom-subst $head#0 $x $sealedmap#0)) $map-expr#0 (chain $map-expr#0 $head-mapped#0 (chain (cons-atom $head-mapped#0 $tail-mapped#0) $res#0 (return $res#0)))))) (empty)))))]\n', False),
     ("shared-dag-type-input", "(= (dag $n $leaf) (if (== $n 0) $leaf "
      "(let $t (dag (- $n 1) $leaf) (node $t $t))))\n"
@@ -287,6 +291,39 @@ def check_private_observer():
         assert private_names(left) != private_names(changed)
     assert private_names('$caller#0', {'$caller#0'}) != private_names(
         '$caller#42', {'$caller#0'})
+    assert private_names('($hole#31 $hole#32)') != private_names(
+        '($hole#42 $hole#42)')
+    faithful = '[(Pair ($hole#31 $hole#31) "($hole#31 $hole#31)")]\n'
+    expected = '[($hole#0 $hole#0)]\n'
+    check_reflected_text(faithful, expected, ())
+    for changed in (faithful.replace('"($hole#31 $hole#31)"', '"($hole#0 $hole#0)"'),
+                    faithful.replace('$hole#31 $hole#31', '$hole#31 $hole#32')):
+        try:
+            check_reflected_text(changed, expected, ())
+        except AssertionError:
+            continue
+        raise AssertionError(("invalid readback accepted", changed))
+
+
+def check_reflected_text(output, expected, protected):
+    """This fixture returns a structured term beside its own formatted text.
+
+    Compare names only in the structured observation. The string must be an
+    exact rendering of that run's term; generated digits are not erased from
+    ordinary string data or compared with another run's allocator sequence.
+    """
+    strings = [m for m in VARIABLE_OR_STRING.finditer(output)
+               if m.group(0).startswith('"')]
+    if not output.startswith('[(Pair ') or len(strings) != 1:
+        raise AssertionError(("reflective return shape", output))
+    text = strings[0]
+    if output[text.end():] != ')]\n':
+        raise AssertionError(("reflective return suffix", output))
+    raw = output[len('[(Pair '):text.start()].rstrip()
+    if json.loads(text.group(0)) != raw:
+        raise AssertionError(("formatted text lost the chosen names", output))
+    if private_names('[' + raw + ']\n', protected) != private_names(expected, protected):
+        raise AssertionError(("reflected structure or aliases changed", output))
 
 
 def main():
@@ -320,6 +357,37 @@ def main():
                     int(value) != 0 for value in re.findall(
                         r"(?:goal_host|equation_match_attempts)=([0-9]+)", result.stderr)):
                     raise AssertionError((name, "pattern callback bypassed admission"))
+                observations += 1
+        # The raw minimal expansion has private names. Return it as completed
+        # data beside its formatting, so neither consumer interprets the
+        # expansion merely to compare it. Preparation before the observation
+        # may choose a different fresh-name schedule.
+        expected = next(row[2] for row in CASES
+                        if row[0] == 'raw-expansion-after-failure')
+        body = '''!(let $raw (eval (_minimal-map-atom (1 2) $x (return $x)))
+          (let $args (cons-atom $raw ())
+            (let $rendered (format-args "{}" $args)
+              (function (return (Pair $raw $rendered))))))\n'''
+        prefixes = ('', '(= (miss $p) (let (Pair $x $y) $p 7))\n!(miss (Single 3))\n')
+        for prefix in prefixes:
+            source = prefix + body
+            path = Path(directory) / "fresh-readback.metta"
+            path.write_text(source)
+            for canonical, shared in (("0", "0"), ("0", "1"),
+                                      ("1", "0"), ("1", "1"), (None, None)):
+                env = dict(os.environ)
+                for key, value in (("CETTA_HE_CANONICAL_EXECUTION", canonical),
+                                   ("CETTA_HE_SHARED_EXECUTION", shared)):
+                    if value is None:
+                        env.pop(key, None)
+                    else:
+                        env[key] = value
+                result = subprocess.run([str(binary), "--lang", "he", str(path)],
+                                        cwd=root, env=env, capture_output=True,
+                                        text=True, timeout=30)
+                if result.returncode or result.stderr:
+                    raise AssertionError(("fresh readback", result.returncode, result.stderr))
+                check_reflected_text(result.stdout, expected, source_variables(source))
                 observations += 1
         # A backend's intrinsic name does not override an authored HE head.
         # All three worker switches are independent of source authority.

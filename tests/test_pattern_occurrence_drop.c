@@ -3,14 +3,14 @@
 /* Link-only mutation: lose the occurrence immediately after every returned
  * one. The ordinary cursor test must reject this stream transformation. */
 extern SpaceOccurrenceCursorStep __real_space_occurrence_cursor_next(
-    SpaceOccurrenceCursor *, CettaIndex *);
+    SpaceOccurrenceCursor *, CettaIndex *, Atom **);
 
 SpaceOccurrenceCursorStep __wrap_space_occurrence_cursor_next(
-    SpaceOccurrenceCursor *cursor, CettaIndex *index) {
-    SpaceOccurrenceCursorStep result = __real_space_occurrence_cursor_next(cursor, index);
+    SpaceOccurrenceCursor *cursor, CettaIndex *index, Atom **atom) {
+    SpaceOccurrenceCursorStep result = __real_space_occurrence_cursor_next(cursor, index, atom);
     if (result == SPACE_OCCURRENCE_CURSOR_ITEM) {
         CettaIndex dropped;
-        (void)__real_space_occurrence_cursor_next(cursor, &dropped);
+        (void)__real_space_occurrence_cursor_next(cursor, &dropped, NULL);
     }
     return result;
 }
