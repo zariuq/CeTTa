@@ -1147,6 +1147,12 @@ uint32_t atom_hash(Atom *a);
 void atom_hash_read_scope_enter(void);
 void atom_hash_read_scope_leave(void);
 
+/* A 64-bit hash spread over every bit, equal for atoms atom_eq equates, for
+ * tables that index many terms by hash.  atom_hash stays the shared
+ * structural hash; its recurrence lets families of terms that differ in small
+ * leaves, numbers above all, collapse to one 32-bit value. */
+uint64_t atom_spread_hash(Atom *atom);
+
 /* A hash cache of 0 means "not yet known", so every structural hash, cached
  * or not, spells a computed 0 as this word: leaves, expression folds, the
  * compile-time list hashes and the term universe's hash32 alike, so a cached

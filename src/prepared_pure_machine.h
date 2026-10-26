@@ -642,6 +642,9 @@ typedef struct {
  * until the cursor is closed or detached. The source Space/read view remains
  * borrowed from the host and must outlive the cursor; detachment moves value
  * storage, not semantic authority. Revision changes cause a stale handoff.
+ * Completed native calls preserve this loan. A retained native producer
+ * first owns its frontier, returned packet and live continuation, so the
+ * host can reclaim entry storage while that producer remains suspended.
  * NULL declines, including when the
  * entry relation is not admitted. */
 CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(

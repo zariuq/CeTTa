@@ -26,6 +26,8 @@ static unsigned residual_native_calls;
 static bool prepared_fixture;
 static SymbolId prepared_head = SYMBOL_ID_NONE;
 static unsigned prepared_mode, prepared_attempts, prepared_calls, prepared_effects;
+static Atom *prepared_borrowed_value;
+static uint32_t prepared_borrowed_parent_depth;
 
 static Atom *prepared_fixture_atom(Arena *arena, const char *text) {
     size_t position = 0u;
@@ -81,6 +83,9 @@ static void prepared_fixture_result(Arena *arena, CettaCallOutcome *outcome) {
         *outcome = cetta_call_expression_frontier(atom_expr3(arena, code, code, code));
         break;
     }
+    case 21u: *outcome = cetta_call_completed_value(prepared_borrowed_value); break;
+    case 22u: *outcome = cetta_call_completed_frontier(
+        atom_expr2(arena, prepared_borrowed_value, prepared_borrowed_value)); break;
     default: abort();
     }
 }
@@ -95,6 +100,17 @@ bool __wrap_cetta_library_call_native_prepared_view(CettaLibraryContext *library
     prepared_attempts++;
     if (prepared_mode == 11u)
         return false;
+    if (prepared_mode == 21u || prepared_mode == 22u) {
+        assert(g_eval_gc.external_owner_depth > prepared_borrowed_parent_depth);
+        EvalOutcome nested;
+        eval_outcome_init(&nested);
+        metta_eval_outcome(space, arena, NULL,
+            prepared_fixture_atom(arena, "(+ 1 2)"), -1, &nested);
+        assert(nested.completion == CETTA_EVAL_COMPLETE && nested.results.len == 1u &&
+            atom_eq(nested.results.items[0], atom_int(arena, 3)));
+        eval_outcome_free(&nested);
+        assert(g_eval_gc.external_owner_depth > prepared_borrowed_parent_depth);
+    }
     prepared_fixture_result(arena, outcome);
     return true;
 }
@@ -706,6 +722,79 @@ static unsigned result_policy_admissions(CettaLibraryContext *context,
     return 5u;
 }
 
+/* Exercise the ordinary entry adapter with a large caller-owned value.
+ * A completed native result borrows it; a suspended native frontier owns it
+ * before the caller reuses its storage. Both occurrences keep one image. */
+static unsigned prepared_native_borrow_controls(CettaLibraryContext *library,
+        Space *space) {
+    unsigned checks = 0u;
+    for (unsigned frontier = 0u; frontier < 2u; frontier++) {
+        Arena source, publication;
+        arena_init_detached(&source);
+        arena_init_detached(&publication);
+        ArenaMark empty = arena_mark(&source);
+        Atom *data = atom_expr_builder_begin(&source, 2049u);
+        assert(data);
+        data->expr.elems[0] = atom_symbol(&source, "Payload");
+        for (unsigned i = 1u; i < 2049u; i++)
+            data->expr.elems[i] = atom_int(&source, i);
+        data = atom_expr_builder_finish(&source, data);
+        prepared_borrowed_value = data;
+        prepared_mode = frontier ? 22u : 21u;
+        prepared_calls = prepared_attempts = prepared_effects = 0u;
+        PettaEvalMachineContext context = {.fuel = -1, .library_context = library,
+            .semantic_authority_epoch = 1u, .prepared_pure_cache = {.root_space = space}};
+        Atom *call = atom_expr2(&source, atom_symbol(&source, "native-tail"), data);
+        CettaPreparedPureAnswerCursor *cursor = petta_eval_machine_open_answer_cursor(
+            &context, space, &source, call, NULL, NULL, NULL);
+        assert(cursor && cetta_prepared_pure_answer_cursor_storage(cursor).live_bytes == 0u);
+        CettaOwnedReturn returned = {0};
+        CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+        prepared_borrowed_parent_depth = g_eval_gc.external_owner_depth;
+        assert(petta_eval_machine_next_answer_cursor(&context, space, cursor,
+            &returned, &completion) == CETTA_OWNED_EXECUTION_RETURN);
+        assert(g_eval_gc.external_owner_depth == prepared_borrowed_parent_depth);
+        assert(returned.outcome.kind == CETTA_CALL_VALUE &&
+            returned.outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE);
+        Atom *answer = returned.outcome.term;
+        assert(atom_eq(answer, data));
+        if (!frontier) {
+            assert(answer == data);
+            assert(cetta_prepared_pure_answer_cursor_storage(cursor).live_bytes < 65536u);
+            assert(cetta_prepared_pure_answer_cursor_detach(cursor));
+        } else {
+            assert(answer != data);
+            assert((answer->flags & ATOM_FLAG_ARENA_CLOSED) != 0u);
+            CettaPreparedPureAnswerFrame frame;
+            assert(cetta_prepared_pure_answer_cursor_frame(cursor, 0u, &frame));
+            assert(frame.arity == 1u && frame.arguments[0] == answer);
+        }
+        Atom *selected = atom_deep_copy(&publication, answer);
+        assert(selected);
+        arena_reset(&source, empty);
+        for (unsigned i = 0u; i < 4096u; i++)
+            assert(atom_int(&source, -(int64_t)i));
+        if (frontier) {
+            memset(&returned, 0, sizeof(returned));
+            assert(petta_eval_machine_next_answer_cursor(&context, space, cursor,
+                &returned, &completion) == CETTA_OWNED_EXECUTION_RETURN);
+            assert(returned.outcome.term == answer && atom_eq(returned.outcome.term, selected));
+        }
+        assert(petta_eval_machine_next_answer_cursor(&context, space, cursor,
+            &returned, &completion) == CETTA_OWNED_EXECUTION_COMPLETE);
+        assert(prepared_calls == 1u && prepared_attempts == 1u &&
+            completion == CETTA_EVAL_COMPLETE);
+        cetta_prepared_pure_answer_cursor_close(cursor);
+        prepared_pure_program_cache_free(&context.prepared_pure_cache);
+        assert(selected->expr.len == 2049u && selected->expr.elems[2048]->ground.ival == 2048);
+        prepared_borrowed_value = NULL;
+        arena_free(&source);
+        arena_free(&publication);
+        checks++;
+    }
+    return checks;
+}
+
 static unsigned prepared_native_consumers(void) {
     unsigned checks = 0u;
     for (unsigned language = 0u; language < 2u; language++) {
@@ -760,6 +849,8 @@ static unsigned prepared_native_consumers(void) {
         native_frontier_capture_control(&space, &arena);
         checks++;
         prepared_fixture = true;
+        if (!language)
+            checks += prepared_native_borrow_controls(context, &space);
         for (prepared_mode = 0u; prepared_mode < 21u; prepared_mode++) {
             assert(cetta_library_petta_translator_rule_set(context, prepared_head, false));
             CettaEvalEpisode tracker = {0};

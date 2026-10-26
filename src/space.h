@@ -867,8 +867,11 @@ bool space_occurrence_cursor_clone_unstarted(
  * rows, ceiling, and next occurrence as the source. */
 bool space_occurrence_cursor_clone(
     const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst);
+/* Select and lend the next captured row in one shared read transition.
+ * An optional payload stays borrowed from the pinned view; the optional
+ * index has view-local coordinates. No matching is performed. */
 SpaceOccurrenceCursorStep space_occurrence_cursor_next(
-    SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out);
+    SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out, Atom **atom_out);
 /* The atom at an index the cursor yielded, from the rows it captured. */
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index);

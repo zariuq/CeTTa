@@ -34491,8 +34491,10 @@ test-pathmap-indexed-query-work: $(BIN)
 $(EXECUTION_CONTRACTS_TEST_BIN): tests/test_execution_contracts_generated.c \
 		$(EXECUTION_CONTRACTS_GENERATED_H) $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -MMD -MP -MF $@.d -MT $@ -o $@ \
 		tests/test_execution_contracts_generated.c $(LDFLAGS)
+
+-include $(EXECUTION_CONTRACTS_TEST_BIN).d
 
 .PHONY: test-prepared-pure-answer-producer
 test-all: test-prepared-pure-answer-producer

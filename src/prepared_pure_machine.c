@@ -12839,6 +12839,9 @@ struct CettaPreparedPureAnswerCursor {
     const void *continuation_context;
 };
 
+static bool prepared_pure_answer_cursor_detach_with_session(
+    CettaPreparedPureAnswerCursor *cursor, AtomDeepCopySession *session);
+
 /* Record a relation's first entry and ask whether it is admitted. */
 static bool prepared_pure_answer_cursor_see_head(
     CettaPreparedPureAnswerCursor *cursor, uint32_t head_index) {
@@ -13425,19 +13428,49 @@ static PreparedPureRunResult prepared_pure_native_retain(
         CettaPreparedPureAnswerCursor *cursor, Atom *head, Atom *const *arguments,
         uint32_t arity, CettaCallOutcome outcome, bool entered,
         const PreparedPureContinuation *continuation) {
+    /* Synchronous native calls borrow their operands. Only a retained native
+     * producer can outlive the parent's current heap segment. Own its full
+     * frontier before installing the opaque producer, while detachment can
+     * still traverse every ordinary frame. Keep an entered return on failure
+     * so capacity exhaustion cannot retry its effects. */
+    Atom *owned[64];
+    CettaCallOutcome saved = outcome;
+    const PreparedPureContinuation *saved_continuation = continuation;
+    PreparedPureContinuationCopies records = {0};
+    AtomDeepCopySession *copy = atom_deep_copy_session_new(cursor->arena);
+    bool ok = arity <= 64u && copy &&
+        prepared_pure_answer_cursor_detach_with_session(cursor, copy);
+    for (uint32_t i = 0u; ok && i < arity; i++) {
+        owned[i] = atom_deep_copy_session_copy(copy, arguments[i]);
+        ok = owned[i] != NULL;
+    }
+    if (ok && outcome.term)
+        ok = (saved.term = atom_deep_copy_session_copy(copy, outcome.term)) != NULL;
+    if (ok && outcome.delayed)
+        ok = (saved.delayed = atom_deep_copy_session_copy(copy, outcome.delayed)) != NULL;
+    if (ok && continuation)
+        ok = prepared_pure_answer_cursor_copy_continuation(cursor, cursor->arena,
+            copy, &records, continuation, &saved_continuation);
+    atom_deep_copy_session_free(copy);
+    free(records.entries);
     PreparedPureNativeFrame *native = cursor->native_spare;
     cursor->native_spare = NULL;
     native->head = head;
     native->entered = entered;
-    native->continuation = continuation;
-    native->returns = (CettaCallReturnCursor){.outcome = outcome};
+    native->continuation = ok ? saved_continuation : continuation;
+    native->returns = (CettaCallReturnCursor){.outcome = ok ? saved : outcome};
     if (entered)
         cetta_owned_execution_init(&native->producer, &native->returns,
                                   cetta_call_return_next, NULL);
     ArenaMark mark = arena_mark(cursor->arena);
     prepared_pure_answer_cursor_push_reserved(cursor, PREPARED_PURE_NATIVE_FRAME,
-        arguments, arity, mark, NULL);
+        ok ? owned : arguments, arity, mark, NULL);
     cursor->frames[cursor->frame_len - 1u].native = native;
+    if (!ok) {
+        (void)prepared_pure_answer_cursor_handoff(cursor,
+            CETTA_PREPARED_PURE_HANDOFF_LIMIT);
+        return PREPARED_PURE_RUN_HANDOFF;
+    }
     if (!entered) {
         (void)prepared_pure_answer_cursor_handoff(cursor,
             CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN);
@@ -14642,8 +14675,8 @@ bool cetta_prepared_pure_answer_cursor_can_detach(
     return cursor && cursor->owns_arena;
 }
 
-bool cetta_prepared_pure_answer_cursor_detach(
-    CettaPreparedPureAnswerCursor *cursor) {
+static bool prepared_pure_answer_cursor_detach_with_session(
+    CettaPreparedPureAnswerCursor *cursor, AtomDeepCopySession *session) {
     if (cursor && cursor->program->execution) return false;
     if (!cursor)
         return false;
@@ -14665,7 +14698,6 @@ bool cetta_prepared_pure_answer_cursor_detach(
     ArenaMark before = arena_mark(cursor->arena);
     Atom **arguments = cursor->argument_len
         ? malloc(sizeof(*arguments) * cursor->argument_len) : NULL;
-    AtomDeepCopySession *session = atom_deep_copy_session_new(cursor->arena);
     bool ok = session != NULL && (!cursor->argument_len || arguments);
     for (size_t index = 0u; ok && index < cursor->argument_len; index++) {
         arguments[index] = atom_deep_copy_session_copy(
@@ -14702,8 +14734,6 @@ bool cetta_prepared_pure_answer_cursor_detach(
             }
         }
     }
-    if (session)
-        atom_deep_copy_session_free(session);
     if (ok) {
         if (cursor->argument_len)
             memcpy(cursor->arguments, arguments,
@@ -14727,6 +14757,19 @@ bool cetta_prepared_pure_answer_cursor_detach(
     }
     free(changed);
     free(arguments);
+    return ok;
+}
+
+bool cetta_prepared_pure_answer_cursor_detach(
+    CettaPreparedPureAnswerCursor *cursor) {
+    if (cursor && cursor->program->execution) return false;
+    if (!cursor)
+        return false;
+    if (!cursor->owns_arena || cursor->detached)
+        return true;
+    AtomDeepCopySession *copy = atom_deep_copy_session_new(cursor->arena);
+    bool ok = copy && prepared_pure_answer_cursor_detach_with_session(cursor, copy);
+    atom_deep_copy_session_free(copy);
     return ok;
 }
 
@@ -15283,7 +15326,9 @@ boxed:;
 
 /* Read back only initialized live logical slots. Registers beyond the
  * step frame are constructor temporaries and cannot escape an instruction.
- * Source and target use the same slot coordinates by construction. */
+ * Source and target use the same slot coordinates by construction. A native
+ * residual borrows these roots until the common retain boundary copies them;
+ * a plain code frontier supplies its own multi-root copy episode. */
 static bool prepared_pure_code_readback(CettaPreparedPureAnswerCursor *cursor,
         AtomDeepCopySession *copy, const PreparedPureContinuation *outer,
         const PreparedPureContinuation **continuation) {
@@ -15328,41 +15373,28 @@ static bool prepared_pure_code_readback(CettaPreparedPureAnswerCursor *cursor,
             if (slot >= count || (size_t)frame->base + slot >= program->slot_len)
                 return false;
             Atom *value = program->slots[(size_t)frame->base + slot];
-            if (!value || !(locals[slot] = atom_deep_copy_session_copy(copy, value)))
+            if (!value || !(locals[slot] = copy
+                    ? atom_deep_copy_session_copy(copy, value) : value))
                 return false;
         }
         *record = (PreparedPureContinuation){.parent = *continuation,
             .locals = locals, .equation = equation, .step = pc + 1u,
-            .slot = step->slot, .locals_detached = true};
+            .slot = step->slot, .locals_detached = copy != NULL};
         *continuation = record;
     }
     return true;
 }
 
-/* The native result and the live register continuation become one owned
- * frontier before reusable program storage can be entered again. One copy
- * session preserves their shared subgraphs, including delayed roots. */
+/* Read the actual register residual before reusable program storage can be
+ * entered again. The common native retain boundary owns its arguments,
+ * tagged return and live continuation in one copy episode. */
 static void prepared_pure_code_retain(CettaPreparedPureAnswerCursor *cursor,
         const PreparedPureContinuation *outer, Atom *head, Atom *const *arguments,
         uint32_t arity, CettaCallOutcome outcome, bool entered) {
-    Atom *owned[64];
-    CettaCallOutcome saved = outcome;
     const PreparedPureContinuation *continuation = outer;
-    AtomDeepCopySession *copy = atom_deep_copy_session_new(cursor->arena);
-    bool ok = copy && arity <= 64u;
-    for (uint32_t i = 0u; ok && i < arity; i++) {
-        owned[i] = atom_deep_copy_session_copy(copy, arguments[i]);
-        ok = owned[i] != NULL;
-    }
-    if (ok && outcome.term)
-        ok = (saved.term = atom_deep_copy_session_copy(copy, outcome.term)) != NULL;
-    if (ok && outcome.delayed)
-        ok = (saved.delayed = atom_deep_copy_session_copy(copy, outcome.delayed)) != NULL;
-    if (ok)
-        ok = prepared_pure_code_readback(cursor, copy, outer, &continuation);
-    atom_deep_copy_session_free(copy);
-    (void)prepared_pure_native_retain(cursor, head, ok ? owned : arguments, arity,
-        ok ? saved : outcome, entered, continuation);
+    bool ok = prepared_pure_code_readback(cursor, NULL, outer, &continuation);
+    (void)prepared_pure_native_retain(cursor, head, arguments, arity,
+        outcome, entered, continuation);
     if (!ok)
         (void)prepared_pure_answer_cursor_handoff(cursor, CETTA_PREPARED_PURE_HANDOFF_LIMIT);
 }
@@ -16012,7 +16044,10 @@ finished:
     }
     if (execution) execution->poll_countdown=poll_countdown;
     prepared_pure_memo_clear(program);
-    if (cursor) {
+    /* Without a collection, values live in the cursor, its borrowed entry,
+     * or its retained immutable program. Only collection survivors need to
+     * cross out of the program's reusable invocation storage here. */
+    if (cursor && program->gc_survivor_ready) {
         AtomDeepCopySession *copy = atom_deep_copy_session_new(arena);
         Atom *owned = copy ? atom_deep_copy_session_copy(copy, result) : NULL;
         atom_deep_copy_session_free(copy);
