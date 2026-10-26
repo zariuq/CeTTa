@@ -587,6 +587,7 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_str_value, "__cetta_lib_str_value") \
     X(lib_re, "__cetta_lib_re") \
     X(lib_crypto, "__cetta_lib_crypto") \
+    X(lib_toml, "__cetta_lib_toml") \
     X(lib_lts_he_transitions, "__cetta_lib_lts_he_transitions") \
     X(lib_lts_he_step_rules, "__cetta_lib_lts_he_step_rules") \
     X(lib_lts_rho_transitions, "__cetta_lib_lts_rho_transitions") \

@@ -941,6 +941,8 @@ SECP256K1_SRC = vendor/secp256k1/src/secp256k1.c vendor/secp256k1/src/precompute
 SECP256K1_OBJ = $(foreach variant,$(BUILD_OBJ_TAG).o $(BUILD_OBJ_TAG).stage0.o $(BUILD_OBJ_TAG).runtime-stats.o,\
 	$(SECP256K1_SRC:.c=.$(variant)))
 SRC += src/library_crypto.c src/crypto_primitives.c $(SECP256K1_SRC)
+# lib/toml: TOML 1.1 through the vendored tomlc17 (MIT, vendor/tomlc17).
+SRC += src/library_toml.c vendor/tomlc17/tomlc17.c
 $(SECP256K1_OBJ): CFLAGS := $(filter-out -Werror,$(CFLAGS)) -Wno-unused-function \
 	-DENABLE_MODULE_EXTRAKEYS=1 -DENABLE_MODULE_SCHNORRSIG=1 -DENABLE_MODULE_ECDH=1
 PARSER_BUILD_MANIFEST ?= langdef/parsers/baked_v1.json
@@ -34247,6 +34249,11 @@ test-crypto-v1: $(BIN) $(CRYPTO_NATIVE_TEST_V1) tests/support/check_crypto_v1.py
 	@$(call cetta_exec,./$(CRYPTO_NATIVE_TEST_V1))
 	@python3 tests/support/check_crypto_v1.py ./$(BIN)
 
+.PHONY: test-toml-v1
+test-all: test-toml-v1
+test-toml-v1: $(BIN) tests/support/check_toml_v1.py
+	@python3 tests/support/check_toml_v1.py ./$(BIN)
+
 # The server side needs Python's websockets package; without it the check
 # reports a skip.
 WEBSOCKET_TEST_PYTHON ?= python3
@@ -45908,8 +45915,8 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
 	system fs proc sqlite shell cwp io durable space_service llm llm/io llm/command llm/compat \
-	re crypto postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
-LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re crypto holkernel mm0kernel
+	re crypto toml postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
+LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re crypto toml holkernel mm0kernel
 LIBRARY_PETTA_SPELLING_SOURCES_V1 += lib_tensor
 LIBRARY_PRIME_SPELLING_SOURCES_V1 += lib_tensor
 .PHONY: test-library-spellings-v1
