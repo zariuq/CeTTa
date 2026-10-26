@@ -53,6 +53,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
+#include <pwd.h>
 #include <unistd.h>
 
 #ifndef CETTA_BUILD_WITH_JSON_GSLT
@@ -4651,6 +4652,58 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
             for (const CettaErrnoName *entry = cetta_errno_names; entry->name; entry++)
                 if (!strcmp(entry->name, name)) return atom_int(a, entry->value);
             return atom_unit(a);
+        }
+        /* os.path.expanduser as CPython 3.12's posixpath has it: "~" alone
+         * or before "/" reads $HOME when it is set, even empty, else the
+         * account database for getuid(); "~name" reads the database for that
+         * name.  An account that cannot be found leaves the path unchanged.
+         * Trailing slashes of the home are dropped, and an empty result is
+         * "/". */
+        if (!strcmp(operation, "expanduser") && nargs == 2) {
+            const char *path = library_text_arg(args[1]);
+            if (!path) return library_signature_error(a, head, args, nargs, "expected a path as text");
+            if (path[0] != '~') return atom_string(a, path);
+            size_t length = strlen(path);
+            const char *slash = strchr(path + 1, '/');
+            size_t name_end = slash ? (size_t)(slash - path) : length;
+            const char *home = name_end == 1 ? getenv("HOME") : NULL;
+            char *buffer = NULL;
+            if (!home) {
+                struct passwd entry, *found = NULL;
+                char *name = name_end == 1 ? NULL : strndup(path + 1, name_end - 1);
+                size_t size = 1024u;
+                int status = 0;
+                for (;;) {
+                    char *grown = realloc(buffer, size);
+                    if (!grown) { status = ENOMEM; break; }
+                    buffer = grown;
+                    status = name ? getpwnam_r(name, &entry, buffer, size, &found)
+                                  : getpwuid_r(getuid(), &entry, buffer, size, &found);
+                    if (status != ERANGE || size > (1u << 24)) break;
+                    size *= 2u;
+                }
+                free(name);
+                if (status == ENOMEM) {
+                    free(buffer);
+                    return library_signature_error(a, head, args, nargs, "out of memory reading the account database");
+                }
+                if (!found || !entry.pw_dir) {
+                    free(buffer);
+                    return atom_string(a, path);
+                }
+                home = entry.pw_dir;
+            }
+            size_t home_length = strlen(home);
+            while (home_length && home[home_length - 1u] == '/') home_length--;
+            size_t rest = length - name_end;
+            char *expanded = arena_alloc(a, home_length + rest + 2u);
+            memcpy(expanded, home, home_length);
+            memcpy(expanded + home_length, path + name_end, rest);
+            size_t expanded_length = home_length + rest;
+            if (!expanded_length) expanded[expanded_length++] = '/';
+            expanded[expanded_length] = '\0';
+            free(buffer);
+            return atom_string_n(a, expanded, expanded_length);
         }
         if (!strcmp(operation, "format-time") && nargs == 4) {
             const char *format = library_text_arg(args[1]), *zone = library_text_arg(args[3]);

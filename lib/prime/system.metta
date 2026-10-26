@@ -30,6 +30,13 @@
 (= (system:errno-value $name)
    (function (case (__cetta_lib_system_host errno-value $name)
      (($result (return $result)))){$result}))
+; os.path.expanduser: "~" alone or before "/" becomes $HOME when it is set
+; (even empty), else the account's home from the account database; "~name"
+; becomes that account's home. An account that cannot be found leaves the path
+; unchanged. Trailing slashes of the home are dropped; an empty result is "/".
+(= (system:expanduser $path)
+   (function (case (__cetta_lib_system_host expanduser $path)
+     (($result (return $result)))){$result}))
 (= (system:format-time $format $timestamp $zone)
    (function (case (__cetta_lib_system_host format-time $format $timestamp $zone)
      (($result (return $result)))){$result}))
