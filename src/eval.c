@@ -25475,7 +25475,8 @@ static Atom *eval_exec_saturation_add_nodup(void *context, Atom *space_ref,
 static bool eval_try_exec_saturation(Space *s, Arena *a, Atom *atom,
                                      int fuel, const Bindings *environment,
                                      OutcomeSet *os) {
-    if (fuel >= 0 || gslt_match_chain_trace_active() ||
+    if (!cetta_eval_episode_allows_unmetered(g_eval_completion_tracker, fuel) ||
+        gslt_match_chain_trace_active() ||
         !active_builtin_allowed("add-atom-nodup") ||
         (environment && environment->eq_len != 0u) ||
         cetta_delay_holds(g_petta_eval_delay_service))
@@ -25632,7 +25633,7 @@ static bool eval_transform_evaluate(void *context, Arena *a, Atom *expression,
     g_he_shared_execution = false;
     g_active_petta_search_machine = true;
     g_petta_machine_run_raised = false;
-    EvalCompletionTracker tracker;
+    CettaEvalEpisode tracker;
     eval_completion_child_begin(&tracker);
     bool handled = petta_eval_machine_run(host->root, a, call, NULL, host->fuel,
         &environment, false, &outcomes, PETTA_RELATION_SAFETY_STATIC,
@@ -25674,7 +25675,8 @@ static bool eval_transform_evaluate(void *context, Arena *a, Atom *expression,
 static bool eval_try_transform_fire(Space *s, Arena *a, Atom *atom, int fuel,
                                     const Bindings *environment,
                                     OutcomeSet *os) {
-    if (gslt_match_chain_trace_active() ||
+    if (!cetta_eval_episode_allows_unmetered(g_eval_completion_tracker, fuel) ||
+        gslt_match_chain_trace_active() ||
         (environment && environment->eq_len != 0u) ||
         cetta_delay_holds(g_petta_eval_delay_service) ||
         !eval_transform_presentation_admitted(s))
@@ -44135,7 +44137,9 @@ static bool petta_eval_exec_saturation_host_owned(
     return head == g_builtin_syms.exec_saturate && arity == 2u &&
         eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         !petta_eval_typed_line() && active_builtin_allowed("add-atom-nodup") &&
-        (!owner || (owner->fuel < 0 && !owner->transaction)) &&
+        cetta_eval_episode_allows_unmetered(
+            g_eval_completion_tracker, owner ? owner->fuel : -1) &&
+        (!owner || !owner->transaction) &&
         !gslt_match_chain_trace_active() &&
         cetta_exec_saturation_presentation_admitted(space);
 }
@@ -44146,6 +44150,8 @@ static bool petta_eval_transform_host_owned(
     void *context, Space *space, SymbolId head, CettaExprLen arity) {
     PettaEvalMachineContext *owner = context;
     return eval_transform_head(head, arity) &&
+        cetta_eval_episode_allows_unmetered(
+            g_eval_completion_tracker, owner ? owner->fuel : -1) &&
         eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         !petta_eval_typed_line() &&
         (!owner || !owner->transaction) &&
@@ -46773,8 +46779,8 @@ static PettaMachineHost petta_eval_machine_host(
 #if !CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     (void)type_obligations;
 #endif
-    bool source_unbounded = fuel < 0 &&
-        !(g_eval_completion_tracker && g_eval_completion_tracker->budget_limited);
+    bool source_unbounded = cetta_eval_episode_allows_unmetered(
+        g_eval_completion_tracker, fuel);
     bool prepared_available = source_unbounded && !prepared_pure_reference_enabled();
     PettaMachineHost host = {
         .context = context,
@@ -49354,8 +49360,7 @@ static bool prepared_pure_closed_call_plan(
         return prepared_pure_precheck_refuse(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OBSERVER,
             "canonical reference requested", call);
-    if (fuel >= 0 ||
-        (g_eval_completion_tracker && g_eval_completion_tracker->budget_limited))
+    if (!cetta_eval_episode_allows_unmetered(g_eval_completion_tracker, fuel))
         return prepared_pure_precheck_refuse(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_OBSERVER,
             "bounded fuel", call);

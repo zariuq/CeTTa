@@ -801,6 +801,18 @@ The process-stream gate is included in test-all and the alternate process
 launch qualification. Frozen executable bundles include their .proc-scope
 companion; owner-scoped process execution depends on that exact adjacent file.
 
+Source-fuel admission for authored regions
+------------------------------------------
+
+cetta_eval_episode_allows_unmetered is the shared source-budget check for
+prepared calls and the native transform and saturation realizations. Both
+worker selection and entry consult it. A finite requested or inherited purse,
+including zero credit, retains authored execution until a realization has its
+own source-debit refinement. Refusal neither runs the region nor replaces an
+empty answer stream. Cancellation and current source authority remain separate
+checks. ContextualCBPV's budgeted-effect controls show why equal complete answers
+do not establish equal effects at a limited source prefix.
+
 Consolidation qualification
 --------------------------
 
