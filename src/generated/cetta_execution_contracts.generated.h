@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 01c3d02d36339f756bfaf772670f428178366e1183f8fbd0d434515b1af226bc
+ * Source SHA-256: 96133f56fc40e72c99f9b3563297607501735c86e31077ccef85c5c1bab1ae17
  */
 
 #include <stdbool.h>
@@ -703,6 +703,8 @@ typedef enum {
     CETTA_CONTROL_RETURN_VALUE = 10,
     CETTA_CONTROL_CONSTRUCT = 11,
     CETTA_CONTROL_INVOKE = 12,
+    CETTA_CONTROL_SEQUENCE_FIRST = 13,
+    CETTA_CONTROL_SEQUENCE_LAST = 14,
 } CettaControlOperation;
 
 #define CETTA_CONTROL_OPERAND_ABSENT UINT8_MAX
@@ -718,7 +720,7 @@ _Static_assert(sizeof(CettaControlOperationPlan) == 4u, "control plan must remai
 #define CETTA_CONTROL_CONSTRUCT_PLAN ((CettaControlOperationPlan){CETTA_CONTROL_CONSTRUCT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT})
 #define CETTA_CONTROL_INVOKE_PLAN ((CettaControlOperationPlan){CETTA_CONTROL_INVOKE, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT})
 
-/* Fixed-layout control forms are distinct from occurrence-level value,
+/* Control-form plans are distinct from occurrence-level value,
  * construction and invocation plans. This grants no callee admission. */
 static inline bool cetta_control_operation_is_control_form(CettaControlOperationPlan plan) {
     switch (plan.operation) {
@@ -731,6 +733,8 @@ static inline bool cetta_control_operation_is_control_form(CettaControlOperation
     case CETTA_CONTROL_FAILURE:
     case CETTA_CONTROL_SCOPED_COMMIT:
     case CETTA_CONTROL_HANDLE:
+    case CETTA_CONTROL_SEQUENCE_FIRST:
+    case CETTA_CONTROL_SEQUENCE_LAST:
         return true;
     default:
         return false;
@@ -744,6 +748,16 @@ static inline bool cetta_control_operation_binding_layout(
     return producer_index <= 1u && plan.operation == CETTA_CONTROL_SEQUENCE &&
         plan.source == producer_index && plan.first == 1u - producer_index &&
         plan.last == 2u;
+}
+
+/* Variadic series select a result without bounding their argument count.
+ * Zero denotes absent metadata, never a source argument coordinate. */
+static inline CettaExprIndex cetta_control_operation_series_result(
+        CettaControlOperationPlan plan, CettaExprLen arity) {
+    if (!arity) return 0u;
+    if (plan.operation == CETTA_CONTROL_SEQUENCE_FIRST) return 1u;
+    if (plan.operation == CETTA_CONTROL_SEQUENCE_LAST) return arity;
+    return 0u;
 }
 
 /* Execution order is selected by admitted source policy. The same program
@@ -879,6 +893,8 @@ static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan pla
  * The enum names are expanded only by the owning dialect adapter. */
 #define CETTA_PETTA_CONTROL_FORM_ROWS(X)     X(PETTA_FORM_CUT, 0u, CETTA_CONTROL_SCOPED_COMMIT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
     X(PETTA_FORM_CATCH, 1u, CETTA_CONTROL_HANDLE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT)
+
+#define CETTA_PETTA_VARIADIC_FORM_ROWS(X) X(PETTA_FORM_PROG1, CETTA_CONTROL_SEQUENCE_FIRST) X(PETTA_FORM_PROGN, CETTA_CONTROL_SEQUENCE_LAST)
 
 /* Arity admission performs no operand read. Refusal leaves the output intact. */
 static inline bool cetta_control_operation_decode(

@@ -13,6 +13,23 @@ def main():
     spec = Spec(text)
     assert len(spec.control_plans) == 9
     assert len(spec.control_forms) == 2
+    assert len(spec.variadic_forms) == 2
+    series = '(variadic-form petta prog1 sequence-first)'
+    for before, after in [
+            (series, series + '\n  ' + series),
+            (series, series.replace('petta', 'he')),
+            (series, series.replace('prog1', 'unregistered')),
+            (series, series.replace('sequence-first', 'sequence-last')),
+            (series, series.replace('sequence-first', 'sequence')),
+            (series, ''),
+            (series, series.replace('sequence-first)', 'sequence-first extra)')),
+            ('(source-head empty 0 failure (operands absent absent absent) (fold none))',
+             '(source-head empty 0 sequence-first (operands absent absent absent) (fold none))')]:
+        try:
+            Spec(text.replace(before, after))
+        except SpecError:
+            continue
+        raise AssertionError(('invalid variadic sequence was admitted', after))
     assert set(spec.implicit_operations) == {'return-value', 'construct', 'invoke'}
     assert len(spec.fold_control_heads) == 5
     assert len(spec.invocation_heads) == 10 and len(spec.invocation_forms) == 10

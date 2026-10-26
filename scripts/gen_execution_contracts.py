@@ -860,6 +860,8 @@ class Spec:
             name = atom_text(entry[1], "control head")
             arity_text = atom_text(entry[2], "control arity")
             operation = atom_text(entry[3], "control operation")
+            if operation in {"sequence-first", "sequence-last"}:
+                raise SpecError("a variadic series needs its variadic-form descriptor")
             if operation in self.implicit_operations:
                 raise SpecError("an implicit operation needs occurrence admission, not a source-head row")
             field = symbol_fields.get(name) if dialect is None else "PETTA_FORM_" + c_enum(name)
@@ -1611,6 +1613,9 @@ def render_header(spec: Spec) -> str:
         f"    X({field}, {arity}u, CETTA_CONTROL_{c_enum(operation)}, " +
         ", ".join(control_coordinate(value) for value in coordinates) + ")"
         for _, field, arity, operation, coordinates, _ in spec.control_forms)
+    variadic_form_rows = " ".join(
+        f"X({field}, CETTA_CONTROL_{c_enum(operation)})"
+        for _, field, operation in spec.variadic_forms)
     implicit_plan_definitions = "\n".join(
         f"#define CETTA_CONTROL_{c_enum(operation)}_PLAN "
         f"((CettaControlOperationPlan){{CETTA_CONTROL_{c_enum(operation)}, "
@@ -2107,7 +2112,7 @@ _Static_assert(sizeof(CettaControlOperationPlan) == 4u, "control plan must remai
 
 {implicit_plan_definitions}
 
-/* Fixed-layout control forms are distinct from occurrence-level value,
+/* Control-form plans are distinct from occurrence-level value,
  * construction and invocation plans. This grants no callee admission. */
 static inline bool cetta_control_operation_is_control_form(CettaControlOperationPlan plan) {{
     switch (plan.operation) {{
@@ -2125,6 +2130,16 @@ static inline bool cetta_control_operation_binding_layout(
     return producer_index <= 1u && plan.operation == CETTA_CONTROL_SEQUENCE &&
         plan.source == producer_index && plan.first == 1u - producer_index &&
         plan.last == 2u;
+}}
+
+/* Variadic series select a result without bounding their argument count.
+ * Zero denotes absent metadata, never a source argument coordinate. */
+static inline CettaExprIndex cetta_control_operation_series_result(
+        CettaControlOperationPlan plan, CettaExprLen arity) {{
+    if (!arity) return 0u;
+    if (plan.operation == CETTA_CONTROL_SEQUENCE_FIRST) return 1u;
+    if (plan.operation == CETTA_CONTROL_SEQUENCE_LAST) return arity;
+    return 0u;
 }}
 
 /* Execution order is selected by admitted source policy. The same program
@@ -2219,6 +2234,8 @@ static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan pla
  * The enum names are expanded only by the owning dialect adapter. */
 #define CETTA_PETTA_CONTROL_FORM_ROWS(X) \
 {control_form_rows}
+
+#define CETTA_PETTA_VARIADIC_FORM_ROWS(X) {variadic_form_rows}
 
 /* Arity admission performs no operand read. Refusal leaves the output intact. */
 static inline bool cetta_control_operation_decode(
