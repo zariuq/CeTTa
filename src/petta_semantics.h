@@ -273,6 +273,13 @@ bool petta_semantics_is_cons_constraint(const Atom *atom);
 bool petta_semantics_is_open_cons_value(const Atom *atom);
 Atom *petta_semantics_open_cons_value(
     Arena *arena, Atom *head, Atom *tail);
+/* Whether Tail is a complete flat list, so that [Head|Tail] is the flat
+ * expression with Head before Tail's elements. */
+bool petta_semantics_cons_tail_is_flat_list(const Atom *tail);
+/* [Head|Tail] as a value: onto a complete flat list it is that list with
+ * Head prepended, in amortized constant time; onto anything else, an open
+ * tail included, it is a cell. */
+Atom *petta_semantics_cons_value(Arena *arena, Atom *head, Atom *tail);
 /* A list value or a list pattern with a rest as its chain of cells. */
 Atom *petta_semantics_flat_list_spine(
     Arena *arena, Atom *flat_list);
