@@ -170,7 +170,8 @@
 ; fault keeps the owner open and its progress counts the owner's bytes in all.
 ; sync is fsync. lock takes exclusive or shared, waiting for a conflicting
 ; holder, as fcntl.flock does; unlock releases it. set-mode is os.fchmod,
-; answering fs:mode-set. Syncing, setting the mode, locking and closing accept
+; answering fs:mode-set; given a path instead of an owner it is os.chmod, which
+; follows a symbolic link. Syncing, setting the mode, locking and closing accept
 ; readers too. Closing, the last holder's release, or the
 ; process's end closes the descriptor, which releases its lock.
 (: __cetta_lib_fs_open_write (-> Atom Atom Atom Atom))
