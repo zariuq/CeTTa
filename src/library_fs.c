@@ -472,6 +472,15 @@ static Atom *sync_cursor(Arena *arena, FsCursor *cursor) {
                       : atom_symbol(arena, "fs:synced");
 }
 
+/* fchmod, as os.fchmod sets an open file's mode, resuming after a signal. */
+static Atom *set_mode_cursor(Arena *arena, FsCursor *cursor, mode_t mode) {
+    int status;
+    do status = fchmod(cursor->fd, mode);
+    while (status < 0 && errno == EINTR && !eval_native_interrupted());
+    return status < 0 ? os_failed(arena, "set-mode", cursor->path, errno, cursor->observed, true)
+                      : atom_symbol(arena, "fs:mode-set");
+}
+
 /* A whole-file flock on the owner's open file description, as Python's
  * fcntl.flock takes it: it waits for a conflicting holder, and closing the
  * owner releases it. */
@@ -497,6 +506,22 @@ static bool writer_flags(Atom *list, int *flags) {
         else if (atom_string_equals_cstr(flag, "create")) *flags |= O_CREAT;
         else if (atom_string_equals_cstr(flag, "truncate")) *flags |= O_TRUNC;
         else if (atom_string_equals_cstr(flag, "exclusive")) *flags |= O_EXCL;
+        else return false;
+    }
+    return true;
+}
+
+/* os.access's mode: F_OK when no permission is named, else the named "read",
+ * "write" and "execute" permissions together. */
+static bool access_mode(Atom *list, int *mode) {
+    if (!list || list->kind != ATOM_EXPR) return false;
+    *mode = F_OK;
+    for (CettaExprLen i = 0u; i < list->expr.len; i++) {
+        Atom *permission = list->expr.elems[i];
+        if (permission->kind != ATOM_GROUNDED || permission->ground.gkind != GV_STRING) return false;
+        if (atom_string_equals_cstr(permission, "read")) *mode |= R_OK;
+        else if (atom_string_equals_cstr(permission, "write")) *mode |= W_OK;
+        else if (atom_string_equals_cstr(permission, "execute")) *mode |= X_OK;
         else return false;
     }
     return true;
@@ -612,6 +637,9 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
         op == g_builtin_syms.lib_fs_lock ? "lock" :
         op == g_builtin_syms.lib_fs_unlock ? "unlock" :
         op == g_builtin_syms.lib_fs_make_directories ? "make-directories" :
+        op == g_builtin_syms.lib_fs_set_mode ? "set-mode" :
+        op == g_builtin_syms.lib_fs_remove ? "remove" :
+        op == g_builtin_syms.lib_fs_access ? "access" :
         op == g_builtin_syms.lib_fs_close ? "close" : NULL;
     if (!name) return false;
     if (eval_native_interrupted()) { *out = cetta_call_interrupted(); return true; }
@@ -620,7 +648,8 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
         op == g_builtin_syms.lib_fs_metadata || op == g_builtin_syms.lib_fs_rename ||
         op == g_builtin_syms.lib_fs_read_chunk || op == g_builtin_syms.lib_fs_walk_step ||
         op == g_builtin_syms.lib_fs_walk_metadata || op == g_builtin_syms.lib_fs_write_all ||
-        op == g_builtin_syms.lib_fs_lock || op == g_builtin_syms.lib_fs_make_directories ? 2u : 1u;
+        op == g_builtin_syms.lib_fs_lock || op == g_builtin_syms.lib_fs_make_directories ||
+        op == g_builtin_syms.lib_fs_set_mode || op == g_builtin_syms.lib_fs_access ? 2u : 1u;
     const char *path = nargs ? path_arg(args[0]) : NULL;
     uint64_t observed = 0u;
     bool position_known = true;
@@ -630,6 +659,20 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
         if (!path || !target) goto argument;
         value = rename(path, target) == 0 ? atom_unit(arena)
             : os_failed(arena, name, path, errno, 0u, true);
+        goto completed;
+    }
+    /* os.unlink, and os.access, which reports refusal as False, never as an
+     * error. */
+    if (op == g_builtin_syms.lib_fs_remove) {
+        if (!path) goto argument;
+        value = unlink(path) == 0 ? atom_unit(arena)
+            : os_failed(arena, name, path, errno, 0u, true);
+        goto completed;
+    }
+    if (op == g_builtin_syms.lib_fs_access) {
+        int permissions;
+        if (!path || !access_mode(args[1], &permissions)) goto argument;
+        value = access(path, permissions) == 0 ? atom_true(arena) : atom_false(arena);
         goto completed;
     }
     if (op == g_builtin_syms.lib_fs_open_write || op == g_builtin_syms.lib_fs_make_directories) {
@@ -675,8 +718,9 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
     }
     const char *kind = op == g_builtin_syms.lib_fs_next_entry ? directory_kind :
         op == g_builtin_syms.lib_fs_write_all ? writer_kind : file_kind;
-    /* Closing, syncing and locking take a reader or a writer alike. */
+    /* Closing, syncing, mode setting and locking take a reader or a writer alike. */
     if ((op == g_builtin_syms.lib_fs_close || op == g_builtin_syms.lib_fs_sync ||
+         op == g_builtin_syms.lib_fs_set_mode ||
          op == g_builtin_syms.lib_fs_lock || op == g_builtin_syms.lib_fs_unlock) &&
         cetta_native_handle_arg(args[0], writer_kind, &id))
         kind = writer_kind;
@@ -709,6 +753,11 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
         if (!text) goto argument;
         value = write_all(arena, cursor, text, len);
     } else if (op == g_builtin_syms.lib_fs_sync) value = sync_cursor(arena, cursor);
+    else if (op == g_builtin_syms.lib_fs_set_mode) {
+        mode_t mode;
+        if (!mode_arg(args[1], &mode)) goto argument;
+        value = set_mode_cursor(arena, cursor, mode);
+    }
     else if (op == g_builtin_syms.lib_fs_lock) {
         bool exclusive = atom_is_symbol(args[1], "exclusive");
         if (!exclusive && !atom_is_symbol(args[1], "shared")) goto argument;
@@ -727,7 +776,7 @@ handle:
 argument:
     value = failed(arena, "fs:invalid-argument", name, path, 0, observed, position_known,
                    "expected a path, owner, nonnegative byte count, text, write flags, "
-                   "mode, lock mode or follow/no-follow (or -modified) policy");
+                   "access permissions, mode, lock mode or follow/no-follow (or -modified) policy");
 completed:
     *out = cetta_call_completed_value(value);
     return true;

@@ -548,6 +548,9 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_fs_lock, "__cetta_lib_fs_lock") \
     X(lib_fs_unlock, "__cetta_lib_fs_unlock") \
     X(lib_fs_make_directories, "__cetta_lib_fs_make_directories") \
+    X(lib_fs_set_mode, "__cetta_lib_fs_set_mode") \
+    X(lib_fs_remove, "__cetta_lib_fs_remove") \
+    X(lib_fs_access, "__cetta_lib_fs_access") \
     X(lib_io_capabilities, "__cetta_lib_io_capabilities") \
     X(lib_durable_open, "__cetta_lib_durable_open") \
     X(lib_durable_read, "__cetta_lib_durable_read") \

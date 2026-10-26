@@ -22,6 +22,9 @@ Operations
   fs:lock file-owner exclusive|shared
   fs:unlock file-owner
   fs:make-directories path mode
+  fs:set-mode file-owner mode
+  fs:remove path
+  fs:access path permissions
   system:entry-directory
 
 Paths are strings or symbol spellings without embedded NUL. This is an OS
@@ -119,7 +122,9 @@ loop with EINTR and the same progress.
 
 sync is fsync. lock is a whole-file flock on the owner's open file
 description, waiting while another holder conflicts, as fcntl.flock does;
-unlock releases it. sync, lock, unlock and close accept readers and writers.
+unlock releases it. set-mode is os.fchmod on the owner's descriptor, resumed
+after a signal, and returns fs:mode-set. sync, set-mode, lock, unlock and close
+accept readers and writers.
 Closing the owner, its last holder's release, context teardown or the end of
 the process closes the descriptor and so releases its lock. A lock taken here
 and one taken by fcntl.flock on the same file exclude each other.
@@ -131,6 +136,13 @@ parts are dropped and ".." parts kept. A missing parent is made with mode
 existing directory, or a symlink to one, is accepted. Any other refusal is
 fs:failed with its errno, naming the directory whose mkdir refused, which may
 be a parent. Success returns (). None of these operations fsyncs a directory.
+
+remove is os.unlink: () on success, otherwise fs:failed with the errno and the
+path, a directory included (EISDIR on Linux, EPERM on macOS); a symlink is
+removed, not its target. access is os.access: permissions is a list of the
+strings "read", "write" and "execute", or () for existence, and the answer is
+True when access(2) grants the real user all of them, else False, never a
+failure.
 
 Reusable walking
 ----------------

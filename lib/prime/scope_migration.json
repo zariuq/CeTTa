@@ -68,9 +68,9 @@
     {
       "source": "fs.metta",
       "output": "fs.metta",
-      "source_sha256": "1569608cfe725e098a510b62adf86f6eb9afbe837577ef366745f82df90786a4",
-      "output_sha256": "bdf78f833e065d02050fd67108699d2ac6709f2f17b56557f523bebff3597349",
-      "edits": 49,
+      "source_sha256": "11b82257951700438088dc601240f644f5c0f8ec659fe0fc8fdb9abfed6730c6",
+      "output_sha256": "f8b1421873daacfb9c88fd8252bcf4f2a3da0c8280e9ad820f9d93af472f8a83",
+      "edits": 52,
       "code_diagnostics": 0
     },
     {
@@ -84,8 +84,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "36e8a006767e9875fbd028345a3d36a88260a5e376b616f14df00d6242907605",
-      "output_sha256": "8f6b5370793bd2ad9f521878cad7ee0f6e498efbb10851e858ddfb456bd0b02f",
+      "source_sha256": "825082aa48cb140c8a4c2bdef55ed3be526e1dde01cf90c25fbfba5eb60ff56b",
+      "output_sha256": "1043dae066307529c88d0df9f2764613fd55ee545c2afb8b64649c9ade59d43b",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -492,17 +492,17 @@
     {
       "source": "str.metta",
       "output": "str.metta",
-      "source_sha256": "28da0978ed2050de6e252db8febc3087ef93b87de54f3b98ba2d9b82b383e518",
-      "output_sha256": "01a3131f0ce2ffaa0b8830399ca32390a3cf1fd4e05d9d8508c77204acbb63c0",
-      "edits": 46,
+      "source_sha256": "778bd2193e77008470656ba3ad8e0dfd732566bef2f438d1a4de0520d4eeef5a",
+      "output_sha256": "d394bded2202e86cdffafba2cbb8014eaf801b884f91f6627e0b0680cfc89233",
+      "edits": 47,
       "code_diagnostics": 0
     },
     {
       "source": "system.metta",
       "output": "system.metta",
-      "source_sha256": "6ae83e2a30f5e0f2b61a2921238f62ed11f6d99d7e114858c4c8e5b1aa5f77bd",
-      "output_sha256": "e170abad0b88a1477a773b9d2517b40624ae574e76d4bb0183575ee64fcad435",
-      "edits": 20,
+      "source_sha256": "ba3506b291e4b9815961f95ccbc19df950c5fd94d4ff2f2209e4452d2bde7a46",
+      "output_sha256": "5e511e97690bc05b66129d67486ae29e84cd850fbbdd3f6945475a40abeef9c1",
+      "edits": 22,
       "code_diagnostics": 0
     },
     {

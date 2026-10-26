@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 36e8a006767e9875fbd028345a3d36a88260a5e376b616f14df00d6242907605
+ * Source SHA-256: 825082aa48cb140c8a4c2bdef55ed3be526e1dde01cf90c25fbfba5eb60ff56b
  */
 
 #include <stdbool.h>
@@ -145,6 +145,9 @@ typedef enum {
     X(lib_fs_lock, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_fs_unlock, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_fs_make_directories, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_set_mode, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_remove, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_access, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(lib_io_submit, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_io_poll, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_io_http_read, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \

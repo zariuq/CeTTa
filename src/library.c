@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "library.h"
+#include "errno_names.h"
 #include "effect_policy.h"
 
 #include "eval.h"
@@ -4597,9 +4598,16 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
         struct timespec now;
         if (!operation) return library_signature_error(a, head, args, nargs, "expected system operation");
         if (!strcmp(operation, "wall-time") && nargs == 1) {
-            if (clock_gettime(CLOCK_REALTIME, &now))
+            int64_t ns;
+            if (clock_gettime(CLOCK_REALTIME, &now) ||
+                __builtin_mul_overflow((int64_t)now.tv_sec, INT64_C(1000000000), &ns) ||
+                __builtin_add_overflow(ns, (int64_t)now.tv_nsec, &ns))
                 return library_signature_error(a, head, args, nargs, "cannot read wall clock");
-            return atom_float(a, (double)now.tv_sec + (double)now.tv_nsec / 1e9);
+            /* time.time() as CPython 3.12 converts the clock's nanoseconds
+             * (_PyTime_AsSecondsDouble): whole seconds by integer division,
+             * any other count divided by 1e9 as a double. */
+            return atom_float(a, ns % 1000000000 == 0 ? (double)(ns / 1000000000)
+                                                      : (double)ns / 1e9);
         }
         if (!strcmp(operation, "pid") && nargs == 1) return atom_int(a, getpid());
         if (!strcmp(operation, "uuid4-hex") && nargs == 1) {
@@ -4620,6 +4628,25 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
             if (!library_int_arg(args[1], &pid) || pid <= 0)
                 return library_signature_error(a, head, args, nargs, "expected positive process ID");
             return !kill(pid, 0) || errno == EPERM ? atom_true(a) : atom_false(a);
+        }
+        /* os.kill(pid, 0): every refusal is reported, EPERM included, and 0
+         * and negative IDs address process groups as kill(2) does. */
+        if (!strcmp(operation, "signal-probe") && nargs == 2) {
+            Atom *pid = args[1];
+            if (!pid || pid->kind != ATOM_GROUNDED || pid->ground.gkind != GV_INT ||
+                (int64_t)(pid_t)pid->ground.ival != pid->ground.ival)
+                return library_signature_error(a, head, args, nargs, "expected a process ID within pid_t");
+            if (!kill((pid_t)pid->ground.ival, 0)) return atom_true(a);
+            int code = errno;
+            return atom_expr3(a, atom_symbol(a, "system:os-error"), atom_int(a, code),
+                              atom_string(a, strerror(code)));
+        }
+        if (!strcmp(operation, "errno-value") && nargs == 2) {
+            const char *name = library_text_arg(args[1]);
+            if (!name) return library_signature_error(a, head, args, nargs, "expected an errno name");
+            for (const CettaErrnoName *entry = cetta_errno_names; entry->name; entry++)
+                if (!strcmp(entry->name, name)) return atom_int(a, entry->value);
+            return atom_unit(a);
         }
         if (!strcmp(operation, "format-time") && nargs == 4) {
             const char *format = library_text_arg(args[1]), *zone = library_text_arg(args[3]);

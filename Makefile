@@ -34197,11 +34197,12 @@ $(FILESYSTEM_NATIVE_TEST_V1): tests/support/test_filesystem_observations_v1.c sr
 .PHONY: test-filesystem-v1
 test-all: test-filesystem-v1
 test-filesystem-v1: $(BIN) $(FILESYSTEM_NATIVE_TEST_V1) tests/support/check_filesystem_v1.py \
-		tests/support/check_filesystem_writers_v1.py
+		tests/support/check_filesystem_writers_v1.py tests/support/check_os_primitives_v1.py
 	@mkdir -p runtime/filesystem-native-v1-$(BUILD_OBJ_TAG)
 	@$(call cetta_exec,./$(FILESYSTEM_NATIVE_TEST_V1)) runtime/filesystem-native-v1-$(BUILD_OBJ_TAG)
 	@python3 tests/support/check_filesystem_v1.py ./$(BIN) --output runtime/filesystem-v1-$(BUILD_OBJ_TAG)
 	@python3 tests/support/check_filesystem_writers_v1.py ./$(BIN)
+	@python3 tests/support/check_os_primitives_v1.py ./$(BIN)
 
 TEXT_STREAMING_NATIVE_TEST_V1 = runtime/test-text-streaming-v1-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats)
 $(TEXT_STREAMING_NATIVE_TEST_V1): tests/support/test_text_streaming_v1.c src/str_stream.c src/str_stream.h src/str_natives.c src/string_ops.c src/utf8.h src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) src/stats.h $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(BUILD_CONFIG_HEADER)

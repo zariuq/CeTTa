@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include "str_natives.h"
 
 #include "native_sha256.h"
@@ -8,7 +9,11 @@
 #include "utf8.h"
 
 #include <ctype.h>
+#include <limits.h>
+#include <locale.h>
 #include <math.h>
+#include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -238,6 +243,45 @@ static Atom *str_trim(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     while (stop > start && isspace((unsigned char)text[stop - 1u]))
         stop--;
     return atom_string_n(a, text + start, stop - start);
+}
+
+static pthread_once_t str_fixed_locale_once = PTHREAD_ONCE_INIT;
+static locale_t str_fixed_locale;
+
+static void str_fixed_locale_init(void) {
+    str_fixed_locale = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0);
+}
+
+/* Python's '%.*f' % (digits, value). printf in the C locale rounds the exact
+ * binary value correctly, as Python's own conversion does; Python spells NaN
+ * without a sign. */
+static Atom *str_format_fixed(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    Atom *number = args[0], *count = args[1];
+    double value;
+    if (number->kind == ATOM_GROUNDED && number->ground.gkind == GV_FLOAT)
+        value = number->ground.fval;
+    else if (number->kind == ATOM_GROUNDED && number->ground.gkind == GV_INT)
+        value = (double)number->ground.ival;
+    else
+        return str_expects(r, "expected a float or integer and a digit count");
+    if (count->kind != ATOM_GROUNDED || count->ground.gkind != GV_INT ||
+        count->ground.ival < 0 || count->ground.ival > INT_MAX)
+        return str_expects(r, "expected a float or integer and a digit count");
+    int digits = (int)count->ground.ival;
+    if (isnan(value)) return atom_string(a, "nan");
+    if (isinf(value)) return atom_string(a, value < 0 ? "-inf" : "inf");
+    pthread_once(&str_fixed_locale_once, str_fixed_locale_init);
+    if (!str_fixed_locale) return str_expects(r, "expected a C numeric locale");
+    locale_t previous = uselocale(str_fixed_locale);
+    int length = snprintf(NULL, 0, "%.*f", digits, value);
+    char *text = length >= 0 && (uint64_t)length <= CETTA_STRING_BYTES_MAX
+        ? malloc((size_t)length + 1u) : NULL;
+    if (text) snprintf(text, (size_t)length + 1u, "%.*f", digits, value);
+    (void)uselocale(previous);
+    if (!text) return str_expects(r, "expected a digit count whose text fits a string");
+    Atom *result = atom_string_n(a, text, (size_t)length);
+    free(text);
+    return result;
 }
 
 /* -1, 0 or 1 by byte order, a proper prefix first. */
@@ -791,6 +835,7 @@ static const CettaStrNative str_natives[] = {
     {"starts-with", 2u, 0u, str_starts_with, CETTA_STR_RESULT_ATOM},
     {"ends-with", 2u, 0u, str_ends_with, CETTA_STR_RESULT_ATOM},
     {"trim", 1u, 0u, str_trim, CETTA_STR_RESULT_ATOM},
+    {"format-fixed", 2u, 0u, str_format_fixed, CETTA_STR_RESULT_ATOM},
     {"compare", 2u, 0u, str_compare, CETTA_STR_RESULT_ATOM},
     {"codepoint-count", 1u, 0u, str_codepoint_count, CETTA_STR_RESULT_ATOM},
     {"utf8-error", 1u, 0u, str_utf8_error, CETTA_STR_RESULT_STRUCTURE},

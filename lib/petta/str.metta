@@ -12,6 +12,7 @@
 (= (str:starts-with $text $prefix) (__cetta_lib_str starts-with $text $prefix))
 (= (str:ends-with $text $suffix) (__cetta_lib_str ends-with $text $suffix))
 (= (str:trim $text) (__cetta_lib_str trim $text))
+(= (str:format-fixed $value $digits) (__cetta_lib_str format-fixed $value $digits))
 (= (str:sha256 $text) (__cetta_lib_str sha256 $text))
 (= (str:compare $lhs $rhs) (__cetta_lib_str compare $lhs $rhs))
 (= (str:codepoint-count $text) (__cetta_lib_str codepoint-count $text))
