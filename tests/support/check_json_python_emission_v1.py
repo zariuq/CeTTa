@@ -6,8 +6,13 @@ two, decimal fractions, integers of both signs, strings with quotes,
 backslashes, control characters, DEL, Basic Multilingual Plane and astral
 scalars, and nested arrays and objects. Each value is emitted by the engine and
 compared byte for byte with json.dumps under default arguments.
+
+Integers past Python's 4300-digit int-to-text limit must fail as json.dumps
+fails, with its ValueError text and the prefix a streaming json.dump has
+written by then.
 """
 import argparse
+import io
 import json
 import math
 import random
@@ -45,7 +50,13 @@ def term(value):
     if value is False:
         return "false"
     if isinstance(value, int):
-        return str(value)
+        # Render oversized integers too; json.dumps keeps the default limit.
+        limit = sys.get_int_max_str_digits()
+        sys.set_int_max_str_digits(0)
+        try:
+            return str(value)
+        finally:
+            sys.set_int_max_str_digits(limit)
     if isinstance(value, float):
         return float_literal(value)
     if isinstance(value, str):
@@ -113,7 +124,8 @@ def emitted(cetta, terms):
     # Split on newlines only: raw U+2028 and friends occur inside strings when
     # ensure_ascii is off, and str.splitlines would break lines there.
     printed = [line for line in result.stdout.split("\n") if line.startswith('"')]
-    return [re.sub(r"\\(.)", r"\1", line[1:-1]) for line in printed]
+    limits = [line for line in result.stdout.split("\n") if line.startswith(("(LIMIT ", "(UNEXPECTED "))]
+    return [re.sub(r"\\(.)", r"\1", line[1:-1]) for line in printed] + limits
 
 
 def main():
@@ -146,14 +158,50 @@ def main():
             string_expression(item), string_expression(key), term(value), options))
         expected.append(json.dumps(value, ensure_ascii=ascii_, sort_keys=sort, separators=(item, key)))
         values.append(value)
+    # Past int()'s digit limit: json.dumps raises; json.dump has written a prefix.
+    huge = 10 ** 4300
+    limit_values = [huge, -huge, [huge], [1, huge], [[1], huge], [1, [huge]], [{"a": 1}, huge],
+                    {"a": 1, "seq": huge}, {"x": [huge]}, {"x": [2.5, {"y": -huge}], "z": "w"},
+                    {"b": 1, "a": huge}, [10 ** 4299, huge], {"a": {"b": huge}}, [[], [huge, 1]]]
+    limit_expected = []
+    for value in limit_values:
+        for options in (("False", "False", ", ", ": "), ("True", "True", ",", ":")):
+            ascii_, sort, item, key = options
+            try:
+                json.dumps(value, ensure_ascii=ascii_ == "True", sort_keys=sort == "True",
+                           separators=(item, key))
+                raise SystemExit("json.dumps accepted an oversized integer")
+            except ValueError as error:
+                stream = io.StringIO()
+                try:
+                    json.dump(value, stream, ensure_ascii=ascii_ == "True", sort_keys=sort == "True",
+                              separators=(item, key))
+                except ValueError:
+                    pass
+                limit_expected.append((str(error), stream.getvalue()))
+            limit_terms_options = "((ensure-ascii %s) (sort-keys %s) (separators %s %s))" % (
+                ascii_, sort, string_literal(item), string_literal(key))
+            terms.append("(case (json:stringify-python-with %s %s) (((JsonPythonErrorV1 ValueError $m $p) "
+                         "(LIMIT $m $p)) ($other (UNEXPECTED $other))))" % (term(value), limit_terms_options))
     actual = emitted(args.cetta, terms)
-    if len(actual) != len(values):
-        raise SystemExit("expected %d results, read %d" % (len(values), len(actual)))
+    limit_actual = actual[len(values):]
+    actual = actual[:len(values)]
+    if len(actual) != len(values) or len(limit_actual) != len(limit_expected):
+        raise SystemExit("expected %d and %d results, read %d and %d"
+                         % (len(values), len(limit_expected), len(actual), len(limit_actual)))
     failures = [(value, got, want) for value, got, want in zip(values, actual, expected)
                 if got != want]
+    for line, (message, prefix) in zip(limit_actual, limit_expected):
+        match = re.fullmatch(r'\(LIMIT "(.*)" "(.*)"\)', line)
+        got = (re.sub(r"\\(.)", r"\1", match.group(1)), re.sub(r"\\(.)", r"\1", match.group(2))) \
+            if match else line
+        if got != (message, prefix):
+            failures.append(("oversized integer", got[:2] if isinstance(got, tuple) else got,
+                             (message, prefix[:80])))
     for value, got, expected in failures[:10]:
         print("MISMATCH %r\n  engine %s\n  python %s" % (value, got, expected))
-    print("json-python-emission: %d values, %d mismatches" % (len(values), len(failures)))
+    print("json-python-emission: %d values and %d oversized integers, %d mismatches"
+          % (len(values), len(limit_expected), len(failures)))
     return 1 if failures else 0
 
 

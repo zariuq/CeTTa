@@ -14,7 +14,11 @@ typedef enum {
     CETTA_JSON_VALUE_V1_INVALID_UTF8,
     CETTA_JSON_VALUE_V1_RESOURCE_LIMIT,
     CETTA_JSON_VALUE_V1_ALLOCATION_FAILURE,
-    CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT
+    CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT,
+    /* Python emission only: int() text past 4300 digits raises ValueError.
+     * The output emitted before the failing value is handed back, as the
+     * chunks a streaming json.dump has already written. */
+    CETTA_JSON_VALUE_V1_PYTHON_VALUE_ERROR
 } CettaJsonValueV1Status;
 
 /*

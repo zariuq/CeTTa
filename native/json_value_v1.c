@@ -1052,6 +1052,13 @@ static bool json_emit_scalar(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out,
                 heap_text = true;
             } else if (value->ground.gkind == GV_BIGINT) {
                 text = (char *)atom_bigint_cstr(value);
+                /* Python's int-to-text conversion refuses more than
+                 * sys.get_int_max_str_digits() digits; json.dumps raises. */
+                if (ctx->python && text &&
+                    strlen(text) - (text[0] == '-' ? 1u : 0u) > 4300u)
+                    return json_value_error(ctx, CETTA_JSON_VALUE_V1_PYTHON_VALUE_ERROR,
+                        "Exceeds the limit (4300 digits) for integer string conversion; "
+                        "use sys.set_int_max_str_digits() to increase the limit");
             } else {
                 char integer[64];
                 int written = snprintf(
@@ -1187,6 +1194,11 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, 
     JsonEmitFrameV1 *frames = NULL;
     size_t len = 0u, cap = 0u;
     Atom *current = value;
+    /* Where the chunk of the next scalar began. CPython's streaming encoder
+     * yields a list's '[' or item separator glued to a scalar element, but a
+     * dict's separators and a container's opening as chunks of their own; a
+     * failing integer takes only its own chunk with it. */
+    size_t glue = SIZE_MAX;
     for (;;) {
         if (!current) {
             json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "missing JSON value");
@@ -1205,6 +1217,7 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, 
                 json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
                 goto failed;
             }
+            size_t open_at = out->len;
             if (!json_bytes_char(out, object ? '{' : '[')) goto failed;
             if (len == cap) {
                 size_t next = cap ? cap * 2u : 16u;
@@ -1228,14 +1241,21 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, 
                                               .sorted = sorted};
             if (!count) goto closed;
             current = json_emit_child(ctx, &frames[len-1u], out, ordinary, pretty, len);
+            glue = object ? SIZE_MAX : open_at;
             if (!current) goto failed;
             continue;
         }
-        if (!json_emit_scalar(ctx, current, out, ordinary)) goto failed;
+        if (!json_emit_scalar(ctx, current, out, ordinary)) {
+            if (ctx->status == CETTA_JSON_VALUE_V1_PYTHON_VALUE_ERROR && glue != SIZE_MAX)
+                out->len = glue;
+            goto failed;
+        }
         while (len) {
             JsonEmitFrameV1 *frame = &frames[len-1u];
             if (++frame->index < frame->count) {
+                size_t separator_at = out->len;
                 current = json_emit_child(ctx, frame, out, ordinary, pretty, len);
+                glue = frame->object ? SIZE_MAX : separator_at;
                 if (!current) goto failed;
                 break;
             }
@@ -1317,6 +1337,11 @@ static bool json_stringify_impl(
     bytes = (JsonBytesV1){.limit = byte_limit ? byte_limit : CETTA_STRING_BYTES_MAX, .ctx = &ctx};
     if (!json_emit_value(&ctx, canonical, &bytes, fused_ordinary, pretty)) {
         if (status) *status = ctx.status;
+        if (ctx.status == CETTA_JSON_VALUE_V1_PYTHON_VALUE_ERROR) {
+            *bytes_out = bytes.bytes;
+            *byte_len_out = bytes.len;
+            bytes.bytes = NULL;
+        }
         goto done_bytes;
     }
     cetta_json_runtime_v1_default_limits(&limits);
@@ -1410,6 +1435,8 @@ const char *cetta_json_value_v1_status_name(CettaJsonValueV1Status status) {
         return "allocation-failure";
     case CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT:
         return "roundtrip-disagreement";
+    case CETTA_JSON_VALUE_V1_PYTHON_VALUE_ERROR:
+        return "python-value-error";
     }
     return "unknown";
 }

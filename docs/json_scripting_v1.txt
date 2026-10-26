@@ -16,7 +16,11 @@ a Python implementation wrote. json:stringify-python-with takes json.dumps
 options as a list of (ensure-ascii B), (sort-keys B) and (separators ITEM KEY),
 for example ((ensure-ascii False) (sort-keys True) (separators "," ":")).
 Sorted keys follow code point order, as Python sorts str keys; unknown options
-are refused.
+are refused. An integer past Python's 4300-digit int-to-text limit makes both
+fail as json.dumps does, with (JsonPythonErrorV1 ValueError message prefix):
+prefix is what a streaming json.dump has already written when it raises.
+CPython writes a list's "[" or separator in the same chunk as a following
+scalar, so that chunk is not part of the prefix.
 
 json:parse-python reads text as Python's json.loads does, beside the strict
 json:parse: NaN, Infinity and -Infinity are floats, a repeated key keeps its

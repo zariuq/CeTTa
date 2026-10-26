@@ -134,7 +134,9 @@
 
 ; The same with json.dumps options, any subset of (ensure-ascii B),
 ; (sort-keys B) and (separators ITEM KEY), for example
-; ((ensure-ascii False) (sort-keys True)).
+; ((ensure-ascii False) (sort-keys True)). Both fail on an integer past 4300
+; digits as json.dumps does: (JsonPythonErrorV1 ValueError message prefix),
+; prefix being what a streaming json.dump has written by then.
 (: json:stringify-python-with (-> %Undefined% %Undefined% Atom))
 (= (json:stringify-python-with $value $options)
    (function

@@ -228,6 +228,8 @@ static const char *json_value_failure_symbol(CettaJsonValueV1Status status) {
         return "JsonAllocationFailureV1";
     case CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT:
         return "JsonRoundtripDisagreementV1";
+    case CETTA_JSON_VALUE_V1_PYTHON_VALUE_ERROR:
+        return "JsonPythonValueErrorV1";
     }
     return "JsonUnknownFailureV1";
 }
@@ -730,6 +732,15 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
             &bytes, &len, &status, error, sizeof(error)) :
         cetta_json_value_v1_emit(cetta_json_direct_v1_number_valid, input, ordinary, 0u, 0u, 0u,
             &bytes, &len, &status, error, sizeof(error));
+    if (!ok && status == CETTA_JSON_VALUE_V1_PYTHON_VALUE_ERROR) {
+        /* (JsonPythonErrorV1 ValueError message prefix): the prefix is what
+         * a streaming json.dump writes before raising; json.dumps writes
+         * nothing. */
+        Atom *prefix = atom_string_n(arena, bytes ? (const char *)bytes : "", bytes ? len : 0u);
+        free(bytes);
+        return atom_expr(arena, (Atom *[]){atom_symbol(arena, "JsonPythonErrorV1"),
+            atom_symbol(arena, "ValueError"), atom_string(arena, error), prefix}, 4u);
+    }
     if (!ok) {
         return json_failure_or_error(
             arena, head, args, nargs, ordinary,
