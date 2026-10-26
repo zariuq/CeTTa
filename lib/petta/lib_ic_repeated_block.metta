@@ -1,0 +1,43 @@
+; RepeatedBlock.lean instance: closed bit sequences and unary count features.
+; Cost is unary constructor size; no numerical equality promotion is used.
+!(import! &self "lib/petta/lib_incremental_compression.metta")
+!(import! &self (library list))
+
+(= (ic:bits? $values)
+   (if (== $values ()) True
+     (if (== (get-metatype $values) Expression)
+       (let ($head $tail) (decons-atom $values)
+         (case $head ((IC:B0 (ic:bits? $tail)) (IC:B1 (ic:bits? $tail)) ($other False))))
+       False)))
+(= (ic:repeat $count $block)
+   (if (== $count 0) ()
+     (let $tail (ic:repeat (- $count 1) $block) (union-atom $block $tail))))
+(= (ic:extract IC:RepeatedBits $feature $source)
+   (case $feature
+     (((IC:Repeat $count)
+       (case (ic:nat-value $count)
+         (((IC:Some $number)
+           (if (and (>= $number 2) (ic:bits? $source))
+             (let $length (size-atom $source)
+               (if (== (% $length $number) 0)
+                 (let $residual (list:take (/ $length $number) $source) (IC:Some $residual))
+                 IC:None)) IC:None))
+          ($other IC:None))))
+      ($other IC:None))))
+(= (ic:expand IC:RepeatedBits $feature $residual)
+   (case $feature
+     (((IC:Repeat $count)
+       (case (ic:nat-value $count)
+         (((IC:Some $number)
+           (if (ic:bits? $residual)
+             (let $source (ic:repeat $number $residual) (IC:Some $source)) IC:None))
+          ($other IC:None))))
+      ($other IC:None))))
+(= (ic:feature-cost IC:RepeatedBits $feature)
+   (case $feature
+     (((IC:Repeat $count)
+       (case (ic:nat-value $count)
+         (((IC:Some $number) (IC:Some (+ $number 2))) ($other IC:None))))
+      ($other IC:None))))
+(= (ic:data-cost IC:RepeatedBits $source)
+   (if (ic:bits? $source) (IC:Some (+ (size-atom $source) 1)) IC:None))

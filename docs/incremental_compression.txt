@@ -1,0 +1,107 @@
+Checked incremental compression
+===============================
+
+The implementation is an authored PeTTa library. It requires no Python or Prolog
+runtime and adds no learner-specific C primitive. Python is used by the separate
+correspondence gates as an independent reference.
+
+Layers
+------
+lib/petta/lib_incremental_compression.metta owns acceptance, first-accepted
+selection, bounded iteration, reconstruction and cost accumulation.
+lib/petta/lib_ic_repeated_block.metta supplies a closed bit-sequence family.
+lib/petta/lib_ic_syntax.metta supplies exact ordered-syntax factoring with fresh
+representation references. These references are not host-language variables.
+
+Import the desired family, for example:
+
+  !(import! &self "lib/petta/lib_ic_syntax.metta")
+
+Counts and search budgets use IC:Z / (IC:S predecessor). This explicit boundary
+does not silently treat fractional numbers as natural budgets or reference IDs.
+Syntax values are (IC:Leaf symbol), (IC:Ref natural), or (IC:Pair left right).
+Leaves must be symbols, not numbers whose matching could promote 1 to 1.0.
+
+  (ic:compress kernel proposals fuel source)
+  (ic:compress-generated kernel fuel source)
+  (ic:restore kernel features residual)
+  (ic:plan-cost kernel features residual)
+
+Compression returns (IC:Plan features residual stop). IC:BudgetExhausted records
+the search bound; IC:NoCandidateAccepted refers only to the supplied finite
+proposal family. Neither result asserts global incompressibility. Reconstruction
+returns (IC:Some source) or a refusal/unavailable result.
+
+Kernel operations are extract, expand, feature-cost, data-cost and, optionally,
+propose. They have a deterministic pure contract with natural costs and the
+IC:Some/IC:None boundary. The current qualified instances satisfy that contract;
+this interface does not prove arbitrary user-defined callbacks pure, total or
+single-valued. Multivalued inverses must expose branch choices as distinct
+proposals rather than hide a first-answer selection inside extraction.
+
+Costs
+-----
+The two initial instances use explicit constructor-size models, including feature
+and residual costs. They do not claim prefix-code bit optimality. A future binary
+codec must charge its framing, alphabet/library and reference costs explicitly.
+Source labels and reference IDs remain part of the representation observation.
+
+In syntax factoring, extraction replaces exact matching subtrees by a fresh
+reference. It refuses an ID already present in the current source. Reconstruction
+expands features in reverse extraction order and restores the exact ordered tree.
+Original rule multiplicity, names and binding syntax are therefore retained when
+included in the input tree. The compact representation is not itself authorized
+as a new rewrite system. Direct compact execution needs a separate correspondence.
+
+Formal layer
+------------
+The host-independent owner is Mettapedia/Algorithms/Compression:
+
+- Checked.lean proves the acceptance characterization, selection soundness,
+  complete-chain reconstruction, non-increasing cost and bounded chain length.
+  Its binary-program instance constructs the existing mathematical CompressionStep.
+- RepeatedBlock.lean proves the executable word-description instance reconstructs
+  every source and does not increase its declared size.
+- SyntaxFactor.lean proves fresh replacement/expansion, checked-chain recovery and
+  observation preservation after expansion. A counterexample shows why freshness
+  cannot be omitted.
+
+These are algorithmic laws, not a universal proof of CeTTa's evaluator. The
+Python/MeTTa gates supply finite implementation correspondence separately.
+
+Feature-scene example
+---------------------
+Mettapedia's metta/gslt/module/FeatureScene.module defines a small typed scene
+language. Shapes and colours form extensional objects, and scenes are ordered
+object pairs. Its glyph aliases explicitly ground all four icons. The canonical
+surface is unambiguous and is not claimed to recover every convention of the
+original illustrative glyph notation.
+
+Languages/FeatureScene/Basic.lean proves variable-renaming semantics, reduction
+soundness and termination, and soundness of an equality/conjunction proof
+calculus over that model. It includes negative controls separating colour from
+object identity and symmetric equality from directed reduction. This is a
+quantifier-free example, not all of first-order logic.
+
+check_feature_scene.py obtains constructor signatures and notation from CeTTa's
+assembled module and generates bounded well-typed source terms. An independent
+product-model evaluator checks parsed terms and normal forms. Depth-held-out
+examples are exported for learning; the generator does not count their existence
+as evidence that a learner has recovered the calculus.
+
+Focused qualification
+---------------------
+From the CeTTa repository root, with CETTA naming the desired binary and
+SCENE_MODULE naming Mettapedia's FeatureScene.module:
+
+  python3 tests/support/check_incremental_compression.py --cetta "$CETTA" --output runtime/ic-repeat
+  python3 tests/support/check_feature_scene.py --cetta "$CETTA" --module "$SCENE_MODULE" --output runtime/ic-scenes
+  python3 tests/support/check_ic_syntax.py --cetta "$CETTA" --examples runtime/ic-scenes/examples.json --module-core runtime/ic-scenes/core.log --output runtime/ic-syntax
+
+From the Mettapedia Lean root:
+
+  lake build Mettapedia.Examples.Compression.FeatureSceneControls
+
+The Lean audit checks theorem dependencies; the executable gates retain input,
+output and result records. They are deliberately separate from ordinary make test.
+No WILLIAM source is copied or required by these implementations.
