@@ -1,0 +1,48 @@
+true
+true
+true
+true
+true
+true
+(petri-1 ((fired t1 1) (fired t2 2)))
+(petri-2 ((fired t1 1) (fired t2 2)))
+(petri-3 ())
+(petri-4 ())
+(petri-tokens (p2 p4 p4))
+true
+true
+true
+(closure-base 3)
+(closure-run done)
+(closure-count 9)
+true
+true
+true
+(round-0 3)
+(round-1 3)
+(round-2 3)
+(round-3 0)
+(round-count 9)
+true
+true
+true
+true
+true
+(saturate-run done)
+(ancestors ((ann jim) (bob ann) (bob jim) (tom ann) (tom bob) (tom jim)))
+true
+true
+true
+true
+true
+true
+true
+(reach done)
+(unreachable 1)
+(unreachable-store (d))
+true
+true
+true
+(exec (2))
+(exec-store ((did-round) (edge a b) (edge a c) (edge b c)))
+(exec-again ())

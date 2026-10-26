@@ -78,7 +78,9 @@ typedef struct {
  * Outputs are passed by destination, as PeTTa's translation does: an
  * activation unifies its body's exposed output term with the caller's
  * destination before any body goal, and a call's destination is its output
- * hole, which an enclosing let or constructor may already have shaped. */
+ * hole, which an enclosing let or constructor may already have shaped.  A
+ * list built by `cons` that names a let pattern's computed head meets its
+ * place in the output after the let's body (OemNode.late_output). */
 typedef enum {
     OEM_S_RET = 0,   /* the activation's output is complete                */
     OEM_S_FAIL,
@@ -1058,6 +1060,17 @@ typedef struct {
     /* A typed protocol's guard whose requirement variables no later guard
      * mentions: only acceptance of its value is observable. */
     bool type_dead;
+    /* A let whose body's output names its pattern's computed head only in
+     * lists the body builds by `cons`, as
+     * `(let ($h $t) (decons-atom $xs) (cons-atom $h $t))` does.  PeTTa's
+     * translation computes such a list by a call after the pattern is read,
+     * so the let exposes its body's output with each of those lists a fresh
+     * hole, and meets the holes with the lists after the body: the
+     * destination cannot bind the head before the pattern is read.  The
+     * pairs (hole, list) are compile->late_binds[late_first, +late_count). */
+    bool late_output;
+    uint32_t late_first;
+    uint32_t late_count;
     uint32_t call_plan;
     SymbolId op;
     uint32_t relation;
@@ -1118,6 +1131,11 @@ typedef struct {
     uint32_t output;
     /* An EQUATION_CUT step has been emitted. */
     bool cuts;
+    /* A let has a late output (OemNode.late_output), and the pairs
+     * (hole, list) that meet after their lets' bodies. */
+    bool late_outputs;
+    uint32_t *late_binds;
+    uint32_t late_bind_len, late_bind_cap;
     /* While a let's pattern is lowered: the let (for a let*, the whole),
      * and the bindings a let* evaluates before this one. */
     const Atom *let_scope;
@@ -1648,8 +1666,35 @@ static bool oem_template_mentions_slot(const CettaOpenEquationProgram *program,
     return false;
 }
 
+/* Whether a template names `slot` outside the lists it builds by `cons`. */
+static bool oem_template_mentions_slot_directly(
+        const CettaOpenEquationProgram *program, uint32_t index,
+        uint32_t slot, uint32_t depth) {
+    if (index >= program->template_len || depth > OEM_MAX_DEPTH)
+        return true;
+    const OemTemplate *item = &program->templates[index];
+    if (item->kind == OEM_T_SLOT)
+        return item->slot == slot;
+    if (item->kind != OEM_T_BUILD && item->kind != OEM_T_PATTERN_LIST)
+        return false;
+    for (uint32_t child = 0u; child < item->count; child++) {
+        if (oem_template_mentions_slot_directly(program,
+                program->template_children[item->first + child], slot,
+                depth + 1u))
+            return true;
+    }
+    return false;
+}
+
+/* A let's output may name a computed head of its pattern, which the
+ * destination would bind if the output met it before the pattern is read.
+ * Named in data, it is: PeTTa's translation exposes data in the clause's
+ * head, and the pattern then reads as a call, outside the fragment.  Named
+ * only in lists the body builds by `cons`, which that translation computes
+ * by a call after the pattern, the let gets a late output (*late). */
 static bool oem_pattern_output_independent(OemCompile *compile, Atom *pattern,
-        const PettaPlanNode *plan, uint32_t output, uint32_t depth) {
+        const PettaPlanNode *plan, uint32_t output, uint32_t depth,
+        bool *late) {
     if (!pattern || depth > OEM_MAX_DEPTH)
         return oem_reject(compile, "pattern proof is too deep");
     if (pattern->kind != ATOM_EXPR)
@@ -1659,15 +1704,128 @@ static bool oem_pattern_output_independent(OemCompile *compile, Atom *pattern,
         uint32_t slot = 0u;
         if (!oem_slot_of(compile, pattern->expr.elems[0]->var_id, &slot))
             return false;
-        if (oem_template_mentions_slot(compile->program, output, slot, 0u))
+        if (oem_template_mentions_slot_directly(compile->program, output,
+                                                slot, 0u))
             return oem_reject(compile,
                 "pattern head can be bound by the demanded result");
+        if (oem_template_mentions_slot(compile->program, output, slot, 0u))
+            *late = true;
     }
     for (CettaExprIndex child = 0u; child < pattern->expr.len; child++) {
         if (!oem_pattern_output_independent(compile,
                 pattern->expr.elems[child],
                 plan ? petta_plan_child(plan, child) : NULL,
-                output, depth + 1u))
+                output, depth + 1u, late))
+            return false;
+    }
+    return true;
+}
+
+/* Whether a construct's goals can all run before a goal that follows them:
+ * nothing in it ends the activation, as a tail call, a branch or a failure
+ * does. */
+static bool oem_value_emittable(const OemCompile *compile, uint32_t index,
+                                uint32_t depth) {
+    if (depth > OEM_MAX_DEPTH)
+        return false;
+    const OemNode *node = &compile->nodes[index];
+    switch ((OemNodeKind)node->kind) {
+    case OEM_N_LET:
+        return oem_value_emittable(compile, node->value, depth + 1u) &&
+            oem_value_emittable(compile, node->body, depth + 1u);
+    case OEM_N_BUILTIN_ENTRY:
+        return oem_value_emittable(compile, node->body, depth + 1u);
+    case OEM_N_CALL:
+    case OEM_N_SEQUENCE:
+    case OEM_N_ALTERNATIVES:
+        if (node->tail)
+            return false;
+        /* fallthrough */
+    case OEM_N_VALUE:
+    case OEM_N_PRIM:
+    case OEM_N_APPLY:
+    case OEM_N_COLLECT:
+    case OEM_N_ONCE:
+        for (uint32_t child = 0u; child < node->count; child++) {
+            if (!oem_value_emittable(compile,
+                    compile->node_children[node->first + child], depth + 1u))
+                return false;
+        }
+        return true;
+    case OEM_N_HOST:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool oem_hole(OemCompile *compile, uint32_t *out);
+
+/* `index` with each list it builds by `cons` a fresh hole, recording the
+ * pairs (hole, list) in compile->late_binds. */
+static bool oem_template_late_lists(OemCompile *compile, uint32_t index,
+                                    uint32_t depth, uint32_t *out) {
+    if (depth > OEM_MAX_DEPTH)
+        return oem_reject(compile, "pattern proof is too deep");
+    const OemTemplate item = compile->program->templates[index];
+    *out = index;
+    if (item.kind == OEM_T_LIST) {
+        if (!oem_reserve((void **)&compile->late_binds,
+                         &compile->late_bind_cap,
+                         compile->late_bind_len + 2u,
+                         sizeof(*compile->late_binds)))
+            return oem_reject(compile, "out of memory");
+        if (!oem_hole(compile, out))
+            return false;
+        compile->late_binds[compile->late_bind_len++] = *out;
+        compile->late_binds[compile->late_bind_len++] = index;
+        return true;
+    }
+    if (item.kind != OEM_T_BUILD || item.count == 0u)
+        return true;
+    uint32_t *children = malloc(sizeof(*children) * item.count);
+    if (!children)
+        return oem_reject(compile, "out of memory");
+    bool ok = true;
+    bool changed = false;
+    for (uint32_t child = 0u; ok && child < item.count; child++) {
+        uint32_t source =
+            compile->program->template_children[item.first + child];
+        ok = oem_template_late_lists(compile, source, depth + 1u,
+                                     &children[child]);
+        changed = changed || children[child] != source;
+    }
+    ok = ok && (!changed ||
+                oem_template_build(compile, children, item.count, out));
+    free(children);
+    return ok;
+}
+
+/* Gives a let a late output (OemNode.late_output). */
+static bool oem_late_output(OemCompile *compile, OemNode *node) {
+    if (!oem_value_emittable(compile, node->body, 0u))
+        return oem_reject(compile,
+            "pattern head can be bound by the demanded result");
+    uint32_t first = compile->late_bind_len / 2u;
+    if (!oem_template_late_lists(compile, compile->nodes[node->body].exposed,
+                                 0u, &node->exposed))
+        return false;
+    node->late_output = true;
+    node->late_first = first;
+    node->late_count = compile->late_bind_len / 2u - first;
+    compile->late_outputs = true;
+    return true;
+}
+
+/* A late output's lists meet their holes after the let's body. */
+static bool oem_emit_late_binds(OemCompile *compile, const OemNode *node) {
+    for (uint32_t pair = node->late_first;
+         pair < node->late_first + node->late_count; pair++) {
+        if (!oem_emit(compile, (OemStep){
+                          .kind = OEM_S_BIND,
+                          .pattern = compile->late_binds[2u * pair],
+                          .value = compile->late_binds[2u * pair + 1u],
+                      }, NULL))
             return false;
     }
     return true;
@@ -3378,12 +3536,15 @@ static bool oem_build_bindings(OemCompile *compile, Atom *expr,
                 compile, expr->expr.elems[body], petta_plan_child(plan, body),
                 depth + 1u, &node.body))
             return false;
+        bool late = false;
         if (!oem_pattern_output_independent(compile, expr->expr.elems[pattern],
                 petta_plan_child(plan, pattern),
-                compile->nodes[node.body].exposed, 0u))
+                compile->nodes[node.body].exposed, 0u, &late))
             return false;
         oem_let_fills_pattern(compile, node.pattern, node.value);
         node.exposed = compile->nodes[node.body].exposed;
+        if (late && !oem_late_output(compile, &node))
+            return false;
         return oem_node(compile, node, out);
     }
     if (plan->control.operation == CETTA_CONTROL_SEQUENCE_MANY) {
@@ -3421,17 +3582,19 @@ static bool oem_build_bindings(OemCompile *compile, Atom *expr,
                                              petta_plan_child(pair_plan, 0u),
                                              depth + 1u, true, &let.pattern);
             compile->let_scope = NULL;
+            bool late = false;
             if (!lowered ||
                 !oem_pattern_output_independent(compile, pair->expr.elems[0],
                     petta_plan_child(pair_plan, 0u),
-                    compile->nodes[body].exposed, 0u) ||
+                    compile->nodes[body].exposed, 0u, &late) ||
                 !oem_build_producer(compile, pair->expr.elems[1],
                                     petta_plan_child(pair_plan, 1u),
                                     depth + 1u, counted, &let.value))
                 return false;
             oem_let_fills_pattern(compile, let.pattern, let.value);
             let.exposed = compile->nodes[body].exposed;
-            if (!oem_node(compile, let, &body))
+            if ((late && !oem_late_output(compile, &let)) ||
+                !oem_node(compile, let, &body))
                 return false;
         }
         *out = body;
@@ -3792,7 +3955,8 @@ static bool oem_emit_goals(OemCompile *compile, uint32_t index) {
                              .value = compile->nodes[node.value].exposed,
                          }, NULL)) &&
             oem_emit_goals(compile, node.value) &&
-            oem_emit_goals(compile, node.body);
+            oem_emit_goals(compile, node.body) &&
+            (!node.late_output || oem_emit_late_binds(compile, &node));
     case OEM_N_SEQUENCE:
     case OEM_N_VALUE:
         for (uint32_t child = 0u; child < node.count; child++) {
@@ -3978,6 +4142,12 @@ static bool oem_emit_tail(OemCompile *compile, uint32_t index) {
         return oem_emit_tail(compile,
                               compile->node_children[node.first + node.count - 1u]);
     case OEM_N_LET:
+        /* A late output's lists meet their holes after the body, so the
+         * body runs as a value and the activation then returns. */
+        if (node.late_output)
+            return oem_emit_goals(compile, index) &&
+                oem_emit(compile, (OemStep){.kind = OEM_S_RET,
+                                            .value = compile->output}, NULL);
         return (node.pattern == compile->nodes[node.value].exposed ||
                 oem_emit(compile, (OemStep){
                              .kind = OEM_S_BIND, .pattern = node.pattern,
@@ -4793,6 +4963,12 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
         } else if (equation.dest_kind == OEM_DEST_SLOT)
             ok = oem_known_output(&compile, rhs, rhs_plan, 0u, true,
                                   &equation.output_kind, &equation.output);
+        /* An output the plan fixes before the body would meet the
+         * destination before a late output's pattern is read. */
+        if (ok && compile.late_outputs &&
+            equation.output_kind == OEM_OUTPUT_TEMPLATE)
+            ok = oem_reject(&compile,
+                "pattern head can be bound by the demanded result");
     }
     ok = ok && oem_compile_relational_occurrences(&compile) &&
         oem_emit_tail(&compile, root);
@@ -4828,6 +5004,7 @@ static bool oem_compile_equation(CettaOpenEquationProgram *program,
     free(compile.nodes);
     free(compile.node_children);
     free(compile.resumes);
+    free(compile.late_binds);
     return ok;
 }
 
@@ -6744,6 +6921,15 @@ typedef struct {
     Atom *rows[];
 } OemRows;
 
+/* A match over a large space read lazily: the rows an occurrence cursor
+ * pinned to the space when the match ran offers in row order, as the
+ * snapshot would hold them, with the next one already read.  A frame holds
+ * one only while it has that next row; it is released with the frame. */
+typedef struct OemLazyRows {
+    SpaceOccurrenceCursor occurrences;
+    Atom *next;
+} OemLazyRows;
+
 /* The cells a host goal left the region through, in the order of the
  * variables it went out with, and the host's choice height beneath the
  * goal, UINT32_MAX until the host reports it. */
@@ -6762,6 +6948,7 @@ typedef struct {
     union {
         const CettaOpenEquationProgram *program;
         OemRows *rows;
+        OemLazyRows *lazy;
         OemHostCells *host;
         struct OemCollectBox *collect;
     };
@@ -6783,6 +6970,8 @@ typedef struct {
     /* Some equation's head has taken this call's arguments: under
      * `unmatched_call_is_value` the call then has no value of its own. */
     bool head_matched;
+    /* A match frame reading its rows lazily (`lazy`, not `rows`). */
+    bool lazy_rows;
 } OemFrame;
 
 #define OEM_MATCH_FRAME UINT32_MAX
@@ -7004,6 +7193,8 @@ struct CettaOpenEquationCursor {
     uint32_t store_len, store_cap;
     OemFrame *frames;
     uint32_t frame_len, frame_cap;
+    /* Frames holding lazy rows, which dropping them releases. */
+    uint32_t lazy_frames;
     OemPair *pairs;
     uint32_t pair_cap;
     Atom **walk;
@@ -7922,9 +8113,12 @@ static Atom *oem_instantiate_in(CettaOpenEquationCursor *cursor,
          * the activation's existing rollback/region lifetime. */
         children[index] = oem_deref(cursor, children[index]);
     }
+    /* A list onto a complete flat list is flat; a pattern keeps its cell. */
     return item->kind == OEM_T_BUILD
         ? atom_expr(arena, children, item->count)
-        : petta_semantics_open_cons_value(arena, children[0], children[1]);
+        : item->kind == OEM_T_LIST
+            ? petta_semantics_cons_value(arena, children[0], children[1])
+            : petta_semantics_open_cons_value(arena, children[0], children[1]);
 }
 
 /* A literal or slot template is read in place; only a built one calls the
@@ -8278,10 +8472,34 @@ static inline uint32_t oem_frame_arity(const OemFrame *frame) {
         : frame->program->relations[frame->relation].arity;
 }
 
+static void oem_lazy_rows_release(OemLazyRows *lazy) {
+    space_occurrence_cursor_release(&lazy->occurrences);
+    free(lazy);
+}
+
+/* Release the lazy rows of the frames from `len` on. */
+static __attribute__((noinline)) void oem_release_lazy_frames(
+    CettaOpenEquationCursor *cursor, uint32_t len) {
+    for (uint32_t index = len;
+         index < cursor->frame_len && cursor->lazy_frames; index++) {
+        OemFrame *frame = &cursor->frames[index];
+        if (frame->relation == OEM_MATCH_FRAME && frame->lazy_rows) {
+            oem_lazy_rows_release(frame->lazy);
+            frame->lazy = NULL;
+            frame->lazy_rows = false;
+            cursor->lazy_frames--;
+        }
+    }
+}
+
 /* Drop the frames from `len` on; the frames below the least length since
- * the last collection are unchanged since it. */
+ * the last collection are unchanged since it.  A frame reading lazy rows
+ * releases them, so its pin on the space ends with it. */
 static inline void oem_truncate_frames(CettaOpenEquationCursor *cursor,
                                        uint32_t len) {
+    if (__builtin_expect(cursor->lazy_frames != 0u, 0) &&
+        len < cursor->frame_len)
+        oem_release_lazy_frames(cursor, len);
     cursor->frame_len = len;
     if (len < cursor->frame_low)
         cursor->frame_low = len;
@@ -9770,6 +9988,80 @@ static OemRun oem_match_fallback_host(
     Atom **locals, uint32_t local_count, const OemCont *cont, uint32_t depth,
     const OemStep *step);
 
+/* The next row a lazy match offers, or NULL when it has none.  The rows
+ * are the space's atoms, as a snapshot's are. */
+static Atom *oem_lazy_rows_fetch(CettaOpenEquationCursor *cursor,
+                                 OemLazyRows *lazy) {
+    for (;;) {
+        CettaIndex index = 0u;
+        if (space_occurrence_cursor_next(&lazy->occurrences, &index) !=
+            SPACE_OCCURRENCE_CURSOR_ITEM)
+            return NULL;
+        cursor->stats.match_candidates++;
+        Atom *row = space_occurrence_cursor_atom(&lazy->occurrences, index);
+        if (row)
+            return row;
+    }
+}
+
+/* A match over a large space whose rows are read as the search needs them:
+ * a first match costs the rows before it, not every row of the pattern.
+ * The rows and their order are the snapshot's, since the cursor is pinned
+ * to the space as the match runs and keeps those rows through any later
+ * change.  False when the space's cursor does not admit the pattern; the
+ * snapshot is taken then. */
+static bool oem_match_lazy(CettaOpenEquationCursor *cursor,
+                           const CettaOpenEquationProgram *program,
+                           uint32_t pc, Atom **locals, uint32_t local_count,
+                           const OemCont *cont, uint32_t depth,
+                           const OemStep *step, Space *space, OemRun *run) {
+    *run = OEM_RUN_HANDOFF;
+    Atom *pattern = oem_instantiate(cursor, program, locals, step->pattern);
+    if (!pattern)
+        return true;
+    Atom *query = oem_pattern_resolved(pattern)
+        ? pattern : oem_resolve_mode(cursor, pattern, true);
+    query = query ? petta_semantics_match_index_pattern(&cursor->region,
+                                                        query, NULL)
+                  : NULL;
+    if (!query)
+        return true;
+    OemLazyRows *lazy = malloc(sizeof(*lazy));
+    if (!lazy)
+        return true;
+    space_occurrence_cursor_init_empty(&lazy->occurrences);
+    if (!space_occurrence_cursor_init(space, query, &lazy->occurrences)) {
+        oem_lazy_rows_release(lazy);
+        return false;
+    }
+    lazy->next = oem_lazy_rows_fetch(cursor, lazy);
+    if (!lazy->next) {
+        oem_lazy_rows_release(lazy);
+        *run = OEM_RUN_FAILED;
+        return true;
+    }
+    OemCont *resume = arena_alloc(&cursor->region, sizeof(*resume));
+    Atom **args = arena_alloc(&cursor->region, sizeof(*args));
+    if (!resume || !args ||
+        !oem_push_frame(cursor, program, OEM_MATCH_FRAME, args, resume,
+                        depth)) {
+        oem_lazy_rows_release(lazy);
+        return true;
+    }
+    *resume = (OemCont){
+        .parent = cont, .receiver_parent = oem_receiver_cont(cont),
+        .program = program, .locals = locals,
+        .local_count = local_count, .pc = pc + 1u, .depth = depth,
+    };
+    args[0] = pattern;
+    OemFrame *frame = &cursor->frames[cursor->frame_len - 1u];
+    frame->lazy = lazy;
+    frame->lazy_rows = true;
+    cursor->lazy_frames++;
+    *run = OEM_RUN_CALLED;
+    return true;
+}
+
 static inline __attribute__((always_inline)) OemRun oem_match_step_mode(
                              CettaOpenEquationCursor *cursor,
                              const CettaOpenEquationProgram *program,
@@ -9873,6 +10165,11 @@ static inline __attribute__((always_inline)) OemRun oem_match_step_mode(
                 rows->rows[len++] = candidate;
         }
     } else {
+        OemRun lazy_run = OEM_RUN_FAILED;
+        if (!he && !counted_only &&
+            oem_match_lazy(cursor, program, pc, locals, local_count, cont,
+                           depth, step, space, &lazy_run))
+            return lazy_run;
         CettaIndex *view_candidates = NULL;
         CettaIndex view_count = 0u;
         bool borrowed = !counted_only && oem_template_candidates_view(
@@ -15156,8 +15453,8 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
              cell++)
             oem_collect_reach(cursor, &collect, frame->host->cells[cell]);
         /* A match's rows are reached with it, from the generation that
-         * holds their block. */
-        if (ok && oem_frame_is_match(frame)) {
+         * holds their block; lazy rows hold none. */
+        if (ok && oem_frame_is_match(frame) && !frame->lazy_rows) {
             size_t bytes = sizeof(OemRows) +
                 sizeof(Atom *) * (size_t)frame->rows->len;
             if (frame->rows->arena == collect.from_identity)
@@ -15297,8 +15594,9 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
             hosts[young] = copy;
         }
         /* A match's rows are the space's atoms; only the block moves, and
-         * only out of a generation this collection collects. */
-        if (ok && oem_frame_is_match(frame)) {
+         * only out of a generation this collection collects.  Lazy rows
+         * stay where they are. */
+        if (ok && oem_frame_is_match(frame) && !frame->lazy_rows) {
             bool moves = frame->rows->arena == collect.from_identity ||
                 (collect.from_old_identity != 0u &&
                  frame->rows->arena == collect.from_old_identity);
@@ -15407,7 +15705,7 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
         OemFrame *frame = &cursor->frames[index];
         uint32_t young = index - frame_base;
         frame->args = args[young];
-        if (oem_frame_is_match(frame))
+        if (oem_frame_is_match(frame) && !frame->lazy_rows)
             frame->rows = rows[young];
         if (oem_frame_is_host(frame))
             frame->host = hosts[young];
@@ -16367,7 +16665,7 @@ static inline __attribute__((always_inline)) bool oem_settle(
         OemFrame *frame = &cursor->frames[cursor->frame_len - 1u];
         oem_restore(cursor, frame);
         if (__builtin_expect(oem_frame_is_match(frame), 0)) {
-            if (frame->next < frame->rows->len)
+            if (frame->lazy_rows || frame->next < frame->rows->len)
                 return true;
             oem_pop_frame(cursor);
             continue;
@@ -18102,14 +18400,23 @@ oem_cursor_run_mode(CettaOpenEquationCursor *cursor, uint32_t base,
                 };
                 goto run_body;
             }
-            if (frame->next >= frame->rows->len) {
-                oem_pop_frame(cursor);
-                continue;
+            Atom *candidate = NULL;
+            if (frame->lazy_rows) {
+                /* The row read ahead, and the one after it read now: a
+                 * frame with none left goes before its last row runs. */
+                candidate = frame->lazy->next;
+                frame->lazy->next = oem_lazy_rows_fetch(cursor, frame->lazy);
+            } else {
+                if (frame->next >= frame->rows->len) {
+                    oem_pop_frame(cursor);
+                    continue;
+                }
+                candidate = frame->rows->rows[frame->next++];
             }
-            Atom *candidate = frame->rows->rows[frame->next++];
             Atom *pattern = frame->args ? frame->args[0] : NULL;
             const OemCont *resume = frame->cont;
-            if (frame->next >= frame->rows->len)
+            if (frame->lazy_rows ? !frame->lazy->next
+                                 : frame->next >= frame->rows->len)
                 oem_pop_frame(cursor);
             run = pattern ? oem_try_candidate(cursor, pattern, candidate)
                           : oem_try_candidate_in_place(cursor, resume,
@@ -18398,6 +18705,8 @@ void cetta_open_equation_cursor_close(CettaOpenEquationCursor *cursor) {
     free(cursor->stores);
     free(cursor->remembered_cells);
     free(cursor->remembered_slots);
+    if (cursor->lazy_frames)
+        oem_release_lazy_frames(cursor, 0u);
     free(cursor->frames);
     free(cursor->fresh_vars);
     cetta_var_index_free(&cursor->fresh_index);
