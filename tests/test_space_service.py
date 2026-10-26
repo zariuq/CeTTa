@@ -596,12 +596,16 @@ class ServiceTests(unittest.TestCase):
 
     def transaction_worker(self):
         module = self.fixture.root / "transactions.metta"
-        module.write_text('''!(import! &self space_service)
+        module.write_text('''!(import! &self (library space_transaction))
 (: transaction-test (-> %Undefined% %Undefined%))
 (= (transaction-test (observe $socket $space $reads $writes $limit))
    (space:observe $socket $space $reads $writes $limit 60000))
 (= (transaction-test (commit $socket $observation $id $operations))
    (space:commit $socket $observation $id $operations))
+(= (transaction-test (begin $socket $space $key $fingerprint $reads $writes))
+   (space:begin $socket $space $key $fingerprint $reads $writes 4096 60000))
+(= (transaction-test (publish $socket $transaction $id $result $operations))
+   (space:publish $socket $transaction $id $result $operations))
 ''')
         worker = Worker(WORKER, module, "transaction-test", language="petta")
         self.addCleanup(worker.close)
@@ -668,6 +672,54 @@ class ServiceTests(unittest.TestCase):
             result = worker.call(E("observe", self.fixture.socket, space.describe(), reads, (), 2))
             self.assertEqual(result[0], S("SpaceObserved"))
             self.assertEqual(result[4], (E("SpaceRead", "items", (1, 2)),))
+
+    @unittest.skipUnless(WORKER, "provide value worker for durable application receipts")
+    def test_metta_application_receipt_survives_protocol_eviction_and_restart(self):
+        worker = self.transaction_worker()
+        space = self.client.open("application", "native-ordered")
+        writes = (E("Value", Var(0)),)
+        def begin(fingerprint="same-request"):
+            return worker.call(E("begin", self.fixture.socket, space.describe(),
+                                 "operation", fingerprint, (), writes))
+        first, competitor = begin(), begin()
+        self.assertEqual(first[0], S("SpaceTransaction"))
+        result = E("+", 1, 2)  # a value, not an instruction to evaluate
+        operations = (E("add", E("Value", 7)), E("add", E("Value", 7)))
+        accepted = worker.call(E("publish", self.fixture.socket, first, "published", result, operations))
+        self.assertEqual(accepted, E("SpaceCommitted", result))
+        stale = worker.call(E("publish", self.fixture.socket, competitor, "competitor", result, operations))
+        self.assertEqual(stale[2:], (S("error"), S("stale-revision")))
+        self.assertEqual(begin(), accepted)
+        self.assertEqual(begin("different-request"), E("SpaceRefused", S("reused-operation-identity")))
+        space.describe()
+        for _ in range(260):
+            space.batch()
+        self.assertEqual(self.client.call("receipt", space.uuid, "published"), S("unknown-receipt"))
+        self.assertEqual(begin(), accepted)
+        self.client.call("compact", space.uuid)
+        self.client.close()
+        self.fixture.restart(crash=True)
+        self.client = Client(self.fixture.socket)
+        self.addCleanup(self.client.close)
+        space = self.client.open("application", "native-ordered")
+        self.assertEqual(begin(), accepted)
+        self.assertEqual(space.match(E("Value", Var(0)), Var(0)), [7, 7])
+        self.assertEqual(space.match_count(E("SpaceReceiptV1", "operation", Var(0), Var(1))), 1)
+
+    @unittest.skipUnless(WORKER, "provide value worker for durable application receipts")
+    def test_metta_application_cannot_rewrite_its_receipts(self):
+        worker = self.transaction_worker()
+        space = self.client.open("receipt-scope", "native-ordered")
+        transaction = worker.call(E("begin", self.fixture.socket, space.describe(), "operation", "fp", (), (Var(0),)))
+        result = worker.call(E("publish", self.fixture.socket, transaction, "tampered", 7,
+                               (E("add", E("SpaceReceiptV1", "other", "fp", 9)),)))
+        self.assertEqual(result, E("SpaceRefused", S("reserved-receipt-mutation")))
+        self.assertEqual(space.match_count(Var(0)), 0)
+        # Imported corruption is reported; no arbitrary matching receipt wins.
+        space.batch(E("add", E("SpaceReceiptV1", "operation", "fp", 1)),
+                    E("add", E("SpaceReceiptV1", "operation", "fp", 2)))
+        result = worker.call(E("begin", self.fixture.socket, space.describe(), "operation", "fp", (), (Var(0),)))
+        self.assertEqual(result, E("SpaceRefused", S("duplicate-application-receipt")))
 
     @unittest.skipUnless(WORKER, "provide value worker for snapshot publication qualification")
     def test_prime_worker_publishes_only_against_its_captured_snapshot(self):

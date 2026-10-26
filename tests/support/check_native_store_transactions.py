@@ -186,7 +186,8 @@ def main():
         if a != b or a != c:
             raise AssertionError({"step": number, "command": trace[number], "sqlite": a, "native": b, "lean": c})
     receipt = {"steps": len(trace), "seed": args.seed, "sqlite_version": sqlite3.sqlite_version,
-               "native_library_sha256": digest(ROOT / "lib/space_service.metta"),
+               "native_library_sha256": digest(ROOT / "lib/petta/space_transaction.metta"),
+               "native_client_sha256": digest(ROOT / "lib/petta/space_service.metta"),
                "service_sha256": digest(args.service), "worker_sha256": digest(args.worker),
                "model_sha256": digest(args.lean_project / "Mettapedia/Machines/NativeStoreTransactions.lean"),
                "commands": trace, "observations": actual,

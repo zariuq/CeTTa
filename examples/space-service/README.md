@@ -150,10 +150,11 @@ The native client returns `space:uncertain` if a reply is lost after sending,
 or `space:unavailable` if no request was sent. The Python client raises
 `Uncertain` with the original request. Inspect receipts before retrying.
 
-The authored MeTTa helpers also support conservative transactions, initially
-qualified in the PeTTa profile:
+The authored MeTTa helpers in `(library space_transaction)` support conservative
+transactions in the PeTTa profile:
 
 ```metta
+!(import! &self (library space_transaction))
 ; Bind an already opened descriptor to $store before calling these helpers.
 (space:observe $socket $store
   ((scope "pending" (Pending $id $value) (Pending $id $value)))
@@ -172,6 +173,15 @@ executes stored values nor binds variables in later operations. Snapshots are
 closed after consumption or a reported read failure. No write is retried by
 these helpers. Applications include their durable idempotency evidence in the
 same batch as the state transition.
+
+`space:begin` and `space:publish` provide that receipt discipline. Begin takes
+an application operation key and fingerprint in addition to the read/write
+scopes. It returns `SpaceTransaction`, or the previously committed result for
+that same key and fingerprint. Publish commits the supplied operations and a
+`SpaceReceiptV1` record together. Reusing the key with another fingerprint is
+refused. Application operations cannot rewrite reserved receipt records.
+An uncertain publish stays uncertain until a fresh begin observes its durable
+receipt; neither helper sends or repeats an external effect.
 
 The snapshot row allowance is explicit and excessive results return an error;
 it is not a truncation policy. These initial helpers materialize each declared
@@ -211,3 +221,11 @@ publication. With a built MeTTapedia checkout supplied as
 ordered traces through the real MeTTa helpers, an in-memory SQLite oracle and
 `NativeStoreTransactions.lean`. Its receipt records the program, model and
 binary hashes alongside every observed state.
+
+The PeTTa `(library rel)` module supplies ordered-bag selection, projection,
+joins, existence, distinctness, stable ordering, paging and sequential grouped
+or running folds. Predicates use `RelTrue`, `RelFalse` and `RelUnknown`;
+comparisons and NULL policy are explicit caller adapters. Callbacks must be
+pure, deterministic and terminating. Zero or multiple callback answers are
+reported, never converted into a partial successful bag. `test-rel` compares
+complete results against SQLite and sequential reference folds.

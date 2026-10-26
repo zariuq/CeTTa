@@ -468,8 +468,8 @@
     {
       "source": "space_service.metta",
       "output": "space_service.metta",
-      "source_sha256": "8d6a184eda5507600b3b18946cad1b1380470f6fdbec3ad20a9d23b8308737a0",
-      "output_sha256": "b5d5021bd1d8ca0d82eddd42cc32d8ce7e3a81ded7a55fb6ce45df5f4224b75e",
+      "source_sha256": "80dc655d9e758f82400f2a662bb2f8c23ca99093c0012d5eb97952c16abda01a",
+      "output_sha256": "a65e28369b8197de268bd3f253b21077ed42e350174a451b34cced7402d39c0b",
       "edits": 10,
       "code_diagnostics": 0
     },

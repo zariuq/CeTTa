@@ -45867,7 +45867,7 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
-	system fs proc sqlite shell cwp io durable llm llm/io llm/command llm/compat \
+	system fs proc sqlite shell cwp io durable space_service llm llm/io llm/command llm/compat \
 	re postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re holkernel mm0kernel
 LIBRARY_PETTA_SPELLING_SOURCES_V1 += lib_tensor
@@ -49980,3 +49980,10 @@ test-petta-overloaded-choice-retention: $(BIN) tests/support/check_petta_overloa
 	python3 tests/support/check_petta_overloaded_choice_retention.py ./$(BIN)
 
 test-petta-search-machine test-all: test-petta-overloaded-choice-retention
+
+.PHONY: test-rel
+REL_TEST_OUTPUT ?= runtime/rel-qualification-$(BUILD_OBJ_TAG)
+test-rel: $(BIN) lib/petta/rel.metta tests/support/check_rel.py
+	python3 tests/support/check_rel.py --cetta ./$(BIN) --output "$(REL_TEST_OUTPUT)"
+
+test-all: test-rel
