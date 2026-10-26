@@ -3,6 +3,7 @@
 #include "match.h"
 #include "mm2_lower.h"
 #include "native_sha256.h"
+#include "native_journal.h"
 #include "space.h"
 #include "space_path_index.h"
 #include "symbol.h"
@@ -508,27 +509,10 @@ static void remember(Service *s, Receipt *r) {
     s->receipts[s->receipt_count++]=*r;
     s->receipt_bytes+=size; *r=(Receipt){0};
 }
-static bool write_all(int fd, const void *data, size_t size) {
-    const unsigned char *p = data;
-    while (size) {
-        ssize_t n = write(fd,p,size);
-        if (n < 0 && errno == EINTR) continue;
-        if (n <= 0) return false;
-        p += n; size -= (size_t)n;
-    }
-    return true;
-}
 /* Complete records have a bounded length and SHA-256. A short last record is
  * an unsynchronized tail. A complete invalid record fails recovery closed. */
 static bool journal_bytes(int fd, Bytes b, bool synchronize, uint64_t *written) {
-    unsigned char header[72] = {'C','S','L','1'};
-    for (size_t i = 0; i < 4; ++i) header[4+i] = (unsigned char)(b.size >> (24-8*i));
-    char digest[65]; cetta_native_sha256_hex(b.data,b.size,digest);
-    memcpy(header+8,digest,64);
-    bool ok = write_all(fd,header,sizeof(header)) && write_all(fd,b.data,b.size);
-    if (ok && synchronize) ok = fsync(fd) == 0;
-    if (ok && written) *written += sizeof(header)+b.size;
-    return ok;
+    return cetta_journal_append(fd,b.data,b.size,synchronize,written)==CETTA_JOURNAL_OK;
 }
 static bool journal_record(int fd, Atom *record, bool synchronize, uint64_t *written) {
     Bytes b={0};
@@ -1140,41 +1124,29 @@ static bool recover(Service *s) {
         bool ok=journal_record(s->journal,form(&a,"header",args,2),true,&s->journal_bytes) && fsync(s->directory)==0;
         arena_free(&a); s->next_store=1; return ok;
     }
-    off_t position=0; bool first=true;
-    while (position<st.st_size) {
-        unsigned char header[72];
-        ssize_t got=pread(s->journal,header,sizeof(header),position);
-        if (got<0 && errno==EINTR) continue;
-        if (got<0) return false;
-        if (got<(ssize_t)sizeof(header)) break;
-        if (memcmp(header,"CSL1",4)) return false;
-        size_t n=0; for (size_t i=4;i<8;++i) n=(n<<8)|header[i];
-        if (n<4 || n>CETTA_ATOM_WIRE_BYTES) return false;
-        if ((uint64_t)n>(uint64_t)(st.st_size-position-(off_t)sizeof(header))) break;
-        Bytes b={malloc(n),n}; if (!b.data) return false;
-        size_t pos=0;
-        while (pos<n) {
-            got=pread(s->journal,b.data+pos,n-pos,position+(off_t)sizeof(header)+(off_t)pos);
-            if (got<0 && errno==EINTR) continue;
-            if (got<=0) { bytes_free(&b); return false; }
-            pos+=(size_t)got;
-        }
-        char digest[65]; cetta_native_sha256_hex(b.data,b.size,digest);
-        if (memcmp(digest,header+8,64)) { bytes_free(&b); return false; }
+    uint64_t position=0; bool first=true;
+    while (position<(uint64_t)st.st_size) {
+        CettaJournalRecord frame={0};
+        CettaJournalStatus status=cetta_journal_read(s->journal,position,
+            (uint64_t)st.st_size,CETTA_ATOM_WIRE_BYTES,&frame);
+        if (status==CETTA_JOURNAL_TORN) break;
+        if (status!=CETTA_JOURNAL_OK) return false;
+        Bytes b={frame.data,frame.size};
         Arena a; arena_init_detached(&a); Atom *record=NULL;
         bool ok=decode(&a,b,&record) && restore_record(s,&a,record,first);
         if (ok && shape(record,"sealed",4))
-            s->checkpoint_bytes=(uint64_t)(position+(off_t)(sizeof(header)+n));
-        arena_free(&a); bytes_free(&b); if (!ok) return false;
-        first=false; position+=(off_t)(sizeof(header)+n);
+            s->checkpoint_bytes=frame.next;
+        position=frame.next;
+        arena_free(&a); cetta_journal_record_free(&frame); if (!ok) return false;
+        first=false;
     }
     if (first || s->restoring) return false;
-    if (position!=st.st_size) {
+    if (position!=(uint64_t)st.st_size) {
         fprintf(stderr,"space-service: discarding incomplete journal tail\n");
-        if (ftruncate(s->journal,position) || fsync(s->journal)) return false;
+        if (cetta_journal_trim_tail(s->journal,position)!=CETTA_JOURNAL_OK) return false;
     }
-    if (lseek(s->journal,position,SEEK_SET)<0) return false;
-    s->journal_bytes=(uint64_t)position; s->restoring=false; return true;
+    if (lseek(s->journal,(off_t)position,SEEK_SET)<0) return false;
+    s->journal_bytes=position; s->restoring=false; return true;
 }
 
 static bool write_checkpoint(Service *s,int fd,uint64_t *size) {
@@ -1238,6 +1210,9 @@ static bool write_checkpoint(Service *s,int fd,uint64_t *size) {
     }
     return ok;
 }
+static bool checkpoint_records(int fd,uint64_t *size,void *context) {
+    return write_checkpoint(context,fd,size);
+}
 static bool compact(Service *s) {
     /* Rebuild ownership from live terms. Query rows are independently owned,
      * so removing the old universe releases removed terms and old frontiers. */
@@ -1257,14 +1232,10 @@ static bool compact(Service *s) {
         old->grants=NULL; old->grant_count=old->grant_capacity=0;
         fresh->churn=0; s->stores[i]=fresh; store_free(old);
     }
-    int fd=openat(s->directory,"checkpoint.new",O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC|O_NOFOLLOW,0600);
-    if (fd<0) return false;
     uint64_t size=0;
-    bool ok=write_checkpoint(s,fd,&size) && fsync(fd)==0;
-    if (ok) ok=renameat(s->directory,"checkpoint.new",s->directory,"journal.csl")==0;
-    if (ok) ok=fsync(s->directory)==0;
-    if (ok) { close(s->journal); s->journal=fd; s->journal_bytes=size; s->checkpoint_bytes=size; }
-    else { close(fd); unlinkat(s->directory,"checkpoint.new",0); }
+    bool ok=cetta_journal_checkpoint(s->directory,"journal.csl","checkpoint.new",
+        checkpoint_records,s,&s->journal,&size)==CETTA_JOURNAL_OK;
+    if (ok) { s->journal_bytes=size; s->checkpoint_bytes=size; }
     return ok;
 }
 static void client_close(Service *s,Client *c) {

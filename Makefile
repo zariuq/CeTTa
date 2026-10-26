@@ -806,6 +806,7 @@ SRC += src/tensor_dense_v1.c
 SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/fallible_alloc.c
 SRC += src/occurrence_log.c src/shared_return_producer.c src/owned_return_image.c
+SRC += src/native_journal.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
 # Shared opaque authority (lib_seal): runtime objects and the seal library.
 SRC += src/seal.c native/seal_module.c
@@ -48484,7 +48485,12 @@ test-telegram-scheduler:
 endif
 
 .PHONY: telegram-service telegram-control test-telegram-service test-telegram-channel-service test-telegram-commands-service test-telegram-control
-.PHONY: space-service test-space-service test-space-service-commit
+.PHONY: space-service test-space-service test-space-service-commit test-native-journal
+runtime/test-native-journal: tests/test_native_journal.c src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
+	@mkdir -p runtime
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_journal.c src/native_journal.c src/native_sha256.c -Wl,--wrap=write,--wrap=pread,--wrap=fsync,--wrap=renameat -o $@
+test-native-journal: runtime/test-native-journal
+	$<
 .PHONY: value-worker test-memory-collection test-memory-index-mutations install-memory-service
 MEMORY_SERVICE_INSTALL_ARGS ?=
 VALUE_WORKER_BIN = runtime/cetta-value-worker-$(BUILD_OBJ_TAG)
