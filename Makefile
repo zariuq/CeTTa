@@ -48525,6 +48525,15 @@ test-space-service-commit: $(SPACE_SERVICE_COMMIT_TEST_BIN)
 	$(SPACE_SERVICE_COMMIT_TEST_BIN)
 test-space-service: test-space-service-commit $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
 	python3 tests/test_space_service.py $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
+
+.PHONY: test-native-store-transactions
+NATIVE_STORE_LEAN_PROJECT ?=
+NATIVE_STORE_TRACE_DIR ?= runtime/native-store-transactions-$(BUILD_OBJ_TAG)
+test-native-store-transactions: $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
+	@test -n "$(NATIVE_STORE_LEAN_PROJECT)" || { echo 'Set NATIVE_STORE_LEAN_PROJECT to the built MeTTapedia Lean project'; exit 1; }
+	python3 tests/support/check_native_store_transactions.py --service $(SPACE_SERVICE_BIN) \
+		--cetta ./$(BIN) --worker $(VALUE_WORKER_BIN) \
+		--lean-project "$(NATIVE_STORE_LEAN_PROJECT)" --output "$(NATIVE_STORE_TRACE_DIR)"
 test-memory-collection: $(SPACE_SERVICE_BIN) $(VALUE_WORKER_BIN)
 	python3 tests/test_memory_collection.py --server $(SPACE_SERVICE_BIN) --worker $(VALUE_WORKER_BIN) --output runtime/memory-qualification-$(BUILD_OBJ_TAG).json
 test-memory-index-mutations: $(VALUE_WORKER_BIN)

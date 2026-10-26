@@ -31,7 +31,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 from value_worker_client import Worker, WorkerUnavailable
 TRACE = []
 BACKENDS = tuple(os.environ.get("CETTA_SPACE_TEST_BACKENDS", "native,pathmap,mork").split(","))
-if not BACKENDS or any(x not in ("native", "pathmap", "mork") for x in BACKENDS):
+if not BACKENDS or any(x not in ("native", "native-ordered", "pathmap", "mork") for x in BACKENDS):
     raise ValueError("invalid test backend selection")
 
 
@@ -145,6 +145,31 @@ class ServiceTests(unittest.TestCase):
                 self.assertEqual(space.match_count(E("p", Var(0))), expected - 1)
                 TRACE.append({"kind": "multiplicity", "backend": backend, "initial": expected,
                               "remaining": expected-1, "revision": space.revision})
+
+    def test_ordered_native_bag_retains_survivor_order_through_recovery(self):
+        self.assertIn(S("native-ordered"), self.client.hello()[5])
+        space = self.client.open("ordered", "native-ordered")
+        space.batch(*(E("add", E("row", n)) for n in (1, 2, 3, 2, 4)))
+        old = space.query(E("row", Var(0)), Var(0))
+        space.batch(E("add", E("row", 5)), E("remove", E("row", 3)), E("remove", E("row", 2)))
+        self.assertEqual(space.match(E("row", Var(0)), Var(0)), [1, 2, 4, 5])
+        self.assertEqual(space.fetch(old)[3][1:], (1, 2, 3, 2, 4))
+        space.close_query(old)
+        self.denied("backend-mismatch", self.client.open, "ordered", "native")
+        self.client.close()
+        self.fixture.restart(crash=True)
+        self.client = Client(self.fixture.socket)
+        self.addCleanup(self.client.close)
+        space = self.client.open("ordered", "native-ordered")
+        self.assertEqual(space.match(E("row", Var(0)), Var(0)), [1, 2, 4, 5])
+        self.client.call("compact", space.uuid)
+        self.client.close()
+        self.fixture.restart(crash=True)
+        self.client = Client(self.fixture.socket)
+        self.addCleanup(self.client.close)
+        space = self.client.open("ordered", "native-ordered")
+        space.remove(E("row", 1))
+        self.assertEqual(space.match(E("row", Var(0)), Var(0)), [2, 4, 5])
 
     def test_noop_advances_revision_and_retry_is_correlated(self):
         space = self.space()
@@ -568,6 +593,81 @@ class ServiceTests(unittest.TestCase):
             self.assertIn("stale-revision",process.stdout)
             self.assertIn(f'"{space.name}" native bag',process.stdout)
             self.assertEqual(space.match(E("helper",Var(0)),Var(0)),[17])
+
+    def transaction_worker(self):
+        module = self.fixture.root / "transactions.metta"
+        module.write_text('''!(import! &self space_service)
+(: transaction-test (-> %Undefined% %Undefined%))
+(= (transaction-test (observe $socket $space $reads $writes $limit))
+   (space:observe $socket $space $reads $writes $limit 60000))
+(= (transaction-test (commit $socket $observation $id $operations))
+   (space:commit $socket $observation $id $operations))
+''')
+        worker = Worker(WORKER, module, "transaction-test", language="petta")
+        self.addCleanup(worker.close)
+        return worker
+
+    @unittest.skipUnless(WORKER, "provide value worker for MeTTa transactions")
+    def test_metta_observation_preserves_pages_and_negative_dependencies(self):
+        worker = self.transaction_worker()
+        space = self.space()
+        rows = [E("Item", n % 7, "λ") for n in range(260)]
+        space.batch(*(E("add", row) for row in rows))
+        reads = (E("scope", "items", E("Item", Var(0), Var(1)), E("Item", Var(0), Var(1))),
+                 E("scope", "absent", E("Missing", Var(2)), Var(2)))
+        writes = (E("Item", Var(0), Var(1)), E("Missing", Var(0)))
+        observation = worker.call(E("observe", self.fixture.socket, space.describe(), reads, writes, 1024))
+        self.assertEqual(observation[0], S("SpaceObserved"))
+        self.assertEqual(observation[4], (E("SpaceRead", "items", tuple(rows)), E("SpaceRead", "absent", ())))
+        # A new formerly absent row invalidates the whole observation, even
+        # though every positive row is unchanged.
+        space.add(E("Missing", 1))
+        result = worker.call(E("commit", self.fixture.socket, observation, "stale-tx",
+                               (E("add", E("Item", 99, "new")),)))
+        self.assertEqual(result[2:], (S("error"), S("stale-revision")))
+        self.assertEqual(space.match_count(E("Item", 99, Var(0))), 0)
+
+    @unittest.skipUnless(WORKER, "provide value worker for MeTTa transactions")
+    def test_metta_commit_checks_scopes_without_capturing_pattern_variables(self):
+        worker = self.transaction_worker()
+        space = self.space()
+        writes = (E("Item", Var(0), Var(1)), E("Receipt", Var(0), Var(1)))
+        observation = worker.call(E("observe", self.fixture.socket, space.describe(), (), writes, 10))
+        operations = (E("add", E("Item", 1, "first")),
+                      E("add", E("Item", 2, "second")),
+                      E("add", E("Receipt", "operation-1", "completed")))
+        rejected = worker.call(E("commit", self.fixture.socket, observation, "outside-tx",
+                                 (*operations, E("add", E("Outside", 1)))))
+        self.assertEqual(rejected, E("SpaceRefused", S("undeclared-write")))
+        self.assertEqual(space.match_count(Var(0)), 0)
+        accepted = worker.call(E("commit", self.fixture.socket, observation, "allowed-tx", operations))
+        self.assertEqual(accepted[2], S("ok"))
+        self.assertEqual(worker.call(E("commit", self.fixture.socket, observation, "allowed-tx", operations)), accepted)
+        self.assertEqual(space.match_count(Var(0)), 3)
+        # Retiring the protocol receipt must not retire application evidence.
+        space.describe()
+        for _ in range(260):
+            space.batch()
+        self.assertEqual(self.client.call("receipt", space.uuid, "allowed-tx"), S("unknown-receipt"))
+        self.assertEqual(space.match(E("Receipt", "operation-1", Var(0)), Var(0)), ["completed"])
+        again = worker.call(E("commit", self.fixture.socket, observation, "new-request-id", operations))
+        self.assertEqual(again[2:], (S("error"), S("stale-revision")))
+        self.assertEqual(space.match_count(Var(0)), 3)
+
+    @unittest.skipUnless(WORKER, "provide value worker for MeTTa transactions")
+    def test_metta_failed_observation_is_not_a_partial_result(self):
+        worker = self.transaction_worker()
+        space = self.space()
+        space.batch(E("add", E("Item", 1)), E("add", E("Item", 2)))
+        reads = (E("scope", "items", E("Item", Var(0)), Var(0)),)
+        result = worker.call(E("observe", self.fixture.socket, space.describe(), reads, (), 1))
+        self.assertNotEqual(result[0], S("SpaceObserved"))
+        self.assertEqual(result[2], S("error"))
+        # Every successful observation releases its server-owned snapshot.
+        for _ in range(70):
+            result = worker.call(E("observe", self.fixture.socket, space.describe(), reads, (), 2))
+            self.assertEqual(result[0], S("SpaceObserved"))
+            self.assertEqual(result[4], (E("SpaceRead", "items", (1, 2)),))
 
     @unittest.skipUnless(WORKER, "provide value worker for snapshot publication qualification")
     def test_prime_worker_publishes_only_against_its_captured_snapshot(self):

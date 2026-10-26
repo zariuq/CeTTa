@@ -11,6 +11,7 @@ multiple nonblocking connections. Its storage choices are:
 | Backend | Duplicates | Representation | Matching |
 | --- | --- | --- | --- |
 | `native` | preserved | CeTTa term universe | CeTTa native index |
+| `native-ordered` | preserved, insertion order retained | CeTTa ordered space | CeTTa native index |
 | `pathmap` | preserved | counted PathMap portable keys | maintained native index |
 | `mork` | unique support | raw MORK portable keys | maintained native index |
 
@@ -119,7 +120,10 @@ An existing name opens only with its existing backend. New names require a
 current catalog revision. Dropping and recreating a name assigns a new ID.
 All accepted batches advance the space revision, including no-ops. `remove`
 removes one alpha-equivalent occurrence if present; absent values are no-ops.
-Bag ordering is unspecified. Patterns use ordinary CeTTa unification and the
+The advertised `native-ordered` profile removes the first matching occurrence
+and preserves the relative order of every survivor, through recovery and
+checkpointing. Other bag profiles leave ordering after removal unspecified.
+Patterns use ordinary CeTTa unification and the
 template is substituted without evaluation. Open facts are freshened per
 match; variables are scoped within each transmitted atom packet.
 
@@ -146,6 +150,35 @@ The native client returns `space:uncertain` if a reply is lost after sending,
 or `space:unavailable` if no request was sent. The Python client raises
 `Uncertain` with the original request. Inspect receipts before retrying.
 
+The authored MeTTa helpers also support conservative transactions, initially
+qualified in the PeTTa profile:
+
+```metta
+; Bind an already opened descriptor to $store before calling these helpers.
+(space:observe $socket $store
+  ((scope "pending" (Pending $id $value) (Pending $id $value)))
+  ((Pending $id $value) (Receipt $id $value)) 4096 60000)
+; Successful result: (SpaceObserved HANDLE READS WRITES RESULTS)
+(space:commit $socket $observation $request-id
+  ((remove (Pending "job-1" "ready"))
+   (add (Receipt "job-1" "finished"))))
+```
+
+Every read must have the descriptor's revision. An empty query still depends
+on that revision. Commit validates declared write scopes before sending one
+conditional atomic batch. An intervening mutation makes the observation stale,
+including when it changes a previously empty range. Scope matching neither
+executes stored values nor binds variables in later operations. Snapshots are
+closed after consumption or a reported read failure. No write is retried by
+these helpers. Applications include their durable idempotency evidence in the
+same batch as the state transition.
+
+The snapshot row allowance is explicit and excessive results return an error;
+it is not a truncation policy. These initial helpers materialize each declared
+read and use conservative whole-store conflicts. They are suitable for bounded
+record queries, not a streaming interface to an entire archive. Ordered removal
+currently uses the existing linear sequence-preserving operation.
+
 The default quotas are 32 spaces, one million facts and 64 MiB of live portable
 values per space, 64 snapshots with 32 MiB total row data, a 1 MiB frame,
 65,536 atom nodes, 64 levels and 4,096 variables per packet. Queries have a
@@ -171,3 +204,10 @@ The generic transition model is
 [`Mettapedia/Machines/SpaceService.lean`](https://github.com/godelclaw/MeTTapedia/blob/main/lean/mettapedia/Mettapedia/Machines/SpaceService.lean).
 Its laws state protocol obligations; they do not certify physical C/Rust or
 filesystem behavior. Native conformance checks establish the tested bridge.
+
+`test-native-journal` fault-injects framed writes, recovery and checkpoint
+publication. With a built MeTTapedia checkout supplied as
+`NATIVE_STORE_LEAN_PROJECT`, `test-native-store-transactions` runs identical
+ordered traces through the real MeTTa helpers, an in-memory SQLite oracle and
+`NativeStoreTransactions.lean`. Its receipt records the program, model and
+binary hashes alongside every observed state.

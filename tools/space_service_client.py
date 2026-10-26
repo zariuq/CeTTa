@@ -427,7 +427,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--socket", required=True)
     parser.add_argument("operation", choices=("hello", "list", "demo"), default="hello", nargs="?")
-    parser.add_argument("--backend", choices=("native", "pathmap", "mork"), default="native")
+    parser.add_argument("--backend", choices=("native", "native-ordered", "pathmap", "mork"), default="native")
     args = parser.parse_args()
     with Client(args.socket) as client:
         if args.operation == "hello":

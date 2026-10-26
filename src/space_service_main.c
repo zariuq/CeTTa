@@ -48,6 +48,7 @@ typedef struct {
     uint64_t id, revision;
     char name[129];
     SpaceEngine engine;
+    bool ordered;
     Arena arena;
     TermUniverse universe;
     Space *space;
@@ -253,8 +254,9 @@ static Atom *with_caller(Arena *a, Atom *atom, Atom *caller) {
     }
     return items ? atom_expr(a, items, atom->expr.len) : atom;
 }
-static bool engine(Atom *a, SpaceEngine *out) {
-    if (atom_is_symbol(a, "native")) *out = SPACE_ENGINE_NATIVE;
+static bool engine(Atom *a, SpaceEngine *out, bool *ordered) {
+    *ordered = atom_is_symbol(a, "native-ordered");
+    if (*ordered || atom_is_symbol(a, "native")) *out = SPACE_ENGINE_NATIVE;
     else if (atom_is_symbol(a, "pathmap")) *out = SPACE_ENGINE_PATHMAP;
     else if (atom_is_symbol(a, "mork")) *out = SPACE_ENGINE_MORK;
     else return false;
@@ -262,6 +264,9 @@ static bool engine(Atom *a, SpaceEngine *out) {
 }
 static const char *engine_name(SpaceEngine e) {
     return e == SPACE_ENGINE_MORK ? "mork" : e == SPACE_ENGINE_PATHMAP ? "pathmap" : "native";
+}
+static const char *store_engine_name(const Store *st) {
+    return st->ordered ? "native-ordered" : engine_name(st->engine);
 }
 static void store_free(Store *st) {
     if (!st) return;
@@ -271,10 +276,10 @@ static void store_free(Store *st) {
     if (st->backend) cetta_mork_bridge_space_free(st->backend);
     term_universe_free(&st->universe); arena_free(&st->arena); free(st);
 }
-static Store *store_new(uint64_t id, const char *name, SpaceEngine e, uint64_t revision) {
+static Store *store_new(uint64_t id, const char *name, SpaceEngine e, bool ordered, uint64_t revision) {
     Store *st = calloc(1, sizeof(*st));
     if (!st) return NULL;
-    st->id = id; st->revision = revision; st->engine = e;
+    st->id = id; st->revision = revision; st->engine = e; st->ordered = ordered;
     snprintf(st->name, sizeof(st->name), "%s", name);
     arena_init_detached(&st->arena);
     term_universe_init(&st->universe);
@@ -282,6 +287,9 @@ static Store *store_new(uint64_t id, const char *name, SpaceEngine e, uint64_t r
     st->space = calloc(1, sizeof(*st->space));
     if (!st->space) { store_free(st); return NULL; }
     space_init_with_universe(st->space, &st->universe);
+    /* Ordered native stores use the existing sequence-preserving removal
+     * path. The original native bag remains unchanged for existing clients. */
+    if (ordered) st->space->kind = SPACE_KIND_QUEUE;
     if (e != SPACE_ENGINE_NATIVE) {
         st->backend=e==SPACE_ENGINE_PATHMAP ? cetta_mork_bridge_space_new_pathmap()
                                            : cetta_mork_bridge_space_new();
@@ -457,7 +465,7 @@ static bool store_remove(Store *st, Atom *atom) {
 static Atom *describe_as(Service *s, Arena *a, Store *st, unsigned rights) {
     bool seen = rights & RIGHT_OBSERVE;
     Atom *args[] = {atom_string(a,s->uuid), atom_int(a,st->id), atom_string(a,st->name),
-        atom_symbol(a,engine_name(st->engine)), atom_symbol(a,st->engine == SPACE_ENGINE_MORK ? "set" : "bag"),
+        atom_symbol(a,store_engine_name(st)), atom_symbol(a,st->engine == SPACE_ENGINE_MORK ? "set" : "bag"),
         atom_int(a,seen ? st->revision : 0), atom_int(a,seen ? space_length64(st->space) : 0)};
     return form(a,"space",args,7);
 }
@@ -523,16 +531,16 @@ static bool journal_record(int fd, Atom *record, bool synchronize, uint64_t *wri
  * the journal. Other mutations still fail closed if application cannot finish. */
 static bool apply(Service *s, Atom *request, Store **prepared_open) {
     if (atom_is_symbol(part(request,2),"open")) {
-        const char *name = NULL; SpaceEngine e; uint64_t rev;
-        if (!token(part(request,4),&name) || !engine(part(request,5),&e) ||
+        const char *name = NULL; SpaceEngine e; bool ordered; uint64_t rev;
+        if (!token(part(request,4),&name) || !engine(part(request,5),&e,&ordered) ||
             !integer(part(request,6),&rev) || rev != s->catalog_revision ||
             s->next_store >= INT64_MAX || find_name(s,name)) return false;
         size_t slot = store_slot(s);
         if (slot == STORES) return false;
-        Store *st = prepared_open ? *prepared_open : store_new(s->next_store,name,e,0);
+        Store *st = prepared_open ? *prepared_open : store_new(s->next_store,name,e,ordered,0);
         if (!st) return false;
         if (prepared_open && (st->id!=s->next_store || strcmp(st->name,name) ||
-            st->engine!=e || st->revision)) return false;
+            st->engine!=e || st->ordered!=ordered || st->revision)) return false;
         s->stores[slot] = st; ++s->next_store; ++s->catalog_revision;
         if (prepared_open) *prepared_open=NULL;
         return true;
@@ -811,10 +819,10 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
             atom_symbol(a,"portable-value-keys"),atom_symbol(a,"native-match-index"),
             atom_symbol(a,"tensor-ctn1-native"),atom_symbol(a,"tensor-f32-native"),
             atom_symbol(a,"revision-waits"),atom_symbol(a,"first-occurrence"),
-            atom_symbol(a,"peer-principals")};
+            atom_symbol(a,"peer-principals"),atom_symbol(a,"native-ordered")};
         /* Only the owner creates stores, so only it needs the catalog revision. */
         Atom *args[] = {atom_int(a,1),atom_string(a,s->uuid),atom_string(a,s->boot),
-            atom_int(a,client->owner ? s->catalog_revision : 0),form(a,"capabilities",caps,12)};
+            atom_int(a,client->owner ? s->catalog_revision : 0),form(a,"capabilities",caps,13)};
         return reply(a,request,true,form(a,"service",args,5));
     }
     if (shape(request,"request",3) && atom_is_symbol(part(request,2),"whoami")) {
@@ -874,8 +882,8 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         return reply(a,request,true,atom_symbol(a,"compacted"));
     }
     if (atom_is_symbol(part(request,2),"open") && request->expr.len == 7) {
-        const char *name = NULL; SpaceEngine e; uint64_t revision;
-        if (!token(part(request,4),&name) || !engine(part(request,5),&e) ||
+        const char *name = NULL; SpaceEngine e; bool ordered; uint64_t revision;
+        if (!token(part(request,4),&name) || !engine(part(request,5),&e,&ordered) ||
             !integer(part(request,6),&revision)) return error(a,request,"invalid-open");
         Store *existing = find_name(s,name);
         /* Other accounts open only stores they hold a right on; an existing
@@ -883,10 +891,10 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         if (!client->owner) {
             unsigned rights = existing ? rights_of(client,existing) : 0;
             if (!rights) return error(a,request,"missing-space");
-            return existing->engine == e ? reply(a,request,true,describe_as(s,a,existing,rights))
+            return existing->engine == e && existing->ordered == ordered ? reply(a,request,true,describe_as(s,a,existing,rights))
                                          : error(a,request,"backend-mismatch");
         }
-        if (existing) return existing->engine == e ? reply(a,request,true,describe(s,a,existing))
+        if (existing) return existing->engine == e && existing->ordered == ordered ? reply(a,request,true,describe(s,a,existing))
                                                   : error(a,request,"backend-mismatch");
         if (revision != s->catalog_revision) return error(a,request,"stale-catalog");
         if (store_slot(s) == STORES || s->next_store >= INT64_MAX || s->catalog_revision >= INT64_MAX)
@@ -894,7 +902,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         if (e != SPACE_ENGINE_NATIVE && !cetta_mork_bridge_is_available())
             return error(a,request,"backend-unavailable");
         /* Allocate the empty backend before durably promising its creation. */
-        Store *probe = store_new(s->next_store,name,e,0);
+        Store *probe = store_new(s->next_store,name,e,ordered,0);
         if (!probe) return error(a,request,"backend");
         Atom *answer = reply(a,request,true,describe(s,a,probe));
         return commit(s,a,client->uid,request,raw,answer,probe);
@@ -1042,12 +1050,12 @@ static bool restore_record(Service *s, Arena *a, Atom *record, bool first) {
         s->restoring=true; return true;
     }
     if (shape(record,"restore-space",5) && s->restoring) {
-        uint64_t id,rev; const char *name=NULL; SpaceEngine e;
+        uint64_t id,rev; const char *name=NULL; SpaceEngine e; bool ordered;
         if (!integer(part(record,1),&id) || !id || id>=s->next_store || find_store(s,id) ||
-            !token(part(record,2),&name) || find_name(s,name) || !engine(part(record,3),&e) ||
+            !token(part(record,2),&name) || find_name(s,name) || !engine(part(record,3),&e,&ordered) ||
             !integer(part(record,4),&rev)) return false;
         size_t slot=store_slot(s); if (slot==STORES) return false;
-        s->stores[slot]=store_new(id,name,e,rev); return s->stores[slot]!=NULL;
+        s->stores[slot]=store_new(id,name,e,ordered,rev); return s->stores[slot]!=NULL;
     }
     if (shape(record,"restore-rows",3) && s->restoring) {
         uint64_t id; Atom *rows=part(record,2);
@@ -1160,7 +1168,7 @@ static bool write_checkpoint(Service *s,int fd,uint64_t *size) {
         Store *st=s->stores[i]; if (!st) continue;
         arena_init_detached(&a);
         Atom *args[]={atom_int(&a,st->id),atom_string(&a,st->name),
-            atom_symbol(&a,engine_name(st->engine)),atom_int(&a,st->revision)};
+            atom_symbol(&a,store_engine_name(st)),atom_int(&a,st->revision)};
         ok=journal_record(fd,form(&a,"restore-space",args,4),false,size);
         arena_free(&a);
         CettaCount count=space_length64(st->space);
@@ -1218,7 +1226,7 @@ static bool compact(Service *s) {
      * so removing the old universe releases removed terms and old frontiers. */
     for (size_t i=0;i<STORES;++i) {
         Store *old=s->stores[i]; if (!old || !old->churn) continue;
-        Store *fresh=store_new(old->id,old->name,old->engine,old->revision);
+        Store *fresh=store_new(old->id,old->name,old->engine,old->ordered,old->revision);
         if (!fresh) return false;
         bool ok=true;
         CettaCount count=space_length64(old->space);
