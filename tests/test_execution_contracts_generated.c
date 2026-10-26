@@ -59,6 +59,57 @@ static void test_operation_metadata(void) {
     assert(!cetta_gslt_fold_control_program(15u, 3u, NULL, NULL));
 }
 
+static void test_invocation_plans(void) {
+    const BuiltinSyms builtins = {.repr = 21u, .car_atom = 22u, .petta_member = 23u};
+    const struct { SymbolId head; unsigned arity, operation; } cases[] = {
+        {21u, 1u, CETTA_INVOCATION_HOST},
+        {22u, 1u, CETTA_INVOCATION_LIST_UNARY},
+        {23u, 2u, CETTA_INVOCATION_RELATIONAL_MEMBER},
+    };
+    for (unsigned row = 0u; row < sizeof(cases) / sizeof(*cases); row++)
+    for (unsigned arity = 0u; arity <= 256u; arity++) {
+        CettaInvocationPlan plan = {255u, 254u, 253u};
+        uint32_t before = cetta_invocation_plan_key(plan);
+        bool admitted = cetta_invocation_plan_decode(cases[row].head, arity, &plan, &builtins);
+        assert(admitted == (arity == cases[row].arity));
+        if (admitted) {
+            assert(plan.operation == cases[row].operation && plan.first == 0u && plan.last == arity);
+            assert(cetta_invocation_plan_key(plan) == (cases[row].operation | arity << 16u));
+        } else {
+            assert(cetta_invocation_plan_key(plan) == before);
+        }
+    }
+    assert(!cetta_invocation_plan_decode(SYMBOL_ID_NONE, 1u, NULL, &builtins));
+    assert(!cetta_invocation_plan_decode(21u, 1u, NULL, NULL));
+    assert(!cetta_invocation_plan_decode(999u, 1u, NULL, &builtins));
+}
+
+static void test_call_preparation_plans(void) {
+    const CettaCallPreparationStep source_order[] = {
+        CETTA_CALL_PREP_INSTALL_TYPE, CETTA_CALL_PREP_COMPUTE,
+        CETTA_CALL_PREP_CHECK_RETURN, CETTA_CALL_PREP_CHECK_TYPE,
+        CETTA_CALL_PREP_BIND,
+    };
+    for (unsigned mask = 0u; mask < 256u; mask++) {
+        assert(cetta_call_preparation_valid((uint8_t)mask) == (mask < 32u));
+        if (mask >= 32u)
+            continue;
+        CettaCallPreparationStep pushed[5];
+        unsigned count = 0u;
+#define RECORD_STEP(step) if (mask & (step)) pushed[count++] = (step);
+        CETTA_CALL_PREPARATION_REVERSE_ROWS(RECORD_STEP)
+#undef RECORD_STEP
+        for (unsigned index = 0u; index < 5u; index++) {
+            assert(source_order[index] == (1u << index));
+            if (mask & source_order[index]) {
+                assert(count > 0u);
+                assert(pushed[--count] == source_order[index]);
+            }
+        }
+        assert(count == 0u);
+    }
+}
+
 static void test_control_operand_plans(void) {
     const BuiltinSyms builtins = {.let = 21u, .chain = 22u, .if_text = 23u,
         .let_star = 24u, .eval = 25u, .function = 26u,
@@ -121,8 +172,20 @@ static void test_control_operand_plans(void) {
                 assert(lowered == CETTA_GSLT_FOLD_CONTROL_BRANCH);
             if (operation == CETTA_CONTROL_SEQUENCE) {
                 assert(cetta_control_operation_binding_layout(plan, plan.source));
+                CettaSequenceOrderPlan order;
+                assert(cetta_control_sequence_plan(plan, CETTA_SEQUENCE_SOURCE_FIRST, &order));
+                assert(order.children[0] == plan.source && order.children[1] == plan.first &&
+                       order.children[2] == plan.last);
+                assert(cetta_control_sequence_plan(plan, CETTA_SEQUENCE_BINDER_FIRST, &order));
+                assert(order.children[0] == plan.first && order.children[1] == plan.source &&
+                       order.children[2] == plan.last);
+                CettaSequenceOrderPlan saved = order;
+                assert(!cetta_control_sequence_plan(plan, (CettaSequenceOrder)99, &order));
+                assert(memcmp(&order, &saved, sizeof(order)) == 0);
                 plan.first = plan.source;
                 assert(!cetta_control_operation_binding_layout(plan, plan.source));
+                assert(!cetta_control_sequence_plan(plan, CETTA_SEQUENCE_SOURCE_FIRST, &order));
+                assert(memcmp(&order, &saved, sizeof(order)) == 0);
                 assert(!cetta_control_operation_lower_fold(plan, &lowered));
             }
             observations++;
@@ -1070,6 +1133,8 @@ static void test_generated_tuple_machine_roots(void) {
 }
 
 int main(void) {
+    test_invocation_plans();
+    test_call_preparation_plans();
     test_operation_metadata();
     test_control_operand_plans();
     test_query_head_rows();

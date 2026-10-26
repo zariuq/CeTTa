@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from petta_typecheck_v2_corpus import (  # noqa: E402
     CENSUS_PREFIX,
     WITNESS_SCHEMA,
+    classify,
     census_axis_inventory,
     census_static_source_inventory,
     native_v3_intake_inventory,
@@ -25,6 +26,24 @@ from petta_typecheck_v2_corpus import (  # noqa: E402
     validate_census_witness_origins,
     split_census_records,
 )
+
+
+class RuntimeRejectionTests(unittest.TestCase):
+    def test_declared_runtime_rejection(self):
+        case = {"expected": {"verdict": "reject"},
+                "classification": {"phase": "runtime", "class": "car-atom-empty"}}
+        diagnostic = ("error: uncaught PeTTa error: car_atom_empty: "
+                      "car-atom expects a non-empty expression\n")
+        self.assertEqual(classify(case, 2, "", diagnostic), "runtime-reject")
+        for status, stdout, stderr in [
+                (1, "", diagnostic), (124, "", diagnostic),
+                (2, "unexpected answer\n", diagnostic),
+                (2, "", "error: uncaught PeTTa error: unrelated\n")]:
+            self.assertNotEqual(classify(case, status, stdout, stderr), "runtime-reject")
+        for classification in ({}, {"phase": "static", "class": "car-atom-empty"},
+                               {"phase": "runtime", "class": "unrelated"}):
+            self.assertEqual(classify({**case, "classification": classification},
+                                     2, "", diagnostic), "other-failure")
 
 
 class SemanticCensusRecordTests(unittest.TestCase):

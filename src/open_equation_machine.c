@@ -1522,7 +1522,7 @@ static bool oem_relation_call(Atom *expr, const PettaPlanNode *plan) {
      * Their already callable occurrences at other arities use the ordinary
      * equation protocol, despite the form mark on the source plan. */
     return (plan->execution == PETTA_PLAN_EXEC_RELATION_SLOTS &&
-            petta_plan_computation(plan).operation == CETTA_CONTROL_INVOKE &&
+            petta_plan_computation(plan).control.operation == CETTA_CONTROL_INVOKE &&
             petta_semantics_form(head) == PETTA_FORM_NONE) ||
         (petta_semantics_runtime_head(head) == PETTA_RUNTIME_HEAD_DATA &&
          !petta_semantics_special_form_reads(head, expr->expr.len - 1u));
@@ -1684,7 +1684,7 @@ static const PettaPlanNode *oem_fold_recursion_plan(
         application->role != PETTA_PLAN_STATIC_CALL ||
         application->execution != PETTA_PLAN_EXEC_RELATION_SLOTS ||
         !application->relation_head_admitted ||
-        petta_plan_computation(application).operation != CETTA_CONTROL_INVOKE)
+        petta_plan_computation(application).control.operation != CETTA_CONTROL_INVOKE)
         return NULL;
     PettaPlanNode *root = arena_alloc(&program->atoms, sizeof(*root));
     PettaPlanNode *children =

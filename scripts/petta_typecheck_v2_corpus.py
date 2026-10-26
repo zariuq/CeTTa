@@ -368,6 +368,13 @@ def classify(case: dict, status: int, stdout: str, stderr: str) -> str:
         return "timeout"
     expected = case["expected"]
     if expected["verdict"] == "reject":
+        classification = case.get("classification", {})
+        if (status == 2 and not stdout
+                and classification.get("phase") == "runtime"
+                and classification.get("class") == "car-atom-empty"
+                and stderr.strip() == "error: uncaught PeTTa error: car_atom_empty: "
+                    "car-atom expects a non-empty expression"):
+            return "runtime-reject"
         if status == 2 and not stdout and "PeTTa type error:" in stderr:
             return "type-reject"
         if status == 0:
@@ -754,7 +761,7 @@ def main() -> int:
                 census_origins[name][case["id"]].update(origins)
         observed = classify(case, status, stdout, stderr)
         matched = (
-            observed == "type-reject"
+            observed in {"type-reject", "runtime-reject"}
             if case["expected"]["verdict"] == "reject"
             else observed == "accept"
         )
@@ -789,7 +796,7 @@ def main() -> int:
     def grouped(field: str) -> dict:
         groups: dict[str, collections.Counter] = {}
         for case in negatives:
-            key = case.get(field) or "unspecified"
+            key = case.get("classification", {}).get(field) or "unspecified"
             counter = groups.setdefault(key, collections.Counter())
             counter["total"] += 1
             counter[case["cetta_observed"]] += 1
@@ -820,7 +827,9 @@ def main() -> int:
         "expected_accept": len(positives),
         "accepted_positive": sum(case["cetta_matched"] for case in positives),
         "expected_reject": len(negatives),
-        "clean_type_rejections": sum(case["cetta_matched"] for case in negatives),
+        "matched_rejections": sum(case["cetta_matched"] for case in negatives),
+        "clean_type_rejections": observed_counts["type-reject"],
+        "runtime_rejections": observed_counts["runtime-reject"],
         "observed": dict(observed_counts),
         "negative_by_phase": grouped("phase"),
         "negative_by_class": grouped("class"),
@@ -981,7 +990,8 @@ def main() -> int:
     print(
         f"typecheck-v2 corpus: {summary['matched_total']}/{summary['total']} exact; "
         f"positive={summary['accepted_positive']}/{summary['expected_accept']}; "
-        f"rejections={summary['clean_type_rejections']}/{summary['expected_reject']}"
+        f"rejections={summary['matched_rejections']}/{summary['expected_reject']} "
+        f"(type={summary['clean_type_rejections']}, runtime={summary['runtime_rejections']})"
         f"{census_note}"
     )
     accepted = summary["matched_total"] == summary["total"]
