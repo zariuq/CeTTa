@@ -258,7 +258,10 @@ static bool prime_standard_head_unchanged(Space *space, SymbolId name) {
     } cache[64];
     size_t slot = name % (sizeof cache / sizeof cache[0]);
     SpaceProgramToken token = space_program_token(space);
-    if (cache[slot].library == library->identity && cache[slot].head == name &&
+    /* Revalidation is real work in a native cost observation. Its memo is
+     * shared by independent runs, so it cannot suppress recorded operations. */
+    if (!cetta_native_cost_active() &&
+        cache[slot].library == library->identity && cache[slot].head == name &&
         space_program_token_eq(cache[slot].token, token)) return cache[slot].unchanged;
     bool same = true;
     SpaceEquationCursor cursor;
@@ -301,7 +304,7 @@ static bool prime_standard_library_unchanged(Space *space) {
         bool unchanged;
     } cache;
     SpaceProgramToken token = space_program_token(space);
-    if (cache.library == library->identity &&
+    if (!cetta_native_cost_active() && cache.library == library->identity &&
         space_program_token_eq(cache.token, token)) return cache.unchanged;
     bool unchanged = true;
     for (size_t i = 0u; i < library->count; i++)

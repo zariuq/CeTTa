@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 0f50525dfc07f17e9f3ee00c1d1aebff033c60f8e9443dcdd27e5125a76a1a4b
+ * Source SHA-256: 10e68f771fc0da6f24de7e2c1f1cc1ac5d39c737ffb37f7873db971ed6481742
  */
 
 #include <stdbool.h>
@@ -1313,6 +1313,7 @@ typedef enum {
     STRONG_ATOM_SPAN(normalization_children) \
     LOGICAL_BINDINGS(env) \
     OUTCOME_SET(child) \
+    OUTCOME_SET(force_pending) \
     STRONG_ATOM_SPAN(equation_roots) \
     OUTCOME_SET(equation_work) \
     OUTCOME_SET(equation_current) \
@@ -1462,6 +1463,7 @@ typedef enum {
     CETTA_GC_VISIT_STRONG_ATOM_SPAN((SESSION), (PAYLOAD)->normalization_children, FAIL); \
     CETTA_GC_VISIT_LOGICAL_BINDINGS((SESSION), (PAYLOAD)->env, FAIL); \
     CETTA_GC_VISIT_OUTCOME_SET((SESSION), (PAYLOAD)->child, FAIL); \
+    CETTA_GC_VISIT_OUTCOME_SET((SESSION), (PAYLOAD)->force_pending, FAIL); \
     CETTA_GC_VISIT_STRONG_ATOM_SPAN((SESSION), (PAYLOAD)->equation_roots, FAIL); \
     CETTA_GC_VISIT_OUTCOME_SET((SESSION), (PAYLOAD)->equation_work, FAIL); \
     CETTA_GC_VISIT_OUTCOME_SET((SESSION), (PAYLOAD)->equation_current, FAIL); \

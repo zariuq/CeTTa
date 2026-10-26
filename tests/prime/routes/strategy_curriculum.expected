@@ -1,6 +1,15 @@
 (SensorRequested A)
+(Produced Left)
+(Produced Right)
 [done, done]
 [one]
 [(P heads heads), (P tails tails)]
 [Ready]
 [(Ready Ready Ready A)]
+[1]
+[1]
+[(Pair 0 0)]
+[(Pair 0 1)]
+[((Left 1) (Right 2))]
+[(first second)]
+[(detail (curriculum-cover X Y))]

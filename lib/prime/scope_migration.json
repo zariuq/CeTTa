@@ -18,14 +18,6 @@
       "code_diagnostics": 0
     },
     {
-      "source": "dict.metta",
-      "output": "dict.metta",
-      "source_sha256": "7c088d3232ecc60298e5f6c17e8c63dbef2177acbc234e1d6acd66b8c80acf51",
-      "output_sha256": "fc35044531f7affac027eb4e3851299ff8b9a238b4b379e05870a618a1eb1430",
-      "edits": 12,
-      "code_diagnostics": 0
-    },
-    {
       "source": "durable/activity.metta",
       "output": "durable/activity.metta",
       "source_sha256": "ef55a22d881c32be516b0492d95864bdf3b891d2e2129c2cf864a732c72c4307",
@@ -92,17 +84,9 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "0f50525dfc07f17e9f3ee00c1d1aebff033c60f8e9443dcdd27e5125a76a1a4b",
-      "output_sha256": "aaf1a8f79d4b84024cf20a1b40381752385e1234150490d74e20573f5d67fcd0",
+      "source_sha256": "10e68f771fc0da6f24de7e2c1f1cc1ac5d39c737ffb37f7873db971ed6481742",
+      "output_sha256": "e7c459a9807deb2227d962a83a6ab28ec6782a7f14bceb00d186aff3ec5cbfd3",
       "edits": 4,
-      "code_diagnostics": 0
-    },
-    {
-      "source": "gslt_ordered_decision.metta",
-      "output": "gslt_ordered_decision.metta",
-      "source_sha256": "ac318df06a90e91c23868c091914331a026fa26a76ac21504a2a4ad89a2970b4",
-      "output_sha256": "4039fc7b566c6927088b6fe096bd8b32ea780985a4956d5f49587fe951f4d900",
-      "edits": 11,
       "code_diagnostics": 0
     },
     {
@@ -399,22 +383,6 @@
       "source_sha256": "2d4eb942ab6b7da1134e84026ea0095b5e6856f5b45a810adc1dd7e6838c528f",
       "output_sha256": "6372eb6dcca4b89138221c40f9df099b7178687392922645bd506726a3406024",
       "edits": 20,
-      "code_diagnostics": 0
-    },
-    {
-      "source": "ordered_module_delivery_v1.metta",
-      "output": "ordered_module_delivery_v1.metta",
-      "source_sha256": "1fd43e66bc154031e9222ff26c8f7bd4f2857e6df393decb697a29185c01677f",
-      "output_sha256": "c28bdb0a15619359280c32ed11f7bc570f5e462b9259814df0706fa2fba4ebc7",
-      "edits": 11,
-      "code_diagnostics": 0
-    },
-    {
-      "source": "ordered_module_fused_v1.metta",
-      "output": "ordered_module_fused_v1.metta",
-      "source_sha256": "5d6db9302e62acfd05ed0f2ac879925d2f6a96b3e909030b590adb007faceb45",
-      "output_sha256": "25b45140603a61ccaf191b3a08b16bf36d359f5477489f0dd04e0d9ee3889d2d",
-      "edits": 61,
       "code_diagnostics": 0
     },
     {

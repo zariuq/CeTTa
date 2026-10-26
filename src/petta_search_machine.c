@@ -18947,7 +18947,8 @@ static Atom *petta_machine_complete_match_candidate(
         if (match_pattern->expr.len > 0u &&
             match_pattern->expr.elems[0]->kind == ATOM_SYMBOL &&
             candidate->expr.elems[0]->kind == ATOM_SYMBOL &&
-            match_pattern->expr.elems[0] != candidate->expr.elems[0])
+            !atom_symbols_equal(match_pattern->expr.elems[0],
+                                candidate->expr.elems[0]))
             return candidate;
         bool child_expr = false;
         for (CettaExprIndex i = 0u; i < candidate->expr.len; i++) {

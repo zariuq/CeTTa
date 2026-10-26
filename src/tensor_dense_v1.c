@@ -1091,21 +1091,77 @@ static Atom *element_atom(Arena *arena, const CettaDenseTensorV1 *tensor, size_t
     return atom_int(arena, tensor->storage->data[index]);
 }
 
+/* This provider owns this finite operation family. Classification and
+ * dispatch share the same selector, including names interned at run time. */
+#define DENSE_TENSOR_NAMED_OPERATIONS(X) \
+    X(cast) \
+    X(row_error_bounds) \
+    X(matvec_bounds_selected) \
+    X(top_k_candidates) \
+    X(matvec_provider) \
+    X(matvec_selected_with) \
+    X(matvec_with) \
+    X(gather) \
+    X(matvec_selected) \
+    X(matvec) \
+    X(div) \
+    X(div_rows) \
+    X(scale) \
+    X(mask_indices) \
+    X(mask_or) \
+    X(mask_and) \
+    X(mask_not) \
+    X(nonzero) \
+    X(top_k_masked) \
+    X(top_k) \
+    X(stack) \
+    X(row_norms) \
+    X(cosine_rows)
+
+typedef enum {
+    DENSE_TENSOR_OP_NONE,
+#define DENSE_TENSOR_ENUM(name) DENSE_TENSOR_OP_##name,
+    DENSE_TENSOR_NAMED_OPERATIONS(DENSE_TENSOR_ENUM)
+#undef DENSE_TENSOR_ENUM
+} DenseTensorNamedOperation;
+
+static DenseTensorNamedOperation dense_tensor_named_operation(const Atom *head) {
+    if (!head || head->kind != ATOM_SYMBOL)
+        return DENSE_TENSOR_OP_NONE;
+#define DENSE_TENSOR_SELECT(name) \
+    if (atom_symbol_equals_cstr(head, "__cetta_lib_tensor_" #name)) return DENSE_TENSOR_OP_##name;
+    DENSE_TENSOR_NAMED_OPERATIONS(DENSE_TENSOR_SELECT)
+#undef DENSE_TENSOR_SELECT
+    return DENSE_TENSOR_OP_NONE;
+}
+#undef DENSE_TENSOR_NAMED_OPERATIONS
+
+bool cetta_dense_tensor_v1_owns_head(const Atom *head) {
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId id = atom_symbol_current_id(head);
+    return (id != SYMBOL_ID_NONE &&
+            id >= g_builtin_syms.dense_v1_tensor_from &&
+            id <= g_builtin_syms.dense_v1_tensor_decode) ||
+           dense_tensor_named_operation(head) != DENSE_TENSOR_OP_NONE;
+}
+
 Atom *cetta_dense_tensor_v1_dispatch(Arena *arena, Atom *head, Atom **args, uint32_t nargs) {
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
+    DenseTensorNamedOperation operation = dense_tensor_named_operation(head);
     CettaDenseTensorV1 *bulk = NULL;
     CettaDenseTensorV1Status bulk_status;
-    if (atom_is_symbol(head, "__cetta_lib_tensor_cast")) {
+    if ((operation == DENSE_TENSOR_OP_cast)) {
         if (nargs != 2u) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         bulk_status = cetta_dense_tensor_v1_cast(from_atom(args[1]), dtype_from_atom(args[0]), &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    if (atom_is_symbol(head, "__cetta_lib_tensor_row_error_bounds")) {
+    if ((operation == DENSE_TENSOR_OP_row_error_bounds)) {
         if (nargs != 2u) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         bulk_status = cetta_dense_tensor_v1_row_error_bounds(from_atom(args[0]), from_atom(args[1]), &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    if (atom_is_symbol(head, "__cetta_lib_tensor_matvec_bounds_selected")) {
+    if ((operation == DENSE_TENSOR_OP_matvec_bounds_selected)) {
         if (nargs != 5u || !from_atom(args[3])) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         unsigned char element[8];
         bulk_status = element_from_atom(CETTA_DENSE_TENSOR_V1_F64, args[4], element);
@@ -1118,20 +1174,20 @@ Atom *cetta_dense_tensor_v1_dispatch(Arena *arena, Atom *head, Atom **args, uint
         Atom *pair[] = {publish(arena, CETTA_DENSE_TENSOR_V1_OK, bulk), publish(arena, CETTA_DENSE_TENSOR_V1_OK, upper)};
         return atom_expr(arena, pair, 2u);
     }
-    if (atom_is_symbol(head, "__cetta_lib_tensor_top_k_candidates")) {
+    if ((operation == DENSE_TENSOR_OP_top_k_candidates)) {
         size_t k;
         if (nargs != 3u || !natural(args[2], &k)) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         bulk_status = cetta_dense_tensor_v1_top_k_candidates(from_atom(args[0]), from_atom(args[1]), k, &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    if (atom_is_symbol(head, "__cetta_lib_tensor_matvec_provider")) {
+    if ((operation == DENSE_TENSOR_OP_matvec_provider)) {
         if (nargs != 1u || !atom_is_symbol(args[0], "auto"))
             return failure(arena, CETTA_DENSE_TENSOR_V1_PROVIDER);
         return atom_symbol(arena,
             cetta_dense_tensor_v1_matvec_provider_available(CETTA_MATVEC_AVX4) ? "avx4" : "scalar4");
     }
-    bool provider_selected = atom_is_symbol(head, "__cetta_lib_tensor_matvec_selected_with");
-    if (provider_selected || atom_is_symbol(head, "__cetta_lib_tensor_matvec_with")) {
+    bool provider_selected = (operation == DENSE_TENSOR_OP_matvec_selected_with);
+    if (provider_selected || (operation == DENSE_TENSOR_OP_matvec_with)) {
         if (nargs != (provider_selected ? 4u : 3u)) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         CettaDenseTensorV1MatvecProvider provider;
         if (atom_is_symbol(args[0], "auto")) provider = CETTA_MATVEC_AUTO;
@@ -1143,30 +1199,30 @@ Atom *cetta_dense_tensor_v1_dispatch(Arena *arena, Atom *head, Atom **args, uint
         bulk_status = cetta_dense_tensor_v1_matvec_with_provider(from_atom(args[1]), from_atom(args[2]), indices, provider, &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    if (atom_is_symbol(head, "__cetta_lib_tensor_gather")) {
+    if ((operation == DENSE_TENSOR_OP_gather)) {
         if (nargs != 2u) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         bulk_status = cetta_dense_tensor_v1_gather(from_atom(args[0]), from_atom(args[1]), &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    bool selected = atom_is_symbol(head, "__cetta_lib_tensor_matvec_selected");
-    if (selected || atom_is_symbol(head, "__cetta_lib_tensor_matvec")) {
+    bool selected = (operation == DENSE_TENSOR_OP_matvec_selected);
+    if (selected || (operation == DENSE_TENSOR_OP_matvec)) {
         if (nargs != (selected ? 3u : 2u)) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         CettaDenseTensorV1 *indices = selected ? from_atom(args[2]) : NULL;
         if (selected && !indices) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         bulk_status = cetta_dense_tensor_v1_matvec(from_atom(args[0]), from_atom(args[1]), indices, &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    if (atom_is_symbol(head, "__cetta_lib_tensor_div")) {
+    if ((operation == DENSE_TENSOR_OP_div)) {
         if (nargs != 2u) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         bulk_status = cetta_dense_tensor_v1_div(from_atom(args[0]), from_atom(args[1]), &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    if (atom_is_symbol(head, "__cetta_lib_tensor_div_rows")) {
+    if ((operation == DENSE_TENSOR_OP_div_rows)) {
         if (nargs != 2u) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         bulk_status = divide_rows(from_atom(args[0]), from_atom(args[1]), &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    if (atom_is_symbol(head, "__cetta_lib_tensor_scale")) {
+    if ((operation == DENSE_TENSOR_OP_scale)) {
         if (nargs != 2u) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         unsigned char element[8];
         bulk_status = element_from_atom(CETTA_DENSE_TENSOR_V1_F64, args[1], element);
@@ -1175,30 +1231,30 @@ Atom *cetta_dense_tensor_v1_dispatch(Arena *arena, Atom *head, Atom **args, uint
         bulk_status = cetta_dense_tensor_v1_scale(from_atom(args[0]), factor, &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    if (atom_is_symbol(head, "__cetta_lib_tensor_mask_indices")) {
+    if ((operation == DENSE_TENSOR_OP_mask_indices)) {
         size_t length;
         if (nargs != 2u || !natural(args[0], &length)) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         bulk_status = cetta_dense_tensor_v1_mask_indices(length, from_atom(args[1]), &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    bool mask_or = atom_is_symbol(head, "__cetta_lib_tensor_mask_or");
-    if (mask_or || atom_is_symbol(head, "__cetta_lib_tensor_mask_and")) {
+    bool mask_or = (operation == DENSE_TENSOR_OP_mask_or);
+    if (mask_or || (operation == DENSE_TENSOR_OP_mask_and)) {
         if (nargs != 2u) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         bulk_status = cetta_dense_tensor_v1_mask_binary(from_atom(args[0]), from_atom(args[1]), mask_or, &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    if (atom_is_symbol(head, "__cetta_lib_tensor_mask_not")) {
+    if ((operation == DENSE_TENSOR_OP_mask_not)) {
         if (nargs != 1u) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         bulk_status = cetta_dense_tensor_v1_mask_not(from_atom(args[0]), &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    if (atom_is_symbol(head, "__cetta_lib_tensor_nonzero")) {
+    if ((operation == DENSE_TENSOR_OP_nonzero)) {
         if (nargs != 1u) return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
         bulk_status = cetta_dense_tensor_v1_nonzero(from_atom(args[0]), &bulk);
         return publish(arena, bulk_status, bulk);
     }
-    bool masked = atom_is_symbol(head, "__cetta_lib_tensor_top_k_masked");
-    if (masked || atom_is_symbol(head, "__cetta_lib_tensor_top_k")) {
+    bool masked = (operation == DENSE_TENSOR_OP_top_k_masked);
+    if (masked || (operation == DENSE_TENSOR_OP_top_k)) {
         size_t k;
         if (nargs != (masked ? 3u : 2u) || !natural(args[nargs-1], &k))
             return failure(arena, CETTA_DENSE_TENSOR_V1_VALUE);
@@ -1209,7 +1265,7 @@ Atom *cetta_dense_tensor_v1_dispatch(Arena *arena, Atom *head, Atom **args, uint
     }
     /* Whole-buffer matrix primitives. Collection/profile/filter policy stays
      * in MeTTa. These names use the ordinary dynamic library-op boundary. */
-    if (atom_is_symbol(head, "__cetta_lib_tensor_stack")) {
+    if ((operation == DENSE_TENSOR_OP_stack)) {
         if (nargs != 3 || args[2]->kind != ATOM_EXPR) return failure(arena,CETTA_DENSE_TENSOR_V1_VALUE);
         CettaDenseTensorV1DType dtype=dtype_from_atom(args[0]); size_t width;
         if (!natural(args[1],&width)) return failure(arena,CETTA_DENSE_TENSOR_V1_SHAPE);
@@ -1227,8 +1283,8 @@ Atom *cetta_dense_tensor_v1_dispatch(Arena *arena, Atom *head, Atom **args, uint
         }
         finish_storage(matrix); return publish(arena,CETTA_DENSE_TENSOR_V1_OK,matrix);
     }
-    bool row_norms=atom_is_symbol(head,"__cetta_lib_tensor_row_norms");
-    bool cosine_rows=atom_is_symbol(head,"__cetta_lib_tensor_cosine_rows");
+    bool row_norms=(operation == DENSE_TENSOR_OP_row_norms);
+    bool cosine_rows=(operation == DENSE_TENSOR_OP_cosine_rows);
     if (row_norms || cosine_rows) {
         if (nargs!=(row_norms ? 1u : 3u)) return failure(arena,CETTA_DENSE_TENSOR_V1_VALUE);
         CettaDenseTensorV1 *matrix=from_atom(args[0]);

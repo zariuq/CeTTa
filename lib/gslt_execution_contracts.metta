@@ -733,6 +733,7 @@
     (field normalization_children strong-atom-span)
     (field env logical-bindings)
     (field child outcome-set)
+    (field force_pending outcome-set)
     (field equation_roots strong-atom-span)
     (field equation_work outcome-set)
     (field equation_current outcome-set)

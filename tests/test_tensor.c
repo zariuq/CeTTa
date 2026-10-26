@@ -443,6 +443,15 @@ int main(void) {
     symbol_table_init_builtins(&symbols, &g_builtin_syms); g_symbols = &symbols;
     g_hashcons = NULL; g_var_intern = NULL;
     Arena origin, survivor; arena_init_detached(&origin); arena_init_detached(&survivor);
+    assert(cetta_dense_tensor_v1_owns_head(atom_symbol(&origin, "__cetta_lib_tensor_from")));
+    assert(cetta_dense_tensor_v1_owns_head(atom_symbol(&origin, "__cetta_lib_tensor_cast")));
+    assert(cetta_dense_tensor_v1_owns_head(atom_symbol(&origin, "__cetta_lib_tensor_matvec_bounds_selected")));
+    Atom *future_operation = atom_symbol(&origin, "__cetta_lib_tensor_future_operation");
+    assert(!cetta_dense_tensor_v1_owns_head(future_operation));
+    assert(!cetta_dense_tensor_v1_dispatch(&origin, future_operation, NULL, 0u));
+    assert(!cetta_dense_tensor_v1_owns_head(atom_symbol(&origin, "__cetta_lib_str")));
+    assert(!cetta_dense_tensor_v1_owns_head(atom_int(&origin, 0)));
+    assert(!cetta_dense_tensor_v1_owns_head(NULL));
     size_t shape[] = {4u}; int64_t entries[] = {1, 2, 3, 4};
     CettaDenseTensorV1 *tensor = make(CETTA_DENSE_TENSOR_V1_I64, shape, 1u, entries, sizeof(entries));
     Atom *atom = atom_tensor(&origin, tensor);

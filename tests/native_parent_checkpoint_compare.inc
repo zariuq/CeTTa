@@ -42,6 +42,7 @@ static bool copy_factors(CopyRelation *r,const CettaWeightLedger *s,const CettaW
     return (!x&&!y)||(r->valid=false);
 }
 static bool copy_bindings(CopyRelation *r,const Bindings *s,const Bindings *d) {
+    if(bindings_reader_context_view(s)||bindings_reader_context_view(d))return r->valid=false;
     if((s->prime_ext!=NULL)!=(d->prime_ext!=NULL)||bindings_occurrence_token(s)!=bindings_occurrence_token(d))return r->valid=false;
     bool good=copy_need(r,bindings_need_view(s),bindings_need_view(d));
     good=copy_receipt(r,bindings_branch_state_view(s),bindings_branch_state_view(d),3)&&good;
@@ -133,9 +134,13 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
         copy_identity(r,15,sf->force_waiter_next,df->force_waiter_next);
         copy_identity(r,15,sf->open_force_next,df->open_force_next);
         if(sf->kind!=df->kind||sf->state!=df->state||sf->control_sequence!=df->control_sequence||sf->index!=df->index||
+           sf->force_pending_initialized!=df->force_pending_initialized||
+           sf->force_pending_observed!=df->force_pending_observed||sf->force_published!=df->force_published||
+           sf->force_retry_pending!=df->force_retry_pending||
            sf->normalization_value_ready!=df->normalization_value_ready||
            sf->normalization_return_value_ready!=df->normalization_return_value_ready||
            sf->normalization_result_form!=df->normalization_result_form)r->valid=false;
+        if(sf->force_pending_initialized)copy_outcomes(r,&sf->force_pending,&df->force_pending);
         if(sf->control_return_advice_length!=df->control_return_advice_length ||
            sf->control_return_advice_capacity!=df->control_return_advice_capacity ||
            sf->control_return_advice_length>sf->control_return_advice_capacity ||

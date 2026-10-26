@@ -251,6 +251,7 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
     RF(control_nested_budget);RF(control_nested_retained);RF(control_nested_parked);RF(control_scoring);
     RF(control_generation);RF(dialect_source_success);RF(dialect_source_is_call);RF(dialect_error_index);
     RF(kind);RF(pure_authority);RF(state);RF(fuel);RF(preserve_bindings);RF(env_initialized);RF(child_initialized);
+    RF(force_pending_initialized);RF(force_pending_observed);RF(force_published);RF(force_retry_pending);
     RF(index);RF(branch_index);RF(variable_branches_active);RF(normalization_child_index);RF(tuple_bind);
     RF(normalization_value_ready);RF(normalization_return_value_ready);RF(normalization_result_form);
     RF(strict_argument);RF(strict_mode);RF(strict_error_is_data);RF(weight_index);RF(weight_ownership_parked);
@@ -281,6 +282,7 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
         return a->control_closed&&b->control_closed&&a->control_notified&&b->control_notified&&
             !a->control_queued&&!b->control_queued&&!a->control_pending&&!b->control_pending&&
             !a->env_initialized&&!b->env_initialized&&!a->child_initialized&&!b->child_initialized&&
+            !a->force_pending_initialized&&!b->force_pending_initialized&&
             !a->equation_search&&!b->equation_search&&!a->match_rows&&!b->match_rows&&
             !a->control_nested&&!b->control_nested&&!a->dialect_source&&!b->dialect_source&&
             !a->normalization_children&&!b->normalization_children;
@@ -300,9 +302,12 @@ static bool prime_replay_compare_frame(const PrimeEvalStackFrame *a,const PrimeE
     FA(control_key);FA(control_bound);FA(atom);FA(etype);FA(strict_source);FA(then_branch);FA(else_branch);
     FA(weight_subject);FA(weight_algebra);FA(weight_trace);FA(ref);
 #undef FA
-    if(a->env_initialized!=b->env_initialized||a->child_initialized!=b->child_initialized)return false;
+    if(a->env_initialized!=b->env_initialized||a->child_initialized!=b->child_initialized||
+        a->force_pending_initialized!=b->force_pending_initialized)return false;
     if((a->env_initialized&&!bindings_checkpoint_compare(&a->env,&b->env,read))||
         (a->child_initialized&&!prime_replay_compare_outcomes(&a->child,&b->child,read))||
+        (a->force_pending_initialized&&
+            !prime_replay_compare_outcomes(&a->force_pending,&b->force_pending,read))||
         !prime_replay_compare_equation(a->equation_search,b->equation_search,read)||
         !prime_replay_compare_policy(&a->control_nested_policy,&b->control_nested_policy,read)||
         !prime_replay_compare_atoms(a->normalization_children,a->normalization_child_count,b->normalization_children,b->normalization_child_count,read)||

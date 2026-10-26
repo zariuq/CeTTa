@@ -2419,6 +2419,224 @@ static void check_forwarded_production(Arena *arena, Arena *promoted_arena) {
     }
 }
 
+typedef struct {
+    StateCell *cells[3];
+    Atom *values[3];
+    unsigned calls, refuse_at;
+} StateImportView;
+
+static CettaMatchCompletion state_import_initial(void *raw, StateCell *cell, Atom **out) {
+    StateImportView *view = raw;
+    view->calls++;
+    if (view->refuse_at && view->calls == view->refuse_at) return CETTA_MATCH_INCOMPLETE;
+    for (size_t i = 0u; i < 3u; i++) if (cell == view->cells[i]) {
+        *out = view->values[i]; return CETTA_MATCH_MATCHED;
+    }
+    return CETTA_MATCH_INCOMPLETE;
+}
+
+static bool state_import_number(const PrimeNeedBranchState *state, StateCell *cell, int64_t expected) {
+    Atom *value = NULL;
+    return prime_need_branch_state_lookup_checked(state, cell, &value) == CETTA_MATCH_MATCHED &&
+        value && value->kind == ATOM_GROUNDED && value->ground.gkind == GV_INT &&
+        value->ground.ival == expected;
+}
+
+static void check_state_production_import(void) {
+    Arena source, receiving, persistent;
+    arena_init_detached(&source); arena_init_detached(&receiving); arena_init_detached(&persistent);
+    StateCell a = {.value=atom_int(&persistent,0)}, b = {.value=atom_int(&persistent,0)},
+              c = {.value=atom_int(&persistent,0)};
+    StateImportView view = {.cells={&a,&b,&c}, .values={a.value,b.value,c.value}};
+    PrimeNeedBranchState common = {0}, entrance = {0}, left = {0}, right = {0},
+        production = {0}, recipient = {0}, imported = {0};
+    bool ready = prime_need_branch_state_begin(&source,&common) &&
+        prime_need_branch_state_write(&source,&common,&a,a.value,atom_int(&source,1),&entrance) &&
+        prime_need_branch_state_write(&source,&common,&a,a.value,atom_int(&source,2),&recipient) &&
+        prime_need_branch_state_write(&source,&entrance,&b,b.value,atom_int(&source,1),&left) &&
+        prime_need_branch_state_write(&source,&entrance,&c,c.value,atom_int(&source,1),&right);
+    CHECK(ready, "State producer and recipient retain distinct earlier a writes");
+    if (!ready) goto done;
+    production = left;
+    CHECK(prime_need_branch_state_merge(&production,&right),
+        "the produced suffix has independent b and c branches joined above the entrance");
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&production,&recipient,
+        state_import_initial,&view,&imported) == CETTA_MATCH_MATCHED,
+        "qualified State graft transports the actual post-entrance diamond");
+    CHECK(state_import_number(&imported,&a,2) && state_import_number(&imported,&b,1) &&
+        state_import_number(&imported,&c,1), "producer a=1 cannot overwrite recipient a=2");
+    PrimeNeedBranchState absent = {0}, absent_result = {0}, malformed = {.owner=&source};
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&absent,&absent,&absent,&absent,
+        state_import_initial,&view,&absent_result) == CETTA_MATCH_MATCHED &&
+        !absent_result.top && !absent_result.session_id && !absent_result.owner,
+        "a producer without State preserves the absent receiver world");
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&absent,&absent,&absent,&recipient,
+        state_import_initial,&view,&absent_result) == CETTA_MATCH_MATCHED &&
+        absent_result.top == recipient.top && state_import_number(&absent_result,&a,2),
+        "a producer without State preserves the receiver's unrelated writes");
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&malformed,&absent,&absent,&recipient,
+        state_import_initial,&view,&absent_result) == CETTA_MATCH_INCOMPLETE &&
+        absent_result.top == recipient.top,
+        "an uninitialized owner is not an absent State world");
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&absent,&absent,&left,&recipient,
+        state_import_initial,&view,&absent_result) == CETTA_MATCH_INCOMPLETE &&
+        absent_result.top == recipient.top,
+        "an absent entrance cannot authorize a produced State write");
+    CHECK(prime_need_branch_state_is_ancestor(&recipient,&imported) &&
+        !prime_need_branch_state_is_ancestor(&entrance,&imported),
+        "the imported world extends the recipient, not the unrelated producer prefix");
+    PrimeNeedBranchState partial = {0}, completed = {0};
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&left,&recipient,
+        state_import_initial,&view,&partial) == CETTA_MATCH_MATCHED &&
+        prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&production,&partial,
+        state_import_initial,&view,&completed) == CETTA_MATCH_MATCHED &&
+        prime_need_branch_state_equal(&completed,&imported),
+        "a held branch of the source diamond permits delivery of its independent missing branch");
+    PrimeNeedBranchState after = {0}, repeated = {0};
+    CHECK(prime_need_branch_state_write(&receiving,&completed,&b,atom_int(&receiving,1),
+        atom_int(&receiving,2),&after), "recipient can write after consuming the source");
+    view.calls = 0u;
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&production,&after,
+        state_import_initial,&view,&repeated) == CETTA_MATCH_MATCHED && repeated.top == after.top &&
+        !view.calls && state_import_number(&repeated,&b,2),
+        "already-held delivery neither rechecks old reads nor rolls back later own writes");
+    PrimeNeedBranchState refused = recipient;
+    view.calls = 0u; view.refuse_at = 2u;
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&production,&recipient,
+        state_import_initial,&view,&refused) == CETTA_MATCH_INCOMPLETE && view.calls == 2u &&
+        refused.top == recipient.top, "refused second preparation publishes none of the first prepared write");
+    view.refuse_at = 0u;
+    PrimeNeedBranchState reads_a = {0};
+    CHECK(prime_need_branch_state_read(&source,&entrance,&a,atom_int(&source,1),&reads_a) &&
+        prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&reads_a,&recipient,
+        state_import_initial,&view,&refused) == CETTA_MATCH_REFUTED && refused.top == recipient.top,
+        "an actual read of earlier a is a dependency, unlike an unrelated earlier a write");
+    PrimeNeedBranchState aba = {0}, rival = {0};
+    CHECK(prime_need_branch_state_write(&source,&recipient,&b,b.value,atom_int(&source,9),&aba) &&
+        prime_need_branch_state_write(&source,&aba,&b,atom_int(&source,9),b.value,&aba) &&
+        state_import_number(&aba,&b,0), "a rival State history returns to the same value through ABA");
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&left,&aba,
+        state_import_initial,&view,&refused) == CETTA_MATCH_REFUTED && refused.top == recipient.top,
+        "equal final values do not erase competing writes");
+    CHECK(prime_need_branch_state_same_writes_checked(&recipient,&aba,&b)==CETTA_MATCH_REFUTED,
+        "input qualification preserves ABA write occurrences even at equal current values");
+    CHECK(prime_need_branch_state_same_writes_checked(&entrance,&recipient,&b)==CETTA_MATCH_MATCHED,
+        "input qualification ignores writes to unrelated State cells");
+    CHECK(prime_need_branch_state_write(&source,&recipient,&b,b.value,atom_int(&source,1),&rival) &&
+        prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&left,&rival,
+        state_import_initial,&view,&refused) == CETTA_MATCH_REFUTED,
+        "distinct equal-valued writes remain distinct effect occurrences");
+    PrimeNeedBranchState ordered = {0}, successor_only = {0};
+    CHECK(prime_need_branch_state_write(&source,&left,&c,c.value,atom_int(&source,3),&ordered) &&
+        prime_need_branch_state_import_suffix(&receiving,&common,&left,&ordered,&recipient,
+        state_import_initial,&view,&successor_only) == CETTA_MATCH_MATCHED,
+        "a separately qualified c production can be observed without importing its caller's b");
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&ordered,&successor_only,
+        state_import_initial,&view,&refused) == CETTA_MATCH_REFUTED && refused.top == recipient.top,
+        "that c alone is not a causally closed delivered prefix of the larger b-then-c production");
+    Atom *changed = NULL;
+    CHECK(prime_need_branch_state_lookup(&partial,&b,&changed) && changed && changed->ground.ival == 1,
+        "the imported canonical write has a separately copied payload");
+    if (changed) {
+        changed->ground.ival = 99;
+        CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&left,&partial,
+            state_import_initial,&view,&refused) == CETTA_MATCH_REFUTED && refused.top == recipient.top,
+            "the same event ID cannot authenticate a changed payload");
+        changed->ground.ival = 1;
+    }
+    /* A physical-depth counterexample: e* is deeper than f, but f follows
+     * the original e. Original/grafted aliases are one semantic event. */
+    PrimeNeedBranchState original_e = {0}, original_f = {0}, deep = common, graft = {0};
+    CHECK(prime_need_branch_state_write(&source,&common,&b,b.value,atom_int(&source,1),&original_e) &&
+        prime_need_branch_state_write(&source,&original_e,&b,atom_int(&source,1),
+            atom_int(&source,2),&original_f), "canonical e then f has final value 2");
+    for (int64_t i = 0; i < 100; i++)
+        ready = ready && prime_need_branch_state_write(&source,&deep,&a,
+            atom_int(&source,i),atom_int(&source,i+1),&deep);
+    CHECK(ready && prime_need_branch_state_import_suffix(&receiving,&common,&common,&original_e,&deep,
+        state_import_initial,&view,&graft) == CETTA_MATCH_MATCHED && state_import_number(&graft,&b,1),
+        "the same e can have a deeper physical record in an unrelated receiving context");
+    CHECK(prime_need_branch_state_same_writes_checked(&original_e,&graft,&b)==CETTA_MATCH_MATCHED,
+        "input qualification identifies original and grafted canonical writes");
+    CHECK(prime_need_branch_state_same_writes_checked(&original_e,&original_f,&b)==CETTA_MATCH_REFUTED,
+        "input qualification notices a later canonical write");
+    CHECK(prime_need_branch_state_same_writes_checked(&original_e,&rival,&b)==CETTA_MATCH_REFUTED,
+        "distinct equal-valued writes do not identify source inputs");
+    PrimeNeedBranchState joined = graft;
+    CHECK(prime_need_branch_state_merge(&joined,&original_f) && state_import_number(&joined,&b,2),
+        "canonical causality prevents deep e* from shadowing its later original f");
+    PrimeNeedBranchState full = {0};
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&common,&original_f,&graft,
+        state_import_initial,&view,&full) == CETTA_MATCH_MATCHED && state_import_number(&full,&b,2) &&
+        prime_need_branch_state_equal(&joined,&full),
+        "a generic join and suffix completion retain the same canonical events without counting e twice");
+    CHECK(prime_need_branch_state_same_writes_checked(&joined,&full,&b)==CETTA_MATCH_MATCHED,
+        "input write comparison retains canonical order across join and suffix representations");
+    PrimeNeedBranchState independent_c = {0}, e_on_f = {0}, f_on_e = {0};
+    CHECK(prime_need_branch_state_write(&source,&common,&c,c.value,atom_int(&source,1),&independent_c) &&
+        prime_need_branch_state_import_suffix(&receiving,&common,&common,&original_e,&independent_c,
+            state_import_initial,&view,&e_on_f) == CETTA_MATCH_MATCHED &&
+        prime_need_branch_state_import_suffix(&receiving,&common,&common,&independent_c,&original_e,
+            state_import_initial,&view,&f_on_e) == CETTA_MATCH_MATCHED &&
+        prime_need_branch_state_merge(&e_on_f,&f_on_e),
+        "crossed grafts of independent State cells compose");
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&common,&original_e,&e_on_f,
+        state_import_initial,&view,&repeated) == CETTA_MATCH_MATCHED && repeated.top == e_on_f.top &&
+        state_import_number(&repeated,&b,1) && state_import_number(&repeated,&c,1),
+        "independent cross-cell transport edges do not defeat all-held idempotence");
+    PrimeNeedBranchState read_e = {0}, read_f = {0};
+    CHECK(prime_need_branch_state_read(&source,&common,&b,b.value,&read_e) &&
+        prime_need_branch_state_read(&source,&common,&b,b.value,&read_f) &&
+        prime_need_branch_state_import_suffix(&receiving,&common,&common,&read_e,&read_f,
+            state_import_initial,&view,&e_on_f) == CETTA_MATCH_MATCHED &&
+        prime_need_branch_state_import_suffix(&receiving,&common,&common,&read_f,&read_e,
+            state_import_initial,&view,&f_on_e) == CETTA_MATCH_MATCHED &&
+        prime_need_branch_state_merge(&e_on_f,&f_on_e) && state_import_number(&e_on_f,&b,0),
+        "equal read-only frontiers commute without dropping either canonical observation");
+    CHECK(prime_need_branch_state_equal(&e_on_f,&f_on_e) &&
+        !prime_need_branch_state_equal(&e_on_f,&read_e) && !prime_need_branch_state_equal(&e_on_f,&read_f),
+        "a read-only component retains both distinct canonical observations");
+    CHECK(prime_need_branch_state_same_writes_checked(&read_e,&e_on_f,&b)==CETTA_MATCH_MATCHED,
+        "equal commuting read-only additions preserve the selected write input");
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&common,&read_e,&e_on_f,
+        state_import_initial,&view,&repeated) == CETTA_MATCH_MATCHED && repeated.top == e_on_f.top,
+        "an already-held read remains idempotent inside a commuting read component");
+    for (int64_t value = 0; value <= 1; value++) {
+        PrimeNeedBranchState write = {0}, unmerged = e_on_f;
+        CHECK(prime_need_branch_state_write(&source,&read_e,&b,b.value,atom_int(&source,value),&write) &&
+            !prime_need_branch_state_compatible(&e_on_f,&write) &&
+            !prime_need_branch_state_merge(&unmerged,&write) && unmerged.top == e_on_f.top,
+            "passive read transport cannot order an otherwise conflicting independent write");
+    }
+    CHECK(prime_need_branch_state_write(&receiving,&e_on_f,&b,b.value,atom_int(&receiving,2),&after) &&
+        state_import_number(&after,&b,2), "an explicitly later write wins after the joined read frontier");
+    Atom *zero = b.value;
+    view.values[1] = atom_int(&persistent,7);
+    PrimeNeedBranchState selected = {0}, selected_result = {0};
+    CHECK(prime_need_branch_state_write(&source,&common,&b,view.values[1],atom_int(&source,8),&selected) &&
+        prime_need_branch_state_import_suffix(&receiving,&common,&common,&selected,&common,
+        state_import_initial,&view,&selected_result) == CETTA_MATCH_MATCHED &&
+        b.value == zero && state_import_number(&selected_result,&b,8),
+        "initial observation uses the selected captured view instead of the physical cell field");
+    view.values[1] = zero;
+    PrimeNeedBranchState foreign = {0};
+    CHECK(prime_need_branch_state_begin(&receiving,&foreign) &&
+        prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&production,&foreign,
+        state_import_initial,&view,&refused) == CETTA_MATCH_INCOMPLETE && refused.top == recipient.top,
+        "an unrelated session is unavailable transport, not an input inequality");
+    CHECK(prime_need_branch_state_same_writes_checked(&common,&foreign,&b)==CETTA_MATCH_REFUTED,
+        "write agreement never identifies independent State sessions");
+    PrimeNeedBranchState retained = full;
+    CHECK(prime_need_branch_state_promote(&persistent,&retained),
+        "canonical grafts use the existing whole-DAG ownership transport");
+    arena_free(&source); arena_init_detached(&source);
+    arena_free(&receiving); arena_init_detached(&receiving);
+    CHECK(state_import_number(&retained,&a,100) && state_import_number(&retained,&b,2),
+        "promoted grafts survive both original physical history owners retiring");
+done:
+    arena_free(&source); arena_free(&receiving); arena_free(&persistent);
+}
+
 static void check_production_view_import(void) {
     Arena source, receiving, persistent;
     arena_init_detached(&source);
@@ -2691,6 +2909,34 @@ static void check_production_view_dependencies(void) {
     prime_need_read_capture_free(capture);
     prime_need_read_capture_free(outer);
 
+    PrimeNeedSnapshot left={0},right={0},right_running={0},right_result={0};
+    ready=prime_need_snapshot_start_evaluation(&arena,&base,a,evaluator,&running) &&
+        prime_need_snapshot_resolve_value(&arena,&running,a,evaluator,value,&left) &&
+        prime_need_snapshot_start_evaluation(&arena,&base,a,evaluator,&running) &&
+        prime_need_snapshot_resolve_value(&arena,&running,a,evaluator,atom_int(&arena,41),&right);
+    outer=ready ? prime_need_read_capture_new(&base,&left) : NULL;
+    capture=ready ? prime_need_read_capture_new(&base,&right) : NULL;
+    CHECK(outer && capture,"sibling resident controls capture distinct requesting worlds");
+    if(outer && capture) {
+        prime_need_read_scope_enter(&parent,outer);
+        prime_need_read_scope_enter_resident(&inner,capture);
+        ready=prime_need_snapshot_start_evaluation(&arena,&right,b,evaluator,&right_running) &&
+            prime_need_snapshot_resolve_value(&arena,&right_running,b,evaluator,atom_int(&arena,99),&right_result);
+        prime_need_read_scope_leave(&inner);
+        CHECK(ready && prime_need_read_capture_complete(capture) && prime_need_read_capture_complete(outer),
+            "a sibling resident records its physical reads without poisoning the recipient capture");
+        CHECK(ready && prime_need_snapshot_import_production(&arena,capture,&right_result,b,&left,&imported) &&
+            prime_need_read_capture_complete(outer),"qualified import propagates support in the recipient's actual world");
+        prime_need_read_scope_leave(&parent);
+        prime_need_read_scope_enter(&parent,outer);
+        PrimeNeedCellView observed;
+        bool read=prime_need_snapshot_lookup(&right,a,&observed);
+        prime_need_read_scope_leave(&parent);
+        CHECK(read && !prime_need_read_capture_complete(outer),
+            "an ordinary unqualified sibling read still invalidates the capture");
+    }
+    prime_need_read_capture_free(capture);prime_need_read_capture_free(outer);
+
     capture = prime_need_read_capture_new(&base, &base);
     CHECK(capture != NULL, "persisted child production captures its entrance");
     if (!capture) goto cleanup;
@@ -2917,6 +3163,7 @@ int main(void) {
 
     interleaved_history_controls(&arena, &promoted_arena, &branch_arena);
     check_production_view_import();
+    check_state_production_import();
     check_production_view_write_cut();
     check_production_view_dependencies();
     check_snapshot_prefix_transport();
