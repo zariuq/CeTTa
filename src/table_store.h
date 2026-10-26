@@ -67,6 +67,7 @@ typedef bool (*TableAnswerRefVisitor)(const AnswerBank *bank,
 void table_store_init(TableStore *store, CettaTableMode mode,
                       AnswerBank *answer_bank);
 void table_store_free(TableStore *store);
+void table_store_storage_census(const TableStore *store, CettaStorageCensus *census);
 bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
                              Atom *query, TableQueryHandle *handle);
 bool table_store_add_answer(TableQueryHandle *handle, Atom *result,

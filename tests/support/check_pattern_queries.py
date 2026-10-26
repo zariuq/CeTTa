@@ -94,8 +94,23 @@ for language in ("he", "petta"):
     # HE reads &self into the form even when its unknown head remains data;
     # PeTTa keeps the named-space symbol.
     inert = call.replace("&self", "ModuleSpace(GroundingSpace-top)") if language == "he" else call
-    check(language, "!" + call, [inert], imported=False)
-    check(language, "!" + call, [inert], profile="he" if language == "he" else None)
+    for reference in (False, True):
+        check(language, "!" + call, [inert], imported=False, reference=reference)
+        check(language, "!" + call, [inert],
+              profile="he" if language == "he" else None, reference=reference)
+        late = ("(p a)\n(= (late-query) " + call + ")\n!(late-query)\n"
+                "!(import! &self pat)\n!" + images("(late-query)", "ready") +
+                ("\n!" + images("(let $code (late-query) (eval $code))", "ready")
+                 if language == "petta" else "") +
+                "\n(= (fresh-query) " + call + ")\n!" + images("(fresh-query)", "ready"))
+        # PeTTa keeps the authored occurrence's translation-time Data role.
+        # Explicit eval and a definition written after import see the new
+        # native operation; HE interprets the original equation live too.
+        retained = "(ready)" if language == "he" else "()"
+        check(language, late,
+              [inert, "()" if language == "he" else "true", retained,
+               *(["(ready)"] if language == "petta" else []), "(ready)"],
+              imported=False, reference=reference)
 
     # Equal rows remain distinguishable occurrences, stable within this read.
     result = run(language, "(row a) (row a)\n!(pat:query &self match% (row a))")

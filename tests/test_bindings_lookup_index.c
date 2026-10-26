@@ -4007,6 +4007,9 @@ static void check_capture_agreement(Arena *arena) {
     CHECK(bindings_eq(&left, &right) && !bindings_capture_equal(arena, &left, &right) &&
           bindings_capture_equal(arena, &left, &alias),
           "captured input agreement distinguishes resource replacement from wrapper copying");
+    CHECK(bindings_capture_equal_checked(arena,&left,&right)==CETTA_MATCH_REFUTED &&
+          bindings_capture_equal_checked(arena,&left,&alias)==CETTA_MATCH_MATCHED,
+          "checked captured inputs distinguish replacement from an identical held image");
     bindings_free(&left); bindings_free(&right);
     bindings_init(&left); bindings_init(&right);
     Atom *unknown = atom_var_with_id(arena, "$capture-open", fresh_var_id());
@@ -4047,8 +4050,307 @@ static void check_capture_agreement(Arena *arena) {
           bindings_rewrite_value_id(&right,variable,binding_value_from_atom(kept)) &&
           bindings_capture_equal(arena,&left,&right),
           "freshening preserves nested expression roles and admits the equivalent captured value");
+    Atom *cycle_left=atom_expr(arena,(Atom *[]){atom_int(arena,9)},1u);
+    Atom *cycle_right=atom_expr(arena,(Atom *[]){atom_int(arena,9)},1u);
+    CHECK(bindings_rewrite_value_id(&left,variable,binding_value_from_atom(cycle_left)) &&
+          bindings_rewrite_value_id(&right,variable,binding_value_from_atom(cycle_right)),
+          "cyclic comparison control starts from ordinary captured values");
+    Atom *left_leaf=cycle_left->expr.elems[0],*right_leaf=cycle_right->expr.elems[0];
+    cycle_left->expr.elems[0]=cycle_left;cycle_right->expr.elems[0]=cycle_right;
+    CHECK(bindings_capture_equal_checked(arena,&left,&right)==CETTA_MATCH_INCOMPLETE,
+          "unavailable captured graph inspection is not permission to select a different source");
+    cycle_left->expr.elems[0]=left_leaf;cycle_right->expr.elems[0]=right_leaf;
     bindings_free(&copied); bindings_free(&framed_right); bindings_free(&framed_left);
     bindings_free(&alias); bindings_free(&right); bindings_free(&left);
+}
+
+
+typedef struct {
+    unsigned references, retains, releases;
+    bool refuse;
+    uint64_t session,thunk,authority,child,child_authority;
+} ReaderOwnerFixture;
+static bool reader_owner_retain(void *raw) {
+    ReaderOwnerFixture *owner=raw;
+    if (owner->refuse) return false;
+    owner->references++; owner->retains++;
+    return true;
+}
+static void reader_owner_release(void *raw) {
+    ReaderOwnerFixture *owner=raw;
+    if (!owner->references) abort();
+    owner->references--; owner->releases++;
+}
+static const PrimeNeedReaderValueOps reader_owner_ops={
+    .retain=reader_owner_retain,.release=reader_owner_release,
+};
+static CettaMatchCompletion reader_owner_settled(const void *raw,const PrimeNeedSnapshot *world) {
+    const ReaderOwnerFixture *owner=raw;
+    if(!world || world->session_id!=owner->session) return CETTA_MATCH_REFUTED;
+    uint64_t ids[]={owner->thunk,owner->child},authorities[]={owner->authority,owner->child_authority};
+    for(size_t i=0u;i<2u;i++) {
+        PrimeNeedCellView cell;
+        if(!ids[i] || !prime_need_snapshot_lookup(world,ids[i],&cell)) return CETTA_MATCH_REFUTED;
+        if(cell.authority_id!=authorities[i]) return CETTA_MATCH_INCOMPLETE;
+        if(cell.cache_state!=PRIME_NEED_CACHE_VALUE && cell.cache_state!=PRIME_NEED_CACHE_STABLE_FAULT)
+            return CETTA_MATCH_REFUTED;
+    }
+    return CETTA_MATCH_MATCHED;
+}
+static const PrimeNeedReaderValueOps settled_reader_ops={
+    .retain=reader_owner_retain,.release=reader_owner_release,.settled=reader_owner_settled};
+static bool reader_context_has(PrimeNeedReaderContext *context,uint64_t key,void *value) {
+    PrimeNeedReaderValue found={0};
+    return prime_need_reader_context_lookup(context,key,&found) &&
+        found.value==value && found.operations==&reader_owner_ops;
+}
+typedef struct {size_t count;uint64_t sum;bool refuse;} ReaderVisitFixture;
+static CettaMatchCompletion reader_visit_entry(uint64_t key,const PrimeNeedReaderValue *value,void *raw) {
+    ReaderVisitFixture *visit=raw;
+    if (!value->value || value->operations!=&reader_owner_ops) return CETTA_MATCH_INCOMPLETE;
+    visit->count++;visit->sum+=key;
+    return visit->refuse ? CETTA_MATCH_INCOMPLETE : CETTA_MATCH_MATCHED;
+}
+static void reader_context_cases(Arena *arena) {
+    ReaderOwnerFixture a={.references=1u}, b={.references=1u}, c={.references=1u};
+    PrimeNeedReaderValue av={&a,&reader_owner_ops}, bv={&b,&reader_owner_ops}, cv={&c,&reader_owner_ops};
+    PrimeNeedReaderContext *base=NULL,*left=NULL,*right=NULL,*joined=NULL,*other=NULL,*removed=NULL;
+    CHECK(prime_need_reader_context_update(NULL,11u,&av,&base)==CETTA_MATCH_MATCHED &&
+        reader_context_has(base,11u,&a) && a.references==2u,
+        "reader context owns its supplied current version");
+    CHECK(prime_need_reader_context_update(base,11u,&bv,&left)==CETTA_MATCH_MATCHED &&
+        reader_context_has(base,11u,&a) && reader_context_has(left,11u,&b),
+        "advancing one reader context preserves its earlier branch version");
+    CHECK(prime_need_reader_context_merge(base,left,&joined)==CETTA_MATCH_MATCHED && joined==left,
+        "actual reader-context ancestry chooses the advanced version");
+    prime_need_reader_context_release(joined);joined=NULL;
+    prime_need_reader_context_release(base);base=NULL;
+    CHECK(a.references==1u && b.references==2u,
+        "lightweight ancestry does not pin an obsolete reader payload");
+    CHECK(prime_need_reader_context_update(left,11u,NULL,&removed)==CETTA_MATCH_MATCHED &&
+        !reader_context_has(removed,11u,&b) &&
+        prime_need_reader_context_merge(left,removed,&joined)==CETTA_MATCH_MATCHED && joined==removed,
+        "a retired reader is not resurrected by merging its earlier context");
+    prime_need_reader_context_release(joined);joined=NULL;
+    prime_need_reader_context_release(left);left=NULL;
+    CHECK(b.references==1u,"retiring the last current value releases its owner despite surviving ancestry");
+    CHECK(prime_need_reader_context_update(NULL,11u,&av,&other)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_merge(other,removed,&joined)==CETTA_MATCH_REFUTED && !joined,
+        "a sibling cannot replace a recorded retirement with an equal old reader");
+    prime_need_reader_context_release(other);other=NULL;
+    prime_need_reader_context_release(removed);removed=NULL;
+
+    CHECK(prime_need_reader_context_update(NULL,11u,&av,&base)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(base,11u,&bv,&left)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(base,11u,&cv,&right)==CETTA_MATCH_MATCHED,
+        "incomparable readers are built from one shared parent");
+    CHECK(prime_need_reader_context_merge(left,right,&joined)==CETTA_MATCH_REFUTED && !joined,
+        "different sibling reader positions refuse instead of selecting a maximum");
+    prime_need_reader_context_release(right);right=NULL;
+    CHECK(prime_need_reader_context_update(base,11u,&bv,&right)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_merge(left,right,&joined)==CETTA_MATCH_MATCHED &&
+        reader_context_has(joined,11u,&b),
+        "independent versions can join when their current owned reader is identical");
+    CHECK(prime_need_reader_context_update(joined,11u,&cv,&removed)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_merge(left,removed,&other)==CETTA_MATCH_MATCHED && other==removed,
+        "a joined version retains the ancestry of its left parent");
+    prime_need_reader_context_release(other);other=NULL;
+    CHECK(prime_need_reader_context_merge(right,removed,&other)==CETTA_MATCH_MATCHED && other==removed,
+        "a joined version retains the ancestry of its right parent");
+    prime_need_reader_context_release(other);other=NULL;
+    prime_need_reader_context_release(removed);removed=NULL;
+    prime_need_reader_context_release(joined);joined=NULL;
+    prime_need_reader_context_release(left);left=NULL;
+    prime_need_reader_context_release(right);right=NULL;
+    CHECK(prime_need_reader_context_update(NULL,22u,&bv,&other)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_merge(base,other,&joined)==CETTA_MATCH_MATCHED &&
+        reader_context_has(joined,11u,&a) && reader_context_has(joined,22u,&b),
+        "disjoint source-call reader contexts compose without identifying their owners");
+    ReaderVisitFixture visit={0};
+    unsigned live_a=a.references,live_b=b.references;
+    CHECK(prime_need_reader_context_visit(joined,reader_visit_entry,&visit)==CETTA_MATCH_MATCHED &&
+        visit.count==2u && visit.sum==33u && a.references==live_a && b.references==live_b,
+        "reader inspection borrows every live key without changing its owners");
+    visit=(ReaderVisitFixture){.refuse=true};
+    CHECK(prime_need_reader_context_visit(joined,reader_visit_entry,&visit)==CETTA_MATCH_INCOMPLETE &&
+        visit.count==1u && a.references==live_a && b.references==live_b,
+        "a refused reader visit is incomplete and retains all owning entries");
+    b.refuse=true;
+    unsigned before_a=a.references,before_b=b.references,before_c=c.references;
+    CHECK(prime_need_reader_context_update(joined,11u,&cv,&removed)==CETTA_MATCH_INCOMPLETE && !removed &&
+        a.references==before_a && b.references==before_b && c.references==before_c,
+        "refused reader retention rolls back all previously prepared ownership shares");
+    b.refuse=false;
+    prime_need_reader_context_release(joined);joined=NULL;
+    prime_need_reader_context_release(other);other=NULL;
+
+
+    /* Source and requester have different earlier reader values. Only the
+     * actual source suffix may cross the production boundary. */
+    PrimeNeedReaderContext *entrance=NULL,*production=NULL,*recipient=NULL,*imported=NULL,*later=NULL;
+    CHECK(prime_need_reader_context_update(base,11u,&bv,&entrance)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(entrance,22u,&cv,&production)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(base,11u,&cv,&recipient)==CETTA_MATCH_MATCHED,
+        "reader production and recipient retain unrelated earlier branch values");
+    CHECK(prime_need_reader_context_import(entrance,production,recipient,&imported)==CETTA_MATCH_MATCHED &&
+        reader_context_has(imported,11u,&c) && reader_context_has(imported,22u,&c),
+        "reader suffix import preserves requester history and transports the earned nested owner");
+    CHECK(prime_need_reader_context_update(imported,22u,&av,&later)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_import(entrance,production,later,&removed)==CETTA_MATCH_MATCHED && removed==later,
+        "already-held reader production does not roll back later requester progress");
+    prime_need_reader_context_release(removed);removed=NULL;
+    CHECK(prime_need_reader_context_update(recipient,22u,&bv,&removed)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_import(entrance,production,removed,&joined)==CETTA_MATCH_REFUTED && !joined,
+        "rival nested reader progress refuses before any production publication");
+    CHECK(prime_need_reader_context_import(entrance,NULL,recipient,&joined)==CETTA_MATCH_INCOMPLETE && !joined,
+        "missing production context is not treated as evidence of an unchanged active entrance");
+    CHECK(prime_need_reader_context_import(base,production,imported,&joined)==CETTA_MATCH_REFUTED && !joined,
+        "holding one reader suffix does not adopt the producer's earlier conflicting reader history");
+    CHECK(prime_need_reader_context_merge(production,imported,&joined)==CETTA_MATCH_REFUTED && !joined,
+        "a suffix import does not claim full-context ancestry from its producer");
+    prime_need_reader_context_release(entrance);prime_need_reader_context_release(production);
+    prime_need_reader_context_release(recipient);prime_need_reader_context_release(imported);
+    prime_need_reader_context_release(later);prime_need_reader_context_release(removed);removed=NULL;
+
+    Bindings seed, advanced, sibling, moved;
+    bindings_init(&seed);bindings_init(&advanced);bindings_init(&sibling);bindings_init(&moved);
+    bindings_reader_context_set(&seed,base);
+    CHECK(bindings_prime_present(&seed) && bindings_clone(&sibling,&seed) &&
+        bindings_reader_context_view(&sibling)==base,
+        "a context-only occurrence survives ordinary binding cloning");
+    CHECK(prime_need_reader_context_update(base,11u,&bv,&left)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(base,11u,&cv,&right)==CETTA_MATCH_MATCHED,
+        "binding branches retain independent versions of their source reader");
+    bindings_reader_context_set(&advanced,left);bindings_reader_context_set(&sibling,right);
+    CHECK(bindings_try_merge_live_checked(&advanced,&sibling)==CETTA_MATCH_REFUTED &&
+        bindings_reader_context_view(&advanced)==left,
+        "checked binding merge refutes incompatible reader contexts without changing its destination");
+    BindingsBuilder builder,copy;
+    CHECK(bindings_builder_init(&builder,&seed),"reader fixture initializes its common binding owner");
+    Atom *root=atom_var_with_id(arena,"reader-root",test_id(9801u));
+    CHECK(bindings_builder_add_var_fresh(&builder,root,atom_int(arena,7)),
+        "reader fixture retains a logical root alongside source context");
+    uint32_t mark=bindings_builder_save(&builder);
+    CHECK(bindings_builder_try_merge(&builder,&advanced) &&
+        bindings_reader_context_view(&builder.current)==left && bindings_builder_clone(&copy,&builder),
+        "builder snapshots and clones own their complete reader contexts");
+    uint32_t marks[]={mark,bindings_builder_save(&builder)};
+    CHECK(bindings_builder_compact_reachable(&builder,&root,1u,marks,2u,NULL,NULL) &&
+        bindings_reader_context_view(&builder.current)==left,
+        "binding compaction transports reader-owned checkpoints with its logical roots");
+    bindings_builder_rollback(&builder,marks[0]);
+    CHECK(bindings_reader_context_view(&builder.current)==base &&
+        bindings_reader_context_view(&copy.current)==left,
+        "rollback restores the exact reader version without rewinding a sibling clone");
+    bindings_builder_free(&builder);
+    bindings_builder_commit(&copy);bindings_builder_take(&copy,&moved);
+    CHECK(bindings_reader_context_view(&moved)==left,
+        "commit and ownership transfer preserve the selected reader context");
+    Atom *copy_variable=atom_var_with_id(arena,"reader-copy",test_id(9802u));
+    Atom *copy_fields[]={atom_symbol(arena,"ReaderPayload"),atom_int(arena,19)};
+    Atom *copy_value=atom_expr(arena,copy_fields,2u);
+    CHECK(bindings_add_var(&moved,copy_variable,copy_value),
+        "copy refusal fixture includes a logical payload in source storage");
+    Arena copy_arena;arena_init_detached(&copy_arena);
+    AtomDeepCopySession *atoms=atom_deep_copy_session_new(&copy_arena);
+    CHECK(atoms && !bindings_copy_owned_atoms_with_session(&moved,&copy_arena,atoms) &&
+        bindings_reader_context_view(&moved)==left &&
+        bindings_lookup_value_id(&moved,copy_variable->var_id).skeleton==copy_value,
+        "an active reader context refuses unmapped owned copying instead of sharing a mutable driver silently");
+    BindingsBuilder unmapped;
+    CHECK(bindings_builder_init(&unmapped,&moved) &&
+        bindings_builder_add_var_fresh(&unmapped,
+            atom_var_with_id(arena,"reader-trail-copy",test_id(9803u)),copy_value),
+        "copy refusal fixture retains a reader only in its rollback trail");
+    bindings_prime_set(&unmapped.current,NULL,NULL,0u,NULL,NULL);
+    CHECK(!bindings_builder_copy_owned_atoms_with_session(&unmapped,&copy_arena,atoms) &&
+        bindings_lookup_value_id(&unmapped.current,copy_variable->var_id).skeleton==copy_value,
+        "an unmapped rollback reader refuses before relocating any logical payload");
+    bindings_builder_free(&unmapped);
+    atom_deep_copy_session_free(atoms);arena_free(&copy_arena);
+    bindings_free(&moved);bindings_free(&advanced);bindings_free(&sibling);
+    bindings_prime_set(&seed,NULL,NULL,0u,NULL,NULL);
+    CHECK(!bindings_prime_present(&seed) && !bindings_reader_context_view(&seed),
+        "an explicit empty occurrence releases its reader ownership edge");
+    bindings_free(&seed);
+    prime_need_reader_context_release(base);base=NULL;
+    prime_need_reader_context_release(left);left=NULL;
+    prime_need_reader_context_release(right);right=NULL;
+    CHECK(a.references==1u && b.references==1u && c.references==1u,
+        "context, builder, compaction and transfer release every retained reader share");
+
+    PrimeNeedReaderContext *chain=NULL;
+    bool chain_ok=true;
+    for (size_t i=0u;i<8192u && chain_ok;i++)
+        chain_ok=prime_need_reader_context_update(chain,31u,i%2u?&av:&bv,&chain)==CETTA_MATCH_MATCHED;
+    CHECK(chain_ok && a.references+b.references==3u,
+        "a long context lineage retains only its current payload rather than every older reader");
+    prime_need_reader_context_release(chain);
+    CHECK(a.references==1u && b.references==1u,
+        "deep version retirement releases its lineage and current reader completely");
+}
+
+static void reader_settlement_cases(Arena *arena) {
+    PrimeNeedSnapshot root={0},child_world={0},base={0},running={0},partial={0},ready={0};
+    uint64_t child=0u,thunk=0u,evaluator=prime_need_fresh_evaluator_id();
+    Atom *origin=atom_symbol(arena,"settlement-source");
+    bool allocated=prime_need_snapshot_begin(&root) &&
+        prime_need_snapshot_allocate(arena,&root,origin,&child_world,&child) &&
+        prime_need_snapshot_allocate(arena,&child_world,origin,&base,&thunk);
+    CHECK(allocated,"settlement controls allocate a source and its actual nested field");
+    if(!allocated) return;
+    PrimeNeedCellView root_cell,child_cell;
+    bool known=prime_need_snapshot_lookup(&base,thunk,&root_cell) && prime_need_snapshot_lookup(&base,child,&child_cell);
+    ReaderOwnerFixture owner={.references=1u,.session=base.session_id,.thunk=thunk,.child=child,
+        .authority=known?root_cell.authority_id:0u,.child_authority=known?child_cell.authority_id:0u};
+    PrimeNeedReaderValue value={.value=&owner,.operations=&settled_reader_ops};
+    PrimeNeedReaderContext *context=NULL,*merged=NULL;
+    CHECK(known && prime_need_reader_context_update(NULL,71u,&value,&context)==CETTA_MATCH_MATCHED,
+        "a settled-reader owner records exact cell authorities");
+    Bindings source,promoted;bindings_init(&source);bindings_init(&promoted);
+    *bindings_need_mut(&source)=base;bindings_reader_context_set(&source,context);
+    Arena destination;arena_init_detached(&destination);
+    CHECK(!bindings_promote_atoms_to_arena(&source,&destination) && bindings_reader_context_view(&source)==context,
+        "an unforced source refuses ordinary promotion without erasing its reader");
+    Atom *nested=prime_need_ref(arena,&base,child);
+    Atom *box=nested?atom_expr2(arena,atom_symbol(arena,"Box"),nested):NULL;
+    bool resolved=box && prime_need_snapshot_start_evaluation(arena,&base,thunk,evaluator,&running) &&
+        prime_need_snapshot_resolve_value(arena,&running,thunk,evaluator,box,&partial);
+    CHECK(resolved,"a completed constructor retains the actual still-pending field capability");
+    *bindings_need_mut(&source)=partial;
+    CHECK(prime_need_reader_context_can_settle(context,&partial)==CETTA_MATCH_REFUTED &&
+        !bindings_promote_atoms_to_arena(&source,&destination),
+        "a cached root does not settle its pending nested field");
+    resolved=resolved && prime_need_snapshot_start_evaluation(arena,&partial,child,evaluator,&running) &&
+        prime_need_snapshot_resolve_value(arena,&running,child,evaluator,atom_int(arena,8),&ready);
+    CHECK(resolved,"the nested field earns its own completed update");
+    *bindings_need_mut(&source)=ready;
+    CHECK(bindings_clone(&promoted,&source) && bindings_promote_atoms_to_arena(&promoted,&destination) &&
+        prime_need_reader_context_values_absent(bindings_reader_context_view(&promoted)) &&
+        prime_need_reader_context_lookup(context,71u,&value),
+        "ordinary promotion tombstones only the promoted occurrence and preserves the source frontier owner");
+    CHECK(prime_need_reader_context_merge(context,bindings_reader_context_view(&promoted),&merged)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_values_absent(merged),"an old live version cannot resurrect settled reader metadata");
+    AtomDeepCopySession *copy=atom_deep_copy_session_new(&destination);
+    CHECK(copy && !bindings_copy_owned_atoms_with_session(&promoted,&destination,copy),
+        "settled ordinary promotion grants no independent owned-context copy");
+    atom_deep_copy_session_free(copy);
+    BindingsBuilder builder={0};
+    *bindings_need_mut(&source)=partial;
+    Atom *variable=atom_var_with_id(arena,"settlement-rollback",test_id(9810u));
+    Atom *logical=atom_expr2(arena,atom_symbol(arena,"HeldLogical"),atom_int(arena,9));
+    bool built=bindings_builder_init(&builder,&source) && bindings_builder_add_var_fresh(&builder,variable,logical);
+    CHECK(built && builder.prime_trail_len,"a real rollback trail retains the earlier pending reader world");
+    if(built) {
+        *bindings_need_mut(&builder.current)=ready;
+        CHECK(!bindings_builder_promote_atoms_to_arena(&builder,&destination) &&
+            bindings_lookup_value_id(&builder.current,variable->var_id).skeleton==logical,
+            "rollback-reader preflight refuses before relocating any current logical payload");
+    }
+    bindings_builder_free(&builder);
+    prime_need_reader_context_release(merged);bindings_free(&promoted);bindings_free(&source);
+    prime_need_reader_context_release(context);arena_free(&destination);
+    CHECK(owner.references==1u,"settlement and refusal release every independently owned reader share");
 }
 
 int main(void) {
@@ -4064,6 +4366,8 @@ int main(void) {
 
     Arena arena;
     arena_init(&arena);
+    reader_context_cases(&arena);
+    reader_settlement_cases(&arena);
     check_capture_agreement(&arena);
 
     for (unsigned mode = 0u; mode < (CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS ? 5u : 1u); mode++)

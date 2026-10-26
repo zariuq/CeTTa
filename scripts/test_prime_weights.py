@@ -273,12 +273,15 @@ def retained_queries(gate):
         gate.passed_case(f'query nodes and graded duplicate rows survive exact cuts with {workers} workers')
     source='(F slow) (F fast) (= (body slow) (body slow)) (= (body fast) 42) '
     expression=read('(match &self (F $x) (body $x) (where 2))')
+    # The public standard definitions are rows of &self too. Leave room for
+    # their scan while retaining exact work and final-step split comparisons.
+    independence_budget=2048
     for workers in (1,2,4):
         default=None
         for quantum in (None,1,8,40):
             extra=f'(workers {workers})'+('' if quantum is None else f' (quantum {quantum})')
             _,obs=gate.run(f'query body independence/{workers}/{quantum}',source+
-                f'!(select 1 {control(1000,extra=extra)} {expression})')
+                f'!(select 1 {control(independence_budget,extra=extra)} {expression})')
             result=obs[-1]
             assert [contribution(x) for x in result['values']]==[[42,2,[2]]],obs
             assert result['satisfied']=='True' and result['closed']=='False',obs
@@ -287,10 +290,10 @@ def retained_queries(gate):
                 for field in ('work','closed','satisfied','status'):
                     assert result[field]==default[field],(workers,field,default,result)
             if workers>1:
-                for cut in (1,13,37,97,result['work']-1):
+                for cut in sorted({1,13,37,97,min(1000,result['work']-1),result['work']-1}):
                     trees,parts=gate.run(f'query body split/{workers}/{quantum}/{cut}',source+
                         f'!(let {pattern} (select 1 {control(cut,extra=extra)} {expression}) '
-                        f'(Split $p (select 1 {control(1000-cut,extra=extra)} $r)))')
+                        f'(Split $p (select 1 {control(independence_budget-cut,extra=extra)} $r)))')
                     values=trees[-1][0][1]+parts[-1]['values']
                     assert [contribution(x) for x in values]==[[42,2,[2]]],parts
                     for field in ('work','closed','satisfied','status'):
@@ -308,7 +311,7 @@ def retained_queries(gate):
     for name,body,expected in cases:
         for workers in (1,2):
             _,obs=gate.run(f'query {name}/{workers}',source+
-                f'!(select 7 {control(1000,extra=f"(workers {workers})")} {read(body)})')
+                f'!(select 7 {control(independence_budget,extra=f"(workers {workers})")} {read(body)})')
             assert bag([contribution(x) for x in obs[-1]['values']])==bag(expected),obs
             assert obs[-1]['closed']=='True' and obs[-1]['satisfied']=='False',obs
         gate.passed_case(f'{name} keeps list mismatch distinct from pending work')
@@ -339,9 +342,10 @@ def retained_query_owners(gate):
         assert [contribution(x) for x in final['values']]==expected,final
         counts=receipt(final['cost'])['counts']
         if visits is not None:
-            # One traversal of the three-row source, even when a matched
-            # body produces no answer. Projection must not replay the read.
-            assert counts['index-visit']==visits,(name,counts)
+            # Standard-definition validation also reads declaration indexes.
+            # Match attempts identify the source traversal: one per row,
+            # even when the matched body produces no answer.
+            assert counts['match-attempt']==visits,(name,counts)
         assert counts['equation-activation']==activations,(name,counts)
         gate.passed_case('complete-empty certificate belongs to its exact return edge: '+name)
 
@@ -856,7 +860,7 @@ def weight_licence_progress(gate):
     pattern = '(Observation $p (satisfied $s) (closed $c) (residual $r) (work $w) (status $t) $order)'
     for width in (1, 2):
         trees, _ = gate.run(f'licence retained inner matcher width{width}', source +
-            f'!(select 0 {policy(1500, width)} {body})')
+            f'!(select 0 {policy(4096, width)} {body})')
         whole = list(weight_observations(trees))[-1]
         assert [contribution(v)[:2] for v in whole['values']] == [[7, 1], [7, 1]], whole
         assert whole['closed'] == 'True' and whole['status'] == 'closed', whole
@@ -867,7 +871,7 @@ def weight_licence_progress(gate):
         for cut in (0, 1, 7, 31, 127, 257):
             trees, parts = gate.run(f'licence retained inner matcher width{width} cut{cut}', source +
                 f'!(let {pattern} (select 0 {policy(cut, width)} {body}) '
-                f'(Split $p (select 0 {policy(1500-cut, width)} $r)))')
+                f'(Split $p (select 0 {policy(4096-cut, width)} $r)))')
             joined = trees[-1][0][1] + parts[-1]['values']
             assert [contribution(v)[:2] for v in joined] == [[7, 1], [7, 1]], joined
             resumed = list(weight_observations([[trees[-1][0][2]]]))[-1]
@@ -1348,7 +1352,7 @@ def authored_coefficients(gate):
     explicit='(let $x (match &self (edge a $x) (weight:where $x (grade $x))) '
     explicit+=f'(match &self (edge $x $z) (weight:where $z 3)){crossing})'
     for body in (explicit,expression):
-        _,obs=gate.run('authored two-step binding-local match',facts+f'!(select 7 {control(3000)} {read(body)})')
+        _,obs=gate.run('authored two-step binding-local match',facts+f'!(select 7 {control(8192)} {read(body)})')
         values=[contribution(x) for x in obs[-1]['values']]
         assert bag(values)==bag([['d',6,[2,3]],['d',6,[2,3]],['d',15,[5,3]]]),obs
         assert obs[-1]['closed']=='True'

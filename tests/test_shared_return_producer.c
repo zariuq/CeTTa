@@ -698,8 +698,8 @@ static void test_real_prepared_producer(bool bounded) {
     CettaPreparedPureAnswerCursor *bound_cursor =
         cetta_prepared_pure_answer_cursor_open(program, &options);
     assert(bound_cursor);
-    CettaOwnedExecution source_execution, bound_execution;
-    cetta_prepared_pure_answer_cursor_own_execution(&source_execution, bound_cursor);
+    CettaOwnedExecution source_execution = {0}, bound_execution = {0};
+    assert(cetta_prepared_pure_answer_cursor_own_execution(&source_execution, bound_cursor));
     CettaOwnedBind sequence;
     PreparedBind bound = {.arena = &source, .refuse = true};
     assert(cetta_owned_bind_open(&bound_execution, &sequence, &source_execution,
@@ -1320,7 +1320,7 @@ static void test_native_provider_ownership(void) {
     arena_init(&arena);
     const char *library_heads[] = {
         "__cetta_lib_str", "__cetta_lib_json_parse_v1",
-        "__cetta_lib_future_operation", "tensor:sum",
+        "__cetta_lib_future_operation", "__cetta_lib_tensor_future_operation", "tensor:sum",
     };
     for (size_t index = 0u; index < sizeof(library_heads) / sizeof(*library_heads);
          index++) {
@@ -1592,6 +1592,188 @@ static void test_resident_capture(void) {
     release_capture(saved);
     assert(account.freed == 3u);
     puts("PASS: resident capture retries one earned occurrence without polling, moving or releasing its producer");
+}
+
+static bool publish_checkpoint(void *raw, uint64_t position,
+    const CettaOwnedReturn *returned, CettaSharedReturnCheckpoint *next) {
+    Recipient *recipient = raw;
+    uint64_t after = 0u;
+    assert(cetta_shared_return_checkpoint_position(next, &after) && after == position + 1u);
+    if (recipient->refuse) return false;
+    assert(recipient->count < 8u);
+    Captured *captured = (Captured *)returned;
+    ++captured->shares;
+    recipient->rows[recipient->count] = returned;
+    recipient->positions[recipient->count++] = position;
+    return true;
+}
+
+static void test_reader_checkpoint_lifetime(void) {
+    Account account = {.compatible=true};
+    CettaOwnedExecution execution = new_execution(&account, 3u);
+    CettaSharedReturnProducer *producer = cetta_shared_return_producer_new(
+        &execution, 1u, 1u, capture, compatible, &account);
+    assert(producer);
+    size_t consumers = log_info(producer).consumers;
+    /* Checkpoint preparation is fallible before it owns any publication. */
+    fail_malloc=1u;
+    assert(!cetta_shared_return_checkpoint_new(producer, 0u) && !fail_malloc &&
+        log_info(producer).consumers==consumers);
+    fail_malloc=2u;
+    assert(!cetta_shared_return_checkpoint_new(producer, 0u) && !fail_malloc &&
+        log_info(producer).consumers==consumers);
+    CettaSharedReturnCheckpoint *root=cetta_shared_return_checkpoint_new(producer, 0u);
+    assert(root && cetta_shared_return_checkpoint_retain(root));
+    CettaSharedReturnCheckpoint *other=root;
+    assert(log_info(producer).consumers==consumers+1u);
+    assert(!cetta_shared_return_producer_cancel(producer, consumers));
+    assert(cetta_shared_return_producer_take(producer, consumers, NULL, NULL).kind==
+        CETTA_SHARED_DELIVERY_INVALID);
+    CettaOwnedExecution stolen={0};
+    assert(!cetta_shared_return_producer_detach_execution(producer, &stolen) && !stolen.computation);
+    assert(cetta_shared_return_producer_cancel(producer, 0u));
+    cetta_shared_return_producer_free(producer);
+    assert(!account.released && cetta_shared_return_checkpoint_peek(root).kind==CETTA_SHARED_DELIVERY_PAUSED);
+    assert(cetta_shared_return_checkpoint_advance(root, 1u)==CETTA_SHARED_RETURN_PAUSED &&
+        account.effects==1u && account.next_calls==1u);
+    CettaSharedDelivery row=cetta_shared_return_checkpoint_peek(root);
+    assert(row.kind==CETTA_SHARED_DELIVERY_ANSWER && row.position==0u);
+    Recipient first={.refuse=true}, second={0};
+    CettaSharedReturnCheckpoint *next=NULL;
+    assert(cetta_shared_return_checkpoint_take(root, publish_checkpoint, &first, &next).kind==
+        CETTA_SHARED_DELIVERY_PUBLICATION_REFUSED && !next && !first.count);
+    first.refuse=false;
+    fail_malloc=1u;
+    assert(cetta_shared_return_checkpoint_take(root, publish_checkpoint, &first, &next).kind==
+        CETTA_SHARED_DELIVERY_PUBLICATION_REFUSED && !fail_malloc && !next && !first.count);
+    assert(account.effects==1u && account.next_calls==1u && !cetta_shared_return_producer_trim(producer));
+    assert(cetta_shared_return_checkpoint_take(root, publish_checkpoint, &first, &next).kind==
+        CETTA_SHARED_DELIVERY_ANSWER && next && first.count==1u);
+    uint64_t position=UINT64_MAX;
+    assert(cetta_shared_return_checkpoint_position(root,&position) && position==0u &&
+        cetta_shared_return_checkpoint_position(next,&position) && position==1u);
+    /* The first reader stops. Its independent sibling still owns the real
+     * residual and receives the exact same already-earned occurrence. */
+    cetta_shared_return_checkpoint_release(root); root=NULL;
+    cetta_shared_return_checkpoint_release(next); next=NULL;
+    assert(!account.released && cetta_shared_return_checkpoint_peek(other).returned==row.returned);
+    assert(cetta_shared_return_checkpoint_take(other,publish_checkpoint,&second,&next).kind==
+        CETTA_SHARED_DELIVERY_ANSWER && second.rows[0]==first.rows[0] && account.effects==1u);
+    cetta_shared_return_checkpoint_release(other); other=next; next=NULL;
+    for (uint64_t i=1u;i<3u;i++) {
+        assert(cetta_shared_return_checkpoint_advance(other,1u)==CETTA_SHARED_RETURN_PAUSED);
+        assert(cetta_shared_return_checkpoint_take(other,publish_checkpoint,&second,&next).kind==
+            CETTA_SHARED_DELIVERY_ANSWER && second.positions[i]==i);
+        cetta_shared_return_checkpoint_release(other); other=next; next=NULL;
+    }
+    assert(cetta_shared_return_checkpoint_advance(other,1u)==CETTA_SHARED_RETURN_COMPLETE &&
+        cetta_shared_return_checkpoint_peek(other).kind==CETTA_SHARED_DELIVERY_COMPLETED &&
+        account.effects==3u && account.next_calls==4u && !account.released);
+    cetta_shared_return_checkpoint_release(other);
+    assert(account.released==1u && !account.freed);
+    release_recipient(&first); release_recipient(&second);
+    assert(account.freed==3u);
+
+    /* A bounded log retains backpressure while a checkpoint can still read
+     * its prefix; source retirement alone does not authorize trimming it. */
+    Account bounded={.compatible=true};
+    execution=new_execution(&bounded,2u);
+    producer=cetta_shared_return_producer_new(&execution,2u,1u,capture,compatible,&bounded);
+    assert(producer && cetta_shared_return_producer_advance(producer,1u)==CETTA_SHARED_RETURN_PAUSED);
+    Recipient a={.producer=producer,.consumer=0u}, b={.producer=producer,.consumer=1u};
+    take_answer(producer,0u,&a,0u);
+    CettaSharedReturnCheckpoint *later=cetta_shared_return_checkpoint_new(producer,0u);
+    CettaSharedReturnCheckpoint *earlier=cetta_shared_return_checkpoint_new(producer,1u);
+    assert(later && earlier && cetta_shared_return_checkpoint_position(later,&position) && position==1u &&
+        cetta_shared_return_checkpoint_position(earlier,&position) && position==0u);
+    take_answer(producer,1u,&b,0u);
+    assert(!cetta_shared_return_producer_trim(producer) &&
+        cetta_shared_return_checkpoint_advance(later,1u)==CETTA_SHARED_RETURN_BACKPRESSURE &&
+        bounded.effects==1u && !log_info(producer).completed);
+    bounded.compatible=false;
+    assert(cetta_shared_return_checkpoint_peek(earlier).kind==CETTA_SHARED_DELIVERY_CONTEXT_REFUSED &&
+        cetta_shared_return_checkpoint_advance(later,1u)==CETTA_SHARED_RETURN_CONTEXT_REFUSED);
+    bounded.compatible=true;
+    cetta_shared_return_checkpoint_release(later); cetta_shared_return_checkpoint_release(earlier);
+    assert(cetta_shared_return_producer_trim(producer)==1u);
+    cetta_shared_return_producer_free(producer);
+    release_recipient(&a); release_recipient(&b);
+    assert(bounded.released==1u && bounded.freed==1u);
+    puts("PASS: immutable reader checkpoints retain one unfinished producer after caller and first-reader retirement");
+}
+
+static unsigned scoped_checkpoint_finalizations;
+static void scoped_checkpoint_hold(void *raw) {
+    assert(cetta_shared_return_checkpoint_retain(raw));
+}
+static void scoped_checkpoint_retire(void *raw) {
+    CettaSharedReturnCheckpoint *checkpoint=raw,*next=NULL;
+    assert(cetta_shared_return_checkpoint_peek(checkpoint).kind==CETTA_SHARED_DELIVERY_INVALID &&
+        cetta_shared_return_checkpoint_advance(checkpoint,1u)==CETTA_SHARED_RETURN_INVALID &&
+        cetta_shared_return_checkpoint_take(checkpoint,NULL,NULL,&next).kind==
+            CETTA_SHARED_DELIVERY_INVALID && !next);
+    scoped_checkpoint_finalizations++;
+    cetta_shared_return_checkpoint_release(checkpoint);
+}
+
+static void test_scoped_reader_checkpoints(void) {
+    Account account={.compatible=true};
+    CettaOwnedExecution execution=new_execution(&account,2u);
+    Computation *resident=execution.computation;
+    CettaSharedReturnProducer *producer=cetta_shared_return_producer_new(
+        &execution,1u,1u,capture,compatible,&account);
+    assert(producer);
+    fail_malloc=1u;
+    assert(!cetta_shared_return_checkpoint_new_scoped(producer,0u) && !fail_malloc);
+    CettaSharedReturnCheckpoint *root=cetta_shared_return_checkpoint_new_scoped(producer,0u);
+    CettaSharedReturnCheckpoint *strong=cetta_shared_return_checkpoint_new(producer,0u);
+    assert(root && strong && cetta_shared_return_producer_cancel(producer,0u));
+    assert(cetta_shared_return_checkpoint_advance(root,1u)==CETTA_SHARED_RETURN_PAUSED);
+    Recipient receiver={.refuse=true};CettaSharedReturnCheckpoint *next=NULL;
+    assert(cetta_shared_return_checkpoint_take(root,publish_checkpoint,&receiver,&next).kind==
+        CETTA_SHARED_DELIVERY_PUBLICATION_REFUSED && !next && !receiver.count);
+    receiver.refuse=false;
+    assert(cetta_shared_return_checkpoint_take(root,publish_checkpoint,&receiver,&next).kind==
+        CETTA_SHARED_DELIVERY_ANSWER && next && receiver.count==1u);
+    assert(cetta_shared_return_checkpoint_advance(next,1u)==CETTA_SHARED_RETURN_BACKPRESSURE &&
+        account.effects==1u && !log_info(producer).completed);
+    /* Both the actual continuation and a retained row contain reader
+     * positions. Neither may keep the producer alive after its owner exits.
+     * All siblings must be invalid BEFORE either finalizer runs. */
+    Captured *row=(Captured *)receiver.rows[0];
+    assert(arena_retain_owner(&resident->arena,root,scoped_checkpoint_hold,scoped_checkpoint_retire));
+    assert(arena_retain_owner(&row->arena,next,scoped_checkpoint_hold,scoped_checkpoint_retire));
+    release_recipient(&receiver);
+    scoped_checkpoint_finalizations=0u;
+    cetta_shared_return_producer_free(producer);
+    assert(!account.released && cetta_shared_return_checkpoint_peek(root).kind==CETTA_SHARED_DELIVERY_ANSWER);
+    cetta_shared_return_checkpoint_release(strong);
+    assert(account.released==1u && account.freed==1u && scoped_checkpoint_finalizations==2u);
+    assert(cetta_shared_return_checkpoint_peek(root).kind==CETTA_SHARED_DELIVERY_INVALID &&
+        cetta_shared_return_checkpoint_advance(next,1u)==CETTA_SHARED_RETURN_INVALID);
+    uint64_t position=0u;
+    assert(cetta_shared_return_checkpoint_position(next,&position) && position==1u);
+    cetta_shared_return_checkpoint_release(root);cetta_shared_return_checkpoint_release(next);
+
+    Account bounded={.compatible=true};execution=new_execution(&bounded,2u);
+    producer=cetta_shared_return_producer_new(&execution,1u,1u,capture,compatible,&bounded);
+    root=cetta_shared_return_checkpoint_new_scoped(producer,0u);
+    assert(root && cetta_shared_return_producer_cancel(producer,0u) &&
+        cetta_shared_return_checkpoint_advance(root,1u)==CETTA_SHARED_RETURN_PAUSED);
+    receiver=(Recipient){0};next=NULL;
+    assert(cetta_shared_return_checkpoint_take(root,publish_checkpoint,&receiver,&next).kind==
+        CETTA_SHARED_DELIVERY_ANSWER);
+    assert(!cetta_shared_return_producer_trim(producer));
+    cetta_shared_return_checkpoint_release(root);root=next;next=NULL;
+    assert(cetta_shared_return_checkpoint_advance(root,1u)==CETTA_SHARED_RETURN_PAUSED && bounded.effects==2u);
+    assert(cetta_shared_return_checkpoint_take(root,publish_checkpoint,&receiver,&next).kind==
+        CETTA_SHARED_DELIVERY_ANSWER);
+    cetta_shared_return_checkpoint_release(root);root=next;
+    cetta_shared_return_producer_free(producer);
+    assert(bounded.released==1u && cetta_shared_return_checkpoint_peek(root).kind==CETTA_SHARED_DELIVERY_INVALID);
+    cetta_shared_return_checkpoint_release(root);release_recipient(&receiver);
+    assert(bounded.freed==2u);
+    puts("PASS: owner-scoped checkpoints pin one shared frontier without producer cycles; retirement precedes continuation and row finalizers");
 }
 
 typedef struct {
@@ -2196,6 +2378,8 @@ int main(int argc, char **argv) {
         test_construction_and_terminal_states();
         test_pending_return_detachment();
         test_resident_capture();
+        test_reader_checkpoint_lifetime();
+        test_scoped_reader_checkpoints();
         test_real_prepared_producer(false);
         test_real_prepared_producer(true);
         test_native_return_cursor();

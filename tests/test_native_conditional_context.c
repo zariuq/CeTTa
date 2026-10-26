@@ -1957,6 +1957,11 @@ int main(int argc, char **argv) {
         checks += episode_accounting() + evaluator_episode_consumers();
     else if (!availability_only)
         checks += episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + source_invocation_plans() + ordinary_invocation_consumers() + shared_compilation_refusals() + closed_failure_cache() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
+    eval_match_decision_cache_free_for_current_thread();
+    eval_profiled_type_cache_free_for_current_thread();
+    space_execution_analysis_cache_free_for_current_thread();
+    cetta_foreign_global_shutdown();
+    assert(cetta_lib_prolog_global_shutdown());
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;

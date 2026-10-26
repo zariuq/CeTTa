@@ -957,6 +957,13 @@ static bool native_stored_coordinate_matches(const TermUniverse *universe,
                                             AtomId stored, Atom *query) {
     if (term_universe_atom_id_eq(universe, stored, query))
         return true;
+    /* Representation inequality cannot refute an opaque resource viewed
+     * through a private world. Scalar index coordinates keep their fast
+     * comparison; other closed coordinates use the same view as matching. */
+    if (universe && query && !space_atom_is_exact_indexable(query)) {
+        Atom *candidate = term_universe_get_atom(universe, stored);
+        return candidate && atom_eq_with_resolved_spaces(query, candidate);
+    }
     if (!universe || !query || query->kind != ATOM_GROUNDED ||
         tu_kind(universe, stored) != ATOM_GROUNDED)
         return false;
@@ -1874,7 +1881,7 @@ static NativeFlatViewRowResult native_flat_view_variable_row_matches(
             if (!var_id_eq(stored_variables[previous], variable))
                 continue;
             assigned = true;
-            if (!atom_eq(stored_values[previous], query))
+            if (!atom_eq_with_resolved_spaces(stored_values[previous], query))
                 return NATIVE_FLAT_VIEW_ROW_MISMATCH;
             break;
         }
@@ -3206,8 +3213,9 @@ static ImportedBridgeExprDecodeResult imported_bridge_token_to_atom_id(
         }
     }
 
-    const char *canonical = parser_canonicalize_namespace_token(scratch, tok);
-    *out_id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, canonical));
+    /* These are encoded symbol bytes, after source parsing. Reapplying
+     * namespace sugar would change literal and evaluator-owned symbols. */
+    *out_id = tu_intern_symbol(universe, symbol_intern_cstr(g_symbols, tok));
     return IMPORTED_BRIDGE_EXPR_DECODE_OK;
 }
 
@@ -7037,8 +7045,7 @@ static Atom *imported_bridge_parse_token_bytes(Arena *a,
             return atom_float(a, fval);
     }
 
-    const char *canonical = parser_canonicalize_namespace_token(a, tok);
-    return atom_symbol_id(a, symbol_intern_cstr(g_symbols, canonical));
+    return atom_symbol_id(a, symbol_intern_cstr(g_symbols, tok));
 }
 
 static Atom *imported_bridge_parse_value_raw_query_only_v2_rec(
@@ -8308,7 +8315,7 @@ static ImportedCorefVerdict imported_match_subtree_coref(const ImportedFlatToken
             if (qt->bval != ct->bval) return IMPORTED_COREF_FAIL;
             break;
         case IMPORTED_FLAT_GROUNDED_OTHER:
-            if (!ct->origin || !atom_eq(qt->origin, ct->origin))
+            if (!ct->origin || !atom_eq_with_resolved_spaces(qt->origin, ct->origin))
                 return IMPORTED_COREF_FAIL;
             break;
         case IMPORTED_FLAT_LIST:
@@ -8405,7 +8412,7 @@ static bool imported_match_subtree_legacy(const ImportedFlatToken *q, CettaIndex
             if (qt->bval != ct->bval) return false;
             break;
         case IMPORTED_FLAT_GROUNDED_OTHER:
-            if (!atom_eq(qt->origin,
+            if (!atom_eq_with_resolved_spaces(qt->origin,
                          imported_token_atom(ct, candidate_universe)))
                 return false;
             break;
@@ -12894,7 +12901,7 @@ static int cetta_flat_join_bind(
     if (pattern_item->kind == ATOM_VAR) {
         for (size_t index = 0u; index < *bind_len; index++) {
             if (var_id_eq(binds[index].id, pattern_item->var_id))
-                return atom_eq(binds[index].value, fact_item) ? 1 : 0;
+                return atom_eq_with_resolved_spaces(binds[index].value, fact_item) ? 1 : 0;
         }
         if (*bind_len >= CETTA_FLAT_JOIN_MAX_BINDS)
             return -1;
@@ -12903,7 +12910,7 @@ static int cetta_flat_join_bind(
         (*bind_len)++;
         return 1;
     }
-    return atom_eq(pattern_item, fact_item) ? 1 : 0;
+    return atom_eq_with_resolved_spaces(pattern_item, fact_item) ? 1 : 0;
 }
 
 static Atom *cetta_flat_join_resolve(
@@ -13216,7 +13223,7 @@ static int cetta_flat_row_match(
             Atom *expected = pattern->expr.elems[column];
             Atom *actual = fact->expr.elems[column];
             if (expected && actual && expected->kind != ATOM_VAR &&
-                !atom_has_vars(actual) && !atom_eq(expected, actual))
+                !atom_has_vars(actual) && !atom_eq_with_resolved_spaces(expected, actual))
                 return 0;
         }
         return -1;
@@ -13299,7 +13306,7 @@ static int cetta_pattern_row_refuted(const Atom *pattern, const Atom *fact,
     if (pattern->kind == ATOM_VAR || fact->kind == ATOM_VAR)
         return 0;
     if (!atom_has_vars((Atom *)pattern) && !atom_has_vars((Atom *)fact))
-        return !atom_eq((Atom *)pattern, (Atom *)fact);
+        return !atom_eq_with_resolved_spaces((Atom *)pattern, (Atom *)fact);
     if (pattern->kind != ATOM_EXPR || fact->kind != ATOM_EXPR)
         return pattern->kind != fact->kind;
     if (pattern->expr.len != fact->expr.len)
@@ -13320,7 +13327,7 @@ static int cetta_pattern_row_bind(Atom *pattern, Atom *fact,
     if (pattern->kind == ATOM_VAR)
         return cetta_flat_join_bind(binds, bind_len, pattern, fact);
     if (!atom_has_vars(pattern))
-        return atom_eq(pattern, fact) ? 1 : 0;
+        return atom_eq_with_resolved_spaces(pattern, fact) ? 1 : 0;
     if (pattern->kind != ATOM_EXPR || fact->kind != ATOM_EXPR ||
         pattern->expr.len != fact->expr.len)
         return 0;
@@ -13575,6 +13582,13 @@ bool space_native_flat_chain_aggregate(
             if (level > 0u) {
                 Atom *inbound = cetta_flat_bind_value(binds, bind_len,
                                                       keys[level - 1u]);
+                /* This table uses representation hashes. A resource key
+                 * needs matching in its selected view, so retain the
+                 * ordinary query fold instead of a negative hash lookup. */
+                if (inbound && !space_atom_is_exact_indexable(inbound)) {
+                    ok = false;
+                    break;
+                }
                 CettaChainEntry *entry = inbound
                     ? cetta_chain_message_find(&previous, inbound,
                                                atom_hash(inbound))
@@ -13604,7 +13618,7 @@ bool space_native_flat_chain_aggregate(
             }
             Atom *outbound = cetta_flat_bind_value(binds, bind_len,
                                                    keys[level]);
-            if (!outbound ||
+            if (!outbound || !space_atom_is_exact_indexable(outbound) ||
                 !cetta_chain_message_add(&current, outbound,
                                          atom_hash(outbound), count, sum))
                 ok = false;

@@ -216,3 +216,68 @@
      (let $left (new-state $left-leaf)
        (let $right (new-state $right-leaf)
          (DuplicatedDiamond (prime-need:observe-diamond $left $right))))))
+
+; A private payload interprets both stored handles and query handles in its
+; own Space view. Retrieval and literal matching recognize the same alias;
+; an unrelated empty Space stays distinct. Stored duplicates remain rows.
+!(let $cell (new-space)
+   (let $store (new-space)
+     (chain (add-atom $store $cell) $added
+       (prime-need:run-payload
+         (rho:eval-payload
+           (quote (Pair (collapse (match $store $cell Hit))
+                        (let $found (get-atoms $store) (== $found $cell)))){$store $cell})))))
+!(let $cell (new-space)
+   (let $other (new-space)
+     (let $store (new-space)
+       (chain (add-atom $store $cell) $added
+         (prime-need:run-payload
+           (rho:eval-payload
+             (quote (Pair (collapse (match $store $other Hit))
+                          (let $found (get-atoms $store) (== $found $other)))){$store $other}))))))
+!(let $cell (new-space)
+   (let $store (new-space)
+     (chain (add-atom $store (StoredResource $cell $cell)) $first
+       (chain (add-atom $store (StoredResource $cell $cell)) $second
+         (prime-need:run-payload
+           (rho:eval-payload
+             (quote (collapse (match $store (StoredResource $cell $cell) Hit))){$store $cell}))))))
+
+; Removing through that alias removes one actual private occurrence and
+; leaves the caller's store intact. Nodup observes the same resource view.
+!(let $cell (new-space)
+   (let $store (new-space)
+     (chain (add-atom $store $cell) $first
+       (chain (add-atom $store $cell) $second
+         (chain
+           (prime-need:run-payload
+             (rho:eval-payload
+               (quote (chain (remove-atom $store $cell) $removed
+                        (Pair (collapse (match $store $cell Hit)) (space-len $store)))){$store $cell}))
+           $inside (Pair $inside (space-len $store)))))))
+!(let $cell (new-space)
+   (let $other (new-space)
+     (let $store (new-space)
+       (chain (add-atom $store $cell) $added
+         (prime-need:run-payload
+           (rho:eval-payload
+             (quote (chain (add-atom-nodup $store $cell) $same
+                      (chain (space-len $store) $one
+                        (chain (add-atom-nodup $store $other) $different
+                          (Pair $one (space-len $store)))))){$store $cell $other}))))))
+
+; Local backend profiles preserve the same visible rows through private
+; read and mutation views, including a removed base row and a new local row.
+!(let $store (new-space)
+   (chain (add-atom $store (Row 1)) $one
+     (chain (add-atom $store (Row 2)) $two
+       (prime-need:run-payload
+         (rho:eval-payload (quote (collapse (get-atoms $store))){$store})))))
+!(let $store (new-space)
+   (chain (add-atom $store (Row 1)) $one
+     (chain (add-atom $store (Row 2)) $two
+       (chain (prime-need:run-payload
+         (rho:eval-payload (quote (chain (add-atom $store (Row 3)) $three
+           (chain (remove-atom $store (Row 1)) $gone
+             (collapse (get-atoms $store))))){$store})) $inside
+         (Pair $inside (collapse (get-atoms $store)))))))

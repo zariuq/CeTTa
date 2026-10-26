@@ -9,15 +9,6 @@
 
 /* ── Bindings ───────────────────────────────────────────────────────────── */
 
-/* Refutation requires an actual mismatch. Resource exhaustion, invalid
- * frame state and undecided cyclic/list meetings remain incomplete. The
- * same distinction applies when preparing a compatible binding image. */
-typedef enum {
-    CETTA_MATCH_INCOMPLETE,
-    CETTA_MATCH_REFUTED,
-    CETTA_MATCH_MATCHED,
-} CettaMatchCompletion;
-
 typedef enum {
     BINDING_VALUE_MATERIALIZED,
     BINDING_VALUE_CONTEXTUAL,
@@ -691,11 +682,15 @@ PrimeNeedReceipt          *bindings_receipt_mut(Bindings *b);
 uint64_t                  bindings_occurrence_token(const Bindings *b);
 bool                      bindings_refresh_occurrence_token(Bindings *b);
 bool                      bindings_prime_present(const Bindings *b);
-/* Copy both Prime components from src into dst (materializing dst's occurrence
+/* Copy the complete Prime product from src into dst (materializing dst's occurrence
  * only when src has present state; otherwise dst's occurrence is released). */
 void      bindings_prime_assign(Bindings *dst, const Bindings *src);
-/* Set dst's Prime components from explicit values (builder-trail restore, which
- * snapshots by value); clears dst's occurrence when both values are absent. */
+PrimeNeedReaderContext *bindings_reader_context_view(const Bindings *bindings);
+/* Replace only the reader ownership edge, retaining the supplied immutable
+ * context. Other Prime carriers keep their existing values. */
+void bindings_reader_context_set(Bindings *bindings, PrimeNeedReaderContext *context);
+/* Replace the explicit machine carriers and clear the reader context. Reader
+ * ownership is set separately; complete product copying uses prime_assign. */
 void      bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
                              const PrimeNeedBranchState *branch_state,
                              uint64_t occurrence_token,
@@ -851,6 +846,22 @@ bool      bindings_try_merge_live(Bindings *dst, const Bindings *src);
  * INCOMPLETE never licenses discarding a candidate or certifying absence. */
 CettaMatchCompletion bindings_try_merge_live_checked(
     Bindings *dst, const Bindings *src);
+/* Join one earned production into a reader's world, atomically. The source
+ * supplies its projected lexical/returned-value support, not unrelated caller
+ * bindings. Common/entrance are the actual cuts captured for this production;
+ * Need reads, State dependencies and factor order are checked together.
+ *
+ * The reader keeps its local history. The enclosing row retains the original
+ * producer provenance; the host may add a cached-observation link on acceptance.
+ * This does not flatten the producer's history into the reader's history.
+ * The host also retains payload/service owners and checks current authority.
+ * Neither REFUTED nor INCOMPLETE permits restarting an effectful source.
+ * out is initialized and changes only on MATCHED; aliasing recipient is valid. */
+CettaMatchCompletion bindings_import_production_checked(Arena *owner,
+    const PrimeNeedReadCapture *reads, uint64_t thunk_id,
+    const Bindings *common, const Bindings *entrance,
+    const Bindings *production, const Bindings *recipient,
+    PrimeNeedStateInitialValue initial_value, void *context, Bindings *out);
 bool      bindings_clone_merge(Bindings *dst, const Bindings *base,
                                const Bindings *extra);
 bool      bindings_contains_private_variant_slots(const Bindings *b);
@@ -1489,6 +1500,11 @@ bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_univers
 /* Alpha-equivalence on atoms: two atoms are equivalent up to a bijective
    renaming of variable names. */
 bool atom_alpha_eq(Atom *left, Atom *right);
+/* Allocation or malformed traversal is incomplete, never a refutation. */
+CettaMatchCompletion atom_alpha_eq_checked(Atom *left, Atom *right);
+/* The same variable-renaming relation with Space leaves read in the held
+ * evaluator view. Raw alpha equality remains the storage relation. */
+CettaMatchCompletion atom_alpha_eq_with_resolved_spaces_checked(Atom *left, Atom *right);
 /* Only variables in the listed activation frames may be renamed. Every
  * other variable, including a captured frame variable, remains rigid.
  * One call compares one whole observation with one bijection. */
@@ -1506,6 +1522,7 @@ bool bindings_eq(Bindings *a, Bindings *b);
  * The caller retains both images and separately qualifies their carriers.
  * Lookup may populate the ordinary binding indexes, as for bindings_eq. */
 bool bindings_capture_equal(Arena *arena, Bindings *left, Bindings *right);
+CettaMatchCompletion bindings_capture_equal_checked(Arena *arena, Bindings *left, Bindings *right);
 char *arena_tagged_var_name(Arena *a, const char *name, CettaFrameIdentity suffix);
 
 /* ── Loop-binding rejection (occurs check, HE spec metta.md line 435) ── */

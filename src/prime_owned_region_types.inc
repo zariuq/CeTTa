@@ -106,5 +106,6 @@ static void prime_native_acquired_operation_storage(const PrimeNativeAcquiredOpe
 static bool prime_native_acquired_receiver_admitted(const PrimeNativeAcquiredOperation *operation,
     const struct PrimeNativeControl *control);
 static bool prime_native_acquired_resume_nested(struct PrimeEvalStackFrame *frame);
+static bool prime_native_region_primitive(SymbolId head);
 static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena,
     Atom *call, bool private_data);

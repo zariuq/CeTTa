@@ -117,7 +117,7 @@ static bool parent_copy_equation_shell(PrimeParentCopy *copy,
     if (!source) return true;
     /* Ordered resident cohorts are an inline stack owner until their source
      * closes. Their ancestor edge is not a relocatable native parent edge. */
-    if (source->cohort_owner)
+    if (source->cohort_owner || source->independent_readers)
         return parent_copy_refuse(copy,"EquationCohortOwner");
     if (source->work.len > source->work_meta_cap ||
         (source->work.len && !source->work_meta))
@@ -153,7 +153,7 @@ static bool parent_copy_frame_shells(PrimeParentCopy *copy,
     PrimeEvalStackFrame **tail=out;
     for(;source;source=source->control_next) {
         if(source->control_retired!=retired) return parent_copy_refuse(copy,"FrameMembership");
-        if(!retired && (source->native_service || source->capsule_search))
+        if(!retired && (source->native_service || source->capsule_search || source->call_force_reader))
             return parent_copy_refuse(copy,"FrameExternalOwner");
         PrimeEvalStackFrame *image=calloc(1u,sizeof(*image));
         if(!image)return parent_copy_refuse(copy,"Allocation");
@@ -170,6 +170,15 @@ static bool parent_copy_frame_shells(PrimeParentCopy *copy,
             outcome_set_init(&image->child);image->child_initialized=true;
             if(!parent_copy_register(copy,&parent_copy_outcome_kind,&source->child,&image->child,sizeof(OutcomeSet)))return false;
         }
+        if(source->force_pending_initialized) {
+            if(source->kind!=PRIME_EVAL_STACK_FRAME_FORCE || source->force_pending.len>1u ||
+                (source->force_pending.len && source->index>=source->child.len) ||
+                (source->force_pending_observed && !source->force_pending.len))
+                return parent_copy_refuse(copy,"ForcePendingExtent");
+            outcome_set_init(&image->force_pending);image->force_pending_initialized=true;
+            if(!parent_copy_register(copy,&parent_copy_outcome_kind,&source->force_pending,
+                &image->force_pending,sizeof(OutcomeSet)))return false;
+        } else if(source->force_pending_observed)return parent_copy_refuse(copy,"ForcePendingState");
         if(!parent_copy_equation_shell(copy,source->equation_search,&image->equation_search))return false;
     }
     return true;
@@ -380,6 +389,9 @@ static bool parent_copy_equation(PrimeParentCopy *copy,
     image->pending_plan_count=source->pending_plan_count;PC_ARRAY(image,source,pending_plan_indices,source->pending_plan_count);
     image->current_covered_by_match=source->current_covered_by_match;image->force_argument=source->force_argument;
     image->current_observation_fault=source->current_observation_fault;
+    image->current_fault=source->current_fault;
+    image->current_coverage_only=source->current_coverage_only;
+    image->independent_readers=source->independent_readers;
     image->root_atom_count=source->root_atom_count;PC_ARRAY(image,source,root_atoms,source->root_atom_count);
     for(size_t i=0u;i<image->root_atom_count;i++)if(!parent_copy_atom(copy,&image->root_atoms[i]))return false;
     image->result_contract_count=source->result_contract_count;
@@ -405,6 +417,7 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
     image->control_next=next;
     memset(&image->env,0,sizeof(image->env));image->env_initialized=false;
     memset(&image->child,0,sizeof(image->child));image->child_initialized=false;
+    memset(&image->force_pending,0,sizeof(image->force_pending));image->force_pending_initialized=false;
     image->equation_search=equation;image->match_rows=NULL;
     image->normalization_children=NULL;image->control_selection=NULL;image->control_child_bounds=NULL;
     image->dialect_source=NULL;image->control_return_advice=NULL;image->control_nested=NULL;
@@ -416,6 +429,9 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
         /* The registered embedded object's address stays fixed; an empty
          * OutcomeSet cannot be moved by copying its inline storage pointer. */
         (void)child;outcome_set_init(&image->child);image->child_initialized=true;
+    }
+    if(source->force_pending_initialized&&!source->control_retired) {
+        outcome_set_init(&image->force_pending);image->force_pending_initialized=true;
     }
     PrimeEvalStackFrame *continuation = NULL;
     /* continuation is the first member of a frame, as used by the ordinary
@@ -461,6 +477,8 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
     PC_ATOM(&image->control_nested_policy,bound_pattern);PC_ATOM(&image->control_nested_policy,bound_expression);
     if(source->env_initialized){image->env_initialized=true;if(!parent_copy_environment(copy,&image->env,&source->env))return false;}
     if(source->child_initialized&&!parent_copy_outcomes(copy,&source->child,&image->child))return false;
+    if(source->force_pending_initialized&&
+        !parent_copy_outcomes(copy,&source->force_pending,&image->force_pending))return false;
     /* Return scheduling belongs to each physical child occurrence. Preserve
      * the optional array and its links to this parent's existing advice graph,
      * including shared holders whose keys can change after the copy. */
@@ -562,7 +580,7 @@ static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
     /* These retained protocols have not supplied an injective transport
      * of their producer owners. A shallow copy would alias arrays
      * and copy a live mutex. Refuse before creating an image. */
-    if (source->need_claim_count || source->need_share_waiting) {
+    if (source->need_claim_count || source->need_share_waiting || source->owns_execution_episode) {
         if (refusal) *refusal = "RetainedProducerWorldTransport";
         return false;
     }

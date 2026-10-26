@@ -117,6 +117,7 @@ typedef struct PrimeNeedReadCapture PrimeNeedReadCapture;
 typedef struct PrimeNeedReadScope {
     PrimeNeedReadCapture *capture;
     struct PrimeNeedReadScope *previous;
+    bool resident_boundary;
 } PrimeNeedReadScope;
 
 PrimeNeedReadCapture *prime_need_read_capture_new(const PrimeNeedSnapshot *context,
@@ -125,8 +126,16 @@ void prime_need_read_capture_free(PrimeNeedReadCapture *capture);
 /* Freeze the currently earned support for a row. Subsequent reads cannot
  * mutate this copy. Payload ownership remains with the enclosing host. */
 PrimeNeedReadCapture *prime_need_read_capture_copy(const PrimeNeedReadCapture *capture);
+void prime_need_read_capture_storage(const PrimeNeedReadCapture *capture,CettaStorageCensus *census);
 bool prime_need_read_capture_complete(const PrimeNeedReadCapture *capture);
+/* The enclosing packet uses these exact captured cuts, including storage
+ * watermarks. A separately copied capture must travel with its mapped cuts. */
+bool prime_need_read_capture_has_cuts(const PrimeNeedReadCapture *capture,
+    const PrimeNeedSnapshot *context, const PrimeNeedSnapshot *entrance);
 void prime_need_read_scope_enter(PrimeNeedReadScope *scope, PrimeNeedReadCapture *capture);
+/* Physical execution in another resident records only that resident's reads.
+ * Successful qualified import propagates support in the recipient's world. */
+void prime_need_read_scope_enter_resident(PrimeNeedReadScope *scope,PrimeNeedReadCapture *capture);
 void prime_need_read_scope_leave(PrimeNeedReadScope *scope);
 
 /* Install an already-earned completion and its introduced cells in a
@@ -139,6 +148,9 @@ void prime_need_read_scope_leave(PrimeNeedReadScope *scope);
  * after the complete return has been accepted. Refusal leaves out unchanged.
  * An incomplete capture is never permission to reuse. */
 bool prime_need_snapshot_import_production(Arena *owner,
+    const PrimeNeedReadCapture *capture, const PrimeNeedSnapshot *production,
+    uint64_t thunk_id, const PrimeNeedSnapshot *recipient, PrimeNeedSnapshot *out);
+CettaMatchCompletion prime_need_snapshot_import_production_checked(Arena *owner,
     const PrimeNeedReadCapture *capture, const PrimeNeedSnapshot *production,
     uint64_t thunk_id, const PrimeNeedSnapshot *recipient, PrimeNeedSnapshot *out);
 
@@ -229,6 +241,69 @@ typedef struct {
  * requested. */
 typedef PrimeNeedBranchState PrimeNeedReceipt;
 
+/* Immutable branch-local reader values. Keys identify actual enclosing source
+ * calls. Values are immutable, independently held reader versions supplied by
+ * that call's owner. Retaining a value grants no invocation or world authority.
+ * The host serializes payload callbacks with their actual services. */
+typedef struct PrimeNeedReaderContext PrimeNeedReaderContext;
+typedef struct {
+    bool (*retain)(void *value);
+    void (*release)(void *value);
+    void (*storage)(const void *value, CettaStorageCensus *census);
+    bool (*payloads)(const void *value, AtomTreePredicate atoms,
+        bool (*cells)(const StateCell *, void *), void *context);
+    /* The selected operational cache makes this lookup metadata redundant in
+     * the exact supplied world. This grants no source exhaustion/cancellation
+     * or independent callable transport. Missing support keeps it live. */
+    CettaMatchCompletion (*settled)(const void *value,const PrimeNeedSnapshot *world);
+    /* An existing owner explicitly includes this arena in its lifetime.
+     * This permits internal relocation only, without retaining that owner,
+     * renewing invocation borrows or licensing an independent graph copy. */
+    bool (*lives_in)(const void *value,const Arena *arena);
+} PrimeNeedReaderValueOps;
+typedef struct {
+    void *value;
+    const PrimeNeedReaderValueOps *operations;
+} PrimeNeedReaderValue;
+void prime_need_reader_context_retain(PrimeNeedReaderContext *context);
+void prime_need_reader_context_release(PrimeNeedReaderContext *context);
+CettaMatchCompletion prime_need_reader_context_can_settle(const PrimeNeedReaderContext *,const PrimeNeedSnapshot *);
+/* Return a tombstoned descendant only when every live value is settled.
+ * The input and its outstanding source frontiers remain unchanged. */
+CettaMatchCompletion prime_need_reader_context_settle(const PrimeNeedReaderContext *,const PrimeNeedSnapshot *,PrimeNeedReaderContext **out);
+CettaMatchCompletion prime_need_reader_context_can_promote(const PrimeNeedReaderContext *,const PrimeNeedSnapshot *,const Arena *);
+CettaMatchCompletion prime_need_reader_context_promote(const PrimeNeedReaderContext *,const PrimeNeedSnapshot *,const Arena *,PrimeNeedReaderContext **out);
+bool prime_need_reader_context_values_absent(const PrimeNeedReaderContext *);
+bool prime_need_reader_context_lookup(const PrimeNeedReaderContext *context,
+    uint64_t key, PrimeNeedReaderValue *out);
+/* Visit live immutable entries without transferring ownership. The caller
+ * retains the context throughout; callbacks may build a distinct context,
+ * but cannot mutate or release this borrowed input. */
+CettaMatchCompletion prime_need_reader_context_visit(const PrimeNeedReaderContext *context,
+    CettaMatchCompletion (*visit)(uint64_t key,const PrimeNeedReaderValue *value,void *state),
+    void *state);
+/* NULL value removes a key. Only the newest values are held; version ancestry
+ * retains no payloads or producers. out owns a nullable context and changes
+ * only after complete preparation. Removing the last key preserves the empty
+ * version, so an older merge cannot resurrect its retired reader. */
+CettaMatchCompletion prime_need_reader_context_update(const PrimeNeedReaderContext *base,
+    uint64_t key, const PrimeNeedReaderValue *value, PrimeNeedReaderContext **out);
+/* An actual descendant wins over its ancestor. Incomparable versions may
+ * combine equal/disjoint entries; different values of one key refuse. */
+CettaMatchCompletion prime_need_reader_context_merge(const PrimeNeedReaderContext *left,
+    const PrimeNeedReaderContext *right, PrimeNeedReaderContext **out);
+/* Transport only reader entries changed/introduced after the actual source
+ * entrance. Preserve unrelated recipient entries; conflicting changes refuse.
+ * Already transported progress remains idempotent after later local updates.
+ * The host independently qualifies source inputs, services and authority. */
+CettaMatchCompletion prime_need_reader_context_import(const PrimeNeedReaderContext *entrance,
+    const PrimeNeedReaderContext *production, const PrimeNeedReaderContext *recipient,
+    PrimeNeedReaderContext **out);
+void prime_need_reader_context_storage(const PrimeNeedReaderContext *context,
+    CettaStorageCensus *census);
+bool prime_need_reader_context_payloads(const PrimeNeedReaderContext *context,
+    AtomTreePredicate atoms, bool (*cells)(const StateCell *, void *), void *state);
+
 /* Per-occurrence Prime contract carrier.
  *
  * A Bindings occurrence's operational state lives here, referenced from
@@ -241,6 +316,7 @@ typedef struct {
     PrimeNeedSnapshot prime_need;
     PrimeNeedBranchState branch_state;
     CettaWeightLedger weights;
+    PrimeNeedReaderContext *reader_context;
     /* Compact operational identity for one exact relational occurrence.
      * It preserves duplicate derivations when causal receipt observation is
      * absent; full rule-use evidence remains in `receipt` only when an
@@ -250,6 +326,14 @@ typedef struct {
     PrimeNeedReceipt  receipt;
 #endif
 } PrimeOccurrence;
+
+/* copy initializes a new carrier; assign/clear operate on initialized ones.
+ * Persistent machine carriers remain borrowed under their existing arena
+ * contracts; the immutable reader context is a separately held ownership edge. */
+void prime_occurrence_init(PrimeOccurrence *occurrence);
+void prime_occurrence_copy(PrimeOccurrence *out, const PrimeOccurrence *source);
+void prime_occurrence_assign(PrimeOccurrence *out, const PrimeOccurrence *source);
+void prime_occurrence_clear(PrimeOccurrence *occurrence);
 
 /* Scope entry refreshes the linked evaluator and binding operations. */
 void prime_need_observation_policy_changed(void);
@@ -563,8 +647,44 @@ bool prime_need_branch_state_write(
  * The caller retains the immutable state and all its payload owners. */
 bool prime_need_branch_state_lookup(
     const PrimeNeedBranchState *state, StateCell *cell, Atom **out_value);
+CettaMatchCompletion prime_need_branch_state_lookup_checked(
+    const PrimeNeedBranchState *state, StateCell *cell, Atom **out_value);
+/* Agreement of canonical write occurrences/payloads and their causal order
+ * for one selected cell. Unrelated cells and equal commuting read additions
+ * do not distinguish the inputs. ABA writes do. Both held DAGs are validated;
+ * malformed/cyclic or unavailable inspection is INCOMPLETE, not disagreement.
+ * This does not compare the selected/frozen initial values or grant lifetime. */
+CettaMatchCompletion prime_need_branch_state_same_writes_checked(
+    const PrimeNeedBranchState *left,const PrimeNeedBranchState *right,StateCell *cell);
 bool prime_need_branch_state_value(
     const PrimeNeedBranchState *state, StateCell *cell, Atom **out_value);
+
+/* Resolve a held resource's selected initial value, only after lookup has
+ * proved that no operational overlay supplies it. This is a passive read
+ * in the caller's captured world; it must not consult an unrelated ambient
+ * world or acquire authority. Failure leaves the answer unpublished. */
+typedef CettaMatchCompletion (*PrimeNeedStateInitialValue)(
+    void *context, StateCell *cell, Atom **out_value);
+
+/* Graft actual post-entrance events onto a recipient of the common call.
+ * All four carriers belong to that call's already-begun State session.
+ * Preserve canonical event occurrences and source causal joins while giving
+ * imported physical records fresh identities. Earlier unrelated producer
+ * state stays outside the cut; the recipient retains its own state.
+ *
+ * The admitted four-cut profile requires preceding source writes on observed
+ * cells to be held, and refuses competing recipient writes since common on
+ * those cells, including ABA. Reusing an entirely
+ * held suffix is idempotent even after later recipient writes. A partial
+ * held suffix must be causally closed. The host separately qualifies Need,
+ * weights, logical support and current resource authority before committing
+ * the whole packet. Neither refusal status grants another source execution.
+ * Source payload/resource owners remain held throughout preparation; out is
+ * written only on MATCHED. */
+CettaMatchCompletion prime_need_branch_state_import_suffix(Arena *owner,
+    const PrimeNeedBranchState *common, const PrimeNeedBranchState *entrance,
+    const PrimeNeedBranchState *production, const PrimeNeedBranchState *recipient,
+    PrimeNeedStateInitialValue initial_value, void *context, PrimeNeedBranchState *out);
 
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 typedef struct {

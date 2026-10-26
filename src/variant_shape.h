@@ -69,6 +69,7 @@ void variant_shape_free(VariantShape *shape);
 
 void variant_bank_init(VariantBank *bank, CettaVariantShapeOptions options);
 void variant_bank_free(VariantBank *bank);
+void variant_bank_storage_census(const VariantBank *bank, CettaStorageCensus *census);
 
 bool variant_shape_from_atom(VariantBank *bank, Atom *src, VariantShape *out);
 bool variant_shape_from_bound_atom(VariantBank *bank, const Bindings *env,

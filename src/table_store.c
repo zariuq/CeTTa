@@ -23,6 +23,20 @@ struct TableStoreEntry {
     TableStoredAnswers results;
 };
 
+void table_store_storage_census(const TableStore *store, CettaStorageCensus *census) {
+    if (!store || !cetta_storage_object(census, store, 0u, CETTA_STORAGE_VISITED)) return;
+    cetta_storage_array(census, store->entries, store->cap, sizeof(*store->entries), 0u);
+    if (store->len > store->cap || (store->len && !store->entries))
+        {cetta_storage_refuse(census, "TableStoreExtent");return;}
+    for (uint32_t i=0u;i<store->len;i++) {
+        const TableStoreEntry *entry=&store->entries[i];
+        arena_storage_census(&entry->arena, census);
+        cetta_storage_array(census, entry->results.items, entry->results.cap,
+            sizeof(*entry->results.items), 0u);
+        if(entry->results.len > entry->results.cap) cetta_storage_refuse(census, "TableAnswerExtent");
+    }
+}
+
 typedef struct {
     TableStoreEntry *exact;
     TableStoreEntry *reusable;

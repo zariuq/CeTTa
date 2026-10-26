@@ -3,6 +3,12 @@
 #include <stdio.h>
 #include <string.h>
 
+void variant_bank_storage_census(const VariantBank *bank, CettaStorageCensus *census) {
+    if (!bank || !cetta_storage_object(census, bank, 0u, CETTA_STORAGE_VISITED)) return;
+    arena_storage_census(&bank->arena, census);
+    hashcons_storage_census(&bank->hashcons, census);
+}
+
 typedef struct {
     CettaVarMap *src_to_slot;
     CettaVarMap *slot_to_src;

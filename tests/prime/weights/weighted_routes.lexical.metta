@@ -13,5 +13,5 @@
                   (Route a $mid d) (where $second-grade)){$mid}))
 
 !(weight:read (algebra 0 1 + *) (routes))
-!(select 7 (search-policy (control FIFO (budget 2000) (workers 2)))
+!(select 7 (search-policy (control FIFO (budget 8192) (workers 2)))
    (weight:read (algebra 0 1 + *) (routes)))

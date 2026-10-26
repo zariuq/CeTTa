@@ -2900,8 +2900,7 @@ static bool rho_state_source_descriptor(const RhoStateCloneMap *map,StateCell *c
     return true;
 }
 
-/* Add `orig` to the map (deduped), creating its copy-on-write overlay.  Returns
- * false only on allocation failure or if the map is full. */
+/* Add `orig` to the map (deduped), creating its copy-on-write overlay. */
 static bool rho_overlay_map_bind_pair(RhoOverlayMap *map,Space *orig,Space *overlay);
 
 static bool rho_overlay_map_add(RhoOverlayMap *map, Space *orig) {
@@ -2918,7 +2917,10 @@ static bool rho_overlay_map_add(RhoOverlayMap *map, Space *orig) {
     ov = cetta_malloc(sizeof(Space));
     if (!ov)
         return false;
-    space_init_overlay(ov, visible);
+    if (!space_init_overlay_local(ov, visible)) {
+        free(ov);
+        return false;
+    }
     if (!eval_payload_track_scratch_space(ov)) {
         space_free(ov);
         free(ov);
