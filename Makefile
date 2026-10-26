@@ -34209,6 +34209,16 @@ $(TEXT_STREAMING_NATIVE_TEST_V1): tests/support/test_text_streaming_v1.c src/str
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_text_streaming_v1.c src/str_stream.c src/str_natives.c src/string_ops.c src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(LDFLAGS) -Wl,--gc-sections
 
+FORMAT_FIXED_NATIVE_TEST_V1 = runtime/test-format-fixed-bound-v1-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats)
+$(FORMAT_FIXED_NATIVE_TEST_V1): tests/support/test_format_fixed_bound_v1.c src/str_stream.c src/str_stream.h src/str_natives.c src/string_ops.c src/utf8.h src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) src/stats.h $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_format_fixed_bound_v1.c src/str_stream.c src/str_natives.c src/string_ops.c src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(LDFLAGS) -Wl,--gc-sections,--wrap=snprintf,--wrap=__snprintf_chk
+
+.PHONY: test-format-fixed-v1
+test-all: test-format-fixed-v1
+test-format-fixed-v1: $(FORMAT_FIXED_NATIVE_TEST_V1)
+	@$(call cetta_exec,./$(FORMAT_FIXED_NATIVE_TEST_V1))
+
 .PHONY: test-text-streaming-v1
 test-all: test-text-streaming-v1
 test-text-streaming-v1: $(BIN) $(TEXT_STREAMING_NATIVE_TEST_V1) tests/support/check_text_streaming_v1.py
