@@ -9,6 +9,10 @@ back raw by the engine and parsed. A value must equal json.loads's, compared
 through json.dumps of both; an error must have the same exception class and
 str(). Python texts also round-trip through str:python-codepoints and
 str:from-python-codepoints.
+
+The oracle is CPython 3.12, whose json the engine follows. Under another
+Python the error messages are not compared (3.13 words trailing-comma errors
+differently), only values and exception classes, and the summary says so.
 """
 import argparse
 import json
@@ -18,6 +22,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+FULL = sys.version_info[:2] == (3, 12)
 
 POOL = list(' \t\n\r{}[],:"\\/-+.0123456789eEnulltruefalseNaNInfinityabcuU') + \
     ["\\u", "\\ud800", "\\udbff", "\\udc00", "\\udfff", "\\ud83d\\ude00", "\\u0000", "\\uZZZZ",
@@ -92,9 +98,9 @@ def python_result(text):
     try:
         return ("OK", json.dumps(json.loads(text)))
     except json.JSONDecodeError as error:
-        return ("ERR", "JSONDecodeError", str(error))
+        return ("ERR", "JSONDecodeError", str(error))[:3 if FULL else 2]
     except ValueError as error:
-        return ("ERR", "ValueError", str(error))
+        return ("ERR", "ValueError", str(error))[:3 if FULL else 2]
 
 
 def unescape(literal):
@@ -153,7 +159,7 @@ def main():
         ok = re.fullmatch(r'\(OK "(.*)"\)', line)
         err = re.fullmatch(r'\(ERR (\w+) "(.*)"\)', line)
         got = ("OK", unescape(ok.group(1))) if ok else \
-              ("ERR", err.group(1), unescape(err.group(2))) if err else ("OTHER", line)
+              ("ERR", err.group(1), unescape(err.group(2)))[:len(want)] if err else ("OTHER", line)
         if got != want:
             failures.append((text, got, want))
     for codes, line in zip(lists, texts_out):
@@ -163,8 +169,9 @@ def main():
             failures.append((codes, line, want))
     for text, got, want in failures[:12]:
         print("MISMATCH %r\n  engine %r\n  python %r" % (text, got, want))
-    print("json-python-parse: %d documents and %d code-point texts, %d mismatches"
-          % (len(texts), len(lists), len(failures)))
+    oracle = "" if FULL else " (Python %d.%d: error classes compared, not messages)" % sys.version_info[:2]
+    print("json-python-parse: %d documents and %d code-point texts, %d mismatches%s"
+          % (len(texts), len(lists), len(failures), oracle))
     return 1 if failures else 0
 
 

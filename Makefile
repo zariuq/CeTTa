@@ -47855,6 +47855,8 @@ else
 		test-petta-oem-sealed-continuation-stats
 endif
 
+# json:parse-python follows the CPython the engine is built against.
+JSON_PYTHON_ORACLE = $(firstword $(wildcard $(patsubst %-config,%,$(PYTHON_CONFIG))) python3)
 .PHONY: test-json-gslt-library-body
 test-json-gslt-library-body: $(BIN) \
 		lib/json.metta lib/petta/json.metta lib/prime/json.metta \
@@ -47913,7 +47915,7 @@ test-json-gslt-library-body: $(BIN) \
 	python3 tests/test_json_deep_v1.py "$(BIN)"; \
 	python3 tests/support/check_json_workflows_v1.py --cetta "$(BIN)"; \
 	python3 tests/support/check_json_python_emission_v1.py --cetta "$(BIN)"; \
-	python3 tests/support/check_json_python_parse_v1.py --cetta "$(BIN)"; \
+	$(JSON_PYTHON_ORACLE) tests/support/check_json_python_parse_v1.py --cetta "$(BIN)"; \
 	echo "(JsonGsltLibrarySummary 25 25 0)"
 
 .PHONY: test-json-gslt-library
