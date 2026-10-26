@@ -105,6 +105,23 @@
 ; received; while max-message-bytes of them wait, the connection reads nothing
 ; more. A longer message closes the connection with 1009, a binary one with
 ; 1003, text that is not UTF-8 with 1007.
+;
+; WebSocket listeners, each operation one request:
+; (ws:listen host port max-message-bytes max-connections idle-ms) listens (port 0
+; picks a free one) and completes (ws:listening LISTENER PORT), the listener named
+; by this request's ID, or (ws:listen-failed LISTENER TEXT). (ws:accept LISTENER)
+; completes (ws:accepted CONN TARGET PEER ((NAME VALUE) ...)) with a connection,
+; named by this request's ID, whose client finished the opening handshake: the
+; request target, the client's address and port, and its header fields, names
+; in lowercase. The connection takes ws:receive, ws:send and ws:close as above.
+; A cancelled accept leaves its connection to the next one. (ws:stop LISTENER)
+; stops listening and completes (ws:stopped LISTENER), as do the accepts still
+; waiting; accepted connections stay open. A client's frames must be masked and
+; keep to the protocol, or the connection closes with 1002. When nothing has
+; arrived for idle-ms a connection sends a ping, and when nothing has arrived
+; for twice that it ends (ws:closed CONN 1006 TEXT); the handshake must also
+; finish within idle-ms. idle-ms 0 means neither. While max-connections are
+; open, further clients wait for one to end. TLS belongs in a proxy in front.
 
 (= (http:get $url)
    (io:submit (http:request "GET" $url () "" 30000 8388608)))

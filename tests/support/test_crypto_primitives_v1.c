@@ -3,7 +3,10 @@
  * 2.4.2), and from the NIP-44 v2 vectors the padding table, every message-key
  * derivation and one payload, which must encrypt byte for byte, decrypt, and
  * refuse each tampered byte.  Base64 decoding must accept and refuse what
- * Python's b64decode(validate=True) does. */
+ * Python's b64decode(validate=True) does.  SHA-1 (FIPS 180-4 examples, and
+ * lengths around its padding boundaries, from Python's hashlib) gives the
+ * same digest however its input is split, and the Sec-WebSocket-Accept of
+ * RFC 6455's example. */
 #include "crypto_primitives.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -184,6 +187,59 @@ static void nip44_cases(void) {
                                      &plain_length) == CETTA_NIP44_INVALID_PAYLOAD_SIZE);
 }
 
+static void sha1_cases(void) {
+    static const struct { const char *text; const char *digest; } examples[] = {
+        {"", "da39a3ee5e6b4b0d3255bfef95601890afd80709"},
+        {"abc", "a9993e364706816aba3e25717850c26c9cd0d89d"},
+        {"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq", "84983e441c3bd26ebaae4aa1f95129e5e54670f1"},
+        {"The quick brown fox jumps over the lazy dog", "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12"},
+    };
+    uint8_t out[20], again[20];
+    for (size_t i = 0u; i < sizeof(examples) / sizeof(*examples); i++) {
+        const uint8_t *parts[1] = {(const uint8_t *)examples[i].text};
+        size_t lengths[1] = {strlen(examples[i].text)};
+        cetta_crypto_sha1(parts, lengths, 1u, out);
+        check(equal_hex(out, 20u, examples[i].digest));
+    }
+    /* Bytes (7i + 3) mod 256, cut at lengths around the 56- and 64-byte
+     * boundaries of the padding. */
+    static const struct { size_t length; const char *digest; } boundaries[] = {
+        {55u, "ddf57317ef34bfee3b6df83d359098930eb278bc"}, {56u, "a0d492bb0fc889d0eca3bc137066ab6f4f74f369"},
+        {63u, "c55856749bef509bdfe6bfebfc7bf4e793e82132"}, {64u, "bede92be29c3874e1b54ddc77988d606fc857a8e"},
+        {65u, "b05a80522b053d6dc7e0a517d0e70212c7dad11f"}, {119u, "504e27376a6e0f0dba8295b85cb25dc4dfa17d23"},
+        {120u, "82134b02fb3f702491be9bed581eeab59334acb2"}, {128u, "a09133e6730ffe899efb70204cb5646cd5dc24ee"},
+    };
+    uint8_t pattern[200];
+    for (size_t i = 0u; i < sizeof(pattern); i++) pattern[i] = (uint8_t)((7u * i + 3u) % 256u);
+    for (size_t i = 0u; i < sizeof(boundaries) / sizeof(*boundaries); i++) {
+        size_t n = boundaries[i].length;
+        const uint8_t *whole[1] = {pattern};
+        cetta_crypto_sha1(whole, &n, 1u, out);
+        check(equal_hex(out, 20u, boundaries[i].digest));
+        for (size_t cut = 0u; cut <= n; cut += 7u) {
+            const uint8_t *parts[3] = {pattern, pattern + cut, pattern + n};
+            size_t lengths[3] = {cut, n - cut, 0u};
+            cetta_crypto_sha1(parts, lengths, 3u, again);
+            check(!memcmp(out, again, sizeof(out)));
+        }
+    }
+    uint8_t *million = malloc(1000000u);
+    check(million != NULL);
+    memset(million, 'a', 1000000u);
+    const uint8_t *parts[1] = {million};
+    size_t lengths[1] = {1000000u};
+    cetta_crypto_sha1(parts, lengths, 1u, out);
+    check(equal_hex(out, 20u, "34aa973cd4c4daa4f61eeb2bdbad27316534016f"));
+    free(million);
+    static const char key[] = "dGhlIHNhbXBsZSBub25jZQ==", guid[] = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+    const uint8_t *handshake[2] = {(const uint8_t *)key, (const uint8_t *)guid};
+    size_t handshake_lengths[2] = {sizeof(key) - 1u, sizeof(guid) - 1u};
+    char accept[32];
+    cetta_crypto_sha1(handshake, handshake_lengths, 2u, out);
+    cetta_crypto_base64_encode(out, sizeof(out), accept);
+    check(!strcmp(accept, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+}
+
 /* Python's b64decode(validate=True), in Python 3.12 and 3.13. */
 static void base64_cases(void) {
     static const struct { const char *text; const char *bytes; } accepted[] = {
@@ -223,6 +279,7 @@ int main(void) {
     chacha_cases();
     nip44_cases();
     base64_cases();
+    sha1_cases();
     entropy_cases();
     printf("crypto primitives: %u checks\n", checks);
     return 0;

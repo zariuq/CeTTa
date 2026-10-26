@@ -823,7 +823,7 @@ SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/petta_contract_core.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
-SRC += src/library_io.c src/library_cwp.c src/library_proc_run.c src/library_sqlite.c src/proc_owner.c src/http_worker.c src/ws_client.c src/telegram_transport.c src/library_durable.c
+SRC += src/library_io.c src/library_cwp.c src/library_proc_run.c src/library_sqlite.c src/proc_owner.c src/http_worker.c src/ws.c src/telegram_transport.c src/library_durable.c
 SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/host_notice.c
 SRC += $(SIWC_SRC)
 SRC += $(JSON_GSLT_RUNTIME_SRC)
@@ -34254,13 +34254,15 @@ test-all: test-toml-v1
 test-toml-v1: $(BIN) tests/support/check_toml_v1.py
 	@python3 tests/support/check_toml_v1.py ./$(BIN)
 
-# The server side needs Python's websockets package; without it the check
-# reports a skip.
+# Both WebSocket checks need Python's websockets package, as the server for
+# the client and as clients for the listener; without it they report a skip.
 WEBSOCKET_TEST_PYTHON ?= python3
-.PHONY: test-io-websocket-v1
-test-all: test-io-websocket-v1
+.PHONY: test-io-websocket-v1 test-io-websocket-server-v1
+test-all: test-io-websocket-v1 test-io-websocket-server-v1
 test-io-websocket-v1: $(BIN) tests/support/check_io_websocket_v1.py
 	@$(WEBSOCKET_TEST_PYTHON) tests/support/check_io_websocket_v1.py ./$(BIN)
+test-io-websocket-server-v1: $(BIN) tests/support/check_io_websocket_server_v1.py
+	@$(WEBSOCKET_TEST_PYTHON) tests/support/check_io_websocket_server_v1.py ./$(BIN)
 
 .PHONY: test-filesystem-core-v1 test-filesystem-core-body-v1
 test-filesystem-core-v1:

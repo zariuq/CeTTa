@@ -37,6 +37,65 @@ bool cetta_crypto_entropy(uint8_t *out, size_t length) {
 #endif
 }
 
+static uint32_t rotate_left(uint32_t value, unsigned bits) {
+    return value << bits | value >> (32u - bits);
+}
+
+static void sha1_block(uint32_t state[5], const uint8_t block[64]) {
+    uint32_t w[80];
+    for (unsigned i = 0u; i < 16u; i++)
+        w[i] = (uint32_t)block[4u * i] << 24 | (uint32_t)block[4u * i + 1u] << 16 |
+               (uint32_t)block[4u * i + 2u] << 8 | block[4u * i + 3u];
+    for (unsigned i = 16u; i < 80u; i++) w[i] = rotate_left(w[i - 3u] ^ w[i - 8u] ^ w[i - 14u] ^ w[i - 16u], 1u);
+    uint32_t a = state[0], b = state[1], c = state[2], d = state[3], e = state[4];
+    for (unsigned i = 0u; i < 80u; i++) {
+        uint32_t f, k;
+        if (i < 20u) { f = (b & c) | (~b & d); k = 0x5a827999u; }
+        else if (i < 40u) { f = b ^ c ^ d; k = 0x6ed9eba1u; }
+        else if (i < 60u) { f = (b & c) | (b & d) | (c & d); k = 0x8f1bbcdcu; }
+        else { f = b ^ c ^ d; k = 0xca62c1d6u; }
+        uint32_t t = rotate_left(a, 5u) + f + e + k + w[i];
+        e = d;
+        d = c;
+        c = rotate_left(b, 30u);
+        b = a;
+        a = t;
+    }
+    state[0] += a;
+    state[1] += b;
+    state[2] += c;
+    state[3] += d;
+    state[4] += e;
+}
+
+void cetta_crypto_sha1(const uint8_t *const *parts, const size_t *lengths, size_t count,
+                       uint8_t out[20]) {
+    uint32_t state[5] = {0x67452301u, 0xefcdab89u, 0x98badcfeu, 0x10325476u, 0xc3d2e1f0u};
+    uint8_t block[64];
+    size_t used = 0u;
+    uint64_t total = 0u;
+    for (size_t p = 0u; p < count; p++) {
+        for (size_t i = 0u; i < lengths[p]; i++) {
+            block[used++] = parts[p][i];
+            if (used == sizeof(block)) {
+                sha1_block(state, block);
+                used = 0u;
+            }
+        }
+        total += lengths[p];
+    }
+    block[used++] = 0x80u;
+    if (used > 56u) {
+        memset(block + used, 0, sizeof(block) - used);
+        sha1_block(state, block);
+        used = 0u;
+    }
+    memset(block + used, 0, 56u - used);
+    for (unsigned i = 0u; i < 8u; i++) block[56u + i] = (uint8_t)(total * 8u >> (56u - 8u * i));
+    sha1_block(state, block);
+    for (unsigned i = 0u; i < 20u; i++) out[i] = (uint8_t)(state[i / 4u] >> (24u - 8u * (i % 4u)));
+}
+
 void cetta_crypto_hmac_sha256(const uint8_t *key, size_t key_len,
                               const uint8_t *const *parts, const size_t *lengths,
                               size_t count, uint8_t out[32]) {

@@ -5,7 +5,8 @@
 #include <stdint.h>
 
 /* NIP-44 v2 and the primitives under it, on bytes, as the NIP specifies
- * them.  No engine types: lib/crypto (library_crypto.c) and the native unit
+ * them, and SHA-1 for the WebSocket opening handshake.  No engine types:
+ * lib/crypto (library_crypto.c), the WebSocket listener and the native unit
  * test share these. */
 
 void cetta_crypto_wipe(void *bytes, size_t length);
@@ -15,6 +16,11 @@ bool cetta_crypto_entropy(uint8_t *out, size_t length);
 void cetta_crypto_hmac_sha256(const uint8_t *key, size_t key_len,
                               const uint8_t *const *parts, const size_t *lengths,
                               size_t count, uint8_t out[32]);
+/* SHA-1 (FIPS 180-4) of the concatenation of `count` parts.  RFC 6455 names
+ * it for Sec-WebSocket-Accept, which needs no collision resistance; nothing
+ * else should use it. */
+void cetta_crypto_sha1(const uint8_t *const *parts, const size_t *lengths, size_t count,
+                       uint8_t out[20]);
 /* ChaCha20 (RFC 8439) with a 32-bit block counter and a 96-bit nonce. */
 void cetta_crypto_chacha20(const uint8_t key[32], const uint8_t nonce[12],
                            uint32_t counter, const uint8_t *in, uint8_t *out,
