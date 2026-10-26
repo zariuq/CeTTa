@@ -48524,7 +48524,7 @@ VALUE_WORKER_OBJ = runtime/bootstrap/value-worker.$(BUILD_OBJ_TAG).o
 $(VALUE_WORKER_OBJ): src/value_worker_main.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
-$(VALUE_WORKER_BIN): $(VALUE_WORKER_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+$(VALUE_WORKER_BIN): $(VALUE_WORKER_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 value-worker: $(VALUE_WORKER_BIN)
 	@echo "Built $(VALUE_WORKER_BIN)"

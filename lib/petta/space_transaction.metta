@@ -49,7 +49,7 @@
          (let $all (union-atom $accumulated $page-rows)
            (if $done (SpaceRows $all) (space-tx:pages $socket $snapshot $next $count $all)))))
       ((reply $rid error page-byte-limit)
-        (if (> $count 1) (space-tx:pages $socket $snapshot $offset (div $count 2) $accumulated)
+        (if (> $count 1) (space-tx:pages $socket $snapshot $offset (/ (- $count (% $count 2)) 2) $accumulated)
           (reply $rid error page-byte-limit))) ($failed $failed))))
 
 (: space-tx:covered (-> Atom Atom %Undefined%))
@@ -153,7 +153,7 @@
          (if $done (SpaceRows $all)
            (space-scope:pages $socket $ticket $scope $next $count $all))))
       ((reply $rid error page-byte-limit)
-        (if (> $count 1) (space-scope:pages $socket $ticket $scope $offset (div $count 2) $collected)
+        (if (> $count 1) (space-scope:pages $socket $ticket $scope $offset (/ (- $count (% $count 2)) 2) $collected)
           (reply $rid error page-byte-limit)))
       ($failed $failed))))
 

@@ -3,6 +3,8 @@
 #include "cetta_stdlib.h"
 #include "eval.h"
 #include "library.h"
+#include "parser.h"
+#include "petta_compiled_reader.h"
 #include "symbol.h"
 #include <errno.h>
 #include <signal.h>
@@ -73,6 +75,24 @@ int main(int argc, char **argv) {
     cetta_library_set_top_module_registry(libraries, &registry);
     Atom *error = NULL;
     int rc = 1;
+    PeTTaCompiledReaderV1 *source_reader = NULL;
+    if (language == CETTA_LANGUAGE_PETTA) {
+        /* Use the CLI's reader for every imported source and term. The
+         * generic HE reader gives PeTTa truth literals a different value
+         * representation from the one its comparison builtins produce. */
+        bool lists = cetta_language_reads_lists(language, worker_profile);
+        parser_set_rational_literals_enabled(true);
+        parser_set_list_syntax_enabled(lists);
+        parser_set_namespace_sugar_enabled(true);
+        source_reader = lists ? petta_compiled_reader_v1_new_with_lists()
+                              : petta_compiled_reader_v1_new();
+        char reason[512] = {0};
+        if (!source_reader || !petta_compiled_reader_v1_prepare(source_reader, reason, sizeof(reason)) ||
+            !petta_compiled_reader_v1_install(source_reader)) {
+            fprintf(stderr, "worker: PeTTa source reader unavailable: %s\n", reason);
+            goto done;
+        }
+    }
     if (language != CETTA_LANGUAGE_PETTA) {
         stdlib_load(&top, &permanent);
         if (language == CETTA_LANGUAGE_PRIME)
@@ -153,6 +173,8 @@ int main(int argc, char **argv) {
         if (!valid) break;
     }
 done:
+    parser_clear_document_ids_backend(source_reader);
+    petta_compiled_reader_v1_free(source_reader);
     /* The worker has no separate registry-space sweep. Drain all tracked
      * new-space owners here, including the ones still bound in the registry. */
     eval_cleanup_owned_new_spaces(NULL, &top);

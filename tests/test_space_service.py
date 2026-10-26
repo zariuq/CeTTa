@@ -794,6 +794,7 @@ class ServiceTests(unittest.TestCase):
         module = self.fixture.root / "transactions.metta"
         module.write_text('''!(import! &self (library space_transaction))
 !(import! &self (library io))
+!(import! &self (library str))
 (: transaction-test (-> %Undefined% %Undefined%))
 (= (transaction-test (observe $socket $space $reads $writes $limit))
    (space:observe $socket $space $reads $writes $limit 60000))
@@ -814,10 +815,42 @@ class ServiceTests(unittest.TestCase):
 (= (transaction-test (cancel $id)) (io:cancel $id))
 (= (transaction-test (publish $socket $transaction $id $result $operations))
    (space:publish $socket $transaction $id $result $operations))
+(= (transaction-test (large-read $socket $space $scoped))
+   (let $answer (if $scoped
+       (space:observe-scoped $socket $space ((scope "large" (Large $id $body))) () 8 60000)
+       (space:observe $socket $space ((scope "large" (Large $id $body) (Large $id $body))) () 8 60000))
+     (case $answer
+       (((SpaceScopedObserved $handle $ticket $reads $writes $results)
+          (let $closed (space:abort $socket $answer) (space-test:summary $results)))
+        ((SpaceObserved $handle $reads $writes $results) (space-test:summary $results))
+        ($failed $failed)))))
+(= (space-test:summary ((SpaceRead "large" $rows)))
+   (let (Large $id $body) (car-atom $rows) (ObservedRows (size-atom $rows) (str:byte-length $body))))
 ''')
         worker = Worker(WORKER, module, "transaction-test", language="petta")
         self.addCleanup(worker.close)
         return worker
+
+    @unittest.skipUnless(WORKER and CETTA, "provide native worker and CLI")
+    def test_petta_worker_and_cli_share_source_truth_and_callback_semantics(self):
+        module = self.fixture.root / "reader-parity.metta"
+        source = '''!(import! &self (library rel))
+(= (reader-check:less $left $right) (< (index-atom $left 0) (index-atom $right 0)))
+(= (reader-check $items)
+   (let $ordered (rel:order reader-check:less $items)
+     (case (< 1 2) ((True (Verified $ordered)) (False (Wrong $ordered))))))
+'''
+        module.write_text(source)
+        worker = Worker(WORKER, module, "reader-check", language="petta")
+        self.addCleanup(worker.close)
+        expected = E("Verified", ((1, "a"), (1, "b"), (2, "c")))
+        self.assertEqual(worker.call(((2, "c"), (1, "a"), (1, "b"))), expected)
+        cli = self.fixture.root / "reader-parity-cli.metta"
+        cli.write_text(source+'!(reader-check ((2 "c") (1 "a") (1 "b")))\n')
+        result = subprocess.run([CETTA, "--lang", "petta", "--quiet", str(cli)],
+                                cwd=ROOT, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip().splitlines()[-1], '(Verified ((1 "a") (1 "b") (2 "c")))')
 
     @unittest.skipUnless(WORKER, "provide value worker for MeTTa transactions")
     def test_metta_observation_preserves_pages_and_negative_dependencies(self):
@@ -899,6 +932,16 @@ class ServiceTests(unittest.TestCase):
             result = worker.call(E("observe", self.fixture.socket, space.describe(), reads, (), 2))
             self.assertEqual(result[0], S("SpaceObserved"))
             self.assertEqual(result[4], (E("SpaceRead", "items", (1, 2)),))
+
+    @unittest.skipUnless(WORKER, "provide value worker for adaptive pages")
+    def test_metta_large_pages_reduce_size_and_keep_the_complete_result(self):
+        worker = self.transaction_worker()
+        space = self.client.open("adaptive-pages", "native-ordered")
+        for number in range(4):
+            space.add(E("Large", number, "x"*270000))
+        for scoped in (False, True):
+            self.assertEqual(worker.call(E("large-read", self.fixture.socket, space.describe(), scoped)),
+                             E("ObservedRows", 4, 270000))
 
     @unittest.skipUnless(WORKER, "provide value worker for durable application receipts")
     def test_metta_application_receipt_survives_protocol_eviction_and_restart(self):
