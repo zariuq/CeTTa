@@ -1,0 +1,50 @@
+true
+true
+true
+(comm ((greeted alice)))
+(comm-store ((send reply (hello alice))))
+(comm-again ())
+true
+true
+true
+(peek1 ((seen-by-peek bob)))
+(peek2 ((seen-by-peek bob)))
+(peek3 ())
+(peek-store ((send ch1 bob)))
+true
+true
+true
+(served ((served carol) (served dave)))
+(served-store ((contract ch2 greet)))
+true
+true
+(forks-a 1)
+(forks-b ())
+(forks-store ((eating A)))
+true
+true
+(claim ((claimed a)))
+(claim-store ((job b)))
+true
+true
+true
+(coin-every ())
+(coin-each 1)
+(coin-each-again ())
+(coin-store ((bought u1 c1) (wants u1) (wants u2)))
+true
+true
+(skew-a 1)
+(skew-b ())
+(skew-store ((P) (x)))
+true
+(dpo-one ())
+true
+(dpo-two (1))
+(dpo-store ((got) (tok)))
+true
+true
+true
+(two-takes 1)
+(two-takes-store ((cell) (pair)))
+(two-takes-again ())

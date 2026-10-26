@@ -784,6 +784,9 @@ static Atom *petta_logical_list_collect(Atom *list, bool authored,
         if (cell) {
             if (!petta_list_items_append(items, &list->expr.elems[1], 1u))
                 return NULL;
+            cetta_runtime_stats_add(
+                CETTA_RUNTIME_COUNTER_PETTA_LIST_CELLS_FLATTENED,
+                petta_semantics_is_open_cons_value(list) ? 1u : 0u);
             list = list->expr.elems[2];
             continue;
         }
@@ -1385,6 +1388,31 @@ Atom *petta_semantics_open_cons_value(
     return atom_expr3(
         arena, g_petta_symbol_ids.open_cons_tag,
         head, tail);
+}
+
+/* A list has one representation once it is complete: the flat expression.
+ * A cell stands only for a list whose tail is not yet a complete flat list:
+ * an unbound tail, another cell, a list value or pattern, or a carrier that
+ * is no list.  A complete list kept as cells would be converted back to its
+ * flat expression by every reader that consumes values. */
+bool petta_semantics_cons_tail_is_flat_list(const Atom *tail) {
+    return tail && tail->kind == ATOM_EXPR &&
+           (tail->expr.len == 0u ||
+            tail->expr.elems[0]->kind != ATOM_GROUNDED ||
+            tail->expr.elems[0]->ground.gkind != GV_INTERNAL_TAG) &&
+           !petta_semantics_is_cons_constraint(tail) &&
+           !petta_semantics_is_nonlist_carrier(tail);
+}
+
+Atom *petta_semantics_cons_value(Arena *arena, Atom *head, Atom *tail) {
+    if (!arena || !head || !tail)
+        return NULL;
+    /* The prepend claims the free slot below the tail's elements when there
+     * is one (PrefixBuffer.claimable_iff_free_below), so a list built by
+     * repeated cons costs its length, as a chain of cells would. */
+    return petta_semantics_cons_tail_is_flat_list(tail)
+        ? atom_expr_prepend(arena, head, tail)
+        : petta_semantics_open_cons_value(arena, head, tail);
 }
 
 /*
