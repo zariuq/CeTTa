@@ -396,6 +396,32 @@ class Space:
     def close_query(self, snapshot):
         return self.client.call("close", snapshot[1], snapshot[2])
 
+    def observe(self, reads=(), writes=(), limit: int = 4096, lease_ms: int = 30000):
+        """Capture complete record scopes atomically. The handle is one-use."""
+        return self.client.call("observe", self.uuid, self.id,
+                                E("reads", *reads), E("writes", *writes), limit, lease_ms)
+
+    def observe_fetch(self, observation, scope: int, offset: int = 0, count: int = 128):
+        return self.client.call("observe-fetch", observation[1], observation[2], scope, offset, count)
+
+    def observe_close(self, observation):
+        return self.client.call("observe-close", observation[1], observation[2])
+
+    def observe_watch(self, observation, wait_ms: int = 30000):
+        """Transfer the observation to a wait for changes in its scopes.
+
+        Use a dedicated connection and a client timeout longer than wait_ms.
+        Closing that connection cancels the wait and releases its captured data.
+        """
+        return self.client.call("observe-watch", self.uuid, self.id,
+                                observation[1], observation[2], wait_ms)
+
+    def batch_observed(self, observation, *operations, request_id=None):
+        value = self.client.call("batch-observed", self.uuid, self.id,
+                                 observation[1], observation[2], E("ops", *operations), request_id=request_id)
+        self.revision = value[3]
+        return value
+
     def match(self, pattern, template, limit: int = 4096):
         snapshot = self.query(pattern, template, limit)
         rows, offset = [], 0

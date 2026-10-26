@@ -171,6 +171,202 @@ class ServiceTests(unittest.TestCase):
         space.remove(E("row", 1))
         self.assertEqual(space.match(E("row", Var(0)), Var(0)), [2, 4, 5])
 
+    def test_scoped_independent_channels_do_not_conflict(self):
+        space = self.client.open("channels", "native-ordered")
+        a, b = E("Message", "a", Var(0)), E("Message", "b", Var(0))
+        oa, ob = space.observe((a,), (a,)), space.observe((b,), (b,))
+        self.assertEqual(space.observe_fetch(oa, 0)[3], E("rows"))
+        first = space.batch_observed(oa, E("add", E("Message", "a", 1)), request_id="scope-a")
+        space.batch_observed(ob, E("add", E("Message", "b", 2)), request_id="scope-b")
+        self.assertEqual(space.match(E("Message", Var(0), Var(1)), E("pair", Var(0), Var(1))),
+                         [E("pair", "a", 1), E("pair", "b", 2)])
+        self.assertEqual(space.batch_observed(oa, E("add", E("Message", "a", 1)), request_id="scope-a"), first)
+        self.denied("expired-or-closed", space.observe_fetch, oa, 0)
+
+    def test_scoped_eight_simultaneous_channels_all_commit(self):
+        space = self.client.open("parallel-channels", "native-ordered")
+        barrier = threading.Barrier(8)
+        def publish(number):
+            with Client(self.fixture.socket) as peer:
+                channel = peer.open(space.name, "native-ordered")
+                pattern = E("Message", number, Var(0))
+                observed = channel.observe((pattern,), (pattern,))
+                barrier.wait(timeout=10)
+                return channel.batch_observed(observed, E("add", E("Message", number, "data")))
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            answers = list(pool.map(publish, range(8)))
+        self.assertTrue(all(answer[0] == S("committed") for answer in answers))
+        self.assertEqual(space.match_count(E("Message", Var(0), Var(1))), 8)
+
+    def test_scoped_eight_spenders_never_overspend_or_lose_a_receipt(self):
+        space = self.client.open("spenders", "native-ordered")
+        space.add(E("Budget", 4))
+        barrier = threading.Barrier(8)
+        def spend(number):
+            with Client(self.fixture.socket) as peer:
+                ledger = peer.open(space.name, "native-ordered")
+                for attempt in range(9):  # At most eight competing successful mutations.
+                    budget = E("Budget", Var(0))
+                    receipt = E("Spent", number)
+                    observed = ledger.observe((budget,), (budget, receipt))
+                    rows = ledger.observe_fetch(observed, 0)[3][1:]
+                    self.assertEqual(len(rows), 1)
+                    balance = rows[0][1]
+                    if attempt == 0:
+                        barrier.wait(timeout=10)
+                    if balance == 0:
+                        ledger.observe_close(observed)
+                        return False
+                    try:
+                        ledger.batch_observed(observed, E("remove", E("Budget", balance)),
+                            E("add", E("Budget", balance-1)), E("add", receipt))
+                        return True
+                    except csp.ServiceError as failure:
+                        self.assertEqual(failure.reason, S("scope-conflict"))
+                self.fail("contention did not settle after every possible competing spend")
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(spend, range(8)))
+        self.assertEqual(sum(results), 4)
+        self.assertEqual(space.match(E("Budget", Var(0)), Var(0)), [0])
+        receipts = space.match(E("Spent", Var(0)), Var(0))
+        self.assertEqual(len(receipts), 4)
+        self.assertEqual(len(set(receipts)), 4)
+
+    def test_scoped_competing_claim_and_negative_dependency(self):
+        space = self.client.open("claims", "native-ordered")
+        item = E("Pending", 7)
+        space.add(item)
+        first, second = space.observe((item,), (item,)), space.observe((item,), (item,))
+        space.batch_observed(first, E("remove", item))
+        self.denied("scope-conflict", space.batch_observed, second, E("remove", item))
+        self.assertEqual(space.match_count(item), 0)
+        absent = E("Missing", Var(0))
+        negative = space.observe((absent,), (item,))
+        space.add(E("Missing", 1))
+        self.denied("scope-conflict", space.batch_observed, negative, E("add", item))
+        self.assertEqual(space.match_count(item), 0)
+
+    def test_scoped_views_keep_full_records_not_lossy_projections(self):
+        space = self.client.open("scope-records", "native-ordered")
+        original = E("Fact", Var(7))
+        space.add(original)
+        pattern = E("Fact", 1)
+        observation = space.observe((pattern,), (E("Changed", Var(0)),))
+        self.assertEqual(space.observe_fetch(observation, 0)[3], E("rows", E("Fact", Var(0))))
+        space.batch(E("remove", original), E("add", E("Fact", 1)))
+        # The projected answer is still 1, but the original record changed.
+        self.denied("scope-conflict", space.batch_observed, observation, E("add", E("Changed", 1)))
+        numeric = E("Numeric", Var(0))
+        space.add(E("Numeric", 1))
+        observation = space.observe((numeric,), (numeric,))
+        space.batch(E("remove", E("Numeric", 1)), E("add", E("Numeric", 1.0)))
+        self.denied("scope-conflict", space.batch_observed, observation, E("add", E("Numeric", 2)))
+
+    def test_scoped_noop_cannot_reapply_after_reply_cache_retirement(self):
+        space = self.client.open("scoped-noop", "native-ordered")
+        observation = space.observe()
+        space.batch_observed(observation, request_id="scoped-noop")
+        for _ in range(260):
+            space.batch()
+        before = space.describe()
+        self.denied("expired-or-closed", space.batch_observed, observation, request_id="scoped-noop")
+        self.assertEqual(space.describe(), before)
+
+    def test_scoped_commit_recovers_without_its_ephemeral_observation(self):
+        space = self.client.open("scoped-recovery", "native-ordered")
+        pattern = E("Value", Var(0))
+        observation = space.observe((pattern,), (pattern,))
+        operations = (E("add", E("Value", 7)), E("add", E("Value", 7)))
+        answer = space.batch_observed(observation, *operations, request_id="scoped-recover")
+        self.client.close()
+        self.fixture.restart(crash=True)
+        self.client = Client(self.fixture.socket)
+        self.addCleanup(self.client.close)
+        space = self.client.open("scoped-recovery", "native-ordered")
+        self.assertEqual(space.match(pattern, Var(0)), [7, 7])
+        self.assertEqual(space.batch_observed(observation, *operations, request_id="scoped-recover"), answer)
+        self.client.call("compact", space.uuid)
+        self.client.close()
+        self.fixture.restart(crash=True)
+        self.client = Client(self.fixture.socket)
+        self.addCleanup(self.client.close)
+        space = self.client.open("scoped-recovery", "native-ordered")
+        self.assertEqual(space.batch_observed(observation, *operations, request_id="scoped-recover"), answer)
+        self.assertEqual(space.match(pattern, Var(0)), [7, 7])
+
+    def test_scoped_rejection_and_close_release_owned_buffers(self):
+        space = self.client.open("scope-cleanup", "native-ordered")
+        for _ in range(70):
+            observation = space.observe((), (E("Allowed", Var(0)),))
+            self.denied("undeclared-write", space.batch_observed, observation, E("add", E("Other", 1)))
+        for _ in range(70):
+            observation = space.observe((), (E("Allowed", Var(0)),))
+            self.assertEqual(space.observe_close(observation), S("closed"))
+        observation = space.observe((), (), lease_ms=1)
+        time.sleep(.01)
+        self.denied("expired-or-closed", space.batch_observed, observation)
+        self.assertEqual(space.match_count(Var(0)), 0)
+
+    def test_scoped_watch_ignores_other_channels_and_has_no_registration_gap(self):
+        space = self.client.open("scope-watch", "native-ordered")
+        pattern = E("Message", "a", Var(0))
+        observation = space.observe((pattern,), (), lease_ms=1000)
+        with Client(self.fixture.socket, timeout=5) as listener:
+            watched = listener.open(space.name, "native-ordered")
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(watched.observe_watch, observation, 4000)
+                # Ownership transfer is observable: the old handle is gone.
+                until = time.monotonic()+2
+                while True:
+                    try:
+                        space.observe_fetch(observation, 0)
+                    except csp.ServiceError as error:
+                        self.assertEqual(error.reason, S("expired-or-closed"))
+                        break
+                    self.assertLess(time.monotonic(), until)
+                    time.sleep(.005)
+                for number in range(20):
+                    space.add(E("Message", "b", number))
+                time.sleep(1.1)  # The wait, not the old lease, now owns its view.
+                self.assertFalse(future.done())
+                start = time.monotonic()
+                space.add(E("Message", "a", "arrived"))
+                result = future.result(timeout=2)
+                self.assertEqual(result[0], S("changed"))
+                self.assertLess(time.monotonic()-start, 2)
+        observation = space.observe((E("Later", Var(0)),), ())
+        space.add(E("Later", 1))
+        # A relevant write before registration answers immediately.
+        self.assertEqual(space.observe_watch(observation, 1000)[0], S("changed"))
+        observation = space.observe((E("Never", Var(0)),), ())
+        self.assertEqual(space.observe_watch(observation, 10)[0], S("unchanged"))
+
+    def test_cancelled_scoped_watches_release_connection_owned_views(self):
+        space = self.client.open("scope-cancel", "native-ordered")
+        for number in range(24):
+            observation = space.observe((E("Message", number),), ())
+            stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            try:
+                stream.connect(self.fixture.socket)
+                stream.sendall(csp.frame(E("request", "watch-"+str(number), S("observe-watch"),
+                    space.uuid, space.id, observation[1], observation[2], 60000)))
+                until = time.monotonic()+2
+                while True:
+                    try:
+                        space.observe_fetch(observation, 0)
+                    except csp.ServiceError as error:
+                        self.assertEqual(error.reason, S("expired-or-closed"))
+                        break
+                    self.assertLess(time.monotonic(), until)
+                    time.sleep(.005)
+                stream.shutdown(socket.SHUT_RDWR)
+            finally:
+                stream.close()
+            # A round trip lets the owner observe the disconnected waiter.
+            self.client.hello()
+        observation = space.observe((E("Message", 0),), ())
+        self.assertEqual(space.observe_watch(observation, 0)[0], S("unchanged"))
+
     def test_noop_advances_revision_and_retry_is_correlated(self):
         space = self.space()
         initial = space.revision
@@ -597,13 +793,23 @@ class ServiceTests(unittest.TestCase):
     def transaction_worker(self):
         module = self.fixture.root / "transactions.metta"
         module.write_text('''!(import! &self (library space_transaction))
+!(import! &self (library io))
 (: transaction-test (-> %Undefined% %Undefined%))
 (= (transaction-test (observe $socket $space $reads $writes $limit))
    (space:observe $socket $space $reads $writes $limit 60000))
+(= (transaction-test (scoped-observe $socket $space $reads $writes))
+   (space:observe-scoped $socket $space $reads $writes 4096 60000))
+(= (transaction-test (abort $socket $observation)) (space:abort $socket $observation))
 (= (transaction-test (commit $socket $observation $id $operations))
    (space:commit $socket $observation $id $operations))
 (= (transaction-test (begin $socket $space $key $fingerprint $reads $writes))
    (space:begin $socket $space $key $fingerprint $reads $writes 4096 60000))
+(= (transaction-test (scoped-begin $socket $space $key $fingerprint $reads $writes))
+   (space:begin-scoped $socket $space $key $fingerprint $reads $writes 4096 60000))
+(= (transaction-test (watch $socket $observation $duration))
+   (let $request (space:wait-request $socket $observation $duration) (io:submit $request)))
+(= (transaction-test (poll $id)) (io:poll $id))
+(= (transaction-test (cancel $id)) (io:cancel $id))
 (= (transaction-test (publish $socket $transaction $id $result $operations))
    (space:publish $socket $transaction $id $result $operations))
 ''')
@@ -630,6 +836,25 @@ class ServiceTests(unittest.TestCase):
                                (E("add", E("Item", 99, "new")),)))
         self.assertEqual(result[2:], (S("error"), S("stale-revision")))
         self.assertEqual(space.match_count(E("Item", 99, Var(0))), 0)
+
+    @unittest.skipUnless(WORKER, "provide value worker for scoped MeTTa transactions")
+    def test_metta_scoped_callers_keep_data_and_independent_channels(self):
+        worker = self.transaction_worker()
+        space = self.client.open("metta-scopes", "native-ordered")
+        scopes = [E("Message", channel, Var(0)) for channel in ("a", "b")]
+        observations = [worker.call(E("scoped-observe", self.fixture.socket, space.describe(),
+                                      (E("scope", "messages", pattern),), (pattern,))) for pattern in scopes]
+        for channel, observation in zip(("a", "b"), observations):
+            self.assertEqual(observation[0], S("SpaceScopedObserved"))
+            self.assertEqual(observation[5], (E("SpaceRead", "messages", ()),))
+            result = worker.call(E("commit", self.fixture.socket, observation, "metta-"+channel,
+                                   (E("add", E("Message", channel, E("+", 1, 2))),)))
+            self.assertEqual(result[2], S("ok"))
+        observed = worker.call(E("scoped-observe", self.fixture.socket, space.describe(),
+                                 (E("scope", "messages", scopes[0]),), ()))
+        self.assertEqual(observed[5], (E("SpaceRead", "messages", (E("Message", "a", E("+", 1, 2)),)),))
+        closed = worker.call(E("abort", self.fixture.socket, observed))
+        self.assertEqual(closed[2:], (S("ok"), S("closed")))
 
     @unittest.skipUnless(WORKER, "provide value worker for MeTTa transactions")
     def test_metta_commit_checks_scopes_without_capturing_pattern_variables(self):
@@ -720,6 +945,70 @@ class ServiceTests(unittest.TestCase):
                     E("add", E("SpaceReceiptV1", "operation", "fp", 2)))
         result = worker.call(E("begin", self.fixture.socket, space.describe(), "operation", "fp", (), (Var(0),)))
         self.assertEqual(result, E("SpaceRefused", S("duplicate-application-receipt")))
+
+    @unittest.skipUnless(WORKER, "provide value worker for scoped receipts")
+    def test_metta_scoped_receipts_release_views_and_survive_independent_writes(self):
+        worker = self.transaction_worker()
+        space = self.client.open("scoped-receipts", "native-ordered")
+        def begin(key="a", fingerprint="fp"):
+            return worker.call(E("scoped-begin", self.fixture.socket, space.describe(),
+                                 key, fingerprint, (), (E("Value", key, Var(0)),)))
+        first, competitor, independent = begin(), begin(), begin("b")
+        literal = E("+", 1, 2)
+        for key, transaction in (("a", first), ("b", independent)):
+            self.assertEqual(transaction[0], S("SpaceTransaction"))
+            answer = worker.call(E("publish", self.fixture.socket, transaction, "commit-"+key,
+                                   literal, (E("add", E("Value", key, literal)),)))
+            self.assertEqual(answer, E("SpaceCommitted", literal))
+        answer = worker.call(E("publish", self.fixture.socket, competitor, "racing", literal, ()))
+        self.assertEqual(answer[2:], (S("error"), S("scope-conflict")))
+        # Cached results and rejections release their service-owned views.
+        for _ in range(70):
+            self.assertEqual(begin(), E("SpaceCommitted", literal))
+            self.assertEqual(begin(fingerprint="different"), E("SpaceRefused", S("reused-operation-identity")))
+        for _ in range(260):
+            space.batch()
+        self.assertEqual(self.client.call("receipt", space.uuid, "commit-a"), S("unknown-receipt"))
+        self.client.call("compact", space.uuid)
+        self.client.close()
+        self.fixture.restart(crash=True)
+        self.client = Client(self.fixture.socket)
+        self.addCleanup(self.client.close)
+        space = self.client.open("scoped-receipts", "native-ordered")
+        self.assertEqual(begin(), E("SpaceCommitted", literal))
+        self.assertEqual(space.match(E("Value", Var(0), Var(1)), Var(0)), ["a", "b"])
+        for number in range(70):
+            pending = begin("cancel-"+str(number))
+            self.assertEqual(worker.call(E("abort", self.fixture.socket, pending))[2:], (S("ok"), S("closed")))
+
+    @unittest.skipUnless(WORKER, "provide value worker for native scoped waits")
+    def test_metta_scoped_wait_uses_owned_native_io(self):
+        worker = self.transaction_worker()
+        space = self.client.open("metta-watch", "native-ordered")
+        def start():
+            observation = worker.call(E("scoped-observe", self.fixture.socket, space.describe(),
+                                         (E("scope", "inbox", E("Message", "a", Var(0))),), ()))
+            pending = worker.call(E("watch", self.fixture.socket, observation, 3000))
+            self.assertEqual(pending[0], S("io:pending"))
+            return pending[1]
+        request = start()
+        space.add(E("Message", "b", 1))
+        self.assertEqual(worker.call(E("poll", request)), E("io:idle"))
+        space.add(E("Message", "a", 2))
+        deadline = time.monotonic()+3
+        while True:
+            result = worker.call(E("poll", request))
+            if result != E("io:idle"):
+                break
+            self.assertLess(time.monotonic(), deadline)
+            time.sleep(.01)
+        self.assertEqual(result[0], S("io:event"))
+        self.assertEqual(result[2][2:], (S("ok"), E("changed", space.uuid, space.id, space.revision)))
+        self.assertEqual(worker.call(E("poll", request)), E("io:unknown", request))
+        for _ in range(24):
+            request = start()
+            self.assertEqual(worker.call(E("cancel", request)), ())
+            self.assertEqual(worker.call(E("poll", request)), E("io:unknown", request))
 
     @unittest.skipUnless(WORKER, "provide value worker for snapshot publication qualification")
     def test_prime_worker_publishes_only_against_its_captured_snapshot(self):

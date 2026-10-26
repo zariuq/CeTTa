@@ -113,6 +113,11 @@ Every response is `(reply ID ok VALUE)` or `(reply ID error REASON)`.
 | `query` | service UUID, space ID, pattern, template, maximum rows, lease milliseconds |
 | `fetch` | boot UUID, cursor ID, offset, maximum page rows |
 | `close` | boot UUID, cursor ID |
+| `observe` | service UUID, space ID, `(reads PATTERN ...)`, `(writes PATTERN ...)`, maximum rows per scope, lease milliseconds |
+| `observe-fetch` | boot UUID, observation ID, scope index, offset, maximum page rows |
+| `observe-close` | boot UUID, observation ID |
+| `batch-observed` | service UUID, space ID, boot UUID, observation ID, `(ops ...)` |
+| `observe-watch` | service UUID, space ID, boot UUID, observation ID, wait milliseconds |
 | `receipt` | service UUID, original request ID |
 | `compact` | service UUID |
 
@@ -144,8 +149,9 @@ Successful mutation receipts are retained for up to 256 requests and 16 MiB.
 The journal and checkpoint retain the original request and reply bytes;
 numeric parsing cannot rewrite a retained request identity.
 Exact retries return their retained answer; a changed request with a retained
-ID is refused. After receipt retirement, the original expected revision still
-prevents reapplication. `unknown-receipt` is uncertainty, not proof of failure.
+ID is refused. After receipt retirement, the original expected revision or
+retired scoped observation prevents reapplication. `unknown-receipt` is
+uncertainty, not proof of failure.
 The native client returns `space:uncertain` if a reply is lost after sending,
 or `space:unavailable` if no request was sent. The Python client raises
 `Uncertain` with the original request. Inspect receipts before retrying.
@@ -183,11 +189,44 @@ refused. Application operations cannot rewrite reserved receipt records.
 An uncertain publish stays uncertain until a fresh begin observes its durable
 receipt; neither helper sends or repeats an external effect.
 
+For independent dependencies use `space:observe-scoped` instead. Its reads are
+`(scope LABEL PATTERN)`: validation always captures complete original records,
+including empty results, duplicates and atom kinds. Apply `rel:project` locally
+when a caller needs a projection. The result is
+`(SpaceScopedObserved HANDLE TICKET READS WRITES RESULTS)`, accepted by the same
+`space:commit`. The service validates all read and write views atomically with
+publication, so unrelated changes do not cause false revision conflicts.
+`space:begin-scoped` provides the same durable receipt contract with these
+dependencies. The service advertises `scoped-observations-v1`.
+
+Each scoped observation belongs to its authenticated account and is one-use,
+including a rejected or no-op proposal. `space:abort` releases an unused
+observation or transaction. Restart invalidates its ticket. A durable scoped
+commit records the original request, reply and resolved publication revision;
+recovery never needs the old observation. A lost reply is reconciled using the
+application receipt, not by repeating an external effect.
+
+Use `native-ordered` for independent ordered channel views. Swap removal in an
+unordered bag can genuinely change another view's order. View validation is
+about current state: removing and reinserting identical records can restore
+the same view. Records must carry stable occurrence IDs and versions when
+causal identity or detecting that intervening change matters.
+
+`space:wait-request SOCKET OBSERVATION MILLISECONDS` builds a native
+`space:request` descriptor for `io:submit`. It consumes the observation when the
+service registers the wait. The service compares the dependency before parking,
+preventing a missed change between reading and waiting. Unrelated writes do not
+wake the client. Completion reports `changed` or `unchanged`; it never claims a
+message or acknowledges an effect. `io:cancel` closes the owning connection and
+releases its captured views. Waiting extends ownership beyond the observation's
+original lease. This requires the advertised `scope-waits-v1` capability.
+
 The snapshot row allowance is explicit and excessive results return an error;
-it is not a truncation policy. These initial helpers materialize each declared
-read and use conservative whole-store conflicts. They are suitable for bounded
-record queries, not a streaming interface to an entire archive. Ordered removal
-currently uses the existing linear sequence-preserving operation.
+it is not a truncation policy. Both helpers currently materialize each declared
+view and are suitable for bounded record queries, not a streaming interface to
+an entire archive. Scoped views share the snapshot memory allowance and include
+their pointer-vector storage. Ordered removal currently uses the existing
+linear sequence-preserving operation.
 
 The default quotas are 32 spaces, one million facts and 64 MiB of live portable
 values per space, 64 snapshots with 32 MiB total row data, a 1 MiB frame,
@@ -221,6 +260,12 @@ publication. With a built MeTTapedia checkout supplied as
 ordered traces through the real MeTTa helpers, an in-memory SQLite oracle and
 `NativeStoreTransactions.lean`. Its receipt records the program, model and
 binary hashes alongside every observed state.
+`test-native-store-scopes` does the same for `NativeStoreScopes.lean`, including
+independent commits, stale positive and negative dependencies, one-use handles,
+no-ops, explicit close and recovery. The service suite separately races eight
+independent writers and eight spenders, and exercises scoped waits through
+native asynchronous I/O. Publication fault tests cover write, synchronization
+and backend failures after resolving a scoped proposal.
 
 The PeTTa `(library rel)` module supplies ordered-bag selection, projection,
 joins, existence, distinctness, stable ordering, paging and sequential grouped

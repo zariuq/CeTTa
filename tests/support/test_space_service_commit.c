@@ -62,7 +62,8 @@ CettaAtomWireStatus __wrap_cetta_atom_wire_encode(const Atom *atom,unsigned char
         (atom_is_symbol((Atom *)atom,"saved") || shape((Atom *)atom,"saved-open",2))) {
         fail_key=false; *data=NULL; *size=0; return ATOM_WIRE_NOMEM;
     }
-    if (shape((Atom *)atom,"event-bytes",3) || shape((Atom *)atom,"event-from",4)) {
+    if (shape((Atom *)atom,"event-bytes",3) || shape((Atom *)atom,"event-from",4) ||
+        shape((Atom *)atom,"event-observed-v1",5)) {
         ++event_encodings;
         if (fail_event) { *data=NULL; *size=0; return ATOM_WIRE_NOMEM; }
     }
@@ -86,14 +87,19 @@ static void reset_faults(void) {
 static void release(Service *s) {
     reset_faults();
     for (size_t i=0;i<STORES;++i) { store_free(s->stores[i]); s->stores[i]=NULL; }
+    for (size_t i=0;i<SNAPSHOTS;++i) {
+        snapshot_free(s,&s->snapshots[i]); observation_free(s,&s->observations[i]);
+    }
     for (size_t i=0;i<s->receipt_count;++i) receipt_free(&s->receipts[i]);
     close(s->journal); close(s->lock); close(s->directory);
 }
 static void initialize(Service *s,const char *directory) {
     *s=(Service){.journal=-1,.directory=-1,.lock=-1,
         .max_facts=1000000,.max_live_bytes=64*1024*1024,
+        .max_query_bytes=QUERY_BYTES,.max_snapshot_bytes=SNAPSHOT_BYTES,.query_ms=5000,.next_cursor=1,
         .process_uid=(uint32_t)geteuid(),.owner_uid=(uint32_t)geteuid()};
     check(directory_open(s,directory)); check(recover(s));
+    check(random_id(s->boot));
 }
 static off_t journal_size(Service *s) {
     struct stat info; check(!fstat(s->journal,&info)); return info.st_size;
@@ -249,19 +255,64 @@ static void account_publication(Service *s,Arena *a,const char *directory) {
     check(s->stores[0]->revision==1);
     bytes_free(&raw); bytes_free(&response);
 }
+static Atom *observed_request(Service *s,Arena *a,const char *id,bool add) {
+    Atom *pattern=atom_var(a,"record");
+    Atom *args[]={atom_int(a,s->stores[0]->id),form(a,"reads",&pattern,1),
+        form(a,"writes",&pattern,1),atom_int(a,16),atom_int(a,60000)};
+    Atom *observed=execute_wire(s,a,request(a,s,"observe-scope","observe",args,5));
+    success(observed);
+    Atom *ticket=part(observed,3),*row=atom_symbol(a,"saved"),*one=form(a,"add",&row,1);
+    Atom *both[]={one,one};
+    Atom *commit_args[]={atom_int(a,s->stores[0]->id),part(ticket,1),part(ticket,2),
+        form(a,"ops",both,add ? 2 : 0)};
+    return request(a,s,id,"batch-observed",commit_args,4);
+}
+static void scoped_publication(Service *s,Arena *a,const char *directory,unsigned fault) {
+    success(execute_wire(s,a,open_request(a,s,"native-ordered")));
+    if (!fault) {
+        publication(s,a,observed_request(s,a,"scoped-noop",false));
+        check(!s->observation_bytes && !s->snapshot_bytes);
+        return;
+    }
+    Atom *req=observed_request(s,a,"scoped-uncertain",true);
+    Bytes raw={0}; check(wire(req,&raw));
+    off_t before=journal_size(s);
+    reset_faults(); observed_journal=s->journal;
+    if (fault<=2) write_fault=fault;
+    else if (fault==3) fail_sync=true;
+    else { fail_projection=true; allowed_projections=fault==5 ? 1 : 0; }
+    check(!execute(s,a,req,raw)); check(s->poisoned && write_started);
+    check(!s->observation_bytes && !s->snapshot_bytes);
+    check(!find_receipt(s,s->process_uid,"scoped-uncertain"));
+    reset_faults(); release(s); initialize(s,directory);
+    bool complete=fault>=3;
+    check(space_length64(s->stores[0]->space)==(complete ? 2u : 0u));
+    check(s->stores[0]->revision==(complete ? 1u : 0u));
+    Atom *again=execute(s,a,req,raw);
+    if (complete) success(again);
+    else {
+        check(shape(again,"reply",4) && atom_is_symbol(part(again,2),"error"));
+        check(atom_is_symbol(part(again,3),"observation-identity"));
+        check(journal_size(s)==before);
+        success(execute_wire(s,a,observed_request(s,a,"scoped-reprepared",true)));
+    }
+    check(space_length64(s->stores[0]->space)==2 && s->stores[0]->revision==1);
+    bytes_free(&raw);
+}
 int main(void) {
     SymbolTable symbols; symbol_table_init(&symbols); g_symbols=&symbols;
     symbol_table_init_builtins(&symbols,&g_builtin_syms);
     Service *s=calloc(1,sizeof(*s)); check(s!=NULL);
     const char *backends[]={"native","pathmap","mork"};
-    for (unsigned trial=0;trial<13;++trial) {
+    for (unsigned trial=0;trial<19;++trial) {
         if (trial>0 && trial<3 && !cetta_mork_bridge_is_available()) continue;
         char directory[]="runtime/space-commit-XXXXXX"; check(mkdtemp(directory)!=NULL);
         Arena a; arena_init_detached(&a); initialize(s,directory);
         if (trial<3) prepared_publication(s,&a,backends[trial]);
         else if (trial<5) preparation_refusal(s,&a,trial==4);
         else if (trial<12) uncertain_publication(s,&a,directory,trial-4);
-        else account_publication(s,&a,directory);
+        else if (trial==12) account_publication(s,&a,directory);
+        else scoped_publication(s,&a,directory,trial-13);
         release(s); arena_free(&a);
         char path[sizeof(directory)+20];
         snprintf(path,sizeof(path),"%s/journal.csl",directory); check(!unlink(path));

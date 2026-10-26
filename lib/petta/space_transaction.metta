@@ -73,14 +73,135 @@
 
 (: space:commit (-> String Atom String Atom %Undefined%))
 
-(=
-  (space:commit $socket
-    (SpaceObserved (space $uuid $id $name $backend $kind $rev $count) $reads $writes $results)
-    $request-id $operations)
-  (if (space-tx:operations-covered $writes $operations)
-    (let $batch (cons-atom ops $operations)
-      (space:call $socket (request $request-id batch $uuid $id $rev $batch) 5000))
-    (SpaceRefused undeclared-write)))
+(= (space:commit $socket $observation $request-id $operations)
+  (case $observation
+    (((SpaceObserved (space $uuid $id $name $backend $kind $rev $count) $reads $writes $results)
+       (if (space-tx:operations-covered $writes $operations)
+         (let $batch (cons-atom ops $operations)
+           (space:call $socket (request $request-id batch $uuid $id $rev $batch) 5000))
+         (SpaceRefused undeclared-write)))
+      ((SpaceScopedObserved $handle $ticket $reads $writes $results)
+        (space-scope:commit $socket $handle $ticket $request-id $operations))
+      ($invalid (SpaceRefused invalid-observation)))))
+
+; Scoped observations capture full records atomically in the service. The
+; caller's read declarations are (scope LABEL PATTERN), with no projection:
+; rel:project and other application queries consume the returned records.
+; The service validates the declared views and writes in one publication.
+(: space:observe-scoped (-> String Atom Atom Atom Number Number %Undefined%))
+(= (space:observe-scoped $socket $handle $reads $writes $limit $lease)
+  (case (space-scope:patterns $reads)
+    (((SpaceScopePatterns $patterns)
+       (case (space-scope:open $socket $handle $patterns $writes $limit $lease)
+         (((reply $rid ok $ticket)
+            (case (space-scope:read-results $socket $ticket $reads 0 ())
+              (((SpaceReadResults $results)
+                 (SpaceScopedObserved $handle $ticket $reads $writes $results))
+                ($failed
+                  (let $closed (space-scope:close $socket $ticket) $failed)))))
+           ($failed $failed))))
+      ($invalid $invalid))))
+
+(: space-scope:patterns (-> Atom %Undefined%))
+(= (space-scope:patterns $reads)
+  (if (== $reads ()) (SpaceScopePatterns ())
+    (case (car-atom $reads)
+      (((scope $label $pattern)
+         (let $rest (cdr-atom $reads)
+           (case (space-scope:patterns $rest)
+             (((SpaceScopePatterns $tail)
+                (let $next (cons-atom $pattern $tail) (SpaceScopePatterns $next)))
+               ($failed $failed)))))
+        ($invalid (SpaceRefused invalid-read-scope))))))
+
+(= (space-scope:has-capability $capabilities)
+  (if (== $capabilities ()) False
+    (if (== (car-atom $capabilities) scoped-observations-v1) True
+      (space-scope:has-capability (cdr-atom $capabilities)))))
+
+(: space-scope:open (-> String Atom Atom Atom Number Number %Undefined%))
+(= (space-scope:open $socket (space $uuid $id $name $backend $kind $rev $count)
+     $reads $writes $limit $lease)
+  (let $hello (space:request-id)
+    (case (space:call $socket (request $hello hello) 5000)
+      (((reply $rid ok (service $version $current-uuid $boot $catalog $capabilities))
+         (if (space-scope:has-capability (cdr-atom $capabilities))
+           (let* (($read-values (cons-atom reads $reads))
+                  ($write-values (cons-atom writes $writes)) ($request-id (space:request-id)))
+             (space:call $socket
+               (request $request-id observe $uuid $id $read-values $write-values $limit $lease) 5000))
+           (SpaceRefused unsupported-scoped-observations)))
+        ($failed $failed)))))
+
+(: space-scope:fetch (-> String Atom Number Number Number %Undefined%))
+(= (space-scope:fetch $socket (observation $boot $id $source $rev $reads $writes $lease)
+     $scope $offset $count)
+  (let $rid (space:request-id)
+    (space:call $socket (request $rid observe-fetch $boot $id $scope $offset $count) 5000)))
+
+(: space-scope:close (-> String Atom %Undefined%))
+(= (space-scope:close $socket (observation $boot $id $source $rev $reads $writes $lease))
+  (let $rid (space:request-id)
+    (space:call $socket (request $rid observe-close $boot $id) 5000)))
+
+(: space-scope:pages (-> String Atom Number Number Number Atom %Undefined%))
+(= (space-scope:pages $socket $ticket $scope $offset $count $collected)
+  (case (space-scope:fetch $socket $ticket $scope $offset $count)
+    (((reply $rid ok (page $rev $start $rows $next $done))
+       (let* (($page (cdr-atom $rows)) ($all (union-atom $collected $page)))
+         (if $done (SpaceRows $all)
+           (space-scope:pages $socket $ticket $scope $next $count $all))))
+      ((reply $rid error page-byte-limit)
+        (if (> $count 1) (space-scope:pages $socket $ticket $scope $offset (div $count 2) $collected)
+          (reply $rid error page-byte-limit)))
+      ($failed $failed))))
+
+(: space-scope:read-results (-> String Atom Atom Number Atom %Undefined%))
+(= (space-scope:read-results $socket $ticket $reads $index $collected)
+  (if (== $reads ()) (SpaceReadResults $collected)
+    (let (scope $label $pattern) (car-atom $reads)
+      (case (space-scope:pages $socket $ticket $index 0 128 ())
+        (((SpaceRows $rows)
+           (let* (($all (union-atom $collected ((SpaceRead $label $rows)))) ($rest (cdr-atom $reads)))
+             (space-scope:read-results $socket $ticket $rest (+ $index 1) $all)))
+          ($failed $failed))))))
+
+(: space-scope:commit (-> String Atom Atom String Atom %Undefined%))
+(= (space-scope:commit $socket
+     (space $uuid $source $name $backend $kind $revision $count)
+     (observation $boot $id $observed-source $rev $reads $writes $lease) $request-id $operations)
+  (let $batch (cons-atom ops $operations)
+    (space:call $socket (request $request-id batch-observed $uuid $source $boot $id $batch) 5000)))
+
+(: space:abort (-> String Atom %Undefined%))
+(= (space:abort $socket $observation)
+  (case $observation
+    (((SpaceScopedObserved $handle $ticket $reads $writes $results)
+       (space-scope:close $socket $ticket))
+      ((SpaceTransaction $captured $key $fingerprint) (space:abort $socket $captured))
+      ($other (SpaceRefused invalid-observation)))))
+
+; Submit this descriptor with io:submit. Waiting consumes the observation:
+; io:cancel closes the owning connection and releases its captured views.
+; A wait reports a changed dependency, never a claimed message or effect.
+(: space:wait-request (-> String Atom Number %Undefined%))
+(= (space:wait-request $socket $observation $duration)
+  (case $observation
+    (((SpaceScopedObserved (space $uuid $source $name $backend $kind $revision $count)
+        (observation $boot $id $observed-source $rev $reads $writes $lease)
+        $read-scopes $write-scopes $results)
+       (let* (($rid (space:request-id)) ($deadline (+ $duration 5000)))
+         (space:request $socket (request $rid observe-watch $uuid $source $boot $id $duration) $deadline)))
+      ($other (SpaceRefused invalid-observation)))))
+
+; Completed or refused begin operations must not retain scoped views. The
+; conservative observation already closed its snapshots while reading.
+(: space-tx:release (-> String Atom %Undefined%))
+(= (space-tx:release $socket $observation)
+  (case $observation
+    (((SpaceScopedObserved $handle $ticket $reads $writes $results)
+       (space-scope:close $socket $ticket))
+      ($other True))))
 
 (: space:begin (-> String Atom String String Atom Atom Number Number %Undefined%))
 
@@ -89,17 +210,36 @@
     (let $scope (scope SpaceReceiptSlot $receipt $receipt)
       (let $all-reads (cons-atom $scope $reads)
         (let $all-writes (cons-atom $receipt $writes)
-          (case (space:observe $socket $handle $all-reads $all-writes $limit $lease)
-            (((SpaceObserved $current $read-scopes $write-scopes $results)
-               (let $observation (SpaceObserved $current $read-scopes $write-scopes $results)
-                 (let (SpaceRead SpaceReceiptSlot $receipts) (car-atom $results)
-                   (if (== $receipts ()) (SpaceTransaction $observation $key $fingerprint)
-                     (if (== (size-atom $receipts) 1)
-                       (let (SpaceReceiptV1 $stored-key $stored-fingerprint $result)
-                         (car-atom $receipts)
-                         (if (== $stored-fingerprint $fingerprint) (SpaceCommitted $result)
-                           (SpaceRefused reused-operation-identity)))
-                       (SpaceRefused duplicate-application-receipt)))))) ($failed $failed))))))))
+          (let $observed (space:observe $socket $handle $all-reads $all-writes $limit $lease)
+            (space-tx:begin-result $socket $observed $key $fingerprint)))))))
+
+(: space:begin-scoped (-> String Atom String String Atom Atom Number Number %Undefined%))
+(= (space:begin-scoped $socket $handle $key $fingerprint $reads $writes $limit $lease)
+  (let* (($receipt (SpaceReceiptV1 $key $prior-fingerprint $prior-result))
+         ($scope (scope SpaceReceiptSlot $receipt))
+         ($all-reads (cons-atom $scope $reads)) ($all-writes (cons-atom $receipt $writes))
+         ($observed (space:observe-scoped $socket $handle $all-reads $all-writes $limit $lease)))
+    (space-tx:begin-result $socket $observed $key $fingerprint)))
+
+(: space-tx:begin-result (-> String Atom String String %Undefined%))
+(= (space-tx:begin-result $socket $observation $key $fingerprint)
+  (case $observation
+    (((SpaceObserved $current $reads $writes $results)
+       (space-tx:begin-receipts $socket $observation $key $fingerprint $results))
+      ((SpaceScopedObserved $current $ticket $reads $writes $results)
+        (space-tx:begin-receipts $socket $observation $key $fingerprint $results))
+      ($failed $failed))))
+
+(: space-tx:begin-receipts (-> String Atom String String Atom %Undefined%))
+(= (space-tx:begin-receipts $socket $observation $key $fingerprint $results)
+  (let (SpaceRead SpaceReceiptSlot $receipts) (car-atom $results)
+    (if (== $receipts ()) (SpaceTransaction $observation $key $fingerprint)
+      (let $closed (space-tx:release $socket $observation)
+        (if (== (size-atom $receipts) 1)
+          (let (SpaceReceiptV1 $stored-key $stored-fingerprint $result) (car-atom $receipts)
+            (if (== $stored-fingerprint $fingerprint) (SpaceCommitted $result)
+              (SpaceRefused reused-operation-identity)))
+          (SpaceRefused duplicate-application-receipt))))))
 
 (: space-tx:receipt-value? (-> Atom %Undefined%))
 
@@ -130,4 +270,5 @@
         (let $all-operations (cons-atom $receipt-op $operations)
           (case (space:commit $socket $observation $request-id $all-operations)
             (((reply $rid ok $committed) (SpaceCommitted $result)) ($failed $failed))))))
-    (SpaceRefused reserved-receipt-mutation)))
+    (let $closed (space-tx:release $socket $observation)
+      (SpaceRefused reserved-receipt-mutation))))
