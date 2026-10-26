@@ -10,6 +10,7 @@ from pathlib import Path
 import os
 import pwd
 import socket
+import socketserver
 import struct
 import subprocess
 import sys
@@ -182,6 +183,91 @@ class ServiceTests(unittest.TestCase):
                          [E("pair", "a", 1), E("pair", "b", 2)])
         self.assertEqual(space.batch_observed(oa, E("add", E("Message", "a", 1)), request_id="scope-a"), first)
         self.denied("expired-or-closed", space.observe_fetch, oa, 0)
+
+    def test_creation_identity_reclaims_lost_replies_and_fences_delayed_requests(self):
+        space = self.client.open("creation-cleanup", "native-ordered")
+        boot = self.client.hello()[3]
+        until = time.monotonic_ns() // 1000000 + 60000
+        reads, writes = E("reads", E("Value", Var(0))), E("writes")
+        for number in range(80):
+            creation = "lost-capture-"+str(number)
+            request = E("request", creation, S("observe-until"), space.uuid, space.id,
+                        reads, writes, 1, 60000, boot, until)
+            if number%2 == 0:
+                self.assertEqual(space.abandon_observation(boot, creation, until), S("closed"))
+            # Drop the response without dispatching any mutation. Cancellation
+            # works whether the owner has already captured or has yet to read it.
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as stream:
+                stream.connect(self.fixture.socket)
+                stream.sendall(csp.frame(request))
+            self.assertEqual(space.abandon_observation(boot, creation, until), S("closed"))
+            self.denied("creation-closed", self.client.call, "observe-until", space.uuid, space.id,
+                        reads, writes, 1, 60000, boot, until, request_id=creation)
+        # Cancellation fences occupy no observation slots or row buffers.
+        observations = [space.observe(limit=1) for _ in range(64)]
+        self.denied("observation-limit", space.observe, limit=1)
+        for observation in observations:
+            space.observe_close(observation)
+        self.assertEqual(space.match_count(Var(0)), 0)
+
+    def test_creation_deadlines_identity_and_restart_are_explicit(self):
+        space = self.client.open("creation-deadlines", "native-ordered")
+        boot = self.client.hello()[3]
+        until = time.monotonic_ns() // 1000000 + 5000
+        first = space.observe_until(request_id="same-creation", until_ms=until, limit=1)
+        again = space.observe_until(request_id="same-creation", until_ms=until, limit=1)
+        self.assertEqual(first[:7], again[:7])
+        self.denied("reused-id", space.observe_until, (E("Different", Var(0)),), (),
+                    request_id="same-creation", until_ms=until, limit=1)
+        self.assertEqual(space.abandon_observation(boot, "same-creation", until), S("closed"))
+        self.denied("expired-or-closed", space.observe_fetch, first, 0)
+        self.denied("creation-expired", space.observe_until, until_ms=time.monotonic_ns()//1000000-1, limit=1)
+        self.client.close(); self.fixture.restart(crash=True)
+        self.client = Client(self.fixture.socket); self.addCleanup(self.client.close)
+        space = self.client.open("creation-deadlines", "native-ordered")
+        self.denied("creation-identity", self.client.call, "observe-until", space.uuid, space.id,
+                    E("reads"), E("writes"), 1, 60000, boot, until)
+
+    @unittest.skipUnless(WORKER,"provide native worker for lost creation replies")
+    def test_metta_creation_cleanup_runs_after_a_lost_native_reply(self):
+        worker = self.transaction_worker()
+        space = self.client.open("native-lost-creation", "native-ordered")
+        target = self.fixture.socket
+        def packet(stream):
+            def read(count):
+                data=bytearray()
+                while len(data)<count:
+                    part=stream.recv(count-len(data))
+                    if not part:
+                        raise EOFError("fixture peer ended a frame")
+                    data.extend(part)
+                return bytes(data)
+            header=read(8)
+            return header+read(struct.unpack(">I",header[4:])[0])
+        class DropCreationReply(socketserver.BaseRequestHandler):
+            def handle(peer):
+                sent=packet(peer.request)
+                operation=csp.decode(sent[8:])[2]
+                with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as downstream:
+                    downstream.connect(target); downstream.sendall(sent)
+                    reply=packet(downstream)
+                if operation!=S("observe-until"):
+                    peer.request.sendall(reply)
+        path=str(self.fixture.root/"drop.sock")
+        proxy=socketserver.ThreadingUnixStreamServer(path,DropCreationReply)
+        proxy.daemon_threads=True
+        serving=threading.Thread(target=proxy.serve_forever,kwargs={"poll_interval":.01},daemon=True)
+        serving.start()
+        def stop_proxy():
+            proxy.shutdown(); proxy.server_close(); serving.join(timeout=5)
+        self.addCleanup(stop_proxy)
+        for _ in range(80):
+            answer=worker.call(E("scoped-observe",path,space.describe(),(),()))
+            self.assertEqual(answer[0],S("space:uncertain"))
+        captures=[space.observe(limit=1) for _ in range(64)]
+        for capture in captures:
+            space.observe_close(capture)
+        self.assertEqual(space.match_count(Var(0)),0)
 
     def test_scoped_eight_simultaneous_channels_all_commit(self):
         space = self.client.open("parallel-channels", "native-ordered")

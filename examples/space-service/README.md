@@ -114,6 +114,8 @@ Every response is `(reply ID ok VALUE)` or `(reply ID error REASON)`.
 | `fetch` | boot UUID, cursor ID, offset, maximum page rows |
 | `close` | boot UUID, cursor ID |
 | `observe` | service UUID, space ID, `(reads PATTERN ...)`, `(writes PATTERN ...)`, maximum rows per scope, lease milliseconds |
+| `observe-until` | the same arguments, then boot UUID and creation deadline in local monotonic milliseconds |
+| `observe-abandon` | service UUID, space ID, boot UUID, creating request ID, creation deadline |
 | `observe-fetch` | boot UUID, observation ID, scope index, offset, maximum page rows |
 | `observe-close` | boot UUID, observation ID |
 | `batch-observed` | service UUID, space ID, boot UUID, observation ID, `(ops ...)` |
@@ -197,7 +199,18 @@ when a caller needs a projection. The result is
 `space:commit`. The service validates all read and write views atomically with
 publication, so unrelated changes do not cause false revision conflicts.
 `space:begin-scoped` provides the same durable receipt contract with these
-dependencies. The service advertises `scoped-observations-v1`.
+dependencies. These helpers require `scoped-creation-v2`; the original
+`scoped-observations-v1` operations remain supported.
+
+The creating request ID is known before sending. `observe-until` accepts it
+only within its declared monotonic deadline and current boot. If the reply is
+lost, `observe-abandon` reclaims that account's capture by creation identity.
+It also fences a creating request that has not arrived yet. An unexpired fence
+is never evicted; after its deadline the original creation is refused by time.
+Cancellation-fence exhaustion is an explicit refusal. The MeTTa helper performs
+this cleanup after an uncertain creation reply. The clock coordinate is the
+shared host's monotonic clock; clients in another time namespace must translate
+their deadline to that coordinate.
 
 Each scoped observation belongs to its authenticated account. It is consumed
 when the service evaluates a proposal, including a rejected or no-op proposal.
@@ -241,9 +254,20 @@ their pointer-vector storage. Ordered removal currently uses the existing
 linear sequence-preserving operation.
 One computation deadline covers all scopes in an observation, as it does for
 validation. Checks occur between scopes and during scans; an individual index
-or matcher operation is not preempted. A lost observation-creation reply still
-relies on lease expiry for reclamation. Per-account allocation fairness and
-longer-lived observation recovery remain integration work.
+or matcher operation is not preempted. Leases remain the fallback when a caller
+dies or cannot deliver cleanup. Observations and their cancellation fences do
+not survive a service restart.
+
+Account resource budgets include ordinary query snapshots, pending scoped
+captures and views transferred to waits. Pointer vectors, patterns, copied
+creating requests and result rows are charged. In the private single-account
+profile the owner can use the full pool. A shared service defaults to half the
+view bytes, 32 views and half the wait slots per account, preventing one account
+from monopolizing the default shared pool. `--max-account-view-bytes`,
+`--max-account-views` and `--max-account-watchers` select other shares. These are
+temporary resource allowances: capacity errors preserve stored facts. Account
+identity comes from the kernel, so agent names under one account share its
+allowance. This is resource isolation, not a general starvation-freedom claim.
 
 The default quotas are 32 spaces, one million facts and 64 MiB of live portable
 values per space, 64 snapshots with 32 MiB total row data, a 1 MiB frame,

@@ -88,6 +88,11 @@ static Atom *watch(Service *s, Client *c, Arena *a, uint64_t store, Atom *id, in
                     atom_int(a, duration)};
     return call(s, c, a, req(a, fresh_id(a), "observe-watch", args, 5));
 }
+static Atom *query_view(Service *s,Client *c,Arena *a,uint64_t store,Atom *pattern,int64_t limit) {
+    Atom *args[]={atom_string(a,s->uuid),atom_int(a,store),pattern,pattern,
+                  atom_int(a,limit),atom_int(a,60000)};
+    return call(s,c,a,req(a,fresh_id(a),"query",args,6));
+}
 
 int main(void) {
     SymbolTable symbols; symbol_table_init(&symbols); g_symbols = &symbols;
@@ -215,6 +220,80 @@ int main(void) {
 
     /* T6: everything released. */
     expect(!s->observation_bytes && !s->snapshot_bytes, "T6 observation and snapshot bytes return to zero");
+
+    uint64_t creation_deadline=now_ms()+5000;
+    Atom *create_args[]={atom_string(a,s->uuid),atom_int(a,ordered),E1(a,"reads",message),
+        form(a,"writes",NULL,0),atom_int(a,1),atom_int(a,60000),atom_string(a,s->boot),
+        atom_int(a,creation_deadline)};
+    Atom *creation=call(s,alice,a,req(a,"account-creation","observe-until",create_args,8));
+    expect(ok(creation),"account creates a reclaimable observation");
+    Atom *abandon_args[]={atom_string(a,s->uuid),atom_int(a,ordered),atom_string(a,s->boot),
+        atom_string(a,"account-creation"),atom_int(a,creation_deadline)};
+    expect(ok(call(s,bob,a,req(a,fresh_id(a),"observe-abandon",abandon_args,5))),
+           "abandonment identity belongs to the calling account");
+    expect(ok(fetch(s,alice,a,handle_id(creation))),"another account cannot reclaim the original view");
+    expect(ok(call(s,alice,a,req(a,fresh_id(a),"observe-abandon",abandon_args,5))),"creator reclaims its view");
+    expect(refused(fetch(s,alice,a,handle_id(creation)),"expired-or-closed"),"reclaimed view is retired");
+    expect(refused(call(s,alice,a,req(a,"account-creation","observe-until",create_args,8)),"creation-closed"),
+           "cancelled creation cannot allocate another view");
+    creation=call(s,alice,a,req(a,"waiting-creation","observe-until",create_args,8));
+    expect(ok(creation),"create before transferring the view");
+    expect(!watch(s,alice,a,ordered,handle_id(creation),60000) && alice->watching,"view transfers to the wait owner");
+    abandon_args[3]=atom_string(a,"waiting-creation");
+    expect(refused(call(s,alice,a,req(a,fresh_id(a),"observe-abandon",abandon_args,5)),"creation-transferred"),
+           "creation cleanup cannot silently revoke a transferred owner");
+    expect(refused(call(s,alice,a,req(a,"waiting-creation","observe-until",create_args,8)),"creation-transferred"),
+           "a transferred creation cannot allocate another view");
+    client_close(s,alice); *alice=(Client){.fd=-1,.uid=s->process_uid+1};
+
+    /* Account budgets include ordinary snapshots, scoped captures and views
+     * transferred to waits. One account cannot borrow another's allowance. */
+    s->shared_profile=true; s->max_account_views=2; s->max_account_view_bytes=4096;
+    s->max_account_watchers=1;
+    Atom *snapshot=query_view(s,alice,a,ordered,message,1);
+    expect(ok(snapshot),"ordinary snapshot owns one account view");
+    Atom *owned=observe(s,alice,a,ordered,E1(a,"reads",message),form(a,"writes",NULL,0),1);
+    expect(ok(owned),"scoped capture shares account allowance with snapshot");
+    expect(refused(observe(s,alice,a,ordered,E1(a,"reads",message),form(a,"writes",NULL,0),1),
+                   "account-view-limit"),"account cannot exceed its view allowance");
+    Atom *other=observe(s,bob,a,ordered,E1(a,"reads",message),form(a,"writes",NULL,0),1);
+    expect(ok(other),"other account retains an independent allowance");
+    Atom *close_args[]={part(part(snapshot,3),1),part(part(snapshot,3),2)};
+    expect(ok(call(s,alice,a,req(a,fresh_id(a),"close",close_args,2))),"close ordinary snapshot");
+    expect(!watch(s,alice,a,ordered,handle_id(owned),60000) && alice->watching,"transfer retains account charge");
+    Atom *second_view=observe(s,alice,a,ordered,E1(a,"reads",message),form(a,"writes",NULL,0),1);
+    expect(ok(second_view),"remaining account slot is usable");
+    expect(refused(watch(s,alice,a,ordered,handle_id(second_view),60000),"account-watch-limit"),
+           "parked waits have an account allowance");
+    expect(!watch(s,bob,a,ordered,handle_id(other),60000) && bob->watching,"another account can wait");
+    expect(ok(close_handle(s,alice,a,handle_id(second_view))),"refused transfer remains releasable");
+    client_close(s,alice); *alice=(Client){.fd=-1,.uid=s->process_uid+1};
+    client_close(s,bob); *bob=(Client){.fd=-1,.uid=s->process_uid+2};
+    expect(!s->observation_bytes && !s->snapshot_bytes,"all account resources released");
+    s->max_account_views=0; s->max_account_view_bytes=0; s->max_account_watchers=0;
+    Atom *held[SNAPSHOTS/2];
+    for (size_t i=0;i<SNAPSHOTS/2;++i) {
+        held[i]=observe(s,alice,a,ordered,form(a,"reads",NULL,0),form(a,"writes",NULL,0),1);
+        expect(ok(held[i]),"shared default grants half the view pool");
+    }
+    expect(refused(observe(s,alice,a,ordered,form(a,"reads",NULL,0),form(a,"writes",NULL,0),1),
+                   "account-view-limit"),"one shared account cannot fill the pool");
+    other=observe(s,bob,a,ordered,form(a,"reads",NULL,0),form(a,"writes",NULL,0),1);
+    expect(ok(other),"another account can still capture");
+    for (size_t i=0;i<SNAPSHOTS/2;++i) close_handle(s,alice,a,handle_id(held[i]));
+    close_handle(s,bob,a,handle_id(other));
+    s->shared_profile=false;
+    owned=observe(s,alice,a,ordered,E1(a,"reads",message),form(a,"writes",NULL,0),1);
+    expect(ok(owned),"capture before byte accounting check");
+    Observation *charged=find_observation(s,(uint64_t)handle_id(owned)->ground.ival);
+    s->max_account_view_bytes=charged->size+charged->size/2;
+    expect(refused(observe(s,alice,a,ordered,E1(a,"reads",message),form(a,"writes",NULL,0),1),
+                   "account-view-byte-limit"),"account byte allowance counts live captures");
+    other=observe(s,bob,a,ordered,E1(a,"reads",message),form(a,"writes",NULL,0),1);
+    expect(ok(other),"byte use by another account stays independent");
+    close_handle(s,alice,a,handle_id(owned)); close_handle(s,bob,a,handle_id(other));
+    s->max_account_view_bytes=0;
+    expect(!s->observation_bytes && !s->snapshot_bytes,"byte-accounting refusals retain no buffers");
 
     /* T8: a member's scoped receipt is recovered under the member's account. */
     observed = observe(s, alice, a, ordered, form(a, "reads", NULL, 0), E1(a, "writes", message), 16);

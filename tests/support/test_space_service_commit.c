@@ -121,8 +121,8 @@ static off_t journal_size(Service *s) {
     struct stat info; check(!fstat(s->journal,&info)); return info.st_size;
 }
 static Atom *request(Arena *a,Service *s,const char *id,const char *operation,Atom **args,size_t count) {
-    Atom *parts[8]={atom_string(a,id),atom_symbol(a,operation),atom_string(a,s->uuid)};
-    check(count<=5);
+    Atom *parts[16]={atom_string(a,id),atom_symbol(a,operation),atom_string(a,s->uuid)};
+    check(count<=13);
     for (size_t i=0;i<count;++i) parts[i+3]=args[i];
     return form(a,"request",parts,count+3);
 }
@@ -328,6 +328,15 @@ static void scope_deadline(Service *s,Arena *a) {
         atom_is_symbol(part(answer,3),"query-time-limit"));
     check(elapsed<40);
     check(s->observation_bytes==0 && s->snapshot_bytes==0);
+    /* A creation's transport deadline also bounds capture, even when the
+     * service's ordinary query allowance is longer. */
+    Atom *owned[]={args[0],args[1],args[2],args[3],args[4],atom_string(a,s->boot),atom_int(a,2006)};
+    s->query_ms=5000; fake_clock=2000;
+    answer=execute_wire(s,a,request(a,s,"bounded-creation","observe-until",owned,7));
+    elapsed=fake_clock-2000; fake_clock=0;
+    check(shape(answer,"reply",4) && atom_is_symbol(part(answer,2),"error"));
+    check(elapsed<20);
+    check(!s->capturing && s->observation_bytes==0 && s->snapshot_bytes==0);
 }
 static void scope_validation_encoding(Service *s,Arena *a) {
     check(execute_wire(s,a,open_request(a,s,"native-ordered"))!=NULL);

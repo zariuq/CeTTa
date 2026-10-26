@@ -11,6 +11,7 @@
 ; reserved and survive the service's bounded transport-reply cache.
 !(import! &self (library space_service))
 !(import! &self (library io))
+!(import! &self (library system))
 
 (: space:observe (-> String Atom Atom Atom Number Number %Undefined%))
 
@@ -118,10 +119,10 @@
                ($failed $failed)))))
         ($invalid (SpaceRefused invalid-read-scope))))))
 
-(= (space-scope:has-capability $capabilities)
+(= (space-scope:has-capability $needle $capabilities)
   (if (== $capabilities ()) False
-    (if (== (car-atom $capabilities) scoped-observations-v1) True
-      (space-scope:has-capability (cdr-atom $capabilities)))))
+    (if (== (car-atom $capabilities) $needle) True
+      (space-scope:has-capability $needle (cdr-atom $capabilities)))))
 
 (: space-scope:open (-> String Atom Atom Atom Number Number %Undefined%))
 (= (space-scope:open $socket (space $uuid $id $name $backend $kind $rev $count)
@@ -129,13 +130,30 @@
   (let $hello (space:request-id)
     (case (space:call $socket (request $hello hello) 5000)
       (((reply $rid ok (service $version $current-uuid $boot $catalog $capabilities))
-         (if (space-scope:has-capability (cdr-atom $capabilities))
-           (let* (($read-values (cons-atom reads $reads))
-                  ($write-values (cons-atom writes $writes)) ($request-id (space:request-id)))
-             (space:call $socket
-               (request $request-id observe $uuid $id $read-values $write-values $limit $lease) 5000))
+         (if (space-scope:has-capability scoped-creation-v2 (cdr-atom $capabilities))
+           (space-scope:create $socket
+             (space $uuid $id $name $backend $kind $rev $count) $boot $reads $writes $limit $lease)
            (SpaceRefused unsupported-scoped-observations)))
         ($failed $failed)))))
+
+(: space-scope:create (-> String Atom String Atom Atom Number Number %Undefined%))
+(= (space-scope:create $socket
+     (space $uuid $id $name $backend $kind $rev $count) $boot $reads $writes $limit $lease)
+  (let* (($ns (system:monotonic-ns))
+         ($until (+ (/ (- $ns (% $ns 1000000)) 1000000) 5000))
+         ($read-values (cons-atom reads $reads)) ($write-values (cons-atom writes $writes))
+         ($request-id (space:request-id))
+         ($answer (space:call $socket
+           (request $request-id observe-until $uuid $id $read-values $write-values $limit $lease $boot $until) 5000)))
+    (case $answer
+      (((space:uncertain $sent $reason)
+         (let $closed (space-scope:abandon $socket $uuid $id $boot $request-id $until) $answer))
+        ($other $other)))))
+
+(: space-scope:abandon (-> String String Number String String Number %Undefined%))
+(= (space-scope:abandon $socket $uuid $source $boot $creation $until)
+  (let $rid (space:request-id)
+    (space:call $socket (request $rid observe-abandon $uuid $source $boot $creation $until) 5000)))
 
 (: space-scope:fetch (-> String Atom Number Number Number %Undefined%))
 (= (space-scope:fetch $socket (observation $boot $id $source $rev $reads $writes $lease)
