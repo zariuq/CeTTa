@@ -165,6 +165,10 @@ enum {
 #endif
 };
 
+_Static_assert((CETTA_NATIVE_IMPORT_GPARSE &
+                (((CettaLibraryMask)CETTA_LIBRARY_TENSOR << 1) - 1)) == 0,
+               "native grammar import aliases the shared library catalog");
+
 static bool library_prime_host_intrinsic(SymbolId head) {
     return cetta_prime_host_intrinsic_head(head) ||
            eval_native_weight_head(head);

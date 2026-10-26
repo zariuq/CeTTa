@@ -11,6 +11,11 @@ struct CettaLibraryContext;
 /* Authored and native imports share one catalog without aliasing bits. */
 typedef uint64_t CettaLibraryMask;
 
+/* Bits 0..24 belong to the shared library catalog. In particular, 24 is
+ * tensor; gparse must not acquire authority when that library is imported.
+ * 25..33 are existing native modules and 34 is reserved for crypto. */
+#define CETTA_NATIVE_IMPORT_GPARSE (UINT64_C(1) << 35)
+
 typedef struct {
     const char *name;
     CettaLibraryMask import_bit;
