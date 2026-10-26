@@ -3,9 +3,10 @@
 
 fs:open-write, fs:lock and fs:make-directories are compared with os.open,
 fcntl.flock and Path.mkdir(parents=True, exist_ok=True): created modes,
-errno values and the paths errors name. Locks are checked across processes in
-both directions, and native and Python writers append to one file under the
-same lock while every line stays whole and in each writer's order.
+errno values and the paths errors name. fs:set-mode, fs:remove and fs:access
+are compared with os.fchmod, os.unlink and os.access. Locks are checked across
+processes in both directions, and native and Python writers append to one file
+under the same lock while every line stays whole and in each writer's order.
 """
 import argparse
 import errno
@@ -214,6 +215,119 @@ def open_cases(engine, failures):
     return checked
 
 
+def mode_cases(engine, failures):
+    """os.fchmod on a fresh writer and on a reader against fs:set-mode."""
+    root = engine.work / "modes"
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir()
+    modes = [0o600, 0o644, 0o400, 0o000, 0o755, 0o1777, 0o2750, 0o4700, 0o7777]
+    for mode in modes:
+        descriptor = os.open(root / ("python-%o" % mode), os.O_WRONLY | os.O_CREAT, 0o666)
+        os.fchmod(descriptor, mode)
+        os.close(descriptor)
+        (root / ("reader-python-%o" % mode)).write_text("r")
+        descriptor = os.open(root / ("reader-python-%o" % mode), os.O_RDONLY)
+        os.fchmod(descriptor, mode)
+        os.close(descriptor)
+        (root / ("reader-native-%o" % mode)).write_text("r")
+    source = "!(import! &self (library fs))\n" + "".join(
+        "!(let $w (fs:open-write %s (\"create\") 438) (println! (RESULT (fs:set-mode $w %d) (fs:close $w))))\n"
+        "!(let $r (fs:open-read %s) (println! (RESULT (fs:set-mode $r %d) (fs:close $r))))\n"
+        % (literal(str(root / ("native-%o" % mode))), mode,
+           literal(str(root / ("reader-native-%o" % mode))), mode) for mode in modes)
+    source += "!(let $w (fs:open-write %s (\"create\") 438) (let $c (fs:close $w) (println! (RESULT (fs:set-mode $w 384)))))\n" \
+        % literal(str(root / "closed"))
+    results = engine.results(source)
+    for index, mode in enumerate(modes):
+        for kind, text in (("writer", results[2 * index]), ("reader", results[2 * index + 1])):
+            if text != "fs:mode-set fs:closed":
+                failures.append(("set-mode %s %o" % (kind, mode), text, "fs:mode-set fs:closed"))
+        for prefix in ("", "reader-"):
+            want = oct((root / ("%spython-%o" % (prefix, mode))).stat().st_mode)
+            got = oct((root / ("%snative-%o" % (prefix, mode))).stat().st_mode)
+            if got != want:
+                failures.append(("set-mode %s%o file mode" % (prefix, mode), got, want))
+    if not results[-1].startswith("(fs:failed fs:invalid-handle set-mode "):
+        failures.append(("set-mode on a closed owner", results[-1], "fs:invalid-handle"))
+    return 2 * len(modes) + 1
+
+
+def remove_cases(engine, failures):
+    """os.unlink against fs:remove: outcomes, errno values, named paths and the tree left."""
+    cases = ["file", "missing", "directory", "link", "dangling", "file/inside", "closed/file", ""]
+    trees = {}
+    outcomes = {}
+    for owner in ("python", "native"):
+        root = engine.work / ("remove-" + owner)
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir()
+        (root / "file").write_text("x")
+        (root / "directory").mkdir()
+        (root / "target").write_text("t")
+        (root / "link").symlink_to("target")
+        (root / "dangling").symlink_to("missing-target")
+        (root / "closed").mkdir()
+        (root / "closed/file").write_text("x")
+        (root / "closed").chmod(0o500)
+        if owner == "python":
+            for name in cases:
+                try:
+                    os.unlink(root / name if name else "")
+                    outcomes[(owner, name)] = ("ok",)
+                except OSError as error:
+                    outcomes[(owner, name)] = ("error", error.errno,
+                                               str(error.filename).replace(str(root), "ROOT"))
+        else:
+            source = "!(import! &self (library fs))\n" + "".join(
+                "!(println! (RESULT (fs:remove %s)))\n" % literal(str(root / name) if name else "")
+                for name in cases)
+            for name, text in zip(cases, engine.results(source)):
+                outcome = native_outcome(text)
+                if outcome[0] == "error":
+                    outcome = ("error", outcome[1], outcome[2].replace(str(root), "ROOT"))
+                outcomes[(owner, name)] = outcome
+        (root / "closed").chmod(0o700)
+        trees[owner] = tree(root)
+    for name in cases:
+        if outcomes[("native", name)] != outcomes[("python", name)]:
+            failures.append(("remove %r" % name, outcomes[("native", name)], outcomes[("python", name)]))
+    if trees["native"] != trees["python"]:
+        failures.append(("remove trees", trees["native"], trees["python"]))
+    return len(cases)
+
+
+def access_cases(engine, failures):
+    """os.access for every permission combination against fs:access."""
+    root = engine.work / "access"
+    shutil.rmtree(root, ignore_errors=True)
+    root.mkdir()
+    for mode in (0o000, 0o400, 0o200, 0o100, 0o700, 0o644, 0o711):
+        path = root / ("mode-%o" % mode)
+        path.write_text("x")
+        path.chmod(mode)
+    (root / "directory").mkdir()
+    (root / "link").symlink_to("mode-700")
+    (root / "dangling").symlink_to("missing-target")
+    names = sorted(entry.name for entry in root.iterdir()) + ["missing", "mode-644/inside"]
+    combinations = [(), ("read",), ("write",), ("execute",), ("read", "write"),
+                    ("read", "execute"), ("write", "execute"), ("read", "write", "execute")]
+    bits = {"read": os.R_OK, "write": os.W_OK, "execute": os.X_OK}
+    cases = [(name, combination) for name in names for combination in combinations]
+    source = "!(import! &self (library fs))\n" + "".join(
+        "!(println! (RESULT (fs:access %s (%s))))\n"
+        % (literal(str(root / name)), " ".join('"%s"' % word for word in combination))
+        for name, combination in cases)
+    for (name, combination), text in zip(cases, engine.results(source)):
+        mode = os.F_OK
+        for word in combination:
+            mode |= bits[word]
+        # PeTTa prints the True and False symbols in lower case.
+        want = "true" if os.access(root / name, mode) else "false"
+        if text != want:
+            failures.append(("access %s %s" % (name, combination), text, want))
+    return len(cases)
+
+
 def lock_cases(engine, failures):
     """A Python holder blocks the native writer, and a native holder blocks Python."""
     path = engine.work / "locked.jsonl"
@@ -316,6 +430,9 @@ def main():
             engine = Engine(args.binary.resolve(), Path(directory))
             checked = make_directory_cases(engine, failures)
             checked += open_cases(engine, failures)
+            checked += mode_cases(engine, failures)
+            checked += remove_cases(engine, failures)
+            checked += access_cases(engine, failures)
             checked += lock_cases(engine, failures)
             lines = interleaving(engine, failures, args.writers, args.lines, args.seed)
     finally:

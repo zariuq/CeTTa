@@ -646,8 +646,8 @@ static bool json_option_bool(Atom *atom, bool *value) {
     return false;
 }
 
-/* (JsonPythonV1 ((ensure-ascii B) (sort-keys B) (separators ITEM KEY))): any
- * subset, unknown options refused. 0 when spec is not this form. */
+/* (JsonPythonV1 ((ensure-ascii B) (sort-keys B) (separators ITEM KEY) (indent N))):
+ * any subset, unknown options refused. 0 when spec is not this form. */
 static int json_python_options(Atom *spec, CettaJsonPythonOptionsV1 *options) {
     if (!spec || spec->kind != ATOM_EXPR || spec->expr.len != 2u ||
         !atom_is_symbol(spec->expr.elems[0], "JsonPythonV1"))
@@ -655,6 +655,7 @@ static int json_python_options(Atom *spec, CettaJsonPythonOptionsV1 *options) {
     Atom *const *items;
     CettaExprLen count;
     if (!atom_sequence_view(spec->expr.elems[1], &items, &count)) return -1;
+    bool separators = false;
     for (CettaExprLen index = 0u; index < count; index++) {
         Atom *option = items[index];
         if (!option || option->kind != ATOM_EXPR || option->expr.len < 2u) return -1;
@@ -672,9 +673,33 @@ static int json_python_options(Atom *spec, CettaJsonPythonOptionsV1 *options) {
             options->item_separator_len = atom_string_len(option->expr.elems[1]);
             options->key_separator = key;
             options->key_separator_len = atom_string_len(option->expr.elems[2]);
+            separators = true;
+        } else if (atom_is_symbol(name, "indent") && option->expr.len == 2u) {
+            /* json.dumps's indent: a string, or a count of spaces, none when
+             * the count is not positive. */
+            Atom *indent = option->expr.elems[1];
+            const char *text = json_text(indent);
+            if (text) {
+                options->indent_text = text;
+                options->indent_len = atom_string_len(indent);
+            } else if (indent && indent->kind == ATOM_GROUNDED && indent->ground.gkind == GV_INT) {
+                int64_t spaces = indent->ground.ival;
+                options->indent_text = NULL;
+                options->indent_len = spaces <= 0 ? 0u
+                    : (uint64_t)spaces > SIZE_MAX ? SIZE_MAX : (size_t)spaces;
+            } else {
+                return -1;
+            }
+            options->indent = true;
         } else {
             return -1;
         }
+    }
+    /* As in json.dumps, an indent without separators drops the item
+     * separator's trailing space. */
+    if (options->indent && !separators) {
+        options->item_separator = ",";
+        options->item_separator_len = 1u;
     }
     return 1;
 }
@@ -699,7 +724,7 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
         return json_failure_or_error(
             arena, head, args, nargs, ordinary,
             "JsonStringifyV1", "JsonBadArgumentV1",
-            "expected options (ensure-ascii B), (sort-keys B) or (separators ITEM KEY)");
+            "expected options (ensure-ascii B), (sort-keys B), (separators ITEM KEY) or (indent N)");
     }
     const CettaJsonRuntimeV1 *parser = NULL;
     Atom *result;

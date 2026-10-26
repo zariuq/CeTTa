@@ -133,8 +133,10 @@
        (return $result))))
 
 ; The same with json.dumps options, any subset of (ensure-ascii B),
-; (sort-keys B) and (separators ITEM KEY), for example
-; ((ensure-ascii False) (sort-keys True)). Both fail on an integer past 4300
+; (sort-keys B), (separators ITEM KEY) and (indent N), N being a number of
+; spaces or an indent string, for example ((ensure-ascii False) (indent 2)).
+; As in json.dumps, an indent without separators makes the item separator
+; ",". Both fail on an integer past 4300
 ; digits as json.dumps does: (JsonPythonErrorV1 ValueError message prefix),
 ; prefix being what a streaming json.dump has written by then.
 (: json:stringify-python-with (-> %Undefined% %Undefined% Atom))

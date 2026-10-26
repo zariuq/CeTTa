@@ -5,6 +5,7 @@
 (: system:cwd (-> String))
 (: system:runtime-root (-> String))
 
+; time.time(): the wall clock's nanoseconds converted as CPython converts them.
 (= (system:wall-time)
    (function (case (__cetta_lib_system_host wall-time)
      (($result (return $result)))){$result}))
@@ -18,6 +19,16 @@
      (($result (return $result)))){$result}))
 (= (system:pid-alive? $pid)
    (function (case (__cetta_lib_system_host pid-alive $pid)
+     (($result (return $result)))){$result}))
+; os.kill(pid, 0): True, or (system:os-error errno message) for every refusal,
+; EPERM included. 0 and negative IDs address process groups, as kill(2) has it.
+(= (system:signal-probe $pid)
+   (function (case (__cetta_lib_system_host signal-probe $pid)
+     (($result (return $result)))){$result}))
+; getattr(errno, name) for the names Python's errno module knows: the
+; platform's value, or () where the platform has no such errno.
+(= (system:errno-value $name)
+   (function (case (__cetta_lib_system_host errno-value $name)
      (($result (return $result)))){$result}))
 (= (system:format-time $format $timestamp $zone)
    (function (case (__cetta_lib_system_host format-time $format $timestamp $zone)

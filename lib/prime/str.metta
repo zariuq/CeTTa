@@ -50,6 +50,13 @@
    (function
      (chain (eval (__cetta_lib_str trim $text)) $result (return $result)){$result}))
 
+; Python's '%.*f' % (digits, value): the correctly rounded fixed-point text in
+; the C locale. An integer converts as float() converts it; NaN is "nan"
+; whatever its sign, and the infinities "inf" and "-inf".
+(= (str:format-fixed $value $digits)
+   (function
+     (chain (eval (__cetta_lib_str format-fixed $value $digits)) $result (return $result)){$result}))
+
 ; The SHA-256 digest of the text's bytes, as 64 lowercase hex digits.
 (= (str:sha256 $text)
    (function

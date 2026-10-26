@@ -113,7 +113,11 @@ bool cetta_json_value_v1_emit_pretty(CettaJsonNumberValidatorV1 number_validator
     uint8_t **bytes_out, size_t *byte_len_out, CettaJsonValueV1Status *status,
     char *error_buf, size_t error_buf_size);
 
-/* Python json.dumps options: ensure_ascii, sort_keys and separators. */
+/* Python json.dumps options: ensure_ascii, sort_keys, separators and indent.
+ * Without indent (indent=None) the text is one line. With it, each member and
+ * each closing bracket of a non-empty container starts a new line, indented
+ * once per nesting level by indent_text, or by indent_len spaces when
+ * indent_text is NULL, as json.dumps indents by a string or an integer. */
 typedef struct {
     bool ensure_ascii;
     bool sort_keys;
@@ -121,6 +125,9 @@ typedef struct {
     size_t item_separator_len;
     const char *key_separator;
     size_t key_separator_len;
+    bool indent;
+    const char *indent_text;
+    size_t indent_len;
 } CettaJsonPythonOptionsV1;
 
 /* The same traversal emitting what Python's json.dumps writes: floats in
@@ -128,7 +135,7 @@ typedef struct {
  * the given separators, keys in code point order when sorted, and, with
  * ensure_ascii, every scalar outside printable ASCII escaped as lowercase
  * \\uXXXX with surrogate pairs. NULL options are json.dumps's defaults:
- * ASCII escapes, member order kept, ", " and ": ". */
+ * ASCII escapes, member order kept, ", " and ": ", one line. */
 bool cetta_json_value_v1_emit_python(CettaJsonNumberValidatorV1 number_validator,
     Atom *value, bool ordinary_input, const CettaJsonPythonOptionsV1 *options,
     uint32_t work_limit, uint32_t depth_limit, size_t byte_limit,
