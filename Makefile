@@ -21908,6 +21908,29 @@ main-readiness-rho-adaptive:
 	done
 	@python3 scripts/rhocalc_benchmark_regression.py
 
+main-readiness-consolidation: $(BIN)
+	@test -n "$(CETTA_CONSOLIDATION_BASELINE_BIN)" && \
+		test -n "$(CETTA_CONSOLIDATION_BASELINE_RECEIPT)" && \
+		test -n "$(CETTA_CONSOLIDATION_BASELINE_SHA256)"
+	@python3 scripts/rhocalc_threaded_bench.py "$(abspath $(BIN))" \
+		--baseline-bin "$(CETTA_CONSOLIDATION_BASELINE_BIN)" \
+		--baseline-receipt "$(CETTA_CONSOLIDATION_BASELINE_RECEIPT)" \
+		--baseline-receipt-sha256 "$(CETTA_CONSOLIDATION_BASELINE_SHA256)" \
+		--baseline-source-commit c632ecd1479fc766dcdf0efafd4cbc311213af6d \
+		--mode standard --runs 5 --threads 1,2,4,8 --seed 0xC377A \
+		--csv runtime/consolidation/rhocalc_threaded_standard_current.csv
+	@python3 scripts/rhocalc_cost_threaded_bench.py "$(abspath $(BIN))" \
+		--baseline-bin "$(CETTA_CONSOLIDATION_BASELINE_BIN)" \
+		--baseline-receipt "$(CETTA_CONSOLIDATION_BASELINE_RECEIPT)" \
+		--baseline-receipt-sha256 "$(CETTA_CONSOLIDATION_BASELINE_SHA256)" \
+		--baseline-source-commit c632ecd1479fc766dcdf0efafd4cbc311213af6d \
+		--mode heavy --runs 5 --threads 1,2,4,8 \
+		--csv runtime/consolidation/rhocalc_cost_threaded_heavy_current.csv
+	@python3 scripts/rhocalc_benchmark_regression.py \
+		--matrix-dir runtime/consolidation --require-paired --max-ratio 1.05 --min-slack 0 \
+		--baseline-commit c632ecd1479fc766dcdf0efafd4cbc311213af6d \
+		--baseline-sha256 "$$(sha256sum "$(CETTA_CONSOLIDATION_BASELINE_BIN)" | cut -d' ' -f1)"
+
 main-readiness-routine:
 	@python3 scripts/cetta_main_readiness.py --tier routine
 
@@ -46873,3 +46896,5 @@ test-petta-contextual-case: $(BIN) tests/support/check_petta_contextual_case.py
 	python3 tests/support/check_petta_contextual_case.py --cetta ./$(BIN)
 
 test-all: test-petta-contextual-case
+
+.PHONY: main-readiness-consolidation

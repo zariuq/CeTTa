@@ -940,22 +940,12 @@ static Atom *prime_need_owned_payload(
     return owned;
 }
 
-typedef struct EvalCompletionTracker {
-    CettaEvalCompletion completion;
-    bool interrupted;
-    bool budget_limited;
-    uint64_t budget_initial;
-    uint64_t budget_remaining;
-    uint64_t steps_spent;
-    struct EvalCompletionTracker *parent;
-} EvalCompletionTracker;
-
 /* Completion tracking is opt-in.  The ordinary evaluator ABI and answer
  * frontier remain unchanged; nested calls contribute to the active tracker. */
-static __thread EvalCompletionTracker *g_eval_completion_tracker = NULL;
+static __thread CettaEvalEpisode *g_eval_completion_tracker = NULL;
 
 static void eval_mark_incomplete(CettaEvalCompletion completion) {
-    EvalCompletionTracker *tracker = g_eval_completion_tracker;
+    CettaEvalEpisode *tracker = g_eval_completion_tracker;
     if (tracker)
         cetta_eval_completion_record(&tracker->completion, completion);
 }
@@ -970,67 +960,20 @@ static void eval_mark_interrupted(CettaEvalCompletion completion) {
 }
 
 static bool eval_completion_step(void) {
-    EvalCompletionTracker *tracker = g_eval_completion_tracker;
-    if (!tracker)
-        return true;
-    if (tracker->interrupted)
-        return false;
-    if (tracker->budget_limited) {
-        if (tracker->budget_remaining == 0) {
-            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_FUEL);
-            return false;
-        }
-        tracker->budget_remaining--;
-        if (tracker->steps_spent != UINT64_MAX)
-            tracker->steps_spent++;
-    }
-    return true;
+    return cetta_eval_episode_step(g_eval_completion_tracker, 1u);
 }
 
-/* Observe one nested computation independently while borrowing the active
- * episode's remaining step budget.  The child reports whether its own
- * frontier completed; on exit its resource use and any incompleteness are
- * still propagated to the enclosing episode. */
-static void eval_completion_child_begin(EvalCompletionTracker *child) {
-    EvalCompletionTracker *parent = g_eval_completion_tracker;
-    uint64_t granted = parent && parent->budget_limited
-        ? parent->budget_remaining : 0u;
-    *child = (EvalCompletionTracker){
-        .completion = parent && parent->interrupted
-            ? parent->completion : CETTA_EVAL_COMPLETE,
-        .interrupted = parent && parent->interrupted,
-        .budget_limited = parent && parent->budget_limited,
-        .budget_initial = granted,
-        .budget_remaining = granted,
-        .steps_spent = 0u,
-        .parent = parent,
-    };
+/* A nested computation borrows its parent's current purse. The host owns
+ * dynamic installation; the shared episode owns accounting and completion. */
+static void eval_completion_child_begin(CettaEvalEpisode *child) {
+    *child = cetta_eval_episode_begin(g_eval_completion_tracker, -1);
     g_eval_completion_tracker = child;
 }
 
-static CettaEvalCompletion eval_completion_child_end(
-    EvalCompletionTracker *child) {
+static CettaEvalCompletion eval_completion_child_end(CettaEvalEpisode *child) {
     assert(child && g_eval_completion_tracker == child);
-    EvalCompletionTracker *parent = child->parent;
-    g_eval_completion_tracker = parent;
-    if (parent && child->completion != CETTA_EVAL_COMPLETE &&
-        parent->completion == CETTA_EVAL_COMPLETE) {
-        parent->completion = child->completion;
-    }
-    if (parent && child->interrupted)
-        parent->interrupted = true;
-    if (parent && parent->budget_limited) {
-        uint64_t spent = child->steps_spent;
-        if (parent->steps_spent > UINT64_MAX - spent)
-            parent->steps_spent = UINT64_MAX;
-        else
-            parent->steps_spent += spent;
-        if (spent >= parent->budget_remaining)
-            parent->budget_remaining = 0u;
-        else
-            parent->budget_remaining -= spent;
-    }
-    return child->completion;
+    g_eval_completion_tracker = child->parent;
+    return cetta_eval_episode_end(child);
 }
 /* When set, the current evaluation is a Rhometta deferred payload running as
  * a sibling-isolated transaction over a frozen shared base. Space and state
@@ -15449,7 +15392,7 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
     const PettaProgramRevisionProjection *prev_program_projection =
         g_petta_program_revision_projection;
     HashConsTable *prev_hashcons = g_hashcons;
-    EvalCompletionTracker *prev_completion = g_eval_completion_tracker;
+    CettaEvalEpisode *prev_completion = g_eval_completion_tracker;
     _Atomic bool *prev_cancel = eval_set_cancel_token(&run->cancel_requested);
     _Atomic bool *prev_unsafe =
         eval_set_hyperpose_thread_unsafe_token(&run->unsafe_result);
@@ -15459,7 +15402,7 @@ static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
        cancellation, stack exhaustion, and capacity failure can be joined at
        the caller's observation boundary, but it owns no fuel purse and pays
        no accounting decrement on ordinary steps. */
-    EvalCompletionTracker completion = {
+    CettaEvalEpisode completion = {
         .completion = CETTA_EVAL_COMPLETE,
         .budget_limited = false,
         .budget_initial = 0u,
@@ -23192,7 +23135,7 @@ static CettaCallOutcome complete_native_expression_frontier(
     __attribute__((cleanup(eval_gc_outcome_suspension_end)))
     EvalGcOutcomeSuspension suspension = {0};
     eval_gc_outcome_suspension_begin(&suspension, &root, &image, &values);
-    EvalCompletionTracker tracker;
+    CettaEvalEpisode tracker;
     eval_completion_child_begin(&tracker);
     CettaCallOutcome end = cetta_call_failure();
     CettaCallReturnCursor cursor = {.outcome = cetta_call_expression_frontier(frontier),
@@ -42035,10 +41978,11 @@ static void petta_eval_machine_transaction_relocate_commit(
     petta_eval_machine_transaction_relocate_discard(context, relocation);
 }
 
-static bool petta_eval_machine_permit_transition(void *context) {
+static bool petta_eval_machine_permit_transition(
+        void *context, const CettaSourceStep *source) {
     PettaEvalMachineContext *eval_context = context;
     if (eval_unwinding() || eval_cancel_check() ||
-        !eval_completion_step()) {
+        !cetta_eval_episode_step(g_eval_completion_tracker, source->debit)) {
         return false;
     }
     if (!eval_context ||
@@ -42056,7 +42000,7 @@ static bool petta_eval_machine_permit_transition(void *context) {
 }
 
 static bool petta_eval_machine_permit_controller_transition(
-    void *context) {
+    void *context, const CettaSourceStep *source) {
     PettaEvalMachineContext *eval_context = context;
     if (!eval_context)
         return false;
@@ -42066,7 +42010,7 @@ static bool petta_eval_machine_permit_controller_transition(
         eval_context->controller_quantum_expired = true;
         return false;
     }
-    if (!petta_eval_machine_permit_transition(context))
+    if (!petta_eval_machine_permit_transition(context, source))
         return false;
     if (eval_context->controller_quantum_active)
         eval_context->controller_quantum_transitions++;
@@ -46614,8 +46558,9 @@ static PettaMachineHost petta_eval_machine_host(
 #if !CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     (void)type_obligations;
 #endif
-    bool prepared_available = fuel < 0 && !prepared_pure_reference_enabled() &&
+    bool source_unbounded = fuel < 0 &&
         !(g_eval_completion_tracker && g_eval_completion_tracker->budget_limited);
+    bool prepared_available = source_unbounded && !prepared_pure_reference_enabled();
     PettaMachineHost host = {
         .context = context,
         .analysis =
@@ -46664,7 +46609,7 @@ static PettaMachineHost petta_eval_machine_host(
             ? petta_eval_machine_permit_controller_transition
             : petta_eval_machine_permit_transition,
         .unlimited_transition_budget =
-            fuel < 0 && context->diagnostic_transition_limit == 0u,
+            source_unbounded && context->diagnostic_transition_limit == 0u,
         .classify = petta_eval_machine_classify_host,
         .builtin_allowed = petta_eval_machine_builtin_allowed,
         .grounded_call = g_he_shared_execution ? he_machine_grounded_values : NULL,
@@ -46904,7 +46849,7 @@ bool eval_pattern_query_ready(Space *space, Arena *arena, Atom *head,
     g_he_shared_execution = eval_current_language_id() == CETTA_LANGUAGE_HE;
     g_active_petta_search_machine = true;
     g_petta_machine_run_raised = false;
-    EvalCompletionTracker tracker;
+    CettaEvalEpisode tracker;
     eval_completion_child_begin(&tracker);
     /* No expression-depth charge inside the data matcher. Its transitions
      * still borrow the enclosing episode's exact remaining step budget. */
@@ -53257,7 +53202,7 @@ petta_lowered_to_shared_form:
             if (case_of_value) {
                 outcome_set_add(&scrut, expr_arg(atom, 0), CURRENT_ENV);
             } else {
-                EvalCompletionTracker source_tracker;
+                CettaEvalEpisode source_tracker;
                 eval_completion_child_begin(&source_tracker);
                 eval_for_caller(s, a, NULL, expr_arg(atom, 0), fuel,
                                 CURRENT_ENV, true, &scrut);
@@ -57695,54 +57640,17 @@ void metta_eval_outcome(Space *s, Arena *a, Atom *type, Atom *atom, int fuel,
                         EvalOutcome *outcome) {
     if (!outcome)
         return;
-    EvalCompletionTracker *parent = g_eval_completion_tracker;
-    bool requested_limited = fuel >= 0;
-    bool budget_limited = requested_limited ||
-                          (parent && parent->budget_limited);
-    uint64_t requested = requested_limited ? (uint64_t)fuel : 0;
-    uint64_t granted = requested;
-    if (parent && parent->budget_limited &&
-        (!requested_limited || parent->budget_remaining < granted)) {
-        granted = parent->budget_remaining;
-    }
-    int effective_fuel = budget_limited
-        ? (granted > (uint64_t)INT_MAX ? INT_MAX : (int)granted)
+    CettaEvalEpisode tracker = cetta_eval_episode_begin(g_eval_completion_tracker, fuel);
+    int effective_fuel = tracker.budget_limited
+        ? (tracker.budget_initial > (uint64_t)INT_MAX ? INT_MAX : (int)tracker.budget_initial)
         : -1;
-    EvalCompletionTracker tracker = {
-        .completion = parent && parent->interrupted
-            ? parent->completion : CETTA_EVAL_COMPLETE,
-        .interrupted = parent && parent->interrupted,
-        .budget_limited = budget_limited,
-        .budget_initial = granted,
-        .budget_remaining = granted,
-        .steps_spent = 0,
-        .parent = parent,
-    };
     g_eval_completion_tracker = &tracker;
     metta_eval(s, a, type, atom, effective_fuel, &outcome->results);
-    g_eval_completion_tracker = tracker.parent;
-    outcome->completion = tracker.completion;
+    outcome->completion = eval_completion_child_end(&tracker);
     outcome->budget_limited = tracker.budget_limited;
     outcome->budget_initial = tracker.budget_initial;
     outcome->budget_remaining = tracker.budget_remaining;
     outcome->steps_spent = tracker.steps_spent;
-    if (tracker.parent && tracker.completion != CETTA_EVAL_COMPLETE &&
-        tracker.parent->completion == CETTA_EVAL_COMPLETE) {
-        tracker.parent->completion = tracker.completion;
-    }
-    if (tracker.parent && tracker.interrupted)
-        tracker.parent->interrupted = true;
-    if (tracker.parent && tracker.parent->budget_limited) {
-        uint64_t spent = tracker.steps_spent;
-        if (tracker.parent->steps_spent > UINT64_MAX - spent)
-            tracker.parent->steps_spent = UINT64_MAX;
-        else
-            tracker.parent->steps_spent += spent;
-        if (spent >= tracker.parent->budget_remaining)
-            tracker.parent->budget_remaining = 0;
-        else
-            tracker.parent->budget_remaining -= spent;
-    }
 }
 
 #undef outcome_set_add

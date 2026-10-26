@@ -22,6 +22,7 @@ from cetta_readiness_model import (
     dependency_identity,
     evidence_key,
     load_property_manifest,
+    load_frozen_baseline,
     repository_identity,
     resolve_source_anchors,
     sha256_file as model_sha256_file,
@@ -31,7 +32,19 @@ from cetta_readiness_model import (
 
 
 PERFORMANCE_BASELINE_COMMIT = "9050a2d171946f6edf417152f259b7bc4e98907d"
+CONSOLIDATION_BASELINE_COMMIT = "c632ecd1479fc766dcdf0efafd4cbc311213af6d"
 PROPERTY_MANIFEST = "benchmarks/main_readiness_properties.json"
+
+
+def consolidation_baseline(root: Path) -> dict[str, Any]:
+    receipt = os.environ.get("CETTA_CONSOLIDATION_BASELINE_RECEIPT")
+    digest = os.environ.get("CETTA_CONSOLIDATION_BASELINE_SHA256")
+    if not receipt or not digest:
+        raise RuntimeError(
+            "set CETTA_CONSOLIDATION_BASELINE_RECEIPT and "
+            "CETTA_CONSOLIDATION_BASELINE_SHA256 to the frozen c632ecd1 cohort"
+        )
+    return load_frozen_baseline(root, Path(receipt), digest, CONSOLIDATION_BASELINE_COMMIT)
 
 
 def parse_args() -> argparse.Namespace:
@@ -112,6 +125,7 @@ def explicit_input_identity(root: Path) -> dict[str, str]:
         "scripts/bench_space_transfer_matrix.sh",
         "scripts/bench_space_scale_ladder.sh",
         "scripts/rhocalc_paired_samples.py",
+        "scripts/rhocalc_bench_provenance.py",
         "scripts/test_rhocalc_paired_samples.py",
         "scripts/rhocalc_threaded_bench.py",
         "scripts/rhocalc_cost_threaded_bench.py",
@@ -156,6 +170,10 @@ def artifact_identity(
     return {
         "schema": EVIDENCE_SCHEMA,
         "tier": tier,
+        "consolidation_baseline": {
+            key: value for key, value in consolidation_baseline(root).items()
+            if key != "binary"
+        },
         "candidate": working_tree_content_identity(root),
         "binaries": binary_identity(root),
         "inputs": explicit_input_identity(root),
@@ -173,23 +191,8 @@ def artifact_identity(
 
 
 def source_identity(artifact: dict[str, Any]) -> dict[str, Any]:
-    """The inputs that must remain byte-stable while a gate is running."""
-    compiler_and_build = artifact["compiler_and_build"]
-    return {
-        "schema": artifact["schema"],
-        "tier": artifact["tier"],
-        "candidate": artifact["candidate"],
-        "inputs": artifact["inputs"],
-        "toolchain": {
-            key: value
-            for key, value in compiler_and_build.items()
-            if key != "generated"
-        },
-        "dependencies": artifact["dependencies"],
-        "property_schema": artifact["property_schema"],
-        "property_manifest_sha256": artifact["property_manifest_sha256"],
-        "source_anchors": artifact["source_anchors"],
-    }
+    """Require the same semantic inputs throughout a tier's execution."""
+    return {**calibration_subject(artifact), "tier": artifact["tier"]}
 
 
 def ledger_record_path(root: Path, tier: str, key: str) -> Path:
@@ -451,6 +454,7 @@ def readiness_commands(tier: str) -> list[list[str]]:
             ],
             ["make", "BUILD=main", "RHO_BENCH_RUNS=1", "bench-light"],
             ["make", "BUILD=main", "main-readiness-rho-adaptive"],
+            ["make", "BUILD=main", "main-readiness-consolidation"],
         ]
     if tier == "exhaustive":
         return common + [
@@ -471,6 +475,7 @@ def readiness_commands(tier: str) -> list[list[str]]:
                 "RHO_BENCH_ENFORCE_BASELINE=1",
                 "bench-heavy",
             ],
+            ["make", "BUILD=main", "main-readiness-consolidation"],
         ]
     raise RuntimeError(f"unsupported readiness tier: {tier}")
 
@@ -637,7 +642,7 @@ def main() -> int:
         initial_artifact = artifact_identity(
             root, mettapedia_root, args.tier, manifest, anchors
         )
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 2
     initial_key = evidence_key(initial_artifact)
@@ -663,6 +668,7 @@ def main() -> int:
 
     environment = os.environ.copy()
     environment["METTAPEDIA_ROOT"] = str(mettapedia_root)
+    environment["CETTA_CONSOLIDATION_BASELINE_BIN"] = consolidation_baseline(root)["binary"]
     if args.tier == "exhaustive":
         environment["BENCH_ALLOW_HEAVY"] = "1"
         assert petta_oracle_root is not None
@@ -793,9 +799,12 @@ def main() -> int:
     for name in (
         "rhocalc_threaded_standard_current.csv",
         "rhocalc_cost_threaded_heavy_current.csv",
+        "consolidation/rhocalc_threaded_standard_current.csv",
+        "consolidation/rhocalc_cost_threaded_heavy_current.csv",
     ):
         source = root / "runtime" / name
         if source.is_file():
+            (evidence / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, evidence / name)
     final_artifact = artifact_identity(
         root, mettapedia_root, args.tier, manifest, anchors

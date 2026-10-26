@@ -754,6 +754,8 @@ class Spec:
             "return-value": (False, False, False),
             "construct": (False, False, False),
             "invoke": (False, False, False),
+            "sequence-first": (False, False, False),
+            "sequence-last": (False, False, False),
         }
         if set(self.control_operations) != set(slot_shapes):
             raise SpecError("control operations must have a native operand-layout scheme")
@@ -767,6 +769,26 @@ class Spec:
         self.control_plans = []
         self.control_forms = []
         self.implicit_operations = []
+        self.sequence_orders = []
+        self.preparation_steps = []
+        for entry in entries(control_plans, "preparation-step"):
+            if (len(entry) != 3 or not isinstance(entry[2], str)
+                    or not entry[2].isdigit()):
+                raise SpecError("a preparation step needs a name and integer position")
+            self.preparation_steps.append((atom_text(entry[1], "preparation step"), int(entry[2])))
+        if (len(self.preparation_steps) != 5 or
+                {name for name, _ in self.preparation_steps} !=
+                {"install-type", "compute", "check-return", "check-type", "bind"} or
+                {position for _, position in self.preparation_steps} != set(range(5))):
+            raise SpecError("preparation stages need distinct names and positions covering 0 through 4")
+        for entry in entries(control_plans, "sequence-order"):
+            if (len(entry) != 5 or not all(isinstance(x, str) for x in entry[2:])
+                    or set(entry[2:]) != {"source", "first", "last"} or entry[4] != "last"):
+                raise SpecError("a sequence order covers both computations before its body")
+            self.sequence_orders.append((atom_text(entry[1], "sequence order"), entry[2:]))
+        if ({name for name, _ in self.sequence_orders} != {"source-first", "binder-first"}
+                or len(self.sequence_orders) != 2):
+            raise SpecError("sequence execution needs its two ordered lowering schemes")
         for entry in entries(control_plans, "implicit-operation"):
             if len(entry) != 2:
                 raise SpecError("an implicit operation names exactly one scheme")
@@ -780,8 +802,58 @@ class Spec:
             if len(entry) != 7 or entry[1] != "petta":
                 raise SpecError("a dialect control form needs a registered dialect and operand layout")
             control_entries.append(("petta", [entry[0], *entry[2:]]))
-        native_forms = set(re.findall(r"\bPETTA_FORM_[A-Z_]+\b",
+        native_forms = set(re.findall(r"\bPETTA_FORM_[A-Z][A-Z0-9_]*\b",
             (ROOT / "src/petta_semantics.h").read_text().split("} PeTTaForm;", 1)[0]))
+        self.variadic_forms = []
+        for entry in entries(control_plans, "variadic-form"):
+            if len(entry) != 4 or entry[1] != "petta":
+                raise SpecError("a variadic form needs its dialect, name and result policy")
+            name = atom_text(entry[2], "variadic form")
+            operation = atom_text(entry[3], "variadic operation")
+            field = "PETTA_FORM_" + c_enum(name)
+            if field not in native_forms or operation not in {"sequence-first", "sequence-last"}:
+                raise SpecError("variadic form or operation has no native interpretation")
+            self.variadic_forms.append((name, field, operation))
+        if (len(self.variadic_forms) != 2 or
+                len({field for _, field, _ in self.variadic_forms}) != 2 or
+                {operation for _, _, operation in self.variadic_forms} !=
+                    {"sequence-first", "sequence-last"}):
+            raise SpecError("variadic forms need distinct first/last sequence policies")
+        self.invocation_operations = []
+        for entry in entries(control_plans, "invocation-operation"):
+            if len(entry) != 2:
+                raise SpecError("an invocation operation needs one name")
+            self.invocation_operations.append(atom_text(entry[1], "invocation operation"))
+        if (len(self.invocation_operations) != 8 or set(self.invocation_operations) !=
+                {"host", "predicate-value", "relational-member", "list-unary",
+                 "list-set", "read-term", "extension", "predicate-call"}):
+            raise SpecError("invocation operations need distinct native body interpretations")
+        self.invocation_heads, self.invocation_forms = [], []
+        invocation_entries = [(None, row) for row in entries(control_plans, "invocation-head")]
+        for row in entries(control_plans, "invocation-form"):
+            if len(row) != 7 or row[1] != "petta":
+                raise SpecError("an invocation form needs a registered dialect and layout")
+            invocation_entries.append(("petta", [row[0], *row[2:]]))
+        for dialect, row in invocation_entries:
+            if len(row) != 6:
+                raise SpecError("an invocation needs a head, arity, body and argument range")
+            name, arity, operation, first, last = [atom_text(x, "invocation field") for x in row[1:]]
+            field = symbol_fields.get(name) if dialect is None else "PETTA_FORM_" + c_enum(name)
+            if (not field or operation not in self.invocation_operations or
+                    (dialect is not None and field not in native_forms)):
+                raise SpecError("invocation head or body has no native interpretation")
+            if not all(x.isdigit() for x in [arity, first, last]):
+                raise SpecError("invocation arity and coordinates must be nonnegative")
+            arity, first, last = map(int, [arity, first, last])
+            if not (0 <= first <= last == arity <= 255) or first != 0:
+                raise SpecError("a strict invocation prepares exactly its admitted arguments")
+            target = self.invocation_heads if dialect is None else self.invocation_forms
+            target.append((name, field, arity, operation, first, last))
+        for rows in [self.invocation_heads, self.invocation_forms]:
+            if not rows or len({(field, arity) for _, field, arity, *_ in rows}) != len(rows):
+                raise SpecError("invocation descriptors must be nonempty and unique")
+        if {row[3] for row in self.invocation_heads + self.invocation_forms} != set(self.invocation_operations):
+            raise SpecError("every invocation body needs an admitted layout")
         for dialect, entry in control_entries:
             if len(entry) != 6 or not is_form(entry[4], "operands") or not is_form(entry[5], "fold"):
                 raise SpecError(f"malformed control source-head: {sexpr(entry)}")
@@ -831,6 +903,7 @@ class Spec:
         if len({(field, arity) for _, field, arity, _, _, _ in self.control_forms}) != len(self.control_forms):
             raise SpecError("dialect control forms must be unique by form and arity")
         if ({operation for _, _, _, operation, _, _ in self.control_plans + self.control_forms}
+                | {operation for _, _, operation in self.variadic_forms}
                 | set(self.implicit_operations)) != set(self.control_operations):
             raise SpecError("control source plans must cover every declared operation")
 
@@ -1546,6 +1619,30 @@ def render_header(spec: Spec) -> str:
     control_form_cases = "\n".join(
         f"    case CETTA_CONTROL_{c_enum(operation)}:"
         for operation in spec.control_operations if operation not in spec.implicit_operations)
+    sequence_order_constants = "\n".join(
+        f"    CETTA_SEQUENCE_{c_enum(name)} = {index},"
+        for index, (name, _) in enumerate(spec.sequence_orders))
+    preparation_constants = "\n".join(
+        f"    CETTA_CALL_PREP_{c_enum(name)} = 1u << {position}u,"
+        for name, position in sorted(spec.preparation_steps, key=lambda row: row[1]))
+    preparation_reverse_rows = " \\\n".join(
+        f"    X(CETTA_CALL_PREP_{c_enum(name)})"
+        for name, _ in sorted(spec.preparation_steps, key=lambda row: row[1], reverse=True))
+    invocation_constants = "\n".join(
+        f"    CETTA_INVOCATION_{c_enum(name)} = {index + 1},"
+        for index, name in enumerate(spec.invocation_operations))
+    def invocation_rows(rows):
+        return " \\\n".join(
+            f"    X({field}, {arity}u, CETTA_INVOCATION_{c_enum(operation)}, {first}u, {last}u)"
+            for _, field, arity, operation, first, last in rows)
+    invocation_head_rows = invocation_rows(spec.invocation_heads)
+    invocation_form_rows = invocation_rows(spec.invocation_forms)
+    sequence_order_cases = "\n".join(
+        f"    case CETTA_SEQUENCE_{c_enum(name)}:\n"
+        "        result = (CettaSequenceOrderPlan){.children = {" +
+        ", ".join("plan." + coordinate for coordinate in coordinates) +
+        "}}; break;"
+        for name, coordinates in spec.sequence_orders)
     control_fold_cases = "\n".join(
         f"    if (plan.operation == CETTA_CONTROL_{c_enum(operation)} &&\n"
         f"        plan.source == {control_coordinate(coordinates[0])} &&\n"
@@ -2028,6 +2125,86 @@ static inline bool cetta_control_operation_binding_layout(
     return producer_index <= 1u && plan.operation == CETTA_CONTROL_SEQUENCE &&
         plan.source == producer_index && plan.first == 1u - producer_index &&
         plan.last == 2u;
+}}
+
+/* Execution order is selected by admitted source policy. The same program
+ * lowers to ordinary goals or activation goals without rereading syntax. */
+typedef enum {{
+{sequence_order_constants}
+}} CettaSequenceOrder;
+
+typedef struct {{ uint8_t children[3]; }} CettaSequenceOrderPlan;
+
+/* A preparation plan selects stages, independently of values or ownership.
+ * Type installation and completed-value checking retain distinct positions. */
+typedef enum {{
+{preparation_constants}
+}} CettaCallPreparationStep;
+typedef uint8_t CettaCallPreparationPlan;
+_Static_assert(sizeof(CettaCallPreparationPlan) == 1u, "preparation plan must remain one byte");
+
+static inline bool cetta_call_preparation_valid(CettaCallPreparationPlan plan) {{
+    return (plan & (uint8_t)~31u) == 0u;
+}}
+
+#define CETTA_CALL_PREPARATION_REVERSE_ROWS(X) \
+{preparation_reverse_rows}
+
+/* Argument preparation and body entry are independent of callee admission. */
+typedef enum {{
+    CETTA_INVOCATION_NONE = 0,
+{invocation_constants}
+}} CettaInvocationOperation;
+
+typedef struct {{ uint8_t operation, first, last; }} CettaInvocationPlan;
+_Static_assert(sizeof(CettaInvocationPlan) == 3u, "invocation plan must remain three bytes");
+
+/* One computation carries its control operation and optional native body.
+ * Source authority, live demand and ownership are supplied by its context. */
+typedef struct {{
+    CettaControlOperationPlan control;
+    CettaInvocationPlan invocation;
+}} CettaComputationPlan;
+_Static_assert(sizeof(CettaComputationPlan) == 7u, "computation plan must remain seven bytes");
+
+static inline uint32_t cetta_invocation_plan_key(CettaInvocationPlan plan) {{
+    return (uint32_t)plan.operation | (uint32_t)plan.first << 8u |
+        (uint32_t)plan.last << 16u;
+}}
+
+#define CETTA_INVOCATION_HEAD_ROWS(X) \
+{invocation_head_rows}
+
+#define CETTA_PETTA_INVOCATION_FORM_ROWS(X) \
+{invocation_form_rows}
+
+/* Refusal neither reads operands nor changes the supplied plan. */
+static inline bool cetta_invocation_plan_decode(
+    SymbolId head, CettaExprLen arity, CettaInvocationPlan *out,
+    const BuiltinSyms *builtins) {{
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_INVOCATION_HEAD(field, count, body, start, end) \\
+    if (head == builtins->field && arity == (count)) {{ \\
+        if (out) *out = (CettaInvocationPlan){{(body), (start), (end)}}; \\
+        return true; \\
+    }}
+    CETTA_INVOCATION_HEAD_ROWS(CETTA_INVOCATION_HEAD)
+#undef CETTA_INVOCATION_HEAD
+    return false;
+}}
+
+static inline bool cetta_control_sequence_plan(CettaControlOperationPlan plan,
+        CettaSequenceOrder order, CettaSequenceOrderPlan *out) {{
+    if (!out || !cetta_control_operation_binding_layout(plan, plan.source))
+        return false;
+    CettaSequenceOrderPlan result;
+    switch (order) {{
+{sequence_order_cases}
+    default: return false;
+    }}
+    *out = result;
+    return true;
 }}
 
 static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan plan) {{

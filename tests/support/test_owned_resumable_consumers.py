@@ -13,6 +13,33 @@ import tempfile
 # live-declaration and held-argument contracts where the reference differs.
 # Cases include refusals of fusion: they must retain ordinary evaluation.
 CASES = [
+    ('invocation-layout-unary-data', 'petta', '!(car-atom (quote ((+ 1 2) 7)))\n!(cdr-atom (quote ((println! forbidden) 7)))\n', '(+ 1 2)\n(7)\n', 0),
+    ('invocation-layout-argument-order', 'petta', '!(exclude-item (let $_ (println! left) 1) (let $_ (println! right) (quote (1 2 1))))\n', 'left\nright\n(2)\n', 0),
+    ('invocation-layout-set-duplicates', 'petta', '!(list_to_set (superpose ((quote (1 2 1)) (quote (1 2 1)))))\n', '(1 2)\n(1 2)\n', 0),
+    ('invocation-layout-read-code', 'petta', '!(sread "(+ 1 2)")\n', '(+ 1 2)\n', 0),
+    ('invocation-layout-predicate-held', 'petta', '(: Predicate (-> Atom Atom))\n!(Predicate (println! forbidden))\n', '(println! forbidden)\n', 0),
+    ('invocation-preparation-postcondition-order', 'petta', '(: prep-result (-> Atom Wanted))\n(= (get-type (Tagged $value)) (let $_ (println! checked) Wanted))\n(= (prep-result $value) (let $_ (println! body) (Tagged $value)))\n!(prep-result 3)\n', 'body\nchecked\n(Tagged 3)\n', 0),
+    ('invocation-preparation-held-1', 'petta', '(: prep-wide (-> Atom Atom))\n(= (prep-wide $a0) $a0)\n!(prep-wide (println! forbidden))\n', '(println! forbidden)\n', 0),
+    ('invocation-preparation-held-8', 'petta', '(: prep-wide (-> Number Number Number Number Number Number Number Atom Atom))\n(= (prep-wide $a0 $a1 $a2 $a3 $a4 $a5 $a6 $a7) $a7)\n!(prep-wide (+ 0 1) (+ 1 1) (+ 2 1) (+ 3 1) (+ 4 1) (+ 5 1) (+ 6 1) (println! forbidden))\n', '(println! forbidden)\n', 0),
+    ('invocation-preparation-held-9', 'petta', '(: prep-wide (-> Number Number Number Number Number Number Number Number Atom Atom))\n(= (prep-wide $a0 $a1 $a2 $a3 $a4 $a5 $a6 $a7 $a8) $a8)\n!(prep-wide (+ 0 1) (+ 1 1) (+ 2 1) (+ 3 1) (+ 4 1) (+ 5 1) (+ 6 1) (+ 7 1) (println! forbidden))\n', '(println! forbidden)\n', 0),
+    ('invocation-preparation-held-64', 'petta', '(: prep-wide (-> Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Atom Atom))\n(= (prep-wide $a0 $a1 $a2 $a3 $a4 $a5 $a6 $a7 $a8 $a9 $a10 $a11 $a12 $a13 $a14 $a15 $a16 $a17 $a18 $a19 $a20 $a21 $a22 $a23 $a24 $a25 $a26 $a27 $a28 $a29 $a30 $a31 $a32 $a33 $a34 $a35 $a36 $a37 $a38 $a39 $a40 $a41 $a42 $a43 $a44 $a45 $a46 $a47 $a48 $a49 $a50 $a51 $a52 $a53 $a54 $a55 $a56 $a57 $a58 $a59 $a60 $a61 $a62 $a63) $a63)\n!(prep-wide (+ 0 1) (+ 1 1) (+ 2 1) (+ 3 1) (+ 4 1) (+ 5 1) (+ 6 1) (+ 7 1) (+ 8 1) (+ 9 1) (+ 10 1) (+ 11 1) (+ 12 1) (+ 13 1) (+ 14 1) (+ 15 1) (+ 16 1) (+ 17 1) (+ 18 1) (+ 19 1) (+ 20 1) (+ 21 1) (+ 22 1) (+ 23 1) (+ 24 1) (+ 25 1) (+ 26 1) (+ 27 1) (+ 28 1) (+ 29 1) (+ 30 1) (+ 31 1) (+ 32 1) (+ 33 1) (+ 34 1) (+ 35 1) (+ 36 1) (+ 37 1) (+ 38 1) (+ 39 1) (+ 40 1) (+ 41 1) (+ 42 1) (+ 43 1) (+ 44 1) (+ 45 1) (+ 46 1) (+ 47 1) (+ 48 1) (+ 49 1) (+ 50 1) (+ 51 1) (+ 52 1) (+ 53 1) (+ 54 1) (+ 55 1) (+ 56 1) (+ 57 1) (+ 58 1) (+ 59 1) (+ 60 1) (+ 61 1) (+ 62 1) (println! forbidden))\n', '(println! forbidden)\n', 0),
+    ('invocation-preparation-held-65', 'petta', '(: prep-wide (-> Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Number Atom Atom))\n(= (prep-wide $a0 $a1 $a2 $a3 $a4 $a5 $a6 $a7 $a8 $a9 $a10 $a11 $a12 $a13 $a14 $a15 $a16 $a17 $a18 $a19 $a20 $a21 $a22 $a23 $a24 $a25 $a26 $a27 $a28 $a29 $a30 $a31 $a32 $a33 $a34 $a35 $a36 $a37 $a38 $a39 $a40 $a41 $a42 $a43 $a44 $a45 $a46 $a47 $a48 $a49 $a50 $a51 $a52 $a53 $a54 $a55 $a56 $a57 $a58 $a59 $a60 $a61 $a62 $a63 $a64) $a64)\n!(prep-wide (+ 0 1) (+ 1 1) (+ 2 1) (+ 3 1) (+ 4 1) (+ 5 1) (+ 6 1) (+ 7 1) (+ 8 1) (+ 9 1) (+ 10 1) (+ 11 1) (+ 12 1) (+ 13 1) (+ 14 1) (+ 15 1) (+ 16 1) (+ 17 1) (+ 18 1) (+ 19 1) (+ 20 1) (+ 21 1) (+ 22 1) (+ 23 1) (+ 24 1) (+ 25 1) (+ 26 1) (+ 27 1) (+ 28 1) (+ 29 1) (+ 30 1) (+ 31 1) (+ 32 1) (+ 33 1) (+ 34 1) (+ 35 1) (+ 36 1) (+ 37 1) (+ 38 1) (+ 39 1) (+ 40 1) (+ 41 1) (+ 42 1) (+ 43 1) (+ 44 1) (+ 45 1) (+ 46 1) (+ 47 1) (+ 48 1) (+ 49 1) (+ 50 1) (+ 51 1) (+ 52 1) (+ 53 1) (+ 54 1) (+ 55 1) (+ 56 1) (+ 57 1) (+ 58 1) (+ 59 1) (+ 60 1) (+ 61 1) (+ 62 1) (+ 63 1) (println! forbidden))\n', '(println! forbidden)\n', 0),
+    ('invocation-operands-order', 'petta', '(= (arg-tick $x) (let $_ (println! $x) $x))\n(= (arg-pair $a $b) (let $_ (println! body) (Pair $a $b)))\n!(arg-pair (arg-tick 1) (arg-tick 2))\n', '1\n2\nbody\n(Pair 1 2)\n', 0),
+    ('invocation-operands-failure', 'petta', '(= (arg-stop) (empty))\n(= (arg-pair $a $b) (Pair $a $b))\n!(arg-pair (arg-stop) (println! forbidden-late))\n', '', 0),
+    ('invocation-operands-completed-code', 'petta', '(= (arg-pair $a $b) (Pair $a $b))\n!(arg-pair (quote (println! forbidden)) 7)\n', '(Pair (println! forbidden) 7)\n', 0),
+    ('invocation-operands-later-alias', 'petta', '(= (arg-pin 7) first)\n(= (arg-pair $a $b) (Pair $a $b))\n!(arg-pair (arg-pin $caller) $caller)\n', '(Pair first 7)\n', 0),
+    ('invocation-operands-open-scope', 'petta', '(= (arg-id $x) $x)\n(= (arg-pair $a $b) (Pair $a $b))\n(= (arg-outer $x) (arg-pair (arg-id $x) (Pair $x $x)))\n!(let $answer (arg-outer $caller) (Both $caller $answer))\n', '(Both $V0 (Pair $V0 (Pair $V0 $V0)))\n', 0),
+    ('invocation-operands-early-error', 'he', '!(Pair (/ 1 0) (println! forbidden-late))\n', '[(Error (/ 1 0) DivisionByZero)]\n', 0),
+    ('invocation-operands-held-error', 'he', '!(Pair (quote (Error authored data)) 7)\n', '[(Pair (quote (Error authored data)) 7)]\n', 0),
+    ('invocation-operands-width-0', 'petta', '(= (arg-wide ) (Tuple ))\n!(arg-wide )\n', '(Tuple)\n', 0),
+    ('invocation-operands-width-8', 'petta', '(= (arg-wide $x0 $x1 $x2 $x3 $x4 $x5 $x6 $x7) (Tuple $x0 $x1 $x2 $x3 $x4 $x5 $x6 $x7))\n!(arg-wide (+ 0 1) (+ 1 1) (+ 2 1) (+ 3 1) (+ 4 1) (+ 5 1) (+ 6 1) (+ 7 1))\n', '(Tuple 1 2 3 4 5 6 7 8)\n', 0),
+    ('invocation-operands-width-9', 'petta', '(= (arg-wide $x0 $x1 $x2 $x3 $x4 $x5 $x6 $x7 $x8) (Tuple $x0 $x1 $x2 $x3 $x4 $x5 $x6 $x7 $x8))\n!(arg-wide (+ 0 1) (+ 1 1) (+ 2 1) (+ 3 1) (+ 4 1) (+ 5 1) (+ 6 1) (+ 7 1) (+ 8 1))\n', '(Tuple 1 2 3 4 5 6 7 8 9)\n', 0),
+    ('invocation-sequence-open-scope', 'petta', '(= (local $n) (let (Pair $x) (Pair $n) (Pair $n $x)))\n!(let $answer (local $caller) (Both $caller $answer))\n', '(Both $V0 (Pair $V0 $V0))\n', 0),
+    ('invocation-sequence-separate-scopes', 'petta', '(= (local $n) (let (Pair $x) (Pair $n) (Pair $n $x)))\n!(let $a (local $left) (let $b (local $right) (Both $left $a $right $b)))\n', '(Both $V0 (Pair $V0 $V0) $V1 (Pair $V1 $V1))\n', 0),
+    ('invocation-sequence-let-root', 'petta', '(= (pattern $x) (let $_ (println! binder) (Pair $x)))\n(= (produce) (let $_ (println! producer) (Pair 7)))\n!(let (pattern $x) (produce) (let $_ (println! body) $x))\n', 'binder\nproducer\nbody\n7\n', 0),
+    ('invocation-sequence-chain-root', 'petta', '(= (pattern $x) (let $_ (println! binder) (Pair $x)))\n(= (produce) (let $_ (println! producer) (Pair 7)))\n!(chain (produce) (pattern $x) (let $_ (println! body) $x))\n', 'producer\nbinder\nbody\n7\n', 0),
+    ('invocation-sequence-let-equation', 'petta', '(= (pattern $x) (let $_ (println! binder) (Pair $x)))\n(= (produce) (let $_ (println! producer) (Pair 7)))\n(= (run) (let (pattern $x) (produce) (let $_ (println! body) $x)))\n!(run)\n', 'binder\nproducer\nbody\n7\n', 0),
+    ('invocation-sequence-chain-equation', 'petta', '(= (pattern $x) (let $_ (println! binder) (Pair $x)))\n(= (produce) (let $_ (println! producer) (Pair 7)))\n(= (run) (chain (produce) (pattern $x) (let $_ (println! body) $x)))\n!(run)\n', 'producer\nbinder\nbody\n7\n', 0),
     ('invocation-case-failure', 'petta', '(= (only-nil $x) (case $x ((Nil 7))))\n!(only-nil (Cons 1 Nil))\n!(only-nil Nil)\n', '7\n', 0),
     ('invocation-oem-prepared-failure', 'petta', '(= (descend $n $x) (if (== $n 0) (case $x ((Nil 7))) (descend (- $n 1) $x)))\n(= (r $x) 0)\n(= (r $x) (descend 3 $x))\n!(r (Cons 1 Nil))\n!(r Nil)\n', '0\n0\n7\n', 0),
     ('invocation-oem-completed-first', 'petta', '(: g (-> Atom Atom))\n(= (g $v) (min 3 1))\n!(g 5)\n', '(min 3 1)\n', 0),
@@ -46,6 +73,14 @@ CASES = [
     ('scope-callee-return-restores-scope', 'petta', '(= (inner) (superpose (1 2)))\n(= (outer) (let $x (inner) (let $_ (cut) $x)))\n(= (outer) 9)\n!(collapse (outer))\n', '(1)\n', 0),
     ('scope-handled-error-keeps-new-choices', 'petta', '(= (outer) (let $_ (catch (/ 1 0)) (superpose (7 7))))\n(= (outer) 9)\n!(collapse (outer))\n', '(7 7 9)\n', 0),
     ('invocation-captured-data', 'petta', '(= (transport $a $b $c) (Bundle $a $b $c))\n!(let $p (transport (quote (println! forbidden))) ($p 7 9))\n', '(Bundle (println! forbidden) 7 9)\n', 0),
+    ('forcing-meaning', 'petta', '(= (pass $x) $x)\n!(let $c (quote (pass (+ 1 2))) (eval $c))\n!(let $c (quote (pass (+ 1 2))) (reduce $c))\n', '3\n(+ 1 2)\n', 0),
+    ('forcing-effects', 'petta', '(= (pass $x) $x)\n(= (tick) (let $_ (println! tick) 7))\n!(let $c (quote (pass (tick))) (eval $c))\n!(let $c (quote (pass (tick))) (reduce $c))\n', 'tick\n7\n(tick)\n', 0),
+    ('forcing-duplicates', 'petta', '(= (pass $x) $x)\n!(let $c (quote (superpose (1 1 2))) (collapse (eval $c)))\n!(let $c (quote (pass (superpose (1 1 2)))) (collapse (reduce $c)))\n', '(1 1 2)\n((superpose (1 1 2)))\n', 0),
+    ('forcing-caught', 'petta', '(= (pass $x) $x)\n!(let $c (quote (/ 1 0)) (let $e (catch (eval $c)) (car-atom $e)))\n!(let $c (quote (pass (/ 1 0))) (reduce $c))\n', 'Error\n(/ 1 0)\n', 0),
+    ('forcing-dynamic', 'petta', '(= (pass $x) $x)\n!(let $f eval ($f (quote (pass (+ 1 2)))))\n!(let $f reduce ($f (quote (pass (+ 1 2)))))\n', '3\n(+ 1 2)\n', 0),
+    ('forcing-explicit-quote', 'petta', '(= (pass $x) $x)\n!(eval (quote (pass (+ 1 2))))\n!(reduce (quote (pass (+ 1 2))))\n', '(pass (+ 1 2))\n(quote 3)\n', 0),
+    ('forcing-empty', 'petta', '(= (pass $x) $x)\n!(let $c (quote (superpose ())) (collapse (eval $c)))\n!(let $c (quote (pass (superpose ()))) (collapse (reduce $c)))\n', '()\n((superpose ()))\n', 0),
+    ('forcing-constructor', 'petta', '!(let $c (quote (Constructor (+ 1 2))) (eval $c))\n!(let $c (quote (Constructor (+ 1 2))) (reduce $c))\n', '(Constructor 3)\n(Constructor (+ 1 2))\n', 0),
     ('invocation-argument-effects', 'petta', '(= (transport $a $b) (let $_ (println! body) (Pair $a $b)))\n(= (tick $x) (let $_ (println! $x) $x))\n!(let $p (transport (tick 1)) ($p (tick 2)))\n', '1\n2\nbody\n(Pair 1 2)\n', 0),
     ('invocation-body-handler', 'petta', '(= (transport $a $b) (/ 1 0))\n(= (transport $a $b) (Pair $a $b))\n!(catch (collapse (let $p (transport 1) ($p 2))))\n', '((Pair 1 2))\n', 0),
     ('invocation-argument-handler', 'petta', '(= (transport $a $b) (Pair $a $b))\n!(let $caught (catch (let $p (transport 1) ($p (/ 1 0)))) (car-atom $caught))\n', 'Error\n', 0),
@@ -119,7 +154,7 @@ def main():
             source = Path(directory) / (name + "-" + language + ".metta")
             source.write_text(text)
             variants = itertools.product(('0', '1'), repeat=2) if (
-                name.startswith(('choice-', 'result-demand-', 'invocation-', 'scope-', 'source-plan-', 'prepared-failure-')) or
+                name.startswith(('choice-', 'result-demand-', 'invocation-', 'scope-', 'source-plan-', 'prepared-failure-', 'forcing-')) or
                 name == 'nested-choice-activation-owner') else [(None, None)]
             for switches in variants:
                 environment = dict(os.environ)
@@ -129,7 +164,7 @@ def main():
                 observations += 1
                 # Destination controls use reference PeTTa. Extended binding
                 # forms permit authored alternatives and retain their own tests.
-                profile = [] if name.startswith(('result-demand-', 'invocation-', 'scope-', 'source-plan-', 'prepared-failure-')) else ["--profile", "extended"]
+                profile = [] if name.startswith(('result-demand-', 'invocation-', 'scope-', 'source-plan-', 'prepared-failure-', 'forcing-')) else ["--profile", "extended"]
                 result = subprocess.run([str(binary), "--lang", language, *profile,
                     str(source)], capture_output=True, text=True, timeout=30, env=environment)
                 if result.returncode != expected_exit or result.stdout != expected:

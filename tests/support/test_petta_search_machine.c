@@ -8326,12 +8326,35 @@ typedef struct {
     int64_t effects[3];
     size_t effect_count;
     bool stop_after_effect;
+    CettaSourceStep blocked_source;
+    bool source_blocked;
+    CettaSourceStep sources[1024];
+    size_t source_count;
 } ResumeContractProbe;
 
-static bool resume_contract_permit(void *context) {
+static bool resume_source_equal(CettaSourceStep left, CettaSourceStep right) {
+    return left.machine_instance == right.machine_instance &&
+        left.occurrence_instance == right.occurrence_instance &&
+        left.debit == right.debit && left.phase == right.phase;
+}
+
+static CettaSourceStep resume_source_reference[1024];
+static size_t resume_source_reference_count;
+
+static bool resume_contract_permit(void *context, const CettaSourceStep *source) {
     ResumeContractProbe *probe = context;
-    if (!probe->remaining)
+    assert(source && source->machine_instance && source->debit == 1u);
+    assert((source->phase == CETTA_SOURCE_COMPUTE) == !!source->occurrence_instance);
+    if (probe->source_blocked)
+        assert(resume_source_equal(probe->blocked_source, *source));
+    if (!probe->remaining) {
+        probe->blocked_source = *source;
+        probe->source_blocked = true;
         return false;
+    }
+    probe->source_blocked = false;
+    assert(probe->source_count < sizeof(probe->sources) / sizeof(*probe->sources));
+    probe->sources[probe->source_count++] = *source;
     probe->remaining--;
     probe->transitions++;
     return true;
@@ -8401,12 +8424,20 @@ static size_t resume_contract_run(Space *space, Arena *arena, Atom *query,
         Bindings environment;
         PettaMachineStep step = petta_machine_next(&machine, &answer, &environment);
         if (step == PETTA_MACHINE_STEP_SUSPENDED) {
+            if (!block && !pauses)
+                assert(count == 0u && probe.effect_count == 0u);
             pauses++;
-            probe.remaining = block;
+            probe.remaining = block ? block : 1u;
         } else if (step == PETTA_MACHINE_STEP_ANSWER) {
             assert(count < sizeof(expected) / sizeof(*expected));
             Atom *pair = atom_expr3(arena, atom_symbol(arena, "Pair"),
                 atom_int(arena, expected[count]), atom_int(arena, expected[count]));
+            if (!atom_eq(answer, pair)) {
+                fprintf(stderr, "resumption answer mismatch (block=%zu, effects=%zu): ",
+                    block, probe.effect_count);
+                atom_print(answer, stderr);
+                fputc('\n', stderr);
+            }
             assert(atom_eq(answer, pair));
             assert(atom_eq(bindings_apply(&environment, arena, visible),
                            atom_int(arena, expected[count])));
@@ -8431,6 +8462,21 @@ static size_t resume_contract_run(Space *space, Arena *arena, Atom *query,
     bindings_free(&completed_environment);
     assert(probe.effect_count == count);
     petta_machine_destroy(&machine);
+    assert(probe.source_count == probe.transitions);
+    if (block == SIZE_MAX && !stop_after_effect) {
+        resume_source_reference_count = probe.source_count;
+        memcpy(resume_source_reference, probe.sources,
+            sizeof(*probe.sources) * probe.source_count);
+    } else {
+        assert(probe.source_count == resume_source_reference_count);
+        for (size_t i = 0u; i < probe.source_count; i++) {
+            CettaSourceStep expected_source = resume_source_reference[i];
+            assert(probe.sources[i].machine_instance == probe.sources[0].machine_instance);
+            assert(expected_source.machine_instance == resume_source_reference[0].machine_instance);
+            expected_source.machine_instance = probe.sources[0].machine_instance;
+            assert(resume_source_equal(expected_source, probe.sources[i]));
+        }
+    }
     return probe.transitions;
 }
 
@@ -8443,67 +8489,100 @@ static void test_resume_contract(TermUniverse *universe, Arena *arena) {
     assert(query && query->kind == ATOM_EXPR);
     Atom *visible = query->expr.elems[1];
     assert(visible && visible->kind == ATOM_VAR);
-    size_t uninterrupted = resume_contract_run(
-        &space, arena, query, visible, SIZE_MAX, false);
-    for (size_t block = 1u; block <= 17u; block++) {
-        assert(resume_contract_run(&space, arena, query, visible, block, false) ==
-               uninterrupted);
-        assert(resume_contract_run(&space, arena, query, visible, block, true) ==
-               uninterrupted);
+    space_add(&space, parse_one(arena,
+        "(= (resume-contract-arguments $v $tag) (Pair $v $tag))"));
+    Atom *argument_query = parse_one(arena,
+        "(let $x (superpose (1 1 2)) "
+        "(resume-contract-arguments $x (resume-contract-record $x)))");
+    space_add(&space, parse_one(arena,
+        "(: resume-contract-typed (-> Number Number Atom))"));
+    space_add(&space, parse_one(arena,
+        "(= (resume-contract-typed $v $tag) (Pair $v $tag))"));
+    Atom *typed_query = parse_one(arena,
+        "(let $x (superpose (1 1 2)) "
+        "(resume-contract-typed $x (resume-contract-record $x)))");
+    Atom *force_query = parse_one(arena,
+        "(let $x (superpose (1 1 2)) "
+        "(let $code (quote (resume-contract-arguments $x (resume-contract-record $x))) "
+        "(eval $code)))");
+    Atom *native_query = parse_one(arena,
+        "(let $x (superpose (1 1 2)) "
+        "(car-atom ((Pair $x (resume-contract-record $x)) spare)))");
+    Atom *set_query = parse_one(arena,
+        "(let $x (superpose (1 1 2)) "
+        "(car-atom (list_to_set ((Pair $x (resume-contract-record $x)) (Pair $x $x)))))");
+    Atom *queries[] = {query, argument_query, typed_query, force_query, native_query, set_query};
+    const size_t query_count = sizeof(queries) / sizeof(*queries);
+    for (size_t index = 0u; index < query_count; index++) {
+        Atom *active_query = queries[index];
+        assert(active_query && active_query->kind == ATOM_EXPR);
+        Atom *active_visible = active_query->expr.elems[1];
+        size_t uninterrupted = resume_contract_run(
+            &space, arena, active_query, active_visible, SIZE_MAX, false);
+        for (size_t block = 0u; block <= 17u; block++) {
+            assert(resume_contract_run(&space, arena, active_query,
+                       active_visible, block, false) == uninterrupted);
+            assert(resume_contract_run(&space, arena, active_query,
+                       active_visible, block, true) == uninterrupted);
+        }
+        assert(resume_contract_run(&space, arena, active_query,
+                   active_visible, SIZE_MAX, true) == uninterrupted);
     }
-    assert(resume_contract_run(&space, arena, query, visible, SIZE_MAX, true) ==
-           uninterrupted);
     puts("PASS: split execution retains ordered duplicate answers, correlations,"
          " visible bindings, effects and completed residuals");
 
-    ResumeContractProbe cancelled = {
-        .head = symbol_intern_cstr(g_symbols, "resume-contract-record"),
-        .remaining = SIZE_MAX,
-        .stop_after_effect = true,
-    };
-    ResumeContractProbe retained = {
-        .head = cancelled.head,
-        .remaining = SIZE_MAX,
-    };
-    PettaMachineHost cancelled_host = resume_contract_host(&cancelled, arena, visible);
-    PettaMachineHost retained_host = resume_contract_host(&retained, arena, visible);
-    PettaMachine first, second;
-    assert(petta_machine_init(&first, &space, arena, query, NULL, &cancelled_host));
-    assert(petta_machine_init(&second, &space, arena, query, NULL, &retained_host));
-    Atom *answer = NULL;
-    Bindings environment;
-    assert(petta_machine_next(&first, &answer, &environment) ==
-           PETTA_MACHINE_STEP_SUSPENDED);
-    bindings_free(&environment);
-    assert(cancelled.effect_count == 1u && cancelled.effects[0] == 1);
-    assert(petta_machine_next(&second, &answer, &environment) ==
-           PETTA_MACHINE_STEP_ANSWER);
-    Atom *held_answer = answer;
-    Bindings held_environment;
-    bindings_move(&held_environment, &environment);
-    petta_machine_destroy(&first);
-    assert(cancelled.effect_count == 1u);
-    for (size_t index = 1u; index < 3u; index++) {
-        const int64_t expected = index == 1u ? 1 : 2;
+    for (size_t query_index = 0u; query_index < query_count; query_index++) {
+        Atom *active_query = queries[query_index];
+        Atom *active_visible = active_query->expr.elems[1];
+        ResumeContractProbe cancelled = {
+            .head = symbol_intern_cstr(g_symbols, "resume-contract-record"),
+            .remaining = SIZE_MAX,
+            .stop_after_effect = true,
+        };
+        ResumeContractProbe retained = {
+            .head = cancelled.head,
+            .remaining = SIZE_MAX,
+        };
+        PettaMachineHost cancelled_host = resume_contract_host(&cancelled, arena, active_visible);
+        PettaMachineHost retained_host = resume_contract_host(&retained, arena, active_visible);
+        PettaMachine first, second;
+        assert(petta_machine_init(&first, &space, arena, active_query, NULL, &cancelled_host));
+        assert(petta_machine_init(&second, &space, arena, active_query, NULL, &retained_host));
+        Atom *answer = NULL;
+        Bindings environment;
+        assert(petta_machine_next(&first, &answer, &environment) ==
+               PETTA_MACHINE_STEP_SUSPENDED);
+        bindings_free(&environment);
+        assert(cancelled.effect_count == 1u && cancelled.effects[0] == 1);
         assert(petta_machine_next(&second, &answer, &environment) ==
                PETTA_MACHINE_STEP_ANSWER);
-        assert(atom_eq(answer, atom_expr3(arena, atom_symbol(arena, "Pair"),
-            atom_int(arena, expected), atom_int(arena, expected))));
-        assert(atom_eq(bindings_apply(&environment, arena, visible),
-                       atom_int(arena, expected)));
+        Atom *held_answer = answer;
+        Bindings held_environment;
+        bindings_move(&held_environment, &environment);
+        petta_machine_destroy(&first);
+        assert(cancelled.effect_count == 1u);
+        for (size_t index = 1u; index < 3u; index++) {
+            const int64_t expected = index == 1u ? 1 : 2;
+            assert(petta_machine_next(&second, &answer, &environment) ==
+                   PETTA_MACHINE_STEP_ANSWER);
+            assert(atom_eq(answer, atom_expr3(arena, atom_symbol(arena, "Pair"),
+                atom_int(arena, expected), atom_int(arena, expected))));
+            assert(atom_eq(bindings_apply(&environment, arena, active_visible),
+                           atom_int(arena, expected)));
+            bindings_free(&environment);
+        }
+        assert(petta_machine_next(&second, &answer, &environment) ==
+               PETTA_MACHINE_STEP_EXHAUSTED);
         bindings_free(&environment);
+        petta_machine_destroy(&second);
+        assert(retained.effect_count == 3u && retained.effects[0] == 1 &&
+               retained.effects[1] == 1 && retained.effects[2] == 2);
+        assert(cancelled.effect_count == 1u);
+        assert(atom_eq(held_answer, atom_expr3(arena, atom_symbol(arena, "Pair"),
+            atom_int(arena, 1), atom_int(arena, 1))));
+        assert(atom_eq(bindings_apply(&held_environment, arena, active_visible), atom_int(arena, 1)));
+        bindings_free(&held_environment);
     }
-    assert(petta_machine_next(&second, &answer, &environment) ==
-           PETTA_MACHINE_STEP_EXHAUSTED);
-    bindings_free(&environment);
-    petta_machine_destroy(&second);
-    assert(retained.effect_count == 3u && retained.effects[0] == 1 &&
-           retained.effects[1] == 1 && retained.effects[2] == 2);
-    assert(cancelled.effect_count == 1u);
-    assert(atom_eq(held_answer, atom_expr3(arena, atom_symbol(arena, "Pair"),
-        atom_int(arena, 1), atom_int(arena, 1))));
-    assert(atom_eq(bindings_apply(&held_environment, arena, visible), atom_int(arena, 1)));
-    bindings_free(&held_environment);
     space_free(&space);
     puts("PASS: cancellation after an effect leaves it performed and preserves"
          " another machine's retained answer and independent alternatives");
@@ -8695,7 +8774,8 @@ static void test_quoted_result_override(Space *space, Arena *arena) {
     puts("PASS: quoted output matches retain host override effects and rejection order");
 }
 
-static bool permit_transition(void *context) {
+static bool permit_transition(void *context, const CettaSourceStep *source) {
+    (void)source;
     TransitionPermit *permit = context;
     if (!permit || permit->remaining == 0u)
         return false;
@@ -8726,7 +8806,8 @@ static bool table_probe_contains(
     return false;
 }
 
-static bool table_probe_permit(void *context) {
+static bool table_probe_permit(void *context, const CettaSourceStep *source) {
+    (void)source;
     TableProbe *probe = context;
     if (!probe || !probe->meter_transitions)
         return true;
@@ -9006,7 +9087,8 @@ typedef struct {
     size_t rollbacks;
 } TransactionProbe;
 
-static bool transaction_probe_permit(void *context) {
+static bool transaction_probe_permit(void *context, const CettaSourceStep *source) {
+    (void)source;
     TransactionProbe *probe = context;
     if (!probe || probe->remaining == 0u)
         return false;
@@ -10734,6 +10816,61 @@ static const PettaAnalysisService test_analysis_service = {
     .validate_ready_call = test_analysis_boundary_accept,
 };
 
+static PettaMachineHostMode preparation_error_classify(
+        void *context, Space *space, Atom *expression) {
+    (void)context;
+    (void)space;
+    return atom_is_error(expression)
+        ? PETTA_MACHINE_HOST_READY_OVERRIDE : PETTA_MACHINE_HOST_NONE;
+}
+
+static bool preparation_error_evaluate(
+        void *context, Space *space, Arena *arena, Atom *expression,
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end, const CettaDelayView *delay) {
+    (void)context;
+    (void)space;
+    (void)arena;
+    (void)environment;
+    (void)outcomes;
+    (void)delay;
+    assert(atom_is_error(expression));
+    *end = cetta_call_raised(expression);
+    return true;
+}
+
+static void test_preparation_installation_contract(
+        TermUniverse *universe, Arena *syntax, Arena *answers) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    space_add(&space, parse_one(syntax,
+        "(: preparation-native-error (-> (| Number (Error $detail $context)) Number))"));
+    space_add(&space, parse_one(syntax,
+        "(= (preparation-native-error $value) 7)"));
+    TestAnalysisAuthority authority = {0};
+    PettaMachineHost host = {
+        .context = &authority,
+        .analysis = &test_analysis_service,
+        .classify_may_override = true,
+        .classify = preparation_error_classify,
+        .evaluate = preparation_error_evaluate,
+    };
+    Atom *query = parse_one(answers,
+        "(preparation-native-error (Error payload context))");
+    PettaMachine machine;
+    assert(query && petta_machine_init(&machine, &space, answers, query, NULL, &host));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_eq(answer, atom_int(answers, 7)));
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    space_free(&space);
+    puts("PASS: native typed preparation installs Error-as-data authority before argument evaluation");
+}
+
 static void test_direct_authority_identity_contract(void) {
     CettaNikDirectAuthorityV1 authority =
         *test_analysis_service.authority;
@@ -12077,7 +12214,8 @@ static void test_branch_capture_algebra(void) {
     puts("PASS: branch storage follows capture capacity, not evaluator dialect");
 }
 
-static bool permit_owned_continuation_transition(void *opaque) {
+static bool permit_owned_continuation_transition(void *opaque, const CettaSourceStep *source) {
+    (void)source;
     OwnedContinuationAuthority *state = opaque;
     if (!state || state->remaining == 0u)
         return false;
@@ -13976,6 +14114,7 @@ int main(int argc, char **argv) {
     if (arity_only) {
         test_type_call_arity(&answers);
         test_type_call_facts(&answers);
+        test_preparation_installation_contract(&universe, &persistent, &answers);
         goto release_owners;
     }
     if (worker_only) {
@@ -14029,6 +14168,7 @@ int main(int argc, char **argv) {
     test_plain_scalar_truth_dispatch(&answers);
     test_typing_operator_identity();
     test_analysis_capability_contract(&space, &answers);
+    test_preparation_installation_contract(&universe, &persistent, &answers);
     test_direct_authority_identity_contract();
     test_direct_source_binding_contract();
     test_sequence_projection_views(&persistent);

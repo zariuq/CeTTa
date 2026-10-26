@@ -26,7 +26,8 @@ static PettaMachineHostMode classify(void *context, Space *space, Atom *call) {
         : PETTA_MACHINE_HOST_NONE;
 }
 
-static bool permit(void *context) {
+static bool permit(void *context, const CettaSourceStep *source) {
+    (void)source;
     Authority *authority = context;
     if (!authority->budget) return false;
     --authority->budget;

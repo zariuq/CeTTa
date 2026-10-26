@@ -9,6 +9,8 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from cetta_readiness_model import load_frozen_baseline, ReadinessModelError
+
 
 def _git(repo_root: Path, *args: str) -> str:
     result = subprocess.run(
@@ -47,13 +49,27 @@ def _cpu_model() -> str:
     return platform.processor() or "unknown"
 
 
-def benchmark_provenance(bin_path: str) -> dict[str, object]:
+def benchmark_provenance(
+    bin_path: str, *, receipt: str | None = None,
+    receipt_sha256: str | None = None, source_commit: str | None = None,
+) -> dict[str, object]:
     binary = Path(bin_path).resolve()
-    repo_root = _git_root(binary.parent) or Path(__file__).resolve().parent.parent
-    commit = _git(repo_root, "rev-parse", "HEAD") or "unknown"
-    status = _git(repo_root, "status", "--porcelain")
-    inside = _git(repo_root, "rev-parse", "--is-inside-work-tree") == "true"
-    tree_state = "dirty" if status else ("clean" if inside else "nogit")
+    repo_root = _git_root(binary.parent)
+    if repo_root is not None and not all((repo_root / name).is_file() for name in (
+            "src/eval.c", "src/main.c", "src/atom.c")):
+        repo_root = None
+    commit, tree_state = "unknown", "nogit"
+    if any(value is not None for value in (receipt, receipt_sha256, source_commit)):
+        if not all((receipt, receipt_sha256, source_commit)):
+            raise ReadinessModelError("frozen provenance requires receipt, digest and commit")
+        frozen = load_frozen_baseline(Path(__file__).resolve().parent.parent,
+            Path(receipt), receipt_sha256, source_commit)
+        if Path(frozen["binary"]) != binary:
+            raise ReadinessModelError("frozen provenance names a different binary")
+        commit, tree_state = frozen["commit"], "frozen"
+    elif repo_root is not None:
+        commit = _git(repo_root, "rev-parse", "HEAD") or "unknown"
+        tree_state = "dirty" if _git(repo_root, "status", "--porcelain") else "clean"
     try:
         load1, load5, load15 = os.getloadavg()
     except OSError:

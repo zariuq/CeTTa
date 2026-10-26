@@ -332,9 +332,11 @@ typedef struct {
     /*
      * Called immediately before a machine transition.  Returning false
      * suspends without consuming the pending goal, so the same machine can
-     * resume when its caller restores a budget or clears cancellation.
+     * resume when its caller restores a budget or clears cancellation. The
+     * source packet is borrowed only for this call; its occurrence survives
+     * suspension. Physical allowance is independent of its semantic debit.
      */
-    bool (*permit_transition)(void *context);
+    bool (*permit_transition)(void *context, const CettaSourceStep *source);
     /* True only when compiled, bounded pure instructions do not consume a
      * finite transition purse.  A metered host leaves this false so equation
      * selection retains the canonical transition boundary. */
