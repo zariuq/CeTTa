@@ -1204,7 +1204,7 @@ CettaSpaceAgendaDiscoveryStep cetta_space_agenda_discovery_step(
         d->cursor_ready=true;
     }
     CettaIndex index;
-    SpaceOccurrenceCursorStep step=space_occurrence_cursor_next(&d->cursor,&index);
+    SpaceOccurrenceCursorStep step=space_occurrence_cursor_next(&d->cursor,&index,NULL);
     cetta_native_cost_charge(CETTA_COST_QUEUE_VISIT,1u);
     if (!cetta_space_agenda_discovery_current(d)) {
         d->pending="StaleDiscoverySource";return CETTA_SPACE_DISCOVERY_INVALIDATED;

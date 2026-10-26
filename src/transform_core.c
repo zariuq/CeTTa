@@ -468,15 +468,15 @@ static TfStatus tf_each_match(TfFire *f, Space *space, Atom *pattern,
         return f->effects ? TF_ERROR : TF_FAIL;
     TfStatus status = TF_CONTINUE;
     for (;;) {
-        CettaIndex at = 0u;
-        SpaceOccurrenceCursorStep step = space_occurrence_cursor_next(&cursor, &at);
+        Atom *candidate = NULL;
+        SpaceOccurrenceCursorStep step =
+            space_occurrence_cursor_next(&cursor, NULL, &candidate);
         if (step == SPACE_OCCURRENCE_CURSOR_END)
             break;
         if (step == SPACE_OCCURRENCE_CURSOR_INVALIDATED) {
             status = f->effects ? TF_ERROR : TF_FAIL;
             break;
         }
-        Atom *candidate = space_occurrence_cursor_atom(&cursor, at);
         if (!candidate)
             continue;
         if (atom_has_vars(candidate)) {

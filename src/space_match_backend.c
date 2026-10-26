@@ -12750,7 +12750,7 @@ SpaceQueryCursorStep space_query_cursor_step_with_budget(SpaceQueryCursor *curso
         return space_query_cursor_publish_candidate(cursor, work);
     if (work->matcher) goto match_candidate;
     CettaIndex index = 0u;
-    SpaceOccurrenceCursorStep step = space_occurrence_cursor_next(&work->occurrences, &index);
+    SpaceOccurrenceCursorStep step = space_occurrence_cursor_next(&work->occurrences, &index, NULL);
     if (step == SPACE_OCCURRENCE_CURSOR_INVALIDATED)
         return SPACE_QUERY_CURSOR_INVALIDATED;
     if (step == SPACE_OCCURRENCE_CURSOR_END) {
@@ -13051,9 +13051,9 @@ bool space_native_flat_conjunction_count(
             bind_marks[level] = bind_len;
         }
 
-        CettaIndex candidate_index = 0u;
+        Atom *fact = NULL;
         SpaceOccurrenceCursorStep step = space_occurrence_cursor_next(
-            &cursors[level], &candidate_index);
+            &cursors[level], NULL, &fact);
         if (step == SPACE_OCCURRENCE_CURSOR_INVALIDATED) {
             admitted = false;
             break;
@@ -13068,8 +13068,6 @@ bool space_native_flat_conjunction_count(
             continue;
         }
 
-        Atom *fact = space_occurrence_cursor_atom(
-            &cursors[level], candidate_index);
         if (!fact || fact->kind != ATOM_EXPR ||
             fact->expr.len != patterns[level]->expr.len) {
             continue;

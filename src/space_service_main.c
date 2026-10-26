@@ -1491,7 +1491,7 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
     CettaIndex index;
     SpaceOccurrenceCursorStep step=SPACE_OCCURRENCE_CURSOR_END;
     for (;;) {
-        step=space_occurrence_cursor_next(&cursor,&index);
+        step=space_occurrence_cursor_next(&cursor,&index,NULL);
         if (step!=SPACE_OCCURRENCE_CURSOR_ITEM) break;
         if ((examined++ & 255u) == 0 && now_ms() >= deadline) { failure="query-time-limit"; break; }
         Atom *source = space_occurrence_cursor_atom(&cursor,index);
@@ -1554,7 +1554,7 @@ static int store_any(Store *st, Atom *pattern) {
     if (!store_consistent(st) || !space_occurrence_cursor_init(st->space,pattern,&cursor)) return -1;
     int found = 0; CettaIndex index;
     SpaceOccurrenceCursorStep step = SPACE_OCCURRENCE_CURSOR_END;
-    while (!found && (step = space_occurrence_cursor_next(&cursor,&index)) == SPACE_OCCURRENCE_CURSOR_ITEM) {
+    while (!found && (step = space_occurrence_cursor_next(&cursor,&index,NULL)) == SPACE_OCCURRENCE_CURSOR_ITEM) {
         Atom *source = space_occurrence_cursor_atom(&cursor,index);
         if (!source) { found = -1; break; }
         Arena scratch; arena_init_detached(&scratch);

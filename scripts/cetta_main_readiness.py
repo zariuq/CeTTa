@@ -453,6 +453,7 @@ def readiness_commands(tier: str) -> list[list[str]]:
                 "bench-d4-backends",
             ],
             ["make", "BUILD=main", "RHO_BENCH_RUNS=1", "bench-light"],
+            ["make", "BUILD=main", "bench-evaluator-tax"],
             ["make", "BUILD=main", "main-readiness-rho-adaptive"],
             ["make", "BUILD=main", "main-readiness-consolidation"],
         ]
@@ -468,6 +469,7 @@ def readiness_commands(tier: str) -> list[list[str]]:
             ["make", "BUILD=main", "main-readiness-space-frontier"],
             ["make", "BUILD=main", "main-readiness-thresholds"],
             ["make", "BUILD=main", "bench-light"],
+            ["make", "BUILD=main", "bench-evaluator-tax"],
             [
                 "make",
                 "BUILD=main",

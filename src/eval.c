@@ -77069,13 +77069,6 @@ static CettaPreparedPureAnswerCursor *petta_eval_machine_open_answer_cursor(
             .continuation_context = head_admission_context,
         };
         cursor = cetta_prepared_pure_answer_cursor_open(program, &options);
-        /* Native loans may remain live across parent heap collection.
-         * Qualify entry operands before effects, while detachment is total. */
-        if (cursor && cetta_prepared_pure_program_has_native_calls(program) &&
-            !cetta_prepared_pure_answer_cursor_detach(cursor)) {
-            cetta_prepared_pure_answer_cursor_close(cursor);
-            cursor = NULL;
-        }
     }
     cetta_prepared_pure_program_clear_closed_entry_call(program);
     if (!program_is_cached &&

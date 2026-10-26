@@ -898,6 +898,8 @@ def main() -> int:
     }
     require("main-readiness-consolidation" in routine_targets & exhaustive_targets,
             "a readiness tier omits the original consolidation baseline")
+    require("bench-evaluator-tax" in routine_targets & exhaustive_targets,
+            "a readiness tier checks evaluator routes without their instruction budgets")
     require("main-readiness-rho-adaptive" in routine_targets and "bench-heavy" in exhaustive_targets,
             "consolidation replaced a historical regression gate")
     report_pass("both tiers retain historical gates and require consolidation timing")
