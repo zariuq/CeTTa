@@ -81,12 +81,15 @@ def main():
 
         generator = random.Random(2026)
         texts = ["".join(chr(generator.choice(POOL)) for _ in range(generator.randrange(1, 11))) for _ in range(30000)]
-        texts += ["Σ", "ΟΣ", "ΟΣ.", "A'Σ", "AΣA", "AΣ'B", "İ", "ΣΣ",
-                  "AͅΣ", "\ud800Σ", "A­Σ­", "ᾈΣ"]
+        texts += ["Σ", "ΟΣ", "ΟΣ.", "A'Σ", "AΣA", "AΣ'B", "İ",
+                  "ΣΣ", "AͅΣ", "\ud800Σ", "A­Σ­", "ᾈΣ"]
+        # Long case-ignorable runs on both sides of each sigma, and long mixed texts.
+        texts += ["A" + ("Σ" + "'" * 700 + ("x" if k else "­")) * 300 for k in range(2)]
+        texts += ["".join(chr(generator.choice(POOL)) for _ in range(5000)) for _ in range(40)]
         (work / "sigma.txt").write_bytes(encoded("\n".join(texts)))
         for dialect in ("petta", "he", "prime"):
             if dialect != "petta":
-                texts_here = texts[:2000] + texts[-12:]
+                texts_here = texts[:2000] + texts[30000:]
                 (work / "sigma.txt").write_bytes(encoded("\n".join(texts_here)))
             else:
                 texts_here = texts

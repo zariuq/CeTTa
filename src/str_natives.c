@@ -468,76 +468,76 @@ static uint8_t lower15_map(uint32_t code, uint32_t out[CETTA_PYTHON_LOWER15_WIDT
     return 1u;
 }
 
-/* U+03A3 lowers to final sigma U+03C2 when a cased code point precedes it and
- * none follows it, case-ignorable code points between them skipped; otherwise
- * to U+03C3. This is CPython's handle_capital_sigma. */
-static uint32_t lower15_sigma(const uint32_t *codes, size_t count, size_t at) {
-    size_t j = at;
-    while (j > 0u && lower15_has(cetta_python_lower15_ignorable_starts,
-                                 CETTA_PYTHON_LOWER15_IGNORABLE_STARTS, codes[j - 1u]))
-        j--;
-    bool final = j > 0u && lower15_has(cetta_python_lower15_cased_starts,
-                                       CETTA_PYTHON_LOWER15_CASED_STARTS, codes[j - 1u]);
-    if (final) {
-        j = at + 1u;
-        while (j < count && lower15_has(cetta_python_lower15_ignorable_starts,
-                                        CETTA_PYTHON_LOWER15_IGNORABLE_STARTS, codes[j]))
-            j++;
-        final = j == count || !lower15_has(cetta_python_lower15_cased_starts,
-                                           CETTA_PYTHON_LOWER15_CASED_STARTS, codes[j]);
+/* Whether the first code point at or after `at` that is not case-ignorable is
+ * cased; false at the end of the text. Malformed bytes end the scan; the
+ * caller refuses them when it reaches them. */
+static bool lower15_cased_follows(const char *text, size_t len, size_t at) {
+    while (at < len) {
+        uint32_t code, width;
+        if (!cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &code, &width))
+            return false;
+        if (!lower15_has(cetta_python_lower15_ignorable_starts, CETTA_PYTHON_LOWER15_IGNORABLE_STARTS, code))
+            return lower15_has(cetta_python_lower15_cased_starts, CETTA_PYTHON_LOWER15_CASED_STARTS, code);
+        at += width;
     }
-    return final ? 0x03C2u : 0x03C3u;
+    return false;
 }
 
 /* CPython 3.12's str.lower of a Python text (UTF-8 extended by surrogatepass,
  * as str:python-codepoints reads it): full lowercase mappings over Unicode
  * 15.0.0, one code point to several included, and the Final_Sigma context of
- * U+03A3. Lone surrogates are kept. Not casefold. The answer's length is
- * known before it is written, and one that cannot fit a string is refused. */
+ * U+03A3, as CPython's handle_capital_sigma decides it: final sigma when the
+ * nearest code point before it that is not case-ignorable is cased and the
+ * nearest one after it is not. Lone surrogates are kept. Not casefold.
+ *
+ * Two passes over the text, with no decoded copy: the first validates and
+ * sizes the answer, the second writes it. Whether the code point before is
+ * cased is carried along; for U+03A3 the scan forward stops at the first code
+ * point that is not case-ignorable, so each run of case-ignorable code points
+ * is scanned for at most one sigma and the work stays linear. An answer that
+ * cannot fit a string is refused before anything is allocated for it. */
 static Atom *str_python_lower(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     const char *text;
-    size_t len, count = 0u;
+    size_t len;
     if (!str_text(args[0], &text, &len))
         return str_expects(r, "expected text argument");
-    uint32_t *codes = malloc((len ? len : 1u) * sizeof(*codes));
-    if (!codes)
-        return str_expects(r, "memory for the code points");
-    for (size_t at = 0u; at < len; count++) {
-        uint32_t width;
-        if (!cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &codes[count], &width)) {
-            free(codes);
-            return str_refuses(r, "StrMalformedUtf8V1", at);
-        }
-        at += width;
-    }
     uint64_t total = 0u;
-    uint32_t mapped[CETTA_PYTHON_LOWER15_WIDTH];
-    uint8_t encoded[4];
-    for (size_t k = 0u; k < count; k++) {
-        uint8_t width = codes[k] == 0x03A3u ? (mapped[0] = lower15_sigma(codes, count, k), 1u)
-                                             : lower15_map(codes[k], mapped);
-        for (uint8_t m = 0u; m < width; m++) total += cetta_utf8_encode(mapped[m], encoded);
-    }
-    if (total > CETTA_STRING_BYTES_MAX) {
-        free(codes);
-        return str_expects(r, "expected a text whose lowercase fits a string");
-    }
-    char *out = malloc((size_t)total + 1u);
-    if (!out) {
-        free(codes);
-        return str_expects(r, "memory for the lowercase text");
-    }
+    char *out = NULL;
     size_t written = 0u;
-    for (size_t k = 0u; k < count; k++) {
-        uint8_t width = codes[k] == 0x03A3u ? (mapped[0] = lower15_sigma(codes, count, k), 1u)
-                                             : lower15_map(codes[k], mapped);
-        for (uint8_t m = 0u; m < width; m++) {
-            size_t bytes = cetta_utf8_encode(mapped[m], encoded);
-            memcpy(out + written, encoded, bytes);
-            written += bytes;
+    for (int pass = 0; pass < 2; pass++) {
+        bool cased_before = false;
+        for (size_t at = 0u; at < len;) {
+            uint32_t code, width;
+            if (!cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &code, &width))
+                return str_refuses(r, "StrMalformedUtf8V1", at);
+            uint32_t mapped[CETTA_PYTHON_LOWER15_WIDTH];
+            uint8_t count = 1u;
+            if (code == 0x03A3u)
+                mapped[0] = cased_before && !lower15_cased_follows(text, len, at + width) ? 0x03C2u : 0x03C3u;
+            else
+                count = lower15_map(code, mapped);
+            for (uint8_t m = 0u; m < count; m++) {
+                uint8_t encoded[4];
+                size_t bytes = cetta_utf8_encode(mapped[m], encoded);
+                if (pass == 0) {
+                    total += bytes;
+                } else {
+                    memcpy(out + written, encoded, bytes);
+                    written += bytes;
+                }
+            }
+            if (!lower15_has(cetta_python_lower15_ignorable_starts, CETTA_PYTHON_LOWER15_IGNORABLE_STARTS, code))
+                cased_before = lower15_has(cetta_python_lower15_cased_starts, CETTA_PYTHON_LOWER15_CASED_STARTS, code);
+            at += width;
+        }
+        if (pass == 0) {
+            if (total > CETTA_STRING_BYTES_MAX)
+                return str_expects(r, "expected a text whose lowercase fits a string");
+            out = malloc((size_t)total + 1u);
+            if (!out)
+                return str_expects(r, "memory for the lowercase text");
         }
     }
-    free(codes);
     Atom *result = atom_string_n(a, out, written);
     free(out);
     return result;
