@@ -132,7 +132,7 @@ static void test_flat_and_captured_readers(TermUniverse *universe, Arena *arena)
     assert(space_occurrence_cursor_init(&space, query, &first));
     assert(first.flat_mode && captured_len > 2u);
     CettaIndex position;
-    assert(space_occurrence_cursor_next(&first, &position) == SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(space_occurrence_cursor_next(&first, &position, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
     assert(position == captured[0]);
     assert(space_occurrence_cursor_clone(&first, &exact));
     assert(space_occurrence_cursor_clone_unstarted(&first, &rewind));
@@ -158,16 +158,16 @@ static void test_flat_and_captured_readers(TermUniverse *universe, Arena *arena)
     space_occurrence_cursor_release(&first);
     space_free(&space);
     for (CettaIndex index = 1u; index < captured_len; index++) {
-        assert(space_occurrence_cursor_next(&exact, &position) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(space_occurrence_cursor_next(&exact, &position, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
         assert(position == captured[index]);
         assert(space_occurrence_cursor_atom(&exact, position));
     }
     for (CettaIndex index = 0u; index < captured_len; index++) {
-        assert(space_occurrence_cursor_next(&rewind, &position) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(space_occurrence_cursor_next(&rewind, &position, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
         assert(position == captured[index]);
     }
-    assert(space_occurrence_cursor_next(&exact, &position) == SPACE_OCCURRENCE_CURSOR_END);
-    assert(space_occurrence_cursor_next(&rewind, &position) == SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next(&exact, &position, NULL) == SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next(&rewind, &position, NULL) == SPACE_OCCURRENCE_CURSOR_END);
     space_occurrence_cursor_release(&exact);
     space_occurrence_cursor_release(&rewind);
     free(captured);

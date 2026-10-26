@@ -9993,12 +9993,11 @@ static OemRun oem_match_fallback_host(
 static Atom *oem_lazy_rows_fetch(CettaOpenEquationCursor *cursor,
                                  OemLazyRows *lazy) {
     for (;;) {
-        CettaIndex index = 0u;
-        if (space_occurrence_cursor_next(&lazy->occurrences, &index) !=
+        Atom *row = NULL;
+        if (space_occurrence_cursor_next(&lazy->occurrences, NULL, &row) !=
             SPACE_OCCURRENCE_CURSOR_ITEM)
             return NULL;
         cursor->stats.match_candidates++;
-        Atom *row = space_occurrence_cursor_atom(&lazy->occurrences, index);
         if (row)
             return row;
     }

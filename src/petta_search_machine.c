@@ -19533,9 +19533,10 @@ static bool petta_machine_advance_choice(
     if (choice->as.match.occurrence_cursor_mode) {
         for (;;) {
             CettaIndex candidate_index = 0u;
+            Atom *candidate = NULL;
             SpaceOccurrenceCursorStep step =
                 space_occurrence_cursor_next(
-                    &choice->as.match.occurrences, &candidate_index);
+                    &choice->as.match.occurrences, &candidate_index, &candidate);
             if (step == SPACE_OCCURRENCE_CURSOR_END) {
                 choice->as.match.occurrence_exhausted = true;
                 return false;
@@ -19544,8 +19545,6 @@ static bool petta_machine_advance_choice(
                 *failure = PETTA_MACHINE_STEP_INVALIDATED;
                 return false;
             }
-            Atom *candidate = space_occurrence_cursor_atom(
-                &choice->as.match.occurrences, candidate_index);
             if (!candidate)
                 continue;
             if (choice->as.match.pattern_query) {
