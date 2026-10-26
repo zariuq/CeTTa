@@ -21,6 +21,7 @@
 (= (str:unicode-version) (__cetta_lib_str unicode-version))
 (= (str:python-codepoints $text) (__cetta_lib_str python-codepoints $text))
 (= (str:from-python-codepoints $codepoints) (__cetta_lib_str from-python-codepoints $codepoints))
+(= (str:python-lower $text) (__cetta_lib_str python-lower $text))
 (= (str:codepoints $text) (__cetta_lib_str codepoints $text))
 (= (str:from-codepoints $codepoints) (__cetta_lib_str from-codepoints $codepoints))
 (= (str:is-all-in $class $text) (__cetta_lib_str is-all-in $class $text))

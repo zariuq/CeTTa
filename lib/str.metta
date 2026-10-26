@@ -99,6 +99,15 @@
    (function
      (chain (eval (__cetta_lib_str from-python-codepoints $codepoints)) $result (return $result))))
 
+; CPython 3.12's str.lower over Unicode 15.0.0, not casefold: every code point
+; through its full lowercase mapping, one to several included (U+0130 becomes
+; i and U+0307), and U+03A3 to final sigma U+03C2 in the Final_Sigma context,
+; else U+03C3. The text is read as str:python-codepoints reads it, so lone
+; surrogates are kept; other malformed bytes are refused.
+(= (str:python-lower $text)
+   (function
+     (chain (eval (__cetta_lib_str python-lower $text)) $result (return $result))))
+
 ; The codepoints of a text as a list value of one-codepoint strings, so that
 ; [$c | $rest] matches over its characters.
 (= (str:codepoints $text)
