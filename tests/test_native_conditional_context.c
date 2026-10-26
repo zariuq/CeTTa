@@ -1747,10 +1747,18 @@ static unsigned episode_accounting(void) {
         g_eval_completion_tracker = &parent;
         PettaMachineHost host = petta_eval_machine_host(&context, request,
             false, false, false, true, false, (CettaMatchDecisionSemanticIdentity){0});
+        assert(cetta_eval_episode_allows_unmetered(&parent, request) ==
+            (!inherited && request < 0));
         assert(host.unlimited_transition_budget ==
             (!inherited && request < 0 && !diagnostic));
         g_eval_completion_tracker = NULL;
         checks++;
+    }
+    CettaEvalEpisode empty = cetta_eval_episode_begin(NULL, 0);
+    for (int request = -1; request <= 2; request++) {
+        assert(cetta_eval_episode_allows_unmetered(NULL, request) == (request < 0));
+        assert(!cetta_eval_episode_allows_unmetered(&empty, request));
+        checks += 2u;
     }
     return checks + 7u;
 }

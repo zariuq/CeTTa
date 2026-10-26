@@ -29,14 +29,19 @@ LIBRARY_IMPORT = "!(import! &self (library lib_transform))"
 SPECS_IMPORT = "!(import! &self (library lib_transform_specs))"
 
 
-def run(binary, path, reference, trace):
-    env = dict(os.environ, CETTA_PETTA_SEARCH_MACHINE="1")
+def run(binary, path, reference, trace, fuel=None, workers=None, machine="1"):
+    env = dict(os.environ, CETTA_PETTA_SEARCH_MACHINE=machine)
     env.pop("CETTA_TRANSFORM_REFERENCE", None)
     if reference:
         env["CETTA_TRANSFORM_REFERENCE"] = "1"
     if trace:
         env["CETTA_TRANSFORM_TRACE"] = "1"
-    p = subprocess.run([binary, "--lang", "petta", path], cwd=ROOT, env=env,
+    if workers is not None:
+        env["CETTA_OPEN_EQUATIONS_REFERENCE"], env["CETTA_PREPARED_PURE_REFERENCE"] = workers
+    command = [binary, "--lang", "petta"]
+    if fuel is not None:
+        command += ["--fuel", str(fuel)]
+    p = subprocess.run(command + [path], cwd=ROOT, env=env,
                        capture_output=True, text=True, timeout=120)
     return p.returncode, p.stdout, p.stderr
 
@@ -75,6 +80,45 @@ def check_fixed(binary):
         if specs != expected:
             print(f"FAIL: {stem}: lib_transform_specs answers differ from the expected output")
             return False
+    return True
+
+
+def check_source_fuel(binary):
+    header = (LIBRARY_IMPORT + "\n!(bind! &s (new-space))\n"
+              "!(add-atom &s (job a))\n")
+    programs = {
+        "take": header + "!(collapse (transform &s (take (job $j)) (hit $j)))\n",
+        "effect": header + "!(collapse (transform &s (, (take (job $j)) "
+                  "(let $v (println! entered))) (hit $j)))\n",
+        "every": header + "".join(f"!(add-atom &s (job n{i}))\n" for i in range(12)) +
+                 "!(collapse (transform &s (every (take (job $j))) (hit $j)))\n",
+    }
+    budgets = [0, 1, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, -1]
+    with tempfile.TemporaryDirectory(prefix="cetta-transform-fuel-") as work:
+        for name, source in programs.items():
+            path = os.path.join(work, name + ".metta")
+            with open(path, "w") as stream:
+                stream.write(source)
+            for machine, oem, prepared in [(m, o, p) for m in ("0", "1")
+                                          for o in ("0", "1") for p in ("0", "1")]:
+                workers = (oem, prepared)
+                for fuel in budgets:
+                    native = run(binary, path, False, True, fuel, workers, machine)
+                    authored = run(binary, path, True, False, fuel, workers, machine)
+                    diagnostics = "\n".join(line for line in native[2].splitlines()
+                                            if not line.startswith("[transform]"))
+                    if (native[0], native[1], diagnostics) != \
+                            (authored[0], authored[1], authored[2].rstrip("\n")):
+                        print(f"FAIL: transform source fuel: {name}, {fuel}, {machine}, {workers}")
+                        print("native:", native, "authored:", authored)
+                        return False
+                    fired = any(line.startswith("[transform] fired")
+                                for line in trace_lines(native[2]))
+                    if (fuel >= 0 and fired) or (fuel < 0 and (not fired or native[0])):
+                        print(f"FAIL: transform source-fuel admission: {name}, {fuel}, {machine}, {workers}")
+                        return False
+    print(f"PASS: transform preserves source-fuel prefixes and effects "
+          f"({len(programs) * 8 * len(budgets) * 2} observations)")
     return True
 
 
@@ -163,7 +207,7 @@ def main():
     parser.add_argument("--seed", type=int, default=20261026)
     args = parser.parse_args()
     binary = os.path.abspath(args.binary)
-    if not check_fixed(binary):
+    if not check_fixed(binary) or not check_source_fuel(binary):
         return 1
     rng = random.Random(args.seed)
     with tempfile.TemporaryDirectory(prefix="cetta-transform-") as work:

@@ -57,6 +57,13 @@ typedef struct CettaEvalEpisode {
     struct CettaEvalEpisode *parent;
 } CettaEvalEpisode;
 
+/* Source-fuel admission for a worker without its own debit refinement.
+ * Cancellation, callee authority and physical allowances are separate. */
+static inline bool cetta_eval_episode_allows_unmetered(
+        const CettaEvalEpisode *episode, int requested_fuel) {
+    return requested_fuel < 0 && !(episode && episode->budget_limited);
+}
+
 static inline CettaEvalEpisode cetta_eval_episode_begin(
         CettaEvalEpisode *parent, int requested_fuel) {
     bool requested_limited = requested_fuel >= 0;
