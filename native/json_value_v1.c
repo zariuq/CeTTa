@@ -26,6 +26,11 @@ typedef struct {
     size_t item_separator_len;
     const char *key_separator;
     size_t key_separator_len;
+    /* A line break before each member and closing bracket, then per nesting
+     * level indent_text, or indent_len spaces when indent_text is NULL. */
+    bool indent;
+    const char *indent_text;
+    size_t indent_len;
     uint64_t work;
     uint32_t work_limit;
     uint32_t depth_limit;
@@ -1156,25 +1161,41 @@ static Atom **json_sorted_members(JsonValueCtxV1 *ctx, Atom *const *items, Cetta
     return sorted;
 }
 
-static bool json_emit_indent(JsonBytesV1 *out, size_t depth) {
-    if (!json_bytes_char(out, '\n')) return false;
-    for (size_t level = 0u; level < depth; level++)
-        if (!json_bytes_append(out, "  ", 2u)) return false;
+/* The line is reserved whole, so an indent past the byte limit fails before
+ * any of it is copied. */
+static bool json_emit_indent(JsonValueCtxV1 *ctx, JsonBytesV1 *out, size_t depth) {
+    static const char spaces[] = "                                ";
+    size_t unit = ctx->indent_len;
+    if (depth && unit > (SIZE_MAX - 1u) / depth)
+        return json_value_error(ctx, CETTA_JSON_VALUE_V1_RESOURCE_LIMIT,
+                                "JSON output byte limit exceeded");
+    if (!json_bytes_reserve(out, 1u + depth * unit) || !json_bytes_char(out, '\n')) return false;
+    for (size_t level = 0u; level < depth; level++) {
+        if (ctx->indent_text) {
+            if (!json_bytes_append(out, ctx->indent_text, unit)) return false;
+            continue;
+        }
+        for (size_t left = unit; left; ) {
+            size_t chunk = left < sizeof(spaces) - 1u ? left : sizeof(spaces) - 1u;
+            if (!json_bytes_append(out, spaces, chunk)) return false;
+            left -= chunk;
+        }
+    }
     return true;
 }
 
 static Atom *json_emit_child(JsonValueCtxV1 *ctx, JsonEmitFrameV1 *frame, JsonBytesV1 *out,
-                             bool ordinary, bool pretty, size_t depth) {
+                             bool ordinary, size_t depth) {
     Atom *child = frame->items[frame->index];
     if (frame->index && !(ctx->python
             ? json_bytes_append(out, ctx->item_separator, ctx->item_separator_len)
             : json_bytes_char(out, ','))) return NULL;
-    if (pretty && !json_emit_indent(out, depth)) return NULL;
+    if (ctx->indent && !json_emit_indent(ctx, out, depth)) return NULL;
     if (!frame->object) return child;
     if (ordinary && json_expr_is(child, "JsonPair", 3u) &&
         json_emit_native_text(ctx, child->expr.elems[1], out, false) &&
         (ctx->python ? json_bytes_append(out, ctx->key_separator, ctx->key_separator_len)
-                     : json_bytes_char(out, ':') && (!pretty || json_bytes_char(out, ' '))))
+                     : json_bytes_char(out, ':') && (!ctx->indent || json_bytes_char(out, ' '))))
         return child->expr.elems[2];
     if (json_expr_is(child, "JsonMemberV1", 5u) &&
         child->expr.elems[1] && child->expr.elems[1]->kind == ATOM_GROUNDED &&
@@ -1183,14 +1204,14 @@ static Atom *json_emit_child(JsonValueCtxV1 *ctx, JsonEmitFrameV1 *frame, JsonBy
         json_member_span_valid(child->expr.elems[4]) &&
         json_emit_string(ctx, child->expr.elems[2], out) &&
         (ctx->python ? json_bytes_append(out, ctx->key_separator, ctx->key_separator_len)
-                     : json_bytes_char(out, ':') && (!pretty || json_bytes_char(out, ' '))))
+                     : json_bytes_char(out, ':') && (!ctx->indent || json_bytes_char(out, ' '))))
         return child->expr.elems[3];
     if (ctx->status == CETTA_JSON_VALUE_V1_OK)
         json_value_error(ctx, CETTA_JSON_VALUE_V1_MALFORMED_VALUE, "malformed canonical JSON value");
     return NULL;
 }
 
-static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, bool ordinary, bool pretty) {
+static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, bool ordinary) {
     JsonEmitFrameV1 *frames = NULL;
     size_t len = 0u, cap = 0u;
     Atom *current = value;
@@ -1240,7 +1261,7 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, 
             frames[len++] = (JsonEmitFrameV1){.items = items, .count = count, .object = object,
                                               .sorted = sorted};
             if (!count) goto closed;
-            current = json_emit_child(ctx, &frames[len-1u], out, ordinary, pretty, len);
+            current = json_emit_child(ctx, &frames[len-1u], out, ordinary, len);
             glue = object ? SIZE_MAX : open_at;
             if (!current) goto failed;
             continue;
@@ -1254,14 +1275,14 @@ static bool json_emit_value(JsonValueCtxV1 *ctx, Atom *value, JsonBytesV1 *out, 
             JsonEmitFrameV1 *frame = &frames[len-1u];
             if (++frame->index < frame->count) {
                 size_t separator_at = out->len;
-                current = json_emit_child(ctx, frame, out, ordinary, pretty, len);
+                current = json_emit_child(ctx, frame, out, ordinary, len);
                 glue = frame->object ? SIZE_MAX : separator_at;
                 if (!current) goto failed;
                 break;
             }
 closed:
             frame = &frames[len-1u];
-            if (pretty && frame->count && !json_emit_indent(out, len-1u)) goto failed;
+            if (ctx->indent && frame->count && !json_emit_indent(ctx, out, len-1u)) goto failed;
             if (!json_bytes_char(out, frame->object ? '}' : ']')) goto failed;
             free(frame->sorted);
             len--;
@@ -1334,8 +1355,16 @@ static bool json_stringify_impl(
         .error = error_buf,
         .error_size = error_buf_size,
     };
+    if (pretty) {
+        ctx.indent = true;
+        ctx.indent_len = 2u;
+    } else if (python && python->indent) {
+        ctx.indent = true;
+        ctx.indent_text = python->indent_text;
+        ctx.indent_len = python->indent_len;
+    }
     bytes = (JsonBytesV1){.limit = byte_limit ? byte_limit : CETTA_STRING_BYTES_MAX, .ctx = &ctx};
-    if (!json_emit_value(&ctx, canonical, &bytes, fused_ordinary, pretty)) {
+    if (!json_emit_value(&ctx, canonical, &bytes, fused_ordinary)) {
         if (status) *status = ctx.status;
         if (ctx.status == CETTA_JSON_VALUE_V1_PYTHON_VALUE_ERROR) {
             *bytes_out = bytes.bytes;

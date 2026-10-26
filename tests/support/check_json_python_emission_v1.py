@@ -5,7 +5,8 @@ Generated values cover finite floats from random bit patterns, every power of
 two, decimal fractions, integers of both signs, strings with quotes,
 backslashes, control characters, DEL, Basic Multilingual Plane and astral
 scalars, and nested arrays and objects. Each value is emitted by the engine and
-compared byte for byte with json.dumps under default arguments.
+compared byte for byte with json.dumps under default arguments, then again
+under random ensure_ascii, sort_keys, separators and indent options.
 
 Integers past Python's 4300-digit int-to-text limit must fail as json.dumps
 fails, with its ValueError text and the prefix a streaming json.dump has
@@ -111,6 +112,68 @@ def random_value(rng, depth=0):
     return {random_text(rng): random_value(rng, depth + 1) for _ in range(rng.randint(0, 5))}
 
 
+def with_options(value, options):
+    """json:stringify-python-with under json.dumps keyword options. Text options
+    are bound by let, since text holding NUL is an expression."""
+    bindings, parts = [], []
+    for name in ("ensure_ascii", "sort_keys"):
+        if name in options:
+            parts.append("(%s %s)" % (name.replace("_", "-"), options[name]))
+    if options.get("separators") is not None:
+        bindings += [("$item", options["separators"][0]), ("$key", options["separators"][1])]
+        parts.append("(separators $item $key)")
+    indent = options.get("indent")
+    if isinstance(indent, int):
+        parts.append("(indent %d)" % indent)
+    elif indent is not None:
+        bindings.append(("$indent", indent))
+        parts.append("(indent $indent)")
+    expression = "(json:stringify-python-with %s (%s))" % (term(value), " ".join(parts))
+    for name, text in reversed(bindings):
+        expression = "(let %s %s %s)" % (name, string_expression(text), expression)
+    return expression
+
+
+def unescaped(text):
+    return re.sub(r"\\(.)", r"\1", text, flags=re.S)
+
+
+def printed_items(output):
+    """Printed strings, unescaped, and (LIMIT ...) and (UNEXPECTED ...) forms.
+
+    println! escapes only backslashes and quotes, so indented text spans lines
+    and the output is read as a sequence of forms, not of lines."""
+    items, position = [], 0
+    def string_end(start):
+        end = start + 1
+        while output[end] != '"':
+            end += 2 if output[end] == "\\" else 1
+        return end
+    while position < len(output):
+        if output[position] == '"':
+            end = string_end(position)
+            items.append(unescaped(output[position + 1:end]))
+            position = end + 1
+        elif output[position] == "(":
+            depth, end = 0, position
+            while True:
+                if output[end] == '"':
+                    end = string_end(end)
+                elif output[end] == "(":
+                    depth += 1
+                elif output[end] == ")":
+                    depth -= 1
+                    if not depth:
+                        break
+                end += 1
+            if output.startswith(("(LIMIT ", "(UNEXPECTED "), position):
+                items.append(output[position:end + 1])
+            position = end + 1
+        else:
+            position += 1
+    return items
+
+
 def emitted(cetta, terms):
     lines = ["!(import! &self (library json))", "!(import! &self (library str))"]
     lines += ["!(println! %s)" % expression for expression in terms]
@@ -121,11 +184,9 @@ def emitted(cetta, terms):
                                 capture_output=True, text=True, timeout=600)
     if result.returncode:
         raise SystemExit("engine exited %d: %s" % (result.returncode, result.stderr[-2000:]))
-    # Split on newlines only: raw U+2028 and friends occur inside strings when
-    # ensure_ascii is off, and str.splitlines would break lines there.
-    printed = [line for line in result.stdout.split("\n") if line.startswith('"')]
-    limits = [line for line in result.stdout.split("\n") if line.startswith(("(LIMIT ", "(UNEXPECTED "))]
-    return [re.sub(r"\\(.)", r"\1", line[1:-1]) for line in printed] + limits
+    items = printed_items(result.stdout)
+    return [item for item in items if not item.startswith(("(LIMIT ", "(UNEXPECTED "))] + \
+        [item for item in items if item.startswith(("(LIMIT ", "(UNEXPECTED "))]
 
 
 def main():
@@ -148,41 +209,40 @@ def main():
     terms.append('(json:stringify-python (json:parse "%s"))' % overflow)
     expected = [json.dumps(value) for value in values] + [json.dumps(json.loads(overflow))]
     values = values + [overflow]
-    # Each value again under random json.dumps options.
-    separators = [(", ", ": "), (",", ":"), (" ; ", " = "), ("\x00", "\x00\x00"), (",\x00", ":")]
+    # Each value again under random json.dumps options; an indent without
+    # separators also checks the "," item separator json.dumps then uses.
+    separators = [(", ", ": "), (",", ":"), (" ; ", " = "), ("\x00", "\x00\x00"), (",\x00", ":"), None]
+    indents = [None, None, None, 0, 2, 4, -1, "\t", "", "\x00 x"]
     for value in values[:-1]:
-        ascii_, sort, (item, key) = rng.random() < 0.5, rng.random() < 0.5, rng.choice(separators)
-        options = "((ensure-ascii %s) (sort-keys %s) (separators $item $key))" % (
-            "True" if ascii_ else "False", "True" if sort else "False")
-        terms.append("(let $item %s (let $key %s (json:stringify-python-with %s %s)))" % (
-            string_expression(item), string_expression(key), term(value), options))
-        expected.append(json.dumps(value, ensure_ascii=ascii_, sort_keys=sort, separators=(item, key)))
+        options = {"ensure_ascii": rng.random() < 0.5, "sort_keys": rng.random() < 0.5,
+                   "separators": rng.choice(separators), "indent": rng.choice(indents)}
+        terms.append(with_options(value, options))
+        expected.append(json.dumps(value, **options))
         values.append(value)
     # Past int()'s digit limit: json.dumps raises; json.dump has written a prefix.
     huge = 10 ** 4300
     limit_values = [huge, -huge, [huge], [1, huge], [[1], huge], [1, [huge]], [{"a": 1}, huge],
                     {"a": 1, "seq": huge}, {"x": [huge]}, {"x": [2.5, {"y": -huge}], "z": "w"},
                     {"b": 1, "a": huge}, [10 ** 4299, huge], {"a": {"b": huge}}, [[], [huge, 1]]]
+    limit_options = [{"ensure_ascii": False, "sort_keys": False, "separators": (", ", ": ")},
+                     {"ensure_ascii": True, "sort_keys": True, "separators": (",", ":")},
+                     {"ensure_ascii": False, "sort_keys": True, "indent": 2},
+                     {"ensure_ascii": True, "separators": (" ; ", " = "), "indent": "\t"}]
     limit_expected = []
     for value in limit_values:
-        for options in (("False", "False", ", ", ": "), ("True", "True", ",", ":")):
-            ascii_, sort, item, key = options
+        for options in limit_options:
             try:
-                json.dumps(value, ensure_ascii=ascii_ == "True", sort_keys=sort == "True",
-                           separators=(item, key))
+                json.dumps(value, **options)
                 raise SystemExit("json.dumps accepted an oversized integer")
             except ValueError as error:
                 stream = io.StringIO()
                 try:
-                    json.dump(value, stream, ensure_ascii=ascii_ == "True", sort_keys=sort == "True",
-                              separators=(item, key))
+                    json.dump(value, stream, **options)
                 except ValueError:
                     pass
                 limit_expected.append((str(error), stream.getvalue()))
-            limit_terms_options = "((ensure-ascii %s) (sort-keys %s) (separators %s %s))" % (
-                ascii_, sort, string_literal(item), string_literal(key))
-            terms.append("(case (json:stringify-python-with %s %s) (((JsonPythonErrorV1 ValueError $m $p) "
-                         "(LIMIT $m $p)) ($other (UNEXPECTED $other))))" % (term(value), limit_terms_options))
+            terms.append("(case %s (((JsonPythonErrorV1 ValueError $m $p) "
+                         "(LIMIT $m $p)) ($other (UNEXPECTED $other))))" % with_options(value, options))
     actual = emitted(args.cetta, terms)
     limit_actual = actual[len(values):]
     actual = actual[:len(values)]
@@ -192,9 +252,9 @@ def main():
     failures = [(value, got, want) for value, got, want in zip(values, actual, expected)
                 if got != want]
     for line, (message, prefix) in zip(limit_actual, limit_expected):
-        match = re.fullmatch(r'\(LIMIT "(.*)" "(.*)"\)', line)
-        got = (re.sub(r"\\(.)", r"\1", match.group(1)), re.sub(r"\\(.)", r"\1", match.group(2))) \
-            if match else line
+        texts = re.findall(r'"((?:[^"\\]|\\.)*)"', line, re.S)
+        got = tuple(unescaped(text) for text in texts) \
+            if line.startswith("(LIMIT ") and len(texts) == 2 else line
         if got != (message, prefix):
             failures.append(("oversized integer", got[:2] if isinstance(got, tuple) else got,
                              (message, prefix[:80])))
