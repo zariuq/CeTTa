@@ -18,6 +18,18 @@ for example ((ensure-ascii False) (sort-keys True) (separators "," ":")).
 Sorted keys follow code point order, as Python sorts str keys; unknown options
 are refused.
 
+json:parse-python reads text as Python's json.loads does, beside the strict
+json:parse: NaN, Infinity and -Infinity are floats, a repeated key keeps its
+first position and takes its last value, and a lone surrogate escape such as
+\ud800 stays in the string. Such a string is written as UTF-8 extended the
+way Python's surrogatepass error handler extends it; str:python-codepoints
+and str:from-python-codepoints convert it to and from code point integers,
+and json:stringify-python writes it back as \ud800 under ensure-ascii. A
+Python exception is data, (JsonPythonErrorV1 class message ...), with message
+its str(): JSONDecodeError adds msg, pos, lineno and colno, positions counting
+code points, and ValueError comes from int() past 4300 digits. Unlike
+CPython, deep nesting raises no RecursionError.
+
 Values are ordinary data:
 
   JsonNull

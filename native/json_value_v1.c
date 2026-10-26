@@ -439,7 +439,12 @@ static bool json_utf8_text(JsonValueCtxV1 *ctx, const char *text, size_t len,
     while (at < len) {
         if ((uint8_t)text[at] < 0x80u) { at++; count++; continue; }
         uint32_t scalar, width;
-        if (!cetta_utf8_decode_one((const uint8_t *)text, len, at, &scalar, &width))
+        /* Python text may hold lone surrogates, encoded as surrogatepass
+         * encodes them; json.dumps escapes them under ensure_ascii. */
+        bool decoded = ctx->python
+            ? cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &scalar, &width)
+            : cetta_utf8_decode_one((const uint8_t *)text, len, at, &scalar, &width);
+        if (!decoded)
             return json_value_error(ctx, CETTA_JSON_VALUE_V1_INVALID_UTF8,
                                     "invalid UTF-8 at byte offset %zu", at);
         at += width; count++;

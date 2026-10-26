@@ -774,6 +774,7 @@ JSON_GSLT_RUNTIME_SRC = \
 	$(JSON_GSLT_EMBEDDED_C_V1) \
 	src/library_json.c \
 	native/json_direct_v1.c \
+	native/json_python_v1.c \
 	native/json_runtime_v1.c \
 	native/json_nik_v1.c \
 	native/json_elaboration_plan_v1.c \
@@ -43507,6 +43508,7 @@ LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 	native/json_runtime_v1.c \
 	native/json_value_v1.c \
 	native/json_direct_v1.c \
+	native/json_python_v1.c \
 	native/decimal_value_v1.c \
 	$(LANGUAGE_DEF_CORE_V1_SRC) \
 	$(OPERATIONAL_LANGUAGE_DEF_V1_SRC) \
@@ -47858,6 +47860,7 @@ test-json-gslt-library-body: $(BIN) \
 		lib/json.metta lib/petta/json.metta lib/prime/json.metta \
 		examples/json_scripting_v1.metta tests/support/check_json_workflows_v1.py \
 		tests/support/check_json_python_emission_v1.py \
+		tests/support/check_json_python_parse_v1.py \
 		tests/test_json_direct_reference.metta tests/test_json_direct_reference.expected tests/test_json_direct_reference.petta.expected \
 		tests/test_json_gslt_hostile_constructors.metta \
 		tests/test_json_gslt_hostile_constructors.expected \
@@ -47910,6 +47913,7 @@ test-json-gslt-library-body: $(BIN) \
 	python3 tests/test_json_deep_v1.py "$(BIN)"; \
 	python3 tests/support/check_json_workflows_v1.py --cetta "$(BIN)"; \
 	python3 tests/support/check_json_python_emission_v1.py --cetta "$(BIN)"; \
+	python3 tests/support/check_json_python_parse_v1.py --cetta "$(BIN)"; \
 	echo "(JsonGsltLibrarySummary 25 25 0)"
 
 .PHONY: test-json-gslt-library

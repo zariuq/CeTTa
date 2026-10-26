@@ -1,4 +1,5 @@
 #include "library_json.h"
+#include "native/json_python_v1.h"
 
 #include "eval.h"
 #include "json_embedded_sources_v1.h"
@@ -437,6 +438,35 @@ done:
     return unique;
 }
 
+/* A Python exception as data: (JsonPythonErrorV1 class message ...), the
+ * message being str() of the exception. JSONDecodeError adds msg, pos,
+ * lineno and colno. */
+static Atom *json_python_failure(Arena *arena, Atom *head, Atom **args, uint32_t nargs,
+                                 const CettaJsonPythonV1Error *failure) {
+    char message[512];
+    if (failure->status == CETTA_JSON_PYTHON_V1_DECODE_ERROR) {
+        snprintf(message, sizeof(message), "%s: line %zu column %zu (char %zu)",
+                 failure->msg, failure->lineno, failure->colno, failure->pos);
+        return atom_expr(arena, (Atom *[]){atom_symbol(arena, "JsonPythonErrorV1"),
+            atom_symbol(arena, "JSONDecodeError"), atom_string(arena, message),
+            atom_string(arena, failure->msg), atom_int(arena, (int64_t)failure->pos),
+            atom_int(arena, (int64_t)failure->lineno), atom_int(arena, (int64_t)failure->colno)}, 7u);
+    }
+    if (failure->status == CETTA_JSON_PYTHON_V1_VALUE_ERROR) {
+        snprintf(message, sizeof(message),
+                 "Exceeds the limit (4300 digits) for integer string conversion: value has %zu "
+                 "digits; use sys.set_int_max_str_digits() to increase the limit", failure->digits);
+        return atom_expr3(arena, atom_symbol(arena, "JsonPythonErrorV1"),
+                          atom_symbol(arena, "ValueError"), atom_string(arena, message));
+    }
+    if (failure->status == CETTA_JSON_PYTHON_V1_INVALID_TEXT) {
+        snprintf(message, sizeof(message), "JSON byte %zu: %s", failure->byte_offset, failure->msg);
+        return json_failure(arena, head, args, nargs, "JsonParseV1", "JsonInvalidUtf8V1", message);
+    }
+    return json_failure(arena, head, args, nargs, "JsonParseV1", "JsonAllocationFailureV1",
+                        failure->msg ? failure->msg : "out of memory");
+}
+
 static Atom *json_parse(CettaJsonLibraryRuntimeV1 *runtime,
                         Arena *arena, Atom *head,
                         Atom **args, uint32_t nargs,
@@ -450,18 +480,26 @@ static Atom *json_parse(CettaJsonLibraryRuntimeV1 *runtime,
     bool reference = nargs == 2u && atom_is_symbol(args[1], "JsonReferenceV1");
     bool unique = ordinary && nargs == 2u && atom_is_symbol(args[1], "JsonUniqueKeysV1");
     bool legacy = ordinary && nargs == 2u && atom_is_symbol(args[1], "JsonLegacyV1");
+    bool python = ordinary && nargs == 2u && atom_is_symbol(args[1], "JsonPythonV1");
     source = (unique || legacy)
         ? ((nargs >= 1u && args[0] && args[0]->kind == ATOM_SYMBOL)
                ? atom_name_cstr(args[0])
                : (nargs >= 1u ? json_text(args[0]) : NULL))
         : (nargs >= 1u ? json_text(args[0]) : NULL);
-    if ((nargs != 1u && !reference && !unique && !legacy) || !source) {
+    if ((nargs != 1u && !reference && !unique && !legacy && !python) || !source) {
         return json_failure_or_error(
             arena, head, args, nargs, ordinary,
             "JsonParseV1", "JsonBadArgumentV1",
             "expected one JSON text argument");
     }
     size_t source_len = args[0]->kind == ATOM_GROUNDED ? atom_string_len(args[0]) : strlen(source);
+    if (python) {
+        CettaJsonPythonV1Error failure;
+        if (cetta_json_python_v1_parse(arena, (const uint8_t *)source, source_len,
+                json_lane_is_petta(), &result, &failure))
+            return result;
+        return json_python_failure(arena, head, args, nargs, &failure);
+    }
     if (unique) {
         if (!cetta_json_direct_v1_parse_legacy(arena, (const uint8_t *)source, source_len,
                 false, 0u, &result, &parse_status, error, sizeof(error))) {

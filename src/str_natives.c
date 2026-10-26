@@ -335,6 +335,59 @@ static Atom *str_unicode_category(Arena *a, Atom *const *args, CettaStrRefusal *
     return atom_string(a, cetta_unicode_category15_names[cetta_unicode_category15_values[low]]);
 }
 
+/* The code points of a Python text, as integers. Its bytes are UTF-8
+ * extended as the surrogatepass error handler extends it, so a lone
+ * surrogate is one code point, as len() counts it; json:parse-python writes
+ * strings that way. Other malformed bytes are refused. */
+static Atom *str_python_codepoints(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len, count = 0u;
+    if (!str_text(args[0], &text, &len))
+        return str_expects(r, "expected text argument");
+    for (size_t at = 0u; at < len; count++) {
+        uint32_t code, width;
+        if (!cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &code, &width))
+            return str_refuses(r, "StrMalformedUtf8V1", at);
+        at += width;
+    }
+    Atom **items = malloc((count ? count : 1u) * sizeof(*items));
+    if (!items)
+        return str_expects(r, "memory for the code points");
+    size_t index = 0u;
+    for (size_t at = 0u; at < len; index++) {
+        uint32_t code = 0u, width = 1u;
+        (void)cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &code, &width);
+        items[index] = atom_int(a, (int64_t)code);
+        at += width;
+    }
+    Atom *result = atom_expr(a, items, count);
+    free(items);
+    return result;
+}
+
+/* The Python text of a list of code points, surrogates included, written as
+ * UTF-8 extended by surrogatepass. */
+static Atom *str_from_python_codepoints(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    Atom *const *items = NULL;
+    CettaExprLen count = 0u;
+    if (!atom_sequence_view(args[0], &items, &count))
+        return str_expects(r, "expected a list of codepoints");
+    CettaByteBuffer out;
+    cetta_byte_buffer_init(&out);
+    for (CettaExprLen k = 0u; k < count; k++) {
+        Atom *item = items[k];
+        if (!item || item->kind != ATOM_GROUNDED || item->ground.gkind != GV_INT ||
+            item->ground.ival < 0 || item->ground.ival > 0x10ffff) {
+            cetta_byte_buffer_free(&out);
+            return str_refuses(r, "StrNotACodepointV1", (size_t)k);
+        }
+        uint8_t encoded[4];
+        size_t width = cetta_utf8_encode((uint32_t)item->ground.ival, encoded);
+        str_append(&out, (const char *)encoded, width);
+    }
+    return str_from_buffer(a, &out);
+}
+
 static Atom *str_unicode_version(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     (void)args;
     (void)r;
@@ -743,6 +796,8 @@ static const CettaStrNative str_natives[] = {
     {"utf8-error", 1u, 0u, str_utf8_error, CETTA_STR_RESULT_STRUCTURE},
     {"unicode-category", 1u, 0u, str_unicode_category, CETTA_STR_RESULT_ATOM},
     {"unicode-version", 0u, 0u, str_unicode_version, CETTA_STR_RESULT_ATOM},
+    {"python-codepoints", 1u, 0u, str_python_codepoints, CETTA_STR_RESULT_STRUCTURE},
+    {"from-python-codepoints", 1u, 1u << 0, str_from_python_codepoints, CETTA_STR_RESULT_ATOM},
     {"codepoints", 1u, 0u, str_codepoints, CETTA_STR_RESULT_STRUCTURE},
     {"from-codepoints", 1u, 1u << 0, str_from_codepoints, CETTA_STR_RESULT_ATOM},
     {"is-all-in", 2u, 0u, str_all_in, CETTA_STR_RESULT_ATOM},

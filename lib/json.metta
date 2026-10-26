@@ -65,6 +65,19 @@
      (chain (eval (__cetta_lib_json_parse $text)) $result
        (return $result))))
 
+; json.loads as CPython 3.12 runs it, beside the strict json:parse. NaN,
+; Infinity and -Infinity are floats; a repeated key keeps its first position
+; and takes the last value; a lone surrogate escape stays in its string,
+; encoded as Python's surrogatepass handler encodes it (str:python-codepoints
+; reads it back). A Python exception is (JsonPythonErrorV1 class message ...)
+; with message its str(): JSONDecodeError adds msg, pos, lineno and colno,
+; positions counting code points; ValueError comes from int() past 4300 digits.
+(: json:parse-python (-> %Undefined% Atom))
+(= (json:parse-python $text)
+   (function
+     (chain (eval (__cetta_lib_json_parse $text JsonPythonV1)) $result
+       (return $result))))
+
 (: json:parse-reference (-> %Undefined% Atom))
 (= (json:parse-reference $text)
    (function

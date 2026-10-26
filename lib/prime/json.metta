@@ -4,6 +4,7 @@
 
 (= (json:capabilities) (function (case (__cetta_lib_json_capabilities_v1 ()) (($result (return $result))))))
 (= (json:parse $text) (function (case (__cetta_lib_json_parse $text) (($result (return $result))))))
+(= (json:parse-python $text) (function (case (__cetta_lib_json_parse $text JsonPythonV1) (($result (return $result))))))
 (= (json:parse-reference $text) (function (case (__cetta_lib_json_parse $text JsonReferenceV1) (($result (return $result))))))
 (= (json:parse-at $text $path) (function (case (__cetta_lib_json_project_v1 $text $path) (($result (return $result))))))
 (= (json:inspect $text) (function (case (__cetta_lib_json_parse_v1 $text) (($result (return $result))))))

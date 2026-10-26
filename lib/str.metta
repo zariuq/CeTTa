@@ -79,6 +79,19 @@
    (function
      (chain (eval (__cetta_lib_str unicode-version)) $result (return $result))))
 
+; A Python text whose bytes are UTF-8 extended as the surrogatepass error
+; handler extends it, so lone surrogates survive: str:python-codepoints gives
+; its code points as integers, a lone surrogate counting once as len() counts
+; it, and str:from-python-codepoints writes such a list back.
+; json:parse-python writes strings that way.
+(= (str:python-codepoints $text)
+   (function
+     (chain (eval (__cetta_lib_str python-codepoints $text)) $result (return $result))))
+
+(= (str:from-python-codepoints $codepoints)
+   (function
+     (chain (eval (__cetta_lib_str from-python-codepoints $codepoints)) $result (return $result))))
+
 ; The codepoints of a text as a list value of one-codepoint strings, so that
 ; [$c | $rest] matches over its characters.
 (= (str:codepoints $text)
