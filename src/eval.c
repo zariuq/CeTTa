@@ -11,6 +11,7 @@
 #include "fold_algebra.h"
 #include "native_fold.h"
 #include "exec_saturation.h"
+#include "transform_core.h"
 #include "fixpoint.h"
 #include "symbol_index.h"
 #include "open_equation_machine.h"
@@ -25567,6 +25568,204 @@ static bool eval_try_exec_saturation(Space *s, Arena *a, Atom *atom,
     return true;
 }
 
+/* tf:fire and tf:fire-into (lib/petta/lib_transform.metta) realized natively
+ * while the library's presentation is live (transform_core.h).  Takes go through the
+ * shared add-atom and remove-atom contracts, and `let` code through the
+ * ordinary evaluator, in the library's order. */
+typedef struct {
+    Space *root;
+    Arena *arena;
+    int fuel;
+} EvalTransformHost;
+
+static bool petta_eval_machine_run(
+    Space *space, Arena *arena, Atom *expression, Atom *etype,
+    int fuel, const Bindings *outer_environment,
+    bool preserve_bindings, OutcomeSet *outcomes,
+    PettaRelationSafety prime_safety,
+    CettaSearchControllerPolicy requested_controller,
+    bool controller_requested, bool pattern_query_ready);
+static _Thread_local bool g_he_shared_execution;
+
+static SymbolId eval_transform_fire_symbol(void) {
+    static SymbolId id = SYMBOL_ID_NONE;
+    if (id == SYMBOL_ID_NONE && g_symbols)
+        id = symbol_intern_cstr(g_symbols, "tf:fire");
+    return id;
+}
+
+static SymbolId eval_transform_fire_into_symbol(void) {
+    static SymbolId id = SYMBOL_ID_NONE;
+    if (id == SYMBOL_ID_NONE && g_symbols)
+        id = symbol_intern_cstr(g_symbols, "tf:fire-into");
+    return id;
+}
+
+/* tf:fire with its three arguments, or tf:fire-into with four. */
+static bool eval_transform_head(SymbolId head, CettaExprLen arity) {
+    return (head == eval_transform_fire_symbol() && arity == 3u) ||
+           (head == eval_transform_fire_into_symbol() && arity == 4u);
+}
+
+static bool eval_transform_library_path(char *out, size_t out_size) {
+    if (!g_library_context || !g_library_context->root_dir[0])
+        return false;
+    int n = snprintf(out, out_size, "%s/lib/petta/lib_transform.metta",
+                     g_library_context->root_dir);
+    return n > 0 && (size_t)n < out_size;
+}
+
+static bool eval_transform_presentation_admitted(Space *s) {
+    char path[4200];
+    return eval_transform_library_path(path, sizeof(path)) &&
+           cetta_transform_presentation_admitted(s, path);
+}
+
+static bool eval_transform_resolve_space(void *context, Atom *space_ref,
+                                         Space **space_out) {
+    EvalTransformHost *host = context;
+    PettaSpaceReadOccurrence read =
+        petta_classify_space_read(host->root, space_ref);
+    *space_out = read.kind == PETTA_SPACE_READ_PRESENT ? read.space : NULL;
+    return read.kind != PETTA_SPACE_READ_INVALID;
+}
+
+static Atom *eval_transform_mutate(EvalTransformHost *host, SymbolId head,
+                                   EvalSpaceMutationKind kind,
+                                   Atom *space_ref, Atom *atom) {
+    Arena *a = host->arena;
+    Atom *call = atom_expr3(a, atom_symbol_id(a, head), space_ref, atom);
+    Bindings empty;
+    bindings_init(&empty);
+    OutcomeSet outcomes;
+    outcome_set_init(&outcomes);
+    bool handled = eval_space_mutation_contract_kind(
+        host->root, a, call, host->fuel, &empty, &outcomes, kind);
+    Atom *error = handled ? NULL : atom_symbol(a, "TransformMutationRefused");
+    for (CettaCount i = 0u; i < outcomes.len && !error; i++) {
+        Atom *answer = outcome_atom_materialize(a, &outcomes.items[i]);
+        if (answer && atom_is_error(answer))
+            error = answer;
+    }
+    outcome_set_free(&outcomes);
+    return error;
+}
+
+static Atom *eval_transform_remove(void *context, Atom *space_ref, Atom *atom) {
+    return eval_transform_mutate(context, g_builtin_syms.remove_atom,
+                                 EVAL_SPACE_MUTATION_REMOVE, space_ref, atom);
+}
+
+static Atom *eval_transform_add(void *context, Atom *space_ref, Atom *atom) {
+    return eval_transform_mutate(context, g_builtin_syms.add_atom,
+                                 EVAL_SPACE_MUTATION_ADD, space_ref, atom);
+}
+
+static bool eval_transform_evaluate(void *context, Arena *a, Atom *expression,
+                                    Atom ***results_out, size_t *len_out,
+                                    Atom **error_out) {
+    EvalTransformHost *host = context;
+    *results_out = NULL;
+    *len_out = 0u;
+    *error_out = NULL;
+    /* The library runs the code as (eval $code) with the code a variable's
+     * value: the term is translated once at that event and its quoted values
+     * stay data.  The same call runs here, in the relational machine, which
+     * this native boundary enters directly as the pattern-query boundary
+     * does (eval_pattern_query_ready). */
+    Atom *code = atom_var_with_id(a, "tf-code", fresh_var_id());
+    Atom *call = code ? atom_expr2(a, atom_symbol(a, "eval"), code) : NULL;
+    Bindings environment;
+    bindings_init(&environment);
+    if (!call || !bindings_add_var(&environment, code, expression)) {
+        bindings_free(&environment);
+        return false;
+    }
+    OutcomeSet outcomes;
+    outcome_set_init_with_owner(&outcomes, a);
+    bool enclosing_shared = g_he_shared_execution;
+    bool enclosing_active = g_active_petta_search_machine;
+    bool enclosing_raised = g_petta_machine_run_raised;
+    g_he_shared_execution = false;
+    g_active_petta_search_machine = true;
+    g_petta_machine_run_raised = false;
+    EvalCompletionTracker tracker;
+    eval_completion_child_begin(&tracker);
+    bool handled = petta_eval_machine_run(host->root, a, call, NULL, host->fuel,
+        &environment, false, &outcomes, PETTA_RELATION_SAFETY_STATIC,
+        CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST, false, false);
+    if (!handled && tracker.completion == CETTA_EVAL_COMPLETE)
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+    CettaEvalCompletion completion = eval_completion_child_end(&tracker);
+    bool raised = g_petta_machine_run_raised;
+    g_he_shared_execution = enclosing_shared;
+    g_active_petta_search_machine = enclosing_active;
+    g_petta_machine_run_raised = enclosing_raised;
+    bindings_free(&environment);
+    if (!handled || completion != CETTA_EVAL_COMPLETE || eval_unwinding() ||
+        eval_cancel_check()) {
+        outcome_set_free(&outcomes);
+        *error_out = atom_error(a, expression,
+                                atom_symbol(a, "TransformLetInterrupted"));
+        return false;
+    }
+    if (raised && outcomes.len) {
+        *error_out = outcomes.items[outcomes.len - 1u].atom;
+        outcome_set_free(&outcomes);
+        return false;
+    }
+    Atom **results = outcomes.len
+        ? cetta_malloc(sizeof(Atom *) * (size_t)outcomes.len) : NULL;
+    size_t len = 0u;
+    for (CettaCount i = 0u; i < outcomes.len; i++) {
+        Atom *result = outcome_atom_materialize(a, &outcomes.items[i]);
+        if (result)
+            results[len++] = result;
+    }
+    outcome_set_free(&outcomes);
+    *results_out = results;
+    *len_out = len;
+    return true;
+}
+
+static bool eval_try_transform_fire(Space *s, Arena *a, Atom *atom, int fuel,
+                                    const Bindings *environment,
+                                    OutcomeSet *os) {
+    if (gslt_match_chain_trace_active() ||
+        (environment && environment->eq_len != 0u) ||
+        cetta_delay_holds(g_petta_eval_delay_service) ||
+        !eval_transform_presentation_admitted(s))
+        return false;
+    Atom *call = environment && !bindings_logically_empty(environment)
+        ? bindings_apply_if_vars((Bindings *)environment, a, atom)
+        : atom;
+    EvalTransformHost context = {.root = s, .arena = a, .fuel = fuel};
+    CettaTransformHost host = {
+        .context = &context,
+        .resolve_space = eval_transform_resolve_space,
+        .remove_atom = eval_transform_remove,
+        .add_atom = eval_transform_add,
+        .evaluate = eval_transform_evaluate,
+    };
+    Atom *answer = NULL;
+    CettaTransformOutcome outcome =
+        cetta_transform_fire(s, a, call, &host, &answer);
+    if (outcome == CETTA_TRANSFORM_DECLINED)
+        return false;
+    /* An error the firing met is raised, as the authored firing raises it
+     * from the `let` or the mutation that met it. */
+    if (outcome == CETTA_TRANSFORM_ERROR) {
+        petta_eval_raise(answer);
+        return true;
+    }
+    if (outcome == CETTA_TRANSFORM_FIRED) {
+        Bindings empty;
+        bindings_init(&empty);
+        outcome_set_add(os, answer, &empty);
+    }
+    return true;
+}
+
 /* Execute the shared space-mutation contract.  The relational machine invokes
  * it only after the call has reached a ready host boundary; ordinary and
  * native dispatch use the same physical effect authority. */
@@ -43997,6 +44196,19 @@ static bool petta_eval_exec_saturation_host_owned(
         cetta_exec_saturation_presentation_admitted(space);
 }
 
+/* tf:fire and tf:fire-into stay at their host boundary while the library's
+ * presentation is live, so the realization sees the whole firing. */
+static bool petta_eval_transform_host_owned(
+    void *context, Space *space, SymbolId head, CettaExprLen arity) {
+    PettaEvalMachineContext *owner = context;
+    return eval_transform_head(head, arity) &&
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        !petta_eval_typed_line() &&
+        (!owner || !owner->transaction) &&
+        !gslt_match_chain_trace_active() &&
+        eval_transform_presentation_admitted(space);
+}
+
 static PettaMachineHostMode petta_eval_machine_classify_host(
     void *context, Space *space, Atom *expression) {
     (void)context;
@@ -44019,6 +44231,9 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
             context, space, head->sym_id, expression->expr.len - 1u) &&
         cetta_exec_saturation_admitted(space, expression,
             resolve_registry_space_payload(g_registry, expression->expr.elems[1])))
+        return PETTA_MACHINE_HOST_READY_UNCONSTRAINED_REGION;
+    if (head->kind == ATOM_SYMBOL && petta_eval_transform_host_owned(
+            context, space, head->sym_id, expression->expr.len - 1u))
         return PETTA_MACHINE_HOST_READY_UNCONSTRAINED_REGION;
     if (form == PETTA_FORM_TRACE && expression->expr.len != 3u)
         return PETTA_MACHINE_HOST_NONE;
@@ -50280,6 +50495,8 @@ static bool petta_eval_open_body_admitted(
     void *context, Space *space, SymbolId head, uint32_t arity) {
     if (petta_eval_exec_saturation_host_owned(context, space, head, arity))
         return false;
+    if (petta_eval_transform_host_owned(context, space, head, arity))
+        return false;
     if (eval_petta_builtin_definition_protected(
             g_registry, space, head, (CettaExprLen)arity))
         return false;
@@ -51688,6 +51905,10 @@ tail_call: ;
         nargs == 2u &&
         head_id == g_builtin_syms.exec_saturate &&
         eval_try_exec_saturation(s, a, atom, fuel, CURRENT_ENV, os))
+        return;
+    if (language_id == CETTA_LANGUAGE_PETTA && !petta_eval_typed_line() &&
+        eval_transform_head(head_id, (CettaExprLen)nargs) &&
+        eval_try_transform_fire(s, a, atom, fuel, CURRENT_ENV, os))
         return;
     /* The evaluator knows only that Prime may host licensed native
      * operations.  Recognition, checking-at-ingress, and realization remain
