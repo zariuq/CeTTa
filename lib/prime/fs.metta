@@ -125,7 +125,11 @@
    (function (case (__cetta_lib_fs_entries $path)
      (($result (return $result)))){$result}))
 
-; Entry kind is an enumeration hint. Use metadata for a resolved observation.
+; Entry kind is an enumeration hint. Use metadata for a resolved observation:
+; (fs:info KIND SIZE (fs:identity DEVICE INODE)) for the policy follow or
+; no-follow; follow-modified and no-follow-modified add (fs:modified SECONDS
+; NANOSECONDS), follow-permissions and no-follow-permissions add
+; (fs:permissions BITS), Python's stat.S_IMODE of the mode.
 ; HE's Atom result contract preserves the observation's constructor fields.
 ; Public operands are computed once; the native receives their data intact.
 (: __cetta_lib_fs_metadata (-> Atom Atom Atom))

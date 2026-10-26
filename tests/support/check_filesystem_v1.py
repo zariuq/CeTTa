@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import stat
 from pathlib import Path
 import subprocess
 
@@ -167,6 +168,18 @@ def main():
         observed = run(language, "metadata_modified_positive", path=data)
         assert b"(fs:modified 1700000000 123456789))" in observed, observed
         assert observed.count(b"(fs:info regular 4 (fs:identity") == 2, observed
+        os.chmod(data, 0o640)
+        observed = run(language, "metadata_permissions_positive", path=link)
+        followed, linked = stat.S_IMODE(os.stat(link).st_mode), stat.S_IMODE(os.lstat(link).st_mode)
+        assert f"(FollowedAndLink (fs:info regular 4 (fs:identity".encode() in observed, observed
+        assert f"(fs:permissions {followed})) (fs:info symlink".encode() in observed, observed
+        assert f"(fs:permissions {linked})))".encode() in observed, observed
+        os.chmod(data, 0o600)
+        assert f"(fs:permissions {0o600})".encode() in run(language, "metadata_permissions_positive", path=data)
+        sticky = output / "sticky"
+        sticky.mkdir(exist_ok=True)
+        os.chmod(sticky, 0o1750)
+        assert f"(fs:permissions {0o1750})".encode() in run(language, "metadata_permissions_positive", path=sticky)
         observed = run(language, "metadata_missing_negative", path=output / "absent")
         assert b"fs:failed fs:missing metadata" in observed, observed
         # A native answer must not run host equations that happen to share
