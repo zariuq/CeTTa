@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def run(binary, work, lines):
+def run(binary, work, lines, check_count=True):
     program = work / "program.metta"
     program.write_text("!(import! &self (library system))\n!(import! &self (library str))\n"
                        "!(import! &self (library json))\n"
@@ -35,7 +35,7 @@ def run(binary, work, lines):
     if result.returncode:
         raise SystemExit("engine exited %d: %s" % (result.returncode, result.stderr[-2000:]))
     results = [line[len("(RESULT "):-1] for line in result.stdout.split("\n") if line.startswith("(RESULT ")]
-    if len(results) != len(lines):
+    if check_count and len(results) != len(lines):
         raise SystemExit("expected %d results, read %d" % (len(lines), len(results)))
     return results
 
@@ -89,6 +89,12 @@ def fixed_cases(binary, work, failures, count, seed):
     values = [0.0, -0.0, 0.5, 1.5, 2.5, -2.5, 2.675, 1e-7, 5e-7, 1.0000005, 0.125, 1e22, 1e23,
               5e-324, -5e-324, 2.2250738585072014e-308, 1.7976931348623157e308,
               float("inf"), float("-inf"), float("nan"), 1761470400.123456789]
+    # PeTTa arithmetic refuses to make NaN or an infinity, so they come from
+    # Python's JSON reader, which a build without the JSON library lacks.
+    special = run(binary, work, ['(json:parse-python "1.5")'], check_count=False)
+    if special != ["1.5"]:
+        values = [value for value in values if value == value and abs(value) != float("inf")]
+        print("os-primitives: json:parse-python is unavailable; NaN and infinities skipped")
     while len(values) < count:
         bits = struct.unpack("<d", struct.pack("<Q", rng.getrandbits(64)))[0]
         if bits == bits:
