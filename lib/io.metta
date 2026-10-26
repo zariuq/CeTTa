@@ -92,6 +92,19 @@
 ; Status is (proc:running pid elapsed-ms stdout-file stderr-file), then
 ; (proc:finished pid exited|signaled|timed-out|failed code stdout-file stderr-file).
 ; Timer completion is (timer:fired elapsed-ms).
+;
+; WebSocket client connections, each operation one request:
+; (ws:connect url connect-timeout-ms max-message-bytes) opens a ws:// or wss://
+; connection, named by this request's ID, and completes (ws:connected CONN);
+; (ws:receive CONN) completes with the next text message, (ws:message CONN TEXT);
+; (ws:send CONN TEXT) completes (ws:sent CONN) once the frame is written;
+; (ws:close CONN CODE REASON) completes (ws:closed CONN CODE REASON) and releases
+; the connection, also after the peer closed. An operation on a closed
+; connection completes (ws:closed CONN CODE REASON), or (ws:failed CONN
+; CURLCODE TEXT) after a transport failure. Messages wait in order until
+; received; while max-message-bytes of them wait, the connection reads nothing
+; more. A longer message closes the connection with 1009, a binary one with
+; 1003, text that is not UTF-8 with 1007.
 
 (= (http:get $url)
    (io:submit (http:request "GET" $url () "" 30000 8388608)))
