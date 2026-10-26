@@ -2145,7 +2145,7 @@ petta_plan_compile_scalar_region(
         }
         if (plan->role != PETTA_PLAN_STATIC_CALL ||
             plan->execution != PETTA_PLAN_EXEC_PURE_GROUNDED_SLOTS ||
-            plan->control.operation != CETTA_CONTROL_NONE ||
+            cetta_control_operation_is_control_form(plan->control) ||
             !plan->contains_call || source->kind != ATOM_EXPR ||
             (source->expr.len != 2u && source->expr.len != 3u) ||
             plan->child_count != source->expr.len ||
@@ -2614,6 +2614,7 @@ static bool petta_plan_push_children(
         CettaExprIndex child = index - 1u;
         if (quoted_child != 0u && child == quoted_child) {
             children[child].role = PETTA_PLAN_VALUE;
+            children[child].control = CETTA_CONTROL_RETURN_VALUE_PLAN;
             children[child].output = PETTA_PLAN_OUTPUT_VALUE;
             continue;
         }
@@ -2695,11 +2696,13 @@ static PettaPlanNode *petta_plan_build_in(
         if (translation && environment &&
             petta_translation_value_cached(program, environment, atom)) {
             node->role = PETTA_PLAN_VALUE;
+            node->control = CETTA_CONTROL_RETURN_VALUE_PLAN;
             node->output = PETTA_PLAN_OUTPUT_VALUE;
             continue;
         }
         if (atom->kind != ATOM_EXPR) {
             node->role = PETTA_PLAN_VALUE;
+            node->control = CETTA_CONTROL_RETURN_VALUE_PLAN;
             node->output = PETTA_PLAN_OUTPUT_VALUE;
             node->plain_scalar_tree = atom->kind == ATOM_VAR ||
                 (atom->kind == ATOM_GROUNDED &&
@@ -2718,6 +2721,7 @@ static PettaPlanNode *petta_plan_build_in(
             petta_semantics_is_canonical_closure(atom) ||
             petta_plan_held_value(atom, held, held_len)) {
             node->role = PETTA_PLAN_VALUE;
+            node->control = CETTA_CONTROL_RETURN_VALUE_PLAN;
             node->output = PETTA_PLAN_OUTPUT_VALUE;
             if (!petta_plan_push_children(
                     plans, &work, &work_len, &work_cap, atom, node,
@@ -2729,6 +2733,7 @@ static PettaPlanNode *petta_plan_build_in(
         }
         if (atom->expr.len == 0u) {
             node->role = PETTA_PLAN_DATA;
+            node->control = CETTA_CONTROL_CONSTRUCT_PLAN;
             node->output = PETTA_PLAN_OUTPUT_VALUE;
             continue;
         }
@@ -2744,8 +2749,10 @@ static PettaPlanNode *petta_plan_build_in(
                 head == g_builtin_syms.size;
             node->contains_deferred_occurrence_transport =
                 petta_head_transports_source_occurrences(head);
-            node->control = petta_semantics_elaborate_control(
+            CettaComputationPlan computation = petta_semantics_elaborate_computation(
                 head, form, atom->expr.len - 1u);
+            node->control = computation.control;
+            node->invocation = computation.invocation;
             node->plain_scalar_tree =
                 grounded_is_plain_scalar_tree_operator(
                     head_atom, atom->expr.len - 1u);
@@ -2798,7 +2805,10 @@ static PettaPlanNode *petta_plan_build_in(
                 !petta_semantics_nullary_lambda_body(head_atom, NULL);
         }
 
-        if (node->role == PETTA_PLAN_DATA) {
+        node->control = petta_plan_computation(node).control;
+        if (node->role != PETTA_PLAN_STATIC_CALL)
+            node->invocation = (CettaInvocationPlan){0};
+        if (node->control.operation == CETTA_CONTROL_CONSTRUCT) {
             node->output = PETTA_PLAN_OUTPUT_CONSTRUCTOR;
         } else if (head_atom->kind == ATOM_SYMBOL) {
             SymbolId head = atom_symbol_current_id(head_atom);
@@ -2813,13 +2823,9 @@ static PettaPlanNode *petta_plan_build_in(
             } else if (node->control.operation == CETTA_CONTROL_SCOPED_COMMIT) {
                 node->output = PETTA_PLAN_OUTPUT_TRUE;
             } else {
-                CettaExprIndex child = 0u;
-                if (form == PETTA_FORM_PROGN && nargs > 0u)
-                    child = nargs;
-                else if (form == PETTA_FORM_TRACE && nargs == 2u)
+                CettaExprIndex child = cetta_control_operation_series_result(node->control, nargs);
+                if (form == PETTA_FORM_TRACE && nargs == 2u)
                     child = 2u;
-                else if (form == PETTA_FORM_PROG1 && nargs > 0u)
-                    child = 1u;
                 else if ((form == PETTA_FORM_LET ||
                           form == PETTA_FORM_CHAIN) && nargs == 3u)
                     child = 3u;
@@ -2934,6 +2940,7 @@ static bool petta_plan_collapse_values(
             petta_translation_value_keep(program, environment, source);
             *node = (PettaPlanNode){
                 .role = PETTA_PLAN_VALUE,
+                .control = CETTA_CONTROL_RETURN_VALUE_PLAN,
                 .output = PETTA_PLAN_OUTPUT_VALUE,
                 .literal_case_default = node->literal_case_default,
             };
@@ -2947,6 +2954,7 @@ static bool petta_plan_collapse_values(
             }
             *node = (PettaPlanNode){
                 .role = PETTA_PLAN_VALUE,
+                .control = CETTA_CONTROL_RETURN_VALUE_PLAN,
                 .output = PETTA_PLAN_OUTPUT_VALUE,
                 .literal_case_default = node->literal_case_default,
             };
@@ -2995,7 +3003,8 @@ enum { PETTA_PLAN_NODE_KEY_WORDS = 11 };
 static void petta_plan_node_key(
     const PettaPlanNode *node,
     uint64_t key[PETTA_PLAN_NODE_KEY_WORDS]) {
-    key[0] = (uint64_t)node->role;
+    key[0] = (uint64_t)node->role |
+             (uint64_t)cetta_invocation_plan_key(node->invocation) << 32u;
     key[1] = (uint64_t)node->execution;
     key[2] = cetta_control_operation_key(node->control);
     key[3] = (uint64_t)node->continuation;
@@ -4921,6 +4930,7 @@ const PettaPlanNode *petta_program_plan_transient(
             program, callability, environment, atom)) {
         static const PettaPlanNode value_plan = {
             .role = PETTA_PLAN_VALUE, .output = PETTA_PLAN_OUTPUT_VALUE,
+            .control = CETTA_CONTROL_RETURN_VALUE_PLAN,
         };
         free(owned.named_heads);
         return &value_plan;

@@ -1093,7 +1093,7 @@ static CettaOwnedExecutionStep prepared_native_completion_next(void *context,
             work->terminal = (CettaCallReturnCursor){.outcome = packet,
                 .environment = work->environment};
         } else {
-            EvalCompletionTracker delivery;
+            CettaEvalEpisode delivery;
             eval_completion_child_begin(&delivery);
             Atom *expression = NULL;
             if (!sequence_native_call(work->answers.space, &work->arena, packet,

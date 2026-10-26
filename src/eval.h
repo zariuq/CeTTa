@@ -510,16 +510,15 @@ Space *prime_public_space_argument(Arena *arena, Atom *atom);
 /* Add a record a scoped judgment published to its theory space, and
  * admit it there. */
 bool eval_admit_scoped_record(Space *space, Arena *arena, Atom *record);
-/* In Prime, why `name` is a name Prime interprets itself (a grounded
-   operation, a builtin of its profile, a judgment, or a form of the
-   evaluator), so that a program may not define or declare it; NULL for any
-   other name, and in every other language. */
+/* In Prime, why a name is a protected original or an implementation form
+   without an installed editable definition. Standard public bindings may
+   be extended or replaced; qualified originals retain their meaning. */
 const char *cetta_prime_reserved_name_reason(Atom *name);
 /* In Prime, `(Error atom (reserved-name N reason))` when `atom` is an
    equation or a type declaration for such a name N; NULL otherwise. */
 Atom *cetta_prime_reserved_definition_error(Arena *a, Atom *atom);
-/* Whether `space` is the space the program runs in (the root space of the
-   current evaluation), where those names may not be defined. */
+/* Whether `space` is the program's root space, where the public naming
+   policy applies. A separately interpreted theory owns its constants. */
 bool cetta_prime_space_is_program_space(const Space *space);
 uint32_t eval_get_atom_types_profiled_budgeted(
     Space *s, Arena *a, Atom *atom, Atom ***out_types,
@@ -533,6 +532,9 @@ uint32_t eval_get_atom_types_structural_profiled_budgeted(
 uint64_t eval_current_max_rational_digits(void);
 uint32_t eval_current_num_threads(void);
 void eval_set_library_context(CettaLibraryContext *ctx);
+/* Preserve the loaded standards and install editable native delegates. Call
+ * after standard type declarations and before loading the user's program. */
+bool eval_prime_install_standard_library(Space *space, Arena *arena);
 /* Select an existing invocation context without initializing its options.
  * The scoped caller restores the returned context before yielding. */
 CettaLibraryContext *eval_swap_library_context(CettaLibraryContext *next);

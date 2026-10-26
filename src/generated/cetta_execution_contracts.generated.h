@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 42190f2be98754b1c9578f45aa0d261ed82e4bf3c3b7c876c35dbca0e60a1eb1
+ * Source SHA-256: 10e68f771fc0da6f24de7e2c1f1cc1ac5d39c737ffb37f7873db971ed6481742
  */
 
 #include <stdbool.h>
@@ -67,6 +67,9 @@ typedef struct {
     X(lib_proc_close, CETTA_GSLT_PLACEMENT_COORDINATOR, CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS, 0u) \
     X(lib_proc_await, CETTA_GSLT_PLACEMENT_COORDINATOR, CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS, 0u) \
     X(lib_proc_run, CETTA_GSLT_PLACEMENT_COORDINATOR, CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS, 0u) \
+    X(lib_proc_write, CETTA_GSLT_PLACEMENT_COORDINATOR, CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS, 0u) \
+    X(lib_proc_read, CETTA_GSLT_PLACEMENT_COORDINATOR, CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS, 0u) \
+    X(lib_proc_close_input, CETTA_GSLT_PLACEMENT_COORDINATOR, CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS, 0u) \
     X(exec_saturate, CETTA_GSLT_PLACEMENT_COORDINATOR, CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS, 0u)
 
 #define CETTA_GSLT_NATIVE_CALL_DEFAULT \
@@ -211,6 +214,9 @@ static inline bool cetta_gslt_progress_inline(CettaGsltProgressAdvice progress) 
     X(lib_proc_abort_signal, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_proc_await, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_proc_run, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_proc_write, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_proc_read, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_proc_close_input, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_prolog_query, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_fs_exists, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(lib_fs_canonical_path, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
@@ -795,6 +801,11 @@ typedef enum {
     CETTA_CONTROL_FAILURE = 7,
     CETTA_CONTROL_SCOPED_COMMIT = 8,
     CETTA_CONTROL_HANDLE = 9,
+    CETTA_CONTROL_RETURN_VALUE = 10,
+    CETTA_CONTROL_CONSTRUCT = 11,
+    CETTA_CONTROL_INVOKE = 12,
+    CETTA_CONTROL_SEQUENCE_FIRST = 13,
+    CETTA_CONTROL_SEQUENCE_LAST = 14,
 } CettaControlOperation;
 
 #define CETTA_CONTROL_OPERAND_ABSENT UINT8_MAX
@@ -806,6 +817,31 @@ typedef struct {
 } CettaControlOperationPlan;
 _Static_assert(sizeof(CettaControlOperationPlan) == 4u, "control plan must remain four bytes");
 
+#define CETTA_CONTROL_RETURN_VALUE_PLAN ((CettaControlOperationPlan){CETTA_CONTROL_RETURN_VALUE, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT})
+#define CETTA_CONTROL_CONSTRUCT_PLAN ((CettaControlOperationPlan){CETTA_CONTROL_CONSTRUCT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT})
+#define CETTA_CONTROL_INVOKE_PLAN ((CettaControlOperationPlan){CETTA_CONTROL_INVOKE, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT})
+
+/* Control-form plans are distinct from occurrence-level value,
+ * construction and invocation plans. This grants no callee admission. */
+static inline bool cetta_control_operation_is_control_form(CettaControlOperationPlan plan) {
+    switch (plan.operation) {
+    case CETTA_CONTROL_SEQUENCE:
+    case CETTA_CONTROL_BRANCH:
+    case CETTA_CONTROL_SEQUENCE_MANY:
+    case CETTA_CONTROL_FORCE:
+    case CETTA_CONTROL_RETURN_SCOPE:
+    case CETTA_CONTROL_ORDERED_CHOICE:
+    case CETTA_CONTROL_FAILURE:
+    case CETTA_CONTROL_SCOPED_COMMIT:
+    case CETTA_CONTROL_HANDLE:
+    case CETTA_CONTROL_SEQUENCE_FIRST:
+    case CETTA_CONTROL_SEQUENCE_LAST:
+        return true;
+    default:
+        return false;
+    }
+}
+
 /* The two three-operand sequence layouts have different source positions.
  * Physical lowerings can admit one layout without changing the operation. */
 static inline bool cetta_control_operation_binding_layout(
@@ -813,6 +849,130 @@ static inline bool cetta_control_operation_binding_layout(
     return producer_index <= 1u && plan.operation == CETTA_CONTROL_SEQUENCE &&
         plan.source == producer_index && plan.first == 1u - producer_index &&
         plan.last == 2u;
+}
+
+/* Variadic series select a result without bounding their argument count.
+ * Zero denotes absent metadata, never a source argument coordinate. */
+static inline CettaExprIndex cetta_control_operation_series_result(
+        CettaControlOperationPlan plan, CettaExprLen arity) {
+    if (!arity) return 0u;
+    if (plan.operation == CETTA_CONTROL_SEQUENCE_FIRST) return 1u;
+    if (plan.operation == CETTA_CONTROL_SEQUENCE_LAST) return arity;
+    return 0u;
+}
+
+/* Execution order is selected by admitted source policy. The same program
+ * lowers to ordinary goals or activation goals without rereading syntax. */
+typedef enum {
+    CETTA_SEQUENCE_SOURCE_FIRST = 0,
+    CETTA_SEQUENCE_BINDER_FIRST = 1,
+} CettaSequenceOrder;
+
+typedef struct { uint8_t children[3]; } CettaSequenceOrderPlan;
+
+/* A preparation plan selects stages, independently of values or ownership.
+ * Type installation and completed-value checking retain distinct positions. */
+typedef enum {
+    CETTA_CALL_PREP_INSTALL_TYPE = 1u << 0u,
+    CETTA_CALL_PREP_COMPUTE = 1u << 1u,
+    CETTA_CALL_PREP_CHECK_RETURN = 1u << 2u,
+    CETTA_CALL_PREP_CHECK_TYPE = 1u << 3u,
+    CETTA_CALL_PREP_BIND = 1u << 4u,
+} CettaCallPreparationStep;
+typedef uint8_t CettaCallPreparationPlan;
+_Static_assert(sizeof(CettaCallPreparationPlan) == 1u, "preparation plan must remain one byte");
+
+static inline bool cetta_call_preparation_valid(CettaCallPreparationPlan plan) {
+    return (plan & (uint8_t)~31u) == 0u;
+}
+
+#define CETTA_CALL_PREPARATION_REVERSE_ROWS(X)     X(CETTA_CALL_PREP_BIND) \
+    X(CETTA_CALL_PREP_CHECK_TYPE) \
+    X(CETTA_CALL_PREP_CHECK_RETURN) \
+    X(CETTA_CALL_PREP_COMPUTE) \
+    X(CETTA_CALL_PREP_INSTALL_TYPE)
+
+/* Argument preparation and body entry are independent of callee admission. */
+typedef enum {
+    CETTA_INVOCATION_NONE = 0,
+    CETTA_INVOCATION_HOST = 1,
+    CETTA_INVOCATION_PREDICATE_VALUE = 2,
+    CETTA_INVOCATION_RELATIONAL_MEMBER = 3,
+    CETTA_INVOCATION_LIST_UNARY = 4,
+    CETTA_INVOCATION_LIST_SET = 5,
+    CETTA_INVOCATION_READ_TERM = 6,
+    CETTA_INVOCATION_EXTENSION = 7,
+    CETTA_INVOCATION_PREDICATE_CALL = 8,
+} CettaInvocationOperation;
+
+typedef struct { uint8_t operation, first, last; } CettaInvocationPlan;
+_Static_assert(sizeof(CettaInvocationPlan) == 3u, "invocation plan must remain three bytes");
+
+/* One computation carries its control operation and optional native body.
+ * Source authority, live demand and ownership are supplied by its context. */
+typedef struct {
+    CettaControlOperationPlan control;
+    CettaInvocationPlan invocation;
+} CettaComputationPlan;
+_Static_assert(sizeof(CettaComputationPlan) == 7u, "computation plan must remain seven bytes");
+
+static inline uint32_t cetta_invocation_plan_key(CettaInvocationPlan plan) {
+    return (uint32_t)plan.operation | (uint32_t)plan.first << 8u |
+        (uint32_t)plan.last << 16u;
+}
+
+#define CETTA_INVOCATION_HEAD_ROWS(X)     X(repr, 1u, CETTA_INVOCATION_HOST, 0u, 1u) \
+    X(petta_member, 2u, CETTA_INVOCATION_RELATIONAL_MEMBER, 0u, 2u) \
+    X(car_atom, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u) \
+    X(cdr_atom, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u) \
+    X(decons_atom, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u) \
+    X(petta_decons, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u) \
+    X(petta_last, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u) \
+    X(reverse, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u) \
+    X(petta_msort, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u) \
+    X(sort_atom, 1u, CETTA_INVOCATION_LIST_UNARY, 0u, 1u)
+
+#define CETTA_PETTA_INVOCATION_FORM_ROWS(X)     X(PETTA_FORM_PREDICATE, 1u, CETTA_INVOCATION_PREDICATE_VALUE, 0u, 1u) \
+    X(PETTA_FORM_LIST_TO_SET, 1u, CETTA_INVOCATION_LIST_SET, 0u, 1u) \
+    X(PETTA_FORM_ALPHA_UNIQUE, 1u, CETTA_INVOCATION_LIST_SET, 0u, 1u) \
+    X(PETTA_FORM_EXCLUDE_ITEM, 2u, CETTA_INVOCATION_LIST_SET, 0u, 2u) \
+    X(PETTA_FORM_SREAD, 1u, CETTA_INVOCATION_READ_TERM, 0u, 1u) \
+    X(PETTA_FORM_IMPORT_PROLOG_FUNCTION, 1u, CETTA_INVOCATION_EXTENSION, 0u, 1u) \
+    X(PETTA_FORM_CALL_PREDICATE, 1u, CETTA_INVOCATION_PREDICATE_CALL, 0u, 1u) \
+    X(PETTA_FORM_ASSERTA_PREDICATE, 1u, CETTA_INVOCATION_PREDICATE_CALL, 0u, 1u) \
+    X(PETTA_FORM_ASSERTZ_PREDICATE, 1u, CETTA_INVOCATION_PREDICATE_CALL, 0u, 1u) \
+    X(PETTA_FORM_RETRACT_PREDICATE, 1u, CETTA_INVOCATION_PREDICATE_CALL, 0u, 1u)
+
+/* Refusal neither reads operands nor changes the supplied plan. */
+static inline bool cetta_invocation_plan_decode(
+    SymbolId head, CettaExprLen arity, CettaInvocationPlan *out,
+    const BuiltinSyms *builtins) {
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_INVOCATION_HEAD(field, count, body, start, end) \
+    if (head == builtins->field && arity == (count)) { \
+        if (out) *out = (CettaInvocationPlan){(body), (start), (end)}; \
+        return true; \
+    }
+    CETTA_INVOCATION_HEAD_ROWS(CETTA_INVOCATION_HEAD)
+#undef CETTA_INVOCATION_HEAD
+    return false;
+}
+
+static inline bool cetta_control_sequence_plan(CettaControlOperationPlan plan,
+        CettaSequenceOrder order, CettaSequenceOrderPlan *out) {
+    if (!out || !cetta_control_operation_binding_layout(plan, plan.source))
+        return false;
+    CettaSequenceOrderPlan result;
+    switch (order) {
+    case CETTA_SEQUENCE_SOURCE_FIRST:
+        result = (CettaSequenceOrderPlan){.children = {plan.source, plan.first, plan.last}}; break;
+    case CETTA_SEQUENCE_BINDER_FIRST:
+        result = (CettaSequenceOrderPlan){.children = {plan.first, plan.source, plan.last}}; break;
+    default: return false;
+    }
+    *out = result;
+    return true;
 }
 
 static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan plan) {
@@ -834,6 +994,8 @@ static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan pla
  * The enum names are expanded only by the owning dialect adapter. */
 #define CETTA_PETTA_CONTROL_FORM_ROWS(X)     X(PETTA_FORM_CUT, 0u, CETTA_CONTROL_SCOPED_COMMIT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
     X(PETTA_FORM_CATCH, 1u, CETTA_CONTROL_HANDLE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT)
+
+#define CETTA_PETTA_VARIADIC_FORM_ROWS(X) X(PETTA_FORM_PROG1, CETTA_CONTROL_SEQUENCE_FIRST) X(PETTA_FORM_PROGN, CETTA_CONTROL_SEQUENCE_LAST)
 
 /* Arity admission performs no operand read. Refusal leaves the output intact. */
 static inline bool cetta_control_operation_decode(

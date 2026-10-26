@@ -1,0 +1,6 @@
+[()]
+[True]
+[(RCons (row (S Z) (S (S Z)) pb) (RCons (row (S (S Z)) (S (S Z)) pc) RNil))]
+[RNil]
+[(RCons (row (S Z) (S Z) pb) (RCons (row (S Z) (S Z) pb) RNil))]
+[False]

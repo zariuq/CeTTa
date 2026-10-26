@@ -393,8 +393,8 @@ static void hosted_guest_cancellation_boundary(Arena *arena) {
     space_init(&guest.space);
     cetta_library_context_init_for_language_profile(
         &guest.context, CETTA_LANGUAGE_PRIME, cetta_profile_prime_default());
-    EvalCompletionTracker caller = {.completion = CETTA_EVAL_INCOMPLETE_FUEL};
-    EvalCompletionTracker *previous_tracker = g_eval_completion_tracker;
+    CettaEvalEpisode caller = {.completion = CETTA_EVAL_INCOMPLETE_FUEL};
+    CettaEvalEpisode *previous_tracker = g_eval_completion_tracker;
     g_eval_completion_tracker = &caller;
     _Atomic bool cancelled = true;
     _Atomic bool *previous_cancel = eval_set_cancel_token(&cancelled);

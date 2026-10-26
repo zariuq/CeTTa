@@ -27,27 +27,20 @@ bool cetta_patterns_overlap(Atom *left, Atom *right) {
     return result;
 }
 
-bool cetta_equation_presentation_exact(
-    Arena *scratch, Space *space, const char *head_name,
-    const char *const *expected_sources, size_t expected_count) {
-    if (!scratch || !space || !head_name || !expected_sources ||
-        expected_count == 0u || !g_symbols) {
+bool cetta_equation_presentation_exact_atoms(
+    Arena *scratch, Space *space, SymbolId head,
+    Atom *const *expected, size_t expected_count) {
+    if (!scratch || !space || !expected || expected_count == 0u ||
+        head == SYMBOL_ID_NONE) {
         return false;
     }
-    SymbolId head = symbol_intern_cstr(g_symbols, head_name);
     SpaceEquationCursor cursor;
-    if (head == SYMBOL_ID_NONE ||
-        !space_equation_cursor_init(space, head, &cursor)) {
+    if (!space_equation_cursor_init(space, head, &cursor))
         return false;
-    }
-    Atom **expected = arena_alloc(
-        scratch, expected_count * sizeof(*expected));
     Atom **expected_lhs = arena_alloc(
         scratch, expected_count * sizeof(*expected_lhs));
-    if (!expected || !expected_lhs) return false;
+    if (!expected_lhs) return false;
     for (size_t index = 0u; index < expected_count; index++) {
-        expected[index] = cetta_presentation_parse_one(
-            scratch, expected_sources[index]);
         expected_lhs[index] = expected[index] &&
                 expected[index]->kind == ATOM_EXPR &&
                 expected[index]->expr.len == 3u &&
@@ -88,4 +81,24 @@ bool cetta_equation_presentation_exact(
         }
     }
     return matched == expected_count;
+}
+
+bool cetta_equation_presentation_exact(
+    Arena *scratch, Space *space, const char *head_name,
+    const char *const *expected_sources, size_t expected_count) {
+    if (!scratch || !space || !head_name || !expected_sources ||
+        expected_count == 0u || !g_symbols) {
+        return false;
+    }
+    SymbolId head = symbol_intern_cstr(g_symbols, head_name);
+    Atom **expected = arena_alloc(
+        scratch, expected_count * sizeof(*expected));
+    if (!expected) return false;
+    for (size_t index = 0u; index < expected_count; index++) {
+        expected[index] = cetta_presentation_parse_one(
+            scratch, expected_sources[index]);
+        if (!expected[index]) return false;
+    }
+    return cetta_equation_presentation_exact_atoms(
+        scratch, space, head, expected, expected_count);
 }

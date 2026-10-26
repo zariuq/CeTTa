@@ -5343,6 +5343,35 @@ CettaMatchCompletion prime_need_branch_state_import_suffix(Arena *owner,
     if (!prime_need_owner_admissible(owner) || !common || !entrance || !production ||
         !recipient || !out) return CETTA_MATCH_INCOMPLETE;
     const PrimeNeedBranchState *states[] = {common, entrance, production, recipient};
+    /* A producer that never entered a State world has no State suffix to
+     * import. Preserve the receiver's world, including the absent world. */
+    bool no_state_source = true;
+    for (size_t i = 0u; i < 3u; i++) {
+        no_state_source &= !states[i]->top && !states[i]->session_id && !states[i]->owner;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        no_state_source &= !states[i]->recording;
+#endif
+    }
+    if (no_state_source) {
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        if (recipient->recording) return CETTA_MATCH_INCOMPLETE;
+#endif
+        if (!prime_need_branch_state_present(recipient)) {
+            if (recipient->top || recipient->session_id || recipient->owner)
+                return CETTA_MATCH_INCOMPLETE;
+        } else {
+            PrimeNeedStateInventory checked = {0};
+            CettaMatchCompletion valid = prime_need_state_inventory(recipient, NULL, &checked);
+            for (size_t i = 0u; valid == CETTA_MATCH_MATCHED && i < checked.event_count; i++)
+                if (checked.events[i]->event.kind != PRIME_NEED_RECEIPT_READ_STATE &&
+                    checked.events[i]->event.kind != PRIME_NEED_RECEIPT_WRITE_STATE)
+                    valid = CETTA_MATCH_INCOMPLETE;
+            prime_need_state_inventory_free(&checked);
+            if (valid != CETTA_MATCH_MATCHED) return valid;
+        }
+        *out = *recipient;
+        return CETTA_MATCH_MATCHED;
+    }
     PrimeNeedStateInventory inv[4] = {0};
     PrimeNeedStateInventory *c = &inv[0], *e = &inv[1], *p = &inv[2], *r = &inv[3];
     CettaMatchCompletion result = CETTA_MATCH_INCOMPLETE;

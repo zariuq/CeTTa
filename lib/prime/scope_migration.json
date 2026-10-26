@@ -84,8 +84,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "42190f2be98754b1c9578f45aa0d261ed82e4bf3c3b7c876c35dbca0e60a1eb1",
-      "output_sha256": "7d57cd81f49636edce1d9856ea757bb63a8462959f87512d626326a265121603",
+      "source_sha256": "10e68f771fc0da6f24de7e2c1f1cc1ac5d39c737ffb37f7873db971ed6481742",
+      "output_sha256": "e7c459a9807deb2227d962a83a6ab28ec6782a7f14bceb00d186aff3ec5cbfd3",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -108,8 +108,8 @@
     {
       "source": "ilp/metagol_core.metta",
       "output": "ilp/metagol_core.metta",
-      "source_sha256": "09721d096c3e54d48a725caf9696d3229b8245eb29ef6115a78b2479d199c6ed",
-      "output_sha256": "5613b9e95623587001586d787c01dc76d9028ebf788a9501ef692030b135a8c0",
+      "source_sha256": "3fd5fbe29721f1d141c3c81525e92264b1978c85faeb23b0df317e81fd595f4b",
+      "output_sha256": "9b824fbb5d1027c162d8f984fde8354c02be1026490d890aa86b72605e40ad52",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -444,8 +444,8 @@
     {
       "source": "proc.metta",
       "output": "proc.metta",
-      "source_sha256": "24638c070ee600b6aa67405b3542c55da9f510b0beda9074bc4cb1465a3cf782",
-      "output_sha256": "90ef1812b7e536335189948eadffc2cd2905895d25d912691c75b994302700d9",
+      "source_sha256": "448ab196c926c91322d98f83c86773b3f3eef72a398789f1b70cbcf25ed1e121",
+      "output_sha256": "f046a6d12c5114a80ef1ff672ca05b5d1e1a534f5d3e1fe0bf7dc35acdb331d7",
       "edits": 2,
       "code_diagnostics": 0
     },

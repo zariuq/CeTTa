@@ -257,6 +257,10 @@ typedef struct CettaLibraryContext {
      * state, with the same lifetime as this host. */
     void *prime_lf_guest;
     void (*prime_lf_guest_free)(void *guest);
+    /* Immutable standard definitions retained independently of editable
+     * program spaces. Owned by the evaluator for this library session. */
+    void *prime_standard_library;
+    void (*prime_standard_library_free)(void *library);
     bool prime_relational_plan_enabled;
     struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;

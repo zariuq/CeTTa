@@ -156,7 +156,8 @@ static bool reusable(void *context, Space *space, SymbolId head, CettaExprLen ar
     return admitted;
 }
 
-static bool permit(void *context) {
+static bool permit(void *context, const CettaSourceStep *source) {
+    (void)source;
     Probe *probe = context;
     if (!probe->remaining)
         return false;

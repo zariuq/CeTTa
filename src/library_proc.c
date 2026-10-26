@@ -23,7 +23,7 @@ extern char **environ;
 typedef struct {
     unsigned char *bytes;
     size_t kept, capacity;
-    uint64_t observed;
+    uint64_t observed, delivered;
     bool eof;
 } ProcCapture;
 
@@ -37,6 +37,8 @@ typedef struct {
     char *cwd, *program;
     unsigned char *input;
     size_t input_len, input_written, limit;
+    size_t input_size, input_offset, input_capacity;
+    bool streaming, input_closed, input_ended;
     uint64_t timeout_ms;
     int launch_error, host_error, wait_status;
     const char *launch_stage;
@@ -158,6 +160,7 @@ static bool capture(ProcJob *job, ProcCapture *out, const unsigned char *bytes, 
         size_t capacity = out->capacity ? out->capacity : 4096u;
         while (capacity < needed && capacity <= SIZE_MAX / 2u) capacity *= 2u;
         if (capacity < needed) capacity = needed;
+        if (job->streaming && capacity > job->limit) capacity = job->limit;
         unsigned char *next = realloc(out->bytes, capacity);
         if (!next) return false;
         out->bytes = next; out->capacity = capacity;
@@ -171,14 +174,27 @@ static void drain(ProcJob *job, int *fd, ProcCapture *out) {
     unsigned char bytes[16384];
     /* Bound each turn so an unending writer cannot starve deadline checks. */
     for (unsigned turn = 0; turn < 16u && *fd >= 0; turn++) {
-        ssize_t size = read(*fd, bytes, sizeof bytes);
+        /* Streaming readers consume under this same lock. A full queue
+         * stops reading the pipe: it must never silently discard a reply. */
+        if (job->streaming) pthread_mutex_lock(&job->lock);
+        size_t room = sizeof bytes;
+        if (job->streaming && room > job->limit - out->kept)
+            room = job->limit - out->kept;
+        if (!room) { pthread_mutex_unlock(&job->lock); return; }
+        ssize_t size = read(*fd, bytes, room);
+        int error = errno;
         if (size > 0) {
-            if (!capture(job, out, bytes, (size_t)size)) { job->host_error = ENOMEM; return; }
+            if (!capture(job, out, bytes, (size_t)size)) job->host_error = ENOMEM;
         } else if (!size) {
             out->eof = true; close(*fd); *fd = -1;
-        } else if (errno == EINTR) continue;
-        else if (errno == EAGAIN || errno == EWOULDBLOCK) return;
-        else { job->host_error = errno; close(*fd); *fd = -1; return; }
+        } else if (error != EINTR && error != EAGAIN && error != EWOULDBLOCK) {
+            job->host_error = error; close(*fd); *fd = -1;
+        }
+        if (job->streaming) {
+            if (size >= 0) pthread_cond_broadcast(&job->changed);
+            pthread_mutex_unlock(&job->lock);
+        }
+        if (job->host_error || (size < 0 && error != EINTR)) return;
     }
 }
 
@@ -278,27 +294,46 @@ static void *execute(void *resource) {
     sigset_t broken;
     sigemptyset(&broken); sigaddset(&broken, SIGPIPE);
     pthread_sigmask(SIG_BLOCK, &broken, NULL);
-    size_t sent = 0;
     bool child_exited = false;
     uint64_t started = monotonic_ms();
     while (!child_exited || output[0][0] >= 0 || output[1][0] >= 0) {
         if (cancelled(job)) { job->cancelled = true; break; }
         if (job->timeout_ms && monotonic_ms() - started >= job->timeout_ms) { job->timed_out = true; break; }
         if (job->host_error) break;
-        if (input[1] >= 0 && sent == job->input_len) { close(input[1]); input[1] = -1; }
+        pthread_mutex_lock(&job->lock);
+        bool input_ready = job->input_offset < job->input_size;
+        if (input[1] >= 0 && !input_ready && job->input_closed) {
+            close(input[1]); input[1] = -1; job->input_ended = true;
+        }
+        int readable[2];
+        for (int i = 0; i < 2; i++)
+            readable[i] = job->streaming && job->output[i].kept == job->limit ? -1 : output[i][0];
+        pthread_mutex_unlock(&job->lock);
         struct pollfd fds[4] = {{job->wake[0], POLLIN, 0},
-            {input[1], POLLOUT, 0}, {output[0][0], POLLIN, 0}, {output[1][0], POLLIN, 0}};
+            {input_ready ? input[1] : -1, POLLOUT, 0},
+            {readable[0], POLLIN, 0}, {readable[1], POLLIN, 0}};
         int ready = poll(fds, 4, 20);
         if (ready < 0 && errno != EINTR) { job->host_error = errno; break; }
+        if (fds[0].revents & POLLIN) {
+            unsigned char notifications[64];
+            while (read(job->wake[0], notifications, sizeof notifications) > 0) {}
+        }
         if (input[1] >= 0 && (fds[1].revents & (POLLOUT | POLLHUP | POLLERR))) {
-            size_t remaining = job->input_len - sent;
+            pthread_mutex_lock(&job->lock);
+            size_t remaining = job->input_size - job->input_offset;
             if (remaining > 16384u) remaining = 16384u;
-            ssize_t count = write(input[1], job->input + sent, remaining);
-            if (count > 0) { sent += (size_t)count; job->input_written = sent; }
+            ssize_t count = write(input[1], job->input + job->input_offset, remaining);
+            if (count > 0) {
+                job->input_offset += (size_t)count;
+                job->input_written += (size_t)count;
+                if (job->input_offset == job->input_size)
+                    job->input_offset = job->input_size = 0;
+            }
             else if (count < 0 && errno != EINTR && errno != EAGAIN) {
                 if (errno != EPIPE) job->host_error = errno;
-                close(input[1]); input[1] = -1;
+                close(input[1]); input[1] = -1; job->input_ended = true;
             }
+            pthread_mutex_unlock(&job->lock);
         }
         for (int i = 0; i < 2; i++) if (output[i][0] >= 0) drain(job, &output[i][0], &job->output[i]);
         if (!child_exited) {
@@ -359,6 +394,7 @@ finish:
         for (int j = 0; j < 2; j++) if (output[i][j] >= 0) close(output[i][j]);
     }
     pthread_mutex_lock(&job->lock);
+    job->input_ended = true;
     job->done = true;
     pthread_cond_broadcast(&job->changed);
     pthread_mutex_unlock(&job->lock);
@@ -472,7 +508,8 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
         Atom *key = entry->expr.elems[0], *value = entry->expr.elems[1];
         unsigned bit = atom_is_symbol(key, "cwd") ? 1u : atom_is_symbol(key, "env") ? 2u :
             atom_is_symbol(key, "stdin") ? 4u : atom_is_symbol(key, "timeout-ms") ? 8u :
-            atom_is_symbol(key, "max-bytes") ? 16u : atom_is_symbol(key, "lifetime") ? 32u : 0u;
+            atom_is_symbol(key, "max-bytes") ? 16u : atom_is_symbol(key, "lifetime") ? 32u :
+            atom_is_symbol(key, "mode") ? 64u : 0u;
         if (!bit || (seen & bit)) { *reason = "unknown or duplicate process option"; goto refuse; }
         seen |= bit;
         if (bit == 1u) {
@@ -483,6 +520,12 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
             }
         }
         else if (bit == 2u) env = value;
+        else if (bit == 64u) {
+            if (!atom_is_symbol(value, "stream") && !atom_is_symbol(value, "capture")) {
+                *reason = "mode must be capture or stream"; goto refuse;
+            }
+            job->streaming = atom_is_symbol(value, "stream");
+        }
         else if (bit == 32u) {
             if (!atom_is_symbol(value, "owner") && !atom_is_symbol(value, "group")) {
                 *reason = "lifetime must be owner or group"; goto refuse;
@@ -501,6 +544,12 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
             else job->limit = (size_t)value->ground.ival;
         }
     }
+    if (job->streaming && (!job->limit || job->limit > UINT32_MAX || job->input_len > job->limit)) {
+        *reason = "stream mode requires positive max-bytes within the string domain and initial stdin within that bound";
+        goto refuse;
+    }
+    job->input_size = job->input_capacity = job->input_len;
+    job->input_closed = !job->streaming;
     char *current = getcwd(NULL, 0);
     if (!current) goto host_failure;
     job->cwd = join_path(current, cwd ? cwd : ".");
@@ -563,7 +612,8 @@ static Atom *result(Arena *arena, ProcJob *job) {
         : atom_symbol(arena, "proc:not-started");
     Atom *cause = job->cancelled ? atom_symbol(arena, "proc:cancelled") : job->timed_out ? atom_symbol(arena, "proc:timed-out") : job->host_error
         ? atom_expr2(arena, atom_symbol(arena, "proc:host-failed"), atom_int(arena, job->host_error)) : atom_symbol(arena, "proc:normal");
-    Atom *captures = atom_expr(arena, (Atom *[]){atom_symbol(arena, "proc:capture"),
+    Atom *captures;
+    if (!job->streaming) captures = atom_expr(arena, (Atom *[]){atom_symbol(arena, "proc:capture"),
         atom_int(arena, (int64_t)job->output[0].kept), atom_int(arena, (int64_t)job->output[0].observed),
         atom_int(arena, (int64_t)job->output[1].kept), atom_int(arena, (int64_t)job->output[1].observed),
         atom_symbol(arena, job->output[0].eof ? "proc:eof" : "proc:open"),
@@ -571,9 +621,98 @@ static Atom *result(Arena *arena, ProcJob *job) {
         atom_expr3(arena, atom_symbol(arena, "proc:input"),
             atom_int(arena, (int64_t)job->input_written),
             atom_int(arena, (int64_t)job->input_len))}, 8u);
+    else captures = atom_expr(arena, (Atom *[]){
+        atom_symbol(arena, "proc:stream-capture"),
+        atom_int(arena, (int64_t)job->output[0].kept),
+        atom_int(arena, (int64_t)job->output[0].observed),
+        atom_int(arena, (int64_t)job->output[0].delivered),
+        atom_int(arena, (int64_t)job->output[1].kept),
+        atom_int(arena, (int64_t)job->output[1].observed),
+        atom_int(arena, (int64_t)job->output[1].delivered),
+        atom_symbol(arena, job->output[0].eof ? "proc:eof" : "proc:open"),
+        atom_symbol(arena, job->output[1].eof ? "proc:eof" : "proc:open"),
+        atom_expr3(arena, atom_symbol(arena, "proc:input"),
+            atom_int(arena, (int64_t)job->input_written),
+            atom_int(arena, (int64_t)job->input_len))}, 10u);
     return atom_expr(arena, (Atom *[]){atom_symbol(arena, "proc:result"), termination, cause,
         atom_string_n(arena, (char *)(job->output[0].bytes ? job->output[0].bytes : (unsigned char *)""), job->output[0].kept),
         atom_string_n(arena, (char *)(job->output[1].bytes ? job->output[1].bytes : (unsigned char *)""), job->output[1].kept), captures}, 6u);
+}
+
+static Atom *stream_write(Arena *arena, ProcJob *job, Atom *value) {
+    const char *bytes;
+    size_t size;
+    if (!bytes_arg(value, &bytes, &size))
+        return failed(arena, "proc:invalid-argument", "write expects a byte string");
+    Atom *reply;
+    pthread_mutex_lock(&job->lock);
+    size_t pending = job->input_size - job->input_offset;
+    if (job->done || job->cancel || job->input_closed || job->input_ended)
+        reply = failed(arena, "proc:input-closed", "process input is closed");
+    else if (size > job->limit || size > INT64_MAX - job->input_len)
+        reply = failed(arena, "proc:capacity", "write exceeds the queue or byte-count bound");
+    else if (size > job->limit - pending)
+        reply = atom_symbol(arena, "proc:backpressure");
+    else {
+        size_t needed = pending + size;
+        unsigned char *next = job->input;
+        if (needed > job->input_capacity) next = realloc(job->input, needed);
+        if (needed && !next) reply = failed(arena, "proc:capacity", "cannot allocate process input");
+        else {
+            job->input = next;
+            if (needed > job->input_capacity) job->input_capacity = needed;
+            if (pending && job->input_offset) memmove(next, next + job->input_offset, pending);
+            if (size) memcpy(next + pending, bytes, size);
+            job->input_offset = 0; job->input_size = needed; job->input_len += size;
+            reply = atom_expr2(arena, atom_symbol(arena, "proc:queued"), atom_int(arena, (int64_t)size));
+            wake_job(job);
+        }
+    }
+    pthread_mutex_unlock(&job->lock);
+    return reply;
+}
+
+static Atom *stream_read(Arena *arena, ProcJob *job, int channel, uint64_t duration, bool *interrupted) {
+    uint64_t started = monotonic_ms();
+    pthread_mutex_lock(&job->lock);
+    ProcCapture *capture = &job->output[channel];
+    while (!capture->kept && !capture->eof && !job->done) {
+        pthread_mutex_unlock(&job->lock);
+        bool cancelled_execution = eval_native_interrupted();
+        pthread_mutex_lock(&job->lock);
+        if (cancelled_execution) {
+            job->cancel = true; wake_job(job); *interrupted = true; break;
+        }
+        uint64_t elapsed = monotonic_ms() - started;
+        if (elapsed >= duration) break;
+        uint64_t remaining = duration - elapsed;
+        if (remaining > 100u) remaining = 100u;
+        struct timespec turn;
+        clock_gettime(CLOCK_MONOTONIC, &turn);
+        turn.tv_nsec += (long)remaining * 1000000L;
+        if (turn.tv_nsec >= 1000000000L) { turn.tv_sec++; turn.tv_nsec -= 1000000000L; }
+        int error = pthread_cond_timedwait(&job->changed, &job->lock, &turn);
+        if (error && error != ETIMEDOUT) {
+            pthread_mutex_unlock(&job->lock);
+            return failed(arena, "proc:host-failure", "process read wait failed");
+        }
+    }
+    Atom *reply;
+    if (job->consumed) reply = failed(arena, "proc:already-consumed", "process completion was already taken");
+    else if (*interrupted) reply = atom_symbol(arena, "proc:pending");
+    else if (capture->kept) {
+        Atom *bytes = atom_string_n(arena, (char *)capture->bytes, capture->kept);
+        reply = bytes ? atom_expr2(arena, atom_symbol(arena, "proc:chunk"), bytes) : NULL;
+        if (reply) {
+            capture->delivered += capture->kept;
+            capture->kept = 0;
+            wake_job(job);
+        } else reply = failed(arena, "proc:capacity", "cannot publish process bytes");
+    } else if (capture->eof) reply = atom_symbol(arena, "proc:eof");
+    else if (job->done) reply = failed(arena, "proc:incomplete-stream", "process ended without stream EOF");
+    else reply = atom_symbol(arena, "proc:pending");
+    pthread_mutex_unlock(&job->lock);
+    return reply;
 }
 
 static Atom *proc_dispatch(CettaLibraryContext *ctx, Arena *arena, Atom *head, Atom **args, uint32_t nargs, bool *interrupted) {
@@ -584,20 +723,19 @@ static Atom *proc_dispatch(CettaLibraryContext *ctx, Arena *arena, Atom *head, A
     if (!atom_is_symbol(head, "__cetta_lib_proc_spawn") && !atom_is_symbol(head, "__cetta_lib_proc_poll") &&
         !atom_is_symbol(head, "__cetta_lib_proc_wait") && !atom_is_symbol(head, "__cetta_lib_proc_status") &&
         !atom_is_symbol(head, "__cetta_lib_proc_cancel") && !atom_is_symbol(head, "__cetta_lib_proc_close") &&
+        !atom_is_symbol(head, "__cetta_lib_proc_write") && !atom_is_symbol(head, "__cetta_lib_proc_read") &&
+        !atom_is_symbol(head, "__cetta_lib_proc_close_input") &&
         !atom_is_symbol(head, "__cetta_lib_proc_run") && !atom_is_symbol(head, "__cetta_lib_proc_await")) return NULL;
-    if (atom_is_symbol(head, "__cetta_lib_proc_run")) {
-        Atom *owner = proc_dispatch(ctx, arena, atom_symbol(arena, "__cetta_lib_proc_spawn"), args, nargs, interrupted);
-        uint64_t id;
-        if (!cetta_native_handle_arg(owner, "process", &id)) return owner;
-        Atom *observed = proc_dispatch(ctx, arena, atom_symbol(arena, "__cetta_lib_proc_await"), &owner, 1u, interrupted);
-        cetta_native_handle_close(ctx, "process", id);
-        return observed;
-    }
-    if (atom_is_symbol(head, "__cetta_lib_proc_spawn")) {
-        const char *reason = "spawn expects argv and options";
+    bool run = atom_is_symbol(head, "__cetta_lib_proc_run");
+    if (run || atom_is_symbol(head, "__cetta_lib_proc_spawn")) {
+        const char *reason = "spawn and run expect argv and options";
         const char *kind = "proc:invalid-argument";
         ProcJob *job = nargs == 2u ? prepare(args[0], args[1], &kind, &reason) : NULL;
         if (!job) return failed(arena, kind, reason);
+        if (run && job->streaming) {
+            stop_job(job);
+            return failed(arena, "proc:invalid-mode", "stream mode requires spawn so the caller can drain output");
+        }
         uint64_t id;
         if (!cetta_native_handle_alloc(ctx, "process", job, stop_job, &id)) { stop_job(job); return failed(arena, "proc:capacity", "native handle allocation failed"); }
         Atom *owner = cetta_native_handle_owned_atom(ctx, arena, "process", id);
@@ -605,14 +743,36 @@ static Atom *proc_dispatch(CettaLibraryContext *ctx, Arena *arena, Atom *head, A
         int error = pthread_create(&job->thread, NULL, execute, job);
         if (error) { cetta_native_handle_close(ctx, "process", id); return failed(arena, "proc:host-failure", strerror(error)); }
         job->started = true;
+        if (run) {
+            Atom *observed = proc_dispatch(ctx, arena, atom_symbol(arena, "__cetta_lib_proc_await"), &owner, 1u, interrupted);
+            cetta_native_handle_close(ctx, "process", id);
+            return observed;
+        }
         return owner;
     }
     uint64_t id;
     bool wait = atom_is_symbol(head, "__cetta_lib_proc_wait");
     bool await = atom_is_symbol(head, "__cetta_lib_proc_await");
-    if (nargs != (wait ? 2u : 1u) || !cetta_native_handle_arg(args[0], "process", &id)) return failed(arena, "proc:invalid-handle", "expected an owned process handle");
+    bool write = atom_is_symbol(head, "__cetta_lib_proc_write");
+    bool read = atom_is_symbol(head, "__cetta_lib_proc_read");
+    bool close_input = atom_is_symbol(head, "__cetta_lib_proc_close_input");
+    if (nargs != (read ? 3u : wait || write ? 2u : 1u) || !cetta_native_handle_arg(args[0], "process", &id)) return failed(arena, "proc:invalid-handle", "expected an owned process handle");
     ProcJob *job = cetta_native_handle_get(ctx, "process", id);
     if (!job) return failed(arena, "proc:invalid-handle", "process owner is closed or belongs to another context");
+    if ((write || read || close_input) && !job->streaming)
+        return failed(arena, "proc:invalid-mode", "stream operations require mode stream");
+    if (write) return stream_write(arena, job, args[1]);
+    if (close_input) {
+        pthread_mutex_lock(&job->lock); job->input_closed = true; pthread_mutex_unlock(&job->lock);
+        wake_job(job);
+        return atom_unit(arena);
+    }
+    if (read) {
+        int channel = atom_is_symbol(args[1], "stdout") ? 0 : atom_is_symbol(args[1], "stderr") ? 1 : -1;
+        if (channel < 0 || args[2]->kind != ATOM_GROUNDED || args[2]->ground.gkind != GV_INT || args[2]->ground.ival < 0)
+            return failed(arena, "proc:invalid-argument", "read expects stdout or stderr and a nonnegative wait in milliseconds");
+        return stream_read(arena, job, channel, (uint64_t)args[2]->ground.ival, interrupted);
+    }
     if (atom_is_symbol(head, "__cetta_lib_proc_close")) { cetta_native_handle_close(ctx, "process", id); return atom_unit(arena); }
     if (atom_is_symbol(head, "__cetta_lib_proc_cancel")) {
         pthread_mutex_lock(&job->lock); job->cancel = true; pthread_mutex_unlock(&job->lock);

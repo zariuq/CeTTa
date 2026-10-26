@@ -764,7 +764,7 @@ static CettaContinuationStatus prime_ordinary_return_resume(EvalOutcome *outcome
     PrimeOrdinaryReturnScope scope={0};
     if (!prime_ordinary_return_enter(owned,&scope))
         return prime_ordinary_return_invalidate(outcome,"OrdinarySourceAuthority");
-    EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE,.parent=g_eval_completion_tracker};
+    CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE,.parent=g_eval_completion_tracker};
     g_eval_completion_tracker=&tracker;
     __attribute__((cleanup(prime_eval_top_leave))) PrimeEvalTopGuard top_guard;
     prime_eval_top_enter(&top_guard);
@@ -892,7 +892,7 @@ static CettaOwnedExecutionStep prime_ordinary_source_next(void *raw,
         *completion=CETTA_EVAL_INCOMPLETE_INVALIDATED;
         return CETTA_OWNED_EXECUTION_HANDOFF;
     }
-    EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE,.parent=g_eval_completion_tracker};
+    CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE,.parent=g_eval_completion_tracker};
     g_eval_completion_tracker=&tracker;
     __attribute__((cleanup(prime_eval_top_leave))) PrimeEvalTopGuard top_guard;
     prime_eval_top_enter(&top_guard);

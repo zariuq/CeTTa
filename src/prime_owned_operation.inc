@@ -154,8 +154,8 @@ static bool prime_native_acquired_values(PrimeNativeAcquiredOperation *operation
             __attribute__((cleanup(prime_need_active_leave)))
             PrimeNeedActiveGuard selected;
             prime_need_active_enter_captured(&selected,&row->env);
-            EvalCompletionTracker preparation={.completion=CETTA_EVAL_COMPLETE};
-            EvalCompletionTracker *caller=g_eval_completion_tracker;
+            CettaEvalEpisode preparation={.completion=CETTA_EVAL_COMPLETE};
+            CettaEvalEpisode *caller=g_eval_completion_tracker;
             g_eval_completion_tracker=&preparation;
             Atom *value = outcome_atom_materialize(control->driver.arena, row);
             operation->reified = value ? prime_need_reify_suspended(
@@ -293,8 +293,8 @@ static CettaContinuationStatus prime_native_acquired_weighted_return(
         const Outcome *source=&control->output.items[operation->value_cursor];
         __attribute__((cleanup(prime_need_active_leave))) PrimeNeedActiveGuard selected;
         prime_need_active_enter_captured(&selected,&source->env);
-        EvalCompletionTracker preparation={.completion=CETTA_EVAL_COMPLETE};
-        EvalCompletionTracker *caller=g_eval_completion_tracker;
+        CettaEvalEpisode preparation={.completion=CETTA_EVAL_COMPLETE};
+        CettaEvalEpisode *caller=g_eval_completion_tracker;
         g_eval_completion_tracker=&preparation;
         bool ready=outcome_set_add_promoted_existing(operation->receiver,
             &operation->pending,source,true) &&

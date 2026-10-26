@@ -8,8 +8,9 @@
 !(hol:inductive &s nat (u 0) (: zero nat) (: succ (-> nat nat)))
 !(hol:inductive &s bool (u 0) (: true bool) (: false bool))
 
-; Legal, not admitted yet: two inspected arguments, a nested pattern, a
-; variable beside constructor patterns, two equations for one constructor.
+; Complete independent argument cases now compile to checked recursors.
+; Nested recursion beyond a direct hypothesis and overlapping cases remain
+; outside this admission route.
 !(let $r (try (hol:define &s eqn (-> nat nat bool)
                 (= (eqn zero zero) true) (= (eqn zero (succ $m)) false)
                 (= (eqn (succ $n) zero) false) (= (eqn (succ $n) (succ $m)) (eqn $n $m))))
@@ -105,6 +106,6 @@
         (= (spin zero) zero) (= (spin (succ $n)) (spin (succ $n)))))
 !(try (hol:define &s partial (-> bool nat) (= (partial true) zero)))
 
-; Nothing refused or undetermined is published.
+; Checking with try publishes nothing, including a successfully compiled case.
 !(== (collapse (match &s (: eqn $t) $t){$t}) ())
 !(== (collapse (match &s (: spin $t) $t){$t}) ())

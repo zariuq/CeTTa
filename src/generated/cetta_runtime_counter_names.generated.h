@@ -1148,6 +1148,11 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
   [CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ALGEBRAIC_SCALAR_SUM] = "open-equation-algebraic-scalar-sum",
   [CETTA_RUNTIME_COUNTER_OPEN_EQUATION_ALGEBRAIC_SCALAR_NODE] = "open-equation-algebraic-scalar-node",
   [CETTA_RUNTIME_COUNTER_OPEN_EQUATION_NATIVE_CALL] = "open-equation-native-call",
+  [CETTA_RUNTIME_COUNTER_PETTA_LIST_CELLS_FLATTENED] = "petta-list-cells-flattened",
+  [CETTA_RUNTIME_COUNTER_SPACE_HEAD_INDEX_BUILD] = "space-head-index-build",
+  [CETTA_RUNTIME_COUNTER_SPACE_HEAD_INDEX_BUILD_ROW] = "space-head-index-build-row",
+  [CETTA_RUNTIME_COUNTER_SPACE_HEAD_INDEX_CURSOR] = "space-head-index-cursor",
+  [CETTA_RUNTIME_COUNTER_SPACE_HEAD_INDEX_ROW] = "space-head-index-row",
 };
 
 #endif

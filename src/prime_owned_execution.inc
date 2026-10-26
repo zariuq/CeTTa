@@ -188,8 +188,8 @@ static inline __attribute__((always_inline)) bool prime_native_execution_task_ke
     EvalContextState previous_context = eval_context_capture();
     VariantBank *previous_variants = g_owned_outcome_variant_bank;
     const PettaProgramRevisionProjection *previous_projection = g_petta_program_revision_projection;
-    EvalCompletionTracker *previous_completion = g_eval_completion_tracker;
-    EvalCompletionTracker completion = {.completion=CETTA_EVAL_COMPLETE};
+    CettaEvalEpisode *previous_completion = g_eval_completion_tracker;
+    CettaEvalEpisode completion = {.completion=CETTA_EVAL_COMPLETE};
     _Atomic bool *previous_cancel = eval_set_cancel_token(&run->cancelled);
     g_prime_native_parallel_current = parallel;
     g_prime_service_reservation = &slice->reservation;

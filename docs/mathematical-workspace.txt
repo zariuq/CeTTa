@@ -1,0 +1,304 @@
+Mathematical programming in a selected theory
+===========================================
+
+Start with examples/prime/first_verified_program.metta. It defines addition
+once, computes 2 + 1, proves both zero identities for every natural number,
+reuses a proof, and rejects two wrong claims. The left identity uses induction;
+checking a few concrete sums would not establish that universal statement.
+
+examples/prime/predicate_types.metta uses one admitted evenness function in
+execution, a HOL proposition and a dependent pair containing evidence. It
+defines EvenNumber and EvenNumberList, checks a function that preserves
+evenness, and builds and checks proof candidates with ordinary MeTTa code.
+The number representation is the declared natural datatype, not machine
+integer literals. examples/prime/predicate_guards.metta separately exercises
+an ordinary runtime guard on finite lists of integer literals; it does not
+prove the modulo primitive or its correspondence to the natural datatype.
+
+examples/prime/standard_api.metta extends get-type with an even-number
+classifier and demonstrates std:definitions: inspecting original declarations
+and equations, removing their local copies, and re-adding them without
+erasing the extension. See docs/standard-api.txt for the API editing contract.
+
+Run the joined example from this repository:
+
+    make run-prime-mathematical-workspace
+
+The example declares naturals, lists, addition, map and composition in &math.
+The admitted definition supplies the equations used by both conversion and
+explicit mathematical computation. Ordinary MeTTa functions construct the
+conjecture and proof strategy. The selected theory checks their evidence.
+
+    definition in &math
+      |-- type:of / match         inspect its type and retained source
+      |-- eval ... (admitted ...) compute using that theory's admitted rules
+      |-- type:normalize          inspect the computed term and type
+      `-- conjecture + strategy
+                  |
+             type:check
+                  |
+          type:theorem / type:prove
+                  |
+          reuse checked equality in a pure computation
+
+Computing a term
+----------------
+
+    !(eval (add (succ zero) (succ zero)) (admitted &math))
+
+This returns (succ (succ zero)). The scope is ordinary data, so it can be
+passed to a function or selected by a program. The admitted view reads only
+published theory rules. It checks the source, computes it, and checks that the
+readable result equals the computed term before returning that result as data.
+
+    !(let $scope (admitted &math)
+        (eval (add (succ zero) zero) $scope))
+
+The existing (eval expression &math) selects ordinary program execution.
+Ordinary equations in that space can override a declared function there.
+For example, after adding (= (add $n zero) zero), the ordinary view returns
+zero for (add (succ zero) zero), while the admitted view still returns
+(succ zero). Selecting the rules is part of selecting the computation.
+
+Two policies make this choice explicit:
+
+    (admitted &math isolated)       use admitted rules (the default)
+    (admitted &math strict)         also refuse ordinary rules at admitted heads
+
+Strict mode checks the scope's admitted computing heads and datatype
+constructors. A conflict is Undetermined with (scope-conflict HEAD RULE),
+including when the conflicting rule is not reached by this particular call.
+Unrelated ordinary programs may still coexist in that space. Both policies
+allow an optional final positive work budget. Neither changes ordinary eval.
+
+The scope may carry a positive work budget:
+
+    !(try (eval (add zero (succ zero)) (admitted &math 10000)))
+
+Normalization and readback checking share that budget. Incomplete supplies no
+partial value. A missing or unsupported scope is Undetermined; malformed typed
+input may be Refuted. None of these invokes an ordinary equation as a fallback.
+The scope reads current dependencies at each invocation and checks that the
+declaration revision remains current through both phases. It is not a saved
+theorem or permission to execute an arbitrary program. Admission withdrawals
+also invalidate authority tokens when the retained syntax itself is unchanged.
+Removing a recursor declaration makes a definition that depended on that
+recursor unavailable, including when its fast equations need no recursor at
+run time. Reinstating the exact dependency allows checking to resume.
+
+To inspect the term and type together:
+
+    !(type:normalize &math (add (succ zero) (succ zero)))
+
+The result is:
+
+    (TypeNormalForm SOURCE VALUE SOURCE-TYPE NORMAL-TYPE)
+
+Applications in VALUE and the types use the authored (app f x) spelling,
+which all type: operations accept. The source expression remains available.
+The normalizer uses the selected space's admitted rules, synthesizes the
+input type, computes the term and dependent type, and checks the output.
+Universe parameters are instantiated in one context before computation.
+
+An optional final positive integer bounds work:
+
+    !(try (type:normalize &math (add zero (succ zero)) 1))
+
+An exhausted computation reports Incomplete through try and yields no partial
+value. Outside the admitted fragment the expression remains uninterpreted;
+try exposes Undetermined. Refuted means the submitted judgment was refused.
+It does not mean that no proof of the intended mathematical claim exists.
+Normalization is an explicit computation service over the typing calculus;
+it introduces no additional inference rule. TypeNormalForm is inspectable
+data, not a sealed theorem token or a replacement for checking a new claim.
+
+Several argument patterns
+-------------------------
+
+Definitions may inspect several independent datatype arguments and supported
+nested constructor patterns. For example, the admitted_top_k example declares
+take once by its zero, empty and successor/cons cases.
+
+The compiler proposes an explicit term using existing recursors. The kernel
+checks that term and then checks every authored equation against it, under the
+equation's typed variables. Only successful validation publishes the source
+equations for direct computation. The retained definition includes both those
+equations and (checked-recursor POSITION WITNESS) for inspection. Compilation,
+typechecking and equation checking share the admission allowance.
+
+This route supports closed simple datatype argument domains and dependent
+result types. It does not yet cover parameterized argument domains, arbitrary
+mutual recursion, or general lexicographic recursion. Incomplete coverage,
+overlaps, wrong result types and calls that the recursor hypotheses cannot
+justify publish nothing. This is checked elaboration, not an additional
+trusted recursion rule or a proof of the C compiler's implementation.
+
+TypedEquality.Normalization.EquationAdmission supplies the general symbolic
+batch-checking theorem: all proposed equations are checked by the existing
+equality procedure, and acceptance earns typed equalities for every row and
+every typed substitution instance. Its TowerInterpretation companion preserves
+the values of independently supplied typed annotations in the selected set
+model. Native admission uses its own shared work counter; the symbolic fuel
+and native cost measures are not identified.
+
+Scoping proof programs
+----------------------
+
+Writing a claim as data, for example (conjecture NAME TYPE), does not publish
+a theorem. A definition gives a checked body to a function or predicate;
+defining a predicate does not establish that it holds at every input.
+
+    !(type:theorem &math NAME TYPE PROOF)
+    !(type:prove &math NAME TYPE STRATEGY)
+
+The optional first space is the checking and publication destination. With
+type:prove, STRATEGY runs in the caller's programming space and supplies
+candidates to that destination. This allows a strategy library to serve many
+theories without copying its functions into their mathematical signatures.
+The original three-operand forms use the caller's space throughout.
+
+type:check checks a candidate without publishing it. type:theorem checks a
+supplied proof and publishes on success; type:prove executes a candidate
+producer and checks its outputs before publication. HOL uses hol:theorem
+with its proposition and proof syntax. hol:axiom instead introduces an
+explicit assumption. Typed context declarations can also supply assumptions;
+a checked theorem remains relative to the context and profile it used.
+
+Publication retains the existing native context and dependency checks.
+Reading or constructing a theorem-shaped record does not publish a theorem.
+The sample rejects reflexivity as a proof of general map fusion, accepts the
+inductive proof, and then uses its universal identity to justify a fused map.
+A dependent pair retains the result and evidence about the original term.
+The ordinary propose-fusion function inspects a retained expression and builds
+that pair. The useEqual consumer requires its evidence to concern the exact
+source supplied by the caller before computing the replacement. Evidence about
+nil cannot authorize replacing a nonempty source. The same fusion evidence is
+also refused for the reversed composition.
+
+The final portion replays a retained HOL Light beta derivation through the
+existing transport into &math with ind interpreted as nat. It prints the exact
+target proposition, rechecks it, and lists target commitments. This example
+requires none beyond its selected logic and declared carrier. Other source
+rules can require additional commitments; the transport's own policy applies.
+
+Data, algorithms and implementation proofs
+-----------------------------------------
+
+Mathematical corpus entries should be stored and read as data. For example,
+match returns a bound payload that can be passed to a ranking function without
+executing terms inside the payload. A literal expression supplied in an
+evaluating position has different semantics; a quoted pattern variable is
+literal syntax and is not string interpolation.
+
+Code extracted from a quotation remains data even when it contains pattern
+variables. It can pass through an ordinary function, be decomposed or unified,
+and be compared without running the function named by its head. Explicit eval
+is the execution boundary. For example, inspecting the left side of a quoted
+addition equation returns that open expression; it does not start a recursive
+addition search.
+
+The companion Mettapedia library metta/math/stable_top_k.metta demonstrates a
+useful algorithm: source-order eligibility, stable integer-score sorting and
+bounded selection. Its implementation truncates after every insertion; a proved
+equivalence relates it to full stable sorting followed by truncation. Every
+recursive selection result contains at most the requested number of rows.
+Its example reads retained candidate data and inspects the
+implementation. The source is pinned and read directly by the existing Lean
+MeTTa program reader. The execution theorem covers arbitrary admitted lists,
+signed integer scores and natural-number budgets, preserving every payload.
+All completed source executions agree with the specification and have no I/O
+or store changes. The native Prime implementation is tested separately against
+an independent stable-sort reference, including effect-shaped data and altered
+algorithms that violate ties, eligibility or the budget.
+
+The algorithm proof is checked by Lean over the existing PeTTa source semantics.
+The Prime C evaluator and source reader remain implementation qualification
+boundaries. No transfer of that Lean theorem into a native HOL theorem is
+asserted.
+
+The native companion examples/prime/admitted_top_k.metta imports a natural-score
+selector and its size-bound proof into one scope. Importing the same library
+gives its execution, source and typing views without duplicating declarations.
+The property companion examples/prime/admitted_top_k_properties.metta imports
+the additional proof library. The kernel checks four general proof functions:
+
+    topk-bound       result length is at most the budget
+    topk-sorted      scores are descending
+    topk-eligible    every returned source index is below the cutoff
+    topk-stable      ties preserve source-index order when the input is in that order
+
+The stability premise remains visible in the theorem's dependent type. The
+example exercises it with an increasing input and a nonempty result containing
+a tie, and rejects false sortedness, eligibility and stability claims. The same
+declarations run through admitted eval. An independent stable-sort reference
+also checks actual results, duplicate occurrences and altered algorithms.
+These properties do not by themselves characterize the entire top-k result:
+for example, they do not prove that no eligible high-scoring row was omitted.
+The native property proofs and the integer PeTTa source proof have distinct
+implementation and property boundaries.
+
+The general symbolic computation contract is
+TypedEquality.Normalization.ExecutableEvaluation: synthesis, reduction and
+readback checking construct typed source/result equality. Typed substitution
+and context extension preserve that equality. TowerInterpretation's matching
+ExecutableEvaluation module proves preservation of actual set values under
+the supplied model and annotation-lifting hypotheses. These contracts are
+qualified against native fixtures separately; they are not proofs of the C
+implementation or of every declaration profile it admits.
+
+Programming a presentation and checking its proposals
+----------------------------------------------------
+
+    make run-prime-mathematical-routes
+
+The Prime mathematical_workspace library reads selected declarations as an
+existing GSLTLanguageDefWireV1 value:
+
+    !(let $wire (math:presentation &math (N) (z s add))
+        (langdef:load-language-value $wire))
+
+The argument lists choose the carriers and heads to export. The library reads
+their signatures and indexed type:rule rows; it does not require a second
+authored list of arithmetic equations. Each argument position also contributes
+an explicit congruence rule. The current adapter covers closed first-order
+signatures. It produces an operational snapshot, not a new checking authority.
+
+    !(math:via &math N &route "N" 8 100000 100000
+        (s (add (s (z)) (z))))
+
+This takes one contextual step through the existing GSLT runner. Its arguments
+select the target theory, target type, loaded language, grammar category,
+context depth, operational work allowance, checking allowance and source.
+The result retains every ordered alternative, duplicate occurrence and trace.
+For each alternative it checks reflexivity against the identity type with the
+exact original source and proposed target. A compatible computation therefore
+earns Established. An altered equation may run in GSLT but fail this check.
+
+The two allowances have distinct meanings. Exhausting exploration does not
+establish that no step exists. Exhausting endpoint checking does not reject the
+mathematical equality. A complete empty successor list is a third outcome.
+The supplied presentation can outlive a declaration; checking still consults
+the current target scope and its dependencies on every crossing.
+
+math:check-conversion also accepts explicit identity evidence, so a strategy
+can use a proved equality beyond definitional conversion. Its report is ordinary
+data. Reusing or publishing a proof still goes through type:check or
+type:theorem; forging a report cannot mint a theorem.
+
+The independent DeclarationFaces.GSLTPresentation development proves the
+source encoding's ordered root reduct correspondence and contextual closure.
+Its source semantics are distinct from the native wire adapter. The example
+qualifies that adapter and its checked crossings; it does not establish a
+universal C refinement theorem, a complete search procedure or preservation of
+all client observations under arbitrary theory translations.
+
+Validation
+----------
+
+    make test-prime-mathematical-workspace
+
+The gate includes computation, scope isolation, forged rules, dependent results,
+polymorphic constants, bounded work, native proof consumers, definition revision
+checks and the existing map-fusion controls. It also runs the native selector's
+reference and mutation controls, and the declaration/GSLT route example with
+altered equations, duplicate paths, stale dependencies and both kinds of fuel.

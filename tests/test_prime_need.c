@@ -2465,6 +2465,23 @@ static void check_state_production_import(void) {
         "qualified State graft transports the actual post-entrance diamond");
     CHECK(state_import_number(&imported,&a,2) && state_import_number(&imported,&b,1) &&
         state_import_number(&imported,&c,1), "producer a=1 cannot overwrite recipient a=2");
+    PrimeNeedBranchState absent = {0}, absent_result = {0}, malformed = {.owner=&source};
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&absent,&absent,&absent,&absent,
+        state_import_initial,&view,&absent_result) == CETTA_MATCH_MATCHED &&
+        !absent_result.top && !absent_result.session_id && !absent_result.owner,
+        "a producer without State preserves the absent receiver world");
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&absent,&absent,&absent,&recipient,
+        state_import_initial,&view,&absent_result) == CETTA_MATCH_MATCHED &&
+        absent_result.top == recipient.top && state_import_number(&absent_result,&a,2),
+        "a producer without State preserves the receiver's unrelated writes");
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&malformed,&absent,&absent,&recipient,
+        state_import_initial,&view,&absent_result) == CETTA_MATCH_INCOMPLETE &&
+        absent_result.top == recipient.top,
+        "an uninitialized owner is not an absent State world");
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&absent,&absent,&left,&recipient,
+        state_import_initial,&view,&absent_result) == CETTA_MATCH_INCOMPLETE &&
+        absent_result.top == recipient.top,
+        "an absent entrance cannot authorize a produced State write");
     CHECK(prime_need_branch_state_is_ancestor(&recipient,&imported) &&
         !prime_need_branch_state_is_ancestor(&entrance,&imported),
         "the imported world extends the recipient, not the unrelated producer prefix");

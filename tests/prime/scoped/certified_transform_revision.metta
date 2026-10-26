@@ -80,6 +80,6 @@
 !(let $removed (match &self (type:rule iterCert $arity $patterns $rhs)
       (remove-atom &self (type:rule iterCert $arity $patterns $rhs)))
  (LibraryRuleWithdrawn
-   (type:eq &self
+   (car-atom (try (type:eq &self
       (fst (iterCert (suc zero) num eqAt sucStep zero (refl zero)))
-      (suc zero))))
+      (suc zero))))))

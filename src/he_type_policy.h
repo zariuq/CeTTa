@@ -157,6 +157,9 @@ typedef struct {
     bool infer_after_metatype_mismatch;
     /* Report the result type after the argument path's refinement. */
     bool report_refined_result;
+    /* A programmable classifier supplies positive membership answers;
+     * absence and Undefined do not discharge a concrete argument contract. */
+    bool require_positive_type;
 } HeTypeApplicationServices;
 
 typedef enum {

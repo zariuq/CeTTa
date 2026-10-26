@@ -177,6 +177,18 @@ Atom *prime_semantics_judge_typing_accounted(
     CettaPrimeTypingResourceObservationV1 *resources_out,
     Atom **canonical_term_out);
 
+/* Compute using admitted declarations only, then check that the flat authored
+ * readback equals the computed term. Both phases share the requested budget
+ * and declaration revision. An Established verdict contains TypeNormalForm;
+ * no other verdict authorizes returning a value. No evaluator is called. */
+Atom *prime_semantics_evaluate_admitted(
+    Arena *arena, Space *space, Atom *term,
+    bool steps_limited, uint64_t steps);
+
+/* Read a named application spine (app (app f a) b) as (f a b).
+ * This proposes display syntax; callers retain their own checking policy. */
+Atom *prime_semantics_flat_named_term(Arena *arena, Atom *term);
+
 /* Check already lowered, closed syntax against the current declaration
  * schemas. Uninstantiated DeclConst occurrences receive fresh universe
  * arguments, exactly as in authored checking. Lambda annotations are kept.
@@ -208,6 +220,11 @@ bool prime_semantics_written_sort_within(Arena *arena, Atom *lower, Atom *upper)
 
 Atom *prime_semantics_reduce_covered_call(
     Arena *arena, Space *space, Atom *call, int fuel);
+
+/* Does this name have a published computation rule in the selected space?
+ * Compiler classification only; execution still checks the call's types and
+ * current dependencies. Raw rule-shaped data does not satisfy this query. */
+bool prime_semantics_head_has_computation(Space *space, const Atom *head);
 
 /* One admitted equation under telescope parameters. A symbol with no
  * declaration stays a parameter of the type; it is not entered as a global.

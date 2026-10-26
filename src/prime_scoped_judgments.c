@@ -623,6 +623,15 @@ static bool sj_admitted_contains(uint64_t instance, Atom *record) {
     return entry && entry->record && !entry->revoked;
 }
 
+/* Withdrawn records still carry authority history; unadmitted lookalikes
+ * are only data and cannot restrict an independently declared constant. */
+static bool sj_admission_recorded(uint64_t instance, Atom *record) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    SjAdmitted *entry = sj_admitted_find(
+        sj_admission_space(instance), sj_record_index_hash(record), record);
+    return entry && entry->record;
+}
+
 static void sj_admitted_grow(SjAdmissionSpace *space) {
     size_t old_cap = space->capacity;
     SjAdmitted *old = space->records;
@@ -926,6 +935,12 @@ typedef struct {
     SjDefinition *defs;          /* the space's definitions, reloaded per revision */
     size_t def_count;
     Atom *kernel_rules;          /* (LCons (PrimeRule ...) ...) from the space's type:rule atoms */
+    Arena kernel_rule_arena;     /* wrappers for this revision, not signature-lifetime data */
+    bool kernel_rule_arena_ready;
+    Atom **current_constants;    /* successful construction checks at one exact snapshot */
+    size_t current_constant_count, current_constant_capacity;
+    uint64_t current_instance, current_revision, current_mutation, current_admission;
+    int current_identity;
     Atom *native_rules[SJ_NATIVE_RULE_COUNT]; /* the rule constants, by role */
     struct SjStoredFunctor *stored; /* functors the space declares stored typed */
     size_t stored_count;
@@ -1154,6 +1169,7 @@ static bool sj_signature_defines(const SjSetEnv *env, Atom *name) {
  * indexed lookup, pointers into the space's own atoms. */
 static void sj_env_add_definitions(SjSetEnv *env, Space *space) {
     Arena *a = &env->arena;
+    ArenaMark lookup_mark = arena_mark(a);
     Atom *items[SJ_KNOWN_LEN] = {
         sj_sym(a, SJ_S("set:known")), atom_var(a, "n"), atom_var(a, "p"),
         sj_sym(a, "definition"), atom_var(a, "f"), atom_var(a, "d"),
@@ -1209,6 +1225,7 @@ static void sj_env_add_definitions(SjSetEnv *env, Space *space) {
         env->defs[env->def_count++] = def;
     }
     free(candidates);
+    arena_reset(a, lookup_mark);
 }
 
 /* The signature's definitions, then the space's own. */
@@ -1229,17 +1246,25 @@ static void sj_env_load_definitions(SjSetEnv *env, Space *space) {
  * definitions and of the space, in kernel spelling, as the kernel's rule
  * list.  Loaded with the definitions, once per revision. */
 static void sj_env_load_kernel_rules(SjSetEnv *env, Space *space) {
-    Atom *rules = prime_semantics_kernel_rules(&env->arena, space);
+    /* An environment rebuild ends the previous rule view. The payloads
+     * belong to their spaces; only the wrapper spine belongs to this arena.
+     * Retained proof dependencies copy a selected wrapper into their owner. */
+    if (env->kernel_rule_arena_ready) arena_free(&env->kernel_rule_arena);
+    arena_init_detached(&env->kernel_rule_arena);
+    arena_set_block_growth(&env->kernel_rule_arena, 4096u);
+    env->kernel_rule_arena_ready = true;
+    Arena *a = &env->kernel_rule_arena;
+    Atom *rules = prime_semantics_kernel_rules(a, space);
     if (!env->theory_ready || space == &env->theory || env->own_rule_count == 0u) {
         env->kernel_rules = rules;
         return;
     }
-    Atom *own = prime_semantics_kernel_rules(&env->arena, &env->theory);
+    Atom *own = prime_semantics_kernel_rules(a, &env->theory);
     /* Every rule of the signature's own definitions, however many. */
     size_t own_count = 0u;
     for (Atom *r = own; sj_is_expr(r, "LCons", 3u); r = r->expr.elems[2])
         own_count++;
-    Atom **items = arena_alloc(&env->arena, sizeof(Atom *) * (own_count ? own_count : 1u));
+    Atom **items = arena_alloc(a, sizeof(Atom *) * (own_count ? own_count : 1u));
     if (!items) {
         env->kernel_rules = NULL;
         return;
@@ -1247,9 +1272,9 @@ static void sj_env_load_kernel_rules(SjSetEnv *env, Space *space) {
     size_t count = 0u;
     for (Atom *r = own; sj_is_expr(r, "LCons", 3u); r = r->expr.elems[2])
         items[count++] = r->expr.elems[1];
-    Atom *list = rules ? rules : sj_sym(&env->arena, "LNil");
+    Atom *list = rules ? rules : sj_sym(a, "LNil");
     for (size_t i = count; i > 0u; i--)
-        list = sj_expr3(&env->arena, "LCons", items[i - 1u], list);
+        list = sj_expr3(a, "LCons", items[i - 1u], list);
     env->kernel_rules = list;
 }
 
@@ -1312,12 +1337,14 @@ static bool sj_env_is_base_type(SjSetEnv *env, Atom *name) {
      * the simple fragment too: one indexed declaration lookup. */
     Atom **declared = NULL;
     SpaceDeclaredTypeLookupCost cost = {0};
+    ArenaMark lookup_mark = arena_mark(&env->arena);
     uint32_t count = space_get_declared_types_costed(
         &env->overlay, &env->arena, name, &declared, &cost);
     bool base = false;
     for (uint32_t i = 0u; i < count && !base; i++)
         base = sj_is_sort(declared[i]);
     free(declared);
+    arena_reset(&env->arena, lookup_mark);
     return base;
 }
 
@@ -1469,12 +1496,14 @@ static bool sj_env_declares_applied(SjSetEnv *env, Atom *head, size_t argc) {
     if (!env->overlay_ready || !head || head->kind != ATOM_SYMBOL) return false;
     Atom **declared = NULL;
     SpaceDeclaredTypeLookupCost cost = {0};
+    ArenaMark lookup_mark = arena_mark(&env->arena);
     uint32_t count = space_get_declared_types_costed(
         &env->overlay, &env->arena, head, &declared, &cost);
     bool fits = false;
     for (uint32_t i = 0u; i < count && !fits; i++)
         fits = argc <= sj_type_arity(declared[i]);
     free(declared);
+    arena_reset(&env->arena, lookup_mark);
     return fits;
 }
 
@@ -1485,6 +1514,7 @@ static bool sj_env_declares_type_former(SjSetEnv *env, Atom *head, size_t argc) 
         return false;
     Atom **declared = NULL;
     SpaceDeclaredTypeLookupCost cost = {0};
+    ArenaMark lookup_mark = arena_mark(&env->arena);
     uint32_t count = space_get_declared_types_costed(
         &env->overlay, &env->arena, head, &declared, &cost);
     bool former = false;
@@ -1503,6 +1533,7 @@ static bool sj_env_declares_type_former(SjSetEnv *env, Atom *head, size_t argc) 
         }
     }
     free(declared);
+    arena_reset(&env->arena, lookup_mark);
     return former;
 }
 
@@ -1652,14 +1683,20 @@ static bool sj_canonical_checked(Arena *a, Space *space, Atom *term,
                                            canonical_out, outcome_out, NULL);
 }
 
-static bool sj_canonical_synthesized(Arena *a, Space *space, Atom *term,
-                                     Atom **canonical_out, Atom **type_out) {
+static bool sj_canonical_synthesized_budgeted(Arena *a, Space *space, Atom *term,
+    Atom **canonical_out, Atom **type_out, CettaPrimeRegularKernelBudget *budget) {
+    if (budget && budget->limited && budget->remaining == 0u) return false;
     CettaPrimeTypingSynthesisCandidateV1 candidate = {
-        .term = term, .steps_limited = false, .steps = 0u};
+        .term = term, .steps_limited = budget && budget->limited,
+        .steps = budget ? budget->remaining : 0u};
     CettaPrimeTypingSynthesisObservationV1 observation;
     memset(&observation, 0, sizeof observation);
     if (!cetta_prime_typing_observe_synthesis_v1(a, space, &candidate, &observation))
         return false;
+    if (budget && budget->limited) {
+        budget->remaining = observation.authority.resources.remaining;
+        budget->spent += observation.authority.resources.spent;
+    }
     if (!sj_outcome_established(&observation.authority)) return false;
     if (canonical_out) *canonical_out = observation.authority.canonical_term;
     Atom *payload = observation.authority.payload;
@@ -1669,6 +1706,11 @@ static bool sj_canonical_synthesized(Arena *a, Space *space, Atom *term,
             *type_out = payload->expr.elems[1];
     }
     return observation.authority.canonical_term != NULL;
+}
+
+static bool sj_canonical_synthesized(Arena *a, Space *space, Atom *term,
+    Atom **canonical_out, Atom **type_out) {
+    return sj_canonical_synthesized_budgeted(a, space, term, canonical_out, type_out, NULL);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -2146,9 +2188,11 @@ static void sj_env_load_stored(SjSetEnv *env, Space *space) {
     env->stored_count = 0u;
     env->stored_atoms = NULL;
     env->stored_atom_count = 0u;
+    ArenaMark lookup_mark = arena_mark(a);
     Atom *pattern = sj_expr2(a, "type:stored", atom_var(a, "declared"));
     CettaIndex *candidates = NULL;
     CettaIndex count = space_match_candidates64(space, pattern, &candidates);
+    arena_reset(a, lookup_mark);
     if (count == 0u) {
         free(candidates);
         return;
@@ -2542,6 +2586,7 @@ static bool sj_signature_typing_entry(const SjSetEnv *env, Atom *entry) {
 
 static bool sj_note_typing_entry(SjProofState *st, Atom *entry) {
     if (sj_signature_typing_entry(st->env, entry)) return true;
+    if (sj_is_expr(entry, "PrimeRule", 5u)) entry = atom_deep_copy(st->arena, entry);
     sj_note_dependency(st, entry, entry);
     return !sj_is_expr(entry, ":", 3u) ||
         sj_note_constant_authority(st, entry->expr.elems[1]);
@@ -3115,7 +3160,7 @@ static Atom *sj_rule_specialize(SjProofState *st, Atom *rule) {
     }
     Atom *srhs = sj_rule_term_specialize(st, rule->expr.elems[4], nvars, 0u);
     if (!srhs) return NULL;
-    Atom *items[5] = {rule->expr.elems[0], rule->expr.elems[1],
+    Atom *items[5] = {sj_sym(a, "PrimeRule"), rule->expr.elems[1],
                       rule->expr.elems[2], spats, srhs};
     return atom_expr(a, items, 5u);
 }
@@ -4717,7 +4762,8 @@ static bool sj_dependencies_walk(SjProofState *st, Atom *record, unsigned depth,
                 seen = m;
                 break;
             }
-        if (seen < memo->count) {
+        bool remembered = seen < memo->count;
+        if (remembered) {
             /* Found current before: the name resolves to the same record
              * throughout the walk, so only the proposition this record cited
              * and the depth bound are left to check. */
@@ -4756,8 +4802,8 @@ static bool sj_dependencies_walk(SjProofState *st, Atom *record, unsigned depth,
                     return false;
                 }
                 Atom *canonical = NULL, *type = NULL;
-                if (!sj_canonical_synthesized(a, &st->env->overlay,
-                                              name->expr.elems[1], &canonical, &type) || !type) {
+                if (!sj_canonical_synthesized_budgeted(a, &st->env->overlay,
+                        name->expr.elems[1], &canonical, &type, &st->budget) || !type) {
                     sj_fail(st, false, sj_expr2(a, SJ_S("set:declaration-unavailable"), name));
                     return false;
                 }
@@ -4773,7 +4819,7 @@ static bool sj_dependencies_walk(SjProofState *st, Atom *record, unsigned depth,
                     return false;
                 }
             }
-            if (seen == memo->count &&
+            if (!remembered &&
                 !sj_dependency_memo_add(a, memo, name, name, -1)) {
                 st->incomplete = true;
                 sj_fail(st, false, sj_expr1(a, SJ_S("set:dependency-storage")));
@@ -4796,7 +4842,7 @@ static bool sj_dependencies_walk(SjProofState *st, Atom *record, unsigned depth,
                                            name->expr.elems[1]));
                 return false;
             }
-            if (seen == memo->count &&
+            if (!remembered &&
                 !sj_dependency_memo_add(a, memo, name, name, -1)) {
                 st->incomplete = true;
                 sj_fail(st, false, sj_expr1(a, SJ_S("set:dependency-storage")));
@@ -4842,7 +4888,7 @@ static bool sj_dependencies_walk(SjProofState *st, Atom *record, unsigned depth,
                 return false;
             if (below + 1 > *height_out) *height_out = below + 1;
         }
-        if (seen == memo->count &&
+        if (!remembered &&
             !sj_dependency_memo_add(a, memo, name, current->expr.elems[SJ_KNOWN_PROP], below)) {
             st->incomplete = true;
             sj_fail(st, false, sj_expr1(a, SJ_S("set:dependency-storage")));
@@ -4852,16 +4898,188 @@ static bool sj_dependencies_walk(SjProofState *st, Atom *record, unsigned depth,
     return true;
 }
 
+typedef struct SjDependencyWalk {
+    const Space *root;
+    SjSetEnv *env;
+    uint64_t instance, revision, mutation, admission;
+    bool require_admission;
+    SjDependencyMemo *memo;
+    struct SjDependencyWalk *outer;
+} SjDependencyWalk;
+
+static _Thread_local SjDependencyWalk *g_dependency_walk;
+
 static bool sj_dependencies_current_as(SjProofState *st, Atom *record,
                                        unsigned depth, bool require_admission) {
     SjDependencyMemo memo = {0};
     int height = 0;
-    return sj_dependencies_walk(st, record, depth, require_admission, &memo, &height);
+    const Space *root = st->user_space;
+    while (root && root->overlay_base) root = root->overlay_base;
+    SjDependencyWalk walk = {root, st->env, space_instance_id(root), space_revision(root),
+        space_global_mutation_epoch(), prime_scoped_judgment_admission_epoch(),
+        require_admission, &memo, g_dependency_walk};
+    /* Native synthesis of a pinned declaration may inspect that constant's
+     * construction too. It must use this same dependency walk, not start a
+     * fresh traversal of every shared ancestor. The memo lasts one check. */
+    for (SjDependencyWalk *prior = g_dependency_walk; prior; prior = prior->outer) {
+        if (prior->root == root && prior->env == st->env &&
+            prior->instance == walk.instance && prior->revision == walk.revision &&
+            prior->mutation == walk.mutation && prior->admission == walk.admission &&
+            prior->require_admission == require_admission)
+            return sj_dependencies_walk(st, record, depth, require_admission, prior->memo, &height);
+    }
+    g_dependency_walk = &walk;
+    bool current = sj_dependencies_walk(st, record, depth, require_admission, &memo, &height);
+    g_dependency_walk = walk.outer;
+    return current;
 }
 
 static bool sj_dependencies_current(SjProofState *st, Atom *record,
                                     unsigned depth) {
     return sj_dependencies_current_as(st, record, depth, true);
+}
+
+typedef struct SjConstantContextVisit {
+    const Space *space;
+    Atom *name;
+    const struct SjConstantContextVisit *outer;
+} SjConstantContextVisit;
+
+static void sj_proof_state_init(SjProofState *st, Arena *a, Space *space,
+    SjSetEnv *env, bool limited, uint64_t steps, bool collect, bool diagnostic);
+
+static _Thread_local const SjConstantContextVisit *g_constant_context_visit;
+
+static void sj_current_constants_snapshot(SjSetEnv *env, const Space *root) {
+    uint64_t instance = space_instance_id(root), revision = space_revision(root);
+    uint64_t mutation = space_global_mutation_epoch();
+    uint64_t admission = prime_scoped_judgment_admission_epoch();
+    int identity = cetta_prime_identity_policy();
+    if (env->current_instance == instance && env->current_revision == revision &&
+        env->current_mutation == mutation && env->current_admission == admission &&
+        env->current_identity == identity) return;
+    env->current_constant_count = 0u;
+    env->current_instance = instance;
+    env->current_revision = revision;
+    env->current_mutation = mutation;
+    env->current_admission = admission;
+    env->current_identity = identity;
+}
+
+static bool sj_current_constant_known(SjSetEnv *env, Atom *name) {
+    for (size_t i = 0u; i < env->current_constant_count; i++)
+        if (atom_eq(env->current_constants[i], name)) return true;
+    return false;
+}
+
+static void sj_current_constant_remember(SjSetEnv *env, Atom *name) {
+    if (sj_current_constant_known(env, name)) return;
+    if (env->current_constant_count == env->current_constant_capacity) {
+        size_t next = env->current_constant_capacity ? 2u * env->current_constant_capacity : 16u;
+        if (next < env->current_constant_capacity || next > SIZE_MAX / sizeof(Atom *)) cetta_oom(SIZE_MAX);
+        env->current_constants = cetta_realloc(env->current_constants, next * sizeof(Atom *));
+        env->current_constant_capacity = next;
+    }
+    env->current_constants[env->current_constant_count++] = name;
+}
+
+bool prime_scoped_constant_context_current(Arena *a, Space *space, Atom *name,
+    CettaPrimeLevelBudgetV1 *budget, Atom **reason) {
+    if (reason) *reason = NULL;
+    if (!a || !space || !name || name->kind != ATOM_SYMBOL) return true;
+    const Space *root = space;
+    while (root->overlay_base) root = root->overlay_base;
+    Atom *record = NULL;
+    const char *faces[] = {"hol:known", "set:known"};
+    for (size_t face = 0u; face < 2u; face++) {
+        Atom *items[SJ_KNOWN_LEN];
+        items[0] = sj_sym(a, faces[face]);
+        items[1] = name;
+        for (size_t i = 2u; i < SJ_KNOWN_LEN; i++) items[i] = atom_var(a, "entry");
+        CettaIndex *candidates = NULL;
+        CettaIndex count = space_match_candidates64(space, atom_expr(a, items, SJ_KNOWN_LEN), &candidates);
+        for (CettaIndex i = 0u; i < count; i++) {
+            Atom *candidate = space_match_candidate_at64(space, candidates[i]);
+            if (!sj_is_expr(candidate, faces[face], SJ_KNOWN_LEN) ||
+                !atom_eq(candidate->expr.elems[SJ_KNOWN_NAME], name)) continue;
+            Atom *origin = candidate->expr.elems[SJ_KNOWN_ORIGIN];
+            if (!atom_is_symbol(origin, "definition") && !atom_is_symbol(origin, "inductive") &&
+                !atom_is_symbol(origin, "family")) continue;
+            if (!sj_signature_owns(&g_set_env, candidate) &&
+                !sj_admission_recorded(space_instance_id(root), candidate)) continue;
+            if (record && !atom_alpha_eq(record, candidate)) {
+                free(candidates);
+                if (reason) *reason = sj_expr2(a, "constructed-name-ambiguous", name);
+                return false;
+            }
+            record = candidate;
+        }
+        free(candidates);
+    }
+    if (!record) return true;
+    for (const SjConstantContextVisit *prior = g_constant_context_visit; prior; prior = prior->outer)
+        if (prior->space == root && atom_eq(prior->name, name)) {
+            if (reason) *reason = sj_expr2(a, "constructed-context-cycle", name);
+            return false;
+        }
+    SjSetEnv *previous_env = g_current_set_env;
+    SjTheoryProfile previous_profile = g_sj_signature_profile;
+    Atom *previous_rules = cetta_prime_regular_kernel_rules_get();
+    int previous_identity = cetta_prime_identity_policy();
+    SjConstantContextVisit visit = {root, name, g_constant_context_visit};
+    g_constant_context_visit = &visit;
+    SjSetEnv *env = sj_env(space);
+    bool current = false;
+    if (env) {
+        sj_current_constants_snapshot(env, root);
+        uint64_t checked_mutation = env->current_mutation;
+        uint64_t checked_admission = env->current_admission;
+        SjProofState st;
+        sj_proof_state_init(&st, a, (Space *)root, env, budget && budget->limited,
+                            budget ? budget->remaining : 0u, false, false);
+        if (budget) st.budget = *budget;
+        if (!sj_record_signature_current(record))
+            st.failure = sj_signature_refusal(a, name, record);
+        else if (!sj_signature_owns(env, record) &&
+                 !sj_admitted_contains(space_instance_id(root), record))
+            st.failure = sj_expr2(a, SJ_S("set:not-admitted"), name);
+        else if (sj_current_constant_known(env, name)) {
+            current = !st.budget.limited || st.budget.remaining > 0u;
+            if (current && st.budget.limited) {
+                st.budget.remaining--;
+                st.budget.spent++;
+            }
+        }
+        else current = sj_dependencies_current(&st, record, 0u);
+        if (current && checked_mutation == space_global_mutation_epoch() &&
+            checked_admission == prime_scoped_judgment_admission_epoch())
+            sj_current_constant_remember(env, record->expr.elems[SJ_KNOWN_NAME]);
+        if (budget) *budget = st.budget;
+        if (reason && !current) *reason = st.failure ? st.failure
+            : sj_expr2(a, "constructed-context-unavailable", name);
+    } else if (reason) *reason = sj_expr2(a, "constructed-profile-unavailable", name);
+    g_constant_context_visit = visit.outer;
+    g_current_set_env = previous_env;
+    g_sj_signature_profile = previous_profile;
+    cetta_prime_regular_kernel_rules_set(previous_rules);
+    cetta_prime_identity_policy_set(previous_identity);
+    return current;
+}
+
+void prime_scoped_prepare_context(Space *space) {
+    static _Thread_local bool preparing;
+    if (!space || preparing) return;
+    preparing = true;
+    SjSetEnv *previous_env = g_current_set_env;
+    SjTheoryProfile previous_profile = g_sj_signature_profile;
+    Atom *previous_rules = cetta_prime_regular_kernel_rules_get();
+    int previous_identity = cetta_prime_identity_policy();
+    (void)sj_env(space);
+    g_current_set_env = previous_env;
+    g_sj_signature_profile = previous_profile;
+    cetta_prime_regular_kernel_rules_set(previous_rules);
+    cetta_prime_identity_policy_set(previous_identity);
+    preparing = false;
 }
 
 /* The canonical proposition of a known fact, with the record's authority
@@ -12069,6 +12287,509 @@ static Atom *sj_implicit_definition(Arena *a, Space *space, Atom *judgment,
                                     PrimeImplicitReport *report);
 static Atom *sj_set_define_written(Arena *a, Space *space, Atom *judgment,
                                    bool limited, uint64_t steps);
+static Atom *sj_set_define_written_shared(Arena *a, Space *space, Atom *judgment,
+    bool limited, uint64_t steps, CettaPrimeRegularKernelBudget *shared);
+
+typedef struct {
+    CettaPrimeRegularKernelBudget *destination;
+    CettaPrimeRegularKernelBudget *source;
+} SjDefinitionBudgetReturn;
+
+static void sj_definition_budget_return(SjDefinitionBudgetReturn *returning) {
+    if (returning->destination && returning->source)
+        *returning->destination = *returning->source;
+}
+
+/* Case compilation proposes an explicit recursor term. It adds no trusted
+ * inference rule: the ordinary explicit-definition checker must admit the
+ * term, and conversion must independently verify every authored equation.
+ * This entrance currently handles independent argument/constructor domains;
+ * the result type may depend on the arguments. */
+typedef struct {
+    Atom *equation;
+    SjBoundVars variables;
+    Atom *right;
+} SjCaseEquation;
+
+typedef struct {
+    SjProofState *st;
+    Atom *name;
+    size_t arity;
+    size_t recursive_position;
+    SjCaseEquation *rows;
+    size_t row_count;
+} SjCaseCompiler;
+
+typedef struct {
+    Atom *field;
+    Atom *hypothesis;
+} SjCaseRecursion;
+
+static bool sj_case_tick(SjProofState *st) {
+    if (!st->budget.limited) return true;
+    if (st->budget.remaining == 0u) {
+        st->incomplete = true;
+        return false;
+    }
+    st->budget.remaining--;
+    st->budget.spent++;
+    return true;
+}
+
+static Atom *sj_case_index(Arena *a, size_t index) {
+    return sj_expr2(a, "idx", atom_int(a, (int64_t)index));
+}
+
+/* Change one free index without removing its context slot. */
+static Atom *sj_case_replace_at(Arena *a, Atom *term, uint64_t index, Atom *value, uint64_t depth) {
+    uint64_t found = 0u;
+    if (!term) return NULL;
+    if (sj_intrinsic_index(term, &found))
+        return found == index + depth ? sj_shift(a, value, 0u, (int64_t)depth) : term;
+    if (sj_is_leaf(term)) return term;
+    Atom **items = sj_children(a, term);
+    if (!items) return NULL;
+    for (CettaExprIndex i = 1u; i < term->expr.len; i++) {
+        items[i] = sj_case_replace_at(a, term->expr.elems[i], index, value,
+                                     depth + (sj_binds_body(term, i) ? 1u : 0u));
+        if (!items[i]) return NULL;
+    }
+    return sj_rebuild(a, term, items);
+}
+
+static Atom *sj_case_replace(Arena *a, Atom *term, uint64_t index, Atom *value) {
+    return sj_case_replace_at(a, term, index, value, 0u);
+}
+
+static Atom *sj_case_replace_constant(Arena *a, Atom *term, Atom *name, Atom *value) {
+    if (!term) return NULL;
+    if (atom_eq(term, name) ||
+        (sj_is_expr(term, "DeclConst", 2u) && atom_eq(term->expr.elems[1], name)))
+        return value; /* value is closed */
+    if (sj_is_leaf(term)) return term;
+    Atom **items = sj_children(a, term);
+    if (!items) return NULL;
+    for (CettaExprIndex i = 1u; i < term->expr.len; i++) {
+        items[i] = sj_case_replace_constant(a, term->expr.elems[i], name, value);
+        if (!items[i]) return NULL;
+    }
+    return sj_rebuild(a, term, items);
+}
+
+/* Match authored constructor patterns against a symbolic neighbourhood.
+ * -1 is a constructor mismatch, 0 requests a split at a free index, and 1
+ * retains the complete substitution for this original equation. */
+static int sj_case_match(SjProofState *st, Atom *pattern, Atom *value,
+    SjBoundVars *variables, Atom **solutions, size_t *blocked) {
+    if (!sj_case_tick(st)) return -2;
+    if (sj_is_var(pattern)) {
+        for (size_t i = 0u; i < variables->count; i++)
+            if (atom_eq(pattern, variables->vars[i])) {
+                solutions[i] = value;
+                return 1;
+            }
+        return -2;
+    }
+    uint64_t index = 0u;
+    if (sj_intrinsic_index(value, &index)) {
+        *blocked = (size_t)index;
+        return 0;
+    }
+    Atom *expected = pattern->kind == ATOM_EXPR ? pattern->expr.elems[0] : pattern;
+    size_t count = pattern->kind == ATOM_EXPR ? (size_t)pattern->expr.len - 1u : 0u;
+    Atom *head = NULL;
+    if (sj_spine(value, &head, NULL, 0u) != count) return -1;
+    Atom *actual = sj_constant_ref(head);
+    if (!actual) actual = head;
+    if (!atom_eq(actual, expected)) return -1;
+    Atom **args = arena_alloc(st->arena, sizeof(*args) * (count ? count : 1u));
+    sj_spine(value, &head, args, count);
+    for (size_t i = 0u; i < count; i++) {
+        int matched = sj_case_match(st, pattern->expr.elems[1u + i], args[i],
+                                    variables, solutions, blocked);
+        if (matched != 1) return matched;
+    }
+    return 1;
+}
+
+/* Recursive occurrences may use only the hypotheses supplied by the
+ * selected datatype recursor. No recursive constant survives compilation. */
+static Atom *sj_case_recursive_calls(SjCaseCompiler *compiler, Atom *term,
+    SjCaseRecursion *recursions, size_t recursion_count, size_t depth) {
+    SjProofState *st = compiler->st;
+    Arena *a = st->arena;
+    if (!term || !sj_case_tick(st)) return NULL;
+    Atom *head = NULL;
+    size_t count = sj_spine(term, &head, NULL, 0u);
+    Atom *constant = sj_constant_ref(head);
+    if (!constant) constant = head;
+    if (atom_eq(constant, compiler->name)) {
+        if (count < compiler->arity) return NULL;
+        Atom **args = arena_alloc(a, sizeof(*args) * (count ? count : 1u));
+        sj_spine(term, &head, args, count);
+        Atom *replacement = NULL;
+        for (size_t i = 0u; i < recursion_count; i++)
+            if (atom_eq(args[compiler->recursive_position],
+                        sj_shift(a, recursions[i].field, 0u, (int64_t)depth))) {
+                replacement = sj_shift(a, recursions[i].hypothesis, 0u, (int64_t)depth);
+                break;
+            }
+        if (!replacement) return NULL;
+        for (size_t i = 0u; i < count; i++) {
+            if (i == compiler->recursive_position) continue;
+            Atom *arg = sj_case_recursive_calls(compiler, args[i], recursions, recursion_count, depth);
+            if (!arg) return NULL;
+            replacement = sj_expr3(a, "App", replacement, arg);
+        }
+        return replacement;
+    }
+    if (sj_is_leaf(term)) return term;
+    Atom **items = sj_children(a, term);
+    if (!items) return NULL;
+    for (CettaExprIndex i = 1u; i < term->expr.len; i++) {
+        items[i] = sj_case_recursive_calls(compiler, term->expr.elems[i], recursions,
+            recursion_count, depth + (sj_binds_body(term, i) ? 1u : 0u));
+        if (!items[i]) return NULL;
+    }
+    return sj_rebuild(a, term, items);
+}
+
+/* Closed field domains and the recursor belonging to an actual admitted
+ * datatype. Parameterized and dependent field telescopes retain their
+ * existing admission routes. */
+static Atom *sj_case_recursor(SjProofState *st, Atom *domain,
+    SjConstructor **constructors, size_t *count) {
+    Atom *principle = NULL;
+    if (!domain || domain->kind != ATOM_SYMBOL ||
+        !sj_datatype_constructors(st, domain, constructors, count, &principle)) return NULL;
+    const char *name = atom_name_cstr(domain);
+    size_t length = strlen(name) + 5u;
+    char *spelling = arena_alloc(st->arena, length);
+    snprintf(spelling, length, "%s-rec", name);
+    Atom *recursor = sj_sym(st->arena, spelling);
+    return sj_constant_type(st, recursor) ? recursor : NULL;
+}
+
+static bool sj_case_fields(SjProofState *st, SjConstructor *ctor, Atom **domains) {
+    Atom *type = sj_constant_type(st, ctor->name);
+    for (size_t i = 0u; i < ctor->arity; i++) {
+        if (!sj_is_expr(type, "Pi", 3u)) return false;
+        domains[i] = sj_shift(st->arena, type->expr.elems[1], 0u, -(int64_t)i);
+        if (!domains[i]) return false;
+        type = type->expr.elems[2];
+    }
+    return true;
+}
+
+static Atom *sj_case_matrix(SjCaseCompiler *compiler, Atom **arguments,
+    Atom **context_types, size_t context_count, Atom *result_type,
+    SjCaseRecursion *recursions, size_t recursion_count) {
+    SjProofState *st = compiler->st;
+    Arena *a = st->arena;
+    if (!sj_case_tick(st)) return NULL;
+    size_t split = context_count;
+    for (size_t e = 0u; e < compiler->row_count; e++) {
+        SjCaseEquation *row = &compiler->rows[e];
+        Atom **solutions = arena_alloc(a, sizeof(*solutions) * (row->variables.count ? row->variables.count : 1u));
+        memset(solutions, 0, sizeof(*solutions) * row->variables.count);
+        int matched = 1;
+        for (size_t i = 0u; i < compiler->arity && matched == 1; i++)
+            matched = sj_case_match(st, row->equation->expr.elems[1]->expr.elems[1u + i],
+                arguments[i], &row->variables, solutions, &split);
+        if (matched == -2) return NULL;
+        if (matched == 0) break;
+        if (matched == 1) {
+            for (size_t i = 0u; i < row->variables.count; i++) if (!solutions[i]) return NULL;
+            return sj_case_recursive_calls(compiler,
+                sj_instantiate_rule(a, row->right, solutions, row->variables.count, 0u),
+                recursions, recursion_count, 0u);
+        }
+        split = context_count;
+    }
+    if (split >= context_count) return NULL; /* uncovered neighbourhood */
+    Atom *domain = context_types[context_count - 1u - split];
+    SjConstructor *ctors = NULL;
+    size_t ctor_count = 0u;
+    Atom *recursor = sj_case_recursor(st, domain, &ctors, &ctor_count);
+    if (!recursor) return NULL;
+    Atom *motive_body = sj_case_replace(a, sj_shift(a, result_type, 0u, 1),
+                                      split + 1u, sj_case_index(a, 0u));
+    Atom *motive = sj_expr3(a, "Lam", domain, motive_body);
+    Atom *term = sj_expr3(a, "App", recursor, motive);
+    for (size_t c = 0u; c < ctor_count; c++) {
+        SjConstructor *ctor = &ctors[c];
+        size_t hypotheses = 0u;
+        for (size_t i = 0u; i < ctor->arity; i++) if (ctor->recursive[i]) hypotheses++;
+        size_t added = ctor->arity + hypotheses;
+        Atom **types = arena_alloc(a, sizeof(*types) * (context_count + added + 1u));
+        memcpy(types, context_types, sizeof(*types) * context_count);
+        memset(types + context_count, 0, sizeof(*types) * added);
+        if (!sj_case_fields(st, ctor, types + context_count)) return NULL;
+        Atom *value = ctor->name;
+        for (size_t i = 0u; i < ctor->arity; i++)
+            value = sj_expr3(a, "App", value, sj_case_index(a, added - 1u - i));
+        Atom **next = arena_alloc(a, sizeof(*next) * compiler->arity);
+        for (size_t i = 0u; i < compiler->arity; i++)
+            next[i] = sj_case_replace(a, sj_shift(a, arguments[i], 0u, (int64_t)added),
+                                     split + added, value);
+        Atom *goal = sj_case_replace(a, sj_shift(a, result_type, 0u, (int64_t)added),
+                                    split + added, value);
+        SjCaseRecursion *available = arena_alloc(a, sizeof(*available) * (recursion_count ? recursion_count : 1u));
+        for (size_t i = 0u; i < recursion_count; i++) {
+            available[i].field = sj_case_replace(a,
+                sj_shift(a, recursions[i].field, 0u, (int64_t)added), split + added, value);
+            available[i].hypothesis = sj_shift(a, recursions[i].hypothesis, 0u, (int64_t)added);
+        }
+        Atom *branch = sj_case_matrix(compiler, next, types, context_count + added,
+                                      goal, available, recursion_count);
+        if (!branch) return NULL;
+        for (size_t i = 0u; i < added; i++) branch = sj_expr2(a, "Lam", branch);
+        term = sj_expr3(a, "App", term, branch);
+    }
+    return sj_expr3(a, "App", term, sj_case_index(a, split));
+}
+
+static Atom *sj_case_function(SjCaseCompiler *compiler, Atom **domains, Atom *result_type) {
+    SjProofState *st = compiler->st;
+    Arena *a = st->arena;
+    size_t arity = compiler->arity, root = compiler->recursive_position;
+    SjConstructor *ctors = NULL;
+    size_t ctor_count = 0u;
+    Atom *recursor = sj_case_recursor(st, domains[root], &ctors, &ctor_count);
+    if (!recursor) return NULL;
+    Atom **permutation = arena_alloc(a, sizeof(*permutation) * arity);
+    for (size_t i = 0u; i < arity; i++) {
+        size_t position = i == root ? 0u : i < root ? i + 1u : i;
+        permutation[i] = sj_case_index(a, arity - 1u - position);
+    }
+    Atom *rest_type = sj_instantiate_rule(a, result_type, permutation, arity, 0u);
+    for (size_t i = arity; i > 0u; i--)
+        if (i - 1u != root) rest_type = sj_expr3(a, "Pi", domains[i - 1u], rest_type);
+    Atom *motive = sj_expr3(a, "Lam", domains[root], rest_type);
+    Atom *function = sj_expr3(a, "App", recursor, motive);
+    for (size_t c = 0u; c < ctor_count; c++) {
+        SjConstructor *ctor = &ctors[c];
+        size_t hypotheses = 0u;
+        for (size_t i = 0u; i < ctor->arity; i++) if (ctor->recursive[i]) hypotheses++;
+        size_t fields_and_hypotheses = ctor->arity + hypotheses;
+        size_t count = fields_and_hypotheses + arity - 1u;
+        Atom **types = arena_alloc(a, sizeof(*types) * (count + 1u));
+        memset(types, 0, sizeof(*types) * count);
+        if (!sj_case_fields(st, ctor, types)) return NULL;
+        Atom *value = ctor->name;
+        for (size_t i = 0u; i < ctor->arity; i++)
+            value = sj_expr3(a, "App", value, sj_case_index(a, fields_and_hypotheses - 1u - i));
+        Atom *goal = sj_instantiate_rule(a, rest_type, &value, 1u, 0u);
+        Atom **arguments = arena_alloc(a, sizeof(*arguments) * arity);
+        arguments[root] = sj_shift(a, value, 0u, (int64_t)(arity - 1u));
+        size_t j = 0u;
+        for (size_t i = 0u; i < arity; i++) {
+            if (i == root) continue;
+            if (!sj_is_expr(goal, "Pi", 3u)) return NULL;
+            types[fields_and_hypotheses + j] = domains[i];
+            arguments[i] = sj_case_index(a, arity - 2u - j);
+            goal = goal->expr.elems[2];
+            j++;
+        }
+        SjCaseRecursion *available = arena_alloc(a, sizeof(*available) * (hypotheses ? hypotheses : 1u));
+        j = 0u;
+        for (size_t i = 0u; i < ctor->arity; i++) if (ctor->recursive[i]) {
+            available[j].field = sj_case_index(a, count - 1u - i);
+            available[j].hypothesis = sj_case_index(a, count - 1u - ctor->arity - j);
+            j++;
+        }
+        Atom *branch = sj_case_matrix(compiler, arguments, types, count, goal, available, hypotheses);
+        if (!branch) return NULL;
+        for (size_t i = 0u; i < count; i++) branch = sj_expr2(a, "Lam", branch);
+        function = sj_expr3(a, "App", function, branch);
+    }
+    if (root == 0u) return function;
+    Atom *body = sj_expr3(a, "App", function, sj_case_index(a, arity - 1u - root));
+    for (size_t i = 0u; i < arity; i++) if (i != root)
+        body = sj_expr3(a, "App", body, sj_case_index(a, arity - 1u - i));
+    for (size_t i = arity; i > 0u; i--) body = sj_expr3(a, "Lam", domains[i - 1u], body);
+    return body;
+}
+
+static Atom *sj_case_checked_normal_form(SjProofState *st, Space *space, Atom *term) {
+    if (!term || (st->budget.limited && st->budget.remaining == 0u)) {
+        st->incomplete = st->budget.limited;
+        return NULL;
+    }
+    CettaPrimeTypingResourceObservationV1 resources = {0};
+    Atom *verdict = prime_semantics_judge_typing_accounted(st->arena, space,
+        sj_expr2(st->arena, "type:normalize", term), st->budget.limited,
+        st->budget.remaining, &resources, NULL);
+    if (st->budget.limited) {
+        st->budget.remaining = resources.remaining;
+        st->budget.spent += resources.spent;
+    }
+    Atom *evidence = NULL;
+    SjStatus status = sj_verdict_status(verdict, &evidence);
+    if (status == SJ_STATUS_INCOMPLETE) st->incomplete = true;
+    return status == SJ_STATUS_ESTABLISHED && sj_is_expr(evidence, "TypeNormalForm", 5u)
+        ? evidence->expr.elems[2] : NULL;
+}
+
+static Atom *sj_set_define_cases(Arena *a, Space *space, Atom *judgment,
+    SjProofState *st, Atom *canonical_type, size_t arity) {
+    if (arity == 0u) return sj_undetermined(a, judgment, sj_expr1(a, "case-compilation-arity"));
+    Atom *name = judgment->expr.elems[1];
+    Atom **domains = arena_alloc(a, sizeof(*domains) * arity);
+    Atom *result_type = canonical_type;
+    for (size_t i = 0u; i < arity; i++) {
+        if (!sj_is_expr(result_type, "Pi", 3u)) return sj_undetermined(a, judgment, sj_expr1(a, "case-compilation-telescope"));
+        domains[i] = sj_shift(a, result_type->expr.elems[1], 0u, -(int64_t)i);
+        if (!domains[i]) return sj_undetermined(a, judgment, sj_expr1(a, "case-compilation-dependent-domain"));
+        result_type = result_type->expr.elems[2];
+    }
+    size_t row_count = (size_t)judgment->expr.len - 3u;
+    SjCaseEquation *rows = arena_alloc(a, sizeof(*rows) * row_count);
+    memset(rows, 0, sizeof(*rows) * row_count);
+    for (size_t i = 0u; i < row_count; i++) {
+        Atom *eq = judgment->expr.elems[3u + i];
+        if (!sj_is_expr(eq, "=", 3u) || !eq->expr.elems[1] ||
+            eq->expr.elems[1]->kind != ATOM_EXPR || eq->expr.elems[1]->expr.len != arity + 1u ||
+            !atom_eq(eq->expr.elems[1]->expr.elems[0], name))
+            return sj_refuted(a, judgment, sj_expr2(a, SJ_S("set:define-equation"), eq));
+        for (size_t j = 0u; j < i; j++)
+            if (sj_bound_patterns_overlap(rows[j].equation->expr.elems[1], eq->expr.elems[1]))
+                return sj_undetermined(a, judgment, sj_expr2(a, SJ_S("set:define-overlap"), eq));
+        rows[i].equation = eq;
+        SjBoundVars *vars = &rows[i].variables;
+        vars->cap = sj_atom_size(eq->expr.elems[1]);
+        vars->vars = arena_alloc(a, sizeof(Atom *) * vars->cap);
+        vars->types = arena_alloc(a, sizeof(Atom *) * vars->cap);
+        vars->authored = arena_alloc(a, sizeof(Atom *) * vars->cap);
+        for (size_t k = 0u; k < arity; k++) {
+            Atom *authored = cetta_prime_regular_term_quote_named_v1(a, domains[k]);
+            if (!authored || !sj_bound_bind(st, eq->expr.elems[1]->expr.elems[1u + k], domains[k], authored, vars))
+                return sj_equation_bind_failure(a, st, judgment);
+        }
+    }
+    size_t saved_constants = st->env->constant_count;
+    sj_constant_cache_add(st->env, name, canonical_type);
+    bool lowered = true;
+    for (size_t i = 0u; i < row_count && lowered; i++) {
+        rows[i].right = sj_equation_lower(st, rows[i].equation->expr.elems[2],
+                                         rows[i].variables.vars, rows[i].variables.count);
+        lowered = rows[i].right != NULL;
+    }
+    st->env->constant_count = saved_constants;
+    if (!lowered) return sj_equation_bind_failure(a, st, judgment);
+    SjCaseCompiler compiler = {st, name, arity, 0u, rows, row_count};
+    Atom *last_equation = NULL;
+    for (size_t root = 0u; root < arity && !st->incomplete; root++) {
+        compiler.recursive_position = root;
+        st->failure = NULL;
+        st->refuted = false;
+        Atom *function = sj_case_function(&compiler, domains, result_type);
+        if (!function) continue;
+        Atom *written = cetta_prime_regular_term_quote_named_v1(a, function);
+        if (!written) continue;
+        /* Check the proposed definition before checking its source equations.
+         * The returned publication is still private and has no authority yet. */
+        Atom *proposal_items[] = {judgment->expr.elems[0], name, judgment->expr.elems[2],
+            sj_expr3(a, "=", name, written)};
+        Atom *proposal = atom_expr(a, proposal_items, 4u);
+        Atom *verdict = sj_set_define_written_shared(a, space, proposal,
+            st->budget.limited, st->budget.remaining, &st->budget);
+        Atom *publication = NULL;
+        SjStatus proposed = sj_verdict_status(verdict, &publication);
+        if (proposed == SJ_STATUS_INCOMPLETE) st->incomplete = true;
+        if (proposed != SJ_STATUS_ESTABLISHED) continue;
+        bool equations_checked = true;
+        for (size_t e = 0u; e < row_count; e++) {
+            SjCaseEquation *row = &rows[e];
+            size_t n = row->variables.count;
+            Atom *left = function;
+            for (size_t k = 0u; k < arity; k++) {
+                Atom *pattern = sj_equation_lower(st, row->equation->expr.elems[1]->expr.elems[1u + k], row->variables.vars, n);
+                if (!pattern) return sj_equation_bind_failure(a, st, judgment);
+                left = sj_expr3(a, "App", left, pattern);
+            }
+            Atom *right = sj_case_replace_constant(a, row->right, name, function);
+            for (size_t i = n; i > 0u; i--) {
+                left = sj_expr3(a, "Lam", row->variables.types[i - 1u], left);
+                right = sj_expr3(a, "Lam", row->variables.types[i - 1u], right);
+            }
+            Atom *left_written = cetta_prime_regular_term_quote_named_v1(a, left);
+            Atom *right_written = cetta_prime_regular_term_quote_named_v1(a, right);
+            /* Full reduction supplies the two computational equality legs. The
+             * ordinary typed comparison checks their readbacks, including their
+             * types; no syntactic equality of printed text is trusted. */
+            left_written = sj_case_checked_normal_form(st, space, left_written);
+            right_written = sj_case_checked_normal_form(st, space, right_written);
+            if (!left_written || !right_written) {
+                equations_checked = false;
+                last_equation = row->equation;
+                break;
+            }
+            Atom *obstruction = sj_declaration_check_obstruction(a, space, judgment, row->equation,
+                sj_expr3(a, "type:eq", left_written, right_written), &st->budget, NULL);
+            if (obstruction) {
+                equations_checked = false;
+                last_equation = row->equation;
+                break;
+            }
+        }
+        if (!equations_checked) continue;
+        Atom *record = publication->expr.elems[1];
+        Atom **record_items = sj_children(a, record);
+        memcpy(record_items, record->expr.elems, sizeof(*record_items) * record->expr.len);
+        Atom **source = arena_alloc(a, sizeof(*source) * (row_count + 2u));
+        source[0] = sj_sym(a, "define");
+        source[1] = judgment->expr.elems[2];
+        for (size_t i = 0u; i < row_count; i++) source[2u + i] = rows[i].equation;
+        record_items[SJ_KNOWN_PROP] = atom_expr(a, source, (CettaExprLen)(row_count + 2u));
+        /* The checked recursor supplies a solution of the original equations.
+         * Execute those licensed equations directly instead of repeatedly
+         * expanding the much larger solution term. */
+        Atom **rules = arena_alloc(a, sizeof(*rules) * (row_count + 2u));
+        rules[0] = sj_sym(a, "rules");
+        rules[1] = atom_int(a, (int64_t)arity);
+        Atom **published = arena_alloc(a, sizeof(*published) * (row_count + 3u));
+        published[0] = publication->expr.elems[0];
+        published[2] = publication->expr.elems[2];
+        size_t previous_constants = st->env->constant_count;
+        sj_constant_cache_add(st->env, name, canonical_type);
+        sj_note_instance(st, name, canonical_type);
+        bool encoded = true;
+        for (size_t e = 0u; e < row_count && encoded; e++) {
+            SjCaseEquation *row = &rows[e];
+            size_t n = row->variables.count;
+            Atom **patterns = arena_alloc(a, sizeof(*patterns) * arity);
+            for (size_t k = 0u; k < arity; k++) {
+                patterns[k] = sj_equation_lower(st,
+                    row->equation->expr.elems[1]->expr.elems[k + 1u], row->variables.vars, n);
+                if (!patterns[k]) encoded = false;
+            }
+            Atom **locals = sj_locals_for(a, n, row->right, NULL);
+            if (!locals) { encoded = false; break; }
+            for (size_t j = 0u; j < n; j++) locals[j] = row->variables.types[j];
+            Atom *right = sj_annotate(st, row->right, locals, n);
+            if (!encoded || !right) { encoded = false; break; }
+            Atom *parts[] = {atom_expr(a, patterns, (CettaExprLen)arity), right, atom_int(a, (int64_t)n)};
+            rules[2u + e] = atom_expr(a, parts, 3u);
+            published[3u + e] = sj_type_rule_atom(st, name, arity, patterns, right, n, row->variables.types);
+            if (!published[3u + e]) encoded = false;
+        }
+        st->env->constant_count = previous_constants;
+        if (!encoded) continue;
+        const char *basis[] = {SJ_LEAN_EXPLICIT};
+        record_items[SJ_KNOWN_PROOF] = sj_definition_evidence(a,
+            atom_expr(a, rules, (CettaExprLen)(row_count + 2u)),
+            sj_expr3(a, "checked-recursor", atom_int(a, (int64_t)compiler.recursive_position), written),
+            sj_lean_basis(a, basis, 1u, false, false));
+        published[1] = atom_expr(a, record_items, record->expr.len);
+        return sj_established(a, judgment, atom_expr(a, published, (CettaExprLen)(row_count + 3u)));
+    }
+    return st->incomplete
+        ? sj_incomplete(a, judgment, sj_expr1(a, "case-compilation-budget"))
+        : sj_undetermined(a, judgment, last_equation
+            ? sj_expr2(a, "case-equation-not-established", last_equation)
+            : sj_expr1(a, "case-compilation-no-total-recursor"));
+}
 
 /* A definition whose right sides write constructors without their
  * parameters is admitted as its elaborated form, in which they are written.
@@ -12094,8 +12815,8 @@ static Atom *sj_set_define(Arena *a, Space *space, Atom *judgment,
     return verdict;
 }
 
-static Atom *sj_set_define_written(Arena *a, Space *space, Atom *judgment,
-                                   bool limited, uint64_t steps) {
+static Atom *sj_set_define_written_shared(Arena *a, Space *space, Atom *judgment,
+    bool limited, uint64_t steps, CettaPrimeRegularKernelBudget *shared) {
     if (limited && steps == 0u)
         return sj_incomplete(a, judgment, sj_expr1(a, SJ_S("set:define-budget")));
     CettaExprLen len = judgment->expr.len;
@@ -12119,6 +12840,9 @@ static Atom *sj_set_define_written(Arena *a, Space *space, Atom *judgment,
         return sj_undetermined(a, judgment, sj_expr1(a, SJ_S("set:signature-unavailable")));
     SjProofState st;
     sj_proof_state_init(&st, a, space, env, limited, steps, true, true);
+    if (shared) st.budget = *shared;
+    __attribute__((cleanup(sj_definition_budget_return)))
+    SjDefinitionBudgetReturn budget_return = {shared, &st.budget};
     if (sj_name_taken(&st, name))
         return sj_refuted(a, judgment, sj_expr2(a, SJ_S("set:define-already-declared"), name));
     Atom *canonical_type = NULL;
@@ -12156,6 +12880,7 @@ static Atom *sj_set_define_written(Arena *a, Space *space, Atom *judgment,
     /* The scrutinized position: the one where some equation has a
      * constructor pattern; the same for every equation. */
     size_t scrut = arity;
+    bool compound_cases = false;
     for (size_t e = 0u; e < eq_count; e++) {
         Atom *eq = judgment->expr.elems[3u + e];
         if (!sj_is_expr(eq, "=", 3u))
@@ -12168,14 +12893,13 @@ static Atom *sj_set_define_written(Arena *a, Space *space, Atom *judgment,
         for (size_t k = 0u; k < arity; k++) {
             Atom *pat = lhs->expr.elems[1u + k];
             if (sj_is_var(pat)) continue;
-            /* Inspecting two arguments is legal; case trees over several
-             * arguments are not admitted yet. */
-            if (scrut != arity && scrut != k)
-                return sj_undetermined(a, judgment, sj_expr3(a, SJ_S("set:define-two-scrutinees"), lhs,
-                                                             sj_expr2(a, "admit-by", sj_sym(a, "bound"))));
+            /* Several inspected arguments use the checked recursor route. */
+            if (scrut != arity && scrut != k) compound_cases = true;
             scrut = k;
         }
     }
+    if (compound_cases)
+        return sj_set_define_cases(a, space, judgment, &st, canonical_type, arity);
     SjConstructor *ctors = NULL;
     size_t ctor_count = 0u;
     Atom *principle = NULL;
@@ -12227,6 +12951,8 @@ static Atom *sj_set_define_written(Arena *a, Space *space, Atom *judgment,
                 judgment, scrut, ctors, ctor_count);
             if (missing)
                 return sj_undetermined(a, judgment, sj_expr2(a, SJ_S("set:define-missing-case"), missing));
+            if (scrut_params == 0u)
+                return sj_set_define_cases(a, space, judgment, &st, canonical_type, arity);
             return sj_undetermined(a, judgment, sj_expr3(a, SJ_S("set:define-coverage"), name,
                                                          sj_expr2(a, "admit-by", sj_sym(a, "bound"))));
         }
@@ -12292,7 +13018,14 @@ static Atom *sj_set_define_written(Arena *a, Space *space, Atom *judgment,
             a, &st, judgment, name, canonical_type, arity, scrut,
             judgment->expr.elems[3u + e], ctors, ctor_count, scrut_params, covered,
             &rule, &descents[e], equation_types[e]);
-        if (verdict) return env->constant_count = saved_constants, verdict;
+        if (verdict) {
+            env->constant_count = saved_constants;
+            Atom *reason = NULL;
+            if (sj_verdict_status(verdict, &reason) == SJ_STATUS_UNDETERMINED &&
+                sj_is_expr(reason, SJ_S("set:define-nested-pattern"), 3u))
+                return sj_set_define_cases(a, space, judgment, &st, canonical_type, arity);
+            return verdict;
+        }
         rules[2u + e] = rule;
     }
     env->constant_count = saved_constants;
@@ -12358,6 +13091,11 @@ static Atom *sj_set_define_written(Arena *a, Space *space, Atom *judgment,
         published[np++] = kernel_rule;
     }
     return sj_established(a, judgment, atom_expr(a, published, (CettaExprLen)np));
+}
+
+static Atom *sj_set_define_written(Arena *a, Space *space, Atom *judgment,
+    bool limited, uint64_t steps) {
+    return sj_set_define_written_shared(a, space, judgment, limited, steps, NULL);
 }
 
 /* Rechecking an imported theorem may verify its proof, but that does not
@@ -12956,6 +13694,29 @@ static Atom *sj_try(Arena *a, Space *space, Atom *judgment, Atom *subject,
             space = explicit;
         }
     }
+    /* Preserve a type query's explicit budget when observed through try,
+     * just as the public query dispatcher does outside try. */
+    CettaExprLen type_arity =
+        (head == g_builtin_syms.type_colon_of ||
+         head == g_builtin_syms.type_colon_normalize ||
+         head == g_builtin_syms.type_colon_formed ||
+         head == g_builtin_syms.type_colon_refine) ? 2u :
+        (head == g_builtin_syms.type_colon_check ||
+         head == g_builtin_syms.type_colon_analyze ||
+         head == g_builtin_syms.type_colon_eq ||
+         head == g_builtin_syms.type_colon_may ||
+         head == g_builtin_syms.type_colon_must) ? 3u : 0u;
+    if (type_arity && subject && subject->kind == ATOM_EXPR &&
+        subject->expr.len == type_arity + 1u) {
+        Atom *limit = subject->expr.elems[type_arity];
+        if (limit->kind == ATOM_GROUNDED && limit->ground.gkind == GV_INT &&
+            limit->ground.ival > 0) {
+            uint64_t given = (uint64_t)limit->ground.ival;
+            if (!limited || given < steps) steps = given;
+            limited = true;
+            subject = atom_expr(a, subject->expr.elems, type_arity);
+        }
+    }
     if (head != SYMBOL_ID_NONE && head != g_builtin_syms.try_judgment &&
         prime_scoped_judgment_is_head_id(head)) {
         verdict = sj_judge(a, space, subject, limited, steps, true);
@@ -12969,6 +13730,7 @@ static Atom *sj_try(Arena *a, Space *space, Atom *judgment, Atom *subject,
                                subject->expr.elems[2]);
         verdict = prime_semantics_judge_typing_direct(a, space, query, limited, steps);
     } else if (head == g_builtin_syms.type_colon_of ||
+               head == g_builtin_syms.type_colon_normalize ||
                head == g_builtin_syms.type_colon_check ||
                head == g_builtin_syms.type_colon_analyze ||
                head == g_builtin_syms.type_colon_eq ||
@@ -14364,7 +15126,8 @@ Atom *prime_scoped_implicit_judgment(Arena *a, Space *space, Atom *judgment,
     bool at_type = (strcmp(head, "type:check") == 0 || strcmp(head, "type:analyze") == 0 ||
                     strcmp(head, "type:may") == 0 || strcmp(head, "type:must") == 0) &&
                    judgment->expr.len == 3u;
-    bool alone = (strcmp(head, "type:of") == 0 || strcmp(head, "type:formed") == 0) &&
+    bool alone = (strcmp(head, "type:of") == 0 || strcmp(head, "type:formed") == 0 ||
+                  strcmp(head, "type:normalize") == 0) &&
                  judgment->expr.len == 2u;
     bool both = strcmp(head, "type:eq") == 0 && judgment->expr.len == 3u;
     if (!at_type && !alone && !both) return judgment;
