@@ -26,7 +26,14 @@ through the same environment. Keeping a cursor does not acquire payload
 ownership. Independent publication uses the existing owned-return image
 protocol where required.
 
-The cursor also implements CettaOwnedExecutionNext. Owned sequencing retains
+Space occurrence cursors likewise lend an optional payload with the selected
+logical coordinate in one `next` transition. The payload is read from that
+same physical occurrence, in either the current or detached pinned view.
+Capture metadata is established after index preparation, which may contract
+marked storage. Selection performs no authoritative matching, and the loan
+adds no payload ownership.
+
+CettaCallReturnCursor also implements CettaOwnedExecutionNext. Owned sequencing retains
 an unaccepted return and resumes it before asking for another. A zero delivery
 allowance does not pull the producer. Accepted occurrences are not replayed.
 Cancellation releases the computation owner; borrowed cursor storage remains
@@ -421,6 +428,22 @@ bypasses the value continuation. Interrupted and malformed results keep their
 own incomplete causes. A private Empty or Error spelling does not choose any
 of these machine states.
 
+The search-machine entry lends immutable argument graphs until its parent
+heap is reclaimed. A synchronous completed native call keeps that loan. The
+existing external-owner guard protects the synchronous pull from caller
+relocation during reentrant completion and ends before the consumer resumes.
+A native residual owns the frontier, actual tagged packet and live locals
+before suspension. Register readback and step execution use this same retain
+boundary. A completed register region copies its answer out of reusable
+program storage only when collection created survivor storage.
+
+Cursor.NativeBorrowedReturn checks graph transport, ordered control traces,
+duplicate occurrences, finite event prefixes and release safety against an
+eager-transfer model. Its graph observer forgets storage homes; payload
+contents, C root enumeration, copy-session sharing and authored source fuel
+remain separate obligations. Native controls cover borrowed identity and
+aliased residuals after source reclamation.
+
 native_boundary lends either an unentered ready invocation or its actual
 pending packet. resume_native takes a replacement producer through the existing
 owned-bind service and resumes the saved step and locals, without rebuilding
@@ -632,3 +655,201 @@ and source charges; later slices resume the same entered state. Separating
 controls cover duplicate returns, one callee effect, inert code-shaped input,
 current logical coordinates and erased lexical scope. The source/callee C
 admission and legacy transition accounting remain native refinement obligations.
+
+Sequence execution and private names
+-----------------------------------
+
+Generated sequence-order plans specify the producer/binder order and keep the
+body last. Ordinary and activation-backed operands use one lowering into the
+existing goal stack. Literal binding emits an authoritative match; relational
+binding emits its admitted computation. Source contexts, continuation marks
+and completed-result receipts keep their existing positions. Identity binds,
+count observers and unused binders retain their separately admitted lowerings.
+
+Ordinary and activation-backed argument evaluation also share one worklist
+lowering. Their adapters supply the ready destinations, demand mask, source
+range and lexical frame. The lowering schedules source computations in written
+order before the retained call continuation. A dialect-requested error check
+runs immediately after its argument, before later operands. Completed operands
+remain values.
+
+Call preparation is a selected subsequence of generated stages: install a
+type obligation, compute, check a returned error, check the completed type,
+then bind or deliver. Ordinary operands, activation operands, typed arguments
+and typed results lower these plans through the same binding and continuation
+services. Argument/result demand and applicable guards remain dialect-owned;
+the generated order is the authority for their execution stages. Literal demand
+is fixed before argument execution. Telescope binding follows acceptance, and
+result installation/checking straddle the call body. The plan is one byte and
+adds no fields to values or machine frames.
+
+ContextualInvocation.ArgumentWorklist relates reverse stack assembly to an
+independent source schedule. Its contextual interpretation joins that schedule
+to CBPV sequencing, preserving the complete metered residual in the model.
+Its charge-prefix laws retain pending work and conserve the source purse.
+Concrete native charge correspondence and dialect error-check elaboration
+remain separate obligations.
+
+ContextualInvocation.Preparation independently defines the source stage order,
+the compact encoding and reverse stack assembly. It proves argument/result
+elaboration and full-call concatenation, then transports the construction to
+metered contextual execution. Native tests additionally require installation
+before an error-raising adapter, completed-result guards after body effects,
+and held source across the compact demand word's arity boundary.
+
+Private names are fresh choices, not a promised allocation-counter sequence.
+Their consistent renaming preserves public names, sharing and distinctness.
+Structured readback compares those identities before text formatting. The
+formatter must render the chosen names faithfully within an execution;
+ordinary literal strings remain byte-exact. No generic string normalization
+may erase digit differences. Sequencing, multiplicity, effects and budgeted
+prefixes keep the observer required by their dialect.
+
+ContextualInvocation.FreshReadback relates a counter with arbitrary intervening
+private allocations to an independent fresh-choice contract and lookup-based
+readback. ExecutionControl.SequenceExecution relates source sequencing to
+reverse-stack construction, including complete metered continuations. Native
+encodings, ownership and C transition correspondence remain separate obligations.
+
+Forcing continuations and episode accounting
+-------------------------------------------
+
+PeTTa's admitted eval occurrence elaborates to FORCE before its operand is
+read. The ready goal retains that operation; reduce retains value dispatch.
+Delivery no longer recovers the operation from a wrapper's head. The held
+operand is translated at the forcing event, and the completed result remains
+a value. This does not change HE's separately observable one-step eval.
+
+CettaEvalEpisode owns completion, interruption and the finite semantic-step
+purse previously private to eval.c. A child borrows the smaller of its request
+and its parent's remaining credit. Closing settles performed work once and
+retires the parent link. Unused credit has not been debited and needs no refund.
+The first incomplete cause survives. These operations retain the existing
+charging points and recursion-depth argument; worker transition and producer
+allowances remain independent. Finite fuel does not admit a specialized worker
+whose source-charge lowering has not been qualified.
+
+ContextualCBPV.EpisodeAccounting relates guarded native counter arithmetic to
+an independent natural-number purse under an explicit word bound. It proves
+grant bounds, conservation, cumulative settlement, affine close and the unit
+charge join to the contextual kernel. ExecutionControl.Forcing relates source
+layout to retained force/dispatch operations and separates their observations.
+Assigning every native charge to its source occurrence, full worker lowering,
+native pointers and complete C correspondence remain separate obligations.
+
+Native invocation layouts
+-------------------------
+
+Admitted strict native calls retain a three-byte body/range plan in the
+existing immutable PettaPlanNode layout. The shared argument worklist lowers
+that range to source-ordered computation followed by the selected ready body.
+The plan is included in content interning; it adds no per-answer storage.
+
+The generated descriptors cover rendering, relational membership, unary list
+operations, list/set conversion, term reading and the optional predicate
+boundary. A descriptor is not source registration, purity or type evidence.
+In particular, a live Atom declaration still holds Predicate's source operand.
+
+The ordinary machine reuses cached metadata only for the same admitted static
+head and arity. Missing plans, dynamic calls and rewritten heads elaborate the
+current callee through the same dialect decoder. Source data and completed
+code-shaped values keep their prior occurrence authority. Native bodies,
+result completion and entered residuals retain their existing owners.
+
+ContextualInvocation.InvocationLayout relates independently destructured
+source calls to array-range reading, then joins body and lexical operands to
+the existing reverse worklist. Controls separate stale same-arity heads,
+wrapper coordinates and duplicate operands. The model does not establish the
+concrete descriptor table, all source-charge assignments or C correspondence.
+
+Authoritative computation selection and source debits
+----------------------------------------------------
+
+CettaComputationPlan combines the existing control operation and native entry
+layout in one seven-byte word. Source compilation creates both parts together;
+a control form has no competing native entry. Ordinary execution consumes the
+retained word for the same admitted static head and arity, as activation and
+specialized lowering already consume its operations. Missing adapter metadata
+and rewritten or dynamic callees re-elaborate through the dialect decoder.
+Operand storage can be reordered only with its coordinates and child plans;
+wrapper spelling does not undo that normalization. Immutable node storage and
+logical binding authority are unchanged.
+
+Ordinary step admission now receives a borrowed CettaSourceStep: the existing
+machine/goal instance coordinates, frontier phase and an explicit debit.
+Canonical ordinary visits retain their previous unit charge; frontier
+boundaries have no goal instance. Prepared admission and the unlimited-worker
+flag derive from the same effective purse, including an inherited finite
+episode even when the immediate call requests unbounded evaluation. A refused visit retains the same occurrence
+on retry. Physical quantum allowance remains a distinct host policy, checked
+before source debit by the controller. No source-event storage is added to
+values or pending goals.
+
+The episode debit accepts an explicit nonnegative cost, refuses overdraft
+atomically and guards word addition. Zero debit admits administrative work
+without consuming semantic credit. Specialized lowerings must establish their
+own source charges before metered entry. Operational goal identities are not
+shared-plan addresses or a completed mapping to authored AST occurrences.
+
+ExecutionControl.Computation joins independent source destructuring, paired
+word reading and metered contextual execution. Its normalization control keeps
+code-shaped data and duplicate answers. ContextualCBPV.EpisodeAccounting
+relates explicit native debit arithmetic to the natural-number purse and full
+metered kernel. Authored occurrence mapping, complete dialect elaboration and
+native C correspondence remain refinement obligations.
+
+Variadic sequence plans
+-----------------------
+
+Dialect elaboration assigns first-result and last-result series operations to
+prog1 and progn. Their argument count is not encoded in a byte coordinate;
+all children run in source order and the selected child supplies the result.
+Zero-argument series retain the dialect's existing logical failure.
+
+One ordinary scheduler builds both worklists. The first-result form retains
+its separate publication goal when its host requires deferred result matching.
+The selected child inherits result demand; other children receive distinct
+fresh destinations. Compiler output selection, fallback syntax elaboration
+and OEM sequence/tail lowering consume the same result policy. Only the last
+child of a last-result series inherits tail position. Opcode selection does
+not add source authority or native effect admission.
+
+ExecutionControl.SeriesExecution relates reverse indexed stack assembly to an
+independent source-order schedule. It proves the exact goal count, separates
+the single-operand policies, retains distinct discarded destinations and joins
+the schedules to metered contextual execution. Native AST correspondence,
+fresh-name allocation and C ownership remain separate obligations.
+
+The process-stream gate is included in test-all and the alternate process
+launch qualification. Frozen executable bundles include their .proc-scope
+companion; owner-scoped process execution depends on that exact adjacent file.
+
+Source-fuel admission for authored regions
+------------------------------------------
+
+cetta_eval_episode_allows_unmetered is the shared source-budget check for
+prepared calls and the native transform and saturation realizations. Both
+worker selection and entry consult it. A finite requested or inherited purse,
+including zero credit, retains authored execution until a realization has its
+own source-debit refinement. Refusal neither runs the region nor replaces an
+empty answer stream. Cancellation and current source authority remain separate
+checks. ContextualCBPV's budgeted-effect controls show why equal complete answers
+do not establish equal effects at a limited source prefix.
+
+Consolidation qualification
+--------------------------
+
+Main-readiness pins both the historical 9050a2d regression baseline and the
+original c632ecd1 consolidation baseline. The latter is supplied through
+CETTA_CONSOLIDATION_BASELINE_RECEIPT and CETTA_CONSOLIDATION_BASELINE_SHA256.
+The v2 receipt joins a complete source archive, its Git tree, the normal-build
+receipt and binary, and the exact runtime library staged beside that binary.
+These checks identify the artifact; they do not prove compiler correspondence.
+
+Both readiness tiers retain the historical gates and add paired pure/cost rho
+matrices against c632ecd1, with their own output files and a five-percent wall
+time bound. These matrices require the exact reference commit and binary;
+missing pairs cannot borrow the historical baseline's recorded timings.
+Qualification reuse and calibration include the frozen cohort's identity.
+The fixed 96-cell PeTTa v1.0.6 panel and HE/NIK application controls remain
+separate required evidence for the final common-execution artifact.

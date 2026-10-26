@@ -49,8 +49,12 @@ def verify_source_archive(
     The archive is streamed without extracting or following its paths. This
     format admits regular source files; directory records carry no source.
     """
+    if not isinstance(entries, list):
+        raise ReadinessModelError("frozen source manifest is not a list")
     recorded: dict[str, Mapping[str, Any]] = {}
     for entry in entries:
+        if not isinstance(entry, dict):
+            raise ReadinessModelError("invalid frozen source entry")
         name = entry.get("path")
         if (
             not isinstance(name, str)
@@ -106,7 +110,8 @@ def load_frozen_baseline(
     if sha256_file(receipt_path) != expected_sha256:
         raise ReadinessModelError("frozen baseline receipt failed its caller digest check")
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    if (receipt.get("schema") != "cetta.readiness.frozen-baseline.v1"
+    if (not isinstance(receipt, dict)
+            or receipt.get("schema") != "cetta.readiness.frozen-baseline.v2"
             or receipt.get("commit") != expected_commit):
         raise ReadinessModelError("frozen baseline has the wrong schema or source commit")
     paths: dict[str, Path] = {}
@@ -122,9 +127,13 @@ def load_frozen_baseline(
         paths[name], hashes[name] = path, digest
     source = json.loads(paths["source_manifest"].read_text(encoding="utf-8"))
     build = json.loads(paths["build_receipt"].read_text(encoding="utf-8"))
-    if (source.get("head") != expected_commit
+    if (not isinstance(source, dict) or not isinstance(build, dict)
+            or source.get("head") != expected_commit
             or build.get("source_head") != expected_commit
             or build.get("sha256") != hashes["binary"]
+            or not isinstance(source.get("dependencies"), dict)
+            or not isinstance(build.get("build"), str)
+            or not build["build"]
             or build.get("runtime_stats") != 0):
         raise ReadinessModelError("frozen baseline source and normal build receipts disagree")
     tree = subprocess.check_output(
@@ -138,7 +147,23 @@ def load_frozen_baseline(
             if kind != b"blob":
                 raise ReadinessModelError("frozen source tree contains a non-file entry")
             blobs[os.fsdecode(name)] = blob.decode("ascii")
-    verify_source_archive(paths["source_archive"], source["source_files"], blobs)
+    verify_source_archive(paths["source_archive"], source.get("source_files"), blobs)
+    library_name = receipt.get("library_root")
+    if not isinstance(library_name, str):
+        raise ReadinessModelError("frozen baseline has no runtime library root")
+    library = (receipt_path.parent / library_name).resolve()
+    expected_library = {
+        entry["path"][4:]: entry["sha256"] for entry in source["source_files"]
+        if entry["path"].startswith("lib/")
+    }
+    actual_library = {
+        str(path.relative_to(library)): sha256_file(path)
+        for path in library.rglob("*") if path.is_file()
+    }
+    if not expected_library or actual_library != expected_library:
+        raise ReadinessModelError("frozen baseline runtime library differs from its source")
+    if (paths["binary"].parent.parent / "lib").resolve() != library:
+        raise ReadinessModelError("frozen baseline binary is not staged beside its library")
     return {
         "commit": expected_commit,
         "receipt_sha256": expected_sha256,
@@ -147,6 +172,7 @@ def load_frozen_baseline(
         "build_only_repair": build.get("build_only_repair", ""),
         "dependencies_sha256": sha256_bytes(canonical_json(source["dependencies"])),
         "binary": str(paths["binary"]),
+        "library_sha256": sha256_bytes(canonical_json(actual_library)),
     }
 
 
@@ -644,6 +670,7 @@ def calibration_subject(artifact: Mapping[str, Any]) -> dict[str, Any]:
         "property_schema",
         "property_manifest_sha256",
         "source_anchors",
+        "consolidation_baseline",
     )
     missing = [key for key in required if key not in artifact]
     if missing:
@@ -660,6 +687,7 @@ def calibration_subject(artifact: Mapping[str, Any]) -> dict[str, Any]:
         "property_schema": artifact["property_schema"],
         "property_manifest_sha256": artifact["property_manifest_sha256"],
         "source_anchors": artifact["source_anchors"],
+        "consolidation_baseline": artifact["consolidation_baseline"],
     }
 
 

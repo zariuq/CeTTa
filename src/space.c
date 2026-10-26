@@ -1997,6 +1997,18 @@ static bool space_occurrence_cursor_frontier_is_full(
     return selected == live;
 }
 
+/* Access preparation may contract marked storage. Capture its resulting
+ * coordinates and pin them together, after the access path is ready. */
+static bool space_occurrence_cursor_capture(
+        Space *space, SpaceOccurrenceCursor *cursor) {
+    cursor->read = space_read_token(space);
+    cursor->prefix_epoch = space->prefix_epoch;
+    cursor->ceiling = space->native.len;
+    cursor->occurrences = space_pinned_occurrences_acquire(space);
+    cursor->pinned = true;
+    return space_read_token_prefix_intact(cursor->read);
+}
+
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
                                   SpaceOccurrenceCursor *cursor) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
@@ -2007,22 +2019,15 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         return false;
     space_linearize(s);
     cursor->space = s;
-    cursor->read = space_read_token(s);
-    cursor->prefix_epoch = s->prefix_epoch;
-    cursor->ceiling = s->native.len;
     if (pattern->kind == ATOM_VAR ||
         s->native.len <= MATCH_TRIE_THRESHOLD) {
         cursor->full_scan = true;
-        cursor->pinned = true;
-        cursor->occurrences = space_pinned_occurrences_acquire(s);
-        return space_read_token_prefix_intact(cursor->read);
+        return space_occurrence_cursor_capture(s, cursor);
     }
     if (space_match_native_exact_occurrences(
             s, pattern, &cursor->flat, &cursor->flat_len)) {
         cursor->flat_mode = true;
-        cursor->pinned = true;
-        cursor->occurrences = space_pinned_occurrences_acquire(s);
-        return space_read_token_prefix_intact(cursor->read);
+        return space_occurrence_cursor_capture(s, cursor);
     }
     /* A head over variables selects by its head alone: its rows, read in
      * order as they are needed, where the trie would merge every leaf below
@@ -2030,9 +2035,7 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     if (space_head_index_open(s, pattern, &cursor->head)) {
         cursor->head_start = cursor->head;
         cursor->head_mode = true;
-        cursor->pinned = true;
-        cursor->occurrences = space_pinned_occurrences_acquire(s);
-        return space_read_token_prefix_intact(cursor->read);
+        return space_occurrence_cursor_capture(s, cursor);
     }
     /* Rows removed by marks stay where they are and the cursor skips them.
      * The cold scan and a position index being built read rows by logical
@@ -2049,9 +2052,7 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         (!marked && !leads && space_path_index_may_select(pattern) &&
          space_path_index_candidates(s, pattern, &cursor->flat, &cursor->flat_len))) {
         cursor->flat_mode = true;
-        cursor->pinned = true;
-        cursor->occurrences = space_pinned_occurrences_acquire(s);
-        return space_read_token_prefix_intact(cursor->read);
+        return space_occurrence_cursor_capture(s, cursor);
     }
     space_match_native_ensure_trie(s);
     DiscNode *root = s->match_backend.native.match_trie;
@@ -2074,9 +2075,7 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     if (space_occurrence_cursor_frontier_is_full(s, &final, unique)) {
         dns_free(&final);
         cursor->full_scan = true;
-        cursor->pinned = true;
-        cursor->occurrences = space_pinned_occurrences_acquire(s);
-        return true;
+        return space_occurrence_cursor_capture(s, cursor);
     }
     cursor->node_len = unique;
     if (unique > 0u) {
@@ -2093,8 +2092,8 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         memset(cursor->leaf_pos, 0, sizeof(*cursor->leaf_pos) * unique);
     }
     dns_free(&final);
-    cursor->pinned = true;
-    cursor->occurrences = space_pinned_occurrences_acquire(s);
+    if (!space_occurrence_cursor_capture(s, cursor))
+        return false;
     space_occurrence_cursor_prepare_heap(cursor);
     return true;
 }
@@ -2200,9 +2199,8 @@ static bool space_occurrence_cursor_yield(
     return true;
 }
 
-SpaceOccurrenceCursorStep space_occurrence_cursor_next(
+static SpaceOccurrenceCursorStep space_occurrence_cursor_next_locked(
     SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out) {
-    CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (logical_index_out)
         *logical_index_out = 0u;
     if (!cursor || !cursor->space || !cursor->pinned ||
@@ -2290,6 +2288,38 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
     }
 }
 
+/* Physical rows belong to the same pinned view on either side of detach.
+ * A selected row needs no second logical-to-physical index lookup. */
+static Atom *space_pinned_occurrences_atom_at_row(
+        const SpacePinnedOccurrences *occurrences, CettaIndex row) {
+    const SpaceNativeStorage *live = occurrences->space
+        ? &occurrences->space->native : NULL;
+    uint8_t bits = live ? live->atom_id_width_bits : occurrences->atom_id_width_bits;
+    CettaCount length = live ? live->len : occurrences->len;
+    const uint8_t *storage = live ? live->atom_ids : occurrences->atom_ids;
+    TermUniverse *universe = live ? live->universe : occurrences->universe;
+    size_t width = cetta_atom_id_storage_width_bytes_from_bits(bits);
+    if (row >= length || !storage || width == 0u)
+        return NULL;
+    AtomId atom_id = cetta_atom_id_storage_load_bits(
+        storage + (size_t)row * width, bits);
+    return atom_id != CETTA_ATOM_ID_NONE
+        ? term_universe_get_atom(universe, atom_id) : NULL;
+}
+
+SpaceOccurrenceCursorStep space_occurrence_cursor_next(
+        SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out, Atom **atom_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (atom_out)
+        *atom_out = NULL;
+    SpaceOccurrenceCursorStep step =
+        space_occurrence_cursor_next_locked(cursor, logical_index_out);
+    if (step == SPACE_OCCURRENCE_CURSOR_ITEM && atom_out)
+        *atom_out = space_pinned_occurrences_atom_at_row(
+            cursor->occurrences, cursor->last_row);
+    return step;
+}
+
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
@@ -2297,22 +2327,14 @@ Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
         cursor ? cursor->occurrences : NULL;
     if (!occurrences)
         return NULL;
+    if (cursor->has_last && cursor->last_logical == index)
+        return space_pinned_occurrences_atom_at_row(occurrences, cursor->last_row);
     if (occurrences->space)
         return space_get_at64(occurrences->space, index);
     /* The detached copy holds the rows themselves, marked ones too. */
     SpaceViewMarks marks = space_view_marks(occurrences);
-    CettaIndex row = cursor->has_last && cursor->last_logical == index
-        ? cursor->last_row : space_view_row(&marks, index);
-    size_t width = cetta_atom_id_storage_width_bytes_from_bits(
-        occurrences->atom_id_width_bits);
-    if (row >= occurrences->len || width == 0u)
-        return NULL;
-    AtomId atom_id = cetta_atom_id_storage_load_bits(
-        occurrences->atom_ids + (size_t)row * width,
-        occurrences->atom_id_width_bits);
-    return atom_id != CETTA_ATOM_ID_NONE
-        ? term_universe_get_atom(occurrences->universe, atom_id)
-        : NULL;
+    return space_pinned_occurrences_atom_at_row(
+        occurrences, space_view_row(&marks, index));
 }
 
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {

@@ -303,11 +303,58 @@
   (value return-value)
   (value construct)
   (value invoke)
+  (value sequence-first)
+  (value sequence-last)
   ; These operations are selected by dialect elaboration of an occurrence,
   ; without giving its value or constructor head new source-call authority.
   (implicit-operation return-value)
   (implicit-operation construct)
   (implicit-operation invoke)
+  ; A nonempty series runs every argument in source order and exposes the
+  ; selected result. The zero-argument spelling is logical failure.
+  (variadic-form petta prog1 sequence-first)
+  (variadic-form petta progn sequence-last)
+  ; The elaborator selects the legal order; every lowering keeps the body
+  ; after the producer and its binding computation.
+  (sequence-order source-first source first last)
+  (sequence-order binder-first first source last)
+  ; Preparation is a selected subsequence of these execution stages. The
+  ; backend pushes the stages in reverse order onto its continuation stack.
+  (preparation-step install-type 0)
+  (preparation-step compute 1)
+  (preparation-step check-return 2)
+  (preparation-step check-type 3)
+  (preparation-step bind 4)
+  ; A ready invocation names its body and the source arguments prepared
+  ; before entry. Source authority and live declaration demand are separate.
+  (invocation-operation host)
+  (invocation-operation predicate-value)
+  (invocation-operation relational-member)
+  (invocation-operation list-unary)
+  (invocation-operation list-set)
+  (invocation-operation read-term)
+  (invocation-operation extension)
+  (invocation-operation predicate-call)
+  (invocation-head repr 1 host 0 1)
+  (invocation-head member 2 relational-member 0 2)
+  (invocation-head car-atom 1 list-unary 0 1)
+  (invocation-head cdr-atom 1 list-unary 0 1)
+  (invocation-head decons-atom 1 list-unary 0 1)
+  (invocation-head decons 1 list-unary 0 1)
+  (invocation-head last 1 list-unary 0 1)
+  (invocation-head reverse 1 list-unary 0 1)
+  (invocation-head msort 1 list-unary 0 1)
+  (invocation-head sort-atom 1 list-unary 0 1)
+  (invocation-form petta predicate 1 predicate-value 0 1)
+  (invocation-form petta list-to-set 1 list-set 0 1)
+  (invocation-form petta alpha-unique 1 list-set 0 1)
+  (invocation-form petta exclude-item 2 list-set 0 2)
+  (invocation-form petta sread 1 read-term 0 1)
+  (invocation-form petta import-prolog-function 1 extension 0 1)
+  (invocation-form petta call-predicate 1 predicate-call 0 1)
+  (invocation-form petta asserta-predicate 1 predicate-call 0 1)
+  (invocation-form petta assertz-predicate 1 predicate-call 0 1)
+  (invocation-form petta retract-predicate 1 predicate-call 0 1)
   ; Coordinates address arguments, excluding the head. A plan describes
   ; source layout; source authority and evaluation strategy remain separate.
   ; The final field names an optional lowering to the admitted fold fragment.

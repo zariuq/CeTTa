@@ -80,6 +80,12 @@ typedef enum {
  * remains the caller's policy. No evaluation or source authority is inferred. */
 static inline CettaControlOperationPlan petta_semantics_elaborate_control(
         SymbolId head, PeTTaForm form, CettaExprLen arity) {
+#define CETTA_PETTA_VARIADIC_FORM(native_form, op) \
+    if (form == (native_form)) \
+        return (CettaControlOperationPlan){arity ? (op) : CETTA_CONTROL_FAILURE, \
+            CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT};
+    CETTA_PETTA_VARIADIC_FORM_ROWS(CETTA_PETTA_VARIADIC_FORM)
+#undef CETTA_PETTA_VARIADIC_FORM
 #define CETTA_PETTA_CONTROL_FORM(native_form, count, op, source_arg, first_arg, last_arg) \
     if (form == (native_form) && arity == (count)) \
         return (CettaControlOperationPlan){(op), (source_arg), (first_arg), (last_arg)};
@@ -91,11 +97,36 @@ static inline CettaControlOperationPlan petta_semantics_elaborate_control(
         head = g_builtin_syms.let;
     else if (form == PETTA_FORM_CHAIN)
         head = g_builtin_syms.chain;
+    else if (form == PETTA_FORM_EVAL)
+        head = g_builtin_syms.eval;
     else if (head != g_builtin_syms.let_star &&
              head != g_builtin_syms.superpose && head != g_builtin_syms.empty_form)
         return (CettaControlOperationPlan){0};
     CettaControlOperationPlan plan = {0};
     cetta_control_operation_decode(head, arity, &plan, &g_builtin_syms);
+    return plan;
+}
+
+/* Native source admission precedes this layout. Live declarations may still
+ * hold arguments; neither the body tag nor the range grants demand authority. */
+static inline CettaInvocationPlan petta_semantics_elaborate_invocation(
+        SymbolId head, PeTTaForm form, CettaExprLen arity) {
+#define CETTA_PETTA_INVOCATION_FORM(native_form, count, body, first, last) \
+    if (form == (native_form) && arity == (count)) \
+        return (CettaInvocationPlan){(body), (first), (last)};
+    CETTA_PETTA_INVOCATION_FORM_ROWS(CETTA_PETTA_INVOCATION_FORM)
+#undef CETTA_PETTA_INVOCATION_FORM
+    CettaInvocationPlan plan = {0};
+    cetta_invocation_plan_decode(head, arity, &plan, &g_builtin_syms);
+    return plan;
+}
+
+static inline CettaComputationPlan petta_semantics_elaborate_computation(
+        SymbolId head, PeTTaForm form, CettaExprLen arity) {
+    CettaComputationPlan plan = {
+        .control = petta_semantics_elaborate_control(head, form, arity)};
+    if (!cetta_control_operation_is_control_form(plan.control))
+        plan.invocation = petta_semantics_elaborate_invocation(head, form, arity);
     return plan;
 }
 

@@ -1540,7 +1540,7 @@ static bool oem_relation_call(Atom *expr, const PettaPlanNode *plan) {
      * Their already callable occurrences at other arities use the ordinary
      * equation protocol, despite the form mark on the source plan. */
     return (plan->execution == PETTA_PLAN_EXEC_RELATION_SLOTS &&
-            petta_plan_computation(plan).operation == CETTA_CONTROL_INVOKE &&
+            petta_plan_computation(plan).control.operation == CETTA_CONTROL_INVOKE &&
             petta_semantics_form(head) == PETTA_FORM_NONE) ||
         (petta_semantics_runtime_head(head) == PETTA_RUNTIME_HEAD_DATA &&
          !petta_semantics_special_form_reads(head, expr->expr.len - 1u));
@@ -1842,7 +1842,7 @@ static const PettaPlanNode *oem_fold_recursion_plan(
         application->role != PETTA_PLAN_STATIC_CALL ||
         application->execution != PETTA_PLAN_EXEC_RELATION_SLOTS ||
         !application->relation_head_admitted ||
-        petta_plan_computation(application).operation != CETTA_CONTROL_INVOKE)
+        petta_plan_computation(application).control.operation != CETTA_CONTROL_INVOKE)
         return NULL;
     PettaPlanNode *root = arena_alloc(&program->atoms, sizeof(*root));
     PettaPlanNode *children =
@@ -3058,10 +3058,9 @@ static bool oem_sequence(const Atom *expr, const PettaPlanNode *plan) {
         expr->expr.elems[0]->kind != ATOM_SYMBOL || !plan ||
         plan->output != PETTA_PLAN_OUTPUT_CHILD)
         return false;
-    PeTTaForm form = petta_semantics_form(expr->expr.elems[0]->sym_id);
-    return (form == PETTA_FORM_PROGN &&
-            plan->output_child == expr->expr.len - 1u) ||
-        (form == PETTA_FORM_PROG1 && plan->output_child == 1u);
+    CettaExprIndex result = cetta_control_operation_series_result(
+        plan->control, expr->expr.len - 1u);
+    return result != 0u && plan->output_child == result;
 }
 
 static bool oem_build_sequence(OemCompile *compile, Atom *expr,
@@ -3069,8 +3068,7 @@ static bool oem_build_sequence(OemCompile *compile, Atom *expr,
                                bool tail, uint32_t *out) {
     OemNode node = {.kind = OEM_N_SEQUENCE,
                     .count = (uint32_t)expr->expr.len - 1u,
-                    .tail = tail && petta_semantics_form(
-                        expr->expr.elems[0]->sym_id) == PETTA_FORM_PROGN};
+                    .tail = tail && plan->control.operation == CETTA_CONTROL_SEQUENCE_LAST};
     uint32_t *children = malloc(sizeof(*children) * node.count);
     if (!children)
         return oem_reject(compile, "out of memory");
@@ -9995,12 +9993,11 @@ static OemRun oem_match_fallback_host(
 static Atom *oem_lazy_rows_fetch(CettaOpenEquationCursor *cursor,
                                  OemLazyRows *lazy) {
     for (;;) {
-        CettaIndex index = 0u;
-        if (space_occurrence_cursor_next(&lazy->occurrences, &index) !=
+        Atom *row = NULL;
+        if (space_occurrence_cursor_next(&lazy->occurrences, NULL, &row) !=
             SPACE_OCCURRENCE_CURSOR_ITEM)
             return NULL;
         cursor->stats.match_candidates++;
-        Atom *row = space_occurrence_cursor_atom(&lazy->occurrences, index);
         if (row)
             return row;
     }
