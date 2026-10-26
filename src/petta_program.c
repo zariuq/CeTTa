@@ -2787,13 +2787,9 @@ static PettaPlanNode *petta_plan_build_in(
             } else if (node->control.operation == CETTA_CONTROL_SCOPED_COMMIT) {
                 node->output = PETTA_PLAN_OUTPUT_TRUE;
             } else {
-                CettaExprIndex child = 0u;
-                if (form == PETTA_FORM_PROGN && nargs > 0u)
-                    child = nargs;
-                else if (form == PETTA_FORM_TRACE && nargs == 2u)
+                CettaExprIndex child = cetta_control_operation_series_result(node->control, nargs);
+                if (form == PETTA_FORM_TRACE && nargs == 2u)
                     child = 2u;
-                else if (form == PETTA_FORM_PROG1 && nargs > 0u)
-                    child = 1u;
                 else if ((form == PETTA_FORM_LET ||
                           form == PETTA_FORM_CHAIN) && nargs == 3u)
                     child = 3u;

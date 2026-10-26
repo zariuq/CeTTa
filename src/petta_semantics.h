@@ -80,6 +80,12 @@ typedef enum {
  * remains the caller's policy. No evaluation or source authority is inferred. */
 static inline CettaControlOperationPlan petta_semantics_elaborate_control(
         SymbolId head, PeTTaForm form, CettaExprLen arity) {
+#define CETTA_PETTA_VARIADIC_FORM(native_form, op) \
+    if (form == (native_form)) \
+        return (CettaControlOperationPlan){arity ? (op) : CETTA_CONTROL_FAILURE, \
+            CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT};
+    CETTA_PETTA_VARIADIC_FORM_ROWS(CETTA_PETTA_VARIADIC_FORM)
+#undef CETTA_PETTA_VARIADIC_FORM
 #define CETTA_PETTA_CONTROL_FORM(native_form, count, op, source_arg, first_arg, last_arg) \
     if (form == (native_form) && arity == (count)) \
         return (CettaControlOperationPlan){(op), (source_arg), (first_arg), (last_arg)};

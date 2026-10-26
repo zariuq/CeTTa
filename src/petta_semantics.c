@@ -2711,52 +2711,24 @@ static Atom *petta_value_let_symbol(Arena *arena) {
 }
 
 static Atom *petta_sequence_lower(
-    Arena *arena, Atom *form, bool return_first) {
+    Arena *arena, Atom *form, CettaControlOperationPlan plan) {
     CettaExprLen nargs = form->expr.len - 1u;
     if (nargs == 0u)
         return atom_petta_no_result(arena);
     if (nargs == 1u)
         return form->expr.elems[1];
-
-    Atom *body;
-    CettaExprIndex first_rest;
-    if (return_first) {
-        Atom *saved = atom_var_with_id(
-            arena, "__petta_prog1_result", fresh_var_id());
-        body = atom_expr2(
-            arena, atom_symbol_id(arena, g_builtin_syms.quote), saved);
-        first_rest = 1u;
-        for (CettaExprIndex index = nargs; index-- > first_rest;) {
-            Atom *ignored = atom_var_with_id(
-                arena, "__petta_sequence", fresh_var_id());
-            Atom *let_elems[4] = {
-                petta_value_let_symbol(arena),
-                ignored,
-                form->expr.elems[index + 1u],
-                body,
-            };
-            body = atom_expr(arena, let_elems, 4u);
-        }
-        Atom *let_elems[4] = {
-            petta_value_let_symbol(arena),
-            saved,
-            form->expr.elems[1],
-            body,
-        };
-        return atom_expr(arena, let_elems, 4u);
-    }
-
-    body = form->expr.elems[nargs];
-    for (CettaExprIndex index = nargs - 1u; index-- > 0u;) {
-        Atom *ignored = atom_var_with_id(
-            arena, "__petta_sequence", fresh_var_id());
-        Atom *let_elems[4] = {
-            petta_value_let_symbol(arena),
-            ignored,
-            form->expr.elems[index + 1u],
-            body,
-        };
-        body = atom_expr(arena, let_elems, 4u);
+    bool return_first = plan.operation == CETTA_CONTROL_SEQUENCE_FIRST;
+    Atom *saved = return_first
+        ? atom_var_with_id(arena, "__petta_prog1_result", fresh_var_id()) : NULL;
+    Atom *body = return_first
+        ? atom_expr2(arena, atom_symbol_id(arena, g_builtin_syms.quote), saved)
+        : form->expr.elems[nargs];
+    for (CettaExprIndex child = return_first ? nargs : nargs - 1u; child > 0u; child--) {
+        Atom *destination = return_first && child == 1u
+            ? saved : atom_var_with_id(arena, "__petta_sequence", fresh_var_id());
+        Atom *fields[] = {petta_value_let_symbol(arena), destination,
+            form->expr.elems[child], body};
+        body = atom_expr(arena, fields, 4u);
     }
     return body;
 }
@@ -2986,7 +2958,8 @@ Atom *petta_semantics_lower(
         Atom *sequence = atom_expr3(
             arena, atom_symbol_id(arena, petta_symbol_ids()->progn),
             print, form->expr.elems[2]);
-        return petta_sequence_lower(arena, sequence, false);
+        return petta_sequence_lower(arena, sequence,
+            petta_semantics_elaborate_control(SYMBOL_ID_NONE, PETTA_FORM_PROGN, 2u));
     }
     case PETTA_FORM_AND_THEN:
     case PETTA_FORM_OR_ELSE: {
@@ -3008,9 +2981,9 @@ Atom *petta_semantics_lower(
         return atom_expr(arena, if_elems, 4u);
     }
     case PETTA_FORM_PROGN:
-        return petta_sequence_lower(arena, form, false);
     case PETTA_FORM_PROG1:
-        return petta_sequence_lower(arena, form, true);
+        return petta_sequence_lower(arena, form, petta_semantics_elaborate_control(
+            SYMBOL_ID_NONE, kind, form->expr.len - 1u));
     case PETTA_FORM_FOLDALL:
         return petta_foldall_lower(arena, form);
     case PETTA_FORM_MAPLIST:
@@ -3877,12 +3850,11 @@ CettaExprIndex petta_semantics_output_child(const Atom *body) {
         return 3u;
     if (head == g_builtin_syms.let_star && len == 3u)
         return 2u;
-    if (form == PETTA_FORM_PROGN)
-        return len - 1u;
+    if (form == PETTA_FORM_PROGN || form == PETTA_FORM_PROG1)
+        return cetta_control_operation_series_result(
+            petta_semantics_elaborate_control(head, form, len - 1u), len - 1u);
     if (form == PETTA_FORM_TRACE && len == 3u)
         return 2u;
-    if (form == PETTA_FORM_PROG1)
-        return 1u;
     return 0u;
 }
 

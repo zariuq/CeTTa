@@ -34394,71 +34394,31 @@ static bool petta_machine_dispatch_solve(
             });
     }
 
-    /*
-     * A PeTTa sequence is relational conjunction in source order.  Keep it
-     * inside the search machine so every child retains its compiled
-     * occurrence role and ordinary choice-point continuations preserve
-     * nondeterminism.  PROG1 differs only by retaining the first answer while
-     * the remaining goals run for their effects.
-     */
-    if (form == PETTA_FORM_PROGN ||
-        form == PETTA_FORM_PROG1) {
-        if (nargs == 0u)
-            return false;
-        if (form == PETTA_FORM_PROGN) {
-            if (!petta_push_solve_planned(
-                    machine, expression->expr.elems[nargs],
-                    expected, goal->barrier,
-                    petta_plan_child(plan, nargs))) {
-                *failure = PETTA_MACHINE_STEP_CAPACITY;
-                return false;
-            }
-            petta_inherit_result_match(machine, goal);
-            for (CettaExprIndex index = nargs;
-                 index > 1u; index--) {
-                Atom *ignored = petta_fresh_variable(machine);
-                CettaExprIndex child = index - 1u;
-                if (!ignored ||
-                    !petta_push_solve_planned(
-                        machine, expression->expr.elems[child],
-                        ignored, goal->barrier,
-                        petta_plan_child(plan, child))) {
-                    *failure = PETTA_MACHINE_STEP_CAPACITY;
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        Atom *saved = machine->host.source_output_constraints
-            ? expected : petta_fresh_variable(machine);
-        if (!saved ||
-            (!machine->host.source_output_constraints &&
-             !petta_push_unify(
-                 machine, saved, expected, goal->barrier))) {
+    /* A series runs in source order and exposes its selected value. The
+     * selected goal inherits result demand; other goals keep their ordinary
+     * continuations, including duplicate answers and effects. */
+    CettaExprIndex series_result = cetta_control_operation_series_result(control, nargs);
+    if (series_result) {
+        bool deferred = control.operation == CETTA_CONTROL_SEQUENCE_FIRST &&
+            !machine->host.source_output_constraints;
+        Atom *saved = deferred ? petta_fresh_variable(machine) : expected;
+        if (!saved || (deferred &&
+            !petta_push_unify(machine, saved, expected, goal->barrier))) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
-        for (CettaExprIndex index = nargs;
-             index > 1u; index--) {
-            Atom *ignored = petta_fresh_variable(machine);
-            if (!ignored ||
-                !petta_push_solve_planned(
-                    machine, expression->expr.elems[index],
-                    ignored, goal->barrier,
-                    petta_plan_child(plan, index))) {
+        for (CettaExprIndex child = nargs; child > 0u; child--) {
+            Atom *destination = child == series_result
+                ? saved : petta_fresh_variable(machine);
+            if (!destination || !petta_push_solve_planned(
+                    machine, expression->expr.elems[child], destination,
+                    goal->barrier, petta_plan_child(plan, child))) {
                 *failure = PETTA_MACHINE_STEP_CAPACITY;
                 return false;
             }
+            if (child == series_result)
+                petta_inherit_result_match(machine, goal);
         }
-        if (!petta_push_solve_planned(
-                machine, expression->expr.elems[1],
-                saved, goal->barrier,
-                petta_plan_child(plan, 1u))) {
-            *failure = PETTA_MACHINE_STEP_CAPACITY;
-            return false;
-        }
-        petta_inherit_result_match(machine, goal);
         return true;
     }
 

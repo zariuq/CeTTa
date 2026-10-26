@@ -1297,6 +1297,10 @@ static unsigned source_computation_plans(void) {
         {"(source-probe 7)", PETTA_PLAN_STATIC_CALL, CETTA_CONTROL_INVOKE},
         {"($f 7)", PETTA_PLAN_DYNAMIC_CALL, CETTA_CONTROL_INVOKE},
         {"(eval $c)", PETTA_PLAN_STATIC_CALL, CETTA_CONTROL_FORCE},
+        {"(progn 1 2)", PETTA_PLAN_STATIC_CALL, CETTA_CONTROL_SEQUENCE_LAST},
+        {"(prog1 1 2)", PETTA_PLAN_STATIC_CALL, CETTA_CONTROL_SEQUENCE_FIRST},
+        {"(progn)", PETTA_PLAN_STATIC_CALL, CETTA_CONTROL_FAILURE},
+        {"(prog1)", PETTA_PLAN_STATIC_CALL, CETTA_CONTROL_FAILURE},
     };
     for (size_t index = 0u; index < sizeof(cases) / sizeof(*cases); index++) {
         const PettaPlanNode *plan = petta_program_plan_current(
@@ -1347,11 +1351,24 @@ static unsigned source_computation_plans(void) {
             (arity == 2u || arity == 3u ? CETTA_CONTROL_BRANCH : CETTA_CONTROL_NONE));
         assert(selected.invocation.operation == CETTA_INVOCATION_NONE);
     }
+    CettaExprLen series_arities[] = {0u, 1u, 2u, 8u, 255u, 256u, 4096u, UINT64_MAX};
+    for (size_t i = 0u; i < sizeof(series_arities) / sizeof(*series_arities); i++) {
+        CettaExprLen arity = series_arities[i];
+        for (unsigned first = 0u; first < 2u; first++) {
+            CettaComputationPlan computation = petta_semantics_elaborate_computation(
+                SYMBOL_ID_NONE, first ? PETTA_FORM_PROG1 : PETTA_FORM_PROGN, arity);
+            assert(computation.control.operation == (!arity ? CETTA_CONTROL_FAILURE :
+                first ? CETTA_CONTROL_SEQUENCE_FIRST : CETTA_CONTROL_SEQUENCE_LAST));
+            assert(computation.invocation.operation == CETTA_INVOCATION_NONE);
+            assert(cetta_control_operation_series_result(computation.control, arity) ==
+                (!arity ? 0u : first ? 1u : arity));
+        }
+    }
     petta_program_free(program);
     space_free(&space);
     term_universe_free(&universe);
     arena_free(&source);
-    return 18u;
+    return 38u;
 }
 
 static bool invocation_rewrite(void *opaque, Space *space, Arena *arena,
@@ -1501,10 +1518,23 @@ static unsigned source_invocation_plans(void) {
     assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
     bindings_free(&environment);
     petta_machine_destroy(&machine);
+    Atom *series = fixture_atom(&source, "(progn (quote (+ 1 2)) (quote ignored))");
+    const PettaPlanNode *series_source = petta_program_plan_current(program, series);
+    PettaPlanNode series_plan = *series_source;
+    series_plan.control.operation = CETTA_CONTROL_SEQUENCE_FIRST;
+    series_plan.output_child = 1u;
+    assert(petta_machine_init_with_plan(&machine, &space, &source, series,
+        &series_plan, NULL, &ordinary));
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
+    assert(atom_eq(answer, fixture_atom(&source, "(+ 1 2)")));
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
     petta_program_free(program);
     space_free(&space);
     arena_free(&source);
-    return checks + 7u;
+    return checks + 8u;
 }
 
 static unsigned ordinary_invocation_consumers(void) {

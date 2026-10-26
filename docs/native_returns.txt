@@ -775,6 +775,32 @@ relates explicit native debit arithmetic to the natural-number purse and full
 metered kernel. Authored occurrence mapping, complete dialect elaboration and
 native C correspondence remain refinement obligations.
 
+Variadic sequence plans
+-----------------------
+
+Dialect elaboration assigns first-result and last-result series operations to
+prog1 and progn. Their argument count is not encoded in a byte coordinate;
+all children run in source order and the selected child supplies the result.
+Zero-argument series retain the dialect's existing logical failure.
+
+One ordinary scheduler builds both worklists. The first-result form retains
+its separate publication goal when its host requires deferred result matching.
+The selected child inherits result demand; other children receive distinct
+fresh destinations. Compiler output selection, fallback syntax elaboration
+and OEM sequence/tail lowering consume the same result policy. Only the last
+child of a last-result series inherits tail position. Opcode selection does
+not add source authority or native effect admission.
+
+ExecutionControl.SeriesExecution relates reverse indexed stack assembly to an
+independent source-order schedule. It proves the exact goal count, separates
+the single-operand policies, retains distinct discarded destinations and joins
+the schedules to metered contextual execution. Native AST correspondence,
+fresh-name allocation and C ownership remain separate obligations.
+
+The process-stream gate is included in test-all and the alternate process
+launch qualification. Frozen executable bundles include their .proc-scope
+companion; owner-scoped process execution depends on that exact adjacent file.
+
 Consolidation qualification
 --------------------------
 

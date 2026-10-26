@@ -8511,7 +8511,14 @@ static void test_resume_contract(TermUniverse *universe, Arena *arena) {
     Atom *set_query = parse_one(arena,
         "(let $x (superpose (1 1 2)) "
         "(car-atom (list_to_set ((Pair $x (resume-contract-record $x)) (Pair $x $x)))))");
-    Atom *queries[] = {query, argument_query, typed_query, force_query, native_query, set_query};
+    Atom *progn_query = parse_one(arena,
+        "(let $x (superpose (1 1 2)) "
+        "(progn (resume-contract-record $x) (Pair $x $x)))");
+    Atom *prog1_query = parse_one(arena,
+        "(let $x (superpose (1 1 2)) "
+        "(prog1 (Pair $x $x) (resume-contract-record $x)))");
+    Atom *queries[] = {query, argument_query, typed_query, force_query, native_query,
+        set_query, progn_query, prog1_query};
     const size_t query_count = sizeof(queries) / sizeof(*queries);
     for (size_t index = 0u; index < query_count; index++) {
         Atom *active_query = queries[index];

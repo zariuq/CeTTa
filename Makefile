@@ -32613,12 +32613,14 @@ test-all: test-owned-resumable-consumers test-he-shared-execution
 test-owned-resumable-consumers: $(BIN)
 	@python3 tests/support/test_owned_resumable_consumers.py ./$(BIN) --gmp $(ENABLE_GMP)
 
-.PHONY: test-effects-v1 test-process-scope-v1 test-process-scope-fork-v1 test-list-drop-v1
-test-all: test-effects-v1 test-process-scope-v1 test-list-drop-v1
+.PHONY: test-effects-v1 test-process-scope-v1 test-process-stream-v1 test-process-scope-fork-v1 test-list-drop-v1
+test-all: test-effects-v1 test-process-scope-v1 test-process-stream-v1 test-list-drop-v1
 test-process-scope-v1: $(BIN) tests/support/check_process_scope_v1.py
 	@python3 tests/support/check_process_scope_v1.py ./$(BIN)
+test-process-stream-v1: $(BIN) tests/support/check_process_stream.py tests/support/proc_fixture_v1.c
+	@python3 tests/support/check_process_stream.py ./$(BIN)
 test-process-scope-fork-v1:
-	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-process-scope-v1
+	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-process-scope-v1 test-process-stream-v1
 test-list-drop-v1: $(BIN) lib/list.metta tests/list_value/list_drop.metta tests/list_value/list_drop.expected
 	@set -e; for language in he petta@1.0.6 prime; do \
 		library=list; test $$language != petta@1.0.6 || library='(library list)'; \

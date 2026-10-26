@@ -13,6 +13,13 @@ import tempfile
 # live-declaration and held-argument contracts where the reference differs.
 # Cases include refusals of fusion: they must retain ordinary evaluation.
 CASES = [
+    ('source-plan-series-progn-duplicates', 'petta', '!(collapse (progn (superpose (1 1)) (superpose (7 7 8))))\n', '(7 7 8 7 7 8)\n', 0),
+    ('source-plan-series-prog1-duplicates', 'petta', '!(collapse (prog1 (superpose (1 1 2)) (superpose (7 8))))\n', '(1 1 1 1 2 2)\n', 0),
+    ('source-plan-series-progn-data-effects', 'petta', '!(progn (println! first) (println! second) (quote (+ 1 2)))\n', 'first\nsecond\n(+ 1 2)\n', 0),
+    ('source-plan-series-prog1-data-effects', 'petta', '!(prog1 (let $_ (println! first) (quote (+ 1 2))) (println! second))\n', 'first\nsecond\n(+ 1 2)\n', 0),
+    ('source-plan-series-empty-series', 'petta', '!(progn)\n!(prog1)\n!(collapse (prog1 (superpose (1 2)) (empty)))\n', '()\n', 0),
+    ('source-plan-series-cut-series', 'petta', '(= (series-cut) (prog1 (superpose (1 2)) (cut)))\n!(series-cut)\n', '1\n', 0),
+    ('source-plan-series-alias-series', 'petta', '!(let $z (prog1 (Pair $x $x) (let $x 7 True)) $z)\n', '(Pair 7 7)\n', 0),
     ('invocation-layout-unary-data', 'petta', '!(car-atom (quote ((+ 1 2) 7)))\n!(cdr-atom (quote ((println! forbidden) 7)))\n', '(+ 1 2)\n(7)\n', 0),
     ('invocation-layout-argument-order', 'petta', '!(exclude-item (let $_ (println! left) 1) (let $_ (println! right) (quote (1 2 1))))\n', 'left\nright\n(2)\n', 0),
     ('invocation-layout-set-duplicates', 'petta', '!(list_to_set (superpose ((quote (1 2 1)) (quote (1 2 1)))))\n', '(1 2)\n(1 2)\n', 0),
