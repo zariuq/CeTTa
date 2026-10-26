@@ -6,11 +6,26 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* A port of CPython 3.12's C JSON scanner (Modules/_json.c) and of
- * json.decoder.JSONDecoder.decode: the same states, checks and messages,
- * over the text's code points so that positions are Python string indices.
- * Containers use an explicit stack; CPython would raise RecursionError near
- * its recursion limit instead. */
+/* Adapted from CPython 3.12's C JSON scanner (Modules/_json.c:
+ * scanstring_unicode, _match_number_unicode, scan_once_unicode and the
+ * object and array parsers) and from json/decoder.py (JSONDecoder.decode,
+ * JSONDecodeError), checked against CPython 3.12.13:
+ *   Copyright (c) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010,
+ *   2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023
+ *   Python Software Foundation; All Rights Reserved.
+ * Used under the PSF License Version 2, in docs/licenses/cpython.txt.
+ *
+ * It keeps CPython's states, checks and messages. Changes from CPython:
+ * - written in C over the text's code points, decoded from UTF-8 with lone
+ *   surrogates as surrogatepass writes them, so positions are Python string
+ *   indices;
+ * - containers use an explicit stack, where CPython recurses and raises
+ *   RecursionError near its recursion limit;
+ * - values are CeTTa atoms, and a repeated object key keeps its first
+ *   position with the last value, as dict(pairs) does, through a hash index;
+ * - errors are returned as data (JSONDecodeError's msg, pos, lineno and
+ *   colno; int()'s ValueError past 4300 digits) rather than raised;
+ * - only json.loads's defaults: strict, with no hooks. */
 
 enum { PY_INT_MAX_STR_DIGITS = 4300 };
 
