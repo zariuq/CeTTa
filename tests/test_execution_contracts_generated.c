@@ -6,6 +6,10 @@
 #include <stdio.h>
 #include <string.h>
 
+/* This descriptor-only executable supplies the builtin table read by the
+ * dialect elaborator; it does not link the runtime's symbol owner. */
+BuiltinSyms g_builtin_syms;
+
 /* The head table is compiled from the spec; the test checks the compiled
  * algebra (join laws, classification) and that the heads the pull consumers
  * admit are present.  It deliberately does not pin the row count: adding a
