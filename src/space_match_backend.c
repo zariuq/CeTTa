@@ -12198,9 +12198,9 @@ bool space_native_flat_conjunction_count(
             bind_marks[level] = bind_len;
         }
 
-        CettaIndex candidate_index = 0u;
+        Atom *fact = NULL;
         SpaceOccurrenceCursorStep step = space_occurrence_cursor_next(
-            &cursors[level], &candidate_index);
+            &cursors[level], NULL, &fact);
         if (step == SPACE_OCCURRENCE_CURSOR_INVALIDATED) {
             admitted = false;
             break;
@@ -12215,8 +12215,6 @@ bool space_native_flat_conjunction_count(
             continue;
         }
 
-        Atom *fact = space_occurrence_cursor_atom(
-            &cursors[level], candidate_index);
         if (!fact || fact->kind != ATOM_EXPR ||
             fact->expr.len != patterns[level]->expr.len) {
             continue;
