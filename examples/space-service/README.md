@@ -212,14 +212,19 @@ about current state: removing and reinserting identical records can restore
 the same view. Records must carry stable occurrence IDs and versions when
 causal identity or detecting that intervening change matters.
 
-`space:wait-request SOCKET OBSERVATION MILLISECONDS` builds a native
-`space:request` descriptor for `io:submit`. It consumes the observation when the
-service registers the wait. The service compares the dependency before parking,
+`space:wait-start SOCKET OBSERVATION MILLISECONDS` returns
+`(SpaceWaiting OBSERVATION IO-ID)` using native asynchronous I/O. It consumes
+the observation when the service registers the wait. The service compares the dependency before parking,
 preventing a missed change between reading and waiting. Unrelated writes do not
 wake the client. Completion reports `changed` or `unchanged`; it never claims a
-message or acknowledges an effect. `io:cancel` closes the owning connection and
-releases its captured views. Waiting extends ownership beyond the observation's
-original lease. This requires the advertised `scope-waits-v1` capability.
+message or acknowledges an effect. Use `space:wait-poll SOCKET WAITING` to
+consume the result and `space:wait-cancel SOCKET WAITING` to cancel. The latter
+closes the I/O connection and retires any observation still awaiting transfer:
+cancelling the I/O request alone, before registration, would leave that
+observation alive until expiry. Waiting extends ownership beyond the original
+lease. The low-level `space:wait-request` descriptor remains available to
+callers implementing both cleanup responsibilities. This requires the
+advertised `scope-waits-v1` capability.
 
 The snapshot row allowance is explicit and excessive results return an error;
 it is not a truncation policy. Both helpers currently materialize each declared

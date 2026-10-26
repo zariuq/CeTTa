@@ -807,7 +807,9 @@ class ServiceTests(unittest.TestCase):
 (= (transaction-test (scoped-begin $socket $space $key $fingerprint $reads $writes))
    (space:begin-scoped $socket $space $key $fingerprint $reads $writes 4096 60000))
 (= (transaction-test (watch $socket $observation $duration))
-   (let $request (space:wait-request $socket $observation $duration) (io:submit $request)))
+   (space:wait-start $socket $observation $duration))
+(= (transaction-test (watch-poll $socket $waiting)) (space:wait-poll $socket $waiting))
+(= (transaction-test (watch-cancel $socket $waiting)) (space:wait-cancel $socket $waiting))
 (= (transaction-test (poll $id)) (io:poll $id))
 (= (transaction-test (cancel $id)) (io:cancel $id))
 (= (transaction-test (publish $socket $transaction $id $result $operations))
@@ -989,15 +991,16 @@ class ServiceTests(unittest.TestCase):
             observation = worker.call(E("scoped-observe", self.fixture.socket, space.describe(),
                                          (E("scope", "inbox", E("Message", "a", Var(0))),), ()))
             pending = worker.call(E("watch", self.fixture.socket, observation, 3000))
-            self.assertEqual(pending[0], S("io:pending"))
-            return pending[1]
-        request = start()
+            self.assertEqual(pending[0], S("SpaceWaiting"))
+            return pending
+        waiting = start()
+        request = waiting[2]
         space.add(E("Message", "b", 1))
-        self.assertEqual(worker.call(E("poll", request)), E("io:idle"))
+        self.assertEqual(worker.call(E("watch-poll", self.fixture.socket, waiting)), E("io:idle"))
         space.add(E("Message", "a", 2))
         deadline = time.monotonic()+3
         while True:
-            result = worker.call(E("poll", request))
+            result = worker.call(E("watch-poll", self.fixture.socket, waiting))
             if result != E("io:idle"):
                 break
             self.assertLess(time.monotonic(), deadline)
@@ -1005,10 +1008,12 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result[0], S("io:event"))
         self.assertEqual(result[2][2:], (S("ok"), E("changed", space.uuid, space.id, space.revision)))
         self.assertEqual(worker.call(E("poll", request)), E("io:unknown", request))
-        for _ in range(24):
-            request = start()
-            self.assertEqual(worker.call(E("cancel", request)), ())
-            self.assertEqual(worker.call(E("poll", request)), E("io:unknown", request))
+        # More cancellations than observation slots, including cancellations
+        # before the server has received the asynchronous request.
+        for _ in range(80):
+            waiting = start()
+            self.assertEqual(worker.call(E("watch-cancel", self.fixture.socket, waiting)), ())
+            self.assertEqual(worker.call(E("poll", waiting[2])), E("io:unknown", waiting[2]))
 
     @unittest.skipUnless(WORKER, "provide value worker for snapshot publication qualification")
     def test_prime_worker_publishes_only_against_its_captured_snapshot(self):

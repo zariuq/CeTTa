@@ -10,6 +10,7 @@
 ; uncertain write and never execute an external effect. Receipt records are
 ; reserved and survive the service's bounded transport-reply cache.
 !(import! &self (library space_service))
+!(import! &self (library io))
 
 (: space:observe (-> String Atom Atom Atom Number Number %Undefined%))
 
@@ -181,9 +182,9 @@
       ((SpaceTransaction $captured $key $fingerprint) (space:abort $socket $captured))
       ($other (SpaceRefused invalid-observation)))))
 
-; Submit this descriptor with io:submit. Waiting consumes the observation:
-; io:cancel closes the owning connection and releases its captured views.
-; A wait reports a changed dependency, never a claimed message or effect.
+; Low-level descriptor. Until the service registers it, the caller still
+; owns the observation. Prefer wait-start/poll/cancel below: cancelling only
+; the I/O request before registration cannot release an unsent observation.
 (: space:wait-request (-> String Atom Number %Undefined%))
 (= (space:wait-request $socket $observation $duration)
   (case $observation
@@ -193,6 +194,29 @@
        (let* (($rid (space:request-id)) ($deadline (+ $duration 5000)))
          (space:request $socket (request $rid observe-watch $uuid $source $boot $id $duration) $deadline)))
       ($other (SpaceRefused invalid-observation)))))
+
+(: space:wait-start (-> String Atom Number %Undefined%))
+(= (space:wait-start $socket $observation $duration)
+  (let $request (space:wait-request $socket $observation $duration)
+    (case $request
+      (((space:request $endpoint $body $deadline)
+         (case (io:try-submit $request)
+           (((io:pending $id) (SpaceWaiting $observation $id))
+             ($failed (let $closed (space-tx:release $socket $observation) $failed)))))
+        ($failed $failed)))))
+
+; A terminal event may mean the request was never sent. Retire the original
+; observation too; if registration already consumed it, closing is harmless.
+(: space:wait-poll (-> String Atom %Undefined%))
+(= (space:wait-poll $socket (SpaceWaiting $observation $id))
+  (case (io:poll $id)
+    (((io:idle) (io:idle))
+      ($terminal (let $closed (space-tx:release $socket $observation) $terminal)))))
+
+(: space:wait-cancel (-> String Atom %Undefined%))
+(= (space:wait-cancel $socket (SpaceWaiting $observation $id))
+  (let* (($stopped (io:cancel $id)) ($closed (space-tx:release $socket $observation)))
+    $stopped))
 
 ; Completed or refused begin operations must not retain scoped views. The
 ; conservative observation already closed its snapshots while reading.
