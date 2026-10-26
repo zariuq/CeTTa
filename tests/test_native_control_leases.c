@@ -296,33 +296,33 @@ static void scoped_environment_refusal_cases(void) {
     CHECK(scoped && whole && !atom_eq(scoped,whole));
     CHECK(scoped && scoped->expr.elems[2]==quoted);
     CHECK(atom_eq(eval_env_apply(&environment,&arena,term),scoped));
-    EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
-    EvalCompletionTracker *previous=g_eval_completion_tracker;
+    CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
+    CettaEvalEpisode *previous=g_eval_completion_tracker;
     g_eval_completion_tracker=&tracker;
     br_env_refusals=1u;
     CHECK(eval_env_apply(&environment,&arena,term)==NULL);
     CHECK(!br_env_refusals && tracker.interrupted &&
           tracker.completion==CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
-    tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+    tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
     OutcomeSet rows;outcome_set_init(&rows);
     br_env_refusals=1u;
     outcome_set_add_prefixed(&arena,&rows,term,NULL,&environment,false);
     CHECK(!rows.len && !br_env_refusals && tracker.interrupted);
     CHECK(tracker.completion==CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
     outcome_set_free(&rows);
-    tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+    tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
     Outcome row;outcome_init(&row);row.atom=term;
     CHECK(bindings_clone(&row.env,&environment));
     br_env_refusals=1u;
     CHECK(!outcome_atom_materialize(&arena,&row));
     CHECK(row.atom==term && !row.materialized_atom &&
         bindings_lookup_value_id(&row.env,variable->var_id).skeleton->ground.ival==7);
-    tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+    tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
     CHECK(atom_eq(outcome_atom_materialize(&arena,&row),scoped));
     CHECK(tracker.completion==CETTA_EVAL_COMPLETE && !tracker.interrupted);
     outcome_free_fields(&row);
     Space space;space_init(&space);
-    tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+    tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
     Atom *call=atom_expr3(&arena,atom_symbol(&arena,"+"),variable,atom_int(&arena,1));
     outcome_set_init(&rows);br_env_refusals=1u;br_native_calls=0u;
     br_suspend_native=true;
@@ -330,7 +330,7 @@ static void scoped_environment_refusal_cases(void) {
     br_suspend_native=false;
     CHECK(!rows.len && !br_env_refusals && !br_native_calls && tracker.interrupted);
     outcome_set_free(&rows);
-    tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+    tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
     outcome_set_init(&rows);br_env_refusals=1u;
     Atom *prefix[3]={term->expr.elems[0]};
     interpret_tuple(&space,&arena,term->expr.elems,3u,1u,prefix,&environment,
@@ -343,7 +343,7 @@ static void scoped_environment_refusal_cases(void) {
             host?CETTA_LANGUAGE_HE:CETTA_LANGUAGE_PETTA,
             host?cetta_profile_he_extended():cetta_profile_petta_extended());
         eval_set_library_context(&context);
-        tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+        tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
         unsigned calls=br_env_calls;br_env_refusals=1u;
         CHECK(atom_eq(eval_env_apply(&environment,&arena,term),whole));
         CHECK(br_env_refusals==1u && br_env_calls==calls && !tracker.interrupted);
@@ -397,8 +397,8 @@ static void answer_reference_outer_binding_cases(void) {
         CettaVarMap map;cetta_var_map_init(&map);
         CHECK(cetta_var_map_add(&map,var_id_from_base(501u),caller));
         Outcome row;CHECK(outcome_init_answer_ref(&arena,&row,&bank,reference,&map,&caller_env));
-        EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
-        EvalCompletionTracker *previous=g_eval_completion_tracker;g_eval_completion_tracker=&tracker;
+        CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
+        CettaEvalEpisode *previous=g_eval_completion_tracker;g_eval_completion_tracker=&tracker;
         CHECK(!outcome_atom_materialize(&arena,&row));
         CHECK(!tracker.interrupted && tracker.completion==CETTA_EVAL_COMPLETE);
         CHECK(row.kind==CETTA_OUTCOME_ANSWER_REF && row.answer_ref.bank==&bank &&
@@ -543,8 +543,8 @@ static void checked_query_preparation_cases(void) {
     Atom *query=atom_expr2(&arena,atom_symbol(&arena,"checked-miss"),marker);
     Bindings base;bindings_init(&base);
     CHECK(bindings_add_var(&base,marker,atom_symbol(&arena,"CheckedA")));
-    EvalCompletionTracker *old_tracker=g_eval_completion_tracker;
-    EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
+    CettaEvalEpisode *old_tracker=g_eval_completion_tracker;
+    CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
     g_eval_completion_tracker=&tracker;
     {
         QueryMissSingleTailStreamCtx stream;
@@ -556,7 +556,7 @@ static void checked_query_preparation_cases(void) {
             tracker.interrupted && tracker.completion==CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
         br_weight_clone_source=NULL;
         query_miss_single_tail_stream_ctx_free(&stream);
-        tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+        tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
         query_miss_single_tail_stream_ctx_init(&stream,NULL,NULL,&base,&arena,
             NULL,true,NULL,NULL,NULL,&arena);
         CHECK(query_miss_single_tail_store_first(&stream,query,&base,CETTA_ANSWER_REF_NONE));
@@ -570,7 +570,7 @@ static void checked_query_preparation_cases(void) {
             QueryEvalVisitorCtx visitor={.space=&space,.arena=&arena,.invocation=query,
                 .fuel=-1,.base_env=&base,.preserve_bindings=true,.context=&context,
                 .outcomes=&rows,.he_call=query};
-            tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+            tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
             const bool refuse=fault && !retry;
             br_preparation_merge_refusals=refuse?1u:0u;
             Atom *next=NULL,*type=NULL;Bindings tail;bindings_init(&tail);
@@ -600,7 +600,7 @@ static void checked_query_preparation_cases(void) {
         QueryEvalVisitorCtx visitor={.space=&space,.arena=&arena,.invocation=query,
             .fuel=-1,.base_env=&base,.preserve_bindings=true,.context=&context,
             .outcomes=&rows};
-        tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+        tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
         CHECK(query_visit_eval_for_caller_common(query,&conflicting,NULL,&visitor));
         CHECK(!tracker.interrupted && !rows.len &&
             bindings_lookup_value_id(&base,marker->var_id).skeleton->kind==ATOM_SYMBOL);
@@ -622,7 +622,7 @@ static void checked_query_preparation_cases(void) {
             QueryEvalVisitorCtx visitor={.space=&space,.arena=&arena,.invocation=query,
                 .fuel=-1,.base_env=&caller,.preserve_bindings=true,.context=&context,
                 .outcomes=&rows,.he_call=query};
-            tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+            tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
             Atom *next=NULL,*type=NULL;Bindings tail;bindings_init(&tail);bool replaces=false;
             QueryTableTailState state=query_equations_miss_single_tail_stream(
                 &space,query,NULL,&arena,&visitor,allow_tail!=0u,&next,&type,&tail,&replaces);
@@ -654,13 +654,13 @@ static void partial_row_consumer_cases(void) {
     Atom *variable=atom_var(&arena,"partial-row");
     CHECK(bindings_add_var(&environment,variable,atom_int(&arena,7)));
     Atom *term=atom_expr2(&arena,atom_symbol(&arena,"Pair"),variable);
-    EvalCompletionTracker *previous=g_eval_completion_tracker;
+    CettaEvalEpisode *previous=g_eval_completion_tracker;
     for(unsigned mode=0u;mode<7u;mode++) {
         OutcomeSet rows;outcome_set_init_with_owner(&rows,&arena);
         Outcome *row=outcome_set_push_slot(&rows);assert(row);
         outcome_init(row);row->atom=term;
         CHECK(bindings_clone(&row->env,&environment));
-        EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
+        CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
         g_eval_completion_tracker=&tracker;
         unsigned visits=0u;
         br_env_refusals=1u;
@@ -670,7 +670,7 @@ static void partial_row_consumer_cases(void) {
                 CETTA_SEARCH_POLICY_ORDER_SHORTLEX};
             CHECK(!outcome_set_visit_ordered(&arena,&rows,orders[mode],refused_row_visit,&visits));
             CHECK(!visits);
-            tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+            tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
             CHECK(outcome_set_visit_ordered(&arena,&rows,orders[mode],refused_row_visit,&visits)==1u);
             CHECK(visits==1u);
         } else if(mode==4u) {
@@ -692,7 +692,7 @@ static void partial_row_consumer_cases(void) {
             CHECK(!top.projected && !top.committed && !destination.len && rows.len==1u);
             CHECK(top.owned.status==CETTA_CONTINUATION_DEFERRED && row->atom==term &&
                 !row->materialized_atom && bindings_has_bound_values(&row->env));
-            tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_COMPLETE};
+            tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_COMPLETE};
             prime_native_owned_top_project(&top,&arena);
             CHECK(top.committed && destination.len==1u && !rows.len &&
                 top.owned.status==CETTA_CONTINUATION_READY);
@@ -721,8 +721,8 @@ static unsigned scoped_failure_run(const char *program,unsigned refusal) {
     Arena arena;arena_init(&arena);Space space;space_init(&space);
     Registry registry;registry_init(&registry);g_registry=&registry;
     registry_bind(&registry,"&self",atom_space(&arena,&space));
-    EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
-    EvalCompletionTracker *previous=g_eval_completion_tracker;
+    CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
+    CettaEvalEpisode *previous=g_eval_completion_tracker;
     g_eval_completion_tracker=&tracker;
     OutcomeSet rows;outcome_set_init(&rows);
     br_env_calls=0u;br_env_fail_at=refusal;br_env_fault_seen=false;br_calls_after_env_fault=0u;
@@ -1157,8 +1157,8 @@ static void nested_return_world_case(void) {
     row.atom=prime_need_ref(&arena,&world,row_id);
     PrimeEvalStackFrame frame={.arena=&arena};
     PrimeNeedActiveGuard active;prime_need_active_enter_captured(&active,&caller);
-    EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
-    EvalCompletionTracker *previous=g_eval_completion_tracker;
+    CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
+    CettaEvalEpisode *previous=g_eval_completion_tracker;
     g_eval_completion_tracker=&tracker;
     CHECK(prime_native_nested_capture_value(&frame,row.atom,&row));
     CHECK(frame.normalization_child_count==1u &&
@@ -1172,7 +1172,7 @@ static void nested_return_world_case(void) {
     CHECK(prime_native_nested_capture_value(&frame,variable,&row));
     CHECK(frame.normalization_child_count==2u &&
         atom_eq(frame.normalization_children[1],variable));
-    tracker=(EvalCompletionTracker){.completion=CETTA_EVAL_INCOMPLETE_CANCELLED,.interrupted=true};
+    tracker=(CettaEvalEpisode){.completion=CETTA_EVAL_INCOMPLETE_CANCELLED,.interrupted=true};
     CHECK(!prime_native_nested_capture_value(&frame,variable,&row));
     CHECK(frame.normalization_child_count==2u && g_eval_completion_tracker==&tracker &&
         tracker.interrupted && tracker.completion==CETTA_EVAL_INCOMPLETE_CANCELLED);
@@ -3866,16 +3866,16 @@ static void owned_authority_refusal_cases(void) {
     Arena arena; arena_init(&arena); arena_set_hashcons(&arena, NULL);
     Space space; space_init(&space);
     Atom *forbidden=atom_expr2(&arena,atom_symbol_id(&arena,g_builtin_syms.println_bang),atom_int(&arena,7));
-    EvalCompletionTracker *previous_completion = g_eval_completion_tracker;
+    CettaEvalEpisode *previous_completion = g_eval_completion_tracker;
     PrimeEvalStackDriver *previous_driver = g_prime_eval_stack_driver;
-    EvalCompletionTracker completion={0}; g_eval_completion_tracker=&completion;
+    CettaEvalEpisode completion={0}; g_eval_completion_tracker=&completion;
     PrimeNativeControl owner={0}, inner={0};
     PrimeEvalStackDriver driver={.pure_authority=true};
     g_prime_eval_stack_driver=&driver;
     CHECK(!prime_eval_check_call_authority(&space,&arena,forbidden));
     CHECK(driver.failed && completion.completion==CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
     puts("Unowned authority refusal propagates");
-    completion=(EvalCompletionTracker){0};
+    completion=(CettaEvalEpisode){0};
     driver=(PrimeEvalStackDriver){.pure_authority=true,.control=&owner};
     CHECK(!prime_eval_check_call_authority(&space,&arena,forbidden));
     CHECK(driver.failed && owner.failed && owner.completion==CETTA_EVAL_COMPLETE);
@@ -3893,15 +3893,15 @@ static void owned_authority_refusal_cases(void) {
     CHECK(parent.failed && owner.failed && !inner.failed && !driver.failed);
     CHECK(completion.completion==CETTA_EVAL_COMPLETE);
     puts("Nested observation cannot catch ancestor denial");
-    completion=(EvalCompletionTracker){.completion=CETTA_EVAL_INCOMPLETE_CAPACITY};
+    completion=(CettaEvalEpisode){.completion=CETTA_EVAL_INCOMPLETE_CAPACITY};
     owner=(PrimeNativeControl){0};
     driver=(PrimeEvalStackDriver){.pure_authority=true,.control=&owner};
     CHECK(!prime_eval_check_call_authority(&space,&arena,forbidden));
     CHECK(completion.completion==CETTA_EVAL_INCOMPLETE_CAPACITY);
     puts("Prior capacity failure is retained");
     for (unsigned i=0;i<3;i++) {
-        completion=(EvalCompletionTracker){0};
-        EvalCompletionTracker child; eval_completion_child_begin(&child);
+        completion=(CettaEvalEpisode){0};
+        CettaEvalEpisode child; eval_completion_child_begin(&child);
         OutcomeSet outcomes; outcome_set_init(&outcomes);
         Bindings env; bindings_init(&env);
         PettaMachineStep step=i==0 ? PETTA_MACHINE_STEP_HOST_ERROR :
@@ -5064,8 +5064,8 @@ static void binding_role_case(unsigned which) {
             outcome_set_free(&projected);
         }
     } else if(which==14u) {
-        EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
-        EvalCompletionTracker *prior=g_eval_completion_tracker;g_eval_completion_tracker=&tracker;
+        CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
+        CettaEvalEpisode *prior=g_eval_completion_tracker;g_eval_completion_tracker=&tracker;
         CettaCallOutcome suspended=cetta_call_suspended(raw,condition);
         assert(eval_call_outcome_atom(&arena,suspended)==NULL);
         assert(tracker.completion==CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
@@ -5084,8 +5084,8 @@ static void binding_role_case(unsigned which) {
         assert(prime_need_snapshot_start_evaluation(&arena,&frame->before,frame->thunk_id,frame->evaluator_id,&frame->evaluating));
         *bindings_need_mut(&frame->env)=frame->evaluating;
         outcome_set_add(&frame->child,raw,&frame->env);frame->child.items[0].delayed=condition;
-        EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
-        EvalCompletionTracker *prior=g_eval_completion_tracker;g_eval_completion_tracker=&tracker;
+        CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
+        CettaEvalEpisode *prior=g_eval_completion_tracker;g_eval_completion_tracker=&tracker;
         prime_eval_stack_publish_force(frame);
         assert(rows.len==0u && tracker.completion==CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
         assert(tracker.interrupted && eval_unwinding());
@@ -5108,8 +5108,8 @@ static void binding_role_case(unsigned which) {
         assert(eval_owned_residual_body(earned,&env,&residual));
         assert(returned.kind==CETTA_CALL_VALUE && returned.result_form==CETTA_CALL_RESULT_COMPLETED_VALUE);
     } else if(which==18u || which==19u) {
-        EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
-        EvalCompletionTracker *prior=g_eval_completion_tracker;
+        CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
+        CettaEvalEpisode *prior=g_eval_completion_tracker;
         g_eval_completion_tracker=which==18u?&tracker:NULL;
         br_native_calls=0u;br_suspend_native=true;
         eval_for_caller(&space,&arena,NULL,br_parse(&arena,"(+ 2 3)"),-1,&env,false,&rows);
@@ -5183,8 +5183,8 @@ static void binding_role_case(unsigned which) {
             Outcome row;outcome_init(&row);row.atom=callable;
             row.result_form=ready?CETTA_CALL_RESULT_COMPLETED_VALUE:CETTA_CALL_RESULT_EXPRESSION;
             bindings_copy(&row.env,&env);
-            EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
-            EvalCompletionTracker *prior=g_eval_completion_tracker;g_eval_completion_tracker=&tracker;
+            CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
+            CettaEvalEpisode *prior=g_eval_completion_tracker;g_eval_completion_tracker=&tracker;
             br_native_calls=0u;br_suspend_native=ready && which!=23u;
             bool accepted=eval_owned_residual_return(&row,&residual);
             br_suspend_native=false;g_eval_completion_tracker=prior;
@@ -5203,8 +5203,8 @@ static void binding_role_case(unsigned which) {
             outcome_free_fields(&row);
         }
     } else if(which==26u || which==27u) {
-        EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
-        EvalCompletionTracker *prior=g_eval_completion_tracker;
+        CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
+        CettaEvalEpisode *prior=g_eval_completion_tracker;
         g_eval_completion_tracker=which==26u?&tracker:NULL;
         EvalOwnedAnswers answers={.space=&space};
         CettaCallOutcome returned=cetta_call_failure();
@@ -5266,8 +5266,8 @@ static void binding_role_case(unsigned which) {
             if(mode==2u)frame.child.items[0].result_form=(CettaCallResultForm)99;
             PrimeNativeReturnAdvice advice={0};frame.control_return_advice=&advice;
             frame.control_return_advice_length=1u;
-            EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE};
-            EvalCompletionTracker *prior=g_eval_completion_tracker;g_eval_completion_tracker=&tracker;
+            CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
+            CettaEvalEpisode *prior=g_eval_completion_tracker;g_eval_completion_tracker=&tracker;
             PrimeNativeRunGuard guard;prime_native_run_enter(&control,&guard);
             bool accepted=native_dialect_source_return(&frame,0u);
             prime_native_run_leave(&guard);
@@ -8771,7 +8771,7 @@ static void ordinary_raw_preparation_refusal_case(unsigned preparation,bool canc
     PrimeNativeControl *control=owned->ordinary_control;
     PrimeOrdinaryReturnScope scope={0};
     CHECK(prime_ordinary_return_enter(owned,&scope));
-    EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE,
+    CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE,
         .parent=g_eval_completion_tracker};
     g_eval_completion_tracker=&tracker;
     PrimeEvalTopGuard top;prime_eval_top_enter(&top);g_metta_eval_depth++;
@@ -8871,7 +8871,7 @@ static void ordinary_cached_disposition_case(unsigned refusal,bool cancel) {
     CettaPrimeObservationReturn *owned=outcome.prime_observation;CHECK(owned);
     assert(owned);PrimeNativeControl *control=owned->ordinary_control;
     PrimeOrdinaryReturnScope run_scope={0};CHECK(prime_ordinary_return_enter(owned,&run_scope));
-    EvalCompletionTracker tracker={.completion=CETTA_EVAL_COMPLETE,.parent=g_eval_completion_tracker};
+    CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE,.parent=g_eval_completion_tracker};
     g_eval_completion_tracker=&tracker;
     PrimeEvalTopGuard top;prime_eval_top_enter(&top);g_metta_eval_depth++;
     for(unsigned cut=0u;cut<10000u && !prime_native_control_closed(control);cut++)
@@ -10530,7 +10530,7 @@ static void payload_result_world_lookup_controls(void) {
     prime_need_active_enter_captured(&active,NULL);
     PrimeNeedBranchState actual;
     value=sentinel;br_payload_lookup_refusals=1u;
-    EvalCompletionTracker completion;eval_completion_child_begin(&completion);
+    CettaEvalEpisode completion;eval_completion_child_begin(&completion);
     CHECK(!prime_need_effective_state(&row,&cell,&actual,&value) &&
         !br_payload_lookup_refusals && value==sentinel && completion.interrupted);
     CHECK(eval_completion_child_end(&completion)==CETTA_EVAL_INCOMPLETE_CAPACITY);
@@ -11221,7 +11221,7 @@ static void ordinary_source_exported_closure_case(unsigned shape,bool invalidate
         /* The native receiving call consumes the full environment, including
          * logical constraints and the exact same cell used by a mixed alias. */
         PrimeNeedActiveGuard active;prime_need_active_enter(&active,value->environment);
-        EvalCompletionTracker tracker;eval_completion_child_begin(&tracker);
+        CettaEvalEpisode tracker;eval_completion_child_begin(&tracker);
         metta_call_with_env(code,&arena,call,NULL,-1,value->environment,&resumed);
         outcome.completion=eval_completion_child_end(&tracker);
         prime_need_active_leave(&active);
@@ -11788,7 +11788,7 @@ static void equation_observation_readiness_cases(void) {
     CHECK(!parent_copy_pattern_readiness(&bad_copy,both,&bad_image,next));
     prime_need_pattern_readiness_free(bad_image);both->paths[1].path[0]=2u;
     prime_need_pattern_readiness_free(both);
-    EvalCompletionTracker completion;
+    CettaEvalEpisode completion;
     eval_completion_child_begin(&completion);
     OutcomeSet incomplete; outcome_set_init(&incomplete);
     CHECK(!prime_need_pattern_observe_full(&space, &arena, parse_one(&arena, "(+ 1 2)"),
@@ -12284,9 +12284,9 @@ static void prepared_native_admission_case(void) {
     CHECK(!br_prepared_native_value(&context, &space, &arena, &invocation));
     CHECK(!br_library_prepared_calls && !br_library_calls);
     g_prime_eval_stack_driver = previous;
-    EvalCompletionTracker tracker = {.completion = CETTA_EVAL_COMPLETE,
+    CettaEvalEpisode tracker = {.completion = CETTA_EVAL_COMPLETE,
         .budget_limited = true, .parent = g_eval_completion_tracker};
-    EvalCompletionTracker *prior_tracker = g_eval_completion_tracker;
+    CettaEvalEpisode *prior_tracker = g_eval_completion_tracker;
     g_eval_completion_tracker = &tracker;
     CHECK(!br_prepared_native_value(&context, &space, &arena, &invocation));
     CHECK(!br_library_prepared_calls && !br_library_calls &&
@@ -12389,7 +12389,7 @@ static void prepared_native_admission_case(void) {
             CHECK(!prime_eval_stack_promote_ordinary(&source, &program, call, -1, NULL, 2u));
             CHECK(source.task_ready && source.task.atom == call &&
                 source.root_target == &output && !output.len && !checked);
-            EvalCompletionTracker check; eval_completion_child_begin(&check);
+            CettaEvalEpisode check; eval_completion_child_begin(&check);
             CHECK(!prime_eval_check_call_contract(&program, &arena, call) && checked == 1u);
             CHECK(eval_completion_child_end(&check) == CETTA_EVAL_INCOMPLETE_CAPACITY);
         } else {

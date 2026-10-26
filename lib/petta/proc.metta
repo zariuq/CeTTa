@@ -13,3 +13,6 @@
 (= (proc:abort-signal) (__cetta_lib_proc_abort_signal ()))
 (= (proc:await $owner) (__cetta_lib_proc_await $owner))
 (= (proc:run $argv $options) (__cetta_lib_proc_run $argv $options))
+(= (proc:write $owner $bytes) (__cetta_lib_proc_write $owner $bytes))
+(= (proc:close-input $owner) (__cetta_lib_proc_close_input $owner))
+(= (proc:read $owner $stream $milliseconds) (__cetta_lib_proc_read $owner $stream $milliseconds))

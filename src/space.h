@@ -61,6 +61,7 @@ bool disc_count_rigid_exact_expression_coordinates(
     CettaExprLen coordinate_count, CettaIndex *out_count);
 
 #include "space_match_backend.h"
+#include "space_path_index.h"
 
 /* ── Head chains: the rows of one projection, chained by head symbol ────── */
 
@@ -791,6 +792,8 @@ SpaceEquationCursorStep space_equation_cursor_next(
  * Revision-qualified zipper over matching discrimination-trie leaves.
  * Pin a read token, prefix epoch, and occurrence ceiling at init; `next`
  * yields logical indices in declaration order without copying the bag.
+ * It walks the Space's rows, skipping those removed by marks when it was
+ * pinned, so opening one never contracts the Space.
  * Matching trie nodes are merged lazily in that order. The frontier retains
  * one position per node, independently of the candidate bag's length.
  * Appends at or after the ceiling are invisible. A removal while the pin
@@ -815,6 +818,10 @@ typedef struct {
     CettaIndex *heap;
     uint32_t heap_len;
     uint32_t heap_node_bits;
+    /* A head over variables reads its head's rows in order (head_index). */
+    bool head_mode;
+    CettaSpaceHeadCursor head;
+    CettaSpaceHeadCursor head_start;
     /* A cold selector can supply a compact declaration-ordered candidate list. */
     CettaIndex *flat;
     CettaIndex flat_capacity;
@@ -828,6 +835,11 @@ typedef struct {
      * a detached occurrence pin. Every access checks all original sources. */
     bool logical_scan;
     SpaceReadView logical_reads;
+    /* The row of the logical index `next` yielded last, which the atom read
+     * that follows it takes without searching the marks. */
+    bool has_last;
+    CettaIndex last_logical;
+    CettaIndex last_row;
 } SpaceOccurrenceCursor;
 
 typedef enum {

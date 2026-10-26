@@ -476,11 +476,14 @@ static Atom *zip_map(Space *space, Arena *destination, Atom **args) {
             call_args[captured + i + 1] = callback_atom(&scratch, encodings[i], scalar_value, &leaves[i]);
             if (!call_args[captured + i + 1]) goto cleanup;
         }
-        Atom *call = atom_expr(&scratch, call_args, count + captured + 1), *value = NULL;
+        Atom *call = atom_expr(&scratch, call_args, count + captured + 1);
+        CettaCallOutcome returned;
         if (!cetta_prepared_pure_program_rebind_closed_entry_call(program, call) ||
             !cetta_prepared_pure_program_execute_closed_controlled(program, &scratch,
-                65536u, tensor_callback_stop, NULL, &value))
+                65536u, tensor_callback_stop, NULL, &returned) ||
+            returned.kind != CETTA_CALL_VALUE)
             goto cleanup;
+        Atom *value = returned.term;
         CettaTensorScalar converted;
         if (scalar(CETTA_TENSOR_F64, value, &converted) != CETTA_TENSOR_OK)
             goto cleanup;

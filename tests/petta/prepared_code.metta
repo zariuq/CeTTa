@@ -75,3 +75,23 @@
          (if (fits $c $placed) (distinct (- $n 1) $cols (Cons $c $placed))
              (empty)))))
 !(distinct 2 (upto 3) Nil)
+
+; A case: each arm one match, which continues at the next arm on a
+; mismatch.  A value an arm binds stays live across its call while more
+; is built, and a value no arm matches answers nothing.
+(= (sizes $l)
+   (case $l
+     ((Nil 0)
+      ((Cons (Box 0) $t) (sizes $t))
+      ((Cons (Box $v) $t) (+ $v (sizes $t))))))
+!(sizes (build 50000))
+(= (classify $l)
+   (case $l
+     ((Nil none)
+      ((Cons (Box $v) Nil) (one $v))
+      ($other (many $other)))))
+!(classify (build 1))
+!(classify (Cons 7 Nil))
+(= (only-nil $l) (case $l ((Nil empty-list))))
+!(only-nil (Cons 1 Nil))
+!(only-nil Nil)

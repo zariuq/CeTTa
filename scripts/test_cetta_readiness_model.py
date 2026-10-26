@@ -4,15 +4,21 @@
 from __future__ import annotations
 
 import json
+import csv
+import hashlib
+import io
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import patch
 
 from bench_d4_progress import census_classification
 from cetta_main_readiness import readiness_commands
+from rhocalc_bench_provenance import benchmark_provenance
 from cetta_readiness_ladders import (
     primary_contract,
     realized_witness_ids,
@@ -26,6 +32,7 @@ from cetta_readiness_model import (
     evidence_key,
     growth_verdict,
     load_property_manifest,
+    load_frozen_baseline,
     memory_rate_verdict,
     missing_frontier_witness_ids,
     paired_growth_verdict,
@@ -41,6 +48,141 @@ from cetta_readiness_model import (
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "benchmarks/main_readiness_properties.json"
 PASS_COUNT = 0
+
+
+def check_frozen_baseline() -> None:
+    """Independently assembled archive, Git blobs, binary and runtime library."""
+    with tempfile.TemporaryDirectory(prefix="readiness-frozen-", dir=ROOT / "runtime") as tmp:
+        directory = Path(tmp)
+        (directory / "bin").mkdir()
+        (directory / "lib").mkdir()
+        binary = directory / "bin/cetta"
+        binary.write_bytes(b"frozen executable fixture")
+        contents = {"src/eval.c": b"source fixture\n", "lib/core.metta": b"(Core fixture)\n"}
+        (directory / "lib/core.metta").write_bytes(contents["lib/core.metta"])
+        sha = lambda value: hashlib.sha256(value).hexdigest()
+        commit = "c" * 40
+        entries = [dict(path=name, kind="file", bytes=len(value), sha256=sha(value))
+                   for name, value in contents.items()]
+        tree = b"".join(b"100644 blob " + hashlib.sha1(
+            f"blob {len(value)}\0".encode() + value).hexdigest().encode() +
+            b"\t" + name.encode() + b"\0" for name, value in contents.items())
+        archive = directory / "source.tar"
+        with tarfile.open(archive, "w") as stream:
+            for name, value in contents.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(value)
+                stream.addfile(info, io.BytesIO(value))
+        source = directory / "source.json"
+        source.write_text(json.dumps(dict(head=commit, source_files=entries, dependencies={})))
+        build = directory / "build.json"
+        build.write_text(json.dumps(dict(source_head=commit, sha256=sha(binary.read_bytes()),
+                                        runtime_stats=0, build="fixture")))
+        receipt = dict(schema="cetta.readiness.frozen-baseline.v2", commit=commit,
+                       library_root="lib")
+        paths = dict(source_archive=archive, source_manifest=source, binary=binary,
+                     build_receipt=build)
+        for key, path in paths.items():
+            receipt[key] = dict(path=str(path.relative_to(directory)), sha256=sha(path.read_bytes()))
+        receipt_path = directory / "receipt.json"
+
+        def write_receipt(value):
+            receipt_path.write_text(json.dumps(value))
+            return sha(receipt_path.read_bytes())
+
+        digest = write_receipt(receipt)
+        check_output = subprocess.check_output
+
+        def source_tree(command, *args, **kwargs):
+            if command[:2] == ["git", "ls-tree"]:
+                return tree
+            return check_output(command, *args, **kwargs)
+
+        with patch("cetta_readiness_model.subprocess.check_output", side_effect=source_tree):
+            admitted = load_frozen_baseline(ROOT, receipt_path, digest, commit)
+            require(admitted["binary_sha256"] == sha(binary.read_bytes()), "wrong frozen binary")
+            report_pass("frozen cohort joins exact archive, Git blobs, build and library")
+            pinned = benchmark_provenance(str(binary), receipt=str(receipt_path),
+                receipt_sha256=digest, source_commit=commit)
+            require(pinned["commit"] == commit and pinned["tree_state"] == "frozen",
+                    "rho provenance did not use the checked frozen cohort")
+            report_pass("rho provenance uses the frozen cohort")
+            with patch("rhocalc_bench_provenance._git_root", return_value=ROOT.parent.parent):
+                unknown = benchmark_provenance(str(binary))
+                require(unknown["commit"] == "unknown" and unknown["tree_state"] == "nogit",
+                        "enclosing workspace was mistaken for a CeTTa checkout")
+            report_pass("rho provenance rejects an enclosing workspace identity")
+
+            def rejects(label, value, expected_digest=None):
+                current_digest = write_receipt(value)
+                try:
+                    load_frozen_baseline(ROOT, receipt_path,
+                        current_digest if expected_digest is None else expected_digest, commit)
+                except ReadinessModelError:
+                    report_pass(label)
+                else:
+                    raise AssertionError(label + " was admitted")
+
+            rejects("frozen receipt rejects wrong caller digest", receipt, "0" * 64)
+            rejects("frozen receipt rejects a non-object", [])
+            bad = dict(receipt, commit="d" * 40)
+            rejects("frozen receipt rejects another source commit", bad)
+            binary.write_bytes(b"altered executable fixture")
+            rejects("frozen receipt rejects altered binary", receipt)
+            binary.write_bytes(b"frozen executable fixture")
+            (directory / "lib/core.metta").write_bytes(b"altered runtime library")
+            rejects("frozen receipt rejects altered runtime library", receipt)
+            (directory / "lib/core.metta").write_bytes(contents["lib/core.metta"])
+            original_source = source.read_bytes()
+            for label, malformed in [
+                ("incomplete source inventory", entries[:1]),
+                ("duplicate source inventory", entries + entries[:1]),
+                ("non-list source inventory", {}),
+                ("malformed source entry", [None]),
+            ]:
+                source.write_text(json.dumps(dict(head=commit, source_files=malformed, dependencies={})))
+                bad = dict(receipt, source_manifest=dict(path="source.json", sha256=sha(source.read_bytes())))
+                rejects("frozen receipt rejects " + label, bad)
+            source.write_bytes(original_source)
+            original_archive = archive.read_bytes()
+            with tarfile.open(archive, "w") as stream:
+                info = tarfile.TarInfo("src/eval.c")
+                info.size = len(contents["src/eval.c"])
+                stream.addfile(info, io.BytesIO(contents["src/eval.c"]))
+            bad = dict(receipt, source_archive=dict(path="source.tar", sha256=sha(archive.read_bytes())))
+            rejects("frozen receipt rejects incomplete archive with a valid digest", bad)
+            archive.write_bytes(original_archive)
+
+
+def check_consolidation_matrix() -> None:
+    """Changing a reference must never fall back to historical timing numbers."""
+    with tempfile.TemporaryDirectory(prefix="readiness-matrix-", dir=ROOT / "runtime") as tmp:
+        directory = Path(tmp)
+        with (ROOT / "benchmarks/rhocalc_performance_baseline_9050a2d.tsv").open() as file:
+            expected = list(csv.DictReader(file, delimiter="\t"))
+        rows = [dict(row, median_s="1.01", baseline_median_s="1.0",
+                     baseline_commit="c" * 40, baseline_binary_sha256="a" * 64) for row in expected]
+
+        def check(label, changes, should_pass):
+            modified = [dict(row, **changes) for row in rows]
+            for witness in {row["witness"] for row in rows}:
+                with (directory / (witness + "_current.csv")).open("w") as file:
+                    writer = csv.DictWriter(file, fieldnames=list(modified[0]))
+                    writer.writeheader()
+                    writer.writerows(row for row in modified if row["witness"] == witness)
+            result = subprocess.run([sys.executable, str(ROOT / "scripts/rhocalc_benchmark_regression.py"),
+                "--matrix-dir", str(directory), "--require-paired", "--max-ratio", "1.05", "--min-slack", "0",
+                "--baseline-commit", "c" * 40, "--baseline-sha256", "a" * 64], capture_output=True, text=True)
+            require((result.returncode == 0) == should_pass, label + ": " + result.stderr)
+            report_pass(label)
+
+        check("consolidation matrix accepts pinned paired observations", {}, True)
+        check("consolidation matrix rejects a six percent regression", {"median_s": "1.06"}, False)
+        check("consolidation matrix rejects missing paired timings", {"baseline_median_s": ""}, False)
+        check("consolidation matrix rejects another binary", {"baseline_binary_sha256": "b" * 64}, False)
+        check("consolidation matrix rejects another commit", {"baseline_commit": "d" * 40}, False)
+        check("consolidation matrix rejects zero timings", {"median_s": "0"}, False)
+        check("consolidation matrix rejects nonfinite timings", {"median_s": "nan"}, False)
 
 
 def require(condition: bool, message: str) -> None:
@@ -572,6 +714,7 @@ def main() -> int:
         "property_schema": "properties-v1",
         "property_manifest_sha256": "manifest-a",
         "source_anchors": [{"path": "source.c", "sha256": "source-a"}],
+        "consolidation_baseline": {"commit": "c632", "binary_sha256": "binary-c"},
     }
     subject = calibration_subject(artifact)
     changed_incidentals = json.loads(json.dumps(artifact))
@@ -585,6 +728,11 @@ def main() -> int:
         "calibration subject included tier-local build products",
     )
     report_pass("calibration subject excludes tier-local build products")
+    changed_baseline = json.loads(json.dumps(artifact))
+    changed_baseline["consolidation_baseline"]["binary_sha256"] = "wrong-binary"
+    require(calibration_subject(changed_baseline) != subject,
+            "calibration reused evidence from another consolidation baseline")
+    report_pass("calibration subject pins consolidation baseline")
 
     subject_key = evidence_key(subject)
     records = [
@@ -748,6 +896,11 @@ def main() -> int:
     exhaustive_targets = {
         command[-1] for command in readiness_commands("exhaustive")
     }
+    require("main-readiness-consolidation" in routine_targets & exhaustive_targets,
+            "a readiness tier omits the original consolidation baseline")
+    require("main-readiness-rho-adaptive" in routine_targets and "bench-heavy" in exhaustive_targets,
+            "consolidation replaced a historical regression gate")
+    report_pass("both tiers retain historical gates and require consolidation timing")
     petta_oracle_targets = {
         "test-petta-corpus-differential",
         "test-petta-native-core-no-libpl",
@@ -838,6 +991,8 @@ def main() -> int:
         "adaptive rho RSS enforcement can swallow a failing comparison",
     )
     report_pass("mandatory heavy graph does not duplicate the explicit frontier")
+    check_frozen_baseline()
+    check_consolidation_matrix()
     print(f"SUMMARY cetta-readiness-model {PASS_COUNT} PASS")
     return 0
 

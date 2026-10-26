@@ -938,6 +938,8 @@ void space_path_indexes_note_mark(Space *space, CettaIndex row, AtomId id) {
     }
 }
 
+void space_head_index_adopt_prefix_epoch(Space *space, uint64_t followed);
+
 void space_path_indexes_adopt_prefix_epoch(Space *space, uint64_t followed) {
     for (CettaSpacePathIndex *index = space->match_backend.native.path_indexes;
          index; index = index->next) {
@@ -945,6 +947,7 @@ void space_path_indexes_adopt_prefix_epoch(Space *space, uint64_t followed) {
             index->source_len == space->native.len)
             index->prefix_epoch = space->prefix_epoch;
     }
+    space_head_index_adopt_prefix_epoch(space, followed);
 }
 
 void space_path_indexes_retire(Space *space) {
@@ -985,4 +988,353 @@ bool space_path_indexes_info(const Space *space, CettaSpacePathIndexInfo *out) {
         out->retained_bytes += index->bytes;
     }
     return true;
+}
+
+/* ── The head index ──────────────────────────────────────────────────── */
+
+typedef struct {
+    uint64_t key;
+    CettaIndex *rows;
+    CettaCount len, cap;
+    /* Leading rows known removed by mark. */
+    CettaCount front;
+} HeadPosting;
+
+struct CettaSpaceHeadIndex {
+    TermUniverse *universe;
+    uint64_t universe_instance, universe_epoch, prefix_epoch;
+    CettaCount source_len;
+    /* Postings by id: HEAD_EVERY holds the rows every query reads. */
+    HeadPosting *postings;
+    uint32_t posting_len, posting_cap;
+    /* Open addressing from a key to its posting's id plus one. */
+    uint32_t *slots;
+    size_t slot_cap, slot_len;
+    /* Retired indexes cursors still read, freed with this one. */
+    CettaSpaceHeadIndex *next_stale;
+};
+
+#define HEAD_EVERY 0u
+#define HEAD_NONE UINT32_MAX
+#define HEAD_ROW_END ((CettaIndex)-1)
+
+/* A head symbol over `length` elements; SYMBOL_ID_NONE for an open head. */
+static uint64_t head_key(SymbolId head, CettaExprLen length) {
+    return ((uint64_t)length << 32) | (uint64_t)head;
+}
+
+typedef enum {
+    HEAD_ROW_NONE = 0, /* no head-selected query meets it */
+    HEAD_ROW_KEYED,    /* its head is a symbol */
+    HEAD_ROW_OPEN,     /* its head is not a symbol */
+    HEAD_ROW_EVERY,    /* a variable, a private carrier or undecoded */
+} HeadRowKind;
+
+static HeadRowKind head_row_kind(const TermUniverse *universe, AtomId id,
+                                 uint64_t *key) {
+    const CettaTermHdr *header = tu_hdr(universe, id);
+    if (!header || header->tag == ATOM_VAR)
+        return HEAD_ROW_EVERY;
+    if (header->tag != ATOM_EXPR)
+        return HEAD_ROW_NONE;
+    CettaExprLen arity = tu_arity(universe, id);
+    if (arity == 0u)
+        return HEAD_ROW_NONE;
+    /* Private list, callable and compound carriers spell a logical shape
+     * other than their encoding. */
+    if (tu_internal_tag(universe, tu_child(universe, id, 0u)) != 0 ||
+        arity > UINT32_MAX)
+        return HEAD_ROW_EVERY;
+    *key = head_key(header->sym_or_head, arity);
+    return header->sym_or_head != SYMBOL_ID_NONE ? HEAD_ROW_KEYED
+                                                 : HEAD_ROW_OPEN;
+}
+
+static uint32_t head_posting_find(const CettaSpaceHeadIndex *index,
+                                  uint64_t key) {
+    if (index->slot_cap == 0u)
+        return HEAD_NONE;
+    size_t slot = (size_t)path_key_hash(key) & (index->slot_cap - 1u);
+    while (index->slots[slot] != 0u) {
+        uint32_t id = index->slots[slot] - 1u;
+        if (index->postings[id].key == key)
+            return id;
+        slot = (slot + 1u) & (index->slot_cap - 1u);
+    }
+    return HEAD_NONE;
+}
+
+static uint32_t head_posting_push(CettaSpaceHeadIndex *index, uint64_t key) {
+    if (index->posting_len == index->posting_cap) {
+        uint32_t next = index->posting_cap ? index->posting_cap * 2u : 8u;
+        if (next <= index->posting_cap)
+            cetta_oom(SIZE_MAX);
+        index->postings = cetta_realloc(index->postings,
+                                        (size_t)next * sizeof(*index->postings));
+        index->posting_cap = next;
+    }
+    uint32_t id = index->posting_len++;
+    index->postings[id] = (HeadPosting){.key = key};
+    return id;
+}
+
+static void head_slots_grow(CettaSpaceHeadIndex *index) {
+    size_t next = index->slot_cap ? index->slot_cap * 2u : 16u;
+    if (next < index->slot_cap || next > SIZE_MAX / sizeof(*index->slots))
+        cetta_oom(SIZE_MAX);
+    uint32_t *slots = cetta_malloc(next * sizeof(*slots));
+    memset(slots, 0, next * sizeof(*slots));
+    for (size_t old = 0u; old < index->slot_cap; old++) {
+        if (index->slots[old] == 0u)
+            continue;
+        uint64_t key = index->postings[index->slots[old] - 1u].key;
+        size_t slot = (size_t)path_key_hash(key) & (next - 1u);
+        while (slots[slot] != 0u)
+            slot = (slot + 1u) & (next - 1u);
+        slots[slot] = index->slots[old];
+    }
+    free(index->slots);
+    index->slots = slots;
+    index->slot_cap = next;
+}
+
+static uint32_t head_posting_get(CettaSpaceHeadIndex *index, uint64_t key) {
+    uint32_t id = head_posting_find(index, key);
+    if (id != HEAD_NONE)
+        return id;
+    if (index->slot_cap == 0u ||
+        index->slot_len >= index->slot_cap - index->slot_cap / 4u)
+        head_slots_grow(index);
+    id = head_posting_push(index, key);
+    size_t slot = (size_t)path_key_hash(key) & (index->slot_cap - 1u);
+    while (index->slots[slot] != 0u)
+        slot = (slot + 1u) & (index->slot_cap - 1u);
+    index->slots[slot] = id + 1u;
+    index->slot_len++;
+    return id;
+}
+
+static void head_posting_append(HeadPosting *posting, CettaIndex row) {
+    if (posting->len == posting->cap) {
+        CettaCount next = posting->cap ? posting->cap * 2u : 4u;
+        if (next <= posting->cap || next > SIZE_MAX / sizeof(CettaIndex))
+            cetta_oom(SIZE_MAX);
+        posting->rows = cetta_realloc(posting->rows,
+                                      (size_t)next * sizeof(CettaIndex));
+        posting->cap = next;
+    }
+    posting->rows[posting->len++] = row;
+}
+
+static void head_index_add_row(CettaSpaceHeadIndex *index, AtomId id,
+                               CettaIndex row) {
+    uint64_t key = 0u;
+    switch (head_row_kind(index->universe, id, &key)) {
+    case HEAD_ROW_NONE:
+        break;
+    case HEAD_ROW_EVERY:
+        head_posting_append(&index->postings[HEAD_EVERY], row);
+        break;
+    case HEAD_ROW_KEYED:
+    case HEAD_ROW_OPEN: {
+        /* Finding the posting may grow the postings. */
+        uint32_t id = head_posting_get(index, key);
+        head_posting_append(&index->postings[id], row);
+        break;
+    }
+    }
+}
+
+bool space_head_index_admits(const Atom *pattern) {
+    if (!pattern || pattern->kind != ATOM_EXPR || pattern->expr.len < 2u ||
+        pattern->expr.len > UINT32_MAX ||
+        pattern->expr.elems[0]->kind != ATOM_SYMBOL ||
+        atom_structural_may_have_list_carrier(pattern) ||
+        atom_structural_may_have_internal_tag(pattern))
+        return false;
+    for (CettaExprIndex position = 1u; position < pattern->expr.len; position++) {
+        if (pattern->expr.elems[position]->kind != ATOM_VAR)
+            return false;
+    }
+    return true;
+}
+
+static bool head_index_current(const Space *space,
+                               const CettaSpaceHeadIndex *index) {
+    return index->universe == space->native.universe &&
+        index->universe_instance == space->native.universe->instance_id &&
+        index->universe_epoch == space->native.universe->storage_epoch &&
+        index->prefix_epoch == space->prefix_epoch &&
+        index->source_len == space->native.len;
+}
+
+static CettaSpaceHeadIndex *head_index_build(Space *space) {
+    size_t width = cetta_atom_id_storage_width_bytes_from_bits(
+        space->native.atom_id_width_bits);
+    if (space->native.len != 0u && (width == 0u || !space->native.atom_ids))
+        return NULL;
+    CettaSpaceHeadIndex *index = cetta_malloc(sizeof(*index));
+    *index = (CettaSpaceHeadIndex){
+        .universe = space->native.universe,
+        .universe_instance = space->native.universe->instance_id,
+        .universe_epoch = space->native.universe->storage_epoch,
+        .prefix_epoch = space->prefix_epoch,
+    };
+    (void)head_posting_push(index, 0u);
+    /* The rows as they stand, those removed by mark included. */
+    for (CettaIndex row = 0u; row < space->native.len; row++) {
+        AtomId id = cetta_atom_id_storage_load_bits(
+            space->native.atom_ids + (size_t)row * width,
+            space->native.atom_id_width_bits);
+        head_index_add_row(index, id, row);
+    }
+    index->source_len = space->native.len;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_HEAD_INDEX_BUILD);
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_HEAD_INDEX_BUILD_ROW,
+                            space->native.len);
+    return index;
+}
+
+bool space_head_index_open(Space *space, const Atom *pattern,
+                           CettaSpaceHeadCursor *cursor) {
+    memset(cursor, 0, sizeof(*cursor));
+    if (!space || !space->native.universe || space->overlay_base ||
+        space->kind != SPACE_KIND_ATOM || space->native.start != 0u ||
+        (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
+        !space_head_index_admits(pattern))
+        return false;
+    SpaceMatchNativeState *state = &space->match_backend.native;
+    if (state->head_index && !head_index_current(space, state->head_index))
+        space_head_index_retire(space);
+    if (!state->head_index)
+        state->head_index = head_index_build(space);
+    CettaSpaceHeadIndex *index = state->head_index;
+    if (!index)
+        return false;
+    CettaExprLen length = pattern->expr.len;
+    cursor->index = index;
+    cursor->keyed = head_posting_find(
+        index, head_key(atom_symbol_current_id(pattern->expr.elems[0]), length));
+    cursor->open = head_posting_find(index, head_key(SYMBOL_ID_NONE, length));
+    cursor->keyed_next = cursor->keyed != HEAD_NONE
+        ? index->postings[cursor->keyed].front : 0u;
+    cursor->open_next = cursor->open != HEAD_NONE
+        ? index->postings[cursor->open].front : 0u;
+    cursor->every_next = index->postings[HEAD_EVERY].front;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_HEAD_INDEX_CURSOR);
+    return true;
+}
+
+static inline CettaIndex head_posting_peek(const CettaSpaceHeadIndex *index,
+                                           uint32_t id, CettaCount next) {
+    if (id == HEAD_NONE || next >= index->postings[id].len)
+        return HEAD_ROW_END;
+    return index->postings[id].rows[next];
+}
+
+bool space_head_index_next(CettaSpaceHeadCursor *cursor, CettaIndex ceiling,
+                           const uint64_t *marks, CettaIndex mark_rows,
+                           CettaIndex *row_out) {
+    CettaSpaceHeadIndex *index = cursor->index;
+    if (!index)
+        return false;
+    for (;;) {
+        CettaIndex keyed = head_posting_peek(index, cursor->keyed,
+                                             cursor->keyed_next);
+        CettaIndex open = head_posting_peek(index, cursor->open,
+                                            cursor->open_next);
+        CettaIndex every = head_posting_peek(index, HEAD_EVERY,
+                                             cursor->every_next);
+        uint32_t from;
+        CettaCount *next;
+        CettaIndex row;
+        if (keyed <= open && keyed <= every) {
+            from = cursor->keyed;
+            next = &cursor->keyed_next;
+            row = keyed;
+        } else if (open <= every) {
+            from = cursor->open;
+            next = &cursor->open_next;
+            row = open;
+        } else {
+            from = HEAD_EVERY;
+            next = &cursor->every_next;
+            row = every;
+        }
+        /* Each posting is in row order, so the least row past the ceiling
+         * ends all three. */
+        if (row == HEAD_ROW_END || row >= ceiling)
+            return false;
+        bool removed = marks && row < mark_rows &&
+            ((marks[row >> 6] >> (row & 63u)) & 1u) != 0u;
+        HeadPosting *posting = &index->postings[from];
+        if (removed && *next == posting->front)
+            posting->front++;
+        (*next)++;
+        if (removed)
+            continue;
+        *row_out = row;
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_HEAD_INDEX_ROW);
+        return true;
+    }
+}
+
+void space_head_index_note_add(Space *space, AtomId id, CettaIndex row) {
+    CettaSpaceHeadIndex *index = space->match_backend.native.head_index;
+    if (!index)
+        return;
+    if (index->source_len != row || index->prefix_epoch != space->prefix_epoch) {
+        space_head_index_retire(space);
+        return;
+    }
+    head_index_add_row(index, id, row);
+    index->source_len++;
+}
+
+void space_head_index_adopt_prefix_epoch(Space *space, uint64_t followed) {
+    CettaSpaceHeadIndex *index = space->match_backend.native.head_index;
+    if (index && index->prefix_epoch == followed &&
+        index->source_len == space->native.len)
+        index->prefix_epoch = space->prefix_epoch;
+}
+
+void space_head_index_free(CettaSpaceHeadIndex *index) {
+    while (index) {
+        CettaSpaceHeadIndex *next = index->next_stale;
+        for (uint32_t id = 0u; id < index->posting_len; id++)
+            free(index->postings[id].rows);
+        free(index->postings);
+        free(index->slots);
+        free(index);
+        index = next;
+    }
+}
+
+void space_head_index_retire(Space *space) {
+    SpaceMatchNativeState *state = &space->match_backend.native;
+    CettaSpaceHeadIndex *index = state->head_index;
+    if (!index)
+        return;
+    state->head_index = NULL;
+    /* Cursors pinned to the Space's rows may be reading it. */
+    if (state->match_trie_pins == 0u) {
+        space_head_index_free(index);
+        return;
+    }
+    index->next_stale = state->stale_head_indexes;
+    state->stale_head_indexes = index;
+}
+
+CettaSpaceHeadIndex *space_head_index_take(Space *space) {
+    SpaceMatchNativeState *state = &space->match_backend.native;
+    CettaSpaceHeadIndex *index = state->head_index;
+    state->head_index = NULL;
+    if (!index) {
+        index = state->stale_head_indexes;
+    } else {
+        index->next_stale = state->stale_head_indexes;
+    }
+    state->stale_head_indexes = NULL;
+    return index;
 }

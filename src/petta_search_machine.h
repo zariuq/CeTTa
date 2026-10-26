@@ -430,9 +430,11 @@ typedef struct {
     /*
      * Called immediately before a machine transition.  Returning false
      * suspends without consuming the pending goal, so the same machine can
-     * resume when its caller restores a budget or clears cancellation.
+     * resume when its caller restores a budget or clears cancellation. The
+     * source packet is borrowed only for this call; its occurrence survives
+     * suspension. Physical allowance is independent of its semantic debit.
      */
-    bool (*permit_transition)(void *context);
+    bool (*permit_transition)(void *context, const CettaSourceStep *source);
     /* Checked before transition budgeting and before consuming the goal or
      * alternative. False retains that exact operation for a later executor.
      * The borrowed operand view is descriptive, not a forced value. */
@@ -698,12 +700,11 @@ typedef struct {
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
-    /* Execute a closed, revision-pinned pure call with at most one answer.
-     * False declines to equation search. True reports a completed VALUE,
-     * FAILURE (no answer), or INTERRUPTED through the common outcome type. */
+    /* A closed revision-pinned pure call returns its completed value,
+     * logical failure or interruption. Only false declines the realization. */
     bool (*execute_prepared_pure_call)(
         void *context, Space *space, Arena *result_arena,
-        Atom *prepared_call, CettaCallOutcome *result);
+        Atom *prepared_call, CettaCallOutcome *outcome);
     /* A revision-keyed program fact: the relation has already declined
      * prepared compilation, so no closed call of it executes there.  Read
      * before a call is proved closed or materialized; false means only

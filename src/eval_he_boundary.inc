@@ -454,15 +454,23 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
     CettaControlOperationPlan control = {0};
     cetta_control_operation_decode(head, nargs, &control, &g_builtin_syms);
     bool invoked = false;
-    Atom *prepared = NULL;
-    PreparedMinimalWorkerResult worker =
-        prepared_minimal_worker_call(s, a, atom, &env, fuel, &prepared);
-    if (worker == PREPARED_MINIMAL_WORKER_INTERRUPTED) {
-        outcome_set_free(&raw);
-        return;
-    }
-    if (worker == PREPARED_MINIMAL_WORKER_EMIT ||
-        worker == PREPARED_MINIMAL_WORKER_REENTER) {
+    CettaCallOutcome worker;
+    if (prepared_minimal_worker_call(s, a, atom, &env, fuel, &worker)) {
+        if (!cetta_call_outcome_shape_valid(worker)) {
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+            outcome_set_free(&raw);
+            return;
+        }
+        if (worker.kind != CETTA_CALL_VALUE) {
+            outcome_set_free(&raw);
+            return;
+        }
+        Atom *prepared = prepared_minimal_worker_readback(a, worker);
+        if (!prepared) {
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+            outcome_set_free(&raw);
+            return;
+        }
         outcome_set_add(&raw, prepared, &env);
         invoked = true;
     } else if (he_compat_host_read_raw(s, a, atom, &env, NULL, &raw,

@@ -11,6 +11,7 @@
 typedef struct Space Space;
 typedef struct DiscNode DiscNode;
 typedef struct CettaSpacePathIndex CettaSpacePathIndex;
+typedef struct CettaSpaceHeadIndex CettaSpaceHeadIndex;
 typedef struct CettaMorkSpaceHandle CettaMorkSpaceHandle;
 
 typedef enum {
@@ -66,6 +67,10 @@ typedef struct {
     uint32_t match_trie_pins;
     SpacePinnedOccurrences *pinned;
     CettaSpacePathIndex *path_indexes;
+    /* The rows of each head and length (space_path_index.h), and the
+     * retired ones cursors pinned to the current view still read. */
+    CettaSpaceHeadIndex *head_index;
+    CettaSpaceHeadIndex *stale_head_indexes;
     SubstTree *stree;
     bool stree_dirty;
     CettaCount stree_stale_occurrences;

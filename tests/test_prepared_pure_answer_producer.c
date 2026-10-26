@@ -709,6 +709,112 @@ static void test_entry_value_certificate_survives_service_roles(void) {
     destroy(&fixture);
 }
 
+static void test_closed_failure_and_refusal(void) {
+    const char *equations[] = {
+        "(= (probe $p) (let (Pair $x $y) $p 7))",
+        "(= (identity $x) $x)",
+        "(= (fraction $x) (/ 1 $x))",
+    };
+    const CettaGsltPureCallMode modes[] = {
+        CETTA_GSLT_PURE_CALL_EAGER, CETTA_GSLT_PURE_CALL_CALL_BY_NEED,
+    };
+    for (size_t mode = 0u; mode < 2u; mode++) {
+        Fixture fixture;
+        init(&fixture, equations, 3u, "(probe (Single 3))");
+        CettaPreparedPureProgram *program = cetta_prepared_pure_program_compile_closed(
+            &fixture.space, parse(&fixture.source, "(probe (Single 3))"), modes[mode],
+            atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
+            NULL, NULL, NULL, NULL, NULL, true, true,
+            (CettaMatchDecisionSemanticIdentity){0}, NULL);
+        assert(program);
+        const char *inputs[] = {"(probe (Single 3))", "(probe (Pair 4 5))",
+            "(probe (Single 8))", "(probe (Pair Empty (empty)))"};
+        for (size_t index = 0u; index < 4u; index++) {
+            assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+                program, parse(&fixture.source, inputs[index])));
+            CettaCallOutcome returned;
+            assert(cetta_prepared_pure_program_execute_closed_controlled(
+                program, &fixture.scratch, 65536u, NULL, NULL, &returned));
+            if (index % 2u == 0u)
+                assert(returned.kind == CETTA_CALL_FAILURE && !returned.term);
+            else
+                assert(returned.kind == CETTA_CALL_VALUE &&
+                    returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+                    atom_eq(returned.term, parse(&fixture.source, "7")));
+            cetta_prepared_pure_program_release_closed_execution(program);
+            cetta_prepared_pure_program_clear_closed_entry_call(program);
+        }
+        /* Cancellation takes precedence over the pattern mismatch that
+         * remains ahead. The next invocation starts with fresh completion. */
+        assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+            program, parse(&fixture.source, inputs[0])));
+        fixture.poll_limit = 1u;
+        CettaCallOutcome returned;
+        assert(cetta_prepared_pure_program_execute_closed_controlled(program,
+            &fixture.scratch, 0u, interrupt, &fixture, &returned));
+        assert(returned.kind == CETTA_CALL_INTERRUPTED && fixture.polls == 1u);
+        cetta_prepared_pure_program_release_closed_execution(program);
+        cetta_prepared_pure_program_clear_closed_entry_call(program);
+        fixture.poll_limit = 0u;
+        assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+            program, parse(&fixture.source, inputs[1])));
+        assert(cetta_prepared_pure_program_execute_closed_controlled(program,
+            &fixture.scratch, 0u, NULL, NULL, &returned));
+        assert(returned.kind == CETTA_CALL_VALUE);
+        cetta_prepared_pure_program_release_closed_execution(program);
+        cetta_prepared_pure_program_clear_closed_entry_call(program);
+
+        assert(space_admit_atom(&fixture.space, &fixture.source,
+            parse(&fixture.source, "(= (probe $p) 8)")));
+        assert(!cetta_prepared_pure_program_execute_closed_controlled(program,
+            &fixture.scratch, 0u, NULL, NULL, &returned));
+        cetta_prepared_pure_program_free(program);
+
+        const char *data[] = {"Empty", "(empty)", "(Error native datum)"};
+        for (size_t index = 0u; index < 3u; index++) {
+            Atom *datum = parse(&fixture.source, data[index]);
+            Atom *call = atom_expr2(&fixture.source,
+                parse(&fixture.source, "identity"), datum);
+            program = cetta_prepared_pure_program_compile_closed(&fixture.space,
+                call, modes[mode], atom_bool, atom_expr,
+                cetta_prepared_pure_constructs_expression_always,
+                NULL, NULL, NULL, NULL, NULL, true, true,
+                (CettaMatchDecisionSemanticIdentity){0}, NULL);
+            assert(program);
+            bool handled = cetta_prepared_pure_program_execute_closed_controlled(program,
+                &fixture.scratch, 0u, NULL, NULL, &returned);
+            if (mode == 1u && index > 0u) {
+                /* Need's current default adapter cannot certify this
+                 * code-shaped entry as data. Keep refusal distinct from
+                 * failure until its value/suspension boundary is admitted. */
+                assert(!handled && returned.kind != CETTA_CALL_FAILURE);
+                cetta_prepared_pure_program_free(program);
+                continue;
+            }
+            if (!handled)
+                fprintf(stderr, "closed value mode=%zu datum=%s declined\n", mode, data[index]);
+            assert(handled);
+            assert(returned.kind == CETTA_CALL_VALUE &&
+                returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+                atom_eq(returned.term, datum));
+            cetta_prepared_pure_program_free(program);
+        }
+        program = cetta_prepared_pure_program_compile_closed(&fixture.space,
+            parse(&fixture.source, "(fraction 0)"), modes[mode], atom_bool, atom_expr,
+            cetta_prepared_pure_constructs_expression_always,
+            NULL, NULL, NULL, NULL, NULL, true, true,
+            (CettaMatchDecisionSemanticIdentity){0}, NULL);
+        assert(program);
+        /* An operation outside this worker's domain keeps ordinary error
+         * interpretation. It cannot be relabelled as logical exhaustion. */
+        assert(!cetta_prepared_pure_program_execute_closed_controlled(program,
+            &fixture.scratch, 0u, NULL, NULL, &returned));
+        cetta_prepared_pure_program_free(program);
+        destroy(&fixture);
+    }
+    puts("PASS: closed register/node returns separate failure, data, cancellation and refusal");
+}
+
 /* A handler can be projected only while the entire pure attempt remains
  * private. A streamed producer must not lose it when exporting alternatives. */
 static void test_single_result_projection(void) {
@@ -1811,12 +1917,14 @@ static void test_context_reconstruction_observes_interrupt(void) {
         context_stop_requested = false;
         context_out_constructions = 0u;
         size_t observed = 0u;
-        Atom *answer = NULL;
+        CettaCallOutcome returned;
         bool completed = cetta_prepared_pure_program_execute_closed_controlled(
             program, &fixture.scratch, 65536u, poll_context_stop, &observed,
-            &answer);
+            &returned);
         if (!interrupted) {
-            assert(completed && answer);
+            assert(completed && returned.kind == CETTA_CALL_VALUE);
+            Atom *answer = returned.term;
+            assert(answer);
             assert(context_out_constructions == 10000u);
             size_t depth = 0u;
             for (Atom *cursor = answer;
@@ -1825,7 +1933,7 @@ static void test_context_reconstruction_observes_interrupt(void) {
                 depth++;
             assert(depth == 10000u);
         } else {
-            assert(!completed);
+            assert(completed && returned.kind == CETTA_CALL_INTERRUPTED);
             assert(observed == 1u);
             /* The executor polls every 256 steps and builds at most 8
              * contexts per step. */
@@ -3458,6 +3566,7 @@ int main(void) {
     test_shared_suspension_publication();
     test_closed_need_admission_and_collection();
     test_entry_value_certificate_survives_service_roles();
+    test_closed_failure_and_refusal();
     test_single_result_projection();
     test_cursor_bounded_continuations();
     test_cursor_bounded_silent_loop_and_authority();

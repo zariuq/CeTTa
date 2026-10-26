@@ -1153,11 +1153,15 @@ static Atom *table_fold(Arena *arena, PostingsTable *table, Atom *request, bool 
             if (count>INT64_MAX) goto cleanup;
             atom_scalar_leaf_int(&group_leaf,table->labels[group]);
             key_items[2]=query[1];
-            Atom *key_call=atom_expr(&scratch,key_items,3u), *key_answer=NULL;
+            Atom *key_call=atom_expr(&scratch,key_items,3u);
+            CettaCallOutcome key_return;
             if (!cetta_prepared_pure_program_rebind_closed_entry_call(key_program,key_call) ||
                 !cetta_prepared_pure_program_execute_closed_controlled(key_program,&scratch,
-                    65536u,postings_callback_stop,NULL,&key_answer) ||
-                !key_answer || key_answer->kind!=ATOM_GROUNDED ||
+                    65536u,postings_callback_stop,NULL,&key_return) ||
+                key_return.kind!=CETTA_CALL_VALUE)
+                goto cleanup;
+            Atom *key_answer=key_return.term;
+            if (!key_answer || key_answer->kind!=ATOM_GROUNDED ||
                 key_answer->ground.gkind!=GV_INT)
                 goto cleanup;
             int64_t label=key_answer->ground.ival;
@@ -1181,12 +1185,16 @@ static Atom *table_fold(Arena *arena, PostingsTable *table, Atom *request, bool 
             atom_scalar_leaf_int(&count_leaf,(int64_t)count);
             call_items[1]=atom_expr(&scratch,state_items,width+offset);
             call_items[4]=query[1];
-            Atom *call=atom_expr(&scratch,call_items,5u), *answer=NULL;
+            Atom *call=atom_expr(&scratch,call_items,5u);
+            CettaCallOutcome returned;
             Atom **values; size_t lanes;
             if (!cetta_prepared_pure_program_rebind_closed_entry_call(program,call) ||
                 !cetta_prepared_pure_program_execute_closed_controlled(program,&scratch,
-                    65536u,postings_callback_stop,NULL,&answer) ||
-                !answer || answer->kind!=ATOM_EXPR ||
+                    65536u,postings_callback_stop,NULL,&returned) ||
+                returned.kind!=CETTA_CALL_VALUE)
+                goto cleanup;
+            Atom *answer=returned.term;
+            if (!answer || answer->kind!=ATOM_EXPR ||
                 !sequence(answer,&values,&lanes) || lanes!=width+offset ||
                 (tag && !atom_eq(tag,values[0])))
                 goto cleanup;

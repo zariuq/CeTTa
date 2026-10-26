@@ -690,7 +690,7 @@ static inline __attribute__((always_inline)) void prime_ordinary_capsule_stack_l
         }
         if (!space_read_token_is_current(control->source_read) ||
             control->registry_read.stale) {control->invalidated=true;break;}
-        EvalCompletionTracker completion;
+        CettaEvalEpisode completion;
         eval_completion_child_begin(&completion);
         if (driver->task_ready) prime_eval_stack_run_task();
         else prime_eval_stack_resume_top();

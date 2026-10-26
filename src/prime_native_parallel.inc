@@ -1358,7 +1358,7 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_task_ker
     CettaLibraryContext *library = g_library_context;
     EvalContextState previous_context = eval_context_capture();
     HashConsTable *hashcons = g_hashcons;
-    EvalCompletionTracker *tracker = g_eval_completion_tracker;
+    CettaEvalEpisode *tracker = g_eval_completion_tracker;
     VariantBank *variants = g_owned_outcome_variant_bank;
     TempSpaceSet temporary = g_temp_spaces, created = g_new_space_track;
     const PettaProgramRevisionProjection *projection = g_petta_program_revision_projection;
@@ -1370,7 +1370,7 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_task_ker
         parallel->created_spaces = (TempSpaceSet){0};
     }
     g_owned_outcome_variant_bank = &parallel->variants;
-    EvalCompletionTracker completion = {.completion = CETTA_EVAL_COMPLETE};
+    CettaEvalEpisode completion = {.completion = CETTA_EVAL_COMPLETE};
     _Atomic bool *cancel = eval_set_cancel_token(&run->cancelled);
     EvalTermUniverseScope universe = {0};
     eval_term_universe_scope_enter(&universe, resource_execution

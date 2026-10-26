@@ -1002,7 +1002,7 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
         *out = (ContractValue){.bottom = true};
         return true;
     }
-    if (plan->control.operation != CETTA_CONTROL_NONE)
+    if (cetta_control_operation_is_control_form(plan->control))
         return false;
     bool static_call = head->kind == ATOM_SYMBOL &&
         plan->role == PETTA_PLAN_STATIC_CALL;

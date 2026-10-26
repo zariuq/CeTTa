@@ -3358,7 +3358,7 @@ struct CettaHeExecution {
     Arena storage;
     OutcomeSet output;
     Bindings input_environment;
-    EvalCompletionTracker completion;
+    CettaEvalEpisode completion;
     const CettaProfile *profile;
     pthread_t thread;
     int fuel;
@@ -3370,7 +3370,7 @@ typedef struct {
     HeCanonicalAmbient previous;
     EvalGc gc;
     HeCanonicalDriver *driver;
-    EvalCompletionTracker *completion;
+    CettaEvalEpisode *completion;
     CettaEvaluatorOptions borrowed_options;
 } HeCanonicalActivation;
 

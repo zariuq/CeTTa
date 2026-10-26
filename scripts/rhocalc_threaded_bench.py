@@ -287,6 +287,9 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--mode", choices=["quick", "standard", "heavy"],
                         default="quick")
     parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--baseline-receipt")
+    parser.add_argument("--baseline-receipt-sha256")
+    parser.add_argument("--baseline-source-commit")
     parser.add_argument(
         "--adaptive",
         action="store_true",
@@ -305,6 +308,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--require-speedup", action="store_true",
                         help="fail if chain-farm does not improve over one thread")
     args = parser.parse_args(argv[1:])
+    if any((args.baseline_receipt, args.baseline_receipt_sha256, args.baseline_source_commit)) and not args.baseline_bin:
+        parser.error("frozen provenance requires --baseline-bin")
     if args.runs < 1:
         parser.error("--runs must be positive")
     if args.adaptive and not args.baseline_bin:
@@ -320,7 +325,9 @@ def main(argv: list[str]) -> int:
     rows: list[dict[str, object]] = []
     provenance = benchmark_provenance(args.bin_path)
     baseline_provenance = (
-        benchmark_provenance(args.baseline_bin) if args.baseline_bin else None
+        benchmark_provenance(args.baseline_bin, receipt=args.baseline_receipt,
+            receipt_sha256=args.baseline_receipt_sha256,
+            source_commit=args.baseline_source_commit) if args.baseline_bin else None
     )
     spill_dir = Path(args.spill_dir)
     spill_dir.mkdir(parents=True, exist_ok=True)

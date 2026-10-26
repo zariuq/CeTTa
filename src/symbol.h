@@ -827,7 +827,10 @@ static inline SymbolSpelling symbol_spelling(
     X(work_record, "work-record") \
     X(work_route, "work-route") \
     X(work_count, "work-count") \
-    X(work_exists, "work-exists")
+    X(work_exists, "work-exists") \
+    X(lib_proc_write, "__cetta_lib_proc_write") \
+    X(lib_proc_read, "__cetta_lib_proc_read") \
+    X(lib_proc_close_input, "__cetta_lib_proc_close_input")
 
 /* Identity, dialect ownership and constructor role are separate facts.
  * These columns supplement the registered vocabulary without changing IDs. */
