@@ -19,16 +19,28 @@ from check_native_store_transactions import ROOT, digest
 
 def commands(seed):
     result = [
-        ["observe", 0, [7], 7], ["observe", 1, [8], 8],
+        ["observe", 0, [7], [7]], ["observe", 1, [8], [8]],
         ["commit", 0, [["add", 7], ["add", 7]]],
         ["commit", 1, [["add", 8]]],
-        ["observe", 2, [9], 7], ["external", [["add", 9]]],
+        ["observe", 2, [9], [7]], ["external", [["add", 9]]],
         ["commit", 2, [["remove", 7]]],
-        ["observe", 3, [], 7], ["commit", 3, []], ["commit", 3, []],
-        ["observe", 0, [], 7], ["commit", 0, [["add", 8]]],
+        ["observe", 3, [], [7]], ["commit", 3, []], ["commit", 3, []],
+        ["observe", 0, [], [7]], ["commit", 0, [["add", 8]]],
         ["commit", 0, [["remove", 7]]],
-        ["observe", 1, [None], None], ["restart"], ["commit", 1, []],
+        ["observe", 1, [None], [None]], ["restart"], ["commit", 1, []],
+        ["external", [["add", 1000], ["add", 1001]]],
+        ["observe", 2, [], [1000, 1001]],
+        ["external", [["remove", 1000], ["add", 1000]]],
+        ["commit", 2, [["remove", 1000], ["add", 1000]]],
+        ["observe", 2, [None], [1000, 1001]],
+        ["external", [["remove", 1001], ["add", 1001]]],
+        ["commit", 2, [["remove", 1000]]],
     ]
+    # Include many successful interleaved commits, not just random refusals.
+    for round_number in range(20):
+        left, right = 100+round_number*2, 101+round_number*2
+        result += [["observe", 0, [left], [left]], ["observe", 1, [right], [right]],
+                   ["commit", 0, [["add", left]]], ["commit", 1, [["add", right]]]]
     rng = random.Random(seed)
     for _ in range(210):
         action = rng.choice(("observe", "observe", "external", "commit", "commit", "close"))
@@ -36,7 +48,7 @@ def commands(seed):
         if action == "observe":
             result.append([action, rng.randrange(4),
                            [rng.choice((None, 0, 1, 2, 3)) for _ in range(rng.randrange(3))],
-                           rng.choice((None, 0, 1, 2, 3))])
+                           [rng.choice((None, 0, 1, 2, 3)) for _ in range(rng.randrange(3))]])
         elif action == "external":
             result.append([action, operations])
         elif action == "commit":
@@ -67,8 +79,8 @@ def sql_trace(trace):
         for action in trace:
             kind, views = action[0], []
             if kind == "observe":
-                scopes = [action[3], *action[2]]
-                captures[action[1]] = scopes, [view(scope) for scope in scopes]
+                scopes = [*action[3], *action[2]]
+                captures[action[1]] = action[3], scopes, [view(scope) for scope in scopes]
                 views, status = [view(scope) for scope in action[2]], "observed"
             elif kind == "external":
                 apply(action[1]); status = "external"
@@ -81,8 +93,8 @@ def sql_trace(trace):
                 if captured is None:
                     status = "retired"
                 else:
-                    scopes, before = captured
-                    if scopes[0] is not None and any(value != scopes[0] for _, value in action[2]):
+                    writes, scopes, before = captured
+                    if any(not any(scope is None or value == scope for scope in writes) for _, value in action[2]):
                         status = "scope"
                     elif before != [view(scope) for scope in scopes]:
                         status = "stale"
@@ -118,7 +130,8 @@ def native_trace(trace, service, binary, worker):
                 if action[1] in captures:
                     native.call(E("abort", test.fixture.socket, captures[action[1]]))
                 reads = tuple(E("scope", str(index), pattern(scope)) for index, scope in enumerate(action[2]))
-                value = native.call(E("scoped-observe", test.fixture.socket, space.describe(), reads, (pattern(action[3]),)))
+                writes = tuple(map(pattern, action[3]))
+                value = native.call(E("scoped-observe", test.fixture.socket, space.describe(), reads, writes))
                 if value[0] != S("SpaceScopedObserved"):
                     raise AssertionError((number, value))
                 captures[action[1]], status = value, "observed"
@@ -163,7 +176,8 @@ def lean_trace(trace, project, output):
     terms = []
     for action in trace:
         if action[0] == "observe":
-            terms.append(f".observe {action[1]} ["+", ".join(map(scope, action[2]))+"] "+scope(action[3]))
+            terms.append(f".observe {action[1]} ["+", ".join(map(scope, action[2]))+"] ["+
+                         ", ".join(map(scope, action[3]))+"]")
         elif action[0] == "external":
             terms.append(".external " + operations(action[1]))
         elif action[0] == "commit":
@@ -203,7 +217,8 @@ def main():
     for number, (a, b, c) in enumerate(zip(expected, actual, model, strict=True)):
         if a != b or a != c:
             raise AssertionError({"step": number, "command": trace[number], "sqlite": a, "native": b, "lean": c})
-    receipt = {"steps": len(trace), "seed": args.seed, "sqlite_version": sqlite3.sqlite_version,
+    receipt = {"steps": len(trace), "commits": sum(row[0] == "committed" for row in actual),
+               "seed": args.seed, "sqlite_version": sqlite3.sqlite_version,
                "library_sha256": digest(ROOT / "lib/petta/space_transaction.metta"),
                "service_sha256": digest(args.service), "worker_sha256": digest(args.worker),
                "model_sha256": digest(args.lean_project / "Mettapedia/Machines/NativeStoreScopes.lean"),
