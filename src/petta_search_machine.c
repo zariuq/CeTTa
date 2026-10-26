@@ -24852,15 +24852,12 @@ static bool petta_machine_cons(
     if (!head || !tail)
         return false;
     /*
-     * Keep constructor results as shared cons cells inside the relational
-     * machine.  Flattening here would copy a tail of length k at every
-     * recursive return and turn an otherwise linear map/range into
-     * 1 + ... + N retained element pointers.  Observable answers are
-     * materialized once by petta_machine_materialize_answer.
+     * A constructor result onto a complete flat list is that list with the
+     * head prepended, sharing the tail's storage, so a list built by
+     * recursive cons costs its length.  Only an open tail makes a cell.
      */
     Atom *constraint =
-        petta_semantics_open_cons_value(
-            &machine->heap, head, tail);
+        petta_semantics_cons_value(&machine->heap, head, tail);
     return constraint &&
            petta_machine_unify(
                machine, constraint, expected);

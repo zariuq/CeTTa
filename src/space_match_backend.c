@@ -733,7 +733,13 @@ void space_match_native_pin_trie(Space *s) {
 void space_match_native_unpin_trie(Space *s) {
     if (!s || s->match_backend.native.match_trie_pins == 0u)
         return;
-    s->match_backend.native.match_trie_pins--;
+    SpaceMatchNativeState *st = &s->match_backend.native;
+    st->match_trie_pins--;
+    /* Retired head indexes wait for the last cursor that may read them. */
+    if (st->match_trie_pins == 0u && st->stale_head_indexes) {
+        space_head_index_free(st->stale_head_indexes);
+        st->stale_head_indexes = NULL;
+    }
 }
 
 static void native_ensure_stree(Space *s) {
@@ -770,6 +776,7 @@ static void native_free(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     space_path_indexes_retire(s);
     space_pinned_occurrences_detach(s);
+    space_head_index_retire(s);
     disc_node_free(st->match_trie);
     st->match_trie = NULL;
     st->match_trie_dirty = false;
@@ -789,6 +796,8 @@ static void native_note_add(Space *s, AtomId atom_id, Atom *atom,
     SpaceMatchNativeState *st = &s->match_backend.native;
     if (st->path_indexes)
         space_path_indexes_note_add(s, atom_id, atom_idx);
+    if (st->head_index)
+        space_head_index_note_add(s, atom_id, atom_idx);
     if (st->match_trie && !st->match_trie_dirty) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_NATIVE_PATTERN_INDEX_INCREMENTAL_ADD);
@@ -814,6 +823,7 @@ static void native_note_add(Space *s, AtomId atom_id, Atom *atom,
 static void native_note_remove(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
     space_path_indexes_retire(s);
+    space_head_index_retire(s);
     (void)s;
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_NATIVE_MATCH_INDEX_REMOVE_NOTE);
@@ -869,6 +879,9 @@ native_transport_stable_occurrence_coordinates(
      * contraction retires only the live derived path indexes. */
     space_path_indexes_transport(s, transport->source_to_target,
                                  transport->source_len, transport->target_len);
+    /* The head index is rebuilt by its next reader: a contraction comes once
+     * per as many removals as the rows it keeps. */
+    space_head_index_retire(s);
 
     /* Small spaces are queried linearly.  Releasing an old realized tree is
      * both exact and better than retaining dead structural branches that no
@@ -1628,6 +1641,10 @@ static bool native_count_flat_linear(
     for (CettaExprIndex column = 0u; column < pattern->expr.len; column++)
         rigid |= pattern->expr.elems[column]->kind != ATOM_VAR;
     bool indexed = native_count_index_ready(s, rigid);
+    /* The trie holds live rows only, so its counts and candidates need no
+     * contraction; a scan reads rows by logical position and does. */
+    if (!indexed)
+        space_settle_marks(s);
     if (indexed && native_count_rigid_occurrences(
             state, pattern, count, examined)) {
         return true;
@@ -1903,7 +1920,11 @@ static bool native_count_flat_linear_view(
     bool indexed = native_count_index_ready(s, rigid);
 
     /* A cold count view can scan the same authoritative AtomId sequence as
-     * the materialized-pattern count. Repeated probes demand the shared trie. */
+     * the materialized-pattern count. Repeated probes demand the shared trie.
+     * The trie holds live rows only; a scan reads rows by logical position,
+     * which needs the marked ones contracted. */
+    if (!indexed)
+        space_settle_marks(s);
 
     CettaIndex *candidates = NULL;
     CettaIndex candidate_len = s->native.len;
@@ -1921,6 +1942,9 @@ static bool native_count_flat_linear_view(
         if (candidate_len > 1u)
             candidate_len = sort_unique_cetta_index(
                 candidates, candidate_len);
+        /* Trie leaves are rows; the reads below take logical positions. */
+        candidate_len = space_marks_physical_to_logical(
+            s, candidates, candidate_len);
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP);
     }
@@ -11218,6 +11242,7 @@ void space_match_backend_note_swap_remove(Space *s, CettaIndex removed_row,
     bool moved = moved_from != removed_row;
     space_path_indexes_note_swap_remove(s, removed_row, removed_id,
                                         moved_from, moved_id);
+    space_head_index_retire(s);
     if (st->match_trie && !st->match_trie_dirty) {
         bool kept = st->match_trie_pins == 0u &&
             disc_remove_id(st->match_trie, universe, removed_id, removed_row) &&
@@ -11486,7 +11511,6 @@ bool space_match_count_flat_linear64(
         !s->match_backend.ops->count_flat_linear) {
         return false;
     }
-    space_settle_marks(s);
     space_linearize(s);
     bool admitted = s->match_backend.ops->count_flat_linear(
         s, scratch, pattern, count, examined);
@@ -11517,7 +11541,6 @@ bool space_match_count_flat_linear_view64(
         !s->match_backend.ops->count_flat_linear_view) {
         return false;
     }
-    space_settle_marks(s);
     space_linearize(s);
     bool admitted = s->match_backend.ops->count_flat_linear_view(
         s, scratch, view, open_bindings, count, examined);
