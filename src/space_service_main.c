@@ -684,7 +684,7 @@ static bool boot_matches(Service *s, Atom *a) {
     const char *boot = NULL; return text(a,&boot) && !strcmp(boot,s->boot);
 }
 static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting,
-                    uint32_t uid, bool original_records) {
+                    uint32_t uid, bool original_records, uint64_t deadline) {
     bool profile=!counting && (atom_is_symbol(part(request,2),"query-profile") ||
                               atom_is_symbol(part(request,2),"query-first-profile"));
     bool first=!counting && (atom_is_symbol(part(request,2),"query-first") ||
@@ -693,6 +693,7 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
     if (!counting && (!integer(part(request,7),&limit) || !integer(part(request,8),&lease) ||
         !limit || limit > QUERY_ROWS || lease < 1 || lease > 300000)) return error(a,request,"limit");
     expire(s);
+    if (now_ms()>=deadline) return error(a,request,"query-time-limit");
     size_t slot = SNAPSHOTS;
     if (!counting) {
         for (size_t i = 0; i < SNAPSHOTS; ++i) if (!s->snapshots[i].id) { slot = i; break; }
@@ -708,7 +709,7 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
         q.rows = calloc((size_t)limit,sizeof(*q.rows));
         if (!q.rows) { space_occurrence_cursor_release(&cursor); return error(a,request,"memory"); }
     }
-    uint64_t matches = 0, examined = 0, deadline = now_ms() + s->query_ms;
+    uint64_t matches = 0, examined = 0;
     const char *failure = NULL;
     CettaIndex index;
     SpaceOccurrenceCursorStep step=SPACE_OCCURRENCE_CURSOR_END;
@@ -772,6 +773,7 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
 /* Captured views are complete records, including duplicates and original
  * variable sharing. A client projection never becomes validation authority. */
 static Atom *observe_scopes(Service *s, Client *client, Arena *a, Atom *request, Store *st) {
+    uint64_t deadline=now_ms()+s->query_ms;
     Atom *reads=part(request,5), *writes=part(request,6);
     uint64_t limit,lease;
     if (!reads || !writes || reads->kind!=ATOM_EXPR || writes->kind!=ATOM_EXPR ||
@@ -794,6 +796,7 @@ static Atom *observe_scopes(Service *s, Client *client, Arena *a, Atom *request,
     s->observation_bytes+=o.size;
     const char *failure=NULL;
     for (size_t i=0;i<count;++i) {
+        if (now_ms()>=deadline) { failure="query-time-limit"; break; }
         Atom *pattern=i<o.reads ? part(reads,i+1) : part(writes,i-o.reads+1);
         Bytes encoded={0};
         if (!wire(pattern,&encoded)) { failure="unsupported-pattern"; break; }
@@ -803,7 +806,7 @@ static Atom *observe_scopes(Service *s, Client *client, Arena *a, Atom *request,
         o.views[i].pattern=encoded; o.size+=encoded.size; s->observation_bytes+=encoded.size;
         Atom *args[]={part(request,1),atom_symbol(a,"query"),part(request,3),part(request,4),
             pattern,atom_unit(a),part(request,7),part(request,8)};
-        Atom *answer=query(s,a,form(a,"request",args,8),st,false,client->uid,true);
+        Atom *answer=query(s,a,form(a,"request",args,8),st,false,client->uid,true,deadline);
         uint64_t cursor;
         if (!shape(answer,"reply",4) || !atom_is_symbol(part(answer,2),"ok") ||
             !integer(part(part(answer,3),2),&cursor)) {
@@ -844,11 +847,13 @@ static const char *scope_current(Service *s, Store *st, ScopeView *view, uint64_
         Atom *source=space_occurrence_cursor_atom(&cursor,index);
         Arena scratch; arena_init_detached(&scratch);
         Bytes encoded={0}; Atom *row=source;
-        if (!source || !wire(source,&encoded)) failure="backend";
-        if (!failure && atom_has_vars(source) && !decode(&scratch,encoded,&row)) failure="backend";
+        if (!source) failure="backend";
+        if (!failure && atom_has_vars(source) &&
+            (!wire(source,&encoded) || !decode(&scratch,encoded,&row))) failure="backend";
         Bindings bindings; bindings_init(&bindings);
         if (!failure && match_atoms(pattern,row,&bindings,&scratch)) {
-            if (position>=view->rows.count || !same_bytes(encoded,view->rows.rows[position]))
+            if (!encoded.data && !wire(source,&encoded)) failure="backend";
+            else if (position>=view->rows.count || !same_bytes(encoded,view->rows.rows[position]))
                 failure="scope-conflict";
             ++position;
         }
@@ -866,7 +871,14 @@ static int scope_covers(Observation *o, Atom *value) {
         Arena scratch; arena_init_detached(&scratch); Atom *pattern=NULL;
         Bindings bindings; bindings_init(&bindings);
         bool decoded=decode(&scratch,o->views[i].pattern,&pattern);
+        /* Coverage is one-way: the declared pattern may bind, but a stored
+         * open value cannot acquire a narrower channel by instantiation. */
         bool covered=decoded && match_atoms(pattern,value,&bindings,&scratch);
+        if (covered && atom_has_vars(value)) {
+            Atom *instance=bindings_apply(&bindings,&scratch,value);
+            if (!instance) { bindings_free(&bindings); arena_free(&scratch); return -1; }
+            covered=atom_alpha_eq(value,instance);
+        }
         bindings_free(&bindings); arena_free(&scratch);
         if (!decoded) return -1;
         if (covered) return 1;
@@ -1254,11 +1266,11 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
     if ((atom_is_symbol(part(request,2),"query") || atom_is_symbol(part(request,2),"query-first") ||
          atom_is_symbol(part(request,2),"query-profile") || atom_is_symbol(part(request,2),"query-first-profile")) && request->expr.len == 9) {
         if (!(rights & RIGHT_READ)) return error(a,request,"forbidden");
-        return query(s,a,request,st,false,client->uid,false);
+        return query(s,a,request,st,false,client->uid,false,now_ms()+s->query_ms);
     }
     if (atom_is_symbol(part(request,2),"count") && request->expr.len == 6) {
         if (!(rights & RIGHT_READ)) return error(a,request,"forbidden");
-        return query(s,a,request,st,true,client->uid,false);
+        return query(s,a,request,st,true,client->uid,false,now_ms()+s->query_ms);
     }
     if (atom_is_symbol(part(request,2),"append") && request->expr.len == 6) {
         if (!(rights & RIGHT_APPEND)) return error(a,request,"forbidden");

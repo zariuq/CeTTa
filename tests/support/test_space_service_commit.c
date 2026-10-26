@@ -1,14 +1,28 @@
 /* Exercise the storage owner's real publication and recovery boundary. Faults
  * are injected at allocation and I/O interfaces, without production switches. */
+#define _GNU_SOURCE
+#include <time.h>
+static int scope_clock(clockid_t,struct timespec *);
+#define clock_gettime scope_clock
 #define main cetta_space_service_entry
 #include "../../src/space_service_main.c"
 #undef main
+#undef clock_gettime
+
+static uint64_t fake_clock;
+static int scope_clock(clockid_t clock,struct timespec *value) {
+    if (!fake_clock || clock!=CLOCK_MONOTONIC) return clock_gettime(clock,value);
+    uint64_t now=fake_clock++;
+    *value=(struct timespec){.tv_sec=(time_t)(now/1000),.tv_nsec=(long)(now%1000)*1000000L};
+    return 0;
+}
 
 static unsigned checks, after_write_allocations, event_encodings;
 static int observed_journal=-1;
 static bool write_started, forbid_after_write, fail_sync, fail_projection, fail_event, fail_key;
 static size_t fail_copy_size;
 static unsigned write_fault, allowed_projections;
+static unsigned scope_row_encodings;
 
 #define check(condition) do { \
     ++checks; \
@@ -58,6 +72,7 @@ int __wrap_fsync(int fd) {
 }
 CettaAtomWireStatus __real_cetta_atom_wire_encode(const Atom *,unsigned char **,size_t *);
 CettaAtomWireStatus __wrap_cetta_atom_wire_encode(const Atom *atom,unsigned char **data,size_t *size) {
+    if (shape((Atom *)atom,"ScopeProbe",3)) ++scope_row_encodings;
     if (write_started && fail_key &&
         (atom_is_symbol((Atom *)atom,"saved") || shape((Atom *)atom,"saved-open",2))) {
         fail_key=false; *data=NULL; *size=0; return ATOM_WIRE_NOMEM;
@@ -83,6 +98,7 @@ static void reset_faults(void) {
     fail_sync=fail_projection=fail_event=fail_key=false;
     fail_copy_size=0; write_fault=allowed_projections=0;
     after_write_allocations=event_encodings=0;
+    scope_row_encodings=0;
 }
 static void release(Service *s) {
     reset_faults();
@@ -299,12 +315,47 @@ static void scoped_publication(Service *s,Arena *a,const char *directory,unsigne
     check(space_length64(s->stores[0]->space)==2 && s->stores[0]->revision==1);
     bytes_free(&raw);
 }
+static void scope_deadline(Service *s,Arena *a) {
+    check(execute_wire(s,a,open_request(a,s,"native-ordered"))!=NULL);
+    Atom *patterns[32];
+    for (size_t i=0;i<32;++i) patterns[i]=atom_symbol(a,"absent");
+    Atom *args[]={atom_int(a,s->stores[0]->id),form(a,"reads",patterns,32),
+        form(a,"writes",NULL,0),atom_int(a,1),atom_int(a,60000)};
+    s->query_ms=20; fake_clock=1000;
+    Atom *answer=execute_wire(s,a,request(a,s,"bounded-scopes","observe",args,5));
+    uint64_t elapsed=fake_clock-1000; fake_clock=0;
+    check(shape(answer,"reply",4) && atom_is_symbol(part(answer,2),"error") &&
+        atom_is_symbol(part(answer,3),"query-time-limit"));
+    check(elapsed<40);
+    check(s->observation_bytes==0 && s->snapshot_bytes==0);
+}
+static void scope_validation_encoding(Service *s,Arena *a) {
+    check(execute_wire(s,a,open_request(a,s,"native-ordered"))!=NULL);
+    Store *st=s->stores[0];
+    for (int i=0;i<65;++i) {
+        Atom *fields[]={atom_int(a,i),atom_int(a,i ? i+1 : 0)};
+        check(store_add(st,form(a,"ScopeProbe",fields,2)));
+    }
+    Atom *variable=atom_var(a,"same");
+    Atom *fields[]={variable,variable};
+    Atom *pattern=form(a,"ScopeProbe",fields,2);
+    Atom *args[]={atom_int(a,st->id),form(a,"reads",&pattern,1),
+        form(a,"writes",NULL,0),atom_int(a,2),atom_int(a,60000)};
+    Atom *answer=execute_wire(s,a,request(a,s,"capture-matching","observe",args,5));
+    check(shape(answer,"reply",4) && atom_is_symbol(part(answer,2),"ok"));
+    Observation *o=find_observation(s,(uint64_t)part(part(answer,3),2)->ground.ival);
+    check(o && o->views[0].rows.count==1);
+    scope_row_encodings=0;
+    check(scope_current(s,st,&o->views[0],now_ms()+5000)==NULL);
+    check(scope_row_encodings==1);
+    observation_free(s,o);
+}
 int main(void) {
     SymbolTable symbols; symbol_table_init(&symbols); g_symbols=&symbols;
     symbol_table_init_builtins(&symbols,&g_builtin_syms);
     Service *s=calloc(1,sizeof(*s)); check(s!=NULL);
     const char *backends[]={"native","pathmap","mork"};
-    for (unsigned trial=0;trial<19;++trial) {
+    for (unsigned trial=0;trial<21;++trial) {
         if (trial>0 && trial<3 && !cetta_mork_bridge_is_available()) continue;
         char directory[]="runtime/space-commit-XXXXXX"; check(mkdtemp(directory)!=NULL);
         Arena a; arena_init_detached(&a); initialize(s,directory);
@@ -312,7 +363,9 @@ int main(void) {
         else if (trial<5) preparation_refusal(s,&a,trial==4);
         else if (trial<12) uncertain_publication(s,&a,directory,trial-4);
         else if (trial==12) account_publication(s,&a,directory);
-        else scoped_publication(s,&a,directory,trial-13);
+        else if (trial<19) scoped_publication(s,&a,directory,trial-13);
+        else if (trial==19) scope_deadline(s,&a);
+        else scope_validation_encoding(s,&a);
         release(s); arena_free(&a);
         char path[sizeof(directory)+20];
         snprintf(path,sizeof(path),"%s/journal.csl",directory); check(!unlink(path));

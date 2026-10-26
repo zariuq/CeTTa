@@ -57,8 +57,11 @@
 (= (space-tx:covered $patterns $value)
   (if (== $patterns ()) False
     (let* (($pattern (car-atom $patterns)) ($rest (cdr-atom $patterns)))
-      (let $matches (collapse (case $value (($pattern True) ($other False))))
-        (if (car-atom $matches) True (space-tx:covered $rest $value))))))
+      (let $matches (collapse (case $value (($pattern (SpaceCoveredValue $value)) ($other SpaceNotCovered))))
+        (case (car-atom $matches)
+          (((SpaceCoveredValue $instantiated)
+             (if (=alpha $instantiated $value) True (space-tx:covered $rest $value)))
+            ($other (space-tx:covered $rest $value))))))))
 
 (: space-tx:operations-covered (-> Atom Atom %Undefined%))
 
@@ -172,13 +175,18 @@
      (space $uuid $source $name $backend $kind $revision $count)
      (observation $boot $id $observed-source $rev $reads $writes $lease) $request-id $operations)
   (let $batch (cons-atom ops $operations)
-    (space:call $socket (request $request-id batch-observed $uuid $source $boot $id $batch) 5000)))
+    (let $answer (space:call $socket (request $request-id batch-observed $uuid $source $boot $id $batch) 5000)
+      (case $answer
+        (((reply $rid ok $result) $answer)
+          ($failed (let $closed (space-scope:close $socket
+            (observation $boot $id $observed-source $rev $reads $writes $lease)) $failed)))))))
 
 (: space:abort (-> String Atom %Undefined%))
 (= (space:abort $socket $observation)
   (case $observation
     (((SpaceScopedObserved $handle $ticket $reads $writes $results)
        (space-scope:close $socket $ticket))
+      ((SpaceObserved $handle $reads $writes $results) (SpaceAborted))
       ((SpaceTransaction $captured $key $fingerprint) (space:abort $socket $captured))
       ($other (SpaceRefused invalid-observation)))))
 

@@ -48557,7 +48557,18 @@ $(SPACE_SERVICE_COMMIT_TEST_BIN): $(SPACE_SERVICE_COMMIT_TEST_OBJ) $(FALLBACK_EV
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=write,--wrap=fsync,--wrap=cetta_atom_wire_encode,--wrap=space_admit_atom
 test-space-service-commit: $(SPACE_SERVICE_COMMIT_TEST_BIN)
 	$(SPACE_SERVICE_COMMIT_TEST_BIN)
-test-space-service: test-space-service-commit $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
+SPACE_SERVICE_SCOPES_TEST_BIN = runtime/test_space_service_scopes-$(BUILD_OBJ_TAG)
+SPACE_SERVICE_SCOPES_TEST_OBJ = runtime/bootstrap/test_space_service_scopes.$(BUILD_OBJ_TAG).o
+-include $(SPACE_SERVICE_SCOPES_TEST_OBJ:.o=.d)
+$(SPACE_SERVICE_SCOPES_TEST_OBJ): tests/support/test_space_service_scopes.c src/space_service_main.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(SPACE_SERVICE_SCOPES_TEST_BIN): $(SPACE_SERVICE_SCOPES_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+.PHONY: test-space-service-scopes
+test-space-service-scopes: $(SPACE_SERVICE_SCOPES_TEST_BIN)
+	$(SPACE_SERVICE_SCOPES_TEST_BIN)
+test-space-service: test-space-service-commit test-space-service-scopes $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
 	python3 tests/test_space_service.py $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
 
 .PHONY: test-native-store-transactions test-native-store-scopes

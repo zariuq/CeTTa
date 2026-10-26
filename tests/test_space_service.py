@@ -852,6 +852,25 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip().splitlines()[-1], '(Verified ((1 "a") (1 "b") (2 "c")))')
 
+    @unittest.skipUnless(WORKER and CETTA, "provide native worker and CLI")
+    def test_worker_profile_matches_cli_and_unencodable_output_keeps_the_worker(self):
+        module = self.fixture.root / "worker-profile.metta"
+        module.write_text('''(= (worker-profile bracket) (quote (f [1 2] 3)))
+(= (worker-profile unavailable) (new-space))
+(= (worker-profile ready) ready)
+''')
+        worker = Worker(WORKER, module, "worker-profile", language="petta")
+        self.addCleanup(worker.close)
+        self.assertEqual(worker.call(S("bracket")), E("f", S("[1"), S("2]"), 3))
+        with self.assertRaisesRegex(RuntimeError, "unencodable-result"):
+            worker.call(S("unavailable"))
+        self.assertEqual(worker.call(S("ready")), S("ready"))
+        extended = Worker(WORKER, module, "worker-profile", language="petta", language_profile="extended")
+        self.addCleanup(extended.close)
+        with self.assertRaisesRegex(RuntimeError, "unencodable-result"):
+            extended.call(S("bracket"))
+        self.assertEqual(extended.call(S("ready")), S("ready"))
+
     @unittest.skipUnless(WORKER, "provide value worker for MeTTa transactions")
     def test_metta_observation_preserves_pages_and_negative_dependencies(self):
         worker = self.transaction_worker()
@@ -890,6 +909,41 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(observed[5], (E("SpaceRead", "messages", (E("Message", "a", E("+", 1, 2)),)),))
         closed = worker.call(E("abort", self.fixture.socket, observed))
         self.assertEqual(closed[2:], (S("ok"), S("closed")))
+
+    @unittest.skipUnless(WORKER, "provide value worker for write coverage")
+    def test_open_values_require_a_write_pattern_covering_the_whole_value(self):
+        worker = self.transaction_worker()
+        space = self.client.open("open-write-scope", "native-ordered")
+        cases = [
+            (E("Channel", "a", Var(0)), E("Channel", Var(0), 1), False),
+            (E("Channel", Var(0), Var(1)), E("Channel", Var(0), 1), True),
+            (E("Pair", Var(0), Var(0)), E("Pair", Var(0), Var(1)), False),
+            (E("Pair", Var(0), Var(0)), E("Pair", Var(0), Var(0)), True),
+        ]
+        for method in ("observe", "scoped-observe"):
+            for index, (pattern, value, allowed) in enumerate(cases):
+                fields = (method, self.fixture.socket, space.describe(), (), (pattern,))
+                observed = worker.call(E(*fields, 16)) if method == "observe" else worker.call(E(*fields))
+                result = worker.call(E("commit", self.fixture.socket, observed, method+str(index), (E("add", value),)))
+                if allowed:
+                    self.assertEqual(result[2], S("ok"), (method, index, result))
+                else:
+                    expected = E("SpaceRefused", S("undeclared-write")) if method == "observe" else (
+                        result[0], result[1], S("error"), S("undeclared-write"))
+                    self.assertEqual(result, expected, (method, index))
+
+    @unittest.skipUnless(WORKER, "provide value worker for terminal cleanup")
+    def test_scoped_commit_early_refusal_releases_its_observation(self):
+        worker = self.transaction_worker()
+        space = self.client.open("refused-commit", "native-ordered")
+        self.client.call("batch", space.uuid, space.id, space.revision, E("ops"), request_id="occupied-request")
+        for _ in range(80):
+            observation = worker.call(E("scoped-observe", self.fixture.socket, space.describe(), (), (Var(0),)))
+            self.assertEqual(observation[0], S("SpaceScopedObserved"))
+            result = worker.call(E("commit", self.fixture.socket, observation, "occupied-request", ()))
+            self.assertEqual(result[2:], (S("error"), S("reused-id")))
+        conservative = worker.call(E("observe", self.fixture.socket, space.describe(), (), (), 16))
+        self.assertEqual(worker.call(E("abort", self.fixture.socket, conservative)), E("SpaceAborted"))
 
     @unittest.skipUnless(WORKER, "provide value worker for MeTTa transactions")
     def test_metta_commit_checks_scopes_without_capturing_pattern_variables(self):

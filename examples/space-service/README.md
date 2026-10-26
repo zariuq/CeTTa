@@ -199,9 +199,13 @@ publication, so unrelated changes do not cause false revision conflicts.
 `space:begin-scoped` provides the same durable receipt contract with these
 dependencies. The service advertises `scoped-observations-v1`.
 
-Each scoped observation belongs to its authenticated account and is one-use,
-including a rejected or no-op proposal. `space:abort` releases an unused
-observation or transaction. Restart invalidates its ticket. A durable scoped
+Each scoped observation belongs to its authenticated account. It is consumed
+when the service evaluates a proposal, including a rejected or no-op proposal.
+Earlier protocol or permission refusals leave cleanup to the caller; the MeTTa
+commit helper closes the observation after any unsuccessful outcome.
+`space:abort` releases an unused scoped observation or transaction, and is a
+no-op for conservative observations whose snapshots are already closed.
+Restart invalidates a scoped ticket. A durable scoped
 commit records the original request, reply and resolved publication revision;
 recovery never needs the old observation. A lost reply is reconciled using the
 application receipt, not by repeating an external effect.
@@ -211,6 +215,9 @@ unordered bag can genuinely change another view's order. View validation is
 about current state: removing and reinserting identical records can restore
 the same view. Records must carry stable occurrence IDs and versions when
 causal identity or detecting that intervening change matters.
+A write pattern must cover the whole value: an unbound channel cannot become
+covered merely by matching it to a particular channel name. Such an open value
+requires a broader declared write scope. Read matching still uses unification.
 
 `space:wait-start SOCKET OBSERVATION MILLISECONDS` returns
 `(SpaceWaiting OBSERVATION IO-ID)` using native asynchronous I/O. It consumes
@@ -232,6 +239,11 @@ view and are suitable for bounded record queries, not a streaming interface to
 an entire archive. Scoped views share the snapshot memory allowance and include
 their pointer-vector storage. Ordered removal currently uses the existing
 linear sequence-preserving operation.
+One computation deadline covers all scopes in an observation, as it does for
+validation. Checks occur between scopes and during scans; an individual index
+or matcher operation is not preempted. A lost observation-creation reply still
+relies on lease expiry for reclamation. Per-account allocation fairness and
+longer-lived observation recovery remain integration work.
 
 The default quotas are 32 spaces, one million facts and 64 MiB of live portable
 values per space, 64 snapshots with 32 MiB total row data, a 1 MiB frame,
@@ -242,6 +254,13 @@ Checkpointing bounds journal growth relative to its last checkpoint; it also
 rebuilds ownership to release removed native terms and old Rust roots.
 
 ## Framing and checks
+
+`cetta-value-worker --lang petta` reads source with the CLI's default PeTTa
+profile. Select `--profile extended` explicitly for its extended syntax.
+An output outside CAV1's portable value types is reported as
+`unencodable-result`, leaving the worker available for the next request.
+That is a result-delivery failure; it does not authorize replaying effects
+the selected module may already have performed.
 
 CSP1 is an application protocol: `CSP1`, a big-endian 32-bit payload length,
 then one CAV1 value. CAV1 uses little-endian lengths and numeric bits: `S`
