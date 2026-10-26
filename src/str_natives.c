@@ -5,6 +5,7 @@
 
 #include "string_ops.h"
 #include "unicode_category15.h"
+#include "python_lower15.h"
 #include "str_stream.h"
 #include "utf8.h"
 
@@ -439,6 +440,109 @@ static Atom *str_from_python_codepoints(Arena *a, Atom *const *args, CettaStrRef
     return str_from_buffer(a, &out);
 }
 
+static bool lower15_has(const uint32_t *starts, size_t count, uint32_t code) {
+    size_t low = 0u, high = count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (starts[middle] <= code) low = middle + 1u;
+        else high = middle;
+    }
+    return low % 2u == 1u;
+}
+
+/* The full lowercase mapping of a code point other than U+03A3: its width,
+ * and its code points in out (the code point itself when it has none). */
+static uint8_t lower15_map(uint32_t code, uint32_t out[CETTA_PYTHON_LOWER15_WIDTH]) {
+    size_t low = 0u, high = CETTA_PYTHON_LOWER15_MAPPINGS;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (cetta_python_lower15_from[middle] < code) low = middle + 1u;
+        else high = middle;
+    }
+    if (low < CETTA_PYTHON_LOWER15_MAPPINGS && cetta_python_lower15_from[low] == code) {
+        uint8_t width = cetta_python_lower15_widths[low];
+        for (uint8_t k = 0u; k < width; k++) out[k] = cetta_python_lower15_to[low][k];
+        return width;
+    }
+    out[0] = code;
+    return 1u;
+}
+
+/* Whether the first code point at or after `at` that is not case-ignorable is
+ * cased; false at the end of the text. Malformed bytes end the scan; the
+ * caller refuses them when it reaches them. */
+static bool lower15_cased_follows(const char *text, size_t len, size_t at) {
+    while (at < len) {
+        uint32_t code, width;
+        if (!cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &code, &width))
+            return false;
+        if (!lower15_has(cetta_python_lower15_ignorable_starts, CETTA_PYTHON_LOWER15_IGNORABLE_STARTS, code))
+            return lower15_has(cetta_python_lower15_cased_starts, CETTA_PYTHON_LOWER15_CASED_STARTS, code);
+        at += width;
+    }
+    return false;
+}
+
+/* CPython 3.12's str.lower of a Python text (UTF-8 extended by surrogatepass,
+ * as str:python-codepoints reads it): full lowercase mappings over Unicode
+ * 15.0.0, one code point to several included, and the Final_Sigma context of
+ * U+03A3, as CPython's handle_capital_sigma decides it: final sigma when the
+ * nearest code point before it that is not case-ignorable is cased and the
+ * nearest one after it is not. Lone surrogates are kept. Not casefold.
+ *
+ * Two passes over the text, with no decoded copy: the first validates and
+ * sizes the answer, the second writes it. Whether the code point before is
+ * cased is carried along; for U+03A3 the scan forward stops at the first code
+ * point that is not case-ignorable, so each run of case-ignorable code points
+ * is scanned for at most one sigma and the work stays linear. An answer that
+ * cannot fit a string is refused before anything is allocated for it. */
+static Atom *str_python_lower(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len;
+    if (!str_text(args[0], &text, &len))
+        return str_expects(r, "expected text argument");
+    uint64_t total = 0u;
+    char *out = NULL;
+    size_t written = 0u;
+    for (int pass = 0; pass < 2; pass++) {
+        bool cased_before = false;
+        for (size_t at = 0u; at < len;) {
+            uint32_t code, width;
+            if (!cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &code, &width))
+                return str_refuses(r, "StrMalformedUtf8V1", at);
+            uint32_t mapped[CETTA_PYTHON_LOWER15_WIDTH];
+            uint8_t count = 1u;
+            if (code == 0x03A3u)
+                mapped[0] = cased_before && !lower15_cased_follows(text, len, at + width) ? 0x03C2u : 0x03C3u;
+            else
+                count = lower15_map(code, mapped);
+            for (uint8_t m = 0u; m < count; m++) {
+                uint8_t encoded[4];
+                size_t bytes = cetta_utf8_encode(mapped[m], encoded);
+                if (pass == 0) {
+                    total += bytes;
+                } else {
+                    memcpy(out + written, encoded, bytes);
+                    written += bytes;
+                }
+            }
+            if (!lower15_has(cetta_python_lower15_ignorable_starts, CETTA_PYTHON_LOWER15_IGNORABLE_STARTS, code))
+                cased_before = lower15_has(cetta_python_lower15_cased_starts, CETTA_PYTHON_LOWER15_CASED_STARTS, code);
+            at += width;
+        }
+        if (pass == 0) {
+            if (total > CETTA_STRING_BYTES_MAX)
+                return str_expects(r, "expected a text whose lowercase fits a string");
+            out = malloc((size_t)total + 1u);
+            if (!out)
+                return str_expects(r, "memory for the lowercase text");
+        }
+    }
+    Atom *result = atom_string_n(a, out, written);
+    free(out);
+    return result;
+}
+
 static Atom *str_unicode_version(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     (void)args;
     (void)r;
@@ -850,6 +954,7 @@ static const CettaStrNative str_natives[] = {
     {"unicode-version", 0u, 0u, str_unicode_version, CETTA_STR_RESULT_ATOM},
     {"python-codepoints", 1u, 0u, str_python_codepoints, CETTA_STR_RESULT_STRUCTURE},
     {"from-python-codepoints", 1u, 1u << 0, str_from_python_codepoints, CETTA_STR_RESULT_ATOM},
+    {"python-lower", 1u, 0u, str_python_lower, CETTA_STR_RESULT_ATOM},
     {"codepoints", 1u, 0u, str_codepoints, CETTA_STR_RESULT_STRUCTURE},
     {"from-codepoints", 1u, 1u << 0, str_from_codepoints, CETTA_STR_RESULT_ATOM},
     {"is-all-in", 2u, 0u, str_all_in, CETTA_STR_RESULT_ATOM},

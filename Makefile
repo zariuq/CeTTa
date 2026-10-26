@@ -34228,6 +34228,15 @@ $(EXPANDUSER_SEAMS_TEST_V1): tests/support/test_expanduser_seams_v1.c src/expand
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_expanduser_seams_v1.c src/expand_user.c \
 		-Wl,--wrap=malloc,--wrap=realloc,--wrap=free,--wrap=strndup,--wrap=getpwnam_r,--wrap=getpwuid_r
 
+# str:python-lower against CPython 3.12's own str.lower (Unicode 15.0.0);
+# another Python's Unicode makes the check report a skip.
+PYTHON_LOWER_TEST_PYTHON ?= $(shell command -v python3.12 2>/dev/null || echo python3)
+.PHONY: test-python-lower-v1
+test-all: test-python-lower-v1
+test-python-lower-v1: $(BIN) tests/support/check_python_lower_v1.py src/python_lower15.h tools/generate_python_lower15.py
+	@$(PYTHON_LOWER_TEST_PYTHON) tools/generate_python_lower15.py src/python_lower15.h --check
+	@$(PYTHON_LOWER_TEST_PYTHON) tests/support/check_python_lower_v1.py ./$(BIN)
+
 .PHONY: test-expanduser-v1
 test-all: test-expanduser-v1
 test-expanduser-v1: $(BIN) tests/support/check_expanduser_v1.py $(EXPANDUSER_SEAMS_TEST_V1)
