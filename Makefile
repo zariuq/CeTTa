@@ -34192,7 +34192,7 @@ FILESYSTEM_NATIVE_TEST_V1 = runtime/test-filesystem-observations-v1-$(BUILD_OBJ_
 FILESYSTEM_STANDALONE_STATS_SRC_V1 = $(if $(filter 1,$(ENABLE_RUNTIME_STATS)),src/stats.c)
 $(FILESYSTEM_NATIVE_TEST_V1): tests/support/test_filesystem_observations_v1.c src/library_fs.c src/library_fs.h src/native_handle.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) src/stats.h $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_filesystem_observations_v1.c src/library_fs.c src/native_handle.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(LDFLAGS) -Wl,--gc-sections,--wrap=read,--wrap=__read_chk,--wrap=readdir,--wrap=malloc,--wrap=strdup,--wrap=fstatat,--wrap=closedir,--wrap=rename,--wrap=write,--wrap=fsync,--wrap=flock
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_filesystem_observations_v1.c src/library_fs.c src/native_handle.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(FILESYSTEM_STANDALONE_STATS_SRC_V1) $(LDFLAGS) -Wl,--gc-sections,--wrap=read,--wrap=__read_chk,--wrap=readdir,--wrap=malloc,--wrap=strdup,--wrap=fstatat,--wrap=closedir,--wrap=rename,--wrap=write,--wrap=fsync,--wrap=flock,--wrap=openat
 
 .PHONY: test-filesystem-v1
 test-all: test-filesystem-v1

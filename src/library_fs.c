@@ -94,7 +94,11 @@ static void release_cursor(void *resource) {
 static int open_owned_at(int directory, const char *path, int flags, mode_t mode) {
     flockfile(stdout);
     flockfile(stderr);
-    int fd = openat(directory, path, flags | O_CLOEXEC, mode);
+    int fd;
+    /* A signal resumes the open, as os.open does, unless it interrupted the
+     * evaluation. */
+    do fd = openat(directory, path, flags | O_CLOEXEC, mode);
+    while (fd < 0 && errno == EINTR && !eval_native_interrupted());
     if (fd >= 0 && fd < 3) {
         int moved = fcntl(fd, F_DUPFD_CLOEXEC, 3);
         int saved = errno;

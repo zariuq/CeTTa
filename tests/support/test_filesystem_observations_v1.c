@@ -6,6 +6,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/file.h>
@@ -27,6 +28,8 @@ static bool rename_cross_device;
 static size_t write_limit, write_budget;
 static bool write_eintr, write_eintr_interrupts, write_budget_set;
 static bool sync_eintr, sync_fault, lock_eintr;
+/* One EINTR from openat, which may also raise the evaluator's interrupt. */
+static bool open_eintr, open_eintr_interrupts;
 
 int __real_rename(const char *source, const char *target);
 int __wrap_rename(const char *source, const char *target) {
@@ -35,6 +38,23 @@ int __wrap_rename(const char *source, const char *target) {
 }
 
 bool eval_native_interrupted(void) { return interrupted; }
+int __real_openat(int directory, const char *path, int flags, ...);
+int __wrap_openat(int directory, const char *path, int flags, ...) {
+    mode_t mode = 0;
+    if (flags & O_CREAT) {
+        va_list modes;
+        va_start(modes, flags);
+        mode = (mode_t)va_arg(modes, int);
+        va_end(modes);
+    }
+    if (open_eintr) {
+        open_eintr = false;
+        if (open_eintr_interrupts) interrupted = true;
+        errno = EINTR;
+        return -1;
+    }
+    return __real_openat(directory, path, flags, mode);
+}
 ssize_t __real_write(int fd, const void *bytes, size_t size);
 ssize_t __wrap_write(int fd, const void *bytes, size_t size) {
     if (write_eintr) {
@@ -401,6 +421,24 @@ static void writer_controls(CettaLibraryContext *ctx, Arena *arena, const char *
     (void)rmdir(top);
     mode_t saved = umask(022);
     const char *append_create[] = {"append", "create"};
+
+    /* A signal during the open resumes it; an interrupt of the evaluation
+     * stops it before anything is created. */
+    char resumed[4096], stopped[4096];
+    assert(snprintf(resumed, sizeof(resumed), "%s/open-resumed", base) < (int)sizeof(resumed));
+    assert(snprintf(stopped, sizeof(stopped), "%s/open-stopped", base) < (int)sizeof(stopped));
+    (void)unlink(resumed);
+    (void)unlink(stopped);
+    open_eintr = true;
+    Atom *resumed_owner = open_writer(ctx, arena, resumed, strings(arena, append_create, 2u), 0666);
+    check(headed(resumed_owner, "NativeHandle", 3u) && access(resumed, F_OK) == 0);
+    check(atom_is_symbol(call(ctx, arena, "close", &resumed_owner, 1u), "fs:closed"));
+    open_eintr = open_eintr_interrupts = true;
+    Atom *stopped_owner = open_writer(ctx, arena, stopped, strings(arena, append_create, 2u), 0666);
+    check(failed_code(stopped_owner) == EINTR && access(stopped, F_OK) != 0);
+    interrupted = open_eintr_interrupts = false;
+    check(!open_eintr);
+
     Atom *owner = open_writer(ctx, arena, path, strings(arena, append_create, 2u), 0666);
     check(headed(owner, "NativeHandle", 3u));
     struct stat info;
