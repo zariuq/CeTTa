@@ -21953,8 +21953,24 @@ static bool petta_machine_start_space_query(
                 !lhs || !query->whole ||
                 petta_semantics_cons_pattern_may_match(
                     lhs, query->whole);
+            /* A named equation with more arguments cannot answer this call.
+             * Named partial application is decided before equation search;
+             * over-application can extend a SHORTER head, so retain those
+             * candidates outside the exact-arity language. Reject impossible
+             * longer heads before they keep a choice and its caller alive.
+             * Logical-list and non-symbol heads stay with their matcher. */
+            if (lhs && lhs->kind == ATOM_EXPR) {
+                if (machine->host.exact_equation_arity &&
+                    lhs->expr.len != query->arity + 1u)
+                    may_match = false;
+                else if (!list_query && !atom_is_list_rest(lhs) &&
+                         lhs->expr.len > query->arity + 1u &&
+                         lhs->expr.elems[0]->kind == ATOM_SYMBOL &&
+                         atom_eq(lhs->expr.elems[0], query->head))
+                    may_match = false;
+            }
             if (list_query && lhs && lhs->kind == ATOM_EXPR &&
-                lhs->expr.len > 0u)
+                lhs->expr.len > 0u && may_match)
                 may_match = petta_machine_cells_may_meet(lhs, query->whole);
             if (!list_query && !candidates_structurally_verified &&
                 !query->argument_views && may_match && lhs &&

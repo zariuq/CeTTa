@@ -49965,3 +49965,9 @@ test-petta-contextual-case: $(BIN) tests/support/check_petta_contextual_case.py
 	python3 tests/support/check_petta_contextual_case.py --cetta ./$(BIN)
 
 test-all: test-petta-contextual-case
+
+.PHONY: test-petta-overloaded-choice-retention
+test-petta-overloaded-choice-retention: $(BIN) tests/support/check_petta_overloaded_choice_retention.py
+	python3 tests/support/check_petta_overloaded_choice_retention.py ./$(BIN)
+
+test-petta-search-machine test-all: test-petta-overloaded-choice-retention
