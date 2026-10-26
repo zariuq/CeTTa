@@ -44,6 +44,53 @@ static PrimeNeedReceiptGraphStatus collect_with_fault(
     return status;
 }
 
+
+typedef struct {unsigned references;} ReaderAllocationOwner;
+static bool reader_allocation_retain(void *raw) {
+    ((ReaderAllocationOwner *)raw)->references++;return true;
+}
+static void reader_allocation_release(void *raw) {
+    ReaderAllocationOwner *owner=raw;assert(owner->references);owner->references--;
+}
+static const PrimeNeedReaderValueOps reader_allocation_ops={
+    .retain=reader_allocation_retain,.release=reader_allocation_release,
+};
+static void check_reader_context_refusal(void) {
+    ReaderAllocationOwner owner={0};
+    PrimeNeedReaderValue value={&owner,&reader_allocation_ops};
+    PrimeNeedReaderContext *base=NULL,*first=NULL,*second=NULL,*joined=NULL,*out=NULL;
+    assert(prime_need_reader_context_update(NULL,11u,&value,&base)==CETTA_MATCH_MATCHED);
+    assert(prime_need_reader_context_update(base,22u,&value,&first)==CETTA_MATCH_MATCHED);
+    assert(prime_need_reader_context_update(first,33u,&value,&second)==CETTA_MATCH_MATCHED);
+    size_t refused=0u;
+    for (unsigned operation=0u;operation<3u;operation++) {
+        allocation_count=0u;fail_at=SIZE_MAX;probing=true;
+        CettaMatchCompletion status=operation==0u
+            ? prime_need_reader_context_update(second,44u,&value,&out)
+            : operation==1u ? prime_need_reader_context_merge(base,second,&out)
+                : prime_need_reader_context_import(first,second,base,&out);
+        probing=false;
+        assert(status==CETTA_MATCH_MATCHED && out);
+        size_t allocations=allocation_count;
+        prime_need_reader_context_release(out);out=NULL;
+        for (size_t i=0u;i<allocations;i++) {
+            prime_need_reader_context_retain(base);out=base;
+            unsigned before=owner.references;
+            allocation_count=0u;fail_at=i;probing=true;
+            status=operation==0u ? prime_need_reader_context_update(second,44u,&value,&out)
+                : operation==1u ? prime_need_reader_context_merge(base,second,&out)
+                    : prime_need_reader_context_import(first,second,base,&out);
+            probing=false;
+            assert(status==CETTA_MATCH_INCOMPLETE && out==base && owner.references==before);
+            prime_need_reader_context_release(out);out=NULL;refused++;
+        }
+    }
+    prime_need_reader_context_release(base);prime_need_reader_context_release(first);
+    prime_need_reader_context_release(second);prime_need_reader_context_release(joined);
+    assert(!owner.references);
+    printf("PASS: %zu reader-context allocation refusals preserve versions and owners\n",refused);
+}
+
 static void check_production_support_refusal(Arena *arena) {
     PrimeNeedSnapshot root = {0}, base = {0}, running = {0}, produced = {0};
     uint64_t thunk = 0u;
@@ -81,10 +128,10 @@ static void check_production_support_refusal(Arena *arena) {
     for (size_t i = 0u; i < 2u; i++) {
         PrimeNeedSnapshot out = root;
         fail_at = i; allocation_count = 0u; probing = true;
-        bool imported = prime_need_snapshot_import_production(arena, capture, &produced,
+        CettaMatchCompletion imported = prime_need_snapshot_import_production_checked(arena, capture, &produced,
             thunk, &base, &out);
         probing = false;
-        assert(!imported && allocation_count == i + 1u &&
+        assert(imported == CETTA_MATCH_INCOMPLETE && allocation_count == i + 1u &&
             memcmp(&out, &root, sizeof(out)) == 0);
     }
     PrimeNeedSnapshot imported;
@@ -107,12 +154,68 @@ static void check_capture_allocation_refusal(Arena *arena) {
     assert(agrees && allocations>=4u);
     for (size_t i=0u;i<allocations;i++) {
         fail_at=i;allocation_count=0u;probing=true;
-        agrees=atom_capture_identical(left,right);
+        CettaMatchCompletion status=atom_capture_identical_checked(left,right);
         probing=false;
-        assert(!agrees && allocation_count==i+1u);
+        assert(status==CETTA_MATCH_INCOMPLETE && allocation_count==i+1u);
         assert(atom_capture_identical(left,right));
     }
     printf("PASS: %zu captured-input allocation refusals preserve both source DAGs\n",allocations);
+}
+
+static CettaMatchCompletion state_selected_initial(void *context, StateCell *cell, Atom **out) {
+    (void)context;
+    /* All allocations before this selected-view observation are checked
+     * scratch preparation. Arena allocation policy remains a separate owner. */
+    probing = false;
+    *out = cell->value;
+    return CETTA_MATCH_MATCHED;
+}
+
+static void check_state_import_allocation_refusal(Arena *arena) {
+    StateCell a={.value=atom_int(arena,0)},b={.value=atom_int(arena,0)};
+    PrimeNeedBranchState common={0},entrance={0},production={0},recipient={0},out={0};
+    assert(prime_need_branch_state_begin(arena,&common));
+    assert(prime_need_branch_state_write(arena,&common,&a,a.value,atom_int(arena,1),&entrance));
+    assert(prime_need_branch_state_write(arena,&entrance,&b,b.value,atom_int(arena,7),&production));
+    assert(prime_need_branch_state_write(arena,&common,&a,a.value,atom_int(arena,2),&recipient));
+    fail_at=SIZE_MAX;allocation_count=0u;probing=true;
+    CettaMatchCompletion status=prime_need_branch_state_import_suffix(arena,&common,&entrance,
+        &production,&recipient,state_selected_initial,NULL,&out);
+    probing=false;size_t allocations=allocation_count;
+    assert(status==CETTA_MATCH_MATCHED && allocations>4u);
+    for(size_t i=0u;i<allocations;i++) {
+        out=recipient;fail_at=i;allocation_count=0u;probing=true;
+        status=prime_need_branch_state_import_suffix(arena,&common,&entrance,
+            &production,&recipient,state_selected_initial,NULL,&out);
+        probing=false;
+        assert(status==CETTA_MATCH_INCOMPLETE && allocation_count>=i+1u &&
+            out.top==recipient.top && out.session_id==recipient.session_id && out.owner==recipient.owner);
+    }
+    assert(prime_need_branch_state_import_suffix(arena,&common,&entrance,&production,&recipient,
+        state_selected_initial,NULL,&out)==CETTA_MATCH_MATCHED);
+    fail_at=SIZE_MAX;allocation_count=0u;probing=true;
+    status=prime_need_branch_state_same_writes_checked(&production,&out,&b);
+    probing=false;size_t comparisons=allocation_count;
+    assert(status==CETTA_MATCH_MATCHED && comparisons>0u);
+    for(size_t i=0u;i<comparisons;i++) {
+        fail_at=i;allocation_count=0u;probing=true;
+        status=prime_need_branch_state_same_writes_checked(&production,&out,&b);
+        probing=false;
+        assert(status==CETTA_MATCH_INCOMPLETE && allocation_count>=i+1u);
+    }
+    printf("PASS: %zu State input comparison refusals remain incomplete\n",comparisons);
+    CettaWeightLedger empty={0},entry={0},produced={0},reader={0},result={0};
+    assert(cetta_weight_ledger_append(arena,&empty,11u,21u,atom_int(arena,3),&entry));
+    assert(cetta_weight_ledger_append(arena,&entry,12u,22u,atom_int(arena,7),&produced));
+    assert(cetta_weight_ledger_append(arena,&empty,13u,23u,atom_int(arena,5),&reader));
+    for(size_t i=0u;i<3u;i++) {
+        result=reader;fail_at=i;allocation_count=0u;probing=true;
+        status=cetta_weight_ledger_import_suffix_checked(arena,&entry,&produced,&reader,&result);
+        probing=false;
+        assert(status==CETTA_MATCH_INCOMPLETE && allocation_count>=i+1u &&
+            result.last==reader.last && result.length==reader.length);
+    }
+    printf("PASS: %zu State and 3 weight import allocation refusals preserve destination\n",allocations);
 }
 
 int main(void) {
@@ -123,6 +226,7 @@ int main(void) {
     g_symbols = &symbols;
     arena_init(&arena);
     check_capture_allocation_refusal(&arena);
+    check_state_import_allocation_refusal(&arena);
     PrimeNeedReceipt receipt = {0};
     PrimeNeedReceiptGraph graph = {0};
     assert(collect_with_fault(&receipt, &graph, 0u) ==
@@ -189,6 +293,7 @@ int main(void) {
            PRIME_NEED_RECEIPT_GRAPH_COMPLETE && graph.length == 80u);
     prime_need_receipt_graph_free(&graph);
     prime_need_receipt_graph_free(&complete);
+    check_reader_context_refusal();
     check_production_support_refusal(&arena);
     prime_need_receipt_graph_free(&graph);
     arena_free(&arena);

@@ -134,13 +134,13 @@ ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
 CETTA_PROC_FORK_SPAWN ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 788
+PRIME_NEED_ALGEBRA_CHECKS := 833
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 797
+PRIME_NEED_ALGEBRA_CHECKS := 842
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -5137,9 +5137,9 @@ $(PRIME_CONTEXT_MUTATION_TEST_BIN): tests/test_prime_need.c $(PRIME_NEED_UNIT_SR
 	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -DCETTA_PRIME_CONTEXT_MUTATION=1 \
 		-o $@ tests/test_prime_need.c $(PRIME_NEED_UNIT_SRC) $(LDFLAGS)
 
-$(PRIME_RECEIPT_GRAPH_ALLOC_TEST_BIN): tests/test_prime_receipt_graph_alloc.c $(PRIME_NEED_UNIT_SRC) $(PRIME_NEED_UNIT_HEADERS) $(BUILD_CONFIG_HEADER)
+$(PRIME_RECEIPT_GRAPH_ALLOC_TEST_BIN): tests/test_prime_receipt_graph_alloc.c $(PRIME_NEED_UNIT_SRC) $(PRIME_NEED_UNIT_HEADERS) src/weight_ledger.c src/weight_ledger.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_receipt_graph_alloc.c $(PRIME_NEED_UNIT_SRC) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(PRIME_NEED_UNIT_CPPFLAGS) $(CFLAGS) -o $@ tests/test_prime_receipt_graph_alloc.c $(PRIME_NEED_UNIT_SRC) src/weight_ledger.c -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc $(LDFLAGS)
 
 .PHONY: test-prime-need-graph-refusal
 ifeq ($(ENABLE_PRIME_CAUSAL_RECEIPTS),1)
@@ -19272,6 +19272,20 @@ qualify-tptp-external-prover-fixtures-v1: \
 
 %.$(BUILD_OBJ_TAG).runtime-stats.o: %.c $(BUILD_CONFIG_HEADER)
 	$(call compile_c_object,$(CPPFLAGS) $(CFLAGS) $(DEPFLAGS))
+
+# Pruning leaves source, generated headers, receipts and logs intact. Pin a
+# retained baseline in runtime/prune-keep.txt; replace those pins when a new
+# checkpoint qualifies. Preview first, then explicitly apply the same policy.
+PRUNE_AGE_DAYS ?= 7
+PRUNE_KEEP_TAGS ?= $(BUILD_OBJ_TAG)
+PRUNE_MANIFEST ?= runtime/prune-$(shell date +%Y%m%dT%H%M%S)-$(shell sh -c 'echo $$$$').jsonl
+.PHONY: prune-runtime prune-runtime-apply test-prune-runtime
+prune-runtime prune-runtime-apply:
+	@python3 scripts/prune_build_artifacts.py --age-days '$(PRUNE_AGE_DAYS)' \
+		$(foreach tag,$(PRUNE_KEEP_TAGS),--keep-tag '$(tag)') \
+		--manifest '$(PRUNE_MANIFEST)' $(if $(filter prune-runtime-apply,$@),--apply,)
+test-prune-runtime:
+	@python3 tests/test_prune_build_artifacts.py
 
 clean:
 	rm -f $(OBJ) $(STAGE0_OBJ) $(DEPS) $(BIN) $(STAGE0_BIN) cetta-stage0 \

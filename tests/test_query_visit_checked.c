@@ -63,6 +63,19 @@ int main(void) {
     Result old = {.accept = true};
     assert(query_equation_visit(equation, query, &arena, keep, &old) == 1u);
     assert(atom_eq(old.result, parse(&arena, "(Pair A A)")));
+    assert(query_equation_head_match_checked(equation,query,&arena,UINT64_MAX)==CETTA_MATCH_MATCHED);
+    assert(query_equation_head_match_checked(equation,different,&arena,UINT64_MAX)==CETTA_MATCH_REFUTED);
+    assert(query_equation_head_match_checked(equation,query,&arena,0u)==CETTA_MATCH_INCOMPLETE);
+    Atom *empty=parse(&arena,"(= (same $x $x) (superpose ()))");
+    assert(query_equation_head_match_checked(empty,query,&arena,UINT64_MAX)==CETTA_MATCH_MATCHED);
+    /* A head decision does not walk, substitute or execute the body graph. */
+    Atom *cycle=atom_expr(&arena,(Atom *[]){atom_symbol(&arena,"cycle")},1u);
+    cycle->expr.elems[0]=cycle;
+    Atom *saved=empty->expr.elems[2];empty->expr.elems[2]=cycle;
+    assert(query_equation_head_match_checked(empty,query,&arena,UINT64_MAX)==CETTA_MATCH_MATCHED);
+    assert(query_equation_head_match_checked(empty,different,&arena,UINT64_MAX)==CETTA_MATCH_REFUTED);
+    empty->expr.elems[2]=saved;
+    assert(query_equation_head_match_checked(parse(&arena,"NotAnEquation"),query,&arena,UINT64_MAX)==CETTA_MATCH_INCOMPLETE);
     arena_free(&arena);
     var_intern_free(&variables);
     symbol_table_free(&symbols);

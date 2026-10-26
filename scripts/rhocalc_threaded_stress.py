@@ -133,6 +133,44 @@ def hot_channel_linear_consumption(bin_path: str) -> bool:
     return expect(ok, "hot-channel-linear-consumption", err or residual)
 
 
+def peer_message_occurrences(bin_path: str) -> bool:
+    # These are routing names; possessing or spelling one authenticates nobody.
+    alice = "(rho:quote (rho:send $pk_alice rho:nil))"
+    bob = "(rho:quote (rho:send $pk_bob rho:nil))"
+    carol = "(rho:quote (rho:send $pk_carol rho:nil))"
+    mallory = "(rho:quote (rho:send $pk_mallory rho:nil))"
+    expr = par([
+        f"(rho:recv {alice} $x (rho:send $outAlice0 (rho:drop $x)))",
+        f"(rho:recv {alice} $x (rho:send $outAlice1 (rho:drop $x)))",
+        f"(rho:send {alice} {payload('equal_message')})",
+        f"(rho:send {alice} {payload('equal_message')})",
+        f"(rho:recv {bob} $x (rho:send $outBob (rho:drop $x)))",
+        f"(rho:send {bob} {payload('bob_message')})",
+        f"(rho:recv {carol} $x (rho:send $outWrongPeer (rho:drop $x)))",
+        f"(rho:send {mallory} {payload('equal_message')})",
+    ])
+    expected = {
+        "outAlice0": "send(equal_message nil)",
+        "outAlice1": "send(equal_message nil)",
+        "outBob": "send(bob_message nil)",
+    }
+    for threads in (1, 2, 4):
+        status, residual, err = run_rho(bin_path, expr, threads=threads)
+        ok = bool(residual) and status == 0 and public_observations(residual) == expected
+        if ok:
+            sends = [part for part in components(residual) if isinstance(part, ProcSend)]
+            recvs = [part for part in components(residual) if isinstance(part, ProcRecv)]
+            ok = (
+                len(sends) == 4 and len(recvs) == 1 and
+                contract_name_key(recvs[0].channel) == "quote(send(pk_carol nil))" and
+                sum(contract_name_key(part.channel) == "quote(send(pk_mallory nil))"
+                    for part in sends) == 1
+            )
+        if not ok:
+            return expect(False, "peer-message-occurrences", f"threads={threads}: {err or residual}")
+    return expect(True, "peer-message-occurrences")
+
+
 def payload_race(bin_path: str) -> bool:
     expr = par([
         "(rho:recv $hot $x (rho:send $out (rho:drop $x)))",
@@ -279,6 +317,7 @@ def main(argv: list[str]) -> int:
     checks = [
         independent_many,
         hot_channel_linear_consumption,
+        peer_message_occurrences,
         payload_race,
         dequote_spawn,
         limit_batch_exact,

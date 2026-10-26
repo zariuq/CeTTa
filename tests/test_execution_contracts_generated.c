@@ -275,7 +275,9 @@ static void test_native_service_advice(void) {
 } while (0);
     CETTA_GSLT_NATIVE_CALL_HEAD_ROWS(COUNT_NATIVE_CALL)
 #undef COUNT_NATIVE_CALL
-    assert(rows==8u && local==6u && coordinator==2u && isolated==1u);
+    /* Rho, JSON, process and saturation services join the original primitive
+     * heads. Their coordinator placement must not turn them into inline work. */
+    assert(rows==32u && local==6u && coordinator==26u && isolated==1u);
     CettaGsltNativeCallAdvice fallback=CETTA_GSLT_NATIVE_CALL_DEFAULT;
     CettaGsltNativeCallAdvice constructor=CETTA_GSLT_NATIVE_CALL_CONSTRUCTOR;
     CettaGsltNativeCallAdvice equation=CETTA_GSLT_NATIVE_CALL_USER_EQUATION;

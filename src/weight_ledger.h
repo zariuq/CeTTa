@@ -109,6 +109,10 @@ bool cetta_weight_ledger_merge(CettaWeightLedger *destination,
 bool cetta_weight_ledger_import_suffix(Arena *owner,
     const CettaWeightLedger *entrance, const CettaWeightLedger *production,
     const CettaWeightLedger *recipient, CettaWeightLedger *out);
+/* Incomplete preparation is distinct from a proved factor/order conflict. */
+CettaMatchCompletion cetta_weight_ledger_import_suffix_checked(Arena *owner,
+    const CettaWeightLedger *entrance, const CettaWeightLedger *production,
+    const CettaWeightLedger *recipient, CettaWeightLedger *out);
 
 
 #include "checkpoint_compare.h"

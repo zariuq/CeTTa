@@ -100,7 +100,9 @@ static bool prime_ordinary_support_frontier(PrimeEvalStackDriver *driver,Space *
         for(size_t j=0u;j<frame->normalization_child_count;j++)
             if(!prime_ordinary_support_atom(frame->normalization_children[j],&bound))return false;
         if((frame->env_initialized && !prime_ordinary_support_bindings(&bound,&frame->env)) ||
-            (frame->child_initialized && !prime_ordinary_support_outcomes(&bound,&frame->child)))return false;
+            (frame->child_initialized && !prime_ordinary_support_outcomes(&bound,&frame->child)) ||
+            (frame->force_pending_initialized &&
+             !prime_ordinary_support_outcomes(&bound,&frame->force_pending)))return false;
         PrimeOrdinarySupport before=bound,evaluating=bound;
         before.snapshot=&frame->before;evaluating.snapshot=&frame->evaluating;
         if(!prime_need_snapshot_atoms_satisfy(&frame->before,prime_ordinary_support_atom,&before) ||

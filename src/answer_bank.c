@@ -83,6 +83,18 @@ void answer_bank_init(AnswerBank *bank) {
     bank->cap = 0;
 }
 
+void answer_bank_storage_census(const AnswerBank *bank, CettaStorageCensus *census) {
+    if (!bank || !cetta_storage_object(census, bank, 0u, CETTA_STORAGE_VISITED)) return;
+    arena_storage_census(&bank->arena, census);
+    cetta_storage_array(census, bank->items, bank->cap, sizeof(*bank->items), 0u);
+    if (bank->len > bank->cap || (bank->len && !bank->items))
+        {cetta_storage_refuse(census, "AnswerBankExtent");return;}
+    for (CettaCount i=0u;i<bank->len;i++) {
+        bindings_storage_census(&bank->items[i].bindings, census);
+        variant_instance_storage_census(&bank->items[i].variant, census);
+    }
+}
+
 void answer_bank_free(AnswerBank *bank) {
     if (!bank)
         return;

@@ -1943,7 +1943,8 @@ _Thread_local HashConsTable *g_hashcons = NULL;
 typedef enum {
     ATOM_COMPARE_STRUCTURAL,
     ATOM_COMPARE_VALUE,
-    ATOM_COMPARE_INTERN
+    ATOM_COMPARE_INTERN,
+    ATOM_COMPARE_RESOLVED_SPACES
 } AtomCompareMode;
 
 static _Thread_local unsigned g_atom_hash_read_scope_depth;
@@ -6916,6 +6917,7 @@ bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
 
 CettaLanguageId eval_current_language_id(void) CETTA_ATOM_OPTIONAL_IMPORT;
 bool eval_current_uses_rust_he_compat_semantics(void) CETTA_ATOM_OPTIONAL_IMPORT;
+struct Space *eval_resolve_space_read(struct Space *space) CETTA_ATOM_OPTIONAL_IMPORT;
 
 /* The HE lane outside he-compat, where numbers compare by exact value. */
 static bool atom_he_exact_semantics(void) {
@@ -7228,21 +7230,28 @@ static inline int atom_eq_flat_tree(Atom *left, Atom *right) {
 }
 
 /* The ordinary pointer/leaf fast path needs no frame of its own. */
-static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b) {
+static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b, AtomCompareMode mode) {
     int small = atom_eq_flat_tree(a, b);
     if (small >= 0)
         return small != 0;
     small = atom_eq_small_tree(a, b);
     if (small >= 0)
         return small != 0;
-    return atom_compare_driver(a, b, ATOM_COMPARE_STRUCTURAL, false);
+    return atom_compare_driver(a, b, mode, false);
 }
 
 bool atom_eq(Atom *a, Atom *b) {
     bool equal = false;
     if (atom_eq_decided(a, b, &equal))
         return equal;
-    return atom_eq_walk(a, b);
+    return atom_eq_walk(a, b, ATOM_COMPARE_STRUCTURAL);
+}
+
+bool atom_eq_with_resolved_spaces(Atom *a, Atom *b) {
+    bool equal = false;
+    if (atom_eq_decided(a, b, &equal))
+        return equal;
+    return atom_eq_walk(a, b, ATOM_COMPARE_RESOLVED_SPACES);
 }
 
 /* The leaves of a rational term's unfolding are atomic, so they compare as
@@ -7364,13 +7373,15 @@ static bool atom_compare_driver(Atom *left, Atom *right,
             if (frame->stage == 0u) {
                 frame->stage = 1u;
                 atom_compare_push(&work, ca->key, cb->key,
-                                  ATOM_COMPARE_STRUCTURAL, 0u, true);
+                    frame->mode == ATOM_COMPARE_RESOLVED_SPACES
+                        ? frame->mode : ATOM_COMPARE_STRUCTURAL, 0u, true);
                 continue;
             }
             if (frame->stage == 1u) {
                 frame->stage = 2u;
                 atom_compare_push(&work, ca->value, cb->value,
-                                  ATOM_COMPARE_STRUCTURAL, 0u, true);
+                    frame->mode == ATOM_COMPARE_RESOLVED_SPACES
+                        ? frame->mode : ATOM_COMPARE_STRUCTURAL, 0u, true);
                 continue;
             }
             frame->context_left = ca->parent;
@@ -7451,7 +7462,9 @@ static bool atom_compare_driver(Atom *left, Atom *right,
         if (term_graph_value_eq &&
             (atom_structural_has_rational(a) ||
              atom_structural_has_rational(b))) {
-            if (!term_graph_value_eq(a, b, atom_eq_leaf))
+            if (!term_graph_value_eq(a, b,
+                    frame->mode == ATOM_COMPARE_RESOLVED_SPACES
+                        ? atom_eq_with_resolved_spaces : atom_eq_leaf))
                 goto comparison_failed;
             goto completed;
         }
@@ -7499,6 +7512,12 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                 equal = cetta_dense_tensor_v1_equal(a->ground.ptr, b->ground.ptr);
                 break;
             case GV_SPACE:
+                equal = frame->mode == ATOM_COMPARE_RESOLVED_SPACES &&
+                        eval_resolve_space_read
+                    ? eval_resolve_space_read(a->ground.ptr) ==
+                        eval_resolve_space_read(b->ground.ptr)
+                    : a->ground.ptr == b->ground.ptr;
+                break;
             case GV_CAPTURE:
             case GV_FOREIGN:
             case GV_TERM_GRAPH:
@@ -7580,7 +7599,8 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                     (StateCellPair){ca, cb};
                 frame->task = ATOM_COMPARE_STATE_END;
                 atom_compare_push(&work, ca->value, cb->value,
-                                  ATOM_COMPARE_STRUCTURAL, 0u, true);
+                    frame->mode == ATOM_COMPARE_RESOLVED_SPACES
+                        ? frame->mode : ATOM_COMPARE_STRUCTURAL, 0u, true);
                 continue;
             }
             }
@@ -7906,19 +7926,19 @@ static bool atom_capture_leaf_identical(Atom *left, Atom *right) {
     return left->ground.ptr && left->ground.ptr == right->ground.ptr;
 }
 
-static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated,
-                                 bool exact, bool capture) {
+static CettaMatchCompletion atom_data_equal_impl(Atom *left, Atom *right, bool validated,
+                                                bool exact, bool capture) {
     if (!left || !right)
-        return false;
+        return CETTA_MATCH_INCOMPLETE;
     if (validated && left == right)
-        return true;
+        return CETTA_MATCH_MATCHED;
     AtomDataEqualityEntry inline_entries[64] = {0};
     AtomDataEqualityMemo memo = {.capacity = 64u, .entries = inline_entries};
     size_t count = 1u, capacity = 32u;
     AtomDataEqualityFrame inline_frames[32];
     AtomDataEqualityFrame *frames = inline_frames;
     frames[0] = (AtomDataEqualityFrame){.left = left, .right = right};
-    bool equal = false;
+    CettaMatchCompletion result = CETTA_MATCH_REFUTED;
     while (count) {
         AtomDataEqualityFrame *frame = &frames[count - 1u];
         Atom *a = frame->left, *b = frame->right;
@@ -7969,11 +7989,11 @@ static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated,
         if (!frame->context_pair && !named && a->expr.len != b->expr.len) goto done;
         if (!frame->entered) {
             if (memo.count >= memo.capacity / 2u && !atom_data_equality_grow(&memo, capture))
-                goto done;
+                goto incomplete;
             AtomDataEqualityEntry *entry = atom_data_equality_find(&memo, a, b);
             if (entry->left) {
                 if (!entry->complete) /* Active pair: a cyclic comparison. */
-                    goto done;
+                    goto incomplete;
                 count--;
                 continue;
             }
@@ -7995,18 +8015,18 @@ static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated,
             }
             if (count == capacity) {
                 if (capacity > SIZE_MAX / 2u / sizeof(*frames))
-                    goto done;
+                    goto incomplete;
                 size_t next_capacity = capacity * 2u;
                 AtomDataEqualityFrame *next;
                 if (frames == inline_frames) {
                     next = capture ? malloc(next_capacity * sizeof(*frames))
                                    : cetta_malloc(next_capacity * sizeof(*frames));
-                    if (!next) goto done;
+                    if (!next) goto incomplete;
                     memcpy(next, inline_frames, count * sizeof(*frames));
                 } else
                     next = capture ? realloc(frames, next_capacity * sizeof(*frames))
                                    : cetta_realloc(frames, next_capacity * sizeof(*frames));
-                if (!next) goto done;
+                if (!next) goto incomplete;
                 frames = next;
                 capacity = next_capacity;
             }
@@ -8016,28 +8036,35 @@ static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated,
             count--;
         }
     }
-    equal = true;
+    result = CETTA_MATCH_MATCHED;
+    goto done;
+incomplete:
+    result = CETTA_MATCH_INCOMPLETE;
 done:
     if (frames != inline_frames)
         free(frames);
     if (memo.entries != inline_entries)
         free(memo.entries);
-    return equal;
+    return result;
 }
 
 bool atom_data_equal(Atom *left, Atom *right) {
-    return atom_data_equal_impl(left, right, false, false, false);
+    return atom_data_equal_impl(left, right, false, false, false) == CETTA_MATCH_MATCHED;
 }
 
 bool atom_data_equal_validated(Atom *left, Atom *right) {
-    return atom_data_equal_impl(left, right, true, false, false);
+    return atom_data_equal_impl(left, right, true, false, false) == CETTA_MATCH_MATCHED;
 }
 
 bool atom_data_identical(Atom *left, Atom *right) {
-    return atom_data_equal_impl(left, right, false, true, false);
+    return atom_data_equal_impl(left, right, false, true, false) == CETTA_MATCH_MATCHED;
 }
 
 bool atom_capture_identical(Atom *left, Atom *right) {
+    return atom_capture_identical_checked(left, right) == CETTA_MATCH_MATCHED;
+}
+
+CettaMatchCompletion atom_capture_identical_checked(Atom *left, Atom *right) {
     return atom_data_equal_impl(left, right, false, true, true);
 }
 

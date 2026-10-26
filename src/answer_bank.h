@@ -24,6 +24,7 @@ typedef struct {
 
 void answer_bank_init(AnswerBank *bank);
 void answer_bank_free(AnswerBank *bank);
+void answer_bank_storage_census(const AnswerBank *bank, CettaStorageCensus *census);
 bool answer_bank_add(AnswerBank *bank, Atom *result,
                      const Bindings *bindings,
                      const VariantInstance *variant,

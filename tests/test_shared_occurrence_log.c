@@ -413,6 +413,67 @@ static int bench(uint64_t count) {
     return 0;
 }
 
+static void test_reader_forks(void) {
+    CettaOccurrenceLog *log=cetta_occurrence_log_new(1u,2u);
+    assert(log);
+    size_t child=SIZE_MAX;
+    fail_malloc=1u;
+    assert(!cetta_occurrence_log_fork(log,0u,&child) && !fail_malloc && child==SIZE_MAX);
+    CettaOccurrenceLogInfo info;
+    assert(cetta_occurrence_log_info(log,&info) && info.consumers==1u && cetta_occurrence_log_valid(log));
+    uint64_t releases=0u;
+    for (size_t i=0u;i<2u;i++) assert(cetta_occurrence_log_append(log,(CettaOccurrenceRow){
+        .value=(void *)(uintptr_t)(i+1u),.owner=&releases,.release=count_release})==CETTA_OCCURRENCE_APPENDED);
+    assert(cetta_occurrence_log_take(log,0u,publish_constant,NULL).position==0u);
+    assert(cetta_occurrence_log_trim(log)==1u && releases==1u);
+    assert(cetta_occurrence_log_fork(log,0u,&child) && child==1u);
+    assert(cetta_occurrence_log_take(log,0u,publish_constant,NULL).position==1u);
+    assert(!cetta_occurrence_log_trim(log));
+    assert(cetta_occurrence_log_take(log,child,refuse_publication,NULL).kind==CETTA_OCCURRENCE_PUBLICATION_REFUSED);
+    assert(cetta_occurrence_log_peek(log,child).position==1u);
+    size_t grandchild=SIZE_MAX;
+    assert(cetta_occurrence_log_fork(log,child,&grandchild) && grandchild==2u);
+    assert(cetta_occurrence_log_cancel(log,child));
+    size_t unchanged=SIZE_MAX;
+    assert(!cetta_occurrence_log_fork(log,child,&unchanged) && unchanged==SIZE_MAX);
+    assert(!cetta_occurrence_log_trim(log));
+    assert(cetta_occurrence_log_take(log,grandchild,publish_constant,NULL).position==1u);
+    assert(cetta_occurrence_log_trim(log)==1u && releases==2u);
+    assert(cetta_occurrence_log_peek(log,grandchild).kind==CETTA_OCCURRENCE_PAUSED);
+    cetta_occurrence_log_complete(log);
+    assert(cetta_occurrence_log_fork(log,grandchild,&child) && child==3u);
+    assert(cetta_occurrence_log_peek(log,child).kind==CETTA_OCCURRENCE_COMPLETED &&
+        cetta_occurrence_log_valid(log));
+    assert(!cetta_occurrence_log_fork(log,SIZE_MAX,&unchanged));
+    cetta_occurrence_log_free(log);
+    log=cetta_occurrence_log_new(0u,0u);
+    assert(log && !cetta_occurrence_log_fork(log,0u,&unchanged) && cetta_occurrence_log_valid(log));
+    cetta_occurrence_log_free(log);
+}
+
+static void test_retention_pins(void) {
+    CettaOccurrenceLog *log=cetta_occurrence_log_new(0u,2u);
+    assert(log);
+    size_t pin=SIZE_MAX, child=SIZE_MAX;
+    fail_malloc=1u;
+    assert(!cetta_occurrence_log_pin(log,0u,&pin) && !fail_malloc && pin==SIZE_MAX);
+    assert(cetta_occurrence_log_pin(log,0u,&pin));
+    uint64_t releases=0u;
+    for (size_t i=0u;i<2u;i++) assert(cetta_occurrence_log_append(log,(CettaOccurrenceRow){
+        .value=(void *)(uintptr_t)(i+1u),.owner=&releases,.release=count_release})==CETTA_OCCURRENCE_APPENDED);
+    assert(cetta_occurrence_log_peek(log,pin).kind==CETTA_OCCURRENCE_INVALID &&
+        cetta_occurrence_log_take(log,pin,publish_constant,NULL).kind==CETTA_OCCURRENCE_INVALID &&
+        !cetta_occurrence_log_fork(log,pin,&child) && child==SIZE_MAX &&
+        !cetta_occurrence_log_cancel(log,pin));
+    assert(!cetta_occurrence_log_trim(log) && !cetta_occurrence_log_pin_move(log,pin,3u));
+    assert(cetta_occurrence_log_pin_move(log,pin,1u) && cetta_occurrence_log_trim(log)==1u && releases==1u);
+    assert(!cetta_occurrence_log_pin_move(log,pin,0u) && cetta_occurrence_log_valid(log));
+    assert(!cetta_occurrence_log_pin(log,0u,&child) && child==SIZE_MAX);
+    assert(cetta_occurrence_log_pin_release(log,pin) && !cetta_occurrence_log_pin_release(log,pin) &&
+        !cetta_occurrence_log_pin_move(log,pin,2u) && cetta_occurrence_log_trim(log)==1u && releases==2u);
+    cetta_occurrence_log_free(log);
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--replay"))
         return replay();
@@ -426,6 +487,8 @@ int main(int argc, char **argv) {
     test_retention_and_wrap();
     test_callback_views();
     test_allocation_refusals();
+    test_reader_forks();
+    test_retention_pins();
     puts("shared occurrence log: independent delivery, ownership, refusal and retention controls passed");
     return 0;
 }

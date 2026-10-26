@@ -66,11 +66,11 @@ def main() -> int:
     header = (ROOT / "src/stats.h").read_text()
     source = (ROOT / "src/stats.c").read_text()
     assert '#include "generated/cetta_runtime_counters.generated.h"' in header
-    assert '#include "generated/cetta_runtime_counter_names.generated.inc"' in source
+    assert '#include "generated/cetta_runtime_counter_names.generated.h"' in source
     positions = enum_positions(
         (ROOT / "src/generated/cetta_runtime_counters.generated.h").read_text())
     names = table_names(
-        (ROOT / "src/generated/cetta_runtime_counter_names.generated.inc").read_text(),
+        (ROOT / "src/generated/cetta_runtime_counter_names.generated.h").read_text(),
         positions)
     errors = []
     if sorted(positions) != list(range(len(positions))):

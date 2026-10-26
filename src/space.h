@@ -360,6 +360,10 @@ void space_exact_index_test_refuse(size_t allocations);
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
+/* A public local view retains its base's admitted matching profile. Attached
+ * MORK execution remains a separate service; its local view uses native
+ * storage. Failure releases the initialized view's storage. */
+bool space_init_overlay_local(Space *s, const Space *base);
 /* Borrow the module's own rows, excluding its imported prefix/dependencies.
  * Mutations reach the original storage. Free this view before its owner, or
  * let owner teardown detach it; the view never owns that owner's storage. */
@@ -892,6 +896,7 @@ bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable);
  * structural identity, exact identity for ground atoms, and alpha identity
  * for variable-bearing atoms. */
 bool space_contains_for_add_nodup(Space *s, Atom *atom);
+CettaMatchCompletion space_contains_for_add_nodup_checked(Space *s, Atom *atom);
 CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 bool space_contains_only_exact_atoms(Space *s);
@@ -992,6 +997,11 @@ CettaMatchCompletion query_equation_visit_checked(
     Atom *equation, Atom *query, Arena *arena,
     QueryResultVisitor visitor, void *context, uint64_t pair_budget,
     CettaCount *emitted);
+/* Decide the same freshened head match without instantiating or visiting the
+ * RHS. Empty producers still cover their input. Incomplete matching supplies
+ * neither a match nor a refutation; no rule-use occurrence is emitted. */
+CettaMatchCompletion query_equation_head_match_checked(
+    Atom *equation, Atom *query, Arena *arena, uint64_t pair_budget);
 /* Apply an explicitly admitted descriptor. Mismatch, invalid input and
  * capacity remain distinct; emitted is zero unless a body was published. */
 CettaTermMatchStatus query_rule_visit(const CettaRuleDescriptor *rule,
@@ -1245,6 +1255,8 @@ bool registry_read_view_init(RegistryReadView *view, Registry *source,
 bool registry_read_view_init_passive(RegistryReadView *view, Arena *arena);
 void registry_read_view_free(RegistryReadView *view);
 bool registry_read_view_validate(RegistryReadView *view, Registry *source);
+/* Receiver compatibility does not poison the source's sticky observations. */
+bool registry_read_view_compatible(const RegistryReadView *view, Registry *source);
 RegistryReadView *registry_read_view_enter(RegistryReadView *view,
                                           Registry *source);
 void registry_read_view_leave(RegistryReadView *previous);
@@ -1272,6 +1284,16 @@ Space *resolve_space(Registry *r, Atom *ref);
 
 /* Remove an atom from a space (by structural equality). Returns true if found. */
 bool space_remove(Space *s, Atom *atom);
+CettaMatchCompletion space_remove_checked(Space *s, Atom *atom);
+/* Interpret comparisons while retaining the original mutable occurrence and
+ * the ordinary exact-then-unique-alpha removal policy. Comparisons borrow
+ * held syntax/resources and must remain stable for the complete operation.
+ * Representation indexes cannot refute an interpreted comparison.
+ * INCOMPLETE publishes no removal; REFUTED includes ambiguous alpha matches. */
+typedef CettaMatchCompletion (*SpaceAtomComparison)(Atom *left, Atom *right);
+CettaMatchCompletion space_remove_compared(Space *s, Atom *atom,
+    SpaceAtomComparison equal, SpaceAtomComparison alpha_equal);
+CettaMatchCompletion space_contains_compared(Space *s, Atom *atom, SpaceAtomComparison equal);
 bool space_contains_atom_id(const Space *s, AtomId atom_id);
 bool space_remove_atom_id(Space *s, AtomId atom_id);
 bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,

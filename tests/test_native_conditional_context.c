@@ -1284,6 +1284,11 @@ int main(int argc, char **argv) {
     unsigned checks = prepared_worker_availability();
     if (!availability_only)
         checks += ordinary_invocation_consumers() + shared_compilation_refusals() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
+    eval_match_decision_cache_free_for_current_thread();
+    eval_profiled_type_cache_free_for_current_thread();
+    space_execution_analysis_cache_free_for_current_thread();
+    cetta_foreign_global_shutdown();
+    assert(cetta_lib_prolog_global_shutdown());
     symbol_table_free(&symbols);
     var_intern_free(&variables);
     g_symbols = NULL;

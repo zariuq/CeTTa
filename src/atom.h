@@ -12,6 +12,14 @@
 #include "symbol.h"
 #include "binding/frame_identity.h"
 
+/* A negative result requires a completed comparison. Resource refusal or
+ * an unsupported structural meeting supplies neither equality nor mismatch. */
+typedef enum {
+    CETTA_MATCH_INCOMPLETE,
+    CETTA_MATCH_REFUTED,
+    CETTA_MATCH_MATCHED,
+} CettaMatchCompletion;
+
 #ifndef CETTA_PROVENANCE_ASSERT
 #define CETTA_PROVENANCE_ASSERT 0
 #endif
@@ -1782,6 +1790,14 @@ bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
 
 bool atom_eq(Atom *a, Atom *b);
 
+/* Structural comparison in the evaluator's currently held Space read view.
+ * Only Space leaves gain interpretation; State keeps its existing comparison
+ * relation. The view and all resource owners must
+ * remain held for the call. Representation hashes, interning and captured
+ * identity continue to use atom_eq/atom_capture_identical. Without an
+ * evaluator provider this is ordinary structural comparison. */
+bool atom_eq_with_resolved_spaces(Atom *a, Atom *b);
+
 /* Exact atom_eq comparison on finite, acyclic expression DAGs of symbols,
  * variables and scalar literals (integer, float, Boolean, string, bigint,
  * rational). Runtime handles and recursive grounded objects are not data
@@ -1809,6 +1825,7 @@ bool atom_data_identical(Atom *left, Atom *right);
  * This borrows the complete graphs and resource owners; agreement grants no
  * lifetime, current-resource observation or invocation authority. */
 bool atom_capture_identical(Atom *left, Atom *right);
+CettaMatchCompletion atom_capture_identical_checked(Atom *left, Atom *right);
 /* MeTTa's ==: a comparison that never binds.  Expressions compare element
  * by element, and a NaN equals nothing, even itself.
  * PeTTa: numbers are equal when their values are, whatever their

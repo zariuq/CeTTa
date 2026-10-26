@@ -4,6 +4,12 @@
 #include "symbol.h"
 
 static unsigned checks, failures;
+struct Space;
+static struct Space *view_source, *view_image;
+
+struct Space *eval_resolve_space_read(struct Space *space) {
+    return space == view_source && view_source ? view_image : space;
+}
 #define CHECK(c, label) do { checks++; if (!(c)) { \
     fprintf(stderr, "FAIL: %s\n", label); failures++; } } while (0)
 
@@ -90,6 +96,30 @@ int main(void) {
     CHECK(!atom_data_equal(handle, handle), "runtime handles are outside scalar data");
     Atom *with_handle = atom_expr2(&arena, leaves[0], handle);
     CHECK(!atom_data_equal(with_handle, with_handle), "sharing cannot conceal a runtime handle");
+    Atom *image_handle = atom_space(&arena, &symbols);
+    Atom *unrelated_handle = atom_space(&arena, &checks);
+    uint32_t source_hash = atom_hash(handle), image_hash = atom_hash(image_handle);
+    CHECK(!atom_eq_with_resolved_spaces(handle, image_handle),
+          "distinct Spaces stay distinct without a selected redirect");
+    view_source = (struct Space *)&arena;
+    view_image = (struct Space *)&symbols;
+    CHECK(atom_eq_with_resolved_spaces(handle, image_handle) &&
+              atom_eq_with_resolved_spaces(image_handle, handle) &&
+              !atom_eq_with_resolved_spaces(handle, unrelated_handle),
+          "the selected Space view resolves both operands and keeps unrelated resources distinct");
+    CHECK(!atom_eq(handle, image_handle) &&
+              !atom_capture_identical(handle, image_handle) &&
+              atom_hash(handle) == source_hash && atom_hash(image_handle) == image_hash,
+          "matching a Space view changes neither stored identity nor representation hashes");
+    Atom *source_graph = shared(&arena, handle, 1000u);
+    Atom *image_graph = shared(&arena, image_handle, 1000u);
+    Atom *wrong_graph = shared(&arena, unrelated_handle, 1000u);
+    CHECK(atom_eq_with_resolved_spaces(source_graph, image_graph) &&
+              !atom_eq_with_resolved_spaces(source_graph, wrong_graph),
+          "Space resolution reaches deep shared leaves without unfolding the DAG as a tree");
+    view_source = view_image = NULL;
+    CHECK(!atom_eq_with_resolved_spaces(source_graph, image_graph),
+          "a later Space view does not reuse an earlier comparison decision");
     Atom *changeable = atom_expr2(&arena, leaves[0], leaves[0]);
     Atom *before = atom_expr2(&arena, leaves[0], leaves[0]);
     CHECK(atom_data_equal(changeable, before), "first independent comparison succeeds");
@@ -185,6 +215,13 @@ int main(void) {
           !atom_capture_identical(identifier, atom_int(&arena, 19)),
           "integer-shaped handles retain their actual owner and lifetime protocol");
     CHECK(!atom_capture_identical(cycle, cycle), "capture inspection does not certify a malformed cyclic expression");
+    CHECK(atom_capture_identical_checked(cycle, cycle) == CETTA_MATCH_INCOMPLETE,
+          "an unsupported cycle is not evidence of different captured inputs");
+    CHECK(atom_capture_identical_checked(state_a, state_alias) == CETTA_MATCH_MATCHED &&
+          atom_capture_identical_checked(state_a, state_b) == CETTA_MATCH_REFUTED,
+          "checked capture distinguishes a completed resource comparison");
+    CHECK(atom_capture_identical_checked(NULL, state_a) == CETTA_MATCH_INCOMPLETE,
+          "missing captured input is incomplete rather than a different world");
 
     arena_free(&arena);
     CHECK(identifier_holds == 0u, "exact key inspection does not retain a native holder");

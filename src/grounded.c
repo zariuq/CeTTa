@@ -3448,21 +3448,13 @@ static Atom *grounded_dispatch_rational(Arena *a, Atom *head, Atom **args,
     return grounded_dispatch_open(a, head, opened, nargs);
 }
 
-/* The dense tensor provider in grounded_dispatch_open is the core
- * implementation of the __cetta_lib_tensor_ ABI family, which it recognizes
- * by name, including names interned at run time. */
-static bool grounded_op_dense_tensor_family(SymbolId head) {
-    const char *name = symbol_bytes(g_symbols, head);
-    return name && strncmp(name, "__cetta_lib_tensor_", 19u) == 0;
-}
-
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
     if (cetta_speculative_active() && !cetta_speculative_op_allowed(atom_symbol_current_id(head)))
         return is_grounded_op(atom_symbol_current_id(head)) ? cetta_effect_denied(a) : NULL;
     if (!(symbol_flags(g_symbols, atom_symbol_current_id(head)) & CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP) &&
         grounded_op_is_library_native(atom_symbol_current_id(head)) &&
-        !grounded_op_dense_tensor_family(atom_symbol_current_id(head)))
+        !cetta_dense_tensor_v1_owns_head(head))
         return NULL;
     for (uint32_t i = 0u; i < nargs; i++) {
         if (atom_structural_has_rational(args[i]))

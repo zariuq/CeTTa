@@ -1907,6 +1907,12 @@ static bool petta_program_builtin_names_data(SymbolId head) {
 }
 
 bool petta_program_head_is_intrinsic(SymbolId head) {
+    /* A registered pattern spelling becomes an operation only in its admitted
+     * module/profile. Otherwise its call and operands retain ordinary PeTTa
+     * interpretation, including named-space symbols. */
+    if (grounded_op_is_pattern(head))
+        return eval_current_pattern_head &&
+               eval_current_pattern_head(head) != SYMBOL_ID_NONE;
     const PettaIntrinsicNameIds *ids =
         head == SYMBOL_ID_NONE ? NULL : petta_intrinsic_name_ids();
     bool machine_named =
