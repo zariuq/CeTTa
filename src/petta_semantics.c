@@ -2046,7 +2046,7 @@ Atom *petta_semantics_alpha_unique(Arena *arena, Atom *list) {
             return NULL;
         }
 
-        uint32_t slot = atom_hash(key) & mask;
+        uint32_t slot = (uint32_t)atom_spread_hash(key) & mask;
         while (slots[slot] && !atom_eq(slots[slot], key))
             slot = (slot + 1u) & mask;
         if (slots[slot])
@@ -2083,7 +2083,7 @@ Atom *petta_semantics_list_to_set(Arena *arena, Atom *list) {
     for (CettaExprIndex index = 0u;
          index < list->expr.len; index++) {
         Atom *candidate = list->expr.elems[index];
-        uint32_t slot = atom_hash(candidate) & mask;
+        uint32_t slot = (uint32_t)atom_spread_hash(candidate) & mask;
         while (slots[slot] &&
                !atom_eq(slots[slot], candidate)) {
             slot = (slot + 1u) & mask;
