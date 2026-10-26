@@ -110,7 +110,21 @@ def fixed_cases(binary, work, failures, count, seed):
         want = json.dumps("%.*f" % (digits, value))
         if text != want:
             failures.append(("format-fixed %r %d" % (value, digits), text[:120], want[:120]))
-    return len(cases)
+    # Digit counts whose shortest text cannot fit a string (sign, one integer
+    # digit, the point and every fraction digit) are refused before any digit
+    # is made; the largest positive count that may still fit is not run.
+    limit = 0x7FFFFFFF
+    impossible = [(1.5, limit - 1), (1.5, limit), (-1.5, limit - 2), (-0.0, limit - 2)]
+    started = time.monotonic()
+    refused = run(binary, work, ["(str:format-fixed %s %d)" % (number_literal(value), digits)
+                                for value, digits in impossible])
+    elapsed = time.monotonic() - started
+    for (value, digits), text in zip(impossible, refused):
+        if "fits a string" not in text:
+            failures.append(("format-fixed refusal %r %d" % (value, digits), text[:120], "a refusal"))
+    if elapsed > 30.0:
+        failures.append(("format-fixed refusal time", "%.1fs" % elapsed, "an immediate refusal"))
+    return len(cases) + len(impossible)
 
 
 def wall_cases(binary, work, failures):

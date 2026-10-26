@@ -270,6 +270,13 @@ static Atom *str_format_fixed(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     int digits = (int)count->ground.ival;
     if (isnan(value)) return atom_string(a, "nan");
     if (isinf(value)) return atom_string(a, value < 0 ? "-inf" : "inf");
+    /* The shortest text '%.*f' can make has the sign of a negative value
+     * (negative zero included), one integer digit, and the point with every
+     * fraction digit. When even that cannot fit a string, refuse before the
+     * length probe, which would generate all the digits first. */
+    uint64_t shortest = (signbit(value) ? 1u : 0u) + 1u + (digits ? 1u + (uint64_t)digits : 0u);
+    if (shortest > CETTA_STRING_BYTES_MAX)
+        return str_expects(r, "expected a digit count whose text fits a string");
     pthread_once(&str_fixed_locale_once, str_fixed_locale_init);
     if (!str_fixed_locale) return str_expects(r, "expected a C numeric locale");
     locale_t previous = uselocale(str_fixed_locale);
