@@ -1,0 +1,5 @@
+!(import! &self (library math))
+(= (binary64-fixture:call (Parts $value)) (math:binary64-parts $value))
+(= (binary64-fixture:call (Divide $left $right)) (math:integer-divmod $left $right))
+(= (binary64-fixture:call (Parallel $value))
+   (collapse (hyperpose ((math:binary64-parts $value) (math:integer-divmod -9 4)))))

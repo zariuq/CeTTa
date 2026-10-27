@@ -25,6 +25,7 @@
 #include "library_cwp.h"
 #include "library_space_service.h"
 #include "library_store.h"
+#include "library_math.h"
 #include "library_proc.h"
 #include "proc_child.h"
 #include "proc_capture.h"
@@ -11960,16 +11961,28 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
         if (target_is_fresh) {
             if (module_space_out)
                 *module_space_out = entry->space;
+            if (word_interface && entry->provider_kind == CETTA_MODULE_PROVIDER_STDLIB_FILE)
+                ctx->active_mask |= interface->bit;
             return true;
         }
+        bool imported;
         if (entry->provider || entry->export_words)
-            return library_name_he_provider(ctx, space, registry, entry,
-                                            eval_arena, persistent_arena, error_out);
-        return library_link_he_module(space, entry->space, eval_arena,
-                                      error_out);
+            imported = library_name_he_provider(ctx, space, registry, entry,
+                                               eval_arena, persistent_arena, error_out);
+        else
+            imported = library_link_he_module(space, entry->space, eval_arena,
+                                             error_out);
+        /* A vocabulary library may also own pure native operations. Activate
+         * them only after its standard-library import actually succeeded. */
+        if (imported && word_interface && entry->provider_kind == CETTA_MODULE_PROVIDER_STDLIB_FILE)
+            ctx->active_mask |= interface->bit;
+        return imported;
     }
-    return execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
-                               registry, fuel, NULL, error_out);
+    bool imported = execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
+                                       registry, fuel, NULL, error_out);
+    if (imported && word_interface && plan.provider_kind == CETTA_MODULE_PROVIDER_STDLIB_FILE)
+        ctx->active_mask |= interface->bit;
+    return imported;
 }
 
 bool cetta_library_import_error_is_missing_module(Atom *error) {
@@ -12275,6 +12288,13 @@ static Atom *cetta_library_dispatch_native_value(
         if (ctx->active_mask & CETTA_LIBRARY_STR)
             result=cetta_library_dispatch_str(a,head,args,nargs,result_form);
         if (result) return result;
+        if (ctx->active_mask & CETTA_LIBRARY_MATH) {
+            result=cetta_math_dispatch(a,head,args,nargs);
+            if (result) {
+                *result_form=CETTA_CALL_RESULT_COMPLETED_VALUE;
+                return result;
+            }
+        }
 #if CETTA_BUILD_WITH_JSON_GSLT
         if (ctx->active_mask & CETTA_LIBRARY_JSON)
             result=cetta_json_library_dispatch_v1(ctx->json_runtime,a,head,args,nargs);
@@ -12341,6 +12361,13 @@ static Atom *cetta_library_dispatch_native_value(
     }
     if (ctx->active_mask & CETTA_LIBRARY_STORE) {
         Atom *result=cetta_store_dispatch(ctx,a,head,args,nargs);
+        if (result) {
+            *result_form=CETTA_CALL_RESULT_COMPLETED_VALUE;
+            return result;
+        }
+    }
+    if (ctx->active_mask & CETTA_LIBRARY_MATH) {
+        Atom *result=cetta_math_dispatch(a,head,args,nargs);
         if (result) {
             *result_form=CETTA_CALL_RESULT_COMPLETED_VALUE;
             return result;

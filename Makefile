@@ -808,7 +808,7 @@ SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/fallible_alloc.c
 SRC += src/occurrence_log.c src/shared_return_producer.c src/owned_return_image.c
 SRC += src/native_journal.c
-SRC += src/native_disk_index.c src/native_disk_store.c src/library_store.c
+SRC += src/native_disk_index.c src/native_disk_store.c src/library_store.c src/library_math.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
 # Shared opaque authority (lib_seal): runtime objects and the seal library.
 SRC += src/seal.c native/seal_module.c
@@ -48579,6 +48579,16 @@ value-worker: $(VALUE_WORKER_BIN)
 .PHONY: test-value-worker-imports
 test-value-worker-imports: $(BIN) $(VALUE_WORKER_BIN)
 	$(PYTHON) tests/test_value_worker_imports.py $(BIN) $(VALUE_WORKER_BIN)
+.PHONY: test-math-parts
+test-math-parts: $(VALUE_WORKER_BIN) $(BIN)
+	$(PYTHON) tests/test_math_parts.py $(VALUE_WORKER_BIN) --cli $(BIN)
+MATH_NATIVE_TEST_BIN = runtime/test-math-native-$(BUILD_OBJ_TAG)
+$(MATH_NATIVE_TEST_BIN): tests/support/test_math_native.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+.PHONY: test-math-native
+test-math-native: $(MATH_NATIVE_TEST_BIN)
+	$<
+test-all: test-math-native test-math-parts
 STORE_AUTHORITY_TEST_BIN = runtime/test-store-authority-$(BUILD_OBJ_TAG)
 $(STORE_AUTHORITY_TEST_BIN): tests/support/test_store_authority.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS) -Wl,--wrap=cetta_native_handle_alloc

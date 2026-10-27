@@ -23,6 +23,26 @@
 (: math:round (-> Number Number))
 (: math:isnan (-> Number Bool))
 (: math:isinf (-> Number Bool))
+(: __cetta_lib_math_binary64_parts (-> Number Atom))
+(: math:binary64-parts (-> Number Atom))
+(: __cetta_lib_math_integer_divmod (-> Number Number Atom))
+(: math:integer-divmod (-> Number Number Atom))
+
+; Exact observation of an existing binary64 value. Finite values are
+; (Binary64PartsV1 sign mantissa exponent), denoting sign*mantissa*2^exponent.
+; The sign of zero is retained. Nonfinite values are Binary64InfinityV1 sign
+; or Binary64NaNV1 sign payload; payload is the original 52-bit fraction.
+; Integer values are not silently rounded into binary64.
+(= (math:binary64-parts $value)
+   (function
+     (chain (eval (__cetta_lib_math_binary64_parts $value)) $result (return $result))))
+
+; Exact integer quotient/remainder: a=q*b+r, q=floor(a/b). The nonzero
+; remainder has the divisor's sign. Non-integer inputs and zero divisors
+; return IntegerDivmodRefusedV1; they are never coerced through binary64.
+(= (math:integer-divmod $left $right)
+   (function
+     (chain (eval (__cetta_lib_math_integer_divmod $left $right)) $result (return $result))))
 
 (@doc math:min
   (@desc "Binary numeric minimum in the math: namespace. This is a library-level helper rather than a new core builtin.")

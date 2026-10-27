@@ -806,6 +806,15 @@ void symbol_table_init_builtins(SymbolTable *st, BuiltinSyms *builtins) {
 } while (0);
     CETTA_BUILTIN_SYMBOLS(CETTA_MARK_LIBRARY_GROUNDED)
 #undef CETTA_MARK_LIBRARY_GROUNDED
+    /* Pure numerical ABI extensions need no legacy BuiltinSyms slot. Their
+     * implementations still require the math library to be active. */
+    const char *math_heads[]={"__cetta_lib_math_binary64_parts","__cetta_lib_math_integer_divmod"};
+    for (size_t i=0;i<sizeof(math_heads)/sizeof(*math_heads);++i) {
+        SymbolId id=symbol_intern_cstr(st,math_heads[i]);
+        symbol_table_add_flags(st,id,CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP |
+            CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP | CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP |
+            CETTA_SYMBOL_FLAG_SPECULATIVE_OP);
+    }
 }
 
 CettaPettaArrowMode cetta_petta_arrow_mode(SymbolId id) {
