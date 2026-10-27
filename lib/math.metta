@@ -178,10 +178,10 @@
    (log-math $base $x))
 
 (= (math:ln $x)
-   (log-math EXP $x))
+   (log-math 2.718281828459045 $x))
 
 (= (math:exp $x)
-   (pow-math EXP $x))
+   (pow-math 2.718281828459045 $x))
 
 (= (math:trunc $x)
    (trunc-math $x))
