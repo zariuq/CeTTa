@@ -68,9 +68,9 @@
     {
       "source": "fs.metta",
       "output": "fs.metta",
-      "source_sha256": "3333204f956e968d6562941ce6967ef0cb0d39de7a9ebf39826bc109df82ecf9",
-      "output_sha256": "9e104cfc1b33cb279ce2fc9089b36e743a9eb51e5818c16c32ae3e9fb4c9dfe6",
-      "edits": 43,
+      "source_sha256": "481557a2a48049fe9241562fa98cf2cfb2af1674890fdd74072046a82e680bf6",
+      "output_sha256": "52b9eade161b2736437658c2679418177564ff09bd8bb87370487e76c495a50a",
+      "edits": 52,
       "code_diagnostics": 0
     },
     {
@@ -84,8 +84,8 @@
     {
       "source": "gslt_execution_contracts.metta",
       "output": "gslt_execution_contracts.metta",
-      "source_sha256": "10e68f771fc0da6f24de7e2c1f1cc1ac5d39c737ffb37f7873db971ed6481742",
-      "output_sha256": "e7c459a9807deb2227d962a83a6ab28ec6782a7f14bceb00d186aff3ec5cbfd3",
+      "source_sha256": "56e300240e8203afdc8c5b6ddaf7e2ed09676535d7145b9db2afd050fee4e4b0",
+      "output_sha256": "29160a0acb309afd92d8a7a399040ae79be9732ea6511496e0952675ab14a094",
       "edits": 4,
       "code_diagnostics": 0
     },
@@ -468,8 +468,8 @@
     {
       "source": "space_service.metta",
       "output": "space_service.metta",
-      "source_sha256": "a8a71c5f9b4b725b11073f295ec57b33e465b53936860a99b9cceafa9e948a8e",
-      "output_sha256": "a9b1c64fd356508ff8974ee5121766942cec7cb972a83cfed93f8fe60b430126",
+      "source_sha256": "643a9738c8daa419a1d995cd443de7995fc36cafacca05dbaaba339f9a0dfd5a",
+      "output_sha256": "1796f343cf1b782c9e567ee9575bc97a670ff1c4bc87aa0d7489e9755912eb17",
       "edits": 18,
       "code_diagnostics": 0
     },
@@ -492,17 +492,17 @@
     {
       "source": "str.metta",
       "output": "str.metta",
-      "source_sha256": "5d2b3f73f072d77c820e6a43c65486fe30e80ed117f1c88eb0207b2804f69405",
-      "output_sha256": "80e7f06e90058449c4c0869e289143d8119f5b446b612e035c1290d0a209f1e8",
-      "edits": 41,
+      "source_sha256": "f797092d3ce245aa94f7f16e91a5e7f4e96475fe7b4612b5310c552e6394f4f2",
+      "output_sha256": "e74062f46d7c77fa8e7facc68871a676055b80145f5e5d2192b291ccd2fb8ab5",
+      "edits": 48,
       "code_diagnostics": 0
     },
     {
       "source": "system.metta",
       "output": "system.metta",
-      "source_sha256": "2e089e8e8729956f9ef016cb9e508eca1cc0dd330825e377e93ee71d83edad2a",
-      "output_sha256": "aed728e015eb1d0f013263bbb19cd1715e13b628b3a7d7b200d35db6287e8c66",
-      "edits": 19,
+      "source_sha256": "694b9b4e39205c2521738e2a04717c78701215fd8eed97cd2c9b0ca8ddc84a4d",
+      "output_sha256": "ec965b723a337fef524c4c359592c920bf239408e26ecd08a27c5ce7ccd1a138",
+      "edits": 23,
       "code_diagnostics": 0
     },
     {
@@ -627,7 +627,7 @@
     {
       "source": "json.metta",
       "generator": "library_spelling.py",
-      "output_sha256": "84736068c0491d998dd672036381588d4d28ac9c42e758b7bea4753887d7122c"
+      "output_sha256": "769db2060ee2eb8bb343c36a5e8bc30023f43071e234d402b160dccb478dc011"
     },
     {
       "source": "lib_tensor.metta",

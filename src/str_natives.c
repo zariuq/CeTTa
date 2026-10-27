@@ -1,13 +1,20 @@
+#define _GNU_SOURCE
 #include "str_natives.h"
 
 #include "native_sha256.h"
 
 #include "string_ops.h"
+#include "unicode_category15.h"
+#include "python_lower15.h"
 #include "str_stream.h"
 #include "utf8.h"
 
 #include <ctype.h>
+#include <limits.h>
+#include <locale.h>
 #include <math.h>
+#include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -239,6 +246,52 @@ static Atom *str_trim(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     return atom_string_n(a, text + start, stop - start);
 }
 
+static pthread_once_t str_fixed_locale_once = PTHREAD_ONCE_INIT;
+static locale_t str_fixed_locale;
+
+static void str_fixed_locale_init(void) {
+    str_fixed_locale = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0);
+}
+
+/* Python's '%.*f' % (digits, value). printf in the C locale rounds the exact
+ * binary value correctly, as Python's own conversion does; Python spells NaN
+ * without a sign. */
+static Atom *str_format_fixed(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    Atom *number = args[0], *count = args[1];
+    double value;
+    if (number->kind == ATOM_GROUNDED && number->ground.gkind == GV_FLOAT)
+        value = number->ground.fval;
+    else if (number->kind == ATOM_GROUNDED && number->ground.gkind == GV_INT)
+        value = (double)number->ground.ival;
+    else
+        return str_expects(r, "expected a float or integer and a digit count");
+    if (count->kind != ATOM_GROUNDED || count->ground.gkind != GV_INT ||
+        count->ground.ival < 0 || count->ground.ival > INT_MAX)
+        return str_expects(r, "expected a float or integer and a digit count");
+    int digits = (int)count->ground.ival;
+    if (isnan(value)) return atom_string(a, "nan");
+    if (isinf(value)) return atom_string(a, value < 0 ? "-inf" : "inf");
+    /* The shortest text '%.*f' can make has the sign of a negative value
+     * (negative zero included), one integer digit, and the point with every
+     * fraction digit. When even that cannot fit a string, refuse before the
+     * length probe, which would generate all the digits first. */
+    uint64_t shortest = (signbit(value) ? 1u : 0u) + 1u + (digits ? 1u + (uint64_t)digits : 0u);
+    if (shortest > CETTA_STRING_BYTES_MAX)
+        return str_expects(r, "expected a digit count whose text fits a string");
+    pthread_once(&str_fixed_locale_once, str_fixed_locale_init);
+    if (!str_fixed_locale) return str_expects(r, "expected a C numeric locale");
+    locale_t previous = uselocale(str_fixed_locale);
+    int length = snprintf(NULL, 0, "%.*f", digits, value);
+    char *text = length >= 0 && (uint64_t)length <= CETTA_STRING_BYTES_MAX
+        ? malloc((size_t)length + 1u) : NULL;
+    if (text) snprintf(text, (size_t)length + 1u, "%.*f", digits, value);
+    (void)uselocale(previous);
+    if (!text) return str_expects(r, "expected a digit count whose text fits a string");
+    Atom *result = atom_string_n(a, text, (size_t)length);
+    free(text);
+    return result;
+}
+
 /* -1, 0 or 1 by byte order, a proper prefix first. */
 static Atom *str_compare(Arena *a, Atom *const *args, CettaStrRefusal *r) {
     const char *left, *right;
@@ -258,6 +311,242 @@ static Atom *str_codepoint_count(Arena *a, Atom *const *args, CettaStrRefusal *r
     if (!cetta_utf8_count(text, len, &count, &bad))
         return str_refuses(r, "StrMalformedUtf8V1", bad);
     return atom_int(a, (int64_t)count);
+}
+
+/* The first malformed UTF-8 sequence of a text, as decoders that report
+ * maximal subparts locate it: the offset where the sequence starts, the end of
+ * its longest valid prefix, the byte at the start, and why it stops (an
+ * invalid start byte, an invalid continuation byte, or the end of the data).
+ * Overlong forms, surrogates and values above U+10FFFF stop at their second
+ * byte. Well-formed text gives StrUtf8WellFormedV1. */
+static Atom *str_utf8_error_at(Arena *a, size_t start, size_t end, uint8_t byte,
+                               const char *reason) {
+    Atom *items[5] = {atom_symbol(a, "StrUtf8ErrorV1"), atom_int(a, (int64_t)start),
+                      atom_int(a, (int64_t)end), atom_int(a, (int64_t)byte),
+                      atom_symbol(a, reason)};
+    return atom_expr(a, items, 5u);
+}
+
+static Atom *str_utf8_error(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len;
+    if (!str_text(args[0], &text, &len))
+        return str_expects(r, "expected text argument");
+    const uint8_t *bytes = (const uint8_t *)text;
+    size_t at = 0u;
+    while (at < len) {
+        uint8_t lead = bytes[at];
+        if (lead < 0x80u) { at++; continue; }
+        size_t need;
+        uint8_t low = 0x80u, high = 0xbfu;
+        if (lead >= 0xc2u && lead <= 0xdfu) need = 1u;
+        else if (lead == 0xe0u) { need = 2u; low = 0xa0u; }
+        else if ((lead >= 0xe1u && lead <= 0xecu) || lead == 0xeeu || lead == 0xefu) need = 2u;
+        else if (lead == 0xedu) { need = 2u; high = 0x9fu; }
+        else if (lead == 0xf0u) { need = 3u; low = 0x90u; }
+        else if (lead >= 0xf1u && lead <= 0xf3u) need = 3u;
+        else if (lead == 0xf4u) { need = 3u; high = 0x8fu; }
+        else return str_utf8_error_at(a, at, at + 1u, lead, "invalid-start-byte");
+        size_t next = at + 1u;
+        for (size_t k = 0u; k < need; k++, next++) {
+            if (next >= len)
+                return str_utf8_error_at(a, at, next, lead, "unexpected-end-of-data");
+            uint8_t follow = bytes[next];
+            bool valid = k == 0u ? follow >= low && follow <= high
+                                 : follow >= 0x80u && follow <= 0xbfu;
+            if (!valid)
+                return str_utf8_error_at(a, at, next, lead, "invalid-continuation-byte");
+        }
+        at = next;
+    }
+    return atom_symbol(a, "StrUtf8WellFormedV1");
+}
+
+/* The Unicode 15.0.0 General_Category of a code point, given as an integer
+ * or as a text of one scalar, spelled as Python 3.12's unicodedata.category
+ * spells it: "Lu", "Nd", "Cn". Surrogates, which no text holds, are Cs. */
+static Atom *str_unicode_category(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len;
+    uint32_t code, width;
+    if (args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_INT) {
+        if (args[0]->ground.ival < 0 || args[0]->ground.ival > 0x10ffff)
+            return str_expects(r, "expected a code point from 0 to 1114111");
+        code = (uint32_t)args[0]->ground.ival;
+    } else if (!str_text(args[0], &text, &len) ||
+               !cetta_utf8_decode_one((const uint8_t *)text, len, 0u, &code, &width) ||
+               width != len) {
+        return str_expects(r, "expected a code point or a text of one scalar");
+    }
+    size_t low = 0u, high = CETTA_UNICODE_CATEGORY15_RUNS;
+    while (high - low > 1u) {
+        size_t middle = low + (high - low) / 2u;
+        if (cetta_unicode_category15_starts[middle] <= code) low = middle;
+        else high = middle;
+    }
+    return atom_string(a, cetta_unicode_category15_names[cetta_unicode_category15_values[low]]);
+}
+
+/* The code points of a Python text, as integers. Its bytes are UTF-8
+ * extended as the surrogatepass error handler extends it, so a lone
+ * surrogate is one code point, as len() counts it; json:parse-python writes
+ * strings that way. Other malformed bytes are refused. */
+static Atom *str_python_codepoints(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len, count = 0u;
+    if (!str_text(args[0], &text, &len))
+        return str_expects(r, "expected text argument");
+    for (size_t at = 0u; at < len; count++) {
+        uint32_t code, width;
+        if (!cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &code, &width))
+            return str_refuses(r, "StrMalformedUtf8V1", at);
+        at += width;
+    }
+    Atom **items = malloc((count ? count : 1u) * sizeof(*items));
+    if (!items)
+        return str_expects(r, "memory for the code points");
+    size_t index = 0u;
+    for (size_t at = 0u; at < len; index++) {
+        uint32_t code = 0u, width = 1u;
+        (void)cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &code, &width);
+        items[index] = atom_int(a, (int64_t)code);
+        at += width;
+    }
+    Atom *result = atom_expr(a, items, count);
+    free(items);
+    return result;
+}
+
+/* The Python text of a list of code points, surrogates included, written as
+ * UTF-8 extended by surrogatepass. */
+static Atom *str_from_python_codepoints(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    Atom *const *items = NULL;
+    CettaExprLen count = 0u;
+    if (!atom_sequence_view(args[0], &items, &count))
+        return str_expects(r, "expected a list of codepoints");
+    CettaByteBuffer out;
+    cetta_byte_buffer_init(&out);
+    for (CettaExprLen k = 0u; k < count; k++) {
+        Atom *item = items[k];
+        if (!item || item->kind != ATOM_GROUNDED || item->ground.gkind != GV_INT ||
+            item->ground.ival < 0 || item->ground.ival > 0x10ffff) {
+            cetta_byte_buffer_free(&out);
+            return str_refuses(r, "StrNotACodepointV1", (size_t)k);
+        }
+        uint8_t encoded[4];
+        size_t width = cetta_utf8_encode((uint32_t)item->ground.ival, encoded);
+        str_append(&out, (const char *)encoded, width);
+    }
+    return str_from_buffer(a, &out);
+}
+
+static bool lower15_has(const uint32_t *starts, size_t count, uint32_t code) {
+    size_t low = 0u, high = count;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (starts[middle] <= code) low = middle + 1u;
+        else high = middle;
+    }
+    return low % 2u == 1u;
+}
+
+/* The full lowercase mapping of a code point other than U+03A3: its width,
+ * and its code points in out (the code point itself when it has none). */
+static uint8_t lower15_map(uint32_t code, uint32_t out[CETTA_PYTHON_LOWER15_WIDTH]) {
+    size_t low = 0u, high = CETTA_PYTHON_LOWER15_MAPPINGS;
+    while (low < high) {
+        size_t middle = low + (high - low) / 2u;
+        if (cetta_python_lower15_from[middle] < code) low = middle + 1u;
+        else high = middle;
+    }
+    if (low < CETTA_PYTHON_LOWER15_MAPPINGS && cetta_python_lower15_from[low] == code) {
+        uint8_t width = cetta_python_lower15_widths[low];
+        for (uint8_t k = 0u; k < width; k++) out[k] = cetta_python_lower15_to[low][k];
+        return width;
+    }
+    out[0] = code;
+    return 1u;
+}
+
+/* Whether the first code point at or after `at` that is not case-ignorable is
+ * cased; false at the end of the text. Malformed bytes end the scan; the
+ * caller refuses them when it reaches them. */
+static bool lower15_cased_follows(const char *text, size_t len, size_t at) {
+    while (at < len) {
+        uint32_t code, width;
+        if (!cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &code, &width))
+            return false;
+        if (!lower15_has(cetta_python_lower15_ignorable_starts, CETTA_PYTHON_LOWER15_IGNORABLE_STARTS, code))
+            return lower15_has(cetta_python_lower15_cased_starts, CETTA_PYTHON_LOWER15_CASED_STARTS, code);
+        at += width;
+    }
+    return false;
+}
+
+/* CPython 3.12's str.lower of a Python text (UTF-8 extended by surrogatepass,
+ * as str:python-codepoints reads it): full lowercase mappings over Unicode
+ * 15.0.0, one code point to several included, and the Final_Sigma context of
+ * U+03A3, as CPython's handle_capital_sigma decides it: final sigma when the
+ * nearest code point before it that is not case-ignorable is cased and the
+ * nearest one after it is not. Lone surrogates are kept. Not casefold.
+ *
+ * Two passes over the text, with no decoded copy: the first validates and
+ * sizes the answer, the second writes it. Whether the code point before is
+ * cased is carried along; for U+03A3 the scan forward stops at the first code
+ * point that is not case-ignorable, so each run of case-ignorable code points
+ * is scanned for at most one sigma and the work stays linear. An answer that
+ * cannot fit a string is refused before anything is allocated for it. */
+static Atom *str_python_lower(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    const char *text;
+    size_t len;
+    if (!str_text(args[0], &text, &len))
+        return str_expects(r, "expected text argument");
+    uint64_t total = 0u;
+    char *out = NULL;
+    size_t written = 0u;
+    for (int pass = 0; pass < 2; pass++) {
+        bool cased_before = false;
+        for (size_t at = 0u; at < len;) {
+            uint32_t code, width;
+            if (!cetta_utf8_decode_surrogatepass((const uint8_t *)text, len, at, &code, &width))
+                return str_refuses(r, "StrMalformedUtf8V1", at);
+            uint32_t mapped[CETTA_PYTHON_LOWER15_WIDTH];
+            uint8_t count = 1u;
+            if (code == 0x03A3u)
+                mapped[0] = cased_before && !lower15_cased_follows(text, len, at + width) ? 0x03C2u : 0x03C3u;
+            else
+                count = lower15_map(code, mapped);
+            for (uint8_t m = 0u; m < count; m++) {
+                uint8_t encoded[4];
+                size_t bytes = cetta_utf8_encode(mapped[m], encoded);
+                if (pass == 0) {
+                    total += bytes;
+                } else {
+                    memcpy(out + written, encoded, bytes);
+                    written += bytes;
+                }
+            }
+            if (!lower15_has(cetta_python_lower15_ignorable_starts, CETTA_PYTHON_LOWER15_IGNORABLE_STARTS, code))
+                cased_before = lower15_has(cetta_python_lower15_cased_starts, CETTA_PYTHON_LOWER15_CASED_STARTS, code);
+            at += width;
+        }
+        if (pass == 0) {
+            if (total > CETTA_STRING_BYTES_MAX)
+                return str_expects(r, "expected a text whose lowercase fits a string");
+            out = malloc((size_t)total + 1u);
+            if (!out)
+                return str_expects(r, "memory for the lowercase text");
+        }
+    }
+    Atom *result = atom_string_n(a, out, written);
+    free(out);
+    return result;
+}
+
+static Atom *str_unicode_version(Arena *a, Atom *const *args, CettaStrRefusal *r) {
+    (void)args;
+    (void)r;
+    return atom_string(a, cetta_unicode_category15_version);
 }
 
 /* The codepoints of a text as a list value of one-codepoint strings, so that
@@ -657,8 +946,15 @@ static const CettaStrNative str_natives[] = {
     {"starts-with", 2u, 0u, str_starts_with, CETTA_STR_RESULT_ATOM},
     {"ends-with", 2u, 0u, str_ends_with, CETTA_STR_RESULT_ATOM},
     {"trim", 1u, 0u, str_trim, CETTA_STR_RESULT_ATOM},
+    {"format-fixed", 2u, 0u, str_format_fixed, CETTA_STR_RESULT_ATOM},
     {"compare", 2u, 0u, str_compare, CETTA_STR_RESULT_ATOM},
     {"codepoint-count", 1u, 0u, str_codepoint_count, CETTA_STR_RESULT_ATOM},
+    {"utf8-error", 1u, 0u, str_utf8_error, CETTA_STR_RESULT_STRUCTURE},
+    {"unicode-category", 1u, 0u, str_unicode_category, CETTA_STR_RESULT_ATOM},
+    {"unicode-version", 0u, 0u, str_unicode_version, CETTA_STR_RESULT_ATOM},
+    {"python-codepoints", 1u, 0u, str_python_codepoints, CETTA_STR_RESULT_STRUCTURE},
+    {"from-python-codepoints", 1u, 1u << 0, str_from_python_codepoints, CETTA_STR_RESULT_ATOM},
+    {"python-lower", 1u, 0u, str_python_lower, CETTA_STR_RESULT_ATOM},
     {"codepoints", 1u, 0u, str_codepoints, CETTA_STR_RESULT_STRUCTURE},
     {"from-codepoints", 1u, 1u << 0, str_from_codepoints, CETTA_STR_RESULT_ATOM},
     {"is-all-in", 2u, 0u, str_all_in, CETTA_STR_RESULT_ATOM},

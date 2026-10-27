@@ -779,6 +779,7 @@ JSON_GSLT_RUNTIME_SRC = \
 	$(JSON_GSLT_EMBEDDED_C_V1) \
 	src/library_json.c \
 	native/json_direct_v1.c \
+	native/json_python_v1.c \
 	native/json_runtime_v1.c \
 	native/json_nik_v1.c \
 	native/json_elaboration_plan_v1.c \
@@ -799,6 +800,7 @@ SRC = src/ready_queue.c src/symbol.c src/scalar_trie.c src/atom.c src/term_graph
 SRC += src/weight_ledger.c src/ordinal_priority.c src/native_cost.c src/native_cost_graph.c src/resource_wave.c src/native_space_agenda.c
 SRC += src/shared_transition.c src/run_report.c src/run_cli.c src/error_presentation.c src/run_guard.c
 SRC += src/library_proc.c
+SRC += src/expand_user.c
 SRC += src/library_fs.c
 SRC += src/petta_priority_heap.c
 SRC += src/library_postings.c src/tensor.c src/tensor_screening.c src/library_tensor.c src/library_group.c
@@ -20943,6 +20945,8 @@ test-string-layer-v1: $(BIN)
 	if [ "$$written" != "610062" ] || [ "$$read_back" != "[3]" ]; then \
 		echo "FAIL: a file keeps a string's bytes: wrote $$written, read $$read_back"; exit 1; \
 	fi; \
+	python3 tests/support/check_str_utf8_error_v1.py --cetta "./$(BIN)"; \
+	python3 tests/support/check_unicode_category_v1.py --cetta "./$(BIN)"; \
 	echo "PASS: string layer, and a string holding NUL in six lanes and in a file"
 
 # The list value's atom contract: construction and normal form, printing,
@@ -34550,19 +34554,54 @@ test-effects-v1: $(BIN) lib/proc.metta tests/support/check_effects_v1.py \
 FILESYSTEM_NATIVE_TEST_V1 = runtime/test-filesystem-observations-v1-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats)
 $(FILESYSTEM_NATIVE_TEST_V1): tests/support/test_filesystem_observations_v1.c src/library_fs.c src/library_fs.h src/native_handle.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) src/stats.h tests/test_runtime_stats_stubs.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_filesystem_observations_v1.c src/library_fs.c src/native_handle.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS) -Wl,--gc-sections,--wrap=read,--wrap=__read_chk,--wrap=readdir,--wrap=malloc,--wrap=strdup,--wrap=fstatat,--wrap=closedir,--wrap=rename
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_filesystem_observations_v1.c src/library_fs.c src/native_handle.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS) -Wl,--gc-sections,--wrap=read,--wrap=__read_chk,--wrap=readdir,--wrap=malloc,--wrap=strdup,--wrap=fstatat,--wrap=closedir,--wrap=rename,--wrap=write,--wrap=fsync,--wrap=flock,--wrap=openat
 
 .PHONY: test-filesystem-v1
 test-all: test-filesystem-v1
-test-filesystem-v1: $(BIN) $(FILESYSTEM_NATIVE_TEST_V1) tests/support/check_filesystem_v1.py
+test-filesystem-v1: $(BIN) $(FILESYSTEM_NATIVE_TEST_V1) tests/support/check_filesystem_v1.py \
+		tests/support/check_filesystem_writers_v1.py tests/support/check_os_primitives_v1.py
 	@mkdir -p runtime/filesystem-native-v1-$(BUILD_OBJ_TAG)
 	@$(call cetta_exec,./$(FILESYSTEM_NATIVE_TEST_V1)) runtime/filesystem-native-v1-$(BUILD_OBJ_TAG)
 	@python3 tests/support/check_filesystem_v1.py ./$(BIN) --output runtime/filesystem-v1-$(BUILD_OBJ_TAG)
+	@python3 tests/support/check_filesystem_writers_v1.py ./$(BIN)
+	@python3 tests/support/check_os_primitives_v1.py ./$(BIN)
 
 TEXT_STREAMING_NATIVE_TEST_V1 = runtime/test-text-streaming-v1-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats)
 $(TEXT_STREAMING_NATIVE_TEST_V1): tests/support/test_text_streaming_v1.c src/str_stream.c src/str_stream.h src/str_natives.c src/string_ops.c src/utf8.h src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) src/stats.h tests/test_runtime_stats_stubs.h $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_text_streaming_v1.c src/str_stream.c src/str_natives.c src/string_ops.c src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS) -Wl,--gc-sections
+
+FORMAT_FIXED_NATIVE_TEST_V1 = runtime/test-format-fixed-bound-v1-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats)
+$(FORMAT_FIXED_NATIVE_TEST_V1): tests/support/test_format_fixed_bound_v1.c src/str_stream.c src/str_stream.h src/str_natives.c src/string_ops.c src/utf8.h src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) src/stats.h tests/test_runtime_stats_stubs.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -o $@ tests/support/test_format_fixed_bound_v1.c src/str_stream.c src/str_natives.c src/string_ops.c src/native_sha256.c src/atom.c src/binding/frame_identity.c $(SYMBOL_STANDALONE_SRC) $(LDFLAGS) -Wl,--gc-sections,--wrap=snprintf,--wrap=__snprintf_chk
+
+.PHONY: test-format-fixed-v1
+test-all: test-format-fixed-v1
+test-format-fixed-v1: $(FORMAT_FIXED_NATIVE_TEST_V1)
+	@$(call cetta_exec,./$(FORMAT_FIXED_NATIVE_TEST_V1))
+
+# The account lookup through wrapped account-database and allocator seams.
+EXPANDUSER_SEAMS_TEST_V1 = runtime/test-expanduser-seams-v1-$(BUILD_OBJ_TAG)
+$(EXPANDUSER_SEAMS_TEST_V1): tests/support/test_expanduser_seams_v1.c src/expand_user.c src/expand_user.h $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_expanduser_seams_v1.c src/expand_user.c \
+		-Wl,--wrap=malloc,--wrap=realloc,--wrap=free,--wrap=strndup,--wrap=getpwnam_r,--wrap=getpwuid_r
+
+# str:python-lower against CPython 3.12's own str.lower (Unicode 15.0.0);
+# another Python's Unicode makes the check report a skip.
+PYTHON_LOWER_TEST_PYTHON ?= $(shell command -v python3.12 2>/dev/null || echo python3)
+.PHONY: test-python-lower-v1
+test-all: test-python-lower-v1
+test-python-lower-v1: $(BIN) tests/support/check_python_lower_v1.py src/python_lower15.h tools/generate_python_lower15.py
+	@$(PYTHON_LOWER_TEST_PYTHON) tools/generate_python_lower15.py src/python_lower15.h --check
+	@$(PYTHON_LOWER_TEST_PYTHON) tests/support/check_python_lower_v1.py ./$(BIN)
+
+.PHONY: test-expanduser-v1
+test-all: test-expanduser-v1
+test-expanduser-v1: $(BIN) tests/support/check_expanduser_v1.py $(EXPANDUSER_SEAMS_TEST_V1)
+	@$(call cetta_exec,./$(EXPANDUSER_SEAMS_TEST_V1))
+	@python3 tests/support/check_expanduser_v1.py ./$(BIN)
 
 .PHONY: test-text-streaming-v1
 test-all: test-text-streaming-v1
@@ -43878,6 +43917,7 @@ LANGUAGE_DEF_PARSER_PACK_V1_RUNTIME_C_SOURCES = \
 	native/json_runtime_v1.c \
 	native/json_value_v1.c \
 	native/json_direct_v1.c \
+	native/json_python_v1.c \
 	native/decimal_value_v1.c \
 	$(LANGUAGE_DEF_CORE_V1_SRC) \
 	$(OPERATIONAL_LANGUAGE_DEF_V1_SRC) \
@@ -46220,7 +46260,7 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
-	system fs proc sqlite shell cwp io durable llm llm/io llm/command llm/compat \
+	system fs proc sqlite shell cwp io durable space_service llm llm/io llm/command llm/compat \
 	re postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re holkernel mm0kernel
 LIBRARY_PETTA_SPELLING_SOURCES_V1 += lib_tensor
@@ -48215,10 +48255,14 @@ else
 		test-petta-oem-sealed-continuation-stats
 endif
 
+# json:parse-python follows the CPython the engine is built against.
+JSON_PYTHON_ORACLE = $(firstword $(wildcard $(patsubst %-config,%,$(PYTHON_CONFIG))) python3)
 .PHONY: test-json-gslt-library-body
 test-json-gslt-library-body: $(BIN) \
 		lib/json.metta lib/petta/json.metta lib/prime/json.metta \
 		examples/json_scripting_v1.metta tests/support/check_json_workflows_v1.py \
+		tests/support/check_json_python_emission_v1.py \
+		tests/support/check_json_python_parse_v1.py \
 		tests/test_json_direct_reference.metta tests/test_json_direct_reference.expected tests/test_json_direct_reference.petta.expected \
 		tests/test_json_gslt_hostile_constructors.metta \
 		tests/test_json_gslt_hostile_constructors.expected \
@@ -48270,6 +48314,8 @@ test-json-gslt-library-body: $(BIN) \
 	diff -u tests/test_json_direct_reference.expected "$$actual"; \
 	python3 tests/test_json_deep_v1.py "$(BIN)"; \
 	python3 tests/support/check_json_workflows_v1.py --cetta "$(BIN)"; \
+	python3 tests/support/check_json_python_emission_v1.py --cetta "$(BIN)"; \
+	$(JSON_PYTHON_ORACLE) tests/support/check_json_python_parse_v1.py --cetta "$(BIN)"; \
 	echo "(JsonGsltLibrarySummary 25 25 0)"
 
 .PHONY: test-json-gslt-library
@@ -48845,7 +48891,12 @@ test-telegram-scheduler:
 endif
 
 .PHONY: telegram-service telegram-control test-telegram-service test-telegram-channel-service test-telegram-commands-service test-telegram-control
-.PHONY: space-service test-space-service test-space-service-commit
+.PHONY: space-service test-space-service test-space-service-commit test-native-journal
+runtime/test-native-journal: tests/test_native_journal.c src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
+	@mkdir -p runtime
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_journal.c src/native_journal.c src/native_sha256.c -Wl,--wrap=write,--wrap=pread,--wrap=fsync,--wrap=renameat -o $@
+test-native-journal: runtime/test-native-journal
+	$<
 .PHONY: value-worker test-memory-collection test-memory-index-mutations install-memory-service
 MEMORY_SERVICE_INSTALL_ARGS ?=
 VALUE_WORKER_BIN = runtime/cetta-value-worker-$(BUILD_OBJ_TAG)
@@ -48854,7 +48905,7 @@ VALUE_WORKER_OBJ = runtime/bootstrap/value-worker.$(BUILD_OBJ_TAG).o
 $(VALUE_WORKER_OBJ): src/value_worker_main.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
-$(VALUE_WORKER_BIN): $(VALUE_WORKER_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+$(VALUE_WORKER_BIN): $(VALUE_WORKER_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 value-worker: $(VALUE_WORKER_BIN)
 	@echo "Built $(VALUE_WORKER_BIN)"
@@ -48878,8 +48929,33 @@ $(SPACE_SERVICE_COMMIT_TEST_BIN): $(SPACE_SERVICE_COMMIT_TEST_OBJ) $(FALLBACK_EV
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=write,--wrap=fsync,--wrap=cetta_atom_wire_encode,--wrap=space_admit_atom
 test-space-service-commit: $(SPACE_SERVICE_COMMIT_TEST_BIN)
 	$(SPACE_SERVICE_COMMIT_TEST_BIN)
-test-space-service: test-space-service-commit $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
+SPACE_SERVICE_SCOPES_TEST_BIN = runtime/test_space_service_scopes-$(BUILD_OBJ_TAG)
+SPACE_SERVICE_SCOPES_TEST_OBJ = runtime/bootstrap/test_space_service_scopes.$(BUILD_OBJ_TAG).o
+-include $(SPACE_SERVICE_SCOPES_TEST_OBJ:.o=.d)
+$(SPACE_SERVICE_SCOPES_TEST_OBJ): tests/support/test_space_service_scopes.c src/space_service_main.c $(BUILD_CONFIG_HEADER)
+	@mkdir -p $(dir $@)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -MF $(@:.o=.d) -c $< -o $@
+$(SPACE_SERVICE_SCOPES_TEST_BIN): $(SPACE_SERVICE_SCOPES_TEST_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+.PHONY: test-space-service-scopes
+test-space-service-scopes: $(SPACE_SERVICE_SCOPES_TEST_BIN)
+	$(SPACE_SERVICE_SCOPES_TEST_BIN)
+test-space-service: test-space-service-commit test-space-service-scopes $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
 	python3 tests/test_space_service.py $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
+
+.PHONY: test-native-store-transactions test-native-store-scopes
+NATIVE_STORE_LEAN_PROJECT ?=
+NATIVE_STORE_TRACE_DIR ?= runtime/native-store-transactions-$(BUILD_OBJ_TAG)
+test-native-store-transactions: $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
+	@test -n "$(NATIVE_STORE_LEAN_PROJECT)" || { echo 'Set NATIVE_STORE_LEAN_PROJECT to the built MeTTapedia Lean project'; exit 1; }
+	python3 tests/support/check_native_store_transactions.py --service $(SPACE_SERVICE_BIN) \
+		--cetta ./$(BIN) --worker $(VALUE_WORKER_BIN) \
+		--lean-project "$(NATIVE_STORE_LEAN_PROJECT)" --output "$(NATIVE_STORE_TRACE_DIR)"
+test-native-store-scopes: $(SPACE_SERVICE_BIN) $(BIN) $(VALUE_WORKER_BIN)
+	@test -n "$(NATIVE_STORE_LEAN_PROJECT)" || { echo 'Set NATIVE_STORE_LEAN_PROJECT to the built MeTTapedia Lean project'; exit 1; }
+	python3 tests/support/check_native_store_scopes.py --service $(SPACE_SERVICE_BIN) \
+		--cetta ./$(BIN) --worker $(VALUE_WORKER_BIN) \
+		--lean-project "$(NATIVE_STORE_LEAN_PROJECT)" --output "$(NATIVE_STORE_TRACE_DIR)/scoped"
 test-memory-collection: $(SPACE_SERVICE_BIN) $(VALUE_WORKER_BIN)
 	python3 tests/test_memory_collection.py --server $(SPACE_SERVICE_BIN) --worker $(VALUE_WORKER_BIN) --output runtime/memory-qualification-$(BUILD_OBJ_TAG).json
 test-memory-index-mutations: $(VALUE_WORKER_BIN)
@@ -50316,3 +50392,16 @@ test-petta-contextual-case: $(BIN) tests/support/check_petta_contextual_case.py
 test-all: test-petta-contextual-case
 
 .PHONY: main-readiness-consolidation
+
+.PHONY: test-petta-overloaded-choice-retention
+test-petta-overloaded-choice-retention: $(BIN) tests/support/check_petta_overloaded_choice_retention.py
+	python3 tests/support/check_petta_overloaded_choice_retention.py ./$(BIN)
+
+test-petta-search-machine test-all: test-petta-overloaded-choice-retention
+
+.PHONY: test-rel
+REL_TEST_OUTPUT ?= runtime/rel-qualification-$(BUILD_OBJ_TAG)
+test-rel: $(BIN) lib/petta/rel.metta tests/support/check_rel.py
+	python3 tests/support/check_rel.py --cetta ./$(BIN) --output "$(REL_TEST_OUTPUT)"
+
+test-all: test-rel

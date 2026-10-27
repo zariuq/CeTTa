@@ -16,7 +16,6 @@
 #include "native/seal_module.h"
 #include "native/megalodon/mg_cetta_module.h"
 
-#define CETTA_NATIVE_IMPORT_GPARSE (1u << 24)
 #define CETTA_NATIVE_IMPORT_LANGDEF (1u << 25)
 #define CETTA_NATIVE_IMPORT_HOL_KERNEL (UINT64_C(1) << 32)
 #define CETTA_NATIVE_IMPORT_MM0_KERNEL (UINT64_C(1) << 33)

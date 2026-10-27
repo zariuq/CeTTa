@@ -3,8 +3,9 @@
 ; is (space:uncertain ID REASON); inspect the receipt before retrying writes.
 ; The service owns storage. A client needs neither MORK nor PathMap linkage.
 
-; Observe public arguments before handing inert request data to the host.
-(: space:call (-> String %Undefined% Number Expression))
+; Resolve the socket and deadline; the request is inert syntax. Evaluate
+; request-building computations into values before calling this boundary.
+(: space:call (-> String Atom Number Expression))
 (: __cetta_lib_space_call (-> Atom Atom Atom Atom))
 (: space:request-id (-> String))
 

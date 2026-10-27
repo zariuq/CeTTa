@@ -1,4 +1,5 @@
 #include "petta_compiled_reader.h"
+#include "parser.h"
 
 #include "generated/petta_extended_reader_direct_v1.generated.h"
 #include "generated/petta_reader_direct_v1.generated.h"
@@ -518,4 +519,40 @@ int petta_compiled_reader_v1_parse_file_ids(
         error_buf, error_buf_size);
     free(bytes);
     return result;
+}
+
+static int installed_petta_compiled_text_backend(
+    void *context, const char *text, TermUniverse *universe,
+    AtomId **out_ids, char *error_buf, size_t error_buf_size) {
+    PeTTaCompiledReaderV1Receipt receipt;
+    return petta_compiled_reader_v1_parse_text_ids(
+        context, text, universe, out_ids, &receipt,
+        error_buf, error_buf_size);
+}
+
+static int installed_petta_compiled_term_backend(
+    void *context, const uint8_t *bytes, size_t length, TermUniverse *universe,
+    AtomId *out_id, char *error_buf, size_t error_buf_size) {
+    return petta_compiled_reader_v1_parse_term_bytes_id(
+        context, bytes, length, universe, out_id, error_buf, error_buf_size);
+}
+
+static int installed_petta_compiled_file_backend(
+    void *context, const char *filename, TermUniverse *universe,
+    AtomId **out_ids, char *error_buf, size_t error_buf_size) {
+    PeTTaCompiledReaderV1Receipt receipt;
+    return petta_compiled_reader_v1_parse_file_ids(
+        context, filename, universe, out_ids, &receipt,
+        error_buf, error_buf_size);
+}
+
+bool petta_compiled_reader_v1_install(PeTTaCompiledReaderV1 *reader) {
+    if (!reader) return false;
+    ParserDocumentIdsBackend backend = {
+        .context = reader,
+        .parse_text_ids = installed_petta_compiled_text_backend,
+        .parse_file_ids = installed_petta_compiled_file_backend,
+        .parse_term_bytes_id = installed_petta_compiled_term_backend,
+    };
+    return parser_set_document_ids_backend(&backend);
 }

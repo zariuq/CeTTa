@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 10e68f771fc0da6f24de7e2c1f1cc1ac5d39c737ffb37f7873db971ed6481742
+ * Source SHA-256: 56e300240e8203afdc8c5b6ddaf7e2ed09676535d7145b9db2afd050fee4e4b0
  */
 
 #include <stdbool.h>
@@ -238,6 +238,15 @@ static inline bool cetta_gslt_progress_inline(CettaGsltProgressAdvice progress) 
     X(lib_fs_open_read, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_fs_read_chunk, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_fs_close, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_open_write, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_write_all, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_sync, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_lock, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_unlock, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_make_directories, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_set_mode, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_remove, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
+    X(lib_fs_access, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(lib_io_submit, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_io_poll, CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE) \
     X(lib_io_http_read, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \

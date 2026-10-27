@@ -65,6 +65,19 @@
      (chain (eval (__cetta_lib_json_parse $text)) $result
        (return $result))))
 
+; json.loads as CPython 3.12 runs it, beside the strict json:parse. NaN,
+; Infinity and -Infinity are floats; a repeated key keeps its first position
+; and takes the last value; a lone surrogate escape stays in its string,
+; encoded as Python's surrogatepass handler encodes it (str:python-codepoints
+; reads it back). A Python exception is (JsonPythonErrorV1 class message ...)
+; with message its str(): JSONDecodeError adds msg, pos, lineno and colno,
+; positions counting code points; ValueError comes from int() past 4300 digits.
+(: json:parse-python (-> %Undefined% Atom))
+(= (json:parse-python $text)
+   (function
+     (chain (eval (__cetta_lib_json_parse $text JsonPythonV1)) $result
+       (return $result))))
+
 (: json:parse-reference (-> %Undefined% Atom))
 (= (json:parse-reference $text)
    (function
@@ -109,6 +122,27 @@
 (= (json:pretty $value)
    (function
      (chain (eval (__cetta_lib_json_stringify $value JsonPrettyV1)) $result
+       (return $result))))
+
+; Python's json.dumps with default arguments, byte for byte: ", " and ": "
+; separators, floats in Python's shortest repr, and ASCII escapes.
+(: json:stringify-python (-> %Undefined% Atom))
+(= (json:stringify-python $value)
+   (function
+     (chain (eval (__cetta_lib_json_stringify $value JsonPythonV1)) $result
+       (return $result))))
+
+; The same with json.dumps options, any subset of (ensure-ascii B),
+; (sort-keys B), (separators ITEM KEY) and (indent N), N being a number of
+; spaces or an indent string, for example ((ensure-ascii False) (indent 2)).
+; As in json.dumps, an indent without separators makes the item separator
+; ",". Both fail on an integer past 4300
+; digits as json.dumps does: (JsonPythonErrorV1 ValueError message prefix),
+; prefix being what a streaming json.dump has written by then.
+(: json:stringify-python-with (-> %Undefined% %Undefined% Atom))
+(= (json:stringify-python-with $value $options)
+   (function
+     (chain (eval (__cetta_lib_json_stringify $value (JsonPythonV1 $options))) $result
        (return $result))))
 
 (: json:inspect-stringify (-> %Undefined% Atom))

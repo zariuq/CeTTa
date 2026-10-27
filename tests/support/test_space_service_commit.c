@@ -1,14 +1,28 @@
 /* Exercise the storage owner's real publication and recovery boundary. Faults
  * are injected at allocation and I/O interfaces, without production switches. */
+#define _GNU_SOURCE
+#include <time.h>
+static int scope_clock(clockid_t,struct timespec *);
+#define clock_gettime scope_clock
 #define main cetta_space_service_entry
 #include "../../src/space_service_main.c"
 #undef main
+#undef clock_gettime
+
+static uint64_t fake_clock;
+static int scope_clock(clockid_t clock,struct timespec *value) {
+    if (!fake_clock || clock!=CLOCK_MONOTONIC) return clock_gettime(clock,value);
+    uint64_t now=fake_clock++;
+    *value=(struct timespec){.tv_sec=(time_t)(now/1000),.tv_nsec=(long)(now%1000)*1000000L};
+    return 0;
+}
 
 static unsigned checks, after_write_allocations, event_encodings;
 static int observed_journal=-1;
 static bool write_started, forbid_after_write, fail_sync, fail_projection, fail_event, fail_key;
 static size_t fail_copy_size;
 static unsigned write_fault, allowed_projections;
+static unsigned scope_row_encodings;
 
 #define check(condition) do { \
     ++checks; \
@@ -58,6 +72,7 @@ int __wrap_fsync(int fd) {
 }
 CettaAtomWireStatus __real_cetta_atom_wire_encode(const Atom *,unsigned char **,size_t *);
 CettaAtomWireStatus __wrap_cetta_atom_wire_encode(const Atom *atom,unsigned char **data,size_t *size) {
+    if (shape((Atom *)atom,"ScopeProbe",3)) ++scope_row_encodings;
     if (write_started && fail_key &&
         (atom_is_symbol((Atom *)atom,"saved") || shape((Atom *)atom,"saved-open",2))) {
         fail_key=false; *data=NULL; *size=0; return ATOM_WIRE_NOMEM;
@@ -66,7 +81,8 @@ CettaAtomWireStatus __wrap_cetta_atom_wire_encode(const Atom *atom,unsigned char
         shape((Atom *)atom,"event-authorized",8) || shape((Atom *)atom,"event-authorized-v2",9) ||
         shape((Atom *)atom,"event-authorized-v3",10) ||
         shape((Atom *)atom,"event-authorized-v4",12) ||
-        shape((Atom *)atom,"event-authorized-v5",15)) {
+        shape((Atom *)atom,"event-authorized-v5",15) ||
+        shape((Atom *)atom,"event-authorized-observed-v1",16)) {
         ++event_encodings;
         if (fail_event) { *data=NULL; *size=0; return ATOM_WIRE_NOMEM; }
     }
@@ -86,11 +102,14 @@ static void reset_faults(void) {
     fail_sync=fail_projection=fail_event=fail_key=false;
     fail_copy_size=0; write_fault=allowed_projections=0;
     after_write_allocations=event_encodings=0;
+    scope_row_encodings=0;
 }
 static void release(Service *s) {
     reset_faults();
     for (size_t i=0;i<STORES;++i) { store_free(s->stores[i]); s->stores[i]=NULL; }
-    for (size_t i=0;i<SNAPSHOTS;++i) snapshot_free(s,&s->snapshots[i]);
+    for (size_t i=0;i<SNAPSHOTS;++i) {
+        snapshot_free(s,&s->snapshots[i]); observation_free(s,&s->observations[i]);
+    }
     for (size_t i=0;i<s->receipt_count;++i) receipt_free(&s->receipts[i]);
     free(s->decisions); free(s->decision_slots);
     free(s->principals); free(s->principal_slots);
@@ -107,6 +126,7 @@ static void initialize(Service *s,const char *directory) {
         .query_ms=5000,.max_watchers=CLIENTS/2,.next_cursor=1,
         .process_uid=(uint32_t)geteuid(),.owner_uid=(uint32_t)geteuid()};
     check(directory_open(s,directory)); check(recover(s));
+    check(random_id(s->boot));
 }
 static off_t journal_size(Service *s) {
     struct stat info; check(!fstat(s->journal,&info)); return info.st_size;
@@ -1138,6 +1158,85 @@ static void stable_principal_publication(Service *s,Arena *a,const char *directo
           find_receipt(s,oldB,"principal-reused-id") &&
           find_receipt(s,freshB,"principal-reused-id"));
 }
+static Atom *observed_request(Service *s,Arena *a,const char *id,bool add) {
+    Atom *pattern=atom_var(a,"record");
+    Atom *args[]={atom_int(a,s->stores[0]->id),form(a,"reads",&pattern,1),
+        form(a,"writes",&pattern,1),atom_int(a,16),atom_int(a,60000)};
+    Atom *observed=execute_wire(s,a,request(a,s,"observe-scope","observe",args,5));
+    success(observed);
+    Atom *ticket=part(observed,3),*row=atom_symbol(a,"saved"),*one=form(a,"add",&row,1);
+    Atom *both[]={one,one};
+    Atom *commit_args[]={atom_int(a,s->stores[0]->id),part(ticket,1),part(ticket,2),
+        form(a,"ops",both,add ? 2 : 0)};
+    return request(a,s,id,"batch-observed",commit_args,4);
+}
+static void scoped_publication(Service *s,Arena *a,const char *directory,unsigned fault) {
+    success(execute_wire(s,a,open_request(a,s,"native-ordered")));
+    if (!fault) {
+        publication(s,a,observed_request(s,a,"scoped-noop",false));
+        check(!s->observation_bytes && !s->snapshot_bytes);
+        return;
+    }
+    Atom *req=observed_request(s,a,"scoped-uncertain",true);
+    Bytes raw={0}; check(wire(req,&raw));
+    off_t before=journal_size(s);
+    reset_faults(); observed_journal=s->journal;
+    if (fault<=2) write_fault=fault;
+    else if (fault==3) fail_sync=true;
+    else { fail_projection=true; allowed_projections=fault==5 ? 1 : 0; }
+    check(!execute(s,a,req,raw)); check(s->poisoned && write_started);
+    check(!s->observation_bytes && !s->snapshot_bytes);
+    check(!find_receipt(s,root_principal(s),"scoped-uncertain"));
+    reset_faults(); release(s); initialize(s,directory);
+    bool complete=fault>=3;
+    check(space_length64(s->stores[0]->space)==(complete ? 2u : 0u));
+    check(s->stores[0]->revision==(complete ? 1u : 0u));
+    Atom *again=execute(s,a,req,raw);
+    if (complete) success(again);
+    else {
+        check(shape(again,"reply",4) && atom_is_symbol(part(again,2),"error"));
+        check(atom_is_symbol(part(again,3),"observation-identity"));
+        check(journal_size(s)==before);
+        success(execute_wire(s,a,observed_request(s,a,"scoped-reprepared",true)));
+    }
+    check(space_length64(s->stores[0]->space)==2 && s->stores[0]->revision==1);
+    bytes_free(&raw);
+}
+static void scope_deadline(Service *s,Arena *a) {
+    check(execute_wire(s,a,open_request(a,s,"native-ordered"))!=NULL);
+    Atom *patterns[32];
+    for (size_t i=0;i<32;++i) patterns[i]=atom_symbol(a,"absent");
+    Atom *args[]={atom_int(a,s->stores[0]->id),form(a,"reads",patterns,32),
+        form(a,"writes",NULL,0),atom_int(a,1),atom_int(a,60000)};
+    s->query_ms=20; fake_clock=1000;
+    Atom *answer=execute_wire(s,a,request(a,s,"bounded-scopes","observe",args,5));
+    uint64_t elapsed=fake_clock-1000; fake_clock=0;
+    check(shape(answer,"reply",4) && atom_is_symbol(part(answer,2),"error") &&
+        atom_is_symbol(part(answer,3),"query-time-limit"));
+    check(elapsed<40);
+    check(s->observation_bytes==0 && s->snapshot_bytes==0);
+}
+static void scope_validation_encoding(Service *s,Arena *a) {
+    check(execute_wire(s,a,open_request(a,s,"native-ordered"))!=NULL);
+    Store *st=s->stores[0];
+    for (int i=0;i<65;++i) {
+        Atom *fields[]={atom_int(a,i),atom_int(a,i ? i+1 : 0)};
+        check(store_add(st,form(a,"ScopeProbe",fields,2)));
+    }
+    Atom *variable=atom_var(a,"same");
+    Atom *fields[]={variable,variable};
+    Atom *pattern=form(a,"ScopeProbe",fields,2);
+    Atom *args[]={atom_int(a,st->id),form(a,"reads",&pattern,1),
+        form(a,"writes",NULL,0),atom_int(a,2),atom_int(a,60000)};
+    Atom *answer=execute_wire(s,a,request(a,s,"capture-matching","observe",args,5));
+    check(shape(answer,"reply",4) && atom_is_symbol(part(answer,2),"ok"));
+    Observation *o=find_observation(s,(uint64_t)part(part(answer,3),2)->ground.ival);
+    check(o && o->views[0].rows.count==1);
+    scope_row_encodings=0;
+    check(scope_current(s,st,&o->views[0],now_ms()+5000)==NULL);
+    check(scope_row_encodings==1);
+    observation_free(s,o);
+}
 int main(void) {
     SymbolTable symbols; symbol_table_init(&symbols); g_symbols=&symbols;
     symbol_table_init_builtins(&symbols,&g_builtin_syms);
@@ -1153,7 +1252,7 @@ int main(void) {
     arena_free(&controls);
     Service *s=calloc(1,sizeof(*s)); check(s!=NULL);
     const char *backends[]={"native","pathmap","mork"};
-    for (unsigned trial=0;trial<18;++trial) {
+    for (unsigned trial=0;trial<26;++trial) {
         if (trial>0 && trial<3 && !cetta_mork_bridge_is_available()) continue;
         char directory[]="runtime/space-commit-XXXXXX"; check(mkdtemp(directory)!=NULL);
         Arena a; arena_init_detached(&a); initialize(s,directory);
@@ -1165,7 +1264,10 @@ int main(void) {
         else if (trial==14) explicit_read_grant_publication(s,&a);
         else if (trial==15) ticket_publication(s,&a,directory);
         else if (trial==16) attenuating_lineage_publication(s,&a,directory);
-        else stable_principal_publication(s,&a,directory);
+        else if (trial==17) stable_principal_publication(s,&a,directory);
+        else if (trial<24) scoped_publication(s,&a,directory,trial-18);
+        else if (trial==24) scope_deadline(s,&a);
+        else scope_validation_encoding(s,&a);
         release(s); arena_free(&a);
         char path[sizeof(directory)+20];
         snprintf(path,sizeof(path),"%s/journal.csl",directory); check(!unlink(path));

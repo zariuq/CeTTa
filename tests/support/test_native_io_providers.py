@@ -4,6 +4,7 @@ import http.server
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import threading
@@ -223,5 +224,22 @@ class NativeIoProviders(unittest.TestCase):
 '''
                 result=self.run_guest(code,d,lang)
                 self.assertIn('TAIL_OK',result.stdout)
+
+    def test_uuid4_hex_is_a_version_4_uuid(self):
+        import uuid
+        for lang in ('petta','he'):
+            with self.subTest(lang=lang), tempfile.TemporaryDirectory() as d:
+                code='!(import! &self '+('(library system)' if lang=='petta' else 'system')+')\n'
+                code+='!(println! (system:uuid4-hex))\n'*500
+                code+='!(println! PROVIDER_OK)\n'
+                result=self.run_guest(code,d,lang)
+                # HE prints a string bare, PeTTa quoted; any other form fails the count.
+                values=re.findall(r'^"?([0-9a-f]{32})"?$',result.stdout,re.M)
+                self.assertEqual(len(values),500)
+                self.assertEqual(len(set(values)),500)
+                for value in values:
+                    parsed=uuid.UUID(hex=value)
+                    self.assertEqual(parsed.hex,value)
+                    self.assertEqual((parsed.version,parsed.variant),(4,uuid.RFC_4122))
 
 if __name__=='__main__': unittest.main()

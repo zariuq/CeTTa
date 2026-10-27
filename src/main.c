@@ -2440,31 +2440,6 @@ static int main_he_compiled_bytes_prefix_backend(
         error_buf, error_buf_size);
 }
 
-static int main_petta_compiled_text_backend(
-    void *context, const char *text, TermUniverse *universe,
-    AtomId **out_ids, char *error_buf, size_t error_buf_size) {
-    PeTTaCompiledReaderV1Receipt receipt;
-    return petta_compiled_reader_v1_parse_text_ids(
-        context, text, universe, out_ids, &receipt,
-        error_buf, error_buf_size);
-}
-
-static int main_petta_compiled_term_backend(
-    void *context, const uint8_t *bytes, size_t length, TermUniverse *universe,
-    AtomId *out_id, char *error_buf, size_t error_buf_size) {
-    return petta_compiled_reader_v1_parse_term_bytes_id(
-        context, bytes, length, universe, out_id, error_buf, error_buf_size);
-}
-
-static int main_petta_compiled_file_backend(
-    void *context, const char *filename, TermUniverse *universe,
-    AtomId **out_ids, char *error_buf, size_t error_buf_size) {
-    PeTTaCompiledReaderV1Receipt receipt;
-    return petta_compiled_reader_v1_parse_file_ids(
-        context, filename, universe, out_ids, &receipt,
-        error_buf, error_buf_size);
-}
-
 static int main_prime_compiled_text_backend(
     void *context, const char *text, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size) {
@@ -3977,7 +3952,6 @@ static int cetta_main(int argc, char **argv) {
                strcmp(document_reader_capability,
                       "petta-reader-direct-v1") == 0) {
         char reader_error[512] = {0};
-        ParserDocumentIdsBackend reader_backend;
         petta_compiled_reader = list_syntax
             ? petta_compiled_reader_v1_new_with_lists()
             : petta_compiled_reader_v1_new();
@@ -3993,13 +3967,7 @@ static int cetta_main(int argc, char **argv) {
             rc = 1;
             goto cleanup;
         }
-        reader_backend = (ParserDocumentIdsBackend){
-            .context = petta_compiled_reader,
-            .parse_text_ids = main_petta_compiled_text_backend,
-            .parse_file_ids = main_petta_compiled_file_backend,
-            .parse_term_bytes_id = main_petta_compiled_term_backend,
-        };
-        if (!parser_set_document_ids_backend(&reader_backend)) {
+        if (!petta_compiled_reader_v1_install(petta_compiled_reader)) {
             fprintf(stderr,
                     "error: could not install compiled PeTTa document reader\n");
             rc = 1;
