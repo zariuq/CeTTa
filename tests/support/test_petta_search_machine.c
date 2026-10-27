@@ -200,6 +200,27 @@ static void test_transient_plan_keys_own_their_storage(void) {
             atom_int(&source, 0)), &environment);
     assert(first && first->role != PETTA_PLAN_VALUE);
     assert(first->child_count == 3u && first->children[2u].role == PETTA_PLAN_VALUE);
+    CettaStorageCensus warm = {0};
+    petta_program_storage_census(program, &warm);
+    cetta_storage_finish(&warm);
+    assert(!warm.incomplete && !warm.overflow);
+    size_t memo_bytes = warm.bytes;
+    cetta_storage_census_free(&warm);
+    /* Fresh variable identities are alpha-equivalent. A broken memo must
+     * not pass merely because detached keys no longer grow the global pool. */
+    for (unsigned index = 0u; index < 2000u; index++) {
+        arena_reset(&source, mark);
+        assert(petta_program_plan_transient(program,
+            atom_expr3(&source, head,
+                atom_var_with_id(&source, "memo", fresh_var_id()),
+                atom_int(&source, 0)), &environment) == first);
+    }
+    CettaStorageCensus repeated = {0};
+    petta_program_storage_census(program, &repeated);
+    cetta_storage_finish(&repeated);
+    assert(!repeated.incomplete && !repeated.overflow);
+    assert(repeated.bytes == memo_bytes);
+    cetta_storage_census_free(&repeated);
     uint32_t baseline = shared.used;
     /* Cross several memo evictions. The caller reuses its arena addresses;
      * The changing integer prevents an alpha-equivalent memo hit. Fresh
@@ -9076,7 +9097,7 @@ static void test_table_hash_domains(Arena *owner) {
                         "     (if (< $n 2)"
                         "       (let $next (+ $n 1) (HashStep $next)) (empty))))"));
                 TableProbe probe = {
-                    .heads = {head->sym_id}, .arities = {1u}, .relation_len = 1u,
+                    .heads = {atom_symbol_current_id(head)}, .arities = {1u}, .relation_len = 1u,
                 };
                 PettaMachineTable *table = petta_machine_table_new();
                 assert(table);
@@ -9109,7 +9130,7 @@ static void test_table_hash_domains(Arena *owner) {
                             steps[payload->ground.ival]++;
                             continue;
                         }
-                        assert(atom_head_symbol_id(answer) == box->sym_id);
+                        assert(atom_head_symbol_id(answer) == atom_symbol_current_id(box));
                         if (atom_eq(payload, plain))
                             nil_count++;
                         else {

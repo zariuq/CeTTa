@@ -27937,7 +27937,7 @@ uint32_t eval_get_atom_types_profiled(Space *s, Arena *a, Atom *atom,
  * head, which a fresh instance of its variables leaves unchanged. */
 static bool eval_atom_has_function_type_profiled(Space *s, Arena *a,
                                                   Atom *atom) {
-    if (!g_profiled_type_budget && !g_profiled_type_normalization_active &&
+    if (g_profiled_type_cache && !g_profiled_type_budget && !g_profiled_type_normalization_active &&
         atom && atom->kind != ATOM_GROUNDED) {
         ProfiledTypeCacheKey key;
         if (profiled_type_cache_make_key(s, atom, &key)) {

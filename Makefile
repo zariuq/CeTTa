@@ -835,7 +835,6 @@ SRC += src/tensor_dense_v1.c
 SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/fallible_alloc.c
 SRC += src/occurrence_log.c src/shared_return_producer.c src/owned_return_image.c
-SRC += src/native_journal.c
 SRC += src/native_disk_index.c src/native_disk_store.c src/library_store.c src/library_math.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
 # Shared opaque authority (lib_seal): runtime objects and the seal library.

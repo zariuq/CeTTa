@@ -3295,9 +3295,10 @@ static CettaPreparedPureProgram *compile_scalar(Fixture *fixture, const char *ca
 
 static size_t result_preparation_views;
 static CettaPreparedPureExpressionViewState counted_zero_view(
-    Space *space, const Atom *expression, CettaPreparedPureExpressionView *view) {
+    Space *space, const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view) {
     result_preparation_views++;
-    return zero_view(space, expression, view);
+    return zero_view(space, expression, computation, view);
 }
 
 static CettaPreparedPureProgram *compile_result(Fixture *fixture,

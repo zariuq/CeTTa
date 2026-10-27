@@ -52,8 +52,8 @@ int main(void) {
     for (size_t i = 0; i < sizeof(equations) / sizeof(*equations); i++)
         space_add(&space, read_one(&arena, equations[i]));
     assert(petta_program_synchronize_space(program, &space));
-    SymbolId unsigned_head = atom_symbol(&arena, "observer-unsigned")->sym_id;
-    SymbolId kind_head = atom_symbol(&arena, "observer-kind")->sym_id;
+    SymbolId unsigned_head = atom_symbol_current_id(atom_symbol(&arena, "observer-unsigned"));
+    SymbolId kind_head = atom_symbol_current_id(atom_symbol(&arena, "observer-kind"));
     SpaceProgramToken unchanged = space_program_token(&space);
 
     /* Availability changes without editing the program. Both stale unsafe
@@ -86,12 +86,12 @@ int main(void) {
         "observer-binding-effect", "observer-binding-source-effect"};
     for (size_t i = 0; i < sizeof(refused) / sizeof(*refused); i++)
         assert(petta_program_relation_safety(program, &space,
-            atom_symbol(&arena, refused[i])->sym_id, 1u) == PETTA_RELATION_SAFETY_UNSAFE);
+            atom_symbol_current_id(atom_symbol(&arena, refused[i])), 1u) == PETTA_RELATION_SAFETY_UNSAFE);
     const char *structural[] = {"observer-construct", "observer-deconstruct", "observer-concatenate",
         "observer-pattern", "observer-chain"};
     for (size_t i = 0; i < sizeof(structural) / sizeof(*structural); i++)
         assert(petta_program_relation_safety(program, &space,
-            atom_symbol(&arena, structural[i])->sym_id, 1u) == PETTA_RELATION_SAFETY_STATIC);
+            atom_symbol_current_id(atom_symbol(&arena, structural[i])), 1u) == PETTA_RELATION_SAFETY_STATIC);
 
     petta_program_free(program);
     eval_set_library_context(previous);

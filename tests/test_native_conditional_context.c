@@ -1682,6 +1682,27 @@ static unsigned source_computation_plans(void) {
     return 38u;
 }
 
+static unsigned cold_function_type_cache(void) {
+    Arena arena;
+    arena_init_detached(&arena);
+    Space space;
+    space_init(&space);
+    Atom *head = atom_symbol(&arena, "cold-type-cache-head");
+    eval_profiled_type_cache_free_for_current_thread();
+    assert(!g_profiled_type_cache);
+    assert(!eval_atom_has_function_type_profiled(&space, &arena, head));
+    space_add(&space, fixture_atom(&arena,
+        "(: cold-type-cache-head (-> Number Number))"));
+    assert(eval_atom_has_function_type_profiled(&space, &arena, head));
+    eval_profiled_type_cache_free_for_current_thread();
+    assert(!g_profiled_type_cache);
+    assert(eval_atom_has_function_type_profiled(&space, &arena, head));
+    eval_profiled_type_cache_free_for_current_thread();
+    space_free(&space);
+    arena_free(&arena);
+    return 5u;
+}
+
 static bool invocation_rewrite(void *opaque, Space *space, Arena *arena,
         Atom *call, Atom **out) {
     (void)space;
@@ -1922,7 +1943,7 @@ static bool prepared_plan_observation(Space *space, Arena *source,
         char name[64];
         snprintf(name, sizeof(name), "prepared-plan-body-%u", ++serial);
         Atom *head = atom_symbol(source, name);
-        context.head = head->sym_id;
+        context.head = atom_symbol_current_id(head);
         Atom *call = atom_expr(source, &head, 1u);
         Atom *fields[] = {atom_symbol(source, "="), call, expression};
         assert(space_admit_atom(space, source, atom_expr(source, fields, 3u)));
@@ -2200,7 +2221,7 @@ static unsigned source_collection_plans(void) {
         assert(petta_program_note_add(owner, &space, space_get_at64(&space, index), &normalized_equation));
         const char *reason = NULL;
         CettaOpenEquationProgram *program = cetta_open_equation_program_compile(
-            owner, &space, lhs->expr.elems[0]->sym_id, fixture ? 1u : 0u, NULL, &reason);
+            owner, &space, atom_symbol_current_id(lhs->expr.elems[0]), fixture ? 1u : 0u, NULL, &reason);
         if (!program)
             fprintf(stderr, "collection word OEM: %s\n", reason);
         assert(program);
@@ -2779,7 +2800,7 @@ int main(int argc, char **argv) {
     if (episode_only)
         checks += episode_accounting() + evaluator_episode_consumers();
     else if (!availability_only)
-        checks += episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + source_invocation_plans() + prepared_computation_plans() + generic_budget_checks() + source_collection_plans() + ordinary_invocation_consumers() + shared_compilation_refusals() + closed_failure_cache() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
+        checks += episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + cold_function_type_cache() + source_invocation_plans() + prepared_computation_plans() + generic_budget_checks() + source_collection_plans() + ordinary_invocation_consumers() + shared_compilation_refusals() + closed_failure_cache() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
     eval_match_decision_cache_free_for_current_thread();
     eval_profiled_type_cache_free_for_current_thread();
     space_execution_analysis_cache_free_for_current_thread();
