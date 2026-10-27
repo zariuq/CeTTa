@@ -84,7 +84,7 @@ static bool cetta_gslt_u32_index_rehash_v1(
 
     if (!index || cap < CETTA_GSLT_U32_INDEX_INITIAL_CAPACITY_V1 ||
         (cap & (cap - 1u)) != 0u ||
-        (size_t)cap > SIZE_MAX / sizeof(uint32_t))
+        (uint64_t)cap * sizeof(uint32_t) > SIZE_MAX)
         return false;
     cetta_gslt_u32_index_init_v1(&grown);
     grown.keys = malloc((size_t)cap * sizeof(*grown.keys));

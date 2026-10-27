@@ -2085,15 +2085,19 @@ static bool petta_unique_key_insert(PettaUniqueKeys *keys, Atom *key) {
         keys->hashed = false;
     }
     if (!keys->hashed) {
-        for (uint32_t i = 0u; i < keys->length; i++)
+        for (uint32_t i = 0u; i < keys->length; i++) {
             if (atom_eq(keys->slots[i], key))
                 return false;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TABLE_KEY_PROBE);
+        }
         keys->slots[keys->length++] = key;
         return true;
     }
     uint32_t slot = (uint32_t)hash & (keys->capacity - 1u);
-    while (keys->slots[slot] && !atom_eq(keys->slots[slot], key))
+    while (keys->slots[slot] && !atom_eq(keys->slots[slot], key)) {
         slot = (slot + 1u) & (keys->capacity - 1u);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TABLE_KEY_PROBE);
+    }
     if (keys->slots[slot])
         return false;
     keys->slots[slot] = key;

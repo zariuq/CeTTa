@@ -21,6 +21,7 @@
 #include "petta_typecheck.h"
 #include "symbol.h"
 #include "variant_shape.h"
+#include "term_graph.h"
 #include "binding/frame_identity.h"
 
 #include <assert.h>
@@ -8909,6 +8910,114 @@ static void test_collection_return_capture(
     puts("PASS: collection captures computed occurrences before child reuse; public answers survive cancellation");
 }
 
+/* Equality is independent of whether a finite value arrived as graph storage
+ * or ordinary syntax. Check both admission orders, transient and persistent
+ * answer indices, memo multiplicities and session-key replay. */
+static void test_table_hash_domains(Arena *owner) {
+    CettaTermGraph *graph = term_graph_new();
+    assert(graph);
+    uint32_t nil = term_graph_add_nil(graph);
+    assert(term_graph_seal(graph));
+    Atom *view = term_graph_node_value(owner, graph, nil, NULL);
+    Atom *plain = atom_expr(owner, NULL, 0u);
+    assert(view && atom_eq(view, plain));
+    Atom *box = atom_symbol(owner, "HashBox");
+    Atom *head = atom_symbol(owner, "hash-domain");
+    const unsigned sizes[] = {8u, 96u};
+    for (unsigned large = 0u; large < 2u; large++) {
+        unsigned count = sizes[large];
+        for (unsigned reverse = 0u; reverse < 2u; reverse++) {
+            for (unsigned memoized = 0u; memoized < 2u; memoized++) {
+                Space space;
+                space_init(&space);
+                space_add(&space, parse_one(owner, "(: hash-domain (-> Atom %Undefined%))"));
+                Atom *values[99];
+                for (unsigned i = 0u; i < count; i++)
+                    values[i < count / 2u ? i : i + 2u] =
+                        atom_expr2(owner, box, atom_int(owner, i));
+                values[count / 2u] = atom_expr2(owner, box, reverse ? plain : view);
+                values[count / 2u + 1u] = atom_expr2(owner, box, reverse ? view : plain);
+                if (large)
+                    values[count + 2u] = parse_one(owner, "(HashStep 0)");
+                Atom *pattern = atom_expr2(owner, head,
+                    atom_var_with_id(owner, "key", fresh_var_id()));
+                Atom *body = atom_expr2(owner, atom_symbol(owner, "superpose"),
+                    atom_expr(owner, values, count + 2u + large));
+                space_add(&space, atom_expr3(owner, atom_symbol(owner, "="), pattern, body));
+                if (large)
+                    space_add(&space, parse_one(owner,
+                        "(= (hash-domain $key)"
+                        "   (let (HashStep $n) (hash-domain $key)"
+                        "     (if (< $n 2)"
+                        "       (let $next (+ $n 1) (HashStep $next)) (empty))))"));
+                TableProbe probe = {
+                    .heads = {head->sym_id}, .arities = {1u}, .relation_len = 1u,
+                };
+                PettaMachineTable *table = petta_machine_table_new();
+                assert(table);
+                PettaMachineHost host = {
+                    .context = &probe,
+                    .tabled_relation_contains = memoized ? NULL : table_probe_contains,
+                    .memoized_relation_contains = memoized ? table_probe_contains : NULL,
+                    .shared_table = table,
+                    .measure_stats = true,
+                };
+                for (unsigned replay = 0u; replay < 2u; replay++) {
+                    Atom *key = (reverse != replay) ? plain : view;
+                    Atom *query = atom_expr2(owner, head, key);
+                    PettaMachine machine;
+                    assert(petta_machine_init(&machine, &space, owner, query, NULL, &host));
+                    unsigned seen[96] = {0}, steps[3] = {0}, nil_count = 0u, total = 0u;
+                    for (;;) {
+                        Atom *answer = NULL;
+                        Bindings environment;
+                        PettaMachineStep step = petta_machine_next(&machine, &answer, &environment);
+                        bindings_free(&environment);
+                        if (step == PETTA_MACHINE_STEP_EXHAUSTED)
+                            break;
+                        assert(step == PETTA_MACHINE_STEP_ANSWER && ++total <= count + 5u);
+                        assert(answer->kind == ATOM_EXPR && answer->expr.len == 2u);
+                        Atom *payload = answer->expr.elems[1];
+                        if (atom_head_symbol_id(answer) == symbol_intern_cstr(g_symbols, "HashStep")) {
+                            assert(large && payload->kind == ATOM_GROUNDED && payload->ground.gkind == GV_INT);
+                            assert(payload->ground.ival >= 0 && payload->ground.ival < 3);
+                            steps[payload->ground.ival]++;
+                            continue;
+                        }
+                        assert(atom_head_symbol_id(answer) == box->sym_id);
+                        if (atom_eq(payload, plain))
+                            nil_count++;
+                        else {
+                            assert(payload->kind == ATOM_GROUNDED && payload->ground.gkind == GV_INT);
+                            assert(payload->ground.ival >= 0 && payload->ground.ival < count);
+                            seen[payload->ground.ival]++;
+                        }
+                    }
+                    assert(total == count + 1u + memoized + 3u * large && nil_count == 1u + memoized);
+                    for (unsigned i = 0u; i < count; i++)
+                        assert(seen[i] == 1u);
+                    for (unsigned i = 0u; i < 3u; i++)
+                        assert(steps[i] == large);
+                    PettaMachineStats stats;
+                    assert(petta_machine_stats(&machine, &stats) && stats.table_lookups > 0u);
+                    if (replay)
+                        assert(stats.table_hits > 0u && stats.table_generator_rounds == 0u);
+                    else {
+                        PettaTableStats table_stats;
+                        assert(petta_machine_table_stats(&machine, &table_stats));
+                        assert(large ? table_stats.index_inserts > 0u : table_stats.index_inserts == 0u);
+                    }
+                    petta_machine_destroy(&machine);
+                }
+                petta_machine_table_free(table);
+                space_free(&space);
+            }
+        }
+    }
+    term_graph_release(graph);
+    puts("PASS: table hashing preserves graph/tree equality, memo multiplicity and session replay");
+}
+
 static void test_ground_slg_tables(
     Space *space, Arena *persistent, Arena *answers) {
     TableProbe probe = {
@@ -14519,6 +14628,7 @@ int main(int argc, char **argv) {
         &space, &persistent, &answers);
     test_ground_slg_tables(
         &space, &persistent, &answers);
+    test_table_hash_domains(&persistent);
     const char *ordered[] = {"one", "uno", "uno"};
     expect_answers(&space, &answers, "(f 1)", ordered, 3u);
 #if CETTA_BUILD_WITH_RUNTIME_STATS

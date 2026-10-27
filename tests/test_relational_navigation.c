@@ -49,7 +49,7 @@ static CettaRelationalPlan *two_factors(uint64_t left, uint64_t right,
         for (unsigned key = 0u; key < 64u; key++) {
             if (!(masks[f] & (UINT64_C(1) << key)))
                 continue;
-            uint64_t value = large_keys ? UINT64_MAX - 63u + key : key;
+            uint32_t value = large_keys ? UINT32_MAX - 63u + key : key;
             /* Unequal occurrence weights exercise support/weight separation. */
             size_t weight = repeats == 1u ? 1u : 1u + (key + f) % repeats;
             for (size_t occurrence = 0u; occurrence < weight; occurrence++)
@@ -144,11 +144,11 @@ static void projection_case(uint64_t left, uint64_t right, unsigned repeats,
 }
 
 static void range_seek_cases(void) {
-    uint64_t tuples[1024];
+    uint32_t tuples[1024];
     RelationalFactor factor = {.width = 2u, .tuples = tuples};
     for (size_t i = 0u; i < 512u; i++) {
-        tuples[2u * i] = UINT64_MAX - i; /* A different column need not be sorted. */
-        tuples[2u * i + 1u] = i / 3u;
+        tuples[2u * i] = UINT32_MAX - (uint32_t)i; /* A different column need not be sorted. */
+        tuples[2u * i + 1u] = (uint32_t)(i / 3u);
     }
     for (size_t trial = 0u; trial < 20000u; trial++) {
         size_t low = (size_t)(random_word() % 513u);
@@ -169,7 +169,7 @@ static void range_seek_cases(void) {
             assert(work.key_comparisons <= comparisons);
         }
     }
-    uint64_t unsorted[] = {1u, 3u, 0u, 4u};
+    uint32_t unsorted[] = {1u, 3u, 0u, 4u};
     factor = (RelationalFactor){.width = 1u, .tuples = unsorted};
     CettaRelationalWork work = {0};
     assert(relational_bound(&factor, 0u, 0u, 4u, 2u, false, &work) != 1u);

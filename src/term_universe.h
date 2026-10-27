@@ -141,6 +141,11 @@ struct TermUniverse {
     size_t blob_len, blob_cap;
     struct TermEntry *entries;
     size_t len, cap;
+    /* The atom each entry decodes to, in pages made when an entry in them
+     * first decodes, so an entry never read as an atom costs nothing here.
+     * An entry without a record keeps its atom here alone. */
+    Atom ***decoded_pages;
+    size_t decoded_page_cap;
     _Atomic(struct CettaTermVariableSupportBlock *)
         *variable_support_blocks;
     size_t variable_support_block_cap;
@@ -261,7 +266,6 @@ typedef struct TermEntry {
     /* The record's coordinate in the intern table, kept so the table grows
      * and the record is placed without reading the record again. */
     uint32_t coordinate;
-    Atom *decoded_cache;
 } TermEntry;
 
 _Static_assert(sizeof(AtomId) == 8, "AtomId must remain 64-bit");
@@ -357,6 +361,10 @@ bool term_universe_variable_support(
 bool term_universe_atom_id_eq(const TermUniverse *universe, AtomId id,
                               Atom *src);
 Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id);
+/* The atom the entry ID names has decoded to, without decoding it: NULL
+ * until the entry is first read as an atom, except for an entry without a
+ * record, whose atom it always is. */
+Atom *term_universe_decoded_atom_at(const TermUniverse *universe, AtomId id);
 Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id);
 /* Read ordinary symbol leaves while copying a form. The callback's meaning

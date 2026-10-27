@@ -32,18 +32,18 @@ true
 true
 true
 true
-(j0 j1 j2 j3 j4 j5 j6 j7 j8 j9 j10 j11 j-open j3 1 1.0 (nested x) open j12 j13 j14 j15 j16 j17 j18 j19 j20 j21 j22 j23)
+(1.0 1 j-open j0 j1 j10 j11 j12 j13 j14 j15 j16 j17 j18 j19 j2 j20 j21 j22 j23 j3 j3 j4 j5 j6 j7 j8 j9 open (nested x))
 30
 ((a b))
-(open job)
+(job open)
 (j0)
 (yes yes)
 ()
 true
 true
 (j1)
-(j1 j2 j4 j5 j6 j7 j8 j9 j10 j11 j-open 1 1.0 (nested x) j12 j13 j14 j15 j16 j17 j18 j19 j20 j21 j22 j23)
-(j1 j2 j4 j5 j6 j7 j8 j9 j10 j11 j-open 1 1.0 (nested x) j12 j13 j14 j15 j16 j17 j18 j19 j20 j21 j22 j23)
+(1.0 1 j-open j1 j10 j11 j12 j13 j14 j15 j16 j17 j18 j19 j2 j20 j21 j22 j23 j4 j5 j6 j7 j8 j9 (nested x))
+(1.0 1 j-open j1 j10 j11 j12 j13 j14 j15 j16 j17 j18 j19 j2 j20 j21 j22 j23 j4 j5 j6 j7 j8 j9 (nested x))
 ()
 true
 true
@@ -76,5 +76,5 @@ true
 true
 true
 31
-(j1 o0 o1 o2 o3 o4 o5 o6 o7 o8 o9 o10 o11 o12 o13 o14 o15 o16 o17 o18 o19 o20 o21 o22 o23 o24 o25 o26 o27 o28 o29)
+(j1 o0 o1 o10 o11 o12 o13 o14 o15 o16 o17 o18 o19 o2 o20 o21 o22 o23 o24 o25 o26 o27 o28 o29 o3 o4 o5 o6 o7 o8 o9)
 0

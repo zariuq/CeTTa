@@ -1148,7 +1148,8 @@ bool space_head_index_open(Space *space, const Atom *pattern,
                            CettaSpaceHeadCursor *cursor) {
     memset(cursor, 0, sizeof(*cursor));
     if (!space || !space->native.universe || space->overlay_base ||
-        space->kind != SPACE_KIND_ATOM || space->native.start != 0u ||
+        (space->kind != SPACE_KIND_ATOM && space->kind != SPACE_KIND_SET) ||
+        space->native.start != 0u ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         !space_head_index_admits(pattern))
