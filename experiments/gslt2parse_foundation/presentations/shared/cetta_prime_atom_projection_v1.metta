@@ -12,6 +12,7 @@
     (operator sexpr-list-prefix-rule 3)
     (operator sexpr-meta-rule 4)
     (operator sexpr-braces-rule 2)
+    (operator sexpr-exec-rule 3)
     (operator sexpr-codepoint-map 2)
     (operator sexpr-projection-cons 2))
   (equations)
@@ -91,6 +92,14 @@
       (head
         (sexpr-list-prefix-rule
           cetta-prime-v1 list-structural-reference structural-reference))
+      (body))
+
+    ; The query marker `!`, written alone, is the word `!`.  It marks the
+    ; term after it and is no head, so it takes no meta-argument: a bracket
+    ; or brace touching it opens that term, as a parenthesis does, and `![a]`
+    ; reads as `! [a]`.  A longer word that starts with it is a word.
+    (rule sexpr-exec-rule-cetta-prime-exec
+      (head (sexpr-exec-rule cetta-prime-v1 exec-marker list-exec-marker))
       (body))
 
     ; A braces node {x y}, the set notation, is the Atom (BRACES x y), whose

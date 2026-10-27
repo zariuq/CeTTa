@@ -682,11 +682,15 @@ PrimeNeedReceipt          *bindings_receipt_mut(Bindings *b);
 uint64_t                  bindings_occurrence_token(const Bindings *b);
 bool                      bindings_refresh_occurrence_token(Bindings *b);
 bool                      bindings_prime_present(const Bindings *b);
-/* Copy both Prime components from src into dst (materializing dst's occurrence
+/* Copy the complete Prime product from src into dst (materializing dst's occurrence
  * only when src has present state; otherwise dst's occurrence is released). */
 void      bindings_prime_assign(Bindings *dst, const Bindings *src);
-/* Set dst's Prime components from explicit values (builder-trail restore, which
- * snapshots by value); clears dst's occurrence when both values are absent. */
+PrimeNeedReaderContext *bindings_reader_context_view(const Bindings *bindings);
+/* Replace only the reader ownership edge, retaining the supplied immutable
+ * context. Other Prime carriers keep their existing values. */
+void bindings_reader_context_set(Bindings *bindings, PrimeNeedReaderContext *context);
+/* Replace the explicit machine carriers and clear the reader context. Reader
+ * ownership is set separately; complete product copying uses prime_assign. */
 void      bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
                              const PrimeNeedBranchState *branch_state,
                              uint64_t occurrence_token,
@@ -838,6 +842,26 @@ bool bindings_add_vars(Bindings *bindings, Atom *const *variables,
 bool      bindings_add_constraint(Bindings *b, Atom *lhs, Atom *rhs);
 bool      bindings_try_merge(Bindings *dst, const Bindings *src);
 bool      bindings_try_merge_live(Bindings *dst, const Bindings *src);
+/* Failure preserves dst. REFUTED is a witnessed incompatibility;
+ * INCOMPLETE never licenses discarding a candidate or certifying absence. */
+CettaMatchCompletion bindings_try_merge_live_checked(
+    Bindings *dst, const Bindings *src);
+/* Join one earned production into a reader's world, atomically. The source
+ * supplies its projected lexical/returned-value support, not unrelated caller
+ * bindings. Common/entrance are the actual cuts captured for this production;
+ * Need reads, State dependencies and factor order are checked together.
+ *
+ * The reader keeps its local history. The enclosing row retains the original
+ * producer provenance; the host may add a cached-observation link on acceptance.
+ * This does not flatten the producer's history into the reader's history.
+ * The host also retains payload/service owners and checks current authority.
+ * Neither REFUTED nor INCOMPLETE permits restarting an effectful source.
+ * out is initialized and changes only on MATCHED; aliasing recipient is valid. */
+CettaMatchCompletion bindings_import_production_checked(Arena *owner,
+    const PrimeNeedReadCapture *reads, uint64_t thunk_id,
+    const Bindings *common, const Bindings *entrance,
+    const Bindings *production, const Bindings *recipient,
+    PrimeNeedStateInitialValue initial_value, void *context, Bindings *out);
 bool      bindings_clone_merge(Bindings *dst, const Bindings *base,
                                const Bindings *extra);
 bool      bindings_contains_private_variant_slots(const Bindings *b);
@@ -919,6 +943,37 @@ Atom     *bindings_apply(Bindings *b, Arena *a, Atom *atom);
  * syntax under each lexical reading for acyclic binding environments.
  * Cyclic environments keep the ordinary active-path interpretation. */
 Atom     *bindings_apply_graph(Bindings *b, Arena *a, Atom *atom);
+typedef struct BindingsApplySession BindingsApplySession;
+typedef enum {
+    BINDINGS_APPLY_PENDING,
+    BINDINGS_APPLY_COMPLETE,
+    BINDINGS_APPLY_REFUSED
+} BindingsApplyStatus;
+/* Retain the existing value-application traversal. The caller holds an
+ * unchanged logical binding image and the source graph, its payload owners
+ * and runtime context. The hook table is copied; callback runtime state is
+ * still supplied by that context. shared_graph selects the same acyclic
+ * node-sharing interpretation as bindings_apply_graph; cycles keep the
+ * ordinary variable-path interpretation.
+ *
+ * Descent, ascent, prefix copies and sibling writes retain their positions.
+ * A private noninterning arena uses incremental summary assembly; an interning
+ * arena retains its atomic expression-finishing provider. Lookup/cache work,
+ * hooks, allocation and control retirement have separate service prices.
+ * These actions are not physical time or whole-slot bounds.
+ *
+ * Results have bindings_apply's borrowed-syntax contract. Retain their source
+ * and payload owners through use, or export with the existing copy service.
+ * No authority or mutable-world snapshot is granted here. */
+BindingsApplySession *bindings_apply_session_new(const Bindings *b, Arena *a,
+    BindingValue source, bool shared_graph);
+/* Zero allowance is inert on an admitted session. Both outputs are required;
+ * pending/refused work never exposes a partial root. Destination reset or a
+ * changed allocation profile refuses before further reads/publication. */
+BindingsApplyStatus bindings_apply_session_advance(BindingsApplySession *session,
+    uint64_t allowance, Atom **result, uint64_t *used);
+uint64_t bindings_apply_session_steps(const BindingsApplySession *session);
+void bindings_apply_session_free(BindingsApplySession *session);
 static inline Atom *bindings_apply_if_vars(const Bindings *b, Arena *a, Atom *atom) {
     if (!b || !bindings_has_bound_values(b) ||
         !atom || !atom_has_vars(atom))
@@ -1118,6 +1173,8 @@ bool      bindings_builder_add_id_fresh(BindingsBuilder *bb, VarId var_id,
 bool      bindings_builder_add_var_fresh(BindingsBuilder *bb, Atom *var,
                                          Atom *val);
 bool      bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src);
+CettaMatchCompletion bindings_builder_try_merge_checked(
+    BindingsBuilder *builder, const Bindings *source);
 const Bindings *bindings_builder_bindings(const BindingsBuilder *bb);
 void      bindings_builder_take(BindingsBuilder *bb, Bindings *out);
 
@@ -1232,14 +1289,8 @@ bool match_atoms_builder_with_attempt_frame(
 bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, CettaFrameIdentity epoch);
 /* Epoch-aware matcher over an existing trail-backed environment.  The caller
  * owns the save/rollback boundary when failure must be transactional. */
-/* A refutation is an actual rigid mismatch. Resource exhaustion, invalid
- * frame state and undecided cyclic/list meetings remain incomplete. Checked
- * callers use this when absence, rather than one positive match, is evidence. */
-typedef enum {
-    CETTA_MATCH_INCOMPLETE,
-    CETTA_MATCH_REFUTED,
-    CETTA_MATCH_MATCHED,
-} CettaMatchCompletion;
+/* Checked callers use this when absence, rather than one positive match,
+ * is evidence. */
 CettaMatchCompletion match_atoms_epoch_builder_checked(
     Atom *left, Atom *right, BindingsBuilder *builder, Arena *arena,
     CettaFrameIdentity epoch, uint64_t pair_budget);
@@ -1256,8 +1307,12 @@ typedef enum {
  * trail, path set and copy transport. Syntax and result arena are borrowed.
  * A zero grant performs no matching. A grant counts worklist nodes and alias
  * resolution retries and retained graph-query actions. Occurs queries use an
- * acyclic private binding image; finite-occurrence audits check the atom graph. Equality, hash growth, frame admission, transport and binding
- * publication still need their own byte/work bounds. A pair's match-node debit
+ * acyclic private binding image; finite-occurrence audits check the atom graph.
+ * Graph-query memo clearing, probing and migration debit index visits; stack
+ * copying and traversal debit analysis steps. Each position survives a pause.
+ * Equality, variable-index maintenance, frame admission, allocator calls,
+ * transport and binding publication still need their own byte/work bounds.
+ * A pair's match-node debit
  * is paid once, including when a nested operation spans several grants.
  * INCOMPLETE retains an undecided primitive; it is not a rigid refutation.
  * CAPACITY retains a refused identity reservation. */
@@ -1275,6 +1330,9 @@ CettaMatchCursor *match_atoms_cursor_clone(const CettaMatchCursor *source);
  * registered map must include the result arena and every reachable Atom
  * owner; syntax and result domains cannot be collapsed into one arena.
  * No matcher transition is replayed. Saved pointer-key tables are rehashed;
+ * an unfinished physical probe is rebased for its relocated key while old
+ * migration rows and stack-copy positions are retained. Relocation has its
+ * own unbounded transport/allocation price, outside a matching grant;
  * inconsistent shared-buffer images or borrowed activation accelerators
  * refuse the copy. Refusal preserves the source; the caller discards the
  * unpublished destinations/session. All mapped destination arenas and separately
@@ -1291,6 +1349,18 @@ bool match_atoms_cursor_take(CettaMatchCursor *cursor, Bindings *out);
 void match_atoms_cursor_free(CettaMatchCursor *cursor);
 void match_atoms_cursor_storage_census(const CettaMatchCursor *cursor,
     CettaStorageCensus *census);
+
+#ifdef CETTA_TEST_HOOKS
+typedef struct {
+    unsigned phase;
+    size_t capacity, next_capacity, cleared, scanned, probe;
+    size_t stack_length, stack_capacity, next_stack_capacity, copied;
+} CettaMatchGraphTestState;
+bool match_atoms_cursor_test_graph(const CettaMatchCursor *cursor,
+    CettaMatchGraphTestState *state);
+size_t match_atoms_cursor_test_bucket(Atom *atom, size_t mask);
+void match_atoms_cursor_test_refuse_graph_allocation(void);
+#endif
 
 bool match_atoms_epoch_builder(Atom *left, Atom *right,
                                BindingsBuilder *bb, Arena *a,
@@ -1430,6 +1500,11 @@ bool match_atoms_atom_id_epoch(Atom *left, const TermUniverse *candidate_univers
 /* Alpha-equivalence on atoms: two atoms are equivalent up to a bijective
    renaming of variable names. */
 bool atom_alpha_eq(Atom *left, Atom *right);
+/* Allocation or malformed traversal is incomplete, never a refutation. */
+CettaMatchCompletion atom_alpha_eq_checked(Atom *left, Atom *right);
+/* The same variable-renaming relation with Space leaves read in the held
+ * evaluator view. Raw alpha equality remains the storage relation. */
+CettaMatchCompletion atom_alpha_eq_with_resolved_spaces_checked(Atom *left, Atom *right);
 /* Only variables in the listed activation frames may be renamed. Every
  * other variable, including a captured frame variable, remains rigid.
  * One call compares one whole observation with one bijection. */
@@ -1439,6 +1514,15 @@ bool atom_alpha_eq_scoped(Atom *left, Atom *right,
 
 /* Compare bindings as a set of (var,value) pairs, ignoring entry order. */
 bool bindings_eq(Bindings *a, Bindings *b);
+/* Exact captured logical inputs: current assignments, delayed constraints
+ * and contextual frame authority, including unbound slots. Uses captured
+ * atom identity beneath values; it does not merge or compare the independent
+ * Need, branch-state, history or factor carriers. Storage layout, ownership
+ * placement and administrative write clocks are not logical inputs here.
+ * The caller retains both images and separately qualifies their carriers.
+ * Lookup may populate the ordinary binding indexes, as for bindings_eq. */
+bool bindings_capture_equal(Arena *arena, Bindings *left, Bindings *right);
+CettaMatchCompletion bindings_capture_equal_checked(Arena *arena, Bindings *left, Bindings *right);
 char *arena_tagged_var_name(Arena *a, const char *name, CettaFrameIdentity suffix);
 
 /* ── Loop-binding rejection (occurs check, HE spec metta.md line 435) ── */

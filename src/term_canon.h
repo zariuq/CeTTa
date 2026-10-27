@@ -3,6 +3,94 @@
 
 #include "atom.h"
 #include "var_index.h"
+#include "segmented_array.h"
+
+/* Results learned by one immutable graph walk, keyed by source and role.
+ * Sources and images borrow the walk's complete graph/context lifetimes.
+ * Distinct keys may have the same image. This is not an object-identity map,
+ * a permission, or a cache for context-dependent/effectful calls.
+ *
+ * One writer owns a memo. A retained cursor must finish or be cancelled
+ * before another writer starts. Readers may inspect the committed table
+ * during growth; the replacement becomes authoritative only when complete.
+ * Table backing uses fixed-block installs and retained old-table retirement.
+ * Allocator execution and ordinary synchronous disposal remain services. */
+typedef struct {
+    const void *node;
+    uint32_t aux;
+    uintptr_t value;
+} CettaNodeMemoSlot;
+
+typedef struct {
+    CettaNodeMemoSlot inline_slots[8];
+    size_t inline_len;
+    CettaSegmentedArray slots;
+    size_t cap, len;
+    uint64_t revision;
+    bool retiring;
+} CettaNodeMemo;
+
+typedef enum {
+    CETTA_NODE_MEMO_PENDING,
+    CETTA_NODE_MEMO_FOUND,
+    CETTA_NODE_MEMO_ABSENT,
+    CETTA_NODE_MEMO_STORED,
+    CETTA_NODE_MEMO_REFUSED
+} CettaNodeMemoStatus;
+
+typedef struct {
+    const CettaNodeMemo *memo;
+    CettaNodeMemo *writer;
+    CettaSegmentedArray grown;
+    CettaNodeMemoSlot carried;
+    const void *node;
+    uintptr_t value;
+    size_t position, slot, inspected, grow_cap, clear_position, copy_position;
+    size_t byte_limit, allocated_bytes;
+    uint64_t revision, steps, probes;
+    uint32_t aux;
+    unsigned phase;
+    CettaNodeMemoStatus status;
+} CettaNodeMemoCursor;
+
+/* Begin uses an empty cursor; cancel releases its unpublished replacement
+ * or the old backing retained after publication. Each advance probes/clears
+ * one slot, installs one fixed block, or retires one old block. Readers keep
+ * the committed table throughout growth. Absence/refusal/pending differ.
+ * Growth byte_limit covers simultaneous live backing blocks, including
+ * directories/headers, excluding embedded control. In-place/inline updates
+ * need no new backing admission. allocated_bytes counts actual
+ * successful new backing requests, not logical capacity. */
+void cetta_node_memo_find_begin(CettaNodeMemoCursor *cursor,
+    const CettaNodeMemo *memo, const void *node, uint32_t aux);
+void cetta_node_memo_store_begin(CettaNodeMemoCursor *cursor,
+    CettaNodeMemo *memo, const void *node, uint32_t aux, uintptr_t value,
+    size_t byte_limit);
+CettaNodeMemoStatus cetta_node_memo_advance(CettaNodeMemoCursor *cursor);
+void cetta_node_memo_cancel(CettaNodeMemoCursor *cursor);
+/* Retiring revokes memo lookup. Each call releases at most one backing block.
+ * The caller has finished/cancelled cursors and owns the stored-value policy.
+ * Synchronous free drains this same operation. */
+bool cetta_node_memo_release_one(CettaNodeMemo *memo);
+void cetta_node_memo_free(CettaNodeMemo *memo);
+static inline const CettaNodeMemoSlot *cetta_node_memo_entry(
+        const CettaNodeMemo *memo, size_t index) {
+    return memo && !memo->retiring && index < memo->cap && index <= UINT32_MAX
+        ? cetta_segmented_array_at(&memo->slots,(uint32_t)index) : NULL;
+}
+
+typedef bool (*CettaNodeMemoProbe)(void *context);
+/* Synchronous clients may use a best-effort memo. A checked refusal never
+ * publishes a partial entry; callers requiring sharing must propagate it. */
+bool cetta_node_memo_find_checked(const CettaNodeMemo *memo, const void *node,
+    uint32_t aux, uintptr_t *value, CettaNodeMemoProbe probe, void *context);
+bool cetta_node_memo_find(const CettaNodeMemo *memo, const void *node,
+    uint32_t aux, uintptr_t *value);
+bool cetta_node_memo_store_checked(CettaNodeMemo *memo, const void *node,
+    uint32_t aux, uintptr_t value, CettaNodeMemoProbe probe, void *context,
+    size_t byte_limit);
+void cetta_node_memo_store(CettaNodeMemo *memo, const void *node,
+    uint32_t aux, uintptr_t value);
 
 /*
  * Shared variable-remapping seam for canonical keys and re-materialization.

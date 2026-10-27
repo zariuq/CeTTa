@@ -2,6 +2,7 @@
 #define CETTA_PREPARED_PURE_MACHINE_H
 
 #include "owned_execution.h"
+#include "lang.h"
 
 #include "match_decision.h"
 #include "space.h"
@@ -139,14 +140,25 @@ bool cetta_prepared_pure_closed_own_execution(
  * or %Undefined%), which the machine checks where HE casts them. */
 bool cetta_prepared_pure_call_policy_supported(
     Space *space, SymbolId head, CettaExprLen arity);
-/* Authored dialect restrictions are shared by source admission, lowering
- * and execution. Unscoped intrinsics retain their existing policy. */
-bool cetta_prepared_pure_intrinsic_scope_supported(SymbolId head, CettaExprLen arity);
-/* Shared interpretation of the authored strict primitive fragment. This is
- * operation metadata, not source authority or permission to speculate. */
+/* The running language's generated intrinsic row for `head` at `arity`:
+ * its operand discipline and instruction.  Source admission, lowering and
+ * execution read the same rows; a row scoped to dialects holds only in
+ * them, and the generator gives no language two rows for one head and
+ * arity. */
+bool cetta_prepared_pure_intrinsic_row(
+    SymbolId head, CettaExprLen arity,
+    CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
+    CettaGsltPreparedPureIntrinsicInstruction *instruction_out);
+/* The strict rows of the running language: shared interpretation of the
+ * authored strict primitive fragment.  This is operation metadata, not
+ * source authority or permission to speculate. */
 bool cetta_prepared_pure_intrinsic_program(
     SymbolId head, CettaExprLen arity,
     CettaGsltPreparedPureIntrinsicInstruction *instruction_out);
+/* A pure constructor, called during preparation as well as execution. Its
+ * false/true images must be distinct and preserve canonical Boolean polarity.
+ * Plain symbol/Bool images are cached by the program and decoded at Boolean
+ * operation/branch boundaries. Data projections do not acquire that role. */
 typedef Atom *(*CettaPreparedPureBooleanValue)(Arena *arena, bool value);
 typedef Atom *(*CettaPreparedPureConstructValue)(
     Arena *arena, Atom **elements, CettaExprLen length);
@@ -185,6 +197,12 @@ typedef enum {
     CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT,
     /* A dialect-owned value. Inspection must not enter its payload. */
     CETTA_PREPARED_PURE_EXPRESSION_OPAQUE_VALUE,
+    /* A committed first-match selection: operand 1's value is tested
+     * against the patterns of operand 2's (pattern body) arms in order, and
+     * the first that matches answers its body under the pattern's bindings.
+     * No matching arm answers nothing.  A pattern any part of which
+     * computes is left to the canonical evaluator. */
+    CETTA_PREPARED_PURE_EXPRESSION_SELECT,
 } CettaPreparedPureExpressionViewState;
 typedef enum {
     CETTA_PREPARED_PURE_PROJECT_SOURCE = 0,
@@ -278,6 +296,7 @@ typedef bool (*CettaPreparedPureEquationSourceFn)(
 typedef struct {
     void *context;
     const void *root;
+    CettaCallResultPolicy result_policy;
     CettaPreparedPureSourceRoleFn role;
     CettaPreparedPureSourceChildFn child;
     CettaPreparedPureEquationSourceFn equation_rhs;
@@ -286,14 +305,14 @@ typedef struct {
      * callees, and at runtime-created application boundaries. */
     bool (*head_admitted)(void *context, Space *space, SymbolId head);
     /* Execute a native whose head/arity was positively admitted by the
-     * generated intrinsic contract.  NULL is a speculative refusal: the
-     * caller discards the prepared attempt and runs the canonical evaluator.
+     * generated intrinsic contract. False declines before native entry.
+     * True transfers the tagged result, including zero or raised control.
      * The native context is separate because a language's source-plan owner
      * and its library registry have distinct lifetimes and representations. */
     void *native_context;
-    Atom *(*native_value)(
+    bool (*native_call)(
         void *context, Space *space, Arena *arena,
-        const CettaInvocation *invocation);
+        const CettaInvocation *invocation, CettaCallOutcome *outcome);
 } CettaPreparedPureSourceView;
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
@@ -313,7 +332,12 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
 
 /* Compile a closed, deterministic, effect-free expression into the same
  * explicit-stack machine used by prepared folds.  Callable arguments are
- * retained as machine suspensions and forced according to call_mode. */
+ * retained as machine suspensions and forced according to call_mode. The
+ * optional answer_frontend_refusal is false on success. True reports that
+ * answer compilation would refuse under the same current source, callbacks,
+ * call mode, ready arguments and equality semantics: either a shared terminal
+ * dialect refusal before the first demand read, or an explicit single-result
+ * gate reached before that read. Failure alone supplies no such evidence. */
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     Space *space, Atom *expression,
     CettaGsltPureCallMode call_mode,
@@ -327,7 +351,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     const CettaPreparedPureSourceView *source_view,
     bool entry_arguments_are_values,
     bool total_structural_equality,
-    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+    CettaMatchDecisionSemanticIdentity match_decision_semantics,
+    bool *answer_frontend_refusal);
 
 /* Prepare an eager value-argument call once for a receiver accepting either
  * an ordinary value or an optional result. Prefer the ordinary result ABI
@@ -465,11 +490,14 @@ bool cetta_prepared_pure_program_execute_closed(
     size_t nursery_budget_bytes,
     Atom **result_out);
 
+/* True carries a completed value, logical failure or interruption. False
+ * declines the pure realization. Failure never becomes an ordinary datum.
+ * Value storage has the same borrowed lifetime as execute_closed above. */
 bool cetta_prepared_pure_program_execute_closed_controlled(
     CettaPreparedPureProgram *program, Arena *arena,
     size_t nursery_budget_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context, Atom **result_out);
+    void *interrupt_context, CettaCallOutcome *outcome);
 
 typedef enum {
     CETTA_PREPARED_PURE_OPTIONAL_VALUE = 0,
@@ -570,6 +598,9 @@ typedef enum {
     CETTA_PREPARED_PURE_HANDOFF_INTERRUPT = 4,
     /* The Space program the producer was compiled from has changed. */
     CETTA_PREPARED_PURE_HANDOFF_STALE = 5,
+    /* An actual native return, or a ready invocation declined before native
+     * entry, is retained with its continuation. It is not an equation retry. */
+    CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN = 6,
 } CettaPreparedPureHandoffReason;
 
 /* Asked once per relation, when the cursor first enters it and before any of
@@ -600,6 +631,10 @@ typedef struct {
      * the continuation.  Cancellation and resource exhaustion are not logical
      * completion, and answers already delivered stay delivered. */
     bool allow_continuations;
+    /* Optional host authority for saved continuations. Completion workers
+     * may change declarations or foreign dispatch without changing Space. */
+    bool (*continuation_current)(const void *context);
+    const void *continuation_context;
 } CettaPreparedPureAnswerCursorOptions;
 
 /* Open a cursor at the program's bound closed entry call.  The cursor
@@ -607,6 +642,9 @@ typedef struct {
  * until the cursor is closed or detached. The source Space/read view remains
  * borrowed from the host and must outlive the cursor; detachment moves value
  * storage, not semantic authority. Revision changes cause a stale handoff.
+ * Completed native calls preserve this loan. A retained native producer
+ * first owns its frontier, returned packet and live continuation, so the
+ * host can reclaim entry storage while that producer remains suspended.
  * NULL declines, including when the
  * entry relation is not admitted. */
 CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(
@@ -687,6 +725,42 @@ void cetta_prepared_pure_answer_cursor_suspend(
 
 CettaPreparedPureHandoffReason cetta_prepared_pure_answer_cursor_handoff_reason(
     const CettaPreparedPureAnswerCursor *cursor);
+
+/* Inspect the ready call or actual pending return at a native boundary.
+ * The loan remains owned by the cursor. No source call or producer is run.
+ * When entered is false, the caller may execute the ready invocation once;
+ * otherwise it completes the returned packet without repeating that call. */
+bool cetta_prepared_pure_answer_cursor_native_boundary(
+    CettaPreparedPureAnswerCursor *cursor, CettaInvocation *invocation,
+    bool *entered, const CettaOwnedReturn **returned);
+/* Move a replacement producer for that boundary into the retained cursor.
+ * An entered packet remains live until the replacement finishes. A stale or
+ * interrupted cursor refuses the move without changing either owner. */
+bool cetta_prepared_pure_answer_cursor_resume_native(
+    CettaOwnedExecution *execution, CettaOwnedExecution *replacement);
+bool cetta_prepared_pure_answer_cursor_native_started(
+    const CettaPreparedPureAnswerCursor *cursor);
+/* Immutable compilation metadata for consumers that own only scalar or
+ * equation frontiers and cannot yet complete a retained native return. */
+bool cetta_prepared_pure_program_has_native_calls(
+    const CettaPreparedPureProgram *program);
+/* Structural control metadata; dialects still own completion permission. */
+bool cetta_prepared_pure_program_has_branches(
+    const CettaPreparedPureProgram *program);
+/* Extend physical work only at an intact equation-frontier boundary. This
+ * neither grants semantic fuel nor changes pending values or continuations.
+ * Scratch exhaustion inside an operation is not such a boundary. */
+/* Borrowed cursor consumers use the same retained-boundary transitions as
+ * owned execution. Refilling preserves the exact frontier and records stale
+ * authority; installing completion takes the replacement only on success. */
+bool cetta_prepared_pure_answer_cursor_refill_transitions(
+    CettaPreparedPureAnswerCursor *cursor, uint64_t allowance,
+    CettaEvalCompletion *completion);
+bool cetta_prepared_pure_answer_cursor_complete_native(
+    CettaPreparedPureAnswerCursor *cursor, CettaOwnedExecution *replacement);
+
+bool cetta_prepared_pure_answer_cursor_resume_transitions(
+    CettaOwnedExecution *execution, uint64_t allowance);
 
 /* The Space program the producer reads. */
 SpaceProgramToken cetta_prepared_pure_answer_cursor_program_token(

@@ -115,6 +115,13 @@ static bool parent_copy_equation_shell(PrimeParentCopy *copy,
     const PrimeNeedEquationContinuation *source, PrimeNeedEquationContinuation **out) {
     *out = NULL;
     if (!source) return true;
+    /* Ordered resident cohorts are an inline stack owner until their source
+     * closes. Their ancestor edge is not a relocatable native parent edge. */
+    if (source->cohort_owner || source->independent_readers)
+        return parent_copy_refuse(copy,"EquationCohortOwner");
+    if (source->work.len > source->work_meta_cap ||
+        (source->work.len && !source->work_meta))
+        return parent_copy_refuse(copy,"WorkMetaExtent");
     if (source->arena!=copy->source->driver.arena ||
         source->space!=copy->source->space)
         return parent_copy_refuse(copy,"EquationDecisionOwner");
@@ -146,6 +153,8 @@ static bool parent_copy_frame_shells(PrimeParentCopy *copy,
     PrimeEvalStackFrame **tail=out;
     for(;source;source=source->control_next) {
         if(source->control_retired!=retired) return parent_copy_refuse(copy,"FrameMembership");
+        if(!retired && (source->native_service || source->capsule_search || source->call_force_reader))
+            return parent_copy_refuse(copy,"FrameExternalOwner");
         PrimeEvalStackFrame *image=calloc(1u,sizeof(*image));
         if(!image)return parent_copy_refuse(copy,"Allocation");
         *tail=image;tail=&image->control_next;
@@ -161,6 +170,15 @@ static bool parent_copy_frame_shells(PrimeParentCopy *copy,
             outcome_set_init(&image->child);image->child_initialized=true;
             if(!parent_copy_register(copy,&parent_copy_outcome_kind,&source->child,&image->child,sizeof(OutcomeSet)))return false;
         }
+        if(source->force_pending_initialized) {
+            if(source->kind!=PRIME_EVAL_STACK_FRAME_FORCE || source->force_pending.len>1u ||
+                (source->force_pending.len && source->index>=source->child.len) ||
+                (source->force_pending_observed && !source->force_pending.len))
+                return parent_copy_refuse(copy,"ForcePendingExtent");
+            outcome_set_init(&image->force_pending);image->force_pending_initialized=true;
+            if(!parent_copy_register(copy,&parent_copy_outcome_kind,&source->force_pending,
+                &image->force_pending,sizeof(OutcomeSet)))return false;
+        } else if(source->force_pending_observed)return parent_copy_refuse(copy,"ForcePendingState");
         if(!parent_copy_equation_shell(copy,source->equation_search,&image->equation_search))return false;
     }
     return true;
@@ -238,6 +256,64 @@ static bool parent_copy_task(PrimeParentCopy *copy, const PrimeEvalStackTask *so
     }
     return true;
 }
+static bool parent_copy_equation_metadata(PrimeParentCopy *copy,
+    const PrimeNeedEquationMetadata *source, PrimeNeedEquationMetadata *image,
+    CettaCount length) {
+    if (length>source->capacity || (source->capacity && !source->items) ||
+        source->capacity>SIZE_MAX/sizeof(*source->items))
+        return parent_copy_refuse(copy,"EquationPacketExtent");
+    image->items=source->capacity?calloc(source->capacity,sizeof(*image->items)):NULL;
+    if (source->capacity&&!image->items)return parent_copy_refuse(copy,"Allocation");
+    image->capacity=source->capacity;image->has_observations=source->has_observations;
+    for (CettaCount i=0u;i<length;i++) {
+        if (source->items[i].kind!=PRIME_NEED_PACKET_BODY &&
+            source->items[i].kind!=PRIME_NEED_PACKET_OBSERVATION)
+            return parent_copy_refuse(copy,"EquationPacketKind");
+        image->items[i]=source->items[i];
+    }
+    return true;
+}
+
+/* These paths contain only coordinates into the separately copied query.
+ * Spare slots are uninitialized in the source; preserve their capacity, not
+ * their bytes. Install each owner before a fallible descendant allocation. */
+static bool parent_copy_pattern_request(PrimeParentCopy *copy,
+    const PrimeNeedPatternRequest *source, PrimeNeedPatternRequest *image) {
+    if (!prime_need_pattern_request_valid(source))
+        return parent_copy_refuse(copy,"ObservationRequestExtent");
+    image->path = source->capacity ? calloc(source->capacity,sizeof(*image->path)) : NULL;
+    if (source->capacity && !image->path) return parent_copy_refuse(copy,"Allocation");
+    image->length=source->length;image->capacity=source->capacity;image->demand=source->demand;
+    if (source->length) memcpy(image->path,source->path,source->length*sizeof(*source->path));
+    return true;
+}
+static bool parent_copy_pattern_readiness(PrimeParentCopy *copy,
+    const PrimeNeedPatternReadiness *source, PrimeNeedPatternReadiness **out,
+    Atom *query) {
+    *out=NULL;
+    if (!source) return true;
+    if (source->length>source->capacity ||
+        source->capacity>SIZE_MAX/sizeof(*source->paths) ||
+        (source->paths!=NULL)!=(source->capacity!=0u))
+        return parent_copy_refuse(copy,"ObservationReadinessExtent");
+    PrimeNeedPatternReadiness *image=calloc(1u,sizeof(*image));
+    if (!image) return parent_copy_refuse(copy,"Allocation");
+    *out=image;
+    image->paths=source->capacity?calloc(source->capacity,sizeof(*image->paths)):NULL;
+    if (source->capacity&&!image->paths) return parent_copy_refuse(copy,"Allocation");
+    image->capacity=source->capacity;
+    for (size_t i=0u;i<source->length;i++) {
+        const PrimeNeedPatternRequest *path=&source->paths[i];
+        if (!prime_need_pattern_request_valid(path) ||
+            path->demand!=PRIME_NEED_PATTERN_FULL_VALUE ||
+            !prime_need_pattern_request_at(query,path))
+            return parent_copy_refuse(copy,"ObservationReadinessPath");
+        image->length=i+1u;
+        if (!parent_copy_pattern_request(copy,path,&image->paths[i])) return false;
+    }
+    return true;
+}
+
 static bool parent_copy_equation(PrimeParentCopy *copy,
     const PrimeNeedEquationContinuation *source, PrimeNeedEquationContinuation *image) {
     if(!source)return image==NULL;
@@ -263,9 +339,27 @@ static bool parent_copy_equation(PrimeParentCopy *copy,
     }
     for(size_t i=0u;i<6u;i++)if(!parent_copy_outcomes(copy,from[i],to[i]))return false;
     for(size_t i=0u;i<source->work.len;i++) {
-        image->work_meta[i]=source->work_meta[i];image->work_meta[i].plan_indices=NULL;
+        image->work_meta[i]=source->work_meta[i];
+        image->work_meta[i].plan_indices=NULL;image->work_meta[i].observed=NULL;
         PC_ARRAY(&image->work_meta[i],&source->work_meta[i],plan_indices,source->work_meta[i].plan_count);
+        if(!parent_copy_pattern_readiness(copy,source->work_meta[i].observed,
+            &image->work_meta[i].observed,source->work.items[i].atom))return false;
     }
+    image->inspect_incrementally=source->inspect_incrementally;
+    image->publication_returns_to_search=source->publication_returns_to_search;
+    if(!parent_copy_pattern_request(copy,&source->inspection,&image->inspection) ||
+       !parent_copy_pattern_readiness(copy,source->observed,&image->observed,
+            source->current.len==1u?source->current.items[0].atom:NULL))return false;
+    if(source->inspect_incrementally && source->state==PRIME_NEED_EQUATION_SEARCH_WAIT_FORCE &&
+       (source->current.len!=1u ||
+        source->inspection.demand==PRIME_NEED_PATTERN_READY ||
+        !source->inspection.length ||
+        !source->original_call || source->original_call->kind!=ATOM_EXPR ||
+        source->original_call->expr.len<=1u ||
+        source->force_argument>=source->original_call->expr.len-1u ||
+        source->inspection.path[0]!=source->force_argument+1u ||
+        !prime_need_pattern_request_at(source->current.items[0].atom,&source->inspection)))
+        return parent_copy_refuse(copy,"ObservationRequestPath");
     size_t nargs=source->original_call&&source->original_call->kind==ATOM_EXPR&&source->original_call->expr.len?source->original_call->expr.len-1u:0u;
     bool *demands=NULL;
     if(nargs && source->plan_count) {
@@ -280,11 +374,24 @@ static bool parent_copy_equation(PrimeParentCopy *copy,
         p->equation=s->equation;PC_ATOM(p,equation);
         p->rule_occurrence_id=s->rule_occurrence_id;p->match_source_ref=s->match_source_ref;
         if(!parent_copy_outcomes(copy,&s->results,&p->results))return false;
+        if(!parent_copy_equation_metadata(copy,&s->result_metadata,&p->result_metadata,s->results.len))return false;
     }
-    image->raw_plan_indices_cap=source->raw_plan_indices_cap;PC_ARRAY(image,source,raw_plan_indices,source->raw_plan_indices_cap);
+    if(!parent_copy_equation_metadata(copy,&source->raw_metadata,&image->raw_metadata,source->raw_results.len) ||
+       !parent_copy_equation_metadata(copy,&source->publication_metadata,&image->publication_metadata,source->publication.len) ||
+       !parent_copy_equation_metadata(copy,&source->residual_metadata,&image->residual_metadata,source->residuals.len) ||
+       !parent_copy_equation_metadata(copy,&source->forced_world_metadata,&image->forced_world_metadata,source->forced_worlds.len))return false;
     image->current_plan_count=source->current_plan_count;PC_ARRAY(image,source,current_plan_indices,source->current_plan_count);
+    image->current_work_slot=source->current_work_slot;
+    image->current_world_order=source->current_world_order;
+    image->world_order_extent=source->world_order_extent;
+    if(source->current.len && source->current_work_slot>source->work.len)
+        return parent_copy_refuse(copy,"CurrentWorkSlot");
     image->pending_plan_count=source->pending_plan_count;PC_ARRAY(image,source,pending_plan_indices,source->pending_plan_count);
     image->current_covered_by_match=source->current_covered_by_match;image->force_argument=source->force_argument;
+    image->current_observation_fault=source->current_observation_fault;
+    image->current_fault=source->current_fault;
+    image->current_coverage_only=source->current_coverage_only;
+    image->independent_readers=source->independent_readers;
     image->root_atom_count=source->root_atom_count;PC_ARRAY(image,source,root_atoms,source->root_atom_count);
     for(size_t i=0u;i<image->root_atom_count;i++)if(!parent_copy_atom(copy,&image->root_atoms[i]))return false;
     image->result_contract_count=source->result_contract_count;
@@ -310,14 +417,21 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
     image->control_next=next;
     memset(&image->env,0,sizeof(image->env));image->env_initialized=false;
     memset(&image->child,0,sizeof(image->child));image->child_initialized=false;
+    memset(&image->force_pending,0,sizeof(image->force_pending));image->force_pending_initialized=false;
     image->equation_search=equation;image->match_rows=NULL;
     image->normalization_children=NULL;image->control_selection=NULL;image->control_child_bounds=NULL;
     image->dialect_source=NULL;image->control_return_advice=NULL;image->control_nested=NULL;
     image->control_nested_operation=NULL;
+    image->native_service=NULL;image->capsule_search=NULL;
+    image->force_producer=NULL;image->force_waiters=NULL;
+    image->force_waiter_next=NULL;image->open_force_next=NULL;
     if(source->child_initialized&&!source->control_retired) {
         /* The registered embedded object's address stays fixed; an empty
          * OutcomeSet cannot be moved by copying its inline storage pointer. */
         (void)child;outcome_set_init(&image->child);image->child_initialized=true;
+    }
+    if(source->force_pending_initialized&&!source->control_retired) {
+        outcome_set_init(&image->force_pending);image->force_pending_initialized=true;
     }
     PrimeEvalStackFrame *continuation = NULL;
     /* continuation is the first member of a frame, as used by the ordinary
@@ -348,6 +462,10 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
 #endif
         return true;
     }
+    PC_EDGE(image,source,force_producer,parent_copy_frame_kind);
+    PC_EDGE(image,source,force_waiters,parent_copy_frame_kind);
+    PC_EDGE(image,source,force_waiter_next,parent_copy_frame_kind);
+    PC_EDGE(image,source,open_force_next,parent_copy_frame_kind);
     PC_EDGE(image,source,target,parent_copy_outcome_kind);
     if(!parent_copy_owner(copy,&image->arena)||!parent_copy_owner(copy,&image->heap_owner))return false;
     PC_ATOM(image,atom);PC_ATOM(image,etype);PC_ATOM(image,control_key);PC_ATOM(image,control_bound);
@@ -359,6 +477,8 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
     PC_ATOM(&image->control_nested_policy,bound_pattern);PC_ATOM(&image->control_nested_policy,bound_expression);
     if(source->env_initialized){image->env_initialized=true;if(!parent_copy_environment(copy,&image->env,&source->env))return false;}
     if(source->child_initialized&&!parent_copy_outcomes(copy,&source->child,&image->child))return false;
+    if(source->force_pending_initialized&&
+        !parent_copy_outcomes(copy,&source->force_pending,&image->force_pending))return false;
     /* Return scheduling belongs to each physical child occurrence. Preserve
      * the optional array and its links to this parent's existing advice graph,
      * including shared holders whose keys can change after the copy. */
@@ -390,6 +510,7 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
             expected.cache_state!=source->cell.cache_state||expected.value_role!=source->cell.value_role||
             expected.value_producer_thunk!=source->cell.value_producer_thunk||
             expected.value_producer_update!=source->cell.value_producer_update||
+            expected.update_id!=source->cell.update_id||
             expected.origin!=source->cell.origin||expected.cached!=source->cell.cached||
             expected.authority_id!=source->cell.authority_id||expected.evaluator_id!=source->cell.evaluator_id||expected.storage_key!=source->cell.storage_key||
             expected.import_key!=source->cell.import_key||expected.source_occurrence_id!=source->cell.source_occurrence_id||
@@ -459,7 +580,7 @@ static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
     /* These retained protocols have not supplied an injective transport
      * of their producer owners. A shallow copy would alias arrays
      * and copy a live mutex. Refuse before creating an image. */
-    if (source->need_claim_count || source->need_share_waiting) {
+    if (source->need_claim_count || source->need_share_waiting || source->owns_execution_episode) {
         if (refusal) *refusal = "RetainedProducerWorldTransport";
         return false;
     }
@@ -468,6 +589,7 @@ static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
         source->active_allowance||source->active_spent||source->driver.task_ready||source->driver.top||
         source->driver.continuations.top||source->driver.continuations.depth||source->leased!=source_reserved||
         source->parallel_owner||(!transaction&&source->space_agenda)||source->parallel_inflight_count||source->parallel_wave_pending||
+        source->reclaimed_frames || source->driver.prepared_opaque_frames ||
         source->driver.prepared_pure_cache.entries||source->driver.prepared_pure_cache.execution_scratch_ready)
         {if(refusal)*refusal="QuiescentOwnerProfile";return false;}
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
@@ -929,6 +1051,8 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     image->interaction_selection=NULL;
     image->resume_choice=NULL;
     memset(&image->hub,0,sizeof(image->hub));image->frames=NULL;image->retired_frames=NULL;
+    image->reclaimed_frames=NULL;
+    memset(image->open_force_buckets,0,sizeof(image->open_force_buckets));
     image->changed_frames=NULL;image->frame_index=NULL;image->advice_cells=NULL;image->weight_analyses=NULL;image->weight_analysis=NULL;
     image->parked=NULL;image->parked_count=0;image->parallel_inflight=NULL;
     image->next_pick=NULL;image->selected=NULL;image->costs=NULL;image->delivered=NULL;
@@ -1007,6 +1131,11 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     for(PrimeEvalStackFrame *d=image->frames;ok&&d;d=d->control_next,sf=sf->control_next)ok=parent_copy_frame(copy,sf,d);
     sf=source->retired_frames;
     for(PrimeEvalStackFrame *d=image->retired_frames;ok&&d;d=d->control_next,sf=sf->control_next)ok=parent_copy_frame(copy,sf,d);
+    /* The lookup and producer/waiter links name this parent's registered
+     * frames. Reusing a source bucket would outlive its retired owner. */
+    for(size_t i=0u;ok&&i<sizeof(source->open_force_buckets)/sizeof(*source->open_force_buckets);i++)
+        ok=parent_copy_edge(copy,&parent_copy_frame_kind,source->open_force_buckets[i],
+            sizeof(PrimeEvalStackFrame),(void **)&image->open_force_buckets[i]);
     const PrimeWeightLicence *sl=source->weight_analyses;
     for(PrimeWeightLicence *d=image->weight_analyses;ok&&d;d=d->next,sl=sl->next)ok=parent_copy_licence(copy,sl,d);
     if(ok&&source->base_environment_initialized){image->base_environment_initialized=true;ok=parent_copy_environment(copy,&image->base_environment,&source->base_environment);}
@@ -1019,7 +1148,7 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
         RegistryReadView *d=&image->registry_read;const RegistryReadView *s=&source->registry_read;
         if(!s->initialized)ok=parent_copy_refuse(copy,"RegistryCapture");
         else {
-            d->initialized=true;d->arena=&image->storage;d->stale=s->stale;d->incomplete=s->incomplete;d->refusal=s->refusal;
+            d->initialized=true;d->passive=s->passive;d->arena=&image->storage;d->stale=s->stale;d->incomplete=s->incomplete;d->refusal=s->refusal;
             d->stale_name=s->stale_name;d->stale_expected=s->stale_expected;d->stale_actual=s->stale_actual;
             /* Inactive entry links are not owned capture roots; enter writes
              * fresh dynamic links under the destination episode. */

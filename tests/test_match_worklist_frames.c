@@ -1,6 +1,8 @@
 #include "atom.h"
 #include "match.h"
 #include "stats.h"
+#include "native_cost.h"
+#include "storage_census.h"
 #include "tests/test_runtime_stats_stubs.h"
 #include <stdio.h>
 #include <string.h>
@@ -18,12 +20,13 @@ static unsigned checks, failures;
 #define CHECK(c, m) do { checks++; if (!(c)) { failures++; fprintf(stderr,"FAIL: %s\n",m); } } while (0)
 
 static void binding_predicate_controls(Arena *arena) {
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    const CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&identities);
     Atom *written = atom_expr3(arena, atom_symbol(arena, "+"),
                               atom_int(arena, 1), atom_int(arena, 2));
     BindingValue materialized = binding_value_from_atom(written);
-    CettaFrameIdentity maximal = {UINT32_MAX};
-    BindingValue contextual = binding_value_from_context(written, maximal);
-    BindingValue persistent = binding_value_from_persistent_context(written, maximal);
+    BindingValue contextual = binding_value_from_context(written, epoch);
+    BindingValue persistent = binding_value_from_persistent_context(written, epoch);
     size_t before = arena_accounted_live_bytes(arena);
     CHECK(!binding_value_context_is_persistent(materialized) &&
           !binding_value_is_contextual(materialized) &&
@@ -37,16 +40,18 @@ static void binding_predicate_controls(Arena *arena) {
           binding_value_is_contextual(persistent) &&
           binding_value_kind_is_contextual(binding_value_kind(persistent)),
           "a persistent contextual value is also contextual");
-    CHECK(!binding_value_context_is_persistent(binding_value_make(
-              NULL, maximal, BINDING_VALUE_MATERIALIZED)),
+    CHECK(!binding_value_context_is_persistent(
+              binding_value_make(NULL, epoch, BINDING_VALUE_MATERIALIZED)),
           "a null skeleton and nonzero epoch do not create persistent provenance");
-    CHECK(binding_value_context_is_persistent(binding_value_make(
-              NULL, maximal, BINDING_VALUE_CONTEXTUAL_PERSISTENT)),
+    CHECK(binding_value_context_is_persistent(
+              binding_value_from_persistent_context(NULL, epoch)),
           "a null skeleton retains its persistent contextual tag");
     CHECK(arena_accounted_live_bytes(arena) == before &&
           materialized.skeleton == written && contextual.skeleton == written &&
-          persistent.skeleton == written && binding_value_epoch(contextual).word == UINT32_MAX &&
-          binding_value_epoch(persistent).word == UINT32_MAX && written->kind == ATOM_EXPR &&
+          persistent.skeleton == written &&
+          cetta_frame_identity_eq(binding_value_epoch(contextual), epoch) &&
+          cetta_frame_identity_eq(binding_value_epoch(persistent), epoch) &&
+          written->kind == ATOM_EXPR &&
           written->expr.len == 3u && written->expr.elems[1]->ground.ival == 1 &&
           written->expr.elems[2]->ground.ival == 2,
           "tag inspection leaves the complete value and written callable syntax inert");
@@ -66,10 +71,8 @@ static CettaGsltTermViewStatusV1 observe_cursor_binding(
 }
 
 static void term_cursor_children(Arena *arena) {
-    Atom *root_variable = atom_var_with_id(
-        arena, "cursor-root", var_id_from_base(UINT64_C(990101)));
-    Atom *child_variable = atom_var_with_id(
-        arena, "cursor-child", var_id_from_base(UINT64_C(990102)));
+    Atom *root_variable = atom_var_with_id(arena, "cursor-root", var_id_from_base(UINT64_C(990101)));
+    Atom *child_variable = atom_var_with_id(arena, "cursor-child", var_id_from_base(UINT64_C(990102)));
     Atom *outer = atom_symbol(arena, "cursor-outer");
     Atom *local = atom_symbol(arena, "cursor-local");
     Atom *head = atom_symbol(arena, "cursor-head");
@@ -77,7 +80,8 @@ static void term_cursor_children(Arena *arena) {
         arena, atom_symbol(arena, "+"), atom_int(arena, 1), atom_int(arena, 2));
     Atom *children[] = {head, child_variable, written_call, child_variable};
     Atom *body = atom_expr(arena, children, 4u);
-    const CettaFrameIdentity epoch = {718u};
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    const CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&identities);
     BindingsBuilder builder;
     CHECK(bindings_builder_init(&builder, NULL), "initialize native term cursor bindings");
     CHECK(bindings_builder_add_var_fresh(&builder, child_variable, outer),
@@ -186,18 +190,14 @@ static void term_cursor_children(Arena *arena) {
 }
 
 static void activation_cursor_resolution(Arena *arena) {
-    Atom *source = atom_var_with_id(
-        arena, "activation-cursor-source", var_id_from_base(UINT64_C(990201)));
-    Atom *alias = atom_var_with_id(
-        arena, "activation-cursor-alias", var_id_from_base(UINT64_C(990202)));
-    Atom *other = atom_var_with_id(
-        arena, "activation-cursor-other", var_id_from_base(UINT64_C(990203)));
+    Atom *source = atom_var_with_id(arena, "activation-cursor-source", var_id_from_base(UINT64_C(990201)));
+    Atom *alias = atom_var_with_id(arena, "activation-cursor-alias", var_id_from_base(UINT64_C(990202)));
+    Atom *other = atom_var_with_id(arena, "activation-cursor-other", var_id_from_base(UINT64_C(990203)));
     Atom *seven = atom_int(arena, 7);
     Atom *eleven = atom_int(arena, 11);
     Atom *thirteen = atom_int(arena, 13);
     CETTA_FRAME_IDENTITY_SCOPE(identities);
-    CettaFrameIdentity source_epoch = CETTA_FRAME_IDENTITY_NONE;
-    CettaFrameIdentity alias_epoch = CETTA_FRAME_IDENTITY_NONE;
+    CettaFrameIdentity source_epoch = CETTA_FRAME_IDENTITY_NONE, alias_epoch = CETTA_FRAME_IDENTITY_NONE;
     CHECK(cetta_frame_identity_scope_try(&identities, &source_epoch) &&
           cetta_frame_identity_scope_try(&identities, &alias_epoch),
           "acquire native frame identities for activation cursor observation");
@@ -257,8 +257,7 @@ static void activation_cursor_resolution(Arena *arena) {
           "a later materialized write enters the outer cursor domain");
 
     CETTA_FRAME_IDENTITY_SCOPE(retired_identity);
-    CettaFrameIdentity retired_epoch = CETTA_FRAME_IDENTITY_NONE;
-    CettaFrameIdentity replacement_epoch = CETTA_FRAME_IDENTITY_NONE;
+    CettaFrameIdentity retired_epoch = CETTA_FRAME_IDENTITY_NONE, replacement_epoch = CETTA_FRAME_IDENTITY_NONE;
     BindingsBuilder retired_builder;
     CHECK(bindings_builder_init(&retired_builder, NULL) &&
           cetta_frame_identity_scope_try(&retired_identity, &retired_epoch),
@@ -318,8 +317,7 @@ static void activation_cursor_resolution(Arena *arena) {
               "store a contextual alias as a postboundary activation value");
         BindingValue resolved;
         CHECK(bindings_resolve_value_preview(&builder.current, contextual, &resolved) &&
-              resolved.skeleton == seven &&
-              binding_value_kind(resolved) == BINDING_VALUE_MATERIALIZED,
+              resolved.skeleton == seven && binding_value_kind(resolved) == BINDING_VALUE_MATERIALIZED,
               "the stored contextual alias has an independently resolvable ground target");
         result = (CettaGsltTermCursorV1){thirteen, &frame};
         CHECK(bindings_resolve_term_cursor_v1(&context,
@@ -365,10 +363,11 @@ static void activation_cursor_resolution(Arena *arena) {
 }
 
 static void alias_root_query_controls(Arena *arena) {
-    Atom *source = atom_var_with_id(
-        arena, "alias-query-source", var_id_from_base(UINT64_C(990301)));
-    Atom *other = atom_var_with_id(
-        arena, "alias-query-other", var_id_from_base(UINT64_C(990302)));
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    const CettaFrameIdentity shadow_epoch = cetta_frame_identity_scope_fresh(&identities);
+    const CettaFrameIdentity written_epoch = cetta_frame_identity_scope_fresh(&identities);
+    Atom *source = atom_var_with_id(arena, "alias-query-source", var_id_from_base(UINT64_C(990301)));
+    Atom *other = atom_var_with_id(arena, "alias-query-other", var_id_from_base(UINT64_C(990302)));
     Atom *seven = atom_int(arena, 7);
     Atom *written_call = atom_expr2(arena, atom_symbol(arena, "alias-query-written"), source);
     Bindings rows;
@@ -377,23 +376,22 @@ static void alias_root_query_controls(Arena *arena) {
           bindings_add_var(&rows, other, seven) && bindings_prepare_logical_write(&rows),
           "construct an owned ordinary-row inventory for alias observation");
     rows.entries[1].var_id = source->var_id;
-    rows.entries[1].value = binding_value_from_context(
-        NULL, (CettaFrameIdentity){19u});
+    rows.entries[1].value = binding_value_from_context(NULL, shadow_epoch);
     bindings_invalidate_after_key_rewrite(&rows);
     BindingValue newest = bindings_lookup_value_id(&rows, source->var_id);
-    CHECK(newest.skeleton == NULL && binding_value_epoch(newest).word == 19u &&
+    CHECK(newest.skeleton == NULL &&
+          cetta_frame_identity_eq(binding_value_epoch(newest), shadow_epoch) &&
           binding_value_kind(newest) == BINDING_VALUE_CONTEXTUAL,
           "the newest null row retains its metadata and shadows an older bound value");
     BindingValue result = binding_value_from_atom(seven);
     CHECK(bindings_resolve_value_preview(&rows, binding_value_from_atom(source), &result) &&
-          result.skeleton == source &&
-          cetta_frame_identity_is_none(binding_value_epoch(result)) &&
+          result.skeleton == source && cetta_frame_identity_is_none(binding_value_epoch(result)) &&
           binding_value_kind(result) == BINDING_VALUE_MATERIALIZED && rows.len == 2u,
           "a null shadow leaves the source open without resurrecting its older alias");
     CHECK(bindings_resolve_value_preview(&rows,
-              binding_value_from_persistent_context(
-                  written_call, (CettaFrameIdentity){17u}), &result) &&
-          result.skeleton == written_call && binding_value_epoch(result).word == 17u &&
+              binding_value_from_persistent_context(written_call, written_epoch), &result) &&
+          result.skeleton == written_call &&
+          cetta_frame_identity_eq(binding_value_epoch(result), written_epoch) &&
           binding_value_kind(result) == BINDING_VALUE_CONTEXTUAL_PERSISTENT &&
           written_call->expr.elems[1] == source,
           "terminal root observation retains written children and the complete contextual operand");
@@ -411,7 +409,6 @@ static void alias_root_query_controls(Arena *arena) {
           "private-variant identifiers use the ordinary domain rather than a frame lookup");
     bindings_free(&rows);
 
-    CETTA_FRAME_IDENTITY_SCOPE(identities);
     CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
     BindingsBuilder builder;
     CHECK(cetta_frame_identity_scope_try(&identities, &epoch) &&
@@ -425,17 +422,14 @@ static void alias_root_query_controls(Arena *arena) {
     BindingValue contextual = binding_value_from_context(source, epoch);
     BindingValue first_edge = bindings_lookup_value_id(
         &builder.current, var_epoch_id(source->var_id, epoch));
-    CHECK(first_edge.skeleton == source &&
-          binding_value_kind(first_edge) == BINDING_VALUE_MATERIALIZED,
+    CHECK(first_edge.skeleton == source && binding_value_kind(first_edge) == BINDING_VALUE_MATERIALIZED,
           "one mixed-chain lookup changes context without replacing the source pointer");
     CHECK(bindings_resolve_value_preview(&builder.current, contextual, &result) &&
-          result.skeleton == seven &&
-          binding_value_kind(result) == BINDING_VALUE_MATERIALIZED &&
+          result.skeleton == seven && binding_value_kind(result) == BINDING_VALUE_MATERIALIZED &&
           cetta_frame_identity_is_none(binding_value_epoch(result)),
           "root observation follows the frame edge and then the independent ordinary edge");
     CHECK(bindings_resolve_value_exact(&builder.current, contextual, &result) &&
-          result.skeleton == seven &&
-          binding_value_kind(result) == BINDING_VALUE_MATERIALIZED,
+          result.skeleton == seven && binding_value_kind(result) == BINDING_VALUE_MATERIALIZED,
           "exact type-root observation follows the same mixed-domain alias chain");
     Atom *held = atom_expr3(arena, atom_symbol(arena, "+"),
         atom_int(arena, 1), atom_int(arena, 2));
@@ -446,8 +440,7 @@ static void alias_root_query_controls(Arena *arena) {
               binding_value_from_atom(body)),
           "return a materialized compound whose child belongs to the ordinary image");
     CHECK(bindings_resolve_value_preview(&builder.current, contextual, &result) &&
-          result.skeleton == body &&
-          cetta_frame_identity_is_none(binding_value_epoch(result)) &&
+          result.skeleton == body && cetta_frame_identity_is_none(binding_value_epoch(result)) &&
           binding_value_kind(result) == BINDING_VALUE_MATERIALIZED &&
           result.skeleton->expr.elems[1] == other &&
           result.skeleton->expr.elems[2] == held &&
@@ -2890,12 +2883,348 @@ static void exclusive_candidate_frame(Arena *a) {
     bindings_frame_schema_release(schema);
 }
 
+static Atom *graph_maintenance_input(Arena *arena, bool cyclic) {
+    Atom *head = atom_symbol(arena, "maintenance-node");
+    Atom *children[97]; children[0] = head;
+    size_t found = 1u;
+    /* Use the actual private memo's bucket observation to force long probe
+     * chains, independently of allocator addresses and hash constants. */
+    for (size_t n = 0u; n < 200000u && found < 97u; ++n) {
+        Atom *node = atom_expr2(arena, head, atom_int(arena, (int64_t)n));
+        if (match_atoms_cursor_test_bucket(node, 255u) == 0u)
+            children[found++] = node;
+    }
+    CHECK(found == 97u, "construct real colliding memo keys");
+    if (found != 97u) return NULL;
+    Atom *root = atom_expr(arena, children, 97u);
+    Atom *bottom = root;
+    for (unsigned n = 0u; n < 80u; ++n)
+        root = atom_expr2(arena, head, root);
+    if (cyclic) bottom->expr.elems[96] = root;
+    return root;
+}
+
+static uint64_t graph_maintenance_work(const CettaNativeCostLedger *cost) {
+    return cost->total.counts[CETTA_COST_INDEX_VISIT] +
+        cost->total.counts[CETTA_COST_ANALYSIS_STEP];
+}
+
+static unsigned graph_maintenance_phase(const CettaMatchGraphTestState *state) {
+    if (state->next_stack_capacity)
+        return state->copied < state->stack_length ? 6u : 7u;
+    return state->phase ? state->phase - 1u : 8u;
+}
+
+static uint64_t graph_maintenance_clone(CettaMatchCursor *cursor,
+        CettaMatchCursorStep expected) {
+    CettaMatchCursor *left = match_atoms_cursor_clone(cursor);
+    CettaMatchCursor *right = match_atoms_cursor_clone(cursor);
+    CHECK(left && right, "clone the full maintenance residual");
+    if (!left || !right) goto done;
+    CettaNativeCostLedger a, b;
+    cetta_native_cost_init_compact(&a); cetta_native_cost_init_compact(&b);
+    CettaMatchCursorStep result = CETTA_MATCH_CURSOR_PROGRESS;
+    for (unsigned n = 0u; n < 100000u && result == CETTA_MATCH_CURSOR_PROGRESS; ++n) {
+        CettaNativeCostScope scope;
+        cetta_native_cost_scope_enter(&scope, &a, 1u);
+        result = match_atoms_cursor_step(left, 1u);
+        cetta_native_cost_scope_leave(&scope);
+        cetta_native_cost_scope_enter(&scope, &b, 1u);
+        CettaMatchCursorStep other = match_atoms_cursor_step(right, 1u);
+        cetta_native_cost_scope_leave(&scope);
+        CHECK(result == other && a.total.work == b.total.work &&
+              !memcmp(a.total.counts, b.total.counts, sizeof(a.total.counts)),
+              "cloned residuals advance in lockstep with the same paid work");
+    }
+    CHECK(result == expected,
+          "cloned maintenance completes without restarting");
+    uint64_t suffix = graph_maintenance_work(&a);
+    cetta_native_cost_free(&a); cetta_native_cost_free(&b);
+    match_atoms_cursor_free(left); match_atoms_cursor_free(right);
+    return suffix;
+done:
+    match_atoms_cursor_free(left); match_atoms_cursor_free(right);
+    return 0u;
+}
+
+static void graph_maintenance_controls(void) {
+    uint64_t total = 0u;
+    const uint64_t grants[] = {1u, 7u, UINT64_MAX};
+    for (unsigned cyclic = 0u; cyclic < 2u; ++cyclic) {
+    CettaMatchCursorStep expected = cyclic
+        ? CETTA_MATCH_CURSOR_INCOMPLETE : CETTA_MATCH_CURSOR_MATCHED;
+    Arena source; arena_init(&source); arena_set_hashcons(&source, NULL);
+    Atom *root = graph_maintenance_input(&source, cyclic != 0u);
+    if (!root) { arena_free(&source); return; }
+    for (unsigned run = 0u; run < 3u; ++run) {
+        CettaMatchCursor *cursor = match_atoms_cursor_new(root, root, NULL, &source);
+        CHECK(cursor != NULL, "construct a finite-audit cursor");
+        if (!cursor) { arena_free(&source); return; }
+        CettaNativeCostLedger cost; CettaNativeCostScope scope;
+        cetta_native_cost_init_compact(&cost);
+        cetta_native_cost_scope_enter(&scope, &cost, 1u);
+        unsigned seen = 0u;
+        uint64_t prefixes[8] = {0}, suffixes[8] = {0};
+        Bindings unpublished; bindings_init(&unpublished);
+        CettaMatchCursorStep result = CETTA_MATCH_CURSOR_PROGRESS;
+        for (unsigned n = 0u; n < 100000u && result == CETTA_MATCH_CURSOR_PROGRESS; ++n) {
+            CettaMatchGraphTestState prior;
+            bool had_prior = match_atoms_cursor_test_graph(cursor, &prior);
+            size_t owned_before = 0u, bytes_before = 0u;
+            if (!run && had_prior && (prior.phase == 0u || prior.phase == 4u)) {
+                CettaStorageCensus census = {0};
+                match_atoms_cursor_storage_census(cursor, &census);
+                owned_before = census.length; bytes_before = census.bytes;
+                CHECK(!census.incomplete, "observe the pre-maintenance owned carriers");
+                cetta_storage_census_free(&census);
+            }
+            uint64_t before = graph_maintenance_work(&cost), all = cost.total.work;
+            CHECK(match_atoms_cursor_step(cursor, 0u) == result && cost.total.work == all,
+                  "zero grant performs no traversal or maintenance");
+            CHECK(!match_atoms_cursor_take(cursor, &unpublished),
+                  "an unfinished audit cannot publish bindings");
+            result = match_atoms_cursor_step(cursor, grants[run]);
+            CHECK(graph_maintenance_work(&cost) - before <= grants[run],
+                  "every graph maintenance action has a prior grant debit");
+            CettaMatchGraphTestState state;
+            if (!run && match_atoms_cursor_test_graph(cursor, &state)) {
+                bool allocated = had_prior &&
+                    ((!prior.next_capacity && state.next_capacity) ||
+                     (!prior.next_stack_capacity && state.next_stack_capacity));
+                bool retired = had_prior && prior.phase == 4u && prior.capacity;
+                if (allocated || retired) {
+                    CettaStorageCensus census = {0};
+                    match_atoms_cursor_storage_census(cursor, &census);
+                    CHECK(!census.incomplete &&
+                          (allocated ? census.length == owned_before + 1u && census.bytes > bytes_before
+                                     : census.length + 1u == owned_before && census.bytes < bytes_before),
+                          "census accounts for the newly held carrier and retires exactly the old one");
+                    cetta_storage_census_free(&census);
+                }
+                if (had_prior && prior.phase == 1u) {
+                    CHECK(state.cleared == prior.cleared + 1u,
+                          "one grant clears exactly one retained slot without restarting");
+                    if (state.cleared != prior.cleared + 1u) abort();
+                }
+                if (had_prior && prior.phase == 2u)
+                    CHECK(state.scanned >= prior.scanned && state.scanned - prior.scanned <= 1u,
+                          "one grant cannot hide a whole source-table scan");
+                if (had_prior && (prior.phase == 3u || prior.phase == 5u)) {
+                    size_t capacity = prior.phase == 3u ? prior.next_capacity : prior.capacity;
+                    CHECK(((state.probe - prior.probe) & (capacity - 1u)) <= 1u,
+                          "one grant cannot hide a collision-chain walk");
+                }
+                if (had_prior && prior.next_stack_capacity && prior.copied < prior.stack_length)
+                    CHECK(state.copied >= prior.copied && state.copied - prior.copied <= 1u,
+                          "one grant cannot hide a whole stack copy");
+                unsigned phase = graph_maintenance_phase(&state);
+                if (phase < 8u && !(seen & (1u << phase))) {
+                    seen |= 1u << phase;
+                    CettaStorageCensus census = {0};
+                    match_atoms_cursor_storage_census(cursor, &census);
+                    CHECK(!census.incomplete && census.bytes,
+                          "storage census includes installed and unfinished carriers");
+                    cetta_storage_census_free(&census);
+                    cetta_native_cost_scope_leave(&scope);
+                    prefixes[phase] = graph_maintenance_work(&cost);
+                    suffixes[phase] = graph_maintenance_clone(cursor, expected);
+                    cetta_native_cost_scope_enter(&scope, &cost, 1u);
+                }
+            }
+        }
+        CHECK(result == expected,
+              "finite audit completes with split or combined grants");
+        CHECK(cost.total.counts[CETTA_COST_MATCH_NODE] == 1u &&
+              cost.total.counts[CETTA_COST_MATCH_ATTEMPT] == 1u,
+              "maintenance does not replay the paid structural pair");
+        if (!run) {
+            CHECK((seen & 0xdfu) == 0xdfu,
+                  "pause inside clearing, scans, migration, installation, collision probes and stack copying");
+            total = graph_maintenance_work(&cost);
+            for (unsigned phase = 0u; phase < 8u; ++phase)
+                if (seen & (1u << phase))
+                    CHECK(prefixes[phase] + suffixes[phase] == total,
+                          "original prefix plus cloned suffix equals the original complete account");
+        }
+        CHECK(graph_maintenance_work(&cost) > 1000u &&
+              graph_maintenance_work(&cost) == total,
+              "split and combined grants do exactly the same maintenance work");
+        bindings_free(&unpublished);
+        cetta_native_cost_scope_leave(&scope); cetta_native_cost_free(&cost);
+        match_atoms_cursor_free(cursor);
+    }
+    CettaMatchCursor *large = match_atoms_cursor_new(root, root, NULL, &source);
+    Atom *small_value = atom_int(&source, 11);
+    CettaMatchCursor *small = match_atoms_cursor_new(small_value, small_value, NULL, &source);
+    CHECK(match_atoms_cursor_step(large, 1u) == CETTA_MATCH_CURSOR_PROGRESS &&
+          match_atoms_cursor_step(small, 1u) == CETTA_MATCH_CURSOR_MATCHED &&
+          match_atoms_cursor_step(large, 1u) == CETTA_MATCH_CURSOR_PROGRESS,
+          "a small ready task is serviced beside an unfinished large audit");
+    match_atoms_cursor_free(large); match_atoms_cursor_free(small);
+    arena_free(&source);
+
+    for (unsigned wanted = 0u; wanted < 8u; ++wanted) {
+        if (wanted == 5u) continue;
+        Arena source, destination; arena_init(&source); arena_init(&destination);
+        arena_set_hashcons(&source, NULL); arena_set_hashcons(&destination, NULL);
+        Atom *root = graph_maintenance_input(&source, cyclic != 0u);
+        if (!root) { arena_free(&source); arena_free(&destination); return; }
+        CettaMatchCursor *cursor = match_atoms_cursor_new(root, root, NULL, &source);
+        CettaMatchGraphTestState state;
+        bool reached = false;
+        for (unsigned n = 0u; n < 100000u; ++n) {
+            if (match_atoms_cursor_step(cursor, 1u) != CETTA_MATCH_CURSOR_PROGRESS) break;
+            if (match_atoms_cursor_test_graph(cursor, &state) &&
+                    graph_maintenance_phase(&state) == wanted &&
+                    (wanted > 3u || state.capacity != 0u) &&
+                    (wanted != 0u || state.cleared > 0u) &&
+                    (wanted != 1u || (state.scanned > 0u && state.scanned < state.capacity)) &&
+                    (wanted != 2u || state.scanned > 1u)) {
+                reached = true; break;
+            }
+        }
+        CHECK(reached, "reach the selected partial maintenance phase");
+        if (reached) {
+            AtomDeepCopySession *session = atom_deep_copy_session_new(&destination);
+            AtomDeepCopyArenaPair map = {&source, &destination};
+            CHECK(session && atom_deep_copy_session_set_arena_map(session, &map, 1u),
+                  "prepare the audit's allocation-domain relocation");
+            CettaMatchCursor *copy = match_atoms_cursor_copy_to_arena(cursor, &destination, session);
+            CHECK(copy != NULL, "relocate the exact partial maintenance state");
+            atom_deep_copy_session_free(session);
+            match_atoms_cursor_free(cursor); cursor = copy;
+        }
+        arena_free(&source);
+        if (reached && cursor) {
+            CHECK(match_atoms_cursor_step(cursor, 0u) == CETTA_MATCH_CURSOR_PROGRESS,
+                  "relocated zero grant is inert after source retirement");
+            CettaMatchCursorStep result = CETTA_MATCH_CURSOR_PROGRESS;
+            for (unsigned n = 0u; n < 100000u && result == CETTA_MATCH_CURSOR_PROGRESS; ++n)
+                result = match_atoms_cursor_step(cursor, 7u);
+            CHECK(result == expected,
+                  "relocated unfinished memo or stack completes after source retirement");
+        }
+        match_atoms_cursor_free(cursor); arena_free(&destination);
+    }
+    }
+
+    Arena arena; arena_init(&arena); arena_set_hashcons(&arena, NULL);
+    Atom *refused_root = atom_expr2(&arena, atom_symbol(&arena, "refused-audit"), atom_int(&arena, 3));
+    CettaMatchCursor *cursor = match_atoms_cursor_new(refused_root, refused_root, NULL, &arena);
+    CHECK(match_atoms_cursor_step(cursor, 1u) == CETTA_MATCH_CURSOR_PROGRESS,
+          "retain the first finite-audit attempt before allocation");
+    match_atoms_cursor_test_refuse_graph_allocation();
+    CHECK(match_atoms_cursor_step(cursor, 1u) == CETTA_MATCH_CURSOR_INCOMPLETE &&
+          match_atoms_cursor_step(cursor, UINT64_MAX) == CETTA_MATCH_CURSOR_INCOMPLETE,
+          "allocation refusal stays incomplete, never refutation or absence");
+    match_atoms_cursor_free(cursor);
+    refused_root->expr.elems[1] = refused_root;
+    cursor = match_atoms_cursor_new(refused_root, refused_root, NULL, &arena);
+    CHECK(match_atoms_cursor_step(cursor, UINT64_MAX) == CETTA_MATCH_CURSOR_INCOMPLETE,
+          "physical cycles are still refused after yielding memo maintenance");
+    match_atoms_cursor_free(cursor); arena_free(&arena);
+}
+
+static void checked_binding_preparation(Arena *arena) {
+    Atom *x = atom_var(arena, "checked-merge-x");
+    Atom *y = atom_var(arena, "checked-merge-y");
+    Atom *a = atom_symbol(arena, "CheckedA");
+    Atom *b = atom_symbol(arena, "CheckedB");
+    Atom *head = atom_symbol(arena, "CheckedPair");
+    for (unsigned conflict = 0u; conflict < 2u; conflict++) {
+        Bindings destination, source;
+        bindings_init(&destination); bindings_init(&source);
+        CHECK(bindings_add_var(&destination, x, a) &&
+              bindings_add_var(&source, x, conflict ? b : a),
+              "prepare complete binding images for a checked merge");
+        CHECK(bindings_try_merge_live_checked(&destination, &source) ==
+                  (conflict ? CETTA_MATCH_REFUTED : CETTA_MATCH_MATCHED),
+              "only a witnessed rigid conflict refutes the binding merge");
+        CHECK(bindings_lookup_value_id(&destination, x->var_id).skeleton == a &&
+              bindings_lookup_value_id(&source, x->var_id).skeleton == (conflict ? b : a),
+              "checked merge preserves both the caller and immutable source values");
+        bindings_free(&source); bindings_free(&destination);
+    }
+    for (unsigned conflict = 0u; conflict < 2u; conflict++) {
+        Bindings destination, source;
+        bindings_init(&destination); bindings_init(&source);
+        Atom *left = atom_expr3(arena, head, y, a);
+        Atom *right = atom_expr3(arena, head, b, conflict ? b : a);
+        CHECK(bindings_add_var(&destination, x, left) &&
+              bindings_add_var(&source, x, right),
+              "prepare a structural merge with an earlier tentative binding");
+        CHECK(bindings_try_merge_live_checked(&destination, &source) ==
+                  (conflict ? CETTA_MATCH_REFUTED : CETTA_MATCH_MATCHED),
+              "structural conflicts remain distinct from successful refinement");
+        BindingValue refined = bindings_lookup_value_id(&destination, y->var_id);
+        CHECK(conflict ? !refined.skeleton : refined.skeleton == b,
+              "a later rigid conflict rolls back the earlier tentative write");
+        CHECK(bindings_lookup_value_id(&destination, x->var_id).skeleton == left &&
+              !bindings_lookup_value_id(&source, y->var_id).skeleton,
+              "checked publication neither replaces caller syntax nor mutates the source");
+        bindings_free(&source); bindings_free(&destination);
+    }
+    {
+        Bindings destination, source;
+        bindings_init(&destination); bindings_init(&source);
+        CHECK(bindings_add_var(&destination, x, a) && bindings_add_var(&source, x, a),
+              "prepare equal values with separately owned name keys");
+        destination.entries[0].name_key = atom_symbol(arena, "checked-key-left");
+        source.entries[0].name_key = atom_symbol(arena, "checked-key-right");
+        CHECK(bindings_try_merge_live_checked(&destination, &source) == CETTA_MATCH_REFUTED,
+              "different keys at one unframed identity are a witnessed incompatibility");
+        CHECK(destination.entries[0].name_key != source.entries[0].name_key &&
+              bindings_lookup_value_id(&destination, x->var_id).skeleton == a,
+              "key incompatibility leaves the original environment owned");
+        bindings_free(&source); bindings_free(&destination);
+    }
+    {
+        Bindings destination, source;
+        bindings_init(&destination); bindings_init(&source);
+        Atom *left = atom_expr3(arena, head, x, a);
+        Atom *right = atom_expr3(arena, head, b, a);
+        CHECK(bindings_add_var(&destination, x, a) &&
+              bindings_add_constraint(&source, left, right),
+              "prepare an unresolved source constraint and a refining caller");
+        CHECK(bindings_try_merge_live_checked(&destination, &source) == CETTA_MATCH_REFUTED,
+              "a fully ground contradictory constraint refutes the merge");
+        CHECK(destination.eq_len == 0u && source.eq_len == 1u &&
+              bindings_lookup_value_id(&destination, x->var_id).skeleton == a,
+              "failed normalization preserves caller bindings and the source constraint");
+        bindings_free(&source); bindings_free(&destination);
+    }
+    {
+        /* A corrupted/undecided alias image is not a finite rigid mismatch.
+         * Build it directly so a checked constructor cannot reject it first. */
+        Bindings destination, source;
+        bindings_init(&destination); bindings_init(&source);
+        CHECK(bindings_add_var(&destination, x, a) && bindings_add_var(&destination, y, b),
+              "reserve the undecided alias image through its storage owner");
+        if (destination.len == 2u) {
+            CHECK(bindings_rewrite_value_id(&destination, x->var_id,
+                      binding_value_from_atom(y)) &&
+                  bindings_rewrite_value_id(&destination, y->var_id,
+                      binding_value_from_atom(x)),
+                  "install the undecided alias graph through the image translation API");
+            CHECK(bindings_add_var(&source, x, a), "prepare the alias-image comparison");
+            CHECK(bindings_try_merge_live_checked(&destination, &source) == CETTA_MATCH_INCOMPLETE,
+                  "an undecided alias cycle never supplies refutation or absence");
+            CHECK(destination.len == 2u &&
+                  bindings_lookup_value_id(&destination, x->var_id).skeleton == y &&
+                  bindings_lookup_value_id(&destination, y->var_id).skeleton == x,
+                  "incomplete preparation preserves the original undecided image");
+        }
+        bindings_free(&source); bindings_free(&destination);
+    }
+}
+
 int main(int argc, char **argv) {
     SymbolTable symbols; symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols,&g_builtin_syms); g_symbols=&symbols; g_hashcons=NULL;
     VarInternTable vars; var_intern_init(&vars); g_var_intern=&vars;
     Arena arena; arena_init(&arena);
     test_runtime_stats_reset_counters();
+    checked_binding_preparation(&arena);
     if (argc > 1 && strcmp(argv[1], "--binding-predicates") == 0) {
         binding_predicate_controls(&arena);
         goto report;
@@ -2910,6 +3239,10 @@ int main(int argc, char **argv) {
     }
     if (argc > 1 && strcmp(argv[1], "--alias-query") == 0) {
         alias_root_query_controls(&arena);
+        goto report;
+    }
+    if (argc > 1 && strcmp(argv[1], "--graph-maintenance") == 0) {
+        graph_maintenance_controls();
         goto report;
     }
     exercise(&arena,false); exercise(&arena,true); epoch_separation(&arena); plan_validation(&arena); plan_head_order(&arena); planned_cycle_support_owns_context(&arena); unplanned_activation_owns_complete_context(&arena); test_nested_head_dereferences(&arena);
@@ -2946,6 +3279,7 @@ int main(int argc, char **argv) {
     activation_cursor_resolution(&arena);
     alias_root_query_controls(&arena);
     binding_predicate_controls(&arena);
+    graph_maintenance_controls();
 report:
     printf("MatchWorklistFrames checks=%u failures=%u\n",checks,failures);
     arena_free(&arena); bindings_thread_cache_free(); g_var_intern=NULL; var_intern_free(&vars);

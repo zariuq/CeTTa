@@ -71,8 +71,8 @@
 ; it is stored.
 !(bind! &rights-inspect-space (new-space))
 !(let $p (delay 11)
-   (let $r (suspension:restrict $p (suspension:rights inspect))
-     (add-atom &rights-inspect-space (stored $r))))
+   (chain (suspension:restrict $p (suspension:rights inspect)) $restricted
+     (add-atom &rights-inspect-space (stored $restricted))))
 !(assertEqualToResult
    (match &rights-inspect-space (stored $saved)
      (force $saved)){$saved}
@@ -82,8 +82,8 @@
 
 !(bind! &rights-force-space (new-space))
 !(let $p (delay 13)
-   (let $r (suspension:restrict $p (suspension:rights force))
-     (add-atom &rights-force-space (stored $r))))
+   (chain (suspension:restrict $p (suspension:rights force)) $restricted
+     (add-atom &rights-force-space (stored $restricted))))
 !(match &rights-force-space (stored $saved)
    (force $saved))
 !(assertEqualToResult
@@ -91,6 +91,32 @@
      (observe-origin $saved)){$saved}
    ((Error (observe-origin suspension:opaque)
            suspension:inspect-denied)))
+
+; Inspecting a fault does not force the references in its diagnostic cause.
+; The original promise remains available for a later authorized force.
+!(if-error
+   (force (suspension:restrict (delay 7) (suspension:rights inspect)))
+   caught leaked)
+!(if-error (force (delay 7)) caught ordinary)
+!(chain
+   (force (suspension:restrict (delay 7) (suspension:rights inspect)))
+   $fault (if-error $fault caught leaked))
+!(let $p (delay (rights-bump))
+   (Pair
+     (if-error
+       (force (suspension:restrict $p (suspension:rights inspect)))
+       caught leaked)
+     (Pair (get-state &rights-counter)
+       (Pair (force $p) (get-state &rights-counter)))))
+!(get-state &rights-counter)
+
+; Stored source remains source data until explicitly activated. Merely
+; writing a restriction expression does not manufacture a granted handle.
+!(bind! &rights-source-space (new-space))
+!(add-atom &rights-source-space
+   (stored (suspension:restrict (delay (rights-bump)) (suspension:rights inspect))))
+!(match &rights-source-space (stored $source) (force $source))
+!(get-state &rights-counter)
 
 ; An attenuation written inside stored code is code: it never runs, and the
 ; stored code holds the suspension itself, with all its rights.

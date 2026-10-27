@@ -326,6 +326,8 @@ typedef struct AtomDeepCopyInventory {
     struct AtomDeepCopyInventory *next;
 } AtomDeepCopyInventory;
 
+typedef struct AtomDeepCopyCursor AtomDeepCopyCursor;
+
 struct AtomDeepCopySession {
     Arena *dst;
     AtomDeepCopyDestinationScope *destination_scope;
@@ -340,6 +342,7 @@ struct AtomDeepCopySession {
     bool failed;
     AtomDeepCopyRegion region;
     AtomDeepCopyInventory *inventories;
+    AtomDeepCopyCursor *cursor;
 };
 
 bool atom_deep_copy_session_retain_frame(
@@ -1940,7 +1943,8 @@ _Thread_local HashConsTable *g_hashcons = NULL;
 typedef enum {
     ATOM_COMPARE_STRUCTURAL,
     ATOM_COMPARE_VALUE,
-    ATOM_COMPARE_INTERN
+    ATOM_COMPARE_INTERN,
+    ATOM_COMPARE_RESOLVED_SPACES
 } AtomCompareMode;
 
 static _Thread_local unsigned g_atom_hash_read_scope_depth;
@@ -2498,6 +2502,64 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
         break;
     }
     return hashcons_index_finalize(h);
+}
+
+/* An atom the spread hash takes whole, through atom_hash: a leaf, or a term
+ * atom_hash reads through its rational unfolding.  Every other expression is
+ * read child by child, as atom_hash folds it, so atoms atom_eq equates hash
+ * alike. */
+static inline bool atom_spread_whole(const Atom *atom) {
+    return !atom || atom->kind != ATOM_EXPR ||
+           (term_graph_view_hash && atom_structural_has_rational(atom));
+}
+
+typedef struct {
+    Atom *node;
+    CettaExprIndex next;
+    uint64_t hash;
+} AtomSpreadFrame;
+
+uint64_t atom_spread_hash(Atom *atom) {
+    const uint64_t seed = UINT64_C(0x243f6a8885a308d3);
+    if (atom_spread_whole(atom))
+        return hashcons_index_finalize(
+            hashcons_index_mix(seed, atom_hash(atom)));
+    AtomSpreadFrame inline_frames[32];
+    AtomSpreadFrame *frames = inline_frames;
+    size_t cap = sizeof(inline_frames) / sizeof(inline_frames[0]);
+    size_t len = 0u;
+    frames[len++] = (AtomSpreadFrame){
+        atom, 0u, hashcons_index_mix(seed, atom->expr.len)};
+    for (;;) {
+        AtomSpreadFrame *top = &frames[len - 1u];
+        if (top->next < top->node->expr.len) {
+            Atom *child = top->node->expr.elems[top->next++];
+            if (atom_spread_whole(child)) {
+                top->hash = hashcons_index_mix(top->hash, atom_hash(child));
+                continue;
+            }
+            if (len == cap) {
+                size_t grown = cap * 2u;
+                if (frames == inline_frames) {
+                    frames = cetta_malloc(sizeof(*frames) * grown);
+                    memcpy(frames, inline_frames, sizeof(inline_frames));
+                } else {
+                    frames = cetta_realloc(frames, sizeof(*frames) * grown);
+                }
+                cap = grown;
+            }
+            frames[len++] = (AtomSpreadFrame){
+                child, 0u, hashcons_index_mix(seed, child->expr.len)};
+            continue;
+        }
+        uint64_t done = hashcons_index_finalize(top->hash);
+        if (--len == 0u) {
+            if (frames != inline_frames)
+                free(frames);
+            return done;
+        }
+        frames[len - 1u].hash = hashcons_index_mix(frames[len - 1u].hash, done);
+    }
 }
 
 /* Interning keeps every distinct term: a float by its bits, so 0.0 and -0.0
@@ -6483,6 +6545,98 @@ Atom *atom_expr_builder_finish(Arena *a, Atom *draft) {
     return shared ? shared : draft;
 }
 
+struct AtomExprAssembly {
+    Arena *arena;
+    Atom *draft, *result;
+    AtomChildrenSummary summary;
+    uint32_t arena_id, older_id;
+    uint64_t reset_epoch, symbol_instance;
+    CettaExprIndex position;
+    VarId single;
+    bool variable_conflict, refused, spliced;
+};
+
+static bool atom_expr_assembly_current(const AtomExprAssembly *assembly) {
+    return assembly && assembly->arena &&
+        assembly->arena->identity == assembly->arena_id &&
+        assembly->arena->reset_epoch == assembly->reset_epoch &&
+        assembly->arena->older_identity == assembly->older_id &&
+        !assembly->arena->hashcons &&
+        symbol_table_instance_id(g_symbols) == assembly->symbol_instance;
+}
+
+AtomExprAssembly *atom_expr_assembly_new(Arena *arena, CettaExprLen len) {
+    if (!arena || arena->hashcons) return NULL;
+    AtomExprAssembly *assembly = calloc(1u, sizeof(*assembly));
+    if (!assembly) return NULL;
+    *assembly = (AtomExprAssembly){.arena = arena, .arena_id = arena->identity,
+        .older_id = arena->older_identity, .reset_epoch = arena->reset_epoch,
+        .symbol_instance = symbol_table_instance_id(g_symbols),
+        .single = VAR_ID_NONE};
+    atom_summary_begin_ids(&assembly->summary, arena->identity,
+                           arena->older_identity, arena->older_identity != 0u);
+    assembly->draft = atom_expr_builder_begin(arena, len);
+    if (!assembly->draft) { free(assembly); return NULL; }
+    return assembly;
+}
+
+bool atom_expr_assembly_append(AtomExprAssembly *assembly, Atom *child) {
+    if (!assembly || assembly->result || assembly->refused) return false;
+    if (!atom_expr_assembly_current(assembly) || !child ||
+        assembly->position >= assembly->draft->expr.len) {
+        assembly->refused = true;
+        return false;
+    }
+    assembly->draft->expr.elems[assembly->position++] = child;
+    atom_summary_add_ids(&assembly->summary, assembly->older_id != 0u, child);
+    if (!assembly->variable_conflict && (child->flags & ATOM_FLAG_HAS_VARS)) {
+        VarId one = atom_single_variable_id(child);
+        if (var_id_is_none(one) || (!var_id_is_none(assembly->single) &&
+                                   !var_id_eq(one, assembly->single))) {
+            assembly->variable_conflict = true;
+            assembly->single = VAR_ID_NONE;
+        } else assembly->single = one;
+    }
+    return true;
+}
+
+static Atom *atom_expr_assembly_finish_with_splicing(AtomExprAssembly *assembly,
+        bool allow_splicing) {
+    if (!assembly || assembly->refused) return NULL;
+    if (!atom_expr_assembly_current(assembly)) { assembly->refused = true; return NULL; }
+    if (assembly->result) return allow_splicing || !assembly->spliced ? assembly->result : NULL;
+    Atom *draft = assembly->draft;
+    if (assembly->position != draft->expr.len) return NULL;
+    draft->flags = atom_summary_finish(&assembly->summary,
+        assembly->older_id != 0u,
+        draft->expr.len ? draft->expr.elems[0] : NULL,
+        &draft->structural_facts);
+    if (atom_list_rest_parts_splice(draft->expr.elems, draft->expr.len,
+                                    draft->structural_facts)) {
+        if (!allow_splicing) return NULL;
+        assembly->result = atom_list_with_rest(assembly->arena, draft->expr.elems + 1u,
+            draft->expr.len - 2u, draft->expr.elems[draft->expr.len - 1u]);
+        assembly->spliced = assembly->result != NULL;
+        return assembly->result;
+    }
+    draft->var_id = assembly->single;
+    draft->hash_cache = 0u;
+    assembly->result = draft;
+    return draft;
+}
+
+Atom *atom_expr_assembly_finish(AtomExprAssembly *assembly) {
+    return atom_expr_assembly_finish_with_splicing(assembly, false);
+}
+
+Atom *atom_expr_assembly_finish_splicing(AtomExprAssembly *assembly) {
+    return atom_expr_assembly_finish_with_splicing(assembly, true);
+}
+
+void atom_expr_assembly_free(AtomExprAssembly *assembly) {
+    free(assembly);
+}
+
 Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len) {
     return atom_expr(a, elems, len);
 }
@@ -6506,6 +6660,13 @@ static Atom *atom_he_evaluated_build(Arena *a, Atom **elems,
 
 Atom *atom_he_evaluated_expr(Arena *a, Atom **elems, CettaExprLen len) {
     return a && elems && len ? atom_he_evaluated_build(a, elems, len) : NULL;
+}
+
+/* Rebuild metadata from the new children while retaining the source's
+ * expression role. Storage and explicit evaluation own role erasure. */
+Atom *atom_expr_rebuild(Arena *a,const Atom *source,Atom **children,CettaExprLen len) {
+    return source && atom_is_he_evaluated(source) && len
+        ?atom_he_evaluated_expr(a,children,len):atom_expr(a,children,len);
 }
 
 Atom *atom_he_evaluated_copy(Arena *a, Atom *expression) {
@@ -6814,6 +6975,7 @@ bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
 
 CettaLanguageId eval_current_language_id(void) CETTA_ATOM_OPTIONAL_IMPORT;
 bool eval_current_uses_rust_he_compat_semantics(void) CETTA_ATOM_OPTIONAL_IMPORT;
+struct Space *eval_resolve_space_read(struct Space *space) CETTA_ATOM_OPTIONAL_IMPORT;
 
 /* The HE lane outside he-compat, where numbers compare by exact value. */
 static bool atom_he_exact_semantics(void) {
@@ -7126,21 +7288,28 @@ static inline int atom_eq_flat_tree(Atom *left, Atom *right) {
 }
 
 /* The ordinary pointer/leaf fast path needs no frame of its own. */
-static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b) {
+static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b, AtomCompareMode mode) {
     int small = atom_eq_flat_tree(a, b);
     if (small >= 0)
         return small != 0;
     small = atom_eq_small_tree(a, b);
     if (small >= 0)
         return small != 0;
-    return atom_compare_driver(a, b, ATOM_COMPARE_STRUCTURAL, false);
+    return atom_compare_driver(a, b, mode, false);
 }
 
 bool atom_eq(Atom *a, Atom *b) {
     bool equal = false;
     if (atom_eq_decided(a, b, &equal))
         return equal;
-    return atom_eq_walk(a, b);
+    return atom_eq_walk(a, b, ATOM_COMPARE_STRUCTURAL);
+}
+
+bool atom_eq_with_resolved_spaces(Atom *a, Atom *b) {
+    bool equal = false;
+    if (atom_eq_decided(a, b, &equal))
+        return equal;
+    return atom_eq_walk(a, b, ATOM_COMPARE_RESOLVED_SPACES);
 }
 
 /* The leaves of a rational term's unfolding are atomic, so they compare as
@@ -7262,13 +7431,15 @@ static bool atom_compare_driver(Atom *left, Atom *right,
             if (frame->stage == 0u) {
                 frame->stage = 1u;
                 atom_compare_push(&work, ca->key, cb->key,
-                                  ATOM_COMPARE_STRUCTURAL, 0u, true);
+                    frame->mode == ATOM_COMPARE_RESOLVED_SPACES
+                        ? frame->mode : ATOM_COMPARE_STRUCTURAL, 0u, true);
                 continue;
             }
             if (frame->stage == 1u) {
                 frame->stage = 2u;
                 atom_compare_push(&work, ca->value, cb->value,
-                                  ATOM_COMPARE_STRUCTURAL, 0u, true);
+                    frame->mode == ATOM_COMPARE_RESOLVED_SPACES
+                        ? frame->mode : ATOM_COMPARE_STRUCTURAL, 0u, true);
                 continue;
             }
             frame->context_left = ca->parent;
@@ -7349,7 +7520,9 @@ static bool atom_compare_driver(Atom *left, Atom *right,
         if (term_graph_value_eq &&
             (atom_structural_has_rational(a) ||
              atom_structural_has_rational(b))) {
-            if (!term_graph_value_eq(a, b, atom_eq_leaf))
+            if (!term_graph_value_eq(a, b,
+                    frame->mode == ATOM_COMPARE_RESOLVED_SPACES
+                        ? atom_eq_with_resolved_spaces : atom_eq_leaf))
                 goto comparison_failed;
             goto completed;
         }
@@ -7397,6 +7570,12 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                 equal = cetta_dense_tensor_v1_equal(a->ground.ptr, b->ground.ptr);
                 break;
             case GV_SPACE:
+                equal = frame->mode == ATOM_COMPARE_RESOLVED_SPACES &&
+                        eval_resolve_space_read
+                    ? eval_resolve_space_read(a->ground.ptr) ==
+                        eval_resolve_space_read(b->ground.ptr)
+                    : a->ground.ptr == b->ground.ptr;
+                break;
             case GV_CAPTURE:
             case GV_FOREIGN:
             case GV_TERM_GRAPH:
@@ -7478,7 +7657,8 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                     (StateCellPair){ca, cb};
                 frame->task = ATOM_COMPARE_STATE_END;
                 atom_compare_push(&work, ca->value, cb->value,
-                                  ATOM_COMPARE_STRUCTURAL, 0u, true);
+                    frame->mode == ATOM_COMPARE_RESOLVED_SPACES
+                        ? frame->mode : ATOM_COMPARE_STRUCTURAL, 0u, true);
                 continue;
             }
             }
@@ -7722,12 +7902,14 @@ static AtomDataEqualityEntry *atom_data_equality_find(
     return &memo->entries[slot];
 }
 
-static bool atom_data_equality_grow(AtomDataEqualityMemo *memo) {
+static bool atom_data_equality_grow(AtomDataEqualityMemo *memo, bool recoverable) {
     if (memo->capacity > SIZE_MAX / 2u / sizeof(*memo->entries))
         return false;
     size_t next = memo->capacity * 2u;
     AtomDataEqualityMemo grown = {.count = memo->count, .capacity = next};
-    grown.entries = cetta_malloc(next * sizeof(*grown.entries));
+    grown.entries = recoverable ? malloc(next * sizeof(*grown.entries))
+                                : cetta_malloc(next * sizeof(*grown.entries));
+    if (!grown.entries) return false;
     memset(grown.entries, 0, next * sizeof(*grown.entries));
     for (size_t i = 0u; i < memo->capacity; ++i) {
         AtomDataEqualityEntry entry = memo->entries[i];
@@ -7758,6 +7940,7 @@ typedef struct {
     Atom *left, *right;
     CettaExprIndex next_child;
     bool entered;
+    bool context_pair;
 } AtomDataEqualityFrame;
 
 static bool atom_data_leaf_identical(Atom *left, Atom *right) {
@@ -7776,57 +7959,99 @@ static bool atom_data_leaf_identical(Atom *left, Atom *right) {
     return atom_eq(left, right);
 }
 
-static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated,
-                                 bool exact) {
+static bool atom_capture_leaf_identical(Atom *left, Atom *right) {
+    if (left->kind != ATOM_GROUNDED) return atom_data_leaf_identical(left, right);
+    if (left->ground.gkind != right->ground.gkind) return false;
+    if (left->ground.gkind == GV_INT &&
+        (left->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID)) {
+        const NativeHandleIdentifier *a = (const void *)left, *b = (const void *)right;
+        return left->ground.ival == right->ground.ival && a->owner == b->owner &&
+            a->lifetime == b->lifetime && a->retain == b->retain &&
+            a->release == b->release && a->storage == b->storage;
+    }
+    if (atom_scalar_data(left) || left->ground.gkind == GV_INTERNAL_TAG)
+        return atom_data_leaf_identical(left, right);
+    if (left->ground.gkind == GV_PRIME_NEED_CAPABILITY) {
+        const CettaPrimeNeedCapability *a = atom_prime_need_capability_value(left);
+        const CettaPrimeNeedCapability *b = atom_prime_need_capability_value(right);
+        return a && b && a->session_id == b->session_id && a->thunk_id == b->thunk_id &&
+            a->authority_id == b->authority_id && a->rights == b->rights;
+    }
+    if (left->ground.gkind == GV_TERM_GRAPH) {
+        const CettaTermGraphRef *a = left->ground.ptr, *b = right->ground.ptr;
+        return a && b && a->graph == b->graph && a->node == b->node;
+    }
+    return left->ground.ptr && left->ground.ptr == right->ground.ptr;
+}
+
+static CettaMatchCompletion atom_data_equal_impl(Atom *left, Atom *right, bool validated,
+                                                bool exact, bool capture) {
     if (!left || !right)
-        return false;
+        return CETTA_MATCH_INCOMPLETE;
     if (validated && left == right)
-        return true;
+        return CETTA_MATCH_MATCHED;
     AtomDataEqualityEntry inline_entries[64] = {0};
     AtomDataEqualityMemo memo = {.capacity = 64u, .entries = inline_entries};
     size_t count = 1u, capacity = 32u;
     AtomDataEqualityFrame inline_frames[32];
     AtomDataEqualityFrame *frames = inline_frames;
     frames[0] = (AtomDataEqualityFrame){.left = left, .right = right};
-    bool equal = false;
+    CettaMatchCompletion result = CETTA_MATCH_REFUTED;
     while (count) {
         AtomDataEqualityFrame *frame = &frames[count - 1u];
         Atom *a = frame->left, *b = frame->right;
-        if (validated && a == b) {
-            count--;
-            continue;
+        const CettaPrimeContext *ca = frame->context_pair ? (const void *)a : NULL;
+        const CettaPrimeContext *cb = frame->context_pair ? (const void *)b : NULL;
+        if (frame->context_pair) {
+            if (!ca || !cb) {
+                if (ca != cb) goto done;
+                count--;
+                continue;
+            }
+            if (ca->depth != cb->depth || ca->flags != cb->flags) goto done;
+        } else {
+            if (validated && a == b) {
+                count--;
+                continue;
+            }
+            if (!a || !b || a->kind != b->kind) goto done;
+            if (capture && ((a->flags ^ b->flags) & ATOM_FLAG_HE_EVALUATED)) goto done;
+            if (exact && ((a->structural_facts | b->structural_facts) &
+                          ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID)) {
+                if (!capture || ((a->structural_facts ^ b->structural_facts) &
+                                 ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID)) goto done;
+            }
+            if (capture && a->kind == ATOM_GROUNDED &&
+                a->ground.gkind == GV_PRIME_CONTEXT && b->ground.gkind == GV_PRIME_CONTEXT) {
+                frame->left = (Atom *)a->ground.prime_context;
+                frame->right = (Atom *)b->ground.prime_context;
+                frame->context_pair = true;
+                continue;
+            }
         }
-        if (!a || !b || a->kind != b->kind)
-            goto done;
-        if (exact && ((a->structural_facts | b->structural_facts) &
-                      ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID))
-            goto done;
-        bool named = exact && a->kind == ATOM_VAR &&
+        bool named = !frame->context_pair && exact && a->kind == ATOM_VAR &&
                      (a->name_key || b->name_key);
         if (named && (!var_id_eq(a->var_id, b->var_id) || !a->name_key || !b->name_key))
             goto done;
-        if (a->kind != ATOM_EXPR && !named) {
+        if (!frame->context_pair && a->kind != ATOM_EXPR && !named) {
             bool data_a = atom_scalar_data(a) ||
-                (exact && a->kind == ATOM_GROUNDED &&
-                 a->ground.gkind == GV_INTERNAL_TAG);
+                (exact && a->kind == ATOM_GROUNDED && a->ground.gkind == GV_INTERNAL_TAG);
             bool data_b = atom_scalar_data(b) ||
-                (exact && b->kind == ATOM_GROUNDED &&
-                 b->ground.gkind == GV_INTERNAL_TAG);
-            if (!data_a || !data_b ||
-                !(exact ? atom_data_leaf_identical(a, b) : atom_eq(a, b)))
-                goto done;
+                (exact && b->kind == ATOM_GROUNDED && b->ground.gkind == GV_INTERNAL_TAG);
+            if (capture ? !atom_capture_leaf_identical(a, b) :
+                (!data_a || !data_b ||
+                 !(exact ? atom_data_leaf_identical(a, b) : atom_eq(a, b)))) goto done;
             count--;
             continue;
         }
-        if (!named && a->expr.len != b->expr.len)
-            goto done;
+        if (!frame->context_pair && !named && a->expr.len != b->expr.len) goto done;
         if (!frame->entered) {
-            if (memo.count >= memo.capacity / 2u && !atom_data_equality_grow(&memo))
-                goto done;
+            if (memo.count >= memo.capacity / 2u && !atom_data_equality_grow(&memo, capture))
+                goto incomplete;
             AtomDataEqualityEntry *entry = atom_data_equality_find(&memo, a, b);
             if (entry->left) {
                 if (!entry->complete) /* Active pair: a cyclic comparison. */
-                    goto done;
+                    goto incomplete;
                 count--;
                 continue;
             }
@@ -7834,21 +8059,34 @@ static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated,
             memo.count++;
             frame->entered = true;
         }
-        if (frame->next_child < (named ? 1u : a->expr.len)) {
+        CettaExprIndex children = frame->context_pair ? 3u : named ? 1u : a->expr.len;
+        if (frame->next_child < children) {
             CettaExprIndex index = frame->next_child++;
-            AtomDataEqualityFrame child = {
-                .left = named ? a->name_key : a->expr.elems[index],
-                .right = named ? b->name_key : b->expr.elems[index],
-            };
+            AtomDataEqualityFrame child = {0};
+            if (frame->context_pair) {
+                child.left = index == 0u ? ca->key : index == 1u ? ca->value : (Atom *)ca->parent;
+                child.right = index == 0u ? cb->key : index == 1u ? cb->value : (Atom *)cb->parent;
+                child.context_pair = index == 2u;
+            } else {
+                child.left = named ? a->name_key : a->expr.elems[index];
+                child.right = named ? b->name_key : b->expr.elems[index];
+            }
             if (count == capacity) {
                 if (capacity > SIZE_MAX / 2u / sizeof(*frames))
-                    goto done;
-                capacity *= 2u;
+                    goto incomplete;
+                size_t next_capacity = capacity * 2u;
+                AtomDataEqualityFrame *next;
                 if (frames == inline_frames) {
-                    frames = cetta_malloc(capacity * sizeof(*frames));
-                    memcpy(frames, inline_frames, count * sizeof(*frames));
+                    next = capture ? malloc(next_capacity * sizeof(*frames))
+                                   : cetta_malloc(next_capacity * sizeof(*frames));
+                    if (!next) goto incomplete;
+                    memcpy(next, inline_frames, count * sizeof(*frames));
                 } else
-                    frames = cetta_realloc(frames, capacity * sizeof(*frames));
+                    next = capture ? realloc(frames, next_capacity * sizeof(*frames))
+                                   : cetta_realloc(frames, next_capacity * sizeof(*frames));
+                if (!next) goto incomplete;
+                frames = next;
+                capacity = next_capacity;
             }
             frames[count++] = child;
         } else {
@@ -7856,25 +8094,36 @@ static bool atom_data_equal_impl(Atom *left, Atom *right, bool validated,
             count--;
         }
     }
-    equal = true;
+    result = CETTA_MATCH_MATCHED;
+    goto done;
+incomplete:
+    result = CETTA_MATCH_INCOMPLETE;
 done:
     if (frames != inline_frames)
         free(frames);
     if (memo.entries != inline_entries)
         free(memo.entries);
-    return equal;
+    return result;
 }
 
 bool atom_data_equal(Atom *left, Atom *right) {
-    return atom_data_equal_impl(left, right, false, false);
+    return atom_data_equal_impl(left, right, false, false, false) == CETTA_MATCH_MATCHED;
 }
 
 bool atom_data_equal_validated(Atom *left, Atom *right) {
-    return atom_data_equal_impl(left, right, true, false);
+    return atom_data_equal_impl(left, right, true, false, false) == CETTA_MATCH_MATCHED;
 }
 
 bool atom_data_identical(Atom *left, Atom *right) {
-    return atom_data_equal_impl(left, right, false, true);
+    return atom_data_equal_impl(left, right, false, true, false) == CETTA_MATCH_MATCHED;
+}
+
+bool atom_capture_identical(Atom *left, Atom *right) {
+    return atom_capture_identical_checked(left, right) == CETTA_MATCH_MATCHED;
+}
+
+CettaMatchCompletion atom_capture_identical_checked(Atom *left, Atom *right) {
+    return atom_data_equal_impl(left, right, false, true, true);
 }
 
 /* ── Printing ───────────────────────────────────────────────────────────── */
@@ -8423,71 +8672,126 @@ static Atom *atom_deep_copy_mapped_leaf(Arena *dst, Atom *source,
     return copy;
 }
 
-static void atom_deep_copy_stack_free(
-        AtomDeepCopyFrame *stack, const AtomDeepCopyFrame *inline_stack,
-        size_t capacity) {
-    if (stack == inline_stack)
-        return;
+static void atom_deep_copy_stack_free(AtomDeepCopyFrame *stack, size_t capacity) {
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES,
         capacity * sizeof(*stack));
     free(stack);
 }
 
-static Atom *atom_deep_copy_impl(
+/* One unpublished root of the existing graph copier. The session owns the
+ * continuation storage; its caller holds the source, destination and import
+ * context stable until completion or cancellation. */
+struct AtomDeepCopyCursor {
+    AtomDeepCopyFrame *stack;
+    size_t stack_len, stack_cap;
+    Arena *destination;
+    Atom *source, *result;
+    uint32_t destination_identity;
+    uint64_t destination_epoch, symbol_context;
+    const HashConsTable *global, *destination_hashcons;
+    const void *variable_context;
+    uint64_t global_instance;
+    uint32_t destination_older;
+    bool started, session_root, destination_scalar_cache;
+};
+
+static void atom_deep_copy_cursor_free(AtomDeepCopyCursor *cursor) {
+    if (!cursor) return;
+    atom_deep_copy_stack_free(cursor->stack,cursor->stack_cap);
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES,
+        sizeof(*cursor));
+    free(cursor);
+}
+
+/* Both callers use this body. Inlining specializes away traversal accounting
+ * for the synchronous caller's constant NULL debit, as in the owned sequencer. */
+static inline __attribute__((always_inline)) AtomDeepCopyStep atom_deep_copy_run(
     Arena *dst, Atom *src, bool share, AtomDeepCopyMemo *memo,
     AtomDeepCopyResolver resolver, void *resolver_context,
     AtomDeepCopyLeafMap map, void *map_context,
-    AtomDeepCopyNodeView view, void *view_context) {
-    AtomDeepCopyFrame inline_stack[16];
-    AtomDeepCopyFrame *stack = inline_stack;
-    size_t stack_len = 0;
-    size_t stack_cap = sizeof(inline_stack) / sizeof(*inline_stack);
+    AtomDeepCopyNodeView view, void *view_context,
+    AtomDeepCopyCursor *cursor, uint64_t allowance, uint64_t *used) {
+    AtomDeepCopyFrame *stack = cursor->stack;
+    size_t stack_len = cursor->stack_len;
+    size_t stack_cap = cursor->stack_cap;
     Atom *result = NULL;
     Atom *memoized;
+    uint64_t spent=0u;
 
-    if (!dst || !src)
-        return NULL;
-    if (resolver && !(src = resolver(resolver_context, src)))
-        return NULL;
-    memoized = atom_deep_copy_lookup(memo, src);
-    if (memoized)
-        return memoized;
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_NODE);
+#define COPY_SAVE() do { \
+    cursor->stack = stack; cursor->stack_len = stack_len; \
+    cursor->stack_cap = stack_cap; cursor->destination = dst; \
+    if (used) *used=spent; \
+} while (0)
+#define COPY_COMPLETE(value) do { \
+    Atom *completed_copy = (value); \
+    if (!completed_copy) goto failed; \
+    cursor->result = completed_copy; COPY_SAVE(); \
+    return ATOM_DEEP_COPY_COMPLETE; \
+} while (0)
+#define COPY_DEBIT() do { \
+    if (used) { \
+        if (spent == allowance) { COPY_SAVE(); return ATOM_DEEP_COPY_PAUSED; } \
+        ++spent; \
+    } \
+} while (0)
+
     Atom *memo_source = src;
-    bool complete = false;
-    if (view && (!view(dst, src, &src, &complete, view_context) || !src))
-        return NULL;
-    if (complete)
-        return atom_deep_copy_record(memo, memo_source, src) ? src : NULL;
-    if (atom_deep_copy_retained(memo, src))
-        return atom_deep_copy_record(memo, memo_source, src) ? src : NULL;
-    dst = atom_deep_copy_destination(memo, dst, src);
-    if (!dst) return NULL;
-    if (src->kind != ATOM_EXPR && !atom_deep_copy_named_variable(memo, src)) {
-        result = map ? map(dst, src, map_context)
-                     : atom_deep_copy_mapped_leaf(dst, src, share, memo);
-        if (!result || !atom_deep_copy_record(memo, memo_source, result))
-            return NULL;
-        return result;
-    }
-    result = !view && src->kind == ATOM_EXPR &&
-             atom_deep_copy_may_share(memo, src)
-        ? atom_deep_copy_buffer_view(dst, src, share, memo) : NULL;
-    if (result) {
-        if ((memo->arenas || memo->snapshot)) {
-            result->flags = src->flags;
-            result->structural_facts = src->structural_facts;
-            result->hash_cache = atom_hash_cache_load(src);
+    if (!cursor->started) {
+        COPY_DEBIT();
+        cursor->started = true;
+        if (!dst || !src)
+            goto failed;
+        if (resolver && !(src = resolver(resolver_context, src)))
+            goto failed;
+        memoized = atom_deep_copy_lookup(memo, src);
+        if (memoized)
+            COPY_COMPLETE(memoized);
+        if (cursor->session_root && atom_settled_for_arena(dst,src)) {
+            if (!atom_deep_copy_memo_store(memo,src,src)) goto failed;
+            provenance_assert_settled(src,"atom_deep_copy_session_advance.destination-closed",dst);
+            COPY_COMPLETE(src);
         }
-        if (!atom_deep_copy_record(memo, src, result))
-            return NULL;
-        return result;
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_NODE);
+        memo_source = src;
+        bool complete = false;
+        if (view && (!view(dst, src, &src, &complete, view_context) || !src))
+            goto failed;
+        if (complete)
+            COPY_COMPLETE(atom_deep_copy_record(memo, memo_source, src) ? src : NULL);
+        if (atom_deep_copy_retained(memo, src))
+            COPY_COMPLETE(atom_deep_copy_record(memo, memo_source, src) ? src : NULL);
+        dst = atom_deep_copy_destination(memo, dst, src);
+        if (!dst) goto failed;
+        if (src->kind != ATOM_EXPR && !atom_deep_copy_named_variable(memo, src)) {
+            result = map ? map(dst, src, map_context)
+                         : atom_deep_copy_mapped_leaf(dst, src, share, memo);
+            if (!result || !atom_deep_copy_record(memo, memo_source, result))
+                goto failed;
+            COPY_COMPLETE(result);
+        }
+        result = !view && src->kind == ATOM_EXPR &&
+                 atom_deep_copy_may_share(memo, src)
+            ? atom_deep_copy_buffer_view(dst, src, share, memo) : NULL;
+        if (result) {
+            if ((memo->arenas || memo->snapshot)) {
+                result->flags = src->flags;
+                result->structural_facts = src->structural_facts;
+                result->hash_cache = atom_hash_cache_load(src);
+            }
+            if (!atom_deep_copy_record(memo, src, result))
+                goto failed;
+            COPY_COMPLETE(result);
+        }
+
+    } else {
+        dst = cursor->destination;
     }
 
 #define PUSH_COPY_FRAME(source_atom, memo_atom) do { \
     Atom *copy_source = (source_atom); \
     Arena *copy_destination = atom_deep_copy_destination(memo, dst, copy_source); \
-    if (!copy_destination) { atom_deep_copy_stack_free(stack, inline_stack, stack_cap); return NULL; } \
+    if (!copy_destination) { goto failed; } \
     Atom *copy_tail = NULL; \
     CettaExprLen child_count = copy_source->kind == ATOM_EXPR \
         ? copy_source->expr.len : 1u; \
@@ -8517,30 +8821,23 @@ static Atom *atom_deep_copy_impl(
         copy_elems = child_count ? storage + 1u : NULL; \
         copy_tail->expr.elems = copy_elems; \
         if (!atom_deep_copy_record(memo, copy_source, copy_tail)) { \
-            atom_deep_copy_stack_free(stack, inline_stack, stack_cap); return NULL; \
+            goto failed; \
         } \
         if (child_count) atom_deep_copy_buffer_store(memo, copy_source, copy_tail); \
     } else if (prefix_len) { \
         copy_elems = arena_alloc(copy_destination, (size_t)prefix_len * sizeof(Atom *)); \
     } \
     if (stack_len == stack_cap) { \
-        size_t next_cap = stack_cap * 2u; \
+        size_t next_cap = stack_cap ? stack_cap * 2u : 64u; \
         if (next_cap < stack_cap || \
             next_cap > SIZE_MAX / sizeof(AtomDeepCopyFrame)) \
             cetta_oom(SIZE_MAX); \
-        AtomDeepCopyFrame *grown; \
-        if (stack == inline_stack) { \
-            grown = cetta_malloc(next_cap * sizeof(*grown)); \
-            memcpy(grown, stack, stack_len * sizeof(*grown)); \
-        } else { \
-            grown = cetta_realloc(stack, next_cap * sizeof(*grown)); \
-        } \
+        stack = cetta_realloc(stack, \
+                              next_cap * sizeof(AtomDeepCopyFrame)); \
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES, \
             next_cap * sizeof(AtomDeepCopyFrame)); \
-        if (stack != inline_stack) \
-            cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES, \
-                stack_cap * sizeof(AtomDeepCopyFrame)); \
-        stack = grown; \
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES, \
+            stack_cap * sizeof(AtomDeepCopyFrame)); \
         stack_cap = next_cap; \
     } \
     stack[stack_len++] = (AtomDeepCopyFrame) { \
@@ -8554,8 +8851,9 @@ static Atom *atom_deep_copy_impl(
     }; \
 } while (0)
 
-    PUSH_COPY_FRAME(src, memo_source);
+    if (!stack_len) PUSH_COPY_FRAME(src, memo_source);
     while (stack_len > 0) {
+        COPY_DEBIT();
         AtomDeepCopyFrame *frame = &stack[stack_len - 1u];
 
         if (frame->next < frame->prefix_len) {
@@ -8564,8 +8862,7 @@ static Atom *atom_deep_copy_impl(
                 : frame->src->expr.elems[frame->next];
             if (resolver &&
                 !(child = resolver(resolver_context, child))) {
-                atom_deep_copy_stack_free(stack, inline_stack, stack_cap);
-                return NULL;
+                goto failed;
             }
             Atom *child_copy = atom_deep_copy_lookup(memo, child);
 
@@ -8579,8 +8876,7 @@ static Atom *atom_deep_copy_impl(
                  !(memo->strip_he_marks && atom_may_hold_he_mark(child)) &&
                  atom_settled_in(dst, child))) {
                 if (!atom_deep_copy_record(memo, child, child)) {
-                    atom_deep_copy_stack_free(stack, inline_stack, stack_cap);
-                    return NULL;
+                    goto failed;
                 }
                 if (!retained)
                     provenance_assert_settled(
@@ -8595,19 +8891,17 @@ static Atom *atom_deep_copy_impl(
             Atom *memo_child = child;
             bool child_complete = false;
             if (view && (!view(dst, child, &child, &child_complete, view_context) || !child)) {
-                atom_deep_copy_stack_free(stack, inline_stack, stack_cap);
-                return NULL;
+                goto failed;
             }
             if (child_complete) {
                 if (!atom_deep_copy_record(memo, memo_child, child)) {
-                    atom_deep_copy_stack_free(stack, inline_stack, stack_cap);
-                    return NULL;
+                    goto failed;
                 }
                 frame->elems[frame->next++] = child;
                 continue;
             }
             Arena *child_destination = atom_deep_copy_destination(memo, dst, child);
-            if (!child_destination) { atom_deep_copy_stack_free(stack, inline_stack, stack_cap); return NULL; }
+            if (!child_destination) { goto failed; }
             if (child->kind == ATOM_EXPR || atom_deep_copy_named_variable(memo, child)) {
                 child_copy = !view && child->kind == ATOM_EXPR &&
                              atom_deep_copy_may_share(memo, child)
@@ -8620,8 +8914,7 @@ static Atom *atom_deep_copy_impl(
                     }
                     if (!atom_deep_copy_record(memo, child,
                                                child_copy)) {
-                        atom_deep_copy_stack_free(stack, inline_stack, stack_cap);
-                        return NULL;
+                        goto failed;
                     }
                     frame->elems[frame->next++] = child_copy;
                     continue;
@@ -8632,8 +8925,7 @@ static Atom *atom_deep_copy_impl(
             child_copy = map ? map(child_destination, child, map_context)
                 : atom_deep_copy_mapped_leaf(child_destination, child, share, memo);
             if (!child_copy || !atom_deep_copy_record(memo, memo_child, child_copy)) {
-                atom_deep_copy_stack_free(stack, inline_stack, stack_cap);
-                return NULL;
+                goto failed;
             }
             frame = &stack[stack_len - 1u];
             frame->elems[frame->next++] = child_copy;
@@ -8677,8 +8969,7 @@ static Atom *atom_deep_copy_impl(
             result->hash_cache = atom_hash_cache_load(frame->src);
         }
         if (!atom_deep_copy_record(memo, frame->memo_source, result)) {
-            atom_deep_copy_stack_free(stack, inline_stack, stack_cap);
-            return NULL;
+            goto failed;
         }
         stack_len--;
         if (stack_len > 0) {
@@ -8686,9 +8977,27 @@ static Atom *atom_deep_copy_impl(
             frame->elems[frame->next++] = result;
         }
     }
-    atom_deep_copy_stack_free(stack, inline_stack, stack_cap);
+    COPY_COMPLETE(result);
+failed:
+    COPY_SAVE();
+    return ATOM_DEEP_COPY_REFUSED;
 #undef PUSH_COPY_FRAME
-    return result;
+#undef COPY_DEBIT
+#undef COPY_COMPLETE
+#undef COPY_SAVE
+}
+
+static Atom *atom_deep_copy_impl(
+    Arena *dst, Atom *src, bool share, AtomDeepCopyMemo *memo,
+    AtomDeepCopyResolver resolver, void *resolver_context,
+    AtomDeepCopyLeafMap map, void *map_context,
+    AtomDeepCopyNodeView view, void *view_context) {
+    AtomDeepCopyCursor cursor = {0};
+    AtomDeepCopyStep step = atom_deep_copy_run(dst, src, share, memo,
+        resolver, resolver_context, map, map_context, view, view_context,
+        &cursor, 0u, NULL);
+    atom_deep_copy_stack_free(cursor.stack, cursor.stack_cap);
+    return step == ATOM_DEEP_COPY_COMPLETE ? cursor.result : NULL;
 }
 
 Atom *atom_deep_copy_mapped(Arena *dst, Atom *src,
@@ -8755,6 +9064,7 @@ AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
     session->failed = false;
     session->region = (AtomDeepCopyRegion){0};
     session->inventories = NULL;
+    session->cursor = NULL;
     atom_deep_copy_memo_init(&session->memo);
     return session;
 }
@@ -8867,7 +9177,7 @@ bool atom_deep_copy_session_restrict_globals(AtomDeepCopySession *session,
         AtomDeepCopyGlobalInspection *inspection) {
     if (!inspection) return false;
     *inspection=(AtomDeepCopyGlobalInspection){0};
-    if (!session||session->failed||session->map||!session->dst||session->memo.arenas||session->memo.used||
+    if (!session||session->failed||session->cursor||session->map||!session->dst||session->memo.arenas||session->memo.used||
         session->object_count||session->memo.global_nodes||session->memo.snapshot||
         session->memo.buffer_used||session->destination_scope||session->memo.region||
         session->resolver||session->resolver_context||!owner||
@@ -8935,7 +9245,7 @@ done:
 }
 
 bool atom_deep_copy_session_set_snapshot(AtomDeepCopySession *session) {
-    if (!session || session->failed || session->map || !session->dst || !session->dst->identity ||
+    if (!session || session->failed || session->cursor || session->map || !session->dst || !session->dst->identity ||
         session->dst->hashcons || session->dst->scalar_cache ||
         session->dst->older_identity || session->memo.used ||
         session->memo.buffer_used || session->memo.arenas ||
@@ -8986,7 +9296,7 @@ static bool atom_deep_copy_session_set_arena_map_impl(AtomDeepCopySession *sessi
         session->memo.global_owner != g_hashcons ||
         session->memo.global_instance != hashcons_instance_id(session->memo.global_owner) ||
         session->memo.global_symbols != symbol_table_instance_id(g_symbols))) return false;
-    if (!session || session->failed || session->map || !pairs || !count || session->memo.used ||
+    if (!session || session->failed || session->cursor || session->map || !pairs || !count || session->memo.used ||
         session->object_count || session->inventories || session->destination_scope ||
         session->memo.buffer_used || session->memo.arenas || session->memo.snapshot || session->resolver ||
         session->resolver_context || session->memo.region ||
@@ -9329,7 +9639,7 @@ bool atom_deep_copy_session_owner_of_span(const AtomDeepCopySession *session,
 
 AtomDeepCopySession *atom_deep_copy_session_clone(
         const AtomDeepCopySession *source) {
-    if (!source || source->failed || source->map || !source->dst || source->resolver ||
+    if (!source || source->failed || source->cursor || source->map || !source->dst || source->resolver ||
         source->memo.arenas || source->memo.snapshot || source->memo.global_nodes || source->object_count || source->inventories ||
         source->resolver_context || source->memo.region || source->region.len ||
         !source->memo.slots || source->memo.used > source->memo.cap ||
@@ -9402,7 +9712,7 @@ static bool atom_deep_copy_header_image_agrees(
 
 AtomDeepCopySession *atom_deep_copy_session_relocate(
         const AtomDeepCopySession *source, AtomDeepCopySession *relocation) {
-    if (!source || !relocation || source == relocation ||
+    if (!source || !relocation || relocation->cursor || source == relocation ||
         !atom_deep_copy_session_relocation_targets(relocation, relocation->dst))
         return NULL;
     AtomDeepCopySession *copy = atom_deep_copy_session_clone(source);
@@ -9518,7 +9828,7 @@ AtomDeepCopySession *atom_deep_copy_session_new_mapped(
 bool atom_deep_copy_session_forward_region(AtomDeepCopySession *session,
                                            const Arena *arena,
                                            ArenaMark mark) {
-    if (!session || session->map || !arena || arena->identity == 0u || session->memo.arenas || session->memo.snapshot)
+    if (!session || session->cursor || session->map || !arena || arena->identity == 0u || session->memo.arenas || session->memo.snapshot)
         return false;
     AtomDeepCopyRegion *region = &session->region;
     for (uint32_t a = 0u; a < region->len; a++) {
@@ -9572,14 +9882,14 @@ bool atom_deep_copy_session_forward_region(AtomDeepCopySession *session,
 void atom_deep_copy_session_set_resolver(
     AtomDeepCopySession *session, AtomDeepCopyResolver resolver,
     void *context) {
-    if (!session || session->map)
+    if (!session || session->map || session->cursor)
         return;
     session->resolver = resolver;
     session->resolver_context = context;
 }
 
 Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src) {
-    if (!session || !session->dst || session->failed)
+    if (!session || !session->dst || session->failed || session->cursor)
         return NULL;
     if (!src || !atom_deep_copy_arena_map_current(session)) {
         session->failed = true;
@@ -9619,9 +9929,65 @@ Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src) {
     return out;
 }
 
+bool atom_deep_copy_session_pending(const AtomDeepCopySession *session) {
+    return session && session->cursor;
+}
+
+AtomDeepCopyStep atom_deep_copy_session_advance(AtomDeepCopySession *session,
+    Atom *src, uint64_t allowance, Atom **out, uint64_t *used) {
+    if (out) *out = NULL;
+    if (used) *used = 0u;
+    if (!session || !src || !out || !used || !session->dst || session->failed ||
+        session->map || session->resolver || session->memo.arenas ||
+        session->memo.snapshot || session->memo.global_nodes || session->memo.region ||
+        session->destination_scope)
+        return ATOM_DEEP_COPY_REFUSED;
+    AtomDeepCopyCursor *cursor = session->cursor;
+    if (cursor && cursor->source != src)
+        return ATOM_DEEP_COPY_REFUSED;
+    if (!allowance)
+        return ATOM_DEEP_COPY_PAUSED;
+    if (!cursor) {
+        cursor = calloc(1u, sizeof(*cursor));
+        if (!cursor) return ATOM_DEEP_COPY_REFUSED;
+        cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
+            sizeof(*cursor));
+        cursor->source = src;
+        cursor->session_root = true;
+        cursor->destination_identity = session->dst->identity;
+        cursor->destination_epoch = session->dst->reset_epoch;
+        cursor->destination_hashcons = session->dst->hashcons;
+        cursor->destination_older = session->dst->older_identity;
+        cursor->destination_scalar_cache = session->dst->scalar_cache;
+        cursor->symbol_context = symbol_table_instance_id(g_symbols);
+        cursor->variable_context = g_var_intern;
+        cursor->global = g_hashcons;
+        cursor->global_instance = g_hashcons?hashcons_instance_id(g_hashcons):0u;
+        session->cursor = cursor;
+    }
+    AtomDeepCopyStep step = ATOM_DEEP_COPY_REFUSED;
+    if (cursor->destination_identity == session->dst->identity &&
+        cursor->destination_epoch == session->dst->reset_epoch &&
+        cursor->destination_hashcons == session->dst->hashcons &&
+        cursor->destination_older == session->dst->older_identity &&
+        cursor->destination_scalar_cache == session->dst->scalar_cache &&
+        cursor->symbol_context == symbol_table_instance_id(g_symbols) &&
+        cursor->variable_context == g_var_intern && cursor->global == g_hashcons &&
+        cursor->global_instance == (g_hashcons?hashcons_instance_id(g_hashcons):0u))
+        step = atom_deep_copy_run(session->dst, src, false, &session->memo,
+            NULL, NULL, NULL, NULL, NULL, NULL, cursor, allowance, used);
+    if (step == ATOM_DEEP_COPY_PAUSED)
+        return step;
+    if (step == ATOM_DEEP_COPY_COMPLETE) *out = cursor->result;
+    else session->failed = true;
+    atom_deep_copy_cursor_free(cursor);
+    session->cursor = NULL;
+    return step;
+}
+
 Atom *atom_deep_copy_session_forwarded(
     const AtomDeepCopySession *session, const Atom *src) {
-    if (!session || !src)
+    if (!session || !src || session->failed || session->cursor)
         return NULL;
     return atom_deep_copy_lookup(&session->memo, (Atom *)src);
 }
@@ -9667,6 +10033,11 @@ void atom_deep_copy_session_free(AtomDeepCopySession *session) {
     if (!session)
         return;
     assert(!session->destination_scope);
+    if (session->cursor) {
+        AtomDeepCopyCursor *cursor=session->cursor;
+        session->cursor=NULL;
+        atom_deep_copy_cursor_free(cursor);
+    }
     while (session->inventories) {
         AtomDeepCopyInventory *entry = session->inventories;
         session->inventories = entry->next;
@@ -9705,6 +10076,11 @@ void atom_deep_copy_session_storage_census(const AtomDeepCopySession *session,
         }
     }
     arena_storage_census(session->dst,census);
+    if (session->cursor) {
+        cetta_storage_object(census,session->cursor,sizeof(*session->cursor),CETTA_STORAGE_BLOCK);
+        cetta_storage_array(census,session->cursor->stack,session->cursor->stack_cap,
+            sizeof(*session->cursor->stack),0u);
+    }
     const AtomDeepCopyMemo *memo = &session->memo;
     if (memo->global_nodes) {
         cetta_storage_object(census,memo->global_nodes,sizeof(*memo->global_nodes),CETTA_STORAGE_BLOCK);

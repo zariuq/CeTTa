@@ -45,6 +45,7 @@ def variables(node: object) -> set[str]:
 class PatternViews:
     def __init__(self, forms: list, external_heads: tuple[str, ...] = (),
                  *, cons_values: str = "flat", capture_external_errors: tuple[str, ...] = (),
+                 capture_primitive_errors: tuple[str, ...] = (),
                  sort_values: str | None = None):
         if cons_values not in ("flat", "spine-or-flat"):
             raise ValueError("unknown source cons-value representation")
@@ -75,10 +76,13 @@ class PatternViews:
                           and node[0] == "=" and isinstance(node[1], list) and node[1]}
         self.external_heads = set(external_heads)
         self.capture_external_errors = set(capture_external_errors)
+        self.capture_primitive_errors = set(capture_primitive_errors)
+        if not self.capture_primitive_errors <= {"size-atom"}:
+            raise ValueError("primitive error capture requires a declared finite observer")
         self.captured_calls: set[tuple[str, int]] = set()
         if not self.capture_external_errors <= self.external_heads:
             raise ValueError("error capture requires an explicitly declared external operation")
-        if self.capture_external_errors & self.equations:
+        if (self.capture_external_errors | self.capture_primitive_errors) & self.equations:
             raise ValueError("an external error profile cannot replace a source equation")
         if any(not name or name.startswith(("$", "&")) or
                any(character.isspace() or character in "()" for character in name)
@@ -128,6 +132,11 @@ class PatternViews:
             if name not in self.used:
                 self.used.add(name)
                 return Symbol(name)
+
+    def captured_application(self, head: Symbol, arguments: list) -> object:
+        self.captured_calls.add((str(head), len(arguments)))
+        alias = self.state_name + ":external:" + str(head) + ":" + str(len(arguments))
+        return self.application(Symbol(alias), arguments)
 
     def error_view(self, node: object) -> object:
         """The selected readout distinguishes error presence, not its payload.
@@ -220,6 +229,15 @@ class PatternViews:
             return form("collapse", self.expression(node[1]))
         if head == "once" and len(node) == 2:
             return form("once", self.expression(node[1]))
+        if head == "catch" and len(node) == 2:
+            observed = node[1]
+            if (not isinstance(observed, list) or not observed or
+                    not isinstance(observed[0], Symbol) or
+                    observed[0] not in self.capture_external_errors | self.capture_primitive_errors):
+                raise ValueError("catch requires a declared finite native observer")
+            if observed[0] in self.capture_primitive_errors and len(observed) != 2:
+                raise ValueError("size-atom error capture requires one operand")
+            return self.captured_application(observed[0], observed[1:])
         if head == "sort-atom" and head not in self.equations:
             if self.sort_values != "closed-strings" or len(node) != 2:
                 raise ValueError("source sort-atom requires a declared closed string-list contract")
@@ -303,9 +321,7 @@ class PatternViews:
             return self.application(Symbol("cons-atom"), node[1:])
         static = isinstance(head, Symbol) and not head.startswith("$")
         if static and head in self.capture_external_errors:
-            self.captured_calls.add((str(head), len(node) - 1))
-            alias = self.state_name + ":external:" + str(head) + ":" + str(len(node) - 1)
-            return self.application(Symbol(alias), node[1:])
+            return self.captured_application(head, node[1:])
         known = static and (head in self.equations or head in PRIMITIVES
                             or head in self.raw_arguments or head in self.external_heads
                             or head.startswith("__cetta_"))
@@ -349,33 +365,34 @@ class PatternViews:
 
 def lower(text: str, external_heads: tuple[str, ...] = (),
           *, cons_values: str = "flat", capture_external_errors: tuple[str, ...] = (),
+          capture_primitive_errors: tuple[str, ...] = (),
           sort_values: str | None = None) -> tuple[str, dict]:
     forms = read_forms(text)
     adapter = PatternViews(forms, external_heads, cons_values=cons_values,
-                           capture_external_errors=capture_external_errors, sort_values=sort_values)
-    translated = [adapter.declaration(adapter.error_view(node) if capture_external_errors else node)
+                           capture_external_errors=capture_external_errors,
+                           capture_primitive_errors=capture_primitive_errors, sort_values=sort_values)
+    translated = [adapter.declaration(adapter.error_view(node)
+                  if capture_external_errors or capture_primitive_errors else node)
                   for node in forms]
     if adapter.captured_calls:
-        # Each declared deterministic operation is evaluated once. The fresh
-        # private space carries its successful value across if-error's raw
-        # status arms. No speculative second file read is performed.
-        box, value, status = map(Symbol, ("$box", "$value", "$status"))
-        result_tag = Symbol(adapter.state_name + ":CapturedValue")
+        # Observe each declared finite deterministic operation once. The
+        # result bag keeps an Error passive until its presence is inspected;
+        # an unobserved stored value could escape its handler later.
+        value, source, reason, unexpected = map(
+            Symbol, ("$value", "$source", "$reason", "$unexpected"))
         error_tag = Symbol(adapter.state_name + ":SourceError")
         helpers = []
         for head, arity in sorted(adapter.captured_calls):
             arguments = [Symbol("$argument" + str(i)) for i in range(arity)]
             alias = adapter.state_name + ":external:" + head + ":" + str(arity)
-            attempted = form("let", value, form(head, *arguments),
-                             form("add-atom", box, [result_tag, value]))
             failed = form("function", form("return", [error_tag, Symbol(head),
                                                         Symbol("ExternalFailure")]))
-            success = form("match", box, [result_tag, value], value)
-            body = form("let", box, form("new-space"),
-                form("let", status, form("if-error", attempted,
-                                          Symbol("Failed"), Symbol("Succeeded")),
-                     form("case", status, [[Symbol("Failed"), failed],
-                                            [Symbol("Succeeded"), success]])))
+            body = form("case", form("collapse", form(head, *arguments)),
+                        [[[[Symbol("Error"), source, reason]], failed],
+                         [[value], form("function", form("return", value))],
+                         [[], form("superpose", [])],
+                         [unexpected, form("Error", Symbol(head),
+                                           Symbol("NonUniqueExternalResult"))]])
             helpers.append(form("=", form(alias, *arguments), body))
         translated = helpers + translated
     if adapter.sequence_primitives:
@@ -464,17 +481,20 @@ def lower(text: str, external_heads: tuple[str, ...] = (),
                         adapter.pattern_removal else None,
                     "ground_sequence_primitives": sorted(adapter.sequence_primitives),
                     "captured_external_errors": sorted(adapter.capture_external_errors),
+                    "captured_primitive_errors": sorted(adapter.capture_primitive_errors),
                     "external_error_observation": "presence only; source payload elided"
-                        if adapter.capture_external_errors else None}
+                        if adapter.capture_external_errors or adapter.capture_primitive_errors else None}
 
 
 def compile_source(text: str, binary: Path, intermediate: Path,
                    external_heads: tuple[str, ...] = (),
                    *, cons_values: str = "flat", capture_external_errors: tuple[str, ...] = (),
+                   capture_primitive_errors: tuple[str, ...] = (),
                    sort_values: str | None = None) -> tuple[str, dict]:
     """Lower views, then use the native elaborator to retain source sharing."""
     viewed, inventory = lower(text, external_heads, cons_values=cons_values,
-                              capture_external_errors=capture_external_errors, sort_values=sort_values)
+                              capture_external_errors=capture_external_errors,
+                              capture_primitive_errors=capture_primitive_errors, sort_values=sort_values)
     intermediate.parent.mkdir(parents=True, exist_ok=True)
     intermediate.write_text(viewed)
     records = native_plan(binary.resolve(), intermediate.resolve())
@@ -531,6 +551,9 @@ def main() -> None:
                         help="source list-value representation; native CeTTa grammar trees use spine-or-flat")
     parser.add_argument("--capture-external-error", action="append", default=[],
                         help="deterministic declared operation whose error-presence readout is retained")
+    parser.add_argument("--capture-primitive-error", action="append", default=[],
+                        choices=("size-atom",),
+                        help="finite primitive observer permitted inside source catch")
     parser.add_argument("--sort-values", choices=("closed-strings",),
                         help="qualify sort-atom to proper lists of closed string values")
     args = parser.parse_args()
@@ -541,6 +564,7 @@ def main() -> None:
     result, inventory = compile_source(text, args.binary, args.view_source,
                                        tuple(args.external_head), cons_values=args.cons_values,
                                        capture_external_errors=tuple(args.capture_external_error),
+                                       capture_primitive_errors=tuple(args.capture_primitive_error),
                                        sort_values=args.sort_values)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(result)

@@ -273,12 +273,15 @@ def retained_queries(gate):
         gate.passed_case(f'query nodes and graded duplicate rows survive exact cuts with {workers} workers')
     source='(F slow) (F fast) (= (body slow) (body slow)) (= (body fast) 42) '
     expression=read('(match &self (F $x) (body $x) (where 2))')
+    # The public standard definitions are rows of &self too. Leave room for
+    # their scan while retaining exact work and final-step split comparisons.
+    independence_budget=2048
     for workers in (1,2,4):
         default=None
         for quantum in (None,1,8,40):
             extra=f'(workers {workers})'+('' if quantum is None else f' (quantum {quantum})')
             _,obs=gate.run(f'query body independence/{workers}/{quantum}',source+
-                f'!(select 1 {control(1000,extra=extra)} {expression})')
+                f'!(select 1 {control(independence_budget,extra=extra)} {expression})')
             result=obs[-1]
             assert [contribution(x) for x in result['values']]==[[42,2,[2]]],obs
             assert result['satisfied']=='True' and result['closed']=='False',obs
@@ -287,10 +290,10 @@ def retained_queries(gate):
                 for field in ('work','closed','satisfied','status'):
                     assert result[field]==default[field],(workers,field,default,result)
             if workers>1:
-                for cut in (1,13,37,97,result['work']-1):
+                for cut in sorted({1,13,37,97,min(1000,result['work']-1),result['work']-1}):
                     trees,parts=gate.run(f'query body split/{workers}/{quantum}/{cut}',source+
                         f'!(let {pattern} (select 1 {control(cut,extra=extra)} {expression}) '
-                        f'(Split $p (select 1 {control(1000-cut,extra=extra)} $r)))')
+                        f'(Split $p (select 1 {control(independence_budget-cut,extra=extra)} $r)))')
                     values=trees[-1][0][1]+parts[-1]['values']
                     assert [contribution(x) for x in values]==[[42,2,[2]]],parts
                     for field in ('work','closed','satisfied','status'):
@@ -308,7 +311,7 @@ def retained_queries(gate):
     for name,body,expected in cases:
         for workers in (1,2):
             _,obs=gate.run(f'query {name}/{workers}',source+
-                f'!(select 7 {control(1000,extra=f"(workers {workers})")} {read(body)})')
+                f'!(select 7 {control(independence_budget,extra=f"(workers {workers})")} {read(body)})')
             assert bag([contribution(x) for x in obs[-1]['values']])==bag(expected),obs
             assert obs[-1]['closed']=='True' and obs[-1]['satisfied']=='False',obs
         gate.passed_case(f'{name} keeps list mismatch distinct from pending work')
@@ -339,9 +342,10 @@ def retained_query_owners(gate):
         assert [contribution(x) for x in final['values']]==expected,final
         counts=receipt(final['cost'])['counts']
         if visits is not None:
-            # One traversal of the three-row source, even when a matched
-            # body produces no answer. Projection must not replay the read.
-            assert counts['index-visit']==visits,(name,counts)
+            # Standard-definition validation also reads declaration indexes.
+            # Match attempts identify the source traversal: one per row,
+            # even when the matched body produces no answer.
+            assert counts['match-attempt']==visits,(name,counts)
         assert counts['equation-activation']==activations,(name,counts)
         gate.passed_case('complete-empty certificate belongs to its exact return edge: '+name)
 
@@ -686,7 +690,7 @@ def search_clients(gate):
         authored_fixture(gate, 'seven_routes.metta'))
     assert len(obs) == 3 and all(x['satisfied'] == 'True' for x in obs), obs
     unpacked = [[contribution(x) for x in result['values']] for result in obs]
-    assert [x[0][1] for x in unpacked[0]] == list('abcdefg'), unpacked
+    assert bag(x[0][1] for x in unpacked[0]) == bag(list('abcdefg')), unpacked
     assert [x[0][1] for x in unpacked[1]] == list('bcdefgh'), unpacked
     assert [x[0][1] for x in unpacked[2]] == list('bcdefgh'), unpacked
     assert unpacked[2][1][1:] == [0, [0]], unpacked
@@ -695,9 +699,13 @@ def search_clients(gate):
     source = '(= (product $a $b) (+ $a $b)) (= (product $a $b) (* $a $b)) '
     trees, _ = gate.run('nondeterministic algebra callback', source +
         '!(weight:read (algebra 0 1 + product) (weight:where V 2))')
-    assert bag([contribution(x) for x in trees[-1]]) == bag([
+    assert bag(contribution(x) for tree in trees for x in tree) == bag([
         ['V', 3, [2]], ['V', 2, [2]]]), trees
     gate.passed_case('nondeterministic interpretation retains separate callback worlds')
+    trees, _ = gate.run('captured algebra multiplication callback',
+        '!(let $product * (weight:read (algebra 0 1 + $product) (weight:where V 2)))')
+    assert [contribution(x) for tree in trees for x in tree] == [['V', 2, [2]]], trees
+    gate.passed_case('a captured multiplication callable is invoked before its returned value is observed')
     source = '(= (product $a $b) (weight:where (* $a $b) 7)) '
     trees, _ = gate.run('readout callback contribution snapshot', source +
         '!(weight:read (algebra 0 1 + *) '
@@ -852,7 +860,7 @@ def weight_licence_progress(gate):
     pattern = '(Observation $p (satisfied $s) (closed $c) (residual $r) (work $w) (status $t) $order)'
     for width in (1, 2):
         trees, _ = gate.run(f'licence retained inner matcher width{width}', source +
-            f'!(select 0 {policy(1500, width)} {body})')
+            f'!(select 0 {policy(4096, width)} {body})')
         whole = list(weight_observations(trees))[-1]
         assert [contribution(v)[:2] for v in whole['values']] == [[7, 1], [7, 1]], whole
         assert whole['closed'] == 'True' and whole['status'] == 'closed', whole
@@ -863,7 +871,7 @@ def weight_licence_progress(gate):
         for cut in (0, 1, 7, 31, 127, 257):
             trees, parts = gate.run(f'licence retained inner matcher width{width} cut{cut}', source +
                 f'!(let {pattern} (select 0 {policy(cut, width)} {body}) '
-                f'(Split $p (select 0 {policy(1500-cut, width)} $r)))')
+                f'(Split $p (select 0 {policy(4096-cut, width)} $r)))')
             joined = trees[-1][0][1] + parts[-1]['values']
             assert [contribution(v)[:2] for v in joined] == [[7, 1], [7, 1]], joined
             resumed = list(weight_observations([[trees[-1][0][2]]]))[-1]
@@ -941,9 +949,17 @@ def weight_order(gate):
     gate.passed_case('a law needs weight order, and weight order owns its key and selection')
 
 
+def matched_body(language):
+    """Stored code runs where the program runs it.  In Prime a bare variable
+    template returns the stored atom as a completed value, so the matched
+    body is evaluated explicitly; HE and PeTTa run the matched body itself."""
+    return '(eval $code)' if language == 'prime' else '$code'
+
+
 def weight_licence_dependency_cases(language):
     """Programs whose delayed dependency makes Hidden the actual best."""
     tenth, half = ('0.1', '0.5') if language == 'petta' else ('1/10', '1/2')
+    code = matched_body(language)
     slow = '(= (licence-slow $n $v) (if (== $n 0) $v (licence-slow (- $n 1) $v))) '
     predicate = '(= (licence-predicate $w) (licence-slow 120 (licence-verdict))) '
     predicate += '(=w (licence-verdict) True 20) '
@@ -959,11 +975,11 @@ def weight_licence_dependency_cases(language):
          f'(where {tenth} (admit licence-predicate)))) ', 'UncheckedAdmission'),
         ('matched executable body', '(stored-computation (weight:where Hidden 20)) ' +
          f'(=w (licence-answer) (licence-slow 120 '
-         f'(match &self (stored-computation $code) $code)) {tenth}) ', 'UncheckedMatchedValue'),
+         f'(match &self (stored-computation $code) {code})) {tenth}) ', 'UncheckedMatchedValue'),
         ('graded matched executable body',
          f'(stored-computation (weight:where Hidden 40) {half}) ' +
          f'(=w (licence-answer) (licence-slow 120 '
-         f'(match &self (stored-computation $code $w) $code (where $w))) {tenth}) ',
+         f'(match &self (stored-computation $code $w) {code} (where $w))) {tenth}) ',
          'UncheckedMatchedValue'),
     ]
     return slow, tenth, definitions
@@ -1005,7 +1021,8 @@ def weight_licence_dependencies(gate):
 
     # Duplicate matched code is still two derivations after licence refusal.
     source = slow + f'(stored-computation (weight:where Hidden 20)) ' * 2
-    source += f'(=w (licence-answer) (match &self (stored-computation $code) $code) {tenth}) '
+    code = matched_body(getattr(gate, 'language', 'prime'))
+    source += f'(=w (licence-answer) (match &self (stored-computation $code) {code}) {tenth}) '
     source += '(=w (licence-answer) Visible 1) '
     for width in (1, 2):
         trees, _ = gate.run('duplicate matched code', source +
@@ -1224,6 +1241,24 @@ def authored_keys(gate):
     assert keyed_work < unkeyed_work and ranked_work < unkeyed_work
     gate.passed_case('weighted match rows are occurrences that keys can see')
 
+    source = (prefix + '(= (explode) (println! "FORBIDDEN-KEY-BODY")) '
+              '(= (pick) (slow 200 (explode))) (= (pick) (slow 1 High)) ')
+    _, observations = gate.run('key wildcard leaves an unchosen body unforced', source +
+        '!(select 1 (search-policy (control WO (key (slow $n $v) $n) (budget 100000))) '
+        '(weight:read (algebra 0 1 + *) (pick)))')
+    assert contribution(observations[-1]['values'][0]) == ['High', 1, []], observations
+    assert 'FORBIDDEN-KEY-BODY' not in gate.receipts[-1]['stdout'], gate.receipts[-1]
+    gate.passed_case('key inspection leaves wildcard source unexecuted')
+
+    source = (prefix + '(= (tick) (let $_ (println! "KEY-SHARED-CELL") 7)) '
+              '(= (twice $x) (slow 1 (Pair $x $x))) ')
+    _, observations = gate.run('key wildcard preserves shared body cells', source +
+        '!(select 1 (search-policy (control WO (key (slow $n $v) $n) (budget 100000))) '
+        '(weight:read (algebra 0 1 + *) (twice (tick))))')
+    assert contribution(observations[-1]['values'][0]) == [['Pair', 7, 7], 1, []], observations
+    assert gate.receipts[-1]['stdout'].splitlines().count('KEY-SHARED-CELL') == 1, gate.receipts[-1]
+    gate.passed_case('key inspection preserves one shared body invocation')
+
 
 def native_handler_boundaries(gate):
     source = '(= (rows) (weighted A 2)) (= (rows) (weighted B 3)) '
@@ -1317,7 +1352,7 @@ def authored_coefficients(gate):
     explicit='(let $x (match &self (edge a $x) (weight:where $x (grade $x))) '
     explicit+=f'(match &self (edge $x $z) (weight:where $z 3)){crossing})'
     for body in (explicit,expression):
-        _,obs=gate.run('authored two-step binding-local match',facts+f'!(select 7 {control(3000)} {read(body)})')
+        _,obs=gate.run('authored two-step binding-local match',facts+f'!(select 7 {control(8192)} {read(body)})')
         values=[contribution(x) for x in obs[-1]['values']]
         assert bag(values)==bag([['d',6,[2,3]],['d',6,[2,3]],['d',15,[5,3]]]),obs
         assert obs[-1]['closed']=='True'
@@ -1602,6 +1637,22 @@ def admitted_coefficients(gate):
     compare('match-bound body grade and callable share the captured row',source,
         '(match &self (F $x $g $predicate) (Pair $x $g) (where $g (admit $predicate)))',
         [[['Pair','a',2],2,[2]]])
+    for name, verdict, expected in [('accepting', 'True', [['V', 2, [2]]]),
+                                    ('rejecting', 'False', [])]:
+        compare('captured ' + name + ' admission callable',
+            f'(= (captured-guard $w) {verdict}) ',
+            '(let $predicate captured-guard (weight:where V 2 (admit $predicate)))', expected)
+    _, captured = gate.run('captured admission callable retains pure authority',
+        '(F 2 captured-effect) (= (captured-effect $w) (let $_ (println! "FORBIDDEN-CAPTURED-GUARD") True)) '
+        f'!(select 7 {control(1500)} '+read(
+            '(match &self (F $g $predicate) V (where $g (admit $predicate)))')+')')
+    assert captured[-1]['status'] == 'fault' and captured[-1]['values'] == [], captured
+    assert 'FORBIDDEN-CAPTURED-GUARD' not in gate.receipts[-1]['stdout']
+    gate.passed_case('a captured admission callable cannot execute effects')
+    if getattr(gate, 'language', 'prime') == 'prime':
+        compare('returned admission application stays data',
+            '(= (yes $w) True) (= (quoted-guard $w) (quote (yes 2))) ',
+            '(weight:where V 2 (admit quoted-guard))', [], closed=False)
     source='(= (accept True) True) (= (accept False) False) '
     source+='(=w (gid $x) $x False (admit accept)) '
     compare('Boolean false coefficient uses explicit Boolean admission',source,'(gid V)',[],

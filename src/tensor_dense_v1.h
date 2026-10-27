@@ -122,6 +122,8 @@ CettaDenseTensorV1Status cetta_dense_tensor_v1_encode(const CettaDenseTensorV1 *
 CettaDenseTensorV1Status cetta_dense_tensor_v1_decode(const unsigned char *bytes,
     size_t size, CettaDenseTensorV1 **out);
 void cetta_dense_tensor_v1_print(const CettaDenseTensorV1 *tensor, FILE *out);
+/* Exact provider ownership; a shared spelling prefix grants no capability. */
+bool cetta_dense_tensor_v1_owns_head(const Atom *head);
 Atom *cetta_dense_tensor_v1_dispatch(Arena *arena, Atom *head, Atom **args, uint32_t nargs);
 
 #endif

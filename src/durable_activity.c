@@ -17,7 +17,7 @@ typedef struct {
     CettaDurableWatch *watch;
     CettaHostDecision *decision;
     int64_t revision, position;
-    bool seen;
+    bool seen,retiring,remove_after_cleanup,cleanup_atomic;
 } Candidate;
 struct CettaActivityRuntime {
     CettaDurableStore *store;
@@ -49,6 +49,79 @@ static bool integer(const Atom *a, int64_t *out) {
     if (!a || a->kind!=ATOM_GROUNDED || a->ground.gkind!=GV_INT) return false;
     *out=a->ground.ival; return true;
 }
+static void add_count(uint64_t *total,uint64_t amount) {
+    *total=*total>UINT64_MAX-amount?UINT64_MAX:*total+amount;
+}
+typedef enum {
+    ACTIVITY_SLOT_ADMISSION,
+    ACTIVITY_SLOT_PREPARATION,
+    ACTIVITY_SLOT_EXECUTION,
+    ACTIVITY_SLOT_DELIVERY,
+    ACTIVITY_SLOT_TEARDOWN,
+    ACTIVITY_SLOT_ARRIVALS,
+    ACTIVITY_SLOT_BOOKKEEPING,
+} ActivitySlotPhase;
+static void slot_add(CettaActivitySlotAccount *account,
+        ActivitySlotPhase phase,uint64_t units) {
+    if (!account || !units) return;
+    uint64_t *field=NULL;
+    switch(phase) {
+    case ACTIVITY_SLOT_ADMISSION: field=&account->admission;break;
+    case ACTIVITY_SLOT_PREPARATION: field=&account->preparation;break;
+    case ACTIVITY_SLOT_EXECUTION: field=&account->execution;break;
+    case ACTIVITY_SLOT_DELIVERY: field=&account->delivery;break;
+    case ACTIVITY_SLOT_TEARDOWN: field=&account->teardown;break;
+    case ACTIVITY_SLOT_ARRIVALS: field=&account->arrivals;break;
+    case ACTIVITY_SLOT_BOOKKEEPING: field=&account->bookkeeping;break;
+    }
+    if (!field || *field>UINT64_MAX-units || account->total>UINT64_MAX-units) {
+        account->complete=false;return;
+    }
+    *field+=units;account->total+=units;
+}
+static void slot_add_plan(CettaActivitySlotAccount *account,
+        const CettaHostPlanReceipt *receipt) {
+    if (!account || !receipt || !receipt->complete) {
+        if (account) account->complete=false;
+        return;
+    }
+    for(uint8_t i=0u;i<receipt->count;i++) {
+        const CettaHostPlanOccurrence *item=&receipt->occurrences[i];
+        ActivitySlotPhase phase=ACTIVITY_SLOT_BOOKKEEPING;
+        switch(item->tag) {
+        case CETTA_HOST_PLAN_SETUP:
+        case CETTA_HOST_PLAN_PREPARATION: phase=ACTIVITY_SLOT_PREPARATION;break;
+        case CETTA_HOST_PLAN_ADMISSION_READY:
+        case CETTA_HOST_PLAN_ADMISSION_PAUSED:
+        case CETTA_HOST_PLAN_ADMISSION_REFUSED:
+        case CETTA_HOST_PLAN_ADMISSION_INVALIDATED:
+            phase=ACTIVITY_SLOT_ADMISSION;break;
+        case CETTA_HOST_PLAN_PRODUCER:
+        case CETTA_HOST_PLAN_SOURCE_WORK: phase=ACTIVITY_SLOT_EXECUTION;break;
+        case CETTA_HOST_PLAN_CONSUMER:
+        case CETTA_HOST_PLAN_TRANSPORT:
+        case CETTA_HOST_PLAN_FINAL_CURRENT: phase=ACTIVITY_SLOT_DELIVERY;break;
+        case CETTA_HOST_PLAN_RETIREMENT:
+        case CETTA_HOST_PLAN_CLEANUP_WORK:
+        case CETTA_HOST_PLAN_CLEANUP_POLL:
+        case CETTA_HOST_PLAN_RETURN_CLEANUP:
+        case CETTA_HOST_PLAN_DECISION_RELEASE:
+            phase=ACTIVITY_SLOT_TEARDOWN;break;
+        }
+        slot_add(account,phase,item->event.units);
+    }
+}
+static void add_protocol(
+    CettaOwnedTaskAccount *total,const CettaOwnedTaskAccount *next) {
+    add_count(&total->admission,next->admission);
+    add_count(&total->producer,next->producer);
+    add_count(&total->consumer,next->consumer);
+    add_count(&total->final_is_current,next->final_is_current);
+    add_count(&total->rotations,next->rotations);
+    add_count(&total->retirements,next->retirements);
+    add_count(&total->cleanup_polls,next->cleanup_polls);
+    add_count(&total->cleanup_work,next->cleanup_work);
+}
 static bool version(const Atom *a) { int64_t n; return integer(a,&n) && n==1; }
 static bool config_valid(const CettaActivityConfig *c) {
     if (!c || !c->program || !c->program->context || !c->program->context->session.profile)
@@ -57,11 +130,17 @@ static bool config_valid(const CettaActivityConfig *c) {
     bool admitted=c->planning.quantum?
         session->language_id==CETTA_LANGUAGE_PRIME && session->profile->id==CETTA_PROFILE_PRIME_DEFAULT &&
             c->planning.quantum!=UINT64_MAX && c->planning.work_limit!=UINT64_MAX &&
-            c->planning.preparation_inspections && c->planning.preparation_bytes && c->planning.results:
+            c->planning.preparation_inspections && c->planning.preparation_bytes && c->planning.results &&
+            c->planning.return_slice.limit_preparation && c->planning.return_slice.preparation &&
+            c->planning.return_slice.preparation!=UINT64_MAX &&
+            c->planning.return_slice.limit_transport && c->planning.return_slice.transport &&
+            c->planning.return_slice.transport!=UINT64_MAX:
         c->fuel>0 && session->language_id==CETTA_LANGUAGE_HE && session->profile->id==CETTA_PROFILE_HE_EXTENDED;
-    return admitted && c->program->version && !strcmp(c->program->version,"activity/1") &&
+    return admitted && c->cleanup_quantum!=UINT64_MAX &&
+        c->program->version && !strcmp(c->program->version,"activity/1") &&
         c->program->space && c->program->context && component(c->worker) &&
-        c->ready_capacity<=4096;
+        c->ready_capacity && c->ready_capacity<=4096 &&
+        c->worker_peer_capacity && c->worker_peer_capacity<=4096;
 }
 static CettaDurableStatus read(CettaDurableStore *store, const char *space,
         const char *key, Arena *arena, CettaDurableObservation **o, Atom **value) {
@@ -108,8 +187,9 @@ CettaDurableStatus cetta_activity_record(CettaDurableStore *store,
     }
     cetta_durable_observation_free(o); free(bytes); arena_free(&a); return s;
 }
-CettaDurableStatus cetta_activity_decide(CettaDurableStore *store,
-        const CettaActivityConfig *c, const char *input_key, CettaHostDecision **out) {
+static CettaDurableStatus activity_decide(CettaDurableStore *store,
+        const CettaActivityConfig *c,const char *input_key,
+        CettaActivitySlotAccount *account,CettaHostDecision **out) {
     if (!out) return DURABLE_INVALID;
     *out=NULL;
     if (!store || !config_valid(c) || !input_key || !*input_key || strnlen(input_key,256)>255) return DURABLE_INVALID;
@@ -175,6 +255,7 @@ CettaDurableStatus cetta_activity_decide(CettaDurableStore *store,
         s=cetta_durable_observe(store,&q,1,&intent); if (s!=DURABLE_OK) goto done;
         const CettaDurableSnapshot *intents=cetta_durable_observation_view(intent,0);
         for (size_t i=0;i<intents->count;++i) {
+            slot_add(account,ACTIVITY_SLOT_ADMISSION,1u);
             char identity[96]; const CettaDurableRecord *record=&intents->records[i];
             snprintf(identity,sizeof(identity),"%s/%" PRId64 "/%" PRId64,intents->epoch,record->revision,record->position);
             if (!strcmp(effect_id,identity)) { timer_intent=record; break; }
@@ -212,70 +293,151 @@ done:
     cetta_host_decision_free(d); cetta_durable_observation_free(input);
     cetta_durable_observation_free(origin); cetta_durable_observation_free(intent); arena_free(&a); return s;
 }
-static void remove_candidate(CettaActivityRuntime *r, Candidate *entry) {
+CettaDurableStatus cetta_activity_decide(CettaDurableStore *store,
+        const CettaActivityConfig *c,const char *input_key,CettaHostDecision **out) {
+    return activity_decide(store,c,input_key,NULL,out);
+}
+static void retire_candidate(CettaActivityRuntime *r,Candidate *entry,bool remove) {
+    if (r->config.cleanup_quantum && entry->decision) {
+        entry->retiring=true;
+        entry->remove_after_cleanup|=remove;
+        return;
+    }
     cetta_host_decision_free(entry->decision);
+    entry->decision=NULL;
+    if (!remove) return;
     cetta_durable_watch_free(entry->watch); cetta_ready_remove(&r->queue,&entry->link);
     *entry=(Candidate){0};
 }
-static CettaDurableStatus refresh(CettaActivityRuntime *r) {
+static void remove_candidate(CettaActivityRuntime *r,Candidate *entry) {
+    retire_candidate(r,entry,true);
+}
+static CettaDurableStatus cleanup_visit(CettaActivityRuntime *r,Candidate *entry,
+        CettaActivitySlotAccount *account) {
+    CettaHostPlanPollAccount poll={0};uint64_t used=0u;
+    CettaOwnedReleaseStep status=cetta_host_decision_release_poll(&entry->decision,
+        r->config.cleanup_quantum,r->config.allow_atomic_cleanup,&used,&poll);
+    uint64_t total=0u;
+    if (used>r->config.cleanup_quantum ||
+        !cetta_host_plan_receipt_total(&poll.receipt,&total)) return DURABLE_CORRUPT;
+    slot_add_plan(account,&poll.receipt);
+    add_protocol(&r->stats.plan_protocol,&poll.protocol);
+    add_count(&r->stats.plan_setup,poll.setup.inspections);
+    add_count(&r->stats.plan_setup_bytes,poll.setup.arena_bytes);
+    add_count(&r->stats.plan_receipt_events,poll.receipt.count);
+    add_count(&r->stats.plan_receipt_units,total);
+    add_count(&r->stats.cleanup_polls,1u);
+    add_count(&r->stats.cleanup_units,used);
+    entry->cleanup_atomic=status==CETTA_OWNED_RELEASE_ATOMIC;
+    if (entry->cleanup_atomic) add_count(&r->stats.cleanup_atomic_waits,1u);
+    if (status==CETTA_OWNED_RELEASE_COMPLETE) {
+        if (entry->decision) return DURABLE_CORRUPT;
+        add_count(&r->stats.cleanup_completed,1u);
+        bool remove=entry->remove_after_cleanup;
+        entry->retiring=false;entry->remove_after_cleanup=false;entry->cleanup_atomic=false;
+        if (remove) {
+            slot_add(account,ACTIVITY_SLOT_TEARDOWN,1u);
+            remove_candidate(r,entry);
+            /* Released capacity can admit durable inputs left behind a full
+             * queue; rescan them before sleeping on external activity. */
+            r->next_deadline_ms=0;
+        }
+    }
+    return DURABLE_OK;
+}
+static CettaDurableStatus refresh(CettaActivityRuntime *r,
+        CettaActivitySlotAccount *account) {
     CettaDurableSnapshot inbox={0};
+    slot_add(account,ACTIVITY_SLOT_ARRIVALS,1u);
     CettaDurableStatus s=cetta_durable_snapshot(r->store,"host.inbox",&inbox);
     if (s!=DURABLE_OK) return s;
     for (CettaReadyLink *p=r->queue.first;p;p=p->next) {
         Candidate *entry=(Candidate *)p; entry->seen=false;
-        for (size_t i=0;i<inbox.count;++i) if (!strcmp(entry->key,inbox.records[i].key)) {
+        for (size_t i=0;i<inbox.count;++i) {
+            slot_add(account,ACTIVITY_SLOT_BOOKKEEPING,1u);
+            if (!strcmp(entry->key,inbox.records[i].key)) {
             const CettaDurableRecord *record=&inbox.records[i];entry->seen=true;
             if(entry->revision!=record->revision || entry->position!=record->position) {
-                cetta_host_decision_free(entry->decision);entry->decision=NULL;
+                retire_candidate(r,entry,false);
                 cetta_durable_watch_free(entry->watch);entry->watch=NULL;
                 entry->revision=record->revision;entry->position=record->position;
             }
             break;
+            }
         }
     }
     for (CettaReadyLink *p=r->queue.first,*next;p;p=next) {
+        slot_add(account,ACTIVITY_SLOT_BOOKKEEPING,1u);
         next=p->next; if (!((Candidate *)p)->seen) remove_candidate(r,(Candidate *)p);
     }
     for (size_t i=0;i<inbox.count && r->queue.count<r->queue.capacity;++i) {
+        slot_add(account,ACTIVITY_SLOT_ARRIVALS,1u);
         char worker_prefix[80]; snprintf(worker_prefix,sizeof(worker_prefix),"worker/%s/",r->config.worker);
         const char *key=inbox.records[i].key;
         if (strncmp(key,"activity/",9) && strncmp(key,worker_prefix,strlen(worker_prefix)) &&
             strncmp(key,"timer/",6)) continue;
         bool present=false;
-        for (CettaReadyLink *p=r->queue.first;p;p=p->next) if (!strcmp(((Candidate *)p)->key,inbox.records[i].key)) { present=true; break; }
+        for (CettaReadyLink *p=r->queue.first;p;p=p->next) {
+            slot_add(account,ACTIVITY_SLOT_BOOKKEEPING,1u);
+            if (!strcmp(((Candidate *)p)->key,inbox.records[i].key)) { present=true; break; }
+        }
         if (present) continue;
-        for (size_t j=0;j<r->queue.capacity;++j) if (!r->candidates[j].link.owner) {
+        for (size_t j=0;j<r->queue.capacity;++j) {
+            slot_add(account,ACTIVITY_SLOT_BOOKKEEPING,1u);
+            if (!r->candidates[j].link.owner) {
             Candidate *entry=&r->candidates[j];
             snprintf(entry->key,sizeof(entry->key),"%s",inbox.records[i].key);
             entry->revision=inbox.records[i].revision;entry->position=inbox.records[i].position;
             if (cetta_ready_admit(&r->queue,&entry->link)!=READY_ADMITTED) s=DURABLE_CORRUPT;
             break;
+            }
         }
     }
     cetta_durable_snapshot_free(&inbox); return s;
 }
-static CettaDurableStatus visit(CettaActivityRuntime *r, Candidate *entry) {
+static CettaDurableStatus visit(CettaActivityRuntime *r, Candidate *entry,
+        CettaActivitySlotAccount *account) {
+    if (entry->retiring) return cleanup_visit(r,entry,account);
+    slot_add(account,ACTIVITY_SLOT_ADMISSION,1u);
     if (entry->watch) {
+        slot_add(account,ACTIVITY_SLOT_ADMISSION,1u);
         CettaDurableStatus s=cetta_durable_watch_current(r->store,entry->watch);
         if (s==DURABLE_OK) return DURABLE_OK;
         if (s!=DURABLE_CONFLICT) return s;
         cetta_durable_watch_free(entry->watch); entry->watch=NULL;
-        cetta_host_decision_free(entry->decision);entry->decision=NULL;
+        retire_candidate(r,entry,false);
+        if (entry->retiring) return cleanup_visit(r,entry,account);
     }
     CettaHostDecision *d=entry->decision;
-    CettaDurableStatus s=d?DURABLE_OK:cetta_activity_decide(r->store,&r->config,entry->key,&d);
+    if (!d) slot_add(account,ACTIVITY_SLOT_ADMISSION,1u);
+    CettaDurableStatus s=d?DURABLE_OK:
+        activity_decide(r->store,&r->config,entry->key,account,&d);
     entry->decision=d;
+    bool remove=false;
     if (s==DURABLE_OK) {
         if (r->config.planning.quantum) {
             CettaOwnedTask *task=cetta_host_plan_task(d);
             if (!task) return DURABLE_CORRUPT;
-            uint64_t before=cetta_host_outcome(d)->steps_spent;
-            cetta_owned_task_poll(task,true);
+            CettaHostPlanPollAccount poll={0};
+            if (cetta_host_plan_poll_accounted(d,true,&poll)!=DURABLE_OK)
+                return DURABLE_CORRUPT;
+            slot_add_plan(account,&poll.receipt);
+            uint64_t receipt_units=0u;
+            if (!cetta_host_plan_receipt_total(&poll.receipt,&receipt_units))
+                return DURABLE_CORRUPT;
             const EvalOutcome *pending=cetta_host_outcome(d);
+            if (!pending) return DURABLE_CORRUPT;
             ++r->stats.plan_polls;
-            r->stats.plan_work+=pending->steps_spent-before;
+            add_count(&r->stats.plan_setup,poll.setup.inspections);
+            add_count(&r->stats.plan_setup_bytes,poll.setup.arena_bytes);
+            add_count(&r->stats.plan_work,poll.source_work);
+            add_count(&r->stats.plan_preparation,poll.returns.preparation);
+            add_count(&r->stats.plan_transport,poll.returns.transport);
+            add_count(&r->stats.plan_receipt_events,poll.receipt.count);
+            add_count(&r->stats.plan_receipt_units,receipt_units);
+            add_protocol(&r->stats.plan_protocol,&poll.protocol);
             if (!task->execution.terminal) {
-                if (!pending || pending->completion==CETTA_EVAL_INCOMPLETE_HOST_FAILURE)
+                if (pending->completion==CETTA_EVAL_INCOMPLETE_HOST_FAILURE)
                     return DURABLE_INVALID;
                 if (pending->completion==CETTA_EVAL_INCOMPLETE_CAPACITY && task->execution.has_pending)
                     return DURABLE_LIMIT;
@@ -284,57 +446,69 @@ static CettaDurableStatus visit(CettaActivityRuntime *r, Candidate *entry) {
                 return DURABLE_OK;
             }
         }
-        /* Terminal publication below may retire this candidate. The local
-         * owner is released once, after acceptance or refusal. */
-        entry->decision=NULL;
+        /* Terminal publication may retire this candidate. Keep its decision
+         * on the entry until the selected cleanup service finishes. */
         const EvalOutcome *o=cetta_host_outcome(d);
         if (!o || o->completion!=CETTA_EVAL_COMPLETE || o->effect_denials) s=DURABLE_INVALID;
         else if (!o->results.len || (o->results.len==1 && atom_is_symbol(o->results.items[0],"Empty"))) {
             ++r->stats.blocked; s=cetta_host_watch(d,65536,&entry->watch);
         } else if (o->results.len!=1) s=DURABLE_INVALID;
         else {
+            slot_add(account,ACTIVITY_SLOT_DELIVERY,1u);
             CettaHostCommit commit; s=cetta_host_accept(d,0,&commit);
             if (s==DURABLE_OK) {
-                ++r->stats.accepted; remove_candidate(r,entry);
+                ++r->stats.accepted;remove=true;
                 if (commit.effects) r->next_deadline_ms=0; /* recheck newly accepted timers before sleeping */
             }
         }
     } else if (s==DURABLE_PRECONDITION) {
+        slot_add(account,ACTIVITY_SLOT_ADMISSION,1u);
         CettaDurableScope scope={DURABLE_KEY,"host.inbox",entry->key};
         CettaDurableObservation *o=NULL;
         s=cetta_durable_observe(r->store,&scope,1,&o);
         if (s==DURABLE_OK) s=cetta_durable_watch_new(o,65536,&entry->watch);
         cetta_durable_observation_free(o);
     }
-    cetta_host_decision_free(d);
+    retire_candidate(r,entry,remove);
     return s==DURABLE_CONFLICT || s==DURABLE_BUSY?DURABLE_OK:s;
 }
-static CettaDurableStatus publish_one(CettaActivityRuntime *r) {
+static CettaDurableStatus publish_one(CettaActivityRuntime *r,
+        CettaActivitySlotAccount *account) {
     CettaDurableScope scopes[]={{DURABLE_SPACE,"host.outbox",NULL},
         {DURABLE_SPACE,"activity.publications",NULL}};
     CettaDurableObservation *o=NULL;
+    slot_add(account,ACTIVITY_SLOT_DELIVERY,1u);
     CettaDurableStatus s=cetta_durable_observe(r->store,scopes,2,&o);
     if (s!=DURABLE_OK) return s;
     const CettaDurableSnapshot *intents=cetta_durable_observation_view(o,0), *published=cetta_durable_observation_view(o,1);
     Arena a; arena_init(&a);
     r->output_pending=false;
     for (size_t i=0;i<intents->count;++i) {
+        slot_add(account,ACTIVITY_SLOT_DELIVERY,1u);
         const CettaDurableRecord *record=&intents->records[i]; bool done=false;
-        for (size_t j=0;j<published->count;++j) if (!strcmp(record->key,published->records[j].key)) { done=true; break; }
+        for (size_t j=0;j<published->count;++j) {
+            slot_add(account,ACTIVITY_SLOT_BOOKKEEPING,1u);
+            if (!strcmp(record->key,published->records[j].key)) { done=true; break; }
+        }
         if (done) continue;
         Atom *intent=NULL; s=cetta_durable_value_decode(&a,record->data,record->size,&intent); if (s!=DURABLE_OK) break;
+        slot_add(account,ACTIVITY_SLOT_DELIVERY,1u);
         if (!form(intent,"host:intent",6) || !form(intent->expr.elems[5],"activity:return",5)) continue;
         char id[65]; s=cetta_worker_register(r->store,record->key,r->config.worker,id);
+        slot_add(account,ACTIVITY_SLOT_DELIVERY,1u);
         if (s==DURABLE_LIMIT) { s=DURABLE_OK; break; }
         if (s!=DURABLE_OK) break;
         r->output_pending=true;
         /* Publication is independently idempotent. If this acknowledgment
          * commit is interrupted, repeating register cannot repeat the task. */
         CettaDurableScope q={DURABLE_KEY,"activity.publications",record->key};
-        CettaDurableObservation *seen=NULL; s=cetta_durable_observe(r->store,&q,1,&seen);
+        CettaDurableObservation *seen=NULL;
+        slot_add(account,ACTIVITY_SLOT_DELIVERY,1u);
+        s=cetta_durable_observe(r->store,&q,1,&seen);
         if (s==DURABLE_OK && !cetta_durable_observation_view(seen,0)->count) {
             static const unsigned char marker[]={'C','D','V','1','Y'}; int64_t revision;
             CettaDurableOp op={DURABLE_INSERT,"activity.publications",record->key,marker,sizeof(marker)};
+            slot_add(account,ACTIVITY_SLOT_DELIVERY,1u);
             s=cetta_durable_commit_observed(r->store,seen,&op,1,&revision);
         }
         cetta_durable_observation_free(seen); if (s==DURABLE_OK) ++r->stats.published; break;
@@ -344,7 +518,8 @@ static CettaDurableStatus publish_one(CettaActivityRuntime *r) {
 static void timer_fault(void *context, const char *key, CettaDurableStatus s) {
     (void)key; CettaActivityRuntime *r=context; r->failed=s;
 }
-static CettaDurableStatus retire_one_timer(CettaActivityRuntime *r, int64_t now) {
+static CettaDurableStatus retire_one_timer(CettaActivityRuntime *r, int64_t now,
+        CettaActivitySlotAccount *account) {
     /* Cancellation first revokes the authored continuation atomically. This
      * idempotent native cleanup can follow after any crash: a cancelled actor
      * generation cannot regain authority, and timer_cancel records a terminal
@@ -352,18 +527,23 @@ static CettaDurableStatus retire_one_timer(CettaActivityRuntime *r, int64_t now)
     CettaDurableScope scopes[]={{DURABLE_SPACE,"host.outbox",NULL},
         {DURABLE_SPACE,"host.outcomes",NULL}};
     CettaDurableObservation *o=NULL;
+    slot_add(account,ACTIVITY_SLOT_TEARDOWN,1u);
     CettaDurableStatus s=cetta_durable_observe(r->store,scopes,2,&o);
     if (s!=DURABLE_OK) return s;
     const CettaDurableSnapshot *intents=cetta_durable_observation_view(o,0),
         *outcomes=cetta_durable_observation_view(o,1);
     Arena a; arena_init(&a);
     for (size_t i=0;i<intents->count;++i) {
+        slot_add(account,ACTIVITY_SLOT_TEARDOWN,1u);
         const CettaDurableRecord *record=&intents->records[i]; bool terminal=false;
-        for (size_t j=0;j<outcomes->count;++j)
+        for (size_t j=0;j<outcomes->count;++j) {
+            slot_add(account,ACTIVITY_SLOT_BOOKKEEPING,1u);
             if (!strcmp(record->key,outcomes->records[j].key)) { terminal=true; break; }
+        }
         if (terminal) continue;
         Atom *intent=NULL;
         s=cetta_durable_value_decode(&a,record->data,record->size,&intent);
+        slot_add(account,ACTIVITY_SLOT_TEARDOWN,1u);
         if (s!=DURABLE_OK) break;
         if (!form(intent,"host:intent",6) || !form(intent->expr.elems[5],"activity:tick",5)) continue;
         Atom **reply=intent->expr.elems[5]->expr.elems;
@@ -372,6 +552,7 @@ static CettaDurableStatus retire_one_timer(CettaActivityRuntime *r, int64_t now)
             !integer(reply[4],&gen) || gen<=0) { s=DURABLE_CORRUPT; break; }
         char actor[160]; snprintf(actor,sizeof(actor),"activity/%s/%" PRId64,owner,gen);
         CettaDurableObservation *state_view=NULL; Atom *actor_value=NULL;
+        slot_add(account,ACTIVITY_SLOT_TEARDOWN,1u);
         s=read(r->store,"host.actors",actor,&a,&state_view,&actor_value);
         cetta_durable_observation_free(state_view);
         if (s==DURABLE_PRECONDITION) { s=DURABLE_OK; continue; }
@@ -385,6 +566,7 @@ static CettaDurableStatus retire_one_timer(CettaActivityRuntime *r, int64_t now)
         if (!text(state->expr.elems[2]) || !text(state->expr.elems[3]) ||
             strcmp(text(state->expr.elems[2]),id) || strcmp(text(state->expr.elems[3]),owner) ||
             !integer(state->expr.elems[4],&saved) || saved!=gen) { s=DURABLE_CORRUPT; break; }
+        slot_add(account,ACTIVITY_SLOT_TEARDOWN,1u);
         s=cetta_timer_cancel(r->store,record->key,now);
         if (s==DURABLE_OK) ++r->stats.timer_events;
         break;
@@ -403,7 +585,8 @@ CettaDurableStatus cetta_activity_new(CettaDurableStore *store,
     if (!r->candidates) { free(r); return DURABLE_NOMEM; }
     CettaDurableStatus s=cetta_durable_attach_runtime(store,r);
     if (s!=DURABLE_OK) { free(r->candidates); free(r); return s; }
-    s=cetta_worker_endpoint_new(store,c->listener,c->worker_uid,c->worker,&r->endpoint);
+    s=cetta_worker_endpoint_new_limited(store,c->listener,c->worker_uid,
+        c->worker,c->worker_peer_capacity,&r->endpoint);
     if (s!=DURABLE_OK) { cetta_durable_detach_runtime(store,r); free(r->candidates); free(r); return s; }
     *out=r; return DURABLE_OK;
 }
@@ -412,39 +595,72 @@ static uint64_t microseconds(void) {
     if (clock_gettime(CLOCK_MONOTONIC,&now)) return 0;
     return (uint64_t)now.tv_sec*1000000u+(uint64_t)now.tv_nsec/1000u;
 }
-CettaDurableStatus cetta_activity_step(CettaActivityRuntime *r, unsigned visits) {
+CettaDurableStatus cetta_activity_step_accounted(CettaActivityRuntime *r,
+        unsigned visits,CettaActivitySlotAccount *account) {
+    if (!account) return DURABLE_INVALID;
+    *account=(CettaActivitySlotAccount){.complete=true};
     if (!r || !visits || visits>64) return DURABLE_INVALID;
     if (r->failed!=DURABLE_OK) return r->failed;
     uint64_t started=microseconds(); ++r->stats.steps;
     size_t requests=0;
+    slot_add(account,ACTIVITY_SLOT_BOOKKEEPING,
+        2u*(uint64_t)cetta_worker_endpoint_slots(r->endpoint)+1u);
     CettaDurableStatus s=cetta_worker_endpoint_step(r->endpoint,0,&requests);
+    slot_add(account,ACTIVITY_SLOT_ARRIVALS,(uint64_t)requests);
     r->stats.worker_requests+=requests;
     CettaClockSample now; CettaTimerTick tick;
+    slot_add(account,ACTIVITY_SLOT_BOOKKEEPING,1u);
     if (s==DURABLE_OK && !cetta_clock_sample(&now)) s=DURABLE_IO;
-    if (s==DURABLE_OK) s=retire_one_timer(r,now.utc_ms);
+    if (s==DURABLE_OK) s=retire_one_timer(r,now.utc_ms,account);
+    slot_add(account,ACTIVITY_SLOT_BOOKKEEPING,1u);
     if (s==DURABLE_OK) s=cetta_timer_tick(r->store,&r->timers,now.utc_ms,1,timer_fault,r,&tick);
     if (s==DURABLE_OK && r->failed!=DURABLE_OK) s=r->failed;
     if (s==DURABLE_OK) {
+        slot_add(account,ACTIVITY_SLOT_BOOKKEEPING,(uint64_t)tick.visited);
+        slot_add(account,ACTIVITY_SLOT_ARRIVALS,(uint64_t)tick.emitted);
         r->stats.timer_events+=tick.emitted; r->next_deadline_ms=tick.more_due?0:tick.next_deadline_ms;
-        s=publish_one(r);
+        s=publish_one(r,account);
     }
-    if (s==DURABLE_OK) s=refresh(r);
-    for (unsigned i=0;s==DURABLE_OK && i<visits && r->queue.count;++i)
-        s=visit(r,(Candidate *)cetta_ready_rotate(&r->queue));
+    if (s==DURABLE_OK) s=refresh(r,account);
+    for (unsigned i=0;s==DURABLE_OK && i<visits && r->queue.count;++i) {
+        slot_add(account,ACTIVITY_SLOT_BOOKKEEPING,1u);
+        s=visit(r,(Candidate *)cetta_ready_rotate(&r->queue),account);
+    }
     uint64_t elapsed=microseconds()-started;
     if (elapsed>r->stats.max_step_us) r->stats.max_step_us=elapsed;
+    add_count(&r->stats.slot_admission,account->admission);
+    add_count(&r->stats.slot_preparation,account->preparation);
+    add_count(&r->stats.slot_execution,account->execution);
+    add_count(&r->stats.slot_delivery,account->delivery);
+    add_count(&r->stats.slot_teardown,account->teardown);
+    add_count(&r->stats.slot_arrivals,account->arrivals);
+    add_count(&r->stats.slot_bookkeeping,account->bookkeeping);
+    add_count(&r->stats.slot_units,account->total);
+    if(account->total>r->stats.max_slot_units)r->stats.max_slot_units=account->total;
+    if (!account->complete && s==DURABLE_OK) s=DURABLE_CORRUPT;
     if (s!=DURABLE_OK) r->failed=s;
     return s;
 }
+CettaDurableStatus cetta_activity_step(CettaActivityRuntime *r, unsigned visits) {
+    CettaActivitySlotAccount account;
+    return cetta_activity_step_accounted(r,visits,&account);
+}
 CettaDurableStatus cetta_activity_wait(CettaActivityRuntime *r, int fd, unsigned milliseconds) {
     return cetta_activity_wait_io(r,fd,-1,milliseconds);
+}
+bool cetta_activity_set_cleanup_atomic(CettaActivityRuntime *r,bool allowed) {
+    if (!r || !r->config.cleanup_quantum) return false;
+    r->config.allow_atomic_cleanup=allowed;return true;
 }
 CettaDurableStatus cetta_activity_wait_io(CettaActivityRuntime *r, int fd, int output_fd, unsigned milliseconds) {
     if (!r || fd < -1 || output_fd < -1 || milliseconds>1000) return DURABLE_INVALID;
     if (r->failed!=DURABLE_OK) return r->failed;
     if (r->output_pending) milliseconds=0;
-    for (CettaReadyLink *p=r->queue.first;p;p=p->next)
-        if (!((Candidate *)p)->watch) { milliseconds=0; break; }
+    for (CettaReadyLink *p=r->queue.first;p;p=p->next) {
+        Candidate *entry=(Candidate *)p;
+        if (entry->retiring ? (!entry->cleanup_atomic || r->config.allow_atomic_cleanup)
+                : !entry->watch) { milliseconds=0;break; }
+    }
     CettaClockSample sample;
     if (!cetta_clock_sample(&sample)) return DURABLE_IO;
     if (r->next_deadline_ms>=0) {

@@ -135,6 +135,104 @@ static void saved_open_template(void) {
     arena_free(&destination);
 }
 
+static Atom *retained_application(const Bindings *bindings, Arena *arena,
+        BindingValue source, bool graph, Atom *expected) {
+    const uint64_t quanta[] = {1u, 7u, UINT64_MAX};
+    uint64_t reference_steps = 0u;
+    Atom *completed = NULL;
+    for (size_t trial = 0u; trial < sizeof(quanta)/sizeof(*quanta); trial++) {
+        BindingsApplySession *session = bindings_apply_session_new(bindings, arena, source, graph);
+        assert(session && !bindings_apply_session_steps(session));
+        BindingsApplyStatus status = BINDINGS_APPLY_PENDING;
+        Atom *result = NULL;
+        while (status == BINDINGS_APPLY_PENDING) {
+            uint64_t before = bindings_apply_session_steps(session), used = 99u;
+            assert(bindings_apply_session_advance(session, 0u, &result, &used) ==
+                BINDINGS_APPLY_PENDING && !result && !used &&
+                bindings_apply_session_steps(session) == before);
+            status = bindings_apply_session_advance(session, quanta[trial], &result, &used);
+            assert(used && used <= quanta[trial] &&
+                bindings_apply_session_steps(session) == before + used);
+            if (status != BINDINGS_APPLY_COMPLETE) assert(!result);
+        }
+        assert((expected && status == BINDINGS_APPLY_COMPLETE && atom_eq(result, expected)) ||
+            (!expected && status == BINDINGS_APPLY_REFUSED && !result));
+        uint64_t steps = bindings_apply_session_steps(session), used = 99u;
+        if (!trial) reference_steps = steps;
+        else assert(steps == reference_steps);
+        assert(bindings_apply_session_advance(session, 7u, &completed, &used) == status &&
+            !used && completed == result && bindings_apply_session_steps(session) == steps);
+        bindings_apply_session_free(session);
+    }
+    for (uint64_t cut = 1u; cut < reference_steps && cut <= 17u; cut += 4u) {
+        BindingsApplySession *session = bindings_apply_session_new(bindings, arena, source, graph);
+        Atom *unfinished = NULL;uint64_t used = 0u;
+        assert(session && bindings_apply_session_advance(session, cut, &unfinished, &used) ==
+            BINDINGS_APPLY_PENDING && !unfinished && used == cut);
+        bindings_apply_session_free(session);
+        if (expected) assert(completed && atom_eq(completed, expected));
+    }
+    return completed;
+}
+
+static Atom *retained_graph_image(Bindings *bindings, Arena *arena, Atom *source) {
+    Atom *expected = bindings_apply_graph(bindings, arena, source);
+    return retained_application(bindings, arena, binding_value_from_atom(source), true, expected);
+}
+
+static void retained_application_controls(void) {
+    Arena source, destination;arena_init_detached(&source);arena_init_detached(&destination);
+    Bindings bindings;bindings_init(&bindings);
+    Atom *x = atom_var(&source, "retained-x"), *y = atom_var(&source, "retained-y");
+    Atom *seven = atom_int(&source, 7);
+    assert(bindings_add_var_acyclic(&bindings, x, seven));
+    Atom *children[2048];
+    for (unsigned i = 0u; i < 2048u; i++) children[i] = atom_int(&source, i);
+    children[2047] = x;
+    Atom *wide = atom_expr(&source, children, 2048u);
+    Atom *expected = bindings_apply(&bindings, &destination, wide);
+    Atom *out = retained_application(&bindings, &destination, binding_value_from_atom(wide),
+        false, expected);
+    assert(out->expr.len == 2048u && out->expr.elems[2047] == seven);
+    /* The source prefix remains intact through every partial-copy cut. */
+    for (unsigned i = 0u; i < 2047u; i++) assert(wide->expr.elems[i] == children[i]);
+    Atom *leaf = atom_expr2(&source, atom_symbol(&source, "shared"), x);
+    Atom *dag = leaf;
+    for (unsigned i = 0u; i < 18u; i++) dag = atom_expr2(&source, dag, dag);
+    out = retained_graph_image(&bindings, &destination, dag);
+    for (unsigned i = 0u; i < 18u; i++) {
+        assert(out->expr.elems[0] == out->expr.elems[1]);out = out->expr.elems[0];
+    }
+    assert(out->expr.elems[1] == seven);
+    CETTA_FRAME_IDENTITY_SCOPE(frames);
+    CettaFrameIdentity frame = cetta_frame_identity_scope_fresh(&frames);
+    VarId ids[] = {x->var_id, y->var_id};
+    assert(bindings_register_contextual_frame(&bindings, ids, 2u, frame));
+    assert(bindings_add_id(&bindings, var_epoch_id(x->var_id, frame), SYMBOL_ID_NONE, seven));
+    Atom *pair = atom_expr2(&source, x, y);
+    BindingValue contextual = binding_value_from_context(pair, frame);
+    expected = bindings_apply_value(&bindings, &destination, contextual);
+    out = retained_application(&bindings, &destination, contextual, false, expected);
+    assert(out->expr.elems[0] == seven &&
+        var_id_eq(out->expr.elems[1]->var_id, var_epoch_id(y->var_id, frame)));
+    /* A list-rest child needs its existing splicing finisher, not the raw
+     * expression constructor's refusal or a silently truncated list. */
+    Atom *list = atom_list_with_rest(&source, &x, 1u, y);
+    expected = bindings_apply(&bindings, &destination, list);
+    out = retained_application(&bindings, &destination, binding_value_from_atom(list), false, expected);
+    assert(out && atom_eq(out, atom_list_with_rest(&destination, &seven, 1u, y)));
+    ArenaMark mark = arena_mark(&destination);
+    BindingsApplySession *session = bindings_apply_session_new(&bindings, &destination,
+        binding_value_from_atom(wide), false);
+    assert(session);assert(atom_int(&destination, 31337));arena_reset(&destination, mark);
+    uint64_t used = 99u;out = NULL;
+    assert(bindings_apply_session_advance(session, 1u, &out, &used) == BINDINGS_APPLY_REFUSED &&
+        !out && !used);
+    bindings_apply_session_free(session);
+    bindings_free(&bindings);arena_free(&destination);arena_free(&source);
+    puts("PASS: retained binding application preserves exact cuts, lexical contexts, shared graphs, wide prefixes, list splicing and reset refusal");
+}
+
 static void shared_lexical_readings(void) {
     Arena arena;
     arena_init_detached(&arena);
@@ -155,7 +253,7 @@ static void shared_lexical_readings(void) {
     assert(bindings_add_id(&env, var_epoch_id(slot->var_id, second), atom_symbol_current_id(slot), b));
     Atom *pair = atom_expr2(&arena, x, y);
     Atom *ordinary = bindings_apply(&env, &arena, pair);
-    Atom *shared = bindings_apply_graph(&env, &arena, pair);
+    Atom *shared = retained_graph_image(&env, &arena, pair);
     assert(ordinary && shared && atom_eq(ordinary, shared));
     assert(shared->expr.elems[0]->expr.elems[1] == a);
     assert(shared->expr.elems[1]->expr.elems[1] == b);
@@ -222,7 +320,7 @@ static void shared_quotation_readings(void) {
         Atom *term = reverse ? atom_expr3(&source, pair, quoted, shared)
                              : atom_expr3(&source, pair, shared, quoted);
         Atom *ordinary = bindings_apply(&env, &ordinary_arena, term);
-        Atom *graph = bindings_apply_graph(&env, &graph_arena, term);
+        Atom *graph = retained_graph_image(&env, &graph_arena, term);
         assert(ordinary && graph && atom_eq(ordinary, graph));
         Atom *outside = graph->expr.elems[reverse ? 2u : 1u];
         Atom *inside = graph->expr.elems[reverse ? 1u : 2u]->expr.elems[1];
@@ -230,7 +328,7 @@ static void shared_quotation_readings(void) {
         assert(inside->expr.elems[1] == payload);
         assert(outside != inside);
     }
-    Atom *same_depth = bindings_apply_graph(&env, &graph_arena,
+    Atom *same_depth = retained_graph_image(&env, &graph_arena,
         atom_expr3(&source, pair, shared, shared));
     assert(same_depth && same_depth->expr.elems[1] == same_depth->expr.elems[2]);
     Atom *inside_pair = atom_expr3(&source, pair, shared, shared);
@@ -238,7 +336,7 @@ static void shared_quotation_readings(void) {
     Atom *nested = atom_expr3(&source, pair, quoted_pair,
         atom_expr2(&source, quote, quoted_pair));
     Atom *ordinary = bindings_apply(&env, &ordinary_arena, nested);
-    Atom *graph = bindings_apply_graph(&env, &graph_arena, nested);
+    Atom *graph = retained_graph_image(&env, &graph_arena, nested);
     assert(ordinary && graph && atom_eq(ordinary, graph));
     Atom *first = graph->expr.elems[1]->expr.elems[1];
     Atom *second = graph->expr.elems[2]->expr.elems[1]->expr.elems[1];
@@ -256,7 +354,7 @@ static void shared_quotation_readings(void) {
     Atom *grown = atom_expr3(&source, pair, both,
         atom_expr2(&source, quote, both));
     ordinary = bindings_apply(&env, &ordinary_arena, grown);
-    graph = bindings_apply_graph(&env, &graph_arena, grown);
+    graph = retained_graph_image(&env, &graph_arena, grown);
     assert(ordinary && graph && atom_eq(ordinary, graph));
     Atom *outside = graph->expr.elems[1];
     Atom *inside = graph->expr.elems[2]->expr.elems[1];
@@ -271,10 +369,10 @@ static void shared_quotation_readings(void) {
      * changes quotation depth. The explicit rational carrier is separate. */
     Atom *cycle = atom_expr2(&source, quote, hole);
     cycle->expr.elems[1] = cycle;
-    assert(!bindings_apply_graph(&env, &graph_arena, cycle));
+    assert(!retained_graph_image(&env, &graph_arena, cycle));
     Atom *plain_cycle = atom_expr2(&source, row_head, hole);
     plain_cycle->expr.elems[1] = plain_cycle;
-    assert(!bindings_apply_graph(&env, &graph_arena, plain_cycle));
+    assert(!retained_graph_image(&env, &graph_arena, plain_cycle));
     bindings_structure_hooks_set(previous);
     bindings_free(&env);
     arena_free(&graph_arena);
@@ -304,7 +402,7 @@ static void shared_formed_quotation_readings(void) {
         Atom *term = reverse ? atom_expr3(&source, pair, quoted, call)
                              : atom_expr3(&source, pair, call, quoted);
         Atom *ordinary = bindings_apply(&env, &ordinary_arena, term);
-        Atom *graph = bindings_apply_graph(&env, &graph_arena, term);
+        Atom *graph = retained_graph_image(&env, &graph_arena, term);
         assert(ordinary && graph && atom_eq(ordinary, graph));
         assert(atom_is_symbol(graph->expr.elems[reverse ? 2u : 1u]->expr.elems[0],
                               "formed-value"));
@@ -318,7 +416,7 @@ static void shared_formed_quotation_readings(void) {
     for (unsigned reverse = 0u; reverse < 2u; ++reverse) {
         Atom *term = reverse ? atom_expr3(&source, pair, quoted, call)
                              : atom_expr3(&source, pair, call, quoted);
-        assert(!bindings_apply_graph(&env, &graph_arena, term));
+        assert(!retained_graph_image(&env, &graph_arena, term));
     }
     bindings_structure_hooks_set(previous);
     bindings_free(&env);
@@ -494,7 +592,7 @@ static void frame_inventory_shared_readings(void) {
     assert(bindings_add_id(&env, var_epoch_id(b->var_id, second), atom_symbol_current_id(b),
                            atom_int(&source, 4)));
     assert(env.len == 2u && env.frame_index->bound_value_count == 4u);
-    Atom *result = bindings_apply_graph(&env, &destination,
+    Atom *result = retained_graph_image(&env, &destination,
         atom_expr2(&source, left, right));
     assert(result && result->expr.elems[0] != result->expr.elems[1]);
     for (unsigned side = 0u; side < 2u; ++side) {
@@ -620,8 +718,7 @@ static void frame_inventory_growth_and_cleanup(void) {
     assert(frame && frame->slot_len == 65u && frame->schema->len == 65u);
     assert(var_id_eq(bindings_frame_slot_source_id(frame, 0u), var_source_id(common->var_id)));
     for (unsigned i = 0u; i < 64u; ++i)
-        assert(var_id_eq(bindings_frame_slot_source_id(frame, i + 1u),
-                 var_source_id(variables[i]->var_id)));
+        assert(var_id_eq(bindings_frame_slot_source_id(frame, i + 1u), var_source_id(variables[i]->var_id)));
     bindings_free(&env);
 
     /* The rightmost rows grow the work stack, expression memo, variable
@@ -647,6 +744,7 @@ int main(void) {
     saved_match();
     saved_permutation();
     saved_open_template();
+    retained_application_controls();
     shared_lexical_readings();
     shared_quotation_readings();
     shared_formed_quotation_readings();

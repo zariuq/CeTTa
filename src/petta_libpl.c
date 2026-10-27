@@ -2269,7 +2269,7 @@ static void petta_libpl_register_reference_stdlib(
         if (symbol == SYMBOL_ID_NONE ||
             petta_semantics_form(symbol) != PETTA_FORM_NONE ||
             is_grounded_op(symbol) ||
-            symbol_id_is_builtin(symbol) ||
+            symbol_id_is_builtin_for(symbol, CETTA_LANGUAGE_PETTA) ||
             petta_semantics_is_mm2_exec(symbol))
             continue;
         PettaLibplImport *entry =
@@ -2312,7 +2312,7 @@ static PettaLibplImport *petta_libpl_probe_system_function(
      */
     if (petta_semantics_form(head) != PETTA_FORM_NONE ||
         is_grounded_op(head) ||
-        symbol_id_is_builtin(head) ||
+        symbol_id_is_builtin_for(head, CETTA_LANGUAGE_PETTA) ||
         petta_semantics_is_mm2_exec(head))
         return NULL;
     PettaLibplImport *existing =

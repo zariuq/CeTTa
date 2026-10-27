@@ -132,7 +132,7 @@ static void test_flat_and_captured_readers(TermUniverse *universe, Arena *arena)
     assert(space_occurrence_cursor_init(&space, query, &first));
     assert(first.flat_mode && captured_len > 2u);
     CettaIndex position;
-    assert(space_occurrence_cursor_next(&first, &position) == SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(space_occurrence_cursor_next(&first, &position, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
     assert(position == captured[0]);
     assert(space_occurrence_cursor_clone(&first, &exact));
     assert(space_occurrence_cursor_clone_unstarted(&first, &rewind));
@@ -158,16 +158,16 @@ static void test_flat_and_captured_readers(TermUniverse *universe, Arena *arena)
     space_occurrence_cursor_release(&first);
     space_free(&space);
     for (CettaIndex index = 1u; index < captured_len; index++) {
-        assert(space_occurrence_cursor_next(&exact, &position) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(space_occurrence_cursor_next(&exact, &position, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
         assert(position == captured[index]);
         assert(space_occurrence_cursor_atom(&exact, position));
     }
     for (CettaIndex index = 0u; index < captured_len; index++) {
-        assert(space_occurrence_cursor_next(&rewind, &position) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(space_occurrence_cursor_next(&rewind, &position, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
         assert(position == captured[index]);
     }
-    assert(space_occurrence_cursor_next(&exact, &position) == SPACE_OCCURRENCE_CURSOR_END);
-    assert(space_occurrence_cursor_next(&rewind, &position) == SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next(&exact, &position, NULL) == SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next(&rewind, &position, NULL) == SPACE_OCCURRENCE_CURSOR_END);
     space_occurrence_cursor_release(&exact);
     space_occurrence_cursor_release(&rewind);
     free(captured);
@@ -212,7 +212,9 @@ static void test_uncertain_rows_keep_rigid_prefixes(TermUniverse *universe,
     CettaIndex *positions = NULL, count = 0u, capacity = 0u;
     assert(space_path_index_candidates(&space, query, &positions, &count, &capacity));
     assert(count == 13u);
-    assert(capacity >= count);
+    /* Head-partitioned uncertain rows allocate only the query head's
+     * candidates; the 64 open rows of the other constructor stay out. */
+    assert(capacity == count && capacity == 13u);
     /* Eight matching ground occurrences, then the variable-headed row,
      * whole-row variable and correlated row of the right constructor. */
     for (CettaIndex index = 0u; index < 8u; index++)
@@ -440,7 +442,8 @@ static void test_string_prefixes_collisions_and_binary_values(TermUniverse *univ
     assert(space_path_indexes_info(&space, &info));
     assert(info.key_kind == CETTA_SPACE_PATH_STRING_HASH_KEY);
     CettaIndex *candidates = NULL, count = 0u;
-    assert(space_path_index_candidates(&space, query, &candidates, &count, NULL));
+    assert(space_path_index_candidates(
+        &space, query, &candidates, &count, NULL));
     assert(count < 8u);
     bool included_collision = false;
     for (CettaIndex index = 0; index < count; index++)
@@ -468,23 +471,32 @@ static void test_unrecorded_string_paths(Arena *arena) {
     space_init_with_universe(&space,&universe);
     space.kind=SPACE_KIND_STACK;
     Atom *head=atom_symbol_data_n(arena,"unrecorded-string-row",21u);
+    StateCell identity={0};
+    Atom *identity_value=atom_state(arena,&identity);
     for (int64_t index=0; index<512; ++index) {
         char key[32];
         snprintf(key,sizeof(key),"id-%lld",(long long)index);
-        Atom *children[]={head,atom_string(arena,key),atom_int(arena,index)};
-        assert(space_admit_atom(&space,&persistent,atom_expr(arena,children,3u)));
+        Atom *children[]={
+            head,atom_string(arena,key),atom_int(arena,index),identity_value};
+        assert(space_admit_atom(&space,&persistent,atom_expr(arena,children,4u)));
     }
 #if CETTA_MANAGED_SYMBOLS
     /* With managed symbols this fixture exercises unrecorded spelled heads.
      * The same query checks also apply to the recorded representation. */
     assert(!tu_hdr(&universe,space_get_atom_id_at64(&space,0u)));
 #endif
-    Atom *children[]={head,atom_string(arena,"id-17"),atom_var(arena,"value")};
-    Atom *pattern=atom_expr(arena,children,3u);
+    Atom *children[]={head,atom_string(arena,"id-17"),atom_var(arena,"value"),
+        atom_var(arena,"identity")};
+    Atom *pattern=atom_expr(arena,children,4u);
     space.match_backend.native.cold_flat_scans=4u;
-    compare_reference(&space,arena,pattern);
+    /* The identity-bearing fourth field intentionally makes the row a
+     * decoded-only fallback. It is not copied through a substitution just to
+     * test indexing; compare the general matcher occurrence by occurrence. */
+    for (CettaIndex position=0u; position<space_length64(&space); ++position)
+        assert(direct_match(&space,arena,pattern,position)==(position==17u));
     CettaIndex *positions=NULL,count=0u;
-    assert(space_path_index_candidates(&space,pattern,&positions,&count,NULL));
+    assert(space_path_index_candidates(
+        &space, pattern, &positions, &count, NULL));
     assert(count==1u && positions[0]==17u);
     free(positions);
     space_free(&space);

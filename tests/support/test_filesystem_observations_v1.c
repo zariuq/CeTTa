@@ -2,6 +2,9 @@
 #include "library_fs.h"
 #include "library.h"
 #include "stats.h"
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+#include "tests/test_runtime_stats_stubs.h"
+#endif
 #include <assert.h>
 #include <dirent.h>
 #include <errno.h>

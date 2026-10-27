@@ -513,6 +513,7 @@ static bool prime_native_return_receiver(const PrimeEvalStackFrame *frame) {
          (frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_ATOM ||
           frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_CHILDREN ||
           frame->kind == PRIME_EVAL_STACK_FRAME_FORCE ||
+          (frame->kind == PRIME_EVAL_STACK_FRAME_ALTERNATIVES && frame->ref) ||
           frame->kind == PRIME_EVAL_STACK_FRAME_BIND_FINISH)));
 }
 
@@ -537,7 +538,8 @@ static const PrimeNativeReturnAdvice *prime_native_frame_next_return(
     if (!frame || ((frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_ATOM ||
                    frame->kind == PRIME_EVAL_STACK_FRAME_NORMALIZE_CHILDREN) &&
                   frame->state != PRIME_EVAL_STACK_FRAME_WAIT_CALL)) return NULL;
-    CettaCount index = frame->kind == PRIME_EVAL_STACK_FRAME_BIND_FINISH
+    CettaCount index = (frame->kind == PRIME_EVAL_STACK_FRAME_BIND_FINISH ||
+        (frame->kind == PRIME_EVAL_STACK_FRAME_ALTERNATIVES && frame->ref))
         ? frame->stream_forwarded : frame->index;
     if (frame->kind == PRIME_EVAL_STACK_FRAME_DIALECT_SOURCE &&
         index >= frame->child.len && !frame->control_pending &&
@@ -869,7 +871,7 @@ static bool native_dialect_prepare_he_type(
     /* Host syntax keeps its declared operand policy. In particular a
      * resource constructor is an operation, not an unmatched equation call.
      * The ordinary dispatcher still owns its permission and result. */
-    if (!held_control && symbol_id_is_builtin(head) &&
+    if (!held_control && symbol_id_is_builtin_for(head, eval_current_language_id()) &&
         !is_grounded_op(head) && petta_program_head_is_intrinsic(head)) {
         *handled = false; return true;
     }
@@ -1183,7 +1185,8 @@ static bool native_dialect_schedule_type(PrimeNativeControl *control, Space *spa
             .compiler_identity=cetta_match_decision_compiler_identity()};
     PettaMachineHost host = petta_eval_machine_host(&owner->context,fuel,false,
         owner->portable,true,!owner->portable &&
-        petta_eval_machine_source_output_constraints_required(space,expression),
+        cetta_language_call_result_policy(eval_current_language_id()) ==
+            CETTA_CALL_RESULT_BY_DESTINATION,
         type_obligations,identity);
     host.externalize_equation_choices = true;
     host.admit_branch_capture = native_dialect_admit_capture;

@@ -74,7 +74,35 @@
 (= (hd2 $l) (Pair (hd $l) (hd $l)))
 !(lazy/unused-field (hd (Cons 1 (loop))))
 !(lazy/unused-field-shared (hd2 (Cons 1 (loop))))
+(= (view-cell) (Cons 1 (println! view-unused-field)))
+!(lazy/computed-head (hd (view-cell)))
 
 ; 6. An explicit suspension is data: its source is its view.
 !(explicit/delay (delay (add (S Z) Z)))
 !(explicit/quote (quote (add (S Z) Z)))
+
+; 7. A scalar projection can update a cell retained by its caller. Reclaiming
+; the projection's temporary region must keep that shared choice. Equal
+; alternatives still count twice, while separate calls remain independent.
+(= (mkdup) (S (superpose (A A B))))
+!(shared/projected-duplicates (both (mkdup)))
+!(independent/projected-calls (Pair (unS (mkc)) (unS (mkc))))
+(= region-choice (superpose (A B)))
+(= (read-region-choice) region-choice)
+!(shared/named-projections (Pair (read-region-choice) (read-region-choice)))
+
+; 8. Selecting a branch does not interpret the selected call's operands.
+; An undecided judgment retains the registry spelling it was handed, while
+; an explicitly bound Space value remains a value in its returned syntax.
+(hol:profile base)
+(= (view/ask-direct $s) (hol:proves $s (pf:by view/missing) ViewGoal))
+(= (view/ask-if $s) (if True (hol:proves $s (pf:by view/missing) ViewGoal) False))
+(= (view/ask-case $s)
+   (case True ((True (hol:proves $s (pf:by view/missing) ViewGoal)) (False no))))
+!(view/ask-direct &self)
+!(view/ask-if &self)
+!(view/ask-case &self)
+!(chain (view/ask-if &self) $r
+   (unify $r (hol:proves &self (pf:by view/missing) ViewGoal) source value))
+!(chain (let $s &self (if True (hol:proves $s (pf:by view/missing) ViewGoal) False)) $r
+   (unify $r (hol:proves &self (pf:by view/missing) ViewGoal) source value))

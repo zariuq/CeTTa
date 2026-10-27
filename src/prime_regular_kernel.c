@@ -5635,15 +5635,21 @@ static bool regular_level_search_exhausted(
     return round > instantiation->count + 1u;
 }
 
-CettaPrimeRegularKernelResult
-cetta_prime_regular_kernel_synth_intrinsic_instantiating_levels_v1(
+static CettaPrimeRegularKernelResult
+regular_synth_or_normalize_instantiating_levels(
     Arena *arena, Atom *context, Atom *term,
     const uint64_t *parameters, size_t parameter_count,
-    CettaPrimeRegularKernelBudget *budget) {
+    CettaPrimeRegularKernelBudget *budget,
+    CettaPrimeRegularKernelNormalFormV1 *normal) {
     if (!arena || !context || !term || !budget)
         return regular_level_instantiation_result(
             CETTA_PRIME_REGULAR_KERNEL_ENGINE_FAILURE,
             "invalid-level-instantiating-synthesis-input");
+    if (parameter_count == 0u && normal) {
+        *normal = cetta_prime_regular_kernel_normalize_intrinsic_v1(
+            arena, context, term, budget);
+        return regular_result(normal->status, normal->type, normal->reason);
+    }
     if (parameter_count == 0u)
         return cetta_prime_regular_kernel_synth_intrinsic_v1(
             arena, context, term, budget);
@@ -5697,13 +5703,43 @@ cetta_prime_regular_kernel_synth_intrinsic_instantiating_levels_v1(
         CettaPrimeRegularKernelResult result =
             cetta_prime_regular_kernel_synth_intrinsic_v1(
                 arena, instantiated_context, instantiated_term, budget);
-        if (regular_level_search_over(result.status, &instantiation, raises))
+        if (regular_level_search_over(result.status, &instantiation, raises)) {
+            if (normal && result.status == CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED) {
+                *normal = cetta_prime_regular_kernel_normalize_intrinsic_v1(
+                    arena, instantiated_context, instantiated_term, budget);
+                return regular_result(normal->status, normal->type, normal->reason);
+            }
             return result;
+        }
         if (regular_level_search_exhausted(&instantiation, round))
             return regular_level_instantiation_result(
                 CETTA_PRIME_REGULAR_KERNEL_OUT_OF_CLASS,
                 "level-instantiation-does-not-settle");
     }
+}
+
+CettaPrimeRegularKernelResult
+cetta_prime_regular_kernel_synth_intrinsic_instantiating_levels_v1(
+    Arena *arena, Atom *context, Atom *term,
+    const uint64_t *parameters, size_t parameter_count,
+    CettaPrimeRegularKernelBudget *budget) {
+    return regular_synth_or_normalize_instantiating_levels(
+        arena, context, term, parameters, parameter_count, budget, NULL);
+}
+
+CettaPrimeRegularKernelNormalFormV1
+cetta_prime_regular_kernel_normalize_intrinsic_instantiating_levels_v1(
+    Arena *arena, Atom *context, Atom *term,
+    const uint64_t *parameters, size_t parameter_count,
+    CettaPrimeRegularKernelBudget *budget) {
+    CettaPrimeRegularKernelNormalFormV1 normal = {0};
+    CettaPrimeRegularKernelResult result =
+        regular_synth_or_normalize_instantiating_levels(
+            arena, context, term, parameters, parameter_count, budget, &normal);
+    if (result.status != CETTA_PRIME_REGULAR_KERNEL_ESTABLISHED)
+        return (CettaPrimeRegularKernelNormalFormV1){
+            result.status, NULL, NULL, NULL, result.reason};
+    return normal;
 }
 
 CettaPrimeRegularKernelResult

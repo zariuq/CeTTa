@@ -2,6 +2,7 @@
 #define CETTA_TABLE_STORE_H
 
 #include "answer_bank.h"
+#include "eval_completion.h"
 #include "space.h"
 #include "variant_instance.h"
 
@@ -66,6 +67,7 @@ typedef bool (*TableAnswerRefVisitor)(const AnswerBank *bank,
 void table_store_init(TableStore *store, CettaTableMode mode,
                       AnswerBank *answer_bank);
 void table_store_free(TableStore *store);
+void table_store_storage_census(const TableStore *store, CettaStorageCensus *census);
 bool table_store_begin_query(TableStore *store, Space *space, uint64_t revision,
                              Atom *query, TableQueryHandle *handle);
 bool table_store_add_answer(TableQueryHandle *handle, Atom *result,
@@ -102,6 +104,28 @@ bool table_store_lookup_visit_ref(TableStore *store, Space *space,
                                   TableAnswerRefVisitor visitor,
                                   void *ctx,
                                   CettaCount *visited_out);
+/* Hit/miss and preparation completion are independent. A complete miss
+ * permits source evaluation; incomplete preparation never does. Intentional
+ * visitor false is normal early stop. visited_out counts actual callbacks,
+ * including a callback that stops. A refused materialization keeps its bank
+ * record and returns the already visited prefix without claiming exhaustion.
+ * Legacy Boolean adapters cannot distinguish miss from refusal. */
+bool table_store_lookup_checked(TableStore *store, Space *space, uint64_t revision,
+    Atom *query, Arena *out_arena, QueryResults *out,
+    CettaEvalCompletion *completion);
+bool table_store_lookup_visit_checked(TableStore *store, Space *space,
+    uint64_t revision, Atom *query, Arena *out_arena,
+    QueryResultVisitor visitor, void *ctx, CettaCount *visited_out,
+    CettaEvalCompletion *completion);
+bool table_store_lookup_visit_delayed_checked(TableStore *store, Space *space,
+    uint64_t revision, Atom *query, Arena *out_arena,
+    TableDelayedResultVisitor visitor, void *ctx, CettaCount *visited_out,
+    CettaEvalCompletion *completion);
+bool table_store_lookup_visit_ref_checked(TableStore *store, Space *space,
+    uint64_t revision, Atom *query, Arena *goal_owner,
+    TableAnswerRefVisitor visitor, void *ctx, CettaCount *visited_out,
+    CettaEvalCompletion *completion);
+
 bool table_store_put(TableStore *store, Space *space, uint64_t revision,
                      Atom *query, const QueryResults *results);
 

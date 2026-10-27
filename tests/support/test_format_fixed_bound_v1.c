@@ -6,6 +6,9 @@
 #include "atom.h"
 #include "str_natives.h"
 #include "stats.h"
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+#include "tests/test_runtime_stats_stubs.h"
+#endif
 #include <limits.h>
 #include <math.h>
 #include <stdarg.h>

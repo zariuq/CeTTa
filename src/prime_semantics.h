@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "atom.h"
+#include "call_outcome.h"
 #include "nik_direct_authority.h"
 #include "prime_typing_authority.h"
 #include "prime_regular_kernel.h"
@@ -176,6 +177,18 @@ Atom *prime_semantics_judge_typing_accounted(
     CettaPrimeTypingResourceObservationV1 *resources_out,
     Atom **canonical_term_out);
 
+/* Compute using admitted declarations only, then check that the flat authored
+ * readback equals the computed term. Both phases share the requested budget
+ * and declaration revision. An Established verdict contains TypeNormalForm;
+ * no other verdict authorizes returning a value. No evaluator is called. */
+Atom *prime_semantics_evaluate_admitted(
+    Arena *arena, Space *space, Atom *term,
+    bool steps_limited, uint64_t steps);
+
+/* Read a named application spine (app (app f a) b) as (f a b).
+ * This proposes display syntax; callers retain their own checking policy. */
+Atom *prime_semantics_flat_named_term(Arena *arena, Atom *term);
+
 /* Check already lowered, closed syntax against the current declaration
  * schemas. Uninstantiated DeclConst occurrences receive fresh universe
  * arguments, exactly as in authored checking. Lambda annotations are kept.
@@ -207,6 +220,11 @@ bool prime_semantics_written_sort_within(Arena *arena, Atom *lower, Atom *upper)
 
 Atom *prime_semantics_reduce_covered_call(
     Arena *arena, Space *space, Atom *call, int fuel);
+
+/* Does this name have a published computation rule in the selected space?
+ * Compiler classification only; execution still checks the call's types and
+ * current dependencies. Raw rule-shaped data does not satisfy this query. */
+bool prime_semantics_head_has_computation(Space *space, const Atom *head);
 
 /* One admitted equation under telescope parameters. A symbol with no
  * declaration stays a parameter of the type; it is not entered as a global.
@@ -240,6 +258,11 @@ Atom *prime_semantics_identity_iota(Atom *call);
  * the remaining binders keep their written domains, and the remaining
  * arguments apply to the result.  NULL when the head is not such a lambda. */
 Atom *prime_semantics_beta(Arena *arena, Atom *call);
+/* Runtime beta uses the written argument for capture avoidance and pattern
+ * syntax, and its supplied value carrier for runtime references. This does
+ * not allocate or interpret the carrier, nor change quotation sealing. */
+Atom *prime_semantics_beta_value(Arena *arena, Atom *call,
+                                 Atom *runtime_argument);
 
 /* The seal of quoted code (atom_is_quotation).  The session sets it:
  * Prime seals unless its profile keeps quotations as written
@@ -280,7 +303,7 @@ typedef struct {
     uint8_t readout;
 } CettaPrimeScopeProfile;
 
-/* The profile of a document that declares none: mercury-implicit per-call
+/* The profile of a document that declares none: lexical-fresh per-call
  * reference, or for the scope experiment's census and output comparison,
  * CETTA_PRIME_SCOPE_DEFAULT=ownership[/lifetime/readout] (an elaboration
  * default only; declarations and template records win). */
@@ -359,9 +382,9 @@ bool prime_semantics_binders_eq(Arena *arena, Atom *left, Atom *right)
 /* Whether the pattern holds a quotation: matched against code binder by
  * binder (prime_semantics_code_canonical). */
 bool prime_semantics_code_pattern(const Atom *pattern);
-/* Whether the pattern takes code apart: a quotation in it holds an
- * expression.  A pattern whose quotations hold bare variables takes code
- * whole and matches binder by binder exactly as it matches as written. */
+/* Whether a pattern inspects a quotation or authored lambda. Whole quoted
+ * holes also require native ownership: their parts are completed values,
+ * not expressions to run again when passed through another call. */
 bool prime_semantics_pattern_takes_code_apart(const Atom *pattern);
 /* Whether `term` is a binder form (let, let*, case, switch, unify, match,
  * chain, filter-atom) whose pattern positions take code apart. */
@@ -405,6 +428,19 @@ const char *prime_semantics_elaboration_error(void) __attribute__((weak));
 bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
                                           AtomId *forms, size_t count);
 
+/* Read executable Prime source: recognize its compiled grammar, project its
+ * syntax, then elaborate document scopes. The raw compiled-reader APIs keep
+ * their syntax-only contract. A NULL reader selects a temporary prepared
+ * reader; neither entry installs or replaces the session's document reader.
+ * Host syntax settings are restored on both success and refusal. */
+struct PrimeCompiledReaderV1;
+int prime_semantics_read_source_text_ids(struct PrimeCompiledReaderV1 *reader,
+    const char *text, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size);
+int prime_semantics_read_source_file_ids(struct PrimeCompiledReaderV1 *reader,
+    const char *filename, TermUniverse *universe, AtomId **out_ids,
+    char *error_buf, size_t error_buf_size);
+
 /* One step of a Prime `map-atom` or `foldl-atom` whose template carries its
  * own list (an elaborated, literal template): the template is activated by
  * its record for each element (rule 3), in the order of the library
@@ -436,9 +472,12 @@ Atom *prime_semantics_env_apply(Arena *arena, const Bindings *store,
 Atom *prime_semantics_subst_var(Arena *arena, Atom *term, Atom *var,
                                 Atom *value);
 /* As above, retaining value's free variables for capture avoidance and its
- * syntax in patterns/quoted holes, with a distinct runtime value carrier. */
+ * syntax in patterns/quoted holes, with a distinct runtime value carrier.
+ * A completed symbol used as a call head still forms the named construct;
+ * its occurrences in value positions retain their completed role. */
 Atom *prime_semantics_subst_value(Arena *arena, Atom *term, Atom *var,
-                                  Atom *value, Atom *runtime_value);
+                                  Atom *value, Atom *runtime_value,
+                                  CettaCallResultForm result_form);
 Atom *prime_semantics_env_apply_pattern(Arena *arena, const Bindings *store,
                                         Atom *term);
 

@@ -161,3 +161,138 @@
    (let $v (ready-field $p) (let $r (ready-refine $y) $v)))
 !(let $p (ReadyField (+ $y 1))
    (let $v (ready-field $p) (let $r (ready-refine $y) $v)))
+
+; Taking code apart in an equation head earns the same ready fields as let
+; or case. Passing a field through another function never activates it.
+(= (ready-code:first $x $y) $x)
+(= (ready-code:id $x) $x)
+(= (ready-code:meta $x) (get-metatype $x))
+(= (ready-code:pass (quote $e)) (Got (ready-code:id $e)))
+(= (ready-code:pass-meta (quote $e)) (ready-code:meta $e))
+(= (ready-code:twice (quote $e)) (Twice (ready-code:id $e) (ready-code:id $e)))
+(= (ready-code:run (quote $e)) (eval $e))
+!(let (quote $e) (quote (ready-code:first 61 62)) (Got (ready-code:id $e)))
+!(case (quote (ready-code:first 61 62))
+   (((quote $e) (Got (ready-code:id $e)))))
+!(ready-code:pass (quote (ready-code:first 61 62)))
+!(ready-code:pass-meta (quote (ready-code:first 61 62)))
+!(ready-code:twice (quote (superpose (A B))))
+!(ready-code:twice (quote (empty)))
+!(ready-code:pass (quote (println! must-not-run)))
+!(ready-code:run (quote (ready-code:first 61 62)))
+
+; Only code fields have this role. A neighboring source field still runs,
+; also when the quotation and source occur inside an ordinary constructor.
+(= (ready-code:mixed (quote $code) $source)
+   (Mixed (ready-code:id $code) (ready-code:id $source)))
+(= (ready-code:nested (Payload $source (quote $code)))
+   (Mixed (ready-code:id $source) (ready-code:id $code)))
+!(ready-code:mixed (quote (ready-code:first 61 62)) (ready-code:first 63 64))
+!(ready-code:nested
+   (Payload (ready-code:first 63 64) (quote (ready-code:first 61 62))))
+
+; Re-quoting uses the raw syntax and retains contextual binder relationships.
+(= (ready-code:requote (quote $e)) (quote $e))
+(= (ready-code:requote-body (quote (lam $x $b))) (quote (lam $x $b)))
+!(ready-code:requote (quote (ready-code:first 61 62)))
+!(ready-code:requote-body (quote (lam x (ready-code:first x 62))))
+
+; A ready open value keeps the caller's variables. Logical refinement may
+; fill those variables, but does not change the value into a computation.
+(= (ready-code:refine $x) (unify $x 65 ok no))
+!(let $v (ready-code:pass (quote (ready-code:first $x 62)))
+   (let $r (ready-code:refine $x) $v))
+
+; The same value rule covers a bare symbol even when it has a definition.
+; It runs only when explicitly activated, including after forwarding.
+(= ready-code:scalar 66)
+!(let (quote $e) (quote ready-code:scalar) (Got (ready-code:id $e)))
+!(case (quote ready-code:scalar) (((quote $e) (Got (ready-code:id $e)))))
+!(ready-code:pass (quote ready-code:scalar))
+!(ready-code:pass-meta (quote ready-code:scalar))
+!(ready-code:run (quote ready-code:scalar))
+!(ready-code:pass-meta (quote ordinary-undefined-symbol))
+
+; Whole code capture retains its internal binders. Repeated quoted holes
+; compare data, while a rigid mismatch leaves the source call residual.
+!(ready-code:pass (quote (lam x (ready-code:first x 62))))
+(= (ready-code:same (quote ($e $e))) (Same (ready-code:id $e)))
+!(ready-code:same (quote ((ready-code:first 61 62) (ready-code:first 61 62))))
+!(ready-code:same (quote (A B)))
+
+; Completion is intrinsic: adding equations later does not activate data.
+; Source evaluation and explicit activation still use the current world.
+(= (late-ready:id $x) $x)
+(= (late-ready:eq (quote $e))
+   (let $_ (add-atom &self (= late-ready:eq-value 203))
+     (Got (late-ready:id $e))))
+(= (late-ready:pair (quote $e))
+   (let $_ (add-atom &self (= late-ready:pair-value 204))
+     (Twice (late-ready:id $e) (late-ready:id $e))))
+(= (late-ready:already-defined) 211)
+(= late-ready:defined-value 212)
+!(let (quote $e) (quote late-ready:let-value)
+   (let $_ (add-atom &self (= late-ready:let-value 201))
+     (Got (late-ready:id $e))))
+!(case (quote late-ready:case-value)
+   (((quote $e)
+     (let $_ (add-atom &self (= late-ready:case-value 202))
+       (Got (late-ready:id $e))))))
+!(late-ready:eq (quote late-ready:eq-value))
+!(late-ready:pair (quote late-ready:pair-value))
+!(let $_ (add-atom &self (= late-ready:live-value 205)) late-ready:live-value)
+!(let (quote $e) (quote late-ready:eval-value)
+   (let $_ (add-atom &self (= late-ready:eval-value 206)) (eval $e)))
+!(let (quote $e) (quote (late-ready:future-head value))
+   (let $_ (add-atom &self (= (late-ready:future-head $x) 207))
+     (Got (late-ready:id $e))))
+!(let (quote $e) (quote late-ready:defined-value)
+   (let $_ (add-atom &self (= late-ready:defined-value 213))
+     (Got (late-ready:id $e))))
+!(let $e (function (return late-ready:return-value))
+   (let $_ (add-atom &self (= late-ready:return-value 208))
+     (Got (late-ready:id $e))))
+!(let (quote $e) (quote late-ready:still-inert) (Got (late-ready:id $e)))
+(= (late-head:id $x) $x)
+(= (late-head:already-callable $x $y) (+ $x $y))
+!(chain (function (return late-head:chain-value)) $e
+   (let $_ (add-atom &self (= late-head:chain-value 301))
+     (Got (late-head:id $e))))
+!(let (quote $f) (quote late-head:already-callable) ($f 2 3))
+!(let (quote $f) (quote +) ($f 2 3))
+!(let (quote $f) (quote late-head:future-callable)
+   (let $_ (add-atom &self (= (late-head:future-callable $x $y) (+ $x $y)))
+     ($f 2 3)))
+!(let (quote $f) (quote let) ($f $x 5 (quote $x)))
+
+; Matching and captured closures preserve the same role. Quoted holes
+; still splice syntax, and lambda substitution still avoids capture.
+(= (late-retained:id $x) $x)
+!(add-atom &self (SavedLateDatum late-retained:match-value))
+!(match &self (SavedLateDatum $e)
+   (let $_ (add-atom &self (= late-retained:match-value 401))
+     (Got (late-retained:id $e))))
+!(let $f (let (quote $e) (quote late-retained:closure-value)
+           (lam y (Pair $e y)))
+   (let $_ (add-atom &self (= late-retained:closure-value 402)) ($f okay)))
+!(let (quote $e) (quote y) (lam y (Pair $e y)))
+!(let (quote $e) (quote late-retained:spliced-value)
+   (let $_ (add-atom &self (= late-retained:spliced-value 403)) (quote $e)))
+!(let (quote $f) (quote let) (quote $f))
+
+; Relational admission must retain whole-code provenance too. These reads
+; make the surrounding definitions eligible for the query accelerator.
+(ready-code:query-seed)
+(= (ready-code:query-pass (quote $e))
+   (match &self (ready-code:query-seed) (Got (ready-code:id $e))))
+(= (ready-code:query-twice (quote $e))
+   (match &self (ready-code:query-seed)
+     (Twice (ready-code:id $e) (ready-code:id $e))))
+(= (ready-code:query-let $q)
+   (match &self (ready-code:query-seed)
+     (let (quote $e) $q (Got (ready-code:id $e)))))
+!(ready-code:query-pass (quote (ready-code:first 67 68)))
+!(ready-code:query-twice (quote (superpose (A B))))
+!(ready-code:query-pass (quote (empty)))
+!(ready-code:query-pass (quote (println! must-not-run)))
+!(ready-code:query-let (quote (ready-code:first 69 70)))

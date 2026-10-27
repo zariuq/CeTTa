@@ -2440,45 +2440,18 @@ static int main_he_compiled_bytes_prefix_backend(
         error_buf, error_buf_size);
 }
 
-/* Every Prime document is read here, so its forms are elaborated as they
- * are read: their binding structure is computed once and stored in the
- * terms (prime_semantics_elaborate_read_forms).  A form that cannot be
- * elaborated refuses the document; it is never accepted unsealed. */
-static int main_prime_elaborate_read(TermUniverse *universe, AtomId **out_ids,
-                                     int count, char *error_buf,
-                                     size_t error_buf_size) {
-    if (count <= 0 || !out_ids ||
-        prime_semantics_elaborate_read_forms(universe, *out_ids,
-                                             (size_t)count))
-        return count;
-    const char *why = prime_semantics_elaboration_error();
-    if (error_buf && error_buf_size > 0u)
-        snprintf(error_buf, error_buf_size,
-                 "the binding structure of a form could not be elaborated%s%s",
-                 why ? ": " : "", why ? why : "");
-    return -1;
-}
-
 static int main_prime_compiled_text_backend(
     void *context, const char *text, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size) {
-    PrimeCompiledReaderV1Receipt receipt;
-    int count = prime_compiled_reader_v1_parse_text_ids(
-        context, text, universe, out_ids, &receipt,
-        error_buf, error_buf_size);
-    return main_prime_elaborate_read(universe, out_ids, count, error_buf,
-                                     error_buf_size);
+    return prime_semantics_read_source_text_ids(context, text, universe,
+        out_ids, error_buf, error_buf_size);
 }
 
 static int main_prime_compiled_file_backend(
     void *context, const char *filename, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size) {
-    PrimeCompiledReaderV1Receipt receipt;
-    int count = prime_compiled_reader_v1_parse_file_ids(
-        context, filename, universe, out_ids, &receipt,
-        error_buf, error_buf_size);
-    return main_prime_elaborate_read(universe, out_ids, count, error_buf,
-                                     error_buf_size);
+    return prime_semantics_read_source_file_ids(context, filename, universe,
+        out_ids, error_buf, error_buf_size);
 }
 
 static void main_he_compiled_reader_free(void *context) {
@@ -4294,6 +4267,12 @@ static int cetta_main(int argc, char **argv) {
     /* Add grounded op type declarations (HE stdlib implicit types) */
     if (lang->id != CETTA_LANGUAGE_PETTA)
         main_add_builtin_type_decls(&space, &arena, lang->id, profile);
+    if (lang->id == CETTA_LANGUAGE_PRIME &&
+        !eval_prime_install_standard_library(&space, &arena)) {
+        fprintf(stderr, "error: Prime standard definitions could not be installed\n");
+        rc = 1;
+        goto cleanup;
+    }
     /* HE's standard library is a module &self imports: its atoms answer
        queries after the program's own and are not removable through &self.
        Prime keeps its library defaults as removable atoms of &self. */
@@ -4935,9 +4914,9 @@ process_petta_document:
                    n, block_end, NULL, NULL)) {
             block_end++;
         }
-        /* Prime refuses an equation or a type declaration for a name it
-         * interprets itself, in its place in the output, and loads the rest
-         * of the program (cetta_prime_reserved_definition_error). */
+        /* Apply Prime's public naming policy at the authored statement.
+         * A protected-original collision does not prevent later statements
+         * from loading (cetta_prime_reserved_definition_error). */
         Atom *refused = NULL;
         if (lang->id == CETTA_LANGUAGE_PRIME) {
             for (int k = i; k < block_end && !refused; k++) {

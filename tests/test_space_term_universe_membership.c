@@ -835,6 +835,64 @@ static void test_space_equation_projection_tokens(void) {
     space_free(&overlay);
     space_free(&overlay_base);
 
+    /* Ordered overlays preserve the base kind's removal order. A queue takes
+       its first visible occurrence, whether that occurrence comes from the
+       base or the local suffix; a stack takes the local tail. */
+    Space queue_base, queue_overlay;
+    space_init_with_universe(&queue_base, &universe);
+    queue_base.kind = SPACE_KIND_QUEUE;
+    Atom *queue_first = atom_symbol(&scratch, "queue-base-first");
+    Atom *queue_second = atom_symbol(&scratch, "queue-base-second");
+    Atom *queue_tail = atom_symbol(&scratch, "queue-local-tail");
+    space_add(&queue_base, queue_first);
+    space_add(&queue_base, queue_second);
+    space_init_overlay(&queue_overlay, &queue_base);
+    queue_overlay.kind = SPACE_KIND_QUEUE;
+    space_add(&queue_overlay, queue_tail);
+    Atom *ordered_popped = NULL;
+    assert(space_pop(&queue_overlay, &ordered_popped));
+    assert(atom_eq(ordered_popped, queue_first));
+    assert(space_length64(&queue_overlay) == 2u);
+    assert(atom_eq(space_get_at64(&queue_overlay, 0u), queue_second));
+    assert(atom_eq(space_get_at64(&queue_overlay, 1u), queue_tail));
+    assert(space_length64(&queue_base) == 2u);
+    space_free(&queue_overlay);
+    space_free(&queue_base);
+
+    Space local_queue_base, local_queue_overlay;
+    space_init_with_universe(&local_queue_base, &universe);
+    local_queue_base.kind = SPACE_KIND_QUEUE;
+    space_init_overlay(&local_queue_overlay, &local_queue_base);
+    local_queue_overlay.kind = SPACE_KIND_QUEUE;
+    Atom *local_first = atom_symbol(&scratch, "queue-local-first");
+    Atom *local_second = atom_symbol(&scratch, "queue-local-second");
+    space_add(&local_queue_overlay, local_first);
+    space_add(&local_queue_overlay, local_second);
+    ordered_popped = NULL;
+    assert(space_pop(&local_queue_overlay, &ordered_popped));
+    assert(atom_eq(ordered_popped, local_first));
+    assert(space_length64(&local_queue_overlay) == 1u);
+    assert(atom_eq(space_get_at64(&local_queue_overlay, 0u), local_second));
+    space_free(&local_queue_overlay);
+    space_free(&local_queue_base);
+
+    Space stack_base, stack_overlay;
+    space_init_with_universe(&stack_base, &universe);
+    stack_base.kind = SPACE_KIND_STACK;
+    space_init_overlay(&stack_overlay, &stack_base);
+    stack_overlay.kind = SPACE_KIND_STACK;
+    Atom *stack_first = atom_symbol(&scratch, "stack-local-first");
+    Atom *stack_second = atom_symbol(&scratch, "stack-local-second");
+    space_add(&stack_overlay, stack_first);
+    space_add(&stack_overlay, stack_second);
+    ordered_popped = NULL;
+    assert(space_pop(&stack_overlay, &ordered_popped));
+    assert(atom_eq(ordered_popped, stack_second));
+    assert(space_length64(&stack_overlay) == 1u);
+    assert(atom_eq(space_get_at64(&stack_overlay, 0u), stack_first));
+    space_free(&stack_overlay);
+    space_free(&stack_base);
+
     /* A backend transition without a projection receipt must decline to
        classify and invalidate conservatively. */
     Space external;

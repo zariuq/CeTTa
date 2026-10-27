@@ -4,6 +4,34 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Include the changed matcher at the allocation seam, without adding a
+ * production allocator hook or a second runtime configuration. */
+static size_t allocations, live_allocations, refuse_allocation;
+static bool track_allocations;
+static void *controlled_malloc(size_t size) {
+    if (track_allocations && ++allocations == refuse_allocation) return NULL;
+    void *p = malloc(size);
+    if (track_allocations && p) ++live_allocations;
+    return p;
+}
+static void *controlled_calloc(size_t n, size_t size) {
+    if (track_allocations && ++allocations == refuse_allocation) return NULL;
+    void *p = calloc(n, size);
+    if (track_allocations && p) ++live_allocations;
+    return p;
+}
+static void controlled_free(void *p) {
+    if (track_allocations && p) --live_allocations;
+    free(p);
+}
+#define malloc controlled_malloc
+#define calloc controlled_calloc
+#define free controlled_free
+#include "native/regex_selection_v1.c"
+#undef malloc
+#undef calloc
+#undef free
+
 #define OP(name, next, second, arg) {CETTA_RE_V1_##name, next, second, arg}
 static unsigned passed, failed;
 static void check(bool value, const char *reason) {
@@ -38,6 +66,13 @@ static bool span(CettaReResultV1 result, size_t start, size_t end) {
 static bool same_cursor(CettaReCursorV1 a, CettaReCursorV1 b) {
     return a.bytes == b.bytes && a.byte_len == b.byte_len && a.cursor == b.cursor &&
         a.last_end == b.last_end && a.has_previous == b.has_previous && a.finished == b.finished;
+}
+static bool same_result(CettaReResultV1 a, CettaReResultV1 b) {
+    if (a.outcome != b.outcome || a.group_len != b.group_len || a.state_visits != b.state_visits) return false;
+    for (uint32_t i = 0; i < a.group_len; ++i)
+        if (a.groups[i].participated != b.groups[i].participated ||
+            a.groups[i].start != b.groups[i].start || a.groups[i].end != b.groups[i].end) return false;
+    return true;
 }
 static void sweep(CettaReProgramV1 *p, const char *input, CettaReModeV1 mode,
                   CettaReOutcomeV1 expected, const char *reason) {
@@ -168,9 +203,111 @@ static void cursor_atomic(bool extended) {
     }
     cetta_re_v1_release(p);
 }
+static void reused_workspace(void) {
+    const CettaReInstructionV1 ops[] = {
+        OP(SPLIT,1,4,0), OP(SAVE,2,0,2), OP(CHAR,3,0,0x3bbu),
+        OP(SAVE,5,0,3), OP(CHAR,5,0,0), OP(MATCH,0,0,0)};
+    CettaReProgramV1 *owners[] = {program(ops, 6u, 2u, NULL), star(false), star(true)};
+    const uint8_t input[] = {'a', 0xce, 0xbb, 0, 'b'};
+    CettaReWorkspaceV1 workspace = {0};
+    /* Reuse across different shapes, failed searches, interruption points and
+     * independent cursors. Compare work accounting as well as answers. */
+    for (unsigned pass = 0; pass < 2u; ++pass) for (size_t p = 0; p < 3u; ++p) {
+        if (!owners[p]) continue;
+        for (uint64_t limit = 0; limit < 24u; ++limit) {
+            for (unsigned cancelling = 0; cancelling < 2u; ++cancelling) {
+                CettaReCursorV1 fresh = {.bytes = input, .byte_len = sizeof(input)}, shared = fresh;
+                Cancellation a = {.stop = cancelling ? limit : 0u}, b = a;
+                CettaReExecutionPolicyV1 policy = {.work_budget = cancelling ? 0u : limit,
+                    .cancelled = cancelled, .context = &a};
+                for (unsigned step = 0; step < 8u; ++step) {
+                    policy.context = &a;
+                    CettaReResultV1 x = cetta_re_v1_next_policy(owners[p], &fresh, &policy);
+                    policy.context = &b;
+                    CettaReResultV1 y = cetta_re_v1_next_workspace(owners[p], &shared, &policy, &workspace);
+                    check(same_result(x, y) && same_cursor(fresh, shared) && a.calls == b.calls,
+                        "fresh and reused storage preserve captures, byte spans, cursor, work and cancellation schedule");
+                    bool done = x.outcome != CETTA_RE_V1_FOUND;
+                    cetta_re_v1_result_free(&x); cetta_re_v1_result_free(&y);
+                    if (done) break;
+                }
+            }
+        }
+    }
+    cetta_re_v1_workspace_free(&workspace);
+    if (owners[0]) {
+        CettaReCursorV1 cursor = {.bytes = input, .byte_len = sizeof(input)};
+        track_allocations = true; allocations = 0u;
+        CettaReResultV1 first = cetta_re_v1_next_workspace(owners[0], &cursor, NULL, &workspace);
+        size_t first_allocations = allocations;
+        CettaReResultV1 second = cetta_re_v1_next_workspace(owners[0], &cursor, NULL, &workspace);
+        check(first_allocations == 11u && allocations == 12u,
+            "ten scratch buffers are allocated once; subsequent matches allocate only their result");
+        check(span(first, 1u, 3u) && first.groups[1].participated && span(second, 3u, 4u) &&
+            !second.groups[1].participated && first.groups != second.groups,
+            "later searches do not alter earlier results or leak capture participation");
+        cetta_re_v1_workspace_free(&workspace);
+        check(span(first, 1u, 3u) && first.groups[1].end == 3u,
+            "match results outlive workspace disposal");
+        cetta_re_v1_result_free(&first); cetta_re_v1_result_free(&second);
+        check(live_allocations == 0u, "successful operation releases every owned allocation");
+        track_allocations = false;
+        for (size_t failure = 1u; failure <= 11u; ++failure) {
+            cursor = (CettaReCursorV1){.bytes = input, .byte_len = sizeof(input)};
+            CettaReCursorV1 before = cursor;
+            allocations = 0; refuse_allocation = failure; track_allocations = true;
+            CettaReResultV1 r = cetta_re_v1_next_workspace(owners[0], &cursor, NULL, &workspace);
+            check(r.outcome == CETTA_RE_V1_ALLOCATION_FAILURE && !r.groups && same_cursor(cursor, before),
+                "scratch/result allocation refusal publishes no result or cursor mutation");
+            cetta_re_v1_result_free(&r); refuse_allocation = 0;
+            r = cetta_re_v1_next_workspace(owners[0], &cursor, NULL, &workspace);
+            check(span(r, 1u, 3u), "workspace retries safely after every allocation refusal");
+            cetta_re_v1_result_free(&r); cetta_re_v1_workspace_free(&workspace);
+            check(live_allocations == 0u, "allocation failure and retry release all scratch and results");
+            track_allocations = false;
+        }
+    }
+    for (size_t p = 0; p < 3u; ++p) cetta_re_v1_release(owners[p]);
+}
+static void first_scalar_filter(void) {
+    const CettaReInstructionV1 ops[] = {
+        OP(SAVE,1,0,2), OP(CHAR,2,0,'a'), OP(SAVE,3,0,3), OP(MATCH,0,0,0)};
+    CettaReProgramV1 *p = program(ops, 4u, 2u, NULL);
+    if (!p) return;
+    check(p->first_ascii_valid && (p->first_ascii['a' / 64u] & (UINT64_C(1) << ('a' % 64u))),
+        "first-scalar analysis follows capture saves to a consuming site");
+    for (unsigned byte = 0; byte < 128u; ++byte) {
+        uint8_t input[] = {(uint8_t)byte, 'a'};
+        CettaReResultV1 x = cetta_re_v1_find_policy_valid_utf8(p, input, sizeof(input), 0u, CETTA_RE_V1_SEARCH, NULL);
+        CettaReResultV1 y = cetta_re_v1_find_reference_valid_utf8(p, input, sizeof(input), 0u, CETTA_RE_V1_SEARCH, NULL);
+        x.state_visits = y.state_visits;
+        check(same_result(x, y), "all ASCII starts, including NUL, preserve the selected captures");
+        cetta_re_v1_result_free(&x); cetta_re_v1_result_free(&y);
+        for (uint64_t budget = 1; budget < 8u; ++budget) {
+            CettaReExecutionPolicyV1 policy = {.work_budget = budget};
+            x = cetta_re_v1_find_policy_valid_utf8(p, input, sizeof(input), 0u, CETTA_RE_V1_SEARCH, &policy);
+            y = cetta_re_v1_find_reference_valid_utf8(p, input, sizeof(input), 0u, CETTA_RE_V1_SEARCH, &policy);
+            check(same_result(x, y), "bounded search retains the exact unfiltered work schedule");
+            cetta_re_v1_result_free(&x); cetta_re_v1_result_free(&y);
+        }
+    }
+    uint8_t absent[4096]; memset(absent, 'x', sizeof(absent));
+    Cancellation control = {.stop = 100u};
+    CettaReExecutionPolicyV1 policy = {.cancelled = cancelled, .context = &control};
+    CettaReResultV1 r = cetta_re_v1_find_policy_valid_utf8(p, absent, sizeof(absent), 0u, CETTA_RE_V1_SEARCH, &policy);
+    check(r.outcome == CETTA_RE_V1_CANCELLED && control.calls == 100u,
+        "a long skipped run still polls cooperative cancellation");
+    cetta_re_v1_result_free(&r); cetta_re_v1_release(p);
+    const CettaReInstructionV1 nullable[] = {OP(ASSERT,1,0,CETTA_RE_V1_TEXT_START), OP(MATCH,0,0,0)};
+    p = program(nullable, 2u, 1u, NULL);
+    check(p && !p->first_ascii_valid, "assertions cannot disguise a possibly nullable path");
+    cetta_re_v1_release(p);
+}
 int main(void) {
     provisional_regular(); negative_assertion(); backreference_comparison();
     cursor_atomic(false); cursor_atomic(true);
+    reused_workspace();
+    first_scalar_filter();
     printf("RegexExecutionPolicyV1Summary %u %u\n", passed, failed);
     return failed ? 1 : 0;
 }

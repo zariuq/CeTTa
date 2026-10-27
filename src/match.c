@@ -581,7 +581,7 @@ static bool match_finite_ground_equal_try(
     if (!match_occurrence_is_finite_dag(left) ||
         (right != left && !match_occurrence_is_finite_dag(right)))
         return false;
-    *equal_out = atom_eq(left, right);
+    *equal_out = atom_eq_with_resolved_spaces(left, right);
     return true;
 }
 
@@ -656,6 +656,12 @@ bool bindings_builder_trail_reserve(
     BindingsBuilder *bb, uint32_t needed);
 bool bindings_builder_prime_trail_reserve(
     BindingsBuilder *bb, uint32_t needed);
+static void bindings_builder_drop_prime_trail(BindingsBuilder *builder, uint32_t length) {
+    assert(length<=builder->prime_trail_len);
+    while (builder->prime_trail_len>length)
+        prime_occurrence_clear(&builder->prime_trail[--builder->prime_trail_len]);
+}
+
 static bool bindings_builder_snapshot(
     BindingsBuilder *bb, bool *created_out);
 static bool bindings_alias_keeps_caller_identity(
@@ -2540,6 +2546,9 @@ bool bindings_resolve_value_exact(
 
 static bool binding_value_may_contain_unbound_var(Bindings *b, BindingValue value);
 static bool binding_values_eq_under_bindings(Bindings *b, BindingValue lhs, BindingValue rhs);
+static bool binding_values_eq_under_bindings_checked(
+    Bindings *bindings, BindingValue lhs, BindingValue rhs, CettaMatchCompletion *failure);
+static bool binding_value_match_equal(BindingValue left, BindingValue right);
 
 static bool constraint_pair_eq(const BindingConstraint *lhs, const BindingConstraint *rhs) {
     return (binding_value_equal(lhs->lhs, rhs->lhs) && binding_value_equal(lhs->rhs, rhs->rhs)) ||
@@ -2691,6 +2700,14 @@ static bool bindings_store_constraint(Bindings *b, BindingValue lhs, BindingValu
 static bool match_decoded_atoms_worklist(BindingValue left, BindingValue right,
                                          Bindings *bindings, BindingsBuilder *builder,
                                          Arena *a, bool undefined_is_wildcard);
+
+static bool match_decoded_atoms_worklist_checked(
+    BindingValue left, BindingValue right, Bindings *bindings,
+    BindingsBuilder *builder, Arena *arena, bool undefined_is_wildcard,
+    CettaMatchCompletion *failure);
+static bool bindings_builder_try_merge_kernel(
+    BindingsBuilder *builder, const Bindings *source,
+    CettaMatchCompletion *failure);
 
 static bool bindings_add_inplace_internal(Bindings *b, VarId var_id,
                                           SymbolId spelling, Atom *name_key,
@@ -3053,13 +3070,7 @@ const CettaWeightLedger *bindings_weight_view(const Bindings *b) {
 static PrimeOccurrence *bindings_prime_ext_materialize(Bindings *b) {
     if (!b->prime_ext) {
         PrimeOccurrence *ext = cetta_malloc(sizeof(PrimeOccurrence));
-        prime_need_snapshot_init(&ext->prime_need);
-        prime_need_branch_state_init(&ext->branch_state);
-        ext->weights = (CettaWeightLedger){0};
-        ext->occurrence_token = 0u;
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        prime_need_receipt_init(&ext->receipt);
-#endif
+        prime_occurrence_init(ext);
         b->prime_ext = ext;
     }
     return b->prime_ext;
@@ -3108,39 +3119,32 @@ bool bindings_prime_present(const Bindings *b) {
     return prime_need_snapshot_present(&b->prime_ext->prime_need) ||
            prime_need_branch_state_present(&b->prime_ext->branch_state) ||
            b->prime_ext->weights.length != 0u ||
-           b->prime_ext->occurrence_token != 0u
+           b->prime_ext->occurrence_token != 0u ||
+           b->prime_ext->reader_context != NULL
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
            || prime_need_receipt_present(&b->prime_ext->receipt)
 #endif
            ;
 }
 
-/* Reset an existing occurrence to empty without freeing it (kept for reuse to
- * avoid alloc churn on hot Prime merge/rollback paths). */
-static void prime_occurrence_reset(PrimeOccurrence *ext) {
-    prime_need_snapshot_init(&ext->prime_need);
-    prime_need_branch_state_init(&ext->branch_state);
-    ext->weights = (CettaWeightLedger){0};
-    ext->occurrence_token = 0u;
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    prime_need_receipt_init(&ext->receipt);
-#endif
+PrimeNeedReaderContext *bindings_reader_context_view(const Bindings *bindings) {
+    return bindings && bindings->prime_ext ? bindings->prime_ext->reader_context : NULL;
+}
+
+void bindings_reader_context_set(Bindings *bindings, PrimeNeedReaderContext *context) {
+    if (!bindings || bindings_reader_context_view(bindings)==context) return;
+    if (!context && !bindings->prime_ext) return;
+    prime_need_reader_context_retain(context);
+    PrimeOccurrence *occurrence=bindings_prime_ext_materialize(bindings);
+    PrimeNeedReaderContext *old=occurrence->reader_context;
+    occurrence->reader_context=context;
+    prime_need_reader_context_release(old);
 }
 
 void bindings_prime_assign(Bindings *dst, const Bindings *src) {
-    if (src->prime_ext &&
-        (prime_need_snapshot_present(&src->prime_ext->prime_need) ||
-         prime_need_branch_state_present(&src->prime_ext->branch_state) ||
-         src->prime_ext->weights.length != 0u ||
-         src->prime_ext->occurrence_token != 0u
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-         || prime_need_receipt_present(&src->prime_ext->receipt)
-#endif
-         )) {
-        *bindings_prime_ext_materialize(dst) = *src->prime_ext;
-    } else if (dst->prime_ext) {
-        prime_occurrence_reset(dst->prime_ext);
-    }
+    if (bindings_prime_present(src))
+        prime_occurrence_assign(bindings_prime_ext_materialize(dst),src->prime_ext);
+    else if (dst->prime_ext) prime_occurrence_clear(dst->prime_ext);
 }
 
 void bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
@@ -3159,20 +3163,14 @@ void bindings_prime_set(Bindings *dst, const PrimeNeedSnapshot *need,
     (void)receipt;
 #endif
     if (present) {
-        PrimeOccurrence *ext = bindings_prime_ext_materialize(dst);
-        if (need) ext->prime_need = *need;
-        else prime_need_snapshot_init(&ext->prime_need);
-        if (branch_state) ext->branch_state = *branch_state;
-        else prime_need_branch_state_init(&ext->branch_state);
-        ext->occurrence_token = occurrence_token;
-        ext->weights = weights ? *weights : (CettaWeightLedger){0};
+        PrimeOccurrence value={.prime_need=need?*need:(PrimeNeedSnapshot){0},
+            .branch_state=branch_state?*branch_state:(PrimeNeedBranchState){0},
+            .occurrence_token=occurrence_token,.weights=weights?*weights:(CettaWeightLedger){0}};
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-        if (receipt) ext->receipt = *receipt;
-        else prime_need_receipt_init(&ext->receipt);
+        if (receipt) value.receipt=*receipt;
 #endif
-    } else if (dst->prime_ext) {
-        prime_occurrence_reset(dst->prime_ext);
-    }
+        prime_occurrence_assign(bindings_prime_ext_materialize(dst),&value);
+    } else if (dst->prime_ext) prime_occurrence_clear(dst->prime_ext);
 }
 
 void bindings_init(Bindings *b) {
@@ -3215,6 +3213,7 @@ void bindings_free(Bindings *b) {
     bindings_frame_index_release(b->frame_index);
     b->frame_index = NULL;
     if (b->prime_ext) {
+        prime_occurrence_clear(b->prime_ext);
         free(b->prime_ext);
         b->prime_ext = NULL;
     }
@@ -3988,6 +3987,7 @@ static bool bindings_atom_closed(const Atom *atom, void *context) {
 static bool bindings_occurrence_payloads_satisfy(const PrimeOccurrence *occurrence,
         AtomTreePredicate atoms, PrimeNeedStateCellPredicate cells, void *context) {
     if (!occurrence) return true;
+    if (!prime_need_reader_context_payloads(occurrence->reader_context,atoms,cells,context)) return false;
     if (!prime_need_snapshot_atoms_satisfy(&occurrence->prime_need, atoms, context) ||
         !prime_need_branch_state_payloads_satisfy(
             &occurrence->branch_state, atoms, cells, context)) return false;
@@ -4071,12 +4071,22 @@ bool bindings_promote_logical_atoms_to_arena(Bindings *bindings,
     return promoted;
 }
 
+static bool bindings_occurrence_readers_qualified(const PrimeOccurrence *occurrence,bool owned_copy,const Arena *owner) {
+    return !occurrence || (owned_copy ? !occurrence->reader_context :
+        prime_need_reader_context_can_promote(occurrence->reader_context,&occurrence->prime_need,owner)==CETTA_MATCH_MATCHED);
+}
+
 static bool bindings_promote_occurrence_with_session(
     Arena *dst, AtomDeepCopySession *copy_session, PrimeOccurrence *occurrence,
     bool owned_copy) {
-    if (!occurrence || !atom_deep_copy_session_targets(copy_session, dst))
+    if (!occurrence || !bindings_occurrence_readers_qualified(occurrence,owned_copy,dst) ||
+        !atom_deep_copy_session_targets(copy_session, dst))
         return false;
+    PrimeNeedReaderContext *readers=NULL;
+    if(!owned_copy && prime_need_reader_context_promote(occurrence->reader_context,
+            &occurrence->prime_need,dst,&readers)!=CETTA_MATCH_MATCHED) return false;
     PrimeOccurrence promoted = *occurrence;
+    promoted.reader_context=readers;
     bool need_copied = owned_copy
         ? prime_need_snapshot_copy_with_session(dst, copy_session, &promoted.prime_need)
         : prime_need_snapshot_promote_with_session(dst, copy_session, &promoted.prime_need);
@@ -4086,16 +4096,22 @@ static bool bindings_promote_occurrence_with_session(
     bool weights_copied = branch_copied && (owned_copy
         ? cetta_weight_ledger_copy_with_session(dst, copy_session, &promoted.weights)
         : cetta_weight_ledger_promote_with_session(dst, copy_session, &promoted.weights));
-    if (!weights_copied)
+    if (!weights_copied) {
+        prime_need_reader_context_release(readers);
         return false;
+    }
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
     bool receipt_copied = owned_copy
         ? prime_need_receipt_copy_carrier_with_session(dst, copy_session, &promoted.receipt)
         : prime_need_receipt_carry_with_session(dst, copy_session, &promoted.receipt);
-    if (!receipt_copied)
+    if (!receipt_copied) {
+        prime_need_reader_context_release(readers);
         return false;
+    }
 #endif
+    PrimeNeedReaderContext *old=occurrence->reader_context;
     *occurrence = promoted;
+    prime_need_reader_context_release(old);
     return true;
 }
 
@@ -4112,7 +4128,8 @@ bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
 
 bool bindings_promote_atoms_with_session(
     Bindings *bindings, Arena *dst, AtomDeepCopySession *session) {
-    if (!bindings || !atom_deep_copy_session_targets(session, dst) ||
+    if (!bindings || !bindings_occurrence_readers_qualified(bindings->prime_ext,false,dst) ||
+        !atom_deep_copy_session_targets(session, dst) ||
         !bindings_promote_logical_atoms_with_session(bindings, session))
         return false;
     return !bindings->prime_ext || bindings_promote_occurrence_with_session(
@@ -4121,7 +4138,8 @@ bool bindings_promote_atoms_with_session(
 
 bool bindings_copy_owned_atoms_with_session(
     Bindings *bindings, Arena *dst, AtomDeepCopySession *session) {
-    if (!bindings || !atom_deep_copy_session_targets(session, dst) ||
+    if (!bindings || bindings_reader_context_view(bindings) ||
+        !atom_deep_copy_session_targets(session, dst) ||
         !bindings_promote_logical_atoms_with_session(bindings, session))
         return false;
     return !bindings->prime_ext || bindings_promote_occurrence_with_session(
@@ -4640,7 +4658,7 @@ static bool bindings_add_constraint_inplace_internal(Bindings *b, BindingValue l
         !bindings_resolve_value_preview(b, rhs, &rhs))
         return false;
 
-    if (binding_values_eq_under_bindings(b, lhs, rhs)) {
+    if (binding_values_eq_under_bindings_checked(b, lhs, rhs, NULL)) {
         return true;
     }
     if (lhs.skeleton->kind == ATOM_VAR) {
@@ -4767,7 +4785,7 @@ void bindings_prime_observation_policy_changed(void) {
 #endif
 
 static inline __attribute__((always_inline)) bool bindings_merge_prime_occurrence(
-    Bindings *dst, const Bindings *src) {
+    Bindings *dst, const Bindings *src, CettaMatchCompletion *failure) {
     /* HE remains allocation-free. One materialization supplies every mutable
      * component, including any optional history already supplied as data. */
     if (!bindings_prime_present(dst) && !bindings_prime_present(src))
@@ -4776,15 +4794,27 @@ static inline __attribute__((always_inline)) bool bindings_merge_prime_occurrenc
         ? dst->prime_ext : &g_prime_occurrence_empty;
     const PrimeOccurrence *source = src->prime_ext
         ? src->prime_ext : &g_prime_occurrence_empty;
+    PrimeNeedReaderContext *readers=NULL;
+    if (previous->reader_context || source->reader_context) {
+        CettaMatchCompletion joined=prime_need_reader_context_merge(
+            previous->reader_context,source->reader_context,&readers);
+        if (joined!=CETTA_MATCH_MATCHED) {if (failure) *failure=joined;return false;}
+    }
     uint64_t occurrence_token;
-    if (!bindings_prime_join_identity(previous, source, &occurrence_token))
-        return false;
+    if (!bindings_prime_join_identity(previous, source, &occurrence_token)) {
+        prime_need_reader_context_release(readers);return false;
+    }
     PrimeOccurrence *destination = bindings_prime_ext_materialize(dst);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    return g_bindings_prime_merge(destination, source, occurrence_token);
+    bool merged=g_bindings_prime_merge(destination, source, occurrence_token);
 #else
-    return bindings_prime_merge_data(destination, source, occurrence_token);
+    bool merged=bindings_prime_merge_data(destination, source, occurrence_token);
 #endif
+    if (merged && (destination->reader_context || readers)) {
+        prime_need_reader_context_release(destination->reader_context);
+        destination->reader_context=readers;
+    } else if (readers) prime_need_reader_context_release(readers);
+    return merged;
 }
 
 typedef struct {
@@ -4807,7 +4837,7 @@ static bool bindings_try_merge_inplace(Bindings *dst, const Bindings *src) {
         bindings_inherit_owners(dst, src);
     bindings_assert_no_private_variant_slots(dst);
     bindings_assert_no_private_variant_slots(src);
-    if (!bindings_merge_prime_occurrence(dst, src))
+    if (!bindings_merge_prime_occurrence(dst, src, NULL))
         return false;
     if (!bindings_frame_index_merge_schemas(dst, src))
         return false;
@@ -4861,7 +4891,9 @@ bool bindings_try_merge(Bindings *dst, const Bindings *src) {
     return true;
 }
 
-bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
+static bool bindings_try_merge_live_kernel(
+    Bindings *dst, const Bindings *src, CettaMatchCompletion *failure) {
+    if (failure) *failure = CETTA_MATCH_INCOMPLETE;
     if (!src || (!bindings_has_bound_values(src) && src->eq_len == 0 &&
                  !bindings_prime_present(src) &&
                  !bindings_has_frame_authority(src)))
@@ -4891,9 +4923,88 @@ bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
 
     BindingsBuilder builder;
     bindings_builder_init_owned(&builder, dst);
-    bool ok = bindings_builder_try_merge(&builder, src);
+    bool ok = bindings_builder_try_merge_kernel(&builder, src, failure);
     bindings_builder_take(&builder, dst);
     return ok;
+}
+
+bool bindings_try_merge_live(Bindings *dst, const Bindings *src) {
+    return bindings_try_merge_live_kernel(dst, src, NULL);
+}
+
+CettaMatchCompletion bindings_try_merge_live_checked(
+    Bindings *dst, const Bindings *src) {
+    CettaMatchCompletion failure = CETTA_MATCH_INCOMPLETE;
+    if (!dst) return failure;
+    return bindings_try_merge_live_kernel(dst, src, &failure)
+        ? CETTA_MATCH_MATCHED : failure;
+}
+
+CettaMatchCompletion bindings_import_production_checked(Arena *owner,
+    const PrimeNeedReadCapture *reads, uint64_t thunk_id,
+    const Bindings *common, const Bindings *entrance,
+    const Bindings *production, const Bindings *recipient,
+    PrimeNeedStateInitialValue initial_value, void *context, Bindings *out) {
+    if (!owner || !common || !entrance || !production || !recipient || !out ||
+        !prime_need_read_capture_has_cuts(reads, bindings_need_view(common),
+                                         bindings_need_view(entrance)))
+        return CETTA_MATCH_INCOMPLETE;
+    PrimeNeedSnapshot need;
+    PrimeNeedBranchState state;
+    CettaWeightLedger weights;
+    CettaMatchCompletion result = prime_need_snapshot_import_production_checked(
+        owner, reads, bindings_need_view(production), thunk_id,
+        bindings_need_view(recipient), &need);
+    if (result != CETTA_MATCH_MATCHED) return result;
+    result = prime_need_branch_state_import_suffix(owner,
+        bindings_branch_state_view(common), bindings_branch_state_view(entrance),
+        bindings_branch_state_view(production), bindings_branch_state_view(recipient),
+        initial_value, context, &state);
+    if (result != CETTA_MATCH_MATCHED) return result;
+    result = cetta_weight_ledger_import_suffix_checked(owner,
+        bindings_weight_view(entrance), bindings_weight_view(production),
+        bindings_weight_view(recipient), &weights);
+    if (result != CETTA_MATCH_MATCHED) return result;
+
+    Bindings staged, lexical;
+    if (!bindings_clone(&staged, recipient)) return CETTA_MATCH_INCOMPLETE;
+    if (!bindings_clone(&lexical, production)) {
+        bindings_free(&staged);
+        return CETTA_MATCH_INCOMPLETE;
+    }
+    uint64_t occurrence = 0u;
+    if (!bindings_prime_join_identity(
+            recipient->prime_ext ? recipient->prime_ext : &g_prime_occurrence_empty,
+            production->prime_ext ? production->prime_ext : &g_prime_occurrence_empty,
+            &occurrence)) {
+        bindings_free(&lexical);
+        bindings_free(&staged);
+        return CETTA_MATCH_INCOMPLETE;
+    }
+    const PrimeNeedReceipt *receipt = NULL;
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    receipt = bindings_receipt_view(recipient);
+#endif
+    /* Join logical support without invoking the ambient occurrence/history
+     * merge policy. All operational carriers were prepared above, and a live
+     * recorder cannot move a reader's held receipt into an unrelated scope. */
+    bindings_prime_set(&staged, NULL, NULL, 0u, NULL, NULL);
+    bindings_prime_set(&lexical, NULL, NULL, 0u, NULL, NULL);
+    result = bindings_try_merge_live_checked(&staged, &lexical);
+    bindings_free(&lexical);
+    if (result == CETTA_MATCH_MATCHED) {
+        PrimeNeedReaderContext *readers=NULL;
+        result=prime_need_reader_context_import(bindings_reader_context_view(entrance),
+            bindings_reader_context_view(production),bindings_reader_context_view(recipient),&readers);
+        if (result==CETTA_MATCH_MATCHED) {
+            bindings_prime_set(&staged, &need, &state, occurrence, receipt, &weights);
+            bindings_reader_context_set(&staged,readers);
+            prime_need_reader_context_release(readers);
+            bindings_replace(out, &staged);
+        } else bindings_free(&staged);
+    }
+    else bindings_free(&staged);
+    return result;
 }
 
 bool bindings_clone_merge(Bindings *dst, const Bindings *base,
@@ -5200,6 +5311,12 @@ static size_t bindings_apply_graph_hash(Atom *source, CettaFrameIdentity epoch,
     return (size_t)(hash ^ (hash >> 27u));
 }
 
+static bool bindings_apply_graph_key_equal(const BindingApplyGraphEntry *entry,
+        Atom *source, BindingsApplyScope scope, uint32_t code_depth) {
+    return entry->source == source && cetta_frame_identity_eq(entry->epoch, scope.epoch) &&
+        entry->kind == scope.kind && entry->code_depth == code_depth;
+}
+
 static BindingApplyGraphEntry *bindings_apply_graph_slot(
         BindingApplyGraph *graph, Atom *source, BindingsApplyScope scope,
         uint32_t code_depth) {
@@ -5207,10 +5324,7 @@ static BindingApplyGraphEntry *bindings_apply_graph_slot(
         source, scope.epoch, scope.kind, code_depth) &
         (graph->cap - 1u);
     while (graph->entries[slot].source &&
-           (graph->entries[slot].source != source ||
-            !cetta_frame_identity_eq(graph->entries[slot].epoch, scope.epoch) ||
-            graph->entries[slot].kind != scope.kind ||
-            graph->entries[slot].code_depth != code_depth))
+           !bindings_apply_graph_key_equal(&graph->entries[slot], source, scope, code_depth))
         slot = (slot + 1u) & (graph->cap - 1u);
     return &graph->entries[slot];
 }
@@ -5530,6 +5644,24 @@ static const BindingsFrameIndexEntry *bindings_cursor_scope_entry(
         ? entry : NULL;
 }
 
+CettaGsltTermViewStatusV1 bindings_value_term_cursor_v1(
+        const Bindings *bindings, BindingValue value,
+        CettaGsltTermCursorV1 *target_out) {
+    if (target_out)
+        *target_out = (CettaGsltTermCursorV1){0};
+    if (!bindings || !value.skeleton || !target_out)
+        return CETTA_GSLT_TERM_VIEW_INVALID_V1;
+    const void *scope = NULL;
+    if (binding_value_is_contextual(value) && atom_has_vars(value.skeleton)) {
+        scope = bindings_frame_index_find_frame_const(
+            bindings->frame_index, binding_value_epoch(value));
+        if (!scope)
+            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+    }
+    *target_out = (CettaGsltTermCursorV1){value.skeleton, scope};
+    return CETTA_GSLT_TERM_VIEW_OK_V1;
+}
+
 static CettaGsltTermViewStatusV1 bindings_resolve_cursor(
         void *raw_context, CettaGsltTermCursorV1 source,
         CettaGsltTermCursorV1 *target_out, bool scoped) {
@@ -5576,17 +5708,9 @@ static CettaGsltTermViewStatusV1 bindings_resolve_cursor(
     if ((!scoped && binding_value_is_contextual(value) && atom_has_vars(value.skeleton)) ||
         !bindings_resolve_value_preview((Bindings *)context->bindings, value, &value))
         return CETTA_GSLT_TERM_VIEW_DEFER_V1;
-    const void *scope = NULL;
-    if (binding_value_is_contextual(value) && atom_has_vars(value.skeleton)) {
-        if (!scoped)
-            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
-        scope = bindings_frame_index_find_frame_const(
-            context->bindings->frame_index, binding_value_epoch(value));
-        if (!scope)
-            return CETTA_GSLT_TERM_VIEW_DEFER_V1;
-    }
-    *target_out = (CettaGsltTermCursorV1){value.skeleton, scope};
-    return CETTA_GSLT_TERM_VIEW_OK_V1;
+    if (!scoped && binding_value_is_contextual(value) && atom_has_vars(value.skeleton))
+        return CETTA_GSLT_TERM_VIEW_DEFER_V1;
+    return bindings_value_term_cursor_v1(context->bindings, value, target_out);
 }
 
 CettaGsltTermViewStatusV1 bindings_resolve_term_cursor_v1(
@@ -5655,6 +5779,7 @@ typedef struct BindingsEpochAccelerator {
 typedef struct {
     Atom *atom;
     Atom *draft;
+    AtomExprAssembly *assembly;
     BindingApplyMemo *memo;
     VarId id;
     BindingsApplyScope scope;
@@ -5829,214 +5954,346 @@ static BindingsApplyScope bindings_apply_bound_scope(
     };
 }
 
-/* Specialize this one traversal at its entry points. Ordinary substitution
- * retains its established loop; only graph observation maintains node images. */
+typedef enum {
+    BINDINGS_WALK_DESCEND,
+    BINDINGS_WALK_ASCEND,
+    BINDINGS_WALK_PREFIX,
+    BINDINGS_WALK_CHILD,
+    BINDINGS_WALK_COMPLETE,
+    BINDINGS_WALK_REFUSED
+} BindingsApplyWalkPhase;
+
+typedef struct {
+    BindingsApplyFold *fold;
+    Atom *atom, *result;
+    BindingsApplyScope scope;
+    uint32_t seen_len, depth, expressions;
+    CettaExprIndex prefix;
+    const BindingsStructureHooks *hooks;
+    BindingApplyGraph *graph;
+    BindingApplyGraph observed;
+    BindingsApplyFrame inline_items[BINDINGS_APPLY_INLINE_FRAMES];
+    BindingsApplyFrames frames;
+    BindingsApplyWalkPhase phase;
+    bool may_observe;
+} BindingsApplyWalk;
+
+static inline void bindings_apply_walk_init(BindingsApplyWalk *walk,
+        BindingsApplyFold *fold, Atom *atom, BindingsApplyScope scope,
+        uint32_t seen_len, bool epoch_fold, BindingApplyGraph *graph) {
+    *walk = (BindingsApplyWalk){.fold = fold, .atom = atom, .scope = scope,
+        .seen_len = seen_len, .hooks = g_bindings_structure_hooks, .graph = graph};
+    walk->frames = (BindingsApplyFrames){.items = walk->inline_items,
+        .cap = BINDINGS_APPLY_INLINE_FRAMES};
+    walk->may_observe = !walk->hooks && !graph && !epoch_fold &&
+        !fold->rewrite_var && !fold->track_cycles;
+}
+
+static void bindings_apply_walk_release(BindingsApplyWalk *walk) {
+    for (uint32_t i = 0u; i < walk->frames.len; i++)
+        atom_expr_assembly_free(walk->frames.items[i].assembly);
+    if (walk->frames.heap) free(walk->frames.items);
+    free(walk->observed.entries);
+}
+
+/* One traversal serves synchronous and retained callers. Synchronous entry
+ * points specialize away the yield boundaries and keep their ordinary atom
+ * constructor. Retained private construction folds each child's summary on
+ * arrival; an interning arena keeps its atomic finishing provider.
+ * Binding/cache operations, hooks, allocation and retirement have separate
+ * service prices. A walk action is not a wall-clock or whole-slot bound. */
+#if defined(__GNUC__)
+__attribute__((always_inline))
+#endif
+static inline BindingsApplyWalkPhase bindings_apply_walk_drive(
+        BindingsApplyWalk *walk, bool epoch_fold, bool yielding) {
+    BindingsApplyFold *fold = walk->fold;
+    const BindingsStructureHooks *hooks = walk->hooks;
+#define BINDINGS_WALK_NEXT(next, label) do { \
+    walk->phase = (next); \
+    if (yielding) return walk->phase; \
+    goto label; \
+} while (0)
+    switch (walk->phase) {
+    case BINDINGS_WALK_DESCEND: goto descend;
+    case BINDINGS_WALK_ASCEND: goto ascend;
+    case BINDINGS_WALK_PREFIX: goto prefix;
+    case BINDINGS_WALK_CHILD: goto child;
+    case BINDINGS_WALK_COMPLETE: case BINDINGS_WALK_REFUSED: return walk->phase;
+    }
+    goto failed;
+descend:
+    walk->result = NULL;
+    if (!atom_has_vars(walk->atom)) {
+        walk->result = walk->atom;
+    } else if (epoch_fold) {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EPOCH_NODE_VISIT);
+        if (fold->node_visits && *fold->node_visits != UINT64_MAX) (*fold->node_visits)++;
+    } else {
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_REWRITE_NODE_VISIT);
+    }
+    /* Unbound materialized support is unchanged at every subtree, not
+     * only at the outer entry. Hooks and lexical renaming still walk. */
+    if (!walk->result && walk->frames.len > 0u && !epoch_fold && !fold->rewrite_var &&
+        walk->atom->kind == ATOM_EXPR && walk->scope.kind == BINDING_VALUE_MATERIALIZED) {
+        VarId support = atom_single_variable_id(walk->atom);
+        if (!var_id_is_none(support) &&
+            !bindings_lookup_context_id(fold->b, binding_value_from_atom(walk->atom),
+                                        support).skeleton)
+            walk->result = walk->atom;
+    }
+    if (walk->graph && !walk->result && walk->atom->kind == ATOM_EXPR) {
+        bool created = false;
+        BindingApplyGraphEntry *active = walk->graph->active_path
+            ? bindings_apply_graph_enter(walk->graph->active_path, walk->atom,
+                walk->scope, 0u, &created) : NULL;
+        if (walk->graph->active_path && (!active || active->active)) goto failed;
+        BindingApplyGraphEntry *entry = bindings_apply_graph_enter(walk->graph,
+            walk->atom, walk->scope, walk->depth, &created);
+        if (!entry && walk->graph == &walk->observed) walk->graph = NULL;
+        else if (!entry) goto failed;
+        else if (!created) {
+            if (!entry->image) goto failed;
+            walk->result = entry->image;
+        }
+        if (!walk->result && active) active->active = true;
+    }
+    if (!walk->result && walk->atom->kind == ATOM_VAR) {
+        bool use_memo = !hooks || walk->depth == 0u;
+        BindingApplyMemo *memo = use_memo ? fold->memo : NULL;
+        VarId id = VAR_ID_NONE;
+        BindingValue bound = binding_value_from_atom(NULL);
+        BindingsApplyVarStep step = epoch_fold
+            ? bindings_apply_epoch_var_step(fold, walk->atom, &walk->scope,
+                walk->seen_len, use_memo, &memo, &id, &walk->result, &bound)
+            : bindings_apply_rewrite_var_step(fold, walk->atom, &walk->scope,
+                walk->seen_len, use_memo, &id, &walk->result, &bound);
+        if (step == BINDINGS_APPLY_VAR_FAILED) goto failed;
+        if (step == BINDINGS_APPLY_VAR_BOUND) {
+            if (fold->track_cycles) {
+                if (!bindings_apply_seen_reserve(fold->seen, walk->seen_len,
+                        walk->seen_len + 1u)) goto failed;
+                fold->seen->ids[walk->seen_len++] = id;
+            }
+            if (!bindings_apply_frames_push(&walk->frames,
+                    (BindingsApplyFrame){.memo = memo, .id = id,
+                        .code_depth = walk->depth})) goto failed;
+            walk->scope = bindings_apply_bound_scope(epoch_fold, &walk->scope, bound);
+            walk->atom = bound.skeleton;
+            BINDINGS_WALK_NEXT(BINDINGS_WALK_DESCEND, descend);
+        }
+    } else if (!walk->result && walk->atom->kind == ATOM_EXPR) {
+        if (!bindings_apply_frames_push(&walk->frames,
+                (BindingsApplyFrame){.atom = walk->atom, .scope = walk->scope,
+                    .seen_len = walk->seen_len, .code_depth = walk->depth})) goto failed;
+        if (walk->may_observe && ++walk->expressions == BINDINGS_APPLY_GRAPH_AFTER)
+            walk->graph = &walk->observed;
+    } else if (!walk->result) {
+        walk->result = walk->atom;
+    }
+    BINDINGS_WALK_NEXT(BINDINGS_WALK_ASCEND, ascend);
+ascend:
+    if (!walk->frames.len) {
+        walk->phase = BINDINGS_WALK_COMPLETE;
+        return walk->phase;
+    } else {
+        BindingsApplyFrame *top = &walk->frames.items[walk->frames.len - 1u];
+        if (!top->atom) {
+            if (top->memo) bindings_apply_memo_store(top->memo, top->id, walk->result);
+            walk->frames.len--;
+            BINDINGS_WALK_NEXT(BINDINGS_WALK_ASCEND, ascend);
+        }
+        Atom **elems = top->atom->expr.elems;
+        CettaExprLen len = top->atom->expr.len;
+        uint32_t child_depth = hooks ? top->code_depth +
+            (bindings_structure_quotes_children(top->atom) ? 1u : 0u) : 0u;
+        if (walk->result) {
+            if (hooks && hooks->code_reading && child_depth > 0u &&
+                elems[top->next]->kind == ATOM_VAR) {
+                walk->result = hooks->code_reading(walk->result);
+                if (!walk->result) goto failed;
+            }
+            if (!top->draft && !top->assembly && walk->result != elems[top->next]) {
+                if (yielding && !fold->a->hashcons) {
+                    top->assembly = atom_expr_assembly_new(fold->a, len);
+                    if (!top->assembly) goto failed;
+                } else {
+                    top->draft = atom_expr_builder_begin(fold->a, len);
+                    if (!top->draft) goto failed;
+                }
+                walk->prefix = 0u;
+                BINDINGS_WALK_NEXT(BINDINGS_WALK_PREFIX, prefix);
+            }
+            BINDINGS_WALK_NEXT(BINDINGS_WALK_CHILD, child);
+        }
+        if (top->next < len) {
+            if (!atom_has_vars(elems[top->next])) {
+                if (top->assembly) {
+                    if (!atom_expr_assembly_append(top->assembly, elems[top->next])) goto failed;
+                } else if (top->draft) top->draft->expr.elems[top->next] = elems[top->next];
+                top->next++;
+                BINDINGS_WALK_NEXT(BINDINGS_WALK_ASCEND, ascend);
+            }
+            walk->atom = elems[top->next];
+            walk->scope = top->scope;
+            walk->seen_len = top->seen_len;
+            walk->depth = child_depth;
+            BINDINGS_WALK_NEXT(BINDINGS_WALK_DESCEND, descend);
+        }
+        bool changed = top->draft || top->assembly;
+        walk->result = top->assembly ? atom_expr_assembly_finish_splicing(top->assembly)
+            : top->draft ? atom_expr_builder_finish(fold->a, top->draft) : top->atom;
+        atom_expr_assembly_free(top->assembly);top->assembly = NULL;
+        if (walk->result && changed && hooks && hooks->formed_node &&
+            len > 0u && elems[0]->kind == ATOM_VAR &&
+            walk->result->expr.elems[0] && walk->result->expr.elems[0]->kind == ATOM_SYMBOL)
+            walk->result = hooks->formed_node(fold->a, walk->result, top->code_depth > 0u);
+        else if (walk->result && changed && hooks && hooks->own_list &&
+                atom_sequence_is_own_list(top->atom))
+            walk->result = hooks->own_list(fold->a, walk->result);
+        if (walk->graph && walk->graph->cap) {
+            BindingApplyGraphEntry *entry = bindings_apply_graph_slot(walk->graph,
+                top->atom, top->scope, top->code_depth);
+            if (entry->source) entry->image = walk->result;
+            if (walk->graph->active_path)
+                bindings_apply_graph_slot(walk->graph->active_path, top->atom,
+                    top->scope, 0u)->active = false;
+        }
+        walk->frames.len--;
+        if (!walk->result) goto failed;
+        BINDINGS_WALK_NEXT(BINDINGS_WALK_ASCEND, ascend);
+    }
+prefix: {
+        BindingsApplyFrame *top = &walk->frames.items[walk->frames.len - 1u];
+        if (walk->prefix < top->next) {
+            Atom *item = top->atom->expr.elems[walk->prefix];
+            if (top->assembly) {
+                if (!atom_expr_assembly_append(top->assembly, item)) goto failed;
+            } else top->draft->expr.elems[walk->prefix] = item;
+            walk->prefix++;
+            BINDINGS_WALK_NEXT(BINDINGS_WALK_PREFIX, prefix);
+        }
+        BINDINGS_WALK_NEXT(BINDINGS_WALK_CHILD, child);
+    }
+child: {
+        BindingsApplyFrame *top = &walk->frames.items[walk->frames.len - 1u];
+        if (top->assembly) {
+            if (!atom_expr_assembly_append(top->assembly, walk->result)) goto failed;
+        } else if (top->draft) top->draft->expr.elems[top->next] = walk->result;
+        top->next++;
+        walk->result = NULL;
+        BINDINGS_WALK_NEXT(BINDINGS_WALK_ASCEND, ascend);
+    }
+failed:
+    walk->phase = BINDINGS_WALK_REFUSED;
+    return walk->phase;
+#undef BINDINGS_WALK_NEXT
+}
+
+/* The existing synchronous entries drain the same traversal without retaining
+ * scheduling cuts or changing their constructor provider. */
 #if defined(__GNUC__)
 __attribute__((always_inline))
 #endif
 static inline Atom *bindings_apply_fold_impl(BindingsApplyFold *fold, Atom *atom,
         BindingsApplyScope scope, uint32_t seen_len, bool epoch_fold,
         BindingApplyGraph *graph) {
-    BindingsApplyFrame inline_items[BINDINGS_APPLY_INLINE_FRAMES];
-    BindingsApplyFrames frames = {
-        .items = inline_items,
-        .cap = BINDINGS_APPLY_INLINE_FRAMES,
-    };
-    /* With the language's binding structure (match.h): the quotations
-     * around `atom`, a node whose head the substitution fills is formed, a
-     * variable inside code reads as code, and an image inside code is not
-     * shared through the memo with one outside it. */
-    const BindingsStructureHooks *hooks = g_bindings_structure_hooks;
-    uint32_t depth = 0u;
-    /* A term that shares subterms is substituted once per path to each
-     * unless the fold keeps node images.  Ordinary substitution starts
-     * without them and keeps them from its BINDINGS_APPLY_GRAPH_AFTER-th
-     * expression on, where its images, like graph observation's, depend on
-     * the node and the scope alone: no hook, an acyclic environment.  A
-     * language's binding structure (hooks) keeps its own walk. */
-    BindingApplyGraph observed = {0};
-    bool may_observe = !graph && !hooks && !epoch_fold &&
-        !fold->rewrite_var && !fold->track_cycles;
-    uint32_t expressions = 0u;
-    Atom *result;
-    for (;;) {
-        /* Descend: the image of `atom`, or the frame that will receive it. */
-        result = NULL;
-        if (!atom_has_vars(atom)) {
-            result = atom;
-        } else if (epoch_fold) {
-            cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_EPOCH_NODE_VISIT);
-            if (fold->node_visits && *fold->node_visits != UINT64_MAX)
-                (*fold->node_visits)++;
-        } else {
-            cetta_runtime_stats_inc(
-                CETTA_RUNTIME_COUNTER_BINDINGS_APPLY_REWRITE_NODE_VISIT);
-        }
-        /* Unbound materialized support is unchanged at every subtree, not
-         * only at the outer entry. Hooks and lexical renaming still walk. */
-        if (!result && frames.len > 0u && !epoch_fold && !fold->rewrite_var &&
-            atom->kind == ATOM_EXPR && scope.kind == BINDING_VALUE_MATERIALIZED) {
-            VarId support = atom_single_variable_id(atom);
-            if (!var_id_is_none(support) &&
-                !bindings_lookup_context_id(fold->b, binding_value_from_atom(atom),
-                                            support).skeleton)
-                result = atom;
-        }
-        if (graph && !result && atom->kind == ATOM_EXPR) {
-            bool created = false;
-            BindingApplyGraphEntry *active = graph->active_path
-                ? bindings_apply_graph_enter(
-                      graph->active_path, atom, scope, 0u, &created)
-                : NULL;
-            if (graph->active_path && (!active || active->active))
-                goto failed;
-            BindingApplyGraphEntry *entry = bindings_apply_graph_enter(
-                graph, atom, scope, depth, &created);
-            /* Kept images are only a shortcut for ordinary substitution:
-             * where they cannot grow, it walks on without them. */
-            if (!entry && graph == &observed)
-                graph = NULL;
-            else if (!entry)
-                goto failed;
-            else if (!created) {
-                /* Native syntax must be a DAG. Rational terms use their
-                 * explicit graph carrier, not a recursive Atom pointer. */
-                if (!entry->image) goto failed;
-                result = entry->image;
-            }
-            if (!result && active)
-                active->active = true;
-        }
-        if (!result && atom->kind == ATOM_VAR) {
-            bool use_memo = !hooks || depth == 0u;
-            BindingApplyMemo *memo = use_memo ? fold->memo : NULL;
-            VarId id = VAR_ID_NONE;
-            BindingValue bound = binding_value_from_atom(NULL);
-            BindingsApplyVarStep step = epoch_fold
-                ? bindings_apply_epoch_var_step(
-                      fold, atom, &scope, seen_len, use_memo, &memo, &id,
-                      &result, &bound)
-                : bindings_apply_rewrite_var_step(
-                      fold, atom, &scope, seen_len, use_memo, &id, &result,
-                      &bound);
-            if (step == BINDINGS_APPLY_VAR_FAILED)
-                goto failed;
-            if (step == BINDINGS_APPLY_VAR_BOUND) {
-                if (fold->track_cycles) {
-                    if (!bindings_apply_seen_reserve(
-                            fold->seen, seen_len, seen_len + 1u))
-                        goto failed;
-                    fold->seen->ids[seen_len++] = id;
-                }
-                if (!bindings_apply_frames_push(
-                        &frames,
-                        (BindingsApplyFrame){.memo = memo, .id = id,
-                                             .code_depth = depth}))
-                    goto failed;
-                scope = bindings_apply_bound_scope(epoch_fold, &scope, bound);
-                atom = bound.skeleton;
-                continue;
-            }
-        } else if (!result && atom->kind == ATOM_EXPR) {
-            if (!bindings_apply_frames_push(
-                    &frames,
-                    (BindingsApplyFrame){
-                        .atom = atom, .scope = scope, .seen_len = seen_len,
-                        .code_depth = depth}))
-                goto failed;
-            if (may_observe && ++expressions == BINDINGS_APPLY_GRAPH_AFTER)
-                graph = &observed;
-        } else if (!result) {
-            result = atom;
-        }
-        /* Ascend: hand `result` to the pending frames until an expression
-         * has a child left to read. */
-        bool descend = false;
-        while (frames.len > 0u) {
-            BindingsApplyFrame *top = &frames.items[frames.len - 1u];
-            if (!top->atom) {
-                if (top->memo)
-                    bindings_apply_memo_store(top->memo, top->id, result);
-                frames.len--;
-                continue;
-            }
-            Atom **elems = top->atom->expr.elems;
-            CettaExprLen len = top->atom->expr.len;
-            uint32_t child_depth = hooks
-                ? top->code_depth +
-                      (bindings_structure_quotes_children(top->atom) ? 1u : 0u)
-                : 0u;
-            if (result && hooks && hooks->code_reading && child_depth > 0u &&
-                elems[top->next]->kind == ATOM_VAR) {
-                result = hooks->code_reading(result);
-                if (!result)
-                    goto failed;
-            }
-            if (result) {
-                if (!top->draft && result != elems[top->next]) {
-                    top->draft = atom_expr_builder_begin(fold->a, len);
-                    if (!top->draft)
-                        goto failed;
-                    for (CettaExprIndex j = 0; j < top->next; j++)
-                        top->draft->expr.elems[j] = elems[j];
-                }
-                if (top->draft)
-                    top->draft->expr.elems[top->next] = result;
-                top->next++;
-            }
-            while (top->next < len && !atom_has_vars(elems[top->next])) {
-                if (top->draft)
-                    top->draft->expr.elems[top->next] = elems[top->next];
-                top->next++;
-            }
-            if (top->next < len) {
-                atom = elems[top->next];
-                scope = top->scope;
-                seen_len = top->seen_len;
-                depth = child_depth;
-                descend = true;
-                break;
-            }
-            result = top->draft
-                ? atom_expr_builder_finish(fold->a, top->draft) : top->atom;
-            /* A head the substitution filled with a symbol forms the
-             * construct the symbol names, where it stands. */
-            if (result && top->draft && hooks && hooks->formed_node &&
-                len > 0u && elems[0]->kind == ATOM_VAR &&
-                result->expr.elems[0] &&
-                result->expr.elems[0]->kind == ATOM_SYMBOL)
-                result = hooks->formed_node(fold->a, result,
-                                            top->code_depth > 0u);
-            /* A scope's own names that a match has bound leave its list. */
-            else if (result && top->draft && hooks && hooks->own_list &&
-                     atom_sequence_is_own_list(top->atom))
-                result = hooks->own_list(fold->a, result);
-            if (graph && graph->cap) {
-                BindingApplyGraphEntry *entry = bindings_apply_graph_slot(
-                    graph, top->atom, top->scope, top->code_depth);
-                if (entry->source)
-                    entry->image = result;
-                if (graph->active_path)
-                    bindings_apply_graph_slot(
-                        graph->active_path, top->atom, top->scope, 0u)->active = false;
-            }
-            frames.len--;
-            if (!result)
-                goto failed;
-        }
-        if (!descend)
-            break;
-    }
-    if (frames.heap)
-        free(frames.items);
-    free(observed.entries);
+    BindingsApplyWalk walk;
+    bindings_apply_walk_init(&walk, fold, atom, scope, seen_len, epoch_fold, graph);
+    BindingsApplyWalkPhase phase = bindings_apply_walk_drive(&walk, epoch_fold, false);
+    Atom *result = phase == BINDINGS_WALK_COMPLETE ? walk.result : NULL;
+    bindings_apply_walk_release(&walk);
     return result;
-failed:
-    if (frames.heap)
-        free(frames.items);
-    free(observed.entries);
-    return NULL;
+}
+
+struct BindingsApplySession {
+    BindingsApplyFold fold;
+    BindingsApplyWalk walk;
+    BindingApplySeen seen;
+    BindingApplyMemo memo;
+    BindingApplyGraph graph, active_path;
+    BindingsStructureHooks hooks;
+    VarId seen_inline[BINDINGS_SEEN_STACK_CAP];
+    VarId memo_ids[BINDINGS_MEMO_STACK_CAP];
+    Atom *memo_values[BINDINGS_MEMO_STACK_CAP];
+    Arena *arena;
+    HashConsTable *hashcons;
+    uint32_t arena_identity;
+    uint64_t arena_epoch, steps;
+};
+
+BindingsApplySession *bindings_apply_session_new(const Bindings *b, Arena *a,
+        BindingValue source, bool shared_graph) {
+    if (!b || !a || !source.skeleton) return NULL;
+    BindingsApplySession *session = calloc(1u, sizeof(*session));
+    if (!session) return NULL;
+    session->arena = a;session->hashcons = a->hashcons;
+    session->arena_identity = a->identity;session->arena_epoch = a->reset_epoch;
+    bindings_apply_seen_init(&session->seen, session->seen_inline, BINDINGS_SEEN_STACK_CAP);
+    bindings_apply_memo_init(&session->memo, session->memo_ids,
+        session->memo_values, BINDINGS_MEMO_STACK_CAP);
+    session->fold = (BindingsApplyFold){.b = (Bindings *)b, .a = a,
+        .seen = &session->seen, .memo = &session->memo,
+        .track_cycles = b->cycle_state != BINDINGS_CYCLE_ACYCLIC};
+    const BindingsStructureHooks *hooks = bindings_structure_hooks();
+    if (hooks) session->hooks = *hooks;
+    if (shared_graph && !session->fold.track_cycles)
+        session->graph.active_path = hooks ? &session->active_path : NULL;
+    bindings_apply_walk_init(&session->walk, &session->fold, source.skeleton,
+        (BindingsApplyScope){.epoch = binding_value_epoch(source),
+            .kind = binding_value_kind(source)}, 0u, false,
+        shared_graph && !session->fold.track_cycles ? &session->graph : NULL);
+    session->walk.hooks = hooks ? &session->hooks : NULL;
+    /* Preserve the existing identity cases, including their borrowed root. */
+    if ((!bindings_has_bound_values(b) &&
+            binding_value_kind(source) == BINDING_VALUE_MATERIALIZED) ||
+            !atom_has_vars(source.skeleton)) {
+        session->walk.phase = BINDINGS_WALK_ASCEND;
+        session->walk.result = source.skeleton;
+    }
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_APPLY);
+    return session;
+}
+
+BindingsApplyStatus bindings_apply_session_advance(BindingsApplySession *session,
+        uint64_t allowance, Atom **result, uint64_t *used) {
+    if (result) *result = NULL;
+    if (used) *used = 0u;
+    if (!session || !result || !used) return BINDINGS_APPLY_REFUSED;
+    if (session->arena->identity != session->arena_identity ||
+            session->arena->reset_epoch != session->arena_epoch ||
+            session->arena->hashcons != session->hashcons) {
+        session->walk.phase = BINDINGS_WALK_REFUSED;
+        return BINDINGS_APPLY_REFUSED;
+    }
+    while (*used < allowance && session->walk.phase != BINDINGS_WALK_COMPLETE &&
+            session->walk.phase != BINDINGS_WALK_REFUSED) {
+        if (session->steps == UINT64_MAX) {
+            session->walk.phase = BINDINGS_WALK_REFUSED;
+            break;
+        }
+        session->steps++;(*used)++;
+        bindings_apply_walk_drive(&session->walk, false, true);
+    }
+    if (session->walk.phase == BINDINGS_WALK_REFUSED) return BINDINGS_APPLY_REFUSED;
+    if (session->walk.phase == BINDINGS_WALK_COMPLETE) {
+        *result = session->walk.result;
+        return BINDINGS_APPLY_COMPLETE;
+    }
+    return BINDINGS_APPLY_PENDING;
+}
+
+uint64_t bindings_apply_session_steps(const BindingsApplySession *session) {
+    return session ? session->steps : 0u;
+}
+
+void bindings_apply_session_free(BindingsApplySession *session) {
+    if (!session) return;
+    bindings_apply_walk_release(&session->walk);
+    bindings_apply_memo_release(&session->memo);
+    bindings_apply_seen_release(&session->seen);
+    free(session->graph.entries);free(session->active_path.entries);
+    free(session);
 }
 
 static Atom *bindings_apply_fold(BindingsApplyFold *fold, Atom *atom,
@@ -6475,7 +6732,9 @@ static Atom *rename_vars_walk(Arena *a, Atom *root, RenameVariable rename,
                 break;
             }
             result = frame->draft
-                ? atom_expr_builder_finish(a, frame->draft) : source;
+                ? (atom_is_he_evaluated(source)
+                    ? atom_expr_rebuild(a, source, frame->draft->expr.elems, source->expr.len)
+                    : atom_expr_builder_finish(a, frame->draft)) : source;
             if (!result || !freshen_epoch_memo_store(&memo, source, result))
                 goto fail;
             len--;
@@ -6526,6 +6785,14 @@ bool binding_value_equal(BindingValue left, BindingValue right) {
         (!atom_has_vars(left.skeleton) && !atom_has_vars(right.skeleton)))
         return atom_eq(left.skeleton, right.skeleton);
     return binding_values_eq_under_bindings(NULL, left, right);
+}
+
+/* Matching may identify two Space representations in the currently held
+ * read view. Storage equality and captured-binding factoring stay raw. */
+static bool binding_value_match_equal(BindingValue left, BindingValue right) {
+    return binding_value_equal(left, right) ||
+        (left.skeleton && right.skeleton &&
+         binding_values_eq_under_bindings_checked(NULL, left, right, NULL));
 }
 
 typedef struct {
@@ -6867,7 +7134,7 @@ static bool bindings_builder_snapshot(BindingsBuilder *bb,
         .prime_state_present = prime_present,
     };
     if (prime_present)
-        bb->prime_trail[bb->prime_trail_len++] = *bb->current.prime_ext;
+        prime_occurrence_copy(&bb->prime_trail[bb->prime_trail_len++],bb->current.prime_ext);
     if (bb->unobserved_write_region_active) {
         bb->unobserved_write_region_has_checkpoint = true;
         cetta_runtime_stats_inc(
@@ -6884,7 +7151,7 @@ static void bindings_builder_discard_latest_snapshot(BindingsBuilder *bb) {
     const BindingsBuilderTrailEntry *entry =
         &bb->trail[bb->trail_len - 1u];
     assert(entry->prime_state_mark <= bb->prime_trail_len);
-    bb->prime_trail_len = entry->prime_state_mark;
+    bindings_builder_drop_prime_trail(bb,entry->prime_state_mark);
     bb->trail_len--;
     bb->frame_registration_save_barrier =
         bb->frame_registration_undo_len > 0u &&
@@ -6984,6 +7251,7 @@ bool bindings_builder_init(BindingsBuilder *bb, const Bindings *base) {
         bb->frame_registration_undo = NULL;
         bb->frame_registration_undo_len = 0u;
         bb->frame_registration_undo_cap = 0u;
+        bindings_builder_drop_prime_trail(bb,0u);
         free(bb->prime_trail);
         bb->prime_trail = NULL;
         bb->prime_trail_len = 0;
@@ -7119,6 +7387,8 @@ bool bindings_builder_clone(BindingsBuilder *dst,
                    sizeof(*dst->prime_trail));
         dst->prime_trail_len = src->prime_trail_len;
         dst->prime_trail_cap = src->prime_trail_len;
+        for (uint32_t i=0u;i<dst->prime_trail_len;i++)
+            prime_need_reader_context_retain(dst->prime_trail[i].reader_context);
     }
     dst->growth_count = src->growth_count;
     dst->rollback_count = src->rollback_count;
@@ -7147,12 +7417,20 @@ bool bindings_builder_promote_prime_atoms_to_arena(
     return ok;
 }
 
+static bool bindings_builder_readers_qualified(const BindingsBuilder *builder,bool owned_copy,const Arena *owner) {
+    if (!bindings_occurrence_readers_qualified(builder->current.prime_ext,owned_copy,owner) ||
+        builder->prime_trail_len>builder->prime_trail_cap ||
+        (builder->prime_trail_len && !builder->prime_trail)) return false;
+    for (uint32_t i=0u;i<builder->prime_trail_len;i++)
+        if (!bindings_occurrence_readers_qualified(&builder->prime_trail[i],owned_copy,owner)) return false;
+    return true;
+}
+
 static bool bindings_builder_move_prime_atoms_with_session(
         BindingsBuilder *bb, Arena *owner, AtomDeepCopySession *session,
         bool owned_copy) {
-    if (!bb || !atom_deep_copy_session_targets(session, owner) ||
-        bb->prime_trail_len > bb->prime_trail_cap ||
-        (bb->prime_trail_len > 0u && !bb->prime_trail)) {
+    if (!bb || !bindings_builder_readers_qualified(bb,owned_copy,owner) ||
+        !atom_deep_copy_session_targets(session, owner)) {
         return false;
     }
     if (bb->current.prime_ext && !bindings_promote_occurrence_with_session(
@@ -7190,7 +7468,8 @@ bool bindings_builder_promote_atoms_to_arena(
 static bool bindings_builder_move_atoms_with_session(
         BindingsBuilder *bb, Arena *owner, AtomDeepCopySession *session,
         bool owned_copy) {
-    if (!bb || !atom_deep_copy_session_targets(session, owner))
+    if (!bb || !bindings_builder_readers_qualified(bb,owned_copy,owner) ||
+        !atom_deep_copy_session_targets(session, owner))
         return false;
     bool promoted = bindings_promote_logical_atoms_with_session(
         &bb->current, session);
@@ -7284,6 +7563,7 @@ void bindings_builder_free(BindingsBuilder *bb) {
     bb->frame_undo_len = 0u;
     bb->frame_undo_cap = 0u;
     bindings_builder_discard_frame_registration_history(bb, true);
+    bindings_builder_drop_prime_trail(bb,0u);
     free(bb->prime_trail);
     bb->prime_trail = NULL;
     bb->prime_trail_len = 0;
@@ -7357,23 +7637,12 @@ void bindings_builder_rollback(BindingsBuilder *bb, uint32_t mark) {
         bb->current.cycle_state = entry->cycle_state;
         restored_derived_nonzero = entry->derived_nonzero;
         restored = true;
-        /* With no checkpoint and no current extension there is nothing to
-         * restore (bindings_prime_set would find nothing present). */
         if (prime || bb->current.prime_ext) {
-            bindings_prime_set(
-                &bb->current,
-                prime ? &prime->prime_need : NULL,
-                prime ? &prime->branch_state : NULL,
-                prime ? prime->occurrence_token : 0u,
-#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-                prime ? &prime->receipt : NULL
-#else
-                NULL
-#endif
-                , prime ? &prime->weights : NULL
-                );
+            PrimeOccurrence *current=bindings_prime_ext_materialize(&bb->current);
+            if (prime) prime_occurrence_assign(current,prime);
+            else prime_occurrence_clear(current);
         }
-        bb->prime_trail_len = entry->prime_state_mark;
+        bindings_builder_drop_prime_trail(bb,entry->prime_state_mark);
     }
     bool frame_values_restored =
         bindings_builder_restore_frame_values(bb, mark);
@@ -7417,7 +7686,7 @@ void bindings_builder_commit(BindingsBuilder *bb) {
     bb->trail_len = 0;
     bb->frame_undo_len = 0u;
     bindings_builder_discard_frame_registration_history(bb, false);
-    bb->prime_trail_len = 0;
+    bindings_builder_drop_prime_trail(bb,0u);
     bb->unobserved_write_region_has_checkpoint = false;
     if (bb->history.commit)
         bb->history.commit(bb->history.context);
@@ -7500,14 +7769,16 @@ bool bindings_builder_prepare_fresh_entries(
 
 static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
                                                      BindingValue lhs, BindingValue rhs,
-                                                     bool normalize_constraints);
+                                                     bool normalize_constraints,
+                                                     CettaMatchCompletion *failure);
 
 static bool bindings_builder_add_id_internal_with_cycle_evidence(
         BindingsBuilder *bb, VarId var_id,
         SymbolId spelling, Atom *name_key, BindingValue val,
         bool has_cycle_evidence,
         BindingsReachability cycle_evidence,
-        BindingValue *authoritative_value_out) {
+        BindingValue *authoritative_value_out, CettaMatchCompletion *failure) {
+    if (failure) *failure = CETTA_MATCH_INCOMPLETE;
     if (authoritative_value_out)
         *authoritative_value_out = binding_value_from_atom(NULL);
     if (!bb)
@@ -7557,6 +7828,7 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
             if ((existing_key || name_key) &&
                 (!existing_key || !name_key ||
                  !atom_eq(existing_key, name_key))) {
+                if (failure) *failure = CETTA_MATCH_REFUTED;
                 return false;
             }
             existing = existing_entry->value;
@@ -7571,7 +7843,8 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
             return true;
         }
         uint32_t mark = bb->trail_len;
-        if (match_decoded_atoms_worklist(existing, val, NULL, bb, NULL, false)) {
+        if (match_decoded_atoms_worklist_checked(
+                existing, val, NULL, bb, NULL, false, failure)) {
             if (authoritative_value_out) {
                 *authoritative_value_out = existing;
             }
@@ -7654,12 +7927,21 @@ static bool bindings_builder_add_id_internal_with_cycle_evidence(
     return true;
 }
 
+static bool bindings_builder_add_id_internal_checked(
+        BindingsBuilder *bb, VarId var_id,
+        SymbolId spelling, Atom *name_key, BindingValue val,
+        CettaMatchCompletion *failure) {
+    return bindings_builder_add_id_internal_with_cycle_evidence(
+        bb, var_id, spelling, name_key, val, false,
+        BINDINGS_REACHABILITY_UNKNOWN, NULL, failure);
+}
+
 static bool bindings_builder_add_id_internal(
         BindingsBuilder *bb, VarId var_id,
         SymbolId spelling, Atom *name_key, BindingValue val) {
     return bindings_builder_add_id_internal_with_cycle_evidence(
         bb, var_id, spelling, name_key, val, false,
-        BINDINGS_REACHABILITY_UNKNOWN, NULL);
+        BINDINGS_REACHABILITY_UNKNOWN, NULL, NULL);
 }
 
 bool bindings_builder_add_id_fresh(BindingsBuilder *bb, VarId var_id,
@@ -7782,7 +8064,7 @@ static bool bindings_match_store_value(
         return bindings_builder_add_id_internal_with_cycle_evidence(
             builder, id, spelling, name_key, value,
             evidence != BINDINGS_REACHABILITY_UNKNOWN, evidence,
-            authoritative_out);
+            authoritative_out, NULL);
     bool added = bindings && bindings_add_internal(
         bindings, id, spelling, name_key, value, true);
     if (added && authoritative_out)
@@ -7910,9 +8192,11 @@ static bool bindings_builder_store_constraint(BindingsBuilder *bb,
 
 static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
                                                      BindingValue lhs, BindingValue rhs,
-                                                     bool normalize_constraints);
+                                                     bool normalize_constraints,
+                                                     CettaMatchCompletion *failure);
 
-static bool bindings_builder_normalize_constraints(BindingsBuilder *bb) {
+static bool bindings_builder_normalize_constraints(
+    BindingsBuilder *bb, CettaMatchCompletion *failure) {
     if (bb->current.eq_len == 0)
         return true;
     BindingConstraint pending_stack[BINDINGS_TEMP_STACK_CAP];
@@ -7925,7 +8209,7 @@ static bool bindings_builder_normalize_constraints(BindingsBuilder *bb) {
     bb->current.private_constraint_count = 0u;
     for (uint32_t i = 0; i < npending; i++) {
         if (!bindings_builder_add_constraint_internal(
-                bb, pending[i].lhs, pending[i].rhs, false)) {
+                bb, pending[i].lhs, pending[i].rhs, false, failure)) {
             bindings_temp_constraints_release(pending, npending,
                                               pending_stack);
             return false;
@@ -7937,34 +8221,39 @@ static bool bindings_builder_normalize_constraints(BindingsBuilder *bb) {
 
 static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
                                                      BindingValue lhs, BindingValue rhs,
-                                                     bool normalize_constraints) {
+                                                     bool normalize_constraints,
+                                                     CettaMatchCompletion *failure) {
+    if (failure) *failure = CETTA_MATCH_INCOMPLETE;
     Bindings *current = &bb->current;
     if (!bindings_resolve_value_preview(current, lhs, &lhs) ||
         !bindings_resolve_value_preview(current, rhs, &rhs))
         return false;
 
-    if (binding_values_eq_under_bindings(current, lhs, rhs))
+    CettaMatchCompletion equality = CETTA_MATCH_INCOMPLETE;
+    if (binding_values_eq_under_bindings_checked(
+            current, lhs, rhs, failure ? &equality : NULL))
         return true;
     if (lhs.skeleton->kind == ATOM_VAR) {
-        if (!bindings_builder_add_id_internal(
+        if (!bindings_builder_add_id_internal_checked(
                 bb, binding_value_variable_id(lhs), atom_symbol_current_id(lhs.skeleton),
-                lhs.skeleton->name_key, rhs)) {
+                lhs.skeleton->name_key, rhs, failure)) {
             return false;
         }
     } else if (rhs.skeleton->kind == ATOM_VAR) {
-        if (!bindings_builder_add_id_internal(
+        if (!bindings_builder_add_id_internal_checked(
                 bb, binding_value_variable_id(rhs), atom_symbol_current_id(rhs.skeleton),
-                rhs.skeleton->name_key, lhs)) {
+                rhs.skeleton->name_key, lhs, failure)) {
             return false;
         }
     } else if (!binding_value_may_contain_unbound_var(current, lhs) &&
                !binding_value_may_contain_unbound_var(current, rhs)) {
+        if (failure) *failure = equality;
         return false;
     } else if (!bindings_builder_store_constraint(bb, lhs, rhs)) {
         return false;
     }
 
-    if (normalize_constraints && !bindings_builder_normalize_constraints(bb))
+    if (normalize_constraints && !bindings_builder_normalize_constraints(bb, failure))
         return false;
     return true;
 }
@@ -7972,19 +8261,22 @@ static bool bindings_builder_add_constraint_internal(BindingsBuilder *bb,
 typedef struct {
     BindingsBuilder *builder;
     bool ok;
+    CettaMatchCompletion *failure;
 } BindingsBuilderMergeCurrentContext;
 
 static bool bindings_builder_merge_current_binding(
         const Binding *binding, void *raw_context) {
     BindingsBuilderMergeCurrentContext *context = raw_context;
-    context->ok = bindings_builder_add_id_internal(
+    context->ok = bindings_builder_add_id_internal_checked(
         context->builder, binding->var_id,
         binding->spelling, binding->name_key,
-        binding->value);
+        binding->value, context->failure);
     return context->ok;
 }
 
-bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
+static bool bindings_builder_try_merge_kernel(
+    BindingsBuilder *bb, const Bindings *src, CettaMatchCompletion *failure) {
+    if (failure) *failure = CETTA_MATCH_INCOMPLETE;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_BINDINGS_MERGE);
     if (!bb || !src)
         return true;
@@ -8002,7 +8294,7 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
         bindings_builder_rollback(bb, mark);
         return false;
     }
-    if (!bindings_merge_prime_occurrence(&bb->current, src)) {
+    if (!bindings_merge_prime_occurrence(&bb->current, src, failure)) {
         bindings_builder_rollback(bb, mark);
         return false;
     }
@@ -8021,6 +8313,7 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     BindingsBuilderMergeCurrentContext merge_context = {
         .builder = bb,
         .ok = true,
+        .failure = failure,
     };
     if (!bindings_for_each_current_binding(
             src, bindings_builder_merge_current_binding,
@@ -8032,7 +8325,7 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
     }
     for (uint32_t i = 0; i < npending; i++) {
         if (!bindings_builder_add_constraint_internal(
-                bb, pending[i].lhs, pending[i].rhs, false)) {
+                bb, pending[i].lhs, pending[i].rhs, false, failure)) {
             bindings_temp_constraints_release(pending, pending_cap,
                                               pending_stack);
             bindings_builder_rollback(bb, mark);
@@ -8040,11 +8333,23 @@ bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
         }
     }
     bindings_temp_constraints_release(pending, pending_cap, pending_stack);
-    if (!bindings_builder_normalize_constraints(bb)) {
+    if (!bindings_builder_normalize_constraints(bb, failure)) {
         bindings_builder_rollback(bb, mark);
         return false;
     }
     return true;
+}
+
+bool bindings_builder_try_merge(BindingsBuilder *bb, const Bindings *src) {
+    return bindings_builder_try_merge_kernel(bb, src, NULL);
+}
+
+CettaMatchCompletion bindings_builder_try_merge_checked(
+    BindingsBuilder *builder, const Bindings *source) {
+    CettaMatchCompletion failure = CETTA_MATCH_INCOMPLETE;
+    if (!builder) return failure;
+    return bindings_builder_try_merge_kernel(builder, source, &failure)
+        ? CETTA_MATCH_MATCHED : failure;
 }
 
 const Bindings *bindings_builder_bindings(const BindingsBuilder *bb) {
@@ -8066,6 +8371,7 @@ void bindings_builder_take(BindingsBuilder *bb, Bindings *out) {
     bb->frame_undo_len = 0u;
     bb->frame_undo_cap = 0u;
     bindings_builder_discard_frame_registration_history(bb, true);
+    bindings_builder_drop_prime_trail(bb,0u);
     free(bb->prime_trail);
     bb->prime_trail = NULL;
     bb->prime_trail_len = 0;
@@ -9277,7 +9583,7 @@ static bool bindings_exclusive_frame_store(
     BindingValue existing = bindings_exclusive_frame_lookup(
         frame, &builder->current, id, NULL);
     if (existing.skeleton) {
-        if (!binding_value_equal(existing, value))
+        if (!binding_value_match_equal(existing, value))
             return false;
         if (authoritative_value_out)
             *authoritative_value_out = existing;
@@ -9441,7 +9747,7 @@ bool bindings_exclusive_frame_freeze(
             : frame->values[write->local_slot];
         if (!bindings_builder_add_id_internal_with_cycle_evidence(
                 builder, id, spelling, name_key, value,
-                true, BINDINGS_REACHABILITY_ABSENT, NULL)) {
+                true, BINDINGS_REACHABILITY_ABSENT, NULL, NULL)) {
             bindings_builder_rollback(builder, mark);
             return false;
         }
@@ -9513,7 +9819,7 @@ bool bindings_exclusive_frame_publish_slots(
             return false;
         }
         if (current.skeleton) {
-            if (!binding_value_equal(current, value)) {
+            if (!binding_value_match_equal(current, value)) {
                 bindings_builder_rollback(builder, mark);
                 return false;
             }
@@ -9944,6 +10250,12 @@ static bool bindings_projection_copy_live_frame_values(
         }
         target->activation_write_boundary = source->activation_write_boundary;
         target->has_activation_write_boundary = source->has_activation_write_boundary;
+        /* A slot past the backing prefix reads as unbound with version zero;
+         * only a different version needs that prefix to grow. */
+        uint64_t source_version = bindings_frame_slot_version(source, source_slot);
+        if (!bindings_frame_index_replace_slot_version(
+                target, target_slot, source_version))
+            return false;
         BindingValue value = bindings_frame_slot_value(source, source_slot);
         if (!value.skeleton)
             continue;
@@ -9959,8 +10271,7 @@ static bool bindings_projection_copy_live_frame_values(
             return false;
         }
         bindings_rhs_variable_bloom_add(dst, value);
-        target->write_version[target_slot] =
-            bindings_frame_slot_version(source, source_slot);
+        target->write_version[target_slot] = source_version;
     }
     return true;
 }
@@ -10620,6 +10931,7 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
             free(next_marks);
             free(next_trail);
             free(next_frame_undo);
+            for (uint32_t i=0u;i<next_prime_len;i++) prime_occurrence_clear(&next_prime_trail[i]);
             free(next_prime_trail);
             return false;
         }
@@ -10680,7 +10992,7 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
                 valid = false;
                 break;
             }
-            next_prime_trail[next_prime_len++] = *prime;
+            prime_occurrence_copy(&next_prime_trail[next_prime_len++],prime);
         }
         next_trail[i] = state;
     }
@@ -10751,6 +11063,7 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
         free(next_entry_marks);
         free(next_trail);
         free(next_frame_undo);
+        for (uint32_t i=0u;i<next_prime_len;i++) prime_occurrence_clear(&next_prime_trail[i]);
         free(next_prime_trail);
         return false;
     }
@@ -10786,6 +11099,7 @@ bool bindings_builder_compact_reachable_with_epoch_roots_and_entry_marks(
         bb->rollback_count++;
     free(bb->trail);
     free(bb->frame_undo);
+    bindings_builder_drop_prime_trail(bb,0u);
     free(bb->prime_trail);
     bb->trail = next_trail;
     bb->trail_len = (uint32_t)unique_count;
@@ -11109,17 +11423,17 @@ static bool alpha_frame_local(VarId id, const CettaFrameIdentity *epochs,
     return false;
 }
 
-static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
+static CettaMatchCompletion atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
                             BindingsBuilder *builder, Arena *arena, bool alpha,
-                            const AlphaFrameScope *scope);
+                            const AlphaFrameScope *scope, bool resolve_spaces);
 
 bool simple_match(Atom *pattern, Atom *target, Bindings *b, Arena *a) {
-    return atom_pair_walk(pattern, target, b, NULL, a, false, NULL);
+    return atom_pair_walk(pattern, target, b, NULL, a, false, NULL, false) == CETTA_MATCH_MATCHED;
 }
 
 bool simple_match_builder(Atom *pattern, Atom *target, BindingsBuilder *bb,
                           Arena *a) {
-    return atom_pair_walk(pattern, target, NULL, bb, a, false, NULL);
+    return atom_pair_walk(pattern, target, NULL, bb, a, false, NULL, false) == CETTA_MATCH_MATCHED;
 }
 
 /* ── Type matching (from HE spec Matching.lean:188-195) ────────────────── */
@@ -11633,6 +11947,7 @@ static bool simple_match_leaf(Atom *pattern, Atom *target) {
         case GV_TENSOR:
             return atom_eq(pattern, target);
         case GV_SPACE:
+            return atom_eq_with_resolved_spaces(pattern, target);
         case GV_STATE:
         case GV_CAPTURE:
         case GV_FOREIGN:
@@ -11643,11 +11958,11 @@ static bool simple_match_leaf(Atom *pattern, Atom *target) {
         /* A rational term is equal to any node with its unfolding. */
         case GV_TERM_GRAPH:
         case GV_BINDINGS:
-            return atom_eq(pattern, target);
+            return atom_eq_with_resolved_spaces(pattern, target);
         case GV_PRIME_NEED_CAPABILITY:
         case GV_PRIME_CONTEXT:
         case GV_INTERNAL_TAG:
-            return atom_eq(pattern, target);
+            return atom_eq_with_resolved_spaces(pattern, target);
         }
         return false;
 
@@ -11671,9 +11986,9 @@ typedef struct {
     Atom *right_rest;
 } AtomPairFrame;
 
-static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
+static CettaMatchCompletion atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
                             BindingsBuilder *builder, Arena *arena, bool alpha,
-                            const AlphaFrameScope *scope) {
+                            const AlphaFrameScope *scope, bool resolve_spaces) {
     AtomPairFrame inline_frames[16];
     AtomPairFrame *frames = inline_frames;
     size_t len = 0u, cap = sizeof inline_frames / sizeof inline_frames[0];
@@ -11681,7 +11996,7 @@ static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
     match_path_init(&path);
     AlphaPairSet pairs;
     alpha_pair_set_init(&pairs);
-    bool ok = false;
+    CettaMatchCompletion completion = CETTA_MATCH_INCOMPLETE;
     if (!alpha && !bindings && !builder)
         goto done;
     for (;;) {
@@ -11692,15 +12007,15 @@ static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
         }
         if (alpha && (left->kind == ATOM_VAR || right->kind == ATOM_VAR)) {
             if (left->kind != ATOM_VAR || right->kind != ATOM_VAR)
-                goto done;
+                goto mismatch;
             if (scope) {
                 bool local_left = alpha_frame_local(left->var_id, scope->left_epochs, scope->left_count);
                 bool local_right = alpha_frame_local(right->var_id, scope->right_epochs, scope->right_count);
                 if (local_left != local_right)
-                    goto done;
+                    goto mismatch;
                 if (!local_left) {
                     if (!var_id_eq(left->var_id, right->var_id))
-                        goto done;
+                        goto mismatch;
                     goto advance_pair;
                 }
             }
@@ -11708,7 +12023,7 @@ static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
             VarId mapped_left = alpha_lookup_right(&pairs, right->var_id);
             if (!var_id_is_none(mapped_right) || !var_id_is_none(mapped_left)) {
                 if (!var_id_eq(mapped_right, right->var_id) || !var_id_eq(mapped_left, left->var_id))
-                    goto done;
+                    goto mismatch;
             } else if (!alpha_add_pair(&pairs, left->var_id, right->var_id)) {
                 goto done;
             }
@@ -11718,22 +12033,26 @@ static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
                 goto done;
         } else {
             if (left->kind != right->kind)
-                goto done;
+                goto mismatch;
             if (left->kind != ATOM_EXPR) {
-                if (!(alpha ? atom_eq(left, right) : simple_match_leaf(left, right)))
-                    goto done;
+                if (!(alpha ? (resolve_spaces ? atom_eq_with_resolved_spaces(left, right)
+                                             : atom_eq(left, right))
+                            : simple_match_leaf(left, right)))
+                    goto mismatch;
             } else {
                 AtomPairFrame frame = {.left = left, .right = right};
                 if (alpha) {
                     if (atom_authored_len(left) != atom_authored_len(right))
-                        goto done;
+                        goto mismatch;
                     frame.end = atom_authored_len(left);
                 } else {
                     if (!atom_petta_decomposition_compatible(left, right))
-                        goto done;
+                        goto mismatch;
                     MatchListMeeting meet;
                     MatchListOutcome outcome = match_list_meet(arena, left, right, &meet);
-                    if (outcome == MATCH_LIST_MISMATCH || outcome == MATCH_LIST_INCOMPLETE)
+                    if (outcome == MATCH_LIST_MISMATCH)
+                        goto mismatch;
+                    if (outcome == MATCH_LIST_INCOMPLETE)
                         goto done;
                     if (outcome == MATCH_LIST_ELEMENTS) {
                         frame.next = 1u;
@@ -11742,7 +12061,7 @@ static bool atom_pair_walk(Atom *left, Atom *right, Bindings *bindings,
                         frame.right_rest = meet.right_rest;
                     } else {
                         if (atom_authored_len(left) != atom_authored_len(right))
-                            goto done;
+                            goto mismatch;
                         frame.end = atom_authored_len(left);
                     }
                 }
@@ -11791,17 +12110,19 @@ advance_pair:
             len--;
         }
         if (!len) {
-            ok = true;
+            completion = CETTA_MATCH_MATCHED;
             break;
         }
     }
-
+    goto done;
+mismatch:
+    completion = CETTA_MATCH_REFUTED;
 done:
     alpha_pair_set_free(&pairs);
     match_path_free(&path);
     if (frames != inline_frames)
         free(frames);
-    return ok;
+    return completion;
 }
 
 typedef enum {
@@ -11901,7 +12222,10 @@ done:
     return unbound;
 }
 
-static bool binding_values_eq_under_bindings(Bindings *b, BindingValue lhs, BindingValue rhs) {
+static inline __attribute__((always_inline)) bool binding_values_eq_under_bindings_mode(
+    Bindings *b, BindingValue lhs, BindingValue rhs, CettaMatchCompletion *failure,
+    bool resolve_spaces) {
+    if (failure) *failure = CETTA_MATCH_INCOMPLETE;
     DecodedMatchWorklist work;
     MatchPathSet path;
     decoded_match_worklist_init(&work);
@@ -11922,15 +12246,16 @@ static bool binding_values_eq_under_bindings(Bindings *b, BindingValue lhs, Bind
             goto done;
         Atom *left = lhs.skeleton, *right = rhs.skeleton;
         if (left->kind != right->kind)
-            goto done;
+            goto mismatch;
         if (left->kind == ATOM_VAR) {
             if (!var_id_eq(binding_value_variable_id(lhs), binding_value_variable_id(rhs)))
-                goto done;
+                goto mismatch;
             continue;
         }
         if (left->kind != ATOM_EXPR) {
-            if (!atom_eq(left, right))
-                goto done;
+            if (!(resolve_spaces ? atom_eq_with_resolved_spaces(left, right)
+                                 : atom_eq(left, right)))
+                goto mismatch;
             continue;
         }
         if (left == right &&
@@ -11939,12 +12264,13 @@ static bool binding_values_eq_under_bindings(Bindings *b, BindingValue lhs, Bind
                 binding_value_is_contextual(rhs), binding_value_epoch(lhs), binding_value_epoch(rhs)))
             continue;
         if (!atom_has_vars(left) && !atom_has_vars(right)) {
-            if (!atom_eq(left, right))
-                goto done;
+            if (!(resolve_spaces ? atom_eq_with_resolved_spaces(left, right)
+                                 : atom_eq(left, right)))
+                goto mismatch;
             continue;
         }
         if (atom_authored_len(left) != atom_authored_len(right))
-            goto done;
+            goto mismatch;
         MatchTerm left_term = {.value = lhs}, right_term = {.value = rhs};
         if (!match_path_enter(&path, left_term, right_term) ||
             !decoded_match_push_exit(&work, left_term, right_term))
@@ -11959,10 +12285,22 @@ static bool binding_values_eq_under_bindings(Bindings *b, BindingValue lhs, Bind
         }
     }
     equal = true;
+    goto done;
+mismatch:
+    if (failure) *failure = CETTA_MATCH_REFUTED;
 done:
     decoded_match_worklist_free(&work);
     match_path_free(&path);
     return equal;
+}
+
+static bool binding_values_eq_under_bindings(Bindings *b, BindingValue lhs, BindingValue rhs) {
+    return binding_values_eq_under_bindings_mode(b, lhs, rhs, NULL, false);
+}
+
+static bool binding_values_eq_under_bindings_checked(
+    Bindings *bindings, BindingValue lhs, BindingValue rhs, CettaMatchCompletion *failure) {
+    return binding_values_eq_under_bindings_mode(bindings, lhs, rhs, failure, true);
 }
 
 static size_t bindings_dereference_limit(const Bindings *bindings) {
@@ -12056,7 +12394,8 @@ static void match_note_unification_attempt(
 static inline __attribute__((always_inline)) bool match_decoded_atoms_worklist_mode(
     BindingValue left_value, BindingValue right_value, Bindings *bindings,
     BindingsBuilder *builder, Arena *a, bool undefined_is_wildcard,
-    bool meter_cost) {
+    bool meter_cost, CettaMatchCompletion *failure) {
+    if (failure) *failure = CETTA_MATCH_INCOMPLETE;
     if (meter_cost)
         cetta_native_cost_charge_observed(CETTA_COST_MATCH_ATTEMPT, 1u);
     Atom *left, *right;
@@ -12074,6 +12413,7 @@ static inline __attribute__((always_inline)) bool match_decoded_atoms_worklist_m
     uint32_t untracked_pairs = 0u;
     decoded_match_worklist_init(&work);
     match_path_init(&path);
+    if (!left_value.skeleton || !right_value.skeleton) goto fail;
     if (!decoded_match_push(&work, (MatchTerm){.value = left_value},
                             (MatchTerm){.value = right_value})) goto fail;
 
@@ -12120,13 +12460,13 @@ retry_pair:
             match_closed_expression_decision_try(
                 left, right, &closed_equal)) {
             if (!closed_equal)
-                goto fail;
+                goto mismatch;
             continue;
         }
         if (!undefined_is_wildcard &&
             match_finite_ground_equal_try(left, right, &closed_equal)) {
             if (!closed_equal)
-                goto fail;
+                goto mismatch;
             continue;
         }
         if (left->kind == ATOM_VAR) {
@@ -12159,9 +12499,9 @@ retry_pair:
                 if (var_id_eq(binding_value_variable_id(left_value), binding_value_variable_id(right_value))) continue;
             }
             bool added = builder
-                ? bindings_builder_add_id_internal(
+                ? bindings_builder_add_id_internal_checked(
                       builder, binding_value_variable_id(left_value),
-                      atom_symbol_current_id(left), left->name_key, right_value)
+                      atom_symbol_current_id(left), left->name_key, right_value, failure)
                 : bindings_add_internal(bindings, binding_value_variable_id(left_value),
                       atom_symbol_current_id(left), left->name_key, right_value, true);
             if (!added) {
@@ -12184,9 +12524,9 @@ retry_pair:
                 goto retry_pair;
             }
             bool added = builder
-                ? bindings_builder_add_id_internal(
+                ? bindings_builder_add_id_internal_checked(
                       builder, binding_value_variable_id(right_value),
-                      atom_symbol_current_id(right), right->name_key, left_value)
+                      atom_symbol_current_id(right), right->name_key, left_value, failure)
                 : bindings_add_internal(bindings, binding_value_variable_id(right_value),
                       atom_symbol_current_id(right), right->name_key, left_value, true);
             if (!added) {
@@ -12198,32 +12538,33 @@ retry_pair:
             if (!atom_symbols_equal(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
-                goto fail;
+                goto mismatch;
             }
             continue;
         }
         if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
-            if (!atom_eq(left, right)) {
+            if (!atom_eq_with_resolved_spaces(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
-                goto fail;
+                goto mismatch;
             }
             continue;
         }
         if (!atom_petta_decomposition_compatible(left, right))
-            goto fail;
+            goto mismatch;
         MatchListMeeting meet;
         MatchListOutcome list_outcome =
             left->kind == ATOM_EXPR && right->kind == ATOM_EXPR
                 ? match_list_meet(a, left, right, &meet)
                 : MATCH_LIST_EXPRESSIONS;
-        if (list_outcome == MATCH_LIST_MISMATCH || list_outcome == MATCH_LIST_INCOMPLETE ||
+        if (list_outcome == MATCH_LIST_INCOMPLETE) goto fail;
+        if (list_outcome == MATCH_LIST_MISMATCH ||
             left->kind != ATOM_EXPR || right->kind != ATOM_EXPR ||
             (list_outcome == MATCH_LIST_EXPRESSIONS &&
              atom_authored_len(left) != atom_authored_len(right))) {
             if (attempt_resolving_bound)
                 attempt_repeated_var = true;
-            goto fail;
+            goto mismatch;
         }
         if (!track_path &&
             ++untracked_pairs > MATCH_UNTRACKED_PAIR_LIMIT)
@@ -12295,6 +12636,8 @@ retry_pair:
         false);
     return true;
 
+mismatch:
+    if (failure) *failure = CETTA_MATCH_REFUTED;
 fail:
     decoded_match_worklist_free(&work);
     match_path_free(&path);
@@ -12311,14 +12654,14 @@ static __attribute__((noinline)) bool match_decoded_atoms_worklist_plain(
     BindingValue left_value, BindingValue right_value, Bindings *bindings,
     BindingsBuilder *builder, Arena *a, bool undefined_is_wildcard) {
     return match_decoded_atoms_worklist_mode(
-        left_value, right_value, bindings, builder, a, undefined_is_wildcard, false);
+        left_value, right_value, bindings, builder, a, undefined_is_wildcard, false, NULL);
 }
 
 static __attribute__((noinline)) bool match_decoded_atoms_worklist_observed(
     BindingValue left_value, BindingValue right_value, Bindings *bindings,
     BindingsBuilder *builder, Arena *a, bool undefined_is_wildcard) {
     return match_decoded_atoms_worklist_mode(
-        left_value, right_value, bindings, builder, a, undefined_is_wildcard, true);
+        left_value, right_value, bindings, builder, a, undefined_is_wildcard, true, NULL);
 }
 
 static bool match_decoded_atoms_worklist(
@@ -12329,6 +12672,22 @@ static bool match_decoded_atoms_worklist(
             left_value, right_value, bindings, builder, a, undefined_is_wildcard)
         : match_decoded_atoms_worklist_plain(
             left_value, right_value, bindings, builder, a, undefined_is_wildcard);
+}
+
+/* A failure observer is explicit and local to this checked operation. The
+ * plain and observed legacy entries keep their compile-time-null observer. */
+static bool match_decoded_atoms_worklist_checked(
+    BindingValue left, BindingValue right, Bindings *bindings,
+    BindingsBuilder *builder, Arena *arena, bool undefined_is_wildcard,
+    CettaMatchCompletion *failure) {
+    if (!failure)
+        return match_decoded_atoms_worklist(
+            left, right, bindings, builder, arena, undefined_is_wildcard);
+    return cetta_native_cost_active()
+        ? match_decoded_atoms_worklist_mode(
+            left, right, bindings, builder, arena, undefined_is_wildcard, true, failure)
+        : match_decoded_atoms_worklist_mode(
+            left, right, bindings, builder, arena, undefined_is_wildcard, false, failure);
 }
 
 /* The public SpaceType name and a concrete (Space discipline) value type
@@ -12765,26 +13124,42 @@ static bool alpha_scalar_leaf(const Atom *atom) {
     }
 }
 
-bool atom_alpha_eq(Atom *left, Atom *right) {
-    if (!left || !right || left->kind != right->kind)
-        return false;
+static CettaMatchCompletion atom_alpha_eq_mode(Atom *left, Atom *right, bool resolve_spaces) {
+    if (!left || !right)
+        return CETTA_MATCH_INCOMPLETE;
+    if (left->kind != right->kind)
+        return CETTA_MATCH_REFUTED;
     if (left->kind != ATOM_EXPR)
-        return left->kind == ATOM_VAR || atom_eq(left, right);
+        return left->kind == ATOM_VAR ||
+            (resolve_spaces ? atom_eq_with_resolved_spaces(left, right) : atom_eq(left, right))
+            ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
     if (atom_authored_len(left) != atom_authored_len(right))
-        return false;
+        return CETTA_MATCH_REFUTED;
     /* Ground flat terms need no renaming environment or comparison frames.
      * Classify the entire pair before comparing: an opaque equality service
      * must never run once here and again after a later child causes fallback. */
     for (CettaExprIndex i = 0u; i < atom_authored_len(left); i++) {
         if (!alpha_scalar_leaf(left->expr.elems[i]) ||
             !alpha_scalar_leaf(right->expr.elems[i]))
-            return atom_pair_walk(left, right, NULL, NULL, NULL, true, NULL);
+            return atom_pair_walk(left, right, NULL, NULL, NULL, true, NULL, resolve_spaces);
     }
     for (CettaExprIndex i = 0u; i < atom_authored_len(left); i++) {
         if (!atom_eq(left->expr.elems[i], right->expr.elems[i]))
-            return false;
+            return CETTA_MATCH_REFUTED;
     }
-    return true;
+    return CETTA_MATCH_MATCHED;
+}
+
+bool atom_alpha_eq(Atom *left, Atom *right) {
+    return atom_alpha_eq_mode(left, right, false) == CETTA_MATCH_MATCHED;
+}
+
+CettaMatchCompletion atom_alpha_eq_checked(Atom *left, Atom *right) {
+    return atom_alpha_eq_mode(left, right, false);
+}
+
+CettaMatchCompletion atom_alpha_eq_with_resolved_spaces_checked(Atom *left, Atom *right) {
+    return atom_alpha_eq_mode(left, right, true);
 }
 
 bool atom_alpha_eq_scoped(Atom *left, Atom *right,
@@ -12792,7 +13167,7 @@ bool atom_alpha_eq_scoped(Atom *left, Atom *right,
         const CettaFrameIdentity *right_epochs, size_t right_count) {
     if ((!left_epochs && left_count) || (!right_epochs && right_count)) return false;
     AlphaFrameScope scope = {left_epochs, right_epochs, left_count, right_count};
-    return atom_pair_walk(left, right, NULL, NULL, NULL, true, &scope);
+    return atom_pair_walk(left, right, NULL, NULL, NULL, true, &scope, false) == CETTA_MATCH_MATCHED;
 }
 
 /* One pending comparison.  An entry with child_count > 0 stands for the
@@ -13201,7 +13576,7 @@ static bool match_query_child_rigid_impossible(
         return query->expr.len != child->child_count;
     if (query->kind == ATOM_GROUNDED)
         return child->source && child->source->kind == ATOM_GROUNDED &&
-            !atom_eq(query, child->source);
+            !atom_eq_with_resolved_spaces(query, child->source);
     return false;
 }
 
@@ -13274,8 +13649,9 @@ static bool match_plan_fails_before_bind(
  * graph traversal. Active marks reject physical cycles; completed marks reuse
  * shared subgraphs. Occurs queries additionally follow qualified variable
  * bindings. Neither query publishes a binding while its verdict is pending.
- * Hash growth and publication remain separate primitive costs, rather than
- * processor-time bounds implied by these traversal units. */
+ * Memo clearing, probing, migration and stack copying retain their own
+ * positions in the same query. Allocator calls, transport and publication
+ * still require separate prices; these are not processor-time bounds. */
 typedef enum {
     MATCH_GRAPH_OCCURS,
     MATCH_GRAPH_FINITE
@@ -13287,10 +13663,25 @@ typedef struct {
     bool entered;
 } MatchGraphFrame;
 
+typedef enum {
+    MATCH_GRAPH_MEMO_IDLE,
+    MATCH_GRAPH_MEMO_CLEAR,
+    MATCH_GRAPH_MEMO_SCAN,
+    MATCH_GRAPH_MEMO_MOVE,
+    MATCH_GRAPH_MEMO_INSTALL,
+    MATCH_GRAPH_MEMO_LOOKUP
+} MatchGraphMemoPhase;
+
 typedef struct {
     MatchGraphFrame *items;
     size_t len, cap;
     BindingApplyGraph graph;
+    BindingApplyGraph growing;
+    BindingApplyGraphEntry migrating;
+    size_t cleared, scanned, probe;
+    MatchGraphMemoPhase memo_phase;
+    MatchGraphFrame *growing_items;
+    size_t growing_cap, copied;
     VarIdSet variables;
     VarId target;
     MatchGraphQuery query;
@@ -13300,6 +13691,8 @@ static void match_graph_check_free(MatchGraphCheck *check) {
     if (!check) return;
     free(check->items);
     free(check->graph.entries);
+    free(check->growing.entries);
+    free(check->growing_items);
     var_id_set_free(&check->variables);
     free(check);
 }
@@ -13332,21 +13725,177 @@ static MatchGraphCheck *match_graph_check_new(
     return check;
 }
 
+/* One debit precedes one fixed-size representation action. malloc/free are
+ * counted calls here; their byte-dependent service costs are not hidden in
+ * the index/analysis valuation. No destination slot is read before clearing. */
+static void match_graph_check_debit(uint64_t *budget, CettaNativeCostKind kind) {
+    --*budget;
+    cetta_native_cost_charge(kind, 1u);
+}
+
+#ifdef CETTA_TEST_HOOKS
+static _Thread_local bool match_graph_test_allocation_refused;
+void match_atoms_cursor_test_refuse_graph_allocation(void) {
+    match_graph_test_allocation_refused = true;
+}
+#endif
+
+static void *match_graph_check_allocate(size_t bytes) {
+#ifdef CETTA_TEST_HOOKS
+    if (match_graph_test_allocation_refused) {
+        match_graph_test_allocation_refused = false;
+        return NULL;
+    }
+#endif
+    return malloc(bytes);
+}
+
+/* NULL with valid=true is a saved maintenance/probe position. The caller
+ * keeps the same top frame until an entry is returned. */
+static BindingApplyGraphEntry *match_graph_check_entry(MatchGraphCheck *check,
+        Atom *atom, BindingsApplyScope scope, bool entering,
+        uint64_t *budget, bool *valid) {
+    *valid = true;
+    if (!*budget) return NULL;
+    if (check->memo_phase == MATCH_GRAPH_MEMO_IDLE) {
+        if (entering && (!check->graph.cap ||
+                check->graph.len + 1u > check->graph.cap / 2u)) {
+            size_t capacity = check->graph.cap ? check->graph.cap * 2u : 32u;
+            if (capacity < check->graph.cap ||
+                    capacity > SIZE_MAX / sizeof(*check->growing.entries)) {
+                *valid = false;
+                return NULL;
+            }
+            match_graph_check_debit(budget, CETTA_COST_ANALYSIS_STEP);
+            check->growing.entries = match_graph_check_allocate(
+                capacity * sizeof(*check->growing.entries));
+            if (!check->growing.entries) { *valid = false; return NULL; }
+            check->growing.cap = capacity;
+            check->growing.len = check->graph.len;
+            check->cleared = check->scanned = 0u;
+            check->memo_phase = MATCH_GRAPH_MEMO_CLEAR;
+            return NULL;
+        }
+        if (!check->graph.cap) { *valid = false; return NULL; }
+        check->probe = bindings_apply_graph_hash(atom, scope.epoch, scope.kind, 0u) &
+            (check->graph.cap - 1u);
+        check->memo_phase = MATCH_GRAPH_MEMO_LOOKUP;
+    }
+    switch (check->memo_phase) {
+    case MATCH_GRAPH_MEMO_CLEAR:
+        match_graph_check_debit(budget, CETTA_COST_INDEX_VISIT);
+        check->growing.entries[check->cleared++] = (BindingApplyGraphEntry){0};
+        if (check->cleared == check->growing.cap)
+            check->memo_phase = MATCH_GRAPH_MEMO_SCAN;
+        return NULL;
+    case MATCH_GRAPH_MEMO_SCAN:
+        if (check->scanned == check->graph.cap) {
+            check->memo_phase = MATCH_GRAPH_MEMO_INSTALL;
+            /* The phase transition and installation share one debit. */
+            return match_graph_check_entry(check, atom, scope, entering, budget, valid);
+        }
+        match_graph_check_debit(budget, CETTA_COST_INDEX_VISIT);
+        check->migrating = check->graph.entries[check->scanned++];
+        if (check->migrating.source) {
+            BindingApplyGraphEntry *entry = &check->migrating;
+            check->probe = bindings_apply_graph_hash(
+                entry->source, entry->epoch, entry->kind, entry->code_depth) &
+                (check->growing.cap - 1u);
+            check->memo_phase = MATCH_GRAPH_MEMO_MOVE;
+        } else if (check->scanned == check->graph.cap) {
+            check->memo_phase = MATCH_GRAPH_MEMO_INSTALL;
+        }
+        return NULL;
+    case MATCH_GRAPH_MEMO_MOVE:
+        match_graph_check_debit(budget, CETTA_COST_INDEX_VISIT);
+        if (check->growing.entries[check->probe].source) {
+            check->probe = (check->probe + 1u) & (check->growing.cap - 1u);
+        } else {
+            check->growing.entries[check->probe] = check->migrating;
+            check->migrating = (BindingApplyGraphEntry){0};
+            check->memo_phase = check->scanned == check->graph.cap
+                ? MATCH_GRAPH_MEMO_INSTALL : MATCH_GRAPH_MEMO_SCAN;
+        }
+        return NULL;
+    case MATCH_GRAPH_MEMO_INSTALL:
+        match_graph_check_debit(budget, CETTA_COST_ANALYSIS_STEP);
+        free(check->graph.entries);
+        check->graph = check->growing;
+        check->growing = (BindingApplyGraph){0};
+        check->memo_phase = MATCH_GRAPH_MEMO_IDLE;
+        return NULL;
+    case MATCH_GRAPH_MEMO_LOOKUP: {
+        match_graph_check_debit(budget, CETTA_COST_INDEX_VISIT);
+        BindingApplyGraphEntry *entry = &check->graph.entries[check->probe];
+        if (entry->source && !bindings_apply_graph_key_equal(entry, atom, scope, 0u)) {
+            check->probe = (check->probe + 1u) & (check->graph.cap - 1u);
+            return NULL;
+        }
+        if (!entry->source) {
+            if (!entering) { *valid = false; return NULL; }
+            *entry = (BindingApplyGraphEntry){.source = atom, .epoch = scope.epoch,
+                .kind = scope.kind};
+            ++check->graph.len;
+        }
+        check->memo_phase = MATCH_GRAPH_MEMO_IDLE;
+        return entry;
+    }
+    case MATCH_GRAPH_MEMO_IDLE:
+        break;
+    }
+    *valid = false;
+    return NULL;
+}
+
+/* Keep the old stack installed until every live frame has been copied.
+ * The pending parent edge is advanced only after installation. */
+static bool match_graph_check_stack(MatchGraphCheck *check, uint64_t *budget,
+        bool *valid) {
+    *valid = true;
+    if (check->len < check->cap && !check->growing_items) return true;
+    if (!*budget) return false;
+    if (!check->growing_items) {
+        size_t capacity = check->cap * 2u;
+        if (capacity <= check->cap || capacity > SIZE_MAX / sizeof(*check->items)) {
+            *valid = false;
+            return false;
+        }
+        match_graph_check_debit(budget, CETTA_COST_ANALYSIS_STEP);
+        check->growing_items = match_graph_check_allocate(capacity * sizeof(*check->items));
+        if (!check->growing_items) { *valid = false; return false; }
+        check->growing_cap = capacity;
+        check->copied = 0u;
+    } else if (check->copied < check->len) {
+        match_graph_check_debit(budget, CETTA_COST_ANALYSIS_STEP);
+        check->growing_items[check->copied] = check->items[check->copied];
+        ++check->copied;
+    } else {
+        match_graph_check_debit(budget, CETTA_COST_ANALYSIS_STEP);
+        free(check->items);
+        check->items = check->growing_items;
+        check->cap = check->growing_cap;
+        check->growing_items = NULL;
+        check->growing_cap = check->copied = 0u;
+    }
+    return false;
+}
+
 /* True means a complete verdict; false with remaining work is a scheduling
  * pause. False with no work is an invalid/capacity boundary, never absence. */
 static bool match_graph_check_step(MatchGraphCheck *check, Bindings *bindings,
         uint64_t *budget, BindingsReachability *verdict) {
     *verdict = BINDINGS_REACHABILITY_UNKNOWN;
     while (check->len && *budget) {
-        --*budget;
         MatchGraphFrame *frame = &check->items[check->len - 1u];
         BindingValue value = frame->value;
         Atom *atom = value.skeleton;
         if (!atom || (check->query == MATCH_GRAPH_OCCURS && !atom_has_vars(atom))) {
+            match_graph_check_debit(budget, CETTA_COST_ANALYSIS_STEP);
             --check->len;
             continue;
         }
         if (check->query == MATCH_GRAPH_OCCURS && atom->kind == ATOM_VAR) {
+            match_graph_check_debit(budget, CETTA_COST_ANALYSIS_STEP);
             --check->len;
             VarId id = binding_value_qualify_id(value, atom->var_id);
             if (var_id_is_none(id)) goto invalid;
@@ -13365,16 +13914,20 @@ static bool match_graph_check_step(MatchGraphCheck *check, Bindings *bindings,
             continue;
         }
         if (atom->kind != ATOM_EXPR) {
+            match_graph_check_debit(budget, CETTA_COST_ANALYSIS_STEP);
             --check->len;
             continue;
         }
         BindingsApplyScope scope = {.epoch = binding_value_epoch(value),
                                     .kind = binding_value_kind(value)};
         if (!frame->entered) {
-            bool created = false;
-            BindingApplyGraphEntry *entry = bindings_apply_graph_enter(
-                &check->graph, atom, scope, 0u, &created);
-            if (!entry) goto invalid;
+            size_t previous = check->graph.len;
+            bool valid = true;
+            BindingApplyGraphEntry *entry = match_graph_check_entry(
+                check, atom, scope, true, budget, &valid);
+            if (!valid) goto invalid;
+            if (!entry) continue;
+            bool created = previous != check->graph.len;
             if (!created && entry->active) {
                 if (check->query != MATCH_GRAPH_FINITE) goto invalid;
                 *verdict = BINDINGS_REACHABILITY_PRESENT;
@@ -13387,11 +13940,22 @@ static bool match_graph_check_step(MatchGraphCheck *check, Bindings *bindings,
             entry->active = true;
             frame->entered = true;
         } else if (frame->child < atom->expr.len) {
+            bool valid = true;
+            if (!match_graph_check_stack(check, budget, &valid)) {
+                if (!valid) goto invalid;
+                continue;
+            }
+            match_graph_check_debit(budget, CETTA_COST_ANALYSIS_STEP);
             value.skeleton = atom->expr.elems[frame->child++];
             if (!value.skeleton && check->query == MATCH_GRAPH_FINITE) continue;
             if (!match_graph_check_push(check, value)) goto invalid;
         } else {
-            bindings_apply_graph_slot(&check->graph, atom, scope, 0u)->active = false;
+            bool valid = true;
+            BindingApplyGraphEntry *entry = match_graph_check_entry(
+                check, atom, scope, false, budget, &valid);
+            if (!valid) goto invalid;
+            if (!entry) continue;
+            entry->active = false;
             --check->len;
         }
     }
@@ -13410,12 +13974,18 @@ static MatchGraphCheck *match_graph_check_clone(const MatchGraphCheck *source) {
     var_id_set_init(&copy->variables);
     copy->target = source->target;
     copy->query = source->query;
-    if (source->len) {
-        if (source->len > SIZE_MAX / sizeof(*copy->items)) goto fail;
-        copy->items = malloc(source->len * sizeof(*copy->items));
+    copy->memo_phase = source->memo_phase;
+    copy->cleared = source->cleared;
+    copy->scanned = source->scanned;
+    copy->probe = source->probe;
+    copy->migrating = source->migrating;
+    if (source->cap) {
+        if (source->cap > SIZE_MAX / sizeof(*copy->items)) goto fail;
+        copy->items = malloc(source->cap * sizeof(*copy->items));
         if (!copy->items) goto fail;
         memcpy(copy->items, source->items, source->len * sizeof(*copy->items));
-        copy->len = copy->cap = source->len;
+        copy->len = source->len;
+        copy->cap = source->cap;
     }
     if (source->graph.cap) {
         if (source->graph.cap > SIZE_MAX / sizeof(*copy->graph.entries)) goto fail;
@@ -13425,6 +13995,24 @@ static MatchGraphCheck *match_graph_check_clone(const MatchGraphCheck *source) {
                source->graph.cap * sizeof(*copy->graph.entries));
         copy->graph.cap = source->graph.cap;
         copy->graph.len = source->graph.len;
+    }
+    if (source->growing.cap) {
+        copy->growing.entries = malloc(source->growing.cap * sizeof(*copy->growing.entries));
+        if (!copy->growing.entries) goto fail;
+        size_t initialized = source->memo_phase == MATCH_GRAPH_MEMO_CLEAR
+            ? source->cleared : source->growing.cap;
+        memcpy(copy->growing.entries, source->growing.entries,
+               initialized * sizeof(*copy->growing.entries));
+        copy->growing.cap = source->growing.cap;
+        copy->growing.len = source->growing.len;
+    }
+    if (source->growing_items) {
+        copy->growing_items = malloc(source->growing_cap * sizeof(*copy->growing_items));
+        if (!copy->growing_items) goto fail;
+        memcpy(copy->growing_items, source->growing_items,
+               source->copied * sizeof(*copy->growing_items));
+        copy->growing_cap = source->growing_cap;
+        copy->copied = source->copied;
     }
     for (uint32_t i = 0u; i < source->variables.len; ++i)
         if (!var_id_set_add(&copy->variables, source->variables.items[i])) goto fail;
@@ -14071,7 +14659,7 @@ retry_pair:
             continue;
         }
         if (left->kind == ATOM_GROUNDED && right->kind == ATOM_GROUNDED) {
-            if (!atom_eq(left, right)) {
+            if (!atom_eq_with_resolved_spaces(left, right)) {
                 if (attempt_resolving_bound)
                     attempt_repeated_var = true;
                 goto mismatch;
@@ -14418,6 +15006,38 @@ static bool match_cursor_copy_pair(EpochMatchPair *pair,
         match_cursor_copy_term(&pair->right, session);
 }
 
+/* During migration, old row coordinates are the retained scan. They are not
+ * queried as a hash table again. Keep those coordinates while relocating the
+ * keys; the destination memo is rehashed before further insertion. */
+static bool match_cursor_copy_graph(BindingApplyGraph *graph,
+        AtomDeepCopySession *session, bool retain_rows) {
+    if (!graph->cap) return true;
+    if (retain_rows) {
+        for (size_t i = 0u; i < graph->cap; ++i) {
+            if (!graph->entries[i].source) continue;
+            Atom *atom = atom_deep_copy_session_copy(session, graph->entries[i].source);
+            if (!atom) return false;
+            graph->entries[i].source = atom;
+        }
+        return true;
+    }
+    BindingApplyGraph relocated = {.cap = graph->cap, .len = graph->len};
+    relocated.entries = calloc(relocated.cap, sizeof(*relocated.entries));
+    if (!relocated.entries) return false;
+    for (size_t i = 0u; i < graph->cap; ++i) {
+        BindingApplyGraphEntry entry = graph->entries[i];
+        if (!entry.source) continue;
+        entry.source = atom_deep_copy_session_copy(session, entry.source);
+        if (!entry.source) { free(relocated.entries); return false; }
+        *bindings_apply_graph_slot(&relocated, entry.source,
+            (BindingsApplyScope){.epoch = entry.epoch, .kind = entry.kind},
+            entry.code_depth) = entry;
+    }
+    free(graph->entries);
+    *graph = relocated;
+    return true;
+}
+
 static bool match_cursor_copy_reach(MatchGraphCheck *check,
                                     AtomDeepCopySession *session) {
     if (!check) return true;
@@ -14426,21 +15046,24 @@ static bool match_cursor_copy_reach(MatchGraphCheck *check,
         if (!atom) return false;
         check->items[i].value.skeleton = atom;
     }
-    if (!check->graph.cap) return true;
-    BindingApplyGraph relocated = {.cap = check->graph.cap, .len = check->graph.len};
-    relocated.entries = calloc(relocated.cap, sizeof(*relocated.entries));
-    if (!relocated.entries) return false;
-    for (size_t i = 0u; i < check->graph.cap; ++i) {
-        BindingApplyGraphEntry entry = check->graph.entries[i];
-        if (!entry.source) continue;
-        entry.source = atom_deep_copy_session_copy(session, entry.source);
-        if (!entry.source) { free(relocated.entries); return false; }
-        *bindings_apply_graph_slot(&relocated, entry.source,
-            (BindingsApplyScope){.epoch = entry.epoch, .kind = entry.kind},
-            entry.code_depth) = entry;
+    for (size_t i = 0u; i < check->copied; ++i)
+        check->growing_items[i] = check->items[i];
+    if (!match_cursor_copy_graph(&check->graph, session, check->growing.cap != 0u))
+        return false;
+    /* Clearing has initialized only a prefix; it contains no keys yet. */
+    if (check->growing.cap && check->memo_phase != MATCH_GRAPH_MEMO_CLEAR &&
+            !match_cursor_copy_graph(&check->growing, session, false)) return false;
+    if (check->memo_phase == MATCH_GRAPH_MEMO_MOVE) {
+        BindingApplyGraphEntry *entry = &check->migrating;
+        entry->source = atom_deep_copy_session_copy(session, entry->source);
+        if (!entry->source) return false;
+        check->probe = bindings_apply_graph_hash(entry->source,
+            entry->epoch, entry->kind, entry->code_depth) & (check->growing.cap - 1u);
+    } else if (check->memo_phase == MATCH_GRAPH_MEMO_LOOKUP) {
+        BindingValue value = check->items[check->len - 1u].value;
+        check->probe = bindings_apply_graph_hash(value.skeleton,
+            binding_value_epoch(value), binding_value_kind(value), 0u) & (check->graph.cap - 1u);
     }
-    free(check->graph.entries);
-    check->graph = relocated;
     return true;
 }
 
@@ -14528,6 +15151,26 @@ CettaFrameIdentity match_atoms_cursor_epoch(const CettaMatchCursor *cursor) {
     return cursor && cursor->started ? cursor->epoch : CETTA_FRAME_IDENTITY_NONE;
 }
 
+#ifdef CETTA_TEST_HOOKS
+bool match_atoms_cursor_test_graph(const CettaMatchCursor *cursor,
+        CettaMatchGraphTestState *state) {
+    const MatchGraphCheck *check = cursor && cursor->saved.active
+        ? cursor->saved.reach : NULL;
+    if (!check || !state) return false;
+    *state = (CettaMatchGraphTestState){
+        .phase = check->memo_phase, .capacity = check->graph.cap,
+        .next_capacity = check->growing.cap, .cleared = check->cleared,
+        .scanned = check->scanned, .probe = check->probe,
+        .stack_length = check->len, .stack_capacity = check->cap,
+        .next_stack_capacity = check->growing_cap, .copied = check->copied};
+    return true;
+}
+
+size_t match_atoms_cursor_test_bucket(Atom *atom, size_t mask) {
+    return bindings_apply_graph_hash(atom, CETTA_FRAME_IDENTITY_NONE, BINDING_VALUE_MATERIALIZED, 0u) & mask;
+}
+#endif
+
 bool match_atoms_cursor_take(CettaMatchCursor *cursor, Bindings *out) {
     if (!cursor || !out || cursor->taken || cursor->result != CETTA_MATCH_CURSOR_MATCHED)
         return false;
@@ -14573,6 +15216,10 @@ void match_atoms_cursor_storage_census(const CettaMatchCursor *cursor,
         cetta_storage_array(census, reach->items, reach->cap, sizeof(*reach->items), 0u);
         cetta_storage_array(census, reach->graph.entries, reach->graph.cap,
             sizeof(*reach->graph.entries), 0u);
+        cetta_storage_array(census, reach->growing.entries, reach->growing.cap,
+            sizeof(*reach->growing.entries), 0u);
+        cetta_storage_array(census, reach->growing_items, reach->growing_cap,
+            sizeof(*reach->growing_items), 0u);
         if (reach->variables.items != reach->variables.inline_items)
             cetta_storage_array(census, reach->variables.items, reach->variables.cap,
                 sizeof(*reach->variables.items), 0u);
@@ -14905,7 +15552,7 @@ retry_pair:
         }
         if (left->kind == ATOM_GROUNDED &&
             right->kind == ATOM_GROUNDED) {
-            if (!atom_eq(left, right))
+            if (!atom_eq_with_resolved_spaces(left, right))
                 goto fail;
             continue;
         }
@@ -15690,7 +16337,125 @@ static bool bindings_current_binding_equal_in_other(
     return context->equal;
 }
 
+static CettaMatchCompletion binding_capture_value_compare(Arena *arena, BindingValue left, BindingValue right) {
+    if (!left.skeleton || !right.skeleton)
+        return left.skeleton==right.skeleton ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
+    if (left.context == right.context)
+        return atom_capture_identical_checked(left.skeleton, right.skeleton);
+    Atom *a = binding_value_materialize(arena, left);
+    Atom *b = binding_value_materialize(arena, right);
+    return a && b ? atom_capture_identical_checked(a,b) : CETTA_MATCH_INCOMPLETE;
+}
+
+static CettaMatchCompletion bindings_capture_frame_compare(Arena *arena,
+    const BindingsFrameStateView *left, const BindingsFrameStateView *right) {
+    if (left->ref.identity.word != right->ref.identity.word ||
+        left->slot_count != right->slot_count ||
+        left->schema_slot_count != right->schema_slot_count ||
+        left->schema_revision != right->schema_revision ||
+        left->schema_complete != right->schema_complete ||
+        left->has_activation_write_boundary != right->has_activation_write_boundary ||
+        (left->has_activation_write_boundary &&
+         left->activation_write_boundary != right->activation_write_boundary)) return CETTA_MATCH_REFUTED;
+    for (uint32_t i = 0u; i < left->slot_count; i++) {
+        BindingsFrameSlotStateView a, b;
+        if (!bindings_frame_state_read_slot(left, i, &a) ||
+            !bindings_frame_state_read_slot(right, i, &b)) return CETTA_MATCH_INCOMPLETE;
+        if (!var_id_eq(a.source_id,b.source_id) || !var_id_eq(a.var_id,b.var_id) ||
+            a.spelling!=b.spelling || a.declared_in_schema!=b.declared_in_schema)
+            return CETTA_MATCH_REFUTED;
+        if (a.name_key!=b.name_key) {
+            if (!a.name_key || !b.name_key) return CETTA_MATCH_REFUTED;
+            CettaMatchCompletion name=atom_capture_identical_checked(a.name_key,b.name_key);
+            if (name!=CETTA_MATCH_MATCHED) return name;
+        }
+        CettaMatchCompletion value=binding_capture_value_compare(arena,a.value,b.value);
+        if (value!=CETTA_MATCH_MATCHED) return value;
+    }
+    return CETTA_MATCH_MATCHED;
+}
+
+static CettaMatchCompletion binding_capture_constraint_compare(Arena *arena,
+    const BindingConstraint *left,const BindingConstraint *right) {
+    BindingValue a[]={left->lhs,left->rhs},b[]={right->lhs,right->rhs};
+    for (size_t orientation=0u;orientation<2u;orientation++) {
+        CettaMatchCompletion first=binding_capture_value_compare(arena,a[0],b[orientation]);
+        if (first==CETTA_MATCH_INCOMPLETE) return first;
+        if (first==CETTA_MATCH_REFUTED) continue;
+        CettaMatchCompletion second=binding_capture_value_compare(arena,a[1],b[1u-orientation]);
+        if (second!=CETTA_MATCH_REFUTED) return second;
+    }
+    return CETTA_MATCH_REFUTED;
+}
+
+CettaMatchCompletion bindings_capture_equal_checked(Arena *arena, Bindings *left, Bindings *right) {
+    if (!arena || !left || !right) return CETTA_MATCH_INCOMPLETE;
+    size_t left_values = 0u, right_values = 0u;
+    uint32_t left_frames = 0u, right_frames = 0u;
+    if (!bindings_current_binding_count(left, &left_values) ||
+        !bindings_current_binding_count(right, &right_values) ||
+        !bindings_frame_state_count(left, &left_frames) ||
+        !bindings_frame_state_count(right, &right_frames)) return CETTA_MATCH_INCOMPLETE;
+    if (left_values!=right_values || left_frames!=right_frames || left->eq_len!=right->eq_len)
+        return CETTA_MATCH_REFUTED;
+    BindingsIterator values = {.bindings = left};
+    Binding binding;
+    size_t visited = 0u;
+    while (bindings_iterator_next(&values, &binding)) {
+        visited++;
+        BindingValue other = bindings_lookup_value_id(right, binding.var_id);
+        if (!other.skeleton) return CETTA_MATCH_REFUTED;
+        CettaMatchCompletion value=binding_capture_value_compare(arena,binding.value,other);
+        if (value!=CETTA_MATCH_MATCHED) return value;
+    }
+    if (visited != left_values) return CETTA_MATCH_INCOMPLETE;
+    BindingsFrameStateIterator frames = {.bindings = left};
+    for (uint32_t i = 0u; i < left_frames; i++) {
+        BindingsFrameStateView a, b;
+        if (!bindings_frame_state_next(&frames, &a)) return CETTA_MATCH_INCOMPLETE;
+        BindingsFrameStateIterator candidates = {.bindings = right};
+        bool found = false;
+        for (uint32_t j = 0u; j < right_frames; j++) {
+            if (!bindings_frame_state_next(&candidates, &b)) return CETTA_MATCH_INCOMPLETE;
+            if (a.ref.identity.word != b.ref.identity.word) continue;
+            CettaMatchCompletion compared=bindings_capture_frame_compare(arena,&a,&b);
+            if (compared!=CETTA_MATCH_MATCHED) return compared;
+            found = true;
+            break;
+        }
+        if (!found) return CETTA_MATCH_REFUTED;
+    }
+    bool inline_matched[BINDINGS_TEMP_STACK_CAP] = {0};
+    bool *matched = right->eq_len > BINDINGS_TEMP_STACK_CAP
+        ? calloc(right->eq_len, sizeof(*matched)) : inline_matched;
+    if (!matched) return CETTA_MATCH_INCOMPLETE;
+    CettaMatchCompletion equal=CETTA_MATCH_MATCHED;
+    for (uint32_t i = 0u; equal==CETTA_MATCH_MATCHED && i < left->eq_len; i++) {
+        const BindingConstraint *a = &left->constraints[i];
+        bool found = false;
+        for (uint32_t j = 0u; j < right->eq_len; j++) {
+            if (matched[j]) continue;
+            const BindingConstraint *b = &right->constraints[j];
+            CettaMatchCompletion compared=binding_capture_constraint_compare(arena,a,b);
+            if (compared==CETTA_MATCH_INCOMPLETE) {equal=compared;break;}
+            if (compared==CETTA_MATCH_MATCHED) {
+                matched[j] = true;
+                found = true;
+                break;
+            }
+        }
+        if (!found && equal==CETTA_MATCH_MATCHED) equal=CETTA_MATCH_REFUTED;
+    }
+    if (matched != inline_matched) free(matched);
+    return equal;
+}
+
+bool bindings_capture_equal(Arena *arena,Bindings *left,Bindings *right) {
+    return bindings_capture_equal_checked(arena,left,right)==CETTA_MATCH_MATCHED;
+}
+
 bool bindings_eq(Bindings *a, Bindings *b) {
+    if (bindings_reader_context_view(a)!=bindings_reader_context_view(b)) return false;
     if (!(prime_need_snapshot_is_ancestor(bindings_need_view(a),
                                           bindings_need_view(b)) &&
           prime_need_snapshot_is_ancestor(bindings_need_view(b),
@@ -15935,10 +16700,14 @@ static bool bindings_compare_frames(const BindingsFrameIndex *a,
      * separate from comparing the live initialized frame inventory. */
     for (uint32_t i=0u;i<a->len;i++) {
         const BindingsFrameIndexEntry *x=&a->frames[i],*y=&b->frames[i];
-        uint32_t x_backed=x->slot_len<x->cap?x->slot_len:x->cap;
-        uint32_t y_backed=y->slot_len<y->cap?y->slot_len:y->cap;
-        if (!cetta_checkpoint_extent(x->values,x_backed,x->cap,y->values,y_backed,y->cap) ||
-            (x_backed&&!x->write_version) || (y_backed&&!y->write_version)) return false;
+        /* Only a prefix of the logical slots may be backed; a slot past it
+         * is unbound with version zero (slot_store_internal.h). The extents
+         * compared are the logical ones, read through the slot accessors. */
+        uint32_t x_rows=x->slot_len<x->cap?x->slot_len:x->cap;
+        uint32_t y_rows=y->slot_len<y->cap?y->slot_len:y->cap;
+        if (x->slot_len!=y->slot_len ||
+            (x_rows&&(!x->values||!x->write_version)) ||
+            (y_rows&&(!y->values||!y->write_version))) return false;
         BC_S("binding.frame_slot",i,i);
         BC_F("binding.frame_storage",(uintptr_t)x,(uintptr_t)y);
         BC_FRAME("binding.frame_epoch",x->epoch,y->epoch);
@@ -15965,8 +16734,10 @@ static bool bindings_compare_frames(const BindingsFrameIndex *a,
         }
         for (uint32_t j=0u;j<x->slot_len;j++) {
             BC_S("binding.value_slot",j,j);
-            if (!bindings_compare_value(bindings_frame_slot_value(x,j),bindings_frame_slot_value(y,j),read)) return false;
-            BC_S("binding.write_version",bindings_frame_slot_version(x,j),bindings_frame_slot_version(y,j));
+            if (!bindings_compare_value(bindings_frame_slot_value(x,j),
+                                        bindings_frame_slot_value(y,j),read)) return false;
+            BC_S("binding.write_version",bindings_frame_slot_version(x,j),
+                 bindings_frame_slot_version(y,j));
         }
     }
     return bindings_compare_frame_table(a,read,false)&&bindings_compare_frame_table(b,read,true);
@@ -16070,7 +16841,7 @@ bool bindings_checkpoint_compare(const Bindings *a,const Bindings *b,
         return false;
     /* Captured arbitrary binding-value owners are outside this pure profile.
      * Lifetime retention by itself would not compare their provider state. */
-    if (a->owners || b->owners) return false;
+    if (a->owners || b->owners || bindings_reader_context_view(a) || bindings_reader_context_view(b)) return false;
     BC_P("bindings.owners",a->owners,b->owners);
     BC_S("bindings.length",a->len,b->len);BC_S("bindings.constraints",a->eq_len,b->eq_len);
     BC_S("bindings.cycle_state",a->cycle_state,b->cycle_state);

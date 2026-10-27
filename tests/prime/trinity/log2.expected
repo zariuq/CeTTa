@@ -2,7 +2,7 @@
 [num]
 [(all (-> num prop) (lam P (imp (P zero) (imp (all num (lam v1 (imp (P v1) (P (suc v1))))) (all num (lam x (P x)))))))]
 [(refl@num subst@num)]
-[(Undetermined (hol:define-coverage log2-plain (admit-by bound)))]
+[(Undetermined (hol:define-equation-elaboration (suc (log2-plain (half-plain (suc (suc $n))))) term-outside-regular-syntax))]
 [below]
 [below-two]
 [half]

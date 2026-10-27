@@ -1211,4 +1211,17 @@
   (1136 OPEN_EQUATION_ALGEBRAIC_CONTAINS "open-equation-algebraic-contains")
   (1137 OPEN_EQUATION_ALGEBRAIC_DROP "open-equation-algebraic-drop")
   (1138 OPEN_EQUATION_ALGEBRAIC_SCALAR_SUM "open-equation-algebraic-scalar-sum")
-  (1139 OPEN_EQUATION_ALGEBRAIC_SCALAR_NODE "open-equation-algebraic-scalar-node")))
+  (1139 OPEN_EQUATION_ALGEBRAIC_SCALAR_NODE "open-equation-algebraic-scalar-node")
+  ; Accepted direct native entries; a refusal performs no native call.
+  (1140 OPEN_EQUATION_NATIVE_CALL "open-equation-native-call")
+  ; Cons cells a reader read back as the flat list they spell.  A complete
+  ; list is built flat, so only a list whose tail was open when it was built
+  ; is read this way.
+  (1141 PETTA_LIST_CELLS_FLATTENED "petta-list-cells-flattened")
+  ; The ordered rows of each head and length that a query selecting by its
+  ; head alone reads lazily: indexes built, rows they were built over,
+  ; cursors that read one, and rows those cursors offered.
+  (1142 SPACE_HEAD_INDEX_BUILD "space-head-index-build")
+  (1143 SPACE_HEAD_INDEX_BUILD_ROW "space-head-index-build-row")
+  (1144 SPACE_HEAD_INDEX_CURSOR "space-head-index-cursor")
+  (1145 SPACE_HEAD_INDEX_ROW "space-head-index-row")))

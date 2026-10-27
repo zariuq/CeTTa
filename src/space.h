@@ -61,6 +61,7 @@ bool disc_count_rigid_exact_expression_coordinates(
     CettaExprLen coordinate_count, CettaIndex *out_count);
 
 #include "space_match_backend.h"
+#include "space_path_index.h"
 
 /* ── Head chains: the rows of one projection, chained by head symbol ────── */
 
@@ -360,6 +361,10 @@ void space_exact_index_test_refuse(size_t allocations);
 
 void space_init_with_universe(Space *s, TermUniverse *universe);
 void space_init_overlay(Space *s, const Space *base);
+/* A public local view retains its base's admitted matching profile. Attached
+ * MORK execution remains a separate service; its local view uses native
+ * storage. Failure releases the initialized view's storage. */
+bool space_init_overlay_local(Space *s, const Space *base);
 /* Borrow the module's own rows, excluding its imported prefix/dependencies.
  * Mutations reach the original storage. Free this view before its owner, or
  * let owner teardown detach it; the view never owns that owner's storage. */
@@ -791,6 +796,8 @@ SpaceEquationCursorStep space_equation_cursor_next(
  * Revision-qualified zipper over matching discrimination-trie leaves.
  * Pin a read token, prefix epoch, and occurrence ceiling at init; `next`
  * yields logical indices in declaration order without copying the bag.
+ * It walks the Space's rows, skipping those removed by marks when it was
+ * pinned, so opening one never contracts the Space.
  * Matching trie nodes are merged lazily in that order. The frontier retains
  * one position per node, independently of the candidate bag's length.
  * Appends at or after the ceiling are invisible. A removal while the pin
@@ -815,6 +822,10 @@ typedef struct {
     CettaIndex *heap;
     uint32_t heap_len;
     uint32_t heap_node_bits;
+    /* A head over variables reads its head's rows in order (head_index). */
+    bool head_mode;
+    CettaSpaceHeadCursor head;
+    CettaSpaceHeadCursor head_start;
     /* A cold selector can supply a compact declaration-ordered candidate list. */
     CettaIndex *flat;
     CettaIndex flat_capacity;
@@ -828,6 +839,11 @@ typedef struct {
      * a detached occurrence pin. Every access checks all original sources. */
     bool logical_scan;
     SpaceReadView logical_reads;
+    /* The row of the logical index `next` yielded last, which the atom read
+     * that follows it takes without searching the marks. */
+    bool has_last;
+    CettaIndex last_logical;
+    CettaIndex last_row;
 } SpaceOccurrenceCursor;
 
 typedef enum {
@@ -855,8 +871,11 @@ bool space_occurrence_cursor_clone_unstarted(
  * rows, ceiling, and next occurrence as the source. */
 bool space_occurrence_cursor_clone(
     const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst);
+/* Select and lend the next captured row in one shared read transition.
+ * An optional payload stays borrowed from the pinned view; the optional
+ * index has view-local coordinates. No matching is performed. */
 SpaceOccurrenceCursorStep space_occurrence_cursor_next(
-    SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out);
+    SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out, Atom **atom_out);
 /* The atom at an index the cursor yielded, from the rows it captured. */
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index);
@@ -892,6 +911,7 @@ bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable);
  * structural identity, exact identity for ground atoms, and alpha identity
  * for variable-bearing atoms. */
 bool space_contains_for_add_nodup(Space *s, Atom *atom);
+CettaMatchCompletion space_contains_for_add_nodup_checked(Space *s, Atom *atom);
 CettaIndex space_exact_match_indices64(Space *s, Atom *atom, CettaIndex **out);
 uint32_t space_exact_match_indices(Space *s, Atom *atom, uint32_t **out);
 bool space_contains_only_exact_atoms(Space *s);
@@ -925,6 +945,22 @@ typedef struct {
 
 typedef bool (*QueryResultVisitor)(Atom *result, const Bindings *bindings,
                                    void *ctx);
+/* A successful match before substituting its result template. The pattern
+ * and body have this activation's fresh variable identities. substitute
+ * applies the full match and restores caller-visible aliases; private rule
+ * bindings remain inside the query. All fields are borrowed for the call. */
+typedef struct {
+    Atom *pattern;
+    Atom *body;
+    Atom *(*substitute)(Arena *arena, Atom *term, void *context);
+    void *context;
+} QueryEquationInstantiation;
+/* The caller bindings are projected as usual. An evaluator may also attach
+ * its operational state while instantiating values with language-specific
+ * provenance. NULL reports incomplete instantiation, never a refutation. */
+typedef Atom *(*QueryEquationResultInstantiator)(
+    const QueryEquationInstantiation *match, Arena *arena,
+    Bindings *caller_bindings, void *context);
 /* Conservative pre-materialization filter.  Returning false may only exclude
  * an equation occurrence already proved unable to match.  The equation store
  * retains authority for candidate order, multiplicity, freshening, and exact
@@ -962,6 +998,12 @@ CettaCount query_equations_visit_planned(
    substitution, but performs no candidate selection. */
 CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
                                 QueryResultVisitor visitor, void *ctx);
+/* The same match and projection, with a synchronous result instantiator
+ * before ordinary substitution would erase the matched fields' roles. */
+CettaMatchCompletion query_equation_visit_instantiated(
+    Atom *equation, Atom *query, Arena *arena,
+    QueryEquationResultInstantiator instantiate, void *instantiate_context,
+    QueryResultVisitor visitor, void *visitor_context, CettaCount *emitted);
 /* Same per-row freshening/matching/projection, with absence certified only
  * by a completed refutation. Incomplete matching or RHS/projection failure
  * never becomes an empty successful visit. pair_budget limits the matcher's
@@ -970,6 +1012,11 @@ CettaMatchCompletion query_equation_visit_checked(
     Atom *equation, Atom *query, Arena *arena,
     QueryResultVisitor visitor, void *context, uint64_t pair_budget,
     CettaCount *emitted);
+/* Decide the same freshened head match without instantiating or visiting the
+ * RHS. Empty producers still cover their input. Incomplete matching supplies
+ * neither a match nor a refutation; no rule-use occurrence is emitted. */
+CettaMatchCompletion query_equation_head_match_checked(
+    Atom *equation, Atom *query, Arena *arena, uint64_t pair_budget);
 /* Apply an explicitly admitted descriptor. Mismatch, invalid input and
  * capacity remain distinct; emitted is zero unless a body was published. */
 CettaTermMatchStatus query_rule_visit(const CettaRuleDescriptor *rule,
@@ -1133,6 +1180,11 @@ SpacePreparedRegisterStep space_prepared_equation_execute_register_step(
 SpacePreparedRegisterStep space_prepared_equation_run_register_loop(
     const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
     size_t max_steps, Atom **result_out);
+/* As above, and reports in `completed_out` the steps taken (0 when not
+ * applicable), so a caller with a step budget can charge them. */
+SpacePreparedRegisterStep space_prepared_equation_run_register_loop_counted(
+    const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
+    size_t max_steps, Atom **result_out, size_t *completed_out);
 SpacePreparedRegisterStep space_prepared_equation_run_register_recursion(
     const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
     size_t max_calls, Atom **result_out);
@@ -1198,6 +1250,7 @@ typedef struct RegistryReadView {
     Registry consulted;
     Arena *arena;
     bool initialized;
+    bool passive;
     bool stale;
     bool incomplete;
     const char *refusal;
@@ -1210,8 +1263,15 @@ typedef struct RegistryReadView {
 
 bool registry_read_view_init(RegistryReadView *view, Registry *source,
                             Arena *arena);
+/* Observe the value selected by existing admitted views without changing it.
+ * Both present and absent names enter the dependency set. Failed recording
+ * invalidates reuse evidence but preserves the lookup result. Atom wrappers
+ * and immutable data are copied; external resource owners remain borrowed. */
+bool registry_read_view_init_passive(RegistryReadView *view, Arena *arena);
 void registry_read_view_free(RegistryReadView *view);
 bool registry_read_view_validate(RegistryReadView *view, Registry *source);
+/* Receiver compatibility does not poison the source's sticky observations. */
+bool registry_read_view_compatible(const RegistryReadView *view, Registry *source);
 RegistryReadView *registry_read_view_enter(RegistryReadView *view,
                                           Registry *source);
 void registry_read_view_leave(RegistryReadView *previous);
@@ -1239,6 +1299,16 @@ Space *resolve_space(Registry *r, Atom *ref);
 
 /* Remove an atom from a space (by structural equality). Returns true if found. */
 bool space_remove(Space *s, Atom *atom);
+CettaMatchCompletion space_remove_checked(Space *s, Atom *atom);
+/* Interpret comparisons while retaining the original mutable occurrence and
+ * the ordinary exact-then-unique-alpha removal policy. Comparisons borrow
+ * held syntax/resources and must remain stable for the complete operation.
+ * Representation indexes cannot refute an interpreted comparison.
+ * INCOMPLETE publishes no removal; REFUTED includes ambiguous alpha matches. */
+typedef CettaMatchCompletion (*SpaceAtomComparison)(Atom *left, Atom *right);
+CettaMatchCompletion space_remove_compared(Space *s, Atom *atom,
+    SpaceAtomComparison equal, SpaceAtomComparison alpha_equal);
+CettaMatchCompletion space_contains_compared(Space *s, Atom *atom, SpaceAtomComparison equal);
 bool space_contains_atom_id(const Space *s, AtomId atom_id);
 bool space_remove_atom_id(Space *s, AtomId atom_id);
 bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,

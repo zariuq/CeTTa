@@ -12,6 +12,14 @@
 #include "symbol.h"
 #include "binding/frame_identity.h"
 
+/* A negative result requires a completed comparison. Resource refusal or
+ * an unsupported structural meeting supplies neither equality nor mismatch. */
+typedef enum {
+    CETTA_MATCH_INCOMPLETE,
+    CETTA_MATCH_REFUTED,
+    CETTA_MATCH_MATCHED,
+} CettaMatchCompletion;
+
 #ifndef CETTA_PROVENANCE_ASSERT
 #define CETTA_PROVENANCE_ASSERT 0
 #endif
@@ -1147,6 +1155,12 @@ uint32_t atom_hash(Atom *a);
 void atom_hash_read_scope_enter(void);
 void atom_hash_read_scope_leave(void);
 
+/* A 64-bit hash spread over every bit, equal for atoms atom_eq equates, for
+ * tables that index many terms by hash.  atom_hash stays the shared
+ * structural hash; its recurrence lets families of terms that differ in small
+ * leaves, numbers above all, collapse to one 32-bit value. */
+uint64_t atom_spread_hash(Atom *atom);
+
 /* A hash cache of 0 means "not yet known", so every structural hash, cached
  * or not, spells a computed 0 as this word: leaves, expression folds, the
  * compile-time list hashes and the term universe's hash32 alike, so a cached
@@ -1665,6 +1679,23 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list);
  * vector, a draft must never escape or be consumed as an Atom before `finish`. */
 Atom *atom_expr_builder_begin(Arena *a, CettaExprLen len);
 Atom *atom_expr_builder_finish(Arena *a, Atom *draft);
+/* Unpublished expression assembly in an arena with interning disabled.
+ * Each append writes and summarizes one child; finish does no child traversal.
+ * The caller holds the arena, child graphs and intern environment unchanged
+ * until free. Missing/excess children, reset/replaced storage, and list-rest
+ * splicing refuse publication. Use the ordinary constructor for list splicing
+ * or interning. Allocation is sized by len; these are not elapsed-work bounds.
+ * Free cancels unpublished assembly or releases its fixed control record;
+ * completed atom storage remains in the arena. No draft pointer escapes. */
+typedef struct AtomExprAssembly AtomExprAssembly;
+AtomExprAssembly *atom_expr_assembly_new(Arena *a, CettaExprLen len);
+bool atom_expr_assembly_append(AtomExprAssembly *assembly, Atom *child);
+Atom *atom_expr_assembly_finish(AtomExprAssembly *assembly);
+/* Allow the ordinary list-rest finishing provider after the same retained
+ * child-summary assembly. Its splice/allocation has a separate atomic cost;
+ * the raw-expression finish above continues to refuse list-rest splicing. */
+Atom *atom_expr_assembly_finish_splicing(AtomExprAssembly *assembly);
+void atom_expr_assembly_free(AtomExprAssembly *assembly);
 /* Compatibility wrapper; immutable atoms are shared universally when the
    global hash-cons table is active. */
 Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len);
@@ -1673,6 +1704,7 @@ Atom *atom_expr_shared(Arena *a, Atom **elems, CettaExprLen len);
 Atom *atom_he_evaluated_copy(Arena *a, Atom *expression);
 /* An expression of `elems` carrying the evaluated mark, never interned. */
 Atom *atom_he_evaluated_expr(Arena *a, Atom **elems, CettaExprLen len);
+Atom *atom_expr_rebuild(Arena *a,const Atom *source,Atom **children,CettaExprLen len);
 /* Deep copies made between enter and leave drop HE's evaluated marks: a
  * space stores syntax, never a value's evaluation state. */
 void atom_deep_copy_strip_he_marks_enter(void);
@@ -1764,6 +1796,14 @@ bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
 
 bool atom_eq(Atom *a, Atom *b);
 
+/* Structural comparison in the evaluator's currently held Space read view.
+ * Only Space leaves gain interpretation; State keeps its existing comparison
+ * relation. The view and all resource owners must
+ * remain held for the call. Representation hashes, interning and captured
+ * identity continue to use atom_eq/atom_capture_identical. Without an
+ * evaluator provider this is ordinary structural comparison. */
+bool atom_eq_with_resolved_spaces(Atom *a, Atom *b);
+
 /* Exact atom_eq comparison on finite, acyclic expression DAGs of symbols,
  * variables and scalar literals (integer, float, Boolean, string, bigint,
  * rational). Runtime handles and recursive grounded objects are not data
@@ -1783,6 +1823,15 @@ bool atom_data_equal_validated(Atom *left, Atom *right);
  * variables retain their identity, spelling and structural name. No runtime
  * handle, value comparison callback or persistent cache participates. */
 bool atom_data_identical(Atom *left, Atom *right);
+/* Agreement of captured inputs, independent of language-level equality.
+ * Immutable data and Prime contexts are compared structurally; value/code
+ * marks, variable identities and names are retained. State/Space and opaque
+ * service leaves retain object identity; Need capabilities retain their full
+ * session/cell/authority/rights tuple. No foreign equality callback runs.
+ * This borrows the complete graphs and resource owners; agreement grants no
+ * lifetime, current-resource observation or invocation authority. */
+bool atom_capture_identical(Atom *left, Atom *right);
+CettaMatchCompletion atom_capture_identical_checked(Atom *left, Atom *right);
 /* MeTTa's ==: a comparison that never binds.  Expressions compare element
  * by element, and a NaN equals nothing, even itself.
  * PeTTa: numbers are equal when their values are, whatever their
@@ -2090,6 +2139,29 @@ void atom_deep_copy_session_set_resolver(
     AtomDeepCopySession *session, AtomDeepCopyResolver resolver,
     void *context);
 Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src);
+typedef enum {
+    ATOM_DEEP_COPY_PAUSED,
+    ATOM_DEEP_COPY_COMPLETE,
+    ATOM_DEEP_COPY_REFUSED,
+} AtomDeepCopyStep;
+/* Retain one root's traversal in the same copy episode. This interface admits
+ * ordinary, nonmapped finite expression DAGs; the specialized snapshot,
+ * resolver, mapped-arena and dying-region profiles keep their existing APIs.
+ * A grant counts the initial root decision, child decisions and expression
+ * finalizations. It does not bound scalar copying, memo operations, allocation,
+ * constructor work or cleanup, and is not an instruction or time budget.
+ * Zero grant is inert, including before the first copy. On PAUSED, out is NULL
+ * and the exact stack and forwarding memo remain owned by the session. The
+ * caller holds all sources, destination and intern context stable. Only the
+ * same root may resume; clone, relocation and changing the profile refuse.
+ * COMPLETE publishes the whole root and keeps the episode's shared memo for
+ * subsequent roots. Freeing the session cancels an unpublished traversal;
+ * destination storage remains owned by its arena. No partial image is exposed.
+ * REFUSED never acknowledges a source return. A failed traversal must be
+ * discarded; rejection of another root/profile leaves an active one intact. */
+AtomDeepCopyStep atom_deep_copy_session_advance(AtomDeepCopySession *session,
+    Atom *src, uint64_t allowance, Atom **out, uint64_t *used);
+bool atom_deep_copy_session_pending(const AtomDeepCopySession *session);
 /* Return the destination image already established for `src` in this copy
    episode, or NULL without copying it.  Ephemeron traversal uses this query
    to discover keys reached from strong roots before conditionally tracing

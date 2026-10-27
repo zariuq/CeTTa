@@ -529,22 +529,8 @@ static bool lookup_frame_value(const Bindings *bindings, VarId id, BindingValue 
     return true;
 }
 
-static CettaFrameIdentity test_frame_identity_value(
-        CettaFrameIdentity identity) {
-    return identity;
-}
-
-static CettaFrameIdentity test_frame_identity_word(uint64_t word) {
-    return (CettaFrameIdentity){word};
-}
-
-#define TEST_FRAME_IDENTITY(value) _Generic((value), \
-    CettaFrameIdentity: test_frame_identity_value, \
-    default: test_frame_identity_word)(value)
-
-static bool find_frame_state_identity(const Bindings *bindings,
-                                      CettaFrameIdentity epoch,
-                                      BindingsFrameStateView *view) {
+static bool find_frame_state(const Bindings *bindings, CettaFrameIdentity epoch,
+                             BindingsFrameStateView *view) {
     BindingsFrameStateIterator iterator = {.bindings = bindings};
     while (bindings_frame_state_next(&iterator, view))
         if (cetta_frame_identity_eq(view->ref.identity, epoch))
@@ -552,12 +538,8 @@ static bool find_frame_state_identity(const Bindings *bindings,
     return false;
 }
 
-#define find_frame_state(bindings, epoch, view) \
-    find_frame_state_identity((bindings), TEST_FRAME_IDENTITY(epoch), (view))
-
-static bool frame_state_slots_are_identity(
-        const Bindings *bindings, CettaFrameIdentity epoch,
-        const VarId *ids, Atom *first, Atom *second, Atom *third) {
+static bool frame_state_slots_are(const Bindings *bindings, CettaFrameIdentity epoch,
+                                  const VarId *ids, Atom *first, Atom *second, Atom *third) {
     BindingsFrameStateView view;
     if (!find_frame_state(bindings, epoch, &view) || view.slot_count != 3u ||
         view.schema_slot_count != 3u)
@@ -573,23 +555,18 @@ static bool frame_state_slots_are_identity(
             (expected[i] && slot.write_version == 0u))
             return false;
     }
-    BindingsFrameSlotStateView unchanged = {0};
-    VarId sentinel = var_id_from_base(UINT64_MAX);
-    unchanged.source_id = sentinel;
+    const VarId sentinel_id = var_id_from_base(UINT64_MAX);
+    BindingsFrameSlotStateView unchanged = {.source_id = sentinel_id};
     BindingsFrameStateView wrong_generation = view;
-    /* The lowest generation bit lies above the 32-bit handle. */
+    /* Change the generation while preserving the complete 32-bit handle. */
     wrong_generation.ref.identity.word ^= UINT64_C(1) << 32;
     return !bindings_frame_state_read_slot(&view, 3u, &unchanged) &&
-        var_id_eq(unchanged.source_id, sentinel) &&
+        var_id_eq(unchanged.source_id, sentinel_id) &&
         !bindings_frame_state_read_slot(&wrong_generation, 0u, &unchanged) &&
-        var_id_eq(unchanged.source_id, sentinel) &&
+        var_id_eq(unchanged.source_id, sentinel_id) &&
         !bindings_frame_state_read_slot(NULL, 0u, &unchanged) &&
-        var_id_eq(unchanged.source_id, sentinel);
+        var_id_eq(unchanged.source_id, sentinel_id);
 }
-
-#define frame_state_slots_are(bindings, epoch, ids, first, second, third) \
-    frame_state_slots_are_identity((bindings), TEST_FRAME_IDENTITY(epoch), \
-                                   (ids), (first), (second), (third))
 
 /* Exercise direct promotion, builder promotion and the retained capsule used
  * by native reply/continuation boundaries against the same joined world. */
@@ -617,7 +594,8 @@ static void test_joint_world_promotion(unsigned mode) {
     if (ready)
         *bindings_receipt_mut(&carrier) = *branch;
 #endif
-    const CettaFrameIdentity epoch = {9421u};
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    const CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&identities);
     VarId ids[] = {var_id_from_base(42u), var_id_from_base(43u)};
     ready = ready && independent && payload != independent && atom_eq(payload, independent) &&
         bindings_register_contextual_frame(&carrier, ids, 2u, epoch) &&
@@ -740,12 +718,9 @@ static void test_saved_contextual_frame_refinement(void) {
     bindings_init(&env);
     bindings_init(&restored);
     bindings_init(&sibling);
-    VarId ids[] = {var_id_from_base(51u), var_id_from_base(52u),
-                   var_id_from_base(53u)};
+    VarId ids[] = {var_id_from_base(51u), var_id_from_base(52u), var_id_from_base(53u)};
     CettaFrameIdentityScope identities = {0};
-    CettaFrameIdentity target_epoch = CETTA_FRAME_IDENTITY_NONE;
-    CettaFrameIdentity source_epoch = CETTA_FRAME_IDENTITY_NONE;
-    CettaFrameIdentity empty_epoch = CETTA_FRAME_IDENTITY_NONE;
+    CettaFrameIdentity target_epoch = CETTA_FRAME_IDENTITY_NONE, source_epoch = CETTA_FRAME_IDENTITY_NONE, empty_epoch = CETTA_FRAME_IDENTITY_NONE;
     Atom *raw = atom_var_with_id(&source, "late-field", ids[1]);
     bool ready = raw &&
         cetta_frame_identity_scope_try(&identities, &target_epoch) &&
@@ -791,8 +766,7 @@ static void test_saved_contextual_frame_refinement(void) {
                   held.skeleton,
           "one retained raw payload observes each branch's later refinement without capturing its substitution");
     CHECK(ready && without_context && without_context->kind == ATOM_VAR &&
-              var_id_eq(without_context->var_id, ids[1]) &&
-              !atom_eq(without_context, left),
+              var_id_eq(without_context->var_id, ids[1]) && !atom_eq(without_context, left),
           "discarding the lexical frame loses a later contextual binding");
     bindings_free(&restored);
     bindings_free(&sibling);
@@ -814,7 +788,8 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
         atom_var_with_id(arena, "frame-present", ids[1]),
         atom_var_with_id(arena, "frame-missing", ids[2])
     };
-    const uint32_t epoch = 113u;
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    const CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&identities);
     Bindings base;
     bool ready = build_bindings(arena, 256u, &base);
     BindingsBuilder builder;
@@ -824,21 +799,21 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
     Atom *before = atom_int(arena, 11);
     Atom *after = atom_int(arena, 22);
     Atom *later = atom_int(arena, 33);
-    ready = bindings_builder_register_contextual_frame(&builder, ids, 3u, (CettaFrameIdentity){epoch});
+    ready = bindings_builder_register_contextual_frame(&builder, ids, 3u, epoch);
     uint32_t frame_count = UINT32_MAX;
     CHECK(ready && bindings_frame_state_count(&builder.current, &frame_count) &&
               frame_count == 1u,
           "frame count includes an entirely unbound registered inventory");
     CHECK(ready && frame_state_slots_are(&builder.current, epoch, ids, NULL, NULL, NULL),
           "current frame readback retains a registered inventory with no assignments");
-    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[0], (CettaFrameIdentity){epoch}),
+    ready = ready && bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[0], epoch),
             SYMBOL_ID_NONE, before);
     uint32_t begin = builder.current.len;
     BindingsActivationView frame;
     bindings_activation_view_init(&frame);
     ready = ready && bindings_activation_view_prepare(
-        &frame, &builder, ids, variables, 3u, (CettaFrameIdentity){epoch}, begin) &&
-        bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[1], (CettaFrameIdentity){epoch}),
+        &frame, &builder, ids, variables, 3u, epoch, begin) &&
+        bindings_builder_add_id_fresh(&builder, var_epoch_id(ids[1], epoch),
             SYMBOL_ID_NONE, after);
     CHECK(ready && dense_slot_is(&builder.current, &frame, 0u, NULL) &&
               dense_slot_is(&builder.current, &frame, 1u, after) && dense_slot_is(&builder.current, &frame, 2u, NULL) &&
@@ -856,18 +831,17 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
           "capturing an image retains the registered frame count");
     uint32_t mark = bindings_builder_save(&builder);
     ready = cloned && bindings_builder_add_id_fresh(
-        &builder, var_epoch_id(ids[2], (CettaFrameIdentity){epoch}), SYMBOL_ID_NONE, later);
+        &builder, var_epoch_id(ids[2], epoch), SYMBOL_ID_NONE, later);
     bindings_lookup_index_test_clear(&builder.current);
     CHECK(ready && dense_slot_is(&builder.current, &frame, 2u, later) &&
-              !bindings_lookup_value_id(&snapshot, var_epoch_id(ids[2], (CettaFrameIdentity){epoch})).skeleton &&
+              !bindings_lookup_value_id(&snapshot, var_epoch_id(ids[2], epoch)).skeleton &&
               frame_state_slots_are(&builder.current, epoch, ids, before, after, later) &&
               frame_state_slots_are(&snapshot, epoch, ids, before, after, NULL),
           "an identity view observes copy-on-write slots without pointer refresh");
-    BindingsFrameSlotStateView untouched = {0};
-    VarId untouched_sentinel = var_id_from_base(UINT64_MAX);
-    untouched.source_id = untouched_sentinel;
+    const VarId sentinel_id = var_id_from_base(UINT64_MAX);
+    BindingsFrameSlotStateView untouched = {.source_id = sentinel_id};
     CHECK(!bindings_frame_state_read_slot(&stale, 0u, &untouched) &&
-              var_id_eq(untouched.source_id, untouched_sentinel),
+              var_id_eq(untouched.source_id, sentinel_id),
           "a borrowed frame readback rejects a changed branch image");
     bindings_builder_rollback(&builder, mark);
     CHECK(ready && dense_slot_is(&builder.current, &frame, 1u, after) && dense_slot_is(&builder.current, &frame, 2u, NULL),
@@ -875,9 +849,9 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
     CHECK(ready && frame_state_slots_are(&builder.current, epoch, ids, before, after, NULL),
           "fresh current frame readback sees the exact restored slot state");
     ready = ready && bindings_rewrite_value_id(&builder.current,
-        var_epoch_id(ids[1], (CettaFrameIdentity){epoch}), binding_value_from_atom(later));
+        var_epoch_id(ids[1], epoch), binding_value_from_atom(later));
     CHECK(ready && dense_slot_is(&builder.current, &frame, 1u, later) &&
-              bindings_lookup_value_id(&snapshot, var_epoch_id(ids[1], (CettaFrameIdentity){epoch})).skeleton == after &&
+              bindings_lookup_value_id(&snapshot, var_epoch_id(ids[1], epoch)).skeleton == after &&
               frame_state_slots_are(&builder.current, epoch, ids, before, later, NULL) &&
               frame_state_slots_are(&snapshot, epoch, ids, before, after, NULL),
           "a rewritten slot changes the current image without altering a sibling");
@@ -891,7 +865,7 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
     Bindings grown;
     bindings_init(&grown);
     VarId first_source = var_id_from_base(1u);
-    const CettaFrameIdentity positional_epoch = {epoch + 1u};
+    const CettaFrameIdentity positional_epoch = cetta_frame_identity_scope_fresh(&identities);
     bool grown_ready = bindings_register_contextual_frame(
         &grown, &first_source, 1u, positional_epoch) &&
         bindings_frame_index_grow_slots(&grown, positional_epoch, 3u);
@@ -902,8 +876,7 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
               positional.slot_count == 3u && positional.schema_slot_count == 1u &&
               bindings_frame_state_read_slot(&positional, 2u, &implicit) &&
               var_id_eq(implicit.source_id, var_id_from_base(3u)) &&
-              var_id_eq(implicit.var_id,
-                        var_epoch_id(var_id_from_base(3u), positional_epoch)) &&
+              var_id_eq(implicit.var_id, var_epoch_id(var_id_from_base(3u), positional_epoch)) &&
               !implicit.declared_in_schema && implicit.spelling == SYMBOL_ID_NONE &&
               !implicit.name_key && !implicit.value.skeleton && implicit.write_version == 0u &&
               atomic_load_explicit(&g_symbols->entry_len, memory_order_relaxed) == symbols_before &&
@@ -930,20 +903,16 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
               !bindings_frame_state_count(&grown, NULL),
           "refused count inspection leaves its output unchanged");
     BindingsFrameStateIterator empty = {.bindings = &grown};
-    const CettaFrameIdentity identity_sentinel = {UINT64_MAX};
-    BindingsFrameStateView sentinel = {
-        .ref = {.identity = {UINT64_MAX}},
-    };
+    BindingsFrameStateView sentinel = {.ref = {.identity = {UINT64_MAX}}};
     CHECK(!bindings_frame_state_next(&empty, &sentinel) &&
               !bindings_frame_state_next(&empty, &sentinel) &&
-              cetta_frame_identity_eq(
-                  sentinel.ref.identity, identity_sentinel),
+              sentinel.ref.identity.word == UINT64_MAX,
           "empty frame directory readback terminates without changing its output");
     VarId sources[] = {var_id_from_base(9u), var_id_from_base(27u)};
-    bool counted = bindings_register_contextual_frame(
-            &grown, sources, 2u, TEST_FRAME_IDENTITY(epoch + 2u)) &&
-        bindings_register_contextual_frame(
-            &grown, sources, 2u, TEST_FRAME_IDENTITY(epoch + 3u)) &&
+    const CettaFrameIdentity first_epoch = cetta_frame_identity_scope_fresh(&identities);
+    const CettaFrameIdentity second_epoch = cetta_frame_identity_scope_fresh(&identities);
+    bool counted = bindings_register_contextual_frame(&grown, sources, 2u, first_epoch) &&
+        bindings_register_contextual_frame(&grown, sources, 2u, second_epoch) &&
         bindings_frame_state_count(&grown, &frame_count);
     BindingsFrameStateIterator all = {.bindings = &grown};
     uint32_t rows = 0u;
@@ -962,16 +931,13 @@ static void test_dense_frame_indexed_suffix(Arena *arena) {
     if (counted) {
         /* Deliberately invalid metadata distinguishes refusal from exhaustion.
          * Restore the identity before releasing this test-owned directory. */
-        CettaFrameIdentity saved_identity =
-            grown.frame_index->frames[0].epoch;
-        grown.frame_index->frames[0].epoch =
-            CETTA_FRAME_IDENTITY_NONE;
+        CettaFrameIdentity saved_identity = grown.frame_index->frames[0].epoch;
+        grown.frame_index->frames[0].epoch = CETTA_FRAME_IDENTITY_NONE;
         BindingsFrameStateIterator refused = {.bindings = &grown};
-        sentinel.ref.identity = identity_sentinel;
+        sentinel.ref.identity = (CettaFrameIdentity){UINT64_MAX};
         CHECK(bindings_frame_state_count(&grown, &frame_count) && frame_count == 2u &&
                   !bindings_frame_state_next(&refused, &sentinel) &&
-                  refused.frame == 0u && cetta_frame_identity_eq(
-                      sentinel.ref.identity, identity_sentinel),
+                  refused.frame == 0u && sentinel.ref.identity.word == UINT64_MAX,
               "iterator refusal cannot certify completion of an advertised inventory");
         grown.frame_index->frames[0].epoch = saved_identity;
     }
@@ -983,8 +949,8 @@ static void test_generation_checked_frame_handles(Arena *arena) {
         .kind = ATOM_VAR,
         .var_id = {9u, {99u}},
     };
-    const CettaFrameIdentity first_context = {(2u << 20) | 5u};
-    const CettaFrameIdentity second_context = {(3u << 20) | 6u};
+    const CettaFrameIdentity first_context = {FrameIdentity_pack(5u, 2u)};
+    const CettaFrameIdentity second_context = {FrameIdentity_pack(6u, 3u)};
     BindingValue materialized = binding_value_from_atom(&qualified_variable);
     binding_value_set_epoch(&materialized, first_context);
     CHECK(var_id_eq(binding_value_variable_id(materialized), qualified_variable.var_id) &&
@@ -1016,6 +982,14 @@ static void test_generation_checked_frame_handles(Arena *arena) {
               cetta_frame_identity_eq(var_epoch_suffix(allocated), first_context) &&
               var_id_eq(zero_base.var_id, (VarId){0u, {99u}}),
           "zero-base contextual qualification consumes a fresh identity and leaves the skeleton intact");
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    const CettaFrameIdentity first = cetta_frame_identity_scope_fresh(&identities);
+    const CettaFrameIdentity second = cetta_frame_identity_scope_fresh(&identities);
+    /* Preserve the alias orientation without assuming allocator reuse order. */
+    const CettaFrameIdentity epoch_300 = first.word > second.word ? first : second;
+    const CettaFrameIdentity epoch_200 = first.word > second.word ? second : first;
+    const CettaFrameIdentity epoch_250 = cetta_frame_identity_scope_fresh(&identities);
+    const CettaFrameIdentity epoch_400 = cetta_frame_identity_scope_fresh(&identities);
     VarId source_id = var_id_from_base(UINT64_C(88001));
     VarId unrelated_source_id = var_id_from_base(UINT64_C(88002));
     Atom *source = atom_var_with_id(
@@ -1024,51 +998,50 @@ static void test_generation_checked_frame_handles(Arena *arena) {
     BindingsBuilder builder;
     bool ready = source && bindings_builder_init(&builder, NULL) &&
         bindings_builder_register_contextual_frame(
-            &builder, &source_id, 1u, (CettaFrameIdentity){300u});
+            &builder, &source_id, 1u, epoch_300);
     BindingsFrameRef frame_300 = {0};
     ready = ready && bindings_frame_ref_test_for_epoch(
-        &builder.current, (CettaFrameIdentity){300u}, &frame_300);
+        &builder.current, epoch_300, &frame_300);
     BindingsActivationView dense;
     bindings_activation_view_init(&dense);
     ready = ready && bindings_activation_view_prepare(
-        &dense, &builder, &source_id, variables, 1u, (CettaFrameIdentity){300u}, 0u);
+        &dense, &builder, &source_id, variables, 1u, epoch_300, 0u);
 
     CHECK(ready && bindings_frame_ref_is_valid(frame_300) &&
               cetta_frame_identity_eq(dense.authority_ref.identity, frame_300.identity) &&
-              dense.authority_ref.identity.word == 300u,
+              dense.authority_ref.identity.word == epoch_300.word,
           "prepared activation carries its stable generation-checked frame handle");
 
     ready = ready && bindings_builder_register_contextual_frame(
-        &builder, &unrelated_source_id, 1u, (CettaFrameIdentity){250u});
+        &builder, &unrelated_source_id, 1u, epoch_250);
     uint32_t mark = bindings_builder_save(&builder);
     ready = ready && bindings_builder_register_contextual_frame(
-        &builder, &source_id, 1u, (CettaFrameIdentity){200u});
+        &builder, &source_id, 1u, epoch_200);
     BindingsFrameRef frame_200 = {CETTA_FRAME_IDENTITY_NONE};
     CettaFrameIdentity resolved_epoch = CETTA_FRAME_IDENTITY_NONE;
     CHECK(ready && bindings_frame_ref_test_for_epoch(
-              &builder.current, (CettaFrameIdentity){200u}, &frame_200) &&
+              &builder.current, epoch_200, &frame_200) &&
               bindings_frame_ref_test_resolves(
                   &builder.current, frame_300, &resolved_epoch) &&
-              resolved_epoch.word == 300u &&
+              resolved_epoch.word == epoch_300.word &&
               bindings_activation_view_available(&dense, &builder.current),
           "inserting another frame preserves a live direct reference");
 
-    BindingValue context_300 = binding_value_from_context(source, (CettaFrameIdentity){300u});
-    BindingValue context_200 = binding_value_from_context(source, (CettaFrameIdentity){200u});
+    BindingValue context_300 = binding_value_from_context(source, epoch_300);
+    BindingValue context_200 = binding_value_from_context(source, epoch_200);
     ready = ready && match_binding_values_builder(
         context_300, context_200, &builder, arena);
     BindingValue stored_context = ready
         ? bindings_lookup_value_id(
-              &builder.current, var_epoch_id(source_id, (CettaFrameIdentity){300u}))
+              &builder.current, var_epoch_id(source_id, epoch_300))
         : binding_value_from_atom(NULL);
     BindingsFrameRef stored_ref = binding_value_frame_ref(stored_context);
     BindingsFrameStateView contextual_state;
     BindingsFrameSlotStateView contextual_slot;
-    CHECK(ready && find_frame_state(&builder.current, 300u, &contextual_state) &&
+    CHECK(ready && find_frame_state(&builder.current, epoch_300, &contextual_state) &&
               bindings_frame_state_read_slot(&contextual_state, 0u, &contextual_slot) &&
-              binding_value_kind(contextual_slot.value) ==
-                  binding_value_kind(stored_context) &&
-              binding_value_epoch(contextual_slot.value).word == 200u &&
+              binding_value_kind(contextual_slot.value) == binding_value_kind(stored_context) &&
+              binding_value_epoch(contextual_slot.value).word == epoch_200.word &&
               contextual_slot.value.skeleton == source,
           "current frame readback keeps contextual syntax and its lexical identity separate");
     BindingValue resolved_context = binding_value_from_atom(NULL);
@@ -1077,9 +1050,9 @@ static void test_generation_checked_frame_handles(Arena *arena) {
         &builder.current, stored_context, &resolved_context);
     CHECK(resolved_direct &&
               cetta_frame_identity_eq(stored_ref.identity, frame_200.identity) &&
-              stored_ref.identity.word == 200u &&
+              stored_ref.identity.word == epoch_200.word &&
               resolved_context.skeleton == source &&
-              binding_value_epoch(resolved_context).word == 200u &&
+              binding_value_epoch(resolved_context).word == epoch_200.word &&
               test_runtime_stats_counter(
                   CETTA_RUNTIME_COUNTER_BINDINGS_FRAME_DIRECTORY_LOOKUP) == 0u,
           "stored contextual aliases dereference by stable frame handle without directory recovery");
@@ -1088,7 +1061,7 @@ static void test_generation_checked_frame_handles(Arena *arena) {
     bindings_init(&projected);
     BindingsEpochRoot projected_root = {
         .atom = source,
-        .epoch = {300u},
+        .epoch = epoch_300,
         .variable_support = NULL,
     };
     bool projected_ok = ready &&
@@ -1097,7 +1070,7 @@ static void test_generation_checked_frame_handles(Arena *arena) {
             &projected_root, 1u, &projected);
     BindingValue projected_context = projected_ok
         ? bindings_lookup_value_id(
-              &projected, var_epoch_id(source_id, (CettaFrameIdentity){300u}))
+              &projected, var_epoch_id(source_id, epoch_300))
         : binding_value_from_atom(NULL);
     BindingsFrameRef projected_ref =
         binding_value_frame_ref(projected_context);
@@ -1107,7 +1080,7 @@ static void test_generation_checked_frame_handles(Arena *arena) {
               cetta_frame_identity_eq(projected_ref.identity, stored_ref.identity) &&
               bindings_frame_ref_test_resolves(
                   &projected, projected_ref, &resolved_epoch) &&
-              resolved_epoch.word == 200u,
+              resolved_epoch.word == epoch_200.word,
           "projection preserves a contextual identity in the destination frame table");
     bindings_free(&projected);
 
@@ -1117,7 +1090,7 @@ static void test_generation_checked_frame_handles(Arena *arena) {
     bool cloned_ok = ready && bindings_clone(&cloned, &builder.current);
     CHECK(cloned_ok && bindings_frame_ref_test_resolves(
               &cloned, frame_300, &resolved_epoch) &&
-              resolved_epoch.word == 300u,
+              resolved_epoch.word == epoch_300.word,
           "copy-on-write clone preserves the frame-handle namespace");
     bindings_free(&cloned);
 
@@ -1125,27 +1098,32 @@ static void test_generation_checked_frame_handles(Arena *arena) {
     resolved_epoch = CETTA_FRAME_IDENTITY_NONE;
     CHECK(bindings_frame_ref_test_resolves(
               &builder.current, frame_300, &resolved_epoch) &&
-              resolved_epoch.word == 300u &&
+              resolved_epoch.word == epoch_300.word &&
               !bindings_frame_ref_test_resolves(
                   &builder.current, frame_200, &resolved_epoch) &&
               bindings_activation_view_available(&dense, &builder.current),
-          "rollback retires the removed activation handle and preserves its older sibling");
+          "rollback removes one activation from this branch and preserves its older sibling");
 
     ready = bindings_builder_register_contextual_frame(
-        &builder, &source_id, 1u, (CettaFrameIdentity){400u});
+        &builder, &source_id, 1u, epoch_400);
     BindingsFrameRef frame_400 = {0};
     resolved_epoch = CETTA_FRAME_IDENTITY_NONE;
     CHECK(ready && bindings_frame_ref_test_for_epoch(
-              &builder.current, (CettaFrameIdentity){400u}, &frame_400) &&
-              !cetta_frame_identity_eq(frame_400.identity, frame_200.identity) &&
+              &builder.current, epoch_400, &frame_400) &&
               !cetta_frame_identity_eq(frame_400.identity, frame_200.identity) &&
               !bindings_frame_ref_test_resolves(
                   &builder.current, frame_200, &resolved_epoch) &&
               bindings_frame_ref_test_resolves(
                   &builder.current, frame_400, &resolved_epoch) &&
-              resolved_epoch.word == 400u,
+              resolved_epoch.word == epoch_400.word,
           "removed frame identity remains invalid after another activation is installed");
 
+    BindingsFrameRef wrong_generation = frame_300;
+    wrong_generation.identity.word ^= UINT64_C(1) << 32;
+    CHECK(!bindings_frame_ref_test_resolves(
+              &builder.current, wrong_generation, &resolved_epoch) &&
+              bindings_activation_view_available(&dense, &builder.current),
+          "a forged generation cannot reuse a live handle or invalidate its real owner");
     bindings_activation_view_free(&dense);
     bindings_builder_free(&builder);
 }
@@ -1439,13 +1417,7 @@ static void test_shared_carrier_promotion(void) {
 
     Bindings bindings;
     bindings_init(&bindings);
-    VarId id419 = var_id_from_base(419u);
-    VarId id420 = var_id_from_base(420u);
-    VarId id421 = var_id_from_base(421u);
-    VarId id422 = var_id_from_base(422u);
-    VarId id423 = var_id_from_base(423u);
-    CHECK(bindings_add_id(&bindings, id419, SYMBOL_ID_NONE, value),
-          "bind same payload");
+    CHECK(bindings_add_id(&bindings, var_id_from_base(419u), SYMBOL_ID_NONE, value), "bind same payload");
     *bindings_need_mut(&bindings) = completed;
     StateCell state = {0};
     PrimeNeedBranchState branch = {0};
@@ -1464,18 +1436,14 @@ static void test_shared_carrier_promotion(void) {
           handled.last->value != value &&
           handled.last->value != handled.last->previous->value,
           "fixture distinguishes copied equal payloads before transport");
-    CHECK(bindings_add_id(&bindings, id421, SYMBOL_ID_NONE, source_branch) &&
-          bindings_add_id(&bindings, id422, SYMBOL_ID_NONE,
-                          handled.last->previous->value) &&
-          bindings_add_id(&bindings, id423, SYMBOL_ID_NONE,
-                          handled.last->value),
+    CHECK(bindings_add_id(&bindings, var_id_from_base(421u), SYMBOL_ID_NONE, source_branch) &&
+          bindings_add_id(&bindings, var_id_from_base(422u), SYMBOL_ID_NONE, handled.last->previous->value) &&
+          bindings_add_id(&bindings, var_id_from_base(423u), SYMBOL_ID_NONE, handled.last->value),
           "capture actual stored branch and factor roots as shared logical values");
-    CHECK(bindings_lookup_value_id(&bindings, id419).skeleton == source_cell.origin &&
-          bindings_lookup_value_id(&bindings, id421).skeleton == source_branch &&
-          bindings_lookup_value_id(&bindings, id422).skeleton ==
-              handled.last->previous->value &&
-          bindings_lookup_value_id(&bindings, id423).skeleton ==
-              handled.last->value,
+    CHECK(bindings_lookup_value_id(&bindings, var_id_from_base(419u)).skeleton == source_cell.origin &&
+          bindings_lookup_value_id(&bindings, var_id_from_base(421u)).skeleton == source_branch &&
+          bindings_lookup_value_id(&bindings, var_id_from_base(422u)).skeleton == handled.last->previous->value &&
+          bindings_lookup_value_id(&bindings, var_id_from_base(423u)).skeleton == handled.last->value,
           "source logical skeletons alias each actual stored carrier root");
     CHECK(atom_eq(value, source_branch) && atom_eq(value, handled.last->value) &&
           atom_eq(value, handled.last->previous->value) &&
@@ -1487,8 +1455,7 @@ static void test_shared_carrier_promotion(void) {
     BindingsBuilder original, transported;
     CHECK(bindings_builder_init(&original, &bindings), "capture builder before promotion");
     uint32_t mark = bindings_builder_save(&original);
-    CHECK(bindings_builder_add_id_fresh(
-              &original, id420, SYMBOL_ID_NONE, value) &&
+    CHECK(bindings_builder_add_id_fresh(&original, var_id_from_base(420u), SYMBOL_ID_NONE, value) &&
           original.prime_trail_len == 1u,
           "capture the complete Prime world in rollback state");
     CHECK(cetta_weight_ledger_append(&source, bindings_weight_view(&original.current),
@@ -1506,7 +1473,7 @@ static void test_shared_carrier_promotion(void) {
     const PrimeNeedFrame *before_top = bindings_need_view(&transported.current)->top;
     CHECK(!bindings_builder_promote_atoms_with_session(&transported, &wrong, session) &&
           bindings_need_view(&transported.current)->top == before_top &&
-          bindings_lookup_value_id(&transported.current, id419).skeleton == value,
+          bindings_lookup_value_id(&transported.current, var_id_from_base(419u)).skeleton == value,
           "wrong destination refuses before mutating the private builder");
     PrimeNeedSnapshot wrong_snapshot = completed;
     PrimeNeedBranchState wrong_branch = *bindings_branch_state_view(&bindings);
@@ -1531,7 +1498,7 @@ static void test_shared_carrier_promotion(void) {
           atom_eq(external, external_branch) && atom_eq(external, external_factor_first) &&
           atom_eq(external, external_factor_last),
           "shared transport does not coalesce equal source-distinct carrier roots");
-    CHECK(bindings_lookup_value_id(&transported.current, id419).skeleton == external &&
+    CHECK(bindings_lookup_value_id(&transported.current, var_id_from_base(419u)).skeleton == external &&
           bindings_weight_view(&transported.current)->last->previous->value == external_factor_last &&
           transported.prime_trail[0].weights.last->value == external_factor_last &&
           transported.prime_trail[0].weights.last->previous->value == external_factor_first &&
@@ -1542,26 +1509,24 @@ static void test_shared_carrier_promotion(void) {
           prime_need_snapshot_is_ancestor(&completed,
               &transported.prime_trail[0].prime_need),
           "rollback Need image retains payload aliases and exact serial ancestry");
-    CHECK(bindings_lookup_value_id(&original.current, id419).skeleton == value &&
+    CHECK(bindings_lookup_value_id(&original.current, var_id_from_base(419u)).skeleton == value &&
           original.prime_trail[0].prime_need.top == completed.top,
           "preparing a copy leaves the original builder and its trail unchanged");
     atom_deep_copy_session_free(session);
     bindings_builder_free(&original);
     CHECK(bindings_promote_atoms_to_arena(&bindings, &destination), "promote complete bindings");
-    Atom *logical = bindings_lookup_value_id(&bindings, id419).skeleton;
+    Atom *logical = bindings_lookup_value_id(&bindings, var_id_from_base(419u)).skeleton;
     Atom *state_value = NULL;
     CHECK(prime_need_snapshot_lookup(bindings_need_view(&bindings), cell_id, &cell) &&
           prime_need_branch_state_value(bindings_branch_state_view(&bindings),
               &state, &state_value), "read copied carriers");
     CHECK(logical == cell.origin && logical == cell.cached,
           "bindings/Need promotion shares one Atom image");
-    CHECK(bindings_lookup_value_id(&bindings, id421).skeleton == state_value,
+    CHECK(bindings_lookup_value_id(&bindings, var_id_from_base(421u)).skeleton == state_value,
           "bindings/branch promotion shares one Atom image");
     const CettaWeightLedger *weights = bindings_weight_view(&bindings);
-    CHECK(bindings_lookup_value_id(&bindings, id423).skeleton ==
-              weights->last->value &&
-          bindings_lookup_value_id(&bindings, id422).skeleton ==
-              weights->last->previous->value,
+    CHECK(bindings_lookup_value_id(&bindings, var_id_from_base(423u)).skeleton == weights->last->value &&
+          bindings_lookup_value_id(&bindings, var_id_from_base(422u)).skeleton == weights->last->previous->value,
           "bindings/factor promotion shares one Atom image");
     CHECK(logical != state_value && logical != weights->last->value &&
           logical != weights->last->previous->value &&
@@ -1584,8 +1549,8 @@ static void test_shared_carrier_promotion(void) {
           "ordinary full promotion preserves the occurrence and allocation watermark");
     bindings_builder_rollback(&transported, mark);
     Atom *restored_state = NULL;
-    CHECK(!bindings_lookup_value_id(&transported.current, id420).skeleton &&
-          bindings_lookup_value_id(&transported.current, id419).skeleton == external &&
+    CHECK(!bindings_lookup_value_id(&transported.current, var_id_from_base(420u)).skeleton &&
+          bindings_lookup_value_id(&transported.current, var_id_from_base(419u)).skeleton == external &&
           bindings_occurrence_token(&transported.current) == occurrence &&
           bindings_weight_view(&transported.current)->length == 2u &&
           cetta_weight_ledger_handler(bindings_weight_view(&transported.current), 701u) == 901u &&
@@ -2127,12 +2092,9 @@ static void test_frame_registration_compaction_rebase(Arena *arena) {
  * Builder compaction with a live checkpoint does: its native inverse record
  * can restore a contextual RHS whose frame is unbound in the current image. */
 static void test_contextual_previous_rhs_compaction_rollback(Arena *arena) {
-    VarId ids[] = {var_id_from_base(71u), var_id_from_base(72u),
-                   var_id_from_base(73u)};
+    VarId ids[] = {var_id_from_base(71u), var_id_from_base(72u), var_id_from_base(73u)};
     CettaFrameIdentityScope identities = {0};
-    CettaFrameIdentity target_epoch = CETTA_FRAME_IDENTITY_NONE;
-    CettaFrameIdentity source_epoch = CETTA_FRAME_IDENTITY_NONE;
-    CettaFrameIdentity unrelated_epoch = CETTA_FRAME_IDENTITY_NONE;
+    CettaFrameIdentity target_epoch = CETTA_FRAME_IDENTITY_NONE, source_epoch = CETTA_FRAME_IDENTITY_NONE, unrelated_epoch = CETTA_FRAME_IDENTITY_NONE;
     Bindings base, snapshot;
     bindings_init(&base);
     bindings_init(&snapshot);
@@ -2157,8 +2119,7 @@ static void test_contextual_previous_rhs_compaction_rollback(Arena *arena) {
     ready = builder_ready && find_frame_state(&builder.current, target_epoch, &target_view) &&
         bindings_frame_state_read_slot(&target_view, 0u, &previous) &&
         previous.value.skeleton == raw && binding_value_is_contextual(previous.value) &&
-        cetta_frame_identity_eq(
-            binding_value_frame_ref(previous.value).identity, source_epoch) &&
+        cetta_frame_identity_eq(binding_value_frame_ref(previous.value).identity, source_epoch) &&
         bindings_builder_prepare_fresh_entries(&builder, 1u);
     uint32_t checkpoint = ready ? bindings_builder_save(&builder) : UINT32_MAX;
     uint32_t write_mark = ready ? bindings_builder_history_mark(&builder) : UINT32_MAX;
@@ -2192,9 +2153,9 @@ static void test_contextual_previous_rhs_compaction_rollback(Arena *arena) {
     BindingValue restored = binding_value_from_atom(NULL);
     CHECK(baseline_ready && lookup_frame_value(&baseline.current, target_id, &restored) &&
               restored.skeleton == previous.value.skeleton &&
-              restored.context == previous.value.context &&
-              cetta_frame_identity_eq(
-                  binding_value_frame_ref(restored).identity, source_epoch) &&
+              binding_value_kind(restored) == binding_value_kind(previous.value) &&
+              cetta_frame_identity_eq(binding_value_epoch(restored), binding_value_epoch(previous.value)) &&
+              cetta_frame_identity_eq(binding_value_frame_ref(restored).identity, source_epoch) &&
               frame_state_slots_are(&baseline.current, source_epoch, ids, NULL, NULL, NULL),
           "native rollback without compaction restores the contextual RHS and its unbound frame authority");
 
@@ -2217,9 +2178,9 @@ static void test_contextual_previous_rhs_compaction_rollback(Arena *arena) {
     restored = binding_value_from_atom(NULL);
     CHECK(compacted && lookup_frame_value(&builder.current, target_id, &restored) &&
               restored.skeleton == previous.value.skeleton &&
-              restored.context == previous.value.context &&
-              cetta_frame_identity_eq(
-                  binding_value_frame_ref(restored).identity, source_epoch) &&
+              binding_value_kind(restored) == binding_value_kind(previous.value) &&
+              cetta_frame_identity_eq(binding_value_epoch(restored), binding_value_epoch(previous.value)) &&
+              cetta_frame_identity_eq(binding_value_frame_ref(restored).identity, source_epoch) &&
               frame_state_slots_are(&builder.current, source_epoch, ids, NULL, NULL, NULL),
           "compacted rollback restores the exact contextual RHS with its complete unbound frame inventory");
     if (baseline_ready)
@@ -2232,11 +2193,9 @@ static void test_contextual_previous_rhs_compaction_rollback(Arena *arena) {
 }
 
 static void test_all_unbound_logical_merge_authority(Arena *arena) {
-    VarId ids[] = {var_id_from_base(81u), var_id_from_base(82u),
-                   var_id_from_base(83u)};
+    VarId ids[] = {var_id_from_base(81u), var_id_from_base(82u), var_id_from_base(83u)};
     CettaFrameIdentityScope identities = {0};
-    CettaFrameIdentity source_epoch = CETTA_FRAME_IDENTITY_NONE;
-    CettaFrameIdentity destination_epoch = CETTA_FRAME_IDENTITY_NONE;
+    CettaFrameIdentity source_epoch = CETTA_FRAME_IDENTITY_NONE, destination_epoch = CETTA_FRAME_IDENTITY_NONE;
     bool identities_ready = cetta_frame_identity_scope_try(&identities, &source_epoch) &&
         cetta_frame_identity_scope_try(&identities, &destination_epoch);
     for (unsigned live = 0u; live < 2u; live++) {
@@ -2288,8 +2247,7 @@ static void test_all_unbound_logical_merge_authority(Arena *arena) {
  * and activation boundary. Logical admission keeps that lineage; importing a
  * bound value is a new receiving write, unlike copying an exact image. */
 static void test_logical_merge_frame_lineage(Arena *arena) {
-    VarId ids[] = {var_id_from_base(91u), var_id_from_base(92u),
-                   var_id_from_base(93u)};
+    VarId ids[] = {var_id_from_base(91u), var_id_from_base(92u), var_id_from_base(93u)};
     Atom *variables[] = {
         atom_var_with_id(arena, "merge-lineage-first", ids[0]),
         atom_var_with_id(arena, "merge-lineage-second", ids[1]),
@@ -2408,8 +2366,7 @@ static void test_logical_merge_frame_lineage(Arena *arena) {
                 received.schema_complete && received.slot_count == 3u;
             for (uint32_t slot = 0u; slot < 3u && admitted; slot++) {
                 admitted = bindings_frame_state_read_slot(&received, slot, &received_slots[slot]) &&
-                    var_id_eq(received_slots[slot].source_id,
-                              incoming_slots[slot].source_id) &&
+                    var_id_eq(received_slots[slot].source_id, incoming_slots[slot].source_id) &&
                     received_slots[slot].value.skeleton == incoming_slots[slot].value.skeleton;
                 if (admitted && !incoming_slots[slot].value.skeleton)
                     admitted = received_slots[slot].write_version == incoming_slots[slot].write_version;
@@ -4035,6 +3992,367 @@ static void test_saved_binding_value_concurrent_lifetime(void) {
     CHECK(survived, "worker-restored versions outlive every source and capsule owner");
 }
 
+static void check_capture_agreement(Arena *arena) {
+    Bindings left, right, alias, framed_left, framed_right, copied;
+    bindings_init(&left); bindings_init(&right); bindings_init(&alias);
+    bindings_init(&framed_left); bindings_init(&framed_right); bindings_init(&copied);
+    StateCell a = {.value = atom_int(arena, 1)}, b = {.value = atom_int(arena, 1)};
+    VarId variable = fresh_var_id();
+    Atom *first = atom_expr2(arena, atom_symbol(arena, "Captured"), atom_state(arena, &a));
+    Atom *second = atom_expr2(arena, atom_symbol(arena, "Captured"), atom_state(arena, &b));
+    CHECK(bindings_add_id(&left, variable, SYMBOL_ID_NONE, first) &&
+          bindings_add_id(&right, variable, SYMBOL_ID_NONE, second) &&
+          bindings_add_id(&alias, variable, SYMBOL_ID_NONE, atom_deep_copy(arena, first)),
+          "capture controls bind same-named values containing actual mutable handles");
+    CHECK(bindings_eq(&left, &right) && !bindings_capture_equal(arena, &left, &right) &&
+          bindings_capture_equal(arena, &left, &alias),
+          "captured input agreement distinguishes resource replacement from wrapper copying");
+    CHECK(bindings_capture_equal_checked(arena,&left,&right)==CETTA_MATCH_REFUTED &&
+          bindings_capture_equal_checked(arena,&left,&alias)==CETTA_MATCH_MATCHED,
+          "checked captured inputs distinguish replacement from an identical held image");
+    bindings_free(&left); bindings_free(&right);
+    bindings_init(&left); bindings_init(&right);
+    Atom *unknown = atom_var_with_id(arena, "$capture-open", fresh_var_id());
+    CHECK(bindings_add_constraint(&left, first, unknown) &&
+          bindings_add_constraint(&right, second, unknown) &&
+          !bindings_capture_equal(arena, &left, &right),
+          "delayed equality constraints use the same resource-aware capture relation");
+    CETTA_FRAME_IDENTITY_SCOPE(identities);
+    CettaFrameIdentity first_frame = cetta_frame_identity_scope_fresh(&identities);
+    CettaFrameIdentity second_frame = cetta_frame_identity_scope_fresh(&identities);
+    VarId slot = var_id_from_base(1u);
+    CHECK(bindings_register_contextual_frame(&framed_left, &slot, 1u, first_frame) &&
+          bindings_register_contextual_frame(&framed_right, &slot, 1u, second_frame) &&
+          bindings_clone(&copied, &framed_left),
+          "capture controls retain distinct all-unbound frame inventories");
+    CHECK(bindings_eq(&framed_left, &framed_right) &&
+          !bindings_capture_equal(arena, &framed_left, &framed_right) &&
+          bindings_capture_equal(arena, &framed_left, &copied),
+          "unbound frame authority is visible to capture agreement even without assignments");
+    CHECK(bindings_frame_index_grow_slots(&copied, first_frame, 2u) &&
+          !bindings_capture_equal(arena, &framed_left, &copied),
+          "growing an unbound authority domain changes the captured input");
+    bindings_free(&left); bindings_free(&right);
+    bindings_init(&left); bindings_init(&right);
+    Atom *x=atom_var_with_id(arena,"capture-x",fresh_var_id());
+    Atom *inner=atom_expr2(arena,atom_symbol(arena,"Data"),x);
+    Atom *marked=atom_expr2(arena,atom_symbol(arena,"Outer"),atom_he_evaluated_copy(arena,inner));
+    Atom *plain=atom_expr2(arena,atom_symbol(arena,"Outer"),inner);
+    Atom *materialized=atom_freshen_epoch(arena,plain,first_frame);
+    CHECK(bindings_add_id(&left,variable,SYMBOL_ID_NONE,marked) &&
+          bindings_rewrite_value_id(&left,variable,binding_value_from_context(marked,first_frame)) &&
+          bindings_add_id(&right,variable,SYMBOL_ID_NONE,materialized),
+          "contextual capture has the same actual variables as the materialized input");
+    CHECK(!bindings_capture_equal(arena,&left,&right),
+          "materializing a contextual value cannot erase a nested Data/code distinction");
+    Atom *kept=binding_value_materialize(arena,binding_value_from_context(marked,first_frame));
+    CHECK(kept && atom_is_he_evaluated(kept->expr.elems[1]) &&
+          bindings_rewrite_value_id(&right,variable,binding_value_from_atom(kept)) &&
+          bindings_capture_equal(arena,&left,&right),
+          "freshening preserves nested expression roles and admits the equivalent captured value");
+    Atom *cycle_left=atom_expr(arena,(Atom *[]){atom_int(arena,9)},1u);
+    Atom *cycle_right=atom_expr(arena,(Atom *[]){atom_int(arena,9)},1u);
+    CHECK(bindings_rewrite_value_id(&left,variable,binding_value_from_atom(cycle_left)) &&
+          bindings_rewrite_value_id(&right,variable,binding_value_from_atom(cycle_right)),
+          "cyclic comparison control starts from ordinary captured values");
+    Atom *left_leaf=cycle_left->expr.elems[0],*right_leaf=cycle_right->expr.elems[0];
+    cycle_left->expr.elems[0]=cycle_left;cycle_right->expr.elems[0]=cycle_right;
+    CHECK(bindings_capture_equal_checked(arena,&left,&right)==CETTA_MATCH_INCOMPLETE,
+          "unavailable captured graph inspection is not permission to select a different source");
+    cycle_left->expr.elems[0]=left_leaf;cycle_right->expr.elems[0]=right_leaf;
+    bindings_free(&copied); bindings_free(&framed_right); bindings_free(&framed_left);
+    bindings_free(&alias); bindings_free(&right); bindings_free(&left);
+}
+
+
+typedef struct {
+    unsigned references, retains, releases;
+    bool refuse;
+    uint64_t session,thunk,authority,child,child_authority;
+} ReaderOwnerFixture;
+static bool reader_owner_retain(void *raw) {
+    ReaderOwnerFixture *owner=raw;
+    if (owner->refuse) return false;
+    owner->references++; owner->retains++;
+    return true;
+}
+static void reader_owner_release(void *raw) {
+    ReaderOwnerFixture *owner=raw;
+    if (!owner->references) abort();
+    owner->references--; owner->releases++;
+}
+static const PrimeNeedReaderValueOps reader_owner_ops={
+    .retain=reader_owner_retain,.release=reader_owner_release,
+};
+static CettaMatchCompletion reader_owner_settled(const void *raw,const PrimeNeedSnapshot *world) {
+    const ReaderOwnerFixture *owner=raw;
+    if(!world || world->session_id!=owner->session) return CETTA_MATCH_REFUTED;
+    uint64_t ids[]={owner->thunk,owner->child},authorities[]={owner->authority,owner->child_authority};
+    for(size_t i=0u;i<2u;i++) {
+        PrimeNeedCellView cell;
+        if(!ids[i] || !prime_need_snapshot_lookup(world,ids[i],&cell)) return CETTA_MATCH_REFUTED;
+        if(cell.authority_id!=authorities[i]) return CETTA_MATCH_INCOMPLETE;
+        if(cell.cache_state!=PRIME_NEED_CACHE_VALUE && cell.cache_state!=PRIME_NEED_CACHE_STABLE_FAULT)
+            return CETTA_MATCH_REFUTED;
+    }
+    return CETTA_MATCH_MATCHED;
+}
+static const PrimeNeedReaderValueOps settled_reader_ops={
+    .retain=reader_owner_retain,.release=reader_owner_release,.settled=reader_owner_settled};
+static bool reader_context_has(PrimeNeedReaderContext *context,uint64_t key,void *value) {
+    PrimeNeedReaderValue found={0};
+    return prime_need_reader_context_lookup(context,key,&found) &&
+        found.value==value && found.operations==&reader_owner_ops;
+}
+typedef struct {size_t count;uint64_t sum;bool refuse;} ReaderVisitFixture;
+static CettaMatchCompletion reader_visit_entry(uint64_t key,const PrimeNeedReaderValue *value,void *raw) {
+    ReaderVisitFixture *visit=raw;
+    if (!value->value || value->operations!=&reader_owner_ops) return CETTA_MATCH_INCOMPLETE;
+    visit->count++;visit->sum+=key;
+    return visit->refuse ? CETTA_MATCH_INCOMPLETE : CETTA_MATCH_MATCHED;
+}
+static void reader_context_cases(Arena *arena) {
+    ReaderOwnerFixture a={.references=1u}, b={.references=1u}, c={.references=1u};
+    PrimeNeedReaderValue av={&a,&reader_owner_ops}, bv={&b,&reader_owner_ops}, cv={&c,&reader_owner_ops};
+    PrimeNeedReaderContext *base=NULL,*left=NULL,*right=NULL,*joined=NULL,*other=NULL,*removed=NULL;
+    CHECK(prime_need_reader_context_update(NULL,11u,&av,&base)==CETTA_MATCH_MATCHED &&
+        reader_context_has(base,11u,&a) && a.references==2u,
+        "reader context owns its supplied current version");
+    CHECK(prime_need_reader_context_update(base,11u,&bv,&left)==CETTA_MATCH_MATCHED &&
+        reader_context_has(base,11u,&a) && reader_context_has(left,11u,&b),
+        "advancing one reader context preserves its earlier branch version");
+    CHECK(prime_need_reader_context_merge(base,left,&joined)==CETTA_MATCH_MATCHED && joined==left,
+        "actual reader-context ancestry chooses the advanced version");
+    prime_need_reader_context_release(joined);joined=NULL;
+    prime_need_reader_context_release(base);base=NULL;
+    CHECK(a.references==1u && b.references==2u,
+        "lightweight ancestry does not pin an obsolete reader payload");
+    CHECK(prime_need_reader_context_update(left,11u,NULL,&removed)==CETTA_MATCH_MATCHED &&
+        !reader_context_has(removed,11u,&b) &&
+        prime_need_reader_context_merge(left,removed,&joined)==CETTA_MATCH_MATCHED && joined==removed,
+        "a retired reader is not resurrected by merging its earlier context");
+    prime_need_reader_context_release(joined);joined=NULL;
+    prime_need_reader_context_release(left);left=NULL;
+    CHECK(b.references==1u,"retiring the last current value releases its owner despite surviving ancestry");
+    CHECK(prime_need_reader_context_update(NULL,11u,&av,&other)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_merge(other,removed,&joined)==CETTA_MATCH_REFUTED && !joined,
+        "a sibling cannot replace a recorded retirement with an equal old reader");
+    prime_need_reader_context_release(other);other=NULL;
+    prime_need_reader_context_release(removed);removed=NULL;
+
+    CHECK(prime_need_reader_context_update(NULL,11u,&av,&base)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(base,11u,&bv,&left)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(base,11u,&cv,&right)==CETTA_MATCH_MATCHED,
+        "incomparable readers are built from one shared parent");
+    CHECK(prime_need_reader_context_merge(left,right,&joined)==CETTA_MATCH_REFUTED && !joined,
+        "different sibling reader positions refuse instead of selecting a maximum");
+    prime_need_reader_context_release(right);right=NULL;
+    CHECK(prime_need_reader_context_update(base,11u,&bv,&right)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_merge(left,right,&joined)==CETTA_MATCH_MATCHED &&
+        reader_context_has(joined,11u,&b),
+        "independent versions can join when their current owned reader is identical");
+    CHECK(prime_need_reader_context_update(joined,11u,&cv,&removed)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_merge(left,removed,&other)==CETTA_MATCH_MATCHED && other==removed,
+        "a joined version retains the ancestry of its left parent");
+    prime_need_reader_context_release(other);other=NULL;
+    CHECK(prime_need_reader_context_merge(right,removed,&other)==CETTA_MATCH_MATCHED && other==removed,
+        "a joined version retains the ancestry of its right parent");
+    prime_need_reader_context_release(other);other=NULL;
+    prime_need_reader_context_release(removed);removed=NULL;
+    prime_need_reader_context_release(joined);joined=NULL;
+    prime_need_reader_context_release(left);left=NULL;
+    prime_need_reader_context_release(right);right=NULL;
+    CHECK(prime_need_reader_context_update(NULL,22u,&bv,&other)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_merge(base,other,&joined)==CETTA_MATCH_MATCHED &&
+        reader_context_has(joined,11u,&a) && reader_context_has(joined,22u,&b),
+        "disjoint source-call reader contexts compose without identifying their owners");
+    ReaderVisitFixture visit={0};
+    unsigned live_a=a.references,live_b=b.references;
+    CHECK(prime_need_reader_context_visit(joined,reader_visit_entry,&visit)==CETTA_MATCH_MATCHED &&
+        visit.count==2u && visit.sum==33u && a.references==live_a && b.references==live_b,
+        "reader inspection borrows every live key without changing its owners");
+    visit=(ReaderVisitFixture){.refuse=true};
+    CHECK(prime_need_reader_context_visit(joined,reader_visit_entry,&visit)==CETTA_MATCH_INCOMPLETE &&
+        visit.count==1u && a.references==live_a && b.references==live_b,
+        "a refused reader visit is incomplete and retains all owning entries");
+    b.refuse=true;
+    unsigned before_a=a.references,before_b=b.references,before_c=c.references;
+    CHECK(prime_need_reader_context_update(joined,11u,&cv,&removed)==CETTA_MATCH_INCOMPLETE && !removed &&
+        a.references==before_a && b.references==before_b && c.references==before_c,
+        "refused reader retention rolls back all previously prepared ownership shares");
+    b.refuse=false;
+    prime_need_reader_context_release(joined);joined=NULL;
+    prime_need_reader_context_release(other);other=NULL;
+
+
+    /* Source and requester have different earlier reader values. Only the
+     * actual source suffix may cross the production boundary. */
+    PrimeNeedReaderContext *entrance=NULL,*production=NULL,*recipient=NULL,*imported=NULL,*later=NULL;
+    CHECK(prime_need_reader_context_update(base,11u,&bv,&entrance)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(entrance,22u,&cv,&production)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(base,11u,&cv,&recipient)==CETTA_MATCH_MATCHED,
+        "reader production and recipient retain unrelated earlier branch values");
+    CHECK(prime_need_reader_context_import(entrance,production,recipient,&imported)==CETTA_MATCH_MATCHED &&
+        reader_context_has(imported,11u,&c) && reader_context_has(imported,22u,&c),
+        "reader suffix import preserves requester history and transports the earned nested owner");
+    CHECK(prime_need_reader_context_update(imported,22u,&av,&later)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_import(entrance,production,later,&removed)==CETTA_MATCH_MATCHED && removed==later,
+        "already-held reader production does not roll back later requester progress");
+    prime_need_reader_context_release(removed);removed=NULL;
+    CHECK(prime_need_reader_context_update(recipient,22u,&bv,&removed)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_import(entrance,production,removed,&joined)==CETTA_MATCH_REFUTED && !joined,
+        "rival nested reader progress refuses before any production publication");
+    CHECK(prime_need_reader_context_import(entrance,NULL,recipient,&joined)==CETTA_MATCH_INCOMPLETE && !joined,
+        "missing production context is not treated as evidence of an unchanged active entrance");
+    CHECK(prime_need_reader_context_import(base,production,imported,&joined)==CETTA_MATCH_REFUTED && !joined,
+        "holding one reader suffix does not adopt the producer's earlier conflicting reader history");
+    CHECK(prime_need_reader_context_merge(production,imported,&joined)==CETTA_MATCH_REFUTED && !joined,
+        "a suffix import does not claim full-context ancestry from its producer");
+    prime_need_reader_context_release(entrance);prime_need_reader_context_release(production);
+    prime_need_reader_context_release(recipient);prime_need_reader_context_release(imported);
+    prime_need_reader_context_release(later);prime_need_reader_context_release(removed);removed=NULL;
+
+    Bindings seed, advanced, sibling, moved;
+    bindings_init(&seed);bindings_init(&advanced);bindings_init(&sibling);bindings_init(&moved);
+    bindings_reader_context_set(&seed,base);
+    CHECK(bindings_prime_present(&seed) && bindings_clone(&sibling,&seed) &&
+        bindings_reader_context_view(&sibling)==base,
+        "a context-only occurrence survives ordinary binding cloning");
+    CHECK(prime_need_reader_context_update(base,11u,&bv,&left)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(base,11u,&cv,&right)==CETTA_MATCH_MATCHED,
+        "binding branches retain independent versions of their source reader");
+    bindings_reader_context_set(&advanced,left);bindings_reader_context_set(&sibling,right);
+    CHECK(bindings_try_merge_live_checked(&advanced,&sibling)==CETTA_MATCH_REFUTED &&
+        bindings_reader_context_view(&advanced)==left,
+        "checked binding merge refutes incompatible reader contexts without changing its destination");
+    BindingsBuilder builder,copy;
+    CHECK(bindings_builder_init(&builder,&seed),"reader fixture initializes its common binding owner");
+    Atom *root=atom_var_with_id(arena,"reader-root",test_id(9801u));
+    CHECK(bindings_builder_add_var_fresh(&builder,root,atom_int(arena,7)),
+        "reader fixture retains a logical root alongside source context");
+    uint32_t mark=bindings_builder_save(&builder);
+    CHECK(bindings_builder_try_merge(&builder,&advanced) &&
+        bindings_reader_context_view(&builder.current)==left && bindings_builder_clone(&copy,&builder),
+        "builder snapshots and clones own their complete reader contexts");
+    uint32_t marks[]={mark,bindings_builder_save(&builder)};
+    CHECK(bindings_builder_compact_reachable(&builder,&root,1u,marks,2u,NULL,NULL) &&
+        bindings_reader_context_view(&builder.current)==left,
+        "binding compaction transports reader-owned checkpoints with its logical roots");
+    bindings_builder_rollback(&builder,marks[0]);
+    CHECK(bindings_reader_context_view(&builder.current)==base &&
+        bindings_reader_context_view(&copy.current)==left,
+        "rollback restores the exact reader version without rewinding a sibling clone");
+    bindings_builder_free(&builder);
+    bindings_builder_commit(&copy);bindings_builder_take(&copy,&moved);
+    CHECK(bindings_reader_context_view(&moved)==left,
+        "commit and ownership transfer preserve the selected reader context");
+    Atom *copy_variable=atom_var_with_id(arena,"reader-copy",test_id(9802u));
+    Atom *copy_fields[]={atom_symbol(arena,"ReaderPayload"),atom_int(arena,19)};
+    Atom *copy_value=atom_expr(arena,copy_fields,2u);
+    CHECK(bindings_add_var(&moved,copy_variable,copy_value),
+        "copy refusal fixture includes a logical payload in source storage");
+    Arena copy_arena;arena_init_detached(&copy_arena);
+    AtomDeepCopySession *atoms=atom_deep_copy_session_new(&copy_arena);
+    CHECK(atoms && !bindings_copy_owned_atoms_with_session(&moved,&copy_arena,atoms) &&
+        bindings_reader_context_view(&moved)==left &&
+        bindings_lookup_value_id(&moved,copy_variable->var_id).skeleton==copy_value,
+        "an active reader context refuses unmapped owned copying instead of sharing a mutable driver silently");
+    BindingsBuilder unmapped;
+    CHECK(bindings_builder_init(&unmapped,&moved) &&
+        bindings_builder_add_var_fresh(&unmapped,
+            atom_var_with_id(arena,"reader-trail-copy",test_id(9803u)),copy_value),
+        "copy refusal fixture retains a reader only in its rollback trail");
+    bindings_prime_set(&unmapped.current,NULL,NULL,0u,NULL,NULL);
+    CHECK(!bindings_builder_copy_owned_atoms_with_session(&unmapped,&copy_arena,atoms) &&
+        bindings_lookup_value_id(&unmapped.current,copy_variable->var_id).skeleton==copy_value,
+        "an unmapped rollback reader refuses before relocating any logical payload");
+    bindings_builder_free(&unmapped);
+    atom_deep_copy_session_free(atoms);arena_free(&copy_arena);
+    bindings_free(&moved);bindings_free(&advanced);bindings_free(&sibling);
+    bindings_prime_set(&seed,NULL,NULL,0u,NULL,NULL);
+    CHECK(!bindings_prime_present(&seed) && !bindings_reader_context_view(&seed),
+        "an explicit empty occurrence releases its reader ownership edge");
+    bindings_free(&seed);
+    prime_need_reader_context_release(base);base=NULL;
+    prime_need_reader_context_release(left);left=NULL;
+    prime_need_reader_context_release(right);right=NULL;
+    CHECK(a.references==1u && b.references==1u && c.references==1u,
+        "context, builder, compaction and transfer release every retained reader share");
+
+    PrimeNeedReaderContext *chain=NULL;
+    bool chain_ok=true;
+    for (size_t i=0u;i<8192u && chain_ok;i++)
+        chain_ok=prime_need_reader_context_update(chain,31u,i%2u?&av:&bv,&chain)==CETTA_MATCH_MATCHED;
+    CHECK(chain_ok && a.references+b.references==3u,
+        "a long context lineage retains only its current payload rather than every older reader");
+    prime_need_reader_context_release(chain);
+    CHECK(a.references==1u && b.references==1u,
+        "deep version retirement releases its lineage and current reader completely");
+}
+
+static void reader_settlement_cases(Arena *arena) {
+    PrimeNeedSnapshot root={0},child_world={0},base={0},running={0},partial={0},ready={0};
+    uint64_t child=0u,thunk=0u,evaluator=prime_need_fresh_evaluator_id();
+    Atom *origin=atom_symbol(arena,"settlement-source");
+    bool allocated=prime_need_snapshot_begin(&root) &&
+        prime_need_snapshot_allocate(arena,&root,origin,&child_world,&child) &&
+        prime_need_snapshot_allocate(arena,&child_world,origin,&base,&thunk);
+    CHECK(allocated,"settlement controls allocate a source and its actual nested field");
+    if(!allocated) return;
+    PrimeNeedCellView root_cell,child_cell;
+    bool known=prime_need_snapshot_lookup(&base,thunk,&root_cell) && prime_need_snapshot_lookup(&base,child,&child_cell);
+    ReaderOwnerFixture owner={.references=1u,.session=base.session_id,.thunk=thunk,.child=child,
+        .authority=known?root_cell.authority_id:0u,.child_authority=known?child_cell.authority_id:0u};
+    PrimeNeedReaderValue value={.value=&owner,.operations=&settled_reader_ops};
+    PrimeNeedReaderContext *context=NULL,*merged=NULL;
+    CHECK(known && prime_need_reader_context_update(NULL,71u,&value,&context)==CETTA_MATCH_MATCHED,
+        "a settled-reader owner records exact cell authorities");
+    Bindings source,promoted;bindings_init(&source);bindings_init(&promoted);
+    *bindings_need_mut(&source)=base;bindings_reader_context_set(&source,context);
+    Arena destination;arena_init_detached(&destination);
+    CHECK(!bindings_promote_atoms_to_arena(&source,&destination) && bindings_reader_context_view(&source)==context,
+        "an unforced source refuses ordinary promotion without erasing its reader");
+    Atom *nested=prime_need_ref(arena,&base,child);
+    Atom *box=nested?atom_expr2(arena,atom_symbol(arena,"Box"),nested):NULL;
+    bool resolved=box && prime_need_snapshot_start_evaluation(arena,&base,thunk,evaluator,&running) &&
+        prime_need_snapshot_resolve_value(arena,&running,thunk,evaluator,box,&partial);
+    CHECK(resolved,"a completed constructor retains the actual still-pending field capability");
+    *bindings_need_mut(&source)=partial;
+    CHECK(prime_need_reader_context_can_settle(context,&partial)==CETTA_MATCH_REFUTED &&
+        !bindings_promote_atoms_to_arena(&source,&destination),
+        "a cached root does not settle its pending nested field");
+    resolved=resolved && prime_need_snapshot_start_evaluation(arena,&partial,child,evaluator,&running) &&
+        prime_need_snapshot_resolve_value(arena,&running,child,evaluator,atom_int(arena,8),&ready);
+    CHECK(resolved,"the nested field earns its own completed update");
+    *bindings_need_mut(&source)=ready;
+    CHECK(bindings_clone(&promoted,&source) && bindings_promote_atoms_to_arena(&promoted,&destination) &&
+        prime_need_reader_context_values_absent(bindings_reader_context_view(&promoted)) &&
+        prime_need_reader_context_lookup(context,71u,&value),
+        "ordinary promotion tombstones only the promoted occurrence and preserves the source frontier owner");
+    CHECK(prime_need_reader_context_merge(context,bindings_reader_context_view(&promoted),&merged)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_values_absent(merged),"an old live version cannot resurrect settled reader metadata");
+    AtomDeepCopySession *copy=atom_deep_copy_session_new(&destination);
+    CHECK(copy && !bindings_copy_owned_atoms_with_session(&promoted,&destination,copy),
+        "settled ordinary promotion grants no independent owned-context copy");
+    atom_deep_copy_session_free(copy);
+    BindingsBuilder builder={0};
+    *bindings_need_mut(&source)=partial;
+    Atom *variable=atom_var_with_id(arena,"settlement-rollback",test_id(9810u));
+    Atom *logical=atom_expr2(arena,atom_symbol(arena,"HeldLogical"),atom_int(arena,9));
+    bool built=bindings_builder_init(&builder,&source) && bindings_builder_add_var_fresh(&builder,variable,logical);
+    CHECK(built && builder.prime_trail_len,"a real rollback trail retains the earlier pending reader world");
+    if(built) {
+        *bindings_need_mut(&builder.current)=ready;
+        CHECK(!bindings_builder_promote_atoms_to_arena(&builder,&destination) &&
+            bindings_lookup_value_id(&builder.current,variable->var_id).skeleton==logical,
+            "rollback-reader preflight refuses before relocating any current logical payload");
+    }
+    bindings_builder_free(&builder);
+    prime_need_reader_context_release(merged);bindings_free(&promoted);bindings_free(&source);
+    prime_need_reader_context_release(context);arena_free(&destination);
+    CHECK(owner.references==1u,"settlement and refusal release every independently owned reader share");
+}
+
 int main(void) {
     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     SymbolTable symbols;
@@ -4048,6 +4366,9 @@ int main(void) {
 
     Arena arena;
     arena_init(&arena);
+    reader_context_cases(&arena);
+    reader_settlement_cases(&arena);
+    check_capture_agreement(&arena);
 
     for (unsigned mode = 0u; mode < (CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS ? 5u : 1u); mode++)
         for (unsigned route = 0u; route < 2u; route++)

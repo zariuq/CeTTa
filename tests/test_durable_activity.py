@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import queue
 import socket
-import sqlite3
+from support.durable_journal_fixture import records
 import subprocess
 import threading
 import time
@@ -13,13 +13,17 @@ import tempfile
 
 
 class Service:
-    def __init__(self, directory, capacity=4, policy=None, quantum=1, work_limit=100000):
+    def __init__(self, directory, capacity=4, policy=None, quantum=1, work_limit=100000,
+                 cleanup_quantum=None, allow_atomic_cleanup=False):
         self.directory = Path(directory)
         self.path = self.directory / "worker.sock"
         self.listener = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         self.listener.bind(str(self.path)); self.listener.listen(16)
         self.capacity = capacity
         self.planning = [] if policy is None else [str(policy), str(quantum), str(work_limit)]
+        if cleanup_quantum is not None:
+            assert policy is not None
+            self.planning += [str(cleanup_quantum), str(int(allow_atomic_cleanup))]
         self.process = None
         self.lines = []
         self.start()
@@ -27,7 +31,7 @@ class Service:
     def start(self):
         self.events = queue.Queue()
         self.process = subprocess.Popen([os.environ["CETTA_ACTIVITY_SERVICE"],
-            str(self.directory / "journal.sqlite3"), str(self.listener.fileno()),
+            str(self.directory / "journal.cdr"), str(self.listener.fileno()),
             "activities", str(self.capacity)] + self.planning, pass_fds=[self.listener.fileno()],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1)
@@ -64,6 +68,11 @@ class Service:
         assert len(data) >= 6 and data[:4] == b"CWP1", data
         n = data[5]
         return data[4], data[6:6 + n].decode(), data[6 + n:].decode()
+
+    def cleanup(self, command):
+        self.process.stdin.write("cleanup\t" + command + "\n"); self.process.stdin.flush()
+        line = self.wait(lambda value: value.startswith("cleanup "))
+        return json.loads(line[8:]) if command == "status" else line[8:]
 
     def task(self, after=""):
         deadline = time.monotonic() + 5
@@ -130,10 +139,12 @@ PRIME_POLICY = '''
 
 @unittest.skipUnless(os.environ.get("CETTA_ACTIVITY_SERVICE"), "set CETTA_ACTIVITY_SERVICE")
 class PrimeActivityTests(unittest.TestCase):
-    def service(self, quantum=1, work_limit=100000, capacity=4):
+    def service(self, quantum=1, work_limit=100000, capacity=4,
+                cleanup_quantum=None, allow_atomic_cleanup=False):
         temporary = tempfile.TemporaryDirectory(); self.addCleanup(temporary.cleanup)
         policy = Path(temporary.name) / "policy.metta"; policy.write_text(PRIME_POLICY)
-        service = Service(temporary.name, capacity, policy, quantum, work_limit)
+        service = Service(temporary.name, capacity, policy, quantum, work_limit,
+                          cleanup_quantum, allow_atomic_cleanup)
         self.addCleanup(service.close)
         return service
 
@@ -165,8 +176,74 @@ class PrimeActivityTests(unittest.TestCase):
             stats = json.loads(next(l[6:] for l in s.lines if l.startswith("stats ")))
             paid.append(stats["plan_work"])
             self.assertGreater(stats["plan_polls"], 1)
+            self.assertGreater(stats["plan_setup"], 0)
+            self.assertGreater(stats["plan_setup_bytes"], 0)
+            self.assertGreater(stats["plan_preparation"], 0)
+            self.assertGreater(stats["plan_transport"], 0)
+            self.assertGreater(stats["plan_admission"], 0)
+            self.assertGreater(stats["plan_producer"], 0)
+            self.assertGreater(stats["plan_consumer"], 0)
+            self.assertLessEqual(stats["plan_final"], stats["plan_producer"])
+            self.assertEqual(stats["plan_rotations"], 0)
+            callbacks = sum(stats[name] for name in (
+                "plan_admission", "plan_producer", "plan_consumer",
+                "plan_final", "plan_rotations", "plan_retirements"))
+            self.assertEqual(stats["plan_receipt_units"], callbacks +
+                stats["plan_setup"] +
+                stats["plan_work"] + stats["plan_preparation"] +
+                stats["plan_transport"])
+            self.assertEqual(stats["slot_units"], sum(stats[name] for name in (
+                "slot_admission", "slot_preparation", "slot_execution",
+                "slot_delivery", "slot_teardown", "slot_arrivals",
+                "slot_bookkeeping")))
+            self.assertGreater(stats["max_slot_units"], 0)
+            self.assertLessEqual(stats["max_slot_units"], stats["slot_units"])
+            self.assertGreaterEqual(stats["slot_preparation"], stats["plan_setup"])
+            self.assertGreaterEqual(stats["slot_execution"], stats["plan_work"])
+            self.assertGreaterEqual(stats["plan_receipt_events"], callbacks)
             print("native activity quantum", quantum, "stats", json.dumps(stats), flush=True)
         self.assertEqual(paid[0], paid[1]); self.assertGreater(paid[0], 0)
+
+    def test_cleanup_holds_capacity_while_peer_progresses_and_regrant_releases_once(self):
+        s = self.service(capacity=2, cleanup_quantum=1)
+        s.record("notice", "first", body="first")
+        s.wait(lambda line: line.startswith("result first "), 15)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            status = s.cleanup("status")
+            if status["atomic_waits"]: break
+        self.assertGreater(status["atomic_waits"], 0)
+        self.assertEqual(status["completed"], 0)
+        s.record("notice", "peer", body="peer")
+        s.wait(lambda line: line.startswith("result peer "), 15)
+        s.record("notice", "backpressure", body="retained")
+        status = s.cleanup("status")
+        self.assertEqual(status["ready"], 2)
+        self.assertEqual(status["completed"], 0)
+        self.assertFalse(any(line.startswith("result backpressure ") for line in s.lines))
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.commits")), 2)
+        self.assertEqual(s.cleanup("allow"), "allowed")
+        s.wait(lambda line: line.startswith("result backpressure "), 15)
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            status = s.cleanup("status")
+            if status["ready"] == 0: break
+        self.assertEqual(status["ready"], 0)
+        self.assertEqual(status["completed"], 3)
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.commits")), 3)
+        s.close(); s.process = None
+        stats = json.loads(next(line[6:] for line in s.lines if line.startswith("stats ")))
+        callbacks = sum(stats[name] for name in (
+            "plan_admission", "plan_producer", "plan_consumer", "plan_final",
+            "plan_rotations", "plan_retirements", "plan_cleanup_polls"))
+        self.assertEqual(stats["plan_receipt_units"], callbacks + stats["plan_setup"] +
+                         stats["plan_work"] + stats["plan_preparation"] +
+                         stats["plan_transport"] + stats["cleanup_units"])
+        self.assertGreater(stats["cleanup_units"], 0)
+        self.assertGreaterEqual(stats["slot_teardown"], stats["cleanup_units"])
+        self.assertEqual(stats["slot_units"], sum(stats[name] for name in (
+            "slot_admission", "slot_preparation", "slot_execution", "slot_delivery",
+            "slot_teardown", "slot_arrivals", "slot_bookkeeping")))
 
     def test_zero_purse_parks_without_refill_and_keeps_capacity_backpressure(self):
         s = self.service(work_limit=0, capacity=1)
@@ -176,26 +253,38 @@ class PrimeActivityTests(unittest.TestCase):
         s.close(); s.process = None
         stats = json.loads(next(l[6:] for l in s.lines if l.startswith("stats ")))
         self.assertEqual(stats["plan_work"], 0); self.assertEqual(stats["plan_polls"], 1)
+        self.assertGreater(stats["plan_setup"], 0)
+        self.assertGreater(stats["plan_setup_bytes"], 0)
+        self.assertEqual(stats["plan_preparation"], 0)
+        self.assertEqual(stats["plan_transport"], 0)
+        self.assertGreaterEqual(stats["plan_admission"], 1)
+        self.assertEqual(stats["plan_consumer"], 0)
+        callbacks = sum(stats[name] for name in (
+            "plan_admission", "plan_producer", "plan_consumer",
+            "plan_final", "plan_rotations", "plan_retirements"))
+        self.assertEqual(stats["plan_receipt_units"], callbacks + stats["plan_setup"])
+        self.assertEqual(stats["slot_units"], sum(stats[name] for name in (
+            "slot_admission", "slot_preparation", "slot_execution",
+            "slot_delivery", "slot_teardown", "slot_arrivals",
+            "slot_bookkeeping")))
+        self.assertGreater(stats["max_slot_units"], 0)
         self.assertEqual(stats["ready"], 1)
-        with sqlite3.connect(s.directory / "journal.sqlite3") as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.inbox'").fetchone()[0], 2)
-            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.commits'").fetchone()[0], 0)
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.inbox")), 2)
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.commits")), 0)
 
     def test_parked_native_plan_restart_reuses_input_then_replays_completed_result(self):
         s = self.service(work_limit=0)
         s.record("notice", "restart", body="restart")
         self.assertEqual(s.rpc(1)[0], 64)
         s.kill()
-        with sqlite3.connect(s.directory / "journal.sqlite3") as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.inbox'").fetchone()[0], 1)
-            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.commits'").fetchone()[0], 0)
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.inbox")), 1)
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.commits")), 0)
         # Restart owns a fresh planning ticket; the persisted input survives
         # retirement of the exhausted in-process task and its original purse.
         s.planning[-1] = "100000"
         s.start(); s.wait(lambda l: l.startswith("result restart "), 15)
         s.kill(); s.start(); s.wait(lambda l: l.startswith("result restart "), 15)
-        with sqlite3.connect(s.directory / "journal.sqlite3") as db:
-            self.assertEqual(db.execute("SELECT count(*) FROM records WHERE space='host.commits'").fetchone()[0], 1)
+        self.assertEqual(len(records(s.directory / "journal.cdr", "host.commits")), 1)
 
 
 @unittest.skipUnless(os.environ.get("CETTA_ACTIVITY_SERVICE"), "set CETTA_ACTIVITY_SERVICE")
@@ -317,7 +406,7 @@ class ActivityTests(unittest.TestCase):
             with socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET) as listener:
                 listener.bind(path); listener.listen(16)
                 process = subprocess.Popen([os.environ["CETTA_ACTIVITY_SERVICE"],
-                    str(Path(directory) / "journal.sqlite3"), str(listener.fileno()), "activities", "4"],
+                    str(Path(directory) / "journal.cdr"), str(listener.fileno()), "activities", "4"],
                     pass_fds=[listener.fileno()], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 try:
                     self.assertEqual(process.stdout.readline(), b"ready\n")

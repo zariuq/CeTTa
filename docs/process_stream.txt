@@ -1,0 +1,52 @@
+Interactive child processes
+===========================
+
+Import (library proc), or use !(import! &self proc).
+The default capture mode and its completion result are unchanged.
+
+With (mode stream), stdin remains open between requests. max-bytes must be
+positive: it bounds pending input and each pending output queue separately.
+Stream mode requires spawn; run cannot expose a handle for draining output.
+When an output queue fills, the reader stops draining that pipe until the
+caller consumes bytes. Output is not discarded to make space.
+
+  !(import! &self proc)
+  !(let* (($p (proc:spawn ("cat")
+             ((mode stream) (max-bytes 65536) (lifetime owner))))
+          ($queued (proc:write $p "hello\n"))
+          ($reply (proc:read $p stdout 1000))
+          ($end (proc:close-input $p))
+          ($done (proc:await $p))
+          ($closed (proc:close $p)))
+     ($queued $reply $done))
+
+proc:write atomically queues the whole byte string and returns (proc:queued n).
+This acknowledges ownership, not delivery. proc:backpressure queues nothing;
+the caller may retry after the child consumes input. A write larger than the
+queue bound is a capacity failure, not temporary backpressure. close-input
+requests EOF after already queued bytes have been written.
+
+proc:read takes stdout or stderr and a nonnegative wait in milliseconds.
+It consumes available bytes as (proc:chunk bytes), returns proc:pending when
+the wait expires, or proc:eof only after reading EOF from that pipe. Zero
+milliseconds polls. An interrupted/truncated stream is not successful EOF.
+Chunks are byte strings, not messages or necessarily complete UTF-8 text.
+The caller must frame and validate its protocol, and drain both output pipes.
+Awaiting completion without draining a full stream can block the child.
+
+Cancel and close work while queues are full. Handles retain the existing
+process-owner lifetime and context checks; closing invalidates aliases.
+Completion remains single-consumption. Its proc:stream-capture field records
+pending, observed and read-delivered counts for stdout, then stderr, followed
+by both EOF states and (proc:input sent queued). Pending bytes are included in
+the final proc:result. Counts distinguish queued input from actual delivery.
+
+Focused qualification (no external service required):
+  python3 tests/support/check_process_stream.py ./cetta
+
+An optional real connection check uses leanprover-community/repl:
+  python3 tests/support/check_process_stream.py ./cetta --repl REPL_EXECUTABLE --lean LEAN_EXECUTABLE
+Use the Lean executable matching the REPL build. The check sends dependent
+requests through one process, tests invalid commands and environment rollback,
+and drives two tactic steps using returned proof-state identifiers. Such IDs
+belong to that running session; they are not durable proof certificates.

@@ -723,7 +723,10 @@ HeTypeApplicability he_type_call_applicable(
             Atom **actual = NULL;
             uint32_t count = services->infer(services->context, argument, &actual);
             if (!count) {
-                bool saved = apply_bindings_move(&next, &paths.items[p]);
+                bool saved = services->require_positive_type
+                    ? he_type_errors_push(errors, argument_error(arena, expression,
+                        i + 1u, expected, atom_undefined_type(arena)))
+                    : apply_bindings_move(&next, &paths.items[p]);
                 free(actual);
                 if (!saved) goto incomplete;
                 continue;
@@ -732,6 +735,8 @@ HeTypeApplicability he_type_call_applicable(
             SearchContext trial;
             search_context_init_owned(&trial, &paths.items[p], NULL);
             for (uint32_t t = 0u; t < count; t++) {
+                if (services->require_positive_type &&
+                    atom_is_symbol_id(actual[t], g_builtin_syms.undefined_type)) continue;
                 if (services->refuted &&
                     services->refuted(services->context, argument, actual[t],
                                       expected)) continue;

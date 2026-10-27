@@ -690,6 +690,16 @@ static bool grounded_op_capabilities_apply(uint8_t capabilities) {
         eval_current_profile_enables_dependent_telescope();
 }
 
+bool grounded_op_is_library_native(SymbolId head) {
+    uint32_t flags = symbol_flags(g_symbols, head);
+    if (flags & CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP)
+        return true;
+    if (flags & CETTA_SYMBOL_FLAG_STATIC_GROUNDED_OP)
+        return false;
+    const char *name = symbol_bytes(g_symbols, head);
+    return name && strncmp(name, "__cetta_lib_", 12u) == 0;
+}
+
 bool is_grounded_op(SymbolId id) {
     if (id == SYMBOL_ID_NONE)
         return false;
@@ -1184,6 +1194,16 @@ static void grounded_float_floor_divmod(double dividend, double divisor,
 static bool grounded_current_language_is_petta(void) {
     return eval_current_language_id &&
            eval_current_language_id() == CETTA_LANGUAGE_PETTA;
+}
+
+/* A scope record belongs to code already formed, including open binder
+ * bodies. Projection keeps that syntax held; it does not activate its body.
+ * This is the same role propagated from an explicitly held operand. */
+static bool grounded_projection_holds_syntax(Arena *arena, const Atom *value) {
+    return atom_prime_held_is(value) ||
+        (eval_current_language_id && eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+         atom_prime_template_own_hidden(value) &&
+         prime_semantics_is_authored_lambda(arena, (Atom *)value));
 }
 
 /* The exact-integer operation an integer spelling names in this dialect.
@@ -2748,6 +2768,12 @@ static Atom *grounded_collapse_add_next(Arena *a, Atom *head, Atom **args, uint3
     return atom_expr(a, elems, list->expr.len + 1);
 }
 
+static Space *grounded_observed_space_read(Space *space) {
+    if (eval_observe_space_read)
+        return eval_observe_space_read(space);
+    return eval_resolve_space_read ? eval_resolve_space_read(space) : space;
+}
+
 static Atom *grounded_space_contains_exact(Arena *a, Atom *head,
                                            Atom **args, uint32_t nargs) {
     if (nargs != 2)
@@ -2755,9 +2781,8 @@ static Atom *grounded_space_contains_exact(Arena *a, Atom *head,
     if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_SPACE))
         return grounded_bad_arg_type(a, head, args, nargs, 1,
                                      atom_symbol(a, "SpaceType"), args[0]);
-    Space *space = (Space *)args[0]->ground.ptr;
-    if (eval_resolve_space_read)
-        space = eval_resolve_space_read(space);
+    Space *space = grounded_observed_space_read(
+        (Space *)args[0]->ground.ptr);
     return atom_bool(a, space_contains_exact(space, args[1]));
 }
 
@@ -2768,9 +2793,8 @@ static Atom *grounded_space_revision(Arena *a, Atom *head,
     if (!(args[0]->kind == ATOM_GROUNDED && args[0]->ground.gkind == GV_SPACE))
         return grounded_bad_arg_type(a, head, args, nargs, 1,
                                      atom_symbol(a, "SpaceType"), args[0]);
-    Space *space = (Space *)args[0]->ground.ptr;
-    if (eval_resolve_space_read)
-        space = eval_resolve_space_read(space);
+    Space *space = grounded_observed_space_read(
+        (Space *)args[0]->ground.ptr);
     uint64_t revision = space_revision(space);
     if (revision > (uint64_t)INT64_MAX)
         return grounded_string_error(a, head, args, nargs,
@@ -2802,12 +2826,23 @@ static Atom *grounded_foldl_in_space(Arena *a, Atom *head, Atom **args, uint32_t
     Atom *op_expr = args[4];
     Atom *space = args[5];
 
+    /* The items are the elements of the one sequence view: a list's after
+     * its tag.  An expression the view declines (a braces node, a list
+     * pattern) is not a sequence and is not folded. */
+    Atom *const *items = NULL;
+    CettaExprLen item_len = 0u;
+    if (!atom_sequence_view(list, &items, &item_len))
+        return NULL;
     Atom *head_item;
     Atom *tail;
-    if (list->expr.len == 0)
+    if (item_len == 0)
         return atom_expr2(a, atom_symbol(a, "return"), init);
-    head_item = list->expr.elems[0];
-    tail = atom_expr_suffix(a, list, 1u);
+    head_item = items[0];
+    /* The rest is folded as the expression of the remaining items, a view
+     * of the same storage, so each step costs the same whatever the kind:
+     * a fold's value does not depend on the sequence's kind. */
+    tail = atom_is_list(list) ? atom_expr_suffix(a, list, 2u)
+                              : atom_sequence_rest(a, list, items, item_len);
 
     Atom *step_op = cetta_fold_bind_step_atom(a, op_expr,
                                               acc_var, init,
@@ -3310,6 +3345,15 @@ static Atom *grounded_petta_math_result(Arena *a, SymbolId head_id,
     return prolog ? prolog : native;
 }
 
+static bool grounded_builds_value_head(Atom *head) {
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    SymbolId id = atom_symbol_current_id(head);
+    return id == g_builtin_syms.parse ||
+           id == g_builtin_syms.parse_first ||
+           id == g_builtin_syms.readln_bang;
+}
+
 bool grounded_op_is_sequence_constructor(SymbolId id) {
 #define SEQUENCE_CONSTRUCTOR(field, arities, mask) if (id == g_builtin_syms.field) return true;
     CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(SEQUENCE_CONSTRUCTOR)
@@ -3353,8 +3397,11 @@ bool grounded_call(Arena *a, Atom *head, Atom **args, uint32_t nargs,
         *out = cetta_call_raised(result);
     else if (atom_is_petta_no_result(result))
         *out = cetta_call_failure();
-    else if (!raised && head->kind == ATOM_SYMBOL &&
-             grounded_op_is_sequence_constructor(atom_symbol_current_id(head)))
+    else if ((!raised && head->kind == ATOM_SYMBOL &&
+              grounded_op_is_sequence_constructor(atom_symbol_current_id(head))) ||
+             (eval_current_language_id &&
+              eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
+              grounded_builds_value_head(head) && !atom_is_error(result)))
         *out = cetta_call_completed_value(result);
     else
         *out = cetta_call_value(result);
@@ -3405,6 +3452,10 @@ Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     if (head->kind != ATOM_SYMBOL) return NULL;
     if (cetta_speculative_active() && !cetta_speculative_op_allowed(atom_symbol_current_id(head)))
         return is_grounded_op(atom_symbol_current_id(head)) ? cetta_effect_denied(a) : NULL;
+    if (!(symbol_flags(g_symbols, atom_symbol_current_id(head)) & CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP) &&
+        grounded_op_is_library_native(atom_symbol_current_id(head)) &&
+        !cetta_dense_tensor_v1_owns_head(head))
+        return NULL;
     for (uint32_t i = 0u; i < nargs; i++) {
         if (atom_structural_has_rational(args[i]))
             return grounded_dispatch_rational(a, head, args, nargs);
@@ -3479,9 +3530,23 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             sequence_result = true;
         }
         bool any_list = false;
-        for (uint32_t i = 0u; i < nargs && i < 2u; i++)
-            if ((sequences & (1u << i)) && atom_is_list(args[i]))
+        for (uint32_t i = 0u; i < nargs && i < 2u; i++) {
+            if (!(sequences & (1u << i)))
+                continue;
+            /* An expression the one sequence view declines (a braces node,
+             * for which no set form is defined yet, or a list pattern) is
+             * not a sequence: none of its internal tags is read as an
+             * element, and the operation does not reduce, as size-atom
+             * does not.  PeTTa's carriers keep their answers above. */
+            Atom *const *view_elems = NULL;
+            CettaExprLen view_len = 0u;
+            if (!grounded_current_language_is_petta() &&
+                args[i]->kind == ATOM_EXPR &&
+                !atom_sequence_view(args[i], &view_elems, &view_len))
+                return NULL;
+            if (atom_is_list(args[i]))
                 any_list = true;
+        }
         if (any_list) {
             Atom *elements[2] = {args[0], nargs > 1u ? args[1] : NULL};
             const Atom *kind = NULL;
@@ -3709,7 +3774,7 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
          head_id == g_builtin_syms.cdr_atom) &&
         nargs == 1u) {
         /* A fragment of held syntax is held syntax. */
-        bool held = atom_prime_held_is(args[0]);
+        bool held = grounded_projection_holds_syntax(a, args[0]);
         Atom *argument = atom_prime_held_payload(args[0]);
         /* A list's elements are read as an expression's are. */
         Atom *const *elems = NULL;
@@ -3734,15 +3799,22 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             g_grounded_raised = true;
             return petta_semantics_empty_head_error(a);
         }
-        if (view.result != CETTA_SEQUENCE_PROJECT_ARGUMENT_ERROR) {
-            Atom *part = cetta_sequence_projection_materialize(a, &view);
-            if (head_id == g_builtin_syms.cdr_atom &&
+        if (view.result == CETTA_SEQUENCE_PROJECT_ELEMENT ||
+            view.result == CETTA_SEQUENCE_PROJECT_SUFFIX) {
+            /* The rest keeps the sequence's kind and, like the view, leaves
+             * an elaborated template's own list out. */
+            Atom *part = view.result == CETTA_SEQUENCE_PROJECT_ELEMENT
+                ? elems[0]
+                : atom_sequence_rest(a, argument, elems, len);
+            if (view.result == CETTA_SEQUENCE_PROJECT_SUFFIX &&
                 atom_is_he_evaluated(argument) && part &&
                 part->kind == ATOM_EXPR && part->expr.len > 0u &&
                 !atom_has_vars(part))
                 part = atom_he_evaluated_copy(a, part);
             return held ? atom_prime_held_wrap(a, part) : part;
         }
+        if (view.result != CETTA_SEQUENCE_PROJECT_ARGUMENT_ERROR)
+            return cetta_sequence_projection_materialize(a, &view);
         return grounded_raise(
             a, head, args, nargs,
             atom_string(
@@ -3954,9 +4026,8 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         if (head_id == g_builtin_syms.size &&
             args[0]->kind == ATOM_GROUNDED &&
             args[0]->ground.gkind == GV_SPACE) {
-            Space *space = (Space *)args[0]->ground.ptr;
-            if (eval_resolve_space_read)
-                space = eval_resolve_space_read(space);
+            Space *space = grounded_observed_space_read(
+                (Space *)args[0]->ground.ptr);
             return atom_int(a, (int64_t)space_length64(space));
         }
         if (head_id == g_builtin_syms.size_atom &&
@@ -3975,7 +4046,7 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     }
 
     if (head_id == g_builtin_syms.index_atom && nargs == 2) {
-        bool held = atom_prime_held_is(args[0]);
+        bool held = grounded_projection_holds_syntax(a, args[0]);
         args[0] = atom_prime_held_payload(args[0]);
         /* A held list is read by its elements, as the sequence operations
          * above read an unheld one. */
@@ -4188,8 +4259,13 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         bool bv;
         if (get_bool_arg(args[0], &bv))
             return bv ? atom_false(a) : atom_true(a);
+        /* SWI-PeTTa's not/2 holds of a truth value alone: any other value
+         * fails there, as its and/2, or/2 and xor/2 do, where HE raises a
+         * type error. */
         if (args[0]->kind == ATOM_GROUNDED)
-            return grounded_bool_bad_arg(a, head, args, nargs, 1, args[0]);
+            return grounded_current_language_is_petta()
+                ? atom_petta_no_result(a)
+                : grounded_bool_bad_arg(a, head, args, nargs, 1, args[0]);
         return NULL;
     }
     if ((head_id == g_builtin_syms.op_and || head_id == g_builtin_syms.op_or || head_id == g_builtin_syms.op_xor) && nargs != 2)

@@ -233,8 +233,9 @@
 
 ;; 11. Learning.  Infer what predicate could evaluate to the truth table
 ;; ⊤ ⊥ ⊥ over 0, 1, 2.  The predicate is left unknown; the chainer builds it.
+;; Lexicographic selection chooses the displayed representative of equal-size answers.
 !(test
-  (once (nupln_bc &kb 27 (: $prf (, (≞ (→ (⊙ 0) $pred) ⊤)
+  (once (search-policy recursive-dependent-proof (order lex)) (nupln_bc &kb 27 (: $prf (, (≞ (→ (⊙ 0) $pred) ⊤)
                                  (, (≞ (→ (⊙ 1) $pred) ⊥)
                                     (≞ (→ (⊙ 2) $pred) ⊥))))))
   (MkSized 27 (: (, (cet f0t g0t) (, (cefl f1f) (cefr g2f)))
@@ -415,7 +416,7 @@
 ;; Learn again, keep the hypothesis, and show it with its bound variable
 ;; named x.
 !(let (MkSized $size (: $prf (, (≞ (→ (⊙ 0) $pred) ⊤) $rest)))
-      (once (nupln_bc &kb 27 (: $prf (, (≞ (→ (⊙ 0) $pred) ⊤)
+      (once (search-policy recursive-dependent-proof (order lex)) (nupln_bc &kb 27 (: $prf (, (≞ (→ (⊙ 0) $pred) ⊤)
                                      (, (≞ (→ (⊙ 1) $pred) ⊥)
                                         (≞ (→ (⊙ 2) $pred) ⊥))))))
    (let $stored (add-atom &self (learned $pred))

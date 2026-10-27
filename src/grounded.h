@@ -30,6 +30,10 @@ typedef struct {
    An escaping result must own any vector storage it needs. */
 Atom *grounded_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs);
 
+/* Immutable library-family classification, not activation or admission.
+ * A library ABI operation may additionally have a core implementation. */
+bool grounded_op_is_library_native(SymbolId head);
+
 /* Run a grounded operation and report what it did (call_outcome.h): its
  * value; FAILURE for PeTTa's no-result; RAISED for the error it raised.
  * An operation raises the errors it constructs, and in PeTTa's grounded

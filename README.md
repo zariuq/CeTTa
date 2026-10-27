@@ -122,11 +122,9 @@ built from one checkout:
 
 ```bash
 make BUILD=python ENABLE_HTTP=1 ENABLE_DURABLE=1 \
-  ENABLE_JSON_GSLT=1 ENABLE_MANAGED_SYMBOLS=1 \
-  SQLITE_PROVIDER=vendored cetta
+  ENABLE_JSON_GSLT=1 ENABLE_MANAGED_SYMBOLS=1 cetta
 make BUILD=core ENABLE_HTTP=1 ENABLE_DURABLE=1 \
-  ENABLE_JSON_GSLT=1 ENABLE_MANAGED_SYMBOLS=1 \
-  SQLITE_PROVIDER=vendored telegram-service
+  ENABLE_JSON_GSLT=1 ENABLE_MANAGED_SYMBOLS=1 telegram-service
 ```
 
 The service is a separate executable so it need not link Python; both builds

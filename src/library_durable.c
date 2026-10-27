@@ -60,7 +60,7 @@ static Atom *commit(CettaDurableRuntime *r, Arena *a, Atom **args) {
     if (!epoch || rev->kind!=ATOM_GROUNDED || rev->ground.gkind!=GV_INT ||
         batch->kind!=ATOM_EXPR) return failure(a,DURABLE_INVALID);
     CettaExprLen n=batch->expr.len;
-    if (n>cetta_durable_default_limits().operations) return failure(a,DURABLE_LIMIT);
+    if (n>SIZE_MAX/sizeof(CettaDurableOp)) return failure(a,DURABLE_LIMIT);
     if (!n) return failure(a,DURABLE_INVALID);
     CettaDurableOp *ops=calloc(n,sizeof(*ops));
     if (!ops) return failure(a,DURABLE_NOMEM);
@@ -82,7 +82,7 @@ static Atom *commit(CettaDurableRuntime *r, Arena *a, Atom **args) {
             if (s!=DURABLE_OK) break;
         }
         size_t bytes=ops[i].size+strlen(ops[i].space)+strlen(ops[i].key);
-        if (bytes>cetta_durable_default_limits().batch_bytes-total) { s=DURABLE_LIMIT; break; }
+        if (bytes>SIZE_MAX-total) { s=DURABLE_LIMIT; break; }
         total+=bytes;
     }
     int64_t published=-1;

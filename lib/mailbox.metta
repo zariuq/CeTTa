@@ -184,6 +184,23 @@
       ($error $error)))
      (($result (return $result))))))
 
+; The same authenticated bundle under an explicit commit-spent ticket.
+(= (mailbox:post-ticket $socket $name $ticket $id $to $agent $body)
+   (function (case (case (space:whoami $socket)
+     (((reply $ignored70 ok (principal $account $ignored71))
+       (let $space (mailbox:open $socket $name)
+         (case $space
+           (((space $ignored72 $ignored73 $ignored74 $ignored75 $ignored76 $ignored77 $ignored78)
+             (case (space:append-ticket $socket $space $ticket
+                     (bundle (MailboxMessage 1 $id $to "" (from $account $agent) $body)
+                             (MailboxPending 1 $to "" (from $account $agent) $id)))
+               (((reply $ignored79 ok appended) (mailbox:sent $id accepted))
+                ((reply $ignored80 ok duplicate) (mailbox:sent $id duplicate))
+                ($error $error))))
+            ($error $error)))))
+      ($error $error)))
+     (($result (return $result))))))
+
 (= (mailbox:next $socket $name $owner)
    (function (case (let $space (mailbox:open $socket $name)
      (mailbox:next-in $socket $space $owner))

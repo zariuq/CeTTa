@@ -175,3 +175,152 @@
 !(prime-need:countdown-size (a b) 2)
 
 !(prime-need:typed-ignore "bad")
+
+; Authored lambda application shares each supplied argument once, as an
+; ordinary equation and canonical App do. Equal producer outcomes retain
+; their occurrences; independent arguments still make a Cartesian product.
+!(sort-atom (collapse ((lam x (Pair x x)) (superpose (A B)))))
+!(sort-atom (collapse ((lam $x (Pair $x $x)) (superpose (A B)))))
+!(sort-atom (collapse ((lam (x : T) (Pair x x)) (superpose (A B)))))
+!(sort-atom (collapse ((lam x (Pair x x)) (superpose (A A)))))
+(= (prime-need:lambda-pair) (lam x (Pair x x)))
+!(sort-atom (collapse ((prime-need:lambda-pair) (superpose (A B)))))
+!(sort-atom (collapse
+   (((lam x (lam y (Pair x x))) (superpose (A B))) ignored)))
+!(sort-atom (collapse
+   ((lam (x y) (Four x x y y)) (superpose (A B)) (superpose (C D)))))
+!(sort-atom (collapse
+   (Two ((lam x x) (superpose (A B)))
+        ((lam x x) (superpose (A B))))))
+
+; Unused lambda arguments remain unforced, including failure, contradiction,
+; divergence and observable effects. A used failing argument has no answer.
+!((lam x kept-empty) (empty))
+!((lam x kept-fault) (== 1 "bad"))
+!((lam x kept-divergence) (prime-need:omega))
+!((lam x kept-effect) (println! must-not-run))
+!(collapse ((lam x (Pair x x)) (empty)))
+
+; Returning a partial application retains the captured cell's identity. Two
+; later uses of the same closure share it; two independent calls do not.
+!(sort-atom (collapse
+   (let $f ((lam x (lam y (Pair x x))) (superpose (A B))) ($f ignored))))
+(= (prime-need:partial-lambda $x) ((lam x (lam y (Pair x x))) $x))
+!(sort-atom (collapse ((prime-need:partial-lambda (superpose (A B))) ignored)))
+!(sort-atom (collapse
+   (let $f ((lam x (lam y (Pair x x))) (superpose (A B)))
+     (Two ($f left) ($f right)))))
+
+; Effects count actual producer executions. Sharing applies through a
+; returned closure; two independent argument occurrences still run twice.
+!(collapse ((lam x (Pair x x))
+   (let $_ (println! need-lambda-shared-once) ran)))
+!(collapse
+   (let $f ((lam x (lam y (Pair x x)))
+            (let $_ (println! need-closure-shared-once) ran))
+     (Two ($f left) ($f right))))
+!(collapse
+   (Two ((lam x x) (let $_ (println! need-independent-occurrence) ran))
+        ((lam x x) (let $_ (println! need-independent-occurrence) ran))))
+
+; Capture avoidance reads the raw argument even when runtime references use
+; its cell. The returned lambda leaves this compound argument unforced.
+!((lam x (lam y (Pair x y))) y)
+!((lam x (lam y (Pair x y))) (Box y (superpose (A B))))
+!(((lam x (lam x done)) (println! must-not-run)) ignored)
+(= (prime-need:produce-callable)
+   (let $_ (println! need-callable-produced-once) (lam n n)))
+!((lam h (Pair (h A) (h B))) (prime-need:produce-callable))
+
+; A bare-symbol argument can itself be source work. Its callable result is
+; chosen once even when the parameter is used in several call-head positions.
+(= (prime-need:callable-f $x) (F $x))
+(= (prime-need:callable-g $x) (G $x))
+(= prime-need:symbol-callable
+   (superpose (prime-need:callable-f prime-need:callable-g)))
+!(sort-atom (collapse
+   ((lam f (Pair (f 1) (f 2))) prime-need:symbol-callable)))
+(= prime-need:duplicate-callable
+   (superpose (prime-need:callable-f prime-need:callable-f)))
+!(collapse ((lam f (Pair (f 1) (f 2))) prime-need:duplicate-callable))
+
+; Cheap exclusion must admit variables on either side before later fields
+; are demanded. Exact matching retains caller scope and duplicate answers.
+(= (prefix:B) B)
+(= (prefix:accept (Pair A B)) accepted)
+(= (prefix:accept-lambda (Wrap A (lam x x))) accepted-lambda)
+!(prefix:accept (Pair A (prefix:B)))
+!(prefix:accept (Pair $x (prefix:B)))
+!(let $r (prefix:accept (Pair $x (prefix:B))) (Result $r $x))
+!(prefix:accept $p)
+!(prefix:accept (Pair Z (prefix:B)))
+!(prefix:accept-lambda (Wrap $x (lam x x)))
+!(unify (Pair $x B) (Pair A B) (Bound $x) mismatch)
+!(prefix:accept (Pair $x B))
+(= (prefix:A) A)
+!(prefix:accept (Pair (prefix:A) $x))
+(= (prefix:duplicate-B) (superpose (B B)))
+!(collapse (prefix:accept (Pair $x (prefix:duplicate-B))))
+!(prefix:accept (Pair Z (prefix:duplicate-B)))
+
+; A wildcard below a constructor retains a returned closure's live world.
+; Structural inspection reads a lambda as code and never runs its body.
+(= (prime-need:closure-field (Payload $f)) $f)
+!(sort-atom (collapse
+   (let $f (prime-need:closure-field
+      (Payload ((lam x (lam y (Pair x x))) (superpose (A B)))))
+      (Two ($f left) ($f right)))))
+(= (prime-need:inspect-partial (lam $v $body)) inspected)
+!(prime-need:inspect-partial
+   ((lam x (lam y x)) (println! must-not-run)))
+
+; Inspecting an outer lambda must keep a nested wildcard closure's cells.
+(= (prime-need:lambda-closure-field (lam $v (Box $f))) $f)
+!(sort-atom (collapse
+   (let $f (prime-need:lambda-closure-field
+       ((lam x (lam y (Box (lam z (Pair x x))))) (superpose (A B))))
+     (Two ($f left) ($f right)))))
+
+; A producer can introduce a name absent from its invocation. Its selected
+; closure keeps later refinements of that name through first force, cache hits
+; and another lambda's argument, without capturing a same-spelled caller.
+(= (prime-need:cache-id $x) $x)
+(= (prime-need:cache-fresh)
+   (let $f ((lam y (lam z (Pair y y))) (prime-need:cache-id $x))
+     (unify $x A $f failed)))
+(= (prime-need:cache-choice)
+   (let $f ((lam y (lam z (Pair y y))) (prime-need:cache-id $x))
+     (let $v (superpose (A B)) (unify $x $v $f failed))))
+!(let $f (prime-need:cache-fresh) ($f ignored))
+!(let $s (delay (prime-need:cache-fresh))
+   (let $f (force $s) ($f ignored)))
+!((lam f (f ignored)) (prime-need:cache-fresh))
+!(let $x B
+   (let $s (delay (prime-need:cache-fresh))
+     (let $f (force $s) (Out $x ($f ignored)))))
+!(let $s (delay (prime-need:cache-fresh))
+   (let $f (force $s) (Two ($f left) ((force $s) right))))
+!(sort-atom (collapse
+   ((lam f (f ignored)) (prime-need:cache-choice))))
+
+; A read-only relational episode crosses the same closure boundary.
+(prime-need:cache-seed)
+(= (prime-need:cache-query)
+   (match &self (prime-need:cache-seed)
+     (let $f ((lam y (lam z (Pair y y))) (prime-need:cache-id $x))
+       (unify $x A $f failed))))
+!(let $f (prime-need:cache-query) ($f ignored))
+!((lam f (f ignored)) (prime-need:cache-query))
+
+; A scalar result may be demanded now, but a returned closure still retains
+; its written argument in both the dependent domain and the suspended body.
+!((lam x x) (+ 1 2))
+!((lam x (Pair x x)) (+ 1 2))
+!((lam x (lam (y : (Vec x)) (Pair x y))) (+ 1 2))
+(= (prime-need:scalar-closure $x) (lam (y : (Vec $x)) (Pair $x y)))
+!(prime-need:scalar-closure (+ 1 2))
+!((lam x (lam (y : (Vec x)) (Pair x y))) 3)
+
+; A literal pattern demands the scalar before the equation can apply.
+(= (prime-need:scalar-matched 3) matched-scalar)
+!(prime-need:scalar-matched (+ 1 2))

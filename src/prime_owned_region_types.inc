@@ -27,6 +27,30 @@ static Space *prime_native_region_program(PrimeNativeOwnedRegion *region) {
     return region->program ? region->program : &region->world;
 }
 
+/* Equation lookup keeps the frozen program. The execution context denotes
+ * its separate private data world, just as the captured &self binding does.
+ * Explicit references to any other space retain their original role. */
+static bool prime_native_context_overlay_of(const Space *view,const Space *base) {
+    if (!base) return false;
+    while (view && view!=base && view->overlay_base && !view->module_own_view)
+        view=view->overlay_base;
+    return view==base;
+}
+
+static Space *prime_native_region_context_space(Space *space) {
+    PrimeNativeOwnedRegion *region = g_prime_owned_region;
+    if (!region || !region->private_data ||
+        !prime_native_context_overlay_of(space,region->program)) return space;
+    Space *world=&region->world;
+    Atom *self=g_registry ? registry_lookup_id(g_registry,g_builtin_syms.self) : NULL;
+    /* A nested payload's registry already names its innermost data overlay.
+     * The active redirect map alone need not contain the original world. */
+    if (self && self->kind==ATOM_GROUNDED && self->ground.gkind==GV_SPACE &&
+        prime_native_context_overlay_of(self->ground.ptr,world))
+        world=self->ground.ptr;
+    return eval_resolve_space_read(world);
+}
+
 static PrimeNativeOwnedRegion *prime_native_episode_region(PrimeNativeTopEpisode *episode) {
     if (episode && episode->source_episode) episode=episode->source_episode;
     return episode ? episode->owned_region : NULL;
@@ -56,6 +80,9 @@ struct PrimeNativeAcquiredOperation {
     bool pending_ready;
     bool owns_lease;
     bool producer_complete;
+    /* Only the explicit weighted-call entry chooses this contract. A closed
+     * call transfers whole Outcomes; an open cut retains one Observation. */
+    bool closed_return;
     bool materialized;
     bool published;
     Atom *values;
@@ -79,5 +106,6 @@ static void prime_native_acquired_operation_storage(const PrimeNativeAcquiredOpe
 static bool prime_native_acquired_receiver_admitted(const PrimeNativeAcquiredOperation *operation,
     const struct PrimeNativeControl *control);
 static bool prime_native_acquired_resume_nested(struct PrimeEvalStackFrame *frame);
+static bool prime_native_region_primitive(SymbolId head);
 static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena,
     Atom *call, bool private_data);

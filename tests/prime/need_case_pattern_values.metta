@@ -2,14 +2,14 @@
 ; consumes: the cell is forced when the selection reaches its branch, after
 ; the earlier branches failed, never before; each of its values continues the
 ; selection from that branch, and the scrutinee is evaluated once.
-(= (k $x) (case 2 (($x hit) ($_ miss))))
-(= (k2 $x $y) (case 3 (($x first) ($y second) ($_ none))))
-(= (kp $x) (case (pair 2 b) (((pair $x $y) $y) ($_ none))))
+(= (k $x) (case 2 (($x hit) ($_ miss))){$x})
+(= (k2 $x $y) (case 3 (($x first) ($y second) ($_ none))){$x $y})
+(= (kp $x) (case (pair 2 b) (((pair $x $y) $y) ($_ none))){$x})
 (= (either) 1)
 (= (either) 2)
 (= (noisy $tag $v) (let $_ (println! $tag) $v))
 (= (scrutinee) (let $_ (println! scrutinee) 3))
-(= (ks $x $y) (case (scrutinee) (($x two) ($y three))))
+(= (ks $x $y) (case (scrutinee) (($x two) ($y three))){$x $y})
 ; The cell (+ 1 1) is the value 2, also inside a structured pattern.
 !(k (+ 1 1))
 !(kp (+ 1 1))

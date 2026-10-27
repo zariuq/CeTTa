@@ -31,17 +31,6 @@ typedef enum {
     PETTA_PLAN_EXEC_RELATION_SLOTS,
 } PettaPlanExecution;
 
-/* Control decisions which are intrinsic to one authored occurrence.  These
- * tags are compiled program data, so an equation activation does not
- * repeatedly recover the same decision from its head symbol. */
-typedef enum {
-    PETTA_PLAN_CONTROL_NONE = 0,
-    PETTA_PLAN_CONTROL_IF,
-    PETTA_PLAN_CONTROL_LET,
-    PETTA_PLAN_CONTROL_CHAIN,
-    PETTA_PLAN_CONTROL_LET_STAR,
-} PettaPlanControl;
-
 /* Source-derived continuation boundaries.  These tags refine the existing
  * plan tree across parent/child edges; they do not reclassify either child.
  * The anonymous-hole form records that an open producer must retain every
@@ -164,12 +153,13 @@ typedef struct PettaRegionHoleProgram {
 struct PettaPlanNode {
     PettaPlanRole role;
     PettaPlanExecution execution;
-    PettaPlanControl control;
+    CettaControlOperationPlan control;
     PettaPlanContinuation continuation;
     PettaPlanOutput output;
     /* Authored (Empty body), distinct from a variable pattern bound to Empty.
      * The arm occurrence keeps this fact through translation and substitution. */
     bool literal_case_default;
+    CettaInvocationPlan invocation;
     CettaExprIndex output_child;
     bool contains_cardinality_call;
     bool contains_call;
@@ -230,6 +220,26 @@ const PettaPlanNode *petta_plan_plain_snapshot(
     Arena *owner, const PettaPlanNode *source,
     PettaPlanSnapshotEntry *cache, size_t *cache_len, size_t cache_capacity,
     size_t node_limit);
+
+/* Source roles establish interpretation authority. The computation plan
+ * states what executes with that authority; it does not grant callee or
+ * lifetime admission. Unelaborated adapter nodes keep their existing role. */
+static inline CettaComputationPlan petta_plan_computation(
+        const PettaPlanNode *plan) {
+    if (!plan)
+        return (CettaComputationPlan){0};
+    CettaComputationPlan computation = {plan->control, plan->invocation};
+    if (computation.control.operation != CETTA_CONTROL_NONE)
+        return computation;
+    switch (plan->role) {
+    case PETTA_PLAN_VALUE: computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN; break;
+    case PETTA_PLAN_DATA: computation.control = CETTA_CONTROL_CONSTRUCT_PLAN; break;
+    case PETTA_PLAN_STATIC_CALL:
+    case PETTA_PLAN_DYNAMIC_CALL: computation.control = CETTA_CONTROL_INVOKE_PLAN; break;
+    default: break;
+    }
+    return computation;
+}
 
 typedef struct PettaEquationTemplateC0 PettaEquationTemplateC0;
 typedef struct PettaEquationTemplate PettaEquationTemplate;

@@ -6,6 +6,7 @@
 #include "atom.h"
 #include "grounded.h"
 #include "match.h"
+#include "generated/cetta_execution_contracts.generated.h"
 
 struct Space;
 
@@ -73,6 +74,62 @@ typedef enum {
     PETTA_FORM_AND_THEN,
     PETTA_FORM_OR_ELSE,
 } PeTTaForm;
+
+/* Elaborate an already classified authored control occurrence. PeTTa's
+ * value-binding spelling has the same operand layout; its matching demand
+ * remains the caller's policy. No evaluation or source authority is inferred. */
+static inline CettaControlOperationPlan petta_semantics_elaborate_control(
+        SymbolId head, PeTTaForm form, CettaExprLen arity) {
+#define CETTA_PETTA_VARIADIC_FORM(native_form, op) \
+    if (form == (native_form)) \
+        return (CettaControlOperationPlan){arity ? (op) : CETTA_CONTROL_FAILURE, \
+            CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT};
+    CETTA_PETTA_VARIADIC_FORM_ROWS(CETTA_PETTA_VARIADIC_FORM)
+#undef CETTA_PETTA_VARIADIC_FORM
+#define CETTA_PETTA_CONTROL_FORM(native_form, count, op, source_arg, first_arg, last_arg) \
+    if (form == (native_form) && arity == (count)) \
+        return (CettaControlOperationPlan){(op), (source_arg), (first_arg), (last_arg)};
+    CETTA_PETTA_CONTROL_FORM_ROWS(CETTA_PETTA_CONTROL_FORM)
+#undef CETTA_PETTA_CONTROL_FORM
+    if (form == PETTA_FORM_IF)
+        head = g_builtin_syms.if_text;
+    else if (form == PETTA_FORM_LET || form == PETTA_FORM_VALUE_LET)
+        head = g_builtin_syms.let;
+    else if (form == PETTA_FORM_CHAIN)
+        head = g_builtin_syms.chain;
+    else if (form == PETTA_FORM_EVAL)
+        head = g_builtin_syms.eval;
+    else if (head != g_builtin_syms.let_star &&
+             head != g_builtin_syms.superpose && head != g_builtin_syms.empty_form)
+        return (CettaControlOperationPlan){0};
+    CettaControlOperationPlan plan = {0};
+    cetta_control_operation_decode(head, arity, &plan, &g_builtin_syms);
+    return plan;
+}
+
+/* Native source admission precedes this layout. Live declarations may still
+ * hold arguments; neither the body tag nor the range grants demand authority. */
+static inline CettaInvocationPlan petta_semantics_elaborate_invocation(
+        SymbolId head, PeTTaForm form, CettaExprLen arity) {
+#define CETTA_PETTA_INVOCATION_FORM(native_form, count, body, first, last) \
+    if (form == (native_form) && arity == (count)) \
+        return (CettaInvocationPlan){(body), (first), (last)};
+    CETTA_PETTA_INVOCATION_FORM_ROWS(CETTA_PETTA_INVOCATION_FORM)
+#undef CETTA_PETTA_INVOCATION_FORM
+    CettaInvocationPlan plan = {0};
+    cetta_invocation_plan_decode(head, arity, &plan, &g_builtin_syms);
+    return plan;
+}
+
+static inline CettaComputationPlan petta_semantics_elaborate_computation(
+        SymbolId head, PeTTaForm form, CettaExprLen arity) {
+    CettaComputationPlan plan = {
+        .control = petta_semantics_elaborate_control(head, form, arity)};
+    if (!cetta_control_operation_is_control_form(plan.control))
+        plan.invocation = petta_semantics_elaborate_invocation(head, form, arity);
+    return plan;
+}
+
 
 typedef struct {
     bool known;
@@ -247,6 +304,13 @@ bool petta_semantics_is_cons_constraint(const Atom *atom);
 bool petta_semantics_is_open_cons_value(const Atom *atom);
 Atom *petta_semantics_open_cons_value(
     Arena *arena, Atom *head, Atom *tail);
+/* Whether Tail is a complete flat list, so that [Head|Tail] is the flat
+ * expression with Head before Tail's elements. */
+bool petta_semantics_cons_tail_is_flat_list(const Atom *tail);
+/* [Head|Tail] as a value: onto a complete flat list it is that list with
+ * Head prepended, in amortized constant time; onto anything else, an open
+ * tail included, it is a cell. */
+Atom *petta_semantics_cons_value(Arena *arena, Atom *head, Atom *tail);
 /* A list value or a list pattern with a rest as its chain of cells. */
 Atom *petta_semantics_flat_list_spine(
     Arena *arena, Atom *flat_list);
@@ -308,6 +372,12 @@ static inline bool petta_semantics_grounded_undefined(SymbolId head) {
  * them, which they neither bind nor show. */
 static inline bool petta_semantics_structural_test(SymbolId head) {
     return head == g_builtin_syms.alpha_eq || head == g_builtin_syms.op_eq;
+}
+/* The search machine owns both numeric extrema, including their nested
+ * occurrences. Their arithmetic bodies remain in the machine. */
+static inline bool petta_semantics_numeric_extremum(SymbolId head) {
+    return head == g_builtin_syms.petta_min ||
+           head == g_builtin_syms.petta_max;
 }
 /* The elements of a closed list as one flat expression, or as a list value
  * when its cells end in one: `list` itself when it is flat, NULL when its

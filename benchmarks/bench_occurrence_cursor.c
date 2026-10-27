@@ -109,16 +109,17 @@ int main(int argc, char **argv) {
         uint64_t first = prepared;
         for (CettaIndex item = 0u; item < prefix; item++) {
             CettaIndex index = UINT64_MAX;
-            assert(space_occurrence_cursor_next(&cursor, &index) ==
+            Atom *row = NULL;
+            assert(space_occurrence_cursor_next(&cursor, &index, &row) ==
                    SPACE_OCCURRENCE_CURSOR_ITEM);
             assert(index == 2u * item);
-            assert(space_occurrence_cursor_atom(&cursor, index));
+            assert(row);
             if (item == 0u)
                 first = now_ns();
         }
         if (prefix == expected) {
             CettaIndex extra;
-            assert(space_occurrence_cursor_next(&cursor, &extra) ==
+            assert(space_occurrence_cursor_next(&cursor, &extra, NULL) ==
                    SPACE_OCCURRENCE_CURSOR_END);
         }
         uint64_t pulled = now_ns();

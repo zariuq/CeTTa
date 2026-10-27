@@ -622,7 +622,11 @@ def diagnostic_controls(recording=True):
                 off_err = (d / (name + '-off.stderr')).read_text()
                 on_err = (d / (name + '-on.stderr')).read_text()
                 expected = [] if empty else [['Pair', 1, 1], ['Pair', 3, 3]]
-                ok = len(off) == len(on) == 1 and not off_err and '[factive ' in on_err
+                # A named source can use the synchronous force or the retained
+                # force cursor. Diagnostics must observe the route actually
+                # taken without changing its values, work or history.
+                force_traced = '[factive ' in on_err or '[sforce ' in on_err
+                ok = len(off) == len(on) == 1 and not off_err and force_traced
                 for label, observation in (('off', off), ('on', on)):
                     ok = ok and bool(observation)
                     if observation:
@@ -1530,6 +1534,31 @@ def debug_controls():
     actual = (d / (name + '.stdout')).read_text()
     checks.append(dict(case=name, passed=actual == expected and
                        not (d / (name + '.stderr')).read_text()))
+    # A quantum boundary may move within a loop iteration. Equal total
+    # grants must retain the exact effects, work and suspended continuation.
+    monitor_definitions = client.read_text().split('!(let (Observation', 1)[0]
+    for allowance in (40, 60):
+        pair = []
+        for split in (False, True):
+            query = f'(select 0 {policy(1, allowance, False)} (monitor:loop Heartbeat 0))'
+            if split:
+                query = f'(select 0 {policy(1, 20, False)} $r{allowance // 20 - 1})'
+                for index in reversed(range(allowance // 20 - 1)):
+                    frame = plain.replace('$r', f'$r{index + 1}')
+                    source = '(monitor:loop Heartbeat 0)' if index == 0 else f'$r{index}'
+                    query = f'(let {frame} (select 0 {policy(1, 20, False)} {source}) {query})'
+            stem = f'debug-monitor-{allowance}-' + ('split' if split else 'whole')
+            run(stem, '!' + query, definitions=monitor_definitions)
+            output = (d / (stem + '.stdout')).read_text()
+            observed = list(observations(parse(output)))
+            effects = [line for line in output.splitlines()
+                       if line.startswith(('(Heartbeat ', '(Service '))]
+            pair.append((effects, observed[-1] if observed else None))
+        checks.append(dict(case=f'debug-monitor-{allowance}-split-agreement',
+            passed=pair[0][1] is not None and pair[1][1] is not None and
+                pair[0][0] == pair[1][0] and same_observation(pair[0][1], pair[1][1]) and
+                pair[1][1]['work'] == allowance and pair[1][1]['closed'] == 'False' and
+                pair[1][1]['status'] == 'suspended'))
     name = 'debug-responsive-monitor-zero-budget'
     monitor = client.read_text().split('; A request/reply server', 1)[0]
     run(name, monitor.replace('(budget 20)', '(budget 0)'), definitions='')

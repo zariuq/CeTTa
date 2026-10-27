@@ -120,4 +120,50 @@ void space_path_indexes_retire(Space *space);
  * False means this Space retains no path index. */
 bool space_path_indexes_info(const Space *space, CettaSpacePathIndexInfo *out);
 
+/* The head index: for each head symbol and expression length, the rows in
+ * row order, as a Prolog system keeps each predicate's clauses.  A query
+ * that selects by its head alone, a symbol over variables, reads the rows
+ * of its head and length merged in row order with the rows any such query
+ * may meet: rows of that length whose head is open, and rows that are
+ * variables, private carriers or undecoded.  It reads them lazily, so the
+ * first match costs no more than the rows before it.
+ *
+ * The index holds rows, not logical positions.  A removal by mark leaves
+ * the rows in place; readers skip the marked ones, and each posting keeps
+ * the count of its leading rows known removed, so a drain from the front
+ * passes each removed row once.  Appends extend it; any other change to
+ * the rows retires it.  It refutes candidates only; matching decides. */
+typedef struct CettaSpaceHeadIndex CettaSpaceHeadIndex;
+
+typedef struct {
+    CettaSpaceHeadIndex *index;
+    /* Positions in the head's posting, the open rows of its length and the
+     * rows every query reads; a posting that does not exist is empty. */
+    uint32_t keyed, open;
+    CettaCount keyed_next, open_next, every_next;
+} CettaSpaceHeadCursor;
+
+/* Whether `pattern` selects by its head alone: a symbol head over
+ * variables, with no carrier inside. */
+bool space_head_index_admits(const Atom *pattern);
+/* Open a cursor over the Space's head index for an admitted pattern,
+ * building the index first when the Space has none current.  False when
+ * the Space keeps no such index. */
+bool space_head_index_open(Space *space, const Atom *pattern,
+                           CettaSpaceHeadCursor *cursor);
+/* The cursor's next row below `ceiling` that `marks` (a bitmap over
+ * [0, mark_rows), NULL when none) does not mark; false at the end. */
+bool space_head_index_next(CettaSpaceHeadCursor *cursor, CettaIndex ceiling,
+                           const uint64_t *marks, CettaIndex mark_rows,
+                           CettaIndex *row_out);
+void space_head_index_note_add(Space *space, AtomId id, CettaIndex row);
+/* After the prefix rewrite of a removal by mark, which moves no row. */
+void space_head_index_adopt_prefix_epoch(Space *space, uint64_t followed);
+/* Retire the Space's head index: freed at once, or, while cursors are
+ * pinned to the Space's rows, kept for them and freed once none is. */
+void space_head_index_retire(Space *space);
+/* Detach the Space's head index for a pinned view that takes its rows. */
+CettaSpaceHeadIndex *space_head_index_take(Space *space);
+void space_head_index_free(CettaSpaceHeadIndex *index);
+
 #endif

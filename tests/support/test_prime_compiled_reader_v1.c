@@ -2,6 +2,7 @@
 #include "match.h"
 #include "parser.h"
 #include "prime_compiled_reader.h"
+#include "prime_semantics.h"
 #include "symbol.h"
 #include "term_universe.h"
 
@@ -20,6 +21,9 @@ typedef struct {
     unsigned passed;
     unsigned failed;
 } TestCounts;
+
+/* Room for the plan's token rules in the mutation cases below. */
+#define PRIME_READER_RULES_CAP 16u
 
 /* A form over two long numerals, written over several lines: the product
  * of the binary numerals 2^33 + 1 and 2^31 + 1, and two 21-digit decimal
@@ -168,6 +172,17 @@ static const PrimeReaderCaseV1 CASES[] = {
     {"braces inside a list", "[{a} b]", true},
     {"stray close brace", "}", false},
     {"braces left open", "{a b", false},
+    /* The query marker written alone takes no meta-argument: a bracket or
+     * brace touching it opens the next term, as a parenthesis does.  A
+     * longer word that starts with it is a word, and takes one. */
+    {"query marker before a bracket", "![a b]", true},
+    {"query marker before braces", "!{a b}", true},
+    {"query marker before a parenthesis", "!(f x)", true},
+    {"query marker inside an expression", "(f ![x] !{y})", true},
+    {"query marker inside a list", "[a ! [b] ![c] !{d}]", true},
+    {"query marker alone at the end", "(a b) !", true},
+    {"words led by the marker", "!c !foo[x] != !!", true},
+    {"words led by the marker in a list", "[!c != !foo[x]]", true},
 };
 
 static bool expect(TestCounts *counts, bool condition, const char *label) {
@@ -210,6 +225,72 @@ static bool ids_alpha_equal(
     arena_free(&right_arena);
     arena_free(&left_arena);
     return equal;
+}
+
+static bool reader_scope_record(const Atom *atom, void *context) {
+    (void)context;
+    return atom_is_prime_own_list(atom);
+}
+
+static int reader_other_session_text(void *context, const char *text,
+    TermUniverse *universe, AtomId **out_ids, char *error, size_t size) {
+    (void)text; (void)universe; (void)error; (void)size;
+    (*(unsigned *)context)++;
+    *out_ids = NULL;
+    return -1;
+}
+
+static void source_frontend_cases(TestCounts *counts,
+    PrimeCompiledReaderV1 *reader, TermUniverse *universe) {
+    const char *source =
+        "(scope:profile lexical-fresh per-call reference)\n"
+        "(= (embedded-match $pattern $template) "
+        "(chain (context-space) $space (match $space $pattern $template){$pattern}))";
+    bool names = parser_set_universal_name_syntax_enabled(false);
+    bool lists = parser_set_list_syntax_enabled(false);
+    bool rationals = parser_set_rational_literals_enabled(false);
+    bool namespaces = parser_set_namespace_sugar_enabled(false);
+    AtomId *raw = NULL, *elaborated = NULL;
+    char error[512];
+    unsigned other_calls = 0u;
+    ParserDocumentIdsBackend other = {.context=&other_calls,
+        .parse_text_ids=reader_other_session_text,.parse_file_ids=reader_other_session_text};
+    bool installed = parser_set_document_ids_backend(&other);
+    expect(counts, installed, "embedding installs an independent host session reader");
+    int raw_count = prime_compiled_reader_v1_parse_text_ids(reader, source,
+        universe, &raw, NULL, error, sizeof(error));
+    int count = prime_semantics_read_source_text_ids(NULL, source, universe,
+        &elaborated, error, sizeof(error));
+    expect(counts, raw_count == 2 && count == 2 && !other_calls,
+        "Prime embedding selects its own compiled reader without invoking the host reader");
+    if (raw_count == 2 && count == 2) {
+        expect(counts,
+            !atom_graph_any(term_universe_get_atom(universe,raw[1]),reader_scope_record,NULL) &&
+            atom_graph_any(term_universe_get_atom(universe,elaborated[1]),reader_scope_record,NULL),
+            "raw grammar stays syntax-only while executable source carries elaborated scope records");
+    }
+    free(raw); free(elaborated); elaborated = NULL;
+    const char *bad[] = {"(unfinished", "(= (bad $x) (chain 1 $v $v){7})"};
+    for (size_t i = 0u; i < sizeof(bad)/sizeof(*bad); i++) {
+        count = prime_semantics_read_source_text_ids(reader,bad[i],universe,
+            &elaborated,error,sizeof(error));
+        expect(counts,count < 0 && !elaborated && error[0],
+            "executable source refuses grammar or scope failure without publishing partial forms");
+    }
+    expect(counts,!parser_universal_name_syntax_enabled() && !parser_list_syntax_enabled() &&
+        !parser_rational_literals_enabled() && !parser_namespace_sugar_enabled(),
+        "Prime source loading restores the host syntax options after acceptance and refusal");
+    if (installed) {
+        count = parse_metta_text_ids_diagnostic("host-source",universe,&raw,error,sizeof(error));
+        expect(counts,count < 0 && other_calls == 1u,
+            "Prime source loading preserves the installed host reader");
+        parser_clear_document_ids_backend(&other_calls);
+        free(raw);
+    }
+    parser_set_namespace_sugar_enabled(namespaces);
+    parser_set_rational_literals_enabled(rationals);
+    parser_set_list_syntax_enabled(lists);
+    parser_set_universal_name_syntax_enabled(names);
 }
 
 int main(void) {
@@ -286,9 +367,14 @@ int main(void) {
     {
         GSLTDirectPrefixReaderV1Plan mutation =
             prime_reader_direct_v1_plan;
-        GSLTDirectTokenRuleV1 rules[6];
-        memcpy(rules, mutation.token_rules, sizeof(rules));
-        for (size_t index = 0u; index < 6u; index++) {
+        GSLTDirectTokenRuleV1 rules[PRIME_READER_RULES_CAP];
+        size_t rule_len = mutation.token_rule_len;
+        expect(&counts, rule_len <= PRIME_READER_RULES_CAP,
+               "Prime token rules fit the mutation buffer");
+        if (rule_len > PRIME_READER_RULES_CAP)
+            rule_len = PRIME_READER_RULES_CAP;
+        memcpy(rules, mutation.token_rules, rule_len * sizeof(*rules));
+        for (size_t index = 0u; index < rule_len; index++) {
             if (rules[index].literal_len == 0u)
                 rules[index].first = rules[index].tail;
         }
@@ -301,9 +387,12 @@ int main(void) {
     {
         GSLTDirectPrefixReaderV1Plan mutation =
             prime_reader_direct_v1_plan;
-        GSLTDirectTokenRuleV1 rules[6];
-        memcpy(rules, mutation.token_rules, sizeof(rules));
-        for (size_t index = 0u; index < 6u; index++) {
+        GSLTDirectTokenRuleV1 rules[PRIME_READER_RULES_CAP];
+        size_t rule_len = mutation.token_rule_len;
+        if (rule_len > PRIME_READER_RULES_CAP)
+            rule_len = PRIME_READER_RULES_CAP;
+        memcpy(rules, mutation.token_rules, rule_len * sizeof(*rules));
+        for (size_t index = 0u; index < rule_len; index++) {
             if (rules[index].literal_len == 1u &&
                 rules[index].literal[0] == (uint32_t)'$' &&
                 rules[index].first) {
@@ -345,6 +434,40 @@ int main(void) {
                label);
         free(legacy);
         free(compiled);
+    }
+
+    /* `![a b] !{c}` reads as `! [a b] ! {c}`: the marker, then a list and
+     * a braces node, each a term of its own. */
+    {
+        AtomId *touching = NULL;
+        AtomId *spaced = NULL;
+        int touching_len = prime_compiled_reader_v1_parse_text_ids(
+            reader, "![a b] !{c}", &compiled_universe, &touching,
+            &receipt, error, sizeof(error));
+        int spaced_len = prime_compiled_reader_v1_parse_text_ids(
+            reader, "! [a b] ! {c}", &compiled_universe, &spaced,
+            &receipt, error, sizeof(error));
+        expect(&counts,
+               touching_len == 4 && spaced_len == 4 &&
+                   tu_kind(&compiled_universe, touching[0]) == ATOM_SYMBOL &&
+                   ids_alpha_equal(&compiled_universe, touching, touching_len,
+                                   &compiled_universe, spaced, spaced_len),
+               "the query marker reads a touching bracket or brace as its spaced form");
+        free(touching);
+        free(spaced);
+    }
+    /* Negative: a word led by the marker is a word, and a bracket touching
+     * it is its meta-argument, (meta !f [x]). */
+    {
+        AtomId *ids = NULL;
+        int len = prime_compiled_reader_v1_parse_text_ids(
+            reader, "!f[x]", &compiled_universe, &ids,
+            &receipt, error, sizeof(error));
+        expect(&counts,
+               len == 1 && tu_kind(&compiled_universe, ids[0]) == ATOM_EXPR &&
+                   tu_arity(&compiled_universe, ids[0]) == 3u,
+               "a word led by the query marker takes its meta-argument");
+        free(ids);
     }
 
     {
@@ -508,6 +631,7 @@ int main(void) {
         free(source);
     }
 
+    source_frontend_cases(&counts,reader,&compiled_universe);
     prime_compiled_reader_v1_free(reader);
     parser_set_list_syntax_enabled(old_lists);
     parser_set_universal_name_syntax_enabled(old_universal);

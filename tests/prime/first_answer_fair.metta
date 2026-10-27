@@ -46,3 +46,21 @@
 (= (tree $n) (if (> $n 0) (s (let $x (println! (left $n)) (tree (- $n 1)))) (empty)))
 (= (tree $n) (if (> $n 0) (t (let $x (println! (right $n)) (tree (- $n 1)))) (empty)))
 !(once (tree 2))
+
+; A divergent register-loop alternative that grows its argument yields to a
+; sibling answer at the inline quantum and under fair native control.
+(= (cf $n) (cf (+ $n 1)))
+!(once (superpose ((cf 0) (answer cf))))
+!(select 2 (superpose ((cf 0) (answer cf) (answer cf2))))
+
+; Deep single-path recursion whose leaf matches two equations that both
+; demand the accumulated argument adopts the inline frontier and shares the
+; in-flight force across both equations.
+(= (lookup a) 1)
+(= (lookup b) 2)
+(= (lookup c) 3)
+(= (sum3) (+ (lookup a) (+ (lookup b) (lookup c))))
+(= (rep 0 $x) $x)
+(= (rep $n $x) (if (> $n 0) (rep (- $n 1) (+ $x (sum3))) $x))
+!(once (rep 3000 0))
+!(select 2 (rep 3000 0))

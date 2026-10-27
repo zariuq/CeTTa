@@ -5,6 +5,7 @@
 beside counters[i], so the name table must follow the enum position by
 position. A table that drifts (for example when two branches append counters
 at the same place) silently reports one gauge under another's name.
+Designated initializers are checked by index; their textual order is immaterial.
 
 A name is the enumerator's suffix in lower kebab case, except for the
 spellings listed in ESTABLISHED_SPELLINGS, which predate this check.
@@ -35,27 +36,48 @@ def enum_positions(header: str) -> dict[int, str]:
         if current in positions:
             raise AssertionError(f"two enumerators at {current}: {positions[current]}, {name}")
         positions[current] = name
+    count = re.search(r"CETTA_RUNTIME_COUNTER_COUNT\s*=\s*(\d+)", body.group(1))
+    if not count or int(count.group(1)) != len(positions):
+        raise AssertionError("counter count does not equal the enumerator count")
     return positions
 
 
-def table_names(source: str) -> list[str]:
+def table_names(source: str, positions: dict[int, str]) -> dict[int, str]:
     body = re.search(
         r"CETTA_RUNTIME_COUNTER_NAMES\[CETTA_RUNTIME_COUNTER_COUNT\] = \{(.*?)\n\};",
         source, re.S)
     if not body:
         raise AssertionError("CETTA_RUNTIME_COUNTER_NAMES not found")
-    return re.findall(r'"([^"]*)"', body.group(1))
+    indices = {name: index for index, name in positions.items()}
+    names = {}
+    for enumerator, name in re.findall(
+            r'\[CETTA_RUNTIME_COUNTER_([A-Z0-9_]+)\]\s*=\s*"([^"]*)"',
+            body.group(1)):
+        if enumerator not in indices:
+            raise AssertionError(f"unknown counter designator: {enumerator}")
+        index = indices[enumerator]
+        if index in names:
+            raise AssertionError(f"two counter names at {index}: {enumerator}")
+        names[index] = name
+    return names
 
 
 def main() -> int:
-    positions = enum_positions((ROOT / "src/generated/cetta_runtime_counters.generated.h").read_text())
-    names = table_names((ROOT / "src/generated/cetta_runtime_counter_names.generated.h").read_text())
+    header = (ROOT / "src/stats.h").read_text()
+    source = (ROOT / "src/stats.c").read_text()
+    assert '#include "generated/cetta_runtime_counters.generated.h"' in header
+    assert '#include "generated/cetta_runtime_counter_names.generated.h"' in source
+    positions = enum_positions(
+        (ROOT / "src/generated/cetta_runtime_counters.generated.h").read_text())
+    names = table_names(
+        (ROOT / "src/generated/cetta_runtime_counter_names.generated.h").read_text(),
+        positions)
     errors = []
     if sorted(positions) != list(range(len(positions))):
         errors.append("enumerators are not dense from zero")
     if len(names) != len(positions):
         errors.append(f"{len(names)} names for {len(positions)} counters")
-    for index, name in enumerate(names):
+    for index, name in names.items():
         enumerator = positions.get(index)
         if enumerator is None:
             continue

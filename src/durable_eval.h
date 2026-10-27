@@ -10,8 +10,15 @@ typedef struct {
     Registry registry;
     EvalOutcome outcome;
     CettaHostPlanLimits limits;
+    AtomDeepCopySession *return_copy;
+    Atom *return_source;
+    ArenaMark return_mark;
+    size_t return_spare;
+    bool return_marked;
+    CettaPrimeReturnWork return_work;
+    CettaHostSetupWork setup_work;
     CettaDurableStatus plan_refusal;
-    bool retained, cancelled;
+    bool retained, cancelled, setup_reported;
 } CettaHostEvaluation;
 CettaDurableStatus cetta_host_eval_create(const CettaHostProgram *program,
                                          CettaHostEvaluation **out);

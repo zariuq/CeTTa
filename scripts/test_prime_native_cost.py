@@ -872,6 +872,25 @@ def analysis_controls(gate, cases):
         assert receipt(observations[-1]['cost'])['counts']['equation-activation'] == expected
         gate.passed_case(f'analysis coverage retains {name}')
 
+    # An observation owns its outer control form even when an authored row
+    # has a variable head. A wrapper must not change that dispatch or turn
+    # the completed observation back into inert source syntax.
+    source = '(= (target A) X) (= ($head A) Y) '
+    for name, expression in (
+        ('root', '(cost:run (target A))'),
+        ('returned through let', '(let $answer (cost:run (target A)) $answer)'),
+    ):
+        _, observations = gate.run(f'wildcard control ownership {name}', source + f'!{expression}')
+        assert len(observations) == 1 and observations[0]['closed'] == 'True'
+        assert bag(observations[0]['values']) == bag(['X', 'Y'])
+        assert receipt(observations[0]['cost'])['counts']['equation-activation'] == 2
+        gate.passed_case(f'wildcard source rows preserve the observation owner {name}')
+
+    trees, observations = gate.run('unapplied cost operation remains data', source +
+        '!(cost:run) !(let $answer (cost:run) $answer)')
+    assert not observations and trees == [[['cost:run']], [['cost:run']]], trees
+    gate.passed_case('control ownership does not admit an unapplied operation')
+
     for name, source, body, reason in (
         ('cycle', '(= (f) (f))', '(f)', 'Cycle'),
         ('growing graph', '(= (f $x) (f (S $x)))', '(f Z)', 'Pending'),
@@ -879,6 +898,14 @@ def analysis_controls(gate, cases):
         ('hidden constructor call', '(= (f) A)', '(Tree (f))', 'UnsupportedSource'),
         ('semantic weight', '(= (f) (weight:where A 3))', '(f)', 'UnsupportedSuccessor'),
         ('declared function type', '(: f (-> Number Number)) (= (f $x) $x)', '(f 3)', 'UnsupportedSource'),
+        ('quoted field', '(= (k $x $y) $x) (= (f (quote $e)) $e)',
+         '(f (quote (k 1 2)))', 'UnsupportedSource'),
+        ('reachable quoted field', '(= (k $x $y) $x) (= (f (quote $e)) $e) '
+         '(= (root) (f (quote (k 1 2))))', '(root)', 'UnsupportedSuccessor'),
+        ('lambda inspection', '(= (f (lam $v $body)) found)',
+         '(f (lam x x))', 'UnsupportedSource'),
+        ('reachable lambda inspection', '(= (f (lam $v $body)) found) '
+         '(= (root) (f (lam x x)))', '(root)', 'UnsupportedSuccessor'),
     ):
         trees, _ = gate.run(name, source + f' !(cost:analyze (quote {body}) 40)')
         analysis = analysis_fields(trees[-1][0])

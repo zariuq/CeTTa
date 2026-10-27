@@ -137,8 +137,10 @@ static void test_completed_occurrences(void) {
 }
 
 static void test_intrinsic_boolean_representation(void) {
-    const char *bodies[] = {"(or False True)", "(and True False)"};
-    for (size_t i = 0u; i < 2u; ++i) {
+    const char *bodies[] = {"(or False True)", "(and True False)",
+        "(not True)", "(not False)"};
+    const bool truths[] = {true, false, false, true};
+    for (size_t i = 0u; i < sizeof(bodies) / sizeof(*bodies); ++i) {
         char equation[96];
         snprintf(equation, sizeof(equation), "(= (truth) %s)", bodies[i]);
         const char *equations[] = {equation};
@@ -147,7 +149,7 @@ static void test_intrinsic_boolean_representation(void) {
             init_with_view(&fixture, equations, 1u, "(truth)", NULL,
                 dialect ? petta_semantics_boolean_value : atom_bool);
             fixture.expected[0] = dialect
-                ? (i ? "false" : "true") : (i ? "False" : "True");
+                ? (truths[i] ? "true" : "false") : (truths[i] ? "True" : "False");
             uint64_t tails = 0u;
             assert(run(&fixture, &tails) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE);
             assert(fixture.answers == 1u);
@@ -164,6 +166,13 @@ static void test_intrinsic_result_roles(void) {
     } cases[] = {
         {"(and True False)", "false"},
         {"(or False True)", "true"},
+        {"(not True)", "false"},
+        {"(not False)", "true"},
+        {"(not (and True False))", "true"},
+        {"(and (not True) (not False))", "false"},
+        {"(or (not True) (not False))", "true"},
+        {"(if (not (and True False)) yes no)", "yes"},
+        {"(if (and (not True) (not False)) yes no)", "no"},
         {"(< 0.5 1.0)", "true"},
         {"(> 0.5 1.0)", "false"},
         {"(<= 0.5 1.0)", "true"},
@@ -186,6 +195,45 @@ static void test_intrinsic_result_roles(void) {
         destroy(&fixture);
     }
     puts("PASS: computed truth roles and Boolean-valued data projections keep their distinct representations");
+}
+
+static Atom *collapsed_boolean(Arena *arena, bool value) {
+    (void)value;
+    return atom_bool(arena, false);
+}
+
+static Atom *inverted_boolean(Arena *arena, bool value) {
+    return atom_bool(arena, !value);
+}
+
+static void test_boolean_representation_admission(void) {
+    Arena arena;
+    arena_init(&arena);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &arena);
+    Space space;
+    space_init_with_universe(&space, &universe);
+    assert(space_admit_atom(&space, &arena,
+        parse(&arena, "(= (encoded-truth) (not False))")));
+    CettaPreparedPureBooleanValue encoders[] = {
+        atom_bool, collapsed_boolean, inverted_boolean};
+    for (size_t index = 0u; index < 3u; index++) {
+        CettaPreparedPureProgram *program =
+            cetta_prepared_pure_program_compile_closed_answers(
+                &space, parse(&arena, "(encoded-truth)"),
+                CETTA_GSLT_PURE_CALL_EAGER, encoders[index], atom_expr,
+                cetta_prepared_pure_constructs_expression_always,
+                NULL, NULL, NULL, NULL, NULL, true, true,
+                (CettaMatchDecisionSemanticIdentity){
+                    .compiler_identity = cetta_match_decision_compiler_identity()});
+        assert((program != NULL) == (index == 0u));
+        cetta_prepared_pure_program_free(program);
+    }
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&arena);
+    puts("PASS: Boolean representation admission refuses collapsed truths and inverted scalar polarity");
 }
 
 static void test_late_decline_is_not_completion(void) {
@@ -365,7 +413,7 @@ static void test_entry_interpretation_precedes_equations(void) {
                     cetta_prepared_pure_constructs_expression_always,
                     NULL, NULL, entry_view,
                     NULL, NULL, ready != 0u, true,
-                    (CettaMatchDecisionSemanticIdentity){0});
+                    (CettaMatchDecisionSemanticIdentity){0}, NULL);
             assert(program);
             assert(!cetta_prepared_pure_closed_open_optional(
                 program, &fixture.scratch, &fixture));
@@ -401,7 +449,7 @@ static void test_entry_interpretation_precedes_equations(void) {
                 cetta_prepared_pure_constructs_expression_always,
                 NULL, NULL, entry_view,
                 NULL, NULL, true, true,
-                (CettaMatchDecisionSemanticIdentity){0});
+                (CettaMatchDecisionSemanticIdentity){0}, NULL);
         assert(program);
         Atom *answer = NULL;
         assert(cetta_prepared_pure_program_execute_closed(
@@ -439,7 +487,7 @@ static void test_shared_suspension_publication(void) {
                 NULL, NULL, NULL, NULL, NULL, false, true,
                 (CettaMatchDecisionSemanticIdentity){
                     .compiler_identity = cetta_match_decision_compiler_identity(),
-                });
+                }, NULL);
         assert(program);
         Atom *answer = NULL;
         bool completed = cetta_prepared_pure_program_execute_closed(
@@ -492,7 +540,7 @@ static void test_closed_need_admission_and_collection(void) {
                 NULL, NULL, NULL, NULL, NULL, false, true,
                 (CettaMatchDecisionSemanticIdentity){
                     .compiler_identity = cetta_match_decision_compiler_identity(),
-                });
+                }, NULL);
         if (i < 2u) {
             assert(!program);
             continue;
@@ -566,7 +614,7 @@ static void test_entry_value_certificate_survives_service_roles(void) {
         true, true,
         (CettaMatchDecisionSemanticIdentity){
             .compiler_identity = cetta_match_decision_compiler_identity(),
-        });
+        }, NULL);
     assert(fixture.program);
     CettaPreparedPureClosedExecution *execution =
         cetta_prepared_pure_closed_open(
@@ -636,7 +684,7 @@ static void test_entry_value_certificate_survives_service_roles(void) {
         false, true,
         (CettaMatchDecisionSemanticIdentity){
             .compiler_identity = cetta_match_decision_compiler_identity(),
-        });
+        }, NULL);
     assert(fixture.program);
     execution = cetta_prepared_pure_closed_open(
         fixture.program, &fixture.scratch, &fixture);
@@ -661,6 +709,112 @@ static void test_entry_value_certificate_survives_service_roles(void) {
     destroy(&fixture);
 }
 
+static void test_closed_failure_and_refusal(void) {
+    const char *equations[] = {
+        "(= (probe $p) (let (Pair $x $y) $p 7))",
+        "(= (identity $x) $x)",
+        "(= (fraction $x) (/ 1 $x))",
+    };
+    const CettaGsltPureCallMode modes[] = {
+        CETTA_GSLT_PURE_CALL_EAGER, CETTA_GSLT_PURE_CALL_CALL_BY_NEED,
+    };
+    for (size_t mode = 0u; mode < 2u; mode++) {
+        Fixture fixture;
+        init(&fixture, equations, 3u, "(probe (Single 3))");
+        CettaPreparedPureProgram *program = cetta_prepared_pure_program_compile_closed(
+            &fixture.space, parse(&fixture.source, "(probe (Single 3))"), modes[mode],
+            atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
+            NULL, NULL, NULL, NULL, NULL, true, true,
+            (CettaMatchDecisionSemanticIdentity){0}, NULL);
+        assert(program);
+        const char *inputs[] = {"(probe (Single 3))", "(probe (Pair 4 5))",
+            "(probe (Single 8))", "(probe (Pair Empty (empty)))"};
+        for (size_t index = 0u; index < 4u; index++) {
+            assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+                program, parse(&fixture.source, inputs[index])));
+            CettaCallOutcome returned;
+            assert(cetta_prepared_pure_program_execute_closed_controlled(
+                program, &fixture.scratch, 65536u, NULL, NULL, &returned));
+            if (index % 2u == 0u)
+                assert(returned.kind == CETTA_CALL_FAILURE && !returned.term);
+            else
+                assert(returned.kind == CETTA_CALL_VALUE &&
+                    returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+                    atom_eq(returned.term, parse(&fixture.source, "7")));
+            cetta_prepared_pure_program_release_closed_execution(program);
+            cetta_prepared_pure_program_clear_closed_entry_call(program);
+        }
+        /* Cancellation takes precedence over the pattern mismatch that
+         * remains ahead. The next invocation starts with fresh completion. */
+        assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+            program, parse(&fixture.source, inputs[0])));
+        fixture.poll_limit = 1u;
+        CettaCallOutcome returned;
+        assert(cetta_prepared_pure_program_execute_closed_controlled(program,
+            &fixture.scratch, 0u, interrupt, &fixture, &returned));
+        assert(returned.kind == CETTA_CALL_INTERRUPTED && fixture.polls == 1u);
+        cetta_prepared_pure_program_release_closed_execution(program);
+        cetta_prepared_pure_program_clear_closed_entry_call(program);
+        fixture.poll_limit = 0u;
+        assert(cetta_prepared_pure_program_rebind_closed_entry_call(
+            program, parse(&fixture.source, inputs[1])));
+        assert(cetta_prepared_pure_program_execute_closed_controlled(program,
+            &fixture.scratch, 0u, NULL, NULL, &returned));
+        assert(returned.kind == CETTA_CALL_VALUE);
+        cetta_prepared_pure_program_release_closed_execution(program);
+        cetta_prepared_pure_program_clear_closed_entry_call(program);
+
+        assert(space_admit_atom(&fixture.space, &fixture.source,
+            parse(&fixture.source, "(= (probe $p) 8)")));
+        assert(!cetta_prepared_pure_program_execute_closed_controlled(program,
+            &fixture.scratch, 0u, NULL, NULL, &returned));
+        cetta_prepared_pure_program_free(program);
+
+        const char *data[] = {"Empty", "(empty)", "(Error native datum)"};
+        for (size_t index = 0u; index < 3u; index++) {
+            Atom *datum = parse(&fixture.source, data[index]);
+            Atom *call = atom_expr2(&fixture.source,
+                parse(&fixture.source, "identity"), datum);
+            program = cetta_prepared_pure_program_compile_closed(&fixture.space,
+                call, modes[mode], atom_bool, atom_expr,
+                cetta_prepared_pure_constructs_expression_always,
+                NULL, NULL, NULL, NULL, NULL, true, true,
+                (CettaMatchDecisionSemanticIdentity){0}, NULL);
+            assert(program);
+            bool handled = cetta_prepared_pure_program_execute_closed_controlled(program,
+                &fixture.scratch, 0u, NULL, NULL, &returned);
+            if (mode == 1u && index > 0u) {
+                /* Need's current default adapter cannot certify this
+                 * code-shaped entry as data. Keep refusal distinct from
+                 * failure until its value/suspension boundary is admitted. */
+                assert(!handled && returned.kind != CETTA_CALL_FAILURE);
+                cetta_prepared_pure_program_free(program);
+                continue;
+            }
+            if (!handled)
+                fprintf(stderr, "closed value mode=%zu datum=%s declined\n", mode, data[index]);
+            assert(handled);
+            assert(returned.kind == CETTA_CALL_VALUE &&
+                returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+                atom_eq(returned.term, datum));
+            cetta_prepared_pure_program_free(program);
+        }
+        program = cetta_prepared_pure_program_compile_closed(&fixture.space,
+            parse(&fixture.source, "(fraction 0)"), modes[mode], atom_bool, atom_expr,
+            cetta_prepared_pure_constructs_expression_always,
+            NULL, NULL, NULL, NULL, NULL, true, true,
+            (CettaMatchDecisionSemanticIdentity){0}, NULL);
+        assert(program);
+        /* An operation outside this worker's domain keeps ordinary error
+         * interpretation. It cannot be relabelled as logical exhaustion. */
+        assert(!cetta_prepared_pure_program_execute_closed_controlled(program,
+            &fixture.scratch, 0u, NULL, NULL, &returned));
+        cetta_prepared_pure_program_free(program);
+        destroy(&fixture);
+    }
+    puts("PASS: closed register/node returns separate failure, data, cancellation and refusal");
+}
+
 /* A handler can be projected only while the entire pure attempt remains
  * private. A streamed producer must not lose it when exporting alternatives. */
 static void test_single_result_projection(void) {
@@ -681,7 +835,7 @@ static void test_single_result_projection(void) {
             cetta_prepared_pure_constructs_expression_always,
             NULL, NULL, entry_view,
             NULL, NULL, true, true,
-            (CettaMatchDecisionSemanticIdentity){0});
+            (CettaMatchDecisionSemanticIdentity){0}, NULL);
     assert(program);
     Atom *answer = NULL;
     assert(cetta_prepared_pure_program_execute_closed(
@@ -720,7 +874,7 @@ static void test_single_result_projection(void) {
         CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
         cetta_prepared_pure_constructs_expression_always,
         NULL, NULL, entry_view, NULL, NULL, true, true,
-        (CettaMatchDecisionSemanticIdentity){0});
+        (CettaMatchDecisionSemanticIdentity){0}, NULL);
     assert(!program);
     destroy(&fixture);
 }
@@ -1757,18 +1911,20 @@ static void test_context_reconstruction_observes_interrupt(void) {
                 (CettaMatchDecisionSemanticIdentity){
                     .compiler_identity =
                         cetta_match_decision_compiler_identity(),
-                });
+                }, NULL);
         assert(program);
         context_stop_on_out = interrupted;
         context_stop_requested = false;
         context_out_constructions = 0u;
         size_t observed = 0u;
-        Atom *answer = NULL;
+        CettaCallOutcome returned;
         bool completed = cetta_prepared_pure_program_execute_closed_controlled(
             program, &fixture.scratch, 65536u, poll_context_stop, &observed,
-            &answer);
+            &returned);
         if (!interrupted) {
-            assert(completed && answer);
+            assert(completed && returned.kind == CETTA_CALL_VALUE);
+            Atom *answer = returned.term;
+            assert(answer);
             assert(context_out_constructions == 10000u);
             size_t depth = 0u;
             for (Atom *cursor = answer;
@@ -1777,7 +1933,7 @@ static void test_context_reconstruction_observes_interrupt(void) {
                 depth++;
             assert(depth == 10000u);
         } else {
-            assert(!completed);
+            assert(completed && returned.kind == CETTA_CALL_INTERRUPTED);
             assert(observed == 1u);
             /* The executor polls every 256 steps and builds at most 8
              * contexts per step. */
@@ -1842,8 +1998,9 @@ static bool owned_sequence_accept(void *context, const CettaOwnedReturn *returne
 
 typedef struct {
     OwnedSequenceFixture sequence;
-    unsigned compatibility, finals;
-    bool permitted, revoke_after_produce, current;
+    unsigned admissions, finals;
+    CettaOwnedTaskAdmission admission;
+    bool revoke_after_produce, current;
     CettaOwnedExecutionStep stop;
 } OwnedTaskFixture;
 
@@ -1856,17 +2013,18 @@ static CettaOwnedExecutionStep owned_task_next(void *raw,
         return fixture->stop;
     }
     CettaOwnedExecutionStep step = owned_sequence_next(&fixture->sequence, returned, completion);
-    if (fixture->revoke_after_produce) fixture->permitted = false;
+    if (fixture->revoke_after_produce)
+        fixture->admission = CETTA_OWNED_TASK_ADMISSION_REFUSED;
     return step;
 }
 static void owned_task_release(void *raw) {
     OwnedTaskFixture *fixture = raw;
     owned_sequence_release(&fixture->sequence);
 }
-static bool owned_task_compatible(void *raw) {
+static CettaOwnedTaskAdmission owned_task_admit(void *raw) {
     OwnedTaskFixture *fixture = raw;
-    fixture->compatibility++;
-    return fixture->permitted;
+    fixture->admissions++;
+    return fixture->admission;
 }
 static bool owned_task_accept(void *raw, const CettaOwnedReturn *returned) {
     OwnedTaskFixture *fixture = raw;
@@ -1878,6 +2036,15 @@ static bool owned_task_final_current(void *raw) {
     return fixture->current;
 }
 
+static void assert_owned_task_account(const CettaOwnedTaskAccount *account) {
+    assert(account && !account->phase_overflow && account->phase_count==
+        account->admission+account->producer+account->consumer+
+        account->final_is_current+account->rotations+account->retirements);
+    if(account->rotations)
+        assert(account->phase_count &&
+            account->phases[0]==CETTA_OWNED_TASK_PHASE_ROTATION);
+}
+
 static void test_owned_task_account(void) {
     Arena arena;
     arena_init_detached(&arena);
@@ -1885,6 +2052,7 @@ static void test_owned_task_account(void) {
         OwnedTaskFixture fixture = {
             .sequence = {.length = 1u, .values = {{
                 .outcome = cetta_call_completed_value(parse(&arena, "same")), .final = true}}},
+            .admission = CETTA_OWNED_TASK_ADMISSION_REFUSED,
             .current = true,
         };
         CettaOwnedExecution execution = {0};
@@ -1892,16 +2060,22 @@ static void test_owned_task_account(void) {
         execution.relocatable = true;
         execution.final_is_current = owned_task_final_current;
         CettaOwnedTask task = {0};
-        assert(cetta_owned_task_init(&task, &execution, owned_task_compatible,
+        assert(cetta_owned_task_init(&task, &execution, owned_task_admit,
                                     owned_task_accept, &fixture));
         CettaReadyQueue queue = {.capacity = 1u};
         assert(cetta_ready_admit(&queue, &task.ready) == READY_ADMITTED);
         CettaOwnedTaskAccount account;
         for (unsigned phase = 0u; phase < 7u; phase++) {
-            if (phase == 2u) { fixture.permitted = true; fixture.revoke_after_produce = true; }
-            if (phase == 4u) { fixture.permitted = true; fixture.sequence.reject = true; }
+            if (phase == 2u) {
+                fixture.admission = CETTA_OWNED_TASK_ADMISSION_READY;
+                fixture.revoke_after_produce = true;
+            }
+            if (phase == 4u) {
+                fixture.admission = CETTA_OWNED_TASK_ADMISSION_READY;
+                fixture.sequence.reject = true;
+            }
             if (phase == 5u) fixture.sequence.reject = false;
-            unsigned compatibility = fixture.compatibility, calls = fixture.sequence.calls;
+            unsigned admissions = fixture.admissions, calls = fixture.sequence.calls;
             unsigned attempts = fixture.sequence.attempts, finals = fixture.finals;
             memset(&account, 0xff, sizeof(account));
             CettaOwnedVisit visit = accounted
@@ -1913,15 +2087,20 @@ static void test_owned_task_account(void) {
             assert(task.execution.has_pending == (phase >= 2u && phase < 5u));
             assert(task.execution.terminal == (phase >= 5u));
             assert(queue.count == (phase < 5u ? 1u : 0u));
-            assert(visit.context_refused == (phase >= 1u && phase <= 3u));
+            CettaOwnedTaskAdmission expected = phase == 0u || phase == 6u?
+                CETTA_OWNED_TASK_ADMISSION_UNCHECKED:
+                phase <= 3u?CETTA_OWNED_TASK_ADMISSION_REFUSED:
+                    CETTA_OWNED_TASK_ADMISSION_READY;
+            assert(visit.admission == expected);
             if (accounted) {
-                assert(account.compatibility == fixture.compatibility - compatibility);
+                assert_owned_task_account(&account);
+                assert(account.admission == fixture.admissions - admissions);
                 assert(account.producer == fixture.sequence.calls - calls);
                 assert(account.consumer == fixture.sequence.attempts - attempts);
                 assert(account.final_is_current == fixture.finals - finals);
                 assert(account.rotations == (phase < 6u ? 1u : 0u));
                 assert(account.retirements == (phase == 5u ? 1u : 0u));
-                assert(account.compatibility <= 2u && account.producer <= 1u &&
+                assert(account.admission <= 2u && account.producer <= 1u &&
                        account.consumer <= 1u && account.final_is_current <= 1u);
                 if (phase == 3u || phase == 4u || phase == 5u) assert(!account.producer);
             }
@@ -1930,12 +2109,58 @@ static void test_owned_task_account(void) {
         /* Completed membership is separate from execution ownership. */
         assert(cetta_ready_admit(&queue, &task.ready) == READY_ADMITTED);
         CettaOwnedVisit retired = cetta_owned_task_poll_accounted(&task, false, &account);
+        assert_owned_task_account(&account);
         assert(retired.step == CETTA_OWNED_EXECUTION_COMPLETE && !queue.count);
-        assert(!account.compatibility && !account.producer && !account.consumer &&
+        assert(!account.admission && !account.producer && !account.consumer &&
                !account.final_is_current && !account.rotations && account.retirements == 1u);
         assert(!fixture.sequence.releases);
         cetta_owned_task_cancel(&task);
         assert(fixture.sequence.releases == 1u);
+    }
+    /* Each non-ready admission verdict retains the exact call. An unchecked
+     * or out-of-range callback result is invalid, never implicit readiness. */
+    const CettaOwnedTaskAdmission refusals[]={
+        CETTA_OWNED_TASK_ADMISSION_UNCHECKED,
+        CETTA_OWNED_TASK_ADMISSION_PAUSED,
+        CETTA_OWNED_TASK_ADMISSION_REFUSED,
+        CETTA_OWNED_TASK_ADMISSION_INVALIDATED,
+        (CettaOwnedTaskAdmission)99,
+    };
+    const CettaOwnedTaskAdmission observed[]={
+        CETTA_OWNED_TASK_ADMISSION_INVALIDATED,
+        CETTA_OWNED_TASK_ADMISSION_PAUSED,
+        CETTA_OWNED_TASK_ADMISSION_REFUSED,
+        CETTA_OWNED_TASK_ADMISSION_INVALIDATED,
+        CETTA_OWNED_TASK_ADMISSION_INVALIDATED,
+    };
+    for (size_t i=0u;i<sizeof(refusals)/sizeof(refusals[0]);i++) {
+        OwnedTaskFixture fixture={
+            .sequence={.length=1u,.values={{
+                .outcome=cetta_call_completed_value(parse(&arena,"admitted")),.final=true}}},
+            .admission=refusals[i],.current=true,
+        };
+        CettaOwnedExecution execution={0};
+        cetta_owned_execution_init(&execution,&fixture,owned_task_next,owned_task_release);
+        execution.relocatable=true;execution.final_is_current=owned_task_final_current;
+        CettaOwnedTask task={0};
+        assert(cetta_owned_task_init(&task,&execution,owned_task_admit,owned_task_accept,&fixture));
+        CettaReadyQueue queue={.capacity=1u};
+        assert(cetta_ready_admit(&queue,&task.ready)==READY_ADMITTED);
+        CettaOwnedTaskAccount account;
+        CettaOwnedVisit held=cetta_owned_task_visit_accounted(&queue,true,&account);
+        assert_owned_task_account(&account);
+        assert(held.task==&task && held.step==CETTA_OWNED_EXECUTION_PAUSED &&
+            held.admission==observed[i] && queue.count==1u &&
+            !fixture.sequence.calls && !fixture.sequence.attempts &&
+            account.admission==1u && !account.producer && !account.consumer);
+        fixture.admission=CETTA_OWNED_TASK_ADMISSION_READY;
+        CettaOwnedVisit done=cetta_owned_task_visit_accounted(&queue,true,&account);
+        assert_owned_task_account(&account);
+        assert(done.step==CETTA_OWNED_EXECUTION_COMPLETE &&
+            done.admission==CETTA_OWNED_TASK_ADMISSION_READY && !queue.count &&
+            fixture.sequence.calls==1u && fixture.sequence.accepted==1u &&
+            account.admission==2u && account.producer==1u && account.consumer==1u);
+        cetta_owned_task_cancel(&task);assert(fixture.sequence.releases==1u);
     }
     /* A final marker can finish immediately, need a successful read-only
      * check, or become stale. A stale marker never replays its accepted item. */
@@ -1943,33 +2168,35 @@ static void test_owned_task_account(void) {
         OwnedTaskFixture fixture = {
             .sequence = {.length = 1u, .values = {{
                 .outcome = cetta_call_completed_value(parse(&arena, "final")), .final = true}}},
-            .permitted = true, .current = final == 2u,
+            .admission = CETTA_OWNED_TASK_ADMISSION_READY, .current = final == 2u,
         };
         CettaOwnedExecution execution = {0};
         cetta_owned_execution_init(&execution, &fixture, owned_task_next, owned_task_release);
         execution.relocatable = true;
         if (final) execution.final_is_current = owned_task_final_current;
         CettaOwnedTask task = {0};
-        assert(cetta_owned_task_init(&task, &execution, owned_task_compatible,
+        assert(cetta_owned_task_init(&task, &execution, owned_task_admit,
                                     owned_task_accept, &fixture));
         CettaReadyQueue queue = {.capacity = 1u};
         assert(cetta_ready_admit(&queue, &task.ready) == READY_ADMITTED);
         CettaOwnedTaskAccount account;
         CettaOwnedVisit visit = cetta_owned_task_visit_accounted(&queue, true, &account);
+        assert_owned_task_account(&account);
         bool stale = final == 1u;
         assert(visit.step == (stale ? CETTA_OWNED_EXECUTION_PAUSED : CETTA_OWNED_EXECUTION_COMPLETE));
         assert(fixture.sequence.calls == 1u && fixture.sequence.accepted == 1u &&
                fixture.sequence.attempts == 1u && fixture.finals == (final ? 1u : 0u));
-        assert(account.compatibility == 2u && account.producer == 1u && account.consumer == 1u &&
+        assert(account.admission == 2u && account.producer == 1u && account.consumer == 1u &&
                account.final_is_current == (final ? 1u : 0u) && account.rotations == 1u &&
                account.retirements == (stale ? 0u : 1u));
         assert(!task.execution.has_pending && task.execution.terminal == !stale);
         if (stale) {
             visit = cetta_owned_task_visit_accounted(&queue, true, &account);
+            assert_owned_task_account(&account);
             assert(visit.step == CETTA_OWNED_EXECUTION_COMPLETE && !queue.count);
             assert(fixture.sequence.calls == 2u && fixture.sequence.accepted == 1u &&
                    fixture.sequence.attempts == 1u && fixture.finals == 1u);
-            assert(account.producer == 1u && account.compatibility == 1u &&
+            assert(account.producer == 1u && account.admission == 1u &&
                    !account.consumer && !account.final_is_current && account.rotations == 1u &&
                    account.retirements == 1u);
         }
@@ -1980,30 +2207,34 @@ static void test_owned_task_account(void) {
      * retains ready membership; terminal stops keep their distinct reason. */
     for (unsigned stop = CETTA_OWNED_EXECUTION_COMPLETE;
          stop <= CETTA_OWNED_EXECUTION_INTERRUPTED; stop++) {
-        OwnedTaskFixture fixture = {.permitted = true, .stop = (CettaOwnedExecutionStep)stop};
+        OwnedTaskFixture fixture = {.admission = CETTA_OWNED_TASK_ADMISSION_READY,
+            .stop = (CettaOwnedExecutionStep)stop};
         CettaOwnedExecution execution = {0};
         cetta_owned_execution_init(&execution, &fixture, owned_task_next, owned_task_release);
         execution.relocatable = true;
         execution.final_is_current = owned_task_final_current;
         CettaOwnedTask task = {0};
-        assert(cetta_owned_task_init(&task, &execution, owned_task_compatible,
+        assert(cetta_owned_task_init(&task, &execution, owned_task_admit,
                                     owned_task_accept, &fixture));
         CettaReadyQueue queue = {.capacity = 1u};
         assert(cetta_ready_admit(&queue, &task.ready) == READY_ADMITTED);
         CettaOwnedTaskAccount account;
         CettaOwnedVisit visit = cetta_owned_task_visit_accounted(&queue, true, &account);
+        assert_owned_task_account(&account);
         bool paused = stop == CETTA_OWNED_EXECUTION_PAUSED;
-        assert(visit.step == (CettaOwnedExecutionStep)stop && !visit.context_refused);
+        assert(visit.step == (CettaOwnedExecutionStep)stop &&
+               visit.admission == CETTA_OWNED_TASK_ADMISSION_READY);
         assert(fixture.sequence.calls == 1u && !fixture.sequence.accepted &&
                !fixture.sequence.attempts && !fixture.finals);
-        assert(account.compatibility == 1u && account.producer == 1u &&
+        assert(account.admission == 1u && account.producer == 1u &&
                !account.consumer && !account.final_is_current && account.rotations == 1u &&
                account.retirements == (paused ? 0u : 1u));
         assert(task.execution.terminal == !paused && queue.count == (paused ? 1u : 0u));
         visit = cetta_owned_task_poll_accounted(&task, true, &account);
+        assert_owned_task_account(&account);
         assert(visit.step == (CettaOwnedExecutionStep)stop && !account.rotations);
         assert(account.producer == (paused ? 1u : 0u) &&
-               account.compatibility == (paused ? 1u : 0u) && !account.consumer &&
+               account.admission == (paused ? 1u : 0u) && !account.consumer &&
                !account.final_is_current && !account.retirements);
         cetta_owned_task_cancel(&task);
         assert(!queue.count && fixture.sequence.releases == 1u);
@@ -3055,7 +3286,7 @@ static CettaPreparedPureProgram *compile_scalar(Fixture *fixture, const char *ca
         NULL,NULL,zero_view,NULL,NULL,true,true,
         (CettaMatchDecisionSemanticIdentity){
             .compiler_identity=cetta_match_decision_compiler_identity(),
-        });
+        }, NULL);
 }
 
 static size_t result_preparation_views;
@@ -3323,6 +3554,7 @@ int main(void) {
     test_completed_occurrences();
     test_intrinsic_boolean_representation();
     test_intrinsic_result_roles();
+    test_boolean_representation_admission();
     test_late_decline_is_not_completion();
     test_visitor_stop_and_reentry();
     test_interrupt_without_answers();
@@ -3334,6 +3566,7 @@ int main(void) {
     test_shared_suspension_publication();
     test_closed_need_admission_and_collection();
     test_entry_value_certificate_survives_service_roles();
+    test_closed_failure_and_refusal();
     test_single_result_projection();
     test_cursor_bounded_continuations();
     test_cursor_bounded_silent_loop_and_authority();

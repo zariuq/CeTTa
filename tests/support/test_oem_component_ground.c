@@ -57,13 +57,22 @@ static void owned_symbol_trace_keeps_spelling(void) {
     arena_init_detached(&moved);
     const char *text = "unregistered-symbol-owned-by-collection-region";
     Atom *source = atom_symbol_data(&cursor.region, text);
+#if CETTA_MANAGED_SYMBOLS
     assert(source && source->symbol_number == SYMBOL_ID_NONE);
+#else
+    assert(source && source->symbol_number != SYMBOL_ID_NONE);
+    SymbolId expected_id = source->symbol_number;
+#endif
     OemCollect collect = {.from_identity = cursor.region.identity,
                           .to = &moved};
     assert(oem_trace_atom(&cursor, &collect, source));
     assert(strcmp(atom_symbol_bytes(source), text) == 0);
+#if CETTA_MANAGED_SYMBOLS
     assert(collect.reached_young == sizeof(Atom) +
         sizeof(CettaSymbolSpelling) + strlen(text) + 1u);
+#else
+    assert(collect.reached_young == sizeof(Atom));
+#endif
     free(collect.keys); free(collect.values);
     collect.keys = NULL; collect.values = NULL;
     collect.cap = collect.len = 0u;
@@ -71,7 +80,11 @@ static void owned_symbol_trace_keeps_spelling(void) {
     assert(copy && copy != source);
     arena_free(&cursor.region);
     assert(strcmp(atom_symbol_bytes(copy), text) == 0);
+#if CETTA_MANAGED_SYMBOLS
     assert(copy->symbol_number == SYMBOL_ID_NONE);
+#else
+    assert(copy->symbol_number == expected_id);
+#endif
     free(collect.keys); free(collect.values); free(cursor.walk);
     arena_free(&moved);
     checks += 5u;

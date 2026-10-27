@@ -29,6 +29,8 @@
 [(ProvisionalUserRule (type:eq (user-normal q) TagA 1000))]
 [(DelayedLow (type:must (delayed-answer) Nat 520))]
 [(DelayedHigh False)]
+[(DelayedMayWitness True)]
+[(DelayedMustAll True)]
 [(PrimeDefRoots LanguageDefV1 ContextsAndSchemesV1 CheckingV1 ResultAlgebraV1 EffectsAndResourcesV1 EvidenceSchemaV2)]
 [((InformationOrderV1 (Below Incomplete Established) (Below Incomplete Refuted) (Below Undetermined Established) (Below Undetermined Refuted) (Incomparable Incomplete Undetermined) (Incomparable Established Refuted) (BudgetLaw DeterminateStable)) (ResourcePolicyV1 NoImplicitStepBound ExplicitProducerBudget BoundedProducersReportResourceLedger ResourceStatusVisibleWhenSemanticallyRelevant UnboundedModeDoesNotMeterSteps (StructuralTypeTraversal DynamicWorklists) (TypeStorage Dynamic) (ApplicabilityStorage Dynamic) (EvaluatorStackBudget RuntimeSelectedAndReported) TotalityRequiresCertifiedCompletion))]
 [(Error (prime-package &self extra) IncorrectNumberOfArguments)]

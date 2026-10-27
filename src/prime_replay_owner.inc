@@ -400,7 +400,7 @@ static bool prime_replay_capsule_capture(PrimeReplayCapsule *capsule,Space *spac
     PrimeNativeControl *source=cetta_native_handle_get_owned(capsule->context,"prime-search",holder);
     if(!source||!source->owned_top_episode||source->space!=space||
         (source->space_agenda!=NULL)!=capsule->transaction||
-        (capsule->transaction&&(source->source_services||
+        (capsule->transaction&&(
             cetta_space_agenda_checkpoint_target(source->space_agenda)!=capsule->sources.external_target||
             cetta_space_agenda_checkpoint_owns_target(source->space_agenda)))) {
         capsule->refusal="OwnedSource";return false;
@@ -645,7 +645,9 @@ static bool prime_replay_capsule_record(PrimeReplayCapsule *capsule,uint64_t all
     PrimeNativeControl *auxiliary=prime_replay_checkpoint_control(capsule->context,&capsule->recording);
     PrimeNativeControl *control=capsule->transaction?original:auxiliary;
     if(capsule->transaction&&(!space_read_token_is_current(capsule->target_expected)||
-        !auxiliary||!capsule->recording.service_only||original->source_services||
+        !auxiliary||!capsule->recording.service_only||
+        (original->source_services&&atomic_load_explicit(
+            &original->source_services->active,memory_order_acquire))||
         !auxiliary->source_services||auxiliary->source_services->active)) {
         capsule->refusal="ChangedRecordingTargetOrService";return false;
     }
@@ -663,7 +665,11 @@ static bool prime_replay_capsule_record(PrimeReplayCapsule *capsule,uint64_t all
         capsule->refusal="RecordCapacity";return false;
     }
     PrimeNativeServiceScope services={0};
-    if(capsule->transaction&&!prime_native_service_enter(auxiliary->source_services,&services)) {
+    /* Owned services stay quiescent for both checkpoints. The ordinary run
+     * guard selects that owner only during execution. An ambient original
+     * still executes against the independent recording service image. */
+    if(capsule->transaction&&!original->source_services&&
+        !prime_native_service_enter(auxiliary->source_services,&services)) {
         capsule->refusal="RecordingServiceAdmission";return false;
     }
     Atom *holder=capsule->transaction?capsule->source_holder:capsule->recording.holder;

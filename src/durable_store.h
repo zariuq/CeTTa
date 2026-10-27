@@ -19,7 +19,7 @@ typedef enum {
 typedef struct {
     size_t record_bytes, batch_bytes, live_bytes, history_bytes;
     size_t records, operations;
-    uint32_t database_pages; /* 4096-byte pages, plus bounded WAL overhead */
+    uint32_t storage_pages; /* optional 4096-byte journal allowance; zero is unlimited */
 } CettaDurableLimits;
 
 typedef enum { DURABLE_INSERT = 1, DURABLE_REPLACE = 2, DURABLE_REMOVE = 3 }
@@ -47,7 +47,7 @@ typedef struct {
 } CettaDurableSnapshot;
 
 typedef struct {
-    int64_t live_bytes, records, history_bytes, database_pages;
+    int64_t live_bytes, records, history_bytes, storage_pages;
     int limits_exceeded; /* readable and reclaimable; admission is restricted */
 } CettaDurableUsage;
 
@@ -59,12 +59,15 @@ typedef struct {
 typedef struct CettaDurableObservation CettaDurableObservation;
 typedef struct CettaDurableWatch CettaDurableWatch;
 
+/* Zero selects unlimited admission in each dimension. The bounded profile
+ * is an explicit service policy, independent of the native representation. */
 CettaDurableLimits cetta_durable_default_limits(void);
+CettaDurableLimits cetta_durable_bounded_limits(void);
 const char *cetta_durable_status_name(CettaDurableStatus status);
 
 /* Opens a local regular file and holds an exclusive OS lock until close.
- * Schema versions fail closed. The caller supplies a private directory;
- * SQLite sidecars must remain on the same local filesystem. */
+ * Native journal versions fail closed. The caller supplies a private directory;
+ * the journal, checkpoint and stable lock file stay on one local filesystem. */
 CettaDurableStatus cetta_durable_open(const char *path,
     const CettaDurableLimits *limits, CettaDurableStore **out);
 void cetta_durable_close(CettaDurableStore *store);

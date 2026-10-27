@@ -119,6 +119,29 @@
   (rule diagnostic-determinate-rule-use
     (= (observe diagnostic determinate-rule-use) emit)))
 
+; Placement and progress are separate from effects.  A known-pure call still
+; needs a progress contract before it may occupy a responsive worker slot;
+; conversely a yielding control form may remain coordinator-owned.  Unknown
+; calls are never inferred to be local or bounded.
+(gslt native-service-admission
+  (sort PlacementAdvice)
+  (placement local)
+  (placement coordinator)
+  (placement unresolved)
+  (sort ProgressAdvice)
+  (progress bounded)
+  (progress yielding)
+  (progress isolated)
+  (progress unresolved-progress)
+  (rule bounded-local
+    (= (inline-service local bounded) admitted))
+  (rule yielding-local
+    (= (inline-service local yielding) admitted))
+  (law isolated-needs-boundary
+    (= (inline-service coordinator isolated) refused))
+  (law unresolved-is-refused
+    (= (inline-service unresolved unresolved-progress) refused)))
+
 (gslt resource-lifetime
   (sort State)
   (state uninitialized)
@@ -284,13 +307,109 @@
   (instruction boolean-dispatch)
   (sort OperandDiscipline)
   (operand-discipline strict-all)
+  ; A sequential connective demands its first operand.  When that value is
+  ; the head's absorbing value it is the answer, and the second operand is
+  ; never demanded.  Any other value demands the second operand, and the
+  ; instruction runs on both values as a strict one does.
+  (operand-discipline short-circuit)
   (rule intrinsic-is-pure
     (= (effects (prepared-pure-intrinsic $instruction $arguments)) pure))
   (law failed-intrinsic-replays-canonically
     (implies
       (not (intrinsic-applicable $instruction $arguments))
       (= (intrinsic-execution $instruction $arguments)
-         canonical-evaluator))))
+         canonical-evaluator)))
+  (law absorbed-operand-is-not-demanded
+    (implies
+      (= (short-circuit-absorbing $head) $first)
+      (= (intrinsic-execution short-circuit ($head $first $second))
+         $first)))
+  (law open-connective-is-strict
+    (implies
+      (not (= (short-circuit-absorbing $head) $first))
+      (= (intrinsic-execution short-circuit ($head $first $second))
+         (intrinsic-execution strict-all ($head $first $second))))))
+
+(gslt execution-control-plans
+  (sort Operation)
+  (value sequence)
+  (value branch)
+  (value sequence-many)
+  (value force)
+  (value return-scope)
+  (value ordered-choice)
+  (value failure)
+  (value scoped-commit)
+  (value handle)
+  (value return-value)
+  (value construct)
+  (value invoke)
+  (value sequence-first)
+  (value sequence-last)
+  ; These operations are selected by dialect elaboration of an occurrence,
+  ; without giving its value or constructor head new source-call authority.
+  (implicit-operation return-value)
+  (implicit-operation construct)
+  (implicit-operation invoke)
+  ; A nonempty series runs every argument in source order and exposes the
+  ; selected result. The zero-argument spelling is logical failure.
+  (variadic-form petta prog1 sequence-first)
+  (variadic-form petta progn sequence-last)
+  ; The elaborator selects the legal order; every lowering keeps the body
+  ; after the producer and its binding computation.
+  (sequence-order source-first source first last)
+  (sequence-order binder-first first source last)
+  ; Preparation is a selected subsequence of these execution stages. The
+  ; backend pushes the stages in reverse order onto its continuation stack.
+  (preparation-step install-type 0)
+  (preparation-step compute 1)
+  (preparation-step check-return 2)
+  (preparation-step check-type 3)
+  (preparation-step bind 4)
+  ; A ready invocation names its body and the source arguments prepared
+  ; before entry. Source authority and live declaration demand are separate.
+  (invocation-operation host)
+  (invocation-operation predicate-value)
+  (invocation-operation relational-member)
+  (invocation-operation list-unary)
+  (invocation-operation list-set)
+  (invocation-operation read-term)
+  (invocation-operation extension)
+  (invocation-operation predicate-call)
+  (invocation-head repr 1 host 0 1)
+  (invocation-head member 2 relational-member 0 2)
+  (invocation-head car-atom 1 list-unary 0 1)
+  (invocation-head cdr-atom 1 list-unary 0 1)
+  (invocation-head decons-atom 1 list-unary 0 1)
+  (invocation-head decons 1 list-unary 0 1)
+  (invocation-head last 1 list-unary 0 1)
+  (invocation-head reverse 1 list-unary 0 1)
+  (invocation-head msort 1 list-unary 0 1)
+  (invocation-head sort-atom 1 list-unary 0 1)
+  (invocation-form petta predicate 1 predicate-value 0 1)
+  (invocation-form petta list-to-set 1 list-set 0 1)
+  (invocation-form petta alpha-unique 1 list-set 0 1)
+  (invocation-form petta exclude-item 2 list-set 0 2)
+  (invocation-form petta sread 1 read-term 0 1)
+  (invocation-form petta import-prolog-function 1 extension 0 1)
+  (invocation-form petta call-predicate 1 predicate-call 0 1)
+  (invocation-form petta asserta-predicate 1 predicate-call 0 1)
+  (invocation-form petta assertz-predicate 1 predicate-call 0 1)
+  (invocation-form petta retract-predicate 1 predicate-call 0 1)
+  ; Coordinates address arguments, excluding the head. A plan describes
+  ; source layout; source authority and evaluation strategy remain separate.
+  ; The final field names an optional lowering to the admitted fold fragment.
+  (source-head let 3 sequence (operands 1 0 2) (fold bind))
+  (source-head chain 3 sequence (operands 0 1 2) (fold none))
+  (source-head if 2 branch (operands 0 1 absent) (fold none))
+  (source-head if 3 branch (operands 0 1 2) (fold branch))
+  (source-head let* 2 sequence-many (operands 0 absent 1) (fold bind-sequence))
+  (source-head eval 1 force (operands 0 absent absent) (fold evaluate))
+  (source-head function 1 return-scope (operands 0 absent absent) (fold evaluate))
+  (source-head superpose 1 ordered-choice (operands 0 absent absent) (fold none))
+  (source-head empty 0 failure (operands absent absent absent) (fold none))
+  (dialect-form petta cut 0 scoped-commit (operands absent absent absent) (fold none))
+  (dialect-form petta catch 1 handle (operands 0 absent absent) (fold none)))
 
 (gslt determinate-fold-continuation
   (sort Control)
@@ -617,6 +736,7 @@
     (field normalization_children strong-atom-span)
     (field env logical-bindings)
     (field child outcome-set)
+    (field force_pending outcome-set)
     (field equation_roots strong-atom-span)
     (field equation_work outcome-set)
     (field equation_current outcome-set)
@@ -650,18 +770,64 @@
 
 (composition cetta-execution-contracts
   (components relational-may-effect streamed-row-disposition
-              observation-profile resource-lifetime
+              observation-profile native-service-admission resource-lifetime
               determinate-equation-continuation
               total-expression-normalization
               value-allocation
               register-expression-execution
               prepared-pure-intrinsic-execution
+              execution-control-plans
               determinate-fold-continuation
               determinate-pure-call-continuation
               evaluator-root-frames))
 
 (interpretation cetta-native-execution (of cetta-execution-contracts)
   (query-default pure)
+  ; The default is conservative.  These rows cover the fixed native heads
+  ; which the retained worker/service boundary can classify independently of
+  ; a user program.  Constructors and revision-pinned user equations use the
+  ; category rules below rather than an ever-growing spelling list.
+  (native-call-default unresolved unresolved-progress)
+  (native-call-constructor local bounded 1)
+  (native-call-user-equation local yielding)
+  (native-call-head decons-atom local bounded 1)
+  (native-call-head cons-atom local bounded 1)
+  (native-call-head car-atom local bounded 1)
+  (native-call-head cdr-atom local bounded 1)
+  (native-call-head get-metatype local bounded 1)
+  (native-call-head context-space local bounded 1)
+  (native-call-head select coordinator yielding)
+  (native-call-head readln! coordinator isolated)
+  ; These handlers retain the existing Rho run and value-observation cursors.
+  ; The prepared atomic shortcut must request their owned service instead.
+  (native-call-head __cetta_lib_rhometta_run_canonical coordinator yielding)
+  (native-call-head __cetta_lib_rhometta_values coordinator yielding)
+  ; Pure results do not bound input traversal, lazy preparation or blocking.
+  (native-call-head __cetta_lib_json_capabilities_v1 coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_parse_v1 coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_to_legacy_v1 coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_from_inspection_v1 coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_parse coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_project_v1 coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_stringify_v1 coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_stringify coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_members_v1 coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_get_all_v1 coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_get_first_v1 coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_get_last_v1 coordinator unresolved-progress)
+  (native-call-head __cetta_lib_json_object_get coordinator unresolved-progress)
+  (native-call-head __cetta_lib_proc_spawn coordinator unresolved-progress)
+  (native-call-head __cetta_lib_proc_poll coordinator unresolved-progress)
+  (native-call-head __cetta_lib_proc_wait coordinator unresolved-progress)
+  (native-call-head __cetta_lib_proc_status coordinator unresolved-progress)
+  (native-call-head __cetta_lib_proc_cancel coordinator unresolved-progress)
+  (native-call-head __cetta_lib_proc_close coordinator unresolved-progress)
+  (native-call-head __cetta_lib_proc_await coordinator unresolved-progress)
+  (native-call-head __cetta_lib_proc_run coordinator unresolved-progress)
+  (native-call-head __cetta_lib_proc_write coordinator unresolved-progress)
+  (native-call-head __cetta_lib_proc_read coordinator unresolved-progress)
+  (native-call-head __cetta_lib_proc_close_input coordinator unresolved-progress)
+  (native-call-head exec:saturate coordinator unresolved-progress)
   (query-head match relational-query)
   (query-head get-atoms relational-query)
   (query-head mork:match relational-query)
@@ -669,6 +835,7 @@
   (query-head get-type-space relational-query)
   (query-head add-atom world-write)
   (query-head add-atom-nodup world-write)
+  (query-head exec:saturate world-write)
   (query-head add-atoms world-write)
   (query-head add-reduct world-write)
   (query-head remove-atom world-write)
@@ -699,6 +866,16 @@
   (query-head step! world-write)
   (query-head transaction world-write)
   (query-head get-state relational-query)
+  (query-head space-push world-write)
+  (query-head space-pop world-write)
+  (query-head space-truncate world-write)
+  (query-head space-get relational-query)
+  (query-head space-len relational-query)
+  (query-head space-peek relational-query)
+  (query-head size relational-query)
+  (query-head count-atoms relational-query)
+  (query-head _minimal-space-contains-exact relational-query)
+  (query-head _minimal-space-revision relational-query)
   (query-head runtime-stats! relational-query)
   (query-head __cetta_lib_system_exit_with_code world-write)
   (query-head __cetta_lib_system_write world-write)
@@ -763,6 +940,9 @@
   (query-head __cetta_lib_proc_abort_signal world-write)
   (query-head __cetta_lib_proc_await world-write)
   (query-head __cetta_lib_proc_run world-write)
+  (query-head __cetta_lib_proc_write world-write)
+  (query-head __cetta_lib_proc_read world-write)
+  (query-head __cetta_lib_proc_close_input world-write)
   (query-head __cetta_lib_prolog_query world-write)
   (query-head __cetta_lib_fs_exists relational-query)
   (query-head __cetta_lib_fs_canonical_path relational-query)
@@ -976,10 +1156,21 @@
     numeric-eq 2 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
     / 2 strict-all grounded-dispatch)
+  ; HE and PeTTa evaluate both operands of a connective.  Prime's
+  ; connectives demand their second operand only when the first leaves the
+  ; value open: False decides and, True decides or.
   (prepared-pure-intrinsic-head
-    and 2 strict-all boolean-dispatch)
+    and 2 strict-all boolean-dispatch (dialects he petta))
   (prepared-pure-intrinsic-head
-    or 2 strict-all boolean-dispatch)
+    and 2 short-circuit boolean-dispatch (dialects prime))
+  (prepared-pure-intrinsic-head
+    or 2 strict-all boolean-dispatch (dialects he petta))
+  (prepared-pure-intrinsic-head
+    or 2 short-circuit boolean-dispatch (dialects prime))
+  (short-circuit-absorbing and 2 False)
+  (short-circuit-absorbing or 2 True)
+  (prepared-pure-intrinsic-head
+    not 1 strict-all boolean-dispatch)
   (prepared-pure-intrinsic-head
     abs-math 1 strict-all grounded-dispatch)
   (prepared-pure-intrinsic-head
@@ -1085,11 +1276,6 @@
     __cetta_lib_str 4 strict-all library-value-dispatch)
   (prepared-pure-intrinsic-head
     __cetta_lib_str_value 2 strict-all library-value-dispatch)
-  (fold-control-head let 3 bind)
-  (fold-control-head let* 2 bind-sequence)
-  (fold-control-head if 3 branch)
-  (fold-control-head eval 1 evaluate)
-  (fold-control-head function 1 evaluate)
   (sequence-representation clist clist:to-list ClistNil ClistCons)
   (sequence-fold-consumer clist clist:foldl 5 0)
   (sequence-fold-target clist list:foldl)

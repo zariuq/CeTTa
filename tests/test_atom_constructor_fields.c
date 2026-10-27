@@ -46,6 +46,77 @@ static void check_leaf(Atom *atom, Arena *a, const char *what) {
     check(atom && atom->arena_id == a->identity, text);
 }
 
+static void check_expression_assembly(void) {
+    Arena arena, other;
+    arena_init_detached(&arena);
+    arena_init_detached(&other);
+    Atom *one = atom_var(&arena, "one");
+    Atom *two = atom_var(&other, "two");
+    Atom *children[] = {atom_symbol(&arena, "head"), one, one, two,
+                        atom_int(&arena, 9), atom_symbol(&other, "foreign")};
+    for (unsigned length = 0u; length <= 6u; length++) {
+        AtomExprAssembly *assembly = atom_expr_assembly_new(&arena, length);
+        check(assembly != NULL, "assembly opens without publishing a draft");
+        for (unsigned i = 0u; i < length; i++) {
+            check(!atom_expr_assembly_finish(assembly),
+                  "unfinished assembly has no result");
+            check(atom_expr_assembly_append(assembly, children[i]),
+                  "one append accepts exactly the next child");
+        }
+        Atom *expected = atom_expr_builder_begin(&arena, length);
+        for (unsigned i = 0u; i < length; i++) expected->expr.elems[i] = children[i];
+        expected = atom_expr_builder_finish(&arena, expected);
+        Atom *actual = atom_expr_assembly_finish(assembly);
+        check(actual && atom_eq(actual, expected) && actual->flags == expected->flags &&
+              actual->structural_facts == expected->structural_facts &&
+              var_id_eq(actual->var_id, expected->var_id),
+              "incremental assembly agrees with the ordinary summary and order");
+        check(!atom_expr_assembly_append(assembly, one) &&
+              atom_expr_assembly_finish(assembly) == actual,
+              "published assembly is immutable and repeat finish is stable");
+        atom_expr_assembly_free(assembly);
+    }
+    AtomExprAssembly *cancel = atom_expr_assembly_new(&arena, 4096u);
+    check(cancel && atom_expr_assembly_append(cancel, one) && !atom_expr_assembly_finish(cancel),
+          "missing children cannot publish a wide draft");
+    atom_expr_assembly_free(cancel);
+    cancel = atom_expr_assembly_new(&arena, 1u);
+    check(cancel && !atom_expr_assembly_append(cancel, NULL) &&
+          !atom_expr_assembly_append(cancel, one) && !atom_expr_assembly_finish(cancel),
+          "a refused null child cannot be hidden by later valid input");
+    atom_expr_assembly_free(cancel);
+    cancel = atom_expr_assembly_new(&arena, 1u);
+    check(cancel && atom_expr_assembly_append(cancel, one) &&
+          !atom_expr_assembly_append(cancel, two) && !atom_expr_assembly_finish(cancel),
+          "excess children refuse before publication rather than truncating");
+    atom_expr_assembly_free(cancel);
+    ArenaMark mark = arena_mark(&arena);
+    cancel = atom_expr_assembly_new(&arena, 1u);
+    check(cancel && atom_expr_assembly_append(cancel, one), "reset control opens");
+    arena_reset(&arena, mark);
+    check(!atom_expr_assembly_finish(cancel) && !atom_expr_assembly_append(cancel, one),
+          "arena reset refuses before touching the discarded draft");
+    atom_expr_assembly_free(cancel);
+    arena_set_older_generation(&arena, &other);
+    Atom *special_heads[] = {atom_symbol(&arena, "resolve-name"),
+                            atom_symbol_id(&arena, g_builtin_syms.native_handle)};
+    for (unsigned i = 0u; i < 2u; i++) {
+        AtomExprAssembly *assembly = atom_expr_assembly_new(&arena, 2u);
+        check(assembly && atom_expr_assembly_append(assembly, special_heads[i]) &&
+              atom_expr_assembly_append(assembly, two),
+              "special-head assembly accepts an older-generation child");
+        Atom *actual = atom_expr_assembly_finish(assembly);
+        Atom *expected = atom_expr2(&arena, special_heads[i], two);
+        check(actual && expected && actual->flags == expected->flags &&
+              actual->structural_facts == expected->structural_facts &&
+              var_id_eq(actual->var_id, expected->var_id),
+              "head adjustments and generation closure agree with the ordinary constructor");
+        atom_expr_assembly_free(assembly);
+    }
+    arena_free(&other);
+    arena_free(&arena);
+}
+
 static void check_full_hashcons_fallback(Arena *arena) {
     HashConsTable hc;
     hashcons_init_compact(&hc);
@@ -57,6 +128,8 @@ static void check_full_hashcons_fallback(Arena *arena) {
         hc.table[i] = &occupied;
     hc.used = hc.size;
     arena_set_hashcons(arena, &hc);
+    check(!atom_expr_assembly_new(arena, 1u),
+          "retained assembly refuses an interning arena");
     Atom *fallback = atom_bool(arena, false);
     bool owned = arena_owns_ptr(arena, fallback);
     check(owned, "a full hashcons table falls back to an arena-owned atom");
@@ -142,6 +215,7 @@ int main(void) {
           "a variable keeps its name key");
 
     check_full_hashcons_fallback(&arena);
+    check_expression_assembly();
 
     arena_free(&arena);
     g_symbols = NULL;

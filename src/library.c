@@ -15,6 +15,7 @@
 #include "petta_typecheck.h"
 #include "petta_typecheck_v3.h"
 #include "prime_scoped_judgments.h"
+#include "prime_semantics.h"
 #include "rhocalc_core.h"
 #include "rhocalc_syntax.h"
 #include "rule_machine.h"
@@ -225,6 +226,44 @@ static bool library_catalog_valid(void) {
         mask |= bit;
     }
     return cetta_native_module_catalog_valid(mask);
+}
+
+/* These namespaces dispatch through structural mechanisms, without a
+ * separate mutable runtime owner. Availability is not permission: the
+ * retained caller still checks every resolved operation before invocation. */
+static const CettaLibraryMask PRIME_SNAPSHOT_MECHANISMS =
+    CETTA_LIBRARY_STR | CETTA_LIBRARY_LTS | CETTA_LIBRARY_RHO | CETTA_LIBRARY_RHOMETTA;
+
+static bool library_prime_snapshot_common(const CettaLibraryContext *ctx) {
+    if (!ctx || ctx->session.language_id!=CETTA_LANGUAGE_PRIME ||
+        ctx->session.profile!=cetta_profile_prime_default() ||
+        ctx->session.test_verdict || ctx->session.test_verdict_context ||
+        ctx->session.process_control.exit_requested || !ctx->petta_program ||
+        ctx->nik_runtime || (ctx->active_mask & ~PRIME_SNAPSHOT_MECHANISMS) ||
+        ctx->petta_trusted_library_import_depth || ctx->import_space_alias_len ||
+        ctx->module_token_scope || ctx->he_module_run_scope || ctx->he_module_failures ||
+        ctx->top_module_space || ctx->top_module_registry || ctx->module_own_view_len ||
+        ctx->retired_module_len || ctx->petta_translator_rules ||
+        ctx->petta_translator_rule_len || ctx->petta_translator_rule_cap ||
+        ctx->petta_tabled_relations || ctx->petta_tabled_relation_len || ctx->petta_tabled_relation_cap ||
+        ctx->petta_memo.all_arities || ctx->petta_memo.all_arity_len || ctx->petta_memo.all_arity_cap ||
+        ctx->petta_memo.exact_arities || ctx->petta_memo.exact_arity_len || ctx->petta_memo.exact_arity_cap ||
+        ctx->petta_shared_table || ctx->petta_open_programs || ctx->petta_open_programs_free ||
+        ctx->petta_match_decisions || ctx->petta_match_decisions_free ||
+        ctx->petta_static_imports || ctx->petta_static_imports_free ||
+        ctx->petta_runtime || ctx->petta_typecheck_v3 || ctx->petta_token_space_clause_registry ||
+        ctx->io_runtime || ctx->durable_runtime || ctx->json_runtime)
+        return false;
+    for (size_t i=0u;i<CETTA_PETTA_MEMO_CONTROL_COUNT;i++)
+        if (ctx->petta_memo.imported_controls[i]) return false;
+    return true;
+}
+
+bool cetta_library_context_prime_snapshot_source_admitted(const CettaLibraryContext *source) {
+    /* Search paths and completed import inventories affect future loading,
+     * which this source profile does not execute. The caller captures and
+     * compares the actual linked code, values and resolved-call meanings. */
+    return library_prime_snapshot_common(source);
 }
 
 static const char *CETTA_MM2_PROGRAM_HANDLE_KIND = "mork-program";
@@ -581,6 +620,8 @@ static void library_context_init_services(CettaLibraryContext *ctx,
     ctx->prime_hol_guest_free = NULL;
     ctx->prime_lf_guest = NULL;
     ctx->prime_lf_guest_free = NULL;
+    ctx->prime_standard_library = NULL;
+    ctx->prime_standard_library_free = NULL;
     if (ctx->petta_shared_table) {
         PettaTableMutationPolicy table_policy =
             profile && profile->enable_cetta_extensions
@@ -613,12 +654,10 @@ static void library_context_init_services(CettaLibraryContext *ctx,
         ctx->prime_relational_plan_enabled ||
         portable_relational_control_requested;
     bool native_weight_profile = false;
-#if CETTA_PRIME_EVAL_STACK
     native_weight_profile = language_id == CETTA_LANGUAGE_PRIME ||
         (profile && (profile->id == CETTA_PROFILE_PETTA_EXTENDED ||
                      profile->id == CETTA_PROFILE_HE_EXTENDED ||
                      cetta_profile_uses_petta_typing(profile)));
-#endif
     ctx->petta_program = needs_occurrence_program
         ? petta_program_new_with_rules_and_host_intrinsics(
             CETTA_RULE_SYNTAX_ORDINARY |
@@ -630,10 +669,8 @@ static void library_context_init_services(CettaLibraryContext *ctx,
                                          : cetta_prime_host_intrinsic_head)
                 : (native_weight_profile ? eval_native_weight_head : NULL))
         : NULL;
-#if CETTA_PRIME_EVAL_STACK
     if (ctx->petta_program && native_weight_profile)
         petta_program_enable_graded_equations(ctx->petta_program);
-#endif
     const CettaLanguageVersion *program_version =
         cetta_language_version_of(language_id, profile);
     /* HE resolves a call's head when the call runs, and PeTTa's typed line
@@ -684,6 +721,21 @@ bool cetta_library_context_init_prime_snapshot(CettaLibraryContext *ctx) {
     return ctx->nik_runtime_mutex_ready && ctx->petta_program != NULL;
 }
 
+bool cetta_library_context_init_prime_snapshot_from(CettaLibraryContext *ctx,
+        const CettaLibraryContext *source) {
+    if (!ctx || !source || ctx==source) return false;
+    bool initialized=cetta_library_context_init_prime_snapshot(ctx);
+    if (!initialized || !cetta_library_context_prime_snapshot_source_admitted(source)) return false;
+    ctx->session=source->session;
+    ctx->active_mask=source->active_mask;
+    ctx->prime_relational_plan_enabled=source->prime_relational_plan_enabled;
+    memcpy(ctx->root_dir,source->root_dir,sizeof(ctx->root_dir));
+    memcpy(ctx->working_dir,source->working_dir,sizeof(ctx->working_dir));
+    memcpy(ctx->script_path,source->script_path,sizeof(ctx->script_path));
+    memcpy(ctx->script_dir,source->script_dir,sizeof(ctx->script_dir));
+    return true;
+}
+
 void cetta_library_context_free(CettaLibraryContext *ctx) {
     if (!ctx) return;
     /* Captured native work may borrow session resources and program views.
@@ -723,6 +775,10 @@ void cetta_library_context_free(CettaLibraryContext *ctx) {
         ctx->prime_lf_guest_free(ctx->prime_lf_guest);
     ctx->prime_lf_guest = NULL;
     ctx->prime_lf_guest_free = NULL;
+    if (ctx->prime_standard_library_free)
+        ctx->prime_standard_library_free(ctx->prime_standard_library);
+    ctx->prime_standard_library = NULL;
+    ctx->prime_standard_library_free = NULL;
     cetta_nik_runtime_v1_free(ctx->nik_runtime);
     ctx->nik_runtime = NULL;
     if (ctx->nik_runtime_mutex_ready) {
@@ -5171,11 +5227,9 @@ static Atom *cetta_library_dispatch_lts(const CettaLibraryContext *ctx,
 static bool rhometta_eval_context_from_current(
     const CettaLibraryContext *ctx, Space *space, RhocalcEvalContext *out) {
     if (!ctx || !space || !out) return false;
-    out->space = space;
-    out->registry = eval_current_registry();
-    out->persistent_arena = eval_current_persistent_arena();
-    out->library_context = (CettaLibraryContext *)ctx;
-    out->payload_failure = NULL;
+    *out=(RhocalcEvalContext){.space=space,.registry=eval_current_registry(),
+        .persistent_arena=eval_current_persistent_arena(),
+        .library_context=(CettaLibraryContext *)ctx};
     return true;
 }
 
@@ -5308,6 +5362,166 @@ static Atom *cetta_library_dispatch_rhometta(const CettaLibraryContext *ctx,
     }
 
     return NULL;
+}
+
+typedef struct {
+    CettaLibraryContext *library;
+    RhocalcEvalContext context;
+    Arena *arena;
+    uint64_t arena_epoch, symbol_instance;
+    uint32_t arena_identity;
+    CettaLanguageId language;
+    const CettaProfile *profile;
+    Atom *call;
+    RhocalcRun *run;
+    RhocalcValueObservation *values;
+    bool started, returned;
+} LibraryNativeExecution;
+
+bool cetta_library_native_execution_supported(const CettaLibraryContext *ctx, SymbolId head) {
+    return ctx && (ctx->active_mask & CETTA_LIBRARY_RHOMETTA) &&
+        (head == g_builtin_syms.lib_rhometta_run_canonical ||
+         head == g_builtin_syms.lib_rhometta_values);
+}
+
+static bool library_native_execution_current(void *raw) {
+    LibraryNativeExecution *job = raw;
+    return job && job->arena->identity == job->arena_identity &&
+        job->arena->reset_epoch == job->arena_epoch &&
+        symbol_table_instance_id(g_symbols) == job->symbol_instance &&
+        eval_current_library_context() == job->library &&
+        job->library->session.language_id == job->language &&
+        job->library->session.profile == job->profile &&
+        eval_current_registry() == job->context.registry &&
+        eval_current_persistent_arena() == job->context.persistent_arena &&
+        (job->library->active_mask & CETTA_LIBRARY_RHOMETTA);
+}
+
+static void library_native_execution_release(void *raw) {
+    LibraryNativeExecution *job = raw;
+    if (!job) return;
+    rhocalc_run_close(job->run);
+    rhocalc_values_close(job->values);
+    free(job);
+}
+
+static CettaOwnedReleaseStep library_native_execution_release_poll(void *raw,
+    uint64_t allowance, bool allow_atomic, uint64_t *used) {
+    LibraryNativeExecution *job = raw;
+    uint64_t spent = 0u;
+    if (used) *used = 0u;
+    if (job->run) {
+        CettaOwnedReleaseStep status = rhocalc_run_release_poll(&job->run,
+            allowance, allow_atomic, &spent);
+        if (status != CETTA_OWNED_RELEASE_COMPLETE) {
+            if (used) *used = spent;
+            return status;
+        }
+    }
+    if (job->values) {
+        if (spent == allowance) {
+            if (used) *used = spent;
+            return CETTA_OWNED_RELEASE_PENDING;
+        }
+        if (!allow_atomic) {
+            if (used) *used = spent;
+            return CETTA_OWNED_RELEASE_ATOMIC;
+        }
+        rhocalc_values_close(job->values);
+        job->values = NULL;
+        spent++;
+    }
+    if (used) *used = spent;
+    return CETTA_OWNED_RELEASE_COMPLETE;
+}
+
+static CettaOwnedExecutionStep library_native_execution_next(void *raw,
+    CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
+    LibraryNativeExecution *job = raw;
+    if (!library_native_execution_current(job)) {
+        *completion = CETTA_EVAL_INCOMPLETE_INVALIDATED;
+        return CETTA_OWNED_EXECUTION_INTERRUPTED;
+    }
+    if (job->returned) return CETTA_OWNED_EXECUTION_COMPLETE;
+    if (!job->started) {
+        job->started = true;
+        if (job->call->expr.len != 2u) {
+            Atom *error = atom_error(job->arena, job->call,
+                atom_symbol(job->arena, "IncorrectNumberOfArguments"));
+            *returned = (CettaOwnedReturn){.outcome = cetta_call_completed_value(error),
+                .final = true};
+            job->returned = true;
+            return CETTA_OWNED_EXECUTION_RETURN;
+        }
+        Atom *input = job->call->expr.elems[1];
+        if (atom_is_symbol_id(job->call->expr.elems[0], g_builtin_syms.lib_rhometta_values))
+            job->values = rhocalc_values_open(job->arena, input);
+        else {
+            RhoRuntimeProfile profile = {.scheduler_policy = RHO_SCHEDULER_CANONICAL,
+                .reduction_limit = 100000u, .thread_count = 1u};
+            job->run = rhocalc_run_open_held(job->arena, input, &profile, &job->context);
+        }
+        if (!job->run && !job->values) {
+            *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+            return CETTA_OWNED_EXECUTION_INTERRUPTED;
+        }
+        return CETTA_OWNED_EXECUTION_PAUSED;
+    }
+    RhocalcRunStatus status = job->run
+        ? rhocalc_run_poll(job->run, 1u, NULL)
+        : rhocalc_values_poll(job->values, 1u, NULL);
+    if (status == RHOCALC_RUN_PENDING) return CETTA_OWNED_EXECUTION_PAUSED;
+    if (status != RHOCALC_RUN_DONE) {
+        *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        return CETTA_OWNED_EXECUTION_INTERRUPTED;
+    }
+    Atom *value = NULL;
+    if (job->run) {
+        RhoReductionResult reduction;
+        if (rhocalc_run_result(job->run, &reduction)) {
+            if (reduction.status == RHOCALC_REDUCTION_LIMIT_EXHAUSTED) {
+                *completion = CETTA_EVAL_INCOMPLETE_FUEL;
+                return CETTA_OWNED_EXECUTION_INTERRUPTED;
+            }
+            value = reduction.residual;
+        }
+    } else value = rhocalc_values_result(job->values);
+    if (!value) {
+        *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        return CETTA_OWNED_EXECUTION_INTERRUPTED;
+    }
+    *returned = (CettaOwnedReturn){.outcome = cetta_call_completed_value(value), .final = true};
+    job->returned = true;
+    return CETTA_OWNED_EXECUTION_RETURN;
+}
+
+bool cetta_library_native_execution_open(CettaLibraryContext *ctx, Space *space,
+    Arena *arena, Atom *call, const RhocalcPayloadProvider *payload,
+    CettaOwnedExecution *out) {
+    if (!ctx || !(ctx->active_mask & CETTA_LIBRARY_RHOMETTA) || !space || !arena ||
+        !call || call->kind != ATOM_EXPR || !call->expr.len ||
+        !call->expr.elems[0] || call->expr.elems[0]->kind != ATOM_SYMBOL ||
+        !out || out->computation ||
+        !cetta_library_native_execution_supported(ctx, atom_symbol_current_id(call->expr.elems[0])) ||
+        (!payload && atom_is_symbol_id(call->expr.elems[0], g_builtin_syms.lib_rhometta_run_canonical)))
+        return false;
+    LibraryNativeExecution *job = calloc(1u, sizeof(*job));
+    if (!job) return false;
+    job->library = ctx; job->arena = arena; job->call = call;
+    job->arena_identity = arena->identity; job->arena_epoch = arena->reset_epoch;
+    job->symbol_instance = symbol_table_instance_id(g_symbols);
+    job->language = ctx->session.language_id; job->profile = ctx->session.profile;
+    if (!rhometta_eval_context_from_current(ctx, space, &job->context)) {
+        free(job); return false;
+    }
+    job->context.payload_provider = payload;
+    cetta_owned_execution_init(out, job, library_native_execution_next,
+        library_native_execution_release);
+    bool cleanup_installed = cetta_owned_execution_set_release_poll(
+        out, library_native_execution_release_poll);
+    assert(cleanup_installed); (void)cleanup_installed;
+    out->final_is_current = library_native_execution_current;
+    return true;
 }
 
 static Atom *fs_exists(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
@@ -9403,9 +9617,11 @@ bool cetta_library_petta_process_text(
 
     AtomId *atom_ids = NULL;
     char diagnostic[512];
-    int atom_count = parse_metta_text_ids_diagnostic(
-        text, space->native.universe, &atom_ids,
-        diagnostic, sizeof(diagnostic));
+    int atom_count = ctx->session.language_id == CETTA_LANGUAGE_PRIME
+        ? prime_semantics_read_source_text_ids(NULL, text, space->native.universe,
+            &atom_ids, diagnostic, sizeof(diagnostic))
+        : parse_metta_text_ids_diagnostic(text, space->native.universe,
+            &atom_ids, diagnostic, sizeof(diagnostic));
     if (atom_count < 0) {
         const char *message = diagnostic[0] != '\0'
             ? diagnostic : "invalid PeTTa source";
@@ -9947,9 +10163,11 @@ static bool load_module_file(CettaLibraryContext *ctx, const char *path,
         ok = load_he_document(ctx, path, work_space, eval_arena,
                               persistent_arena, registry, source, last_results, error_out);
     } else {
-        int n = parse_metta_file_ids(path,
-                                     work_space ? work_space->native.universe : NULL,
-                                     &atom_ids);
+        int n = ctx->session.language_id == CETTA_LANGUAGE_PRIME
+            ? prime_semantics_read_source_file_ids(NULL, path,
+                work_space ? work_space->native.universe : NULL, &atom_ids, NULL, 0u)
+            : parse_metta_file_ids(path,
+                work_space ? work_space->native.universe : NULL, &atom_ids);
         if (n < 0) {
             ok = false;
             *error_out = module_reason(ctx, eval_arena, "ModuleParseFailed", path);
@@ -12428,7 +12646,9 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
     Atom *value = cetta_library_dispatch_native_value(
         ctx, space, a, head, args, nargs, &result_form);
     if (value) {
-        *out = (CettaCallOutcome){.kind = CETTA_CALL_VALUE,
+        *out = atom_is_petta_no_result(value)
+            ? cetta_call_failure()
+            : (CettaCallOutcome){.kind = CETTA_CALL_VALUE,
                                  .term = value, .result_form = result_form};
         return true;
     }
@@ -12447,30 +12667,19 @@ void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx
     petta_program_storage_census(ctx->petta_program, census);
     /* This constructor/profile has no such owners. Unexpected state is
      * an incomplete census, never a zero-byte approximation of a service. */
-    if (!ctx->nik_runtime_mutex_ready || !ctx->petta_program ||
-        ctx->session.language_id != CETTA_LANGUAGE_PRIME ||
-        ctx->session.profile != cetta_profile_prime_default() ||
-        ctx->session.test_verdict || ctx->session.test_verdict_context ||
-        ctx->nik_runtime || ctx->active_mask || ctx->import_dir_len || ctx->module_mount_len ||
-        ctx->petta_library_paths.items || ctx->petta_library_paths.len ||
-        ctx->petta_library_paths.cap || ctx->imported_file_len ||
-        ctx->petta_trusted_library_import_depth || ctx->import_space_alias_len ||
-        ctx->cmdline_arg_len || ctx->loaded_module_len || ctx->module_token_scope ||
-        ctx->top_module_space || ctx->retired_modules || ctx->retired_module_len || ctx->retired_module_cap ||
-        ctx->native_handle_registry || ctx->native_handle_next_id != 1u ||
-        ctx->petta_translator_rules || ctx->petta_translator_rule_len || ctx->petta_translator_rule_cap ||
-        ctx->petta_tabled_relations || ctx->petta_tabled_relation_len || ctx->petta_tabled_relation_cap ||
-        ctx->petta_memo.all_arities || ctx->petta_memo.all_arity_len || ctx->petta_memo.all_arity_cap ||
-        ctx->petta_memo.exact_arities || ctx->petta_memo.exact_arity_len || ctx->petta_memo.exact_arity_cap ||
-        ctx->petta_shared_table || ctx->petta_open_programs || ctx->petta_open_programs_free ||
-        ctx->petta_match_decisions || ctx->petta_match_decisions_free ||
-        ctx->petta_static_imports || ctx->petta_static_imports_free || ctx->petta_runtime || ctx->petta_typecheck_v3 ||
-        ctx->petta_token_space_clause_registry || ctx->lib_prolog || ctx->foreign_runtime ||
-        ctx->io_runtime || ctx->json_runtime)
+    if (!library_prime_snapshot_common(ctx) || !ctx->nik_runtime_mutex_ready ||
+        ctx->import_dirs || ctx->import_dir_len || ctx->import_dir_cap ||
+        ctx->module_mounts || ctx->module_mount_len || ctx->module_mount_cap ||
+        ctx->petta_library_paths.items || ctx->petta_library_paths.len || ctx->petta_library_paths.cap ||
+        ctx->imported_files || ctx->imported_file_len || ctx->imported_file_cap || ctx->cmdline_arg_len ||
+        ctx->loaded_modules || ctx->loaded_module_len || ctx->loaded_module_cap ||
+        ctx->module_own_views || ctx->module_own_view_cap ||
+        ctx->retired_modules || ctx->retired_module_cap ||
+        ctx->he_module_aliases || ctx->he_module_alias_len || ctx->he_module_alias_cap ||
+        ctx->native_handle_registry || ctx->native_handle_next_id!=1u ||
+        ctx->lib_prolog || ctx->foreign_runtime || ctx->parser_cache ||
+        ctx->prime_hol_guest || ctx->prime_hol_guest_free || ctx->prime_lf_guest || ctx->prime_lf_guest_free)
         cetta_storage_refuse(census, "PrivateServiceProfileChanged");
-    for (size_t i = 0u; i < CETTA_PETTA_MEMO_CONTROL_COUNT; i++)
-        if (ctx->petta_memo.imported_controls[i])
-            cetta_storage_refuse(census, "PrivateServiceProfileChanged");
 }
 
 bool cetta_library_call_native_prepared_view(
@@ -12484,8 +12693,6 @@ bool cetta_library_call_native_prepared_view(
         Atom *value = NULL;
         if (cetta_json_library_borrowed_value_v1(
                 ctx->json_runtime, a, head, args, nargs, &value)) {
-            if (!value)
-                return false;
             *out = cetta_call_completed_value(value);
             return true;
         }

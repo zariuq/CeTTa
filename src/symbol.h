@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include "scalar_trie.h"
+#include "lang.h"
 
 #ifndef CETTA_SYMBOL_READ_COVERAGE
 #define CETTA_SYMBOL_READ_COVERAGE 0
@@ -24,7 +25,10 @@ enum {
     CETTA_SYMBOL_FLAG_RUNTIME_DATA = 1u << 4,
     CETTA_SYMBOL_FLAG_SPECULATIVE_OP = 1u << 2,
     CETTA_SYMBOL_FLAG_BUILTIN = 1u << 3,
-    CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP = 1u << 5,
+    CETTA_SYMBOL_FLAG_PETTA_ONLY_BUILTIN = 1u << 5,
+    CETTA_SYMBOL_FLAG_BUILTIN_CONSTRUCTOR = 1u << 6,
+    CETTA_SYMBOL_FLAG_LIBRARY_NATIVE_OP = 1u << 7,
+    CETTA_SYMBOL_FLAG_CORE_GROUNDED_OP = 1u << 8,
 };
 
 typedef struct {
@@ -733,6 +737,7 @@ static inline SymbolSpelling symbol_spelling(
     X(petta_min, "min") \
     X(petta_max, "max") \
     X(type_colon_of, "type:of") \
+    X(type_colon_normalize, "type:normalize") \
     X(type_colon_check, "type:check") \
     X(type_colon_analyze, "type:analyze") \
     X(type_colon_eq, "type:eq") \
@@ -831,7 +836,19 @@ static inline SymbolSpelling symbol_spelling(
     X(work_record, "work-record") \
     X(work_route, "work-route") \
     X(work_count, "work-count") \
-    X(work_exists, "work-exists")
+    X(work_exists, "work-exists") \
+    X(lib_proc_write, "__cetta_lib_proc_write") \
+    X(lib_proc_read, "__cetta_lib_proc_read") \
+    X(lib_proc_close_input, "__cetta_lib_proc_close_input")
+
+/* Identity, dialect ownership and constructor role are separate facts.
+ * These columns supplement the registered vocabulary without changing IDs. */
+#define CETTA_PETTA_ONLY_BUILTIN_SYMBOL_FIELDS(X) \
+    X(petta_member) X(petta_last) X(petta_the) X(petta_make_list) \
+    X(petta_msort) X(petta_transaction) X(petta_with_mutex) \
+    X(petta_min) X(petta_max) X(petta_decons)
+#define CETTA_BUILTIN_CONSTRUCTOR_SYMBOL_FIELDS(X) \
+    X(prime_data) X(subtype)
 
 /* Libraries may publish native primitives under their public names. The
  * shared registry supplies dispatch and operand-observation capability;
@@ -954,8 +971,11 @@ static inline SymbolSpelling symbol_spelling(
     X(size_atom) \
     X(index_atom) \
     X(range_atom) \
+    X(repeat_atom) \
     X(lib_list_range) \
-    X(repeat_atom)
+    X(lib_list_repeat) \
+    X(lib_list_from_expression) \
+    X(lib_list_to_expression)
 
 /* Grounded value operations without ambient observations or mutation, given
  * closed values from the host. This is also an execution permission list:
@@ -1120,10 +1140,13 @@ typedef struct {
 extern SymbolTable *g_symbols;
 extern BuiltinSyms g_builtin_syms;
 
-/* Builtin syntax symbols occupy the table's initial contiguous interval.
- * This distinguishes evaluator syntax from later interned constructor/data
- * heads without spelling the builtin set again in each consumer. */
+/* Registration flags identify the builtin vocabulary independently of IDs.
+ * Executable membership additionally depends on dialect and constructor role;
+ * callers that dispatch operations use symbol_id_is_builtin_for instead. */
 bool symbol_id_is_builtin(SymbolId id);
+/* Executable builtin membership; registered type constructors and names owned
+ * by another dialect keep ordinary data/equation resolution in that dialect. */
+bool symbol_id_is_builtin_for(SymbolId id, CettaLanguageId language);
 
 void symbol_table_init(SymbolTable *st);
 void symbol_table_free(SymbolTable *st);

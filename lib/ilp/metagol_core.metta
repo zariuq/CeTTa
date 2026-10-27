@@ -275,11 +275,13 @@
 (= (mil:instantiate-template $bias (MIL.T.HO1 $operator))
    (MIL.HO1 $operator (mil:primitive-name $bias)))
 
+; Enumerate untrusted program data before the caller checks it. Constructing
+; syntax explicitly retains ill-typed candidates for that admission step.
 (= (mil:instantiate-template $bias (MIL.T.HO1Chain $operator))
-   (MIL.HO1 $operator
-     (MIL.Chain
-       (mil:primitive-name $bias)
-       (mil:primitive-name $bias))))
+   (let $left (mil:primitive-name $bias)
+     (let $right (mil:primitive-name $bias)
+       (let $chain (cons-atom MIL.Chain ($left $right))
+         (cons-atom MIL.HO1 ($operator $chain))))))
 
 (= (mil:instantiate-template $bias (MIL.T.HO1Chain3 $operator))
    (MIL.HO1 $operator

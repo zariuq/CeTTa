@@ -503,7 +503,7 @@ static void test_occurrence_cursor_exact_clone(
     SpaceOccurrenceCursor clone;
     assert(space_occurrence_cursor_init(&space, query, &source));
     CettaIndex index = UINT64_MAX;
-    assert(space_occurrence_cursor_next(&source, &index) ==
+    assert(space_occurrence_cursor_next(&source, &index, NULL) ==
            SPACE_OCCURRENCE_CURSOR_ITEM);
     assert(index == 0u);
 
@@ -514,16 +514,16 @@ static void test_occurrence_cursor_exact_clone(
     for (CettaIndex expected = 1u; expected < 4u; expected++) {
         CettaIndex source_index = UINT64_MAX;
         CettaIndex clone_index = UINT64_MAX;
-        assert(space_occurrence_cursor_next(&source, &source_index) ==
+        assert(space_occurrence_cursor_next(&source, &source_index, NULL) ==
                SPACE_OCCURRENCE_CURSOR_ITEM);
-        assert(space_occurrence_cursor_next(&clone, &clone_index) ==
+        assert(space_occurrence_cursor_next(&clone, &clone_index, NULL) ==
                SPACE_OCCURRENCE_CURSOR_ITEM);
         assert(source_index == expected);
         assert(clone_index == expected);
     }
-    assert(space_occurrence_cursor_next(&source, &index) ==
+    assert(space_occurrence_cursor_next(&source, &index, NULL) ==
            SPACE_OCCURRENCE_CURSOR_END);
-    assert(space_occurrence_cursor_next(&clone, &index) ==
+    assert(space_occurrence_cursor_next(&clone, &index, NULL) ==
            SPACE_OCCURRENCE_CURSOR_END);
     space_occurrence_cursor_release(&clone);
 
@@ -535,6 +535,103 @@ static void test_occurrence_cursor_exact_clone(
     source.prefix_epoch = prefix_epoch;
     space_occurrence_cursor_release(&source);
     space_free(&space);
+}
+
+static void test_occurrence_cursor_fused_delivery(void) {
+    for (unsigned format = 0u; format < 2u; format++)
+    for (unsigned backend = 0u; backend < 2u; backend++)
+    for (unsigned query_kind = 0u; query_kind < 4u; query_kind++)
+    for (unsigned marked = 0u; marked < 2u; marked++) {
+        Arena persistent, scratch;
+        arena_init(&persistent);
+        arena_init(&scratch);
+        TermUniverse universe;
+        assert(term_universe_init_with_store_format(&universe, format
+            ? TERM_UNIVERSE_STORE_FORMAT_WIDE64_V1
+            : TERM_UNIVERSE_STORE_FORMAT_COMPACT32_V1));
+        term_universe_set_persistent_arena(&universe, &persistent);
+        Space space;
+        space_init_with_universe(&space, &universe);
+        assert(space_match_backend_try_set(&space, backend
+            ? SPACE_ENGINE_NATIVE_CANDIDATE_EXACT : SPACE_ENGINE_NATIVE));
+        SymbolId edge = symbol_intern_cstr(g_symbols, "fused-edge");
+        AtomId ids[80];
+        Atom *expected[80];
+        CettaCount visible = 0u;
+        for (unsigned i = 0u; i < 80u; i++) {
+            ids[i] = store_atom(&universe,
+                edge_value(&scratch, edge, i == 17u ? 7 : (int64_t)i));
+            space_add_atom_id(&space, ids[i]);
+            if (!marked || (i != 3u && i != 6u))
+                expected[visible++] = term_universe_get_atom(&universe, ids[i]);
+        }
+        if (marked) {
+            CettaIndex removed[] = {3u, 6u};
+            assert(space_remove_logical_positions(&space, removed, 2u));
+            assert(space_has_marks(&space));
+        }
+        Atom *x = atom_var_with_id(&scratch, "fused-x", fresh_var_id());
+        Atom *y = atom_var_with_id(&scratch, "fused-y", fresh_var_id());
+        Atom *query = query_kind == 0u ? x
+            : query_kind == 1u ? binary(&scratch, edge, x, y)
+            : query_kind == 2u ? edge_value(&scratch, edge, 7)
+            : binary(&scratch, edge, atom_int(&scratch, 7), y);
+        SpaceOccurrenceCursor source, reference;
+        assert(space_occurrence_cursor_init(&space, query, &source));
+        bool cloned = space_occurrence_cursor_clone(&source, &reference);
+        if (!cloned)
+            fprintf(stderr, "fused cursor clone: format=%u backend=%u query=%u marked=%u prefix=%llu current=%llu ceiling=%llu rows=%llu\n",
+                format, backend, query_kind, marked,
+                (unsigned long long)source.prefix_epoch,
+                (unsigned long long)space.prefix_epoch,
+                (unsigned long long)source.ceiling,
+                (unsigned long long)space.native.len);
+        assert(cloned);
+        CettaIndex index = UINT64_MAX;
+        Atom *row = expected[0];
+        uint64_t epoch = source.prefix_epoch;
+        source.prefix_epoch++;
+        assert(space_occurrence_cursor_next(&source, &index, &row) ==
+               SPACE_OCCURRENCE_CURSOR_INVALIDATED && !row && index == 0u);
+        source.prefix_epoch = epoch;
+        assert(space_occurrence_cursor_next(NULL, &index, &row) ==
+               SPACE_OCCURRENCE_CURSOR_INVALIDATED && !row);
+        unsigned received = 0u;
+        for (;;) {
+            CettaIndex reference_index = UINT64_MAX;
+            SpaceOccurrenceCursorStep wanted =
+                space_occurrence_cursor_next(&reference, &reference_index, NULL);
+            SpaceOccurrenceCursorStep actual =
+                space_occurrence_cursor_next(&source, &index, &row);
+            assert(actual == wanted && index == reference_index);
+            if (actual != SPACE_OCCURRENCE_CURSOR_ITEM) {
+                assert(actual == SPACE_OCCURRENCE_CURSOR_END && !row);
+                break;
+            }
+            assert(index < visible && row);
+            assert(atom_eq(row, expected[index]));
+            assert(atom_eq(row, space_occurrence_cursor_atom(&reference, reference_index)));
+            assert(source.last_row == reference.last_row);
+            assert(source.last_logical == reference.last_logical);
+            if (received++ == 0u) {
+                space_add_atom_id(&space, store_atom(&universe,
+                    edge_value(&scratch, edge, 999)));
+                CettaIndex removed = 5u;
+                assert(space_remove_logical_positions(&space, &removed, 1u));
+                assert(atom_eq(row, expected[index]));
+            }
+        }
+        assert(received >= 2u);
+        space_occurrence_cursor_release(&reference);
+        space_occurrence_cursor_release(&source);
+        row = expected[0];
+        assert(space_occurrence_cursor_next(&source, &index, &row) ==
+               SPACE_OCCURRENCE_CURSOR_INVALIDATED && !row);
+        space_free(&space);
+        term_universe_free(&universe);
+        arena_free(&scratch);
+        arena_free(&persistent);
+    }
 }
 
 static void test_atom_id_removal_preserves_pinned_view(
@@ -556,7 +653,7 @@ static void test_atom_id_removal_preserves_pinned_view(
     assert(space_occurrence_cursor_init(
         &space, query, &before_remove));
     CettaIndex index = UINT64_MAX;
-    assert(space_occurrence_cursor_next(&before_remove, &index) ==
+    assert(space_occurrence_cursor_next(&before_remove, &index, NULL) ==
            SPACE_OCCURRENCE_CURSOR_ITEM);
     assert(index == 0u);
 
@@ -573,42 +670,42 @@ static void test_atom_id_removal_preserves_pinned_view(
      * reads the compacted live rows, with coordinates local to that view. */
     assert(space_occurrence_cursor_init(
         &space, query, &after_remove));
-    assert(space_occurrence_cursor_next(&after_remove, &index) ==
+    assert(space_occurrence_cursor_next(&after_remove, &index, NULL) ==
            SPACE_OCCURRENCE_CURSOR_ITEM);
     assert(index == 0u);
     assert(atom_eq(space_occurrence_cursor_atom(&after_remove, index),
                    term_universe_get_atom(universe, rows[0])));
-    assert(space_occurrence_cursor_next(&after_remove, &index) ==
+    assert(space_occurrence_cursor_next(&after_remove, &index, NULL) ==
            SPACE_OCCURRENCE_CURSOR_ITEM);
     assert(index == 1u);
     assert(atom_eq(space_occurrence_cursor_atom(&after_remove, index),
                    term_universe_get_atom(universe, rows[2])));
-    assert(space_occurrence_cursor_next(&after_remove, &index) ==
+    assert(space_occurrence_cursor_next(&after_remove, &index, NULL) ==
            SPACE_OCCURRENCE_CURSOR_END);
 
-    assert(space_occurrence_cursor_next(&before_remove, &index) ==
+    assert(space_occurrence_cursor_next(&before_remove, &index, NULL) ==
            SPACE_OCCURRENCE_CURSOR_ITEM);
     assert(index == 1u);
     assert(atom_eq(space_occurrence_cursor_atom(&before_remove, index),
                    term_universe_get_atom(universe, rows[1])));
-    assert(space_occurrence_cursor_next(&before_remove, &index) ==
+    assert(space_occurrence_cursor_next(&before_remove, &index, NULL) ==
            SPACE_OCCURRENCE_CURSOR_ITEM);
     assert(index == 2u);
     assert(atom_eq(space_occurrence_cursor_atom(&before_remove, index),
                    term_universe_get_atom(universe, rows[2])));
-    assert(space_occurrence_cursor_next(&before_remove, &index) ==
+    assert(space_occurrence_cursor_next(&before_remove, &index, NULL) ==
            SPACE_OCCURRENCE_CURSOR_END);
 
     space_occurrence_cursor_release(&after_remove);
     space_occurrence_cursor_release(&before_remove);
     for (CettaIndex expected = 1u; expected < 3u; expected++) {
-        assert(space_occurrence_cursor_next(&detached_clone, &index) ==
+        assert(space_occurrence_cursor_next(&detached_clone, &index, NULL) ==
                SPACE_OCCURRENCE_CURSOR_ITEM);
         assert(index == expected);
         assert(atom_eq(space_occurrence_cursor_atom(&detached_clone, index),
                        term_universe_get_atom(universe, rows[expected])));
     }
-    assert(space_occurrence_cursor_next(&detached_clone, &index) ==
+    assert(space_occurrence_cursor_next(&detached_clone, &index, NULL) ==
            SPACE_OCCURRENCE_CURSOR_END);
     space_occurrence_cursor_release(&detached_clone);
     AtomId expected[] = {rows[0], rows[2]};
@@ -650,15 +747,15 @@ static void test_cold_candidate_cursor(TermUniverse *universe, Arena *scratch) {
     assert(space_add_atom_ids_batch(&space, appended, 2u));
     for (size_t i = 0u; i < 4u; i++) {
         CettaIndex index = UINT64_MAX, cloned = UINT64_MAX;
-        assert(space_occurrence_cursor_next(&cursor, &index) == SPACE_OCCURRENCE_CURSOR_ITEM);
-        assert(space_occurrence_cursor_next(&clone, &cloned) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(space_occurrence_cursor_next(&cursor, &index, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(space_occurrence_cursor_next(&clone, &cloned, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
         assert(index == candidates[i] && cloned == index);
         assert(atom_eq(space_occurrence_cursor_atom(&cursor, index),
                        term_universe_get_atom(universe, rows[index])));
     }
     CettaIndex end = UINT64_MAX;
-    assert(space_occurrence_cursor_next(&cursor, &end) == SPACE_OCCURRENCE_CURSOR_END);
-    assert(space_occurrence_cursor_next(&clone, &end) == SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next(&cursor, &end, NULL) == SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next(&clone, &end, NULL) == SPACE_OCCURRENCE_CURSOR_END);
     space_occurrence_cursor_release(&clone);
     space_occurrence_cursor_release(&cursor);
     /* Exhausting the startup scan allowance returns to a maintained access
@@ -699,9 +796,9 @@ static void test_retained_query_rows(TermUniverse *universe, Arena *scratch) {
     space_init_with_universe(&space, universe);
     SymbolId edge = symbol_intern_cstr(g_symbols, "cursor-edge");
     Atom *x = atom_var_with_spelling(scratch,
-        symbol_intern_cstr(g_symbols, "cursor-x"), UINT64_C(81001));
+        symbol_intern_cstr(g_symbols, "cursor-x"), var_id_from_base(UINT64_C(81001)));
     Atom *y = atom_var_with_spelling(scratch,
-        symbol_intern_cstr(g_symbols, "cursor-y"), UINT64_C(81002));
+        symbol_intern_cstr(g_symbols, "cursor-y"), var_id_from_base(UINT64_C(81002)));
     Atom *e12 = binary(scratch, edge, atom_int(scratch, 1), atom_int(scratch, 2));
     Atom *e23 = binary(scratch, edge, atom_int(scratch, 2), atom_int(scratch, 3));
     space_add_atom_id(&space, store_atom(universe, e12));
@@ -846,9 +943,9 @@ typedef struct {
 static void assert_query_owned_world(Bindings *row) {
     const PrimeNeedSnapshot *need=bindings_need_view(row);
     PrimeNeedCellView view;
-    Atom *origin=bindings_lookup_value_id(row,UINT64_C(984404)).skeleton;
-    Atom *cell=bindings_lookup_value_id(row,UINT64_C(984405)).skeleton;
-    Atom *watermark=bindings_lookup_value_id(row,UINT64_C(984406)).skeleton;
+    Atom *origin=bindings_lookup_value_id(row,var_id_from_base(UINT64_C(984404))).skeleton;
+    Atom *cell=bindings_lookup_value_id(row,var_id_from_base(UINT64_C(984405))).skeleton;
+    Atom *watermark=bindings_lookup_value_id(row,var_id_from_base(UINT64_C(984406))).skeleton;
     assert(cell && cell->kind==ATOM_GROUNDED && cell->ground.gkind==GV_INT &&
         cell->ground.ival>0);
     assert(watermark && watermark->kind==ATOM_GROUNDED &&
@@ -870,7 +967,7 @@ static void assert_query_owned_world(Bindings *row) {
 static void seed_query_owned_world(Arena *arena, Bindings *seed) {
     Atom *origin=atom_expr2(arena,atom_symbol(arena,"owned-query-origin"),
         atom_int(arena,23));
-    assert(bindings_add_id(seed,UINT64_C(984404),
+    assert(bindings_add_id(seed,var_id_from_base(UINT64_C(984404)),
         symbol_intern_cstr(g_symbols,"owned-query-origin-binding"),origin));
     PrimeNeedSnapshot empty,need;
     prime_need_snapshot_init(&empty);
@@ -878,13 +975,13 @@ static void seed_query_owned_world(Arena *arena, Bindings *seed) {
     uint64_t cell=0u;
     assert(prime_need_snapshot_allocate(arena,&empty,origin,&need,&cell));
     assert(cell && cell<=INT64_MAX);
-    assert(bindings_add_id(seed,UINT64_C(984405),
+    assert(bindings_add_id(seed,var_id_from_base(UINT64_C(984405)),
         symbol_intern_cstr(g_symbols,"owned-query-cell-binding"),atom_int(arena,(int64_t)cell)));
     assert(prime_need_snapshot_start_evaluation(arena,&need,cell,31u,&need));
     assert(prime_need_snapshot_resolve_value(arena,&need,cell,31u,origin,&need));
     assert(need.max_storage_key<=INT64_MAX-911u);
     need.max_storage_key+=911u;
-    assert(bindings_add_id(seed,UINT64_C(984406),
+    assert(bindings_add_id(seed,var_id_from_base(UINT64_C(984406)),
         symbol_intern_cstr(g_symbols,"owned-query-watermark-binding"),
         atom_int(arena,(int64_t)need.max_storage_key)));
     CettaWeightLedger weights={0},prefix={0},selected={0};
@@ -892,7 +989,7 @@ static void seed_query_owned_world(Arena *arena, Bindings *seed) {
     assert(cetta_weight_ledger_handle(arena,&weights,&prefix,901u,&weights,&selected));
     bindings_prime_set(seed,&need,NULL,811u,NULL,&weights);
     /* Assert actual stored aliases before comparing their transported image. */
-    assert(bindings_lookup_value_id(seed,UINT64_C(984404)).skeleton==origin);
+    assert(bindings_lookup_value_id(seed,var_id_from_base(UINT64_C(984404))).skeleton==origin);
     assert_query_owned_world(seed);
 }
 
@@ -954,7 +1051,7 @@ static void test_retained_query_clone(TermUniverse *universe, Arena *arena,
         binary(arena,edge,atom_int(arena,1),y));
     SpaceQueryCursor *cursor=space_query_cursor_new(space,arena,query,NULL);
     QueryCloneTrace baseline;
-    trace_query_clone(cursor,space,arena,y,&baseline,0u,NULL);
+    trace_query_clone(cursor,space,arena,y,&baseline,VAR_ID_NONE,NULL);
     space_query_cursor_free(cursor);
     assert(baseline.rows==4u);
     const int64_t values[]={3,3,2,2};
@@ -989,9 +1086,9 @@ static void test_retained_query_clone(TermUniverse *universe, Arena *arena,
         assert(space_query_cursor_visit_witnesses(copy,collect_query_witness,&b)==witness);
         assert(a.length==b.length && memcmp(a.indices,b.indices,a.length*sizeof(*a.indices))==0);
         QueryCloneTrace first,second;
-        trace_query_clone(cursor,space,arena,y,&first,0u,NULL);
+        trace_query_clone(cursor,space,arena,y,&first,VAR_ID_NONE,NULL);
         space_query_cursor_free(cursor);
-        trace_query_clone(copy,space,arena,y,&second,0u,NULL);
+        trace_query_clone(copy,space,arena,y,&second,VAR_ID_NONE,NULL);
         assert(first.length==second.length && first.rows==second.rows);
         assert(memcmp(first.steps,second.steps,first.length*sizeof(*first.steps))==0);
         assert(first.nodes==second.nodes && first.attempts==second.attempts &&
@@ -1015,9 +1112,9 @@ static void test_retained_query_clone(TermUniverse *universe, Arena *arena,
 
 static Atom *owned_query_pattern(Arena *arena, SymbolId edge, Atom **value,
                                  Atom **cached) {
-    Atom *x=atom_var_with_spelling(arena,symbol_intern_cstr(g_symbols,"owned-query-x"),UINT64_C(984401));
-    *value=atom_var_with_spelling(arena,symbol_intern_cstr(g_symbols,"owned-query-y"),UINT64_C(984402));
-    *cached=atom_var_with_spelling(arena,symbol_intern_cstr(g_symbols,"owned-query-cached"),UINT64_C(984403));
+    Atom *x=atom_var_with_spelling(arena,symbol_intern_cstr(g_symbols,"owned-query-x"),var_id_from_base(UINT64_C(984401)));
+    *value=atom_var_with_spelling(arena,symbol_intern_cstr(g_symbols,"owned-query-y"),var_id_from_base(UINT64_C(984402)));
+    *cached=atom_var_with_spelling(arena,symbol_intern_cstr(g_symbols,"owned-query-cached"),var_id_from_base(UINT64_C(984403)));
     return binary(arena,g_builtin_syms.pipe,
         binary(arena,g_builtin_syms.comma,
             binary(arena,edge,atom_int(arena,1),x),binary(arena,edge,x,*value)),
@@ -1229,7 +1326,7 @@ static void test_owned_query_authority(TermUniverse *universe, Arena *external,
             }
         } else {
             QueryCloneTrace trace;
-            trace_query_clone(copy,&outer,&copied_result,copied_x,&trace,0u,NULL);
+            trace_query_clone(copy,&outer,&copied_result,copied_x,&trace,VAR_ID_NONE,NULL);
             assert(trace.rows+delivered==(empty ? 0u : 1u));
             for (size_t i=0u;i<trace.rows;i++)
                 assert(atom_eq(trace.values[i],atom_int(&copied_result,7)));
@@ -1246,9 +1343,9 @@ static void test_retained_overlay_query_authority(TermUniverse *universe, Arena 
                                                  SpaceEngine engine) {
     SymbolId head=symbol_intern_cstr(g_symbols,"overlay-query-edge");
     Atom *x=atom_var_with_spelling(scratch,
-        symbol_intern_cstr(g_symbols,"overlay-query-x"),UINT64_C(81101));
+        symbol_intern_cstr(g_symbols,"overlay-query-x"),var_id_from_base(UINT64_C(81101)));
     Atom *y=atom_var_with_spelling(scratch,
-        symbol_intern_cstr(g_symbols,"overlay-query-y"),UINT64_C(81102));
+        symbol_intern_cstr(g_symbols,"overlay-query-y"),var_id_from_base(UINT64_C(81102)));
     Atom *query=binary(scratch,head,x,y);
     Atom *seven=edge_value(scratch,head,7), *eight=edge_value(scratch,head,8);
     for (unsigned changed=0u;changed<4u;changed++)
@@ -1388,7 +1485,7 @@ static void test_overlay_occurrence_scan(TermUniverse *universe, Arena *scratch,
     assert(scan.logical_scan && !scan.pinned && !scan.occurrences);
     assert(scan.ceiling==5u && scan.logical_reads.base_count==2u);
     CettaIndex index=UINT64_MAX;
-    assert(space_occurrence_cursor_next(&scan,&index)==SPACE_OCCURRENCE_CURSOR_ITEM && index==0u);
+    assert(space_occurrence_cursor_next(&scan,&index,NULL)==SPACE_OCCURRENCE_CURSOR_ITEM && index==0u);
     assert(atom_eq(space_occurrence_cursor_atom(&scan,index),seven));
     assert(space_occurrence_cursor_clone(&scan,&exact));
     assert(space_occurrence_cursor_clone_unstarted(&scan,&unstarted));
@@ -1400,19 +1497,19 @@ static void test_overlay_occurrence_scan(TermUniverse *universe, Arena *scratch,
     space_occurrence_cursor_release(&scan);
     const int64_t values[]={7,7,9,7,10};
     for(unsigned i=1u;i<5u;i++) {
-        assert(space_occurrence_cursor_next(&exact,&index)==SPACE_OCCURRENCE_CURSOR_ITEM && index==i);
+        assert(space_occurrence_cursor_next(&exact,&index,NULL)==SPACE_OCCURRENCE_CURSOR_ITEM && index==i);
         assert(atom_eq(space_occurrence_cursor_atom(&exact,index),atom_int(scratch,values[i])));
     }
-    assert(space_occurrence_cursor_next(&exact,&index)==SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next(&exact,&index,NULL)==SPACE_OCCURRENCE_CURSOR_END);
     for(unsigned i=0u;i<5u;i++) {
-        assert(space_occurrence_cursor_next(&unstarted,&index)==SPACE_OCCURRENCE_CURSOR_ITEM && index==i);
+        assert(space_occurrence_cursor_next(&unstarted,&index,NULL)==SPACE_OCCURRENCE_CURSOR_ITEM && index==i);
         assert(atom_eq(space_occurrence_cursor_atom(&unstarted,index),atom_int(scratch,values[i])));
     }
-    assert(space_occurrence_cursor_next(&unstarted,&index)==SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next(&unstarted,&index,NULL)==SPACE_OCCURRENCE_CURSOR_END);
     space_occurrence_cursor_release(&exact);space_occurrence_cursor_release(&unstarted);
 
     assert(space_occurrence_cursor_init_scan(&outer,&scan));
-    assert(space_occurrence_cursor_next(&scan,&index)==SPACE_OCCURRENCE_CURSOR_ITEM);
+    assert(space_occurrence_cursor_next(&scan,&index,NULL)==SPACE_OCCURRENCE_CURSOR_ITEM);
     SpaceReadToken captured=scan.logical_reads.bases[1];
     assert(space_remove(&base,seven));
     assert(space_occurrence_cursor_clone(&scan,&exact));
@@ -1420,9 +1517,9 @@ static void test_overlay_occurrence_scan(TermUniverse *universe, Arena *scratch,
     assert(exact.logical_reads.bases[1].revision==captured.revision &&
            unstarted.logical_reads.bases[1].revision==captured.revision);
     for(unsigned repeat=0u;repeat<3u;repeat++) {
-        assert(space_occurrence_cursor_next(&scan,&index)==SPACE_OCCURRENCE_CURSOR_INVALIDATED);
-        assert(space_occurrence_cursor_next(&exact,&index)==SPACE_OCCURRENCE_CURSOR_INVALIDATED);
-        assert(space_occurrence_cursor_next(&unstarted,&index)==SPACE_OCCURRENCE_CURSOR_INVALIDATED);
+        assert(space_occurrence_cursor_next(&scan,&index,NULL)==SPACE_OCCURRENCE_CURSOR_INVALIDATED);
+        assert(space_occurrence_cursor_next(&exact,&index,NULL)==SPACE_OCCURRENCE_CURSOR_INVALIDATED);
+        assert(space_occurrence_cursor_next(&unstarted,&index,NULL)==SPACE_OCCURRENCE_CURSOR_INVALIDATED);
         assert(scan.full_next==1u && exact.full_next==1u && unstarted.full_next==0u);
         assert(!space_occurrence_cursor_atom(&scan,0u));
     }
@@ -1460,7 +1557,7 @@ static void test_incremental_overlay_query(TermUniverse *universe, Arena *scratc
     assert(space_match_backend_try_set(&base,engine));
     Atom *head=atom_symbol(scratch,"overlay-deep-node");
     Atom *x=atom_var_with_spelling(scratch,
-        symbol_intern_cstr(g_symbols,"overlay-deep-x"),UINT64_C(81103));
+        symbol_intern_cstr(g_symbols,"overlay-deep-x"),var_id_from_base(UINT64_C(81103)));
     Atom *pattern=x, *value=atom_int(scratch,7);
     for(unsigned i=0u;i<96u;i++) {
         pattern=atom_expr2(scratch,head,pattern);
@@ -1548,8 +1645,8 @@ static void test_overlay_query_join(TermUniverse *universe, Arena *scratch,
     space_init_overlay(&outer,&middle);
     assert(space_match_backend_try_set(&outer,engine));
     space_add_atom_id(&outer,store_atom(universe,e23));
-    Atom *x=atom_var_with_spelling(scratch,symbol_intern_cstr(g_symbols,"overlay-join-x"),81104);
-    Atom *y=atom_var_with_spelling(scratch,symbol_intern_cstr(g_symbols,"overlay-join-y"),81105);
+    Atom *x=atom_var_with_spelling(scratch,symbol_intern_cstr(g_symbols,"overlay-join-x"),var_id_from_base(81104));
+    Atom *y=atom_var_with_spelling(scratch,symbol_intern_cstr(g_symbols,"overlay-join-y"),var_id_from_base(81105));
     Atom *second=binary(scratch,edge,x,y);
     Atom *query=binary(scratch,g_builtin_syms.comma,
         binary(scratch,edge,atom_int(scratch,1),x),
@@ -2113,7 +2210,7 @@ static void test_retained_query_invalidation(TermUniverse *universe, Arena *scra
 static void test_retained_list_match(Arena *arena) {
     Atom *seven=atom_int(arena,7), *nine=atom_int(arena,9);
     Atom *tail=atom_var_with_spelling(arena,
-        symbol_intern_cstr(g_symbols,"cursor-list-tail"),UINT64_C(83001));
+        symbol_intern_cstr(g_symbols,"cursor-list-tail"),var_id_from_base(UINT64_C(83001)));
     Atom *one=atom_list(arena,&seven,1u);
     Atom *two=atom_list(arena,(Atom *[]){seven,nine},2u);
     Atom *empty=atom_list(arena,NULL,0u);
@@ -2172,16 +2269,16 @@ static void test_retained_match_cold_thread(Arena *arena) {
         CettaMatchCursor *cursor=match_atoms_cursor_new(
             atom_expr(arena,left,130u),atom_expr(arena,right,130u),&seed,arena);
         assert(cursor && match_atoms_cursor_step(cursor,16u)==CETTA_MATCH_CURSOR_PROGRESS);
-        uint32_t epoch=match_atoms_cursor_epoch(cursor);assert(epoch);
+        CettaFrameIdentity epoch=match_atoms_cursor_epoch(cursor);assert(!cetta_frame_identity_is_none(epoch));
         CettaMatchCursor *copy=match_atoms_cursor_clone(cursor);
-        assert(copy && match_atoms_cursor_epoch(copy)==epoch);
+        assert(copy && cetta_frame_identity_eq(match_atoms_cursor_epoch(copy), epoch));
         match_atoms_cursor_free(cursor);
         cursor=copy;
         ColdMatchStep job={.cursor=cursor};pthread_t thread;
         assert(pthread_create(&thread,NULL,cold_match_step,&job)==0);
         assert(pthread_join(thread,NULL)==0);
         assert(job.result==(success?CETTA_MATCH_CURSOR_MATCHED:CETTA_MATCH_CURSOR_REFUTED));
-        assert(match_atoms_cursor_epoch(cursor)==epoch);
+        assert(cetta_frame_identity_eq(match_atoms_cursor_epoch(cursor), epoch));
         Bindings answer;bindings_init(&answer);
         assert(match_atoms_cursor_take(cursor,&answer)==(success!=0u));
         if(success)assert(atom_eq(bindings_apply(&answer,arena,left[128]),right[128]));
@@ -2206,7 +2303,7 @@ static void test_retained_alias_match(void) {
         Atom *variables[LENGTH],*seven=atom_int(&source,7);
         SymbolId name=symbol_intern_cstr(g_symbols,"retained-alias");
         for (unsigned i=0u;i<LENGTH;i++)
-            variables[i]=atom_var_with_spelling(&source,name,UINT64_C(83000)+i);
+            variables[i]=atom_var_with_spelling(&source,name,var_id_from_base(UINT64_C(83000)+i));
         Bindings seed;bindings_init(&seed);
         for (unsigned i=0u;i<LENGTH;i++) assert(bindings_add_var(&seed,variables[i],seven));
         assert(bindings_prepare_logical_write(&seed) && seed.len==LENGTH);
@@ -2217,17 +2314,17 @@ static void test_retained_alias_match(void) {
         Atom *target=atom_int(&source,outcome==1u?8:7);
         BindingsBuilder reference;assert(bindings_builder_init(&reference,&seed));
         assert(match_atoms_epoch_builder_checked(variables[0],target,
-            &reference,&source,0u,UINT64_MAX)==canonical[outcome]);
+            &reference,&source,CETTA_FRAME_IDENTITY_NONE,UINT64_MAX)==canonical[outcome]);
         bindings_builder_free(&reference);
         CettaNativeCostLedger cost;CettaNativeCostScope scope;
         cetta_native_cost_init(&cost);cetta_native_cost_scope_enter(&scope,&cost,1u);
         CettaMatchCursor *cursor=match_atoms_cursor_new(variables[0],target,&seed,&source);
         assert(cursor && match_atoms_cursor_step(cursor,0u)==CETTA_MATCH_CURSOR_PROGRESS);
-        assert(!cost.total.counts[CETTA_COST_MATCH_NODE] && !match_atoms_cursor_epoch(cursor));
+        assert(!cost.total.counts[CETTA_COST_MATCH_NODE] && cetta_frame_identity_is_none(match_atoms_cursor_epoch(cursor)));
         assert(match_atoms_cursor_step(cursor,1u)==CETTA_MATCH_CURSOR_PROGRESS);
         assert(cost.total.counts[CETTA_COST_MATCH_NODE]==1u &&
             cost.total.counts[CETTA_COST_MATCH_ATTEMPT]==1u);
-        uint32_t epoch=match_atoms_cursor_epoch(cursor);assert(epoch);
+        CettaFrameIdentity epoch=match_atoms_cursor_epoch(cursor);assert(!cetta_frame_identity_is_none(epoch));
         if (run) {
             CettaMatchCursor *copy;
             if (run==1u) copy=match_atoms_cursor_clone(cursor);
@@ -2238,7 +2335,7 @@ static void test_retained_alias_match(void) {
                 copy=match_atoms_cursor_copy_to_arena(cursor,&destination,session);
                 atom_deep_copy_session_free(session);
             }
-            assert(copy && match_atoms_cursor_epoch(copy)==epoch);
+            assert(copy && cetta_frame_identity_eq(match_atoms_cursor_epoch(copy), epoch));
             match_atoms_cursor_free(cursor);cursor=copy;
         }
         assert(seed.len==LENGTH && seed.entries[0].value.skeleton==variables[1]);
@@ -2251,7 +2348,7 @@ static void test_retained_alias_match(void) {
             assert(match_atoms_cursor_step(cursor,0u)==CETTA_MATCH_CURSOR_PROGRESS);
             step=match_atoms_cursor_step(cursor,grants[run]);
         }
-        assert(step==expected[outcome] && match_atoms_cursor_epoch(cursor)==epoch);
+        assert(step==expected[outcome] && cetta_frame_identity_eq(match_atoms_cursor_epoch(cursor), epoch));
         if (!run) assert(polls>=LENGTH-1u);
         assert(cost.total.counts[CETTA_COST_MATCH_NODE]==1u &&
             cost.total.counts[CETTA_COST_MATCH_ATTEMPT]==1u);
@@ -2259,7 +2356,7 @@ static void test_retained_alias_match(void) {
         assert(match_atoms_cursor_take(cursor,&answer)==(outcome==0u));
         if (outcome==0u) {
             Arena *result=run==2u?&destination:&source;
-            Atom *root=atom_var_with_spelling(result,name,UINT64_C(83000));
+            Atom *root=atom_var_with_spelling(result,name,var_id_from_base(UINT64_C(83000)));
             assert(answer.len==LENGTH && atom_eq(bindings_apply(&answer,result,root),atom_int(result,7)));
         } else assert(!answer.len);
         if (run!=2u) assert(seed.len==LENGTH && seed.entries[0].value.skeleton==variables[1]);
@@ -2301,12 +2398,13 @@ static void test_retained_occurs_match(void) {
             Atom *variables[257];
             for (unsigned i = 0u; i < 257u; ++i)
                 variables[i] = atom_var_with_spelling(&source,
-                    symbol_intern_cstr(g_symbols, "occurs-alias"), UINT64_C(87000) + i);
+                    symbol_intern_cstr(g_symbols, "occurs-alias"), var_id_from_base(UINT64_C(87000) + i));
             for (unsigned i = 257u; i > 0u; --i)
                 assert(bindings_add_var(&seed, variables[i - 1u], i == 257u ? seven : variables[i]));
             deep = binary(&source, head, variables[0], z);
         } else {
-            CettaFrameIdentity first = 0u, second = 0u, distinct = 0u;
+            CettaFrameIdentity first = CETTA_FRAME_IDENTITY_NONE,
+                second = CETTA_FRAME_IDENTITY_NONE, distinct = CETTA_FRAME_IDENTITY_NONE;
             assert(cetta_frame_identity_scope_try(&contexts, &first));
             assert(cetta_frame_identity_scope_try(&contexts, &second));
             assert(cetta_frame_identity_scope_try(&contexts, &distinct));
@@ -2334,7 +2432,7 @@ static void test_retained_occurs_match(void) {
             right = binary(&source, pair, captured, captured);
         }
         CettaFrameIdentityScope reference_scope = {0};
-        CettaFrameIdentity reference_epoch = 0u;
+        CettaFrameIdentity reference_epoch = CETTA_FRAME_IDENTITY_NONE;
         assert(cetta_frame_identity_scope_try(&reference_scope, &reference_epoch));
         BindingsBuilder reference; assert(bindings_builder_init(&reference, &seed));
         CettaMatchCompletion expected = match_atoms_epoch_builder_checked(
@@ -2346,10 +2444,10 @@ static void test_retained_occurs_match(void) {
         cetta_native_cost_init(&cost); cetta_native_cost_scope_enter(&scope, &cost, 1u);
         CettaMatchCursor *cursor = match_atoms_cursor_new(left, right, &seed, &source);
         assert(cursor && match_atoms_cursor_step(cursor, 0u) == CETTA_MATCH_CURSOR_PROGRESS);
-        assert(!match_atoms_cursor_epoch(cursor) && !cost.total.counts[CETTA_COST_MATCH_NODE]);
+        assert(cetta_frame_identity_is_none(match_atoms_cursor_epoch(cursor)) && !cost.total.counts[CETTA_COST_MATCH_NODE]);
         assert(match_atoms_cursor_step(cursor, 8u) == CETTA_MATCH_CURSOR_PROGRESS);
         assert(cost.total.counts[CETTA_COST_MATCH_NODE] == (shape == 3u ? 1u : 3u));
-        uint32_t epoch = match_atoms_cursor_epoch(cursor); assert(epoch);
+        CettaFrameIdentity epoch = match_atoms_cursor_epoch(cursor); assert(!cetta_frame_identity_is_none(epoch));
         VarId result_id = shape == 3u ? var_epoch_id(x->var_id, epoch) : x->var_id;
         SymbolId result_name = atom_symbol_current_id(x);
         Atom *expected_value = shape == 3u
@@ -2391,7 +2489,7 @@ static void test_retained_occurs_match(void) {
                 copy = match_atoms_cursor_copy_to_arena(cursor, &destination, session);
                 atom_deep_copy_session_free(session);
             }
-            assert(copy && match_atoms_cursor_epoch(copy) == epoch);
+            assert(copy && cetta_frame_identity_eq(match_atoms_cursor_epoch(copy), epoch));
             match_atoms_cursor_free(cursor); cursor = copy;
         }
         if (run == 2u) { bindings_free(&seed); arena_free(&source); }
@@ -2444,7 +2542,7 @@ static void test_retained_identity_audit(void) {
             root->expr.elems[1] = root;
         }
         Bindings oracle; bindings_init(&oracle);
-        CettaFrameIdentityScope reference = {0}; CettaFrameIdentity reference_epoch = 0u;
+        CettaFrameIdentityScope reference = {0}; CettaFrameIdentity reference_epoch = CETTA_FRAME_IDENTITY_NONE;
         assert(cetta_frame_identity_scope_try(&reference, &reference_epoch));
         assert(match_atoms_epoch(root, root, &oracle, &source, reference_epoch) == (shape != 3u));
         bindings_free(&oracle); cetta_frame_identity_scope_clear(&reference);
@@ -2453,10 +2551,10 @@ static void test_retained_identity_audit(void) {
         CettaMatchCursor *cursor = match_atoms_cursor_new(root, root, NULL, &source);
         uint64_t admitted = cost.total.work;
         assert(cursor && match_atoms_cursor_step(cursor, 0u) == CETTA_MATCH_CURSOR_PROGRESS);
-        assert(!match_atoms_cursor_epoch(cursor) && cost.total.work == admitted);
+        assert(cetta_frame_identity_is_none(match_atoms_cursor_epoch(cursor)) && cost.total.work == admitted);
         assert(match_atoms_cursor_step(cursor, 1u) == CETTA_MATCH_CURSOR_PROGRESS);
         assert(cost.total.counts[CETTA_COST_MATCH_NODE] == 1u);
-        uint32_t epoch = match_atoms_cursor_epoch(cursor); assert(epoch);
+        CettaFrameIdentity epoch = match_atoms_cursor_epoch(cursor); assert(!cetta_frame_identity_is_none(epoch));
         if (run) {
             assert(match_atoms_cursor_step(cursor, shape == 3u ? 2u : 70u) ==
                 CETTA_MATCH_CURSOR_PROGRESS);
@@ -2490,7 +2588,7 @@ static void test_retained_identity_audit(void) {
                 copy = match_atoms_cursor_copy_to_arena(cursor, &destination, session);
                 atom_deep_copy_session_free(session);
             }
-            assert(copy && match_atoms_cursor_epoch(copy) == epoch);
+            assert(copy && cetta_frame_identity_eq(match_atoms_cursor_epoch(copy), epoch));
             match_atoms_cursor_free(cursor); cursor = copy;
         }
         if (run == 2u) arena_free(&source);
@@ -2566,7 +2664,7 @@ static void test_retained_match_clone(Arena *arena) {
             cetta_native_cost_init(&cost);
             cetta_native_cost_scope_enter(&scope,&cost,1u);
             CettaMatchCursor *copy=match_atoms_cursor_clone(original);
-            assert(copy && match_atoms_cursor_epoch(copy)==match_atoms_cursor_epoch(original));
+            assert(copy && cetta_frame_identity_eq(match_atoms_cursor_epoch(copy), match_atoms_cursor_epoch(original)));
             assert(cost.total.counts[CETTA_COST_MATCH_NODE]==0u);
             assert(cost.total.counts[CETTA_COST_MATCH_ATTEMPT]==0u);
             assert(match_atoms_cursor_step(copy,0u)==CETTA_MATCH_CURSOR_PROGRESS);
@@ -2720,7 +2818,7 @@ static void test_retained_match_relocation(void) {
             CettaMatchCursor *original = match_atoms_cursor_new(query,row,&seed,&source);
             assert(original && match_atoms_cursor_step(original,cuts[cut])==
                    CETTA_MATCH_CURSOR_PROGRESS);
-            uint32_t epoch=match_atoms_cursor_epoch(original);
+            CettaFrameIdentity epoch=match_atoms_cursor_epoch(original);
             AtomDeepCopySession *session=atom_deep_copy_session_new(&destination);
             assert(!match_atoms_cursor_copy_to_arena(original,&source,session));
             assert(!match_atoms_cursor_copy_to_arena(original,&destination,session));
@@ -2766,7 +2864,7 @@ static void test_retained_match_relocation(void) {
             atom_deep_copy_session_free(stale);
             arena_free(&refused_need); arena_free(&refused); arena_free(&refused_inputs);
             CettaMatchCursor *copy=match_atoms_cursor_copy_to_arena(original,&destination,session);
-            assert(copy && match_atoms_cursor_epoch(copy)==epoch);
+            assert(copy && cetta_frame_identity_eq(match_atoms_cursor_epoch(copy), epoch));
             assert(cost.total.counts[CETTA_COST_MATCH_NODE]==0u &&
                    cost.total.counts[CETTA_COST_MATCH_ATTEMPT]==0u);
             assert(match_atoms_cursor_step(copy,0u)==CETTA_MATCH_CURSOR_PROGRESS);
@@ -2836,7 +2934,7 @@ static void test_retained_match_worklist(TermUniverse *universe, Arena *scratch)
         right=atom_expr2(scratch,head,right);
     }
     Atom *x=atom_var_with_spelling(scratch,
-        symbol_intern_cstr(g_symbols,"cursor-deep-x"),UINT64_C(82001));
+        symbol_intern_cstr(g_symbols,"cursor-deep-x"),var_id_from_base(UINT64_C(82001)));
     Atom *query_items[]={head,x,left,x};
     Atom *row_items[]={head,atom_int(scratch,11),right,atom_int(scratch,11)};
     Atom *query=atom_expr(scratch,query_items,4u);
@@ -2846,7 +2944,7 @@ static void test_retained_match_worklist(TermUniverse *universe, Arena *scratch)
     Bindings conservative;
     bindings_init(&conservative);
     Atom *seed_var=atom_var_with_spelling(scratch,
-        symbol_intern_cstr(g_symbols,"cursor-seed"),UINT64_C(82003));
+        symbol_intern_cstr(g_symbols,"cursor-seed"),var_id_from_base(UINT64_C(82003)));
     assert(bindings_add_var(&conservative,seed_var,atom_int(scratch,13)));
     assert(bindings_invalidate_after_key_rewrite(&conservative));
     for (unsigned run=0u;run<3u;run++) {
@@ -2856,17 +2954,17 @@ static void test_retained_match_worklist(TermUniverse *universe, Arena *scratch)
         CettaNativeCostScope scope;
         cetta_native_cost_init(&cost);
         cetta_native_cost_scope_enter(&scope,&cost,1u);
-        assert(match_atoms_cursor_epoch(cursor)==0u);
+        assert(cetta_frame_identity_is_none(match_atoms_cursor_epoch(cursor)));
         assert(match_atoms_cursor_step(cursor,0u)==CETTA_MATCH_CURSOR_PROGRESS);
-        assert(match_atoms_cursor_epoch(cursor)==0u);
+        assert(cetta_frame_identity_is_none(match_atoms_cursor_epoch(cursor)));
         assert(cost.total.work==0u);
         CettaMatchCursorStep step=CETTA_MATCH_CURSOR_PROGRESS;
-        uint32_t activation=0u;
+        CettaFrameIdentity activation=CETTA_FRAME_IDENTITY_NONE;
         for (unsigned poll=0u;poll<1000u && step==CETTA_MATCH_CURSOR_PROGRESS;poll++) {
             uint64_t previous=cost.total.counts[CETTA_COST_MATCH_NODE];
             step=match_atoms_cursor_step(cursor,grants[run]);
-            if(!activation)activation=match_atoms_cursor_epoch(cursor);
-            assert(activation && match_atoms_cursor_epoch(cursor)==activation);
+            if(cetta_frame_identity_is_none(activation))activation=match_atoms_cursor_epoch(cursor);
+            assert(!cetta_frame_identity_is_none(activation) && cetta_frame_identity_eq(match_atoms_cursor_epoch(cursor), activation));
             assert(cost.total.counts[CETTA_COST_MATCH_NODE]-previous<=grants[run]);
             uint64_t work=cost.total.work;
             assert(match_atoms_cursor_step(cursor,0u)==step);
@@ -2913,7 +3011,7 @@ static void test_retained_match_worklist(TermUniverse *universe, Arena *scratch)
     /* A contextual stored variable is copied by the canonical transport.
      * Its fresh frame is owned after the suspended matcher is destroyed. */
     Atom *v=atom_var_with_spelling(scratch,
-        symbol_intern_cstr(g_symbols,"cursor-stored"),UINT64_C(82002));
+        symbol_intern_cstr(g_symbols,"cursor-stored"),var_id_from_base(UINT64_C(82002)));
     Atom *open=atom_expr2(scratch,head,v);
     Atom *open_query=binary(scratch,g_builtin_syms.comma,x,x);
     Atom *open_row=binary(scratch,g_builtin_syms.comma,open,open);
@@ -2934,7 +3032,7 @@ static void test_retained_match_worklist(TermUniverse *universe, Arena *scratch)
     assert(bindings_add_var(&bad,v,atom_int(scratch,11)));
     assert(bindings_prepare_logical_write(&bad));
     for (uint32_t i=0u;i<bad.len;i++)
-        if (bad.entries[i].var_id==v->var_id) bad.entries[i].value.skeleton=x;
+        if (var_id_eq(bad.entries[i].var_id,v->var_id)) bad.entries[i].value.skeleton=x;
     assert(bindings_invalidate_after_key_rewrite(&bad));
     assert(bindings_has_loop(&bad));
     cursor=match_atoms_cursor_new(x,atom_int(scratch,11),&bad,scratch);
@@ -3125,7 +3223,7 @@ static void test_owned_builder_need_graph(void) {
     BindingsBuilder original,copy;
     assert(bindings_builder_init(&original,&seed));
     uint32_t mark=bindings_builder_save(&original);
-    assert(bindings_builder_add_id_fresh(&original,98701u,SYMBOL_ID_NONE,value));
+    assert(bindings_builder_add_id_fresh(&original,var_id_from_base(98701u),SYMBOL_ID_NONE,value));
     *bindings_need_mut(&original.current)=current;
     assert(original.prime_trail_len==1u &&
         original.prime_trail[0].prime_need.top==completed.top &&
@@ -3370,7 +3468,7 @@ static void test_owned_receipt_factor_rollback(void) {
     BindingsBuilder original,copied;
     assert(bindings_builder_init(&original,&seed));
     uint32_t mark=bindings_builder_save(&original);
-    assert(bindings_builder_add_id_fresh(&original,881991u,SYMBOL_ID_NONE,atom_int(&source,4)));
+    assert(bindings_builder_add_id_fresh(&original,var_id_from_base(881991u),SYMBOL_ID_NONE,atom_int(&source,4)));
     *bindings_branch_state_mut(&original.current)=next;
     assert(original.prime_trail_len==1u && original.prime_trail[0].branch_state.top==branch.top &&
         original.prime_trail[0].weights.last==weights.last &&
@@ -3450,14 +3548,14 @@ static void test_reset_releases_storage_after_readers(
         space_free(&space);
         for (CettaIndex expected = 0u; expected < ROWS; expected++) {
             CettaIndex index = UINT64_MAX;
-            assert(space_occurrence_cursor_next(&second, &index) ==
+            assert(space_occurrence_cursor_next(&second, &index, NULL) ==
                    SPACE_OCCURRENCE_CURSOR_ITEM);
             assert(index == expected);
             assert(atom_eq(space_occurrence_cursor_atom(&second, index),
                 term_universe_get_atom(universe, values[expected % 2u])));
         }
         CettaIndex end = UINT64_MAX;
-        assert(space_occurrence_cursor_next(&second, &end) == SPACE_OCCURRENCE_CURSOR_END);
+        assert(space_occurrence_cursor_next(&second, &end, NULL) == SPACE_OCCURRENCE_CURSOR_END);
         space_occurrence_cursor_release(&second);
 #if CETTA_BUILD_WITH_RUNTIME_STATS
         cetta_runtime_stats_snapshot(&after);
@@ -3495,7 +3593,7 @@ static void test_lazy_merge_and_independent_clones(
         assert(source.leaf_pos[node] == 0u);
     for (CettaIndex expected = 0u; expected < PREFIX; expected++) {
         CettaIndex index;
-        assert(space_occurrence_cursor_next(&source, &index) ==
+        assert(space_occurrence_cursor_next(&source, &index, NULL) ==
                SPACE_OCCURRENCE_CURSOR_ITEM);
         assert(index == expected);
     }
@@ -3519,7 +3617,7 @@ static void test_lazy_merge_and_independent_clones(
     /* Detachment keeps the old trie and rows alive after the live space goes. */
     space_free(&space);
     CettaIndex next;
-    assert(space_occurrence_cursor_next(&source, &next) ==
+    assert(space_occurrence_cursor_next(&source, &next, NULL) ==
            SPACE_OCCURRENCE_CURSOR_ITEM);
     assert(next == PREFIX);
     space_occurrence_cursor_release(&source);
@@ -3529,15 +3627,15 @@ static void test_lazy_merge_and_independent_clones(
         CettaIndex first = reader == 1u ? 0u : PREFIX;
         for (CettaIndex expected = first; expected < ROWS; expected++) {
             CettaIndex index;
-            assert(space_occurrence_cursor_next(cursors[reader], &index) ==
+            assert(space_occurrence_cursor_next(cursors[reader], &index, NULL) ==
                    SPACE_OCCURRENCE_CURSOR_ITEM);
             assert(index == expected);
             assert(atom_eq(space_occurrence_cursor_atom(cursors[reader], index),
                            term_universe_get_atom(universe, rows[expected])));
         }
-        assert(space_occurrence_cursor_next(cursors[reader], NULL) ==
+        assert(space_occurrence_cursor_next(cursors[reader], NULL, NULL) ==
                SPACE_OCCURRENCE_CURSOR_END);
-        assert(space_occurrence_cursor_next(cursors[reader], NULL) ==
+        assert(space_occurrence_cursor_next(cursors[reader], NULL, NULL) ==
                SPACE_OCCURRENCE_CURSOR_END);
         space_occurrence_cursor_release(cursors[reader]);
     }
@@ -3564,7 +3662,7 @@ static void test_full_frontier_sequence(TermUniverse *universe, Arena *scratch) 
     assert(source.full_scan && source.node_len == 0u && !source.heap && !source.flat);
     for (CettaIndex expected = 0u; expected < PREFIX; expected++) {
         CettaIndex index;
-        assert(space_occurrence_cursor_next(&source, &index) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(space_occurrence_cursor_next(&source, &index, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
         assert(index == expected);
     }
     assert(space_occurrence_cursor_clone(&source, &exact));
@@ -3579,10 +3677,10 @@ static void test_full_frontier_sequence(TermUniverse *universe, Arena *scratch) 
     assert(!partial.full_scan && partial.node_len > 0u);
     for (CettaIndex expected = 0u; expected < ROWS; expected++) {
         CettaIndex index;
-        assert(space_occurrence_cursor_next(&partial, &index) == SPACE_OCCURRENCE_CURSOR_ITEM);
+        assert(space_occurrence_cursor_next(&partial, &index, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
         assert(index == expected);
     }
-    assert(space_occurrence_cursor_next(&partial, NULL) == SPACE_OCCURRENCE_CURSOR_END);
+    assert(space_occurrence_cursor_next(&partial, NULL, NULL) == SPACE_OCCURRENCE_CURSOR_END);
     space_occurrence_cursor_release(&partial);
     assert(space_remove_atom_id(&space, rows[0]));
     space_occurrence_cursor_release(&source);
@@ -3591,12 +3689,12 @@ static void test_full_frontier_sequence(TermUniverse *universe, Arena *scratch) 
     for (size_t reader = 0u; reader < 2u; reader++) {
         for (CettaIndex expected = reader ? 0u : PREFIX; expected < ROWS; expected++) {
             CettaIndex index;
-            assert(space_occurrence_cursor_next(readers[reader], &index) == SPACE_OCCURRENCE_CURSOR_ITEM);
+            assert(space_occurrence_cursor_next(readers[reader], &index, NULL) == SPACE_OCCURRENCE_CURSOR_ITEM);
             assert(index == expected);
             assert(atom_eq(space_occurrence_cursor_atom(readers[reader], index),
                            term_universe_get_atom(universe, rows[expected])));
         }
-        assert(space_occurrence_cursor_next(readers[reader], NULL) == SPACE_OCCURRENCE_CURSOR_END);
+        assert(space_occurrence_cursor_next(readers[reader], NULL, NULL) == SPACE_OCCURRENCE_CURSOR_END);
         space_occurrence_cursor_release(readers[reader]);
     }
     puts("PASS: full frontier uses a pinned occurrence sequence; partial frontiers keep branch selection, clones preserve position and duplicate rows survive removal and cancellation");
@@ -4160,6 +4258,7 @@ int main(void) {
     test_repeated_churn_is_amortized(&universe, &scratch);
     test_leaf_registry_against_ground_rows(&scratch);
     test_occurrence_cursor_exact_clone(&universe, &scratch);
+    test_occurrence_cursor_fused_delivery();
     test_atom_id_removal_preserves_pinned_view(&universe, &scratch);
     test_retained_query_rows(&universe, &scratch);
     const SpaceEngine overlay_engines[]={SPACE_ENGINE_NATIVE,SPACE_ENGINE_NATIVE_CANDIDATE_EXACT};

@@ -311,7 +311,8 @@ static bool eval_work_start_general_reopened(EvalWork *work, Arena *scratch,
         work->language) ==
         CETTA_PORTABLE_RELATIONAL_EAGER_STRUCTURAL_EQUATIONS_V1;
     bool source_output_constraints = !portable &&
-        petta_eval_machine_source_output_constraints_required(space, source);
+        cetta_language_call_result_policy(work->language) ==
+            CETTA_CALL_RESULT_BY_DESTINATION;
     work->portable = portable;
     /* The host takes HE's rules from the shared execution's flags, as the
      * HE driver sets them around its machine. */

@@ -75,9 +75,32 @@ bool eval_prime_source_owner_is_current(const CettaPrimeSourceOwner *);
  * Calls and callbacks are serialized. The source's intern contexts remain
  * live. Shared admission and publication must supply their own compatibility
  * gate and complete return capture; a loan does not confer those permissions.
+ * Reusable values retain their runtime term and complete logical/Need world;
+ * the receiver consumes both together. This is distinct from atoms-only
+ * observation or explicit storage reification. A receiver retains the owning
+ * services and threads each invocation's resulting world; replaying an old
+ * immutable image restarts its captured Need state rather than updating it.
  * Unsupported admission performs no synchronous evaluation fallback. */
 CettaContinuationStatus eval_prime_source_execution_open(
     CettaPrimeSourceOwner *, uint64_t quantum, CettaOwnedExecution *);
+
+/* Select conserved finite work before this fresh provider has run. Reserve
+ * amount from the caller's existing cell; refusal changes neither owner.
+ * The private lease moves with the execution, including through a shared
+ * producer. Actual controller work spends it, even on failure or suspension;
+ * cancellation returns only unspent credit. Pending delivery does not repeat
+ * producer work. Preparation, capture, delivery and service time have separate
+ * accounts. NULL payer leaves the ordinary unmetered provider selected. No
+ * per-step credit check is added to that ordinary provider. */
+CettaContinuationStatus eval_prime_source_execution_fund(
+    CettaOwnedExecution *, CettaWorkCredit *payer, uint64_t amount);
+/* Transfer a later tranche to the same funded, nonterminal provider. The
+ * supplied payer belongs to its bank; refusal changes neither cell. Paid
+ * work, the complete residual, history and a pending loan remain untouched.
+ * Unused donated credit returns to the original reservation parent on close.
+ * This does not replenish a host's independently selected total-work limit. */
+bool eval_prime_source_execution_add_credit(
+    const CettaOwnedExecution *, CettaWorkCredit *payer, uint64_t amount);
 
 /* Read-only source/service currency check for this actual quiescent driver.
  * It also applies after movement into a host task. A host combines it with
@@ -91,6 +114,18 @@ bool eval_prime_source_execution_is_current(const CettaOwnedExecution *);
  * Neither operation replenishes a host's separate total-work purse. */
 bool eval_prime_source_execution_work(const CettaOwnedExecution *, uint64_t *);
 bool eval_prime_source_execution_set_quantum(const CettaOwnedExecution *, uint64_t);
+/* Select one preparation slice per provider invocation without advancing it.
+ * NULL restores unlimited preparation. A source provider loans its result;
+ * destination transport belongs to its consumer, so a transport limit is
+ * refused here. The same raw row and partial reification survive policy
+ * changes, zero slices and shared-driver moves. The work view reports the
+ * explicitly sliced preparation steps accumulated by this owner; unlimited
+ * untouched preparation has no traversal counter. Controller credit, callback
+ * counts and primitive/time prices remain separate. */
+bool eval_prime_source_execution_set_return_slice(
+    const CettaOwnedExecution *, const CettaPrimeReturnSlice *);
+bool eval_prime_source_execution_return_work(
+    const CettaOwnedExecution *, CettaPrimeReturnWork *);
 
 /* These operations require the actual live source driver, including after
  * movement into the shared producer. Calls are serialized and the provider

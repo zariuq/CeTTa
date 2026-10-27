@@ -175,6 +175,83 @@ static void read_view_controls(Arena *arena) {
     registry_free(&source);
 }
 
+static void passive_read_controls(Arena *arena) {
+    Registry source;
+    registry_init(&source);
+    SymbolId key = symbol_intern_cstr(g_symbols, "&passive-input");
+    SymbolId absent = symbol_intern_cstr(g_symbols, "&passive-absent");
+    Atom *two = atom_int(arena, 2), *nine = atom_int(arena, 9);
+    registry_bind_id(&source, key, two);
+    RegistryReadView passive, frozen;
+    CHECK(registry_read_view_init_passive(&passive, arena), "create a passive dependency observer");
+    RegistryReadView *previous = registry_read_view_enter(&passive, &source);
+    CHECK(registry_lookup_id(&source, key) == two, "passive lookup returns the exact live value");
+    registry_bind_id(&source, key, nine);
+    CHECK(registry_lookup_id(&source, key) == nine && passive.stale,
+          "a later live value is returned even when reuse evidence becomes stale");
+    registry_read_view_leave(previous);
+    CHECK(!registry_read_view_validate(&passive, &source), "changed observation cannot authorize reuse");
+    registry_read_view_free(&passive);
+
+    registry_bind_id(&source, key, two);
+    CHECK(registry_read_view_init(&frozen, &source, arena) &&
+          registry_read_view_init_passive(&passive, arena), "frozen selection and passive observation coexist");
+    previous = registry_read_view_enter(&frozen, &source);
+    RegistryReadView *outer = registry_read_view_enter(&passive, &source);
+    registry_bind_id(&source, key, nine);
+    Atom *selected = registry_lookup_id(&source, key);
+    CHECK(atom_capture_identical(selected, two) && selected != nine &&
+          atom_capture_identical(registry_lookup_id(&passive.consulted, key), two),
+          "passive capture records the selected admitted value rather than the unselected live value");
+    registry_read_view_leave(outer);
+    registry_read_view_leave(previous);
+    registry_read_view_free(&passive); registry_read_view_free(&frozen);
+
+    CHECK(registry_read_view_init_passive(&passive, arena), "create passive absence capture");
+    previous = registry_read_view_enter(&passive, &source);
+    CHECK(!registry_lookup_id(&source, absent), "passive capture includes a failed name lookup");
+    registry_read_view_leave(previous);
+    CHECK(registry_read_view_validate(&passive, &source), "unchanged absence remains current");
+    registry_bind_id(&source, absent, two);
+    CHECK(!registry_read_view_validate(&passive, &source), "a newly present name invalidates the absent read");
+    registry_read_view_free(&passive);
+
+    Atom *name = descriptor(arena, "passive-structured");
+    registry_bind_name(&source, name, two);
+    CHECK(registry_read_view_init_passive(&passive, arena), "create structural-name observer");
+    previous = registry_read_view_enter(&passive, &source);
+    CHECK(registry_lookup_name(&source, name) == two &&
+          registry_lookup(&source, "&passive-input") == nine,
+          "structured and text lookup routes preserve their exact selected values");
+    registry_read_view_leave(previous);
+    CHECK(registry_read_view_validate(&passive, &source), "all observed lookup routes validate together");
+    registry_read_view_free(&passive);
+
+    CHECK(registry_read_view_init_passive(&passive, arena), "create capacity-refusal observer");
+    passive.consulted.len = UINT32_MAX;
+    previous = registry_read_view_enter(&passive, &source);
+    CHECK(registry_lookup_id(&source, key) == nine && passive.incomplete,
+          "dependency insertion refusal never substitutes a missing lookup");
+    CHECK(registry_read_view_init(&frozen, &source, arena),
+          "a failed passive observer does not invalidate a nested admitted view");
+    registry_read_view_free(&frozen);
+    registry_read_view_leave(previous);
+    passive.consulted.len = 0u;
+    registry_read_view_free(&passive);
+
+    StateCell a = {.value = two}, b = {.value = two};
+    registry_bind_id(&source, key, atom_state(arena, &a));
+    CHECK(registry_read_view_init(&frozen, &source, arena), "capture a mutable handle as an input dependency");
+    previous = registry_read_view_enter(&frozen, &source);
+    registry_bind_id(&source, key, atom_state(arena, &b));
+    Atom *held = registry_lookup_id(&source, key);
+    CHECK(held && held->ground.ptr == &a && frozen.stale &&
+          !registry_read_view_validate(&frozen, &source),
+          "rebinding to an equal-valued different State is a changed input");
+    registry_read_view_leave(previous); registry_read_view_free(&frozen);
+    registry_free(&source);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -190,6 +267,7 @@ int main(void) {
     g_var_intern = NULL;
     arena_init(&arena);
     read_view_controls(&arena);
+    passive_read_controls(&arena);
     registry_init(&local_a);
     registry_init(&local_b);
     registry_init(&private_c);

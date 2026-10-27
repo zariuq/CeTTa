@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#if CETTA_BUILD_WITH_DURABLE
+#if CETTA_BUILD_WITH_SQLITE
 #include <sqlite3.h>
 
 static const char *text(Atom *value) {
@@ -218,12 +218,12 @@ Atom *cetta_sqlite_dispatch(Arena *arena, Atom *head, Atom **args, uint32_t narg
     SymbolId id = atom_symbol_current_id(head);
     if (id != g_builtin_syms.lib_sqlite_query && id != g_builtin_syms.lib_sqlite_transaction &&
         id != g_builtin_syms.lib_sqlite_observe) return NULL;
-#if CETTA_BUILD_WITH_DURABLE
+#if CETTA_BUILD_WITH_SQLITE
     if (nargs != 4) return failure(arena, SQLITE_MISUSE, "expected four SQLite arguments", false);
     return run(arena, args, nargs, id == g_builtin_syms.lib_sqlite_transaction,
                id == g_builtin_syms.lib_sqlite_observe);
 #else
-    (void)args; (void)nargs;
-    return atom_error(arena, head, atom_string(arena, "SQLite support requires ENABLE_DURABLE=1"));
+    (void)arena; (void)args; (void)nargs;
+    return NULL;
 #endif
 }

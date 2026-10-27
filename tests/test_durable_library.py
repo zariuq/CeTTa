@@ -2,7 +2,7 @@
 """Exercise the real MeTTa boundary in fresh, private local databases."""
 import pathlib
 import re
-import sqlite3
+from support.durable_journal_fixture import damage_value
 import subprocess
 import sys
 import tempfile
@@ -93,13 +93,26 @@ def main():
                 '(superpose ((durable:close) (durable:checkpoint)))',
                 '(collapse (durable:read "*"))',
             ]
+            if language == "he":
+                probes.append(f'(metta {attempt} %Undefined% &self)')
             for probe in probes:
                 source = opening + f'(= (hidden-commit) {attempt})\n!{probe}\n!(durable:read "outbox")\n!(durable:close)\n'
                 lines = run(binary, language, directory, source)
-                assert any('commit-boundary-required' in line for line in lines), (language, probe, lines)
+                if language == "he" and probe.startswith("(eval "):
+                    # HE eval takes one step, exposing the inert native request;
+                    # the full interpreter below must still refuse its execution.
+                    expected = attempt.replace("durable:commit", "__cetta_lib_durable_commit").replace(epoch, "EPOCH")
+                    assert lines[1] == expected, (language, probe, lines)
+                else:
+                    assert any('commit-boundary-required' in line for line in lines), (language, probe, lines)
                 assert lines[-2] == ('(durable:snapshot "EPOCH" 2 ('
                     '(durable:record "outbox" "send:1" (send "test" "reply"))))'), lines
                 assert lines[-1] == '(durable:closed)', lines
+            # The raw batch boundary must publish completed refusal as data,
+            # preserve its environment, and never execute a stored operand.
+            source = '!(durable:commit "no-authority" 0 ((durable:insert "state" "raw" (println! "BATCH_EXECUTED"))))\n'
+            lines = run(binary, language, directory, source, admin=False)
+            assert lines[-1] == denied and not any("BATCH_EXECUTED" in line for line in lines), lines
             # COMM executes a deferred payload in its own evaluator invocation.
             # It must not gain the CLI's administrative authority.
             source = opening + '!(import! &self rhometta)\n'
@@ -120,11 +133,9 @@ def main():
                         f'!(import! &self "{imported}")\n!(durable:read "outbox")\n!(durable:close)\n')
             assert lines[-2] == ('(durable:snapshot "EPOCH" 2 ('
                 '(durable:record "outbox" "send:1" (send "test" "reply"))))'), lines
-            # Keep the two durable representations coherent but damage a value.
-            # The read reports its identity and other spaces remain inspectable.
-            with sqlite3.connect(directory / "coordination.db") as db:
-                for table in ("records", "checkpoint"):
-                    db.execute(f"UPDATE {table} SET value=CAST('X' || substr(value,2) AS BLOB) WHERE key='inert'")
+            # A well-framed but invalid application codec must identify the
+            # damaged occurrence without interpreting it or hiding other rows.
+            damage_value(directory / "coordination.db", "inert")
             lines = run(binary, language, directory, opening + '!(durable:read "state")\n!(durable:close)\n')
             assert lines[0] == '(durable:failure corrupt "data" "inert")', lines
             assert lines[1] == ('(durable:snapshot "EPOCH" 2 ('

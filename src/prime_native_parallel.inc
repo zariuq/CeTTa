@@ -366,7 +366,7 @@ static bool prime_native_parallel_read_service_admitted(PrimeNativeControl *chil
      * A relation-safety cache miss in a shared scope has no compiled plans
      * and cannot decide this service's authority. */
     SymbolId head = atom_head_symbol_id(call);
-    if (head != SYMBOL_ID_NONE && !symbol_id_is_builtin(head) &&
+    if (head != SYMBOL_ID_NONE && !symbol_id_is_builtin_for(head, eval_current_language_id()) &&
         prime_native_guest_call(space, arena, call) == PRIME_NATIVE_GUEST_REQUIRED &&
         eval_equations_may_match_known_head(space, head))
         return true;
@@ -492,6 +492,22 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     Arena *arena = owner->driver.arena;
     Atom *expression = bindings_apply_if_vars(&task->dynamic_env, arena, task->atom);
     const PrimeNeedSnapshot *need = bindings_need_view(&task->dynamic_env);
+    /* A yielding coordinator call may return a retained computation tied
+     * to its original world. Keep that continuation before worker copying.
+     * Stateless effects retain the existing actual-call rendezvous. Values
+     * do not invoke a head and keep their ordinary transport. */
+    if (!expression) return false;
+    if ((task->kind == PRIME_EVAL_STACK_TASK_BIND ||
+         task->kind == PRIME_EVAL_STACK_TASK_CALL) &&
+        !prime_is_completed_value(expression) && !atom_prime_held_is(expression) &&
+        !prime_observation_value_barrier(task->space, arena, expression) &&
+        !prime_runtime_authored_lambda(task->space, arena, expression)) {
+        CettaGsltNativeCallAdvice advice =
+            prime_native_call_advice(task->space, arena, expression);
+        if (advice.placement == CETTA_GSLT_PLACEMENT_COORDINATOR &&
+            advice.progress == CETTA_GSLT_PROGRESS_YIELDING)
+            return false;
+    }
     PrimeNativeOwnedRegion *region=prime_native_episode_region(owner->owned_top_episode);
     if (region && region->private_data &&
         !prime_native_expression_safe(task->space,arena,expression,need))
@@ -1108,7 +1124,7 @@ static bool prime_native_need_scalar_share_admitted(Space *space, Atom *origin) 
         cetta_prepared_pure_constructs_expression_always, NULL,
         cetta_prepared_pure_register_view, view, NULL, &source, false,
         active_composition_uses_total_structural_eq(),
-        prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_CALL_BY_NEED));
+        prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_CALL_BY_NEED), NULL);
     bool admitted = certificate && cetta_prepared_pure_program_is_current(certificate) &&
         cetta_prepared_pure_program_all_heads_determinate(certificate);
     cetta_prepared_pure_program_free(certificate);
@@ -1342,7 +1358,7 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_task_ker
     CettaLibraryContext *library = g_library_context;
     EvalContextState previous_context = eval_context_capture();
     HashConsTable *hashcons = g_hashcons;
-    EvalCompletionTracker *tracker = g_eval_completion_tracker;
+    CettaEvalEpisode *tracker = g_eval_completion_tracker;
     VariantBank *variants = g_owned_outcome_variant_bank;
     TempSpaceSet temporary = g_temp_spaces, created = g_new_space_track;
     const PettaProgramRevisionProjection *projection = g_petta_program_revision_projection;
@@ -1354,7 +1370,7 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_task_ker
         parallel->created_spaces = (TempSpaceSet){0};
     }
     g_owned_outcome_variant_bank = &parallel->variants;
-    EvalCompletionTracker completion = {.completion = CETTA_EVAL_COMPLETE};
+    CettaEvalEpisode completion = {.completion = CETTA_EVAL_COMPLETE};
     _Atomic bool *cancel = eval_set_cancel_token(&run->cancelled);
     EvalTermUniverseScope universe = {0};
     eval_term_universe_scope_enter(&universe, resource_execution

@@ -111,6 +111,7 @@ tests/prime/need_explicit_control_negative.metta	prime	metta		any	native	test-pr
 tests/prime/need_gc_lifetime.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_judgment_operands.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_native_operands.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
+tests/prime/need_quote_preservation.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_sequential_unification_refinement.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/need_storage_boundary.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/nik_plural_checking.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -604,6 +605,7 @@ tests/test_lib_parse_metamath_theorem_length_ladder_native.metta	he	metta	extend
 tests/test_lib_parse_metamath_theorem_normal_v0.metta	he	metta	extended	main	native	test-heavy	golden	heavy backend golden regression
 tests/test_lib_parse_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lib_parse_shared_cert_regression.metta	he	metta	extended	main	native	test	golden	-
+tests/test_list_sequence_consumers.metta	he	metta	extended	main	native	test	golden	-
 tests/test_list_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_log_math_bad_type.metta	he	metta	extended	main	native	test	golden	-
 tests/test_lts_he_argument_effects.metta	he	metta	extended	main	native	test	golden	-

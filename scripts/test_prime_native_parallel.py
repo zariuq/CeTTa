@@ -305,11 +305,8 @@ def equation_dependencies(gate):
             f'(= (entry $x) (select 10 {policy(workers,50000,3)} (jobs $x))) !(entry (coin))')
         result=results[-1]
         assert result['closed']=='True' and bag(result['values'])==bag(expected),result
-        assert gate.receipts[-1]['stdout'].splitlines().count('ROW-PRODUCER')==2
-        if workers>1:
-            assert any(x[4]=='Suspended' and x[5]=='Equation'
-                       for x in result.get('need-barriers',[])),result
-        gate.passed_case(f'physical rows own independent worlds with internal shared choice workers={workers}')
+        assert gate.receipts[-1]['stdout'].splitlines().count('ROW-PRODUCER')==1
+        gate.passed_case(f'physical rows retain duplicate answers while sharing qualified production workers={workers}')
     for workers in (1,2,4):
         for budget in (1,29,97,211):
             program=source+f'(= (entry $x) (select 10 {policy(workers,budget,3,evidence=False)} (jobs $x))) '
@@ -317,8 +314,75 @@ def equation_dependencies(gate):
             program+=f'!(let {PATTERN} &checkpoint (Split $v (select 10 {policy(workers,50000,3,evidence=False)} $r)))'
             trees,results=gate.run(f'equation worlds across episodes workers={workers} budget={budget}',program)
             assert results[-1]['closed']=='True' and bag(trees[-1][0][1]+results[-1]['values'])==bag(expected),(trees,results)
-            assert gate.receipts[-1]['stdout'].splitlines().count('ROW-PRODUCER')==2
+            assert gate.receipts[-1]['stdout'].splitlines().count('ROW-PRODUCER')==1
             gate.passed_case(f'equation alternative choices survive episode retirement workers={workers} budget={budget}')
+
+    # Fresh execution is explicit. Each physical row resamples once, and
+    # repeated uses within that row still share its selected result.
+    fresh=source.replace('(jobs $x) (+ $x $x)',
+        '(jobs $x) (let $fresh (force (resample $x)) (+ $fresh $fresh))')
+    for workers in (1,2,4):
+        _,results=gate.run(f'explicit row resampling workers={workers}',fresh+
+            f'(= (entry $x) (select 10 {policy(workers,50000,3)} (jobs $x))) !(entry (coin))')
+        assert results[-1]['closed']=='True' and bag(results[-1]['values'])==bag(expected),results
+        assert gate.receipts[-1]['stdout'].splitlines().count('ROW-PRODUCER')==2
+        gate.passed_case(f'explicit resampling gives distinct row executions workers={workers}')
+
+    # Publishing a constructor may allocate private lazy fields. Both row
+    # consumers must retain their complete returned world, including duplicates.
+    source=('(= (field) (superpose (A A B))) (= (make) (Box (field))) '
+            '(= (take (Box $v)) (Pair $v $v)) '
+            '(= (jobs $x) (take $x)) (= (jobs $x) (take $x)) ')
+    expected=[['Pair','A','A']]*4+[['Pair','B','B']]*2
+    for workers in (1,2,4):
+        _,results=gate.run(f'private lazy constructor world workers={workers}',source+
+            f'(= (entry $x) (select 20 {policy(workers,50000,1)} (jobs $x))) !(entry (make))')
+        result=results[-1]
+        assert result['closed']=='True' and bag(result['values'])==bag(expected),result
+        check_cost(result)
+        gate.passed_case(f'both consumers retain a constructor private Need field workers={workers}')
+        for budget in (1,29,97):
+            program=source+f'(= (entry $x) (select 20 {policy(workers,budget,1,evidence=False)} (jobs $x))) '
+            program+='!(bind! &checkpoint (entry (make))) '
+            program+=f'!(let {PATTERN} &checkpoint (Split $v (select 20 {policy(workers,50000,1,evidence=False)} $r)))'
+            trees,results=gate.run(f'private lazy constructor split workers={workers} budget={budget}',program)
+            assert results[-1]['closed']=='True' and bag(trees[-1][0][1]+results[-1]['values'])==bag(expected),(trees,results)
+            gate.passed_case(f'private constructor fields survive episode retirement workers={workers} budget={budget}')
+
+    # Answer occurrences remain physical duplicates. A shared field keeps
+    # its factor identity in both answers; outer grades and fresh executions
+    # have distinct occurrences even when their scalar values agree.
+    weighted_fields=[
+        ('shared field','(= (field) (weight:where 7 3))',
+         '(take $x)','(take $x)',[(3,[3]),(3,[3])],1),
+        ('outer grades','(= (field) (weight:where 7 3))',
+         '(weight:where (take $x) 11)','(weight:where (take $x) 13)',
+         [(33,[11,3]),(39,[13,3])],3),
+        ('mixed ordinary and graded field','(= (field) 7) (=w (field) 7 3)',
+         '(take $x)','(take $x)',[(1,[]),(1,[]),(3,[3]),(3,[3])],1),
+        ('resampled field','(= (field) (weight:where 7 3))',
+         '(take (force (resample $x)))','(take (force (resample $x)))',
+         [(3,[3]),(3,[3])],2)]
+    for name,field,left,right,expected,distinct_factors in weighted_fields:
+        source=(field+' (= (make) (Box (field))) '
+                '(= (take (Box $v)) (Pair $v $v)) '+
+                f'(= (jobs $x) {left}) (= (jobs $x) {right}) ')
+        for workers in (1,2,4):
+            _,results=gate.run(f'private weighted return {name} workers={workers}',source+
+                f'(= (entry $x) (select 20 {policy(workers,50000,1)} '
+                '(weight:read (algebra 0 1 + *) (jobs $x)))) !(entry (make))')
+            result=results[-1];values=result['values']
+            assert result['closed']=='True',result
+            actual=[(value[2],[f[3] for f in value[3][1]]) for value in values]
+            assert bag(actual)==bag(expected) and all(value[:2]==['Weighted',['Pair',7,7]]
+                for value in values),result
+            factors=[f[1] for value in values for f in value[3][1]]
+            assert len(set(factors))==distinct_factors,result
+            assert all(len({f[1] for f in value[3][1]})==len(value[3][1]) for value in values),result
+            counters={x[1]:x[2] for x in check_cost(result)['operations']}
+            assert counters['coefficient-append']==distinct_factors,result
+            assert counters['coefficient-handle']==len(factors),result
+            gate.passed_case(f'private weighted fields conserve row occurrences and ordered factors: {name} workers={workers}')
 
 
 def force_dependencies(gate):
@@ -669,8 +733,27 @@ def receipt_capture(gate):
         assert counts['equation-activation'] == 29, fields
         if workers == 2:
             assert counts['worker-dispatch'] > 0 and counts['worker-join'] > 0, fields
-            assert fields['span'][0] == 'ForkJoin', fields
+            # A two-worker allowance can place every tiny slice on one worker.
+            # Its honest sequential account then has span equal to work.
+            if fields['span'][0] == 'Sequential':
+                assert fields['span'][1] == fields['work'], fields
         gate.passed_case(f'outer meter retains receipt-free inner worker execution workers={workers}')
+
+    _, results = gate.run('outer span agrees with actual inner placement', source +
+        f'!(cost:run (select 10 {policy(2,30000,5)} (jobs)))')
+    outer = results[-1]
+    inner = {'values': outer['values'][0][1], **dict(outer['values'][0][2:])}
+    assert outer['closed'] == inner['closed'] == 'True', results
+    assert bag(inner['values']) == bag([78,91]), inner
+    waves = inner.get('parallel-waves', [])
+    assert waves, inner
+    placed_parallel = any(
+        len({branch[5] for branch in wave[2] if branch[8] == phase}) > 1
+        for wave in waves for phase in {branch[8] for branch in wave[2]})
+    expected_span = 'ForkJoin' if placed_parallel else 'Sequential'
+    assert check_cost(outer)['span'][0] == expected_span, outer
+    assert check_cost(inner)['span'][0] == expected_span, inner
+    gate.passed_case('outer and inner span labels agree with actual worker placement')
 
     requested = policy(2,30000,5,extra='(receipts True)',evidence=False)
     for budget in (17,30000):

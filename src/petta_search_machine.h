@@ -430,9 +430,11 @@ typedef struct {
     /*
      * Called immediately before a machine transition.  Returning false
      * suspends without consuming the pending goal, so the same machine can
-     * resume when its caller restores a budget or clears cancellation.
+     * resume when its caller restores a budget or clears cancellation. The
+     * source packet is borrowed only for this call; its occurrence survives
+     * suspension. Physical allowance is independent of its semantic debit.
      */
-    bool (*permit_transition)(void *context);
+    bool (*permit_transition)(void *context, const CettaSourceStep *source);
     /* Checked before transition budgeting and before consuming the goal or
      * alternative. False retains that exact operation for a later executor.
      * The borrowed operand view is descriptive, not a forced value. */
@@ -556,6 +558,11 @@ typedef struct {
         const CettaInvocation *invocation,
         const Bindings *environment, OutcomeSet *outcomes,
         CettaCallOutcome *end);
+    /* Mark a completed datum (a native operation's completed value or a
+     * matched space row) so later demand treats its closed expressions as
+     * values rather than re-executing them as code. */
+    Atom *(*complete_value)(
+        void *context, Space *space, Arena *arena, Atom *value);
     /* HE interpretation owns source demand and first-applicable overload
      * selection. Terminal judgments return values; an admitted application
      * returns fresh signatures with each correlated result contract. Arrays
@@ -579,6 +586,13 @@ typedef struct {
      * type and caller destination stay in the machine until an owned return
      * supplies a value and the completed branch environment. */
     bool (*owns_call)(void *context, const Atom *expression);
+    /* Complete a native invocation that has already executed. No refusal
+     * or native replay is permitted here; terminal faults go through end.
+     * Its values retain their provenance and conditional roots. */
+    void (*deliver_native_return)(
+        void *context, Space *space, Arena *arena, CettaCallOutcome outcome,
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end, CettaEvalCompletion *completion);
     /* Create a new translation event at an explicit forcing boundary such as
      * PeTTa `eval`.  A returned plan fixes callability for that occurrence;
      * NULL declines because the host could not establish the event. */
@@ -677,7 +691,8 @@ typedef struct {
      * has been substituted.  The host owns storage, typing, and program
      * observation through the shared admit authority.  Returning false
      * declines to ordinary host evaluation.  On true, `*result` is the
-     * language success value or an error atom.
+     * language success value or an error atom. True commits entry; a
+     * missing result is a host fault and cannot reopen ordinary evaluation.
      */
     bool (*admit_ground_atom)(
         void *context, Space *space, Arena *arena,
@@ -685,12 +700,11 @@ typedef struct {
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);
-    /* Execute a closed, revision-pinned pure call with at most one answer.
-     * False declines to equation search. True reports a completed VALUE,
-     * FAILURE (no answer), or INTERRUPTED through the common outcome type. */
+    /* A closed revision-pinned pure call returns its completed value,
+     * logical failure or interruption. Only false declines the realization. */
     bool (*execute_prepared_pure_call)(
         void *context, Space *space, Arena *result_arena,
-        Atom *prepared_call, CettaCallOutcome *result);
+        Atom *prepared_call, CettaCallOutcome *outcome);
     /* A revision-keyed program fact: the relation has already declined
      * prepared compilation, so no closed call of it executes there.  Read
      * before a call is proved closed or materialized; false means only
@@ -704,7 +718,14 @@ typedef struct {
     CettaPreparedPureAnswerCursor *(*open_answer_cursor)(
         void *context, Space *space, Arena *scratch, Atom *prepared_call,
         CettaPreparedPureHeadAdmissionFn head_admission,
-        void *head_admission_context);
+        void *head_admission_context,
+        bool (*continuation_current)(const void *));
+    /* Typed callee delivery may complete an entered native packet while its
+     * cursor retains the exact caller continuation. NULL uses the equation-
+     * only reader; no consumer may replay an entered native on handoff. */
+    CettaOwnedExecutionStep (*next_answer_cursor)(
+        void *context, Space *space, CettaPreparedPureAnswerCursor *cursor,
+        CettaOwnedReturn *returned, CettaEvalCompletion *completion);
     /* A revision-keyed program fact: the relation has declined answer
      * compilation.  False means only that no decline is known. */
     bool (*answer_cursor_declined)(
@@ -914,6 +935,13 @@ typedef struct {
      * not a branch world or any additional execution authority. */
     Arena *(*return_occurrence_owner)(void *context, Arena *answer_arena,
                                       const Bindings *environment);
+    /* Language-owned support hidden behind opaque values participates in
+     * host calls and returned closures. Project the existing environment
+     * without evaluating the value or adding execution authority. The
+     * initialized output owns its bindings; its atoms belong to arena or
+     * to the input's retained owners. NULL uses syntactic reachability. */
+    bool (*project_environment)(void *context, Arena *arena, Atom *value,
+        const Bindings *environment, Bindings *projected);
 } PettaMachineHost;
 
 typedef enum {

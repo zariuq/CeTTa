@@ -488,9 +488,9 @@ def causal_world_readout(gate, resource_checker=None):
     # Prepared matching really runs on the pool; source publication remains
     # with the coordinator. The causal view forgets independent source order,
     # not worker timing or a competing consumer's chosen result.
-    payload = '(Fact (' + ' '.join(str(i) for i in range(4096)) + '))'
+    payload = '(Fact (' + ' '.join(str(i) for i in range(8192)) + '))'
     controlled = ('(search-policy (control FIFO (resources (Transaction worlds)) '
-                  '(workers 2) (quantum 8192) (budget 100000) '
+                  '(workers 2) (quantum 16384) (budget 200000) '
                   '(receipts True) (costs native-events-v1)))')
     for kind in ('read', 'take'):
         rows = [payload,
@@ -882,20 +882,25 @@ def physical_matches(gate):
         combined={'values':trees[-1][0][1]+split[-1]['values']}
         assert world_observations(combined)==expected,(budget,trees,split,expected)
         gate.passed_case(f'prepared match residual survives pause/reconfigured width at {budget}')
-    # A 33-node slice can finish before the second worker is scheduled.
-    # Use a substantial explicitly selected slice for the overlap witness;
-    # the smaller slice/cut behavior is checked independently below.
-    size=4096
+    # Matching retains bounded node slices independently of evaluator
+    # quanta. A wider wave supplies enough real work for pool overlap.
+    # Consuming one shared permit leaves one winning directive per world,
+    # rather than exploring every ordering of the independent readers.
+    size=1024
+    readers=8
     pattern=' '.join(f'$v{i}' for i in range(size))
     values=' '.join(str(i) for i in range(size))
-    rows=[f'(Fact ({values}))',
-          f'(exec Left (I (read (Fact ({pattern})))) (O (+ (Left $v{size-1}))))',
-          f'(exec Right (I (read (Fact ({pattern})))) (O (+ (Right $v{size-1}))))']
-    overlap_policy=controlled(2).replace('(workers 2)', '(workers 2) (quantum 8192)')
+    rows=['Permit',f'(Fact ({values}))']+[
+        f'(exec Reader{i} (I (take Permit) (read (Fact ({pattern})))) '
+        f'(O (+ (Won Reader{i} $v{size-1}))))' for i in range(readers)]
+    _,serial=gate.run('wide resource matcher serial',source(rows)+f'!(select 100 {controlled(1)} &jobs)')
+    expected=world_observations(serial[-1])
+    overlap_policy=controlled(4)
     _,results=gate.run('physical resource matcher overlap',source(rows)+f'!(select 100 {overlap_policy} &jobs)')
     result=results[-1];check_cost(result)
     waves=result.get('parallel-waves',[])
-    assert result['closed']=='True' and len(worlds(result))==2,result
+    assert result['closed']=='True' and len(worlds(result))==readers,result
+    assert world_observations(result)==expected,(result,expected)
     assert overlapping_workers(result),('No overlapping physical matching intervals',waves)
     gate.passed_case('actual private resource matcher work overlaps on distinct pool workers')
 

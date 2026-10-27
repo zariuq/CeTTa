@@ -408,7 +408,8 @@ int main(int argc,char **argv) {
         result=0; goto done;
     }
     if (stopped) { result=0; goto done; }
-    CettaDurableStatus s=cetta_durable_open(database,NULL,&store);
+    CettaDurableLimits storage_limits=cetta_durable_bounded_limits();
+    CettaDurableStatus s=cetta_durable_open(database,&storage_limits,&store);
     if (s==DURABLE_OK) s=bind_identity(store,source_id,c.worker,c.channel?trusted.version:NULL);
     if (s==DURABLE_OK && c.offset_seen) s=seed_cursor(store,source_id,c.initial_offset);
     if (s!=DURABLE_OK) { fault(NULL,"journal identity/open",s); result=s==DURABLE_VERSION?CONFIG:FAILURE; goto done; }
@@ -429,7 +430,7 @@ int main(int argc,char **argv) {
     if (s!=DURABLE_OK) { fault(NULL,"startup",s); result=FAILURE; goto done; }
     puts("cetta-telegram: ready"); fflush(stdout);
     identity.known=!c.channel || !c.commands || commands_name_bot;
-    uint64_t maintenance=0; CettaDurableLimits limits=cetta_durable_default_limits();
+    uint64_t maintenance=0; CettaDurableLimits limits=storage_limits;
     while (!stopped) {
         s=cetta_service_step(service,25);
         if (stopped) break;

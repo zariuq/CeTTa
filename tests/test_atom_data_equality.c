@@ -4,6 +4,12 @@
 #include "symbol.h"
 
 static unsigned checks, failures;
+struct Space;
+static struct Space *view_source, *view_image;
+
+struct Space *eval_resolve_space_read(struct Space *space) {
+    return space == view_source && view_source ? view_image : space;
+}
 #define CHECK(c, label) do { checks++; if (!(c)) { \
     fprintf(stderr, "FAIL: %s\n", label); failures++; } } while (0)
 
@@ -90,6 +96,30 @@ int main(void) {
     CHECK(!atom_data_equal(handle, handle), "runtime handles are outside scalar data");
     Atom *with_handle = atom_expr2(&arena, leaves[0], handle);
     CHECK(!atom_data_equal(with_handle, with_handle), "sharing cannot conceal a runtime handle");
+    Atom *image_handle = atom_space(&arena, &symbols);
+    Atom *unrelated_handle = atom_space(&arena, &checks);
+    uint32_t source_hash = atom_hash(handle), image_hash = atom_hash(image_handle);
+    CHECK(!atom_eq_with_resolved_spaces(handle, image_handle),
+          "distinct Spaces stay distinct without a selected redirect");
+    view_source = (struct Space *)&arena;
+    view_image = (struct Space *)&symbols;
+    CHECK(atom_eq_with_resolved_spaces(handle, image_handle) &&
+              atom_eq_with_resolved_spaces(image_handle, handle) &&
+              !atom_eq_with_resolved_spaces(handle, unrelated_handle),
+          "the selected Space view resolves both operands and keeps unrelated resources distinct");
+    CHECK(!atom_eq(handle, image_handle) &&
+              !atom_capture_identical(handle, image_handle) &&
+              atom_hash(handle) == source_hash && atom_hash(image_handle) == image_hash,
+          "matching a Space view changes neither stored identity nor representation hashes");
+    Atom *source_graph = shared(&arena, handle, 1000u);
+    Atom *image_graph = shared(&arena, image_handle, 1000u);
+    Atom *wrong_graph = shared(&arena, unrelated_handle, 1000u);
+    CHECK(atom_eq_with_resolved_spaces(source_graph, image_graph) &&
+              !atom_eq_with_resolved_spaces(source_graph, wrong_graph),
+          "Space resolution reaches deep shared leaves without unfolding the DAG as a tree");
+    view_source = view_image = NULL;
+    CHECK(!atom_eq_with_resolved_spaces(source_graph, image_graph),
+          "a later Space view does not reuse an earlier comparison decision");
     Atom *changeable = atom_expr2(&arena, leaves[0], leaves[0]);
     Atom *before = atom_expr2(&arena, leaves[0], leaves[0]);
     CHECK(atom_data_equal(changeable, before), "first independent comparison succeeds");
@@ -117,6 +147,13 @@ int main(void) {
     CHECK(!atom_data_identical(variable,
               atom_var_with_id(&arena, "exactVariable", fresh_var_id())),
           "equal printed variables do not erase variable identity");
+    CETTA_FRAME_IDENTITY_SCOPE(frames);
+    CettaFrameIdentity epoch = cetta_frame_identity_scope_fresh(&frames);
+    Atom *framed = atom_var_like(&arena, variable, var_epoch_id(variable->var_id, epoch));
+    CHECK(!atom_data_identical(variable, framed),
+          "equal source variables in different activations remain distinct keys");
+    CHECK(atom_data_identical(framed, atom_deep_copy(&arena, framed)),
+          "copying an exact variable key preserves its activation identity");
     Atom *named = atom_var_with_name_key(&arena, small, variable->var_id);
     CHECK(atom_data_identical(named, atom_deep_copy(&arena, named)),
           "structural variable names compare as finite data rather than pointers");
@@ -138,6 +175,53 @@ int main(void) {
               !atom_data_identical(atom_expr2(&arena, leaves[0], identifier),
                                    atom_expr2(&arena, leaves[0], atom_int(&arena, 19))),
           "integer-shaped native holders and their enclosing expressions are not data keys");
+
+    StateCell first = {.value = atom_int(&arena, 1)}, second = {.value = atom_int(&arena, 1)};
+    Atom *state_a = atom_state(&arena, &first), *state_b = atom_state(&arena, &second);
+    CHECK(atom_eq(state_a, state_b) && !atom_capture_identical(state_a, state_b),
+          "capture identity distinguishes equal-valued mutable cells without changing ordinary equality");
+    Atom *state_alias = atom_deep_copy(&arena, state_a);
+    CHECK(atom_capture_identical(state_a, state_alias), "copied wrappers keep the same captured resource");
+    first.value = atom_int(&arena, 7);
+    CHECK(atom_capture_identical(state_a, state_alias) && !atom_capture_identical(state_a, state_b),
+          "resource mutation does not change which captured handle was read");
+    CHECK(atom_capture_identical(shared(&arena, state_a, 10000u), shared(&arena, state_alias, 10000u)) &&
+          !atom_capture_identical(shared(&arena, state_a, 10000u), shared(&arena, state_b, 10000u)),
+          "the same resource policy applies beneath deep shared input graphs");
+    Atom *context = atom_prime_context_bind(&arena, NULL, atom_symbol(&arena, "key"), state_a);
+    Atom *context_copy = atom_deep_copy(&arena, context);
+    Atom *context_other = atom_prime_context_bind(&arena, NULL, atom_symbol(&arena, "key"), state_b);
+    CHECK(atom_capture_identical(context, context_copy) && !atom_capture_identical(context, context_other),
+          "immutable context copies retain nested resource identity");
+    Atom *cap = atom_prime_need_capability_with_rights(&arena, 11u, 12u, 13u,
+        CETTA_PRIME_NEED_RIGHT_ALL);
+    CHECK(atom_capture_identical(cap, atom_deep_copy(&arena, cap)) &&
+          !atom_capture_identical(cap, atom_prime_need_capability_with_rights(&arena, 11u, 12u, 13u,
+              CETTA_PRIME_NEED_RIGHT_INSPECT)) &&
+          !atom_capture_identical(cap, atom_prime_need_capability_with_rights(&arena, 11u, 12u, 14u,
+              CETTA_PRIME_NEED_RIGHT_ALL)), "captured capabilities preserve authority and rights");
+    CHECK(atom_capture_identical(nan_left, atom_deep_copy(&arena, nan_left)) &&
+          !atom_capture_identical(atom_float(&arena, 0.0), atom_float(&arena, -0.0)),
+          "captured numeric representation compares exact bits rather than language truth equality");
+    Atom *marked = atom_expr2(&arena, leaves[0], leaves[1]);
+    Atom *unmarked = atom_deep_copy(&arena, marked);
+    marked->flags |= ATOM_FLAG_HE_EVALUATED;
+    CHECK(!atom_capture_identical(marked, unmarked), "captured data and executable-source roles remain distinct");
+    unsigned other_holds = 0u;
+    Atom *other_identifier = atom_native_handle_identifier(&arena, 19,
+        &other_holds, retain_identifier, release_identifier);
+    CHECK(atom_capture_identical(identifier, atom_deep_copy(&arena, identifier)) &&
+          !atom_capture_identical(identifier, other_identifier) &&
+          !atom_capture_identical(identifier, atom_int(&arena, 19)),
+          "integer-shaped handles retain their actual owner and lifetime protocol");
+    CHECK(!atom_capture_identical(cycle, cycle), "capture inspection does not certify a malformed cyclic expression");
+    CHECK(atom_capture_identical_checked(cycle, cycle) == CETTA_MATCH_INCOMPLETE,
+          "an unsupported cycle is not evidence of different captured inputs");
+    CHECK(atom_capture_identical_checked(state_a, state_alias) == CETTA_MATCH_MATCHED &&
+          atom_capture_identical_checked(state_a, state_b) == CETTA_MATCH_REFUTED,
+          "checked capture distinguishes a completed resource comparison");
+    CHECK(atom_capture_identical_checked(NULL, state_a) == CETTA_MATCH_INCOMPLETE,
+          "missing captured input is incomplete rather than a different world");
 
     arena_free(&arena);
     CHECK(identifier_holds == 0u, "exact key inspection does not retain a native holder");

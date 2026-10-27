@@ -72,6 +72,9 @@ class PrefixProjectionPolicy:
     meta_labels: tuple[str, str, str] | None = None
     # The node of a braces form {x y}; None when the language has none.
     braces_label: str | None = None
+    # The nodes of the query marker written alone, outside a list and inside
+    # one; None when the language has none.
+    exec_labels: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +85,9 @@ class TokenRule:
     boundary: Boundary
     projection: str
     strip_literal: bool
+    # The query marker written alone: a term of its own that takes no
+    # meta-argument, so a bracket or brace touching it opens the next term.
+    meta_free: bool = False
 
 
 @dataclass(frozen=True)
@@ -407,6 +413,7 @@ def projection_policy(
     list_prefix_mirrors: list[tuple[str, str]] = []
     meta_labels: tuple[str, str, str] | None = None
     braces_label: str | None = None
+    exec_labels: tuple[str, str] | None = None
     for rule in presentation.rules:
         if rule.body or not isinstance(rule.head, tuple) or not rule.head:
             continue
@@ -492,6 +499,15 @@ def projection_policy(
                 raise CompileError(
                     f"duplicate braces projection for {profile_name}")
             braces_label = symbol(value[2], "braces label")
+        elif tag == "sexpr-exec-rule":
+            value = form(rule.head, tag, 3, f"{presentation.source}:{rule.name}")
+            if symbol(value[1], "projection profile") != profile_name:
+                continue
+            if exec_labels is not None:
+                raise CompileError(
+                    f"duplicate query-marker projection for {profile_name}")
+            exec_labels = (symbol(value[2], "query marker label"),
+                           symbol(value[3], "list query marker label"))
     if document_label is None or expression_label is None:
         raise CompileError(f"missing projection profile {profile_name}")
 
@@ -536,6 +552,7 @@ def projection_policy(
         tuple(sorted(list_prefix_mirrors)),
         meta_labels,
         braces_label,
+        exec_labels,
     )
 
 
@@ -651,21 +668,61 @@ def derive_token_rules(
     return token_rules
 
 
+def term_sequence(
+    defs: dict[str, SExpr], name: str, exec_name: str | None, where: str,
+) -> SExpr:
+    """A term without its query-marker alternative.  With a query marker a
+    term is the marker written alone, which takes no meta-argument, or an
+    atom with the meta-arguments touching it:
+    (alt (ref EXEC) (seq ATOM (star META)))."""
+    body = defs[name]
+    if exec_name is None:
+        return body
+    choice = sir_form(body, "alt", 2, where)
+    if sir_reference(choice[1], f"{where} query marker") != exec_name:
+        raise CompileError(f"{where} does not read the query marker first")
+    return choice[2]
+
+
 def split_term(
     defs: dict[str, SExpr], name: str, meta_name: str | None,
-    where: str,
+    where: str, exec_name: str | None = None,
 ) -> str:
     """A term is an atom followed by the meta-arguments touching it,
     (seq ATOM (star META)), when the language has meta-arguments; the atom
     otherwise.  A prefix form's payload is an atom, so a prefix binds tighter
-    than a touching bracket or brace."""
+    than a touching bracket or brace.  A language with a query marker reads
+    it alone first (term_sequence)."""
     if meta_name is None:
+        if exec_name is not None:
+            raise CompileError(f"{where}: a query marker needs meta-arguments")
         return name
-    sequence = sir_form(defs[name], "seq", 2, where)
+    sequence = sir_form(term_sequence(defs, name, exec_name, where),
+                        "seq", 2, where)
     star = sir_form(sequence[2], "star", 1, f"{where} meta-arguments")
     if sir_reference(star[1], f"{where} meta-argument") != meta_name:
         raise CompileError(f"{where} takes different meta-arguments")
     return sir_reference(sequence[1], where)
+
+
+def derive_exec_rule(
+    body: SExpr, defs: dict[str, SExpr], word_rules: tuple[TokenRule, ...],
+    where: str,
+) -> TokenRule:
+    """The query marker written alone, (left MARK (peek BOUNDARY)): one
+    literal token ending where a word ends, which takes no meta-argument.
+    A word led by the marker is read by a word rule of its own, so no other
+    word reads the marker alone (validate_dispatch_partition)."""
+    rule = parse_token_branch(body, defs, where)
+    boundaries = {word.boundary for word in word_rules if word.first is not None}
+    if not rule.literal or rule.first is not None or \
+            boundaries != {rule.boundary}:
+        raise CompileError(f"{where} must be one literal ending where a word ends")
+    if not any(word.literal == rule.literal and word.first is not None
+               for word in word_rules):
+        raise CompileError(f"no word rule reads a word led by the {where}")
+    return TokenRule(rule.literal, None, None, rule.boundary, "word", False,
+                     True)
 
 
 def derive_meta(
@@ -740,15 +797,30 @@ def derive_plan(
     if not isinstance(document[2], Symbol) or document[2].text != "sir-eof":
         raise CompileError("document must end at eof")
     term_name = sir_reference(defs[top_name], "top atom")
+    exec_name: str | None = None
+    exec_body: SExpr | None = None
+    exec_list_name: str | None = None
+    exec_list_body: SExpr | None = None
+    if policy.exec_labels is not None:
+        if policy.meta_labels is None:
+            raise CompileError("a query marker needs meta-arguments")
+        exec_name, exec_body = node_definition(ir, policy.exec_labels[0])
+        exec_list_name, exec_list_body = node_definition(
+            ir, policy.exec_labels[1])
     meta_name: str | None = None
     if policy.meta_labels is not None:
         if policy.list_labels is None or policy.braces_label is None:
             raise CompileError("meta-arguments require lists and braces")
         meta_name = sir_reference(
-            sir_form(sir_form(defs[term_name], "seq", 2, "top term")[2],
+            sir_form(sir_form(term_sequence(defs, term_name, exec_name,
+                                            "top term"),
+                              "seq", 2, "top term")[2],
                      "star", 1, "top term meta-arguments")[1],
             "top term meta-argument")
-    atom_name = split_term(defs, term_name, meta_name, "top term")
+    atom_name = split_term(defs, term_name, meta_name, "top term", exec_name)
+    # A language with a query marker reads a word led by the marker by a
+    # word rule of its own.
+    extra_words = 1 if exec_name is not None else 0
 
     skip = sir_form(defs[skip_name], "star", 1, "skip")
     layout_name = sir_reference(skip[1], "skip layout")
@@ -834,7 +906,16 @@ def derive_plan(
         raise CompileError("atom alternatives differ from projected syntax nodes")
 
     token_rules = derive_token_rules(
-        word_body, anonymous_variable_body, variable_body, defs, "")
+        word_body, anonymous_variable_body, variable_body, defs, "",
+        4 + extra_words)
+    word_count = 4 + extra_words
+    if exec_body is not None:
+        # The query marker reads as a word, after the word rules.
+        token_rules = (token_rules[:word_count] +
+                       (derive_exec_rule(exec_body, defs,
+                                         token_rules[:word_count],
+                                         "query marker"),) +
+                       token_rules[word_count:])
     lists = None
     list_bar_boundary: Boundary | None = None
     list_token_rules: tuple[TokenRule, ...] = ()
@@ -846,7 +927,8 @@ def derive_plan(
                 ir, defs, policy, skip_name, token_rules,
                 {string_name, expression_name} |
                 ({braces_name} if braces_name is not None else set()),
-                prefix_nodes, atom_name, meta_name)
+                prefix_nodes, atom_name, meta_name,
+                exec_list_name, exec_list_body, extra_words)
         if meta_name is not None:
             assert policy.meta_labels is not None and braces_name is not None
             meta = derive_meta(
@@ -981,6 +1063,9 @@ def derive_prefix_list(
     prefix_nodes: dict[str, tuple[str, SExpr]],
     atom_name: str,
     meta_name: str | None = None,
+    exec_list_name: str | None = None,
+    exec_list_body: SExpr | None = None,
+    extra_words: int = 0,
 ) -> tuple[tuple[int, int, int], Boundary, tuple[TokenRule, ...],
            tuple[PrefixRule, ...], str]:
     """Read [x y] and [x y | rest], and the lexicon inside a list:
@@ -1023,7 +1108,8 @@ def derive_prefix_list(
                                "list items")
     items = sir_form(defs[items_name], "seq", 2, "list items")
     item_name = element_then_skip(items[1], "list element")
-    element_name = split_term(defs, item_name, meta_name, "list term")
+    element_name = split_term(defs, item_name, meta_name, "list term",
+                              exec_list_name)
     more = sir_form(items[2], "seq", 2, "list items")
     if element_then_skip(sir_form(more[1], "star", 1, "list elements")[1],
                          "list element") != item_name:
@@ -1073,11 +1159,20 @@ def derive_prefix_list(
         list_prefix_rules.append(inner_rule)
 
     list_token_rules = derive_token_rules(
-        word_body, anonymous_body, variable_body, defs, "list", 5)
+        word_body, anonymous_body, variable_body, defs, "list",
+        5 + extra_words)
     bar_words = [rule for rule in list_token_rules
                  if rule.literal == (rest_marker,)]
     mirrored = [rule for rule in list_token_rules
                 if rule.literal != (rest_marker,)]
+    if exec_list_body is not None:
+        # The query marker inside a list, at the place it has outside.
+        word_count = 4 + extra_words
+        mirrored = (mirrored[:word_count] +
+                    [derive_exec_rule(exec_list_body, defs,
+                                      tuple(mirrored[:word_count]),
+                                      "list query marker")] +
+                    mirrored[word_count:])
     if len(bar_words) != 1 or bar_words[0].projection != "word" or \
             bar_words[0].first is None or bar_words[0].strip_literal or \
             bar_words[0].first != bar_words[0].tail:
@@ -1085,8 +1180,9 @@ def derive_prefix_list(
             "a list word starts with the bar exactly when more follows")
     if len(mirrored) != len(token_rules) or any(
         (inner_rule.literal, inner_rule.projection, inner_rule.strip_literal,
-         inner_rule.first is None) !=
-        (rule.literal, rule.projection, rule.strip_literal, rule.first is None)
+         inner_rule.first is None, inner_rule.meta_free) !=
+        (rule.literal, rule.projection, rule.strip_literal, rule.first is None,
+         rule.meta_free)
         for inner_rule, rule in zip(mirrored, token_rules)
     ):
         raise CompileError("list tokens differ from the atom's tokens")
@@ -1182,6 +1278,7 @@ def emit_token_rules(
             f".boundary = {boundaries[index]}, "
             f".projection = {projection_name}, "
             f".strip_literal = {'true' if rule.strip_literal else 'false'}"
+            + (", .meta_free = true" if rule.meta_free else "") +
             "},\n"
         )
     lines.append("};\n")

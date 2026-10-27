@@ -35,6 +35,63 @@ counter() {
     printf '%s\n' "$value"
 }
 
+# The optional ordinary route and the mandatory bounded-consumer route are
+# distinct. Disabling automatic entry must leave ordinary calls recursive,
+# while once still stops the producer before its second visible effect.
+automatic=${CETTA_PRIME_EVAL_STACK_AUTOMATIC:-1}
+if [[ "$automatic" != 0 && "$automatic" != 1 ]]; then
+    echo "FAIL: expected automatic continuation entry to be 0 or 1" >&2
+    exit 1
+fi
+"$BIN" --emit-runtime-stats --lang prime \
+    -e '(= (routing:plain $n) (+ $n 1))' -e '!(routing:plain 4)' \
+    >"$probe_dir/routing-plain.stdout" 2>"$probe_dir/routing-plain.stats"
+roots=$(counter "$probe_dir/routing-plain.stats" prime-eval-stack-root-run)
+if [[ $(<"$probe_dir/routing-plain.stdout") != '[5]' ]] ||
+   (( (automatic == 0 && roots != 0) || (automatic == 1 && roots == 0) )); then
+    echo "FAIL: ordinary call disagrees with automatic-entry setting $automatic ($roots roots)" >&2
+    exit 1
+fi
+for observation in once collapse; do
+    "$BIN" --emit-runtime-stats --lang prime \
+        -e '(= (routing:offer) (chain (println! first) $u A))' \
+        -e '(= (routing:offer) (chain (println! second) $u B))' \
+        -e "!($observation (routing:offer))" \
+        >"$probe_dir/routing-$observation.stdout" 2>"$probe_dir/routing-$observation.stats"
+    roots=$(counter "$probe_dir/routing-$observation.stats" prime-eval-stack-root-run)
+    if [[ "$observation" == once ]]; then
+        expected=$'first\n[A]'
+        if (( roots == 0 )); then
+            echo "FAIL: bounded consumer did not enter its continuation engine" >&2
+            exit 1
+        fi
+    else
+        expected=$'first\nsecond\n[(A B)]'
+    fi
+    if [[ $(<"$probe_dir/routing-$observation.stdout") != "$expected" ]]; then
+        echo "FAIL: $observation changed the demanded effects or answers" >&2
+        cat "$probe_dir/routing-$observation.stdout" >&2
+        exit 1
+    fi
+done
+# An ordinary caller can demand only the head produced by another call.
+# Its mandatory receiver leaves the returned tail alone in both settings.
+"$BIN" --emit-runtime-stats --lang prime \
+    -e '(= (routing:cell) (Cons 1 (println! unused)))' \
+    -e '(= (routing:head (Cons $x $xs)) $x)' \
+    -e '!(routing:head (routing:cell))' \
+    >"$probe_dir/routing-head.stdout" 2>"$probe_dir/routing-head.stats"
+roots=$(counter "$probe_dir/routing-head.stats" prime-eval-stack-root-run)
+if [[ $(<"$probe_dir/routing-head.stdout") != '[1]' ]] || (( roots == 0 )); then
+    echo "FAIL: weak-head production lost its demand contract ($roots roots)" >&2
+    cat "$probe_dir/routing-head.stdout" >&2
+    exit 1
+fi
+echo "PASS: ordinary entry setting $automatic preserves bounded and weak-head demand"
+if [[ "$automatic" == 0 ]]; then
+    exit 0
+fi
+
 run_sum_probe() {
     local n=$1
     local stdout_file="$probe_dir/sum-${n}.stdout"
@@ -113,10 +170,10 @@ run_sum_probe() {
         echo "FAIL: sum(${n}) entered a recursive poisoned task" >&2
         exit 1
     fi
-    # Needed-equation search now contributes one generated-root decision
-    # frame per recursive step.  Count that scheduler unit honestly while
-    # retaining a tight linear envelope over the complete explicit machine.
-    if ((work < n || work > 22 * n + 16)); then
+    # The current owned-call route uses thirteen frames, six bind tasks and
+    # six call tasks per level, with seventeen fixed entry/return units.
+    # Count the complete route, including the borrowed weak-head receiver.
+    if ((work < n || work > 25 * n + 17)); then
         echo "FAIL: explicit-stack work ${work} escaped the linear sum(${n}) envelope" >&2
         exit 1
     fi
@@ -168,8 +225,8 @@ run_sum_probe 400
 run_sum_probe 800
 run_sum_probe 1600
 
-if ((work_800 - work_400 > 22 * 400 + 16 ||
-    work_1600 - work_800 > 22 * 800 + 16)); then
+if ((work_800 - work_400 > 25 * 400 ||
+    work_1600 - work_800 > 25 * 800)); then
     echo "FAIL: explicit-stack work increments are not linearly bounded" >&2
     exit 1
 fi
@@ -247,6 +304,7 @@ run_live_data_projection_probe() {
 
     local data_mutations decision_compiles negative_hits negative_stores
     local marker_index_lookups marker_fallback_rows released_capacity
+    local effect_prechecks safety_compiles
     data_mutations=$(
         counter "$stats_file" space-mutation-publish-data-only
     )
@@ -266,16 +324,29 @@ run_live_data_projection_probe() {
     released_capacity=$(
         counter "$stats_file" bindings-released-entry-capacity
     )
+    effect_prechecks=$(counter "$stats_file" prepared-pure-precheck-effect)
+    safety_compiles=$(counter "$stats_file" petta-relation-safety-cache-miss)
+
+    # The cheap query-effect precheck can reject this effectful source before
+    # pure compilation is attempted. Either that cached analysis or the pure
+    # compiler's negative cache must be reused across the data-only writes.
+    local refusal_reused=0
+    if ((negative_hits >= n && negative_stores == 1)); then
+        refusal_reused=1
+    elif ((negative_hits == 0 && negative_stores == 0 &&
+           effect_prechecks >= n && safety_compiles == 1)); then
+        refusal_reused=1
+    fi
 
     if ((data_mutations < n || decision_compiles < 1 ||
-        decision_compiles > 4 || negative_hits < n ||
-        negative_stores != 1 || marker_index_lookups < n ||
+        decision_compiles > 4 || !refusal_reused || marker_index_lookups < n ||
         marker_fallback_rows != 0 ||
         released_capacity > 4096 * n + 1048576)); then
         echo "FAIL: live data retained dead bindings, invalidated a cache, or scanned the growing space" >&2
         printf '%s\n' \
             "mutations=$data_mutations decisions=$decision_compiles" \
             "negative-hits=$negative_hits negative-stores=$negative_stores" \
+            "effect-prechecks=$effect_prechecks safety-compiles=$safety_compiles" \
             "marker-index=$marker_index_lookups marker-rows=$marker_fallback_rows" \
             "released-capacity=$released_capacity" >&2
         exit 1
@@ -328,13 +399,22 @@ fi
 
 observation_stdout="$probe_dir/observation.stdout"
 observation_stats="$probe_dir/observation.stats"
+# Counting one returned root does not demand its constructor fields. Check
+# the complete value when qualifying structural observation.
+check_deep_value() {
+    python3 - "$1" <<'PY'
+import sys
+from pathlib import Path
+actual = Path(sys.argv[1]).read_text().strip()
+assert actual == '[' + '(S ' * 10000 + 'Z' + ')' * 10000 + ']', 'deep value differs'
+PY
+}
 CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
-"$BIN" --emit-runtime-stats --lang prime --count-only \
+"$BIN" --emit-runtime-stats --lang prime \
     "$ROOT/tests/prime/prepared_pure_observation_stack.metta" \
     >"$observation_stdout" 2>"$observation_stats"
-if [[ $(<"$observation_stdout") != 1 ]]; then
-    echo "FAIL: deep Prime structural observation changed its result count" >&2
-    cat "$observation_stdout" >&2
+if ! check_deep_value "$observation_stdout"; then
+    echo "FAIL: deep Prime structural observation changed its value" >&2
     exit 1
 fi
 observation_tasks=$(counter "$observation_stats" prime-eval-stack-task-normalize)
@@ -343,22 +423,27 @@ observation_heap_peak=$(counter "$observation_stats" prime-eval-stack-frame-dept
 observation_c_stack_peak=$(counter "$observation_stats" eval-c-stack-guard-depth-peak)
 observation_gc=$(counter "$observation_stats" prime-eval-stack-gc-frame-safe-point)
 observation_evacuated=$(counter "$observation_stats" prime-eval-stack-gc-evacuated-bytes)
-if ((observation_tasks < 10000 || observation_poisoned != 0 ||
-    observation_heap_peak < 10000 || observation_c_stack_peak > 8 ||
-    observation_gc == 0 || observation_evacuated == 0)); then
-    echo "FAIL: deep Prime observation did not remain on generated-rooted heap frames" >&2
+observation_capsule=$(counter "$observation_stats" prepared-capsule-step)
+observation_publications=$(counter "$observation_stats" prepared-capsule-publication)
+# A retained compiled producer may already return the complete constructor
+# value. Its receiver need not normalize that value a second time. The
+# stateful and computed-head probes separately require actual moving GC.
+if ((observation_poisoned != 0 || observation_c_stack_peak > 8 ||
+    !((observation_tasks >= 10000 && observation_heap_peak >= 10000 &&
+       observation_gc > 0 && observation_evacuated > 0) ||
+      (observation_capsule >= 10000 && observation_publications == 1)))); then
+    echo "FAIL: deep Prime observation escaped its owned execution route" >&2
     exit 1
 fi
 
 non_tail_stdout="$probe_dir/non-tail.stdout"
 non_tail_stats="$probe_dir/non-tail.stats"
 CETTA_GC=1 CETTA_GC_BUDGET_MB=1 \
-"$BIN" --emit-runtime-stats --lang prime --count-only \
+"$BIN" --emit-runtime-stats --lang prime \
     "$ROOT/tests/prime/non_tail_symbolic_observation_stack.metta" \
     >"$non_tail_stdout" 2>"$non_tail_stats"
-if [[ $(<"$non_tail_stdout") != 1 ]]; then
-    echo "FAIL: non-tail Prime observation changed its result count" >&2
-    cat "$non_tail_stdout" >&2
+if ! check_deep_value "$non_tail_stdout"; then
+    echo "FAIL: non-tail Prime observation changed its value" >&2
     exit 1
 fi
 non_tail_admissions=$(counter "$non_tail_stats" prepared-pure-call-admission)
@@ -374,10 +459,21 @@ non_tail_normalize=$(counter "$non_tail_stats" prime-eval-stack-task-normalize)
 non_tail_poisoned=$(counter "$non_tail_stats" prime-eval-stack-poisoned-task)
 non_tail_heap_peak=$(counter "$non_tail_stats" prime-eval-stack-frame-depth-peak)
 non_tail_c_stack_peak=$(counter "$non_tail_stats" eval-c-stack-guard-depth-peak)
-if ((non_tail_admissions < 10001 ||
-    non_tail_commits != non_tail_admissions || non_tail_declines != 0 ||
-    non_tail_cache_hits < 10000 || non_tail_cache_stores != 1 ||
-    non_tail_normalize < 20001 || non_tail_poisoned != 0 ||
+non_tail_capsule=$(counter "$non_tail_stats" prepared-capsule-publication)
+non_tail_compiles=$(counter "$non_tail_stats" prepared-pure-call-compile-attempt)
+non_tail_plans=$(counter "$non_tail_stats" prime-need-plan-call)
+non_tail_decisions=$(counter "$non_tail_stats" match-decision-compile)
+non_tail_cached=0
+if ((non_tail_admissions >= 10001 && non_tail_commits == non_tail_admissions &&
+     non_tail_declines == 0 && non_tail_cache_hits >= 10000 &&
+     non_tail_cache_stores == 1 && non_tail_normalize >= 20001)); then
+    non_tail_cached=1
+elif ((non_tail_capsule == 1 && non_tail_compiles == 1 &&
+       non_tail_cache_stores == 1 && non_tail_plans >= 9999 &&
+       non_tail_decisions == 1 && non_tail_normalize >= 1)); then
+    non_tail_cached=1
+fi
+if ((!non_tail_cached || non_tail_poisoned != 0 ||
     non_tail_heap_peak < 30000 || non_tail_c_stack_peak > 8)); then
     echo "FAIL: non-tail Prime observation escaped cached heap machinery" >&2
     printf '%s\n' \
@@ -421,8 +517,9 @@ run_support_probe() {
     released=$(counter "$stats_file" bindings-released-entry-capacity)
     active_peak=$(counter "$stats_file" bindings-entry-active-bytes-peak)
 
-    if ((queries == 0 || applied != queries || fallback != 0 ||
-        elided == 0)); then
+    # A compiled producer may already return a closed value. Projection must
+    # still be exact, but need not discard an entry that was never retained.
+    if ((queries == 0 || applied != queries || fallback != 0)); then
         echo "FAIL: length(${n}) did not exercise exact value-support projection" >&2
         printf '%s\n' \
             "queries=$queries applied=$applied fallback=$fallback elided=$elided" >&2

@@ -63,7 +63,7 @@ static bool he_compat_host_read_raw(Space *s, Arena *a, Atom *invocation,
     *declared_type = atom_undefined_type(a);
     if (head == g_builtin_syms.get_state) {
         if (argument->kind == ATOM_GROUNDED && argument->ground.gkind == GV_STATE) {
-            StateCell *cell = payload_resolve_state_read(argument->ground.ptr);
+            StateCell *cell = eval_resolve_state_read(argument->ground.ptr);
             outcome_set_add_prefixed(a, raw, payload_rebind_resources(a, cell->value),
                 env, outer, true);
         } else {
@@ -451,16 +451,26 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
     SymbolId head = atom_head_symbol_id(atom);
     CettaExprLen nargs = atom->kind == ATOM_EXPR && atom->expr.len
         ? expr_nargs(atom) : 0u;
+    CettaControlOperationPlan control = {0};
+    cetta_control_operation_decode(head, nargs, &control, &g_builtin_syms);
     bool invoked = false;
-    Atom *prepared = NULL;
-    PreparedMinimalWorkerResult worker =
-        prepared_minimal_worker_call(s, a, atom, &env, fuel, &prepared);
-    if (worker == PREPARED_MINIMAL_WORKER_INTERRUPTED) {
-        outcome_set_free(&raw);
-        return;
-    }
-    if (worker == PREPARED_MINIMAL_WORKER_EMIT ||
-        worker == PREPARED_MINIMAL_WORKER_REENTER) {
+    CettaCallOutcome worker;
+    if (prepared_minimal_worker_call(s, a, atom, &env, fuel, &worker)) {
+        if (!cetta_call_outcome_shape_valid(worker)) {
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+            outcome_set_free(&raw);
+            return;
+        }
+        if (worker.kind != CETTA_CALL_VALUE) {
+            outcome_set_free(&raw);
+            return;
+        }
+        Atom *prepared = prepared_minimal_worker_readback(a, worker);
+        if (!prepared) {
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+            outcome_set_free(&raw);
+            return;
+        }
         outcome_set_add(&raw, prepared, &env);
         invoked = true;
     } else if (he_compat_host_read_raw(s, a, atom, &env, NULL, &raw,
@@ -490,8 +500,8 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
             outcome_set_add(&raw, types[i], &env);
         free(types);
         invoked = true;
-    } else if (head == g_builtin_syms.superpose && nargs == 1u) {
-        Atom *list = expr_arg(atom, 0);
+    } else if (control.operation == CETTA_CONTROL_ORDERED_CHOICE) {
+        Atom *list = expr_arg(atom, control.source);
         Atom *const *elements;
         CettaExprLen count;
         if (!atom_sequence_view(list, &elements, &count)) {
@@ -500,8 +510,20 @@ static void he_raw_collect(Space *s, Arena *a, Atom *atom, int fuel,
         } else if (count == 0u) {
             outcome_set_add(&raw, legacy_empty_sentinel(a), &env);
         } else {
-            for (CettaExprIndex i = 0u; i < count; i++)
-                outcome_set_add(&raw, elements[i], &env);
+            Atom frontier = {.kind = ATOM_EXPR, .expr = {
+                .elems = (Atom **)elements, .len = count}};
+            CettaCallReturnCursor cursor = {
+                .outcome = cetta_call_expression_frontier(&frontier),
+                .environment = &env,
+                .select_expressions = true,
+            };
+            CettaOwnedReturn returned;
+            CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+            while (cetta_call_return_next(&cursor, &returned, &completion) ==
+                    CETTA_OWNED_EXECUTION_RETURN)
+                outcome_set_add(&raw, returned.outcome.term, returned.environment);
+            if (completion != CETTA_EVAL_COMPLETE)
+                eval_mark_incomplete(completion);
         }
         invoked = true;
     } else if (head == g_builtin_syms.match && nargs == 3u && g_registry) {
@@ -1017,7 +1039,11 @@ static void he_instruction_resume(CettaOwnedFrameStack *stack) {
         for (CettaCount i = 0u; i < frame->inner.len; i++) {
             Outcome *item = &frame->inner.items[i];
             Atom *result = outcome_atom_materialize(a, item);
-            if (!result || atom_is_legacy_empty_sentinel(result))
+            if (!result) {
+                if (!eval_unwinding()) continue;
+                he_instruction_pop(stack);return;
+            }
+            if (atom_is_legacy_empty_sentinel(result))
                 continue;
             pairs[count++] = atom_expr2(a, result,
                 bindings_capture_value(a, &item->env));

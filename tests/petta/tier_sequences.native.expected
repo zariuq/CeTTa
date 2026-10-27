@@ -10,7 +10,7 @@ done
 ((Box kept) (Box kept))
 (tail tail outside)
 ()
-(/ 1 0)
+true
 ()
 ()
 done

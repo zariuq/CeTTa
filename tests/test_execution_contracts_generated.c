@@ -1,9 +1,14 @@
 #include "atom.h"
 #include "generated/cetta_execution_contracts.generated.h"
+#include "petta_semantics.h"
 
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+
+/* This descriptor-only executable supplies the builtin table read by the
+ * dialect elaborator; it does not link the runtime's symbol owner. */
+BuiltinSyms g_builtin_syms;
 
 /* The head table is compiled from the spec; the test checks the compiled
  * algebra (join laws, classification) and that the heads the pull consumers
@@ -28,26 +33,35 @@ static void test_operation_metadata(void) {
         SYMBOL_ID_NONE, 2u, NULL, NULL, &builtins));
     CettaGsltPreparedPureIntrinsicOperandDiscipline operands;
     CettaGsltPreparedPureIntrinsicInstruction intrinsic;
+    /* A connective is a truth computation in every dialect; HE and PeTTa
+     * read its strict row, Prime its short-circuit row. */
     assert(cetta_gslt_prepared_intrinsic_program(
-        12u, 2u, &operands, &intrinsic, &builtins));
+        12u, 2u, CETTA_GSLT_INTRINSIC_DIALECT_HE, &operands, &intrinsic,
+        &builtins));
     assert(operands == CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL);
     assert(intrinsic == CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH);
     assert(cetta_gslt_prepared_intrinsic_program(
-        16u, 1u, NULL, &intrinsic, &builtins));
+        12u, 2u, CETTA_GSLT_INTRINSIC_DIALECT_PRIME, &operands, &intrinsic,
+        &builtins));
+    assert(operands ==
+           CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT);
+    assert(intrinsic == CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH);
+    assert(cetta_gslt_prepared_intrinsic_program(
+        16u, 1u, CETTA_GSLT_INTRINSIC_DIALECT_PRIME, NULL, &intrinsic,
+        &builtins));
     assert(intrinsic == CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);
+    /* A scoped row holds only in its dialects. */
+    assert(cetta_gslt_prepared_intrinsic_program(
+        13u, 2u, CETTA_GSLT_INTRINSIC_DIALECT_PETTA, NULL, NULL, &builtins));
     assert(!cetta_gslt_prepared_intrinsic_program(
-        999u, 1u, NULL, NULL, &builtins));
-    assert(cetta_gslt_prepared_intrinsic_scope(
-        13u, 2u, CETTA_GSLT_INTRINSIC_DIALECT_PETTA, &builtins));
-    assert(!cetta_gslt_prepared_intrinsic_scope(
-        13u, 2u, CETTA_GSLT_INTRINSIC_DIALECT_HE, &builtins));
-    assert(!cetta_gslt_prepared_intrinsic_scope(
-        13u, 2u, CETTA_GSLT_INTRINSIC_DIALECT_PRIME, &builtins));
-    /* Unrestricted scope is not evidence that an operation exists. */
-    assert(cetta_gslt_prepared_intrinsic_scope(
-        999u, 1u, CETTA_GSLT_INTRINSIC_DIALECT_HE, &builtins));
+        13u, 2u, CETTA_GSLT_INTRINSIC_DIALECT_HE, NULL, NULL, &builtins));
     assert(!cetta_gslt_prepared_intrinsic_program(
-        999u, 1u, NULL, NULL, &builtins));
+        13u, 2u, CETTA_GSLT_INTRINSIC_DIALECT_PRIME, NULL, NULL, &builtins));
+    /* A head without a row is no intrinsic in any dialect. */
+    assert(!cetta_gslt_prepared_intrinsic_program(
+        999u, 1u, CETTA_GSLT_INTRINSIC_DIALECT_HE, NULL, NULL, &builtins));
+    assert(!cetta_gslt_prepared_intrinsic_program(
+        999u, 1u, CETTA_GSLT_INTRINSIC_DIALECT_ALL, NULL, NULL, &builtins));
     CettaGsltFoldControl control;
     assert(cetta_gslt_fold_control_program(14u, 3u, &control, &builtins));
     assert(control == CETTA_GSLT_FOLD_CONTROL_BIND);
@@ -58,11 +72,186 @@ static void test_operation_metadata(void) {
     assert(!cetta_gslt_fold_control_program(15u, 3u, NULL, NULL));
 }
 
+static void test_invocation_plans(void) {
+    const BuiltinSyms builtins = {.repr = 21u, .car_atom = 22u, .petta_member = 23u};
+    const struct { SymbolId head; unsigned arity, operation; } cases[] = {
+        {21u, 1u, CETTA_INVOCATION_HOST},
+        {22u, 1u, CETTA_INVOCATION_LIST_UNARY},
+        {23u, 2u, CETTA_INVOCATION_RELATIONAL_MEMBER},
+    };
+    for (unsigned row = 0u; row < sizeof(cases) / sizeof(*cases); row++)
+    for (unsigned arity = 0u; arity <= 256u; arity++) {
+        CettaInvocationPlan plan = {255u, 254u, 253u};
+        uint32_t before = cetta_invocation_plan_key(plan);
+        bool admitted = cetta_invocation_plan_decode(cases[row].head, arity, &plan, &builtins);
+        assert(admitted == (arity == cases[row].arity));
+        if (admitted) {
+            assert(plan.operation == cases[row].operation && plan.first == 0u && plan.last == arity);
+            assert(cetta_invocation_plan_key(plan) == (cases[row].operation | arity << 16u));
+        } else {
+            assert(cetta_invocation_plan_key(plan) == before);
+        }
+    }
+    assert(!cetta_invocation_plan_decode(SYMBOL_ID_NONE, 1u, NULL, &builtins));
+    assert(!cetta_invocation_plan_decode(21u, 1u, NULL, NULL));
+    assert(!cetta_invocation_plan_decode(999u, 1u, NULL, &builtins));
+}
+
+static void test_call_preparation_plans(void) {
+    const CettaCallPreparationStep source_order[] = {
+        CETTA_CALL_PREP_INSTALL_TYPE, CETTA_CALL_PREP_COMPUTE,
+        CETTA_CALL_PREP_CHECK_RETURN, CETTA_CALL_PREP_CHECK_TYPE,
+        CETTA_CALL_PREP_BIND,
+    };
+    for (unsigned mask = 0u; mask < 256u; mask++) {
+        assert(cetta_call_preparation_valid((uint8_t)mask) == (mask < 32u));
+        if (mask >= 32u)
+            continue;
+        CettaCallPreparationStep pushed[5];
+        unsigned count = 0u;
+#define RECORD_STEP(step) if (mask & (step)) pushed[count++] = (step);
+        CETTA_CALL_PREPARATION_REVERSE_ROWS(RECORD_STEP)
+#undef RECORD_STEP
+        for (unsigned index = 0u; index < 5u; index++) {
+            assert(source_order[index] == (1u << index));
+            if (mask & source_order[index]) {
+                assert(count > 0u);
+                assert(pushed[--count] == source_order[index]);
+            }
+        }
+        assert(count == 0u);
+    }
+}
+
+static void test_control_operand_plans(void) {
+    const BuiltinSyms builtins = {.let = 21u, .chain = 22u, .if_text = 23u,
+        .let_star = 24u, .eval = 25u, .function = 26u,
+        .superpose = 27u, .empty_form = 28u};
+    const unsigned operands[] = {17u, 29u, 43u};
+    unsigned observations = 0u;
+    for (SymbolId head = 21u; head <= 28u; head++) {
+        for (unsigned arity = 0u; arity <= 5u; arity++) {
+            /* Independent source grammar: a let holds pattern, producer,
+             * body; chain holds producer, pattern, body. No generated row
+             * is used to compute this reference. */
+            unsigned operation = CETTA_CONTROL_NONE;
+            unsigned source = 0u, first = 0u, last = 0u;
+            if ((head == 21u || head == 22u) && arity == 3u) {
+                operation = CETTA_CONTROL_SEQUENCE;
+                source = head == 21u ? 29u : 17u;
+                first = head == 21u ? 17u : 29u;
+                last = 43u;
+            } else if (head == 23u && (arity == 2u || arity == 3u)) {
+                operation = CETTA_CONTROL_BRANCH;
+                source = 17u; first = 29u;
+                last = arity == 3u ? 43u : 0u;
+            } else if (head == 24u && arity == 2u) {
+                operation = CETTA_CONTROL_SEQUENCE_MANY;
+                source = 17u; last = 29u;
+            } else if ((head == 25u || head == 26u) && arity == 1u) {
+                operation = head == 25u ? CETTA_CONTROL_FORCE : CETTA_CONTROL_RETURN_SCOPE;
+                source = 17u;
+            } else if (head == 27u && arity == 1u) {
+                operation = CETTA_CONTROL_ORDERED_CHOICE;
+                source = 17u;
+            } else if (head == 28u && arity == 0u) {
+                operation = CETTA_CONTROL_FAILURE;
+            }
+            CettaControlOperationPlan plan = {255u, 77u, 88u, 99u};
+            uint32_t before = cetta_control_operation_key(plan);
+            assert(cetta_control_operation_decode(head, arity, &plan, &builtins) ==
+                (operation != CETTA_CONTROL_NONE));
+            if (!operation) {
+                assert(cetta_control_operation_key(plan) == before);
+                continue;
+            }
+            assert(plan.operation == operation);
+            if (operation == CETTA_CONTROL_FAILURE)
+                assert(plan.source == CETTA_CONTROL_OPERAND_ABSENT);
+            else
+                assert(plan.source < arity && operands[plan.source] == source);
+            if (plan.first == CETTA_CONTROL_OPERAND_ABSENT)
+                assert(!first);
+            else
+                assert(plan.first < arity && operands[plan.first] == first);
+            if (plan.last == CETTA_CONTROL_OPERAND_ABSENT)
+                assert(!last);
+            else
+                assert(plan.last < arity && operands[plan.last] == last);
+            CettaGsltFoldControl lowered = CETTA_GSLT_FOLD_CONTROL_BRANCH;
+            bool eligible = head <= 26u && head != 22u && !(head == 23u && arity == 2u);
+            assert(cetta_control_operation_lower_fold(plan, &lowered) == eligible);
+            if (!eligible)
+                assert(lowered == CETTA_GSLT_FOLD_CONTROL_BRANCH);
+            if (operation == CETTA_CONTROL_SEQUENCE) {
+                assert(cetta_control_operation_binding_layout(plan, plan.source));
+                CettaSequenceOrderPlan order;
+                assert(cetta_control_sequence_plan(plan, CETTA_SEQUENCE_SOURCE_FIRST, &order));
+                assert(order.children[0] == plan.source && order.children[1] == plan.first &&
+                       order.children[2] == plan.last);
+                assert(cetta_control_sequence_plan(plan, CETTA_SEQUENCE_BINDER_FIRST, &order));
+                assert(order.children[0] == plan.first && order.children[1] == plan.source &&
+                       order.children[2] == plan.last);
+                CettaSequenceOrderPlan saved = order;
+                assert(!cetta_control_sequence_plan(plan, (CettaSequenceOrder)99, &order));
+                assert(memcmp(&order, &saved, sizeof(order)) == 0);
+                plan.first = plan.source;
+                assert(!cetta_control_operation_binding_layout(plan, plan.source));
+                assert(!cetta_control_sequence_plan(plan, CETTA_SEQUENCE_SOURCE_FIRST, &order));
+                assert(memcmp(&order, &saved, sizeof(order)) == 0);
+                assert(!cetta_control_operation_lower_fold(plan, &lowered));
+            }
+            observations++;
+        }
+    }
+    CettaControlOperationPlan force, scope;
+    assert(cetta_control_operation_decode(25u, 1u, &force, &builtins));
+    assert(cetta_control_operation_decode(26u, 1u, &scope, &builtins));
+    assert(cetta_control_operation_key(force) != cetta_control_operation_key(scope));
+    assert(!cetta_control_operation_decode(25u, UINT64_MAX, &force, &builtins));
+    assert(!cetta_control_operation_decode(999u, 1u, NULL, &builtins));
+    assert(!cetta_control_operation_decode(25u, 1u, NULL, NULL));
+    assert(observations == 9u);
+    CettaControlOperationPlan basic[] = {CETTA_CONTROL_RETURN_VALUE_PLAN,
+        CETTA_CONTROL_CONSTRUCT_PLAN, CETTA_CONTROL_INVOKE_PLAN};
+    for (size_t index = 0u; index < sizeof(basic) / sizeof(*basic); index++) {
+        CettaControlOperationPlan operation = basic[index];
+        assert(!cetta_control_operation_is_control_form(operation));
+        assert(operation.source == CETTA_CONTROL_OPERAND_ABSENT &&
+            operation.first == CETTA_CONTROL_OPERAND_ABSENT &&
+            operation.last == CETTA_CONTROL_OPERAND_ABSENT);
+        CettaGsltFoldControl untouched = CETTA_GSLT_FOLD_CONTROL_BRANCH;
+        assert(!cetta_control_operation_lower_fold(operation, &untouched));
+        assert(untouched == CETTA_GSLT_FOLD_CONTROL_BRANCH);
+    }
+    for (unsigned arity = 0u; arity <= 5u; arity++) {
+        CettaControlOperationPlan commit = petta_semantics_elaborate_control(
+            SYMBOL_ID_NONE, PETTA_FORM_CUT, arity);
+        CettaControlOperationPlan handler = petta_semantics_elaborate_control(
+            SYMBOL_ID_NONE, PETTA_FORM_CATCH, arity);
+        assert(commit.operation == (arity == 0u
+            ? CETTA_CONTROL_SCOPED_COMMIT : CETTA_CONTROL_NONE));
+        assert(handler.operation == (arity == 1u
+            ? CETTA_CONTROL_HANDLE : CETTA_CONTROL_NONE));
+        CettaGsltFoldControl untouched = CETTA_GSLT_FOLD_CONTROL_BRANCH;
+        assert(!cetta_control_operation_lower_fold(commit, &untouched));
+        assert(!cetta_control_operation_lower_fold(handler, &untouched));
+        assert(untouched == CETTA_GSLT_FOLD_CONTROL_BRANCH);
+        if (arity == 0u)
+            assert(commit.source == CETTA_CONTROL_OPERAND_ABSENT);
+        if (arity == 1u)
+            assert(handler.source == 0u &&
+                handler.first == CETTA_CONTROL_OPERAND_ABSENT &&
+                handler.last == CETTA_CONTROL_OPERAND_ABSENT);
+    }
+}
+
 static void test_query_head_rows(void) {
     unsigned rows = 0u;
     bool saw_match = false, saw_get_atoms = false, saw_mork_match = false;
     bool saw_get_type = false, saw_get_type_space = false;
     bool saw_add_atom = false, saw_remove_atom = false;
+    unsigned saw_space_contracts = 0u;
     bool saw_http_read = false;
 #define COUNT_HEAD(head, effect) do { \
     assert((effect) != CETTA_GSLT_QUERY_EFFECT_PURE); \
@@ -78,6 +267,25 @@ static void test_query_head_rows(void) {
     if (strcmp(#head, "mork_match_syntax") == 0) saw_mork_match = true; \
     if (strcmp(#head, "get_type") == 0) saw_get_type = true; \
     if (strcmp(#head, "get_type_space") == 0) saw_get_type_space = true; \
+    if (strcmp(#head, "space_push") == 0 || \
+        strcmp(#head, "space_pop") == 0 || \
+        strcmp(#head, "space_truncate") == 0) { \
+        assert((effect) == CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE); \
+        saw_space_contracts++; \
+    } \
+    if (strcmp(#head, "space_get") == 0 || \
+        strcmp(#head, "space_len") == 0 || \
+        strcmp(#head, "space_peek") == 0 || \
+        strcmp(#head, "size") == 0 || \
+        strcmp(#head, "count_atoms") == 0) { \
+        assert((effect) == CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY); \
+        saw_space_contracts++; \
+    } \
+    if (strcmp(#head, "minimal_space_contains_exact") == 0 || \
+        strcmp(#head, "minimal_space_revision") == 0) { \
+        assert((effect) == CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY); \
+        saw_space_contracts++; \
+    } \
 } while (0);
     CETTA_GSLT_QUERY_EFFECT_HEAD_ROWS(COUNT_HEAD)
 #undef COUNT_HEAD
@@ -85,6 +293,7 @@ static void test_query_head_rows(void) {
     assert(saw_match && saw_get_atoms && saw_mork_match);
     assert(saw_get_type && saw_get_type_space);
     assert(saw_add_atom && saw_remove_atom);
+    assert(saw_space_contracts == 10u);
     assert(saw_http_read);
 
     /* Joining is union over the two flags. */
@@ -127,6 +336,39 @@ static void test_query_head_rows(void) {
             CETTA_GSLT_QUERY_EFFECT_WORLD_WRITE));
     assert(CETTA_GSLT_QUERY_EFFECT_INERT_SYMBOL ==
            CETTA_GSLT_QUERY_EFFECT_PURE);
+}
+
+static void test_native_service_advice(void) {
+    unsigned rows=0u,local=0u,coordinator=0u,isolated=0u;
+#define COUNT_NATIVE_CALL(field,placement,progress,bound) do { \
+    rows++; \
+    if ((placement)==CETTA_GSLT_PLACEMENT_LOCAL) { \
+        local++; \
+        assert(cetta_gslt_progress_inline(progress)); \
+    } else if ((placement)==CETTA_GSLT_PLACEMENT_COORDINATOR) { \
+        coordinator++; \
+    } else assert(0); \
+    if ((progress)==CETTA_GSLT_PROGRESS_BOUNDED) assert((bound)>0u); \
+    else assert((bound)==0u); \
+    if ((progress)==CETTA_GSLT_PROGRESS_ISOLATED) isolated++; \
+} while (0);
+    CETTA_GSLT_NATIVE_CALL_HEAD_ROWS(COUNT_NATIVE_CALL)
+#undef COUNT_NATIVE_CALL
+    /* Six bounded local services and the explicit coordinator catalogue,
+     * including the retained JSON/process and saturation declarations. */
+    assert(rows==35u && local==6u && coordinator==29u && isolated==1u);
+    CettaGsltNativeCallAdvice fallback=CETTA_GSLT_NATIVE_CALL_DEFAULT;
+    CettaGsltNativeCallAdvice constructor=CETTA_GSLT_NATIVE_CALL_CONSTRUCTOR;
+    CettaGsltNativeCallAdvice equation=CETTA_GSLT_NATIVE_CALL_USER_EQUATION;
+    assert(fallback.placement==CETTA_GSLT_PLACEMENT_UNRESOLVED &&
+        fallback.progress==CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS &&
+        !cetta_gslt_progress_inline(fallback.progress));
+    assert(constructor.placement==CETTA_GSLT_PLACEMENT_LOCAL &&
+        constructor.progress==CETTA_GSLT_PROGRESS_BOUNDED &&
+        constructor.bound==1u);
+    assert(equation.placement==CETTA_GSLT_PLACEMENT_LOCAL &&
+        equation.progress==CETTA_GSLT_PROGRESS_YIELDING && !equation.bound);
+    assert(!cetta_gslt_progress_inline(CETTA_GSLT_PROGRESS_ISOLATED));
 }
 
 static void test_row_dispositions(void) {
@@ -513,15 +755,45 @@ static void test_generated_sequence_representations(void) {
 static void test_generated_prepared_intrinsic_program(void) {
     unsigned rows = 0u;
     bool saw_division = false, saw_sort_numbers = false;
-    bool saw_and = false, saw_or = false;
+    unsigned and_strict = 0u, and_short = 0u;
+    unsigned or_strict = 0u, or_short = 0u;
+    bool saw_not = false;
     bool saw_intersection = false;
     bool saw_remove_all = false, saw_unkey = false;
     bool saw_retain_top_k = false, saw_cons = false, saw_union = false;
     unsigned dual_numeric_heads = 0u;
+    struct IntrinsicRow {
+        const char *field;
+        unsigned arity;
+        unsigned dialects;
+    };
+#define INTRINSIC_ROW(field, arity, discipline, instruction, dialects) \
+    {#field, (arity), (dialects)},
+    const struct IntrinsicRow scoped[] = {
+        CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(INTRINSIC_ROW)
+    };
+#undef INTRINSIC_ROW
+    const size_t scoped_count = sizeof(scoped) / sizeof(scoped[0]);
+    /* No dialect reads two rows for one head and arity. */
+    for (size_t i = 0u; i < scoped_count; i++)
+        for (size_t j = i + 1u; j < scoped_count; j++)
+            if (strcmp(scoped[i].field, scoped[j].field) == 0 &&
+                scoped[i].arity == scoped[j].arity)
+                assert((scoped[i].dialects & scoped[j].dialects) == 0u);
 #define COUNT_PREPARED_INTRINSIC_HEAD(                                  \
-    field, arity, discipline, instruction) do {                         \
+    field, arity, discipline, instruction, dialects) do {               \
+    assert((dialects) != 0u);                                           \
+    assert(((dialects) & ~CETTA_GSLT_INTRINSIC_DIALECT_ALL) == 0u);    \
     assert((discipline) ==                                              \
-           CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL);     \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL || \
+           (discipline) ==                                              \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT); \
+    if ((discipline) ==                                                 \
+        CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_SHORT_CIRCUIT) {    \
+        assert((arity) == 2u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH);    \
+    }                                                                   \
     rows++;                                                             \
     if (strcmp(#field, "sort_numbers_atom") == 0) {                    \
         saw_sort_numbers = true;                                        \
@@ -537,17 +809,27 @@ static void test_generated_prepared_intrinsic_program(void) {
     }                                                                   \
     if (strcmp(#field, "op_and") == 0 ||                             \
         strcmp(#field, "op_or") == 0) {                               \
+        bool is_and = strcmp(#field, "op_and") == 0;                  \
+        bool strict = (discipline) ==                                  \
+            CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_STRICT_ALL;     \
         assert((arity) == 2u);                                          \
         assert((instruction) ==                                         \
                CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH);    \
-        if (strcmp(#field, "op_and") == 0) saw_and = true;            \
-        else saw_or = true;                                              \
+        *(is_and ? (strict ? &and_strict : &and_short)                  \
+                 : (strict ? &or_strict : &or_short)) |= (dialects);    \
+    }                                                                   \
+    if (strcmp(#field, "op_not") == 0) {                              \
+        saw_not = true;                                                 \
+        assert((arity) == 1u);                                          \
+        assert((instruction) ==                                         \
+               CETTA_GSLT_PREPARED_PURE_INTRINSIC_BOOLEAN_DISPATCH);    \
     }                                                                   \
     if (strcmp(#field, "intersection_atom") == 0) {                  \
         saw_intersection = true;                                       \
         assert((arity) == 2u);                                          \
         assert((instruction) ==                                         \
                CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH);   \
+        assert((dialects) == CETTA_GSLT_INTRINSIC_DIALECT_PETTA);        \
     }                                                                   \
     if (strcmp(#field, "op_plus") == 0 ||                             \
         strcmp(#field, "op_minus") == 0 ||                            \
@@ -586,24 +868,30 @@ static void test_generated_prepared_intrinsic_program(void) {
     assert(saw_division && saw_sort_numbers && saw_remove_all);
     assert(saw_retain_top_k && saw_unkey);
     assert(saw_cons && saw_union);
-    assert(saw_and && saw_or);
+    assert(saw_not);
     assert(saw_intersection);
     assert(dual_numeric_heads == 8u);
-    bool saw_intersection_scope = false;
-#define CHECK_INTRINSIC_SCOPE(field, arity, dialects) do {               \
-    assert((dialects) != 0u);                                           \
-    assert(((dialects) & ~(CETTA_GSLT_INTRINSIC_DIALECT_HE |             \
-        CETTA_GSLT_INTRINSIC_DIALECT_PETTA |                            \
-        CETTA_GSLT_INTRINSIC_DIALECT_PRIME)) == 0u);                    \
-    if (strcmp(#field, "intersection_atom") == 0) {                  \
-        assert((arity) == 2u);                                          \
-        assert((dialects) == CETTA_GSLT_INTRINSIC_DIALECT_PETTA);        \
-        saw_intersection_scope = true;                                 \
-    }                                                                  \
+    /* HE and PeTTa evaluate both operands of a connective; Prime demands
+     * the second only when the first leaves the value open. */
+    assert(and_strict == (CETTA_GSLT_INTRINSIC_DIALECT_HE |
+                          CETTA_GSLT_INTRINSIC_DIALECT_PETTA));
+    assert(or_strict == and_strict);
+    assert(and_short == CETTA_GSLT_INTRINSIC_DIALECT_PRIME);
+    assert(or_short == and_short);
+    unsigned short_circuit_rows = 0u;
+    bool saw_and_absorbs_false = false, saw_or_absorbs_true = false;
+#define CHECK_SHORT_CIRCUIT(field, arity, absorbing) do {               \
+    short_circuit_rows++;                                               \
+    assert((arity) == 2u);                                              \
+    if (strcmp(#field, "op_and") == 0)                                \
+        saw_and_absorbs_false = !(absorbing);                          \
+    if (strcmp(#field, "op_or") == 0)                                 \
+        saw_or_absorbs_true = (absorbing);                              \
 } while (0);
-    CETTA_GSLT_PREPARED_PURE_INTRINSIC_SCOPE_ROWS(CHECK_INTRINSIC_SCOPE)
-#undef CHECK_INTRINSIC_SCOPE
-    assert(saw_intersection_scope);
+    CETTA_GSLT_PREPARED_PURE_SHORT_CIRCUIT_ROWS(CHECK_SHORT_CIRCUIT)
+#undef CHECK_SHORT_CIRCUIT
+    assert(short_circuit_rows == 2u);
+    assert(saw_and_absorbs_false && saw_or_absorbs_true);
 }
 
 static void test_generated_sequence_constructor_policy(void) {
@@ -649,7 +937,7 @@ static void test_generated_sequence_constructor_policy(void) {
             assert(policy->held_mask == 2u);
         }
         /* Strict-all code cannot erase a constructor's held operand. */
-#define CHECK_PREPARED_CONSTRUCTOR(symbol_field, arity, discipline, instruction) \
+#define CHECK_PREPARED_CONSTRUCTOR(symbol_field, arity, discipline, instruction, dialects) \
         if (strcmp(policy->field, #symbol_field) == 0) { \
             assert(policy->held_mask == 0u); \
             assert((policy->arities & (1u << (arity))) != 0u); \
@@ -956,8 +1244,12 @@ static void test_generated_tuple_machine_roots(void) {
 }
 
 int main(void) {
+    test_invocation_plans();
+    test_call_preparation_plans();
     test_operation_metadata();
+    test_control_operand_plans();
     test_query_head_rows();
+    test_native_service_advice();
     test_row_dispositions();
     test_observation_and_lifetime();
     test_prepared_equation_admission();

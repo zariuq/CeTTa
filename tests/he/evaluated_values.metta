@@ -44,3 +44,8 @@
 !(let $v (fr a) (let $s (new-state $v) (wrap (get-state $s))))
 !(let $v (fr a) (let $s (new-state $v) (let $w (get-state $s) (add-atom &self (kept $w)))))
 !(match &self (kept $x) (wrap $x))
+
+; Updating a cell and storing a compound value keep evaluated fields too.
+!(let $v (fr a) (let $s (new-state $v)
+   (let $u (change-state! $s $v) (wrap (get-state $s)))))
+!(let $v (fr a) (let $s (new-state (Box $v)) (wrap (get-state $s))))

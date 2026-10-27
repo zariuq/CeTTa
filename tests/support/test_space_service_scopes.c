@@ -109,16 +109,17 @@ int main(void) {
     for (size_t i = 0; i < CLIENTS; ++i) clients[i] = (Client){.fd = -1};
     s->clients = clients;
     Client *owner = &clients[0], *alice = &clients[1], *bob = &clients[2];
-    *owner = (Client){.fd = -1, .uid = s->process_uid, .owner = true};
-    *alice = (Client){.fd = -1, .uid = s->process_uid + 1};
-    *bob = (Client){.fd = -1, .uid = s->process_uid + 2};
+    /* A member connection pins the principal its first grant mints. */
+    *owner = (Client){.fd = -1, .principal = {.uid = s->process_uid}, .owner = true};
+    *alice = (Client){.fd = -1, .principal = {.uid = s->process_uid + 1}};
+    *bob = (Client){.fd = -1, .principal = {.uid = s->process_uid + 2}};
     Arena arena; arena_init_detached(&arena); Arena *a = &arena;
     Atom *x = atom_var(a, "x");
 
     /* T1: handles are account-bound for every operation. */
     uint64_t ordered = open_store(s, owner, a, "ordered", "native-ordered");
-    grant(s, owner, a, ordered, alice->uid, RIGHT_READ | RIGHT_WRITE);
-    grant(s, owner, a, ordered, bob->uid, RIGHT_READ | RIGHT_WRITE);
+    grant(s, owner, a, ordered, alice->principal.uid, RIGHT_READ | RIGHT_WRITE);
+    grant(s, owner, a, ordered, bob->principal.uid, RIGHT_READ | RIGHT_WRITE);
     Atom *message = E2(a, "Message", atom_symbol(a, "a"), x);
     Atom *observed = observe(s, alice, a, ordered, E1(a, "reads", message), E1(a, "writes", message), 16);
     expect(ok(observed), "T1 alice observes");
@@ -137,10 +138,10 @@ int main(void) {
     observed = observe(s, alice, a, ordered, E1(a, "reads", message), form(a, "writes", NULL, 0), 16);
     expect(ok(observed), "T2 observe");
     expect(!watch(s, alice, a, ordered, handle_id(observed), 60000) && alice->watching, "T2 wait parked");
-    grant(s, owner, a, ordered, alice->uid, RIGHT_OBSERVE);
+    grant(s, owner, a, ordered, alice->principal.uid, RIGHT_OBSERVE);
     expect(refused(wake(s, alice, a), "missing-space"), "T2 losing READ ends the scoped wait");
     expect(!alice->watching && !alice->watched.id, "T2 wait and captured views released");
-    grant(s, owner, a, ordered, alice->uid, RIGHT_READ | RIGHT_WRITE);
+    grant(s, owner, a, ordered, alice->principal.uid, RIGHT_READ | RIGHT_WRITE);
 
     /* T3: a wait on a write scope wakes when that scope changes. */
     Atom *claim = E1(a, "Claim", x);
@@ -152,7 +153,7 @@ int main(void) {
 
     /* T4: unordered swap removal reorders a view; the wait reports it. */
     uint64_t bag = open_store(s, owner, a, "bag", "native");
-    grant(s, owner, a, bag, alice->uid, RIGHT_READ | RIGHT_WRITE);
+    grant(s, owner, a, bag, alice->principal.uid, RIGHT_READ | RIGHT_WRITE);
     Atom *rows[] = {E1(a, "add", E2(a, "b", atom_int(a, 1), atom_int(a, 0))),
                     E1(a, "add", E2(a, "a", atom_int(a, 1), atom_int(a, 0))),
                     E1(a, "add", E2(a, "a", atom_int(a, 2), atom_int(a, 0)))};
@@ -207,7 +208,7 @@ int main(void) {
     Atom *round_trip[] = {E1(a, "add", nine), E1(a, "remove", nine)};
     batch(s, owner, a, ordered, form(a, "ops", round_trip, 2));
     expect(!wake(s, alice, a) && alice->watching, "T9 unchanged views keep the wait parked");
-    client_close(s, alice); *alice = (Client){.fd = -1, .uid = s->process_uid + 1};
+    client_close(s, alice); *alice = (Client){.fd = -1, .principal = {.uid = s->process_uid + 1}};
 
     /* T10: an expired lease cannot authorize a commit, even before expire() runs. */
     observed = observe(s, alice, a, ordered, form(a, "reads", NULL, 0), E1(a, "writes", message), 16);
@@ -257,7 +258,7 @@ int main(void) {
            "creation cleanup cannot silently revoke a transferred owner");
     expect(refused(call(s,alice,a,req(a,"waiting-creation","observe-until",create_args,8)),"creation-transferred"),
            "a transferred creation cannot allocate another view");
-    client_close(s,alice); *alice=(Client){.fd=-1,.uid=s->process_uid+1};
+    client_close(s,alice); *alice=(Client){.fd=-1,.principal={.uid=s->process_uid+1}};
 
     /* Account budgets include ordinary snapshots, scoped captures and views
      * transferred to waits. One account cannot borrow another's allowance. */
@@ -280,8 +281,8 @@ int main(void) {
            "parked waits have an account allowance");
     expect(!watch(s,bob,a,ordered,handle_id(other),60000) && bob->watching,"another account can wait");
     expect(ok(close_handle(s,alice,a,handle_id(second_view))),"refused transfer remains releasable");
-    client_close(s,alice); *alice=(Client){.fd=-1,.uid=s->process_uid+1};
-    client_close(s,bob); *bob=(Client){.fd=-1,.uid=s->process_uid+2};
+    client_close(s,alice); *alice=(Client){.fd=-1,.principal={.uid=s->process_uid+1}};
+    client_close(s,bob); *bob=(Client){.fd=-1,.principal={.uid=s->process_uid+2}};
     expect(!s->observation_bytes && !s->snapshot_bytes,"all account resources released");
     s->max_account_views=0; s->max_account_view_bytes=0; s->max_account_watchers=0;
     Atom *held[SNAPSHOTS/2];
@@ -317,6 +318,7 @@ int main(void) {
     for (size_t i = 0; i < STORES; ++i) { store_free(s->stores[i]); s->stores[i] = NULL; }
     for (size_t i = 0; i < SNAPSHOTS; ++i) { snapshot_free(s, &s->snapshots[i]); observation_free(s, &s->observations[i]); }
     for (size_t i = 0; i < s->receipt_count; ++i) receipt_free(&s->receipts[i]);
+    free(s->decisions); free(s->decision_slots); free(s->principals); free(s->principal_slots);
     close(s->journal); close(s->lock); close(s->directory);
     *s = (Service){.journal = -1, .directory = -1, .lock = -1, .max_facts = 1000000,
         .max_live_bytes = 64 * 1024 * 1024, .max_query_bytes = QUERY_BYTES,
@@ -324,13 +326,17 @@ int main(void) {
         .max_watchers = CLIENTS / 2, .process_uid = (uint32_t)geteuid(), .owner_uid = (uint32_t)geteuid()};
     expect(directory_open(s, directory) && recover(s) && random_id(s->boot), "T8 recovery");
     s->clients = clients;
-    expect(find_receipt(s, (uint32_t)geteuid() + 1, "alice-scoped") != NULL, "T8 receipt recovered for the member");
-    expect(find_receipt(s, (uint32_t)geteuid(), "alice-scoped") == NULL, "T8 not attributed to the process account");
+    Principal member = current_principal(s, (uint32_t)geteuid() + 1);
+    expect(member.epoch && find_receipt(s, member, "alice-scoped") != NULL,
+           "T8 receipt recovered for the member");
+    expect(find_receipt(s, (Principal){.uid = (uint32_t)geteuid()}, "alice-scoped") == NULL,
+           "T8 not attributed to the process account");
 
     for (size_t i = 0; i < CLIENTS; ++i) client_close(s, &clients[i]);
     for (size_t i = 0; i < STORES; ++i) { store_free(s->stores[i]); s->stores[i] = NULL; }
     for (size_t i = 0; i < SNAPSHOTS; ++i) { snapshot_free(s, &s->snapshots[i]); observation_free(s, &s->observations[i]); }
     for (size_t i = 0; i < s->receipt_count; ++i) receipt_free(&s->receipts[i]);
+    free(s->decisions); free(s->decision_slots); free(s->principals); free(s->principal_slots);
     close(s->journal); close(s->lock); close(s->directory);
     char path[sizeof(directory) + 20];
     snprintf(path, sizeof(path), "%s/journal.csl", directory); unlink(path);

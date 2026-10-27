@@ -9,8 +9,9 @@ import math
 import os
 import signal
 import subprocess
+import tarfile
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping, Sequence
 
 
@@ -38,6 +39,141 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def verify_source_archive(
+    archive: Path, entries: Sequence[Mapping[str, Any]], blobs: Mapping[str, str]
+) -> None:
+    """Check complete source bytes against both a receipt and the Git tree.
+
+    The archive is streamed without extracting or following its paths. This
+    format admits regular source files; directory records carry no source.
+    """
+    if not isinstance(entries, list):
+        raise ReadinessModelError("frozen source manifest is not a list")
+    recorded: dict[str, Mapping[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ReadinessModelError("invalid frozen source entry")
+        name = entry.get("path")
+        if (
+            not isinstance(name, str)
+            or not name
+            or PurePosixPath(name).is_absolute()
+            or ".." in PurePosixPath(name).parts
+            or PurePosixPath(name).as_posix() != name
+            or entry.get("kind") != "file"
+            or name in recorded
+        ):
+            raise ReadinessModelError("invalid or duplicate frozen source path")
+        recorded[name] = entry
+    if not recorded or recorded.keys() != blobs.keys():
+        raise ReadinessModelError("frozen source manifest differs from the pinned Git tree")
+    seen: set[str] = set()
+    with tarfile.open(archive, "r|*") as stream:
+        for member in stream:
+            name = member.name
+            if PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts:
+                raise ReadinessModelError("unsafe frozen source archive path")
+            if member.isdir():
+                continue
+            if not member.isfile() or name not in recorded or name in seen:
+                raise ReadinessModelError("unexpected or duplicate frozen source member")
+            entry = recorded[name]
+            if member.size != entry.get("bytes"):
+                raise ReadinessModelError(f"frozen source length changed: {name}")
+            contents = stream.extractfile(member)
+            if contents is None:
+                raise ReadinessModelError(f"frozen source cannot be read: {name}")
+            content_hash = hashlib.sha256()
+            blob_hash = hashlib.new("sha1" if len(blobs[name]) == 40 else "sha256")
+            blob_hash.update(f"blob {member.size}\0".encode())
+            for block in iter(lambda: contents.read(1024 * 1024), b""):
+                content_hash.update(block)
+                blob_hash.update(block)
+            if (content_hash.hexdigest() != entry.get("sha256")
+                    or blob_hash.hexdigest() != blobs[name]):
+                raise ReadinessModelError(f"frozen source bytes changed: {name}")
+            seen.add(name)
+    if seen != recorded.keys():
+        raise ReadinessModelError("frozen source archive is incomplete")
+
+
+def load_frozen_baseline(
+    repository: Path, receipt_path: Path, expected_sha256: str, expected_commit: str
+) -> dict[str, Any]:
+    """Admit a caller-pinned source/archive/binary cohort, never an enclosing repo.
+
+    Source integrity and recorded build provenance do not prove compiler
+    correspondence. The caller pins the receipt naming that build artifact.
+    """
+    if sha256_file(receipt_path) != expected_sha256:
+        raise ReadinessModelError("frozen baseline receipt failed its caller digest check")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if (not isinstance(receipt, dict)
+            or receipt.get("schema") != "cetta.readiness.frozen-baseline.v2"
+            or receipt.get("commit") != expected_commit):
+        raise ReadinessModelError("frozen baseline has the wrong schema or source commit")
+    paths: dict[str, Path] = {}
+    hashes: dict[str, str] = {}
+    for name in ("source_archive", "source_manifest", "binary", "build_receipt"):
+        item = receipt.get(name)
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+            raise ReadinessModelError(f"frozen baseline has no {name}")
+        path = (receipt_path.parent / item["path"]).resolve()
+        digest = sha256_file(path)
+        if digest != item.get("sha256"):
+            raise ReadinessModelError(f"frozen baseline {name} failed its digest check")
+        paths[name], hashes[name] = path, digest
+    source = json.loads(paths["source_manifest"].read_text(encoding="utf-8"))
+    build = json.loads(paths["build_receipt"].read_text(encoding="utf-8"))
+    if (not isinstance(source, dict) or not isinstance(build, dict)
+            or source.get("head") != expected_commit
+            or build.get("source_head") != expected_commit
+            or build.get("sha256") != hashes["binary"]
+            or not isinstance(source.get("dependencies"), dict)
+            or not isinstance(build.get("build"), str)
+            or not build["build"]
+            or build.get("runtime_stats") != 0):
+        raise ReadinessModelError("frozen baseline source and normal build receipts disagree")
+    tree = subprocess.check_output(
+        ["git", "ls-tree", "-rz", expected_commit], cwd=repository
+    )
+    blobs = {}
+    for record in tree.split(b"\0"):
+        if record:
+            header, name = record.split(b"\t", 1)
+            _mode, kind, blob = header.split()
+            if kind != b"blob":
+                raise ReadinessModelError("frozen source tree contains a non-file entry")
+            blobs[os.fsdecode(name)] = blob.decode("ascii")
+    verify_source_archive(paths["source_archive"], source.get("source_files"), blobs)
+    library_name = receipt.get("library_root")
+    if not isinstance(library_name, str):
+        raise ReadinessModelError("frozen baseline has no runtime library root")
+    library = (receipt_path.parent / library_name).resolve()
+    expected_library = {
+        entry["path"][4:]: entry["sha256"] for entry in source["source_files"]
+        if entry["path"].startswith("lib/")
+    }
+    actual_library = {
+        str(path.relative_to(library)): sha256_file(path)
+        for path in library.rglob("*") if path.is_file()
+    }
+    if not expected_library or actual_library != expected_library:
+        raise ReadinessModelError("frozen baseline runtime library differs from its source")
+    if (paths["binary"].parent.parent / "lib").resolve() != library:
+        raise ReadinessModelError("frozen baseline binary is not staged beside its library")
+    return {
+        "commit": expected_commit,
+        "receipt_sha256": expected_sha256,
+        **{name + "_sha256": digest for name, digest in hashes.items()},
+        "build": build.get("build"),
+        "build_only_repair": build.get("build_only_repair", ""),
+        "dependencies_sha256": sha256_bytes(canonical_json(source["dependencies"])),
+        "binary": str(paths["binary"]),
+        "library_sha256": sha256_bytes(canonical_json(actual_library)),
+    }
 
 
 def terminate_process_session(process: subprocess.Popen[Any]) -> None:
@@ -534,6 +670,7 @@ def calibration_subject(artifact: Mapping[str, Any]) -> dict[str, Any]:
         "property_schema",
         "property_manifest_sha256",
         "source_anchors",
+        "consolidation_baseline",
     )
     missing = [key for key in required if key not in artifact]
     if missing:
@@ -550,6 +687,7 @@ def calibration_subject(artifact: Mapping[str, Any]) -> dict[str, Any]:
         "property_schema": artifact["property_schema"],
         "property_manifest_sha256": artifact["property_manifest_sha256"],
         "source_anchors": artifact["source_anchors"],
+        "consolidation_baseline": artifact["consolidation_baseline"],
     }
 
 

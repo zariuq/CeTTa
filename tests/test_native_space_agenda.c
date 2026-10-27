@@ -147,10 +147,10 @@ static void self_reintroduced(Arena *arena,Bindings *env) {
 }
 static void scoped_alpha(Arena *arena) {
     CETTA_FRAME_IDENTITY_SCOPE(frames);
-    uint32_t left_epoch=cetta_frame_identity_scope_fresh(&frames);
-    uint32_t right_epoch=cetta_frame_identity_scope_fresh(&frames);
-    uint32_t captured_epoch=cetta_frame_identity_scope_fresh(&frames);
-    CHECK(left_epoch && right_epoch && captured_epoch);
+    CettaFrameIdentity left_epoch=cetta_frame_identity_scope_fresh(&frames);
+    CettaFrameIdentity right_epoch=cetta_frame_identity_scope_fresh(&frames);
+    CettaFrameIdentity captured_epoch=cetta_frame_identity_scope_fresh(&frames);
+    CHECK(left_epoch.word && right_epoch.word && captured_epoch.word);
     Atom *base=atom_var(arena,"$local");
     Atom *x=atom_var_like(arena,base,var_epoch_id(base->var_id,left_epoch));
     Atom *y=atom_var_like(arena,base,var_epoch_id(base->var_id,right_epoch));
@@ -199,7 +199,7 @@ static void alpha_set_members(Arena *arena,Bindings *env) {
     CHECK(space_length64(&s)==2u && space_contains_exact(&s,parse(arena,"Done")));
     Atom *remaining=space_get_at64(&s,0u);
     CHECK(remaining->kind==ATOM_EXPR && remaining->expr.len==3u);
-    CHECK(remaining->expr.elems[1]->var_id!=remaining->expr.elems[2]->var_id);
+    CHECK(!var_id_eq(remaining->expr.elems[1]->var_id, remaining->expr.elems[2]->var_id));
     cetta_space_agenda_free(a);space_free(&s);
 }
 static void transaction(Arena *arena,Bindings *env) {

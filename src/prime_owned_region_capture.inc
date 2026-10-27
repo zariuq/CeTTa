@@ -15,6 +15,7 @@ typedef struct {
     PrimeNativeOwnedRegion *region;
     PrimeNativeRegionNode *nodes;
     size_t *stack;
+    CettaNodeMemo index;
     size_t length, capacity, depth;
     bool value, executable;
     CettaContinuationStatus status;
@@ -33,12 +34,14 @@ static bool prime_native_region_tick(PrimeNativeRegionCapture *capture) {
     return true;
 }
 
+static bool prime_native_region_probe(void *context) {
+    return prime_native_region_tick(context);
+}
+
 static size_t prime_native_region_find(PrimeNativeRegionCapture *capture, const Atom *source) {
-    for (size_t i = 0u; i < capture->length; i++) {
-        if (!prime_native_region_tick(capture)) return SIZE_MAX;
-        if (capture->nodes[i].source == source) return i;
-    }
-    return SIZE_MAX;
+    uintptr_t index=0u;
+    return cetta_node_memo_find_checked(&capture->index,source,0u,&index,
+        prime_native_region_probe,capture) ? (size_t)index : SIZE_MAX;
 }
 
 /* These are the scalar payload kinds carried by the snapshot graph.
@@ -48,8 +51,23 @@ static bool prime_native_region_scalar_kind(GroundedKind kind) {
         kind == GV_STRING || kind == GV_BIGINT || kind == GV_RATIONAL;
 }
 
-static bool prime_native_region_push(PrimeNativeRegionCapture *capture, Atom *source) {
+static CettaInternalTag prime_native_region_syntax_tag(const Atom *node) {
+    if (atom_is_prime_own_list(node)) return CETTA_INTERNAL_TAG_PRIME_OWN;
+    if (atom_is_prime_braces(node)) return CETTA_INTERNAL_TAG_PRIME_BRACES;
+    if (atom_is_list_form(node))
+        return atom_is_list_rest(node) ? CETTA_INTERNAL_TAG_LIST_REST : CETTA_INTERNAL_TAG_LIST;
+    return 0;
+}
+
+static bool prime_native_region_push(PrimeNativeRegionCapture *capture, Atom *source,
+    CettaInternalTag syntax_tag) {
     if (!source || !prime_native_region_tick(capture)) return false;
+    /* Only a recognized immutable syntax container supplies its tag leaf.
+     * Check that role before DAG reuse, so sharing cannot turn a private
+     * marker into a standalone executable or value. */
+    if (source->kind==ATOM_GROUNDED && source->ground.gkind==GV_INTERNAL_TAG &&
+        (!syntax_tag || !atom_is_internal_tag(source,syntax_tag)))
+        return false;
     size_t known = prime_native_region_find(capture, source);
     if (capture->status == CETTA_CONTINUATION_CAPACITY) return false;
     if (known != SIZE_MAX) {
@@ -85,14 +103,21 @@ static bool prime_native_region_push(PrimeNativeRegionCapture *capture, Atom *so
     if (source->structural_facts & ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) return false;
     if (source->kind == ATOM_GROUNDED) {
         GroundedKind kind = source->ground.gkind;
-        if (!prime_native_region_scalar_kind(kind)) return false;
+        if (!prime_native_region_scalar_kind(kind) &&
+            !(syntax_tag && atom_is_internal_tag(source,syntax_tag)))
+            return false;
         if (kind == GV_STRING && (!source->ground.sval ||
                 source->ground.slen >= capture->region->byte_limit)) {
             capture->status = CETTA_CONTINUATION_CAPACITY; return false;
         }
     } else if (source->kind != ATOM_SYMBOL && source->kind != ATOM_VAR && source->kind != ATOM_EXPR)
         return false;
-    size_t index = capture->length++;
+    size_t index = capture->length;
+    if (!cetta_node_memo_store_checked(&capture->index,source,0u,(uintptr_t)index,
+            prime_native_region_probe,capture,capture->region->byte_limit)) {
+        capture->status=CETTA_CONTINUATION_CAPACITY;return false;
+    }
+    capture->length++;
     capture->nodes[index] = (PrimeNativeRegionNode){.source=source,.state=1u,
         .value=capture->value,.executable=capture->executable};
     capture->stack[capture->depth++] = index;
@@ -100,7 +125,7 @@ static bool prime_native_region_push(PrimeNativeRegionCapture *capture, Atom *so
 }
 
 static bool prime_native_region_walk(PrimeNativeRegionCapture *capture, Atom *root) {
-    if (!prime_native_region_push(capture, root)) return false;
+    if (!prime_native_region_push(capture, root, false)) return false;
     while (capture->depth) {
         PrimeNativeRegionNode *node = &capture->nodes[capture->stack[capture->depth-1u]];
         Atom *source = node->source;
@@ -111,11 +136,13 @@ static bool prime_native_region_walk(PrimeNativeRegionCapture *capture, Atom *ro
         }
         if (!prime_native_region_tick(capture) || (source->kind == ATOM_EXPR && !source->expr.elems))
             return false;
+        CettaInternalTag syntax_tag=source->kind==ATOM_EXPR && node->edge==0u
+            ? prime_native_region_syntax_tag(source) : 0;
         Atom *child = source->kind == ATOM_EXPR ? source->expr.elems[node->edge] : source->name_key;
         node->edge++;
         if (capture->region->captured_edges == SIZE_MAX) return false;
         capture->region->captured_edges++;
-        if (!prime_native_region_push(capture, child)) return false;
+        if (!prime_native_region_push(capture, child, syntax_tag)) return false;
     }
     return true;
 }
@@ -138,6 +165,8 @@ static bool prime_native_region_primitive(SymbolId head) {
     return head == g_builtin_syms.quote || head == g_builtin_syms.superpose ||
         head == g_builtin_syms.if_text || head == g_builtin_syms.if_equal ||
         head == g_builtin_syms.let || head == g_builtin_syms.chain ||
+        head == g_builtin_syms.let_star || head == g_builtin_syms.case_text ||
+        head == g_builtin_syms.cons_atom || head == g_builtin_syms.decons_atom ||
         head == g_builtin_syms.op_plus || head == g_builtin_syms.op_minus ||
         head == g_builtin_syms.op_mul || head == g_builtin_syms.op_div ||
         head == g_builtin_syms.op_mod || head == g_builtin_syms.op_lt ||
@@ -150,31 +179,38 @@ static bool prime_native_region_primitive(SymbolId head) {
 /* This is shallow constructor recognition, not an effect judgement for
  * the expression. Capture still inspects every descendant and world row;
  * ordinary evaluation still owns field demand and equation queries. */
-static bool prime_native_owned_region_scalar_head(Space *space, Arena *arena, Atom *call) {
+static bool prime_native_owned_region_constructor_head(Space *space, Arena *arena, Atom *call) {
     if (!call || call->kind != ATOM_EXPR || !call->expr.len || !call->expr.elems)
         return false;
     Atom *head = call->expr.elems[0];
-    return head && head->kind == ATOM_GROUNDED &&
-        prime_native_region_scalar_kind(head->ground.gkind) &&
-        atom_has_constructor_head(space, arena, call);
+    return head &&
+        ((head->kind==ATOM_GROUNDED && prime_native_region_scalar_kind(head->ground.gkind) &&
+          atom_has_constructor_head(space,arena,call)) ||
+         (head->kind==ATOM_EXPR && atom_has_constructor_head(space,arena,head)));
 }
 
 static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena,
     Atom *call, bool private_data) {
     if (!call || call->kind != ATOM_EXPR || !call->expr.len) return true;
+    if (prime_observation_value_barrier(space, arena, call)) return true;
     Atom *head_atom = call->expr.elems[0];
-    if (private_data && head_atom &&
-        (head_atom->kind == ATOM_VAR || head_atom->kind == ATOM_EXPR))
+    if (private_data && prime_native_head_requires_resolution(
+            head_atom, &g_prime_need_active))
         return true;
     if (!head_atom || head_atom->kind != ATOM_SYMBOL)
-        return prime_native_owned_region_scalar_head(space, arena, call);
+        return prime_native_owned_region_constructor_head(space, arena, call);
     SymbolId head = atom_symbol_current_id(head_atom);
     if (prime_native_region_primitive(head)) return true;
     if (private_data && (head == g_builtin_syms.match ||
         head == g_builtin_syms.get_atoms || head == g_builtin_syms.add_atom ||
         head == g_builtin_syms.remove_atom || head == g_builtin_syms.collapse ||
         head == g_builtin_syms.function || head == g_builtin_syms.return_text ||
-        head == g_builtin_syms.eval))
+        head == g_builtin_syms.eval || head == g_builtin_syms.unify ||
+        head == g_builtin_syms.context_space))
+        return true;
+    /* This profile may enter a native handler with an actual retained
+     * realization. Payload calls keep this source's authority at every use. */
+    if (private_data && cetta_library_native_execution_supported(g_library_context, head))
         return true;
     /* These semantic handlers use the same inspected equation/argument
      * closure. Costs, interaction services and effectful primitives retain
@@ -184,8 +220,9 @@ static bool prime_native_owned_region_call_admitted(Space *space, Arena *arena,
         head==weights->weight_exact_rational) return true;
     /* These are declaration/data constructors, not mutable services. */
     if (head == g_builtin_syms.equals || head == g_builtin_syms.colon ||
-        head == g_builtin_syms.arrow) return true;
-    if (symbol_id_is_builtin(head) || registry_lookup_atom(head_atom) ||
+        head == g_builtin_syms.arrow ||
+        (symbol_flags(g_symbols, head) & CETTA_SYMBOL_FLAG_BUILTIN_CONSTRUCTOR)) return true;
+    if (symbol_id_is_builtin_for(head, eval_current_language_id()) || registry_lookup_atom(head_atom) ||
         eval_native_weight_head(head) || cetta_prime_host_intrinsic_head(head)) return false;
     if (private_data && eval_equations_may_match_known_head(space,head)) return true;
     return g_library_context && g_library_context->petta_program &&
@@ -214,11 +251,11 @@ static bool prime_native_region_call_agrees(PrimeNativeOwnedRegion *region,
     }
     Registry *saved_registry = g_registry;
     g_registry = registry;
-    bool left_scalar = prime_native_owned_region_scalar_head(source, &region->snapshot, node);
+    bool left_scalar = prime_native_owned_region_constructor_head(source, &region->snapshot, node);
     bool indirect = region->private_data &&
         (head_atom->kind == ATOM_VAR || head_atom->kind == ATOM_EXPR);
     bool left = (symbol_head || left_scalar || indirect) &&
-        (node == expression || left_scalar ||
+        (region->private_data || node == expression || left_scalar ||
          prime_native_owned_region_call_admitted(source, &region->snapshot, node,
              region->private_data));
     PettaResolvedCallClass left_class = petta_program_classify_resolved_call(
@@ -230,12 +267,12 @@ static bool prime_native_region_call_agrees(PrimeNativeOwnedRegion *region,
     if (okay) {
         Atom *image_head = image->expr.elems[0];
         bool right_symbol = image_head->kind == ATOM_SYMBOL;
-        bool right_scalar = prime_native_owned_region_scalar_head(
+        bool right_scalar = prime_native_owned_region_constructor_head(
             &region->world, &region->snapshot, image);
         bool right_indirect = region->private_data &&
             (image_head->kind == ATOM_VAR || image_head->kind == ATOM_EXPR);
         bool right = (right_symbol || right_scalar || right_indirect) &&
-            (node == expression || right_scalar ||
+            (region->private_data || node == expression || right_scalar ||
              prime_native_owned_region_call_admitted(&region->world, &region->snapshot, image,
                  region->private_data));
         PettaResolvedCallClass right_class = petta_program_classify_resolved_call(
@@ -250,7 +287,9 @@ static bool prime_native_region_call_agrees(PrimeNativeOwnedRegion *region,
             indirect == right_indirect &&
             (symbol_head ? atom_symbols_equal(head_atom, image_head) :
              indirect ? head_atom->kind == image_head->kind :
-             left_scalar && head_atom->ground.gkind == image_head->ground.gkind);
+             left_scalar && head_atom->kind==image_head->kind &&
+                 (head_atom->kind!=ATOM_GROUNDED ||
+                  head_atom->ground.gkind == image_head->ground.gkind));
         okay = right && same_category && !foreign_known && left_class == right_class &&
             left_grounded == (right_symbol && is_grounded_op(atom_symbol_current_id(image_head)));
     }
@@ -259,31 +298,7 @@ static bool prime_native_region_call_agrees(PrimeNativeOwnedRegion *region,
 }
 
 static bool prime_native_region_baseline(const CettaLibraryContext *source) {
-    if (!source) return false;
-    for (size_t i=0u; i<CETTA_PETTA_MEMO_CONTROL_COUNT; i++)
-        if (source->petta_memo.imported_controls[i]) return false;
-    return source->session.language_id == CETTA_LANGUAGE_PRIME &&
-        source->session.profile == cetta_profile_prime_default() &&
-        !source->session.test_verdict && !source->session.test_verdict_context &&
-        !source->session.process_control.exit_requested && source->petta_program &&
-        !source->nik_runtime && !source->active_mask && !source->import_dir_len &&
-        !source->module_mount_len && !source->petta_library_paths.items &&
-        !source->petta_library_paths.len && !source->petta_library_paths.cap && !source->imported_file_len &&
-        !source->petta_trusted_library_import_depth && !source->import_space_alias_len &&
-        !source->cmdline_arg_len && !source->loaded_module_len && !source->module_token_scope &&
-        !source->top_module_space && !source->retired_modules && !source->retired_module_len &&
-        !source->retired_module_cap && !source->petta_translator_rules &&
-        !source->petta_translator_rule_len && !source->petta_translator_rule_cap &&
-        !source->petta_tabled_relations && !source->petta_tabled_relation_len &&
-        !source->petta_tabled_relation_cap && !source->petta_memo.all_arities &&
-        !source->petta_memo.all_arity_len && !source->petta_memo.all_arity_cap &&
-        !source->petta_memo.exact_arities && !source->petta_memo.exact_arity_len &&
-        !source->petta_memo.exact_arity_cap && !source->petta_shared_table &&
-        !source->petta_open_programs && !source->petta_open_programs_free &&
-        !source->petta_match_decisions && !source->petta_match_decisions_free &&
-        !source->petta_static_imports && !source->petta_static_imports_free &&
-        !source->petta_runtime && !source->petta_typecheck_v3 &&
-        !source->petta_token_space_clause_registry && !source->io_runtime && !source->json_runtime;
+    return cetta_library_context_prime_snapshot_source_admitted(source);
 }
 
 static bool prime_native_region_measure(PrimeNativeRegionCapture *capture,
@@ -294,6 +309,8 @@ static bool prime_native_region_measure(PrimeNativeRegionCapture *capture,
     atom_deep_copy_session_storage_census(copy, &census);
     cetta_storage_array(&census, capture->nodes, capture->capacity, sizeof(*capture->nodes), 0u);
     cetta_storage_array(&census, capture->stack, capture->capacity, sizeof(*capture->stack), 0u);
+    for (const CettaSegmentedBlock *block=capture->index.slots.blocks;block;block=block->next)
+        cetta_storage_array(&census,block,block->bytes,1u,0u);
     cetta_storage_finish(&census);
     cetta_native_cost_charge(CETTA_COST_STORAGE_PROBE,census.probes);
     bool okay = !census.incomplete && !census.overflow &&
@@ -467,15 +484,9 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
         if (!okay) capture.status=CETTA_CONTINUATION_CAPACITY;
     }
     if (okay) {
-        okay=cetta_library_context_init_prime_snapshot(region->library);
+        okay=cetta_library_context_init_prime_snapshot_from(region->library,origin);
         region->library_ready=true;
         if (!okay) capture.status=CETTA_CONTINUATION_CAPACITY;
-        region->library->session=origin->session;
-        region->library->prime_relational_plan_enabled=origin->prime_relational_plan_enabled;
-        memcpy(region->library->root_dir,origin->root_dir,sizeof(origin->root_dir));
-        memcpy(region->library->working_dir,origin->working_dir,sizeof(origin->working_dir));
-        memcpy(region->library->script_path,origin->script_path,sizeof(origin->script_path));
-        memcpy(region->library->script_dir,origin->script_dir,sizeof(origin->script_dir));
         arena_init_detached(&region->snapshot); arena_set_scalar_cache(&region->snapshot,false);
         arena_init_detached(&region->persistent); arena_set_scalar_cache(&region->persistent,false);
         region->arenas_ready=true;
@@ -487,12 +498,8 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
         registry_init(&region->registry);
         g_hashcons=previous_hashcons;
         region->registry_ready=true;
-        region->services=calloc(1u,sizeof(*region->services));
-        if (region->services) {
-            atomic_init(&region->services->active, false);
-            region->services->effects=space_execution_analysis_cache_new();
-        }
-        okay=okay && region->services && region->services->effects;
+        region->services=prime_native_source_services_new();
+        okay=okay && region->services;
         if (!okay) capture.status=CETTA_CONTINUATION_CAPACITY;
         if (okay) okay=prime_native_region_world_registered(&capture,&region->world);
     }
@@ -553,12 +560,22 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
         }
     }
     if (okay) okay=prime_native_region_prepare_programs(&capture,origin,source,registry,copy);
-    /* Inspect every executable call-shaped node, including RHS and quoted
+    /* Compare every executable call-shaped node, including RHS and quoted
      * payloads. Admitted top-policy data retains its separate role. Private
-     * indirect heads retain the invocation-time service gate.
+     * code may retain unavailable operations without invoking them; every
+     * actual resolved call still crosses its invocation-time service gate.
      * The omitted foreign capability is compared even for inert names. */
     for (size_t i=0u; okay && i<capture.length; i++) {
         Atom *node=capture.nodes[i].source, *image=capture.nodes[i].image;
+        if (node->kind==ATOM_SYMBOL) {
+            /* A symbolic function can be passed as data and later become a
+             * computed head. Omitting its foreign callable interpretation
+             * must not turn it into a constructor in the captured context. */
+            if (!prime_native_region_tick(&capture) ||
+                petta_libpl_named_arity(origin->lib_prolog,atom_symbol_current_id(node),0u).known) {
+                okay=false;break;
+            }
+        }
         if (node->kind==ATOM_SYMBOL && capture.nodes[i].value) {
             Atom *binding=registry_lookup_symbol(registry,node);
             if (binding && binding->kind==ATOM_GROUNDED && binding->ground.gkind==GV_SPACE) {
@@ -570,6 +587,11 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
         if (!prime_native_region_tick(&capture)) {
             okay=false; break;
         }
+        CettaInternalTag syntax_tag=prime_native_region_syntax_tag(node);
+        if (syntax_tag) {
+            okay=prime_native_region_syntax_tag(image)==syntax_tag;
+            continue;
+        }
         okay=prime_native_region_call_agrees(region,origin,source,registry,
             node,image,expression);
     }
@@ -579,6 +601,7 @@ static PrimeNativeOwnedRegion *prime_native_owned_region_capture(
         space_read_token_matches_live_space(source_read,source) &&
         prime_native_region_measure(&capture,copy);
     atom_deep_copy_session_free(copy);
+    cetta_node_memo_free(&capture.index);
     free(capture.nodes); free(capture.stack);
     cetta_native_cost_scope_leave(&cost);
     if (!okay) {

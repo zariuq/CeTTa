@@ -1964,7 +1964,7 @@ static PrimeNativePlanBuildV1 prime_native_relation_symbol_provider(
         return PRIME_NATIVE_PLAN_FAULT;
     }
     if (!relation_term || relation_term->kind != ATOM_SYMBOL ||
-        symbol_id_is_builtin(atom_symbol_current_id(relation_term)) ||
+        symbol_id_is_builtin_for(atom_symbol_current_id(relation_term), CETTA_LANGUAGE_PRIME) ||
         is_grounded_op(atom_symbol_current_id(relation_term))) {
         return PRIME_NATIVE_PLAN_DECLINED;
     }

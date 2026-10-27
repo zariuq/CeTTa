@@ -61,6 +61,7 @@ static void prime_native_top_episode_destroy(PrimeNativeTopEpisode *episode) {
     PrimeNativeRegionScope scope = {0};
     bool selected = prime_native_region_scope_enter(episode, &scope);
     assert(selected); (void)selected;
+    prime_need_call_sources_free(episode);
     if (episode->execution) {
         EvalExecutionScope execution={.owner=episode->execution,.previous=g_eval_execution};
         g_eval_execution=episode->execution;

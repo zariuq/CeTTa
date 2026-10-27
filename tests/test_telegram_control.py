@@ -4,7 +4,7 @@ import json
 import os
 import pathlib
 import socket
-import sqlite3
+from support.durable_journal_fixture import records as native_records
 import subprocess
 import sys
 import tempfile
@@ -54,10 +54,7 @@ def wait(proc, predicate, what):
     raise AssertionError((what,out,err))
 
 def rows(state, space):
-    try:
-        with sqlite3.connect(f'file:{state}/journal.db?mode=ro',uri=True) as db:
-            return dict(db.execute('SELECT key,value FROM records WHERE space=?',(space,)))
-    except sqlite3.OperationalError: return {}
+    return native_records(str(state) + '/journal.db', space)
 
 with tempfile.TemporaryDirectory(prefix='cetta-control-') as temp:
     root=pathlib.Path(temp)

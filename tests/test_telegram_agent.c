@@ -319,7 +319,7 @@ int main(int argc,char **argv) {
     control_request("version","84.0","delivery",control);
     d=decide(control,0); cetta_host_decision_free(d); assert(!record("telegram.control-results","version"));
     printf("Telegram agent: %u pure policy checks; recorded input, rho reaction, task pairing, atomic batches, chat progress, stale drafts, held uncertainty and profile/fuel checks passed\n",policy_checks);
-    cetta_durable_close(store); unlink(db); char path[300]; snprintf(path,sizeof(path),"%s-wal",db); unlink(path); snprintf(path,sizeof(path),"%s-shm",db); unlink(path); rmdir(dir);
+    cetta_durable_close(store); unlink(db); char path[300]; snprintf(path,sizeof(path),"%s.lock",db); unlink(path); snprintf(path,sizeof(path),"%s.checkpoint",db); unlink(path); rmdir(dir);
     cetta_library_context_free(&context); eval_set_library_context(NULL); registry_free(&registry); space_free(&program);
     arena_free(&scratch); arena_free(&persistent); var_intern_free(&vars); symbol_table_free(&symbols); g_symbols=NULL; g_var_intern=NULL;
 }

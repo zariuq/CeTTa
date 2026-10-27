@@ -4,6 +4,7 @@
 #include "atom.h"
 #include "native/native_modules.h"
 #include "call_outcome.h"
+#include "owned_execution.h"
 #include "foreign.h"
 #include "mork_space_bridge_runtime.h"
 #include "native_handle.h"
@@ -256,6 +257,10 @@ typedef struct CettaLibraryContext {
      * state, with the same lifetime as this host. */
     void *prime_lf_guest;
     void (*prime_lf_guest_free)(void *guest);
+    /* Immutable standard definitions retained independently of editable
+     * program spaces. Owned by the evaluator for this library session. */
+    void *prime_standard_library;
+    void (*prime_standard_library_free)(void *library);
     bool prime_relational_plan_enabled;
     struct CettaPettaRuntimeState *petta_runtime;
     PettaProgram *petta_program;
@@ -277,6 +282,14 @@ void cetta_library_context_init_for_language_profile(CettaLibraryContext *ctx,
  * The caller must independently validate every captured root and call. A
  * false result still leaves an initialized context requiring normal free. */
 bool cetta_library_context_init_prime_snapshot(CettaLibraryContext *ctx);
+/* Project an already linked Prime program's immutable mechanisms. Loader
+ * inventories are not execution services and are not copied. Import/module
+ * lookup and every native operation still need independent invocation
+ * admission; this projection grants no external effect or handle authority.
+ * Source context and code roots must be quiescent through capture. */
+bool cetta_library_context_prime_snapshot_source_admitted(const CettaLibraryContext *source);
+bool cetta_library_context_init_prime_snapshot_from(CettaLibraryContext *ctx,
+    const CettaLibraryContext *source);
 void cetta_library_context_prime_snapshot_storage(const CettaLibraryContext *ctx,
     CettaStorageCensus *census);
 void cetta_library_context_free(CettaLibraryContext *ctx);
@@ -443,6 +456,18 @@ Atom *cetta_library_durable_admin(CettaLibraryContext *ctx, Arena *arena, Atom *
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out);
+/* Native services with an owned, yielding realization. Operands are already
+ * observed values. The caller keeps the COMPLETE immutable operand graph,
+ * its arenas/intern/resource owners, selected services and captures alive
+ * (holding just the root arena is insufficient), checks current authority
+ * before each advance, and closes the owner
+ * after delivery. Opening allocates an owner without executing the request;
+ * its first preparation, final materialization and cleanup have atomic costs. */
+struct RhocalcPayloadProvider;
+bool cetta_library_native_execution_supported(const CettaLibraryContext *ctx, SymbolId head);
+bool cetta_library_native_execution_open(CettaLibraryContext *ctx, Space *space,
+    Arena *arena, Atom *call, const struct RhocalcPayloadProvider *payload,
+    CettaOwnedExecution *out);
 /* The prepared pure machine keeps every argument alive until it has consumed
  * the result.  A library may therefore return an immutable view into an
  * argument instead of copying it; callers outside that lifetime use the

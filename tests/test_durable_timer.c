@@ -71,7 +71,7 @@ static void event(const char *kind, int64_t due, int64_t now, int64_t represente
 static CettaTimerTick tick(int64_t now, size_t budget, size_t emitted) {
     CettaTimerTick out;
     assert(cetta_timer_tick(store,&cursor,now,budget,fault,NULL,&out)==DURABLE_OK && out.emitted==emitted);
-    assert(!out.faults); return out;
+    assert(!out.faults && (!out.emitted || out.visited)); return out;
 }
 static void drain(void) {
     CettaDurableSnapshot s; assert(cetta_durable_snapshot(store,"host.inbox",&s)==DURABLE_OK);
@@ -84,8 +84,8 @@ static void drain(void) {
 }
 static void cleanup(const char *path) {
     assert(!unlink(path)); char side[300];
-    snprintf(side,sizeof(side),"%s-wal",path); unlink(side);
-    snprintf(side,sizeof(side),"%s-shm",path); unlink(side);
+    snprintf(side,sizeof(side),"%s.lock",path); unlink(side);
+    snprintf(side,sizeof(side),"%s.checkpoint",path); unlink(side);
 }
 int main(int argc, char **argv) {
     SymbolTable symbols; symbol_table_init(&symbols); symbol_table_init_builtins(&symbols,&g_builtin_syms); g_symbols=&symbols;

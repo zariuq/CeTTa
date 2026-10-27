@@ -2125,7 +2125,6 @@ bool cetta_foreign_call(CettaForeignRuntime *rt,
 }
 
 static Atom *result_set_collapse_for_native(Arena *a, ResultSet *rs) {
-    if (rs->len == 0) return atom_empty(a);
     if (rs->len == 1) return rs->items[0];
     return atom_expr(a, rs->items, rs->len);
 }
@@ -2474,11 +2473,13 @@ bool cetta_foreign_call_native(CettaForeignRuntime *rt,
         result_set_free(&results);
         return false;
     }
-    *out = end.kind == CETTA_CALL_RAISED
-        ? end
+    *out = end.kind != CETTA_CALL_FAILURE ? end
+        : results.len == 0u ? cetta_call_failure()
         : cetta_call_value(result_set_collapse_for_native(a, &results));
     result_set_free(&results);
-    return out->kind == CETTA_CALL_RAISED || out->term != NULL;
+    /* Dispatch entered already. Zero answers are failure, not refusal;
+     * the spelling of an ordinary value supplies no control authority. */
+    return true;
 }
 
 /* The Python exception an uncaught (Error (python_error Type Value) _)

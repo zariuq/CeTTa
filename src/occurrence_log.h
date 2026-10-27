@@ -4,13 +4,19 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include "storage_census.h"
 
-/* Delivery from an already qualified producer, with a fixed consumer cohort.
+/* Delivery from an already qualified producer, with independent consumers.
  * Occurrence positions are local to this log. This does not choose a producer,
  * merge independent choices, or validate the producer's source context.
  * Calls are serialized. Publication and release callbacks must not mutate the
  * log. Their work is outside the constant-cost cursor operation. */
 typedef struct CettaOccurrenceLog CettaOccurrenceLog;
+
+/* The caller supplies the census of its row owner. An absent provider for
+ * an owned row leaves the census explicitly incomplete. */
+void cetta_occurrence_log_storage(const CettaOccurrenceLog *log,
+    CettaStorageCensus *census,CettaStorageVisitor row_storage);
 
 typedef struct {
     const void *value;
@@ -46,7 +52,7 @@ typedef struct {
     uint64_t past_end;
     size_t rows;
     size_t limit;
-    size_t consumers;
+    size_t consumers; /* Consumer/pin slot IDs, including cancelled slots. */
     size_t reserved_rows;
     bool completed;
 } CettaOccurrenceLogInfo;
@@ -56,6 +62,24 @@ typedef struct {
  * permitted. NULL reports an unrepresentable or unallocated control store. */
 CettaOccurrenceLog *cetta_occurrence_log_new(size_t consumers, size_t limit);
 void cetta_occurrence_log_free(CettaOccurrenceLog *log);
+
+/* Fork an active reader at its current unread position. The new reader pins
+ * the same retained suffix, then advances independently. This never restarts
+ * a producer, resurrects a cancelled reader or reads a trimmed prefix. A
+ * completed reader may fork at the end. Refusal leaves the log and out index
+ * unchanged. Growing the consumer store costs O(consumers); ordinary take
+ * retains its constant-cost cursor update. Consumer IDs are never reused. */
+bool cetta_occurrence_log_fork(CettaOccurrenceLog *log, size_t parent,
+                             size_t *out_consumer);
+
+/* Administrative retention for immutable reader checkpoints. A pin is a
+ * distinct slot role: peek/take/fork/cancel do not accept it as a consumer.
+ * Its owner computes the oldest position its live checkpoints still require.
+ * Move is monotone within the currently retained interval; releasing a pin
+ * never acknowledges an answer. Slot identifiers are never reused. */
+bool cetta_occurrence_log_pin(CettaOccurrenceLog *log, uint64_t position, size_t *out_pin);
+bool cetta_occurrence_log_pin_move(CettaOccurrenceLog *log, size_t pin, uint64_t position);
+bool cetta_occurrence_log_pin_release(CettaOccurrenceLog *log, size_t pin);
 
 /* APPENDED transfers this row's owner to the log. Every refusal leaves that
  * owner with the caller. Each admitted occurrence has its own ownership share,

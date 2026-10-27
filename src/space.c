@@ -1685,12 +1685,12 @@ static int disc_node_ptr_compare(const void *left, const void *right) {
 }
 
 /* While current, a pinned view borrows its Space's rows and trie and
- * `space` names that Space.  Detaching copies the rows into the view, takes
- * the trie, and clears `space`: the view is then the only source of its
- * cursors, and the Space is free to rewrite its own rows.  The shared
- * transition domain protects references and the attached-to-detached
- * transition together; atomic reference counts alone would not protect the
- * borrowed rows and trie during mutation. */
+ * `space` names that Space.  Detaching copies the rows and their removal
+ * marks into the view, takes the trie, and clears `space`: the view is then
+ * the only source of its cursors, and the Space is free to rewrite its own
+ * rows.  The shared transition domain protects references and the
+ * attached-to-detached transition together; atomic reference counts alone
+ * would not protect the borrowed rows and trie during mutation. */
 struct SpacePinnedOccurrences {
     uint32_t references;
     Space *space;
@@ -1699,7 +1699,78 @@ struct SpacePinnedOccurrences {
     CettaCount len;
     DiscNode *match_trie;
     TermUniverse *universe;
+    /* The rows marked removed when the view detached, as the Space keeps
+     * its marks: a bitmap and a Fenwick tree of live rows over
+     * [0, mark_rows). */
+    uint64_t *marks;
+    CettaIndex *mark_tree;
+    CettaIndex mark_rows;
+    CettaIndex marked;
+    /* The head indexes its cursors read, taken when it detached. */
+    CettaSpaceHeadIndex *head_index;
 };
+
+static inline CettaIndex space_mark_lowbit(CettaIndex i);
+
+/* The removal marks over a view's rows: its Space's while the view is
+ * current, which no removal changes before detaching it, and the ones it
+ * copied when it detached. */
+typedef struct {
+    const uint64_t *marks;
+    const CettaIndex *tree;
+    CettaIndex rows;
+    CettaIndex marked;
+} SpaceViewMarks;
+
+static SpaceViewMarks space_view_marks(const SpacePinnedOccurrences *view) {
+    if (view->space) {
+        const SpaceNativeStorage *n = &view->space->native;
+        return (SpaceViewMarks){n->marks, n->mark_tree, n->mark_rows,
+                                n->marked};
+    }
+    return (SpaceViewMarks){view->marks, view->mark_tree, view->mark_rows,
+                            view->marked};
+}
+
+static inline bool space_view_row_marked(const SpaceViewMarks *m,
+                                         CettaIndex row) {
+    return m->marked != 0u && row < m->rows &&
+           ((m->marks[row >> 6] >> (row & 63u)) & 1u) != 0u;
+}
+
+/* A live row's logical index: the live rows before it. */
+static CettaIndex space_view_logical(const SpaceViewMarks *m, CettaIndex row) {
+    if (m->marked == 0u)
+        return row;
+    if (row >= m->rows)
+        return m->rows - m->marked + (row - m->rows);
+    CettaIndex live = 0u;
+    for (CettaIndex i = row; i > 0u; i -= space_mark_lowbit(i))
+        live += m->tree[i];
+    return live;
+}
+
+/* The row holding live logical index `logical`. */
+static CettaIndex space_view_row(const SpaceViewMarks *m, CettaIndex logical) {
+    if (m->marked == 0u)
+        return logical;
+    CettaIndex live_in_tree = m->rows - m->marked;
+    if (logical >= live_in_tree)
+        return m->rows + (logical - live_in_tree);
+    CettaIndex step = 1u;
+    while (step <= m->rows / 2u)
+        step <<= 1u;
+    CettaIndex position = 0u;
+    CettaIndex remaining = logical + 1u;
+    for (; step; step >>= 1u) {
+        if (position + step <= m->rows &&
+            m->tree[position + step] < remaining) {
+            position += step;
+            remaining -= m->tree[position];
+        }
+    }
+    return position;
+}
 
 static SpacePinnedOccurrences *space_pinned_occurrences_acquire(Space *s) {
     SpaceMatchNativeState *st = &s->match_backend.native;
@@ -1735,6 +1806,9 @@ static void space_pinned_occurrences_release(SpacePinnedOccurrences *view) {
             (size_t)view->len *
                 cetta_atom_id_storage_width_bytes_from_bits(view->atom_id_width_bits));
         free(view->atom_ids);
+        free(view->marks);
+        free(view->mark_tree);
+        space_head_index_free(view->head_index);
         disc_node_free(view->match_trie);
     }
     free(view);
@@ -1746,11 +1820,8 @@ void space_pinned_occurrences_detach(Space *s) {
     SpacePinnedOccurrences *view = st ? st->pinned : NULL;
     if (!view)
         return;
-    /* The detached copy is of logical rows. */
-    space_settle_marks(s);
-    view = st->pinned;
-    if (!view)
-        return;
+    /* The copy is of the rows as they stand, with the rows marked removed
+     * and their marks, so the Space need not contract them first. */
     size_t width = cetta_atom_id_storage_width_bytes_from_bits(
         s->native.atom_id_width_bits);
     size_t first = s->kind == SPACE_KIND_QUEUE ? (size_t)s->native.start : 0u;
@@ -1765,7 +1836,19 @@ void space_pinned_occurrences_detach(Space *s) {
     view->atom_id_width_bits = s->native.atom_id_width_bits;
     view->len = s->native.len;
     view->universe = s->native.universe;
+    if (s->native.marked != 0u) {
+        size_t words = ((size_t)s->native.mark_rows + 63u) / 64u;
+        size_t nodes = (size_t)s->native.mark_rows + 1u;
+        view->marks = cetta_malloc(words * sizeof(*view->marks));
+        view->mark_tree = cetta_malloc(nodes * sizeof(*view->mark_tree));
+        memcpy(view->marks, s->native.marks, words * sizeof(*view->marks));
+        memcpy(view->mark_tree, s->native.mark_tree,
+               nodes * sizeof(*view->mark_tree));
+        view->mark_rows = s->native.mark_rows;
+        view->marked = s->native.marked;
+    }
     view->match_trie = st->match_trie;
+    view->head_index = space_head_index_take(s);
     view->space = NULL;
     st->match_trie = NULL;
     st->match_trie_dirty = false;
@@ -1838,7 +1921,8 @@ static CettaIndex space_occurrence_cursor_heap_pop(SpaceOccurrenceCursor *cursor
  * Allocation failure retains the same declaration-order node scan. */
 static void space_occurrence_cursor_prepare_heap(SpaceOccurrenceCursor *cursor) {
     size_t bytes;
-    if (cursor->full_scan || cursor->flat_mode || cursor->node_len <= 1u ||
+    if (cursor->full_scan || cursor->flat_mode || cursor->head_mode ||
+        cursor->node_len <= 1u ||
         __builtin_mul_overflow((size_t)cursor->node_len,
                               sizeof(*cursor->heap), &bytes))
         return;
@@ -1914,20 +1998,21 @@ static bool space_occurrence_cursor_frontier_is_full(
     const SpaceMatchNativeState *state = &space->match_backend.native;
     if (state->match_trie_dirty || state->match_trie_stale_occurrences != 0u)
         return false;
+    /* The trie holds the live rows only. */
+    CettaCount live = space->native.len - space->native.marked;
     CettaCount selected = 0u;
     for (uint32_t index = 0u; index < length; index++) {
         CettaCount count = frontier->nodes[index]->leaves.count;
-        if (count > space->native.len - selected)
+        if (count > live - selected)
             return false;
         selected += count;
     }
-    return selected == space->native.len;
+    return selected == live;
 }
 
-static bool space_occurrence_cursor_capture(Space *s,
-                                             SpaceOccurrenceCursor *cursor) {
-    /* The cursor reads rows directly: removals by mark settle first. */
-    space_settle_marks(s);
+/* The checks that admit a native, standalone Space to an occurrence cursor. */
+static bool space_occurrence_cursor_admit(Space *s,
+                                          SpaceOccurrenceCursor *cursor) {
     space_occurrence_cursor_init_empty(cursor);
     if (!s || !cursor || s->overlay_base || s->dep_count != 0u ||
         (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
@@ -1935,10 +2020,19 @@ static bool space_occurrence_cursor_capture(Space *s,
         return false;
     space_linearize(s);
     cursor->space = s;
-    cursor->read = space_read_token(s);
-    cursor->prefix_epoch = s->prefix_epoch;
-    cursor->ceiling = s->native.len;
     return true;
+}
+
+/* Access preparation may contract marked storage. Capture its resulting
+ * coordinates and pin them together, after the access path is ready. */
+static bool space_occurrence_cursor_capture(
+        Space *space, SpaceOccurrenceCursor *cursor) {
+    cursor->read = space_read_token(space);
+    cursor->prefix_epoch = space->prefix_epoch;
+    cursor->ceiling = space->native.len;
+    cursor->occurrences = space_pinned_occurrences_acquire(space);
+    cursor->pinned = true;
+    return space_read_token_prefix_intact(cursor->read);
 }
 
 bool space_occurrence_cursor_init_scan(Space *s, SpaceOccurrenceCursor *cursor) {
@@ -1958,12 +2052,10 @@ bool space_occurrence_cursor_init_scan(Space *s, SpaceOccurrenceCursor *cursor) 
         cursor->logical_scan = true;
         return true;
     }
-    if (!space_occurrence_cursor_capture(s, cursor))
+    if (!space_occurrence_cursor_admit(s, cursor))
         return false;
     cursor->full_scan = true;
-    cursor->pinned = true;
-    cursor->occurrences = space_pinned_occurrences_acquire(s);
-    return space_read_token_prefix_intact(cursor->read);
+    return space_occurrence_cursor_capture(s, cursor);
 }
 
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
@@ -1973,38 +2065,42 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         space_occurrence_cursor_init_empty(cursor);
         return false;
     }
-    if (!space_occurrence_cursor_capture(s, cursor))
+    if (!space_occurrence_cursor_admit(s, cursor))
         return false;
     if (pattern->kind == ATOM_VAR ||
         s->native.len <= MATCH_TRIE_THRESHOLD) {
         cursor->full_scan = true;
-        cursor->pinned = true;
-        cursor->occurrences = space_pinned_occurrences_acquire(s);
-        return space_read_token_prefix_intact(cursor->read);
+        return space_occurrence_cursor_capture(s, cursor);
     }
     if (space_match_native_exact_occurrences(
             s, pattern, &cursor->flat, &cursor->flat_len)) {
         cursor->flat_mode = true;
-        cursor->pinned = true;
-        cursor->occurrences = space_pinned_occurrences_acquire(s);
-        return space_read_token_prefix_intact(cursor->read);
+        return space_occurrence_cursor_capture(s, cursor);
     }
+    /* A head over variables selects by its head alone: its rows, read in
+     * order as they are needed, where the trie would merge every leaf below
+     * the head before the first match. */
+    if (space_head_index_open(s, pattern, &cursor->head)) {
+        cursor->head_start = cursor->head;
+        cursor->head_mode = true;
+        return space_occurrence_cursor_capture(s, cursor);
+    }
+    /* Rows removed by marks stay where they are and the cursor skips them.
+     * The cold scan and a position index being built read rows by logical
+     * position, so a marked Space takes the trie instead. */
+    bool marked = space_has_marks(s);
     bool leads = space_path_index_leads(pattern);
-    bool indexed_first = leads && space_path_index_may_select(pattern) &&
-        space_path_index_candidates(s, pattern, &cursor->flat,
-                                    &cursor->flat_len, &cursor->flat_capacity);
+    bool indexed_first = !marked && leads && space_path_index_may_select(pattern) &&
+        space_path_index_candidates(s, pattern, &cursor->flat, &cursor->flat_len, &cursor->flat_capacity);
     if (indexed_first)
         space_match_native_note_indexed_query(s);
     if (indexed_first ||
-        space_match_native_try_cold_candidates(
-            s, pattern, &cursor->flat, &cursor->flat_len, &cursor->flat_capacity) ||
-        (!leads && space_path_index_may_select(pattern) &&
-         space_path_index_candidates(s, pattern, &cursor->flat,
-                                     &cursor->flat_len, &cursor->flat_capacity))) {
+        (!marked && space_match_native_try_cold_candidates(
+            s, pattern, &cursor->flat, &cursor->flat_len, &cursor->flat_capacity)) ||
+        (!marked && !leads && space_path_index_may_select(pattern) &&
+         space_path_index_candidates(s, pattern, &cursor->flat, &cursor->flat_len, &cursor->flat_capacity))) {
         cursor->flat_mode = true;
-        cursor->pinned = true;
-        cursor->occurrences = space_pinned_occurrences_acquire(s);
-        return space_read_token_prefix_intact(cursor->read);
+        return space_occurrence_cursor_capture(s, cursor);
     }
     space_match_native_ensure_trie(s);
     DiscNode *root = s->match_backend.native.match_trie;
@@ -2027,9 +2123,7 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
     if (space_occurrence_cursor_frontier_is_full(s, &final, unique)) {
         dns_free(&final);
         cursor->full_scan = true;
-        cursor->pinned = true;
-        cursor->occurrences = space_pinned_occurrences_acquire(s);
-        return true;
+        return space_occurrence_cursor_capture(s, cursor);
     }
     cursor->node_len = unique;
     if (unique > 0u) {
@@ -2046,8 +2140,8 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         memset(cursor->leaf_pos, 0, sizeof(*cursor->leaf_pos) * unique);
     }
     dns_free(&final);
-    cursor->pinned = true;
-    cursor->occurrences = space_pinned_occurrences_acquire(s);
+    if (!space_occurrence_cursor_capture(s, cursor))
+        return false;
     space_occurrence_cursor_prepare_heap(cursor);
     return true;
 }
@@ -2100,6 +2194,8 @@ static bool space_occurrence_cursor_copy(
     if (rewind) {
         dst->full_next = 0u;
         dst->flat_next = 0u;
+        dst->head = src->head_start;
+        dst->has_last = false;
     }
     if (src->flat_mode && src->flat_len > 0u) {
         dst->flat = cetta_malloc(sizeof(*dst->flat) * (size_t)src->flat_len);
@@ -2153,9 +2249,22 @@ bool space_occurrence_cursor_clone(
     return space_occurrence_cursor_copy(src, dst, false);
 }
 
-SpaceOccurrenceCursorStep space_occurrence_cursor_next(
+/* Yield `row` as its logical index, unless the view's marks removed it. */
+static bool space_occurrence_cursor_yield(
+        SpaceOccurrenceCursor *cursor, const SpaceViewMarks *marks,
+        CettaIndex row, CettaIndex *logical_index_out) {
+    if (space_view_row_marked(marks, row))
+        return false;
+    cursor->has_last = true;
+    cursor->last_row = row;
+    cursor->last_logical = space_view_logical(marks, row);
+    if (logical_index_out)
+        *logical_index_out = cursor->last_logical;
+    return true;
+}
+
+static SpaceOccurrenceCursorStep space_occurrence_cursor_next_locked(
     SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out) {
-    CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (logical_index_out)
         *logical_index_out = 0u;
     if (cursor && cursor->logical_scan) {
@@ -2176,32 +2285,44 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
          cursor->prefix_epoch != occurrences->space->prefix_epoch))
         return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
     CettaCount len = space_pinned_occurrences_len(occurrences);
+    SpaceViewMarks marks = space_view_marks(occurrences);
+    if (cursor->head_mode) {
+        CettaIndex row = 0u;
+        CettaIndex ceiling = cursor->ceiling < len ? cursor->ceiling : len;
+        while (space_head_index_next(&cursor->head, ceiling,
+                                     marks.marked ? marks.marks : NULL,
+                                     marks.rows, &row)) {
+            if (space_occurrence_cursor_yield(cursor, &marks, row,
+                                              logical_index_out))
+                return SPACE_OCCURRENCE_CURSOR_ITEM;
+        }
+        return SPACE_OCCURRENCE_CURSOR_END;
+    }
     if (cursor->full_scan) {
-        if (cursor->full_next < cursor->ceiling &&
-            cursor->full_next < len) {
-            CettaIndex index = cursor->full_next++;
-            if (logical_index_out)
-                *logical_index_out = index;
-            return SPACE_OCCURRENCE_CURSOR_ITEM;
+        while (cursor->full_next < cursor->ceiling &&
+               cursor->full_next < len) {
+            if (space_occurrence_cursor_yield(cursor, &marks,
+                    cursor->full_next++, logical_index_out))
+                return SPACE_OCCURRENCE_CURSOR_ITEM;
         }
         return SPACE_OCCURRENCE_CURSOR_END;
     }
     if (cursor->flat_mode) {
-        if (cursor->flat_next < cursor->flat_len) {
-            CettaIndex index = cursor->flat[cursor->flat_next++];
-            if (logical_index_out)
-                *logical_index_out = index;
-            return SPACE_OCCURRENCE_CURSOR_ITEM;
+        while (cursor->flat_next < cursor->flat_len) {
+            if (space_occurrence_cursor_yield(cursor, &marks,
+                    cursor->flat[cursor->flat_next++], logical_index_out))
+                return SPACE_OCCURRENCE_CURSOR_ITEM;
         }
         return SPACE_OCCURRENCE_CURSOR_END;
     }
     if (cursor->heap) {
         CettaIndex index;
-        if (!space_occurrence_cursor_heap_next(cursor, len, &index))
-            return SPACE_OCCURRENCE_CURSOR_END;
-        if (logical_index_out)
-            *logical_index_out = index;
-        return SPACE_OCCURRENCE_CURSOR_ITEM;
+        while (space_occurrence_cursor_heap_next(cursor, len, &index)) {
+            if (space_occurrence_cursor_yield(cursor, &marks, index,
+                                              logical_index_out))
+                return SPACE_OCCURRENCE_CURSOR_ITEM;
+        }
+        return SPACE_OCCURRENCE_CURSOR_END;
     }
     for (;;) {
         CettaIndex best = UINT64_MAX;
@@ -2232,12 +2353,44 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
             if (disc_leaf_at(node, cursor->leaf_pos[i]) == best)
                 cursor->leaf_pos[i]++;
         }
-        if (best >= len)
+        if (best >= len ||
+            !space_occurrence_cursor_yield(cursor, &marks, best,
+                                           logical_index_out))
             continue;
-        if (logical_index_out)
-            *logical_index_out = best;
         return SPACE_OCCURRENCE_CURSOR_ITEM;
     }
+}
+
+/* Physical rows belong to the same pinned view on either side of detach.
+ * A selected row needs no second logical-to-physical index lookup. */
+static Atom *space_pinned_occurrences_atom_at_row(
+        const SpacePinnedOccurrences *occurrences, CettaIndex row) {
+    const SpaceNativeStorage *live = occurrences->space
+        ? &occurrences->space->native : NULL;
+    uint8_t bits = live ? live->atom_id_width_bits : occurrences->atom_id_width_bits;
+    CettaCount length = live ? live->len : occurrences->len;
+    const uint8_t *storage = live ? live->atom_ids : occurrences->atom_ids;
+    TermUniverse *universe = live ? live->universe : occurrences->universe;
+    size_t width = cetta_atom_id_storage_width_bytes_from_bits(bits);
+    if (row >= length || !storage || width == 0u)
+        return NULL;
+    AtomId atom_id = cetta_atom_id_storage_load_bits(
+        storage + (size_t)row * width, bits);
+    return atom_id != CETTA_ATOM_ID_NONE
+        ? term_universe_get_atom(universe, atom_id) : NULL;
+}
+
+SpaceOccurrenceCursorStep space_occurrence_cursor_next(
+        SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out, Atom **atom_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (atom_out)
+        *atom_out = NULL;
+    SpaceOccurrenceCursorStep step =
+        space_occurrence_cursor_next_locked(cursor, logical_index_out);
+    if (step == SPACE_OCCURRENCE_CURSOR_ITEM && atom_out)
+        *atom_out = space_pinned_occurrences_atom_at_row(
+            cursor->occurrences, cursor->last_row);
+    return step;
 }
 
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
@@ -2252,18 +2405,14 @@ Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
         cursor ? cursor->occurrences : NULL;
     if (!occurrences)
         return NULL;
+    if (cursor->has_last && cursor->last_logical == index)
+        return space_pinned_occurrences_atom_at_row(occurrences, cursor->last_row);
     if (occurrences->space)
         return space_get_at64(occurrences->space, index);
-    size_t width = cetta_atom_id_storage_width_bytes_from_bits(
-        occurrences->atom_id_width_bits);
-    if (index >= occurrences->len || width == 0u)
-        return NULL;
-    AtomId atom_id = cetta_atom_id_storage_load_bits(
-        occurrences->atom_ids + (size_t)index * width,
-        occurrences->atom_id_width_bits);
-    return atom_id != CETTA_ATOM_ID_NONE
-        ? term_universe_get_atom(occurrences->universe, atom_id)
-        : NULL;
+    /* The detached copy holds the rows themselves, marked ones too. */
+    SpaceViewMarks marks = space_view_marks(occurrences);
+    return space_pinned_occurrences_atom_at_row(
+        occurrences, space_view_row(&marks, index));
 }
 
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
@@ -4633,24 +4782,8 @@ static void space_marks_mark(Space *s, CettaIndex row) {
 /* The row holding live logical position `logical`. */
 CettaIndex space_marks_select(const Space *s, CettaIndex logical) {
     const SpaceNativeStorage *n = &s->native;
-    if (n->marked == 0u)
-        return logical;
-    CettaIndex live_in_tree = n->mark_rows - n->marked;
-    if (logical >= live_in_tree)
-        return n->mark_rows + (logical - live_in_tree);
-    CettaIndex step = 1u;
-    while (step <= n->mark_rows / 2u)
-        step <<= 1u;
-    CettaIndex position = 0u;
-    CettaIndex remaining = logical + 1u;
-    for (; step; step >>= 1u) {
-        if (position + step <= n->mark_rows &&
-            n->mark_tree[position + step] < remaining) {
-            position += step;
-            remaining -= n->mark_tree[position];
-        }
-    }
-    return position;
+    SpaceViewMarks marks = {n->marks, n->mark_tree, n->mark_rows, n->marked};
+    return space_view_row(&marks, logical);
 }
 
 /* Keep the live rows of an ascending row list, as logical positions. */
@@ -4677,6 +4810,8 @@ void space_settle_marks_slow(Space *s) {
     if (!space_has_marks(s))
         return;
     CETTA_SCOPED_SHARED_TRANSITION(transition);
+    /* Pinned readers keep the rows and marks they began with. */
+    space_pinned_occurrences_detach(s);
     SpaceNativeStorage *n = &s->native;
     CettaIndex len = n->len;
     uint8_t *mask = cetta_malloc(len ? (size_t)len : 1u);
@@ -4716,8 +4851,7 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
         !s->native.atom_ids || s->native.start != 0u)
         return false;
-    /* Pinned readers keep the rows they began with; detaching them may
-     * first settle earlier marks, which moves rows. */
+    /* Pinned readers keep the rows and marks they began with. */
     space_pinned_occurrences_detach(s);
     CettaCount live = space_length64(s);
     CettaIndex *rows = cetta_malloc((size_t)count * sizeof(*rows));
@@ -4870,8 +5004,9 @@ static void space_mark_indexes_dirty(Space *s) {
 static void space_clear_native_logical_view(Space *s) {
     if (!s)
         return;
-    space_marks_reset(s);
+    /* Pinned readers keep the rows and marks they began with. */
     space_pinned_occurrences_detach(s);
+    space_marks_reset(s);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
     s->native.start = 0;
@@ -5946,6 +6081,16 @@ void space_init_overlay(Space *s, const Space *base) {
     s->kind = base->kind;
     s->overlay_base = base;
     s->overlay_base_visible_len = space_length64(base);
+}
+
+bool space_init_overlay_local(Space *s, const Space *base) {
+    space_init_overlay(s, base);
+    SpaceEngine backend = base && base->match_backend.kind != SPACE_ENGINE_MORK
+        ? base->match_backend.kind : SPACE_ENGINE_NATIVE;
+    if (space_match_backend_try_set(s, backend))
+        return true;
+    space_free(s);
+    return false;
 }
 
 void space_init(Space *s) {
@@ -7524,7 +7669,8 @@ static bool space_effect_scan_rhs(
                     CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD);
         } else {
             has_control = cetta_gslt_fold_control_program(
-                atom_symbol_current_id(head), authored_len - 1u, &control, &g_builtin_syms);
+                atom_symbol_current_id(head), authored_len - 1u, &control,
+                &g_builtin_syms);
             bool grounded = is_grounded_op(atom_symbol_current_id(head));
             bool defined = space_equations_may_match_known_head(
                 graph->space, atom_symbol_current_id(head));
@@ -7552,7 +7698,7 @@ static bool space_effect_scan_rhs(
              * elements evaluated: they are walked as any call's operands. */
         }
         for (CettaExprIndex i = 1u; i < authored_len; i++) {
-            CettaGsltControlOperandRole role;
+            CettaGsltControlOperandRole role = CETTA_GSLT_CONTROL_OPERAND_EVALUATED;
             bool has_role = has_control &&
                 cetta_gslt_fold_control_operand_role(
                     control, i - 1u, &role);
@@ -8245,9 +8391,17 @@ void space_add_atom_id(Space *s, AtomId atom_id) {
     space_add_stored_id(s, atom_id, NULL);
 }
 
+/* Before a mutation that publishes a prefix rewrite: pinned readers keep
+ * the rows and marks they began with, so none is left reading rows that
+ * move, and the marks are contracted. */
+static void space_prepare_prefix_rewrite(Space *s) {
+    space_pinned_occurrences_detach(s);
+    space_settle_marks(s);
+}
+
 bool space_add_atom_ids_batch(Space *s, const AtomId *atom_ids,
                               CettaCount atom_count) {
-    space_settle_marks(s);
+    space_prepare_prefix_rewrite(s);
     uint64_t added = 0;
     bool keep_pathmap_exact_metadata;
     bool had_non_exact_atom;
@@ -9582,29 +9736,34 @@ Atom *registry_lookup_ref(Registry *r, Atom *ref) {
 
 static _Thread_local RegistryReadView *g_registry_read_view;
 
-static Atom *registry_read_raw(Registry *source, SymbolId key, Atom *name,
+static uint32_t registry_read_index(Registry *source, SymbolId key, Atom *name,
                                bool symbolic) {
     if (!source)
-        return NULL;
+        return UINT32_MAX;
     if (symbolic) {
         uint32_t index = key != SYMBOL_ID_NONE
             ? registry_id_index(source, key) : registry_symbol_index(source, name);
-        return index == UINT32_MAX ? NULL : source->entries[index].value;
+        return index;
     }
     NameId id = NAME_ID_NONE;
     if (key == SYMBOL_ID_NONE) {
         if (!name || !source->name_keys)
-            return NULL;
+            return UINT32_MAX;
         id = name_key_find(source->name_keys, name);
         if (id == NAME_ID_NONE)
-            return NULL;
+            return UINT32_MAX;
     }
     uint32_t index = registry_index_find(source, key, id, 0);
+    return index;
+}
+
+static Atom *registry_read_raw(Registry *source, SymbolId key, Atom *name, bool symbolic) {
+    uint32_t index = registry_read_index(source, key, name, symbolic);
     return index == UINT32_MAX ? NULL : source->entries[index].value;
 }
 
 static bool registry_read_same(Atom *left, Atom *right) {
-    return left == right || (left && right && atom_eq(left, right));
+    return left == right || (left && right && atom_capture_identical(left, right));
 }
 
 static bool registry_read_refuse(RegistryReadView *view, const char *reason) {
@@ -9625,6 +9784,29 @@ static void registry_read_stale(RegistryReadView *view, SymbolId key,
     view->stale_actual = actual ? atom_deep_copy(view->arena, actual) : NULL;
 }
 
+/* The observer records what the computation received, after any enclosing
+ * frozen-view selection. A later different observation makes this static
+ * dependency set ineligible for reuse; neither read is changed or suppressed. */
+static void registry_read_observe(RegistryReadView *view, SymbolId key,
+    Atom *name, bool symbolic, Atom *selected) {
+    if (view->incomplete) return;
+    uint32_t index = registry_read_index(&view->consulted, key, name, symbolic);
+    if (index != UINT32_MAX) {
+        registry_read_stale(view, key, name, view->consulted.entries[index].value, selected);
+        return;
+    }
+    Atom *captured = selected ? atom_deep_copy(view->arena, selected) : NULL;
+    if (selected && !captured) {
+        registry_read_refuse(view, "ObservedValueCopy");
+        return;
+    }
+    bool recorded = key != SYMBOL_ID_NONE
+        ? registry_bind_id_checked(&view->consulted, key, captured)
+        : symbolic ? registry_bind_symbol(&view->consulted, name, captured)
+                   : registry_bind_name(&view->consulted, name, captured);
+    if (!recorded) registry_read_refuse(view, "ObservedDependencyInsert");
+}
+
 /* Called by both physical lookup paths, including absent names.  Every
  * nested observer sees the same live lookup, while evaluation uses the
  * innermost admitted value.  Continuing this quantum cannot acquire the
@@ -9635,7 +9817,7 @@ static Atom *registry_read_intercept(Registry *source, SymbolId key,
     bool selected = false;
     for (RegistryReadView *view = g_registry_read_view; view;
          view = view->active_parent) {
-        if (view->active_source != source)
+        if (view->active_source != source || view->passive)
             continue;
         Atom *expected = registry_read_raw(&view->initial, key, name, symbolic);
         if (!selected) {
@@ -9650,6 +9832,9 @@ static Atom *registry_read_intercept(Registry *source, SymbolId key,
             registry_read_refuse(view, "DependencyInsert");
         registry_read_stale(view, key, name, expected, actual);
     }
+    for (RegistryReadView *view = g_registry_read_view; view; view = view->active_parent)
+        if (view->active_source == source && view->passive)
+            registry_read_observe(view, key, name, symbolic, result);
     return result;
 }
 
@@ -9661,7 +9846,8 @@ static Atom *registry_read_intercept_text(Registry *source,
         Atom *name = atom_symbol_data_n(view->arena, bytes, length);
         if (!name) {
             registry_read_refuse(view, "DependencyName");
-            return NULL;
+            if (!view->passive) return NULL;
+            continue;
         }
         return registry_read_intercept(source, SYMBOL_ID_NONE, name, true, actual);
     }
@@ -9682,7 +9868,7 @@ bool registry_read_view_init(RegistryReadView *view, Registry *source,
     Registry *visible = source;
     for (RegistryReadView *outer = g_registry_read_view; outer;
          outer = outer->active_parent) {
-        if (outer->active_source == source) {
+        if (outer->active_source == source && !outer->passive) {
             visible = &outer->initial;
             if (outer->incomplete)
                 return registry_read_refuse(view, "InheritedIncomplete");
@@ -9699,6 +9885,17 @@ bool registry_read_view_init(RegistryReadView *view, Registry *source,
         if (!registry_copy_entry(&view->initial, visible, i, value))
             return registry_read_refuse(view, "InitialCapture");
     }
+    return true;
+}
+
+bool registry_read_view_init_passive(RegistryReadView *view, Arena *arena) {
+    if (!view || !arena) return false;
+    memset(view, 0, sizeof(*view));
+    registry_init(&view->initial);
+    registry_init(&view->consulted);
+    view->arena = arena;
+    view->initialized = true;
+    view->passive = true;
     return true;
 }
 
@@ -9729,6 +9926,12 @@ bool registry_read_view_validate(RegistryReadView *view, Registry *source) {
     return true;
 }
 
+bool registry_read_view_compatible(const RegistryReadView *view, Registry *source) {
+    if(!view) return false;
+    RegistryReadView probe=*view;
+    return registry_read_view_validate(&probe,source);
+}
+
 RegistryReadView *registry_read_view_enter(RegistryReadView *view,
                                           Registry *source) {
     RegistryReadView *previous = g_registry_read_view;
@@ -9755,11 +9958,27 @@ Space *resolve_space(Registry *r, Atom *ref) {
     return NULL;
 }
 
-bool space_remove(Space *s, Atom *atom) {
+static CettaMatchCompletion space_representation_equal(Atom *left, Atom *right) {
+    return atom_eq(left, right) ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
+}
+
+static CettaMatchCompletion space_compare_checked(Atom *left, Atom *right,
+    SpaceAtomComparison equal) {
+    if (!left || !right || !equal)
+        return CETTA_MATCH_INCOMPLETE;
+    CettaMatchCompletion result = equal(left, right);
+    return result == CETTA_MATCH_MATCHED || result == CETTA_MATCH_REFUTED
+        ? result : CETTA_MATCH_INCOMPLETE;
+}
+
+static CettaMatchCompletion space_remove_kernel(Space *s, Atom *atom,
+    SpaceAtomComparison equal, SpaceAtomComparison alpha_equal, bool representation) {
+    if (!atom || !equal || !alpha_equal)
+        return CETTA_MATCH_INCOMPLETE;
     space_settle_marks(s);
     s = space_mutation_target(s);
     if (!s)
-        return false;
+        return CETTA_MATCH_INCOMPLETE;
     if (space_has_overlay_base(s)) {
         CettaCount base_visible = space_overlay_visible_base_count(s);
         CettaIndex alpha_index = 0;
@@ -9768,36 +9987,48 @@ bool space_remove(Space *s, Atom *atom) {
         for (CettaCount i = 0; i < base_visible; i++) {
             CettaIndex raw = 0;
             Atom *candidate = NULL;
-            if (!space_overlay_visible_base_raw_index(s, i, &raw) ||
-                raw < space_imported_length(s->overlay_base))
+            if (!space_overlay_visible_base_raw_index(s, i, &raw))
+                return CETTA_MATCH_INCOMPLETE;
+            if (raw < space_imported_length(s->overlay_base))
                 continue;
             candidate = space_get_at64(s->overlay_base, raw);
-            if (candidate && atom_eq(candidate, atom)) {
+            CettaMatchCompletion comparison = space_compare_checked(candidate, atom, equal);
+            if (comparison == CETTA_MATCH_INCOMPLETE)
+                return comparison;
+            if (comparison == CETTA_MATCH_MATCHED) {
                 SpaceMutationEquationProjection equation_projection =
                     space_atom_equation_projection(
                         s->overlay_base,
                         space_get_atom_id_at64(s->overlay_base, raw),
                         candidate);
                 if (!space_overlay_mark_base_removed(s, raw))
-                    return false;
+                    return CETTA_MATCH_INCOMPLETE;
                 space_publish_mutation(
                     s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
-                return true;
+                return CETTA_MATCH_MATCHED;
             }
         }
         for (CettaIndex i = 0; i < space_local_length64(s); i++) {
             Atom *candidate = space_local_get_at64(s, i);
-            if (candidate && atom_eq(candidate, atom))
-                return space_overlay_remove_local_raw_index(s, i);
+            CettaMatchCompletion comparison = space_compare_checked(candidate, atom, equal);
+            if (comparison == CETTA_MATCH_INCOMPLETE)
+                return comparison;
+            if (comparison == CETTA_MATCH_MATCHED)
+                return space_overlay_remove_local_raw_index(s, i)
+                    ? CETTA_MATCH_MATCHED : CETTA_MATCH_INCOMPLETE;
         }
         for (CettaCount i = 0; i < base_visible; i++) {
             CettaIndex raw = 0;
             Atom *candidate = NULL;
-            if (!space_overlay_visible_base_raw_index(s, i, &raw) ||
-                raw < space_imported_length(s->overlay_base))
+            if (!space_overlay_visible_base_raw_index(s, i, &raw))
+                return CETTA_MATCH_INCOMPLETE;
+            if (raw < space_imported_length(s->overlay_base))
                 continue;
             candidate = space_get_at64(s->overlay_base, raw);
-            if (candidate && atom_alpha_eq(candidate, atom)) {
+            CettaMatchCompletion comparison = space_compare_checked(candidate, atom, alpha_equal);
+            if (comparison == CETTA_MATCH_INCOMPLETE)
+                return comparison;
+            if (comparison == CETTA_MATCH_MATCHED) {
                 alpha_index = raw;
                 alpha_in_base = true;
                 alpha_count++;
@@ -9805,14 +10036,17 @@ bool space_remove(Space *s, Atom *atom) {
         }
         for (CettaIndex i = 0; i < space_local_length64(s); i++) {
             Atom *candidate = space_local_get_at64(s, i);
-            if (candidate && atom_alpha_eq(candidate, atom)) {
+            CettaMatchCompletion comparison = space_compare_checked(candidate, atom, alpha_equal);
+            if (comparison == CETTA_MATCH_INCOMPLETE)
+                return comparison;
+            if (comparison == CETTA_MATCH_MATCHED) {
                 alpha_index = i;
                 alpha_in_base = false;
                 alpha_count++;
             }
         }
         if (alpha_count != 1u)
-            return false;
+            return CETTA_MATCH_REFUTED;
         if (alpha_in_base) {
             AtomId removed_id = space_get_atom_id_at64(
                 s->overlay_base, alpha_index);
@@ -9822,26 +10056,27 @@ bool space_remove(Space *s, Atom *atom) {
                 space_atom_equation_projection(
                     s->overlay_base, removed_id, removed_atom);
             if (!space_overlay_mark_base_removed(s, alpha_index))
-                return false;
+                return CETTA_MATCH_INCOMPLETE;
             space_publish_mutation(
                 s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
-            return true;
+            return CETTA_MATCH_MATCHED;
         }
-        return space_overlay_remove_local_raw_index(s, alpha_index);
+        return space_overlay_remove_local_raw_index(s, alpha_index)
+            ? CETTA_MATCH_MATCHED : CETTA_MATCH_INCOMPLETE;
     }
-    if (s->native.universe && atom) {
+    if (!representation && !space_match_backend_require_logical_order(s, NULL))
+        return CETTA_MATCH_INCOMPLETE;
+    if (representation && s->native.universe && atom) {
         AtomId atom_id = term_universe_lookup_atom_id(s->native.universe, atom);
         if (atom_id != CETTA_ATOM_ID_NONE &&
             !space_atom_id_imported_only(s, atom_id) &&
             space_remove_via_backend_primary(s, atom_id)) {
-            return true;
+            return CETTA_MATCH_MATCHED;
         }
     }
-    if (space_imported_length(s) == 0u &&
+    if (representation && space_imported_length(s) == 0u &&
         space_remove_atom_via_backend_primary(s, atom))
-        return true;
-    if (!atom)
-        return false;
+        return CETTA_MATCH_MATCHED;
     /* A live PathMap bridge is the primary store and must not be bypassed by
        mutating its native projection.  Once authored order pins the logical
        sequence, or when the bridge has explicitly fallen back as unavailable,
@@ -9849,10 +10084,11 @@ bool space_remove(Space *s, Atom *atom) {
        exact-then-unique-alpha removal semantics there. */
     if (s->match_backend.kind == SPACE_ENGINE_PATHMAP &&
         !s->match_backend.pathmap.bridge.bridge_unavailable &&
-        !s->match_backend.pathmap.bridge.preserve_logical_order)
-        return false;
+        !s->match_backend.pathmap.bridge.preserve_logical_order &&
+        !space_match_backend_require_logical_order(s, NULL))
+        return CETTA_MATCH_INCOMPLETE;
     if (!space_match_backend_materialize_native_storage(s, NULL))
-        return false;
+        return CETTA_MATCH_INCOMPLETE;
     if (space_is_queue(s))
         space_linearize(s);
     bool found = false;
@@ -9860,9 +10096,10 @@ bool space_remove(Space *s, Atom *atom) {
     CettaIndex own_begin = s->imported_len;
     for (CettaIndex i = own_begin; i < s->native.len; i++) {
         Atom *candidate = space_get_at64(s, i);
-        if (!candidate)
-            continue;
-        if (atom_eq(candidate, atom)) {
+        CettaMatchCompletion comparison = space_compare_checked(candidate, atom, equal);
+        if (comparison == CETTA_MATCH_INCOMPLETE)
+            return comparison;
+        if (comparison == CETTA_MATCH_MATCHED) {
             remove_idx = i;
             found = true;
             break;
@@ -9873,9 +10110,10 @@ bool space_remove(Space *s, Atom *atom) {
         CettaCount alpha_count = 0;
         for (CettaIndex i = own_begin; i < s->native.len; i++) {
             Atom *candidate = space_get_at64(s, i);
-            if (!candidate)
-                continue;
-            if (atom_alpha_eq(candidate, atom)) {
+            CettaMatchCompletion comparison = space_compare_checked(candidate, atom, alpha_equal);
+            if (comparison == CETTA_MATCH_INCOMPLETE)
+                return comparison;
+            if (comparison == CETTA_MATCH_MATCHED) {
                 alpha_idx = i;
                 alpha_count++;
             }
@@ -9886,7 +10124,7 @@ bool space_remove(Space *s, Atom *atom) {
         }
     }
     if (!found)
-        return false;
+        return CETTA_MATCH_REFUTED;
 
     SpaceMutationEquationProjection equation_projection =
         space_local_removal_equation_projection(s, remove_idx);
@@ -9935,7 +10173,20 @@ bool space_remove(Space *s, Atom *atom) {
         s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
     if (swap_removed_id != CETTA_ATOM_ID_NONE)
         space_path_indexes_adopt_prefix_epoch(s, followed_prefix);
-    return true;
+    return CETTA_MATCH_MATCHED;
+}
+
+CettaMatchCompletion space_remove_compared(Space *s, Atom *atom,
+    SpaceAtomComparison equal, SpaceAtomComparison alpha_equal) {
+    return space_remove_kernel(s, atom, equal, alpha_equal, false);
+}
+
+CettaMatchCompletion space_remove_checked(Space *s, Atom *atom) {
+    return space_remove_kernel(s, atom, space_representation_equal, atom_alpha_eq_checked, true);
+}
+
+bool space_remove(Space *s, Atom *atom) {
+    return space_remove_checked(s, atom) == CETTA_MATCH_MATCHED;
 }
 
 bool space_contains_atom_id(const Space *s, AtomId atom_id) {
@@ -10053,7 +10304,7 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
 bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
                                  CettaCount atom_count,
                                  CettaCount *out_removed) {
-    space_settle_marks(s);
+    space_prepare_prefix_rewrite(s);
     uint64_t removed = 0;
     SpaceBackendBatchResult batch_result;
 
@@ -10413,7 +10664,7 @@ Atom *space_peek(const Space *s) {
 }
 
 bool space_pop(Space *s, Atom **out) {
-    space_settle_marks(s);
+    space_prepare_prefix_rewrite(s);
     CettaCount logical_len;
     Atom *top;
 
@@ -10433,11 +10684,16 @@ bool space_pop(Space *s, Atom **out) {
             return false;
         if (out)
             *out = top;
-        if (local_len > 0)
-            return space_overlay_remove_local_raw_index(s, local_len - 1u);
+        bool remove_local = space_is_queue(s)
+            ? base_visible == 0u
+            : local_len > 0u;
+        if (remove_local && local_len > 0u)
+            return space_overlay_remove_local_raw_index(
+                s, space_is_queue(s) ? 0u : local_len - 1u);
         if (base_visible > 0) {
             CettaIndex raw = 0;
-            if (!space_overlay_visible_base_raw_index(s, base_visible - 1u, &raw) ||
+            CettaIndex visible = space_is_queue(s) ? 0u : base_visible - 1u;
+            if (!space_overlay_visible_base_raw_index(s, visible, &raw) ||
                 !space_overlay_mark_base_removed(s, raw)) {
                 return false;
             }
@@ -10482,7 +10738,7 @@ bool space_pop(Space *s, Atom **out) {
 }
 
 bool space_truncate(Space *s, uint32_t new_len) {
-    space_settle_marks(s);
+    space_prepare_prefix_rewrite(s);
     uint32_t logical_len;
 
     if (!s || new_len < space_imported_length(s))
@@ -10513,7 +10769,7 @@ bool space_truncate(Space *s, uint32_t new_len) {
 }
 
 bool space_truncate64(Space *s, CettaCount new_len) {
-    space_settle_marks(s);
+    space_prepare_prefix_rewrite(s);
     CettaCount logical_len;
 
     if (!s || new_len < space_imported_length(s))
@@ -10888,34 +11144,41 @@ bool space_contains_canonical(Space *s, Atom *atom, bool *out_applicable) {
     return found;
 }
 
-bool space_contains_for_add_nodup(Space *s, Atom *atom) {
+CettaMatchCompletion space_contains_compared(Space *s, Atom *atom, SpaceAtomComparison equal) {
+    CETTA_SCOPED_SHARED_TRANSITION(observation);
+    if (!s || !atom || !equal)
+        return CETTA_MATCH_INCOMPLETE;
+    CettaCount logical_len = space_length64(s);
+    for (CettaIndex index = 0u; index < logical_len; index++) {
+        Atom *candidate = space_get_at64(s, index);
+        CettaMatchCompletion comparison = space_compare_checked(candidate, atom, equal);
+        if (comparison != CETTA_MATCH_REFUTED)
+            return comparison;
+    }
+    return CETTA_MATCH_REFUTED;
+}
+
+CettaMatchCompletion space_contains_for_add_nodup_checked(Space *s, Atom *atom) {
     if (!s || !atom)
-        return false;
+        return CETTA_MATCH_INCOMPLETE;
     bool found = false;
     bool backend_checked =
         space_match_backend_contains_atom_structural_direct(s, atom, &found);
     if (!backend_checked)
         found = space_contains_exact(s, atom);
     if (found || backend_checked || space_atom_is_exact_indexable(atom))
-        return found;
+        return found ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
 
     bool canonical_applicable = false;
     found = space_contains_canonical(s, atom, &canonical_applicable);
     if (canonical_applicable)
-        return found;
+        return found ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
+    return space_contains_compared(s, atom,
+        atom_has_vars(atom) ? atom_alpha_eq_checked : space_representation_equal);
+}
 
-    bool alpha_fallback = atom_has_vars(atom);
-    CettaCount logical_len = space_length64(s);
-    for (CettaIndex index = 0u; index < logical_len; index++) {
-        Atom *candidate = space_get_at64(s, index);
-        if (!candidate)
-            continue;
-        if (alpha_fallback ? atom_alpha_eq(candidate, atom)
-                           : atom_eq(candidate, atom)) {
-            return true;
-        }
-    }
-    return false;
+bool space_contains_for_add_nodup(Space *s, Atom *atom) {
+    return space_contains_for_add_nodup_checked(s, atom) == CETTA_MATCH_MATCHED;
 }
 
 bool space_contains_only_exact_atoms(Space *s) {
@@ -12824,6 +13087,8 @@ typedef struct QueryResultSink {
     QueryResults *results;
     QueryResultVisitor visitor;
     void *visitor_ctx;
+    QueryEquationResultInstantiator instantiate;
+    void *instantiate_context;
     QueryEquationCandidatePlan candidate_plan;
     void *candidate_plan_ctx;
     CettaCount emitted;
@@ -12846,6 +13111,24 @@ static bool query_equation_emit_decoded_epoch(Atom *lhs, Atom *rhs,
                                               Arena *a, CettaFrameIdentity epoch,
                                               const Bindings *seed,
                                               QueryResultSink *sink);
+static CettaMatchCompletion query_equation_match_decoded_checked(
+    Atom *lhs,Atom *query,Arena *arena,CettaFrameIdentity epoch,
+    Bindings *environment,uint64_t pair_budget) {
+    const BindingsStructureHooks *hooks=bindings_structure_hooks();
+    if (hooks && hooks->code_pattern && hooks->code_match && hooks->code_pattern(lhs)) {
+        if (pair_budget!=UINT64_MAX) return CETTA_MATCH_INCOMPLETE;
+        Bindings none;bindings_init(&none);
+        Atom *instance=bindings_apply_epoch(&none,arena,lhs,epoch);
+        bindings_free(&none);
+        bool matched=false;
+        bool complete=instance && hooks->code_match(arena,instance,query,environment,&matched);
+        return !complete ? CETTA_MATCH_INCOMPLETE : matched ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
+    }
+    BindingsBuilder builder;bindings_builder_init_owned(&builder,environment);
+    CettaMatchCompletion result=match_atoms_epoch_builder_checked(query,lhs,&builder,arena,epoch,pair_budget);
+    bindings_builder_take(&builder,environment);return result;
+}
+
 static bool query_equation_emit_decoded_plan_epoch(
     Atom *lhs, Atom *rhs,
     Atom *refinement_fallback_lhs, Atom *refinement_failure_rhs,
@@ -12866,6 +13149,8 @@ static void query_result_sink_init_collect(QueryResultSink *sink,
     sink->results = results;
     sink->visitor = NULL;
     sink->visitor_ctx = NULL;
+    sink->instantiate = NULL;
+    sink->instantiate_context = NULL;
     sink->candidate_plan = NULL;
     sink->candidate_plan_ctx = NULL;
     sink->emitted = 0;
@@ -12881,6 +13166,8 @@ static void query_result_sink_init_visit(QueryResultSink *sink,
     sink->results = NULL;
     sink->visitor = visitor;
     sink->visitor_ctx = ctx;
+    sink->instantiate = NULL;
+    sink->instantiate_context = NULL;
     sink->candidate_plan = NULL;
     sink->candidate_plan_ctx = NULL;
     sink->emitted = 0;
@@ -13200,6 +13487,47 @@ static bool query_equation_match_code_head(Atom *lhs, Atom *query, Arena *a,
            matched;
 }
 
+typedef struct {
+    const QueryVisibleVarSet *visible;
+    const Bindings *full;
+} QueryEquationSubstitution;
+
+static Atom *query_equation_substitute_match(Arena *arena, Atom *term,
+                                             void *context) {
+    const QueryEquationSubstitution *match = context;
+    Atom *result = bindings_apply_if_vars(match->full, arena, term);
+    return rewrite_query_visible_aliases(
+        arena, result, match->visible, match->full);
+}
+
+static bool query_equation_emit_instantiated(
+    Atom *lhs, Atom *rhs, Arena *arena, CettaFrameIdentity epoch,
+    const QueryVisibleVarSet *visible, const Bindings *full,
+    QueryResultSink *sink) {
+    Bindings projected;
+    if (!project_query_visible_bindings(arena, visible, full, &projected)) {
+        sink->incomplete = true;
+        return false;
+    }
+    Bindings none;
+    bindings_init(&none);
+    QueryEquationSubstitution substitution = {visible, full};
+    QueryEquationInstantiation match = {
+        .pattern = bindings_apply_epoch(&none, arena, lhs, epoch),
+        .body = bindings_apply_epoch(&none, arena, rhs, epoch),
+        .substitute = query_equation_substitute_match,
+        .context = &substitution,
+    };
+    bindings_free(&none);
+    Atom *result = match.pattern && match.body
+        ? sink->instantiate(&match, arena, &projected,
+                            sink->instantiate_context) : NULL;
+    bool emitted = result && query_result_sink_emit(sink, result, &projected);
+    sink->incomplete = sink->incomplete || !emitted || sink->stop;
+    bindings_free(&projected);
+    return emitted;
+}
+
 static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
                                        Atom *query,
                                        const QueryVisibleVarSet *visible,
@@ -13238,6 +13566,15 @@ static bool query_equation_emit_stored(Space *s, AtomId lhs_id, AtomId rhs_id,
         CettaSurvivorAllocationScope allocation_scope =
             cetta_survivor_allocation_scope_enter(
                 CETTA_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION);
+        if (sink->instantiate) {
+            emitted = query_equation_emit_instantiated(
+                term_universe_get_atom(s->native.universe, lhs_id),
+                term_universe_get_atom(s->native.universe, rhs_id),
+                a, epoch, visible, &merged, sink);
+            cetta_survivor_allocation_scope_leave(allocation_scope);
+            bindings_free(&merged);
+            return emitted;
+        }
         Atom *rhs_copy = tu_has_vars(s->native.universe, rhs_id)
             ? term_universe_copy_atom_epoch(s->native.universe, a, rhs_id, epoch)
             : term_universe_copy_atom(s->native.universe, a, rhs_id);
@@ -13314,11 +13651,8 @@ static bool query_equation_emit_decoded_plan_epoch(
     bool emitted = false;
     bool matched;
     if (sink->checked) {
-        BindingsBuilder match_builder;
-        bindings_builder_init_owned(&match_builder, &merged);
-        CettaMatchCompletion decision = match_atoms_epoch_builder_checked(
-            query, lhs, &match_builder, a, epoch, sink->pair_budget);
-        bindings_builder_take(&match_builder, &merged);
+        CettaMatchCompletion decision=query_equation_match_decoded_checked(
+            lhs,query,a,epoch,&merged,sink->pair_budget);
         sink->incomplete = decision == CETTA_MATCH_INCOMPLETE;
         matched = decision == CETTA_MATCH_MATCHED;
     } else {
@@ -13349,6 +13683,13 @@ static bool query_equation_emit_decoded_plan_epoch(
         CettaSurvivorAllocationScope allocation_scope =
             cetta_survivor_allocation_scope_enter(
                 CETTA_SURVIVOR_ALLOC_ROLE_EQUATION_RESULT_INSTANTIATION);
+        if (sink->instantiate) {
+            emitted = query_equation_emit_instantiated(
+                lhs, selected_rhs, a, epoch, visible, &merged, sink);
+            cetta_survivor_allocation_scope_leave(allocation_scope);
+            bindings_free(&merged);
+            return emitted;
+        }
         Atom *result = bindings_apply_epoch(&merged, a, selected_rhs, epoch);
         result = rewrite_query_visible_aliases(a, result, visible, &merged);
         cetta_survivor_allocation_scope_leave(allocation_scope);
@@ -14710,7 +15051,7 @@ static Atom *prepared_mpz_materialize_call(
 
 static SpacePreparedRegisterStep prepared_mpz_run_register_loop(
     const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
-    size_t max_steps, Atom **result_out) {
+    size_t max_steps, Atom **result_out, size_t *completed_out) {
     if (!plan || !call || !result_arena || !result_out || max_steps == 0u ||
         !plan->register_guard || !plan->register_base ||
         !plan->register_tail || call->kind != ATOM_EXPR ||
@@ -14801,6 +15142,8 @@ prepared_mpz_materialize:
         *result_out = prepared_mpz_materialize_call(
             plan, banks[active], result_arena);
 prepared_mpz_done:
+    if (completed_out)
+        *completed_out = completed;
     prepared_mpz_scratch_clear(&scratch);
     for (unsigned bank = 0u; bank < 2u; bank++)
         for (CettaExprIndex i = 0u; i < plan->arity; i++)
@@ -15313,18 +15656,29 @@ static SpacePreparedRegisterStep prepared_mpz_run_register_recursion(
 SpacePreparedRegisterStep space_prepared_equation_run_register_loop(
     const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
     size_t max_steps, Atom **result_out) {
+    return space_prepared_equation_run_register_loop_counted(
+        plan, call, result_arena, max_steps, result_out, NULL);
+}
+
+SpacePreparedRegisterStep space_prepared_equation_run_register_loop_counted(
+    const SpacePreparedEquation *plan, Atom *call, Arena *result_arena,
+    size_t max_steps, Atom **result_out, size_t *completed_out) {
     enum { REGISTER_LOOP_NURSERY_BYTES = 8u * 1024u * 1024u };
     if (result_out)
         *result_out = NULL;
+    if (completed_out)
+        *completed_out = 0u;
     if (!plan || !call || !result_arena || !result_out || max_steps == 0u)
         return SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
 
 #if CETTA_BUILD_WITH_GMP
     SpacePreparedRegisterStep mpz_outcome =
         prepared_mpz_run_register_loop(
-            plan, call, result_arena, max_steps, result_out);
+            plan, call, result_arena, max_steps, result_out, completed_out);
     if (mpz_outcome != SPACE_PREPARED_REGISTER_NOT_APPLICABLE)
         return mpz_outcome;
+    if (completed_out)
+        *completed_out = 0u;
 #endif
 
     Arena semispaces[2];
@@ -15392,6 +15746,9 @@ SpacePreparedRegisterStep space_prepared_equation_run_register_loop(
         if (!*result_out)
             outcome = SPACE_PREPARED_REGISTER_NOT_APPLICABLE;
     }
+    if (completed_out)
+        *completed_out = outcome == SPACE_PREPARED_REGISTER_NOT_APPLICABLE
+            ? 0u : completed;
     arena_free(&semispaces[0]);
     arena_free(&semispaces[1]);
     return outcome;
@@ -15471,6 +15828,7 @@ CettaTermMatchStatus query_rule_visit(const CettaRuleDescriptor *rule,
 static CettaMatchCompletion query_equation_visit_status(
         Atom *equation, Atom *query, Arena *a,
         QueryResultVisitor visitor, void *ctx,
+        QueryEquationResultInstantiator instantiate, void *instantiate_context,
         bool checked, uint64_t pair_budget, CettaCount *count) {
     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     QueryResultSink sink;
@@ -15487,6 +15845,8 @@ static CettaMatchCompletion query_equation_visit_status(
         return CETTA_MATCH_INCOMPLETE;
     }
     query_result_sink_init_visit(&sink, visitor, ctx);
+    sink.instantiate = instantiate;
+    sink.instantiate_context = instantiate_context;
     sink.checked = checked;
     sink.pair_budget = pair_budget;
     CettaFrameIdentity identity;
@@ -15510,8 +15870,21 @@ CettaCount query_equation_visit(Atom *equation, Atom *query, Arena *a,
                                 QueryResultVisitor visitor, void *ctx) {
     CettaCount count;
     (void)query_equation_visit_status(equation, query, a, visitor, ctx,
-                                     false, UINT64_MAX, &count);
+                                     NULL, NULL, false, UINT64_MAX, &count);
     return count;
+}
+
+CettaMatchCompletion query_equation_visit_instantiated(
+        Atom *equation, Atom *query, Arena *arena,
+        QueryEquationResultInstantiator instantiate, void *instantiate_context,
+        QueryResultVisitor visitor, void *visitor_context, CettaCount *emitted) {
+    CettaCount count;
+    CettaMatchCompletion decision = query_equation_visit_status(
+        equation, query, arena, visitor, visitor_context,
+        instantiate, instantiate_context, false, UINT64_MAX, &count);
+    if (emitted)
+        *emitted = count;
+    return decision;
 }
 
 CettaMatchCompletion query_equation_visit_checked(
@@ -15520,10 +15893,24 @@ CettaMatchCompletion query_equation_visit_checked(
         CettaCount *emitted) {
     CettaCount count;
     CettaMatchCompletion decision = query_equation_visit_status(
-        equation, query, arena, visitor, context, true, pair_budget, &count);
+        equation, query, arena, visitor, context,
+        NULL, NULL, true, pair_budget, &count);
     if (emitted)
         *emitted = count;
     return decision;
+}
+
+CettaMatchCompletion query_equation_head_match_checked(
+    Atom *equation,Atom *query,Arena *arena,uint64_t pair_budget) {
+    Atom *lhs=NULL,*rhs=NULL;
+    if (!arena || !query || !is_equation_atom(equation,&lhs,&rhs)) return CETTA_MATCH_INCOMPLETE;
+    CETTA_FRAME_IDENTITY_SCOPE(scope);
+    CettaFrameIdentity epoch;
+    if (!cetta_frame_identity_scope_try(&scope,&epoch)) return CETTA_MATCH_INCOMPLETE;
+    Bindings environment;bindings_init(&environment);
+    CettaMatchCompletion result=query_equation_match_decoded_checked(
+        lhs,query,arena,epoch,&environment,pair_budget);
+    bindings_free(&environment);return result;
 }
 
 CettaCount query_equations_visit_singleton(

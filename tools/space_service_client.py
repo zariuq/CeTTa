@@ -330,6 +330,14 @@ class Client:
     def hello(self):
         return self.call("hello")
 
+    def principal_ref(self):
+        hello = self.hello()
+        return self.call("principal-ref", hello[2])
+
+    def rotate_principal(self, account):
+        hello = self.hello()
+        return self.call("rotate-principal", hello[2], account)
+
     def open(self, name: str, backend: str = "native") -> Space:
         hello = self.hello()
         return Space(self, self.call("open", hello[2], name, S(backend), hello[4]))
@@ -347,12 +355,16 @@ class Space:
         self.backend=self.backend.name
         self.multiplicity=self.multiplicity.name
 
-    def describe(self):
-        value = self.client.call("describe", self.uuid, self.id)
+    @staticmethod
+    def _authority(grant):
+        return () if grant is None else (E("authority", grant),)
+
+    def describe(self, grant=None):
+        value = self.client.call("describe", self.uuid, self.id, *self._authority(grant))
         self.revision, self.count = value[6:]
         return value
 
-    def watch(self, revision: int, wait_ms: int = 30000):
+    def watch(self, revision: int, wait_ms: int = 30000, grant=None):
         """Wait for a source revision change; this never consumes a value.
 
         Use a dedicated client while waiting and a timeout longer than the
@@ -360,7 +372,8 @@ class Space:
         and inspect durable state. The captured revision closes the race
         between a read and registration, even if a write already happened.
         """
-        return self.client.call("watch", self.uuid, self.id, revision, wait_ms)
+        return self.client.call("watch", self.uuid, self.id, revision, wait_ms,
+                                *self._authority(grant))
 
     def batch(self, *operations, request_id: str | None = None):
         value = self.client.call("batch", self.uuid, self.id, self.revision,
@@ -374,21 +387,25 @@ class Space:
     def remove(self, value, **kwargs):
         return self.batch(E("remove", value), **kwargs)
 
-    def query(self, pattern, template, limit: int = 4096, lease_ms: int = 30000):
-        return self.client.call("query", self.uuid, self.id, pattern, template, limit, lease_ms)
+    def query(self, pattern, template, limit: int = 4096, lease_ms: int = 30000, grant=None):
+        return self.client.call("query", self.uuid, self.id, pattern, template, limit, lease_ms,
+                                *self._authority(grant))
 
-    def query_first(self, pattern, template, lease_ms: int = 30000):
+    def query_first(self, pattern, template, lease_ms: int = 30000, grant=None):
         """Select the first matching occurrence; this is not an exhaustive view."""
-        return self.client.call("query-first", self.uuid, self.id, pattern, template, 1, lease_ms)
+        return self.client.call("query-first", self.uuid, self.id, pattern, template, 1, lease_ms,
+                                *self._authority(grant))
 
-    def profile_query(self, pattern, template, limit: int = 4096, lease_ms: int = 30000, first=False):
+    def profile_query(self, pattern, template, limit: int = 4096, lease_ms: int = 30000,
+                      first=False, grant=None):
         """Return (profile, view, query-work) with candidates actually examined.
 
         The remaining counters describe all retained path indexes, not a
         claim that a particular index alone answered this query.
         """
         return self.client.call("query-first-profile" if first else "query-profile",
-                                self.uuid,self.id,pattern,template,1 if first else limit,lease_ms)
+                                self.uuid,self.id,pattern,template,1 if first else limit,lease_ms,
+                                *self._authority(grant))
 
     def fetch(self, snapshot, offset: int = 0, count: int = 128):
         return self.client.call("fetch", snapshot[1], snapshot[2], offset, count)
@@ -434,8 +451,8 @@ class Space:
         self.revision = value[3]
         return value
 
-    def match(self, pattern, template, limit: int = 4096):
-        snapshot = self.query(pattern, template, limit)
+    def match(self, pattern, template, limit: int = 4096, grant=None):
+        snapshot = self.query(pattern, template, limit, grant=grant)
         rows, offset = [], 0
         try:
             while True:
@@ -454,11 +471,11 @@ class Space:
             self.close_query(snapshot)
         return rows
 
-    def match_count(self, pattern):
-        return self.client.call("count", self.uuid, self.id, pattern)
+    def match_count(self, pattern, grant=None):
+        return self.client.call("count", self.uuid, self.id, pattern, *self._authority(grant))
 
-    def verify(self):
-        return self.client.call("verify",self.uuid,self.id)
+    def verify(self, grant=None):
+        return self.client.call("verify",self.uuid,self.id,*self._authority(grant))
 
 
 def main():

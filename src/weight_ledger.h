@@ -94,6 +94,26 @@ bool cetta_weight_ledger_handle(Arena *owner, const CettaWeightLedger *base,
 bool cetta_weight_ledger_merge(CettaWeightLedger *destination,
                                const CettaWeightLedger *right);
 
+/* Transport an already-earned production after its actual entrance. Earlier
+ * source factors/claims stay outside this cut. The recipient keeps its own
+ * order, followed by the missing earned suffix, with original occurrence and
+ * dependency IDs. An already held earned prefix must agree and keep order;
+ * gaps/reordering, changed payloads and rival handlers refuse. A new claim on
+ * a pre-entrance factor requires that same factor in the recipient.
+ *
+ * The host separately qualifies the production's captured inputs, dependency
+ * keys, handler authority and other execution carriers. This operation does
+ * not run a source, issue an occurrence or authorize whole-episode reuse.
+ * Atoms are promoted to owner under the normal ledger ownership contract.
+ * Refusal leaves out unchanged; unpublished arena allocations remain owned. */
+bool cetta_weight_ledger_import_suffix(Arena *owner,
+    const CettaWeightLedger *entrance, const CettaWeightLedger *production,
+    const CettaWeightLedger *recipient, CettaWeightLedger *out);
+/* Incomplete preparation is distinct from a proved factor/order conflict. */
+CettaMatchCompletion cetta_weight_ledger_import_suffix_checked(Arena *owner,
+    const CettaWeightLedger *entrance, const CettaWeightLedger *production,
+    const CettaWeightLedger *recipient, CettaWeightLedger *out);
+
 
 #include "checkpoint_compare.h"
 bool cetta_weight_ledger_compare(const CettaWeightLedger *, const CettaWeightLedger *, const CettaCheckpointCompare *);

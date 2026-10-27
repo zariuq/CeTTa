@@ -226,10 +226,16 @@ int main(void) {
     assert(petta_selector_fingerprint(left, &second) && first == second);
     compare(left, right);
 
-    Atom unknown = {.kind = ATOM_EXPR, .expr = {.elems = wide_fields, .len = 1u}};
-    assert(!petta_selector_fingerprint(&unknown, &first));
-    unknown.structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_RATIONAL;
-    assert(!petta_selector_fingerprint(&unknown, &first));
+    /* A header whose structural facts are unknown, then one with a rational. */
+    AtomExprBorrowedView unknown_view;
+    bool viewed = atom_expr_borrowed_view_init(&unknown_view, wide_fields, 1u);
+    assert(viewed);
+    (void)viewed;
+    Atom *unknown = &unknown_view.root;
+    unknown->structural_facts = 0u;
+    assert(!petta_selector_fingerprint(unknown, &first));
+    unknown->structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_RATIONAL;
+    assert(!petta_selector_fingerprint(unknown, &first));
 
     /* Each lookup observes a new arena epoch; the tiny local memo is not
      * carried across a call or a reset. */

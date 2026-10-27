@@ -63,6 +63,7 @@ def main():
     ]
     cases += [(f'(tensor:inspect (tensor:zip-map f64 {boolean_inputs} bulk:bool-{name} ()))',
                expected) for name, expected in boolean_expected.items()]
+    guard_input = '(tensor:from-values f64 (4) (-1.0 0.0 2.0 3.0))'
     intersection_input = '(tensor:from-values i64 (4) (0 1 2 3))'
     intersection_expected = '(TensorData f64 (4) ((0 0.0) (1 1.0) (2 0.0) (3 1.0)))'
     cases += [(f'(tensor:inspect (tensor:zip-map f64 ({intersection_input}) bulk:intersection-size ()))',
@@ -118,6 +119,10 @@ def main():
 (= (bulk:or-invalid $x) (if (or True (+ $x 1.0)) 1.0 0.0))
 (= (bulk:and-empty $x) (if (and False (superpose ())) 1.0 0.0))
 (= (bulk:or-empty $x) (if (or True (superpose ())) 1.0 0.0))
+(= (bulk:spin) (bulk:spin))
+(= (bulk:positive $x) (if (> $x 0.0) True (bulk:spin)))
+(= (bulk:and-guard $x) (if (and (> $x 0.0) (bulk:positive $x)) 1.0 0.0))
+(= (bulk:or-guard $x) (if (or (<= $x 0.0) (bulk:positive $x)) 1.0 0.0))
 '''
     checks = 0
     for language in ('petta@1.0.6', 'he', 'prime'):
@@ -155,7 +160,27 @@ def main():
                      f'(__cetta_lib_tensor_try_zip_map f64 ($input) bulk:{name} ()))',
                      'Tensor:Fallback')
                     for name in ('and-effect', 'or-effect', 'and-choice', 'or-choice',
-                                 'and-invalid', 'or-invalid', 'and-empty', 'or-empty')]
+                                 'and-empty', 'or-empty')]
+                # HE and PeTTa evaluate an absorbed operand, and refuse one that
+                # is not a truth value.  Prime never demands it, so the callback
+                # is packed, and so is a guard whose absorbed operand diverges.
+                if language == 'prime':
+                    active_cases += [
+                        (f'(let $input {source} '
+                         f'(case (__cetta_lib_tensor_try_zip_map f64 ($input) bulk:{name} ()) '
+                         '(((Tensor:Mapped $native) (tensor:inspect $native)) ($other $other))))',
+                         expected)
+                        for name, source, expected in (
+                            ('and-invalid', a, '(TensorData f64 (3) ((0 0.0) (1 0.0) (2 0.0)))'),
+                            ('or-invalid', a, '(TensorData f64 (3) ((0 1.0) (1 1.0) (2 1.0)))'),
+                            ('and-guard', guard_input, '(TensorData f64 (4) ((0 0.0) (1 0.0) (2 1.0) (3 1.0)))'),
+                            ('or-guard', guard_input, '(TensorData f64 (4) ((0 1.0) (1 1.0) (2 1.0) (3 1.0)))'))]
+                else:
+                    active_cases += [
+                        (f'(let $input {a} '
+                         f'(__cetta_lib_tensor_try_zip_map f64 ($input) bulk:{name} ()))',
+                         'Tensor:Fallback')
+                        for name in ('and-invalid', 'or-invalid')]
             source = prefix + ''.join(
                 f'!(let $actual {body} (== $actual {expected}))\n'
                 for body, expected in active_cases)
@@ -178,7 +203,13 @@ def main():
                 for name in ('and-effect', 'or-effect', 'and-choice', 'or-choice',
                              'and-invalid', 'or-invalid', 'and-empty', 'or-empty',
                              'intersection-inline', 'intersection-effect'))),
-        ):
+        ) + ((
+            # An absorbed operand that would diverge is never evaluated, on the
+            # packed path, the authored map and the canonical evaluator alike.
+            ('lazy-guards', '\n'.join(
+                f'!(tensor:inspect (tensor:zip-map f64 ({guard_input}) bulk:{name} ()))'
+                for name in ('and-guard', 'or-guard'))),
+        ) if language == 'prime' else ()):
             observations = []
             for reference, fuel in (('0', False), ('1', False), ('0', True)):
                 env = dict(os.environ, CETTA_TENSOR_MAP_REFERENCE=reference)
@@ -196,11 +227,15 @@ def main():
                 observations.append((r.returncode, stdout, r.stderr))
             assert observations[0] == observations[1] == observations[2], (language, name, observations)
             if name in ('effects', 'index-effects'): assert observations[0][1].count('BulkEffect') == 2
+            if name == 'lazy-guards':
+                assert observations[0][1].splitlines()[-2:] == [
+                    '[(TensorData f64 (4) ((0 0.0) (1 0.0) (2 1.0) (3 1.0)))]',
+                    '[(TensorData f64 (4) ((0 1.0) (1 1.0) (2 1.0) (3 1.0)))]'], observations[0]
             if name == 'strict-boolean':
                 # HE and PeTTa evaluate both operands. Prime's control form
                 # short-circuits; its independent canonical run above agrees.
                 effects = 0 if language == 'prime' else 6
-                assert observations[0][1].count('BulkBooleanEffect') == effects
+                assert observations[0][1].count('BulkBooleanEffect') == effects, (language, observations[0][1])
             if name != 'domain': assert observations[0][0] == 0 and observations[0][1].splitlines()[-1]
             checks += 3
         # CTN1 records scalar bits. Observing the extracted dense values

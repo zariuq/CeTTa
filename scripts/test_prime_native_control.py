@@ -12,6 +12,7 @@ from collections import Counter
 from hashlib import sha256
 from itertools import combinations
 import json
+import os
 from pathlib import Path
 import random
 import re
@@ -122,7 +123,7 @@ class Gate:
         self.passed = 0
 
     def run(self, name, source, language='prime', profile=None, arguments=(), expected_exit=0,
-            source_path=None):
+            source_path=None, environment=None):
         command = [str(self.args.binary), '--lang', language]
         if profile:
             command += ['--profile', profile]
@@ -132,7 +133,7 @@ class Gate:
         usage = resource.getrusage(resource.RUSAGE_CHILDREN)
         try:
             result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True,
-                                    timeout=self.args.timeout)
+                                    timeout=self.args.timeout, env=os.environ | (environment or {}))
         except subprocess.TimeoutExpired as error:
             self.receipts.append({'name': name, 'language': language, 'profile': profile,
                 'source': source, 'source_sha256': sha256(source.encode()).hexdigest(),
@@ -140,6 +141,7 @@ class Gate:
             raise AssertionError(f'{name}: execution exceeded {self.args.timeout} seconds') from error
         receipt = {'name': name, 'language': language, 'profile': profile,
                    'arguments': list(arguments),
+                   'environment': environment or {},
                    'source_path': str(source_path) if source_path else None,
                    'source': source, 'source_sha256': sha256(source.encode()).hexdigest(),
                    'exit': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr,
@@ -151,9 +153,363 @@ class Gate:
         trees = [parse(line)[0] for line in result.stdout.splitlines() if line.startswith('[')]
         return trees, list(observations(trees))
 
+    def first_answer_shapes(self):
+        """Equivalent finite sources retain the same demanded effect prefix."""
+        definitions = '''
+(= (shape-source) (superpose (1 2 3)))
+(shape:item 1)
+(shape:item 2)
+(shape:item 3)
+'''
+        sources = [
+            ('literal', '(superpose (1 2 3))', [1, 2, 3]),
+            ('computed', '(superpose ((+ 0 1) 2 3))', [1, 2, 3]),
+            ('equation', '(shape-source)', [1, 2, 3]),
+            ('nested-let', '(let $y (superpose (1 2 3)) $y)', [1, 2, 3]),
+            ('match', '(match &self (shape:item $y) $y)', [1, 2, 3]),
+            ('duplicates', '(superpose (1 1 2))', [1, 1, 2]),
+        ]
+        routes = [
+            ('default', (), {'CETTA_PRIME_RELATIONAL_PLAN_REFERENCE': '0'}),
+            ('reference', (), {'CETTA_PRIME_RELATIONAL_PLAN_REFERENCE': '1'}),
+            ('fuel', ('--fuel', '1000000'), {'CETTA_PRIME_RELATIONAL_PLAN_REFERENCE': '0'}),
+        ]
+        for shape, source, values in sources:
+            for binding in ('let', 'let*'):
+                body = '(chain (println! (seen $x)) $effect $x)'
+                term = (f'(let $x {source} {body})' if binding == 'let'
+                        else f'(let* (($x {source})) {body})')
+                for observer, limit in [('once', 1), ('select 0', 0), ('select 2', 2), ('collapse', None)]:
+                    expected = values if limit is None else values[:limit]
+                    expected_answer = expected if observer != 'once' else expected[0]
+                    expected_output = ''.join(f'(seen {value})\n' for value in expected)
+                    expected_output += '[' + (sexpr(expected_answer) if isinstance(expected_answer, list)
+                                               else str(expected_answer)) + ']\n'
+                    for route, arguments, environment in routes:
+                        name = f'first-answer {shape} {binding} {observer} {route}'
+                        self.run(name, definitions + f'!({observer} {term})',
+                                 arguments=arguments, environment=environment)
+                        receipt = self.receipts[-1]
+                        assert receipt['stdout'] == expected_output and not receipt['stderr'], (
+                            name, expected_output, receipt)
+                        self.passed_case(name + ': exact effects and answer occurrences')
+
+    def ordered_readiness(self):
+        """Earlier rules expose earned answers before later inspections."""
+        cases = [
+            ('unequal arguments',
+             '(= (ready-call A $u) first) (= (ready-call $u B) second) '
+             '(= (ready-tail) (chain (println! forbidden-ready-tail) $u B))',
+             '(ready-call (superpose (A X)) (ready-tail))',
+             [('once', ['first'], []), ('select 1', ['first'], [])]),
+        ]
+        source = ' '.join(f'(= (ready-source) (Box {tag} (ready-field {tag})))'
+                          for tag in ('A', 'B', 'C'))
+        heads = ('(= (ready-view (Box $tag $x)) Early) '
+                 '(= (ready-view (Box $tag 7)) $tag) ')
+        fields = '(= (ready-field $tag) (chain (println! (inspect $tag)) $u 7))'
+        early = ['Early'] * 3
+        cases += [
+            ('unmatched worlds preserve source order',
+             '(= (residual-source) (Box A (residual-tail))) '
+             '(= (residual-source) (Box (residual-head) B)) '
+             '(= (residual-tail) (chain (println! (inspect tail-A)) $u 8)) '
+             '(= (residual-head) (chain (println! (inspect head-B)) $u 8)) '
+             '(= (residual-view (Box 7 $x)) Rule0) '
+             '(= (residual-view (Box $x 7)) Rule1)', '(residual-view (residual-source))',
+             [('select 3', [['residual-view', ['Box', 'A', 8]],
+                            ['residual-view', ['Box', 8, 'B']]], ['head-B', 'tail-A'])]),
+            ('duplicate unmatched worlds remain separate',
+             '(= (residual-source) (Box A (residual-tail))) '
+             '(= (residual-source) (Box (residual-head) B)) '
+             '(= (residual-tail) (chain (println! (inspect tail-A)) $u (superpose (8 8)))) '
+             '(= (residual-head) (chain (println! (inspect head-B)) $u 8)) '
+             '(= (residual-view (Box 7 $x)) Rule0) '
+             '(= (residual-view (Box $x 7)) Rule1)', '(residual-view (residual-source))',
+             [('select 4', [['residual-view', ['Box', 'A', 8]],
+                            ['residual-view', ['Box', 'A', 8]],
+                            ['residual-view', ['Box', 8, 'B']]], ['head-B', 'tail-A'])]),
+            ('middle world forks before a parked earlier reader',
+             '(= (fork-source) (Box A A (fork-tail))) '
+             '(= (fork-source) (Box B (fork-head) 7)) '
+             '(= (fork-source) (Box C A 7)) '
+             '(= (fork-head) (chain (println! (inspect head-B)) $u (superpose (A A)))) '
+             '(= (fork-tail) (chain (println! (inspect tail-A)) $u 7)) '
+             '(= (fork-view (Box $tag A $x)) Early) '
+             '(= (fork-view (Box $tag $x 7)) $tag)', '(fork-view (fork-source))',
+             [('select 1', ['Early'], []), ('select 4', ['Early'] * 4, ['head-B']),
+              ('select 5', ['Early'] * 4 + ['A'], ['head-B', 'tail-A']),
+              ('select 9', ['Early'] * 4 + ['A', 'B', 'C'], ['head-B', 'tail-A'])]),
+            ('three worlds', source + heads + fields, '(ready-view (ready-source))',
+             [('select 1', early[:1], []), ('select 3', early, []),
+              ('select 4', early + ['A'], ['A']),
+              ('select 5', early + ['A', 'B'], ['A', 'B']),
+              ('select 7', early + ['A', 'B', 'C'], ['A', 'B', 'C']),
+              ('collapse', early + ['A', 'B', 'C'], ['A', 'B', 'C'])]),
+            ('duplicate physical first rule', source +
+             '(= (ready-view (Box $tag $x)) Early) ' + heads + fields,
+             '(ready-view (ready-source))',
+             [('select 6', early * 2, []),
+              ('select 7', early * 2 + ['A'], ['A']),
+              ('select 10', early * 2 + ['A', 'B', 'C'], ['A', 'B', 'C'])]),
+            ('empty leading body', source +
+             '(= (ready-view (Box $tag $x)) (empty)) '
+             '(= (ready-view (Box $tag 7)) $tag) ' + fields,
+             '(ready-view (ready-source))',
+             [('once', ['A'], ['A']), ('select 4', ['A', 'B', 'C'], ['A', 'B', 'C'])]),
+            ('empty later field', source + heads +
+             '(= (ready-field $tag) (chain (println! (inspect $tag)) $u '
+             '  (if (== $tag A) (empty) 7)))', '(ready-view (ready-source))',
+             [('select 3', early, []), ('select 4', early + ['B'], ['A', 'B']),
+              ('select 7', early + ['B', 'C'], ['A', 'B', 'C'])]),
+            ('fault in later field', source + heads +
+             '(= (ready-field $tag) (chain (println! (inspect $tag)) $u '
+             '  (if (== $tag A) (Error bad ReadinessFault) 7)))',
+             '(ready-view (ready-source))',
+             [('select 3', early, []),
+              ('select 4', early + [['Error', 'bad', 'ReadinessFault']], ['A'])]),
+        ]
+        routes = [('default', (), {}),
+                  ('reference', (), {'CETTA_PRIME_RELATIONAL_PLAN_REFERENCE': '1'}),
+                  ('fuel', ('--fuel', '1000000'), {})]
+        for label, definitions, term, observations in cases:
+            for observer, answers, inspected in observations:
+                for route, arguments, environment in routes:
+                    name = f'ordered readiness: {label}, {observer}, {route}'
+                    trees, _ = self.run(name, definitions + f'!({observer} {term})',
+                                        arguments=arguments, environment=environment)
+                    expected = [answers] if observer in ('once', 'select 1') else [[answers]]
+                    assert trees == expected, (name, expected, trees)
+                    effects = [line for line in self.receipts[-1]['stdout'].splitlines()
+                               if not line.startswith('[')]
+                    assert effects == [f'(inspect {tag})' for tag in inspected], (
+                        name, inspected, self.receipts[-1])
+                    assert not self.receipts[-1]['stderr'], self.receipts[-1]
+                    self.passed_case(name)
+
     def run_file(self, name, path, **kwargs):
         path = path.resolve()
         return self.run(name, path.read_text(), source_path=path, **kwargs)
+
+    def ordered_pattern_cohorts(self):
+        """Finite inline demand preserves rule order across shared observations."""
+        source = '(= (cohort-input) (Box 1)) (= (cohort-input) (Box 2)) '
+        cases = [
+            ('renamed locals', source +
+             '(= (cohort-use (Box $x)) (A $x)) '
+             '(= (cohort-use (Box $renamed)) (B $renamed))',
+             '(cohort-use (cohort-input))',
+             [[tag, value] for tag in ('A', 'B') for value in (1, 2)]),
+            ('empty leading body', source +
+             '(= (cohort-use (Box $x)) (if (> $x 1) (A $x) (empty))) '
+             '(= (cohort-use (Box $y)) (B $y))',
+             '(cohort-use (cohort-input))', [['A', 2], ['B', 1], ['B', 2]]),
+            ('several body answers', source +
+             '(= (cohort-use (Box $x)) (superpose ((A $x) (D $x)))) '
+             '(= (cohort-use (Box $y)) (B $y))',
+             '(cohort-use (cohort-input))',
+             [[tag, value] for value in (1, 2) for tag in ('A', 'D')] +
+             [['B', 1], ['B', 2]]),
+            ('two argument observations', source +
+             '(= (cohort-other) (Box 8)) (= (cohort-other) (Box 9)) '
+             '(= (cohort-use (Box $x) (Box $y)) (A $x $y)) '
+             '(= (cohort-use (Box $u) (Box $v)) (B $u $v))',
+             '(cohort-use (cohort-input) (cohort-other))',
+             [[tag, x, y] for tag in ('A', 'B') for x in (1, 2) for y in (8, 9)]),
+            ('repeated-variable coverage',
+             '(= (cohort-input) (Pair 1 2)) (= (cohort-input) (Pair 3 3)) '
+             '(= (cohort-use (Pair $x $x)) (A $x)) '
+             '(= (cohort-use (Pair $y $y)) (B $y))',
+             '(cohort-use (cohort-input))',
+             [['A', 3], ['B', 3], ['cohort-use', ['Pair', 1, 2]]]),
+            ('duplicate physical rules and rows',
+             '(= (cohort-input) (Box 1)) (= (cohort-input) (Box 1)) '
+             '(= (cohort-use (Box $x)) (A $x)) '
+             '(= (cohort-use (Box $x)) (A $x))',
+             '(cohort-use (cohort-input))', [['A', 1]] * 4),
+        ]
+        routes = [('default', (), {}),
+                  ('reference', (), {'CETTA_PRIME_RELATIONAL_PLAN_REFERENCE': '1'}),
+                  ('fuel', ('--fuel', '1000000'), {})]
+        for label, definitions, term, values in cases:
+            for observer, expected in [('select 1', values[:1]),
+                                       ('select 2', values[:2]),
+                                       ('select 3', values[:3]),
+                                       (f'select {len(values) + 1}', values),
+                                       ('collapse', values)]:
+                for route, arguments, environment in routes:
+                    name = f'ordered patterns: {label}, {observer}, {route}'
+                    trees, _ = self.run(name, definitions + f'!({observer} {term})',
+                                        arguments=arguments, environment=environment)
+                    readout = [expected] if observer == 'select 1' else [[expected]]
+                    assert trees == readout, (name, readout, trees)
+                    assert not self.receipts[-1]['stderr'], self.receipts[-1]
+                    self.passed_case(name)
+
+    def deferred_pattern_observations(self):
+        """Earlier answers do not borrow multiplicity or demand from later heads."""
+        patterns = '(= (inspect (Box $x)) early) (= (inspect (Box 7)) late) '
+        cases = [
+            ('later-only field', '(= (field) (chain (println! forbidden) $u 7)) ' +
+             patterns + '!(once (inspect (Box (field))))', [['early']], ''),
+            ('nested later-only field',
+             '(= (field) (chain (println! forbidden) $u 7)) '
+             '(= (inspect (Box (Inner $x))) early) '
+             '(= (inspect (Box (Inner 7))) late) '
+             '!(once (inspect (Box (Inner (field)))))', [['early']], ''),
+            ('duplicate later observations',
+             '(= (field) (chain (println! observed) $u (superpose (7 7)))) ' + patterns +
+             '!(select 5 (inspect (Box (field)))) !(collapse (inspect (Box (field))))',
+             [[['early', 'late', 'late']], [['early', 'late', 'late']]],
+             'observed\nobserved\n'),
+            ('empty later observation', '(= (field) (empty)) ' + patterns +
+             '!(select 5 (inspect (Box (field)))) !(collapse (inspect (Box (field))))',
+             [[['early']], [['early']]], ''),
+            ('matched empty coverage',
+             '(= (field) 9) (= (inspect (Box $x)) (empty)) '
+             '(= (inspect (Box 7)) late) !(select 5 (inspect (Box (field))))', [[[]]], ''),
+            ('complete mismatch residual',
+             '(= (field) 9) (= (inspect (Box 7)) seven) (= (inspect (Box 8)) eight) '
+             '!(select 5 (inspect (Box (field))))', [[[['inspect', ['Box', 9]]]]], ''),
+            ('body and later pattern share a field',
+             '(= (field) (chain (println! observed) $u 7)) '
+             '(= (inspect (Box $x)) $x) (= (inspect (Box 7)) late) '
+             '!(select 2 (inspect (Box (field))))', [[[7, 'late']]], 'observed\n'),
+            ('open full observation', '(= (stuck A C) value) (= (same $x $x) equal) '
+             '!(select 2 (same (stuck $v B) (stuck $v B)))', [[['equal']]], ''),
+            ('opaque full observation', '(= (same $x $x) equal) '
+             '!(select 2 (same (quote (Node 1)) (quote (Node 1))))', [[['equal']]], ''),
+            ('ordered later observation fault', '(= (field) (Error bad Broken)) ' + patterns +
+             '!(once (inspect (Box (field)))) !(select 3 (inspect (Box (field)))) '
+             '!(collapse (inspect (Box (field))))',
+             [['early'], [['early', ['Error', 'bad', 'Broken']]],
+              [['early', ['Error', 'bad', 'Broken']]]], ''),
+            ('fault between source occurrences',
+             '(= source (Box 1)) (= source (Error bad Broken)) (= source (Box 2)) '
+             '(= (report (Box $x)) (A $x)) (= (report (Box $y)) (B $y)) '
+             '!(once (report source)) !(select 3 (report source)) '
+             '!(collapse (report source))',
+             [[['A', 1]], [[['A', 1], ['Error', 'bad', 'Broken'], ['A', 2]]],
+              [[['A', 1], ['Error', 'bad', 'Broken'], ['A', 2], ['B', 1], ['B', 2]]]], ''),
+            ('duplicate fault occurrences',
+             '(= source (Error bad Broken)) (= source (Error bad Broken)) '
+             '(= (report (Box $x)) (A $x)) (= (report (Box $y)) (B $y)) '
+             '!(select 5 (report source)) !(collapse (report source))',
+             [[[['Error', 'bad', 'Broken'], ['Error', 'bad', 'Broken']]],
+              [[['Error', 'bad', 'Broken'], ['Error', 'bad', 'Broken']]]], ''),
+            ('fault diagnostic stays inert',
+             '(= (field) (Error (println! forbidden-diagnostic) Broken)) ' + patterns +
+             '!(collapse (inspect (Box (field))))',
+             [[['early', ['Error', ['println!', 'forbidden-diagnostic'], 'Broken']]]], ''),
+            ('captured syntax before a later constrained field',
+             '(= (eta (T (lam $v ($p $v)) (Arrow $a Bool))) (Yes $p $a)) '
+             '(= (eta (T $any Other)) no) '
+             '!(Probe (collapse (let $f (F $v) '
+             '(eta (T (lam $v $f) (Arrow UInt Bool)))){$f})) '
+             '!(Probe (collapse (let $f (F $v) '
+             '(eta (T (lam $v $f) Other))){$f}))',
+             [[['Probe', [['Yes', 'F', 'UInt']]]], [['Probe', ['no']]]], ''),
+        ]
+        routes = [('default', (), {}),
+                  ('reference', (), {'CETTA_PRIME_RELATIONAL_PLAN_REFERENCE': '1'}),
+                  ('fuel', ('--fuel', '1000000'), {})]
+        for label, source, expected, effects in cases:
+            for route, arguments, environment in routes:
+                name = f'deferred patterns: {label}, {route}'
+                trees, _ = self.run(name, source, arguments=arguments, environment=environment)
+                actual_effects = ''.join(line + '\n' for line in
+                    self.receipts[-1]['stdout'].splitlines() if not line.startswith('['))
+                assert trees == expected and actual_effects == effects, (name, expected, trees,
+                                                                          effects, actual_effects)
+                self.passed_case(name)
+
+    def queued_pattern_observations(self):
+        """Queued readers retain independent answers and unfinished competitors."""
+        head = '(= (report (Box $x)) Header) (= (report (Box 7)) Detail) '
+        repeated = ('(= (stuck A C) value) (=w (field) 7 5) (=w (field) 7 5) '
+                    '(=w (inspect (Pair $x $x) (Box $n)) Header 3) '
+                    '(=w (inspect (Pair $x $x) (Box 7)) Detail 11) ')
+        inspect = '(inspect (Pair (stuck $v B) (stuck $v B)) (Box (field)))'
+        cases = [
+            ('independent prefix', head + '(= (field) (chain (println! later) $u 7)) ',
+             '(report (Box (field)))', 1, ['Header'], 'False'),
+            ('duplicate later observations', head + '(= (field) 7) (= (field) 7) ',
+             '(report (Box (field)))', 9, ['Header', 'Detail', 'Detail'], 'True'),
+            ('empty later observation', head + '(= (field) (empty)) ',
+             '(report (Box (field)))', 9, ['Header'], 'True'),
+            ('divergent earlier body', '(= (loop) (loop)) (= (field) 7) '
+             '(= (report (Box $x)) (loop)) (= (report (Box 7)) Detail) ',
+             '(report (Box (field)))', 1, ['Detail'], 'False'),
+            ('earned prefix and infinite suffix', '(= (loop) (loop)) (= (field) 7) '
+             '(= (early) Header) (= (early) (loop)) '
+             '(= (report (Box $x)) (early)) (= (report (Box 7)) Detail) ',
+             '(report (Box (field)))', 2, ['Header', 'Detail'], 'False'),
+            ('independent answer beside divergent full inspection',
+             '(= (loop $x) (loop $x)) (= (report $a) Header) '
+             '(= (report (Pair $x $x)) Detail) ',
+             '(report (Pair (loop 0) (loop 0)))', 1, ['Header'], 'False'),
+            ('earned repeated-pattern readiness', repeated, inspect,
+             9, ['Header', 'Detail', 'Detail'], 'True'),
+            ('diagnostic payload stays inert', head +
+             '(= (field) (Error (println! forbidden) Broken)) ',
+             '(report (Box (field)))', 9,
+             ['Header', ['Error', ['println!', 'forbidden'], 'Broken']], 'True'),
+            ('named cyclic value under repeated pattern',
+             '(= Ring (Node Ring)) (= (report (Pair $x $x)) Answer) ',
+             '(report (Pair Ring Ring))', 9, ['Answer'], 'True'),
+        ]
+        for workers in (1, 2):
+            for quantum in (1, 7):
+                def policy(budget=4000, extra=''):
+                    return (f'(search-policy (control FIFO (workers {workers}) '
+                            f'(quantum {quantum}) (budget {budget}) {extra}))')
+                suffix = f'workers={workers} quantum={quantum}'
+                for label, source, term, demand, expected, closed in cases:
+                    name = f'queued patterns: {label}, {suffix}'
+                    _, obs = self.run(name, source + f'!(select {demand} {policy()} {term})')
+                    assert obs and bag(obs[-1]['values']) == bag(expected), (name, obs)
+                    assert obs[-1]['closed'] == closed, (name, obs[-1])
+                    assert obs[-1]['satisfied'] == ('True' if demand == len(expected) else 'False')
+                    if label == 'diagnostic payload stays inert':
+                        assert '\nforbidden\n' not in '\n' + self.receipts[-1]['stdout']
+                    # FIFO interleaves runnable obligations. No general inline
+                    # answer-before-effect order is imposed on the controller.
+                    self.passed_case(name)
+                name = f'queued patterns: earned factors, {suffix}'
+                _, obs = self.run(name, repeated +
+                    f'!(select 9 {policy()} (weight:read (algebra 0 1 + *) {inspect}))')
+                assert obs and bag([x[:3] for x in obs[-1]['values']]) == bag([
+                    ['Weighted', 'Header', 3], ['Weighted', 'Detail', 55],
+                    ['Weighted', 'Detail', 55]]), (name, obs)
+                self.passed_case(name)
+                name = f'queued patterns: later cheaper candidate, {suffix}'
+                source = ('(= (field) 7) (= (report (Box $x)) (Offer Header 10)) '
+                          '(= (report (Box 7)) (Offer Detail 1)) ')
+                _, obs = self.run(name, source + f'!(select 1 '
+                    f'{policy(extra="(best (Offer $name $cost) $cost)")} (report (Box (field))))')
+                assert obs and obs[-1]['values'] == [['Offer', 'Detail', 1]], (name, obs)
+                self.passed_case(name)
+                name = f'queued patterns: later coverage obligation, {suffix}'
+                source = (f'!(import! &self {ROOT / "lib/native_search_goals.metta"}) '
+                          '(= (field) 7) (= (report (Box $x)) (Route Header (0) 10)) '
+                          '(= (report (Box 7)) (Route Detail (1) 1)) ')
+                _, obs = self.run(name, source + f'!(select 2 '
+                    f'{policy(extra="(goal $selected (search:joint? (0 1) () $selected))")} '
+                    '(report (Box (field))))')
+                assert obs and bag(obs[-1]['values']) == bag([
+                    ['Route', 'Header', [0], 10], ['Route', 'Detail', [1], 1]]), (name, obs)
+                assert obs[-1]['satisfied'] == 'True'
+                self.passed_case(name)
+                name = f'queued patterns: retained partial inspection, {suffix}'
+                pattern = ('(Observation $prefix (satisfied $s) (closed $c) '
+                           '(residual $r) (work $w) (status $t))')
+                trees, obs = self.run(name, repeated +
+                    f'!(let {pattern} (select 9 {policy(79)} {inspect}) '
+                    f'(Split $prefix (select 9 {policy()} $r)))')
+                assert obs and bag(trees[-1][0][1] + obs[-1]['values']) == bag(
+                    ['Header', 'Detail', 'Detail']), (name, trees)
+                assert obs[-1]['closed'] == 'True'
+                self.passed_case(name)
 
     def passed_case(self, name):
         self.passed += 1
@@ -596,6 +952,7 @@ def main():
     parser.add_argument('--receipt', type=Path)
     # Checking builds (the whole-graph scan audit) are deliberately slower.
     parser.add_argument('--no-timing', action='store_true')
+    parser.add_argument('--first-answer-only', action='store_true')
     parser.add_argument('--mutation', choices=['DROP', 'DUPLICATE', 'INVENT', 'FALSE_CLOSED', 'EARLY_BEST',
                                                'UNLICENSED_PRUNE'])
     args = parser.parse_args()
@@ -604,8 +961,19 @@ def main():
     try:
         if args.mutation:
             gate.mutation_controls(args.mutation)
+        elif args.first_answer_only:
+            gate.first_answer_shapes()
+            gate.ordered_pattern_cohorts()
+            gate.ordered_readiness()
+            gate.deferred_pattern_observations()
+            gate.queued_pattern_observations()
         else:
             gate.fixed()
+            gate.first_answer_shapes()
+            gate.ordered_pattern_cohorts()
+            gate.ordered_readiness()
+            gate.deferred_pattern_observations()
+            gate.queued_pattern_observations()
             if not args.no_timing:
                 gate.controller_scaling()
             gate.joint_budget_splits()

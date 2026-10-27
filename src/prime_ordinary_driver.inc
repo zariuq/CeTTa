@@ -100,7 +100,9 @@ static bool prime_ordinary_support_frontier(PrimeEvalStackDriver *driver,Space *
         for(size_t j=0u;j<frame->normalization_child_count;j++)
             if(!prime_ordinary_support_atom(frame->normalization_children[j],&bound))return false;
         if((frame->env_initialized && !prime_ordinary_support_bindings(&bound,&frame->env)) ||
-            (frame->child_initialized && !prime_ordinary_support_outcomes(&bound,&frame->child)))return false;
+            (frame->child_initialized && !prime_ordinary_support_outcomes(&bound,&frame->child)) ||
+            (frame->force_pending_initialized &&
+             !prime_ordinary_support_outcomes(&bound,&frame->force_pending)))return false;
         PrimeOrdinarySupport before=bound,evaluating=bound;
         before.snapshot=&frame->before;evaluating.snapshot=&frame->evaluating;
         if(!prime_need_snapshot_atoms_satisfy(&frame->before,prime_ordinary_support_atom,&before) ||
@@ -165,51 +167,110 @@ static const char *prime_share_grounded_refusal(GroundedKind kind) {
  * inspection admits immutable syntax payloads; it does not create a pin or
  * authorize an external writer. Index/cache accesses retain their existing
  * concurrent-scope guards. */
+typedef struct {
+    size_t position;
+    CettaExprIndex child;
+    bool checked;
+} PrimeOrdinaryGraphCursor;
+
+struct PrimeOrdinaryGraphInspection {
+    PrimeEvalStackSupportBuffer scan;
+    CettaStorageCensus seen;
+    PrimeOrdinaryGraphCursor cursor;
+    Arena *arena;
+    uint32_t arena_identity, older_identity;
+    uint64_t arena_epoch;
+    HashConsTable *hashcons;
+    bool scalar_cache;
+};
+
+/* Both admissions use the same node predicate and edge order. A finite
+ * slice retains its census, node position and next edge. Native indexing,
+ * allocation and pointer validity remain primitive service obligations. */
+static inline __attribute__((always_inline)) CettaContinuationStatus
+prime_ordinary_immutable_graph_run(PrimeEvalStackSupportBuffer *scan,
+    CettaStorageCensus *seen,PrimeOrdinaryGraphCursor *cursor,
+    uint64_t allowance,uint64_t *used) {
+    uint64_t spent=0u;
+    if (used) *used=0u;
+#define INSPECTION_DEBIT() do { \
+    if (used) { \
+        if (spent==allowance) { *used=spent;return CETTA_CONTINUATION_DEFERRED; } \
+        ++spent; *used=spent; \
+    } \
+} while (0)
+    if (used && !allowance) return CETTA_CONTINUATION_DEFERRED;
+    while (cursor->position<scan->len) {
+        Atom *atom=scan->items[cursor->position];
+        if (!cursor->checked) {
+            INSPECTION_DEBIT();
+            if (!atom) {
+                prime_share_refuse("immutable-null");
+                return CETTA_CONTINUATION_UNSUPPORTED;
+            }
+            if (!cetta_storage_object(seen,atom,0u,CETTA_STORAGE_VISITED)) {
+                if (seen->incomplete || seen->overflow) {
+                    prime_share_refuse("immutable-census");
+                    return CETTA_CONTINUATION_UNSUPPORTED;
+                }
+                cursor->position++;
+                continue;
+            }
+            if (atom->structural_facts&ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) {
+                prime_share_refuse("immutable-handle");
+                return CETTA_CONTINUATION_UNSUPPORTED;
+            }
+            if (atom->kind==ATOM_GROUNDED) {
+                GroundedKind kind=atom->ground.gkind;
+                if (kind!=GV_INT && kind!=GV_FLOAT && kind!=GV_BOOL && kind!=GV_STRING &&
+                    kind!=GV_BIGINT && kind!=GV_RATIONAL) {
+                    prime_share_refuse(prime_share_grounded_refusal(kind));
+                    return CETTA_CONTINUATION_UNSUPPORTED;
+                }
+            } else if (atom->kind==ATOM_EXPR) {
+                if (atom->expr.len && !atom->expr.elems) {
+                    prime_share_refuse("immutable-expression");
+                    return CETTA_CONTINUATION_UNSUPPORTED;
+                }
+            } else if (atom->kind!=ATOM_VAR && atom->kind!=ATOM_SYMBOL) {
+                prime_share_refuse("immutable-kind");
+                return CETTA_CONTINUATION_UNSUPPORTED;
+            }
+            cursor->checked=true;
+        }
+        CettaExprLen children=atom->kind==ATOM_EXPR?atom->expr.len:
+            atom->kind==ATOM_VAR && atom->name_key?1u:0u;
+        while (cursor->child<children) {
+            INSPECTION_DEBIT();
+            Atom *child=atom->kind==ATOM_VAR?atom->name_key:atom->expr.elems[cursor->child];
+            if (!prime_eval_stack_support_buffer_push(scan,child)) {
+                prime_share_refuse("immutable-push");
+                return CETTA_CONTINUATION_UNSUPPORTED;
+            }
+            cursor->child++;
+        }
+        cursor->position++;cursor->child=0u;cursor->checked=false;
+    }
+    if (seen->incomplete || seen->overflow) {
+        prime_share_refuse("immutable-census");
+        return CETTA_CONTINUATION_UNSUPPORTED;
+    }
+    return CETTA_CONTINUATION_READY;
+#undef INSPECTION_DEBIT
+}
+
 static bool prime_ordinary_immutable_graph(PrimeEvalStackSupportBuffer *scan,
     CettaStorageCensus *seen) {
-    for(size_t i=0u;i<scan->len;i++) {
-        Atom *atom=scan->items[i];
-        if(!atom) {
-            prime_share_refuse("immutable-null");
-            return false;
-        }
-        if(!cetta_storage_object(seen,atom,0u,CETTA_STORAGE_VISITED)) {
-            if(seen->incomplete || seen->overflow) {
-                prime_share_refuse("immutable-census");
-                return false;
-            }
-            continue;
-        }
-        if(atom->structural_facts&ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID) {
-            prime_share_refuse("immutable-handle");
-            return false;
-        }
-        if(atom->kind==ATOM_GROUNDED) {
-            GroundedKind kind=atom->ground.gkind;
-            if(kind!=GV_INT && kind!=GV_FLOAT && kind!=GV_BOOL && kind!=GV_STRING &&
-                kind!=GV_BIGINT && kind!=GV_RATIONAL) {
-                prime_share_refuse(prime_share_grounded_refusal(kind));
-                return false;
-            }
-        } else if(atom->kind==ATOM_EXPR) {
-            for(CettaExprIndex j=0u;j<atom->expr.len;j++)
-                if(!prime_eval_stack_support_buffer_push(scan,atom->expr.elems[j])) {
-                    prime_share_refuse("immutable-push");
-                    return false;
-                }
-        } else if(atom->kind==ATOM_VAR) {
-            if(atom->name_key && !prime_eval_stack_support_buffer_push(scan,atom->name_key)) {
-                prime_share_refuse("immutable-push");
-                return false;
-            }
-        } else if(atom->kind!=ATOM_SYMBOL) {
-            prime_share_refuse("immutable-kind");
-            return false;
-        }
-    }
-    if (seen->incomplete || seen->overflow)
-        prime_share_refuse("immutable-census");
-    return !seen->incomplete && !seen->overflow;
+    PrimeOrdinaryGraphCursor cursor={0};
+    return prime_ordinary_immutable_graph_run(scan,seen,&cursor,0u,NULL)
+        ==CETTA_CONTINUATION_READY;
+}
+
+static void prime_ordinary_graph_inspection_free(PrimeOrdinaryGraphInspection *inspection) {
+    if (!inspection) return;
+    cetta_storage_census_free(&inspection->seen);
+    prime_eval_stack_support_buffer_free(&inspection->scan);
+    free(inspection);
 }
 
 static bool prime_ordinary_shared_source_admitted(Space *space) {
@@ -304,7 +365,7 @@ static bool prime_ordinary_shared_task_admitted(Space *space,Arena *arena,Atom *
             safe=false;break;
         }
         SymbolId id=atom_head_symbol_id(atom);
-        if(id!=SYMBOL_ID_NONE && !symbol_id_is_builtin(id) &&
+        if(id!=SYMBOL_ID_NONE && !symbol_id_is_builtin_for(id, eval_current_language_id()) &&
             !registry_lookup_atom(head) && eval_equations_may_match_known_head(space,id)) {
             /* PeTTa conservatively gives every non-symbol head a dynamic
              * plan, including an inert scalar-headed container. Keep its
@@ -361,9 +422,27 @@ static bool prime_ordinary_received_outcome(Arena *arena,const Outcome *row) {
     return true;
 }
 
+/* Borrowed return and service contexts may name the original driver. Moving
+ * its frontier needs a transport for those contexts; ordinary transfer keeps
+ * their invocation in place until that transport is available. */
+static bool prime_ordinary_driver_transfer_admitted(
+    const PrimeEvalStackDriver *source) {
+    if (!source || g_prime_ordinary_return)
+        return false;
+    for (const PrimeEvalStackDriver *scope = source; scope;
+         scope = scope->call_permit_parent ? scope->call_permit_parent
+                                          : scope->authority_parent)
+        if (scope->call_permit)
+            return false;
+    return true;
+}
+
 static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
     Space *space,Atom *expression,int fuel,const Bindings *environment,uint32_t workers) {
-    if(!source || source!=g_prime_eval_stack_driver || source->control || workers<2u ||
+    /* Explicit owned roots install their controller before source entry.
+     * A nested synchronous root retains its caller's return receiver and
+     * invocation checks; moving it cannot detach that borrowed ancestry. */
+    if(!prime_ordinary_driver_transfer_admitted(source) || source!=g_prime_eval_stack_driver || source->control || workers<2u ||
         source->streaming || source->running_task || source->active_task ||
         source->root_call_running || source->raw_call_depth || source->bind_depth ||
         source->poison_depth || source->capacity_blocked || source->failed ||
@@ -482,14 +561,6 @@ static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,
     control->published=prefix;control->delivered_count=prefix;
     for(size_t i=0u;i<(size_t)prefix;i++)control->delivered[i]=true;
     memset(source,0,sizeof(*source));
-    if (g_prime_ordinary_return) {
-        CettaPrimeObservationReturn *owned=g_prime_ordinary_return;
-        assert(owned->ordinary && !owned->ordinary_control &&
-            source->frame_depth==0u && owned->output!=control->driver.arena);
-        prime_ordinary_return_take_control(owned,control);
-        free(frames);
-        return true;
-    }
     prime_native_control_run(control,UINT64_MAX,prime_ordinary_observe,NULL);
 #ifdef CETTA_PRIME_ORDINARY_TEST_OBSERVER
     prime_ordinary_test_finished(control);
@@ -621,7 +692,7 @@ static inline __attribute__((always_inline)) void prime_ordinary_capsule_stack_l
         }
         if (!space_read_token_is_current(control->source_read) ||
             control->registry_read.stale) {control->invalidated=true;break;}
-        EvalCompletionTracker completion;
+        CettaEvalEpisode completion;
         eval_completion_child_begin(&completion);
         if (driver->task_ready) prime_eval_stack_run_task();
         else prime_eval_stack_resume_top();
@@ -649,6 +720,173 @@ static inline __attribute__((always_inline)) void prime_ordinary_capsule_stack_l
     if (control->registry_read.stale) control->invalidated=true;
     if (control->registry_read.incomplete || driver->capacity_blocked)
         control->completion=CETTA_EVAL_INCOMPLETE_CAPACITY;
+}
+
+static PrimeNativeControl *prime_inline_quantum_adopt(
+    PrimeEvalStackDriver *source, Space *space, Atom *expression, int fuel,
+    const Bindings *environment, CettaObservationDemand demand) {
+    if (!prime_ordinary_driver_transfer_admitted(source) ||
+        source != g_prime_eval_stack_driver || source->control ||
+        source->running_task || source->active_task ||
+        source->root_call_running || source->raw_call_depth ||
+        source->bind_depth || source->poison_depth ||
+        source->capacity_blocked || source->failed ||
+        source->stream_pending ||
+        source->prepared_pure_cache.execution_scratch_ready ||
+        !source->root_target || !source->arena ||
+        (!source->task_ready && !source->top) ||
+        cetta_parallel_worker_active() ||
+        cetta_native_cost_observer_active() ||
+        cetta_shared_transition_guard_held_by_current_thread() ||
+        eval_current_language_id() != CETTA_LANGUAGE_PRIME ||
+        active_search_table_mode() != CETTA_TABLE_MODE_NONE ||
+        !prime_native_control_admits(space, source->arena, expression, false))
+        return NULL;
+    size_t count = source->frame_depth;
+    if (count > SIZE_MAX / sizeof(PrimeEvalStackFrame *) ||
+        source->continuations.depth != count ||
+        source->continuations.top != (CettaOwnedFrameLink *)source->top)
+        return NULL;
+    PrimeEvalStackFrame **frames = count ? calloc(count, sizeof(*frames)) : NULL;
+    if (count && !frames)
+        return NULL;
+    size_t found = 0u;
+    size_t alternative_frames = 0u;
+    for (PrimeEvalStackFrame *frame = source->top; frame;
+         frame = (PrimeEvalStackFrame *)frame->continuation.next) {
+        if (found == count || frame->arena != source->arena ||
+            frame->control_sequence || frame->control_pending ||
+            frame->control_queued || frame->control_retired ||
+            frame->control_closed || frame->control_nested ||
+            frame->control_nested_operation ||
+            frame->kind == PRIME_EVAL_STACK_FRAME_STREAM_RESUME ||
+            (frame->kind >= PRIME_EVAL_STACK_FRAME_CONTROL_SCORE &&
+             frame->kind != PRIME_EVAL_STACK_FRAME_CHOICE))
+            goto decline;
+        if (prime_eval_stack_frame_holds_alternative(frame) &&
+            ++alternative_frames > 1u)
+            goto decline;
+        if (frame->kind == PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH) {
+            const PrimeNeedEquationContinuation *eq = frame->equation_search;
+            if (!eq ||
+                eq->cohort_owner || eq->inspect_incrementally ||
+                eq->publication_returns_to_search ||
+                eq->state == PRIME_NEED_EQUATION_SEARCH_WAIT_FORCE ||
+                (eq->state == PRIME_NEED_EQUATION_SEARCH_WAIT_PUBLICATION &&
+                 (frame->child.len != 0u ||
+                  (frame == source->top && !source->task_ready))))
+                /* A synchronous body can stop at the inline budget without
+                 * leaving a child task. Its empty wait is not a retained
+                 * producer and cannot be advanced as a completed body. */
+                goto decline;
+        }
+        frames[found++] = frame;
+    }
+    if (found != count)
+        goto decline;
+    for (size_t i = 0u; i < count; i++)
+        if (!prime_ordinary_target(source, frames, count, frames[i]->target))
+            goto decline;
+    if (source->task_ready &&
+        (!prime_ordinary_target(source, frames, count, source->task.target) ||
+         source->task.arena != source->arena))
+        goto decline;
+    PrimeNativeControl *control = calloc(1u, sizeof(*control));
+    if (!control)
+        goto decline;
+    if (!prime_native_control_initialize(
+            control, space, source->arena, expression, fuel, false,
+            demand, NULL, environment, NULL, NULL, false) ||
+        control->registry_read.incomplete)
+        goto release;
+    control->reclaims_frames = !control->weight_analysis && !control->weight_keys;
+    size_t capacity = 16u;
+    if (count > SIZE_MAX / 2u)
+        goto release;
+    while (capacity < count * 2u) {
+        if (capacity > SIZE_MAX / 2u)
+            goto release;
+        capacity *= 2u;
+    }
+    control->frame_index = calloc(capacity, sizeof(*control->frame_index));
+    control->frame_index_capacity = capacity;
+    control->changed_frames = count ? calloc(count, sizeof(*control->changed_frames)) : NULL;
+    control->changed_capacity = count;
+    if (!control->frame_index || (count && !control->changed_frames))
+        goto release;
+    PrimeNativeWork *ready = calloc(1u, sizeof(*ready));
+    if (!ready)
+        goto release;
+    ready->owner = control;
+    CettaOwnedContinuation initial = {
+        .payload = ready, .provider = &prime_native_work_provider};
+    if (!cetta_continuation_hub_append(&control->hub, &initial)) {
+        free(ready);
+        goto release;
+    }
+    OutcomeSet *target = source->root_target;
+    prime_ordinary_move_outcomes(&control->output, target);
+    for (size_t i = count; i > 0u; i--) {
+        PrimeEvalStackFrame *frame = frames[i - 1u];
+        if (frame->target == target)
+            frame->target = &control->output;
+        if (frame->kind == PRIME_EVAL_STACK_FRAME_CHOICE)
+            frame->kind = PRIME_EVAL_STACK_FRAME_ALTERNATIVES;
+        if (frame->kind == PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH &&
+            frame->equation_search->state ==
+                PRIME_NEED_EQUATION_SEARCH_WAIT_PUBLICATION) {
+            OutcomeSet *old_target = &frame->child;
+            OutcomeSet *new_target = frame->target;
+            for (size_t j = 0u; j < i - 1u; j++)
+                if (frames[j]->target == old_target)
+                    frames[j]->target = new_target;
+            if (source->task_ready && source->task.target == old_target)
+                source->task.target = new_target;
+            frame->equation_search->state =
+                PRIME_NEED_EQUATION_SEARCH_BUILD_PUBLICATION;
+        }
+    }
+    if (source->task_ready && source->task.target == target)
+        source->task.target = &control->output;
+    control->driver = *source;
+    control->driver.control = control;
+    control->driver.ordinary_ordered = false;
+    control->driver.answer_limit = 0u;
+    control->driver.streaming = true;
+    control->driver.nested = true;
+    control->driver.continuations = (CettaOwnedFrameStack){0};
+    control->driver.root_target = &control->output;
+    control->driver.collection_admitted = false;
+    control->driver.top = NULL;
+    for (size_t i = count; i > 0u; i--) {
+        PrimeEvalStackFrame *frame = frames[i - 1u];
+        prime_native_control_register_frame(control, frame);
+        control->driver.top = frame;
+    }
+    if (control->driver.task_ready) {
+        ready->task = control->driver.task;
+        ready->task_initialized = true;
+        ready->parent = control->driver.top;
+        if (ready->parent)
+            ready->parent->control_pending++;
+        memset(&control->driver.task, 0, sizeof(control->driver.task));
+        control->driver.task_ready = false;
+    } else {
+        ready->frame = control->driver.top;
+        ready->frame->control_queued = true;
+    }
+    control->driver.top = NULL;
+    g_prime_eval_stack_driver = &control->driver;
+    prime_native_control_scan(control);
+    g_prime_eval_stack_driver = source;
+    memset(source, 0, sizeof(*source));
+    free(frames);
+    return control;
+release:
+    prime_native_control_destroy(control);
+decline:
+    free(frames);
+    return NULL;
 }
 
 static void prime_ordinary_capsule_stack_run(PrimeNativeControl *control,uint64_t grant) {

@@ -129,7 +129,9 @@ PREPARED_PURE_INTRINSIC_INSTRUCTIONS = {
     "concatenate-expressions",
     "library-value-dispatch",
 }
-PREPARED_PURE_INTRINSIC_OPERAND_DISCIPLINES = {"strict-all"}
+PREPARED_PURE_INTRINSIC_OPERAND_DISCIPLINES = {"strict-all", "short-circuit"}
+# The dialects an intrinsic row can be scoped to, in mask-bit order.
+INTRINSIC_DIALECTS = ("he", "petta", "prime")
 
 # Representation interpretation for value-allocation.  The presentation uses
 # semantic leaf classes; this backend maps them to CeTTa's GroundedKind tags.
@@ -225,6 +227,7 @@ class Spec:
         effect = find_form(forms, "gslt", "relational-may-effect")
         rows = find_form(forms, "gslt", "streamed-row-disposition")
         observation = find_form(forms, "gslt", "observation-profile")
+        service_admission = find_form(forms, "gslt", "native-service-admission")
         lifetime = find_form(forms, "gslt", "resource-lifetime")
         prepared = find_form(forms, "gslt", "determinate-equation-continuation")
         total = find_form(forms, "gslt", "total-expression-normalization")
@@ -233,6 +236,7 @@ class Spec:
         intrinsic = find_form(
             forms, "gslt", "prepared-pure-intrinsic-execution")
         fold = find_form(forms, "gslt", "determinate-fold-continuation")
+        control_plans = find_form(forms, "gslt", "execution-control-plans")
         pure_call = find_form(
             forms, "gslt", "determinate-pure-call-continuation")
         frames = find_form(forms, "gslt", "evaluator-root-frames")
@@ -290,6 +294,24 @@ class Spec:
 
         self.row_values = declared_values(rows, "row disposition")
         self.visibility_values = declared_values(observation, "visibility")
+        placement_values = [
+            atom_text(item[1], "native service placement")
+            for item in entries(service_admission, "placement")
+            if len(item) == 2]
+        progress_values = [
+            atom_text(item[1], "native service progress")
+            for item in entries(service_admission, "progress")
+            if len(item) == 2]
+        if (len(set(placement_values)) != len(placement_values) or
+                len(set(progress_values)) != len(progress_values)):
+            raise SpecError("native service advice values must be duplicate-free")
+        if set(placement_values) != {"local", "coordinator", "unresolved"}:
+            raise SpecError("native service placement must declare local, coordinator and unresolved")
+        if set(progress_values) != {
+                "bounded", "yielding", "isolated", "unresolved-progress"}:
+            raise SpecError("native service progress declaration is incomplete")
+        self.service_placement_values = placement_values
+        self.service_progress_values = progress_values
         self.transitions = [atom_text(item[1], "lifetime transition")
                             for item in entries(lifetime, "transition")
                             if len(item) >= 2]
@@ -552,6 +574,69 @@ class Spec:
         if not self.heads:
             raise SpecError("at least one relational query head is required")
 
+        defaults = entries(native, "native-call-default")
+        if defaults != [["native-call-default", "unresolved", "unresolved-progress"]]:
+            raise SpecError("native call default must be unresolved/unresolved-progress")
+        constructors = entries(native, "native-call-constructor")
+        if len(constructors) != 1 or len(constructors[0]) != 4:
+            raise SpecError("native call constructor needs placement, progress and bound")
+        user_equations = entries(native, "native-call-user-equation")
+        if len(user_equations) != 1 or len(user_equations[0]) != 3:
+            raise SpecError("native call user-equation needs placement and progress")
+        self.native_call_constructor = (
+            atom_text(constructors[0][1], "constructor placement"),
+            atom_text(constructors[0][2], "constructor progress"),
+            atom_text(constructors[0][3], "constructor bound"))
+        self.native_call_user_equation = (
+            atom_text(user_equations[0][1], "user-equation placement"),
+            atom_text(user_equations[0][2], "user-equation progress"))
+        if self.native_call_constructor[:2] != ("local", "bounded") or \
+                not self.native_call_constructor[2].isdigit() or \
+                int(self.native_call_constructor[2]) < 1:
+            raise SpecError("constructor calls must be local with a positive bounded contract")
+        if self.native_call_user_equation != ("local", "yielding"):
+            raise SpecError("user equations must be local yielding calls")
+        self.native_call_heads: list[tuple[str, str, str, str, int]] = []
+        seen_native_call_fields: set[str] = set()
+        for entry in entries(native, "native-call-head"):
+            if len(entry) not in (4, 5):
+                raise SpecError(f"malformed native-call-head: {sexpr(entry)}")
+            name = atom_text(entry[1], "native call head")
+            placement = atom_text(entry[2], "native call placement")
+            progress = atom_text(entry[3], "native call progress")
+            if name not in symbol_fields:
+                raise SpecError(f"native call head {name} has no entry in {SYMBOL_TABLE.name}")
+            if placement not in placement_values or progress not in progress_values:
+                raise SpecError(f"native call head {name} has unknown advice")
+            bound = 0
+            if progress == "bounded":
+                if len(entry) != 5 or not atom_text(entry[4], "native call bound").isdigit():
+                    raise SpecError(f"bounded native call head {name} needs a positive bound")
+                bound = int(atom_text(entry[4], "native call bound"))
+                if bound < 1:
+                    raise SpecError(f"bounded native call head {name} needs a positive bound")
+            elif len(entry) != 4:
+                raise SpecError(f"unbounded native call head {name} cannot carry a bound")
+            field = symbol_fields[name]
+            if field in seen_native_call_fields:
+                raise SpecError(f"native call head {name} is declared twice")
+            if placement == "local" and progress not in ("bounded", "yielding"):
+                raise SpecError(f"local native call head {name} lacks inline progress")
+            if progress == "isolated" and placement != "coordinator":
+                raise SpecError(f"isolated native call head {name} must be coordinator-owned")
+            seen_native_call_fields.add(field)
+            self.native_call_heads.append((name, field, placement, progress, bound))
+        if not self.native_call_heads:
+            raise SpecError("at least one native call head is required")
+        relational_fields = {field for _, field, _ in self.heads}
+        conflicting_local = relational_fields & {
+            field for _, field, placement, _, _ in self.native_call_heads
+            if placement == "local"}
+        if conflicting_local:
+            raise SpecError(
+                "a store-effect head cannot be worker-local: " +
+                repr(sorted(conflicting_local)))
+
         self.total_integer_heads: list[tuple[str, str, int]] = []
         for entry in entries(native, "total-integer-head"):
             if len(entry) != 3:
@@ -634,10 +719,13 @@ class Spec:
                 len(self.register_heads):
             raise SpecError("register heads must be unique by symbol and arity")
 
+        # A row without a dialect scope, like one naming every dialect, holds
+        # in every language.  Rows for one head and arity may differ in
+        # operand discipline between dialects, so each row carries its own
+        # scope and no dialect sees two rows.
         self.prepared_intrinsic_heads: list[
-            tuple[str, str, int, str, str]
+            tuple[str, str, int, str, str, tuple[str, ...]]
         ] = []
-        self.prepared_intrinsic_scopes: list[tuple[str, int, tuple[str, ...]]] = []
         for entry in entries(native, "prepared-pure-intrinsic-head"):
             if len(entry) not in (5, 6):
                 raise SpecError(
@@ -665,16 +753,15 @@ class Spec:
                 raise SpecError(
                     f"prepared-pure intrinsic head {name} names undeclared "
                     f"instruction {instruction}")
+            dialects = INTRINSIC_DIALECTS
             if len(entry) == 6:
                 scope = entry[5]
                 if not isinstance(scope, list) or len(scope) < 2 or scope[0] != "dialects":
                     raise SpecError("intrinsic scope must name nonempty dialects")
                 dialects = tuple(atom_text(value, "intrinsic dialect") for value in scope[1:])
-                if (not set(dialects) <= {"he", "petta", "prime"} or
+                if (not set(dialects) <= set(INTRINSIC_DIALECTS) or
                         len(dialects) != len(set(dialects))):
                     raise SpecError("intrinsic dialects must be unique known language names")
-                self.prepared_intrinsic_scopes.append(
-                    (symbol_fields[name], int(arity_text), dialects))
             if (instruction == "deconstruct-nonempty-expression" and
                     int(arity_text) != 1):
                 raise SpecError(
@@ -685,24 +772,69 @@ class Spec:
                     } and int(arity_text) != 2):
                 raise SpecError(
                     f"{instruction} requires arity two")
+            # A connective computes a truth value: the open case runs the
+            # canonical operation on both values and answers in the
+            # caller's Boolean constructor.
+            if discipline == "short-circuit" and (
+                    int(arity_text) != 2 or
+                    instruction != "boolean-dispatch"):
+                raise SpecError(
+                    f"short-circuit head {name} must be a binary "
+                    "boolean dispatch")
             self.prepared_intrinsic_heads.append((
                 name, symbol_fields[name], int(arity_text), discipline,
-                instruction))
+                instruction, dialects))
         if not self.prepared_intrinsic_heads:
             raise SpecError(
                 "at least one prepared-pure intrinsic head is required")
-        if len({(field, arity) for _, field, arity, _, _
-                in self.prepared_intrinsic_heads}) != \
-                len(self.prepared_intrinsic_heads):
+        if len({(field, arity, dialect)
+                for _, field, arity, _, _, dialects
+                in self.prepared_intrinsic_heads
+                for dialect in dialects}) != \
+                sum(len(dialects) for *_, dialects
+                    in self.prepared_intrinsic_heads):
             raise SpecError(
-                "prepared-pure intrinsic heads must be unique by symbol "
-                "and arity")
-        if {instruction for _, _, _, _, instruction
+                "prepared-pure intrinsic heads must be unique by symbol, "
+                "arity and dialect")
+        if {instruction for _, _, _, _, instruction, _
                 in self.prepared_intrinsic_heads} != \
                 set(self.prepared_intrinsic_instructions):
             raise SpecError(
                 "native prepared-pure intrinsic heads must cover every "
                 "declared intrinsic instruction")
+        self.short_circuit_absorbing: list[tuple[str, str, int, bool]] = []
+        for entry in entries(native, "short-circuit-absorbing"):
+            if len(entry) != 4:
+                raise SpecError(
+                    f"malformed short-circuit-absorbing: {sexpr(entry)}")
+            name = atom_text(entry[1], "short-circuit head")
+            arity_text = atom_text(entry[2], "short-circuit arity")
+            value = atom_text(entry[3], "short-circuit absorbing value")
+            if value not in ("True", "False"):
+                raise SpecError(
+                    f"short-circuit head {name} must absorb a truth value")
+            if not any(row_name == name and str(arity) == arity_text and
+                       discipline == "short-circuit"
+                       for row_name, _, arity, discipline, _, _
+                       in self.prepared_intrinsic_heads):
+                raise SpecError(
+                    f"short-circuit-absorbing names {name}/{arity_text}, "
+                    "which no short-circuit head declares")
+            self.short_circuit_absorbing.append(
+                (name, symbol_fields[name], int(arity_text),
+                 value == "True"))
+        if len({(field, arity) for _, field, arity, _
+                in self.short_circuit_absorbing}) != \
+                len(self.short_circuit_absorbing):
+            raise SpecError("short-circuit absorbing values must be unique")
+        for name, field, arity, discipline, _, _ in \
+                self.prepared_intrinsic_heads:
+            if discipline == "short-circuit" and not any(
+                    absorbing_field == field and absorbing_arity == arity
+                    for _, absorbing_field, absorbing_arity, _
+                    in self.short_circuit_absorbing):
+                raise SpecError(
+                    f"short-circuit head {name} declares no absorbing value")
 
         self.sequence_value_constructor_heads: list[tuple[str, str, int, int]] = []
         for entry in entries(native, "sequence-value-constructor-head"):
@@ -737,40 +869,179 @@ class Spec:
             raise SpecError("sequence value constructor heads must be unique")
         for _, field, _, mask in self.sequence_value_constructor_heads:
             if mask and any(intrinsic_field == field
-                            for _, intrinsic_field, _, _, _
+                            for _, intrinsic_field, _, _, _, _
                             in self.prepared_intrinsic_heads):
                 raise SpecError(
                     "a held-operand constructor cannot have strict-all prepared admission")
 
+        self.control_operations = declared_values(control_plans, "control operation")
+        slot_shapes = {
+            "sequence": (True, True, True),
+            "branch": (True, True, None),
+            "sequence-many": (True, False, True),
+            "force": (True, False, False),
+            "return-scope": (True, False, False),
+            "ordered-choice": (True, False, False),
+            "failure": (False, False, False),
+            "scoped-commit": (False, False, False),
+            "handle": (True, False, False),
+            "return-value": (False, False, False),
+            "construct": (False, False, False),
+            "invoke": (False, False, False),
+            "sequence-first": (False, False, False),
+            "sequence-last": (False, False, False),
+        }
+        if set(self.control_operations) != set(slot_shapes):
+            raise SpecError("control operations must have a native operand-layout scheme")
+        fold_schemes = {
+            ("sequence", 3, (1, 0, 2)): "bind",
+            ("branch", 3, (0, 1, 2)): "branch",
+            ("sequence-many", 2, (0, None, 1)): "bind-sequence",
+            ("force", 1, (0, None, None)): "evaluate",
+            ("return-scope", 1, (0, None, None)): "evaluate",
+        }
+        self.control_plans = []
+        self.control_forms = []
+        self.implicit_operations = []
+        self.sequence_orders = []
+        self.preparation_steps = []
+        for entry in entries(control_plans, "preparation-step"):
+            if (len(entry) != 3 or not isinstance(entry[2], str)
+                    or not entry[2].isdigit()):
+                raise SpecError("a preparation step needs a name and integer position")
+            self.preparation_steps.append((atom_text(entry[1], "preparation step"), int(entry[2])))
+        if (len(self.preparation_steps) != 5 or
+                {name for name, _ in self.preparation_steps} !=
+                {"install-type", "compute", "check-return", "check-type", "bind"} or
+                {position for _, position in self.preparation_steps} != set(range(5))):
+            raise SpecError("preparation stages need distinct names and positions covering 0 through 4")
+        for entry in entries(control_plans, "sequence-order"):
+            if (len(entry) != 5 or not all(isinstance(x, str) for x in entry[2:])
+                    or set(entry[2:]) != {"source", "first", "last"} or entry[4] != "last"):
+                raise SpecError("a sequence order covers both computations before its body")
+            self.sequence_orders.append((atom_text(entry[1], "sequence order"), entry[2:]))
+        if ({name for name, _ in self.sequence_orders} != {"source-first", "binder-first"}
+                or len(self.sequence_orders) != 2):
+            raise SpecError("sequence execution needs its two ordered lowering schemes")
+        for entry in entries(control_plans, "implicit-operation"):
+            if len(entry) != 2:
+                raise SpecError("an implicit operation names exactly one scheme")
+            self.implicit_operations.append(atom_text(entry[1], "implicit operation"))
+        if (set(self.implicit_operations) != {"return-value", "construct", "invoke"} or
+                len(self.implicit_operations) != len(set(self.implicit_operations))):
+            raise SpecError("implicit operations must name the native value, constructor and call schemes")
         self.fold_control_heads: list[tuple[str, str, int, str]] = []
-        for entry in entries(native, "fold-control-head"):
-            if len(entry) != 4:
-                raise SpecError(
-                    f"malformed fold-control-head: {sexpr(entry)}")
-            name = atom_text(entry[1], "fold control head")
-            arity_text = atom_text(entry[2], "fold control arity")
-            control = atom_text(entry[3], "fold control kind")
-            if name not in symbol_fields:
-                raise SpecError(
-                    f"fold control head {name} has no symbol-table entry")
-            if not arity_text.isdigit() or not 1 <= int(arity_text) <= 16:
-                raise SpecError("fold control arity must be in [1, 16]")
-            if control not in self.fold_control_kinds:
-                raise SpecError(
-                    f"fold control head {name} names undeclared control "
-                    f"{control}")
-            if int(arity_text) != len(self.fold_control_operands[control]):
-                raise SpecError(
-                    f"fold control head {name} arity does not match the "
-                    f"declared operands of {control}")
-            self.fold_control_heads.append(
-                (name, symbol_fields[name], int(arity_text), control))
-        if not self.fold_control_heads:
-            raise SpecError("at least one fold control head is required")
-        if len({(field, arity) for _, field, arity, _
-                in self.fold_control_heads}) != len(self.fold_control_heads):
-            raise SpecError(
-                "fold control heads must be unique by symbol and arity")
+        control_entries = [(None, entry) for entry in entries(control_plans, "source-head")]
+        for entry in entries(control_plans, "dialect-form"):
+            if len(entry) != 7 or entry[1] != "petta":
+                raise SpecError("a dialect control form needs a registered dialect and operand layout")
+            control_entries.append(("petta", [entry[0], *entry[2:]]))
+        native_forms = set(re.findall(r"\bPETTA_FORM_[A-Z][A-Z0-9_]*\b",
+            (ROOT / "src/petta_semantics.h").read_text().split("} PeTTaForm;", 1)[0]))
+        self.variadic_forms = []
+        for entry in entries(control_plans, "variadic-form"):
+            if len(entry) != 4 or entry[1] != "petta":
+                raise SpecError("a variadic form needs its dialect, name and result policy")
+            name = atom_text(entry[2], "variadic form")
+            operation = atom_text(entry[3], "variadic operation")
+            field = "PETTA_FORM_" + c_enum(name)
+            if field not in native_forms or operation not in {"sequence-first", "sequence-last"}:
+                raise SpecError("variadic form or operation has no native interpretation")
+            self.variadic_forms.append((name, field, operation))
+        if (len(self.variadic_forms) != 2 or
+                len({field for _, field, _ in self.variadic_forms}) != 2 or
+                {operation for _, _, operation in self.variadic_forms} !=
+                    {"sequence-first", "sequence-last"}):
+            raise SpecError("variadic forms need distinct first/last sequence policies")
+        self.invocation_operations = []
+        for entry in entries(control_plans, "invocation-operation"):
+            if len(entry) != 2:
+                raise SpecError("an invocation operation needs one name")
+            self.invocation_operations.append(atom_text(entry[1], "invocation operation"))
+        if (len(self.invocation_operations) != 8 or set(self.invocation_operations) !=
+                {"host", "predicate-value", "relational-member", "list-unary",
+                 "list-set", "read-term", "extension", "predicate-call"}):
+            raise SpecError("invocation operations need distinct native body interpretations")
+        self.invocation_heads, self.invocation_forms = [], []
+        invocation_entries = [(None, row) for row in entries(control_plans, "invocation-head")]
+        for row in entries(control_plans, "invocation-form"):
+            if len(row) != 7 or row[1] != "petta":
+                raise SpecError("an invocation form needs a registered dialect and layout")
+            invocation_entries.append(("petta", [row[0], *row[2:]]))
+        for dialect, row in invocation_entries:
+            if len(row) != 6:
+                raise SpecError("an invocation needs a head, arity, body and argument range")
+            name, arity, operation, first, last = [atom_text(x, "invocation field") for x in row[1:]]
+            field = symbol_fields.get(name) if dialect is None else "PETTA_FORM_" + c_enum(name)
+            if (not field or operation not in self.invocation_operations or
+                    (dialect is not None and field not in native_forms)):
+                raise SpecError("invocation head or body has no native interpretation")
+            if not all(x.isdigit() for x in [arity, first, last]):
+                raise SpecError("invocation arity and coordinates must be nonnegative")
+            arity, first, last = map(int, [arity, first, last])
+            if not (0 <= first <= last == arity <= 255) or first != 0:
+                raise SpecError("a strict invocation prepares exactly its admitted arguments")
+            target = self.invocation_heads if dialect is None else self.invocation_forms
+            target.append((name, field, arity, operation, first, last))
+        for rows in [self.invocation_heads, self.invocation_forms]:
+            if not rows or len({(field, arity) for _, field, arity, *_ in rows}) != len(rows):
+                raise SpecError("invocation descriptors must be nonempty and unique")
+        if {row[3] for row in self.invocation_heads + self.invocation_forms} != set(self.invocation_operations):
+            raise SpecError("every invocation body needs an admitted layout")
+        for dialect, entry in control_entries:
+            if len(entry) != 6 or not is_form(entry[4], "operands") or not is_form(entry[5], "fold"):
+                raise SpecError(f"malformed control source-head: {sexpr(entry)}")
+            name = atom_text(entry[1], "control head")
+            arity_text = atom_text(entry[2], "control arity")
+            operation = atom_text(entry[3], "control operation")
+            if operation in {"sequence-first", "sequence-last"}:
+                raise SpecError("a variadic series needs its variadic-form descriptor")
+            if operation in self.implicit_operations:
+                raise SpecError("an implicit operation needs occurrence admission, not a source-head row")
+            field = symbol_fields.get(name) if dialect is None else "PETTA_FORM_" + c_enum(name)
+            if (not field or operation not in slot_shapes or
+                    (dialect is not None and field not in native_forms)):
+                raise SpecError("control source head or operation has no native interpretation")
+            if not arity_text.isdigit() or not 0 <= int(arity_text) <= 16:
+                raise SpecError("control arity must be in [0, 16]")
+            arity = int(arity_text)
+            coordinates = []
+            for item in entry[4][1:]:
+                coordinate = atom_text(item, "control coordinate")
+                if coordinate == "absent":
+                    coordinates.append(None)
+                elif coordinate.isdigit() and int(coordinate) < arity:
+                    coordinates.append(int(coordinate))
+                else:
+                    raise SpecError("control coordinate is outside the admitted arity")
+            if len(coordinates) != 3:
+                raise SpecError("a control plan needs source, first and last coordinates")
+            if any(required is not None and (coordinate is not None) != required
+                   for required, coordinate in zip(slot_shapes[operation], coordinates)):
+                raise SpecError("control coordinate presence disagrees with its operation")
+            present = [coordinate for coordinate in coordinates if coordinate is not None]
+            if sorted(present) != list(range(arity)):
+                raise SpecError("control coordinates must cover each operand exactly once")
+            if len(entry[5]) != 2:
+                raise SpecError("a control plan names exactly one optional fold lowering")
+            lowering = atom_text(entry[5][1], "control fold lowering")
+            coordinates = tuple(coordinates)
+            if lowering != "none":
+                if (dialect is not None or lowering not in self.fold_control_kinds or
+                        fold_schemes.get((operation, arity, coordinates)) != lowering):
+                    raise SpecError("control plan has no matching fold lowering scheme")
+                self.fold_control_heads.append((name, symbol_fields[name], arity, lowering))
+            target = self.control_plans if dialect is None else self.control_forms
+            target.append((name, field, arity, operation, coordinates, lowering))
+        if (not self.control_plans or
+                len({(field, arity) for _, field, arity, _, _, _ in self.control_plans}) != len(self.control_plans)):
+            raise SpecError("control plans must be nonempty and unique by source head and arity")
+        if len({(field, arity) for _, field, arity, _, _, _ in self.control_forms}) != len(self.control_forms):
+            raise SpecError("dialect control forms must be unique by form and arity")
+        if ({operation for _, _, _, operation, _, _ in self.control_plans + self.control_forms}
+                | {operation for _, _, operation in self.variadic_forms}
+                | set(self.implicit_operations)) != set(self.control_operations):
+            raise SpecError("control source plans must cover every declared operation")
 
         self.sequence_representations: list[
             tuple[str, str, str, str]
@@ -1316,6 +1587,22 @@ def render_header(spec: Spec) -> str:
         f"    X({field}, CETTA_GSLT_QUERY_EFFECT_{c_enum(effect)})"
         for _, field, effect in spec.heads
     )
+    placement_constants = "\n".join(
+        f"    CETTA_GSLT_PLACEMENT_{c_enum(value)} = {index},"
+        for index, value in enumerate(spec.service_placement_values)
+    )
+    progress_constants = "\n".join(
+        f"    CETTA_GSLT_PROGRESS_{c_enum(value)} = {index},"
+        for index, value in enumerate(spec.service_progress_values)
+    )
+    native_call_rows = " \\\n".join(
+        f"    X({field}, CETTA_GSLT_PLACEMENT_{c_enum(placement)}, "
+        f"CETTA_GSLT_PROGRESS_{c_enum(progress)}, {bound}u)"
+        for _, field, placement, progress, bound in spec.native_call_heads
+    )
+    constructor_placement, constructor_progress, constructor_bound = \
+        spec.native_call_constructor
+    user_placement, user_progress = spec.native_call_user_equation
     opaque_expression_head_rows = " \\\n".join(
         f"    X({field})"
         for _, field in spec.opaque_expression_heads
@@ -1408,18 +1695,28 @@ def render_header(spec: Spec) -> str:
         f"    X({field}, {arity}u, "
         f"CETTA_GSLT_PREPARED_PURE_INTRINSIC_OPERANDS_"
         f"{c_enum(discipline)}, "
-        f"CETTA_GSLT_PREPARED_PURE_INTRINSIC_{c_enum(instruction)})"
-        for _, field, arity, discipline, instruction
+        f"CETTA_GSLT_PREPARED_PURE_INTRINSIC_{c_enum(instruction)}, " +
+        ("CETTA_GSLT_INTRINSIC_DIALECT_ALL"
+         if set(dialects) == set(INTRINSIC_DIALECTS) else
+         " | ".join(
+             f"CETTA_GSLT_INTRINSIC_DIALECT_{c_enum(dialect)}"
+             for dialect in dialects)) + ")"
+        for _, field, arity, discipline, instruction, dialects
         in spec.prepared_intrinsic_heads
     )
-    prepared_intrinsic_scope_rows = " \\\n".join(
-        f"    X({field}, {arity}u, " + " | ".join(
-            f"CETTA_GSLT_INTRINSIC_DIALECT_{c_enum(dialect)}" for dialect in dialects) + ")"
-        for field, arity, dialects in spec.prepared_intrinsic_scopes
+    short_circuit_rows = " \\\n".join(
+        f"    X({field}, {arity}u, {'true' if absorbing else 'false'})"
+        for _, field, arity, absorbing in spec.short_circuit_absorbing
     )
-    prepared_intrinsic_scope_macro = "#define CETTA_GSLT_PREPARED_PURE_INTRINSIC_SCOPE_ROWS(X)"
-    if prepared_intrinsic_scope_rows:
-        prepared_intrinsic_scope_macro += " \\\n" + prepared_intrinsic_scope_rows
+    short_circuit_macro = \
+        "#define CETTA_GSLT_PREPARED_PURE_SHORT_CIRCUIT_ROWS(X)"
+    if short_circuit_rows:
+        short_circuit_macro += " \\\n" + short_circuit_rows
+    intrinsic_dialect_constants = "\n".join(
+        f"    CETTA_GSLT_INTRINSIC_DIALECT_{c_enum(dialect)} = {1 << index}u,"
+        for index, dialect in enumerate(INTRINSIC_DIALECTS)
+    ) + f"\n    CETTA_GSLT_INTRINSIC_DIALECT_ALL = " \
+        f"{(1 << len(INTRINSIC_DIALECTS)) - 1}u,"
     sequence_value_constructor_rows = " \\\n".join(
         f"    X({field}, {arity_mask}u, {mask}u)"
         for _, field, arity_mask, mask in spec.sequence_value_constructor_heads
@@ -1463,6 +1760,63 @@ def render_header(spec: Spec) -> str:
         f"CETTA_GSLT_FOLD_CONTROL_{c_enum(control)})"
         for _, field, arity, control in spec.fold_control_heads
     )
+    control_operation_constants = "\n".join(
+        f"    CETTA_CONTROL_{c_enum(value)} = {index + 1},"
+        for index, value in enumerate(spec.control_operations))
+    def control_coordinate(value):
+        return "CETTA_CONTROL_OPERAND_ABSENT" if value is None else f"{value}u"
+    control_plan_rows = " \\\n".join(
+        f"    X({field}, {arity}u, CETTA_CONTROL_{c_enum(operation)}, " +
+        ", ".join(control_coordinate(value) for value in coordinates) + ")"
+        for _, field, arity, operation, coordinates, _ in spec.control_plans)
+    control_form_rows = " \\\n".join(
+        f"    X({field}, {arity}u, CETTA_CONTROL_{c_enum(operation)}, " +
+        ", ".join(control_coordinate(value) for value in coordinates) + ")"
+        for _, field, arity, operation, coordinates, _ in spec.control_forms)
+    variadic_form_rows = " ".join(
+        f"X({field}, CETTA_CONTROL_{c_enum(operation)})"
+        for _, field, operation in spec.variadic_forms)
+    implicit_plan_definitions = "\n".join(
+        f"#define CETTA_CONTROL_{c_enum(operation)}_PLAN "
+        f"((CettaControlOperationPlan){{CETTA_CONTROL_{c_enum(operation)}, "
+        "CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT})"
+        for operation in spec.implicit_operations)
+    control_form_cases = "\n".join(
+        f"    case CETTA_CONTROL_{c_enum(operation)}:"
+        for operation in spec.control_operations if operation not in spec.implicit_operations)
+    sequence_order_constants = "\n".join(
+        f"    CETTA_SEQUENCE_{c_enum(name)} = {index},"
+        for index, (name, _) in enumerate(spec.sequence_orders))
+    preparation_constants = "\n".join(
+        f"    CETTA_CALL_PREP_{c_enum(name)} = 1u << {position}u,"
+        for name, position in sorted(spec.preparation_steps, key=lambda row: row[1]))
+    preparation_reverse_rows = " \\\n".join(
+        f"    X(CETTA_CALL_PREP_{c_enum(name)})"
+        for name, _ in sorted(spec.preparation_steps, key=lambda row: row[1], reverse=True))
+    invocation_constants = "\n".join(
+        f"    CETTA_INVOCATION_{c_enum(name)} = {index + 1},"
+        for index, name in enumerate(spec.invocation_operations))
+    def invocation_rows(rows):
+        return " \\\n".join(
+            f"    X({field}, {arity}u, CETTA_INVOCATION_{c_enum(operation)}, {first}u, {last}u)"
+            for _, field, arity, operation, first, last in rows)
+    invocation_head_rows = invocation_rows(spec.invocation_heads)
+    invocation_form_rows = invocation_rows(spec.invocation_forms)
+    sequence_order_cases = "\n".join(
+        f"    case CETTA_SEQUENCE_{c_enum(name)}:\n"
+        "        result = (CettaSequenceOrderPlan){.children = {" +
+        ", ".join("plan." + coordinate for coordinate in coordinates) +
+        "}}; break;"
+        for name, coordinates in spec.sequence_orders)
+    control_fold_cases = "\n".join(
+        f"    if (plan.operation == CETTA_CONTROL_{c_enum(operation)} &&\n"
+        f"        plan.source == {control_coordinate(coordinates[0])} &&\n"
+        f"        plan.first == {control_coordinate(coordinates[1])} &&\n"
+        f"        plan.last == {control_coordinate(coordinates[2])}) {{\n"
+        f"        if (control_out) *control_out = CETTA_GSLT_FOLD_CONTROL_{c_enum(lowering)};\n"
+        f"        return true;\n    }}"
+        for _, _, _, operation, coordinates, lowering in spec.control_plans
+        if lowering != "none")
     sequence_representation_rows = " \\\n".join(
         f'    X("{key}", "{materializer}", "{empty}", "{cons}")'
         for key, materializer, empty, cons
@@ -1656,6 +2010,52 @@ typedef enum {{
 {effect_enum}
 }} CettaGsltQueryEffect;
 
+typedef enum {{
+{placement_constants}
+}} CettaGsltWorkerPlacementAdvice;
+
+typedef enum {{
+{progress_constants}
+}} CettaGsltProgressAdvice;
+
+typedef struct {{
+    CettaGsltWorkerPlacementAdvice placement;
+    CettaGsltProgressAdvice progress;
+    uint64_t bound;
+}} CettaGsltNativeCallAdvice;
+
+#define CETTA_GSLT_NATIVE_CALL_HEAD_ROWS(X) \\
+{native_call_rows}
+
+#define CETTA_GSLT_NATIVE_CALL_DEFAULT \\
+    ((CettaGsltNativeCallAdvice){{CETTA_GSLT_PLACEMENT_UNRESOLVED, \\
+        CETTA_GSLT_PROGRESS_UNRESOLVED_PROGRESS, 0u}})
+#define CETTA_GSLT_NATIVE_CALL_CONSTRUCTOR \\
+    ((CettaGsltNativeCallAdvice){{CETTA_GSLT_PLACEMENT_{c_enum(constructor_placement)}, \\
+        CETTA_GSLT_PROGRESS_{c_enum(constructor_progress)}, {constructor_bound}u}})
+#define CETTA_GSLT_NATIVE_CALL_USER_EQUATION \\
+    ((CettaGsltNativeCallAdvice){{CETTA_GSLT_PLACEMENT_{c_enum(user_placement)}, \\
+        CETTA_GSLT_PROGRESS_{c_enum(user_progress)}, 0u}})
+
+static inline bool cetta_gslt_native_call_head_advice(
+    SymbolId head, const BuiltinSyms *builtins, CettaGsltNativeCallAdvice *out) {{
+    if (!builtins || !out) return false;
+#define CETTA_GSLT_NATIVE_CALL_ADVICE_CASE(field, placement, progress, bound) \\
+    if (head == builtins->field) {{ \\
+        *out = (CettaGsltNativeCallAdvice){{placement, progress, bound}}; \\
+        return true; \\
+    }}
+    CETTA_GSLT_NATIVE_CALL_HEAD_ROWS(CETTA_GSLT_NATIVE_CALL_ADVICE_CASE)
+#undef CETTA_GSLT_NATIVE_CALL_ADVICE_CASE
+    *out = CETTA_GSLT_NATIVE_CALL_DEFAULT;
+    return false;
+}}
+
+static inline bool cetta_gslt_progress_inline(CettaGsltProgressAdvice progress) {{
+    return progress == CETTA_GSLT_PROGRESS_BOUNDED ||
+           progress == CETTA_GSLT_PROGRESS_YIELDING;
+}}
+
 #define CETTA_GSLT_QUERY_EFFECT_HEAD_ROWS(X) \\
 {head_rows}
 
@@ -1797,25 +2197,33 @@ typedef enum {{
 }} CettaGsltPreparedPureIntrinsicOperandDiscipline;
 
 typedef enum {{
-    CETTA_GSLT_INTRINSIC_DIALECT_HE = 1u,
-    CETTA_GSLT_INTRINSIC_DIALECT_PETTA = 2u,
-    CETTA_GSLT_INTRINSIC_DIALECT_PRIME = 4u,
+{intrinsic_dialect_constants}
 }} CettaGsltPreparedPureIntrinsicDialect;
 
-{prepared_intrinsic_scope_macro}
-
+/* X(head, arity, operand discipline, instruction, dialects): no dialect
+ * reads two rows for one head and arity. */
 #define CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(X) \
 {prepared_intrinsic_head_rows}
 
+/* X(head, arity, absorbing truth value) for every short-circuit row. */
+{short_circuit_macro}
+
+/* The row that `dialect`, one CETTA_GSLT_INTRINSIC_DIALECT_* bit, reads for
+ * `head` at `arity`: its operand discipline and instruction.  A row scoped
+ * to every dialect holds in every language.  This is operation metadata,
+ * not source authority or permission to speculate. */
 static inline bool cetta_gslt_prepared_intrinsic_program(
-    SymbolId head, CettaExprLen arity,
+    SymbolId head, CettaExprLen arity, uint32_t dialect,
     CettaGsltPreparedPureIntrinsicOperandDiscipline *discipline_out,
     CettaGsltPreparedPureIntrinsicInstruction *instruction_out,
     const BuiltinSyms *builtins) {{
     if (!builtins || head == SYMBOL_ID_NONE)
         return false;
-#define CETTA_INTRINSIC_HEAD(field, expected_arity, discipline, instruction) \\
-    if (head == builtins->field && arity == (expected_arity)) {{ \\
+#define CETTA_INTRINSIC_HEAD(field, expected_arity, discipline, instruction, \\
+                             dialects) \\
+    if (head == builtins->field && arity == (expected_arity) && \\
+        ((dialects) == CETTA_GSLT_INTRINSIC_DIALECT_ALL || \\
+         ((dialects) & dialect) != 0u)) {{ \\
         if (discipline_out) *discipline_out = (discipline); \\
         if (instruction_out) *instruction_out = (instruction); \\
         return true; \\
@@ -1823,21 +2231,6 @@ static inline bool cetta_gslt_prepared_intrinsic_program(
     CETTA_GSLT_PREPARED_PURE_INTRINSIC_HEAD_ROWS(CETTA_INTRINSIC_HEAD)
 #undef CETTA_INTRINSIC_HEAD
     return false;
-}}
-
-/* Unlisted heads are unrestricted here; this check does not establish that
- * an intrinsic exists or that the current execution route can run it. */
-static inline bool cetta_gslt_prepared_intrinsic_scope(
-    SymbolId head, CettaExprLen arity, uint32_t dialect,
-    const BuiltinSyms *builtins) {{
-    if (!builtins)
-        return false;
-#define CETTA_INTRINSIC_SCOPE(field, expected_arity, dialects) \\
-    if (head == builtins->field && arity == (expected_arity)) \\
-        return ((dialects) & dialect) != 0u;
-    CETTA_GSLT_PREPARED_PURE_INTRINSIC_SCOPE_ROWS(CETTA_INTRINSIC_SCOPE)
-#undef CETTA_INTRINSIC_SCOPE
-    return true;
 }}
 
 #define CETTA_GSLT_SEQUENCE_VALUE_CONSTRUCTOR_ROWS(X) \
@@ -1899,23 +2292,186 @@ static inline bool cetta_gslt_pure_call_whnf_disjoint(
            right_head_rigid && !heads_equal;
 }}
 
-/* Executable control arms for the generated determinate-fold program. */
+/* Source control plans carry only operation and operand coordinates. Source
+ * authority, lexical owners, demand and result completion remain independent.
+ * Absence is metadata, never an ordinary Empty value. */
+typedef enum {{
+    CETTA_CONTROL_NONE = 0,
+{control_operation_constants}
+}} CettaControlOperation;
+
+#define CETTA_CONTROL_OPERAND_ABSENT UINT8_MAX
+typedef struct {{
+    uint8_t operation;
+    uint8_t source;
+    uint8_t first;
+    uint8_t last;
+}} CettaControlOperationPlan;
+_Static_assert(sizeof(CettaControlOperationPlan) == 4u, "control plan must remain four bytes");
+
+{implicit_plan_definitions}
+
+/* Control-form plans are distinct from occurrence-level value,
+ * construction and invocation plans. This grants no callee admission. */
+static inline bool cetta_control_operation_is_control_form(CettaControlOperationPlan plan) {{
+    switch (plan.operation) {{
+{control_form_cases}
+        return true;
+    default:
+        return false;
+    }}
+}}
+
+/* The two three-operand sequence layouts have different source positions.
+ * Physical lowerings can admit one layout without changing the operation. */
+static inline bool cetta_control_operation_binding_layout(
+    CettaControlOperationPlan plan, uint8_t producer_index) {{
+    return producer_index <= 1u && plan.operation == CETTA_CONTROL_SEQUENCE &&
+        plan.source == producer_index && plan.first == 1u - producer_index &&
+        plan.last == 2u;
+}}
+
+/* Variadic series select a result without bounding their argument count.
+ * Zero denotes absent metadata, never a source argument coordinate. */
+static inline CettaExprIndex cetta_control_operation_series_result(
+        CettaControlOperationPlan plan, CettaExprLen arity) {{
+    if (!arity) return 0u;
+    if (plan.operation == CETTA_CONTROL_SEQUENCE_FIRST) return 1u;
+    if (plan.operation == CETTA_CONTROL_SEQUENCE_LAST) return arity;
+    return 0u;
+}}
+
+/* Execution order is selected by admitted source policy. The same program
+ * lowers to ordinary goals or activation goals without rereading syntax. */
+typedef enum {{
+{sequence_order_constants}
+}} CettaSequenceOrder;
+
+typedef struct {{ uint8_t children[3]; }} CettaSequenceOrderPlan;
+
+/* A preparation plan selects stages, independently of values or ownership.
+ * Type installation and completed-value checking retain distinct positions. */
+typedef enum {{
+{preparation_constants}
+}} CettaCallPreparationStep;
+typedef uint8_t CettaCallPreparationPlan;
+_Static_assert(sizeof(CettaCallPreparationPlan) == 1u, "preparation plan must remain one byte");
+
+static inline bool cetta_call_preparation_valid(CettaCallPreparationPlan plan) {{
+    return (plan & (uint8_t)~31u) == 0u;
+}}
+
+#define CETTA_CALL_PREPARATION_REVERSE_ROWS(X) \
+{preparation_reverse_rows}
+
+/* Argument preparation and body entry are independent of callee admission. */
+typedef enum {{
+    CETTA_INVOCATION_NONE = 0,
+{invocation_constants}
+}} CettaInvocationOperation;
+
+typedef struct {{ uint8_t operation, first, last; }} CettaInvocationPlan;
+_Static_assert(sizeof(CettaInvocationPlan) == 3u, "invocation plan must remain three bytes");
+
+/* One computation carries its control operation and optional native body.
+ * Source authority, live demand and ownership are supplied by its context. */
+typedef struct {{
+    CettaControlOperationPlan control;
+    CettaInvocationPlan invocation;
+}} CettaComputationPlan;
+_Static_assert(sizeof(CettaComputationPlan) == 7u, "computation plan must remain seven bytes");
+
+static inline uint32_t cetta_invocation_plan_key(CettaInvocationPlan plan) {{
+    return (uint32_t)plan.operation | (uint32_t)plan.first << 8u |
+        (uint32_t)plan.last << 16u;
+}}
+
+#define CETTA_INVOCATION_HEAD_ROWS(X) \
+{invocation_head_rows}
+
+#define CETTA_PETTA_INVOCATION_FORM_ROWS(X) \
+{invocation_form_rows}
+
+/* Refusal neither reads operands nor changes the supplied plan. */
+static inline bool cetta_invocation_plan_decode(
+    SymbolId head, CettaExprLen arity, CettaInvocationPlan *out,
+    const BuiltinSyms *builtins) {{
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_INVOCATION_HEAD(field, count, body, start, end) \\
+    if (head == builtins->field && arity == (count)) {{ \\
+        if (out) *out = (CettaInvocationPlan){{(body), (start), (end)}}; \\
+        return true; \\
+    }}
+    CETTA_INVOCATION_HEAD_ROWS(CETTA_INVOCATION_HEAD)
+#undef CETTA_INVOCATION_HEAD
+    return false;
+}}
+
+static inline bool cetta_control_sequence_plan(CettaControlOperationPlan plan,
+        CettaSequenceOrder order, CettaSequenceOrderPlan *out) {{
+    if (!out || !cetta_control_operation_binding_layout(plan, plan.source))
+        return false;
+    CettaSequenceOrderPlan result;
+    switch (order) {{
+{sequence_order_cases}
+    default: return false;
+    }}
+    *out = result;
+    return true;
+}}
+
+static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan plan) {{
+    return (uint32_t)plan.operation | (uint32_t)plan.source << 8u |
+        (uint32_t)plan.first << 16u | (uint32_t)plan.last << 24u;
+}}
+
+#define CETTA_CONTROL_PLAN_HEAD_ROWS(X) \
+{control_plan_rows}
+
+/* Dialect classification admits these forms before reading their operands.
+ * The enum names are expanded only by the owning dialect adapter. */
+#define CETTA_PETTA_CONTROL_FORM_ROWS(X) \
+{control_form_rows}
+
+#define CETTA_PETTA_VARIADIC_FORM_ROWS(X) {variadic_form_rows}
+
+/* Arity admission performs no operand read. Refusal leaves the output intact. */
+static inline bool cetta_control_operation_decode(
+    SymbolId head, CettaExprLen arity, CettaControlOperationPlan *plan_out,
+    const BuiltinSyms *builtins) {{
+    if (!builtins || head == SYMBOL_ID_NONE)
+        return false;
+#define CETTA_CONTROL_HEAD(field, expected_arity, op, source_arg, first_arg, last_arg) \\
+    if (head == builtins->field && arity == (expected_arity)) {{ \\
+        if (plan_out) *plan_out = (CettaControlOperationPlan){{ \\
+            .operation = (op), .source = (source_arg), \\
+            .first = (first_arg), .last = (last_arg)}}; \\
+        return true; \\
+    }}
+    CETTA_CONTROL_PLAN_HEAD_ROWS(CETTA_CONTROL_HEAD)
+#undef CETTA_CONTROL_HEAD
+    return false;
+}}
+
+/* This lowering is used only after the caller admits the pure fold fragment.
+ * Its direct body entry does not erase a general function's return scope. */
+static inline bool cetta_control_operation_lower_fold(
+    CettaControlOperationPlan plan, CettaGsltFoldControl *control_out) {{
+{control_fold_cases}
+    return false;
+}}
+
+/* The physical fold instruction inventory is derived from the same plans. */
 #define CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(X) \
 {fold_control_rows}
 
 static inline bool cetta_gslt_fold_control_program(
     SymbolId head, CettaExprLen arity, CettaGsltFoldControl *control_out,
     const BuiltinSyms *builtins) {{
-    if (!builtins || head == SYMBOL_ID_NONE)
-        return false;
-#define CETTA_FOLD_CONTROL(field, expected_arity, control) \\
-    if (head == builtins->field && arity == (expected_arity)) {{ \\
-        if (control_out) *control_out = (control); \\
-        return true; \\
-    }}
-    CETTA_GSLT_FOLD_CONTROL_HEAD_ROWS(CETTA_FOLD_CONTROL)
-#undef CETTA_FOLD_CONTROL
-    return false;
+    CettaControlOperationPlan plan;
+    return cetta_control_operation_decode(head, arity, &plan, builtins) &&
+        cetta_control_operation_lower_fold(plan, control_out);
 }}
 
 /* Representation rows for sequence consumers.  The runtime resolves these

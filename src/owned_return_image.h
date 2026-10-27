@@ -33,8 +33,12 @@ typedef struct CettaOwnedReturnImagePolicy {
 /* Independently own the term, delayed goals and full logical environment,
  * preserving source pointer sharing across all roots, structured variable
  * name keys, and return provenance. Source Atom graphs are finite and acyclic.
- * Plain scalar leaves are copied. Opaque resource leaves and owning native
- * identifiers represented as integers require a qualified owner descriptor;
+ * Plain scalar leaves are copied. A Need capability authenticated by the
+ * returned environment's actual snapshot is copied with that complete world;
+ * its cell and authority identities and rights are unchanged. References to
+ * live evaluators, foreign or orphan capabilities still require a qualified
+ * owner. Opaque resource leaves
+ * and owning native identifiers represented as integers require a qualified owner descriptor;
  * no resource permission is inferred from its syntax or
  * ordinary Atom-copy support. Immutable Prime occurrence state is copied
  * through the same graph, preserving each return's own world. Bare mutable
