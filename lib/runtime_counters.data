@@ -1210,4 +1210,19 @@
   (1100 SPACE_HEAD_INDEX_BUILD "space-head-index-build")
   (1101 SPACE_HEAD_INDEX_BUILD_ROW "space-head-index-build-row")
   (1102 SPACE_HEAD_INDEX_CURSOR "space-head-index-cursor")
-  (1103 SPACE_HEAD_INDEX_ROW "space-head-index-row")))
+  (1103 SPACE_HEAD_INDEX_ROW "space-head-index-row")
+  ; Slots a table keyed by atoms passes before it meets its key or an empty
+  ; slot: unique-atom, and the answer tables of tabled and memoized calls.
+  (1104 ATOM_TABLE_KEY_PROBE "atom-table-key-probe")
+  ; Matches whose whole answer bag the native query path computed, for an
+  ; observer that takes every answer, and the answers they gave.
+  (1105 NATIVE_QUERY_ADMISSION "native-query-admission")
+  (1106 NATIVE_QUERY_ANSWER "native-query-answer")
+  ; The candidate rows the native query path's index loops read.
+  (1107 NATIVE_QUERY_LOOP_ROW "native-query-loop-row")
+  ; Conjunctions over dense binary relations joined by rows of bits, and the
+  ; machine words those rows gave.
+  (1108 DENSE_RELATION_ADMISSION "dense-relation-admission")
+  (1109 DENSE_RELATION_WORD "dense-relation-word")
+  ; The instances the native query path made for its effects.
+  (1110 NATIVE_QUERY_EFFECT_INSTANCE "native-query-effect-instance")))

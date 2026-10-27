@@ -3294,6 +3294,9 @@ static bool petta_program_scan_callability_rows(
     CettaCount from, CettaCount to,
     PettaCallabilityDomain *callability) {
     for (CettaIndex atom_index = from; atom_index < to; atom_index++) {
+        /* Only a row shaped as a rule names a head; a fact is not read. */
+        if (!space_row_may_be_rule(space, atom_index))
+            continue;
         Atom *lhs = NULL;
         SymbolId head = SYMBOL_ID_NONE;
         if (petta_program_equation_view(program,
