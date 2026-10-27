@@ -623,7 +623,78 @@ static bool screen_call(CettaLibraryContext *context, Arena *arena,
 bool cetta_tensor_call(CettaLibraryContext *context,Space *space,Arena *a,Atom *head,Atom **args,uint32_t nargs,CettaCallOutcome *out) {
     if(!head || head->kind!=ATOM_SYMBOL) return false;
     SymbolId op=head->sym_id;
+    if (op == g_builtin_syms.tensor_is_tensor) {
+        if (nargs != 1u) return false;
+        Atom *answer = scalar_atom(a, CETTA_TENSOR_BOOL,
+            (CettaTensorScalar){.u8 = cetta_tensor_from_atom(args[0]) != NULL});
+        *out = cetta_call_completed_value(answer);
+        return true;
+    }
     if (screen_call(context, a, op, args, nargs, out)) return true;
+    if (op == g_builtin_syms.tensor_encode_bytes || op == g_builtin_syms.tensor_decode_bytes) {
+        if (nargs != 1u) return false;
+        CettaTensor *input = cetta_tensor_from_atom(args[0]), *result = NULL;
+        if (!input) return false;
+        unsigned char *bytes = NULL;
+        size_t size = 0;
+        CettaTensorStatus status;
+        if (op == g_builtin_syms.tensor_encode_bytes) {
+            status = cetta_tensor_encode(input, &bytes, &size);
+            if (status == CETTA_TENSOR_OK) {
+                status = cetta_tensor_new_take(CETTA_TENSOR_U8, &size, 1, bytes, size, &result);
+                if (status == CETTA_TENSOR_OK) bytes = NULL;
+            }
+        } else if (cetta_tensor_dtype(input) != CETTA_TENSOR_U8) status = CETTA_TENSOR_DTYPE;
+        else if (cetta_tensor_rank(input) != 1 || cetta_tensor_stored(input) != cetta_tensor_count(input))
+            status = CETTA_TENSOR_ENCODING;
+        else {
+            size = cetta_tensor_count(input);
+            bytes = size ? malloc(size) : NULL;
+            status = size && !bytes ? CETTA_TENSOR_NOMEM : cetta_tensor_copy_values(input, bytes, size);
+            if (status == CETTA_TENSOR_ENCODING) {
+                status = CETTA_TENSOR_OK;
+                for (size_t i = 0; i < size; i++) {
+                    if (eval_native_interrupted()) {
+                        free(bytes);
+                        *out = cetta_call_interrupted();
+                        return true;
+                    }
+                    bool present = false;
+                    CettaTensorScalar value;
+                    status = cetta_tensor_get(input, i, &present, &value);
+                    if (status != CETTA_TENSOR_OK || !present) { status = CETTA_TENSOR_ENCODING; break; }
+                    bytes[i] = value.u8;
+                }
+            }
+            if (status == CETTA_TENSOR_OK) status = cetta_tensor_decode(bytes, size, &result);
+        }
+        free(bytes);
+        *out = cetta_call_completed_value(publish(a, status, result));
+        return true;
+    }
+    if (op == g_builtin_syms.tensor_scan_sum || op == g_builtin_syms.tensor_concatenate ||
+        op == g_builtin_syms.tensor_permute) {
+        bool concat = op == g_builtin_syms.tensor_concatenate;
+        if (nargs != (concat ? 3u : 2u)) return false;
+        CettaTensor *first = cetta_tensor_from_atom(args[0]);
+        CettaTensor *second = concat ? cetta_tensor_from_atom(args[1]) : NULL;
+        if (!first || (concat && !second)) return false;
+        CettaTensor *result = NULL;
+        CettaTensorStatus status;
+        if (op == g_builtin_syms.tensor_permute) {
+            size_t *axes = NULL, rank = 0;
+            status = shape(a, args[1], &axes, &rank);
+            if (status == CETTA_TENSOR_OK) status = cetta_tensor_permute(first, axes, rank, &result);
+            free(axes);
+        } else {
+            size_t axis = 0;
+            if (!natural(args[concat ? 2u : 1u], &axis)) status = CETTA_TENSOR_SHAPE;
+            else status = concat ? cetta_tensor_concatenate(first, second, axis, &result)
+                : cetta_tensor_scan_sum(first, axis, &result);
+        }
+        *out = cetta_call_completed_value(publish(a, status, result));
+        return true;
+    }
     if (op == g_builtin_syms.tensor_entries || op == g_builtin_syms.tensor_gather ||
         op == g_builtin_syms.tensor_merge || op == g_builtin_syms.lib_tensor_try_zip_map) {
         bool map = op == g_builtin_syms.lib_tensor_try_zip_map;
