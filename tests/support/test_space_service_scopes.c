@@ -164,17 +164,30 @@ int main(void) {
     batch(s, owner, a, bag, E1(a, "ops", E1(a, "remove", E2(a, "b", atom_int(a, 1), atom_int(a, 0)))));
     expect(reports(wake(s, alice, a), "changed"), "T4 reordering removal wakes the wait");
 
-    /* T5: the per-scope pointer vector counts against the allowance. */
+    /* T5: charge actual rows and their retained pointer vector, not the
+     * caller's maximum result count. Empty/tiny views stay cheap. */
     uint64_t saved = s->max_snapshot_bytes;
-    s->max_snapshot_bytes = 65536u * sizeof(Bytes);
+    s->max_snapshot_bytes = 4096;
     observed = observe(s, alice, a, ordered, E1(a, "reads", message), form(a, "writes", NULL, 0), 65536);
-    expect(refused(observed, "observation-byte-limit"), "T5 65536-row vector plus values exceeds its pointer-only allowance");
-    if (ok(observed)) close_handle(s, alice, a, handle_id(observed));
-    /* The retained vector stays charged: two 40000-row vectors do not fit into 65536 pointer slots. */
+    expect(ok(observed), "T5 a high limit does not reserve a full result vector");
+    Observation *tiny=find_observation(s,(uint64_t)handle_id(observed)->ground.ival);
+    size_t payload=0;
+    for (size_t i=0;i<tiny->views[0].rows.count;++i) payload+=tiny->views[0].rows.rows[i].size;
+    expect(tiny->views[0].rows.size==payload+tiny->views[0].rows.count*sizeof(Bytes),
+           "T5 the retained vector and payload are both charged");
+    size_t exact=tiny->size;
+    close_handle(s, alice, a, handle_id(observed));
+    s->max_snapshot_bytes=exact-sizeof(Bytes);
+    observed=observe(s,alice,a,ordered,E1(a,"reads",message),form(a,"writes",NULL,0),65536);
+    expect(refused(observed,"query-byte-limit"),"T5 pointer storage cannot bypass the byte allowance");
+    s->max_snapshot_bytes=4096;
     Atom *first = observe(s, alice, a, ordered, E1(a, "reads", message), form(a, "writes", NULL, 0), 40000);
-    expect(ok(first), "T5 one 40000-row vector fits");
+    expect(ok(first), "T5 one small high-limit view fits");
     Atom *second = observe(s, alice, a, ordered, E1(a, "reads", message), form(a, "writes", NULL, 0), 40000);
-    expect(refused(second, "observation-byte-limit"), "T5 a retained vector still counts");
+    expect(ok(second), "T5 two small high-limit views fit");
+    s->max_snapshot_bytes=s->snapshot_bytes+s->observation_bytes;
+    Atom *third=observe(s,alice,a,ordered,E1(a,"reads",message),form(a,"writes",NULL,0),40000);
+    expect(refused(third,"observation-byte-limit"),"T5 retained views still count against the next capture");
     if (ok(second)) close_handle(s, alice, a, handle_id(second));
     if (ok(first)) close_handle(s, alice, a, handle_id(first));
     s->max_snapshot_bytes = saved;

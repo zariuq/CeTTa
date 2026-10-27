@@ -233,6 +233,7 @@ class ServiceTests(unittest.TestCase):
         worker = self.transaction_worker()
         space = self.client.open("native-lost-creation", "native-ordered")
         target = self.fixture.socket
+        creations=[]
         def packet(stream):
             def read(count):
                 data=bytearray()
@@ -247,11 +248,14 @@ class ServiceTests(unittest.TestCase):
         class DropCreationReply(socketserver.BaseRequestHandler):
             def handle(peer):
                 sent=packet(peer.request)
-                operation=csp.decode(sent[8:])[2]
+                request=csp.decode(sent[8:])
+                operation=request[2]
                 with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as downstream:
                     downstream.connect(target); downstream.sendall(sent)
                     reply=packet(downstream)
-                if operation!=S("observe-until"):
+                if operation==S("observe-until"):
+                    creations.append((request,csp.decode(reply[8:])))
+                else:
                     peer.request.sendall(reply)
         path=str(self.fixture.root/"drop.sock")
         proxy=socketserver.ThreadingUnixStreamServer(path,DropCreationReply)
@@ -261,9 +265,15 @@ class ServiceTests(unittest.TestCase):
         def stop_proxy():
             proxy.shutdown(); proxy.server_close(); serving.join(timeout=5)
         self.addCleanup(stop_proxy)
-        for _ in range(80):
+        for index in range(80):
             answer=worker.call(E("scoped-observe",path,space.describe(),(),()))
             self.assertEqual(answer[0],S("space:uncertain"))
+            if not index:
+                request,reply=creations[0]
+                self.assertEqual(reply[2],S("ok"))
+                self.denied("creation-closed",self.client.call,"observe-until",*request[3:],request_id=request[1])
+        self.assertEqual(len(creations),80)
+        self.assertTrue(all(reply[2]==S("ok") for _,reply in creations))
         captures=[space.observe(limit=1) for _ in range(64)]
         for capture in captures:
             space.observe_close(capture)

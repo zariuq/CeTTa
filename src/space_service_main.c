@@ -522,7 +522,7 @@ static void view_usage(Service *s,uint32_t uid,size_t *count,uint64_t *bytes,siz
         if (c->watched.id && c->watched.uid==uid) { ++*count; *bytes+=c->watched.size; }
     }
 }
-static const char *view_admit(Service *s,uint32_t uid,size_t added,uint64_t bytes) {
+static const char *view_room(Service *s,uint32_t uid,size_t added,uint64_t *available) {
     size_t count,waits; uint64_t used;
     view_usage(s,uid,&count,&used,&waits);
     size_t limit=s->max_account_views ? s->max_account_views :
@@ -530,8 +530,14 @@ static const char *view_admit(Service *s,uint32_t uid,size_t added,uint64_t byte
     uint64_t budget=s->max_account_view_bytes ? s->max_account_view_bytes :
         s->shared_profile ? s->max_snapshot_bytes/2+s->max_snapshot_bytes%2 : s->max_snapshot_bytes;
     if (added>limit || count>limit-added) return "account-view-limit";
-    if (bytes>budget || used>budget-bytes) return "account-view-byte-limit";
+    if (used>budget) return "account-view-byte-limit";
+    *available=budget-used;
     return NULL;
+}
+static const char *view_admit(Service *s,uint32_t uid,size_t added,uint64_t bytes) {
+    uint64_t available=0;
+    const char *failure=view_room(s,uid,added,&available);
+    return failure ? failure : bytes>available ? "account-view-byte-limit" : NULL;
 }
 static bool account_watch_full(Service *s,uint32_t uid) {
     size_t count,waits; uint64_t bytes;
@@ -786,14 +792,13 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
     if (!store_consistent(st) || !space_occurrence_cursor_init(st->space,pattern,&cursor))
         return error(a,request,"backend");
     Snapshot q = {.id=s->next_cursor,.source=st->id,.revision=st->revision,.uid=uid};
+    uint64_t account_room=0,total_room=s->max_snapshot_bytes-s->snapshot_bytes-s->observation_bytes;
+    size_t capacity=0;
     if (!counting) {
-        q.size=(size_t)limit*sizeof(*q.rows);
-        if (q.size>s->max_snapshot_bytes-s->snapshot_bytes-s->observation_bytes)
-            { space_occurrence_cursor_release(&cursor); return error(a,request,original_records ? "observation-byte-limit" : "query-byte-limit"); }
-        const char *refused=view_admit(s,uid,original_records ? 0 : 1,q.size);
+        /* The single owner cannot admit another query during this scan.
+         * Capture its remaining allowance once, not once per returned row. */
+        const char *refused=view_room(s,uid,original_records ? 0 : 1,&account_room);
         if (refused) { space_occurrence_cursor_release(&cursor); return error(a,request,refused); }
-        q.rows = calloc((size_t)limit,sizeof(*q.rows));
-        if (!q.rows) { space_occurrence_cursor_release(&cursor); return error(a,request,"memory"); }
     }
     uint64_t matches = 0, examined = 0, payload_bytes=0;
     const char *failure = NULL;
@@ -821,12 +826,27 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
                     Atom *value = original_records ? source : bindings_apply(&bindings,&scratch,projection);
                     Bytes b = {0};
                     if (!value || !wire(value,&b)) failure="query-value-limit";
-                    else if (b.size > s->max_query_bytes - payload_bytes ||
-                        b.size > s->max_snapshot_bytes - s->snapshot_bytes - s->observation_bytes - q.size) {
+                    else if (b.size>s->max_query_bytes-payload_bytes || b.size>total_room-q.size) {
                         bytes_free(&b); failure="query-byte-limit";
-                    } else if ((failure=view_admit(s,uid,original_records ? 0 : 1,q.size+b.size))) {
-                        bytes_free(&b);
-                    } else { q.rows[q.count++] = b; q.size += b.size; payload_bytes+=b.size; }
+                    } else if (b.size>account_room-q.size) {
+                        bytes_free(&b); failure="account-view-byte-limit";
+                    } else {
+                        if (q.count==capacity) {
+                            uint64_t room=total_room<account_room ? total_room : account_room;
+                            size_t extra=(size_t)((room-q.size-b.size)/sizeof(*q.rows));
+                            size_t desired=capacity ? capacity : 1;
+                            if (desired>limit-capacity) desired=(size_t)limit-capacity;
+                            if (extra>desired) extra=desired;
+                            if (!extra) failure=account_room<total_room ? "account-view-byte-limit" : "query-byte-limit";
+                            else {
+                                Bytes *rows=realloc(q.rows,(capacity+extra)*sizeof(*q.rows));
+                                if (!rows) failure="memory";
+                                else { q.rows=rows; capacity+=extra; q.size+=extra*sizeof(*q.rows); }
+                            }
+                        }
+                        if (failure) bytes_free(&b);
+                        else { q.rows[q.count++]=b; q.size+=b.size; payload_bytes+=b.size; }
+                    }
                 }
             }
         }
@@ -840,6 +860,13 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
         free(q.rows); return error(a,request,failure);
     }
     if (counting) return reply(a,request,true,atom_int(a,matches));
+    if (q.count<capacity) {
+        Bytes *rows=realloc(q.rows,q.count*sizeof(*q.rows));
+        if (rows || !q.count) {
+            q.rows=rows; q.size-=(capacity-q.count)*sizeof(*q.rows);
+        }
+        /* A failed shrink retains and charges its actual allocation. */
+    }
     q.expires = now_ms()+lease;
     s->snapshots[slot] = q; s->snapshot_bytes += q.size; ++s->next_cursor;
     Atom *args[] = {atom_string(a,s->boot),atom_int(a,q.id),atom_int(a,q.source),
