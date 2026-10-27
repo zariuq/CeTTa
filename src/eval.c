@@ -53181,6 +53181,10 @@ static PrimeEvalStackFrame *prime_native_control_find_open_force(
 static bool prime_eval_stack_force_copy_waiters(PrimeEvalStackFrame *frame);
 static bool prime_native_force_origin_shareable(const PrimeEvalStackFrame *frame);
 static bool prime_ordinary_driver_transfer_admitted(const PrimeEvalStackDriver *source);
+static inline __attribute__((always_inline)) bool prime_eval_stack_open_force_kernel(
+    Space *s, Arena *a, Atom *ref, uint64_t thunk_id, int fuel,
+    OutcomeSet *target, PrimeNeedCellView cell, const PrimeEvalStackFrame *demander,
+    PrimeEvalStackFrame *existing, bool traced);
 
 static inline __attribute__((always_inline)) bool prime_eval_stack_schedule_force_kernel(
     Space *s, Arena *a, Atom *ref, uint64_t thunk_id, int fuel,
@@ -53236,6 +53240,20 @@ static inline __attribute__((always_inline)) bool prime_eval_stack_schedule_forc
         return false;
     }
     if (prime_need_call_force(s,a,ref,thunk_id,fuel,target,true)) return true;
+    return prime_eval_stack_open_force_kernel(s, a, ref, thunk_id, fuel, target,
+        cell, driver->top, NULL, traced);
+}
+
+/* The ordinary FORCE of an EMPTY cell: evaluate its origin in the requester's
+ * world and publish its values into target. A call-owned reader whose shared
+ * production cannot serve its demand passes its own frame as `existing`; that
+ * frame, already on the stack under the demander, becomes exactly this frame
+ * in place, so its parent, target and queue registration are unchanged. */
+static inline __attribute__((always_inline)) bool prime_eval_stack_open_force_kernel(
+    Space *s, Arena *a, Atom *ref, uint64_t thunk_id, int fuel,
+    OutcomeSet *target, PrimeNeedCellView cell, const PrimeEvalStackFrame *demander,
+    PrimeEvalStackFrame *existing, bool traced) {
+    PrimeEvalStackDriver *driver = g_prime_eval_stack_driver;
     /* Symbol right sides are alternatives of this same force. Computed
      * alternatives retain their cursor so a downstream bounded consumer
      * can stop before the next right side's effects. */
@@ -53259,11 +53277,11 @@ static inline __attribute__((always_inline)) bool prime_eval_stack_schedule_forc
         named_computes = computing > 0u;
     }
     bool source_argument_universal_demand = false;
-    if (driver->top &&
-        driver->top->kind == PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH &&
-        driver->top->equation_search) {
+    if (demander &&
+        demander->kind == PRIME_EVAL_STACK_FRAME_EQUATION_SEARCH &&
+        demander->equation_search) {
         const PrimeNeedEquationContinuation *equation =
-            driver->top->equation_search;
+            demander->equation_search;
         CettaExprIndex nargs = equation->original_call->expr.len - 1u;
         if (cell.source_occurrence_id != 0u &&
             cell.source_occurrence_id == equation->source_occurrence_id &&
@@ -53284,7 +53302,7 @@ static inline __attribute__((always_inline)) bool prime_eval_stack_schedule_forc
     PRIME_NEED_TRACE_WHEN(traced, "[sforce %llu] scheduling\n",
                      (unsigned long long)thunk_id);
 
-    PrimeEvalStackFrame *frame =
+    PrimeEvalStackFrame *frame = existing ? existing :
         prime_eval_stack_frame_new(PRIME_EVAL_STACK_FRAME_FORCE);
     frame->space = s;
     frame->arena = a;
@@ -53306,22 +53324,28 @@ static inline __attribute__((always_inline)) bool prime_eval_stack_schedule_forc
         ? frame->previous_evaluator_id : prime_need_fresh_evaluator_id();
     frame->source_argument_universal_demand =
         source_argument_universal_demand;
-    outcome_set_init(&frame->child);
-    frame->child_initialized = true;
-    if (!prime_eval_stack_capture_dynamic_env(
-            &frame->env, g_prime_need_logical_env)) {
-        prime_eval_stack_frame_free(frame);
-        free(named_sides);
-        return false;
+    if (!existing || !frame->child_initialized) {
+        outcome_set_init(&frame->child);
+        frame->child_initialized = true;
     }
-    frame->env_initialized = true;
+    /* An existing reader frame captured this same demand environment. */
+    if (!existing) {
+        if (!prime_eval_stack_capture_dynamic_env(
+                &frame->env, g_prime_need_logical_env)) {
+            prime_eval_stack_frame_free(frame);
+            free(named_sides);
+            return false;
+        }
+        frame->env_initialized = true;
+    }
 
     Bindings evaluating_env;
     if (!prime_need_project_cell_bindings(
             a, &cell, g_prime_need_logical_env, &evaluating_env)) {
         prime_eval_stack_abandon_fresh_need_claim(thunk_id);
         eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
-        prime_eval_stack_frame_free(frame);
+        if (existing) prime_eval_stack_pop();
+        else prime_eval_stack_frame_free(frame);
         free(named_sides);
         return true;
     }
@@ -53343,7 +53367,7 @@ static inline __attribute__((always_inline)) bool prime_eval_stack_schedule_forc
             frame->force_producer = open;
             frame->force_waiter_next = open->force_waiters;
             open->force_waiters = frame;
-            prime_eval_stack_push(frame);
+            if (!existing) prime_eval_stack_push(frame);
             (void)prime_eval_stack_force_copy_waiters(open);
             return true;
         }
@@ -53362,7 +53386,8 @@ static inline __attribute__((always_inline)) bool prime_eval_stack_schedule_forc
             atom_error(a, ref,
                        atom_symbol(a, "PrimeNeedHeapUpdateFailed")),
             &empty);
-        prime_eval_stack_frame_free(frame);
+        if (existing) prime_eval_stack_pop();
+        else prime_eval_stack_frame_free(frame);
         free(named_sides);
         return true;
     }
@@ -53381,7 +53406,7 @@ static inline __attribute__((always_inline)) bool prime_eval_stack_schedule_forc
     bool applied = false;
     Atom *payload = bindings_apply_body_exact_env(
         a, cell.origin, &evaluating_env, &applied);
-    prime_eval_stack_push(frame);
+    if (!existing) prime_eval_stack_push(frame);
     if (!applied) {
         PRIME_NEED_TRACE_WHEN(traced, "[force %llu] schedule: apply failed\n",
                          (unsigned long long)thunk_id);
@@ -75566,6 +75591,14 @@ typedef struct PrimeNeedForceProduction {
     bool (*input_current)(struct PrimeNeedForceProduction *source);
     bool (*state_admitted)(void *context,StateCell *cell,bool fresh);
     void *input_context;
+    /* A refused CALL stays pending, unpaid, for a receiver that may run it.
+     * The refusal itself is reported to the reader that met it: no wake
+     * source can change a waiting receiver's permission. Readers compare
+     * call_refusals across one advance. world_effects counts admitted calls
+     * that may change the world outside this production (space writes,
+     * printing, unclassified natives); while it is zero and a reader has
+     * taken no row, nothing the attempt did is observable. */
+    uint64_t call_refusals,world_effects;
     bool registry_ready,input_owner_held,retiring,input_refused;
 } PrimeNeedForceProduction;
 
@@ -75647,6 +75680,21 @@ static void prime_need_force_production_release(void *raw) {
     free(source);
 }
 
+/* The production's own check of its pending CALL, made before the task is
+ * taken. A refusal here is counted for the reader, which decides its outcome;
+ * the check's own incompleteness mark belongs to that refusal, not to the
+ * receiver's episode, so it is not recorded there. An admitted check settles
+ * normally. Authority refusals still mark the refusing scope's driver. */
+static bool prime_need_production_check_call(Space *space,Arena *arena,Atom *call) {
+    CettaEvalEpisode *episode=g_eval_completion_tracker;
+    CettaEvalEpisode check=cetta_eval_episode_begin(episode,-1);
+    g_eval_completion_tracker=&check;
+    bool permitted=prime_eval_check_call_contract(space,arena,call);
+    g_eval_completion_tracker=episode;
+    if(permitted) (void)cetta_eval_episode_end(&check);
+    return permitted;
+}
+
 static CettaEvalCompletion prime_need_force_agenda_step(PrimeNeedForceProduction *source,
     bool *permitted) {
     PrimeNativeControl *agenda=source->agenda;
@@ -75674,7 +75722,7 @@ static CettaEvalCompletion prime_need_force_agenda_step(PrimeNeedForceProduction
             agenda->driver.pure_authority=pure || work->task.pure_authority;
             __attribute__((cleanup(prime_need_active_leave))) PrimeNeedActiveGuard task;
             prime_need_active_enter(&task,&work->task.dynamic_env);
-            *permitted=prime_eval_check_call_contract(work->task.space,work->task.arena,work->task.atom);
+            *permitted=prime_need_production_check_call(work->task.space,work->task.arena,work->task.atom);
             agenda->driver.pure_authority=pure;
         }
         if(*permitted && work) {
@@ -75729,7 +75777,10 @@ static CettaOwnedExecutionStep prime_need_force_production_next(void *raw,
             ? registry_read_view_enter(&source->registry_view,g_registry) : NULL;
         bool permitted=true;
         /* Authenticate a CALL before taking its task. Refusal leaves that
-         * exact task pending; a future receiver supplies fresh authority.
+         * exact task pending and unpaid, so a receiver holding the authority
+         * can still run it. It is not a pause for this receiver: nothing
+         * registers the call on a wake source, so the refusal is counted and
+         * the reader observes it (prime_need_call_force_resume).
          * A retained stream/earned row still precedes this later CALL. */
         if (!driver->stream_pending && driver->task_ready &&
             driver->task.kind==PRIME_EVAL_STACK_TASK_CALL) {
@@ -75742,7 +75793,7 @@ static CettaOwnedExecutionStep prime_need_force_production_next(void *raw,
                 prime_need_active_enter_captured(&entrance,&source->entrance);
                 __attribute__((cleanup(prime_need_active_leave))) PrimeNeedActiveGuard task;
                 prime_need_active_enter(&task,&driver->task.dynamic_env);
-                permitted=prime_eval_check_call_contract(driver->task.space,
+                permitted=prime_need_production_check_call(driver->task.space,
                     driver->task.arena,driver->task.atom);
             }
             g_prime_eval_stack_driver=previous;
@@ -75763,7 +75814,10 @@ static CettaOwnedExecutionStep prime_need_force_production_next(void *raw,
         g_owned_outcome_variant_bank=previous_variants;
         driver->authority_parent=NULL;
         driver->pure_authority=original_pure;
-        if (!permitted) return CETTA_OWNED_EXECUTION_PAUSED;
+        if (!permitted) {
+            if (source->call_refusals<UINT64_MAX) source->call_refusals++;
+            return CETTA_OWNED_EXECUTION_PAUSED;
+        }
         if (status!=CETTA_EVAL_COMPLETE) {
             if (status==CETTA_EVAL_INCOMPLETE_CAPACITY &&
                 resident->completion==CETTA_EVAL_COMPLETE &&
@@ -76313,6 +76367,28 @@ static void prime_need_call_adopt_data_publication(void *raw,Space *target,
     PrimeNeedCallInputs *inputs=source->input_context;
     for(size_t i=0u;inputs && i<inputs->space_count;i++)
         prime_native_adopt_data_guard(&inputs->spaces[i].read,target,revision_before,prefix_before);
+    /* The production's own data write is visible outside it before any row. */
+    if(source->world_effects<UINT64_MAX) source->world_effects++;
+}
+static bool prime_native_region_primitive(SymbolId head);
+/* Whether a call this production admits may change the world outside it
+ * before a row is delivered: a space write, printing, or a native whose
+ * effects carry no classification here. Reads, fresh cells and spaces,
+ * branch-local state and pure-authority calls cannot; their results reach a
+ * reader only inside rows, which import them checked. */
+static bool prime_need_call_world_effect(Space *space,Arena *arena,Atom *call,SymbolId head) {
+    if(prime_native_world_effect_head(head)) return true;
+    return !(prime_native_actual_call_allowed(space,arena,call) ||
+        (is_grounded_op(head) && grounded_op_is_type_pure(head)) ||
+        native_weight_form(call) || prime_need_is_explicit_control_form(call) ||
+        prime_native_region_primitive(head) ||
+        head==g_builtin_syms.once || head==g_builtin_syms.hyperpose ||
+        head==g_builtin_syms.new_state || head==g_builtin_syms.get_state ||
+        head==g_builtin_syms.change_state_bang || head==g_builtin_syms.new_space ||
+        head==g_builtin_syms.match || head==g_builtin_syms.get_atoms ||
+        head==g_builtin_syms.collapse || head==g_builtin_syms.unify ||
+        head==g_builtin_syms.function || head==g_builtin_syms.return_text ||
+        head==g_builtin_syms.context_space);
 }
 static void prime_need_call_observe_space(void *raw,SpaceReadToken read) {
     PrimeNeedForceProduction *source=raw;
@@ -76326,9 +76402,8 @@ static void prime_need_call_observe_space(void *raw,SpaceReadToken read) {
     }
     source->input_refused=true;
 }
-static bool prime_need_call_input_permit(void *raw,Space *space,
+static bool prime_need_call_input_permitted(PrimeNeedForceProduction *source,Space *space,
     PettaMachineOperation operation,const PettaMachineOperationView *view) {
-    PrimeNeedForceProduction *source=raw;
     if(source->input_refused || !view || !view->expression) return operation==PETTA_MACHINE_OPERATION_LOCAL;
     if(operation!=PETTA_MACHINE_OPERATION_CALL) return operation==PETTA_MACHINE_OPERATION_LOCAL;
     Atom *call=view->expression;
@@ -76381,7 +76456,7 @@ static bool prime_need_call_input_permit(void *raw,Space *space,
         for(size_t i=0u;i<inputs->name_count;i++) if(inputs->names[i]==head) return true;
         return false;
     }
-    return prime_native_owned_region_call_admitted(space,&source->storage,call,true) ||
+    bool admitted=prime_native_owned_region_call_admitted(space,&source->storage,call,true) ||
         prime_native_actual_call_allowed(space,&source->storage,call) ||
         (is_grounded_op(head) && grounded_op_is_type_pure(head)) ||
         prime_native_world_effect_head(head) || native_weight_form(call) ||
@@ -76390,6 +76465,20 @@ static bool prime_need_call_input_permit(void *raw,Space *space,
         head==g_builtin_syms.new_state || head==g_builtin_syms.get_state ||
         head==g_builtin_syms.change_state_bang || head==g_builtin_syms.new_space ||
         head==g_builtin_syms.match || head==g_builtin_syms.get_atoms;
+    if(admitted && source->world_effects<UINT64_MAX &&
+        prime_need_call_world_effect(space,&source->storage,call,head))
+        source->world_effects++;
+    return admitted;
+}
+/* The input domain is consulted only where a call is about to run, so every
+ * refusal, at the pending CALL or nested inside a dispatched step, is a
+ * failed attempt of this production. Readers observe it by the count. */
+static bool prime_need_call_input_permit(void *raw,Space *space,
+    PettaMachineOperation operation,const PettaMachineOperationView *view) {
+    PrimeNeedForceProduction *source=raw;
+    bool permitted=prime_need_call_input_permitted(source,space,operation,view);
+    if(!permitted && source->call_refusals<UINT64_MAX) source->call_refusals++;
+    return permitted;
 }
 /* This finite input-domain profile conservatively includes resources in
  * reachable source/code, including alternatives, grade and admission. It
@@ -76756,7 +76845,9 @@ static PrimeNeedCallForceReader *prime_need_call_reader_select(Space *space,Aren
     PrimeNeedCellView root;
     if(!prime_need_snapshot_lookup(bindings_need_view(entrance),lookup->thunk,&root)) return NULL;
     PrimeNeedCallInputs *inputs=prime_need_call_inputs_new(space,&root,lookup->thunk,entrance);
-    if(!inputs) return NULL;
+    /* REFUTED: no finite input domain describes this demand, so it has no
+     * shareable production; ordinary evaluation answers it unshared. */
+    if(!inputs) {*status=CETTA_MATCH_REFUTED;return NULL;}
     PrimeNeedCallSourceSlot *slot=lookup->cell->slots;
     for(;slot;slot=slot->next) {
         *status=prime_need_call_inputs_equal(arena,slot->inputs,inputs);
@@ -76862,28 +76953,132 @@ static bool prime_need_call_publish(void *raw,uint64_t position,const CettaOwned
     else publication->next_reader=advanced;
     return ready;
 }
+/* Nothing this reader's shared attempt did is observable: it has taken no
+ * row, and its production has made no call that can change the world
+ * outside it. Rows are imported only on delivery, so its private work
+ * (pure steps, branch-local state, fresh cells) is invisible. */
+static bool prime_need_call_reader_untouched(const PrimeNeedCallForceReader *reader) {
+    if (!reader || !reader->slot || !reader->slot->source) return false;
+    uint64_t position=UINT64_MAX;
+    bool observed_rows=!cetta_shared_return_checkpoint_position(reader->position,&position) ||
+        position!=0u;
+    bool world_effects=reader->slot->source->world_effects!=0u;
+#ifdef CETTA_PRIME_NEED_MUTATION_FALLBACK_AFTER_ROWS
+    /* Fault injection: hand back a reader that already took rows. */
+    observed_rows=false;
+#endif
+#ifdef CETTA_PRIME_NEED_MUTATION_FALLBACK_AFTER_EFFECTS
+    /* Fault injection: hand back after a world-visible effect. */
+    world_effects=false;
+#endif
+    return !observed_rows && !world_effects;
+}
+/* A shared production that has met a refusal serves a fresh reader no
+ * better than ordinary evaluation, which then answers the demand. */
+static bool prime_need_call_reader_declines(const PrimeNeedCallForceReader *reader) {
+    return reader && reader->slot && reader->slot->source &&
+        reader->slot->source->call_refusals && prime_need_call_reader_untouched(reader);
+}
+/* The shared production cannot give this reader its next answer: it refused
+ * a call (nothing registers a refused call on a wake source, so polling
+ * again cannot change the verdict), its context refused it, it ended without
+ * a final answer, or its row does not hold in this reader's world. These are
+ * ends of the shared attempt, not of the demand. While the attempt is
+ * untouched, the demand returns to its receiver as the ordinary FORCE, in
+ * this frame, so the demander and target are unchanged; it is evaluated
+ * under the receiver's own authority and call contract, and a refused call
+ * never runs under the production's domain. False when the attempt is
+ * touched: a second evaluation would repeat delivered rows or visible
+ * effects, so the caller ends the wait with an explicit outcome. */
+static bool prime_need_call_force_hand_back(PrimeEvalStackFrame *frame) {
+    PrimeNeedCallForceReader *reader=frame->call_force_reader;
+    if(!prime_need_call_reader_untouched(reader)) return false;
+    Bindings demand;
+    if(!bindings_clone(&demand,&frame->env)) return false;
+    frame->call_force_reader=NULL;prime_need_call_force_reader_free(reader);
+    Space *space=frame->space;Arena *arena=frame->arena;Atom *reference=frame->ref;
+    uint64_t thunk=frame->thunk_id;int fuel=frame->fuel;OutcomeSet *target=frame->target;
+    PrimeNeedCellView cell=frame->cell;
+    const PrimeEvalStackFrame *demander=(const PrimeEvalStackFrame *)frame->continuation.next;
+    uint64_t evaluator=g_prime_need_evaluator_id;
+    g_prime_need_evaluator_id=frame->previous_evaluator_id;
+    {
+        __attribute__((cleanup(prime_need_active_leave))) PrimeNeedActiveGuard active;
+        prime_need_active_enter(&active,&demand);
+        Atom *named=NULL;bool scheduled=false;
+        /* A symbol cell without fuel has the scheduler's synchronous answer. */
+        if(fuel!=0 || !prime_symbol_cell_origin(cell.origin,&named))
+            scheduled=prime_eval_stack_open_force_kernel(space,arena,reference,thunk,fuel,
+                target,cell,demander,frame,false);
+        else prime_eval_stack_pop();
+        if(!scheduled) {
+            /* The frame is gone; the synchronous FORCE answers the demand. */
+            prime_need_force_active(space,arena,reference,thunk,fuel,target);
+            prime_eval_stack_stream_note(target);
+        }
+    }
+    g_prime_need_evaluator_id=evaluator;
+    bindings_free(&demand);
+    return true;
+}
 static void prime_need_call_force_resume(PrimeEvalStackFrame *frame) {
     PrimeNeedCallForceReader *reader=frame->call_force_reader;
     if(!prime_need_call_link_current(reader->link)) {
         eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_INVALIDATED);return;
     }
+    PrimeNeedForceProduction *source=reader->slot->source;
     CettaSharedDelivery delivery=cetta_shared_return_checkpoint_peek(reader->position);
     if(delivery.kind==CETTA_SHARED_DELIVERY_PAUSED) {
+        /* A refusal met by any reader leaves this production unable to
+         * serve an untouched one; a nested refusal also ends its work. */
+#ifndef CETTA_PRIME_NEED_MUTATION_REFUSAL_PAUSE
+        if(source->call_refusals && prime_need_call_force_hand_back(frame)) return;
+#endif
+        uint64_t refusals=source->call_refusals;
+        /* The production steps in this attempt's episode: its steps are the
+         * receiver's work, but its verdict becomes the receiver's only if
+         * this reader keeps the outcome. */
+        CettaEvalEpisode *episode=g_eval_completion_tracker;
+        CettaEvalEpisode attempt=cetta_eval_episode_begin(episode,-1);
+        g_eval_completion_tracker=&attempt;
         CettaSharedReturnStep step=cetta_shared_return_checkpoint_advance(reader->position,1u);
-        if(step==CETTA_SHARED_RETURN_PAUSED || step==CETTA_SHARED_RETURN_COMPLETE) return;
-        if(step==CETTA_SHARED_RETURN_CONTEXT_REFUSED)
+        g_eval_completion_tracker=episode;
+        /* A refusal is a failed attempt, never a pause. */
+        bool refused=source->call_refusals!=refusals;
+#ifdef CETTA_PRIME_NEED_MUTATION_REFUSAL_PAUSE
+        /* Fault injection: the rule that livelocks takes a refusal for a
+         * pause and polls the same receiver again. */
+        refused=false;
+#endif
+        bool waiting=!refused &&
+            (step==CETTA_SHARED_RETURN_PAUSED || step==CETTA_SHARED_RETURN_COMPLETE);
+        if(!waiting && prime_need_call_reader_untouched(reader)) {
+            attempt.completion=CETTA_EVAL_COMPLETE;attempt.interrupted=false;
+            (void)cetta_eval_episode_end(&attempt);
+            if(!prime_need_call_force_hand_back(frame))
+                eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return;
+        }
+        (void)cetta_eval_episode_end(&attempt);
+        if(waiting) return;
+        if(source->call_refusals) eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_EFFECT_DENIED);
+        else if(step==CETTA_SHARED_RETURN_CONTEXT_REFUSED)
             eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_INVALIDATED);
         else prime_eval_stack_force_refuse(frame);
         return;
     }
     if(delivery.kind==CETTA_SHARED_DELIVERY_COMPLETED) {prime_eval_stack_pop();return;}
     if(delivery.kind!=CETTA_SHARED_DELIVERY_ANSWER) {
-        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_INVALIDATED);return;
+        if(!prime_need_call_force_hand_back(frame))
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_INVALIDATED);
+        return;
     }
     PrimeNeedCallPublication publication={.frame=frame,.status=CETTA_MATCH_INCOMPLETE};
     CettaSharedReturnCheckpoint *next=NULL;
     delivery=cetta_shared_return_checkpoint_take(reader->position,prime_need_call_publish,&publication,&next);
     if(delivery.kind!=CETTA_SHARED_DELIVERY_ANSWER) {
+        /* The shared row does not transport into this reader's world. */
+        if(prime_need_call_force_hand_back(frame)) return;
         if(publication.status==CETTA_MATCH_REFUTED)
             eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_INVALIDATED);
         else prime_eval_stack_force_refuse(frame);
@@ -76938,8 +77133,22 @@ static bool prime_need_call_force(Space *space,Arena *arena,Atom *reference,uint
     status=CETTA_MATCH_INCOMPLETE;
     frame->call_force_reader=prime_need_call_reader_select(space,arena,reference,fuel,&lookup,&frame->env,&status);
     if(!frame->call_force_reader) {
-        prime_eval_stack_frame_free(frame);eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);return true;
+        prime_eval_stack_frame_free(frame);
+        /* Sharing is a strategy of this demand, not its meaning: without a
+         * shareable production the ordinary FORCE answers it. */
+        if(status==CETTA_MATCH_REFUTED) return false;
+        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);return true;
     }
+#ifdef CETTA_PRIME_NEED_MUTATION_REFUSAL_PAUSE
+    bool declines=false;(void)prime_need_call_reader_declines;
+#else
+    bool declines=prime_need_call_reader_declines(frame->call_force_reader);
+#endif
+    if(declines) {
+        prime_eval_stack_frame_free(frame);return false;
+    }
+    /* A hand-back reopens this demand as an ordinary FORCE with its world. */
+    frame->previous_evaluator_id=g_prime_need_evaluator_id;
     prime_eval_stack_push(frame);return true;
 }
 

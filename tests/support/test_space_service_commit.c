@@ -456,7 +456,7 @@ static void grant_index_growth_control(void) {
         Bytes form={0}; uint64_t issued=0;
         Principal grantee={.uid=10000+i,.epoch=1};
         check(grant_issue(&store,grantee,(Principal){0},RIGHT_APPEND,0,false,false,0,0,
-                          &form,&issued));
+                          &form,false,&issued));
         check(issued==i && find_grant_ref(&store,i,i)==&store.grants[i-1]);
     }
     check(store.grant_slot_capacity>8 && !find_grant_ref(&store,GRANTS+1,GRANTS+1));
@@ -875,6 +875,28 @@ static void ticket_publication(Service *s,Arena *a,const char *directory) {
     copy=batch_ticket_request(a,s,"copied-after-restart",ticket->id); check(wire(copy,&copyRaw));
     failure(dispatch(s,&member,a,copy,copyRaw),"ticket-unavailable"); bytes_free(&copyRaw);
 }
+/* Journal a delegation exactly as a service under the earlier subset rule
+ * recorded it, which let a child drop a ticket requirement: the same request,
+ * prepared commit and reply, with the commit admitted by that rule. */
+static Atom *legacy_subset_delegation(Service *s,Arena *a,Client *client,Store *st,
+                                      Grant *parent,const char *id,uint32_t uid,
+                                      unsigned rights,unsigned ticket_rights) {
+    Atom *request=delegate_grant_request(a,s,id,parent,uid,rights,ticket_rights,false);
+    Bytes raw={0}; check(wire(request,&raw));
+    PreparedCommit prepared={.has_grant_form=true};
+    check(!parent->form.size ||
+          bytes_copy(&prepared.grant_form,parent->form.data,parent->form.size));
+    check(grant_reserve(st) && !principal_prepare(s,uid,false,&prepared));
+    Grant predicted={.id=st->grant_generation+1,.generation=st->grant_generation+1};
+    Atom *args[]={grant_ref_atom(s,a,st,&predicted),part(request,6),rights_atom(a,rights),
+        rights_atom(a,ticket_rights),atom_symbol(a,"false")};
+    s->replaying=true;
+    Atom *answer=commit(s,a,client,request,raw,
+        reply(a,request,true,form(a,"delegated",args,5)),&prepared);
+    s->replaying=false;
+    bytes_free(&raw);
+    return answer;
+}
 static void attenuating_lineage_publication(Service *s,Arena *a,const char *directory) {
     success(execute_wire(s,a,open_request(a,s,"native")));
     Store *st=s->stores[0];
@@ -965,18 +987,33 @@ static void attenuating_lineage_publication(Service *s,Arena *a,const char *dire
           !grant_authority(s,st,leaf,principalC).generation);
     failure(execute_client_wire(s,a,&cClient,
         append_authorized_request(a,s,"old-c",leaf,NULL,"old")),"missing-space");
+    /* Delegation never gives a child more than its parent can do: a child of
+     * a grant whose appends need tickets cannot drop that requirement. */
+    beforeCount=st->grant_count; beforeGeneration=st->grant_generation;
+    failure(execute_client_wire(s,a,&bClient,delegate_grant_request(a,s,"b-to-c-free",
+        middle,accountC,RIGHT_APPEND,0,false)),"attenuation");
+    check(st->grant_count==beforeCount && st->grant_generation==beforeGeneration);
     success(execute_client_wire(s,a,&bClient,delegate_grant_request(a,s,"b-to-c-again",
-        middle,accountC,RIGHT_APPEND,0,false)));
+        middle,accountC,RIGHT_APPEND,RIGHT_APPEND,false)));
     Grant *freshLeaf=find_grant_ref(st,st->grant_generation,st->grant_generation);
     uint64_t freshLeafId=st->grant_generation;
     check(freshLeaf && freshLeaf->id!=leaf->id &&
-          principal_same(freshLeaf->grantee,principalC));
+          principal_same(freshLeaf->grantee,principalC) &&
+          freshLeaf->ticket_rights==RIGHT_APPEND);
     root=find_grant_ref(st,1,1); middle=find_grant_ref(st,2,2);
     leaf=find_grant_ref(st,3,3); sibling=find_grant_ref(st,4,4);
     freshLeaf=find_grant_ref(st,freshLeafId,freshLeafId);
     check(root && middle && leaf && sibling && freshLeaf);
+    failure(execute_client_wire(s,a,&cClient,
+        append_authorized_request(a,s,"new-c-free",freshLeaf,NULL,"free")),"ticket-required");
+    success(execute_wire(s,a,issue_ticket_v2_request(a,s,"ticket-new-c",freshLeaf,RIGHT_APPEND)));
+    Ticket *freshTicket=find_ticket(st,st->ticket_generation);
+    freshLeaf=find_grant_ref(st,freshLeafId,freshLeafId);
+    check(freshTicket && freshLeaf && freshTicket->grant_id==freshLeafId &&
+          principal_same(freshTicket->holder,principalC));
     success(execute_client_wire(s,a,&cClient,
-        append_authorized_request(a,s,"new-c",freshLeaf,NULL,"from-new-c")));
+        append_authorized_request(a,s,"new-c",freshLeaf,freshTicket,"from-new-c")));
+    check(find_ticket(st,freshTicket->id)->status==TICKET_SPENT);
 
     success(execute_wire(s,a,revoke_grant_request(a,s,"revoke-root-a",root)));
     check(root->revoked && !grant_authority(s,st,freshLeaf,principalC).generation &&
@@ -991,6 +1028,68 @@ static void attenuating_lineage_publication(Service *s,Arena *a,const char *dire
     failure(execute_client_wire(s,a,&cClient,
         append_authorized_request(a,s,"regranted-c",leaf,NULL,"late")),"missing-space");
     check(space_length64(st->space)==3);
+
+    /* Requirements are closed along the implication of rights: a ticket for
+     * each append beside a held write requires a ticket for write, since a
+     * write batch adds rows too. The owner can mint that write ticket. */
+    uint32_t accountG=s->process_uid+16,accountH=s->process_uid+17;
+    success(execute_wire(s,a,grant_ticketed_request(a,s,"grant-g-write",accountG,
+        RIGHT_WRITE,RIGHT_APPEND)));
+    Principal principalG=current_principal(s,accountG);
+    Client gClient={.fd=-1,.principal=principalG};
+    uint64_t rowsBefore=space_length64(st->space);
+    failure(execute_client_wire(s,a,&gClient,batch_request(a,s,"g-free-add",true)),
+        "ticket-required");
+    check(space_length64(st->space)==rowsBefore);
+    success(execute_wire(s,a,issue_ticket_request(a,s,"ticket-g-write",accountG,RIGHT_WRITE)));
+    Ticket *gTicket=find_ticket(st,st->ticket_generation);
+    check(gTicket && gTicket->right==RIGHT_WRITE && principal_same(gTicket->holder,principalG));
+    uint64_t gTicketId=gTicket->id;
+    success(execute_client_wire(s,a,&gClient,batch_ticket_request(a,s,"g-ticketed",gTicketId)));
+    check(find_ticket(st,gTicketId)->status==TICKET_SPENT && space_length64(st->space)==rowsBefore);
+    /* Adding a requirement only attenuates: a ticket-free delegable grant may
+     * delegate a child whose appends need tickets, which then binds it. */
+    success(execute_wire(s,a,grant_root_request(a,s,"root-h-open",accountH,
+        RIGHT_READ|RIGHT_APPEND,0,true)));
+    uint64_t openRootId=st->grant_generation;
+    Grant *openRoot=find_grant_ref(st,openRootId,openRootId);
+    Client hClient={.fd=-1,.principal=current_principal(s,accountH)};
+    success(execute_client_wire(s,a,&hClient,delegate_grant_request(a,s,"h-to-g-ticketed",
+        openRoot,accountG,RIGHT_APPEND,RIGHT_APPEND,false)));
+    uint64_t addedChildId=st->grant_generation;
+    Grant *addedChild=find_grant_ref(st,addedChildId,addedChildId);
+    check(addedChild && addedChild->ticket_rights==RIGHT_APPEND &&
+          grant_authority(s,st,addedChild,principalG).rights==RIGHT_APPEND);
+    failure(execute_client_wire(s,a,&gClient,
+        append_authorized_request(a,s,"g-child-free",addedChild,NULL,"free")),"ticket-required");
+    check(space_length64(st->space)==rowsBefore);
+    /* A journal written under the earlier rule holds a ticket-free child of a
+     * ticketed grant. It replays as recorded history, from the event log and
+     * from a checkpoint, and the recovered child confers no authority. */
+    uint32_t accountI=s->process_uid+18;
+    success(execute_wire(s,a,grant_root_request(a,s,"root-b-ticketed",accountB,
+        RIGHT_READ|RIGHT_APPEND,RIGHT_APPEND,true)));
+    uint64_t ticketedRootId=st->grant_generation;
+    Grant *ticketedRoot=find_grant_ref(st,ticketedRootId,ticketedRootId);
+    check(ticketedRoot && ticketedRoot->ticket_rights==RIGHT_APPEND);
+    failure(execute_client_wire(s,a,&bClient,delegate_grant_request(a,s,"b-to-i-live",
+        ticketedRoot,accountI,RIGHT_APPEND,0,false)),"attenuation");
+    success(legacy_subset_delegation(s,a,&bClient,st,ticketedRoot,"b-to-i-legacy",accountI,
+        RIGHT_APPEND,0));
+    uint64_t legacyId=st->grant_generation;
+    release(s); initialize(s,directory); st=s->stores[0];
+    Grant *legacy=find_grant_ref(st,legacyId,legacyId);
+    Principal principalI=current_principal(s,accountI);
+    Client iClient={.fd=-1,.principal=principalI};
+    check(legacy && !legacy->ticket_rights && !legacy->revoked && grants_consistent(st) &&
+          !grant_authority(s,st,legacy,principalI).generation);
+    failure(execute_client_wire(s,a,&iClient,
+        append_authorized_request(a,s,"i-free",legacy,NULL,"free")),"missing-space");
+    check(compact(s)); release(s); initialize(s,directory); st=s->stores[0];
+    legacy=find_grant_ref(st,legacyId,legacyId);
+    check(legacy && !legacy->ticket_rights && grants_consistent(st) &&
+          !grant_authority(s,st,legacy,principalI).generation &&
+          space_length64(st->space)==rowsBefore);
 
     uint32_t accountE=s->process_uid+14,accountF=s->process_uid+15;
     Atom *caller=form(a,"caller",NULL,0);
