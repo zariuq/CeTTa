@@ -20,3 +20,8 @@
 2
 0
 ((counted-dynamic-left count-dynamic-marker) (counted-dynamic-left count-dynamic-marker) (counted-dynamic-right count-dynamic-marker))
+(bar 3 (a a b))
+(bar 3 (a a b))
+done
+done
+4

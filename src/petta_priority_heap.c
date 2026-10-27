@@ -4,6 +4,7 @@
 #include "stats.h"
 
 #include <limits.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -289,4 +290,51 @@ PettaPriorityHeapStatus petta_priority_heap_call(
             arena, resolved_call->expr.elems[1], answer);
     }
     return PETTA_PRIORITY_HEAP_DECLINED;
+}
+
+PettaPriorityHeapStatus petta_priority_heap_validate(Atom *heap,
+        bool (*interrupted)(void), bool *valid) {
+    typedef struct { Atom *root, *parent; } Pending;
+    *valid = false;
+    Atom *root = NULL;
+    int64_t size = 0;
+    if (!petta_priority_heap_carrier(heap, &root, &size) || size < 0 ||
+        !petta_priority_heap_ground_finite(heap)) return PETTA_PRIORITY_HEAP_ANSWER;
+    if (atom_is_symbol(root, "nil")) {
+        *valid = size == 0;
+        return PETTA_PRIORITY_HEAP_ANSWER;
+    }
+    size_t capacity = 16, length = 1;
+    uint64_t visited = 0;
+    Pending *pending = malloc(capacity * sizeof(*pending));
+    if (!pending) return PETTA_PRIORITY_HEAP_CAPACITY;
+    pending[0] = (Pending){root, NULL};
+    while (length) {
+        if (interrupted && interrupted()) break;
+        Pending next = pending[--length];
+        PettaPairingNode node;
+        int order = 0;
+        if (++visited > (uint64_t)size || !petta_priority_heap_node(next.root, &node) ||
+            (next.parent && (!petta_semantics_term_compare(next.parent, node.key, &order) || order > 0)))
+            break;
+        size_t children = node.children->expr.len;
+        if (children > SIZE_MAX - length || length + children > SIZE_MAX / sizeof(*pending)) {
+            free(pending); return PETTA_PRIORITY_HEAP_CAPACITY;
+        }
+        size_t needed = length + children;
+        if ((uint64_t)needed > (uint64_t)size - visited) break;
+        if (needed > capacity) {
+            size_t grown = capacity > SIZE_MAX / 2 ? needed : capacity * 2;
+            if (grown < needed) grown = needed;
+            if (grown > SIZE_MAX / sizeof(*pending)) grown = needed;
+            Pending *more = realloc(pending, grown * sizeof(*pending));
+            if (!more) { free(pending); return PETTA_PRIORITY_HEAP_CAPACITY; }
+            pending = more; capacity = grown;
+        }
+        for (size_t i = 0; i < children; i++)
+            pending[length++] = (Pending){node.children->expr.elems[i], node.key};
+        if (!length) *valid = visited == (uint64_t)size;
+    }
+    free(pending);
+    return PETTA_PRIORITY_HEAP_ANSWER;
 }

@@ -555,6 +555,17 @@ typedef struct {
     bool (*admit_ground_atom)(
         void *context, Space *space, Arena *arena,
         Atom *call, Atom **result);
+    /*
+     * A match a collection takes whole, `query` with its bindings applied
+     * and `plan` its plan when known, answered at once by the native query
+     * path when the host admits it: DONE sets `*value` to the collection, or
+     * under `count_only` to its count; DECLINED has done nothing; FAILED may
+     * have made some of the match's effects.
+     */
+    CettaNativeQueryStatus (*native_collect)(
+        void *context, Space *space, Arena *arena, Atom *query,
+        const PettaPlanNode *plan, bool count_only, bool wrap_collection,
+        Atom **value);
     PettaSpecializeResult (*prepare_call)(
         void *context, Space *space, Arena *result_arena,
         Atom *call, Atom **prepared_call);

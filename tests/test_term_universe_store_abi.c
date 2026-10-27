@@ -1190,6 +1190,31 @@ static void test_atom_deep_copy_preserves_pointer_dag(void) {
     arena_free(&src_arena);
 }
 
+static void test_exact_payload_coordinate_collision(void) {
+    Arena persistent;
+    TermUniverse universe;
+    arena_init_detached(&persistent);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    /* Distinct byte payloads with the same actual intern-table coordinate.
+     * Both payloads also retain their complete lengths across embedded NULs. */
+    static const char first[] = {94, 86, 34, 32, 0, 0, 0, 0};
+    static const char second[] = {39, 77, 39, 32, 0, 0, 0, 0};
+    AtomId left = tu_intern_string_n(&universe, first, sizeof first);
+    AtomId right = tu_intern_string_n(&universe, second, sizeof second);
+    assert(left != CETTA_ATOM_ID_NONE && right != CETTA_ATOM_ID_NONE);
+    assert(universe.entries[left].coordinate == universe.entries[right].coordinate);
+    assert(left != right);
+    assert(tu_string_len(&universe, left) == sizeof first);
+    assert(tu_string_len(&universe, right) == sizeof second);
+    assert(tu_intern_string_n(&universe, first, sizeof first) == left);
+    assert(tu_intern_string_n(&universe, second, sizeof second) == right);
+    assert(!memcmp(tu_string_cstr(&universe, left), first, sizeof first));
+    assert(!memcmp(tu_string_cstr(&universe, right), second, sizeof second));
+    term_universe_free(&universe);
+    arena_free(&persistent);
+}
+
 static void test_structural_slot_hash_collision_family(void) {
     Arena persistent;
     TermUniverse universe;
@@ -1828,7 +1853,7 @@ static void test_batched_integer_identity(void) {
         assert(tu_int(&universe, ids[i]) == values[i]);
         assert(term_universe_store_atom_id(
             &universe, NULL, atom_int(&scratch, values[i])) == ids[i]);
-        assert(universe.entries[ids[i]].decoded_cache == NULL);
+        assert(term_universe_decoded_atom_at(&universe, ids[i]) == NULL);
     }
     assert(ids[31] != ids[32]);
     assert(ids[1] == ids[551]);
@@ -1964,62 +1989,70 @@ static Atom *read_test_symbol(void *context, SymbolId symbol) {
 }
 
 static void test_copy_reads_symbols_once_with_owned_values(void) {
-    Arena persistent, source, output;
-    TermUniverse universe;
-    Registry names;
-    Space module;
-    arena_init(&persistent);
-    arena_init(&source);
-    arena_init(&output);
-    ArenaMark origin = arena_mark(&source);
-    term_universe_init(&universe);
-    term_universe_set_persistent_arena(&universe, &persistent);
-    space_init_with_universe(&module, &universe);
-    registry_init(&names);
-    Atom *word = atom_symbol(&source, "read-token");
-    Atom *later = atom_symbol(&source, "read-later");
-    Atom *value = atom_expr2(&source, atom_symbol(&source, "pair"), later);
-    registry_bind_id(&names, word->sym_id, value);
-    registry_bind_id(&names, later->sym_id, atom_int(&source, 99));
-    Atom *form = atom_expr3(&source, atom_symbol(&source, "form"), word, word);
-    AtomId id = term_universe_store_atom_id(&universe, NULL, form);
-    assert(id != CETTA_ATOM_ID_NONE && tu_hdr(&universe, id));
-    Atom *read = term_universe_copy_atom_read_symbols(
-        &universe, &output, id, read_test_symbol, &names);
-    assert(read && read->expr.elems[1] == read->expr.elems[2]);
-    assert(atom_eq(read->expr.elems[1], value));
-    assert(!atom_eq(read->expr.elems[1]->expr.elems[1], atom_int(&output, 99)));
-    assert(arena_owns_atom(&output, read->expr.elems[1]->expr.elems[1]));
-    assert(atom_eq(term_universe_get_atom(&universe, id)->expr.elems[1], word));
-    assert(atom_eq(term_universe_copy_atom_read_symbols(
-                       &universe, &output, id, NULL, NULL), form));
+    for (unsigned own_symbols = 0u; own_symbols < 2u; own_symbols++) {
+        Arena persistent, source, output;
+        TermUniverse universe;
+        Registry names;
+        Space module;
+        arena_init(&persistent);
+        arena_init(&source);
+        arena_init(&output);
+        arena_set_own_symbols(&output, own_symbols);
+        ArenaMark origin = arena_mark(&source);
+        term_universe_init(&universe);
+        term_universe_set_persistent_arena(&universe, &persistent);
+        space_init_with_universe(&module, &universe);
+        registry_init(&names);
+        Atom *word = atom_symbol(&source, "read-token");
+        Atom *later = atom_symbol(&source, "read-later");
+        Atom *value = atom_expr2(&source, atom_symbol(&source, "pair"), later);
+        registry_bind_id(&names, word->sym_id, value);
+        registry_bind_id(&names, later->sym_id, atom_int(&source, 99));
+        Atom *form = atom_expr3(&source, atom_symbol(&source, "form"), word, word);
+        AtomId id = term_universe_store_atom_id(&universe, NULL, form);
+        assert(id != CETTA_ATOM_ID_NONE && tu_hdr(&universe, id));
+        Atom *read = term_universe_copy_atom_read_symbols(
+            &universe, &output, id, read_test_symbol, &names);
+        assert(read && read->expr.elems[1] == read->expr.elems[2]);
+        assert(atom_eq(read->expr.elems[1], value));
+        assert(!atom_eq(read->expr.elems[1]->expr.elems[1], atom_int(&output, 99)));
+        assert(arena_owns_atom(&output, read->expr.elems[1]));
+        Atom *copied_leaf = read->expr.elems[1]->expr.elems[1];
+        if (own_symbols)
+            assert(arena_owns_atom(&output, copied_leaf));
+        else
+            assert(copied_leaf == atom_symbol_canonical(later->sym_id));
+        assert(atom_eq(term_universe_get_atom(&universe, id)->expr.elems[1], word));
+        assert(atom_eq(term_universe_copy_atom_read_symbols(
+                           &universe, &output, id, NULL, NULL), form));
 
-    Atom *variable = atom_var_with_name_key(&source, word, var_id_from_base(17u));
-    AtomId variable_id = term_universe_store_atom_id(&universe, NULL, variable);
-    Atom *read_variable = term_universe_copy_atom_read_symbols(
-        &universe, &output, variable_id, read_test_symbol, &names);
-    assert(read_variable && read_variable->kind == ATOM_VAR);
-    assert(atom_eq(read_variable->name_key, word));
+        Atom *variable = atom_var_with_name_key(&source, word, var_id_from_base(17u));
+        AtomId variable_id = term_universe_store_atom_id(&universe, NULL, variable);
+        Atom *read_variable = term_universe_copy_atom_read_symbols(
+            &universe, &output, variable_id, read_test_symbol, &names);
+        assert(read_variable && read_variable->kind == ATOM_VAR);
+        assert(atom_eq(read_variable->name_key, word));
 
-    Atom *opaque = atom_expr3(&source, atom_symbol(&source, "form"),
-                              atom_space(&source, &module), word);
-    AtomId opaque_id = term_universe_store_atom_id(&universe, NULL, opaque);
-    assert(opaque_id != CETTA_ATOM_ID_NONE && !tu_hdr(&universe, opaque_id));
-    Atom *read_opaque = term_universe_copy_atom_read_symbols(
-        &universe, &output, opaque_id, read_test_symbol, &names);
-    assert(read_opaque && read_opaque->expr.elems[1]->ground.ptr == &module);
-    assert(atom_eq(read_opaque->expr.elems[2], value));
-    registry_free(&names);
-    arena_reset(&source, origin);
-    Atom *expected = atom_expr2(&output, atom_symbol(&output, "pair"),
-                                atom_symbol(&output, "read-later"));
-    assert(atom_eq(read->expr.elems[1], expected));
-    assert(atom_eq(read_opaque->expr.elems[2], expected));
-    space_free(&module);
-    term_universe_free(&universe);
-    arena_free(&output);
-    arena_free(&source);
-    arena_free(&persistent);
+        Atom *opaque = atom_expr3(&source, atom_symbol(&source, "form"),
+                                  atom_space(&source, &module), word);
+        AtomId opaque_id = term_universe_store_atom_id(&universe, NULL, opaque);
+        assert(opaque_id != CETTA_ATOM_ID_NONE && !tu_hdr(&universe, opaque_id));
+        Atom *read_opaque = term_universe_copy_atom_read_symbols(
+            &universe, &output, opaque_id, read_test_symbol, &names);
+        assert(read_opaque && read_opaque->expr.elems[1]->ground.ptr == &module);
+        assert(atom_eq(read_opaque->expr.elems[2], value));
+        registry_free(&names);
+        arena_reset(&source, origin);
+        Atom *expected = atom_expr2(&output, atom_symbol(&output, "pair"),
+                                    atom_symbol(&output, "read-later"));
+        assert(atom_eq(read->expr.elems[1], expected));
+        assert(atom_eq(read_opaque->expr.elems[2], expected));
+        space_free(&module);
+        term_universe_free(&universe);
+        arena_free(&output);
+        arena_free(&source);
+        arena_free(&persistent);
+    }
 }
 
 /* A stored variable record spells its activation's epoch, so the universe
@@ -2196,6 +2229,7 @@ int main(void) {
     test_query_results_capacity_failure_is_loud();
     test_atom_deep_copy_preserves_pointer_dag();
     test_structural_slot_hash_collision_family();
+    test_exact_payload_coordinate_collision();
     test_hashcons_structural_slot_collision_family();
     test_source_arena_id_memo_contract();
     test_shallow_ground_admit_shares_structure_keeps_occurrences();
@@ -2239,8 +2273,8 @@ int main(void) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BLOB_BYTES) > 0);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
 
-    assert(universe.entries[sym_id].decoded_cache == NULL);
-    assert(universe.entries[str_id].decoded_cache == NULL);
+    assert(term_universe_decoded_atom_at(&universe, sym_id) == NULL);
+    assert(term_universe_decoded_atom_at(&universe, str_id) == NULL);
     assert(tu_kind(&universe, sym_id) == ATOM_SYMBOL);
     assert(tu_kind(&universe, var_id) == ATOM_VAR);
     assert(tu_kind(&universe, int_id) == ATOM_GROUNDED);
@@ -2279,7 +2313,7 @@ int main(void) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 7);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BYTE_ENTRY) == 7);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_FALLBACK_ENTRY) == 0);
-    assert(universe.entries[expr_id].decoded_cache == NULL);
+    assert(term_universe_decoded_atom_at(&universe, expr_id) == NULL);
     assert(tu_kind(&universe, expr_id) == ATOM_EXPR);
     assert(tu_arity(&universe, expr_id) == 4);
     assert(tu_head_sym(&universe, expr_id) == pair_sym);
@@ -2304,9 +2338,9 @@ int main(void) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BYTE_ENTRY) == 7);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_FALLBACK_ENTRY) == 1);
     assert(tu_hdr(&universe, boxed_id) == NULL);
-    assert(universe.entries[boxed_id].decoded_cache != NULL);
+    assert(term_universe_decoded_atom_at(&universe, boxed_id) != NULL);
     assert(term_universe_get_atom(&universe, boxed_id) ==
-           universe.entries[boxed_id].decoded_cache);
+           term_universe_decoded_atom_at(&universe, boxed_id));
     AtomId bad_children[2] = {sym_id, boxed_id};
     assert(tu_expr_from_ids(&universe, bad_children, 2) == CETTA_ATOM_ID_NONE);
 
@@ -2486,7 +2520,7 @@ int main(void) {
     term_universe_diag_reset(&universe);
     cetta_runtime_stats_set(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE, 0);
     Atom *sym_load = term_universe_get_atom(&universe, sym_id);
-    assert(sym_load == universe.entries[sym_id].decoded_cache);
+    assert(sym_load == term_universe_decoded_atom_at(&universe, sym_id));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 1);
     assert(term_universe_get_atom(&universe, sym_id) == sym_load);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 1);
@@ -2502,7 +2536,7 @@ int main(void) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 4);
 
     Atom *expr_load = term_universe_get_atom(&universe, expr_id);
-    assert(expr_load == universe.entries[expr_id].decoded_cache);
+    assert(expr_load == term_universe_decoded_atom_at(&universe, expr_id));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 5);
     assert(term_universe_get_atom(&universe, expr_id) == expr_load);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 5);
@@ -2575,10 +2609,10 @@ int main(void) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 1);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BYTE_ENTRY) == 1);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
-    assert(universe.entries[fresh_id].decoded_cache == NULL);
+    assert(term_universe_decoded_atom_at(&universe, fresh_id) == NULL);
     Atom *fresh_loaded = space_get_at(&space, 0);
     assert(fresh_loaded != NULL);
-    assert(fresh_loaded == universe.entries[fresh_id].decoded_cache);
+    assert(fresh_loaded == term_universe_decoded_atom_at(&universe, fresh_id));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 1);
 
     Space hash_space;

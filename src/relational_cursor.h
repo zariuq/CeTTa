@@ -10,6 +10,8 @@ typedef enum {
     CETTA_RELATIONAL_COUNT_COMPLETE,
     CETTA_RELATIONAL_COUNT_INVALIDATED,
     CETTA_RELATIONAL_COUNT_OVERFLOW,
+    /* An enumeration's visitor stopped it. */
+    CETTA_RELATIONAL_COUNT_STOPPED,
 } CettaRelationalCountStatus;
 
 /* Each cursor owns its navigation and unpublished accumulator, and retains
