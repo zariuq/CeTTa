@@ -175,6 +175,46 @@ static void checkpointing(int dir,int *fd) {
     expect(*fd,0,length(*fd),"final",5);
 }
 
+static void streaming_frames(int fd) {
+    empty(fd); uint64_t bytes=0;
+    CettaJournalPart parts[]={{(const unsigned char *)"a",1},{NULL,0},
+        {(const unsigned char *)"bc",2}};
+    check(cetta_journal_append_parts(fd,parts,3,false,&bytes)==CETTA_JOURNAL_OK);
+    expect(fd,0,bytes,"abc",3);
+    CettaJournalPart invalid[]={{NULL,1}};
+    check(cetta_journal_append_parts(fd,invalid,1,false,&bytes)==CETTA_JOURNAL_INVALID);
+    check(bytes==75 && length(fd)==75);
+    CettaJournalPart oversized[]={{(const unsigned char *)"",UINT32_MAX},
+        {(const unsigned char *)"x",1}};
+    check(cetta_journal_append_parts(fd,oversized,2,false,&bytes)==CETTA_JOURNAL_INVALID);
+    check(bytes==75 && length(fd)==75);
+    check(cetta_journal_append_parts(fd,NULL,0,false,&bytes)==CETTA_JOURNAL_OK);
+    expect(fd,75,bytes,"",0);
+    FILE *copy=tmpfile(); check(copy); int dest=fileno(copy);
+    uint64_t written=0;
+    read_chunk=1; read_interrupt=1; write_interrupt=1;
+    check(cetta_journal_copy(fd,0,bytes,4096,dest,&written)==CETTA_JOURNAL_OK);
+    read_chunk=0;
+    expect(dest,0,written,"abc",3);
+    check(cetta_journal_copy(fd,75,bytes,4096,dest,&written)==CETTA_JOURNAL_OK);
+    expect(dest,75,written,"",0);
+    check(cetta_journal_copy(fd,bytes,bytes,4096,dest,&written)==CETTA_JOURNAL_END);
+    for (ssize_t cut=0;cut<75;++cut) {
+        empty(dest); written=0; write_remaining=cut;
+        check(cetta_journal_copy(fd,0,bytes,4096,dest,&written)==CETTA_JOURNAL_UNKNOWN);
+        write_remaining=-1; check(!written && length(dest)==(uint64_t)cut);
+    }
+    empty(dest); written=0;
+    check(cetta_journal_copy(fd,0,74,4096,dest,&written)==CETTA_JOURNAL_TORN);
+    check(!written && !length(dest));
+    check(cetta_journal_copy(fd,0,bytes,2,dest,&written)==CETTA_JOURNAL_CORRUPT);
+    check(!written && !length(dest));
+    check(pwrite(fd,"x",1,74)==1);
+    check(cetta_journal_copy(fd,0,bytes,4096,dest,&written)==CETTA_JOURNAL_CORRUPT);
+    check(!written); /* Destination is an unpublished, unusable candidate. */
+    fclose(copy);
+}
+
 int main(void) {
     char directory[]="runtime/native-journal-test.XXXXXX";
     check(mkdtemp(directory)!=NULL);
@@ -184,6 +224,7 @@ int main(void) {
     check(fd>=0);
     framing(fd);
     interrupted_writes(fd);
+    streaming_frames(fd);
     checkpointing(dir,&fd);
     close(fd);
     check(!unlinkat(dir,"journal.csl",0));

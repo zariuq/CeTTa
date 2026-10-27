@@ -31,12 +31,25 @@ typedef struct {
 CettaJournalStatus cetta_journal_append(int fd, const unsigned char *data,
     size_t size, bool synchronize, uint64_t *written);
 
+typedef struct { const unsigned char *data; size_t size; } CettaJournalPart;
+/* One frame from borrowed parts, without concatenating their payloads. */
+CettaJournalStatus cetta_journal_append_parts(int fd, const CettaJournalPart *parts,
+    size_t count, bool synchronize, uint64_t *written);
+
 /* Read one frame within a captured file length. END is an exact boundary;
  * TORN is an incomplete final frame; CORRUPT is a complete invalid frame.
  * A successful record owns its data until cetta_journal_record_free. */
 CettaJournalStatus cetta_journal_read(int fd, uint64_t offset,
     uint64_t file_size, size_t max_record_bytes, CettaJournalRecord *out);
 void cetta_journal_record_free(CettaJournalRecord *record);
+
+/* Copy one complete frame using constant scratch space, checking its digest.
+ * This builds an unpublished destination: failure can leave partial or corrupt
+ * bytes there, which must not be published. The source's captured length is
+ * never extended. Destination position/counter ownership is as for append. */
+CettaJournalStatus cetta_journal_copy(int source, uint64_t offset,
+    uint64_t file_size, size_t max_record_bytes, int destination,
+    uint64_t *written);
 
 /* Only recovery of an otherwise valid journal may discard an incomplete tail. */
 CettaJournalStatus cetta_journal_trim_tail(int fd, uint64_t valid_bytes);

@@ -322,3 +322,33 @@ comparisons and NULL policy are explicit caller adapters. Callbacks must be
 pure, deterministic and terminating. Zero or multiple callback answers are
 reported, never converted into a partial successful bag. `test-rel` compares
 complete results against SQLite and sequential reference folds.
+
+## Disk index foundation
+
+`native_disk_index` is an experimental byte-key kernel, not yet a service
+backend. MeTTa will supply record encodings, occurrence keys, secondary index
+entries and transaction receipts. Its compressed binary radix tree reads one
+path or one cursor frontier instead of loading a corpus. Values occupy separate
+frames and can be verified/read through a fixed scratch buffer. Old root/end
+pairs remain immutable; cursors own a duplicate segment descriptor.
+
+Candidate construction only appends. The owner must synchronize the segment
+and atomically publish its root/end through the shared native journal before
+acknowledging an application transaction. A failed candidate can leave orphan
+bytes and never authorizes an external retry. Compaction streams only the live
+tree into a fresh segment. Publish that segment through the owner's manifest;
+open reader descriptors keep an unlinked old segment alive until they close.
+
+`test-native-disk-index` exercises ordered binary keys, retained readers,
+compaction, partial writes, uncertain root acknowledgements and large bodies.
+An allocation seam refuses body-sized temporaries safely. Its optional
+`--bulk COUNT` mode reports generated-data build/scan/compaction times, warm
+lookup percentiles and the platform's `ru_maxrss`. It does not measure physical
+disk coldness. `test-native-disk-index-oracle` compares complete maps and old
+snapshots against an offline SQLite reference; SQLite is a test oracle only.
+
+The companion `NativeDiskIndex.lean` model proves old-root read preservation
+under immutable extension and the critical-bit traversal depth bound. It is
+not yet a proof of the C insertion algorithm or service integration. The
+current named-space backends still retain their base records in memory; this
+kernel does not silently change their persistence format or active callers.

@@ -48525,6 +48525,19 @@ runtime/test-native-journal: tests/test_native_journal.c src/native_journal.c sr
 	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_journal.c src/native_journal.c src/native_sha256.c -Wl,--wrap=write,--wrap=pread,--wrap=fsync,--wrap=renameat -o $@
 test-native-journal: runtime/test-native-journal
 	$<
+.PHONY: test-native-disk-index
+runtime/test-native-disk-index: tests/test_native_disk_index.c src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
+	@mkdir -p runtime
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_disk_index.c src/native_disk_index.c src/native_journal.c src/native_sha256.c -Wl,--wrap=write,--wrap=pread,--wrap=fsync,--wrap=malloc,--wrap=calloc,--wrap=realloc -o $@
+test-native-disk-index: runtime/test-native-disk-index
+	$<
+runtime/libnative-disk-index.so: src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
+	@mkdir -p runtime
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -fPIC -shared -Isrc src/native_disk_index.c src/native_journal.c src/native_sha256.c -o $@
+.PHONY: test-native-disk-index-oracle
+PYTHON ?= python3
+test-native-disk-index-oracle: runtime/libnative-disk-index.so
+	$(PYTHON) tests/check_native_disk_index.py $<
 .PHONY: value-worker test-memory-collection test-memory-index-mutations install-memory-service
 MEMORY_SERVICE_INSTALL_ARGS ?=
 VALUE_WORKER_BIN = runtime/cetta-value-worker-$(BUILD_OBJ_TAG)
