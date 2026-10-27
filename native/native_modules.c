@@ -14,6 +14,7 @@
 #include "native/hol_light/hol_cetta_module.h"
 #include "native/mm0/mm0_cetta_module.h"
 #include "native/seal_module.h"
+#include "native/interaction_module.h"
 #include "native/megalodon/mg_cetta_module.h"
 
 #define CETTA_NATIVE_IMPORT_LANGDEF (1u << 25)
@@ -1236,6 +1237,8 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
     {"holkernel", CETTA_NATIVE_IMPORT_HOL_KERNEL, NULL, "__cetta_lib_hol_", hol_module_call},
     {"mm0kernel", CETTA_NATIVE_IMPORT_MM0_KERNEL, NULL, "__cetta_lib_mm0_", mm0_module_call},
     {"seal", CETTA_NATIVE_IMPORT_SEAL, NULL, "__cetta_lib_seal_", cetta_seal_module_call},
+    {"interaction", CETTA_NATIVE_IMPORT_INTERACTION, NULL, "__cetta_lib_interaction_",
+     cetta_interaction_module_call},
     {"megalodon", CETTA_NATIVE_IMPORT_MEGALODON, NULL, "__cetta_lib_megalodon_",
      cetta_megalodon_module_call},
 #if CETTA_BUILD_WITH_DURABLE

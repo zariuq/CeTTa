@@ -815,6 +815,7 @@ SRC += src/occurrence_log.c src/shared_return_producer.c src/owned_return_image.
 SRC += src/library_supervise.c $(DURABLE_SRC)
 # Shared opaque authority (lib_seal): runtime objects and the seal library.
 SRC += src/seal.c native/seal_module.c
+SRC += src/interaction_core.c native/interaction_module.c
 # Native Megalodon kernel and its CeTTa library (lib/megalodon.metta).
 MEGALODON_SRC = native/megalodon/mg_store.c native/megalodon/mg_ops.c \
 	native/megalodon/mg_rules.c native/megalodon/mg_conv.c \
@@ -49543,6 +49544,32 @@ test-native-leases: $(NATIVE_LEASES_TEST_BIN)
 	@$(NATIVE_LEASES_TEST_BIN)
 test-native-control-leases: $(NATIVE_CONTROL_LEASES_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_CONTROL_LEASES_TEST_BIN))
+# The refusal controls must reject each faulty rule: a reader that takes a
+# refused call for a pause (it polls a state that nothing can change), and a
+# fallback that reruns a demand after a row or a world effect was observed.
+# Each case names the failed check that must report it.
+NATIVE_CONTROL_LEASES_REFUSAL_MUTANT = runtime/test-native-control-leases-refusal-$(BUILD_OBJ_TAG)
+.PHONY: test-native-control-leases-refusal-mutation
+test-prime: test-native-control-leases-refusal-mutation
+test-native-control-leases-refusal-mutation: tests/test_native_control_leases.c src/eval.c src/table_store.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	@set -eu; \
+	for case in 'REFUSAL_PAUSE:polls\.stalled' 'FALLBACK_AFTER_ROWS:demand\.driver\.top==frame' \
+		'FALLBACK_AFTER_EFFECTS:world_effects && slot->source->call_refusals && episode\.interrupted'; do \
+		mutation=$${case%%:*}; expected=$${case#*:}; \
+		binary=$(NATIVE_CONTROL_LEASES_REFUSAL_MUTANT)-$$mutation; \
+		$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_PRIME_NEED_MUTATION_$$mutation=1 \
+			-o "$$binary" tests/test_native_control_leases.c \
+			$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o src/table_store.$(BUILD_OBJ_TAG).o src/table_store.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=calloc; \
+		set +e; \
+		output=$$($(call cetta_exec,./$$binary) 2>&1); status=$$?; \
+		set -e; \
+		if [ $$status -eq 0 ] || ! printf '%s\n' "$$output" | grep -q "FAIL: .*$$expected"; then \
+			echo "FAIL: the refusal controls accepted the $$mutation fault"; \
+			exit 1; \
+		fi; \
+		echo "PASS: the refusal controls reject the $$mutation fault"; \
+	done
 test-native-cost-join: $(NATIVE_COST_JOIN_TEST_BIN)
 	@$(NATIVE_COST_JOIN_TEST_BIN)
 test-prime: test-resource-wave test-native-leases test-native-control-leases test-native-cost-join test-provider-graph-copy
@@ -50405,3 +50432,36 @@ test-rel: $(BIN) lib/petta/rel.metta tests/support/check_rel.py
 	python3 tests/support/check_rel.py --cetta ./$(BIN) --output "$(REL_TEST_OUTPUT)"
 
 test-all: test-rel
+
+.PHONY: test-prime-interaction
+# The interaction basis (lib/prime/interaction.metta over
+# src/interaction_core.c): one commit, region profiles and facets,
+# waiting, the Rholang receipts and the data law.
+test-prime: test-prime-interaction
+test-prime-interaction: $(BIN)
+	@pass=0; fail=0; \
+	for f in tests/prime/interaction/*.metta; do \
+		exp="$${f%.metta}.expected"; \
+		result=$$(timeout $(PRIME_COMPLETION_TIMEOUT) $(CETTA_BIN_INVOKE) --lang prime "$$f" 2>&1); \
+		status=$$?; \
+		if [ $$status -eq 0 ] && [ "$$result" = "$$(cat "$$exp")" ]; then \
+			echo "PASS: $$f"; pass=$$((pass + 1)); \
+		else \
+			echo "FAIL: $$f (exit $$status)"; \
+			diff <(cat "$$exp") <(echo "$$result") | head -20; \
+			fail=$$((fail + 1)); \
+		fi; \
+	done; \
+	echo "Prime interaction: $$pass passed, $$fail failed"; \
+	[ $$fail -eq 0 ]
+# A region is reached only through its handles: a space atom, or a name a
+# resolver maps to the region's space, gets no right over it; a plain space
+# keeps every right (tests/test_interaction_naming.c over the engine source).
+INTERACTION_NAMING_TEST_BIN = runtime/test-interaction-naming-$(BUILD_OBJ_TAG)
+.PHONY: test-prime-interaction-naming
+test-prime: test-prime-interaction-naming
+test-prime-interaction-naming: tests/test_interaction_naming.c src/interaction_core.c native/interaction_core.h $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -o $(INTERACTION_NAMING_TEST_BIN) tests/test_interaction_naming.c \
+		$(filter-out src/interaction_core.$(BUILD_OBJ_TAG).o src/interaction_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+	@$(call cetta_exec,./$(INTERACTION_NAMING_TEST_BIN))

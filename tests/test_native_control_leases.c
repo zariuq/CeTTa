@@ -13706,6 +13706,175 @@ static void call_source_delivery_controls(Space *space,Arena *syntax,const Bindi
     puts("Call-owned FORCE retries the earned weighted row and serves an independent reader without rerunning effects");
 }
 
+/* Run a test driver as the root loop does, for at most `limit` actions. */
+static bool refusal_drive(PrimeEvalStackDriver *driver,unsigned limit) {
+    for(unsigned i=0u;i<limit && (driver->stream_pending || driver->task_ready || driver->top);i++) {
+        if(driver->capacity_blocked || eval_unwinding()) return false;
+        if(driver->stream_pending) {
+            OutcomeSet *ready=driver->stream_pending;driver->stream_pending=NULL;
+            prime_eval_stack_stream(ready);
+        } else if(driver->task_ready) prime_eval_stack_run_task();
+        else prime_eval_stack_resume_top();
+    }
+    return !driver->stream_pending && !driver->task_ready && !driver->top;
+}
+
+typedef struct {unsigned polls,stalled;} RefusalPolls;
+/* Poll one call-owned reader until it stops waiting. A poll after which the
+ * reader still waits, with no row and no step of its production, changed
+ * nothing that a later poll could see (a refusal is not progress), so the
+ * next poll can only repeat it: `stalled` counts such polls, and the
+ * controls require none. */
+static RefusalPolls refusal_poll_reader(PrimeEvalStackFrame *frame,unsigned limit) {
+    RefusalPolls seen={0u,0u};
+    PrimeNeedForceProduction *source=frame->call_force_reader->slot->source;
+    while(seen.polls<limit && frame->call_force_reader && !eval_unwinding()) {
+        uint64_t paid=source->dispatches;
+        bool waiting=cetta_shared_return_checkpoint_peek(frame->call_force_reader->position).kind==
+            CETTA_SHARED_DELIVERY_PAUSED;
+        prime_need_call_force_resume(frame);seen.polls++;
+        if(waiting && frame->call_force_reader && !eval_unwinding() && source->dispatches==paid &&
+            cetta_shared_return_checkpoint_peek(frame->call_force_reader->position).kind==
+                CETTA_SHARED_DELIVERY_PAUSED) seen.stalled++;
+    }
+    return seen;
+}
+
+typedef struct {
+    Bindings environment;
+    OutcomeSet out;
+    PrimeEvalStackDriver driver,*previous;
+    PrimeNeedActiveGuard active;
+    Atom *reference;
+    uint64_t thunk;
+} RefusalDemand;
+/* One argument demand of a call with a call-owned source. */
+static void refusal_demand_open(RefusalDemand *demand,Space *space,Arena *syntax,
+    const Bindings *world,const char *argument,PettaMachineOperationPermit permit,void *context) {
+    Bindings allocated;bindings_init(&demand->environment);bindings_init(&allocated);
+    CHECK(bindings_clone(&demand->environment,world));
+    demand->reference=NULL;
+    CHECK(prime_need_allocate_ref(syntax,parse_one(syntax,argument),
+        &demand->environment,&allocated,&demand->reference));
+    bindings_replace(&demand->environment,&allocated);
+    bool installed=false;
+    CHECK(prime_need_call_sources_prepare(space,syntax,&demand->reference,1u,
+        prime_need_fresh_source_occurrence(),&demand->environment,&installed)==CETTA_MATCH_MATCHED && installed);
+    outcome_set_init_with_owner(&demand->out,syntax);
+    demand->driver=(PrimeEvalStackDriver){.arena=syntax,.root_target=&demand->out,.streaming=true,
+        .heap_phase=true,.call_permit=permit,.call_permit_context=context};
+    demand->previous=g_prime_eval_stack_driver;g_prime_eval_stack_driver=&demand->driver;
+    prime_need_active_enter_captured(&demand->active,&demand->environment);
+    demand->thunk=0u;
+    CHECK(prime_need_ref_belongs_to(demand->reference,bindings_need_view(&demand->environment),
+        &demand->thunk));
+}
+static void refusal_demand_close(RefusalDemand *demand) {
+    prime_eval_stack_abandon(&demand->driver);
+    prepared_pure_program_cache_free(&demand->driver.prepared_pure_cache);
+    prime_need_active_leave(&demand->active);g_prime_eval_stack_driver=demand->previous;
+    outcome_set_free(&demand->out);bindings_free(&demand->environment);
+}
+
+/* A refused call of a shared production is a failed attempt of the reader
+ * that meets it, never a pause: no wake source can change that receiver's
+ * permission. An untouched demand returns to its receiver as the ordinary
+ * FORCE, under the receiver's own contract; a demand that already received
+ * rows ends with the refusal. Positive and negative controls. */
+static void call_source_refusal_controls(Space *space,Arena *syntax,const Bindings *world) {
+    space_add(space,parse_one(syntax,"(= (refused-value) 41)"));
+    space_add(space,parse_one(syntax,"(= (refused-produce) (eval (refused-value)))"));
+    space_add(space,parse_one(syntax,"(= (refused-printing) (let $_ (println! refused-effect) 5))"));
+    space_add(space,parse_one(syntax,"(= (refused-rows) 1)"));
+    space_add(space,parse_one(syntax,"(= (refused-rows) (eval (refused-value)))"));
+    unsigned effects=br_resident_effects;
+
+    /* The input domain refuses `eval`. The reader observes the refusal
+     * without a stalled poll, the production keeps its task unpaid, and the
+     * ordinary FORCE answers the demand under the receiver's authority. */
+    RefusalDemand demand;
+    refusal_demand_open(&demand,space,syntax,world,"(refused-produce)",NULL,NULL);
+    CHECK(prime_need_call_force(space,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
+    PrimeEvalStackFrame *frame=demand.driver.top;
+    assert(frame && frame->call_force_reader);
+    PrimeNeedCallSourceSlot *slot=frame->call_force_reader->slot;
+    RefusalPolls polls=refusal_poll_reader(frame,64u);
+    CHECK(!frame->call_force_reader && polls.polls<64u && !polls.stalled &&
+        slot->source->call_refusals && !slot->source->world_effects &&
+        !slot->source->resident.outcomes.len);
+    CHECK(refusal_drive(&demand.driver,100000u) && demand.out.len==1u &&
+        atom_eq(demand.out.items[0].atom,atom_int(syntax,41)) && br_resident_effects==effects);
+    /* A fresh reader of that production is not made to wait on it: the
+     * scheduler's ordinary FORCE answers the demand instead. */
+    CHECK(!demand.driver.top &&
+        !prime_need_call_force(space,syntax,demand.reference,demand.thunk,-1,&demand.out,true) &&
+        !demand.driver.top);
+    refusal_demand_close(&demand);
+
+    /* Negative control: the receiver denies every call. The production's
+     * refusal is reported, the ordinary FORCE crosses the receiver's own
+     * contract and is denied again, and the effect never runs. */
+    unsigned denied=0u;
+    refusal_demand_open(&demand,space,syntax,world,"(refused-printing)",
+        retained_ancestor_permit,&denied);
+    CHECK(prime_need_call_force(space,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
+    frame=demand.driver.top;
+    assert(frame && frame->call_force_reader);
+    slot=frame->call_force_reader->slot;
+    polls=refusal_poll_reader(frame,64u);
+    unsigned denied_in_production=denied;
+    CHECK(!frame->call_force_reader && !polls.stalled && slot->source->call_refusals &&
+        denied_in_production>=1u);
+    (void)refusal_drive(&demand.driver,100000u);
+    CHECK(!demand.out.len && denied>denied_in_production && br_resident_effects==effects);
+    refusal_demand_close(&demand);
+
+    /* A reader that already observed a row of its production cannot be
+     * answered again without repeating it: the refusal is its explicit
+     * outcome, an interruption rather than a relational end, and the demand
+     * is never handed back or rerun. */
+    CettaEvalEpisode episode=cetta_eval_episode_begin(NULL,-1);
+    CettaEvalEpisode *outer=g_eval_completion_tracker;g_eval_completion_tracker=&episode;
+    refusal_demand_open(&demand,space,syntax,world,"(refused-rows)",NULL,NULL);
+    CHECK(prime_need_call_force(space,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
+    frame=demand.driver.top;
+    assert(frame && frame->call_force_reader);
+    slot=frame->call_force_reader->slot;
+    polls=refusal_poll_reader(frame,64u);
+    uint64_t observed_paid=slot->source->dispatches;
+    CHECK(!polls.stalled && frame->call_force_reader && demand.driver.top==frame &&
+        demand.out.len==1u && atom_eq(demand.out.items[0].atom,atom_int(syntax,1)) &&
+        episode.interrupted && episode.completion==CETTA_EVAL_INCOMPLETE_EFFECT_DENIED &&
+        br_resident_effects==effects);
+    CHECK(!refusal_drive(&demand.driver,1000u) && demand.out.len==1u &&
+        slot->source->dispatches==observed_paid);
+    g_eval_completion_tracker=outer;
+    refusal_demand_close(&demand);
+
+    /* A production whose call is refused after a world-visible effect cannot
+     * be rerun without repeating the effect: its untouched reader still ends
+     * with the refusal, and the effect happened exactly once. */
+    space_add(space,parse_one(syntax,
+        "(= (printed-then-refused) (let $_ (println! printed-effect) (eval (refused-value))))"));
+    episode=cetta_eval_episode_begin(NULL,-1);
+    outer=g_eval_completion_tracker;g_eval_completion_tracker=&episode;
+    refusal_demand_open(&demand,space,syntax,world,"(printed-then-refused)",NULL,NULL);
+    CHECK(prime_need_call_force(space,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
+    frame=demand.driver.top;
+    assert(frame && frame->call_force_reader);
+    slot=frame->call_force_reader->slot;
+    polls=refusal_poll_reader(frame,64u);
+    CHECK(!polls.stalled && frame->call_force_reader && !demand.out.len &&
+        slot->source->world_effects && slot->source->call_refusals &&
+        episode.interrupted && episode.completion==CETTA_EVAL_INCOMPLETE_EFFECT_DENIED &&
+        br_resident_effects==effects+1u);
+    CHECK(!refusal_drive(&demand.driver,1000u) && !demand.out.len &&
+        br_resident_effects==effects+1u);
+    g_eval_completion_tracker=outer;
+    refusal_demand_close(&demand);
+    puts("A refused call ends its reader's wait: an untouched demand is answered by the ordinary FORCE under its own receiver; one that observed a row or a world effect ends refused, never rerun");
+}
+
 static void resident_force_production_case(void) {
     Arena syntax;arena_init_detached(&syntax);
     Space space;space_init(&space);Registry registry;registry_init(&registry);
@@ -13815,23 +13984,34 @@ static void resident_force_production_case(void) {
     registry_bind(&equivalent,"&resident-state",atom_state(&syntax,&distinct));
     CHECK(!prime_need_force_production_current(sources[1]));
     g_registry=&registry;registry_free(&equivalent);
-    /* A new receiver can deny the next call without consuming that task.
-     * Regranting resumes the same unfinished FORCE, without another prefix. */
+    /* A new receiver can deny the next call without consuming that task: it
+     * stays pending and unpaid for a receiver holding the authority, and
+     * regranting resumes the same unfinished FORCE, without another prefix.
+     * A pause is a registered wait only while the production progresses.
+     * Nothing registers a refused call on a wake source, so every refused
+     * poll is reported by its count; the reader that meets it observes it at
+     * once instead of polling again (call_source_refusal_controls). */
     unsigned denied=0u;
     PrimeEvalStackDriver denying={.call_permit=retained_ancestor_permit,
         .call_permit_context=&denied};
     PrimeEvalStackDriver *previous_driver=g_prime_eval_stack_driver;
     g_prime_eval_stack_driver=&denying;
-    for (size_t i=0u;i<10000u && !denied;i++)
+    uint64_t refusals=sources[0]->call_refusals;
+    for (size_t i=0u;i<10000u && !denied;i++) {
+        uint64_t paid=sources[0]->dispatches;
         CHECK(cetta_shared_return_producer_advance(producers[0],1u)==CETTA_SHARED_RETURN_PAUSED);
+        CHECK(denied || (sources[0]->dispatches>paid && sources[0]->call_refusals==refusals));
+    }
     CHECK(denied && sources[0]->resident.driver.task_ready &&
-        sources[0]->resident.driver.task.kind==PRIME_EVAL_STACK_TASK_CALL && br_resident_effects==2u);
+        sources[0]->resident.driver.task.kind==PRIME_EVAL_STACK_TASK_CALL && br_resident_effects==2u &&
+        sources[0]->call_refusals==refusals+1u);
     Atom *pending=sources[0]->resident.driver.task.atom;
     uint64_t before_refusal=sources[0]->dispatches;
     for (unsigned i=0u;i<3u;i++)
         CHECK(cetta_shared_return_producer_advance(producers[0],1u)==CETTA_SHARED_RETURN_PAUSED &&
             sources[0]->dispatches==before_refusal && sources[0]->resident.driver.task.atom==pending &&
-            br_resident_effects==2u && !sources[0]->resident.driver.authority_parent);
+            br_resident_effects==2u && !sources[0]->resident.driver.authority_parent &&
+            sources[0]->call_refusals==refusals+2u+i);
     g_prime_eval_stack_driver=previous_driver;
     row=resident_force_wait(producers[0],1u);
     CHECK(row.kind==CETTA_SHARED_DELIVERY_ANSWER &&
@@ -13903,6 +14083,7 @@ static void resident_force_production_case(void) {
     cetta_shared_return_producer_free(writer);bindings_free(&published);
     space_add(&space,parse_one(&syntax,"(=w (resident-call-produce $s) (let $_ (add-atom &resident-log (Produced)) (let $_ (println! resident-effect) (+ (get-state $s) 1))) 3)"));
     space_add(&space,parse_one(&syntax,"(= (resident-read-log) (let $rows (collapse (get-atoms &resident-log)) (+ 10 7)))"));
+    call_source_refusal_controls(&space,&syntax,&seven);
     call_source_delivery_controls(&space,&syntax,&seven,&log);
     unsigned final_effects=br_resident_effects;
     prime_need_active_leave(&ambient);
