@@ -708,7 +708,7 @@ static bool contract_match(ContractScan *scan, Atom *expr,
 static bool contract_bindings(ContractScan *scan, Atom *expr,
                               const PettaPlanNode *plan, uint32_t depth,
                               ContractValue *out) {
-    if (cetta_control_operation_binding_layout(plan->control, 1u)) {
+    if (cetta_control_operation_binding_layout(plan->computation.control, 1u)) {
         ContractValue value = {0};
         if (!contract_eval(scan, expr->expr.elems[2],
                            petta_plan_child(plan, 2u), depth + 1u, &value))
@@ -992,17 +992,17 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
     if (!plan || expr->expr.len == 0u)
         return false;
     Atom *head = expr->expr.elems[0];
-    if ((cetta_control_operation_binding_layout(plan->control, 1u) && expr->expr.len == 4u) ||
-        (plan->control.operation == CETTA_CONTROL_SEQUENCE_MANY && expr->expr.len == 3u))
+    if ((cetta_control_operation_binding_layout(plan->computation.control, 1u) && expr->expr.len == 4u) ||
+        (plan->computation.control.operation == CETTA_CONTROL_SEQUENCE_MANY && expr->expr.len == 3u))
         return contract_bindings(scan, expr, plan, depth, out);
-    if (plan->control.operation == CETTA_CONTROL_BRANCH &&
+    if (plan->computation.control.operation == CETTA_CONTROL_BRANCH &&
         (expr->expr.len == 3u || expr->expr.len == 4u))
         return contract_if(scan, expr, plan, depth, out);
-    if (plan->control.operation == CETTA_CONTROL_FAILURE) {
+    if (plan->computation.control.operation == CETTA_CONTROL_FAILURE) {
         *out = (ContractValue){.bottom = true};
         return true;
     }
-    if (cetta_control_operation_is_control_form(plan->control))
+    if (cetta_control_operation_is_control_form(plan->computation.control))
         return false;
     bool static_call = head->kind == ATOM_SYMBOL &&
         plan->role == PETTA_PLAN_STATIC_CALL;
@@ -1090,17 +1090,17 @@ static bool contract_returns_pattern(Atom *rhs, const PettaPlanNode *plan,
         return true;
     if (!plan || rhs->kind != ATOM_EXPR || rhs->expr.len == 0u)
         return false;
-    if (plan->control.operation == CETTA_CONTROL_FAILURE)
+    if (plan->computation.control.operation == CETTA_CONTROL_FAILURE)
         return true;
-    if (cetta_control_operation_binding_layout(plan->control, 1u) && rhs->expr.len == 4u)
+    if (cetta_control_operation_binding_layout(plan->computation.control, 1u) && rhs->expr.len == 4u)
         return contract_returns_pattern(rhs->expr.elems[3],
                                         petta_plan_child(plan, 3u), pattern,
                                         depth + 1u);
-    if (plan->control.operation == CETTA_CONTROL_SEQUENCE_MANY && rhs->expr.len == 3u)
+    if (plan->computation.control.operation == CETTA_CONTROL_SEQUENCE_MANY && rhs->expr.len == 3u)
         return contract_returns_pattern(rhs->expr.elems[2],
                                         petta_plan_child(plan, 2u), pattern,
                                         depth + 1u);
-    if (plan->control.operation == CETTA_CONTROL_BRANCH &&
+    if (plan->computation.control.operation == CETTA_CONTROL_BRANCH &&
         (rhs->expr.len == 3u || rhs->expr.len == 4u))
         return contract_returns_pattern(rhs->expr.elems[2],
                                         petta_plan_child(plan, 2u), pattern,

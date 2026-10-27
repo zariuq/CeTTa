@@ -1354,7 +1354,7 @@ static __attribute__((noinline)) CettaIndex native_candidates_marked(
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP);
     CettaIndex ncand = 0, ccand = 0;
     disc_lookup(st->match_trie, pattern, out, &ncand, &ccand);
-    if (ncand > 1) {
+    if (ncand > 1 && space_is_ordered(s)) {
         ncand = sort_unique_cetta_index(*out, ncand);
     }
     ncand = space_marks_physical_to_logical(s, *out, ncand);
@@ -1397,7 +1397,7 @@ static CettaIndex native_candidates(Space *s, Atom *pattern, CettaIndex **out) {
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_TRIE_LOOKUP);
     CettaIndex ncand = 0, ccand = 0;
     disc_lookup(st->match_trie, pattern, out, &ncand, &ccand);
-    if (ncand > 1) {
+    if (ncand > 1 && space_is_ordered(s)) {
         ncand = sort_unique_cetta_index(*out, ncand);
     }
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_MATCH_NATIVE_CANDIDATES, ncand);
@@ -1949,7 +1949,7 @@ static bool native_count_flat_linear_view(
         disc_lookup_expression_coordinates(
             state->match_trie, columns, column_count,
             &candidates, &candidate_len, &candidate_cap);
-        if (candidate_len > 1u)
+        if (candidate_len > 1u && space_is_ordered(s))
             candidate_len = sort_unique_cetta_index(
                 candidates, candidate_len);
         /* Trie leaves are rows; the reads below take logical positions. */
@@ -8525,7 +8525,7 @@ imported_candidates_flat(Space *s, Atom *pattern, CettaIndex **out) {
         }
         (*out)[len++] = st->wildcard.entries[i].atom_idx;
     }
-    if (len > 1)
+    if (len > 1 && space_is_ordered(s))
         len = sort_unique_cetta_index(*out, len);
     return len;
 }
@@ -11173,6 +11173,7 @@ bool space_match_backend_accepts_space(const Space *s, SpaceEngine kind) {
     switch (s->kind) {
     case SPACE_KIND_STACK:
     case SPACE_KIND_QUEUE:
+    case SPACE_KIND_SET:
         return kind == SPACE_ENGINE_NATIVE ||
                kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT;
     case SPACE_KIND_ATOM:

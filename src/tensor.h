@@ -122,6 +122,18 @@ CettaTensorStatus cetta_tensor_entries(const CettaTensor *tensor,
  * missing source coordinates remain absent; present indices must be in bounds. */
 CettaTensorStatus cetta_tensor_gather(const CettaTensor *tensor,
     const CettaTensor *indices, CettaTensor **out);
+/* Inclusive sum along one axis, in increasing axis position. Each fiber
+ * starts with its first present value; missing positions stay missing. The
+ * accumulator has the input dtype, including per-step f32 rounding and
+ * checked integer overflow. No reassociation or zero filling is implicit. */
+CettaTensorStatus cetta_tensor_scan_sum(const CettaTensor *tensor, size_t axis,
+    CettaTensor **out);
+/* Axis concatenation preserves both occurrence sequences and their support.
+ * A permutation lists the old axis used for each new axis, exactly once. */
+CettaTensorStatus cetta_tensor_concatenate(const CettaTensor *left,
+    const CettaTensor *right, size_t axis, CettaTensor **out);
+CettaTensorStatus cetta_tensor_permute(const CettaTensor *tensor,
+    const size_t *axes, size_t rank, CettaTensor **out);
 /* Concatenate the two stored occurrence sequences, then apply the explicit
  * duplicate policy. Shape and dtype must agree. */
 CettaTensorStatus cetta_tensor_merge(const CettaTensor *left,

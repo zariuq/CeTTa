@@ -22,6 +22,58 @@ int cetta_dense_tensor_v1_compare(const CettaDenseTensorV1 *, const CettaDenseTe
 #pragma weak term_graph_assumption_key
 #pragma weak term_graph_assumptions_free
 
+/* One dialect elaborator consumes the generated operation descriptors. */
+CettaControlOperationPlan petta_semantics_elaborate_control(
+        SymbolId head, PeTTaForm form, CettaExprLen arity) {
+#define CETTA_PETTA_VARIADIC_FORM(native_form, op) \
+    if (form == (native_form)) \
+        return (CettaControlOperationPlan){arity ? (op) : CETTA_CONTROL_FAILURE, \
+            CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT};
+    CETTA_PETTA_VARIADIC_FORM_ROWS(CETTA_PETTA_VARIADIC_FORM)
+#undef CETTA_PETTA_VARIADIC_FORM
+#define CETTA_PETTA_CONTROL_FORM(native_form, count, op, source_arg, first_arg, last_arg) \
+    if (form == (native_form) && arity == (count)) \
+        return (CettaControlOperationPlan){(op), (source_arg), (first_arg), (last_arg)};
+    CETTA_PETTA_CONTROL_FORM_ROWS(CETTA_PETTA_CONTROL_FORM)
+#undef CETTA_PETTA_CONTROL_FORM
+    if (form == PETTA_FORM_IF)
+        head = g_builtin_syms.if_text;
+    else if (form == PETTA_FORM_LET || form == PETTA_FORM_VALUE_LET)
+        head = g_builtin_syms.let;
+    else if (form == PETTA_FORM_CHAIN)
+        head = g_builtin_syms.chain;
+    else if (form == PETTA_FORM_EVAL)
+        head = g_builtin_syms.eval;
+    else if (head != g_builtin_syms.let_star &&
+             head != g_builtin_syms.superpose && head != g_builtin_syms.empty_form &&
+             head != g_builtin_syms.collapse)
+        return (CettaControlOperationPlan){0};
+    CettaControlOperationPlan plan = {0};
+    cetta_control_operation_decode(head, arity, &plan, &g_builtin_syms);
+    return plan;
+}
+
+CettaInvocationPlan petta_semantics_elaborate_invocation(
+        SymbolId head, PeTTaForm form, CettaExprLen arity) {
+#define CETTA_PETTA_INVOCATION_FORM(native_form, count, body, first, last) \
+    if (form == (native_form) && arity == (count)) \
+        return (CettaInvocationPlan){(body), (first), (last)};
+    CETTA_PETTA_INVOCATION_FORM_ROWS(CETTA_PETTA_INVOCATION_FORM)
+#undef CETTA_PETTA_INVOCATION_FORM
+    CettaInvocationPlan plan = {0};
+    cetta_invocation_plan_decode(head, arity, &plan, &g_builtin_syms);
+    return plan;
+}
+
+CettaComputationPlan petta_semantics_elaborate_computation(
+        SymbolId head, PeTTaForm form, CettaExprLen arity) {
+    CettaComputationPlan plan = {
+        .control = petta_semantics_elaborate_control(head, form, arity)};
+    if (!cetta_control_operation_is_control_form(plan.control))
+        plan.invocation = petta_semantics_elaborate_invocation(head, form, arity);
+    return plan;
+}
+
 #define PETTA_FORM_DENSE_CAP 4096u
 #define PETTA_FORM_OVERFLOW_CAP 128u
 
@@ -2016,6 +2068,46 @@ static uint32_t petta_unique_capacity(CettaExprLen len) {
     return capacity;
 }
 
+/* Both uniqueness operations index semantic keys. A declined hash switches
+ * the entire inventory to equality: a later finite key can equal an earlier
+ * graph view. Compaction changes only private key order, not output order. */
+typedef struct {
+    Atom **slots;
+    uint32_t capacity;
+    uint32_t length;
+    bool hashed;
+} PettaUniqueKeys;
+
+static bool petta_unique_key_insert(PettaUniqueKeys *keys, Atom *key) {
+    uint64_t hash = 0u;
+    if (keys->hashed && !atom_spread_hash(key, &hash)) {
+        uint32_t write = 0u;
+        for (uint32_t read = 0u; read < keys->capacity; read++)
+            if (keys->slots[read])
+                keys->slots[write++] = keys->slots[read];
+        keys->hashed = false;
+    }
+    if (!keys->hashed) {
+        for (uint32_t i = 0u; i < keys->length; i++) {
+            if (atom_eq(keys->slots[i], key))
+                return false;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TABLE_KEY_PROBE);
+        }
+        keys->slots[keys->length++] = key;
+        return true;
+    }
+    uint32_t slot = (uint32_t)hash & (keys->capacity - 1u);
+    while (keys->slots[slot] && !atom_eq(keys->slots[slot], key)) {
+        slot = (slot + 1u) & (keys->capacity - 1u);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TABLE_KEY_PROBE);
+    }
+    if (keys->slots[slot])
+        return false;
+    keys->slots[slot] = key;
+    keys->length++;
+    return true;
+}
+
 Atom *petta_semantics_alpha_unique(Arena *arena, Atom *list) {
     if (!arena || !list || list->kind != ATOM_EXPR ||
         !cetta_expr_len_fits_u32(list->expr.len)) {
@@ -2037,7 +2129,7 @@ Atom *petta_semantics_alpha_unique(Arena *arena, Atom *list) {
     Atom **unique = arena_alloc(
         arena, sizeof(*unique) * (size_t)list->expr.len);
     CettaExprLen unique_len = 0u;
-    uint32_t mask = capacity - 1u;
+    PettaUniqueKeys keys = {slots, capacity, 0u, true};
 
     for (CettaExprIndex index = 0u;
          index < list->expr.len; index++) {
@@ -2049,13 +2141,8 @@ Atom *petta_semantics_alpha_unique(Arena *arena, Atom *list) {
             return NULL;
         }
 
-        uint32_t slot = (uint32_t)atom_spread_hash(key) & mask;
-        while (slots[slot] && !atom_eq(slots[slot], key))
-            slot = (slot + 1u) & mask;
-        if (slots[slot])
+        if (!petta_unique_key_insert(&keys, key))
             continue;
-
-        slots[slot] = key;
         unique[unique_len++] = candidate;
     }
 
@@ -2082,18 +2169,14 @@ Atom *petta_semantics_list_to_set(Arena *arena, Atom *list) {
     memset(slots, 0, sizeof(*slots) * (size_t)capacity);
 
     CettaExprLen unique_len = 0u;
-    uint32_t mask = capacity - 1u;
+    PettaUniqueKeys keys = {slots, capacity, 0u, true};
     for (CettaExprIndex index = 0u;
          index < list->expr.len; index++) {
         Atom *candidate = list->expr.elems[index];
-        uint32_t slot = (uint32_t)atom_spread_hash(candidate) & mask;
-        while (slots[slot] &&
-               !atom_eq(slots[slot], candidate)) {
-            slot = (slot + 1u) & mask;
-        }
-        if (slots[slot])
+        if (!candidate)
+            return NULL;
+        if (!petta_unique_key_insert(&keys, candidate))
             continue;
-        slots[slot] = candidate;
         unique[unique_len++] = candidate;
     }
     return atom_expr(arena, unique, unique_len);

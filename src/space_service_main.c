@@ -2172,7 +2172,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         Observation *o=find_creation(s,client->principal,creation);
         if (o && (o->source!=source || o->creation_until!=until)) return error(a,request,"creation-identity");
         Store *owned_source=find_store(s,source);
-        if (!o && (!owned_source || !(rights_of(client,owned_source)&RIGHT_READ)))
+        if (!o && (!owned_source || !(rights_of(s,client,owned_source)&RIGHT_READ)))
             return error(a,request,"missing-space");
         if (until>now_ms()+300000) return error(a,request,"invalid-creation-deadline");
         bool fenced=cancel_creation(s,client->principal,source,creation,until);

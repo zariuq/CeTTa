@@ -10,7 +10,7 @@
 
 struct CettaLibraryContext;
 
-#define CETTA_NATIVE_IMPORT_INTERACTION (UINT64_C(1) << 36)
+#define CETTA_NATIVE_IMPORT_INTERACTION (UINT64_C(1) << 43)
 
 /* The `interaction` library's natives, heads `__cetta_lib_interaction_*`
  * (lib/prime/interaction.metta).  False when `head` is not one of them. */

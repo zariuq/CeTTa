@@ -453,13 +453,47 @@ static inline SymbolSpelling symbol_spelling(
     X(lib_postings_sources_current, "__cetta_lib_postings_sources_current") \
     X(lib_postings_inspect, "__cetta_lib_postings_inspect") \
     X(lib_postings_close, "__cetta_lib_postings_close") \
+    X(binary_pack_fields, "binary:pack-fields") \
+    X(binary_unpack_fields, "binary:unpack-fields") \
+    X(binary_packed_length, "binary:packed-length") \
+    X(binary_utf8, "binary:utf8") \
+    X(binary_from_utf8, "binary:from-utf8") \
+    X(binary_unsigned, "binary:unsigned") \
+    X(binary_from_unsigned, "binary:from-unsigned") \
+    X(binary_symbol_utf8, "binary:symbol-utf8") \
+    X(binary_from_symbol_utf8, "binary:from-symbol-utf8") \
+    X(binary_value_kind, "binary:value-kind") \
+    X(binary_is_unsigned, "binary:unsigned?") \
+    X(heap_empty, "heap:empty") \
+    X(heap_insert, "heap:insert") \
+    X(heap_take, "heap:take") \
+    X(heap_size_public, "heap:size") \
+    X(heap_valid, "heap:valid?") \
+    X(work_epoch, "work:epoch") \
+    X(dag_from_forest, "dag:from-forest") \
+    X(dag_from_records, "dag:from-records") \
+    X(dag_export, "dag:export") \
+    X(dag_roots, "dag:roots") \
+    X(dag_node, "dag:node") \
+    X(dag_unfold, "dag:unfold") \
+    X(dag_stats, "dag:stats") \
+    X(dag_close, "dag:close") \
+    X(syntax_read, "syntax:read") \
+    X(syntax_restore, "syntax:restore") \
+    X(syntax_freeze, "syntax:freeze") \
+    X(syntax_write, "syntax:write") \
+    X(syntax_intrinsic_head, "syntax:intrinsic-head?") \
     X(tensor_from_values, "tensor:from-values") \
     X(tensor_from_json, "tensor:from-json") \
     X(tensor_from_coo, "tensor:from-coo") \
     X(tensor_from_coordinates, "tensor:from-coordinates") \
     X(tensor_inspect, "tensor:inspect") \
+    X(tensor_is_tensor, "tensor:is-tensor") \
     X(tensor_entries, "tensor:entries") \
     X(tensor_gather, "tensor:gather") \
+    X(tensor_scan_sum, "tensor:scan-sum") \
+    X(tensor_concatenate, "tensor:concatenate") \
+    X(tensor_permute, "tensor:permute") \
     X(tensor_merge, "tensor:merge") \
     X(tensor_zip_map, "tensor:zip-map") \
     X(lib_tensor_try_zip_map, "__cetta_lib_tensor_try_zip_map") \
@@ -478,6 +512,8 @@ static inline SymbolSpelling symbol_spelling(
     X(tensor_top_k, "tensor:top-k") \
     X(tensor_encode, "tensor:encode") \
     X(tensor_decode, "tensor:decode") \
+    X(tensor_encode_bytes, "tensor:encode-bytes") \
+    X(tensor_decode_bytes, "tensor:decode-bytes") \
     X(tensor_builder, "tensor:builder") \
     X(tensor_put, "tensor:put") \
     X(tensor_freeze, "tensor:freeze") \
@@ -854,11 +890,24 @@ static inline SymbolSpelling symbol_spelling(
  * shared registry supplies dispatch and operand-observation capability;
  * no evaluator needs to recognize a library's spelling or value type. */
 #define CETTA_PUBLIC_LIBRARY_NATIVE_SYMBOL_FIELDS(X) \
+    X(binary_pack_fields) X(binary_unpack_fields) X(binary_packed_length) \
+    X(binary_unsigned) X(binary_from_unsigned) \
+    X(binary_symbol_utf8) X(binary_from_symbol_utf8) \
+    X(binary_value_kind) \
+    X(binary_is_unsigned) \
+    X(binary_utf8) X(binary_from_utf8) \
+    X(heap_empty) X(heap_insert) X(heap_take) X(heap_size_public) X(heap_valid) \
+    X(work_epoch) \
+    X(dag_from_forest) X(dag_from_records) X(dag_export) X(dag_roots) \
+    X(dag_node) X(dag_unfold) X(dag_stats) X(dag_close) \
+    X(syntax_read) X(syntax_restore) X(syntax_freeze) X(syntax_write) X(syntax_intrinsic_head) \
     X(tensor_from_values) X(tensor_from_json) X(tensor_from_coo) X(tensor_from_coordinates) X(tensor_inspect) \
-    X(tensor_shape) X(tensor_dtype) X(tensor_layout) X(tensor_at) \
+    X(tensor_shape) X(tensor_dtype) X(tensor_layout) X(tensor_at) X(tensor_is_tensor) \
     X(tensor_entries) X(tensor_gather) X(tensor_merge) \
+    X(tensor_scan_sum) X(tensor_concatenate) X(tensor_permute) \
     X(tensor_copy) X(tensor_convert) X(tensor_cast) X(tensor_promote) X(tensor_view) X(tensor_reshape) X(tensor_sum) \
     X(tensor_matvec) X(tensor_top_k) X(tensor_encode) X(tensor_decode) \
+    X(tensor_encode_bytes) X(tensor_decode_bytes) \
     X(tensor_builder) X(tensor_put) X(tensor_freeze) X(tensor_freeze_log) X(tensor_close) \
     X(tensor_all_finite) X(tensor_normalize) X(tensor_cosine_index) \
     X(tensor_cosine_scores) X(tensor_cosine_retrieve) X(tensor_index_source) \

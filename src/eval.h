@@ -14,6 +14,8 @@ typedef struct CettaLibraryContext CettaLibraryContext;
 /* Cooperatively poll the active execution's interruption at a blocking
  * native boundary. A true result must release owned host work and unwind. */
 bool eval_native_interrupted(void);
+/* Opaque revision of a live owned retained computation; NULL if not owned. */
+Atom *eval_current_work_epoch(Arena *arena, Atom *handle);
 struct CettaPettaTokenSpaceClauseRegistry;
 
 /*
@@ -466,6 +468,7 @@ bool eval_current_uses_rust_he_compat_semantics(void) __attribute__((weak));
 bool eval_current_builtin_allowed(const char *name) __attribute__((weak));
 bool eval_current_pattern_module_enabled(void) __attribute__((weak));
 uint32_t eval_current_pattern_control_arity(SymbolId head) __attribute__((weak));
+uint64_t eval_current_native_observer_mask(void) __attribute__((weak));
 SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
 Space *eval_resolve_space_read(Space *space) __attribute__((weak));
 /* Resolve the captured transactional state view. This supplies neither an

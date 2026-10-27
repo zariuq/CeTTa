@@ -184,6 +184,9 @@ typedef enum {
     SPACE_KIND_STACK = 1,
     SPACE_KIND_QUEUE = 2,
     SPACE_KIND_HASH = 3,
+    /* Holds each atom once: adding an atom it holds, or an alpha-variant of
+     * one, changes nothing. */
+    SPACE_KIND_SET = 4,
 } SpaceKind;
 
 /* ── Space ──────────────────────────────────────────────────────────────── */
@@ -212,8 +215,9 @@ typedef struct {
     bool has_graded_equations; /* derived alongside the ordinary equation index */
     uint32_t secondary_index_deferral_depth;
     /* Rows removed and not yet contracted away (space_mark_rows): one bit
-     * per row, their number, and a Fenwick tree of live rows that maps
-     * logical positions to rows while any row is marked. */
+     * per row, their number, and a Fenwick tree of the live rows of each
+     * 64-row word, which maps logical positions to rows while any row is
+     * marked. */
     uint64_t *marks;
     CettaIndex *mark_tree;
     CettaIndex marked;
@@ -545,6 +549,7 @@ bool space_is_ordered(const Space *s);
 bool space_is_stack(const Space *s);
 bool space_is_queue(const Space *s);
 bool space_is_hash(const Space *s);
+bool space_is_set(const Space *s);
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx);
 CettaCount space_length64(const Space *s);
 AtomId space_get_atom_id_at64(const Space *s, CettaIndex idx);
@@ -795,10 +800,12 @@ SpaceEquationCursorStep space_equation_cursor_next(
 /*
  * Revision-qualified zipper over matching discrimination-trie leaves.
  * Pin a read token, prefix epoch, and occurrence ceiling at init; `next`
- * yields logical indices in declaration order without copying the bag.
+ * yields logical indices without copying the bag: in row order for an
+ * ordered space (a stack or a queue), in the index's own order for any
+ * other, since a space answers a bag.
  * It walks the Space's rows, skipping those removed by marks when it was
  * pinned, so opening one never contracts the Space.
- * Matching trie nodes are merged lazily in that order. The frontier retains
+ * An ordered space's trie nodes are merged lazily in row order. The frontier retains
  * one position per node, independently of the candidate bag's length.
  * Appends at or after the ceiling are invisible. A removal while the pin
  * is live leaves the cursor draining the rows it captured, while the Space
@@ -817,6 +824,11 @@ typedef struct {
     DiscNode **nodes;
     CettaIndex *leaf_pos;
     uint32_t node_len;
+    /* Whether the cursor reads rows in row order: a stack's or a queue's do,
+     * merging their trie nodes; any other reads its nodes one after another,
+     * and node_next is the node it is on. */
+    bool row_order;
+    uint32_t node_next;
     /* Cached (occurrence, node) keys packed into one index when the captured
      * ranges permit it. Inactive heap slots also hold tied-head advances. */
     CettaIndex *heap;
@@ -922,6 +934,13 @@ bool space_atom_is_exact_indexable(Atom *atom);
  * space, or a stale index it may not rebuild here (inside a deferral window,
  * or while rows are marked). */
 bool space_exact_frontier_certified(Space *s, Atom *pattern);
+/* Remove every row equal to one of the ground atoms IDS, all of head HEAD,
+ * in one pass through the exact index.  False, having removed nothing, when
+ * the index cannot answer for them: no current index, a row under HEAD or
+ * without a head that holds a variable, or rows the space cannot remove by
+ * position. */
+bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
+                            size_t count);
 /* The rows holding a ground pattern, ascending, read from a current exact
  * index without settling marks: physical rows while rows are marked. */
 CettaIndex space_exact_index_rows64(Space *s, Atom *pattern, CettaIndex **out);

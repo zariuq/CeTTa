@@ -973,7 +973,7 @@ static bool prepared_pure_opaque_value(
         return true;
     CettaPreparedPureExpressionView view = {0};
     return program->expression_view &&
-        program->expression_view(program->space, value, &view) ==
+        program->expression_view(program->space, value, NULL, &view) ==
             CETTA_PREPARED_PURE_EXPRESSION_OPAQUE_VALUE;
 }
 
@@ -988,7 +988,7 @@ static bool prepared_pure_leaf_ready(
         return !value->expr.len || prepared_pure_opaque_value(program, value);
     if (value->kind == ATOM_SYMBOL && program && program->expression_view) {
         CettaPreparedPureExpressionView view = {0};
-        return program->expression_view(program->space, value, &view) ==
+        return program->expression_view(program->space, value, NULL, &view) ==
             CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
     }
     return true;
@@ -2111,8 +2111,13 @@ static bool prepared_pure_code_trim_dead_registers(
 
 /* The slots or registers the machine will not read again are cleared
  * first, so collection keeps only what the rest of the run reads. */
+static __attribute__((noinline, cold)) size_t prepared_pure_gc_input_arenas(
+    const CettaPreparedPureAnswerCursor *cursor, const Arena *arena,
+    const Arena *survivor, uint32_t *identities, size_t capacity);
+
 static void prepared_pure_gc_collect(
-    CettaPreparedPureProgram *program, Arena *arena, ArenaMark anchor) {
+    CettaPreparedPureProgram *program, Arena *arena, ArenaMark anchor,
+    const CettaPreparedPureAnswerCursor *cursor) {
     if (!program || !arena)
         return;
     if (!(program->code_frame_len == 0u
@@ -2162,6 +2167,17 @@ static void prepared_pure_gc_collect(
      * resolve its atoms record their copies in place (Cheney forwarding). */
     else
         (void)atom_deep_copy_session_forward_region(session, arena, anchor);
+
+    /* Entry storage remains borrowed until this cursor closes or detaches.
+     * Copying collection may keep its closed subgraphs without certifying
+     * persistent ownership. Update-cell resolution still traverses them. */
+    uint32_t loan_arenas[64];
+    if (cursor && program->memo_len == 0u) {
+        size_t loan_count = prepared_pure_gc_input_arenas(cursor, arena,
+            program->gc_survivor_ready ? &program->gc_survivor : NULL,
+            loan_arenas, sizeof(loan_arenas) / sizeof(*loan_arenas));
+        (void)atom_deep_copy_session_loan_arenas(session, loan_arenas, loan_count);
+    }
 
     PreparedPureGcRoots roots = {
         .values = {program->values, program->value_len},
@@ -3044,13 +3060,40 @@ static bool prepared_pure_compile_eval(
     Atom *source, const void *source_view,
     uint32_t depth, uint32_t *node_out);
 
+static CettaComputationPlan prepared_pure_source_computation(
+        const CettaPreparedPureProgram *program, const void *source_view) {
+    if (!source_view || !program->source_view.computation)
+        return (CettaComputationPlan){0};
+    return program->source_view.computation(
+        program->source_view.context, source_view);
+}
+
 static CettaPreparedPureSourceRole prepared_pure_source_role(
         const CettaPreparedPureProgram *program,
         const void *source_view) {
-    if (!program || !source_view || !program->source_view.role)
+    if (!program || !source_view)
         return CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED;
-    return program->source_view.role(
-        program->source_view.context, source_view);
+    CettaPreparedPureSourceRole role = program->source_view.role
+        ? program->source_view.role(program->source_view.context, source_view)
+        : CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED;
+    if (role == CETTA_PREPARED_PURE_SOURCE_DECLINE ||
+        role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL)
+        return role;
+    CettaControlOperation operation = prepared_pure_source_computation(
+        program, source_view).control.operation;
+    /* A word can retain a completed result of a source call. It cannot
+     * grant call authority to a value/data occurrence. */
+    if ((role == CETTA_PREPARED_PURE_SOURCE_VALUE &&
+         operation != CETTA_CONTROL_NONE && operation != CETTA_CONTROL_RETURN_VALUE) ||
+        (role == CETTA_PREPARED_PURE_SOURCE_DATA &&
+         operation != CETTA_CONTROL_NONE && operation != CETTA_CONTROL_RETURN_VALUE &&
+         operation != CETTA_CONTROL_CONSTRUCT))
+        return CETTA_PREPARED_PURE_SOURCE_DECLINE;
+    if (operation == CETTA_CONTROL_RETURN_VALUE)
+        return CETTA_PREPARED_PURE_SOURCE_VALUE;
+    if (operation == CETTA_CONTROL_CONSTRUCT)
+        return CETTA_PREPARED_PURE_SOURCE_DATA;
+    return role;
 }
 
 static const void *prepared_pure_source_child(
@@ -3060,6 +3103,43 @@ static const void *prepared_pure_source_child(
         return NULL;
     return program->source_view.child(
         program->source_view.context, source_view, child_index);
+}
+
+
+static CettaPreparedPureExpressionViewState prepared_pure_describe_expression(
+        const CettaPreparedPureProgram *program, const Atom *source,
+        const void *source_view, CettaPreparedPureExpressionView *view) {
+    CettaComputationPlan computation =
+        prepared_pure_source_computation(program, source_view);
+    return program->expression_view(program->space, source,
+        computation.control.operation == CETTA_CONTROL_NONE ? NULL : &computation,
+        view);
+}
+
+/* Stored operation metadata precedes physical spelling. Fresh syntax has
+ * no retained word and elaborates through the generated common vocabulary. */
+static CettaControlOperationPlan prepared_pure_control_plan(
+        const CettaPreparedPureProgram *program, Atom *source,
+        const void *source_view) {
+    CettaComputationPlan computation =
+        prepared_pure_source_computation(program, source_view);
+    if (computation.control.operation != CETTA_CONTROL_NONE)
+        return computation.control;
+    CettaControlOperationPlan control = {0};
+    if (source && source->kind == ATOM_EXPR && source->expr.len &&
+        source->expr.elems[0] && source->expr.elems[0]->kind == ATOM_SYMBOL)
+        cetta_control_operation_decode(atom_symbol_current_id(source->expr.elems[0]),
+            source->expr.len - 1u, &control, &g_builtin_syms);
+    return control;
+}
+
+/* These lowerings consume three independent source places. Checking the
+ * coordinates before reading also rejects absent and malformed operands. */
+static bool prepared_pure_control_three_places(
+        CettaControlOperationPlan plan, CettaExprLen arity) {
+    return arity == 3u && plan.source < arity && plan.first < arity &&
+        plan.last < arity && plan.source != plan.first &&
+        plan.source != plan.last && plan.first != plan.last;
 }
 
 static const void *prepared_pure_projected_source_child(
@@ -3086,12 +3166,18 @@ typedef enum {
 static bool prepared_pure_expression_is_zero(
         CettaPreparedPureProgram *program, Atom *source,
         const void *source_view) {
-    if (!program || !source || !program->expression_view)
+    if (!program || !source)
         return false;
     CettaPreparedPureSourceRole source_role =
         prepared_pure_source_role(program, source_view);
     if (source_role != CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED &&
         source_role != CETTA_PREPARED_PURE_SOURCE_CALL)
+        return false;
+    CettaComputationPlan computation =
+        prepared_pure_source_computation(program, source_view);
+    if (computation.control.operation != CETTA_CONTROL_NONE)
+        return computation.control.operation == CETTA_CONTROL_FAILURE;
+    if (!program->expression_view)
         return false;
     if (source_role == CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED &&
         source->kind == ATOM_EXPR && source->expr.len > 0u &&
@@ -3101,7 +3187,7 @@ static bool prepared_pure_expression_is_zero(
             program->space, atom_symbol_current_id(source->expr.elems[0])))
         return false;
     CettaPreparedPureExpressionView view = {0};
-    return program->expression_view(program->space, source, &view) ==
+    return program->expression_view(program->space, source, NULL, &view) ==
         CETTA_PREPARED_PURE_EXPRESSION_ZERO;
 }
 
@@ -3121,11 +3207,11 @@ bool cetta_prepared_pure_single_result_requires_answer_effect(
         return false;
 
     CettaPreparedPureExpressionView view = {0};
-    if (expression_view(space, expression->expr.elems[2], &view) ==
+    if (expression_view(space, expression->expr.elems[2], NULL, &view) ==
             CETTA_PREPARED_PURE_EXPRESSION_ZERO)
         return true;
     memset(&view, 0, sizeof(view));
-    return expression_view(space, expression->expr.elems[3], &view) ==
+    return expression_view(space, expression->expr.elems[3], NULL, &view) ==
         CETTA_PREPARED_PURE_EXPRESSION_ZERO;
 }
 
@@ -3248,17 +3334,25 @@ prepared_pure_compile_guarded_equation(
         rhs->expr.elems[0]->kind != ATOM_SYMBOL)
         return PREPARED_PURE_GUARDED_EQUATION_NOT_APPLICABLE;
 
-    CettaGsltFoldControl control;
-    if (!cetta_gslt_fold_control_program(
-            atom_symbol_current_id(rhs->expr.elems[0]), 3u, &control, &g_builtin_syms) ||
-        control != CETTA_GSLT_FOLD_CONTROL_BRANCH)
+    CettaControlOperationPlan control =
+        prepared_pure_control_plan(program, rhs, rhs_view);
+    if (control.operation != CETTA_CONTROL_BRANCH ||
+        !prepared_pure_control_three_places(control, 3u))
+        return PREPARED_PURE_GUARDED_EQUATION_NOT_APPLICABLE;
+    CettaExprIndex condition = (CettaExprIndex)control.source + 1u;
+    CettaExprIndex when_true = (CettaExprIndex)control.first + 1u;
+    CettaExprIndex when_false = (CettaExprIndex)control.last + 1u;
+    CettaComputationPlan condition_plan = prepared_pure_source_computation(
+        program, prepared_pure_source_child(program, rhs_view, condition));
+    if (condition_plan.control.operation != CETTA_CONTROL_NONE &&
+        condition_plan.control.operation != CETTA_CONTROL_INVOKE)
         return PREPARED_PURE_GUARDED_EQUATION_NOT_APPLICABLE;
     bool then_zero = prepared_pure_expression_is_zero(
-        program, rhs->expr.elems[2],
-        prepared_pure_source_child(program, rhs_view, 2u));
+        program, rhs->expr.elems[when_true],
+        prepared_pure_source_child(program, rhs_view, when_true));
     bool else_zero = prepared_pure_expression_is_zero(
-        program, rhs->expr.elems[3],
-        prepared_pure_source_child(program, rhs_view, 3u));
+        program, rhs->expr.elems[when_false],
+        prepared_pure_source_child(program, rhs_view, when_false));
     if (then_zero == else_zero)
         return PREPARED_PURE_GUARDED_EQUATION_NOT_APPLICABLE;
 
@@ -3267,15 +3361,16 @@ prepared_pure_compile_guarded_equation(
     uint32_t guard = PREPARED_PURE_NO_SCALAR_GUARD;
     bool expected_truth = else_zero;
     if (!prepared_pure_compile_scalar_guard(
-            program, context, rhs->expr.elems[1],
+            program, context, rhs->expr.elems[condition],
             expected_truth, &guard)) {
         program->scalar_guard_len = guard_mark;
         program->scalar_guard_argument_len = argument_mark;
         return PREPARED_PURE_GUARDED_EQUATION_NOT_APPLICABLE;
     }
-    Atom *result_branch = rhs->expr.elems[then_zero ? 3u : 2u];
+    CettaExprIndex result = then_zero ? when_false : when_true;
+    Atom *result_branch = rhs->expr.elems[result];
     const void *result_view = prepared_pure_source_child(
-        program, rhs_view, then_zero ? 3u : 2u);
+        program, rhs_view, result);
     if (!prepared_pure_compile_eval(
             program, context, result_branch, result_view,
             depth + 1u, root_out)) {
@@ -3346,7 +3441,7 @@ static PreparedPureHeadRole prepared_pure_head_role(
     if (program->expression_view) {
         CettaPreparedPureExpressionView view = {0};
         CettaPreparedPureExpressionViewState state =
-            program->expression_view(program->space, source, &view);
+            program->expression_view(program->space, source, NULL, &view);
         if (state == CETTA_PREPARED_PURE_EXPRESSION_OPAQUE_VALUE)
             return PREPARED_PURE_HEAD_INERT;
         if (state == CETTA_PREPARED_PURE_EXPRESSION_DECLINE ||
@@ -3496,8 +3591,8 @@ static bool prepared_pure_compile_template(
                 prepared_pure_program_intrinsic_row(
                     program, atom_symbol_current_id(payload_head),
                     payload_arity, NULL, NULL) ||
-                cetta_gslt_fold_control_program(
-                    atom_symbol_current_id(payload_head), payload_arity, NULL, &g_builtin_syms)) {
+                cetta_control_operation_is_control_form(
+                    prepared_pure_control_plan(program, source, source_view))) {
                 return prepared_pure_compile_eval(
                     program, context, source, source_view,
                     depth, node_out);
@@ -4942,8 +5037,13 @@ static bool prepared_pure_compile_eval_with_role(
         return prepared_pure_reject(
             program, "a Prime meta-argument is read by the core or equations",
             source);
+    CettaControlOperationPlan control = prepared_pure_control_plan(
+        program, source, source_view);
     if (source_role != CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL &&
         source_role != CETTA_PREPARED_PURE_SOURCE_DECLINE &&
+        (control.operation == CETTA_CONTROL_NONE ||
+         control.operation == CETTA_CONTROL_RETURN_VALUE ||
+         control.operation == CETTA_CONTROL_CONSTRUCT) &&
         prepared_pure_ground_data(program, source))
         return prepared_pure_add_node(
             program,
@@ -4975,7 +5075,8 @@ static bool prepared_pure_compile_eval_with_role(
      * symbol canonical-only wherever it occurs. */
     if (source->kind == ATOM_SYMBOL && program->expression_view) {
         CettaPreparedPureExpressionView symbol_view = {0};
-        if (program->expression_view(program->space, source, &symbol_view) ==
+        if (prepared_pure_describe_expression(program, source, source_view,
+                &symbol_view) ==
             CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY)
             return prepared_pure_reject(
                 program, "dialect-owned symbol requires canonical evaluation",
@@ -5021,7 +5122,7 @@ static bool prepared_pure_compile_eval_with_role(
          * values and opaque quotations have already returned above. */
         if (program->expression_view) {
             CettaPreparedPureExpressionView dialect_view = {0};
-            if (program->expression_view(program->space, source, &dialect_view) ==
+            if (program->expression_view(program->space, source, NULL, &dialect_view) ==
                 CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY)
                 return prepared_pure_reject(program,
                     "dialect-owned source requires canonical evaluation", source);
@@ -5053,7 +5154,8 @@ static bool prepared_pure_compile_eval_with_role(
     CettaPreparedPureExpressionView expression_view = {0};
     if (program->expression_view) {
         expression_view_state =
-            program->expression_view(program->space, source, &expression_view);
+            prepared_pure_describe_expression(program, source, source_view,
+                &expression_view);
         if (expression_view_state ==
                 CETTA_PREPARED_PURE_EXPRESSION_PROJECT ||
             expression_view_state ==
@@ -5437,73 +5539,96 @@ static bool prepared_pure_compile_eval_with_role(
             },
             children, 2u, node_out);
     }
-    CettaGsltFoldControl control;
-    if (cetta_gslt_fold_control_program(head, arity, &control, &g_builtin_syms)) {
-        if (control == CETTA_GSLT_FOLD_CONTROL_EVALUATE) {
-            return arity == 1u && prepared_pure_compile_eval(
-                program, context, source->expr.elems[1],
-                prepared_pure_source_child(program, source_view, 1u),
+    if (cetta_control_operation_is_control_form(control)) {
+        if (control.operation == CETTA_CONTROL_FORCE ||
+            control.operation == CETTA_CONTROL_RETURN_SCOPE) {
+            /* A supplied force word needs the dialect's code projection,
+             * handled above. Compiling its saved value as an ordinary
+             * source child would erase the force/value distinction. */
+            if (control.operation == CETTA_CONTROL_FORCE &&
+                prepared_pure_source_computation(
+                    program, source_view).control.operation != CETTA_CONTROL_NONE)
+                return prepared_pure_reject(program,
+                    "force requires an admitted code projection", source);
+            CettaExprIndex child = (CettaExprIndex)control.source + 1u;
+            return arity == 1u && control.source == 0u &&
+                prepared_pure_compile_eval(
+                program, context, source->expr.elems[child],
+                prepared_pure_source_child(program, source_view, child),
                 depth + 1u, node_out);
         }
-        if (control == CETTA_GSLT_FOLD_CONTROL_BRANCH) {
-            if (arity != 3u)
+        if (control.operation == CETTA_CONTROL_BRANCH) {
+            if (!prepared_pure_control_three_places(control, arity))
                 return false;
-            uint32_t *children = NULL;
-            if (!prepared_pure_compile_children(
-                    program, context, &source->expr.elems[1], 3u,
-                    source_view, 1u, depth, true, false, &children))
-                return false;
-            bool ok = prepared_pure_add_node(
+            CettaExprIndex places[] = {(CettaExprIndex)control.source + 1u,
+                (CettaExprIndex)control.first + 1u,
+                (CettaExprIndex)control.last + 1u};
+            uint32_t children[3];
+            for (size_t index = 0u; index < 3u; index++) {
+                CettaExprIndex child = places[index];
+                if (!prepared_pure_compile_eval(
+                        program, context, source->expr.elems[child],
+                        prepared_pure_source_child(program, source_view, child),
+                        depth + 1u, &children[index]))
+                    return false;
+            }
+            return prepared_pure_add_node(
                 program, (PreparedPureNode){.kind = PREPARED_PURE_IF},
                 children, 3u, node_out);
-            free(children);
-            return ok;
         }
-        if (control == CETTA_GSLT_FOLD_CONTROL_BIND) {
-            if (arity != 3u || !source->expr.elems[1])
+        if (control.operation == CETTA_CONTROL_SEQUENCE) {
+            if (!prepared_pure_control_three_places(control, arity))
                 return false;
+            CettaExprIndex producer = (CettaExprIndex)control.source + 1u;
+            CettaExprIndex binder = (CettaExprIndex)control.first + 1u;
+            CettaExprIndex continuation = (CettaExprIndex)control.last + 1u;
             uint32_t bound = 0u;
             if (!prepared_pure_compile_eval(
-                    program, context, source->expr.elems[2],
+                    program, context, source->expr.elems[producer],
                     prepared_pure_source_child(
-                        program, source_view, 2u),
+                        program, source_view, producer),
                     depth + 1u, &bound))
                 return prepared_pure_reject(
                     program, "let bound expression is outside the fragment",
-                    source->expr.elems[2]);
+                    source->expr.elems[producer]);
             size_t saved_bindings = context->len;
             uint32_t pattern_index = 0u;
             if (!prepared_pure_compile_inert_bind_pattern(
-                    program, context, source->expr.elems[1],
-                    prepared_pure_source_child(program, source_view, 1u),
+                    program, context, source->expr.elems[binder],
+                    prepared_pure_source_child(program, source_view, binder),
                     &pattern_index))
                 return prepared_pure_reject(
                     program, "let pattern is outside the fragment",
-                    source->expr.elems[1]);
+                    source->expr.elems[binder]);
             uint32_t body = 0u;
             bool body_ok = prepared_pure_compile_eval(
-                program, context, source->expr.elems[3],
+                program, context, source->expr.elems[continuation],
                 prepared_pure_source_child(
-                    program, source_view, 3u),
+                    program, source_view, continuation),
                 depth + 1u, &body);
             context->len = saved_bindings;
             if (!body_ok)
                 return prepared_pure_reject(
                     program, "let body is outside the fragment",
-                    source->expr.elems[3]);
+                    source->expr.elems[continuation]);
             return prepared_pure_compile_source_bind(
                 program, pattern_index, bound, body, node_out);
         }
-        if (control == CETTA_GSLT_FOLD_CONTROL_BIND_SEQUENCE) {
-            Atom *pairs = source->expr.elems[1];
-            if (arity != 2u || !pairs || pairs->kind != ATOM_EXPR)
+        if (control.operation == CETTA_CONTROL_SEQUENCE_MANY) {
+            if (arity != 2u || control.source >= arity ||
+                control.last >= arity || control.source == control.last)
+                return false;
+            CettaExprIndex producer = (CettaExprIndex)control.source + 1u;
+            CettaExprIndex continuation = (CettaExprIndex)control.last + 1u;
+            Atom *pairs = source->expr.elems[producer];
+            if (!pairs || pairs->kind != ATOM_EXPR)
                 return prepared_pure_reject(
                     program, "let* bindings are outside the fragment", pairs);
             return prepared_pure_compile_bind_sequence(
                 program, context, pairs,
-                prepared_pure_source_child(program, source_view, 1u), 0u,
-                source->expr.elems[2],
-                prepared_pure_source_child(program, source_view, 2u),
+                prepared_pure_source_child(program, source_view, producer), 0u,
+                source->expr.elems[continuation],
+                prepared_pure_source_child(program, source_view, continuation),
                 depth, node_out);
         }
         return false;
@@ -10379,7 +10504,8 @@ static bool prepared_pure_compile_closed_entry_call(
     if (program->expression_view) {
         CettaPreparedPureExpressionView view = {0};
         CettaPreparedPureExpressionViewState state =
-            program->expression_view(program->space, expression, &view);
+            prepared_pure_describe_expression(program, expression,
+                program->source_view.root, &view);
         if (state == CETTA_PREPARED_PURE_EXPRESSION_PROJECT) {
             /* An entry value cannot stand for evaluation as code or for
              * dispatch of an application. Compile those boundaries from
@@ -10416,8 +10542,15 @@ static bool prepared_pure_compile_closed_entry_call(
 
     SymbolId head = atom_symbol_current_id(expression->expr.elems[0]);
     CettaExprLen arity = expression->expr.len - 1u;
-    CettaGsltFoldControl control;
-    if (cetta_gslt_fold_control_program(head, arity, &control, &g_builtin_syms)) {
+    CettaControlOperationPlan control = prepared_pure_control_plan(
+        program, expression, program->source_view.root);
+    if (cetta_control_operation_is_control_form(control)) {
+        /* Reusable syntax entries cannot erase the individual source
+         * roles of captured operands. The per-expression compiler keeps
+         * their words and still lowers the resulting node to this worker. */
+        if (prepared_pure_source_computation(
+                program, program->source_view.root).control.operation != CETTA_CONTROL_NONE)
+            return true;
         /* A Need control's operands are invocation data while its scheduling
          * discipline is generated language semantics.  Compile that fixed
          * discipline once and demand only the operands selected at runtime.
@@ -10425,8 +10558,9 @@ static bool prepared_pure_compile_closed_entry_call(
          * on the ordinary per-expression compiler until it has an equally
          * general parameter representation. */
         if (program->call_mode != CETTA_GSLT_PURE_CALL_CALL_BY_NEED ||
-            (control != CETTA_GSLT_FOLD_CONTROL_BRANCH &&
-             control != CETTA_GSLT_FOLD_CONTROL_EVALUATE))
+            (control.operation != CETTA_CONTROL_BRANCH &&
+             control.operation != CETTA_CONTROL_FORCE &&
+             control.operation != CETTA_CONTROL_RETURN_SCOPE))
             return true;
 
         uint32_t *children = NULL;
@@ -10436,14 +10570,18 @@ static bool prepared_pure_compile_closed_entry_call(
                 PREPARED_PURE_EVAL_ENTRY_ARGUMENT, &children))
             return false;
         bool compiled = false;
-        if (control == CETTA_GSLT_FOLD_CONTROL_BRANCH && arity == 3u) {
+        if (control.operation == CETTA_CONTROL_BRANCH &&
+            prepared_pure_control_three_places(control, arity)) {
+            uint32_t branch[] = {children[control.source],
+                children[control.first], children[control.last]};
             compiled = prepared_pure_add_node(
                 program,
                 (PreparedPureNode){.kind = PREPARED_PURE_IF},
-                children, arity, root_out);
-        } else if (control == CETTA_GSLT_FOLD_CONTROL_EVALUATE &&
-                   arity == 1u) {
-            *root_out = children[0];
+                branch, 3u, root_out);
+        } else if ((control.operation == CETTA_CONTROL_FORCE ||
+                    control.operation == CETTA_CONTROL_RETURN_SCOPE) &&
+                   arity == 1u && control.source == 0u) {
+            *root_out = children[control.source];
             compiled = true;
         }
         free(children);
@@ -12089,10 +12227,10 @@ static bool prepared_pure_lower_code_body(
 /* Native-aware register execution is a lowering of the continuation steps,
  * not a second lowering of the source tree. Logical slots keep their exact
  * coordinates; only short-lived constructor operands need extra registers. */
-static bool prepared_pure_lower_native_code(CettaPreparedPureProgram *program) {
-    for (size_t h = 0u; h < program->head_len; h++)
-        if (!program->heads[h].compiled || !program->heads[h].unique_match)
-            return false;
+static __attribute__((noinline, cold)) bool prepared_pure_lower_native_code(CettaPreparedPureProgram *program) {
+    /* The cursor already selected this equation. Other equations remain
+     * cursor alternatives; calls from code still require a unique match,
+     * or transfer their ready call and return frames to that cursor. */
     for (size_t e = 0u; e < program->equation_len; e++) {
         PreparedPureEquation *equation = &program->equations[e];
         uint32_t start = (uint32_t)program->code_len;
@@ -12192,7 +12330,9 @@ static bool prepared_pure_lower_native_code(CettaPreparedPureProgram *program) {
  * each step of an answer producer that evaluates a region that cannot
  * choose.  In an answer producer those regions call only determinate
  * heads, so only their equations are lowered.  A body outside the code's
- * node kinds leaves the program to the node executor. */
+ * node kinds leaves the program to the node executor. Native-aware code
+ * instead lowers selected equations' continuation steps and transfers an
+ * ambiguous ready call to the cursor with its actual return frames. */
 static bool prepared_pure_lower_code(CettaPreparedPureProgram *program) {
     if (!program || !program->closed_program ||
         program->call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
@@ -12838,6 +12978,26 @@ struct CettaPreparedPureAnswerCursor {
     bool (*continuation_current)(const void *context);
     const void *continuation_context;
 };
+
+static __attribute__((noinline, cold)) size_t prepared_pure_gc_input_arenas(
+        const CettaPreparedPureAnswerCursor *cursor, const Arena *arena,
+        const Arena *survivor, uint32_t *identities, size_t capacity) {
+    size_t count = 0u;
+    for (size_t index = 0u; index < cursor->argument_len; index++) {
+        const Atom *argument = cursor->arguments[index];
+        uint32_t identity = argument ? argument->arena_id : 0u;
+        if (!identity ||
+            identity == arena->identity ||
+            (survivor && identity == survivor->identity))
+            continue;
+        size_t found = 0u;
+        while (found < count && identities[found] != identity)
+            found++;
+        if (found == count && count < capacity)
+            identities[count++] = identity;
+    }
+    return count;
+}
 
 static bool prepared_pure_answer_cursor_detach_with_session(
     CettaPreparedPureAnswerCursor *cursor, AtomDeepCopySession *session);
@@ -15216,14 +15376,14 @@ static PREPARED_PURE_NOINLINE bool prepared_pure_code_safe_point(
     size_t nursery_budget_bytes, ArenaMark gc_anchor,
     size_t *gc_trigger_bytes,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context) {
+    void *interrupt_context, const CettaPreparedPureAnswerCursor *cursor) {
     if (interrupt_poll && interrupt_poll(interrupt_context))
         return false;
     if (nursery_budget_bytes != 0u &&
         prepared_pure_saturating_add(
             arena->live_bytes, arena->external_bytes) >= *gc_trigger_bytes) {
         program->code_resumed = resumed;
-        prepared_pure_gc_collect(program, arena, gc_anchor);
+        prepared_pure_gc_collect(program, arena, gc_anchor, cursor);
         program->code_resumed = false;
         *gc_trigger_bytes = prepared_pure_gc_trigger_bytes(
             program, arena, gc_anchor, nursery_budget_bytes);
@@ -15775,7 +15935,7 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
                 if (!prepared_pure_code_safe_point(
                         program, arena, false, nursery_budget_bytes,
                         gc_anchor, &gc_trigger_bytes, interrupt_poll,
-                        interrupt_context)) {
+                        interrupt_context, cursor)) {
                     if (outcome)
                         *outcome = cetta_call_interrupted();
                     if (cursor) {
@@ -16015,7 +16175,7 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_run_code_worker(
             if (!prepared_pure_code_safe_point(
                     program, arena, true, nursery_budget_bytes,
                     gc_anchor, &gc_trigger_bytes, interrupt_poll,
-                    interrupt_context)) {
+                    interrupt_context, cursor)) {
                 if (outcome)
                     *outcome = cetta_call_interrupted();
                 if (cursor) {
@@ -16043,12 +16203,20 @@ finished:
         decline="bounded result requires normalization handoff";goto declined;
     }
     if (execution) execution->poll_countdown=poll_countdown;
+    bool loan_inputs = program->memo_len == 0u;
     prepared_pure_memo_clear(program);
     /* Without a collection, values live in the cursor, its borrowed entry,
      * or its retained immutable program. Only collection survivors need to
      * cross out of the program's reusable invocation storage here. */
     if (cursor && program->gc_survivor_ready) {
         AtomDeepCopySession *copy = atom_deep_copy_session_new(arena);
+        uint32_t loan_arenas[64];
+        if (copy && loan_inputs) {
+            size_t loan_count = prepared_pure_gc_input_arenas(cursor, arena,
+                &program->gc_survivor, loan_arenas,
+                sizeof(loan_arenas) / sizeof(*loan_arenas));
+            (void)atom_deep_copy_session_loan_arenas(copy, loan_arenas, loan_count);
+        }
         Atom *owned = copy ? atom_deep_copy_session_copy(copy, result) : NULL;
         atom_deep_copy_session_free(copy);
         if (!owned) {
@@ -16251,7 +16419,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
             arena->live_bytes, arena->external_bytes);
         if (closed && nursery_budget_bytes != 0u &&
             gc_current_bytes >= gc_trigger_bytes) {
-            prepared_pure_gc_collect(program, arena, gc_anchor);
+            prepared_pure_gc_collect(program, arena, gc_anchor, NULL);
             gc_trigger_bytes = prepared_pure_gc_trigger_bytes(
                 program, arena, gc_anchor, nursery_budget_bytes);
         }
@@ -16276,7 +16444,7 @@ static bool PREPARED_PURE_HOT prepared_pure_program_execute_retained(
                 if (program->expression_view) {
                     CettaPreparedPureExpressionView view = {0};
                     CettaPreparedPureExpressionViewState state =
-                        program->expression_view(program->space, source, &view);
+                        program->expression_view(program->space, source, NULL, &view);
                     if (state ==
                             CETTA_PREPARED_PURE_EXPRESSION_CANONICAL_ONLY ||
                         state == CETTA_PREPARED_PURE_EXPRESSION_ZERO ||

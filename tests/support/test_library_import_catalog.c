@@ -9,7 +9,8 @@ static unsigned checks;
 
 int main(void) {
     const char *names[]={"gparse","langdef","pat","hol","set","holkernel",
-        "mm0kernel","seal","megalodon","supervise"};
+        "mm0kernel","seal","megalodon","supervise","interaction",
+        "binary","heap","dag","syntax","work"};
     CettaLibraryMask native=UINT64_C(1)<<34; /* Reserved optional crypto. */
     check(cetta_native_module_catalog_valid(0));
     for (size_t i=0;i<sizeof(names)/sizeof(*names);++i) {

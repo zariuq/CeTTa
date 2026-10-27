@@ -45,6 +45,7 @@
 #include "atom.h"
 #include "call_outcome.h"
 #include "space.h"
+#include "native_query.h"
 
 typedef struct CettaOpenEquationProgram CettaOpenEquationProgram;
 
@@ -482,6 +483,13 @@ typedef struct {
     /* The selected dialect treats a still-unbound evaluated head as data.
      * This says nothing about a later interpretation after binding. */
     bool open_head_is_data;
+    /* A match a collection takes whole, answered at once by the native
+     * query path when the host admits it (petta_search_machine.h); DECLINED
+     * leaves the collection to its local relation. */
+    CettaNativeQueryStatus (*native_collect)(
+        void *context, Space *space, Arena *arena, Atom *query,
+        const struct PettaPlanNode *plan, bool count_only,
+        bool wrap_collection, Atom **value);
 } CettaOpenEquationRuntime;
 
 /* Install the owning machine's pure guard service before the cursor runs.

@@ -869,6 +869,9 @@ typedef struct Arena {
      * and per small integer until its next reset.  Opt-in, for arenas whose
      * owner allocates such scalars at a high rate. */
     bool scalar_cache;
+    /* Copies into this arena make symbols of their own instead of taking
+     * the symbol table's one atom for each.  Opt-in. */
+    bool own_symbols;
     /* Retired full-size blocks go to the thread's stock for its next
      * recycling arena instead of back to the allocator.  Opt-in, for owners
      * that create and retire many short-lived arenas. */
@@ -955,6 +958,9 @@ void  arena_set_older_generation(Arena *young, const Arena *older);
  * this arena.  Atoms are immutable, so sharing is invisible to observers;
  * a reset or free forgets every shared atom with the storage it lived in. */
 void  arena_set_scalar_cache(Arena *a, bool enabled);
+/* Copies into this arena make symbols of their own, where they would take
+ * the symbol table's one atom for each. */
+void  arena_set_own_symbols(Arena *a, bool enabled);
 /* Keep a contextual identity alive until this arena's corresponding reset.
  * Ambient/external identifiers have no recyclable owner to retain. */
 bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity);
@@ -1155,11 +1161,13 @@ uint32_t atom_hash(Atom *a);
 void atom_hash_read_scope_enter(void);
 void atom_hash_read_scope_leave(void);
 
-/* A 64-bit hash spread over every bit, equal for atoms atom_eq equates, for
- * tables that index many terms by hash.  atom_hash stays the shared
- * structural hash; its recurrence lets families of terms that differ in small
- * leaves, numbers above all, collapse to one 32-bit value. */
-uint64_t atom_spread_hash(Atom *atom);
+/* A spread hash for known identity-free finite structure or certified
+ * infinite unfoldings. False leaves out unchanged when neither domain is
+ * established. A collection must switch
+ * to canonical equality when any key declines: rational views can compare
+ * equal to finite trees while having a different physical representation.
+ * Shared expression children are memoized within this call. */
+bool atom_spread_hash(Atom *atom, uint64_t *out);
 
 /* A hash cache of 0 means "not yet known", so every structural hash, cached
  * or not, spells a computed 0 as this word: leaves, expression folds, the
@@ -1905,6 +1913,11 @@ char *atom_to_parseable_string_petta(Arena *a, Atom *atom);
  * string's bytes raw, NUL included. */
 char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
                               size_t *len_out);
+/* Source output uses the same dialect printer but preserves source variable
+ * names rather than replacing them with display ordinals. This is not a
+ * guarantee of reader round-trip; the source adapter checks that separately. */
+char *atom_to_source_bytes(Arena *a, Atom *atom, bool petta,
+                          size_t *len_out);
 
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */
@@ -2116,6 +2129,13 @@ bool atom_deep_copy_session_relocation_targets(
  * resource identities keep their separate lifetime contract. */
 AtomDeepCopySession *atom_deep_copy_session_relocate(
     const AtomDeepCopySession *source, AtomDeepCopySession *relocation);
+/* Borrow closed graphs from the named arenas instead of transporting them.
+ * Install before the first copy; mapped/resolving sessions cannot borrow.
+ * The identity array stays live until this session ends. Source storage stays
+ * live until every resulting borrow is retired or materialized by an ordinary
+ * copy. This grants no destination-ownership or arena-closure certificate. */
+bool atom_deep_copy_session_loan_arenas(AtomDeepCopySession *session,
+    const uint32_t *identities, size_t count);
 /* A multi-root mapped episode. The mapper/context cannot be replaced during
  * the episode. Destination-owned terms are still traversed: storage ownership
  * does not establish that their leaves already have the requested meaning.

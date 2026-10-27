@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create isolated indexed-count, encoding and validity defects."""
+"""Create isolated indexed-count, encoding, validity and stored-variable defects."""
 from pathlib import Path
 import sys
 
@@ -18,9 +18,13 @@ mutations = {
     "generation": ("plan->info.universe_epoch == space->native.universe->storage_epoch", "true"),
     "private-alias": ("previous < c; previous++", "false && previous < c; previous++"),
     "sharing": ("if (factors > 1u)", "if (factors > 2u)"),
-    "encoding": ("header->subtag == GV_STRING)))", "header->subtag == GV_STRING || header->subtag == GV_FLOAT)))"),
+    "encoding": ("header->subtag == GV_STRING));", "header->subtag == GV_STRING || header->subtag == GV_FLOAT));"),
     "whole-variable": ("if (kind == ATOM_VAR)", "if (false)"),
+    "open-order": ("before[others_len] = j < i || (ground_only && ground_only[j]);",
+                   "before[others_len] = ground_only && ground_only[j];"),
+    "open-unbound": ("ready = part->sources[v] != SIZE_MAX;", "ready = true;"),
     "seed": ("bindings_apply_if_vars(seed, scratch, patterns[i])", "bindings_apply_if_vars(NULL, scratch, patterns[i])"),
+    "dense-seed": ("bindings_apply_if_vars(seed, scratch, patterns[p])", "bindings_apply_if_vars(NULL, scratch, patterns[p])"),
     "seek": ("value < key || (upper && value == key)", "value <= key || (upper && value == key)"),
     "seek-cost": ("work->key_comparisons++;", "work->key_comparisons += 0u;"),
     "seek-rotation": (

@@ -42,6 +42,7 @@ tests/he_e1_kb_write.metta	he	metta	extended	main	native	test	golden	-
 tests/he_e2_states.metta	he	metta	extended	main	native	test	golden	-
 tests/he_e3_match_states.metta	he	metta	extended	main	native	test	golden	-
 tests/he_g1_docs.metta	he	metta	extended	main	native	test	golden	-
+tests/petta/argument_redefines_callee.metta	petta	metta		main	native	test-petta	golden	argument changes callee before dispatch; effect once
 tests/prime/atom_result_type.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
 tests/prime/authored_frontier_chaining.metta	prime	metta		any	native	test-prime	golden	Prime authored bounded-chaining integration canary with independent kernel checking
 tests/prime/cardinality_observer_dynamic_space.metta	prime	metta		any	native	test-prime	golden	Prime normative golden regression
@@ -804,6 +805,7 @@ tests/test_select_arity.metta	he	metta	extended	main	native	test	golden	-
 tests/test_select_bad_type.metta	he	metta	extended	main	native	test	golden	-
 tests/test_select_collect_docs.metta	he	metta	extended	main	native	test	golden	-
 tests/test_select_once_alias.metta	he	metta	extended	main	native	test	golden	-
+tests/test_set_space.metta	he	metta	extended	main	native	test	golden	-
 tests/test_sha256_syntax.metta	he	metta	extended	main	native	test	golden	-
 tests/test_simple_match_builder_regression.metta	he	metta	extended	main	native	test	golden	-
 tests/test_singleton_visible_witness_overlap_regression.metta	he	metta	extended	main	native	test	golden	-
