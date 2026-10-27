@@ -142,6 +142,54 @@ static void test_transient_value_plan_lifetime(void) {
     puts("PASS: translation certificates reject address reuse and changed definitions; two generations and deep values remain valid");
 }
 
+static void test_transient_plan_keys_own_their_storage(void) {
+    HashConsTable shared;
+    hashcons_init_compact(&shared);
+    HashConsTable *saved = g_hashcons;
+    g_hashcons = &shared;
+    Arena source;
+    arena_init_detached(&source);
+    Space space;
+    space_init(&space);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    assert(petta_program_enable_callability_refresh(program));
+    assert(petta_program_synchronize_space(program, &space));
+    const Arena *sources[] = {&source};
+    PettaTranslationEnvironment environment = {
+        .source_arenas = sources, .source_arena_count = 1,
+        .host_identity = g_symbols,
+        .symbol_table_instance = symbol_table_instance_id(g_symbols),
+    };
+    Atom *head = atom_symbol(&source, "+");
+    ArenaMark mark = arena_mark(&source);
+    const PettaPlanNode *first = petta_program_plan_transient(
+        program, atom_expr3(&source, head,
+            atom_var_with_id(&source, "memo", fresh_var_id()),
+            atom_int(&source, 0)), &environment);
+    assert(first && first->role != PETTA_PLAN_VALUE);
+    assert(first->child_count == 3u && first->children[2u].role == PETTA_PLAN_VALUE);
+    uint32_t baseline = shared.used;
+    /* Cross several memo evictions. The caller reuses its arena addresses;
+     * The changing integer prevents an alpha-equivalent memo hit. Fresh
+     * variables copied into memo keys must not become global pool roots. */
+    for (int64_t value = 1; value <= 20000; value++) {
+        arena_reset(&source, mark);
+        const PettaPlanNode *plan = petta_program_plan_transient(
+            program, atom_expr3(&source, head,
+                atom_var_with_id(&source, "memo", fresh_var_id()),
+                atom_int(&source, value)), &environment);
+        assert(plan && plan->role == first->role);
+    }
+    assert(shared.used == baseline);
+    petta_program_free(program);
+    space_free(&space);
+    arena_free(&source);
+    g_hashcons = saved;
+    hashcons_free(&shared);
+    puts("PASS: transient plan keys retire with their memo instead of growing the global pool");
+}
+
 static void test_type_policy_component(Arena *arena) {
     PettaTypeCall call;
     assert(petta_type_call_open(parse_one(arena, "(-> Number Atom Expression)"), 2u, &call));
@@ -14642,8 +14690,9 @@ int main(int argc, char **argv) {
     bool worker_only = argc == 2 && strcmp(argv[1], "--worker-ownership") == 0;
     bool resume_only = argc == 2 && strcmp(argv[1], "--resume-contract") == 0;
     bool arity_only = argc == 2 && strcmp(argv[1], "--arity-contract") == 0;
-    if (argc != 1 && !worker_only && !resume_only && !arity_only) {
-        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract]\n", stderr);
+    bool transient_only = argc == 2 && strcmp(argv[1], "--transient-plans") == 0;
+    if (argc != 1 && !worker_only && !resume_only && !arity_only && !transient_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--transient-plans]\n", stderr);
         return 2;
     }
     Arena persistent;
@@ -14666,6 +14715,11 @@ int main(int argc, char **argv) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    if (transient_only) {
+        test_transient_value_plan_lifetime();
+        test_transient_plan_keys_own_their_storage();
+        goto release_owners;
+    }
     if (arity_only) {
         test_type_call_arity(&answers);
         test_type_call_facts(&answers);
@@ -14679,6 +14733,7 @@ int main(int argc, char **argv) {
     if (resume_only)
         goto release_owners;
     test_transient_value_plan_lifetime();
+    test_transient_plan_keys_own_their_storage();
     test_type_policy_component(&answers);
     test_type_bound_rows(&answers);
     test_type_fact_reuse(&answers);

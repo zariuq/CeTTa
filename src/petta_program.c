@@ -4437,7 +4437,10 @@ PettaProgram *petta_program_new_with_rules_and_host_intrinsics(unsigned admitted
         &program->plans, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
     arena_set_hashcons(&program->plans, NULL);
     arena_init(&program->transient_scratch);
-    arena_init(&program->transient_plan_atoms);
+    /* Memo keys belong to the bounded memo. Publishing their fresh variable
+     * identities or substituted values in the global hash-cons table would
+     * keep them after eviction and make a long-lived evaluator grow. */
+    arena_init_detached(&program->transient_plan_atoms);
     arena_set_hashcons(&program->transient_scratch, NULL);
     return program;
 }
