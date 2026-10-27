@@ -43,6 +43,11 @@
 (= (system:getcwd)
    (function (case (__cetta_lib_system_host getcwd)
      (($result (return $result)))){$result}))
+; os.TMP_MAX: the C library's temporary-name bound, or 10000 if absent.
+; Python tempfile retry policy is versioned; the Python 3.12 profile uses this.
+(= (system:tmp-max)
+   (function (case (__cetta_lib_system_host tmp-max)
+     (($result (return $result)))){$result}))
 (= (system:format-time $format $timestamp $zone)
    (function (case (__cetta_lib_system_host format-time $format $timestamp $zone)
      (($result (return $result)))){$result}))

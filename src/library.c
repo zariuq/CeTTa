@@ -4692,6 +4692,15 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
             free(path);
             return value;
         }
+        /* os.TMP_MAX: the C platform constant. Python 3.12's tempfile profile
+         * uses it; later Python versions can choose their own retry policy. */
+        if (!strcmp(operation, "tmp-max") && nargs == 1) {
+#ifdef TMP_MAX
+            return atom_int(a, TMP_MAX);
+#else
+            return atom_int(a, 10000);
+#endif
+        }
         if (!strcmp(operation, "errno-value") && nargs == 2) {
             const char *name = library_text_arg(args[1]);
             if (!name) return library_signature_error(a, head, args, nargs, "expected an errno name");

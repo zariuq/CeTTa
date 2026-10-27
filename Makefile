@@ -34247,6 +34247,10 @@ test-expanduser-v1: $(BIN) tests/support/check_expanduser_v1.py $(EXPANDUSER_SEA
 test-all: test-getcwd-v1
 test-getcwd-v1: $(BIN) tests/support/check_getcwd_v1.py
 	@python3 tests/support/check_getcwd_v1.py ./$(BIN) $(if $(filter 1,$(LIB_PROLOG_ENABLED)),,--without-prolog)
+.PHONY: test-tmp-max-v1
+test-all: test-tmp-max-v1
+test-tmp-max-v1: $(BIN) tests/support/check_tmp_max_v1.py
+	@python3 tests/support/check_tmp_max_v1.py ./$(BIN)
 
 .PHONY: test-text-streaming-v1
 test-all: test-text-streaming-v1
