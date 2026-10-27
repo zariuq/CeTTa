@@ -1190,6 +1190,31 @@ static void test_atom_deep_copy_preserves_pointer_dag(void) {
     arena_free(&src_arena);
 }
 
+static void test_exact_payload_coordinate_collision(void) {
+    Arena persistent;
+    TermUniverse universe;
+    arena_init_detached(&persistent);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    /* Distinct byte payloads with the same actual intern-table coordinate.
+     * Both payloads also retain their complete lengths across embedded NULs. */
+    static const char first[] = {94, 86, 34, 32, 0, 0, 0, 0};
+    static const char second[] = {39, 77, 39, 32, 0, 0, 0, 0};
+    AtomId left = tu_intern_string_n(&universe, first, sizeof first);
+    AtomId right = tu_intern_string_n(&universe, second, sizeof second);
+    assert(left != CETTA_ATOM_ID_NONE && right != CETTA_ATOM_ID_NONE);
+    assert(universe.entries[left].coordinate == universe.entries[right].coordinate);
+    assert(left != right);
+    assert(tu_string_len(&universe, left) == sizeof first);
+    assert(tu_string_len(&universe, right) == sizeof second);
+    assert(tu_intern_string_n(&universe, first, sizeof first) == left);
+    assert(tu_intern_string_n(&universe, second, sizeof second) == right);
+    assert(!memcmp(tu_string_cstr(&universe, left), first, sizeof first));
+    assert(!memcmp(tu_string_cstr(&universe, right), second, sizeof second));
+    term_universe_free(&universe);
+    arena_free(&persistent);
+}
+
 static void test_structural_slot_hash_collision_family(void) {
     Arena persistent;
     TermUniverse universe;
@@ -2143,6 +2168,7 @@ int main(void) {
     test_query_results_capacity_failure_is_loud();
     test_atom_deep_copy_preserves_pointer_dag();
     test_structural_slot_hash_collision_family();
+    test_exact_payload_coordinate_collision();
     test_hashcons_structural_slot_collision_family();
     test_source_arena_id_memo_contract();
     test_shallow_ground_admit_shares_structure_keeps_occurrences();

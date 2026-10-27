@@ -8481,7 +8481,7 @@ void atom_print_petta(Atom *a, FILE *out) {
 /* The printed text of an atom and its length.  As a C string (`c_text`) it
  * cannot hold NUL, so NUL a lane writes raw is written \x00 there. */
 static char *atom_print_to_text(Arena *a, Atom *atom, bool petta, bool c_text,
-                                size_t *len_out) {
+                                bool source_names, size_t *len_out) {
     char *buffer = NULL;
     size_t length = 0u;
     FILE *memory = open_memstream(&buffer, &length);
@@ -8490,7 +8490,9 @@ static char *atom_print_to_text(Arena *a, Atom *atom, bool petta, bool c_text,
     if (!memory)
         return arena_strdup(a, "");
     bool previous = atom_print_set_c_text(c_text);
-    if (petta)
+    if (source_names)
+        atom_print_mode(atom, memory, petta, NULL);
+    else if (petta)
         atom_print_petta(atom, memory);
     else
         atom_print(atom, memory);
@@ -8507,16 +8509,21 @@ static char *atom_print_to_text(Arena *a, Atom *atom, bool petta, bool c_text,
 }
 
 char *atom_to_parseable_string(Arena *a, Atom *atom) {
-    return atom_print_to_text(a, atom, false, true, NULL);
+    return atom_print_to_text(a, atom, false, true, false, NULL);
 }
 
 char *atom_to_parseable_string_petta(Arena *a, Atom *atom) {
-    return atom_print_to_text(a, atom, true, true, NULL);
+    return atom_print_to_text(a, atom, true, true, false, NULL);
 }
 
 char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
                               size_t *len_out) {
-    return atom_print_to_text(a, atom, petta, false, len_out);
+    return atom_print_to_text(a, atom, petta, false, false, len_out);
+}
+
+char *atom_to_source_bytes(Arena *a, Atom *atom, bool petta,
+                          size_t *len_out) {
+    return atom_print_to_text(a, atom, petta, false, true, len_out);
 }
 
 char *atom_to_string(Arena *a, Atom *atom) {

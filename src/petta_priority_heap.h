@@ -22,5 +22,9 @@ typedef struct {
  * predicate. */
 PettaPriorityHeapStatus petta_priority_heap_call(
     Arena *arena, Atom *resolved_call, PettaPriorityHeapAnswer *answer);
+/* Validate untrusted finite data at an import/resumption boundary. Normal
+ * operations preserve the invariant of a heap returned by this library. */
+PettaPriorityHeapStatus petta_priority_heap_validate(Atom *heap,
+    bool (*interrupted)(void), bool *valid);
 
 #endif
