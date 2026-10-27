@@ -29944,7 +29944,8 @@ test-petta-get-type-relation: $(BIN)
 
 .PHONY: test-petta-py-call-spec
 # py-call takes a call spec, (path args...); any other value, a function's
-# result included, has no answer.  The expected output is SWI-PeTTa's.
+# result included, has no answer.  The expected output is SWI-PeTTa's, except
+# that Python text comes back as strings, which Janus makes symbols.
 test-petta-semantics: test-petta-py-call-spec
 test-petta-py-call-spec: $(BIN)
 ifeq ($(ENABLE_PYTHON),1)
@@ -31257,9 +31258,10 @@ test-petta-semantics: test-petta-py-call-data
 # A library or Python operation takes the ready values of its arguments: a
 # value shaped like a call is data in and out of a Python call, a parsed
 # command reaching Python as the list it spells and a list Python returns
-# whose head names a function never run (SWI-PeTTa's answers), an
-# operation that gives no answer fails, and a completed value handed back
-# through the evaluate path's delimiter is that value.
+# whose head names a function never run, an operation that gives no answer
+# fails, and a completed value handed back through the evaluate path's
+# delimiter is that value. Python text comes back as MeTTa strings, where
+# SWI-PeTTa's Janus default makes them symbols.
 test-petta-py-call-data: $(BIN)
 	@set -eu; \
 	actual=$$($(CETTA_BIN_INVOKE) --lang petta \
