@@ -1,6 +1,7 @@
 #include "library_dag.h"
 #include "eval.h"
 #include "native_handle.h"
+#include "storage_census.h"
 #include "tensor.h"
 #include "term_universe.h"
 #include "u64_index.h"
@@ -242,14 +243,18 @@ static bool charge(size_t *total, size_t count, size_t width) {
 }
 
 static size_t retained(Dag *dag) {
-    TermUniverse *u = &dag->universe;
+    CettaStorageCensus census = {0};
+    term_universe_storage_census(&dag->universe, &census);
+    cetta_storage_finish(&census);
+    bool complete = !census.incomplete && !census.overflow && !census.invalidated;
+    size_t universe_bytes = census.retained;
+    cetta_storage_census_free(&census);
+    if (!complete) return SIZE_MAX;
     size_t total = sizeof(*dag);
     bool valid = charge(&total, dag->capacity, sizeof(*dag->ids)) &&
         charge(&total, dag->number_capacity, sizeof(*dag->numbers)) &&
-        charge(&total, dag->root_count, sizeof(*dag->roots)) && charge(&total, u->blob_cap, 1) &&
-        charge(&total, u->cap, sizeof(*u->entries)) &&
-        charge(&total, u->intern_mask + 1u, sizeof(uint64_t) + sizeof(AtomId)) &&
-        charge(&total, u->ptr_mask + 1u, sizeof(void *) + sizeof(AtomId)) &&
+        charge(&total, dag->root_count, sizeof(*dag->roots)) &&
+        charge(&total, universe_bytes, 1) &&
         charge(&total, dag->arena.reserved_bytes, 1) && charge(&total, dag->arena.external_bytes, 1) &&
         charge(&total, dag->arena.persistent_bytes, 1);
     return valid ? total : SIZE_MAX;

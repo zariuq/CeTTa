@@ -2201,7 +2201,7 @@ static void test_readonly_lookup_coordinates(void) {
     term_universe_init(&universe);
     term_universe_set_persistent_arena(&universe, &persistent);
     Atom *head = atom_symbol(&source, "lookup-coordinate");
-    AtomId head_id = tu_intern_symbol(&universe, head->sym_id);
+    AtomId head_id = tu_intern_symbol(&universe, atom_symbol_current_id(head));
     Atom *value = atom_int(&source, 23);
     AtomId value_id = tu_intern_int(&universe, 23);
     const unsigned depths[] = {0u, 1u, 2u, 3u, 64u, 96u};

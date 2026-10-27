@@ -20,6 +20,8 @@
 #define CETTA_TERM_UNIVERSE_COPY_MEMO_INLINE_CAP 64u
 #define CETTA_TERM_UNIVERSE_SOURCE_MEMO_CAP (1u << 16)
 #define CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE 64u
+enum { TERM_DECODED_PAGE_BITS = 12u };
+#define TERM_DECODED_PAGE_ENTRIES ((size_t)1u << TERM_DECODED_PAGE_BITS)
 
 typedef struct CettaTermVariableSupportBlock {
     _Atomic(CettaTermVariableSupport *)
@@ -1057,6 +1059,13 @@ void term_universe_storage_census(const TermUniverse *u, CettaStorageCensus *c) 
     cetta_storage_array(c, u->blob_pool, u->blob_cap, 1u, 0u);
     cetta_storage_array(c, u->entries, u->cap, sizeof(*u->entries), 0u);
     cetta_storage_array(c, u->observers, u->observer_cap, sizeof(*u->observers), 0u);
+    cetta_storage_array(c, u->decoded_pages, u->decoded_page_cap,
+        sizeof(*u->decoded_pages), 0u);
+    for (size_t i = 0u; u->decoded_pages && i < u->decoded_page_cap; i++)
+        cetta_storage_array(c, u->decoded_pages[i], TERM_DECODED_PAGE_ENTRIES,
+            sizeof(*u->decoded_pages[i]), 0u);
+    cetta_storage_array(c, u->root_providers, u->root_provider_cap,
+        sizeof(*u->root_providers), 0u);
     size_t width = term_universe_slot_storage_width_bytes(u);
     if (u->intern_slots && u->intern_mask == SIZE_MAX) cetta_storage_refuse(c, "InternCapacity");
     else cetta_storage_array(c, u->intern_slots, u->intern_mask + 1u, term_universe_intern_pair_width(width), 0u);
@@ -1509,9 +1518,6 @@ static const TermEntry *term_universe_entry(const TermUniverse *universe,
         return NULL;
     return &universe->entries[physical_index];
 }
-
-enum { TERM_DECODED_PAGE_BITS = 12u };
-#define TERM_DECODED_PAGE_ENTRIES ((size_t)1u << TERM_DECODED_PAGE_BITS)
 
 /* The atom the entry at physical INDEX decodes to, when it has one. */
 static Atom *term_universe_decoded_at(const TermUniverse *universe,

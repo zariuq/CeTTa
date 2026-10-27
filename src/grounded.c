@@ -1203,6 +1203,7 @@ static bool grounded_projection_holds_syntax(Arena *arena, const Atom *value) {
     return atom_prime_held_is(value) ||
         (eval_current_language_id && eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
          atom_prime_template_own_hidden(value) &&
+         prime_semantics_is_authored_lambda &&
          prime_semantics_is_authored_lambda(arena, (Atom *)value));
 }
 

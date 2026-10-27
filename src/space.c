@@ -8657,8 +8657,31 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
     /* Equations and arrow declarations introduce callable identities. Ordinary
      * facts only retain their values; they do not register their spellings. */
     Atom *decl = backend_atom;
-    if (!decl && s && s->native.universe && atom_id != CETTA_ATOM_ID_NONE)
-        decl = term_universe_get_atom(s->native.universe, atom_id);
+    if (!decl && s && s->native.universe && atom_id != CETTA_ATOM_ID_NONE) {
+        TermUniverse *universe = s->native.universe;
+        const CettaTermHdr *header = tu_hdr(universe, atom_id);
+        if (header) {
+            /* Packed symbols already name registered identities. Only a
+             * spelling-only declaration name needs registration; reading it
+             * must not materialize the declaration's body or ordinary facts. */
+            if (header->tag == ATOM_EXPR && tu_arity(universe, atom_id) == 3u) {
+                AtomId tag = tu_child(universe, atom_id, 0u);
+                SymbolId tag_id = tu_kind(universe, tag) == ATOM_SYMBOL
+                    ? tu_sym(universe, tag) : SYMBOL_ID_NONE;
+                if (tag_id == g_builtin_syms.equals || tag_id == g_builtin_syms.colon) {
+                    AtomId name = tu_child(universe, atom_id, 1u);
+                    if (tu_kind(universe, name) == ATOM_EXPR && tu_arity(universe, name))
+                        name = tu_child(universe, name, 0u);
+                    if (tu_kind(universe, name) == ATOM_SYMBOL && !tu_hdr(universe, name)) {
+                        Atom *spelling = term_universe_get_atom(universe, name);
+                        if (spelling) (void)atom_symbol_register_id(spelling);
+                    }
+                }
+            }
+        } else {
+            decl = term_universe_get_atom(universe, atom_id);
+        }
+    }
     if (decl && decl->kind == ATOM_EXPR && decl->expr.len == 3u &&
         (atom_is_symbol_id(decl->expr.elems[0], g_builtin_syms.equals) ||
          atom_is_symbol_id(decl->expr.elems[0], g_builtin_syms.colon))) {
