@@ -19,6 +19,7 @@
 #include "shared_transition.h"
 #include "grounded.h"
 #include "library_pattern.h"
+#include "library_binary.h"
 #include "he_typing.h"
 #include "he_typing_authority.h"
 #include "he_type_policy.h"
@@ -48,6 +49,12 @@
 #include "variant_shape.h"
 #include "langdef_pack.h"
 #include "native/syntax_gslt_v1.h"
+#include "native/native_modules.h"
+/* Standalone evaluator clients need not link optional library modules. */
+extern bool cetta_native_module_builtin_enabled(struct CettaLibraryContext *,
+    uint32_t, const char *) __attribute__((weak));
+extern uint32_t cetta_native_module_available_mask(const struct CettaLibraryContext *,
+    uint32_t, uint32_t) __attribute__((weak));
 #include "generated/cetta_execution_contracts.generated.h"
 #include "generated/collection_ingress.generated.h"
 #include <inttypes.h>
@@ -1933,7 +1940,10 @@ bool eval_current_profile_enables_dependent_telescope(void) {
 bool eval_current_builtin_allowed(const char *name) {
     const CettaEvalSession *session = active_eval_session();
     return cetta_language_allows_builtin(session->language_id,
-                                         session->profile, name);
+                                         session->profile, name) ||
+        (g_library_context && cetta_native_module_builtin_enabled &&
+         cetta_native_module_builtin_enabled(g_library_context,
+             g_library_context->active_mask, name));
 }
 
 bool eval_current_pattern_module_enabled(void) {
@@ -20413,6 +20423,14 @@ Arena *eval_current_persistent_arena(void) {
 
 CettaLibraryContext *eval_current_library_context(void) {
     return g_library_context;
+}
+
+/* Use the native provider's actual import/loaded-module availability, not a
+ * second naming rule. Standalone clients without that provider get no credit. */
+uint32_t eval_current_native_observer_mask(void) {
+    return g_library_context && cetta_native_module_available_mask
+        ? cetta_native_module_available_mask(g_library_context,
+            g_library_context->active_mask, CETTA_NATIVE_IMPORT_BINARY) : 0u;
 }
 
 static const char *string_like_atom(Atom *atom) {
@@ -40719,6 +40737,8 @@ typedef struct {
     PreparedPureProgramCache prepared_pure_cache;
     PettaBuiltinAdmissionCacheEntry
         builtin_admission_cache[PETTA_BUILTIN_ADMISSION_CACHE_SLOTS];
+    uint32_t builtin_admission_imports;
+    uint32_t builtin_admission_modules;
     PettaRelationAdmissionCacheEntry
         relation_admission_cache[PETTA_RELATION_ADMISSION_CACHE_SLOTS];
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
@@ -41616,6 +41636,14 @@ static bool petta_eval_machine_builtin_allowed(
     PettaEvalMachineContext *context = opaque;
     PettaBuiltinAdmissionCacheEntry *entry = NULL;
     if (context && head != SYMBOL_ID_NONE) {
+        uint32_t imports = g_library_context ? g_library_context->active_mask : 0u;
+        uint32_t modules = g_library_context ? g_library_context->loaded_module_len : 0u;
+        if (context->builtin_admission_imports != imports ||
+            context->builtin_admission_modules != modules) {
+            memset(context->builtin_admission_cache, 0, sizeof(context->builtin_admission_cache));
+            context->builtin_admission_imports = imports;
+            context->builtin_admission_modules = modules;
+        }
         entry = &context->builtin_admission_cache[
             (size_t)head &
             (PETTA_BUILTIN_ADMISSION_CACHE_SLOTS - 1u)];

@@ -745,6 +745,12 @@ SRC += src/library_proc.c
 SRC += src/library_fs.c
 SRC += src/petta_priority_heap.c
 SRC += src/library_postings.c src/tensor.c src/tensor_screening.c src/library_tensor.c src/library_group.c
+SRC += src/binary_codec.c src/library_binary.c
+SRC += src/library_heap.c
+SRC += src/library_work.c
+SRC += src/library_dag.c
+SRC += src/u64_index.c
+SRC += src/library_syntax.c
 SRC += src/str_stream.c
 SRC += src/relational_plan.c src/relational_cursor.c
 SRC += src/space_path_index.c
@@ -44350,6 +44356,12 @@ test-tensor: $(BIN) runtime/test_tensor-$(BUILD_OBJ_TAG)
 	python3 tests/support/check_tensor.py --cetta ./$(BIN)
 	python3 tests/support/check_tensor_bulk.py --cetta ./$(BIN)
 
+.PHONY: test-tensor-sequences
+test-tensor-sequences: $(BIN)
+	python3 tools/library_spelling.py lib/tensor.metta lib/petta/tensor.metta --check
+	python3 tools/library_spelling.py lib/tensor.metta lib/prime/tensor.metta --dialect=prime --check
+	python3 tests/support/check_tensor_sequences.py --cetta ./$(BIN) --output runtime/tensor-sequence-qualification
+
 runtime/test_tensor_screening-$(BUILD_OBJ_TAG): tests/support/test_tensor_screening.c src/tensor_screening.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_screening.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
 
@@ -47022,3 +47034,87 @@ test-petta-contextual-case: $(BIN) tests/support/check_petta_contextual_case.py
 test-all: test-petta-contextual-case
 
 .PHONY: main-readiness-consolidation
+
+BINARY_CODEC_TEST_BIN = runtime/test_binary_codec-$(BUILD_OBJ_TAG)
+$(BINARY_CODEC_TEST_BIN): tests/support/test_binary_codec.c src/binary_codec.c src/binary_codec.h $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_BINARY_TEST_HOOKS -o $@ tests/support/test_binary_codec.c src/binary_codec.c $(LDFLAGS)
+
+.PHONY: test-binary-codec
+test-binary-codec: $(BIN) $(BINARY_CODEC_TEST_BIN)
+	@$(BINARY_CODEC_TEST_BIN)
+	python3 tests/support/check_binary_codec.py --cetta ./$(BIN) --output runtime/binary-codec-qualification
+	python3 tools/library_spelling.py lib/binary.metta lib/petta/binary.metta --check
+	python3 tools/library_spelling.py lib/binary.metta lib/prime/binary.metta --dialect=prime --check
+
+.PHONY: test-ic-archive
+test-ic-archive: test-binary-codec
+	python3 tests/support/check_binary_tree.py --cetta ./$(BIN) --output runtime/ic-binary-tree-qualification
+	python3 tests/support/check_ic_archive.py --cetta ./$(BIN) --output runtime/ic-archive-qualification
+
+.PHONY: test-ic-search
+test-ic-search: $(BIN)
+	python3 tests/support/check_search_libraries.py --cetta ./$(BIN) --output runtime/ic-search-libraries-qualification
+	python3 tests/support/check_fair_queue.py --cetta ./$(BIN) --output runtime/ic-fair-queue-qualification
+	python3 tests/support/check_ic_search.py --cetta ./$(BIN) --output runtime/ic-search-qualification
+	python3 tests/support/check_ic_grammar.py --cetta ./$(BIN) --output runtime/ic-grammar-qualification
+	python3 tools/library_spelling.py lib/heap.metta lib/petta/heap.metta --check
+	python3 tools/library_spelling.py lib/heap.metta lib/prime/heap.metta --dialect=prime --check
+	python3 tools/library_spelling.py lib/work.metta lib/petta/work.metta --check
+	python3 tools/library_spelling.py lib/work.metta lib/prime/work.metta --dialect=prime --check
+
+U64_INDEX_TEST_BIN = runtime/test_u64_index-$(BUILD_OBJ_TAG)
+$(U64_INDEX_TEST_BIN): tests/support/test_u64_index.c src/u64_index.c src/u64_index.h src/gslt_u32_index_v1.c src/gslt_u32_index_v1.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Isrc tests/support/test_u64_index.c src/u64_index.c src/gslt_u32_index_v1.c -o $@
+
+.PHONY: test-compact-dag
+test-compact-dag: $(BIN) $(TERM_UNIVERSE_STORE_ABI_TEST_BIN) $(U64_INDEX_TEST_BIN)
+	@$(U64_INDEX_TEST_BIN)
+	@$(call cetta_exec,./$(TERM_UNIVERSE_STORE_ABI_TEST_BIN))
+	python3 tests/support/check_compact_dag.py --cetta ./$(BIN) --output runtime/ic-dag-qualification
+	python3 tools/library_spelling.py lib/dag.metta lib/petta/dag.metta --check
+	python3 tools/library_spelling.py lib/dag.metta lib/prime/dag.metta --dialect=prime --check
+
+.PHONY: test-source-codec
+test-source-codec: $(BIN)
+	python3 tests/support/check_source_codec.py --cetta ./$(BIN) --output runtime/source-codec-qualification
+	python3 tests/support/check_ic_source_archive.py --cetta ./$(BIN) --output runtime/ic-source-archive-qualification
+	python3 tools/library_spelling.py lib/syntax.metta lib/petta/syntax.metta --check
+	python3 tools/library_spelling.py lib/syntax.metta lib/prime/syntax.metta --dialect=prime --check
+
+NATIVE_OBSERVER_SAFETY_TEST_BIN = runtime/test_native_observer_safety-$(BUILD_OBJ_TAG)
+$(NATIVE_OBSERVER_SAFETY_TEST_BIN): tests/support/test_native_observer_safety.c src/library_binary.h $(filter-out src/main.%,$(OBJ)) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_native_observer_safety.c $(filter-out src/main.%,$(OBJ)) $(LDFLAGS)
+
+.PHONY: test-native-observer-safety test-binary-value test-scoped-templates test-scoped-grammar test-ic-scoped-archive test-ic-numeric test-ic-library test-ic-templates test-ic-reference test-incremental-compression
+test-native-observer-safety: $(NATIVE_OBSERVER_SAFETY_TEST_BIN)
+	@$(NATIVE_OBSERVER_SAFETY_TEST_BIN)
+
+test-binary-value: $(BIN)
+	python3 tests/support/check_binary_value.py --cetta ./$(BIN) --output runtime/binary-value-qualification
+
+test-scoped-templates: $(BIN)
+	python3 tests/support/check_scoped_templates.py --cetta ./$(BIN) --output runtime/ic-scoped-qualification
+
+test-scoped-grammar: $(BIN) test-native-observer-safety
+	python3 tests/support/check_scoped_grammar.py --cetta ./$(BIN) --output runtime/ic-scoped-grammar-qualification
+
+test-ic-scoped-archive: $(BIN)
+	python3 tests/support/check_ic_scoped_archive.py --cetta ./$(BIN) --output runtime/ic-scoped-archive-qualification
+
+test-ic-templates: $(BIN)
+	python3 tests/support/check_ic_templates.py --cetta ./$(BIN) --output runtime/ic-templates-qualification
+
+test-ic-reference: $(BIN)
+	python3 tests/support/check_incremental_compression.py --cetta ./$(BIN) --output runtime/ic-reference-qualification
+	python3 tests/support/check_ic_syntax.py --cetta ./$(BIN) --output runtime/ic-syntax-qualification
+
+# Explicit joined gate for the implemented IC components, not an expansion of
+# the ordinary test suite or a claim of numerical/discovery completeness.
+test-ic-numeric: $(BIN)
+	python3 tests/support/check_ic_numeric.py --cetta ./$(BIN) --output runtime/ic-numeric-qualification
+
+test-ic-library: $(BIN)
+	python3 tests/support/check_ic_library.py --cetta ./$(BIN) --output runtime/ic-library-qualification
+
+test-incremental-compression: test-ic-reference test-ic-templates test-ic-archive test-ic-search test-compact-dag test-source-codec test-binary-value test-scoped-templates test-ic-scoped-archive test-scoped-grammar test-tensor-sequences test-ic-numeric test-ic-library
