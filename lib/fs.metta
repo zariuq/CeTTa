@@ -122,7 +122,11 @@
    (function (case (__cetta_lib_fs_entries $path)
      (($result (return $result))))))
 
-; Entry kind is an enumeration hint. Use metadata for a resolved observation.
+; Entry kind is an enumeration hint. Use metadata for a resolved observation:
+; (fs:info KIND SIZE (fs:identity DEVICE INODE)) for the policy follow or
+; no-follow; follow-modified and no-follow-modified add (fs:modified SECONDS
+; NANOSECONDS), follow-permissions and no-follow-permissions add
+; (fs:permissions BITS), Python's stat.S_IMODE of the mode.
 ; HE's Atom result contract preserves the observation's constructor fields.
 ; Public operands are computed once; the native receives their data intact.
 (: __cetta_lib_fs_metadata (-> Atom Atom Atom))
@@ -169,7 +173,8 @@
 ; write-all writes every byte of a text and answers (fs:written bytes); a
 ; fault keeps the owner open and its progress counts the owner's bytes in all.
 ; sync is fsync. lock takes exclusive or shared, waiting for a conflicting
-; holder, as fcntl.flock does; unlock releases it. set-mode is os.fchmod,
+; holder, as fcntl.flock does; exclusive-nowait and shared-nowait answer
+; fs:held at once instead. unlock releases it. set-mode is os.fchmod,
 ; answering fs:mode-set; given a path instead of an owner it is os.chmod, which
 ; follows a symbolic link. Syncing, setting the mode, locking and closing accept
 ; readers too. Closing, the last holder's release, or the

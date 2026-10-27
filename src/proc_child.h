@@ -73,9 +73,10 @@ static inline _Noreturn void cetta_proc_child_stop(int fd, int stage, int error)
     _exit(127);
 }
 
-/* `new_group` puts the child in a process group of its own, so its owner can
- * signal the whole tree; otherwise it stays in the caller's group and sees
- * the caller's terminal signals, as a plain fork does. */
+/* `new_group` 1 puts the child in a process group of its own, so its owner
+ * can signal the whole tree; 2 makes it lead a session of its own as well,
+ * apart from the caller's terminal; 0 keeps it in the caller's group, where it
+ * sees the caller's terminal signals, as a plain fork does. */
 static inline _Noreturn void cetta_proc_child_exec_group_fds(const char *program,
         char *const argv[], char *const env[], const char *cwd,
         int in, int out, int err, int report, int new_group,
@@ -99,7 +100,7 @@ static inline _Noreturn void cetta_proc_child_exec_group_fds(const char *program
         if (moved < 0) cetta_proc_child_stop(report, CETTA_PROC_CHILD_FDS, errno);
         pass4 = moved;
     }
-    if (new_group && setpgid(0, 0))
+    if (new_group == 2 ? setsid() < 0 : new_group && setpgid(0, 0))
         cetta_proc_child_stop(report, CETTA_PROC_CHILD_GROUP, errno);
     struct sigaction standard = {.sa_handler = SIG_DFL};
     sigemptyset(&standard.sa_mask);

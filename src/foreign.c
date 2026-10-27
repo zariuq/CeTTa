@@ -1214,18 +1214,15 @@ static bool python_emit_single(CettaForeignRuntime *rt, Arena *a, PyObject *obj,
         if (!text || length < 0 || (uint64_t)length > UINT32_MAX)
             return false;
         /*
-         * SWI Janus maps a Python str returned by PeTTa's py-call to a
-         * Prolog atom.  Preserve that language boundary: repr and sread can
-         * still distinguish it from an authored MeTTa string.  HE keeps its
-         * established grounded-string conversion.
+         * Python text is MeTTa text in every language. SWI Janus maps a
+         * Python str to a Prolog atom by default, as the PIP interface
+         * standard asks of Prologs that may lack strings; in PeTTa an atom
+         * is a symbol, so that default turns data into a name: "true" would
+         * equal True, text that spells an expression would read back as
+         * code, and "" and NUL could not be spelled. A string keeps every
+         * byte, prints quoted and comes back as it went in.
          */
-        bool petta_text =
-            eval_current_language_id &&
-            eval_current_language_id() == CETTA_LANGUAGE_PETTA;
-        result_set_add(
-            rs, petta_text
-                ? atom_symbol_data_n(a, text, (uint32_t)length)
-                : atom_string_n(a, text, (uint32_t)length));
+        result_set_add(rs, atom_string_n(a, text, (uint32_t)length));
         return true;
     }
 

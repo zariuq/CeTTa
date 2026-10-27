@@ -45,6 +45,22 @@
 ; Text decoding is a separate policy.
 ; lifetime owner selects tree ownership through the Linux process companion;
 ; the default lifetime group retains process-group cancellation.
+; lifetime run keeps that tree ownership while the command runs:
+; cancellation, a timeout or the owner's end kill the whole tree, and what the
+; command leaves running when it exits by itself is released, as a shell
+; releases a background job. lifetime detached makes the child the leader of
+; a session of its own, apart from the caller's terminal: closing its handle
+; or the caller's end leaves it running, while proc:cancel and a timeout still
+; end it. Its output must be inherit or null, and it shares neither the
+; caller's input nor its group.
+; Standard input is (stdin BYTES), empty by default, or (stdin inherit), the
+; caller's own. Output and error are captured unless (stdout inherit),
+; (stdout null), (stderr inherit) or (stderr null) says otherwise. A child
+; leads a process group of its own unless (group caller) keeps it in the
+; caller's, as a foreground job reading the caller's terminal must be: the
+; terminal stops a background group that reads it. A child in the caller's
+; group is signalled alone on cancellation and timeout, or its tree under
+; lifetime owner or run.
 (= (proc:spawn $argv $options)
    (__cetta_lib_proc_spawn $argv $options))
 (= (proc:poll $owner)

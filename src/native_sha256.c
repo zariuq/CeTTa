@@ -138,6 +138,10 @@ static void native_sha_hex(const uint8_t digest[32], char out[65]) {
     out[64] = '\0';
 }
 
+void cetta_native_sha256_finish(CettaNativeSha256 *sha, uint8_t out[32]) {
+    native_sha_finish(sha, out);
+}
+
 void cetta_native_sha256_finish_hex(CettaNativeSha256 *sha, char out[65]) {
     uint8_t digest[32];
 

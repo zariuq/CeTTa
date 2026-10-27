@@ -853,7 +853,7 @@ SRC += src/petta_type_policy.c src/petta_type_relation.c src/he_type_policy.c
 SRC += src/petta_contract_core.c
 SRC += src/gslt_language_manifest_v1.c
 SRC += src/gslt_support_profile_v1.c
-SRC += src/library_io.c src/library_cwp.c src/library_proc_run.c src/library_sqlite.c src/proc_owner.c src/http_worker.c src/telegram_transport.c src/library_durable.c
+SRC += src/library_io.c src/library_cwp.c src/library_proc_run.c src/library_sqlite.c src/proc_owner.c src/http_worker.c src/ws.c src/telegram_transport.c src/library_durable.c
 SRC += src/atom_wire.c src/library_space_service.c src/ipc_client.c src/host_notice.c
 SRC += $(SIWC_SRC)
 SRC += $(JSON_GSLT_RUNTIME_SRC)
@@ -963,6 +963,18 @@ SRC += experiments/gslt2parse_foundation/native/parser_pack_abi_stream_v1.c \
 	native/decimal_value_v1.c \
 	native/tptp_official_snapshot_v1.c \
 	experiments/gslt2parse_foundation/native/parser_pack_table_snapshot_v1.c
+# lib/crypto: BIP-340 Schnorr signatures and NIP-44 v2 over the vendored
+# libsecp256k1 (MIT, vendor/secp256k1) with its extrakeys, schnorrsig and
+# ECDH modules.  The vendored sources keep their own warnings.
+SECP256K1_SRC = vendor/secp256k1/src/secp256k1.c vendor/secp256k1/src/precomputed_ecmult.c \
+	vendor/secp256k1/src/precomputed_ecmult_gen.c
+SECP256K1_OBJ = $(foreach variant,$(BUILD_OBJ_TAG).o $(BUILD_OBJ_TAG).stage0.o $(BUILD_OBJ_TAG).runtime-stats.o,\
+	$(SECP256K1_SRC:.c=.$(variant)))
+SRC += src/library_crypto.c src/crypto_primitives.c $(SECP256K1_SRC)
+# lib/toml: TOML 1.1 through the vendored tomlc17 (MIT, vendor/tomlc17).
+SRC += src/library_toml.c vendor/tomlc17/tomlc17.c
+$(SECP256K1_OBJ): CFLAGS := $(filter-out -Werror,$(CFLAGS)) -Wno-unused-function \
+	-DENABLE_MODULE_EXTRAKEYS=1 -DENABLE_MODULE_SCHNORRSIG=1 -DENABLE_MODULE_ECDH=1
 PARSER_BUILD_MANIFEST ?= langdef/parsers/baked_v1.json
 PARSER_BUILD_MANIFEST_KEY := $(shell python3 tools/parser_artifact_build_v1.py --manifest "$(PARSER_BUILD_MANIFEST)" --manifest-key)
 PARSER_BAKED_HEADER = runtime/generated/parser_baked_v1.$(BUILD_OBJ_TAG).$(PARSER_BUILD_MANIFEST_KEY).h
@@ -30135,7 +30147,8 @@ test-petta-get-type-relation: $(BIN)
 
 .PHONY: test-petta-py-call-spec
 # py-call takes a call spec, (path args...); any other value, a function's
-# result included, has no answer.  The expected output is SWI-PeTTa's.
+# result included, has no answer.  The expected output is SWI-PeTTa's, except
+# that Python text comes back as strings, which Janus makes symbols.
 test-petta-semantics: test-petta-py-call-spec
 test-petta-py-call-spec: $(BIN)
 ifeq ($(ENABLE_PYTHON),1)
@@ -31764,9 +31777,10 @@ test-petta-semantics: test-petta-py-call-data
 # A library or Python operation takes the ready values of its arguments: a
 # value shaped like a call is data in and out of a Python call, a parsed
 # command reaching Python as the list it spells and a list Python returns
-# whose head names a function never run (SWI-PeTTa's answers), an
-# operation that gives no answer fails, and a completed value handed back
-# through the evaluate path's delimiter is that value.
+# whose head names a function never run, an operation that gives no answer
+# fails, and a completed value handed back through the evaluate path's
+# delimiter is that value. Python text comes back as MeTTa strings, where
+# SWI-PeTTa's Janus default makes them symbols.
 test-petta-py-call-data: $(BIN)
 	@set -eu; \
 	actual=$$($(CETTA_BIN_INVOKE) --lang petta \
@@ -34743,6 +34757,18 @@ test-process-stream-v1: $(BIN) tests/support/check_process_stream.py tests/suppo
 	@python3 tests/support/check_process_stream.py ./$(BIN)
 test-process-scope-fork-v1:
 	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-process-scope-v1 test-process-stream-v1
+.PHONY: test-proc-stdio-v1 test-proc-stdio-fork-v1
+test-all: test-proc-stdio-v1
+test-proc-stdio-v1: $(BIN) tests/support/check_proc_stdio_v1.py
+	@python3 tests/support/check_proc_stdio_v1.py ./$(BIN)
+test-proc-stdio-fork-v1:
+	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-proc-stdio-v1
+.PHONY: test-proc-lifetime-v1 test-proc-lifetime-fork-v1
+test-all: test-proc-lifetime-v1
+test-proc-lifetime-v1: $(BIN) tests/support/check_proc_lifetime_v1.py
+	@python3 tests/support/check_proc_lifetime_v1.py ./$(BIN)
+test-proc-lifetime-fork-v1:
+	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-proc-lifetime-v1
 test-list-drop-v1: $(BIN) lib/list.metta tests/list_value/list_drop.metta tests/list_value/list_drop.expected
 	@set -e; for language in he petta@1.0.6 prime; do \
 		library=list; test $$language != petta@1.0.6 || library='(library list)'; \
@@ -34820,6 +34846,39 @@ test-all: test-text-streaming-v1
 test-text-streaming-v1: $(BIN) $(TEXT_STREAMING_NATIVE_TEST_V1) tests/support/check_text_streaming_v1.py
 	@$(call cetta_exec,./$(TEXT_STREAMING_NATIVE_TEST_V1))
 	@python3 tests/support/check_text_streaming_v1.py ./$(BIN) --output runtime/text-streaming-v1-$(BUILD_OBJ_TAG)
+
+CRYPTO_NATIVE_TEST_V1 = runtime/test-crypto-primitives-v1-$(BUILD_OBJ_TAG)
+$(CRYPTO_NATIVE_TEST_V1): tests/support/test_crypto_primitives_v1.c src/crypto_primitives.c src/crypto_primitives.h src/native_sha256.c src/native_sha256.h
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc -o $@ tests/support/test_crypto_primitives_v1.c src/crypto_primitives.c src/native_sha256.c
+
+.PHONY: test-crypto-v1
+test-all: test-crypto-v1
+test-crypto-v1: $(BIN) $(CRYPTO_NATIVE_TEST_V1) tests/support/check_crypto_v1.py
+	@$(call cetta_exec,./$(CRYPTO_NATIVE_TEST_V1))
+	@python3 tests/support/check_crypto_v1.py ./$(BIN)
+
+.PHONY: test-toml-v1
+test-all: test-toml-v1
+test-toml-v1: $(BIN) tests/support/check_toml_v1.py
+	@python3 tests/support/check_toml_v1.py ./$(BIN)
+
+# Both WebSocket checks need Python's websockets package, as the server for
+# the client and as clients for the listener; without it they report a skip.
+WEBSOCKET_TEST_PYTHON ?= python3
+.PHONY: test-io-websocket-v1 test-io-websocket-server-v1
+test-all: test-io-websocket-v1 test-io-websocket-server-v1
+test-io-websocket-v1: $(BIN) tests/support/check_io_websocket_v1.py
+	@$(WEBSOCKET_TEST_PYTHON) tests/support/check_io_websocket_v1.py ./$(BIN)
+test-io-websocket-server-v1: $(BIN) tests/support/check_io_websocket_server_v1.py
+	@$(WEBSOCKET_TEST_PYTHON) tests/support/check_io_websocket_server_v1.py ./$(BIN)
+
+# The TCP check needs only Python's standard library, and openssl for its TLS
+# case; a build without the provider reports a skip.
+.PHONY: test-io-tcp-v1
+test-all: test-io-tcp-v1
+test-io-tcp-v1: $(BIN) tests/support/check_io_tcp_v1.py
+	@python3 tests/support/check_io_tcp_v1.py ./$(BIN)
 
 .PHONY: test-filesystem-core-v1 test-filesystem-core-body-v1
 test-filesystem-core-v1:
@@ -46473,8 +46532,8 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
 	system fs proc sqlite shell cwp io durable space_service store llm llm/io llm/command llm/compat \
-	re postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
-LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re holkernel mm0kernel
+	re crypto toml postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
+LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re crypto toml holkernel mm0kernel
 LIBRARY_PETTA_SPELLING_SOURCES_V1 += lib_tensor
 LIBRARY_PRIME_SPELLING_SOURCES_V1 += lib_tensor
 .PHONY: test-library-spellings-v1
