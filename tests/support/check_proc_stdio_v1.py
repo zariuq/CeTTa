@@ -8,12 +8,13 @@ executable's path. Each case is one MeTTa program run in PeTTa.
   blocking and the timed read share one buffer.
 - (stdin inherit), (stdout inherit), (stdout null) and (stderr null) give a
   child the caller's streams or discard its output; an uncaptured stream
-  reports proc:eof. A child that inherits standard input stays in the
-  caller's process group; any other child leads a group of its own.
-- On a terminal, a child that inherits standard input reads the line typed
-  to the caller's terminal, while a child in a group of its own that opens
-  the terminal to read it is stopped until its timeout: why inheriting
-  standard input keeps the caller's group.
+  reports proc:eof. Stream wiring says nothing about the process group: a
+  child leads a group of its own, with or without the caller's input, unless
+  (group caller) keeps it in the caller's.
+- On a terminal, a child in the caller's group that inherits standard input
+  reads the line typed to the caller's terminal. With the same input in a
+  group of its own it is stopped by the terminal until its timeout, which is
+  why a foreground job asks for (group caller).
 - system:executable names the running binary.
 """
 import argparse
@@ -137,9 +138,16 @@ def main():
         check("discarded error", (code, '"kept\n" ""' in out, "proc:eof proc:eof" in out), (0, True, True))
         code, out = run(binary, directory, '!(println! (proc:run ("sh") ((stdout bogus))))')
         check("an unknown stream mode", (code, out), (0, '(proc:failed proc:invalid-argument "stdout and stderr must be inherit or null")\n'))
+        code, out = run(binary, directory, '!(println! (proc:run ("sh" "-c" %s) ((group caller))))' % GROUP)
+        child, parent = groups(out)
+        check("(group caller) keeps the child in the caller's group", child == parent, True)
         code, out = run(binary, directory, '!(println! (proc:run ("sh" "-c" %s) ((stdin inherit))))' % GROUP)
         child, parent = groups(out)
-        check("an inheriting child stays in the caller's group", child == parent, True)
+        check("inherited input leaves the group the child's own", child != parent, True)
+        code, out = run(binary, directory, '!(println! (proc:run ("sh") ((group bogus))))')
+        check("an unknown group", out, '(proc:failed proc:invalid-argument "group must be own or caller")\n')
+        code, out = run(binary, directory, '!(println! (proc:run ("true") ((group caller) (lifetime detached) (stdout null) (stderr null))))')
+        check("a detached child cannot share the caller's group", "(proc:failed proc:invalid-argument" in out, True)
         code, out = run(binary, directory, '!(println! (proc:run ("sh" "-c" %s) ()))' % GROUP)
         child, parent = groups(out)
         check("another child leads a group of its own", child != parent, True)
@@ -150,9 +158,15 @@ def main():
 
         code, shown = run_on_terminal(
             binary, directory,
-            '!(println! (proc:run ("sh" "-c" "read x; echo terminal gave $x") ((stdin inherit) (stdout inherit) (timeout-ms 10000))))',
+            '!(println! (proc:run ("sh" "-c" "read x; echo terminal gave $x") ((stdin inherit) (stdout inherit) (group caller) (timeout-ms 10000))))',
             b"typed\n")
-        check("a terminal read by an inheriting child", (code, "terminal gave typed" in shown), (0, True))
+        check("a terminal read by an inheriting child in the caller's group", (code, "terminal gave typed" in shown), (0, True))
+        code, shown = run_on_terminal(
+            binary, directory,
+            '!(println! (proc:run ("sh" "-c" "read x; echo read $x") ((stdin inherit) (stdout inherit) (timeout-ms 1500))))',
+            b"typed\n")
+        check("the same read from a group of its own stops until the timeout",
+              (code, "proc:timed-out" in shown, "read typed" in shown), (0, True, False))
         code, shown = run_on_terminal(
             binary, directory,
             '!(println! (proc:run ("sh" "-c" "read x < /dev/tty; echo read $x") ((timeout-ms 1500))))',

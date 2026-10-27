@@ -48,6 +48,7 @@ typedef struct {
      * the child leads a session of its own and outlives its handle;
      * orphaned: its handle is gone and this job's thread frees it. */
     bool release_on_exit, detached, orphaned;
+    bool caller_group;      /* (group caller): the child stays in the caller's group */
     ProcCapture output[2];
     /* Standard input, output and error: a pipe of the job's own (input
      * bytes, captured output), the caller's descriptor, or /dev/null. */
@@ -228,15 +229,16 @@ static void *execute(void *resource) {
         (null_device = open("/dev/null", O_WRONLY | O_CLOEXEC)) < 0) {
         job->launch_error = errno; job->launch_stage = "null-device"; goto finish;
     }
-    /* The child's standard descriptors. A child that inherits standard input
-     * stays in the caller's process group, where it may read the caller's
-     * terminal; a child in a background group would be stopped instead. */
+    /* The child's standard descriptors, and its process group: its own unless
+     * (group caller) keeps it in the caller's, as a foreground job that reads
+     * the caller's terminal must be; a background group reading the terminal
+     * is stopped by it. A detached child leads a session of its own. */
     int in = job->stdio[0] == PROC_STDIO_INHERIT ? STDIN_FILENO : input[0];
     int out = job->stdio[1] == PROC_STDIO_PIPE ? output[0][1]
         : job->stdio[1] == PROC_STDIO_INHERIT ? STDOUT_FILENO : null_device;
     int err = job->stdio[2] == PROC_STDIO_PIPE ? output[1][1]
         : job->stdio[2] == PROC_STDIO_INHERIT ? STDERR_FILENO : null_device;
-    int new_group = job->detached ? 2 : job->stdio[0] != PROC_STDIO_INHERIT;
+    int new_group = job->detached ? 2 : !job->caller_group;
     if (job->owned_tree &&
         (owned_pipe(owner, O_CLOEXEC) ||
          owned_pipe(receipt, O_CLOEXEC | O_NONBLOCK))) {
@@ -536,7 +538,8 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
         unsigned bit = atom_is_symbol(key, "cwd") ? 1u : atom_is_symbol(key, "env") ? 2u :
             atom_is_symbol(key, "stdin") ? 4u : atom_is_symbol(key, "timeout-ms") ? 8u :
             atom_is_symbol(key, "max-bytes") ? 16u : atom_is_symbol(key, "lifetime") ? 32u :
-            atom_is_symbol(key, "stdout") ? 64u : atom_is_symbol(key, "stderr") ? 128u : 0u;
+            atom_is_symbol(key, "stdout") ? 64u : atom_is_symbol(key, "stderr") ? 128u :
+            atom_is_symbol(key, "group") ? 256u : 0u;
         if (!bit || (seen & bit)) { *reason = "unknown or duplicate process option"; goto refuse; }
         seen |= bit;
         if (bit == 1u) {
@@ -554,6 +557,10 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
             else if (!atom_is_symbol(value, "group")) {
                 *reason = "lifetime must be group, owner, run or detached"; goto refuse;
             }
+        }
+        else if (bit == 256u) {
+            if (atom_is_symbol(value, "caller")) job->caller_group = true;
+            else if (!atom_is_symbol(value, "own")) { *reason = "group must be own or caller"; goto refuse; }
         }
         else if (bit == 64u || bit == 128u) {
             int stream = bit == 64u ? 1 : 2;
@@ -576,9 +583,9 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
     }
     /* Nobody reads a detached child's output once its handle is gone, and a
      * child apart from the caller's terminal cannot share its input. */
-    if (job->detached && (job->stdio[0] == PROC_STDIO_INHERIT ||
+    if (job->detached && (job->stdio[0] == PROC_STDIO_INHERIT || job->caller_group ||
                           job->stdio[1] == PROC_STDIO_PIPE || job->stdio[2] == PROC_STDIO_PIPE)) {
-        *reason = "a detached child's output must be inherit or null, and its input cannot be inherited";
+        *reason = "a detached child's output must be inherit or null, and it shares neither the caller's input nor its group";
         goto refuse;
     }
     /* A stream that is not captured has nothing more to give. */

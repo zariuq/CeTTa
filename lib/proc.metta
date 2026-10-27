@@ -50,13 +50,16 @@
 ; releases a background job. lifetime detached makes the child the leader of
 ; a session of its own, apart from the caller's terminal: closing its handle
 ; or the caller's end leaves it running, while proc:cancel and a timeout still
-; end it. Its output must be inherit or null, and its input is not inherited.
+; end it. Its output must be inherit or null, and it shares neither the
+; caller's input nor its group.
 ; Standard input is (stdin BYTES), empty by default, or (stdin inherit), the
 ; caller's own. Output and error are captured unless (stdout inherit),
 ; (stdout null), (stderr inherit) or (stderr null) says otherwise. A child
-; that inherits standard input stays in the caller's process group, so it
-; can read a terminal the caller reads; cancellation and a timeout then
-; signal that child alone, or its tree under lifetime owner.
+; leads a process group of its own unless (group caller) keeps it in the
+; caller's, as a foreground job reading the caller's terminal must be: the
+; terminal stops a background group that reads it. A child in the caller's
+; group is signalled alone on cancellation and timeout, or its tree under
+; lifetime owner or run.
 (= (proc:spawn $argv $options)
    (__cetta_lib_proc_spawn $argv $options))
 (= (proc:poll $owner)
