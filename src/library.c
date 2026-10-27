@@ -24,6 +24,7 @@
 #include "library_io.h"
 #include "library_cwp.h"
 #include "library_space_service.h"
+#include "library_store.h"
 #include "library_proc.h"
 #include "proc_child.h"
 #include "proc_capture.h"
@@ -166,8 +167,10 @@ enum {
 #endif
 };
 
+#define CETTA_LIBRARY_STORE (UINT64_C(1) << 36)
+
 _Static_assert((CETTA_NATIVE_IMPORT_GPARSE &
-                (((CettaLibraryMask)CETTA_LIBRARY_TENSOR << 1) - 1)) == 0,
+                (((UINT64_C(1) << 25) - 1) | CETTA_LIBRARY_STORE)) == 0,
                "native grammar import aliases the shared library catalog");
 
 static bool library_prime_host_intrinsic(SymbolId head) {
@@ -203,6 +206,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"proc", CETTA_LIBRARY_PROC, NULL},
     {"llm", CETTA_LIBRARY_LLM, NULL},
     {"space_service", CETTA_LIBRARY_SPACE_SERVICE, NULL},
+    {"store", CETTA_LIBRARY_STORE, NULL},
     {"mailbox", CETTA_LIBRARY_MAILBOX, NULL},
     {"sqlite", CETTA_LIBRARY_SQLITE, NULL},
     {"siwc", CETTA_LIBRARY_SIWC, NULL},
@@ -210,6 +214,17 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"json", CETTA_LIBRARY_JSON, NULL},
 #endif
 };
+
+static bool library_catalog_valid(void) {
+    CettaLibraryMask mask = 0;
+    for (size_t i = 0; i < sizeof(CETTA_LIBRARIES) / sizeof(CETTA_LIBRARIES[0]); ++i) {
+        CettaLibraryMask bit = CETTA_LIBRARIES[i].bit;
+        if (!bit || (bit & (bit - 1)) || (mask & bit))
+            return false;
+        mask |= bit;
+    }
+    return cetta_native_module_catalog_valid(mask);
+}
 
 static const char *CETTA_MM2_PROGRAM_HANDLE_KIND = "mork-program";
 static const char *CETTA_MM2_CONTEXT_HANDLE_KIND = "mork-context";
@@ -482,6 +497,10 @@ void cetta_library_context_init(CettaLibraryContext *ctx) {
 static void library_context_init_services(CettaLibraryContext *ctx,
         CettaLanguageId language_id, const CettaProfile *profile,
         bool foreign_services) {
+    if (!library_catalog_valid()) {
+        fputs("cetta: conflicting library import bits\n", stderr);
+        abort();
+    }
     cetta_eval_session_init(&ctx->session, language_id, profile);
     ctx->nik_runtime_mutex_ready =
         pthread_mutex_init(&ctx->nik_runtime_mutex, NULL) == 0;
@@ -12317,6 +12336,13 @@ static Atom *cetta_library_dispatch_native_value(
         Atom *result = cetta_space_service_dispatch(a, head, args, nargs);
         if (result) {
             *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
+            return result;
+        }
+    }
+    if (ctx->active_mask & CETTA_LIBRARY_STORE) {
+        Atom *result=cetta_store_dispatch(ctx,a,head,args,nargs);
+        if (result) {
+            *result_form=CETTA_CALL_RESULT_COMPLETED_VALUE;
             return result;
         }
     }

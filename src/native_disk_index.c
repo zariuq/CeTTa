@@ -32,6 +32,7 @@ struct CettaDiskCursor {
     CettaDiskBuffer upper;
     bool failed, has_upper;
 };
+struct CettaDiskBlobReader { CettaDiskRoot root; CettaDiskBlob value; };
 
 static uint64_t number(const unsigned char *p,size_t n) {
     uint64_t value=0;
@@ -209,6 +210,38 @@ static CettaDiskStatus append(CettaDiskRoot *root,const unsigned char *data,size
     CettaDiskStatus status=journal_status(cetta_journal_append(root->fd,data,size,false,&root->end));
     if (status==CETTA_DISK_OK) *reference=start+1;
     return status;
+}
+CettaDiskStatus cetta_disk_blob_reader_open(const CettaDiskRoot *root,CettaDiskBlob value,
+                                           CettaDiskBlobReader **out) {
+    if (!out) return CETTA_DISK_INVALID;
+    *out=NULL;
+    if (!valid(root)) return CETTA_DISK_INVALID;
+    CettaDiskBlobReader *reader=calloc(1,sizeof(*reader));
+    if (!reader) return CETTA_DISK_NOMEM;
+    reader->root=*root; reader->value=value;
+    reader->root.fd=fcntl(root->fd,F_DUPFD_CLOEXEC,0);
+    if (reader->root.fd<0) { free(reader); return CETTA_DISK_IO; }
+    size_t verified=0;
+    CettaDiskStatus status=cetta_disk_blob_read(&reader->root,value,0,NULL,0,&verified);
+    if (status!=CETTA_DISK_OK) { cetta_disk_blob_reader_close(reader); return status; }
+    *out=reader; return CETTA_DISK_OK;
+}
+CettaDiskStatus cetta_disk_blob_reader_read(CettaDiskBlobReader *reader,uint64_t offset,
+                                            void *destination,size_t capacity,size_t *written) {
+    if (!written) return CETTA_DISK_INVALID;
+    *written=0;
+    if (!reader || offset>reader->value.size || (capacity && !destination)) return CETTA_DISK_INVALID;
+    size_t count=reader->value.size-offset<capacity ? (size_t)(reader->value.size-offset) : capacity;
+    CettaDiskStatus status=read_all(reader->root.fd,destination,count,
+                                  reader->value.reference-1+FRAME+1+offset);
+    if (status==CETTA_DISK_OK) *written=count;
+    return status;
+}
+void cetta_disk_blob_reader_close(CettaDiskBlobReader *reader) {
+    if (reader) { close(reader->root.fd); free(reader); }
+}
+uint64_t cetta_disk_blob_reader_size(const CettaDiskBlobReader *reader) {
+    return reader ? reader->value.size : 0;
 }
 static CettaDiskStatus branch(CettaDiskRoot *root,uint64_t bit,uint64_t left,uint64_t right,uint64_t *out) {
     unsigned char data[25]={BRANCH};

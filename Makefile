@@ -808,6 +808,7 @@ SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/fallible_alloc.c
 SRC += src/occurrence_log.c src/shared_return_producer.c src/owned_return_image.c
 SRC += src/native_journal.c
+SRC += src/native_disk_index.c src/native_disk_store.c src/library_store.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
 # Shared opaque authority (lib_seal): runtime objects and the seal library.
 SRC += src/seal.c native/seal_module.c
@@ -45910,7 +45911,7 @@ LIBRARY_SPELLING_TOOL_V1 = tools/library_spelling.py
 # PeTTa does not have.
 LIBRARY_PETTA_PORTABLE_SOURCES_V1 = langdef lib_bnf lib_lbnf lib_module lib_tptp json str
 LIBRARY_PETTA_SPELLING_SOURCES_V1 = $(LIBRARY_PETTA_PORTABLE_SOURCES_V1) list \
-	system fs proc sqlite shell cwp io durable space_service llm llm/io llm/command llm/compat \
+	system fs proc sqlite shell cwp io durable space_service store llm llm/io llm/command llm/compat \
 	re postings postings_descriptors tensor tensor_descriptors embedding holkernel mm0kernel
 LIBRARY_PRIME_SPELLING_SOURCES_V1 = json re holkernel mm0kernel
 LIBRARY_PETTA_SPELLING_SOURCES_V1 += lib_tensor
@@ -48540,6 +48541,22 @@ runtime/test-native-disk-index: tests/test_native_disk_index.c src/native_disk_i
 	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_disk_index.c src/native_disk_index.c src/native_journal.c src/native_sha256.c -Wl,--wrap=write,--wrap=pread,--wrap=fsync,--wrap=malloc,--wrap=calloc,--wrap=realloc -o $@
 test-native-disk-index: runtime/test-native-disk-index
 	$<
+.PHONY: test-native-disk-store
+runtime/test-native-disk-store: tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_store.h src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
+	@mkdir -p runtime
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_index.c src/native_journal.c src/native_sha256.c -Wl,--wrap=write,--wrap=fsync,--wrap=renameat -o $@
+test-native-disk-store: runtime/test-native-disk-store
+	$<
+LIBRARY_IMPORT_CATALOG_TEST_BIN = runtime/test-library-import-catalog-$(BUILD_OBJ_TAG)
+$(LIBRARY_IMPORT_CATALOG_TEST_BIN): tests/support/test_library_import_catalog.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+.PHONY: test-library-import-catalog test-store-library test-store-lifetime
+test-library-import-catalog: $(LIBRARY_IMPORT_CATALOG_TEST_BIN)
+	$<
+test-all: test-library-import-catalog test-store-library
+runtime/libnative-disk-store.so: src/native_disk_store.c src/native_disk_store.h src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
+	@mkdir -p runtime
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -fPIC -shared -Isrc src/native_disk_store.c src/native_disk_index.c src/native_journal.c src/native_sha256.c -o $@
 runtime/libnative-disk-index.so: src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
 	@mkdir -p runtime
 	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -fPIC -shared -Isrc src/native_disk_index.c src/native_journal.c src/native_sha256.c -o $@
@@ -48559,6 +48576,10 @@ $(VALUE_WORKER_BIN): $(VALUE_WORKER_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPIL
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 value-worker: $(VALUE_WORKER_BIN)
 	@echo "Built $(VALUE_WORKER_BIN)"
+test-store-library: $(VALUE_WORKER_BIN) test-native-disk-store test-native-disk-index test-library-import-catalog
+	$(PYTHON) tests/test_store_library.py $(VALUE_WORKER_BIN)
+test-store-lifetime: $(VALUE_WORKER_BIN)
+	$(PYTHON) tests/check_store_lifetime.py $(VALUE_WORKER_BIN)
 SPACE_SERVICE_BIN = runtime/cetta-space-service-$(BUILD_OBJ_TAG)
 SPACE_SERVICE_OBJ = runtime/bootstrap/space-service.$(BUILD_OBJ_TAG).o
 -include $(SPACE_SERVICE_OBJ:.o=.d)

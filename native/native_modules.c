@@ -1243,6 +1243,21 @@ static const CettaNativeBuiltinModule g_native_modules[] = {
 #endif
 };
 
+bool cetta_native_module_catalog_valid(CettaLibraryMask authored_mask) {
+    CettaLibraryMask seen = authored_mask;
+    const CettaLibraryMask crypto = UINT64_C(1) << 34;
+    if (seen & crypto)
+        return false;
+    seen |= crypto;
+    for (size_t i = 0; i < sizeof(g_native_modules) / sizeof(g_native_modules[0]); ++i) {
+        CettaLibraryMask bit = g_native_modules[i].import_bit;
+        if (!bit || (bit & (bit - 1)) || (seen & bit))
+            return false;
+        seen |= bit;
+    }
+    return true;
+}
+
 const CettaNativeBuiltinModule *cetta_native_module_lookup(const char *name) {
     uint32_t i;
 

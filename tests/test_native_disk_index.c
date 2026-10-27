@@ -17,6 +17,7 @@ static unsigned checks;
 } } while (0)
 static ssize_t write_remaining=-1;
 static size_t read_chunk;
+static uint64_t read_bytes;
 static int write_interrupt,read_interrupt,sync_interrupt,sync_failure=-1;
 static size_t allocation_limit;
 static unsigned oversized_allocations;
@@ -49,7 +50,9 @@ ssize_t __wrap_write(int fd,const void *data,size_t size) {
 ssize_t __wrap_pread(int fd,void *data,size_t size,off_t offset) {
     if (read_interrupt) { read_interrupt=0; errno=EINTR; return -1; }
     if (read_chunk && size>read_chunk) size=read_chunk;
-    return __real_pread(fd,data,size,offset);
+    ssize_t n=__real_pread(fd,data,size,offset);
+    if (n>0) read_bytes+=(uint64_t)n;
+    return n;
 }
 int __wrap_fsync(int fd) {
     if (sync_interrupt) { sync_interrupt=0; errno=EINTR; return -1; }
@@ -205,6 +208,17 @@ static void large_body_and_reader_ownership(void) {
     allocation_limit=65536;
     set(&root,text("large"),bytes(data,size),false);
     CettaDiskBlob body; check(cetta_disk_lookup(&root,text("large"),&body)==CETTA_DISK_OK);
+    uint64_t before_read=read_bytes;
+    CettaDiskBlobReader *reader=NULL;
+    check(cetta_disk_blob_reader_open(&root,body,&reader)==CETTA_DISK_OK);
+    unsigned char chunk[4096]; size_t received=0;
+    for (uint64_t offset=0;offset<size;offset+=received) {
+        check(cetta_disk_blob_reader_read(reader,offset,chunk,sizeof(chunk),&received)==CETTA_DISK_OK);
+        check(received && !memcmp(chunk,data+(size_t)offset,received));
+    }
+    check(read_bytes-before_read<=(uint64_t)size*2+1024);
+    check(cetta_disk_blob_reader_read(reader,0,chunk,sizeof(chunk),&received)==CETTA_DISK_OK);
+    check(received==sizeof(chunk) && !memcmp(chunk,data,received));
     unsigned char range[101]; size_t n;
     check(cetta_disk_blob_read(&root,body,32761,range,sizeof(range),&n)==CETTA_DISK_OK);
     check(n==sizeof(range) && !memcmp(range,data+32761,n));
@@ -218,6 +232,9 @@ static void large_body_and_reader_ownership(void) {
     check(cetta_disk_sync(&compacted)==CETTA_DISK_OK);
     set(&root,text("large"),text("new"),false);
     fclose(file); /* The cursor owns its old segment, even after owner close. */
+    check(cetta_disk_blob_reader_read(reader,123,chunk,sizeof(chunk),&received)==CETTA_DISK_OK);
+    check(received==sizeof(chunk) && !memcmp(chunk,data+123,received));
+    cetta_disk_blob_reader_close(reader);
     CettaDiskBuffer key;
     check(cetta_disk_cursor_next(cursor,&key,&body)==CETTA_DISK_OK && key.size==5);
     check(cetta_disk_blob_read(cetta_disk_cursor_root(cursor),body,100,range,sizeof(range),&n)==CETTA_DISK_OK);

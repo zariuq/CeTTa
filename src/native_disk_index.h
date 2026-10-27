@@ -36,6 +36,7 @@ typedef struct {
 typedef struct { bool remove; CettaDiskBytes key, value; } CettaDiskOp;
 typedef struct { uint64_t reference, size; } CettaDiskBlob;
 typedef struct CettaDiskCursor CettaDiskCursor;
+typedef struct CettaDiskBlobReader CettaDiskBlobReader;
 
 /* All operations are interpreted in order in one candidate root. No operation
  * count or corpus-sized in-memory index is retained between calls. */
@@ -51,6 +52,16 @@ CettaDiskStatus cetta_disk_lookup(const CettaDiskRoot *root,
  */
 CettaDiskStatus cetta_disk_blob_read(const CettaDiskRoot *root, CettaDiskBlob value,
     uint64_t offset, void *destination, size_t capacity, size_t *written);
+
+/* Verify once, then read duplicate-safe ranges from an owned immutable fd.
+ * This avoids rehashing the whole body for every chunk. The owner must keep
+ * published bytes immutable, including while old readers remain open. */
+CettaDiskStatus cetta_disk_blob_reader_open(const CettaDiskRoot *root, CettaDiskBlob value,
+    CettaDiskBlobReader **out);
+CettaDiskStatus cetta_disk_blob_reader_read(CettaDiskBlobReader *reader,
+    uint64_t offset, void *destination, size_t capacity, size_t *written);
+uint64_t cetta_disk_blob_reader_size(const CettaDiskBlobReader *reader);
+void cetta_disk_blob_reader_close(CettaDiskBlobReader *reader);
 
 /* Captures root/end and owns a duplicate fd. Appends, deletion, compaction and
  * unlinking the old segment do not change this view. Increasing byte-key order,

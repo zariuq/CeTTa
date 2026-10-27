@@ -643,6 +643,11 @@
       "source": "re.metta",
       "generator": "library_spelling.py",
       "output_sha256": "049085eb033f7f7875084e69e0ed49e2dc423afb4402982bdb896c8e79dffc26"
+    },
+    {
+      "source": "store.metta",
+      "generator": "library_spelling.py",
+      "output_sha256": "ce9e10acb5a5f60d27beb07a31fb326e90516722f7eef5720b56aa1595af69cc"
     }
   ]
 }
