@@ -22,14 +22,14 @@ implementation, and a program is written for one of them.
 
 | `--lang` | Language | Profiles (`--profile`) |
 |---|---|---|
-| `petta` (default) | PeTTa, as released in version 1.0.6 | `extended` adds CeTTa's labeled extensions; `typecheck-v2` and `typecheck-v3` add native type checking (`petta@1.1`); `petta@1.1.c` is the typed line with declarations as call contracts |
+| `petta` (default) | Corrected stable PeTTa | `extended` adds CeTTa's labeled extensions; `typecheck-v2` and `typecheck-v3` add native type checking (`petta@1.1`); `petta@1.1.c` is the typed line with declarations as call contracts |
 | `he` | Hyperon Experimental MeTTa 0.2.10, in CeTTa's fork | `he` (default) is the fork with its deliberate differences; `he-compat` keeps the Rust implementation's behavior where `he` differs; `extended` adds CeTTa's labeled extensions; `he-prime` adds dependent binders and typed inhabitation search |
 | `prime` | the MeTTa-Prime 0.0.1 draft | |
 | `hol-light` | the HOL Light kernel, checking HOLR proof streams | `standard` (default), `open`, `sealed` |
 | `rhocalc` | the reflective higher-order rho-calculus | `strict-core`, `cost`, `rhometta` |
 | `mm2` | MM2 programs, lowered directly and run on MORK | `gslt` |
 
-`--lang <name>@<version>` names a version: `petta@1.0.6`, `petta@1.1`
+`--lang <name>@<version>` names a contract: `petta@stable-fixed`, `petta@1.1`
 (typed PeTTa), `petta@1.1.c`, `he@0.2.10` (the Hyperon Experimental release
 CeTTa's HE forks; every HE profile) and `prime@0.0.1`. See
 `docs/language_versions.txt`.

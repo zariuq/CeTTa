@@ -16528,13 +16528,11 @@ static bool petta_machine_schedule_typed_call(
     Atom *result = delayed_type_result
         ? petta_fresh_variable(machine) : expected;
     Atom *result_type = contract->result_type;
-    /* Under call contracts a position whose declared type is a variable is
-     * not checked: every value has a type it could take there.  Nor is the
-     * result of a call given fewer arguments than its arity: its value is a
-     * partial application, whose result the call completing it checks. */
-    bool result_requires_check = contract->guard_result &&
-        !(machine->host.call_contracts &&
-          (partial || result_type->kind == ATOM_VAR));
+    /* A partial application is a closure, not the completed call's result.
+     * Its supplied arguments are still checked here; the completed call
+     * checks its result. Call contracts also leave variable types open. */
+    bool result_requires_check = contract->guard_result && !partial &&
+        !(machine->host.call_contracts && result_type->kind == ATOM_VAR);
     PettaGoalKind type_goal = overload_dispatch
         ? PETTA_GOAL_TYPE_MATCH : PETTA_GOAL_TYPE_ACCEPT;
     PettaGoalKind result_goal = overload_dispatch || result_filter
@@ -36340,8 +36338,8 @@ static bool petta_machine_dispatch_solve(
      * read under its plan: a variable holds its value, which is never run
      * again (P-APP-6), as the reference's partial(F, Args) holds Args. */
     if (partial == PETTA_PARTIAL_YES) {
-        /* Base PeTTa's generated typed branch checks the returned partial
-         * too. A Number codomain therefore does not admit a closure. */
+        /* Check supplied arguments through the same typed-call path. The
+         * closure itself is not checked against the completed codomain. */
         if (!petta_machine_type_obligations_enabled(machine) &&
             petta_machine_has_equations(machine, head_id) &&
             space_head_declares_type(machine->space, head_id)) {

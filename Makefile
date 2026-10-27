@@ -34770,8 +34770,8 @@ test-proc-lifetime-v1: $(BIN) tests/support/check_proc_lifetime_v1.py
 test-proc-lifetime-fork-v1:
 	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-proc-lifetime-v1
 test-list-drop-v1: $(BIN) lib/list.metta tests/list_value/list_drop.metta tests/list_value/list_drop.expected
-	@set -e; for language in he petta@1.0.6 prime; do \
-		library=list; test $$language != petta@1.0.6 || library='(library list)'; \
+	@set -e; for language in he petta prime; do \
+		library=list; test $$language != petta || library='(library list)'; \
 		profile='--profile extended'; test $$language != prime || profile=; \
 		./$(BIN) --no-results --lang $$language $$profile -e "!(import! &self $$library) $$(cat tests/list_value/list_drop.metta)" | \
 			diff -u tests/list_value/list_drop.expected -; \
@@ -46608,7 +46608,7 @@ test-postings-descriptors: $(BIN) tools/generate_postings_descriptors.py \
 		langdef/postings/generated/Descriptors.lean \
 		lib/postings_descriptors.metta lib/petta/postings_descriptors.metta
 	python3 tools/generate_postings_descriptors.py --cetta ./$(BIN) --check
-	@set -eu; got=$$(./$(BIN) --no-results --lang petta@1.0.6 --profile extended \
+	@set -eu; got=$$(./$(BIN) --no-results --lang petta --profile extended \
 		tests/langdef/postings/descriptors_surface_v1.metta); \
 	test "$$got" = "$$(cat tests/langdef/postings/descriptors_surface_v1.expected)"; \
 	echo '(PostingsDescriptorSurface 5 0)'
@@ -46665,7 +46665,7 @@ test-embedding: $(BIN)
 
 .PHONY: test-numerical-substrate-smoke
 test-numerical-substrate-smoke: $(BIN)
-	@result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta@1.0.6 \
+	@result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta \
 		tests/petta/numerical_substrate_smoke.metta 2>&1); \
 	status=$$?; \
 	if [ $$status -ne 0 ]; then \
@@ -46710,7 +46710,7 @@ test-all: test-json-codec-boundary
 
 test-tensor-support: $(BIN)
 	@set -eu; \
-	got=$$(./$(BIN) --no-results --lang petta@1.0.6 --profile extended \
+	got=$$(./$(BIN) --no-results --lang petta --profile extended \
 		tests/langdef/tensor/support_runtime_v1.metta); \
 	test "$$got" = "$$(cat tests/langdef/tensor/support_runtime_v1.expected)"; \
 	echo '(TensorSupport 6 0)'
@@ -48157,9 +48157,9 @@ test-petta-add-atoms-batch-v1: $(BIN) \
 	@set -eu; \
 	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-add-atoms-batch.XXXXXX"); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
-	$(BIN) --lang petta@1.0.6 tests/petta/add_atoms_batch.metta > "$$actual"; \
+	$(BIN) --lang petta tests/petta/add_atoms_batch.metta > "$$actual"; \
 	diff -u tests/petta/add_atoms_batch.expected "$$actual"; \
-	$(BIN) --lang petta@1.0.6 tests/petta/add_atoms_override.metta > "$$actual"; \
+	$(BIN) --lang petta tests/petta/add_atoms_override.metta > "$$actual"; \
 	diff -u tests/petta/add_atoms_override.expected "$$actual"; \
 	echo '(PettaAddAtomsBatchV1Summary 5 1 0)'
 
@@ -48175,7 +48175,7 @@ test-petta-prepared-sum-by-v1: $(BIN) \
 	for fuel in unlimited bounded; do \
 		option=; \
 		if [ "$$fuel" = bounded ]; then option='--fuel 1000000'; fi; \
-		$(CETTA_BIN_INVOKE) $$option --lang petta@1.0.6 \
+		$(CETTA_BIN_INVOKE) $$option --lang petta \
 			tests/petta/prepared_sum_by_number.metta >"$$actual"; \
 		diff -u tests/petta/prepared_sum_by_number.expected "$$actual"; \
 	done; \

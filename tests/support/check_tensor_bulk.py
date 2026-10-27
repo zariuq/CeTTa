@@ -125,7 +125,7 @@ def main():
 (= (bulk:or-guard $x) (if (or (<= $x 0.0) (bulk:positive $x)) 1.0 0.0))
 '''
     checks = 0
-    for language in ('petta@1.0.6', 'he', 'prime'):
+    for language in ('petta', 'he', 'prime'):
         module = '(library tensor)' if language.startswith('petta') else 'tensor'
         postings = '(library postings)' if language.startswith('petta') else 'postings'
         prefix = f'!(import! &self {module})\n!(import! &self {postings})\n' + definitions

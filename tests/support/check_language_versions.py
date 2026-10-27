@@ -19,11 +19,11 @@ def main():
         result = subprocess.run(command, cwd=ROOT, capture_output=True, timeout=60)
         return result.returncode, result.stdout, result.stderr
 
-    # Without --lang, cetta runs petta@1.0.6.  An unversioned spelling is its
-    # language's default contract; compatibility is a distinct contract, not
+    # Without --lang, cetta runs corrected stable PeTTa. An unversioned spelling
+    # selects its language's default contract; compatibility is distinct, not
     # a change to ordinary HE's profile or import policy.
     pairs = [
-        ([], ["--lang", "petta@1.0.6"]),
+        ([], ["--lang", "petta@stable-fixed"]),
         (["--lang", "he"], ["--lang", "he@0.2.10"]),
         (["--lang", "he"], ["--lang", "mettahe@0.2.10"]),
         (["--lang", "he", "--profile", "he"],
@@ -36,9 +36,9 @@ def main():
          ["--lang", "he@0.2.10", "--profile", "he-prime"]),
         (["--lang", "prime"], ["--lang", "prime@0.0.1"]),
         (["--lang", "prime"], ["--lang", "metta-prime@0.0.1"]),
-        (["--lang", "petta"], ["--lang", "petta@1.0.6"]),
+        (["--lang", "petta"], ["--lang", "petta@stable-fixed"]),
         (["--lang", "petta", "--profile", "extended"],
-         ["--lang", "petta@1.0.6", "--profile", "extended"]),
+         ["--lang", "petta@stable-fixed", "--profile", "extended"]),
         (["--lang", "petta", "--profile", "petta@1.1.c"], ["--lang", "petta@1.1.c"]),
     ]
     for ordinary, versioned in pairs:
@@ -52,8 +52,9 @@ def main():
         ("he@9", None, b"unknown source version"),
         ("prime@9", None, b"unknown source version"),
         ("petta@9", None, b"unknown source version"),
+        ("petta@1.0.6", None, b"unknown source version"),
         ("petta@1.1.c", "extended", b"is not a profile"),
-        ("petta@1.0.6", "petta@1.1.c", b"is not a profile"),
+        ("petta@stable-fixed", "petta@1.1.c", b"is not a profile"),
         ("he@0.0.1", None, b"unknown source version"),
         ("petta", "contract", b"unknown source profile"),
         ("prime@0.0.1", "extended", b"unknown source profile 'extended' for language 'prime'"),
@@ -69,7 +70,7 @@ def main():
 
     expression = "!(+ 1 2)"
     ordinary = run(["--translate", "--lang", "he", "--lang", "petta"], expression)
-    versioned = run(["--translate", "--lang", "he@0.2.10", "--lang", "petta@1.0.6"], expression)
+    versioned = run(["--translate", "--lang", "he@0.2.10", "--lang", "petta@stable-fixed"], expression)
     # This build translates only rhocalc. HE/PeTTa endpoint selection must
     # still reach that same boundary; versioning does not add a translator.
     assert ordinary[0] == 2 and b"supports only rhocalc endpoints" in ordinary[2]

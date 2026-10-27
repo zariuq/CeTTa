@@ -52,7 +52,7 @@ def check_default(binary):
                 'is (), should (). ✅ \n'
                 'is (7 7), should (7 7). ✅ \n'
                 'true\ntrue\ntrue\ntrue\n')
-    for language in ('petta', 'petta@1.0.6'):
+    for language in ('petta', 'petta@stable-fixed'):
         run = subprocess.run([str(binary), '--lang', language, str(source)],
                              capture_output=True, text=True, timeout=30)
         if (run.returncode, run.stdout, run.stderr) != (0, expected, ''):
@@ -62,7 +62,7 @@ def check_default(binary):
     # Pin its positive, empty, impossible and duplicate-occurrence observations.
     source = ROOT / 'tests/petta/language_versions/combinatorics_contract.metta'
     expected = source.with_suffix('.expected').read_text()
-    for language in ('petta', 'petta@1.0.6'):
+    for language in ('petta', 'petta@stable-fixed'):
         run = subprocess.run([str(binary), '--lang', language, str(source)],
                              capture_output=True, text=True, timeout=30)
         if (run.returncode, run.stdout, run.stderr) != (0, expected, ''):

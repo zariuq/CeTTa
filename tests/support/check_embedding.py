@@ -150,7 +150,7 @@ def main():
 (= (tensor:cosine-retrieve ExtensionQuery ExtensionVector 1) ExtendedRetrieval)
 '''
     checks=0
-    for language,profile_mode in [('petta@1.0.6',None),('petta@1.0.6','extended'),('he','extended'),('prime',None)]:
+    for language,profile_mode in [('petta',None),('petta','extended'),('he','extended'),('prime',None)]:
         library='(library embedding)' if language.startswith('petta') else 'embedding'
         source=f'!(import! &self {library})\n'+helpers
         source+=''.join(f'!(let $actual{i} {body} (== $actual{i} {expected}))\n' for i,(body,expected) in enumerate(cases))

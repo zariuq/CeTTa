@@ -144,7 +144,7 @@ def main():
          '(tensor:rerank (TensorScreenInfo CompleteSuperset fake 1 source query mask candidates lower upper))'),
     ]
     checks = 0
-    for language, profile in (('petta@1.0.6', None), ('petta@1.0.6', 'extended'),
+    for language, profile in (('petta', None), ('petta', 'extended'),
                               ('he', 'extended'), ('prime', None)):
         petta = language.startswith('petta')
         module = '(library tensor)' if petta else 'tensor'

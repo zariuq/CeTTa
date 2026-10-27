@@ -38,7 +38,7 @@ typedef enum {
 
 typedef enum {
     CETTA_LANGUAGE_VERSION_NONE = 0,
-    CETTA_LANGUAGE_VERSION_PETTA_1_0_6 = 1,
+    CETTA_LANGUAGE_VERSION_PETTA_STABLE = 6,
     CETTA_LANGUAGE_VERSION_PETTA_1_1 = 2,
     CETTA_LANGUAGE_VERSION_PRIME_0_0_1 = 3,
     CETTA_LANGUAGE_VERSION_HE_0_2_10 = 4,
@@ -79,7 +79,7 @@ typedef enum {
     cesta_table_apply_0(CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME_VALUE, CETTA_PROFILE_PRIME_CONTEXT_SELF_HOME, CETTA_LANGUAGE_PRIME, "context-self-home", "Inside captured code, &self is the space the code was captured in.", 0, 1, 1, 0, CETTA_LANGUAGE_VERSION_NONE, CETTA_IDENTITY_POLICY_J, CETTA_CONTEXT_SELF_HOME, 0) \
     cesta_table_apply_0(CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE_VALUE, CETTA_PROFILE_PRIME_CONTEXT_SELF_HERE, CETTA_LANGUAGE_PRIME, "context-self-here", "&self is the space the current evaluation is in.", 0, 1, 1, 0, CETTA_LANGUAGE_VERSION_NONE, CETTA_IDENTITY_POLICY_J, CETTA_CONTEXT_SELF_HERE, 0) \
     cesta_table_apply_0(CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN_VALUE, CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN, CETTA_LANGUAGE_PRIME, "quote-as-written", "Opt-in: substitution enters quotations and quoted parameters capture their arguments as written.", 0, 1, 1, 0, CETTA_LANGUAGE_VERSION_NONE, CETTA_IDENTITY_POLICY_J, CETTA_CONTEXT_SELF_PROGRAM, 1) \
-    cesta_table_apply_0(CETTA_PROFILE_PETTA_EXTENDED_VALUE, CETTA_PROFILE_PETTA_EXTENDED, CETTA_LANGUAGE_PETTA, "extended", "PeTTa semantics plus labeled shared CeTTa extensions.", 0, 1, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_1_0_6, CETTA_IDENTITY_POLICY_J, CETTA_CONTEXT_SELF_PROGRAM, 0) \
+    cesta_table_apply_0(CETTA_PROFILE_PETTA_EXTENDED_VALUE, CETTA_PROFILE_PETTA_EXTENDED, CETTA_LANGUAGE_PETTA, "extended", "Corrected stable PeTTa plus labeled shared CeTTa extensions.", 0, 1, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_STABLE, CETTA_IDENTITY_POLICY_J, CETTA_CONTEXT_SELF_PROGRAM, 0) \
     cesta_table_apply_0(CETTA_PROFILE_PETTA_1_1_C_VALUE, CETTA_PROFILE_PETTA_1_1_C, CETTA_LANGUAGE_PETTA, "petta@1.1.c", "PeTTa's typed line with declarations as call contracts: a failed check raises on every route.", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_1_1_C, CETTA_IDENTITY_POLICY_J, CETTA_CONTEXT_SELF_PROGRAM, 0)
 
 #define CETTA_PROFILE_TYPING_ROWS(cesta_table_apply_0) \
@@ -102,3 +102,4 @@ typedef enum {
 
 
 #endif
+

@@ -61,7 +61,7 @@ def main():
           (and $before (not $after)))''',
     ]
     checks = 0
-    for language, profile in (('petta@1.0.6', None), ('petta@1.0.6', 'extended'),
+    for language, profile in (('petta', None), ('petta', 'extended'),
                               ('he', 'extended'), ('prime', None)):
         petta = language.startswith('petta')
         module = '(library postings)' if petta else 'postings'

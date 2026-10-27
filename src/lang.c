@@ -68,7 +68,7 @@ static const CettaLanguageSpec CETTA_LANGUAGES[] = {
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
      CETTA_PORTABLE_RELATIONAL_NONE},
     {CETTA_LANGUAGE_PETTA, "petta", "petta", true,
-     "PeTTa, the default language (petta@1.0.6; petta@1.1 is typed)",
+     "Corrected stable PeTTa, the default language (petta@1.1 is typed)",
      CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY,
      CETTA_PORTABLE_RELATIONAL_NONE},
     {CETTA_LANGUAGE_AMBIENT, "ambient", "ambient", false,
