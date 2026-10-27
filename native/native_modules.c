@@ -7,6 +7,11 @@
 #include "library.h"
 #include "library_supervise.h"
 #include "library_pattern.h"
+#include "library_binary.h"
+#include "library_heap.h"
+#include "library_work.h"
+#include "library_dag.h"
+#include "library_syntax.h"
 #include "lib_parse_inference_native.h"
 #include "lib_parse_native_grammar.h"
 #include "native/langdef_module.h"
@@ -1227,18 +1232,56 @@ static bool mm0_module_call(CettaLibraryContext *ctx, Space *space,
 }
 
 static const CettaNativeBuiltinModule g_native_modules[] = {
-    {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL, NULL},
-    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call},
-    {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call},
-    {"holkernel", CETTA_NATIVE_IMPORT_HOL, NULL, "__cetta_lib_hol_", hol_module_call},
-    {"mm0kernel", CETTA_NATIVE_IMPORT_MM0, NULL, "__cetta_lib_mm0_", mm0_module_call},
-    {"seal", CETTA_NATIVE_IMPORT_SEAL, NULL, "__cetta_lib_seal_", cetta_seal_module_call},
+    {"binary", CETTA_NATIVE_IMPORT_BINARY, NULL, "binary:", cetta_binary_module_call, NULL},
+    {"heap", CETTA_NATIVE_IMPORT_HEAP, NULL, "heap:", cetta_heap_module_call, NULL},
+    {"dag", CETTA_NATIVE_IMPORT_DAG, NULL, "dag:", cetta_dag_module_call, NULL},
+    {"syntax", CETTA_NATIVE_IMPORT_SYNTAX, NULL, "syntax:", cetta_syntax_module_call, NULL},
+    {"work", CETTA_NATIVE_IMPORT_WORK, NULL, "work:", cetta_work_module_call,
+     "work-new work-take work-budget work-cancel work-record work-route work-count work-exists"},
+    {"gparse", CETTA_NATIVE_IMPORT_GPARSE, gparse_dispatch, NULL, NULL, NULL},
+    {"langdef", CETTA_NATIVE_IMPORT_LANGDEF, NULL, NULL, langdef_module_call, NULL},
+    {"pat", CETTA_NATIVE_IMPORT_PAT, NULL, "pat:", cetta_pattern_module_call, NULL},
+    {"holkernel", CETTA_NATIVE_IMPORT_HOL, NULL, "__cetta_lib_hol_", hol_module_call, NULL},
+    {"mm0kernel", CETTA_NATIVE_IMPORT_MM0, NULL, "__cetta_lib_mm0_", mm0_module_call, NULL},
+    {"seal", CETTA_NATIVE_IMPORT_SEAL, NULL, "__cetta_lib_seal_", cetta_seal_module_call, NULL},
     {"megalodon", CETTA_NATIVE_IMPORT_MEGALODON, NULL, "__cetta_lib_megalodon_",
-     cetta_megalodon_module_call},
+     cetta_megalodon_module_call, NULL},
 #if CETTA_BUILD_WITH_DURABLE
-    {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL},
+    {"supervise", 1u << 26, cetta_supervise_dispatch, "__cetta_lib_supervise_", NULL, NULL},
 #endif
 };
+
+uint32_t cetta_native_module_available_mask(const CettaLibraryContext *ctx,
+    uint32_t active_mask, uint32_t requested_mask) {
+    if (!ctx) return 0u;
+    uint32_t available = 0u;
+    for (size_t i = 0; i < sizeof(g_native_modules) / sizeof(*g_native_modules); i++) {
+        const CettaNativeBuiltinModule *module = &g_native_modules[i];
+        if ((requested_mask & module->import_bit) &&
+            ((active_mask & module->import_bit) || native_module_loaded(ctx, module)))
+            available |= module->import_bit;
+    }
+    return available;
+}
+
+bool cetta_native_module_builtin_enabled(CettaLibraryContext *ctx,
+    uint32_t active_mask, const char *name) {
+    if (!ctx || !name) return false;
+    size_t length = strlen(name);
+    for (size_t i = 0; i < sizeof(g_native_modules) / sizeof(g_native_modules[0]); i++) {
+        const CettaNativeBuiltinModule *module = &g_native_modules[i];
+        if (!module->builtin_words ||
+            (!(active_mask & module->import_bit) && !native_module_loaded(ctx, module))) continue;
+        const char *word = module->builtin_words;
+        while (*word) {
+            size_t count = strcspn(word, " ");
+            if (count == length && !memcmp(word, name, count)) return true;
+            word += count;
+            while (*word == ' ') word++;
+        }
+    }
+    return false;
+}
 
 const CettaNativeBuiltinModule *cetta_native_module_lookup(const char *name) {
     uint32_t i;

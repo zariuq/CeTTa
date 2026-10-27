@@ -1547,6 +1547,11 @@ char *atom_to_parseable_string_petta(Arena *a, Atom *atom);
  * string's bytes raw, NUL included. */
 char *atom_to_parseable_bytes(Arena *a, Atom *atom, bool petta,
                               size_t *len_out);
+/* Source output uses the same dialect printer but preserves source variable
+ * names rather than replacing them with display ordinals. This is not a
+ * guarantee of reader round-trip; the source adapter checks that separately. */
+char *atom_to_source_bytes(Arena *a, Atom *atom, bool petta,
+                          size_t *len_out);
 
 /* Deep-copy an atom DAG into a different arena, preserving source pointer
    sharing within one copy episode. */

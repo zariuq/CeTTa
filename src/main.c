@@ -2350,6 +2350,18 @@ static int main_petta_compiled_term_backend(
         context, bytes, length, universe, out_id, error_buf, error_buf_size);
 }
 
+/* These readers are atomic: a failed counted document exposes no prefix.
+ * Captured-byte clients still use the same dialect reader as file/text input. */
+static int main_petta_compiled_bytes_backend(
+    void *context, const uint8_t *bytes, size_t length, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count, char *error_buf, size_t error_buf_size) {
+    PeTTaCompiledReaderV1Receipt receipt;
+    int count = petta_compiled_reader_v1_parse_bytes_ids(context, bytes, length, universe,
+        out_ids, &receipt, error_buf, error_buf_size);
+    *complete_count = count >= 0 ? count : 0;
+    return count;
+}
+
 static int main_petta_compiled_file_backend(
     void *context, const char *filename, TermUniverse *universe,
     AtomId **out_ids, char *error_buf, size_t error_buf_size) {
@@ -2375,6 +2387,16 @@ static int main_prime_compiled_file_backend(
     return prime_compiled_reader_v1_parse_file_ids(
         context, filename, universe, out_ids, &receipt,
         error_buf, error_buf_size);
+}
+
+static int main_prime_compiled_bytes_backend(
+    void *context, const uint8_t *bytes, size_t length, TermUniverse *universe,
+    AtomId **out_ids, int *complete_count, char *error_buf, size_t error_buf_size) {
+    PrimeCompiledReaderV1Receipt receipt;
+    int count = prime_compiled_reader_v1_parse_bytes_ids(context, bytes, length, universe,
+        out_ids, &receipt, error_buf, error_buf_size);
+    *complete_count = count >= 0 ? count : 0;
+    return count;
 }
 
 static void main_he_compiled_reader_free(void *context) {
@@ -3864,6 +3886,7 @@ static int cetta_main(int argc, char **argv) {
             .parse_text_ids = main_petta_compiled_text_backend,
             .parse_file_ids = main_petta_compiled_file_backend,
             .parse_term_bytes_id = main_petta_compiled_term_backend,
+            .parse_bytes_prefix_ids = main_petta_compiled_bytes_backend,
         };
         if (!parser_set_document_ids_backend(&reader_backend)) {
             fprintf(stderr,
@@ -3893,6 +3916,7 @@ static int cetta_main(int argc, char **argv) {
             .context = prime_compiled_reader,
             .parse_text_ids = main_prime_compiled_text_backend,
             .parse_file_ids = main_prime_compiled_file_backend,
+            .parse_bytes_prefix_ids = main_prime_compiled_bytes_backend,
         };
         if (!parser_set_document_ids_backend(&reader_backend)) {
             fprintf(stderr,

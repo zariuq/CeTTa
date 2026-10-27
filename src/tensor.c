@@ -1278,3 +1278,5 @@ CettaTensorStatus cetta_tensor_decode(const unsigned char *p,size_t size,CettaTe
     if(s!=CETTA_TENSOR_OK) free(data);
     free(shape); return s;
 }
+
+#include "tensor_sequence.inc"
