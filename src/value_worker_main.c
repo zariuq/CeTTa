@@ -27,8 +27,8 @@ int main(int argc, char **argv) {
     const CettaProfile *worker_profile = NULL;
     const char *profile_name = NULL;
     const char *threads_repr = NULL;
-    CettaRelativeModulePolicy import_mode=CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
-    bool import_mode_overridden=false;
+    CettaRelativeModulePolicy import_mode = CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY;
+    bool import_mode_overridden = false;
     unsigned long threads = 0;
     int first = 1;
     while (first < argc && argv[first][0] == '-') {
@@ -46,9 +46,9 @@ int main(int argc, char **argv) {
             } else goto usage;
         } else if (!strcmp(option, "--profile")) {
             profile_name = argv[first++];
-        } else if (!strcmp(option,"--import-mode")) {
-            if (!cetta_relative_module_policy_from_name(argv[first++],&import_mode)) goto usage;
-            import_mode_overridden=true;
+        } else if (!strcmp(option, "--import-mode")) {
+            if (!cetta_relative_module_policy_from_name(argv[first++], &import_mode)) goto usage;
+            import_mode_overridden = true;
         } else if (!strcmp(option, "--num-threads")) {
             char *end = NULL;
             threads_repr = argv[first++];
@@ -77,7 +77,7 @@ int main(int argc, char **argv) {
     if (!libraries) return 1;
     cetta_library_context_init_for_language_profile(libraries, language, worker_profile);
     if (import_mode_overridden)
-        cetta_eval_session_set_relative_module_policy(&libraries->session,import_mode);
+        cetta_eval_session_set_relative_module_policy(&libraries->session, import_mode);
     term_universe_set_persistent_arena(&libraries->term_universe, &permanent);
     cetta_library_context_set_exec_path(libraries, argv[0]);
     cetta_library_context_set_script_path(libraries, module);

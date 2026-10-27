@@ -60,6 +60,33 @@ def main():
             checks += 2
         finally:
             worker.close(); explicit.close()
+        # Only ancestor-walk can find a leaf above the importing module.
+        deeper = nested / "deeper"
+        deeper.mkdir()
+        above = deeper / "middle.metta"
+        above.write_text('!(import! &self "./leaf.metta")\n')
+        entry.write_text('!(import! &self ' + json.dumps(str(above)) + ')\n'
+                         '(= (worker-imports:run $value) (worker-imports:leaf $value))\n')
+        cases = (("petta", "relative", E("worker-imports:leaf", 41),
+                  "(RESULT (worker-imports:leaf 41))"),
+                 ("petta", "ancestor-walk", 42, "(RESULT 42)"),
+                 ("prime", "ancestor-walk", 42, "(RESULT 42)"))
+        for language, mode, expected, printed in cases:
+            worker = Worker(args.worker.resolve(), entry, "worker-imports:run",
+                            language=language, import_mode=mode)
+            try:
+                if encode(worker.call(41)) != encode(expected):
+                    raise AssertionError((language, mode, "ancestor scope changed"))
+                checks += 1
+            finally:
+                worker.close()
+            cli = subprocess.run([str(args.binary.resolve()), "--lang", language,
+                                  "--import-mode", mode, str(driver)],
+                                 capture_output=True, text=True, timeout=60)
+            lines = [line for line in cli.stdout.splitlines() if line.startswith("(RESULT ")]
+            if cli.returncode or lines != [printed]:
+                raise AssertionError((language, mode, cli.returncode, cli.stdout, cli.stderr))
+            checks += 1
         try:
             Worker(args.worker.resolve(), entry, "worker-imports:run", import_mode="unknown")
         except ValueError:
