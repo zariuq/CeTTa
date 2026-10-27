@@ -34243,6 +34243,11 @@ test-expanduser-v1: $(BIN) tests/support/check_expanduser_v1.py $(EXPANDUSER_SEA
 	@$(call cetta_exec,./$(EXPANDUSER_SEAMS_TEST_V1))
 	@python3 tests/support/check_expanduser_v1.py ./$(BIN)
 
+.PHONY: test-getcwd-v1
+test-all: test-getcwd-v1
+test-getcwd-v1: $(BIN) tests/support/check_getcwd_v1.py
+	@python3 tests/support/check_getcwd_v1.py ./$(BIN) $(if $(filter 1,$(LIB_PROLOG_ENABLED)),,--without-prolog)
+
 .PHONY: test-text-streaming-v1
 test-all: test-text-streaming-v1
 test-text-streaming-v1: $(BIN) $(TEXT_STREAMING_NATIVE_TEST_V1) tests/support/check_text_streaming_v1.py

@@ -37,6 +37,12 @@
 (= (system:expanduser $path)
    (function (case (__cetta_lib_system_host expanduser $path)
      (($result (return $result)))){$result}))
+; os.getcwd: the working directory at any length, or
+; (system:os-error errno message) when the system cannot report it, for
+; example a removed directory. system:cwd reports the same failure as an Error.
+(= (system:getcwd)
+   (function (case (__cetta_lib_system_host getcwd)
+     (($result (return $result)))){$result}))
 (= (system:format-time $format $timestamp $zone)
    (function (case (__cetta_lib_system_host format-time $format $timestamp $zone)
      (($result (return $result)))){$result}))

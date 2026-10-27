@@ -12,6 +12,7 @@
 (= (system:signal-probe $pid) (__cetta_lib_system_host signal-probe $pid))
 (= (system:errno-value $name) (__cetta_lib_system_host errno-value $name))
 (= (system:expanduser $path) (__cetta_lib_system_host expanduser $path))
+(= (system:getcwd) (__cetta_lib_system_host getcwd))
 (= (system:format-time $format $timestamp $zone) (__cetta_lib_system_host format-time $format $timestamp $zone))
 (= (system:read-line) (__cetta_lib_system_read_line ()))
 (= (system:args) (__cetta_lib_system_args ()))

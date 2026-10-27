@@ -17,6 +17,7 @@
 #include <SWI-Prolog.h>
 
 #include <assert.h>
+#include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <signal.h>
@@ -25,6 +26,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef struct {
     SymbolId symbol;
@@ -1521,6 +1523,18 @@ static void petta_libpl_global_init(void) {
             program, quiet, no_signals, no_alert_signal,
             no_init, no_init_file, NULL,
         };
+        /* SWI-Prolog's start-up reads the working directory into a
+         * PATH_MAX buffer. When it cannot (a directory deeper than PATH_MAX,
+         * or one that was removed), it raises before its stacks exist and
+         * the process dies. Leave the engine unstarted instead, so every
+         * crossing reports it unavailable. */
+        char working_directory[PATH_MAX];
+        if (!getcwd(working_directory, sizeof(working_directory))) {
+            int code = errno;
+            fprintf(stderr, "cetta: embedded SWI-Prolog not started: cannot read the "
+                            "working directory into PATH_MAX bytes (%s)\n", strerror(code));
+            return;
+        }
         PettaLibplHostAltStack host_altstack;
         if (!petta_libpl_host_altstack_save(&host_altstack))
             return;

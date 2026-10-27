@@ -4563,16 +4563,47 @@ static Atom *system_write(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     return atom_unit(a);
 }
 
+/* The working directory at any length, as CPython's os.getcwd reads it: the
+ * buffer grows while getcwd answers ERANGE. On failure errno is kept and NULL
+ * returned; ENOMEM also covers a directory longer than a string can be. */
+static char *library_getcwd(size_t *length) {
+    size_t capacity = PATH_MAX;
+    char *buffer = NULL;
+    for (;;) {
+        char *grown = realloc(buffer, capacity);
+        if (!grown) {
+            free(buffer);
+            errno = ENOMEM;
+            return NULL;
+        }
+        buffer = grown;
+        if (getcwd(buffer, capacity)) {
+            *length = strlen(buffer);
+            return buffer;
+        }
+        if (errno != ERANGE || capacity > CETTA_STRING_BYTES_MAX) {
+            int code = errno == ERANGE ? ENOMEM : errno;
+            free(buffer);
+            errno = code;
+            return NULL;
+        }
+        capacity *= 2;
+    }
+}
+
 static Atom *system_cwd(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    char path[PATH_MAX];
     if (!system_zero_arg_ok(args, nargs)) {
         return library_signature_error(a, head, args, nargs, "expected: (system:cwd)");
     }
-    if (!getcwd(path, sizeof(path))) {
+    size_t length;
+    char *path = library_getcwd(&length);
+    if (!path) {
         return library_signature_error(a, head, args, nargs,
                                        "cannot determine current directory");
     }
-    return atom_string(a, path);
+    Atom *value = atom_string_n(a, path, length);
+    free(path);
+    return value;
 }
 
 static Atom *system_monotonic_ns(Arena *a, Atom *head, Atom **args,
@@ -4645,6 +4676,21 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
             int code = errno;
             return atom_expr3(a, atom_symbol(a, "system:os-error"), atom_int(a, code),
                               atom_string(a, strerror(code)));
+        }
+        /* os.getcwd: the directory at any length, or the refusal's errno and
+         * message, as CPython raises OSError (ENOENT for a removed directory,
+         * EACCES when an unreadable ancestor hides a long one's name). */
+        if (!strcmp(operation, "getcwd") && nargs == 1) {
+            size_t length;
+            char *path = library_getcwd(&length);
+            if (!path) {
+                int code = errno;
+                return atom_expr3(a, atom_symbol(a, "system:os-error"), atom_int(a, code),
+                                  atom_string(a, strerror(code)));
+            }
+            Atom *value = atom_string_n(a, path, length);
+            free(path);
+            return value;
         }
         if (!strcmp(operation, "errno-value") && nargs == 2) {
             const char *name = library_text_arg(args[1]);
