@@ -1,4 +1,5 @@
 #include "library_json.h"
+#include "native/json_python_v1.h"
 
 #include "eval.h"
 #include "json_embedded_sources_v1.h"
@@ -227,6 +228,8 @@ static const char *json_value_failure_symbol(CettaJsonValueV1Status status) {
         return "JsonAllocationFailureV1";
     case CETTA_JSON_VALUE_V1_ROUNDTRIP_DISAGREEMENT:
         return "JsonRoundtripDisagreementV1";
+    case CETTA_JSON_VALUE_V1_PYTHON_VALUE_ERROR:
+        return "JsonPythonValueErrorV1";
     }
     return "JsonUnknownFailureV1";
 }
@@ -437,6 +440,35 @@ done:
     return unique;
 }
 
+/* A Python exception as data: (JsonPythonErrorV1 class message ...), the
+ * message being str() of the exception. JSONDecodeError adds msg, pos,
+ * lineno and colno. */
+static Atom *json_python_failure(Arena *arena, Atom *head, Atom **args, uint32_t nargs,
+                                 const CettaJsonPythonV1Error *failure) {
+    char message[512];
+    if (failure->status == CETTA_JSON_PYTHON_V1_DECODE_ERROR) {
+        snprintf(message, sizeof(message), "%s: line %zu column %zu (char %zu)",
+                 failure->msg, failure->lineno, failure->colno, failure->pos);
+        return atom_expr(arena, (Atom *[]){atom_symbol(arena, "JsonPythonErrorV1"),
+            atom_symbol(arena, "JSONDecodeError"), atom_string(arena, message),
+            atom_string(arena, failure->msg), atom_int(arena, (int64_t)failure->pos),
+            atom_int(arena, (int64_t)failure->lineno), atom_int(arena, (int64_t)failure->colno)}, 7u);
+    }
+    if (failure->status == CETTA_JSON_PYTHON_V1_VALUE_ERROR) {
+        snprintf(message, sizeof(message),
+                 "Exceeds the limit (4300 digits) for integer string conversion: value has %zu "
+                 "digits; use sys.set_int_max_str_digits() to increase the limit", failure->digits);
+        return atom_expr3(arena, atom_symbol(arena, "JsonPythonErrorV1"),
+                          atom_symbol(arena, "ValueError"), atom_string(arena, message));
+    }
+    if (failure->status == CETTA_JSON_PYTHON_V1_INVALID_TEXT) {
+        snprintf(message, sizeof(message), "JSON byte %zu: %s", failure->byte_offset, failure->msg);
+        return json_failure(arena, head, args, nargs, "JsonParseV1", "JsonInvalidUtf8V1", message);
+    }
+    return json_failure(arena, head, args, nargs, "JsonParseV1", "JsonAllocationFailureV1",
+                        failure->msg ? failure->msg : "out of memory");
+}
+
 static Atom *json_parse(CettaJsonLibraryRuntimeV1 *runtime,
                         Arena *arena, Atom *head,
                         Atom **args, uint32_t nargs,
@@ -450,18 +482,26 @@ static Atom *json_parse(CettaJsonLibraryRuntimeV1 *runtime,
     bool reference = nargs == 2u && atom_is_symbol(args[1], "JsonReferenceV1");
     bool unique = ordinary && nargs == 2u && atom_is_symbol(args[1], "JsonUniqueKeysV1");
     bool legacy = ordinary && nargs == 2u && atom_is_symbol(args[1], "JsonLegacyV1");
+    bool python = ordinary && nargs == 2u && atom_is_symbol(args[1], "JsonPythonV1");
     source = (unique || legacy)
         ? ((nargs >= 1u && args[0] && args[0]->kind == ATOM_SYMBOL)
                ? atom_name_cstr(args[0])
                : (nargs >= 1u ? json_text(args[0]) : NULL))
         : (nargs >= 1u ? json_text(args[0]) : NULL);
-    if ((nargs != 1u && !reference && !unique && !legacy) || !source) {
+    if ((nargs != 1u && !reference && !unique && !legacy && !python) || !source) {
         return json_failure_or_error(
             arena, head, args, nargs, ordinary,
             "JsonParseV1", "JsonBadArgumentV1",
             "expected one JSON text argument");
     }
     size_t source_len = args[0]->kind == ATOM_GROUNDED ? atom_string_len(args[0]) : strlen(source);
+    if (python) {
+        CettaJsonPythonV1Error failure;
+        if (cetta_json_python_v1_parse(arena, (const uint8_t *)source, source_len,
+                json_lane_is_petta(), &result, &failure))
+            return result;
+        return json_python_failure(arena, head, args, nargs, &failure);
+    }
     if (unique) {
         if (!cetta_json_direct_v1_parse_legacy(arena, (const uint8_t *)source, source_len,
                 false, 0u, &result, &parse_status, error, sizeof(error))) {
@@ -596,6 +636,74 @@ static bool json_is_canonical_v1(Atom *value) {
            json_expr_is(value, "JsonBoolV1", 2u);
 }
 
+static bool json_option_bool(Atom *atom, bool *value) {
+    if (atom && atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_BOOL) {
+        *value = atom->ground.bval;
+        return true;
+    }
+    if (atom_is_symbol(atom, "True") || atom_is_symbol(atom, "true")) { *value = true; return true; }
+    if (atom_is_symbol(atom, "False") || atom_is_symbol(atom, "false")) { *value = false; return true; }
+    return false;
+}
+
+/* (JsonPythonV1 ((ensure-ascii B) (sort-keys B) (separators ITEM KEY) (indent N))):
+ * any subset, unknown options refused. 0 when spec is not this form. */
+static int json_python_options(Atom *spec, CettaJsonPythonOptionsV1 *options) {
+    if (!spec || spec->kind != ATOM_EXPR || spec->expr.len != 2u ||
+        !atom_is_symbol(spec->expr.elems[0], "JsonPythonV1"))
+        return 0;
+    Atom *const *items;
+    CettaExprLen count;
+    if (!atom_sequence_view(spec->expr.elems[1], &items, &count)) return -1;
+    bool separators = false;
+    for (CettaExprLen index = 0u; index < count; index++) {
+        Atom *option = items[index];
+        if (!option || option->kind != ATOM_EXPR || option->expr.len < 2u) return -1;
+        Atom *name = option->expr.elems[0];
+        if (atom_is_symbol(name, "ensure-ascii") && option->expr.len == 2u) {
+            if (!json_option_bool(option->expr.elems[1], &options->ensure_ascii)) return -1;
+        } else if (atom_is_symbol(name, "sort-keys") && option->expr.len == 2u) {
+            if (!json_option_bool(option->expr.elems[1], &options->sort_keys)) return -1;
+        } else if (atom_is_symbol(name, "separators") && option->expr.len == 3u) {
+            const char *item = json_text(option->expr.elems[1]);
+            const char *key = json_text(option->expr.elems[2]);
+            if (!item || !key) return -1;
+            /* Byte lengths, not C string lengths: a separator may hold NUL. */
+            options->item_separator = item;
+            options->item_separator_len = atom_string_len(option->expr.elems[1]);
+            options->key_separator = key;
+            options->key_separator_len = atom_string_len(option->expr.elems[2]);
+            separators = true;
+        } else if (atom_is_symbol(name, "indent") && option->expr.len == 2u) {
+            /* json.dumps's indent: a string, or a count of spaces, none when
+             * the count is not positive. */
+            Atom *indent = option->expr.elems[1];
+            const char *text = json_text(indent);
+            if (text) {
+                options->indent_text = text;
+                options->indent_len = atom_string_len(indent);
+            } else if (indent && indent->kind == ATOM_GROUNDED && indent->ground.gkind == GV_INT) {
+                int64_t spaces = indent->ground.ival;
+                options->indent_text = NULL;
+                options->indent_len = spaces <= 0 ? 0u
+                    : (uint64_t)spaces > SIZE_MAX ? SIZE_MAX : (size_t)spaces;
+            } else {
+                return -1;
+            }
+            options->indent = true;
+        } else {
+            return -1;
+        }
+    }
+    /* As in json.dumps, an indent without separators drops the item
+     * separator's trailing space. */
+    if (options->indent && !separators) {
+        options->item_separator = ",";
+        options->item_separator_len = 1u;
+    }
+    return 1;
+}
+
 static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
                             Arena *arena, Atom *head,
                             Atom **args, uint32_t nargs,
@@ -605,10 +713,23 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
     CettaJsonValueV1Status status;
     bool reference = nargs == 2u && atom_is_symbol(args[1], "JsonReferenceV1");
     bool pretty = nargs == 2u && atom_is_symbol(args[1], "JsonPrettyV1");
+    CettaJsonPythonOptionsV1 python_options = {
+        .ensure_ascii = true, .sort_keys = false,
+        .item_separator = ", ", .item_separator_len = 2u,
+        .key_separator = ": ", .key_separator_len = 2u,
+    };
+    int python_spec = nargs == 2u ? json_python_options(args[1], &python_options) : 0;
+    bool python = nargs == 2u && (atom_is_symbol(args[1], "JsonPythonV1") || python_spec == 1);
+    if (python_spec < 0) {
+        return json_failure_or_error(
+            arena, head, args, nargs, ordinary,
+            "JsonStringifyV1", "JsonBadArgumentV1",
+            "expected options (ensure-ascii B), (sort-keys B), (separators ITEM KEY) or (indent N)");
+    }
     const CettaJsonRuntimeV1 *parser = NULL;
     Atom *result;
     char error[512] = {0};
-    if (nargs != 1u && !reference && !pretty) {
+    if (nargs != 1u && !reference && !pretty && !python) {
         return json_failure_or_error(
             arena, head, args, nargs, ordinary,
             "JsonStringifyV1", "JsonBadArgumentV1",
@@ -627,12 +748,24 @@ static Atom *json_stringify(CettaJsonLibraryRuntimeV1 *runtime,
     bool ok = pretty ? cetta_json_value_v1_emit_pretty(
             cetta_json_direct_v1_number_valid, input, ordinary, 0u, 0u, 0u,
             &bytes, &len, &status, error, sizeof(error)) :
+        python ? cetta_json_value_v1_emit_python(
+            cetta_json_direct_v1_number_valid, input, ordinary, &python_options, 0u, 0u, 0u,
+            &bytes, &len, &status, error, sizeof(error)) :
         reference ? cetta_json_value_v1_stringify(
             parser, input, ordinary,
             4000000u, 1024u, 16u * 1024u * 1024u,
             &bytes, &len, &status, error, sizeof(error)) :
         cetta_json_value_v1_emit(cetta_json_direct_v1_number_valid, input, ordinary, 0u, 0u, 0u,
             &bytes, &len, &status, error, sizeof(error));
+    if (!ok && status == CETTA_JSON_VALUE_V1_PYTHON_VALUE_ERROR) {
+        /* (JsonPythonErrorV1 ValueError message prefix): the prefix is what
+         * a streaming json.dump writes before raising; json.dumps writes
+         * nothing. */
+        Atom *prefix = atom_string_n(arena, bytes ? (const char *)bytes : "", bytes ? len : 0u);
+        free(bytes);
+        return atom_expr(arena, (Atom *[]){atom_symbol(arena, "JsonPythonErrorV1"),
+            atom_symbol(arena, "ValueError"), atom_string(arena, error), prefix}, 4u);
+    }
     if (!ok) {
         return json_failure_or_error(
             arena, head, args, nargs, ordinary,

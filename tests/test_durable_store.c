@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -504,10 +505,14 @@ static void semantic_corruption(const char *path) {
     CettaDurableStore *s=open_store(path,NULL);
     CettaDurableOp ops[]={put(DURABLE_INSERT,"state","a","x"),put(DURABLE_INSERT,"state","b","y")};
     commit(s,ops,2); cetta_durable_close(s);
-    int fd=open(path,O_RDWR); assert(fd>=0); unsigned char *header=NULL,*batch=NULL;
-    size_t hs=0,bs=0; off_t next=0,end=0;
-    assert(cetta_native_journal_read(fd,0,0,&header,&hs,&next)==CETTA_JOURNAL_OK);
-    assert(cetta_native_journal_read(fd,next,0,&batch,&bs,&end)==CETTA_JOURNAL_OK);
+    int fd=open(path,O_RDWR); assert(fd>=0);
+    struct stat info; assert(!fstat(fd,&info));
+    CettaJournalRecord header_frame={0},batch_frame={0};
+    assert(cetta_journal_read(fd,0,(uint64_t)info.st_size,SIZE_MAX,&header_frame)==CETTA_JOURNAL_OK);
+    assert(cetta_journal_read(fd,header_frame.next,(uint64_t)info.st_size,SIZE_MAX,
+        &batch_frame)==CETTA_JOURNAL_OK);
+    unsigned char *header=header_frame.data,*batch=batch_frame.data;
+    size_t hs=header_frame.size,bs=batch_frame.size;
     /* Independently re-frame a correct-checksum but repeated key. The second
      * row cannot acquire a new occurrence merely by changing its position. */
     assert(bs==53+2*(29+5+1+1));
@@ -515,14 +520,14 @@ static void semantic_corruption(const char *path) {
     size_t second=53+29+5+1+1; forged[second]=DURABLE_REPLACE;
     forged[second+29+5]='a';
     assert(!ftruncate(fd,0) && lseek(fd,0,SEEK_SET)==0);
-    assert(cetta_native_journal_append(fd,header,hs,false,NULL)==CETTA_JOURNAL_OK);
-    assert(cetta_native_journal_append(fd,forged,bs,true,NULL)==CETTA_JOURNAL_OK);
+    assert(cetta_journal_append(fd,header,hs,false,NULL)==CETTA_JOURNAL_OK);
+    assert(cetta_journal_append(fd,forged,bs,true,NULL)==CETTA_JOURNAL_OK);
     assert(!close(fd)); check(cetta_durable_open(path,NULL,&s),DURABLE_CORRUPT); assert(!s);
     /* A discontinuous revision is corrupt despite an authentic frame digest. */
     memcpy(forged,batch,bs); forged[44]=3;
     fd=open(path,O_RDWR|O_TRUNC); assert(fd>=0);
-    assert(cetta_native_journal_append(fd,header,hs,false,NULL)==CETTA_JOURNAL_OK);
-    assert(cetta_native_journal_append(fd,forged,bs,true,NULL)==CETTA_JOURNAL_OK);
+    assert(cetta_journal_append(fd,header,hs,false,NULL)==CETTA_JOURNAL_OK);
+    assert(cetta_journal_append(fd,forged,bs,true,NULL)==CETTA_JOURNAL_OK);
     assert(!close(fd)); check(cetta_durable_open(path,NULL,&s),DURABLE_CORRUPT); assert(!s);
     free(header); free(batch); free(forged);
 }

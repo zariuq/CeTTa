@@ -11,6 +11,7 @@ multiple nonblocking connections. Its storage choices are:
 | Backend | Duplicates | Representation | Matching |
 | --- | --- | --- | --- |
 | `native` | preserved | CeTTa term universe | CeTTa native index |
+| `native-ordered` | preserved, insertion order retained | CeTTa ordered space | CeTTa native index |
 | `pathmap` | preserved | counted PathMap portable keys | maintained native index |
 | `mork` | unique support | raw MORK portable keys | maintained native index |
 
@@ -112,6 +113,11 @@ Every response is `(reply ID ok VALUE)` or `(reply ID error REASON)`.
 | `query` | service UUID, space ID, pattern, template, maximum rows, lease milliseconds |
 | `fetch` | boot UUID, cursor ID, offset, maximum page rows |
 | `close` | boot UUID, cursor ID |
+| `observe` | service UUID, space ID, `(reads PATTERN ...)`, `(writes PATTERN ...)`, maximum rows per scope, lease milliseconds |
+| `observe-fetch` | boot UUID, observation ID, scope index, offset, maximum page rows |
+| `observe-close` | boot UUID, observation ID |
+| `batch-observed` | service UUID, space ID, boot UUID, observation ID, `(ops ...)` |
+| `observe-watch` | service UUID, space ID, boot UUID, observation ID, wait milliseconds |
 | `receipt` | service UUID, original request ID |
 | `compact` | service UUID |
 
@@ -119,7 +125,10 @@ An existing name opens only with its existing backend. New names require a
 current catalog revision. Dropping and recreating a name assigns a new ID.
 All accepted batches advance the space revision, including no-ops. `remove`
 removes one alpha-equivalent occurrence if present; absent values are no-ops.
-Bag ordering is unspecified. Patterns use ordinary CeTTa unification and the
+The advertised `native-ordered` profile removes the first matching occurrence
+and preserves the relative order of every survivor, through recovery and
+checkpointing. Other bag profiles leave ordering after removal unspecified.
+Patterns use ordinary CeTTa unification and the
 template is substituted without evaluation. Open facts are freshened per
 match; variables are scoped within each transmitted atom packet.
 
@@ -140,11 +149,101 @@ Successful mutation receipts are retained for up to 256 requests and 16 MiB.
 The journal and checkpoint retain the original request and reply bytes;
 numeric parsing cannot rewrite a retained request identity.
 Exact retries return their retained answer; a changed request with a retained
-ID is refused. After receipt retirement, the original expected revision still
-prevents reapplication. `unknown-receipt` is uncertainty, not proof of failure.
+ID is refused. After receipt retirement, the original expected revision or
+retired scoped observation prevents reapplication. `unknown-receipt` is
+uncertainty, not proof of failure.
 The native client returns `space:uncertain` if a reply is lost after sending,
 or `space:unavailable` if no request was sent. The Python client raises
 `Uncertain` with the original request. Inspect receipts before retrying.
+
+The authored MeTTa helpers in `(library space_transaction)` support conservative
+transactions in the PeTTa profile:
+
+```metta
+!(import! &self (library space_transaction))
+; Bind an already opened descriptor to $store before calling these helpers.
+(space:observe $socket $store
+  ((scope "pending" (Pending $id $value) (Pending $id $value)))
+  ((Pending $id $value) (Receipt $id $value)) 4096 60000)
+; Successful result: (SpaceObserved HANDLE READS WRITES RESULTS)
+(space:commit $socket $observation $request-id
+  ((remove (Pending "job-1" "ready"))
+   (add (Receipt "job-1" "finished"))))
+```
+
+Every read must have the descriptor's revision. An empty query still depends
+on that revision. Commit validates declared write scopes before sending one
+conditional atomic batch. An intervening mutation makes the observation stale,
+including when it changes a previously empty range. Scope matching neither
+executes stored values nor binds variables in later operations. Snapshots are
+closed after consumption or a reported read failure. No write is retried by
+these helpers. Applications include their durable idempotency evidence in the
+same batch as the state transition.
+
+`space:begin` and `space:publish` provide that receipt discipline. Begin takes
+an application operation key and fingerprint in addition to the read/write
+scopes. It returns `SpaceTransaction`, or the previously committed result for
+that same key and fingerprint. Publish commits the supplied operations and a
+`SpaceReceiptV1` record together. Reusing the key with another fingerprint is
+refused. Application operations cannot rewrite reserved receipt records.
+An uncertain publish stays uncertain until a fresh begin observes its durable
+receipt; neither helper sends or repeats an external effect.
+
+For independent dependencies use `space:observe-scoped` instead. Its reads are
+`(scope LABEL PATTERN)`: validation always captures complete original records,
+including empty results, duplicates and atom kinds. Apply `rel:project` locally
+when a caller needs a projection. The result is
+`(SpaceScopedObserved HANDLE TICKET READS WRITES RESULTS)`, accepted by the same
+`space:commit`. The service validates all read and write views atomically with
+publication, so unrelated changes do not cause false revision conflicts.
+`space:begin-scoped` provides the same durable receipt contract with these
+dependencies. The service advertises `scoped-observations-v1`.
+
+Each scoped observation belongs to its authenticated account. It is consumed
+when the service evaluates a proposal, including a rejected or no-op proposal.
+Earlier protocol or permission refusals leave cleanup to the caller; the MeTTa
+commit helper closes the observation after any unsuccessful outcome.
+`space:abort` releases an unused scoped observation or transaction, and is a
+no-op for conservative observations whose snapshots are already closed.
+Restart invalidates a scoped ticket. A durable scoped
+commit records the original request, reply and resolved publication revision;
+recovery never needs the old observation. A lost reply is reconciled using the
+application receipt, not by repeating an external effect.
+
+Use `native-ordered` for independent ordered channel views. Swap removal in an
+unordered bag can genuinely change another view's order. View validation is
+about current state: removing and reinserting identical records can restore
+the same view. Records must carry stable occurrence IDs and versions when
+causal identity or detecting that intervening change matters.
+A write pattern must cover the whole value: an unbound channel cannot become
+covered merely by matching it to a particular channel name. Such an open value
+requires a broader declared write scope. Read matching still uses unification.
+
+`space:wait-start SOCKET OBSERVATION MILLISECONDS` returns
+`(SpaceWaiting OBSERVATION IO-ID)` using native asynchronous I/O. It consumes
+the observation when the service registers the wait. The service compares the dependency before parking,
+preventing a missed change between reading and waiting. Unrelated writes do not
+wake the client. Completion reports `changed` or `unchanged`; it never claims a
+message or acknowledges an effect. Use `space:wait-poll SOCKET WAITING` to
+consume the result and `space:wait-cancel SOCKET WAITING` to cancel. The latter
+closes the I/O connection and retires any observation still awaiting transfer:
+cancelling the I/O request alone, before registration, would leave that
+observation alive until expiry. Waiting extends ownership beyond the original
+lease. The low-level `space:wait-request` descriptor remains available to
+callers implementing both cleanup responsibilities. This requires the
+advertised `scope-waits-v1` capability.
+
+The snapshot row allowance is explicit and excessive results return an error;
+it is not a truncation policy. Both helpers currently materialize each declared
+view and are suitable for bounded record queries, not a streaming interface to
+an entire archive. Scoped views share the snapshot memory allowance and include
+their pointer-vector storage. Ordered removal currently uses the existing
+linear sequence-preserving operation.
+One computation deadline covers all scopes in an observation, as it does for
+validation. Checks occur between scopes and during scans; an individual index
+or matcher operation is not preempted. A lost observation-creation reply still
+relies on lease expiry for reclamation. Per-account allocation fairness and
+longer-lived observation recovery remain integration work.
 
 The default quotas are 32 spaces, one million facts and 64 MiB of live portable
 values per space, 64 snapshots with 32 MiB total row data, a 1 MiB frame,
@@ -155,6 +254,13 @@ Checkpointing bounds journal growth relative to its last checkpoint; it also
 rebuilds ownership to release removed native terms and old Rust roots.
 
 ## Framing and checks
+
+`cetta-value-worker --lang petta` reads source with the CLI's default PeTTa
+profile. Select `--profile extended` explicitly for its extended syntax.
+An output outside CAV1's portable value types is reported as
+`unencodable-result`, leaving the worker available for the next request.
+That is a result-delivery failure; it does not authorize replaying effects
+the selected module may already have performed.
 
 CSP1 is an application protocol: `CSP1`, a big-endian 32-bit payload length,
 then one CAV1 value. CAV1 uses little-endian lengths and numeric bits: `S`
@@ -171,3 +277,24 @@ The generic transition model is
 [`Mettapedia/Machines/SpaceService.lean`](https://github.com/godelclaw/MeTTapedia/blob/main/lean/mettapedia/Mettapedia/Machines/SpaceService.lean).
 Its laws state protocol obligations; they do not certify physical C/Rust or
 filesystem behavior. Native conformance checks establish the tested bridge.
+
+`test-native-journal` fault-injects framed writes, recovery and checkpoint
+publication. With a built MeTTapedia checkout supplied as
+`NATIVE_STORE_LEAN_PROJECT`, `test-native-store-transactions` runs identical
+ordered traces through the real MeTTa helpers, an in-memory SQLite oracle and
+`NativeStoreTransactions.lean`. Its receipt records the program, model and
+binary hashes alongside every observed state.
+`test-native-store-scopes` does the same for `NativeStoreScopes.lean`, including
+independent commits, stale positive and negative dependencies, one-use handles,
+no-ops, explicit close and recovery. The service suite separately races eight
+independent writers and eight spenders, and exercises scoped waits through
+native asynchronous I/O. Publication fault tests cover write, synchronization
+and backend failures after resolving a scoped proposal.
+
+The PeTTa `(library rel)` module supplies ordered-bag selection, projection,
+joins, existence, distinctness, stable ordering, paging and sequential grouped
+or running folds. Predicates use `RelTrue`, `RelFalse` and `RelUnknown`;
+comparisons and NULL policy are explicit caller adapters. Callbacks must be
+pure, deterministic and terminating. Zero or multiple callback answers are
+reported, never converted into a partial successful bag. `test-rel` compares
+complete results against SQLite and sequential reference folds.

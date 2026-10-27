@@ -3,6 +3,8 @@
 #include "cetta_stdlib.h"
 #include "eval.h"
 #include "library.h"
+#include "parser.h"
+#include "petta_compiled_reader.h"
 #include "symbol.h"
 #include <errno.h>
 #include <signal.h>
@@ -22,7 +24,8 @@ static uint64_t monotonic_ns(void) {
  * evaluator with the parent's authority, not the no-eval space service. */
 int main(int argc, char **argv) {
     CettaLanguageId language = CETTA_LANGUAGE_PETTA;
-    const CettaProfile *worker_profile = cetta_profile_petta_extended();
+    const CettaProfile *worker_profile = NULL;
+    const char *profile_name = NULL;
     const char *threads_repr = NULL;
     unsigned long threads = 0;
     int first = 1;
@@ -37,8 +40,10 @@ int main(int argc, char **argv) {
                 worker_profile = cetta_profile_prime_default();
             } else if (!strcmp(name, "petta")) {
                 language = CETTA_LANGUAGE_PETTA;
-                worker_profile = cetta_profile_petta_extended();
+                worker_profile = NULL;
             } else goto usage;
+        } else if (!strcmp(option, "--profile")) {
+            profile_name = argv[first++];
         } else if (!strcmp(option, "--num-threads")) {
             char *end = NULL;
             threads_repr = argv[first++];
@@ -47,6 +52,10 @@ int main(int argc, char **argv) {
             if (errno || end == threads_repr || *end ||
                 threads_repr[0] == '-' || threads > 1024) goto usage;
         } else goto usage;
+    }
+    if (profile_name) {
+        worker_profile = cetta_profile_from_name_for_language(language, profile_name);
+        if (!worker_profile) goto usage;
     }
     if (argc - first != 2) goto usage;
     const char *module = argv[first], *entry = argv[first + 1];
@@ -73,6 +82,24 @@ int main(int argc, char **argv) {
     cetta_library_set_top_module_registry(libraries, &registry);
     Atom *error = NULL;
     int rc = 1;
+    PeTTaCompiledReaderV1 *source_reader = NULL;
+    if (language == CETTA_LANGUAGE_PETTA) {
+        /* Use the CLI's reader for every imported source and term. The
+         * generic HE reader gives PeTTa truth literals a different value
+         * representation from the one its comparison builtins produce. */
+        bool lists = cetta_language_reads_lists(language, worker_profile);
+        parser_set_rational_literals_enabled(true);
+        parser_set_list_syntax_enabled(lists);
+        parser_set_namespace_sugar_enabled(true);
+        source_reader = lists ? petta_compiled_reader_v1_new_with_lists()
+                              : petta_compiled_reader_v1_new();
+        char reason[512] = {0};
+        if (!source_reader || !petta_compiled_reader_v1_prepare(source_reader, reason, sizeof(reason)) ||
+            !petta_compiled_reader_v1_install(source_reader)) {
+            fprintf(stderr, "worker: PeTTa source reader unavailable: %s\n", reason);
+            goto done;
+        }
+    }
     if (language != CETTA_LANGUAGE_PETTA) {
         stdlib_load(&top, &permanent);
         if (language == CETTA_LANGUAGE_PRIME)
@@ -143,6 +170,16 @@ int main(int argc, char **argv) {
         Atom *reply = atom_expr(&scratch, parts, profile ? 5 : 4);
         bytes = NULL;
         valid = cetta_atom_wire_encode(reply, &bytes, &length) == ATOM_WIRE_OK;
+        if (!valid) {
+            /* The computation finished, but its value is outside CAV1.
+             * Keep the evaluator and its state alive, reporting no result
+             * rather than implying that any effects can be retried. */
+            free(bytes); bytes = NULL;
+            Atom *failure[] = {parts[0], parts[1], atom_symbol(&scratch,"error"),
+                              atom_symbol(&scratch,"unencodable-result")};
+            reply = atom_expr(&scratch, failure, 4);
+            valid = cetta_atom_wire_encode(reply, &bytes, &length) == ATOM_WIRE_OK;
+        }
         if (valid) {
             for (size_t i = 0; i < 4; ++i) header[i+4] = (unsigned char)(length >> (24-8*i));
             valid = fwrite(header,1,8,stdout) == 8 && fwrite(bytes,1,length,stdout) == length &&
@@ -153,6 +190,8 @@ int main(int argc, char **argv) {
         if (!valid) break;
     }
 done:
+    parser_clear_document_ids_backend(source_reader);
+    petta_compiled_reader_v1_free(source_reader);
     /* The worker has no separate registry-space sweep. Drain all tracked
      * new-space owners here, including the ones still bound in the registry. */
     eval_cleanup_owned_new_spaces(NULL, &top);
@@ -173,6 +212,6 @@ done:
     return rc;
 usage:
     fprintf(stderr, "usage: cetta-value-worker [--lang petta|prime] "
-        "[--num-threads N] MODULE ENTRY\n");
+        "[--profile NAME] [--num-threads N] MODULE ENTRY\n");
     return 2;
 }

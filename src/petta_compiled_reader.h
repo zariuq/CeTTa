@@ -36,6 +36,10 @@ bool petta_compiled_reader_v1_prepare(
     PeTTaCompiledReaderV1 *reader, char *error_buf,
     size_t error_buf_size);
 
+/* Install this prepared reader for source imports and term reads in the
+ * current thread. The caller clears the parser backend before freeing it. */
+bool petta_compiled_reader_v1_install(PeTTaCompiledReaderV1 *reader);
+
 int petta_compiled_reader_v1_parse_bytes_ids(
     PeTTaCompiledReaderV1 *reader, const uint8_t *input,
     size_t input_len, TermUniverse *universe, AtomId **out_ids,

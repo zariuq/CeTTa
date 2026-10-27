@@ -4,6 +4,7 @@
 
 (= (json:capabilities) (__cetta_lib_json_capabilities_v1 ()))
 (= (json:parse $text) (__cetta_lib_json_parse $text))
+(= (json:parse-python $text) (__cetta_lib_json_parse $text JsonPythonV1))
 (= (json:parse-reference $text) (__cetta_lib_json_parse $text JsonReferenceV1))
 (= (json:parse-at $text $path) (__cetta_lib_json_project_v1 $text $path))
 (= (json:inspect $text) (__cetta_lib_json_parse_v1 $text))
@@ -11,6 +12,8 @@
 (= (json:stringify-reference $value) (__cetta_lib_json_stringify $value JsonReferenceV1))
 (= (json:stringify $value) (__cetta_lib_json_stringify $value))
 (= (json:pretty $value) (__cetta_lib_json_stringify $value JsonPrettyV1))
+(= (json:stringify-python $value) (__cetta_lib_json_stringify $value JsonPythonV1))
+(= (json:stringify-python-with $value $options) (__cetta_lib_json_stringify $value (JsonPythonV1 $options)))
 (= (json:inspect-stringify $value) (__cetta_lib_json_stringify_v1 $value))
 (= (json:inspect-stringify-reference $value) (__cetta_lib_json_stringify_v1 $value JsonReferenceV1))
 (= (json:from-inspection $value) (__cetta_lib_json_from_inspection_v1 $value))

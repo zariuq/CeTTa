@@ -9,8 +9,10 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -23,6 +25,14 @@ static unsigned directory_reads;
 static const char *refused_strdup;
 static bool metadata_missing, directory_close_fault;
 static bool rename_cross_device;
+/* Writer faults: writes no longer than write_limit bytes, one EINTR (which
+ * may also raise the evaluator's interrupt), and EIO once write_budget bytes
+ * have gone through. fsync and flock may each be interrupted once or fail. */
+static size_t write_limit, write_budget;
+static bool write_eintr, write_eintr_interrupts, write_budget_set;
+static bool sync_eintr, sync_fault, lock_eintr;
+/* One EINTR from openat, which may also raise the evaluator's interrupt. */
+static bool open_eintr, open_eintr_interrupts;
 
 int __real_rename(const char *source, const char *target);
 int __wrap_rename(const char *source, const char *target) {
@@ -31,6 +41,51 @@ int __wrap_rename(const char *source, const char *target) {
 }
 
 bool eval_native_interrupted(void) { return interrupted; }
+int __real_openat(int directory, const char *path, int flags, ...);
+int __wrap_openat(int directory, const char *path, int flags, ...) {
+    mode_t mode = 0;
+    if (flags & O_CREAT) {
+        va_list modes;
+        va_start(modes, flags);
+        mode = (mode_t)va_arg(modes, int);
+        va_end(modes);
+    }
+    if (open_eintr) {
+        open_eintr = false;
+        if (open_eintr_interrupts) interrupted = true;
+        errno = EINTR;
+        return -1;
+    }
+    return __real_openat(directory, path, flags, mode);
+}
+ssize_t __real_write(int fd, const void *bytes, size_t size);
+ssize_t __wrap_write(int fd, const void *bytes, size_t size) {
+    if (write_eintr) {
+        write_eintr = false;
+        if (write_eintr_interrupts) interrupted = true;
+        errno = EINTR;
+        return -1;
+    }
+    if (write_budget_set) {
+        if (!write_budget) { errno = EIO; return -1; }
+        if (size > write_budget) size = write_budget;
+    }
+    if (write_limit && size > write_limit) size = write_limit;
+    ssize_t count = __real_write(fd, bytes, size);
+    if (count > 0 && write_budget_set) write_budget -= (size_t)count;
+    return count;
+}
+int __real_fsync(int fd);
+int __wrap_fsync(int fd) {
+    if (sync_eintr) { sync_eintr = false; errno = EINTR; return -1; }
+    if (sync_fault) { errno = EIO; return -1; }
+    return __real_fsync(fd);
+}
+int __real_flock(int fd, int operation);
+int __wrap_flock(int fd, int operation) {
+    if (lock_eintr) { lock_eintr = false; errno = EINTR; return -1; }
+    return __real_flock(fd, operation);
+}
 ssize_t __real_read(int fd, void *bytes, size_t size);
 ssize_t __wrap_read(int fd, void *bytes, size_t size) {
     reads++;
@@ -301,6 +356,183 @@ static void walk_controls(CettaLibraryContext *ctx, Arena *arena, Arena *survivo
     check(headed(call(ctx, arena, "walk_current", &owner, 1u), "fs:failed", 7u));
 }
 
+static Atom *strings(Arena *arena, const char *const *items, uint32_t count) {
+    Atom *elems[4];
+    for (uint32_t i = 0u; i < count; i++) elems[i] = atom_string(arena, items[i]);
+    return atom_expr(arena, elems, count);
+}
+
+static Atom *open_writer(CettaLibraryContext *ctx, Arena *arena, const char *path,
+                         Atom *flags, int64_t mode) {
+    return call(ctx, arena, "open_write",
+                (Atom *[]){atom_string(arena, path), flags, atom_int(arena, mode)}, 3u);
+}
+
+static Atom *write_text(CettaLibraryContext *ctx, Arena *arena, Atom *owner,
+                        const char *text, size_t len) {
+    return call(ctx, arena, "write_all",
+                (Atom *[]){owner, atom_string_n(arena, text, len)}, 2u);
+}
+
+static bool file_holds(const char *path, const char *text, size_t len) {
+    char bytes[256];
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return false;
+    ssize_t count = read(fd, bytes, sizeof(bytes));
+    (void)close(fd);
+    return count == (ssize_t)len && memcmp(bytes, text, len) == 0;
+}
+
+/* The mode the kernel gives a new file or directory here, umask and any
+ * default ACL included, read from a control made by open or mkdir. */
+static mode_t control_mode(const char *base, const char *name, bool directory, mode_t mode) {
+    char path[4096];
+    struct stat info;
+    assert(snprintf(path, sizeof(path), "%s/%s", base, name) < (int)sizeof(path));
+    (void)unlink(path);
+    (void)rmdir(path);
+    if (directory) assert(mkdir(path, mode) == 0);
+    else {
+        int fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, mode);
+        assert(fd >= 0 && close(fd) == 0);
+    }
+    assert(stat(path, &info) == 0);
+    return info.st_mode & 07777;
+}
+
+static int64_t failed_code(Atom *value) {
+    return headed(value, "fs:failed", 7u) ? value->expr.elems[4]->ground.ival : -1;
+}
+
+static int64_t failed_progress(Atom *value) {
+    Atom *progress = value->expr.elems[5];
+    check(headed(progress, "fs:progress", 3u) &&
+          atom_is_symbol(progress->expr.elems[2], "known-position"));
+    return progress->expr.elems[1]->ground.ival;
+}
+
+static void writer_controls(CettaLibraryContext *ctx, Arena *arena, const char *base) {
+    char path[4096], tree[4096], middle[4096], leaf[4096], top[4096];
+    assert(snprintf(path, sizeof(path), "%s/writer", base) < (int)sizeof(path));
+    assert(snprintf(tree, sizeof(tree), "%s/tree//a/./b/", base) < (int)sizeof(tree));
+    assert(snprintf(top, sizeof(top), "%s/tree", base) < (int)sizeof(top));
+    assert(snprintf(middle, sizeof(middle), "%s/tree/a", base) < (int)sizeof(middle));
+    assert(snprintf(leaf, sizeof(leaf), "%s/tree/a/b", base) < (int)sizeof(leaf));
+    (void)unlink(path);
+    (void)rmdir(leaf);
+    (void)rmdir(middle);
+    (void)rmdir(top);
+    mode_t saved = umask(022);
+    const char *append_create[] = {"append", "create"};
+
+    /* A signal during the open resumes it; an interrupt of the evaluation
+     * stops it before anything is created. */
+    char resumed[4096], stopped[4096];
+    assert(snprintf(resumed, sizeof(resumed), "%s/open-resumed", base) < (int)sizeof(resumed));
+    assert(snprintf(stopped, sizeof(stopped), "%s/open-stopped", base) < (int)sizeof(stopped));
+    (void)unlink(resumed);
+    (void)unlink(stopped);
+    open_eintr = true;
+    Atom *resumed_owner = open_writer(ctx, arena, resumed, strings(arena, append_create, 2u), 0666);
+    check(headed(resumed_owner, "NativeHandle", 3u) && access(resumed, F_OK) == 0);
+    check(atom_is_symbol(call(ctx, arena, "close", &resumed_owner, 1u), "fs:closed"));
+    open_eintr = open_eintr_interrupts = true;
+    Atom *stopped_owner = open_writer(ctx, arena, stopped, strings(arena, append_create, 2u), 0666);
+    check(failed_code(stopped_owner) == EINTR && access(stopped, F_OK) != 0);
+    interrupted = open_eintr_interrupts = false;
+    check(!open_eintr);
+
+    Atom *owner = open_writer(ctx, arena, path, strings(arena, append_create, 2u), 0666);
+    check(headed(owner, "NativeHandle", 3u));
+    struct stat info;
+    check(stat(path, &info) == 0 &&
+          (info.st_mode & 07777) == control_mode(base, "control-file", false, 0666));
+
+    /* Short writes continue and one EINTR resumes. */
+    write_limit = 3u;
+    write_eintr = true;
+    Atom *written = write_text(ctx, arena, owner, "hel\0o world", 11u);
+    check(headed(written, "fs:written", 2u) && written->expr.elems[1]->ground.ival == 11);
+    write_limit = 0u;
+    check(file_holds(path, "hel\0o world", 11u));
+
+    /* A fault reports the owner's bytes in all and leaves the owner usable. */
+    write_budget_set = true;
+    write_budget = 4u;
+    Atom *refused = write_text(ctx, arena, owner, "abcdefgh", 8u);
+    check(failed_code(refused) == EIO && failed_progress(refused) == 15);
+    write_budget_set = false;
+    check(headed(write_text(ctx, arena, owner, "!", 1u), "fs:written", 2u));
+    check(file_holds(path, "hel\0o worldabcd!", 16u));
+
+    /* An interrupt raised during a signal stops the loop with known progress. */
+    write_eintr = write_eintr_interrupts = true;
+    refused = write_text(ctx, arena, owner, "zz", 2u);
+    check(failed_code(refused) == EINTR && failed_progress(refused) == 16);
+    interrupted = write_eintr_interrupts = false;
+
+    sync_eintr = true;
+    check(atom_is_symbol(call(ctx, arena, "sync", &owner, 1u), "fs:synced"));
+    sync_fault = true;
+    check(failed_code(call(ctx, arena, "sync", &owner, 1u)) == EIO);
+    sync_fault = false;
+    lock_eintr = true;
+    Atom *exclusive = atom_symbol(arena, "exclusive");
+    check(atom_is_symbol(call(ctx, arena, "lock", (Atom *[]){owner, exclusive}, 2u), "fs:locked"));
+    int other = open(path, O_RDONLY | O_CLOEXEC);
+    check(other >= 0 && flock(other, LOCK_EX | LOCK_NB) == -1 && errno == EWOULDBLOCK);
+    check(atom_is_symbol(call(ctx, arena, "unlock", &owner, 1u), "fs:unlocked"));
+    check(flock(other, LOCK_EX | LOCK_NB) == 0 && flock(other, LOCK_UN) == 0);
+    check(atom_is_symbol(call(ctx, arena, "lock", (Atom *[]){owner, exclusive}, 2u), "fs:locked"));
+    check(flock(other, LOCK_SH | LOCK_NB) == -1 && errno == EWOULDBLOCK);
+    close_reader(ctx, arena, owner);
+    check(flock(other, LOCK_EX | LOCK_NB) == 0);
+    (void)close(other);
+
+    /* Readers sync and lock; writing needs a writer; bad flags and modes refuse. */
+    Atom *reader = open_reader(ctx, arena, path);
+    check(atom_is_symbol(call(ctx, arena, "sync", &reader, 1u), "fs:synced"));
+    check(atom_is_symbol(call(ctx, arena, "lock", (Atom *[]){reader, atom_symbol(arena, "shared")}, 2u),
+                         "fs:locked"));
+    check(atom_is_symbol(call(ctx, arena, "lock", (Atom *[]){reader, atom_symbol(arena, "both")}, 2u)
+                         ->expr.elems[1], "fs:invalid-argument"));
+    check(atom_is_symbol(write_text(ctx, arena, reader, "x", 1u)->expr.elems[1], "fs:invalid-handle"));
+    close_reader(ctx, arena, reader);
+    const char *exclusive_create[] = {"exclusive", "create"};
+    check(failed_code(open_writer(ctx, arena, path, strings(arena, exclusive_create, 2u), 0600)) == EEXIST);
+    Atom *symbols = atom_expr(arena, (Atom *[]){atom_symbol(arena, "append")}, 1u);
+    check(atom_is_symbol(open_writer(ctx, arena, path, symbols, 0600)->expr.elems[1],
+                         "fs:invalid-argument"));
+    check(atom_is_symbol(open_writer(ctx, arena, path, strings(arena, append_create, 2u), 010000)
+                         ->expr.elems[1], "fs:invalid-argument"));
+    const char *truncate[] = {"truncate"};
+    owner = open_writer(ctx, arena, path, strings(arena, truncate, 1u), 0);
+    check(file_holds(path, "", 0u));
+    close_reader(ctx, arena, owner);
+
+    /* Directories as pathlib makes them: parents 0777, the leaf its mode. */
+    Atom *made = call(ctx, arena, "make_directories",
+                      (Atom *[]){atom_string(arena, tree), atom_int(arena, 0750)}, 2u);
+    check(made->kind == ATOM_EXPR && made->expr.len == 0u);
+    mode_t parent_mode = control_mode(base, "control-parent", true, 0777);
+    check(stat(top, &info) == 0 && (info.st_mode & 07777) == parent_mode);
+    check(stat(middle, &info) == 0 && (info.st_mode & 07777) == parent_mode);
+    check(stat(leaf, &info) == 0 && S_ISDIR(info.st_mode) &&
+          (info.st_mode & 07777) == control_mode(base, "control-leaf", true, 0750));
+    made = call(ctx, arena, "make_directories",
+                (Atom *[]){atom_string(arena, leaf), atom_int(arena, 0700)}, 2u);
+    check(made->kind == ATOM_EXPR && made->expr.len == 0u);
+    refused = call(ctx, arena, "make_directories",
+                   (Atom *[]){atom_string(arena, path), atom_int(arena, 0700)}, 2u);
+    check(failed_code(refused) == EEXIST && atom_string_equals_cstr(refused->expr.elems[3], path));
+    char below[4096];
+    assert(snprintf(below, sizeof(below), "%s/x/y", path) < (int)sizeof(below));
+    refused = call(ctx, arena, "make_directories",
+                   (Atom *[]){atom_string(arena, below), atom_int(arena, 0700)}, 2u);
+    check(failed_code(refused) == ENOTDIR);
+    umask(saved);
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2);
 #if CETTA_BUILD_WITH_RUNTIME_STATS
@@ -420,6 +652,7 @@ int main(int argc, char **argv) {
     check(headed(chunk(ctx, &arena, owner, 1), "fs:failed", 7u));
 
     rename_controls(ctx, &arena, argv[1]);
+    writer_controls(ctx, &arena, argv[1]);
     pid_t child = fork();
     assert(child >= 0);
     if (!child) {

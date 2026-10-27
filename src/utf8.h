@@ -133,4 +133,22 @@ static inline size_t cetta_utf8_encode(uint32_t scalar, uint8_t out[4]) {
     return 4u;
 }
 
+/* One code point of UTF-8 extended as Python's surrogatepass error handler
+ * extends it: a surrogate U+D800..U+DFFF is the three bytes cetta_utf8_encode
+ * gives it, so a Python text holding lone surrogates keeps every code point.
+ * Everything else must be well-formed UTF-8. */
+static inline bool cetta_utf8_decode_surrogatepass(const uint8_t *bytes, size_t len,
+                                                   size_t pos, uint32_t *code,
+                                                   uint32_t *width) {
+    if (bytes && pos < len && len - pos >= 3u && bytes[pos] == 0xedu &&
+        bytes[pos + 1u] >= 0xa0u && bytes[pos + 1u] <= 0xbfu &&
+        (bytes[pos + 2u] & 0xc0u) == 0x80u) {
+        *code = 0xd000u | ((uint32_t)(bytes[pos + 1u] & 0x3fu) << 6) |
+                (uint32_t)(bytes[pos + 2u] & 0x3fu);
+        *width = 3u;
+        return true;
+    }
+    return cetta_utf8_decode_one(bytes, len, pos, code, width);
+}
+
 #endif

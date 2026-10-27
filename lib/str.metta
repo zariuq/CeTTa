@@ -47,6 +47,13 @@
    (function
      (chain (eval (__cetta_lib_str trim $text)) $result (return $result))))
 
+; Python's '%.*f' % (digits, value): the correctly rounded fixed-point text in
+; the C locale. An integer converts as float() converts it; NaN is "nan"
+; whatever its sign, and the infinities "inf" and "-inf".
+(= (str:format-fixed $value $digits)
+   (function
+     (chain (eval (__cetta_lib_str format-fixed $value $digits)) $result (return $result))))
+
 ; The SHA-256 digest of the text's bytes, as 64 lowercase hex digits.
 (= (str:sha256 $text)
    (function
@@ -60,6 +67,46 @@
 (= (str:codepoint-count $text)
    (function
      (chain (eval (__cetta_lib_str codepoint-count $text)) $result (return $result))))
+
+; The first malformed UTF-8 sequence of a text: (StrUtf8ErrorV1 start end byte
+; reason), with reason invalid-start-byte, invalid-continuation-byte or
+; unexpected-end-of-data; StrUtf8WellFormedV1 when there is none.
+(= (str:utf8-error $text)
+   (function
+     (chain (eval (__cetta_lib_str utf8-error $text)) $result (return $result))))
+
+; The Unicode 15.0.0 General_Category of a code point, given as an integer or as
+; a text of one scalar, as Python 3.12's unicodedata.category spells it: "Lu",
+; "Nd", "Zs", "Cn". str:unicode-version names the Unicode version of the table.
+(= (str:unicode-category $code)
+   (function
+     (chain (eval (__cetta_lib_str unicode-category $code)) $result (return $result))))
+
+(= (str:unicode-version)
+   (function
+     (chain (eval (__cetta_lib_str unicode-version)) $result (return $result))))
+
+; A Python text whose bytes are UTF-8 extended as the surrogatepass error
+; handler extends it, so lone surrogates survive: str:python-codepoints gives
+; its code points as integers, a lone surrogate counting once as len() counts
+; it, and str:from-python-codepoints writes such a list back.
+; json:parse-python writes strings that way.
+(= (str:python-codepoints $text)
+   (function
+     (chain (eval (__cetta_lib_str python-codepoints $text)) $result (return $result))))
+
+(= (str:from-python-codepoints $codepoints)
+   (function
+     (chain (eval (__cetta_lib_str from-python-codepoints $codepoints)) $result (return $result))))
+
+; CPython 3.12's str.lower over Unicode 15.0.0, not casefold: every code point
+; through its full lowercase mapping, one to several included (U+0130 becomes
+; i and U+0307), and U+03A3 to final sigma U+03C2 in the Final_Sigma context,
+; else U+03C3. The text is read as str:python-codepoints reads it, so lone
+; surrogates are kept; other malformed bytes are refused.
+(= (str:python-lower $text)
+   (function
+     (chain (eval (__cetta_lib_str python-lower $text)) $result (return $result))))
 
 ; The codepoints of a text as a list value of one-codepoint strings, so that
 ; [$c | $rest] matches over its characters.

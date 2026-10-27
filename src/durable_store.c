@@ -164,12 +164,15 @@ static void frame_row(unsigned char **p,unsigned kind,const CettaDurableRecord *
     n=strlen(r->key); memcpy(*p,r->key,n); *p+=n;
     if (r->size) { memcpy(*p,r->data,r->size); *p+=r->size; }
 }
-static CettaDurableStatus journal_status(CettaNativeJournalStatus r) {
+/* A frame the journal cannot represent is a limit of this store. A write
+ * that entered the journal boundary is an I/O failure here; a commit reports
+ * it as UNKNOWN and poisons the store. */
+static CettaDurableStatus journal_status(CettaJournalStatus r) {
     switch (r) {
     case CETTA_JOURNAL_OK: return DURABLE_OK;
     case CETTA_JOURNAL_NOMEM: return DURABLE_NOMEM;
-    case CETTA_JOURNAL_LIMIT: return DURABLE_LIMIT;
-    case CETTA_JOURNAL_IO: return DURABLE_IO;
+    case CETTA_JOURNAL_INVALID: return DURABLE_LIMIT;
+    case CETTA_JOURNAL_IO: case CETTA_JOURNAL_UNKNOWN: return DURABLE_IO;
     default: return DURABLE_CORRUPT;
     }
 }
@@ -199,17 +202,21 @@ static bool frame_keys_unique(const unsigned char *p,const unsigned char *end,ui
 static CettaDurableStatus read_image(int fd,bool trim,Image **out,char epoch[33],
         int64_t *revision,int64_t *history,uint64_t *file_bytes) {
     *out=NULL; Image *im=image_new(); if (!im) return DURABLE_NOMEM;
-    off_t position=0; bool first=true; uint64_t remaining=0; *history=0;
+    struct stat info;
+    if (fstat(fd,&info) || info.st_size<0) { image_free(im); return DURABLE_IO; }
+    uint64_t length=(uint64_t)info.st_size,position=0; bool first=true; uint64_t remaining=0; *history=0;
     CettaDurableStatus result=DURABLE_CORRUPT;
     for (;;) {
-        unsigned char *bytes=NULL; size_t size=0; off_t next=0;
-        CettaNativeJournalStatus st=cetta_native_journal_read(fd,position,0,&bytes,&size,&next);
-        if (st==CETTA_JOURNAL_END || st==CETTA_JOURNAL_TAIL) {
+        CettaJournalRecord frame={0};
+        CettaJournalStatus st=cetta_journal_read(fd,position,length,SIZE_MAX,&frame);
+        if (st==CETTA_JOURNAL_END || st==CETTA_JOURNAL_TORN) {
             if (first || remaining) break;
-            if (st==CETTA_JOURNAL_TAIL && trim && (ftruncate(fd,position) || fsync(fd))) { result=DURABLE_IO; break; }
-            *out=im; *file_bytes=(uint64_t)position; return DURABLE_OK;
+            if (st==CETTA_JOURNAL_TORN && trim &&
+                cetta_journal_trim_tail(fd,position)!=CETTA_JOURNAL_OK) { result=DURABLE_IO; break; }
+            *out=im; *file_bytes=position; return DURABLE_OK;
         }
         if (st!=CETTA_JOURNAL_OK) { result=journal_status(st); break; }
+        unsigned char *bytes=frame.data; size_t size=frame.size; uint64_t next=frame.next;
         if (size<FRAME_BASE || memcmp(bytes,"CDR1",4)) {
             result=first?DURABLE_VERSION:DURABLE_CORRUPT; free(bytes); break;
         }
@@ -303,7 +310,7 @@ CettaDurableStatus cetta_durable_open(const char *path,const CettaDurableLimits 
         close(random); if (used!=sizeof(seed)) goto fail;
         for (size_t i=0;i<sizeof(seed);++i) snprintf(s->epoch+2*i,3,"%02x",seed[i]);
         unsigned char *b=frame_new(0,s->epoch,0,0,FRAME_BASE); if (!b) { r=DURABLE_NOMEM; goto fail; }
-        r=journal_status(cetta_native_journal_append(s->fd,b,FRAME_BASE,true,&s->file_bytes)); free(b);
+        r=journal_status(cetta_journal_append(s->fd,b,FRAME_BASE,true,&s->file_bytes)); free(b);
         if (r!=DURABLE_OK) goto fail;
     } else {
         unsigned char magic[4];
@@ -542,14 +549,14 @@ static CettaDurableStatus checkpoint_locked(CettaDurableStore *s) {
     if (ftruncate(fd,0)) goto done;
     unsigned char *b=frame_new(0,s->epoch,s->revision,space_length64(s->image->space),FRAME_BASE);
     if (!b) { result=DURABLE_NOMEM; goto done; }
-    result=journal_status(cetta_native_journal_append(fd,b,FRAME_BASE,false,&written)); free(b);
+    result=journal_status(cetta_journal_append(fd,b,FRAME_BASE,false,&written)); free(b);
     for (CettaIndex i=0;i<space_length64(s->image->space) && result==DURABLE_OK;++i) {
         CettaDurableRecord r=row(space_get_at64(s->image->space,i)); size_t size=FRAME_BASE+row_size(&r);
         b=frame_new(2,s->epoch,s->revision,1,size);
         if (!b) { result=DURABLE_NOMEM; break; }
         unsigned char *p=b+FRAME_BASE; frame_row(&p,DURABLE_INSERT,&r);
         if (!image_add(fresh,&r)) result=DURABLE_LIMIT;
-        else result=journal_status(cetta_native_journal_append(fd,b,size,false,&written));
+        else result=journal_status(cetta_journal_append(fd,b,size,false,&written));
         free(b);
     }
     if (result!=DURABLE_OK) goto done;
@@ -643,7 +650,7 @@ static CettaDurableStatus commit_internal(CettaDurableStore *s,
         frame_row(&p,op->kind,&r); BOUNDARY("operation");
     }
     BOUNDARY("before_commit");
-    result=journal_status(cetta_native_journal_append(s->fd,frame,frame_bytes,true,&s->file_bytes));
+    result=journal_status(cetta_journal_append(s->fd,frame,frame_bytes,true,&s->file_bytes));
     if (result!=DURABLE_OK) { s->poisoned=true; result=DURABLE_UNKNOWN; goto done; }
     /* No allocation or semantic check remains after the irreversible write. */
     Space *old=s->image->space; s->image->space=prepared; prepared=NULL;
