@@ -125,6 +125,21 @@
 ; for twice that it ends (ws:closed CONN 1006 TEXT); the handshake must also
 ; finish within idle-ms. idle-ms 0 means neither. While max-connections are
 ; open, further clients wait for one to end. TLS belongs in a proxy in front.
+;
+; TCP client connections, each operation one request:
+; (tcp:connect url connect-timeout-ms max-bytes lines|pieces) opens a raw
+; tcp://host:port connection, or tls://host:port over TLS, named by this
+; request's ID, and completes (tcp:connected CONN). (tcp:receive CONN) completes
+; with (tcp:received CONN TEXT): with lines, the next line without its LF or
+; CRLF; with pieces, the text that has arrived, never splitting a character.
+; Bytes that are not UTF-8 read as U+FFFD. (tcp:send CONN TEXT) completes
+; (tcp:sent CONN) once the text is written; it adds no line ending.
+; (tcp:close CONN) completes (tcp:closed CONN REASON) once queued text is
+; written and releases the connection, also after the peer closed. When the
+; peer ends the stream, the text left over arrives as a last item, and further
+; operations complete (tcp:closed CONN ""). A line longer than max-bytes ends
+; the connection with a reason; a transport failure completes (tcp:failed CONN
+; CURLCODE TEXT). While max-bytes of received items wait, nothing more is read.
 
 (= (http:get $url)
    (io:submit (http:request "GET" $url () "" 30000 8388608)))

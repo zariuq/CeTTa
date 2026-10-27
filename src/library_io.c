@@ -61,8 +61,11 @@ typedef struct CettaIoRequest {
     /* A WebSocket operation on the connection that the ws:connect or
      * ws:accept request with ID ws_id opened, or on the listener that the
      * ws:listen request with that ID opened.  A received message is assigned
-     * to one receive, an accepted connection to one accept. */
+     * to one receive, an accepted connection to one accept.  The tcp:
+     * operations are the same on a raw TCP connection (ws_tcp), received in
+     * lines or in pieces (ws_lines). */
     enum { WS_CONNECT, WS_RECEIVE, WS_SEND, WS_CLOSE, WS_LISTEN, WS_ACCEPT, WS_STOP } ws_operation;
+    bool ws_tcp, ws_lines;
     uint64_t ws_id, ws_position;
     char *ws_text;
     size_t ws_text_len;
@@ -127,6 +130,7 @@ typedef struct CettaIoWs {
     uint64_t id;
     CettaWsConnection *connection;
     struct CettaIoWs *next;
+    bool tcp;
 } CettaIoWs;
 
 typedef struct CettaIoWsListener {
@@ -1290,7 +1294,7 @@ static Atom *io_capabilities(CettaIoRuntime *runtime, Arena *arena,
     if (!io_zero_arg_ok(args, nargs))
         return io_error(arena, head, args, nargs,
                         "expected: (io:capabilities)");
-    Atom *providers[10]; size_t count = 0;
+    Atom *providers[12]; size_t count = 0;
     if (runtime && cetta_siwc_available()) providers[count++] = atom_symbol(arena, "siwc");
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
     if (runtime && runtime->worker) providers[count++] = atom_symbol(arena, "http");
@@ -1309,6 +1313,7 @@ static Atom *io_capabilities(CettaIoRuntime *runtime, Arena *arena,
 #endif
 #if CETTA_BUILD_HTTP_PROVIDER_CURL
         providers[count++] = atom_symbol(arena, "ws");
+        providers[count++] = atom_symbol(arena, "tcp");
 #endif
         providers[count++] = atom_symbol(arena, "ws-server");
     }
@@ -1443,7 +1448,8 @@ static CettaIoRequest *io_parse_ws(CettaIoRuntime *runtime, Atom *input, char *e
             snprintf(error, error_size, "a WebSocket URL begins with ws:// or wss://");
             return NULL;
         }
-    } else if (n < 2 || !io_nonnegative_int_arg(x[1], &first) || !(entry = io_ws_find(runtime, (uint64_t)first))) {
+    } else if (n < 2 || !io_nonnegative_int_arg(x[1], &first) ||
+               !(entry = io_ws_find(runtime, (uint64_t)first)) || entry->tcp) {
         snprintf(error, error_size, "expected a WebSocket connection this runtime opened and has not released");
         return NULL;
     }
@@ -1490,6 +1496,68 @@ static CettaIoRequest *io_parse_ws(CettaIoRuntime *runtime, Atom *input, char *e
     return request;
 }
 
+/* (tcp:connect URL CONNECT-TIMEOUT-MS MAX-BYTES lines|pieces) opens a raw
+ * TCP connection, tcp://host:port, or a TLS one, tls://host:port, named by
+ * the ID of this request; (tcp:receive CONNECTION), (tcp:send CONNECTION
+ * TEXT) and (tcp:close CONNECTION) act on it, as on a WebSocket connection. */
+static CettaIoRequest *io_parse_tcp(CettaIoRuntime *runtime, Atom *input, char *error, size_t error_size) {
+    Atom **x = input->expr.elems;
+    size_t n = input->expr.len;
+    int64_t first = 0, second = 0;
+    CettaIoWs *entry = NULL;
+    const char *text = NULL;
+    bool connect = atom_is_symbol(x[0], "tcp:connect");
+    if (connect) {
+        const char *url = n == 5 ? io_text_arg(x[1]) : NULL;
+        if (!url || !io_nonnegative_int_arg(x[2], &first) || first > (int64_t)UINT32_MAX ||
+            !io_nonnegative_int_arg(x[3], &second) || !second ||
+            !(atom_is_symbol(x[4], "lines") || atom_is_symbol(x[4], "pieces"))) {
+            snprintf(error, error_size, "expected (tcp:connect url connect-timeout-ms max-bytes lines|pieces)");
+            return NULL;
+        }
+        if (strncmp(url, "tcp://", 6) && strncmp(url, "tls://", 6)) {
+            snprintf(error, error_size, "a TCP URL begins with tcp:// or tls://");
+            return NULL;
+        }
+    } else if (n < 2 || !io_nonnegative_int_arg(x[1], &first) ||
+               !(entry = io_ws_find(runtime, (uint64_t)first)) || !entry->tcp) {
+        snprintf(error, error_size, "expected a TCP connection this runtime opened and has not released");
+        return NULL;
+    } else if (atom_is_symbol(x[0], "tcp:receive") ? n != 2 :
+               atom_is_symbol(x[0], "tcp:close") ? n != 2 : n != 3 || !(text = io_text_arg(x[2]))) {
+        snprintf(error, error_size, atom_is_symbol(x[0], "tcp:send") ? "expected (tcp:send connection text)"
+                 : atom_is_symbol(x[0], "tcp:close") ? "expected (tcp:close connection)"
+                 : "expected (tcp:receive connection)");
+        return NULL;
+    }
+    CettaIoRequest *request = calloc(1, sizeof(*request));
+    if (!request) {
+        snprintf(error, error_size, "TCP request allocation failed");
+        return NULL;
+    }
+    request->provider = IO_WS;
+    request->ws_tcp = true;
+    if (connect) {
+        request->ws_operation = WS_CONNECT;
+        request->url = io_strdup(io_text_arg(x[1]));
+        request->timeout_ms = first;
+        request->max_bytes = (size_t)second;
+        request->ws_lines = atom_is_symbol(x[4], "lines");
+        return request;
+    }
+    request->ws_id = entry->id;
+    if (atom_is_symbol(x[0], "tcp:receive")) {
+        request->ws_operation = WS_RECEIVE;
+    } else if (atom_is_symbol(x[0], "tcp:send")) {
+        request->ws_operation = WS_SEND;
+        request->ws_position = cetta_ws_send(entry->connection, text, strlen(text));
+    } else {
+        request->ws_operation = WS_CLOSE;
+        cetta_ws_close(entry->connection, 1000, "");
+    }
+    return request;
+}
+
 static Atom *io_ws_accepted(CettaIoRuntime *runtime, Arena *arena, CettaIoRequest *r) {
     Atom *connection = atom_int(arena, (int64_t)r->id);
     CettaWsConnection *accepted = r->ws_accepted;
@@ -1527,19 +1595,24 @@ static Atom *io_ws_result(CettaIoRuntime *runtime, Arena *arena, CettaIoRequest 
     Atom *connection = atom_int(arena, (int64_t)r->ws_id);
     CettaWsClosed closed = {.code = 1006};
     CettaWsState state = entry ? cetta_ws_state(entry->connection, &closed) : CETTA_WS_CLOSED;
+    bool tcp = r->ws_tcp;
     if (r->ws_operation == WS_RECEIVE && r->ws_has_text) {
         r->ws_has_text = false;
-        return atom_expr3(arena, atom_symbol(arena, "ws:message"), connection,
+        return atom_expr3(arena, atom_symbol(arena, tcp ? "tcp:received" : "ws:message"), connection,
                           atom_string_n(arena, r->ws_text, r->ws_text_len));
     }
     if (r->ws_operation == WS_CONNECT && state == CETTA_WS_OPEN)
-        return atom_expr2(arena, atom_symbol(arena, "ws:connected"), connection);
+        return atom_expr2(arena, atom_symbol(arena, tcp ? "tcp:connected" : "ws:connected"), connection);
     if (r->ws_operation == WS_SEND && entry && r->ws_position && cetta_ws_sent(entry->connection, r->ws_position))
-        return atom_expr2(arena, atom_symbol(arena, "ws:sent"), connection);
+        return atom_expr2(arena, atom_symbol(arena, tcp ? "tcp:sent" : "ws:sent"), connection);
     if (r->ws_operation == WS_CLOSE) io_ws_drop(runtime, r->ws_id);
     if (closed.transport_code)
-        return atom_expr(arena, (Atom *[]){atom_symbol(arena, "ws:failed"), connection,
+        return atom_expr(arena, (Atom *[]){atom_symbol(arena, tcp ? "tcp:failed" : "ws:failed"), connection,
             atom_int(arena, closed.transport_code), atom_string(arena, closed.transport_message)}, 4);
+    /* A TCP connection that ended has no close code, only a reason when this
+     * side ended it for one. */
+    if (tcp)
+        return atom_expr3(arena, atom_symbol(arena, "tcp:closed"), connection, atom_string(arena, closed.reason));
     return atom_expr(arena, (Atom *[]){atom_symbol(arena, "ws:closed"), connection,
         atom_int(arena, closed.code), atom_string(arena, closed.reason)}, 4);
 }
@@ -1624,6 +1697,10 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
          atom_is_symbol(input->expr.elems[0], "ws:listen") || atom_is_symbol(input->expr.elems[0], "ws:accept") ||
          atom_is_symbol(input->expr.elems[0], "ws:stop"))) {
         request = io_parse_ws(runtime, input, error, sizeof(error));
+    } else if (input && input->kind == ATOM_EXPR && input->expr.len &&
+        (atom_is_symbol(input->expr.elems[0], "tcp:connect") || atom_is_symbol(input->expr.elems[0], "tcp:receive") ||
+         atom_is_symbol(input->expr.elems[0], "tcp:send") || atom_is_symbol(input->expr.elems[0], "tcp:close"))) {
+        request = io_parse_tcp(runtime, input, error, sizeof(error));
     } else if (input && input->kind == ATOM_EXPR && input->expr.len &&
         atom_is_symbol(input->expr.elems[0], "timer:after")) {
         int64_t delay;
@@ -1715,15 +1792,18 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
         io_ws_listener_drop(runtime, request->ws_id);
     if (request->provider == IO_WS && request->ws_operation == WS_CONNECT) {
         CettaIoWs *entry = calloc(1, sizeof(*entry));
-        CettaWsConnection *connection = entry ? cetta_ws_open(request->url, (uint32_t)request->timeout_ms,
-                                                              request->max_bytes, runtime->wakeup[1]) : NULL;
+        CettaWsConnection *connection = !entry ? NULL
+            : request->ws_tcp ? cetta_tcp_open(request->url, (uint32_t)request->timeout_ms, request->max_bytes,
+                                               request->ws_lines, runtime->wakeup[1])
+            : cetta_ws_open(request->url, (uint32_t)request->timeout_ms, request->max_bytes, runtime->wakeup[1]);
         if (!connection) {
             free(entry);
             io_request_unlink(runtime, request);
             io_request_free(runtime, request);
-            return io_error(arena, head, args, nargs, "WebSocket provider unavailable");
+            return io_error(arena, head, args, nargs, request->ws_tcp ? "TCP provider unavailable"
+                                                                      : "WebSocket provider unavailable");
         }
-        *entry = (CettaIoWs){request->id, connection, runtime->ws};
+        *entry = (CettaIoWs){request->id, connection, runtime->ws, request->ws_tcp};
         runtime->ws = entry;
         request->ws_id = request->id;
     }

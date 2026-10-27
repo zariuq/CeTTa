@@ -62,6 +62,8 @@ struct CettaWsConnection {
     size_t inbox_bytes;
     WsText *outbox, *outbox_tail;
     uint64_t queued, sent;
+    /* A raw TCP client's: its queue holds lines, or text pieces. */
+    bool raw, lines;
     bool close_requested;
     int close_code;
     char close_reason[124];
@@ -474,11 +476,242 @@ CettaWsConnection *cetta_ws_open(const char *url, uint32_t connect_timeout_ms,
     return c;
 }
 
+/* ------------------------------------------------------------------------
+ * Raw TCP and TLS client connections */
+
+/* The text of these bytes, each byte that is not part of a UTF-8 scalar
+ * read as U+FFFD; *out_length is its length.  NULL when memory is short. */
+static char *tcp_text(const char *bytes, size_t length, size_t *out_length) {
+    char *text = malloc(length * 3u + 1u), *at = text;
+    if (!text) return NULL;
+    uint32_t scalar, width;
+    for (size_t i = 0u; i < length; i += width) {
+        if (cetta_utf8_decode_one((const uint8_t *)bytes, length, i, &scalar, &width)) {
+            memcpy(at, bytes + i, width);
+            at += width;
+        } else {
+            memcpy(at, "\xEF\xBF\xBD", 3u);
+            at += 3;
+            width = 1u;
+        }
+    }
+    *at = '\0';
+    *out_length = (size_t)(at - text);
+    return text;
+}
+
+/* Queues these bytes as text; false when memory is exhausted. */
+static bool tcp_push(CettaWsConnection *c, const char *bytes, size_t length, bool *reading) {
+    size_t text_length = 0u;
+    char *text = tcp_text(bytes, length, &text_length);
+    if (!text) return false;
+    bool pushed = inbox_push(c, text, text_length, reading);
+    free(text);
+    return pushed;
+}
+
+/* How many of the received bytes end on a whole UTF-8 scalar: all of them,
+ * unless they end inside a scalar whose lead byte has arrived. */
+static size_t tcp_whole(const char *bytes, size_t length) {
+    for (size_t back = 1u; back <= 4u && back <= length; ++back) {
+        unsigned char b = (unsigned char)bytes[length - back];
+        if ((b & 0xC0u) == 0x80u) continue;
+        size_t need = b >= 0xF0u ? 4u : b >= 0xE0u ? 3u : b >= 0xC0u ? 2u : 1u;
+        return need > back ? length - back : length;
+    }
+    return length;
+}
+
+static void tcp_out_of_memory(CettaWsConnection *c) {
+    finish(c, 1011, "out of memory", 13u, CURLE_OUT_OF_MEMORY, curl_easy_strerror(CURLE_OUT_OF_MEMORY));
+}
+
+static void *tcp_worker(void *argument) {
+    CettaWsConnection *c = argument;
+    char *buffer = malloc(WS_READ_CHUNK), *pending = NULL;
+    size_t pending_length = 0u, capacity = 0u, offset = 0u;
+    curl_socket_t fd = CURL_SOCKET_BAD;
+    CURL *easy = buffer ? curl_easy_init() : NULL;
+    if (!easy) {
+        finish(c, 1006, "", 0, CURLE_OUT_OF_MEMORY, curl_easy_strerror(CURLE_OUT_OF_MEMORY));
+        goto done;
+    }
+    curl_easy_setopt(easy, CURLOPT_URL, c->url);
+    curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
+    /* Connect, and for https also complete TLS, then hand over the stream.
+     * HTTP/1.1 keeps TLS from negotiating HTTP/2, whose framing libcurl would
+     * then expect on what is a raw stream. */
+    curl_easy_setopt(easy, CURLOPT_CONNECT_ONLY, 1L);
+    curl_easy_setopt(easy, CURLOPT_HTTP_VERSION, (long)CURL_HTTP_VERSION_1_1);
+    curl_easy_setopt(easy, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT_MS, (long)c->connect_timeout_ms);
+    CURLcode code = curl_easy_perform(easy);
+    if (code == CURLE_OK && (curl_easy_getinfo(easy, CURLINFO_ACTIVESOCKET, &fd) != CURLE_OK ||
+                             fd == CURL_SOCKET_BAD))
+        code = CURLE_COULDNT_CONNECT;
+    if (code != CURLE_OK) {
+        finish(c, 1006, "", 0, code, curl_easy_strerror(code));
+        goto done;
+    }
+    pthread_mutex_lock(&c->lock);
+    if (c->state == CETTA_WS_CONNECTING) c->state = CETTA_WS_OPEN;
+    pthread_mutex_unlock(&c->lock);
+    notify(c);
+
+    for (;;) {
+        /* Write queued text in order; a close takes effect once it is out. */
+        bool want_write = false;
+        for (;;) {
+            pthread_mutex_lock(&c->lock);
+            WsText *piece = c->outbox;
+            bool close_due = !piece && c->close_requested;
+            pthread_mutex_unlock(&c->lock);
+            if (close_due) {
+                finish(c, 1000, "", 0, 0, "");
+                goto done;
+            }
+            if (!piece) break;
+            size_t sent = 0u;
+            code = curl_easy_send(easy, piece->bytes + offset, piece->length - offset, &sent);
+            if (code == CURLE_AGAIN) { want_write = true; break; }
+            if (code != CURLE_OK) {
+                finish(c, 1006, "", 0, code, curl_easy_strerror(code));
+                goto done;
+            }
+            offset += sent;
+            if (offset < piece->length) continue;
+            pthread_mutex_lock(&c->lock);
+            c->outbox = piece->next;
+            if (!c->outbox) c->outbox_tail = NULL;
+            c->sent++;
+            pthread_mutex_unlock(&c->lock);
+            free(piece->bytes);
+            free(piece);
+            offset = 0u;
+            notify(c);
+        }
+
+        /* Read whatever is there, unless the queue is full. */
+        pthread_mutex_lock(&c->lock);
+        bool reading = c->inbox_bytes < c->max_message_bytes;
+        pthread_mutex_unlock(&c->lock);
+        while (reading) {
+            size_t got = 0u;
+            code = curl_easy_recv(easy, buffer, WS_READ_CHUNK, &got);
+            if (code == CURLE_AGAIN) break;
+            if (code != CURLE_OK) {
+                finish(c, 1006, "", 0, code, curl_easy_strerror(code));
+                goto done;
+            }
+            if (got == 0u) {
+                /* The peer ended the stream: what is left is the last piece. */
+                if (pending_length && !tcp_push(c, pending, pending_length, &reading)) {
+                    tcp_out_of_memory(c);
+                    goto done;
+                }
+                finish(c, 1000, "", 0, 0, "");
+                goto done;
+            }
+            if (pending_length + got > capacity) {
+                size_t grown = capacity ? capacity : 4096u;
+                while (grown < pending_length + got) grown *= 2u;
+                char *bigger = realloc(pending, grown);
+                if (!bigger) {
+                    tcp_out_of_memory(c);
+                    goto done;
+                }
+                pending = bigger;
+                capacity = grown;
+            }
+            memcpy(pending + pending_length, buffer, got);
+            pending_length += got;
+            size_t used = 0u;
+            if (c->lines) {
+                for (char *end; (end = memchr(pending + used, '\n', pending_length - used)); ) {
+                    size_t length = (size_t)(end - (pending + used));
+                    if (length && pending[used + length - 1u] == '\r') length--;
+                    if (length > c->max_message_bytes) {
+                        finish(c, 1009, "line longer than max-bytes", 26u, 0, "");
+                        goto done;
+                    }
+                    if (!tcp_push(c, pending + used, length, &reading)) {
+                        tcp_out_of_memory(c);
+                        goto done;
+                    }
+                    used = (size_t)(end - pending) + 1u;
+                }
+                if (pending_length - used > c->max_message_bytes) {
+                    finish(c, 1009, "line longer than max-bytes", 26u, 0, "");
+                    goto done;
+                }
+            } else {
+                used = tcp_whole(pending, pending_length);
+                if (used && !tcp_push(c, pending, used, &reading)) {
+                    tcp_out_of_memory(c);
+                    goto done;
+                }
+            }
+            memmove(pending, pending + used, pending_length - used);
+            pending_length -= used;
+        }
+
+        /* Wait for the evaluator, or the socket when there is room to read
+         * or text to write.  A full queue leaves the socket out, so a peer
+         * that hung up cannot spin this loop. */
+        struct pollfd fds[2] = {
+            {c->control[0], POLLIN, 0},
+            {fd, (short)((reading ? POLLIN : 0) | (want_write ? POLLOUT : 0)), 0},
+        };
+        if (poll(fds, reading || want_write ? 2u : 1u, -1) < 0 && errno != EINTR) {
+            finish(c, 1006, "", 0, CURLE_RECV_ERROR, "waiting on the connection failed");
+            goto done;
+        }
+        if (fds[0].revents & POLLIN) {
+            char drain[64];
+            while (read(c->control[0], drain, sizeof(drain)) > 0) {}
+        }
+    }
+done:
+    free(pending);
+    free(buffer);
+    if (easy) curl_easy_cleanup(easy);
+    unreference(c);
+    return NULL;
+}
+
+CettaWsConnection *cetta_tcp_open(const char *url, uint32_t connect_timeout_ms,
+                                  size_t max_bytes, bool lines, int wakeup_fd) {
+    pthread_once(&ws_curl_once, ws_init_curl);
+    bool tls = url && !strncmp(url, "tls://", 6);
+    if (!ws_curl_ready || !url || max_bytes == 0u || (!tls && strncmp(url, "tcp://", 6)))
+        return NULL;
+    CettaWsConnection *c = connection_new(max_bytes, wakeup_fd);
+    if (!c) return NULL;
+    c->raw = true;
+    c->lines = lines;
+    /* libcurl's connect-only mode reaches a host and port through these
+     * schemes without sending a request; https completes TLS first. */
+    size_t length = strlen(url + 6) + 9u;
+    c->url = malloc(length);
+    if (c->url) snprintf(c->url, length, "%s://%s", tls ? "https" : "http", url + 6);
+    c->connect_timeout_ms = connect_timeout_ms;
+    if (!c->url || !start_worker(c, tcp_worker)) {
+        connection_free(c);
+        return NULL;
+    }
+    return c;
+}
+
 #else
 
 CettaWsConnection *cetta_ws_open(const char *url, uint32_t connect_timeout_ms,
                                  size_t max_message_bytes, int wakeup_fd) {
     (void)url; (void)connect_timeout_ms; (void)max_message_bytes; (void)wakeup_fd;
+    return NULL;
+}
+CettaWsConnection *cetta_tcp_open(const char *url, uint32_t connect_timeout_ms,
+                                  size_t max_bytes, bool lines, int wakeup_fd) {
+    (void)url; (void)connect_timeout_ms; (void)max_bytes; (void)lines; (void)wakeup_fd;
     return NULL;
 }
 
@@ -1438,6 +1671,11 @@ void cetta_ws_release(CettaWsConnection *c) {
 CettaWsConnection *cetta_ws_open(const char *url, uint32_t connect_timeout_ms,
                                  size_t max_message_bytes, int wakeup_fd) {
     (void)url; (void)connect_timeout_ms; (void)max_message_bytes; (void)wakeup_fd;
+    return NULL;
+}
+CettaWsConnection *cetta_tcp_open(const char *url, uint32_t connect_timeout_ms,
+                                  size_t max_bytes, bool lines, int wakeup_fd) {
+    (void)url; (void)connect_timeout_ms; (void)max_bytes; (void)lines; (void)wakeup_fd;
     return NULL;
 }
 CettaWsState cetta_ws_state(CettaWsConnection *c, CettaWsClosed *closed) {

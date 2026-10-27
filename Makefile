@@ -34264,6 +34264,13 @@ test-io-websocket-v1: $(BIN) tests/support/check_io_websocket_v1.py
 test-io-websocket-server-v1: $(BIN) tests/support/check_io_websocket_server_v1.py
 	@$(WEBSOCKET_TEST_PYTHON) tests/support/check_io_websocket_server_v1.py ./$(BIN)
 
+# The TCP check needs only Python's standard library, and openssl for its TLS
+# case; a build without the provider reports a skip.
+.PHONY: test-io-tcp-v1
+test-all: test-io-tcp-v1
+test-io-tcp-v1: $(BIN) tests/support/check_io_tcp_v1.py
+	@python3 tests/support/check_io_tcp_v1.py ./$(BIN)
+
 .PHONY: test-filesystem-core-v1 test-filesystem-core-body-v1
 test-filesystem-core-v1:
 	+$(MAKE) BUILD=core ENABLE_PYTHON=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 ENABLE_GMP=0 \

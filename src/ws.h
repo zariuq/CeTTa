@@ -37,6 +37,17 @@ typedef struct {
 /* Starts connecting.  NULL when the provider is unavailable or out of memory. */
 CettaWsConnection *cetta_ws_open(const char *url, uint32_t connect_timeout_ms,
                                  size_t max_message_bytes, int wakeup_fd);
+/* A raw TCP client connection, tcp://host:port, or one over TLS,
+ * tls://host:port, through libcurl's connect-only mode.  It takes the queue,
+ * send order, close and release of a WebSocket connection; what it receives
+ * becomes text, each byte that is not part of a UTF-8 scalar read as U+FFFD.
+ * With lines, each queued item is one line without its LF or CRLF, a longer
+ * line than max_bytes ending the connection with code 1009; otherwise items
+ * are the text received so far, never splitting a scalar.  The end of the
+ * stream queues what is left as a last item and closes with code 1000, as
+ * does a close from this side once its queued text is written. */
+CettaWsConnection *cetta_tcp_open(const char *url, uint32_t connect_timeout_ms,
+                                  size_t max_bytes, bool lines, int wakeup_fd);
 CettaWsState cetta_ws_state(CettaWsConnection *connection, CettaWsClosed *closed);
 /* Removes the oldest received message; the caller frees *text. */
 bool cetta_ws_take(CettaWsConnection *connection, char **text, size_t *length);
