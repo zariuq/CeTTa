@@ -24,13 +24,16 @@ typedef struct {
     CettaDiskBuffer key;
 } Node;
 typedef struct { uint64_t reference, bit, left, right; bool rightward; } Path;
-typedef struct { uint64_t reference, parent; bool has_parent; } Pending;
+typedef struct { uint64_t reference, parent; size_t depth; bool has_parent, rightward; } Pending;
 struct CettaDiskCursor {
     CettaDiskRoot root;
     Pending *pending;
     size_t count, capacity;
-    CettaDiskBuffer upper;
-    bool failed, has_upper;
+    Path *ancestry;
+    size_t depth, ancestry_capacity;
+    uint64_t visits;
+    CettaDiskBuffer upper, previous;
+    bool failed, has_upper, has_previous;
 };
 struct CettaDiskBlobReader { CettaDiskRoot root; CettaDiskBlob value; };
 
@@ -134,6 +137,26 @@ static uint64_t first_bit(CettaDiskBytes left,CettaDiskBytes right) {
     while (!(difference&(256u>>shift))) ++shift;
     return (uint64_t)at*9+shift;
 }
+static bool agrees_with_path(CettaDiskBytes key,const Path *path,size_t count) {
+    for (size_t i=0;i<count;++i)
+        if ((key_bit(key,path[i].bit)!=0)!=path[i].rightward) return false;
+    return true;
+}
+/* A valid tree visits each node once; a seek can visit one path twice. Use
+ * the physical frame bound, not an archive-sized visited set. Dead frames
+ * only loosen this bound. Even a validly checksummed DAG cannot amplify
+ * work exponentially relative to its segment's size. */
+static bool visit(const CettaDiskRoot *root,uint64_t *count,unsigned passes) {
+    uint64_t limit=(root->end/(FRAME+13))*passes;
+    if (*count>=limit) return false;
+    ++*count;return true;
+}
+static CettaDiskStatus remember_key(CettaDiskBuffer *previous,CettaDiskBytes key) {
+    unsigned char *copy=malloc(key.size ? key.size : 1);
+    if (!copy) return CETTA_DISK_NOMEM;
+    if (key.size) memcpy(copy,key.data,key.size);
+    cetta_disk_buffer_free(previous);*previous=(CettaDiskBuffer){copy,key.size};return CETTA_DISK_OK;
+}
 static CettaDiskStatus grow(void **data,size_t *capacity,size_t need,size_t width,uint64_t limit) {
     if (need>*capacity) {
         if (need>limit || need>SIZE_MAX/width) return CETTA_DISK_LIMIT;
@@ -162,19 +185,26 @@ CettaDiskStatus cetta_disk_lookup(const CettaDiskRoot *root,CettaDiskBytes key,C
     *value=(CettaDiskBlob){0};
     if (!valid(root) || !bytes_valid(key,root->key_limit)) return CETTA_DISK_INVALID;
     uint64_t reference=root->root,parent=0; bool has_parent=false;
+    Path *path=NULL;size_t count=0,capacity=0;CettaDiskStatus status=CETTA_DISK_ABSENT;
     while (reference) {
-        Node node; CettaDiskStatus status=node_read(root,reference,&node);
-        if (status!=CETTA_DISK_OK) return status;
+        Node node;status=node_read(root,reference,&node);
+        if (status!=CETTA_DISK_OK) break;
         if (node.leaf) {
-            bool matches=key_equal(key,(CettaDiskBytes){node.key.data,node.key.size});
+            CettaDiskBytes stored={node.key.data,node.key.size};
+            bool consistent=agrees_with_path(stored,path,count),matches=key_equal(key,stored);
             uint64_t blob=node.value; node_free(&node);
-            return matches ? blob_info(root,blob,value) : CETTA_DISK_ABSENT;
+            status=!consistent ? CETTA_DISK_CORRUPT : matches ? blob_info(root,blob,value) : CETTA_DISK_ABSENT;
+            break;
         }
-        if (has_parent && node.bit<=parent) return CETTA_DISK_CORRUPT;
+        if (has_parent && node.bit<=parent) { status=CETTA_DISK_CORRUPT;break; }
+        status=grow((void **)&path,&capacity,count+1,sizeof(*path),((uint64_t)root->key_limit+1)*9);
+        if (status!=CETTA_DISK_OK) break;
+        bool side=key_bit(key,node.bit)!=0;
+        path[count++]=(Path){reference,node.bit,node.left,node.right,side};
         parent=node.bit; has_parent=true;
-        reference=key_bit(key,node.bit) ? node.right : node.left;
+        reference=side ? node.right : node.left;
     }
-    return CETTA_DISK_ABSENT;
+    free(path);return status;
 }
 CettaDiskStatus cetta_disk_blob_read(const CettaDiskRoot *root,CettaDiskBlob value,
         uint64_t offset,void *destination,size_t capacity,size_t *written) {
@@ -281,6 +311,9 @@ static CettaDiskStatus change(CettaDiskRoot *root,const CettaDiskOp *op) {
         parent=found.bit; has_parent=true; reference=side ? found.right : found.left;
     }
     if (status!=CETTA_DISK_OK) goto done;
+    if (reference && !agrees_with_path((CettaDiskBytes){found.key.data,found.key.size},path,count)) {
+        status=CETTA_DISK_CORRUPT;goto done;
+    }
     bool matches=reference && key_equal(op->key,(CettaDiskBytes){found.key.data,found.key.size});
     uint64_t replacement=0;
     size_t cut=count;
@@ -334,16 +367,18 @@ CettaDiskStatus cetta_disk_build(const CettaDiskRoot *base,const CettaDiskOp *op
     }
     *candidate=draft; return CETTA_DISK_OK;
 }
-CettaDiskStatus cetta_disk_sync(const CettaDiskRoot *candidate) {
+CettaDiskStatus cetta_disk_sync(CettaDiskRoot *candidate) {
     if (!valid(candidate)) return CETTA_DISK_INVALID;
     int result;
     do { result=fsync(candidate->fd); } while (result<0 && errno==EINTR);
-    return result ? CETTA_DISK_IO : CETTA_DISK_OK;
+    if (result) { candidate->fd=-1;return CETTA_DISK_IO; }
+    return CETTA_DISK_OK;
 }
-static CettaDiskStatus push(CettaDiskCursor *cursor,uint64_t reference,uint64_t parent,bool has_parent) {
+static CettaDiskStatus push(CettaDiskCursor *cursor,uint64_t reference,uint64_t parent,
+        bool has_parent,size_t depth,bool rightward) {
     CettaDiskStatus status=grow((void **)&cursor->pending,&cursor->capacity,cursor->count+1,
                                sizeof(*cursor->pending),((uint64_t)cursor->root.key_limit+1)*9+1);
-    if (status==CETTA_DISK_OK) cursor->pending[cursor->count++]=(Pending){reference,parent,has_parent};
+    if (status==CETTA_DISK_OK) cursor->pending[cursor->count++]=(Pending){reference,parent,depth,has_parent,rightward};
     return status;
 }
 static CettaDiskStatus seek(CettaDiskCursor *cursor,CettaDiskBytes lower,bool exclusive) {
@@ -351,6 +386,7 @@ static CettaDiskStatus seek(CettaDiskCursor *cursor,CettaDiskBytes lower,bool ex
     uint64_t reference=cursor->root.root,parent=0; bool has_parent=false;
     Node node={0}; CettaDiskStatus status=CETTA_DISK_OK;
     while (reference) {
+        if (!visit(&cursor->root,&cursor->visits,2)) { status=CETTA_DISK_CORRUPT;break; }
         status=node_read(&cursor->root,reference,&node);
         if (status!=CETTA_DISK_OK || node.leaf) break;
         if (has_parent && node.bit<=parent) { status=CETTA_DISK_CORRUPT; break; }
@@ -362,6 +398,7 @@ static CettaDiskStatus seek(CettaDiskCursor *cursor,CettaDiskBytes lower,bool ex
     }
     if (status!=CETTA_DISK_OK || !reference) goto done;
     CettaDiskBytes found={node.key.data,node.key.size};
+    if (!agrees_with_path(found,path,count)) { status=CETTA_DISK_CORRUPT;goto done; }
     int order=key_compare(lower,found); size_t cut=count;
     if (order) {
         uint64_t different=first_bit(lower,found); cut=0;
@@ -371,10 +408,14 @@ static CettaDiskStatus seek(CettaDiskCursor *cursor,CettaDiskBytes lower,bool ex
      * it, every key in the selected subtree lies on the same side of lower.
      * This handles a bound differing before any stored critical bit too. */
     for (size_t i=0;i<cut && status==CETTA_DISK_OK;++i)
-        if (!path[i].rightward) status=push(cursor,path[i].right,path[i].bit,true);
+        if (!path[i].rightward) status=push(cursor,path[i].right,path[i].bit,true,i,true);
     if (status==CETTA_DISK_OK && (order<0 || (!order && !exclusive))) {
         uint64_t target=cut<count ? path[cut].reference : reference;
-        status=push(cursor,target,cut ? path[cut-1].bit : 0,cut!=0);
+        status=push(cursor,target,cut ? path[cut-1].bit : 0,cut!=0,cut ? cut-1 : 0,
+                    cut ? path[cut-1].rightward : false);
+    }
+    if (status==CETTA_DISK_OK) {
+        cursor->ancestry=path;cursor->depth=count;cursor->ancestry_capacity=capacity;path=NULL;
     }
 done:
     node_free(&node); free(path); return status;
@@ -399,7 +440,7 @@ CettaDiskStatus cetta_disk_cursor_open_range(const CettaDiskRoot *root,
     CettaDiskStatus status=CETTA_DISK_OK;
     if (lower && upper && key_compare(*lower,*upper)>=0) { /* Empty interval. */ }
     else if (lower) status=seek(cursor,*lower,exclusive);
-    else if (root->root) status=push(cursor,root->root,0,false);
+    else if (root->root) status=push(cursor,root->root,0,false,0,false);
     if (status!=CETTA_DISK_OK) { cetta_disk_cursor_close(cursor); return status; }
     *out=cursor; return CETTA_DISK_OK;
 }
@@ -412,20 +453,35 @@ CettaDiskStatus cetta_disk_cursor_next(CettaDiskCursor *cursor,CettaDiskBuffer *
     if (!cursor || cursor->failed) return CETTA_DISK_INVALID;
     while (cursor->count) {
         Pending pending=cursor->pending[--cursor->count]; Node node;
+        cursor->depth=pending.depth;
+        if (!visit(&cursor->root,&cursor->visits,2)) { cursor->failed=true;return CETTA_DISK_CORRUPT; }
+        if (pending.has_parent) {
+            CettaDiskStatus allocated=grow((void **)&cursor->ancestry,&cursor->ancestry_capacity,
+                cursor->depth+1,sizeof(*cursor->ancestry),((uint64_t)cursor->root.key_limit+1)*9);
+            if (allocated!=CETTA_DISK_OK) { cursor->failed=true;return allocated; }
+            cursor->ancestry[cursor->depth++]=(Path){.bit=pending.parent,.rightward=pending.rightward};
+        }
         CettaDiskStatus status=node_read(&cursor->root,pending.reference,&node);
         if (status!=CETTA_DISK_OK) { cursor->failed=true; return status; }
         if (node.leaf) {
+            CettaDiskBytes stored={node.key.data,node.key.size};
+            if (!agrees_with_path(stored,cursor->ancestry,cursor->depth) ||
+                (cursor->has_previous && key_compare((CettaDiskBytes){cursor->previous.data,cursor->previous.size},stored)>=0)) {
+                node_free(&node);cursor->failed=true;return CETTA_DISK_CORRUPT;
+            }
             if (cursor->has_upper && key_compare((CettaDiskBytes){node.key.data,node.key.size},
                     (CettaDiskBytes){cursor->upper.data,cursor->upper.size})>=0) {
                 node_free(&node); cursor->count=0; return CETTA_DISK_END;
             }
             status=blob_info(&cursor->root,node.value,value);
+            if (status==CETTA_DISK_OK) status=remember_key(&cursor->previous,stored);
             if (status!=CETTA_DISK_OK) { node_free(&node); cursor->failed=true; return status; }
+            cursor->has_previous=true;
             *key=node.key; return CETTA_DISK_OK;
         }
         if (pending.has_parent && node.bit<=pending.parent) { cursor->failed=true; return CETTA_DISK_CORRUPT; }
-        status=push(cursor,node.right,node.bit,true);
-        if (status==CETTA_DISK_OK) status=push(cursor,node.left,node.bit,true);
+        status=push(cursor,node.right,node.bit,true,cursor->depth,true);
+        if (status==CETTA_DISK_OK) status=push(cursor,node.left,node.bit,true,cursor->depth,false);
         if (status!=CETTA_DISK_OK) { cursor->failed=true; return status; }
     }
     return CETTA_DISK_END;
@@ -433,7 +489,8 @@ CettaDiskStatus cetta_disk_cursor_next(CettaDiskCursor *cursor,CettaDiskBuffer *
 const CettaDiskRoot *cetta_disk_cursor_root(const CettaDiskCursor *cursor) { return cursor ? &cursor->root : NULL; }
 void cetta_disk_cursor_close(CettaDiskCursor *cursor) {
     if (cursor) {
-        close(cursor->root.fd); free(cursor->pending);
+        close(cursor->root.fd); free(cursor->pending);free(cursor->ancestry);
+        cetta_disk_buffer_free(&cursor->previous);
         cetta_disk_buffer_free(&cursor->upper); free(cursor);
     }
 }
@@ -450,7 +507,8 @@ CettaDiskStatus cetta_disk_compact(const CettaDiskRoot *source,int destination,C
     if (to.st_size || (from.st_dev==to.st_dev && from.st_ino==to.st_ino)) return CETTA_DISK_INVALID;
     if (lseek(destination,0,SEEK_SET)!=0) return CETTA_DISK_IO;
     CettaDiskRoot draft=*source; draft.fd=destination; draft.root=0; draft.end=0;
-    Copy *stack=NULL; size_t count=0,capacity=0; uint64_t result=0;
+    Copy *stack=NULL; size_t count=0,capacity=0; uint64_t result=0,visits=0;
+    CettaDiskBuffer previous={0};bool has_previous=false;
     CettaDiskStatus status=CETTA_DISK_OK;
     if (source->root) {
         status=grow((void **)&stack,&capacity,1,sizeof(*stack),((uint64_t)source->key_limit+1)*9+1);
@@ -471,9 +529,19 @@ CettaDiskStatus cetta_disk_compact(const CettaDiskRoot *source,int destination,C
             if (status!=CETTA_DISK_OK) break;
             stack[count++]=(Copy){.reference=child,.parent=bit,.has_parent=true}; continue;
         }
+        if (!visit(source,&visits,1)) { status=CETTA_DISK_CORRUPT;break; }
         Node node; status=node_read(source,top->reference,&node);
         if (status!=CETTA_DISK_OK) break;
         if (node.leaf) {
+            CettaDiskBytes stored={node.key.data,node.key.size};bool consistent=true;
+            for (size_t i=0;i+1<count;++i)
+                if ((key_bit(stored,stack[i].bit)!=0)!=(stack[i].phase==2)) { consistent=false;break; }
+            if (!consistent || (has_previous && key_compare((CettaDiskBytes){previous.data,previous.size},stored)>=0)) {
+                node_free(&node);status=CETTA_DISK_CORRUPT;break;
+            }
+            status=remember_key(&previous,stored);
+            if (status!=CETTA_DISK_OK) { node_free(&node);break; }
+            has_previous=true;
             CettaDiskBlob body; status=blob_info(source,node.value,&body);
             uint64_t copied=draft.end+1;
             if (status==CETTA_DISK_OK) status=journal_status(cetta_journal_copy(source->fd,body.reference-1,
@@ -489,7 +557,7 @@ CettaDiskStatus cetta_disk_compact(const CettaDiskRoot *source,int destination,C
         if (status!=CETTA_DISK_OK) break;
         stack[count++]=(Copy){.reference=node.left,.parent=node.bit,.has_parent=true};
     }
-    free(stack);
+    free(stack);cetta_disk_buffer_free(&previous);
     if (status==CETTA_DISK_OK) { draft.root=result; *candidate=draft; }
     return status;
 }

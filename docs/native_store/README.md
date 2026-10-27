@@ -99,6 +99,17 @@ to decide whether another local write is needed. Recovery never sends HTTP or
 replays another external operation. A failure to allocate a returned view after
 successful publication is also reported as uncertain to the caller.
 
+Low-level index callers must discard a candidate after any segment-sync error.
+The failed candidate is invalidated without closing its borrowed descriptor.
+A later successful fsync can still leave failed writeback missing: rebuild from
+the last acknowledged root, rewriting discarded bytes, or use a fresh segment.
+The store owner follows this rebuild rule and never publishes a failed candidate.
+
+Tree reads check the path they traverse. Streaming scans and compaction also
+check increasing key order and bound node visits by the captured segment's
+frame capacity, so a small shared-subtree graph cannot expand exponentially.
+These checks do not turn a point lookup into a whole-file validation proof.
+
 `(store:compact owner)` builds a new segment outside the writer lock and
 publishes it only if the source root is still current. A changed root refuses
 that maintenance attempt. `(store:collect owner)` first confirms the visible

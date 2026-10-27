@@ -19,6 +19,7 @@ static unsigned checks;
 static ssize_t write_remaining=-1;
 static int sync_failure=-1,sync_fail_at,sync_calls,rename_failure,rename_after_success;
 static int pause_ready=-1,pause_resume=-1;
+static off_t drop_unsynced_to=-1;
 ssize_t __real_write(int,const void *,size_t);
 int __real_fsync(int);
 int __real_renameat(int,const char *,int,const char *);
@@ -37,7 +38,10 @@ ssize_t __wrap_write(int fd,const void *data,size_t size) {
 }
 int __wrap_fsync(int fd) {
     ++sync_calls;
-    if (fd==sync_failure || (sync_fail_at && sync_calls==sync_fail_at)) { errno=EIO; return -1; }
+    if (fd==sync_failure || (sync_fail_at && sync_calls==sync_fail_at)) {
+        if (drop_unsynced_to>=0) { check(!ftruncate(fd,drop_unsynced_to));drop_unsynced_to=-1; }
+        errno=EIO; return -1;
+    }
     return __real_fsync(fd);
 }
 int __wrap_renameat(int a,const char *x,int b,const char *y) {
@@ -211,6 +215,22 @@ static void collection_confirmation(const char *path) {
     expect(old,"absent",NULL); /* Its unlinked generation remains readable. */
     cetta_disk_store_view_close(old);cetta_disk_store_close(reader);cetta_disk_store_close(store);
 }
+static void lost_writeback(const char *path) {
+    CettaDiskStore *store=open_store(path);CettaDiskStoreView *empty=snapshot(store),*stable=NULL,*out=NULL;
+    CettaDiskOp first={false,text("receipt"),text("before")};
+    check(cetta_disk_store_commit(store,empty,&first,1,&stable)==CETTA_STORE_OK);
+    CettaDiskOp ops[]={{false,text("receipt"),text("completed")},
+        {false,text("usage"),text("one")},{false,text("answer"),text("retained")}};
+    sync_calls=0;sync_fail_at=1;drop_unsynced_to=(off_t)cetta_disk_store_view_root(stable)->end;
+    check(cetta_disk_store_commit(store,stable,ops,3,&out)==CETTA_STORE_IO && !out);
+    sync_fail_at=0;check(drop_unsynced_to==-1);
+    CettaDiskStoreView *current=snapshot(store);expect(current,"receipt","before");expect(current,"usage",NULL);
+    check(cetta_disk_store_commit(store,stable,ops,3,&out)==CETTA_STORE_OK);
+    check(cetta_disk_store_view_revision(out)==2);
+    expect(out,"receipt","completed");expect(out,"usage","one");expect(out,"answer","retained");
+    cetta_disk_store_view_close(empty);cetta_disk_store_view_close(stable);
+    cetta_disk_store_view_close(current);cetta_disk_store_view_close(out);cetta_disk_store_close(store);
+}
 static void live_builder(const char *path) {
     CettaDiskStore *store=open_store(path);CettaDiskStoreView *before=snapshot(store),*written=NULL;
     CettaDiskOp op={false,text("body"),text("preserved")};
@@ -324,7 +344,7 @@ static void parallel(const char *path,bool spend) {
 }
 int main(void) {
     char root[]="runtime/disk-store-test.XXXXXX"; check(mkdtemp(root));
-    const char *labels[]={"ordinary","lock","unknown-before","unknown-after","partial","corrupt","sync-data","sync-manifest","sync-directory","scoped","parallel","spenders","collection-confirmation","live-builder"};
+    const char *labels[]={"ordinary","lock","unknown-before","unknown-after","partial","corrupt","sync-data","sync-manifest","sync-directory","scoped","parallel","spenders","collection-confirmation","live-builder","lost-writeback"};
     enum { CASES=sizeof(labels)/sizeof(*labels) };char paths[CASES][256];
     for (size_t i=0;i<CASES;++i) {
         check(snprintf(paths[i],sizeof(paths[i]),"%s/%s",root,labels[i])>0);
@@ -335,6 +355,7 @@ int main(void) {
     for (size_t i=0;i<3;++i) sync_faults(paths[6+i],(int)i+1);
     scoped(paths[9]);parallel(paths[10],false);parallel(paths[11],true);
     collection_confirmation(paths[12]);live_builder(paths[13]);
+    lost_writeback(paths[14]);
     for (size_t i=0;i<CASES;++i) empty_directory(paths[i]);
     check(!rmdir(root)); printf("native disk store: %u checks passed\n",checks); return 0;
 }

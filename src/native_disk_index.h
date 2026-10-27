@@ -42,7 +42,12 @@ typedef struct CettaDiskBlobReader CettaDiskBlobReader;
  * count or corpus-sized in-memory index is retained between calls. */
 CettaDiskStatus cetta_disk_build(const CettaDiskRoot *base,
     const CettaDiskOp *operations, size_t count, CettaDiskRoot *candidate);
-CettaDiskStatus cetta_disk_sync(const CettaDiskRoot *candidate);
+/* On any sync failure the candidate is invalidated (fd becomes -1, without
+ * closing the borrowed descriptor). Do not re-sync it or derive new roots
+ * from any unsynchronized candidate sharing those writes. A successful later
+ * fsync does not repair lost writeback. Rebuild from the last acknowledged
+ * root, rewriting discarded bytes, or use a fresh segment. */
+CettaDiskStatus cetta_disk_sync(CettaDiskRoot *candidate);
 CettaDiskStatus cetta_disk_lookup(const CettaDiskRoot *root,
     CettaDiskBytes key, CettaDiskBlob *value);
 

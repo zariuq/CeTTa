@@ -263,6 +263,62 @@ static void corruption(void) {
     root.end--; check(cetta_disk_lookup(&root,text("key"),&blob)==CETTA_DISK_CORRUPT);
     fclose(file); fclose(copy);
 }
+static void put64(unsigned char *data,uint64_t value) {
+    for (size_t i=8;i>0;--i) { data[i-1]=(unsigned char)value;value>>=8; }
+}
+static uint64_t crafted_frame(CettaDiskRoot *root,const unsigned char *data,size_t size) {
+    uint64_t reference=root->end+1;
+    check(cetta_journal_append(root->fd,data,size,false,&root->end)==CETTA_JOURNAL_OK);
+    return reference;
+}
+static uint64_t crafted_leaf(CettaDiskRoot *root,unsigned char key) {
+    const unsigned char value[]={3,'v'};
+    uint64_t body=crafted_frame(root,value,sizeof(value));
+    unsigned char leaf[14]={2};leaf[4]=1;put64(leaf+5,body);leaf[13]=key;
+    return crafted_frame(root,leaf,sizeof(leaf));
+}
+static uint64_t crafted_branch(CettaDiskRoot *root,uint64_t bit,uint64_t left,uint64_t right) {
+    unsigned char branch[25]={1};put64(branch+1,bit);put64(branch+9,left);put64(branch+17,right);
+    return crafted_frame(root,branch,sizeof(branch));
+}
+static void structural_corruption(void) {
+    for (int kind=0;kind<4;++kind) {
+        FILE *file=tmpfile(),*copy=tmpfile();check(file && copy);
+        CettaDiskRoot root=empty(fileno(file));
+        uint64_t a=crafted_leaf(&root,kind==3 ? 'y' : 'a'),b=crafted_leaf(&root,'b');
+        if (kind==0) root.root=crafted_branch(&root,8,b,a); /* Wrong sides. */
+        else if (kind==1) {
+            uint64_t x=crafted_branch(&root,8,a,b),y=crafted_branch(&root,8,a,b);
+            root.root=crafted_branch(&root,7,x,y); /* Shared subtrees. */
+        } else if (kind==2) {
+            for (int bit=15;bit>=0;--bit) {
+                uint64_t x=crafted_branch(&root,(uint64_t)bit,a,b);
+                uint64_t y=crafted_branch(&root,(uint64_t)bit,b,a);a=x;b=y;
+            }
+            root.root=a; /* A small DAG formerly produced 65,536 rows. */
+        } else root.root=crafted_branch(&root,8,a,b); /* Wrong compressed prefix. */
+        CettaDiskCursor *cursor=NULL;check(cetta_disk_cursor_open(&root,&cursor)==CETTA_DISK_OK);
+        CettaDiskStatus status=CETTA_DISK_OK;size_t rows=0;
+        while (rows<4) {
+            CettaDiskBuffer key={0};CettaDiskBlob value;
+            status=cetta_disk_cursor_next(cursor,&key,&value);cetta_disk_buffer_free(&key);
+            if (status!=CETTA_DISK_OK) break;
+            ++rows;
+        }
+        check(status==CETTA_DISK_CORRUPT && rows<=1);cetta_disk_cursor_close(cursor);
+        if (!kind) {
+            CettaDiskBlob value;
+            check(cetta_disk_lookup(&root,text("a"),&value)==CETTA_DISK_CORRUPT);
+            CettaDiskRoot candidate;CettaDiskOp op={false,text("c"),text("new")};
+            check(cetta_disk_build(&root,&op,1,&candidate)==CETTA_DISK_CORRUPT);
+            CettaDiskBytes lower=text("a");
+            check(cetta_disk_cursor_open_range(&root,&lower,false,NULL,&cursor)==CETTA_DISK_CORRUPT && !cursor);
+        }
+        CettaDiskRoot compacted;write_remaining=65536;
+        check(cetta_disk_compact(&root,fileno(copy),&compacted)==CETTA_DISK_CORRUPT && compacted.fd==-1);
+        write_remaining=-1;fclose(file);fclose(copy);
+    }
+}
 static void root_record(const CettaDiskRoot *root,unsigned char record[16]) {
     uint64_t values[]={root->root,root->end};
     for (size_t i=0;i<2;++i) for (size_t j=8;j>0;--j) {
@@ -300,9 +356,17 @@ static void root_publication(void) {
     CettaDiskRoot candidate; check(cetta_disk_build(&old,ops,3,&candidate)==CETTA_DISK_OK);
     sync_failure=fileno(file);
     check(cetta_disk_sync(&candidate)==CETTA_DISK_IO); sync_failure=-1;
+    check(candidate.fd==-1);
+    check(cetta_disk_sync(&candidate)==CETTA_DISK_INVALID);
+    CettaDiskRoot refused;
+    check(cetta_disk_build(&candidate,ops,3,&refused)==CETTA_DISK_INVALID);
     CettaDiskRoot recovered=recover_root(old,fileno(journal));
     expect(&recovered,text("receipt"),text("before"),true);
     expect(&recovered,text("usage"),text(""),false);
+    /* Model lost unsynchronized writeback, not merely one reported error.
+     * The next candidate must rewrite from the acknowledged root. */
+    check(!ftruncate(fileno(file),(off_t)old.end));
+    check(cetta_disk_build(&old,ops,3,&candidate)==CETTA_DISK_OK);
     check(cetta_disk_sync(&candidate)==CETTA_DISK_OK); root_record(&candidate,record);
     uint64_t previous=written;
     for (ssize_t cut=0;cut<88;++cut) {
@@ -383,6 +447,7 @@ int main(int argc,char **argv) {
         check(end && !*end && count>0); bulk((size_t)count); return 0;
     }
     check(argc==1);
-    map_and_snapshots(); batches_and_faults(); large_body_and_reader_ownership(); corruption(); root_publication();
+    map_and_snapshots(); batches_and_faults(); large_body_and_reader_ownership(); corruption();
+    structural_corruption();root_publication();
     printf("native disk index: %u checks passed\n",checks); return 0;
 }
