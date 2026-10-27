@@ -68,7 +68,7 @@ def main():
 
     options = "((mode stream) (max-bytes 64) (timeout-ms 5000) (lifetime owner))"
     has("inherited-input-is-not-a-write-queue", '''!(let* (($p
-        (proc:spawn ("/bin/cat") ((mode stream) (max-bytes 64)
+        (proc:spawn ("/bin/sleep" "30") ((mode stream) (max-bytes 64)
           (stdin inherit) (stdout null) (stderr null) (group caller))))
         ($write (proc:write $p "cannot queue to inherited stdin"))
         ($out (proc:read $p stdout 0)) ($err (proc:read $p stderr 0))

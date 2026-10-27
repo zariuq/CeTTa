@@ -115,6 +115,10 @@ def main():
         check("lines and the unterminated last line", (code, out), (0, '("one" "two" "" "three" eof)\n'))
         code, out = run(binary, directory, DRAIN + "!(println! (drain))", feed=[(1.0, b"late\n")])
         check("nothing within the deadline", (code, out), (0, "(idle)\n"))
+        code, out = run(binary, directory,
+                        "!(println! (system:read-line 9223372036854775807))",
+                        feed=[(0.1, b"late\n")])
+        check("a large wait does not wrap into an immediate timeout", (code, out), (0, '"late"\n'))
         code, out = run(binary, directory, DRAIN + "!(println! (drain))",
                         feed=[(0.1, b"par"), (1.0, b"tial\n"), (1.0, b"")])
         check("a begun line is read to its end", (code, out), (0, '("partial" idle)\n'))

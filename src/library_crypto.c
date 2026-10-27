@@ -22,7 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define RANDOM_BYTES_MAX 65536u
+#define RANDOM_BYTES_MAX (CETTA_STRING_BYTES_MAX / 2u)
 
 /* ── text ──────────────────────────────────────────────────────────────── */
 
@@ -304,7 +304,7 @@ static Atom *nip44_decrypt(Arena *a, Atom **x) {
 static Atom *random_hex(Arena *a, Atom *count) {
     if (!count || count->kind != ATOM_GROUNDED || count->ground.gkind != GV_INT ||
         count->ground.ival < 0 || count->ground.ival > (int64_t)RANDOM_BYTES_MAX)
-        return failure(a, "crypto:invalid-argument", "expected a byte count from 0 to 65536");
+        return failure(a, "crypto:invalid-argument", "expected a nonnegative byte count whose hex fits a string");
     size_t length = (size_t)count->ground.ival;
     uint8_t *bytes = malloc(length ? length : 1u);
     if (!bytes) return failure(a, "crypto:unavailable", "out of memory");

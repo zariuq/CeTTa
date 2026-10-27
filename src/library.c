@@ -4740,23 +4740,31 @@ static int stdin_lines_fill(int64_t timeout_ms) {
         g_stdin_lines.bytes = bytes;
         g_stdin_lines.capacity = capacity;
     }
-    uint64_t deadline = 0, now = 0;
+    uint64_t started = 0;
     if (timeout_ms >= 0) {
-        if (!library_read_monotonic_ns(&now)) return -1;
-        deadline = now + (uint64_t)timeout_ms * 1000000u;
+        if (!library_read_monotonic_ns(&started)) return -1;
     }
     for (;;) {
         int wait = -1;
         if (timeout_ms >= 0) {
+            uint64_t now;
             if (!library_read_monotonic_ns(&now)) return -1;
-            uint64_t left = now < deadline ? (deadline - now + 999999u) / 1000000u : 0;
+            /* Subtract elapsed time rather than multiply an arbitrary
+             * millisecond duration into a wrapping absolute deadline. */
+            uint64_t elapsed = (now - started) / 1000000u;
+            uint64_t left = elapsed < (uint64_t)timeout_ms
+                ? (uint64_t)timeout_ms - elapsed : 0;
             wait = left > INT_MAX ? INT_MAX : (int)left;
         }
         struct pollfd input = {STDIN_FILENO, POLLIN, 0};
         int ready = poll(&input, 1, wait);
         if (ready < 0 && errno != EINTR) return -1;
         if (ready <= 0) {
-            if (ready == 0 && timeout_ms >= 0 && now >= deadline) return 0;
+            if (ready == 0 && timeout_ms >= 0) {
+                uint64_t now;
+                if (!library_read_monotonic_ns(&now)) return -1;
+                if ((now - started) / 1000000u >= (uint64_t)timeout_ms) return 0;
+            }
             continue;
         }
         ssize_t count = read(STDIN_FILENO, g_stdin_lines.bytes + g_stdin_lines.end,
@@ -4783,8 +4791,8 @@ static Atom *system_read_line(Arena *a, Atom *head, Atom **args, uint32_t nargs)
         timeout_ms = args[0]->ground.ival;
     }
     for (;;) {
-        char *bytes = g_stdin_lines.bytes + g_stdin_lines.start;
         size_t held = g_stdin_lines.end - g_stdin_lines.start;
+        char *bytes = held ? g_stdin_lines.bytes + g_stdin_lines.start : NULL;
         char *newline = held ? memchr(bytes, '\n', held) : NULL;
         if (newline || (held && g_stdin_lines.eof)) {
             size_t size = newline ? (size_t)(newline - bytes) : held;

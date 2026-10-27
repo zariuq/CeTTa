@@ -144,7 +144,8 @@ def other_cases():
     return [
         ("(crypto:random-hex 0)", "no random bytes", ""),
         ("(crypto:random-hex -1)", "a negative byte count", failed("crypto:invalid-argument")),
-        ("(crypto:random-hex 65537)", "too many random bytes", failed("crypto:invalid-argument")),
+        ("(str:byte-length (crypto:random-hex 65537))", "random bytes beyond the old allocation cap", "131074"),
+        ("(crypto:random-hex 1073741824)", "hex cannot fit a MeTTa string", failed("crypto:invalid-argument")),
         ('(crypto:schnorr-verify "zz" "00" "00")', "text that is not hex verifies nothing", "false"),
         ("(crypto:xonly-public-key 3)", "a number is not a key", failed("crypto:invalid-hex")),
         ('(crypto:xonly-public-key "%s")' % ("00" * 32), "the zero key", failed("crypto:invalid-secret-key")),
