@@ -2415,6 +2415,10 @@ typedef struct {
     char *inline_buf;
     Atom **atoms;
     AtomId *atom_ids;
+    int atom_count;
+    /* The first form the run has yet to finish: forms before it ran, or
+     * were loaded into a space, which holds them as rows. */
+    int atom_first;
     FILE *output_spool;
     Arena *arena;
     bool arena_initialized;
@@ -2447,6 +2451,17 @@ typedef struct {
     CettaGsltAbtProviderV1 *gslt_abt_provider;
     CettaGsltOwnedProviderRegistryV1 gslt_physical_providers;
 } CettaMainCleanup;
+
+/* The document's forms the run has yet to finish stay in the universe. */
+static void cetta_main_document_roots(const TermUniverse *universe,
+                                      TermUniverseRootVisit visit,
+                                      void *visit_context, void *ctx) {
+    const CettaMainCleanup *cleanup = ctx;
+    (void)universe;
+    int first = cleanup->atom_first > 0 ? cleanup->atom_first : 0;
+    for (int i = first; cleanup->atom_ids && i < cleanup->atom_count; i++)
+        visit(visit_context, cleanup->atom_ids[i]);
+}
 
 static void cetta_main_cleanup_registry_spaces(
     Registry *registry, Space *root_space, PettaProgram *petta_program,
@@ -2555,6 +2570,9 @@ static bool cetta_main_cleanup(CettaMainCleanup *cleanup) {
     }
 
     if (cleanup->libraries_initialized) {
+        term_universe_remove_root_provider(
+            &cleanup->libraries->term_universe, cetta_main_document_roots,
+            cleanup);
         cetta_library_context_free(cleanup->libraries);
         cleanup->libraries_initialized = false;
     }
@@ -3755,6 +3773,8 @@ static int cetta_main(int argc, char **argv) {
     cetta_library_context_init_for_language_profile(&libraries, lang->id, profile);
     cleanup.libraries_initialized = true;
     term_universe_set_persistent_arena(&libraries.term_universe, &arena);
+    (void)term_universe_add_root_provider(
+        &libraries.term_universe, cetta_main_document_roots, &cleanup);
     cetta_library_context_set_exec_path(&libraries, argv[0]);
     cetta_library_context_set_script_path(&libraries, script_path);
     cetta_library_context_set_cli_args(&libraries, argc, argv, script_arg_start);
@@ -4000,6 +4020,8 @@ static int cetta_main(int argc, char **argv) {
             free(source);
         }
         cleanup.atom_ids = atom_ids;
+        cleanup.atom_count = n;
+        cleanup.atom_first = 0;
         if (n < 0) {
             if (document_reader_error[0]) {
                 const char *reader_name =
@@ -4383,6 +4405,7 @@ process_petta_document:
     /* Process top-level atoms */
     i = 0;
     while (i < n) {
+        cleanup.atom_first = i;
         if (lang_is_mm2) {
             Atom *at = atoms[i];
 
@@ -4417,6 +4440,8 @@ process_petta_document:
                    This makes CeTTa safe for unlimited chaining iterations. */
                 arena_free(&eval_arena);
                 cetta_foreign_drain_releases();
+                (void)term_universe_collect_at_safe_point(
+                    &libraries.term_universe, NULL);
                 arena_init(&eval_arena);
                 arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
                 arena_set_hashcons(
@@ -4695,6 +4720,8 @@ process_petta_document:
             eval_reset_form_gc_survivor();
             arena_free(&eval_arena);
             cetta_foreign_drain_releases();
+            (void)term_universe_collect_at_safe_point(
+                &libraries.term_universe, NULL);
             arena_init(&eval_arena);
             arena_set_runtime_kind(&eval_arena, CETTA_ARENA_RUNTIME_KIND_EVAL);
             arena_set_hashcons(
@@ -4785,11 +4812,15 @@ petta_document_complete:
         free(atom_ids);
         atom_ids = NULL;
         cleanup.atom_ids = NULL;
+        cleanup.atom_count = 0;
+        cleanup.atom_first = 0;
         document_reader_error[0] = '\0';
         n = parse_metta_file_ids_diagnostic(
             filename, &libraries.term_universe, &atom_ids,
             document_reader_error, sizeof(document_reader_error));
         cleanup.atom_ids = atom_ids;
+        cleanup.atom_count = n;
+        cleanup.atom_first = 0;
         if (n < 0) {
             if (document_reader_error[0]) {
                 fprintf(stderr, "error: compiled PeTTa reader: %s\n",

@@ -46241,6 +46241,16 @@ static bool eval_private_ingress_item(void *context, Atom *item) {
     return true;
 }
 
+/* The ids taken so far wait for one batch: until it they are roots. */
+static void eval_private_ingress_roots(const TermUniverse *universe,
+                                       TermUniverseRootVisit visit,
+                                       void *visit_context, void *context) {
+    const EvalPrivateIngress *ingress = context;
+    (void)universe;
+    for (size_t i = 0u; i < ingress->length; i++)
+        visit(visit_context, ingress->ids[i]);
+}
+
 static bool eval_private_ingress_batch(void *context, Atom *batch) {
     EvalPrivateIngress *ingress = context;
     if (!ingress->flatten) return eval_private_ingress_item(context, batch);
@@ -46346,6 +46356,8 @@ static bool petta_eval_machine_append_private_collection(
     arena_init(&ingress.scratch);
     arena_set_hashcons(&ingress.scratch, NULL);
     ingress.origin = arena_mark(&ingress.scratch);
+    (void)term_universe_add_root_provider(
+        target->native.universe, eval_private_ingress_roots, &ingress);
     __attribute__((cleanup(petta_source_plan_scope_leave))) PettaSourcePlanScope source_scope = {0};
     petta_source_plan_scope_enter(&source_scope, projection_plan, projection);
     Atom *completed = NULL;
@@ -46372,6 +46384,8 @@ static bool petta_eval_machine_append_private_collection(
         }
         handled = true;
     }
+    term_universe_remove_root_provider(
+        target->native.universe, eval_private_ingress_roots, &ingress);
     free(ingress.ids);
     arena_free(&ingress.scratch);
     return handled;

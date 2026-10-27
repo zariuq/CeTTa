@@ -29,6 +29,9 @@ struct CettaPrimeRegularKernelAdmittedConversionV1 {
     const TermUniverse *universe;
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    /* A collection may reclaim the ids an entry holds: entries made before
+     * the universe's last collection are not reused after it. */
+    uint64_t universe_collection_epoch;
     AtomId context_id;
     AtomId left_term_id;
     AtomId right_term_id;
@@ -85,6 +88,7 @@ static bool cached_conversion_matches(
     return cached && universe && token && cached->universe == universe &&
            cached->universe_instance_id == universe->instance_id &&
            cached->universe_storage_epoch == universe->storage_epoch &&
+           cached->universe_collection_epoch == universe->collection_epoch &&
            cached->left_term_id == left_id &&
            cached->right_term_id == right_id &&
            profile_equal(cached->profile, profile) &&
@@ -317,6 +321,7 @@ cetta_prime_regular_kernel_admit_closed_conversion_v1(
         .universe = universe,
         .universe_instance_id = universe->instance_id,
         .universe_storage_epoch = universe->storage_epoch,
+        .universe_collection_epoch = universe->collection_epoch,
         .context_id = context_id,
         .left_term_id = left_id,
         .right_term_id = right_id,
@@ -489,6 +494,9 @@ struct CettaPrimeRegularKernelAdmittedSynthesisV1 {
     const TermUniverse *universe;
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    /* A collection may reclaim the ids an entry holds: entries made before
+     * the universe's last collection are not reused after it. */
+    uint64_t universe_collection_epoch;
     AtomId context_id;
     AtomId term_id;
     AtomId type_id;
@@ -543,6 +551,7 @@ static bool cached_synthesis_matches(
     return cached && universe && token && cached->universe == universe &&
            cached->universe_instance_id == universe->instance_id &&
            cached->universe_storage_epoch == universe->storage_epoch &&
+           cached->universe_collection_epoch == universe->collection_epoch &&
            cached->term_id == term_id &&
            synthesis_profile_equal(cached->profile, profile) &&
            cached->source_binding == source_binding &&
@@ -733,6 +742,7 @@ cetta_prime_regular_kernel_admit_closed_synthesis_v1(
         .universe = universe,
         .universe_instance_id = universe->instance_id,
         .universe_storage_epoch = universe->storage_epoch,
+        .universe_collection_epoch = universe->collection_epoch,
         .context_id = context_id,
         .term_id = term_id,
         .type_id = type_id,
@@ -900,6 +910,9 @@ struct CettaPrimeRegularKernelAdmittedCheckingV1 {
     const TermUniverse *universe;
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    /* A collection may reclaim the ids an entry holds: entries made before
+     * the universe's last collection are not reused after it. */
+    uint64_t universe_collection_epoch;
     AtomId context_id;
     AtomId term_id;
     AtomId expected_type_id;
@@ -954,6 +967,7 @@ static bool cached_checking_matches(
     return cached && universe && token && cached->universe == universe &&
            cached->universe_instance_id == universe->instance_id &&
            cached->universe_storage_epoch == universe->storage_epoch &&
+           cached->universe_collection_epoch == universe->collection_epoch &&
            cached->term_id == term_id &&
            cached->expected_type_id == expected_type_id &&
            checking_profile_equal(cached->profile, profile) &&
@@ -1164,6 +1178,7 @@ cetta_prime_regular_kernel_admit_closed_checking_v1(
         .universe = universe,
         .universe_instance_id = universe->instance_id,
         .universe_storage_epoch = universe->storage_epoch,
+        .universe_collection_epoch = universe->collection_epoch,
         .context_id = context_id,
         .term_id = term_id,
         .expected_type_id = expected_type_id,

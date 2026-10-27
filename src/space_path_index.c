@@ -1130,8 +1130,14 @@ static CettaSpaceHeadIndex *head_index_build(Space *space) {
         .prefix_epoch = space->prefix_epoch,
     };
     (void)head_posting_push(index, 0u);
-    /* The rows as they stand, those removed by mark included. */
+    /* The rows as they stand.  A row removed by mark is left out: its
+     * readers skip it by the marks, and its term a collection may since have
+     * reclaimed, so it is not read. */
+    const uint64_t *marks = space->native.marked ? space->native.marks : NULL;
     for (CettaIndex row = 0u; row < space->native.len; row++) {
+        if (marks && row < space->native.mark_rows &&
+            ((marks[row >> 6] >> (row & 63u)) & 1u) != 0u)
+            continue;
         AtomId id = cetta_atom_id_storage_load_bits(
             space->native.atom_ids + (size_t)row * width,
             space->native.atom_id_width_bits);
