@@ -4164,9 +4164,9 @@ test-root-substitution: $(ROOT_SUBSTITUTION_TEST_BIN)
 test-bindings-lookup-index test-petta-search-machine: test-root-substitution
 
 TERM_ORDER_GRAPH_TEST_BIN = runtime/test_term_order_graph-$(BUILD_OBJ_TAG)
-$(TERM_ORDER_GRAPH_TEST_BIN): tests/test_term_order_graph.c src/petta_semantics.c src/petta_semantics.h src/term_graph.c src/term_graph.h src/stats.h src/atom.c $(SYMBOL_STANDALONE_SRC) src/symbol.h src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(BUILD_CONFIG_HEADER)
+$(TERM_ORDER_GRAPH_TEST_BIN): tests/test_term_order_graph.c src/petta_semantics.c src/petta_semantics.h src/term_graph.c src/term_graph.h src/stats.h src/atom.c $(SYMBOL_STANDALONE_SRC) src/symbol.h src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c src/term_universe.c $(BUILD_CONFIG_HEADER)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/test_term_order_graph.c src/petta_semantics.c src/term_graph.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 $(CFLAGS) -ffunction-sections -fdata-sections -Wl,--gc-sections -o $@ tests/test_term_order_graph.c src/petta_semantics.c src/term_graph.c src/atom.c $(SYMBOL_STANDALONE_SRC) src/binding/frame_identity.c src/name_key.c src/atom_blob.c src/term_canon.c src/term_universe.c $(LDFLAGS)
 
 .PHONY: test-term-order-graph
 test-all: test-term-order-graph
@@ -32713,11 +32713,11 @@ test-pathmap-indexed-query-work: $(BIN)
 	fi; \
 	echo "PASS: counted PathMap indexed pull query (oracle differential/cold/warm/multiplicity/work bounds)"
 
-$(EXECUTION_CONTRACTS_TEST_BIN): tests/test_execution_contracts_generated.c \
+$(EXECUTION_CONTRACTS_TEST_BIN): tests/test_execution_contracts_generated.c src/petta_semantics.c \
 		$(EXECUTION_CONTRACTS_GENERATED_H) $(BUILD_CONFIG_HEADER) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -MMD -MP -MF $@.d -MT $@ -o $@ \
-		tests/test_execution_contracts_generated.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -ffunction-sections -fdata-sections -Isrc -MMD -MP -MF $@.d -MT $@ -o $@ \
+		tests/test_execution_contracts_generated.c src/petta_semantics.c -Wl,--gc-sections $(LDFLAGS)
 
 -include $(EXECUTION_CONTRACTS_TEST_BIN).d
 

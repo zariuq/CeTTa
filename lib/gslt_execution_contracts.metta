@@ -305,6 +305,7 @@
   (value invoke)
   (value sequence-first)
   (value sequence-last)
+  (value collect)
   ; These operations are selected by dialect elaboration of an occurrence,
   ; without giving its value or constructor head new source-call authority.
   (implicit-operation return-value)
@@ -366,6 +367,7 @@
   (source-head eval 1 force (operands 0 absent absent) (fold evaluate))
   (source-head function 1 return-scope (operands 0 absent absent) (fold evaluate))
   (source-head superpose 1 ordered-choice (operands 0 absent absent) (fold none))
+  (source-head collapse 1 collect (operands 0 absent absent) (fold none))
   (source-head empty 0 failure (operands absent absent absent) (fold none))
   (dialect-form petta cut 0 scoped-commit (operands absent absent absent) (fold none))
   (dialect-form petta catch 1 handle (operands 0 absent absent) (fold none)))

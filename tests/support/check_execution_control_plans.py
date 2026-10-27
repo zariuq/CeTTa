@@ -11,9 +11,20 @@ from gen_execution_contracts import Spec, SpecError
 def main():
     text = (ROOT / 'lib/gslt_execution_contracts.metta').read_text()
     spec = Spec(text)
-    assert len(spec.control_plans) == 9
+    assert len(spec.control_plans) == 10
     assert len(spec.control_forms) == 2
     assert len(spec.variadic_forms) == 2
+    collection = '(source-head collapse 1 collect (operands 0 absent absent) (fold none))'
+    for replacement in [
+            collection + '\n  ' + collection,
+            collection.replace('operands 0', 'operands absent'),
+            collection.replace('operands 0', 'operands 1'),
+            collection.replace('fold none', 'fold evaluate')]:
+        try:
+            Spec(text.replace(collection, replacement))
+        except SpecError:
+            continue
+        raise AssertionError(('invalid collection plan was admitted', replacement))
     series = '(variadic-form petta prog1 sequence-first)'
     for before, after in [
             (series, series + '\n  ' + series),

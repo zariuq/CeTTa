@@ -1724,6 +1724,9 @@ static void test_native_handle_id_retention(void) {
     assert(!term_universe_atom_is_stable(identifier));
     assert(!term_universe_atom_is_stable(handle));
     assert(term_universe_atom_is_stable(atom_int(&source, 17)));
+    assert(tu_intern_int(&universe, 17) != CETTA_ATOM_ID_NONE);
+    assert(term_universe_lookup_atom_id(&universe, identifier) == CETTA_ATOM_ID_NONE);
+    assert(term_universe_lookup_atom_id(&universe, handle) == CETTA_ATOM_ID_NONE);
     AtomId id = term_universe_store_atom_id(&universe, &persistent, handle);
     assert(id != CETTA_ATOM_ID_NONE && holders > 1);
     arena_free(&source);
@@ -2111,6 +2114,55 @@ static void test_record_hash_is_atom_hash(void) {
     arena_free(&arena);
 }
 
+static void test_readonly_lookup_coordinates(void) {
+    Arena source, persistent;
+    TermUniverse universe;
+    arena_init_detached(&source);
+    arena_init_detached(&persistent);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    Atom *head = atom_symbol(&source, "lookup-coordinate");
+    AtomId head_id = tu_intern_symbol(&universe, head->sym_id);
+    Atom *value = atom_int(&source, 23);
+    AtomId value_id = tu_intern_int(&universe, 23);
+    const unsigned depths[] = {0u, 1u, 2u, 3u, 64u, 96u};
+    unsigned depth = 0u;
+    for (size_t index = 0u; index < sizeof(depths) / sizeof(*depths); index++) {
+        while (depth < depths[index]) {
+            AtomId children[] = {head_id, value_id};
+            value_id = tu_expr_from_ids(&universe, children, 2u);
+            value = atom_expr2(&source, head, value);
+            depth++;
+        }
+        size_t before = universe.len;
+        assert(value_id != CETTA_ATOM_ID_NONE);
+        assert(term_universe_lookup_atom_id(&universe, value) == value_id);
+        assert(universe.len == before);
+    }
+    Atom *wide_children[32];
+    AtomId wide_ids[32];
+    for (unsigned index = 0u; index < 32u; index++) {
+        wide_children[index] = value;
+        wide_ids[index] = value_id;
+    }
+    AtomId wide_id = tu_expr_from_ids(&universe, wide_ids, 32u);
+    Atom *wide = atom_expr(&source, wide_children, 32u);
+    AtomId empty_id = tu_expr_from_ids(&universe, NULL, 0u);
+    size_t before = universe.len;
+    assert(term_universe_lookup_atom_id(&universe, wide) == wide_id);
+    assert(term_universe_lookup_atom_id(&universe,
+        atom_expr(&source, NULL, 0u)) == empty_id);
+    assert(term_universe_lookup_atom_id(&universe, head) == head_id);
+    Atom *missing = atom_symbol(&source, "lookup-missing-coordinate");
+    assert(term_universe_lookup_atom_id(&universe, missing) == CETTA_ATOM_ID_NONE);
+    assert(term_universe_lookup_atom_id(&universe,
+        atom_expr2(&source, head, missing)) == CETTA_ATOM_ID_NONE);
+    assert(universe.len == before);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+    arena_free(&source);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -2130,6 +2182,7 @@ int main(void) {
     test_arena_accounting_saturation_contract();
     test_store_format_contract();
     test_record_hash_is_atom_hash();
+    test_readonly_lookup_coordinates();
     test_root_token_generation_contract();
     test_structural_variable_name_store_contract();
     test_store_format_migration_contract();

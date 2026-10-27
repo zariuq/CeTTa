@@ -2035,10 +2035,10 @@ static bool oem_data_node(Atom *expr, const PettaPlanNode *plan) {
         Atom *head = expr->expr.elems[0];
         if (head->kind == ATOM_SYMBOL)
             return plan->role == PETTA_PLAN_DATA &&
-                !cetta_control_operation_is_control_form(plan->control) &&
+                !cetta_control_operation_is_control_form(plan->computation.control) &&
                 petta_semantics_form(head->sym_id) == PETTA_FORM_NONE;
         if (plan->role != PETTA_PLAN_DYNAMIC_CALL ||
-            cetta_control_operation_is_control_form(plan->control))
+            cetta_control_operation_is_control_form(plan->computation.control))
             return false;
         if (oem_inert_head(head))
             return true;
@@ -2514,7 +2514,7 @@ static bool oem_apply_call(Atom *expr, const PettaPlanNode *plan) {
     const PettaPlanNode *head_plan = petta_plan_child(plan, 0u);
     Atom *head = expr->expr.elems[0];
     return plan->role == PETTA_PLAN_DYNAMIC_CALL &&
-        !cetta_control_operation_is_control_form(plan->control) &&
+        !cetta_control_operation_is_control_form(plan->computation.control) &&
         plan->child_count == expr->expr.len && head_plan &&
         ((head->kind == ATOM_EXPR &&
           (head_plan->role == PETTA_PLAN_STATIC_CALL ||
@@ -2546,10 +2546,10 @@ static const PettaPlanNode *oem_ready_static_plan(
         return NULL;
     memset(children, 0, sizeof(*children) * (size_t)source->child_count);
     for (CettaExprIndex index = 0u; index < source->child_count; index++)
-        children[index].control = CETTA_CONTROL_RETURN_VALUE_PLAN;
+        children[index].computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN;
     *root = (PettaPlanNode){
         .role = PETTA_PLAN_STATIC_CALL,
-        .control = CETTA_CONTROL_INVOKE_PLAN,
+        .computation.control = CETTA_CONTROL_INVOKE_PLAN,
         .execution = source->execution,
         .contains_call = true,
         .dispatch_handler = source->dispatch_handler,
@@ -2956,9 +2956,10 @@ static bool oem_control_form(const OemCompile *compile, const Atom *expr,
                              const PettaPlanNode *plan) {
     SymbolId head = expr->expr.elems[0]->sym_id;
     uint32_t len = (uint32_t)expr->expr.len;
+    if (plan->computation.control.operation == CETTA_CONTROL_COLLECT)
+        return true;
     if (len == 2u &&
-        (head == g_builtin_syms.collapse ||
-         plan->control.operation == CETTA_CONTROL_ORDERED_CHOICE ||
+        (plan->computation.control.operation == CETTA_CONTROL_ORDERED_CHOICE ||
          head == g_builtin_syms.once ||
          (compile->host && head == compile->host->reify_head)))
         return true;
@@ -2981,9 +2982,14 @@ static bool oem_build_control(OemCompile *compile, Atom *expr,
                               const PettaPlanNode *plan, uint32_t depth,
                               uint32_t *out) {
     SymbolId head = expr->expr.elems[0]->sym_id;
-    bool choice = plan->control.operation == CETTA_CONTROL_ORDERED_CHOICE;
+    bool choice = plan->computation.control.operation == CETTA_CONTROL_ORDERED_CHOICE;
+    bool collection = plan->computation.control.operation == CETTA_CONTROL_COLLECT;
     uint32_t limit = 0u;
-    if (head == g_builtin_syms.select && expr->expr.len == 3u) {
+    if (collection) {
+        head = g_builtin_syms.collapse;
+    } else if (choice) {
+        head = g_builtin_syms.superpose;
+    } else if (head == g_builtin_syms.select && expr->expr.len == 3u) {
         Atom *bound = expr->expr.elems[1];
         if (bound->kind != ATOM_GROUNDED || bound->ground.gkind != GV_INT ||
             bound->ground.ival < 1)
@@ -3002,9 +3008,12 @@ static bool oem_build_control(OemCompile *compile, Atom *expr,
                head != g_builtin_syms.once) {
         head = g_builtin_syms.collapse;
     }
-    CettaExprIndex body_index = choice
-        ? (CettaExprIndex)plan->control.source + 1u
+    CettaExprIndex body_index = choice || collection
+        ? (CettaExprIndex)plan->computation.control.source + 1u
         : (CettaExprIndex)(expr->expr.len - 1u);
+    if (body_index >= expr->expr.len ||
+        ((choice || collection) && plan->computation.control.source == CETTA_CONTROL_OPERAND_ABSENT))
+        return oem_reject(compile, "control source coordinate outside its operands");
     Atom *argument = expr->expr.elems[body_index];
     const PettaPlanNode *argument_plan = petta_plan_child(plan, body_index);
     if (!argument_plan)
@@ -3059,7 +3068,7 @@ static bool oem_sequence(const Atom *expr, const PettaPlanNode *plan) {
         plan->output != PETTA_PLAN_OUTPUT_CHILD)
         return false;
     CettaExprIndex result = cetta_control_operation_series_result(
-        plan->control, expr->expr.len - 1u);
+        plan->computation.control, expr->expr.len - 1u);
     return result != 0u && plan->output_child == result;
 }
 
@@ -3068,7 +3077,7 @@ static bool oem_build_sequence(OemCompile *compile, Atom *expr,
                                bool tail, uint32_t *out) {
     OemNode node = {.kind = OEM_N_SEQUENCE,
                     .count = (uint32_t)expr->expr.len - 1u,
-                    .tail = tail && plan->control.operation == CETTA_CONTROL_SEQUENCE_LAST};
+                    .tail = tail && plan->computation.control.operation == CETTA_CONTROL_SEQUENCE_LAST};
     uint32_t *children = malloc(sizeof(*children) * node.count);
     if (!children)
         return oem_reject(compile, "out of memory");
@@ -3233,12 +3242,12 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
             oem_node(compile, node, out);
     if (!plan)
         return oem_reject(compile, "occurrence has no plan");
-    if (plan->control.operation == CETTA_CONTROL_FAILURE)
+    if (plan->computation.control.operation == CETTA_CONTROL_FAILURE)
         return oem_build_failure(compile, out);
     if (oem_sequence(expr, plan))
         return oem_build_sequence(compile, expr, plan, depth, false, out);
-    if ((cetta_control_operation_binding_layout(plan->control, 1u) && expr->expr.len == 4u) ||
-        (plan->control.operation == CETTA_CONTROL_SEQUENCE_MANY && expr->expr.len == 3u))
+    if ((cetta_control_operation_binding_layout(plan->computation.control, 1u) && expr->expr.len == 4u) ||
+        (plan->computation.control.operation == CETTA_CONTROL_SEQUENCE_MANY && expr->expr.len == 3u))
         return oem_build_bindings(compile, expr, plan, depth, false, out);
     bool symbol_head = expr->expr.elems[0]->kind == ATOM_SYMBOL;
     if (symbol_head && expr->expr.len == 4u &&
@@ -3248,7 +3257,7 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
      * equations the program has for `cut`: in an equation's own body it
      * commits the call to that equation, and its value is the truth
      * value. */
-    if (plan->control.operation == CETTA_CONTROL_SCOPED_COMMIT) {
+    if (plan->computation.control.operation == CETTA_CONTROL_SCOPED_COMMIT) {
         if (!compile->named)
             return oem_reject(compile, "cut inside a control");
         node.kind = OEM_N_CUT;
@@ -3348,7 +3357,7 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
                 ? petta_program_plan_current(compile->petta, lowered)
                 : NULL;
             if (lowered_plan &&
-                cetta_control_operation_binding_layout(lowered_plan->control, 1u))
+                cetta_control_operation_binding_layout(lowered_plan->computation.control, 1u))
                 return oem_build_local_control(compile, OEM_N_ALTERNATIVES,
                                                expr, plan, depth, &lowered,
                                                &lowered_plan, 1u, expr, out);
@@ -3357,7 +3366,7 @@ static bool oem_build_value_native(OemCompile *compile, Atom *expr,
     /* An `if` whose output is a value runs as a local relation whose one
      * equation is the `if` in a tail position: each of its answers
      * continues after it, as each of the host's does. */
-    if (symbol_head && plan->control.operation == CETTA_CONTROL_BRANCH &&
+    if (symbol_head && plan->computation.control.operation == CETTA_CONTROL_BRANCH &&
         expr->expr.len == 4u)
         return oem_build_local_control(compile, OEM_N_ALTERNATIVES, expr,
                                        plan, depth, &expr, &plan, 1u, expr,
@@ -3509,12 +3518,12 @@ static bool oem_build_bindings(OemCompile *compile, Atom *expr,
         return oem_build_host(compile, expr, plan, depth,
                               "collection producer/consumer observation", out);
     OemNode node = {0};
-    if (cetta_control_operation_binding_layout(plan->control, 1u)) {
+    if (cetta_control_operation_binding_layout(plan->computation.control, 1u)) {
         if (expr->expr.len != 4u)
             return oem_reject(compile, "let arity");
-        CettaExprIndex producer = (CettaExprIndex)plan->control.source + 1u;
-        CettaExprIndex pattern = (CettaExprIndex)plan->control.first + 1u;
-        CettaExprIndex body = (CettaExprIndex)plan->control.last + 1u;
+        CettaExprIndex producer = (CettaExprIndex)plan->computation.control.source + 1u;
+        CettaExprIndex pattern = (CettaExprIndex)plan->computation.control.first + 1u;
+        CettaExprIndex body = (CettaExprIndex)plan->computation.control.last + 1u;
         node.kind = OEM_N_LET;
         const PettaPlanNode *body_plan = petta_plan_child(plan, body);
         bool counted = oem_count_only_binder(
@@ -3547,7 +3556,7 @@ static bool oem_build_bindings(OemCompile *compile, Atom *expr,
             return false;
         return oem_node(compile, node, out);
     }
-    if (plan->control.operation == CETTA_CONTROL_SEQUENCE_MANY) {
+    if (plan->computation.control.operation == CETTA_CONTROL_SEQUENCE_MANY) {
         /* Sequential lets, the last binding innermost. */
         Atom *bindings = expr->expr.len == 3u ? expr->expr.elems[1] : NULL;
         const PettaPlanNode *bindings_plan = petta_plan_child(plan, 1u);
@@ -3614,16 +3623,16 @@ static bool oem_build_tail_native(OemCompile *compile, Atom *expr,
         return oem_build_value(compile, expr, plan, depth, out);
     SymbolId head = expr->expr.elems[0]->sym_id;
     OemNode node = {0};
-    if (plan->control.operation == CETTA_CONTROL_FAILURE)
+    if (plan->computation.control.operation == CETTA_CONTROL_FAILURE)
         return oem_build_failure(compile, out);
     if (oem_sequence(expr, plan))
         return oem_build_sequence(compile, expr, plan, depth, true, out);
-    if (plan->control.operation == CETTA_CONTROL_BRANCH) {
+    if (plan->computation.control.operation == CETTA_CONTROL_BRANCH) {
         if (expr->expr.len != 4u)
             return oem_reject(compile, "if arity");
-        CettaExprIndex producer = (CettaExprIndex)plan->control.source + 1u;
-        CettaExprIndex when_true = (CettaExprIndex)plan->control.first + 1u;
-        CettaExprIndex when_false = (CettaExprIndex)plan->control.last + 1u;
+        CettaExprIndex producer = (CettaExprIndex)plan->computation.control.source + 1u;
+        CettaExprIndex when_true = (CettaExprIndex)plan->computation.control.first + 1u;
+        CettaExprIndex when_false = (CettaExprIndex)plan->computation.control.last + 1u;
         Atom *test = expr->expr.elems[producer];
         const PettaPlanNode *test_plan = petta_plan_child(plan, producer);
         node.kind = OEM_N_IF;
@@ -3677,13 +3686,14 @@ static bool oem_build_tail_native(OemCompile *compile, Atom *expr,
             (!guarded || oem_guard_native_node(
                 compile, expr, plan, depth, out));
     }
-    if ((cetta_control_operation_binding_layout(plan->control, 1u) && expr->expr.len == 4u) ||
-        (plan->control.operation == CETTA_CONTROL_SEQUENCE_MANY && expr->expr.len == 3u))
+    if ((cetta_control_operation_binding_layout(plan->computation.control, 1u) && expr->expr.len == 4u) ||
+        (plan->computation.control.operation == CETTA_CONTROL_SEQUENCE_MANY && expr->expr.len == 3u))
         return oem_build_bindings(compile, expr, plan, depth, true, out);
-    if (cetta_control_operation_is_control_form(plan->control) &&
-        plan->control.operation != CETTA_CONTROL_ORDERED_CHOICE &&
-        plan->control.operation != CETTA_CONTROL_FAILURE &&
-        plan->control.operation != CETTA_CONTROL_SCOPED_COMMIT &&
+    if (cetta_control_operation_is_control_form(plan->computation.control) &&
+        plan->computation.control.operation != CETTA_CONTROL_ORDERED_CHOICE &&
+        plan->computation.control.operation != CETTA_CONTROL_COLLECT &&
+        plan->computation.control.operation != CETTA_CONTROL_FAILURE &&
+        plan->computation.control.operation != CETTA_CONTROL_SCOPED_COMMIT &&
         !oem_relation_call(expr, plan))
         return oem_build_host(compile, expr, plan, depth,
                               "control outside the fragment", out);
