@@ -444,8 +444,8 @@
     {
       "source": "proc.metta",
       "output": "proc.metta",
-      "source_sha256": "4c14098b24f32d0da74286d68981173d36c8175bf89a59067ffd22499ac8941b",
-      "output_sha256": "724fd35217fa9e02a69154d5cd5829bee95a398be96b7d9685701bd774d8472b",
+      "source_sha256": "e205c725840073e65fe331218cb7e21338626c9cd6867062fbea785626c3390d",
+      "output_sha256": "8938e0f742dbcae7b14023361f5e0f039c6beb5a313f3837af8f93e19714c050",
       "edits": 2,
       "code_diagnostics": 0
     },

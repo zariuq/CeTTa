@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/prctl.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -54,7 +55,9 @@ int main(int argc, char **argv) {
     CettaProcessScopeReceiptV1 receipt = {.magic = CETTA_PROCESS_SCOPE_MAGIC_V1};
     int children = -1, error_pipe[2] = {-1, -1};
     pid_t child = -1;
-    bool cleaning = false;
+    bool cleaning = false, exited = false;
+    bool release = argc > 1 && !strcmp(argv[1], CETTA_PROCESS_SCOPE_RELEASE_ON_EXIT_V1);
+    if (release) { argc--; argv++; }
     if (argc < 3 || fcntl(3, F_GETFD) < 0 || fcntl(4, F_GETFD) < 0) return 125;
     if (fcntl(3, F_SETFD, FD_CLOEXEC) < 0 || fcntl(4, F_SETFD, FD_CLOEXEC) < 0 ||
         prctl(PR_SET_CHILD_SUBREAPER, 1) < 0) { receipt.launch_error = errno; goto finish; }
@@ -92,8 +95,11 @@ int main(int argc, char **argv) {
         int status;
         pid_t waited;
         while ((waited = waitpid(-1, &status, WNOHANG)) > 0) {
-            if (waited == child) { receipt.wait_status = status; cleaning = true; }
+            if (waited == child) { receipt.wait_status = status; exited = true; cleaning = cleaning || !release; }
         }
+        /* Released: the command ended by itself while its owner lived, so
+         * whatever it left running goes on, adopted by the next reaper. */
+        if (release && exited && !cleaning && !stopped && !owner_gone()) break;
         if (waited < 0 && errno == ECHILD) break;
         if (waited < 0 && errno != EINTR) { receipt.host_error = errno; cleaning = true; }
         cleaning = cleaning || stopped || owner_gone();

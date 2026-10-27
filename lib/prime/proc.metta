@@ -47,6 +47,13 @@
 ; timeout or capture limit means no bound. Text decoding is a separate policy.
 ; lifetime owner selects tree ownership through the Linux process companion;
 ; the default lifetime group retains process-group cancellation.
+; lifetime run keeps that tree ownership while the command runs:
+; cancellation, a timeout or the owner's end kill the whole tree, and what the
+; command leaves running when it exits by itself is released, as a shell
+; releases a background job. lifetime detached makes the child the leader of
+; a session of its own, apart from the caller's terminal: closing its handle
+; or the caller's end leaves it running, while proc:cancel and a timeout still
+; end it. Its output must be inherit or null, and its input is not inherited.
 ; Standard input is (stdin BYTES), empty by default, or (stdin inherit), the
 ; caller's own. Output and error are captured unless (stdout inherit),
 ; (stdout null), (stderr inherit) or (stderr null) says otherwise. A child
