@@ -16907,15 +16907,18 @@ static bool petta_prepared_pure_register_view(
 
 static CettaPreparedPureExpressionViewState
 petta_prepared_pure_expression_view(
-    const Atom *expression, CettaPreparedPureExpressionView *view);
+    const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view);
 
 static CettaPreparedPureExpressionViewState
 he_prepared_pure_expression_view(
-    const Atom *expression, CettaPreparedPureExpressionView *view);
+    const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view);
 
 static CettaPreparedPureExpressionViewState
 prime_prepared_pure_expression_view(
-    const Atom *expression, CettaPreparedPureExpressionView *view);
+    const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view);
 
 static CettaPreparedPureSourceRole petta_prepared_pure_source_role(
         void *context, const void *source_view) {
@@ -16940,6 +16943,12 @@ static CettaPreparedPureSourceRole petta_prepared_pure_source_role(
         return CETTA_PREPARED_PURE_SOURCE_UNSPECIFIED;
     }
     return CETTA_PREPARED_PURE_SOURCE_DECLINE;
+}
+
+static CettaComputationPlan petta_prepared_pure_source_computation(
+        void *context, const void *source_view) {
+    (void)context;
+    return petta_plan_computation((const PettaPlanNode *)source_view);
 }
 
 static const void *petta_prepared_pure_source_child(
@@ -17185,6 +17194,7 @@ static CettaPreparedPureSourceView prepared_pure_source_view_for_language(
     view.root = source == g_petta_source_plan_atom
         ? g_petta_source_plan : NULL;
     view.role = petta_prepared_pure_source_role;
+    view.computation = petta_prepared_pure_source_computation;
     view.child = petta_prepared_pure_source_child;
     view.equation_rhs = petta_prepared_pure_equation_source;
     return view;
@@ -42182,21 +42192,21 @@ static void petta_eval_machine_transaction_relocate_commit(
 static bool petta_eval_machine_permit_transition(
         void *context, const CettaSourceStep *source) {
     PettaEvalMachineContext *eval_context = context;
-    if (eval_unwinding() || eval_cancel_check() ||
-        !cetta_eval_episode_step(g_eval_completion_tracker, source->debit)) {
+    if (eval_unwinding() || eval_cancel_check()) {
         return false;
     }
-    if (!eval_context ||
-        eval_context->diagnostic_transition_limit == 0u) {
-        return true;
-    }
-    if (eval_context->diagnostic_transitions_permitted >=
-        eval_context->diagnostic_transition_limit) {
+    bool bounded = eval_context && eval_context->diagnostic_transition_limit != 0u;
+    if (bounded && eval_context->diagnostic_transitions_permitted >=
+            eval_context->diagnostic_transition_limit) {
         eval_context->diagnostic_transition_exhausted = true;
         eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_FUEL);
         return false;
     }
-    eval_context->diagnostic_transitions_permitted++;
+    /* Refusing physical work must not consume the pending source debit. */
+    if (!cetta_eval_episode_step(g_eval_completion_tracker, source->debit))
+        return false;
+    if (bounded)
+        eval_context->diagnostic_transitions_permitted++;
     return true;
 }
 
@@ -45869,7 +45879,7 @@ static bool petta_eval_preserve_collection_observer(
     void *context, Atom *expression, const PettaPlanNode *plan) {
     (void)context;
     if (!expression || expression->kind != ATOM_EXPR || expression->expr.len != 4u ||
-        !plan || !cetta_control_operation_binding_layout(plan->control, 1u) ||
+        !plan || !cetta_control_operation_binding_layout(plan->computation.control, 1u) ||
         expression->expr.elems[1]->kind != ATOM_VAR)
         return false;
     Atom *producer = expression->expr.elems[2], *body = expression->expr.elems[3];
@@ -49081,7 +49091,8 @@ static bool petta_case_arms_write_empty(const Atom *arms) {
 
 static CettaPreparedPureExpressionViewState
 petta_prepared_pure_expression_view(
-    const Atom *expression, CettaPreparedPureExpressionView *view) {
+    const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view) {
     if (!expression || !view || expression->kind != ATOM_EXPR ||
         expression->expr.len == 0u ||
         expression->expr.elems[0]->kind != ATOM_SYMBOL) {
@@ -49089,6 +49100,11 @@ petta_prepared_pure_expression_view(
     }
     SymbolId head = expression->expr.elems[0]->sym_id;
     CettaExprLen arity = expression->expr.len - 1u;
+    PeTTaForm form = petta_semantics_form(head);
+    CettaControlOperationPlan control = computation
+        ? computation->control : petta_semantics_elaborate_control(head, form, arity);
+    bool force = control.operation == CETTA_CONTROL_FORCE;
+
     /* Check executable source occurrences at compilation, never the terms
      * already delivered as argument values.  Data/typecheck operations need
      * the relational machine; quotation and value registers retain their
@@ -49098,7 +49114,8 @@ petta_prepared_pure_expression_view(
     /* A generated positive capability is more precise than the generic
      * extension classification below.  Its executor still routes through
      * the active library and declines if that exact native is unavailable. */
-    if (cetta_prepared_pure_intrinsic_program(head, arity, NULL))
+    if (!cetta_control_operation_is_control_form(control) &&
+        cetta_prepared_pure_intrinsic_program(head, arity, NULL))
         return CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
     /*
      * An explicit PeTTa import makes this occurrence a host call, not an
@@ -49121,10 +49138,21 @@ petta_prepared_pure_expression_view(
             g_library_context, head, arity)) {
         return CETTA_PREPARED_PURE_EXPRESSION_DECLINE;
     }
-    if (petta_semantics_elaborate_control(head, PETTA_FORM_NONE, arity).operation ==
-            CETTA_CONTROL_FAILURE)
+    if (control.operation == CETTA_CONTROL_FAILURE)
         return CETTA_PREPARED_PURE_EXPRESSION_ZERO;
-    PeTTaForm form = petta_semantics_form(head);
+    /* The word owns the stage, including after operand normalization.
+     * Other controls require the canonical continuation machine. */
+    if (cetta_control_operation_is_control_form(control) && !force) {
+        bool supported =
+            (control.operation == CETTA_CONTROL_SEQUENCE && arity == 3u) ||
+            (control.operation == CETTA_CONTROL_BRANCH && arity == 3u) ||
+            (control.operation == CETTA_CONTROL_SEQUENCE_MANY && arity == 2u) ||
+            (control.operation == CETTA_CONTROL_RETURN_SCOPE && arity == 1u);
+        return supported ? CETTA_PREPARED_PURE_EXPRESSION_DEFAULT
+                         : CETTA_PREPARED_PURE_EXPRESSION_DECLINE;
+    }
+    if (force && (arity != 1u || control.source != 0u))
+        return CETTA_PREPARED_PURE_EXPRESSION_DECLINE;
     /* `id` is its argument's value.  `call` calls the head of the
      * application written in it on its evaluated arguments, which is what
      * that application written alone does when its head is ordinary (a
@@ -49143,7 +49171,7 @@ petta_prepared_pure_expression_view(
      * results, so it must retain the handler across its alternatives. */
     if ((form == PETTA_FORM_ID ||
          form == PETTA_FORM_CALL ||
-         form == PETTA_FORM_EVAL ||
+         force ||
          form == PETTA_FORM_REDUCE) &&
         expression->expr.len == 2u) {
         const Atom *child = expression->expr.elems[1];
@@ -49159,10 +49187,10 @@ petta_prepared_pure_expression_view(
         }
         if (form == PETTA_FORM_ID ||
             (form == PETTA_FORM_CALL && written_ordinary_call) ||
-            (form == PETTA_FORM_EVAL && child->kind == ATOM_EXPR &&
+            (force && child->kind == ATOM_EXPR &&
              petta_eval_term_variables_are_operands(child))) {
             view->projected = expression->expr.elems[1];
-            view->projection_mode = form == PETTA_FORM_EVAL
+            view->projection_mode = force
                 ? (atom_has_vars(child)
                        ? CETTA_PREPARED_PURE_PROJECT_CODE_OVER_VALUES
                        : CETTA_PREPARED_PURE_PROJECT_CODE)
@@ -49180,7 +49208,7 @@ petta_prepared_pure_expression_view(
      * before reaching this shared lane. */
     CettaGsltRegisterResultKind register_kind;
     CettaGsltRegisterInstruction register_instruction;
-    if (cetta_gslt_fold_control_program(head, arity, NULL, &g_builtin_syms) ||
+    if (cetta_control_operation_lower_fold(control, NULL) ||
         prepared_fold_register_program(head, arity) ||
         petta_prepared_pure_register_view(
             head, arity, &register_kind, &register_instruction) ||
@@ -49211,7 +49239,9 @@ petta_prepared_pure_expression_view(
 
 static CettaPreparedPureExpressionViewState
 he_prepared_pure_expression_view(
-    const Atom *expression, CettaPreparedPureExpressionView *view) {
+    const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view) {
+    (void)computation;
     (void)view;
     /* NotReducible is HE's call-return marker: a body that is NotReducible
      * leaves its own call unreduced, which the canonical evaluator does. */
@@ -49224,7 +49254,9 @@ he_prepared_pure_expression_view(
 
 static CettaPreparedPureExpressionViewState
 prime_prepared_pure_expression_view(
-    const Atom *expression, CettaPreparedPureExpressionView *view) {
+    const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view) {
+    (void)computation;
     (void)view;
     /* These forms need the evaluator's lexical environment and Need state.
      * The pure machine must not compile them as inert constructors, including

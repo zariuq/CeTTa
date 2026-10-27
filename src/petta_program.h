@@ -53,6 +53,12 @@ typedef enum {
     PETTA_PLAN_OUTPUT_TRUE,
 } PettaPlanOutput;
 
+_Static_assert(PETTA_PLAN_DYNAMIC_CALL <= UINT8_MAX &&
+               PETTA_PLAN_EXEC_RELATION_SLOTS <= UINT8_MAX &&
+               PETTA_PLAN_CONTINUATION_AFTER_ANONYMOUS_HOLE <= UINT8_MAX &&
+               PETTA_PLAN_OUTPUT_TRUE <= UINT8_MAX,
+               "plan classification tags must fit their compact fields");
+
 typedef struct PettaPlanNode PettaPlanNode;
 
 /* One qualified physical realization of a deterministic RegionPlan.  It is
@@ -151,15 +157,18 @@ typedef struct PettaRegionHoleProgram {
  * petta_program.c), so every field other than `children` is part of that
  * key. */
 struct PettaPlanNode {
-    PettaPlanRole role;
-    PettaPlanExecution execution;
-    CettaControlOperationPlan control;
-    PettaPlanContinuation continuation;
-    PettaPlanOutput output;
+    uint8_t role;
+    uint8_t execution;
+    CettaComputationPlan computation;
     /* Authored (Empty body), distinct from a variable pattern bound to Empty.
      * The arm occurrence keeps this fact through translation and substitution. */
     bool literal_case_default;
-    CettaInvocationPlan invocation;
+    uint8_t continuation;
+    uint8_t output;
+    /* Source positions are assigned before normalization. A zero position
+     * is an unannotated adapter; its legacy canonical visit costs one. */
+    uint32_t source_position;
+    uint32_t source_debit;
     CettaExprIndex output_child;
     bool contains_cardinality_call;
     bool contains_call;
@@ -204,24 +213,12 @@ struct PettaPlanNode {
     const PettaPlanNode *children;
 };
 
-/* Source roles establish interpretation authority. The computation plan
- * states what executes with that authority; it does not grant callee or
- * lifetime admission. Unelaborated adapter nodes keep their existing role. */
+/* Elaboration owns the executable word. Reading it does not reinterpret
+ * source roles or grant callee/lifetime admission. An absent word retains
+ * the dialect adapter's existing fresh-elaboration path. */
 static inline CettaComputationPlan petta_plan_computation(
         const PettaPlanNode *plan) {
-    if (!plan)
-        return (CettaComputationPlan){0};
-    CettaComputationPlan computation = {plan->control, plan->invocation};
-    if (computation.control.operation != CETTA_CONTROL_NONE)
-        return computation;
-    switch (plan->role) {
-    case PETTA_PLAN_VALUE: computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN; break;
-    case PETTA_PLAN_DATA: computation.control = CETTA_CONTROL_CONSTRUCT_PLAN; break;
-    case PETTA_PLAN_STATIC_CALL:
-    case PETTA_PLAN_DYNAMIC_CALL: computation.control = CETTA_CONTROL_INVOKE_PLAN; break;
-    default: break;
-    }
-    return computation;
+    return plan ? plan->computation : (CettaComputationPlan){0};
 }
 
 typedef struct PettaEquationTemplateC0 PettaEquationTemplateC0;
@@ -239,6 +236,7 @@ typedef struct {
 
 typedef struct {
     Atom *equation;
+    uint64_t source_root;
     const PettaPlanNode *rhs_plan;
     /* Program-owned, proof-erased derived code for the conservative C0
      * fragment.  The source equation remains semantic authority. */

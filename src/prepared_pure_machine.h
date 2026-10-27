@@ -101,10 +101,14 @@ typedef struct {
  * instructions have had their chance.  Canonical-only rejects the form at
  * both compilation and dynamic execution boundaries.  Zero identifies a
  * dialect-owned no-result form; it is usable only as an explicitly guarded
- * equation branch and never becomes an ordinary prepared value. */
+ * equation branch and never becomes an ordinary prepared value. The optional
+ * computation is the borrowed word of this occurrence, valid for this call
+ * only. NULL requests fresh syntax interpretation; a retained operation
+ * governs the stage even when the operand carrier has a different head. */
 typedef CettaPreparedPureExpressionViewState
 (*CettaPreparedPureExpressionViewFn)(
-    const Atom *expression, CettaPreparedPureExpressionView *view);
+    const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view);
 
 /* A closed single-result program cannot represent a branch whose selected
  * arm has no answer.  Detect that direct answer-effect boundary before
@@ -136,9 +140,10 @@ typedef CettaPreparedPurePatternViewState
 
 /*
  * Optional language-owned evidence for the authored occurrence paired with
- * an Atom.  The prepared machine sees only a small role algebra and the
- * occurrence tree; the language keeps its concrete planning representation
- * private.  A missing view preserves the ordinary live-space classifier.
+ * an Atom. The prepared machine receives the common computation word, a
+ * small source-authority algebra and the occurrence tree; the language keeps
+ * its concrete planning representation private. A missing view preserves
+ * the ordinary live-space classifier.
  *
  * The equation callback supplies the authored RHS view for an exact live
  * equation occurrence.  Refusal is an accelerator decline, leaving the
@@ -155,6 +160,11 @@ typedef enum {
 typedef CettaPreparedPureSourceRole
 (*CettaPreparedPureSourceRoleFn)(
     void *context, const void *source_view);
+/* Immutable executable metadata for an admitted source occurrence. NONE
+ * means this adapter supplies no word and needs fresh dialect elaboration.
+ * An invocation without a specialised native body still enters its callee. */
+typedef CettaComputationPlan (*CettaPreparedPureSourceComputationFn)(
+    void *context, const void *source_view);
 typedef const void *(*CettaPreparedPureSourceChildFn)(
     void *context, const void *source_view,
     CettaExprIndex child_index);
@@ -168,6 +178,7 @@ typedef struct {
     const void *root;
     CettaCallResultPolicy result_policy;
     CettaPreparedPureSourceRoleFn role;
+    CettaPreparedPureSourceComputationFn computation;
     CettaPreparedPureSourceChildFn child;
     CettaPreparedPureEquationSourceFn equation_rhs;
     /* Decline a named executable occurrence whose admitted rule semantics
