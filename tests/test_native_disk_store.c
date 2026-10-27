@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "native_disk_store.h"
+#include "native_journal.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -24,7 +25,9 @@ ssize_t __real_write(int,const void *,size_t);
 int __real_fsync(int);
 int __real_renameat(int,const char *,int,const char *);
 ssize_t __wrap_write(int fd,const void *data,size_t size) {
-    if (pause_ready>=0) {
+    struct stat paused_file;
+    if (pause_ready>=0 && !fstat(fd,&paused_file) &&
+        paused_file.st_size>=CETTA_DISK_SEGMENT_HEADER_BYTES) {
         int ready=pause_ready,resume=pause_resume;pause_ready=pause_resume=-1;
         char byte='x';
         if (__real_write(ready,&byte,1)!=1 || read(resume,&byte,1)!=1) _exit(2);
@@ -128,6 +131,14 @@ static void locking(const char *path) {
     check(cetta_disk_store_commit(store,view,NULL,0,&out)==CETTA_STORE_BUSY && !out);
     close(lock); close(directory);
     check(cetta_disk_store_commit(store,view,NULL,0,&out)==CETTA_STORE_OK);
+    cetta_disk_store_view_close(out);out=NULL;
+    directory=open(path,O_RDONLY|O_DIRECTORY);check(directory>=0);
+    lock=openat(directory,"writer.lock",O_RDWR);check(lock>=0 && !flock(lock,LOCK_SH|LOCK_NB));
+    CettaDiskStore *also=NULL;
+    check(cetta_disk_store_open(path,true,NULL,&also)==CETTA_STORE_OK && also);
+    cetta_disk_store_close(also);
+    check(cetta_disk_store_commit(store,view,NULL,0,&out)==CETTA_STORE_BUSY && !out);
+    close(lock);close(directory);
     cetta_disk_store_view_close(view); cetta_disk_store_view_close(out); cetta_disk_store_close(store);
 }
 static void unknown(const char *path,bool after) {
@@ -194,6 +205,52 @@ static void corrupt_manifest(const char *path) {
     int fd=openat(directory,"root.csl",O_WRONLY|O_TRUNC); check(fd>=0); close(fd);
     check(cetta_disk_store_open(path,true,NULL,&store)==CETTA_STORE_CORRUPT && !store);
     close(directory);
+}
+static void ownership(const char *path) {
+    CettaDiskStore *store=open_store(path);cetta_disk_store_close(store);store=NULL;
+    int directory=open(path,O_RDONLY|O_DIRECTORY);check(directory>=0);
+    check(!fchmod(directory,0750));
+    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(!fchmod(directory,0700));
+    check(!symlinkat(".",directory,"alias"));char alias[512];
+    check(snprintf(alias,sizeof(alias),"%s/alias",path)>0);
+    check(cetta_disk_store_open(alias,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(!unlinkat(directory,"alias",0));
+    int manifest=openat(directory,"root.csl",O_RDWR);check(manifest>=0);
+    check(!fchmod(manifest,0640));
+    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(!fchmod(manifest,0600));close(manifest);
+    check(!linkat(directory,"root.csl",directory,"linked",0));
+    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(!unlinkat(directory,"linked",0));
+    check(!renameat(directory,"root.csl",directory,"saved"));
+    check(!symlinkat("saved",directory,"root.csl"));
+    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_OWNERSHIP && !store);
+    check(!unlinkat(directory,"root.csl",0));check(!renameat(directory,"saved",directory,"root.csl"));
+    store=open_store(path);cetta_disk_store_close(store);close(directory);
+}
+static void old_manifest_version(const char *path) {
+    CettaDiskStore *store=open_store(path);cetta_disk_store_close(store);store=NULL;
+    int directory=open(path,O_RDONLY|O_DIRECTORY),fd=openat(directory,"root.csl",O_RDWR);
+    struct stat st;check(directory>=0 && fd>=0 && !fstat(fd,&st));CettaJournalRecord record={0};
+    check(cetta_journal_read(fd,0,(uint64_t)st.st_size,128,&record)==CETTA_JOURNAL_OK);
+    check(record.size>=4 && !memcmp(record.data,"CDS2",4));memcpy(record.data,"CDS1",4);
+    check(!ftruncate(fd,0) && lseek(fd,0,SEEK_SET)==0);uint64_t written=0;
+    check(cetta_journal_append(fd,record.data,record.size,true,&written)==CETTA_JOURNAL_OK);
+    cetta_journal_record_free(&record);close(fd);close(directory);
+    check(cetta_disk_store_open(path,true,NULL,&store)==CETTA_STORE_VERSION && !store);
+}
+static void wrong_segment_header(const char *path) {
+    CettaDiskStore *store=open_store(path);CettaDiskStoreView *view=snapshot(store);
+    const CettaDiskRoot *root=cetta_disk_store_view_root(view);unsigned char id[16];memcpy(id,root->segment,16);
+    static const char digits[]="0123456789abcdef";char name[45];memcpy(name,"segment-",8);
+    for (size_t i=0;i<16;++i) { name[8+i*2]=digits[id[i]>>4];name[9+i*2]=digits[id[i]&15]; }
+    memcpy(name+40,".csi",5);
+    int directory=open(path,O_RDONLY|O_DIRECTORY),fd=openat(directory,name,O_RDWR);check(directory>=0 && fd>=0);
+    cetta_disk_store_view_close(view);cetta_disk_store_close(store);store=NULL;
+    id[0]^=1;id[1]|=128;check(!ftruncate(fd,0));
+    check(cetta_disk_segment_create(fd,id)==CETTA_DISK_OK);check(!fsync(fd));close(fd);close(directory);
+    check(cetta_disk_store_open(path,false,NULL,&store)==CETTA_STORE_CORRUPT && !store);
 }
 static size_t segments(const char *path) {
     DIR *directory=opendir(path);check(directory);size_t count=0;struct dirent *entry;
@@ -344,7 +401,7 @@ static void parallel(const char *path,bool spend) {
 }
 int main(void) {
     char root[]="runtime/disk-store-test.XXXXXX"; check(mkdtemp(root));
-    const char *labels[]={"ordinary","lock","unknown-before","unknown-after","partial","corrupt","sync-data","sync-manifest","sync-directory","scoped","parallel","spenders","collection-confirmation","live-builder","lost-writeback"};
+    const char *labels[]={"ordinary","lock","unknown-before","unknown-after","partial","corrupt","sync-data","sync-manifest","sync-directory","scoped","parallel","spenders","collection-confirmation","live-builder","lost-writeback","ownership","old-version","wrong-header"};
     enum { CASES=sizeof(labels)/sizeof(*labels) };char paths[CASES][256];
     for (size_t i=0;i<CASES;++i) {
         check(snprintf(paths[i],sizeof(paths[i]),"%s/%s",root,labels[i])>0);
@@ -356,6 +413,7 @@ int main(void) {
     scoped(paths[9]);parallel(paths[10],false);parallel(paths[11],true);
     collection_confirmation(paths[12]);live_builder(paths[13]);
     lost_writeback(paths[14]);
+    ownership(paths[15]);old_manifest_version(paths[16]);wrong_segment_header(paths[17]);
     for (size_t i=0;i<CASES;++i) empty_directory(paths[i]);
     check(!rmdir(root)); printf("native disk store: %u checks passed\n",checks); return 0;
 }

@@ -10,6 +10,15 @@ The named-space and older durable-runtime interfaces have not yet migrated to
 this owner. The byte-store library is available for qualification; adding it
 does not migrate an application's existing database.
 
+The disk ABI is version 2 (`cetta_disk_abi_version`), with a generation in every
+`CettaDiskRoot`. A checksummed `CSD2` segment header carries the same generation
+as the `CDS2` manifest. Reopening through the wrong segment is refused even
+when its offsets and frame checksums happen to be valid. Earlier prototype
+`CDS1` manifests are reported as a different version, never reset or silently
+read as version 2. Preserve and re-export those offline prototype stores with
+their matching implementation. Portable bindings must check the ABI before
+passing a root structure.
+
 ## Owners and snapshots
 
 Import `(library store)` in PeTTa, or `store` in HE and Prime.
@@ -117,6 +126,12 @@ root durably, then removes obsolete segment names. Live builders hold kernel
 locks and old readers retain open descriptors, so collection cannot revoke
 either. The owner lock is nonblocking and covers validation/publication, not
 model calls or application planning.
+
+Opening an existing store uses a shared lock even with `"create"`. Only a
+missing manifest escalates to an exclusive initialization lock. Callers own
+retry/backoff policy for `busy`; the lock provides no fairness guarantee.
+Ownership refusals (unsafe links, permissions or owner) are reported separately
+as `(StoreRefused ownership)`, rather than as an I/O failure.
 
 ## Qualification
 

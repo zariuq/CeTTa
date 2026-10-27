@@ -70,6 +70,60 @@ static CettaDiskStatus read_all(int fd,unsigned char *data,size_t size,uint64_t 
     }
     return CETTA_DISK_OK;
 }
+uint32_t cetta_disk_abi_version(void) { return CETTA_DISK_ABI_VERSION; }
+static bool zero_identity(const unsigned char identity[16]) {
+    unsigned char combined=0;for (size_t i=0;i<16;++i) combined|=identity[i];return !combined;
+}
+static CettaDiskStatus segment_identity(int fd,uint64_t end,unsigned char identity[16]) {
+    if (end<CETTA_DISK_SEGMENT_HEADER_BYTES) return CETTA_DISK_CORRUPT;
+    CettaJournalRecord record={0};
+    CettaDiskStatus status=journal_status(cetta_journal_read(fd,0,end,20,&record));
+    if (status==CETTA_DISK_OK) {
+        if (record.size!=20 || memcmp(record.data,"CSD2",4) || zero_identity(record.data+4))
+            status=CETTA_DISK_CORRUPT;
+        else memcpy(identity,record.data+4,16);
+    }
+    cetta_journal_record_free(&record);return status;
+}
+CettaDiskStatus cetta_disk_segment_create(int fd,const unsigned char identity[16]) {
+    if (fd<0 || !identity || zero_identity(identity)) return CETTA_DISK_INVALID;
+    struct stat st;if (fstat(fd,&st)) return CETTA_DISK_IO;
+    if (st.st_size) return CETTA_DISK_INVALID;
+    if (lseek(fd,0,SEEK_SET)!=0) return CETTA_DISK_IO;
+    unsigned char data[20];memcpy(data,"CSD2",4);memcpy(data+4,identity,16);uint64_t written=0;
+    return journal_status(cetta_journal_append(fd,data,sizeof(data),false,&written));
+}
+CettaDiskStatus cetta_disk_root_check(const CettaDiskRoot *root) {
+    if (!valid(root)) return CETTA_DISK_INVALID;
+    if (!root->end && !root->root && zero_identity(root->segment)) return CETTA_DISK_OK;
+    if ((root->root && root->root<=CETTA_DISK_SEGMENT_HEADER_BYTES) || zero_identity(root->segment))
+        return CETTA_DISK_CORRUPT;
+    unsigned char identity[16];CettaDiskStatus status=segment_identity(root->fd,root->end,identity);
+    if (status==CETTA_DISK_OK && memcmp(identity,root->segment,16)) status=CETTA_DISK_CORRUPT;
+    return status;
+}
+static bool random_identity(unsigned char identity[16]) {
+    int fd=open("/dev/urandom",O_RDONLY|O_CLOEXEC);if (fd<0) return false;
+    do {
+        size_t position=0;
+        while (position<16) {
+            ssize_t n=read(fd,identity+position,16-position);
+            if (n<0 && errno==EINTR) continue;
+            if (n<=0) { close(fd);return false; }
+            position+=(size_t)n;
+        }
+    } while (zero_identity(identity));
+    close(fd);return true;
+}
+static CettaDiskStatus prepare_segment(CettaDiskRoot *root) {
+    if (!root->end) {
+        unsigned char identity[16];if (!random_identity(identity)) return CETTA_DISK_IO;
+        CettaDiskStatus status=cetta_disk_segment_create(root->fd,identity);
+        if (status!=CETTA_DISK_OK) return status;
+        root->end=CETTA_DISK_SEGMENT_HEADER_BYTES;memcpy(root->segment,identity,16);return CETTA_DISK_OK;
+    }
+    return segment_identity(root->fd,root->end,root->segment);
+}
 static CettaDiskStatus header(const CettaDiskRoot *root,uint64_t reference,
                               unsigned char bytes[FRAME],size_t *size) {
     if (!reference || reference>root->end || root->end-reference+1<FRAME)
@@ -184,6 +238,7 @@ CettaDiskStatus cetta_disk_lookup(const CettaDiskRoot *root,CettaDiskBytes key,C
     if (!value) return CETTA_DISK_INVALID;
     *value=(CettaDiskBlob){0};
     if (!valid(root) || !bytes_valid(key,root->key_limit)) return CETTA_DISK_INVALID;
+    CettaDiskStatus identity=cetta_disk_root_check(root);if (identity!=CETTA_DISK_OK) return identity;
     uint64_t reference=root->root,parent=0; bool has_parent=false;
     Path *path=NULL;size_t count=0,capacity=0;CettaDiskStatus status=CETTA_DISK_ABSENT;
     while (reference) {
@@ -211,6 +266,7 @@ CettaDiskStatus cetta_disk_blob_read(const CettaDiskRoot *root,CettaDiskBlob val
     if (!written) return CETTA_DISK_INVALID;
     *written=0;
     if (!valid(root) || offset>value.size || (capacity && !destination)) return CETTA_DISK_INVALID;
+    CettaDiskStatus identity=cetta_disk_root_check(root);if (identity!=CETTA_DISK_OK) return identity;
     unsigned char bytes[FRAME],buffer[32768]; size_t size;
     CettaDiskStatus status=header(root,value.reference,bytes,&size);
     if (status!=CETTA_DISK_OK) return status;
@@ -246,6 +302,7 @@ CettaDiskStatus cetta_disk_blob_reader_open(const CettaDiskRoot *root,CettaDiskB
     if (!out) return CETTA_DISK_INVALID;
     *out=NULL;
     if (!valid(root)) return CETTA_DISK_INVALID;
+    CettaDiskStatus identity=cetta_disk_root_check(root);if (identity!=CETTA_DISK_OK) return identity;
     CettaDiskBlobReader *reader=calloc(1,sizeof(*reader));
     if (!reader) return CETTA_DISK_NOMEM;
     reader->root=*root; reader->value=value;
@@ -354,6 +411,7 @@ CettaDiskStatus cetta_disk_build(const CettaDiskRoot *base,const CettaDiskOp *op
     if (candidate!=base) *candidate=(CettaDiskRoot){.fd=-1};
     base=&captured;
     if (!valid(base) || (count && !operations)) return CETTA_DISK_INVALID;
+    CettaDiskStatus identity=cetta_disk_root_check(base);if (identity!=CETTA_DISK_OK) return identity;
     for (size_t i=0;i<count;++i) if (!bytes_valid(operations[i].key,base->key_limit) ||
         (!operations[i].remove && !bytes_valid(operations[i].value,base->value_limit)))
         return CETTA_DISK_INVALID;
@@ -361,6 +419,7 @@ CettaDiskStatus cetta_disk_build(const CettaDiskRoot *base,const CettaDiskOp *op
     if (end<0) return CETTA_DISK_IO;
     if ((uint64_t)end<base->end) return CETTA_DISK_CORRUPT;
     CettaDiskRoot draft=*base; draft.end=(uint64_t)end;
+    identity=prepare_segment(&draft);if (identity!=CETTA_DISK_OK) return identity;
     for (size_t i=0;i<count;++i) {
         CettaDiskStatus status=change(&draft,&operations[i]);
         if (status!=CETTA_DISK_OK) return status;
@@ -369,6 +428,8 @@ CettaDiskStatus cetta_disk_build(const CettaDiskRoot *base,const CettaDiskOp *op
 }
 CettaDiskStatus cetta_disk_sync(CettaDiskRoot *candidate) {
     if (!valid(candidate)) return CETTA_DISK_INVALID;
+    CettaDiskStatus identity=cetta_disk_root_check(candidate);
+    if (identity!=CETTA_DISK_OK) { candidate->fd=-1;return identity; }
     int result;
     do { result=fsync(candidate->fd); } while (result<0 && errno==EINTR);
     if (result) { candidate->fd=-1;return CETTA_DISK_IO; }
@@ -426,6 +487,7 @@ CettaDiskStatus cetta_disk_cursor_open_range(const CettaDiskRoot *root,
     *out=NULL;
     if (!valid(root) || (lower && !bytes_valid(*lower,root->key_limit)) ||
         (upper && !bytes_valid(*upper,root->key_limit))) return CETTA_DISK_INVALID;
+    CettaDiskStatus identity=cetta_disk_root_check(root);if (identity!=CETTA_DISK_OK) return identity;
     CettaDiskCursor *cursor=calloc(1,sizeof(*cursor));
     if (!cursor) return CETTA_DISK_NOMEM;
     cursor->root=*root;
@@ -502,11 +564,16 @@ CettaDiskStatus cetta_disk_compact(const CettaDiskRoot *source,int destination,C
     if (candidate!=source) *candidate=(CettaDiskRoot){.fd=-1};
     source=&captured;
     if (!valid(source) || destination<0) return CETTA_DISK_INVALID;
+    CettaDiskStatus identity=cetta_disk_root_check(source);if (identity!=CETTA_DISK_OK) return identity;
     struct stat from,to;
     if (fstat(source->fd,&from) || fstat(destination,&to)) return CETTA_DISK_IO;
-    if (to.st_size || (from.st_dev==to.st_dev && from.st_ino==to.st_ino)) return CETTA_DISK_INVALID;
-    if (lseek(destination,0,SEEK_SET)!=0) return CETTA_DISK_IO;
-    CettaDiskRoot draft=*source; draft.fd=destination; draft.root=0; draft.end=0;
+    if ((to.st_size && to.st_size!=CETTA_DISK_SEGMENT_HEADER_BYTES) ||
+        (from.st_dev==to.st_dev && from.st_ino==to.st_ino)) return CETTA_DISK_INVALID;
+    CettaDiskRoot draft={.fd=destination,.end=(uint64_t)to.st_size,
+        .key_limit=source->key_limit,.value_limit=source->value_limit};
+    identity=prepare_segment(&draft);if (identity!=CETTA_DISK_OK) return identity;
+    if (!memcmp(source->segment,draft.segment,16)) return CETTA_DISK_INVALID;
+    if (lseek(destination,(off_t)draft.end,SEEK_SET)!=(off_t)draft.end) return CETTA_DISK_IO;
     Copy *stack=NULL; size_t count=0,capacity=0; uint64_t result=0,visits=0;
     CettaDiskBuffer previous={0};bool has_previous=false;
     CettaDiskStatus status=CETTA_DISK_OK;

@@ -22,6 +22,8 @@ typedef enum {
 
 typedef struct { const unsigned char *data; size_t size; } CettaDiskBytes;
 typedef struct { unsigned char *data; size_t size; } CettaDiskBuffer;
+enum { CETTA_DISK_ABI_VERSION=2, CETTA_DISK_SEGMENT_HEADER_BYTES=92 };
+uint32_t cetta_disk_abi_version(void);
 
 /* Zero root means the empty map. Other references are frame offset + 1.
  * fd is borrowed. Keep it open until the snapshot's reads have ended.
@@ -31,7 +33,14 @@ typedef struct {
     int fd;
     uint64_t root, end;
     size_t key_limit, value_limit;
+    unsigned char segment[16];
 } CettaDiskRoot;
+
+/* Initialize an empty descriptor with one checksummed generation header.
+ * The caller supplies a nonzero generation; no synchronization is implied.
+ * Root metadata carries this identity through publication and reopen. */
+CettaDiskStatus cetta_disk_segment_create(int fd,const unsigned char identity[16]);
+CettaDiskStatus cetta_disk_root_check(const CettaDiskRoot *root);
 
 typedef struct { bool remove; CettaDiskBytes key, value; } CettaDiskOp;
 typedef struct { uint64_t reference, size; } CettaDiskBlob;

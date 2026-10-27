@@ -61,7 +61,9 @@ int __wrap_fsync(int fd) {
 }
 static CettaDiskBytes bytes(const void *data,size_t size) { return (CettaDiskBytes){data,size}; }
 static CettaDiskBytes text(const char *value) { return bytes(value,strlen(value)); }
-static CettaDiskRoot empty(int fd) { return (CettaDiskRoot){fd,0,0,4096,4*1024*1024}; }
+static CettaDiskRoot empty(int fd) {
+    return (CettaDiskRoot){.fd=fd,.key_limit=4096,.value_limit=4*1024*1024};
+}
 static void expect(const CettaDiskRoot *root,CettaDiskBytes key,CettaDiskBytes expected,bool present) {
     CettaDiskBlob blob; CettaDiskStatus status=cetta_disk_lookup(root,key,&blob);
     if (!present) { check(status==CETTA_DISK_ABSENT); return; }
@@ -285,6 +287,9 @@ static void structural_corruption(void) {
     for (int kind=0;kind<4;++kind) {
         FILE *file=tmpfile(),*copy=tmpfile();check(file && copy);
         CettaDiskRoot root=empty(fileno(file));
+        root.segment[0]=(unsigned char)(kind+1);
+        check(cetta_disk_segment_create(root.fd,root.segment)==CETTA_DISK_OK);
+        root.end=CETTA_DISK_SEGMENT_HEADER_BYTES;
         uint64_t a=crafted_leaf(&root,kind==3 ? 'y' : 'a'),b=crafted_leaf(&root,'b');
         if (kind==0) root.root=crafted_branch(&root,8,b,a); /* Wrong sides. */
         else if (kind==1) {
@@ -319,11 +324,35 @@ static void structural_corruption(void) {
         write_remaining=-1;fclose(file);fclose(copy);
     }
 }
-static void root_record(const CettaDiskRoot *root,unsigned char record[16]) {
+static void segment_binding(void) {
+    FILE *file=tmpfile(),*copy=tmpfile(),*reused=tmpfile();check(file && copy && reused);
+    CettaDiskRoot original=empty(fileno(file));
+    set(&original,text("unchanged"),text("same first value"),false);
+    set(&original,text("changed"),text("old-value"),false);
+    CettaDiskRoot before=original;
+    set(&original,text("changed"),text("new-value"),false);
+    CettaDiskRoot compacted;check(cetta_disk_compact(&original,fileno(copy),&compacted)==CETTA_DISK_OK);
+    check(memcmp(before.segment,compacted.segment,16));
+    CettaDiskRoot mispaired=compacted;mispaired.fd=before.fd;
+    CettaDiskBlob value;CettaDiskCursor *cursor=NULL;
+    check(cetta_disk_lookup(&mispaired,text("changed"),&value)==CETTA_DISK_CORRUPT);
+    check(cetta_disk_cursor_open(&mispaired,&cursor)==CETTA_DISK_CORRUPT && !cursor);
+    CettaDiskRoot refused;CettaDiskOp op={false,text("new"),text("row")};
+    check(cetta_disk_build(&mispaired,&op,1,&refused)==CETTA_DISK_CORRUPT);
+    CettaDiskRoot omitted=compacted;memset(omitted.segment,0,16);
+    check(cetta_disk_lookup(&omitted,text("changed"),&value)==CETTA_DISK_CORRUPT);
+    check(cetta_disk_segment_create(fileno(reused),original.segment)==CETTA_DISK_OK);
+    check(cetta_disk_compact(&original,fileno(reused),&refused)==CETTA_DISK_INVALID);
+    expect(&before,text("changed"),text("old-value"),true);
+    expect(&compacted,text("changed"),text("new-value"),true);
+    fclose(reused);fclose(copy);fclose(file);
+}
+static void root_record(const CettaDiskRoot *root,unsigned char record[32]) {
     uint64_t values[]={root->root,root->end};
     for (size_t i=0;i<2;++i) for (size_t j=8;j>0;--j) {
         record[i*8+j-1]=(unsigned char)values[i]; values[i]>>=8;
     }
+    memcpy(record+16,root->segment,16);
 }
 static uint64_t read_number(const unsigned char *data) {
     uint64_t value=0;
@@ -335,10 +364,11 @@ static CettaDiskRoot recover_root(CettaDiskRoot template,int journal) {
     uint64_t offset=0;
     while (offset<(uint64_t)st.st_size) {
         CettaJournalRecord row={0};
-        CettaJournalStatus status=cetta_journal_read(journal,offset,(uint64_t)st.st_size,16,&row);
+        CettaJournalStatus status=cetta_journal_read(journal,offset,(uint64_t)st.st_size,32,&row);
         if (status==CETTA_JOURNAL_TORN) break;
-        check(status==CETTA_JOURNAL_OK && row.size==16);
+        check(status==CETTA_JOURNAL_OK && row.size==32);
         template.root=read_number(row.data); template.end=read_number(row.data+8);
+        memcpy(template.segment,row.data+16,16);
         offset=row.next; cetta_journal_record_free(&row);
     }
     return template;
@@ -349,7 +379,7 @@ static void root_publication(void) {
     FILE *file=tmpfile(),*journal=tmpfile(); check(file && journal);
     CettaDiskRoot old=empty(fileno(file)); set(&old,text("receipt"),text("before"),false);
     check(cetta_disk_sync(&old)==CETTA_DISK_OK);
-    unsigned char record[16]; root_record(&old,record); uint64_t written=0;
+    unsigned char record[32]; root_record(&old,record); uint64_t written=0;
     check(cetta_journal_append(fileno(journal),record,sizeof(record),true,&written)==CETTA_JOURNAL_OK);
     CettaDiskOp ops[]={{false,text("receipt"),text("completed")},
         {false,text("usage"),text("one")},{false,text("answer"),text("retained")}};
@@ -369,7 +399,7 @@ static void root_publication(void) {
     check(cetta_disk_build(&old,ops,3,&candidate)==CETTA_DISK_OK);
     check(cetta_disk_sync(&candidate)==CETTA_DISK_OK); root_record(&candidate,record);
     uint64_t previous=written;
-    for (ssize_t cut=0;cut<88;++cut) {
+    for (ssize_t cut=0;cut<(ssize_t)(72+sizeof(record));++cut) {
         check(!ftruncate(fileno(journal),(off_t)previous));
         check(lseek(fileno(journal),(off_t)previous,SEEK_SET)==(off_t)previous);
         write_remaining=cut;
@@ -448,6 +478,6 @@ int main(int argc,char **argv) {
     }
     check(argc==1);
     map_and_snapshots(); batches_and_faults(); large_body_and_reader_ownership(); corruption();
-    structural_corruption();root_publication();
+    structural_corruption();segment_binding();root_publication();
     printf("native disk index: %u checks passed\n",checks); return 0;
 }

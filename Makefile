@@ -48576,7 +48576,13 @@ $(VALUE_WORKER_BIN): $(VALUE_WORKER_OBJ) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPIL
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 value-worker: $(VALUE_WORKER_BIN)
 	@echo "Built $(VALUE_WORKER_BIN)"
-test-store-library: $(VALUE_WORKER_BIN) test-native-disk-store test-native-disk-index test-library-import-catalog
+STORE_AUTHORITY_TEST_BIN = runtime/test-store-authority-$(BUILD_OBJ_TAG)
+$(STORE_AUTHORITY_TEST_BIN): tests/support/test_store_authority.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_READER_RUNTIME_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $^ $(LDFLAGS) -Wl,--wrap=cetta_native_handle_alloc
+.PHONY: test-store-authority
+test-store-authority: $(STORE_AUTHORITY_TEST_BIN)
+	$<
+test-store-library: $(VALUE_WORKER_BIN) test-native-disk-store test-native-disk-index test-library-import-catalog test-store-authority
 	$(PYTHON) tests/test_store_library.py $(VALUE_WORKER_BIN)
 test-store-lifetime: $(VALUE_WORKER_BIN)
 	$(PYTHON) tests/check_store_lifetime.py $(VALUE_WORKER_BIN)

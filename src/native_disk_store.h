@@ -17,7 +17,7 @@ typedef enum {
     CETTA_STORE_OK, CETTA_STORE_ABSENT, CETTA_STORE_INVALID, CETTA_STORE_BUSY,
     CETTA_STORE_CONFLICT, CETTA_STORE_IO, CETTA_STORE_CORRUPT, CETTA_STORE_NOMEM,
     CETTA_STORE_LIMIT, CETTA_STORE_UNKNOWN, CETTA_STORE_VERSION,
-    CETTA_STORE_RECOVERY_REQUIRED
+    CETTA_STORE_RECOVERY_REQUIRED, CETTA_STORE_OWNERSHIP
 } CettaDiskStoreStatus;
 typedef struct { size_t key_bytes, value_bytes; } CettaDiskStoreLimits;
 typedef enum { CETTA_STORE_POINT, CETTA_STORE_RANGE } CettaDiskStoreScopeKind;
@@ -37,6 +37,9 @@ CettaDiskStoreLimits cetta_disk_store_limits(void);
 CettaDiskStoreStatus cetta_disk_store_open(const char *directory, bool create,
     const CettaDiskStoreLimits *limits, CettaDiskStore **out);
 void cetta_disk_store_close(CettaDiskStore *store);
+/* The caller holds its exclusive owner use. A lost post-publication reply
+ * resource must use the same write gate as an uncertain filesystem reply. */
+void cetta_disk_store_require_recovery(CettaDiskStore *store);
 CettaDiskStoreStatus cetta_disk_store_snapshot(CettaDiskStore *store, CettaDiskStoreView **out);
 /* Successful snapshots confirm first-seen roots durably, including a root
  * published by a writer that died before its final synchronization. */

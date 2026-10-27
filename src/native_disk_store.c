@@ -47,19 +47,25 @@ static bool synchronize(int fd) {
 }
 static bool safe_file(int fd) {
     struct stat st;
-    return !fstat(fd,&st) && S_ISREG(st.st_mode) && st.st_uid==geteuid() &&
-        !(st.st_mode&077) && st.st_nlink==1;
+    if (fstat(fd,&st)) return false;
+    if (!S_ISREG(st.st_mode) || st.st_uid!=geteuid() || (st.st_mode&077) || st.st_nlink!=1) {
+        errno=EPERM;return false;
+    }
+    return true;
 }
 static int file_open(int directory,const char *name,int flags) {
     int fd;
     do { fd=openat(directory,name,flags|O_CLOEXEC|O_NOFOLLOW,0600); } while (fd<0 && errno==EINTR);
-    if (fd>=0 && !safe_file(fd)) { close(fd); errno=EPERM; return -1; }
+    if (fd>=0 && !safe_file(fd)) { int code=errno;close(fd);errno=code;return -1; }
     return fd;
+}
+static CettaDiskStoreStatus open_error(void) {
+    return errno==EPERM || errno==EACCES || errno==ELOOP ? CETTA_STORE_OWNERSHIP : CETTA_STORE_IO;
 }
 static CettaDiskStoreStatus acquire(CettaDiskStore *store,bool exclusive,int *out) {
     *out=-1;
     int fd=file_open(store->directory,"writer.lock",exclusive ? O_RDWR : O_RDONLY);
-    if (fd<0) return CETTA_STORE_IO;
+    if (fd<0) return open_error();
     int result;
     do { result=flock(fd,(exclusive ? LOCK_EX : LOCK_SH)|LOCK_NB); } while (result<0 && errno==EINTR);
     if (result) {
@@ -104,15 +110,19 @@ static CettaDiskStoreStatus segment_create(CettaDiskStore *store,unsigned char i
     *out=-1;
     for (;;) {
         if (!random_bytes(id)) return CETTA_STORE_IO;
+        unsigned char nonzero=0;for (size_t i=0;i<16;++i) nonzero|=id[i];
+        if (!nonzero) continue;
         char name[45]; segment_name(id,name);
         int fd=file_open(store->directory,name,O_RDWR|O_CREAT|O_EXCL);
-        if (fd<0) { if (errno==EEXIST) continue; return CETTA_STORE_IO; }
+        if (fd<0) { if (errno==EEXIST) continue; return open_error(); }
         if (flock(fd,LOCK_EX|LOCK_NB)) { close(fd); unlinkat(store->directory,name,0); return CETTA_STORE_IO; }
+        CettaDiskStoreStatus status=disk_status(cetta_disk_segment_create(fd,id));
+        if (status!=CETTA_STORE_OK) { close(fd);unlinkat(store->directory,name,0);return status; }
         *out=fd; return CETTA_STORE_OK;
     }
 }
 static void encode_meta(const Meta *meta,unsigned char bytes[META_BYTES]) {
-    memcpy(bytes,"CDS1",4); memcpy(bytes+4,meta->epoch,16); memcpy(bytes+20,meta->segment,16);
+    memcpy(bytes,"CDS2",4); memcpy(bytes+4,meta->epoch,16); memcpy(bytes+20,meta->segment,16);
     put_number(bytes+36,meta->revision); put_number(bytes+44,meta->root); put_number(bytes+52,meta->end);
     put_number(bytes+60,meta->limits.key_bytes); put_number(bytes+68,meta->limits.value_bytes);
 }
@@ -123,7 +133,7 @@ static bool write_meta(int fd,uint64_t *written,void *context) {
 static CettaDiskStoreStatus read_meta(int directory,bool writing,Meta *meta,int *out) {
     *out=-1;
     int fd=file_open(directory,"root.csl",writing ? O_RDWR : O_RDONLY);
-    if (fd<0) return errno==ENOENT ? CETTA_STORE_ABSENT : CETTA_STORE_IO;
+    if (fd<0) return errno==ENOENT ? CETTA_STORE_ABSENT : open_error();
     struct stat st;
     if (fstat(fd,&st)) { close(fd); return CETTA_STORE_IO; }
     if (st.st_size!=META_FRAME_BYTES) { close(fd); return CETTA_STORE_CORRUPT; }
@@ -131,14 +141,15 @@ static CettaDiskStoreStatus read_meta(int directory,bool writing,Meta *meta,int 
     CettaJournalStatus result=cetta_journal_read(fd,0,(uint64_t)st.st_size,META_BYTES,&record);
     CettaDiskStoreStatus status=CETTA_STORE_CORRUPT;
     if (result==CETTA_JOURNAL_OK && record.size==META_BYTES) {
-        if (memcmp(record.data,"CDS1",4)) status=CETTA_STORE_VERSION;
+        if (memcmp(record.data,"CDS2",4)) status=CETTA_STORE_VERSION;
         else {
             uint64_t keys=get_number(record.data+60),values=get_number(record.data+68);
             memcpy(meta->epoch,record.data+4,16); memcpy(meta->segment,record.data+20,16);
             meta->revision=get_number(record.data+36); meta->root=get_number(record.data+44);
             meta->end=get_number(record.data+52);
             if (keys<=SIZE_MAX && values<=SIZE_MAX && keys<=UINT32_MAX-13u && values<=UINT32_MAX-1u &&
-                meta->end<=INT64_MAX && (!meta->root || meta->root<=meta->end)) {
+                meta->end>=CETTA_DISK_SEGMENT_HEADER_BYTES && meta->end<=INT64_MAX &&
+                (!meta->root || meta->root<=meta->end)) {
                 meta->limits=(CettaDiskStoreLimits){(size_t)keys,(size_t)values}; status=CETTA_STORE_OK;
             }
         }
@@ -157,17 +168,23 @@ static CettaDiskStoreStatus view_load(CettaDiskStore *store,bool writing,
     char name[45]; segment_name(meta.segment,name);
     int fd=file_open(store->directory,name,writing ? O_RDWR : O_RDONLY);
     struct stat st;
-    if (fd<0 || fstat(fd,&st)) status=CETTA_STORE_IO;
+    if (fd<0) status=open_error();
+    else if (fstat(fd,&st)) status=CETTA_STORE_IO;
     else if (st.st_size<0 || (uint64_t)st.st_size<meta.end) status=CETTA_STORE_CORRUPT;
     else {
         CettaDiskStoreView *view=calloc(1,sizeof(*view));
         if (!view) status=CETTA_STORE_NOMEM;
         else {
-            view->root=(CettaDiskRoot){fd,meta.root,meta.end,meta.limits.key_bytes,meta.limits.value_bytes};
+            view->root=(CettaDiskRoot){.fd=fd,.root=meta.root,.end=meta.end,
+                .key_limit=meta.limits.key_bytes,.value_limit=meta.limits.value_bytes};
+            memcpy(view->root.segment,meta.segment,16);
+            status=disk_status(cetta_disk_root_check(&view->root));
+            if (status!=CETTA_STORE_OK) { free(view);goto failed; }
             view->meta=meta; view->device=store->device; view->inode=store->inode;
             *out=view; return CETTA_STORE_OK;
         }
     }
+failed:
     if (fd>=0) close(fd);
     close(*manifest); *manifest=-1;
     return status;
@@ -190,15 +207,20 @@ CettaDiskStoreStatus cetta_disk_store_open(const char *path,bool create,
     *out=NULL;
     if (!path || !*path) return CETTA_STORE_INVALID;
     int directory=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
-    if (directory<0) return errno==ENOENT ? CETTA_STORE_ABSENT : CETTA_STORE_IO;
+    if (directory<0) {
+        int code=errno;struct stat entry;
+        if (code==ENOTDIR && !lstat(path,&entry) && S_ISLNK(entry.st_mode)) return CETTA_STORE_OWNERSHIP;
+        errno=code;return code==ENOENT ? CETTA_STORE_ABSENT : open_error();
+    }
     struct stat st;
-    if (fstat(directory,&st) || st.st_uid!=geteuid() || (st.st_mode&077)) { close(directory); return CETTA_STORE_INVALID; }
+    if (fstat(directory,&st)) { close(directory);return CETTA_STORE_IO; }
+    if (st.st_uid!=geteuid() || (st.st_mode&077)) { close(directory);return CETTA_STORE_OWNERSHIP; }
     CettaDiskStore *store=calloc(1,sizeof(*store));
     if (!store) { close(directory); return CETTA_STORE_NOMEM; }
     *store=(CettaDiskStore){.directory=directory,.device=st.st_dev,.inode=st.st_ino};
     if (create) {
         int fd=file_open(directory,"writer.lock",O_RDWR|O_CREAT);
-        if (fd<0) { cetta_disk_store_close(store); return CETTA_STORE_IO; }
+        if (fd<0) { CettaDiskStoreStatus status=open_error();cetta_disk_store_close(store);return status; }
         close(fd);
     } else {
         struct stat root;
@@ -207,15 +229,20 @@ CettaDiskStoreStatus cetta_disk_store_open(const char *path,bool create,
             cetta_disk_store_close(store); return absent ? CETTA_STORE_ABSENT : CETTA_STORE_CORRUPT;
         }
     }
-    int lock=-1; CettaDiskStoreStatus status=acquire(store,create,&lock);
+    int lock=-1; CettaDiskStoreStatus status=acquire(store,false,&lock);
     if (status!=CETTA_STORE_OK) { cetta_disk_store_close(store); return status; }
     Meta meta; int manifest=-1;
     status=read_meta(directory,false,&meta,&manifest);
     if (status==CETTA_STORE_ABSENT && create) {
+        close(lock);lock=-1;
+        status=acquire(store,true,&lock);
+        if (status==CETTA_STORE_OK) status=read_meta(directory,false,&meta,&manifest);
+    }
+    if (status==CETTA_STORE_ABSENT && create) {
         CettaDiskStoreLimits actual=limits ? *limits : cetta_disk_store_limits();
         if (actual.key_bytes>UINT32_MAX-13u || actual.value_bytes>UINT32_MAX-1u) status=CETTA_STORE_INVALID;
         else {
-            meta=(Meta){.limits=actual}; int segment=-1;
+            meta=(Meta){.end=CETTA_DISK_SEGMENT_HEADER_BYTES,.limits=actual}; int segment=-1;
             if (!random_bytes(meta.epoch)) status=CETTA_STORE_IO;
             else status=segment_create(store,meta.segment,&segment);
             if (status==CETTA_STORE_OK) {
@@ -234,12 +261,15 @@ CettaDiskStoreStatus cetta_disk_store_open(const char *path,bool create,
         cetta_disk_store_view_close(view);
         if (manifest>=0) close(manifest);
     }
-    close(lock);
+    if (lock>=0) close(lock);
     if (status!=CETTA_STORE_OK) { cetta_disk_store_close(store); return status; }
     *out=store; return CETTA_STORE_OK;
 }
 void cetta_disk_store_close(CettaDiskStore *store) {
     if (store) { close(store->directory); free(store); }
+}
+void cetta_disk_store_require_recovery(CettaDiskStore *store) {
+    if (store) store->uncertain=true;
 }
 void cetta_disk_store_view_close(CettaDiskStoreView *view) {
     if (view) { close(view->root.fd); free(view); }
@@ -293,7 +323,7 @@ static bool same_root(const CettaDiskStoreView *left,const CettaDiskStoreView *r
 static CettaDiskStoreStatus readonly_view(CettaDiskStore *store,CettaDiskStoreView *view) {
     char name[45]; segment_name(view->meta.segment,name);
     int reader=file_open(store->directory,name,O_RDONLY);
-    if (reader<0) return CETTA_STORE_IO;
+    if (reader<0) return open_error();
     close(view->root.fd); view->root.fd=reader; return CETTA_STORE_OK;
 }
 static bool key_valid(CettaDiskBytes key,size_t limit) {

@@ -22,7 +22,8 @@ class Buffer(c.Structure):
 
 class Root(c.Structure):
     _fields_ = [("fd", c.c_int), ("root", c.c_uint64), ("end", c.c_uint64),
-                ("key_limit", c.c_size_t), ("value_limit", c.c_size_t)]
+                ("key_limit", c.c_size_t), ("value_limit", c.c_size_t),
+                ("segment", c.c_ubyte * 16)]
 
 
 class Operation(c.Structure):
@@ -36,6 +37,8 @@ class Blob(c.Structure):
 class Index:
     def __init__(self, library):
         self.lib = c.CDLL(str(Path(library).resolve()))
+        version=self.lib.cetta_disk_abi_version;version.argtypes=[];version.restype=c.c_uint32
+        if version()!=2:raise RuntimeError("native disk index ABI mismatch")
         signatures = {
             "cetta_disk_build": ([c.POINTER(Root), c.POINTER(Operation), c.c_size_t, c.POINTER(Root)], c.c_int),
             "cetta_disk_lookup": ([c.POINTER(Root), Bytes, c.POINTER(Blob)], c.c_int),
