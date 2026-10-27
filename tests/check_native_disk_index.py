@@ -56,6 +56,9 @@ class Index:
         for name, (arguments, result) in signatures.items():
             function = getattr(self.lib, name)
             function.argtypes, function.restype = arguments, result
+        if hasattr(self.lib, "cetta_disk_cursor_open_reverse_range"):
+            function = self.lib.cetta_disk_cursor_open_reverse_range
+            function.argtypes, function.restype = signatures["cetta_disk_cursor_open_range"]
 
     @staticmethod
     def borrowed(data, keep):
@@ -91,12 +94,13 @@ class Index:
             raise AssertionError(("native lookup", status))
         return self.body(c.byref(root), value)
 
-    def rows(self, root, lower=None, exclusive=False, upper=None):
+    def rows(self, root, lower=None, exclusive=False, upper=None, *, reverse=False):
         cursor = c.c_void_p()
         keep = []
         low = None if lower is None else self.borrowed(lower, keep)
         high = None if upper is None else self.borrowed(upper, keep)
-        status = self.lib.cetta_disk_cursor_open_range(c.byref(root),
+        opener = self.lib.cetta_disk_cursor_open_reverse_range if reverse else self.lib.cetta_disk_cursor_open_range
+        status = opener(c.byref(root),
             None if low is None else c.byref(low), exclusive,
             None if high is None else c.byref(high), c.byref(cursor))
         if status:
@@ -178,6 +182,10 @@ def check(index, seeds, steps):
                         raise AssertionError(("range", seed, step, lower, exclusive, upper))
                     checked += len(wanted)
                     ranges += 1
+                    if index.rows(root, lower, exclusive, upper, reverse=True) != list(reversed(wanted)):
+                        raise AssertionError(("reverse range", seed, step, lower, exclusive, upper))
+                    checked += len(wanted)
+                    ranges += 1
                     if step and step % 101 == 0:
                         if index.rows(old[0][0]) != old[0][1]:
                             raise AssertionError(("captured old root", seed, step))
@@ -193,7 +201,7 @@ def check(index, seeds, steps):
                 try:
                     compacted = Root()
                     status = index.lib.cetta_disk_compact(c.byref(root), compact_fd, c.byref(compacted))
-                    if status or index.rows(compacted) != expected:
+                    if status or index.rows(compacted) != expected or index.rows(compacted, reverse=True) != list(reversed(expected)):
                         raise AssertionError(("compaction", seed, status))
                     if index.lib.cetta_disk_sync(c.byref(compacted)):
                         raise AssertionError(("sync", seed))
@@ -201,6 +209,8 @@ def check(index, seeds, steps):
                     for captured, wanted in old:
                         if index.rows(captured) != wanted:
                             raise AssertionError(("snapshot", seed))
+                        if index.rows(captured, reverse=True) != list(reversed(wanted)):
+                            raise AssertionError(("reverse snapshot", seed))
                         checked += len(wanted)
                 finally:
                     os.close(compact_fd)

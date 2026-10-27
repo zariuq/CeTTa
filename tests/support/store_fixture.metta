@@ -44,9 +44,14 @@
         (let $closed (store:close $owner) $answer)))
      ($error $error))))
 
+(= (store-fixture:reverse $rows $result)
+  (if (== $rows ()) $result
+    (let $next (cons-atom (car-atom $rows) $result)
+      (store-fixture:reverse (cdr-atom $rows) $next))))
+
 (= (store-fixture:scan $scan $position $reverse)
   (case (store:scan-next $scan $position)
-    ((StoreEnd $reverse)
+    ((StoreEnd (store-fixture:reverse $reverse ()))
      ((StoreKey $key $bytes $next)
        (let $again (store:scan-next $scan $position)
          (if (== $again (StoreKey $key $bytes $next))
@@ -56,13 +61,19 @@
      ($error $error))))
 
 (= (store-fixture:run (Keys $path $lower $upper))
+  (store-fixture:keys $path $lower $upper False))
+(= (store-fixture:run (ReverseKeys $path $lower $upper))
+  (store-fixture:keys $path $lower $upper True))
+
+(= (store-fixture:keys $path $lower $upper $descending)
   (case (store:open $path "existing")
     (((StoreOpened $owner)
       (let $answer
         (case (store:snapshot $owner)
           (((StoreSnapshot $view $epoch $revision)
             (let $answer
-              (case (store:scan-open $view $lower $upper)
+              (case (if $descending (store:scan-reverse-open $view $lower $upper)
+                      (store:scan-open $view $lower $upper))
                 (((StoreScan $scan)
                   (let* (($rows (store-fixture:scan $scan 0 ())) ($closed (store:close $scan))) $rows))
                  ($error $error)))
@@ -75,6 +86,12 @@
   (case (store:encode $value)
     (((StoreEncoded $bytes) (store:decode $bytes))
      ($error $error))))
+
+(= (store-fixture:run (IntegerKey $integer))
+  (case (store:key-i64 $integer)
+    (((StoreKeyBytes $bytes) (IntegerKeyRoundTrip $bytes (store:key->i64 $bytes)))
+     ($error $error))))
+(= (store-fixture:run (DecodeIntegerKey $bytes)) (store:key->i64 $bytes))
 
 ; The worker must release these intentionally unreturned owners when its
 ; request arena retires. The open body and cursor also outlive their parents.

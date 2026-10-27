@@ -9,6 +9,7 @@
 (: __cetta_lib_store_blob_open (-> Atom String Atom))
 (: __cetta_lib_store_blob_read (-> Atom Number Number Atom))
 (: __cetta_lib_store_scan_open (-> Atom Atom Atom Atom))
+(: __cetta_lib_store_scan_reverse_open (-> Atom Atom Atom Atom))
 (: __cetta_lib_store_scan_next (-> Atom Number Atom))
 (: __cetta_lib_store_recover (-> Atom Atom))
 (: __cetta_lib_store_compact (-> Atom Atom))
@@ -17,6 +18,7 @@
 (: __cetta_lib_store_encode (-> Atom Atom))
 (: __cetta_lib_store_decode (-> String Atom))
 (: __cetta_lib_store_key_i64 (-> Number Atom))
+(: __cetta_lib_store_key_to_i64 (-> String Atom))
 
 (= (store:open $path $mode)
    (function (case (__cetta_lib_store_open $path $mode) (($result (return $result))))))
@@ -34,6 +36,8 @@
    (function (case (__cetta_lib_store_blob_read $reader $offset $count) (($result (return $result))))))
 (= (store:scan-open $view $lower $upper)
    (function (case (__cetta_lib_store_scan_open $view $lower $upper) (($result (return $result))))))
+(= (store:scan-reverse-open $view $lower $upper)
+   (function (case (__cetta_lib_store_scan_reverse_open $view $lower $upper) (($result (return $result))))))
 (= (store:scan-next $scan $position)
    (function (case (__cetta_lib_store_scan_next $scan $position) (($result (return $result))))))
 (= (store:recover $store)
@@ -53,3 +57,5 @@
 ; Fixed-width signed integer order embedding; schema/layout belongs to callers.
 (= (store:key-i64 $integer)
    (function (case (__cetta_lib_store_key_i64 $integer) (($result (return $result))))))
+(= (store:key->i64 $bytes)
+   (function (case (__cetta_lib_store_key_to_i64 $bytes) (($result (return $result))))))

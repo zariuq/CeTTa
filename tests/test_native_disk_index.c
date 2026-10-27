@@ -17,7 +17,7 @@ static unsigned checks;
 } } while (0)
 static ssize_t write_remaining=-1;
 static size_t read_chunk;
-static uint64_t read_bytes;
+static uint64_t read_bytes,read_calls;
 static int write_interrupt,read_interrupt,sync_interrupt,sync_failure=-1;
 static size_t allocation_limit;
 static unsigned oversized_allocations;
@@ -48,6 +48,7 @@ ssize_t __wrap_write(int fd,const void *data,size_t size) {
     return n;
 }
 ssize_t __wrap_pread(int fd,void *data,size_t size,off_t offset) {
+    ++read_calls;
     if (read_interrupt) { read_interrupt=0; errno=EINTR; return -1; }
     if (read_chunk && size>read_chunk) size=read_chunk;
     ssize_t n=__real_pread(fd,data,size,offset);
@@ -106,16 +107,18 @@ static void scan(const CettaDiskRoot *root,Row *rows,size_t count) {
     check(cetta_disk_cursor_next(cursor,&key,&value)==CETTA_DISK_END);
     cetta_disk_cursor_close(cursor); free(ordered);
 }
-static void range_scan(const CettaDiskRoot *root,Row *rows,size_t count,
-                       CettaDiskBytes lower,bool exclusive,CettaDiskBytes upper) {
+static void range_scan_order(const CettaDiskRoot *root,Row *rows,size_t count,
+                       const CettaDiskBytes *lower,bool exclusive,const CettaDiskBytes *upper,bool reverse) {
     Row *ordered=malloc(count*sizeof(*ordered)); check(ordered);
     memcpy(ordered,rows,count*sizeof(*rows)); qsort(ordered,count,sizeof(*ordered),row_compare);
     CettaDiskCursor *cursor=NULL;
-    check(cetta_disk_cursor_open_range(root,&lower,exclusive,&upper,&cursor)==CETTA_DISK_OK);
+    check((reverse ? cetta_disk_cursor_open_reverse_range(root,lower,exclusive,upper,&cursor) :
+                     cetta_disk_cursor_open_range(root,lower,exclusive,upper,&cursor))==CETTA_DISK_OK);
     for (size_t i=0;i<count;++i) {
-        CettaDiskBytes expected=bytes(ordered[i].key,ordered[i].size);
-        int low=key_compare(expected,lower);
-        if (!ordered[i].present || low<0 || (!low && exclusive) || key_compare(expected,upper)>=0) continue;
+        size_t at=reverse ? count-1-i : i;
+        CettaDiskBytes expected=bytes(ordered[at].key,ordered[at].size);
+        int low=lower ? key_compare(expected,*lower) : 1;
+        if (!ordered[at].present || low<0 || (!low && exclusive) || (upper && key_compare(expected,*upper)>=0)) continue;
         CettaDiskBuffer actual; CettaDiskBlob value;
         check(cetta_disk_cursor_next(cursor,&actual,&value)==CETTA_DISK_OK);
         check(key_compare(bytes(actual.data,actual.size),expected)==0);
@@ -124,6 +127,13 @@ static void range_scan(const CettaDiskRoot *root,Row *rows,size_t count,
     CettaDiskBuffer actual; CettaDiskBlob value;
     check(cetta_disk_cursor_next(cursor,&actual,&value)==CETTA_DISK_END);
     cetta_disk_cursor_close(cursor); free(ordered);
+}
+static void range_scan(const CettaDiskRoot *root,Row *rows,size_t count,
+                       CettaDiskBytes lower,bool exclusive,CettaDiskBytes upper) {
+    range_scan_order(root,rows,count,&lower,exclusive,&upper,false);
+    range_scan_order(root,rows,count,&lower,exclusive,&upper,true);
+    range_scan_order(root,rows,count,&lower,exclusive,NULL,true);
+    range_scan_order(root,rows,count,NULL,false,&upper,true);
 }
 static uint64_t seed=0x756e69636f646531ULL;
 static uint64_t random_word(void) { seed^=seed<<13; seed^=seed>>7; seed^=seed<<17; return seed; }
@@ -154,9 +164,12 @@ static void map_and_snapshots(void) {
         }
     }
     scan(&root,rows,N); scan(&saved,saved_rows,N);
+    range_scan_order(&root,rows,N,NULL,false,NULL,true);
+    range_scan_order(&saved,saved_rows,N,NULL,false,NULL,true);
     FILE *copy=tmpfile(); check(copy); CettaDiskRoot compacted;
     check(cetta_disk_compact(&root,fileno(copy),&compacted)==CETTA_DISK_OK);
     check(compacted.end<root.end); scan(&compacted,rows,N);
+    range_scan_order(&compacted,rows,N,NULL,false,NULL,true);
     check(cetta_disk_compact(&root,fileno(copy),&compacted)==CETTA_DISK_INVALID);
     scan(&root,rows,N); scan(&saved,saved_rows,N);
     fclose(copy); fclose(file);
@@ -229,11 +242,12 @@ static void large_body_and_reader_ownership(void) {
     check(cetta_disk_blob_read(&root,body,size,range,sizeof(range),&n)==CETTA_DISK_OK && !n);
     check(cetta_disk_blob_read(&root,body,size+1,range,sizeof(range),&n)==CETTA_DISK_INVALID && !n);
     CettaDiskCursor *cursor; check(cetta_disk_cursor_open(&root,&cursor)==CETTA_DISK_OK);
+    CettaDiskCursor *reverse;check(cetta_disk_cursor_open_reverse_range(&root,NULL,false,NULL,&reverse)==CETTA_DISK_OK);
     CettaDiskRoot compacted;
     check(cetta_disk_compact(&root,fileno(copy),&compacted)==CETTA_DISK_OK);
     check(cetta_disk_sync(&compacted)==CETTA_DISK_OK);
     set(&root,text("large"),text("new"),false);
-    fclose(file); /* The cursor owns its old segment, even after owner close. */
+    fclose(file); /* Both cursors own the old segment after owner close. */
     check(cetta_disk_blob_reader_read(reader,123,chunk,sizeof(chunk),&received)==CETTA_DISK_OK);
     check(received==sizeof(chunk) && !memcmp(chunk,data+123,received));
     cetta_disk_blob_reader_close(reader);
@@ -242,6 +256,10 @@ static void large_body_and_reader_ownership(void) {
     check(cetta_disk_blob_read(cetta_disk_cursor_root(cursor),body,100,range,sizeof(range),&n)==CETTA_DISK_OK);
     check(n==sizeof(range) && !memcmp(range,data+100,n));
     cetta_disk_buffer_free(&key); cetta_disk_cursor_close(cursor);
+    check(cetta_disk_cursor_next(reverse,&key,&body)==CETTA_DISK_OK && key.size==5);
+    check(cetta_disk_blob_read(cetta_disk_cursor_root(reverse),body,100,range,sizeof(range),&n)==CETTA_DISK_OK);
+    check(n==sizeof(range) && !memcmp(range,data+100,n));
+    cetta_disk_buffer_free(&key);cetta_disk_cursor_close(reverse);
     check(cetta_disk_lookup(&compacted,text("large"),&body)==CETTA_DISK_OK);
     check(cetta_disk_blob_read(&compacted,body,100,range,sizeof(range),&n)==CETTA_DISK_OK);
     check(n==sizeof(range) && !memcmp(range,data+100,n));
@@ -302,15 +320,24 @@ static void structural_corruption(void) {
             }
             root.root=a; /* A small DAG formerly produced 65,536 rows. */
         } else root.root=crafted_branch(&root,8,a,b); /* Wrong compressed prefix. */
-        CettaDiskCursor *cursor=NULL;check(cetta_disk_cursor_open(&root,&cursor)==CETTA_DISK_OK);
-        CettaDiskStatus status=CETTA_DISK_OK;size_t rows=0;
-        while (rows<4) {
-            CettaDiskBuffer key={0};CettaDiskBlob value;
-            status=cetta_disk_cursor_next(cursor,&key,&value);cetta_disk_buffer_free(&key);
-            if (status!=CETTA_DISK_OK) break;
-            ++rows;
+        CettaDiskCursor *cursor=NULL;
+        for (int reverse=0;reverse<2;++reverse) {
+            check((reverse ? cetta_disk_cursor_open_reverse_range(&root,NULL,false,NULL,&cursor) :
+                             cetta_disk_cursor_open(&root,&cursor))==CETTA_DISK_OK);
+            CettaDiskStatus status=CETTA_DISK_OK;size_t rows=0;
+            while (rows<4) {
+                CettaDiskBuffer key={0};CettaDiskBlob value;
+                status=cetta_disk_cursor_next(cursor,&key,&value);cetta_disk_buffer_free(&key);
+                if (status!=CETTA_DISK_OK) break;
+                ++rows;
+            }
+            /* In reverse order the shared-subtree fixture first reaches
+             * its two valid right-hand leaves, then the invalid left path. */
+            size_t valid_prefix=kind==1 && reverse ? 2u : 1u;
+            if (status!=CETTA_DISK_CORRUPT || rows>valid_prefix)
+                fprintf(stderr,"structural fixture kind=%d reverse=%d status=%d rows=%zu\n",kind,reverse,(int)status,rows);
+            check(status==CETTA_DISK_CORRUPT && rows<=valid_prefix);cetta_disk_cursor_close(cursor);
         }
-        check(status==CETTA_DISK_CORRUPT && rows<=1);cetta_disk_cursor_close(cursor);
         if (!kind) {
             CettaDiskBlob value;
             check(cetta_disk_lookup(&root,text("a"),&value)==CETTA_DISK_CORRUPT);
@@ -337,6 +364,7 @@ static void segment_binding(void) {
     CettaDiskBlob value;CettaDiskCursor *cursor=NULL;
     check(cetta_disk_lookup(&mispaired,text("changed"),&value)==CETTA_DISK_CORRUPT);
     check(cetta_disk_cursor_open(&mispaired,&cursor)==CETTA_DISK_CORRUPT && !cursor);
+    check(cetta_disk_cursor_open_reverse_range(&mispaired,NULL,false,NULL,&cursor)==CETTA_DISK_CORRUPT && !cursor);
     CettaDiskRoot refused;CettaDiskOp op={false,text("new"),text("row")};
     check(cetta_disk_build(&mispaired,&op,1,&refused)==CETTA_DISK_CORRUPT);
     CettaDiskRoot omitted=compacted;memset(omitted.segment,0,16);
@@ -346,6 +374,27 @@ static void segment_binding(void) {
     expect(&before,text("changed"),text("old-value"),true);
     expect(&compacted,text("changed"),text("new-value"),true);
     fclose(reused);fclose(copy);fclose(file);
+}
+static void reverse_seek_is_path_bounded(void) {
+    FILE *file=tmpfile();check(file);CettaDiskRoot root=empty(fileno(file));
+    char key[11];
+    for (unsigned i=0;i<1000;++i) {
+        snprintf(key,sizeof(key),"k/%08u",i);
+        set(&root,text(key),bytes(&i,sizeof(i)),false);
+    }
+    unsigned char payload[65536];memset(payload,'v',sizeof(payload));
+    set(&root,text("k/00000999"),bytes(payload,sizeof(payload)),false);
+    CettaDiskBytes lower=text("k/"),upper=text("k/00001000");
+    read_calls=0;read_bytes=0;CettaDiskCursor *cursor=NULL;
+    check(cetta_disk_cursor_open_reverse_range(&root,&lower,false,&upper,&cursor)==CETTA_DISK_OK);
+    CettaDiskBuffer found={0};CettaDiskBlob value;
+    check(cetta_disk_cursor_next(cursor,&found,&value)==CETTA_DISK_OK);
+    check(key_compare(bytes(found.data,found.size),text("k/00000999"))==0);
+    check(value.size==sizeof(payload) && read_bytes<sizeof(payload));
+    /* At most two critical-bit paths, three small frame reads per node,
+     * plus the segment and value headers. The bound depends on key length. */
+    check(read_calls<=2u*9u*(sizeof(key))*3u+12u);
+    cetta_disk_buffer_free(&found);cetta_disk_cursor_close(cursor);fclose(file);
 }
 static void root_record(const CettaDiskRoot *root,unsigned char record[32]) {
     uint64_t values[]={root->root,root->end};
@@ -478,6 +527,6 @@ int main(int argc,char **argv) {
     }
     check(argc==1);
     map_and_snapshots(); batches_and_faults(); large_body_and_reader_ownership(); corruption();
-    structural_corruption();segment_binding();root_publication();
+    structural_corruption();segment_binding();root_publication();reverse_seek_is_path_bounded();
     printf("native disk index: %u checks passed\n",checks); return 0;
 }

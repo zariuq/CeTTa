@@ -87,6 +87,12 @@ CettaDiskStatus cetta_disk_cursor_open(const CettaDiskRoot *root, CettaDiskCurso
 CettaDiskStatus cetta_disk_cursor_open_range(const CettaDiskRoot *root,
     const CettaDiskBytes *lower, bool exclusive, const CettaDiskBytes *upper,
     CettaDiskCursor **out);
+/* The same interval, returned in decreasing byte-key order. Upper remains
+ * exclusive; exclusive still controls the lower bound. Seeking starts at the
+ * upper edge without enumerating the earlier keys. */
+CettaDiskStatus cetta_disk_cursor_open_reverse_range(const CettaDiskRoot *root,
+    const CettaDiskBytes *lower, bool exclusive, const CettaDiskBytes *upper,
+    CettaDiskCursor **out);
 CettaDiskStatus cetta_disk_cursor_next(CettaDiskCursor *cursor,
     CettaDiskBuffer *key, CettaDiskBlob *value);
 const CettaDiskRoot *cetta_disk_cursor_root(const CettaDiskCursor *cursor);

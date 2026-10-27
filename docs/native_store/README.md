@@ -80,8 +80,15 @@ receipts together with their changes; a bounded reply cache is insufficient.
   `(StoreKey key body-length next-position)` or `StoreEnd`. Repeating the last
   position repeats its answer; skipping positions is refused. Keys arrive in
   ascending byte order from the captured revision. Fetch bodies separately.
+- `(store:scan-reverse-open view lower upper)` uses the same inclusive lower
+  and exclusive upper bounds and the same `scan-next` protocol, returning keys
+  in descending byte order. It seeks from the upper edge; finding a maximum
+  does not materialize or walk all preceding records. Snapshots, repeatable
+  positions and handle cleanup have the same contract in both directions.
 - `(store:key-i64 integer)` returns `(StoreKeyBytes bytes)`, a fixed-width signed
-  integer order embedding. Applications decide where to use it in their keys.
+  integer order embedding. `(store:key->i64 bytes)` is its inverse and returns
+  `(StoreKeyInteger integer)`; a key of any length other than eight is refused.
+  Applications decide where to use this encoding in their keys.
 
 The immutable disk index keeps payloads separate from searchable nodes. Reads,
 scope comparisons and compaction use bounded scratch space rather than loading
@@ -114,9 +121,9 @@ A later successful fsync can still leave failed writeback missing: rebuild from
 the last acknowledged root, rewriting discarded bytes, or use a fresh segment.
 The store owner follows this rebuild rule and never publishes a failed candidate.
 
-Tree reads check the path they traverse. Streaming scans and compaction also
-check increasing key order and bound node visits by the captured segment's
-frame capacity, so a small shared-subtree graph cannot expand exponentially.
+Tree reads check the path they traverse. Streaming scans check strict key order
+in the selected direction; compaction checks increasing order. Both bound node
+visits by the captured segment's frame capacity, so a small shared-subtree graph cannot expand exponentially.
 These checks do not turn a point lookup into a whole-file validation proof.
 
 `(store:compact owner)` builds a new segment outside the writer lock and

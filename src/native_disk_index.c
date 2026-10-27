@@ -32,8 +32,8 @@ struct CettaDiskCursor {
     Path *ancestry;
     size_t depth, ancestry_capacity;
     uint64_t visits;
-    CettaDiskBuffer upper, previous;
-    bool failed, has_upper, has_previous;
+    CettaDiskBuffer terminal, previous;
+    bool failed, has_terminal, terminal_exclusive, has_previous, reverse;
 };
 struct CettaDiskBlobReader { CettaDiskRoot root; CettaDiskBlob value; };
 
@@ -465,12 +465,15 @@ static CettaDiskStatus seek(CettaDiskCursor *cursor,CettaDiskBytes lower,bool ex
         uint64_t different=first_bit(lower,found); cut=0;
         while (cut<count && path[cut].bit<different) ++cut;
     }
-    /* Above the first differing bit, retain later right subtrees. At/below
-     * it, every key in the selected subtree lies on the same side of lower.
-     * This handles a bound differing before any stored critical bit too. */
+    /* Above the first differing bit, retain subtrees on the remaining side
+     * of the requested order. At/below it, every selected key is on the same
+     * side of the bound. This also handles absent compressed-prefix bits. */
     for (size_t i=0;i<cut && status==CETTA_DISK_OK;++i)
-        if (!path[i].rightward) status=push(cursor,path[i].right,path[i].bit,true,i,true);
-    if (status==CETTA_DISK_OK && (order<0 || (!order && !exclusive))) {
+        if (path[i].rightward==cursor->reverse)
+            status=push(cursor,cursor->reverse ? path[i].left : path[i].right,
+                        path[i].bit,true,i,!cursor->reverse);
+    bool include=cursor->reverse ? order>0 : order<0;
+    if (status==CETTA_DISK_OK && (include || (!order && !exclusive))) {
         uint64_t target=cut<count ? path[cut].reference : reference;
         status=push(cursor,target,cut ? path[cut-1].bit : 0,cut!=0,cut ? cut-1 : 0,
                     cut ? path[cut-1].rightward : false);
@@ -481,8 +484,9 @@ static CettaDiskStatus seek(CettaDiskCursor *cursor,CettaDiskBytes lower,bool ex
 done:
     node_free(&node); free(path); return status;
 }
-CettaDiskStatus cetta_disk_cursor_open_range(const CettaDiskRoot *root,
-        const CettaDiskBytes *lower,bool exclusive,const CettaDiskBytes *upper,CettaDiskCursor **out) {
+static CettaDiskStatus cursor_open_range(const CettaDiskRoot *root,
+        const CettaDiskBytes *lower,bool exclusive,const CettaDiskBytes *upper,
+        bool reverse,CettaDiskCursor **out) {
     if (!out) return CETTA_DISK_INVALID;
     *out=NULL;
     if (!valid(root) || (lower && !bytes_valid(*lower,root->key_limit)) ||
@@ -490,21 +494,32 @@ CettaDiskStatus cetta_disk_cursor_open_range(const CettaDiskRoot *root,
     CettaDiskStatus identity=cetta_disk_root_check(root);if (identity!=CETTA_DISK_OK) return identity;
     CettaDiskCursor *cursor=calloc(1,sizeof(*cursor));
     if (!cursor) return CETTA_DISK_NOMEM;
-    cursor->root=*root;
+    cursor->root=*root;cursor->reverse=reverse;
     cursor->root.fd=fcntl(root->fd,F_DUPFD_CLOEXEC,0);
     if (cursor->root.fd<0) { free(cursor); return CETTA_DISK_IO; }
-    if (upper) {
-        cursor->upper.data=malloc(upper->size ? upper->size : 1);
-        if (!cursor->upper.data) { cetta_disk_cursor_close(cursor); return CETTA_DISK_NOMEM; }
-        if (upper->size) memcpy(cursor->upper.data,upper->data,upper->size);
-        cursor->upper.size=upper->size; cursor->has_upper=true;
+    const CettaDiskBytes *terminal=reverse ? lower : upper;
+    if (terminal) {
+        cursor->terminal.data=malloc(terminal->size ? terminal->size : 1);
+        if (!cursor->terminal.data) { cetta_disk_cursor_close(cursor); return CETTA_DISK_NOMEM; }
+        if (terminal->size) memcpy(cursor->terminal.data,terminal->data,terminal->size);
+        cursor->terminal.size=terminal->size;cursor->has_terminal=true;
+        cursor->terminal_exclusive=reverse ? exclusive : true;
     }
     CettaDiskStatus status=CETTA_DISK_OK;
     if (lower && upper && key_compare(*lower,*upper)>=0) { /* Empty interval. */ }
-    else if (lower) status=seek(cursor,*lower,exclusive);
+    else if (reverse && upper) status=seek(cursor,*upper,true);
+    else if (!reverse && lower) status=seek(cursor,*lower,exclusive);
     else if (root->root) status=push(cursor,root->root,0,false,0,false);
     if (status!=CETTA_DISK_OK) { cetta_disk_cursor_close(cursor); return status; }
     *out=cursor; return CETTA_DISK_OK;
+}
+CettaDiskStatus cetta_disk_cursor_open_range(const CettaDiskRoot *root,
+        const CettaDiskBytes *lower,bool exclusive,const CettaDiskBytes *upper,CettaDiskCursor **out) {
+    return cursor_open_range(root,lower,exclusive,upper,false,out);
+}
+CettaDiskStatus cetta_disk_cursor_open_reverse_range(const CettaDiskRoot *root,
+        const CettaDiskBytes *lower,bool exclusive,const CettaDiskBytes *upper,CettaDiskCursor **out) {
+    return cursor_open_range(root,lower,exclusive,upper,true,out);
 }
 CettaDiskStatus cetta_disk_cursor_open(const CettaDiskRoot *root,CettaDiskCursor **out) {
     return cetta_disk_cursor_open_range(root,NULL,false,NULL,out);
@@ -527,13 +542,18 @@ CettaDiskStatus cetta_disk_cursor_next(CettaDiskCursor *cursor,CettaDiskBuffer *
         if (status!=CETTA_DISK_OK) { cursor->failed=true; return status; }
         if (node.leaf) {
             CettaDiskBytes stored={node.key.data,node.key.size};
+            int previous=cursor->has_previous ?
+                key_compare((CettaDiskBytes){cursor->previous.data,cursor->previous.size},stored) : 0;
             if (!agrees_with_path(stored,cursor->ancestry,cursor->depth) ||
-                (cursor->has_previous && key_compare((CettaDiskBytes){cursor->previous.data,cursor->previous.size},stored)>=0)) {
+                (cursor->has_previous && (cursor->reverse ? previous<=0 : previous>=0))) {
                 node_free(&node);cursor->failed=true;return CETTA_DISK_CORRUPT;
             }
-            if (cursor->has_upper && key_compare((CettaDiskBytes){node.key.data,node.key.size},
-                    (CettaDiskBytes){cursor->upper.data,cursor->upper.size})>=0) {
-                node_free(&node); cursor->count=0; return CETTA_DISK_END;
+            if (cursor->has_terminal) {
+                int end=key_compare(stored,(CettaDiskBytes){cursor->terminal.data,cursor->terminal.size});
+                bool passed=cursor->reverse ? end<0 : end>0;
+                if (passed || (!end && cursor->terminal_exclusive)) {
+                    node_free(&node);cursor->count=0;return CETTA_DISK_END;
+                }
             }
             status=blob_info(&cursor->root,node.value,value);
             if (status==CETTA_DISK_OK) status=remember_key(&cursor->previous,stored);
@@ -542,8 +562,9 @@ CettaDiskStatus cetta_disk_cursor_next(CettaDiskCursor *cursor,CettaDiskBuffer *
             *key=node.key; return CETTA_DISK_OK;
         }
         if (pending.has_parent && node.bit<=pending.parent) { cursor->failed=true; return CETTA_DISK_CORRUPT; }
-        status=push(cursor,node.right,node.bit,true,cursor->depth,true);
-        if (status==CETTA_DISK_OK) status=push(cursor,node.left,node.bit,true,cursor->depth,false);
+        status=push(cursor,cursor->reverse ? node.left : node.right,node.bit,true,cursor->depth,!cursor->reverse);
+        if (status==CETTA_DISK_OK)
+            status=push(cursor,cursor->reverse ? node.right : node.left,node.bit,true,cursor->depth,cursor->reverse);
         if (status!=CETTA_DISK_OK) { cursor->failed=true; return status; }
     }
     return CETTA_DISK_END;
@@ -553,7 +574,7 @@ void cetta_disk_cursor_close(CettaDiskCursor *cursor) {
     if (cursor) {
         close(cursor->root.fd); free(cursor->pending);free(cursor->ancestry);
         cetta_disk_buffer_free(&cursor->previous);
-        cetta_disk_buffer_free(&cursor->upper); free(cursor);
+        cetta_disk_buffer_free(&cursor->terminal); free(cursor);
     }
 }
 

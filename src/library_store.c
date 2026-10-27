@@ -149,6 +149,15 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         for (size_t i=8;i>0;--i) { bytes[i-1]=(unsigned char)value;value>>=8; }
         return atom_expr2(a,atom_symbol(a,"StoreKeyBytes"),atom_string_n(a,(const char *)bytes,8));
     }
+    if (atom_is_symbol(head,"__cetta_lib_store_key_to_i64")) {
+        CettaDiskBytes bytes;
+        if (n!=1 || !string(args[0],&bytes) || bytes.size!=8) return refused(a,"invalid-integer-key");
+        uint64_t ordered=0;
+        for (size_t i=0;i<8;++i) ordered=(ordered<<8)|bytes.data[i];
+        uint64_t sign=UINT64_C(1)<<63;
+        int64_t value=ordered<sign ? INT64_MIN+(int64_t)ordered : (int64_t)(ordered-sign);
+        return atom_expr2(a,atom_symbol(a,"StoreKeyInteger"),atom_int(a,value));
+    }
     if (atom_is_symbol(head,"__cetta_lib_store_open")) {
         CettaDiskBytes path;
         if (n!=2 || !string(args[0],&path) || !path.size || memchr(path.data,0,path.size) ||
@@ -269,13 +278,17 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         }
         cetta_native_handle_use_release(&use);return result;
     }
-    if (atom_is_symbol(head,"__cetta_lib_store_scan_open")) {
+    bool reverse_scan=atom_is_symbol(head,"__cetta_lib_store_scan_reverse_open");
+    if (atom_is_symbol(head,"__cetta_lib_store_scan_open") || reverse_scan) {
         CettaDiskBytes lower={0},upper={0};bool lo=false,hi=false;
         if (n!=3 || !bound(args[1],&lower,&lo) || !bound(args[2],&upper,&hi)) return refused(a,"invalid-range");
         CettaNativeHandleUse use={0};
         if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
         Scan *scan=calloc(1,sizeof(*scan));Atom *result;
-        CettaDiskStatus status=scan ? cetta_disk_cursor_open_range(cetta_disk_store_view_root(cetta_native_handle_use_resource(&use)),lo ? &lower : NULL,false,hi ? &upper : NULL,&scan->cursor) : CETTA_DISK_NOMEM;
+        const CettaDiskRoot *root=cetta_disk_store_view_root(cetta_native_handle_use_resource(&use));
+        CettaDiskStatus status=!scan ? CETTA_DISK_NOMEM : reverse_scan ?
+            cetta_disk_cursor_open_reverse_range(root,lo ? &lower : NULL,false,hi ? &upper : NULL,&scan->cursor) :
+            cetta_disk_cursor_open_range(root,lo ? &lower : NULL,false,hi ? &upper : NULL,&scan->cursor);
         if (status!=CETTA_DISK_OK) { free(scan);result=status_value(a,disk_status(status)); }
         else {
             Atom *handle=own(ctx,a,scan_kind,scan,free_scan);
