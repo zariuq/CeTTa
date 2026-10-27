@@ -775,6 +775,11 @@ Operand storage can be reordered only with its coordinates and child plans;
 wrapper spelling does not undo that normalization. Immutable node storage and
 logical binding authority are unchanged.
 
+PettaPlanNode stores that word in its computation field; reading it does not
+infer an operation again from the source role. A generic invocation may omit
+a specialized native body. Call entry then selects the current callee's body
+without decoding a different control operation from the operand carrier.
+
 Ordinary step admission now receives a borrowed CettaSourceStep: the existing
 machine/goal instance coordinates, frontier phase and an explicit debit.
 Canonical ordinary visits retain their previous unit charge; frontier
@@ -797,6 +802,12 @@ code-shaped data and duplicate answers. ContextualCBPV.EpisodeAccounting
 relates explicit native debit arithmetic to the natural-number purse and full
 metered kernel. Authored occurrence mapping, complete dialect elaboration and
 native C correspondence remain refinement obligations.
+
+ExecutionControl.Occurrence.Invocation joins ordinary occurrence lowering to
+borrowed callee entry and its independent expanded-call reference. The metered
+join preserves the admitted source charge, actual residual and semantic purse,
+including failed lexical resolution. It does not identify native goal visits
+with authored source occurrences.
 
 Variadic sequence plans
 -----------------------
@@ -853,3 +864,145 @@ missing pairs cannot borrow the historical baseline's recorded timings.
 Qualification reuse and calibration include the frozen cohort's identity.
 The fixed 96-cell PeTTa v1.0.6 panel and HE/NIK application controls remain
 separate required evidence for the final common-execution artifact.
+
+Prepared computation operands
+-----------------------------
+
+The prepared source view supplies the same computation word as ordinary
+execution through an opaque occurrence callback. The word refines completed
+values and constructors without granting call authority to data. Branch and
+binding lowering reads operand coordinates together with their child views;
+a missing word keeps fresh dialect interpretation.
+
+Dialect expression projection receives the borrowed word as well. A retained
+force selects code interpretation even with a different physical wrapper;
+a generic invocation does not acquire force from an eval spelling. A force
+without an admitted code projection declines before entry. Ordinary force
+and a Need update remain distinct.
+
+A reusable syntax-only Need entrance cannot discard a captured operand's
+value authority. Source-aware controls instead use their per-expression node
+lowering into the same worker. Completed call-shaped data stays data across
+that entrance, and malformed coordinates refuse before any operand executes.
+
+PreparedComputation joins the common coordinate reader to the independent
+RegisterCode compiler for pure branches and bindings. Its ordered binding
+reference evaluates each producer, matches its pattern and threads the
+resulting registers into the next binding. Native source classification,
+root invocation arguments, branch flattening, semantic source charging and C
+ownership remain separate correspondence obligations.
+
+Source occurrence accounting
+----------------------------
+
+Ordinary admission carries a declaration/query root, a position assigned before
+plan normalization, and an explicit debit. Roots are independent of shared
+plan addresses. Catalogued duplicate equations have distinct roots; the live
+Space occurrence receipt remains their separate revision-validity evidence.
+Uncatalogued snapshot entries receive roots when that snapshot is captured.
+
+Goals and alternatives retain the root by value; their immutable plans own
+positions and debits. Owned continuations retain those roots and existing plan
+owners. Declining a pending transition changes neither its receipt nor charge.
+Source-aware computation goals read their plan debit. Derived goals and frontier
+boundaries use position zero and retain canonical unit accounting; a missing
+annotation does not grant free execution. Default authored plan charges remain
+one. Physical allowance and the semantic purse remain independent.
+
+Admission checks the active physical window before spending the pending
+source debit. A refused physical step changes neither semantic credit nor
+spent work. Source refusal also leaves physical counters unchanged; cancellation
+keeps priority over either admission. Refilling a controller quantum resumes
+the retained computation and publication frontier.
+
+SourceAccounting proves a charged-job to retained-program-counter refinement,
+including bounded prefixes, exact residuals and native debit overflow guards.
+It also shows why combining unit charges into one aggregate charge can change
+a budgeted prefix. Complete C syntax elaboration, dynamic call-stack origins
+and specialized source-fuel correspondence remain separate obligations.
+
+ContextualSourceAdmission joins a native cumulative physical counter and
+bounded-word source ledger to the independently metered contextual machine.
+Every slice retains its full kernel state, source trace and remaining credit;
+split execution and physical-window refill preserve that residual. Complete
+syntax elaboration and native pointer correspondence remain separate duties.
+
+Scoped input loans during collection
+-----------------------------------
+
+An answer cursor already borrows its entry values until it closes or detaches.
+Its register collector may retain a closed subgraph in one of those live input
+arenas instead of evacuating it. The dying nursery and invocation survivor are
+excluded. A generation-closed graph spanning another arena is insufficient;
+the loan uses the stricter single-arena closure fact. Identity-bearing and
+thread-local resources remain ineligible.
+
+The existing copy session carries this temporary permission. It does not mark
+borrowed graphs as destination-owned or certify newly constructed parents as
+closed over the destination. Resolver and mapped-copy semantics take precedence
+over borrowing. Active update-cell resolution continues to traverse its roots.
+
+Detachment and publication use ordinary multi-root transport to materialize
+borrowed graphs before their source storage is released. Moving a register
+result into cursor storage may preserve the same input loan while owning the
+parts that lived in reusable invocation storage. Physical allowance refill
+continues the retained frontier, including the native calls already performed.
+
+ScopedGraphLoan models labelled values, closed input arenas, reclamation and
+later materialization. Its observations preserve labels, ordered edges and
+duplicate occurrences. Native closure-bit construction, pointer-DAG identity,
+resource payloads and lifetime-guard correspondence remain separate checks.
+
+Callee-local native register entry
+----------------------------------
+
+A matched equation can enter native-aware register code while its cursor
+retains other matching equations. Ambiguity in another head does not veto
+the complete program. Each call from register code uses the existing callee
+selector; an ambiguous call transfers its ready arguments and actual return
+frames to the cursor, preserving pending alternatives and earlier effects.
+Input-specific refusal does not invalidate the reusable program.
+
+CalleeAdmission compares the candidate scanner with complete matching and
+proves equality of the retained frontier, return frames and published prefix.
+Its bounded continuation law uses the shared operational model. Native
+matching, register bytecode, pointer ownership and source-fuel accounting
+remain separate correspondence obligations.
+
+Common collection plans
+-----------------------
+
+Collection is an explicit computation operation with a retained producer
+coordinate. Ordinary execution, counted consumers and OEM lower that same
+operation through their existing collection owners. Dialect elaboration selects
+the host materializer and permitted extended collection alias. Completed values
+stay data even when their printed shape names an executable operation.
+
+SourceCollection joins the operand reader to the maintained PeTTa source
+machine's collection entry and finalization rules. The shared owned-completion
+driver buffers results while effects run, then either publishes the completed
+frontier or constructs one aggregate. A later fault discards unpublished results
+without replaying earlier effects. These are finite completed-producer laws;
+full source-to-contextual compilation, conditional completion, native source
+fuel and pointer ownership retain their separate correspondence obligations.
+
+Shared computation elaboration
+
+Control, invocation and combined computation elaboration have one compiled
+owner in petta_semantics.c. The public declarations retain the existing
+four-byte control and three-byte invocation layouts. Their generated descriptors remain
+immutable metadata; elaborating a plan grants no call, type or source authority.
+
+SourceSchedulingBoundary distinguishes concrete completion schedules from a
+language-wide policy. Its smaller causal law requires an earlier production
+for each consumed occurrence. Both interleaving and batching satisfy that law,
+and every prefix of a causally valid trace remains valid. Multiplicity,
+explicit sequencing, mutable dependencies, stopping and source debit retain
+separate obligations. These model laws do not establish the complete native
+source-to-contextual refinement.
+
+Canonical lookup first tries the existing borrowed reader over bounded shallow
+structure after the pointer-identity and stability checks. A known miss remains
+a miss; an unknown result uses the existing iterative lookup. Deep and wide
+graphs retain that general path. Managed native identifiers keep their lifetime
+checks and are never admitted as their scalar spelling.

@@ -363,7 +363,9 @@ static CettaPreparedPureProjectionMode entry_projection_mode;
 static SymbolId entry_view_head;
 
 static CettaPreparedPureExpressionViewState entry_view(
-    const Atom *expression, CettaPreparedPureExpressionView *view) {
+    const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view) {
+    (void)computation;
     if (expression->kind != ATOM_EXPR || expression->expr.len != 2u ||
         !atom_is_symbol_id(expression->expr.elems[0], entry_view_head))
         return CETTA_PREPARED_PURE_EXPRESSION_DEFAULT;
@@ -1144,7 +1146,9 @@ static void test_cursor_limit_keeps_frontier(void) {
 }
 
 static CettaPreparedPureExpressionViewState zero_view(
-    const Atom *expression, CettaPreparedPureExpressionView *view) {
+    const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view) {
+    (void)computation;
     (void)view;
     return expression && expression->kind == ATOM_EXPR &&
            expression->expr.len == 1u &&

@@ -927,11 +927,13 @@ bool atom_eq_fast(Atom *a, Atom *b);
 /* Compute structural hash of an atom */
 uint32_t atom_hash(Atom *a);
 
-/* A 64-bit hash spread over every bit, equal for atoms atom_eq equates, for
- * tables that index many terms by hash.  atom_hash stays the shared
- * structural hash; its recurrence lets families of terms that differ in small
- * leaves, numbers above all, collapse to one 32-bit value. */
-uint64_t atom_spread_hash(Atom *atom);
+/* A spread hash for known identity-free finite structure or certified
+ * infinite unfoldings. False leaves out unchanged when neither domain is
+ * established. A collection must switch
+ * to canonical equality when any key declines: rational views can compare
+ * equal to finite trees while having a different physical representation.
+ * Shared expression children are memoized within this call. */
+bool atom_spread_hash(Atom *atom, uint64_t *out);
 
 /* A hash cache of 0 means "not yet known", so every structural hash, cached
  * or not, spells a computed 0 as this word: leaves, expression folds, the
@@ -1581,6 +1583,13 @@ Atom *atom_deep_copy_mapped(Arena *dst, Atom *src,
    resolver, installed before copying, redirects every encountered node before
    traversal; update-cell collectors use it to collapse evaluated thunks. */
 AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst);
+/* Borrow closed graphs from the named arenas instead of transporting them.
+ * Install before the first copy; mapped/resolving sessions cannot borrow.
+ * The identity array stays live until this session ends. Source storage stays
+ * live until every resulting borrow is retired or materialized by an ordinary
+ * copy. This grants no destination-ownership or arena-closure certificate. */
+bool atom_deep_copy_session_loan_arenas(AtomDeepCopySession *session,
+    const uint32_t *identities, size_t count);
 /* A multi-root mapped episode. The mapper/context cannot be replaced during
  * the episode. Destination-owned terms are still traversed: storage ownership
  * does not establish that their leaves already have the requested meaning.

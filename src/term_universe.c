@@ -3805,10 +3805,11 @@ static AtomId term_universe_expr_id_from_ids(TermUniverse *universe,
  * the general iterative path. */
 static AtomId term_universe_lookup_atom_id_borrowed(
         const TermUniverse *universe, Atom *src, uint32_t depth,
-        bool *complete) {
+        bool shallow, bool *complete) {
     enum {
         TERM_UNIVERSE_LOOKUP_INLINE_CHILDREN = 16u,
         TERM_UNIVERSE_LOOKUP_MAX_DEPTH = 64u,
+        TERM_UNIVERSE_LOOKUP_SHALLOW_DEPTH = 2u,
     };
     if (!complete || !*complete || !universe || !src) {
         if (complete)
@@ -3821,6 +3822,8 @@ static AtomId term_universe_lookup_atom_id_borrowed(
     if (src->kind != ATOM_EXPR)
         return term_universe_leaf_id((TermUniverse *)universe, src, false);
     if (depth >= TERM_UNIVERSE_LOOKUP_MAX_DEPTH ||
+        (shallow && (depth >= TERM_UNIVERSE_LOOKUP_SHALLOW_DEPTH ||
+                     src->expr.len > TERM_UNIVERSE_LOOKUP_INLINE_CHILDREN)) ||
         !cetta_expr_len_fits_u32(src->expr.len) ||
         (size_t)src->expr.len > SIZE_MAX / sizeof(AtomId)) {
         *complete = false;
@@ -3839,7 +3842,7 @@ static AtomId term_universe_lookup_atom_id_borrowed(
     AtomId result = CETTA_ATOM_ID_NONE;
     for (CettaExprIndex i = 0u; i < src->expr.len; i++) {
         child_ids[i] = term_universe_lookup_atom_id_borrowed(
-            universe, src->expr.elems[i], depth + 1u, complete);
+            universe, src->expr.elems[i], depth + 1u, shallow, complete);
         if (!*complete || child_ids[i] == CETTA_ATOM_ID_NONE)
             goto done;
     }
@@ -5019,6 +5022,13 @@ AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src) {
         return existing_ptr;
     if (!term_universe_atom_is_stable(src))
         return CETTA_ATOM_ID_NONE;
+    /* Reuse the borrowed reader for bounded shallow structure. Its unknown
+     * result retains the iterative path for deeper or wider graphs. */
+    bool complete = true;
+    AtomId shallow_id = term_universe_lookup_atom_id_borrowed(
+        universe, src, 0u, true, &complete);
+    if (complete)
+        return shallow_id;
     bool stable = false;
     AtomId stable_id =
         term_universe_stable_atom_id_iterative((TermUniverse *)universe, src,
@@ -5050,7 +5060,7 @@ AtomId term_universe_lookup_expression_coordinates(
          index < coordinate_count; index++) {
         bool complete = true;
         child_ids[index] = term_universe_lookup_atom_id_borrowed(
-            universe, coordinates[index], 0u, &complete);
+            universe, coordinates[index], 0u, false, &complete);
         if (!complete) {
             child_ids[index] = term_universe_lookup_atom_id(
                 universe, coordinates[index]);
@@ -5102,7 +5112,7 @@ AtomId term_universe_lookup_symbol_application(
          index < argument_count; index++) {
         bool complete = true;
         child_ids[index + 1u] = term_universe_lookup_atom_id_borrowed(
-            universe, arguments[index], 0u, &complete);
+            universe, arguments[index], 0u, false, &complete);
         if (!complete) {
             child_ids[index + 1u] = term_universe_lookup_atom_id(
                 universe, arguments[index]);

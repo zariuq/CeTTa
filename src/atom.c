@@ -24,6 +24,8 @@ const CettaTermGraphRef *term_graph_ref(const CettaTermGraph *graph,
                                         uint32_t node) __attribute__((weak));
 void term_graph_retain(void *graph) __attribute__((weak));
 void term_graph_release(void *graph) __attribute__((weak));
+bool term_graph_infinite(const CettaTermGraph *graph, uint32_t node)
+    __attribute__((weak));
 bool term_graph_value_eq(Atom *left, Atom *right,
                          bool (*leaf_eq)(Atom *, Atom *)) __attribute__((weak));
 uint32_t term_graph_view_hash(Atom *atom,
@@ -215,6 +217,8 @@ typedef struct {
     const AtomDeepCopyRegion *region;
     /* Whether copies drop HE's evaluated marks (a space storing syntax). */
     bool strip_he_marks;
+    const uint32_t *loan_arenas;
+    size_t loan_arena_count;
 } AtomDeepCopyMemo;
 
 static _Thread_local unsigned g_atom_deep_copy_strip_he_marks;
@@ -245,6 +249,22 @@ static inline bool atom_deep_copy_may_share(const AtomDeepCopyMemo *memo,
            !(memo->strip_he_marks && atom_may_hold_he_mark(source));
 }
 
+/* A temporary loan deliberately does not use the older-generation ownership
+ * test: a later ordinary publication must still materialize this graph. */
+static __attribute__((noinline, cold)) bool atom_deep_copy_may_loan(
+        const AtomDeepCopyMemo *memo, const Atom *source) {
+    if (!memo->loan_arena_count || !source->arena_id ||
+        !(source->flags & ATOM_FLAG_ARENA_CLOSED) ||
+        (source->flags & (ATOM_FLAG_HAS_IDENTITY_GROUNDED |
+                          ATOM_FLAG_HAS_THREAD_LOCAL_RESOURCE)) ||
+        !atom_deep_copy_may_share(memo, source))
+        return false;
+    for (size_t index = 0u; index < memo->loan_arena_count; index++)
+        if (source->arena_id == memo->loan_arenas[index])
+            return true;
+    return false;
+}
+
 typedef struct AtomDeepCopyInventory {
     const void *kind;
     void *value;
@@ -260,6 +280,7 @@ struct AtomDeepCopySession {
     AtomDeepCopyLeafMap map;
     void *map_context;
     bool failed;
+    bool started;
     AtomDeepCopyRegion region;
     AtomDeepCopyInventory *inventories;
 };
@@ -2293,38 +2314,78 @@ static uint64_t hashcons_slot_hash(Atom *atom) {
     return hashcons_index_finalize(h);
 }
 
-/* An atom the spread hash takes whole, through atom_hash: a leaf, or a term
- * atom_hash reads through its rational unfolding.  Every other expression is
- * read child by child, as atom_hash folds it, so atoms atom_eq equates hash
- * alike. */
-static inline bool atom_spread_whole(const Atom *atom) {
-    return !atom || atom->kind != ATOM_EXPR ||
-           (term_graph_view_hash && atom_structural_has_rational(atom));
-}
-
 typedef struct {
     Atom *node;
     CettaExprIndex next;
     uint64_t hash;
 } AtomSpreadFrame;
 
-uint64_t atom_spread_hash(Atom *atom) {
+typedef struct {
+    const Atom *node;
+    uint64_t hash;
+} AtomSpreadMemoEntry;
+
+/* Only nested expressions need the map; ordinary flat keys allocate none. */
+static AtomSpreadMemoEntry *atom_spread_memo_slot(
+        AtomSpreadMemoEntry *entries, size_t capacity, const Atom *node) {
+    size_t index = (size_t)hashcons_index_finalize((uintptr_t)node) & (capacity - 1u);
+    while (entries[index].node && entries[index].node != node)
+        index = (index + 1u) & (capacity - 1u);
+    return &entries[index];
+}
+
+static bool atom_spread_infinite_node(const Atom *atom, void *context) {
+    (void)context;
+    const CettaTermGraphRef *ref = atom_term_graph_ref(atom);
+    return ref && term_graph_infinite &&
+        term_graph_infinite(ref->graph, ref->node);
+}
+
+bool atom_spread_hash(Atom *atom, uint64_t *out) {
+    if (!atom || !out ||
+        !(atom->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) ||
+        atom_has_identity_grounded(atom))
+        return false;
     const uint64_t seed = UINT64_C(0x243f6a8885a308d3);
-    if (atom_spread_whole(atom))
-        return hashcons_index_finalize(
+    if (atom_structural_has_rational(atom)) {
+        /* An infinite unfolding cannot equal a finite key. Keep its existing
+         * bisimulation hash, including open forms; finite graph views decline
+         * because their ordinary representatives use the finite-tree fold. */
+        if (!atom_graph_any(atom, atom_spread_infinite_node, NULL))
+            return false;
+        *out = hashcons_index_finalize(hashcons_index_mix(seed, atom_hash(atom)));
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR) {
+        *out = hashcons_index_finalize(
             hashcons_index_mix(seed, atom_hash(atom)));
+        return true;
+    }
     AtomSpreadFrame inline_frames[32];
     AtomSpreadFrame *frames = inline_frames;
     size_t cap = sizeof(inline_frames) / sizeof(inline_frames[0]);
     size_t len = 0u;
+    AtomSpreadMemoEntry inline_memo[32];
+    AtomSpreadMemoEntry *memo = NULL;
+    size_t memo_cap = 0u, memo_len = 0u;
     frames[len++] = (AtomSpreadFrame){
         atom, 0u, hashcons_index_mix(seed, atom->expr.len)};
     for (;;) {
         AtomSpreadFrame *top = &frames[len - 1u];
         if (top->next < top->node->expr.len) {
             Atom *child = top->node->expr.elems[top->next++];
-            if (atom_spread_whole(child)) {
+            if (child->kind != ATOM_EXPR) {
                 top->hash = hashcons_index_mix(top->hash, atom_hash(child));
+                continue;
+            }
+            if (!memo) {
+                memset(inline_memo, 0, sizeof(inline_memo));
+                memo = inline_memo;
+                memo_cap = sizeof(inline_memo) / sizeof(inline_memo[0]);
+            }
+            AtomSpreadMemoEntry *known = atom_spread_memo_slot(memo, memo_cap, child);
+            if (known->node) {
+                top->hash = hashcons_index_mix(top->hash, known->hash);
                 continue;
             }
             if (len == cap) {
@@ -2345,8 +2406,28 @@ uint64_t atom_spread_hash(Atom *atom) {
         if (--len == 0u) {
             if (frames != inline_frames)
                 free(frames);
-            return done;
+            if (memo && memo != inline_memo)
+                free(memo);
+            *out = done;
+            return true;
         }
+        if ((memo_len + 1u) * 2u >= memo_cap) {
+            size_t capacity = memo_cap * 2u;
+            if (capacity <= memo_cap || capacity > SIZE_MAX / sizeof(*memo))
+                cetta_oom(SIZE_MAX);
+            AtomSpreadMemoEntry *grown = cetta_malloc(capacity * sizeof(*grown));
+            memset(grown, 0, capacity * sizeof(*grown));
+            for (size_t i = 0u; i < memo_cap; i++)
+                if (memo[i].node)
+                    *atom_spread_memo_slot(grown, capacity, memo[i].node) = memo[i];
+            if (memo != inline_memo)
+                free(memo);
+            memo = grown;
+            memo_cap = capacity;
+        }
+        *atom_spread_memo_slot(memo, memo_cap, top->node) =
+            (AtomSpreadMemoEntry){top->node, done};
+        memo_len++;
         frames[len - 1u].hash = hashcons_index_mix(frames[len - 1u].hash, done);
     }
 }
@@ -7064,6 +7145,8 @@ static void atom_deep_copy_memo_init(AtomDeepCopyMemo *memo) {
     memo->buffer_used = 0u;
     memo->region = NULL;
     memo->strip_he_marks = g_atom_deep_copy_strip_he_marks != 0u;
+    memo->loan_arenas = NULL;
+    memo->loan_arena_count = 0u;
     atom_deep_copy_memo_clear(memo->slots, memo->cap);
 }
 
@@ -7443,6 +7526,8 @@ static Atom *atom_deep_copy_impl(
     memoized = atom_deep_copy_lookup(memo, src);
     if (memoized)
         return memoized;
+    if (!resolver && !map && !view && memo->loan_arena_count && atom_deep_copy_may_loan(memo, src))
+        return atom_deep_copy_record(memo, src, src) ? src : NULL;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_NODE);
     Atom *memo_source = src;
     bool complete = false;
@@ -7530,6 +7615,14 @@ static Atom *atom_deep_copy_impl(
 
             if (child_copy) {
                 frame->elems[frame->next++] = child_copy;
+                continue;
+            }
+            if (!resolver && !map && !view && memo->loan_arena_count && atom_deep_copy_may_loan(memo, child)) {
+                if (!atom_deep_copy_record(memo, child, child)) {
+                    atom_deep_copy_stack_free(stack, inline_stack, stack_cap);
+                    return NULL;
+                }
+                frame->elems[frame->next++] = child;
                 continue;
             }
             if (!map && !view &&
@@ -7685,10 +7778,28 @@ AtomDeepCopySession *atom_deep_copy_session_new(Arena *dst) {
     session->map = NULL;
     session->map_context = NULL;
     session->failed = false;
+    session->started = false;
     session->region = (AtomDeepCopyRegion){0};
     session->inventories = NULL;
     atom_deep_copy_memo_init(&session->memo);
     return session;
+}
+
+bool atom_deep_copy_session_loan_arenas(AtomDeepCopySession *session,
+        const uint32_t *identities, size_t count) {
+    if (!session || session->failed || session->started || session->resolver ||
+        session->map || (count && !identities))
+        return false;
+    for (size_t index = 0u; index < count; index++) {
+        if (!identities[index] || identities[index] == ARENA_ID_DEAD)
+            return false;
+        for (uint32_t region = 0u; region < session->region.len; region++)
+            if (identities[index] == session->region.arenas[region].identity)
+                return false;
+    }
+    session->memo.loan_arenas = identities;
+    session->memo.loan_arena_count = count;
+    return true;
 }
 
 AtomDeepCopySession *atom_deep_copy_session_new_mapped(
@@ -7711,6 +7822,9 @@ bool atom_deep_copy_session_forward_region(AtomDeepCopySession *session,
                                            ArenaMark mark) {
     if (!session || session->map || !arena || arena->identity == 0u)
         return false;
+    for (size_t index = 0u; index < session->memo.loan_arena_count; index++)
+        if (session->memo.loan_arenas[index] == arena->identity)
+            return false;
     AtomDeepCopyRegion *region = &session->region;
     for (uint32_t a = 0u; a < region->len; a++) {
         if (region->arenas[a].identity == arena->identity)
@@ -7763,8 +7877,11 @@ bool atom_deep_copy_session_forward_region(AtomDeepCopySession *session,
 void atom_deep_copy_session_set_resolver(
     AtomDeepCopySession *session, AtomDeepCopyResolver resolver,
     void *context) {
-    if (!session || session->map)
+    if (!session || session->map ||
+        (session->memo.loan_arena_count && session->started))
         return;
+    session->memo.loan_arenas = NULL;
+    session->memo.loan_arena_count = 0u;
     session->resolver = resolver;
     session->resolver_context = context;
 }
@@ -7776,6 +7893,7 @@ Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src) {
         session->failed = true;
         return NULL;
     }
+    session->started = true;
     if (session->resolver &&
         !(src = session->resolver(session->resolver_context, src))) {
         session->failed = true;
@@ -7784,6 +7902,9 @@ Atom *atom_deep_copy_session_copy(AtomDeepCopySession *session, Atom *src) {
     Atom *forwarded = atom_deep_copy_lookup(&session->memo, src);
     if (forwarded)
         return forwarded;
+    if (!session->resolver && !session->map && session->memo.loan_arena_count &&
+        atom_deep_copy_may_loan(&session->memo, src))
+        return atom_deep_copy_memo_store(&session->memo, src, src) ? src : NULL;
     /*
      * Arena ownership proves where the root allocation lives, not where its
      * transitive children live.  A destination-owned expression can still

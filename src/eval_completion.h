@@ -26,15 +26,26 @@ typedef enum {
     CETTA_SOURCE_PUBLISH,
 } CettaSourcePhase;
 
-/* Operational occurrence/debit metadata is borrowed for step admission.
- * Instances name the executing machine and its retained goal, not a shared
- * plan's address. Frontier boundaries have no goal instance. Mapping these
- * occurrences to authored syntax remains the elaborator's responsibility. */
+/* The declaration/query root is distinct from a shared executable plan.
+ * Position zero denotes derived work without an exact source-node receipt. */
+typedef struct {
+    uint64_t root;
+    uint32_t position;
+    uint32_t debit;
+} CettaSourceOccurrence;
+
+uint64_t cetta_source_root_new(void);
+
+/* Borrowed admission receipt. Operational instances name the executing
+ * machine and retained goal; source names the declaration/query occurrence.
+ * Frontier boundaries have no goal instance and use source position zero.
+ * Adapters without source-node metadata retain explicit unit accounting. */
 typedef struct {
     uint64_t machine_instance;
     uint64_t occurrence_instance;
     uint64_t debit;
     CettaSourcePhase phase;
+    CettaSourceOccurrence source;
 } CettaSourceStep;
 
 /* Completion is an identity; the first incomplete cause survives nested

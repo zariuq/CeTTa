@@ -217,6 +217,66 @@ static Atom *cyclic_value(Arena *arena, bool unrolled, int leaf) {
     return value;
 }
 
+static void uniqueness_hash_domains(Arena *arena) {
+    CettaTermGraph *graph = term_graph_new();
+    uint32_t nil = term_graph_add_nil(graph);
+    assert(term_graph_seal(graph));
+    Atom *view = term_graph_node_value(arena, graph, nil, NULL);
+    Atom *plain = atom_expr(arena, NULL, 0u);
+    assert(view && atom_eq(view, plain));
+    uint64_t hash = UINT64_MAX;
+    assert(!atom_spread_hash(view, &hash) && hash == UINT64_MAX);
+    assert(atom_spread_hash(plain, &hash));
+    Atom unknown = *plain;
+    unknown.structural_facts = 0u;
+    assert(!atom_spread_hash(&unknown, &hash));
+    for (unsigned reverse = 0u; reverse < 2u; reverse++) {
+        Atom *values[202];
+        for (unsigned i = 0u; i < 100u; i++)
+            values[i] = values[i + 102u] = atom_int(arena, i);
+        values[100] = reverse ? plain : view;
+        values[101] = reverse ? view : plain;
+        Atom *source = atom_expr(arena, values, 202u);
+        Atom *set = petta_semantics_list_to_set(arena, source);
+        Atom *alpha = petta_semantics_alpha_unique(arena, source);
+        assert(set && alpha && set->expr.len == 101u && alpha->expr.len == 101u);
+        for (unsigned i = 0u; i < 100u; i++)
+            assert(set->expr.elems[i]->ground.ival == i && alpha->expr.elems[i]->ground.ival == i);
+        assert(set->expr.elems[100] == values[100]);
+    }
+    Atom *left = atom_expr2(arena, atom_symbol(arena, "Box"), view);
+    Atom *right = atom_expr2(arena, atom_symbol(arena, "Box"), plain);
+    assert(atom_eq(left, right));
+    assert(petta_semantics_list_to_set(arena, atom_expr2(arena, left, right))->expr.len == 1u);
+    Atom *cycle = cyclic_value(arena, false, 1);
+    Atom *unrolled = cyclic_value(arena, true, 1);
+    assert(atom_eq(cycle, unrolled));
+    uint64_t cycle_hash, unrolled_hash;
+    assert(atom_spread_hash(cycle, &cycle_hash) && atom_spread_hash(unrolled, &unrolled_hash));
+    assert(cycle_hash == unrolled_hash);
+    Atom *open_cycle = term_graph_open_value(arena, cycle);
+    assert(atom_eq(cycle, open_cycle) && atom_spread_hash(open_cycle, &unrolled_hash));
+    assert(cycle_hash == unrolled_hash);
+    assert(petta_semantics_list_to_set(arena, atom_expr2(arena, cycle, unrolled))->expr.len == 1u);
+    term_graph_release(graph);
+}
+
+/* The two roots unfold to exponentially many occurrences; hashing reads
+ * their shared physical nodes once, without recursive C calls. */
+static void shared_hash_case(void) {
+    Arena arena;
+    arena_init_detached(&arena);
+    Atom *left = atom_int(&arena, 7), *right = atom_int(&arena, 7);
+    for (unsigned depth = 0u; depth < 4096u; depth++) {
+        left = atom_expr2(&arena, left, left);
+        right = atom_expr2(&arena, right, right);
+    }
+    uint64_t first, second;
+    assert(atom_spread_hash(left, &first) && atom_spread_hash(right, &second));
+    assert(first == second);
+    arena_free(&arena);
+}
+
 static void rational_cases(Arena *arena) {
     Atom *a = cyclic_value(arena, false, 1);
     Atom *b = cyclic_value(arena, true, 1);
@@ -319,6 +379,110 @@ static void rational_order_laws(Arena *arena) {
     term_graph_release(graph);
 }
 
+static Atom *loan_rewrite_leaf(Arena *arena, Atom *source, void *context) {
+    (void)context;
+    if (source->kind == ATOM_GROUNDED && source->ground.gkind == GV_INT)
+        return atom_int(arena, source->ground.ival + 100);
+    return atom_deep_copy(arena, source);
+}
+
+static Atom *loan_resolve_leaf(void *context, Atom *source) {
+    Atom *replacement = context;
+    return source->kind == ATOM_GROUNDED && source->ground.gkind == GV_INT
+        ? replacement : source;
+}
+
+static void scoped_copy_loans(void) {
+    Arena source, dying, work, published;
+    arena_init(&source);
+    arena_init(&dying);
+    arena_init(&work);
+    arena_init(&published);
+    Atom *leaf = atom_int(&source, 7);
+    Atom *shared = atom_expr3(&source, atom_symbol(&source, "loan"), leaf, leaf);
+    assert(shared->flags & ATOM_FLAG_ARENA_CLOSED);
+    uint32_t identity = source.identity;
+    AtomDeepCopySession *copy = atom_deep_copy_session_new(&work);
+    assert(copy && atom_deep_copy_session_loan_arenas(copy, &identity, 1u));
+    assert(!atom_deep_copy_session_forward_region(copy, &source, arena_mark(&source)));
+    Atom *loan = atom_deep_copy_session_copy(copy, shared);
+    assert(loan == shared && atom_deep_copy_session_copy(copy, shared) == loan);
+    assert(!atom_deep_copy_session_loan_arenas(copy, &identity, 1u));
+    assert(!atom_deep_copy_session_settled(copy, loan));
+    assert(!atom_graph_is_closed_for_arena(&work, loan));
+    atom_deep_copy_session_free(copy);
+
+    Atom *mixed = atom_expr2(&source, shared, atom_int(&dying, 9));
+    assert(!(mixed->flags & ATOM_FLAG_ARENA_CLOSED));
+    copy = atom_deep_copy_session_new(&work);
+    assert(copy && atom_deep_copy_session_loan_arenas(copy, &identity, 1u));
+    Atom *copied = atom_deep_copy_session_copy(copy, mixed);
+    assert(copied && copied != mixed && copied->expr.elems[0] == shared);
+    assert(copied->expr.elems[1] != mixed->expr.elems[1]);
+    assert(!(copied->flags & ATOM_FLAG_ARENA_CLOSED));
+    atom_deep_copy_session_free(copy);
+    arena_free(&dying);
+    assert(copied->expr.elems[1]->ground.ival == 9);
+
+    copy = atom_deep_copy_session_new_mapped(&work, loan_rewrite_leaf, NULL);
+    assert(copy && !atom_deep_copy_session_loan_arenas(copy, &identity, 1u));
+    Atom *mapped = atom_deep_copy_session_copy(copy, shared);
+    assert(mapped && mapped->expr.elems[1]->ground.ival == 107);
+    atom_deep_copy_session_free(copy);
+    copy = atom_deep_copy_session_new(&work);
+    atom_deep_copy_session_set_resolver(copy, loan_resolve_leaf, atom_int(&work, 31));
+    assert(!atom_deep_copy_session_loan_arenas(copy, &identity, 1u));
+    Atom *resolved = atom_deep_copy_session_copy(copy, shared);
+    assert(resolved && resolved->expr.elems[1]->ground.ival == 31);
+    atom_deep_copy_session_free(copy);
+    copy = atom_deep_copy_session_new(&work);
+    assert(copy && atom_deep_copy_session_loan_arenas(copy, &identity, 1u));
+    atom_deep_copy_session_set_resolver(copy, loan_resolve_leaf, atom_int(&work, 43));
+    resolved = atom_deep_copy_session_copy(copy, shared);
+    assert(resolved && resolved->expr.elems[1]->ground.ival == 43);
+    atom_deep_copy_session_free(copy);
+
+    copy = atom_deep_copy_session_new(&work);
+    assert(atom_deep_copy_session_forward_region(copy, &source, arena_mark(&source)));
+    assert(!atom_deep_copy_session_loan_arenas(copy, &identity, 1u));
+    atom_deep_copy_session_free(copy);
+    copy = atom_deep_copy_session_new(&work);
+    uint32_t invalid = 0u;
+    assert(!atom_deep_copy_session_loan_arenas(copy, &invalid, 1u));
+    Atom *owned = atom_deep_copy_session_copy(copy, shared);
+    assert(owned && owned != shared && atom_graph_is_closed_for_arena(&work, owned));
+    atom_deep_copy_session_free(copy);
+
+    Arena older;
+    arena_init(&older);
+    arena_set_older_generation(&source, &older);
+    Atom *generation = atom_expr2(&source, leaf, atom_int(&older, 83));
+    assert(!(generation->flags & ATOM_FLAG_ARENA_CLOSED));
+    assert(generation->structural_facts & ATOM_STRUCTURAL_GENERATION_CLOSED);
+    copy = atom_deep_copy_session_new(&work);
+    assert(atom_deep_copy_session_loan_arenas(copy, &identity, 1u));
+    Atom *generation_copy = atom_deep_copy_session_copy(copy, generation);
+    assert(generation_copy && generation_copy != generation &&
+        generation_copy->expr.elems[1] != generation->expr.elems[1]);
+    atom_deep_copy_session_free(copy);
+
+    Atom *parent = atom_expr2(&work, loan, loan);
+    assert(parent && !(parent->flags & ATOM_FLAG_ARENA_CLOSED));
+    copy = atom_deep_copy_session_new(&published);
+    Atom *escaped = atom_deep_copy_session_copy(copy, parent);
+    assert(escaped && escaped != parent && escaped->expr.elems[0] != loan &&
+        escaped->expr.elems[0] == escaped->expr.elems[1]);
+    assert(atom_deep_copy_session_settled(copy, escaped));
+    atom_deep_copy_session_free(copy);
+    arena_free(&source);
+    arena_free(&older);
+    arena_free(&work);
+    assert(escaped->expr.elems[0]->expr.elems[1]->ground.ival == 7 &&
+        escaped->expr.elems[0]->expr.elems[1] == escaped->expr.elems[0]->expr.elems[2]);
+    arena_free(&published);
+    puts("PASS: scoped graph loans preserve aliases without certifying publication ownership");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -326,6 +490,7 @@ int main(void) {
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
     g_symbols = &symbols;
     arena_init(&arena);
+    scoped_copy_loans();
     expression_boundary_cases(&arena);
     finite_cases(&arena);
     shared_case(24u);
@@ -334,6 +499,8 @@ int main(void) {
     rational_cases(&arena);
     carrier_environments(&arena);
     rational_order_laws(&arena);
+    uniqueness_hash_domains(&arena);
+    shared_hash_case();
     arena_free(&arena);
     symbol_table_free(&symbols);
     g_symbols = NULL;
