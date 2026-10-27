@@ -1096,6 +1096,7 @@ void arena_init(Arena *a) {
     a->retained_owners = NULL;
     a->frame_identities = NULL;
     a->scalar_cache = false;
+    a->own_symbols = false;
     a->recycle_blocks = false;
     a->block_growth = false;
     arena_ledger_open(a);
@@ -1629,6 +1630,11 @@ void arena_set_scalar_cache(Arena *a, bool enabled) {
         a->scalar_cache = enabled;
 }
 
+void arena_set_own_symbols(Arena *a, bool enabled) {
+    if (a)
+        a->own_symbols = enabled;
+}
+
 void arena_set_block_recycling(Arena *a, bool enabled) {
     if (a)
         a->recycle_blocks = enabled;
@@ -2029,8 +2035,9 @@ static void hashcons_init_capacity(HashConsTable *hc, uint32_t capacity) {
     hc->lookup_count = 0;
     hc->lookup_probes = 0;
     hc->maximum_lookup_probe = 0;
-    hc->table = cetta_malloc(sizeof(Atom *) * hc->size);
-    memset(hc->table, 0, sizeof(Atom *) * hc->size);
+    hc->table = calloc(hc->size, sizeof(Atom *));
+    if (!hc->table)
+        cetta_oom(sizeof(Atom *) * hc->size);
 }
 
 void hashcons_init(HashConsTable *hc) {
@@ -2744,11 +2751,11 @@ extern inline VarId var_epoch_id(VarId id, CettaFrameIdentity epoch);
 
 void var_intern_init(VarInternTable *t) {
     if (!t) return;
-    t->chunks =
-        cetta_malloc(sizeof(*t->chunks) * VAR_INTERN_CHUNK_COUNT);
-    for (uint32_t i = 0; i < VAR_INTERN_CHUNK_COUNT; i++) {
-        atomic_init(&t->chunks[i], NULL);
-    }
+    /* Zeroed pages: each slot holds no chunk until one is made, and the
+     * table occupies no page it has not used. */
+    t->chunks = calloc(VAR_INTERN_CHUNK_COUNT, sizeof(*t->chunks));
+    if (!t->chunks)
+        cetta_oom(sizeof(*t->chunks) * VAR_INTERN_CHUNK_COUNT);
     if (pthread_mutex_init(&t->write_mutex, NULL) != 0) {
         fprintf(stderr, "fatal: failed to initialize variable intern mutex\n");
         abort();
@@ -7308,7 +7315,16 @@ static Atom *atom_deep_copy_leaf(Arena *dst, Atom *src, bool share) {
 
     switch (src->kind) {
     case ATOM_SYMBOL:
-        out = atom_symbol_id(dst, src->sym_id);
+        /* A symbol carries nothing a copy could own, so a copy takes the
+         * table's one atom for it.  An arena that interns takes its
+         * published atom instead, which the terms it interns are made of;
+         * one with a symbol cache already holds one atom per symbol; and
+         * one may keep symbols of its own. */
+        out = dst->hashcons || dst->own_symbols ||
+                arena_symbol_cache_is_active(dst)
+            ? NULL : atom_symbol_canonical(src->sym_id);
+        if (!out)
+            out = atom_symbol_id(dst, src->sym_id);
         break;
     case ATOM_VAR:
         out = atom_var_like(dst, src, src->var_id);

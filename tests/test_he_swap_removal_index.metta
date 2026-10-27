@@ -11,24 +11,24 @@
 !(remove-atom &self (item 2 two))
 !(look 2)
 !(look 4)
-!(collapse (match &self (item $k $v) $k))
+!(let $bag (collapse (match &self (item $k $v) $k)) (sort-atom $bag))
 
 ; The last row moves into the gap left by an earlier one.
 !(add-atom &self (item 5 five))
 !(remove-atom &self (item 1 one))
 !(look 5)
-!(collapse (match &self (item $k $v) ($k $v)))
+!(let $bag (collapse (match &self (item $k $v) ($k $v))) (sort-atom $bag))
 
 ; Removing the last row moves nothing.
 !(remove-atom &self (item 5 five))
 !(look 5)
-!(collapse (match &self (item $k $v) $k))
+!(let $bag (collapse (match &self (item $k $v) $k)) (sort-atom $bag))
 
 ; A copy stays after one of two equal rows is removed.
 !(add-atom &self (item 6 six))
 !(add-atom &self (item 6 six))
 !(remove-atom &self (item 6 six))
-!(collapse (match &self (item 6 $v) $v))
+!(let $bag (collapse (match &self (item 6 $v) $v)) (sort-atom $bag))
 
 ; An equation that moves into a gap is still found.
 (gap 1)
@@ -38,7 +38,7 @@
 
 ; Removing an absent row changes nothing.
 !(remove-atom &self (item 99 none))
-!(collapse (match &self (item $k $v) $k))
+!(let $bag (collapse (match &self (item $k $v) $k)) (sort-atom $bag))
 
 ; Many removals and additions between queries.
 (= (churn $n) (if (== $n 0) done
@@ -46,5 +46,5 @@
            ($b (remove-atom &self (tick $n))))
           (churn (- $n 1)))))
 !(churn 40)
-!(collapse (match &self (tick $n) $n))
-!(collapse (match &self (item $k $v) $k))
+!(let $bag (collapse (match &self (tick $n) $n)) (sort-atom $bag))
+!(let $bag (collapse (match &self (item $k $v) $k)) (sort-atom $bag))

@@ -685,6 +685,9 @@ typedef struct {
      * and per small integer until its next reset.  Opt-in, for arenas whose
      * owner allocates such scalars at a high rate. */
     bool scalar_cache;
+    /* Copies into this arena make symbols of their own instead of taking
+     * the symbol table's one atom for each.  Opt-in. */
+    bool own_symbols;
     /* Retired full-size blocks go to the thread's stock for its next
      * recycling arena instead of back to the allocator.  Opt-in, for owners
      * that create and retire many short-lived arenas. */
@@ -770,6 +773,9 @@ void  arena_set_older_generation(Arena *young, const Arena *older);
  * this arena.  Atoms are immutable, so sharing is invisible to observers;
  * a reset or free forgets every shared atom with the storage it lived in. */
 void  arena_set_scalar_cache(Arena *a, bool enabled);
+/* Copies into this arena make symbols of their own, where they would take
+ * the symbol table's one atom for each. */
+void  arena_set_own_symbols(Arena *a, bool enabled);
 /* Keep a contextual identity alive until this arena's corresponding reset.
  * Ambient/external identifiers have no recyclable owner to retain. */
 bool arena_retain_frame_identity(Arena *a, CettaFrameIdentity identity);

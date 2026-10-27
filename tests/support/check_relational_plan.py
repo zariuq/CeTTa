@@ -40,7 +40,7 @@ def main():
             "binding": (f"!(let $x 0 (answer {expression}))\n", None, None),
             "changes": (f"!{expression}\n!(add-atom &self (r 0 0 99))\n"
                         f"!{expression}\n!(remove-atom &self (r 0 0 99))\n!{expression}\n", True, None),
-            "open-row": ("(r $a $b 99)\n" + f"!{expression}\n", False, None),
+            "open-row": ("(r $a $b 99)\n" + f"!{expression}\n", True, None),
             "whole-variable-row": ("!(add-atom &self $whole)\n" + f"!{expression}\n", False, None),
             "numeric-equality": ("(r 0.0 0 99)\n" + f"!{expression}\n", False, None),
             "branching": ("(= (two-values) (superpose (1 2)))\n"
@@ -71,6 +71,46 @@ def main():
                 assert (observed.get("match-relational-count-admission", 0) > 0) == admitted, (
                     name, language, observed)
             records.append({"case": name, "language": language, "expected_admission": admitted,
+                            "observed": observed, "stdout": actual.stdout})
+    # Binary relations, each row once, dense enough for rows of bits: the
+    # counts agree with the reference and with the graph's own, and the
+    # cyclic one is counted by rows of bits (an acyclic chain may be counted
+    # by the flat chain count first).
+    edges = sorted({(u, v) for u in range(8) for v in range(8)
+                    if (u * 7 + v * 3) % 5 < 2})
+    links = sorted({(u, v) for u in range(8) for v in range(8)
+                    if (u + 2 * v) % 3 == 0})
+    out_edges = {}
+    for u, v in edges:
+        out_edges.setdefault(u, set()).add(v)
+    link_set = set(links)
+    dense_cases = {
+        "dense-triangle": ("(, (edge $x $y) (edge $y $z) (edge $z $x))",
+                           sum(1 for x, y in edges for z in out_edges.get(y, ())
+                               if (z, x) in set(edges)), True),
+        "dense-chain": ("(, (edge $x $y) (link $y $z) (edge $z $w))",
+                        sum(1 for x, y in edges for y2, z in links if y2 == y
+                            for w in out_edges.get(z, ())), None),
+        "dense-fixed": ("(, (edge 1 $y) (link $y $z) (edge $z $z))",
+                        sum(1 for y in out_edges.get(1, ()) for y2, z in links
+                            if y2 == y and (z, z) in set(edges)), None),
+    }
+    graph = "".join(f"(edge {u} {v})\n" for u, v in edges) + \
+        "".join(f"(link {u} {v})\n" for u, v in links)
+    for language in ("he", "petta"):
+        for name, (pattern, expected, bits) in dense_cases.items():
+            path = out / f"{name}-{language}.metta"
+            path.write_text(graph + f"!{count_expression(language, pattern)}\n")
+            actual = run(binary, language, path, False, args.stats)
+            reference = run(binary, language, path, True, False)
+            text = f"[{expected}]\n" if language == "he" else f"{expected}\n"
+            assert actual.stdout == reference.stdout == text, (
+                name, language, text, actual.stdout, reference.stdout)
+            observed = counters(actual)
+            if args.stats and bits:
+                assert observed.get("dense-relation-admission", 0) > 0, (
+                    name, language)
+            records.append({"case": name, "language": language,
                             "observed": observed, "stdout": actual.stdout})
     purse_path = out / "field-petta.metta"
     for options, settings in [(("--fuel", str(fuel)), None) for fuel in (16, 64, 512)] + [

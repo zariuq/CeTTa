@@ -1,6 +1,7 @@
 #include "relational_plan.h"
 #include "relational_cursor.h"
 #include "relational_plan_internal.h"
+#include "dense_relation.h"
 #include "parser.h"
 #include "symbol.h"
 
@@ -381,6 +382,120 @@ static void controls(TermUniverse *universe, Arena *arena) {
     space_free(&space);
 }
 
+static bool add_weights(void *context, const AtomId *values, uint64_t weight) {
+    (void)values;
+    *(uint64_t *)context += weight;
+    return true;
+}
+
+/* A plan over rows holding stored variables counts as nested loops do; its
+ * enumeration answers the same weights, or declines when a solution would
+ * keep a stored variable unbound. */
+static void check_open(Space *space, Arena *arena, Atom **patterns,
+                       size_t count, bool enumerable) {
+    CettaRelationalPlan *plan = NULL;
+    assert(cetta_relational_plan_prepare(space, arena, patterns, count, NULL,
+        CETTA_RELATIONAL_ADMIT_FULL_QUERY, &plan));
+    uint64_t actual = 99u;
+    assert(cetta_relational_plan_count(plan, space, &actual, NULL));
+    assert(actual == reference(space, arena, patterns, count, NULL));
+    CettaRelationalCountCursor *cursor = NULL;
+    assert(!cetta_relational_count_cursor_open(plan, space, &cursor) && !cursor);
+    cetta_relational_plan_free(plan);
+    plan = NULL;
+    bool prepared = cetta_relational_plan_prepare(space, arena, patterns, count,
+        NULL, CETTA_RELATIONAL_ADMIT_ENUMERATION, &plan);
+    assert(prepared == enumerable);
+    if (!prepared)
+        return;
+    uint64_t weights = 0u, enumerated = 0u;
+    assert(cetta_relational_plan_enumerate(plan, space, add_weights, &weights,
+                                           &enumerated, NULL));
+    assert(weights == actual && enumerated == actual);
+    cetta_relational_plan_free(plan);
+}
+
+/* A stored variable standing for a whole column acts as a wildcard: its
+ * row is joined on its own, with the factors before it reading only rows
+ * without stored variables, so each row combination is met once. */
+static void stored_variables(TermUniverse *universe, Arena *arena) {
+    Atom *family = parse(arena, "(, (r $x $y) (s $y $z) (t $z $x))");
+    Atom **triangle = family->expr.elems + 1u;
+    Space space;
+    space_init_with_universe(&space, universe);
+    space.kind = SPACE_KIND_STACK;
+    const char *facts[] = {
+        "(r a b)", "(r b c)", "(r $u b)",
+        "(s b c)", "(s c a)", "(s $v $v)",
+        "(t c a)", "(t a b)", "(t c c)",
+    };
+    for (size_t i = 0u; i < sizeof(facts) / sizeof(*facts); i++)
+        add(&space, arena, facts[i]);
+    check_open(&space, arena, triangle, 3u, true);
+    /* A row leaving x to the stored variables of two factors at once has
+     * solutions that keep it unbound: the enumeration declines. */
+    add(&space, arena, "(t c $w)");
+    check_open(&space, arena, triangle, 3u, false);
+    /* One pattern: the open row is a solution of its own. */
+    Atom *single[] = {parse(arena, "(r $x b)")};
+    CettaRelationalPlan *plan = NULL;
+    assert(cetta_relational_plan_prepare(&space, arena, single, 1u, NULL,
+        CETTA_RELATIONAL_ADMIT_FULL_QUERY, &plan));
+    uint64_t count = 99u;
+    assert(cetta_relational_plan_count(plan, &space, &count, NULL));
+    assert(count == reference(&space, arena, single, 1u, NULL) && count == 2u);
+    cetta_relational_plan_free(plan);
+    space_free(&space);
+}
+
+/* A conjunction over dense binary relations is counted by rows of bits:
+ * the count equals nested loops', with and without a seed.  A repeated row
+ * leaves it to the plan, which keeps the row's multiplicity. */
+static void dense_counts(TermUniverse *universe, Arena *arena) {
+    Atom *family = parse(arena, "(, (edge $x $y) (edge $y $z) (edge $z $x))");
+    Atom **triangle = family->expr.elems + 1u;
+    Space space;
+    space_init_with_universe(&space, universe);
+    char row[32];
+    for (int u = 0; u < 8; u++) {
+        for (int v = 0; v < 8; v++) {
+            if ((u * 7 + v * 3) % 5 < 2) {
+                snprintf(row, sizeof(row), "(edge %d %d)", u, v);
+                add(&space, arena, row);
+            }
+        }
+    }
+    CettaDenseQuery *query = NULL;
+    assert(cetta_dense_query_prepare(&space, arena, triangle, 3u, &query));
+    cetta_dense_query_free(query);
+    uint64_t dense = 99u;
+    assert(space_native_relational_count(&space, arena, triangle, 3u, NULL, &dense));
+    assert(dense == reference(&space, arena, triangle, 3u, NULL) && dense > 0u);
+    /* With x bound, y, z and w still close a cycle: the seeded query is
+     * not a chain, and rows of bits count it. */
+    Atom *tailed = parse(arena,
+        "(, (edge $x $y) (edge $y $z) (edge $z $w) (edge $w $y))");
+    Atom **lollipop = tailed->expr.elems + 1u;
+    uint64_t dense_all = 99u;
+    assert(space_native_relational_count(&space, arena, lollipop, 4u, NULL, &dense_all));
+    assert(dense_all == reference(&space, arena, lollipop, 4u, NULL));
+    Bindings seed;
+    bindings_init(&seed);
+    assert(bindings_add_var(&seed, lollipop[0]->expr.elems[1], parse(arena, "1")));
+    uint64_t dense_seeded = 99u;
+    assert(space_native_relational_count(&space, arena, lollipop, 4u, &seed, &dense_seeded));
+    assert(dense_seeded == reference(&space, arena, lollipop, 4u, &seed) && dense_seeded > 0u &&
+           dense_seeded < dense_all);
+    bindings_free(&seed);
+    add(&space, arena, "(edge 0 0)");
+    query = NULL;
+    assert(!cetta_dense_query_prepare(&space, arena, triangle, 3u, &query) && !query);
+    uint64_t repeated = 99u;
+    assert(space_native_relational_count(&space, arena, triangle, 3u, NULL, &repeated));
+    assert(repeated == reference(&space, arena, triangle, 3u, NULL) && repeated > dense);
+    space_free(&space);
+}
+
 static void private_projection(TermUniverse *universe, Arena *arena) {
     Space space;
     space_init_with_universe(&space, universe);
@@ -701,6 +816,8 @@ int main(void) {
     randomized(&universe, &arena);
     sparse_trail_retention(&universe, &arena);
     overflow(&universe, &arena);
+    stored_variables(&universe, &arena);
+    dense_counts(&universe, &arena);
 #ifdef CETTA_RELATIONAL_FAULT_CONTROLS
     allocation_faults(&universe, &arena);
 #endif
@@ -711,6 +828,6 @@ int main(void) {
     var_intern_free(&variables);
     g_symbols = NULL;
     symbol_table_free(&symbols);
-    puts("PASS: prepared relational intersections preserve ground occurrence counts, aliases, seeds and revision boundaries");
+    puts("PASS: prepared relational intersections preserve ground occurrence counts, aliases, seeds and revision boundaries, join rows holding stored variables as wildcards, and count dense binary relations by rows of bits");
     return 0;
 }

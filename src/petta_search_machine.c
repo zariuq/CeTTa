@@ -23,6 +23,7 @@
 #include "producer_schedule.h"
 #include "shared_transition.h"
 #include "native_fold.h"
+#include "native_query.h"
 #include "stats.h"
 #include "symbol.h"
 #include "term_canon.h"
@@ -3744,6 +3745,12 @@ static PettaTableAnswerIndex *petta_table_index_new(Arena *arena) {
     return index;
 }
 
+/* The hash a table indexes an answer key by: spread over every bit, so
+ * keys that differ only in small leaves do not crowd one run of slots. */
+static inline uint32_t petta_table_key_hash(Atom *key) {
+    return (uint32_t)atom_spread_hash(key);
+}
+
 static PettaTableIndexSlot *petta_table_index_find(
     PettaTableAnswerIndex *index, Atom *key, uint32_t hash,
     PettaTableStats *stats) {
@@ -3756,6 +3763,7 @@ static PettaTableIndexSlot *petta_table_index_find(
         if (atom_eq(index->slots[slot].key, key))
             return &index->slots[slot];
         slot = (slot + 1u) & (index->capacity - 1u);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TABLE_KEY_PROBE);
     }
     return NULL;
 }
@@ -3772,7 +3780,7 @@ static bool petta_table_index_grow(Arena *arena, PettaTableAnswerIndex *index) {
         if (!index->slots[old].key)
             continue;
         size_t slot =
-            (size_t)atom_hash(index->slots[old].key) & (capacity - 1u);
+            (size_t)petta_table_key_hash(index->slots[old].key) & (capacity - 1u);
         while (slots[slot].key)
             slot = (slot + 1u) & (capacity - 1u);
         slots[slot] = index->slots[old];
@@ -3793,8 +3801,10 @@ static PettaTableIndexSlot *petta_table_index_append(
         !petta_table_index_grow(arena, index))
         return NULL;
     size_t slot = (size_t)hash & (index->capacity - 1u);
-    while (index->slots[slot].key)
+    while (index->slots[slot].key) {
         slot = (slot + 1u) & (index->capacity - 1u);
+        cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TABLE_KEY_PROBE);
+    }
     index->slots[slot] = (PettaTableIndexSlot){
         .key = key, .position = index->positions++, .count = 1u};
     index->keys++;
@@ -3812,13 +3822,13 @@ static PettaTableIndexSlot *petta_table_index_append(
 #define PETTA_TABLE_INDEX_MIN_ROWS ((size_t)64u)
 #endif
 
-/* Occurrences of a key among a small table's own answers; `hash` is the
- * key's hash, which retained answers keep cached. */
+/* Occurrences of a key among a small table's own answers, screened by
+ * atom_hash, which retained answers keep cached. */
 static size_t petta_table_entry_scan(
-    const PettaTableEntry *entry, Atom *key, uint32_t hash,
-    PettaTableStats *stats) {
+    const PettaTableEntry *entry, Atom *key, PettaTableStats *stats) {
     if (stats)
         stats->index_probes++;
+    uint32_t hash = atom_hash(key);
     size_t count = 0u;
     for (size_t index = 0u; index < entry->answer_len; index++) {
         Atom *present = petta_table_record_index_key(entry, entry->answers[index]);
@@ -3833,7 +3843,7 @@ static bool petta_table_entry_contains(
     PettaTableStats *stats) {
     PettaTableAnswerIndex *index = petta_table_entry_index(entry);
     if (!index)
-        return petta_table_entry_scan(entry, key, hash, stats) > 0u;
+        return petta_table_entry_scan(entry, key, stats) > 0u;
     PettaTableIndexSlot *slot = petta_table_index_find(index, key, hash, stats);
     return slot && slot->position < entry->factor->index_extent;
 }
@@ -3844,7 +3854,7 @@ static size_t petta_table_entry_count(
     PettaTableStats *stats) {
     PettaTableAnswerIndex *index = petta_table_entry_index(entry);
     if (!index)
-        return petta_table_entry_scan(entry, key, hash, stats);
+        return petta_table_entry_scan(entry, key, stats);
     PettaTableIndexSlot *slot = petta_table_index_find(index, key, hash, stats);
     return slot && slot->position < entry->factor->index_extent ? slot->count : 0u;
 }
@@ -3900,7 +3910,7 @@ static __attribute__((noinline)) bool petta_table_entry_prepare_index(
         /* A table without an edge delivers exactly its own answers. */
         for (size_t own = 0u; own < entry->answer_len; own++) {
             Atom *key = petta_table_record_index_key(entry, entry->answers[own]);
-            uint32_t hash = atom_hash(key);
+            uint32_t hash = petta_table_key_hash(key);
             PettaTableIndexSlot *slot =
                 petta_table_index_find(index, key, hash, stats);
             if (slot)
@@ -3930,7 +3940,7 @@ static __attribute__((noinline)) bool petta_table_entry_prepare_index(
         if (!record)
             break;
         Atom *key = petta_table_record_index_key(entry, record);
-        uint32_t hash = atom_hash(key);
+        uint32_t hash = petta_table_key_hash(key);
         PettaTableIndexSlot *slot =
             petta_table_index_find(index, key, hash, stats);
         if (slot)
@@ -4078,7 +4088,7 @@ static __attribute__((cold, noinline)) bool petta_table_expand_forward(
         }
         if (stats)
             stats->forward_expanded_answers++;
-        uint32_t hash = atom_hash(key);
+        uint32_t hash = petta_table_key_hash(key);
         if (petta_table_entry_contains(entry, key, hash, stats))
             continue;
         ok = petta_table_append_answer(shared, entry_index, rebased, hash, stats);
@@ -4129,7 +4139,7 @@ static __attribute__((noinline)) bool petta_table_install_forward(
         Atom *key = petta_table_record_index_key(entry, entry->answers[own]);
         if (!key)
             return false;
-        if (petta_table_entry_contains(child, key, atom_hash(key), stats)) {
+        if (petta_table_entry_contains(child, key, petta_table_key_hash(key), stats)) {
             if (stats)
                 stats->forward_declined_overlap++;
             return petta_table_expand_forward(
@@ -4140,7 +4150,7 @@ static __attribute__((noinline)) bool petta_table_install_forward(
     for (size_t own = 0u; own < entry->answer_len; own++) {
         Atom *key = petta_table_record_index_key(entry, entry->answers[own]);
         if (!petta_table_index_append(&shared->arena, index, key,
-                atom_hash(key), stats))
+                petta_table_key_hash(key), stats))
             return false;
     }
     size_t child_total = petta_table_entry_total(child);
@@ -4179,9 +4189,11 @@ static bool petta_table_merge_counted(
     memset(slots, 0, sizeof(*slots) * capacity);
     for (size_t index = 0u; index < entry->answer_len; index++) {
         Atom *key = petta_table_record_index_key(entry, entry->answers[index]);
-        size_t slot = (size_t)atom_hash(key) & (capacity - 1u);
-        while (slots[slot].key && !atom_eq(slots[slot].key, key))
+        size_t slot = (size_t)petta_table_key_hash(key) & (capacity - 1u);
+        while (slots[slot].key && !atom_eq(slots[slot].key, key)) {
             slot = (slot + 1u) & (capacity - 1u);
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TABLE_KEY_PROBE);
+        }
         slots[slot].key = key;
         slots[slot].existing_count++;
     }
@@ -4195,10 +4207,12 @@ static bool petta_table_merge_counted(
             ok = false;
             break;
         }
-        uint32_t hash = atom_hash(key);
+        uint32_t hash = petta_table_key_hash(key);
         size_t slot = (size_t)hash & (capacity - 1u);
-        while (slots[slot].key && !atom_eq(slots[slot].key, key))
+        while (slots[slot].key && !atom_eq(slots[slot].key, key)) {
             slot = (slot + 1u) & (capacity - 1u);
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TABLE_KEY_PROBE);
+        }
         if (!slots[slot].key)
             slots[slot].key = key;
         slots[slot].round_count++;
@@ -4277,11 +4291,13 @@ static __attribute__((noinline)) bool petta_table_merge_round_answers(
             ok = false;
             break;
         }
-        uint32_t hash = atom_hash(key);
+        uint32_t hash = petta_table_key_hash(key);
         if (round) {
             size_t slot = (size_t)hash & (capacity - 1u);
-            while (round[slot].key && !atom_eq(round[slot].key, key))
+            while (round[slot].key && !atom_eq(round[slot].key, key)) {
                 slot = (slot + 1u) & (capacity - 1u);
+                cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TABLE_KEY_PROBE);
+            }
             if (!round[slot].key)
                 round[slot] = (PettaTableRoundSlot){
                     .key = key,
@@ -22313,7 +22329,7 @@ static bool petta_machine_start_tabled_call(
     cetta_var_map_free(&query_to_slot);
     SpaceEquationToken memo_equations = {0};
     uint64_t hash = canonical
-        ? (uint64_t)atom_hash(canonical) : 0u;
+        ? atom_spread_hash(canonical) : 0u;
     if (canonical && memoized) {
         memo_equations = space_equation_token(machine->space);
         hash = petta_memo_equation_key_hash(
@@ -22543,6 +22559,130 @@ static PettaMachine *petta_machine_new_child(
         : NULL;
 }
 
+/* What a call `(h a...)` of a program function answers by: the right side
+ * of its one equation `(= (h p...) R)`, the parameters bound by the call's
+ * arguments, when nothing else can answer the call (no intrinsic, type
+ * declaration, rule, other equation or imported space), the arguments are
+ * ground values, and R is a match.  R's other variables are its own. */
+static Atom *petta_machine_native_query_unfold(
+    PettaMachineImpl *machine, Atom *call, const PettaPlanNode *plan) {
+    if (call->kind != ATOM_EXPR || call->expr.len == 0u ||
+        call->expr.elems[0]->kind != ATOM_SYMBOL || !plan ||
+        plan->role != PETTA_PLAN_STATIC_CALL ||
+        space_has_dependencies(machine->space))
+        return NULL;
+    SymbolId head = call->expr.elems[0]->sym_id;
+    CettaExprLen arity = call->expr.len - 1u;
+    /* An argument the call would evaluate first is not yet its value. */
+    for (CettaExprIndex i = 1u; i < call->expr.len; i++) {
+        if (!petta_plan_match_template_is_single_data_answer(
+                petta_plan_child(plan, i)))
+            return NULL;
+    }
+    if (petta_program_head_is_intrinsic(head) ||
+        petta_machine_builtin_equations_mode(machine, head, arity) !=
+            PETTA_MACHINE_BUILTIN_EQUATIONS_NONE ||
+        space_head_declares_type(machine->space, head) ||
+        ((machine->host.admitted_rule_forms &
+          CETTA_RULE_SYNTAX_DIRECTIONAL) &&
+         space_directional_rules_may_match_known_head(
+             machine->space, head)) ||
+        petta_machine_named_partial_decision(machine, call) !=
+            PETTA_PARTIAL_NO)
+        return NULL;
+    SpaceEquationCursor cursor;
+    if (!space_equation_cursor_init(machine->space, head, &cursor))
+        return NULL;
+    SpaceEquationOccurrenceId first;
+    SpaceEquationOccurrenceId other;
+    SpaceEquationOccurrence occurrence;
+    if (space_equation_cursor_next(&cursor, &first) !=
+            SPACE_EQUATION_CURSOR_ITEM ||
+        space_equation_cursor_next(&cursor, &other) !=
+            SPACE_EQUATION_CURSOR_END ||
+        !space_equation_occurrence_resolve(first, &occurrence) ||
+        !occurrence.lhs || !occurrence.rhs ||
+        occurrence.lhs->kind != ATOM_EXPR ||
+        occurrence.lhs->expr.len != call->expr.len ||
+        !atom_is_symbol_id(occurrence.lhs->expr.elems[0], head) ||
+        occurrence.rhs->kind != ATOM_EXPR || occurrence.rhs->expr.len != 4u ||
+        !atom_is_symbol_id(occurrence.rhs->expr.elems[0],
+                           g_builtin_syms.match))
+        return NULL;
+    if (arity == 0u)
+        return occurrence.rhs;
+    Atom *resolved = petta_machine_apply_bindings(
+        machine, search_context_bindings(&machine->search), &machine->heap,
+        call);
+    if (!resolved || atom_has_vars(resolved))
+        return NULL;
+    Bindings parameters;
+    bindings_init(&parameters);
+    Atom *query = match_atoms(occurrence.lhs, resolved, &parameters,
+                              &machine->heap)
+        ? bindings_apply_if_vars(&parameters, &machine->heap, occurrence.rhs)
+        : NULL;
+    bindings_free(&parameters);
+    return query;
+}
+
+/* A match collected whole, in a space whose rows form finite ground
+ * relations, is answered by the native query path (native_query.h) in one
+ * join loop when its template is data or adds data into a space.  The
+ * collection is the bag the child machine would gather: an answer per
+ * solution and row combination, the template's instance or what the
+ * addition answers.  A call of a function whose one equation is such a
+ * match answers as the match does.  *HANDLED stays false when the path
+ * declines, having done nothing. */
+static __attribute__((cold, noinline)) bool
+petta_machine_try_native_collapse(
+    PettaMachineImpl *machine, Atom *body, const PettaPlanNode *plan,
+    bool count_only, bool wrap_collection, Atom *expected,
+    uint32_t barrier, bool *handled, PettaMachineStep *failure) {
+    *handled = false;
+    /* PeTTa's own matching, run to completion, with nothing that observes
+     * the steps of the ordinary path. */
+    if (!machine->host.native_collect || !cetta_native_query_enabled() ||
+        !machine->host.unlimited_transition_budget ||
+        machine->host.analysis ||
+        machine->host.externalize_equation_choices ||
+        machine->host.begin_relation_call ||
+        machine->host.record_equation_use ||
+        machine->host.match_rows || machine->host.match_instances ||
+        machine->host.collected_value_reducible ||
+        petta_machine_delay_holds(machine) ||
+        body->kind != ATOM_EXPR)
+        return false;
+    Atom *query = NULL;
+    if (body->expr.len == 4u &&
+        (atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.match) ||
+         atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.let))) {
+        query = petta_machine_apply_bindings(
+            machine, search_context_bindings(&machine->search),
+            &machine->heap, body);
+    } else {
+        /* The right side's plan is the program's; only an addition, which
+         * needs none, is admitted through a call. */
+        query = petta_machine_native_query_unfold(machine, body, plan);
+        plan = NULL;
+    }
+    if (!query)
+        return false;
+    Atom *value = NULL;
+    CettaNativeQueryStatus status = machine->host.native_collect(
+        machine->host.context, machine->space, &machine->heap, query, plan,
+        count_only, wrap_collection, &value);
+    if (status == CETTA_NATIVE_QUERY_DECLINED)
+        return false;
+    *handled = true;
+    if (status != CETTA_NATIVE_QUERY_DONE || !value ||
+        !petta_push_unify(machine, value, expected, barrier)) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    return true;
+}
+
 static bool petta_machine_start_collapse(
     PettaMachineImpl *machine, Atom *body, Atom *expected,
     uint32_t barrier, const PettaPlanNode *plan, size_t limit,
@@ -22551,6 +22691,14 @@ static bool petta_machine_start_collapse(
         if (failure)
             *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
+    }
+    if (limit == 0u) {
+        bool handled = false;
+        bool published = petta_machine_try_native_collapse(
+            machine, body, plan, false, false, expected, barrier,
+            &handled, failure);
+        if (handled)
+            return published;
     }
     PettaMachine *inner =
         petta_machine_new_child(machine, body, plan);
@@ -22620,6 +22768,12 @@ static bool petta_machine_start_count_collapse(
             *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
+    bool handled = false;
+    bool published = petta_machine_try_native_collapse(
+        machine, body, plan, true, wrap_collection, expected, barrier,
+        &handled, failure);
+    if (handled)
+        return published;
     PettaMachine *inner =
         petta_machine_new_child(machine, body, plan);
     if (!inner) {
@@ -25698,6 +25852,41 @@ static bool petta_count_use_children_executable(
     return petta_semantics_count_use_children_executable(head);
 }
 
+/* Whether the query shows VARIABLE: a free variable of the root query, or
+ * one its host exports, whose binding is read outside any let. */
+static bool petta_machine_variable_visible(
+    const PettaMachineImpl *machine, VarId variable) {
+    for (size_t i = 0u; i < machine->visible_len; i++) {
+        if (var_id_eq(machine->visible[i].id, variable) ||
+            var_id_eq(machine->visible[i].context_id, variable))
+            return true;
+    }
+    return false;
+}
+
+/* Whether PRODUCER is a collapse, which gives exactly one list. */
+static bool petta_machine_collapse_producer(
+    const PettaMachineImpl *machine, const Atom *producer) {
+    return producer && producer->kind == ATOM_EXPR &&
+        producer->expr.len == 2u &&
+        petta_machine_atom_is_reify_head(machine, producer->expr.elems[0]);
+}
+
+/* Whether a let may bind VARIABLE to a counted collection in place of its
+ * list.  Each of its USES counts the list; with none, the producer must be
+ * a collapse, made for its effects alone.  Nothing else may read it: not
+ * the query and not a binding. */
+static bool petta_count_binding_admitted(
+    PettaMachineImpl *machine, VarId variable, Atom *producer,
+    uint64_t uses, bool may_contain_cardinality) {
+    if (uses == 0u ? !petta_machine_collapse_producer(machine, producer)
+                   : !may_contain_cardinality)
+        return false;
+    return !petta_machine_variable_visible(machine, variable) &&
+        cetta_observation_environment_var_is_private(
+            search_context_bindings(&machine->search), variable);
+}
+
 static bool petta_let_binding_count_only(
     PettaMachineImpl *machine, Atom *bindings,
     const PettaPlanNode *bindings_plan,
@@ -25707,6 +25896,12 @@ static bool petta_let_binding_count_only(
         !machine || !bindings ||
         bindings->kind != ATOM_EXPR ||
         binding_index >= bindings->expr.len || !body) {
+        return false;
+    }
+    Atom *binding = bindings->expr.elems[binding_index];
+    if (!binding || binding->kind != ATOM_EXPR ||
+        binding->expr.len != 2u ||
+        binding->expr.elems[0]->kind != ATOM_VAR) {
         return false;
     }
     bool may_contain_cardinality =
@@ -25719,15 +25914,10 @@ static bool petta_let_binding_count_only(
             bindings_plan->children[index]
                 .contains_cardinality_call;
     }
-    if (!may_contain_cardinality)
+    if (!may_contain_cardinality &&
+        !petta_machine_collapse_producer(machine, binding->expr.elems[1]))
         return false;
 
-    Atom *binding = bindings->expr.elems[binding_index];
-    if (!binding || binding->kind != ATOM_EXPR ||
-        binding->expr.len != 2u ||
-        binding->expr.elems[0]->kind != ATOM_VAR) {
-        return false;
-    }
     VarId variable = binding->expr.elems[0]->var_id;
     if (var_id_is_none(variable) ||
         cetta_observation_atom_contains_var(
@@ -25750,10 +25940,9 @@ static bool petta_let_binding_count_only(
                body, variable, petta_count_consumer_head,
                petta_count_use_children_executable,
                machine, &uses) &&
-           uses > 0u &&
-           cetta_observation_environment_var_is_private(
-               search_context_bindings(&machine->search),
-               variable);
+           petta_count_binding_admitted(machine, variable,
+                                        binding->expr.elems[1], uses,
+                                        may_contain_cardinality);
 }
 
 static bool petta_direct_let_binding_count_only(
@@ -25761,8 +25950,12 @@ static bool petta_direct_let_binding_count_only(
     Atom *body, const PettaPlanNode *body_plan) {
     if (!petta_machine_let_count_fusion_enabled() || !machine || !binder ||
         !producer || !body || binder->kind != ATOM_VAR ||
-        var_id_is_none(binder->var_id) ||
-        (body_plan && !body_plan->contains_cardinality_call) ||
+        var_id_is_none(binder->var_id))
+        return false;
+    bool may_contain_cardinality =
+        !body_plan || body_plan->contains_cardinality_call;
+    if ((!may_contain_cardinality &&
+         !petta_machine_collapse_producer(machine, producer)) ||
         cetta_observation_atom_contains_var(
             producer, binder->var_id)) {
         return false;
@@ -25772,10 +25965,8 @@ static bool petta_direct_let_binding_count_only(
                body, binder->var_id, petta_count_consumer_head,
                petta_count_use_children_executable,
                machine, &uses) &&
-           uses > 0u &&
-           cetta_observation_environment_var_is_private(
-               search_context_bindings(&machine->search),
-               binder->var_id);
+           petta_count_binding_admitted(machine, binder->var_id, producer,
+                                        uses, may_contain_cardinality);
 }
 
 
@@ -33880,13 +34071,9 @@ static bool petta_machine_dispatch_solve(
         (!petta_plan_child(plan, 2u) || petta_plan_child(plan, 2u)->role != PETTA_PLAN_VALUE) &&
         (!petta_plan_child(plan, 3u) || petta_plan_child(plan, 3u)->role != PETTA_PLAN_VALUE)) {
         Atom *binder = expression->expr.elems[1];
-        bool visible = false;
-        for (size_t i = 0u; i < machine->visible_len; i++)
-            if (var_id_eq(machine->visible[i].id, binder->var_id) ||
-                var_id_eq(machine->visible[i].context_id, binder->var_id))
-                visible = true;
         CettaCallOutcome appended = cetta_call_failure();
-        if (!visible && machine->host.append_private_collection(
+        if (!petta_machine_variable_visible(machine, binder->var_id) &&
+            machine->host.append_private_collection(
                 machine->host.context, machine->space, &machine->heap,
                 binder, expression->expr.elems[2], expression->expr.elems[3],
                 petta_plan_child(plan, 2u), environment, &appended)) {
@@ -38574,7 +38761,7 @@ petta_machine_start_match_conjunction_leg(
      * The caller environment is part of admission: replacing a variable by
      * its bound value may remove a separator or expose a correlation. Finite
      * purses and observable execution obligations retain their transitions. */
-    if (count_observer && index == 1u && pattern_family->expr.len >= 4u &&
+    if (count_observer && index == 1u && pattern_family->expr.len >= 3u &&
         machine->host.unlimited_transition_budget &&
         !machine->host.analysis &&
         !machine->host.externalize_equation_choices &&

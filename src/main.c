@@ -2709,6 +2709,14 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
     Arena diagnostic_arena;
     arena_init(&diagnostic_arena);
     for (int index = 0; ok && index < atom_count; index++) {
+        /* A fact is only stored: the program reads equations and type
+         * declarations, so nothing else is decoded for it. */
+        if (libraries && libraries->petta_program &&
+            !petta_program_form_id_may_affect_metadata(universe,
+                                                       atom_ids[index])) {
+            space_add_atom_id(space, atom_ids[index]);
+            continue;
+        }
         Atom *source =
             term_universe_get_atom(universe, atom_ids[index]);
         Atom *definition_error = eval_petta_builtin_definition_error(
@@ -4231,6 +4239,12 @@ process_petta_document:
                     declaration_index, NULL,
                     &declaration_exec_width)) {
                 declaration_index += declaration_exec_width;
+                continue;
+            }
+            if (!petta_program_form_id_may_affect_metadata(
+                    &libraries.term_universe,
+                    atom_ids[declaration_index])) {
+                declaration_index++;
                 continue;
             }
             Atom *declaration = term_universe_get_atom(

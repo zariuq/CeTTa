@@ -2047,8 +2047,10 @@ Atom *petta_semantics_alpha_unique(Arena *arena, Atom *list) {
         }
 
         uint32_t slot = (uint32_t)atom_spread_hash(key) & mask;
-        while (slots[slot] && !atom_eq(slots[slot], key))
+        while (slots[slot] && !atom_eq(slots[slot], key)) {
             slot = (slot + 1u) & mask;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TABLE_KEY_PROBE);
+        }
         if (slots[slot])
             continue;
 
@@ -2087,6 +2089,7 @@ Atom *petta_semantics_list_to_set(Arena *arena, Atom *list) {
         while (slots[slot] &&
                !atom_eq(slots[slot], candidate)) {
             slot = (slot + 1u) & mask;
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_TABLE_KEY_PROBE);
         }
         if (slots[slot])
             continue;
