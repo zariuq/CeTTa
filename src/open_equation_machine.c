@@ -12510,6 +12510,121 @@ static const CettaOpenEquationProgram *oem_enter_evaluated(
     return NULL;
 }
 
+/* Whether a template could build an expression of LEN elements headed by
+ * one of HEADS.  False only when it certainly does not, whatever its locals
+ * hold: a literal, or a built expression whose length or literal head
+ * differs.  A slot or a list, which only the run decides, could. */
+static bool oem_template_may_be(const CettaOpenEquationProgram *program,
+                                uint32_t index, uint32_t len,
+                                const SymbolId *heads, size_t head_count) {
+    const OemTemplate *item = &program->templates[index];
+    Atom *head = NULL;
+    if (item->kind == OEM_T_LITERAL) {
+        if (!item->literal || item->literal->kind != ATOM_EXPR ||
+            item->literal->expr.len != len)
+            return false;
+        head = item->literal->expr.elems[0];
+    } else if (item->kind == OEM_T_BUILD) {
+        if (item->count != len)
+            return false;
+        const OemTemplate *first =
+            &program->templates[program->template_children[item->first]];
+        if (first->kind == OEM_T_SLOT)
+            return true;
+        /* A built or listed head is an expression, never a symbol. */
+        if (first->kind != OEM_T_LITERAL)
+            return false;
+        head = first->literal;
+    } else {
+        return true;
+    }
+    for (size_t i = 0u; i < head_count; i++) {
+        if (atom_is_symbol_id(head, heads[i]))
+            return true;
+    }
+    return false;
+}
+
+/* Whether a collection could be one the host answers natively, read from
+ * its template before anything is built.  The host answers a body that is
+ * a match, or a let over a superposed list whose body makes effects:
+ * add-atom or remove-atom, or a let or let* binding them.  A collection
+ * that certainly builds any other body never reaches it. */
+static bool oem_native_collect_may_admit(
+    const CettaOpenEquationProgram *program, uint32_t control_index) {
+    const OemTemplate *control = &program->templates[control_index];
+    if (control->kind != OEM_T_BUILD)
+        return true;
+    if (control->count != 2u)
+        return false;
+    uint32_t body_index = program->template_children[control->first + 1u];
+    SymbolId bodies[2] = {g_builtin_syms.match, g_builtin_syms.let};
+    if (!oem_template_may_be(program, body_index, 4u, bodies, 2u))
+        return false;
+    const OemTemplate *body = &program->templates[body_index];
+    if (body->kind != OEM_T_BUILD)
+        return true;
+    const OemTemplate *head =
+        &program->templates[program->template_children[body->first]];
+    if (head->kind != OEM_T_LITERAL ||
+        !atom_is_symbol_id(head->literal, g_builtin_syms.let))
+        return true;
+    SymbolId lists[1] = {g_builtin_syms.superpose};
+    SymbolId effects[2] = {g_builtin_syms.add_atom, g_builtin_syms.remove_atom};
+    SymbolId lets[1] = {g_builtin_syms.let};
+    SymbolId let_stars[1] = {g_builtin_syms.let_star};
+    uint32_t list = program->template_children[body->first + 2u];
+    uint32_t made = program->template_children[body->first + 3u];
+    return oem_template_may_be(program, list, 2u, lists, 1u) &&
+        (oem_template_may_be(program, made, 3u, effects, 2u) ||
+         oem_template_may_be(program, made, 4u, lets, 1u) ||
+         oem_template_may_be(program, made, 3u, let_stars, 1u));
+}
+
+/* A collection whose body is a match the host answers natively, in one
+ * join loop: the collection expression, instantiated from the locals, goes
+ * to the host, and the collection it answers meets the step's output.
+ * DECLINED leaves the collection to its local relation. */
+static __attribute__((noinline)) OemRun oem_native_collect_step(
+    CettaOpenEquationCursor *cursor, const CettaOpenEquationProgram *program,
+    Atom **locals, const OemStep *step) {
+    if (!cursor->runtime.native_collect ||
+        cursor->runtime.activation_budget || cursor->runtime.depth_bound ||
+        cursor->runtime.raises_he_errors || cursor->runtime.withdraws_on_error ||
+        program->controls[step->control].limit != 0u ||
+        step->relation >= program->host_plan_len ||
+        !oem_native_collect_may_admit(program, step->value))
+        return OEM_RUN_DECLINED;
+    Atom *control = oem_instantiate(cursor, program, locals, step->value);
+    control = control ? oem_resolve_mode(cursor, control, true) : NULL;
+    if (!control)
+        return OEM_RUN_HANDOFF;
+    if (control->kind != ATOM_EXPR || control->expr.len != 2u)
+        return OEM_RUN_DECLINED;
+    /* A match, or a let over a superposed list, which the host reads as a
+     * match over the list's elements. */
+    Atom *body = control->expr.elems[1];
+    if (body->kind != ATOM_EXPR || body->expr.len != 4u ||
+        (!atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.match) &&
+         !atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.let)))
+        return OEM_RUN_DECLINED;
+    Atom *value = NULL;
+    CettaNativeQueryStatus status = cursor->runtime.native_collect(
+        cursor->runtime.context, program->space, &cursor->region, body,
+        petta_plan_child(program->host_plans[step->relation], 1u), false,
+        false, &value);
+    if (status == CETTA_NATIVE_QUERY_DECLINED)
+        return OEM_RUN_DECLINED;
+    if (status != CETTA_NATIVE_QUERY_DONE || !value) {
+        if (cursor->handoff == CETTA_OPEN_EQUATION_HANDOFF_NONE)
+            cursor->handoff = CETTA_OPEN_EQUATION_HANDOFF_CAPACITY;
+        return OEM_RUN_FAULT;
+    }
+    OemUnify unified = oem_meet(cursor, program, locals, step, value);
+    return unified == OEM_UNIFY_ERROR ? OEM_RUN_HANDOFF
+        : unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
+}
+
 /* A control the region runs through its local relation.  Alternatives are
  * a call of it: each answer continues after the step.  A collection pushes
  * its frame beneath the call, whose answers return to the YIELD step; when
@@ -13128,17 +13243,18 @@ static Atom *oem_collected_list(CettaOpenEquationCursor *cursor,
      * dropped, and errors alone are its answers. */
     bool errors = box->count == 0u && box->error_count > 0u;
     uint32_t count = errors ? box->error_count : box->count;
-    Atom **items = arena_alloc(&cursor->region,
-                               sizeof(*items) * (count ? count : 1u));
+    /* The list is built in place: its answers go straight into its own
+     * element vector. */
+    Atom *list = atom_expr_builder_begin(&cursor->region, count);
+    bool ok = list != NULL;
     uint32_t index = count;
     for (OemCollectItem *item = errors ? box->errors : box->last;
-         items && item; item = item->prev) {
+         ok && item; item = item->prev) {
         cursor->fresh_var_len = 0u;
-        items[--index] = oem_import_collected(cursor, item->value);
-        if (!items[index])
-            items = NULL;
+        list->expr.elems[--index] = oem_import_collected(cursor, item->value);
+        ok = list->expr.elems[index] != NULL;
     }
-    Atom *list = items ? atom_expr(&cursor->region, items, count) : NULL;
+    list = ok ? atom_expr_builder_finish(&cursor->region, list) : NULL;
     arena_reset(&cursor->collected, box->mark);
     return list;
 }
@@ -13808,6 +13924,16 @@ static inline __attribute__((always_inline)) OemRun oem_run_body_mode(
                         cont = callee.cont;
                         depth = callee.depth;
                         continue;
+                    }
+                    if (step->target == OEM_HOST_COLLECT) {
+                        OemRun native = oem_native_collect_step(
+                            cursor, program, locals, step);
+                        if (native == OEM_RUN_CALLED) {
+                            pc++;
+                            continue;
+                        }
+                        if (native != OEM_RUN_DECLINED)
+                            return oem_raised(cursor, cont, native);
                     }
                     return oem_local_step(cursor, program, pc, locals,
                                           local_count, cont, depth, step);
@@ -15562,6 +15688,10 @@ static bool oem_collect_generation(CettaOpenEquationCursor *cursor,
         arena_set_ledger_tag(&fresh, CETTA_ARENA_LEDGER_CURSOR);
         arena_set_block_growth(&fresh, OEM_FIRST_BLOCK_BYTES);
         arena_set_hashcons(&fresh, NULL);
+        /* The terms a collection moves keep symbols of their own: every
+         * later step reads them, and the table's shared atoms there cost
+         * those steps more than they save. */
+        arena_set_own_symbols(&fresh, true);
     }
     Arena *to_arena = major || !cursor->old_ready ? &fresh : &cursor->old;
     collect.to = to_arena;

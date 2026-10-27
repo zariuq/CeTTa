@@ -12,7 +12,7 @@
    (match &self (, (edge $x $y) (edge $y $z))
       (let $u (add-atom &self (edge $z d)) (path $x $y $z))))
 !(grow)
-!(collapse (match &self (edge $p d) $p))
+!(let $bag (collapse (match &self (edge $p d) $p)) (sort-atom $bag))
 
 ; A template removes a row that a later joint row reads.
 (item 1 one)
@@ -23,7 +23,7 @@
    (match &self (, (pair $i $j) (item $j $n))
       (let $u (remove-atom &self (item $j $n)) (took $i $n))))
 !(take)
-!(collapse (match &self (item $k $v) $k))
+!(let $bag (collapse (match &self (item $k $v) $k)) (sort-atom $bag))
 
 ; Joint rows keep their multiplicity, and three legs complete together.
 (t x)
@@ -36,7 +36,7 @@
    (match &self (, (t $a) (u $a $b) (w $b $c))
       (let $u (add-atom &self (seen $c)) $c)))
 !(three)
-!(collapse (match &self (seen $s) $s))
+!(let $bag (collapse (match &self (seen $s) $s)) (sort-atom $bag))
 
 ; A row with a variable of its own: the host completes the rows.
 (open k $v)
@@ -47,7 +47,7 @@
    (match &self (, (key $k) (open $k $w))
       (let $u (add-atom &self (got $k)) (opened $k))))
 !(opened)
-!(collapse (match &self (got $g) $g))
+!(let $bag (collapse (match &self (got $g) $g)) (sort-atom $bag))
 
 ; A row part that would evaluate further: the host completes the rows.
 (= (double $n) (* 2 $n))
@@ -59,4 +59,4 @@
    (match &self (, (name $m) (calc $m $e))
       (let $u (add-atom &self (did $m)) $e)))
 !(calcs)
-!(collapse (match &self (did $d) $d))
+!(let $bag (collapse (match &self (did $d) $d)) (sort-atom $bag))

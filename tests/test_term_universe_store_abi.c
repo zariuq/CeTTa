@@ -1825,7 +1825,7 @@ static void test_batched_integer_identity(void) {
         assert(tu_int(&universe, ids[i]) == values[i]);
         assert(term_universe_store_atom_id(
             &universe, NULL, atom_int(&scratch, values[i])) == ids[i]);
-        assert(universe.entries[ids[i]].decoded_cache == NULL);
+        assert(term_universe_decoded_atom_at(&universe, ids[i]) == NULL);
     }
     assert(ids[31] != ids[32]);
     assert(ids[1] == ids[551]);
@@ -2186,8 +2186,8 @@ int main(void) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BLOB_BYTES) > 0);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
 
-    assert(universe.entries[sym_id].decoded_cache == NULL);
-    assert(universe.entries[str_id].decoded_cache == NULL);
+    assert(term_universe_decoded_atom_at(&universe, sym_id) == NULL);
+    assert(term_universe_decoded_atom_at(&universe, str_id) == NULL);
     assert(tu_kind(&universe, sym_id) == ATOM_SYMBOL);
     assert(tu_kind(&universe, var_id) == ATOM_VAR);
     assert(tu_kind(&universe, int_id) == ATOM_GROUNDED);
@@ -2226,7 +2226,7 @@ int main(void) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 7);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BYTE_ENTRY) == 7);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_FALLBACK_ENTRY) == 0);
-    assert(universe.entries[expr_id].decoded_cache == NULL);
+    assert(term_universe_decoded_atom_at(&universe, expr_id) == NULL);
     assert(tu_kind(&universe, expr_id) == ATOM_EXPR);
     assert(tu_arity(&universe, expr_id) == 4);
     assert(tu_head_sym(&universe, expr_id) == pair_sym);
@@ -2251,9 +2251,9 @@ int main(void) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BYTE_ENTRY) == 7);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_FALLBACK_ENTRY) == 1);
     assert(tu_hdr(&universe, boxed_id) == NULL);
-    assert(universe.entries[boxed_id].decoded_cache != NULL);
+    assert(term_universe_decoded_atom_at(&universe, boxed_id) != NULL);
     assert(term_universe_get_atom(&universe, boxed_id) ==
-           universe.entries[boxed_id].decoded_cache);
+           term_universe_decoded_atom_at(&universe, boxed_id));
     AtomId bad_children[2] = {sym_id, boxed_id};
     assert(tu_expr_from_ids(&universe, bad_children, 2) == CETTA_ATOM_ID_NONE);
 
@@ -2433,7 +2433,7 @@ int main(void) {
     term_universe_diag_reset(&universe);
     cetta_runtime_stats_set(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE, 0);
     Atom *sym_load = term_universe_get_atom(&universe, sym_id);
-    assert(sym_load == universe.entries[sym_id].decoded_cache);
+    assert(sym_load == term_universe_decoded_atom_at(&universe, sym_id));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 1);
     assert(term_universe_get_atom(&universe, sym_id) == sym_load);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 1);
@@ -2449,7 +2449,7 @@ int main(void) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 4);
 
     Atom *expr_load = term_universe_get_atom(&universe, expr_id);
-    assert(expr_load == universe.entries[expr_id].decoded_cache);
+    assert(expr_load == term_universe_decoded_atom_at(&universe, expr_id));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 5);
     assert(term_universe_get_atom(&universe, expr_id) == expr_load);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 5);
@@ -2522,10 +2522,10 @@ int main(void) {
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_INSERT) == 1);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_BYTE_ENTRY) == 1);
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 0);
-    assert(universe.entries[fresh_id].decoded_cache == NULL);
+    assert(term_universe_decoded_atom_at(&universe, fresh_id) == NULL);
     Atom *fresh_loaded = space_get_at(&space, 0);
     assert(fresh_loaded != NULL);
-    assert(fresh_loaded == universe.entries[fresh_id].decoded_cache);
+    assert(fresh_loaded == term_universe_decoded_atom_at(&universe, fresh_id));
     assert(test_counter(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE) == 1);
 
     Space hash_space;
