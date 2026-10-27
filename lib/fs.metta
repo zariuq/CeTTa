@@ -173,7 +173,8 @@
 ; write-all writes every byte of a text and answers (fs:written bytes); a
 ; fault keeps the owner open and its progress counts the owner's bytes in all.
 ; sync is fsync. lock takes exclusive or shared, waiting for a conflicting
-; holder, as fcntl.flock does; unlock releases it. set-mode is os.fchmod,
+; holder, as fcntl.flock does; exclusive-nowait and shared-nowait answer
+; fs:held at once instead. unlock releases it. set-mode is os.fchmod,
 ; answering fs:mode-set. Syncing, setting the mode, locking and closing accept
 ; readers too. Closing, the last holder's release, or the
 ; process's end closes the descriptor, which releases its lock.

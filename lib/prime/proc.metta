@@ -47,6 +47,12 @@
 ; timeout or capture limit means no bound. Text decoding is a separate policy.
 ; lifetime owner selects tree ownership through the Linux process companion;
 ; the default lifetime group retains process-group cancellation.
+; Standard input is (stdin BYTES), empty by default, or (stdin inherit), the
+; caller's own. Output and error are captured unless (stdout inherit),
+; (stdout null), (stderr inherit) or (stderr null) says otherwise. A child
+; that inherits standard input stays in the caller's process group, so it
+; can read a terminal the caller reads; cancellation and a timeout then
+; signal that child alone, or its tree under lifetime owner.
 (= (proc:spawn $argv $options)
    (__cetta_lib_proc_spawn $argv $options))
 (= (proc:poll $owner)

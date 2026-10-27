@@ -68,8 +68,8 @@
     {
       "source": "fs.metta",
       "output": "fs.metta",
-      "source_sha256": "409ecf29c588da62135bfecc8ee84ae7e4c5f5898e7a3411945c6f7e2ccbcefe",
-      "output_sha256": "cf6c5e09c40b7e68066e20673834dcafa6f060892d8debdd80a8fdf7d7e32819",
+      "source_sha256": "8e53c62c33d0ee9ccb4dbf76992122821129d577d4e809c4c2e7af23377392a2",
+      "output_sha256": "82f3b8c8409bf7ac762bde68b842bc8792434f79b89659bd0db8169d625fe986",
       "edits": 52,
       "code_diagnostics": 0
     },
@@ -444,8 +444,8 @@
     {
       "source": "proc.metta",
       "output": "proc.metta",
-      "source_sha256": "24638c070ee600b6aa67405b3542c55da9f510b0beda9074bc4cb1465a3cf782",
-      "output_sha256": "90ef1812b7e536335189948eadffc2cd2905895d25d912691c75b994302700d9",
+      "source_sha256": "4c14098b24f32d0da74286d68981173d36c8175bf89a59067ffd22499ac8941b",
+      "output_sha256": "724fd35217fa9e02a69154d5cd5829bee95a398be96b7d9685701bd774d8472b",
       "edits": 2,
       "code_diagnostics": 0
     },
@@ -500,9 +500,9 @@
     {
       "source": "system.metta",
       "output": "system.metta",
-      "source_sha256": "ba3506b291e4b9815961f95ccbc19df950c5fd94d4ff2f2209e4452d2bde7a46",
-      "output_sha256": "5e511e97690bc05b66129d67486ae29e84cd850fbbdd3f6945475a40abeef9c1",
-      "edits": 22,
+      "source_sha256": "ee9101319da1815224da5326e8fd1e9b41201037e21b6785749facf0d5f10c9b",
+      "output_sha256": "90758e954c363eb000882073a52148a1d311a5fc10ec4df91b70a037897fb153",
+      "edits": 24,
       "code_diagnostics": 0
     },
     {

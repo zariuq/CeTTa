@@ -494,12 +494,14 @@ static Atom *set_mode_cursor(Arena *arena, FsCursor *cursor, mode_t mode) {
 
 /* A whole-file flock on the owner's open file description, as Python's
  * fcntl.flock takes it: it waits for a conflicting holder, and closing the
- * owner releases it. */
+ * owner releases it. With LOCK_NB a conflicting holder answers fs:held at
+ * once, where Python raises BlockingIOError. */
 static Atom *lock_cursor(Arena *arena, FsCursor *cursor, int operation) {
     const char *name = operation == LOCK_UN ? "unlock" : "lock";
     int status;
     do status = flock(cursor->fd, operation);
     while (status < 0 && errno == EINTR && !eval_native_interrupted());
+    if (status < 0 && (operation & LOCK_NB) && errno == EWOULDBLOCK) return atom_symbol(arena, "fs:held");
     if (status < 0) return os_failed(arena, name, cursor->path, errno, cursor->observed, true);
     return atom_symbol(arena, operation == LOCK_UN ? "fs:unlocked" : "fs:locked");
 }
@@ -783,9 +785,10 @@ bool cetta_fs_call(CettaLibraryContext *ctx, Arena *arena, Atom *head,
         value = set_mode_cursor(arena, cursor, mode);
     }
     else if (op == g_builtin_syms.lib_fs_lock) {
-        bool exclusive = atom_is_symbol(args[1], "exclusive");
-        if (!exclusive && !atom_is_symbol(args[1], "shared")) goto argument;
-        value = lock_cursor(arena, cursor, exclusive ? LOCK_EX : LOCK_SH);
+        bool exclusive = atom_is_symbol(args[1], "exclusive") || atom_is_symbol(args[1], "exclusive-nowait");
+        bool nowait = atom_is_symbol(args[1], "exclusive-nowait") || atom_is_symbol(args[1], "shared-nowait");
+        if (!exclusive && !nowait && !atom_is_symbol(args[1], "shared")) goto argument;
+        value = lock_cursor(arena, cursor, (exclusive ? LOCK_EX : LOCK_SH) | (nowait ? LOCK_NB : 0));
     } else if (op == g_builtin_syms.lib_fs_unlock) value = lock_cursor(arena, cursor, LOCK_UN);
     else {
         if (args[1]->kind != ATOM_GROUNDED || args[1]->ground.gkind != GV_INT ||

@@ -9,6 +9,12 @@
 (= (system:pid)
    (function (case (__cetta_lib_system_host pid)
      (($result (return $result))))))
+; The running executable with symbolic links resolved, for a program that
+; starts another process of the same runtime, or (system:os-error errno
+; message) when the platform cannot name it.
+(= (system:executable)
+   (function (case (__cetta_lib_system_host executable)
+     (($result (return $result))))))
 ; uuid.uuid4().hex: sixteen bytes from the kernel's random source, with the
 ; version 4 and RFC 4122 variant bits set, as 32 lowercase hexadecimal digits.
 (= (system:uuid4-hex)
@@ -30,8 +36,16 @@
 (= (system:format-time $format $timestamp $zone)
    (function (case (__cetta_lib_system_host format-time $format $timestamp $zone)
      (($result (return $result))))))
+; A line of standard input without its newline and one carriage return
+; before it, or end_of_file after the last line. With a number of
+; milliseconds, the read waits at most that long and answers () when no line
+; has begun arriving; a line that has begun is read to its end, so () leaves
+; no input buffered. Both forms share one buffer, never stdio's.
 (= (system:read-line)
    (function (case (__cetta_lib_system_read_line ())
+     (($result (return $result))))))
+(= (system:read-line $milliseconds)
+   (function (case (__cetta_lib_system_read_line $milliseconds)
      (($result (return $result))))))
 
 (= (system:args)

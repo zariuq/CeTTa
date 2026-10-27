@@ -34190,6 +34190,12 @@ test-process-scope-v1: $(BIN) tests/support/check_process_scope_v1.py
 	@python3 tests/support/check_process_scope_v1.py ./$(BIN)
 test-process-scope-fork-v1:
 	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-process-scope-v1
+.PHONY: test-proc-stdio-v1 test-proc-stdio-fork-v1
+test-all: test-proc-stdio-v1
+test-proc-stdio-v1: $(BIN) tests/support/check_proc_stdio_v1.py
+	@python3 tests/support/check_proc_stdio_v1.py ./$(BIN)
+test-proc-stdio-fork-v1:
+	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-proc-stdio-v1
 test-list-drop-v1: $(BIN) lib/list.metta tests/list_value/list_drop.metta tests/list_value/list_drop.expected
 	@set -e; for language in he petta@1.0.6 prime; do \
 		library=list; test $$language != petta@1.0.6 || library='(library list)'; \

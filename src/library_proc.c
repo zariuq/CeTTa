@@ -45,6 +45,9 @@ typedef struct {
     const char *launch_stage;
     bool waited, timed_out, cancelled, owned_tree;
     ProcCapture output[2];
+    /* Standard input, output and error: a pipe of the job's own (input
+     * bytes, captured output), the caller's descriptor, or /dev/null. */
+    enum { PROC_STDIO_PIPE, PROC_STDIO_INHERIT, PROC_STDIO_NULL } stdio[3];
 } ProcJob;
 
 static uint64_t monotonic_ms(void) {
@@ -196,11 +199,27 @@ static void *execute(void *resource) {
     int input[2] = {-1,-1}, output[2][2] = {{-1,-1},{-1,-1}};
     int owner[2] = {-1,-1}, receipt[2] = {-1,-1};
     int report[2] = {-1,-1};
+    int null_device = -1;
     pid_t pid = -1;
     if (cancelled(job)) { job->cancelled = true; goto finish; }
-    if (owned_pipe(input, O_CLOEXEC) || owned_pipe(output[0], O_CLOEXEC) || owned_pipe(output[1], O_CLOEXEC)) {
+    if ((job->stdio[0] == PROC_STDIO_PIPE && owned_pipe(input, O_CLOEXEC)) ||
+        (job->stdio[1] == PROC_STDIO_PIPE && owned_pipe(output[0], O_CLOEXEC)) ||
+        (job->stdio[2] == PROC_STDIO_PIPE && owned_pipe(output[1], O_CLOEXEC))) {
         job->launch_error = errno; job->launch_stage = "pipe"; goto finish;
     }
+    if ((job->stdio[1] == PROC_STDIO_NULL || job->stdio[2] == PROC_STDIO_NULL) &&
+        (null_device = open("/dev/null", O_WRONLY | O_CLOEXEC)) < 0) {
+        job->launch_error = errno; job->launch_stage = "null-device"; goto finish;
+    }
+    /* The child's standard descriptors. A child that inherits standard input
+     * stays in the caller's process group, where it may read the caller's
+     * terminal; a child in a background group would be stopped instead. */
+    int in = job->stdio[0] == PROC_STDIO_INHERIT ? STDIN_FILENO : input[0];
+    int out = job->stdio[1] == PROC_STDIO_PIPE ? output[0][1]
+        : job->stdio[1] == PROC_STDIO_INHERIT ? STDOUT_FILENO : null_device;
+    int err = job->stdio[2] == PROC_STDIO_PIPE ? output[1][1]
+        : job->stdio[2] == PROC_STDIO_INHERIT ? STDERR_FILENO : null_device;
+    bool new_group = job->stdio[0] != PROC_STDIO_INHERIT;
     if (job->owned_tree &&
         (owned_pipe(owner, O_CLOEXEC) ||
          owned_pipe(receipt, O_CLOEXEC | O_NONBLOCK))) {
@@ -219,14 +238,16 @@ static void *execute(void *resource) {
     sigset_t empty, defaults;
     sigemptyset(&empty); sigfillset(&defaults);
 #define SPAWN_STEP(operation) do { if (!error) error = (operation); } while (0)
-    SPAWN_STEP(posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF));
-    SPAWN_STEP(posix_spawnattr_setpgroup(&attributes, 0));
+    SPAWN_STEP(posix_spawnattr_setflags(&attributes, (new_group ? POSIX_SPAWN_SETPGROUP : 0) |
+                                        POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF));
+    if (new_group) SPAWN_STEP(posix_spawnattr_setpgroup(&attributes, 0));
     SPAWN_STEP(posix_spawnattr_setsigmask(&attributes, &empty));
     SPAWN_STEP(posix_spawnattr_setsigdefault(&attributes, &defaults));
     SPAWN_STEP(posix_spawn_file_actions_addchdir_np(&actions, job->cwd));
-    SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, input[0], STDIN_FILENO));
-    SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, output[0][1], STDOUT_FILENO));
-    SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, output[1][1], STDERR_FILENO));
+    /* An inherited descriptor is already in place. */
+    if (in != STDIN_FILENO) SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, in, STDIN_FILENO));
+    if (out != STDOUT_FILENO) SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, out, STDOUT_FILENO));
+    if (err != STDERR_FILENO) SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, err, STDERR_FILENO));
     if (job->owned_tree) {
         SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, owner[0], 3));
         SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, receipt[1], 4));
@@ -254,14 +275,13 @@ static void *execute(void *resource) {
     pid = fork();
     if (!pid) {
         if (job->owned_tree) {
-            cetta_proc_child_exec_scoped(
+            cetta_proc_child_exec_group_fds(
                 job->program, job->argv, job->env, job->cwd,
-                input[0], output[0][1], output[1][1], report[1],
-                owner[0], receipt[1]);
+                in, out, err, report[1], new_group, owner[0], receipt[1]);
         }
-        cetta_proc_child_exec(
+        cetta_proc_child_exec_group(
             job->program, job->argv, job->env, job->cwd,
-            input[0], output[0][1], output[1][1], report[1]);
+            in, out, err, report[1], new_group);
     }
     int fork_error = errno;
     (void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
@@ -272,11 +292,12 @@ static void *execute(void *resource) {
         close(receipt[1]); receipt[1] = -1;
     }
 #endif
-    close(input[0]); input[0] = -1;
-    for (int i = 0; i < 2; i++) { close(output[i][1]); output[i][1] = -1; }
-    if (fcntl(input[1], F_SETFL, O_NONBLOCK) < 0) job->host_error = errno;
+    if (input[0] >= 0) { close(input[0]); input[0] = -1; }
+    for (int i = 0; i < 2; i++) if (output[i][1] >= 0) { close(output[i][1]); output[i][1] = -1; }
+    if (null_device >= 0) { close(null_device); null_device = -1; }
+    if (input[1] >= 0 && fcntl(input[1], F_SETFL, O_NONBLOCK) < 0) job->host_error = errno;
     for (int i = 0; i < 2; i++)
-        if (fcntl(output[i][0], F_SETFL, O_NONBLOCK) < 0) job->host_error = errno;
+        if (output[i][0] >= 0 && fcntl(output[i][0], F_SETFL, O_NONBLOCK) < 0) job->host_error = errno;
     /* SIGPIPE is blocked only in this owner; child defaults were restored. */
     sigset_t broken;
     sigemptyset(&broken); sigaddset(&broken, SIGPIPE);
@@ -362,6 +383,7 @@ static void *execute(void *resource) {
     }
     for (int i = 0; i < 2; i++) if (output[i][0] >= 0) drain(job, &output[i][0], &job->output[i]);
 finish:
+    if (null_device >= 0) close(null_device);
     for (int i = 0; i < 2; i++) {
         if (report[i] >= 0) close(report[i]);
         if (input[i] >= 0) close(input[i]);
@@ -483,7 +505,8 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
         Atom *key = entry->expr.elems[0], *value = entry->expr.elems[1];
         unsigned bit = atom_is_symbol(key, "cwd") ? 1u : atom_is_symbol(key, "env") ? 2u :
             atom_is_symbol(key, "stdin") ? 4u : atom_is_symbol(key, "timeout-ms") ? 8u :
-            atom_is_symbol(key, "max-bytes") ? 16u : atom_is_symbol(key, "lifetime") ? 32u : 0u;
+            atom_is_symbol(key, "max-bytes") ? 16u : atom_is_symbol(key, "lifetime") ? 32u :
+            atom_is_symbol(key, "stdout") ? 64u : atom_is_symbol(key, "stderr") ? 128u : 0u;
         if (!bit || (seen & bit)) { *reason = "unknown or duplicate process option"; goto refuse; }
         seen |= bit;
         if (bit == 1u) {
@@ -500,9 +523,16 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
             }
             job->owned_tree = atom_is_symbol(value, "owner");
         }
+        else if (bit == 64u || bit == 128u) {
+            int stream = bit == 64u ? 1 : 2;
+            if (atom_is_symbol(value, "inherit")) job->stdio[stream] = PROC_STDIO_INHERIT;
+            else if (atom_is_symbol(value, "null")) job->stdio[stream] = PROC_STDIO_NULL;
+            else { *reason = "stdout and stderr must be inherit or null"; goto refuse; }
+        }
+        else if (bit == 4u && atom_is_symbol(value, "inherit")) job->stdio[0] = PROC_STDIO_INHERIT;
         else if (bit == 4u) {
             const char *bytes;
-            if (!bytes_arg(value, &bytes, &job->input_len)) { *reason = "stdin must be a byte string"; goto refuse; }
+            if (!bytes_arg(value, &bytes, &job->input_len)) { *reason = "stdin must be a byte string or inherit"; goto refuse; }
             job->input = malloc(job->input_len ? job->input_len : 1u);
             if (!job->input) goto allocation;
             memcpy(job->input, bytes, job->input_len);
@@ -512,6 +542,8 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
             else job->limit = (size_t)value->ground.ival;
         }
     }
+    /* A stream that is not captured has nothing more to give. */
+    for (int i = 0; i < 2; i++) job->output[i].eof = job->stdio[i + 1] != PROC_STDIO_PIPE;
     char *current = getcwd(NULL, 0);
     if (!current) goto host_failure;
     job->cwd = join_path(current, cwd ? cwd : ".");
