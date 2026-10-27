@@ -140,6 +140,11 @@
 ; operations complete (tcp:closed CONN ""). A line longer than max-bytes ends
 ; the connection with a reason; a transport failure completes (tcp:failed CONN
 ; CURLCODE TEXT). While max-bytes of received items wait, nothing more is read.
+;
+; ws:connect and tcp:connect take an optional last argument of options. Its
+; one option, (ca-file PATH), names the only certificates TLS trusts for that
+; connection, in place of the default store, as for a private server or a test
+; fixture. Verification itself is never turned off.
 
 (= (http:get $url)
    (io:submit (http:request "GET" $url () "" 30000 8388608)))

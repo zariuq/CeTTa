@@ -148,8 +148,8 @@
     {
       "source": "io.metta",
       "output": "io.metta",
-      "source_sha256": "56b632fbe2d56826c4532f64942c0861631f8f4e3345d102d07c0803cf1e59aa",
-      "output_sha256": "9ffe2f5f43a6ea37af8f9e0c3a4facf2cf5fff28c86c414eac8055d72567b080",
+      "source_sha256": "f12ec3e4c6f70a390808130f217b16430ac2451c2c153968d71b4ffcc3e2c64b",
+      "output_sha256": "38a78af2e7fa8ece7ca827321875633ffe3b7ad1628895b42d032be1bc46b573",
       "edits": 16,
       "code_diagnostics": 0
     },

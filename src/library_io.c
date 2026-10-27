@@ -89,6 +89,7 @@ typedef struct CettaIoRequest {
     uint64_t id;
     char *method;
     char *url;
+    char *ca_file;          /* a TLS connection's trust anchors, else the default store */
     CettaIoHeader *headers;
     char *body;
     int64_t timeout_ms;
@@ -272,6 +273,7 @@ static void io_request_free(CettaIoRuntime *runtime, CettaIoRequest *request) {
 #endif
     free(request->method);
     free(request->url);
+    free(request->ca_file);
     io_header_list_free(request->headers);
     free(request->body);
     free(request->response);
@@ -1399,6 +1401,21 @@ static Atom *io_ipc_result(Arena *arena, CettaIoRequest *request) {
  * CONNECTION TEXT) and (ws:close CONNECTION CODE REASON) act on it.  ws:close
  * releases the connection when its completion is consumed, also after the
  * peer closed. */
+/* The options of a connection: ((ca-file PATH)) names the only certificates
+ * TLS trusts for it, in place of the default store. */
+static bool io_connect_options(Atom *options, char **ca_file) {
+    if (!options || options->kind != ATOM_EXPR) return false;
+    for (size_t i = 0; i < options->expr.len; i++) {
+        Atom *entry = options->expr.elems[i];
+        const char *path = entry && entry->kind == ATOM_EXPR && entry->expr.len == 2u &&
+                           atom_is_symbol(entry->expr.elems[0], "ca-file")
+                           ? io_text_arg(entry->expr.elems[1]) : NULL;
+        if (!path || !*path || *ca_file) { free(*ca_file); *ca_file = NULL; return false; }
+        if (!(*ca_file = io_strdup(path))) return false;
+    }
+    return true;
+}
+
 static CettaIoRequest *io_parse_ws(CettaIoRuntime *runtime, Atom *input, char *error, size_t error_size) {
     Atom **x = input->expr.elems;
     size_t n = input->expr.len;
@@ -1437,14 +1454,18 @@ static CettaIoRequest *io_parse_ws(CettaIoRuntime *runtime, Atom *input, char *e
         } else request->ws_id = listener->id;
         return request;
     }
+    char *ca_file = NULL;
     if (atom_is_symbol(x[0], "ws:connect")) {
-        const char *url = n == 4 ? io_text_arg(x[1]) : NULL;
+        const char *url = n == 4 || n == 5 ? io_text_arg(x[1]) : NULL;
         if (!url || !io_nonnegative_int_arg(x[2], &first) || first > (int64_t)UINT32_MAX ||
-            !io_nonnegative_int_arg(x[3], &second) || !second) {
-            snprintf(error, error_size, "expected (ws:connect url connect-timeout-ms max-message-bytes)");
+            !io_nonnegative_int_arg(x[3], &second) || !second ||
+            (n == 5 && !io_connect_options(x[4], &ca_file))) {
+            snprintf(error, error_size, "expected (ws:connect url connect-timeout-ms max-message-bytes), "
+                     "optionally followed by ((ca-file path))");
             return NULL;
         }
         if (strncmp(url, "ws://", 5) && strncmp(url, "wss://", 6)) {
+            free(ca_file);
             snprintf(error, error_size, "a WebSocket URL begins with ws:// or wss://");
             return NULL;
         }
@@ -1479,6 +1500,7 @@ static CettaIoRequest *io_parse_ws(CettaIoRuntime *runtime, Atom *input, char *e
     if (atom_is_symbol(x[0], "ws:connect")) {
         request->ws_operation = WS_CONNECT;
         request->url = io_strdup(io_text_arg(x[1]));
+        request->ca_file = ca_file;
         request->timeout_ms = first;
         request->max_bytes = (size_t)second;
         return request;
@@ -1507,15 +1529,19 @@ static CettaIoRequest *io_parse_tcp(CettaIoRuntime *runtime, Atom *input, char *
     CettaIoWs *entry = NULL;
     const char *text = NULL;
     bool connect = atom_is_symbol(x[0], "tcp:connect");
+    char *ca_file = NULL;
     if (connect) {
-        const char *url = n == 5 ? io_text_arg(x[1]) : NULL;
+        const char *url = n == 5 || n == 6 ? io_text_arg(x[1]) : NULL;
         if (!url || !io_nonnegative_int_arg(x[2], &first) || first > (int64_t)UINT32_MAX ||
             !io_nonnegative_int_arg(x[3], &second) || !second ||
-            !(atom_is_symbol(x[4], "lines") || atom_is_symbol(x[4], "pieces"))) {
-            snprintf(error, error_size, "expected (tcp:connect url connect-timeout-ms max-bytes lines|pieces)");
+            !(atom_is_symbol(x[4], "lines") || atom_is_symbol(x[4], "pieces")) ||
+            (n == 6 && !io_connect_options(x[5], &ca_file))) {
+            snprintf(error, error_size, "expected (tcp:connect url connect-timeout-ms max-bytes lines|pieces), "
+                     "optionally followed by ((ca-file path))");
             return NULL;
         }
         if (strncmp(url, "tcp://", 6) && strncmp(url, "tls://", 6)) {
+            free(ca_file);
             snprintf(error, error_size, "a TCP URL begins with tcp:// or tls://");
             return NULL;
         }
@@ -1532,6 +1558,7 @@ static CettaIoRequest *io_parse_tcp(CettaIoRuntime *runtime, Atom *input, char *
     }
     CettaIoRequest *request = calloc(1, sizeof(*request));
     if (!request) {
+        free(ca_file);
         snprintf(error, error_size, "TCP request allocation failed");
         return NULL;
     }
@@ -1540,6 +1567,7 @@ static CettaIoRequest *io_parse_tcp(CettaIoRuntime *runtime, Atom *input, char *
     if (connect) {
         request->ws_operation = WS_CONNECT;
         request->url = io_strdup(io_text_arg(x[1]));
+        request->ca_file = ca_file;
         request->timeout_ms = first;
         request->max_bytes = (size_t)second;
         request->ws_lines = atom_is_symbol(x[4], "lines");
@@ -1794,8 +1822,9 @@ static Atom *io_submit(CettaIoRuntime *runtime, Arena *arena,
         CettaIoWs *entry = calloc(1, sizeof(*entry));
         CettaWsConnection *connection = !entry ? NULL
             : request->ws_tcp ? cetta_tcp_open(request->url, (uint32_t)request->timeout_ms, request->max_bytes,
-                                               request->ws_lines, runtime->wakeup[1])
-            : cetta_ws_open(request->url, (uint32_t)request->timeout_ms, request->max_bytes, runtime->wakeup[1]);
+                                               request->ws_lines, request->ca_file, runtime->wakeup[1])
+            : cetta_ws_open(request->url, (uint32_t)request->timeout_ms, request->max_bytes, request->ca_file,
+                            runtime->wakeup[1]);
         if (!connection) {
             free(entry);
             io_request_unlink(runtime, request);

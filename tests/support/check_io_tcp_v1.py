@@ -13,7 +13,8 @@ server observed are both checked:
 - with pieces, a character split across TCP segments arrives whole;
 - a line longer than max-bytes closes the connection with a reason;
 - no listener answers tcp:failed with curl's code, and a certificate nobody
-  vouches for fails TLS;
+  vouches for fails TLS, unless the connection's (ca-file PATH) names it,
+  when the text goes through TLS both ways; a malformed option is refused;
 - a released connection, and a WebSocket operation on a TCP connection, are
   refused;
 - 400 lines sent while the program sleeps all arrive, in order, through a
@@ -105,8 +106,8 @@ DRAIN = """
 """
 
 
-def connect(url, framing="lines", limit=4096):
-    return '((io:pending $c) (io:submit (tcp:connect "%s" 5000 %d %s)))' % (url, limit, framing)
+def connect(url, framing="lines", limit=4096, options=""):
+    return '((io:pending $c) (io:submit (tcp:connect "%s" 5000 %d %s%s)))' % (url, limit, framing, options)
 
 
 def send(name, text):
@@ -202,23 +203,35 @@ def run(binary, directory, body):
     return result, [normalize(line) for line in result.stdout.split("\n") if line.startswith("(RESULT")]
 
 
-def tls_case(binary, directory):
+def tls_cases(binary, directory):
     """A TLS server whose self-signed certificate no authority vouches for:
-    the connection fails with curl's verification code, 60."""
+    the connection fails with curl's verification code, 60, and succeeds
+    when its (ca-file PATH) names that certificate."""
     if not shutil.which("openssl"):
         return None
     key, cert = Path(directory) / "key.pem", Path(directory) / "cert.pem"
     made = subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key),
-                           "-out", str(cert), "-days", "1", "-subj", "/CN=127.0.0.1"], capture_output=True)
+                           "-out", str(cert), "-days", "1", "-subj", "/CN=127.0.0.1",
+                           "-addext", "subjectAltName=IP:127.0.0.1"], capture_output=True)
     if made.returncode:
         return None
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert, key)
     server = Server(context)
-    result, got = run(binary, directory, "!(let* (%s ((io:event $c (tcp:failed $c $code $text)) %s))"
-                      " (println! (RESULT $code)))" % (connect("tls://127.0.0.1:%d" % server.port), WAIT % "$c"))
+    url = "tls://127.0.0.1:%d" % server.port
+    trusted = ' ((ca-file "%s"))' % cert
+    untrusted = run(binary, directory, "!(let* (%s ((io:event $c (tcp:failed $c $code $text)) %s))"
+                    " (println! (RESULT $code)))" % (connect(url), WAIT % "$c"))
+    echoed = run(binary, directory, "!(let* (%s ($o %s) %s %s) (println! (RESULT $o $R1)))"
+                 % (connect(url, options=trusted), WAIT % "$c", send("s", "echo\nsecret\n"), receive("r1")))
+    malformed = run(binary, directory, '!(println! (RESULT (io:submit (tcp:connect "%s" 5000 4096 lines ((ca-file 7))))))' % url)
     server.stop()
-    return result, got
+    return [("tls without a trusted certificate", untrusted, ["(RESULT 60)"]),
+            ("tls with the certificate as its ca-file", echoed,
+             [shape('(RESULT (io:event C (tcp:connected C)) (io:event R (tcp:received C "secret")))')]),
+            ("a malformed connection option", malformed,
+             ['(RESULT (Error (io:submit) "expected (tcp:connect url connect-timeout-ms max-bytes lines|pieces), '
+              'optionally followed by ((ca-file path))"))'])]
 
 
 def main():
@@ -248,12 +261,10 @@ def main():
                     time.sleep(0.05)
                 if server.observed.get(behavior) != facts:
                     failures.append((name + " (server)", 0, server.observed.get(behavior), facts, ""))
-        tls = tls_case(binary, directory)
-        if tls is not None:
+        for name, (result, got), want in tls_cases(binary, directory) or []:
             total += 1
-            if tls[1] != ["(RESULT 60)"]:
-                failures.append(("tls without a trusted certificate", tls[0].returncode, tls[1], ["(RESULT 60)"],
-                                 tls[0].stderr[-600:]))
+            if got != want:
+                failures.append((name, result.returncode, got, want, result.stderr[-600:]))
     server.stop()
     for name, code, got, want, err in failures:
         print("FAIL %s (exit %s):\n  got  %s\n  want %s\n  %s" % (name, code, str(got)[:600], want, err.strip()[:300]))

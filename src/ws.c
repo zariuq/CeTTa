@@ -53,6 +53,7 @@ struct CettaWsConnection {
     int control[2];         /* the evaluator wakes the worker through this pipe */
     int wakeup_fd;          /* the runtime's; not owned, -1 once released */
     char *url;              /* a client's */
+    char *ca_file;          /* a client's trust anchors for TLS, else the default store */
     uint32_t connect_timeout_ms;
     size_t max_message_bytes;
     unsigned references;    /* the evaluator's and the worker's */
@@ -120,6 +121,7 @@ static void connection_free(CettaWsConnection *c) {
         while (*p) *p++ = 0;
         free(c->url);
     }
+    free(c->ca_file);
     free(c->request_text);
     free(c->request_fields);
     pthread_mutex_destroy(&c->lock);
@@ -275,6 +277,7 @@ static void *client_worker(void *argument) {
         goto done;
     }
     curl_easy_setopt(easy, CURLOPT_URL, c->url);
+    if (c->ca_file) curl_easy_setopt(easy, CURLOPT_CAINFO, c->ca_file);
     curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "ws,wss");
     curl_easy_setopt(easy, CURLOPT_CONNECT_ONLY, 2L);
     /* Connect-only mode would queue an automatic pong until the next send;
@@ -460,7 +463,7 @@ done:
 }
 
 CettaWsConnection *cetta_ws_open(const char *url, uint32_t connect_timeout_ms,
-                                 size_t max_message_bytes, int wakeup_fd) {
+                                 size_t max_message_bytes, const char *ca_file, int wakeup_fd) {
     pthread_once(&ws_curl_once, ws_init_curl);
     if (!ws_curl_ready || !url || max_message_bytes == 0u ||
         (strncmp(url, "ws://", 5) && strncmp(url, "wss://", 6)))
@@ -468,8 +471,9 @@ CettaWsConnection *cetta_ws_open(const char *url, uint32_t connect_timeout_ms,
     CettaWsConnection *c = connection_new(max_message_bytes, wakeup_fd);
     if (!c) return NULL;
     c->url = strdup(url);
+    c->ca_file = ca_file ? strdup(ca_file) : NULL;
     c->connect_timeout_ms = connect_timeout_ms;
-    if (!c->url || !start_worker(c, client_worker)) {
+    if (!c->url || (ca_file && !c->ca_file) || !start_worker(c, client_worker)) {
         connection_free(c);
         return NULL;
     }
@@ -537,6 +541,7 @@ static void *tcp_worker(void *argument) {
         goto done;
     }
     curl_easy_setopt(easy, CURLOPT_URL, c->url);
+    if (c->ca_file) curl_easy_setopt(easy, CURLOPT_CAINFO, c->ca_file);
     curl_easy_setopt(easy, CURLOPT_PROTOCOLS_STR, "http,https");
     /* Connect, and for https also complete TLS, then hand over the stream.
      * HTTP/1.1 keeps TLS from negotiating HTTP/2, whose framing libcurl would
@@ -680,7 +685,7 @@ done:
 }
 
 CettaWsConnection *cetta_tcp_open(const char *url, uint32_t connect_timeout_ms,
-                                  size_t max_bytes, bool lines, int wakeup_fd) {
+                                  size_t max_bytes, bool lines, const char *ca_file, int wakeup_fd) {
     pthread_once(&ws_curl_once, ws_init_curl);
     bool tls = url && !strncmp(url, "tls://", 6);
     if (!ws_curl_ready || !url || max_bytes == 0u || (!tls && strncmp(url, "tcp://", 6)))
@@ -694,8 +699,9 @@ CettaWsConnection *cetta_tcp_open(const char *url, uint32_t connect_timeout_ms,
     size_t length = strlen(url + 6) + 9u;
     c->url = malloc(length);
     if (c->url) snprintf(c->url, length, "%s://%s", tls ? "https" : "http", url + 6);
+    c->ca_file = ca_file ? strdup(ca_file) : NULL;
     c->connect_timeout_ms = connect_timeout_ms;
-    if (!c->url || !start_worker(c, tcp_worker)) {
+    if (!c->url || (ca_file && !c->ca_file) || !start_worker(c, tcp_worker)) {
         connection_free(c);
         return NULL;
     }
@@ -705,13 +711,13 @@ CettaWsConnection *cetta_tcp_open(const char *url, uint32_t connect_timeout_ms,
 #else
 
 CettaWsConnection *cetta_ws_open(const char *url, uint32_t connect_timeout_ms,
-                                 size_t max_message_bytes, int wakeup_fd) {
-    (void)url; (void)connect_timeout_ms; (void)max_message_bytes; (void)wakeup_fd;
+                                 size_t max_message_bytes, const char *ca_file, int wakeup_fd) {
+    (void)url; (void)connect_timeout_ms; (void)max_message_bytes; (void)ca_file; (void)wakeup_fd;
     return NULL;
 }
 CettaWsConnection *cetta_tcp_open(const char *url, uint32_t connect_timeout_ms,
-                                  size_t max_bytes, bool lines, int wakeup_fd) {
-    (void)url; (void)connect_timeout_ms; (void)max_bytes; (void)lines; (void)wakeup_fd;
+                                  size_t max_bytes, bool lines, const char *ca_file, int wakeup_fd) {
+    (void)url; (void)connect_timeout_ms; (void)max_bytes; (void)lines; (void)ca_file; (void)wakeup_fd;
     return NULL;
 }
 
@@ -1669,13 +1675,13 @@ void cetta_ws_release(CettaWsConnection *c) {
 #else
 
 CettaWsConnection *cetta_ws_open(const char *url, uint32_t connect_timeout_ms,
-                                 size_t max_message_bytes, int wakeup_fd) {
-    (void)url; (void)connect_timeout_ms; (void)max_message_bytes; (void)wakeup_fd;
+                                 size_t max_message_bytes, const char *ca_file, int wakeup_fd) {
+    (void)url; (void)connect_timeout_ms; (void)max_message_bytes; (void)ca_file; (void)wakeup_fd;
     return NULL;
 }
 CettaWsConnection *cetta_tcp_open(const char *url, uint32_t connect_timeout_ms,
-                                  size_t max_bytes, bool lines, int wakeup_fd) {
-    (void)url; (void)connect_timeout_ms; (void)max_bytes; (void)lines; (void)wakeup_fd;
+                                  size_t max_bytes, bool lines, const char *ca_file, int wakeup_fd) {
+    (void)url; (void)connect_timeout_ms; (void)max_bytes; (void)lines; (void)ca_file; (void)wakeup_fd;
     return NULL;
 }
 CettaWsState cetta_ws_state(CettaWsConnection *c, CettaWsClosed *closed) {
