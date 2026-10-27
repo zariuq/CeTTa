@@ -34863,6 +34863,11 @@ test-all: test-toml-v1
 test-toml-v1: $(BIN) tests/support/check_toml_v1.py
 	@python3 tests/support/check_toml_v1.py ./$(BIN)
 
+.PHONY: test-store-toml-imports-v1
+test-all: test-store-toml-imports-v1
+test-store-toml-imports-v1: $(BIN) tests/support/check_store_toml_imports_v1.py
+	@python3 tests/support/check_store_toml_imports_v1.py ./$(BIN)
+
 # Both WebSocket checks need Python's websockets package, as the server for
 # the client and as clients for the listener; without it they report a skip.
 WEBSOCKET_TEST_PYTHON ?= python3

@@ -50,6 +50,7 @@ def run(binary, directory, body, stdin_bytes=None, feed=None):
             child.stdin.write(data)
             child.stdin.flush()
         child.stdin.close()
+        child.stdin = None
     except BrokenPipeError:
         pass  # the program finished before reading all of it
     out, _ = child.communicate(timeout=60)
