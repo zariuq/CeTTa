@@ -249,7 +249,10 @@ static bool native_query_loops_prepare(NativeQueryLoops *loops,
             if (atom_has_vars(item) || !native_query_exact_atom(item))
                 return false;
             leg->slot[c] = SIZE_MAX;
-            leg->fixed[c] = term_universe_lookup_atom_id(loops->universe, item);
+            /* Stored, not only looked up: a row holding variables may match
+             * a ground atom no row holds, which then has no id to compare. */
+            leg->fixed[c] = term_universe_store_atom_id(loops->universe, NULL,
+                                                        item);
         }
     }
     loops->leg_count = count;

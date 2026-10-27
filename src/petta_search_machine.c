@@ -38132,6 +38132,9 @@ static bool petta_machine_permit_source_step(
     return machine->host.permit_transition(machine->host.context, &source);
 }
 
+static void petta_machine_offer_collection(PettaMachineImpl *impl,
+                                           uint32_t steps_open);
+
 static PettaMachineStep petta_machine_next_local(
     PettaMachine *machine, Atom **answer, Bindings *environment) {
     if (answer)
@@ -38229,6 +38232,8 @@ static PettaMachineStep petta_machine_next_local(
             impl->yielded = true;
             return PETTA_MACHINE_STEP_ANSWER;
         }
+        /* Between goals the outermost machine holds atoms, not ids. */
+        petta_machine_offer_collection(impl, 1u);
         if ((impl->delay && (!petta_machine_delay_scan(impl) ||
                             !petta_machine_delay_frontier(impl))) ||
             !petta_machine_maybe_collect(impl)) {
@@ -38334,6 +38339,22 @@ dispatch_body_resume_segment:
     }
 }
 
+/* Local steps under way on this thread.  A collection of the universe may
+ * run where exactly STEPS_OPEN steps are open: before a step of the
+ * outermost machine (none open), or between the goals of that step (its
+ * own).  There no dispatch is under way, the machines hold atoms, and every
+ * holder of ids is a listed provider. */
+static _Thread_local uint32_t g_petta_machine_steps_open = 0u;
+
+static void petta_machine_offer_collection(PettaMachineImpl *impl,
+                                           uint32_t steps_open) {
+    TermUniverse *universe = impl->space ? impl->space->native.universe : NULL;
+    if (g_petta_machine_steps_open == steps_open && universe &&
+        term_universe_collection_due(universe) &&
+        !cetta_shared_transition_scope_active())
+        (void)term_universe_collect_at_safe_point(universe, NULL);
+}
+
 PettaMachineStep petta_machine_next(
     PettaMachine *machine, Atom **answer, Bindings *environment) {
     if (answer)
@@ -38360,9 +38381,12 @@ PettaMachineStep petta_machine_next(
          * caller pause time is excluded from the next pull. */
         if (impl->host.measure_stats && frame->started_ns == 0u)
             frame->started_ns = petta_machine_monotonic_ns();
+        petta_machine_offer_collection(impl, 0u);
         impl->pull_frame = frame;
+        g_petta_machine_steps_open++;
         PettaMachineStep step = petta_machine_next_local(
             frame->machine, &result, &bindings);
+        g_petta_machine_steps_open--;
         impl->pull_frame = NULL;
         if (frame->requested_child) {
             assert(step == PETTA_MACHINE_STEP_SUSPENDED);

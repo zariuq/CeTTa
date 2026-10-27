@@ -1961,6 +1961,26 @@ static SpacePinnedOccurrences *space_pinned_occurrences_share(
     return view;
 }
 
+/* A detached view's rows, as its readers see them: the rows its own marks
+ * did not remove.  They are roots while the view lives. */
+static void space_pinned_occurrences_roots(const TermUniverse *universe,
+                                           TermUniverseRootVisit visit,
+                                           void *visit_context, void *ctx) {
+    const SpacePinnedOccurrences *view = ctx;
+    size_t width = cetta_atom_id_storage_width_bytes_from_bits(
+        view->atom_id_width_bits);
+    (void)universe;
+    for (CettaIndex row = 0u; view->atom_ids && row < view->len; row++) {
+        if (row < view->mark_rows && view->marks &&
+            ((view->marks[row >> 6] >> (row & 63u)) & 1u) != 0u)
+            continue;
+        visit(visit_context,
+              cetta_atom_id_storage_load_bits(
+                  view->atom_ids + (size_t)row * width,
+                  view->atom_id_width_bits));
+    }
+}
+
 static void space_pinned_occurrences_release(SpacePinnedOccurrences *view) {
     if (!view)
         return;
@@ -1971,6 +1991,8 @@ static void space_pinned_occurrences_release(SpacePinnedOccurrences *view) {
     if (view->space) {
         view->space->match_backend.native.pinned = NULL;
     } else {
+        term_universe_remove_root_provider(
+            view->universe, space_pinned_occurrences_roots, view);
         cetta_runtime_stats_add(
             CETTA_RUNTIME_COUNTER_SPACE_RETIRED_OCCURRENCE_RELEASE_BYTES,
             (size_t)view->len *
@@ -2020,6 +2042,8 @@ void space_pinned_occurrences_detach(Space *s) {
     view->match_trie = st->match_trie;
     view->head_index = space_head_index_take(s);
     view->space = NULL;
+    (void)term_universe_add_root_provider(
+        view->universe, space_pinned_occurrences_roots, view);
     st->match_trie = NULL;
     st->match_trie_dirty = false;
     st->match_trie_stale_occurrences = 0u;
@@ -4320,11 +4344,105 @@ static bool space_term_universe_store_format_observer(
     return space_sync_projected_atom_id_storage_width_bits(space, want_bits);
 }
 
+static void space_visit_stored_ids(const uint8_t *ids, uint8_t width_bits,
+                                   CettaIndex start, CettaIndex len,
+                                   TermUniverseRootVisit visit,
+                                   void *visit_context) {
+    if (!ids)
+        return;
+    for (CettaIndex i = start; i < start + len; i++)
+        visit(visit_context, space_atom_id_storage_load_at(ids, width_bits, i));
+}
+
+static void space_visit_flat_bucket_ids(const ImportedFlatBucket *bucket,
+                                        TermUniverseRootVisit visit,
+                                        void *visit_context) {
+    for (CettaIndex e = 0u; bucket->entries && e < bucket->len; e++) {
+        const ImportedFlatEntry *entry = &bucket->entries[e];
+        for (CettaIndex t = 0u; entry->tokens && t < entry->len; t++) {
+            if (entry->tokens[t].origin_id != CETTA_ATOM_ID_NONE)
+                visit(visit_context, entry->tokens[t].origin_id);
+        }
+    }
+}
+
+static void space_visit_head_chain_ids(const SpaceHeadChains *chains,
+                                       TermUniverseRootVisit visit,
+                                       void *visit_context) {
+    for (CettaIndex i = 0u; chains->atom_ids && i < chains->len; i++)
+        visit(visit_context, chains->atom_ids[i]);
+}
+
+static bool space_marks_row_marked(const SpaceNativeStorage *n,
+                                   CettaIndex row);
+
+/* The ids a space keeps between calls: its live rows, the keys of its
+ * presence bitset, a backend's projected rows and flat tokens, and the ids its
+ * equation and declaration indexes captured.  A row marked removed holds
+ * nothing: no reader meets it, and contracting it reads no more than its id. */
+static void space_term_universe_roots(const TermUniverse *universe,
+                                      TermUniverseRootVisit visit,
+                                      void *visit_context, void *ctx) {
+    Space *space = ctx;
+    if (!space || space->native.universe != universe)
+        return;
+    const SpaceNativeStorage *native = &space->native;
+    if (native->marked == 0u) {
+        space_visit_stored_ids(native->atom_ids, native->atom_id_width_bits,
+                               native->start, native->len, visit,
+                               visit_context);
+    } else {
+        for (CettaIndex row = 0u; native->atom_ids && row < native->len;
+             row++) {
+            if (!space_marks_row_marked(native, row))
+                visit(visit_context,
+                      space_atom_id_storage_load_at(
+                          native->atom_ids, native->atom_id_width_bits,
+                          native->start + row));
+        }
+    }
+    /* The presence bitset keys every row by its alpha-canonical id, and a
+     * row with variables has that id nowhere else: each id with its bit set
+     * is a root, or a variant added later would miss its key. */
+    for (size_t byte = 0u; native->id_present &&
+                           byte < (size_t)(native->id_present_bits >> 3);
+         byte++) {
+        unsigned bits = native->id_present[byte];
+        while (bits) {
+            unsigned bit = (unsigned)__builtin_ctz(bits);
+            bits &= bits - 1u;
+            visit(visit_context, (AtomId)byte * 8u + bit);
+        }
+    }
+    ImportedBridgeState *st = space_imported_bridge_state(space);
+    if (st) {
+        space_visit_stored_ids(st->projected_atom_ids,
+                               st->projected_atom_id_width_bits, 0u,
+                               st->projected_len, visit, visit_context);
+        for (size_t b = 0u; b < STREE_BUCKETS; b++)
+            space_visit_flat_bucket_ids(&st->buckets[b], visit,
+                                        visit_context);
+        space_visit_flat_bucket_ids(&st->wildcard, visit, visit_context);
+    }
+    const EqIndex *eq = &space->native.eq_idx;
+    for (size_t b = 0u; b <= EQ_INDEX_BUCKETS; b++) {
+        const EqBucket *bucket =
+            b < EQ_INDEX_BUCKETS ? &eq->buckets[b] : &eq->wildcard;
+        for (CettaIndex i = 0u; bucket->atom_ids && i < bucket->len; i++)
+            visit(visit_context, bucket->atom_ids[i]);
+    }
+    space_visit_head_chain_ids(&eq->head_rows, visit, visit_context);
+    space_visit_head_chain_ids(&space->native.ty_idx.rows, visit,
+                               visit_context);
+}
+
 static void space_attach_to_universe(Space *s, TermUniverse *universe) {
     if (!s || !universe)
         return;
     (void)term_universe_add_store_format_observer(
         universe, space_term_universe_store_format_observer, s);
+    (void)term_universe_add_root_provider(
+        universe, space_term_universe_roots, s);
 }
 
 static void space_detach_from_universe(Space *s) {
@@ -4332,6 +4450,8 @@ static void space_detach_from_universe(Space *s) {
         return;
     term_universe_remove_store_format_observer(
         s->native.universe, space_term_universe_store_format_observer, s);
+    term_universe_remove_root_provider(
+        s->native.universe, space_term_universe_roots, s);
 }
 
 static void space_note_atom_id_storage_peak(const Space *s) {
@@ -4371,6 +4491,7 @@ typedef enum {
 } SpaceMutationPrefixEffect;
 
 static void space_mark_indexes_dirty(Space *s);
+static void space_note_released(Space *s, CettaCount rows);
 static void space_publish_mutation(
     Space *s, SpaceMutationEquationProjection equation_projection,
     SpaceMutationPrefixEffect prefix_effect);
@@ -4553,10 +4674,12 @@ static bool space_overlay_remove_local_raw_index(Space *s, CettaIndex raw_idx) {
                 s->native.atom_ids + ((size_t)(raw_idx + 1u) * width),
                 (size_t)(s->native.len - raw_idx - 1u) * width);
         s->native.len--;
+        space_note_released(s, 1u);
     } else {
         AtomId tail_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, s->native.len - 1u);
         s->native.len--;
+        space_note_released(s, 1u);
         (void)space_atom_id_storage_store_at(
             s->native.atom_ids, s->native.atom_id_width_bits, raw_idx, tail_id);
     }
@@ -4581,6 +4704,13 @@ static void space_reserve_linear(Space *s, CettaIndex min_cap) {
         s->native.atom_ids, width * (size_t)new_cap);
     s->native.cap = new_cap;
     space_note_atom_id_storage_peak(s);
+}
+
+/* Rows a space removes release the references they held: the universe
+ * counts them as its estimate of the garbage made since its last collection. */
+static void space_note_released(Space *s, CettaCount rows) {
+    if (s && rows)
+        term_universe_collection_note_released(s->native.universe, rows);
 }
 
 /* ── Removal marks ───────────────────────────────────────────────────────── */
@@ -4808,6 +4938,7 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
                            SPACE_MUTATION_PREFIX_REWRITTEN);
     space_path_indexes_adopt_prefix_epoch(s, followed_prefix);
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_SPACE_MARKED_ROW, count);
+    space_note_released(s, count);
     /* Settle when marked rows reach the live ones: a pass then reads at most
      * twice the rows it removes. */
     if (s->native.marked >= s->native.len - s->native.marked)
@@ -4933,6 +5064,7 @@ static void space_clear_native_logical_view(Space *s) {
     /* Pinned readers keep the rows and marks they began with. */
     space_pinned_occurrences_detach(s);
     space_marks_reset(s);
+    space_note_released(s, s->native.len);
     free(s->native.atom_ids);
     s->native.atom_ids = NULL;
     s->native.start = 0;
@@ -8962,6 +9094,7 @@ bool space_remove(Space *s, Atom *atom) {
                 s->native.atom_ids + ((size_t)(remove_idx + 1u) * width),
                 (size_t)(s->native.len - remove_idx - 1u) * width);
         s->native.len--;
+        space_note_released(s, 1u);
     } else {
         AtomId removed_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, remove_idx);
@@ -8969,6 +9102,7 @@ bool space_remove(Space *s, Atom *atom) {
         AtomId tail_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, moved_from);
         s->native.len--;
+        space_note_released(s, 1u);
         (void)space_atom_id_storage_store_at(
             s->native.atom_ids, s->native.atom_id_width_bits, remove_idx,
             tail_id); /* swap with last */
@@ -9070,6 +9204,7 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
                     s->native.atom_ids + ((size_t)(i + 1u) * width),
                     (size_t)(s->native.len - i - 1u) * width);
             s->native.len--;
+            space_note_released(s, 1u);
             space_mark_indexes_dirty(s);
             s->native.eq_idx_dirty = !retained.equations;
             s->native.ty_idx_dirty = !retained.declarations;
@@ -9079,6 +9214,7 @@ bool space_remove_atom_id(Space *s, AtomId atom_id) {
             AtomId tail_id = space_atom_id_storage_load_at(
                 s->native.atom_ids, s->native.atom_id_width_bits, moved_from);
             s->native.len--;
+            space_note_released(s, 1u);
             (void)space_atom_id_storage_store_at(
                 s->native.atom_ids, s->native.atom_id_width_bits, i,
                 tail_id);
@@ -9204,6 +9340,10 @@ static bool space_contract_occurrence_mask(
         if (remove_mask[index] == 0u)
             continue;
         removed++;
+        /* Settling contracts rows marking admitted as data only, and whose
+         * terms a collection may since have reclaimed: they are not read. */
+        if (settling)
+            continue;
         equation_projection = space_merge_equation_projection(
             equation_projection,
             space_atom_equation_projection(
@@ -9315,6 +9455,8 @@ static bool space_contract_occurrence_mask(
             }
             s->native.len = target;
             s->native.start = 0u;
+            if (!settling)
+                space_note_released(s, removed);
             space_mark_derived_state_dirty(s);
             s->native.eq_idx_dirty = !retained.equations;
             s->native.ty_idx_dirty = !retained.declarations;
@@ -9523,10 +9665,12 @@ bool space_pop(Space *s, Atom **out) {
     if (space_is_queue(s)) {
         s->native.start++;
         s->native.len--;
+        space_note_released(s, 1u);
         if (s->native.len == 0)
             s->native.start = 0;
     } else {
         s->native.len--;
+        space_note_released(s, 1u);
     }
     space_mark_indexes_dirty(s);
     space_match_backend_note_remove(s);
