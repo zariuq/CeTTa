@@ -19,11 +19,13 @@ class WorkerUnavailable(RuntimeError):
 
 class Worker:
     def __init__(self, binary, module, entry, timeout=30, profile=False,
-                 *, language=None, num_threads=None, language_profile=None):
+                 *, language=None, num_threads=None, language_profile=None, import_mode=None):
         if language is not None and language not in ("petta", "prime"):
             raise ValueError("invalid worker language")
         if num_threads is not None and (type(num_threads) is not int or not 0 <= num_threads <= 1024):
             raise ValueError("invalid worker thread count")
+        if import_mode is not None and import_mode not in ("upstream", "relative", "ancestor-walk"):
+            raise ValueError("invalid worker import mode")
         self.timeout = timeout
         self.profile = profile
         self.last_metrics = None
@@ -33,6 +35,8 @@ class Worker:
             self.command += ["--lang", language]
         if language_profile is not None:
             self.command += ["--profile", language_profile]
+        if import_mode is not None:
+            self.command += ["--import-mode", import_mode]
         if num_threads is not None:
             self.command += ["--num-threads", str(num_threads)]
         self.command += [str(module), entry]
