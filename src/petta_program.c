@@ -343,6 +343,11 @@ typedef struct {
      * synchronized; a data-only mutation leaves it current. */
     SpaceProgramToken synchronized_program;
     bool synchronized_snapshot;
+    /* Evidence for a single notified append to that snapshot. */
+    uint64_t synchronized_prefix_epoch;
+    CettaCount synchronized_atom_count;
+    size_t synchronized_equation_len;
+    uint64_t synchronized_catalog_generation;
     uint64_t catalog_generation;
     /* Optional validation stamps, allocated only by live translation. They
      * follow current catalog positions; retained plans themselves are immutable. */
@@ -3506,6 +3511,19 @@ static bool petta_program_collect_callability(
     return true;
 }
 
+/* A synchronous reader may borrow the current domain; if caching could not
+ * retain it, the caller owns the fallback copy in `scratch`. */
+static bool petta_program_callability_view(PettaProgram *program,
+        PettaCallabilityDomain *scratch, const PettaCallabilityDomain **view) {
+    if (!program || !scratch || !view ||
+        (!petta_program_callability_cache_current(program) &&
+         !petta_program_extend_callability(program) &&
+         !petta_program_collect_callability(program, scratch)))
+        return false;
+    *view = program->callability_cache_valid ? &program->callability_cache : scratch;
+    return true;
+}
+
 static PettaProgramSpace *petta_program_find_space(
     PettaProgram *program, const Space *space) {
     if (!program || !space)
@@ -3846,6 +3864,10 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
         .synchronized_revision = entry->synchronized_revision,
         .synchronized_program = entry->synchronized_program,
         .synchronized_snapshot = entry->synchronized_snapshot,
+        .synchronized_prefix_epoch = entry->synchronized_prefix_epoch,
+        .synchronized_atom_count = entry->synchronized_atom_count,
+        .synchronized_equation_len = entry->synchronized_equation_len,
+        .synchronized_catalog_generation = entry->synchronized_catalog_generation,
         .head_index_dirty = true,
     };
     if (entry->equation_len > SIZE_MAX / sizeof(*entry->equations)) {
@@ -4857,6 +4879,42 @@ bool petta_plan_match_template_is_single_data_answer(
           !template_plan->contains_call));
 }
 
+/* The live space proves exactly one own-row append and no catalog operation
+ * has changed the synchronized prefix independently. */
+static bool petta_program_space_single_append(
+        const PettaProgramSpace *entry, const Space *space, Atom *atom,
+        SpaceReadToken *read_out, SpaceProgramToken *program_out) {
+    if (!entry || !space || !atom || !read_out || !program_out ||
+        !entry->synchronized_snapshot || entry->space != space ||
+        entry->instance_id != space_instance_id(space) ||
+        space->overlay_base || space->dep_count ||
+        entry->synchronized_prefix_epoch != space->prefix_epoch ||
+        entry->synchronized_catalog_generation == UINT64_MAX ||
+        entry->synchronized_catalog_generation != entry->catalog_generation ||
+        entry->synchronized_equation_len == SIZE_MAX ||
+        entry->synchronized_equation_len != entry->equation_len ||
+        entry->synchronized_revision == UINT64_MAX ||
+        entry->synchronized_atom_count == UINT64_MAX)
+        return false;
+    SpaceReadToken read = space_read_token(space);
+    SpaceProgramToken current = space_program_token(space);
+    SpaceProgramToken old = entry->synchronized_program;
+    if (read.revision != entry->synchronized_revision + 1u ||
+        space_length64(space) != entry->synchronized_atom_count + 1u ||
+        old.space != space || old.instance_id != current.instance_id ||
+        old.base_dependency_epoch != 0u || current.base_dependency_epoch != 0u ||
+        old.equation_revision == UINT64_MAX ||
+        current.equation_revision != old.equation_revision + 1u ||
+        current.declaration_revision != old.declaration_revision)
+        return false;
+    Atom *last = space_get_at64(space, entry->synchronized_atom_count);
+    if (!last || !atom_eq(last, atom))
+        return false;
+    *read_out = read;
+    *program_out = current;
+    return true;
+}
+
 bool petta_program_note_add(
     PettaProgram *program, Space *space, Atom *atom,
     const PettaPlanNode *plan) {
@@ -4911,6 +4969,10 @@ bool petta_program_note_add(
         return true;
     PettaProgramSpace *entry =
         petta_program_ensure_space(program, space);
+    SpaceReadToken append_read = {0};
+    SpaceProgramToken append_program = {0};
+    bool notified_append = plan && petta_program_space_single_append(
+        entry, space, atom, &append_read, &append_program);
     if (!petta_program_space_reserve_equation(entry)) {
         return false;
     }
@@ -4952,7 +5014,50 @@ bool petta_program_note_add(
             .rhs_binds_variables =
                 petta_program_rhs_binds_variables(lhs, rhs),
         });
+    if (notified_append &&
+        entry->catalog_generation == entry->synchronized_catalog_generation + 1u &&
+        entry->equation_len == entry->synchronized_equation_len + 1u &&
+        space_read_token_matches_live_space(append_read, space) &&
+        space_program_token_matches_live_space(append_program, space)) {
+        entry->synchronized_revision = append_read.revision;
+        entry->synchronized_program = append_program;
+        entry->synchronized_prefix_epoch = append_read.prefix_epoch;
+        entry->synchronized_atom_count++;
+        entry->synchronized_equation_len = entry->equation_len;
+        entry->synchronized_catalog_generation = entry->catalog_generation;
+    }
     return true;
+}
+
+/* An unnotified append can use the same certificate when the program's
+ * callability cache describes exactly this space's complete view. Otherwise
+ * the general synchronization retains authority. */
+static bool petta_program_space_sync_one_append(
+        PettaProgram *program, PettaProgramSpace *entry, Space *space) {
+    if (!program || !entry || !space || program->space_len != 1u ||
+        program->predeclared_callability.admits_any_head ||
+        program->predeclared_callability.named_len != 0u)
+        return false;
+    Atom *atom = space_get_at64(space, entry->synchronized_atom_count);
+    SpaceReadToken read = {0};
+    SpaceProgramToken token = {0};
+    if (!atom || !petta_program_space_single_append(entry, space, atom, &read, &token) ||
+        !petta_program_equation_view(program, atom, NULL, NULL, NULL))
+        return false;
+    PettaCallabilityDomain callability = {0};
+    const PettaCallabilityDomain *view = NULL;
+    bool collected = petta_program_callability_view(program, &callability, &view);
+    const PettaPlanNode *plan = collected
+        ? petta_plan_build(program, view, atom) : NULL;
+    free(callability.named_heads);
+    if (!plan || !space_read_token_matches_live_space(read, space) ||
+        !space_program_token_matches_live_space(token, space) ||
+        !petta_program_note_add(program, space, atom, plan))
+        return false;
+    return entry->synchronized_snapshot &&
+        entry->synchronized_revision == read.revision &&
+        space_read_token_matches_live_space(read, space) &&
+        space_program_token_matches_live_space(token, space);
 }
 
 /* Check the same callability observations that formed this source plan.
@@ -5025,14 +5130,11 @@ static bool petta_program_refresh_callability(PettaProgram *program,
         entry->plan_callability_epoch_len = entry->equation_len;
     }
     PettaCallabilityDomain local = {0};
-    if (!petta_program_callability_cache_current(program) &&
-        !petta_program_extend_callability(program) &&
-        !petta_program_collect_callability(program, &local)) {
+    const PettaCallabilityDomain *domain = NULL;
+    if (!petta_program_callability_view(program, &local, &domain)) {
         free(local.named_heads);
         return false;
     }
-    const PettaCallabilityDomain *domain = program->callability_cache_valid
-        ? &program->callability_cache : &local;
     typedef struct {
         size_t index;
         const PettaPlanNode *plan;
@@ -5207,8 +5309,12 @@ bool petta_program_synchronize_space(
         if (space_program_token_matches_live_space(
                 current->synchronized_program, space)) {
             current->synchronized_revision = revision;
+            current->synchronized_prefix_epoch = space->prefix_epoch;
+            current->synchronized_atom_count = space_length64(space);
             return true;
         }
+        if (petta_program_space_sync_one_append(program, current, space))
+            return true;
     }
 
     SpaceReadToken read = space_read_token(space);
@@ -5270,6 +5376,7 @@ bool petta_program_synchronize_space(
     size_t known_len = 0u;
     bool *taken = NULL;
     if (entry) {
+        entry->synchronized_snapshot = false;
         known = entry->equations;
         known_len = entry->equation_len;
         entry->equations = NULL;
@@ -5328,6 +5435,10 @@ bool petta_program_synchronize_space(
     }
     installed->synchronized_revision = read.revision;
     installed->synchronized_program = program_token;
+    installed->synchronized_prefix_epoch = read.prefix_epoch;
+    installed->synchronized_atom_count = atom_count;
+    installed->synchronized_equation_len = installed->equation_len;
+    installed->synchronized_catalog_generation = installed->catalog_generation;
     installed->synchronized_snapshot = true;
     return true;
 }
@@ -6815,17 +6926,21 @@ static bool petta_table_safety_push_case(
     size_t *length, size_t *capacity,
     Atom *atom, const PettaPlanNode *plan) {
     if (!nodes || !length || !capacity || !atom || !plan ||
-        atom->kind != ATOM_EXPR || atom->expr.len != 3u ||
-        plan->child_count != atom->expr.len ||
-        !petta_table_safety_push_node(
-            nodes, length, capacity,
-            atom->expr.elems[1], petta_plan_child(plan, 1u))) {
+        atom->kind != ATOM_EXPR || atom->expr.len == 0u ||
+        plan->child_count != atom->expr.len)
         return false;
-    }
-
-    Atom *branches = atom->expr.elems[2];
+    CettaControlOperationPlan control = plan->computation.control;
+    CettaExprLen arity = atom->expr.len - 1u;
+    if (!cetta_control_operation_match_branches_layout(control, arity))
+        return false;
+    CettaExprIndex key_child = (CettaExprIndex)control.source + 1u;
+    CettaExprIndex arms_child = (CettaExprIndex)control.first + 1u;
+    if (!petta_table_safety_push_node(nodes, length, capacity,
+            atom->expr.elems[key_child], petta_plan_child(plan, key_child)))
+        return false;
+    Atom *branches = atom->expr.elems[arms_child];
     const PettaPlanNode *branches_plan =
-        petta_plan_child(plan, 2u);
+        petta_plan_child(plan, arms_child);
     if (!branches || branches->kind != ATOM_EXPR ||
         !branches_plan ||
         branches_plan->child_count != branches->expr.len) {
@@ -7149,7 +7264,7 @@ static PettaRelationSafety petta_table_safety_scan_relation(
 
         SymbolId call_head =
             atom->expr.elems[0]->sym_id;
-        if (call_head == g_builtin_syms.case_text) {
+        if (plan->computation.control.operation == CETTA_CONTROL_MATCH_BRANCHES) {
             safe = petta_table_safety_push_case(
                 &nodes, &node_len, &node_cap,
                 atom, plan);

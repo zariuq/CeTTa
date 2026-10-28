@@ -4900,10 +4900,10 @@ Atom *atom_counted_collection(
 Atom *atom_list(Arena *a, Atom *const *elems, CettaExprLen len) {
     Atom *tag, *list;
     Atom **parts;
+    const CettaExprLen capacity = (CettaExprLen)(SIZE_MAX / sizeof(*parts));
     if (len == 0u)
         return &g_atom_empty_list;
-    if (!a || !elems ||
-        !cetta_expr_len_mul_fits_size(len + 1u, sizeof(Atom *)))
+    if (!a || !elems || len >= capacity)
         return NULL;
     tag = atom_internal_tag(a, CETTA_INTERNAL_TAG_LIST);
     if (!tag)
@@ -4921,12 +4921,13 @@ Atom *atom_list_with_rest(Arena *a, Atom *const *elems, CettaExprLen len, Atom *
     Atom *tag, *result;
     Atom **parts;
     CettaExprLen rest_len;
-    if (!a || !rest || (!elems && len > 0u))
+    const CettaExprLen capacity = (CettaExprLen)(SIZE_MAX / sizeof(*parts));
+    if (!a || !rest || (!elems && len > 0u) || len > capacity)
         return NULL;
     if (atom_is_list(rest) || atom_is_list_rest(rest)) {
         /* [x... | [y...]] is [x... y...]; [x... | [y... | r]] is [x... y... | r]. */
         rest_len = rest->expr.len - 1u;
-        if (!cetta_expr_len_mul_fits_size(len + rest_len + 1u, sizeof(Atom *)))
+        if (rest_len >= capacity || len > capacity - rest_len - 1u)
             return NULL;
         parts = cetta_malloc(sizeof(*parts) * (size_t)(len + rest_len + 1u));
         parts[0] = rest->expr.elems[0];
@@ -4939,7 +4940,7 @@ Atom *atom_list_with_rest(Arena *a, Atom *const *elems, CettaExprLen len, Atom *
     }
     if (len == 0u)
         return rest; /* [| r] is r */
-    if (!cetta_expr_len_mul_fits_size(len + 2u, sizeof(Atom *)))
+    if (len > capacity - 2u)
         return NULL;
     tag = atom_internal_tag(a, CETTA_INTERNAL_TAG_LIST_REST);
     if (!tag)
@@ -6103,63 +6104,6 @@ SymbolId atom_head_symbol_id(const Atom *a) {
     return SYMBOL_ID_NONE;
 }
 
-bool atom_tree_any(const Atom *root, AtomTreePredicate predicate,
-                   void *context) {
-    enum { INLINE_CAPACITY = 64 };
-    const Atom *inline_stack[INLINE_CAPACITY];
-    const Atom **stack = inline_stack;
-    size_t capacity = INLINE_CAPACITY;
-    size_t length = 0u;
-
-    if (!root || !predicate)
-        return false;
-    stack[length++] = root;
-    while (length > 0u) {
-        const Atom *node = stack[--length];
-        if (!node)
-            continue;
-        if (predicate(node, context)) {
-            if (stack != inline_stack)
-                free((void *)stack);
-            return true;
-        }
-        if (node->kind != ATOM_EXPR || node->expr.len == 0u)
-            continue;
-        if (node->expr.len > (CettaExprLen)(SIZE_MAX - length))
-            cetta_oom(SIZE_MAX);
-        size_t needed = length + (size_t)node->expr.len;
-        if (needed > capacity) {
-            size_t next_capacity = capacity;
-            while (next_capacity < needed) {
-                if (next_capacity > SIZE_MAX / 2u) {
-                    next_capacity = needed;
-                    break;
-                }
-                next_capacity *= 2u;
-            }
-            if (next_capacity > SIZE_MAX / sizeof(*stack))
-                cetta_oom(SIZE_MAX);
-            if (stack == inline_stack) {
-                const Atom **grown = cetta_malloc(
-                    next_capacity * sizeof(*grown));
-                memcpy((void *)grown, inline_stack,
-                       length * sizeof(*grown));
-                stack = grown;
-            } else {
-                stack = cetta_realloc(
-                    (void *)stack, next_capacity * sizeof(*stack));
-            }
-            capacity = next_capacity;
-        }
-        /* Reverse push preserves the recursive walk's left-to-right order. */
-        for (CettaExprIndex i = node->expr.len; i > 0u; i--)
-            stack[length++] = node->expr.elems[i - 1u];
-    }
-    if (stack != inline_stack)
-        free((void *)stack);
-    return false;
-}
-
 static size_t atom_visit_slot(const Atom *atom, size_t cap) {
     uintptr_t key = (uintptr_t)atom;
     key ^= key >> 33u;
@@ -6204,8 +6148,9 @@ void atom_visit_set_free(AtomVisitSet *set) {
     *set = (AtomVisitSet){0};
 }
 
-bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
-                    void *context) {
+static inline __attribute__((always_inline)) bool atom_walk_any(
+    const Atom *root, AtomTreePredicate predicate, AtomTreePredicate barrier,
+    void *context, bool unique) {
     enum { INLINE_CAPACITY = 64 };
     const Atom *inline_stack[INLINE_CAPACITY];
     const Atom **stack = inline_stack;
@@ -6224,8 +6169,10 @@ bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
             continue;
         /* A subexpression met again was answered where it was first met;
          * where the set cannot grow the walk goes on as a tree walk. */
-        if (node != root && node->kind == ATOM_EXPR && node->expr.len &&
+        if (unique && node != root && node->kind == ATOM_EXPR && node->expr.len &&
             !fault && !atom_visit_set_add(&seen, node, &fault) && !fault)
+            continue;
+        if (barrier && barrier(node, context))
             continue;
         if (predicate(node, context)) {
             found = true;
@@ -6264,8 +6211,28 @@ bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
     }
     if (stack != inline_stack)
         free((void *)stack);
-    atom_visit_set_free(&seen);
+    if (unique)
+        atom_visit_set_free(&seen);
     return found;
+}
+
+
+bool atom_tree_any(const Atom *root, AtomTreePredicate predicate, void *context) {
+    return atom_walk_any(root, predicate, NULL, context, false);
+}
+
+bool atom_graph_any(const Atom *root, AtomTreePredicate predicate, void *context) {
+    return atom_walk_any(root, predicate, NULL, context, true);
+}
+
+bool atom_tree_any_pruned(const Atom *root, AtomTreePredicate predicate,
+                          AtomTreePredicate barrier, void *context) {
+    return atom_walk_any(root, predicate, barrier, context, false);
+}
+
+bool atom_graph_any_pruned(const Atom *root, AtomTreePredicate predicate,
+                           AtomTreePredicate barrier, void *context) {
+    return atom_walk_any(root, predicate, barrier, context, true);
 }
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */

@@ -319,6 +319,7 @@ typedef enum {
      * the answer choice `open_host.holder` with the values of `first`'s
      * variables. */
     PETTA_GOAL_OPEN_RESUME,
+    PETTA_GOAL_PREPARED_RESUME,
     /* Goals delayed on variables a binding woke (delay_service.h): `first`
      * is the woken client goal, run before the next goal. */
     PETTA_GOAL_DELAY_WAKE,
@@ -634,6 +635,7 @@ static void petta_machine_record_goal_class(
     case PETTA_GOAL_TRANSLATE_PREDICATE_READY:
     case PETTA_GOAL_NAMED_STATE_READY:
     case PETTA_GOAL_OPEN_RESUME:
+    case PETTA_GOAL_PREPARED_RESUME:
     case PETTA_GOAL_DELAY_WAKE:
         stats->host_goal_transitions++;
         return;
@@ -695,6 +697,27 @@ typedef struct {
 
 typedef struct PettaMachineImpl PettaMachineImpl;
 
+typedef struct {
+    Atom *term;
+    Bindings captures;
+    PettaGoal *bindings;
+    size_t binding_count;
+    const PettaPlanNode *plan;
+} PettaPreparedResumption;
+
+typedef struct PettaPreparedFrontier PettaPreparedFrontier;
+
+typedef struct {
+    CettaOwnedExecution producer;
+    PettaPreparedResumption caller;
+    Atom *hole;
+    bool pending;
+    Atom *moved_term;
+    Atom *moved_hole;
+    PettaGoal *moved_bindings;
+    PettaPreparedFrontier *frontier;
+} PettaPreparedNative;
+
 /* The machine's side of an answer producer: it admits each relation the
  * producer enters and keeps that relation's snapshot, in first-entry order. */
 typedef struct {
@@ -703,6 +726,7 @@ typedef struct {
     size_t lease_len;
     size_t lease_cap;
     PettaMachineAuthorityToken authority;
+    PettaPreparedNative *native;
 } PettaAnswerAdmission;
 
 /* An answer choice over the compiled open equation tier: the cursor, and
@@ -2223,7 +2247,7 @@ static bool petta_machine_init_internal(
     Atom *query, const PettaPlanNode *query_plan,
     const Bindings *base_environment,
     const PettaMachineHost *host,
-    bool borrow_query,
+    bool borrow_query, bool retained_context,
     PettaTableShared *table_shared,
     PettaMatchDecisionRepository *match_decision_repository,
     PettaNamedAritySourceCache **named_arity_source,
@@ -5106,8 +5130,26 @@ static void petta_machine_release_child(
     }
 }
 
+static void petta_prepared_frontier_release(PettaMachineImpl *machine,
+    PettaPreparedFrontier *frontier, size_t transferred);
+
+static void petta_prepared_native_release(PettaMachineImpl *machine, PettaPreparedNative *native) {
+    if (native->frontier) {
+        petta_prepared_frontier_release(machine, native->frontier, 0u);
+        free(native->frontier);
+    }
+    cetta_owned_execution_cancel(&native->producer);
+    bindings_free(&native->caller.captures);
+    free(native->caller.bindings);
+    free(native->moved_bindings);
+    free(native);
+}
+
 static void __attribute__((noinline))
 petta_answer_choice_release(PettaChoice *choice) {
+    PettaAnswerAdmission *admission = choice->as.answers.admission;
+    if (admission && admission->native)
+        petta_prepared_native_release(admission->machine, admission->native);
     cetta_prepared_pure_answer_cursor_close(choice->as.answers.cursor);
     choice->as.answers.cursor = NULL;
     PettaOpenAnswers *open = choice->as.answers.open;
@@ -5117,7 +5159,6 @@ petta_answer_choice_release(PettaChoice *choice) {
         free(open);
     }
     choice->as.answers.open = NULL;
-    PettaAnswerAdmission *admission = choice->as.answers.admission;
     if (admission) {
         for (size_t index = 0u; index < admission->lease_len; index++) {
             petta_program_candidate_snapshot_lease_release(
@@ -6612,6 +6653,16 @@ static bool petta_binding_roots_add_choice(
                     return false;
             }
         }
+        if (choice->as.answers.admission && choice->as.answers.admission->native) {
+            const PettaPreparedNative *native = choice->as.answers.admission->native;
+            if (!petta_binding_roots_add(roots, native->caller.term) ||
+                !petta_binding_roots_add(roots, native->hole))
+                return false;
+            for (size_t index = 0u; index < native->caller.binding_count; index++)
+                if (!petta_binding_roots_add(roots, native->caller.bindings[index].first) ||
+                    !petta_binding_roots_add(roots, native->caller.bindings[index].second))
+                    return false;
+        }
         return petta_binding_roots_add(
             roots, choice->as.answers.expected);
     case PETTA_CHOICE_OUTCOMES:
@@ -7205,6 +7256,22 @@ static bool petta_copy_supported_choice_atoms(
                        choice->as.answers.cursor)) {
             return false;
         }
+        if (choice->as.answers.admission && choice->as.answers.admission->native) {
+            PettaPreparedNative *native = choice->as.answers.admission->native;
+            native->moved_term = petta_copy_optional_atom(session, native->caller.term, &ok);
+            native->moved_hole = petta_copy_optional_atom(session, native->hole, &ok);
+            native->moved_bindings = ok && native->caller.binding_count
+                ? calloc(native->caller.binding_count, sizeof(*native->moved_bindings)) : NULL;
+            if (native->caller.binding_count && !native->moved_bindings)
+                ok = false;
+            for (size_t index = 0u; ok && index < native->caller.binding_count; index++) {
+                native->moved_bindings[index] = native->caller.bindings[index];
+                native->moved_bindings[index].first = petta_copy_optional_atom(
+                    session, native->caller.bindings[index].first, &ok);
+                native->moved_bindings[index].second = petta_copy_optional_atom(
+                    session, native->caller.bindings[index].second, &ok);
+            }
+        }
         choice->as.answers.expected = petta_copy_optional_atom(
             session, choice->as.answers.expected, &ok);
         return ok;
@@ -7266,6 +7333,12 @@ static void petta_choice_open_moved_vars_free(
             continue;
         free(choices[index].as.answers.open_moved_vars);
         choices[index].as.answers.open_moved_vars = NULL;
+        if (choices[index].as.answers.admission && choices[index].as.answers.admission->native) {
+            PettaPreparedNative *native = choices[index].as.answers.admission->native;
+            free(native->moved_bindings);
+            native->moved_bindings = NULL;
+            native->moved_term = native->moved_hole = NULL;
+        }
     }
 }
 
@@ -7546,6 +7619,16 @@ static bool petta_machine_collect_choice_heap(
                     choice->as.transaction.relocated);
                 choice->as.transaction.relocated = NULL;
                 continue;
+            }
+            if (choice->kind == PETTA_CHOICE_ANSWERS &&
+                choice->as.answers.admission && choice->as.answers.admission->native) {
+                PettaPreparedNative *native = choice->as.answers.admission->native;
+                native->caller.term = native->moved_term;
+                native->hole = native->moved_hole;
+                free(native->caller.bindings);
+                native->caller.bindings = native->moved_bindings;
+                native->moved_bindings = NULL;
+                native->moved_term = native->moved_hole = NULL;
             }
             if (choice->kind != PETTA_CHOICE_ANSWERS ||
                 !choice->as.answers.open_moved_vars)
@@ -16630,7 +16713,7 @@ static bool petta_table_choice_begin_generator(
         if (!petta_machine_init_internal(
                 generator, machine->space, round_arena,
                 generator_query, NULL,
-                &empty, &machine->host, false,
+                &empty, &machine->host, false, false,
                 machine->table_shared,
                 petta_match_decision_tree_repository_enabled()
                     ? machine->match_decision_repository : NULL,
@@ -22608,7 +22691,7 @@ static PettaMachine *petta_machine_new_child_in(
             inner, machine->space, answers, body,
             plan,
             &child_environment,
-            &machine->host, true, machine->table_shared,
+            &machine->host, true, false, machine->table_shared,
             petta_match_decision_tree_repository_enabled()
                 ? machine->match_decision_repository : NULL,
             machine->named_arity_source,
@@ -29125,9 +29208,9 @@ static bool petta_answer_frame_catalog_index(
     return false;
 }
 
-/* A continuation frontier is not an equation choice.  Rebuilding it would
- * replay a step body that already delivered answers or publish a callee
- * where the continuation should resume.  The stop stays distinct from
+/* A frontier without a decoded source continuation cannot become an
+ * equation choice. Restarting it would replay delivered work or publish a
+ * callee where its caller should resume.  The stop stays distinct from
  * logical completion.  Already delivered answers are left where they are;
  * this is not a transaction that discards its prefix and retries. */
 static PettaMachineStep petta_answer_continuation_handoff_failure(
@@ -29152,38 +29235,113 @@ static Atom *petta_machine_import_prepared_value(void *context, Atom *value) {
     return petta_semantics_materialize_value(&machine->heap, value);
 }
 
-/* Replace the answer choice on top of the stack by the equation choices of
- * its frontier and resume the innermost.  The machine state is the choice's
- * checkpoint.  Returns as a resumed choice does; on exhaustion the caller
- * pops the record at the producer's position.
- *
- * A call whose answers resume pending callers keeps them: its choice answers
- * into a fresh hole, and a goal solving the callers' decoded source
- * computation over that hole sits at the consumer's height beneath it.  Each
- * such choice owns that goal slot through the goal trail, so a later choice's
- * goal never leaks into an earlier alternative.  The call resumes at its next
- * equation occurrence; nothing is restarted and no delivered answer is
- * replayed.  A caller with no source reading keeps the honest stop. */
-static __attribute__((cold, noinline)) bool petta_machine_answer_handoff(
-    PettaMachineImpl *machine, PettaMachineStep *failure) {
-    cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PETTA_ANSWER_PRODUCER_HANDOFF);
-    size_t position = machine->choice_len - 1u;
-    PettaChoice *source = &machine->choices[position];
+
+static void petta_prepared_resumptions_free(PettaPreparedResumption *resumptions,
+        size_t count) {
+    if (!resumptions)
+        return;
+    for (size_t index = 0u; index < count; index++) {
+        bindings_free(&resumptions[index].captures);
+        free(resumptions[index].bindings);
+    }
+    free(resumptions);
+}
+
+/* Freeze the positional caller plan and lower captured data to unification
+ * goals before the frontier's heap mark. Both survive every branch restore. */
+static bool petta_machine_prepare_resumption(PettaMachineImpl *machine,
+        PettaPreparedResumption *resumption, uint32_t barrier) {
+    size_t count = 0u;
+    if (!bindings_current_binding_count(&resumption->captures, &count) ||
+        count > SIZE_MAX / sizeof(*resumption->bindings))
+        return false;
+    resumption->binding_count = count;
+    resumption->bindings = count ? cetta_malloc(count * sizeof(*resumption->bindings)) : NULL;
+    if (count && !resumption->bindings)
+        return false;
+    BindingsIterator iterator = {.bindings = &resumption->captures};
+    Binding capture;
+    size_t index = 0u;
+    while (bindings_iterator_next(&iterator, &capture)) {
+        if (index >= count)
+            return false;
+        Atom *port = atom_var_with_id(&machine->heap, "__captured", capture.var_id);
+        if (!port)
+            return false;
+        resumption->bindings[index++] = (PettaGoal){
+            .kind = PETTA_GOAL_UNIFY, .barrier = barrier,
+            .first = port, .second = capture.value.skeleton};
+    }
+    if (index != count)
+        return false;
+    if (machine->host.translate_source) {
+        resumption->plan = petta_machine_translate_source(machine, resumption->term);
+        if (!resumption->plan)
+            return false;
+    }
+    return true;
+}
+
+/* Each branch installs the captured values in its own authoritative world
+ * before running the source continuation. No captured value is interpreted. */
+static bool petta_machine_push_prepared_resumption(PettaMachineImpl *machine,
+        const PettaPreparedResumption *resumption, Atom *expected,
+        uint32_t barrier) {
+    if (!petta_push_solve_planned(machine, resumption->term, expected, barrier, resumption->plan))
+        return false;
+    for (size_t index = 0u; index < resumption->binding_count; index++)
+        if (!petta_goal_push(machine, &resumption->bindings[index]))
+            return false;
+    return true;
+}
+
+/* A prepared frontier owns untried equation snapshots and the data each
+ * saved caller already computed. The same image serves ordinary handoff and
+ * an entered native caller whose alternatives must move into the parent. */
+struct PettaPreparedFrontier {
+    PettaChoice *records;
+    PettaPreparedResumption *resumptions;
+    size_t length;
+    size_t frame_count;
+};
+
+static void petta_prepared_frontier_release(PettaMachineImpl *machine,
+        PettaPreparedFrontier *frontier, size_t transferred) {
+    for (size_t index = transferred; index < frontier->length; index++)
+        petta_choice_release(machine, &frontier->records[index]);
+    free(frontier->records);
+    petta_prepared_resumptions_free(frontier->resumptions, frontier->frame_count);
+    *frontier = (PettaPreparedFrontier){0};
+}
+
+static __attribute__((cold, noinline)) bool petta_machine_prepare_frontier(
+        PettaMachineImpl *machine, const PettaChoice *source, size_t frame_count,
+        PettaPreparedFrontier *frontier, PettaMachineStep *failure) {
     CettaPreparedPureAnswerCursor *cursor = source->as.answers.cursor;
-    size_t frame_count = cetta_prepared_pure_answer_cursor_frame_count(cursor);
-    if (frame_count > SIZE_MAX / sizeof(PettaChoice)) {
+    if (frame_count > SIZE_MAX / sizeof(PettaChoice) ||
+        frame_count > SIZE_MAX / sizeof(PettaPreparedResumption)) {
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
     PettaChoice *records = frame_count
         ? cetta_malloc(frame_count * sizeof(*records)) : NULL;
-    Atom **resumptions = frame_count
+    PettaPreparedResumption *resumptions = frame_count
         ? cetta_malloc(frame_count * sizeof(*resumptions)) : NULL;
+    if (frame_count && (!records || !resumptions)) {
+        free(records);
+        free(resumptions);
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    for (size_t index = 0u; index < frame_count; index++) {
+        resumptions[index] = (PettaPreparedResumption){0};
+        bindings_init(&resumptions[index].captures);
+    }
     size_t record_len = 0u;
     PettaMachineStep error = PETTA_MACHINE_STEP_EXHAUSTED;
     Atom *final_expected = source->as.answers.expected;
     uint32_t consumer_barrier = source->barrier;
+    size_t position = source->barrier;
     size_t consumer_height = source->goal_height;
     for (size_t index = 0u; index < frame_count; index++) {
         CettaPreparedPureAnswerFrame frame;
@@ -29202,7 +29360,7 @@ static __attribute__((cold, noinline)) bool petta_machine_answer_handoff(
                 !cetta_prepared_pure_answer_cursor_frame_resumption(
                     cursor, index, &machine->heap, hole,
                     petta_machine_import_prepared_value, machine,
-                    &resumption)) {
+                    &resumptions[record_len].captures, &resumption)) {
                 error = petta_answer_continuation_handoff_failure(
                     cetta_prepared_pure_answer_cursor_handoff_reason(cursor));
                 break;
@@ -29246,12 +29404,21 @@ static __attribute__((cold, noinline)) bool petta_machine_answer_handoff(
         }
         /* Each unfinished call is the equation choice equation search would
          * have pushed at this depth. */
-        resumptions[record_len] = resumption;
+        resumptions[record_len].term = resumption;
+        if (resumption &&
+            (!petta_machine_prepare_resumption(machine, &resumptions[record_len], consumer_barrier) ||
+             consumer_height == SIZE_MAX ||
+             resumptions[record_len].binding_count > SIZE_MAX - consumer_height - 1u)) {
+            petta_program_candidate_snapshot_lease_release(&catalog);
+            error = PETTA_MACHINE_STEP_CAPACITY;
+            break;
+        }
         records[record_len] = (PettaChoice){
             .kind = PETTA_CHOICE_EQUATION,
+            .source_root = source->source_root ? source->source_root : machine->current_source_root,
             .manufacture_epoch = source->manufacture_epoch,
             .binding_mark = source->binding_mark,
-            .goal_height = resumption ? consumer_height + 1u : consumer_height,
+            .goal_height = resumption ? consumer_height + 1u + resumptions[record_len].binding_count : consumer_height,
             .barrier = (uint32_t)(position + record_len),
             .as.equation = {
                 .catalog = catalog,
@@ -29270,62 +29437,109 @@ static __attribute__((cold, noinline)) bool petta_machine_answer_handoff(
         for (size_t index = 0u; index < record_len; index++)
             petta_choice_release(machine, &records[index]);
         free(records);
-        free(resumptions);
+        petta_prepared_resumptions_free(resumptions, frame_count);
         *failure = error;
         return false;
     }
-    petta_answer_choice_release(source);
-    if (record_len == 0u) {
-        free(records);
-        free(resumptions);
+    *frontier = (PettaPreparedFrontier){records, resumptions, record_len, frame_count};
+    return true;
+}
+
+/* Install every source alternative before the entered caller can change
+ * authority. Keeping the answer owner appends it above those alternatives;
+ * its cursor then supplies storage only and is never restarted. */
+static __attribute__((cold, noinline)) bool petta_machine_install_frontier(
+        PettaMachineImpl *machine, size_t position, PettaPreparedFrontier *frontier,
+        bool keep_answer, PettaMachineStep *failure) {
+    size_t length = frontier->length, transferred = 0u;
+    PettaChoice saved = machine->choices[position];
+    bool saved_uninstalled = false;
+    if (!length) {
+        petta_prepared_frontier_release(machine, frontier, 0u);
+        return true;
+    }
+    if (length > SIZE_MAX - machine->choice_len ||
+        !petta_machine_reserve((void **)&machine->choices, &machine->choice_cap,
+            machine->choice_len + length, sizeof(*machine->choices))) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        petta_prepared_frontier_release(machine, frontier, 0u);
         return false;
     }
-    /* The outermost unfinished call takes the producer's place; the frontier
-     * values it and the inner calls read lie below the raised heap mark. */
+    PettaChoice *source = &machine->choices[position];
+    if (!keep_answer)
+        petta_answer_choice_release(source);
     ArenaMark mark = arena_mark(&machine->heap);
-    PettaChoice outer = records[0];
+    size_t height = saved.goal_height;
+    PettaChoice outer = frontier->records[0];
     outer.heap_mark = mark;
     outer.heap_mark_captured = true;
-    outer.goal_trail_mark = source->goal_trail_mark;
-    outer.type_obligation_mark = source->type_obligation_mark;
-    outer.previous_protected_goal_height =
-        source->previous_protected_goal_height;
-    machine->goal_len = consumer_height;
-    if (resumptions[0] &&
-        !petta_push_solve(machine, resumptions[0], final_expected,
-                          consumer_barrier)) {
-        for (size_t index = 0u; index < record_len; index++)
-            petta_choice_release(machine, &records[index]);
-        free(records);
-        free(resumptions);
-        *failure = PETTA_MACHINE_STEP_CAPACITY;
-        return false;
-    }
+    outer.type_obligation_mark = saved.type_obligation_mark;
+    outer.previous_protected_goal_height = saved.previous_protected_goal_height;
+    machine->goal_len = height;
+    if (frontier->resumptions[0].term &&
+        !petta_machine_push_prepared_resumption(machine, &frontier->resumptions[0],
+            saved.as.answers.expected, saved.barrier))
+        goto capacity;
+    /* This choice owns the installed caller. An older choice may have
+     * trailed the overwritten slot; rolling back that write here would
+     * restore the entrance call and replay its already-entered effects. */
+    outer.goal_trail_mark = machine->goal_trail_len;
     *source = outer;
-    /* The outer choice now owns the goal slot at the consumer's height:
-     * later writes to it must be trailed so that restoring it brings its own
-     * resumption back. */
+    transferred = 1u;
+    saved_uninstalled = keep_answer;
     if (outer.goal_height > machine->protected_goal_height)
         machine->protected_goal_height = outer.goal_height;
-    for (size_t index = 1u; index < record_len; index++) {
-        records[index].heap_mark = mark;
-        records[index].heap_mark_captured = true;
-        machine->goal_len = consumer_height;
-        if ((resumptions[index] &&
-             !petta_push_solve(machine, resumptions[index], final_expected,
-                               consumer_barrier)) ||
-            !petta_choice_push_at_goal_trail_mark(
-                machine, records[index], machine->goal_trail_len)) {
-            for (size_t rest = index + 1u; rest < record_len; rest++)
-                petta_choice_release(machine, &records[rest]);
-            free(records);
-            free(resumptions);
-            *failure = PETTA_MACHINE_STEP_CAPACITY;
-            return false;
-        }
+    for (size_t index = 1u; index < length; index++) {
+        PettaChoice next = frontier->records[index];
+        next.heap_mark = mark;
+        next.heap_mark_captured = true;
+        machine->goal_len = height;
+        if (frontier->resumptions[index].term &&
+            !petta_machine_push_prepared_resumption(machine, &frontier->resumptions[index],
+                saved.as.answers.expected, saved.barrier))
+            goto capacity;
+        /* Push consumes this record on success and releases it on refusal. */
+        transferred = index + 1u;
+        if (!petta_choice_push_at_goal_trail_mark(machine, next, machine->goal_trail_len))
+            goto capacity;
     }
-    free(records);
-    free(resumptions);
+    if (keep_answer) {
+        machine->goal_len = height;
+        saved.heap_mark = mark;
+        saved.heap_mark_captured = true;
+        saved_uninstalled = false;
+        if (!petta_choice_push_at_goal_trail_mark(machine, saved, machine->goal_trail_len))
+            goto capacity;
+    }
+    petta_prepared_frontier_release(machine, frontier, transferred);
+    return true;
+capacity:
+    if (saved_uninstalled)
+        petta_answer_choice_release(&saved);
+    petta_prepared_frontier_release(machine, frontier, transferred);
+    *failure = PETTA_MACHINE_STEP_CAPACITY;
+    return false;
+}
+
+/* Resume the innermost untried source equation, retaining each caller's
+ * captured values through the existing goal trail and binding checkpoint. */
+static __attribute__((cold, noinline)) bool petta_machine_answer_handoff(
+        PettaMachineImpl *machine, PettaMachineStep *failure) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_ANSWER_PRODUCER_HANDOFF);
+    size_t position = machine->choice_len - 1u;
+    PettaChoice *source = &machine->choices[position];
+    PettaPreparedFrontier frontier = {0};
+    if (!petta_machine_prepare_frontier(machine, source,
+            cetta_prepared_pure_answer_cursor_frame_count(source->as.answers.cursor),
+            &frontier, failure))
+        return false;
+    if (!frontier.length) {
+        petta_prepared_frontier_release(machine, &frontier, 0u);
+        petta_answer_choice_release(source);
+        return false;
+    }
+    if (!petta_machine_install_frontier(machine, position, &frontier, false, failure))
+        return false;
     while (machine->choice_len - 1u > position) {
         PettaChoice *inner = &machine->choices[machine->choice_len - 1u];
         if (petta_machine_advance_choice(machine, inner, failure, true, NULL))
@@ -29334,8 +29548,8 @@ static __attribute__((cold, noinline)) bool petta_machine_answer_handoff(
             return false;
         petta_choice_pop(machine);
     }
-    return petta_machine_advance_choice(
-        machine, &machine->choices[position], failure, true, NULL);
+    return petta_machine_advance_choice(machine,
+        &machine->choices[position], failure, true, NULL);
 }
 
 /* Open calls.  A call whose relations compile to the open equation tier
@@ -30183,6 +30397,8 @@ static bool petta_open_return_valid(CettaOpenEquationStep step,
     return true;
 }
 
+static PettaMachineStep petta_open_handoff_step(CettaOpenEquationHandoff reason);
+
 static __attribute__((noinline)) bool petta_machine_start_open_answers(
     PettaMachineImpl *machine, const PettaSpaceQueryView *query,
     Atom *expected, bool evaluate_result, bool *taken_out) {
@@ -30298,10 +30514,7 @@ static __attribute__((noinline)) bool petta_machine_start_open_answers(
         machine->terminal = true;
         CettaOpenEquationHandoff reason =
             cetta_open_equation_cursor_handoff(open->cursor);
-        machine->terminal_step = reason == CETTA_OPEN_EQUATION_HANDOFF_SERVICE_ERROR
-            ? PETTA_MACHINE_STEP_HOST_ERROR
-            : reason == CETTA_OPEN_EQUATION_HANDOFF_STACK
-                ? PETTA_MACHINE_STEP_STACK : PETTA_MACHINE_STEP_CAPACITY;
+        machine->terminal_step = petta_open_handoff_step(reason);
         *taken_out = true;
         petta_answer_choice_release(&choice);
         return false;
@@ -30385,6 +30598,8 @@ static bool petta_machine_open_cut(PettaMachineImpl *machine,
 static PettaMachineStep petta_open_handoff_step(
     CettaOpenEquationHandoff reason) {
     switch (reason) {
+    case CETTA_OPEN_EQUATION_HANDOFF_INVALIDATED:
+        return PETTA_MACHINE_STEP_INVALIDATED;
     case CETTA_OPEN_EQUATION_HANDOFF_INTERRUPT:
         return PETTA_MACHINE_STEP_SUSPENDED;
     case CETTA_OPEN_EQUATION_HANDOFF_SERVICE_ERROR:
@@ -30752,6 +30967,187 @@ static PettaMachineStep petta_machine_entered_answer_failure(
             cetta_prepared_pure_answer_cursor_handoff_reason(cursor));
 }
 
+/* COMPLETE with LIMIT is a physical pause of retained work. An entered
+ * cursor resumes only after another parent transition is admitted; body or
+ * allocation failure records an incomplete cause instead. */
+static bool petta_machine_prepared_quantum_pending(
+        CettaPreparedPureAnswerCursor *cursor, CettaEvalCompletion completion) {
+    return completion == CETTA_EVAL_COMPLETE &&
+        cetta_prepared_pure_answer_cursor_handoff_reason(cursor) ==
+            CETTA_PREPARED_PURE_HANDOFF_LIMIT;
+}
+
+/* Import a loan's data and reachable logical world before its owner can
+ * advance. Term, environment and conditional roots share one copy episode. */
+static bool petta_machine_copy_return(PettaMachineImpl *machine,
+        const CettaOwnedReturn *returned, CettaCallOutcome *packet,
+        PettaMachineStep *failure) {
+    if (!cetta_call_outcome_shape_valid(returned->outcome)) {
+        *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+        return false;
+    }
+    if (returned->outcome.kind == CETTA_CALL_VALUE &&
+        returned->outcome.result_form == CETTA_CALL_RESULT_EXPRESSION_FRONTIER) {
+        /* This packet interprets as a whole. Validate every occurrence before
+         * capturing its graph, as the ordinary completion owner does. */
+        CettaCallReturnCursor preflight = {.outcome = returned->outcome, .select_expressions = true};
+        CettaOwnedReturn item;
+        CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+        while (cetta_call_return_next(&preflight, &item, &completion) == CETTA_OWNED_EXECUTION_RETURN) {}
+        if (completion != CETTA_EVAL_COMPLETE) {
+            *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+            return false;
+        }
+    }
+    Bindings captured;
+    bindings_init(&captured);
+    Atom *roots[] = {returned->outcome.term, returned->outcome.delayed};
+    AtomDeepCopySession *copy = atom_deep_copy_session_new(&machine->heap);
+    bool ok = copy && bindings_project_reachable(returned->environment,
+        roots, 2u, &captured) && petta_copy_binding_atoms(&captured, &machine->heap, copy);
+    CettaCallOutcome image = returned->outcome;
+    image.term = ok && roots[0] ? atom_deep_copy_session_copy(copy, roots[0]) : NULL;
+    image.delayed = ok && roots[1] ? atom_deep_copy_session_copy(copy, roots[1]) : NULL;
+    atom_deep_copy_session_free(copy);
+    if (!ok || (roots[0] && !image.term) || (roots[1] && !image.delayed)) {
+        bindings_free(&captured);
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    ok = petta_machine_merge(machine, &captured, PETTA_BINDING_MERGE_OUTCOME);
+    bindings_free(&captured);
+    if (ok)
+        *packet = image;
+    return ok;
+}
+
+/* The same typed stage serves a new machine and a continuation spliced into
+ * its parent. Completed data never enters a source interpretation goal. */
+static bool petta_machine_stage_return(PettaMachineImpl *machine,
+        const CettaOwnedReturn *returned, Atom *destination, uint32_t barrier,
+        PettaMachineStep *failure) {
+    CettaCallOutcome packet;
+    if (!petta_machine_copy_return(machine, returned, &packet, failure))
+        return false;
+    Atom *target = atom_deep_copy(&machine->heap, destination);
+    if (!target || !petta_goal_push(machine, &(PettaGoal){
+            .kind = packet.kind == CETTA_CALL_VALUE &&
+                    packet.result_form == CETTA_CALL_RESULT_EXPRESSION
+                ? PETTA_GOAL_SOLVE : PETTA_GOAL_NATIVE_RETURN,
+            .barrier = barrier, .first = packet.term, .second = target,
+            .third = packet.delayed,
+            .native_return = {packet.kind, packet.result_form},
+        })) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    return true;
+}
+
+static __attribute__((cold, noinline)) bool petta_machine_import_prepared_return(
+        PettaMachineImpl *machine, const CettaOwnedReturn *returned,
+        Atom *expected, uint32_t barrier, PettaMachineStep *failure) {
+    CettaCallOutcome packet;
+    if (!petta_machine_copy_return(machine, returned, &packet, failure))
+        return false;
+    if ((packet.delayed && !petta_machine_delay_install(machine, packet.delayed)) ||
+        !petta_push_unify(machine, packet.term, expected, barrier)) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    return true;
+}
+
+/* Freeze the actual caller chain before moving its entered producer. These
+ * roots precede the choice's heap mark and survive every branch restore. */
+static __attribute__((cold, noinline)) bool petta_machine_take_prepared_native(
+        PettaMachineImpl *machine, PettaChoice *choice, PettaMachineStep *failure) {
+    CettaPreparedPureAnswerCursor *cursor = choice->as.answers.cursor;
+    size_t frames = cetta_prepared_pure_answer_cursor_frame_count(cursor);
+    PettaPreparedNative *native = calloc(1u, sizeof(*native));
+    if (!native) {
+        *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    bindings_init(&native->caller.captures);
+    native->hole = atom_var_with_id(&machine->heap, "__native_return", fresh_var_id());
+    bool ok = frames && native->hole &&
+        cetta_prepared_pure_answer_cursor_frame_resumption(cursor, frames - 1u,
+            &machine->heap, native->hole, petta_machine_import_prepared_value,
+            machine, &native->caller.captures, &native->caller.term) &&
+        petta_machine_prepare_resumption(machine, &native->caller, choice->barrier);
+    bindings_free(&native->caller.captures);
+    bindings_init(&native->caller.captures);
+    if (!ok || !cetta_prepared_pure_answer_cursor_take_native(cursor, &native->producer)) {
+        free(native->caller.bindings);
+        free(native);
+        *failure = cetta_prepared_pure_answer_cursor_handoff_reason(cursor) ==
+            CETTA_PREPARED_PURE_HANDOFF_STALE ? PETTA_MACHINE_STEP_INVALIDATED
+                                           : PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    choice->as.answers.admission->native = native;
+    if (!cetta_prepared_pure_answer_cursor_owns_native_frontier(cursor)) {
+        native->frontier = calloc(1u, sizeof(*native->frontier));
+        if (!native->frontier || !petta_machine_prepare_frontier(machine, choice,
+                frames - 1u, native->frontier, failure)) {
+            if (*failure == PETTA_MACHINE_STEP_EXHAUSTED)
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+    }
+    choice->heap_mark = arena_mark(&machine->heap);
+    choice->heap_mark_captured = true;
+    return true;
+}
+
+static bool petta_machine_resume_prepared_native(PettaMachineImpl *machine,
+        PettaChoice *choice, PettaMachineStep *failure) {
+    PettaPreparedNative *native = choice->as.answers.admission->native;
+    if (native->frontier) {
+        PettaPreparedFrontier *frontier = native->frontier;
+        native->frontier = NULL;
+        bool installed = petta_machine_install_frontier(machine,
+            machine->choice_len - 1u, frontier, true, failure);
+        free(frontier);
+        if (!installed)
+            return false;
+        choice = &machine->choices[machine->choice_len - 1u];
+        native = choice->as.answers.admission->native;
+    }
+    if (native->pending) {
+        if (!cetta_owned_execution_accept(&native->producer)) {
+            *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+            return false;
+        }
+        native->pending = false;
+    }
+    const CettaOwnedReturn *returned = NULL;
+    CettaOwnedExecutionStep step = cetta_owned_execution_loan(&native->producer, &returned);
+    if (step != CETTA_OWNED_EXECUTION_RETURN) {
+        if (step == CETTA_OWNED_EXECUTION_COMPLETE &&
+            native->producer.completion == CETTA_EVAL_COMPLETE)
+            return false;
+        if (!petta_machine_completion_failure(native->producer.completion, failure))
+            *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+        return false;
+    }
+    native->pending = true;
+    if (!petta_push_solve_planned(machine, native->caller.term,
+            choice->as.answers.expected, choice->barrier, native->caller.plan) ||
+        !petta_machine_stage_return(machine, returned, native->hole, choice->barrier, failure)) {
+        if (*failure == PETTA_MACHINE_STEP_EXHAUSTED)
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+        return false;
+    }
+    for (size_t index = 0u; index < native->caller.binding_count; index++)
+        if (!petta_goal_push(machine, &native->caller.bindings[index])) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+    return true;
+}
+
 static __attribute__((noinline)) bool petta_machine_resume_answer_choice(
     PettaMachineImpl *machine, PettaChoice *choice,
     PettaMachineStep *failure, bool restore_choice_state) {
@@ -30770,15 +31166,18 @@ static __attribute__((noinline)) bool petta_machine_resume_answer_choice(
     if (choice->as.answers.open)
         return petta_machine_resume_open_answer_choice(
             machine, choice, failure);
+    if (choice->as.answers.admission && choice->as.answers.admission->native)
+        return petta_machine_resume_prepared_native(machine, choice, failure);
     CettaPreparedPureAnswerCursor *cursor = choice->as.answers.cursor;
     PettaMachineAuthorityToken authority = {0};
     CettaOwnedReturn returned = {0};
     CettaEvalCompletion completion = CETTA_EVAL_INCOMPLETE_INVALIDATED;
     CettaPreparedPureCursorStep step = CETTA_PREPARED_PURE_CURSOR_HANDOFF;
-    if (machine->host.answer_authority_token(
-            machine->host.context, &authority) &&
-        petta_machine_authority_token_eq(
-            &authority, &choice->as.answers.authority)) {
+    if (cetta_prepared_pure_answer_cursor_owns_native_frontier(cursor) ||
+        (machine->host.answer_authority_token(
+             machine->host.context, &authority) &&
+         petta_machine_authority_token_eq(
+             &authority, &choice->as.answers.authority))) {
         completion = CETTA_EVAL_COMPLETE;
         step = petta_machine_pull_prepared_answer(machine, cursor, &returned, &completion);
     }
@@ -30812,7 +31211,21 @@ static __attribute__((noinline)) bool petta_machine_resume_answer_choice(
         step = CETTA_PREPARED_PURE_CURSOR_HANDOFF;
     }
     if (step == CETTA_PREPARED_PURE_CURSOR_HANDOFF) {
+        if (cetta_prepared_pure_answer_cursor_native_transfer_ready(cursor)) {
+            if (!petta_machine_take_prepared_native(machine, choice, failure))
+                return false;
+            return petta_machine_resume_prepared_native(machine, choice, failure);
+        }
         if (cetta_prepared_pure_answer_cursor_native_started(cursor)) {
+            if (petta_machine_prepared_quantum_pending(cursor, completion)) {
+                if (petta_goal_push(machine, &(PettaGoal){
+                        .kind = PETTA_GOAL_PREPARED_RESUME,
+                        .barrier = choice->barrier,
+                        .choice_index = machine->choice_len - 1u}))
+                    return true;
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
             *failure = petta_machine_entered_answer_failure(cursor, completion);
             return false;
         }
@@ -30820,6 +31233,13 @@ static __attribute__((noinline)) bool petta_machine_resume_answer_choice(
     }
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_ANSWER_PRODUCER_ANSWER);
+    if (returned.environment || returned.outcome.kind == CETTA_CALL_SUSPENDED) {
+        bool imported = petta_machine_import_prepared_return(machine, &returned,
+            choice->as.answers.expected, choice->barrier, failure);
+        if (imported)
+            cetta_prepared_pure_answer_cursor_suspend(cursor);
+        return imported;
+    }
     /* The machine keeps its own copy of the answer; the cursor stays only
      * for its alternatives. */
     Atom *value = petta_semantics_materialize_value(&machine->heap, answer);
@@ -30892,6 +31312,7 @@ static __attribute__((noinline)) bool petta_machine_start_answer_producer(
         petta_answer_choice_release(&choice);
         return false;
     }
+    cetta_prepared_pure_answer_cursor_defer_native_completion(choice.as.answers.cursor);
     CettaOwnedReturn returned = {0};
     CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
     CettaPreparedPureCursorStep step = petta_machine_pull_prepared_answer(
@@ -30902,6 +31323,42 @@ static __attribute__((noinline)) bool petta_machine_start_answer_producer(
         petta_machine_extension_callable(machine, answer))
         step = CETTA_PREPARED_PURE_CURSOR_HANDOFF;
     if (step == CETTA_PREPARED_PURE_CURSOR_HANDOFF) {
+        if (cetta_prepared_pure_answer_cursor_native_transfer_ready(choice.as.answers.cursor)) {
+            *taken_out = true;
+            PettaMachineStep failure = PETTA_MACHINE_STEP_EXHAUSTED;
+            if (!petta_machine_take_prepared_native(machine, &choice, &failure)) {
+                petta_answer_choice_release(&choice);
+                machine->terminal = true;
+                machine->terminal_step = failure;
+                return false;
+            }
+            if (!petta_choice_push(machine, choice)) {
+                machine->terminal = true;
+                machine->terminal_step = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            bool resumed = petta_machine_resume_prepared_native(machine,
+                &machine->choices[machine->choice_len - 1u], &failure);
+            if (failure != PETTA_MACHINE_STEP_EXHAUSTED) {
+                machine->terminal = true;
+                machine->terminal_step = failure;
+            }
+            return resumed;
+        }
+        if (cetta_prepared_pure_answer_cursor_native_started(choice.as.answers.cursor) &&
+            petta_machine_prepared_quantum_pending(choice.as.answers.cursor, completion)) {
+            *taken_out = true;
+            if (!petta_choice_push(machine, choice) ||
+                !petta_goal_push(machine, &(PettaGoal){
+                    .kind = PETTA_GOAL_PREPARED_RESUME, .barrier = choice.barrier,
+                    .choice_index = machine->choice_len - 1u})) {
+                machine->terminal = true;
+                machine->terminal_step = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_PETTA_ANSWER_PRODUCER_CHOICE);
+            return true;
+        }
         if (cetta_prepared_pure_answer_cursor_native_started(choice.as.answers.cursor)) {
             *taken_out = true;
             machine->terminal = true;
@@ -30941,6 +31398,18 @@ static __attribute__((noinline)) bool petta_machine_start_answer_producer(
         machine->terminal = true;
         machine->terminal_step = PETTA_MACHINE_STEP_CAPACITY;
         return false;
+    }
+    if (returned.environment || returned.outcome.kind == CETTA_CALL_SUSPENDED) {
+        PettaMachineStep failure = PETTA_MACHINE_STEP_EXHAUSTED;
+        bool imported = petta_machine_import_prepared_return(machine, &returned,
+            expected, choice.barrier, &failure);
+        if (failure != PETTA_MACHINE_STEP_EXHAUSTED) {
+            machine->terminal = true;
+            machine->terminal_step = failure;
+        }
+        if (imported)
+            cetta_prepared_pure_answer_cursor_suspend(choice.as.answers.cursor);
+        return imported;
     }
     Atom *value = petta_semantics_materialize_value(&machine->heap, answer);
     if (!value) {
@@ -31081,8 +31550,16 @@ static bool petta_machine_he_data_values(
  * The Empty default still materializes at its escaping choice boundary. */
 static bool petta_machine_push_case(PettaMachineImpl *machine,
     const PettaGoal *goal, Atom *expression, Atom *expected,
-    const PettaPlanNode *plan, PettaMachineStep *failure) {
-    Atom *branches = expression->expr.elems[2];
+    const PettaPlanNode *plan, CettaControlOperationPlan control,
+    PettaMachineStep *failure) {
+    CettaExprLen arity = expression->expr.len - 1u;
+    if (!cetta_control_operation_match_branches_layout(control, arity)) {
+        *failure = PETTA_MACHINE_STEP_HOST_ERROR;
+        return false;
+    }
+    CettaExprIndex key_child = (CettaExprIndex)control.source + 1u;
+    CettaExprIndex branches_child = (CettaExprIndex)control.first + 1u;
+    Atom *branches = expression->expr.elems[branches_child];
     if (!branches || branches->kind != ATOM_EXPR)
         return petta_machine_unify_resolved(
             machine, expression, expected);
@@ -31104,7 +31581,7 @@ static bool petta_machine_push_case(PettaMachineImpl *machine,
             }
             PettaGoal pattern_goal = *goal;
             pattern_goal.plan = petta_plan_child(
-                petta_plan_child(petta_plan_child(plan, 2u), index), 0u);
+                petta_plan_child(petta_plan_child(plan, branches_child), index), 0u);
             Atom *pattern = petta_machine_materialize_activation_source(
                 machine, &pattern_goal, branch->expr.elems[0]);
             draft->expr.elems[index] = pattern;
@@ -31133,7 +31610,7 @@ static bool petta_machine_push_case(PettaMachineImpl *machine,
         Atom *branch = branches->expr.elems[index];
         if (!branch || branch->kind != ATOM_EXPR || branch->expr.len != 2u ||
             petta_case_default_arm(branch,
-                petta_plan_child(petta_plan_child(plan, 2u), index)))
+                petta_plan_child(petta_plan_child(plan, branches_child), index)))
             continue;
         Atom *pattern = pattern_draft ? pattern_draft->expr.elems[index]
                                      : branch->expr.elems[0];
@@ -31186,14 +31663,14 @@ static bool petta_machine_push_case(PettaMachineImpl *machine,
         if (!branch || branch->kind != ATOM_EXPR ||
             branch->expr.len != 2u ||
             !petta_case_default_arm(branch,
-                petta_plan_child(petta_plan_child(plan, 2u), index))) {
+                petta_plan_child(petta_plan_child(plan, branches_child), index))) {
             continue;
         }
         Atom *default_body = branch->expr.elems[1];
         if (activation) {
             PettaGoal body_goal = *goal;
             body_goal.plan = petta_plan_child(
-                petta_plan_child(petta_plan_child(plan, 2u), index), 1u);
+                petta_plan_child(petta_plan_child(plan, branches_child), index), 1u);
             default_body = petta_machine_materialize_activation_source(
                 machine, &body_goal, default_body);
             if (!default_body) {
@@ -31215,7 +31692,7 @@ static bool petta_machine_push_case(PettaMachineImpl *machine,
                 .expected = expected,
                 .plan = petta_plan_child(
                     petta_plan_child(
-                        petta_plan_child(plan, 2u), index),
+                        petta_plan_child(plan, branches_child), index),
                     1u),
             },
         };
@@ -31242,14 +31719,14 @@ static bool petta_machine_push_case(PettaMachineImpl *machine,
             .activation_first_entry = activation ? goal->activation_first_entry : 0u,
             .activation_source_fields = activation ? PETTA_ACTIVATION_SOURCE_SECOND : 0u,
             .third = expected,
-            .second_plan = petta_plan_child(plan, 2u),
+            .second_plan = petta_plan_child(plan, branches_child),
             .choice_index = default_choice_index,
         });
     bool key_first = default_choice_index == SIZE_MAX;
     if (pushed && !key_first)
         pushed = petta_push_solve_scoped_planned(
-            machine, expression->expr.elems[1], value,
-            goal->barrier, petta_plan_child(plan, 1u),
+            machine, expression->expr.elems[key_child], value,
+            goal->barrier, petta_plan_child(plan, key_child),
             activation ? goal->activation_template : NULL,
             activation ? goal->activation_epoch : CETTA_FRAME_IDENTITY_NONE,
             activation ? goal->activation_first_entry : 0u);
@@ -31262,8 +31739,8 @@ static bool petta_machine_push_case(PettaMachineImpl *machine,
     }
     if (pushed && key_first)
         pushed = petta_push_solve_scoped_planned(
-            machine, expression->expr.elems[1], value,
-            goal->barrier, petta_plan_child(plan, 1u),
+            machine, expression->expr.elems[key_child], value,
+            goal->barrier, petta_plan_child(plan, key_child),
             activation ? goal->activation_template : NULL,
             activation ? goal->activation_epoch : CETTA_FRAME_IDENTITY_NONE,
             activation ? goal->activation_first_entry : 0u);
@@ -31413,17 +31890,27 @@ activation_tail_segment:;
      * Materialize it at the canonical fallback below; typed or generated
      * constructor rows may reintroduce a narrower direct view later. */
 
-    if (source->kind == ATOM_EXPR && source->expr.len == 3u &&
-        atom_is_symbol_id(source->expr.elems[0], g_builtin_syms.case_text) &&
-        source->expr.elems[2]->kind == ATOM_EXPR) {
-        Atom *arms = source->expr.elems[2];
+    CettaControlOperationPlan control = petta_plan_computation(goal->plan).control;
+    if (!goal->plan && source->kind == ATOM_EXPR &&
+        source->expr.len > 0u &&
+        source->expr.elems[0]->kind == ATOM_SYMBOL) {
+        SymbolId head = source->expr.elems[0]->sym_id;
+        PeTTaForm form = petta_semantics_form(head);
+        control = petta_semantics_elaborate_computation(
+            head, form, source->expr.len - 1u).control;
+    }
+    if (control.operation == CETTA_CONTROL_MATCH_BRANCHES &&
+        source->kind == ATOM_EXPR && source->expr.len > 0u &&
+        control.first < source->expr.len - 1u &&
+        source->expr.elems[(CettaExprIndex)control.first + 1u]->kind == ATOM_EXPR) {
+        Atom *arms = source->expr.elems[(CettaExprIndex)control.first + 1u];
         bool literal_arms = true;
         for (CettaExprIndex index = 0u; index < arms->expr.len; index++)
             if (!arms->expr.elems[index] || arms->expr.elems[index]->kind == ATOM_VAR)
                 literal_arms = false;
         if (literal_arms)
             return petta_machine_push_case(machine, goal, source, goal->second,
-                                           goal->plan, failure);
+                                           goal->plan, control, failure);
     }
 
     bool grounded_handled = false;
@@ -31463,15 +31950,6 @@ activation_tail_segment:;
         }
     }
 
-    CettaControlOperationPlan control = petta_plan_computation(goal->plan).control;
-    if (!goal->plan && source->kind == ATOM_EXPR &&
-        source->expr.len > 0u &&
-        source->expr.elems[0]->kind == ATOM_SYMBOL) {
-        SymbolId head = source->expr.elems[0]->sym_id;
-        PeTTaForm form = petta_semantics_form(head);
-        control = petta_semantics_elaborate_computation(
-            head, form, source->expr.len - 1u).control;
-    }
     if (source->kind == ATOM_EXPR &&
         source->expr.len > 0u &&
         source->expr.elems[0]->kind == ATOM_SYMBOL) {
@@ -34093,9 +34571,9 @@ static bool petta_machine_dispatch_solve(
         return true;
     }
 
-    if (head_id == g_builtin_syms.case_text && nargs == 2u)
+    if (control.operation == CETTA_CONTROL_MATCH_BRANCHES)
         return petta_machine_push_case(machine, goal, expression,
-                                       expected, plan, failure);
+                                       expected, plan, control, failure);
 
     bool numeric_min = head_id == g_builtin_syms.petta_min;
     bool numeric_max = head_id == g_builtin_syms.petta_max;
@@ -35308,6 +35786,27 @@ static bool petta_machine_dispatch_goal(
 
     const Bindings *environment =
         search_context_bindings(&machine->search);
+
+    if (goal.kind == PETTA_GOAL_PREPARED_RESUME) {
+        size_t owner = goal.choice_index;
+        if (owner >= machine->choice_len || owner + 1u != machine->choice_len ||
+            machine->choices[owner].kind != PETTA_CHOICE_ANSWERS ||
+            machine->choices[owner].as.answers.open ||
+            !machine->choices[owner].as.answers.cursor) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        CettaPreparedPureAnswerCursor *cursor = machine->choices[owner].as.answers.cursor;
+        CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+        /* This dispatch owns one admitted parent transition. Grant one
+         * cursor transition only now, retaining opaque native packets. */
+        if (!cetta_prepared_pure_answer_cursor_refill_transitions(cursor, 1u, &completion)) {
+            *failure = petta_machine_entered_answer_failure(cursor, completion);
+            return false;
+        }
+        return petta_machine_resume_answer_choice(
+            machine, &machine->choices[owner], failure, false);
+    }
 
     if (goal.kind == PETTA_GOAL_NATIVE_RETURN) {
         CettaCallOutcome outcome = {
@@ -37879,7 +38378,7 @@ static bool petta_machine_init_internal(
     Atom *query, const PettaPlanNode *query_plan,
     const Bindings *base_environment,
     const PettaMachineHost *host,
-    bool borrow_query,
+    bool borrow_query, bool retained_context,
     PettaTableShared *table_shared,
     PettaMatchDecisionRepository *match_decision_repository,
     PettaNamedAritySourceCache **named_arity_source,
@@ -37991,7 +38490,7 @@ static bool petta_machine_init_internal(
               impl, &impl->heap, query, PETTA_ATOM_COPY_QUERY);
     if (!impl->query ||
         !petta_collect_visible_variables(impl) ||
-        (!borrow_query &&
+        (!borrow_query && !retained_context &&
          !petta_machine_contextualize_root_query(impl))) {
         petta_machine_destroy(&(PettaMachine){.impl = impl});
         return false;
@@ -38017,11 +38516,11 @@ bool petta_machine_init(
         NULL, base_environment, host);
 }
 
-bool petta_machine_init_with_plan(
+static bool petta_machine_init_entry(
     PettaMachine *machine, Space *space, Arena *answer_arena,
     Atom *query, const PettaPlanNode *plan,
     const Bindings *base_environment,
-    const PettaMachineHost *host) {
+    const PettaMachineHost *host, bool retained_context) {
     if (machine)
         machine->impl = NULL;
     if (!machine || !space || !answer_arena || !query ||
@@ -38057,7 +38556,7 @@ bool petta_machine_init_with_plan(
         decisions->root_leased = true;
     bool initialized = petta_machine_init_internal(
         machine, space, answer_arena, query, plan,
-        base_environment, host, false, shared,
+        base_environment, host, false, retained_context, shared,
         decisions, NULL,
         owns_shared, borrowed_shared, false,
         PETTA_TABLE_ENTRY_NONE);
@@ -38070,6 +38569,36 @@ bool petta_machine_init_with_plan(
             decisions->root_leased = false;
     }
     return initialized;
+}
+
+bool petta_machine_init_with_plan(
+    PettaMachine *machine, Space *space, Arena *answer_arena,
+    Atom *query, const PettaPlanNode *plan,
+    const Bindings *base_environment, const PettaMachineHost *host) {
+    return petta_machine_init_entry(machine, space, answer_arena, query, plan,
+                                    base_environment, host, false);
+}
+
+bool petta_machine_init_with_return(
+        PettaMachine *machine, Space *space, Arena *answer_arena,
+        Atom *query, const PettaPlanNode *plan, Atom *destination, CettaCallOutcome packet,
+        const Bindings *base_environment, const PettaMachineHost *host) {
+    if (machine)
+        machine->impl = NULL;
+    if (!host || !destination || !cetta_call_outcome_shape_valid(packet))
+        return false;
+    /* The packet and code already inhabit the same lexical world. Keep its
+     * coordinates at entry; public answer naming remains the host's policy. */
+    if (!petta_machine_init_entry(machine, space, answer_arena, query, plan,
+                                  base_environment, host, true))
+        return false;
+    PettaMachineImpl *impl = machine->impl;
+    PettaMachineStep failure = PETTA_MACHINE_STEP_EXHAUSTED;
+    CettaOwnedReturn returned = {.outcome = packet};
+    bool ok = petta_machine_stage_return(impl, &returned, destination, 0u, &failure);
+    if (!ok)
+        petta_machine_destroy(machine);
+    return ok;
 }
 
 static PettaMachineStep petta_machine_finish_next(

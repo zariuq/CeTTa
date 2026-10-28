@@ -369,6 +369,7 @@ typedef struct {
     Arena *arena;
     Atom *resumption;
     Atom *hole;
+    const Bindings *captures;
     CettaOwnedReturnConsumer consume;
     void *consumer;
     bool ok;
@@ -404,8 +405,10 @@ static CettaOwnedExecutionStep eval_owned_residual_next(void *context,
         __attribute__((cleanup(eval_gc_external_owner_guard_leave)))
         EvalGcExternalOwnerGuard borrowed = {0};
         eval_gc_external_owner_guard_enter(&borrowed);
-        eval_for_caller(residual->answers->space, residual->arena, NULL,
-            work->body, -1, work->bindings, false, &work->values);
+        __attribute__((cleanup(petta_host_branch_leave)))
+        PettaHostBranchGuard branch = petta_host_branch_enter();
+        metta_call_with_env(residual->answers->space, residual->arena,
+            work->body, NULL, -1, work->bindings, &work->values);
         /* The enclosing evaluator already owns the completion/fuel purse.
          * Observe it here instead of constructing one boundary per item. */
         work->completion = g_eval_completion_tracker
@@ -463,23 +466,26 @@ static bool eval_owned_residual_continue(void *context,
     CettaOwnedExecution proposed;
     eval_owned_residual_open(&bind->child, residual, residual->resumption,
                              NULL, &proposed);
-    if (!bindings_builder_init(&bind->child.selected, returned->environment)) {
-        residual->ok = false;
-        cetta_owned_execution_cancel(&proposed);
-        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
-        return false;
-    }
+    if (!bindings_builder_init(&bind->child.selected, returned->environment))
+        goto refused;
     bind->child.owns_selected = true;
+    BindingsIterator captures = {.bindings = residual->captures};
+    Binding capture;
+    while (residual->captures && bindings_iterator_next(&captures, &capture))
+        if (!bindings_builder_add_id_fresh(&bind->child.selected,
+                capture.var_id, capture.spelling, capture.value.skeleton))
+            goto refused;
     if (!bindings_builder_add_var_fresh(&bind->child.selected,
-            residual->hole, returned->outcome.term)) {
-        residual->ok = false;
-        cetta_owned_execution_cancel(&proposed);
-        eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
-        return false;
-    }
+            residual->hole, returned->outcome.term))
+        goto refused;
     bind->child.bindings = bindings_builder_bindings(&bind->child.selected);
     *execution = proposed;
     return true;
+refused:
+    residual->ok = false;
+    cetta_owned_execution_cancel(&proposed);
+    eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+    return false;
 }
 
 /* The ordinary evaluator owns a declined equation body. Its already-decoded
@@ -494,8 +500,10 @@ static bool eval_owned_residual_body(Atom *body, const Bindings *bindings,
          * computation or resumable ownership boundary is needed here. */
         OutcomeSet values;
         outcome_set_init(&values);
-        eval_for_caller(residual->answers->space, residual->arena,
-                        NULL, body, -1, bindings, false, &values);
+        __attribute__((cleanup(petta_host_branch_leave)))
+        PettaHostBranchGuard branch = petta_host_branch_enter();
+        metta_call_with_env(residual->answers->space, residual->arena,
+            body, NULL, -1, bindings, &values);
         for (CettaCount index = 0u; residual->ok && index < values.len; index++) {
             Outcome *outcome = &values.items[index];
             Atom *value = outcome_atom_materialize(residual->arena, outcome);
@@ -562,6 +570,8 @@ static bool eval_owned_answers_finish_residual(EvalOwnedAnswers *answers,
             continue;
         Arena arena;
         arena_init_detached(&arena);
+        Bindings captures;
+        bindings_init(&captures);
         arena_set_runtime_kind(&arena, CETTA_ARENA_RUNTIME_KIND_SCRATCH);
         AtomDeepCopySession *copy = atom_deep_copy_session_new(&arena);
         Atom *query = atom_expr_builder_begin(&arena, frame.arity + 1u);
@@ -576,14 +586,14 @@ static bool eval_owned_answers_finish_residual(EvalOwnedAnswers *answers,
         query = ok ? atom_expr_builder_finish(&arena, query) : NULL;
         EvalOwnedResidual residual = {
             .answers = answers, .arena = &arena, .consume = consume,
-            .consumer = consumer, .ok = query != NULL,
+            .consumer = consumer, .captures = &captures, .ok = query != NULL,
         };
         if (residual.ok && frame.resumes_continuation) {
             residual.hole = atom_var_with_id(&arena, "__owned_return", fresh_var_id());
             residual.ok = residual.hole &&
                 cetta_prepared_pure_answer_cursor_frame_resumption(
                     cursor, index, &arena, residual.hole,
-                    eval_owned_residual_import, copy, &residual.resumption);
+                    eval_owned_residual_import, copy, &captures, &residual.resumption);
         }
         atom_deep_copy_session_free(copy);
         for (uint32_t ordinal = frame.next_ordinal;
@@ -600,6 +610,7 @@ static bool eval_owned_answers_finish_residual(EvalOwnedAnswers *answers,
             if (eval_unwinding()) residual.ok = false;
         }
         ok = residual.ok;
+        bindings_free(&captures);
         arena_free(&arena);
         if (!ok)
             return false;
@@ -682,13 +693,16 @@ static bool eval_owned_fold_return(void *context, const CettaOwnedReturn *return
         returned->outcome.delayed)
         return false;
     arena_reset(&fold->nursery, fold->nursery_origin);
-    Atom *candidate = NULL;
+    CettaCallOutcome completed = {0};
     if (!cetta_prepared_pure_program_is_current(fold->step) ||
         !cetta_prepared_pure_program_execute_controlled(fold->step, &fold->nursery,
             fold->accumulator, returned->outcome.term,
-            eval_prepared_pure_interrupt_poll, NULL, &candidate) ||
-        !candidate || atom_is_error(candidate))
+            eval_prepared_pure_interrupt_poll, NULL, &completed) ||
+        completed.kind != CETTA_CALL_VALUE ||
+        completed.result_form != CETTA_CALL_RESULT_COMPLETED_VALUE ||
+        !completed.term || atom_is_error(completed.term))
         return false;
+    Atom *candidate = completed.term;
     unsigned destination = fold->active ^ 1u;
     arena_reset(&fold->carry[destination], fold->carry_origin[destination]);
     Atom *owned = atom_deep_copy(&fold->carry[destination], candidate);
@@ -840,6 +854,15 @@ static bool eval_owned_collapsed_fold(Space *space, Arena *arena, Atom *collapse
 }
 
 /* Ordinary completion of a retained prepared invocation result. */
+typedef struct PreparedNativeContinuation PreparedNativeContinuation;
+static PreparedNativeContinuation *prepared_native_continuation_new(
+    Space *space, Arena *arena, CettaPreparedPureAnswerCursor *cursor,
+    const CettaOwnedReturn *returned);
+static CettaOwnedExecutionStep prepared_native_continuation_next(
+    PreparedNativeContinuation *work, CettaOwnedReturn *returned,
+    CettaEvalCompletion *completion);
+static void prepared_native_continuation_free(PreparedNativeContinuation *work);
+
 typedef struct {
     Arena arena;
     EvalOwnedAnswers answers;
@@ -854,11 +877,14 @@ typedef struct {
     bool entered;
     bool started;
     bool has_terminal;
+    PreparedNativeContinuation *continuation;
 } PreparedNativeCompletion;
 
 static CettaOwnedExecutionStep prepared_native_completion_next(void *context,
         CettaOwnedReturn *returned, CettaEvalCompletion *completion) {
     PreparedNativeCompletion *work = context;
+    if (work->continuation)
+        return prepared_native_continuation_next(work->continuation, returned, completion);
     if (!work->started) {
         work->started = true;
         __attribute__((cleanup(eval_gc_external_owner_guard_leave)))
@@ -919,6 +945,7 @@ static CettaOwnedExecutionStep prepared_native_completion_next(void *context,
 
 static void prepared_native_completion_release(void *context) {
     PreparedNativeCompletion *work = context;
+    prepared_native_continuation_free(work->continuation);
     eval_owned_residual_release(&work->values);
     bindings_free(&work->empty);
     arena_free(&work->arena);
@@ -926,16 +953,23 @@ static void prepared_native_completion_release(void *context) {
 }
 
 static bool prepared_native_completion_open(Space *space,
+        CettaPreparedPureAnswerCursor *cursor,
         const CettaInvocation *invocation, bool entered,
-        const CettaOwnedReturn *returned, CettaOwnedExecution *execution) {
-    /* A delayed answer needs the dialect's constraint-registration boundary.
-     * Keep its loan and continuation intact until that worker is supplied. */
-    if (entered && (!returned || returned->outcome.kind == CETTA_CALL_SUSPENDED))
+        const CettaOwnedReturn *returned, CettaOwnedExecution *execution,
+        bool *completes_callers) {
+    *completes_callers = false;
+    if (entered && !returned)
         return false;
-    if (entered && returned->outcome.kind == CETTA_CALL_VALUE &&
-        returned->outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
-        returned->outcome.term && (atom_has_vars(returned->outcome.term) ||
-            atom_has_thread_local_resource(returned->outcome.term)))
+    bool contextual = entered &&
+        (cetta_prepared_pure_answer_cursor_owns_native_frontier(cursor) ||
+         returned->outcome.kind == CETTA_CALL_SUSPENDED ||
+         (returned->outcome.kind == CETTA_CALL_VALUE &&
+          returned->outcome.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+          returned->outcome.term && atom_has_vars(returned->outcome.term)));
+    if ((contextual && eval_current_language_id() != CETTA_LANGUAGE_PETTA) ||
+        (entered &&
+         (atom_has_thread_local_resource(returned->outcome.term) ||
+          atom_has_thread_local_resource(returned->outcome.delayed))))
         return false;
     CettaExprLen arity;
     if (!cetta_invocation_arity(invocation, &arity) || arity > 64u)
@@ -953,6 +987,18 @@ static bool prepared_native_completion_open(Space *space,
     work->entered = entered;
     work->packet = entered ? returned->outcome : (CettaCallOutcome){0};
     bindings_init(&work->empty);
+    if (contextual) {
+        work->continuation = prepared_native_continuation_new(
+            space, &work->arena, cursor, returned);
+        if (!work->continuation) {
+            prepared_native_completion_release(work);
+            return false;
+        }
+        *completes_callers = true;
+        cetta_owned_execution_init(execution, work, prepared_native_completion_next,
+                                   prepared_native_completion_release);
+        return true;
+    }
     work->environment = entered && returned->environment
         ? returned->environment : &work->empty;
     for (CettaExprIndex index = 0u; index < arity; index++) {
@@ -993,15 +1039,19 @@ static CettaOwnedExecutionStep prepared_pure_next_return(Space *space,
         if (cetta_prepared_pure_answer_cursor_handoff_reason(cursor) !=
                 CETTA_PREPARED_PURE_HANDOFF_NATIVE_RETURN)
             return step;
+        if (cetta_prepared_pure_answer_cursor_native_transfer_ready(cursor))
+            return step;
         CettaInvocation invocation;
         bool entered;
-        const CettaOwnedReturn *pending;
+        CettaOwnedReturn pending;
         CettaOwnedExecution replacement = {0};
+        bool completes_callers = false;
         bool resumed = cetta_prepared_pure_answer_cursor_native_boundary(
                 cursor, &invocation, &entered, &pending) &&
-            prepared_native_completion_open(space, &invocation, entered,
-                pending, &replacement) &&
-            cetta_prepared_pure_answer_cursor_complete_native(cursor, &replacement);
+            prepared_native_completion_open(space, cursor, &invocation, entered,
+                entered ? &pending : NULL, &replacement, &completes_callers) &&
+            cetta_prepared_pure_answer_cursor_complete_native(
+                cursor, &replacement, completes_callers);
         cetta_owned_execution_cancel(&replacement);
         if (!resumed)
             return CETTA_OWNED_EXECUTION_HANDOFF;
