@@ -69,7 +69,7 @@ static const CettaLanguageSpec CETTA_LANGUAGES[] = {
      CETTA_PORTABLE_RELATIONAL_NONE},
     {CETTA_LANGUAGE_PETTA, "petta", "petta", true,
      "Corrected stable PeTTa, the default language (petta@1.1 is typed)",
-     CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY,
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY,
      CETTA_PORTABLE_RELATIONAL_NONE},
     {CETTA_LANGUAGE_AMBIENT, "ambient", "ambient", false,
      "Planned port from mettail-rust inventory",
