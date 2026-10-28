@@ -69902,7 +69902,8 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
         petta_eval_machine_preserves_mixed_data_call(expression)) {
         return PETTA_MACHINE_HOST_READY_APPLICATION;
     }
-    if (form == PETTA_FORM_IS_SPACE)
+    if (form == PETTA_FORM_IS_VAR || form == PETTA_FORM_IS_GROUND ||
+        form == PETTA_FORM_IS_EXPR || form == PETTA_FORM_IS_SPACE)
         return PETTA_MACHINE_HOST_STRICT_APPLICATION;
     /*
      * These PeTTa forms already have dialect-specific implementations in the
@@ -69927,9 +69928,6 @@ static PettaMachineHostMode petta_eval_machine_classify_host(
         form == PETTA_FORM_LENGTH ||
         form == PETTA_FORM_MSORT ||
         form == PETTA_FORM_SECOND_FROM_PAIR ||
-        form == PETTA_FORM_IS_VAR ||
-        form == PETTA_FORM_IS_GROUND ||
-        form == PETTA_FORM_IS_EXPR ||
         form == PETTA_FORM_IS_ALPHA_MEMBER ||
         form == PETTA_FORM_LAMBDA) {
         return PETTA_MACHINE_HOST_READY_APPLICATION;

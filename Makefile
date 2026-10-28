@@ -30135,6 +30135,18 @@ test-petta-space-value-predicate: $(BIN)
 	done; \
 	echo "PASS: named and first-class space predicates on both routes"
 
+.PHONY: test-petta-eager-value-predicates
+test-petta-semantics: test-petta-eager-value-predicates
+test-petta-eager-value-predicates: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/eager_value_predicates.metta \
+			| diff -u tests/petta/eager_value_predicates.expected -; \
+	done; \
+	echo "PASS: value predicates retain computation, bindings and ready values"
+
 .PHONY: test-petta-get-type-relation
 # get-type is SWI-PeTTa's relation over the space's declarations: a literal's
 # type, any type for a variable, a declared function's result type when its
