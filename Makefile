@@ -50364,7 +50364,7 @@ test-petta-language-versions: $(BIN)
 			failures=$$((failures + 1)); \
 		fi; \
 	done < $$dir/cases.tsv; \
-	for version in 1.0.6 1.1 1.1.c; do \
+	for version in stable-fixed 1.1 1.1.c; do \
 		output=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang petta@$$version \
 			$$dir/library_version.metta 2>&1); \
 		if [ "$$output" != "$$(cat $$dir/library_version.$$version.expected)" ]; then \
@@ -50373,7 +50373,7 @@ test-petta-language-versions: $(BIN)
 		fi; \
 	done; \
 	[ $$failures -eq 0 ]; \
-	echo 'PASS: PeTTa 1.0.6, 1.1 and 1.1.c select their checkers and libraries; typed closures, residual obligations and PeTTa diagnostics'
+	echo 'PASS: current stable and opt-in typed PeTTa select their checkers and libraries; typed closures, residual obligations and PeTTa diagnostics'
 
 # Two PeTTa runtime regressions: a declared constructor in a typed space's
 # match pattern is literal structure, and a specialization chosen through a
