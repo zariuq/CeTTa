@@ -82566,7 +82566,9 @@ static __attribute__((noinline)) MettaDispatchResult metta_petta_dispatch(
                     const char *name = value->kind == ATOM_SYMBOL
                         ? atom_name_cstr(value)
                         : NULL;
-                    answer = name && name[0] == '&';
+                    answer = (name && name[0] == '&') ||
+                        (value->kind == ATOM_GROUNDED &&
+                         value->ground.gkind == GV_SPACE && value->ground.ptr);
                 }
                 outcome_set_add(
                     os, petta_semantics_boolean_value(a, answer),

@@ -12198,8 +12198,10 @@ static __attribute__((noinline)) OemRun oem_observation_step(
             answer = !atom_has_vars(value);
             break;
         case PETTA_FORM_IS_SPACE:
-            answer = value->kind == ATOM_SYMBOL &&
-                atom_symbol_bytes(value)[0] == '&';
+            answer = (value->kind == ATOM_SYMBOL &&
+                      atom_symbol_bytes(value)[0] == '&') ||
+                (value->kind == ATOM_GROUNDED &&
+                 value->ground.gkind == GV_SPACE && value->ground.ptr);
             break;
         default:
             return OEM_RUN_DECLINED;

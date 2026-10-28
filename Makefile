@@ -30123,6 +30123,18 @@ test-petta-value-occurrences: $(BIN)
 	done; \
 	echo "PASS: a variable is the value it holds, on the tier and in the machine"
 
+.PHONY: test-petta-space-value-predicate
+test-petta-semantics: test-petta-space-value-predicate
+test-petta-space-value-predicate: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/space_value_predicate.metta \
+			| diff -u tests/petta/space_value_predicate.expected -; \
+	done; \
+	echo "PASS: named and first-class space predicates on both routes"
+
 .PHONY: test-petta-get-type-relation
 # get-type is SWI-PeTTa's relation over the space's declarations: a literal's
 # type, any type for a variable, a declared function's result type when its
