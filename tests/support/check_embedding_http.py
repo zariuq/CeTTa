@@ -106,7 +106,7 @@ def main():
     thread.start()
     checks=0
     try:
-        for language in ('petta@1.0.6','prime'):
+        for language in ('petta','prime'):
             url=f'http://127.0.0.1:{server.server_port}'
             profile=f'(EmbeddingProfile "fixture" "fixture" "fixture-v1" 3 "fixture-text-v1" {json.dumps(url+"/indices")})'
             source=f'!(embedding-http:run {profile})\n'
@@ -141,7 +141,7 @@ def main():
             parser.error('a live service requires protocol, dimension and configured model identity')
         profile='(EmbeddingProfile '+ ' '.join(json.dumps(v) for v in
             ('live-fixture',args.model,args.protocol))+f' {args.dimension} "synthetic-four-doc-v1" '+json.dumps(args.live_url)+')'
-        for language in ('petta@1.0.6','prime'):
+        for language in ('petta','prime'):
             lines,stderr=run(binary,language,f'!(embedding-http:run {profile})\n')
             assert lines and 'Embedding:Match 0 france' in lines[-1],(language,lines,stderr)
             assert all(f'Embedding:Match {i} ' in lines[-1] for i in range(4)),(language,lines)

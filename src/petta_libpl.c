@@ -5513,6 +5513,20 @@ static bool petta_libpl_numeric_call(
     bool comparison, CettaCallOutcome *out) {
     if (out)
         *out = cetta_call_failure();
+    /* Stable's arith_arg/1 excludes MeTTa text and list values before is/2.
+     * Do not let SWI reinterpret a character or singleton list as a number.
+     * Named numeric constants still use the ordinary arithmetic path below. */
+    if (arena && out && args) {
+        for (uint32_t i = 0u; i < nargs; i++) {
+            Atom *arg = args[i];
+            if (arg && (arg->kind == ATOM_EXPR ||
+                        (arg->kind == ATOM_GROUNDED &&
+                         arg->ground.gkind == GV_STRING))) {
+                *out = cetta_call_raised(petta_semantics_arithmetic_operand_error(arena, arg));
+                return out->term != NULL;
+            }
+        }
+    }
     CettaLibraryContext *context = eval_current_library_context();
     CettaLibPrologRuntime *runtime = context ? context->lib_prolog : NULL;
     if (!runtime || !arena || !out || !args || nargs == 0u ||

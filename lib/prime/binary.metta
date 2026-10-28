@@ -13,3 +13,4 @@
 (: binary:from-symbol-utf8 (-> %Undefined% %Undefined%))
 (: binary:unsigned? (-> %Undefined% %Undefined%))
 (: binary:value-kind (-> %Undefined% %Undefined%))
+(: binary:portable-kind (-> %Undefined% %Undefined%))

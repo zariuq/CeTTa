@@ -100,7 +100,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     for name in ("lib_ic_parameters.metta", "lib_ic_numeric.metta"):
         check_controls((ROOT / "lib/petta" / name).read_text())
-    code = ['!(import! &self "lib/petta/lib_ic_numeric.metta")', HELPERS]
+    code = ['!(import! &self (library lib_ic_numeric))', HELPERS]
     expected = []
 
     def add(call, wanted):
@@ -208,6 +208,8 @@ def main():
     for args_text in (
         f"{vector(inputs)} {vector(outputs[:-1])} {vector(mask, 'bool')} 0.0",
         f"{vector(inputs)} {vector(outputs)} {vector(mask, 'bool')} -1.0",
+        f"{vector(inputs)} {vector(outputs)} {vector(mask, 'bool')} NoPrecision",
+        f"{vector(inputs)} {vector(outputs)} {vector(mask, 'bool')} 1.0e309",
         f"{vector(inputs)} {vector(outputs)} {vector([1] * 8, 'u8')} 0.0",
         f"(tensor:from-coo f64 (8) ((0 0.0))) {vector(outputs)} {vector(mask, 'bool')} 0.0",
     ):

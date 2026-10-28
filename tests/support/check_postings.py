@@ -108,7 +108,7 @@ def main():
     expected_rows = ['(Row ' + ' '.join(expectations[i:i + 10]) + ')'
                      for i in range(0, len(expectations), 10)]
     total = 0
-    for language, profile in [('petta@1.0.6', None), ('petta@1.0.6', 'extended'),
+    for language, profile in [('petta', None), ('petta', 'extended'),
                               ('he', 'extended'), ('prime', None)]:
         for reference in (False, True):
             module = '(library postings)' if language.startswith('petta') else 'postings'
@@ -193,7 +193,7 @@ def main():
           (== (postings:prepare-space-blocks-attempt $s {layout})
             Postings:Fallback))\n'''
     run = subprocess.run(
-        [str(args.cetta.resolve()), '--lang', 'petta@1.0.6', '-e', space_source],
+        [str(args.cetta.resolve()), '--lang', 'petta', '-e', space_source],
         cwd=ROOT, capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, (run.stdout, run.stderr)
     assert run.stdout.splitlines()[-10:] == ['true'] * 10, run.stdout
@@ -201,7 +201,7 @@ def main():
     for extra, environment in [([], dict(os.environ, CETTA_POSTINGS_SPACE_REFERENCE='1')),
                                (['--fuel', '100000'], os.environ.copy())]:
         run = subprocess.run(
-            [str(args.cetta.resolve()), *extra, '--lang', 'petta@1.0.6', '-e',
+            [str(args.cetta.resolve()), *extra, '--lang', 'petta', '-e',
              '''!(import! &self (library postings))
 !(let* (($source (new-space))
         ($added (add-atom $source (Block ("a") 2 4))))

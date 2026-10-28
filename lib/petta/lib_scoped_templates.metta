@@ -2,8 +2,8 @@
 ; Wire:Atom and Wire:Pair denote WireCodec.Data, not executable source terms.
 ; Base operators are table positions. Schema operators use the tagged sum of
 ; a base position and a contextual-parameter position. Nothing runs an operator.
-!(import! &self "lib/petta/lib_binary_schema.metta")
-!(import! &self "lib/petta/lib_ic_templates.metta")
+!(import! &self (library lib_binary_schema))
+!(import! &self (library lib_ic_templates))
 
 (= (scoped:variable $index) (Wire:Pair (Wire:Atom 0) (Wire:Atom $index)))
 (= (scoped:args $values)

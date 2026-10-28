@@ -1814,7 +1814,7 @@ done:
 
 static void print_usage(FILE *out) {
     fputs("usage: cetta [--lang <name>] [--syntax <metta|mrho|rho|holr>] <file>\n", out);
-    fputs("       note: without --lang, cetta runs petta (petta@1.0.6)\n", out);
+    fputs("       note: without --lang, cetta runs corrected stable petta\n", out);
     fputs("       cetta -e '<expr>' [-e '<expr>' ...]  # inline expressions (multiple -e concatenate)\n", out);
     fputs("       cetta --translate --lang A [--syntax S] --lang B [--syntax T] <file>\n", out);
     fputs("       cetta [--lang he[@0.2.10] --profile <he|he-compat|extended|he-prime>] <file.metta>\n", out);
@@ -1822,7 +1822,7 @@ static void print_usage(FILE *out) {
     fputs("       cetta --lang prime@0.0.1 <file.metta> # frozen Prime draft\n", out);
     fputs("       cetta --lang hol-light [--profile <standard|open|sealed>] <proof.holr>\n", out);
     fputs("       note: hol aliases hol-light; HOLR is a checked proof stream, not OCaml source\n", out);
-    fputs("       cetta --lang petta@1.0.6 <file.metta> # default PeTTa version\n", out);
+    fputs("       cetta --lang petta <file.metta> # corrected stable PeTTa\n", out);
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
     fputs("       cetta --lang petta@1.1 [--strict|--strict-det] <file.metta>\n", out);
     fputs("       cetta --lang petta --profile typecheck-v2 [--strict|--strict-det] <file.metta>\n", out);

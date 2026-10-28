@@ -38,7 +38,7 @@ def record(name, expression):
 def execute(binary, output, language, name, source, timeout=None):
     path = output / f"{language}-{name}.metta"
     path.write_text(source, encoding="utf-8")
-    endpoint = {"petta": "petta@1.0.6", "prime": "prime@0.0.1"}.get(language, language)
+    endpoint = {"petta": "petta", "prime": "prime@0.0.1"}.get(language, language)
     before = time.perf_counter_ns()
     result = subprocess.run([str(binary), "--lang", endpoint, str(path)],
                             cwd=ROOT, capture_output=True, text=True, timeout=timeout)
@@ -352,7 +352,7 @@ def conformance(binary, output, corpus, timeout=None):
         raise AssertionError((corpus, "no JSONTestSuite-style inputs"))
     manifest = []
     for path in files:
-        result = subprocess.run([str(binary), "--lang", "petta@1.0.6", str(source), str(path.resolve())],
+        result = subprocess.run([str(binary), "--lang", "petta", str(source), str(path.resolve())],
                                 cwd=ROOT, capture_output=True, text=True, timeout=timeout)
         records = [value for value in output_values(result.stdout) if headed(value, "JsonValidationV1", 2)]
         if result.returncode or len(records) != 1:

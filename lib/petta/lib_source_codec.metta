@@ -2,7 +2,7 @@
 ; form's variable inventory is part of the charged representation. Source
 ; ordinals preserve identity relationships without exporting process VarIds.
 !(import! &self (library syntax))
-!(import! &self "lib/petta/lib_binary_schema.metta")
+!(import! &self (library lib_binary_schema))
 
 (= (source-codec:term) (Either (Syntax:Variable Syntax:Literal Syntax:Expr)))
 (= (source-codec:schema)

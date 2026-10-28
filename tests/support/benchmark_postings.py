@@ -60,7 +60,7 @@ def main():
         retained=None
         for _ in range(args.repeat):
             start=time.perf_counter_ns()
-            child=subprocess.Popen([str(args.cetta.resolve()),'--lang','petta@1.0.6',str(script)],
+            child=subprocess.Popen([str(args.cetta.resolve()),'--lang','petta',str(script)],
                                    cwd=ROOT,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
             peak=[0]
             finished=threading.Event()

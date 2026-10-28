@@ -12,7 +12,11 @@ Unversioned language names retain their existing defaults.
                  its deliberate differences), he-compat (Rust's behavior
                  where he differs, used to run Rust's own tests), extended
                  and he-prime.
-  petta@1.0.6    Untyped default PeTTa; extended remains an explicit profile.
+  petta          Corrected stable PeTTa; extended remains an explicit profile.
+                 petta@stable-fixed names this same current contract. The
+                 historical 1.0.6 endpoint is no longer registered. Imports
+                 resolve from their source file, handle cycles, and expose
+                 catchable loading failures independently of typed checking.
   petta@1.1      Typed PeTTa; typecheck-v2 remains its default checker and
                  typecheck-v3 is selected explicitly when built in.
   petta@1.1.c    PeTTa's typed line with declarations as call contracts; the
@@ -21,7 +25,7 @@ Unversioned language names retain their existing defaults.
 
 An explicit version does not install equations, load a module or change
 the unversioned default. Without --lang, cetta runs petta, that is
-petta@1.0.6. Versions, default profiles and library overlays
+the corrected stable contract. Versions, default profiles and library overlays
 are described by the shared language registry. Both translation endpoints
 use the same selection procedure.
 
@@ -36,7 +40,7 @@ ParserPack is the native execution artifact, not another language definition.
 The build manifest supports module inputs with explicit catalogs and builds
 their readers through the same pipeline without a baked-reader cycle.
 
-The parser build driver uses petta@1.0.6 with the extended profile. It does
+The parser build driver uses petta with the extended profile. It does
 not execute through Prime. Module and artifact tests share one host runner:
 HE extended, PeTTa extended and the frozen Prime compatibility lane remain
 separate. A legacy reader fixture called "prime" may describe the grammar

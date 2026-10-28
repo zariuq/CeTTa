@@ -15,7 +15,7 @@ def main():
     args = parser.parse_args()
     binary = args.cetta.resolve()
     fixtures = args.fixtures.resolve()
-    profiles = [(['--lang', 'petta'], False),
+    profiles = [(['--lang', 'petta'], True),
                 (['--lang', 'petta@1.1'], True),
                 (['--lang', 'petta', '--profile', 'typecheck-v2'], True),
                 (['--lang', 'petta', '--profile', 'typecheck-v3'], True)]
@@ -28,6 +28,10 @@ def main():
         }
         if modern:
             expected['cycles'] = 'is true, should true. ✅ \ntrue\ntrue\n(b a)\n'
+        # Parse errors on the typed line have their own source diagnostic.
+        # Stable must expose loading errors without enabling that checker.
+        if options == ['--lang', 'petta']:
+            expected['recovery'] = 'Error\nError\ntrue\n(recovered)\n'
         for machine in ('0', '1'):
             environment = dict(os.environ, CETTA_PETTA_SEARCH_MACHINE=machine)
             for case, stdout in expected.items():

@@ -2,7 +2,7 @@
 ; (Binary:Form positive-integer constructor field-kinds).
 ; Kinds: Bytes, Text, Symbol, Natural, (Record constructor),
 ; (Vector kind), (Either constructors). Tag zero belongs to vectors.
-!(import! &self "lib/petta/lib_binary_tree.metta")
+!(import! &self (library lib_binary_tree))
 
 (= (binary-schema:natural? $n)
    (binary:unsigned? $n))

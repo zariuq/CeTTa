@@ -5,7 +5,7 @@
 (= (pcg-two $x $y) (+ $x $y))
 !(collapse (pcg-two (+ 1 1)))
 !((pcg-two (+ 1 1)) (+ 2 2))
-; A Number codomain rejects an authored partial before it can be applied.
+; An authored partial checks its Number codomain when the call is completed.
 (: pcg-two-num (-> Number Number Number))
 (= (pcg-two-num $x $y) (+ $x $y))
 !(collapse (pcg-two-num 2))

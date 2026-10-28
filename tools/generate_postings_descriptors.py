@@ -59,7 +59,7 @@ def descriptor_pattern(value):
 
 def read_descriptor_module(binary: Path, runtime: str, expected_name: str):
     run = subprocess.run(
-        [str(binary), "--no-results", "--lang", "petta@1.0.6", "--profile",
+        [str(binary), "--no-results", "--lang", "petta", "--profile",
          "extended", runtime],
         cwd=ROOT, text=True, capture_output=True, check=True,
     )

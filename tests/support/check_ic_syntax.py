@@ -177,8 +177,8 @@ def main():
         (args.output / "packet-atoms.json").write_text(json.dumps(packet_atoms, indent=2) + "\n")
     # Both families share one checker; importing them together must not create
     # duplicate answers or route a proposal through the other family's rules.
-    code = ['!(import! &self "lib/petta/lib_ic_syntax.metta")',
-            '!(import! &self "lib/petta/lib_ic_repeated_block.metta")', '''
+    code = ['!(import! &self (library lib_ic_syntax))',
+            '!(import! &self (library lib_ic_repeated_block))', '''
 (= (tree-test $fuel $source)
    (case (ic:compress-generated IC:Syntax $fuel $source)
      (((IC:Plan $features $residual $stop)

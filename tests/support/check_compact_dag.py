@@ -85,7 +85,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     check_controls((ROOT / "lib/dag.metta").read_text())
     code = ['!(println! (DagUnimported (dag:from-forest ())))',
-            '!(import! &self "lib/petta/lib_dag_codec.metta")', '''
+            '!(import! &self (library lib_dag_codec))', '''
 (= (dag-record-view $record)
    (case $record
      (((Binary:Leaf $bytes) (Binary:Leaf (tensor:inspect $bytes)))
