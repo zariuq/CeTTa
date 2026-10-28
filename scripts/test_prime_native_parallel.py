@@ -924,8 +924,10 @@ def stored_demand_boundaries(gate):
     for workers in (1, 2, 4):
         trees, _ = gate.run(f'stored arithmetic source and value workers={workers}', source,
                             arguments=('--num-threads', str(workers)))
-        assert trees[-2:] == [[['+', 1, 2]], [3]], trees
-        gate.passed_case(f'storage reifies; explicit value demand evaluates workers={workers}')
+        # A space holds values: storing demands the argument's cell, so the
+        # Data view and the ordinary read both retrieve the stored value.
+        assert trees[-2:] == [[3], [3]], trees
+        gate.passed_case(f'storage demands the argument; both views read its value workers={workers}')
     # Prefix mutation may invalidate this exact-snapshot controller. Its
     # committed physical effect must survive and cannot be reported undone.
     source = ('(Old) (Keep) (= (delete:jobs) (let $_ (remove-atom &self (Old)) Gone)) '

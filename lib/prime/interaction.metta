@@ -21,6 +21,13 @@
 ;                          are matched against P; no value, no row
 ;   (every c)              from here on every row, all in this one commit
 ;
+; The names a source pattern holds are the transform's own: each is bound
+; by the matching, in force in the sources and the template, as a pattern
+; of match binds its names.  A name of the scope around reaches a pattern
+; only through a crossing set, (transform R SOURCES TEMPLATE){$x ...}.  A
+; location and the E of (let P E) are read where they stand: a name there
+; is a source's, or the scope around's.
+;
 ; A matched read picks an occurrence and keeps or takes it.  A predicate
 ; query (an answer from every match of its pattern in the region) disposes
 ; of nothing; it holds only while its region is unchanged.  A row
@@ -131,6 +138,23 @@
 
 ;; ---- the commit ---------------------------------------------------------------
 
+; The binding structure the reader gives a transform: R and DEST are read
+; in the scope around, the sources are patterns, the template is in their
+; scope; inside the sources, these are the source forms.
+(scope:binder (transform value source body))
+(scope:binder (transform value source body value))
+(scope:source transform (, source ...))
+(scope:source transform (every source))
+(scope:source transform (absent source))
+(scope:source transform (absent value pattern))
+(scope:source transform (unique source))
+(scope:source transform (unique take source))
+(scope:source transform (all source pattern))
+(scope:source transform (all take source pattern))
+(scope:source transform (read value pattern))
+(scope:source transform (take value pattern))
+(scope:source transform (let pattern value))
+
 (: transform (-> %Undefined% (Data Atom) (Data Atom) %Undefined%))
 (: transform (-> %Undefined% (Data Atom) (Data Atom) %Undefined% %Undefined%))
 (= (transform $r $sources $template)
@@ -210,6 +234,13 @@
      (__cetta_lib_interaction_seq $v $answers $k)))
 
 ;; ---- Rholang's receipts ------------------------------------------------------------
+
+; A receipt's patterns bind as a transform's do; its channels are read in the
+; scope around.  So does the name seq binds to each answer.
+(scope:binder (for source body))
+(scope:source for (pattern _ value _ ...))
+(scope:binder (contract value pattern body))
+(scope:binder (seq value pattern body))
 
 (: for (-> (Data Atom) (Data Atom) %Undefined%))
 (= (for $binds $body) (let $i (__cetta_lib_interaction_for $binds $body) (ia:finish (ia:run $i))))

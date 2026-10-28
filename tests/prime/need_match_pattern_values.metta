@@ -27,9 +27,14 @@
 !(u (either))
 ; Written syntax in a pattern is not evaluated.
 !(match &self (fact (+ 1 1) $y) $y)
-; A value needs no forcing; quote keeps its argument as written.
+; A value needs no forcing.  A quotation's crossing name denotes what its
+; parameter's type says, as a pattern's captured name does: the value 2 for
+; a value parameter, the syntax written for a `(Data Atom)` one.
 !(q 2)
 !(qq (+ 1 1))
+(: qq-syntax (-> (Data Atom) Atom))
+(= (qq-syntax $x) (quote $x){$x})
+!(qq-syntax (+ 1 1))
 
 ; Negative controls: the same spelling without capture is fresh, so it does
 ; not constrain the stored row to the caller's argument.

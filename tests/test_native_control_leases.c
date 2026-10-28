@@ -7028,9 +7028,13 @@ static void native_data_branch_case(unsigned which) {
     else if (which == 1u)
         assert(atom_eq(value, br_parse(&arena, "(Box suspension:opaque)")));
     else {
+        /* A pending cell crosses as its program; a ready one (case 6, origin
+         * 42, value 99) as the value it holds, so the native never runs it
+         * again. */
+        Atom *crossing = which == 6u ? atom_int(&arena, 99) : origin;
         Atom *expected = which == 7u
-            ? atom_expr3(&arena, atom_symbol(&arena, "Pair"), origin, origin)
-            : atom_expr2(&arena, atom_symbol(&arena, "Box"), origin);
+            ? atom_expr3(&arena, atom_symbol(&arena, "Pair"), crossing, crossing)
+            : atom_expr2(&arena, atom_symbol(&arena, "Box"), crossing);
         assert(atom_eq(value, expected));
     }
     printf("NativeDataBranch %u passed\n", which);

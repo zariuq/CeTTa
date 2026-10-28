@@ -10852,6 +10852,8 @@ static Atom *eval_grounded_final_value(Arena *a, Atom *result) {
 
 static Atom *prime_need_ready_syntax(Arena *a, Atom *atom,
                                      const Bindings *environment);
+static Atom *prime_need_template_syntax(Arena *a, Atom *atom,
+                                        const Bindings *environment);
 
 static bool dispatch_native_invocation(Space *s, Arena *a,
                                        const CettaInvocation *invocation,
@@ -31328,7 +31330,58 @@ typedef enum {
     PRIME_NEED_REIFY_READY_DATA,
     PRIME_NEED_REIFY_READY_CALL,
     PRIME_NEED_REIFY_PATTERN_QUERY,
+    /* READY_DATA, and a pending cell whose origin has a free variable read
+     * as that origin (prime_need_template_syntax). */
+    PRIME_NEED_REIFY_TEMPLATE_DATA,
 } PrimeNeedReifyMode;
+
+/* The argument index a returned-value carrier records
+ * (prime_need_returned_value_ref).  A carrier is no argument of a call: its
+ * origin is a value already produced, which a runtime position may still
+ * reduce further, while a position that holds or stores it holds that
+ * value. */
+#define PRIME_NEED_RETURNED_VALUE_ARGUMENT UINT64_MAX
+
+/* The free variables of an origin.  An elaborated form carries its own list
+ * as a hidden last element (atom_authored_len): the variables it owns are
+ * bound throughout it.  Every other variable is free, which is conservative
+ * for a binder written without its own list. */
+static bool prime_need_free_vars_rec(Atom *atom, BoundVarStack *bound,
+                                     FreeVarSet *free_vars) {
+    if (!atom || !atom_has_vars(atom))
+        return true;
+    if (atom->kind == ATOM_VAR)
+        return bound_var_stack_contains(bound, atom->var_id) ||
+               free_var_set_add(free_vars, atom);
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    CettaExprLen len = atom->expr.len;
+    CettaExprLen authored = atom_authored_len(atom);
+    CettaExprLen mark = bound->len;
+    bool ok = authored == len ||
+              collect_bound_pattern_vars(atom->expr.elems[len - 1u], bound);
+    for (CettaExprIndex i = 0u; ok && i < authored; i++)
+        ok = prime_need_free_vars_rec(atom->expr.elems[i], bound, free_vars);
+    bound->len = mark;
+    return ok;
+}
+
+/* Whether an origin has a free variable: its value would depend on bindings
+ * still to come, so it is code (a template), not a value.  When the analysis
+ * cannot finish, the origin counts as code. */
+static bool prime_need_origin_has_free_vars(Atom *origin) {
+    if (!origin || !atom_has_vars(origin))
+        return false;
+    BoundVarStack bound;
+    FreeVarSet free_vars;
+    bound_var_stack_init(&bound);
+    free_var_set_init(&free_vars);
+    bool ok = prime_need_free_vars_rec(origin, &bound, &free_vars);
+    bool open = !ok || free_vars.len > 0u;
+    free_var_set_free(&free_vars);
+    bound_var_stack_free(&bound);
+    return open;
+}
 
 /* Whether a pending demand's origin is already a value: closed, holding no
  * observable cell, and in constructor normal form (an undefined symbol, a
@@ -31427,7 +31480,8 @@ prime_need_reification_run(PrimeNeedReification *state,
     const bool pattern_query=mode==PRIME_NEED_REIFY_PATTERN_QUERY;
     const bool persist_sharing=mode==PRIME_NEED_REIFY_PERSISTENCE;
     const bool syntax_only=mode==PRIME_NEED_REIFY_JUDGMENT_SYNTAX;
-    const bool ready_data=mode==PRIME_NEED_REIFY_READY_DATA;
+    const bool template_data=mode==PRIME_NEED_REIFY_TEMPLATE_DATA;
+    const bool ready_data=mode==PRIME_NEED_REIFY_READY_DATA || template_data;
     const bool match_value=mode==PRIME_NEED_REIFY_MATCH_VALUE || ready_data || pattern_query;
     const bool ready_call=mode==PRIME_NEED_REIFY_READY_CALL;
     PrimeNeedReifyMemo *memo=state->memo;
@@ -31683,6 +31737,67 @@ prime_need_reification_run(PrimeNeedReification *state,
                 for (size_t i = 0u; i < len; i++)
                     if (frames[i].resolving_thunk == thunk_id)
                         goto fail;
+                /* A returned-value carrier holds a value already produced
+                 * (PRIME_NEED_RETURNED_VALUE_ARGUMENT).  A syntax view reads
+                 * it as that value, in the carrier's own lexical world; its
+                 * further reduction belongs to runtime positions only.  Once
+                 * that reduction has run, the carrier holds its result, and
+                 * the view reads the result. */
+                if (ready_data &&
+                    cell.source_argument_index ==
+                        PRIME_NEED_RETURNED_VALUE_ARGUMENT) {
+                    Bindings lexical;
+                    bool applied = false;
+                    if (!prime_need_project_cell_logical_env(
+                            arena, &cell, environment, &lexical, NULL, snapshot))
+                        goto fail;
+                    Atom *carried = cell.cache_state == PRIME_NEED_CACHE_VALUE &&
+                                    cell.cached ? cell.cached : cell.origin;
+                    Atom *value = bindings_apply_body_exact_env(
+                        arena, carried, &lexical, &applied);
+                    bindings_free(&lexical);
+                    if (!applied || !value)
+                        goto fail;
+                    frame->waiting_for_payload = true;
+                    frame->resolving_thunk = thunk_id;
+                    if (!prime_need_reify_push(
+                            &frames, &len, &cap, inline_frames,
+                            (PrimeNeedReifyFrame){.source = value,
+                                .destination = frame->destination}))
+                        goto fail;
+                    continue;
+                }
+                /* A pending cell whose origin has a free variable is code: that
+                 * variable is a metavariable nothing has bound yet, so it has
+                 * no value to compute (prime_need_origin_has_free_vars).  A syntax view of a template reads it
+                 * as its origin, in the cell's own lexical world.  A cell over
+                 * a closed origin is a value and stays a cell. */
+                if (template_data &&
+                    !(cell.cache_state == PRIME_NEED_CACHE_VALUE &&
+                      cell.value_role == PRIME_NEED_VALUE_READY &&
+                      cell.cached)) {
+                    Bindings lexical;
+                    bool applied = false;
+                    if (!prime_need_project_cell_logical_env(
+                            arena, &cell, environment, &lexical, NULL, snapshot))
+                        goto fail;
+                    Atom *origin = bindings_apply_body_exact_env(
+                        arena, cell.origin, &lexical, &applied);
+                    bindings_free(&lexical);
+                    if (!applied || !origin)
+                        goto fail;
+                    if (prime_need_origin_has_free_vars(origin)) {
+                        if (getenv("C2_TEMPLATE_SITES")) { fprintf(stderr, "C2-TEMPLATE-SITE "); atom_print(origin, stderr); fputc('\n', stderr); }
+                        frame->waiting_for_payload = true;
+                        frame->resolving_thunk = thunk_id;
+                        if (!prime_need_reify_push(
+                                &frames, &len, &cap, inline_frames,
+                                (PrimeNeedReifyFrame){.source = origin,
+                                    .destination = frame->destination}))
+                            goto fail;
+                        continue;
+                    }
+                }
                 /* A selected ready value is already earned. Persist its
                  * structure, retaining only genuinely pending child demands;
                  * storing its origin as a new demand would replay it and hide
@@ -32057,6 +32172,25 @@ static bool prime_need_observation_barrier(Atom *atom) {
            atom_is_symbol_id(head, syms->resampler) ||
            atom_is_symbol_id(head, syms->stored_promise) ||
            atom_is_symbol_id(head, syms->lt_delay);
+}
+
+/* A quotation is code: reading it runs nothing written there.  A Need cell
+ * in it is no code.  A crossing name, or a substitution under the
+ * quote-as-written profile, put it there as the value a variable denotes,
+ * which the evaluator still owes: a variable denotes what its binding
+ * parameter's type says, so a value parameter denotes its value inside a
+ * quotation as well.  A reader that computes cells enters such a quotation
+ * to reach them and reads everything else in it as written. */
+static bool prime_need_quotation_holds_cells(const Atom *atom) {
+    return atom_is_quotation(atom) &&
+           atom_has_registry_refs(atom->expr.elems[1]);
+}
+
+/* What a reader that computes cells does not enter: an observation barrier
+ * other than a quotation that holds cells. */
+static bool prime_need_cell_barrier(Atom *atom) {
+    return prime_need_observation_barrier(atom) &&
+           !prime_need_quotation_holds_cells(atom);
 }
 
 static void prime_need_normalize_observation_atom(
@@ -32553,6 +32687,13 @@ static Atom *prime_need_observation_data_argument(
             : &g_prime_need_active;
     if (prime_need_snapshot_present(snapshot) &&
         prime_need_atom_has_observable_ref(child)) {
+        /* A native's raw operand leaves this world as data.  A ready cell
+         * crosses as the value it holds, so the native never runs it again;
+         * a pending computation crosses as its program, for the native to
+         * run (a spawned process runs what its cell would compute). */
+        child = prime_need_ready_syntax(a, child, env);
+        if (!prime_need_atom_has_observable_ref(child))
+            return child;
         return prime_need_reify_suspended(a, child, snapshot);
     }
     return child;
@@ -33030,9 +33171,11 @@ static Atom *prime_need_ready_code(Arena *a, Atom *atom,
 }
 
 /* A syntax view of an operand: a position that takes its operand as syntax
- * (code a quotation is built from, code being opened) reads each ready cell
- * as the value it holds, at every depth.  Cells that are not ready, explicit
- * suspensions and promises stay as they are; nothing is run or forced. */
+ * (code a quotation is built from, code being opened, a held or stored
+ * operand) reads each ready cell as the value it holds and each
+ * returned-value carrier as the value it carries, at every depth.  Pending
+ * argument cells, explicit suspensions and promises stay as they are;
+ * nothing is run or forced. */
 static Atom *prime_need_ready_syntax(Arena *a, Atom *atom,
                                      const Bindings *environment) {
     if (eval_current_language_id() != CETTA_LANGUAGE_PRIME || !atom ||
@@ -33045,6 +33188,26 @@ static Atom *prime_need_ready_syntax(Arena *a, Atom *atom,
         return atom;
     Atom *data = prime_need_reify_mode(a, atom, snapshot,
         PRIME_NEED_REIFY_READY_DATA, environment, NULL, NULL);
+    return data ? data : atom;
+}
+
+/* The syntax view of an operand that holds, stores or builds code: the ready
+ * view (prime_need_ready_syntax), and a pending cell whose origin has a free
+ * variable read as that origin.  Such a cell is a template: its free variables
+ * are metavariables its consumer binds, so it has no value of its own yet.  A
+ * pending cell over a closed origin stays a cell; it is a value. */
+static Atom *prime_need_template_syntax(Arena *a, Atom *atom,
+                                        const Bindings *environment) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_PRIME || !atom ||
+        !atom_has_registry_refs(atom))
+        return atom;
+    const PrimeNeedSnapshot *snapshot =
+        environment && prime_need_snapshot_present(bindings_need_view(environment))
+            ? bindings_need_view(environment) : &g_prime_need_active;
+    if (!prime_need_snapshot_present(snapshot))
+        return atom;
+    Atom *data = prime_need_reify_mode(a, atom, snapshot,
+        PRIME_NEED_REIFY_TEMPLATE_DATA, environment, NULL, NULL);
     return data ? data : atom;
 }
 
@@ -33075,10 +33238,7 @@ static void prime_need_normalize_observation_children(
             index > 0u && index - 1u <= UINT32_MAX &&
             grounded_dispatch_accepts_data_arg(
                 source->expr.elems[0], (uint32_t)(index - 1u));
-        if (raw_native_operand ||
-            (policy == PRIME_NEED_OBSERVATION_NORMAL_FORM &&
-             prime_need_observation_argument_is_data(
-                 s, a, source, index, active_env))) {
+        if (raw_native_operand) {
             Atom *child = prime_need_observation_data_argument(
                 a, source->expr.elems[index], active_env);
             if (!child)
@@ -33086,6 +33246,12 @@ static void prime_need_normalize_observation_children(
             children[index++] = child;
             continue;
         }
+        /* A field the head holds is syntax: what is written there is not
+         * run, but a cell the evaluator made there is a value, computed like
+         * any other cell of the observed value. */
+        bool held_field = policy == PRIME_NEED_OBSERVATION_NORMAL_FORM &&
+            prime_need_observation_argument_is_data(
+                s, a, source, index, active_env);
 
         OutcomeSet child_outcomes;
         outcome_set_init(&child_outcomes);
@@ -33102,7 +33268,7 @@ static void prime_need_normalize_observation_children(
         prime_need_normalize_observation_in(
             s, a, rooted_source->expr.elems[index], fuel, active_env,
             &child_outcomes, lexical_root,
-            policy == PRIME_NEED_OBSERVATION_NATIVE_OPERANDS
+            policy == PRIME_NEED_OBSERVATION_NATIVE_OPERANDS || held_field
                 ? PRIME_NEED_OBSERVATION_PENDING_CELLS : policy);
 
         /* A determinate child is the overwhelmingly common case for a
@@ -33222,10 +33388,105 @@ static void prime_need_normalize_observation_in(
         return;
     }
 
-    /* A held value is already the syntax it observes as. */
+    /* A held value is already the syntax it observes as.  A cell the
+     * evaluator made inside it is still a value it owes: such cells are
+     * computed, the written syntax around them is not run, and what is
+     * observed is held again. */
     if (atom_prime_held_is(applied)) {
-        outcome_set_add(out, applied, env);
+        Atom *payload = atom_prime_held_payload(applied);
+        if (!payload || !atom_has_registry_refs(payload) ||
+            !prime_need_atom_has_observable_ref(payload)) {
+            outcome_set_add(out, applied, env);
+            return;
+        }
+        OutcomeSet inner;
+        outcome_set_init(&inner);
+        Atom *rooted_source = applied;
+        Atom *rooted_value = payload;
+        __attribute__((cleanup(
+            eval_gc_observation_normalization_suspension_end)))
+        EvalGcObservationNormalizationSuspension held_suspension = {0};
+        eval_gc_observation_normalization_suspension_begin(
+            &held_suspension, lexical_root,
+            &rooted_source, &rooted_value, NULL, 0u,
+            (Bindings *)env, &inner, out);
+        prime_need_normalize_observation_in(
+            s, a, rooted_value, fuel, env, &inner, lexical_root,
+            PRIME_NEED_OBSERVATION_PENDING_CELLS);
+        for (CettaCount i = 0u; i < inner.len; i++) {
+            Atom *value = outcome_atom_materialize(a, &inner.items[i]);
+            if (!value)
+                continue;
+            Atom *held = atom_is_legacy_empty_or_error(value)
+                ? value : atom_prime_held_wrap(a, value);
+            if (held)
+                outcome_set_add(out, held, &inner.items[i].env);
+        }
+        eval_gc_observation_normalization_suspension_end(&held_suspension);
+        outcome_set_free(&inner);
         return;
+    }
+
+    /* A quotation is observed as written, except the cells in it
+     * (prime_need_quotation_holds_cells): each is the value a variable
+     * denotes, computed once, here, and read as that value; nothing written
+     * in the quotation runs.  A cell whose origin is open is a template's
+     * code and is read as its origin (prime_need_template_syntax). */
+    if (prime_need_quotation_holds_cells(applied)) {
+        Atom *payload = prime_need_template_syntax(
+            a, applied->expr.elems[1], env);
+        if (payload && payload != applied->expr.elems[1]) {
+            Atom **items = arena_alloc(
+                a, sizeof(*items) * (size_t)applied->expr.len);
+            if (!items)
+                return;
+            memcpy(items, applied->expr.elems,
+                   sizeof(*items) * (size_t)applied->expr.len);
+            items[1] = payload;
+            applied = atom_expr(a, items, applied->expr.len);
+            if (!applied)
+                return;
+        }
+        if (payload && atom_has_registry_refs(payload) &&
+            prime_need_atom_has_observable_ref(payload)) {
+            OutcomeSet inner;
+            outcome_set_init(&inner);
+            Atom *rooted_source = applied;
+            Atom *rooted_value = payload;
+            __attribute__((cleanup(
+                eval_gc_observation_normalization_suspension_end)))
+            EvalGcObservationNormalizationSuspension quote_suspension = {0};
+            eval_gc_observation_normalization_suspension_begin(
+                &quote_suspension, lexical_root,
+                &rooted_source, &rooted_value, NULL, 0u,
+                (Bindings *)env, &inner, out);
+            prime_need_normalize_observation_in(
+                s, a, rooted_value, fuel, env, &inner, lexical_root,
+                PRIME_NEED_OBSERVATION_PENDING_CELLS);
+            for (CettaCount i = 0u; i < inner.len; i++) {
+                Atom *value = outcome_atom_materialize(a, &inner.items[i]);
+                if (!value)
+                    continue;
+                if (atom_is_legacy_empty_or_error(value)) {
+                    outcome_set_add(out, value, &inner.items[i].env);
+                    continue;
+                }
+                Atom **items = arena_alloc(
+                    a, sizeof(*items) * (size_t)rooted_source->expr.len);
+                if (!items)
+                    continue;
+                memcpy(items, rooted_source->expr.elems,
+                       sizeof(*items) * (size_t)rooted_source->expr.len);
+                items[1] = value;
+                Atom *quoted = atom_expr(a, items, rooted_source->expr.len);
+                if (quoted)
+                    outcome_set_add(out, quoted, &inner.items[i].env);
+            }
+            eval_gc_observation_normalization_suspension_end(
+                &quote_suspension);
+            outcome_set_free(&inner);
+            return;
+        }
     }
 
     /* Internal observation preserves values together with their captured
@@ -33579,11 +33840,12 @@ static bool prime_need_argument_treats_error_as_data(
 }
 
 /* Persistent spaces contain atoms, not evaluator-private heap references.
- * Prime therefore exports a data argument by applying its logical bindings
- * and replacing suspended references with their captured syntax.  This is
- * deliberately reification, not forcing: add-atom remains a data operation
- * and cannot execute an effect merely because its argument crossed a storage
- * boundary. */
+ * A space holds values, so the cells of a stored payload are demanded before
+ * the storage operation runs (PRIME_NEED_ARGUMENT_PAYLOAD), and what arrives
+ * here holds earned values.  Exporting it applies its logical bindings and
+ * reifies what remains: an explicit suspension keeps its identity as a
+ * stored promise, and a cell captured inside code (a lambda, a quotation)
+ * stays a stored demand of that code.  Nothing is forced here. */
 static Atom *prime_need_apply_data_environment(Arena *arena, Atom *root,
     const Bindings *environment) {
     return root && eval_current_language_id()==CETTA_LANGUAGE_PRIME &&
@@ -34350,7 +34612,8 @@ static bool prime_need_returned_value_ref(
     Bindings next;
     *reference = NULL;
     if (!occurrence || !prime_need_allocate_source_argument_ref(
-            arena, value, occurrence, 0u, environment, &next, reference))
+            arena, value, occurrence, PRIME_NEED_RETURNED_VALUE_ARGUMENT,
+            environment, &next, reference))
         return false;
     if (result_form == CETTA_CALL_RESULT_EXPRESSION &&
         !prime_is_completed_value(value)) {
@@ -39011,6 +39274,9 @@ typedef struct {
     bool merged_builder_initialized;
     bool active_attempt_initialized;
     bool child_builder_initialized;
+    /* The argument is held Data syntax whose pending cells are being
+     * observed; each observed argument is held again. */
+    bool hold_observed_data;
 } InterpretFunctionArgsFrame;
 
 static void interpret_function_args_frame_init(
@@ -39106,6 +39372,10 @@ static Atom *instantiate_symbol_domains(Arena *a, Atom **arg_types, Atom **prefi
     return subst_symbol_type(a, domain, names, values, count);
 }
 
+static Atom *prime_need_pattern_pending_cell(Atom *pattern,
+                                             const PrimeNeedSnapshot *snapshot,
+                                             uint64_t *thunk_id_out);
+
 static InterpretFunctionArgsAction interpret_function_args_frame_step(
     Space *s, Arena *a, Atom **op_io, Atom **orig_args, Atom **arg_types,
     CettaExprLen nargs, Atom **prefix, int fuel, OutcomeSet *os,
@@ -39165,37 +39435,34 @@ static InterpretFunctionArgsAction interpret_function_args_frame_step(
             frame->orig_arg->kind == ATOM_VAR &&
             bound_arg->kind != ATOM_VAR;
 
-        if (!normalize_observation &&
+        bool held_position = !normalize_observation &&
             (explicit_data_argument || data_parameter ||
              (atom_is_symbol_id(
                   frame->arg_type, g_builtin_syms.atom) &&
               !eager_petta_atom && !prime_atom_top) ||
              petta_bound_value ||
-             bound_arg->kind == ATOM_VAR)) {
-            if (!control_continuation &&
-                (data_parameter ||
-                 atom_is_symbol_id(frame->arg_type, g_builtin_syms.atom)) &&
-                !(prime_need_library_native_head(*op_io) &&
-                  !explicit_data_argument && !data_parameter) &&
-                prime_need_atom_has_observable_ref(bound_arg)) {
-                /* Completed cells denote their earned value, even in a
-                 * held argument position. Only pending cells export their
-                 * source; neither view evaluates the argument again. */
-                bound_arg = prime_need_ready_syntax(
-                    a, bound_arg, frame->env);
-                if (prime_need_atom_has_observable_ref(bound_arg))
-                    bound_arg = prime_need_reify_suspended(
-                        a, bound_arg, &g_prime_need_active);
-                if (!bound_arg) {
-                    outcome_set_add(
-                        os,
-                        atom_error(a, frame->orig_arg,
-                                   atom_symbol(a,
-                                               "PrimeNeedReificationCycle")),
-                        frame->env);
-                    return INTERPRET_FUNCTION_ARGS_POP;
-                }
-            }
+             bound_arg->kind == ATOM_VAR);
+        bool hold_observed = false;
+        if (held_position && !control_continuation &&
+            (data_parameter ||
+             atom_is_symbol_id(frame->arg_type, g_builtin_syms.atom)) &&
+            !(prime_need_library_native_head(*op_io) &&
+              !explicit_data_argument && !data_parameter) &&
+            prime_need_atom_has_observable_ref(bound_arg)) {
+            /* A cell the evaluator made is a value it owes.  A ready cell is
+             * read as the value it holds, wherever it stands.  A whole
+             * argument that is one pending cell is held as the cell itself,
+             * neither forced nor shown as its source; a pending cell inside
+             * written syntax is demanded first, by observing the argument
+             * (prime_held_demand_written_cells). */
+            bool already_held = atom_prime_held_is(bound_arg);
+            bound_arg = prime_need_template_syntax(a, bound_arg, frame->env);
+            hold_observed = !already_held &&
+                !prime_need_ref_parse(bound_arg, NULL, NULL, NULL) &&
+                prime_need_pattern_pending_cell(
+                    bound_arg, &g_prime_need_active, NULL) != NULL;
+        }
+        if (held_position && !hold_observed) {
             if (data_parameter) {
                 bound_arg = atom_prime_held_wrap(a, bound_arg);
                 if (!bound_arg) return INTERPRET_FUNCTION_ARGS_POP;
@@ -39222,14 +39489,20 @@ static InterpretFunctionArgsAction interpret_function_args_frame_step(
 
         outcome_set_init(&frame->arg_os);
         frame->arg_os_initialized = true;
-        if (owned_continuation && !normalize_observation &&
+        if (!hold_observed && owned_continuation && !normalize_observation &&
             eval_current_language_id() == CETTA_LANGUAGE_HE &&
             he_canonical_argument_schedule(s, a, frame->arg_type,
                 bound_arg, fuel, frame->env, &frame->arg_os)) {
             frame->state = INTERPRET_FUNCTION_ARGS_FRAME_WAIT_EVAL;
             return INTERPRET_FUNCTION_ARGS_WAIT;
         }
-        if (normalize_observation) {
+        if (hold_observed) {
+            frame->hold_observed_data = data_parameter;
+            prime_need_normalize_observation_in(
+                s, a, bound_arg, fuel, frame->env, &frame->arg_os,
+                lexical_root, PRIME_NEED_OBSERVATION_PENDING_CELLS);
+        }
+        else if (normalize_observation) {
             g_prime_structural_observation_depth++;
             prime_need_normalize_observation_atom(
                 s, a, bound_arg, fuel, frame->env, &frame->arg_os,
@@ -39264,6 +39537,9 @@ static InterpretFunctionArgsAction interpret_function_args_frame_step(
             CETTA_RUNTIME_COUNTER_OUTCOME_VARIANT_MATERIALIZE_DISPATCH_CALL_TERM);
         if (prime_need_argument_requires_normal_form(*op_io, frame->idx))
             arg_atom = prime_need_observe_data(a, arg_atom, &arg_outcome->env);
+        if (arg_atom && frame->hold_observed_data &&
+            !atom_is_legacy_empty_or_error(arg_atom))
+            arg_atom = atom_prime_held_wrap(a, arg_atom);
         if (!arg_atom)
             continue;
         BindingsMergeAttempt attempt;
@@ -44655,7 +44931,8 @@ static bool prime_need_pattern_request(
             }
             if (scan->value->kind != ATOM_EXPR || scan->pattern->kind != ATOM_EXPR ||
                 scan->value->expr.len != scan->pattern->expr.len ||
-                prime_observation_value_barrier(space, arena, scan->value))
+                (prime_observation_value_barrier(space, arena, scan->value) &&
+                 !prime_need_quotation_holds_cells(scan->value)))
                 goto finished_node;
         }
         if (scan->child == scan->value->expr.len ||
@@ -44833,8 +45110,9 @@ static bool prime_need_pattern_observe_full(Space *space, Arena *arena,
 /* Whether `pattern` constrains a part of `value` that is still suspended:
  * a position where the pattern is not a variable and the value holds a Need
  * reference or a stored thunk.  Positions a pattern variable binds are not
- * inspected, and neither is the inside of a quotation, a lambda or held
- * syntax. */
+ * inspected, and neither is the inside of a lambda, held syntax, or a
+ * quotation, except the cells a quotation holds
+ * (prime_need_quotation_holds_cells). */
 static bool prime_pattern_inspects_suspended_part(
     Space *s, Arena *a, Atom *value, Atom *pattern) {
     PrimeNeedPatternRequest request = {0};
@@ -45637,12 +45915,78 @@ static void prime_held_note_positions(const Bindings *env, Arena *a,
     }
 }
 
+/* A held position holds the syntax the call writes there.  A cell the
+ * evaluator made is a value it owes, never syntax.  A whole argument that is
+ * one cell is held as the cell itself (prime_held_apply_positions), so it is
+ * neither forced nor shown as its source.  A pending cell inside written
+ * syntax is demanded before the call, because the readers of held syntax
+ * take its parts as data: the argument is observed with the pending-cell
+ * policy, which computes the evaluator's cells and runs nothing written, and
+ * each observed argument gives the call again, held.  True when a demand was
+ * made; its answers are in `os`. */
+static bool prime_held_demand_written_cells(
+    Space *s, Arena *a, Atom *call, Atom *declared_type, int fuel,
+    const Bindings *equation_env, const Bindings *caller_env,
+    CettaExprIndex nargs, const uint8_t *data_positions,
+    const uint8_t *plain_positions, bool preserve_bindings, OutcomeSet *os) {
+    if (!data_positions || !plain_positions ||
+        !prime_need_snapshot_present(&g_prime_need_active))
+        return false;
+    for (CettaExprIndex i = 0u; i < nargs; i++) {
+        if (!data_positions[i] || plain_positions[i])
+            continue;
+        Atom *argument = call->expr.elems[i + 1u];
+        if (equation_env && !bindings_logically_empty(equation_env))
+            argument = bindings_apply_if_vars(equation_env, a, argument);
+        /* Only written syntax is demanded here: a value that is held already
+         * is passed as it is, and its observation computes its cells
+         * (prime_need_normalize_observation_in). */
+        if (!argument || !atom_has_registry_refs(argument) ||
+            atom_prime_held_is(argument))
+            continue;
+        Atom *view = prime_need_template_syntax(a, argument, equation_env);
+        if (!view || prime_need_ref_parse(view, NULL, NULL, NULL) ||
+            !prime_need_pattern_pending_cell(view, &g_prime_need_active, NULL))
+            continue;
+        OutcomeSet observed;
+        outcome_set_init(&observed);
+        prime_need_normalize_observation_in(
+            s, a, view, fuel, equation_env, &observed, NULL,
+            PRIME_NEED_OBSERVATION_PENDING_CELLS);
+        for (CettaCount j = 0u; j < observed.len; j++) {
+            Atom *value = outcome_atom_materialize(a, &observed.items[j]);
+            if (!value || atom_is_legacy_empty_sentinel(value))
+                continue;
+            if (atom_is_error(value)) {
+                outcome_set_add(os, value, &observed.items[j].env);
+                continue;
+            }
+            Atom **elems = arena_alloc(
+                a, sizeof(*elems) * (size_t)call->expr.len);
+            Atom *held = atom_prime_held_wrap(a, value);
+            if (!elems || !held)
+                break;
+            memcpy(elems, call->expr.elems,
+                   sizeof(*elems) * (size_t)call->expr.len);
+            elems[i + 1u] = held;
+            eval_for_current_caller(
+                s, a, declared_type, atom_expr(a, elems, call->expr.len),
+                fuel, &observed.items[j].env, caller_env, preserve_bindings,
+                os);
+        }
+        outcome_set_free(&observed);
+        return true;
+    }
+    return false;
+}
+
 /* The settled Data discipline: a parameter typed Data receives its argument
  * held, as written, and the call site does not change.  A position is held
  * when every applicable type of exact arity types it Data.  An argument that
- * is already held is passed as it is; an argument that is a suspended
- * computation is first turned back into the syntax it stands for, since
- * what is held is the source, not a thunk.  NULL when that fails. */
+ * is already held is passed as it is.  A cell is a value, not the source it
+ * was made from: an argument that is one cell is held as that cell, and the
+ * ready cells inside written syntax are read as their values.  NULL when
+ * allocation fails. */
 static Atom *prime_held_apply_positions(Arena *a, Atom *call,
                                         const Bindings *env,
                                         CettaExprIndex nargs,
@@ -45665,11 +46009,14 @@ static Atom *prime_held_apply_positions(Arena *a, Atom *call,
             if (stripped) argument = stripped;
         }
         if (holds && !atom_prime_held_is(argument)) {
-            if (prime_need_atom_has_observable_ref(argument)) {
-                argument = prime_need_reify_suspended(
-                    a, argument, &g_prime_need_active);
-                if (!argument) return NULL;
-            }
+            /* Ready cells and returned-value carriers are read as the values
+             * they hold, wherever they stand in the argument
+             * (prime_need_ready_syntax).  A whole argument that is one pending
+             * cell is held as the cell itself (atom_prime_held_wrap leaves a
+             * cell as it is).  The pending cells inside written syntax were
+             * demanded before the call (prime_held_demand_written_cells). */
+            if (prime_need_atom_has_observable_ref(argument))
+                argument = prime_need_template_syntax(a, argument, env);
             argument = atom_prime_held_wrap(a, argument);
         }
         items[i + 1u] = argument;
@@ -45822,6 +46169,14 @@ static bool prime_need_try_equation_call_core(
         applicability_errors_free(&candidate_errors);
     }
     free(head_types);
+    if (has_applicable_function_type &&
+        prime_held_demand_written_cells(
+            s, a, atom, declared_type, fuel, equation_env, current_env,
+            call_nargs, data_positions, plain_positions, preserve_bindings,
+            os)) {
+        applicability_errors_free(&type_errors);
+        return true;
+    }
     {
         Atom *held_call = prime_held_apply_positions(
             a, atom, equation_env, call_nargs,
@@ -46458,6 +46813,10 @@ typedef enum {
     PRIME_NEED_ARGUMENT_SPACE_REFERENCE,
     /* Resolve a sequence producer without evaluating its written fields. */
     PRIME_NEED_ARGUMENT_SPINE,
+    /* A stored payload: every evaluator-made cell in it is demanded, as a
+     * pattern's cells are, and nothing written is evaluated, whatever its
+     * outer form.  A space holds values (prime_need_payload_view). */
+    PRIME_NEED_ARGUMENT_PAYLOAD,
 } PrimeNeedArgumentMode;
 
 typedef struct {
@@ -46489,9 +46848,9 @@ static PrimeNeedArgumentMode prime_need_argument_mode(
                           PRIME_NEED_ARGUMENT_VALUE),
         PRIME_DEMAND_RULE(g_builtin_syms.run, 1u, 1u, 0u, 0u,
                           PRIME_NEED_ARGUMENT_VALUE),
-        /* Storage consumes its space coordinate as a value; its pattern,
-         * payload and continuation keep their independent data/binder roles.
-         * Resolve a computed coordinate once through the retained caller. */
+        /* Storage consumes its space coordinate as a value; its pattern and
+         * continuation keep their independent data/binder roles.  Resolve a
+         * computed coordinate once through the retained caller. */
         PRIME_DEMAND_RULE(g_builtin_syms.match, 3u, 3u, 0u, 0u,
                           PRIME_NEED_ARGUMENT_SPACE_REFERENCE),
         PRIME_DEMAND_RULE(g_builtin_syms.get_atoms, 1u, 1u, 0u, 0u,
@@ -46502,6 +46861,15 @@ static PrimeNeedArgumentMode prime_need_argument_mode(
                           PRIME_NEED_ARGUMENT_SPACE_REFERENCE),
         PRIME_DEMAND_RULE(g_builtin_syms.remove_atom, 2u, 2u, 0u, 0u,
                           PRIME_NEED_ARGUMENT_SPACE_REFERENCE),
+        /* A space holds values, which its readers match by structure, so a
+         * stored or removed payload's cells are demanded.  The syntax written
+         * around them stays data, and an explicit suspension stays one. */
+        PRIME_DEMAND_RULE(g_builtin_syms.add_atom, 2u, 2u, 1u, 1u,
+                          PRIME_NEED_ARGUMENT_PAYLOAD),
+        PRIME_DEMAND_RULE(g_builtin_syms.add_atom_nodup, 2u, 2u, 1u, 1u,
+                          PRIME_NEED_ARGUMENT_PAYLOAD),
+        PRIME_DEMAND_RULE(g_builtin_syms.remove_atom, 2u, 2u, 1u, 1u,
+                          PRIME_NEED_ARGUMENT_PAYLOAD),
         PRIME_DEMAND_RULE(g_builtin_syms.new_state, 1u, 1u, 0u, 0u,
                           PRIME_NEED_ARGUMENT_WHNF),
         PRIME_DEMAND_RULE(g_builtin_syms.get_type, 1u, 1u, 0u, 0u,
@@ -46644,15 +47012,17 @@ static bool prime_need_cell_pending(Atom *atom,
     return true;
 }
 
-/* The first pending Need cell a pattern holds outside quotation: the demand
- * the pattern makes. A fault's payload records its cause, including references
- * that may not be forced; inspecting the fault does not execute that payload.
- * A ready cell is already a value, which the consumer reads as one. */
+/* The first pending Need cell a pattern holds outside code: the demand the
+ * pattern makes.  A cell in a quotation is a value a variable denotes and is
+ * found there too (prime_need_cell_barrier).  A fault's payload records its
+ * cause, including references that may not be forced; inspecting the fault
+ * does not execute that payload.  A ready cell is already a value, which the
+ * consumer reads as one. */
 static Atom *prime_need_pattern_pending_cell(Atom *pattern,
                                              const PrimeNeedSnapshot *snapshot,
                                              uint64_t *thunk_id_out) {
     if (!pattern || atom_is_error(pattern) || !atom_has_registry_refs(pattern) ||
-        prime_need_observation_barrier(pattern))
+        prime_need_cell_barrier(pattern))
         return NULL;
     if (pattern->kind == ATOM_GROUNDED)
         return prime_need_cell_pending(pattern, snapshot, thunk_id_out)
@@ -46680,7 +47050,7 @@ static Atom *prime_need_pattern_with_value(Arena *a, Atom *pattern,
         return prime_need_ref_belongs_to(pattern, snapshot, &id) &&
                 id == thunk_id ? value : pattern;
     if (pattern->kind != ATOM_EXPR || atom_is_error(pattern) ||
-        prime_need_observation_barrier(pattern))
+        prime_need_cell_barrier(pattern))
         return pattern;
     Atom **elems = NULL;
     for (CettaExprIndex i = 0u; i < pattern->expr.len; i++) {
@@ -46711,6 +47081,19 @@ static PrimeNeedArgumentMode prime_need_pattern_demand(
     return view && prime_need_pattern_pending_cell(
                        view, &g_prime_need_active, thunk_id_out)
         ? PRIME_NEED_ARGUMENT_PATTERN : PRIME_NEED_ARGUMENT_DATA;
+}
+
+/* A stored payload as its readers will see it: the caller's substitutions
+ * applied, and every ready cell and returned-value carrier read as the value
+ * it holds (prime_need_ready_syntax), so that a pending cell inside a value
+ * earned earlier is found as well.  Pending cells, explicit suspensions and
+ * the written syntax around them stay as they are; nothing is run here. */
+static Atom *prime_need_payload_view(Arena *a, Atom *payload,
+                                     const Bindings *env) {
+    Atom *view = payload;
+    if (view && env && !bindings_logically_empty(env))
+        view = bindings_apply_if_vars((Bindings *)env, a, view);
+    return view ? prime_need_template_syntax(a, view, env) : NULL;
 }
 
 /* The acquired head chooses the builder's role. Ordinary construction
@@ -46798,6 +47181,11 @@ static int prime_need_demanded_argument(Space *s, Arena *a, SymbolId head,
             mode = prime_need_pattern_demand(a, argument, env,
                                              pattern_cell_out);
             demanded = mode != PRIME_NEED_ARGUMENT_DATA;
+        }
+        if (mode == PRIME_NEED_ARGUMENT_PAYLOAD) {
+            Atom *view = prime_need_payload_view(a, argument, env);
+            demanded = view && prime_need_pattern_pending_cell(
+                view, &g_prime_need_active, pattern_cell_out) != NULL;
         }
         if (mode == PRIME_NEED_ARGUMENT_STRUCTURE)
             demanded = prime_need_strict_argument_needs_eval(
@@ -56847,8 +57235,22 @@ static void prime_eval_stack_resume_normalize_atom(
             return;
         }
 
-        /* A held value is already the syntax it observes as, as in
-         * prime_need_normalize_observation_atom. */
+        /* A held value is already the syntax it observes as, and a
+         * quotation is observed as written, as in
+         * prime_need_normalize_observation_in; a cell the evaluator made in
+         * either is a value that observer computes, so it observes them. */
+        if ((atom_prime_held_is(applied) &&
+             atom_has_registry_refs(atom_prime_held_payload(applied)) &&
+             prime_need_atom_has_observable_ref(
+                 atom_prime_held_payload(applied))) ||
+            prime_need_quotation_holds_cells(applied)) {
+            prime_need_normalize_observation_atom(
+                frame->space, frame->arena, applied, frame->fuel,
+                &frame->env, frame->target, NULL);
+            prime_eval_stack_pop();
+            prime_eval_stack_stream_note(published);
+            return;
+        }
         if (atom_prime_held_is(applied)) {
             prime_eval_stack_normalize_publish(frame, applied);
             prime_eval_stack_pop();
@@ -87387,7 +87789,39 @@ tail_call: ;
         head_id == lift_syms->values) {
         /* The code of a value is its syntax: a ready value reads as the
          * value it holds (prime_need_ready_syntax). */
-        Atom *value = prime_need_ready_syntax(a, expr_arg(atom, 0), CURRENT_ENV);
+        Atom *value = prime_need_template_syntax(a, expr_arg(atom, 0), CURRENT_ENV);
+        /* The code of a value needs the whole value: a pending cell in it is
+         * demanded first, by observing the value with the pending-cell policy
+         * (nothing written is run), and each observed value gives its code. */
+        if (value && !atom_is_error(value) &&
+            prime_need_pattern_pending_cell(value, &g_prime_need_active, NULL)) {
+            OutcomeSet observed;
+            outcome_set_init(&observed);
+            __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+            EvalGcOutcomeSuspension value_suspension = {0};
+            eval_gc_outcome_suspension_begin(
+                &value_suspension, &eval_gc_root_frame, os, &observed);
+            prime_need_normalize_observation_in(
+                s, a, value, fuel, CURRENT_ENV, &observed, &eval_gc_root_frame,
+                PRIME_NEED_OBSERVATION_PENDING_CELLS);
+            eval_gc_outcome_suspension_end(&value_suspension);
+            for (CettaCount i = 0u; i < observed.len; i++) {
+                Atom *whole = outcome_atom_materialize(a, &observed.items[i]);
+                if (!whole || atom_is_legacy_empty_sentinel(whole))
+                    continue;
+                if (atom_is_error(whole)) {
+                    outcome_set_add(os, whole, &observed.items[i].env);
+                    continue;
+                }
+                eval_for_current_caller(
+                    s, a, etype,
+                    atom_expr2(a, atom_symbol_id(a, lift_syms->values), whole),
+                    fuel, &observed.items[i].env, CURRENT_ENV,
+                    preserve_bindings, os);
+            }
+            outcome_set_free(&observed);
+            return;
+        }
         /* The code of a value keeps the binding structure its lambdas were
          * formed with (prime_semantics_form_built): opening it later never
          * elaborates them again. */
@@ -87577,12 +88011,16 @@ prime_need_next_strict_argument: ;
         ? expr_arg(atom, (CettaExprIndex)strict_argument) : NULL;
     bool strict_error_is_data =
         prime_need_observer_treats_error_as_data(head_id);
-    if (strict_argument >= 0 && strict_mode == PRIME_NEED_ARGUMENT_PATTERN) {
-        /* Force the pattern's pending cell, then read the pattern with each
-         * of the cell's values in its place. */
-        Atom *cell = prime_need_pattern_pending_cell(
-            bindings_apply_if_vars(CURRENT_ENV, a, strict_source),
-            &g_prime_need_active, NULL);
+    if (strict_argument >= 0 && (strict_mode == PRIME_NEED_ARGUMENT_PATTERN ||
+                                 strict_mode == PRIME_NEED_ARGUMENT_PAYLOAD)) {
+        /* Force the pattern's or the payload's pending cell, then read it
+         * with each of the cell's values in its place. */
+        bool payload_demand = strict_mode == PRIME_NEED_ARGUMENT_PAYLOAD;
+        Atom *demand_view = payload_demand
+            ? prime_need_payload_view(a, strict_source, CURRENT_ENV)
+            : bindings_apply_if_vars(CURRENT_ENV, a, strict_source);
+        Atom *cell = demand_view ? prime_need_pattern_pending_cell(
+            demand_view, &g_prime_need_active, NULL) : NULL;
         OutcomeSet values;
         outcome_set_init(&values);
         __attribute__((cleanup(eval_gc_outcome_suspension_end)))
@@ -87605,10 +88043,14 @@ prime_need_next_strict_argument: ;
                     bindings_need_view(&values.items[i].env))
                     ? bindings_need_view(&values.items[i].env)
                     : &g_prime_need_active;
+            Atom *source = expr_arg(atom, (CettaExprIndex)strict_argument);
             Atom *pattern = prime_need_pattern_with_value(
-                a, bindings_apply_if_vars(CURRENT_ENV, a,
-                    expr_arg(atom, (CettaExprIndex)strict_argument)),
+                a, payload_demand
+                    ? prime_need_payload_view(a, source, CURRENT_ENV)
+                    : bindings_apply_if_vars(CURRENT_ENV, a, source),
                 snapshot, pattern_cell, value);
+            if (!pattern)
+                continue;
             Atom **elems = arena_alloc(a,
                 sizeof(*elems) * (size_t)atom->expr.len);
             memcpy(elems, atom->expr.elems,
@@ -88091,16 +88533,64 @@ prime_need_next_strict_argument: ;
     /* Whether two arguments are the same syntax, neither evaluated.  The
      * library equation compares (quote $a) with (quote $b), which captures
      * the arguments only where substitution enters a quotation.  Prime seals
-     * quotations, so it reads each argument as `quote` does: as written,
-     * with a suspended argument read as its source and a held value as the
-     * syntax it holds. */
+     * quotations, so it reads each argument as `quote` does: what is written
+     * there as written, and a held value as the syntax it holds.  A variable
+     * denotes what its binding parameter's type says: one bound to a Need
+     * cell (a value parameter) denotes the value the cell is owed, so the
+     * cell is computed first, once, and compared as that value. */
     if (language_id == CETTA_LANGUAGE_PRIME && nargs == 2u &&
         prime_quote_seal_active() &&
         head_id == prime_lift_symbols()->noreduce_eq) {
+        Atom *views[2];
+        for (CettaExprIndex i = 0u; i < 2u; i++) {
+            Atom *view = bindings_apply_if_vars(
+                CURRENT_ENV, a, expr_arg(atom, i));
+            views[i] = view
+                ? prime_need_template_syntax(a, view, CURRENT_ENV) : NULL;
+        }
+        for (CettaExprIndex i = 0u; i < 2u; i++) {
+            if (!views[i] || atom_is_error(views[i]) ||
+                !prime_need_pattern_pending_cell(
+                    views[i], &g_prime_need_active, NULL))
+                continue;
+            OutcomeSet observed;
+            outcome_set_init(&observed);
+            __attribute__((cleanup(eval_gc_outcome_suspension_end)))
+            EvalGcOutcomeSuspension side_suspension = {0};
+            eval_gc_outcome_suspension_begin(
+                &side_suspension, &eval_gc_root_frame, os, &observed);
+            prime_need_normalize_observation_in(
+                s, a, views[i], fuel, CURRENT_ENV, &observed,
+                &eval_gc_root_frame, PRIME_NEED_OBSERVATION_PENDING_CELLS);
+            eval_gc_outcome_suspension_end(&side_suspension);
+            for (CettaCount k = 0u; k < observed.len; k++) {
+                Atom *side = outcome_atom_materialize(a, &observed.items[k]);
+                if (!side || atom_is_legacy_empty_sentinel(side))
+                    continue;
+                if (atom_is_error(side)) {
+                    outcome_set_add(os, side, &observed.items[k].env);
+                    continue;
+                }
+                /* The computed side is held, so the next round reads it as
+                 * the syntax of its value. */
+                Atom *held = atom_prime_held_is(side)
+                    ? side : atom_prime_held_wrap(a, side);
+                Atom *args[2] = {expr_arg(atom, 0), expr_arg(atom, 1)};
+                args[i] = held;
+                eval_for_current_caller(
+                    s, a, etype,
+                    atom_expr3(a, atom_symbol_id(
+                                      a, prime_lift_symbols()->noreduce_eq),
+                               args[0], args[1]),
+                    fuel, &observed.items[k].env, CURRENT_ENV,
+                    preserve_bindings, os);
+            }
+            outcome_set_free(&observed);
+            return;
+        }
         Atom *sides[2];
         for (CettaExprIndex i = 0u; i < 2u; i++) {
-            Atom *side = bindings_apply_if_vars(
-                CURRENT_ENV, a, expr_arg(atom, i));
+            Atom *side = views[i];
             if (side && prime_need_snapshot_present(&g_prime_need_active))
                 side = prime_need_reify_suspended(
                     a, side, &g_prime_need_active);
@@ -88133,13 +88623,23 @@ prime_need_next_strict_argument: ;
             return;
         }
         /* A written Prime quotation may carry its own list last
-         * (atom_is_quotation): it is a quotation all the same. */
+         * (atom_is_quotation): it is a quotation all the same.  Nothing is
+         * forced when it is formed.  A Need cell a crossing name or a
+         * substitution put in it is the value a variable denotes (a variable
+         * denotes what its binding parameter's type says): the quotation
+         * holds the cell, and observing or matching the quotation computes
+         * it, once (prime_need_quotation_holds_cells).  A ready cell reads as
+         * its value, and a cell whose origin is open as that origin, a
+         * template's code (prime_need_template_syntax).  A held value in it
+         * (a `Data` parameter's argument, as written) is code there: the
+         * quotation holds the syntax itself, which opening it runs. */
         if (nargs == 1 || atom_is_quotation(atom)) {
             Atom *data = atom;
             if (language_id == CETTA_LANGUAGE_PRIME &&
                 prime_need_snapshot_present(&g_prime_need_active)) {
-                data = prime_need_reify_suspended(
-                    a, atom, &g_prime_need_active);
+                data = prime_need_template_syntax(a, atom, CURRENT_ENV);
+                if (data)
+                    data = atom_prime_held_strip(a, data);
             }
             outcome_set_add(
                 os,

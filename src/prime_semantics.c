@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6414,11 +6415,507 @@ static Atom *prime_code_with_payload(Arena *arena, Atom *code, Atom *payload) {
         : atom_expr2(arena, code->expr.elems[0], payload);
 }
 
+/* ── Declared binding forms ────────────────────────────────────────────
+ *
+ * A library form that binds names by matching declares its pattern
+ * positions, as the core's pattern binders have theirs in the binder table
+ * below:
+ *
+ *   (scope:binder (H r1 ... rn))     (H a1 ... an) is a pattern binder, and
+ *                                    each ri says what ai is;
+ *   (scope:source H (S r1 ... rn))   inside a source position of H, the form
+ *                                    (S a1 ... an) is one of H's source forms.
+ *
+ * An item is a role: `value` (read in the scope around the form), `pattern`
+ * (a pattern), `source` (a pattern in which H's source forms are read),
+ * `body` (in the scope of the names the form's patterns bind) or `_` (any
+ * atom, which binds and refers to nothing); any other symbol is a word the
+ * form has there.  A source form need not start with a word: `(pattern _
+ * value)` describes `(p <- c)`.  A final `...` repeats the items after the
+ * head (all the items, when the shape starts with a role), in order, as
+ * often as the form needs.  The names written at the pattern positions,
+ * outside the value positions of source forms, are the names the form
+ * binds: under lexical-fresh each is a fresh slot in force in the form's
+ * patterns and bodies, as a pattern of `match` makes one, and a crossing set
+ * written on the form, H{$t ...}, shares the names it lists.  A shape that
+ * matches no declaration is an ordinary call.
+ *
+ * A document's own declarations hold in all of it.  A library's hold in a
+ * document that imports it, from the import onward: the reader reads the
+ * declarations of the library where the import stands.  Code formed while
+ * the program runs reads every declaration read so far. */
+typedef enum {
+    PRIME_SHAPE_WORD = 0,
+    PRIME_SHAPE_ANY,
+    PRIME_SHAPE_VALUE,
+    PRIME_SHAPE_PATTERN,
+    PRIME_SHAPE_SOURCE,
+    PRIME_SHAPE_BODY,
+} PrimeShapeRole;
+
+#define PRIME_SHAPE_ARGS 8u
+
+typedef struct {
+    SymbolId binder;          /* the declared form's head */
+    SymbolId head;            /* its first word, or SYMBOL_ID_NONE */
+    bool source_form;         /* one of `binder`'s source forms */
+    bool rest;                /* the items after the head repeat */
+    CettaExprLen len;         /* the number of items, without `...` */
+    uint8_t role[PRIME_SHAPE_ARGS];
+    SymbolId word[PRIME_SHAPE_ARGS];
+} PrimeScopeShape;
+
+typedef struct {
+    PrimeScopeShape *items;
+    size_t len, cap;
+} PrimeScopeShapes;
+
+/* Every declaration read so far, for code formed while the program runs.
+ * It only grows: a reader loads the count, then the array, and an array
+ * that was replaced is kept, so a reader on another thread never sees
+ * freed memory. */
+static pthread_mutex_t g_prime_scope_shapes_lock = PTHREAD_MUTEX_INITIALIZER;
+static PrimeScopeShape *_Atomic g_prime_scope_shapes_items = NULL;
+static _Atomic size_t g_prime_scope_shapes_len = 0u;
+static size_t g_prime_scope_shapes_cap = 0u;
+/* The declarations in force while a document is read. */
+static __thread bool g_prime_scope_shapes_reading = false;
+static __thread const PrimeScopeShape *g_prime_scope_shapes_doc = NULL;
+static __thread size_t g_prime_scope_shapes_doc_len = 0u;
+
+static const PrimeScopeShape *prime_scope_shapes_in_force(size_t *len) {
+    if (g_prime_scope_shapes_reading) {
+        *len = g_prime_scope_shapes_doc_len;
+        return g_prime_scope_shapes_doc;
+    }
+    *len = atomic_load_explicit(&g_prime_scope_shapes_len,
+                                memory_order_acquire);
+    return *len ? atomic_load_explicit(&g_prime_scope_shapes_items,
+                                       memory_order_acquire)
+                : NULL;
+}
+
+static bool prime_scope_shape_equal(const PrimeScopeShape *a,
+                                    const PrimeScopeShape *b) {
+    if (a->binder != b->binder || a->head != b->head ||
+        a->source_form != b->source_form || a->rest != b->rest ||
+        a->len != b->len)
+        return false;
+    for (CettaExprIndex i = 0u; i < a->len; i++)
+        if (a->role[i] != b->role[i] || a->word[i] != b->word[i])
+            return false;
+    return true;
+}
+
+static void prime_scope_shapes_publish(const PrimeScopeShape *shape) {
+    pthread_mutex_lock(&g_prime_scope_shapes_lock);
+    size_t len = atomic_load_explicit(&g_prime_scope_shapes_len,
+                                      memory_order_relaxed);
+    PrimeScopeShape *items = atomic_load_explicit(&g_prime_scope_shapes_items,
+                                                  memory_order_relaxed);
+    bool known = false;
+    for (size_t i = 0u; i < len && !known; i++)
+        known = prime_scope_shape_equal(&items[i], shape);
+    if (!known && len == g_prime_scope_shapes_cap) {
+        size_t cap = g_prime_scope_shapes_cap ? g_prime_scope_shapes_cap * 2u
+                                              : 16u;
+        PrimeScopeShape *grown = malloc(sizeof(*grown) * cap);
+        if (grown) {
+            if (len) memcpy(grown, items, sizeof(*grown) * len);
+            atomic_store_explicit(&g_prime_scope_shapes_items, grown,
+                                  memory_order_release);
+            items = grown;
+            g_prime_scope_shapes_cap = cap;
+        }
+    }
+    if (!known && len < g_prime_scope_shapes_cap) {
+        items[len] = *shape;
+        atomic_store_explicit(&g_prime_scope_shapes_len, len + 1u,
+                              memory_order_release);
+    }
+    pthread_mutex_unlock(&g_prime_scope_shapes_lock);
+}
+
+static bool prime_scope_shapes_push(PrimeScopeShapes *set,
+                                    const PrimeScopeShape *shape) {
+    if (set->len == set->cap) {
+        size_t cap = set->cap ? set->cap * 2u : 8u;
+        PrimeScopeShape *grown = realloc(set->items, sizeof(*grown) * cap);
+        if (!grown) return false;
+        set->items = grown;
+        set->cap = cap;
+    }
+    set->items[set->len++] = *shape;
+    return true;
+}
+
+static CettaExprIndex prime_scope_item_at(const PrimeScopeShape *shape,
+                                          CettaExprIndex index) {
+    if (index < shape->len || !shape->rest) return index;
+    CettaExprIndex start = shape->head != SYMBOL_ID_NONE ? 1u : 0u;
+    return start + (index - start) % (shape->len - start);
+}
+
+static PrimeShapeRole prime_scope_role_at(const PrimeScopeShape *shape,
+                                          CettaExprIndex index) {
+    CettaExprIndex item = prime_scope_item_at(shape, index);
+    return item < shape->len ? (PrimeShapeRole)shape->role[item]
+                             : PRIME_SHAPE_ANY;
+}
+
+static bool prime_scope_shape_fits(const PrimeScopeShape *shape,
+                                   const Atom *term) {
+    CettaExprLen len = term->expr.len;
+    if (shape->rest ? len + 1u < shape->len : len != shape->len)
+        return false;
+    for (CettaExprIndex i = 0u; i < len; i++) {
+        CettaExprIndex item = prime_scope_item_at(shape, i);
+        if (shape->role[item] == PRIME_SHAPE_WORD &&
+            !atom_is_symbol_id(term->expr.elems[i], shape->word[item]))
+            return false;
+    }
+    return true;
+}
+
+/* The declaration `term` has: as a binding form when `binder` is
+ * SYMBOL_ID_NONE, otherwise as a source form of `binder`. */
+static const PrimeScopeShape *prime_scope_shape_of(const Atom *term,
+                                                   SymbolId binder) {
+    bool source = binder != SYMBOL_ID_NONE;
+    if (!term || term->kind != ATOM_EXPR || term->expr.len < 1u ||
+        !term->expr.elems[0] ||
+        (!source && (term->expr.len < 2u ||
+                     term->expr.elems[0]->kind != ATOM_SYMBOL)))
+        return NULL;
+    size_t count;
+    const PrimeScopeShape *shapes = prime_scope_shapes_in_force(&count);
+    if (!count) return NULL;
+    SymbolId head = term->expr.elems[0]->kind == ATOM_SYMBOL
+        ? atom_symbol_current_id(term->expr.elems[0]) : SYMBOL_ID_NONE;
+    for (size_t i = 0u; i < count; i++) {
+        const PrimeScopeShape *shape = &shapes[i];
+        if (shape->source_form != source ||
+            (source ? shape->binder != binder : shape->head != head) ||
+            (shape->head != SYMBOL_ID_NONE && shape->head != head))
+            continue;
+        if (prime_scope_shape_fits(shape, term)) return shape;
+    }
+    return NULL;
+}
+
+/* The pattern positions of a declared form, gathered as one expression
+ * `(, p1 ... pk)`: its pattern arguments, and in a source argument the
+ * pattern positions of the source forms written there. */
+#define PRIME_SCOPE_SOURCE_DEPTH 10000u
+
+static bool prime_scope_gather(SymbolId binder, Atom *arg, PrimeShapeRole role,
+                               Atom ***items, size_t *len, size_t *cap,
+                               unsigned depth) {
+    const PrimeScopeShape *form = role == PRIME_SHAPE_SOURCE &&
+                                          depth < PRIME_SCOPE_SOURCE_DEPTH
+        ? prime_scope_shape_of(arg, binder) : NULL;
+    if (!form) {
+        if (!arg || !atom_has_vars(arg)) return true;
+        if (*len == *cap) {
+            size_t next = *cap ? *cap * 2u : 8u;
+            Atom **grown = realloc(*items, sizeof(*grown) * next);
+            if (!grown) return false;
+            *items = grown;
+            *cap = next;
+        }
+        (*items)[(*len)++] = arg;
+        return true;
+    }
+    for (CettaExprIndex i = 0u; i < arg->expr.len; i++) {
+        PrimeShapeRole inner = prime_scope_role_at(form, i);
+        if ((inner == PRIME_SHAPE_PATTERN || inner == PRIME_SHAPE_SOURCE) &&
+            !prime_scope_gather(binder, arg->expr.elems[i], inner, items, len,
+                                cap, depth + 1u))
+            return false;
+    }
+    return true;
+}
+
+static Atom *prime_scope_form_patterns(Arena *arena,
+                                       const PrimeScopeShape *shape,
+                                       const Atom *term) {
+    Atom **items = NULL;
+    size_t len = 1u, cap = 8u;
+    items = malloc(sizeof(*items) * cap);
+    if (!items) return NULL;
+    items[0] = atom_symbol(arena, ",");
+    bool ok = items[0] != NULL;
+    for (CettaExprIndex i = 1u; ok && i < term->expr.len; i++) {
+        PrimeShapeRole role = prime_scope_role_at(shape, i);
+        if (role == PRIME_SHAPE_PATTERN || role == PRIME_SHAPE_SOURCE)
+            ok = prime_scope_gather(shape->head, term->expr.elems[i], role,
+                                    &items, &len, &cap, 0u);
+    }
+    Atom *result = ok ? atom_expr(arena, items, (CettaExprLen)len) : NULL;
+    free(items);
+    return result;
+}
+
+/* A declaration read from a document, `(scope:binder SHAPE)` or
+ * `(scope:source H SHAPE)`.  False for any other form, and for a
+ * declaration it cannot read (that stays data). */
+static bool prime_scope_shape_read(TermUniverse *u, AtomId id,
+                                   PrimeScopeShape *out) {
+    if (tu_kind(u, id) != ATOM_EXPR) return false;
+    CettaExprLen n = tu_arity(u, id);
+    if (n != 2u && n != 3u) return false;
+    AtomId head = tu_child(u, id, 0u);
+    if (tu_kind(u, head) != ATOM_SYMBOL) return false;
+    const char *name = symbol_bytes(g_symbols, tu_sym(u, head));
+    bool source;
+    if (name && n == 2u && strcmp(name, "scope:binder") == 0) source = false;
+    else if (name && n == 3u && strcmp(name, "scope:source") == 0) source = true;
+    else return false;
+    memset(out, 0, sizeof(*out));
+    out->source_form = source;
+    if (source) {
+        AtomId binder = tu_child(u, id, 1u);
+        if (tu_kind(u, binder) != ATOM_SYMBOL) return false;
+        out->binder = tu_sym(u, binder);
+    }
+    AtomId shape = tu_child(u, id, source ? 2u : 1u);
+    if (tu_kind(u, shape) != ATOM_EXPR) return false;
+    CettaExprLen len = tu_arity(u, shape);
+    if (len < 2u || len > PRIME_SHAPE_ARGS) return false;
+    out->len = len;
+    bool binds = false;
+    for (CettaExprIndex i = 0u; i < len; i++) {
+        AtomId item = tu_child(u, shape, i);
+        if (tu_kind(u, item) != ATOM_SYMBOL) return false;
+        SymbolId sym = tu_sym(u, item);
+        const char *word = symbol_bytes(g_symbols, sym);
+        if (word && strcmp(word, "...") == 0) {
+            if (i + 1u != len || out->rest ||
+                i <= (out->role[0] == PRIME_SHAPE_WORD ? 1u : 0u))
+                return false;
+            out->rest = true;
+            out->len = len - 1u;
+            continue;
+        }
+        uint8_t role = PRIME_SHAPE_WORD;
+        if (i == 0u && !source) role = PRIME_SHAPE_WORD;
+        else if (word && strcmp(word, "_") == 0) role = PRIME_SHAPE_ANY;
+        else if (word && strcmp(word, "value") == 0) role = PRIME_SHAPE_VALUE;
+        else if (word && strcmp(word, "pattern") == 0) role = PRIME_SHAPE_PATTERN;
+        else if (word && strcmp(word, "source") == 0) role = PRIME_SHAPE_SOURCE;
+        else if (word && strcmp(word, "body") == 0) role = PRIME_SHAPE_BODY;
+        out->role[i] = role;
+        if (role == PRIME_SHAPE_WORD) out->word[i] = sym;
+        if (role == PRIME_SHAPE_PATTERN || role == PRIME_SHAPE_SOURCE)
+            binds = true;
+    }
+    out->head = out->role[0] == PRIME_SHAPE_WORD ? out->word[0]
+                                                 : SYMBOL_ID_NONE;
+    if (!source) out->binder = out->head;
+    return source || binds;
+}
+
+/* The declarations a library holds, read where a document imports it: the
+ * file the import would read, as the import resolves it now.  A library
+ * read once is not read again. */
+typedef struct {
+    char *path;
+    size_t first, count;
+} PrimeScopeLibraryShapes;
+
+static pthread_mutex_t g_prime_scope_library_lock = PTHREAD_MUTEX_INITIALIZER;
+/* The prepared reader of the document being read, while it is elaborated. */
+static __thread PrimeCompiledReaderV1 *g_prime_scope_reader = NULL;
+
+/* A library's text, or NULL. */
+static uint8_t *prime_scope_read_text(const char *path, size_t *len_out) {
+    FILE *file = fopen(path, "rb");
+    if (!file) return NULL;
+    uint8_t *text = NULL;
+    size_t len = 0u, cap = 0u;
+    for (;;) {
+        if (len == cap) {
+            size_t next = cap ? cap * 2u : 65536u;
+            uint8_t *grown = realloc(text, next);
+            if (!grown) {
+                free(text);
+                fclose(file);
+                return NULL;
+            }
+            text = grown;
+            cap = next;
+        }
+        size_t got = fread(text + len, 1u, cap - len, file);
+        len += got;
+        if (got == 0u) break;
+    }
+    bool failed = ferror(file) != 0;
+    fclose(file);
+    if (failed) {
+        free(text);
+        return NULL;
+    }
+    *len_out = len;
+    return text;
+}
+
+static bool prime_scope_text_mentions(const uint8_t *text, size_t len) {
+    static const char word[] = "scope:";
+    size_t n = sizeof(word) - 1u;
+    for (size_t i = 0u; i + n <= len; i++)
+        if (memcmp(text + i, word, n) == 0) return true;
+    return false;
+}
+static PrimeScopeLibraryShapes *g_prime_scope_libraries = NULL;
+static size_t g_prime_scope_libraries_len = 0u, g_prime_scope_libraries_cap = 0u;
+static PrimeScopeShapes g_prime_scope_library_shapes;
+
+static bool prime_scope_library_shapes(const char *spec,
+                                       PrimeScopeShapes *out) {
+    CettaLibraryContext *ctx = eval_current_library_context();
+    char path[PATH_MAX];
+    if (!ctx || !spec ||
+        !cetta_library_module_source_path(ctx, spec, path, sizeof(path)))
+        return true;
+    pthread_mutex_lock(&g_prime_scope_library_lock);
+    bool ok = true;
+    const PrimeScopeLibraryShapes *known = NULL;
+    for (size_t i = 0u; i < g_prime_scope_libraries_len && !known; i++)
+        if (strcmp(g_prime_scope_libraries[i].path, path) == 0)
+            known = &g_prime_scope_libraries[i];
+    if (!known) {
+        size_t first = g_prime_scope_library_shapes.len;
+        /* A declaration is spelled with `scope:`; a library whose text has
+         * no such word declares nothing and is not parsed again. */
+        size_t text_len = 0u;
+        uint8_t *text = prime_scope_read_text(path, &text_len);
+        bool declares = text && prime_scope_text_mentions(text, text_len);
+        /* The reader of the document being read is ready already. */
+        PrimeCompiledReaderV1 *owned = declares && !g_prime_scope_reader
+            ? prime_compiled_reader_v1_new() : NULL;
+        PrimeCompiledReaderV1 *reader = !declares ? NULL
+            : g_prime_scope_reader ? g_prime_scope_reader : owned;
+        char error[256] = {0};
+        TermUniverse universe;
+        Arena universe_arena;
+        arena_init(&universe_arena);
+        term_universe_init(&universe);
+        term_universe_set_persistent_arena(&universe, &universe_arena);
+        AtomId *ids = NULL;
+        int n = reader && (reader == g_prime_scope_reader ||
+                           prime_compiled_reader_v1_prepare(reader, error,
+                                                            sizeof(error)))
+            ? prime_compiled_reader_v1_parse_bytes_ids(reader, text, text_len,
+                                                       &universe, &ids, NULL,
+                                                       error, sizeof(error))
+            : 0;
+        free(text);
+        for (int i = 0; i < n && ok; i++) {
+            PrimeScopeShape shape;
+            if (prime_scope_shape_read(&universe, ids[i], &shape))
+                ok = prime_scope_shapes_push(&g_prime_scope_library_shapes,
+                                             &shape);
+        }
+        free(ids);
+        term_universe_free(&universe);
+        arena_free(&universe_arena);
+        prime_compiled_reader_v1_free(owned);
+        if (ok && g_prime_scope_libraries_len == g_prime_scope_libraries_cap) {
+            size_t cap = g_prime_scope_libraries_cap
+                ? g_prime_scope_libraries_cap * 2u : 8u;
+            PrimeScopeLibraryShapes *grown = realloc(
+                g_prime_scope_libraries, sizeof(*grown) * cap);
+            if (grown) {
+                g_prime_scope_libraries = grown;
+                g_prime_scope_libraries_cap = cap;
+            } else {
+                ok = false;
+            }
+        }
+        size_t path_len = strlen(path);
+        char *copy = ok ? malloc(path_len + 1u) : NULL;
+        if (copy) memcpy(copy, path, path_len + 1u);
+        if (copy) {
+            g_prime_scope_libraries[g_prime_scope_libraries_len] =
+                (PrimeScopeLibraryShapes){
+                    .path = copy, .first = first,
+                    .count = g_prime_scope_library_shapes.len - first};
+            known = &g_prime_scope_libraries[g_prime_scope_libraries_len++];
+        } else {
+            ok = false;
+        }
+    }
+    for (size_t i = 0u; ok && known && i < known->count; i++)
+        ok = prime_scope_shapes_push(
+            out, &g_prime_scope_library_shapes.items[known->first + i]);
+    pthread_mutex_unlock(&g_prime_scope_library_lock);
+    return ok;
+}
+
+/* The import a query names, `(import! SPACE NAME)`: NAME's spelling. */
+static const char *prime_scope_import_spec(TermUniverse *u, AtomId id) {
+    if (tu_kind(u, id) != ATOM_EXPR || tu_arity(u, id) != 3u) return NULL;
+    AtomId head = tu_child(u, id, 0u), name = tu_child(u, id, 2u);
+    if (tu_kind(u, head) != ATOM_SYMBOL || tu_kind(u, name) != ATOM_SYMBOL)
+        return NULL;
+    const char *verb = symbol_bytes(g_symbols, tu_sym(u, head));
+    if (!verb || strcmp(verb, "import!") != 0) return NULL;
+    return symbol_bytes(g_symbols, tu_sym(u, name));
+}
+
+/* The declarations a document reads, in the order they come into force:
+ * its own top-level declarations first (they hold in all of it), then each
+ * declaration a query or an imported library makes, at its position.
+ * `positions[k]` is the first form the k-th declaration holds in. */
+static bool prime_scope_shapes_scan(TermUniverse *u, const AtomId *forms,
+                                    size_t count, PrimeScopeShapes *doc,
+                                    size_t **positions) {
+    *positions = NULL;
+    for (size_t i = 0u; i < count; i++) {
+        bool after_bang = i > 0u &&
+            tu_kind(u, forms[i - 1u]) == ATOM_SYMBOL &&
+            tu_sym(u, forms[i - 1u]) == g_builtin_syms.bang;
+        PrimeScopeShape shape;
+        if (!after_bang && prime_scope_shape_read(u, forms[i], &shape) &&
+            !prime_scope_shapes_push(doc, &shape))
+            return false;
+    }
+    size_t whole = doc->len;
+    for (size_t i = 0u; i < count; i++) {
+        bool after_bang = i > 0u &&
+            tu_kind(u, forms[i - 1u]) == ATOM_SYMBOL &&
+            tu_sym(u, forms[i - 1u]) == g_builtin_syms.bang;
+        if (!after_bang) continue;
+        size_t before = doc->len;
+        PrimeScopeShape shape;
+        if (prime_scope_shape_read(u, forms[i], &shape)) {
+            if (!prime_scope_shapes_push(doc, &shape)) return false;
+        } else if (!prime_scope_library_shapes(prime_scope_import_spec(
+                       u, forms[i]), doc)) {
+            return false;
+        }
+        if (doc->len == before) continue;
+        bool first = *positions == NULL;
+        size_t *grown = realloc(*positions, sizeof(*grown) * doc->len);
+        if (!grown) return false;
+        *positions = grown;
+        /* the document's own declarations hold from its first form */
+        for (size_t k = 0u; first && k < before; k++) grown[k] = 0u;
+        for (size_t k = before; k < doc->len; k++) grown[k] = i;
+    }
+    if (doc->len > whole && !*positions) return false;
+    for (size_t k = 0u; k < doc->len; k++)
+        prime_scope_shapes_publish(&doc->items[k]);
+    return true;
+}
+
 /* The pattern positions of the pattern binders (rule 4): a name written
  * there, quoted or not, is a store-name occurrence that binds.  `(P B)`
  * pairs are the branches of case and switch and the bindings of let*.  The
  * table is the binder table of the elaboration (equation heads, case,
- * switch, let, let*, unify, match, chain, filter-atom). */
+ * switch, let, let*, unify, match, chain, filter-atom, and the forms a
+ * document or library declares, whose pattern and source arguments are
+ * pattern positions). */
 typedef enum {
     PRIME_CHILD_VALUE = 0,
     PRIME_CHILD_PATTERN,
@@ -6451,6 +6948,13 @@ static PrimeChildRole prime_child_role(const Atom *term,
          head == g_builtin_syms.filter_atom) &&
         (len == 4u || space_match_where_grade(term)))
         return index == 2u ? PRIME_CHILD_PATTERN : PRIME_CHILD_VALUE;
+    const PrimeScopeShape *declared = prime_scope_shape_of(term,
+                                                           SYMBOL_ID_NONE);
+    if (declared) {
+        PrimeShapeRole role = prime_scope_role_at(declared, index);
+        if (role == PRIME_SHAPE_PATTERN || role == PRIME_SHAPE_SOURCE)
+            return PRIME_CHILD_PATTERN;
+    }
     return PRIME_CHILD_VALUE;
 }
 
@@ -8288,8 +8792,9 @@ bool prime_quote_seal_active(void) {
  *                                 and a name written outside is captured.
  *              lexical-fresh      templates own nothing by themselves; a
  *                                 pattern of let, let*, case, switch,
- *                                 switch-minimal, match, chain or
- *                                 filter-atom makes a fresh slot for each
+ *                                 switch-minimal, match, chain,
+ *                                 filter-atom or a declared binding form
+ *                                 makes a fresh slot for each
  *                                 store name it holds, in force in the part
  *                                 it scopes over (inner wins); unify and an
  *                                 equation head make none, they refer.  The
@@ -8689,6 +9194,11 @@ typedef struct {
     uint32_t nesting;
     /* how many quotations in value position enclose the current term */
     uint32_t code_depth;
+    /* the shadowing report (prime_lex_report_shadowing): the form being
+     * resolved, and the names the enclosing equation heads bind */
+    Atom *shadow_site;
+    VarId *head_names;
+    size_t head_names_len, head_names_cap;
     bool failed;
 } PrimeElab;
 
@@ -8711,6 +9221,8 @@ static bool prime_elab_enter(PrimeElab *e) {
 }
 
 static void prime_elab_free(PrimeElab *e) {
+    free(e->head_names);
+    e->head_names = NULL;
     free(e->binders.items);
     free(e->binder_ids.items);
     for (size_t i = 0u; i < e->scopes_len; i++) {
@@ -9306,6 +9818,30 @@ static Atom *prime_elab_binders_crossing(PrimeElab *e, Atom *term, Atom *inner,
             items[2] = atom_expr(e->arena, out, branches->expr.len);
             if (!items[2]) e->failed = true;
         }
+    } else if (prime_scope_shape_of(inner, SYMBOL_ID_NONE)) {
+        /* A declared form: the names at its pattern positions, outside the
+         * set, are made fresh in its patterns and bodies. */
+        const PrimeScopeShape *declared =
+            prime_scope_shape_of(inner, SYMBOL_ID_NONE);
+        Atom *patterns = prime_scope_form_patterns(e->arena, declared, inner);
+        Atom **region = arena_alloc(e->arena, sizeof(Atom *) * (size_t)len);
+        CettaExprIndex *at = arena_alloc(e->arena,
+                                         sizeof(CettaExprIndex) * (size_t)len);
+        if (!patterns || !region || !at) {
+            e->failed = true;
+            return term;
+        }
+        size_t count = 0u;
+        for (CettaExprIndex i = 1u; i < len; i++)
+            if (prime_scope_role_at(declared, i) == PRIME_SHAPE_PATTERN ||
+                prime_scope_role_at(declared, i) == PRIME_SHAPE_SOURCE ||
+                prime_scope_role_at(declared, i) == PRIME_SHAPE_BODY) {
+                at[count] = i;
+                region[count++] = items[i];
+            }
+        prime_elab_make_fresh(e, patterns, crossing, region, count);
+        for (size_t k = 0u; k < count && !e->failed; k++)
+            items[at[k]] = region[k];
     }
     if (e->failed) return term;
     Atom *renamed = atom_expr(e->arena, items, len);
@@ -9485,6 +10021,19 @@ static size_t prime_elab_binder_cover(const Atom *term, CettaExprIndex index,
     if (head == g_builtin_syms.equals && len == 3u && index == 2u) {
         patterns[0] = 1u;
         return 1u;
+    }
+    /* A declared form: its pattern and source arguments scope over its
+     * bodies (the first two of them, which is all a declaration has). */
+    const PrimeScopeShape *declared = prime_scope_shape_of(term,
+                                                           SYMBOL_ID_NONE);
+    if (declared && prime_scope_role_at(declared, index) == PRIME_SHAPE_BODY) {
+        size_t count = 0u;
+        for (CettaExprIndex i = 1u; i < term->expr.len && count < 2u; i++) {
+            PrimeShapeRole role = prime_scope_role_at(declared, i);
+            if (role == PRIME_SHAPE_PATTERN || role == PRIME_SHAPE_SOURCE)
+                patterns[count++] = i;
+        }
+        return count;
     }
     return 0u;
 }
@@ -10308,6 +10857,52 @@ static void prime_lex_pattern_names(PrimeElab *e, Atom *pattern, Atom ***names,
 
 static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern);
 
+/* The shadowing report, an opt-in check of a document
+ * (CETTA_PRIME_SCOPE_CENSUS=shadowing): under lexical-fresh a pattern name is
+ * a new name, so one spelled as a name already in scope does not refer to
+ * it.  That is the rule, and a crossing set shares the name when sharing is
+ * meant; the report lists each such pattern name, for a reader to decide.
+ * It reports the main document only, prints one line per name, and the
+ * program does not run. */
+static __thread bool g_prime_scope_shadowing = false;
+static __thread size_t g_prime_scope_form_index = 0u;
+static __thread bool g_prime_scope_reading_main = false;
+
+static void prime_lex_report_shadowing(PrimeElab *e, Atom *name,
+                                       bool parameter) {
+    if (!g_prime_scope_shadowing || !g_prime_scope_reading_main) return;
+    char *site = e->shadow_site ? atom_to_string(e->arena, e->shadow_site)
+                                : NULL;
+    const char *spelling = name && name->kind == ATOM_VAR
+        ? atom_name_cstr(name) : "?";
+    char shown[161];
+    snprintf(shown, sizeof shown, "%s", site ? site : "?");
+    if (site && strlen(site) > 160u) memcpy(shown + 156, " ...", 5u);
+    printf("(scope-shadowing (form %zu) (name $%s) (around %s) (site %s))\n",
+           g_prime_scope_form_index, spelling,
+           parameter ? "equation-parameter" : "pattern-name", shown);
+}
+
+static bool prime_lex_head_name(const PrimeElab *e, VarId id) {
+    for (size_t i = 0u; i < e->head_names_len; i++)
+        if (var_id_eq(e->head_names[i], id)) return true;
+    return false;
+}
+
+static void prime_lex_note_head_names(PrimeElab *e, const Atom *head) {
+    if (e->failed || !head || !atom_has_vars(head)) return;
+    if (head->kind == ATOM_VAR) {
+        if (prime_elab_reserve(e, (void **)&e->head_names, &e->head_names_cap,
+                               e->head_names_len + 1u,
+                               sizeof(*e->head_names)))
+            e->head_names[e->head_names_len++] = head->var_id;
+        return;
+    }
+    if (head->kind != ATOM_EXPR) return;
+    for (CettaExprIndex i = 0u; i < head->expr.len && !e->failed; i++)
+        prime_lex_note_head_names(e, head->expr.elems[i]);
+}
+
 /* A pattern that makes slots: a fresh slot for each store name it holds, in
  * force from now (the caller pops it), recorded in the current template's
  * frame; the pattern is written with its slots. */
@@ -10315,6 +10910,13 @@ static Atom *prime_lex_introduce(PrimeElab *e, Atom *pattern) {
     Atom **names = NULL;
     size_t count = 0u, cap = 0u;
     prime_lex_pattern_names(e, pattern, &names, &count, &cap);
+    for (size_t i = 0u; g_prime_scope_shadowing && i < count && !e->failed;
+         i++) {
+        if (prime_lex_lookup(e, names[i]) != names[i])
+            prime_lex_report_shadowing(e, names[i], false);
+        else if (prime_lex_head_name(e, names[i]->var_id))
+            prime_lex_report_shadowing(e, names[i], true);
+    }
     for (size_t i = 0u; i < count && !e->failed; i++) {
         Atom *slot = prime_elab_split_var(e->arena, names[i]);
         if (!slot ||
@@ -10512,6 +11114,11 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
     CettaExprLen len = term->expr.len;
     size_t lex_mark = e->lex_len;
     size_t holes_mark = e->holes_len;
+    Atom *shadow_site = e->shadow_site;
+    size_t head_names_mark = e->head_names_len;
+    e->shadow_site = term;
+    if (g_prime_scope_shadowing && head == g_builtin_syms.equals && len == 3u)
+        prime_lex_note_head_names(e, term->expr.elems[1]);
     /* A crossing set a wrapper puts on this pattern binder: its names are
      * in force in each pattern and the part of the form it scopes over, so
      * no pattern there makes a slot for them.  Step 1 made the pattern's
@@ -10649,6 +11256,81 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
                 result = term;
             }
         }
+    } else if (prime_scope_shape_of(term, SYMBOL_ID_NONE)) {
+        /* A declared binding form: a value argument is read in the scope
+         * around; the names at its pattern positions get fresh slots, in
+         * force in its patterns and bodies (a source form's value positions
+         * refer to them, or to the scope around).  The arguments are read in
+         * order, so its templates meet their scopes in the collect walk's
+         * order; a value read after the slots are made is read with them
+         * set aside. */
+        const PrimeScopeShape *declared =
+            prime_scope_shape_of(term, SYMBOL_ID_NONE);
+        Atom *patterns = prime_scope_form_patterns(e->arena, declared, term);
+        Atom **items = arena_alloc(e->arena, sizeof(Atom *) * (size_t)len);
+        if (!patterns || !items) {
+            e->failed = true;
+            goto done;
+        }
+        items[0] = term->expr.elems[0];
+        size_t force_mark = e->lex_shared_len;
+        size_t slots_mark = e->lex_len, outer_holes = e->holes_len;
+        bool introduced = false;
+        for (CettaExprIndex i = 1u; i < len && !e->failed; i++) {
+            PrimeShapeRole role = prime_scope_role_at(declared, i);
+            Atom *child = term->expr.elems[i];
+            if (role == PRIME_SHAPE_VALUE || role == PRIME_SHAPE_WORD ||
+                role == PRIME_SHAPE_ANY) {
+                if (!introduced) {
+                    items[i] = prime_lex_resolve(e, child, false);
+                    continue;
+                }
+                size_t saved_len = e->lex_len - slots_mark;
+                PrimeElabTwin *saved = saved_len
+                    ? malloc(sizeof(*saved) * saved_len) : NULL;
+                if (saved_len && !saved) {
+                    e->failed = true;
+                    break;
+                }
+                if (saved_len)
+                    memcpy(saved, e->lex + slots_mark,
+                           sizeof(*saved) * saved_len);
+                size_t inner_holes = e->holes_len;
+                size_t inner_force = e->lex_shared_len;
+                e->lex_len = slots_mark;
+                e->holes_len = outer_holes;
+                e->lex_shared_len = force_mark;
+                items[i] = prime_lex_resolve(e, child, false);
+                e->lex_shared_len = inner_force;
+                e->holes_len = inner_holes;
+                if (!e->failed &&
+                    prime_elab_reserve(e, (void **)&e->lex, &e->lex_cap,
+                                       slots_mark + saved_len,
+                                       sizeof(*e->lex))) {
+                    if (saved_len)
+                        memcpy(e->lex + slots_mark, saved,
+                               sizeof(*saved) * saved_len);
+                    e->lex_len = slots_mark + saved_len;
+                }
+                free(saved);
+                continue;
+            }
+            if (!introduced) {
+                (void)prime_lex_force(e, crossing, true);
+                (void)prime_lex_introduce(e, patterns);
+                prime_elab_push_holes(e, patterns, false);
+                introduced = true;
+            }
+            items[i] = prime_lex_resolve(e, child, role != PRIME_SHAPE_BODY);
+        }
+        e->lex_shared_len = force_mark;
+        if (!e->failed) {
+            result = atom_expr(e->arena, items, len);
+            if (!result) {
+                e->failed = true;
+                result = term;
+            }
+        }
     } else if (prime_elab_is_let_star(term) &&
                term->expr.elems[1]->kind == ATOM_EXPR) {
         Atom *bindings = term->expr.elems[1];
@@ -10735,6 +11417,8 @@ static Atom *prime_lex_resolve(PrimeElab *e, Atom *term, bool pattern) {
 done:
     e->lex_len = lex_mark;
     e->holes_len = holes_mark;
+    e->shadow_site = shadow_site;
+    e->head_names_len = head_names_mark;
     e->nesting--;
     return result;
 }
@@ -13050,7 +13734,8 @@ void prime_scope_document_reading(bool reading) {
 }
 
 void prime_scope_census_set(const char *mode) {
-    g_prime_scope_census = mode && mode[0];
+    g_prime_scope_shadowing = mode && strcmp(mode, "shadowing") == 0;
+    g_prime_scope_census = mode && mode[0] && !g_prime_scope_shadowing;
     g_prime_scope_migration_plan = mode && strcmp(mode, "plan") == 0;
 }
 
@@ -13490,6 +14175,23 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
     }
     if (g_prime_scope_reading_document)
         prime_scope_runtime_profile_set(profile);
+    /* The declared binding forms in force at each form (prime_scope_shape_of). */
+    PrimeScopeShapes doc_shapes = {0};
+    size_t *shape_positions = NULL;
+    if (!prime_scope_shapes_scan(universe, forms, count, &doc_shapes,
+                                 &shape_positions)) {
+        free(doc_shapes.items);
+        free(shape_positions);
+        snprintf(g_prime_elab_error, sizeof g_prime_elab_error,
+                 "the declared binding forms could not be read");
+        return false;
+    }
+    bool shapes_reading = g_prime_scope_shapes_reading;
+    const PrimeScopeShape *shapes_doc = g_prime_scope_shapes_doc;
+    size_t shapes_doc_len = g_prime_scope_shapes_doc_len;
+    g_prime_scope_shapes_reading = true;
+    g_prime_scope_shapes_doc = doc_shapes.items;
+    g_prime_scope_shapes_doc_len = shape_positions ? 0u : doc_shapes.len;
     Arena scratch;
     arena_init(&scratch);
     bool ok = true;
@@ -13502,6 +14204,10 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
         bool after_bang = i > 0u &&
             tu_kind(universe, forms[i - 1u]) == ATOM_SYMBOL &&
             tu_sym(universe, forms[i - 1u]) == g_builtin_syms.bang;
+        while (g_prime_scope_shapes_doc_len < doc_shapes.len &&
+               shape_positions &&
+               shape_positions[g_prime_scope_shapes_doc_len] <= i)
+            g_prime_scope_shapes_doc_len++;
         bool is_declaration = false;
         CettaPrimeScopeProfile declared;
         bool valid = prime_scope_declaration(universe, forms[i], &declared,
@@ -13533,8 +14239,18 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
         if (relevant == 0) continue;
         ArenaMark mark = arena_mark(&scratch);
         Atom *form = term_universe_copy_atom(universe, &scratch, forms[i]);
+        /* the form's number in the document, its `!` marks not counted */
+        if (g_prime_scope_shadowing) {
+            g_prime_scope_form_index = 0u;
+            for (size_t k = 0u; k <= i; k++)
+                if (!(tu_kind(universe, forms[k]) == ATOM_SYMBOL &&
+                      tu_sym(universe, forms[k]) == g_builtin_syms.bang))
+                    g_prime_scope_form_index++;
+        }
+        g_prime_scope_reading_main = g_prime_scope_reading_document;
         Atom *elaborated = form ? prime_elab_run(&scratch, form, profile)
                                 : NULL;
+        g_prime_scope_reading_main = false;
         if (!elaborated) {
             ok = false;
             break;
@@ -13551,6 +14267,11 @@ bool prime_semantics_elaborate_read_forms(TermUniverse *universe,
         arena_reset(&scratch, mark);
     }
     arena_free(&scratch);
+    g_prime_scope_shapes_reading = shapes_reading;
+    g_prime_scope_shapes_doc = shapes_doc;
+    g_prime_scope_shapes_doc_len = shapes_doc_len;
+    free(doc_shapes.items);
+    free(shape_positions);
     if (ok && counting && !planning) prime_scope_census_print(census);
     if (ok && planning) printf("{\"kind\":\"complete\",\"forms\":%zu}\n", count);
     return ok;
@@ -13580,7 +14301,12 @@ static int prime_semantics_read_source_ids(PrimeCompiledReaderV1 *reader,
             out_ids, NULL, error_buf, error_buf_size)
         : prime_compiled_reader_v1_parse_text_ids(reader, source, universe,
             out_ids, NULL, error_buf, error_buf_size);
-    if (count > 0 && !prime_semantics_elaborate_read_forms(universe, *out_ids, (size_t)count)) {
+    PrimeCompiledReaderV1 *outer_reader = g_prime_scope_reader;
+    g_prime_scope_reader = reader;
+    bool elaborated = count <= 0 ||
+        prime_semantics_elaborate_read_forms(universe, *out_ids, (size_t)count);
+    g_prime_scope_reader = outer_reader;
+    if (!elaborated) {
         const char *why = prime_semantics_elaboration_error();
         if (error_buf && error_buf_size)
             snprintf(error_buf, error_buf_size,

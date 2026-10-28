@@ -1,6 +1,7 @@
 ; Persistent spaces store ordinary Prime syntax, never evaluator-private
-; thunk references, and crossing the boundary is reification rather than
-; forcing.
+; thunk references.  A space holds values: crossing the boundary demands
+; the cells the evaluator made in the payload, while syntax the program
+; wrote stays data and an explicit suspension stays a suspension.
 !(bind! &prime-need:stored (new-space))
 !(bind! &prime-need:store-counter (new-state 0))
 (= (prime-need:store-bump)
@@ -12,9 +13,10 @@
 
 !(prime-need:store-unused (prime-need:store-bump))
 !(get-state &prime-need:store-counter)
-; Storage reifies the source without running the pending effect. Ordinary
-; return subsequently observes its value. A declared Data view retrieves
-; the stored source without executing it; neither view exposes heap IDs.
+; Storage demands the pending argument once, and the stored row holds its
+; value; the ambient state is unchanged, as for every branch receipt.  An
+; ordinary read and a declared Data view both retrieve that value, and
+; neither view exposes heap IDs.
 !(match &prime-need:stored (Stored $saved) $saved)
 (: prime-need:stored-code (-> (Data Atom) (Data Atom)))
 (= (prime-need:stored-code $value) $value)
@@ -36,8 +38,9 @@
 !(let $b &prime-need:registry-box
    (let $p (index-atom $b 1) (Pair (force $p) (force $p))))
 
-; One matched compound value keeps aliases throughout substitution. Its
-; ordinary return is data; explicit activation recovers the stored demand.
+; One shared argument is demanded once per branch, so each branch stores
+; one row whose two uses agree: never (Pair A B).  Two independent arguments
+; store one row per combination, as eager evaluation would.
 (= (prime-need:store-shared $x)
    (add-atom &prime-need:stored (StoredShared (Pair $x $x))))
 !(prime-need:store-shared (superpose (A B)))
@@ -128,8 +131,12 @@
 
 ; Explicit quotation crossing builds deferred code. If an enclosing caller
 ; has already produced a State, the service captures that caller's logical
-; value before creating its isolated image. Two uses retain one image.
-(: prime-need:defer (-> Atom Atom))
+; value before creating its isolated image. Two uses retain one image.  The
+; parameters that carry the code are `(Data Atom)`: they hold their argument
+; as written, so the quotation captures the code.  A value parameter would
+; denote the value the code computes, and observing the quotation would run
+; it.
+(: prime-need:defer (-> (Data Atom) Atom))
 (= (prime-need:defer $payload) (rho:eval-payload (quote $payload){$payload}))
 (: prime-need:run-payload (-> Atom %Undefined%))
 (= (prime-need:run-payload $node)
@@ -138,7 +145,7 @@
        (rho:par
          (rho:send (rho:quote rho:nil) $node)
          (rho:recv (rho:quote rho:nil) $answer (rho:drop $answer))))))
-(: prime-need:through-rho (-> Atom %Undefined%))
+(: prime-need:through-rho (-> (Data Atom) %Undefined%))
 (= (prime-need:through-rho $payload)
    (prime-need:run-payload (prime-need:defer $payload)))
 !(prime-need:defer (println! "DeferredCodeMustRemainInert"))

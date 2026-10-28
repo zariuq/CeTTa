@@ -6,6 +6,7 @@
 [no, two]
 [syn, wild]
 [two, wild]
+[(quote 2)]
 [(quote (+ 1 1))]
 [one, two, syn, wild]
 [b, c]

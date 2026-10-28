@@ -11472,6 +11472,45 @@ Atom *cetta_library_module_inventory_space(CettaLibraryContext *ctx,
     return atom_space(dst, inventory);
 }
 
+bool cetta_library_module_source_path(CettaLibraryContext *ctx,
+                                      const char *spec, char *out,
+                                      size_t out_size) {
+    if (!ctx || !spec || !*spec || !out || out_size == 0u) return false;
+    Arena scratch;
+    arena_init(&scratch);
+    Atom *error = NULL;
+    CettaModuleSpec parsed;
+    CettaImportPlan plan;
+    bool ok;
+    /* A named library (native or not) is read from the standard library,
+     * as cetta_library_import reads it. */
+    const CettaLibrarySpec *library = cetta_library_lookup(spec);
+    const CettaNativeBuiltinModule *native =
+        library ? NULL : cetta_native_module_lookup(spec);
+    if (library || native) {
+        memset(&parsed, 0, sizeof(parsed));
+        parsed.kind = CETTA_MODULE_SPEC_STDLIB;
+        const char *name = library ? library->name : native->name;
+        snprintf(parsed.raw_spec, sizeof(parsed.raw_spec), "%s", name);
+        snprintf(parsed.path_or_member, sizeof(parsed.path_or_member), "%s",
+                 name);
+        for (char *part = parsed.path_or_member; *part; ++part)
+            if (*part == ':') *part = '/';
+        ok = true;
+    } else {
+        ok = parse_module_spec(spec, &parsed, &scratch, &error);
+    }
+    ok = ok && resolve_import_plan(ctx, &parsed, NULL, NULL, false, &plan,
+                                   &scratch, &error) &&
+         plan.format.kind == CETTA_MODULE_FORMAT_METTA;
+    if (ok) {
+        int n = snprintf(out, out_size, "%s", plan.canonical_path);
+        ok = n > 0 && (size_t)n < out_size;
+    }
+    arena_free(&scratch);
+    return ok;
+}
+
 bool cetta_library_include_module(CettaLibraryContext *ctx, const char *spec,
                                   Space *space, Arena *eval_arena,
                                   Arena *persistent_arena, Registry *registry,

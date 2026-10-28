@@ -65,6 +65,7 @@
 ; term such as (mapf (lam y b) nil), the list ((lam y b) nil), stays held
 ; through car-atom and cdr-atom and is never run as an application.
 (: pf:expand-tail (-> (Data Atom) (Data Atom)))
+(: pf:expand-list (-> (Data Atom) (Data Atom)))
 (= (pf:expand-list $t) (pf:expand-tail $t))
 (= (pf:expand-tail $t)
    (if (== $t ()) ()
@@ -102,12 +103,15 @@
        $t))
 
 ; Syntax is handed to a judgment quoted: the evaluator then leaves it
-; alone even where a constant shares its name with a builtin.
+; alone even where a constant shares its name with a builtin.  A proposition
+; and a proof are syntax, so their parameters are `(Data Atom)`, which holds
+; an argument as written; an `Atom` parameter is an ordinary value in Prime,
+; and a quotation of it would hold its value.
 ; The namespace a space is judged in.
 (: pf:namespace (-> Atom Atom))
 (= (pf:namespace $space)
    (if (== (collapse (match $space (hol:profile $p) $p){$p}) ()) set hol))
-(: pf:theorem (-> Atom Atom Atom Atom %Undefined%))
+(: pf:theorem (-> Atom Atom (Data Atom) (Data Atom) %Undefined%))
 (= (pf:theorem $space $name $prop $proof)
    (let $p (pf:expand $proof)
      (let $qp (cons-atom quote ($p))
@@ -115,7 +119,7 @@
          (if (== (pf:namespace $space) hol)
              (hol:theorem $space $name $qprop $qp)
              (set:theorem $space $name $qprop $qp))))))
-(: pf:proves (-> Atom Atom Atom %Undefined%))
+(: pf:proves (-> Atom (Data Atom) (Data Atom) %Undefined%))
 (= (pf:proves $space $proof $prop)
    (let $p (pf:expand $proof)
      (let $qp (cons-atom quote ($p))
@@ -124,7 +128,7 @@
              (hol:proves $space $qp $qprop)
              (set:proves $space $qp $qprop))))))
 
-(: pf:axiom (-> Atom Atom Atom %Undefined%))
+(: pf:axiom (-> Atom Atom (Data Atom) %Undefined%))
 (= (pf:axiom $space $name $statement)
    (if (== (pf:namespace $space) hol)
        (hol:axiom $space $name $statement)

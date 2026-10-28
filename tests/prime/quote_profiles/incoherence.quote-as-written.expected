@@ -1,5 +1,6 @@
-[(Pair 3 Expression)]
-[True]
+[(Pair 3 Grounded)]
+[False]
 [(Pair 3 (quote 3))]
 [(Pair 3 Grounded)]
 [(Pair 3 Grounded)]
+[(Pair (+ 1 2) Expression)]

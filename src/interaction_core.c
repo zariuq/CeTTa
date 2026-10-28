@@ -731,6 +731,8 @@ typedef struct {
     IaList results;
     IaList seen;      /* (LOC REV), one per region scanned */
     IaList seen_keys; /* the regions' keys, to keep `seen` one per region */
+    IaList scans;     /* (LOC PATTERN) of each scan, when record_scans */
+    bool record_scans;
     bool suffix;      /* inside an `every`: nested `every` splices */
     bool first;       /* stop at the first result: a choice of rows */
     bool truncated;   /* stopped with branches left */
@@ -743,6 +745,7 @@ static void ia_walk_free(IaWalk *w) {
     free(w->results.items);
     free(w->seen.items);
     free(w->seen_keys.items);
+    free(w->scans.items);
 }
 
 static void ia_note_seen(IaWalk *w, IaLoc *loc) {
@@ -779,9 +782,23 @@ static Atom *ia_unhold(Atom *x) {
     return x && atom_prime_held_is(x) ? atom_prime_held_payload(x) : x;
 }
 
+/* A firing as the kernel reads it.  A crossing set written on a transform or
+ * a choose, X{$x ...}, says which names the form shares with the scope
+ * around; the reader has applied it when the form was read, and the braces
+ * stay as written structure.  The kernel reads the form inside them, as the
+ * evaluator does. */
+static Atom *ia_firing(Atom *x) {
+    x = ia_unhold(x);
+    while (x && atom_is_prime_meta(x) && atom_is_prime_braces(x->expr.elems[2]))
+        x = ia_unhold(x->expr.elems[1]);
+    return x;
+}
+
 /* Whether a source is written as a source form (and not a plain pattern). */
 static bool ia_source_form(Atom *x) {
-    return ia_head_any(x, ",") || ia_head(x, "read", 2u) ||
+    return (x && x->kind == ATOM_EXPR && x->expr.len == 0u) ||
+           ia_head_any(x, ",") || ia_head(x, "let", 3u) ||
+           ia_head(x, "every", 2u) || ia_head(x, "read", 2u) ||
            ia_head(x, "read", 3u) || ia_head(x, "take", 2u) ||
            ia_head(x, "take", 3u) || ia_head(x, "absent", 2u) ||
            ia_head(x, "absent", 3u) || ia_head_any(x, "unique") ||
@@ -887,6 +904,9 @@ static bool ia_scan_lazy(IaWalk *w, IaLoc *loc, Atom *pattern, IaVisit visit,
 static bool ia_scan(IaWalk *w, IaLoc *loc, Atom *pattern, IaVisit visit,
                     void *data) {
     ia_note_seen(w, loc);
+    if (w->record_scans &&
+        !ia_push(&w->scans, atom_expr2(w->a, loc->atom, pattern)))
+        w->failed = true;
     if (w->first && visit != ia_visit_collect_fwd) {
         bool done = false;
         bool ok = ia_scan_lazy(w, loc, pattern, visit, data, &done);
@@ -1192,9 +1212,13 @@ static void ia_walk_list(IaWalk *w, Atom **cs, size_t n, Atom *tpl, Atom *fp,
         Atom *loc_atom = c->expr.len == 3u ? c->expr.elems[1] : w->default_loc;
         Atom *pattern = c->expr.elems[c->expr.len - 1u];
         if (c->expr.len == 2u && ia_source_form(pattern)) {
-            /* the absence of sources: no row of the inner sources */
+            /* The absence of sources: no row of the inner sources.  It is a
+             * predicate query of the union of the regions they read, so it
+             * needs observe at each of them, and its footprint names each
+             * (region, pattern) pair read, with the revision seen there. */
             IaWalk inner = {.a = a, .default_loc = w->default_loc,
-                            .suffix = true, .depth = w->depth};
+                            .suffix = true, .depth = w->depth,
+                            .record_scans = true};
             Atom *one = NULL;
             Atom **ics;
             size_t ik;
@@ -1212,18 +1236,48 @@ static void ia_walk_list(IaWalk *w, Atom **cs, size_t n, Atom *tpl, Atom *fp,
                 w->failed = true;
             if (inner.refused)
                 ia_refuse(w, inner.refused);
+            Atom *denied = NULL;
+            IaList parts = {0};
+            for (size_t i = 0; !denied && i < inner.scans.len; i++) {
+                Atom *scan = inner.scans.items[i];
+                IaLoc sloc;
+                denied = ia_resolve(a, scan->expr.elems[0], &sloc);
+                if (!denied)
+                    denied = ia_check_right(a, &sloc, IA_OBSERVE);
+                if (denied)
+                    break;
+                bool known = false;
+                for (size_t k = 0; k < parts.len && !known; k++)
+                    known = atom_eq(parts.items[k]->expr.elems[0],
+                                    scan->expr.elems[0]) &&
+                            atom_eq(parts.items[k]->expr.elems[2],
+                                    scan->expr.elems[1]);
+                if (known)
+                    continue;
+                Atom *part[3] = {scan->expr.elems[0],
+                                 atom_int(a, (int64_t)space_revision(sloc.space)),
+                                 scan->expr.elems[1]};
+                if (!ia_push(&parts, atom_expr(a, part, 3u)))
+                    w->failed = true;
+            }
             ia_walk_free(&inner);
+            if (denied) {
+                ia_refuse(w, denied);
+                free(parts.items);
+                return;
+            }
             if (stuck) {
                 if (!ia_push(&w->results, atom_expr2(a, atom_symbol(a, "ia:stuck"), c)))
                     w->failed = true;
+                free(parts.items);
                 return;
             }
             if (rows == 0u && !w->failed && !w->refused) {
-                Atom *items[5] = {atom_symbol(a, "full"), w->default_loc,
-                                  atom_int(a, 0), pattern, atom_int(a, 0)};
-                ia_walk_list(w, rest, m, tpl,
-                             ia_cons(a, atom_expr(a, items, 5u), fp), base);
+                Atom *entry = atom_expr2(a, atom_symbol(a, "full-of"),
+                                         ia_list_atom(a, &parts));
+                ia_walk_list(w, rest, m, tpl, ia_cons(a, entry, fp), base);
             }
+            free(parts.items);
             return;
         }
         IaLoc loc;
@@ -1415,7 +1469,8 @@ static bool ia_occs_push(IaOcc **items, size_t *len, size_t *cap, Atom *fp,
  * by a keep of another row (rows: `every`) or of any entry (one commit). */
 static Atom *ia_occs_conflict(Arena *a, IaOcc *items, size_t len,
                               bool across_rows) {
-    qsort(items, len, sizeof(*items), ia_occ_cmp);
+    if (len > 1u)
+        qsort(items, len, sizeof(*items), ia_occ_cmp);
     for (size_t i = 0; i < len; ) {
         size_t j = i;
         while (j < len && items[j].space == items[i].space &&
@@ -1690,10 +1745,392 @@ typedef struct {
  * read is at the revision it was read at (so every predicate query still holds),
  * every occurrence taken or kept is still the atom read, nothing is taken
  * twice or both taken and kept, and each part has its right.  Then the
- * takes leave and the makes arrive, and nothing else changes. */
+ * takes leave and the makes arrive, and nothing else changes.
+ *
+ * The order of these steps is the protocol ia_commit_run, declared in
+ * langdef/protocols/interaction_commit.module and generated as ordinary C into
+ * src/generated/interaction_commit_protocol.generated.h.  Guards establish the
+ * facts each step requires; the writes happen inside one epoch; the epoch is
+ * published only when every space the commit changed has moved its revision.
+ * A refusal before the epoch leaves the store as it was: a guard's reason, or
+ * no-memory when the commit cannot reserve what its writes need.  A failure
+ * inside the epoch is (commit-failed REASON) and may leave some writes made:
+ * take-failed, make-failed, or revision-unmoved when the space layer changed a
+ * space without moving its revision.  Defining ia_commit_run_CHECKED to 1
+ * observes each fact again where a step requires it. */
 static void ia_trace_commit(Arena *a, Atom *seen, Atom *fp, Atom *makes,
                             Atom *rows, IaLoc *made, uint64_t **made_ids);
 static void ia_trace_after(Atom *makes, IaLoc *made, uint64_t *made_ids);
+
+/* The parts of an absence of sources, ((LOC REV PATTERN) ...): each region
+ * still observable by the committer, and at the revision the walk saw. */
+static Atom *ia_check_full_of(Arena *a, Atom *parts) {
+    if (!parts || parts->kind != ATOM_EXPR)
+        return atom_symbol(a, "malformed-entry");
+    for (CettaExprIndex k = 0; k < parts->expr.len; k++) {
+        Atom *part = parts->expr.elems[k];
+        if (part->kind != ATOM_EXPR || part->expr.len != 3u)
+            return atom_expr2(a, atom_symbol(a, "malformed-entry"), part);
+        IaLoc loc;
+        Atom *why = ia_resolve(a, part->expr.elems[0], &loc);
+        if (!why)
+            why = ia_check_right(a, &loc, IA_OBSERVE);
+        if (why)
+            return why;
+        Atom *rev = part->expr.elems[1];
+        if (rev->kind != ATOM_GROUNDED || rev->ground.gkind != GV_INT ||
+            (uint64_t)rev->ground.ival != space_revision(loc.space))
+            return atom_expr2(a, atom_symbol(a, "stale"), loc.atom);
+    }
+    return NULL;
+}
+
+/* A space the epoch may change, as it was when the epoch opened. */
+typedef struct {
+    Space *space;
+    uint64_t revision;
+    CettaCount length;
+    bool takes; /* occurrences leave it: its contents change */
+} IaWritten;
+
+/* One commit, as the protocol's hooks see it. */
+typedef struct IaCommitRun {
+    Arena *a;
+    Atom *seen, *fp, *makes, *rows;
+    Atom *why; /* why the last step failed */
+    IaSpaceTakes *groups;
+    size_t group_len, group_cap;
+    IaLoc *made;
+    uint64_t *made_ids;
+    IaWritten *written;
+    size_t written_len;
+    bool epoch_open, taken, made_done;
+    IaList taken_regions, made_regions;
+} IaCommitRun;
+
+/* A test can replay, after the writes, a space layer that does not move a
+ * revision; a run never sets it. */
+static void (*g_ia_commit_after_writes)(IaCommitRun *c);
+
+/* Every region read is still at the revision it was read at. */
+static Atom *ia_commit_seen_reason(IaCommitRun *c) {
+    Arena *a = c->a;
+    for (CettaExprIndex i = 0; i < c->seen->expr.len; i++) {
+        Atom *e = c->seen->expr.elems[i];
+        if (ia_head_any(e, "ia:seen"))
+            continue;
+        if (e->kind != ATOM_EXPR || e->expr.len != 2u)
+            return atom_symbol(a, "malformed-seen");
+        IaLoc loc;
+        Atom *why = ia_resolve(a, e->expr.elems[0], &loc);
+        if (why)
+            return why;
+        Atom *rev = e->expr.elems[1];
+        if (rev->kind != ATOM_GROUNDED || rev->ground.gkind != GV_INT ||
+            (uint64_t)rev->ground.ival != space_revision(loc.space))
+            return atom_expr2(a, atom_symbol(a, "stale"), loc.atom);
+    }
+    return NULL;
+}
+
+/* Each entry of the footprint has its right and is at the revision read; each
+ * position taken or kept still holds the atom read; each predicate query of
+ * an absence of sources is at the revision read.  With `collect`, the takes
+ * are grouped by space for the writes. */
+static Atom *ia_commit_footprint_reason(IaCommitRun *c, bool collect) {
+    Arena *a = c->a;
+    for (CettaExprIndex i = 0; i < c->fp->expr.len; i++) {
+        Atom *e = c->fp->expr.elems[i];
+        if (ia_head(e, "full-of", 2u)) {
+            Atom *why = ia_check_full_of(a, e->expr.elems[1]);
+            if (why)
+                return why;
+            continue;
+        }
+        bool take = ia_head(e, "take", 5u), keep = ia_head(e, "keep", 5u);
+        bool full = ia_head(e, "full", 5u);
+        if (!take && !keep && !full)
+            return atom_expr2(a, atom_symbol(a, "malformed-entry"), e);
+        IaLoc loc;
+        Atom *why = ia_resolve(a, e->expr.elems[1], &loc);
+        if (why)
+            return why;
+        why = ia_check_right(a, &loc, take ? IA_RECEIVE : keep ? IA_PEEK
+                                                               : IA_OBSERVE);
+        if (why)
+            return why;
+        Atom *rev = e->expr.elems[2];
+        bool rev_ok = rev->kind == ATOM_GROUNDED && rev->ground.gkind == GV_INT &&
+                      (full && rev->ground.ival == 0
+                           ? true
+                           : (uint64_t)rev->ground.ival == space_revision(loc.space));
+        if (!rev_ok)
+            return atom_expr2(a, atom_symbol(a, "stale"), loc.atom);
+        if (full)
+            continue;
+        Atom *p = e->expr.elems[3];
+        if (p->kind != ATOM_GROUNDED || p->ground.gkind != GV_INT ||
+            p->ground.ival < 0)
+            return atom_expr2(a, atom_symbol(a, "malformed-entry"), e);
+        CettaIndex pos = (CettaIndex)p->ground.ival;
+        Atom *now = pos < space_length64(loc.space)
+            ? space_get_at64(loc.space, pos) : NULL;
+        if (!now || !atom_eq(now, e->expr.elems[4]))
+            return atom_expr2(a, atom_symbol(a, "stale"), loc.atom);
+        if (!take || !collect)
+            continue;
+        size_t g = 0;
+        while (g < c->group_len && c->groups[g].space != loc.space)
+            g++;
+        if (g == c->group_len) {
+            if (c->group_len == c->group_cap) {
+                size_t cap = c->group_cap ? c->group_cap * 2u : 4u;
+                IaSpaceTakes *next = realloc(c->groups, cap * sizeof(*next));
+                if (!next)
+                    return atom_symbol(a, "no-memory");
+                c->groups = next;
+                c->group_cap = cap;
+            }
+            c->groups[c->group_len++] = (IaSpaceTakes){.space = loc.space, .loc = loc};
+        }
+        IaSpaceTakes *st = &c->groups[g];
+        if (st->take_len == st->take_cap) {
+            size_t cap = st->take_cap ? st->take_cap * 2u : 8u;
+            CettaIndex *t = realloc(st->takes, cap * sizeof(*t));
+            if (t)
+                st->takes = t;
+            Atom **ta = realloc(st->taken_atoms, cap * sizeof(*ta));
+            if (ta)
+                st->taken_atoms = ta;
+            if (!t || !ta)
+                return atom_symbol(a, "no-memory");
+            st->take_cap = cap;
+        }
+        st->taken_atoms[st->take_len] = now;
+        st->takes[st->take_len++] = pos;
+    }
+    return NULL;
+}
+
+/* Identification: nothing taken twice, nothing both taken and kept. */
+static Atom *ia_commit_linear_reason(IaCommitRun *c) {
+    IaOcc *occs = NULL;
+    size_t len = 0u, cap = 0u;
+    Atom *why = ia_occs_push(&occs, &len, &cap, c->fp, 0u)
+        ? ia_occs_conflict(c->a, occs, len, false)
+        : atom_symbol(c->a, "no-memory");
+    free(occs);
+    return why;
+}
+
+/* Every make names a location with the send right.  `made`, when given,
+ * receives the locations. */
+static Atom *ia_commit_makes_reason(IaCommitRun *c, IaLoc *made) {
+    Arena *a = c->a;
+    for (CettaExprIndex i = 0; i < c->makes->expr.len; i++) {
+        Atom *mk = c->makes->expr.elems[i];
+        if (mk->kind != ATOM_EXPR || mk->expr.len != 2u)
+            return atom_expr2(a, atom_symbol(a, "malformed-make"), mk);
+        IaLoc here;
+        IaLoc *loc = made ? &made[i] : &here;
+        Atom *why = ia_resolve(a, mk->expr.elems[0], loc);
+        if (!why)
+            why = ia_check_right(a, loc, IA_SEND);
+        if (why)
+            return why;
+    }
+    return NULL;
+}
+
+/* The guards. */
+static bool ia_commit_seen(IaCommitRun *c) {
+    c->why = ia_commit_seen_reason(c);
+    return !c->why;
+}
+
+static bool ia_commit_footprint(IaCommitRun *c) {
+    c->why = ia_commit_footprint_reason(c, true);
+    return !c->why;
+}
+
+static bool ia_commit_linear(IaCommitRun *c) {
+    c->why = ia_commit_linear_reason(c);
+    return !c->why;
+}
+
+static bool ia_commit_makes(IaCommitRun *c) {
+    size_t n = c->makes->expr.len;
+    c->made = n ? calloc(n, sizeof(*c->made)) : NULL;
+    c->why = n && !c->made ? atom_symbol(c->a, "no-memory")
+                           : ia_commit_makes_reason(c, c->made);
+    return !c->why;
+}
+
+/* The facts, observed again where a step requires them (checked mode only,
+ * hence inline). */
+static inline bool ia_commit_is_current(IaCommitRun *c) {
+    return !ia_commit_seen_reason(c);
+}
+
+static inline bool ia_commit_is_formed(IaCommitRun *c) {
+    return !ia_commit_footprint_reason(c, false);
+}
+
+static inline bool ia_commit_is_linear(IaCommitRun *c) {
+    return !ia_commit_linear_reason(c);
+}
+
+static inline bool ia_commit_is_permitted(IaCommitRun *c) {
+    return !ia_commit_makes_reason(c, NULL);
+}
+
+static inline bool ia_commit_was_taken(IaCommitRun *c) {
+    return c->taken;
+}
+
+static inline bool ia_commit_was_made(IaCommitRun *c) {
+    return c->made_done;
+}
+
+/* Every space the commit changed has moved its revision: one that lost
+ * occurrences, or whose length changed, is not at its opening revision. */
+static bool ia_commit_has_moved(IaCommitRun *c) {
+    for (size_t k = 0; k < c->written_len; k++) {
+        IaWritten *w = &c->written[k];
+        bool changed = w->takes || space_length64(w->space) != w->length;
+        if (changed && space_revision(w->space) == w->revision)
+            return false;
+    }
+    return true;
+}
+
+static inline bool ia_commit_epoch_is_open(IaCommitRun *c) {
+    return c->epoch_open;
+}
+
+/* Room for `n` items, so that later pushes cannot fail. */
+static bool ia_reserve(IaList *l, size_t n) {
+    if (n <= l->cap)
+        return true;
+    Atom **items = realloc(l->items, n * sizeof(*items));
+    if (!items)
+        return false;
+    l->items = items;
+    l->cap = n;
+    return true;
+}
+
+static void ia_commit_written_note(IaCommitRun *c, Space *space, bool takes) {
+    for (size_t k = 0; k < c->written_len; k++)
+        if (c->written[k].space == space) {
+            c->written[k].takes |= takes;
+            return;
+        }
+    c->written[c->written_len++] = (IaWritten){
+        space, space_revision(space), space_length64(space), takes};
+}
+
+/* The epoch: the spaces the writes may change, as they are now, and room for
+ * the regions the result names.  Nothing the writes need is allocated after
+ * the first write. */
+static bool ia_commit_epoch_open(IaCommitRun *c) {
+    size_t n = c->group_len + c->makes->expr.len;
+    c->written = n ? calloc(n, sizeof(*c->written)) : NULL;
+    if ((n && !c->written) ||
+        !ia_reserve(&c->taken_regions, c->group_len) ||
+        !ia_reserve(&c->made_regions, c->makes->expr.len)) {
+        free(c->written);
+        c->written = NULL;
+        c->why = atom_symbol(c->a, "no-memory");
+        return false;
+    }
+    c->written_len = 0u;
+    for (size_t g = 0; g < c->group_len; g++)
+        ia_commit_written_note(c, c->groups[g].space, true);
+    for (CettaExprIndex i = 0; i < c->makes->expr.len; i++)
+        ia_commit_written_note(c, c->made[i].space, false);
+    c->epoch_open = true;
+    return true;
+}
+
+static void ia_commit_epoch_close(IaCommitRun *c) {
+    free(c->written);
+    c->written = NULL;
+    c->written_len = 0u;
+    c->epoch_open = false;
+}
+
+static void ia_commit_epoch_abandon(IaCommitRun *c) {
+    ia_commit_epoch_close(c);
+}
+
+static void ia_commit_epoch_publish(IaCommitRun *c) {
+    ia_commit_epoch_close(c);
+}
+
+/* The writes: the takes leave by position, then the makes arrive. */
+static bool ia_commit_take(IaCommitRun *c) {
+    if (ia_trace_on())
+        ia_trace_commit(c->a, c->seen, c->fp, c->makes, c->rows, c->made,
+                        &c->made_ids);
+    bool removed = true;
+    for (size_t g = 0; g < c->group_len && removed; g++) {
+        IaSpaceTakes *st = &c->groups[g];
+        removed = cetta_interaction_remove_positions(st->space, st->takes,
+                                                     st->taken_atoms,
+                                                     st->take_len);
+        if (removed)
+            (void)ia_push(&c->taken_regions, st->loc.atom);
+    }
+    c->taken = removed;
+    if (!removed)
+        c->why = atom_symbol(c->a, "take-failed");
+    return removed;
+}
+
+static bool ia_commit_make(IaCommitRun *c) {
+    Arena *persistent = eval_current_persistent_arena();
+    for (CettaExprIndex i = 0; i < c->makes->expr.len; i++) {
+        Atom *atom = ia_strip(c->a, c->makes->expr.elems[i]->expr.elems[1]);
+        if (!space_admit_atom(c->made[i].space, persistent, atom)) {
+            c->why = atom_symbol(c->a, "make-failed");
+            return false;
+        }
+        bool dup = false;
+        for (CettaExprIndex k = 0; k < i && !dup; k++)
+            dup = c->made[k].region == c->made[i].region;
+        if (!dup)
+            (void)ia_push(&c->made_regions, c->made[i].atom);
+    }
+    if (ia_trace_on())
+        ia_trace_after(c->makes, c->made, c->made_ids);
+    if (g_ia_commit_after_writes)
+        g_ia_commit_after_writes(c);
+    c->made_done = true;
+    return true;
+}
+
+static bool ia_commit_moved(IaCommitRun *c) {
+    if (ia_commit_has_moved(c))
+        return true;
+    c->why = atom_symbol(c->a, "revision-unmoved");
+    return false;
+}
+
+#include "generated/interaction_commit_protocol.generated.h"
+
+static void ia_commit_run_free(IaCommitRun *c) {
+    for (size_t g = 0; g < c->group_len; g++) {
+        free(c->groups[g].takes);
+        free(c->groups[g].taken_atoms);
+    }
+    free(c->groups);
+    free(c->made);
+    free(c->made_ids);
+    free(c->written);
+    free(c->taken_regions.items);
+    free(c->made_regions.items);
+}
 
 static bool op_commit(Arena *a, Atom **args, uint32_t nargs,
                       CettaCallOutcome *out) {
@@ -1709,163 +2146,26 @@ static bool op_commit(Arena *a, Atom **args, uint32_t nargs,
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_transition = {0};
     cetta_shared_transition_guard_enter(&shared_transition);
-    Atom *why = NULL;
-    /* the regions read */
-    for (CettaExprIndex i = 0; !why && i < seen->expr.len; i++) {
-        Atom *e = seen->expr.elems[i];
-        if (ia_head_any(e, "ia:seen"))
-            continue;
-        IaLoc loc;
-        if (e->kind != ATOM_EXPR || e->expr.len != 2u) {
-            why = atom_symbol(a, "malformed-seen");
-            break;
-        }
-        why = ia_resolve(a, e->expr.elems[0], &loc);
-        Atom *rev = e->expr.elems[1];
-        if (!why && (rev->kind != ATOM_GROUNDED || rev->ground.gkind != GV_INT ||
-                     (uint64_t)rev->ground.ival != space_revision(loc.space)))
-            why = atom_expr2(a, atom_symbol(a, "stale"), loc.atom);
+    IaCommitRun c = {.a = a, .seen = seen, .fp = fp, .makes = makes, .rows = rows};
+    Atom *result;
+    switch (ia_commit_run(&c)) {
+    case ia_commit_run_answered:
+        result = atom_expr3(a, atom_symbol(a, "ia:committed"),
+                            ia_list_atom(a, &c.taken_regions),
+                            ia_list_atom(a, &c.made_regions));
+        break;
+    case ia_commit_run_declined:
+        result = ia_refusal(a, c.why ? c.why : atom_symbol(a, "declined"));
+        break;
+    case ia_commit_run_resource_failure:
+        result = ia_refusal(a, atom_symbol(a, "no-memory"));
+        break;
+    default:
+        result = ia_refusal(a, atom_expr2(a, atom_symbol(a, "commit-failed"),
+                                          c.why ? c.why : atom_symbol(a, "engine")));
+        break;
     }
-    IaSpaceTakes *groups = NULL;
-    size_t group_len = 0u, group_cap = 0u;
-    /* the footprint */
-    for (CettaExprIndex i = 0; !why && i < fp->expr.len; i++) {
-        Atom *e = fp->expr.elems[i];
-        bool take = ia_head(e, "take", 5u), keep = ia_head(e, "keep", 5u);
-        bool full = ia_head(e, "full", 5u);
-        if (!take && !keep && !full) {
-            why = atom_expr2(a, atom_symbol(a, "malformed-entry"), e);
-            break;
-        }
-        IaLoc loc;
-        why = ia_resolve(a, e->expr.elems[1], &loc);
-        if (why)
-            break;
-        why = ia_check_right(a, &loc, take ? IA_RECEIVE : keep ? IA_PEEK
-                                                               : IA_OBSERVE);
-        if (why)
-            break;
-        Atom *rev = e->expr.elems[2];
-        bool rev_ok = rev->kind == ATOM_GROUNDED && rev->ground.gkind == GV_INT &&
-                      (full && rev->ground.ival == 0
-                           ? true
-                           : (uint64_t)rev->ground.ival == space_revision(loc.space));
-        if (!rev_ok) {
-            why = atom_expr2(a, atom_symbol(a, "stale"), loc.atom);
-            break;
-        }
-        if (full)
-            continue;
-        Atom *p = e->expr.elems[3];
-        if (p->kind != ATOM_GROUNDED || p->ground.gkind != GV_INT ||
-            p->ground.ival < 0) {
-            why = atom_expr2(a, atom_symbol(a, "malformed-entry"), e);
-            break;
-        }
-        CettaIndex pos = (CettaIndex)p->ground.ival;
-        Atom *now = pos < space_length64(loc.space)
-            ? space_get_at64(loc.space, pos) : NULL;
-        if (!now || !atom_eq(now, e->expr.elems[4])) {
-            why = atom_expr2(a, atom_symbol(a, "stale"), loc.atom);
-            break;
-        }
-        if (!take)
-            continue;
-        size_t g = 0;
-        while (g < group_len && groups[g].space != loc.space)
-            g++;
-        if (g == group_len) {
-            if (group_len == group_cap) {
-                size_t cap = group_cap ? group_cap * 2u : 4u;
-                IaSpaceTakes *next = realloc(groups, cap * sizeof(*next));
-                if (!next) {
-                    why = atom_symbol(a, "no-memory");
-                    break;
-                }
-                groups = next;
-                group_cap = cap;
-            }
-            groups[group_len++] = (IaSpaceTakes){.space = loc.space, .loc = loc};
-        }
-        IaSpaceTakes *st = &groups[g];
-        if (st->take_len == st->take_cap) {
-            size_t cap = st->take_cap ? st->take_cap * 2u : 8u;
-            CettaIndex *t = realloc(st->takes, cap * sizeof(*t));
-            Atom **ta = realloc(st->taken_atoms, cap * sizeof(*ta));
-            if (t) st->takes = t;
-            if (ta) st->taken_atoms = ta;
-            if (!t || !ta) {
-                why = atom_symbol(a, "no-memory");
-                break;
-            }
-            st->take_cap = cap;
-        }
-        st->taken_atoms[st->take_len] = now;
-        st->takes[st->take_len++] = pos;
-    }
-    /* identification: nothing taken twice, nothing both taken and kept */
-    if (!why) {
-        IaOcc *occs = NULL;
-        size_t len = 0u, cap = 0u;
-        (void)ia_occs_push(&occs, &len, &cap, fp, 0u);
-        why = ia_occs_conflict(a, occs, len, false);
-        free(occs);
-    }
-    /* the makes */
-    IaLoc *made = makes->expr.len ? calloc(makes->expr.len, sizeof(*made)) : NULL;
-    for (CettaExprIndex i = 0; !why && i < makes->expr.len; i++) {
-        Atom *mk = makes->expr.elems[i];
-        if (mk->kind != ATOM_EXPR || mk->expr.len != 2u) {
-            why = atom_expr2(a, atom_symbol(a, "malformed-make"), mk);
-            break;
-        }
-        why = ia_resolve(a, mk->expr.elems[0], &made[i]);
-        if (!why)
-            why = ia_check_right(a, &made[i], IA_SEND);
-    }
-    if (why) {
-        for (size_t g = 0; g < group_len; g++) {
-            free(groups[g].takes);
-            free(groups[g].taken_atoms);
-        }
-        free(groups);
-        free(made);
-        return ia_value(out, ia_refusal(a, why));
-    }
-    uint64_t *made_ids = NULL;
-    if (ia_trace_on())
-        ia_trace_commit(a, seen, fp, makes, rows, made, &made_ids);
-    /* fire: takes by position, then makes */
-    IaList taken_regions = {0}, made_regions = {0};
-    for (size_t g = 0; g < group_len; g++) {
-        IaSpaceTakes *st = &groups[g];
-        (void)cetta_interaction_remove_positions(st->space, st->takes,
-                                                 st->taken_atoms, st->take_len);
-        (void)ia_push(&taken_regions, st->loc.atom);
-        free(st->takes);
-        free(st->taken_atoms);
-    }
-    free(groups);
-    Arena *persistent = eval_current_persistent_arena();
-    for (CettaExprIndex i = 0; i < makes->expr.len; i++) {
-        Atom *atom = ia_strip(a, makes->expr.elems[i]->expr.elems[1]);
-        if (!space_admit_atom(made[i].space, persistent, atom))
-            space_add(made[i].space, space_store_atom(made[i].space, persistent, atom));
-        bool dup = false;
-        for (CettaExprIndex k = 0; k < i && !dup; k++)
-            dup = made[k].region == made[i].region;
-        if (!dup)
-            (void)ia_push(&made_regions, made[i].atom);
-    }
-    if (ia_trace_on())
-        ia_trace_after(makes, made, made_ids);
-    free(made_ids);
-    free(made);
-    Atom *result = atom_expr3(a, atom_symbol(a, "ia:committed"),
-                              ia_list_atom(a, &taken_regions),
-                              ia_list_atom(a, &made_regions));
-    free(taken_regions.items);
-    free(made_regions.items);
+    ia_commit_run_free(&c);
     return ia_value(out, result);
 }
 
@@ -1884,6 +2184,120 @@ static void ia_trace_sync_loc(Atom *loc_atom) {
 
 static void ia_trace_note_taken(IaRegion *r, uint64_t id);
 
+/* An absence of sources as one predicate query: the union of the
+ * (region, pattern) pairs its sources read, and every identity that matches
+ * one of them now. */
+static void ia_trace_query_union(Arena *a, Atom *parts, bool first) {
+    IaVarMap pvm = {0};
+    fputs(first ? "(rd (" : " (rd (", g_trace);
+    bool any = false;
+    for (CettaExprIndex k = 0; parts->kind == ATOM_EXPR && k < parts->expr.len; k++) {
+        Atom *part = parts->expr.elems[k];
+        IaRegion *r = ia_region_of(ia_space_of(part->expr.elems[0]), true);
+        if (!r)
+            continue;
+        fputs(any ? " (" : "(", g_trace);
+        ia_trace_region_name(g_trace, r);
+        fputc(' ', g_trace);
+        ia_trace_atom(g_trace, part->expr.elems[2], &pvm);
+        fputc(')', g_trace);
+        any = true;
+    }
+    fputs(") (", g_trace);
+    uint64_t *ids = NULL;
+    size_t n = 0u, cap = 0u;
+    for (CettaExprIndex k = 0; parts->kind == ATOM_EXPR && k < parts->expr.len; k++) {
+        Atom *part = parts->expr.elems[k];
+        IaRegion *r = ia_region_of(ia_space_of(part->expr.elems[0]), true);
+        if (!r)
+            continue;
+        CettaCount len = space_length64(r->space);
+        for (CettaIndex i = 0; i < len; i++) {
+            Atom *row = space_get_at64(r->space, i);
+            CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+            CettaFrameIdentity epoch = CETTA_FRAME_IDENTITY_NONE;
+            if (!cetta_frame_identity_scope_try(&frame_identity_scope, &epoch))
+                break;
+            Bindings b;
+            bindings_init(&b);
+            bool hit = row && match_atoms_epoch(part->expr.elems[2], row, &b, a, epoch);
+            bindings_free(&b);
+            if (!hit)
+                continue;
+            uint64_t id = ia_shadow_id(r, i);
+            bool known = false;
+            for (size_t j = 0; j < n && !known; j++)
+                known = ids[j] == id;
+            if (known)
+                continue;
+            if (n == cap) {
+                size_t c = cap ? cap * 2u : 16u;
+                uint64_t *next = realloc(ids, c * sizeof(*next));
+                if (!next)
+                    break;
+                ids = next;
+                cap = c;
+            }
+            ids[n++] = id;
+        }
+    }
+    for (size_t j = 0; j < n; j++)
+        fprintf(g_trace, j ? " %llu" : "%llu", (unsigned long long)ids[j]);
+    fputs("))", g_trace);
+    free(ids);
+    free(pvm.vars);
+}
+
+/* The kernel's own picks in an `every` commit, written as its first row: the
+ * takes of the footprint, as a multiset, less the takes of every row.  A take
+ * of the base that a row repeats is therefore listed in both rows. */
+static void ia_trace_kernel_row(Atom *fp, Atom *rows) {
+    typedef struct { Space *space; CettaIndex pos; bool used; } IaRowTake;
+    size_t n = 0u;
+    for (CettaExprIndex k = 0; k < rows->expr.len; k++) {
+        Atom *row = rows->expr.elems[k];
+        for (CettaExprIndex i = 0; row->kind == ATOM_EXPR && i < row->expr.len; i++)
+            if (ia_head(row->expr.elems[i], "take", 5u))
+                n++;
+    }
+    IaRowTake *rt = n ? calloc(n, sizeof(*rt)) : NULL;
+    size_t len = 0u;
+    for (CettaExprIndex k = 0; rt && k < rows->expr.len; k++) {
+        Atom *row = rows->expr.elems[k];
+        for (CettaExprIndex i = 0; row->kind == ATOM_EXPR && i < row->expr.len; i++) {
+            Atom *e = row->expr.elems[i];
+            if (!ia_head(e, "take", 5u))
+                continue;
+            rt[len++] = (IaRowTake){ia_space_of(e->expr.elems[1]),
+                                    (CettaIndex)e->expr.elems[3]->ground.ival,
+                                    false};
+        }
+    }
+    fputc('(', g_trace);
+    bool first = true;
+    for (CettaExprIndex i = 0; i < fp->expr.len; i++) {
+        Atom *e = fp->expr.elems[i];
+        if (!ia_head(e, "take", 5u))
+            continue;
+        Space *space = ia_space_of(e->expr.elems[1]);
+        CettaIndex pos = (CettaIndex)e->expr.elems[3]->ground.ival;
+        bool accounted = false;
+        for (size_t j = 0; j < len && !accounted; j++)
+            if (!rt[j].used && rt[j].space == space && rt[j].pos == pos) {
+                rt[j].used = true;
+                accounted = true;
+            }
+        if (accounted)
+            continue;
+        IaRegion *r = ia_region_of(space, true);
+        fprintf(g_trace, first ? "%llu" : " %llu",
+                (unsigned long long)ia_shadow_id(r, pos));
+        first = false;
+    }
+    fputc(')', g_trace);
+    free(rt);
+}
+
 static void ia_trace_commit(Arena *a, Atom *seen, Atom *fp, Atom *makes,
                             Atom *rows, IaLoc *made, uint64_t **made_ids) {
     for (CettaExprIndex i = 0; i < seen->expr.len; i++) {
@@ -1891,8 +2305,17 @@ static void ia_trace_commit(Arena *a, Atom *seen, Atom *fp, Atom *makes,
         if (e->kind == ATOM_EXPR && e->expr.len == 2u)
             ia_trace_sync_loc(e->expr.elems[0]);
     }
-    for (CettaExprIndex i = 0; i < fp->expr.len; i++)
-        ia_trace_sync_loc(fp->expr.elems[i]->expr.elems[1]);
+    for (CettaExprIndex i = 0; i < fp->expr.len; i++) {
+        Atom *e = fp->expr.elems[i];
+        if (ia_head(e, "full-of", 2u)) {
+            Atom *parts = e->expr.elems[1];
+            for (CettaExprIndex k = 0; parts->kind == ATOM_EXPR &&
+                                       k < parts->expr.len; k++)
+                ia_trace_sync_loc(parts->expr.elems[k]->expr.elems[0]);
+            continue;
+        }
+        ia_trace_sync_loc(e->expr.elems[1]);
+    }
     for (CettaExprIndex i = 0; i < makes->expr.len; i++)
         ia_trace_sync_loc(makes->expr.elems[i]->expr.elems[0]);
     IaVarMap vm = {0};
@@ -1930,6 +2353,11 @@ static void ia_trace_commit(Arena *a, Atom *seen, Atom *fp, Atom *makes,
     bool first = true;
     for (CettaExprIndex i = 0; i < fp->expr.len; i++) {
         Atom *e = fp->expr.elems[i];
+        if (ia_head(e, "full-of", 2u)) {
+            ia_trace_query_union(a, e->expr.elems[1], first);
+            first = false;
+            continue;
+        }
         if (!ia_head(e, "full", 5u))
             continue;
         IaRegion *r = ia_region_of(ia_space_of(e->expr.elems[1]), true);
@@ -1947,9 +2375,13 @@ static void ia_trace_commit(Arena *a, Atom *seen, Atom *fp, Atom *makes,
         first = false;
     }
     fputs(") (", g_trace);
+    /* only an `every` commit has rows; its kernel row comes first */
+    bool kernel_row = rows && rows->kind == ATOM_EXPR && rows->expr.len > 0u;
+    if (kernel_row)
+        ia_trace_kernel_row(fp, rows);
     for (CettaExprIndex k = 0; rows && rows->kind == ATOM_EXPR && k < rows->expr.len; k++) {
         Atom *row = rows->expr.elems[k];
-        fputs(k ? " (" : "(", g_trace);
+        fputs(kernel_row || k ? " (" : "(", g_trace);
         bool f2 = true;
         for (CettaExprIndex i = 0; row->kind == ATOM_EXPR && i < row->expr.len; i++) {
             Atom *e = row->expr.elems[i];
@@ -2111,6 +2543,7 @@ static void ia_form_loc(IaForm *f, Atom *loc, uint32_t needed) {
 }
 
 static void ia_form_sources(IaForm *f, Atom *src);
+static void ia_form_absent_sources(IaForm *f, Atom *src);
 
 static void ia_form_source(IaForm *f, Atom *c) {
     if (f->why || !c)
@@ -2132,8 +2565,8 @@ static void ia_form_source(IaForm *f, Atom *c) {
     if (ia_head(c, "absent", 2u) || ia_head(c, "absent", 3u)) {
         if (c->expr.len == 3u)
             ia_form_loc(f, c->expr.elems[1], IA_OBSERVE);
-        else if (ia_head_any(c->expr.elems[1], ","))
-            ia_form_sources(f, c->expr.elems[1]);
+        else if (ia_source_form(c->expr.elems[1]))
+            ia_form_absent_sources(f, c->expr.elems[1]);
         else
             ia_form_loc(f, f->default_loc, IA_OBSERVE);
         return;
@@ -2167,6 +2600,33 @@ static void ia_form_sources(IaForm *f, Atom *src) {
         return;
     }
     ia_form_source(f, src);
+}
+
+/* An absence of sources reads the union of its sources' regions as one
+ * predicate query: each source is formed as written, and each location that
+ * a matched source names must also observe.  A location an earlier source
+ * binds is checked when the walk reaches it. */
+static void ia_form_absent_sources(IaForm *f, Atom *src) {
+    ia_form_sources(f, src);
+    Atom *one = NULL;
+    Atom **cs;
+    size_t n;
+    ia_conjuncts(src, &one, &cs, &n);
+    for (size_t i = 0; i < n && !f->why; i++) {
+        Atom *c = cs[i];
+        if ((c->kind == ATOM_EXPR && c->expr.len == 0u) ||
+            ia_head_any(c, ",") || ia_head(c, "let", 3u) ||
+            ia_head(c, "every", 2u) || ia_head(c, "absent", 2u) ||
+            ia_head(c, "absent", 3u) || ia_head_any(c, "unique") ||
+            ia_head_any(c, "all"))
+            continue;
+        IaWalk w = {.a = f->a, .default_loc = f->default_loc};
+        IaMatched q;
+        ia_matched(&w, c, &q);
+        if (q.loc && q.loc->kind == ATOM_VAR)
+            continue;
+        ia_form_loc(f, q.loc, IA_OBSERVE);
+    }
 }
 
 static void ia_form_template(IaForm *f, Atom *t) {
@@ -2833,7 +3293,7 @@ static void ia_attempt_begin(IaMachine *m, Atom *x) {
     m->in_attempt = true;
     m->current = x;
     m->truncated = false;
-    x = ia_unhold(x);
+    x = ia_firing(x);
     if (!(ia_head(x, "transform", 4u) || ia_head(x, "transform", 5u))) {
         m->refused = atom_expr2(a, atom_symbol(a, "not-a-firing"), x);
         return;
@@ -2984,7 +3444,7 @@ static Atom *ia_done(Arena *a, Atom *outcome) {
 }
 
 static void ia_set_alts(IaMachine *m, Atom *firing) {
-    firing = ia_unhold(firing);
+    firing = ia_firing(firing);
     free(m->alts);
     m->alts = NULL;
     m->nalts = m->alt_i = 0u;
@@ -2992,7 +3452,7 @@ static void ia_set_alts(IaMachine *m, Atom *firing) {
         size_t n = firing->expr.len - 1u;
         m->alts = n ? calloc(n, sizeof(Atom *)) : NULL;
         for (size_t i = 0; i < n; i++)
-            m->alts[i] = ia_unhold(firing->expr.elems[i + 1u]);
+            m->alts[i] = ia_firing(firing->expr.elems[i + 1u]);
         m->nalts = n;
     } else {
         m->alts = calloc(1u, sizeof(Atom *));
@@ -3349,7 +3809,7 @@ static bool op_await(Arena *a, Atom **args, uint32_t nargs, CettaCallOutcome *ou
 /* A rule is formed when it is installed: an error then, not a rule that
  * never fires. */
 static Atom *ia_install_error(Arena *a, Atom *firing) {
-    firing = ia_unhold(firing);
+    firing = ia_firing(firing);
     Atom **alts = NULL;
     size_t n = 0u;
     if (ia_head_any(firing, "choose")) {
@@ -3360,7 +3820,7 @@ static Atom *ia_install_error(Arena *a, Atom *firing) {
         n = 1u;
     }
     for (size_t i = 0; i < n; i++) {
-        Atom *x = ia_unhold(alts[i]);
+        Atom *x = ia_firing(alts[i]);
         if (!(ia_head(x, "transform", 4u) || ia_head(x, "transform", 5u)))
             return atom_error(a, atom_symbol(a, "whenever"),
                               atom_expr2(a, atom_symbol(a, "not-a-firing"), x));
@@ -3628,7 +4088,8 @@ bool cetta_interaction_picks_linear(Space *const *spaces, const CettaIndex *posi
         return false;
     for (size_t i = 0; i < len; i++)
         occs[i] = (IaOcc){spaces[i], positions[i], (uint32_t)i, takes[i], NULL, NULL};
-    qsort(occs, len, sizeof(*occs), ia_occ_cmp);
+    if (len > 1u)
+        qsort(occs, len, sizeof(*occs), ia_occ_cmp);
     bool linear = true;
     for (size_t i = 0; i + 1u < len && linear; i++)
         if (occs[i].space == occs[i + 1u].space && occs[i].pos == occs[i + 1u].pos &&
