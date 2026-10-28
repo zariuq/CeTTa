@@ -27,6 +27,7 @@ import tempfile
 from pathlib import Path
 
 MARKER = '(__cetta_answers_frame__)'
+FRAMED_TIMEOUT = 120
 
 
 def top_level_forms(text):
@@ -154,9 +155,14 @@ def compare_petta(program, expected, actual, cetta):
                                      dir=os.path.dirname(os.path.abspath(program))) as f:
         f.write(source)
         framed_path = f.name
+    # The framed copy sits beside the program, so its own timeout, shorter
+    # than a caller's, still removes it.
     try:
         run = subprocess.run([*cetta, framed_path], capture_output=True, text=True,
-                             cwd=os.path.dirname(os.path.abspath(program)))
+                             cwd=os.path.dirname(os.path.abspath(program)),
+                             timeout=FRAMED_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return False, f'the framed run took over {FRAMED_TIMEOUT} s'
     finally:
         os.unlink(framed_path)
     lines = run.stdout.splitlines()

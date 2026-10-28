@@ -10,6 +10,9 @@ struct CettaPrimeTypedValueV1 {
     const TermUniverse *universe;
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    /* The ids below name entries of this collection epoch: a collection
+     * that frees entries may reuse their slots. */
+    uint64_t universe_collection_epoch;
     AtomId context_id;
     AtomId term_id;
     AtomId type_id;

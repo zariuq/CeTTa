@@ -11,6 +11,7 @@
 #include "match.h"
 #include "subst_tree.h"
 #include "term_universe.h"
+#include "space_dense.h"
 
 /* ── Discrimination Trie (à la Vampire SubstitutionTree) ───────────────── */
 
@@ -202,6 +203,15 @@ typedef struct {
     uint64_t id_present_bits; /* capacity in bits; 0 = unallocated */
     CettaIndex id_present_synced_len; /* logical prefix already reflected in id_present (lazy catch-up) */
     bool id_present_dirty;    /* removal/bulk invalidated bits: clear + full resync on next membership query */
+    /* The bitset's keys that are no row's id, the alpha-canonical forms of
+     * rows with variables: the bitset holds them, one reference a key set. */
+    AtomId *id_present_keys;
+    CettaIndex id_present_key_len, id_present_key_cap;
+    /* The heads whose ground facts the space keeps as bits (space.c, "Relations
+     * kept as bits"); NULL while it keeps none.  The pairs they hold, over
+     * every head, which every positional read past the rows asks. */
+    struct SpaceDense *dense;
+    CettaCount dense_pairs;
     bool eq_idx_dirty;
     bool ty_idx_dirty;
     bool exact_idx_dirty;
@@ -235,6 +245,10 @@ typedef struct Space {
             uint64_t id_present_bits;
             CettaIndex id_present_synced_len;
             bool id_present_dirty;
+            AtomId *id_present_keys;
+            CettaIndex id_present_key_len, id_present_key_cap;
+            struct SpaceDense *dense;
+            CettaCount dense_pairs;
             bool eq_idx_dirty;
             bool ty_idx_dirty;
             bool exact_idx_dirty;
@@ -420,6 +434,60 @@ bool space_admit_atoms_batch_from_source_arena(
 TermUniverseError space_term_universe_last_error_code(const Space *s);
 void space_linearize(Space *s);
 void space_mark_derived_state_dirty(Space *s);
+/* Take, or drop, the reference each live row holds on its atom, when the
+ * rows are adopted or given up wholesale. */
+void space_rows_hold(Space *s);
+void space_rows_release(Space *s);
+
+/* Relations kept as bits.  The facts a space keeps as bits count in its
+ * length and answer its membership tests, adds and removals; a reader of
+ * rows that does not read bits gives them back to the rows first:
+ * space_dense_settle for every head, or for the head HEAD only
+ * (SYMBOL_ID_NONE: every head).  space_dense_settle_for_pattern settles the
+ * head a pattern names, or every head when its head is not a symbol. */
+void space_dense_settle(Space *s, SymbolId head);
+void space_dense_settle_for_pattern(Space *s, const Atom *pattern);
+void space_dense_settle_for_patterns(Space *s, Atom *const *patterns,
+                                     CettaExprLen count);
+/* The pairs held as bits, over every head. */
+static inline CettaCount space_dense_pairs(const Space *s) {
+    return s ? s->native.dense_pairs : 0u;
+}
+/* Count the facts the bits hold that match (h a b), given as COLUMNS: each
+ * a variable, distinct from the others, which takes anything, or a ground
+ * atom.  A head that is a variable reads every relation kept as bits.
+ * False when the bits cannot answer: in a concurrent-evaluation scope, or
+ * for a column a number other than an integer, which may equal one by
+ * value. */
+bool space_dense_count_columns(const Space *s, Atom *const *columns,
+                               CettaCount *count);
+/* The bits of HEAD, or NULL when the space keeps none for it (or a
+ * concurrent-evaluation scope is open).  Facts of HEAD may also be rows:
+ * a reader of bits asks the rows too, between space_dense_reading_bits_begin
+ * and _end, which keep the guards from giving the bits back meanwhile. */
+const CettaDenseRelation *space_dense_relation(const Space *s,
+                                               SymbolId head);
+/* Whether a pattern names a head the space keeps as bits: the native
+ * query's loops read bits; the planners that read rows would give them
+ * back to the rows. */
+bool space_dense_meets_patterns(const Space *s, Atom *const *patterns,
+                                size_t count);
+void space_dense_reading_bits_begin(void);
+void space_dense_reading_bits_end(void);
+/* Before adding IDS: a head whose facts among them reach the threshold
+ * for bits takes bits now, so that none of them is a row. */
+void space_dense_prepare_adds(Space *s, const AtomId *ids, CettaCount count);
+/* Whether the space may keep the facts of HEAD as bits: it admits bits,
+ * and HEAD has not given its bits back to rows. */
+bool space_dense_may_hold(const Space *s, SymbolId head);
+/* Add the facts (h a b): h by its symbol and id, each (a, b) by two ids in
+ * PAIRS.  While the space keeps h as bits the facts need no records; the
+ * others are rows.  A set adds no fact it holds. */
+bool space_add_dense_pairs(Space *s, SymbolId head, AtomId head_id,
+                           const AtomId *pairs, CettaCount count);
+/* Take the pair of the ground fact ATOM from the bits, by its parts (a fact
+ * kept as bits may have no record of its own): the copies removed, 0 or 1. */
+CettaCount space_dense_remove_ground(Space *s, Atom *atom);
 void space_discard_native_logical_view(Space *s);
 /* Drop the full logical tuple projection while retaining revision-independent
  * equation/type descriptors. The backend mutation caller remains responsible
