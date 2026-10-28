@@ -7713,8 +7713,8 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                 const StateCell *ca = a->ground.ptr;
                 const StateCell *cb = b->ground.ptr;
                 if (ca == cb &&
-                    (!ca || !atom_structural_may_have_nan(ca->value) ||
-                     !atom_he_exact_semantics()))
+                    (!ca || !atom_he_exact_semantics() ||
+                     !atom_structural_may_have_nan(ca->value)))
                     goto completed;
                 if (!ca || !cb)
                     goto comparison_failed;

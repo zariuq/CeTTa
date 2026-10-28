@@ -264,6 +264,9 @@ typedef struct Space {
        reviving cached state from a freed Space at the same address. */
     uint64_t instance_id;
     uint64_t revision;
+    /* Currency for captured read views. Never copied with storage or reused
+       after retirement; readers hold the header's existing lifetime owner. */
+    _Atomic uint64_t read_stamp;
     /* Revision of the ordered equation-occurrence projection only.  Data-only
        mutations leave this coordinate unchanged; mutations whose projection
        effect is opaque advance it conservatively. */
@@ -528,6 +531,10 @@ void space_discard_native_logical_view(Space *s);
  * for invalidating either descriptor when its corresponding row class changes. */
 void space_discard_native_logical_view_preserving_dispatch(Space *s);
 void space_note_external_backend_mutation(Space *s);
+/* Invalidate read-view admission after a representation/profile change.
+ * Shared callers hold the physical transition guard through the whole change.
+ * This is neither a row publication nor a grant of ownership or authority. */
+void space_read_view_invalidate(Space *s);
 Space *space_heap_clone_shallow(Space *src);
 void space_replace_contents(Space *dst, Space *src);
 /* Notified after a space takes over the contents of a space with another
@@ -617,15 +624,23 @@ bool space_execution_analysis_cache_compare_targets(const SpaceExecutionAnalysis
     const SpaceExecutionAnalysisCache *, SpaceReadToken left_target,
     SpaceReadToken right_target, const CettaCheckpointCompare *);
 
+typedef struct {
+    const _Atomic uint64_t *stamp;
+    uint64_t expected;
+} SpaceReadWatch;
+
 /* Original authorities for one logical Space view. The caller retains every
  * Space and its universe; this view owns only its captured token array. A
- * non-overlay view has no allocation. Cloning preserves the issued tokens,
+ * non-overlay view has no allocation. Watches are immutable after capture;
+ * checking them does not permit unlocked access to mutable storage. Cloning preserves the issued tokens,
  * including stale ones, rather than capturing a later revision. Capture and
  * clone require an empty output; release that output exactly once. */
 typedef struct {
     SpaceReadToken root;
     SpaceReadToken *bases;
     size_t base_count;
+    SpaceReadWatch root_watch;
+    SpaceReadWatch *base_watches;
 } SpaceReadView;
 
 bool space_read_view_capture(const Space *space, SpaceReadView *out);
@@ -1332,6 +1347,29 @@ typedef CettaMatchCompletion (*SpaceAtomComparison)(Atom *left, Atom *right);
 CettaMatchCompletion space_remove_compared(Space *s, Atom *atom,
     SpaceAtomComparison equal, SpaceAtomComparison alpha_equal);
 CettaMatchCompletion space_contains_compared(Space *s, Atom *atom, SpaceAtomComparison equal);
+/* Resolve removal without changing the store. The caller retains the Space,
+ * body and protection mask for the search lifetime. Each step performs at
+ * most one comparison; incomplete comparisons retain their exact position.
+ * Protection is applied after exact precedence/global alpha uniqueness, so
+ * hiding a kept occurrence cannot change which removal class applies.
+ * Native logical coordinates are pinned by read; mutation invalidates it. */
+typedef struct {
+    SpaceReadToken read;
+    CettaIndex first, next, end, selected;
+    uint8_t alpha_count;
+    bool alpha, exact_seen, selected_protected, finished;
+} SpaceRemovalSearch;
+typedef enum {
+    SPACE_REMOVAL_PROGRESS, SPACE_REMOVAL_SELECTED, SPACE_REMOVAL_UNMATCHED,
+    SPACE_REMOVAL_PROTECTED, SPACE_REMOVAL_INCOMPLETE, SPACE_REMOVAL_INVALIDATED,
+} SpaceRemovalSearchStep;
+bool space_removal_search_init(Space *space, SpaceRemovalSearch *search);
+SpaceRemovalSearchStep space_removal_search_step(SpaceRemovalSearch *search,
+    Atom *body, SpaceAtomComparison equal, SpaceAtomComparison alpha_equal,
+    const uint8_t *protected_occurrences, CettaCount protected_length);
+/* Consume the selected physical native occurrence, preserving the store's
+ * existing ordered/swap-removal discipline. A stale token removes nothing. */
+CettaMatchCompletion space_remove_occurrence_checked(Space *space, SpaceReadToken read, CettaIndex index);
 bool space_contains_atom_id(const Space *s, AtomId atom_id);
 bool space_remove_atom_id(Space *s, AtomId atom_id);
 bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,

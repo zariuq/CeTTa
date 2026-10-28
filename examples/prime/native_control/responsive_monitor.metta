@@ -17,7 +17,8 @@
          (MonitorPaused $values $more $w $w2 $c $c2 $t $t2))))
 
 ; A request/reply server keeps its actual waiting computation between bursts.
-; Each exec reads its own source body to restore the receive after a commit.
+; Selection consumes the exec. A predicate query obtains its pre-state source
+; body to restore the receive, without promising to keep the consumed rule.
 ; Slot bounds the reply buffer; Acknowledge authorizes its consumer to release
 ; that capacity. Equal request payloads remain separate bag occurrences.
 !(bind! &server-jobs (new-space))
@@ -25,12 +26,12 @@
 !(add-atom &server-jobs
    (exec Server
       (I (take Slot) (take (Request $id $payload))
-         (read (exec Server $input $output)))
+         (all (exec Server $i $o) ((exec Server $input $output))))
       (O (+ (Reply $id $payload)) (+ (exec Server $input $output)))))
 !(add-atom &server-jobs
    (exec Consumer
       (I (take (Reply $id $payload)) (take Acknowledge)
-         (read (exec Consumer $input $output)))
+         (all (exec Consumer $i $o) ((exec Consumer $input $output))))
       (O (+ Slot) (+ (Delivered $id $payload))
          (+ (exec Consumer $input $output)))))
 !(let (Observation $values (satisfied $s) (closed $c) (residual $r)

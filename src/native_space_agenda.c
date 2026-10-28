@@ -2,6 +2,7 @@
 #include "binding/frame_identity.h"
 #include "mm2_lower.h"
 #include "native_cost.h"
+#include "segmented_array.h"
 #include "shared_transition.h"
 #include "space_match_backend.h"
 #include "symbol.h"
@@ -40,6 +41,12 @@ typedef struct {
     Atom *exec;
 } WaitingExec;
 typedef struct {CettaIndex index;Atom *exec;void *advice;} ExecCandidate;
+typedef struct {
+    CettaSegmentedArray64 target_to_source;
+    CettaCount length;
+    CettaIndex selected_target;
+    bool selected_ready;
+} AgendaCaptureOrigins;
 struct CettaSpaceAgendaMatch {
     Arena arena;
     HashConsTable hashcons;
@@ -56,7 +63,7 @@ typedef enum {
     AGENDA_VALIDATE_CAPTURE, AGENDA_VALIDATE_MATCH,
     AGENDA_BUILD, AGENDA_SINK, AGENDA_COMMIT, AGENDA_WAIT, AGENDA_RANK,
     AGENDA_WORLD_CAPTURE, AGENDA_WORLD_REPORT, AGENDA_DONE,
-    AGENDA_ACTIVATE,
+    AGENDA_ACTIVATE, AGENDA_QUALIFY_BUILD, AGENDA_QUALIFY_SINK,
 } AgendaPhase;
 
 struct CettaSpaceAgenda {
@@ -94,6 +101,10 @@ struct CettaSpaceAgenda {
     Space snapshot;
     Space current;
     Space replacement;
+    uint8_t *replacement_kept;
+    size_t replacement_kept_length, replacement_kept_capacity;
+    SpaceRemovalSearch removal;
+    bool removal_ready, qualifying_sinks, sinks_prepared;
     /* Qualified native reads use the held source until its token changes.
      * Discovery refuses a changed source; ordinary matching restarts it.
      * Publication still builds one private replacement before committing. */
@@ -104,6 +115,11 @@ struct CettaSpaceAgenda {
     SpaceReadToken capture_read;
     CettaIndex capture_index;
     CettaIndex capture_length;
+    AgendaCaptureOrigins snapshot_origins, current_origins;
+    CettaIndex capture_target;
+    CettaIndex capture_probe;
+    SpaceReadToken capture_search_read;
+    bool capture_row_ready, capture_row_found, capture_search_done, capture_retiring;
     AgendaInput *inputs;
     size_t input_count;
     Atom *sinks;
@@ -115,7 +131,10 @@ struct CettaSpaceAgenda {
     CettaFrameIdentity *match_epochs[2];
     size_t match_epoch_count[2], match_epoch_capacity[2];
     bool validating;
-    size_t build_index, sink_row, sink_index;
+    /* Raw MM2 inserts the whole sink batch before finalizing removals. */
+    bool sink_removal_phase;
+    CettaIndex build_index;
+    size_t sink_row, sink_index;
     uint64_t commits, retries;
     Atom *receipt;
     const char *pending;
@@ -361,32 +380,157 @@ static Atom *code_value(CettaSpaceAgenda *a, Atom *syntax) {
 /* MORK's set carrier is compact-expression bytes. Distinct parser/frame
  * names for the same variable-incidence pattern denote the same member.
  * Encoding refusal is an unfinished carrier obligation, never inequality. */
+static bool agenda_input_spec(const CettaSpaceAgenda *a,Atom *in,Atom *pattern,
+        AgendaInput *spec) {
+    *spec=(AgendaInput){.kind=INPUT_READ,.pattern=pattern};
+    if(headed(in,a->comma))return true;
+    if(!headed(in,a->input))return false;
+    if(shaped(pattern,a->btm,1u) ||
+       (a->contract.explicit_inputs && shaped(pattern,a->read,1u)))
+        spec->pattern=pattern->expr.elems[1];
+    else if(a->contract.explicit_inputs && shaped(pattern,a->take,1u))
+        *spec=(AgendaInput){INPUT_TAKE,pattern->expr.elems[1],NULL};
+    else if(a->contract.explicit_inputs && shaped(pattern,a->absent,1u))
+        *spec=(AgendaInput){INPUT_ABSENT,pattern->expr.elems[1],NULL};
+    else if(a->contract.explicit_inputs && shaped(pattern,a->all,2u))
+        *spec=(AgendaInput){INPUT_ALL,pattern->expr.elems[1],pattern->expr.elems[2]};
+    else return false;
+    return true;
+}
+
+static bool agenda_directive_syntax(const CettaSpaceAgenda *a,Atom *atom) {
+    if(!shaped(atom,a->exec,3u))return false;
+    Atom *in=atom->expr.elems[2],*out=atom->expr.elems[3];
+    if((!headed(in,a->comma) && !headed(in,a->input)) || !headed(out,a->output))return false;
+    for(CettaExprIndex i=1u;i<in->expr.len;i++) {
+        AgendaInput spec;
+        if(!agenda_input_spec(a,in,in->expr.elems[i],&spec))return false;
+    }
+    for(CettaExprIndex i=1u;i<out->expr.len;i++)
+        if(!shaped(out->expr.elems[i],a->plus,1u) && !shaped(out->expr.elems[i],a->minus,1u))return false;
+    return true;
+}
+
+static bool carrier_bytes(CettaSpaceAgenda *a,Atom *atom,uint8_t **bytes,
+        size_t *length,const char **error) {
+    /* Annotated executable directives use this agenda's captured lexical
+     * environment. Data (including uninterpreted exec syntax) has a fresh
+     * matching context; raw MM2 retains its literal compact-byte carrier. */
+    if(!a->contract.explicit_inputs || bindings_logically_empty(&a->captured) ||
+       !agenda_directive_syntax(a,atom))
+        return cetta_mm2_atom_to_bridge_expr_bytes(a->owner,atom,bytes,length,error);
+    Arena temporary;arena_init_detached(&temporary);
+    arena_set_block_capacity(&temporary,4096u);
+    Atom *interpreted=bindings_apply_if_vars(&a->captured,&temporary,atom);
+    bool complete=interpreted && cetta_mm2_atom_to_bridge_expr_bytes(
+        &temporary,interpreted,bytes,length,error);
+    arena_free(&temporary);
+    return complete;
+}
+
 static bool carrier_equal(CettaSpaceAgenda *a, Atom *left, Atom *right, bool *equal) {
     if (!a->contract.set_support) { *equal=atom_eq(left,right); return true; }
     uint8_t *lb=NULL,*rb=NULL;
     size_t ln=0u,rn=0u;
     const char *error=NULL;
-    bool complete=cetta_mm2_atom_to_bridge_expr_bytes(a->owner,left,&lb,&ln,&error) &&
-        cetta_mm2_atom_to_bridge_expr_bytes(a->owner,right,&rb,&rn,&error);
+    bool complete=carrier_bytes(a,left,&lb,&ln,&error) &&
+        carrier_bytes(a,right,&rb,&rn,&error);
     if(complete)*equal=ln==rn && (!ln || !memcmp(lb,rb,ln));
     free(lb);free(rb);
     return complete;
 }
 
-static bool carrier_contains(CettaSpaceAgenda *a, Space *space, Atom *atom, bool *found) {
+static bool carrier_find(CettaSpaceAgenda *a, Space *space, Atom *atom,
+                         bool *found, CettaIndex *index) {
     *found=false;
     for(CettaIndex i=0u;i<space_length64(space);i++) {
         bool equal=false;
         if(!carrier_equal(a,space_get_at64(space,i),atom,&equal))return false;
-        if(equal){*found=true;return true;}
+        if(equal){*found=true;if(index)*index=i;return true;}
     }
     /* Even the first set member must have a valid compact representation. */
     if(a->contract.set_support) {
         uint8_t *bytes=NULL;size_t length=0u;const char *error=NULL;
-        bool complete=cetta_mm2_atom_to_bridge_expr_bytes(a->owner,atom,&bytes,&length,&error);
+        bool complete=carrier_bytes(a,atom,&bytes,&length,&error);
         free(bytes);return complete;
     }
     return true;
+}
+
+static bool carrier_contains(CettaSpaceAgenda *a, Space *space, Atom *atom, bool *found) {
+    return carrier_find(a,space,atom,found,NULL);
+}
+
+static void capture_origins_clear(AgendaCaptureOrigins *origins) {
+    cetta_segmented_array64_free(&origins->target_to_source);
+    *origins=(AgendaCaptureOrigins){0};
+}
+
+static void capture_origins_reset(AgendaCaptureOrigins *origins) {
+    origins->length=0u;origins->selected_target=0u;origins->selected_ready=false;
+}
+
+static void capture_staging_clear(CettaSpaceAgenda *a) {
+    a->capture_target=0u;a->capture_probe=0u;
+    a->capture_search_read=(SpaceReadToken){0};
+    a->capture_row_ready=a->capture_row_found=a->capture_search_done=false;
+}
+
+static bool capture_origins_empty(const AgendaCaptureOrigins *origins) {
+    const CettaSegmentedArray *backing=&origins->target_to_source.backing;
+    return !origins->length && !origins->selected_target && !origins->selected_ready &&
+        !backing->root && !backing->blocks && !backing->element_size &&
+        !backing->live_bytes && !backing->retiring;
+}
+
+static AgendaCaptureOrigins *capture_origins(CettaSpaceAgenda *a) {
+    return a->validating ? &a->current_origins : &a->snapshot_origins;
+}
+
+/* A set capture chooses the first physical source representative for each
+ * member. The selected exec may itself be a later equal source occurrence;
+ * its captured coordinate is tracked separately from that representative. */
+static bool capture_source_index(CettaSpaceAgenda *a, CettaIndex target,
+                                 CettaIndex *source, uint64_t *probes) {
+    *probes=0u;
+    if (!a->contract.explicit_inputs || !a->contract.set_support || a->borrowed_capture) {
+        *source=target;return true;
+    }
+    AgendaCaptureOrigins *origins=capture_origins(a);
+    if (target>=origins->length)return false;
+    const CettaIndex *entry=cetta_segmented_array64_at_observed(
+        &origins->target_to_source,target,probes);
+    if (!entry)return false;
+    *source=*entry;return true;
+}
+
+static bool capture_selected_index(CettaSpaceAgenda *a, CettaIndex *target) {
+    if (!a->contract.explicit_inputs || !a->contract.set_support || a->borrowed_capture) {
+        *target=a->selected_index;return true;
+    }
+    AgendaCaptureOrigins *origins=capture_origins(a);
+    if (!origins->selected_ready)return false;
+    *target=origins->selected_target;return true;
+}
+
+static bool agenda_natural_index(const Atom *atom, CettaIndex *out) {
+    if (atom && atom->kind==ATOM_GROUNDED && atom->ground.gkind==GV_INT &&
+        atom->ground.ival>=0) {
+        *out=(CettaIndex)atom->ground.ival;return true;
+    }
+    if (!atom || atom->kind!=ATOM_SYMBOL)return false;
+    const char *digits=atom_symbol_bytes(atom);
+    uint32_t length=atom_symbol_length(atom);
+    if (!digits || !length || length>20u)return false;
+    CettaIndex value=0u;
+    for (uint32_t i=0u;i<length;i++) {
+        unsigned char digit=(unsigned char)digits[i];
+        if (digit<'0' || digit>'9')return false;
+        digit=(unsigned char)(digit-'0');
+        if (value>(UINT64_MAX-digit)/10u)return false;
+        value=value*10u+digit;
+    }
+    *out=value;return true;
 }
 
 static void level_free(JoinLevel *level) {
@@ -571,34 +715,18 @@ static bool waiting_add(CettaSpaceAgenda *a) {
 }
 
 static bool parse_selected(CettaSpaceAgenda *a) {
-    Atom *in = a->selected->expr.elems[2];
-    Atom *out = a->selected->expr.elems[3];
-    if ((!headed(in,a->comma) && !headed(in,a->input)) || !headed(out,a->output)) return false;
-    size_t n = in->expr.len - 1u;
-    if (n > SIZE_MAX / sizeof(*a->inputs) || n == SIZE_MAX) return false;
-    a->inputs = calloc(n ? n : 1u,sizeof(*a->inputs));
-    if (!a->inputs) return false;
-    a->input_count = n;
-    for (size_t i = 0u; i < n; i++) {
-        Atom *p = in->expr.elems[i+1u];
-        AgendaInput spec = {.kind=INPUT_READ,.pattern=p};
-        if (headed(in,a->input)) {
-            if (shaped(p,a->btm,1u) || (a->contract.explicit_inputs && shaped(p,a->read,1u)))
-                spec.pattern = p->expr.elems[1];
-            else if (a->contract.explicit_inputs && shaped(p,a->take,1u))
-                spec = (AgendaInput){INPUT_TAKE,p->expr.elems[1],NULL};
-            else if (a->contract.explicit_inputs && shaped(p,a->absent,1u))
-                spec = (AgendaInput){INPUT_ABSENT,p->expr.elems[1],NULL};
-            else if (a->contract.explicit_inputs && shaped(p,a->all,2u))
-                spec = (AgendaInput){INPUT_ALL,p->expr.elems[1],p->expr.elems[2]};
-            else return false;
-        }
-        a->inputs[i] = spec;
+    if(!agenda_directive_syntax(a,a->selected))return false;
+    Atom *in=a->selected->expr.elems[2];
+    size_t n=in->expr.len-1u;
+    if(n>SIZE_MAX/sizeof(*a->inputs) || n==SIZE_MAX)return false;
+    a->inputs=calloc(n?n:1u,sizeof(*a->inputs));
+    if(!a->inputs)return false;
+    a->input_count=n;
+    for(size_t i=0u;i<n;i++) {
+        bool parsed=agenda_input_spec(a,in,in->expr.elems[i+1u],&a->inputs[i]);
+        assert(parsed);(void)parsed;
     }
-    for (CettaExprIndex i = 1u; i < out->expr.len; i++)
-        if (!shaped(out->expr.elems[i],a->plus,1u) && !shaped(out->expr.elems[i],a->minus,1u))
-            return false;
-    a->sinks = out;
+    a->sinks=a->selected->expr.elems[3];
     return true;
 }
 
@@ -662,37 +790,49 @@ static bool aggregate_add(JoinLevel *level, Atom *value) {
     level->aggregate[level->aggregate_length++]=value;return true;
 }
 
-static CettaSpaceAgendaStep sink_step(CettaSpaceAgenda *a) {
-    if(a->sink_row==a->row_count) {a->phase=AGENDA_COMMIT;return CETTA_SPACE_AGENDA_PROGRESS;}
-    Atom *out=a->rows[a->sink_row].outputs;
-    if(a->sink_index==out->expr.len) {a->sink_row++;a->sink_index=1u;return CETTA_SPACE_AGENDA_PROGRESS;}
-    Atom *sink=out->expr.elems[a->sink_index];
-    Atom *body=sink->expr.elems[1];
-    if(atom_is_symbol_id(sink->expr.elems[0],a->plus)) {
-        bool found=false;
-        if(a->contract.set_support && !carrier_contains(a,&a->replacement,body,&found))
-            return pending(a,"CompactSetCarrier");
-        if((!a->contract.set_support || !found) &&
-            !space_admit_atom(&a->replacement,a->owner,body))return pending(a,"SinkAdmission");
-    } else if(a->contract.set_support) {
-        CettaCount n=space_length64(&a->replacement);
-        if(n>SIZE_MAX)return pending(a,"SinkOccurrenceMask");
-        uint8_t *mask=calloc(n?(size_t)n:1u,1u);
-        if(!mask)return pending(a,"SinkOccurrenceMask");
-        for(CettaIndex i=0u;i<n;i++) {
-            bool equal=false;
-            if(!carrier_equal(a,space_get_at64(&a->replacement,i),body,&equal)) {
-                free(mask);return pending(a,"CompactSetCarrier");
-            }
-            mask[i]=equal;
-        }
-        CettaCount removed=0u;
-        bool complete=space_remove_occurrence_mask_stable(&a->replacement,mask,n,&removed);
-        free(mask);
-        if(!complete)return pending(a,"SinkRemoval");
-    } else (void)space_remove(&a->replacement,body);
-    a->sink_index++;return CETTA_SPACE_AGENDA_PROGRESS;
+static bool replacement_keep_reserve(CettaSpaceAgenda *a, CettaCount count) {
+    if (count>SIZE_MAX) return false;
+    if ((size_t)count<=a->replacement_kept_capacity) return true;
+    size_t capacity=a->replacement_kept_capacity ? a->replacement_kept_capacity : 16u;
+    while (capacity<(size_t)count) {
+        if (capacity>SIZE_MAX/2u) {capacity=(size_t)count;break;}
+        capacity*=2u;
+    }
+    uint8_t *grown=realloc(a->replacement_kept,capacity);
+    if (!grown) return false;
+    a->replacement_kept=grown;a->replacement_kept_capacity=capacity;
+    return true;
 }
+
+static void replacement_discard(CettaSpaceAgenda *a) {
+    if (a->replacement_ready)space_free(&a->replacement);
+    a->replacement_ready=false;a->replacement_kept_length=0u;
+    a->removal_ready=false;a->removal=(SpaceRemovalSearch){0};
+    a->sinks_prepared=false;
+}
+
+static void replacement_begin(CettaSpaceAgenda *a) {
+    replacement_discard(a);
+    memset(&a->replacement,0,sizeof(a->replacement));
+    space_init_with_universe(&a->replacement,a->space->universe);
+    a->replacement.kind=a->space->kind;
+    a->replacement_ready=true;a->build_index=0u;
+}
+
+static bool row_requires_sink_qualification(const CettaSpaceAgenda *a) {
+    if (!a->contract.explicit_inputs) return false;
+    bool kept=false;
+    for (size_t i=0u;i<a->input_count;i++)kept=kept || a->inputs[i].kind==INPUT_READ;
+    if (!kept)return false;
+    for (CettaExprIndex i=1u;i<a->sinks->expr.len;i++)
+        if (atom_is_symbol_id(a->sinks->expr.elems[i]->expr.elems[0],a->minus)) return true;
+    return false;
+}
+
+static CettaMatchCompletion agenda_removal_equal(Atom *left, Atom *right) {
+    return atom_eq(left,right) ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
+}
+
 
 static CettaSpaceAgendaStep world_capture_step(CettaSpaceAgenda *a) {
     if (a->capture_index<a->capture_length) {
@@ -888,7 +1028,7 @@ void cetta_space_agenda_resume(CettaSpaceAgenda *a) {
 Atom *cetta_space_agenda_receipt(CettaSpaceAgenda *a) {return a?a->receipt:NULL;}
 Atom *cetta_space_agenda_pending(CettaSpaceAgenda *a) {
     if(!a)return NULL;
-    static const char *phases[]={"Select","Capture","Match","ValidateCapture","ValidateMatch","Build","Sink","Commit","Wait","Rank","WorldCapture","WorldReport","Done","Activate"};
+    static const char *phases[]={"Select","Capture","Match","ValidateCapture","ValidateMatch","Build","Sink","Commit","Wait","Rank","WorldCapture","WorldReport","Done","Activate","QualifyBuild","QualifySink"};
     Atom **waiting=a->waiting_count?malloc(a->waiting_count*sizeof(*waiting)):NULL;
     for(size_t i=0u;waiting && i<a->waiting_count;i++)
         waiting[i]=atom_expr(a->owner,(Atom *[]){natural(a->owner,a->waiting[i].read.revision),
@@ -934,12 +1074,17 @@ static void agenda_storage_one(const CettaSpaceAgenda *a,CettaStorageCensus *c) 
     if (a->world_ready)space_storage_census(&a->world,c);
     cetta_storage_array(c,a->selected_key,a->selected_key_length,1u,0u);
     cetta_storage_array(c,a->inputs,a->input_count,sizeof(*a->inputs),0u);
+    cetta_storage_array(c,a->replacement_kept,a->replacement_kept_capacity,1u,0u);
     cetta_storage_array(c,a->rows,a->row_capacity,sizeof(*a->rows),0u);
     cetta_storage_array(c,a->validation,a->validation_capacity,sizeof(*a->validation),0u);
     for(size_t i=0u;i<2u;i++)
         cetta_storage_array(c,a->match_epochs[i],a->match_epoch_capacity[i],sizeof(uint32_t),0u);
     cetta_storage_array(c,a->waiting,a->waiting_capacity,sizeof(*a->waiting),0u);
     cetta_storage_array(c,a->candidates,a->candidate_capacity,sizeof(*a->candidates),0u);
+    for(const CettaSegmentedBlock *block=a->snapshot_origins.target_to_source.backing.blocks;
+        block;block=block->next)cetta_storage_array(c,block,block->bytes,1u,0u);
+    for(const CettaSegmentedBlock *block=a->current_origins.target_to_source.backing.blocks;
+        block;block=block->next)cetta_storage_array(c,block,block->bytes,1u,0u);
     if(a->snapshot_ready)space_storage_census(&a->snapshot,c);
     if(a->current_ready)space_storage_census(&a->current,c);
     if(a->replacement_ready)space_storage_census(&a->replacement,c);
@@ -1169,7 +1314,10 @@ CettaSpaceAgendaDiscoveryStep cetta_space_agenda_discovery_step(
              * indices and write images are rebuilt only after selection. */
             if (a->snapshot_ready) {space_free(&a->snapshot);a->snapshot_ready=false;}
             if (a->current_ready) {space_free(&a->current);a->current_ready=false;}
-            if (a->replacement_ready) {space_free(&a->replacement);a->replacement_ready=false;}
+            replacement_discard(a);
+            capture_origins_clear(&a->snapshot_origins);
+            capture_origins_clear(&a->current_origins);
+            capture_staging_clear(a);
             if (!discovery_retain(d,&d->preparing)) {
                 d->pending="ChoiceCapacity";return CETTA_SPACE_DISCOVERY_INCOMPLETE;
             }
@@ -1386,7 +1534,8 @@ static bool agenda_checkpoint_cursor_empty(const SpaceOccurrenceCursor *c,
         c->logical_reads.root.instance_id || c->logical_reads.root.revision ||
         c->logical_reads.root.prefix_epoch || c->logical_reads.root.base_prefix_epoch ||
         c->logical_reads.root.base_dependency_epoch || c->logical_reads.bases ||
-        c->logical_reads.base_count)
+        c->logical_reads.base_count || c->logical_reads.base_watches ||
+        c->logical_reads.root_watch.stamp || c->logical_reads.root_watch.expected)
         return agenda_checkpoint_refuse(budget,"AgendaInactiveSelection");
     return true;
 }
@@ -1410,6 +1559,14 @@ bool cetta_space_agenda_checkpoint_admitted(const CettaSpaceAgenda *a,
         a->owned_arena ||
         a->borrowed_capture ||
         a->matching || a->snapshot_ready || a->current_ready || a->replacement_ready ||
+        a->replacement_kept || a->replacement_kept_length || a->replacement_kept_capacity ||
+        a->removal_ready || a->qualifying_sinks || a->sinks_prepared ||
+        !capture_origins_empty(&a->snapshot_origins) ||
+        !capture_origins_empty(&a->current_origins) || a->capture_target || a->capture_probe ||
+        a->capture_search_read.space || a->capture_search_read.instance_id ||
+        a->capture_search_read.revision || a->capture_search_read.prefix_epoch ||
+        a->capture_search_read.base_prefix_epoch || a->capture_search_read.base_dependency_epoch ||
+        a->capture_row_ready || a->capture_row_found || a->capture_search_done || a->capture_retiring ||
         a->inputs || a->input_count || a->levels || a->join_ready ||
         a->rows || a->row_count || a->row_capacity || a->validation ||
         a->validation_count || a->validation_capacity || a->validating ||
@@ -1550,6 +1707,7 @@ bool cetta_space_agenda_checkpoint_copy(const CettaSpaceAgenda *a,
     b->capture_index=a->capture_index; b->capture_length=a->capture_length;
     b->depth=a->depth; b->build_index=a->build_index;
     b->sink_row=a->sink_row; b->sink_index=a->sink_index;
+    b->sink_removal_phase=a->sink_removal_phase;
     b->commits=a->commits; b->retries=a->retries; b->pending=a->pending;
     b->ranking=a->ranking; b->best=a->best; b->schedule=a->schedule; b->oldest=a->oldest;
     b->origin_read=agenda_checkpoint_token_copy(a,b,a->origin_read);
@@ -1690,6 +1848,20 @@ bool cetta_space_agenda_checkpoint_compare(const CettaSpaceAgenda *a,
         AC_F("agenda.match_epoch_capacity",a->match_epoch_capacity[i],b->match_epoch_capacity[i]);
     }
     AC_MEMBER(validating); AC_MEMBER(build_index); AC_MEMBER(sink_row); AC_MEMBER(sink_index);
+    AC_MEMBER(sink_removal_phase);
+    AC_MEMBER(qualifying_sinks);AC_MEMBER(sinks_prepared);AC_MEMBER(removal_ready);
+    AC_P("agenda.replacement_kept",a->replacement_kept,b->replacement_kept);
+    AC_MEMBER(replacement_kept_length);AC_MEMBER(replacement_kept_capacity);
+    AC_S("removal.first",a->removal.first,b->removal.first);
+    AC_S("removal.next",a->removal.next,b->removal.next);
+    AC_S("removal.end",a->removal.end,b->removal.end);
+    AC_S("removal.selected",a->removal.selected,b->removal.selected);
+    AC_S("removal.alpha_count",a->removal.alpha_count,b->removal.alpha_count);
+    AC_S("removal.alpha",a->removal.alpha,b->removal.alpha);
+    AC_S("removal.exact_seen",a->removal.exact_seen,b->removal.exact_seen);
+    AC_S("removal.selected_protected",a->removal.selected_protected,b->removal.selected_protected);
+    AC_S("removal.finished",a->removal.finished,b->removal.finished);
+
     AC_MEMBER(commits); AC_MEMBER(retries);
     AC_A("agenda.receipt",a->receipt,b->receipt);
     /* Reasons are static constants of this normally returning provider. */
@@ -1697,7 +1869,8 @@ bool cetta_space_agenda_checkpoint_compare(const CettaSpaceAgenda *a,
     if (!agenda_checkpoint_token_compare("agenda.origin_read",a->origin_read,b->origin_read,read) ||
         !agenda_checkpoint_token_compare("agenda.selected_read",a->selected_read,b->selected_read,read) ||
         !agenda_checkpoint_token_compare("agenda.capture_read",a->capture_read,b->capture_read,read) ||
-        !agenda_checkpoint_token_compare("agenda.selection_read",a->selection_read,b->selection_read,read)) return false;
+        !agenda_checkpoint_token_compare("agenda.selection_read",a->selection_read,b->selection_read,read) ||
+        !agenda_checkpoint_token_compare("removal.read",a->removal.read,b->removal.read,read)) return false;
     if (a->waiting_count != b->waiting_count || a->waiting_capacity != b->waiting_capacity ||
         a->candidate_count != b->candidate_count || a->candidate_capacity != b->candidate_capacity)
         return agenda_checkpoint_refuse(budget,"AgendaArrayExtent");
@@ -1972,11 +2145,21 @@ static bool agenda_word_cursor(CettaSpaceAgendaTranscript *t, const char *field,
     AW_S("cursor.full_next",c->full_next); AW_S("cursor.pinned",c->pinned);
     AW_S("cursor.logical_scan",c->logical_scan);
     AW_T("cursor.logical_root",c->logical_reads.root);
+    if(c->logical_reads.root.space) {
+        AW_F("cursor.logical_stamp",(uintptr_t)c->logical_reads.root_watch.stamp);
+        AW_S("cursor.logical_expected",c->logical_reads.root_watch.expected);
+        AW_F("cursor.logical_watches",(uintptr_t)c->logical_reads.base_watches);
+    } else if(c->logical_reads.root_watch.stamp || c->logical_reads.root_watch.expected ||
+              c->logical_reads.base_watches)
+        return agenda_word_refuse(t,budget,"TranscriptInactiveReadWatch");
     AW_S("cursor.logical_bases",c->logical_reads.base_count);
-    if (c->logical_reads.base_count && !c->logical_reads.bases)
+    if (c->logical_reads.base_count &&
+        (!c->logical_reads.bases || !c->logical_reads.base_watches))
         return agenda_word_refuse(t,budget,"TranscriptCursorBases");
     for (size_t i=0u;i<c->logical_reads.base_count;i++) {
         AW_S("cursor.base_index",i); AW_T("cursor.base",c->logical_reads.bases[i]);
+        AW_F("cursor.base_stamp",(uintptr_t)c->logical_reads.base_watches[i].stamp);
+        AW_S("cursor.base_expected",c->logical_reads.base_watches[i].expected);
     }
     /* Opaque query buffers are represented by the real poll chronology.
      * They remain in a refused active provider and are never reconstructed. */
@@ -2045,6 +2228,27 @@ static bool agenda_word_state(CettaSpaceAgendaTranscript *t,
     AW_S("agenda.validating",a->validating); AW_S("agenda.depth",a->depth);
     AW_S("agenda.join_ready",a->join_ready); AW_S("agenda.build_index",a->build_index);
     AW_S("agenda.sink_row",a->sink_row); AW_S("agenda.sink_index",a->sink_index);
+    AW_S("agenda.sink_removal_phase",a->sink_removal_phase);
+    AW_S("agenda.qualifying_sinks",a->qualifying_sinks);
+    AW_S("agenda.sinks_prepared",a->sinks_prepared);
+    AW_S("agenda.removal_ready",a->removal_ready);
+    AW_S("agenda.replacement_kept_length",a->replacement_kept_length);
+    AW_F("agenda.replacement_kept_capacity",a->replacement_kept_capacity);
+    if(a->replacement_kept_length>a->replacement_kept_capacity ||
+        (a->replacement_kept_length && !a->replacement_kept))return false;
+    if(!agenda_word_bytes(t,"agenda.replacement_kept",a->replacement_kept,
+        a->replacement_kept_length,budget))return false;
+    AW_T("removal.read",a->removal.read);
+    AW_S("removal.first",a->removal.first);
+    AW_S("removal.next",a->removal.next);
+    AW_S("removal.end",a->removal.end);
+    AW_S("removal.selected",a->removal.selected);
+    AW_S("removal.alpha_count",a->removal.alpha_count);
+    AW_S("removal.alpha",a->removal.alpha);
+    AW_S("removal.exact_seen",a->removal.exact_seen);
+    AW_S("removal.selected_protected",a->removal.selected_protected);
+    AW_S("removal.finished",a->removal.finished);
+
     AW_S("agenda.commits",a->commits); AW_S("agenda.retries",a->retries);
     AW_S("agenda.snapshot_exec_appended",a->snapshot_exec_appended);
     AW_S("agenda.current_exec_appended",a->current_exec_appended);
@@ -2352,10 +2556,19 @@ static bool agenda_live_cursor(AgendaLiveWord *r,const char *field,
     AL_S("cursor.full_next",cursor->full_next);AL_S("cursor.pinned",cursor->pinned);
     AL_S("cursor.logical_scan",cursor->logical_scan);
     AL_T("cursor.logical_root",cursor->logical_reads.root);
+    if(cursor->logical_reads.root.space) {
+        AL_P("cursor.logical_stamp",(uintptr_t)cursor->logical_reads.root_watch.stamp);
+        AL_S("cursor.logical_expected",cursor->logical_reads.root_watch.expected);
+        AL_P("cursor.logical_watches",(uintptr_t)cursor->logical_reads.base_watches);
+    } else if(cursor->logical_reads.root_watch.stamp || cursor->logical_reads.root_watch.expected ||
+              cursor->logical_reads.base_watches)return false;
     AL_S("cursor.logical_bases",cursor->logical_reads.base_count);
-    if(cursor->logical_reads.base_count&&!cursor->logical_reads.bases)return false;
+    if(cursor->logical_reads.base_count &&
+        (!cursor->logical_reads.bases || !cursor->logical_reads.base_watches))return false;
     for(size_t i=0u;i<cursor->logical_reads.base_count;i++) {
         AL_S("cursor.base_index",i);AL_T("cursor.base",cursor->logical_reads.bases[i]);
+        AL_P("cursor.base_stamp",(uintptr_t)cursor->logical_reads.base_watches[i].stamp);
+        AL_S("cursor.base_expected",cursor->logical_reads.base_watches[i].expected);
     }
     return true;
 }
@@ -2418,6 +2631,27 @@ static bool agenda_live_state(AgendaLiveWord *r,const CettaSpaceAgendaEvent *eve
     AL_S("agenda.validating",a->validating);AL_S("agenda.depth",a->depth);
     AL_S("agenda.join_ready",a->join_ready);AL_S("agenda.build_index",a->build_index);
     AL_S("agenda.sink_row",a->sink_row);AL_S("agenda.sink_index",a->sink_index);
+    AL_S("agenda.sink_removal_phase",a->sink_removal_phase);
+    AL_S("agenda.qualifying_sinks",a->qualifying_sinks);
+    AL_S("agenda.sinks_prepared",a->sinks_prepared);
+    AL_S("agenda.removal_ready",a->removal_ready);
+    AL_S("agenda.replacement_kept_length",a->replacement_kept_length);
+    AL_P("agenda.replacement_kept_capacity",a->replacement_kept_capacity);
+    if(a->replacement_kept_length>a->replacement_kept_capacity ||
+        (a->replacement_kept_length && !a->replacement_kept))return false;
+    if(!agenda_live_bytes(r,"agenda.replacement_kept",a->replacement_kept,
+        a->replacement_kept_length))return false;
+    AL_T("removal.read",a->removal.read);
+    AL_S("removal.first",a->removal.first);
+    AL_S("removal.next",a->removal.next);
+    AL_S("removal.end",a->removal.end);
+    AL_S("removal.selected",a->removal.selected);
+    AL_S("removal.alpha_count",a->removal.alpha_count);
+    AL_S("removal.alpha",a->removal.alpha);
+    AL_S("removal.exact_seen",a->removal.exact_seen);
+    AL_S("removal.selected_protected",a->removal.selected_protected);
+    AL_S("removal.finished",a->removal.finished);
+
     AL_S("agenda.commits",a->commits);AL_S("agenda.retries",a->retries);
     AL_S("agenda.snapshot_exec_appended",a->snapshot_exec_appended);
     AL_S("agenda.current_exec_appended",a->current_exec_appended);

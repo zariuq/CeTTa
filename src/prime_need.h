@@ -288,6 +288,13 @@ CettaMatchCompletion prime_need_reader_context_visit(const PrimeNeedReaderContex
  * version, so an older merge cannot resurrect its retired reader. */
 CettaMatchCompletion prime_need_reader_context_update(const PrimeNeedReaderContext *base,
     uint64_t key, const PrimeNeedReaderValue *value, PrimeNeedReaderContext **out);
+/* Clear selected live values in one private descendant, retaining every key
+ * and prior tombstone. Visit live entries once in ascending key order; the
+ * predicate borrows immutable input and cannot release it. No-op keeps the
+ * original context identity; refusal leaves out and all owners unchanged. */
+CettaMatchCompletion prime_need_reader_context_clear_if(const PrimeNeedReaderContext *base,
+    CettaMatchCompletion (*should_clear)(uint64_t key,const PrimeNeedReaderValue *value,
+        void *state,bool *clear),void *state,PrimeNeedReaderContext **out);
 /* An actual descendant wins over its ancestor. Incomparable versions may
  * combine equal/disjoint entries; different values of one key refuse. */
 CettaMatchCompletion prime_need_reader_context_merge(const PrimeNeedReaderContext *left,
@@ -355,6 +362,9 @@ typedef struct {
      * absence of its completion event is an external dependency, not a firing. */
     uint64_t producer_update_id;
     bool producer_completed;
+    /* Canonical operational State occurrence described by this observation.
+     * Zero denotes an independent diagnostic event with no such link. */
+    uint64_t state_event_id;
 #endif
     StateCell *state_cell;
     Atom *before;
@@ -1018,6 +1028,15 @@ bool prime_need_receipt_read_state(
 bool prime_need_receipt_write_state(
     Arena *owner, const PrimeNeedReceipt *base, StateCell *cell,
     Atom *before, Atom *after, PrimeNeedReceipt *out);
+/* Observe the latest supplied operational State read/write. Its canonical
+ * identity and payload come from that carrier, including after promotion or
+ * State grafting; no operation is executed or inferred from equal values.
+ * The caller supplies/retains the actual operational carrier and external
+ * cell owners. This observation grants no authority to execute or replay it.
+ * Diagnostic read_state/write_state above leave state_event_id zero.
+ * Refusal leaves out unchanged. */
+bool prime_need_receipt_record_state(Arena *owner,const PrimeNeedReceipt *base,
+    const PrimeNeedBranchState *operation,PrimeNeedReceipt *out);
 bool prime_need_receipt_use_equation(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t source_occurrence_id, uint64_t rule_occurrence_id,

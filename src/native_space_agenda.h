@@ -32,7 +32,12 @@ typedef enum {
 
 /* These are realized contracts, not the final universe of resource policies.
  * MM2 uses set support and compact-expression byte selection. Transactions
- * retain bag occurrences and read/take/all/absent input annotations. */
+ * retain bag occurrences and read/take/all/absent input annotations. A read
+ * keeps its exact input occurrence: reads may share it, but a take (including
+ * the selected exec) must use a different occurrence. all/absent are predicate
+ * queries over the pre-state, not kept inputs. Migration diagnostics are
+ * available through make lint-prime-transaction-reads TRANSACTION_READ_LINT_FILES=... .
+ * Legacy removal sinks have separate effects and require footprint review. */
 CettaSpaceAgenda *cetta_space_agenda_new(Space *space, Arena *owner,
     const Bindings *environment, CettaSpaceAgendaContract contract);
 void cetta_space_agenda_free(CettaSpaceAgenda *agenda);
@@ -70,8 +75,9 @@ CettaSpaceAgendaMatch *cetta_space_agenda_match_capture(CettaSpaceAgenda *agenda
  * including a refused binding promotion. This query performs no match work. */
 bool cetta_space_agenda_match_prepared(const CettaSpaceAgenda *agenda);
 enum { CETTA_SPACE_AGENDA_MATCH_NODES = 32 };
-/* Zero is inert. Node grants count actual worklist nodes, not bytes or CPU
- * inside equality, occurs checking or a binding/copy primitive. */
+/* Zero is inert. Grants count retained matcher steps: pair entries, alias
+ * resolution, graph probes and graph maintenance. They are not byte or CPU
+ * bounds on the remaining equality, allocation and binding/copy primitives. */
 bool cetta_space_agenda_match_run(CettaSpaceAgendaMatch *match, uint64_t node_budget);
 /* Snapshot alternatives are issued once to the enclosing native hub. The
  * root owns their storage; acceptance transfers only the ready-work edge. */

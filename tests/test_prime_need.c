@@ -2465,6 +2465,16 @@ static void check_state_production_import(void) {
         "qualified State graft transports the actual post-entrance diamond");
     CHECK(state_import_number(&imported,&a,2) && state_import_number(&imported,&b,1) &&
         state_import_number(&imported,&c,1), "producer a=1 cannot overwrite recipient a=2");
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    /* Operational State grafts preserve canonical events under new physical
+     * node identities. The current receipt graph has a stricter identity
+     * invariant, so treating this carrier as a recorded receipt is invalid. */
+    PrimeNeedReceiptGraph state_as_receipt = {0};
+    CHECK(prime_need_receipt_graph_collect(&imported,&state_as_receipt) ==
+        PRIME_NEED_RECEIPT_GRAPH_INVALID,
+        "a rebased operational State DAG is not yet a receipt-graph transport");
+    prime_need_receipt_graph_free(&state_as_receipt);
+#endif
     PrimeNeedBranchState absent = {0}, absent_result = {0}, malformed = {.owner=&source};
     CHECK(prime_need_branch_state_import_suffix(&receiving,&absent,&absent,&absent,&absent,
         state_import_initial,&view,&absent_result) == CETTA_MATCH_MATCHED &&
@@ -2492,6 +2502,19 @@ static void check_state_production_import(void) {
         state_import_initial,&view,&completed) == CETTA_MATCH_MATCHED &&
         prime_need_branch_state_equal(&completed,&imported),
         "a held branch of the source diamond permits delivery of its independent missing branch");
+    PrimeNeedBranchState second_partial = {0};
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&left,&recipient,
+        state_import_initial,&view,&second_partial) == CETTA_MATCH_MATCHED &&
+        partial.top && second_partial.top && partial.top != second_partial.top &&
+        prime_need_branch_state_is_ancestor(&recipient,&partial) &&
+        prime_need_branch_state_is_ancestor(&recipient,&second_partial) &&
+        prime_need_branch_state_equal(&partial,&second_partial),
+        "independent grafts realize the same event over one recipient using distinct roots");
+    PrimeNeedBranchState joined_partials = partial;
+    CHECK(prime_need_branch_state_merge(&joined_partials,&second_partial) &&
+        prime_need_branch_state_equal(&joined_partials,&partial) &&
+        state_import_number(&joined_partials,&b,1),
+        "joining those realizations retains one event and one State write");
     PrimeNeedBranchState after = {0}, repeated = {0};
     CHECK(prime_need_branch_state_write(&receiving,&completed,&b,atom_int(&receiving,1),
         atom_int(&receiving,2),&after), "recipient can write after consuming the source");
@@ -3142,6 +3165,110 @@ static void check_private_need_suffix(Arena *arena, Arena *promoted_arena) {
               !prime_need_snapshot_suffix_is_private(&base, &promoted),
           "relocating a caller-cell update does not make it private");
 }
+
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static void check_state_receipt_operation_identity(void) {
+    Arena values,operations,observations,copied;
+    arena_init(&values);arena_init(&operations);arena_init(&observations);arena_init(&copied);
+    Atom *zero=atom_int(&values,0),*one=atom_int(&values,1);
+    StateCell cell={.value=zero,.content_type=atom_symbol(&values,"Number")};
+    PrimeNeedBranchState states[6]={{0}};
+    PrimeNeedReceipt receipts[6]={{0}};
+    uint64_t ids[5]={0};
+    bool ready=prime_need_branch_state_begin(&operations,&states[0]) &&
+        prime_need_receipt_begin(&observations,&receipts[0]);
+    CHECK(ready,"begin distinct operational and observer State carriers");
+    for(size_t i=0u;ready && i<5u;i++) {
+        Atom *before=i==1u?one:zero,*after=i==0u?one:zero;
+        ready=i==4u
+            ? prime_need_branch_state_read(&operations,&states[i],&cell,zero,&states[i+1u])
+            : prime_need_branch_state_write(&operations,&states[i],&cell,before,after,&states[i+1u]);
+        CHECK(ready,"construct an actual State occurrence including ABA and equal writes");
+        if(!ready)break;
+        PrimeNeedReceiptEvent operation={0},observation={0};
+        ready=prime_need_receipt_event_at(&states[i+1u],i,&operation);
+        CHECK(ready && operation.event_id && !operation.state_event_id,
+            "operational State identity exists independently of observation");
+        const PrimeNeedReceiptFrame *unchanged=states[i+1u].top;
+        ready=ready && prime_need_receipt_record_state(&observations,&receipts[i],
+            &states[i+1u],&receipts[i+1u]) &&
+            prime_need_receipt_event_at(&receipts[i+1u],i,&observation);
+        CHECK(ready,"record the operational occurrence through the common receipt owner");
+        if(!ready)break;
+        ids[i]=operation.event_id;
+        CHECK(observation.state_event_id==operation.event_id &&
+            observation.event_id>observation.state_event_id && observation.kind==operation.kind &&
+            observation.state_cell==&cell && atom_eq(observation.after,operation.after) &&
+            ((!observation.before && !operation.before) ||
+                (observation.before && operation.before && atom_eq(observation.before,operation.before))),
+            "observer identity is fresh while its State link and payload name the exact operation");
+        CHECK(states[i+1u].top==unchanged && cell.value==zero,
+            "recording neither reruns the operation nor mutates the operational carrier or cell");
+        for(size_t j=0u;j<i;j++)CHECK(ids[j]!=ids[i],
+            "ABA and equal-valued writes retain distinct operational identities");
+    }
+    if(ready) {
+        PrimeNeedReceiptGraph graph={0};
+        CHECK(prime_need_receipt_graph_collect(&receipts[5],&graph)==PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+            graph.event_count==5u,"correlated State observations form a complete diagnostic graph");
+        for(size_t i=0u;i<graph.length;i++)if(graph.nodes[i].has_event) {
+            PrimeNeedReceiptEvent saved=graph.nodes[i].event;
+            graph.nodes[i].event.state_event_id=saved.event_id;
+            CHECK(prime_need_receipt_graph_validate(&graph)==PRIME_NEED_RECEIPT_GRAPH_INVALID,
+                "a State observation cannot precede its claimed operation");
+            graph.nodes[i].event=saved;graph.nodes[i].event.kind=PRIME_NEED_RECEIPT_INSPECT_ORIGIN;
+            CHECK(prime_need_receipt_graph_validate(&graph)==PRIME_NEED_RECEIPT_GRAPH_INVALID,
+                "non-State event kinds cannot carry an operational State link");
+            graph.nodes[i].event=saved;graph.nodes[i].event.state_cell=NULL;
+            CHECK(prime_need_receipt_graph_validate(&graph)==PRIME_NEED_RECEIPT_GRAPH_INVALID,
+                "a correlated State event retains its resource identity");
+            graph.nodes[i].event=saved;
+        }
+        prime_need_receipt_graph_free(&graph);
+        PrimeNeedReceipt preserved=receipts[5],empty={0},not_state={0};
+        CHECK(!prime_need_receipt_record_state(&observations,&receipts[0],&empty,&preserved) &&
+            preserved.top==receipts[5].top,"absent operational input leaves the owned receipt unchanged");
+        CHECK(prime_need_receipt_use_equation_ids(&observations,&receipts[0],1u,1u,&not_state) &&
+            !prime_need_receipt_record_state(&observations,&receipts[0],&not_state,&preserved) &&
+            preserved.top==receipts[5].top,"a non-State operation cannot masquerade as a State witness");
+        PrimeNeedRecording *group=prime_need_recording_new((PrimeNeedRecordingLimits){8u,16384u,1u,4u});
+        PrimeNeedReceipt bounded={0},omitted={0};
+        bool reserved=group && prime_need_recording_reserve(group,NULL,4u,8192u,&bounded);
+        CHECK(reserved,"reserve a bounded observer without changing State execution");
+        if(reserved) {
+            PrimeNeedRecordingScope scope;
+            prime_need_recording_enter(&scope,&bounded);
+            CHECK(prime_need_receipt_record_state(&observations,&bounded,&states[5],&omitted),
+                "State correlation follows the recorder's existing omission policy");
+            prime_need_recording_leave(&scope);
+            PrimeNeedRecordingStatus status=prime_need_recording_status(group);
+            CHECK(status.incomplete && status.omitted>0u,
+                "a bounded omitted State observation never claims complete history");
+        }
+        if(group)prime_need_recording_release(group);
+        PrimeNeedBranchState state_copy=states[5];
+        PrimeNeedReceipt receipt_copy=receipts[5];
+        bool promoted=prime_need_branch_state_promote(&copied,&state_copy) &&
+            prime_need_receipt_promote(&copied,&receipt_copy);
+        CHECK(promoted && prime_need_receipt_equal(&receipt_copy,&receipts[5]),
+            "promotion preserves exact operational State links and observer identities");
+        if(promoted) {
+            arena_free(&operations);arena_init(&operations);
+            arena_free(&observations);arena_init(&observations);
+            for(size_t i=0u;i<5u;i++) {
+                PrimeNeedReceiptEvent observed={0};
+                CHECK(prime_need_receipt_event_at(&receipt_copy,i,&observed) && observed.state_event_id==ids[i],
+                    "promoted correlation survives retirement of both source arenas");
+            }
+            PrimeNeedReceipt later={0};PrimeNeedReceiptEvent event={0};
+            CHECK(prime_need_receipt_record_state(&copied,&receipt_copy,&state_copy,&later) &&
+                prime_need_receipt_event_at(&later,5u,&event) && event.state_event_id==ids[4],
+                "an arena-promoted operational frame retains its canonical State identity");
+        }
+    }
+    arena_free(&copied);arena_free(&observations);arena_free(&operations);arena_free(&values);
+}
+#endif
 
 int main(void) {
     SymbolTable symbols;
@@ -4052,6 +4179,8 @@ int main(void) {
           "the receipt join contains both causal branches");
     CHECK(prime_need_receipt_event_count(&independent_join) == 3u,
           "the join is the occurrence-preserving union of common support");
+
+    check_state_receipt_operation_identity();
 
     StateCell state = {
         .value = atom_int(&arena, 0),

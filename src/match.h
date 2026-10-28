@@ -649,6 +649,10 @@ bool      bindings_logical_atoms_satisfy(
  * success does not grant substitution, lifetime or source-read authority. */
 bool      bindings_payloads_satisfy(const Bindings *bindings,
               AtomTreePredicate atoms, PrimeNeedStateCellPredicate cells, void *context);
+/* As above for logical, Need, State, receipt and weight carriers, without
+ * inspecting reader-owner values. The caller must qualify those separately. */
+bool      bindings_carriers_payloads_satisfy(const Bindings *bindings,
+              AtomTreePredicate atoms, PrimeNeedStateCellPredicate cells, void *context);
 /* Conservative support query over the logical substitution carrier only.
  * Prime occurrence state is intentionally excluded: callers use this to
  * decide whether a visible continuation can retain a registry capability. */

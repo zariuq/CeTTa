@@ -6226,12 +6226,7 @@ static bool prime_binder_reference(const Atom *key, Atom *term) {
  * (prime_semantics_elaborate_form): the names its body quantifies, which
  * each application copies afresh.  Own names bind in the body as the
  * binders do. */
-typedef struct {
-    CettaPrimeLambdaBinderGroupV1 *groups;
-    size_t count;
-    bool listed;
-    Atom *own;
-} PrimeLambdaTelescope;
+typedef CettaPrimeLambdaTelescopeV1 PrimeLambdaTelescope;
 
 /* An own-name list, `(OWN RECORD $y ...)`: the reserved head is a
  * symbol no source text can spell (it holds a space), so an elaborated list
@@ -6269,34 +6264,7 @@ static Atom *prime_list_with(Arena *arena, Atom *list, CettaExprIndex index,
 
 static bool prime_lambda_telescope(Arena *arena, Atom *term,
                                    PrimeLambdaTelescope *out) {
-    if (!arena || !term || term->kind != ATOM_EXPR ||
-        (term->expr.len != 3u && term->expr.len != 4u) ||
-        !is_symbol_named(term->expr.elems[0], "lam"))
-        return false;
-    if (term->expr.len == 4u && !prime_own_list(term->expr.elems[3]))
-        return false;
-    PrimeLambdaTelescope telescope = {0};
-    if (cetta_prime_lambda_binder_groups_v1(
-            arena, term->expr.elems[1], &telescope.groups, &telescope.count,
-            &telescope.listed) != CETTA_PRIME_LAMBDA_BINDERS_OK_V1)
-        return false;
-    for (size_t g = 0u; g < telescope.count; g++) {
-        for (size_t i = 0u; i < telescope.groups[g].names_count; i++) {
-            Atom *name = cetta_prime_lambda_binder_name_v1(
-                &telescope.groups[g], i);
-            if (!name) return false;
-            if (name->kind != ATOM_VAR) {
-                CettaPrimeNameStatusV1 status =
-                    cetta_prime_name_key_v1(name, true, NULL, NULL);
-                if (status != CETTA_PRIME_NAME_OK_V1 &&
-                    status != CETTA_PRIME_NAME_ANONYMOUS_V1)
-                    return false;
-            }
-        }
-    }
-    telescope.own = term->expr.len == 4u ? term->expr.elems[3] : NULL;
-    *out = telescope;
-    return true;
+    return cetta_prime_lambda_telescope_v1(arena,term,out);
 }
 
 static bool prime_group_binds(const CettaPrimeLambdaBinderGroupV1 *group,
@@ -6342,6 +6310,10 @@ static bool prime_iter_template(const Atom *term, PrimeIterTemplate *out) {
         return false;
     if (out) *out = view;
     return true;
+}
+
+bool prime_semantics_is_iteration_template(const Atom *call) {
+    return prime_iter_template(call, NULL);
 }
 
 static bool prime_iter_binds(const Atom *term, const PrimeIterTemplate *view,

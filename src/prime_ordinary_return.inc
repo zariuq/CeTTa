@@ -101,6 +101,7 @@ CettaContinuationStatus eval_prime_source_owner_capture_profile(Space *space,Reg
         bool okay=region->program && space_length64(region->program)==rows &&
             prime_native_region_tick(&capture) &&
             petta_program_synchronize_space(region->library->petta_program,region->program) &&
+            prime_native_region_hold_program_view(&capture,region->program) &&
             prime_native_region_measure(&capture,NULL);
         cetta_native_cost_scope_leave(&cost);
         prime_native_region_scope_leave(&selected);

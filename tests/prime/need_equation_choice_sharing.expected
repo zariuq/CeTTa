@@ -1,3 +1,16 @@
+shared-eval-effect
+shared-three-effect
+(map-earned 2)
+(map-earned 1)
+(fold-earned 1)
+(fold-earned 2)
+(map-fallback 4)
+(map-fallback 2)
 [()]
 [(left A), (right B), (wild A), (wild B)]
 [0]
+[Matched, (Any 7)]
+[First, Second, (Any 7)]
+[MapMatched, (MapAny (1 2))]
+[FoldMatched, (FoldAny 3)]
+[TupleMatched, (TupleAny ((healthy 1) (faulty 2)))]

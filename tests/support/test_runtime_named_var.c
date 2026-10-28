@@ -149,8 +149,8 @@ int main(void) {
               atom_alpha_eq(collision_pair, collision_forms[0]),
           "freshened collision rendering preserves the variable partition");
 
-    Atom *local = atom_var_with_id(&arena, "x", (VarId)60001u);
-    Atom *metadata_only = atom_var_with_id(&arena, "x", (VarId)60002u);
+    Atom *local = atom_var_with_id(&arena, "x", fresh_var_id());
+    Atom *metadata_only = atom_var_with_id(&arena, "x", fresh_var_id());
     Atom *owned = atom_expr3(&arena,
         atom_internal_tag(&arena, CETTA_INTERNAL_TAG_PRIME_OWN),
         atom_symbol(&arena, "scope-record"), metadata_only);

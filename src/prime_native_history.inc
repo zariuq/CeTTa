@@ -87,8 +87,9 @@ static bool prime_native_history_configure(PrimeNativeControl *control,
 static bool prime_native_history_quiescent(const PrimeNativeControl *control) {
     return control && !control->leased && !control->active_work &&
         !control->driver.running_task && !control->history.active &&
-        g_prime_eval_stack_driver!=&control->driver &&
-        g_prime_eval_top_authority!=&control->driver;
+        (!control->source_services || !atomic_load_explicit(
+            &control->source_services->active,memory_order_acquire)) &&
+        prime_native_driver_active_scope_status(&control->driver)==CETTA_CONTINUATION_READY;
 }
 static bool prime_native_history_forget_control(PrimeNativeControl *control) {
     if (!prime_native_history_quiescent(control)) return false;
@@ -114,7 +115,7 @@ static PrimeNeedReceipt prime_native_history_reserve(PrimeNativeControl *control
 
 static void prime_native_history_begin(PrimeNativeControl *control,
     const PrimeNativeWork *work, uint64_t occurrence,
-    PrimeNeedReceipt *slice, PrimeNeedRecordingScope *scope) {
+    PrimeNeedReceipt *slice, PrimeNeedRecordingScope *scope, bool delivery_retry) {
     PrimeNativeHistory *history = &control->history;
     if (!history->spec.enabled) return;
     *slice = prime_native_history_reserve(control);
@@ -126,8 +127,8 @@ static void prime_native_history_begin(PrimeNativeControl *control,
                         work->dialect ? "Dialect" : "Need",
             .operation = *slice,
             .prepared = prime_native_parallel_history(work),
-            .paid = work->prepared_publication,
-            .preparation = work->parallel != NULL || work->prepared_publication,
+            .paid = delivery_retry || work->prepared_publication,
+            .preparation = delivery_retry || work->parallel != NULL || work->prepared_publication,
         };
     } else if (history->omitted != UINT64_MAX) history->omitted++;
     else history->overflow = true;
@@ -189,7 +190,7 @@ static bool prime_native_history_root_atom(const PrimeNeedReceipt *root, void *r
         const PrimeNeedReceiptEvent *event = &node->event;
         Atom *payload = atom_symbol(arena, "Join");
         if (node->has_event) {
-            Atom *fields[] = {atom_symbol(arena, "NeedEvent"),
+            Atom *fields[13] = {atom_symbol(arena, "NeedEvent"),
                 atom_int(arena, event->kind),
                 prime_native_occurrence_atom(arena, event->need_session_id),
                 prime_native_occurrence_atom(arena, event->thunk_id),
@@ -202,7 +203,10 @@ static bool prime_native_history_root_atom(const PrimeNeedReceipt *root, void *r
                     !event->producer_update_id ? "None" : retained[i] ? "Retained" : "External")),
                 prime_native_history_quote(arena, event->before),
                 prime_native_history_quote(arena, event->after)};
-            payload = atom_expr(arena, fields, 12u);
+            if (event->state_event_id)
+                fields[12]=prime_native_history_field(arena,"state-event",
+                    prime_native_occurrence_atom(arena,event->state_event_id));
+            payload = atom_expr(arena, fields,event->state_event_id?13u:12u);
         }
         Atom *fields[] = {atom_symbol(arena, "NeedNode"),
             prime_native_occurrence_atom(arena, node->identity_id),

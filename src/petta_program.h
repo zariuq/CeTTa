@@ -697,6 +697,10 @@ bool petta_program_revision_view_bind(
 bool petta_program_revision_projection_current(
     const PettaProgramRevisionProjection *projection,
     const Space *target);
+/* The program and source remain owned by the caller. This validates the
+ * extra dependencies needed to borrow this view's compiled source plans. */
+bool petta_program_revision_view_source_plans_current(
+    PettaProgram *program, Space *source, const PettaProgramRevisionView *view);
 bool petta_program_revision_view_equation_lease(
     const PettaProgramRevisionProjection *projection,
     Space *space, SymbolId head,

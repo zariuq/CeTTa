@@ -34,6 +34,7 @@ static _Thread_local uint64_t
 static _Thread_local CettaCount g_query_results_capacity_limit_override = 0;
 static _Atomic uint64_t g_space_next_instance_id = 1u;
 static _Atomic uint64_t g_space_next_prefix_epoch = 1u;
+static _Atomic uint64_t g_space_next_read_stamp = 1u;
 _Atomic uint64_t cetta_space_global_mutation_epoch = 0u;
 
 static _Thread_local bool g_declared_type_index_configured = false;
@@ -97,6 +98,31 @@ static uint64_t space_fresh_prefix_epoch(void) {
         abort();
     }
     return epoch;
+}
+
+static bool space_read_stamp_valid(uint64_t stamp) {
+    return stamp && stamp!=UINT64_MAX;
+}
+
+static void space_read_stamp_publish(Space *s) {
+    if (!s) return;
+    uint64_t stamp=atomic_fetch_add_explicit(&g_space_next_read_stamp,1u,
+                                            memory_order_relaxed);
+    if (!stamp || stamp==UINT64_MAX) {
+        fputs("CeTTa: exhausted Space read-view stamps\n",stderr);
+        abort();
+    }
+    atomic_store_explicit(&s->read_stamp,stamp,memory_order_release);
+}
+
+void space_read_view_invalidate(Space *s) {
+    if(!s)return;
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    space_read_stamp_publish(s);
+    /* Importers consult this module's own representation. Their importers
+     * do not thereby consult its dependencies; do not widen that relation. */
+    for(uint32_t i=0u;i<s->importer_count;i++)
+        space_read_stamp_publish(s->importers[i]);
 }
 
 static void space_advance_global_mutation_epoch(void) {
@@ -6054,6 +6080,7 @@ static void space_move_storage_and_backend(Space *dst, Space *src) {
 static void space_reset_moved_from(Space *s) {
     if (!s)
         return;
+    atomic_store_explicit(&s->read_stamp,0u,memory_order_release);
     s->kind = SPACE_KIND_ATOM;
     /* Moving the payload ends the old source lifetime.  Re-establish every
        invariant of an empty live Space so callers may safely reuse or free it:
@@ -6072,6 +6099,7 @@ static void space_reset_moved_from(Space *s) {
     s->payload_export_owner_epoch = 0;
     s->imported_len = 0;
     s->module_dependency_epoch = 0u;
+    space_read_stamp_publish(s);
 }
 
 /* ── Space ──────────────────────────────────────────────────────────────── */
@@ -6090,6 +6118,7 @@ static uint64_t space_ledger_heap_in_use(void) {
 void space_init_with_universe(Space *s, TermUniverse *universe) {
     if (!s)
         return;
+    atomic_init(&s->read_stamp,0u);
     s->ledger_counted = cetta_runtime_stats_is_enabled();
     uint64_t heap_before = s->ledger_counted ? space_ledger_heap_in_use() : 0u;
     s->kind = SPACE_KIND_ATOM;
@@ -6114,6 +6143,7 @@ void space_init_with_universe(Space *s, TermUniverse *universe) {
     s->module_dependency_epoch = 0u;
     /* Never cleared later: false is the claim that no subtype row exists. */
     s->declares_subtypes = false;
+    space_read_stamp_publish(s);
     if (s->ledger_counted) {
         uint64_t heap_after = space_ledger_heap_in_use();
         cetta_runtime_stats_gauge_add(CETTA_RUNTIME_COUNTER_SPACE_LIVE,
@@ -6191,6 +6221,7 @@ static void space_note_dependency_mutation(
             (SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
              SPACE_MUTATION_EQUATION_PROJECTION_OPAQUE)))
         importer->equation_revision++;
+    space_read_stamp_publish(importer);
 }
 
 static bool space_add_dependency_link(Space *importer, Space *dependency) {
@@ -6216,6 +6247,7 @@ static bool space_add_dependency_link(Space *importer, Space *dependency) {
 }
 
 bool space_add_dependency(Space *importer, Space *dependency) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     return importer && !importer->module_own_view &&
            space_add_dependency_link(importer, dependency);
 }
@@ -6293,6 +6325,7 @@ bool space_view_row_may_be_rule(const Space *s, CettaIndex index) {
 }
 
 bool space_copy_module_view(Space *dst, const Space *src) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!dst || !src)
         return false;
     CettaIndex imported = space_imported_length(src);
@@ -6303,8 +6336,12 @@ bool space_copy_module_view(Space *dst, const Space *src) {
         for (CettaIndex i = 0u; i < imported && same_prefix; i++)
             same_prefix = space_get_atom_id_at64(dst, i) ==
                           space_get_atom_id_at64(src, i);
-        if (same_prefix)
+        if (same_prefix && dst->imported_len!=imported) {
             dst->imported_len = imported;
+            space_publish_mutation(dst,SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+                                   SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION,
+                                   SPACE_MUTATION_PREFIX_REWRITTEN);
+        }
     }
     uint32_t dependencies = space_dependency_count(src);
     for (uint32_t d = 0u; d < dependencies; d++) {
@@ -6344,9 +6381,17 @@ static void space_dependencies_unlink(Space *s) {
 }
 
 bool space_mark_imported_prefix(Space *s) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!s || space_has_overlay_base(s) || s->kind != SPACE_KIND_ATOM)
         return false;
-    s->imported_len = space_length64(s);
+    CettaIndex imported=space_length64(s);
+    if(s->imported_len!=imported) {
+        s->imported_len=imported;
+        /* Visibility changes existing rows; it introduces no new subtype. */
+        space_publish_mutation(s,SPACE_MUTATION_EQUATION_PROJECTION_RELEVANT |
+                               SPACE_MUTATION_EQUATION_PROJECTION_DECLARATION,
+                               SPACE_MUTATION_PREFIX_REWRITTEN);
+    }
     return true;
 }
 
@@ -6440,6 +6485,7 @@ static bool space_atom_id_imported_only(const Space *s, AtomId atom_id) {
 }
 
 void space_init_overlay(Space *s, const Space *base) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     space_init_with_universe(s, base ? base->native.universe : NULL);
     if (!base)
         return;
@@ -6449,6 +6495,7 @@ void space_init_overlay(Space *s, const Space *base) {
 }
 
 bool space_init_overlay_local(Space *s, const Space *base) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     space_init_overlay(s, base);
     SpaceEngine backend = base && base->match_backend.kind != SPACE_ENGINE_MORK
         ? base->match_backend.kind : SPACE_ENGINE_NATIVE;
@@ -6463,6 +6510,7 @@ void space_init(Space *s) {
 }
 
 bool space_init_module_own_view(Space *s, Space *module) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!s || !module || s == module || module->module_own_view)
         return false;
     space_init_overlay(s, module);
@@ -6477,6 +6525,7 @@ bool space_init_module_own_view(Space *s, Space *module) {
 }
 
 bool space_module_own_view_select(Space *view, Space *storage) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!view || !view->module_own_view || !storage || storage->module_own_view ||
         !space_add_dependency_link(view, storage))
         return false;
@@ -6490,6 +6539,7 @@ bool space_module_own_view_select(Space *view, Space *storage) {
 }
 
 void space_module_own_view_release(Space *view, Space *storage) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!view || !view->module_own_view || !storage)
         return;
     bool selected = view->overlay_base == storage;
@@ -6509,6 +6559,7 @@ static SpaceInstanceRetiredHook g_space_instance_retired_hook;
 static void space_release_contents(Space *s) {
     if (!s)
         return;
+    atomic_store_explicit(&s->read_stamp,0u,memory_order_release);
     /* A read token may retain this address after the object lifetime ends.
        Retire thread-local execution-analysis entries while the identity is
        still readable; cache lookup also validates against its live query
@@ -6552,6 +6603,8 @@ static void space_release_contents(Space *s) {
 void space_free(Space *s) {
     if (!s)
         return;
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    atomic_store_explicit(&s->read_stamp,0u,memory_order_release);
     if (g_space_instance_retired_hook && s->instance_id)
         g_space_instance_retired_hook(s->instance_id);
     if (s->ledger_counted) {
@@ -6742,6 +6795,7 @@ bool space_read_token_matches_live_space(SpaceReadToken token,
 void space_read_view_release(SpaceReadView *view) {
     if (!view) return;
     free(view->bases);
+    free(view->base_watches);
     *view = (SpaceReadView){0};
 }
 
@@ -6765,10 +6819,17 @@ bool space_read_view_capture(const Space *space, SpaceReadView *out) {
     if (count) {
         out->bases = cetta_malloc(count * sizeof(*out->bases));
         if (!out->bases) return false;
+        out->base_watches=cetta_malloc(count*sizeof(*out->base_watches));
+        if(!out->base_watches){space_read_view_release(out);return false;}
     }
     out->root = space_read_token(space);
-    for (const Space *base = space->overlay_base; base; base = base->overlay_base)
-        out->bases[out->base_count++] = space_read_token(base);
+    out->root_watch=(SpaceReadWatch){&space->read_stamp,
+        atomic_load_explicit(&space->read_stamp,memory_order_acquire)};
+    for (const Space *base = space->overlay_base; base; base = base->overlay_base) {
+        out->bases[out->base_count]=space_read_token(base);
+        out->base_watches[out->base_count++]=(SpaceReadWatch){&base->read_stamp,
+            atomic_load_explicit(&base->read_stamp,memory_order_acquire)};
+    }
     return true;
 }
 
@@ -6776,28 +6837,41 @@ bool space_read_view_clone(const SpaceReadView *source, SpaceReadView *out) {
     if (!source || !out || source == out) return false;
     *out = (SpaceReadView){0};
     if (!source->root.space ||
-        (source->base_count && !source->bases) ||
+        (source->base_count && (!source->bases || !source->base_watches)) ||
         source->base_count > SIZE_MAX / sizeof(*out->bases)) return false;
     if (source->base_count) {
         out->bases = cetta_malloc(source->base_count * sizeof(*out->bases));
         if (!out->bases) return false;
+        out->base_watches=cetta_malloc(source->base_count*sizeof(*out->base_watches));
+        if(!out->base_watches){space_read_view_release(out);return false;}
         memcpy(out->bases, source->bases, source->base_count * sizeof(*out->bases));
+        memcpy(out->base_watches,source->base_watches,
+               source->base_count*sizeof(*out->base_watches));
     }
     out->root = source->root;
+    out->root_watch=source->root_watch;
     out->base_count = source->base_count;
     return true;
 }
 
 bool space_read_view_is_current(const SpaceReadView *view) {
-    CETTA_SCOPED_SHARED_TRANSITION(transition);
-    if (!view || !space_read_token_is_current(view->root)) return false;
-    const Space *base = view->root.space->overlay_base;
+    if (!view || !view->root.space || !view->root.instance_id ||
+        view->root.base_dependency_epoch==UINT64_MAX ||
+        view->root_watch.stamp!=&view->root.space->read_stamp ||
+        !space_read_stamp_valid(view->root_watch.expected) ||
+        (view->base_count && (!view->bases || !view->base_watches)) ||
+        atomic_load_explicit(view->root_watch.stamp,memory_order_acquire)!=
+            view->root_watch.expected) return false;
     for (size_t i = 0u; i < view->base_count; i++) {
-        if (base != view->bases[i].space ||
-            !space_read_token_is_current(view->bases[i])) return false;
-        base = base->overlay_base;
+        const SpaceReadWatch *watch=&view->base_watches[i];
+        if(!view->bases[i].space || !view->bases[i].instance_id ||
+           view->bases[i].base_dependency_epoch==UINT64_MAX ||
+           watch->stamp!=&view->bases[i].space->read_stamp ||
+           !space_read_stamp_valid(watch->expected) ||
+           atomic_load_explicit(watch->stamp,memory_order_acquire)!=watch->expected)
+            return false;
     }
-    return base == NULL;
+    return true;
 }
 
 bool space_read_view_has_native_occurrences(const SpaceReadView *view) {
@@ -6826,6 +6900,8 @@ void space_read_view_storage_census(const SpaceReadView *view,
     space_storage_census(view->root.space, census);
     cetta_storage_array(census, view->bases, view->base_count,
         sizeof(*view->bases), 0u);
+    cetta_storage_array(census,view->base_watches,view->base_count,
+        sizeof(*view->base_watches),0u);
     for (size_t i = 0u; i < view->base_count; i++)
         space_storage_census(view->bases[i].space, census);
 }
@@ -8611,6 +8687,7 @@ static void space_publish_mutation(
     }
     if (__builtin_expect(s->importer_count != 0u, 0))
         space_notify_importers(s, equation_projection, prefix_effect);
+    space_read_stamp_publish(s);
     space_advance_global_mutation_epoch();
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_REVISION_BUMP);
 }
@@ -9235,10 +9312,13 @@ SpaceContentsMovedHook space_contents_moved_hook(void) {
 static void space_replace_contents_classified(
         Space *dst, Space *src,
         SpaceMutationEquationProjection equation_projection) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     space_settle_marks(dst);
     space_settle_marks(src);
     if (!dst || !src || dst == src)
         return;
+    atomic_store_explicit(&dst->read_stamp,0u,memory_order_release);
+    atomic_store_explicit(&src->read_stamp,0u,memory_order_release);
     uint64_t dst_instance_id = dst->instance_id;
     uint64_t src_instance_id = src->instance_id;
     uint64_t old_revision = dst->revision;
@@ -10463,6 +10543,123 @@ static CettaMatchCompletion space_compare_checked(Atom *left, Atom *right,
         ? result : CETTA_MATCH_INCOMPLETE;
 }
 
+static CettaMatchCompletion space_remove_local_index(Space *s, CettaIndex remove_idx) {
+    SpaceMutationEquationProjection equation_projection =
+        space_local_removal_equation_projection(s, remove_idx);
+    SpaceDispatchRetention retained = space_transport_dispatch_coordinates(
+        s, equation_projection, NULL, remove_idx);
+    space_pinned_occurrences_detach(s);
+
+    AtomId swap_removed_id = CETTA_ATOM_ID_NONE, swap_moved_id = CETTA_ATOM_ID_NONE;
+    CettaIndex swap_moved_from = 0u;
+    if (space_is_ordered(s)) {
+        size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
+        memmove(s->native.atom_ids + ((size_t)remove_idx * width),
+                s->native.atom_ids + ((size_t)(remove_idx + 1u) * width),
+                (size_t)(s->native.len - remove_idx - 1u) * width);
+        s->native.len--;
+    } else {
+        AtomId removed_id = space_atom_id_storage_load_at(
+            s->native.atom_ids, s->native.atom_id_width_bits, remove_idx);
+        CettaIndex moved_from = s->native.len - 1u;
+        AtomId tail_id = space_atom_id_storage_load_at(
+            s->native.atom_ids, s->native.atom_id_width_bits, moved_from);
+        s->native.len--;
+        (void)space_atom_id_storage_store_at(
+            s->native.atom_ids, s->native.atom_id_width_bits, remove_idx,
+            tail_id); /* swap with last */
+        swap_removed_id = removed_id;
+        swap_moved_from = moved_from;
+        swap_moved_id = tail_id;
+    }
+    space_note_released(s, 1u);
+    /* A swap moves one row, which the exact index follows as
+     * space_remove_atom_id's does; a shift renumbers the rest. */
+    bool exact_current = !s->native.exact_idx_dirty;
+    space_mark_indexes_dirty(s);
+    s->native.eq_idx_dirty = !retained.equations;
+    s->native.ty_idx_dirty = !retained.declarations;
+    if (exact_current && swap_removed_id != CETTA_ATOM_ID_NONE)
+        s->native.exact_idx_dirty = !exact_index_note_swap_remove(
+            s, remove_idx, swap_removed_id, swap_moved_from, swap_moved_id);
+    uint64_t followed_prefix = s->prefix_epoch;
+    if (swap_removed_id != CETTA_ATOM_ID_NONE)
+        space_match_backend_note_swap_remove(s, remove_idx, swap_removed_id,
+                                             swap_moved_from, swap_moved_id);
+    else
+        space_match_backend_note_remove(s);
+    space_publish_mutation(
+        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
+    if (swap_removed_id != CETTA_ATOM_ID_NONE)
+        space_path_indexes_adopt_prefix_epoch(s, followed_prefix);
+    return CETTA_MATCH_MATCHED;
+}
+
+bool space_removal_search_init(Space *space, SpaceRemovalSearch *search) {
+    if (!space || !search || space_has_overlay_base(space)) return false;
+    *search=(SpaceRemovalSearch){.read=space_read_token(space),
+        .first=space_imported_length(space),.end=space_length64(space)};
+    search->next=search->first;
+    return true;
+}
+
+static SpaceRemovalSearchStep space_removal_search_result(const SpaceRemovalSearch *search) {
+    if (search->alpha && search->alpha_count!=1u) return SPACE_REMOVAL_UNMATCHED;
+    return search->selected_protected ? SPACE_REMOVAL_PROTECTED : SPACE_REMOVAL_SELECTED;
+}
+
+SpaceRemovalSearchStep space_removal_search_step(SpaceRemovalSearch *search,
+        Atom *body, SpaceAtomComparison equal, SpaceAtomComparison alpha_equal,
+        const uint8_t *protected_occurrences, CettaCount protected_length) {
+    if (!search || !body || !equal || !alpha_equal) return SPACE_REMOVAL_INCOMPLETE;
+    if (!space_read_token_is_current(search->read)) return SPACE_REMOVAL_INVALIDATED;
+    if (protected_occurrences && protected_length!=search->end) return SPACE_REMOVAL_INCOMPLETE;
+    if (search->finished) return space_removal_search_result(search);
+    if (search->next==search->end) {
+        if (!search->alpha && !search->exact_seen) {
+            search->alpha=true;search->next=search->first;
+            return SPACE_REMOVAL_PROGRESS;
+        }
+        search->finished=true;
+        return space_removal_search_result(search);
+    }
+    CettaIndex index=search->next;
+    Atom *candidate=space_get_at64(search->read.space,index);
+    CettaMatchCompletion comparison=space_compare_checked(candidate,body,
+        search->alpha ? alpha_equal : equal);
+    if (comparison==CETTA_MATCH_INCOMPLETE) return SPACE_REMOVAL_INCOMPLETE;
+    search->next++;
+    if (comparison==CETTA_MATCH_MATCHED) {
+        bool protected=protected_occurrences && protected_occurrences[index];
+        if (search->alpha) {
+            if (search->alpha_count<2u) search->alpha_count++;
+            search->selected=index;search->selected_protected=protected;
+        } else {
+            search->exact_seen=true;
+            search->selected=index;search->selected_protected=protected;
+            if (!protected) {
+                search->finished=true;return SPACE_REMOVAL_SELECTED;
+            }
+        }
+    }
+    return SPACE_REMOVAL_PROGRESS;
+}
+
+CettaMatchCompletion space_remove_occurrence_checked(Space *s, SpaceReadToken read, CettaIndex index) {
+    CETTA_SCOPED_SHARED_TRANSITION(publication);
+    if (!s || read.space!=s)return CETTA_MATCH_INCOMPLETE;
+    if (!space_read_token_is_current(read))return CETTA_MATCH_REFUTED;
+    if (space_has_overlay_base(s) ||
+        space_mutation_target(s)!=s || index<space_imported_length(s) ||
+        index>=space_length64(s) ||
+        (s->match_backend.kind!=SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind!=SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return CETTA_MATCH_INCOMPLETE;
+    if (!space_match_backend_materialize_native_storage(s,NULL)) return CETTA_MATCH_INCOMPLETE;
+    if (space_is_queue(s)) space_linearize(s);
+    return space_remove_local_index(s,index);
+}
+
 static CettaMatchCompletion space_remove_kernel(Space *s, Atom *atom,
     SpaceAtomComparison equal, SpaceAtomComparison alpha_equal, bool representation) {
     if (!atom || !equal || !alpha_equal)
@@ -10583,91 +10780,14 @@ static CettaMatchCompletion space_remove_kernel(Space *s, Atom *atom,
         return CETTA_MATCH_INCOMPLETE;
     if (space_is_queue(s))
         space_linearize(s);
-    bool found = false;
-    CettaIndex remove_idx = 0;
-    CettaIndex own_begin = s->imported_len;
-    for (CettaIndex i = own_begin; i < s->native.len; i++) {
-        Atom *candidate = space_get_at64(s, i);
-        CettaMatchCompletion comparison = space_compare_checked(candidate, atom, equal);
-        if (comparison == CETTA_MATCH_INCOMPLETE)
-            return comparison;
-        if (comparison == CETTA_MATCH_MATCHED) {
-            remove_idx = i;
-            found = true;
-            break;
-        }
-    }
-    if (!found) {
-        CettaIndex alpha_idx = 0;
-        CettaCount alpha_count = 0;
-        for (CettaIndex i = own_begin; i < s->native.len; i++) {
-            Atom *candidate = space_get_at64(s, i);
-            CettaMatchCompletion comparison = space_compare_checked(candidate, atom, alpha_equal);
-            if (comparison == CETTA_MATCH_INCOMPLETE)
-                return comparison;
-            if (comparison == CETTA_MATCH_MATCHED) {
-                alpha_idx = i;
-                alpha_count++;
-            }
-        }
-        if (alpha_count == 1) {
-            remove_idx = alpha_idx;
-            found = true;
-        }
-    }
-    if (!found)
-        return CETTA_MATCH_REFUTED;
-
-    SpaceMutationEquationProjection equation_projection =
-        space_local_removal_equation_projection(s, remove_idx);
-    SpaceDispatchRetention retained = space_transport_dispatch_coordinates(
-        s, equation_projection, NULL, remove_idx);
-    space_pinned_occurrences_detach(s);
-
-    AtomId swap_removed_id = CETTA_ATOM_ID_NONE, swap_moved_id = CETTA_ATOM_ID_NONE;
-    CettaIndex swap_moved_from = 0u;
-    if (space_is_ordered(s)) {
-        size_t width = space_atom_id_width_bytes_bits(s->native.atom_id_width_bits);
-        memmove(s->native.atom_ids + ((size_t)remove_idx * width),
-                s->native.atom_ids + ((size_t)(remove_idx + 1u) * width),
-                (size_t)(s->native.len - remove_idx - 1u) * width);
-        s->native.len--;
-        space_note_released(s, 1u);
-    } else {
-        AtomId removed_id = space_atom_id_storage_load_at(
-            s->native.atom_ids, s->native.atom_id_width_bits, remove_idx);
-        CettaIndex moved_from = s->native.len - 1u;
-        AtomId tail_id = space_atom_id_storage_load_at(
-            s->native.atom_ids, s->native.atom_id_width_bits, moved_from);
-        s->native.len--;
-        space_note_released(s, 1u);
-        (void)space_atom_id_storage_store_at(
-            s->native.atom_ids, s->native.atom_id_width_bits, remove_idx,
-            tail_id); /* swap with last */
-        swap_removed_id = removed_id;
-        swap_moved_from = moved_from;
-        swap_moved_id = tail_id;
-    }
-    /* A swap moves one row, which the exact index follows as
-     * space_remove_atom_id's does; a shift renumbers the rest. */
-    bool exact_current = !s->native.exact_idx_dirty;
-    space_mark_indexes_dirty(s);
-    s->native.eq_idx_dirty = !retained.equations;
-    s->native.ty_idx_dirty = !retained.declarations;
-    if (exact_current && swap_removed_id != CETTA_ATOM_ID_NONE)
-        s->native.exact_idx_dirty = !exact_index_note_swap_remove(
-            s, remove_idx, swap_removed_id, swap_moved_from, swap_moved_id);
-    uint64_t followed_prefix = s->prefix_epoch;
-    if (swap_removed_id != CETTA_ATOM_ID_NONE)
-        space_match_backend_note_swap_remove(s, remove_idx, swap_removed_id,
-                                             swap_moved_from, swap_moved_id);
-    else
-        space_match_backend_note_remove(s);
-    space_publish_mutation(
-        s, equation_projection, SPACE_MUTATION_PREFIX_REWRITTEN);
-    if (swap_removed_id != CETTA_ATOM_ID_NONE)
-        space_path_indexes_adopt_prefix_epoch(s, followed_prefix);
-    return CETTA_MATCH_MATCHED;
+    SpaceRemovalSearch search;
+    if (!space_removal_search_init(s,&search)) return CETTA_MATCH_INCOMPLETE;
+    SpaceRemovalSearchStep step;
+    do {step=space_removal_search_step(&search,atom,equal,alpha_equal,NULL,0u);}
+    while (step==SPACE_REMOVAL_PROGRESS);
+    if (step==SPACE_REMOVAL_UNMATCHED) return CETTA_MATCH_REFUTED;
+    if (step!=SPACE_REMOVAL_SELECTED) return CETTA_MATCH_INCOMPLETE;
+    return space_remove_local_index(s,search.selected);
 }
 
 CettaMatchCompletion space_remove_compared(Space *s, Atom *atom,
@@ -17096,7 +17216,9 @@ bool space_universe_registration_current(const Space *space,
 bool space_checkpoint_native_admitted(const Space *space,
                                       SpaceCheckpointBudget *budget) {
     if (!space_checkpoint_work(budget, 1u)) return false;
+    uint64_t stamp=space?atomic_load_explicit(&space->read_stamp,memory_order_acquire):0u;
     if (!space || !space->instance_id || !space->prefix_epoch ||
+        !space_read_stamp_valid(stamp) ||
         space->instance_id == UINT64_MAX || space->prefix_epoch == UINT64_MAX ||
         !space->universe || !space->universe->instance_id ||
         !space->universe->storage_epoch || space->kind != SPACE_KIND_ATOM ||
@@ -17217,8 +17339,9 @@ bool space_checkpoint_native_copy(const Space *source, Space *image,
     cetta_native_cost_charge(CETTA_COST_CAPTURE, 1u);
     if (!space_checkpoint_native_admitted(source, budget)) return false;
     SpaceCheckpointIssuance next = space_checkpoint_issuance();
+    uint64_t next_stamp=atomic_load_explicit(&g_space_next_read_stamp,memory_order_relaxed);
     if (!next.instance || next.instance == UINT64_MAX ||
-        !next.prefix || next.prefix == UINT64_MAX)
+        !next.prefix || next.prefix == UINT64_MAX || !next_stamp || next_stamp==UINT64_MAX)
         return space_checkpoint_refuse(budget, "WorldIdentityExhausted");
     if (budget->retained_bytes > budget->byte_limit ||
         sizeof(*image) > budget->byte_limit - budget->retained_bytes)
@@ -17376,6 +17499,7 @@ bool space_checkpoint_native_copy(const Space *source, Space *image,
      * builds its own on demand rather than sharing the source's. */
     image->match_backend.native.path_indexes = NULL;
     image->declares_subtypes = source->declares_subtypes;
+    space_read_view_invalidate(image);
     return true;
 }
 
@@ -17454,7 +17578,13 @@ bool space_checkpoint_native_compare(const Space *a, const Space *b,
         !read->identity(read->context, "world.instance", CETTA_CHECKPOINT_TARGET_SPACE_INSTANCE,
                         a->instance_id, b->instance_id) ||
         !read->identity(read->context, "world.prefix", CETTA_CHECKPOINT_TARGET_SPACE_PREFIX,
-                        a->prefix_epoch, b->prefix_epoch)) return false;
+                        a->prefix_epoch, b->prefix_epoch) ||
+        /* Invalidation currency belongs to this physical held header.
+         * A copied world receives fresh currency, not a renamed row ID.
+         * Read-view comparisons separately preserve their issued watches. */
+        !read->physical(read->context,"world.read_stamp",
+            atomic_load_explicit(&a->read_stamp,memory_order_acquire),
+            atomic_load_explicit(&b->read_stamp,memory_order_acquire))) return false;
 #define WORLD_SCALAR(field) \
     do { if (!read->scalar(read->context, "world." #field, a->field, b->field)) return false; } while (0)
     WORLD_SCALAR(kind);

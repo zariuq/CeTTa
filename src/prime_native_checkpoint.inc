@@ -197,7 +197,9 @@ static bool parent_copy_visible(PrimeParentCopy *copy, const MatchVisibleVarSet 
 static bool parent_copy_read_view(PrimeParentCopy *copy,const SpaceReadView *source,SpaceReadView *image) {
     if(source->root.space)
         return space_read_view_clone(source,image)||parent_copy_refuse(copy,"ReadView");
-    if(source->bases||source->base_count||source->root.instance_id||source->root.revision||
+    if(source->bases||source->base_watches||source->base_count||
+        source->root_watch.stamp||source->root_watch.expected||
+        source->root.instance_id||source->root.revision||
         source->root.prefix_epoch||source->root.base_prefix_epoch||source->root.base_dependency_epoch)
         return parent_copy_refuse(copy,"AbsentReadView");
     *image=(SpaceReadView){0};return true;
@@ -564,6 +566,14 @@ static bool parent_copy_work(PrimeParentCopy *copy,const CettaOwnedContinuation 
  * Its staging owner exists until the image control has an actual holder. */
 static const char parent_copy_episode_shell_kind, parent_copy_episode_kind;
 
+static CettaContinuationStatus parent_copy_refusal_status(const char *refusal) {
+    if(refusal && (!strcmp(refusal,"ActiveAuthorityScope") ||
+        !strcmp(refusal,"ActiveSourceServices")))return CETTA_CONTINUATION_DEFERRED;
+    if(refusal && !strcmp(refusal,"AuthorityScopeCapacity"))return CETTA_CONTINUATION_CAPACITY;
+    if(refusal && !strcmp(refusal,"AuthorityScopeCycle"))return CETTA_CONTINUATION_INVALIDATED;
+    return CETTA_CONTINUATION_UNSUPPORTED;
+}
+
 /* The reservation excludes another admitted resume. It does not establish
  * worker or callback quiescence; check those same source conditions before
  * allocating an episode shell and again before the first payload copy. */
@@ -573,8 +583,31 @@ static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
         if (refusal) *refusal = "QuiescentOwnerProfile";
         return false;
     }
+    CettaContinuationStatus active=prime_native_driver_active_scope_status(&source->driver);
+    if(active!=CETTA_CONTINUATION_READY) {
+        if(refusal)*refusal=active==CETTA_CONTINUATION_DEFERRED ? "ActiveAuthorityScope" :
+            active==CETTA_CONTINUATION_CAPACITY ? "AuthorityScopeCapacity" : "AuthorityScopeCycle";
+        return false;
+    }
+    if(source->source_services && atomic_load_explicit(
+            &source->source_services->active,memory_order_acquire)) {
+        if(refusal)*refusal="ActiveSourceServices";
+        return false;
+    }
     if (source->interaction_selection || source->resume_choice) {
         if (refusal) *refusal = "SelectedInteractionOwner";
+        return false;
+    }
+    /* Invocation and authority parents are borrowed drivers. Their stack or
+     * service lifetime is not mapped by this checkpoint. Do not discard an
+     * unknown grant or silently retain a callback's original context. */
+    if (source->driver.authority_parent || source->driver.call_permit_parent ||
+        source->driver.call_permit || source->driver.call_permit_context ||
+        source->driver.observe_space_read || source->driver.space_read_context ||
+        source->driver.own_data_read || source->driver.own_data_published ||
+        source->driver.own_data_context || source->driver.normalization_value_role ||
+        source->driver.normalization_role_context) {
+        if (refusal) *refusal = "BorrowedAuthorityScope";
         return false;
     }
     /* These retained protocols have not supplied an injective transport
@@ -616,11 +649,12 @@ static bool parent_copy_transaction_work(const PrimeNativeControl *source,
 
 static bool parent_copy_transaction_admitted(const PrimeNativeControl *source,
     bool source_reserved, SpaceCheckpointBudget *budget, const char **refusal) {
-    if (!parent_copy_quiescent_in(source,source_reserved,true,refusal) ||
-        !prime_native_transaction_policy(&source->policy) || !source->space_agenda ||
+    if (!parent_copy_quiescent_in(source,source_reserved,true,refusal)) return false;
+    if (!prime_native_transaction_policy(&source->policy) || !source->space_agenda ||
         source->frames || source->retired_frames || source->advice_cells ||
         source->weight_analyses || source->weight_analysis || source->weight_environment_initialized ||
         source->active_advice || source->active_scoring || source->parked_count ||
+        source->force_retry.continuation.payload ||
         cetta_continuation_hub_length(&source->hub)>1u) {
         if (refusal) *refusal="TransactionBoundaryProfile";
         return false;
@@ -1043,6 +1077,7 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     Arena destination=image->storage;
     PrimeNativeSourceServices *services=image->source_services;
     *image=*source;image->storage=destination;image->source_services=services;
+    image->force_retry=(PrimeNativeForceRetry){0};
     image->need_claims=NULL;image->need_claim_count=0u;image->need_claim_cap=0u;
     image->need_claim_mu_ready=false;
     memset(&image->need_claim_mu,0,sizeof(image->need_claim_mu));
@@ -1185,18 +1220,32 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
         {image->costs,source->costs_capacity},{image->consumer_revisions,source->consumer_revision_count},
         {image->parallel_waves,source->parallel_wave_count},{image->effect_barriers,source->effect_barrier_count},{image->need_barriers,source->need_barrier_count}};
     for(size_t k=0u;ok&&k<sizeof(vectors)/sizeof(*vectors);k++)for(size_t i=0u;i<vectors[k].count;i++)if(!parent_copy_atom(copy,&vectors[k].items[i])){ok=false;break;}
-    size_t queued=cetta_continuation_hub_length(&source->hub),count=queued+source->parked_count;
+    size_t queued=cetta_continuation_hub_length(&source->hub);
+    size_t retry_count=source->force_retry.continuation.payload ? 1u : 0u;
+    size_t count=queued+source->parked_count;
     CettaContinuationTransport *transport=NULL;
-    if(ok&&(count<queued||count>SIZE_MAX/sizeof(*transport)))ok=parent_copy_refuse(copy,"FrontierExtent");
+    if(ok&&(count<queued||retry_count>SIZE_MAX-count))ok=parent_copy_refuse(copy,"FrontierExtent");
+    if(ok)count+=retry_count;
+    if(ok&&count>SIZE_MAX/sizeof(*transport))ok=parent_copy_refuse(copy,"FrontierExtent");
     if(ok&&count){transport=calloc(count,sizeof(*transport));if(!transport)ok=parent_copy_refuse(copy,"Allocation");}
     for(size_t i=0;ok&&i<count;i++) {
-        transport[i].source=i<queued?cetta_continuation_hub_at(&source->hub,i):&source->parked[i-queued];
+        transport[i].source=i<queued ? cetta_continuation_hub_at(&source->hub,i)
+            : i<queued+source->parked_count ? &source->parked[i-queued]
+            : &source->force_retry.continuation;
         ok=parent_copy_work(copy,transport[i].source,&transport[i].prepared);
     }
     if(ok&&source->parked_capacity){image->parked=calloc(source->parked_capacity,sizeof(*image->parked));if(!image->parked)ok=parent_copy_refuse(copy,"Allocation");}
     if(ok&&cetta_continuation_hub_copy_prepared(&source->hub,transport,count,&image->hub)!=CETTA_CONTINUATION_READY)
         ok=parent_copy_refuse(copy,"HubTransport");
     if(ok){image->parked_count=source->parked_count;for(size_t i=0;i<source->parked_count;i++){image->parked[i]=transport[queued+i].prepared;memset(&transport[queued+i].prepared,0,sizeof(transport[queued+i].prepared));}}
+    if(ok) {
+        image->force_retry.admitted=source->force_retry.admitted;
+        if(retry_count) {
+            size_t index=queued+source->parked_count;
+            image->force_retry.continuation=transport[index].prepared;
+            memset(&transport[index].prepared,0,sizeof(transport[index].prepared));
+        }
+    }
     for(size_t i=0;i<count&&transport;i++)cetta_owned_continuation_destroy(&transport[i].prepared);
     free(transport);
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
@@ -1317,11 +1366,15 @@ static CettaPrimeCheckpointCopy *prime_checkpoint_copy_new_profile(
         ? source->source_services->effects
         : capture_services ? space_execution_analysis_cache_current() : NULL;
     SpaceCheckpointBudget transaction_budget={.work_limit=service_limit,.byte_limit=bytes};
-    if ((transaction ? !parent_copy_transaction_admitted(source,source_reserved,&transaction_budget,NULL)
-                     : !parent_copy_quiescent(source,source_reserved,NULL)) ||
-        !parent_copy_episode_admitted(source) ||
-        (source->source_services && atomic_load_explicit(
-            &source->source_services->active, memory_order_acquire)) ||
+    const char *admission_refusal=NULL;
+    bool admitted=transaction
+        ? parent_copy_transaction_admitted(source,source_reserved,&transaction_budget,&admission_refusal)
+        : parent_copy_quiescent(source,source_reserved,&admission_refusal);
+    if(!admitted) {
+        if(status)*status=parent_copy_refusal_status(admission_refusal);
+        return NULL;
+    }
+    if (!parent_copy_episode_admitted(source) ||
         !parent_copy_selectors_admitted_in(source,services) ||
         (services && !space_execution_analysis_cache_admitted(effects,service_limit))) return NULL;
     SpaceReadToken source_target={0};
@@ -1499,7 +1552,7 @@ CettaContinuationStatus cetta_prime_checkpoint_copy_prepare(
         copy->status = CETTA_CONTINUATION_INVALIDATED;
         copy->refusal = "SourceReservation";
     } else if (!parent_copy_quiescent_in(copy->source,true,copy->transaction_boundary,&copy->refusal)) {
-        copy->status = CETTA_CONTINUATION_UNSUPPORTED;
+        copy->status = parent_copy_refusal_status(copy->refusal);
     } else if (!parent_copy_episode_admitted(copy->source)) {
         copy->status = CETTA_CONTINUATION_UNSUPPORTED;
         copy->refusal = "OwnedTopEpisodeImage";
@@ -1514,7 +1567,7 @@ CettaContinuationStatus cetta_prime_checkpoint_copy_prepare(
     } else if (!prime_native_parent_copy_with_session(copy->source, copy->image,
             atoms, true, copy->transaction_boundary?&copy->transaction_budget:NULL,&copy->refusal)) {
         copy->status = copy->refusal && strcmp(copy->refusal, "Allocation") == 0
-            ? CETTA_CONTINUATION_CAPACITY : CETTA_CONTINUATION_UNSUPPORTED;
+            ? CETTA_CONTINUATION_CAPACITY : parent_copy_refusal_status(copy->refusal);
     } else {
         bool target=true;
         if(copy->transaction_boundary) {
@@ -1579,6 +1632,9 @@ CettaContinuationStatus cetta_prime_checkpoint_copy_replace(
     if (!prime_checkpoint_source_live(copy) || !copy->source->leased ||
         cetta_native_handle_use_resource(source_use) != copy->source)
         return CETTA_CONTINUATION_INVALIDATED;
+    const char *refusal=NULL;
+    if(!parent_copy_quiescent_in(copy->source,true,copy->transaction_boundary,&refusal))
+        return parent_copy_refusal_status(refusal);
     PrimeNativeControl *image = copy->image;
     uint64_t former_id = image->handle_id;
     image->handle_id = copy->source_handle;

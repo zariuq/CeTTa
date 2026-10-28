@@ -576,7 +576,19 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
     /* Only preparation/ownership is reused here. Hyperpose's eager branch
      * execution and result observer are not involved. */
     SpaceEquationToken source_equations = space_equation_token(task->space);
+    SpaceProgramToken source_program = space_program_token(task->space);
     PrimeSymbolWorld symbol_source = prime_symbol_world(task->space, SYMBOL_ID_NONE);
+    bool inherited_program=g_prime_symbol_source.program_valid &&
+        g_prime_symbol_source.admission==symbol_source.admission &&
+        g_prime_symbol_source.instance==symbol_source.instance &&
+        g_prime_symbol_source.equations==symbol_source.equations &&
+        space_program_token_matches_live_space(g_prime_symbol_source.program_target,task->space);
+    bool direct_program=symbol_source.instance==source_program.instance_id &&
+        symbol_source.equations==source_program.equation_revision;
+    uint64_t source_declarations=inherited_program ? g_prime_symbol_source.declarations
+        : source_program.declaration_revision;
+    uint64_t source_base=inherited_program ? g_prime_symbol_source.base_dependency
+        : source_program.base_dependency_epoch;
     bool prepared = hyperpose_prepare_thread_branch(&parallel->world, 0u,
         task->space, &owner->registry_read.initial, expression, NULL,
         NULL, shared_source, true, need, NULL);
@@ -584,6 +596,7 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
         share_refused ? g_prime_share_refusal : NULL);
     if (!prepared ||
         !space_equation_token_matches_live_space(source_equations, task->space) ||
+        !space_program_token_matches_live_space(source_program,task->space) ||
         symbol_source.admission != prime_scoped_judgment_admission_epoch()) {
         prime_native_parallel_destroy(parallel); return false;
     }
@@ -594,9 +607,13 @@ static bool prime_native_parallel_prepare(PrimeNativeControl *owner,
      * it must not rename this captured world into a later live source. */
     parallel->context.symbol_source = (PrimeSymbolSourceProjection){
         .target = space_equation_token(parallel->world.space),
+        .program_target = space_program_token(parallel->world.space),
         .instance = symbol_source.instance,
         .equations = symbol_source.equations,
+        .declarations = source_declarations,
+        .base_dependency = source_base,
         .admission = symbol_source.admission,
+        .program_valid = inherited_program || direct_program,
     };
     for (CettaCount i = 0u; i < parallel->world.owned_spaces.len; i++)
         parallel->world.owned_spaces.items[i].petta_program = g_library_context->petta_program;
@@ -1616,12 +1633,18 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_publish_
                 return false;
             }
     }
-    for (; parallel->forwarded < parallel->child->published; parallel->forwarded++) {
+    while (parallel->forwarded < parallel->child->published) {
         Outcome *item = &parallel->child->output.items[parallel->forwarded];
         if (!outcome_inflate_answer_ref(parallel->child->driver.arena, item)) {
             owner->driver.capacity_blocked = true;
             return false;
         }
+#ifndef CETTA_PRIME_NATIVE_CONTROL_MUTATION_UNPREPARED_PARALLEL_RETURN
+        if (!prime_native_return_prepare_target(target)) {
+            owner->driver.capacity_blocked = true;
+            return false;
+        }
+#endif
         CettaCount before = target->len;
         if (!outcome_set_add_promoted_existing(owner->driver.arena,
                 target, item, preserve_bindings)) {
@@ -1641,9 +1664,16 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_publish_
             owner->driver.capacity_blocked = true;
             return false;
         }
+#ifndef CETTA_PRIME_NATIVE_CONTROL_MUTATION_UNPREPARED_PARALLEL_RETURN
+        prime_native_return_commit_target(target);
+#endif
+        /* This row is committed before waking its receiver. A later
+         * refusal cannot move it back behind the producer's cursor. */
+        parallel->forwarded++;
+        if (!prime_eval_stack_stream_note(target))
+            return false;
     }
-    prime_eval_stack_stream_note(target);
-    return true;
+    return prime_eval_stack_stream_note(target);
 }
 
 CETTA_OPERATION_VARIANT(bool, return, prime_native_parallel_publish, plain,

@@ -104,6 +104,8 @@ static void print_reader_atom(FILE *out, Atom *atom) {
     case GV_PRIME_NEED_CAPABILITY:
     case GV_PRIME_CONTEXT:
     case GV_SEAL:
+    case GV_TENSOR:
+    case GV_STRUCTURAL:
         fputs("(unsupported-grounded)", out);
         return;
     }

@@ -55,6 +55,11 @@ static void reader_allocation_release(void *raw) {
 static const PrimeNeedReaderValueOps reader_allocation_ops={
     .retain=reader_allocation_retain,.release=reader_allocation_release,
 };
+static CettaMatchCompletion reader_allocation_clear(uint64_t key,
+        const PrimeNeedReaderValue *value,void *state,bool *clear) {
+    (void)value;*clear=state && key!=22u;
+    return CETTA_MATCH_MATCHED;
+}
 static void check_reader_context_refusal(void) {
     ReaderAllocationOwner owner={0};
     PrimeNeedReaderValue value={&owner,&reader_allocation_ops};
@@ -63,12 +68,13 @@ static void check_reader_context_refusal(void) {
     assert(prime_need_reader_context_update(base,22u,&value,&first)==CETTA_MATCH_MATCHED);
     assert(prime_need_reader_context_update(first,33u,&value,&second)==CETTA_MATCH_MATCHED);
     size_t refused=0u;
-    for (unsigned operation=0u;operation<3u;operation++) {
+    for (unsigned operation=0u;operation<4u;operation++) {
         allocation_count=0u;fail_at=SIZE_MAX;probing=true;
         CettaMatchCompletion status=operation==0u
             ? prime_need_reader_context_update(second,44u,&value,&out)
             : operation==1u ? prime_need_reader_context_merge(base,second,&out)
-                : prime_need_reader_context_import(first,second,base,&out);
+                : operation==2u ? prime_need_reader_context_import(first,second,base,&out)
+                    : prime_need_reader_context_clear_if(second,reader_allocation_clear,&owner,&out);
         probing=false;
         assert(status==CETTA_MATCH_MATCHED && out);
         size_t allocations=allocation_count;
@@ -79,12 +85,18 @@ static void check_reader_context_refusal(void) {
             allocation_count=0u;fail_at=i;probing=true;
             status=operation==0u ? prime_need_reader_context_update(second,44u,&value,&out)
                 : operation==1u ? prime_need_reader_context_merge(base,second,&out)
-                    : prime_need_reader_context_import(first,second,base,&out);
+                    : operation==2u ? prime_need_reader_context_import(first,second,base,&out)
+                        : prime_need_reader_context_clear_if(second,reader_allocation_clear,&owner,&out);
             probing=false;
             assert(status==CETTA_MATCH_INCOMPLETE && out==base && owner.references==before);
             prime_need_reader_context_release(out);out=NULL;refused++;
         }
     }
+    allocation_count=0u;fail_at=0u;probing=true;
+    CettaMatchCompletion unchanged=prime_need_reader_context_clear_if(second,reader_allocation_clear,NULL,&out);
+    probing=false;
+    assert(unchanged==CETTA_MATCH_MATCHED && out==second && allocation_count==0u);
+    prime_need_reader_context_release(out);out=NULL;
     prime_need_reader_context_release(base);prime_need_reader_context_release(first);
     prime_need_reader_context_release(second);prime_need_reader_context_release(joined);
     assert(!owner.references);

@@ -164,13 +164,13 @@ ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
 CETTA_PROC_FORK_SPAWN ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 837
+PRIME_NEED_ALGEBRA_CHECKS := 904
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 846
+PRIME_NEED_ALGEBRA_CHECKS := 913
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -2096,7 +2096,7 @@ REGISTRY_LOOKUP_BENCH_BIN = runtime/bench_registry_lookup-$(BUILD_OBJ_TAG)
 REGISTRY_LOOKUP_BENCH_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
 ABT_MUTATION_TEST_BINS = $(foreach id,$(ABT_MUTATION_IDS),runtime/test_abt_mutation-$(BUILD_OBJ_TAG)-$(id))
-GROUNDED_STANDALONE_SRC = src/grounded.c src/tensor_dense_v1.c src/petta_semantics.c src/term_graph.c src/abt.c src/atom_blob.c
+GROUNDED_STANDALONE_SRC = src/grounded.c src/tensor_dense_v1.c src/petta_semantics.c src/term_graph.c src/abt.c src/atom_blob.c src/prime_regular_pattern.c src/prime_regular_kernel.c src/prime_level.c
 GROUNDED_STANDALONE_DEPS = $(GROUNDED_STANDALONE_SRC) src/tensor.h $(ABT_DEFAULT_SIGNATURES_BLOB)
 PARSER_STANDALONE_SRC = src/parser.c src/name_key.c
 # Bindings owns a PrimeNeedSnapshot even in non-Prime harnesses, so every
@@ -5503,16 +5503,18 @@ test-prime-equation-call-sharing-tournament:
 
 test-prime-equation-call-sharing-tournament-body: $(BIN)
 	@set -eu; \
+	status=0; \
 	result=$$(CETTA_BIN="$(abspath $(BIN))" \
-		python3 tests/prime/run_need_equation_call_tournament.py 2>&1); \
+		python3 tests/prime/run_need_equation_call_tournament.py 2>&1) || status=$$?; \
 	printf '%s\n' "$$result"; \
+	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeNeedEquationCallTournamentSummary 48 48 0 frontiers 3 order-invariance monolithic-red candidate-local-green demand-cohort-green)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeNeedEquationCallTournamentSummary 48 48 0 frontiers 3 order-invariance monolithic-green candidate-local-green demand-cohort-green)')" -ne 1 ]; then \
 		echo "FAIL: Prime equation-call tournament exact summary absent or duplicated"; \
 		exit 1; \
 	fi; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeNativeReceiptMutationSummary 8 8 0)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeNativeReceiptMutationSummary 11 11 0)')" -ne 1 ]; then \
 		echo "FAIL: Prime native receipt mutation summary absent or duplicated"; \
 		exit 1; \
 	fi
@@ -49938,7 +49940,7 @@ $(NATIVE_PARENT_CHECKPOINT_TEST_BIN): $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) te
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) \
 		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)),$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) \
-		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),-Wl$(comma)--wrap=free,)
+		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),-Wl$(comma)--wrap=free -Wl$(comma)--wrap=calloc,)
 .PHONY: test-native-parent-checkpoint
 test-native-parent-checkpoint: $(NATIVE_PARENT_CHECKPOINT_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_PARENT_CHECKPOINT_TEST_BIN))
@@ -49985,18 +49987,84 @@ test-native-control-leases-refusal-mutation: tests/test_native_control_leases.c 
 		fi; \
 		echo "PASS: the refusal controls reject the $$mutation fault"; \
 	done
+NATIVE_CONTROL_LEASES_EQUATION_RETURN_MUTANT = runtime/test-native-control-leases-equation-return-$(BUILD_OBJ_TAG)
+NATIVE_CONTROL_LEASES_SCAN_OWNER_MUTANT = runtime/test-native-control-leases-scan-owner-$(BUILD_OBJ_TAG)
+NATIVE_CONTROL_LEASES_PARALLEL_RETURN_MUTANT = runtime/test-native-control-leases-parallel-return-$(BUILD_OBJ_TAG)
+.PHONY: test-native-control-leases-equation-return-mutation
+test-prime: test-native-control-leases-equation-return-mutation
+$(NATIVE_CONTROL_LEASES_EQUATION_RETURN_MUTANT) $(NATIVE_CONTROL_LEASES_SCAN_OWNER_MUTANT) $(NATIVE_CONTROL_LEASES_PARALLEL_RETURN_MUTANT): tests/test_native_control_leases.c src/eval.c src/native_dialect_provider.inc src/prime_native_parallel.inc src/table_store.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	@case "$@" in \
+		"$(NATIVE_CONTROL_LEASES_EQUATION_RETURN_MUTANT)") mutation=CETTA_PRIME_NEED_MUTATION_EQUATION_RETURN_UNPREPARED ;; \
+		"$(NATIVE_CONTROL_LEASES_SCAN_OWNER_MUTANT)") mutation=CETTA_PRIME_NATIVE_CONTROL_MUTATION_AMBIENT_SCAN ;; \
+		"$(NATIVE_CONTROL_LEASES_PARALLEL_RETURN_MUTANT)") mutation=CETTA_PRIME_NATIVE_CONTROL_MUTATION_UNPREPARED_PARALLEL_RETURN ;; \
+		*) exit 1 ;; \
+	esac; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -D$$mutation=1 -o "$@" tests/test_native_control_leases.c \
+		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o src/table_store.$(BUILD_OBJ_TAG).o src/table_store.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=calloc
+test-native-control-leases-equation-return-mutation: $(NATIVE_CONTROL_LEASES_EQUATION_RETURN_MUTANT)
+	@set +e; \
+	output=$$($(call cetta_exec,./$(NATIVE_CONTROL_LEASES_EQUATION_RETURN_MUTANT)) --equation-return-refusal 2>&1); status=$$?; \
+	set -e; \
+	if [ $$status -eq 0 ] || ! printf '%s\n' "$$output" | grep -q 'FAIL: .*retained'; then \
+		echo "FAIL: equation-return refusal control accepted an unprepared move"; \
+		exit 1; \
+	fi; \
+	echo "PASS: equation-return refusal control rejects an unprepared move"
+.PHONY: test-native-control-leases-scan-owner-mutation
+test-prime: test-native-control-leases-scan-owner-mutation
+test-native-control-leases-scan-owner-mutation: $(NATIVE_CONTROL_LEASES_SCAN_OWNER_MUTANT)
+	@set +e; \
+	output=$$($(call cetta_exec,./$(NATIVE_CONTROL_LEASES_SCAN_OWNER_MUTANT)) --scan-owner 2>&1); status=$$?; \
+	set -e; \
+	if [ $$status -eq 0 ] || ! printf '%s\n' "$$output" | grep -Fq 'receiver->control_return_advice_length==1u'; then \
+		echo "FAIL: scan-owner control accepted the ambient controller"; \
+		exit 1; \
+	fi; \
+	echo "PASS: scan-owner control rejects the ambient controller"
+.PHONY: test-native-control-leases-parallel-return-mutation
+test-prime: test-native-control-leases-parallel-return-mutation
+test-native-control-leases-parallel-return-mutation: $(NATIVE_CONTROL_LEASES_PARALLEL_RETURN_MUTANT)
+	@set +e; \
+	output=$$($(call cetta_exec,./$(NATIVE_CONTROL_LEASES_PARALLEL_RETURN_MUTANT)) --parallel-return-refusal 2>&1); status=$$?; \
+	set -e; \
+	if [ $$status -eq 0 ] || ! printf '%s\n' "$$output" | grep -q 'FAIL: .*retained'; then \
+		echo "FAIL: parallel-return control accepted an unprepared row"; \
+		exit 1; \
+	fi; \
+	echo "PASS: parallel-return control rejects an unprepared row"
 test-native-cost-join: $(NATIVE_COST_JOIN_TEST_BIN)
 	@$(NATIVE_COST_JOIN_TEST_BIN)
 test-prime: test-resource-wave test-native-leases test-native-control-leases test-native-cost-join test-provider-graph-copy
 
 NATIVE_SPACE_AGENDA_TEST_BIN = runtime/test-native-space-agenda-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-.PHONY: test-native-space-agenda test-prime-native-parallel test-prime-native-resources
+NATIVE_SPACE_AGENDA_COST_MUTANT = runtime/test-native-space-agenda-cost-mutant-$(BUILD_OBJ_TAG)
+.PHONY: test-native-space-agenda lint-prime-transaction-reads test-prime-native-parallel test-prime-native-resources
 $(NATIVE_SPACE_AGENDA_TEST_BIN): tests/test_native_space_agenda.c src/native_space_agenda.c src/native_space_agenda_steps.inc $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ tests/test_native_space_agenda.c \
 		$(filter-out src/native_space_agenda.$(BUILD_OBJ_TAG).o src/native_space_agenda.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
 test-native-space-agenda: $(NATIVE_SPACE_AGENDA_TEST_BIN)
 	@$(NATIVE_SPACE_AGENDA_TEST_BIN)
+.PHONY: test-native-space-agenda-cost-index-oracle test-native-space-agenda-cost-index-mutation
+test-prime-native-cost: test-native-space-agenda-cost-index-oracle test-native-space-agenda-cost-index-mutation
+test-native-space-agenda-cost-index-oracle: $(NATIVE_SPACE_AGENDA_TEST_BIN)
+	@$(NATIVE_SPACE_AGENDA_TEST_BIN) --cost-index-oracle
+$(NATIVE_SPACE_AGENDA_COST_MUTANT): tests/test_native_space_agenda.c src/native_space_agenda.c src/native_space_agenda_steps.inc $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -DCETTA_AGENDA_TEST_MUTATION_DOUBLE_INDEX_VISIT=1 -o "$@" tests/test_native_space_agenda.c \
+		$(filter-out src/native_space_agenda.$(BUILD_OBJ_TAG).o src/native_space_agenda.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+test-native-space-agenda-cost-index-mutation: $(NATIVE_SPACE_AGENDA_COST_MUTANT)
+	@set +e; \
+	output=$$($(NATIVE_SPACE_AGENDA_COST_MUTANT) --cost-index-oracle 2>&1); status=$$?; \
+	set -e; \
+	if [ $$status -eq 0 ] || ! printf '%s\n' "$$output" | grep -Fq 'meter.total.counts[CETTA_COST_INDEX_VISIT]==probes+3u'; then \
+		echo "FAIL: physical index-visit oracle accepted doubled charges"; \
+		exit 1; \
+	fi; \
+	echo "PASS: physical index-visit oracle rejects doubled charges"
+lint-prime-transaction-reads: $(NATIVE_SPACE_AGENDA_TEST_BIN)
+	@$(NATIVE_SPACE_AGENDA_TEST_BIN) --lint-transaction-reads $(TRANSACTION_READ_LINT_FILES)
 test-prime-native-parallel: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/test_prime_native_parallel.py --binary "$(CETTA_SCRIPT_BIN)"
 test-prime-native-resources: $(BIN)

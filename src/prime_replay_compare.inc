@@ -379,13 +379,19 @@ static bool prime_replay_compare_registry_view(const RegistryReadView *a,
 }
 static bool prime_replay_compare_read_view(const SpaceReadView *a,const SpaceReadView *b,
     const CettaCheckpointCompare *read) {
-    if(a->base_count!=b->base_count||(a->base_count&&(!a->bases||!b->bases))||
+    if(a->base_count!=b->base_count ||
+        (a->base_count&&(!a->bases||!b->bases||!a->base_watches||!b->base_watches))||
         !prime_replay_compare_read(a->root,b->root,read))return false;
+    RC_P("read_view.root_stamp",a->root_watch.stamp,b->root_watch.stamp);
+    RC_S("read_view.root_expected",a->root_watch.expected,b->root_watch.expected);
     RC_S("read_view.count",a->base_count,b->base_count);
     RC_F("read_view.storage",(uintptr_t)a->bases,(uintptr_t)b->bases);
+    RC_F("read_view.watches",(uintptr_t)a->base_watches,(uintptr_t)b->base_watches);
     for(size_t i=0u;i<a->base_count;i++) {
         RC_S("read_view.index",i,i);
         if(!prime_replay_compare_read(a->bases[i],b->bases[i],read))return false;
+        RC_P("read_view.base_stamp",a->base_watches[i].stamp,b->base_watches[i].stamp);
+        RC_S("read_view.base_expected",a->base_watches[i].expected,b->base_watches[i].expected);
     }
     return true;
 }
@@ -536,6 +542,15 @@ static bool prime_replay_compare_continuation(const CettaOwnedContinuation *a,
     RC_I("continuation.store",CETTA_CHECKPOINT_ISSUED_STORE,a->resume_store,b->resume_store);
     RC_I("continuation.lease",CETTA_CHECKPOINT_ISSUED_LEASE,a->resume_lease,b->resume_lease);
     return prime_replay_compare_work(a->payload,b->payload,read);
+}
+static bool prime_replay_compare_force_retry(const PrimeNativeForceRetry *a,
+    const PrimeNativeForceRetry *b,const CettaCheckpointCompare *read) {
+    bool present_a=a->continuation.payload!=NULL, present_b=b->continuation.payload!=NULL;
+    RC_S("control.force_retry_admitted",a->admitted,b->admitted);
+    RC_S("control.force_retry_present",present_a,present_b);
+    if(a->admitted!=b->admitted || present_a!=present_b) return false;
+    return !present_a || prime_replay_compare_continuation(
+        &a->continuation,&b->continuation,read);
 }
 static bool prime_replay_compare_hub(const CettaContinuationHub *a,const CettaContinuationHub *b,
     const CettaCheckpointCompare *read) {
@@ -950,6 +965,7 @@ static bool prime_replay_compare_control_fields_in(const PrimeNativeControl *a,
     RC_F("control.parked_capacity",a->parked_capacity,b->parked_capacity);
     for(size_t i=0u;i<a->parked_count;i++)
         if(!prime_replay_compare_continuation(&a->parked[i],&b->parked[i],read))return false;
+    if(!prime_replay_compare_force_retry(&a->force_retry,&b->force_retry,read))return false;
     return prime_replay_compare_selectors(a,b,read);
 }
 
