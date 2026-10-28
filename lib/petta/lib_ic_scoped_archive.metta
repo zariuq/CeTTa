@@ -2,10 +2,10 @@
 ; A raw source carries only its base signature, not an unused proposal grammar.
 ; Definitions carry their own ordinary context, parameter declarations and
 ; pattern forest. Calls carry checked partial captures and their source origin.
-!(import! &self "lib/petta/lib_scoped_templates.metta")
-!(import! &self "lib/petta/lib_binary_value.metta")
-!(import! &self "lib/petta/lib_ic_packed.metta")
-!(import! &self "lib/petta/lib_ic_search.metta")
+!(import! &self (library lib_scoped_templates))
+!(import! &self (library lib_binary_value))
+!(import! &self (library lib_ic_packed))
+!(import! &self (library lib_ic_search))
 
 (= (scoped-archive:definition? $sorts $operators $definition)
    (case $definition

@@ -79,7 +79,7 @@ def main():
     check_controls((ROOT / "lib/petta/lib_ic_scoped_archive.metta").read_text())
     family, original, candidate, definition, observed, support = repeated_family()
     before, after = encoded(original), encoded(candidate)
-    program = ['!(import! &self "lib/petta/lib_ic_scoped_archive.metta")', '''
+    program = ['!(import! &self (library lib_ic_scoped_archive))', '''
 (= (scoped-learning-view $result $expected)
    (case $result
      (((IC:SearchResult $best (IC:Statistics $turns $seen $accepted $faults) $reason $first $state)

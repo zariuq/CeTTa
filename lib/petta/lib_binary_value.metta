@@ -2,7 +2,7 @@
 ; scalar kinds are explicit: symbols, UTF-8 text, machine naturals and fully
 ; supported packed U8 vectors. Expressions retain every ordered child.
 ; No host variable, opaque handle or arbitrary Grounded value is serialized.
-!(import! &self "lib/petta/lib_binary_schema.metta")
+!(import! &self (library lib_binary_schema))
 
 (= (binary-value:schema)
    ((Binary:Form 1 BinaryValue:Symbol (Symbol))

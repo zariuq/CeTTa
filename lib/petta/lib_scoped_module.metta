@@ -2,7 +2,7 @@
 ; The projection describes finite AST operators; it does not execute or
 ; authorize any source equation, rewrite, premise, effect or concrete syntax.
 ; Plain registration supplies the very same Scoped:Family values directly.
-!(import! &self "lib/petta/lib_scoped_templates.metta")
+!(import! &self (library lib_scoped_templates))
 
 (= (scoped-module:types $types)
    (case $types

@@ -1,8 +1,8 @@
 ; IC1: complete first-order program archives. The fixed format table governs
 ; encoding and decoding. Operator/literal identities, names, definitions,
 ; substitutions and residuals all contribute to encoded cost.
-!(import! &self "lib/petta/lib_binary_schema.metta")
-!(import! &self "lib/petta/lib_ic_templates.metta")
+!(import! &self (library lib_binary_schema))
+!(import! &self (library lib_ic_templates))
 
 (= (ic-archive:schema)
    ((Binary:Form 1 IC:Archive

@@ -58,7 +58,7 @@ typedef enum {
 } CettaProfileMask;
 
 /* Registered language contracts. A profile implements one version of its
- * language; PeTTa 1.0.6 is the untyped language of PeTTa release v1.0.6,
+ * language; PeTTa's default is the corrected stable contract,
  * and PeTTa 1.1 is the typed language PeTTa's main line adopted with its
  * checker.  PeTTa 1.1.c is CeTTa's own version of that typed line: its
  * declarations are call contracts whose failed checks raise on every route

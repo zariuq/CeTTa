@@ -1,5 +1,6 @@
 ; Typed calls whose values no declaration can type take the inert guard;
-; the observations below are those of the relational type relation.
+; the observations below are those of the corrected F5 type relation.
+; A later type variable bound to %Undefined% is checked, not a literal wildcard.
 
 ; A requirement aliased by an earlier guard: ($p $q) meets ($a $a), so
 ; the guard on $p decides $q for the last guard.

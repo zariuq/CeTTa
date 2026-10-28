@@ -1,7 +1,7 @@
 ; Corpus-guided finite templates over the existing scoped binding family.
 ; Depth bounds retained rigid constructors, not the source under a parameter.
 ; One partial capture environment is threaded through the whole rule forest.
-!(import! &self "lib/petta/lib_ic_scoped_archive.metta")
+!(import! &self (library lib_ic_scoped_archive))
 
 (= (scoped-grammar:positions $values $index)
    (if (== $values ()) (superpose ()) (Scoped:Position $index (car-atom $values))))

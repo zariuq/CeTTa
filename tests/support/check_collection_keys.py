@@ -55,7 +55,7 @@ def main():
     source = '!(import! &self (library list))\n' + probe + '\n'.join(calls)
     checks = 0
     for reference in ('0', '1'):
-        run = subprocess.run([binary, '--lang', 'petta@1.0.6', '-e', source],
+        run = subprocess.run([binary, '--lang', 'petta', '-e', source],
             cwd=ROOT, text=True, capture_output=True, timeout=60,
             env=dict(os.environ, CETTA_KEY_ENCODING_REFERENCE=reference))
         lines = run.stdout.splitlines()

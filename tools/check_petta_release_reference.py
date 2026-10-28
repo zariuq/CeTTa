@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Check the released PeTTa source identity and CeTTa's default contract."""
+"""Check the pinned corrected PeTTa reference and the current default contract.
+
+This checks source identity and selected default observations. It does not
+establish complete conformance. check_petta_stable_corpus.py records broader
+diagnostics; it is not a specification oracle either.
+"""
 import argparse
 import hashlib
 import json
@@ -17,17 +22,25 @@ def digest(path):
 def check_reference(reference, contract):
     revision = subprocess.check_output(
         ['git', '-C', str(reference), 'rev-parse', 'HEAD'], text=True).strip()
-    if revision != contract['upstream_commit']:
-        raise ValueError('reference checkout is not the pinned release')
+    if revision != contract['reference_commit']:
+        raise ValueError('reference checkout is not the pinned corrected stable revision')
     for relative, expected in contract['reference_files'].items():
         if digest(reference / relative) != expected:
-            raise ValueError('release source changed: ' + relative)
-    examples = {p.name for p in (reference / 'examples').glob('*.metta')}
+            raise ValueError('reference source changed: ' + relative)
+    tracked = subprocess.check_output(
+        ['git', '-C', str(reference), 'ls-files'], text=True).splitlines()
+    members = {p for p in tracked if p.startswith(('src/', 'lib/', 'examples/', 'tests/'))
+               or p in ('run.sh', 'run.py', 'test.sh')}
+    if members != set(contract['reference_files']):
+        raise ValueError('reference source membership changed')
+    examples = {Path(p).name for p in members
+                if p.startswith('examples/') and p.count('/') == 1
+                and p.endswith('.metta')}
     expected = {Path(p).name for p in contract['reference_files']
                 if p.startswith('examples/') and p.endswith('.metta')
                 and p.count('/') == 1}
     if examples != expected:
-        raise ValueError('release example membership changed')
+        raise ValueError('reference example membership changed')
     return len(expected)
 
 
@@ -43,6 +56,14 @@ def check_libraries(contract):
         expected = contract['library_adaptations'].get(name, upstream)
         if digest(path) != expected:
             raise ValueError('default library changed: ' + name)
+    provenance = (ROOT / 'lib/petta/vendored_from_petta.tsv').read_text().splitlines()
+    actual = [line.split('\t') for line in provenance
+              if line and not line.startswith('#')]
+    expected = [['file', 'source_sha256', 'petta_commit']] + [
+        [name, sha[:16], contract['reference_commit'][:7]]
+        for name, sha in sorted(contract['library_files'].items())]
+    if actual != expected:
+        raise ValueError('library provenance does not match the current reference')
 
 
 def check_default(binary):
@@ -52,17 +73,17 @@ def check_default(binary):
                 'is (), should (). ✅ \n'
                 'is (7 7), should (7 7). ✅ \n'
                 'true\ntrue\ntrue\ntrue\n')
-    for language in ('petta', 'petta@1.0.6'):
+    for language in ('petta', 'petta@stable-fixed'):
         run = subprocess.run([str(binary), '--lang', language, str(source)],
                              capture_output=True, text=True, timeout=30)
         if (run.returncode, run.stdout, run.stderr) != (0, expected, ''):
             raise ValueError(('default contract changed', language,
                               run.returncode, run.stdout, run.stderr))
-    # The release's two-argument lambda map is adapted to the native binder map.
+    # The reference's two-argument lambda map is adapted to the native binder map.
     # Pin its positive, empty, impossible and duplicate-occurrence observations.
     source = ROOT / 'tests/petta/language_versions/combinatorics_contract.metta'
     expected = source.with_suffix('.expected').read_text()
-    for language in ('petta', 'petta@1.0.6'):
+    for language in ('petta', 'petta@stable-fixed'):
         run = subprocess.run([str(binary), '--lang', language, str(source)],
                              capture_output=True, text=True, timeout=30)
         if (run.returncode, run.stdout, run.stderr) != (0, expected, ''):
@@ -75,19 +96,31 @@ def main():
     parser.add_argument('--reference', type=Path)
     parser.add_argument('--cetta', type=Path)
     args = parser.parse_args()
-    contract = json.loads((ROOT / 'langdef/petta/release_v1_0_6.json').read_text())
-    if contract['schema'] != 'cetta-petta-release-reference-v1':
-        raise ValueError('unknown release reference schema')
-    if contract['default_language_version'] != '1.0.6':
+    contract = json.loads((ROOT / 'langdef/petta/reference.json').read_text())
+    if contract['schema'] != 'cetta-petta-reference-v2':
+        raise ValueError('unknown reference schema')
+    if contract['default_language_version'] != 'stable-fixed':
         raise ValueError('unexpected default language version')
+    qualification = contract['qualification_contract']
+    observations = ROOT / qualification['observations']
+    if digest(observations) != qualification['observations_sha256']:
+        raise ValueError('observation contract changed without updating its identity')
+    ledger = json.loads(observations.read_text())
+    if ledger['reference_commit'] != contract['reference_commit']:
+        raise ValueError('observation contract names another reference')
+    for observation in ledger['observations']:
+        if observation['source_sha256'] != contract['reference_files'][observation['source']]:
+            raise ValueError('observation source identity changed: ' + observation['id'])
+        if 'contract_probe' in observation and not (ROOT / observation['contract_probe']).is_file():
+            raise ValueError('missing contract probe: ' + observation['id'])
     check_libraries(contract)
     if args.reference:
         count = check_reference(args.reference.resolve(), contract)
         if count != contract['example_count']:
-            raise ValueError('release example count changed')
+            raise ValueError('reference example count changed')
     if args.cetta:
         check_default(args.cetta.resolve())
-    print('PASS: released PeTTa libraries and default semantics are pinned to 1.0.6')
+    print('PASS: corrected stable PeTTa source, libraries and selected default observations are pinned')
 
 
 if __name__ == '__main__':

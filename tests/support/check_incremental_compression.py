@@ -73,7 +73,7 @@ def main():
         for count in (2, 3, 8, 16):
             for fuel in (0, 1, 4):
                 cases.append((block * count, [3, 2, 4, 5, 6, 7, 8], fuel))
-    statements = ['!(import! &self "lib/petta/lib_ic_repeated_block.metta")', '''
+    statements = ['!(import! &self (library lib_ic_repeated_block))', '''
 (= (ic-test $proposals $fuel $source)
    (case (ic:compress IC:RepeatedBits $proposals $fuel $source)
      (((IC:Plan $features $residual $stop)

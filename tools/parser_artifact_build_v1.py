@@ -280,8 +280,9 @@ def run_compiler(binary, directory, name, program, timeout):
 def compile_catalog(binary, manifest, rows, output, header, timeout):
     output.mkdir(parents=True, exist_ok=True)
     inputs = Inputs(manifest, rows)
-    imports = ('!(import! &self "lib/lib_lbnf.metta")\n!(import! &self "lib/lib_bnf.metta")\n'
-               '!(import! &self "lib/lib_module.metta")\n')
+    # Generated programs live beside their artifacts, not at the source root.
+    imports = ''.join(f'!(import! &self {text(ROOT / "lib" / name)})\n'
+                      for name in ('lib_lbnf.metta', 'lib_bnf.metta', 'lib_module.metta'))
     with tempfile.TemporaryDirectory(prefix=".partial-", dir=output) as temporary:
         directory = Path(temporary)
         artifacts = []

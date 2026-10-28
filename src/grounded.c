@@ -16,6 +16,7 @@
 #endif
 #include "exact_integer.h"
 #include "generated/cetta_execution_contracts.generated.h"
+#include <float.h>
 #include <inttypes.h>
 #include <string.h>
 #include <math.h>
@@ -703,7 +704,7 @@ bool is_grounded_op(SymbolId id) {
         return false;
     if (grounded_op_is_pattern(id))
         return eval_current_pattern_head && eval_current_pattern_head(id) != SYMBOL_ID_NONE;
-    /* These appended opcodes require an explicit extended profile. Keep
+    /* These appended opcodes have a language-specific policy. Keep
      * the decision outside the symbol cache so a session/profile handoff
      * cannot reuse another profile's permission. */
     if (grounded_op_is_term_order(id))
@@ -801,22 +802,33 @@ static bool get_numeric_arg(Atom *a, NumArg *out) {
      */
     if (a->kind == ATOM_SYMBOL &&
         eval_current_language_id &&
-        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
-        (symbol_eq_cstr(g_symbols, a->sym_id, "inf") ||
-         symbol_eq_cstr(g_symbols, a->sym_id, "-inf") ||
-         symbol_eq_cstr(g_symbols, a->sym_id, "nan"))) {
-        bool nan_value = symbol_eq_cstr(g_symbols, a->sym_id, "nan");
-        out->val = nan_value
-            ? NAN
-            : (symbol_eq_cstr(g_symbols, a->sym_id, "-inf")
-                   ? -INFINITY : INFINITY);
-        out->ival = 0;
-        out->bigint = NULL;
-        out->rational = NULL;
-        out->is_float = true;
-        out->is_bigint = false;
-        out->is_rational = false;
-        return true;
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        double constant = 0.0;
+        bool known = true;
+        if (symbol_eq_cstr(g_symbols, a->sym_id, "inf"))
+            constant = INFINITY;
+        else if (symbol_eq_cstr(g_symbols, a->sym_id, "-inf"))
+            constant = -INFINITY;
+        else if (symbol_eq_cstr(g_symbols, a->sym_id, "nan"))
+            constant = NAN;
+        else if (symbol_eq_cstr(g_symbols, a->sym_id, "pi"))
+            constant = acos(-1.0);
+        else if (symbol_eq_cstr(g_symbols, a->sym_id, "e"))
+            constant = exp(1.0);
+        else if (symbol_eq_cstr(g_symbols, a->sym_id, "epsilon"))
+            constant = DBL_EPSILON;
+        else
+            known = false;
+        if (known) {
+            out->val = constant;
+            out->ival = 0;
+            out->bigint = NULL;
+            out->rational = NULL;
+            out->is_float = true;
+            out->is_bigint = false;
+            out->is_rational = false;
+            return true;
+        }
     }
     if (a->kind != ATOM_GROUNDED) return false;
     if (a->ground.gkind == GV_INT) {
@@ -3557,6 +3569,18 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     if (grounded_op_is_term_order(head_id)) {
         if (nargs != 2u)
             return grounded_incorrect_arity(a, head, args, nargs);
+        if (grounded_current_language_is_petta()) {
+            /* PeTTa's operators and msort share SWI's standard term order.
+             * HE's structural ordering below is a different contract. */
+            int order = 0;
+            if (!petta_semantics_term_compare(args[0], args[1], &order))
+                return grounded_raise(a, head, args, nargs,
+                    atom_symbol(a, "IncomparableTermOrder"));
+            bool truth = head_id == g_builtin_syms.term_lt ? order < 0 :
+                head_id == g_builtin_syms.term_gt ? order > 0 :
+                head_id == g_builtin_syms.term_le ? order <= 0 : order >= 0;
+            return petta_semantics_boolean_value(a, truth);
+        }
         CettaTermOrder order = term_graph_value_compare(args[0], args[1]);
         if (order == CETTA_TERM_ORDER_INCOMPARABLE ||
             order == CETTA_TERM_ORDER_INVALID ||
@@ -4202,7 +4226,14 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         bool petta_strict =
             eval_current_language_id &&
             eval_current_language_id() == CETTA_LANGUAGE_PETTA;
-        if (bad_arg->kind == ATOM_GROUNDED || petta_strict) {
+        if (petta_strict) {
+            Atom *error =
+                petta_semantics_arithmetic_operand_error(a, bad_arg);
+            if (error)
+                g_grounded_raised = true;
+            return error;
+        }
+        if (bad_arg->kind == ATOM_GROUNDED) {
             return grounded_bad_arg_type(a, head, args, nargs,
                                          !na_ok ? 1 : 2,
                                          atom_symbol(a, "Number"),

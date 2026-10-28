@@ -219,7 +219,7 @@ def main():
         ($closed (postings:close $p)))
    (postings:fold-table-before $alias () 1 (Summary 0 0.0) fold-summary))
 '''
-    command = [str(args.cetta.resolve()), '--lang', 'petta@1.0.6']
+    command = [str(args.cetta.resolve()), '--lang', 'petta']
     observations = []
     for reference in ('0', '1'):
         run = subprocess.run(command + ['-e', prefix + '\n'.join(calls) + controls],
