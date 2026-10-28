@@ -34,7 +34,7 @@ runtime_type_error_uncaught.metta	--lang petta@1.1	2	PeTTa type error: Type mism
 no_matching_overload_caught.metta	--lang petta@1.1	0	✅
 overload_result_filter.metta	--lang petta@1.1	0	✅
 missing_import_raises.metta	--lang petta@1.1	0	✅
-missing_import_quiet.metta	--lang petta@stable-fixed	0	()
+missing_import_raises.metta	--lang petta@stable-fixed	0	✅
 typed_space_row_error.metta	--lang petta@1.1	0	✅
 untyped_function_argument.metta	--lang petta@1.1	0	✅
 decons_pattern_equality.metta	--lang petta@1.1 --strict-det	2	Determinism check failed

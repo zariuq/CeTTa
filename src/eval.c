@@ -4485,20 +4485,13 @@ static bool petta_eval_contract_raise(Atom *raised) {
         petta_semantics_contract_error(raised);
 }
 
-/* Whether the running PeTTa version raises an error for an import no file
- * answers: PeTTa 1.1 does; release 1.0.6 gives no outcome. */
-static bool petta_import_missing_raises(void) {
-    return petta_eval_typed_line();
-}
-
-#if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
+/* Source loading errors are independent of the optional type checker. */
 static bool petta_import_parse_failure(Atom *error) {
     return error && error->kind == ATOM_EXPR &&
            error->expr.len > 0u &&
            atom_is_symbol_id(
                error->expr.elems[0], g_builtin_syms.module_parse_failed);
 }
-#endif
 
 static TermUniverse *eval_current_term_universe(void) {
     if (g_eval_term_universe_override)
@@ -81449,11 +81442,9 @@ static __attribute__((noinline)) MettaDispatchResult metta_storage_dispatch(
             bool imported_parse_failure =
                 petta_import_parse_failure(error);
             /*
-             * Upstream PeTTa defines ordinary import! through a caught
-             * predicate: a genuinely missing module contributes no outcome.
-             * Under typecheck-v2, however, a module that was found but could
-             * not be parsed or checked is a source-program failure and must
-             * abort the importer rather than masquerade as absence.
+             * Preserve the typed line's source diagnostics. Corrected stable
+             * also exposes loading failures, through ordinary catch below,
+             * without selecting a type checker.
              */
             if (language_id == CETTA_LANGUAGE_PETTA &&
                 active_profile_is_petta_typecheck_v2() &&
@@ -81469,16 +81460,17 @@ static __attribute__((noinline)) MettaDispatchResult metta_storage_dispatch(
 #endif
             if (language_id == CETTA_LANGUAGE_PETTA &&
                 !has_library_reference &&
-                petta_import_missing_raises() &&
                 cetta_library_import_error_is_missing_module(error)) {
-                /* PeTTa 1.1 resolves an import before loading it and
-                 * raises existence_error(source_sink, File) for a file
-                 * that does not exist; release 1.0.6 caught it as no
-                 * outcome. */
+                /* Stable resolves an import before loading it, and reports
+                 * a missing source through the ordinary exception channel. */
                 Atom *missing = petta_semantics_missing_import_error(
                     a, expr_arg((*call), 1));
                 if (missing)
                     petta_eval_raise(missing);
+            } else if (language_id == CETTA_LANGUAGE_PETTA &&
+                       !has_library_reference &&
+                       petta_import_parse_failure(error)) {
+                petta_eval_raise(atom_error(a, (*call), error));
             } else if (language_id != CETTA_LANGUAGE_PETTA ||
                 has_library_reference) {
                 outcome_set_add(os, atom_error(a, (*call), error), empty);

@@ -3,8 +3,8 @@
 ; A take keeps every later answer in its work handle. Work and source epochs
 ; reject stale snapshots before another slice is executed.
 !(import! &self (library work))
-!(import! &self "lib/petta/lib_ic_archive.metta")
-!(import! &self "lib/petta/lib_fair_queue.metta")
+!(import! &self (library lib_ic_archive))
+!(import! &self (library lib_fair_queue))
 
 ; Models own reconstruction and complete encoded acceptance. Search ordering
 ; neither supplies a proof nor turns an estimate into an acceptance cost.

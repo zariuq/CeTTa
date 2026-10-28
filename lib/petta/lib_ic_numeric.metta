@@ -1,9 +1,9 @@
 ; Finite affine model discovery using the shared owned candidate search.
 ; NC1 includes inputs, mask, precision and either raw outputs or parameters.
 ; All fields needed by this decoder are charged by the common BV1 framing.
-!(import! &self "lib/petta/lib_ic_parameters.metta")
-!(import! &self "lib/petta/lib_binary_value.metta")
-!(import! &self "lib/petta/lib_ic_packed.metta")
+!(import! &self (library lib_ic_parameters))
+!(import! &self (library lib_binary_value))
+!(import! &self (library lib_ic_packed))
 
 (= (ic-numeric:encode $value) (tensor:encode-bytes (tensor:convert $value dense)))
 

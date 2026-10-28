@@ -1,6 +1,6 @@
 ; RepeatedBlock.lean instance: closed bit sequences and unary count features.
 ; Cost is unary constructor size; no numerical equality promotion is used.
-!(import! &self "lib/petta/lib_incremental_compression.metta")
+!(import! &self (library lib_incremental_compression))
 !(import! &self (library list))
 
 (= (ic:bits? $values)

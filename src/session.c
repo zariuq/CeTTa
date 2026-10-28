@@ -276,7 +276,7 @@ bool cetta_language_version_petta_typed_line(
 static const CettaLanguageVersion CETTA_LANGUAGE_VERSIONS[] = {
     {CETTA_LANGUAGE_VERSION_PETTA_STABLE, CETTA_LANGUAGE_PETTA, "stable-fixed",
      NULL, NULL, "Corrected stable PeTTa; the default",
-     CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY, false, .is_default = true},
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = true},
     {CETTA_LANGUAGE_VERSION_PETTA_1_1, CETTA_LANGUAGE_PETTA, "1.1",
      "typecheck-v2", "typecheck", "PeTTa's typed language",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = false},

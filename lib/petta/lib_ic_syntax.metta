@@ -1,7 +1,7 @@
 ; Exact factoring of finite ordered syntax, matching SyntaxFactor.lean.
 ; IC:Leaf payloads are symbols, so equality is structural, not numeric promotion.
 ; Fresh IC:Ref names are representation references, never host bindings.
-!(import! &self "lib/petta/lib_incremental_compression.metta")
+!(import! &self (library lib_incremental_compression))
 
 (= (ic-tree:size $tree)
    (case $tree

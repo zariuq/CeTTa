@@ -1,7 +1,7 @@
 ; Finite mixed parameter regions over immutable packed vectors. Search owns
 ; each cooperative continuation; later choices are not collapsed or discarded.
 !(import! &self (library tensor))
-!(import! &self "lib/petta/lib_ic_search.metta")
+!(import! &self (library lib_ic_search))
 
 (= (ic-parameters:vector? $dtype $value)
    (if (tensor:is-tensor $value)

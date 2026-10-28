@@ -83,7 +83,7 @@ to its own file, as HE resolves imports; the PeTTa spelling names the
 PeTTa realization from the top-level directory, as PeTTa resolves them:
 
   !(import! &self ../langdef/he/generated/NAME.metta)
-      -> !(import! &self langdef/petta/generated/NAME.metta)
+      -> !(import! &self ../../langdef/petta/generated/NAME.metta)
 
 HE's map-atom and foldl-atom, written out by their definitions at a call
 (as a library that forwards its caller's variable and template writes
@@ -358,7 +358,7 @@ def realization_import(form):
     if (isinstance(form, list) and len(form) == 3 and form[0] == "import!"
             and isinstance(form[2], Symbol) and form[2].startswith(HE_REALIZATIONS)):
         return [form[0], form[1],
-                Symbol(PETTA_REALIZATIONS + form[2][len(HE_REALIZATIONS):])]
+                Symbol("../../" + PETTA_REALIZATIONS + form[2][len(HE_REALIZATIONS):])]
     if (isinstance(form, list) and len(form)==3 and form[0]==Symbol("import!")
             and isinstance(form[2],Symbol) and re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',form[2])):
         return [form[0],form[1],[Symbol("library"),form[2]]]

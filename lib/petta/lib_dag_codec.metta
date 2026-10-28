@@ -2,7 +2,7 @@
 ; Payload bytes, every child reference and the ordered root vector are charged.
 ; Decoding admits the chronological records and creates new owned authority.
 !(import! &self (library dag))
-!(import! &self "lib/petta/lib_binary_schema.metta")
+!(import! &self (library lib_binary_schema))
 
 ; Logical unfolded-tree lengths, not the size of the DAG1 transport.
 (= (dag:encoded-lengths $handle)

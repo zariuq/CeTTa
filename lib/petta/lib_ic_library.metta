@@ -1,7 +1,7 @@
 ; Whole-body source helpers for the explicit entered-value profile. Source
 ; variables retain their original form-local identities. Learning returns a
 ; reviewable source artifact; it never installs equations into an application.
-!(import! &self "lib/petta/lib_ic_source_archive.metta")
+!(import! &self (library lib_ic_source_archive))
 !(import! &self (library str))
 
 (= (source-library:operations)

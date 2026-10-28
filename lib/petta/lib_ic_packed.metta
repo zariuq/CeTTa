@@ -1,7 +1,7 @@
 ; Whole packed-artifact acceptance. Domains supply a deterministic observation
 ; decoder, not a caller-claimed certificate. Every proposal is compared with
 ; the original task; every byte required by its decoder belongs to the cost.
-!(import! &self "lib/petta/lib_binary_tree.metta")
+!(import! &self (library lib_binary_tree))
 
 (= (ic-packed:check $model $original $current $candidate)
    (if (and (binary-tree:bytes? $original)

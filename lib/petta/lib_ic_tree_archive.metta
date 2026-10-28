@@ -3,7 +3,7 @@
 ; Native DAG admission and key factorization are reused; search stays authored.
 !(import! &self (library dag))
 !(import! &self (library list))
-!(import! &self "lib/petta/lib_ic_archive.metta")
+!(import! &self (library lib_ic_archive))
 
 (= (ic-tree-archive:descriptors $records)
    (if (== $records ()) ()
