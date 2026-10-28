@@ -208,6 +208,8 @@ def main():
     for args_text in (
         f"{vector(inputs)} {vector(outputs[:-1])} {vector(mask, 'bool')} 0.0",
         f"{vector(inputs)} {vector(outputs)} {vector(mask, 'bool')} -1.0",
+        f"{vector(inputs)} {vector(outputs)} {vector(mask, 'bool')} NoPrecision",
+        f"{vector(inputs)} {vector(outputs)} {vector(mask, 'bool')} 1.0e309",
         f"{vector(inputs)} {vector(outputs)} {vector([1] * 8, 'u8')} 0.0",
         f"(tensor:from-coo f64 (8) ((0 0.0))) {vector(outputs)} {vector(mask, 'bool')} 0.0",
     ):

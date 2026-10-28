@@ -50033,6 +50033,79 @@ CettaPreparedPureProgram *eval_prepare_pure_value_call(
         prepared_pure_match_decision_semantics(plan.call_mode), NULL);
 }
 
+/* Both scalar-library and relational consumers open the same nominal
+ * lexical source and compile the same ready-value expression. Each entrance
+ * retains its own observer, fuel and transaction admission. */
+static CettaPreparedPureProgram *prepared_pure_compile_lexical_values(
+        Space *space, Arena *owner, Atom *callable, uint32_t arity) {
+    if (!space || !owner || !callable || arity == 0u || arity > 2u ||
+        atom_has_registry_refs(callable) ||
+        hyperpose_atom_has_thread_local_resource(callable))
+        return NULL;
+    int64_t identity = 0;
+    if (!atom_petta_callable_identity(callable, &identity))
+        return NULL;
+    Atom *body = atom_deep_copy(owner, callable);
+    Atom *binders[2] = {NULL, NULL};
+    for (uint32_t index = 0u; body && index < arity; index++) {
+        int64_t nested_identity = 0;
+        if (!atom_petta_callable_identity(body, &nested_identity) ||
+            nested_identity != identity ||
+            !petta_semantics_lambda_body(body, NULL))
+            return NULL;
+        binders[index] = atom_var_with_id(
+            owner, "$__pure_callable", fresh_var_id());
+        body = binders[index]
+            ? cetta_petta_open_callable(owner, body, binders[index]) : NULL;
+    }
+    if (!body || petta_semantics_lambda_body(body, NULL) ||
+        cetta_prepared_pure_single_result_requires_answer_effect(
+            body, petta_prepared_pure_expression_view))
+        return NULL;
+    if (arity == 1u) {
+        binders[1] = atom_var_with_id(
+            owner, "$__pure_callable_unused", fresh_var_id());
+        if (!binders[1])
+            return NULL;
+    }
+    CettaPreparedPureSourceView source_view =
+        prepared_pure_source_view_for_language(CETTA_LANGUAGE_PETTA, body);
+    CETTA_SCOPED_SHARED_TRANSITION(pure_callable_compile);
+    CettaPreparedPureProgram *prepared = cetta_prepared_pure_program_compile(
+        space, body, binders[0]->var_id, binders[1]->var_id,
+        CETTA_GSLT_PURE_CALL_EAGER,
+        petta_semantics_boolean_value,
+        petta_semantics_construct_value,
+        petta_semantics_construct_value_is_expression,
+        petta_semantics_is_opaque_runtime_value,
+        petta_prepared_pure_register_view,
+        petta_prepared_pure_expression_view,
+        petta_prepared_pure_pattern_view,
+        &source_view,
+        active_composition_uses_total_structural_eq(),
+        prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_EAGER));
+    if (prepared &&
+        (cetta_prepared_pure_program_has_native_calls(prepared) ||
+         !cetta_prepared_pure_program_use_exportable_booleans(prepared))) {
+        cetta_prepared_pure_program_free(prepared);
+        return NULL;
+    }
+    return prepared;
+}
+
+CettaPreparedPureProgram *eval_prepare_pure_lexical_values(
+        Space *space, Arena *owner, Atom *callable, uint32_t arity) {
+    if (eval_current_language_id() != CETTA_LANGUAGE_PETTA ||
+        prepared_pure_reference_enabled() || petta_eval_typed_line() ||
+        active_search_table_mode() != CETTA_TABLE_MODE_NONE ||
+        prime_need_receipt_observer_requested() ||
+        gslt_match_chain_trace_active() ||
+        !cetta_eval_episode_allows_unmetered(
+            g_eval_completion_tracker, current_eval_fuel_limit()))
+        return NULL;
+    return prepared_pure_compile_lexical_values(space, owner, callable, arity);
+}
+
 /* A closed call's result, copied out of the storage that dies when the call
  * is released: its scratch above the call's mark and its collection
  * survivors. Their atoms record their copies in place, preserving sharing. */
@@ -51518,66 +51591,7 @@ static void *petta_eval_open_prepare_pure_callable(
         !petta_eval_open_callable_admitted(context, space, callable, arity))
         return NULL;
 
-    int64_t identity = 0;
-    if (!atom_petta_callable_identity(callable, &identity))
-        return NULL;
-    Atom *body = atom_deep_copy(owner, callable);
-    Atom *binders[2] = {NULL, NULL};
-    for (uint32_t index = 0u; body && index < arity; index++) {
-        int64_t nested_identity = 0;
-        if (!atom_petta_callable_identity(body, &nested_identity) ||
-            nested_identity != identity ||
-            !petta_semantics_lambda_body(body, NULL))
-            return NULL;
-        binders[index] = atom_var_with_id(
-            owner, "$__pure_callable", fresh_var_id());
-        body = binders[index]
-            ? cetta_petta_open_callable(owner, body, binders[index])
-            : NULL;
-    }
-    if (!body || petta_semantics_lambda_body(body, NULL) ||
-        cetta_prepared_pure_single_result_requires_answer_effect(
-            body, petta_prepared_pure_expression_view))
-        return NULL;
-    if (arity == 1u) {
-        binders[1] = atom_var_with_id(
-            owner, "$__pure_callable_unused", fresh_var_id());
-        if (!binders[1])
-            return NULL;
-    }
-    CettaPreparedPureSourceView source_view =
-        prepared_pure_source_view_for_language(
-            CETTA_LANGUAGE_PETTA, body);
-    CETTA_SCOPED_SHARED_TRANSITION(pure_callable_compile);
-    CettaPreparedPureProgram *prepared = cetta_prepared_pure_program_compile(
-        space, body, binders[0]->var_id, binders[1]->var_id,
-        CETTA_GSLT_PURE_CALL_EAGER,
-        petta_semantics_boolean_value,
-        petta_semantics_construct_value,
-        petta_semantics_construct_value_is_expression,
-        petta_semantics_is_opaque_runtime_value,
-        petta_prepared_pure_register_view,
-        petta_prepared_pure_expression_view,
-        petta_prepared_pure_pattern_view,
-        &source_view,
-        active_composition_uses_total_structural_eq(),
-        prepared_pure_match_decision_semantics(
-            CETTA_GSLT_PURE_CALL_EAGER));
-    /* The scalar callable consumer cannot retain an entered native return.
-     * Record that refusal when selecting its worker, before each application
-     * prepares operands or retries the same unsupported plan. */
-    if (prepared && cetta_prepared_pure_program_has_native_calls(prepared)) {
-        cetta_prepared_pure_program_free(prepared);
-        return NULL;
-    }
-    /* This private plan is released with its cursor. Its output may already
-     * have crossed to a longer-lived consumer, so Boolean leaves must have
-     * canonical or execution-arena ownership rather than inline storage. */
-    if (prepared && !cetta_prepared_pure_program_use_exportable_booleans(prepared)) {
-        cetta_prepared_pure_program_free(prepared);
-        return NULL;
-    }
-    return prepared;
+    return prepared_pure_compile_lexical_values(space, owner, callable, arity);
 }
 
 static bool petta_eval_open_execute_pure_callable(

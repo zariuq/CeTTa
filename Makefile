@@ -44477,6 +44477,14 @@ test-json-codec-boundary: $(BIN)
 runtime/test_tensor-$(BUILD_OBJ_TAG): tests/support/test_tensor.c src/tensor.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
 
+runtime/test_tensor_gather_rows_allocation-$(BUILD_OBJ_TAG): tests/support/test_tensor_gather_rows_allocation.c src/tensor.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_gather_rows_allocation.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
+
+.PHONY: test-tensor-gather-rows
+test-tensor-gather-rows: $(BIN) runtime/test_tensor_gather_rows_allocation-$(BUILD_OBJ_TAG)
+	./runtime/test_tensor_gather_rows_allocation-$(BUILD_OBJ_TAG)
+	python3 tests/support/check_tensor_gather_rows.py --cetta ./$(BIN) --output runtime/tensor-gather-rows-qualification
+
 .PHONY: test-tensor
 test-tensor: $(BIN) runtime/test_tensor-$(BUILD_OBJ_TAG)
 	./runtime/test_tensor-$(BUILD_OBJ_TAG)
@@ -47213,12 +47221,36 @@ NATIVE_OBSERVER_SAFETY_TEST_BIN = runtime/test_native_observer_safety-$(BUILD_OB
 $(NATIVE_OBSERVER_SAFETY_TEST_BIN): tests/support/test_native_observer_safety.c src/library_binary.h $(filter-out src/main.%,$(OBJ)) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_native_observer_safety.c $(filter-out src/main.%,$(OBJ)) $(LDFLAGS)
 
-.PHONY: test-native-observer-safety test-binary-value test-scoped-templates test-scoped-grammar test-ic-scoped-archive test-ic-numeric test-ic-library test-ic-templates test-ic-reference test-incremental-compression
+WORK_SOURCE_EPOCHS_TEST_BIN = runtime/test_work_source_epochs-$(BUILD_OBJ_TAG)
+$(WORK_SOURCE_EPOCHS_TEST_BIN): tests/support/test_work_source_epochs.c src/library_work.h $(filter-out src/main.%,$(OBJ)) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_work_source_epochs.c $(filter-out src/main.%,$(OBJ)) $(LDFLAGS)
+
+.PHONY: test-work-source-epochs
+test-work-source-epochs: $(BIN) $(WORK_SOURCE_EPOCHS_TEST_BIN)
+	@$(WORK_SOURCE_EPOCHS_TEST_BIN)
+	python3 tests/support/check_work_source_epochs.py --cetta ./$(BIN) --output runtime/work-source-epochs-qualification
+
+.PHONY: test-native-observer-safety test-binary-value test-scoped-templates test-scoped-grammar test-ic-scoped-archive test-ic-numeric test-ic-numeric-program test-ic-numeric-arrays test-ic-continuations test-tensor-inverse test-ic-library test-ic-constructor-trees test-ic-context-library test-ic-library-transfer test-ic-library-stack test-ic-library-stack-transfer test-ic-guided-grammar test-ic-context-grammar test-tensor-lexical test-tensor-program test-ic-templates test-ic-reference test-incremental-compression
 test-native-observer-safety: $(NATIVE_OBSERVER_SAFETY_TEST_BIN)
 	@$(NATIVE_OBSERVER_SAFETY_TEST_BIN)
 
 test-binary-value: $(BIN)
 	python3 tests/support/check_binary_value.py --cetta ./$(BIN) --output runtime/binary-value-qualification
+
+.PHONY: test-portable-value test-ic-mil-program
+test-portable-value: $(BIN)
+	python3 tests/support/check_portable_value.py --cetta ./$(BIN) --output runtime/portable-value-qualification
+	python3 tools/library_spelling.py lib/binary.metta lib/petta/binary.metta --dialect=petta --check
+	python3 tools/library_spelling.py lib/binary.metta lib/prime/binary.metta --dialect=prime --check
+
+test-ic-mil-program: $(BIN)
+	python3 tests/support/check_ic_mil_program.py --cetta ./$(BIN) --output runtime/ic-mil-program-qualification
+
+.PHONY: test-ic-mil-export
+test-ic-mil-export: $(BIN)
+	python3 tests/support/check_ic_mil_export.py --cetta ./$(BIN) --output runtime/ic-mil-export-qualification
+
+test-incremental-compression: test-portable-value test-ic-mil-program test-ic-mil-export
 
 test-scoped-templates: $(BIN)
 	python3 tests/support/check_scoped_templates.py --cetta ./$(BIN) --output runtime/ic-scoped-qualification
@@ -47241,7 +47273,81 @@ test-ic-reference: $(BIN)
 test-ic-numeric: $(BIN)
 	python3 tests/support/check_ic_numeric.py --cetta ./$(BIN) --output runtime/ic-numeric-qualification
 
+.PHONY: test-ic-packed-observations test-ic-mil-skeletons test-ic-mil-pruning test-ic-mil-tensor test-ic-mil-source test-tensor-program-compose test-tensor-program-parameters test-ic-family-transfer
+test-ic-packed-observations: $(BIN)
+	python3 tests/support/check_ic_packed_observations.py --cetta ./$(BIN) --output runtime/ic-packed-observations-qualification
+
+test-ic-mil-skeletons: $(BIN)
+	python3 tests/support/check_mil_skeletons.py --cetta ./$(BIN) --output runtime/ic-mil-skeletons-qualification
+	python3 tests/support/check_mil_skeletons.py --cetta ./$(BIN) --lang prime --skip-helper --output runtime/ic-mil-skeletons-prime-qualification
+
+test-ic-mil-pruning: $(BIN)
+	python3 tests/support/check_mil_pruning.py --cetta ./$(BIN) --output runtime/ic-mil-pruning-qualification
+
+test-tensor-program-compose: $(BIN)
+	python3 tests/support/check_tensor_program_compose.py --cetta ./$(BIN) --output runtime/ic-tensor-compose-qualification
+
+test-ic-mil-tensor: $(BIN)
+	python3 tests/support/check_ic_mil_tensor.py --cetta ./$(BIN) --output runtime/ic-mil-tensor-qualification
+
+test-ic-mil-source: $(BIN)
+	python3 tests/support/check_ic_mil_source.py --cetta ./$(BIN) --output runtime/ic-mil-source-qualification
+
+test-tensor-program-parameters: $(BIN)
+	python3 tests/support/check_tensor_program_parameters.py --cetta ./$(BIN) --output runtime/ic-parameter-programs-qualification
+
+test-ic-family-transfer: $(BIN)
+	python3 tests/support/check_ic_family_transfer.py --cetta ./$(BIN) --output runtime/ic-family-transfer-qualification
+
 test-ic-library: $(BIN)
 	python3 tests/support/check_ic_library.py --cetta ./$(BIN) --output runtime/ic-library-qualification
 
-test-incremental-compression: test-ic-reference test-ic-templates test-ic-archive test-ic-search test-compact-dag test-source-codec test-binary-value test-scoped-templates test-ic-scoped-archive test-scoped-grammar test-tensor-sequences test-ic-numeric test-ic-library
+test-ic-constructor-trees: $(BIN)
+	python3 tests/support/check_ic_constructor_trees.py --cetta ./$(BIN) --output runtime/ic-constructor-trees-qualification
+
+test-ic-context-library: $(BIN)
+	python3 tests/support/check_ic_context_library.py --cetta ./$(BIN) --output runtime/ic-context-library-qualification
+
+test-ic-library-transfer: $(BIN)
+	python3 tests/support/check_ic_library_transfer.py --cetta ./$(BIN) --output runtime/ic-library-transfer-qualification
+
+test-ic-library-stack: $(BIN)
+	python3 tests/support/check_ic_library_stack.py --cetta ./$(BIN) --output runtime/ic-library-stack-qualification
+
+test-ic-library-stack-transfer: $(BIN)
+	python3 tests/support/check_ic_library_stack_transfer.py --cetta ./$(BIN) --output runtime/ic-library-stack-transfer-qualification
+
+test-ic-guided-grammar: $(BIN)
+	python3 tests/support/check_ic_guided_grammar.py --cetta ./$(BIN) --output runtime/ic-guided-grammar-qualification
+
+test-ic-context-grammar: $(BIN)
+	python3 tests/support/check_ic_context_grammar.py --cetta ./$(BIN) --output runtime/ic-context-grammar-qualification
+
+test-tensor-lexical: $(BIN)
+	python3 tests/support/check_tensor_lexical.py --cetta ./$(BIN) --output runtime/tensor-lexical-qualification
+
+test-tensor-program: $(BIN)
+	python3 tests/support/check_tensor_program.py --cetta ./$(BIN) --output runtime/tensor-program-qualification
+
+.PHONY: test-tensor-program-literals test-ic-clustering
+test-tensor-program-literals: $(BIN)
+	python3 tests/support/check_tensor_program_literals.py --cetta ./$(BIN) --output runtime/tensor-program-literals-qualification
+
+test-ic-clustering: $(BIN)
+	python3 tests/support/check_ic_clustering.py --cetta ./$(BIN) --output runtime/ic-clustering-qualification
+
+test-incremental-compression: test-tensor-gather-rows test-tensor-program-literals test-ic-clustering
+
+test-ic-numeric-program: $(BIN)
+	python3 tests/support/check_ic_numeric_program.py --cetta ./$(BIN) --output runtime/ic-numeric-program-qualification
+
+test-ic-numeric-arrays: $(BIN)
+	python3 tests/support/check_ic_numeric_arrays.py --cetta ./$(BIN) --output runtime/ic-numeric-arrays-qualification
+
+test-ic-continuations: $(BIN)
+	python3 tests/support/check_ic_continuations.py --cetta ./$(BIN) --output runtime/ic-continuations-qualification
+
+test-tensor-inverse: $(BIN)
+	python3 tests/support/check_tensor_inverse.py --cetta ./$(BIN) --output runtime/tensor-inverse-qualification
+
+test-incremental-compression: test-ic-reference test-ic-templates test-ic-archive test-ic-search test-work-source-epochs test-compact-dag test-source-codec test-binary-value test-scoped-templates test-ic-scoped-archive test-scoped-grammar test-tensor-sequences test-ic-numeric test-ic-packed-observations test-ic-mil-skeletons test-ic-mil-pruning test-tensor-program-compose test-ic-mil-tensor test-ic-mil-source test-tensor-program-parameters test-ic-family-transfer test-ic-library test-ic-constructor-trees test-ic-context-library test-ic-library-transfer test-ic-library-stack test-ic-library-stack-transfer test-ic-guided-grammar test-ic-context-grammar test-tensor-lexical test-tensor-program test-ic-numeric-program test-ic-numeric-arrays test-ic-continuations test-tensor-inverse
