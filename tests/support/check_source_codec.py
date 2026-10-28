@@ -107,7 +107,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     check_controls((ROOT / "lib/petta/lib_source_codec.metta").read_text())
     code = ['!(println! (SourceUnimported (syntax:read "a")))',
-            '!(import! &self "lib/petta/lib_source_codec.metta")', '''
+            '!(import! &self (library lib_source_codec))', '''
 (= (source-test $text)
    (let* (($document (syntax:read $text))
           ($restored (syntax:restore $document))
@@ -217,7 +217,7 @@ def main():
         '!(println! "effect-once")\n!(println! (collapse (superpose ())))\n',
     ]
     emitter = args.output / "emit.metta"
-    emitter.write_text('!(import! &self "lib/petta/lib_source_codec.metta")\n' + "\n".join(
+    emitter.write_text('!(import! &self (library lib_source_codec))\n' + "\n".join(
         f'!(println! (SourceEmission {i} (tensor:inspect (binary:utf8 (syntax:write (syntax:read {text_arg(s)}))))))'
         for i, s in enumerate(snippets)) + "\n")
     emit = subprocess.run([str(args.cetta.resolve()), "--lang", "petta", str(emitter.resolve())],

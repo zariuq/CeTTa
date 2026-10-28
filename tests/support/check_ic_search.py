@@ -65,7 +65,7 @@ def main():
     check_controls()
     args.output.mkdir(parents=True, exist_ok=True)
     original, candidate = fixtures()
-    code = ['!(import! &self "lib/petta/lib_ic_search.metta")', '''
+    code = ['!(import! &self (library lib_ic_search))', '''
 (= (spam $original) (IC:Candidate $original))
 (= (spam $original) (spam $original))
 (= (stubborn $original $candidate) (stubborn $original $candidate))

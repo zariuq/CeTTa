@@ -166,7 +166,7 @@ def main():
     args = ap.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     check_controls((ROOT / "lib/petta/lib_ic_library.metta").read_text())
-    code = ['!(import! &self "lib/petta/lib_ic_library.metta")', '''
+    code = ['!(import! &self (library lib_ic_library))', '''
 (= (library-test:factor $text)
    (let* (($document (syntax:read $text)) ($prepared (ic:prepare-library $document)))
      (case (source-library:seed $prepared "ic-learned:test" 0 1)

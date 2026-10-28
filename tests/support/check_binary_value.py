@@ -71,7 +71,7 @@ def main():
     args = ap.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     check_controls((ROOT / "lib/petta/lib_binary_value.metta").read_text())
-    program = ['!(import! &self "lib/petta/lib_binary_value.metta")', '''
+    program = ['!(import! &self (library lib_binary_value))', '''
 (= (value-view $value)
    (case (binary:value-kind $value)
      ((Symbol (ValueSymbol (tensor:inspect (binary:symbol-utf8 $value))))

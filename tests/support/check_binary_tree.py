@@ -52,7 +52,7 @@ def main():
         return "node", rng.randbytes(rng.randrange(4)), [tree(depth - 1) for _ in range(rng.randrange(4))]
 
     trees += [tree(4) for _ in range(20)]
-    code = ['!(import! &self "lib/petta/lib_binary_tree.metta")', '''
+    code = ['!(import! &self (library lib_binary_tree))', '''
 (= (tree-view $tree)
    (case $tree
      (((Binary:Leaf $payload) (Binary:Leaf (tensor:inspect $payload)))

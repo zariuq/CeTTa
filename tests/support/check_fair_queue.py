@@ -44,7 +44,7 @@ def main():
     for _ in range(20):
         offers = [(rng.randrange(8), rng.choice(["A", "B", "Loop", "Fork"])) for _ in range(rng.randrange(1, 10))]
         cases.append((offers, rng.randrange(1, 40)))
-    code = ['!(import! &self "lib/petta/lib_fair_queue.metta")', '''
+    code = ['!(import! &self (library lib_fair_queue))', '''
 (= (fair-build $queue $offers)
    (if (== $offers ()) $queue
      (let ($offer $tail) (decons-atom $offers)

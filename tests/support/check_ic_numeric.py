@@ -100,7 +100,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     for name in ("lib_ic_parameters.metta", "lib_ic_numeric.metta"):
         check_controls((ROOT / "lib/petta" / name).read_text())
-    code = ['!(import! &self "lib/petta/lib_ic_numeric.metta")', HELPERS]
+    code = ['!(import! &self (library lib_ic_numeric))', HELPERS]
     expected = []
 
     def add(call, wanted):

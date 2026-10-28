@@ -156,7 +156,7 @@ def main():
         left, right = tree(3), tree(3)
         target = node(2, left, left if rng.randrange(2) else right)
         cases.append((signature, [r("Term")], [duplicate], [target]))
-    code = ['!(import! &self "lib/petta/lib_ic_templates.metta")', '''
+    code = ['!(import! &self (library lib_ic_templates))', '''
 (= (template-test $signature $slots $patterns $sources)
    (case (ic-template:match $signature $slots $patterns $sources)
      (((IC:Some $environment)
