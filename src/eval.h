@@ -478,6 +478,22 @@ StateCell *eval_resolve_state_read(StateCell *cell) __attribute__((weak));
  * every active retained/native observer. Ordinary execution has a cold
  * no-observer fast path. */
 Space *eval_observe_space_read(Space *space) __attribute__((weak));
+/* A synchronous borrowed observer of the existing evaluator read hooks.
+ * Nested scopes all receive the original tokens. Returning false marks the
+ * active evaluation incomplete; it never denotes an empty result. Resource
+ * owners outlive the observation and any retained validation of its tokens. */
+typedef struct CettaEvalReadScope {
+    bool (*observe)(void *context, SpaceReadToken read);
+    void *context;
+    struct CettaEvalReadScope *previous;
+    bool incomplete;
+} CettaEvalReadScope;
+void eval_read_scope_enter(CettaEvalReadScope *scope);
+void eval_read_scope_leave(CettaEvalReadScope *scope);
+/* Evaluate the stored code of an interaction request through the ordinary
+ * complete-frontier host boundary. The caller owns its request and observer. */
+bool eval_interaction_values(Space *space, Arena *arena, Atom *expression,
+    Atom ***values_out, size_t *len_out, Atom **error_out);
 bool eval_current_profile_enables_dependent_telescope(void) __attribute__((weak));
 CettaLanguageId eval_current_language_id(void) __attribute__((weak));
 /* Whether the active PeTTa profile checks each step application (the

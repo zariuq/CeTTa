@@ -1,0 +1,138 @@
+Native integration contract
+===========================
+
+This checkpoint specifies the implementation boundary. It compares executable
+authoring forms using existing services and does not select a new :/= default.
+
+Completion
+----------
+
+Read a complete declaration submission before admitting its clauses. Retain
+the signature, body, family parameters and indices, constructor fields and
+results, eliminator, computation rows and universe information. Check binding,
+formation, typing and the selected computation authority before publication.
+An unfinished clause family is data, not a completed conversion definition.
+
+DeclarationCompletion proves the signature/body case against the existing
+prefix checker. The Nat and Vec generators qualify their selected family
+profiles. Other recursive families require their own producer/admission
+connection; being readable by the package codec alone does not provide it.
+
+Resolution and reuse
+--------------------
+
+Ordinary mathematical execution and conversion must resolve the same admitted
+definition identity and revision. The retained selected entry supplies both
+the type and the unfolding body. An unrelated ordinary equation must not
+silently replace only one of those views.
+
+Retain each checked result's source, context, exact conclusion and dependency
+observations. Reuse compares the declarations, rules, premises and policies
+actually consulted, including absent lookups. A revision label alone is
+insufficient. A previously negative verdict can change after an addition.
+An unsuccessful bounded search remains unfinished, not inequality.
+
+Reference adapters
+------------------
+
+HE inventories contain actual qualified local source rules. A negative
+selection guard needs evidence for the complete source condition. A displayed
+guard, a nominal policy name or failed bounded search supplies no such proof.
+Preserve inventory-local judgment dictionaries with the source envelope;
+matching compact identifiers from different inventories is not source equality.
+
+HOL operations retain primitive typing, freshness, hypothesis and substitution
+conditions. Axiom commitments and definition extensions belong to the selected
+source theory. HOL theorem data and native owned theorem handles remain
+different interfaces.
+
+Requests, derivations and rules
+------------------------------
+
+Inspection returns data without executing it. A rule value retains its ordered
+premise holes, including duplicate and unused positions. Application checks
+every argument and fills those positions through the established substitution.
+The three tags request/rule/derivation are not interchangeable authority.
+
+Converters return the exact source and target with checked equality evidence.
+Propositional Id evidence authorizes explicit transport. A profile that also
+uses it for judgmental conversion needs a separate equality-reflection contract.
+
+Operational integration
+-----------------------
+
+The existing proof machine and OSLF connection describe checked application
+events and supported completion observations. Interactive services can propose
+evidence; the checker independently validates it. A transform consumes the
+selected work occurrence, reads the current source and produces a publication
+intent. These theorems do not establish C atomicity, arbitrary capability
+confinement, fair scheduling or termination of an external provider.
+
+Qualification before adopting a default
+--------------------------------------
+
+Nested queries retain their complete pending computation. Empty conjunctions
+and vacuous every are rows; failure to finish a matcher or computed request is
+not an absence result. Source matching and linear commit admission remain
+distinct: a nonlinear match can still refute absence, while every filters its
+contributing rows before amalgamation.
+
+A reply capability names the exact request that owns its continuation. Its
+generation is consumed once; cancellation cannot turn a late reply into a
+reply to the next request. Effects already performed by computed code remain
+observable. Additional mutable reads performed by that code must become commit
+dependencies; immutable argument computation needs no extra store read.
+
+Admission prepares the complete output and continuation before mutation.
+Backend allocation after the first effect remains an atomicity obligation;
+unexpected failure must publish changed state and its failure history rather
+than return ordinary no-match or claim rollback.
+
+Use the corpus to check definition conflicts, dependency edits, captures,
+malformed and unused contexts, wrong premise positions, forged conclusions,
+policy changes, incorrect indices, effects during inspection and exhausted
+search. Preserve the generated Nat/Vec package comparisons and the full HE/HOL
+reference controls. Compare native parser and dispatch behavior with the exact
+source judgments. Native implementation refinement remains a separate proof
+obligation; matching a finite corpus is evidence with a finite scope.
+
+Build comparisons retain their runtime resources as well as their executable.
+The generated project and plain-C export currently contain compiled units, not
+the interpreted MeTTa library tree. For their execution comparison, run check.py
+with --working-dir pointing to the runtime source root, which supplies lib/.
+The ordinary source binary also finds that tree beside its executable; a deeper
+exported executable does not. The default experiment-directory check is retained
+and exposes this packaging difference. Equal executable bytes do not establish
+relocatable resource packaging.
+
+Open runtime findings
+---------------------
+
+The computed-read integration is WIP. Run memoized-query-dependencies.metta
+with the current executable's --lang petta selector. The warmed lookup returns
+(1), then a later computed source adds (item 2) to its consulted space.
+The current diagnostic ends with (()), (done), and ((item 1) (item 2)).
+The intended dependent-publication contract instead refuses that commit,
+retains pending work, and preserves the computed insertion. The attempted
+cached-read capture/replay changes have not closed this case. This diagnostic
+is separate from check.py's passing corpus; a zero process exit is not a pass.
+
+The current native sources pass thirteen interaction fixtures, 404 focused
+query/continuation controls and 266 corrected-stable assertions on both
+equation routes. The final staging check of this directory's mathematics
+corpus passes seventeen of twenty programs. judgment-transforms.metta,
+interactive-judgments.metta and query-judgments.metta regress: expected proof
+publications are absent and pending work remains. These failures are separate
+from the cached-read diagnostic above and still require investigation.
+
+Final sanitizer and native/project/plain-C comparisons for these dependency
+edits are outstanding. Earlier sanitizer, complete mathematics-corpus and
+byte-agreement receipts qualify the earlier continuation checkpoint only.
+
+The current draft still separates raw ordinary rewrite selection from admitted
+conversion; the supplied conflict and same-source-admission fixtures retain
+that behavior. The separate indexed generic-checker campaign has seven capacity
+exhaustions and one terminal-DAG false rejection in Prime. The frozen HE
+PathMap one-argument new-space probe also has an API mismatch. These findings
+must remain visible during implementation. None is reclassified as a proof of
+unprovability or hidden by choosing a new language default.

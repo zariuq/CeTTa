@@ -112,12 +112,13 @@
 
 ;; ---- running the kernel ---------------------------------------------------------
 
-; The kernel stops only to have code run.  (ia:need M E): run E, give the
-; values back.  (ia:done OUTCOME): the firing is over.
+; The kernel stops only to have code run. (ia:need M E) identifies M's stored
+; request; compute evaluates it while retaining its reported Space reads.
+; (ia:done OUTCOME): the firing is over.
 (= (ia:run $i)
    (case $i
      (((ia:need $m $e)
-       (ia:run (__cetta_lib_interaction_resume $m (collapse (eval $e)))))
+       (ia:run (__cetta_lib_interaction_compute $m)))
       ($done $done))))
 
 ; The answers of a firing: the continuation's, after the agenda has run.

@@ -8,7 +8,8 @@ derives the matching `cesta project/1` document for the active configuration.
 Makefile, and `cesta build --export-c` turns it into plain C with a Makefile.
 
 The variables file has one NAME=VALUE line per variable, as the Makefile writes
-it: NATIVE_CC, CPPFLAGS, CFLAGS, LDFLAGS, SRC, PARSER_BAKED_OBJ, BRIDGE_DEPS.
+it: NATIVE_CC, CPPFLAGS, CFLAGS, LDFLAGS, SRC, SECP256K1_SRC,
+SECP256K1_CFLAGS, PARSER_BAKED_OBJ, BRIDGE_DEPS.
 Words split as the shell splits the Makefile's recipes.  The baked parser is
 compiled by the Makefile with its own definition and enters the link as an
 input, at the place the Makefile's link gives it: after every other object.
@@ -19,7 +20,8 @@ from pathlib import Path
 
 TARGET = "cetta"
 BAKED_SOURCE = "native/parser_baked_v1.c"
-REQUIRED = ("NATIVE_CC", "CPPFLAGS", "CFLAGS", "LDFLAGS", "SRC", "PARSER_BAKED_OBJ", "BRIDGE_DEPS")
+REQUIRED = ("NATIVE_CC", "CPPFLAGS", "CFLAGS", "LDFLAGS", "SRC", "SECP256K1_SRC",
+            "SECP256K1_CFLAGS", "PARSER_BAKED_OBJ", "BRIDGE_DEPS")
 
 
 def string(word):
@@ -79,8 +81,33 @@ def main():
     if Path(args.executable).resolve() == (Path(args.out) / TARGET).resolve():
         raise SystemExit("the executable must not be the target's object directory")
 
+    if not sources:
+        raise SystemExit("the runtime needs at least one source")
+    special = set(words(values, "SECP256K1_SRC"))
+    if special - set(sources):
+        raise SystemExit("the crypto source declaration names a source outside SRC")
+
+    # project/1 assigns flags to targets. Partition contiguous source groups
+    # into those targets, keeping the Makefile's exact object order. Whole
+    # archives retain even units used only through exported native symbols.
+    groups = []
+    for source in sources:
+        profile = "crypto" if source in special else "runtime"
+        if not groups or groups[-1][0] != profile:
+            groups.append((profile, []))
+        groups[-1][1].append(source)
+    archives, targets = [], []
+    for index, (profile, group) in enumerate(groups[1:], 1):
+        name = f"cetta_sources_{index}"
+        archive = str(Path(args.out) / name / f"lib{name}.a")
+        archives.append(archive)
+        targets.append("\n".join([
+            f"  (target {name} (profile {profile}) (kind archive)",
+            form("sources", group, "    ") + ")",
+        ]))
     bridge = words(values, "BRIDGE_DEPS")
-    link = (words(values, "CFLAGS") + ["-Wl,--export-dynamic"] + baked + bridge
+    grouped = ["-Wl,--whole-archive", *archives, "-Wl,--no-whole-archive"] if archives else []
+    link = (words(values, "CFLAGS") + ["-Wl,--export-dynamic"] + grouped + baked + bridge
             + words(values, "LDFLAGS"))
     document = "\n".join([
         ";; The runtime executable, derived from the Makefile for one configuration.",
@@ -91,11 +118,16 @@ def main():
         "  (profile runtime",
         form("flags", words(values, "CPPFLAGS") + words(values, "CFLAGS"), "    "),
         "    (link))",
-        f"  (target {TARGET} (profile runtime) (kind executable)",
+        "  (profile crypto",
+        form("flags", words(values, "CPPFLAGS") + words(values, "SECP256K1_CFLAGS"), "    "),
+        "    (link))",
+        *targets,
+        f"  (target {TARGET} (profile {groups[0][0]}) (kind executable)",
         f"    (output {string(args.executable)})",
-        form("sources", sources, "    "),
+        form("sources", groups[0][1], "    "),
+        form("depends", [f"cetta_sources_{i}" for i in range(1, len(groups))], "    "),
         form("link", link, "    "),
-        form("link-inputs", baked + bridge, "    ") + "))",
+        form("link-inputs", archives + baked + bridge, "    ") + "))",
         "",
     ])
     output = Path(args.output)

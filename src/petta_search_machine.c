@@ -154,6 +154,8 @@ typedef struct {
     Atom *answer_storage_key;
     size_t answer_len;
     size_t answer_cap;
+    SpaceReadToken *space_reads;
+    size_t space_read_len, space_read_cap;
     /* Allocated once the table indexes its answers or forwards. */
     struct PettaTableFactor *factor;
     PettaTableEntryState state;
@@ -1511,6 +1513,15 @@ struct PettaMachineImpl {
     int typecheck_exit_code;
     PettaMachineStats stats;
 };
+
+/* The live pull prefix includes private child frames as well as reentrant
+ * host calls. Refer to its pointer cells so growth cannot stale this scope. */
+typedef struct PettaTableReadScope {
+    PettaPullFrame **frames;
+    size_t *length;
+    struct PettaTableReadScope *previous;
+} PettaTableReadScope;
+static _Thread_local PettaTableReadScope *g_petta_table_read_scopes;
 
 typedef struct {
     int kind;
@@ -3346,9 +3357,78 @@ static CettaProducerReads *petta_table_current_reads(
 
 static void petta_table_entry_release(PettaTableEntry *entry) {
     free(entry->answers);
+    free(entry->space_reads);
     if (entry->answer_storage)
         cetta_answer_storage_release(entry->answer_storage);
     entry->factor = NULL;
+}
+
+static bool petta_table_capture_space_read(PettaTableShared *shared, SpaceReadToken read) {
+    if (!shared) return true;
+    if (shared->failed) return false;
+    for (size_t active = 0u; active < shared->tarjan_len; active++) {
+        size_t index = shared->tarjan_stack[active];
+        if (index >= shared->entry_len) {
+            shared->failed = true;
+            return false;
+        }
+        PettaTableEntry *entry = &shared->entries[index];
+        bool retained = false;
+        for (size_t i = 0u; i < entry->space_read_len; i++) {
+            SpaceReadToken old = entry->space_reads[i];
+            if (old.space == read.space && old.instance_id == read.instance_id &&
+                old.revision == read.revision && old.prefix_epoch == read.prefix_epoch &&
+                old.base_prefix_epoch == read.base_prefix_epoch &&
+                old.base_dependency_epoch == read.base_dependency_epoch) {
+                retained = true;
+                break;
+            }
+        }
+        if (retained) continue;
+        if (entry->space_read_len == entry->space_read_cap) {
+            size_t cap = entry->space_read_cap ? entry->space_read_cap * 2u : 4u;
+            if (cap <= entry->space_read_cap || cap > SIZE_MAX / sizeof(*entry->space_reads)) {
+                shared->failed = true;
+                return false;
+            }
+            void *items = cetta_fallible_realloc(entry->space_reads, cap * sizeof(*entry->space_reads));
+            if (!items) {
+                shared->failed = true;
+                return false;
+            }
+            entry->space_reads = items;
+            entry->space_read_cap = cap;
+        }
+        entry->space_reads[entry->space_read_len++] = read;
+    }
+    return true;
+}
+
+bool petta_machine_records_host_reads(void) {
+    for (PettaTableReadScope *scope = g_petta_table_read_scopes; scope; scope = scope->previous)
+        for (size_t i = 0u; i < *scope->length; i++) {
+            PettaTableShared *shared = (*scope->frames)[i].machine->impl->table_shared;
+            if (shared && shared->tarjan_len) return true;
+        }
+    return false;
+}
+
+bool petta_machine_observe_host_read(SpaceReadToken read) {
+    bool complete = true;
+    for (PettaTableReadScope *scope = g_petta_table_read_scopes; scope; scope = scope->previous)
+        for (size_t i = 0u; i < *scope->length; i++) {
+            PettaTableShared *shared = (*scope->frames)[i].machine->impl->table_shared;
+            if (!petta_table_capture_space_read(shared, read)) complete = false;
+        }
+    return complete;
+}
+
+static bool petta_machine_observe_query_read(PettaMachineImpl *machine, SpaceReadToken read) {
+    if (!petta_table_capture_space_read(machine->table_shared, read) ||
+        !petta_machine_observe_host_read(read)) return false;
+    if (machine->host.observe_space_read)
+        machine->host.observe_space_read(machine->host.context, read);
+    return !machine->table_shared || !machine->table_shared->failed;
 }
 
 static void petta_table_root_release(PettaTableShared *shared) {
@@ -4630,7 +4710,19 @@ static bool petta_table_shared_copy_selected(
         uint64_t retained = source->memoized
             ? source->retained_bytes : physical_retained;
 
+        SpaceReadToken *space_reads = source->space_read_len
+            ? cetta_fallible_malloc(source->space_read_len * sizeof(*space_reads)) : NULL;
+        if (source->space_read_len && !space_reads) {
+            free(answers);
+            if (answer_storage) cetta_answer_storage_release(answer_storage);
+            ok = false;
+            break;
+        }
+        if (source->space_read_len)
+            memcpy(space_reads, source->space_reads, source->space_read_len * sizeof(*space_reads));
         PettaTableEntry copied = *source;
+        copied.space_reads = space_reads;
+        copied.space_read_cap = copied.space_read_len;
         copied.key = key;
         copied.generator_key = generator_key;
         copied.answers = answers;
@@ -9092,6 +9184,8 @@ static void petta_machine_table_storage_census(const PettaTableShared *shared,
         const PettaTableEntry *entry = &shared->entries[i];
         if (!petta_machine_storage_array(census, entry->answers, entry->answer_len,
                 entry->answer_cap, sizeof(*entry->answers))) return;
+        if (!petta_machine_storage_array(census, entry->space_reads, entry->space_read_len,
+                entry->space_read_cap, sizeof(*entry->space_reads))) return;
         cetta_answer_storage_census(entry->answer_storage, census);
     }
     const PettaProducerRounds *rounds = shared->producer_rounds;
@@ -23919,8 +24013,16 @@ static bool petta_machine_start_tabled_call(
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
-    if (!inserted)
+    if (!inserted) {
+        for (size_t i = 0u; i < entry->space_read_len; i++) {
+            if (!petta_machine_observe_query_read(machine, entry->space_reads[i])) {
+                cetta_var_map_free(&goal_instantiation);
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+        }
         machine->stats.table_hits++;
+    }
     uint32_t answer_limit =
         memoized && machine->host.memoized_relation_answer_limit
             ? machine->host.memoized_relation_answer_limit(
@@ -24759,8 +24861,8 @@ static bool petta_machine_match_count_weight(
          (atom_is_symbol_id(query->expr.elems[0], g_builtin_syms.comma) ||
           atom_is_symbol_id(query->expr.elems[0], g_builtin_syms.pipe))))
         return false;
-    if (machine->host.observe_space_read)
-        machine->host.observe_space_read(machine->host.context, space_read_token(space));
+    if (!petta_machine_observe_query_read(machine, space_read_token(space)))
+        return false;
     if (!space_match_count_flat_linear64(
             space, &machine->heap, query,
             &match_count, examined)) {
@@ -24820,8 +24922,8 @@ static bool petta_machine_match_count_view_weight(
             return false;
     }
     uint64_t match_count = 0u;
-    if (machine->host.observe_space_read)
-        machine->host.observe_space_read(machine->host.context, space_read_token(space));
+    if (!petta_machine_observe_query_read(machine, space_read_token(space)))
+        return false;
     if (!space_match_count_flat_linear_view64(
             space, &machine->heap, &view, open_bindings,
             &match_count, examined)) {
@@ -24926,8 +25028,8 @@ static bool petta_machine_start_match_choice_policy(
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard shared_transition = {0};
     cetta_shared_transition_guard_enter(&shared_transition);
-    if (machine->host.observe_space_read)
-        machine->host.observe_space_read(machine->host.context, space_read_token(space));
+    if (!petta_machine_observe_query_read(machine, space_read_token(space)))
+        return false;
     bool terminal_count_fold = false;
     if (!pattern_query && machine->observation_algebra ==
             CETTA_OBSERVATION_ALGEBRA_PREFERRED_FALLBACK_COUNT &&
@@ -28097,8 +28199,8 @@ static bool petta_machine_try_match_existence_observer(
         return false;
 
     bool applicable = false;
-    if (machine->host.observe_space_read)
-        machine->host.observe_space_read(machine->host.context, space_read_token(target));
+    if (!petta_machine_observe_query_read(machine, space_read_token(target)))
+        return false;
     bool found = space_match_exists_ground_exact(
         target, pattern, &applicable);
     if (!applicable)
@@ -40308,6 +40410,10 @@ PettaMachineStep petta_machine_next(
     PettaPullFrame *frames = initial;
     size_t length = 1u, capacity = sizeof(initial) / sizeof(initial[0]);
     frames[0] = (PettaPullFrame){.machine = machine};
+    PettaTableReadScope read_scope = {
+        .frames = &frames, .length = &length, .previous = g_petta_table_read_scopes,
+    };
+    g_petta_table_read_scopes = &read_scope;
     for (;;) {
         PettaPullFrame *frame = &frames[length - 1u];
         PettaMachineImpl *impl = frame->machine->impl;
@@ -40364,6 +40470,7 @@ PettaMachineStep petta_machine_next(
         if (--length == 0u) {
             *answer = result;
             *environment = bindings;
+            g_petta_table_read_scopes = read_scope.previous;
             if (frames != initial)
                 free(frames);
             return step;

@@ -1009,8 +1009,9 @@ SECP256K1_OBJ = $(foreach variant,$(BUILD_OBJ_TAG).o $(BUILD_OBJ_TAG).stage0.o $
 SRC += src/library_crypto.c src/crypto_primitives.c $(SECP256K1_SRC)
 # lib/toml: TOML 1.1 through the vendored tomlc17 (MIT, vendor/tomlc17).
 SRC += src/library_toml.c vendor/tomlc17/tomlc17.c
-$(SECP256K1_OBJ): CFLAGS := $(filter-out -Werror,$(CFLAGS)) -Wno-unused-function \
+SECP256K1_CFLAGS := $(filter-out -Werror,$(CFLAGS)) -Wno-unused-function \
 	-DENABLE_MODULE_EXTRAKEYS=1 -DENABLE_MODULE_SCHNORRSIG=1 -DENABLE_MODULE_ECDH=1
+$(SECP256K1_OBJ): CFLAGS := $(SECP256K1_CFLAGS)
 PARSER_BUILD_MANIFEST ?= langdef/parsers/baked_v1.json
 PARSER_BUILD_MANIFEST_KEY := $(shell python3 tools/parser_artifact_build_v1.py --manifest "$(PARSER_BUILD_MANIFEST)" --manifest-key)
 PARSER_BAKED_HEADER = runtime/generated/parser_baked_v1.$(BUILD_OBJ_TAG).$(PARSER_BUILD_MANIFEST_KEY).h
@@ -50904,6 +50905,15 @@ test-prime-interaction-naming: tests/test_interaction_naming.c src/interaction_c
 		$(filter-out src/interaction_core.$(BUILD_OBJ_TAG).o src/interaction_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
 	@$(call cetta_exec,./$(INTERACTION_NAMING_TEST_BIN))
 
+INTERACTION_QUERY_TEST_BIN = runtime/test-interaction-queries-$(BUILD_OBJ_TAG)
+.PHONY: test-prime-interaction-queries
+test-prime: test-prime-interaction-queries
+test-prime-interaction-queries: tests/test_interaction_queries.c src/interaction_core.c native/interaction_core.h $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -o $(INTERACTION_QUERY_TEST_BIN) tests/test_interaction_queries.c \
+		$(filter-out src/interaction_core.$(BUILD_OBJ_TAG).o src/interaction_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=cetta_fallible_malloc
+	@$(call cetta_exec,./$(INTERACTION_QUERY_TEST_BIN))
+
 # The commit of the interaction kernel is a declared protocol
 # (langdef/protocols/interaction_commit.module), generated as ordinary C into
 # src/generated/interaction_commit_protocol.generated.h with its plan for the
@@ -50950,7 +50960,7 @@ EXPORT_C_DIR ?= $(CESTA_PROJECT_DIR)/export
 CESTA_IDENTITY_TAG ?= cesta-identity
 
 .PHONY: cesta-tool cesta-tool-check cesta-project export-c
-.PHONY: test-cesta-project-build test-cesta-build-identity check-cesta-generated
+.PHONY: test-cesta-project-build test-cesta-build-identity check-cesta-generated test-cesta-runtime-project
 cesta-tool:
 	@test -n '$(CESTA_FROM)' || { echo 'usage: make cesta-tool CESTA_FROM=FILE (Cesta built from commit $(CESTA_COMMIT))' >&2; exit 2; }
 	@actual=$$(sha256sum '$(CESTA_FROM)' | cut -d' ' -f1); \
@@ -50975,6 +50985,8 @@ cesta-project: $(PARSER_BAKED_OBJ) $(BUILD_CONFIG_HEADER) | cesta-tool-check
 	$(file >>$(CESTA_PROJECT_VARS),CFLAGS=$(CFLAGS))
 	$(file >>$(CESTA_PROJECT_VARS),LDFLAGS=$(LDFLAGS))
 	$(file >>$(CESTA_PROJECT_VARS),SRC=$(SRC))
+	$(file >>$(CESTA_PROJECT_VARS),SECP256K1_SRC=$(SECP256K1_SRC))
+	$(file >>$(CESTA_PROJECT_VARS),SECP256K1_CFLAGS=$(SECP256K1_CFLAGS))
 	$(file >>$(CESTA_PROJECT_VARS),PARSER_BAKED_OBJ=$(PARSER_BAKED_OBJ))
 	$(file >>$(CESTA_PROJECT_VARS),BRIDGE_DEPS=$(BRIDGE_DEPS))
 	@python3 -B tools/cesta_runtime_project.py --vars $(CESTA_PROJECT_VARS) \
@@ -51007,7 +51019,11 @@ test-cesta-build-identity:
 	@echo "PASS: the Cesta-driven build and the native compiler alone link the same executable ($$(sha256sum runtime/cetta-$(CESTA_IDENTITY_TAG)-cesta | cut -c1-16))"
 
 # Every checked-in file generated from a Cesta declaration still matches it.
-check-cesta-generated: cesta-tool-check check-layout-words-generated check-interaction-commit-protocol-generated
+test-cesta-runtime-project: | cesta-tool-check
+	@python3 -B tests/support/test_cesta_runtime_project.py --cesta '$(CESTA)' \
+		--cc '$(CESTA_NATIVE_CC)' --output runtime/cesta-runtime-project-controls
+
+check-cesta-generated: cesta-tool-check check-layout-words-generated check-interaction-commit-protocol-generated test-cesta-runtime-project
 	@python3 -B tools/regenerate_registry_tables.py --cesta '$(CESTA)' --check
 	@echo 'counter and profile tables match their declarations'
 BINARY_CODEC_TEST_BIN = runtime/test_binary_codec-$(BUILD_OBJ_TAG)

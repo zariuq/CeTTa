@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <stdatomic.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -54,6 +55,7 @@
  *     (ia:row TEMPLATE FOOTPRINT)
  *     (ia:let PATTERN EXPRESSION STATE)
  *     (ia:every SUFFIX-STATE BASE-FOOTPRINT)
+ *     (ia:absent QUERY-STATE CONTINUATION-STATE)
  *     (ia:refused REASON)
  *     (ia:stuck SOURCE)
  *   STATE = (ia:state SOURCES TEMPLATE FOOTPRINT BASE)
@@ -731,9 +733,9 @@ typedef struct {
     IaList results;
     IaList seen;      /* (LOC REV), one per region scanned */
     IaList seen_keys; /* the regions' keys, to keep `seen` one per region */
-    IaList scans;     /* (LOC PATTERN) of each scan, when record_scans */
+    IaList scans;     /* (LOC REV PATTERN), sampled when each scan begins */
     bool record_scans;
-    bool suffix;      /* inside an `every`: nested `every` splices */
+    bool unfiltered;  /* a negative query observes matches before linear admission */
     bool first;       /* stop at the first result: a choice of rows */
     bool truncated;   /* stopped with branches left */
     bool failed;      /* allocation */
@@ -844,6 +846,18 @@ static bool ia_visit_collect(IaWalk *w, void *data, CettaIndex pos,
                              Atom *atom, Bindings *b);
 #define ia_visit_collect_fwd ia_visit_collect
 
+/* A negative result is evidence only after the canonical matcher completed.
+ * The builder owns the private binding trail on every outcome. */
+static CettaMatchCompletion ia_match(Atom *pattern, Atom *value, Bindings *bindings,
+                                     Arena *a, CettaFrameIdentity epoch) {
+    BindingsBuilder builder;
+    bindings_builder_init_owned(&builder, bindings);
+    CettaMatchCompletion result = match_atoms_epoch_builder_checked(
+        pattern, value, &builder, a, epoch, UINT64_MAX);
+    bindings_builder_take(&builder, bindings);
+    return result;
+}
+
 /* The occurrences one at a time, from the space's own lazy cursor: a first
  * row commits without the region's other candidates being listed.  Each
  * yielded position is checked to name the yielded atom in the live space;
@@ -887,7 +901,11 @@ static bool ia_scan_lazy(IaWalk *w, IaLoc *loc, Atom *pattern, IaVisit visit,
         }
         Bindings b;
         bindings_init(&b);
-        if (match_atoms_epoch(pattern, atom, &b, w->a, epoch)) {
+        CettaMatchCompletion matched = ia_match(pattern, atom, &b, w->a, epoch);
+        if (matched == CETTA_MATCH_INCOMPLETE) {
+            w->refused = atom_symbol(w->a, "match-incomplete");
+            ok = false;
+        } else if (matched == CETTA_MATCH_MATCHED) {
             visited = true;
             ok = visit(w, data, pos, atom, &b);
         }
@@ -903,9 +921,17 @@ static bool ia_scan_lazy(IaWalk *w, IaLoc *loc, Atom *pattern, IaVisit visit,
 /* Every stored occurrence of `loc` whose atom the pattern matches. */
 static bool ia_scan(IaWalk *w, IaLoc *loc, Atom *pattern, IaVisit visit,
                     void *data) {
+    if (w->record_scans) {
+        Atom *why = ia_check_right(w->a, loc, IA_OBSERVE);
+        if (why) {
+            w->refused = why;
+            return false;
+        }
+    }
     ia_note_seen(w, loc);
     if (w->record_scans &&
-        !ia_push(&w->scans, atom_expr2(w->a, loc->atom, pattern)))
+        !ia_push(&w->scans, atom_expr3(w->a, loc->atom,
+          atom_int(w->a, (int64_t)space_revision(loc->space)), pattern)))
         w->failed = true;
     if (w->first && visit != ia_visit_collect_fwd) {
         bool done = false;
@@ -955,7 +981,11 @@ static bool ia_scan_all(IaWalk *w, IaLoc *loc, Atom *pattern, IaVisit visit,
         }
         Bindings b;
         bindings_init(&b);
-        if (match_atoms_epoch(pattern, atom, &b, w->a, epoch))
+        CettaMatchCompletion matched = ia_match(pattern, atom, &b, w->a, epoch);
+        if (matched == CETTA_MATCH_INCOMPLETE) {
+            w->refused = atom_symbol(w->a, "match-incomplete");
+            ok = false;
+        } else if (matched == CETTA_MATCH_MATCHED)
             ok = visit(w, data, pos, atom, &b);
         bindings_free(&b);
     }
@@ -985,6 +1015,34 @@ static Space *ia_space_of(Atom *loc) {
     if (loc->kind == ATOM_SYMBOL)
         return resolve_space(eval_current_registry(), loc);
     return NULL;
+}
+
+/* Computed reads retain the complete issued token, including imported-view
+ * epochs. Sampling a fresh epoch at validation would bless an older result. */
+static Atom *ia_captured_read(Arena *a, SpaceReadToken read) {
+    Atom *items[7] = {atom_symbol(a, "ia:captured-read"),
+        atom_space(a, (Space *)read.space),
+        atom_int(a, (int64_t)read.instance_id), atom_int(a, (int64_t)read.revision),
+        atom_int(a, (int64_t)read.prefix_epoch), atom_int(a, (int64_t)read.base_prefix_epoch),
+        atom_int(a, (int64_t)read.base_dependency_epoch)};
+    return atom_expr(a, items, 7u);
+}
+
+static bool ia_captured_read_token(Atom *entry, SpaceReadToken *read) {
+    if (!ia_head(entry, "ia:captured-read", 7u))
+        return false;
+    Space *space = ia_space_of(entry->expr.elems[1]);
+    uint64_t fields[5];
+    for (size_t i = 0; i < 5u; i++) {
+        Atom *value = entry->expr.elems[i + 2u];
+        if (!value || value->kind != ATOM_GROUNDED || value->ground.gkind != GV_INT)
+            return false;
+        fields[i] = (uint64_t)value->ground.ival;
+    }
+    *read = (SpaceReadToken){.space = space, .instance_id = fields[0],
+        .revision = fields[1], .prefix_epoch = fields[2],
+        .base_prefix_epoch = fields[3], .base_dependency_epoch = fields[4]};
+    return space && read->instance_id != 0u;
 }
 
 /* Whether occurrence (space, pos) is already taken, or kept, in a
@@ -1061,7 +1119,7 @@ typedef struct {
 static bool ia_visit_match(IaWalk *w, void *data, CettaIndex pos, Atom *atom,
                            Bindings *b) {
     IaMatchStep *s = data;
-    if (!ia_linear_with(s->fp, s->base, s->use, s->loc->space, pos))
+    if (!w->unfiltered && !ia_linear_with(s->fp, s->base, s->use, s->loc->space, pos))
         return true;
     Atom *e = ia_entry(w->a, s->use == IA_USE_TAKE ? "take" : "keep", s->loc,
                        pos, atom);
@@ -1194,10 +1252,6 @@ static void ia_walk_list(IaWalk *w, Atom **cs, size_t n, Atom *tpl, Atom *fp,
             flat[i] = inner[i];
         for (size_t i = 0; i < m; i++)
             flat[k + i] = rest[i];
-        if (w->suffix) {
-            ia_walk_list(w, flat, k + m, tpl, fp, base);
-            return;
-        }
         Atom *state_items[5] = {
             atom_symbol(a, "ia:state"), atom_expr(a, flat, (CettaExprLen)(k + m)),
             tpl, atom_unit(a), fp,
@@ -1212,74 +1266,21 @@ static void ia_walk_list(IaWalk *w, Atom **cs, size_t n, Atom *tpl, Atom *fp,
         Atom *loc_atom = c->expr.len == 3u ? c->expr.elems[1] : w->default_loc;
         Atom *pattern = c->expr.elems[c->expr.len - 1u];
         if (c->expr.len == 2u && ia_source_form(pattern)) {
-            /* The absence of sources: no row of the inner sources.  It is a
-             * predicate query of the union of the regions they read, so it
-             * needs observe at each of them, and its footprint names each
-             * (region, pattern) pair read, with the revision seen there. */
-            IaWalk inner = {.a = a, .default_loc = w->default_loc,
-                            .suffix = true, .depth = w->depth,
-                            .record_scans = true};
             Atom *one = NULL;
-            Atom **ics;
-            size_t ik;
-            ia_conjuncts(pattern, &one, &ics, &ik);
-            ia_walk_list(&inner, ics, ik, atom_unit(a), atom_unit(a),
-                         atom_unit(a));
-            for (size_t i = 0; i < inner.seen.len; i++)
-                (void)ia_push(&w->seen, inner.seen.items[i]);
-            bool stuck = false;
-            for (size_t i = 0; i < inner.results.len; i++)
-                if (!ia_head_any(inner.results.items[i], "ia:row"))
-                    stuck = true;
-            size_t rows = inner.results.len;
-            if (inner.failed)
+            Atom **inner;
+            size_t count;
+            ia_conjuncts(pattern, &one, &inner, &count);
+            Atom *query[5] = {atom_symbol(a, "ia:state"),
+                atom_expr(a, inner, (CettaExprLen)count), atom_unit(a),
+                atom_unit(a), atom_unit(a)};
+            Atom *next[5] = {atom_symbol(a, "ia:state"),
+                atom_expr(a, rest, (CettaExprLen)m), tpl, fp, base};
+            if (!ia_push(&w->results, atom_expr3(a, atom_symbol(a, "ia:absent"),
+                atom_expr(a, query, 5u), atom_expr(a, next, 5u))))
                 w->failed = true;
-            if (inner.refused)
-                ia_refuse(w, inner.refused);
-            Atom *denied = NULL;
-            IaList parts = {0};
-            for (size_t i = 0; !denied && i < inner.scans.len; i++) {
-                Atom *scan = inner.scans.items[i];
-                IaLoc sloc;
-                denied = ia_resolve(a, scan->expr.elems[0], &sloc);
-                if (!denied)
-                    denied = ia_check_right(a, &sloc, IA_OBSERVE);
-                if (denied)
-                    break;
-                bool known = false;
-                for (size_t k = 0; k < parts.len && !known; k++)
-                    known = atom_eq(parts.items[k]->expr.elems[0],
-                                    scan->expr.elems[0]) &&
-                            atom_eq(parts.items[k]->expr.elems[2],
-                                    scan->expr.elems[1]);
-                if (known)
-                    continue;
-                Atom *part[3] = {scan->expr.elems[0],
-                                 atom_int(a, (int64_t)space_revision(sloc.space)),
-                                 scan->expr.elems[1]};
-                if (!ia_push(&parts, atom_expr(a, part, 3u)))
-                    w->failed = true;
-            }
-            ia_walk_free(&inner);
-            if (denied) {
-                ia_refuse(w, denied);
-                free(parts.items);
-                return;
-            }
-            if (stuck) {
-                if (!ia_push(&w->results, atom_expr2(a, atom_symbol(a, "ia:stuck"), c)))
-                    w->failed = true;
-                free(parts.items);
-                return;
-            }
-            if (rows == 0u && !w->failed && !w->refused) {
-                Atom *entry = atom_expr2(a, atom_symbol(a, "full-of"),
-                                         ia_list_atom(a, &parts));
-                ia_walk_list(w, rest, m, tpl, ia_cons(a, entry, fp), base);
-            }
-            free(parts.items);
             return;
         }
+
         IaLoc loc;
         Atom *why = ia_resolve(a, loc_atom, &loc);
         if (!why)
@@ -1347,7 +1348,7 @@ static void ia_walk_list(IaWalk *w, Atom **cs, size_t n, Atom *tpl, Atom *fp,
             if (found == 1u) {
                 CettaIndex pos = (CettaIndex)col.positions.items[0]->ground.ival;
                 if (q.use == IA_USE_TAKE) {
-                    if (!ia_linear_with(fp, base, IA_USE_TAKE, loc.space, pos)) {
+                    if (!w->unfiltered && !ia_linear_with(fp, base, IA_USE_TAKE, loc.space, pos)) {
                         ia_collect_free(&col);
                         return;
                     }
@@ -1363,7 +1364,7 @@ static void ia_walk_list(IaWalk *w, Atom **cs, size_t n, Atom *tpl, Atom *fp,
         if (q.use == IA_USE_TAKE)
             for (size_t i = 0; i < found; i++) {
                 CettaIndex pos = (CettaIndex)col.positions.items[i]->ground.ival;
-                if (!ia_linear_with(fp, base, IA_USE_TAKE, loc.space, pos)) {
+                if (!w->unfiltered && !ia_linear_with(fp, base, IA_USE_TAKE, loc.space, pos)) {
                     ia_collect_free(&col);
                     return;
                 }
@@ -1374,7 +1375,10 @@ static void ia_walk_list(IaWalk *w, Atom **cs, size_t n, Atom *tpl, Atom *fp,
         ia_collect_free(&col);
         Bindings b;
         bindings_init(&b);
-        if (match_atoms(coll, bag, &b, a))
+        CettaMatchCompletion matched = ia_match(coll, bag, &b, a, CETTA_FRAME_IDENTITY_NONE);
+        if (matched == CETTA_MATCH_INCOMPLETE)
+            w->refused = atom_symbol(a, "match-incomplete");
+        else if (matched == CETTA_MATCH_MATCHED)
             ia_continue(w, &b, rest, m, tpl, nfp, base);
         bindings_free(&b);
         return;
@@ -1632,8 +1636,8 @@ static bool op_walk(Arena *a, Atom **args, uint32_t nargs,
     return ia_value(out, result);
 }
 
-/* (walk-suffix DEFAULT STATE): the rows of an `every`, each linear with the
- * base, nested `every` spliced. */
+/* (walk-suffix DEFAULT STATE): continue a suffix through the same row and
+ * suspension events as an ordinary source walk. */
 static bool op_walk_suffix(Arena *a, Atom **args, uint32_t nargs,
                            CettaCallOutcome *out) {
     if (nargs != 2u)
@@ -1641,7 +1645,7 @@ static bool op_walk_suffix(Arena *a, Atom **args, uint32_t nargs,
     Atom *state = ia_unhold(args[1]);
     if (!ia_head(state, "ia:state", 5u))
         return ia_value(out, ia_refusal(a, atom_symbol(a, "not-a-state")));
-    IaWalk w = {.a = a, .default_loc = ia_strip(a, args[0]), .suffix = true};
+    IaWalk w = {.a = a, .default_loc = ia_strip(a, args[0])};
     Atom *sources = state->expr.elems[1];
     ia_walk_list(&w, sources->expr.elems, sources->expr.len,
                  state->expr.elems[2], state->expr.elems[3],
@@ -1666,7 +1670,10 @@ static bool op_bind(Arena *a, Atom **args, uint32_t nargs,
     Bindings b;
     bindings_init(&b);
     Atom *result = NULL;
-    if (match_atoms(pattern, value, &b, a)) {
+    CettaMatchCompletion matched = ia_match(pattern, value, &b, a, CETTA_FRAME_IDENTITY_NONE);
+    if (matched == CETTA_MATCH_INCOMPLETE)
+        result = ia_refusal(a, atom_symbol(a, "match-incomplete"));
+    else if (matched == CETTA_MATCH_MATCHED) {
         Atom *sources = state->expr.elems[1];
         Atom **next = arena_alloc(a, sizeof(Atom *) * (sources->expr.len + 1u));
         bool ok = true;
@@ -1678,7 +1685,8 @@ static bool op_bind(Arena *a, Atom **args, uint32_t nargs,
                               atom_expr(a, next, sources->expr.len), tpl,
                               state->expr.elems[3], state->expr.elems[4]};
             result = atom_expr(a, items, 5u);
-        }
+        } else
+            result = ia_refusal(a, atom_symbol(a, "binding-failed"));
     }
     bindings_free(&b);
     return ia_value(out, result);
@@ -1819,6 +1827,14 @@ static Atom *ia_commit_seen_reason(IaCommitRun *c) {
         Atom *e = c->seen->expr.elems[i];
         if (ia_head_any(e, "ia:seen"))
             continue;
+        if (ia_head_any(e, "ia:captured-read")) {
+            SpaceReadToken read;
+            if (!ia_captured_read_token(e, &read))
+                return atom_symbol(a, "malformed-seen");
+            if (!space_read_token_is_current(read))
+                return atom_expr2(a, atom_symbol(a, "stale"), e->expr.elems[1]);
+            continue;
+        }
         if (e->kind != ATOM_EXPR || e->expr.len != 2u)
             return atom_symbol(a, "malformed-seen");
         IaLoc loc;
@@ -2030,9 +2046,9 @@ static void ia_commit_written_note(IaCommitRun *c, Space *space, bool takes) {
         space, space_revision(space), space_length64(space), takes};
 }
 
-/* The epoch: the spaces the writes may change, as they are now, and room for
- * the regions the result names.  Nothing the writes need is allocated after
- * the first write. */
+/* Reserve mutation bookkeeping before the first write. Backend atom
+ * admission has its own allocation boundary; failure there is an engine
+ * failure whose already changed state is published by the protocol. */
 static bool ia_commit_epoch_open(IaCommitRun *c) {
     size_t n = c->group_len + c->makes->expr.len;
     c->written = n ? calloc(n, sizeof(*c->written)) : NULL;
@@ -2513,8 +2529,8 @@ static void ia_form_bind(IaForm *f, Atom *pattern) {
     if (!pattern)
         return;
     if (pattern->kind == ATOM_VAR) {
-        if (!ia_form_bound(f, pattern))
-            (void)ia_push(&f->bound, pattern);
+        if (!ia_form_bound(f, pattern) && !ia_push(&f->bound, pattern))
+            f->why = atom_symbol(f->a, "no-memory");
         return;
     }
     if (pattern->kind == ATOM_EXPR)
@@ -2565,9 +2581,11 @@ static void ia_form_source(IaForm *f, Atom *c) {
     if (ia_head(c, "absent", 2u) || ia_head(c, "absent", 3u)) {
         if (c->expr.len == 3u)
             ia_form_loc(f, c->expr.elems[1], IA_OBSERVE);
-        else if (ia_source_form(c->expr.elems[1]))
+        else if (ia_source_form(c->expr.elems[1])) {
+            size_t outer = f->bound.len;
             ia_form_absent_sources(f, c->expr.elems[1]);
-        else
+            f->bound.len = outer;
+        } else
             ia_form_loc(f, f->default_loc, IA_OBSERVE);
         return;
     }
@@ -2656,6 +2674,7 @@ static bool op_formed(Arena *a, Atom **args, uint32_t nargs,
 
 
 static Atom *ia_keep(Atom *x);
+static uint64_t ia_park(Atom *firing, bool always, Atom *seen);
 
 /* ── the agenda: parked firings and ready processes ───────────────────── */
 
@@ -2669,12 +2688,14 @@ static Atom *ia_keep(Atom *x);
 typedef struct {
     Space *space;
     uint64_t rev;
+    SpaceReadToken read; /* issued computed read, or zero for the region form */
 } IaSeenAt;
 
 typedef struct {
     uint64_t ticket;
     bool always;
     bool live;
+    bool needs_recheck;
     Atom *firing;
     IaSeenAt *seen;
     size_t seen_len;
@@ -2722,9 +2743,21 @@ static bool ia_seen_from(Atom *seen, IaSeenAt **out, size_t *len) {
     if (!seen || seen->kind != ATOM_EXPR)
         return true;
     IaSeenAt *items = seen->expr.len ? calloc(seen->expr.len, sizeof(*items)) : NULL;
+    if (seen->expr.len && !items)
+        return false;
     size_t n = 0u;
     for (CettaExprIndex i = 0; i < seen->expr.len; i++) {
         Atom *e = seen->expr.elems[i];
+        if (ia_head_any(e, "ia:captured-read")) {
+            SpaceReadToken read;
+            if (!ia_captured_read_token(e, &read)) {
+                free(items);
+                return false;
+            }
+            items[n++] = (IaSeenAt){.space = (Space *)read.space,
+                .rev = read.revision, .read = read};
+            continue;
+        }
         if (e->kind != ATOM_EXPR || e->expr.len != 2u ||
             atom_is_symbol(e->expr.elems[0], "ia:seen"))
             continue;
@@ -2732,7 +2765,7 @@ static bool ia_seen_from(Atom *seen, IaSeenAt **out, size_t *len) {
         Atom *rev = e->expr.elems[1];
         if (!space || rev->kind != ATOM_GROUNDED || rev->ground.gkind != GV_INT)
             continue;
-        items[n++] = (IaSeenAt){space, (uint64_t)rev->ground.ival};
+        items[n++] = (IaSeenAt){.space = space, .rev = (uint64_t)rev->ground.ival};
     }
     *out = items;
     *len = n;
@@ -2740,10 +2773,11 @@ static bool ia_seen_from(Atom *seen, IaSeenAt **out, size_t *len) {
 }
 
 static bool ia_parked_changed(const IaParked *p) {
-    if (p->seen_len == 0u)
+    if (p->needs_recheck || p->seen_len == 0u)
         return true;
     for (size_t i = 0; i < p->seen_len; i++)
-        if (space_revision(p->seen[i].space) != p->seen[i].rev)
+        if (p->seen[i].read.space ? !space_read_token_is_current(p->seen[i].read)
+                                : space_revision(p->seen[i].space) != p->seen[i].rev)
             return true;
     return false;
 }
@@ -2777,33 +2811,9 @@ static bool op_agenda_park(Arena *a, Atom **args, uint32_t nargs,
     if (nargs != 3u)
         return false;
     Atom *kind = ia_strip(a, args[0]);
-    bool always = kind && atom_is_symbol(kind, "always");
-    Atom *firing = ia_keep(ia_unhold(args[1]));
-    if (!firing)
-        return false;
-    pthread_mutex_lock(&g_agenda_gate);
-    if (g_parked_len == g_parked_cap) {
-        size_t cap = g_parked_cap ? g_parked_cap * 2u : 64u;
-        IaParked *items = realloc(g_parked, cap * sizeof(*items));
-        if (!items) {
-            pthread_mutex_unlock(&g_agenda_gate);
-            return false;
-        }
-        g_parked = items;
-        g_parked_cap = cap;
-    }
-    IaParked *p = &g_parked[g_parked_len++];
-    memset(p, 0, sizeof(*p));
-    p->ticket = g_next_ticket++;
-    p->always = always;
-    p->live = true;
-    p->firing = firing;
-    ia_seen_at(args[2], &p->seen, &p->seen_len);
-    g_stat_parks++;
-    uint64_t ticket = p->ticket;
-    pthread_mutex_unlock(&g_agenda_gate);
-    return ia_value(out, atom_expr2(a, atom_symbol(a, "ia:ticket"),
-                                    atom_int(a, (int64_t)ticket)));
+    uint64_t ticket = ia_park(args[1], kind && atom_is_symbol(kind, "always"), args[2]);
+    return ia_value(out, ticket ? atom_expr2(a, atom_symbol(a, "ia:ticket"),
+        atom_int(a, (int64_t)ticket)) : ia_refusal(a, atom_symbol(a, "no-memory")));
 }
 
 /* (agenda-woken) -> ((ia:woken TICKET KIND FIRING) ...), the live parked
@@ -2869,13 +2879,21 @@ static bool op_agenda_seen(Arena *a, Atom **args, uint32_t nargs,
     uint64_t ticket;
     if (!ia_ticket_of(args[0], &ticket))
         return ia_value(out, atom_false(a));
+    IaSeenAt *observed = NULL;
+    size_t count = 0u;
+    if (!ia_seen_at(args[1], &observed, &count))
+        return ia_value(out, ia_refusal(a, atom_symbol(a, "no-memory")));
     pthread_mutex_lock(&g_agenda_gate);
     IaParked *p = ia_parked_find(ticket);
     if (p) {
         free(p->seen);
-        ia_seen_at(args[1], &p->seen, &p->seen_len);
+        p->seen = observed;
+        p->seen_len = count;
+        p->needs_recheck = false;
     }
     pthread_mutex_unlock(&g_agenda_gate);
+    if (!p)
+        free(observed);
     return ia_value(out, p ? atom_true(a) : atom_false(a));
 }
 
@@ -3105,13 +3123,19 @@ typedef struct {
     IaJobKind kind;
     Atom *state;
     Atom *pattern, *expr;
-    int ctx; /* -1: the kernel; else the `every` collecting this job's rows */
+    int ctx; /* -1: the kernel; otherwise the group owning this job */
 } IaJob;
 
+typedef enum { IA_CTX_EVERY, IA_CTX_ABSENT } IaCtxKind;
+
 typedef struct {
-    int outstanding;
+    size_t outstanding, row_count;
+    IaCtxKind kind;
+    int parent;
+    bool observe; /* inside an absence query, including nested every groups */
     IaList fps, tpls;
-    Atom *base;
+    IaList scans;
+    Atom *base, *continuation;
 } IaCtx;
 
 typedef enum { IA_MODE_NOW, IA_MODE_AWAIT, IA_MODE_AGENDA } IaMode;
@@ -3132,6 +3156,9 @@ typedef struct {
     Atom *refused, *stuck;
     IaJob let_job;
     bool waiting;
+    bool computing; /* a borrowed evaluator owns the pending request */
+    bool cancelled;
+    uint64_t request;
     Atom *firing; /* as parked, for an await that does not fire now */
     Atom *current; /* the alternative being attempted */
     CettaInteractionLane lane;
@@ -3139,6 +3166,7 @@ typedef struct {
     bool raw_values;     /* the caller protected its code positions */
     const CettaInteractionHost *host; /* during cetta_interaction_fire only */
     bool full;     /* enumerate every row (after a first-row attempt failed) */
+    bool replay_safe; /* source matching alone can be repeated; computed requests cannot */
     bool truncated;
     uint64_t *woken;
     size_t nwoken, woken_i;
@@ -3148,12 +3176,34 @@ typedef struct {
 
 static const char g_machine_kind = 'm';
 
+static bool ia_machine_observe_read(void *context, SpaceReadToken read) {
+    IaMachine *m = context;
+    if (!read.space || !read.instance_id || m->refused)
+        return false;
+    for (size_t i = 0; i < m->seen.len; i++) {
+        SpaceReadToken old;
+        if (ia_captured_read_token(m->seen.items[i], &old) &&
+            old.space == read.space && old.instance_id == read.instance_id &&
+            old.revision == read.revision && old.prefix_epoch == read.prefix_epoch &&
+            old.base_prefix_epoch == read.base_prefix_epoch &&
+            old.base_dependency_epoch == read.base_dependency_epoch)
+            return true;
+    }
+    Atom *entry = ia_captured_read(&m->arena, read);
+    if (!entry || !ia_push(&m->seen, entry)) {
+        m->refused = atom_symbol(&m->arena, "no-memory");
+        return false;
+    }
+    return true;
+}
+
 static void ia_machine_reset_attempt(IaMachine *m) {
     m->njobs = 0u;
     m->jobhead = 0u;
     for (size_t i = 0; i < m->nctxs; i++) {
         free(m->ctxs[i].fps.items);
         free(m->ctxs[i].tpls.items);
+        free(m->ctxs[i].scans.items);
     }
     m->nctxs = 0u;
     free(m->cands.items);
@@ -3194,23 +3244,53 @@ static IaMachine *ia_machine_new(IaMode mode) {
     return m;
 }
 
+typedef struct {
+    atomic_uint holders;
+    IaMachine *machine;
+    uint64_t request;
+} IaResumeToken;
+
+static void ia_resume_token_retain(void *resource) {
+    IaResumeToken *token = resource;
+    atomic_fetch_add(&token->holders, 1u);
+}
+
+static void ia_resume_token_release(void *resource) {
+    IaResumeToken *token = resource;
+    if (!token || atomic_fetch_sub(&token->holders, 1u) != 1u)
+        return;
+    ia_machine_release(token->machine);
+    free(token);
+}
+
+/* Each suspension owns one particular request, rather than a reusable
+ * authority to submit values to whichever request happens to be current. */
 static Atom *ia_machine_atom(Arena *a, IaMachine *m) {
     CettaSealObject *root = ia_root();
-    if (!root)
+    IaResumeToken *token = calloc(1u, sizeof(*token));
+    if (!root || !token) {
+        free(token);
         return NULL;
+    }
+    atomic_init(&token->holders, 1u);
+    token->machine = m;
+    token->request = m->request;
+    ia_machine_retain(m);
     CettaSealNativePayload payload = {
-        .kind = &g_machine_kind, .resource = m,
-        .retain = ia_machine_retain, .release = ia_machine_release,
+        .kind = &g_machine_kind, .resource = token,
+        .retain = ia_resume_token_retain, .release = ia_resume_token_release,
     };
     CettaSealObject *capsule = NULL;
-    if (cetta_seal_native(root, &payload, &capsule) != CETTA_SEAL_OK)
+    CettaSealStatus status = cetta_seal_native(root, &payload, &capsule);
+    ia_resume_token_release(token);
+    if (status != CETTA_SEAL_OK)
         return NULL;
     Atom *atom = cetta_seal_object_atom(a, capsule);
     cetta_seal_release(capsule);
     return atom;
 }
 
-static IaMachine *ia_machine_of(Atom *atom) {
+static IaResumeToken *ia_resume_token_of(Atom *atom) {
     CettaSealObject *root = ia_root();
     CettaSealObject *capsule = atom ? cetta_seal_atom_object(atom) : NULL;
     void *resource = NULL;
@@ -3221,7 +3301,16 @@ static IaMachine *ia_machine_of(Atom *atom) {
     return resource;
 }
 
+static void ia_machine_cancel(IaMachine *m) {
+    m->cancelled = true;
+    m->waiting = false;
+    m->in_attempt = false;
+    m->njobs = m->jobhead = 0u;
+}
+
 static bool ia_job_push(IaMachine *m, IaJob job) {
+    if (job.ctx >= 0 && m->ctxs[job.ctx].outstanding == SIZE_MAX)
+        return false;
     if (m->njobs == m->capjobs) {
         size_t cap = m->capjobs ? m->capjobs * 2u : 16u;
         IaJob *jobs = realloc(m->jobs, cap * sizeof(*jobs));
@@ -3236,7 +3325,11 @@ static bool ia_job_push(IaMachine *m, IaJob job) {
     return true;
 }
 
-static int ia_ctx_new(IaMachine *m, Atom *base) {
+static int ia_ctx_new(IaMachine *m, IaCtxKind kind, int parent, Atom *base,
+                       Atom *continuation) {
+    if (m->nctxs >= INT_MAX ||
+        (parent >= 0 && m->ctxs[parent].outstanding == SIZE_MAX))
+        return -1;
     if (m->nctxs == m->capctxs) {
         size_t cap = m->capctxs ? m->capctxs * 2u : 4u;
         IaCtx *ctxs = realloc(m->ctxs, cap * sizeof(*ctxs));
@@ -3245,7 +3338,13 @@ static int ia_ctx_new(IaMachine *m, Atom *base) {
         m->ctxs = ctxs;
         m->capctxs = cap;
     }
-    m->ctxs[m->nctxs] = (IaCtx){.base = base};
+    bool observe = kind == IA_CTX_ABSENT || (parent >= 0 && m->ctxs[parent].observe);
+    m->ctxs[m->nctxs] = (IaCtx){.kind = kind, .parent = parent, .observe = observe, .base = base,
+                                .continuation = continuation};
+    /* A child group holds its parent until it has delivered its result or
+     * scheduled the saved continuation. */
+    if (parent >= 0)
+        m->ctxs[parent].outstanding++;
     return (int)m->nctxs++;
 }
 
@@ -3260,30 +3359,133 @@ static Atom *ia_cand(Arena *a, Atom *fp, Atom *tpls) {
     return atom_expr3(a, atom_symbol(a, "ia:cand"), fp, tpls);
 }
 
-/* An `every` whose rows are all in: one amalgamated candidate, or none
- * when its rows clash (the amalgamation is not enabled). */
-static void ia_ctx_done(IaMachine *m, int c) {
-    if (c < 0)
-        return;
-    IaCtx *ctx = &m->ctxs[c];
-    if (--ctx->outstanding > 0)
-        return;
+/* A completed source row belongs to its enclosing group. Negative
+ * queries count rows before linear admission; every filters its body rows
+ * before summing them. The aggregate itself can still fail commit admission. */
+static void ia_deliver_row(IaMachine *m, int parent, Atom *fp, Atom *templates,
+                            Atom *rows) {
     Arena *a = &m->arena;
-    Atom *rows = ia_list_atom(a, &ctx->fps);
-    Atom *merged = ia_call_term(op_amalgamate, a, &rows, 1u);
-    if (!ia_head(merged, "ia:amalgamated", 2u))
+    if (parent < 0) {
+        Atom *items[4] = {atom_symbol(a, "ia:cand"), fp, templates, rows};
+        Atom *candidate = rows ? atom_expr(a, items, 4u) : ia_cand(a, fp, templates);
+        if (!ia_push(&m->cands, candidate))
+            m->refused = atom_symbol(a, "no-memory");
         return;
-    Atom *fp = merged->expr.elems[1];
-    IaList all = {0};
-    for (CettaExprIndex i = 0; i < fp->expr.len; i++)
-        (void)ia_push(&all, fp->expr.elems[i]);
-    for (CettaExprIndex i = 0; ctx->base && ctx->base->kind == ATOM_EXPR &&
-                               i < ctx->base->expr.len; i++)
-        (void)ia_push(&all, ctx->base->expr.elems[i]);
-    Atom *items[4] = {atom_symbol(a, "ia:cand"), ia_list_atom(a, &all),
-                      ia_list_atom(a, &ctx->tpls), rows};
-    (void)ia_push(&m->cands, atom_expr(a, items, 4u));
-    free(all.items);
+    }
+    IaCtx *ctx = &m->ctxs[parent];
+    if (ctx->kind == IA_CTX_ABSENT) {
+        if (ctx->row_count == SIZE_MAX)
+            m->refused = atom_symbol(a, "no-memory");
+        else
+            ctx->row_count++;
+        return;
+    }
+    IaOcc *occs = NULL;
+    size_t len = 0u, cap = 0u;
+    if (!ia_occs_push(&occs, &len, &cap, fp, 0u)) {
+        free(occs);
+        m->refused = atom_symbol(a, "no-memory");
+        return;
+    }
+    Atom *conflict = ia_occs_conflict(a, occs, len, false);
+    free(occs);
+    if (conflict)
+        return;
+    if (!ia_push(&ctx->fps, fp)) {
+        m->refused = atom_symbol(a, "no-memory");
+        return;
+    }
+    for (CettaExprIndex i = 0; i < templates->expr.len; i++)
+        if (!ia_push(&ctx->tpls, templates->expr.elems[i])) {
+            m->refused = atom_symbol(a, "no-memory");
+            return;
+        }
+}
+
+/* Preserve scan-time revisions, including repeated or empty observations.
+ * An inner request may have run code before this group completes. */
+static Atom *ia_ctx_observation(IaMachine *m, IaCtx *ctx) {
+    Arena *a = &m->arena;
+    for (size_t i = 0; i < ctx->scans.len; i++) {
+        Atom *scan = ctx->scans.items[i];
+        IaLoc loc;
+        Atom *why = ia_resolve(a, scan->expr.elems[0], &loc);
+        if (!why)
+            why = ia_check_right(a, &loc, IA_OBSERVE);
+        if (why) {
+            m->refused = why;
+            return NULL;
+        }
+    }
+    return atom_expr2(a, atom_symbol(a, "full-of"), ia_list_atom(a, &ctx->scans));
+}
+
+/* Close a group only after every owned job and child group has completed.
+ * Parent completion is iterative so nested queries do not recurse in C here. */
+static void ia_ctx_done(IaMachine *m, int c) {
+    Arena *a = &m->arena;
+    while (c >= 0 && !m->refused && !m->stuck) {
+        IaCtx *ctx = &m->ctxs[c];
+        if (!ctx->outstanding) {
+            m->refused = atom_symbol(a, "group-already-completed");
+            return;
+        }
+        if (--ctx->outstanding)
+            return;
+        int parent = ctx->parent;
+        if (ctx->kind == IA_CTX_ABSENT) {
+            if (ctx->row_count == 0u) {
+                Atom *observation = ia_ctx_observation(m, ctx);
+                if (!observation)
+                    return;
+                Atom *next = ctx->continuation;
+                Atom *items[5] = {next->expr.elems[0], next->expr.elems[1],
+                    next->expr.elems[2], ia_cons(a, observation, next->expr.elems[3]),
+                    next->expr.elems[4]};
+                if (!ia_job_push(m, (IaJob){.kind = IA_JOB_WALK,
+                    .state = atom_expr(a, items, 5u), .ctx = parent})) {
+                    m->refused = atom_symbol(a, "no-memory");
+                    return;
+                }
+            }
+        } else {
+            Atom *observation = ctx->observe ? ia_ctx_observation(m, ctx) : NULL;
+            if (ctx->observe && !observation)
+                return;
+            IaList all = {0};
+            bool ok = !observation || ia_push(&all, observation);
+            for (size_t r = 0; ok && r < ctx->fps.len; r++) {
+                Atom *fp = ctx->fps.items[r];
+                for (CettaExprIndex i = 0; ok && i < fp->expr.len; i++)
+                    ok = ia_push(&all, fp->expr.elems[i]);
+            }
+            for (CettaExprIndex i = 0; ok && ctx->base &&
+                     ctx->base->kind == ATOM_EXPR && i < ctx->base->expr.len; i++)
+                ok = ia_push(&all, ctx->base->expr.elems[i]);
+            if (ok)
+                ia_deliver_row(m, parent, ia_list_atom(a, &all),
+                    ia_list_atom(a, &ctx->tpls), ia_list_atom(a, &ctx->fps));
+            else
+                m->refused = atom_symbol(a, "no-memory");
+            free(all.items);
+        }
+        c = parent;
+    }
+}
+
+/* Only declared source constructors can request evaluation. Patterns and
+ * templates that merely contain the spelling `let` are not computations. */
+static bool ia_sources_compute(Atom *source) {
+    if (ia_head(source, "let", 3u))
+        return true;
+    if (ia_head_any(source, ",")) {
+        for (CettaExprIndex i = 1; i < source->expr.len; i++)
+            if (ia_sources_compute(source->expr.elems[i]))
+                return true;
+    } else if (ia_head(source, "every", 2u) ||
+               (ia_head(source, "absent", 2u) && ia_source_form(source->expr.elems[1])))
+        return ia_sources_compute(source->expr.elems[1]);
+    return false;
 }
 
 /* Begin one transform (transform R SOURCES TEMPLATE [DEST]). */
@@ -3303,6 +3505,7 @@ static void ia_attempt_begin(IaMachine *m, Atom *x) {
                                 : atom_symbol(a, "ia:caller");
     Atom *sources = ia_unhold(x->expr.elems[2]);
     Atom *tpl = ia_unhold(x->expr.elems[3]);
+    m->replay_safe = !ia_sources_compute(sources);
     Atom *fargs[3] = {m->region, sources, tpl};
     Atom *formed = ia_call_term(op_formed, a, fargs, 3u);
     if (getenv("CETTA_INTERACTION_DEBUG")) {
@@ -3331,15 +3534,22 @@ static void ia_attempt_begin(IaMachine *m, Atom *x) {
 
 static void ia_run_walk(IaMachine *m, IaJob job) {
     Arena *a = &m->arena;
-    IaWalk w = {.a = a, .default_loc = m->region, .suffix = job.ctx >= 0,
-                .first = job.ctx < 0 && !m->full};
+    IaWalk w = {.a = a, .default_loc = m->region,
+                .unfiltered = job.ctx >= 0 && m->ctxs[job.ctx].kind == IA_CTX_ABSENT,
+                .record_scans = job.ctx >= 0 && m->ctxs[job.ctx].observe,
+                .first = job.ctx < 0 && m->replay_safe && !m->full};
     Atom *state = job.state;
     Atom *sources = state->expr.elems[1];
     ia_walk_list(&w, sources->expr.elems, sources->expr.len,
                  state->expr.elems[2], state->expr.elems[3],
                  state->expr.elems[4]);
     for (size_t i = 0; i < w.seen.len; i++)
-        (void)ia_push(&m->seen, w.seen.items[i]);
+        if (!ia_push(&m->seen, w.seen.items[i]))
+            w.failed = true;
+    for (int c = job.ctx; c >= 0; c = m->ctxs[c].parent)
+        for (size_t i = 0; i < w.scans.len; i++)
+            if (!ia_push(&m->ctxs[c].scans, w.scans.items[i]))
+                w.failed = true;
     if (w.failed && !w.refused)
         m->refused = atom_symbol(a, "walk-failed");
     if (w.refused && !m->refused)
@@ -3347,25 +3557,25 @@ static void ia_run_walk(IaMachine *m, IaJob job) {
     for (size_t i = 0; !m->refused && i < w.results.len; i++) {
         Atom *r = w.results.items[i];
         if (ia_head(r, "ia:row", 3u)) {
-            if (job.ctx < 0)
-                (void)ia_push(&m->cands, ia_cand(a, r->expr.elems[2],
-                    atom_expr(a, &r->expr.elems[1], 1u)));
-            else {
-                (void)ia_push(&m->ctxs[job.ctx].fps, r->expr.elems[2]);
-                (void)ia_push(&m->ctxs[job.ctx].tpls, r->expr.elems[1]);
-            }
+            ia_deliver_row(m, job.ctx, r->expr.elems[2],
+                atom_expr(a, &r->expr.elems[1], 1u), NULL);
         } else if (ia_head(r, "ia:let", 4u)) {
-            (void)ia_job_push(m, (IaJob){.kind = IA_JOB_LET,
+            if (!ia_job_push(m, (IaJob){.kind = IA_JOB_LET,
                 .state = r->expr.elems[3], .pattern = r->expr.elems[1],
-                .expr = r->expr.elems[2], .ctx = job.ctx});
-        } else if (ia_head(r, "ia:every", 3u)) {
-            int c = ia_ctx_new(m, r->expr.elems[2]);
+                .expr = r->expr.elems[2], .ctx = job.ctx}))
+                m->refused = atom_symbol(a, "no-memory");
+        } else if (ia_head(r, "ia:every", 3u) || ia_head(r, "ia:absent", 3u)) {
+            bool absent = ia_head(r, "ia:absent", 3u);
+            int c = ia_ctx_new(m, absent ? IA_CTX_ABSENT : IA_CTX_EVERY,
+                job.ctx, absent ? NULL : r->expr.elems[2],
+                absent ? r->expr.elems[2] : NULL);
             if (c < 0)
                 m->refused = atom_symbol(a, "no-memory");
             else {
-                m->ctxs[c].outstanding = 1; /* held until this push is in */
-                (void)ia_job_push(m, (IaJob){.kind = IA_JOB_WALK,
-                    .state = r->expr.elems[1], .ctx = c});
+                m->ctxs[c].outstanding = 1u; /* held until the push is in */
+                if (!ia_job_push(m, (IaJob){.kind = IA_JOB_WALK,
+                    .state = r->expr.elems[1], .ctx = c}))
+                    m->refused = atom_symbol(a, "no-memory");
                 ia_ctx_done(m, c);
             }
         } else if (ia_head(r, "ia:stuck", 2u) && !m->stuck) {
@@ -3398,8 +3608,26 @@ static Atom *ia_continuation(Arena *a, IaList *cont, IaList *makes, Atom *dest) 
     return g_ia_lane == CETTA_INTERACTION_LANE_PETTA ? x : atom_prime_held_wrap(a, x);
 }
 
-/* Try the candidates in order; the first whose commit is enabled fires. */
+/* A refusal of admission may select another candidate. Resource and engine
+ * failures terminate this attempt; an engine failure may follow published
+ * effects and must never be reported as an ordinary missing match. */
+static void ia_commit_failure(IaMachine *m, Atom *result) {
+    if (!result || !ia_head(result, "ia:refused", 2u)) {
+        m->refused = atom_symbol(&m->arena, "commit-engine-failure");
+        return;
+    }
+    Atom *why = result->expr.elems[1];
+    if (atom_is_symbol(why, "no-memory") || ia_head(why, "commit-failed", 2u))
+        m->refused = why;
+}
+
+/* Try candidates in order; prepare output lists and the continuation before
+ * entering the commit protocol. Backend admission is a separate boundary. */
 static Atom *ia_commit_first(IaMachine *m, Arena *out) {
+    if (m->cancelled || eval_native_interrupted()) {
+        ia_machine_cancel(m);
+        return NULL;
+    }
     Arena *a = &m->arena;
     Atom *seen = ia_list_atom(a, &m->seen);
     for (size_t i = 0; i < m->cands.len; i++) {
@@ -3407,34 +3635,47 @@ static Atom *ia_commit_first(IaMachine *m, Arena *out) {
         Atom *fp = cand->expr.elems[1], *tpls = cand->expr.elems[2];
         IaList makes = {0}, cont = {0};
         if (m->instances_only) {
+            Atom *prepared = atom_deep_copy(out, tpls);
             Atom *cargs[4] = {seen, fp, atom_unit(a),
                               cand->expr.len == 4u ? cand->expr.elems[3] : atom_unit(a)};
             Atom *done = ia_call_term(op_commit, a, cargs, 4u);
             if (ia_head(done, "ia:committed", 3u))
-                return atom_deep_copy(out, tpls);
+                return prepared;
+            ia_commit_failure(m, done);
+            if (m->refused)
+                return NULL;
             continue;
         }
-        for (CettaExprIndex t = 0; t < tpls->expr.len; t++) {
+        bool ok = true;
+        for (CettaExprIndex t = 0; ok && t < tpls->expr.len; t++) {
             Atom *sargs[2] = {tpls->expr.elems[t], m->dest};
             Atom *split = ia_call_term(op_split, a, sargs, 2u);
-            if (!ia_head(split, "ia:split", 3u))
-                continue;
-            for (CettaExprIndex k = 0; k < split->expr.elems[1]->expr.len; k++)
-                (void)ia_push(&makes, split->expr.elems[1]->expr.elems[k]);
-            for (CettaExprIndex k = 0; k < split->expr.elems[2]->expr.len; k++)
-                (void)ia_push(&cont, split->expr.elems[2]->expr.elems[k]);
+            if (!ia_head(split, "ia:split", 3u)) {
+                ok = false;
+                break;
+            }
+            for (CettaExprIndex k = 0; ok && k < split->expr.elems[1]->expr.len; k++)
+                ok = ia_push(&makes, split->expr.elems[1]->expr.elems[k]);
+            for (CettaExprIndex k = 0; ok && k < split->expr.elems[2]->expr.len; k++)
+                ok = ia_push(&cont, split->expr.elems[2]->expr.elems[k]);
         }
+        if (!ok) {
+            free(makes.items);
+            free(cont.items);
+            m->refused = atom_symbol(a, "no-memory");
+            return NULL;
+        }
+        Atom *prepared = atom_deep_copy(out, ia_continuation(a, &cont, &makes, m->dest));
         Atom *cargs[4] = {seen, fp, ia_list_atom(a, &makes),
                           cand->expr.len == 4u ? cand->expr.elems[3] : atom_unit(a)};
         Atom *done = ia_call_term(op_commit, a, cargs, 4u);
-        if (ia_head(done, "ia:committed", 3u)) {
-            Atom *x = ia_continuation(a, &cont, &makes, m->dest);
-            free(makes.items);
-            free(cont.items);
-            return atom_deep_copy(out, x);
-        }
         free(makes.items);
         free(cont.items);
+        if (ia_head(done, "ia:committed", 3u))
+            return prepared;
+        ia_commit_failure(m, done);
+        if (m->refused)
+            return NULL;
     }
     return NULL;
 }
@@ -3451,18 +3692,28 @@ static void ia_set_alts(IaMachine *m, Atom *firing) {
     if (ia_head_any(firing, "choose")) {
         size_t n = firing->expr.len - 1u;
         m->alts = n ? calloc(n, sizeof(Atom *)) : NULL;
+        if (n && !m->alts) {
+            m->in_attempt = true;
+            m->refused = atom_symbol(&m->arena, "no-memory");
+            return;
+        }
         for (size_t i = 0; i < n; i++)
             m->alts[i] = ia_firing(firing->expr.elems[i + 1u]);
         m->nalts = n;
     } else {
         m->alts = calloc(1u, sizeof(Atom *));
+        if (!m->alts) {
+            m->in_attempt = true;
+            m->refused = atom_symbol(&m->arena, "no-memory");
+            return;
+        }
         m->alts[0] = firing;
         m->nalts = 1u;
     }
 }
 
 static bool ia_agenda_next(IaMachine *m);
-static void ia_parked_update(uint64_t ticket, Atom *seen, bool drop);
+static bool ia_parked_update(uint64_t ticket, Atom *seen, bool drop);
 static uint64_t ia_park(Atom *firing, bool always, Atom *seen);
 
 static Atom *ia_machine_run(IaMachine *m, Arena *out) {
@@ -3471,8 +3722,10 @@ static Atom *ia_machine_run(IaMachine *m, Arena *out) {
     g_ia_raw = m->raw_values;
     g_ia_host = m->host;
     for (;;) {
-        if (eval_native_interrupted())
+        if (m->cancelled || eval_native_interrupted()) {
+            ia_machine_cancel(m);
             return NULL;
+        }
         if (!m->in_attempt) {
             if (m->alt_i < m->nalts) {
                 g_stat_attempts++;
@@ -3482,11 +3735,15 @@ static Atom *ia_machine_run(IaMachine *m, Arena *out) {
             /* no alternative fired */
             Atom *seen_all = ia_list_atom(a, &m->all_seen);
             if (m->mode == IA_MODE_AWAIT) {
-                (void)ia_park(m->firing, false, seen_all);
+                if (!ia_park(m->firing, false, seen_all))
+                    return ia_done(out, atom_error(out, atom_symbol(out, "transform"),
+                        atom_expr2(out, atom_symbol(out, "refused"), atom_symbol(out, "no-memory"))));
                 return ia_done(out, atom_symbol(out, "ia:parked"));
             }
             if (m->mode == IA_MODE_AGENDA) {
-                ia_parked_update(m->ticket, seen_all, false);
+                if (!ia_parked_update(m->ticket, seen_all, false))
+                    return ia_done(out, atom_error(out, atom_symbol(out, "transform"),
+                        atom_expr2(out, atom_symbol(out, "refused"), atom_symbol(out, "no-memory"))));
                 if (ia_agenda_next(m))
                     continue;
                 return ia_done(out, atom_symbol(out, "ia:quiescent"));
@@ -3500,6 +3757,11 @@ static Atom *ia_machine_run(IaMachine *m, Arena *out) {
             if (m->jobhead == m->njobs)
                 m->jobhead = m->njobs = 0u;
             if (job.kind == IA_JOB_LET) {
+                if (m->request == UINT64_MAX) {
+                    m->refused = atom_symbol(a, "request-capacity");
+                    continue;
+                }
+                m->request++;
                 m->let_job = job;
                 m->waiting = true;
                 Atom *machine = ia_machine_atom(out, m);
@@ -3514,8 +3776,13 @@ static Atom *ia_machine_run(IaMachine *m, Arena *out) {
             ia_ctx_done(m, job.ctx);
             if (!m->refused && !m->stuck && m->cands.len && ia_open_ctxs(m) == 0u) {
                 for (size_t i = 0; i < m->seen.len; i++)
-                    (void)ia_push(&m->all_seen, m->seen.items[i]);
+                    if (!ia_push(&m->all_seen, m->seen.items[i]))
+                        m->refused = atom_symbol(a, "no-memory");
+                if (m->refused)
+                    continue;
                 Atom *fired = ia_commit_first(m, out);
+                if (m->refused)
+                    continue;
                 if (fired) {
                     m->in_attempt = false;
                     m->full = false;
@@ -3532,16 +3799,18 @@ static Atom *ia_machine_run(IaMachine *m, Arena *out) {
         }
         /* the attempt is complete */
         for (size_t i = 0; i < m->seen.len; i++)
-            (void)ia_push(&m->all_seen, m->seen.items[i]);
+            if (!ia_push(&m->all_seen, m->seen.items[i]))
+                m->refused = atom_symbol(a, "no-memory");
         if (m->refused) {
             Atom *why = atom_deep_copy(out, m->refused);
             m->in_attempt = false;
             if (m->mode == IA_MODE_AGENDA) {
-                /* a parked firing that is not formed is withdrawn */
-                ia_parked_update(m->ticket, NULL, true);
-                if (ia_agenda_next(m))
-                    continue;
-                return ia_done(out, atom_symbol(out, "ia:quiescent"));
+                (void)ia_parked_update(m->ticket, NULL, true);
+                if (ia_head(why, "not-formed", 2u)) {
+                    if (ia_agenda_next(m))
+                        continue;
+                    return ia_done(out, atom_symbol(out, "ia:quiescent"));
+                }
             }
             if (!ia_head(why, "not-formed", 2u))
                 why = atom_expr2(out, atom_symbol(out, "refused"), why);
@@ -3553,6 +3822,8 @@ static Atom *ia_machine_run(IaMachine *m, Arena *out) {
                                            atom_deep_copy(out, m->stuck)));
         }
         Atom *fired = ia_commit_first(m, out);
+        if (m->refused)
+            continue;
         m->in_attempt = false;
         if (!fired && m->truncated && !m->full) {
             m->full = true;
@@ -3581,14 +3852,23 @@ static Atom *ia_machine_resume(IaMachine *m, Atom *values, Arena *out) {
     m->waiting = false;
     IaJob job = m->let_job;
     values = ia_strip(a, values);
-    if (values && values->kind == ATOM_EXPR)
+    if (!values || values->kind != ATOM_EXPR)
+        m->refused = atom_symbol(a, "malformed-computed-results");
+    if (!m->refused)
         for (CettaExprIndex i = 0; i < values->expr.len; i++) {
             Atom *v = atom_deep_copy(a, values->expr.elems[i]);
             Atom *bargs[3] = {job.pattern, v, job.state};
             Atom *next = ia_call_term(op_bind, a, bargs, 3u);
-            if (ia_head(next, "ia:state", 5u))
-                (void)ia_job_push(m, (IaJob){.kind = IA_JOB_WALK,
-                                             .state = next, .ctx = job.ctx});
+            if (ia_head(next, "ia:refused", 2u)) {
+                m->refused = next->expr.elems[1];
+                break;
+            }
+            if (ia_head(next, "ia:state", 5u) &&
+                !ia_job_push(m, (IaJob){.kind = IA_JOB_WALK,
+                                        .state = next, .ctx = job.ctx})) {
+                m->refused = atom_symbol(a, "no-memory");
+                break;
+            }
         }
     ia_ctx_done(m, job.ctx);
     return ia_machine_run(m, out);
@@ -3615,15 +3895,27 @@ static Atom *ia_machine_start(IaMode mode, Atom *firing, Arena *out) {
 /* ── the agenda, for the machine ──────────────────────────────────────── */
 
 static uint64_t ia_park(Atom *firing, bool always, Atom *seen) {
-    Atom *kept = ia_keep(ia_unhold(firing));
-    if (!kept)
+    IaSeenAt *observed = NULL;
+    size_t observed_len = 0u;
+    if (seen && !ia_seen_at(seen, &observed, &observed_len))
         return 0u;
+    Atom *kept = ia_keep(ia_unhold(firing));
+    if (!kept) {
+        free(observed);
+        return 0u;
+    }
     pthread_mutex_lock(&g_agenda_gate);
+    if (g_next_ticket > INT64_MAX) {
+        pthread_mutex_unlock(&g_agenda_gate);
+        free(observed);
+        return 0u;
+    }
     if (g_parked_len == g_parked_cap) {
         size_t cap = g_parked_cap ? g_parked_cap * 2u : 64u;
         IaParked *items = realloc(g_parked, cap * sizeof(*items));
         if (!items) {
             pthread_mutex_unlock(&g_agenda_gate);
+            free(observed);
             return 0u;
         }
         g_parked = items;
@@ -3635,8 +3927,8 @@ static uint64_t ia_park(Atom *firing, bool always, Atom *seen) {
     p->always = always;
     p->live = true;
     p->firing = kept;
-    if (seen)
-        ia_seen_at(seen, &p->seen, &p->seen_len);
+    p->seen = observed;
+    p->seen_len = observed_len;
     g_stat_parks++;
     uint64_t ticket = p->ticket;
     pthread_mutex_unlock(&g_agenda_gate);
@@ -3645,19 +3937,26 @@ static uint64_t ia_park(Atom *firing, bool always, Atom *seen) {
 
 /* After an attempt: what it read (a firing is woken by a change there),
  * or its withdrawal. */
-static void ia_parked_update(uint64_t ticket, Atom *seen, bool drop) {
+static bool ia_parked_update(uint64_t ticket, Atom *seen, bool drop) {
+    IaSeenAt *observed = NULL;
+    size_t count = 0u;
+    bool ready = drop || !seen || ia_seen_at(seen, &observed, &count);
     pthread_mutex_lock(&g_agenda_gate);
     IaParked *p = ia_parked_find(ticket);
-    if (p) {
+    if (p && !ready)
+        p->needs_recheck = true;
+    if (p && ready) {
         if (drop)
             p->live = false;
         free(p->seen);
-        p->seen = NULL;
-        p->seen_len = 0u;
-        if (!drop && seen)
-            ia_seen_at(seen, &p->seen, &p->seen_len);
+        p->seen = observed;
+        p->seen_len = count;
+        p->needs_recheck = false;
     }
     pthread_mutex_unlock(&g_agenda_gate);
+    if (!p)
+        free(observed);
+    return ready;
 }
 
 static bool ia_agenda_next(IaMachine *m) {
@@ -3843,17 +4142,54 @@ static bool op_whenever(Arena *a, Atom **args, uint32_t nargs,
     if (error)
         return ia_answer(out, ia_done(a, error));
     if (!ia_park(args[0], true, NULL))
-        return false;
+        return ia_answer(out, NULL);
     return ia_answer(out, ia_done(a, atom_symbol(a, "ia:parked")));
 }
 
 static bool op_resume(Arena *a, Atom **args, uint32_t nargs, CettaCallOutcome *out) {
     if (nargs != 2u)
         return false;
-    IaMachine *m = ia_machine_of(ia_strip(a, args[0]));
-    if (!m)
-        return ia_answer(out, ia_done(a, atom_symbol(a, "ia:none")));
+    IaResumeToken *token = ia_resume_token_of(ia_strip(a, args[0]));
+    IaMachine *m = token ? token->machine : NULL;
+    if (!m || m->cancelled || m->computing || !m->waiting || token->request != m->request)
+        return ia_answer(out, ia_done(a, atom_error(a, atom_symbol(a, "transform"),
+            atom_expr2(a, atom_symbol(a, "refused"), atom_symbol(a, "stale-resumption")))));
     return ia_answer(out, ia_machine_resume(m, args[1], a));
+}
+
+/* Run the request's stored expression, rather than accepting replacement
+ * code or installing an observer across unrelated evaluator calls. */
+static bool op_compute(Space *space, Arena *a, Atom **args, uint32_t nargs,
+                        CettaCallOutcome *out) {
+    if (nargs != 1u)
+        return false;
+    IaResumeToken *token = ia_resume_token_of(ia_strip(a, args[0]));
+    IaMachine *m = token ? token->machine : NULL;
+    if (!m || m->cancelled || m->computing || !m->waiting || token->request != m->request)
+        return ia_answer(out, ia_done(a, atom_error(a, atom_symbol(a, "transform"),
+            atom_expr2(a, atom_symbol(a, "refused"), atom_symbol(a, "stale-resumption")))));
+    CettaEvalReadScope scope = {.observe = ia_machine_observe_read, .context = m};
+    Atom **values = NULL, *error = NULL;
+    size_t len = 0u;
+    m->computing = true;
+    eval_read_scope_enter(&scope);
+    bool complete = eval_interaction_values(space, a, m->let_job.expr, &values, &len, &error);
+    eval_read_scope_leave(&scope);
+    m->computing = false;
+    if (!complete || scope.incomplete || m->refused) {
+        free(values);
+        m->waiting = false;
+        if (m->refused)
+            error = atom_error(a, atom_symbol(a, "transform"),
+                atom_expr2(a, atom_symbol(a, "refused"), atom_deep_copy(a, m->refused)));
+        if (!error)
+            error = atom_error(a, atom_symbol(a, "transform"),
+                atom_symbol(a, "incomplete-computation"));
+        return ia_answer(out, ia_done(a, error));
+    }
+    Atom *reply = atom_expr(a, values, (CettaExprLen)len);
+    free(values);
+    return ia_answer(out, ia_machine_resume(m, reply, a));
 }
 
 /* (agenda-step): a ready process to run, else the woken firings attempted
@@ -4126,8 +4462,20 @@ CettaInteractionOutcome cetta_interaction_fire(
         size_t n = 0u;
         Atom *error = NULL;
         Atom *e = ia_unhold(r->expr.elems[2]);
-        if (!host->evaluate(host->context, a, e, &values, &n, &error)) {
+        CettaEvalReadScope scope = {.observe = ia_machine_observe_read, .context = m};
+        m->computing = true;
+        eval_read_scope_enter(&scope);
+        bool complete = host->evaluate(host->context, a, e, &values, &n, &error);
+        eval_read_scope_leave(&scope);
+        m->computing = false;
+        if (!complete || scope.incomplete || m->refused) {
             free(values);
+            if (m->refused)
+                error = atom_error(a, atom_symbol(a, "transform"),
+                    atom_expr2(a, atom_symbol(a, "refused"), atom_deep_copy(a, m->refused)));
+            ia_machine_cancel(m);
+            m->host = NULL;
+            g_ia_host = NULL;
             ia_machine_release(m);
             *continuation_out = error;
             return CETTA_INTERACTION_ERROR;
@@ -4235,6 +4583,7 @@ bool cetta_interaction_core_call(Space *space, Arena *a, const char *op,
     if (strcmp(op, "await") == 0) return op_await(a, args, nargs, out);
     if (strcmp(op, "whenever") == 0) return op_whenever(a, args, nargs, out);
     if (strcmp(op, "resume") == 0) return op_resume(a, args, nargs, out);
+    if (strcmp(op, "compute") == 0) return op_compute(space, a, args, nargs, out);
     if (strcmp(op, "agenda-step") == 0) return op_agenda_step(a, nargs, out);
     if (strcmp(op, "spawn") == 0) return op_spawn(a, args, nargs, out);
     if (strcmp(op, "seq") == 0) return op_seq(a, args, nargs, out);

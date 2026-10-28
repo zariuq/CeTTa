@@ -1,0 +1,289 @@
+Theorem-to-interface map
+========================
+
+Lean paths below are relative to Mettapedia/lean/mettapedia/Mettapedia.
+MeTTa examples are in this experiment directory. The formal checker/codec
+results and the pinned native comparisons are different kinds of evidence.
+
+gor-apply / gor-apply-value
+  GSLT/LanguageDef/CertificateGSLTOpenApplication.lean
+    applyOpen?_exact
+    applyOpen?_checked
+    checked_substitute_assoc
+    applyOpen?_interprets
+  Assumptions: validated selected calculus, all ordered arguments checked.
+  Result: exact reconstructed open derivations and actual model-value
+  composition from the model's local rule operations.
+  Corpus: open-rule-programs.metta.
+
+Source-aware rule application
+  GSLT/LanguageDef/CheckedSourceOpen.lean
+    GSLTSource.applyOpen_exact; GSLTSource.applyOpen_preserves_identity
+  Existing owner: CheckedSource.GSLTSource, including its identity,
+  assumption ledger and profile ledger. Validation failure remains separate
+  from a refused proof. The exact source object accompanies the result.
+  Corpus: source-rule-programs.metta, including changed revisions, changed
+  assumption ledgers and missing profiles. Source-specific authenticity and
+  semantic adequacy remain adapter obligations.
+
+Reading and checking a result at the requested statement
+  GSLT/LanguageDef/CertificateGSLTOpenApplicationWire.lean
+    applyOpenPacket_exact; applyOpenPacket_checked
+  GSLT/LanguageDef/CertificateGSLTJudgmentValues.lean
+    checkDerivationValue_exact; different_claim_refused
+  Assumptions: the caller selects the admitted calculus, context and goal.
+  Result: catalog/header agreement and exact proof reconstruction. Request
+  and rule-program tags cannot be substituted for derivation evidence.
+  Corpus: open-rule-programs.metta, including a valid proof of another claim.
+
+gor-manifest / gor-agrees
+  GSLT/LanguageDef/CertificateGSLTOpenSupport.lean
+    checkOpenRaw_eq_of_agreement
+    applyOpen?_eq_of_agreement
+    absent_premise_changes_verdict
+  Assumptions: complete rule-lookup and premise-lookup agreement, including
+  absence; unchanged generic checking algorithms. Target source-context
+  formation is a separate obligation.
+  Result: exact positive or negative checker verdict and identical raw tree.
+  Corpus: changed rules, changed premises, absent-to-present transitions.
+
+Operational and OSLF meaning of accepted application
+  GSLT/LanguageDef/CertificateGSLTOpenApplicationOperational.lean
+    applyOpen?_operational; checked_ledger_iff_closureDiamond
+  Existing owners: CertificateGSLTOpenSearchMachine and
+  CertificateGSLTOpenSearchModalAdequacy.
+  Result: exact raw proof events and ordered premise-use substitution; the
+  same completed ledger is observable through the OSLF closure diamond.
+  Corpus: gor-checked-events in open-rule-programs.metta.
+  This gives the checked proof an operational meaning. The route is built
+  from evidence; neither automatic search nor C execution refinement follows.
+
+HE reference rule objects
+  Languages/MeTTa/HE/Spec/Type/RulePresentation.lean
+    local_sound; sourceAlgebra; sound
+  Languages/MeTTa/HE/Spec/Type/RulePresentationCompleteness.lean
+    complete; source_iff_tree
+  Assumptions: explicit space, lookup relation and custom matching policy.
+  Result: correspondence for all 15 judgment families listed in reference.txt.
+  The trees retain rule and premise choices; existence equivalence does not
+  establish a bijection with proof-irrelevant source proofs.
+
+HE contextual request data
+  Languages/MeTTa/HE/TypeRuleData.lean
+    readJudgment_judgmentData; judgmentData_injective
+    readSequent_sequentData; variable_request_is_readable_but_unprovable
+  Assumptions: a rendering of an unordered occurrence bag retains its bag.
+  Result: exact contextual request readback; readable requests need not hold.
+
+HE local rule inspection and compiled rule programs
+  Languages/MeTTa/HE/TypeRuleViews.lean
+    readRuleData_ruleData; duplicate_type_positions_distinct
+  Languages/MeTTa/HE/TypeRulePrograms.lean
+    encode_injective_on; application_source; accepted_open_source
+  Languages/MeTTa/HE/TypeRuleCompilation.lean
+    compile_valid; abstractInstance_checks; source_iff_checked_inventory
+  Assumptions: actual local source-rule instances, including their guards;
+  explicit source space and lookup/matching policies. No conclusion proof is
+  stored in an inventory entry. Open assumptions need their source meanings.
+  Result: every finite inventory validates; all source judgments correspond
+  to accepted generic certificates over some such inventory. Dictionary
+  names are inventory-local; the source and dictionary must accompany them.
+  Native qualification: TypeRuleProgramExamples generates all 41 open-rule
+  cases, 82 altered-goal/out-of-range controls, and a closed typing chain.
+  This does not verify arbitrary externally supplied guard descriptions.
+
+HE reference computations
+  Languages/MeTTa/HE/TypeRuleExamples.lean
+    duplicate_lookup_tree; independently_scoped_application
+  Existing owners: HE.Spec.Type.Conformance and Type.Presentation.Exact.
+  Corpus: he-reference-generated.metta, generated by TypeRuleExamples.main.
+  Scope: explicit HE mode. Native tests do not replace whole-engine refinement.
+
+HOL Light rule data and execution
+  Languages/HOLLight/MeTTa/RuleData.lean
+    rebuild_readRequest; read_invocation_request; readPremises_invocation
+  Existing owners:
+    HOLLight.InferenceRequest.check_eq_some_iff
+    HOLLight.InferenceRequest.Semantics.outputAxiomsAllowed
+    HOLLight.MeTTa.InferenceSchedule.executes
+    HOLLight.ProofDataEncoding.getInference_putInference
+    HOLLight.ProofSystem.node_replay_iff
+    HOLLight.DefinitionAdapters; HOLLight.ExportReplay
+  Assumptions: registered source declarations, selected axiom policy and
+  valid premise cache; original typing/freshness/substitution conditions.
+  Result: all ten native request forms and ordered premise occurrences.
+  The authored execution theorems use their stated PeTTa source semantics;
+  they are not a universal theorem about Prime's C evaluator.
+  Corpus: hol-rule-generated.metta from RuleDataExport; the maintained
+  tests/hol_light/test_host.py exercises native operations and controls.
+
+Contextual rule abstraction and dependent application
+  TypeTheory/Calculi/ParameterizedPiSigmaId/FormationCheckedTelescopePrograms.lean
+    close_formed; close_typed; checked_substitution; apply_typed
+    checked_program; applicationCode_checked
+  Existing owners: TelescopeAbstraction, FormationSensitiveTyping,
+  FormationSensitiveRuleSubstitution, FormationSensitiveRuleReadout.
+  Assumptions: formed telescopes, typed capture-avoiding substitutions and
+  the displayed universe joins/regularity. The cumulative instance proves
+  these capabilities through its actual universe rules.
+  Corpus: contracts.lean, judgment-programs.metta, first-class-rules.metta.
+  Named reader: PrimeCandidates/DeclarationBased/ContextualJudgmentReadback.lean
+    local_name_readback; read_closed_term; read_closed_type
+    erase_closeTerm; read_rule_application; nativeClosed_exact
+    renaming_after_read; substitution_after_read
+  The named closure, scoped application and native-wire decoder now commute
+  for the explicit constructor grammar. ContextualJudgmentExamples generates
+  seven comparisons with actual native kernel-query encodings. General C
+  reader/evaluator refinement and additional notation remain obligations.
+
+Both declaration authoring forms
+  GSLT/LanguageDef/ModuleSource/InductiveMeTTaData.lean
+    readFamily_familyData; readBlock_blockData
+    familyData_injective; blockData_injective
+    two_forms_same_family; two_forms_same_admission
+  GSLT/LanguageDef/ModuleSource/InductiveMeTTaDataControls.lean
+    builder_admits_vector; block_admits_vector
+    alpha_renaming_preserves_admission
+    captured_index_refused; negative_recursive_field_refused
+    block_vector_guest_formed
+  Assumptions: the selected indexed admission's Nat/Vec profile. Reading a
+  general Family value grants no positivity or computation authority.
+  Corpus: declaration-builders.metta and declaration-packages.metta.
+  Complete generated observations:
+    GSLT/LanguageDef/ModuleSource/InductiveMeTTaPackage.lean
+      rows_checked; generated_row_has_receipt; authoring_forms_agree
+    .../InductiveMeTTaPackageControls.lean
+      vector_generated_reference; builder_reference; block_reference
+      vector_receipts; vector_packet_readback; missing_constructor_row_distinct
+    TypeTheory/Calculi/ParameterizedPiSigmaId/IndexedFamilyData.lean
+      readPackage_packageData; packageData_injective; inspected_row_has_receipt
+  These retain the actual generated eliminator and typed computation contexts.
+  Corpus: generated-family-packages.metta from InductiveMeTTaPackageExport.
+  Remaining: completion of recursive equation families and their native consumers.
+
+Conversion procedure and typed use
+  TypeTheory/Calculi/ParameterizedPiSigmaId/StructuralConversionPrograms.lean
+    compare_checked; compareOutcome_incomplete_iff
+    certificate_conversion; retypeOutcome; zero_budget_can_miss_beta
+  Existing owners: StructuralConversionSearch, StructuralConversionCode,
+  StructuralConversionCertificate and FormationSensitiveConversionChecking.
+  Assumptions: qualified local root decoder; retyping also retains the source
+  judgment and independently checked target formation.
+  Corpus: conversion-programs.metta.
+
+Identity without equality reflection
+  TypeTheory/Calculi/ParameterizedPiSigmaId/IdentityConversionBoundary.lean
+    EmptyRootConversion.variable_conversion_injective
+  TypeTheory/Calculi/ParameterizedPiSigmaId/Examples/IdentityConversionBoundary.lean
+    IdentityConversionBoundary.identity_without_judgmental_conversion
+  Assumptions: the actual cumulative presentation with empty declared root
+  computation. Church--Rosser is proved, not assumed for this instance.
+  Result: a formed telescope has a typed identity premise and distinct,
+  nonconvertible endpoints. Adding reflection changes the profile.
+  Corpus: conversion-programs.metta, including explicit dependent transport.
+
+Closed-body completion and declaration revisions
+  TypeTheory/Calculi/ParameterizedPiSigmaId/DeclarationCompletion.lean
+    Declaration.checkComplete_exists_of_typed
+    Declaration.checkComplete_admitted
+    Declaration.checkComplete_body_typed; checkComplete_body_typed_after
+    Declaration.checkComplete_selected; checkComplete_computes
+    Declaration.published_signature_not_overwritten
+    DeclarationConversionCode.changed_delta_body_refuses_old_endpoints
+  Assumptions: the selected prefix checker and qualified root decoder.
+  Result: real typing before/after publication; the selected type and delta
+  body come from the same entry. Existing authoritative entries are not
+  implicitly treated as pending signatures. Changed bodies invalidate a
+  delta certificate at its old endpoints. These are library laws; arbitrary
+  native equation-family admission and mutation still need their integration.
+
+Native implementation handoff
+-----------------------------
+
+The remaining native contract must connect one resolved definition identity
+and revision to ordinary execution, conversion, dependency queries and proof
+reuse. StructuralTypingReplayDependencies and StructuralConversionCodeDependencies
+already prove exact verdict reuse under their stated agreements. This tranche
+does not infer that agreement from a seal, revision counter or successful
+demonstration. The two preserved same-source/conflicting-conversion fixtures
+are open findings until this connection is implemented and qualified.
+
+Transactional and interactive rule programs
+  Languages/MeTTa/ProgrammableJudgmentTransforms.lean
+    step_preserves_validity; no_second_consumption
+    changed_source_blocks_commit; prepare_publish_fusion
+    fused_publication_preserves_validity; stored_evidence_derivation
+  Existing owner: TransformComposition.Span; exact source.applyOpen checking.
+  Languages/MeTTa/ProgrammableJudgmentServices.lean
+    continuation_intents_preserve; program_intents_preserve
+    unfinished_episode
+  Existing owner: GSLT.Dynamics.ServiceResumption and Authority.Outcome.
+  Assumptions: the store initially satisfies the evidence invariant; each
+  published intent is enabled. No assumption on provider correctness.
+  Corpus: judgment-transforms.metta and interactive-judgments.metta.
+  Boundary: other writers need an independent authority/validity contract;
+  external reply availability, scheduler fairness and C atomicity are separate.
+
+HOL rule programs and theory-extension composition
+  Languages/HOLLight/MeTTa/RulePrograms.lean
+    readCommands_commandsAtom; commandsAtom_read; appendPrograms_assoc
+    plan_trace_history; plan_program_returns; composition_returns
+  Assumptions: the existing InferenceSchedule invocation side conditions and
+  a valid initial cache. Exact command/receipt order is derived from each
+  primitive's existing source execution.
+  Languages/HOLLight/ExportReplayComposition.lean
+    replayFrom_append_iff; replayFrom_receipts; composed_root
+    replayFrom_policy_congr; refusal_reuse; revoked_axiom_refused
+  Assumptions: the actual registered receiver, requested-axiom agreement for
+  verdict reuse, and initial validity for a returned theorem derivation.
+  Includes definition and paired type-definition operations.
+  Corpus: hol-programs-generated.metta from RuleProgramExamples.
+
+Completed declarations as callable dependent programs
+  TypeTheory/Calculi/ParameterizedPiSigmaId/FormationCheckedTelescopePrograms.lean
+    applicationCodeIn_checked; applyFunctionCode_checked
+  .../DeclarationCallPrograms.lean
+    callCode_checked; completed_call_typed; completed_call_checked
+    changed_body_refuses_call; callCode_stepCount
+  Assumptions: actual prefix-checker acceptance and typed argument substitution;
+  the same entry supplies the constant type and decoded body.
+  .../StructuralConversionRootMap.lean
+    StepCode.decode_mapRoot; Code.check_mapRoot; Code.mapRoot_comp
+  Only exact local root-reader correspondence is assumed. Complete code
+  checking and both positive/negative verdict preservation are derived.
+
+Recursive append completion and revision controls
+  TypeTheory/Calculi/CumulativePiSigmaId/Declarations/AppendDefinitionCompletion.lean
+    accepted_true; call_typed; nil_equation; cons_equation
+    replacement_typed; replacement_conversion; stale_call_refused
+    stale_negative_changes
+  GSLT/LanguageDef/IndexedInductiveAppendCompletion.lean
+    completeProposal_sound; source_body_checked; source_body_entry; source_call_checked
+  Existing owners: the maintained IndexedNatVecAppend module producer and
+  NativeNaturalVectorProgramChecking's independently checked program.
+  Corpus: completion-controls.lean (Lean model execution).
+  Boundary: the selected source-module comparison is concrete; it is not
+  correctness of every module accepted by an arbitrary evidence producer.
+
+Contextual interpretation of programmable judgments
+  TypeTheory/Calculi/ParameterizedPiSigmaId/ProgrammableJudgmentSemantics.lean
+    checked_value_eq; checked_reindexed_value; converter_value_eq
+    application_value; application_section_observation
+  Existing owners: FormationSensitiveContextual, CwfYoneda and PresheafSemantics.
+  Local hypotheses: qualified root decoder, source judgment, typed context
+  morphism, universe regularity and joins for telescope closure.
+  Whole-program soundness is derived; equality reflection is not a parameter.
+  Corpus: contracts.lean's application_semantic_value and application_keeps_distinct_code.
+
+Nat through both authoring forms and the simple-inductive generator
+  GSLT/LanguageDef/ModuleSource/InductiveMeTTaNaturalPackage.lean
+    authoring_forms_agree; builder_generated; block_generated
+    generated_reference; generated_receipts
+    missing_constructor_refused; captured_field_refused
+  Existing owners: IndexedNatVecSource.admitNatural, Normalization.ctorType,
+  recType, Annotated.iotaTele, IndexedPolynomialGenerated.origins and its
+  computation endpoints. The independent NativeNaturalVectorFamilies library
+  supplies the comparison and typed receipts, not the generated definitions.
+  Result: actual source fields determine all four declarations and both
+  full dependent computation judgments. Both authoring forms reach them.
+  Corpus: generated-family-packages.metta now inspects both Nat iota rows.

@@ -26,6 +26,21 @@ SourceAbsence.rows_absent_eq
 SourceAbsence.mem_absenceRows_iff_holds
   Retained observations validate the exact old result. Continued absence alone
   can be weaker: a new nonjoining row may leave absence true but stale its evidence.
+SourceQueries.run_compile / run_empty_iff_no_declarative
+  The full source grammar lowers to the existing adaptive read program.
+  Complete ordered occurrence replies recover the original row bags, preserving
+  alternative substitutions, duplicate-labelled occurrences and exact picks.
+  Completed emptiness agrees with the independent declarative row relation
+  under the stated matcher and pure-computation laws.
+SourceQueryExecution.completed_agreement / execute_split / resumed_rows
+  The existing cursor returns exactly those rows on completion. Splitting its
+  read budget retains the actual continuation and charge. Validated resumption
+  observes the current complete view; stale performed reads retain a refused
+  packet. A paused cursor has no completed answer.
+SourceQueryControls
+  Checks correlated joins, vacuous every, computed-result positions, duplicate
+  identities, equational alternatives, ordered certificates, truncated scanners,
+  unread arrivals and changed positive/negative dependencies.
 ConditionTransport.PredicateQuery.holds_fire_iff_pullback
   An exact observed-region postcondition becomes finite initial tests.
 CommitPreconditions.CommitPrecondition.sequential_holds_iff
@@ -54,18 +69,42 @@ The source-form classifier now recognizes the empty conjunction, let and every.
 An explicitly supplied location still selects literal-pattern absence, including
 patterns whose heads happen to be source operators.
 
-Open findings:
+Qualified native cases:
 
-1. Native absence flattens every into candidate rows. With no candidates it
-   reports absence. The source every has one amalgamated row even when its
-   contributing set is empty, so an enclosing absence is false there.
-2. A computed source inside native absence is currently stuck. Standalone let
-   is now classified as a source, so it no longer falsely establishes absence
-   by searching for a stored atom shaped like the computation.
+1. Absence and every now retain separate groups of jobs in the common machine.
+   A query closes after all its jobs and child groups have completed. A vacuous
+   every supplies one aggregate row, and nested aggregates retain their row
+   boundary for the enclosing linearity filter.
+2. Computed sources inside absence use the existing request/resume path.
+   Their values remain an ordered complete reply bag. Inner bindings and picks
+   do not escape the negative query. Evaluation requests are not replayed by
+   the matcher's first-candidate retry optimization.
+3. A sealed resumption identifies one request generation. A stale, duplicate
+   or cancelled handle cannot supply values to a later request on that machine.
+   The checked matcher reports unfinished comparisons separately from no match.
+4. Output lists and continuations are prepared before commit. Resource and
+   post-effect engine failures stay explicit; changed state is retained.
+   Backend atom admission still requires its complete preparation connection.
+
+Native controls: tests/prime/interaction/negative_queries.metta and
+tests/test_interaction_queries.c. The query-judgments.metta client invokes the
+actual proof checker inside a negative query, while retaining the independent
+positive check before publication.
 
 The native adaptive scan may retain fewer regions than the source's conservative
 completeness footprint. Its correspondence needs the actual adaptive read history;
 the source's footprint theorem does not by itself prove that implementation.
+The source-query cursor realizes the contract in Lean. Native scanner
+completeness, scoped matcher correspondence and the whole mutation/revision
+audit remain implementation obligations. Computed code that reads additional
+mutable resources needs those transitive dependencies joined to the commit;
+the pure computed-source theorem assumes no such hidden store reads.
+
+Machines.Kernel.CorrelatedReplies:
+consumed_reply_stays_refused / cancelled_reply_stays_refused
+  Consumed or cancelled request identities remain refused through arbitrary
+  later operations. The native generation check is tested against this contract;
+  the model's theorem does not itself prove native seal unforgeability.
 
 No default notation or universal operational-to-conversion rule is selected.
 Successful checking of a rule still requires its selected theory and evidence.

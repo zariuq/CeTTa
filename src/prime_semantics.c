@@ -6470,11 +6470,17 @@ typedef struct {
     size_t len, cap;
 } PrimeScopeShapes;
 
+typedef struct PrimeScopeShapeStorage {
+    struct PrimeScopeShapeStorage *previous;
+    PrimeScopeShape items[];
+} PrimeScopeShapeStorage;
+
 /* Every declaration read so far, for code formed while the program runs.
  * It only grows: a reader loads the count, then the array, and an array
- * that was replaced is kept, so a reader on another thread never sees
- * freed memory. */
+ * that was replaced remains owned by the cache's version chain, so a reader
+ * on another thread never sees freed memory. */
 static pthread_mutex_t g_prime_scope_shapes_lock = PTHREAD_MUTEX_INITIALIZER;
+static PrimeScopeShapeStorage *g_prime_scope_shapes_storage;
 static PrimeScopeShape *_Atomic g_prime_scope_shapes_items = NULL;
 static _Atomic size_t g_prime_scope_shapes_len = 0u;
 static size_t g_prime_scope_shapes_cap = 0u;
@@ -6507,7 +6513,7 @@ static bool prime_scope_shape_equal(const PrimeScopeShape *a,
     return true;
 }
 
-static void prime_scope_shapes_publish(const PrimeScopeShape *shape) {
+static bool prime_scope_shapes_publish(const PrimeScopeShape *shape) {
     pthread_mutex_lock(&g_prime_scope_shapes_lock);
     size_t len = atomic_load_explicit(&g_prime_scope_shapes_len,
                                       memory_order_relaxed);
@@ -6519,14 +6525,24 @@ static void prime_scope_shapes_publish(const PrimeScopeShape *shape) {
     if (!known && len == g_prime_scope_shapes_cap) {
         size_t cap = g_prime_scope_shapes_cap ? g_prime_scope_shapes_cap * 2u
                                               : 16u;
-        PrimeScopeShape *grown = malloc(sizeof(*grown) * cap);
-        if (grown) {
-            if (len) memcpy(grown, items, sizeof(*grown) * len);
-            atomic_store_explicit(&g_prime_scope_shapes_items, grown,
-                                  memory_order_release);
-            items = grown;
-            g_prime_scope_shapes_cap = cap;
+        if (cap < g_prime_scope_shapes_cap ||
+            cap > (SIZE_MAX - sizeof(PrimeScopeShapeStorage)) / sizeof(PrimeScopeShape)) {
+            pthread_mutex_unlock(&g_prime_scope_shapes_lock);
+            return false;
         }
+        PrimeScopeShapeStorage *storage = malloc(sizeof(*storage) + sizeof(*items) * cap);
+        if (!storage) {
+            pthread_mutex_unlock(&g_prime_scope_shapes_lock);
+            return false;
+        }
+        storage->previous = g_prime_scope_shapes_storage;
+        g_prime_scope_shapes_storage = storage;
+        PrimeScopeShape *grown = storage->items;
+        if (len) memcpy(grown, items, sizeof(*grown) * len);
+        atomic_store_explicit(&g_prime_scope_shapes_items, grown,
+                              memory_order_release);
+        items = grown;
+        g_prime_scope_shapes_cap = cap;
     }
     if (!known && len < g_prime_scope_shapes_cap) {
         items[len] = *shape;
@@ -6534,6 +6550,7 @@ static void prime_scope_shapes_publish(const PrimeScopeShape *shape) {
                               memory_order_release);
     }
     pthread_mutex_unlock(&g_prime_scope_shapes_lock);
+    return true;
 }
 
 static bool prime_scope_shapes_push(PrimeScopeShapes *set,
@@ -6905,7 +6922,8 @@ static bool prime_scope_shapes_scan(TermUniverse *u, const AtomId *forms,
     }
     if (doc->len > whole && !*positions) return false;
     for (size_t k = 0u; k < doc->len; k++)
-        prime_scope_shapes_publish(&doc->items[k]);
+        if (!prime_scope_shapes_publish(&doc->items[k]))
+            return false;
     return true;
 }
 

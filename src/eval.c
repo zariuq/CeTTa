@@ -7,6 +7,7 @@
 #include "term_universe.h"
 #include "var_index.h"
 #include "eval.h"
+#include "fallible_alloc.h"
 #include "shared_return_producer.h"
 #include <stddef.h>
 typedef struct OutcomeAbiBefore {
@@ -2326,6 +2327,20 @@ typedef struct PrimeEvalObservation {
 /* Completion tracking is opt-in.  The ordinary evaluator ABI and answer
  * frontier remain unchanged; nested calls contribute to the active tracker. */
 static __thread CettaEvalEpisode *g_eval_completion_tracker = NULL;
+static _Thread_local CettaEvalReadScope *g_eval_read_scopes;
+
+void eval_read_scope_enter(CettaEvalReadScope *scope) {
+    assert(scope);
+    scope->previous = g_eval_read_scopes;
+    scope->incomplete = false;
+    g_eval_read_scopes = scope;
+}
+
+void eval_read_scope_leave(CettaEvalReadScope *scope) {
+    assert(scope && g_eval_read_scopes == scope);
+    g_eval_read_scopes = scope->previous;
+    scope->previous = NULL;
+}
 
 static void eval_mark_incomplete(CettaEvalCompletion completion) {
     CettaEvalEpisode *tracker = g_eval_completion_tracker;
@@ -34506,18 +34521,42 @@ static bool eval_transform_evaluate(void *context, Arena *a, Atom *expression,
         outcome_set_free(&outcomes);
         return false;
     }
+    if (outcomes.len > SIZE_MAX / sizeof(Atom *)) {
+        outcome_set_free(&outcomes);
+        *error_out = atom_error(a, expression, atom_symbol(a, "TransformLetCapacity"));
+        return false;
+    }
     Atom **results = outcomes.len
-        ? cetta_malloc(sizeof(Atom *) * (size_t)outcomes.len) : NULL;
+        ? cetta_fallible_malloc(sizeof(Atom *) * (size_t)outcomes.len) : NULL;
+    if (outcomes.len && !results) {
+        outcome_set_free(&outcomes);
+        *error_out = atom_error(a, expression, atom_symbol(a, "TransformLetCapacity"));
+        return false;
+    }
     size_t len = 0u;
     for (CettaCount i = 0u; i < outcomes.len; i++) {
         Atom *result = outcome_atom_materialize(a, &outcomes.items[i]);
-        if (result)
-            results[len++] = result;
+        if (!result) {
+            free(results);
+            outcome_set_free(&outcomes);
+            *error_out = atom_error(a, expression, atom_symbol(a, "TransformLetCapacity"));
+            return false;
+        }
+        results[len++] = result;
     }
     outcome_set_free(&outcomes);
     *results_out = results;
     *len_out = len;
     return true;
+}
+
+bool eval_interaction_values(Space *space, Arena *arena, Atom *expression,
+    Atom ***values_out, size_t *len_out, Atom **error_out) {
+    EvalTransformHost host = {
+        .root = space, .arena = arena, .fuel = eval_current_effective_fuel_limit(),
+    };
+    return eval_transform_evaluate(&host, arena, expression,
+        values_out, len_out, error_out);
 }
 
 static bool eval_try_transform_fire(Space *s, Arena *a, Atom *atom, int fuel,
@@ -58832,6 +58871,15 @@ static void prime_native_observe_enclosing_space_read(Space *space) {
 }
 
 static void prime_native_observe_read_token(SpaceReadToken read) {
+    if (!petta_machine_observe_host_read(read))
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+    for (CettaEvalReadScope *scope = g_eval_read_scopes; scope;
+         scope = scope->previous) {
+        if (scope->observe && !scope->observe(scope->context, read)) {
+            scope->incomplete = true;
+            eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_CAPACITY);
+        }
+    }
     prime_native_observe_enclosing_space_read((Space *)read.space);
     if (!read.space) return;
     for (PrimeEvalStackDriver *driver=g_prime_eval_stack_driver;driver;
@@ -58846,7 +58894,8 @@ static void prime_native_observe_read_token(SpaceReadToken read) {
 }
 
 static void prime_native_observe_space_read(Space *space) {
-    if (!space || (!g_prime_eval_top_authority && !g_prime_eval_stack_driver))
+    if (!space || (!g_prime_eval_top_authority && !g_prime_eval_stack_driver &&
+                   !g_eval_read_scopes && !petta_machine_records_host_reads()))
         return;
     prime_native_observe_read_token(space_read_token(space));
 }
@@ -73530,7 +73579,8 @@ static PettaMachineHost petta_eval_machine_host(
     bool prepared_available = source_unbounded && !prepared_pure_reference_enabled();
     PettaMachineHost host = {
         .context = context,
-        .observe_space_read = prime_native_owner_active() || g_prime_eval_top_authority
+        .observe_space_read = prime_native_owner_active() || g_prime_eval_top_authority ||
+            g_eval_read_scopes
             ? petta_eval_machine_observe_space_read : NULL,
         .analysis =
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2

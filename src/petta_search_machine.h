@@ -1081,6 +1081,11 @@ bool petta_machine_supply_owned_call(PettaMachine *machine,
 
 PettaMachineStep petta_machine_next(
     PettaMachine *machine, Atom **answer, Bindings *environment);
+/* Synchronous host reads made during active table generators join their
+ * cached read certificates. Replaying a cached value reports the original
+ * tokens to its caller without executing the generator again. */
+bool petta_machine_records_host_reads(void);
+bool petta_machine_observe_host_read(SpaceReadToken read);
 
 /* A native typecheck-v2 refutation is semantic, not ordinary search
  * exhaustion.  The evaluator reads this diagnostic only after the machine
