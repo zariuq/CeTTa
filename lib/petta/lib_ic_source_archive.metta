@@ -1,10 +1,10 @@
 ; Source templates are representations, never executable evaluator rules.
 ; Header metadata and form-local name inventories remain charged IC1 roots.
 ; No helper is installed into a source space by preparing or learning a task.
-!(import! &self "lib/petta/lib_source_codec.metta")
-!(import! &self "lib/petta/lib_ic_tree_archive.metta")
-!(import! &self "lib/petta/lib_ic_search.metta")
-!(import! &self "lib/petta/lib_ic_packed.metta")
+!(import! &self (library lib_source_codec))
+!(import! &self (library lib_ic_tree_archive))
+!(import! &self (library lib_ic_search))
+!(import! &self (library lib_ic_packed))
 
 (= (source-archive:encode-forms $schema $forms)
    (if (== $forms ()) (IC:Some ())

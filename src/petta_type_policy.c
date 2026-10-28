@@ -186,26 +186,18 @@ Atom *petta_type_tuple_query(Arena *arena, CettaExprLen length) {
     return atom_expr(arena, fields, length);
 }
 
-bool petta_type_function_query(Arena *arena, Atom *sequence, Atom *required,
+bool petta_type_function_query(Arena *arena, Atom *sequence,
                                 PettaTypeFunctionQuery *query) {
     Atom *const *elements = NULL;
     CettaExprLen length = 0u;
-    if (!arena || !required || !query ||
+    if (!arena || !query ||
         !atom_sequence_view(sequence, &elements, &length) || !length ||
         length >= (CettaExprLen)(SIZE_MAX / sizeof(Atom *)))
         return false;
-    Atom *domains = petta_type_tuple_query(arena, length - 1u);
-    Atom **arrow = arena_alloc(arena, sizeof(*arrow) * ((size_t)length + 1u));
-    if (!domains || !arrow)
-        return false;
-    arrow[0] = atom_symbol_id(arena, g_builtin_syms.arrow);
-    for (CettaExprIndex i = 1u; i < length; i++)
-        arrow[i] = domains->expr.elems[i - 1u];
-    arrow[length] = required;
-    Atom *signature = atom_expr(arena, arrow, length + 1u);
+    Atom *signature = atom_var_with_id(arena, "__petta_signature", fresh_var_id());
     Atom *pattern = petta_type_declaration_query(arena, elements[0], signature);
     if (!pattern)
         return false;
-    *query = (PettaTypeFunctionQuery){pattern, domains};
+    *query = (PettaTypeFunctionQuery){pattern, signature};
     return true;
 }

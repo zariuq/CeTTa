@@ -57,7 +57,7 @@ def natural(value, prefix):
 
 
 def tables(binary):
-    run = subprocess.run([str(binary), '--no-results', '--lang', 'petta@1.0.6', '--profile', 'extended',
+    run = subprocess.run([str(binary), '--no-results', '--lang', 'petta', '--profile', 'extended',
         'tests/langdef/tensor/descriptors_runtime_v1.metta'], cwd=ROOT, text=True, capture_output=True, check=True)
     values = parse_sexprs(run.stdout)
     if len(values) != 1:

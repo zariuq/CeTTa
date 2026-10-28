@@ -726,6 +726,8 @@ static void oem_read_heads_finish(CettaOpenEquationProgram *program) {
 
 static bool oem_reads_head(const CettaOpenEquationProgram *program,
                            SymbolId head) {
+    if (!program || program->read_head_len == 0u || !program->read_heads)
+        return false;
     return bsearch(&head, program->read_heads, program->read_head_len,
                     sizeof(*program->read_heads), oem_read_head_compare) != NULL;
 }
@@ -3153,6 +3155,20 @@ static bool oem_guard_native_node(OemCompile *compile, Atom *expr,
 static bool oem_build_builtin_entry(OemCompile *compile, Atom *expr,
                                     const PettaPlanNode *plan, uint32_t depth,
                                     bool tail, uint32_t *out) {
+    if (compile->host && compile->host->declared_builtin_protocol &&
+        expr && expr->kind == ATOM_EXPR && expr->expr.len > 0u &&
+        expr->expr.elems[0]->kind == ATOM_SYMBOL && plan &&
+        plan->role != PETTA_PLAN_VALUE && plan->role != PETTA_PLAN_DATA &&
+        is_grounded_op(expr->expr.elems[0]->sym_id) &&
+        petta_semantics_form(expr->expr.elems[0]->sym_id) == PETTA_FORM_NONE &&
+        space_head_declares_type(
+            compile->program->space, expr->expr.elems[0]->sym_id)) {
+        if (!oem_build_host(compile, expr, plan, depth, "declared builtin protocol", out))
+            return false;
+        compile->nodes[*out].host_fast = OEM_HOST_PLAIN;
+        compile->nodes[*out].op = SYMBOL_ID_NONE;
+        return true;
+    }
     bool guarded = oem_builtin_source(compile, expr, plan);
     if (guarded && compile->host->builtin_equations(
             compile->host->context, compile->program->space,
@@ -12340,8 +12356,10 @@ static __attribute__((noinline)) OemRun oem_observation_step(
             answer = !atom_has_vars(value);
             break;
         case PETTA_FORM_IS_SPACE:
-            answer = value->kind == ATOM_SYMBOL &&
-                symbol_bytes(g_symbols, value->sym_id)[0] == '&';
+            answer = (value->kind == ATOM_SYMBOL &&
+                      symbol_bytes(g_symbols, value->sym_id)[0] == '&') ||
+                (value->kind == ATOM_GROUNDED &&
+                 value->ground.gkind == GV_SPACE && value->ground.ptr);
             break;
         default:
             return OEM_RUN_DECLINED;

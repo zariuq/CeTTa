@@ -31,7 +31,7 @@ typedef enum {
 
 typedef enum {
     CETTA_LANGUAGE_VERSION_NONE = 0,
-    CETTA_LANGUAGE_VERSION_PETTA_1_0_6 = 1,
+    CETTA_LANGUAGE_VERSION_PETTA_STABLE = 6,
     CETTA_LANGUAGE_VERSION_PETTA_1_1 = 2,
     CETTA_LANGUAGE_VERSION_PRIME_0_0_1 = 3,
     CETTA_LANGUAGE_VERSION_HE_0_2_10 = 4,
@@ -65,7 +65,7 @@ typedef enum {
     cesta_table_apply_0(CETTA_PROFILE_HE_EXTENDED_VALUE, CETTA_PROFILE_HE_EXTENDED, CETTA_LANGUAGE_HE, "extended", "HE-compatible syntax plus labeled CeTTa extensions.", 1, 1, 0, 0, CETTA_LANGUAGE_VERSION_HE_0_2_10) \
     cesta_table_apply_0(CETTA_PROFILE_HE_PRIME_VALUE, CETTA_PROFILE_HE_PRIME, CETTA_LANGUAGE_HE, "he-prime", "HE typing with explicit dependent binders, checked type-level computation, and typed inhabitation search.", 0, 1, 1, 0, CETTA_LANGUAGE_VERSION_HE_0_2_10) \
     cesta_table_apply_0(CETTA_PROFILE_PRIME_DEFAULT_VALUE, CETTA_PROFILE_PRIME_DEFAULT, CETTA_LANGUAGE_PRIME, "prime-default", "Frozen MeTTa-Prime 0.0.1 draft policy.", 0, 1, 1, 0, CETTA_LANGUAGE_VERSION_PRIME_0_0_1) \
-    cesta_table_apply_0(CETTA_PROFILE_PETTA_EXTENDED_VALUE, CETTA_PROFILE_PETTA_EXTENDED, CETTA_LANGUAGE_PETTA, "extended", "PeTTa semantics plus labeled shared CeTTa extensions.", 0, 1, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_1_0_6) \
+    cesta_table_apply_0(CETTA_PROFILE_PETTA_EXTENDED_VALUE, CETTA_PROFILE_PETTA_EXTENDED, CETTA_LANGUAGE_PETTA, "extended", "Corrected stable PeTTa plus labeled shared CeTTa extensions.", 0, 1, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_STABLE) \
     cesta_table_apply_0(CETTA_PROFILE_PETTA_1_1_C_VALUE, CETTA_PROFILE_PETTA_1_1_C, CETTA_LANGUAGE_PETTA, "petta@1.1.c", "PeTTa's typed line with declarations as call contracts: a failed check raises on every route.", 0, 0, 0, 0, CETTA_LANGUAGE_VERSION_PETTA_1_1_C)
 
 #define CETTA_PROFILE_TYPING_ROWS(cesta_table_apply_0) \

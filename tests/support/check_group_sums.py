@@ -37,7 +37,7 @@ def main():
         datasets.append([(f'key-{rng.randrange(17)}', rng.randrange(-1000, 1000) / 8)
                          for _ in range(size)])
     checks = 0
-    for language, profile in [('petta@1.0.6', None), ('petta@1.0.6', 'extended'),
+    for language, profile in [('petta', None), ('petta', 'extended'),
                               ('he', 'extended'), ('prime', None)]:
         library = '(library list)' if language.startswith('petta') else 'list'
         for reference in (False, True):
@@ -90,7 +90,7 @@ def main():
     source += '''\n!(let* (($s (new-space hash))
         ($added (add-atoms $s ((K a) (K a) (K b)))))
       (HashOccurrences (size-atom (collapse (match $s (K $v) $v)))))\n'''
-    result = subprocess.run([str(args.cetta.resolve()), '--lang', 'petta@1.0.6',
+    result = subprocess.run([str(args.cetta.resolve()), '--lang', 'petta',
                              '--profile', 'extended', '-e', source], cwd=ROOT,
                             text=True, capture_output=True, timeout=30)
     expected = (ROOT / 'tests/petta/collection_observation.expected').read_text()

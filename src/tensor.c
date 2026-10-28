@@ -286,6 +286,75 @@ CettaTensorStatus cetta_tensor_gather(const CettaTensor *t,
     free(coordinates); free(data); return status;
 }
 
+static size_t stored_lower_bound(const CettaTensor *t, size_t coordinate) {
+    if (!t->storage->sparse) return coordinate < t->count ? coordinate : t->count;
+    size_t lo = 0, hi = cetta_tensor_stored(t);
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (stored_coordinate(t, mid) < coordinate) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
+CettaTensorStatus cetta_tensor_gather_rows(const CettaTensor *t,
+    const CettaTensor *rows, CettaTensor **out) {
+    if (!out) return CETTA_TENSOR_VALUE;
+    *out = NULL;
+    if (!t || !rows) return CETTA_TENSOR_VALUE;
+    if (rows->dtype != CETTA_TENSOR_INDEX) return CETTA_TENSOR_DTYPE;
+    if (!t->rank || rows->rank != 1) return CETTA_TENSOR_SHAPE;
+    size_t requested = cetta_tensor_stored(rows), width = cetta_tensor_itemsize(t->dtype);
+    /* Bounds still matter when the selected rows contain no coordinates. */
+    for (size_t i = 0; i < requested; i++) {
+        uint64_t row; memcpy(&row, stored_value(rows, i), sizeof(row));
+        if (row >= t->shape[0]) return CETTA_TENSOR_INDEX_ERROR;
+    }
+    size_t *shape = malloc(t->rank * sizeof(*shape));
+    if (!shape) return CETTA_TENSOR_NOMEM;
+    memcpy(shape, t->shape, t->rank * sizeof(*shape)); shape[0] = rows->count;
+    size_t count;
+    CettaTensorStatus status = cetta_tensor_coordinate_count(shape, t->rank, &count);
+    if (status != CETTA_TENSOR_OK) { free(shape); return status; }
+    if (!count) {
+        status = cetta_tensor_new(t->dtype, shape, t->rank, NULL, 0, out);
+        free(shape); return status;
+    }
+    size_t row_width = count / rows->count, used = 0;
+    for (size_t i = 0; i < requested; i++) {
+        uint64_t row; memcpy(&row, stored_value(rows, i), sizeof(row));
+        size_t first = stored_lower_bound(t, (size_t)row * row_width);
+        size_t last = stored_lower_bound(t, ((size_t)row + 1) * row_width);
+        if (last - first > SIZE_MAX - used) { free(shape); return CETTA_TENSOR_OVERFLOW; }
+        used += last - first;
+    }
+    bool dense = used == count;
+    if (used > SIZE_MAX / width || (!dense && used > SIZE_MAX / sizeof(size_t))) {
+        free(shape); return CETTA_TENSOR_OVERFLOW;
+    }
+    unsigned char *data = used ? malloc(used * width) : NULL;
+    size_t *coordinates = !dense && used ? malloc(used * sizeof(*coordinates)) : NULL;
+    if (used && (!data || (!dense && !coordinates))) {
+        free(shape); free(data); free(coordinates); return CETTA_TENSOR_NOMEM;
+    }
+    size_t written = 0;
+    for (size_t i = 0; i < requested; i++) {
+        uint64_t row; memcpy(&row, stored_value(rows, i), sizeof(row));
+        size_t first = stored_lower_bound(t, (size_t)row * row_width);
+        size_t last = stored_lower_bound(t, ((size_t)row + 1) * row_width);
+        size_t target = stored_coordinate(rows, i) * row_width;
+        for (size_t entry = first; entry < last; entry++) {
+            if (!dense) coordinates[written] = target + stored_coordinate(t, entry) - (size_t)row * row_width;
+            memcpy(data + written * width, stored_value(t, entry), width); written++;
+        }
+    }
+    if (dense) {
+        status = cetta_tensor_new_take(t->dtype, shape, t->rank, data, used * width, out);
+        if (status == CETTA_TENSOR_OK) data = NULL;
+    } else status = cetta_tensor_coo(t->dtype, shape, t->rank, coordinates, data, used, CETTA_TENSOR_REJECT, out);
+    free(shape); free(data); free(coordinates); return status;
+}
+
 CettaTensorStatus cetta_tensor_merge(const CettaTensor *left,
     const CettaTensor *right, CettaTensorDuplicates duplicates, CettaTensor **out) {
     if (!out) return CETTA_TENSOR_VALUE;

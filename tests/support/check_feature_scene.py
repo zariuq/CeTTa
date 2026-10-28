@@ -90,7 +90,7 @@ def main():
         return parse_forms(result.stdout)
 
     module_path = os.path.relpath(args.module.resolve(), ROOT)
-    prefix = '!(import! &self "lib/petta/lib_module.metta")\n'
+    prefix = '!(import! &self (library lib_module))\n'
     forms = run("core", prefix + f"!(let* {setup(module_path)} (println! (SceneCore $core)))\n")
     cores = [form[1] for form in forms if isinstance(form, list) and form and form[0] == "SceneCore"]
     if len(cores) != 1 or cores[0][0] != "GSLTLanguageDefWireV1":

@@ -8145,6 +8145,14 @@ static bool prepared_pure_operands_share_type(
     return compatible;
 }
 
+/* Equality observes the list value a private carrier spells, including cells
+ * nested in a record. Quotes and closures keep their existing opaque policy.
+ * Scalar realizations leave these operands to the boxed observation below. */
+static bool prepared_pure_equality_needs_observation(const Atom *value) {
+    return value && atom_structural_may_have_list_carrier(value) &&
+           petta_semantics_value_contains_observable_open_cons(value);
+}
+
 /* Execute the generated register arm directly.  Dialect dispatch is absent by
  * construction: instruction and result layout were emitted from the active
  * execution-contract presentation when the program was compiled. */
@@ -8157,6 +8165,17 @@ static Atom *prepared_pure_execute_register(
     if (!program || !program->boolean_value || !arena || !arguments ||
         arity != 2u)
         return NULL;
+    Atom *observed[2];
+    if (instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
+        for (uint32_t i = 0u; i < 2u; i++) {
+            observed[i] = prepared_pure_equality_needs_observation(arguments[i])
+                ? petta_semantics_materialize_value(arena, arguments[i])
+                : arguments[i];
+            if (!observed[i])
+                return NULL;
+        }
+        arguments = observed;
+    }
     CettaGsltRegisterOperandDiscipline discipline;
     if (!cetta_gslt_register_operand_discipline(
             instruction, &discipline))
@@ -8761,6 +8780,9 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_scalar_binary(
     PreparedPureScalar left = *left_value, right = *right_value;
     *out = (PreparedPureScalar){0};
     if (node->instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
+        if (prepared_pure_equality_needs_observation(left.atom) ||
+            prepared_pure_equality_needs_observation(right.atom))
+            return false;
         if (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
             (!program->total_structural_equality &&
              !prepared_pure_scalar_operands_share_type(
@@ -13020,6 +13042,9 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_ready_register_scalar(
     bool right_integer = right_atom->kind == ATOM_GROUNDED &&
         right_atom->ground.gkind == GV_INT;
     if (node->instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
+        if (prepared_pure_equality_needs_observation(left_atom) ||
+            prepared_pure_equality_needs_observation(right_atom))
+            return false;
         PreparedPureScalar left = {.atom = left_atom};
         PreparedPureScalar right = {.atom = right_atom};
         if (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||

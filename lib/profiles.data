@@ -30,7 +30,7 @@
     (Unique id)
     (Rows
       (Row CETTA_LANGUAGE_VERSION_NONE 0)
-      (Row CETTA_LANGUAGE_VERSION_PETTA_1_0_6 1)
+      (Row CETTA_LANGUAGE_VERSION_PETTA_STABLE 6)
       (Row CETTA_LANGUAGE_VERSION_PETTA_1_1 2)
       (Row CETTA_LANGUAGE_VERSION_PRIME_0_0_1 3)
       (Row CETTA_LANGUAGE_VERSION_HE_0_2_10 4)
@@ -48,7 +48,7 @@
       (Row 2 CETTA_PROFILE_HE_EXTENDED CETTA_PROFILE_HE_EXTENDED_VALUE CETTA_LANGUAGE_HE "extended" "HE-compatible syntax plus labeled CeTTa extensions." true true false false CETTA_LANGUAGE_VERSION_HE_0_2_10 before)
       (Row 3 CETTA_PROFILE_HE_PRIME CETTA_PROFILE_HE_PRIME_VALUE CETTA_LANGUAGE_HE "he-prime" "HE typing with explicit dependent binders, checked type-level computation, and typed inhabitation search." false true true false CETTA_LANGUAGE_VERSION_HE_0_2_10 before)
       (Row 6 CETTA_PROFILE_PRIME_DEFAULT CETTA_PROFILE_PRIME_DEFAULT_VALUE CETTA_LANGUAGE_PRIME "prime-default" "Frozen MeTTa-Prime 0.0.1 draft policy." false true true false CETTA_LANGUAGE_VERSION_PRIME_0_0_1 before)
-      (Row 7 CETTA_PROFILE_PETTA_EXTENDED CETTA_PROFILE_PETTA_EXTENDED_VALUE CETTA_LANGUAGE_PETTA "extended" "PeTTa semantics plus labeled shared CeTTa extensions." false true false false CETTA_LANGUAGE_VERSION_PETTA_1_0_6 before)
+      (Row 7 CETTA_PROFILE_PETTA_EXTENDED CETTA_PROFILE_PETTA_EXTENDED_VALUE CETTA_LANGUAGE_PETTA "extended" "Corrected stable PeTTa plus labeled shared CeTTa extensions." false true false false CETTA_LANGUAGE_VERSION_PETTA_STABLE before)
       (Row 15 CETTA_PROFILE_PETTA_1_1_C CETTA_PROFILE_PETTA_1_1_C_VALUE CETTA_LANGUAGE_PETTA "petta@1.1.c" "PeTTa's typed line with declarations as call contracts: a failed check raises on every route." false false false false CETTA_LANGUAGE_VERSION_PETTA_1_1_C before)
       (Row 8 CETTA_PROFILE_PETTA_TYPECHECK_V2 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE CETTA_LANGUAGE_PETTA "typecheck-v2" "PeTTa with native Roman-compatible residual type checking." false true false false CETTA_LANGUAGE_VERSION_PETTA_1_1 typing)
       (Row 13 CETTA_PROFILE_PETTA_TYPECHECK_V3 CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE CETTA_LANGUAGE_PETTA "typecheck-v3" "PeTTa with native v3 judgments and coherent typecheck-v2 delegation." false true false false CETTA_LANGUAGE_VERSION_PETTA_1_1 typing)

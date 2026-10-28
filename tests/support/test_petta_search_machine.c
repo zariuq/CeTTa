@@ -256,6 +256,10 @@ static void test_type_policy_component(Arena *arena) {
     free(answers);
     assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "6"),
                                        parse_one(arena, "%Undefined%"), &answers, &count, NULL));
+    assert(count == 0u);
+    free(answers);
+    assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "untyped-leaf"),
+                                       parse_one(arena, "%Undefined%"), &answers, &count, NULL));
     assert(count == 1u && atom_eq(answers[0], parse_one(arena, "%Undefined%")));
     free(answers);
     assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "6"),
@@ -265,7 +269,7 @@ static void test_type_policy_component(Arena *arena) {
     assert(petta_type_intrinsic_answers(&space, arena, parse_one(arena, "(a 6)"),
                                        parse_one(arena, "(%Undefined% %Undefined%)"),
                                        &answers, &count, NULL));
-    assert(count == 1u);
+    assert(count == 0u);
     free(answers);
     space_add(&space, parse_one(arena, "(: branch-value Number)"));
     space_add(&space, parse_one(arena, "(: branch-value String)"));
@@ -315,8 +319,8 @@ static void test_type_bound_rows(Arena *arena) {
          "((Number Number) (Number String) (String Number) (String String))"},
         {"(($open row-choice) ($t $t))", "((Number Number) (String String))"},
         {"(($shared 6) (Number $shared))", "((Number Number))"},
-        {"((box $t) $t)", "((Box (%Undefined% %Undefined%)))"},
-        {"((row-dependent $shared) $shared)", "(%Undefined%)"},
+        {"((box $t) $t)", "((Box $fresh))"},
+        {"((row-dependent $shared) $shared)", "(Number)"},
         {"((6 7) (Number String))", "()"},
         {"((6 7) (Number))", "()"},
         {"(() ())", "(())"},
@@ -346,7 +350,7 @@ static void test_type_bound_rows(Arena *arena) {
     free(answers);
     /* A successful function candidate never needs the argument's structural
      * type product. The row below has more combinations than a result vector
-     * can represent, but its bound Undefined check succeeds directly. */
+     * can represent, but the literal wildcard omits that premise. */
     space_add(&space, parse_one(arena, "(: row-first (-> %Undefined% Number))"));
     Atom *choices[33];
     for (size_t i = 0u; i < sizeof(choices) / sizeof(choices[0]); i++)
@@ -355,6 +359,13 @@ static void test_type_bound_rows(Arena *arena) {
         atom_expr(arena, choices, sizeof(choices) / sizeof(choices[0])));
     assert(petta_type_intrinsic_answers(&space, arena, wide, NULL, &answers, &count, NULL));
     assert(count == 1u && atom_eq(answers[0], atom_symbol(arena, "Number")));
+    free(answers);
+    /* Confirming Undefined is not an instruction to enumerate all 2^33
+     * structural combinations. Their positive existence already refutes it. */
+    CettaEvalCompletion wide_confirmation = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+    assert(petta_type_intrinsic_answers(&space, arena, wide->expr.elems[1],
+        atom_undefined_type(arena), &answers, &count, &wide_confirmation));
+    assert(wide_confirmation == CETTA_EVAL_COMPLETE && count == 0u);
     free(answers);
 
     space_add(&space, parse_one(arena, "(: row-failure (-> String Number))"));
@@ -602,17 +613,31 @@ static void test_type_fact_reuse(Arena *arena) {
     free(first);
     space_add(&space, parse_one(arena, "(: 6 ReuseFoo)"));
     assert(petta_type_intrinsic_answers(&space, arena, number, foo,
-                                        &first, &first_count, NULL) && first_count == 1u);
-    assert(atom_eq(first[0], foo));
+                                        &first, &first_count, NULL) && first_count == 0u);
     free(first);
     assert(petta_type_intrinsic_answers(&space, arena, number, NULL,
                                         &first, &first_count, NULL) && first_count == 1u);
     assert(atom_eq(first[0], parse_one(arena, "Number")));
     free(first);
 
+    /* Revision invalidation still applies to an ordinary declared subject;
+     * a primitive's intrinsic commitment is independent of annotations. */
+    Atom *label = parse_one(arena, "reuse-label");
+    assert(petta_type_intrinsic_answers(&space, arena, label, foo,
+                                        &first, &first_count, NULL) && first_count == 0u);
+    free(first);
+    space_add(&space, parse_one(arena, "(: reuse-label ReuseFoo)"));
+    assert(petta_type_intrinsic_answers(&space, arena, label, foo,
+                                        &first, &first_count, NULL) && first_count == 1u);
+    assert(atom_eq(first[0], foo));
+    free(first);
+
     Space other;
     space_init(&other);
     assert(petta_type_intrinsic_answers(&other, arena, number, foo,
+                                        &first, &first_count, NULL) && first_count == 0u);
+    free(first);
+    assert(petta_type_intrinsic_answers(&other, arena, label, foo,
                                         &first, &first_count, NULL) && first_count == 0u);
     free(first);
     space_free(&other);

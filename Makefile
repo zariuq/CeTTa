@@ -28453,6 +28453,44 @@ test-petta-value-occurrences: $(BIN)
 	done; \
 	echo "PASS: a variable is the value it holds, on the tier and in the machine"
 
+.PHONY: test-petta-space-value-predicate
+test-petta-semantics: test-petta-space-value-predicate
+test-petta-space-value-predicate: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/space_value_predicate.metta \
+			| diff -u tests/petta/space_value_predicate.expected -; \
+	done; \
+	echo "PASS: named and first-class space predicates on both routes"
+
+.PHONY: test-petta-eager-value-predicates
+test-petta-semantics: test-petta-eager-value-predicates
+test-petta-eager-value-predicates: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/eager_value_predicates.metta \
+			| diff -u tests/petta/eager_value_predicates.expected -; \
+	done; \
+	echo "PASS: value predicates retain computation, bindings and ready values"
+
+.PHONY: test-petta-type-confirmation
+test-petta-semantics: test-petta-type-confirmation
+test-petta-type-confirmation: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for fixture in type_confirmation space_type_confirmation type_confirmation_relational; do \
+			CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$fixture.metta \
+				| diff -u tests/petta/$$fixture.expected -; \
+		done; \
+	done; \
+	echo "PASS: type confirmations preserve candidates, wildcard roles and bindings"
+
 .PHONY: test-petta-get-type-relation
 # get-type is SWI-PeTTa's relation over the space's declarations: a literal's
 # type, any type for a variable, a declared function's result type when its
@@ -32893,8 +32931,8 @@ test-process-stream-v1: $(BIN) tests/support/check_process_stream.py tests/suppo
 test-process-scope-fork-v1:
 	@$(MAKE) -s BUILD=core CETTA_PROC_FORK_SPAWN=1 test-process-scope-v1 test-process-stream-v1
 test-list-drop-v1: $(BIN) lib/list.metta tests/list_value/list_drop.metta tests/list_value/list_drop.expected
-	@set -e; for language in he petta@1.0.6 prime; do \
-		library=list; test $$language != petta@1.0.6 || library='(library list)'; \
+	@set -e; for language in he petta prime; do \
+		library=list; test $$language != petta || library='(library list)'; \
 		profile='--profile extended'; test $$language != prime || profile=; \
 		./$(BIN) --no-results --lang $$language $$profile -e "!(import! &self $$library) $$(cat tests/list_value/list_drop.metta)" | \
 			diff -u tests/list_value/list_drop.expected -; \
@@ -44468,7 +44506,7 @@ test-postings-descriptors: $(BIN) tools/generate_postings_descriptors.py \
 		langdef/postings/generated/Descriptors.lean \
 		lib/postings_descriptors.metta lib/petta/postings_descriptors.metta
 	python3 tools/generate_postings_descriptors.py --cetta ./$(BIN) --check
-	@set -eu; got=$$(./$(BIN) --no-results --lang petta@1.0.6 --profile extended \
+	@set -eu; got=$$(./$(BIN) --no-results --lang petta --profile extended \
 		tests/langdef/postings/descriptors_surface_v1.metta); \
 	test "$$got" = "$$(cat tests/langdef/postings/descriptors_surface_v1.expected)"; \
 	echo '(PostingsDescriptorSurface 5 0)'
@@ -44492,6 +44530,14 @@ test-json-codec-boundary: $(BIN)
 
 runtime/test_tensor-$(BUILD_OBJ_TAG): tests/support/test_tensor.c src/tensor.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+
+runtime/test_tensor_gather_rows_allocation-$(BUILD_OBJ_TAG): tests/support/test_tensor_gather_rows_allocation.c src/tensor.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_tensor_gather_rows_allocation.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc
+
+.PHONY: test-tensor-gather-rows
+test-tensor-gather-rows: $(BIN) runtime/test_tensor_gather_rows_allocation-$(BUILD_OBJ_TAG)
+	./runtime/test_tensor_gather_rows_allocation-$(BUILD_OBJ_TAG)
+	python3 tests/support/check_tensor_gather_rows.py --cetta ./$(BIN) --output runtime/tensor-gather-rows-qualification
 
 .PHONY: test-tensor
 test-tensor: $(BIN) runtime/test_tensor-$(BUILD_OBJ_TAG)
@@ -44525,7 +44571,7 @@ test-embedding: $(BIN)
 
 .PHONY: test-numerical-substrate-smoke
 test-numerical-substrate-smoke: $(BIN)
-	@result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta@1.0.6 \
+	@result=$$($(CETTA_BIN_INVOKE) --quiet --lang petta \
 		tests/petta/numerical_substrate_smoke.metta 2>&1); \
 	status=$$?; \
 	if [ $$status -ne 0 ]; then \
@@ -44570,7 +44616,7 @@ test-all: test-json-codec-boundary
 
 test-tensor-support: $(BIN)
 	@set -eu; \
-	got=$$(./$(BIN) --no-results --lang petta@1.0.6 --profile extended \
+	got=$$(./$(BIN) --no-results --lang petta --profile extended \
 		tests/langdef/tensor/support_runtime_v1.metta); \
 	test "$$got" = "$$(cat tests/langdef/tensor/support_runtime_v1.expected)"; \
 	echo '(TensorSupport 6 0)'
@@ -45973,9 +46019,9 @@ test-petta-add-atoms-batch-v1: $(BIN) \
 	@set -eu; \
 	actual=$$(mktemp "$(BOOTSTRAP_TMPDIR)/petta-add-atoms-batch.XXXXXX"); \
 	trap 'rm -f "$$actual"' EXIT INT TERM; \
-	$(BIN) --lang petta@1.0.6 tests/petta/add_atoms_batch.metta > "$$actual"; \
+	$(BIN) --lang petta tests/petta/add_atoms_batch.metta > "$$actual"; \
 	diff -u tests/petta/add_atoms_batch.expected "$$actual"; \
-	$(BIN) --lang petta@1.0.6 tests/petta/add_atoms_override.metta > "$$actual"; \
+	$(BIN) --lang petta tests/petta/add_atoms_override.metta > "$$actual"; \
 	diff -u tests/petta/add_atoms_override.expected "$$actual"; \
 	echo '(PettaAddAtomsBatchV1Summary 5 1 0)'
 
@@ -45991,7 +46037,7 @@ test-petta-prepared-sum-by-v1: $(BIN) \
 	for fuel in unlimited bounded; do \
 		option=; \
 		if [ "$$fuel" = bounded ]; then option='--fuel 1000000'; fi; \
-		$(CETTA_BIN_INVOKE) $$option --lang petta@1.0.6 \
+		$(CETTA_BIN_INVOKE) $$option --lang petta \
 			tests/petta/prepared_sum_by_number.metta >"$$actual"; \
 		diff -u tests/petta/prepared_sum_by_number.expected "$$actual"; \
 	done; \
@@ -46761,8 +46807,9 @@ test-petta-program-rule-rows: $(BIN)
 	echo 'PASS: a program reads rules among facts, a rule added while running, and a rule holding a space'
 
 
-# PeTTa's language versions: 1.0.6, untyped, with the libraries of release
-# v1.0.6; 1.1, typed, with its main line's libraries (lib/petta/typecheck/).
+# PeTTa's current stable contract and its opt-in typed line. The default
+# libraries follow the pinned corrected stable reference; typed libraries
+# remain in lib/petta/typecheck/.
 # Each case runs one fixture under the arguments given and must exit as
 # given, with the phrase in its output.  The library a version reads is
 # compared exactly.
@@ -46790,7 +46837,7 @@ test-petta-language-versions: $(BIN)
 			failures=$$((failures + 1)); \
 		fi; \
 	done < $$dir/cases.tsv; \
-	for version in 1.0.6 1.1 1.1.c; do \
+	for version in stable-fixed 1.1 1.1.c; do \
 		output=$$(timeout 60 $(CETTA_BIN_INVOKE) --lang petta@$$version \
 			$$dir/library_version.metta 2>&1); \
 		if [ "$$output" != "$$(cat $$dir/library_version.$$version.expected)" ]; then \
@@ -46799,7 +46846,7 @@ test-petta-language-versions: $(BIN)
 		fi; \
 	done; \
 	[ $$failures -eq 0 ]; \
-	echo 'PASS: PeTTa 1.0.6, 1.1 and 1.1.c select their checkers and libraries; typed closures, residual obligations and PeTTa diagnostics'
+	echo 'PASS: current stable and opt-in typed PeTTa select their checkers and libraries; typed closures, residual obligations and PeTTa diagnostics'
 
 # Two PeTTa runtime regressions: a declared constructor in a typed space's
 # match pattern is literal structure, and a specialization chosen through a
@@ -47178,6 +47225,23 @@ test-all: test-petta-contextual-case
 
 .PHONY: main-readiness-consolidation
 
+.PHONY: test-petta-primitive-space-mutations
+test-petta-primitive-space-mutations: $(BIN)
+	@set -eu; \
+	for reference in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			CETTA_PREPARED_PURE_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/primitive_space_mutations.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/primitive_space_mutations.expected)" ]; then \
+			echo "FAIL: primitive space mutations (reference=$$reference)"; \
+			diff -u tests/petta/primitive_space_mutations.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: 46 primitive space removal checks preserve unrelated occurrences"
+
+test-petta-semantics test-all: test-petta-primitive-space-mutations
+
 BINARY_CODEC_TEST_BIN = runtime/test_binary_codec-$(BUILD_OBJ_TAG)
 $(BINARY_CODEC_TEST_BIN): tests/support/test_binary_codec.c src/binary_codec.c src/binary_codec.h $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_BINARY_TEST_HOOKS -o $@ tests/support/test_binary_codec.c src/binary_codec.c $(LDFLAGS)
@@ -47229,12 +47293,36 @@ NATIVE_OBSERVER_SAFETY_TEST_BIN = runtime/test_native_observer_safety-$(BUILD_OB
 $(NATIVE_OBSERVER_SAFETY_TEST_BIN): tests/support/test_native_observer_safety.c src/library_binary.h $(filter-out src/main.%,$(OBJ)) $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_native_observer_safety.c $(filter-out src/main.%,$(OBJ)) $(LDFLAGS)
 
-.PHONY: test-native-observer-safety test-binary-value test-scoped-templates test-scoped-grammar test-ic-scoped-archive test-ic-numeric test-ic-library test-ic-templates test-ic-reference test-incremental-compression
+WORK_SOURCE_EPOCHS_TEST_BIN = runtime/test_work_source_epochs-$(BUILD_OBJ_TAG)
+$(WORK_SOURCE_EPOCHS_TEST_BIN): tests/support/test_work_source_epochs.c src/library_work.h $(filter-out src/main.%,$(OBJ)) $(BUILD_CONFIG_HEADER)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/support/test_work_source_epochs.c $(filter-out src/main.%,$(OBJ)) $(LDFLAGS)
+
+.PHONY: test-work-source-epochs
+test-work-source-epochs: $(BIN) $(WORK_SOURCE_EPOCHS_TEST_BIN)
+	@$(WORK_SOURCE_EPOCHS_TEST_BIN)
+	python3 tests/support/check_work_source_epochs.py --cetta ./$(BIN) --output runtime/work-source-epochs-qualification
+
+.PHONY: test-native-observer-safety test-binary-value test-scoped-templates test-scoped-grammar test-ic-scoped-archive test-ic-numeric test-ic-numeric-program test-ic-numeric-arrays test-ic-continuations test-tensor-inverse test-ic-library test-ic-constructor-trees test-ic-context-library test-ic-library-transfer test-ic-library-stack test-ic-library-stack-transfer test-ic-guided-grammar test-ic-context-grammar test-tensor-lexical test-tensor-program test-ic-templates test-ic-reference test-incremental-compression
 test-native-observer-safety: $(NATIVE_OBSERVER_SAFETY_TEST_BIN)
 	@$(NATIVE_OBSERVER_SAFETY_TEST_BIN)
 
 test-binary-value: $(BIN)
 	python3 tests/support/check_binary_value.py --cetta ./$(BIN) --output runtime/binary-value-qualification
+
+.PHONY: test-portable-value test-ic-mil-program
+test-portable-value: $(BIN)
+	python3 tests/support/check_portable_value.py --cetta ./$(BIN) --output runtime/portable-value-qualification
+	python3 tools/library_spelling.py lib/binary.metta lib/petta/binary.metta --dialect=petta --check
+	python3 tools/library_spelling.py lib/binary.metta lib/prime/binary.metta --dialect=prime --check
+
+test-ic-mil-program: $(BIN)
+	python3 tests/support/check_ic_mil_program.py --cetta ./$(BIN) --output runtime/ic-mil-program-qualification
+
+.PHONY: test-ic-mil-export
+test-ic-mil-export: $(BIN)
+	python3 tests/support/check_ic_mil_export.py --cetta ./$(BIN) --output runtime/ic-mil-export-qualification
+
+test-incremental-compression: test-portable-value test-ic-mil-program test-ic-mil-export
 
 test-scoped-templates: $(BIN)
 	python3 tests/support/check_scoped_templates.py --cetta ./$(BIN) --output runtime/ic-scoped-qualification
@@ -47257,7 +47345,86 @@ test-ic-reference: $(BIN)
 test-ic-numeric: $(BIN)
 	python3 tests/support/check_ic_numeric.py --cetta ./$(BIN) --output runtime/ic-numeric-qualification
 
+.PHONY: test-ic-packed-observations test-ic-mil-skeletons test-ic-mil-pruning test-ic-mil-tensor test-ic-mil-source test-tensor-program-compose test-tensor-program-parameters test-ic-family-transfer
+test-ic-packed-observations: $(BIN)
+	python3 tests/support/check_ic_packed_observations.py --cetta ./$(BIN) --output runtime/ic-packed-observations-qualification
+
+test-ic-mil-skeletons: $(BIN)
+	python3 tests/support/check_mil_skeletons.py --cetta ./$(BIN) --output runtime/ic-mil-skeletons-qualification
+	python3 tests/support/check_mil_skeletons.py --cetta ./$(BIN) --lang prime --skip-helper --output runtime/ic-mil-skeletons-prime-qualification
+
+test-ic-mil-pruning: $(BIN)
+	python3 tests/support/check_mil_pruning.py --cetta ./$(BIN) --output runtime/ic-mil-pruning-qualification
+
+test-tensor-program-compose: $(BIN)
+	python3 tests/support/check_tensor_program_compose.py --cetta ./$(BIN) --output runtime/ic-tensor-compose-qualification
+
+test-ic-mil-tensor: $(BIN)
+	python3 tests/support/check_ic_mil_tensor.py --cetta ./$(BIN) --output runtime/ic-mil-tensor-qualification
+
+test-ic-mil-source: $(BIN)
+	python3 tests/support/check_ic_mil_source.py --cetta ./$(BIN) --output runtime/ic-mil-source-qualification
+
+test-tensor-program-parameters: $(BIN)
+	python3 tests/support/check_tensor_program_parameters.py --cetta ./$(BIN) --output runtime/ic-parameter-programs-qualification
+
+test-ic-family-transfer: $(BIN)
+	python3 tests/support/check_ic_family_transfer.py --cetta ./$(BIN) --output runtime/ic-family-transfer-qualification
+
 test-ic-library: $(BIN)
 	python3 tests/support/check_ic_library.py --cetta ./$(BIN) --output runtime/ic-library-qualification
 
-test-incremental-compression: test-ic-reference test-ic-templates test-ic-archive test-ic-search test-compact-dag test-source-codec test-binary-value test-scoped-templates test-ic-scoped-archive test-scoped-grammar test-tensor-sequences test-ic-numeric test-ic-library
+test-ic-constructor-trees: $(BIN)
+	python3 tests/support/check_ic_constructor_trees.py --cetta ./$(BIN) --output runtime/ic-constructor-trees-qualification
+
+test-ic-context-library: $(BIN)
+	python3 tests/support/check_ic_context_library.py --cetta ./$(BIN) --output runtime/ic-context-library-qualification
+
+test-ic-library-transfer: $(BIN)
+	python3 tests/support/check_ic_library_transfer.py --cetta ./$(BIN) --output runtime/ic-library-transfer-qualification
+
+test-ic-library-stack: $(BIN)
+	python3 tests/support/check_ic_library_stack.py --cetta ./$(BIN) --output runtime/ic-library-stack-qualification
+
+test-ic-library-stack-transfer: $(BIN)
+	python3 tests/support/check_ic_library_stack_transfer.py --cetta ./$(BIN) --output runtime/ic-library-stack-transfer-qualification
+
+test-ic-guided-grammar: $(BIN)
+	python3 tests/support/check_ic_guided_grammar.py --cetta ./$(BIN) --output runtime/ic-guided-grammar-qualification
+
+test-ic-context-grammar: $(BIN)
+	python3 tests/support/check_ic_context_grammar.py --cetta ./$(BIN) --output runtime/ic-context-grammar-qualification
+
+test-tensor-lexical: $(BIN)
+	python3 tests/support/check_tensor_lexical.py --cetta ./$(BIN) --output runtime/tensor-lexical-qualification
+
+test-tensor-program: $(BIN)
+	python3 tests/support/check_tensor_program.py --cetta ./$(BIN) --output runtime/tensor-program-qualification
+
+.PHONY: test-tensor-program-literals test-ic-clustering
+test-tensor-program-literals: $(BIN)
+	python3 tests/support/check_tensor_program_literals.py --cetta ./$(BIN) --output runtime/tensor-program-literals-qualification
+
+test-ic-clustering: $(BIN)
+	python3 tests/support/check_ic_clustering.py --cetta ./$(BIN) --output runtime/ic-clustering-qualification
+
+test-incremental-compression: test-tensor-gather-rows test-tensor-program-literals test-ic-clustering
+
+test-ic-numeric-program: $(BIN)
+	python3 tests/support/check_ic_numeric_program.py --cetta ./$(BIN) --output runtime/ic-numeric-program-qualification
+
+test-ic-numeric-arrays: $(BIN)
+	python3 tests/support/check_ic_numeric_arrays.py --cetta ./$(BIN) --output runtime/ic-numeric-arrays-qualification
+
+test-ic-continuations: $(BIN)
+	python3 tests/support/check_ic_continuations.py --cetta ./$(BIN) --output runtime/ic-continuations-qualification
+
+test-tensor-inverse: $(BIN)
+	python3 tests/support/check_tensor_inverse.py --cetta ./$(BIN) --output runtime/tensor-inverse-qualification
+
+test-incremental-compression: test-ic-reference test-ic-templates test-ic-archive test-ic-search test-work-source-epochs test-compact-dag test-source-codec test-binary-value test-scoped-templates test-ic-scoped-archive test-scoped-grammar test-tensor-sequences test-ic-numeric test-ic-packed-observations test-ic-mil-skeletons test-ic-mil-pruning test-tensor-program-compose test-ic-mil-tensor test-ic-mil-source test-tensor-program-parameters test-ic-family-transfer test-ic-library test-ic-constructor-trees test-ic-context-library test-ic-library-transfer test-ic-library-stack test-ic-library-stack-transfer test-ic-guided-grammar test-ic-context-grammar test-tensor-lexical test-tensor-program test-ic-numeric-program test-ic-numeric-arrays test-ic-continuations test-tensor-inverse
+
+.PHONY: test-petta-corrected-stable
+test-petta-semantics: test-petta-corrected-stable
+test-petta-corrected-stable: $(BIN)
+	python3 tests/support/check_petta_corrected_stable.py $(BIN)

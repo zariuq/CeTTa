@@ -132,7 +132,7 @@ def main():
     args = ap.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     check_controls((ROOT / "lib/petta/lib_scoped_grammar.metta").read_text())
-    program = ['!(import! &self "lib/petta/lib_scoped_grammar.metta")', '''
+    program = ['!(import! &self (library lib_scoped_grammar))', '''
 (= (guided-search-result $result)
    (case $result
      (((IC:SearchResult $best (IC:Statistics $turns $seen $accepted $faults) $reason $first $last)

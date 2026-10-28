@@ -604,6 +604,11 @@ PeTTaNamedArity petta_semantics_named_arity(
         info.smaller = info.smaller || intrinsic < supplied;
     }
 
+    /* A declaration describes a callable; it does not install one. In
+     * particular a forward declaration alone must not manufacture partials. */
+    if (!info.known)
+        return info;
+
     Atom **types = NULL;
     uint32_t count = space_get_declared_types(
         space, scratch, head_atom, &types);
@@ -908,6 +913,14 @@ Atom *petta_semantics_empty_head_error(Arena *arena) {
 
 static Atom *petta_error_unbound_context(Arena *arena) {
     return atom_var_with_id(arena, "_", fresh_var_id());
+}
+
+Atom *petta_semantics_arithmetic_operand_error(Arena *arena, Atom *value) {
+    if (!arena || !value)
+        return NULL;
+    Atom *formal = atom_expr3(arena, atom_symbol(arena, "type_error"),
+                             atom_symbol(arena, "evaluable"), value);
+    return petta_error_term(arena, formal, petta_error_unbound_context(arena));
 }
 
 /* context(Indicator, _), the indicator Name/Arity or Module:Name/Arity. */
@@ -2233,6 +2246,10 @@ bool petta_semantics_intrinsic_partial_arity(
         head == g_builtin_syms.op_gt ||
         head == g_builtin_syms.op_le ||
         head == g_builtin_syms.op_ge ||
+        head == g_builtin_syms.term_lt ||
+        head == g_builtin_syms.term_le ||
+        head == g_builtin_syms.term_gt ||
+        head == g_builtin_syms.term_ge ||
         head == g_builtin_syms.op_eq ||
         head == g_builtin_syms.alpha_eq ||
         head == g_builtin_syms.equals ||
@@ -2319,6 +2336,10 @@ static const struct {
     {"=?", PETTA_ARITY(2)},
     {"<=", PETTA_ARITY(2)},
     {">=", PETTA_ARITY(2)},
+    {"@<", PETTA_ARITY(2)},
+    {"@<=", PETTA_ARITY(2)},
+    {"@>", PETTA_ARITY(2)},
+    {"@>=", PETTA_ARITY(2)},
     {"and", PETTA_ARITY(2)},
     {"or", PETTA_ARITY(2)},
     {"xor", PETTA_ARITY(2)},
