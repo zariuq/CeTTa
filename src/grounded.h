@@ -134,6 +134,13 @@ static inline bool grounded_op_is_type_pure(SymbolId id) {
             CETTA_SYMBOL_FLAG_TYPE_PURE_GROUNDED_OP) != 0u;
 }
 
+/* This operation creates local syntax identities without invoking a world
+ * service. Separate executions can produce different identities, so this is
+ * neither a replay licence nor a type-purity classification. */
+static inline bool grounded_op_is_local_freshening(SymbolId id) {
+    return id == g_builtin_syms.sealed_text;
+}
+
 /* Shared fold/reduce binder substitution helper. It substitutes the
    accumulator/item variables and freshens the remaining variables so the step
    expression can be reused safely across evaluator and grounded folds. */

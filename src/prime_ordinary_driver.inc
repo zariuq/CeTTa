@@ -325,6 +325,16 @@ static bool prime_ordinary_shared_source_admitted(Space *space) {
         prime_share_refuse("synchronize");
         safe = false;
     }
+    if (safe) {
+        PettaProgramRevisionView *program_view = petta_program_revision_view_capture(
+            g_library_context->petta_program, space);
+        if (!program_view || !petta_program_revision_view_source_plans_current(
+                g_library_context->petta_program, space, program_view)) {
+            prime_share_refuse("program-view");
+            safe = false;
+        }
+        petta_program_revision_view_free(program_view);
+    }
     if (safe && !space_read_view_is_current(&view)) {
         prime_share_refuse("view-stale");
         safe = false;
@@ -425,16 +435,20 @@ static bool prime_ordinary_received_outcome(Arena *arena,const Outcome *row) {
 /* Borrowed return and service contexts may name the original driver. Moving
  * its frontier needs a transport for those contexts; ordinary transfer keeps
  * their invocation in place until that transport is available. */
+static bool prime_ordinary_scope_has_no_permit(PrimeEvalStackDriver *scope,void *context) {
+    (void)context;
+    return !scope->call_permit;
+}
+
 static bool prime_ordinary_driver_transfer_admitted(
     const PrimeEvalStackDriver *source) {
     if (!source || g_prime_ordinary_return)
         return false;
-    for (const PrimeEvalStackDriver *scope = source; scope;
-         scope = scope->call_permit_parent ? scope->call_permit_parent
-                                          : scope->authority_parent)
-        if (scope->call_permit)
-            return false;
-    return true;
+    /* A resource parent and an invocation parent can be different. Refuse
+     * transfer if either graph branch carries an unmapped permit, or if its
+     * finite traversal cannot establish that the whole graph was checked. */
+    return prime_eval_scope_walk((PrimeEvalStackDriver *)source,true,
+        prime_ordinary_scope_has_no_permit,NULL)==PRIME_EVAL_SCOPE_WALK_COMPLETE;
 }
 
 static bool prime_eval_stack_promote_ordinary(PrimeEvalStackDriver *source,

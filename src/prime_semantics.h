@@ -451,6 +451,9 @@ typedef enum {
     PRIME_ITERATION_REENTER,
     PRIME_ITERATION_VALUE
 } PrimeIterationStep;
+/* Recognize the same scoped iteration form without executing its body.
+ * This alone grants no authority to the callbacks it will invoke. */
+bool prime_semantics_is_iteration_template(const Atom *call);
 PrimeIterationStep prime_semantics_iteration_step(Arena *arena, Atom *call,
                                                   Atom *space, Atom **out);
 

@@ -3984,10 +3984,9 @@ static bool bindings_atom_closed(const Atom *atom, void *context) {
     return atom_graph_is_closed_for_arena(context, atom);
 }
 
-static bool bindings_occurrence_payloads_satisfy(const PrimeOccurrence *occurrence,
+static bool bindings_occurrence_carriers_satisfy(const PrimeOccurrence *occurrence,
         AtomTreePredicate atoms, PrimeNeedStateCellPredicate cells, void *context) {
     if (!occurrence) return true;
-    if (!prime_need_reader_context_payloads(occurrence->reader_context,atoms,cells,context)) return false;
     if (!prime_need_snapshot_atoms_satisfy(&occurrence->prime_need, atoms, context) ||
         !prime_need_branch_state_payloads_satisfy(
             &occurrence->branch_state, atoms, cells, context)) return false;
@@ -4005,11 +4004,25 @@ static bool bindings_occurrence_payloads_satisfy(const PrimeOccurrence *occurren
     return remaining == 0u;
 }
 
+static bool bindings_occurrence_payloads_satisfy(const PrimeOccurrence *occurrence,
+        AtomTreePredicate atoms, PrimeNeedStateCellPredicate cells, void *context) {
+    return !occurrence ||
+        (prime_need_reader_context_payloads(occurrence->reader_context,atoms,cells,context) &&
+         bindings_occurrence_carriers_satisfy(occurrence,atoms,cells,context));
+}
+
 bool bindings_payloads_satisfy(const Bindings *bindings,
         AtomTreePredicate atoms, PrimeNeedStateCellPredicate cells, void *context) {
     return bindings && atoms && cells &&
         bindings_logical_atoms_satisfy(bindings, atoms, context) &&
         bindings_occurrence_payloads_satisfy(bindings->prime_ext, atoms, cells, context);
+}
+
+bool bindings_carriers_payloads_satisfy(const Bindings *bindings,
+        AtomTreePredicate atoms, PrimeNeedStateCellPredicate cells, void *context) {
+    return bindings && atoms && cells &&
+        bindings_logical_atoms_satisfy(bindings,atoms,context) &&
+        bindings_occurrence_carriers_satisfy(bindings->prime_ext,atoms,cells,context);
 }
 
 bool bindings_logical_atoms_closed_for_arena(

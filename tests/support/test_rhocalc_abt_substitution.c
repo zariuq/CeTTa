@@ -2527,7 +2527,86 @@ static bool segmented_storage_tests(void) {
     size_t previous=array.live_bytes;
     RETAIN_CHECK(!cetta_segmented_array_release_one(&array) && array.live_bytes==previous-request);
     RETAIN_CHECK(cetta_segmented_array_release_one(&array) && !array.live_bytes);
-    puts("PASS: bounded indexed storage preserves addresses and initialized values, covers uint32 indices, retries nine allocation boundaries, enforces actual backing budgets and retires one block per step");
+    CettaSegmentedArray64 wide={0};
+    RETAIN_CHECK(cetta_segmented_array64_init(&wide,sizeof(uint64_t)));
+    const uint64_t wide_indices[]={0u,63u,64u,UINT32_MAX,
+        (uint64_t)UINT32_MAX+1u,UINT64_C(1)<<63,UINT64_MAX};
+    uint64_t *wide_addresses[sizeof(wide_indices)/sizeof(*wide_indices)]={0};
+    for(size_t i=0u;i<sizeof(wide_indices)/sizeof(*wide_indices);i++) {
+        unsigned pending=0u;
+        CettaSegmentedStep status;
+        do {
+            size_t before=storage_blocks(&wide.backing),calls=block_allocation_calls;
+            status=cetta_segmented_array64_prepare(&wide,wide_indices[i]);
+            RETAIN_CHECK(status!=CETTA_SEGMENTED_REFUSED && block_allocation_calls-calls<=1u &&
+                storage_blocks(&wide.backing)-before==(status==CETTA_SEGMENTED_PENDING));
+            pending+=status==CETTA_SEGMENTED_PENDING;
+        } while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(pending<=10u);
+        wide_addresses[i]=cetta_segmented_array64_at(&wide,wide_indices[i]);
+        RETAIN_CHECK(wide_addresses[i] && !*wide_addresses[i]);
+        *wide_addresses[i]=(uint64_t)i+31u;
+        for(size_t j=0u;j<=i;j++)
+            RETAIN_CHECK(cetta_segmented_array64_at(&wide,wide_indices[j])==wide_addresses[j] &&
+                *wide_addresses[j]==j+31u);
+    }
+    blocks=storage_blocks(&wide.backing);retired=0u;
+    while(wide.backing.blocks) {
+        bool done=cetta_segmented_array64_release_one(&wide);retired++;
+        RETAIN_CHECK(!cetta_segmented_array64_at(&wide,0u) &&
+            storage_blocks(&wide.backing)+retired==blocks && done==!wide.backing.blocks);
+        if(!done)RETAIN_CHECK(cetta_segmented_array64_prepare(&wide,0u)==CETTA_SEGMENTED_REFUSED);
+    }
+    for(size_t fail=1u;fail<=10u;fail++) {
+        RETAIN_CHECK(cetta_segmented_array64_init(&wide,sizeof(uint64_t)));
+        block_allocation_calls=0u;block_fail_at=fail;block_failure_injected=false;
+        CettaSegmentedStep status;
+        do {status=cetta_segmented_array64_prepare(&wide,UINT64_MAX);}
+        while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(status==CETTA_SEGMENTED_REFUSED && block_failure_injected &&
+            storage_blocks(&wide.backing)==fail-1u &&
+            !cetta_segmented_array64_at(&wide,UINT64_MAX));
+        CettaSegmentedBlock *held=wide.backing.blocks;
+        block_fail_at=0u;
+        do {status=cetta_segmented_array64_prepare(&wide,UINT64_MAX);}
+        while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(status==CETTA_SEGMENTED_READY && storage_blocks(&wide.backing)==10u);
+        bool retained=!held;
+        for(CettaSegmentedBlock *block=wide.backing.blocks;block;block=block->next)
+            retained|=block==held;
+        RETAIN_CHECK(retained);
+        uint64_t *value=cetta_segmented_array64_at(&wide,UINT64_MAX);
+        RETAIN_CHECK(value);*value=117u;
+        RETAIN_CHECK(cetta_segmented_array64_prepare(&wide,UINT64_MAX)==CETTA_SEGMENTED_READY &&
+            *value==117u);
+        cetta_segmented_array64_free(&wide);
+    }
+    for(size_t fail=1u;fail<=9u;fail++) {
+        RETAIN_CHECK(cetta_segmented_array64_init(&wide,sizeof(uint64_t)));
+        while(cetta_segmented_array64_prepare(&wide,0u)==CETTA_SEGMENTED_PENDING) {}
+        uint64_t *first=cetta_segmented_array64_at(&wide,0u);
+        RETAIN_CHECK(first);*first=731u;
+        block_allocation_calls=0u;block_fail_at=fail;block_failure_injected=false;
+        CettaSegmentedStep status;
+        do {status=cetta_segmented_array64_prepare(&wide,UINT64_MAX);}
+        while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(status==CETTA_SEGMENTED_REFUSED && block_failure_injected &&
+            cetta_segmented_array64_at(&wide,0u)==first && *first==731u);
+        block_fail_at=0u;
+        do {status=cetta_segmented_array64_prepare(&wide,UINT64_MAX);}
+        while(status==CETTA_SEGMENTED_PENDING);
+        RETAIN_CHECK(status==CETTA_SEGMENTED_READY &&
+            cetta_segmented_array64_at(&wide,0u)==first && *first==731u);
+        cetta_segmented_array64_free(&wide);
+    }
+    RETAIN_CHECK(cetta_segmented_array64_init(&wide,sizeof(uint64_t)));
+    calls=block_allocation_calls;
+    RETAIN_CHECK(cetta_segmented_array64_prepare_limit(&wide,0u,request-1u)==CETTA_SEGMENTED_REFUSED &&
+        !wide.backing.blocks && block_allocation_calls==calls);
+    RETAIN_CHECK(cetta_segmented_array64_prepare_limit(&wide,0u,request)==CETTA_SEGMENTED_PENDING &&
+        wide.backing.live_bytes==request);
+    cetta_segmented_array64_free(&wide);
+    puts("PASS: bounded indexed storage preserves addresses and initialized values across 32- and 64-bit indices, retries allocation boundaries, enforces backing budgets and retires one block per step");
     return true;
 }
 

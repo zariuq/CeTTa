@@ -5218,6 +5218,7 @@ bool space_match_backend_snapshot_clone(Space *dst, Space *src) {
     dst->native.has_non_exact_atoms_dirty = src->native.has_non_exact_atoms_dirty;
     dst->revision = space_revision(src);
     dst->equation_revision = space_equation_revision(src);
+    space_read_view_invalidate(dst);
     return true;
 }
 
@@ -11186,6 +11187,7 @@ bool space_match_backend_accepts_space(const Space *s, SpaceEngine kind) {
 }
 
 bool space_match_backend_try_set(Space *s, SpaceEngine kind) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!space_match_backend_accepts_space(s, kind) ||
         space_match_backend_unavailable_reason(kind))
         return false;
@@ -11215,6 +11217,8 @@ bool space_match_backend_try_set(Space *s, SpaceEngine kind) {
         if (!s->match_backend.ops->materialize_native_storage(s, persistent))
             return false;
     }
+    bool changed=s->match_backend.kind!=kind || s->match_backend.ops!=ops;
+    if(changed)space_read_view_invalidate(s);
     space_match_backend_free(s);
     space_match_backend_init(s);
     s->match_backend.kind = kind;

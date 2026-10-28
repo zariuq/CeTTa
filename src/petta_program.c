@@ -423,6 +423,11 @@ typedef struct {
     SpaceProgramToken program;
     SymbolId head;
     CettaExprLen arity;
+    /* Live translation also reads callable heads from the other program
+     * Spaces and the predeclared domain. */
+    uint64_t callability_epoch;
+    unsigned admitted_rule_forms;
+    bool graded_equations;
     PettaRelationSafety safety;
     bool occupied;
 } PettaTableSafetyCacheEntry;
@@ -492,10 +497,13 @@ struct PettaProgramRevisionView {
        state; reuse is keyed by the strictly smaller equation projection. */
     SpaceReadToken source;
     SpaceEquationToken source_equation_token;
+    SpaceProgramToken source_program_token;
     uint64_t catalog_generation;
+    uint64_t callability_epoch;
+    bool callability_certified;
     PettaProgramSpace catalog;
     Atom **source_equations;
-    size_t source_equation_len;
+    size_t source_equation_len, source_equation_capacity;
 };
 
 enum {
@@ -1674,6 +1682,7 @@ bool petta_program_is_equation(Atom *atom) {
 }
 
 void petta_program_enable_graded_equations(PettaProgram *program) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_profile_update);
     if (program) program->graded_equations = true;
 }
 
@@ -1726,6 +1735,7 @@ static bool petta_program_space_declare_pending(
 
 bool petta_program_predeclare_equation(
     PettaProgram *program, Space *space, Atom *atom) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_predeclare);
     if (!program || !space || !atom)
         return false;
     Atom *lhs = NULL;
@@ -1746,6 +1756,7 @@ bool petta_program_predeclare_equation(
 
 bool petta_program_function_registered(
     PettaProgram *program, Space *space, SymbolId head) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_registration_read);
     if (!program || !space || head == SYMBOL_ID_NONE ||
         !petta_program_synchronize_space(program, space))
         return false;
@@ -1769,6 +1780,7 @@ bool petta_program_function_registered(
 
 bool petta_program_head_declared(
     const PettaProgram *program, SymbolId head) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_head_read);
     if (!program || head == SYMBOL_ID_NONE)
         return false;
     if (petta_callability_contains_named(
@@ -4022,6 +4034,7 @@ static bool petta_program_refresh_callability(PettaProgram *program,
 
 PettaProgramRevisionView *petta_program_revision_view_capture(
         PettaProgram *program, Space *source) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_view_capture);
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_PROGRAM_REVISION_VIEW_CAPTURE_ATTEMPT);
     PettaProgramSpace *entry =
@@ -4033,9 +4046,20 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
         return NULL;
     }
 
+    bool callability_certified = !program->refresh_callability ||
+        (program->callability_epoch != 0u &&
+         petta_program_callability_cache_current(program));
+
     if (entry->revision_view &&
         entry->revision_view->catalog_generation ==
             entry->catalog_generation &&
+        entry->revision_view->admitted_rule_forms == petta_program_rule_forms(program) &&
+        entry->revision_view->graded_equations == program->graded_equations &&
+        entry->revision_view->callability_certified == callability_certified &&
+        (!program->refresh_callability ||
+         entry->revision_view->callability_epoch == program->callability_epoch) &&
+        space_program_token_matches_live_space(
+            entry->revision_view->source_program_token, source) &&
         space_equation_token_matches_live_space(
             entry->revision_view->source_equation_token, source)) {
         if (!petta_program_revision_view_retain(
@@ -4063,7 +4087,10 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
     view->admitted_rule_forms = petta_program_rule_forms(program);
     view->source = space_read_token(source);
     view->source_equation_token = space_equation_token(source);
+    view->source_program_token = space_program_token(source);
     view->catalog_generation = entry->catalog_generation;
+    view->callability_epoch = program->callability_epoch;
+    view->callability_certified = callability_certified;
     view->graded_equations = program->graded_equations;
     view->catalog = (PettaProgramSpace){
         .space = source,
@@ -4107,14 +4134,13 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
         goto decline;
     }
 
-    size_t equation_cap = 0u;
     CettaCount source_len = space_length64(source);
     for (CettaIndex index = 0u; index < source_len; index++) {
         Atom *atom = space_get_at64(source, index);
         if (!atom || !petta_rule_syntax_view(atom, view->admitted_rule_forms, view->graded_equations, NULL, NULL, NULL))
             continue;
         if (!petta_program_reserve(
-                (void **)&view->source_equations, &equation_cap,
+                (void **)&view->source_equations, &view->source_equation_capacity,
                 view->source_equation_len + 1u,
                 sizeof(*view->source_equations))) {
             goto decline;
@@ -4122,6 +4148,7 @@ PettaProgramRevisionView *petta_program_revision_view_capture(
         view->source_equations[view->source_equation_len++] = atom;
     }
     if (!space_read_token_matches_live_space(view->source, source) ||
+        !space_program_token_matches_live_space(view->source_program_token, source) ||
         !space_equation_token_matches_live_space(
             view->source_equation_token, source))
         goto decline;
@@ -4214,6 +4241,28 @@ bool petta_program_revision_projection_current(
     return projection && projection->view && target &&
         space_equation_token_matches_live_space(
             projection->target, target);
+}
+
+static bool petta_program_revision_view_source_plans_current_locked(
+        PettaProgram *program, Space *source, PettaProgramSpace *entry,
+        const PettaProgramRevisionView *view) {
+    return program && source && entry && view && entry->revision_view == view &&
+        entry->catalog_generation == view->catalog_generation &&
+        view->admitted_rule_forms == petta_program_rule_forms(program) &&
+        view->graded_equations == program->graded_equations &&
+        view->callability_certified &&
+        space_program_token_matches_live_space(view->source_program_token, source) &&
+        space_equation_token_matches_live_space(view->source_equation_token, source) &&
+        (!program->refresh_callability ||
+         (petta_program_callability_cache_current(program) &&
+          view->callability_epoch == program->callability_epoch));
+}
+
+bool petta_program_revision_view_source_plans_current(
+        PettaProgram *program, Space *source, const PettaProgramRevisionView *view) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_view_source_check);
+    return petta_program_revision_view_source_plans_current_locked(
+        program, source, petta_program_find_space(program, source), view);
 }
 
 static PettaProgramSpace *petta_program_ensure_space(
@@ -4458,6 +4507,7 @@ PettaProgram *petta_program_new_with_rules(unsigned admitted_forms) {
 }
 
 bool petta_program_enable_callability_refresh(PettaProgram *program) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_callability_profile);
     if (!program || program->space_len)
         return false;
     program->refresh_callability = true;
@@ -4489,6 +4539,7 @@ static void petta_program_analysis_state_free(
 }
 
 bool petta_program_enable_analysis(PettaProgram *program) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_analysis_enable);
     if (!program)
         return false;
     if (program->analysis)
@@ -4532,6 +4583,7 @@ bool petta_program_analysis_enabled(const PettaProgram *program) {
 }
 
 void petta_program_free(PettaProgram *program) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_retirement);
     if (!program)
         return;
     for (size_t index = 0u;
@@ -4564,6 +4616,7 @@ void petta_program_free(PettaProgram *program) {
 
 const PettaPlanNode *petta_program_plan_current(
     PettaProgram *program, Atom *atom) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_plan_current);
     if (!program || !atom)
         return NULL;
     PettaCallabilityDomain callability = {0};
@@ -4577,6 +4630,7 @@ const PettaPlanNode *petta_program_plan_current(
 
 const PettaPlanNode *petta_program_plan_current_in(
     PettaProgram *program, Arena *plans, Atom *atom) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_plan_current_in);
     if (!program || !plans || !atom)
         return NULL;
     PettaCallabilityDomain callability = {0};
@@ -4897,6 +4951,7 @@ static bool petta_translation_is_value(
 const PettaPlanNode *petta_program_plan_transient(
     PettaProgram *program, Atom *atom,
     const PettaTranslationEnvironment *environment) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_plan_transient);
     if (!program || !atom)
         return NULL;
     PettaCallabilityDomain owned = {0};
@@ -4971,6 +5026,7 @@ const PettaPlanNode *petta_program_plan_transient(
 PettaDeclarationBlock *petta_program_declaration_block_new(
     PettaProgram *program, const TermUniverse *universe,
     const AtomId *atoms, int atom_count) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_declaration_block);
     if (!program || !universe || atom_count < 0 ||
         (atom_count > 0 && !atoms)) {
         return NULL;
@@ -5061,6 +5117,7 @@ const PettaPlanNode *petta_program_plan_derived_add(
 
 static const PettaPlanNode *petta_program_plan_equation(
     PettaProgram *program, Atom *atom, Atom *const *held, size_t held_len) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_equation_plan);
     if (!program || !atom)
         return NULL;
     PettaCallabilityDomain callability = {0};
@@ -5098,6 +5155,7 @@ bool petta_plan_match_template_is_single_data_answer(
 bool petta_program_note_add(
     PettaProgram *program, Space *space, Atom *atom,
     const PettaPlanNode *plan) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_catalog_add);
     if (!program || !space || !atom)
         return false;
     Atom *subject = NULL;
@@ -5356,6 +5414,7 @@ static bool petta_program_refresh_callability(PettaProgram *program,
 bool petta_program_observe_addition(
     PettaProgram *program, Space *space, Arena *storage,
     Atom *atom, const PettaPlanNode *plan) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_catalog_observe_addition);
     if (!program || !space || !storage || !atom)
         return false;
     if (!petta_program_atom_affects_metadata(atom))
@@ -5367,6 +5426,7 @@ bool petta_program_observe_addition(
 
 void petta_program_note_remove_all(
     PettaProgram *program, Space *space, Atom *atom) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_catalog_remove_all);
     PettaProgramSpace *entry =
         petta_program_find_space(program, space);
     if (!atom)
@@ -5396,6 +5456,7 @@ void petta_program_note_remove_all(
 
 void petta_program_note_remove_one(
     PettaProgram *program, Space *space, Atom *atom) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_catalog_remove_one);
     PettaProgramSpace *entry =
         petta_program_find_space(program, space);
     if (!atom)
@@ -5448,6 +5509,7 @@ void petta_program_note_remove_one(
 
 bool petta_program_synchronize_space(
         PettaProgram *program, Space *space) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_catalog_synchronize);
     if (!program || !space)
         return false;
     PettaProgramSpace *current =
@@ -6027,6 +6089,7 @@ static bool petta_portable_relation_check(
 CettaRelationalExecutionClass
 petta_program_relational_execution_class(
         PettaProgram *program, Space *space, Atom *call) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_relational_class);
     if (!program || !space || !call ||
         call->kind != ATOM_EXPR || call->expr.len == 0u ||
         !call->expr.elems[0] ||
@@ -6061,6 +6124,7 @@ petta_program_relational_execution_class(
 
 bool petta_program_native_eager_equations(
         PettaProgram *program, Space *space, Atom *expression) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_eager_equations);
     if (!program || !space || !expression)
         return false;
     PettaProgramSpace *catalog = petta_program_find_space(program, space);
@@ -6079,6 +6143,7 @@ bool petta_program_native_eager_equations(
 
 void petta_program_forget_space(
     PettaProgram *program, const Space *space) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_catalog_forget);
     if (!program || !space)
         return;
     for (size_t index = 0u;
@@ -6118,6 +6183,7 @@ void petta_program_forget_space(
 static bool petta_program_copy_records(
     PettaProgram *program, const Space *source,
     Space *destination, bool replace) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_catalog_copy);
     if (!program || !source || !destination)
         return false;
     if (source == destination)
@@ -6735,6 +6801,7 @@ bool petta_program_candidate_snapshot(
 bool petta_program_equation_snapshot(
     PettaProgram *program, Space *space,
     Atom ***equations, size_t *equation_count) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_equation_snapshot);
     if (!program || !space || !equations || !equation_count)
         return false;
     *equations = NULL;
@@ -6776,6 +6843,7 @@ static size_t petta_program_inferred_signature_lower_bound(
 static bool petta_program_inferred_signatures_current_internal(
     PettaProgram *program, Space *space,
     const CettaNikDirectAuthorityStampV1 *authority) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_signatures_current);
     PettaProgramAnalysisSpace *entry =
         petta_program_find_analysis_space(program, space);
     if (!entry || !entry->inferred_signatures_valid ||
@@ -6808,6 +6876,7 @@ static bool petta_program_inferred_signature_lookup_internal(
     const CettaNikDirectAuthorityStampV1 *authority,
     SymbolId head, CettaExprLen arity,
     Arena *arena, Atom **signature_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_signature_lookup);
         CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     if (signature_out)
         *signature_out = NULL;
@@ -6857,6 +6926,7 @@ static bool petta_program_inferred_signatures_lookup_internal(
     const CettaNikDirectAuthorityStampV1 *authority,
     SymbolId head, CettaExprLen arity,
     Arena *arena, Atom ***signatures_out, size_t *count_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_signatures_lookup);
     if (signatures_out)
         *signatures_out = NULL;
     if (count_out)
@@ -6925,6 +6995,7 @@ bool petta_program_inferred_signatures_lookup_under_authority(
 static void petta_program_inferred_signatures_reset_internal(
     PettaProgram *program, Space *space,
     const CettaNikDirectAuthorityStampV1 *authority) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_signatures_reset);
     PettaProgramAnalysisSpace *entry =
         petta_program_ensure_analysis_space(program, space);
     if (!entry)
@@ -6956,6 +7027,7 @@ static bool petta_program_inferred_signature_put_internal(
     PettaProgram *program, Space *space,
     const CettaNikDirectAuthorityStampV1 *authority,
     SymbolId head, CettaExprLen arity, Atom *signature) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_signature_put);
     if (!program || !space || !space->native.universe ||
         head == SYMBOL_ID_NONE || !signature) {
         return false;
@@ -7027,6 +7099,7 @@ bool petta_program_inferred_signature_put_under_authority(
 
 void petta_program_inferred_signature_remove_head(
     PettaProgram *program, Space *space, SymbolId head) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_signature_remove);
     PettaProgramAnalysisSpace *entry =
         petta_program_find_analysis_space(program, space);
     if (!entry || head == SYMBOL_ID_NONE)
@@ -7048,6 +7121,7 @@ void petta_program_inferred_signature_remove_head(
 static void petta_program_inferred_signatures_rebase_internal(
     PettaProgram *program, Space *space,
     const CettaNikDirectAuthorityStampV1 *authority) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_signatures_rebase);
     PettaProgramAnalysisSpace *entry =
         petta_program_find_analysis_space(program, space);
     if (!entry || !entry->inferred_signatures_valid ||
@@ -7078,6 +7152,7 @@ void petta_program_inferred_signatures_rebase_under_authority(
 
 bool petta_program_type_annotation_snapshot(
     PettaProgram *program, Atom ***annotations_out, size_t *count_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_annotations_snapshot);
     if (annotations_out)
         *annotations_out = NULL;
     if (count_out)
@@ -7117,6 +7192,7 @@ bool petta_program_type_annotation_snapshot(
 uint32_t petta_program_declared_types(
     PettaProgram *program, Atom *subject,
     Arena *arena, Atom ***types_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_declared_types);
     if (types_out)
         *types_out = NULL;
     if (!program || !program->analysis || !subject ||
@@ -7473,15 +7549,33 @@ static PettaRelationSafety petta_table_safety_scan_relation(
     PettaTableSafetyRelation **relations,
     size_t *relation_len, size_t *relation_cap,
     bool *transient_out) {
-    PettaEquationCandidate *candidates = NULL;
-    size_t candidate_count = 0u;
-    if (!petta_program_candidate_snapshot(
-            program, space, relation.head,
-            &candidates, &candidate_count)) {
+    PettaCandidateSnapshotLease lease = {0};
+    bool acquired = false;
+    if (cetta_shared_transition_scope_active()) {
+        /* The relation check holds the shared transition guard. A catalog
+         * view may lend plans only to its own still-current source and only
+         * while the callability domain used to build those plans is current. */
+        PettaProgramSpace *entry = petta_program_find_space(program, space);
+        PettaProgramRevisionView *view = entry ? entry->revision_view : NULL;
+        if (petta_program_revision_view_source_plans_current_locked(
+                program, space, entry, view)) {
+            PettaProgramRevisionProjection projection = {
+                .view = view, .target = view->source_equation_token,
+            };
+            acquired = petta_program_revision_view_source_candidate_lease(
+                &projection, space, relation.head, &lease, NULL);
+        }
+    } else {
+        acquired = petta_program_candidate_snapshot_lease_profiled(
+            program, space, relation.head, &lease, NULL);
+    }
+    if (!acquired) {
         if (transient_out)
             *transient_out = true;
         return PETTA_RELATION_SAFETY_UNSAFE;
     }
+    const PettaEquationCandidate *candidates = lease.items;
+    size_t candidate_count = lease.len;
 
     PettaTableSafetyNode *nodes = NULL;
     size_t node_len = 0u;
@@ -7529,7 +7623,7 @@ static PettaRelationSafety petta_table_safety_scan_relation(
                 (unsigned)relation.arity, index);
         }
     }
-    free(candidates);
+    petta_program_candidate_snapshot_lease_release(&lease);
 
     while (safe && node_len > 0u) {
         PettaTableSafetyNode item = nodes[--node_len];
@@ -7714,6 +7808,24 @@ PettaRelationSafety petta_program_relation_safety(
      * replaced by an immutable once-published index. */
     CETTA_SCOPED_SHARED_TRANSITION(relation_safety_observation);
 
+    /* Live plans can change when another Space introduces or removes a
+     * callable head. Refresh on the owning thread; a worker with a stale
+     * domain has no current plan certificate and must not reuse a verdict. */
+    bool callability_current = true;
+    if (program->refresh_callability) {
+        callability_current = petta_program_callability_cache_current(program);
+        if (!callability_current && !cetta_shared_transition_scope_active()) {
+            PettaProgramSpace *entry = petta_program_find_space(program, space);
+            if (!petta_program_refresh_callability(program, entry, head))
+                return PETTA_RELATION_SAFETY_UNSAFE;
+            callability_current = petta_program_callability_cache_current(program);
+        }
+        if (!callability_current && cetta_shared_transition_scope_active())
+            return PETTA_RELATION_SAFETY_UNSAFE;
+    }
+    uint64_t callability_epoch = program->refresh_callability
+        ? program->callability_epoch : 0u;
+
     size_t cache_slot =
         petta_table_safety_cache_slot(space, head, arity);
     SpaceProgramToken program_token = space_program_token(space);
@@ -7724,7 +7836,11 @@ PettaRelationSafety petta_program_relation_safety(
         if (entry->occupied && entry->head == head && entry->arity == arity &&
             entry->program.space == program_token.space &&
             entry->program.instance_id == program_token.instance_id) {
-            if (space_program_token_eq(entry->program, program_token)) {
+            if (callability_current &&
+                entry->callability_epoch == callability_epoch &&
+                entry->admitted_rule_forms == petta_program_rule_forms(program) &&
+                entry->graded_equations == program->graded_equations &&
+                space_program_token_eq(entry->program, program_token)) {
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PETTA_RELATION_SAFETY_CACHE_HIT);
                 return entry->safety;
@@ -7748,7 +7864,7 @@ PettaRelationSafety petta_program_relation_safety(
     PettaTableSafetyRelation *relations = NULL;
     size_t relation_len = 0u;
     size_t relation_cap = 0u;
-    bool transient = false;
+    bool transient = !callability_current;
     bool safe = petta_table_safety_add_relation(
         &relations, &relation_len, &relation_cap,
         head, arity);
@@ -7794,6 +7910,9 @@ PettaRelationSafety petta_program_relation_safety(
             .program = program_token,
             .head = head,
             .arity = arity,
+            .callability_epoch = callability_epoch,
+            .admitted_rule_forms = petta_program_rule_forms(program),
+            .graded_equations = program->graded_equations,
             .safety = safety,
             .occupied = true,
         };
@@ -7914,6 +8033,9 @@ static void petta_program_catalog_storage(const PettaProgramSpace *entry,
     if (!entry || !cetta_storage_object(census, entry, 0u, CETTA_STORAGE_VISITED)) return;
     if (!petta_program_storage_array(census, entry->equations,
             entry->equation_len, entry->equation_cap, sizeof(*entry->equations)) ||
+        !petta_program_storage_array(census, entry->plan_callability_epochs,
+            entry->plan_callability_epoch_len, entry->plan_callability_epoch_cap,
+            sizeof(*entry->plan_callability_epochs)) ||
         !petta_program_storage_array(census, entry->head_buckets,
             entry->head_bucket_len, entry->head_bucket_cap, sizeof(*entry->head_buckets)) ||
         !petta_program_storage_array(census, entry->pending_heads,
@@ -7938,7 +8060,9 @@ static void petta_program_catalog_storage(const PettaProgramSpace *entry,
     for (size_t i = 0u; i < entry->type_family_len; i++) {
         const PettaProgramTypeFamily *family = &entry->type_families[i];
         if (!petta_program_storage_array(census, family->calls,
-                family->count, family->count, sizeof(*family->calls))) return;
+                family->count, family->count, sizeof(*family->calls)) ||
+            !petta_program_storage_array(census, family->arities,
+                family->arity_len, family->arity_cap, sizeof(*family->arities))) return;
     }
     if (entry->type_families_current) arena_storage_census(&entry->type_family_storage, census);
     petta_program_revision_view_storage_census(entry->revision_view, census);
@@ -7948,7 +8072,7 @@ void petta_program_revision_view_storage_census(
         const PettaProgramRevisionView *view, CettaStorageCensus *census) {
     if (!view || !cetta_storage_object(census, view, sizeof(*view), CETTA_STORAGE_BLOCK)) return;
     if (!petta_program_storage_array(census, view->source_equations,
-            view->source_equation_len, view->source_equation_len,
+            view->source_equation_len, view->source_equation_capacity,
             sizeof(*view->source_equations))) return;
     petta_program_catalog_storage(&view->catalog, census);
 }

@@ -1,5 +1,89 @@
 /* Inspect the retained descendant state in the actual implementation. */
+#include <stdbool.h>
+#include <stdlib.h>
+#include "space.h"
+static _Thread_local bool agenda_test_refuse_calloc;
+static _Thread_local unsigned agenda_test_refusals;
+static _Thread_local bool agenda_test_refuse_admission;
+static _Thread_local unsigned agenda_test_admission_refusals;
+static _Thread_local bool agenda_test_refuse_removal;
+static _Thread_local unsigned agenda_test_removal_refusals;
+static _Thread_local bool agenda_test_refuse_occurrence;
+struct Space;
+struct Arena;
+struct Atom;
+static bool agenda_test_space_admit_atom(struct Space *,struct Arena *,struct Atom *);
+static __attribute__((unused)) bool agenda_test_space_remove(struct Space *,struct Atom *);
+static CettaMatchCompletion agenda_test_space_remove_checked(struct Space *,struct Atom *);
+static CettaMatchCompletion agenda_test_space_remove_occurrence_checked(struct Space *,SpaceReadToken,CettaIndex);
+static SpaceRemovalSearchStep agenda_test_removal_search_step(SpaceRemovalSearch *,struct Atom *,
+    SpaceAtomComparison,SpaceAtomComparison,const uint8_t *,CettaCount);
+static void *agenda_test_calloc(size_t count,size_t width) {
+    if (agenda_test_refuse_calloc) {
+        agenda_test_refuse_calloc=false;agenda_test_refusals++;
+        return NULL;
+    }
+    return calloc(count,width);
+}
+#define calloc agenda_test_calloc
+#define space_admit_atom agenda_test_space_admit_atom
+#define space_remove agenda_test_space_remove
+#define space_remove_checked agenda_test_space_remove_checked
+#define space_remove_occurrence_checked agenda_test_space_remove_occurrence_checked
+#define space_removal_search_step agenda_test_removal_search_step
+#ifdef CETTA_AGENDA_TEST_MUTATION_DOUBLE_INDEX_VISIT
+#include "native_cost.h"
+static uint64_t agenda_mutant_cost_charge(CettaNativeCostKind kind,uint64_t units) {
+    return cetta_native_cost_charge(kind,kind==CETTA_COST_INDEX_VISIT ? units*2u : units);
+}
+#define cetta_native_cost_charge agenda_mutant_cost_charge
+#endif
 #include "../src/native_space_agenda.c"
+#ifdef CETTA_AGENDA_TEST_MUTATION_DOUBLE_INDEX_VISIT
+#undef cetta_native_cost_charge
+#endif
+#undef space_admit_atom
+#undef space_remove
+#undef space_remove_checked
+#undef space_remove_occurrence_checked
+#undef space_removal_search_step
+#undef calloc
+extern bool space_admit_atom(struct Space *,struct Arena *,struct Atom *);
+static bool agenda_test_space_admit_atom(struct Space *space,struct Arena *arena,struct Atom *atom) {
+    if (agenda_test_refuse_admission) {
+        agenda_test_refuse_admission=false;agenda_test_admission_refusals++;
+        return false;
+    }
+    return space_admit_atom(space,arena,atom);
+}
+static CettaMatchCompletion agenda_test_space_remove_checked(struct Space *space,struct Atom *atom) {
+    if (agenda_test_refuse_removal) {
+        agenda_test_refuse_removal=false;agenda_test_removal_refusals++;
+        return CETTA_MATCH_INCOMPLETE;
+    }
+    return space_remove_checked(space,atom);
+}
+static CettaMatchCompletion agenda_test_space_remove_occurrence_checked(struct Space *space,
+        SpaceReadToken read,CettaIndex index) {
+    if (agenda_test_refuse_removal || agenda_test_refuse_occurrence) {
+        agenda_test_refuse_removal=agenda_test_refuse_occurrence=false;
+        agenda_test_removal_refusals++;
+        return CETTA_MATCH_INCOMPLETE;
+    }
+    return space_remove_occurrence_checked(space,read,index);
+}
+static SpaceRemovalSearchStep agenda_test_removal_search_step(SpaceRemovalSearch *search,
+        struct Atom *body,SpaceAtomComparison equal,SpaceAtomComparison alpha,
+        const uint8_t *protected_occurrences,CettaCount length) {
+    if (agenda_test_refuse_removal) {
+        agenda_test_refuse_removal=false;agenda_test_removal_refusals++;
+        return SPACE_REMOVAL_INCOMPLETE;
+    }
+    return space_removal_search_step(search,body,equal,alpha,protected_occurrences,length);
+}
+static bool agenda_test_space_remove(struct Space *space,struct Atom *atom) {
+    return agenda_test_space_remove_checked(space,atom)==CETTA_MATCH_MATCHED;
+}
 #include "parser.h"
 #include "symbol.h"
 #include "binding/frame_identity.h"
@@ -10,7 +94,11 @@
 #include <stdlib.h>
 
 static size_t checks;
+#ifdef CETTA_AGENDA_TEST_MUTATION_DOUBLE_INDEX_VISIT
+#define CHECK(x) do {if(!(x)){fprintf(stderr,"failed line %d: %s\n",__LINE__,#x);exit(1);}checks++;}while(0)
+#else
 #define CHECK(x) do {if(!(x)){fprintf(stderr,"failed line %d: %s\n",__LINE__,#x);abort();}checks++;}while(0)
+#endif
 static Atom *parse(Arena *a,const char *text) {
     Atom **rows;int n=parse_metta_text(text,a,&rows);CHECK(n==1);
     Atom *row=rows[0];free(rows);return row;
@@ -59,6 +147,563 @@ static void mm2(Arena *arena,Bindings *env) {
     CHECK(!space_contains_exact(&s,parse(arena,"(q B)")));
     CHECK(space_contains_exact(&s,parse(arena,"(p A)")) && space_length64(&s)==3u);
     cetta_space_agenda_free(a);space_free(&s);
+}
+
+/* A raw MM2 removal is staged until the sink batch is finalized; an
+ * explicit bag transaction applies its written sinks in order. */
+static int sink_order_controls(Arena *arena,Bindings *env) {
+    bool observed[2][2]={{false}};
+    for(unsigned raw=0u;raw<2u;raw++) for(unsigned reverse=0u;reverse<2u;reverse++) {
+        Space space={0};space_init(&space);
+        const char *program=raw
+            ? (reverse ? "(exec 0 (,) (O (- A) (+ A)))" : "(exec 0 (,) (O (+ A) (- A)))")
+            : (reverse ? "(exec 0 (I) (O (- A) (+ A)))" : "(exec 0 (I) (O (+ A) (- A)))");
+        add(&space,arena,program);
+        CettaSpaceAgendaContract contract=raw
+            ? (CettaSpaceAgendaContract){.set_support=true,.raw_mm2_order=true}
+            : (CettaSpaceAgendaContract){.explicit_inputs=true};
+        CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,contract);
+        CHECK(agenda);
+        if(raw) {
+            for(unsigned i=0u;i<10000u && agenda->phase!=AGENDA_SINK;i++)
+                CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+            CHECK(agenda->phase==AGENDA_SINK && !agenda->sink_removal_phase);
+            SpaceReadToken before=space_read_token(&space);
+            for(unsigned i=0u;i<10000u && !agenda->sink_removal_phase;i++)
+                CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+            CHECK(agenda->phase==AGENDA_SINK && agenda->sink_removal_phase &&
+                space_read_token_is_current(before) && !space_contains_exact(&space,parse(arena,"A")));
+        }
+        run(agenda,1u);
+        observed[raw][reverse]=space_contains_exact(&space,parse(arena,"A"));
+        cetta_space_agenda_free(agenda);space_free(&space);
+    }
+    Space multi={0};space_init(&multi);
+    add(&multi,arena,"(p A)");add(&multi,arena,"(p B)");
+    add(&multi,arena,"(exec 0 (, (p $x)) (O (- A) (+ $x)))");
+    CettaSpaceAgenda *agenda=cetta_space_agenda_new(&multi,arena,env,
+        (CettaSpaceAgendaContract){.set_support=true,.raw_mm2_order=true});
+    CHECK(agenda);run(agenda,1u);
+    bool multiple=!space_contains_exact(&multi,parse(arena,"A")) &&
+        space_contains_exact(&multi,parse(arena,"B")) &&
+        space_contains_exact(&multi,parse(arena,"(p A)")) &&
+        space_contains_exact(&multi,parse(arena,"(p B)"));
+    cetta_space_agenda_free(agenda);space_free(&multi);
+    bool correct=!observed[1][0] && !observed[1][1] &&
+        !observed[0][0] && observed[0][1] && multiple;
+    printf("Sink order: raw add-remove=%u remove-add=%u; explicit add-remove=%u remove-add=%u\n",
+        observed[1][0],observed[1][1],observed[0][0],observed[0][1]);
+    printf("Raw multi-row sink phase: %u\n",multiple);
+    return correct?0:1;
+}
+
+/* Set capture contracts duplicate support rows. Its cursor coordinates must
+ * still refer to the intended source occurrences when selecting an exec. */
+static int set_capture_occurrence_controls(Arena *arena,Bindings *env) {
+    CettaIndex decoded=0u;
+    CHECK(agenda_natural_index(natural(arena,UINT64_MAX),&decoded) && decoded==UINT64_MAX);
+    CHECK(!agenda_natural_index(atom_symbol(arena,"18446744073709551616"),&decoded));
+    CHECK(!agenda_natural_index(atom_int(arena,-1),&decoded));
+    bool self_blocked[2]={false}, unrelated_read[2]={false}, unrelated_take[2]={false};
+    bool source_coordinates[2][2]={{false}};
+    for(unsigned set=0u;set<2u;set++) for(unsigned which=0u;which<3u;which++) {
+        Space space={0};space_init(&space);
+        add(&space,arena,"Noise");add(&space,arena,"Noise");
+        add(&space,arena,which==0u
+            ? "(exec Self (I (read (exec Self $inputs $outputs))) (O (+ Wrong)))"
+            : which==1u ? "(exec Probe (I (read Tail)) (O (+ Done)))"
+            : "(exec Probe (I (take Tail)) (O (+ Done)))");
+        if(which)add(&space,arena,"Tail");
+        CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+            (CettaSpaceAgendaContract){.set_support=!!set,.explicit_inputs=true});
+        CHECK(agenda);
+        SpaceReadToken before=space_read_token(&space);
+        CettaSpaceAgendaStep last=CETTA_SPACE_AGENDA_PROGRESS;
+        for(unsigned i=0u;i<10000u;i++) {
+            last=cetta_space_agenda_step(agenda);
+            if(which && agenda->phase==AGENDA_BUILD && agenda->validation_count) {
+                Atom *dependency=agenda->validation[0].dependencies->expr.elems[0];
+                CettaIndex source=UINT64_MAX;
+                source_coordinates[set][which-1u]=
+                    agenda_natural_index(dependency->expr.elems[2],&source) && source==3u;
+            }
+            if(last==CETTA_SPACE_AGENDA_COMMITTED || last==CETTA_SPACE_AGENDA_PENDING ||
+               last==CETTA_SPACE_AGENDA_CLOSED)break;
+        }
+        if(which) {
+            bool good=last==CETTA_SPACE_AGENDA_COMMITTED &&
+                space_contains_exact(&space,parse(arena,"Tail"))==(which==1u) &&
+                space_contains_exact(&space,parse(arena,"Done"));
+            if(which==1u)unrelated_read[set]=good;else unrelated_take[set]=good;
+        } else {
+            self_blocked[set]=last==CETTA_SPACE_AGENDA_PENDING &&
+                space_read_token_is_current(before) &&
+                !space_contains_exact(&space,parse(arena,"Wrong"));
+        }
+        cetta_space_agenda_free(agenda);space_free(&space);
+    }
+    printf("Captured occurrences: bag self=%u read=%u take=%u source=%u/%u; "
+           "set self=%u read=%u take=%u source=%u/%u\n",
+        self_blocked[0],unrelated_read[0],unrelated_take[0],
+        source_coordinates[0][0],source_coordinates[0][1],
+        self_blocked[1],unrelated_read[1],unrelated_take[1],
+        source_coordinates[1][0],source_coordinates[1][1]);
+    return self_blocked[0] && unrelated_read[0] && unrelated_take[0] &&
+           self_blocked[1] && unrelated_read[1] && unrelated_take[1] &&
+           source_coordinates[0][0] && source_coordinates[0][1] &&
+           source_coordinates[1][0] && source_coordinates[1][1] ? 0 : 1;
+}
+
+typedef struct { uint64_t before,after; unsigned events,commits; } SetCaptureObservation;
+static bool set_capture_observe(void *raw,const CettaSpaceAgendaEvent *event) {
+    SetCaptureObservation *observation=raw;observation->events++;
+    if(event->kind==CETTA_AGENDA_EVENT_COMMITTED)observation->commits++;
+    return true;
+}
+static bool set_capture_permit(void *raw,const CettaSpaceAgendaEvent *event) {
+    (void)raw;return event->kind==CETTA_AGENDA_EVENT_PRECOMMIT;
+}
+static bool set_capture_charge(void *raw,const CettaSpaceAgenda *agenda,
+        CettaSpaceAgendaChargeSite site,unsigned kind,uint64_t units,bool after) {
+    (void)agenda;(void)site;(void)kind;
+    SetCaptureObservation *observation=raw;
+    if(after)observation->after+=units;else observation->before+=units;
+    return true;
+}
+
+static void set_capture_allocation_refusal(Arena *arena,Bindings *env) {
+  for(unsigned recorded=0u;recorded<2u;recorded++) {
+    Space space={0};space_init(&space);
+    add(&space,arena,"Noise");add(&space,arena,"Noise");
+    add(&space,arena,"(exec Probe (I (take Tail)) (O (+ Done)))");
+    add(&space,arena,"Tail");
+    CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+        (CettaSpaceAgendaContract){.set_support=true,.explicit_inputs=true});CHECK(agenda);
+    SetCaptureObservation notes={0};CettaSpaceAgendaObservationScope observation={0};
+    if(recorded) {
+        CHECK(!cetta_space_agenda_observation_enter(&observation,agenda,
+            set_capture_observe,set_capture_permit,set_capture_charge,&notes));
+        cetta_space_agenda_free(agenda);space_free(&space);continue;
+    }
+    until_phase(agenda,"Capture");
+    SpaceReadToken before=space_read_token(&space);
+    CettaNativeCostLedger meter;cetta_native_cost_init(&meter);
+    CettaNativeCostScope scope;cetta_native_cost_scope_enter(&scope,&meter,0u);
+    for(unsigned i=0u;i<100u && !agenda->snapshot_origins.target_to_source.backing.blocks;i++)
+        CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+    CHECK(agenda->capture_row_ready && agenda->capture_index==0u &&
+        agenda->snapshot_origins.target_to_source.backing.blocks);
+    CettaIndex target=agenda->capture_target;
+    CettaSegmentedBlock *block=agenda->snapshot_origins.target_to_source.backing.blocks;
+    CettaStorageCensus census={0};cetta_space_agenda_storage(agenda,&census);
+    cetta_storage_finish(&census);
+    bool counted=false;
+    for(size_t i=0u;i<census.capacity;i++)
+        if(census.slots[i].identity==block && census.slots[i].bytes==block->bytes)counted=true;
+    CHECK(!census.incomplete && !census.overflow && counted);
+    cetta_storage_census_free(&census);
+    uint64_t probes=meter.total.counts[CETTA_COST_INDEX_VISIT];
+    uint64_t captures=meter.total.counts[CETTA_COST_CAPTURE];
+    unsigned refusals=agenda_test_refusals;
+    agenda_test_refuse_calloc=true;
+    CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PENDING);
+    CHECK(!agenda_test_refuse_calloc && agenda_test_refusals==refusals+1u &&
+        agenda->capture_row_ready && agenda->capture_target==target && agenda->capture_index==0u &&
+        agenda->snapshot_origins.target_to_source.backing.blocks==block &&
+        space_read_token_is_current(before));
+    CHECK(meter.total.counts[CETTA_COST_INDEX_VISIT]==probes+3u &&
+        meter.total.counts[CETTA_COST_CAPTURE]==captures+1u);
+    cetta_space_agenda_resume(agenda);
+    CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+    CHECK(agenda->capture_row_ready && agenda->capture_target==target && agenda->capture_index==0u &&
+        meter.total.counts[CETTA_COST_INDEX_VISIT]==probes+6u &&
+        meter.total.counts[CETTA_COST_CAPTURE]==captures+2u);
+    run(agenda,1u);
+    CHECK(!space_contains_exact(&space,parse(arena,"Tail")) &&
+        space_contains_exact(&space,parse(arena,"Done")));
+    cetta_native_cost_scope_leave(&scope);cetta_native_cost_free(&meter);
+    cetta_space_agenda_free(agenda);space_free(&space);
+  }
+    puts("PASS: captured source coordinates retain paid progress across allocation refusal, count probes and remain in the ownership census; set recording remains unadmitted");
+}
+
+static void set_capture_admission_refusal(Arena *arena,Bindings *env) {
+    Space space={0};space_init(&space);add(&space,arena,"Token");
+    add(&space,arena,"(exec Probe (I (take Token)) (O (+ Done)))");
+    CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+        (CettaSpaceAgendaContract){.set_support=true,.explicit_inputs=true});CHECK(agenda);
+    until_phase(agenda,"Capture");SpaceReadToken before=space_read_token(&space);
+    for(unsigned i=0u;i<100u &&
+        !cetta_segmented_array64_at(&agenda->snapshot_origins.target_to_source,0u);i++)
+        CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+    CHECK(agenda->capture_row_ready && agenda->capture_index==0u &&
+        !agenda->snapshot_origins.length && !space_length64(&agenda->snapshot));
+    unsigned refusals=agenda_test_admission_refusals;
+    agenda_test_refuse_admission=true;
+    CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PENDING);
+    CHECK(!agenda_test_refuse_admission && agenda_test_admission_refusals==refusals+1u &&
+        agenda->capture_row_ready && agenda->capture_index==0u &&
+        !agenda->snapshot_origins.length && !space_length64(&agenda->snapshot) &&
+        space_read_token_is_current(before));
+    cetta_space_agenda_resume(agenda);
+    CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+    CHECK(!agenda->capture_row_ready && agenda->capture_index==1u &&
+        agenda->snapshot_origins.length==1u && space_length64(&agenda->snapshot)==1u);
+    run(agenda,1u);
+    CHECK(!space_contains_exact(&space,parse(arena,"Token")) &&
+        space_contains_exact(&space,parse(arena,"Done")));
+    cetta_space_agenda_free(agenda);space_free(&space);
+    puts("PASS: refused snapshot admission keeps its prepared origin and resumes without publishing a partial capture");
+}
+
+static void set_capture_appended_duplicate(Arena *arena,Bindings *env) {
+    Space space={0};space_init(&space);
+    add(&space,arena,"(Fact $x)");
+    add(&space,arena,"(exec Probe (I (take (Fact $z))) (O (+ Done)))");
+    CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+        (CettaSpaceAgendaContract){.set_support=true,.explicit_inputs=true});CHECK(agenda);
+    until_phase(agenda,"ValidateCapture");
+    CHECK(agenda->row_count==1u && !agenda->retries);
+    add(&space,arena,"(Fact $y)");
+    CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_RETRY && agenda->retries==1u);
+    run(agenda,1u);
+    CHECK(!space_contains_exact(&space,parse(arena,"(Fact $x)")) &&
+        !space_contains_exact(&space,parse(arena,"(Fact $y)")) &&
+        space_contains_exact(&space,parse(arena,"Done")) && agenda->retries==1u);
+    cetta_space_agenda_free(agenda);space_free(&space);
+    puts("PASS: revalidation of an appended alpha-equivalent set member keeps its source representative and consumes the set member once");
+}
+
+static void set_capture_search_quanta(Arena *arena,Bindings *env) {
+    Space space={0};space_init(&space);
+    for(unsigned i=0u;i<16u;i++) {
+        char fact[40];snprintf(fact,sizeof(fact),"(Noise %u)",i);add(&space,arena,fact);
+    }
+    add(&space,arena,"(exec Probe (I) (O (+ Done)))");
+    CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+        (CettaSpaceAgendaContract){.set_support=true,.explicit_inputs=true});CHECK(agenda);
+    until_phase(agenda,"Capture");
+    for(unsigned i=0u;i<10000u && !(agenda->capture_index==16u && agenda->capture_row_ready);i++)
+        CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+    CHECK(agenda->capture_index==16u && agenda->capture_row_ready && !agenda->capture_probe);
+    unsigned visits=0u;
+    while(!agenda->capture_search_done) {
+        CettaIndex previous=agenda->capture_probe;
+        CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+        CHECK(agenda->capture_index==16u &&
+            (agenda->capture_probe==previous || agenda->capture_probe==previous+1u));
+        if(agenda->capture_probe==previous+1u)visits++;
+    }
+    CHECK(visits==16u && agenda->capture_probe==16u && agenda->capture_target==16u);
+    run(agenda,1u);CHECK(space_contains_exact(&space,parse(arena,"Done")));
+    cetta_space_agenda_free(agenda);space_free(&space);
+    puts("PASS: set capture visits at most one existing member per retained search step");
+}
+
+static void set_capture_changed_source(Arena *arena,Bindings *env) {
+    Space space={0};space_init(&space);add(&space,arena,"Token");
+    add(&space,arena,"(exec Probe (I (take Token)) (O (+ Done)))");
+    CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+        (CettaSpaceAgendaContract){.set_support=true,.explicit_inputs=true});CHECK(agenda);
+    until_phase(agenda,"Capture");
+    for(unsigned i=0u;i<100u && !agenda->snapshot_origins.target_to_source.backing.blocks;i++)
+        CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+    CHECK(agenda->capture_row_ready && agenda->snapshot_origins.target_to_source.backing.blocks);
+    CettaSegmentedBlock *held=agenda->snapshot_origins.target_to_source.backing.blocks;
+    add(&space,arena,"Extra");
+    CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_RETRY &&
+        !agenda->capture_row_ready && !agenda->capture_search_done &&
+        agenda->snapshot_origins.target_to_source.backing.blocks==held &&
+        !agenda->snapshot_origins.length && !agenda->capture_retiring && agenda->capture_index==0u);
+    run(agenda,1u);
+    CHECK(space_contains_exact(&space,parse(arena,"Extra")) &&
+        space_contains_exact(&space,parse(arena,"Done")) &&
+        !space_contains_exact(&space,parse(arena,"Token")) &&
+        capture_origins_empty(&agenda->snapshot_origins) &&
+        capture_origins_empty(&agenda->current_origins));
+    cetta_space_agenda_free(agenda);space_free(&space);
+    puts("PASS: a changed source restarts set capture without publishing its partial coordinate map");
+}
+
+static size_t capture_origin_blocks(const AgendaCaptureOrigins *origins) {
+    size_t count=0u;
+    for(const CettaSegmentedBlock *block=origins->target_to_source.backing.blocks;
+        block;block=block->next)count++;
+    return count;
+}
+
+static void set_capture_retirement_steps(Arena *arena,Bindings *env) {
+    for(unsigned cancel=0u;cancel<2u;cancel++) {
+        Space space={0};space_init(&space);add(&space,arena,"Token");
+        add(&space,arena,"(exec Probe (I (take Token)) (O (+ Done)))");
+        CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+            (CettaSpaceAgendaContract){.set_support=true,.explicit_inputs=true});CHECK(agenda);
+        bool committed=false;
+        for(unsigned i=0u;i<10000u && !committed;i++) {
+            CettaSpaceAgendaStep step=cetta_space_agenda_step(agenda);
+            CHECK(step!=CETTA_SPACE_AGENDA_PENDING && step!=CETTA_SPACE_AGENDA_CLOSED);
+            committed=step==CETTA_SPACE_AGENDA_COMMITTED;
+        }
+        CHECK(committed && agenda->phase==AGENDA_SELECT && agenda->capture_retiring);
+        size_t blocks=capture_origin_blocks(&agenda->snapshot_origins)+
+            capture_origin_blocks(&agenda->current_origins);
+        CHECK(blocks>2u);
+        SpaceReadToken before=space_read_token(&space);
+        Atom *receipt=cetta_space_agenda_receipt(agenda);CHECK(receipt);
+        CettaNativeCostLedger meter;cetta_native_cost_init(&meter);
+        CettaNativeCostScope scope;cetta_native_cost_scope_enter(&scope,&meter,0u);
+        size_t retired=0u;
+        while(agenda->capture_retiring && (!cancel || retired<blocks/2u)) {
+            size_t prior=capture_origin_blocks(&agenda->snapshot_origins)+
+                capture_origin_blocks(&agenda->current_origins);
+            uint64_t charges=meter.total.counts[CETTA_COST_CAPTURE];
+            CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+            size_t remaining=capture_origin_blocks(&agenda->snapshot_origins)+
+                capture_origin_blocks(&agenda->current_origins);
+            CHECK(prior==remaining+1u &&
+                meter.total.counts[CETTA_COST_CAPTURE]==charges+1u &&
+                space_read_token_is_current(before) && cetta_space_agenda_receipt(agenda)==receipt);
+            retired++;
+        }
+        if(!cancel) {
+            CHECK(retired==blocks && !agenda->capture_retiring &&
+                capture_origins_empty(&agenda->snapshot_origins) &&
+                capture_origins_empty(&agenda->current_origins));
+            run(agenda,0u);
+        } else CHECK(retired==blocks/2u && agenda->capture_retiring);
+        cetta_native_cost_scope_leave(&scope);cetta_native_cost_free(&meter);
+        cetta_space_agenda_free(agenda);space_free(&space);
+    }
+    puts("PASS: capture backing retires one charged block per step and can be destroyed after partial retirement");
+}
+
+typedef struct { unsigned calls; int ranks[2]; } SetCaptureRanking;
+static void *set_capture_rank(void *raw,Atom *exec,const Bindings *bindings,Atom *priority) {
+    (void)exec;(void)bindings;(void)priority;
+    SetCaptureRanking *ranking=raw;
+    return ranking->calls<2u ? &ranking->ranks[ranking->calls++] : NULL;
+}
+static bool set_capture_rank_before(void *raw,const void *left,const void *right) {
+    (void)raw;return *(const int *)left<*(const int *)right;
+}
+
+static void set_capture_selected_equivalence(Arena *arena,Bindings *env) {
+    const char *first="(exec Same (I (read (val $x))) (O (+ (result $x))))";
+    const char *second="(exec Same (I (read (val $y))) (O (+ (result $y))))";
+    Space space={0};space_init(&space);
+    add(&space,arena,"(val A)");add(&space,arena,first);add(&space,arena,second);
+    CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+        (CettaSpaceAgendaContract){.set_support=true,.explicit_inputs=true});CHECK(agenda);
+    CettaSelectionAutomaton schedule;CHECK(cetta_selection_automaton_ratio(1u,&schedule));
+    SetCaptureRanking ranking={.ranks={1,0}};
+    CHECK(cetta_space_agenda_control(agenda,&schedule,set_capture_rank,
+        set_capture_rank_before,&ranking));
+    bool observed=false,committed=false;
+    for(unsigned i=0u;i<10000u;i++) {
+        CettaSpaceAgendaStep step=cetta_space_agenda_step(agenda);
+        if(agenda->phase==AGENDA_BUILD)
+            observed=agenda->selected_index==2u && agenda->current_origins.selected_ready &&
+                agenda->current_origins.selected_target==1u;
+        if(step==CETTA_SPACE_AGENDA_COMMITTED){committed=true;break;}
+        CHECK(step!=CETTA_SPACE_AGENDA_PENDING && step!=CETTA_SPACE_AGENDA_CLOSED);
+    }
+    CHECK(observed && committed && ranking.calls==2u &&
+        space_contains_exact(&space,parse(arena,"(result A)")) &&
+        !space_contains_exact(&space,parse(arena,first)) &&
+        !space_contains_exact(&space,parse(arena,second)));
+    cetta_space_agenda_free(agenda);space_free(&space);
+    puts("PASS: a selected alpha-equivalent duplicate maps to its earlier captured set member");
+}
+
+/* Compare set support with the existing captured-environment behavior when
+ * only one of two alpha-shaped directives uses a held outer binding. */
+static int set_capture_bound_environment(Arena *arena,Bindings *env) {
+    bool survives[2][2]={{false}},expected_answer[2][2]={{false}};
+    for(unsigned set=0u;set<2u;set++) for(unsigned chosen=0u;chosen<2u;chosen++) {
+        Space space={0};space_init(&space);
+        add(&space,arena,"(token A)");add(&space,arena,"(token B)");
+        Atom *first=parse(arena,"(exec Same (I (read (token $outer))) (O (+ (kept $outer))))");
+        Atom *second=parse(arena,"(exec Same (I (read (token $other))) (O (+ (kept $other))))");
+        Atom *outer=first->expr.elems[2]->expr.elems[1]->expr.elems[1]->expr.elems[1];
+        Bindings captured;CHECK(bindings_clone(&captured,env));
+        CHECK(bindings_add_var(&captured,outer,atom_symbol(arena,"B")));
+        CHECK(space_admit_atom(&space,arena,first));CHECK(space_admit_atom(&space,arena,second));
+        CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,&captured,
+            (CettaSpaceAgendaContract){.set_support=!!set,.explicit_inputs=true});CHECK(agenda);
+        bindings_free(&captured);
+        CettaSelectionAutomaton schedule;CHECK(cetta_selection_automaton_ratio(1u,&schedule));
+        SetCaptureRanking ranking={.ranks={chosen?1:0,chosen?0:1}};
+        CHECK(cetta_space_agenda_control(agenda,&schedule,set_capture_rank,
+            set_capture_rank_before,&ranking));
+        bool committed=false;
+        for(unsigned i=0u;i<10000u;i++) {
+            CettaSpaceAgendaStep step=cetta_space_agenda_step(agenda);
+            if(step==CETTA_SPACE_AGENDA_COMMITTED){committed=true;break;}
+            if(step==CETTA_SPACE_AGENDA_PENDING || step==CETTA_SPACE_AGENDA_CLOSED)break;
+        }
+        for(CettaIndex i=0u;committed && i<space_length64(&space);i++) {
+            Atom *candidate=space_get_at64(&space,i);
+            if (shaped(candidate,agenda->exec,3u) && atom_eq(candidate,chosen?first:second))
+                survives[set][chosen]=true;
+        }
+        expected_answer[set][chosen]=committed &&
+            space_contains_exact(&space,parse(arena,chosen?"(kept A)":"(kept B)"));
+        if(!survives[set][chosen] || !expected_answer[set][chosen]) {
+            fprintf(stderr,"outer-binding case set=%u chosen=%u committed=%u:\n",set,chosen,committed);
+            for(CettaIndex i=0u;i<space_length64(&space);i++) {
+                atom_print(space_get_at64(&space,i),stderr);fputc('\n',stderr);
+            }
+        }
+        cetta_space_agenda_free(agenda);space_free(&space);
+    }
+    printf("Captured outer binding: bag survivors=%u/%u answers=%u/%u; "
+           "set survivors=%u/%u answers=%u/%u\n",
+        survives[0][0],survives[0][1],expected_answer[0][0],expected_answer[0][1],
+        survives[1][0],survives[1][1],expected_answer[1][0],expected_answer[1][1]);
+    return survives[0][0] && survives[0][1] && expected_answer[0][0] &&
+        expected_answer[0][1] && survives[1][0] && survives[1][1] &&
+        expected_answer[1][0] && expected_answer[1][1] ? 0 : 1;
+}
+
+/* Diagnostic only: raw MM2 uses a different source interpretation, so this
+ * does not decide whether its open directives should capture the caller. */
+static void raw_capture_bound_inspect(Arena *arena,Bindings *env) {
+    for(unsigned chosen=0u;chosen<2u;chosen++) {
+        Space space={0};space_init(&space);
+        add(&space,arena,"(token A)");add(&space,arena,"(token B)");
+        Atom *first=parse(arena,"(exec Same (, (token $outer)) (O (+ (kept $outer))))");
+        Atom *second=parse(arena,"(exec Same (, (token $other)) (O (+ (kept $other))))");
+        Atom *outer=first->expr.elems[2]->expr.elems[1]->expr.elems[1];
+        Bindings captured;CHECK(bindings_clone(&captured,env));
+        CHECK(bindings_add_var(&captured,outer,atom_symbol(arena,"B")));
+        CHECK(space_admit_atom(&space,arena,first));CHECK(space_admit_atom(&space,arena,second));
+        CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,&captured,
+            (CettaSpaceAgendaContract){.set_support=true,.raw_mm2_order=true});CHECK(agenda);
+        bindings_free(&captured);
+        CettaSelectionAutomaton schedule;CHECK(cetta_selection_automaton_ratio(1u,&schedule));
+        SetCaptureRanking ranking={.ranks={chosen?1:0,chosen?0:1}};
+        CHECK(cetta_space_agenda_control(agenda,&schedule,set_capture_rank,
+            set_capture_rank_before,&ranking));
+        bool committed=false;
+        for(unsigned i=0u;i<10000u;i++) {
+            CettaSpaceAgendaStep step=cetta_space_agenda_step(agenda);
+            if(step==CETTA_SPACE_AGENDA_COMMITTED){committed=true;break;}
+            if(step==CETTA_SPACE_AGENDA_PENDING || step==CETTA_SPACE_AGENDA_CLOSED)break;
+        }
+        bool survivor=false;
+        for(CettaIndex i=0u;committed && i<space_length64(&space);i++) {
+            Atom *candidate=space_get_at64(&space,i);
+            if (shaped(candidate,agenda->exec,3u) && atom_eq(candidate,chosen?first:second))
+                survivor=true;
+        }
+        printf("Raw MM2 held context: chosen=%u committed=%u other=%u A=%u B=%u\n",
+            chosen,committed,survivor,
+            space_contains_exact(&space,parse(arena,"(kept A)")),
+            space_contains_exact(&space,parse(arena,"(kept B)")));
+        cetta_space_agenda_free(agenda);space_free(&space);
+    }
+}
+
+static void set_capture_stored_data_scope(Arena *arena,Bindings *env) {
+    for(unsigned malformed=0u;malformed<2u;malformed++) {
+        Space space={0};space_init(&space);
+        Atom *first=parse(arena,malformed ?
+            "(exec NotExecutable (Unknown $outer) (O))" : "(p $outer)");
+        Atom *second=parse(arena,malformed ?
+            "(exec NotExecutable (Unknown $other) (O))" : "(p $other)");
+        Atom *variable=malformed ? first->expr.elems[2]->expr.elems[1] : first->expr.elems[1];
+        Bindings captured;CHECK(bindings_clone(&captured,env));
+        CHECK(bindings_add_var(&captured,variable,atom_symbol(arena,"B")));
+        /* The valid probe precedes unknown exec-shaped data in the agenda. */
+        if(malformed)add(&space,arena,
+            "(exec Probe (I (all (exec NotExecutable $in $out) $rows)) (O (+ Done)))");
+        CHECK(space_admit_atom(&space,arena,first));CHECK(space_admit_atom(&space,arena,second));
+        if(!malformed)add(&space,arena,"(exec Probe (I (all (p $z) $rows)) (O (+ Done)))");
+        CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,&captured,
+            (CettaSpaceAgendaContract){.set_support=true,.explicit_inputs=true});CHECK(agenda);
+        bindings_free(&captured);
+        until_phase(agenda,"Build");
+        CHECK(agenda->validation_count==1u);
+        Atom *witnesses=agenda->validation[0].witnesses;
+        CHECK(witnesses && witnesses->kind==ATOM_EXPR && witnesses->expr.len==1u);
+        Atom *rows=witnesses->expr.elems[0];
+        CHECK(rows && rows->kind==ATOM_EXPR && rows->expr.len==1u);
+        Atom *fact=rows->expr.elems[0];
+        CHECK(fact && fact->kind==ATOM_EXPR && fact->expr.len==(malformed?4u:2u));
+        Atom *fresh=malformed ? fact->expr.elems[2]->expr.elems[1] : fact->expr.elems[1];
+        CHECK(fresh->kind==ATOM_VAR);
+        if(malformed) {
+            CHECK(until_pending(agenda)==1u);
+            CHECK(agenda->pending && !strcmp(agenda->pending,"UninterpretedExec"));
+        } else run(agenda,1u);
+        CHECK(space_contains_exact(&space,parse(arena,"Done")));
+        cetta_space_agenda_free(agenda);space_free(&space);
+    }
+    puts("PASS: captured outer bindings do not capture variables inside stored data or uninterpreted exec rows");
+}
+
+/* A legacy removal's exact-then-unique-alpha decision depends on whether a
+ * kept occurrence is still in its candidate store. */
+static int legacy_removal_resolution_controls(Arena *arena) {
+    Atom *x=parse(arena,"(p $x)"),*y=parse(arena,"(p $y)"),*w=parse(arena,"(p $w)");
+    Space full={0},excluded={0};space_init(&full);space_init(&excluded);
+    CHECK(space_admit_atom(&full,arena,x));CHECK(space_admit_atom(&full,arena,y));
+    CHECK(space_admit_atom(&excluded,arena,y));
+    CettaMatchCompletion global=space_remove_checked(&full,w);
+    CettaMatchCompletion filtered=space_remove_checked(&excluded,w);
+    bool ambiguous=global==CETTA_MATCH_REFUTED && space_length64(&full)==2u &&
+        filtered==CETTA_MATCH_MATCHED && !space_length64(&excluded);
+    space_free(&full);space_free(&excluded);
+
+    space_init(&full);space_init(&excluded);
+    CHECK(space_admit_atom(&full,arena,x));CHECK(space_admit_atom(&full,arena,y));
+    CHECK(space_admit_atom(&excluded,arena,y));
+    global=space_remove_checked(&full,x);
+    filtered=space_remove_checked(&excluded,x);
+    bool precedence=global==CETTA_MATCH_MATCHED && space_length64(&full)==1u &&
+        atom_eq(space_get_at64(&full,0u),y) &&
+        filtered==CETTA_MATCH_MATCHED && !space_length64(&excluded);
+    space_free(&full);space_free(&excluded);
+    printf("Legacy removal resolution: global ambiguity=%u exact precedence=%u\n",ambiguous,precedence);
+    return ambiguous && precedence ? 0 : 1;
+}
+
+/* A failed removal preparation retains the exact sink and already-staged
+ * outputs. A missing atom is a completed no-op, not the same failure. */
+static void legacy_removal_refusal_controls(Arena *arena,Bindings *env) {
+    for(unsigned recorded=0u;recorded<2u;recorded++)for(unsigned mode=0u;mode<2u;mode++) {
+        Space s={0};space_init(&s);add(&s,arena,"Token");
+        add(&s,arena,mode ?
+            "(exec Query (I (all Token $rows)) (O (+ Mark) (- Missing) (+ Done)))" :
+            "(exec Query (I (all Token $rows)) (O (+ Mark) (- Token) (+ Done)))");
+        CettaSpaceAgenda *a=cetta_space_agenda_new(&s,arena,env,
+            (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
+        SetCaptureObservation notes={0};CettaSpaceAgendaObservationScope observation={0};
+        if(recorded)CHECK(cetta_space_agenda_observation_enter(&observation,a,
+            set_capture_observe,set_capture_permit,set_capture_charge,&notes));
+        until_phase(a,"Sink");
+        CHECK(cetta_space_agenda_step(a)==CETTA_SPACE_AGENDA_PROGRESS);
+        CHECK(space_contains_exact(&a->replacement,parse(arena,"Mark")));
+        SpaceReadToken source=space_read_token(&s);
+        CettaIndex position=a->sink_index;
+        CettaCount staged=space_length64(&a->replacement);
+        agenda_test_refuse_removal=true;agenda_test_removal_refusals=0u;
+        CHECK(cetta_space_agenda_step(a)==CETTA_SPACE_AGENDA_PENDING);
+        CHECK(agenda_test_removal_refusals==1u && a->sink_index==position &&
+            space_read_token_is_current(source) && space_length64(&a->replacement)==staged &&
+            space_contains_exact(&a->replacement,parse(arena,"Mark")));
+        run(a,1u);
+        CHECK(space_contains_exact(&s,parse(arena,"Mark")) &&
+            space_contains_exact(&s,parse(arena,"Done")) &&
+            space_contains_exact(&s,parse(arena,"Token"))==(mode!=0u) &&
+            space_length64(&s)==(mode?3u:2u));
+        if(recorded) {
+            CHECK(notes.commits==1u);
+            cetta_space_agenda_observation_leave(&observation);
+        }
+        cetta_space_agenda_free(a);space_free(&s);
+    }
+    puts("PASS: incomplete legacy removal retains its sink and staged prefix for retry");
 }
 
 typedef struct { unsigned calls; bool allow, mutate; Arena *arena; } ActivationGateTest;
@@ -234,6 +879,424 @@ static void shared_reads_and_takes(Arena *arena,Bindings *env) {
     add(&s,arena,"Token");add(&s,arena,"Token");run(a,1u);
     CHECK(space_contains_exact(&s,parse(arena,"Overdraw")) && !space_contains_exact(&s,parse(arena,"Token")));
     cetta_space_agenda_free(a);space_free(&s);
+}
+
+static void kept_read_identification(Arena *arena,Bindings *env) {
+    const char *rules[]={
+        "(exec Claim (I (read Token) (take Token)) (O (+ Done)))",
+        "(exec Claim (I (take Token) (read Token)) (O (+ Done)))"};
+    for(size_t order=0u;order<2u;order++) {
+        Space s={0};space_init(&s);add(&s,arena,"Token");add(&s,arena,rules[order]);
+        SpaceReadToken before=space_read_token(&s);
+        CettaSpaceAgenda *a=cetta_space_agenda_new(&s,arena,env,
+            (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
+        CHECK(until_pending(a)==0u);
+        CHECK(space_read_token_is_current(before));
+        CHECK(!space_contains_exact(&s,parse(arena,"Done")));
+        /* Equal values have different occurrences. A later second token
+         * enables the retained rule without consuming its kept witness. */
+        add(&s,arena,"Token");run(a,1u);
+        CHECK(space_length64(&s)==2u);
+        CHECK(space_contains_exact(&s,parse(arena,"Token")));
+        CHECK(space_contains_exact(&s,parse(arena,"Done")));
+        cetta_space_agenda_free(a);space_free(&s);
+    }
+    const char *queries[]={
+        "(exec Query (I (all Token $seen) (take Token)) (O (+ (Seen $seen))))",
+        "(exec Query (I (take Token) (all Token $seen)) (O (+ (Seen $seen))))"};
+    for(size_t order=0u;order<2u;order++) {
+        Space s={0};space_init(&s);add(&s,arena,"Token");add(&s,arena,queries[order]);
+        CettaSpaceAgenda *a=cetta_space_agenda_new(&s,arena,env,
+            (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
+        run(a,1u);
+        CHECK(space_length64(&s)==1u);
+        CHECK(space_contains_exact(&s,parse(arena,"(Seen (Token))")));
+        cetta_space_agenda_free(a);space_free(&s);
+    }
+    Space s={0};space_init(&s);
+    add(&s,arena,"(tok 1)");add(&s,arena,"(tok 2)");add(&s,arena,"(tok 3)");
+    add(&s,arena,"(exec A (I (read (tok $x)) (take (tok $y))) (O (+ (took $y))))");
+    add(&s,arena,"(exec B (I (read (tok $x)) (take (tok $y))) (O (+ (took $y))))");
+    add(&s,arena,"(exec C (I (read (tok $x)) (take (tok $y))) (O (+ (took $y))))");
+    CettaSpaceAgenda *a=cetta_space_agenda_new(&s,arena,env,
+        (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
+    CHECK(until_pending(a)==2u);
+    CHECK(space_length64(&s)==4u && space_contains_exact(&s,parse(arena,"(tok 1)")));
+    CHECK(space_contains_exact(&s,parse(arena,"(took 2)")));
+    CHECK(space_contains_exact(&s,parse(arena,"(took 3)")));
+    cetta_space_agenda_free(a);space_free(&s);
+
+    space_init(&s);
+    add(&s,arena,"(exec Self (I (read (exec Self $inputs $outputs))) (O (+ Wrong)))");
+    a=cetta_space_agenda_new(&s,arena,env,
+        (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
+    SpaceReadToken before=space_read_token(&s);
+    CHECK(until_pending(a)==0u && space_read_token_is_current(before));
+    CHECK(!space_contains_exact(&s,parse(arena,"Wrong")));
+    cetta_space_agenda_free(a);space_free(&s);
+    puts("PASS: kept reads and takes use distinct occurrences in both orders; predicate queries retain pre-state meaning and reserve rules keep one token");
+}
+
+/* A full pre-state query does not keep its members; an ordinary read does.
+ * Legacy removal must not erase the witness selected by a kept read. */
+static bool kept_read_legacy_removal(Arena *arena,Bindings *env) {
+    bool kept_witness, duplicate_survives, later_witness;
+    Space s={0};space_init(&s);
+    add(&s,arena,"(token A)");
+    add(&s,arena,"(exec Query (I (all (token $x) $rows)) (O (- (token A)) (+ Queried)))");
+    CettaSpaceAgenda *a=cetta_space_agenda_new(&s,arena,env,
+        (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
+    run(a,1u);
+    CHECK(!space_contains_exact(&s,parse(arena,"(token A)")) &&
+        space_contains_exact(&s,parse(arena,"Queried")));
+    cetta_space_agenda_free(a);space_free(&s);
+
+    space_init(&s);
+    add(&s,arena,"(token A)");
+    add(&s,arena,"(exec Keep (I (read (token $x))) (O (- (token $x)) (+ Kept)))");
+    a=cetta_space_agenda_new(&s,arena,env,
+        (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
+    bool stopped=false;
+    for(unsigned i=0u;i<10000u;i++) {
+        CettaSpaceAgendaStep step=cetta_space_agenda_step(a);
+        if(step==CETTA_SPACE_AGENDA_PENDING || step==CETTA_SPACE_AGENDA_CLOSED) {
+            stopped=true;break;
+        }
+    }
+    kept_witness=stopped && space_contains_exact(&s,parse(arena,"(token A)")) &&
+        !space_contains_exact(&s,parse(arena,"Kept"));
+    cetta_space_agenda_free(a);space_free(&s);
+
+    /* Equal payloads still give two distinct occurrences: removal can take
+     * the other one while the selected read witness survives. */
+    space_init(&s);
+    add(&s,arena,"Token");add(&s,arena,"Token");
+    add(&s,arena,"(exec Reserve (I (read Token)) (O (- Token) (+ Kept)))");
+    a=cetta_space_agenda_new(&s,arena,env,
+        (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
+    run(a,1u);
+    duplicate_survives=space_length64(&s)==2u &&
+        space_contains_exact(&s,parse(arena,"Token")) &&
+        space_contains_exact(&s,parse(arena,"Kept"));
+    cetta_space_agenda_free(a);space_free(&s);
+
+    /* If the first matched witness conflicts, a later independent witness
+     * must remain available to the rule rather than losing the entire call. */
+    space_init(&s);
+    add(&s,arena,"(token A)");add(&s,arena,"(token B)");
+    add(&s,arena,"(exec Choose (I (read (token $x))) (O (- (token A)) (+ (Kept $x))))");
+    a=cetta_space_agenda_new(&s,arena,env,
+        (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
+    run(a,1u);
+    later_witness=!space_contains_exact(&s,parse(arena,"(token A)")) &&
+        space_contains_exact(&s,parse(arena,"(token B)")) &&
+        space_contains_exact(&s,parse(arena,"(Kept B)"));
+    cetta_space_agenda_free(a);space_free(&s);
+
+    /* Exercise all three even when an earlier example fails. Equal token
+     * values establish multiplicity here; a stable occurrence certificate
+     * is additionally needed to distinguish which physical token survived. */
+    if(!kept_witness || !duplicate_survives || !later_witness)
+        fprintf(stderr,"legacy removals: kept=%u duplicate=%u later=%u\n",
+            kept_witness,duplicate_survives,later_witness);
+    return kept_witness && duplicate_survives && later_witness;
+}
+
+static size_t count_exact(Space *s,Arena *a,const char *text);
+static unsigned removal_comparisons,removal_incomplete;
+static CettaMatchCompletion removal_equal_control(Atom *left,Atom *right) {
+    removal_comparisons++;
+    if(removal_incomplete){removal_incomplete--;return CETTA_MATCH_INCOMPLETE;}
+    return atom_eq(left,right)?CETTA_MATCH_MATCHED:CETTA_MATCH_REFUTED;
+}
+static CettaMatchCompletion removal_alpha_control(Atom *left,Atom *right) {
+    removal_comparisons++;
+    return atom_alpha_eq_checked(left,right);
+}
+static SpaceRemovalSearchStep resolve_removal_control(SpaceRemovalSearch *search,Atom *body,
+        const uint8_t *kept,CettaCount count) {
+    for(unsigned i=0u;i<10000u;i++) {
+        unsigned before=removal_comparisons;
+        SpaceRemovalSearchStep step=space_removal_search_step(search,body,
+            removal_equal_control,removal_alpha_control,kept,count);
+        CHECK(removal_comparisons-before<=1u);
+        if(step!=SPACE_REMOVAL_PROGRESS)return step;
+    }
+    CHECK(false);return SPACE_REMOVAL_INCOMPLETE;
+}
+static void removal_search_controls(Arena *arena) {
+    Space space={0};space_init(&space);
+    Atom *token=parse(arena,"Token");
+    add(&space,arena,"Token");add(&space,arena,"Token");add(&space,arena,"Other");
+    uint8_t kept[]={1u,0u,0u};
+    SpaceRemovalSearch search;
+    CHECK(space_removal_search_init(&space,&search));
+    SpaceReadToken before=space_read_token(&space);
+    CHECK(resolve_removal_control(&search,token,kept,3u)==SPACE_REMOVAL_SELECTED && search.selected==1u);
+    CHECK(space_read_token_is_current(before));
+    CHECK(space_remove_occurrence_checked(&space,search.read,search.selected)==CETTA_MATCH_MATCHED);
+    CHECK(space_length64(&space)==2u && atom_eq(space_get_at64(&space,0u),token));
+    CHECK(space_remove_occurrence_checked(&space,before,0u)==CETTA_MATCH_REFUTED);
+    CHECK(space_length64(&space)==2u);
+    CHECK(space_removal_search_init(&space,&search));
+    removal_incomplete=1u;
+    CHECK(space_removal_search_step(&search,token,removal_equal_control,removal_alpha_control,
+        kept,2u)==SPACE_REMOVAL_INCOMPLETE && search.next==0u && !search.exact_seen);
+    CHECK(resolve_removal_control(&search,token,kept,2u)==SPACE_REMOVAL_PROTECTED);
+    CHECK(space_removal_search_init(&space,&search));
+    add(&space,arena,"New");
+    CHECK(resolve_removal_control(&search,token,NULL,0u)==SPACE_REMOVAL_INVALIDATED);
+    space_free(&space);
+
+    /* Protection does not turn two global alpha matches into a unique one. */
+    space_init(&space);add(&space,arena,"(edge $a $a)");add(&space,arena,"(edge $b $b)");
+    Atom *query=parse(arena,"(edge $c $c)");
+    CHECK(space_removal_search_init(&space,&search));
+    CHECK(resolve_removal_control(&search,query,kept,2u)==SPACE_REMOVAL_UNMATCHED);
+    /* An exact protected occurrence still beats an eligible alpha match. */
+    Atom *exact=space_get_at64(&space,0u);
+    CHECK(space_removal_search_init(&space,&search));
+    CHECK(resolve_removal_control(&search,exact,kept,2u)==SPACE_REMOVAL_PROTECTED);
+    space_free(&space);
+    space_init(&space);add(&space,arena,"(edge $a $a)");
+    CHECK(space_removal_search_init(&space,&search));
+    CHECK(resolve_removal_control(&search,query,kept,1u)==SPACE_REMOVAL_PROTECTED);
+    CHECK(space_removal_search_init(&space,&search));
+    CHECK(resolve_removal_control(&search,parse(arena,"Missing"),kept,1u)==SPACE_REMOVAL_UNMATCHED);
+    space_free(&space);
+}
+
+static void kept_removal_preparation_controls(Arena *arena,Bindings *env) {
+    const char *rules[]={
+        "(exec Keep (I (read Token)) (O (- Token) (+ Token) (+ Wrong)))",
+        "(exec Keep (I (read Token)) (O (+ Token) (- Token) (+ Done)))",
+        "(exec Keep (I (read Token)) (O (+ Mark) (- Token) (- Token) (+ Done)))",
+        "(exec Keep (I (read Token)) (O (+ Mark) (- Token) (- Token) (- Token) (+ Token) (+ Wrong)))"};
+    for(unsigned mode=0u;mode<4u;mode++)for(unsigned recorded=0u;recorded<2u;recorded++) {
+        Space space={0};space_init(&space);add(&space,arena,"Token");
+        if(mode>=2u){add(&space,arena,"Token");add(&space,arena,"Token");}
+        add(&space,arena,rules[mode]);
+        SpaceReadToken before=space_read_token(&space);
+        CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+            (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(agenda);
+        SetCaptureObservation notes={0};CettaSpaceAgendaObservationScope observation={0};
+        if(recorded)CHECK(cetta_space_agenda_observation_enter(&observation,agenda,
+            set_capture_observe,set_capture_permit,set_capture_charge,&notes));
+        bool accepted=mode==1u || mode==2u;
+        if(accepted) {
+            until_phase(agenda,"Commit");
+            CHECK(space_read_token_is_current(before));
+            size_t kept_count=0u;
+            for(size_t i=0u;i<agenda->replacement_kept_length;i++)kept_count+=agenda->replacement_kept[i]!=0u;
+            CHECK(kept_count==1u);
+            CHECK(!space_contains_exact(&space,parse(arena,"Done")));
+            run(agenda,1u);
+            CHECK(space_contains_exact(&space,parse(arena,"Done")) &&
+                space_contains_exact(&space,parse(arena,"Token")));
+            CHECK(space_length64(&space)==(mode==2u?3u:2u));
+        } else {
+            CHECK(until_pending(agenda)==0u);
+            CHECK(space_read_token_is_current(before));
+            CHECK(!space_contains_exact(&space,parse(arena,"Mark")) &&
+                !space_contains_exact(&space,parse(arena,"Wrong")));
+        }
+        if(recorded) {
+            CHECK(notes.commits==(accepted?1u:0u));
+            cetta_space_agenda_observation_leave(&observation);
+        }
+        cetta_space_agenda_free(agenda);space_free(&space);
+    }
+}
+
+static void kept_removal_validation_controls(Arena *arena,Bindings *env) {
+    for(unsigned kind=0u;kind<3u;kind++) {
+        Space space={0};space_init(&space);space.kind=(SpaceKind)kind;
+        add(&space,arena,"(token A)");add(&space,arena,"(token B)");add(&space,arena,"(token B)");
+        add(&space,arena,"(exec R (I (read (token $x))) (O (- (token $x)) (+ (Kept $x))))");
+        CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+            (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(agenda);
+        run(agenda,1u);
+        CHECK(space.kind==(SpaceKind)kind && space_length64(&space)==3u &&
+            count_exact(&space,arena,"(token B)")==1u &&
+            space_contains_exact(&space,parse(arena,"(Kept B)")) &&
+            !space_contains_exact(&space,parse(arena,"(Kept A)")));
+        cetta_space_agenda_free(agenda);space_free(&space);
+    }
+    Space space={0};space_init(&space);add(&space,arena,"Token");add(&space,arena,"Other");
+    add(&space,arena,"(exec R (I (all Token $rows)) (O (+ Mark) (- Token) (+ Done)))");
+    CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+        (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(agenda);
+    until_phase(agenda,"Sink");
+    CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+    SpaceReadToken before=space_read_token(&space);
+    CettaNativeCostLedger meter;cetta_native_cost_init(&meter);
+    CettaNativeCostScope scope;cetta_native_cost_scope_enter(&scope,&meter,0u);
+    agenda_test_refuse_occurrence=true;
+    CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PENDING);
+    CHECK(agenda->removal_ready && agenda->removal.finished && agenda->removal.next<agenda->removal.end);
+    uint64_t probes=meter.total.counts[CETTA_COST_INDEX_VISIT];
+    CHECK(probes==1u && space_read_token_is_current(before));
+    CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+    CHECK(meter.total.counts[CETTA_COST_INDEX_VISIT]==probes && !agenda->removal_ready);
+    cetta_native_cost_scope_leave(&scope);cetta_native_cost_free(&meter);
+    run(agenda,1u);
+    CHECK(count_exact(&space,arena,"Mark")==1u && count_exact(&space,arena,"Done")==1u &&
+        !space_contains_exact(&space,parse(arena,"Token")));
+    cetta_space_agenda_free(agenda);space_free(&space);
+}
+
+static void kept_removal_interruption_controls(Arena *arena,Bindings *env) {
+    for(unsigned boundary=0u;boundary<4u;boundary++) {
+        Space space={0};space_init(&space);
+        add(&space,arena,"(token A)");add(&space,arena,"(token B)");add(&space,arena,"(token B)");
+        add(&space,arena,"(exec R (I (read (token $x))) (O (+ Mark) (- (token $x)) (+ (Kept $x))))");
+        CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+            (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(agenda);
+        if(boundary==1u) {
+            for(unsigned i=0u;;i++) {
+                CHECK(i<10000u);
+                if(agenda->phase==AGENDA_QUALIFY_BUILD && agenda->validating)break;
+                CettaSpaceAgendaStep step=cetta_space_agenda_step(agenda);
+                CHECK(step==CETTA_SPACE_AGENDA_PROGRESS || step==CETTA_SPACE_AGENDA_RETRY);
+            }
+        } else until_phase(agenda,boundary==2u?"QualifySink":"QualifyBuild");
+        SpaceReadToken before=space_read_token(&space);
+        if(boundary<2u) {
+            add(&space,arena,"Unrelated");
+            run(agenda,1u);
+            CHECK(space_contains_exact(&space,parse(arena,"Unrelated")) &&
+                count_exact(&space,arena,"Mark")==1u &&
+                space_contains_exact(&space,parse(arena,"(Kept B)")) && space_length64(&space)==5u);
+        } else if(boundary==2u) {
+            CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PROGRESS);
+            CHECK(space_contains_exact(&agenda->replacement,parse(arena,"Mark")));
+            CHECK(space_read_token_is_current(before) && !space_contains_exact(&space,parse(arena,"Mark")));
+        } else {
+            agenda_test_refuse_admission=true;
+            CHECK(cetta_space_agenda_step(agenda)==CETTA_SPACE_AGENDA_PENDING);
+            CHECK(space_read_token_is_current(before) && space_length64(&agenda->replacement)==0u &&
+                agenda->replacement_kept_length==0u);
+            run(agenda,1u);
+            CHECK(count_exact(&space,arena,"Mark")==1u &&
+                space_contains_exact(&space,parse(arena,"(Kept B)")));
+        }
+        cetta_space_agenda_free(agenda);
+        if(boundary==2u)CHECK(space_read_token_is_current(before));
+        space_free(&space);
+    }
+    /* Freshly matched variables do not become exact occurrences merely
+     * because their original spelling appeared in the captured store. */
+    Space space={0};space_init(&space);
+    Atom *first=parse(arena,"(p $x)");CHECK(space_admit_atom(&space,arena,first));
+    add(&space,arena,"(p $y)");
+    add(&space,arena,"(exec R (I (read (p $a))) (O (- (p $a)) (+ (Seen $a $a))))");
+    CettaSpaceAgenda *agenda=cetta_space_agenda_new(&space,arena,env,
+        (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(agenda);
+    run(agenda,1u);
+    bool first_survives=false;
+    for(CettaIndex i=0u;i<space_length64(&space);i++)
+        first_survives=first_survives || atom_eq(space_get_at64(&space,i),first);
+    /* The indexed ground-membership API deliberately rejects open queries. */
+    CHECK(space_length64(&space)==3u && first_survives);
+    Atom *seen=NULL;
+    for(CettaIndex i=0u;i<space_length64(&space);i++) {
+        Atom *row=space_get_at64(&space,i);
+        if(shaped(row,symbol_intern_cstr(g_symbols,"Seen"),2u))seen=row;
+    }
+    CHECK(seen && seen->expr.elems[1]->kind==ATOM_VAR && seen->expr.elems[2]->kind==ATOM_VAR &&
+        var_id_eq(seen->expr.elems[1]->var_id,seen->expr.elems[2]->var_id) &&
+        !var_id_eq(seen->expr.elems[1]->var_id,first->expr.elems[1]->var_id));
+    cetta_space_agenda_free(agenda);space_free(&space);
+}
+
+static void predicate_query_context(Arena *arena,Bindings *env) {
+    for(unsigned refined=0u;refined<2u;refined++) {
+        Space space={0};space_init(&space);
+        add(&space,arena,"(Seed Captured)");add(&space,arena,"(Template $x $x)");
+        add(&space,arena,refined ?
+            "(exec Query (I (take (Seed $x)) (all (Template Refined $y) $rows)) (O (+ (Result $rows))))" :
+            "(exec Query (I (take (Seed $x)) (all (Template $y $z) $rows)) (O (+ (Result $rows))))");
+        CettaSpaceAgenda *a=cetta_space_agenda_new(&space,arena,env,
+            (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
+        run(a,1u);
+        Atom *result=space_get_at64(&space,space_length64(&space)-1u);
+        CHECK(shaped(result,symbol_intern_cstr(g_symbols,"Result"),1u));
+        Atom *rows=result->expr.elems[1];CHECK(rows->kind==ATOM_EXPR && rows->expr.len==1u);
+        Atom *row=rows->expr.elems[0];CHECK(shaped(row,symbol_intern_cstr(g_symbols,"Template"),2u));
+        if(refined)CHECK(atom_eq(row,parse(arena,"(Template Refined Refined)")));
+        else {
+            CHECK(row->expr.elems[1]->kind==ATOM_VAR && row->expr.elems[2]->kind==ATOM_VAR);
+            CHECK(var_id_eq(row->expr.elems[1]->var_id,row->expr.elems[2]->var_id));
+        }
+        cetta_space_agenda_free(a);space_free(&space);
+    }
+    puts("PASS: predicate queries preserve fresh stored-variable aliases and apply only actual match refinements");
+}
+
+static void predicate_match_paid_suffix(Arena *arena,Bindings *env) {
+    Space space={0};space_init(&space);
+    add(&space,arena,"Slot");add(&space,arena,"(Request Later Payload)");
+    add(&space,arena,"(exec Server (I (take Slot) (take (Request $id $payload)) "
+        "(all (exec Server $i $o) ((exec Server $input $output)))) "
+        "(O (+ (Reply $id $payload)) (+ (exec Server $input $output))))");
+    CettaSpaceAgenda *a=cetta_space_agenda_new(&space,arena,env,
+        (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
+    CettaSpaceAgendaMatch *match=NULL;
+    for(unsigned i=0u;!match;i++) {
+        CHECK(i<10000u && cetta_space_agenda_step(a)==CETTA_SPACE_AGENDA_PROGRESS);
+        if(a->join_ready && a->depth<a->input_count &&
+           a->inputs[a->depth].kind==INPUT_ALL &&
+           shaped(a->levels[a->depth].pending_row,a->exec,3u) &&
+           atom_is_symbol_id(a->levels[a->depth].pending_row->expr.elems[1],
+               symbol_intern_cstr(g_symbols,"Server")))
+            match=cetta_space_agenda_match_capture(a);
+    }
+    CettaNativeCostLedger original,suffix;
+    cetta_native_cost_init_compact(&original);cetta_native_cost_init_compact(&suffix);
+    CettaNativeCostScope scope;
+    cetta_native_cost_scope_enter(&scope,&original,1u);
+    CHECK(cetta_space_agenda_match_run(match,1u));
+    cetta_native_cost_scope_leave(&scope);
+    CHECK(match->decision==CETTA_MATCH_CURSOR_PROGRESS);
+    CettaMatchCursor *copy=match_atoms_cursor_clone(match->cursor);CHECK(copy);
+    CHECK(match_atoms_cursor_epoch(copy).word==match->epoch.word);
+    uint64_t prefix[sizeof(original.total.counts)/sizeof(*original.total.counts)];
+    memcpy(prefix,original.total.counts,sizeof(prefix));
+    uint64_t prefix_work=original.total.work;
+    for(unsigned i=0u;match->decision==CETTA_MATCH_CURSOR_PROGRESS;i++) {
+        CHECK(i<10000u);
+        cetta_native_cost_scope_enter(&scope,&original,1u);
+        uint64_t before=original.total.work;
+        CHECK(!cetta_space_agenda_match_run(match,0u));
+        CHECK(cetta_space_agenda_step(a)==CETTA_SPACE_AGENDA_PROGRESS);
+        CHECK(original.total.work==before && a->matching==match);
+        CHECK(cetta_space_agenda_match_run(match,CETTA_SPACE_AGENDA_MATCH_NODES));
+        cetta_native_cost_scope_leave(&scope);
+        HashConsTable *previous=g_hashcons;
+        if(match->isolated)g_hashcons=&match->hashcons;
+        cetta_native_cost_scope_enter(&scope,&suffix,1u);
+        uint64_t held=suffix.total.work;
+        CHECK(match_atoms_cursor_step(copy,0u)==CETTA_MATCH_CURSOR_PROGRESS);
+        CHECK(suffix.total.work==held);
+        CettaMatchCursorStep decision=match_atoms_cursor_step(copy,CETTA_SPACE_AGENDA_MATCH_NODES);
+        cetta_native_cost_scope_leave(&scope);g_hashcons=previous;
+        CHECK(decision==match->decision);
+        CHECK(original.total.work==prefix_work+suffix.total.work);
+        for(size_t k=0u;k<sizeof(prefix)/sizeof(*prefix);k++)
+            CHECK(original.total.counts[k]==prefix[k]+suffix.total.counts[k]);
+    }
+    CHECK(match->decision==CETTA_MATCH_CURSOR_MATCHED);
+    match_atoms_cursor_free(copy);
+    uint64_t nodes=original.total.counts[CETTA_COST_MATCH_NODE];
+    uint64_t attempts=original.total.counts[CETTA_COST_MATCH_ATTEMPT];
+    cetta_native_cost_scope_enter(&scope,&original,1u);
+    CHECK(cetta_space_agenda_step(a)==CETTA_SPACE_AGENDA_PROGRESS);
+    CHECK(original.total.counts[CETTA_COST_MATCH_NODE]==nodes);
+    CHECK(original.total.counts[CETTA_COST_MATCH_ATTEMPT]==attempts);
+    cetta_native_cost_scope_leave(&scope);
+    cetta_native_cost_free(&original);cetta_native_cost_free(&suffix);
+    cetta_space_agenda_free(a);space_free(&space);
+    puts("PASS: a retained server predicate matcher conserves every actual counter across its exact suffix; paid installation repeats no matcher work");
 }
 static void phantoms(Arena *arena,Bindings *env) {
     const char *phases[]={"Capture","Match","ValidateCapture","ValidateMatch","Build","Sink","Commit"};
@@ -667,11 +1730,12 @@ static size_t count_exact(Space *space,Arena *arena,const char *text) {
 
 static void continuing_request_reply(Arena *arena,Bindings *env) {
     Space space={0};space_init(&space);add(&space,arena,"Slot");
+    /* The selected rule is consumed; its code is a pre-state query. */
     add(&space,arena,"(exec Server (I (take Slot) (take (Request $id $payload)) "
-        "(read (exec Server $input $output))) "
+        "(all (exec Server $i $o) ((exec Server $input $output)))) "
         "(O (+ (Reply $id $payload)) (+ (exec Server $input $output))))");
     add(&space,arena,"(exec Consumer (I (take (Reply $id $payload)) (take Acknowledge) "
-        "(read (exec Consumer $input $output))) "
+        "(all (exec Consumer $i $o) ((exec Consumer $input $output)))) "
         "(O (+ Slot) (+ (Delivered $id $payload)) (+ (exec Consumer $input $output))))");
     CettaSpaceAgenda *a=cetta_space_agenda_new(&space,arena,env,
         (CettaSpaceAgendaContract){.explicit_inputs=true});CHECK(a);
@@ -711,7 +1775,7 @@ static void continuing_request_reply(Arena *arena,Bindings *env) {
 static void borrowed_discovery(Arena *arena,Bindings *env) {
     const char *inputs[]={"(I)","(I (read Token) (read Token))",
         "(I (take Token) (take Token))","(I (all (p $x) $rows))",
-        "(I (absent Stop))","(I (read (exec $key $in $out)))"};
+        "(I (absent Stop))","(I (all (exec $k $i $o) ((exec $key $in $out))))"};
     const char *outputs[]={"(O (+ Ready))","(O (+ Ready))","(O (+ Ready))",
         "(O (+ (Rows $rows)))","(O (+ Ready))","(O (+ (Self $key)))"};
     const char *expected[]={"(O (+ Ready))","(O (+ Ready))","(O (+ Ready))",
@@ -769,7 +1833,7 @@ static void borrowed_discovery(Arena *arena,Bindings *env) {
 static void borrowed_transactions(Arena *arena,Bindings *env) {
     const char *inputs[]={"(I)","(I (read Token) (read Token))",
         "(I (take Token) (take Token))","(I (all (p $x) $rows))",
-        "(I (absent Stop))","(I (read (exec $key $in $out)))"};
+        "(I (absent Stop))","(I (all (exec $k $i $o) ((exec $key $in $out))))"};
     const char *outputs[]={"(O (+ Ready))","(O (+ Ready))","(O (+ Ready))",
         "(O (+ (Rows $rows)))","(O (+ Ready))","(O (+ (Self $key)))"};
     for(size_t test=0u;test<sizeof(inputs)/sizeof(*inputs);test++) {
@@ -1428,14 +2492,277 @@ static void discovery_selected_worlds(Arena *arena,Bindings *env) {
     puts("PASS: selected physical tuples publish into separate owned worlds and resume ordinary world execution");
 }
 
-int main(void) {
+/* Migration diagnostics use the same parser and checked matcher as the
+ * provider. They inspect syntax without activating a source or its effects. */
+static CettaMatchCompletion lint_overlap(Atom *left,Atom *right,Arena *arena,
+        const Bindings *env,bool fresh_right) {
+    CETTA_FRAME_IDENTITY_SCOPE(frames);
+    CettaFrameIdentity epoch=cetta_frame_identity_scope_fresh(&frames);
+    if(!epoch.word)return CETTA_MATCH_INCOMPLETE;
+    /* Two input patterns share one source context. Materialize its left
+     * view into the same epoch the checked matcher assigns to the right.
+     * A stored exec candidate instead has an independent right context. */
+    if(!fresh_right)left=rename_vars(arena,left,epoch);
+    if(!left)return CETTA_MATCH_INCOMPLETE;
+    BindingsBuilder builder;
+    if(!bindings_builder_init(&builder,env))return CETTA_MATCH_INCOMPLETE;
+    CettaMatchCompletion result=match_atoms_epoch_builder_checked(left,right,
+        &builder,arena,epoch,UINT64_MAX);
+    bindings_builder_free(&builder);return result;
+}
+
+static void lint_diagnostic(FILE *out,const char *path,size_t form,Atom *exec,
+        const char *message,size_t read,size_t take) {
+    if(!out)return;
+    fprintf(out,"%s:form %zu: exec ",path,form);atom_print(exec->expr.elems[1],out);
+    fprintf(out,": %s (input %zu, take %zu; take 0 is the selected exec)\n",
+        message,read,take);
+}
+
+static size_t lint_transaction_exec(Atom *term,Space *space,Arena *arena,
+        const Bindings *env,FILE *out,const char *path,size_t form,bool *complete) {
+    if(!shaped(term,symbol_intern_cstr(g_symbols,"exec"),3u) ||
+       !headed(term->expr.elems[2],symbol_intern_cstr(g_symbols,"I")))return 0u;
+    CettaSpaceAgenda *a=cetta_space_agenda_new(space,arena,env,
+        (CettaSpaceAgendaContract){.explicit_inputs=true});
+    if(!a){*complete=false;return 0u;}
+    a->selected=term;
+    if(!parse_selected(a)) {
+        lint_diagnostic(out,path,form,term,"uninterpreted Transaction source",0u,0u);
+        *complete=false;cetta_space_agenda_free(a);return 0u;
+    }
+    size_t warnings=0u;
+    for(size_t i=0u;i<a->input_count;i++) {
+        if(a->inputs[i].kind!=INPUT_READ)continue;
+        for(size_t j=0u;j<=a->input_count;j++) {
+            if(j && a->inputs[j-1u].kind!=INPUT_TAKE)continue;
+            Atom *taken=j ? a->inputs[j-1u].pattern : term;
+            CettaMatchCompletion overlap=lint_overlap(a->inputs[i].pattern,taken,
+                arena,env,!j);
+            if(overlap==CETTA_MATCH_REFUTED)continue;
+            if(overlap==CETTA_MATCH_INCOMPLETE)*complete=false;
+            warnings++;
+            lint_diagnostic(out,path,form,term,overlap==CETTA_MATCH_MATCHED ?
+                "kept/taken patterns overlap: review distinct-occurrence intent, remove a redundant read, or use a pre-state predicate query" :
+                "kept/taken overlap is undecided",i+1u,j);
+        }
+    }
+    for(CettaExprIndex i=1u;i<a->sinks->expr.len;i++) {
+        if(shaped(a->sinks->expr.elems[i],a->minus,1u)) {
+            warnings++;
+            lint_diagnostic(out,path,form,term,
+                "legacy removal sink needs an explicit consumption-footprint review",0u,i);
+        }
+    }
+    cetta_space_agenda_free(a);return warnings;
+}
+
+static size_t lint_transaction_tree(Atom *root,Space *space,Arena *arena,
+        const Bindings *env,FILE *out,const char *path,size_t form,bool *complete) {
+    size_t capacity=16u,length=0u,warnings=0u;
+    Atom **pending=malloc(capacity*sizeof(*pending));
+    if(!pending){*complete=false;return 0u;}
+    pending[length++]=root;
+    while(length) {
+        Atom *term=pending[--length];
+        warnings+=lint_transaction_exec(term,space,arena,env,out,path,form,complete);
+        if(!term || term->kind!=ATOM_EXPR)continue;
+        if(term->expr.len>SIZE_MAX-length){*complete=false;break;}
+        size_t needed=length+(size_t)term->expr.len;
+        if(needed>capacity) {
+            if(needed>SIZE_MAX/sizeof(*pending)){*complete=false;break;}
+            Atom **grown=realloc(pending,needed*sizeof(*pending));
+            if(!grown){*complete=false;break;}
+            pending=grown;capacity=needed;
+        }
+        for(CettaExprIndex i=term->expr.len;i>0u;i--)pending[length++]=term->expr.elems[i-1u];
+    }
+    free(pending);return warnings;
+}
+
+static void transaction_lint_controls(Arena *arena,Bindings *env) {
+    const struct {const char *text;size_t warnings;} examples[]={
+        {"(exec D1 (I (read Token) (take Token)) (O (+ Done)))",1u},
+        {"(exec Reverse (I (take Token) (read Token)) (O (+ Done)))",1u},
+        {"(exec Reserve (I (read (tok $x)) (take (tok $y))) (O (+ (took $y))))",1u},
+        {"(exec Separate (I (read Fact) (take Token)) (O (+ Done)))",0u},
+        {"(exec Aliases (I (read (p $x A)) (take (p B $x))) (O (+ Done)))",0u},
+        {"(exec Query (I (all Token $xs) (take Token)) (O (+ Done)))",0u},
+        {"(exec Self (I (read (exec Self $i $o))) (O (+ Done)))",1u},
+        {"(exec Remove (I (read Token)) (O (- Token)))",1u}};
+    Space space={0};space_init(&space);
+    SpaceReadToken before=space_read_token(&space);
+    for(size_t i=0u;i<sizeof(examples)/sizeof(*examples);i++) {
+        bool complete=true;
+        CHECK(lint_transaction_tree(parse(arena,examples[i].text),&space,arena,env,
+            NULL,"control",i+1u,&complete)==examples[i].warnings);
+        CHECK(complete && space_read_token_is_current(before));
+    }
+    space_free(&space);
+    puts("PASS: Transaction lint uses the native matcher, preserves shared variable constraints and flags self-consumption without executing sources");
+}
+
+static void absent_read_watch_controls(void) {
+    SpaceOccurrenceCursor cursor={0};
+    SpaceCheckpointBudget clean={.work_limit=100u,.byte_limit=SIZE_MAX};
+    CHECK(agenda_checkpoint_cursor_empty(&cursor,&clean));
+    _Atomic uint64_t stamp=1u;SpaceReadWatch watch={&stamp,1u};
+    for(unsigned field=0u;field<3u;field++) {
+        cursor=(SpaceOccurrenceCursor){0};
+        if(field==0u)cursor.logical_reads.root_watch.stamp=&stamp;
+        if(field==1u)cursor.logical_reads.root_watch.expected=1u;
+        if(field==2u)cursor.logical_reads.base_watches=&watch;
+        SpaceCheckpointBudget budget={.work_limit=100u,.byte_limit=SIZE_MAX};
+        CHECK(!agenda_checkpoint_cursor_empty(&cursor,&budget));
+        CHECK(budget.refusal && !strcmp(budget.refusal,"AgendaInactiveSelection"));
+    }
+    puts("PASS: an inactive cursor cannot hide a retained read-watch field");
+}
+
+static int lint_transaction_files(int argc,char **argv,Bindings *env) {
+    if(argc<3 || strcmp(argv[1],"--lint-transaction-reads")) {
+        fputs("usage: test-native-space-agenda --lint-transaction-reads FILE...\n",stderr);
+        return 2;
+    }
+    size_t warnings=0u;bool complete=true;
+    for(int file=2;file<argc;file++) {
+        Arena arena;arena_init(&arena);Space space={0};space_init(&space);
+        Atom **forms=NULL;int count=parse_metta_file(argv[file],&arena,&forms);
+        if(count<0){fprintf(stderr,"%s: parse failed\n",argv[file]);complete=false;}
+        for(int i=0;i<count;i++)warnings+=lint_transaction_tree(forms[i],&space,&arena,
+            env,stdout,argv[file],(size_t)i+1u,&complete);
+        free(forms);space_free(&space);arena_free(&arena);
+    }
+    printf("Transaction read lint: %zu review findings; analysis %s\n",warnings,
+        complete?"complete":"incomplete");
+    return complete ? (warnings?1:0) : 2;
+}
+
+static void kept_removal_discovery_controls(Arena *arena,Bindings *env) {
+    const CettaSpaceAgendaChoiceKind kinds[]={CETTA_SPACE_CHOICE_TRANSACTION_COMMIT,
+        CETTA_SPACE_CHOICE_TRANSACTION_MATCH,CETTA_SPACE_CHOICE_TRANSACTION_WORLD_MATCH};
+    for(size_t kind=0u;kind<3u;kind++) {
+        Space space={0};space_init(&space);
+        add(&space,arena,"(token A)");add(&space,arena,"(token B)");add(&space,arena,"(token B)");
+        add(&space,arena,"(exec R (I (read (token $x))) (O (- (token $x)) (+ (Kept $x))))");
+        SpaceReadToken before=space_read_token(&space);
+        CettaSpaceAgendaDiscovery *discovery=cetta_space_agenda_discovery_new_owned_kind(&space,env,kinds[kind]);
+        CettaSpaceAgendaChoice choices[4];CHECK(discovery);
+        size_t count=discover_choices(discovery,choices,4u);CHECK(count==(kind?2u:1u));
+        CHECK(space_read_token_is_current(before) && space_length64(&space)==4u);
+        CettaSpaceAgendaSelection *selection=cetta_space_agenda_discovery_take(discovery,choices[0].ticket);
+        CHECK(selection);cetta_space_agenda_discovery_free(discovery);
+        if(kind==2u) {
+            selected_world_commit(selection);
+            CHECK(space_read_token_is_current(before) && space_length64(&space)==4u);
+        } else {
+            bool committed=false;
+            for(unsigned i=0u;i<10000u;i++) {
+                CettaSpaceAgendaStep step=cetta_space_agenda_selection_step(selection);
+                if(step==CETTA_SPACE_AGENDA_COMMITTED){committed=true;break;}
+                CHECK(step==CETTA_SPACE_AGENDA_PROGRESS || step==CETTA_SPACE_AGENDA_RETRY);
+            }
+            CHECK(committed);
+        }
+        Space *result=cetta_space_agenda_selection_provider(selection)->space;
+        CHECK(space_length64(result)==3u && count_exact(result,arena,"(token B)")==1u &&
+            space_contains_exact(result,parse(arena,"(Kept B)")));
+        cetta_space_agenda_selection_free(selection);space_free(&space);
+    }
+}
+
+int main(int argc,char **argv) {
     SymbolTable symbols;VarInternTable vars;Arena arena;Bindings env;
     symbol_table_init(&symbols);symbol_table_init_builtins(&symbols,&g_builtin_syms);g_symbols=&symbols;
     var_intern_init(&vars);g_var_intern=&vars;g_hashcons=NULL;arena_init(&arena);bindings_init(&env);
+    if(argc==2 && !strcmp(argv[1],"--cost-index-oracle")) {
+        set_capture_allocation_refusal(&arena,&env);
+        bindings_free(&env);arena_free(&arena);var_intern_free(&vars);symbol_table_free(&symbols);
+        printf("Physical index-visit oracle: %zu checks passed\n",checks);
+        return 0;
+    }
+    if(argc==2 && !strcmp(argv[1],"--sink-order")) {
+        int result=sink_order_controls(&arena,&env);
+        bindings_free(&env);arena_free(&arena);var_intern_free(&vars);symbol_table_free(&symbols);
+        return result;
+    }
+    if(argc==2 && !strcmp(argv[1],"--set-capture")) {
+        int result=set_capture_occurrence_controls(&arena,&env);
+        if(!result) {
+            set_capture_allocation_refusal(&arena,&env);
+            set_capture_admission_refusal(&arena,&env);
+            set_capture_appended_duplicate(&arena,&env);
+            set_capture_search_quanta(&arena,&env);
+            set_capture_changed_source(&arena,&env);
+            set_capture_retirement_steps(&arena,&env);
+            set_capture_selected_equivalence(&arena,&env);
+            set_capture_stored_data_scope(&arena,&env);
+        }
+        bindings_free(&env);arena_free(&arena);var_intern_free(&vars);symbol_table_free(&symbols);
+        return result;
+    }
+    if(argc==2 && !strcmp(argv[1],"--set-captured")) {
+        int result=set_capture_bound_environment(&arena,&env);
+        bindings_free(&env);arena_free(&arena);var_intern_free(&vars);symbol_table_free(&symbols);
+        return result;
+    }
+    if(argc==2 && !strcmp(argv[1],"--raw-captured")) {
+        raw_capture_bound_inspect(&arena,&env);
+        bindings_free(&env);arena_free(&arena);var_intern_free(&vars);symbol_table_free(&symbols);
+        return 0;
+    }
+    if(argc==2 && !strcmp(argv[1],"--kept-removal")) {
+        removal_search_controls(&arena);
+        kept_removal_preparation_controls(&arena,&env);
+        kept_removal_validation_controls(&arena,&env);
+        kept_removal_interruption_controls(&arena,&env);
+        kept_removal_discovery_controls(&arena,&env);
+        bool result=kept_read_legacy_removal(&arena,&env);
+        bindings_free(&env);arena_free(&arena);var_intern_free(&vars);symbol_table_free(&symbols);
+        printf("Kept legacy removal: %zu checks, %s\n",checks,result?"pass":"FAIL");
+        return result?0:1;
+    }
+    if(argc==2 && !strcmp(argv[1],"--legacy-policy")) {
+        int result=legacy_removal_resolution_controls(&arena);
+        bindings_free(&env);arena_free(&arena);var_intern_free(&vars);symbol_table_free(&symbols);
+        return result;
+    }
+    if(argc==2 && !strcmp(argv[1],"--sink-refusal")) {
+        legacy_removal_refusal_controls(&arena,&env);
+        bindings_free(&env);arena_free(&arena);var_intern_free(&vars);symbol_table_free(&symbols);
+        printf("Legacy sink refusal: %zu checks passed\n",checks);
+        return 0;
+    }
+    if(argc>1) {
+        int result=lint_transaction_files(argc,argv,&env);
+        bindings_free(&env);arena_free(&arena);var_intern_free(&vars);symbol_table_free(&symbols);
+        return result;
+    }
+    transaction_lint_controls(&arena,&env);
+    absent_read_watch_controls();
     scoped_alpha(&arena);captured_environment(&arena,&env);alpha_set_members(&arena,&env);
     mm2(&arena,&env);self_and_new_exec(&arena,&env);self_reintroduced(&arena,&env);transaction(&arena,&env);
     controlled_mm2_activation(&arena,&env);
     disabled_then_enabled(&arena,&env);shared_reads_and_takes(&arena,&env);
+    CHECK(set_capture_occurrence_controls(&arena,&env)==0);
+    set_capture_allocation_refusal(&arena,&env);
+    set_capture_admission_refusal(&arena,&env);
+    set_capture_appended_duplicate(&arena,&env);
+    set_capture_search_quanta(&arena,&env);
+    set_capture_changed_source(&arena,&env);
+    set_capture_retirement_steps(&arena,&env);
+    set_capture_selected_equivalence(&arena,&env);
+    set_capture_stored_data_scope(&arena,&env);
+    CHECK(legacy_removal_resolution_controls(&arena)==0);
+    legacy_removal_refusal_controls(&arena,&env);
+    removal_search_controls(&arena);
+    kept_removal_preparation_controls(&arena,&env);
+    kept_removal_validation_controls(&arena,&env);
+    kept_removal_interruption_controls(&arena,&env);
+    kept_removal_discovery_controls(&arena,&env);
+    kept_read_identification(&arena,&env);
+    predicate_query_context(&arena,&env);
+    predicate_match_paid_suffix(&arena,&env);
     phantoms(&arena,&env);replaced_occurrence(&arena,&env);
     world_fork_ownership(&arena,&env);
     prepared_match_ownership(&arena,&env);
@@ -1456,6 +2783,9 @@ int main(void) {
     selection_provider_scope(&arena,&env);
     nested_selection_scopes(&arena,&env);
     discovery_selected_worlds(&arena,&env);
+    bool bound_scope_ok=set_capture_bound_environment(&arena,&env)==0;
+    bool legacy_kept_ok=kept_read_legacy_removal(&arena,&env);
+    CHECK(bound_scope_ok && legacy_kept_ok);
     bindings_free(&env);arena_free(&arena);var_intern_free(&vars);symbol_table_free(&symbols);
     puts("PASS: native space agenda joins, restores self reads, creates execs and consumes physical bag occurrences");
     printf("%zu checks passed\n",checks);return 0;

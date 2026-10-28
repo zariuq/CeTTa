@@ -12,7 +12,13 @@
 #include "native_parent_checkpoint_compare.inc"
 static const void *recording_retirement_watch;
 static unsigned recording_retirements;
+static _Thread_local bool checkpoint_calloc_refuse;
 void __real_free(void *pointer);
+void *__real_calloc(size_t count,size_t size);
+void *__wrap_calloc(size_t count,size_t size) {
+ if(checkpoint_calloc_refuse){checkpoint_calloc_refuse=false;return NULL;}
+ return __real_calloc(count,size);
+}
 void __wrap_free(void *pointer) {
  if(pointer && pointer==recording_retirement_watch) {
   recording_retirements++;recording_retirement_watch=NULL;
@@ -75,6 +81,7 @@ static bool exact_io(int fd,void *buffer,size_t size,bool writing){
 static size_t checks,failures;
 static size_t inspection_copies,readiness_copies,work_readiness_copies;
 static bool inspection_refusals_checked;
+static const size_t expected_answers[]={1u,3u,2u,0u,3u,2u,2u,2u,0u,2u,2u,0u,3u,7u,3u};
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
 static size_t causal_frame_views;
 static void request_causal_receipt(Atom *answer,const PrimeNeedReceipt *receipt,void *context) {
@@ -83,6 +90,23 @@ static void request_causal_receipt(Atom *answer,const PrimeNeedReceipt *receipt,
 #endif
 #define CHECK(x) do{checks++;if(!(x)){failures++;fprintf(stderr,"FAIL %u/%u %s\n",client,cut,#x);}}while(0)
 #include "native_parent_run_scope.inc"
+
+/* A checkpoint can own several arenas. Map every advertised owner and the
+ * externally borrowed syntax/space arenas before copying any payload. */
+static AtomDeepCopyArenaPair *checkpoint_arena_pairs(CettaPrimeCheckpointCopy *copy,
+ Arena *syntax,const Space *space,bool include_syntax,size_t *count_out) {
+ size_t count=cetta_prime_checkpoint_copy_arena_pair_count(copy);
+ if(!count || count>SIZE_MAX-2u)return NULL;
+ AtomDeepCopyArenaPair *pairs=calloc(count+2u,sizeof(*pairs));
+ if(!pairs)return NULL;
+ for(size_t i=0u;i<count;i++)
+  if(!cetta_prime_checkpoint_copy_arena_pair_at(copy,i,&pairs[i])) {free(pairs);return NULL;}
+ if(include_syntax)pairs[count++]=(AtomDeepCopyArenaPair){syntax,syntax};
+ if(space->universe&&space->universe->persistent_arena&&space->universe->persistent_arena!=syntax)
+  pairs[count++]=(AtomDeepCopyArenaPair){space->universe->persistent_arena,space->universe->persistent_arena};
+ *count_out=count;return pairs;
+}
+
 static void one(unsigned client,unsigned cut){
  Arena syntax;arena_init(&syntax);arena_set_hashcons(&syntax,NULL);Space space;space_init(&space);
  Registry reg;registry_init(&reg);g_registry=&reg;registry_bind(&reg,"&self",atom_space(&syntax,&space));
@@ -136,6 +160,7 @@ static void one(unsigned client,unsigned cut){
   if(eq) {
    PrimeNeedPatternRequest saved=eq->inspection;
    CettaExprIndex coordinate=saved.path[0],argument=eq->force_argument;
+   bool all_checked=true;
    for(unsigned damage=0u;damage<5u;damage++) {
     if(damage==0u)eq->inspection.demand=PRIME_NEED_PATTERN_READY;
     if(damage==1u)eq->inspection.length=0u;
@@ -144,13 +169,18 @@ static void one(unsigned client,unsigned cut){
     if(damage==4u)eq->inspection.path[0]=eq->original_call->expr.len;
     CettaContinuationStatus refused_status;
     CettaPrimeCheckpointCopy *refused=cetta_prime_checkpoint_copy_new(lib,source_atom,&refused_status);
-    CHECK(refused && refused_status==CETTA_CONTINUATION_READY);assert(refused);
-    AtomDeepCopyArenaPair owners[4];CHECK(cetta_prime_checkpoint_copy_arena_pair(refused,&owners[0]));
-    owners[1]=(AtomDeepCopyArenaPair){&syntax,&syntax};size_t owners_n=2u;
-    if(space.universe&&space.universe->persistent_arena&&space.universe->persistent_arena!=&syntax)
-     owners[owners_n++]=(AtomDeepCopyArenaPair){space.universe->persistent_arena,space.universe->persistent_arena};
+    CHECK(refused && refused_status==CETTA_CONTINUATION_READY);
+    if(!refused || refused_status!=CETTA_CONTINUATION_READY) {
+     cetta_prime_checkpoint_copy_free(refused);all_checked=false;
+     eq->inspection=saved;eq->inspection.path[0]=coordinate;eq->force_argument=argument;
+     break;
+    }
+    size_t owners_n=0u;
+    AtomDeepCopyArenaPair *owners=checkpoint_arena_pairs(refused,&syntax,&space,true,&owners_n);
+    CHECK(owners);assert(owners);
     AtomDeepCopySession *session=atom_deep_copy_session_new(owners[0].destination);assert(session);
     CHECK(atom_deep_copy_session_set_arena_map(session,owners,owners_n));
+    free(owners);
     CHECK(cetta_prime_checkpoint_copy_prepare(refused,session)!=CETTA_CONTINUATION_READY);
     const char *why=cetta_prime_checkpoint_copy_refusal(refused);
     CHECK(why && !strcmp(why,"ObservationRequestPath"));
@@ -158,23 +188,37 @@ static void one(unsigned client,unsigned cut){
     CHECK(!source->leased);
     eq->inspection=saved;eq->inspection.path[0]=coordinate;eq->force_argument=argument;
    }
-   inspection_refusals_checked=true;
+   inspection_refusals_checked=all_checked;
   }
  }
  PrimeNativeControl original=*source;
  CettaContinuationStatus status;
  CettaPrimeCheckpointCopy *copy=cetta_prime_checkpoint_copy_new(lib,source_atom,&status);
- CHECK(copy&&status==CETTA_CONTINUATION_READY);assert(copy);
+ CHECK(copy&&status==CETTA_CONTINUATION_READY);
+ if(!copy || status!=CETTA_CONTINUATION_READY) {
+  const char *blocked=NULL;
+  (void)parent_copy_quiescent_in(source,false,false,&blocked);
+  fprintf(stderr,"COPY_UNAVAILABLE %u/%u status=%u boundary=%s\n",
+   client,cut,(unsigned)status,blocked?blocked:"other");
+  cetta_prime_checkpoint_copy_free(copy);
+  goto copy_unavailable;
+ }
  CHECK(source->leased);
- AtomDeepCopyArenaPair pairs[4];CHECK(cetta_prime_checkpoint_copy_arena_pair(copy,&pairs[0]));
+ size_t pairs_n=0u;
+ AtomDeepCopyArenaPair *pairs=checkpoint_arena_pairs(copy,&syntax,&space,true,&pairs_n);
+ CHECK(pairs);assert(pairs);
  PrimeNativeControl *image=copy->image;
  AtomDeepCopySession *atoms=atom_deep_copy_session_new(pairs[0].destination);assert(atoms);
- pairs[1]=(AtomDeepCopyArenaPair){&syntax,&syntax};size_t pairs_n=2;
- if(space.universe&&space.universe->persistent_arena&&space.universe->persistent_arena!=&syntax)pairs[pairs_n++]=(AtomDeepCopyArenaPair){space.universe->persistent_arena,space.universe->persistent_arena};
  bool mapping=atom_deep_copy_session_set_arena_map(atoms,pairs,pairs_n);
+ free(pairs);
  bool copied=mapping&&cetta_prime_checkpoint_copy_prepare(copy,atoms)==CETTA_CONTINUATION_READY;
  const char *reason=cetta_prime_checkpoint_copy_refusal(copy);
  CHECK(copied);CHECK(!memcmp(&original,source,sizeof(original)));
+ if(!copied) {
+  fprintf(stderr,"COPY_UNAVAILABLE %u/%u reason=%s\n",client,cut,reason?reason:"unspecified");
+  atom_deep_copy_session_free(atoms);cetta_prime_checkpoint_copy_free(copy);
+  goto copy_unavailable;
+ }
  if(copied){
   CopyRelation relation;CHECK(copy_relation(source,image,&relation));
   for(const PrimeEvalStackFrame *f=source->frames;f;f=f->control_next) {
@@ -264,9 +308,8 @@ static void one(unsigned client,unsigned cut){
   }
   free(observed);
  }
- static const size_t expected[]={1u,3u,2u,0u,3u,2u,2u,2u,0u,2u,2u,0u,3u,7u,3u};
- CHECK(prefix.count+a.count==expected[client]);
- CHECK(prefix.count+b.count==expected[client]);
+ CHECK(prefix.count+a.count==expected_answers[client]);
+ CHECK(prefix.count+b.count==expected_answers[client]);
  if(client==3u)CHECK(pending&&!closed);
  free(events);
  printf("{\"client\":%u,\"cut\":%u,\"copied\":%s,\"reason\":\"%s\",\"prefix\":%zu,\"source_answers\":%zu,\"image_answers\":%zu,\"source_steps\":%"PRIu64",\"image_steps\":%"PRIu64",\"failures\":%zu}\n",client,cut,copied?"true":"false",reason?reason:"",prefix.count,a.count,b.count,steps,image_steps,failures);
@@ -275,6 +318,21 @@ static void one(unsigned client,unsigned cut){
  prime_need_answer_observer_changed();
 #endif
  assert(cetta_native_handle_close(lib,"prime-search",image_handle));arena_free(&a.storage);arena_free(&b.storage);arena_free(&prefix.storage);
+ cetta_library_context_free(lib);free(lib);eval_set_library_context(NULL);registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);
+ return;
+
+copy_unavailable:
+ /* A failed copy remains a failed checkpoint control. Continue only the
+  * untouched source so later clients and cuts still receive coverage. */
+ CHECK(!source->leased);
+ checkpoint_scope_run(source,3000u,&a,&syntax,client,cut);
+ CHECK(prefix.count+a.count==expected_answers[client]);
+ if(client==3u)CHECK(prime_native_control_waiting_verdict(source)&&!prime_native_control_closed(source));
+ CHECK(cetta_native_handle_close(lib,"prime-search",source_handle));
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+ g_prime_need_answer_observer=prior_observer;prime_need_answer_observer_changed();
+#endif
+ arena_free(&a.storage);arena_free(&b.storage);arena_free(&prefix.storage);
  cetta_library_context_free(lib);free(lib);eval_set_library_context(NULL);registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);
 }
 /* The array is optional, but its rows are occurrence indexed. These direct
@@ -336,6 +394,389 @@ static void return_advice_copy_cases(void) {
   arena_free(&image.storage);
  }
 }
+
+static bool checkpoint_borrowed_permit(void *context,Space *space,PettaMachineOperation operation,
+ const PettaMachineOperationView *view) {
+ (void)context;(void)space;(void)operation;(void)view;return true;
+}
+static void checkpoint_borrowed_read(void *context,SpaceReadToken token) {(void)context;(void)token;}
+static void checkpoint_borrowed_write(void *context,Space *space,uint64_t revision,uint64_t prefix) {
+ (void)context;(void)space;(void)revision;(void)prefix;
+}
+static bool checkpoint_borrowed_role(void *context,Atom *value,Atom *type,
+ const Bindings *bindings,bool *role) {
+ (void)context;(void)value;(void)type;(void)bindings;(void)role;return false;
+}
+static bool checkpoint_has_borrowed_driver(const PrimeEvalStackDriver *driver) {
+ return driver->authority_parent || driver->call_permit_parent || driver->call_permit ||
+  driver->call_permit_context || driver->observe_space_read || driver->space_read_context ||
+  driver->own_data_read || driver->own_data_published || driver->own_data_context ||
+  driver->normalization_value_role || driver->normalization_role_context;
+}
+
+/* A quiescent image must not acquire pointers to another invocation's stack.
+ * Refusing an untransportable source is allowed, but must leave it intact. */
+static void borrowed_authority_checkpoint_cases(void) {
+ for(unsigned mask=0u;mask<=28u;mask++) {
+  unsigned client=500u+mask,cut=0u;
+  Arena syntax;arena_init(&syntax);arena_set_hashcons(&syntax,NULL);
+  Space space;space_init(&space);Registry reg;registry_init(&reg);g_registry=&reg;
+  registry_bind(&reg,"&self",atom_space(&syntax,&space));
+  CettaLibraryContext *lib=malloc(sizeof(*lib));assert(lib);
+  cetta_library_context_init_for_language_profile(lib,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());
+  eval_set_library_context(lib);term_universe_set_persistent_arena(&lib->term_universe,&syntax);
+  PrimeNativeControl *source=calloc(1u,sizeof(*source));assert(source);
+  CettaSearchPolicySpec policy={.native_control=true,.all=true,.retain=true,.workers=1u};
+  CHECK(prime_native_control_init(source,&space,&syntax,parse(&syntax,"(superpose (A B))"),
+   -1,true,(CettaObservationDemand){.completion=CETTA_OBSERVATION_COMPLETE_BAG},
+   &policy,NULL,NULL,NULL));
+  PrimeEvalStackDriver ancestry={0},caller={0};SpaceReadToken read=space_read_token(&space);
+  unsigned context=0u;
+  source->driver.authority_parent=(mask<=3u && (mask&1u))?&ancestry:NULL;
+  source->driver.call_permit_parent=(mask<=3u && (mask&2u))?&caller:NULL;
+  if(mask==4u)source->driver.call_permit=checkpoint_borrowed_permit;
+  if(mask==5u)source->driver.call_permit_context=&context;
+  if(mask==6u)source->driver.observe_space_read=checkpoint_borrowed_read;
+  if(mask==7u)source->driver.space_read_context=&context;
+  if(mask==8u)source->driver.own_data_read=&read;
+  if(mask==9u)source->driver.own_data_published=checkpoint_borrowed_write;
+  if(mask==10u)source->driver.own_data_context=&context;
+  if(mask==11u)source->driver.normalization_value_role=checkpoint_borrowed_role;
+  if(mask==12u)source->driver.normalization_role_context=&context;
+  source->driver.pure_authority=true;source->pure_authority=true;
+  uint64_t id=0u;CHECK(cetta_native_handle_alloc(lib,"prime-search",source,prime_native_control_destroy,&id));
+  source->handle_id=id;
+  PrimeNativeControl initial=*source;
+  PrimeEvalStackDriver original=source->driver;
+  Atom *holder=cetta_native_handle_owned_atom(lib,&syntax,"prime-search",id);assert(holder);
+  CettaNativeHandleUse use={0};
+  if(mask==26u || mask==28u)CHECK(cetta_native_handle_acquire_owned(lib,"prime-search",holder,
+   CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use));
+  PrimeNativeRunGuard run={0};PrimeEvalStackDriver inner={.authority_parent=&source->driver},cycle={0};
+  PrimeEvalStackDriver middle={0};PrimeEvalTopGuard first_top={0},second_top={0};
+  PrimeEvalStackDriver deep[18]={0},branch={0};
+  for(size_t i=0u;i+1u<18u;i++)deep[i].authority_parent=&deep[i+1u];
+  deep[0].call_permit_parent=&branch;
+  PrimeEvalStackDriver *previous_driver=g_prime_eval_stack_driver,*previous_top=g_prime_eval_top_authority;
+  bool active=mask==13u || mask==14u || mask==18u || mask==19u || mask==25u || mask==27u;
+  if(active) {
+   g_prime_eval_stack_driver=mask==13u?&caller:NULL;g_prime_eval_top_authority=NULL;
+   prime_native_run_enter(source,&run);
+   if(mask==18u)inner.call_permit_parent=&caller;
+   if(mask==25u)inner.authority_parent=NULL;
+   if(mask==27u)source->interaction_selection=(CettaSpaceAgendaSelection *)&context;
+   if(mask==19u){g_prime_eval_stack_driver=NULL;g_prime_eval_top_authority=&inner;}
+   else g_prime_eval_stack_driver=&inner;
+  } else if(mask==17u) {
+   cycle.call_permit_parent=&cycle;g_prime_eval_stack_driver=&cycle;g_prime_eval_top_authority=NULL;
+  } else if(mask==22u) {
+   g_prime_eval_stack_driver=&deep[0];g_prime_eval_top_authority=NULL;checkpoint_calloc_refuse=true;
+  } else if(mask==24u) {
+   g_prime_eval_stack_driver=&source->driver;g_prime_eval_top_authority=NULL;
+   prime_eval_top_enter(&first_top);g_prime_eval_stack_driver=&middle;
+   prime_eval_top_enter(&second_top);
+  }
+  CettaContinuationStatus status;
+  CettaPrimeCheckpointCopy *copy=(mask==26u || mask==28u)
+   ?cetta_prime_checkpoint_copy_new_reserved(lib,holder,&status)
+   :cetta_prime_checkpoint_copy_new(lib,holder,&status);
+  if(mask==26u || mask==28u) {
+   CHECK(copy && status==CETTA_CONTINUATION_READY);assert(copy);
+   size_t count=0u;AtomDeepCopyArenaPair *pairs=checkpoint_arena_pairs(copy,&syntax,&space,true,&count);
+   CHECK(pairs);assert(pairs);
+   AtomDeepCopySession *atoms=atom_deep_copy_session_new(pairs[0].destination);assert(atoms);
+   CHECK(atom_deep_copy_session_set_arena_map(atoms,pairs,count));free(pairs);
+   CHECK(cetta_prime_checkpoint_copy_prepare(copy,atoms)==CETTA_CONTINUATION_READY);
+   atom_deep_copy_session_free(atoms);
+   PrimeNativeControl *image=copy->image;
+   if(mask==26u) {
+    source->driver.call_permit_context=&context;
+    CettaContinuationStatus replaced=cetta_prime_checkpoint_copy_replace(copy,&use);
+    CHECK(replaced==CETTA_CONTINUATION_UNSUPPORTED && copy->prepared && copy->image==image);
+    if(replaced!=CETTA_CONTINUATION_READY) {
+     CHECK(source->leased && source->driver.call_permit_context==&context);
+     source->driver.call_permit_context=NULL;
+     replaced=cetta_prime_checkpoint_copy_replace(copy,&use);
+     CHECK(replaced==CETTA_CONTINUATION_READY);
+    }
+    if(replaced==CETTA_CONTINUATION_READY) {
+     source=NULL;CHECK(cetta_native_handle_use_resource(&use)==image && image->pure_authority);
+    }
+   } else {
+    /* Isolate the failing mutation: if replace wrongly destroys an entered
+     * owner, the child exits without dereferencing its stale run guard. */
+    fflush(NULL);pid_t pid=fork();assert(pid>=0);
+    if(!pid) {
+     PrimeNativeRunGuard entered;PrimeEvalStackDriver hidden={0};
+     g_prime_eval_stack_driver=NULL;g_prime_eval_top_authority=NULL;
+     prime_native_run_enter(source,&entered);g_prime_eval_stack_driver=&hidden;
+     CettaContinuationStatus deferred=cetta_prime_checkpoint_copy_replace(copy,&use);
+     if(deferred!=CETTA_CONTINUATION_DEFERRED)_exit(1);
+     g_prime_eval_stack_driver=&source->driver;prime_native_run_leave(&entered);
+     if(!source->leased || !copy->prepared || cetta_native_handle_use_resource(&use)!=source)_exit(2);
+     if(cetta_prime_checkpoint_copy_replace(copy,&use)!=CETTA_CONTINUATION_READY ||
+        cetta_native_handle_use_resource(&use)!=image)_exit(3);
+     _exit(0);
+    }
+    int child_status=0;CHECK(waitpid(pid,&child_status,0)==pid &&
+     WIFEXITED(child_status) && WEXITSTATUS(child_status)==0);
+    CHECK(source->leased && copy->reserved && copy->prepared && copy->image==image &&
+     cetta_native_handle_use_resource(&use)==source);
+   }
+   cetta_prime_checkpoint_copy_free(copy);
+   if(source)CHECK(!source->leased && !memcmp(&initial,source,sizeof(initial)));
+   CHECK(cetta_native_handle_use_release(&use));CHECK(cetta_native_handle_close(lib,"prime-search",id));
+   cetta_library_context_free(lib);free(lib);eval_set_library_context(NULL);
+   registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);
+   continue;
+  } else if(active) {
+   CHECK(!copy && status==CETTA_CONTINUATION_DEFERRED);
+   cetta_prime_checkpoint_copy_free(copy);
+   if(mask==27u)source->interaction_selection=NULL;
+   g_prime_eval_stack_driver=&source->driver;prime_native_run_leave(&run);
+   g_prime_eval_stack_driver=previous_driver;g_prime_eval_top_authority=previous_top;
+  } else if(mask==17u) {
+   CHECK(!copy && status==CETTA_CONTINUATION_INVALIDATED);
+   cetta_prime_checkpoint_copy_free(copy);
+   g_prime_eval_stack_driver=previous_driver;g_prime_eval_top_authority=previous_top;
+  } else if(mask==22u) {
+   CHECK(!copy && status==CETTA_CONTINUATION_CAPACITY && !checkpoint_calloc_refuse);
+   checkpoint_calloc_refuse=false;cetta_prime_checkpoint_copy_free(copy);
+   g_prime_eval_stack_driver=previous_driver;g_prime_eval_top_authority=previous_top;
+  } else if(mask==24u) {
+   CHECK(!copy && status==CETTA_CONTINUATION_DEFERRED);
+   cetta_prime_checkpoint_copy_free(copy);
+   prime_eval_top_leave(&second_top);prime_eval_top_leave(&first_top);
+   g_prime_eval_stack_driver=previous_driver;g_prime_eval_top_authority=previous_top;
+  } else if(copy && status==CETTA_CONTINUATION_READY) {
+   size_t count=0u;AtomDeepCopyArenaPair *pairs=checkpoint_arena_pairs(copy,&syntax,&space,true,&count);
+   CHECK(pairs);assert(pairs);
+   AtomDeepCopySession *atoms=atom_deep_copy_session_new(pairs[0].destination);assert(atoms);
+   CHECK(atom_deep_copy_session_set_arena_map(atoms,pairs,count));free(pairs);
+   if(mask==15u)source->driver.authority_parent=&ancestry;
+   if(mask==16u)source->driver.call_permit_parent=&caller;
+   if(mask==20u)source->driver.call_permit=checkpoint_borrowed_permit;
+   if(mask==21u)source->driver.normalization_role_context=&context;
+   if(mask==23u) {
+    g_prime_eval_stack_driver=&deep[0];g_prime_eval_top_authority=NULL;checkpoint_calloc_refuse=true;
+   }
+   CettaContinuationStatus prepared=cetta_prime_checkpoint_copy_prepare(copy,atoms);
+   if(mask==23u) {
+    CHECK(prepared==CETTA_CONTINUATION_CAPACITY && !source->leased && !checkpoint_calloc_refuse);
+    checkpoint_calloc_refuse=false;g_prime_eval_stack_driver=previous_driver;g_prime_eval_top_authority=previous_top;
+   } else if(mask>=15u) {
+    CHECK(prepared==CETTA_CONTINUATION_UNSUPPORTED && !source->leased);
+    CHECK(source->driver.authority_parent==(mask==15u?&ancestry:NULL) &&
+     source->driver.call_permit_parent==(mask==16u?&caller:NULL) &&
+     source->driver.call_permit==(mask==20u?checkpoint_borrowed_permit:NULL) &&
+     source->driver.normalization_role_context==(mask==21u?&context:NULL));
+    source->driver.authority_parent=NULL;source->driver.call_permit_parent=NULL;
+    source->driver.call_permit=NULL;source->driver.normalization_role_context=NULL;
+   } else if(prepared==CETTA_CONTINUATION_READY) {
+    CHECK(!checkpoint_has_borrowed_driver(&copy->image->driver) &&
+     copy->image->driver.pure_authority && copy->image->pure_authority);
+   } else CHECK(mask!=0u && (prepared==CETTA_CONTINUATION_UNSUPPORTED ||
+    prepared==CETTA_CONTINUATION_CAPACITY || prepared==CETTA_CONTINUATION_INVALIDATED));
+   atom_deep_copy_session_free(atoms);cetta_prime_checkpoint_copy_free(copy);
+  } else {
+   CHECK(mask!=0u && mask<15u && !copy && (status==CETTA_CONTINUATION_UNSUPPORTED || status==CETTA_CONTINUATION_CAPACITY ||
+    status==CETTA_CONTINUATION_INVALIDATED));
+   cetta_prime_checkpoint_copy_free(copy);
+  }
+  CHECK(!source->leased && !memcmp(&initial,source,sizeof(initial)) &&
+   !memcmp(&source->driver,&original,sizeof(original)) &&
+   source->driver.pure_authority && source->pure_authority);
+  CHECK(cetta_native_handle_close(lib,"prime-search",id));
+  cetta_library_context_free(lib);free(lib);eval_set_library_context(NULL);
+  registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);
+ }
+ puts("Borrowed driver authority and services cannot escape in a copied checkpoint");
+}
+
+/* Disposal must not reclaim a selected control while its driver is hidden by
+ * a nested evaluator. Once the enclosing scope leaves, the same handle is
+ * still disposable. Run the destructive negative control in a child. */
+static void hidden_active_disposal_cases(void) {
+ for(unsigned mode=0u;mode<3u;mode++) {
+  unsigned client=540u+mode,cut=0u;
+  Arena syntax;arena_init(&syntax);arena_set_hashcons(&syntax,NULL);
+  Space space;space_init(&space);Registry reg;registry_init(&reg);g_registry=&reg;
+  CettaLibraryContext *lib=malloc(sizeof(*lib));assert(lib);
+  cetta_library_context_init_for_language_profile(lib,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());
+  eval_set_library_context(lib);
+  PrimeNativeControl *source=calloc(1u,sizeof(*source));assert(source);
+  CettaSearchPolicySpec policy={.native_control=true,.all=true,.retain=true,.workers=1u};
+  CHECK(prime_native_control_init(source,&space,&syntax,parse(&syntax,"(superpose (A B))"),
+   -1,true,(CettaObservationDemand){.completion=CETTA_OBSERVATION_COMPLETE_BAG},
+   &policy,NULL,NULL,NULL));
+  source->resume_choice=calloc(1u,sizeof(*source->resume_choice));assert(source->resume_choice);
+  if(mode==2u) {
+   source->source_services=prime_native_source_services_new();assert(source->source_services);
+  }
+  uint64_t id=0u;CHECK(cetta_native_handle_alloc(lib,"prime-search",source,prime_native_control_destroy,&id));
+  source->handle_id=id;
+  Atom *holder=cetta_native_handle_owned_atom(lib,&syntax,"prime-search",id);assert(holder);
+  Atom *dispose=atom_expr2(&syntax,atom_symbol(&syntax,"interaction:dispose"),holder);
+  Bindings env;bindings_init(&env);OutcomeSet out;outcome_set_init(&out);
+  fflush(NULL);pid_t pid=fork();assert(pid>=0);
+  if(!pid) {
+   PrimeEvalStackDriver hidden={0};PrimeNativeRunGuard run={0};PrimeEvalTopGuard top={0};
+   if(!mode)prime_native_run_enter(source,&run);
+   else if(mode==1u) {g_prime_eval_stack_driver=&source->driver;prime_eval_top_enter(&top);}
+   else atomic_store_explicit(&source->source_services->active,true,memory_order_release);
+   g_prime_eval_stack_driver=&hidden;g_prime_eval_top_authority=NULL;
+   if(prime_native_interaction_dispatch(&space,&syntax,dispose,-1,&env,&out) ||
+      out.len || cetta_native_handle_get_owned(lib,"prime-search",holder)!=source)_exit(1);
+   if(!mode)prime_native_run_leave(&run);
+   else if(mode==1u) {prime_eval_top_leave(&top);g_prime_eval_stack_driver=NULL;}
+   else {atomic_store_explicit(&source->source_services->active,false,memory_order_release);
+    g_prime_eval_stack_driver=NULL;}
+   if(!prime_native_interaction_dispatch(&space,&syntax,dispose,-1,&env,&out) ||
+      out.len!=1u || cetta_native_handle_get_owned(lib,"prime-search",holder))_exit(2);
+   _exit(0);
+  }
+  int child_status=0;CHECK(waitpid(pid,&child_status,0)==pid &&
+   WIFEXITED(child_status) && WEXITSTATUS(child_status)==0);
+  CHECK(cetta_native_handle_get_owned(lib,"prime-search",holder)==source);
+  CHECK(cetta_native_handle_close(lib,"prime-search",id));
+  outcome_set_free(&out);bindings_free(&env);cetta_library_context_free(lib);free(lib);
+  eval_set_library_context(NULL);registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);
+ }
+ puts("Hidden active controls survive disposal until their scopes leave");
+}
+
+/* A prepared replacement must retain its original owner while one of that
+ * owner's source services is entered, and allow retry after the service exits. */
+static void active_service_replacement_case(void) {
+ unsigned client=550u,cut=0u;
+ Arena syntax;arena_init(&syntax);arena_set_hashcons(&syntax,NULL);
+ Space space;space_init(&space);Registry reg;registry_init(&reg);g_registry=&reg;
+ CettaLibraryContext *lib=malloc(sizeof(*lib));assert(lib);
+ cetta_library_context_init_for_language_profile(lib,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());
+ eval_set_library_context(lib);term_universe_set_persistent_arena(&lib->term_universe,&syntax);
+ PrimeNativeControl *source=calloc(1u,sizeof(*source));assert(source);
+ CettaSearchPolicySpec policy={.native_control=true,.all=true,.retain=true,.workers=1u};
+ CHECK(prime_native_control_init(source,&space,&syntax,parse(&syntax,"(superpose (A B))"),
+  -1,true,(CettaObservationDemand){.completion=CETTA_OBSERVATION_COMPLETE_BAG},
+  &policy,NULL,NULL,NULL));
+ source->source_services=prime_native_source_services_new();assert(source->source_services);
+ uint64_t id=0u;CHECK(cetta_native_handle_alloc(lib,"prime-search",source,prime_native_control_destroy,&id));
+ source->handle_id=id;
+ Atom *holder=cetta_native_handle_owned_atom(lib,&syntax,"prime-search",id);assert(holder);
+ CettaNativeHandleUse use={0};CHECK(cetta_native_handle_acquire_owned(lib,"prime-search",holder,
+  CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use));
+ CettaContinuationStatus status;
+ CettaPrimeCheckpointCopy *copy=cetta_prime_checkpoint_copy_new_reserved(lib,holder,&status);
+ CHECK(copy && status==CETTA_CONTINUATION_READY);assert(copy);
+ size_t count=0u;AtomDeepCopyArenaPair *pairs=checkpoint_arena_pairs(copy,&syntax,&space,true,&count);
+ CHECK(pairs);assert(pairs);
+ AtomDeepCopySession *atoms=atom_deep_copy_session_new(pairs[0].destination);assert(atoms);
+ CHECK(atom_deep_copy_session_set_arena_map(atoms,pairs,count));free(pairs);
+ CHECK(cetta_prime_checkpoint_copy_prepare(copy,atoms)==CETTA_CONTINUATION_READY);
+ atom_deep_copy_session_free(atoms);
+ PrimeNativeControl *image=copy->image;
+ fflush(NULL);pid_t pid=fork();assert(pid>=0);
+ if(!pid) {
+  atomic_store_explicit(&source->source_services->active,true,memory_order_release);
+  if(cetta_prime_checkpoint_copy_replace(copy,&use)!=CETTA_CONTINUATION_DEFERRED)_exit(1);
+  if(!source->leased || !copy->reserved || !copy->prepared || copy->image!=image ||
+     cetta_native_handle_use_resource(&use)!=source)_exit(2);
+  atomic_store_explicit(&source->source_services->active,false,memory_order_release);
+  if(cetta_prime_checkpoint_copy_replace(copy,&use)!=CETTA_CONTINUATION_READY ||
+     cetta_native_handle_use_resource(&use)!=image)_exit(3);
+  _exit(0);
+ }
+ int child_status=0;CHECK(waitpid(pid,&child_status,0)==pid &&
+  WIFEXITED(child_status) && WEXITSTATUS(child_status)==0);
+ CHECK(copy->reserved && copy->prepared && copy->image==image && source->leased);
+ cetta_prime_checkpoint_copy_free(copy);CHECK(!source->leased);
+ CHECK(cetta_native_handle_use_release(&use));CHECK(cetta_native_handle_close(lib,"prime-search",id));
+ cetta_library_context_free(lib);free(lib);eval_set_library_context(NULL);
+ registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);
+ puts("Prepared replacement waits for an active source service");
+}
+
+/* A hidden active owner must not lose its history or acquire a second
+ * retained Resume cursor. Both operations become available after it leaves. */
+static void hidden_active_history_and_resume_cases(void) {
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+ const unsigned operations=2u;
+#else
+ const unsigned operations=1u;
+#endif
+ for(unsigned operation=0u;operation<operations;operation++)for(unsigned mode=0u;mode<3u;mode++) {
+  unsigned client=560u+3u*operation+mode,cut=0u;
+  Arena syntax;arena_init(&syntax);arena_set_hashcons(&syntax,NULL);
+  Space space;space_init(&space);Registry reg;registry_init(&reg);g_registry=&reg;
+  CettaLibraryContext *lib=malloc(sizeof(*lib));assert(lib);
+  cetta_library_context_init_for_language_profile(lib,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());
+  eval_set_library_context(lib);term_universe_set_persistent_arena(&lib->term_universe,&syntax);
+  PrimeNativeControl *source=calloc(1u,sizeof(*source));assert(source);
+  CettaSearchPolicySpec policy={.native_control=true,.all=true,.retain=true,.workers=1u};
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+  if(operation)policy.history=(PrimeNativeHistorySpec){.enabled=true,.selections=4u,
+      .nodes=16u,.bytes=4096u,.owners=8u};
+#endif
+  CHECK(prime_native_control_init(source,&space,&syntax,parse(&syntax,"(superpose (A B))"),
+   -1,true,(CettaObservationDemand){.completion=CETTA_OBSERVATION_COMPLETE_BAG},
+   &policy,NULL,NULL,NULL));
+  if(mode==2u) {
+   source->source_services=prime_native_source_services_new();assert(source->source_services);
+  }
+  uint64_t id=0u;CHECK(cetta_native_handle_alloc(lib,"prime-search",source,prime_native_control_destroy,&id));
+  source->handle_id=id;
+  Atom *holder=cetta_native_handle_owned_atom(lib,&syntax,"prime-search",id);assert(holder);
+  Atom *fields[]={atom_symbol(&syntax,"interaction:choices"),holder,
+      atom_symbol(&syntax,"Resume"),atom_int(&syntax,1)};
+  Atom *choices=atom_expr(&syntax,fields,4u);assert(choices);
+  Bindings env;bindings_init(&env);OutcomeSet out;outcome_set_init(&out);
+  fflush(NULL);pid_t pid=fork();assert(pid>=0);
+  if(!pid) {
+   PrimeEvalStackDriver hidden={0};PrimeNativeRunGuard run={0};PrimeEvalTopGuard top={0};
+   if(!mode)prime_native_run_enter(source,&run);
+   else if(mode==1u) {g_prime_eval_stack_driver=&source->driver;prime_eval_top_enter(&top);}
+   else atomic_store_explicit(&source->source_services->active,true,memory_order_release);
+   g_prime_eval_stack_driver=&hidden;g_prime_eval_top_authority=NULL;
+   if(!operation) {
+    if(!prime_native_interaction_dispatch(&space,&syntax,choices,-1,&env,&out) ||
+       out.len!=1u || out.items[0].atom!=choices || source->leased)_exit(1);
+   }
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+   else {
+    const char *refusal=NULL;
+    if(prime_checkpoint_forget_recording(holder,1u,&refusal)!=CETTA_CONTINUATION_DEFERRED ||
+       source->history.forgotten || !source->history.group)_exit(2);
+   }
+#endif
+   if(!mode)prime_native_run_leave(&run);
+   else if(mode==1u) {prime_eval_top_leave(&top);g_prime_eval_stack_driver=NULL;}
+   else {atomic_store_explicit(&source->source_services->active,false,memory_order_release);
+    g_prime_eval_stack_driver=NULL;}
+   if(!operation) {
+    if(!prime_native_interaction_dispatch(&space,&syntax,choices,-1,&env,&out) ||
+       out.len!=2u || !out.items[1].atom || out.items[1].atom->kind!=ATOM_EXPR ||
+       !out.items[1].atom->expr.len ||
+       !atom_is_symbol(out.items[1].atom->expr.elems[0],"InteractionChoices") || !source->leased)_exit(3);
+   }
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+   else {
+    const char *refusal=NULL;
+    if(prime_checkpoint_forget_recording(holder,1u,&refusal)!=CETTA_CONTINUATION_READY ||
+       !source->history.forgotten)_exit(4);
+   }
+#endif
+   _exit(0);
+  }
+  int child_status=0;CHECK(waitpid(pid,&child_status,0)==pid &&
+   WIFEXITED(child_status) && WEXITSTATUS(child_status)==0);
+  CHECK(!source->leased && cetta_native_handle_get_owned(lib,"prime-search",holder)==source);
+  CHECK(cetta_native_handle_close(lib,"prime-search",id));
+  outcome_set_free(&out);bindings_free(&env);cetta_library_context_free(lib);free(lib);
+  eval_set_library_context(NULL);registry_free(&reg);g_registry=NULL;space_free(&space);arena_free(&syntax);
+ }
+ puts("Hidden active owners retain history and Resume authority until their scopes leave");
+}
+
 /* A queued foreign service owns a live cursor and its creating driver. A
  * refused capture must neither share nor cancel either allocation. */
 static void opaque_service_copy_cases(void) {
@@ -440,12 +881,9 @@ static void forgetting_recorded_parent(bool weighted, bool replace) {
   :cetta_prime_checkpoint_copy_new(lib,source_token,&status);
  CHECK(copy&&status==CETTA_CONTINUATION_READY);assert(copy);
  PrimeNativeControl *image=copy->image;
- size_t count=cetta_prime_checkpoint_copy_arena_pair_count(copy);
- AtomDeepCopyArenaPair *pairs=calloc(count+2u,sizeof(*pairs));assert(pairs);
- for(size_t i=0u;i<count;i++)CHECK(cetta_prime_checkpoint_copy_arena_pair_at(copy,i,&pairs[i]));
- pairs[count++]=(AtomDeepCopyArenaPair){&syntax,&syntax};
- if(space.universe&&space.universe->persistent_arena&&space.universe->persistent_arena!=&syntax)
-  pairs[count++]=(AtomDeepCopyArenaPair){space.universe->persistent_arena,space.universe->persistent_arena};
+ size_t count=0u;
+ AtomDeepCopyArenaPair *pairs=checkpoint_arena_pairs(copy,&syntax,&space,true,&count);
+ CHECK(pairs);assert(pairs);
  AtomDeepCopySession *atoms=atom_deep_copy_session_new(&image->storage);assert(atoms);
  CHECK(atom_deep_copy_session_set_arena_map(atoms,pairs,count)&&prime_need_recording_copy_forget(atoms));
  status=cetta_prime_checkpoint_copy_prepare(copy,atoms);
@@ -517,7 +955,19 @@ static void forgetting_recorded_parent(bool weighted, bool replace) {
 }
 #endif
 
-int main(void){SymbolTable syms;symbol_table_init(&syms);symbol_table_init_builtins(&syms,&g_builtin_syms);g_symbols=&syms;VarInternTable vars;var_intern_init(&vars);g_var_intern=&vars;g_hashcons=NULL;
+int main(int argc,char **argv){SymbolTable syms;symbol_table_init(&syms);symbol_table_init_builtins(&syms,&g_builtin_syms);g_symbols=&syms;VarInternTable vars;var_intern_init(&vars);g_var_intern=&vars;g_hashcons=NULL;
+ if(argc==2&&!strcmp(argv[1],"--borrowed-authority")) {
+  borrowed_authority_checkpoint_cases();
+  hidden_active_disposal_cases();
+  active_service_replacement_case();
+  hidden_active_history_and_resume_cases();
+  eval_match_decision_cache_free_for_current_thread();var_intern_free(&vars);g_var_intern=NULL;
+  symbol_table_free(&syms);g_symbols=NULL;printf("CHECKS %zu FAILURES %zu\n",checks,failures);return failures?1:0;
+ }
+ borrowed_authority_checkpoint_cases();
+ hidden_active_disposal_cases();
+ active_service_replacement_case();
+ hidden_active_history_and_resume_cases();
  return_advice_copy_cases();
  opaque_service_copy_cases();
  const unsigned cuts[]={0,1,3,7,13,19,31,49,79,149,163,401};
@@ -525,7 +975,8 @@ int main(void){SymbolTable syms;symbol_table_init(&syms);symbol_table_init_built
  for(unsigned cut=80u;cut<=128u;cut+=4u)one(12u,cut);
  printf("INSPECTION_COPIES %zu CURRENT_READINESS %zu WORK_READINESS %zu\n",
   inspection_copies,readiness_copies,work_readiness_copies);
- assert(inspection_copies>0u && readiness_copies>0u && work_readiness_copies>0u && inspection_refusals_checked);
+ {unsigned client=999u,cut=0u;
+  CHECK(inspection_copies>0u && readiness_copies>0u && work_readiness_copies>0u && inspection_refusals_checked);}
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
  printf("CAUSAL_FRAME_VIEWS %zu\n",causal_frame_views);
  assert(causal_frame_views>0u);
@@ -580,12 +1031,12 @@ static void lifecycle_cases(void) {
    ?cetta_prime_checkpoint_copy_new_reserved(lib,handle,&status)
    :cetta_prime_checkpoint_copy_new(lib,handle,&status);CHECK(copy&&status==CETTA_CONTINUATION_READY);assert(copy);
   CHECK(source->leased);CHECK(!cetta_prime_checkpoint_copy_new(lib,handle,&status)&&status==CETTA_CONTINUATION_DEFERRED);
-  AtomDeepCopyArenaPair pairs[3];CHECK(cetta_prime_checkpoint_copy_arena_pair(copy,&pairs[0]));
-  pairs[1]=(AtomDeepCopyArenaPair){&syntax,&syntax};size_t count=2u;
-  if(space.universe&&space.universe->persistent_arena&&space.universe->persistent_arena!=&syntax)pairs[count++]=(AtomDeepCopyArenaPair){space.universe->persistent_arena,space.universe->persistent_arena};
+  size_t count=0u;
+  AtomDeepCopyArenaPair *pairs=checkpoint_arena_pairs(copy,&syntax,&space,mode!=6u,&count);
+  CHECK(pairs);assert(pairs);
   AtomDeepCopySession *atoms=atom_deep_copy_session_new(pairs[0].destination);assert(atoms);
-  if(mode==6u)pairs[1]=pairs[--count];
   if(mode!=1u)CHECK(atom_deep_copy_session_set_arena_map(atoms,pairs,count));
+  free(pairs);
   if(mode==7u) {
    arena_init(&source->driver.prepared_pure_cache.execution_scratch);
    source->driver.prepared_pure_cache.execution_scratch_ready=true;

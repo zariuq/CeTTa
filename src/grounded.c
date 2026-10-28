@@ -6,6 +6,7 @@
 #include "eval.h"
 #include "he_typing.h"
 #include "petta_semantics.h"
+#include "prime_regular_pattern.h"
 #include "prime_semantics.h"
 #include "match.h"
 #include "native_sha256.h"
@@ -1200,10 +1201,11 @@ static bool grounded_current_language_is_petta(void) {
  * bodies. Projection keeps that syntax held; it does not activate its body.
  * This is the same role propagated from an explicitly held operand. */
 static bool grounded_projection_holds_syntax(Arena *arena, const Atom *value) {
-    return atom_prime_held_is(value) ||
-        (eval_current_language_id && eval_current_language_id() == CETTA_LANGUAGE_PRIME &&
-         atom_prime_template_own_hidden(value) &&
-         prime_semantics_is_authored_lambda(arena, (Atom *)value));
+    if(atom_prime_held_is(value))return true;
+    if(!eval_current_language_id || eval_current_language_id()!=CETTA_LANGUAGE_PRIME ||
+       !atom_prime_template_own_hidden(value))return false;
+    CettaPrimeLambdaTelescopeV1 telescope;
+    return cetta_prime_lambda_telescope_v1(arena,(Atom *)value,&telescope);
 }
 
 /* The exact-integer operation an integer spelling names in this dialect.

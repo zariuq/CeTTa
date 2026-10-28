@@ -4775,6 +4775,140 @@ static void test_program_case_safety_projection(
     space_free(&space);
 }
 
+static void test_program_safety_foreign_callability(
+        TermUniverse *universe, Arena *arena) {
+    PettaProgram *program = petta_program_new();
+    assert(program && petta_program_enable_callability_refresh(program));
+    Space home, foreign;
+    space_init_with_universe(&home, universe);
+    space_init_with_universe(&foreign, universe);
+    assert(petta_program_synchronize_space(program, &home));
+    assert(petta_program_synchronize_space(program, &foreign));
+    add_compiled_program_equation(program, &home, arena,
+        "(= (cache-foreign-caller) (cache-foreign-future 1))");
+    SymbolId caller = symbol_intern_cstr(g_symbols, "cache-foreign-caller");
+    assert(petta_program_relation_safety(program, &home, caller, 0u) ==
+           PETTA_RELATION_SAFETY_STATIC);
+    PettaProgramRevisionView *view = petta_program_revision_view_capture(program, &home);
+    assert(view);
+
+    /* The home equations do not change, but their callability can change
+     * when a different Space makes a previously inert head callable. */
+    Atom *foreign_rule = add_compiled_program_equation(program, &foreign, arena,
+        "(= (cache-foreign-future $x) (println! $x))");
+    cetta_shared_transition_scope_enter();
+    assert(petta_program_relation_safety(program, &home, caller, 0u) ==
+           PETTA_RELATION_SAFETY_UNSAFE);
+    cetta_shared_transition_scope_leave();
+    assert(petta_program_relation_safety(program, &home, caller, 0u) ==
+           PETTA_RELATION_SAFETY_UNSAFE);
+    cetta_shared_transition_scope_enter();
+    assert(petta_program_relation_safety(program, &home, caller, 0u) ==
+           PETTA_RELATION_SAFETY_UNSAFE);
+    cetta_shared_transition_scope_leave();
+
+    assert(space_remove(&foreign, foreign_rule));
+    petta_program_note_remove_one(program, &foreign, foreign_rule);
+    assert(petta_program_relation_safety(program, &home, caller, 0u) ==
+           PETTA_RELATION_SAFETY_STATIC);
+
+    /* A temporarily unavailable current view must not cache a permanent
+     * unsafe answer for a later, fully prepared pure relation. */
+    add_compiled_program_equation(program, &home, arena,
+        "(= (cache-late-pure) 11)");
+    SymbolId late = symbol_intern_cstr(g_symbols, "cache-late-pure");
+    cetta_shared_transition_scope_enter();
+    assert(petta_program_relation_safety(program, &home, late, 0u) ==
+           PETTA_RELATION_SAFETY_UNSAFE);
+    cetta_shared_transition_scope_leave();
+    PettaProgramRevisionView *fresh = petta_program_revision_view_capture(program, &home);
+    assert(fresh);
+    cetta_shared_transition_scope_enter();
+    assert(petta_program_relation_safety(program, &home, late, 0u) ==
+           PETTA_RELATION_SAFETY_STATIC);
+    cetta_shared_transition_scope_leave();
+
+    /* An independent data-only Space adds no callable head. Its registration
+     * and retirement must not turn the already-certified pure call into a
+     * refusal. */
+    Space unrelated;
+    space_init_with_universe(&unrelated, universe);
+    space_add(&unrelated,parse_one(arena,"(cache-unrelated-data 7)"));
+    assert(petta_program_synchronize_space(program, &unrelated));
+    cetta_shared_transition_scope_enter();
+    assert(petta_program_relation_safety(program, &home, late, 0u) ==
+           PETTA_RELATION_SAFETY_STATIC);
+    cetta_shared_transition_scope_leave();
+    petta_program_forget_space(program, &unrelated);
+    space_free(&unrelated);
+    cetta_shared_transition_scope_enter();
+    assert(petta_program_relation_safety(program, &home, late, 0u) ==
+           PETTA_RELATION_SAFETY_STATIC);
+    cetta_shared_transition_scope_leave();
+    petta_program_revision_view_free(fresh);
+    petta_program_revision_view_free(view);
+    petta_program_free(program);
+    space_free(&foreign);
+    space_free(&home);
+    puts("PASS: safety accounts for callability changes in another Space");
+}
+
+typedef struct {
+    PettaProgram *program;
+    Space *spaces;
+    SymbolId *heads;
+    const PettaRelationSafety *expected;
+    unsigned head_count;
+    pthread_barrier_t barrier;
+    bool reader_ok, writer_ok;
+} SafetyCatalogConcurrent;
+
+static void *test_safety_catalog_reader(void *raw) {
+    SafetyCatalogConcurrent *test = raw;
+    cetta_shared_transition_scope_enter();
+    pthread_barrier_wait(&test->barrier);
+    test->reader_ok = true;
+    for (unsigned pass = 0u; pass < 2u; pass++) {
+        for (unsigned step = 0u; step < test->head_count; step++) {
+            unsigned i = (step * 73u + pass * 17u) % test->head_count;
+            for (unsigned s = 0u; s < 2u; s++) {
+                for (unsigned arity = 1u; arity <= 2u; arity++) {
+                    PettaRelationSafety want = test->expected[(i + s + arity - 1u) % 3u];
+                    if (petta_program_relation_safety(test->program, &test->spaces[s],
+                                                      test->heads[i], arity) != want)
+                        test->reader_ok = false;
+                }
+            }
+            Atom **annotations = NULL;
+            size_t annotation_count = 0u;
+            if (!petta_program_type_annotation_snapshot(test->program,
+                    &annotations, &annotation_count) || annotation_count != 0u)
+                test->reader_ok = false;
+            free(annotations);
+        }
+    }
+    cetta_shared_transition_scope_leave();
+    return NULL;
+}
+
+static void *test_safety_catalog_writer(void *raw) {
+    SafetyCatalogConcurrent *test = raw;
+    cetta_shared_transition_scope_enter();
+    pthread_barrier_wait(&test->barrier);
+    test->writer_ok = true;
+    for (unsigned i = 0u; i < 2000u; i++) {
+        Space scratch;
+        space_init(&scratch);
+        if (!petta_program_synchronize_space(test->program, &scratch))
+            test->writer_ok = false;
+        petta_program_inferred_signatures_reset(test->program, &scratch);
+        petta_program_forget_space(test->program, &scratch);
+        space_free(&scratch);
+    }
+    cetta_shared_transition_scope_leave();
+    return NULL;
+}
+
 static void test_program_safety_cache_scope(
         TermUniverse *universe, Arena *arena) {
     enum { HEADS = 192 };
@@ -4785,7 +4919,7 @@ static void test_program_safety_cache_scope(
         PETTA_RELATION_SAFETY_GUARDED_DYNAMIC,
     };
     PettaProgram *program = petta_program_new();
-    assert(program);
+    assert(program && petta_program_enable_analysis(program));
     Space spaces[2];
     SymbolId heads[HEADS];
     for (unsigned s = 0u; s < 2u; s++) {
@@ -4821,6 +4955,39 @@ static void test_program_safety_cache_scope(
             }
         }
     }
+
+    /* The same answers must survive cache eviction while other evaluators
+     * can observe the program. The views keep the source plans available;
+     * a cache miss must not turn a pure relation into an authority refusal. */
+    PettaProgramRevisionView *views[2];
+    for (unsigned s = 0u; s < 2u; s++) {
+        views[s] = petta_program_revision_view_capture(program, &spaces[s]);
+        assert(views[s]);
+    }
+    cetta_shared_transition_scope_enter();
+    for (unsigned step = 0u; step < HEADS; step++) {
+        unsigned i = (step * 73u + 31u) % HEADS;
+        for (unsigned s = 0u; s < 2u; s++) {
+            for (unsigned arity = 1u; arity <= 2u; arity++) {
+                PettaRelationSafety want = expected[(i + s + arity - 1u) % 3u];
+                assert(petta_program_relation_safety(program, &spaces[s],
+                                                    heads[i], arity) == want);
+            }
+        }
+    }
+    cetta_shared_transition_scope_leave();
+    SafetyCatalogConcurrent concurrent = {.program=program, .spaces=spaces,
+        .heads=heads, .expected=expected, .head_count=HEADS};
+    assert(pthread_barrier_init(&concurrent.barrier, NULL, 2u) == 0);
+    pthread_t reader, writer;
+    assert(pthread_create(&reader, NULL, test_safety_catalog_reader, &concurrent) == 0);
+    assert(pthread_create(&writer, NULL, test_safety_catalog_writer, &concurrent) == 0);
+    assert(pthread_join(reader, NULL) == 0);
+    assert(pthread_join(writer, NULL) == 0);
+    assert(pthread_barrier_destroy(&concurrent.barrier) == 0);
+    assert(concurrent.reader_ok && concurrent.writer_ok);
+    for (unsigned s = 0u; s < 2u; s++)
+        petta_program_revision_view_free(views[s]);
 
     Space *space = &spaces[0];
     SymbolId changing = symbol_intern_cstr(g_symbols, "cache-changing");
@@ -15289,8 +15456,9 @@ int main(int argc, char **argv) {
     bool resume_only = argc == 2 && strcmp(argv[1], "--resume-contract") == 0;
     bool arity_only = argc == 2 && strcmp(argv[1], "--arity-contract") == 0;
     bool native_only = argc == 2 && strcmp(argv[1], "--native-return") == 0;
-    if (argc != 1 && !worker_only && !resume_only && !arity_only && !native_only) {
-        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--native-return]\n", stderr);
+    bool safety_only = argc == 2 && strcmp(argv[1], "--safety-catalog") == 0;
+    if (argc != 1 && !worker_only && !resume_only && !arity_only && !native_only && !safety_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--native-return|--safety-catalog]\n", stderr);
         return 2;
     }
     Arena persistent;
@@ -15313,6 +15481,12 @@ int main(int argc, char **argv) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    if (safety_only) {
+        test_program_case_safety_projection(&universe, &persistent);
+        test_program_safety_foreign_callability(&universe, &persistent);
+        test_program_safety_cache_scope(&universe, &persistent);
+        goto release_owners;
+    }
     if (native_only) {
         test_compiled_native_returns(&universe, &persistent);
     test_entered_service_returns(&universe, &persistent);
@@ -15366,6 +15540,7 @@ int main(int argc, char **argv) {
     test_compiled_host_read_observations(&universe, &persistent);
     test_compiled_terminal_host(&universe, &persistent);
     test_program_case_safety_projection(&universe, &persistent);
+    test_program_safety_foreign_callability(&universe, &persistent);
     test_program_safety_cache_scope(&universe, &persistent);
     frame_prefix_transitions(&persistent);
     space_init_with_universe(&space, &universe);

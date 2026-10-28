@@ -4290,6 +4290,108 @@ static void reader_context_cases(Arena *arena) {
         "deep version retirement releases its lineage and current reader completely");
 }
 
+typedef struct {
+    size_t visits,fail_on;
+    uint64_t previous;
+    bool keep_all,clear_all;
+    CettaMatchCompletion refusal;
+} ReaderClearFixture;
+static CettaMatchCompletion reader_clear_selected(uint64_t key,
+        const PrimeNeedReaderValue *value,void *raw,bool *clear) {
+    ReaderClearFixture *selection=raw;
+    CHECK(value->value && key>selection->previous,"bulk clear visits live keys once in order");
+    selection->previous=key;selection->visits++;
+    if(selection->fail_on==selection->visits)return selection->refusal;
+    *clear=selection->clear_all || (!selection->keep_all && (key==11u || key==33u));
+    return CETTA_MATCH_MATCHED;
+}
+
+static void reader_context_batch_cases(void) {
+    ReaderOwnerFixture owners[4]={{.references=1u},{.references=1u},{.references=1u},{.references=1u}};
+    PrimeNeedReaderValue values[4];
+    PrimeNeedReaderContext *base=NULL,*serial=NULL,*batch=NULL,*out=NULL,*recipient=NULL;
+    PrimeNeedReaderContext *imported=NULL,*foreign=NULL,*conflict=NULL,*retired=NULL;
+    bool ready=true;
+    for(size_t i=0u;i<4u;i++) {
+        values[i]=(PrimeNeedReaderValue){&owners[i],&reader_owner_ops};
+        ready=ready && prime_need_reader_context_update(base,11u*(i+1u),&values[i],&base)==CETTA_MATCH_MATCHED;
+    }
+    CHECK(ready,"prepare ordered reader map for bulk retirement");
+    if(!ready)goto done;
+    ReaderClearFixture keep={.keep_all=true};
+    CHECK(prime_need_reader_context_clear_if(base,reader_clear_selected,&keep,&out)==CETTA_MATCH_MATCHED &&
+        out==base && keep.visits==4u,"no-op bulk clear preserves exact context identity");
+    prime_need_reader_context_release(out);out=NULL;
+    for(unsigned refusal=0u;refusal<2u;refusal++) {
+        prime_need_reader_context_retain(base);out=base;
+        unsigned before[4];for(size_t i=0u;i<4u;i++)before[i]=owners[i].references;
+        ReaderClearFixture decline={.fail_on=3u,
+            .refusal=refusal?CETTA_MATCH_REFUTED:CETTA_MATCH_INCOMPLETE};
+        CHECK(prime_need_reader_context_clear_if(base,reader_clear_selected,&decline,&out)==decline.refusal &&
+            out==base && decline.visits==3u,"partial bulk refusal preserves the owned output version");
+        for(size_t i=0u;i<4u;i++)CHECK(owners[i].references==before[i],"bulk refusal rolls back retained prefix owners");
+        prime_need_reader_context_release(out);out=NULL;
+    }
+    prime_need_reader_context_retain(base);out=base;
+    owners[3].refuse=true;
+    ReaderClearFixture refused_retain={0};
+    CHECK(prime_need_reader_context_clear_if(base,reader_clear_selected,&refused_retain,&out)==CETTA_MATCH_INCOMPLETE &&
+        out==base,"retained-prefix refusal cannot publish a partial retirement");
+    owners[3].refuse=false;
+    prime_need_reader_context_release(out);out=NULL;
+    for(size_t i=0u;i<4u;i++)CHECK(owners[i].references==2u,"failed bulk preparation leaves only base shares");
+    ReaderClearFixture selected={0};
+    CHECK(prime_need_reader_context_clear_if(base,reader_clear_selected,&selected,&batch)==CETTA_MATCH_MATCHED &&
+        selected.visits==4u && !reader_context_has(batch,11u,&owners[0]) &&
+        !reader_context_has(batch,33u,&owners[2]) && reader_context_has(batch,22u,&owners[1]) &&
+        reader_context_has(batch,44u,&owners[3]),"bulk clear keeps the selected complement without touching base");
+    CHECK(reader_context_has(base,11u,&owners[0]) && reader_context_has(base,33u,&owners[2]),
+        "bulk retirement preserves independently retained source versions");
+    CHECK(prime_need_reader_context_update(base,11u,NULL,&serial)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(serial,33u,NULL,&serial)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_merge(serial,batch,&out)==CETTA_MATCH_MATCHED &&
+        !reader_context_has(out,11u,&owners[0]) && !reader_context_has(out,33u,&owners[2]) &&
+        reader_context_has(out,22u,&owners[1]) && reader_context_has(out,44u,&owners[3]),
+        "batch and sequential retirement have the same merge-visible map");
+    prime_need_reader_context_release(out);out=NULL;
+    CHECK(prime_need_reader_context_merge(base,batch,&out)==CETTA_MATCH_MATCHED && out==batch,
+        "batch lineage remains an actual descendant of its source");
+    prime_need_reader_context_release(out);out=NULL;
+    CHECK(prime_need_reader_context_update(NULL,11u,&values[0],&foreign)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_merge(batch,foreign,&out)==CETTA_MATCH_REFUTED && !out,
+        "batch tombstones prevent sibling resurrection of equal retired readers");
+    CHECK(prime_need_reader_context_update(base,22u,&values[0],&recipient)==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_import(base,batch,recipient,&imported)==CETTA_MATCH_MATCHED &&
+        reader_context_has(imported,22u,&owners[0]) && reader_context_has(imported,44u,&owners[3]) &&
+        !reader_context_has(imported,11u,&owners[0]) && !reader_context_has(imported,33u,&owners[2]),
+        "bulk import installs retirements while preserving unrelated recipient progress");
+    PrimeNeedReaderContext *identity=imported;
+    CHECK(prime_need_reader_context_import(base,batch,imported,&imported)==CETTA_MATCH_MATCHED && imported==identity,
+        "repeat bulk import retains exact idempotent progress identity");
+    CHECK(prime_need_reader_context_update(base,11u,&values[3],&conflict)==CETTA_MATCH_MATCHED,
+        "prepare recipient conflicting with a batch retirement");
+    prime_need_reader_context_retain(base);out=base;
+    CHECK(prime_need_reader_context_import(base,batch,conflict,&out)==CETTA_MATCH_REFUTED && out==base,
+        "conflicting batch import leaves the owned output unchanged");
+    prime_need_reader_context_release(out);out=NULL;
+    ReaderClearFixture all={.clear_all=true};
+    CHECK(prime_need_reader_context_clear_if(batch,reader_clear_selected,&all,&retired)==CETTA_MATCH_MATCHED &&
+        all.visits==2u && prime_need_reader_context_values_absent(retired),
+        "existing tombstones survive a later clear and are not revisited");
+    ReaderClearFixture unexpected={.fail_on=1u,.refusal=CETTA_MATCH_INCOMPLETE};
+    CHECK(prime_need_reader_context_clear_if(retired,reader_clear_selected,&unexpected,&out)==CETTA_MATCH_MATCHED &&
+        out==retired && unexpected.visits==0u,"an already retired map is an allocation-free identity");
+    prime_need_reader_context_release(out);out=NULL;
+done:
+    prime_need_reader_context_release(base);prime_need_reader_context_release(serial);
+    prime_need_reader_context_release(batch);prime_need_reader_context_release(out);
+    prime_need_reader_context_release(recipient);prime_need_reader_context_release(imported);
+    prime_need_reader_context_release(foreign);prime_need_reader_context_release(conflict);
+    prime_need_reader_context_release(retired);
+    for(size_t i=0u;i<4u;i++)CHECK(owners[i].references==1u && owners[i].retains==owners[i].releases,
+        "bulk retirement and import release every owned reader share once");
+}
+
 static void reader_settlement_cases(Arena *arena) {
     PrimeNeedSnapshot root={0},child_world={0},base={0},running={0},partial={0},ready={0};
     uint64_t child=0u,thunk=0u,evaluator=prime_need_fresh_evaluator_id();
@@ -4367,6 +4469,7 @@ int main(void) {
     Arena arena;
     arena_init(&arena);
     reader_context_cases(&arena);
+    reader_context_batch_cases();
     reader_settlement_cases(&arena);
     check_capture_agreement(&arena);
 

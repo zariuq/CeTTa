@@ -1,5 +1,10 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <math.h>
+#include <signal.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include "atom.h"
 #include "symbol.h"
 
@@ -21,6 +26,39 @@ static Atom *shared(Arena *arena, Atom *leaf, unsigned depth) {
     for (unsigned i = 0; i < depth; ++i)
         leaf = atom_expr3(arena, head, leaf, leaf);
     return leaf;
+}
+
+static void unreadable_state_fault(int signal_number) {
+    (void)signal_number;
+    _exit(2);
+}
+
+/* Two wrappers of the same live resource can be compared by identity in a
+ * non-HE lane without borrowing its payload. Protect the initialized cell
+ * to make an accidental read observable in the child, not fatal to the test. */
+static bool same_state_without_payload_read(Arena *arena) {
+    long page_size=sysconf(_SC_PAGESIZE);
+    if(page_size<=0 || (size_t)page_size<sizeof(StateCell)) return false;
+    void *page=mmap(NULL,(size_t)page_size,PROT_READ|PROT_WRITE,
+        MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+    if(page==MAP_FAILED) return false;
+    StateCell *cell=page;
+    *cell=(StateCell){.value=atom_int(arena,7)};
+    Atom *left=atom_state(arena,cell),*right=atom_state(arena,cell);
+    if(!left || !right || mprotect(page,(size_t)page_size,PROT_NONE)!=0) {
+        munmap(page,(size_t)page_size);return false;
+    }
+    pid_t child=fork();
+    if(child==0) {
+        signal(SIGSEGV,unreadable_state_fault);
+        signal(SIGBUS,unreadable_state_fault);
+        _exit(atom_eq(left,right)?0:1);
+    }
+    int status=0;
+    bool ok=child>0 && waitpid(child,&status,0)==child &&
+        WIFEXITED(status) && WEXITSTATUS(status)==0;
+    munmap(page,(size_t)page_size);
+    return ok;
 }
 
 int main(void) {
@@ -183,8 +221,12 @@ int main(void) {
     Atom *state_alias = atom_deep_copy(&arena, state_a);
     CHECK(atom_capture_identical(state_a, state_alias), "copied wrappers keep the same captured resource");
     first.value = atom_int(&arena, 7);
+    CHECK(!atom_eq(state_a, state_b),
+          "distinct mutable cells still compare their unequal contents");
     CHECK(atom_capture_identical(state_a, state_alias) && !atom_capture_identical(state_a, state_b),
           "resource mutation does not change which captured handle was read");
+    CHECK(same_state_without_payload_read(&arena),
+          "same-cell identity comparison does not read its payload");
     CHECK(atom_capture_identical(shared(&arena, state_a, 10000u), shared(&arena, state_alias, 10000u)) &&
           !atom_capture_identical(shared(&arena, state_a, 10000u), shared(&arena, state_b, 10000u)),
           "the same resource policy applies beneath deep shared input graphs");

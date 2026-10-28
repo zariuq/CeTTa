@@ -1,12 +1,15 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <assert.h>
+#include <errno.h>
 #include <pthread.h>
 #include <sched.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <time.h>
 
 #include "shared_transition.h"
 #include "space.h"
@@ -577,6 +580,203 @@ static void check_concurrent_membership(SymbolTable *symbols) {
         (unsigned long long)checks);
 }
 
+static void refresh_read_view(SpaceReadView *view,const Space *space) {
+    space_read_view_release(view);
+    assert(space_read_view_capture(space,view));
+    assert(space_read_view_is_current(view));
+}
+
+static void check_read_view_lifetimes(TermUniverse *universe,AtomId token) {
+    Space a,b,module,importer,outer,overlay,own,image;
+    space_init_with_universe(&a,universe);space_init_with_universe(&b,universe);
+    space_init_with_universe(&module,universe);space_init_with_universe(&importer,universe);
+    space_init_with_universe(&outer,universe);
+    space_init_with_universe(&image,universe);
+    space_add_atom_id(&a,token);space_add_atom_id(&module,token);
+    SpaceReadView view={0},copy={0},stale={0},dependent={0},outer_read={0};
+    refresh_read_view(&view,&a);
+    assert(!view.bases && !view.base_watches);
+    assert(space_read_view_clone(&view,&copy));
+    space_add_atom_id(&b,token);
+    assert(space_read_view_is_current(&view) && space_read_view_is_current(&copy));
+    space_add_atom_id(&a,token);
+    assert(!space_read_view_is_current(&view) && !space_read_view_is_current(&copy));
+    assert(space_read_view_clone(&view,&stale) && !space_read_view_is_current(&stale));
+    space_read_view_release(&copy);space_read_view_release(&stale);
+
+    space_init_overlay(&overlay,&a);refresh_read_view(&view,&overlay);
+    assert(view.base_count==1u);
+    space_add_atom_id(&b,token);assert(space_read_view_is_current(&view));
+    space_add_atom_id(&a,token);assert(!space_read_view_is_current(&view));
+    space_read_view_release(&view);space_free(&overlay);
+
+    assert(space_add_dependency(&importer,&module));refresh_read_view(&dependent,&importer);
+    assert(space_add_dependency(&outer,&importer));refresh_read_view(&outer_read,&outer);
+    refresh_read_view(&view,&module);
+    assert(space_match_backend_try_set(&module,SPACE_ENGINE_NATIVE_CANDIDATE_EXACT));
+    assert(!space_read_view_is_current(&view) && !space_read_view_is_current(&dependent));
+    assert(space_read_view_is_current(&outer_read));
+    refresh_read_view(&dependent,&importer);
+    space_add_atom_id(&module,token);assert(!space_read_view_is_current(&dependent));
+    assert(space_read_view_is_current(&outer_read));
+    refresh_read_view(&dependent,&importer);refresh_read_view(&view,&module);
+    assert(space_mark_imported_prefix(&module));
+    assert(!space_read_view_is_current(&view) && !space_read_view_is_current(&dependent));
+    refresh_read_view(&dependent,&importer);refresh_read_view(&view,&a);
+    assert(space_copy_module_view(&a,&module));
+    assert(!space_read_view_is_current(&view) && space_read_view_is_current(&dependent));
+
+    assert(space_init_module_own_view(&own,&module));refresh_read_view(&view,&own);
+    assert(space_module_own_view_select(&own,&b));assert(!space_read_view_is_current(&view));
+    refresh_read_view(&view,&own);space_module_own_view_release(&own,&b);
+    assert(!space_read_view_is_current(&view));refresh_read_view(&view,&own);
+    space_free(&module);
+    assert(!space_read_view_is_current(&view) && !space_read_view_is_current(&dependent));
+    space_read_view_release(&view);space_read_view_release(&dependent);
+    space_read_view_release(&outer_read);
+    space_free(&own);space_free(&outer);space_free(&importer);
+
+    refresh_read_view(&view,&a);SpaceReadToken logical=view.root;
+    assert(space_match_backend_try_set(&a,SPACE_ENGINE_NATIVE_CANDIDATE_EXACT));
+    assert(!space_read_view_is_current(&view) && space_read_token_is_current(logical));
+    refresh_read_view(&view,&a);
+    assert(space_match_backend_try_set(&a,SPACE_ENGINE_NATIVE_CANDIDATE_EXACT));
+    assert(space_read_view_is_current(&view));
+    space_add_atom_id(&image,token);refresh_read_view(&copy,&image);
+    space_replace_contents(&a,&image);
+    assert(!space_read_view_is_current(&view) && !space_read_view_is_current(&copy));
+    space_read_view_release(&view);space_read_view_release(&copy);
+
+    /* The physical stack header remains held and all operations are
+     * quiescent here. Concurrent atomic_init/destruction is not permitted. */
+    space_free(&b);space_init_with_universe(&b,universe);refresh_read_view(&view,&b);
+    uint64_t old=view.root_watch.expected;
+    space_free(&b);space_init_with_universe(&b,universe);
+    assert(view.root.revision==space_revision(&b));
+    assert(atomic_load_explicit(&b.read_stamp,memory_order_acquire)!=old);
+    assert(!space_read_view_is_current(&view));space_read_view_release(&view);
+    space_free(&b);assert(space_read_view_capture(&b,&view));
+    assert(!space_read_view_is_current(&view));space_read_view_release(&view);
+    space_free(&image);space_free(&a);
+    puts("PASS: read-view stamps cover dependencies, projections, backend changes, moves and retired lifetimes; unrelated Spaces and stale clones retain their meaning");
+}
+
+static void check_read_view_checkpoint_currency(TermUniverse *universe) {
+    Space source;space_init_with_universe(&source,universe);
+    SpaceCheckpointBudget complete={.work_limit=100000u,.byte_limit=SIZE_MAX};
+    assert(space_checkpoint_native_admitted(&source,&complete));
+    const uint64_t invalid[]={0u,UINT64_MAX};
+    for(size_t i=0u;i<2u;i++) {
+        atomic_store_explicit(&source.read_stamp,invalid[i],memory_order_release);
+        SpaceReadView view={0};assert(space_read_view_capture(&source,&view));
+        assert(!space_read_view_is_current(&view));
+        Space image;bool ready=false;
+        SpaceCheckpointBudget budget={.work_limit=100000u,.byte_limit=SIZE_MAX};
+        assert(!space_checkpoint_native_copy(&source,&image,&ready,&budget));
+        assert(!ready && budget.refusal && !strcmp(budget.refusal,"WorldNativeAuthority"));
+        space_read_view_release(&view);space_read_view_invalidate(&source);
+    }
+    space_free(&source);
+    puts("PASS: checkpoint copying cannot repair a poisoned zero or maximum read-view stamp");
+}
+
+typedef struct {
+    const SpaceReadView *view;
+    pthread_mutex_t mutex;
+    pthread_cond_t ready;
+    bool done,current;
+} ReadViewCheck;
+
+static void *read_view_check_thread(void *raw) {
+    ReadViewCheck *check=raw;
+    cetta_shared_transition_scope_enter();
+    bool current=space_read_view_is_current(check->view);
+    cetta_shared_transition_scope_leave();
+    assert(pthread_mutex_lock(&check->mutex)==0);
+    check->current=current;check->done=true;
+    assert(pthread_cond_signal(&check->ready)==0);
+    assert(pthread_mutex_unlock(&check->mutex)==0);
+    return NULL;
+}
+
+static void check_read_view_without_transition_lock(TermUniverse *universe) {
+    Space space,overlay;space_init_with_universe(&space,universe);
+    space_init_overlay(&overlay,&space);
+    for(unsigned path=0u;path<2u;path++) {
+    SpaceReadView view={0};refresh_read_view(&view,path?&overlay:&space);
+    ReadViewCheck check={.view=&view};
+    pthread_condattr_t attr;assert(pthread_condattr_init(&attr)==0);
+    assert(pthread_condattr_setclock(&attr,CLOCK_MONOTONIC)==0);
+    assert(pthread_mutex_init(&check.mutex,NULL)==0);
+    assert(pthread_cond_init(&check.ready,&attr)==0);
+    assert(pthread_condattr_destroy(&attr)==0);
+    cetta_shared_transition_scope_enter();
+    CettaSharedTransitionGuard held={0};cetta_shared_transition_guard_enter(&held);
+    assert(cetta_shared_transition_guard_held_by_current_thread());
+    pthread_t reader;assert(pthread_create(&reader,NULL,read_view_check_thread,&check)==0);
+    struct timespec deadline;assert(clock_gettime(CLOCK_MONOTONIC,&deadline)==0);
+    deadline.tv_sec+=10;
+    assert(pthread_mutex_lock(&check.mutex)==0);
+    int waited=0;
+    while(!check.done && !waited)waited=pthread_cond_timedwait(&check.ready,&check.mutex,&deadline);
+    assert(!waited || waited==ETIMEDOUT);
+    bool completed_while_held=check.done;
+    assert(pthread_mutex_unlock(&check.mutex)==0);
+    cetta_shared_transition_guard_leave(&held);cetta_shared_transition_scope_leave();
+    assert(pthread_join(reader,NULL)==0);
+    assert(completed_while_held && check.current);
+    assert(pthread_cond_destroy(&check.ready)==0);
+    assert(pthread_mutex_destroy(&check.mutex)==0);
+    space_read_view_release(&view);
+    }
+    space_free(&overlay);space_free(&space);
+    puts("PASS: a concurrent read-view check completes while another thread holds the representation mutex");
+}
+
+typedef struct {
+    Space *own,*left,*right;
+    pthread_barrier_t *start;
+} ReadViewTopology;
+
+static void *read_view_topology_writer(void *raw) {
+    ReadViewTopology *task=raw;
+    cetta_shared_transition_scope_enter();
+    (void)pthread_barrier_wait(task->start);
+    for(unsigned i=0u;i<512u;i++) {
+        assert(space_module_own_view_select(task->own,i&1u?task->left:task->right));
+        if(!(i&7u))sched_yield();
+    }
+    cetta_shared_transition_scope_leave();return NULL;
+}
+
+static void check_read_view_topology_race(TermUniverse *universe) {
+    Space left,right,own;
+    space_init_with_universe(&left,universe);space_init_with_universe(&right,universe);
+    assert(space_init_module_own_view(&own,&left));
+    pthread_barrier_t start;assert(pthread_barrier_init(&start,NULL,2u)==0);
+    ReadViewTopology task={&own,&left,&right,&start};pthread_t writer;
+    assert(pthread_create(&writer,NULL,read_view_topology_writer,&task)==0);
+    cetta_shared_transition_scope_enter();(void)pthread_barrier_wait(&start);
+    for(unsigned i=0u;i<512u;i++) {
+        SpaceReadView view={0};assert(space_read_view_capture(&own,&view));
+        assert(view.base_count==1u);
+        assert(view.bases[0].space==&left || view.bases[0].space==&right);
+        (void)space_read_view_is_current(&view);
+        {
+            CETTA_SCOPED_SHARED_TRANSITION(inspection);
+            bool same=space_read_token_is_current(view.root) &&
+                own.overlay_base==view.bases[0].space &&
+                space_read_token_is_current(view.bases[0]);
+            assert(space_read_view_is_current(&view)==same);
+        }
+        space_read_view_release(&view);
+    }
+    cetta_shared_transition_scope_leave();assert(pthread_join(writer,NULL)==0);
+    assert(pthread_barrier_destroy(&start)==0);
+    space_free(&own);space_free(&right);space_free(&left);
+    puts("PASS: guarded topology publication races coherent captures; fast validation reads captured watches only");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena persistent;
@@ -614,6 +814,10 @@ int main(void) {
         &universe, NULL, row(&construction, row_symbol, OPTIONAL_VALUE));
     assert(optional_id != CETTA_ATOM_ID_NONE);
     assert(term_universe_get_atom(&universe, optional_id) != NULL);
+    check_read_view_lifetimes(&universe,optional_id);
+    check_read_view_checkpoint_currency(&universe);
+    check_read_view_without_transition_lock(&universe);
+    check_read_view_topology_race(&universe);
     query = row_query(&persistent, row_symbol, value_spelling);
     stable_exact_pattern = term_universe_get_atom(&universe, base_ids[0]);
     assert(stable_exact_pattern != NULL);

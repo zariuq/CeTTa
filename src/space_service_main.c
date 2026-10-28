@@ -135,6 +135,9 @@ typedef struct {
     /* The process account wrote every record that names no account. */
     uint32_t owner_uid, process_uid;
     bool poisoned, restoring;
+    /* Historical admission is restricted to journal recovery. Live grant
+     * authority always preserves the current ticket requirements. */
+    bool replaying;
 } Service;
 typedef struct {
     int fd;
@@ -390,6 +393,14 @@ static unsigned effective_rights(unsigned rights) {
     if (rights & RIGHT_READ) rights |= RIGHT_OBSERVE;
     return rights;
 }
+/* A ticket requirement restricts a right, and restrictions are closed along
+ * the implication of rights: requiring a ticket for each append while
+ * holding write requires one for write, since a write batch adds rows too. */
+static unsigned requirement_closure(unsigned rights,unsigned ticket_rights) {
+    if ((ticket_rights&RIGHT_APPEND) && (effective_rights(rights)&RIGHT_WRITE))
+        ticket_rights|=RIGHT_WRITE;
+    return ticket_rights;
+}
 static bool same_form(Bytes left,Bytes right) {
     return left.size==right.size && (!left.size || !memcmp(left.data,right.data,left.size));
 }
@@ -441,13 +452,25 @@ typedef struct {
     uint64_t grant, generation;
     bool delegable;
 } AuthorityView;
-static bool grant_edge_valid(const Grant *parent,const Grant *child) {
+static unsigned grant_requirements(const Grant *grant) {
+    return requirement_closure(grant->rights,grant->ticket_rights);
+}
+/* Delegation never gives a child more than its parent can do: the child's
+ * effective rights lie within the parent's, and the child keeps every
+ * requirement its parent places on a right the child holds; adding
+ * requirements only attenuates. The earlier rule compared requirements by
+ * subset, which let a child drop one. A `historical` record admitted under
+ * that rule is accepted as recorded, but live authority never follows it. */
+static bool grant_edge_valid(const Grant *parent,const Grant *child,bool historical) {
+    bool keeps=!(grant_requirements(parent)&effective_rights(child->rights)&
+        ~grant_requirements(child));
+    bool recorded=historical && !(child->ticket_rights&~parent->ticket_rights);
     return child->parent_id==parent->id &&
         child->parent_generation==parent->generation &&
         principal_same(child->issuer,parent->grantee) && parent->id<child->id &&
         parent->delegable &&
         !(effective_rights(child->rights)&~effective_rights(parent->rights)) &&
-        !(child->ticket_rights&~parent->ticket_rights) &&
+        (keeps || recorded) &&
         same_form(parent->form,child->form);
 }
 static bool grant_structure_valid(Store *st,Grant *grant) {
@@ -458,7 +481,7 @@ static bool grant_structure_valid(Store *st,Grant *grant) {
     if (!grant->parent_id && !grant->parent_generation)
         return !grant->issuer.uid && !grant->issuer.epoch;
     Grant *parent=find_grant_ref(st,grant->parent_id,grant->parent_generation);
-    return parent && !grant->direct_default && grant_edge_valid(parent,grant);
+    return parent && !grant->direct_default && grant_edge_valid(parent,grant,true);
 }
 static AuthorityView grant_authority(Service *s,Store *st,Grant *leaf,Principal principal) {
     if (!principal_is_current(s,principal) || !leaf ||
@@ -473,7 +496,7 @@ static AuthorityView grant_authority(Service *s,Store *st,Grant *leaf,Principal 
                 (AuthorityView){0};
         Grant *parent=find_grant_ref(st,child->parent_id,child->parent_generation);
         if (!parent || parent->revoked || !principal_is_current(s,parent->grantee) ||
-            !grant_edge_valid(parent,child))
+            !grant_edge_valid(parent,child,s->replaying))
             return (AuthorityView){0};
         rights&=effective_rights(parent->rights);
         child=parent;
@@ -527,7 +550,7 @@ static bool grants_consistent(Store *st) {
 static bool grant_issue(Store *st,Principal grantee,Principal issuer,unsigned rights,
                         unsigned ticket_rights,bool delegable,bool direct_default,
                         uint64_t parent_id,uint64_t parent_generation,Bytes *form_bytes,
-                        uint64_t *issued) {
+                        bool historical,uint64_t *issued) {
     if ((ticket_rights&~(RIGHT_APPEND|RIGHT_WRITE)) ||
         (ticket_rights&~effective_rights(rights)) || !rights ||
         st->grant_generation>=INT64_MAX || !grant_reserve(st)) {
@@ -540,7 +563,7 @@ static bool grant_issue(Store *st,Principal grantee,Principal issuer,unsigned ri
         .direct_default=direct_default,.form=*form_bytes};
     if (parent_id || parent_generation) {
         Grant *parent=find_grant_ref(st,parent_id,parent_generation);
-        if (!parent || !grant_edge_valid(parent,&candidate)) {
+        if (!parent || !grant_edge_valid(parent,&candidate,historical)) {
             bytes_free(form_bytes); return false;
         }
     } else if (issuer.uid || issuer.epoch) {
@@ -565,7 +588,7 @@ static bool grant_set(Store *st,Principal principal,unsigned rights,unsigned tic
         bytes_free(form_bytes); ++st->grant_generation; return true;
     }
     return grant_issue(st,principal,(Principal){0},rights,ticket_rights,false,true,
-        0,0,form_bytes,NULL);
+        0,0,form_bytes,false,NULL);
 }
 static bool grant_revoke(Store *st,Grant *grant) {
     if (!grant || grant->revoked || st->grant_generation>=INT64_MAX) return false;
@@ -1297,7 +1320,7 @@ static bool apply(Service *s, Client *client, Atom *request, PreparedCommit *pre
             return false;
         Principal holder=current_principal(s,uid);
         Store *st=find_store(s,id); Grant *grant=st ? find_grant(st,holder) : NULL;
-        if (!grant || !(effective_rights(grant->rights)&right) || !(grant->ticket_rights&right))
+        if (!grant || !(effective_rights(grant->rights)&right) || !(grant_requirements(grant)&right))
             return false;
         return ticket_issue(st,holder,grant->id,grant->generation,right,NULL);
     }
@@ -1308,7 +1331,7 @@ static bool apply(Service *s, Client *client, Atom *request, PreparedCommit *pre
         Store *st=find_store(s,id);
         Grant *grant=st ? grant_ref(s,st,part(request,5)) : NULL;
         if (!grant || grant->revoked || !(effective_rights(grant->rights)&right) ||
-            !(grant->ticket_rights&right)) return false;
+            !(grant_requirements(grant)&right)) return false;
         return ticket_issue(st,grant->grantee,grant->id,grant->generation,right,NULL);
     }
     if (atom_is_symbol(part(request,2),"revoke-ticket") && request->expr.len==6) {
@@ -1347,7 +1370,7 @@ static bool apply(Service *s, Client *client, Atom *request, PreparedCommit *pre
             !grant_form_bytes(part(request,9),part(request,10),form_bytes)) return false;
         if (!principal_install(s,prepared)) { bytes_free(&local_form); return false; }
         return grant_issue(st,target,(Principal){0},rights,ticketRights,delegable,false,0,0,
-            form_bytes,NULL);
+            form_bytes,false,NULL);
     }
     if (atom_is_symbol(part(request,2),"delegate-grant") && request->expr.len==10) {
         uint64_t id; uint32_t uid; unsigned rights,ticketRights; bool delegable;
@@ -1365,7 +1388,7 @@ static bool apply(Service *s, Client *client, Atom *request, PreparedCommit *pre
             !bytes_copy(inherited,parent->form.data,parent->form.size)) return false;
         if (!principal_install(s,prepared)) { bytes_free(&local_form); return false; }
         return grant_issue(st,target,client->principal,rights,ticketRights,delegable,false,
-            parent->id,parent->generation,inherited,NULL);
+            parent->id,parent->generation,inherited,s->replaying,NULL);
     }
     if (atom_is_symbol(part(request,2),"revoke-grant") && request->expr.len==6) {
         uint64_t id;
@@ -1884,7 +1907,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         } else if (!request_ticket(request,&ticketId)) {
             return error(a,request,"invalid-ticket");
         }
-        if (!ticketId && grant && (grant->ticket_rights&RIGHT_APPEND))
+        if (!ticketId && grant && (grant_requirements(grant)&RIGHT_APPEND))
             return error(a,request,"ticket-required");
         if (ticketId && !ticket_available(st,ticketId,client->principal,authority.grant,
                 authority.generation,RIGHT_APPEND))
@@ -1966,8 +1989,14 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
             !rights_parse(part(request,8),&ticketRights) ||
             !boolean_atom(part(request,9),&delegable))
             return error(a,request,"invalid-delegation");
+        if ((ticketRights&~(RIGHT_APPEND|RIGHT_WRITE)) ||
+            (ticketRights&~effective_rights(granted)))
+            return error(a,request,"invalid-delegation");
+        /* The child keeps every requirement the parent places on a right it
+         * holds; it may add requirements, never drop one. */
         if ((effective_rights(granted)&~authority.rights) ||
-            (ticketRights&~selected->ticket_rights) ||
+            (grant_requirements(selected)&effective_rights(granted)&
+                ~requirement_closure(granted,ticketRights)) ||
             (delegable && !selected->delegable))
             return error(a,request,"attenuation");
         if (st->grant_generation>=INT64_MAX) return error(a,request,"generation-limit");
@@ -2007,7 +2036,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         Principal holder=current_principal(s,uid);
         Grant *grant=find_grant(st,holder);
         AuthorityView granted=grant_authority(s,st,grant,holder);
-        if (!grant || !(granted.rights&right) || !(grant->ticket_rights&right))
+        if (!grant || !(granted.rights&right) || !(grant_requirements(grant)&right))
             return error(a,request,"forbidden");
         if (st->ticket_generation>=INT64_MAX) return error(a,request,"generation-limit");
         uint64_t total=ticket_total(s);
@@ -2027,7 +2056,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         if (!grant || !rights_parse(part(request,6),&right) ||
             (right!=RIGHT_APPEND && right!=RIGHT_WRITE))
             return error(a,request,"invalid-ticket");
-        if (!(granted.rights&right) || !(grant->ticket_rights&right))
+        if (!(granted.rights&right) || !(grant_requirements(grant)&right))
             return error(a,request,"forbidden");
         if (st->ticket_generation>=INT64_MAX) return error(a,request,"generation-limit");
         uint64_t total=ticket_total(s);
@@ -2077,7 +2106,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
     } else if (!request_ticket(request,&ticketId)) {
         return error(a,request,"invalid-ticket");
     }
-    if (!ticketId && grant && (grant->ticket_rights&RIGHT_WRITE))
+    if (!ticketId && grant && (grant_requirements(grant)&RIGHT_WRITE))
         return error(a,request,"ticket-required");
     if (ticketId && !ticket_available(st,ticketId,client->principal,authority.grant,
             authority.generation,RIGHT_WRITE))
@@ -2796,21 +2825,26 @@ static bool recover(Service *s) {
         arena_free(&a); s->next_store=1; return ok;
     }
     off_t position=0; bool first=true;
+    s->replaying=true;
     while (position<st.st_size) {
         Bytes b={0}; off_t next=position;
         CettaNativeJournalStatus frame=cetta_native_journal_read(
             s->journal,position,CETTA_ATOM_WIRE_BYTES,&b.data,&b.size,&next);
         if (frame==CETTA_JOURNAL_END || frame==CETTA_JOURNAL_TAIL) break;
-        if (frame!=CETTA_JOURNAL_OK || b.size<4u) { bytes_free(&b); return false; }
+        if (frame!=CETTA_JOURNAL_OK || b.size<4u) {
+            bytes_free(&b); s->replaying=false; return false;
+        }
         Arena a; arena_init_detached(&a); Atom *record=NULL;
         bool ok=decode(&a,b,&record) && restore_record(s,&a,record,first);
         if (ok && (shape(record,"sealed",4) || shape(record,"sealed-v2",5) ||
                    shape(record,"sealed-v3",6) || shape(record,"sealed-v4",7) ||
                    shape(record,"sealed-v5",7) || shape(record,"sealed-v6",9)))
             s->checkpoint_bytes=(uint64_t)next;
-        arena_free(&a); bytes_free(&b); if (!ok) return false;
+        arena_free(&a); bytes_free(&b);
+        if (!ok) { s->replaying=false; return false; }
         first=false; position=next;
     }
+    s->replaying=false;
     if (first || s->restoring) return false;
     if (position!=st.st_size) {
         fprintf(stderr,"space-service: discarding incomplete journal tail\n");

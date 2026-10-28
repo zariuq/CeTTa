@@ -1171,6 +1171,31 @@ Atom *cetta_prime_name_normal_v1(Atom *name) {
     return regular_term_name_normal(name);
 }
 
+bool cetta_prime_lambda_telescope_v1(Arena *arena,Atom *term,
+                                    CettaPrimeLambdaTelescopeV1 *out) {
+    if(!arena || !out || !term || term->kind!=ATOM_EXPR ||
+       (term->expr.len!=3u && term->expr.len!=4u) ||
+       !atom_is_symbol(term->expr.elems[0],"lam"))return false;
+    if(term->expr.len==4u && !atom_is_prime_own_list(term->expr.elems[3]))return false;
+    CettaPrimeLambdaTelescopeV1 telescope={0};
+    if(cetta_prime_lambda_binder_groups_v1(arena,term->expr.elems[1],
+        &telescope.groups,&telescope.count,&telescope.listed)!=CETTA_PRIME_LAMBDA_BINDERS_OK_V1)
+        return false;
+    for(size_t g=0u;g<telescope.count;g++) {
+        for(size_t i=0u;i<telescope.groups[g].names_count;i++) {
+            Atom *name=cetta_prime_lambda_binder_name_v1(&telescope.groups[g],i);
+            if(!name)return false;
+            if(name->kind!=ATOM_VAR) {
+                CettaPrimeNameStatusV1 status=cetta_prime_name_key_v1(name,true,NULL,NULL);
+                if(status!=CETTA_PRIME_NAME_OK_V1 && status!=CETTA_PRIME_NAME_ANONYMOUS_V1)
+                    return false;
+            }
+        }
+    }
+    telescope.own=term->expr.len==4u?term->expr.elems[3]:NULL;
+    *out=telescope;return true;
+}
+
 CettaPrimeLambdaBindersStatusV1 cetta_prime_lambda_binder_groups_v1(
     Arena *arena, Atom *binders, CettaPrimeLambdaBinderGroupV1 **groups_out,
     size_t *count_out, bool *listed_out) {

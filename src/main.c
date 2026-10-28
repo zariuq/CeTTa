@@ -232,6 +232,8 @@ typedef struct {
     uint64_t answer;
     PrimeNeedTraceId *events;
     size_t events_len;
+    PrimeNeedTraceId *state_events;
+    size_t state_events_len;
     PrimeNeedTraceId *sessions;
     size_t sessions_len;
     PrimeNeedTraceId *sources;
@@ -425,6 +427,12 @@ static void prime_need_trace_answer(
                 trace->allocation_failed = true;
             fprintf(trace->out, " (rule %" PRIu64 ")", rule_id);
         }
+        if (event.state_event_id) {
+            uint64_t operation_id=prime_need_trace_id(
+                &trace->state_events,&trace->state_events_len,event.state_event_id);
+            if (!operation_id)trace->allocation_failed=true;
+            fprintf(trace->out," (state-event %" PRIu64 ")",operation_id);
+        }
         if (event.state_cell) {
             uint64_t state_id = prime_need_trace_state(
                 trace, event.state_cell);
@@ -460,6 +468,7 @@ static void prime_need_trace_printer_free(PrimeNeedTracePrinter *trace) {
     if (!trace)
         return;
     free(trace->events);
+    free(trace->state_events);
     free(trace->sessions);
     free(trace->sources);
     free(trace->rules);
