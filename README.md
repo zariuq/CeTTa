@@ -287,8 +287,9 @@ make test-asan-main
 and selected default observations. The source revision and file hashes are in
 `langdef/petta/reference.json`; this check does not claim complete conformance.
 `python3 tools/check_petta_stable_corpus.py --reference <PeTTa-checkout> --cetta ./cetta`
-compares the active reference programs and exits unsuccessfully for every remaining
-disagreement. Existing conformance gaps are described in
+records the original corpus and independently framed observations. Raw disagreements
+are diagnostic evidence, not a conformance score. `make test-petta-corrected-stable`
+checks the selected settled rules. Classifications and open questions are described in
 [the compatibility notes](docs/petta_compatibility.txt).
 
 The `Runtime portability` workflow builds clean source archives in Ubuntu

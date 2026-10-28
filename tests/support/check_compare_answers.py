@@ -7,7 +7,9 @@ usage: check_compare_answers.py CETTA"""
 import subprocess
 import sys
 import tempfile
+import json
 from pathlib import Path
+from compare_answers import answers_equal, observe_framed, compare_framed, compare_completed_runs, MARKER
 
 HERE = Path(__file__).resolve().parent
 TOOL = HERE / 'compare_answers.py'
@@ -54,6 +56,49 @@ def main():
         ('effects reordered', 'second\nfirst\n[()]\n[1, 2, 3]\n[()]\n[(1 2 3)]\n', False),
     ]
     failures = []
+    independent = [
+        ('alpha sharing', ['(p $x $x)'], ['(p $a $a)'], False, True),
+        ('alias lost', ['(p $x $x)'], ['(p $a $b)'], False, False),
+        ('bag multiplicity', ['1', '1', '2'], ['1', '2', '2'], False, False),
+        ('collapse shared variable permuted', ['((p $x) (q $x))'],
+         ['((q $z) (p $z))'], True, True),
+        ('collapse sharing lost', ['((p $x) (q $x))'],
+         ['((q $z) (p $y))'], True, False),
+        ('collapse independent variables', ['((p $x) (p $y))'],
+         ['((p $z) (p $z))'], True, False),
+        ('nested list remains ordered', ['((p 1 2) (q 3))'],
+         ['((q 3) (p 2 1))'], True, False),
+        ('string variable spelling is data', ['"$x"'], ['"$y"'], False, False),
+        ('PeTTa comma is part of a token', ['(a,b)'], ['(a b)'], True, False),
+        ('PeTTa brackets are symbols', ['([x y])'], ['(y] [x)'], True, True),
+    ]
+    for name, left, right, collapse, want in independent:
+        if answers_equal(left, right, collapse) != want:
+            failures.append(name)
+    representations = [
+        ('(p $x $x)', '(p $a $a)', True),
+        ('(p $x $x)', '(p $a $b)', False),
+        ('"$x"', '"$y"', False),
+    ]
+    for left, right, want in representations:
+        if answers_equal([json.dumps(left)], [json.dumps(right)], representation=True) != want:
+            failures.append('repr provenance/sharing')
+    # These executions have identical unframed output, but different query
+    # boundaries. Counts from one implementation would conceal the defect.
+    left = observe_framed(f'{MARKER}\n1\n{MARKER}\n2\n{MARKER}\n', [False, False])
+    right = observe_framed(f'{MARKER}\n1\n2\n{MARKER}\n{MARKER}\n', [False, False])
+    if compare_framed([False, False], left, right)[0]:
+        failures.append('independent query counts')
+    for incomplete in (f'{MARKER}\n1\n', f'{MARKER}\n1\n{MARKER}\ntrailing\n'):
+        try:
+            observe_framed(incomplete, [False])
+            failures.append('unfinished framing accepted')
+        except ValueError:
+            pass
+    for code, timeout in ((2, False), (0, True), (-11, False)):
+        record = dict(returncode=code, timed_out=timeout, observations=left)
+        if compare_completed_runs([False, False], record, record)[0]:
+            failures.append('equal unsuccessful executions accepted')
     for name, actual, want in petta:
         if agrees('petta', PROGRAM, expected, actual, cetta) != want:
             failures.append(f'petta: {name}')
@@ -71,7 +116,7 @@ def main():
             print('  ' + failure)
         return 1
     print(f'PASS: answers compare as bags, collapses by their elements, effects in order '
-          f'({len(petta) + len(he) + 1} cases)')
+          f'({len(petta) + len(he) + len(independent) + len(representations) + 7} cases)')
     return 0
 
 

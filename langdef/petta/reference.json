@@ -309,5 +309,19 @@
     "examples/torch.metta": "optional GPU/Python library; separate controlled fixture",
     "examples/greedy_chess.metta": "interactive game; separate scripted session",
     "examples/git_import2.metta": "external clone/build; separate local build fixture"
+  },
+  "qualification_contract": {
+    "target": "stable PeTTa plus accepted repairs and established semantic decisions",
+    "observations": "tests/petta/corrected_stable_observations.json",
+    "observations_sha256": "debdc56c72a3eeda9dee0f24da03006b4686b2c2fd5ed9fea52f4c8688daaf56",
+    "settled_gate": "test-petta-corrected-stable",
+    "approved_differences_gate": "test-petta-swi-differences",
+    "comparison": "independently framed query bags; effects and completion remain observable",
+    "open_questions": [
+      "unbound-space operations",
+      "whole-variable mutation",
+      "incompatible-declaration admission"
+    ],
+    "historical_results": "Earlier flat-output counts describe only their recorded builds and are not conformance percentages."
   }
 }

@@ -2,7 +2,8 @@
 """Check the pinned corrected PeTTa reference and the current default contract.
 
 This checks source identity and selected default observations. It does not
-establish complete conformance; use check_petta_stable_corpus.py for that.
+establish complete conformance. check_petta_stable_corpus.py records broader
+diagnostics; it is not a specification oracle either.
 """
 import argparse
 import hashlib
@@ -100,6 +101,18 @@ def main():
         raise ValueError('unknown reference schema')
     if contract['default_language_version'] != 'stable-fixed':
         raise ValueError('unexpected default language version')
+    qualification = contract['qualification_contract']
+    observations = ROOT / qualification['observations']
+    if digest(observations) != qualification['observations_sha256']:
+        raise ValueError('observation contract changed without updating its identity')
+    ledger = json.loads(observations.read_text())
+    if ledger['reference_commit'] != contract['reference_commit']:
+        raise ValueError('observation contract names another reference')
+    for observation in ledger['observations']:
+        if observation['source_sha256'] != contract['reference_files'][observation['source']]:
+            raise ValueError('observation source identity changed: ' + observation['id'])
+        if 'contract_probe' in observation and not (ROOT / observation['contract_probe']).is_file():
+            raise ValueError('missing contract probe: ' + observation['id'])
     check_libraries(contract)
     if args.reference:
         count = check_reference(args.reference.resolve(), contract)

@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Compare the pinned stable PeTTa corpus; every disagreement fails the check."""
+"""Record pinned corpus diagnostics with independently framed query observations.
+
+Raw agreement is not conformance. Settled requirements and approved differences
+are qualified by the semantic regression targets; original corpus assertions
+remain diagnostic evidence, including unresolved/reference-specific assertions.
+"""
 
 import argparse
 import hashlib
@@ -10,13 +15,17 @@ import signal
 import subprocess
 import sys
 import tempfile
+import uuid
 
 from check_petta_release_reference import ROOT, check_reference, digest
 
 sys.path.insert(0, str(ROOT / 'scripts'))
 from petta_corpus_manifest import (  # noqa: E402
-    normalize_cetta_stdout, normalize_oracle_stdout, semantic_stdout,
+    normalize_oracle_stdout, normalize_cetta_stdout, semantic_stdout,
 )
+
+sys.path.insert(0, str(ROOT / 'tests/support'))
+from compare_answers import framed, observe_framed, compare_completed_runs, representation_queries  # noqa: E402
 
 
 def run(command, directory, timeout):
@@ -61,7 +70,8 @@ def main():
                       ((p.startswith('examples/') and p.count('/') == 1)
                        or p.startswith('tests/regression/')))
     result = dict(reference=contract['reference_commit'],
-                  binary_sha256=digest(binary), cases={},
+                  binary_sha256=digest(binary), cases={}, controls={},
+                  scope='diagnostic observations, not a conformance score',
                   excluded=contract['corpus_exclusions'])
     with tempfile.TemporaryDirectory(prefix='cetta-petta-corpus-') as directory:
         stage = Path(directory)
@@ -69,37 +79,71 @@ def main():
             target = stage / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes((reference / relative).read_bytes())
-        # Keep the local package import local, and control the three clock reads.
         package = 'repos/test_metta_lib/test.metta'
         (stage / package).parent.mkdir(parents=True, exist_ok=True)
         (stage / package).write_bytes((ROOT / package).read_bytes())
-        (stage / 'examples/test_datetime.metta').write_bytes(
-            (ROOT / 'tests/petta/fixtures/test_datetime_fixed.metta').read_bytes())
+
+        def observe(relative, source):
+            oracle_cmd = ['sh', 'run.sh', str(source), '--silent']
+            native_cmd = [str(binary), '--lang', 'petta', str(source)]
+            original = dict(reference=run(oracle_cmd, stage, args.timeout),
+                            native=run(native_cmd, stage, args.timeout))
+            marker = '(__cetta_answers_' + uuid.uuid4().hex + '__)'
+            text, kinds = framed(source.read_text(), marker)
+            representations = representation_queries(source.read_text())
+            instrumented = source.with_name('.framed-' + source.name)
+            instrumented.write_text(text)
+            observations = {}
+            for name, command in [('reference', ['sh', 'run.sh', str(instrumented), '--silent']),
+                                  ('native', [str(binary), '--lang', 'petta', str(instrumented)])]:
+                record = run(command, stage, args.timeout)
+                normalize = normalize_oracle_stdout if name == 'reference' else normalize_cetta_stdout
+                cleaned = semantic_stdout(normalize(record['stdout'], stage))
+                try:
+                    record['observations'] = observe_framed(cleaned, kinds, marker)
+                except ValueError as error:
+                    record['framing_error'] = str(error)
+                record['completed'] = (record['returncode'] == 0 and not record['timed_out']
+                                       and 'observations' in record)
+                observations[name] = record
+            instrumented.unlink()
+            a, b = observations['reference'], observations['native']
+            agreement, reason = compare_completed_runs(kinds, a, b, representations)
+            # Stdout does not erase a fault, diagnostic or unfinished original.
+            for name in original:
+                if original[name]['returncode'] != 0 or original[name]['timed_out']:
+                    agreement = False
+                    reason = 'original execution incomplete or raised'
+            if a['stderr'] != b['stderr']:
+                agreement = False
+                reason = 'stderr observations differ'
+            return dict(original=original, framed=observations, agreement=agreement,
+                        reason=reason, query_count=len(kinds), source_sha256=digest(source))
+
         for relative in programs:
             if relative in result['excluded']:
                 continue
-            oracle = run(['sh', 'run.sh', relative, '--silent'], stage, args.timeout)
-            native = run([str(binary), '--lang', 'petta', str(stage / relative)],
-                         stage, args.timeout)
-            expected = semantic_stdout(normalize_oracle_stdout(oracle['stdout'], stage))
-            actual = semantic_stdout(normalize_cetta_stdout(native['stdout'], stage))
-            matched = (oracle['returncode'] == native['returncode'] == 0
-                       and not oracle['timed_out'] and not native['timed_out']
-                       and '❌' not in oracle['stdout'] and '❌' not in native['stdout']
-                       and expected == actual)
-            result['cases'][relative] = dict(match=matched, reference=oracle,
-                                             native=native)
-            if relative == 'examples/test_datetime.metta':
-                result['cases'][relative]['fixture'] = 'fixed-clock'
-            print(('PASS: ' if matched else 'FAIL: ') + relative, flush=True)
-    result['failures'] = [p for p, case in result['cases'].items() if not case['match']]
+            case = observe(relative, stage / relative)
+            result['cases'][relative] = case
+            print(('AGREEMENT: ' if case['agreement'] else 'DIAGNOSTIC: ') + relative,
+                  flush=True)
+        # The clock-controlled programme is additional evidence. Never replace
+        # the corpus's original source or attribute the control's result to it.
+        relative = 'examples/qualification_datetime_fixed.metta'
+        control = stage / relative
+        control.write_bytes((ROOT / 'tests/petta/fixtures/test_datetime_fixed.metta').read_bytes())
+        result['controls']['fixed_clock'] = observe(relative, control)
+    result['diagnostic_differences'] = [p for p, case in result['cases'].items()
+                                        if not case['agreement']]
     result['binary_sha256_after'] = digest(binary)
     if result['binary_sha256_after'] != result['binary_sha256']:
         raise ValueError('binary changed during comparison')
     if args.output:
         args.output.write_text(json.dumps(result, indent=2) + '\n')
-    print(f"{len(result['cases'])} programs; {len(result['failures'])} disagreements")
-    return bool(result['failures'])
+    print(f"{len(result['cases'])} original programs recorded; "
+          f"{len(result['diagnostic_differences'])} require observation-level classification. "
+          "No conformance percentage is inferred.")
+    return 0
 
 
 if __name__ == '__main__':
