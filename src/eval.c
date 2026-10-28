@@ -71401,8 +71401,9 @@ static bool petta_value_predicate_answer(
 }
 
 /* Apply an admitted operation to the values already computed by the machine.
- * Language forms, mutation/import protocols, transactions and open operands
- * retain their ordinary owners. Completion is the same service used by an
+ * Language forms, mutation/import protocols and transactions retain their
+ * ordinary owners. Open data is still a value, not code to evaluate again.
+ * Completion is the same service used by an
  * entered OEM native return, independent of how that call was executed. */
 static bool petta_eval_machine_apply_ready_values(
     void *context, Space *space, Arena *arena,
@@ -71445,13 +71446,15 @@ static bool petta_eval_machine_apply_ready_values(
         atom_symbol_current_id(head) == g_builtin_syms.get_atoms ||
         atom_symbol_current_id(head) == g_builtin_syms.import_bang)
         return false;
+    EvalNativeDemand demand = eval_current_language_id() == CETTA_LANGUAGE_PETTA
+        ? EVAL_NATIVE_READY_ARGUMENTS : EVAL_NATIVE_CLOSED_READY_ARGUMENTS;
     CettaExprLen arity = 0u;
     if (!cetta_invocation_arity(invocation, &arity) || arity > UINT32_MAX ||
         !eval_native_callee_admitted(
-            space, head, arity, EVAL_NATIVE_CLOSED_READY_ARGUMENTS))
+            space, head, arity, demand))
         return false;
     EvalNativeCallPlan plan = {
-        head, (uint32_t)arity, EVAL_NATIVE_CLOSED_READY_ARGUMENTS};
+        head, (uint32_t)arity, demand};
     CettaCallOutcome native_outcome;
     if (!eval_native_invocation_on(space, arena, &plan, invocation, NULL,
             environment, eval_context->fuel, &native_outcome))

@@ -39379,7 +39379,9 @@ static bool petta_machine_dispatch_goal(
         };
     }
     bool evaluated =
-        goal.kind == PETTA_GOAL_HOST_STRICT_READY &&
+        (goal.kind == PETTA_GOAL_HOST_STRICT_READY ||
+         (goal.kind == PETTA_GOAL_HOST_READY &&
+          ready_host_mode != PETTA_MACHINE_HOST_READY_OVERRIDE)) &&
         machine->host.apply_ready_values &&
         machine->host.apply_ready_values(
             machine->host.context, machine->space, &machine->heap,
