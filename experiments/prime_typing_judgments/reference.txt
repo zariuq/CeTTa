@@ -1,0 +1,402 @@
+Programmable judgments and rules: experimental reference
+=======================================================
+
+This experiment connects existing checkers and source judgments. Ordinary :
+and = retain their current behavior. A request is data; a derivation supplies
+evidence; a rule program contains premise holes that an application must fill.
+Later MeTTa-IL integration through lang: depends on the GSLT-to-MeTTa and
+executable OSLF contracts. The experiment does not select those defaults.
+
+Objects and operations
+----------------------
+
+The generic inference interface uses the existing serialized calculus and
+open-proof formats. Its three objects are:
+
+  (GJudgmentRequest language context goal)
+  (GRuleProgram language premises goal program)
+  (GDerivation language context goal proof)
+
+For a named source, the gslt-open-*-v1 operations use the existing
+GSLTSourceV1 envelope as the first field, retaining identity, revision,
+assumptions, profiles and checker-facing definition together. Changing that
+source envelope refuses an old result at the requested source even when the
+rule catalog is identical. Recorded identity/digest data still require the
+source adapter's verification and adequacy; they are not authenticity oracles.
+The lower-level gor-* operations expose the checker catalog directly.
+
+These constructors are inspectable records, not seals. gor-rule-value checks
+a proposed rule program. gor-apply-value checks that value and every supplied
+argument, then substitutes the arguments into its premise holes. Missing or
+extra arguments are refused, including arguments for unused premise positions.
+gor-check-request compares the theory catalog, ordered context and conclusion
+with the request before checking the proof. A valid proof of a different claim
+does not answer the request.
+
+GOpenHyp uses an occurrence index. Two equal judgments in positions 0 and 1
+remain distinct premises. Substitution preserves the submitted proof tree;
+these operations do not quotient proofs by their conclusions. A DAG's sharing
+is a separate property from equality of its expanded tree.
+
+gor-manifest records complete rule lookups and premise lookups, including
+absence. gor-agrees compares those observations in a proposed new environment.
+Agreement alone grants no proof authority. Reusing a positive or negative
+checker verdict also requires the original checked artifact and unchanged
+checker policy. Source-specific telescope formation remains an obligation.
+
+Contextual typing and conversion
+-------------------------------
+
+  (: a A)                         classification in the current context
+  (: A (u i))                     formation at a specified universe
+  (|- ((: A (u 0)) (: x A)) (: x A))
+                                   an explicit contextual request
+
+Quoted requests can be generated and inspected without executing their terms.
+The experimental judge adapter closes the displayed telescope with annotated
+lambdas and checks its dependent function type. ContextualJudgmentReadback
+now proves the corresponding named-reader laws for the explicit Pi/Sigma/Id
+constructor notation. Reading every displayed domain and then closing the
+result agrees with reading the nested lambda/product program directly.
+Its typed application computes the existing capture-avoiding substitution.
+The native-wire comparison retains written lambda domains. Seven generated
+examples compare this model with the actual kernel-query subject and type;
+this bounded comparison is not a general proof of the C reader. Object-language lambdas inside
+a represented term and meta-level premise holes have different roles.
+
+A converter proposes a target with equality evidence. conversion-proposal
+uses the existing native normalizer; conversion-recheck checks the exact
+endpoints, operand types and evidence in the selected scope. Its Conversion
+record remains data and must not be mistaken for an owned theorem handle.
+
+The generic Lean procedure StructuralConversionPrograms.compareOutcome uses
+the existing structural recipe producer and certificate checker. A successful
+result retains its certificate. Failure to find one is Incomplete, not a proof
+of inequality. Even a beta equality can be missed with zero search budget.
+retypeOutcome also requires the target type's formation.
+
+A propositional identity permits explicit transport. It does not generally
+add judgmental conversion. The cumulative empty-root presentation has a
+proved separating context containing p : Id A x y while x and y are not
+convertible. An equality-reflection profile would require a separate contract.
+
+Machine and behavioral interpretations
+--------------------------------------
+
+An accepted application also has a complete route in the existing open-proof
+machine. Its event trace retains the actual rule instances and exact premise
+positions; substitution composes the premise-use ledger in order.
+CertificateGSLTOpenApplicationOperational proves this connection for the exact
+returned proof. gor-checked-events exposes the corresponding data view.
+
+The existing OSLF closure diamond describes existence of a completion with a
+specified final ledger. It does not select a particular proof tree or supply
+an automatic search algorithm. This separates a strategy's behavior from the
+mathematical validity established by the selected checker.
+
+ProgrammableJudgmentTransforms instantiates the existing consume/read/produce
+span: a work occurrence is consumed, the current source is read, and checked
+evidence is produced. The validity invariant follows from the source checker;
+no second publication can consume the same work occurrence. A source change
+blocks a pending commit. Preparation followed by publication fuses through
+the existing span operation and has exactly the same enabledness and result.
+
+ProgrammableJudgmentServices uses the existing request/reply resumption model.
+An arbitrary provider can suggest premise evidence. Independent checking
+produces a publication intent; rejected, outside and unfinished replies do
+not produce one. Every emitted intent preserves evidence validity when its
+span is enabled. A reply need not arrive, and no fairness or external
+termination theorem is asserted. Native transform/await examples exercise
+late replies, invalid replies, one-time consumption and stale-source checks.
+The mathematical intent theorem does not prove C atomicity or capability
+confinement for arbitrary writes.
+
+The HE typed-application and recursive machines already have data-step and
+run/resumption representation laws. They are candidates for interpreting the
+actual rule-building programs. Executable OSLF's canonical-region theorems
+apply to their supported forward formulas under closure and label-coherence
+conditions. A finite unsuccessful exploration is not global unprovability.
+The later lang: integration should consume those qualified machine/compiler
+contracts, rather than infer them from matching notation.
+
+ProgrammableJudgmentSemantics connects the actual callable rules and converter
+to the existing formed contextual interpretation. Successful conversion
+preserves the observed value under every admitted substitution. A closed
+lambda call observes the reindexed value of its original open body; its typing
+and beta receipt are constructed from the existing local rules. The retained
+presheaf section still has the original code. The joined driver proves a
+positive value equality and a negative code-equality control for the same call.
+This is the specified contextual interpretation, not a universal set-model or
+C implementation theorem.
+
+HE reference
+------------
+
+HE.Spec.Type.RulePresentation uses JudgmentDerivation's existing generated
+trees for the published reference relations. It has source-to-tree and
+tree-to-source theorems for:
+
+  annotation extraction       intrinsic grounded types
+  occurrence collections      storage-order type queries
+  selected lookup queries     type membership
+  raw type matching           a selected matching policy
+  selected type occurrences   first-success casts
+  complete cast batches       function-type decomposition
+  ordered argument checking   successful applications
+  applicability outcomes
+
+Lookup and custom matching are explicit parameters. Their queries are local
+dependencies, not conclusions supplied by a whole-program soundness field.
+For published HE enumeration, TypeEnumeration.admissible supplies the source
+occurrence obligation. An arbitrary supplied lookup remains a relative rule
+theory until that obligation is discharged. Failure rules retain complete
+negative matching/selection conditions; an
+exhausted strategy cannot supply them.
+
+HEOccurrences is a bag. HEStorageTypes and HELookup preserve the selected
+list order. Duplicate annotations remain duplicate occurrences. %Undefined%
+and Atom have their specified wildcard behavior; expected/actual orientation
+and binding-thread order are retained. The codec distinguishes every judgment
+kind and retains the context's declaration rows and policy names.
+
+TypeRuleViews exposes every local rule, its ordered premises, conclusion
+and guard descriptions. TypeRulePrograms and TypeRuleCompilation compile a
+finite inventory of actual guard-qualified source instances into the existing
+CalculusLanguageDef/OpenDerivation checker. Every such inventory validates.
+The source_iff_checked_inventory theorem covers all 15 judgment families and
+all 41 rule forms, in both directions. Local source meanings construct the
+interpretation; no whole-program soundness assumption is added.
+
+The compiler keeps every rule occurrence and every premise position. A local
+judgment dictionary provides compact identifiers and refuses unknown requests.
+Those identifiers are local to that inventory: retain the source context,
+selected policies and dictionary alongside stored checker data. A bare ordinal
+is not a portable source judgment. The existing source-envelope interface
+supplies the corresponding identity/revision boundary.
+
+A guard-qualified inventory is an input to this bridge. Loading a printed
+rule description does not prove a policy query or a negative-selection guard.
+The native generic checker checks relative to its supplied theory. The source
+reflection theorem applies to the actual compiler output, not an edited table.
+he-rule-programs-generated.metta exercises all 41 forms as open programs,
+rejects forged conclusions and out-of-range premises, and separately checks
+a closed integer-typing chain. An accepted open rule does not prove its holes.
+
+The existing Type.Presentation.Exact owner separately specifies private
+annotation-variable scopes and whole-expression result inference. The
+generated HE example exercises its independent-variable application theorem.
+The new rule-tree correspondence does not claim to replace that entire owner
+or to verify CeTTa's complete HE implementation.
+
+HOL Light reference
+-------------------
+
+The source owners are HOLLight.Rules, DefinitionAdapters, ProofDataEncoding,
+ProofSystem and HOLLight.MeTTa.InferenceSchedule. The maintained proof-calculus
+module and native transports remain the authorities. RuleData reads and
+rebuilds all ten existing request kinds and preserves their premise keys.
+
+  REFL       [] |- t = t, for a checked term t.
+  TRANS      Join t = u and u = v; retain the union of hypotheses.
+  MK_COMB    Apply equal functions to equal arguments of the required type.
+  ABS        Abstract the equality; the variable must be absent from the
+             hypotheses and have the required source type.
+  BETA       The source primitive contracts (lambda x. t) x with the matching
+             typed variable. General beta is a derived operation.
+  ASSUME     [p] |- p, with p a Boolean proposition.
+  EQ_MP      From p = q and p infer q, retaining both hypothesis sets.
+  DEDUCT_ANTISYM_RULE
+             From Gamma |- p and Delta |- q infer p = q with the respective
+             discharged assumptions and remaining hypothesis union.
+  INST_TYPE  Capture-avoiding type instantiation with source maplet policy.
+  INST       Typed simultaneous term substitution with source maplet policy.
+
+Native HOL hypotheses have set semantics; their order and duplicate copies
+are not proof identity. Ordered parent references in a proof graph do retain
+repeated uses. The common HOL.ProofSyntax ordered-assumption representation
+and its interpretation are distinct interfaces.
+
+AXIOM is a separate, policy-controlled operation. Constant and type-definition
+extensions use DefinitionAdapters and ExportReplay; freshness, formation and
+the nonemptiness witness for a type definition remain checked. Reading a rule
+name or a printed sequent supplies none of these obligations. HOL propositions
+are not identified with dependent proof types without their interpretation.
+
+Programmable HOL histories use the existing HOL:Step/HOL:Cons values.
+RulePrograms reads and composes these lists without changing requests or
+repeated parent addresses. Its admitted-plan theorem constructs the final
+cache from local primitive executions, retains the old cache as a suffix,
+and identifies the newly recorded requests with the executed command list.
+The theorem concerns primitive plans, with one receipt per primitive event.
+
+ExportReplayComposition separately handles registered constant and type
+definitions. Composition retains the complete intermediate declaration state,
+source-address map and cache. A type-definition event has two checked outputs;
+the MeTTa publication interface records each output separately. Policy reuse
+compares the exact sequents of requested axioms, and preserves both successful
+and unsuccessful replay results. Existing cached evidence still needs validity
+under the selected policy; a coincident replay verdict does not grant that.
+
+hol-programs-generated.metta constructs a reusable rule builder as a lambda,
+composes command lists, computes and stores one source run for inspection,
+checks all ten primitives, resumes a complete source state, and exercises declarations, definitions, type definitions and axiom
+policies. All requests use the maintained source constructors. It evaluates
+the MeTTa HOL checker in CeTTa; serialized HOL:Thm values remain data and are
+not native owned theorem handles. The separate native host suite checks those.
+The maplet-order control requires a genuine A-to-bool substitution: HOL Light
+writes the replacement before the variable key. Reversing that pair leaves
+the parameter unchanged and is not a successful specialization.
+
+Inductive declarations
+----------------------
+
+The experimental canonical value is:
+
+  (Family name (parameters (...)) (indices (...)) sort
+    (constructors ((: (constructor (fields (...))) result) ...)))
+
+A complete block can express the same value:
+
+  (Declarations
+    (: (Family name (parameters (...)) (indices (...))) sort)
+    (= name (data ((: (constructor (fields (...))) result) ...))))
+
+decl:family is an ordinary constructor program. A lambda can call it and
+return a Family value. decl:read-family and decl:read-block inspect quoted
+data. The declaration-packages example compares both forms for Nat and Vec,
+retains all fields and indices, and checks that inspection performs no effect.
+
+InductiveMeTTaData proves that both readers recover the same existing
+InductiveSyntax.Family. Their Nat/Vec interpretation reaches the existing
+indexed admission. Controls establish admission of the actual vector package,
+preservation under field renaming, refusal of captured indices and negative
+recursive fields, and formation of the generated guest declarations.
+
+InductiveMeTTaPackage now extends both forms to the complete generated guest
+observations: family and constructor declarations, eliminator, and one
+computation row per source constructor occurrence. IndexedFamilyData reads
+back each row's arity, context, exact endpoints and result type. The vector
+package agrees with the independent cumulative library, including its
+4-variable and 7-variable computation contexts. Accepted generated-row checks
+supply the original typed iota receipts. InductiveMeTTaNaturalPackage connects
+both Nat authoring forms to the existing simple-inductive generator. It uses
+the authored constructor field lists to generate constructor types, the
+recursor and both complete iota rows; these agree with the independent native
+Nat library, including the 3-variable and 4-variable contexts. Missing
+constructors and captured recursive-field names are refused. The generated
+Nat and Vec packets are inspectable in generated-family-packages.metta.
+
+Source-data checking is not a native backend capability claim. Packet reading
+forgets the receipt proof term and establishes no new iota authority. The
+original indexed-family checker supplies it. Missing constructor rows change
+the packet; equal-looking rows retain separate occurrence positions.
+
+Completion and editing
+----------------------
+
+A complete submitted block is the experimental completion boundary. The
+reader requires a matching signature and body and refuses missing, extra or
+malformed rows. A raw standalone : annotation is not thereby a completed
+mathematical definition.
+
+The native implementation contract is that execution and type conversion
+resolve the same definition identity, revision and qualified computations.
+Current ordinary evaluation can still select a conflicting raw rewrite while
+conversion uses an admitted definition. The conflict fixture records this
+open boundary. The admitted execution view is a separate supported route.
+
+DeclarationCompletion now checks a submitted signature/body pair through the
+existing prefix checker. It constructs acceptance from actual formation and
+body derivations, proves body typing before and after publication, and proves
+that type lookup and delta execution select the same completed entry. An
+already published opaque declaration is refused rather than overwritten.
+The delta decoder reads the current body; a changed body refuses the old
+endpoint pair even if its type is unchanged.
+
+Declaration-local and conversion-root dependency owners already supply exact
+verdict-preservation laws. The new open-rule support theorem adds rule and
+premise lookup agreement, including absent lookups. A revision counter alone
+does not establish those semantic agreements. The call interface now extends completion through execution:
+DeclarationCallPrograms emits a declaration lookup followed by the telescope's
+beta program. Its exact endpoints check against the same selected entry that
+types the call. The code reads the current declaration body, rather than
+accepting a body supplied as an unfolding axiom. It takes one selected delta
+step plus one beta step per argument; this is not a runtime-cost measurement.
+
+The existing recursive dependent append body is a substantive completion
+case. Its retained typing tree is re-encoded through StructuralConversionRootMap
+and checked before its name is published. The source .module producer reaches
+this exact body and completion boundary. The completed five-argument function
+has its original dependent result type and nil/cons equations. A beta-equivalent,
+well-typed replacement still invalidates the old call receipt. A previously
+negative endpoint check can become positive after the same edit.
+
+completion-controls.lean executes eight checks of this source/body/call chain.
+It runs the Lean model and distinguishes that qualification from the native
+MeTTa examples. For arbitrary other source modules, a checked proposal earns
+its body typing; fidelity to the authored recursive equations still needs the
+corresponding producer comparison. General textual-family coverage and the
+joined native revision/reuse implementation remain open.
+
+Notation recommendation
+-----------------------
+
+1. Keep : and = recognizable, and submit related declarations as one complete
+   block. Allow ordinary functions and lambdas to construct that same package.
+   The two styles serve hand-written declarations and reusable generators.
+2. Use |- when contexts or side judgments need inspection. Most ordinary calls
+   should obtain their context from the selected mathematical scope.
+3. Retain explicit Family and GRuleProgram records for inspection, interchange
+   and tooling. Repeated low-level fields should be generated where their
+   binding and universe obligations can be retained.
+
+The comparison has not selected a new language default. The measured Nat
+builder call uses 46 UTF-8 bytes and 13 tokens; its complete quoted block uses
+194 bytes and 62 tokens. Vec uses 50 bytes/14 tokens for the call and 280
+bytes/103 tokens for the block. Tokens count parentheses. Whitespace is
+retained. Each block has one quote; its Nat and Vec forms contain four and
+eight classification rows. The short calls contain neither: they reuse the
+3,551-byte builder library, where the quotation and annotations are written.
+These counts measure the submitted examples, not independent implementation
+size. measure.py reproduces them.
+
+The generated Nat/Vec inspection fixture is 72,465 bytes, including repeated
+expected results and fifteen assertions. The seven named-reader/native-query
+comparisons occupy 6,962 bytes with 31 assertions. These are retained fixture
+sizes, not compact evidence-size claims. The canonical binary scalar fields
+are exact but difficult to read; a presentation view should display names and
+indices while keeping that canonical data available. The view must preserve
+occurrence addresses and must not silently replace the retained artifact.
+
+Diagnostics already distinguish duplicate display names, malformed entries,
+missing or extra arguments, wrong claims, unavailable formation and unfinished
+search. The canonical package reader currently returns absence on malformed
+data; a location-bearing diagnostic is still an ergonomic improvement.
+No runtime speed comparison or universal compiler correctness is claimed.
+
+Reference
+---------
+
+Andromeda distinguishes judgment requests, checked judgments and parametric
+derivations. Its separation informs this interface, while Prime retains its
+own source relations, universe policies and interpretation obligations:
+https://www.andromeda-prover.org/type-theory.html
+
+Running the comparison
+----------------------
+
+  python3 experiments/prime_typing_judgments/check.py --cetta <selected-binary>
+
+The runner selects HE explicitly for the generated HE reference and Prime
+for the other programs. It hashes the binary and relevant sources before and
+after execution, checks exact output lists, and preserves boundary findings
+separately from supported behavior. Use --output-dir to retain the results.
+The maintained tests/hol_light/test_host.py independently qualifies the native
+HOL bridge, including all primitive operations and policy/authority controls.
+
+Implementation handoff
+----------------------
+
+implementation-contract.txt states the completion, resolution, reuse, reference
+adapter and operational obligations for native adoption, with the remaining
+runtime findings. The theorem map identifies the established source results.

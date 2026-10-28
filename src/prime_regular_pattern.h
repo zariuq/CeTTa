@@ -271,6 +271,18 @@ CettaPrimeLambdaBindersStatusV1 cetta_prime_lambda_binder_groups_v1(
     Arena *arena, Atom *binders, CettaPrimeLambdaBinderGroupV1 **groups_out,
     size_t *count_out, bool *listed_out);
 
+/* Complete authored-lambda recognition shared by the evaluator and inert
+ * grounded projections. Recognition never evaluates the lambda body. */
+typedef struct {
+    CettaPrimeLambdaBinderGroupV1 *groups;
+    size_t count;
+    bool listed;
+    Atom *own;
+} CettaPrimeLambdaTelescopeV1;
+
+bool cetta_prime_lambda_telescope_v1(Arena *arena,Atom *term,
+                                    CettaPrimeLambdaTelescopeV1 *out);
+
 /* How the kernel reads a lexical name: a symbol names itself; `(quote K)`
  * with an admissible key K names K, explicitly; a matcher variable is not a
  * lexical name; and a bare `_` in binder position binds nothing.  A term uses

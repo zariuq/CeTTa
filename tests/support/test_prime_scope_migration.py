@@ -43,6 +43,32 @@ def main():
     args = ap.parse_args()
     binary = args.binary.resolve()
     args.workdir.mkdir(parents=True, exist_ok=True)
+    # A dialect library may need different argument demands from its shared
+    # ancestor. Explicit authorship must survive both regeneration and checking.
+    authored_root = args.workdir / "authored-library"
+    authored_prime = authored_root / "prime"
+    authored_prime.mkdir(parents=True, exist_ok=True)
+    shared = authored_root / "proof.metta"
+    authored = authored_prime / "proof.metta"
+    shared.write_text("(: inspect (-> Atom Atom))\n")
+    authored_text = "(: inspect (-> (Data Atom) (Data Atom)))\n"
+    authored.write_text(authored_text)
+    manifest_path = authored_prime / "scope_migration.json"
+    manifest_path.write_text(json.dumps({"libraries": [
+        {"source": "proof.metta", "output": "proof.metta", "authored": True}]}))
+    migration.library_spellings(binary, authored_root, check=False)
+    assert authored.read_text() == authored_text
+    migration.library_spellings(binary, authored_root, check=True)
+    authored.write_text(authored_text + "; a reviewed edit still needs a fresh receipt\n")
+    try:
+        migration.library_spellings(binary, authored_root, check=True)
+    except ValueError as error:
+        assert "manifest" in str(error), error
+    else:
+        raise AssertionError("changed authored content passed its stale receipt")
+    assert authored.read_text().endswith("fresh receipt\n")
+    migration.library_spellings(binary, authored_root, check=False)
+    migration.library_spellings(binary, authored_root, check=True)
     controls = [
         ("capture", "; keep (let $fake 1 $fake) exactly\n!(let $f (lam z (let $y z (g $y))) (Pair ($f 1) $y))\n", "[(Pair (g 1) 1)]\n"),
         ("independent", "!(let $f (lam z (let $y z (g $y))) (Pair ($f 1) ($f 2)))\n", "[(Pair (g 1) (g 2))]\n"),
@@ -57,7 +83,7 @@ def main():
         ("constructed-repeated", "(= (twice $f) (Pair ($f 1) ($f 2)))\n!(collapse (twice (cons-atom lam (z (let $y z (g $y))))))\n!(collapse (twice (union-atom (lam z) ((let $y z (g $y))))))\n!(collapse (let $h lam (twice ($h z (let $y z (g $y))))))\n!((lam h (collapse (twice (h z (let $y z (g $y)))))) lam)\n",
          "[()]\n[()]\n[()]\n[()]\n"),
     ]
-    checks = 0
+    checks = 4
     for name, text, expected in controls:
         source = args.workdir / (name + ".source.metta")
         target = args.workdir / (name + ".translated.metta")

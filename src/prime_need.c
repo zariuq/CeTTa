@@ -3182,6 +3182,41 @@ CettaMatchCompletion prime_need_reader_context_update(const PrimeNeedReaderConte
     return CETTA_MATCH_MATCHED;
 }
 
+CettaMatchCompletion prime_need_reader_context_clear_if(const PrimeNeedReaderContext *base,
+        CettaMatchCompletion (*should_clear)(uint64_t,const PrimeNeedReaderValue *,void *,bool *),
+        void *state,PrimeNeedReaderContext **out) {
+    if (!should_clear || !out) return CETTA_MATCH_INCOMPLETE;
+    PrimeNeedReaderContext *next=NULL;
+    for (size_t i=0u;base && i<base->length;i++) {
+        PrimeNeedReaderEntry entry=base->entries[i];
+        bool clear=false;
+        if (entry.reader.value) {
+            CettaMatchCompletion result=should_clear(entry.key,&entry.reader,state,&clear);
+            if (result!=CETTA_MATCH_MATCHED) {
+                prime_need_reader_context_release(next);return result;
+            }
+        }
+        if (clear && !next) {
+            next=prime_need_reader_context_new(base->length,base->lineage,NULL);
+            if (!next) return CETTA_MATCH_INCOMPLETE;
+            for (size_t prefix=0u;prefix<i;prefix++) {
+                if (!prime_need_reader_context_append(next,base->entries[prefix])) {
+                    prime_need_reader_context_release(next);return CETTA_MATCH_INCOMPLETE;
+                }
+            }
+        }
+        if (next) {
+            if (clear) entry.reader=(PrimeNeedReaderValue){0};
+            if (!prime_need_reader_context_append(next,entry)) {
+                prime_need_reader_context_release(next);return CETTA_MATCH_INCOMPLETE;
+            }
+        }
+    }
+    if (!next) return prime_need_reader_context_share(base,out);
+    prime_need_reader_context_replace(out,next);
+    return CETTA_MATCH_MATCHED;
+}
+
 bool prime_need_reader_context_values_absent(const PrimeNeedReaderContext *context) {
     for(size_t i=0u;context && i<context->length;i++) if(context->entries[i].reader.value) return false;
     return true;
@@ -3208,21 +3243,22 @@ CettaMatchCompletion prime_need_reader_context_can_promote(const PrimeNeedReader
     return CETTA_MATCH_MATCHED;
 }
 
+typedef struct {const Arena *arena;} PrimeNeedReaderPromotion;
+static CettaMatchCompletion prime_need_reader_clear_foreign(uint64_t key,
+        const PrimeNeedReaderValue *value,void *raw,bool *clear) {
+    (void)key;
+    const PrimeNeedReaderPromotion *promotion=raw;
+    *clear=!prime_need_reader_value_lives_in(value,promotion->arena);
+    return CETTA_MATCH_MATCHED;
+}
+
 CettaMatchCompletion prime_need_reader_context_promote(const PrimeNeedReaderContext *context,
-    const PrimeNeedSnapshot *world,const Arena *arena,PrimeNeedReaderContext **out) {
-    if(!out) return CETTA_MATCH_INCOMPLETE;
+        const PrimeNeedSnapshot *world,const Arena *arena,PrimeNeedReaderContext **out) {
+    if (!out) return CETTA_MATCH_INCOMPLETE;
     CettaMatchCompletion result=prime_need_reader_context_can_promote(context,world,arena);
-    if(result!=CETTA_MATCH_MATCHED) return result;
-    PrimeNeedReaderContext *prepared=(PrimeNeedReaderContext *)context;
-    prime_need_reader_context_retain(prepared);
-    for(size_t i=0u;context && i<context->length;i++) if(context->entries[i].reader.value &&
-        !prime_need_reader_value_lives_in(&context->entries[i].reader,arena)) {
-        PrimeNeedReaderContext *next=NULL;
-        result=prime_need_reader_context_update(prepared,context->entries[i].key,NULL,&next);
-        if(result!=CETTA_MATCH_MATCHED) {prime_need_reader_context_release(prepared);return result;}
-        prime_need_reader_context_release(prepared);prepared=next;
-    }
-    prime_need_reader_context_replace(out,prepared);return CETTA_MATCH_MATCHED;
+    if (result!=CETTA_MATCH_MATCHED) return result;
+    PrimeNeedReaderPromotion promotion={.arena=arena};
+    return prime_need_reader_context_clear_if(context,prime_need_reader_clear_foreign,&promotion,out);
 }
 
 CettaMatchCompletion prime_need_reader_context_can_settle(const PrimeNeedReaderContext *context,
@@ -3274,12 +3310,11 @@ CettaMatchCompletion prime_need_reader_context_merge(const PrimeNeedReaderContex
 }
 
 static const PrimeNeedReaderEntry *prime_need_reader_entry(
-    const PrimeNeedReaderContext *context,uint64_t key) {
-    for (size_t i=0u;context && i<context->length;i++) {
-        if (context->entries[i].key==key) return &context->entries[i];
-        if (context->entries[i].key>key) break;
-    }
-    return NULL;
+        const PrimeNeedReaderContext *context,uint64_t key,size_t *position) {
+    if (!context) return NULL;
+    while (*position<context->length && context->entries[*position].key<key) (*position)++;
+    return *position<context->length && context->entries[*position].key==key
+        ? &context->entries[*position] : NULL;
 }
 static bool prime_need_reader_entry_same(const PrimeNeedReaderEntry *a,
     const PrimeNeedReaderEntry *b) {
@@ -3305,11 +3340,13 @@ CettaMatchCompletion prime_need_reader_context_import(const PrimeNeedReaderConte
         if (held==CETTA_MATCH_INCOMPLETE) return held;
     }
     bool changed=false;
+    size_t entrance_position=0u,recipient_position=0u;
     for (size_t i=0u;i<production->length;i++) {
-        const PrimeNeedReaderEntry *p=&production->entries[i], *e=prime_need_reader_entry(entrance,p->key);
+        const PrimeNeedReaderEntry *p=&production->entries[i],
+            *e=prime_need_reader_entry(entrance,p->key,&entrance_position);
         if (prime_need_reader_entry_same(e,p)) continue;
         changed=true;
-        const PrimeNeedReaderEntry *r=prime_need_reader_entry(recipient,p->key);
+        const PrimeNeedReaderEntry *r=prime_need_reader_entry(recipient,p->key,&recipient_position);
         if (r && !prime_need_reader_entry_same(r,e) && !prime_need_reader_entry_same(r,p))
             return CETTA_MATCH_REFUTED;
     }
@@ -3324,13 +3361,14 @@ CettaMatchCompletion prime_need_reader_context_import(const PrimeNeedReaderConte
     if (entrance) prime_need_reader_reference_retain(&entrance->lineage->references);
     prime_need_reader_reference_retain(&production->lineage->references);
     size_t a=0u,b=0u;
+    entrance_position=0u;
     while (a<length || b<production->length) {
         PrimeNeedReaderEntry entry;
         if (b==production->length || (a<length && recipient->entries[a].key<production->entries[b].key))
             entry=recipient->entries[a++];
         else {
             entry=production->entries[b++];
-            bool delta=!prime_need_reader_entry_same(&entry,prime_need_reader_entry(entrance,entry.key));
+            bool delta=!prime_need_reader_entry_same(&entry,prime_need_reader_entry(entrance,entry.key,&entrance_position));
             if (a<length && recipient->entries[a].key==entry.key) {
                 if (!delta) entry=recipient->entries[a];
                 a++;
@@ -3655,7 +3693,8 @@ static CettaMatchCompletion prime_need_event_payload_compare(
         a->source_argument_index != b->source_argument_index ||
         a->rule_occurrence_id != b->rule_occurrence_id ||
         a->producer_update_id != b->producer_update_id ||
-        a->producer_completed != b->producer_completed
+        a->producer_completed != b->producer_completed ||
+        a->state_event_id != b->state_event_id
 #endif
         ) return CETTA_MATCH_REFUTED;
     Atom *x[] = {a->before, a->after}, *y[] = {b->before, b->after};
@@ -5170,6 +5209,25 @@ bool prime_need_receipt_write_state(
             .state_cell = cell, .before = before, .after = after}, false, out);
 }
 
+bool prime_need_receipt_record_state(Arena *owner,const PrimeNeedReceipt *base,
+        const PrimeNeedBranchState *operation,PrimeNeedReceipt *out) {
+    if (!out || !operation || !operation->session_id || operation->recording ||
+        !operation->top) return false;
+    const PrimeNeedReceiptFrame *frame=operation->top;
+    const PrimeNeedReceiptEvent *event=&frame->event;
+    if (!frame->has_event || frame->session_id!=operation->session_id ||
+        !frame->event_id || frame->event_id!=event->event_id ||
+        !event->state_cell || !event->after ||
+        (event->kind!=PRIME_NEED_RECEIPT_READ_STATE &&
+         event->kind!=PRIME_NEED_RECEIPT_WRITE_STATE) ||
+        (event->kind==PRIME_NEED_RECEIPT_WRITE_STATE && !event->before))
+        return false;
+    return prime_need_observed_append(owner,base,
+        (PrimeNeedReceiptEvent){.kind=event->kind,
+            .state_event_id=event->event_id,.state_cell=event->state_cell,
+            .before=event->before,.after=event->after},false,out);
+}
+
 static bool prime_need_receipt_use_equation_event(
     Arena *owner, const PrimeNeedReceipt *base,
     uint64_t source_occurrence_id, uint64_t rule_occurrence_id,
@@ -5762,7 +5820,11 @@ PrimeNeedReceiptGraphStatus prime_need_receipt_graph_validate(
                 (node->event.producer_completed && !node->event.producer_update_id) ||
                 (node->event.producer_update_id &&
                  (node->event.kind != PRIME_NEED_RECEIPT_OBSERVE_CELL ||
-                  !node->event.need_session_id || !node->event.thunk_id)))
+                  !node->event.need_session_id || !node->event.thunk_id)) ||
+                (node->event.state_event_id &&
+                 (!node->event.state_cell || node->event.state_event_id>=node->event.event_id ||
+                  (node->event.kind!=PRIME_NEED_RECEIPT_READ_STATE &&
+                   node->event.kind!=PRIME_NEED_RECEIPT_WRITE_STATE))))
                 goto done;
             events++;
         } else if (node->event.event_id != 0u ||
@@ -5815,6 +5877,7 @@ static bool prime_need_receipt_graph_payload_equal(
            a->rule_occurrence_id == b->rule_occurrence_id &&
            a->producer_update_id == b->producer_update_id &&
            a->producer_completed == b->producer_completed &&
+           a->state_event_id == b->state_event_id &&
            a->state_cell == b->state_cell &&
            (a->before == b->before ||
             (a->before && b->before && atom_eq(a->before, b->before))) &&
@@ -7215,6 +7278,7 @@ static bool prime_need_receipt_frame_compare(const PrimeNeedReceiptFrame *a,
     RF_I("receipt.frame_rule",CETTA_CHECKPOINT_RULE_OCCURRENCE,p->rule_occurrence_id,q->rule_occurrence_id);
     RF_I("receipt.frame_update",CETTA_CHECKPOINT_NEED_SERIAL,p->producer_update_id,q->producer_update_id);
     RF_S("receipt.frame_completed",p->producer_completed,q->producer_completed);
+    RF_I("receipt.frame_state_event",CETTA_CHECKPOINT_RECEIPT_NODE,p->state_event_id,q->state_event_id);
 #endif
     RF_P("receipt.frame_state_cell",p->state_cell,q->state_cell);
     RF_A("receipt.frame_before",p->before,q->before);RF_A("receipt.frame_after",p->after,q->after);
@@ -7470,6 +7534,7 @@ bool prime_need_receipt_compare(const PrimeNeedReceipt *left,
         PR_ID("receipt.rule",CETTA_CHECKPOINT_RULE_OCCURRENCE,p->rule_occurrence_id,q->rule_occurrence_id);
         PR_ID("receipt.producer_update",CETTA_CHECKPOINT_NEED_SERIAL,p->producer_update_id,q->producer_update_id);
         PR_SCALAR("receipt.producer_completed",p->producer_completed,q->producer_completed);
+        PR_ID("receipt.state_event",CETTA_CHECKPOINT_RECEIPT_NODE,p->state_event_id,q->state_event_id);
         PR_PTR("receipt.state_cell",p->state_cell,q->state_cell);
         PR_ATOM("receipt.before",p->before,q->before);PR_ATOM("receipt.after",p->after,q->after);
     }

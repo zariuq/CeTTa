@@ -5631,7 +5631,20 @@ static bool prepared_pure_compile_eval_with_role(
                 prepared_pure_source_child(program, source_view, continuation),
                 depth, node_out);
         }
-        return false;
+        /* A collection returns one completed bag, keeping its producer's
+         * alternatives inside the canonical service. A choice itself does
+         * not have that single-result contract. A stored computation word
+         * may describe a normalized carrier, so it cannot be erased into
+         * source syntax and reinterpreted by this route. */
+        if (control.operation == CETTA_CONTROL_COLLECT &&
+            program->service_source_nodes && !atom_has_vars(source) &&
+            prepared_pure_source_computation(
+                program, source_view).control.operation == CETTA_CONTROL_NONE)
+            return prepared_pure_add_node(program,
+                (PreparedPureNode){.kind=PREPARED_PURE_SERVICE_SOURCE,.atom=source},
+                NULL,0u,node_out);
+        return prepared_pure_reject(program,
+            "control requires an admitted canonical service", source);
     }
 
     CettaGsltRegisterResultKind result_kind;

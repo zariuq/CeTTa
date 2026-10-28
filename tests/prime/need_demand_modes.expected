@@ -8,6 +8,8 @@ prime-need:head-effect-once
 prime-need:head-source-once
 prime-need:head-lambda-application
 prime-need:head-lambda-application
+stored-root-field
+stored-later-field
 prime-need:pattern-demand-once
 [5]
 [Number]
@@ -74,7 +76,7 @@ prime-need:pattern-demand-once
 [Kept]
 [()]
 [Kept]
-[()]
+[(), (), ()]
 [Strict, Strict, (Fallback 8)]
 [()]
 [Kept]

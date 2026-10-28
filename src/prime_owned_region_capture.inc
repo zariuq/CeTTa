@@ -381,6 +381,24 @@ static void prime_native_region_plan_release(void *context, size_t scratch) {
     compare->temporary -= scratch;
 }
 
+static bool prime_native_region_hold_program_view(PrimeNativeRegionCapture *capture,
+    Space *program_space) {
+    if (!prime_native_region_tick(capture)) return false;
+    PettaProgramRevisionView *view = petta_program_revision_view_capture(
+        capture->region->library->petta_program, program_space);
+    bool current = view && petta_program_revision_view_source_plans_current(
+        capture->region->library->petta_program, program_space, view);
+    if (!current) {
+        petta_program_revision_view_free(view);
+        capture->status = CETTA_CONTINUATION_CAPACITY;
+        return false;
+    }
+    /* The catalog owns its cached reference; the region census includes it
+     * before the capture is published. */
+    petta_program_revision_view_free(view);
+    return true;
+}
+
 static bool prime_native_region_prepare_programs(PrimeNativeRegionCapture *capture,
     CettaLibraryContext *origin, Space *source, Registry *registry,
     const AtomDeepCopySession *copy) {
@@ -409,7 +427,12 @@ static bool prime_native_region_prepare_programs(PrimeNativeRegionCapture *captu
         region->library->petta_program, &region->world, &read);
     assert(!compare.temporary);
     if (equal < 0 && !compare.refused) capture->status = CETTA_CONTINUATION_CAPACITY;
-    return equal == 1;
+    if (equal != 1) return false;
+    PrimeNativeRegionScope view_scope = {0};
+    bool selected = prime_native_region_scope_select(region, &view_scope);
+    bool held = selected && prime_native_region_hold_program_view(capture, &region->world);
+    prime_native_region_scope_leave(&view_scope);
+    return held && prime_native_region_measure(capture, copy);
 }
 
 static PrimeNativeOwnedRegion *prime_native_owned_region_capture(

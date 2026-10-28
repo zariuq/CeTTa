@@ -1,0 +1,11 @@
+(hol:profile base)
+!(hol:inductive &self Nat (u 0) (: Z Nat) (: S (-> Nat Nat)))
+!(hol:define &self inc (-> Nat Nat) (= (inc $n) (S $n)))
+!(assertEqual (inc Z) (S Z))
+!(assertEqual (type:check (refl (inc Z)) (id Nat (inc Z) (S Z))) True)
+; The ordinary source route permits another equation for the same name.
+(= (inc $n) Z)
+!(assertEqual (inc Z) Z)
+!(assertEqual (type:check (refl (inc Z)) (id Nat (inc Z) (S Z))) True)
+!(assertEqual (car-atom (try (eval (inc Z) (admitted &self strict)))) Undetermined)
+!(assertEqual (eval (inc Z) (admitted &self)) (S Z))

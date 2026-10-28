@@ -135,5 +135,9 @@ int main(void) {
     space_free(&plain);
     space_free(&backing);
     arena_free(&a);
+    var_intern_free(&variables);
+    g_var_intern = NULL;
+    symbol_table_free(&symbols);
+    g_symbols = NULL;
     return g_failures ? 1 : 0;
 }

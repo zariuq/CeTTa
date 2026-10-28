@@ -25,6 +25,12 @@
  * quoted on the PeTTa lane, as lib_transform quotes them) and, optionally,
  * how a `let` expression is evaluated now.  Without an evaluator the firing
  * suspends at a `let` and its caller resumes it (the Prime library driver).
+ * Nested absence retains its own jobs and read observations until its whole
+ * inner query completes. A vacuous `every` still supplies its aggregate row.
+ * Resumption handles authorize one particular request; stale, repeated and
+ * cancelled handles cannot answer a subsequent request on that machine.
+ * Effects of computed code remain observable when a guard fails. NONE means
+ * no interaction committed, not that evaluated code performed no effect.
  */
 
 typedef enum {
@@ -36,7 +42,10 @@ typedef struct {
     CettaInteractionLane lane;
     void *context;
     /* Every value of a `let` expression, in order; false with *error_out
-     * set when evaluation answers an error.  NULL: the firing suspends. */
+     * set when evaluation answers an error. Reads reported through the
+     * evaluator's existing hooks become commit and waiter dependencies.
+     * The host retains those Space owners; unreported foreign resources
+     * require their separate observation contract. NULL: the firing suspends. */
     bool (*evaluate)(void *context, Arena *a, Atom *expression,
                      Atom ***values_out, size_t *len_out, Atom **error_out);
     /* The rows' template instances, one per row in row order, are the

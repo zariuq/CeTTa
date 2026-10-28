@@ -756,6 +756,8 @@ static void oem_read_heads_finish(CettaOpenEquationProgram *program) {
 
 static bool oem_reads_head(const CettaOpenEquationProgram *program,
                            SymbolId head) {
+    if (program->read_head_len == 0u)
+        return false;
     return bsearch(&head, program->read_heads, program->read_head_len,
                     sizeof(*program->read_heads), oem_read_head_compare) != NULL;
 }
@@ -3189,7 +3191,7 @@ static bool oem_build_builtin_entry(OemCompile *compile, Atom *expr,
         plan->role != PETTA_PLAN_VALUE && plan->role != PETTA_PLAN_DATA &&
         is_grounded_op(atom_symbol_current_id(expr->expr.elems[0])) &&
         petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0])) == PETTA_FORM_NONE &&
-        space_head_declares_type(compile->program->space, atom_symbol_current_id(expr->expr.elems[0]))) {
+        space_head_declares_stored_type(compile->program->space, atom_symbol_current_id(expr->expr.elems[0]))) {
         if (!oem_build_host(compile, expr, plan, depth, "declared builtin protocol", out))
             return false;
         compile->nodes[*out].host_fast = OEM_HOST_PLAIN;

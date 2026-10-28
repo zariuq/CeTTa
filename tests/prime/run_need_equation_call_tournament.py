@@ -377,50 +377,63 @@ def main() -> int:
 
     case("04-strict-wild-constant", case04)
 
-    def case05():
-        require(value_bag(forms, 5) == Counter({
+    def case05(observed=forms):
+        require(value_bag(observed, 5) == Counter({
             "c05-left": 1,
-            "c05-right": 2,
+            "c05-right": 1,
             "(tournament:c05 X Y)": 1,
-        }), "baseline disjoint-demand bag changed")
-        left = next(a for a in forms[5] if a.value == "c05-left")
+        }), "disjoint demands lost multiplicity or uncovered residuals")
+        left = next(a for a in observed[5] if a.value == "c05-left")
+        right = next(a for a in observed[5] if a.value == "c05-right")
         require(field_set(left, "observe-cell", "argument") == {"1"},
                 "left answer observed an irrelevant argument")
-        for right in (a for a in forms[5] if a.value == "c05-right"):
-            require(field_set(right, "observe-cell", "argument") == {"1", "2"},
-                    "baseline right receipt no longer exposes frontier contamination")
+        require(field_set(right, "observe-cell", "argument") == {"2"},
+                "right answer observed an irrelevant argument")
+        require(producer_count(observed, 5) == 2,
+                "disjoint arguments lost their distinct source cells")
 
     case("05-disjoint-supports", case05)
 
-    def case06():
-        require(value_bag(forms, 6) == Counter({
+    def case06(observed=forms):
+        require(value_bag(observed, 6) == Counter({
             "c06-right": 1,
-            "c06-left": 2,
+            "c06-left": 1,
             "(tournament:c06 X Y)": 1,
-        }), "reversed baseline bag changed")
+        }), "reversed disjoint demands lost multiplicity or residuals")
         mapped_left_first = Counter({
             value.replace("c05", "c0x"): count
-            for value, count in value_bag(forms, 5).items()
+            for value, count in value_bag(observed, 5).items()
             if not value.startswith("(tournament:")
         })
         mapped_right_first = Counter({
             value.replace("c06", "c0x"): count
-            for value, count in value_bag(forms, 6).items()
+            for value, count in value_bag(observed, 6).items()
             if not value.startswith("(tournament:")
         })
-        require(mapped_left_first != mapped_right_first,
-                "baseline unexpectedly ceased to discriminate declaration order")
+        require(mapped_left_first == mapped_right_first,
+                "declaration order changed admitted answer multiplicity")
+        left = next(a for a in observed[6] if a.value == "c06-left")
+        right = next(a for a in observed[6] if a.value == "c06-right")
+        require(field_set(left, "observe-cell", "argument") == {"1"} and
+                field_set(right, "observe-cell", "argument") == {"2"},
+                "declaration order changed argument support")
 
     case("06-declaration-reversal", case06)
 
     def case07():
         require(value_bag(forms, 7) == Counter({
-            "c07-left": 1, "c07-right": 2, "c07-both": 1,
+            "c07-left": 1, "c07-right": 1, "c07-both": 1,
             "(tournament:c07 X Y)": 1,
-        }), "overlapping-support baseline bag changed")
+        }), "overlapping demands lost multiplicity or uncovered residuals")
+        left = next(a for a in forms[7] if a.value == "c07-left")
+        right = next(a for a in forms[7] if a.value == "c07-right")
         both = next(a for a in forms[7] if a.value == "c07-both")
-        require(field_set(both, "observe-cell", "argument") == {"1", "2"},
-                "two-argument candidate lacks its exact support")
+        require(field_set(left, "observe-cell", "argument") == {"1"} and
+                field_set(right, "observe-cell", "argument") == {"2"} and
+                field_set(both, "observe-cell", "argument") == {"1", "2"},
+                "overlapping answers do not carry exact argument support")
+        require(producer_count(forms, 7) == 2,
+                "overlapping demands lost their distinct source cells")
 
     case("07-overlapping-supports", case07)
 
@@ -506,10 +519,28 @@ def main() -> int:
         require(value_bag(forms, 23) == Counter({"0": 1}),
                 "conflicting siblings committed ambient state")
         compatible = [a for a in forms[24] if a.value == "c13-compatible"]
-        require(len(compatible) == 2 and
-                len(set().union(*(event_ids(a, "observe-cell")
-                                  for a in compatible))) == 1,
-                "compatible duplicate rules do not share one observation")
+        require(len(compatible) == 2, "compatible duplicate rules lost an answer")
+        observations = [a.events_named("observe-cell") for a in compatible]
+        producer_keys = {
+            (event_field(event, "need-session"), event_field(event, "cell"),
+             event_field(event, "producer"), event_field(event, "after"))
+            for events in observations for event in events
+        }
+        require(len(producer_keys) == 1 and
+                all(part is not None for part in next(iter(producer_keys))),
+                "compatible readers do not name the same producer outcome")
+        completed = {event[1] for events in observations for event in events
+                     if event_field(event, "production") == "True"}
+        uses = {event[1] for events in observations for event in events
+                if event_field(event, "production") == "False"}
+        require(len(completed) == 1 and all(any(
+                    event_field(event, "production") == "True" for event in events)
+                    for events in observations),
+                "shared producer completion is absent from an answer's history")
+        require(len(uses) == 2 and all(sum(
+                    event_field(event, "production") == "False" for event in events) == 1
+                    for events in observations),
+                "independent reader observations were not retained separately")
         require(len(set().union(*(field_set(a, "use-equation", "rule")
                                   for a in compatible))) == 2,
                 "compatible answers collapsed duplicate rule occurrences")
@@ -806,9 +837,10 @@ def main() -> int:
 
     mutation_checks = []
 
-    def mutation(name, setup, discriminator):
+    def mutation(name, setup, discriminator, source=None):
         try:
-            mutated = deepcopy(policy_observations["demand-cohort"])
+            mutated = deepcopy(source if source is not None else
+                               policy_observations["demand-cohort"])
             setup(mutated)
             mutation_is_killed(
                 lambda: discriminator(mutated),
@@ -817,6 +849,29 @@ def main() -> int:
             mutation_checks.append((name, True, ""))
         except AssertionError as error:
             mutation_checks.append((name, False, str(error)))
+
+    def duplicate_disjoint_setup(mutated):
+        extra = deepcopy(next(answer for answer in mutated[5]
+                              if answer.value == "c05-right"))
+        extra.occurrence = 900010
+        mutated[5].append(extra)
+
+    mutation("monolithic-duplicate-disjoint", duplicate_disjoint_setup, case05, forms)
+
+    def missing_residual_setup(mutated):
+        residual = next(answer for answer in mutated[5]
+                        if answer.value == "(tournament:c05 X Y)")
+        mutated[5].remove(residual)
+
+    mutation("monolithic-missing-residual", missing_residual_setup, case05, forms)
+
+    def reverse_order_duplicate_setup(mutated):
+        extra = deepcopy(next(answer for answer in mutated[6]
+                              if answer.value == "c06-left"))
+        extra.occurrence = 900011
+        mutated[6].append(extra)
+
+    mutation("monolithic-order-dependent", reverse_order_duplicate_setup, case06, forms)
 
     def duplicate_producer_setup(mutated):
         source = deepcopy(admitted(mutated, 2)[0]
@@ -960,14 +1015,24 @@ def main() -> int:
               + (f": {detail}" if detail else ""))
     passed = sum(1 for _, ok, _ in checks if ok)
     failed = len(checks) - passed
+    case_results = {name: ok for name, ok, _ in checks}
+    order_cases = {
+        "monolithic": "06-declaration-reversal",
+        "candidate-local": "candidate-local:06-declaration-reversal",
+        "demand-cohort": "demand-cohort:06-declaration-reversal",
+    }
+    require(all(name in case_results for name in order_cases.values()),
+            "an order-invariance example did not run")
+    order_summary = " ".join(
+        f"{frontier}-{'green' if case_results[name] else 'red'}"
+        for frontier, name in order_cases.items())
     print(
         f"(PrimeNeedEquationCallTournamentSummary "
         f"{len(checks)} {passed} {failed} "
-        f"frontiers 3 order-invariance monolithic-red "
-        f"candidate-local-green demand-cohort-green)"
+        f"frontiers 3 order-invariance {order_summary})"
     )
     print(
-        "(PrimeNeedRewriteFrontierEvidence "
+        "(PrimeNeedRewriteFrontierEvidence historical "
         "candidate-local same-support-sharing red residual-precision red "
         "demand-cohort same-support-sharing green "
         "overlapping-producer-reuse red residual-precision red)"

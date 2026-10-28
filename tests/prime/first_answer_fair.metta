@@ -12,10 +12,12 @@
 ; A named control at the top level runs as it does inside an expression.
 !(once (search-policy (control FIFO)) (loop Z))
 
-; A recursion through a space read, around a cycle.
+; A recursion through a space read, around a cycle.  The edge pattern is
+; read from the node reached so far, so its `$x` is the parameter's, shared
+; with the pattern by the crossing set.
 (edge a b)
 (edge b a)
-(= (reach $x) (match &self (edge $x $y) (reach $y)))
+(= (reach $x) (match &self (edge $x $y) (reach $y)){$x})
 (= (reach $x) (at $x))
 !(once (reach a))
 

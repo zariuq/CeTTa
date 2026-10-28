@@ -11,10 +11,10 @@ lines alone do not say which query an answer belongs to.  This tool runs the
 program once more with a marker query before every top-level `!` form and one
 at the end; the lines between two markers are one query's answers, and the
 counts of those answers split the expected output, which needs no markers of
-its own.  HE prints each query's answers on one bracketed line, which frames
+its own.  HE and Prime print each query's answers on one bracketed line, which frames
 them already.
 
-usage: compare_answers.py --lang petta|he --program P --expected E \
+usage: compare_answers.py --lang petta|he|prime --program P --expected E \
            --actual A [--cetta BIN [ARG...]]
   --cetta is required for petta: the command that ran the program.
 exit status 0 when the outputs agree, 1 otherwise."""
@@ -333,7 +333,7 @@ def compare_he(program, expected, actual):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--lang', choices=('petta', 'he'), required=True)
+    ap.add_argument('--lang', choices=('petta', 'he', 'prime'), required=True)
     ap.add_argument('--program', required=True)
     ap.add_argument('--expected', required=True)
     ap.add_argument('--actual', required=True)

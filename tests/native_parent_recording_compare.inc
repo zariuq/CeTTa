@@ -283,12 +283,12 @@ static void recorded_public_refusal(unsigned cut) {
  CettaContinuationStatus status;
  CettaPrimeCheckpointCopy *copy=cetta_prime_checkpoint_copy_new(lib,handle,&status);
  CHECK(copy&&status==CETTA_CONTINUATION_READY);assert(copy);
- AtomDeepCopyArenaPair pairs[3];CHECK(cetta_prime_checkpoint_copy_arena_pair(copy,&pairs[0]));
- pairs[1]=(AtomDeepCopyArenaPair){&syntax,&syntax};size_t count=2u;
- if(space.universe&&space.universe->persistent_arena&&space.universe->persistent_arena!=&syntax)
-  pairs[count++]=(AtomDeepCopyArenaPair){space.universe->persistent_arena,space.universe->persistent_arena};
+ size_t count=0u;
+ AtomDeepCopyArenaPair *pairs=checkpoint_arena_pairs(copy,&syntax,&space,true,&count);
+ CHECK(pairs);assert(pairs);
  AtomDeepCopySession *atoms=atom_deep_copy_session_new(pairs[0].destination);assert(atoms);
  CHECK(atom_deep_copy_session_set_arena_map(atoms,pairs,count));
+ free(pairs);
  CHECK(cetta_prime_checkpoint_copy_prepare(copy,atoms)==CETTA_CONTINUATION_UNSUPPORTED);
  CHECK(!strcmp(cetta_prime_checkpoint_copy_refusal(copy),"RecordingOwner"));
  atom_deep_copy_session_free(atoms);cetta_prime_checkpoint_copy_free(copy);

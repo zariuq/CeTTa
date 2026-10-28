@@ -1,3 +1,9 @@
+computed
+[(quote 3)]
 [(quote (+ 1 2))]
+[(quote (box 12))]
 [(quote (box (* (+ 1 2) 4)))]
+[(Pair (quote 1) (quote 1)), (Pair (quote 2) (quote 2))]
+[(quote 5)]
+[formed]
 [4]

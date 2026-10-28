@@ -1,0 +1,10 @@
+(hol:profile base)
+!(import! &self judgments.metta)
+!(hol:inductive &self Nat (u 0) (: Z Nat) (: S (-> Nat Nat)))
+!(hol:define &self inc (-> Nat Nat) (= (inc $n) (S $n)))
+; Direct top-level composition and staged use have the same checked answer.
+!(judge (congruence-judgment inc Nat Nat))
+!(let $goal (congruence-judgment inc Nat Nat) (assertEqual (judge $goal) True))
+!(let* (($goal (congruence-judgment inc Nat Nat)) ($view (inspect-judgment $goal)))
+   (assertEqual (judge $goal) True))
+!(judge (congruence-judgment inc Nat Nat))

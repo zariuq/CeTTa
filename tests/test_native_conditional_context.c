@@ -2147,6 +2147,9 @@ static unsigned source_collection_plans(void) {
                         complete = true;
                         break;
                     }
+                    if (step != PETTA_MACHINE_STEP_ANSWER || answers != 0u)
+                        fprintf(stderr, "collection plan: fixture=%u route=%u purse=%u quantum=%u step=%u answers=%u\n",
+                            fixture, route, purse, quantum, (unsigned)step, answers);
                     assert(step == PETTA_MACHINE_STEP_ANSWER && ++answers == 1u);
                     assert(atom_eq(answer, route ? atom_int(&arena, 2) : fixture_atom(&arena, expected[fixture])));
                 }

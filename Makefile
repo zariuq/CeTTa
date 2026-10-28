@@ -1,5 +1,29 @@
 SHELL = /bin/bash
-CC = gcc
+# Cesta is the language this tree's C is written in: plain C is Cesta, and
+# declared protocols, layouts, tables and macros generate checked-in C.  Every
+# compile and link runs through one pinned Cesta tool, built from Cesta commit
+# CESTA_COMMIT, whose sha256 is CESTA_SHA256; plain C reaches the native
+# compiler unchanged.  `make cesta-tool CESTA_FROM=FILE` installs the tool;
+# CESTA_BUILD=0 builds with the native compiler alone.
+CESTA_COMMIT = 7f94e9309e123be98366a2e6a93db898374ef44c
+CESTA_SHA256 = 3d65f2604378f91f63415c5b5cdc4a35e8482fe933343e305c00663388acbf29
+CESTA ?= $(CURDIR)/runtime/cesta/cesta
+CESTA_NATIVE_CC ?= gcc
+CESTA_BUILD ?= 1
+export CESTA CESTA_NATIVE_CC
+ifeq ($(CESTA_BUILD),1)
+CC = $(CURDIR)/tools/cesta_cc.sh
+ifeq ($(filter cesta-tool,$(MAKECMDGOALS)),)
+ifneq ($(CESTA_TOOL_VERIFIED),$(CESTA_SHA256) $(CESTA))
+ifneq ($(firstword $(shell sha256sum '$(CESTA)' 2>/dev/null)),$(CESTA_SHA256))
+$(error $(CESTA) is not the pinned Cesta tool (sha256 $(CESTA_SHA256), commit $(CESTA_COMMIT)); install it with 'make cesta-tool CESTA_FROM=FILE', or build with CESTA_BUILD=0)
+endif
+export CESTA_TOOL_VERIFIED := $(CESTA_SHA256) $(CESTA)
+endif
+endif
+else
+CC = $(CESTA_NATIVE_CC)
+endif
 LLVM_OPT ?= opt
 LLVM_CLANG ?= clang
 .DEFAULT_GOAL := all
@@ -114,6 +138,9 @@ ENABLE_RUNTIME_TIMING ?= 0
 ENABLE_SANITIZERS ?= 0
 ENABLE_PIC ?= 0
 CETTA_PROVENANCE_ASSERT ?= 0
+# 1: the interaction commit protocol observes each fact again where a step
+# requires it (src/interaction_core.c, ia_commit_run_CHECKED).
+CETTA_INTERACTION_COMMIT_CHECKED ?= 0
 # A checked build traps any read of a term the last collection found
 # unreachable; it collects at every safe point.
 TERM_UNIVERSE_COLLECTION_CHECKS ?= 0
@@ -137,13 +164,13 @@ ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
 CETTA_PROC_FORK_SPAWN ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 837
+PRIME_NEED_ALGEBRA_CHECKS := 904
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 846
+PRIME_NEED_ALGEBRA_CHECKS := 913
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -199,6 +226,9 @@ $(error ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS must be 0 or 1)
 endif
 ifneq ($(filter $(CETTA_PROVENANCE_ASSERT),0 1),$(CETTA_PROVENANCE_ASSERT))
 $(error CETTA_PROVENANCE_ASSERT must be 0 or 1)
+endif
+ifneq ($(filter $(CETTA_INTERACTION_COMMIT_CHECKED),0 1),$(CETTA_INTERACTION_COMMIT_CHECKED))
+$(error CETTA_INTERACTION_COMMIT_CHECKED must be 0 or 1)
 endif
 ifneq ($(filter $(TERM_UNIVERSE_COLLECTION_CHECKS),0 1),$(TERM_UNIVERSE_COLLECTION_CHECKS))
 $(error TERM_UNIVERSE_COLLECTION_CHECKS must be 0 or 1)
@@ -585,8 +615,11 @@ endif
 ifeq ($(CETTA_PROVENANCE_ASSERT),1)
 BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).provenance
 endif
+ifeq ($(CETTA_INTERACTION_COMMIT_CHECKED),1)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).commit-checked
+endif
 ifeq ($(TERM_UNIVERSE_COLLECTION_CHECKS),1)
-BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).collection-checks
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).collection-checks
 endif
 ifeq ($(RHOCOST_COMMIT_AUDIT),1)
 BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).rhocost-audit
@@ -713,6 +746,9 @@ ifeq ($(CETTA_PROC_FORK_SPAWN),1)
 PROC_FORK_SPAWN_CPPFLAGS = -DCETTA_PROC_FORK_SPAWN=1
 endif
 CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS) $(PY_CFLAGS) $(GMP_CFLAGS) $(LIB_PROLOG_CFLAGS) $(HTTP_CFLAGS) $(SIWC_CFLAGS) $(DURABLE_CFLAGS) $(PROVENANCE_CPPFLAGS) $(PRIME_RECEIPT_INDEX_CPPFLAGS) $(PRIME_NEED_HEAP_INDEX_CPPFLAGS) $(PRIME_NEED_CLOSURE_CAPTURE_CPPFLAGS) $(PRIME_EVAL_STACK_CPPFLAGS) $(PROC_FORK_SPAWN_CPPFLAGS) -DCETTA_MANAGED_SYMBOLS=$(ENABLE_MANAGED_SYMBOLS) -DCETTA_SYMBOL_READ_COVERAGE=$(ENABLE_SYMBOL_READ_COVERAGE) -include $(BUILD_CONFIG_HEADER)
+ifeq ($(CETTA_INTERACTION_COMMIT_CHECKED),1)
+CPPFLAGS += -Dia_commit_run_CHECKED=1
+endif
 CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
 DEPFLAGS = -MMD -MP
 # Libraries a binary does not use are not recorded as its dependencies, with
@@ -973,8 +1009,9 @@ SECP256K1_OBJ = $(foreach variant,$(BUILD_OBJ_TAG).o $(BUILD_OBJ_TAG).stage0.o $
 SRC += src/library_crypto.c src/crypto_primitives.c $(SECP256K1_SRC)
 # lib/toml: TOML 1.1 through the vendored tomlc17 (MIT, vendor/tomlc17).
 SRC += src/library_toml.c vendor/tomlc17/tomlc17.c
-$(SECP256K1_OBJ): CFLAGS := $(filter-out -Werror,$(CFLAGS)) -Wno-unused-function \
+SECP256K1_CFLAGS := $(filter-out -Werror,$(CFLAGS)) -Wno-unused-function \
 	-DENABLE_MODULE_EXTRAKEYS=1 -DENABLE_MODULE_SCHNORRSIG=1 -DENABLE_MODULE_ECDH=1
+$(SECP256K1_OBJ): CFLAGS := $(SECP256K1_CFLAGS)
 PARSER_BUILD_MANIFEST ?= langdef/parsers/baked_v1.json
 PARSER_BUILD_MANIFEST_KEY := $(shell python3 tools/parser_artifact_build_v1.py --manifest "$(PARSER_BUILD_MANIFEST)" --manifest-key)
 PARSER_BAKED_HEADER = runtime/generated/parser_baked_v1.$(BUILD_OBJ_TAG).$(PARSER_BUILD_MANIFEST_KEY).h
@@ -2059,7 +2096,7 @@ REGISTRY_LOOKUP_BENCH_BIN = runtime/bench_registry_lookup-$(BUILD_OBJ_TAG)
 REGISTRY_LOOKUP_BENCH_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 ABT_MUTATION_IDS = 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
 ABT_MUTATION_TEST_BINS = $(foreach id,$(ABT_MUTATION_IDS),runtime/test_abt_mutation-$(BUILD_OBJ_TAG)-$(id))
-GROUNDED_STANDALONE_SRC = src/grounded.c src/tensor_dense_v1.c src/petta_semantics.c src/term_graph.c src/abt.c src/atom_blob.c
+GROUNDED_STANDALONE_SRC = src/grounded.c src/tensor_dense_v1.c src/petta_semantics.c src/term_graph.c src/abt.c src/atom_blob.c src/prime_regular_pattern.c src/prime_regular_kernel.c src/prime_level.c
 GROUNDED_STANDALONE_DEPS = $(GROUNDED_STANDALONE_SRC) src/tensor.h $(ABT_DEFAULT_SIGNATURES_BLOB)
 PARSER_STANDALONE_SRC = src/parser.c src/name_key.c
 # Bindings owns a PrimeNeedSnapshot even in non-Prime harnesses, so every
@@ -3413,6 +3450,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/if_atom_data_boundary.metta \
 	tests/prime/need_gc_lifetime.metta \
 	tests/prime/need_storage_boundary.metta \
+	tests/prime/need_value_denotation.metta \
 	tests/prime/need_judgment_operands.metta \
 	tests/prime/need_activation_operand.metta \
 	tests/prime/need_native_operands.metta \
@@ -4194,9 +4232,9 @@ test-frame-identity: $(FRAME_IDENTITY_TEST_BIN)
 
 # Frame identities are spelled by the layout declared in
 # langdef/layouts/runtime_words.module.  The accessors are checked-in
-# ordinary C; regenerating them needs cesta, building with them does not.
-# The test compares them with an independent reading of the word.
-CESTA ?= cesta
+# ordinary C; regenerating them needs the pinned Cesta tool (CESTA), building
+# with them does not.  The test compares them with an independent reading of
+# the word.
 LAYOUT_WORDS_TEST_BIN = runtime/test_layout_words-$(BUILD_OBJ_TAG)
 
 .PHONY: regenerate-layout-words check-layout-words-generated test-layout-words
@@ -5465,16 +5503,18 @@ test-prime-equation-call-sharing-tournament:
 
 test-prime-equation-call-sharing-tournament-body: $(BIN)
 	@set -eu; \
+	status=0; \
 	result=$$(CETTA_BIN="$(abspath $(BIN))" \
-		python3 tests/prime/run_need_equation_call_tournament.py 2>&1); \
+		python3 tests/prime/run_need_equation_call_tournament.py 2>&1) || status=$$?; \
 	printf '%s\n' "$$result"; \
+	if [ $$status -ne 0 ]; then exit $$status; fi; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeNeedEquationCallTournamentSummary 48 48 0 frontiers 3 order-invariance monolithic-red candidate-local-green demand-cohort-green)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeNeedEquationCallTournamentSummary 48 48 0 frontiers 3 order-invariance monolithic-green candidate-local-green demand-cohort-green)')" -ne 1 ]; then \
 		echo "FAIL: Prime equation-call tournament exact summary absent or duplicated"; \
 		exit 1; \
 	fi; \
 	if [ "$$(printf '%s\n' "$$result" | \
-		grep -Fxc '(PrimeNativeReceiptMutationSummary 8 8 0)')" -ne 1 ]; then \
+		grep -Fxc '(PrimeNativeReceiptMutationSummary 11 11 0)')" -ne 1 ]; then \
 		echo "FAIL: Prime native receipt mutation summary absent or duplicated"; \
 		exit 1; \
 	fi
@@ -5633,12 +5673,18 @@ test-prime-need-boundaries: $(BIN)
 # matches the cell's value, once per value, while syntax written in the
 # pattern stays data.  Both the prepared machine and the reference route.
 test-prime-need-match-pattern: $(BIN) tests/prime/need_match_pattern_values.metta \
-		tests/prime/need_match_pattern_values.expected
+		tests/prime/need_match_pattern_values.expected tests/support/compare_answers.py
 	@set -eu -o pipefail; \
+	mkdir -p runtime/prime-need-pattern-$(BUILD_OBJ_TAG); case_number=0; \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1"; do \
+		actual=runtime/prime-need-pattern-$(BUILD_OBJ_TAG)/$$case_number.out; \
 		env $$route $(CETTA_BIN_INVOKE) --lang prime \
-			tests/prime/need_match_pattern_values.metta \
-			| diff -u tests/prime/need_match_pattern_values.expected -; \
+			tests/prime/need_match_pattern_values.metta >"$$actual" 2>"$$actual.stderr"; \
+		if [ -s "$$actual.stderr" ]; then cat "$$actual.stderr" >&2; exit 1; fi; \
+		python3 tests/support/compare_answers.py --lang prime \
+			--program tests/prime/need_match_pattern_values.metta \
+			--expected tests/prime/need_match_pattern_values.expected --actual "$$actual"; \
+		case_number=$$((case_number + 1)); \
 	done; \
 	echo "PASS: a Need cell in a match, unify or let pattern is matched as its value"
 
@@ -49899,7 +49945,7 @@ $(NATIVE_PARENT_CHECKPOINT_TEST_BIN): $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) te
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $(NATIVE_PARENT_CHECKPOINT_TEST_SOURCE) \
 		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)),$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) \
-		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),-Wl$(comma)--wrap=free,)
+		$(if $(filter 1,$(ENABLE_PRIME_EVAL_STACK)),-Wl$(comma)--wrap=free -Wl$(comma)--wrap=calloc,)
 .PHONY: test-native-parent-checkpoint
 test-native-parent-checkpoint: $(NATIVE_PARENT_CHECKPOINT_TEST_BIN)
 	@$(call cetta_exec,./$(NATIVE_PARENT_CHECKPOINT_TEST_BIN))
@@ -49946,18 +49992,84 @@ test-native-control-leases-refusal-mutation: tests/test_native_control_leases.c 
 		fi; \
 		echo "PASS: the refusal controls reject the $$mutation fault"; \
 	done
+NATIVE_CONTROL_LEASES_EQUATION_RETURN_MUTANT = runtime/test-native-control-leases-equation-return-$(BUILD_OBJ_TAG)
+NATIVE_CONTROL_LEASES_SCAN_OWNER_MUTANT = runtime/test-native-control-leases-scan-owner-$(BUILD_OBJ_TAG)
+NATIVE_CONTROL_LEASES_PARALLEL_RETURN_MUTANT = runtime/test-native-control-leases-parallel-return-$(BUILD_OBJ_TAG)
+.PHONY: test-native-control-leases-equation-return-mutation
+test-prime: test-native-control-leases-equation-return-mutation
+$(NATIVE_CONTROL_LEASES_EQUATION_RETURN_MUTANT) $(NATIVE_CONTROL_LEASES_SCAN_OWNER_MUTANT) $(NATIVE_CONTROL_LEASES_PARALLEL_RETURN_MUTANT): tests/test_native_control_leases.c src/eval.c src/native_dialect_provider.inc src/prime_native_parallel.inc src/table_store.c $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	@case "$@" in \
+		"$(NATIVE_CONTROL_LEASES_EQUATION_RETURN_MUTANT)") mutation=CETTA_PRIME_NEED_MUTATION_EQUATION_RETURN_UNPREPARED ;; \
+		"$(NATIVE_CONTROL_LEASES_SCAN_OWNER_MUTANT)") mutation=CETTA_PRIME_NATIVE_CONTROL_MUTATION_AMBIENT_SCAN ;; \
+		"$(NATIVE_CONTROL_LEASES_PARALLEL_RETURN_MUTANT)") mutation=CETTA_PRIME_NATIVE_CONTROL_MUTATION_UNPREPARED_PARALLEL_RETURN ;; \
+		*) exit 1 ;; \
+	esac; \
+	$(CC) $(CPPFLAGS) $(CFLAGS) -D$$mutation=1 -o "$@" tests/test_native_control_leases.c \
+		$(filter-out src/eval.$(BUILD_OBJ_TAG).o src/eval.$(BUILD_OBJ_TAG).runtime-stats.o src/table_store.$(BUILD_OBJ_TAG).o src/table_store.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=calloc
+test-native-control-leases-equation-return-mutation: $(NATIVE_CONTROL_LEASES_EQUATION_RETURN_MUTANT)
+	@set +e; \
+	output=$$($(call cetta_exec,./$(NATIVE_CONTROL_LEASES_EQUATION_RETURN_MUTANT)) --equation-return-refusal 2>&1); status=$$?; \
+	set -e; \
+	if [ $$status -eq 0 ] || ! printf '%s\n' "$$output" | grep -q 'FAIL: .*retained'; then \
+		echo "FAIL: equation-return refusal control accepted an unprepared move"; \
+		exit 1; \
+	fi; \
+	echo "PASS: equation-return refusal control rejects an unprepared move"
+.PHONY: test-native-control-leases-scan-owner-mutation
+test-prime: test-native-control-leases-scan-owner-mutation
+test-native-control-leases-scan-owner-mutation: $(NATIVE_CONTROL_LEASES_SCAN_OWNER_MUTANT)
+	@set +e; \
+	output=$$($(call cetta_exec,./$(NATIVE_CONTROL_LEASES_SCAN_OWNER_MUTANT)) --scan-owner 2>&1); status=$$?; \
+	set -e; \
+	if [ $$status -eq 0 ] || ! printf '%s\n' "$$output" | grep -Fq 'receiver->control_return_advice_length==1u'; then \
+		echo "FAIL: scan-owner control accepted the ambient controller"; \
+		exit 1; \
+	fi; \
+	echo "PASS: scan-owner control rejects the ambient controller"
+.PHONY: test-native-control-leases-parallel-return-mutation
+test-prime: test-native-control-leases-parallel-return-mutation
+test-native-control-leases-parallel-return-mutation: $(NATIVE_CONTROL_LEASES_PARALLEL_RETURN_MUTANT)
+	@set +e; \
+	output=$$($(call cetta_exec,./$(NATIVE_CONTROL_LEASES_PARALLEL_RETURN_MUTANT)) --parallel-return-refusal 2>&1); status=$$?; \
+	set -e; \
+	if [ $$status -eq 0 ] || ! printf '%s\n' "$$output" | grep -q 'FAIL: .*retained'; then \
+		echo "FAIL: parallel-return control accepted an unprepared row"; \
+		exit 1; \
+	fi; \
+	echo "PASS: parallel-return control rejects an unprepared row"
 test-native-cost-join: $(NATIVE_COST_JOIN_TEST_BIN)
 	@$(NATIVE_COST_JOIN_TEST_BIN)
 test-prime: test-resource-wave test-native-leases test-native-control-leases test-native-cost-join test-provider-graph-copy
 
 NATIVE_SPACE_AGENDA_TEST_BIN = runtime/test-native-space-agenda-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
-.PHONY: test-native-space-agenda test-prime-native-parallel test-prime-native-resources
+NATIVE_SPACE_AGENDA_COST_MUTANT = runtime/test-native-space-agenda-cost-mutant-$(BUILD_OBJ_TAG)
+.PHONY: test-native-space-agenda lint-prime-transaction-reads test-prime-native-parallel test-prime-native-resources
 $(NATIVE_SPACE_AGENDA_TEST_BIN): tests/test_native_space_agenda.c src/native_space_agenda.c src/native_space_agenda_steps.inc $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ tests/test_native_space_agenda.c \
 		$(filter-out src/native_space_agenda.$(BUILD_OBJ_TAG).o src/native_space_agenda.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
 test-native-space-agenda: $(NATIVE_SPACE_AGENDA_TEST_BIN)
 	@$(NATIVE_SPACE_AGENDA_TEST_BIN)
+.PHONY: test-native-space-agenda-cost-index-oracle test-native-space-agenda-cost-index-mutation
+test-prime-native-cost: test-native-space-agenda-cost-index-oracle test-native-space-agenda-cost-index-mutation
+test-native-space-agenda-cost-index-oracle: $(NATIVE_SPACE_AGENDA_TEST_BIN)
+	@$(NATIVE_SPACE_AGENDA_TEST_BIN) --cost-index-oracle
+$(NATIVE_SPACE_AGENDA_COST_MUTANT): tests/test_native_space_agenda.c src/native_space_agenda.c src/native_space_agenda_steps.inc $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -DCETTA_AGENDA_TEST_MUTATION_DOUBLE_INDEX_VISIT=1 -o "$@" tests/test_native_space_agenda.c \
+		$(filter-out src/native_space_agenda.$(BUILD_OBJ_TAG).o src/native_space_agenda.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
+test-native-space-agenda-cost-index-mutation: $(NATIVE_SPACE_AGENDA_COST_MUTANT)
+	@set +e; \
+	output=$$($(NATIVE_SPACE_AGENDA_COST_MUTANT) --cost-index-oracle 2>&1); status=$$?; \
+	set -e; \
+	if [ $$status -eq 0 ] || ! printf '%s\n' "$$output" | grep -Fq 'meter.total.counts[CETTA_COST_INDEX_VISIT]==probes+3u'; then \
+		echo "FAIL: physical index-visit oracle accepted doubled charges"; \
+		exit 1; \
+	fi; \
+	echo "PASS: physical index-visit oracle rejects doubled charges"
+lint-prime-transaction-reads: $(NATIVE_SPACE_AGENDA_TEST_BIN)
+	@$(NATIVE_SPACE_AGENDA_TEST_BIN) --lint-transaction-reads $(TRANSACTION_READ_LINT_FILES)
 test-prime-native-parallel: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 scripts/test_prime_native_parallel.py --binary "$(CETTA_SCRIPT_BIN)"
 test-prime-native-resources: $(BIN)
@@ -50865,6 +50977,128 @@ test-prime-interaction-naming: tests/test_interaction_naming.c src/interaction_c
 	@$(CC) $(CPPFLAGS) $(CFLAGS) -o $(INTERACTION_NAMING_TEST_BIN) tests/test_interaction_naming.c \
 		$(filter-out src/interaction_core.$(BUILD_OBJ_TAG).o src/interaction_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS)
 	@$(call cetta_exec,./$(INTERACTION_NAMING_TEST_BIN))
+
+INTERACTION_QUERY_TEST_BIN = runtime/test-interaction-queries-$(BUILD_OBJ_TAG)
+.PHONY: test-prime-interaction-queries
+test-prime: test-prime-interaction-queries
+test-prime-interaction-queries: tests/test_interaction_queries.c src/interaction_core.c native/interaction_core.h $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	@$(CC) $(CPPFLAGS) $(CFLAGS) -o $(INTERACTION_QUERY_TEST_BIN) tests/test_interaction_queries.c \
+		$(filter-out src/interaction_core.$(BUILD_OBJ_TAG).o src/interaction_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) -Wl,--wrap=cetta_fallible_malloc
+	@$(call cetta_exec,./$(INTERACTION_QUERY_TEST_BIN))
+
+# The commit of the interaction kernel is a declared protocol
+# (langdef/protocols/interaction_commit.module), generated as ordinary C into
+# src/generated/interaction_commit_protocol.generated.h with its plan for the
+# Lean kernel; regenerating them needs the pinned Cesta tool, building with
+# them does not.  The control test (tests/test_interaction_commit_protocol.c)
+# runs in ordinary and in checked mode.
+INTERACTION_COMMIT_PROTOCOL_MODULE = langdef/protocols/interaction_commit.module
+INTERACTION_COMMIT_PROTOCOL_HEADER = src/generated/interaction_commit_protocol.generated.h
+INTERACTION_COMMIT_PROTOCOL_PLAN = src/generated/interaction_commit_protocol.plan
+INTERACTION_COMMIT_PROTOCOL_TEST_BIN = runtime/test-interaction-commit-protocol-$(BUILD_OBJ_TAG)
+.PHONY: regenerate-interaction-commit-protocol check-interaction-commit-protocol-generated
+.PHONY: test-prime-interaction-commit-protocol
+regenerate-interaction-commit-protocol: | cesta-tool-check
+	'$(CESTA)' protocol export $(INTERACTION_COMMIT_PROTOCOL_MODULE) Protocols \
+		-o $(INTERACTION_COMMIT_PROTOCOL_HEADER) --plan $(INTERACTION_COMMIT_PROTOCOL_PLAN)
+check-interaction-commit-protocol-generated: | cesta-tool-check
+	@'$(CESTA)' protocol verify $(INTERACTION_COMMIT_PROTOCOL_MODULE) Protocols \
+		-o $(INTERACTION_COMMIT_PROTOCOL_HEADER) --plan $(INTERACTION_COMMIT_PROTOCOL_PLAN)
+	@echo 'the commit protocol header and plan match their declaration'
+ifeq ($(CESTA_BUILD),1)
+test-prime: check-interaction-commit-protocol-generated
+endif
+test-prime: test-prime-interaction-commit-protocol
+test-prime-interaction-commit-protocol: tests/test_interaction_commit_protocol.c src/interaction_core.c native/interaction_core.h $(INTERACTION_COMMIT_PROTOCOL_HEADER) $(BUILD_CONFIG_HEADER) $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	@for checked in 0 1; do \
+		$(CC) $(filter-out -Dia_commit_run_CHECKED=%,$(CPPFLAGS)) -Dia_commit_run_CHECKED=$$checked $(CFLAGS) \
+			-o $(INTERACTION_COMMIT_PROTOCOL_TEST_BIN)-$$checked tests/test_interaction_commit_protocol.c \
+			$(filter-out src/interaction_core.$(BUILD_OBJ_TAG).o src/interaction_core.$(BUILD_OBJ_TAG).runtime-stats.o,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS) $(LDFLAGS) && \
+		$(call cetta_exec,./$(INTERACTION_COMMIT_PROTOCOL_TEST_BIN)-$$checked) || exit 1; \
+	done
+
+# The runtime's Cesta project is derived from this Makefile, the one
+# declaration of its sources and flags, for the active configuration
+# (tools/cesta_runtime_project.py); `cesta build` links it to the executable
+# this Makefile links.  `make export-c` writes the plain C the other CeTTa
+# lines consume, with its own Makefile, builds it with the native compiler
+# alone, and checks that it links the same executable.
+CESTA_PROJECT_DIR = runtime/cesta/$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,)
+CESTA_PROJECT = $(CESTA_PROJECT_DIR)/cetta.project
+CESTA_PROJECT_VARS = $(CESTA_PROJECT_DIR)/make.vars
+CESTA_JOBS ?= 8
+EXPORT_C_DIR ?= $(CESTA_PROJECT_DIR)/export
+CESTA_IDENTITY_TAG ?= cesta-identity
+
+.PHONY: cesta-tool cesta-tool-check cesta-project export-c
+.PHONY: test-cesta-project-build test-cesta-build-identity check-cesta-generated test-cesta-runtime-project
+cesta-tool:
+	@test -n '$(CESTA_FROM)' || { echo 'usage: make cesta-tool CESTA_FROM=FILE (Cesta built from commit $(CESTA_COMMIT))' >&2; exit 2; }
+	@actual=$$(sha256sum '$(CESTA_FROM)' | cut -d' ' -f1); \
+	if [ "$$actual" != '$(CESTA_SHA256)' ]; then \
+		echo '$(CESTA_FROM): not the pinned Cesta tool $(CESTA_SHA256)' >&2; exit 1; \
+	fi
+	@mkdir -p '$(dir $(CESTA))'
+	@cp '$(CESTA_FROM)' '$(CESTA).partial' && chmod 755 '$(CESTA).partial' && mv '$(CESTA).partial' '$(CESTA)'
+	@echo 'installed the pinned Cesta tool as $(CESTA)'
+
+cesta-tool-check:
+	@actual=$$(sha256sum '$(CESTA)' 2>/dev/null | cut -d' ' -f1); \
+	if [ "$$actual" != '$(CESTA_SHA256)' ]; then \
+		echo 'FAIL: $(CESTA) is not the pinned Cesta tool $(CESTA_SHA256)' >&2; exit 1; \
+	fi; \
+	echo 'Cesta tool $(CESTA_SHA256) (commit $(CESTA_COMMIT))'
+
+# Every word of a variable reaches the project as the shell splits the recipe.
+cesta-project: $(PARSER_BAKED_OBJ) $(BUILD_CONFIG_HEADER) | cesta-tool-check
+	$(shell mkdir -p $(CESTA_PROJECT_DIR))$(file >$(CESTA_PROJECT_VARS),NATIVE_CC=$(CESTA_NATIVE_CC))
+	$(file >>$(CESTA_PROJECT_VARS),CPPFLAGS=$(CPPFLAGS))
+	$(file >>$(CESTA_PROJECT_VARS),CFLAGS=$(CFLAGS))
+	$(file >>$(CESTA_PROJECT_VARS),LDFLAGS=$(LDFLAGS))
+	$(file >>$(CESTA_PROJECT_VARS),SRC=$(SRC))
+	$(file >>$(CESTA_PROJECT_VARS),SECP256K1_SRC=$(SECP256K1_SRC))
+	$(file >>$(CESTA_PROJECT_VARS),SECP256K1_CFLAGS=$(SECP256K1_CFLAGS))
+	$(file >>$(CESTA_PROJECT_VARS),PARSER_BAKED_OBJ=$(PARSER_BAKED_OBJ))
+	$(file >>$(CESTA_PROJECT_VARS),BRIDGE_DEPS=$(BRIDGE_DEPS))
+	@python3 -B tools/cesta_runtime_project.py --vars $(CESTA_PROJECT_VARS) \
+		--out $(CESTA_PROJECT_DIR)/build --executable $(CESTA_PROJECT_DIR)/cetta \
+		--output $(CESTA_PROJECT)
+
+# The export replaces an earlier export only, never another directory.
+export-c: $(BIN) cesta-project
+	@set -eu; dir='$(EXPORT_C_DIR)'; \
+	if [ -e "$$dir" ] && ! head -n 1 "$$dir/Makefile" 2>/dev/null | grep -q '^# Readable C exported by cesta build'; then \
+		echo "$$dir exists and is not a Cesta export; not replacing it" >&2; exit 1; \
+	fi; \
+	rm -rf "$$dir"; \
+	'$(CESTA)' build -C . -f '$(CESTA_PROJECT)' --export-c "$$dir" cetta
+	@$(MAKE) --no-print-directory -C '$(EXPORT_C_DIR)' MAKEOVERRIDES= CC='$(CESTA_NATIVE_CC)'
+	@cmp '$(EXPORT_C_DIR)/$(CESTA_PROJECT_DIR)/cetta' '$(BIN)'
+	@echo "PASS: the plain-C export in $(EXPORT_C_DIR) links the executable of this build ($$(sha256sum '$(BIN)' | cut -c1-16))"
+
+test-cesta-project-build: $(BIN) cesta-project
+	@'$(CESTA)' build -C . -f '$(CESTA_PROJECT)' -j $(CESTA_JOBS) cetta
+	@cmp '$(CESTA_PROJECT_DIR)/cetta' '$(BIN)'
+	@echo "PASS: cesta build links the executable of this build ($$(sha256sum '$(BIN)' | cut -c1-16))"
+
+# Both builds compile every unit afresh in their own object namespace; the
+# namespace's configuration includes the compiler driver.
+test-cesta-build-identity:
+	@$(MAKE) --no-print-directory CESTA_BUILD=1 BUILD_OBJ_TAG=$(CESTA_IDENTITY_TAG) BIN=runtime/cetta-$(CESTA_IDENTITY_TAG)-cesta all
+	@$(MAKE) --no-print-directory CESTA_BUILD=0 BUILD_OBJ_TAG=$(CESTA_IDENTITY_TAG) BIN=runtime/cetta-$(CESTA_IDENTITY_TAG)-native all
+	@cmp runtime/cetta-$(CESTA_IDENTITY_TAG)-cesta runtime/cetta-$(CESTA_IDENTITY_TAG)-native
+	@echo "PASS: the Cesta-driven build and the native compiler alone link the same executable ($$(sha256sum runtime/cetta-$(CESTA_IDENTITY_TAG)-cesta | cut -c1-16))"
+
+# Every checked-in file generated from a Cesta declaration still matches it.
+test-cesta-runtime-project: | cesta-tool-check
+	@python3 -B tests/support/test_cesta_runtime_project.py --cesta '$(CESTA)' \
+		--cc '$(CESTA_NATIVE_CC)' --output runtime/cesta-runtime-project-controls
+
+check-cesta-generated: cesta-tool-check check-layout-words-generated check-interaction-commit-protocol-generated test-cesta-runtime-project
+	@python3 -B tools/regenerate_registry_tables.py --cesta '$(CESTA)' --check
+	@echo 'counter and profile tables match their declarations'
 BINARY_CODEC_TEST_BIN = runtime/test_binary_codec-$(BUILD_OBJ_TAG)
 $(BINARY_CODEC_TEST_BIN): tests/support/test_binary_codec.c src/binary_codec.c src/binary_codec.h $(BUILD_CONFIG_HEADER)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -DCETTA_BINARY_TEST_HOOKS -o $@ tests/support/test_binary_codec.c src/binary_codec.c $(LDFLAGS)

@@ -1,3 +1,5 @@
+[(quote 3)]
 [(quote (+ 1 2))]
+[(quote (box 12))]
 [(quote (box (* (+ 1 2) 4)))]
 [4]

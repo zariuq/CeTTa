@@ -19,6 +19,7 @@ enum {
     CETTA_SEGMENTED_DIRECTORY_BITS = 7,
     CETTA_SEGMENTED_DIRECTORY_CELLS = 1u << CETTA_SEGMENTED_DIRECTORY_BITS,
     CETTA_SEGMENTED_DIRECTORY_LEVELS = 4,
+    CETTA_SEGMENTED_64_DIRECTORY_LEVELS = 9,
     CETTA_SEGMENTED_MAX_ELEMENT_SIZE = 256
 };
 
@@ -67,27 +68,44 @@ static inline CettaSegmentedStep cetta_segmented_array_install(
     return CETTA_SEGMENTED_PENDING;
 }
 
-static inline CettaSegmentedStep cetta_segmented_array_prepare_limit(
-        CettaSegmentedArray *array, uint32_t index, size_t byte_limit) {
-    if (!array || !array->element_size ||
+static inline CettaSegmentedStep cetta_segmented_array_prepare_levels(
+        CettaSegmentedArray *array, uint64_t index, size_t byte_limit,
+        unsigned levels, uint64_t *probes, bool *installation) {
+    if (probes)*probes=0u;
+    if (installation)*installation=false;
+    if (!array || !levels || levels>CETTA_SEGMENTED_64_DIRECTORY_LEVELS || !array->element_size ||
         array->element_size > CETTA_SEGMENTED_MAX_ELEMENT_SIZE || array->retiring ||
         array->live_bytes > byte_limit)
         return CETTA_SEGMENTED_REFUSED;
+    unsigned bits=CETTA_SEGMENTED_PAGE_BITS+CETTA_SEGMENTED_DIRECTORY_BITS*levels;
+    if (bits<64u && (index >> bits))return CETTA_SEGMENTED_REFUSED;
     CettaSegmentedBlock **slot = &array->root;
-    for (unsigned level = 0u; level < CETTA_SEGMENTED_DIRECTORY_LEVELS; ++level) {
-        if (!*slot)
+    for (unsigned level = 0u; level < levels; ++level) {
+        if (probes)(*probes)++;
+        if (!*slot) {
+            if (installation)*installation=true;
             return cetta_segmented_array_install(array, slot,
                 CETTA_SEGMENTED_DIRECTORY_CELLS * sizeof(CettaSegmentedBlock *), byte_limit);
+        }
         unsigned shift = CETTA_SEGMENTED_PAGE_BITS +
             CETTA_SEGMENTED_DIRECTORY_BITS *
-            (CETTA_SEGMENTED_DIRECTORY_LEVELS - 1u - level);
+            (levels - 1u - level);
         CettaSegmentedBlock **children = (CettaSegmentedBlock **)(*slot)->data;
         slot = &children[(index >> shift) & (CETTA_SEGMENTED_DIRECTORY_CELLS - 1u)];
     }
-    if (!*slot)
+    if (probes)(*probes)++;
+    if (!*slot) {
+        if (installation)*installation=true;
         return cetta_segmented_array_install(array, slot,
             CETTA_SEGMENTED_PAGE_CELLS * array->element_size, byte_limit);
+    }
     return CETTA_SEGMENTED_READY;
+}
+
+static inline CettaSegmentedStep cetta_segmented_array_prepare_limit(
+        CettaSegmentedArray *array, uint32_t index, size_t byte_limit) {
+    return cetta_segmented_array_prepare_levels(array,index,byte_limit,
+        CETTA_SEGMENTED_DIRECTORY_LEVELS,NULL,NULL);
 }
 
 static inline CettaSegmentedStep cetta_segmented_array_prepare(
@@ -97,19 +115,31 @@ static inline CettaSegmentedStep cetta_segmented_array_prepare(
 
 /* A null result means the backing page is not prepared or is being retired;
  * it is not evidence that a client sequence has no element at this index. */
-static inline void *cetta_segmented_array_at(
-        const CettaSegmentedArray *array, uint32_t index) {
-    if (!array || !array->element_size || array->element_size > CETTA_SEGMENTED_MAX_ELEMENT_SIZE || array->retiring) return NULL;
+static inline void *cetta_segmented_array_at_levels(
+        const CettaSegmentedArray *array, uint64_t index, unsigned levels,
+        uint64_t *probes) {
+    if (probes)*probes=0u;
+    if (!array || !levels || levels>CETTA_SEGMENTED_64_DIRECTORY_LEVELS || !array->element_size ||
+        array->element_size > CETTA_SEGMENTED_MAX_ELEMENT_SIZE || array->retiring) return NULL;
+    unsigned bits=CETTA_SEGMENTED_PAGE_BITS+CETTA_SEGMENTED_DIRECTORY_BITS*levels;
+    if (bits<64u && (index >> bits))return NULL;
     CettaSegmentedBlock *block = array->root;
-    for (unsigned level = 0u; block && level < CETTA_SEGMENTED_DIRECTORY_LEVELS; ++level) {
+    for (unsigned level = 0u; block && level < levels; ++level) {
+        if (probes)(*probes)++;
         unsigned shift = CETTA_SEGMENTED_PAGE_BITS +
             CETTA_SEGMENTED_DIRECTORY_BITS *
-            (CETTA_SEGMENTED_DIRECTORY_LEVELS - 1u - level);
+            (levels - 1u - level);
         CettaSegmentedBlock *const *children = (CettaSegmentedBlock *const *)block->data;
         block = children[(index >> shift) & (CETTA_SEGMENTED_DIRECTORY_CELLS - 1u)];
     }
+    if (block && probes)(*probes)++;
     return block ? block->data +
         (size_t)(index & (CETTA_SEGMENTED_PAGE_CELLS - 1u)) * array->element_size : NULL;
+}
+
+static inline void *cetta_segmented_array_at(
+        const CettaSegmentedArray *array, uint32_t index) {
+    return cetta_segmented_array_at_levels(array,index,CETTA_SEGMENTED_DIRECTORY_LEVELS,NULL);
 }
 
 /* The client first disposes its initialized element payloads. Retiring then
@@ -134,6 +164,51 @@ static inline bool cetta_segmented_array_release_one(CettaSegmentedArray *array)
 
 static inline void cetta_segmented_array_free(CettaSegmentedArray *array) {
     while (!cetta_segmented_array_release_one(array)) {}
+}
+
+/* The same fixed-block owner with a full-width occurrence index. Its type
+ * keeps the four-level and nine-level directory layouts from being mixed. */
+typedef struct { CettaSegmentedArray backing; } CettaSegmentedArray64;
+
+static inline bool cetta_segmented_array64_init(
+        CettaSegmentedArray64 *array, size_t element_size) {
+    return array && cetta_segmented_array_init(&array->backing,element_size);
+}
+
+static inline CettaSegmentedStep cetta_segmented_array64_prepare_observed(
+        CettaSegmentedArray64 *array, uint64_t index, size_t byte_limit,
+        uint64_t *probes, bool *installation) {
+    return cetta_segmented_array_prepare_levels(array?&array->backing:NULL,index,
+        byte_limit,CETTA_SEGMENTED_64_DIRECTORY_LEVELS,probes,installation);
+}
+
+static inline CettaSegmentedStep cetta_segmented_array64_prepare_limit(
+        CettaSegmentedArray64 *array, uint64_t index, size_t byte_limit) {
+    return cetta_segmented_array64_prepare_observed(array,index,byte_limit,NULL,NULL);
+}
+
+static inline CettaSegmentedStep cetta_segmented_array64_prepare(
+        CettaSegmentedArray64 *array, uint64_t index) {
+    return cetta_segmented_array64_prepare_limit(array,index,SIZE_MAX);
+}
+
+static inline void *cetta_segmented_array64_at_observed(
+        const CettaSegmentedArray64 *array, uint64_t index, uint64_t *probes) {
+    return cetta_segmented_array_at_levels(array?&array->backing:NULL,index,
+        CETTA_SEGMENTED_64_DIRECTORY_LEVELS,probes);
+}
+
+static inline void *cetta_segmented_array64_at(
+        const CettaSegmentedArray64 *array, uint64_t index) {
+    return cetta_segmented_array64_at_observed(array,index,NULL);
+}
+
+static inline bool cetta_segmented_array64_release_one(CettaSegmentedArray64 *array) {
+    return !array || cetta_segmented_array_release_one(&array->backing);
+}
+
+static inline void cetta_segmented_array64_free(CettaSegmentedArray64 *array) {
+    if (array) cetta_segmented_array_free(&array->backing);
 }
 
 /* A retained stack of fixed-size records. Indexed backing contains record

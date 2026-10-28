@@ -6,6 +6,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import random
+import re
 from test_prime_native_control import Gate, ROOT, bag, parse
 
 
@@ -16,6 +17,26 @@ def policy(kind='Transaction', budget=100000):
 PATTERN = '(Observation $v (satisfied $s) (closed $c) (residual $r) (work $w) (status $t) (agenda $a))'
 
 
+def fresh_frame_syntax(value):
+    """Compare these syntax fixtures modulo one bijection of fresh frames.
+
+    Authored names, variable sharing, physical row coordinates and all data
+    remain rigid. Apply once to the complete compared observation, not once
+    per row. These fixtures contain no string literals resembling variables;
+    the generic result parser does not retain that token distinction.
+    """
+    frames = {}
+    def visit(term):
+        if isinstance(term, list):
+            return [visit(child) for child in term]
+        matched = re.fullmatch(r'(\$[^#]+)#([0-9]+)', term) if isinstance(term, str) else None
+        if matched:
+            name, frame = matched.groups()
+            return f'{name}#frame{frames.setdefault(frame, len(frames))}'
+        return term
+    return visit(value)
+
+
 def source(rows):
     return '!(bind! &jobs (new-space))\n' + '\n'.join(f'!(add-atom &jobs {row})' for row in rows) + '\n'
 
@@ -24,6 +45,33 @@ def inspect(gate, name, rows, kind='Transaction', suffix=''):
     trees, results=gate.run(name,source(rows)+f'!(select 100 {policy(kind)} &jobs)\n'+suffix+'\n!(collapse (get-atoms &jobs))')
     assert results, (name,trees)
     return trees[-1][0],results[-1]
+
+
+def state_world_diagnostic(gate):
+    """Expose comparison profiles without adopting one as the expected law."""
+    source = '''
+!(let $a (new-state 1) (let $b (new-state 2) (== $a $b)))
+!(let $a (new-state 1) (let $b (new-state 1)
+   (let $_ (change-state! $b 2)
+     ((get-state $a) (get-state $b) (== $a $b)
+      (== (get-state $a) (get-state $b))))))
+!(let $n (/ 0.0 0.0) (let $s (new-state $n) (== $s $s)))
+'''
+    results = {}
+    for language in ('prime', 'he'):
+        trees, _ = gate.run(f'{language} State comparison world diagnostic', source,
+                            language=language)
+        assert len(trees) == 3 and len(trees[0]) == len(trees[2]) == 1, trees
+        assert trees[0][0] == 'False', trees
+        assert len(trees[1]) == 1 and trees[1][0][:2] == [1, 2], trees
+        changed = trees[1][0]
+        assert len(changed) == 4 and all(x in ('True', 'False') for x in changed[2:]), trees
+        assert trees[2][0] in ('True', 'False'), trees
+        results[language] = {'changed_world': changed, 'same_nan_state': trees[2][0]}
+        gate.receipts[-1]['state_comparison_observation'] = results[language]
+    print('State comparison diagnostic (no policy selected): ' +
+          json.dumps(results, sort_keys=True))
+    gate.passed_case('both routes expose the requested State values and comparison results')
 
 
 def fixed(gate):
@@ -40,6 +88,52 @@ def fixed(gate):
     assert ['hit','B'] in values and ['seen',[1,'self']] in values and ['q','B'] not in values,(values,result)
     assert result['closed']=='True' and len(result['values'])==2,result
     gate.passed_case('raw MM2 joins, read-copy reinsertion and created execs use native residual work')
+
+
+def kept_read_identification(gate):
+    base = [['Template', '$x#11', '$y#11'], ['Use', '$x#11']]
+    assert fresh_frame_syntax(base) == fresh_frame_syntax([
+        ['Template', '$x#97', '$y#97'], ['Use', '$x#97']])
+    for changed in (
+            [['Template', '$x#97', '$y#98'], ['Use', '$x#97']],
+            [['Template', '$x#97', '$y#97'], ['Use', '$x#98']],
+            [['Template', '$x#97', '$y#97'], ['Use', 'Captured']]):
+        assert fresh_frame_syntax(base) != fresh_frame_syntax(changed)
+    gate.passed_case('fresh-frame observation rejects changed frame sharing, aliases and captured values')
+    for order in ('(read Token) (take Token)', '(take Token) (read Token)'):
+        rule = f'(exec Claim (I {order}) (O (+ Done)))'
+        for copies in (1, 2):
+            values, result = inspect(gate, f'kept/taken identification {order} copies={copies}',
+                                     ['Token'] * copies + [rule])
+            commits = copies - 1
+            assert len(result['values']) == commits, (values, result)
+            assert values.count('Token') == 1 and values.count('Done') == commits, (values, result)
+            gate.passed_case(f'kept input is distinct from takes {order} copies={copies}')
+            _, result = gate.run(f'world kept/taken identification {order} copies={copies}',
+                source(['Token'] * copies + [rule]) +
+                f'!(select 100 {policy("(Transaction worlds)")} &jobs)')
+            alternatives = worlds(result[-1])
+            assert len(alternatives) == copies, alternatives
+            assert all(len(trace) == commits and atoms.count('Token') == 1 and
+                       atoms.count('Done') == commits for atoms, trace in alternatives), alternatives
+            gate.passed_case(f'world matching preserves distinct kept/taken occurrences {order} copies={copies}')
+
+    # Overlapping patterns intentionally express a reserve. The lint warns
+    # about the migration risk; it does not reject this lawful use.
+    rows = [f'(tok {n})' for n in (1, 2, 3)] + [
+        f'(exec {key} (I (read (tok $x)) (take (tok $y))) (O (+ (took $y))))'
+        for key in ('A', 'B', 'C')]
+    values, result = inspect(gate, 'D2 keeps a reserve while consuming distinct tokens', rows)
+    assert len(result['values']) == 2 and ['tok', 1] in values, (values, result)
+    assert sorted(row for row in values if isinstance(row, list) and row[0] == 'took') == [
+        ['took', 2], ['took', 3]], values
+    gate.passed_case('D2 preserves one token and emits exactly two takes')
+
+    for order in ('(all Token $seen) (take Token)', '(take Token) (all Token $seen)'):
+        values, result = inspect(gate, f'predicate query and take {order}',
+            ['Token', f'(exec Query (I {order}) (O (+ (Seen $seen))))'])
+        assert values == [['Seen', ['Token']]] and len(result['values']) == 1, (values, result)
+        gate.passed_case(f'predicate query observes pre-state without keeping the taken occurrence {order}')
 
 
 def split(gate,count):
@@ -765,8 +859,9 @@ def snapshot_worlds(gate,count):
             f'(let $_ (add-atom &jobs Phantom) (select 100 {policy(kind)} $r)))')
         assert results[-1]['status']=='invalidated' and results[-1]['closed']=='False' and not results[-1]['values'],results
         gate.passed_case(f'pinned world authority rejects source insertion after {budget} quanta')
-    # A reflected exec can regenerate itself while a conflicting take closes.
-    looprows=['Token','(exec Spin (I (take Token) (read (exec Spin $inputs $outputs))) (O (+ Token) (+ (exec Spin $inputs $outputs))))',
+    # Selection consumes this exec. Reflection needs its pre-state syntax,
+    # so use a predicate query rather than promise to keep the same occurrence.
+    looprows=['Token','(exec Spin (I (take Token) (all (exec Spin $i $o) ((exec Spin $inputs $outputs)))) (O (+ Token) (+ (exec Spin $inputs $outputs))))',
               '(exec Done (I (take Token)) (O (+ Win)))']
     _,results=gate.run('finite world beside infinite descendant',source(looprows)+
         f'!(select 1 {policy(kind,2000)} &jobs)')
@@ -1647,23 +1742,39 @@ def resume_choices(gate, history_controls=False):
 
 
 def continuing_server(gate, history_controls=False):
+    from test_prime_native_cost import compact_receipt
     client = ROOT / 'examples/prime/native_control/responsive_monitor.metta'
     authored = client.read_text()
     start = authored.index('!(bind! &server-jobs')
     end = authored.index('!(let (Observation', start)
     prefix = authored[start:end].replace('&server-jobs', '&jobs')
 
-    def control(budget=10000, workers=1, observer=''):
-        return ('(search-policy (control FIFO (resources Transaction) '
-                f'(demand additional) (workers {workers}) (budget {budget}) {observer}))')
+    accounted_pattern = PATTERN[:-1] + ' (cost $cost))'
 
-    def setup(workers=1):
-        return (prefix + f'!(bind! &initial (select 100 {control(workers=workers)} &jobs))\n'
-                f'!(bind! &held (let {PATTERN} &initial $r))\n'
+    def control(budget=10000, workers=1, observer='', accounted=False):
+        cost = '(costs native-counts-v1)' if accounted else ''
+        return ('(search-policy (control FIFO (resources Transaction) '
+                f'(demand additional) (workers {workers}) (budget {budget}) {observer} {cost}))')
+
+    def setup(workers=1, accounted=False):
+        pattern = accounted_pattern if accounted else PATTERN
+        return (prefix + f'!(bind! &initial (select 100 {control(workers=workers, accounted=accounted)} &jobs))\n'
+                f'!(bind! &held (let {pattern} &initial $r))\n'
                 '!(let $initial &initial $initial)\n')
 
-    def advance(budget=10000, workers=1, observer=''):
-        return f'!(select 100 {control(budget, workers, observer)} &held)\n'
+    def advance(budget=10000, workers=1, observer='', accounted=False):
+        return f'!(select 100 {control(budget, workers, observer, accounted)} &held)\n'
+
+    def accounts(report):
+        counts = compact_receipt(report['cost'])['counts']
+        assert report['work'] == counts['quantum'], (report, counts)
+        assert counts['publish'] == dict(report['agenda'][1:])['commits'], (report, counts)
+        return counts
+
+    def source_counts(report):
+        counts = accounts(report)
+        return {key: counts[key] for key in ('candidate-row', 'match-attempt', 'match-node',
+                'binding-clone', 'analysis-step', 'publish', 'commit-check')}
 
     def add(row):
         return f'!(add-atom &jobs {row})\n'
@@ -1722,20 +1833,41 @@ def continuing_server(gate, history_controls=False):
         assert [row[1:] for row in inputs(commits, 'Consumer', 'Reply')] == [row[1:] for row in requests]
         gate.passed_case(f'continuing server workers {width}: same owner, duplicate occurrences, ordered late arrivals and ack backpressure')
 
-    complete = setup() + add(equal) * 2 + add('Acknowledge') * 2
-    trees, reports = gate.run('continuing server complete fixed arrivals', complete + advance() + state)
+    complete = setup(accounted=True) + add(equal) * 2 + add('Acknowledge') * 2
+    trees, reports = gate.run('continuing server complete fixed arrivals',
+        complete + advance(accounted=True) + state)
     baseline, final = reports[-1], states(trees)[-1]
     assert len(baseline['values']) == 4, reports
+    initial_counts = accounts(reports[0])
+    expected_counts = source_counts(baseline)
+    assert expected_counts['publish'] == 4 and expected_counts['commit-check'] == 8, expected_counts
     for cut in (0, 1, 7, 19, 53, 101):
         trees, reports = gate.run(f'continuing server fixed arrivals cut {cut}', complete +
-            f'!(let {PATTERN} (select 100 {control(cut)} &held) '
-            f'(Split $v (select 100 {control(10000-cut)} $r)))\n' + state)
+            f'!(let {accounted_pattern} (select 100 {control(cut, accounted=True)} &held) '
+            f'(Split $v $w $cost (select 100 {control(10000-cut, accounted=True)} $r)))\n' + state)
         split = next(interaction_records(trees, 'Split'))
         actual = {**reports[-1], 'values': split[1] + reports[-1]['values']}
+        prefix_counts = compact_receipt(split[3])['counts']
+        assert split[2] == prefix_counts['quantum'], (cut, split)
+        assert 0 <= split[2] - reports[0]['work'] <= cut, (cut, split, reports)
+        assert 0 <= actual['work'] - split[2] <= 10000-cut, (cut, actual, split)
+        assert source_counts(actual) == expected_counts, (cut, actual, baseline)
+        if cut == 0:
+            before = accounts(reports[0])
+            assert before == initial_counts, (split, reports)
+            # Returning the initial account itself has its declared price.
+            # A zero execution grant adds exactly that one observation, and
+            # performs no matcher, provider or scheduler work.
+            expected_zero = {**before, 'cost-read': before['cost-read'] + 1}
+            assert prefix_counts == expected_zero, (split, reports)
         assert all(actual[field] == baseline[field] for field in
-                   ('values', 'work', 'satisfied', 'closed', 'status')), (cut, actual, baseline)
-        assert states(trees)[-1] == final, (cut, trees)
-        gate.passed_case(f'continuing server cut {cut} retains exact commits, paid work, buffer and actual receive bodies')
+                   ('satisfied', 'closed', 'status')), (cut, actual, baseline)
+        assert fresh_frame_syntax([actual['values'], states(trees)[-1]]) == \
+               fresh_frame_syntax([baseline['values'], final]), (cut, actual, baseline)
+        # Actual probing is retained and metered, but its bucket collisions
+        # depend on native addresses. Exact suffix conservation on the same
+        # retained cursor is checked by test_native_space_agenda.c.
+        gate.passed_case(f'continuing server cut {cut} conserves source operations and exact per-run quantum accounts, commits and receive bodies')
 
     for cut in (0, 7, 31, 47, 101):
         trees, reports = gate.run(f'continuing server arrival during paid prefix {cut}', setup() +
@@ -1808,18 +1940,21 @@ def continuing_server(gate, history_controls=False):
         recording = '(history (selections 2048) (nodes 32) (bytes 65536) (owners 10000))'
         for cut in (0, 19, 71):
             trees, ordinary = gate.run(f'continuing server history reference {cut}',
-                complete + advance(cut) + advance(10000-cut) + state)
+                complete + advance(cut, accounted=True) + advance(10000-cut, accounted=True) + state)
             expected = states(trees)[-1]
             for forget in (False, True):
                 stop = ('!(history:forget &held 100000)\n' if forget else '')
                 trees, recorded = gate.run(f'continuing server history {cut} forget {forget}',
-                    complete + advance(cut, observer=recording) + stop +
-                    advance(10000-cut, observer='' if forget else '(history False)') + state)
+                    complete + advance(cut, observer=recording, accounted=True) + stop +
+                    advance(10000-cut, observer='' if forget else '(history False)', accounted=True) + state)
                 assert len(recorded) == len(ordinary) == 3, recorded
                 for left, right in zip(ordinary, recorded):
+                    accounts(left); accounts(right)
                     assert all(left[key] == right[key] for key in
-                               ('values', 'work', 'satisfied', 'closed', 'status')), (left, right)
-                assert states(trees)[-1] == expected, trees
+                               ('satisfied', 'closed', 'status')), (left, right)
+                assert source_counts(ordinary[-1]) == source_counts(recorded[-1]), (ordinary, recorded)
+                assert fresh_frame_syntax([[r['values'] for r in recorded], states(trees)[-1]]) == \
+                       fresh_frame_syntax([[r['values'] for r in ordinary], expected]), (ordinary, recorded)
                 if forget:
                     policies = list(interaction_records(trees, 'HistoryPolicy'))
                     assert policies and dict(policies[0][1:])['status'] == 'Unrecorded', trees
@@ -1837,14 +1972,16 @@ def main():
     parser.add_argument('--timeout',type=int,default=30)
     parser.add_argument('--cases',type=int,default=5)
     parser.add_argument('--receipt',type=Path)
-    parser.add_argument('--population', choices=('all', 'choices', 'server'), default='all')
+    parser.add_argument('--population', choices=('all', 'choices', 'server', 'state-world'), default='all')
     parser.add_argument('--history-controls', action='store_true',
                         help='Check optional recording, stopping and forgetting on selected bindings and the continuing server.')
     parser.add_argument('--resource-checker',type=Path,
                         help='Optional executable for the resource-word source model')
     args=parser.parse_args();args.binary=args.binary.resolve();gate=Gate(args)
     try:
-        if args.population != 'server':
+        if args.population == 'state-world':
+            state_world_diagnostic(gate)
+        elif args.population != 'server':
             semantic_choices(gate)
             raw_semantic_choices(gate)
             matching_choices(gate, args.history_controls)
@@ -1853,7 +1990,7 @@ def main():
         if args.population in ('all', 'server'):
             continuing_server(gate, args.history_controls)
         if args.population == 'all':
-            fixed(gate);split(gate,args.cases);priorities(gate);current_scope(gate);generated(gate,args.cases)
+            fixed(gate);kept_read_identification(gate);split(gate,args.cases);priorities(gate);current_scope(gate);generated(gate,args.cases)
             mm2_correspondence(gate, args.cases)
             pending_resumption(gate)
             causal_world_readout(gate, args.resource_checker)
@@ -1867,7 +2004,10 @@ def main():
             if args.resource_checker is not None:
                 receipt['resource_checker_sha256'] = sha256(args.resource_checker.read_bytes()).hexdigest()
             args.receipt.write_text(json.dumps(receipt,indent=2)+'\n')
-    print(f'Prime native resources: {gate.passed} passed, 0 failed')
+    if args.population == 'state-world':
+        print(f'Prime native resources: {gate.passed} plumbing checks; comparison policy not qualified')
+    else:
+        print(f'Prime native resources: {gate.passed} passed, 0 failed')
 
 
 if __name__=='__main__':main()

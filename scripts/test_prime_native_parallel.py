@@ -607,7 +607,7 @@ def captured_query_publications(gate, history_controls=False):
                 gate.passed_case(f'own publication record/stop/forget cut={cut} forget={forget} keeps exact work')
 
 
-def effect_barriers(gate):
+def effect_barriers(gate, history_controls=False):
     # The equation's future contains an effect, while its current computation
     # is ordinary private work. The coordinator executes the effect exactly
     # once; the peer's pure work retains its own worker continuation.
@@ -682,13 +682,136 @@ def effect_barriers(gate):
     assert trees[-1]==[55],trees
     gate.passed_case('escaped StateCell survives answer and private continuation retirement')
 
-    source=SUM+'(= (coefficient) (let $_ (println! "COEFFICIENT-MUST-NOT-RUN") 2)) '
-    source+='(= (jobs) (weight:where A (coefficient))) (= (jobs) (sum 11)) '
-    _,results=gate.run('worker semantic coefficient authority',source+
-        f'!(select 10 {policy(2,30000,3)} (jobs))')
-    assert results[-1]['status']=='fault',results
-    assert 'COEFFICIENT-MUST-NOT-RUN' not in gate.receipts[-1]['stdout']
-    gate.passed_case('worker pure semantic grading cannot acquire ordinary effect authority')
+    authority_boundaries(gate, history_controls)
+
+
+def external_coefficient_authority(gate):
+    source = (SUM +
+        '(= (ext-pure $k) (let $n (sum $k) (let $f + ($f $n 1)))) '
+        '(= (pure-ext-jobs) (ext-pure 5)) (= (pure-ext-jobs) (sum 11)) '
+        '(= (ext-deny $k) (let $n (sum $k) (let $f println! ($f "NO-EXTERNAL")))) '
+        '(= (deny-ext-jobs) (ext-deny 5)) (= (deny-ext-jobs) (sum 11)) '
+        '(= (wave-coeff (Observation $v (satisfied $s) (closed $c) (residual $r) '
+        '(work $w) (status $t) (parallel-waves $waves) (receipt-capture $rc) '
+        '(consumer-revisions $cr))) '
+        '(let ((NativeParallelWave $overlap $slices $deferred) $rest) (decons-atom $waves) 2)) '
+        '(= (wave-coeff (Observation $v (satisfied $s) (closed $c) (residual $r) '
+        '(work $w) (status $t) (receipt-capture $rc) (consumer-revisions $cr))) 0) ')
+    for workers in (1, 2, 4):
+        for name, budget, relation in (
+            ('pure', 30000, 'pure-ext-jobs'),
+            ('denial-prefix', 40, 'deny-ext-jobs'),
+            ('denial-complete', 30000, 'deny-ext-jobs'),
+        ):
+            program = (source +
+                f'!(let $pol (search-policy (control FIFO (workers {workers}) (quantum 3) '
+                f'(receipts True) (budget {budget}))) '
+                '(select 1 (search-policy (control FIFO (workers 1) (budget 30000))) '
+                '(weight:read (algebra 0 1 + *) (weight:where A '
+                f'(let $obs (select 10 $pol ({relation})) (wave-coeff $obs))))))')
+            label = f'external authority {name} workers={workers}'
+            _, results = gate.run(label, program, expected_exit=1 if name == 'denial-complete' else 0)
+            receipt = gate.receipts[-1]
+            assert 'NO-EXTERNAL' not in receipt['stdout'], receipt
+            if name == 'denial-complete':
+                assert not results and receipt['stdout'].strip() == '(Incomplete effect-denied)', receipt
+            else:
+                coefficient = 0 if workers == 1 else 2
+                assert results and results[-1]['status'] == 'satisfied', results
+                assert observation(results[-1]['values']) == [['Weighted', 'A', coefficient, [coefficient]]], results
+            gate.passed_case(label)
+        waves = '(parallel-waves $waves) ' if workers > 1 else ''
+        pattern = ('(Observation $v (satisfied $s) (closed $c) (residual $res) '
+                   f'(work $w) (status $t) {waves}(receipt-capture $rc) (consumer-revisions $cr))')
+        program = (source +
+            f'!(let $p1 (search-policy (control FIFO (workers {workers}) (quantum 3) '
+            '(receipts True) (budget 40))) '
+            f'(let $p2 (search-policy (control FIFO (workers {workers}) (quantum 3) '
+            '(receipts True) (budget 30000))) '
+            f'(let {pattern} (select 10 $p1 (pure-ext-jobs)) '
+            '(let $first (select 10 $p2 $res) (Pair $first (select 10 $p2 $res))))))')
+        _, results = gate.run(f'resumed handle aliases workers={workers}', program)
+        assert len(results) == 2 and bag(results[0]['values']) == bag([16, 66]), results
+        assert results[0]['closed'] == results[1]['closed'] == 'True' and not results[1]['values'], results
+        assert results[0]['work'] == results[1]['work'], results
+        gate.passed_case(f'one residual handle exposes its consumed suffix to its alias workers={workers}')
+        guarded = (source +
+            f'!(let $p1 (search-policy (control FIFO (workers {workers}) (quantum 3) '
+            '(receipts True) (budget 40))) '
+            f'(let $p2 (search-policy (control FIFO (workers {workers}) (quantum 3) '
+            '(receipts True) (budget 30000))) '
+            f'(let {pattern} (select 10 $p1 (pure-ext-jobs)) '
+            '(let $guarded (select 1 (search-policy (control FIFO (workers 1) (budget 30000))) '
+            '(weight:read (algebra 0 1 + *) (weight:where A (let $obs (select 10 $p2 $res) 2)))) '
+            '(Pair $guarded (select 10 $p2 $res))))))')
+        _, results = gate.run(f'pure borrowed resume workers={workers}', guarded)
+        assert len(results) == 2 and results[0]['status'] == 'fault' and not results[0]['values'], results
+        assert results[1]['closed'] == 'True' and bag(results[1]['values']) == bag([16, 66]), results
+        gate.passed_case(f'pure borrowed resume leaves its suffix for an authorized caller workers={workers}')
+
+
+def authority_boundaries(gate, history_controls=False):
+    external_coefficient_authority(gate)
+    coefficient_authority(gate, history_controls)
+
+
+def coefficient_authority(gate, history_controls=False):
+    positive = (SUM + '(= (helper $x) (+ $x 1)) (= (pure-coeff) (helper 1)) '
+        '(= (jobs) (weight:where A (pure-coeff))) (= (jobs) (sum 11)) ')
+    denied = [
+        ('helper', '(= (coefficient) (let $_ (println! "NO-HELPER") 2)) '
+            '(= (jobs) (weight:where A (coefficient))) '),
+        ('direct', '(= (jobs) (weight:where A '
+            '(let $_ (println! "NO-DIRECT") (let $_ (println! "NO-AFTER") 2)))) '),
+        ('split', '(= (two) (let $_ (println! "NO-SPLIT") 1)) (= (two) 2) '
+            '(= (jobs) (weight:where A (two))) '),
+        ('after-effect', '(= (bad) (let $_ (println! "NO-LATER") 2)) '
+            '(= (jobs) (let $_ (println! "EARLIER-ONCE") (weight:where A (bad)))) '),
+    ]
+    modes = [('plain', False, ''), ('receipts', True, '')]
+    if history_controls:
+        modes.append(('history', False,
+            '(history (selections 2048) (nodes 4096) (bytes 1048576) (owners 10000))'))
+    failures = []
+    for workers in (1, 2, 4):
+        for mode, evidence, extra in modes:
+            schedule = policy(workers, 30000, 3, extra=extra, evidence=evidence)
+            label = f'pure coefficient workers={workers} mode={mode}'
+            try:
+                _, results = gate.run(label, positive + f'!(select 10 {schedule} (jobs))')
+                assert results, gate.receipts[-1]
+                result = results[-1]
+                assert result['closed'] == 'True' and bag(result['values']) == bag(['A', 66]), result
+                if evidence and workers > 1:
+                    assert result.get('parallel-waves'), result
+                if mode == 'history':
+                    assert ['recording', 'True'] in result['history'][1:], result
+                gate.passed_case(label)
+            except AssertionError as error:
+                failures.append(f'{label}: {error}')
+            for name, definitions in denied:
+                source = SUM + definitions + '(= (jobs) (sum 11)) '
+                label = f'coefficient {name} denial workers={workers} mode={mode}'
+                failures_before = len(failures)
+                try:
+                    _, results = gate.run(label, source + f'!(select 10 {schedule} (jobs))')
+                    assert results, gate.receipts[-1]
+                    result = results[-1]
+                    assert result['status'] == 'fault' and result['closed'] == 'False', result
+                    if mode == 'history':
+                        assert ['recording', 'True'] in result['history'][1:], result
+                except AssertionError as error:
+                    failures.append(f'{label}: {error}')
+                # Inspect physical effects even when the exit or status was wrong.
+                stdout = gate.receipts[-1].get('stdout', '')
+                if 'NO-' in stdout:
+                    failures.append(f'{label}: forbidden effect executed')
+                if name == 'after-effect' and stdout.splitlines().count('EARLIER-ONCE') != 1:
+                    failures.append(f'{label}: preceding effect was not executed exactly once')
+                if len(failures) == failures_before:
+                    gate.passed_case(label)
+    if failures:
+        raise AssertionError('\n'.join(failures))
 
 
 def session_context(gate):
@@ -924,8 +1047,10 @@ def stored_demand_boundaries(gate):
     for workers in (1, 2, 4):
         trees, _ = gate.run(f'stored arithmetic source and value workers={workers}', source,
                             arguments=('--num-threads', str(workers)))
-        assert trees[-2:] == [[['+', 1, 2]], [3]], trees
-        gate.passed_case(f'storage reifies; explicit value demand evaluates workers={workers}')
+        # A space holds values: storing demands the argument's cell, so the
+        # Data view and the ordinary read both retrieve the stored value.
+        assert trees[-2:] == [[3], [3]], trees
+        gate.passed_case(f'storage demands the argument; both views read its value workers={workers}')
     # Prefix mutation may invalidate this exact-snapshot controller. Its
     # committed physical effect must survive and cannot be reported undone.
     source = ('(Old) (Keep) (= (delete:jobs) (let $_ (remove-atom &self (Old)) Gone)) '
@@ -947,6 +1072,8 @@ def main():
     parser.add_argument('--history-controls',action='store_true')
     parser.add_argument('--ordinary-only', action='store_true',
                         help='Run ordinary-program controls on production builds without recording')
+    parser.add_argument('--authority-only', action='store_true',
+                        help='Run the coefficient authority boundary controls')
     parser.add_argument('--benchmark', action='store_true',
                         help='Measure ordinary programs after the selected correctness controls')
     parser.add_argument('--benchmark-size', type=int, default=20000)
@@ -960,10 +1087,12 @@ def main():
                            args.benchmark_repetitions < 1):
         parser.error('benchmark size and repetitions must be positive, and facts nonnegative')
     try:
-        if args.ordinary_only:
+        if args.authority_only:
+            authority_boundaries(gate, args.history_controls)
+        elif args.ordinary_only:
             ordinary(gate)
         else:
-            fixed(gate);split(gate,args.cases);storage(gate);force_dependencies(gate);equation_dependencies(gate);return_dependencies(gate);fuel_and_advice(gate);captured_query_publications(gate,args.history_controls);effect_barriers(gate);session_context(gate);receipt_capture(gate);nested_allowances(gate);generated(gate,args.cases);shared_producer_boundaries(gate);stored_demand_boundaries(gate)
+            fixed(gate);split(gate,args.cases);storage(gate);force_dependencies(gate);equation_dependencies(gate);return_dependencies(gate);fuel_and_advice(gate);captured_query_publications(gate,args.history_controls);effect_barriers(gate,args.history_controls);session_context(gate);receipt_capture(gate);nested_allowances(gate);generated(gate,args.cases);shared_producer_boundaries(gate);stored_demand_boundaries(gate)
         if args.benchmark:
             measure_ordinary(gate)
     finally:

@@ -430,6 +430,12 @@ bool cetta_library_petta_resolve_reference(
     const PeTTaLibraryReference *reference,
     char *canonical_path,
     size_t canonical_path_size);
+/* The MeTTa file an import of `spec` reads, as the import resolves it now
+ * (the reader reads a library's declarations there); false when the import
+ * reads no MeTTa file. */
+bool cetta_library_module_source_path(CettaLibraryContext *ctx,
+                                      const char *spec, char *out,
+                                      size_t out_size);
 bool cetta_library_include_module(CettaLibraryContext *ctx, const char *spec,
                                   Space *space, Arena *eval_arena,
                                   Arena *persistent_arena, Registry *registry,

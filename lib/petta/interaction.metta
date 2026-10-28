@@ -21,10 +21,11 @@
 (= (transform $r $s $t $d)
    (ia-finish (ia-run (__cetta_lib_interaction_fire-lane petta $r (quote $s) (quote $t) $d))))
 
-; The engine stops only to have code run: (ia:need M E) asks for E's values.
+; The engine stops only to have code run. Compute evaluates M's stored request
+; and retains its reported Space reads before handing the values back.
 (= (ia-run $i)
    (case $i
-     (((ia:need $m $e) (ia-run (__cetta_lib_interaction_resume $m (collapse (eval $e)))))
+     (((ia:need $m $e) (ia-run (__cetta_lib_interaction_compute $m)))
       ($done $done))))
 
 (= (ia-finish $i)

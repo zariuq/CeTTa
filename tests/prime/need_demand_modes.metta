@@ -177,12 +177,15 @@
 !(let $box (cons-atom Box ((+ 1 2))) (unify $box (Box $field) (Field $field) NotBox))
 !(let $box (cons-atom Box ((+ 1 2))) (case $box (((Box $field) (Field (eval $field))))))
 !(let $box (cons-atom Box ((cons-atom + (1 2)))) (let (Box $field) $box (Field $field)))
+; A stored row holds values: storing demands the payload's cells, each once,
+; and a later pattern reads the stored value whatever it inspects.  A
+; nondeterministic field stores one row per value.
 (= (prime-need:pattern-store $tag $value) (add-atom &self (NeedPattern $tag $value)))
 (= (prime-need:pattern-box $field) (Box $field))
 (= (prime-need:pattern-tick $label $value) (chain (println! $label) $_ $value))
-!(prime-need:pattern-store root-wild (prime-need:pattern-tick unreachable-root-field 7))
+!(prime-need:pattern-store root-wild (prime-need:pattern-tick stored-root-field 7))
 !(match &self (NeedPattern root-wild $value) (case $value (($unused Kept) (7 Strict))))
-!(prime-need:pattern-store field-wild (prime-need:pattern-box (prime-need:pattern-tick unreachable-later-field 7)))
+!(prime-need:pattern-store field-wild (prime-need:pattern-box (prime-need:pattern-tick stored-later-field 7)))
 !(match &self (NeedPattern field-wild $value) (case $value (((Box $unused) Kept) ((Box 7) Strict))))
 !(prime-need:pattern-store field-choices (prime-need:pattern-box (superpose (7 7 8))))
 !(match &self (NeedPattern field-choices $value) (case $value (((Box 7) Strict) ((Box $other) (Fallback $other)))))

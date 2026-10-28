@@ -102,21 +102,26 @@ def main():
     for name, actual, want in petta:
         if agrees('petta', PROGRAM, expected, actual, cetta) != want:
             failures.append(f'petta: {name}')
-    for name, actual, want in he:
-        if agrees('he', PROGRAM, he_expected, actual, cetta) != want:
-            failures.append(f'he: {name}')
+    for lang in ('he', 'prime'):
+        for name, actual, want in he:
+            if agrees(lang, PROGRAM, he_expected, actual, cetta) != want:
+                failures.append(f'{lang}: {name}')
     # A list a program builds is ordered: only a collapse at the top of a
     # query is compared as a bag.
     built = '!(cons-atom 1 (2 3))\n'
     if agrees('petta', built, '(1 2 3)\n', '(3 2 1)\n', cetta):
         failures.append('petta: a built list compared as a bag')
+    if agrees('prime', built, '[(1 2 3)]\n', '[(3 2 1)]\n', cetta):
+        failures.append('prime: a built list compared as a bag')
+    if agrees('prime', '!(superpose (A A B))\n', '[A, A, B]\n', '[A, B]\n', cetta):
+        failures.append('prime: a missing occurrence was accepted')
     if failures:
         print('FAIL: the answer comparator disagrees with the observation contract:')
         for failure in failures:
             print('  ' + failure)
         return 1
     print(f'PASS: answers compare as bags, collapses by their elements, effects in order '
-          f'({len(petta) + len(he) + len(independent) + len(representations) + 7} cases)')
+          f'({len(petta) + 2 * len(he) + len(independent) + len(representations) + 9} cases)')
     return 0
 
 

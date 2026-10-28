@@ -489,13 +489,13 @@ static PrimeEvalStackFrame *native_dialect_source_sink(const PrimeNativeWork *wo
         work->dialect->target == &frame->child ? frame : NULL;
 }
 
-static bool prime_native_return_reserve_advice(PrimeEvalStackFrame *frame) {
-    if (!frame || frame->child.len < frame->control_return_advice_capacity) return true;
+static bool prime_native_return_reserve_advice_count(PrimeEvalStackFrame *frame,
+    size_t needed) {
+    if (!frame || needed <= frame->control_return_advice_capacity) return true;
     size_t capacity=frame->control_return_advice_capacity;
-    if (capacity > SIZE_MAX / 2u) return false;
     capacity=capacity ? capacity * 2u : 4u;
-    if (frame->child.len==SIZE_MAX) return false;
-    if (capacity<=frame->child.len) capacity=(size_t)frame->child.len+1u;
+    if (capacity < frame->control_return_advice_capacity) return false;
+    if (capacity < needed) capacity=needed;
     if (capacity > SIZE_MAX / sizeof(*frame->control_return_advice)) return false;
     void *items=realloc(frame->control_return_advice,
         capacity * sizeof(*frame->control_return_advice));
@@ -503,6 +503,12 @@ static bool prime_native_return_reserve_advice(PrimeEvalStackFrame *frame) {
     frame->control_return_advice=items;
     frame->control_return_advice_capacity=capacity;
     return true;
+}
+
+static bool prime_native_return_reserve_advice(PrimeEvalStackFrame *frame) {
+    if (!frame) return true;
+    if (frame->child.len==SIZE_MAX) return false;
+    return prime_native_return_reserve_advice_count(frame,(size_t)frame->child.len+1u);
 }
 
 /* These receivers append physical rows without splicing or reordering
@@ -517,15 +523,19 @@ static bool prime_native_return_receiver(const PrimeEvalStackFrame *frame) {
           frame->kind == PRIME_EVAL_STACK_FRAME_BIND_FINISH)));
 }
 
-static bool prime_native_note_returns(PrimeEvalStackFrame *frame) {
+static bool prime_native_note_returns(PrimeNativeControl *control, PrimeEvalStackFrame *frame) {
     if (!prime_native_return_receiver(frame) || !frame->child_initialized ||
         frame->control_return_advice_length >= frame->child.len) return true;
-    PrimeNativeControl *control=g_prime_eval_stack_driver->control;
+#ifdef CETTA_PRIME_NATIVE_CONTROL_MUTATION_AMBIENT_SCAN
+    /* Fault control: use the caller's active controller instead of the owner. */
+    control=g_prime_eval_stack_driver ? g_prime_eval_stack_driver->control : NULL;
+#endif
+    if (!control) return false;
     /* Ordinary ungraded Prime evaluation neither allocates nor populates
      * this optional scheduling sidecar. */
     if (frame->kind != PRIME_EVAL_STACK_FRAME_DIALECT_SOURCE &&
         !control->policy.priority && !control->live_bound) return true;
-    if (!prime_native_return_reserve_advice(frame)) return false;
+    if (!prime_native_return_reserve_advice_count(frame,(size_t)frame->child.len)) return false;
     while (frame->control_return_advice_length < frame->child.len)
         frame->control_return_advice[frame->control_return_advice_length++]=
             (PrimeNativeReturnAdvice){.key=control->active_key,

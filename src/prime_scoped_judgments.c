@@ -14085,7 +14085,20 @@ static Atom *sj_judge(Arena *a, Space *space, Atom *judgment,
         return sj_set_term_judgment(a, space, judgment, SJ_SET_EQ,
                                     steps_limited, steps);
     if (head == g_builtin_syms.set_colon_proves) {
-        if (len != 3u) return sj_refuted(a, judgment, sj_expr1(a, SJ_S("set:proves-arity")));
+        if (len != 3u && len != 4u)
+            return sj_refuted(a, judgment, sj_expr1(a, SJ_S("set:proves-arity")));
+        /* The optional last operand bounds this checking query. It does not
+         * change the proposition or add an inference rule to either profile. */
+        if (len == 4u) {
+            Atom *limit = judgment->expr.elems[3];
+            if (!limit || limit->kind != ATOM_GROUNDED ||
+                limit->ground.gkind != GV_INT || limit->ground.ival < 0)
+                return sj_refuted(a, judgment,
+                                  sj_expr1(a, SJ_S("set:proves-budget")));
+            uint64_t given = (uint64_t)limit->ground.ival;
+            if (!steps_limited || given < steps) steps = given;
+            steps_limited = true;
+        }
         return sj_set_proves(a, space, judgment, judgment->expr.elems[1],
                              judgment->expr.elems[2], steps_limited, steps,
                              diagnostic);

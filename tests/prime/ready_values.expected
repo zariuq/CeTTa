@@ -53,6 +53,7 @@
 [42]
 [()]
 [14]
+[(quote 0)]
 [(quote (ready-values:bump))]
 [0]
 [same, different]

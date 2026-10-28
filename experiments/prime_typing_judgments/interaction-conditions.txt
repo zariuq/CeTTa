@@ -1,0 +1,110 @@
+Conditional interaction: source and native comparison
+2026-10-28
+
+The source theory now includes absence of a complete source query. A query's
+local bindings do not reach the following sources. Its successful absence row
+retains observations of the regions needed to establish that no row exists.
+This includes empty queries, nested absence, pure computed sources, and every.
+
+Example: a space contains (msg a) and (ack b). Each pattern has a match, but
+(read (msg $x)) followed by (read (ack $x)) has no joined row. Its absence
+therefore succeeds. Adding (ack a) disables that absence.
+
+Theorem-to-interface correspondence
+-----------------------------------
+Mettapedia's OccurrenceCommits owner:
+
+SourceCompilation.SourceList.absent
+  The recursive query-and-continuation constructor.
+SourceCompilation.mem_rows_absent
+  Query emptiness, original bindings, and exact retained query observations.
+SourceSemantics.agreementFor / agreement
+  Computed rows agree with the independent declarative source relation under
+  the stated matcher and pure-computation laws, including nested absence.
+SourceAbsence.rows_absent_eq
+  The constructor composes a query-only result with its continuation.
+SourceAbsence.mem_absenceRows_iff_holds
+  Retained observations validate the exact old result. Continued absence alone
+  can be weaker: a new nonjoining row may leave absence true but stale its evidence.
+SourceQueries.run_compile / run_empty_iff_no_declarative
+  The full source grammar lowers to the existing adaptive read program.
+  Complete ordered occurrence replies recover the original row bags, preserving
+  alternative substitutions, duplicate-labelled occurrences and exact picks.
+  Completed emptiness agrees with the independent declarative row relation
+  under the stated matcher and pure-computation laws.
+SourceQueryExecution.completed_agreement / execute_split / resumed_rows
+  The existing cursor returns exactly those rows on completion. Splitting its
+  read budget retains the actual continuation and charge. Validated resumption
+  observes the current complete view; stale performed reads retain a refused
+  packet. A paused cursor has no completed answer.
+SourceQueryControls
+  Checks correlated joins, vacuous every, computed-result positions, duplicate
+  identities, equational alternatives, ordered certificates, truncated scanners,
+  unread arrivals and changed positive/negative dependencies.
+ConditionTransport.PredicateQuery.holds_fire_iff_pullback
+  An exact observed-region postcondition becomes finite initial tests.
+CommitPreconditions.CommitPrecondition.sequential_holds_iff
+  Compiled preconditions characterize two enabled occurrence commits exactly.
+SequentialComposition.Commit.composition_exact
+  The compiled condition and net update synthesize and decompose the original
+  two applications. Intermediate freshness is retained in the condition.
+SequentialComposition.Commit.compose_assoc_fire / compose_comm_fire
+  Final occurrence-store associativity, and commutation with explicit independence.
+
+TransformComposition.Span:
+composeAlong / sequential_iff_exists_overlap
+  Counted resource composition at explicit overlaps.
+compose_assoc / compose_eq_fuse
+  Associativity of the canonical counted composite; the previous handoff-only
+  fusion is a special case. Finer occurrence-map multiplicities are not erased
+  by these theorems, but also are not enumerated by this counted construction.
+
+Native comparison
+-----------------
+Run interaction-conditions.metta with the Prime dialect. The correlated-query
+examples agree with the source calculation. The experiment intentionally also
+retains unresolved cases; it is not an all-passing conformance fixture.
+
+The source-form classifier now recognizes the empty conjunction, let and every.
+An explicitly supplied location still selects literal-pattern absence, including
+patterns whose heads happen to be source operators.
+
+Qualified native cases:
+
+1. Absence and every now retain separate groups of jobs in the common machine.
+   A query closes after all its jobs and child groups have completed. A vacuous
+   every supplies one aggregate row, and nested aggregates retain their row
+   boundary for the enclosing linearity filter.
+2. Computed sources inside absence use the existing request/resume path.
+   Their values remain an ordered complete reply bag. Inner bindings and picks
+   do not escape the negative query. Evaluation requests are not replayed by
+   the matcher's first-candidate retry optimization.
+3. A sealed resumption identifies one request generation. A stale, duplicate
+   or cancelled handle cannot supply values to a later request on that machine.
+   The checked matcher reports unfinished comparisons separately from no match.
+4. Output lists and continuations are prepared before commit. Resource and
+   post-effect engine failures stay explicit; changed state is retained.
+   Backend atom admission still requires its complete preparation connection.
+
+Native controls: tests/prime/interaction/negative_queries.metta and
+tests/test_interaction_queries.c. The query-judgments.metta client invokes the
+actual proof checker inside a negative query, while retaining the independent
+positive check before publication.
+
+The native adaptive scan may retain fewer regions than the source's conservative
+completeness footprint. Its correspondence needs the actual adaptive read history;
+the source's footprint theorem does not by itself prove that implementation.
+The source-query cursor realizes the contract in Lean. Native scanner
+completeness, scoped matcher correspondence and the whole mutation/revision
+audit remain implementation obligations. Computed code that reads additional
+mutable resources needs those transitive dependencies joined to the commit;
+the pure computed-source theorem assumes no such hidden store reads.
+
+Machines.Kernel.CorrelatedReplies:
+consumed_reply_stays_refused / cancelled_reply_stays_refused
+  Consumed or cancelled request identities remain refused through arbitrary
+  later operations. The native generation check is tested against this contract;
+  the model's theorem does not itself prove native seal unforgeability.
+
+No default notation or universal operational-to-conversion rule is selected.
+Successful checking of a rule still requires its selected theory and evidence.

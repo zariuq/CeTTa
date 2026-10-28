@@ -5395,6 +5395,9 @@ static bool g_atom_prime_held_made = false;
 
 Atom *atom_prime_held_wrap(Arena *a, Atom *atom) {
     if (!a || !atom || atom_prime_held_is(atom)) return atom;
+    /* A Need cell is a value the evaluator owes, not syntax: what holds a
+     * cell holds the cell itself. */
+    if (atom_prime_need_capability_value(atom)) return atom;
     Atom *tag = atom_internal_tag(a, CETTA_INTERNAL_TAG_PRIME_HELD);
     if (tag)
         g_atom_prime_held_made = true;
@@ -7710,8 +7713,8 @@ static bool atom_compare_driver(Atom *left, Atom *right,
                 const StateCell *ca = a->ground.ptr;
                 const StateCell *cb = b->ground.ptr;
                 if (ca == cb &&
-                    (!ca || !atom_structural_may_have_nan(ca->value) ||
-                     !atom_he_exact_semantics()))
+                    (!ca || !atom_he_exact_semantics() ||
+                     !atom_structural_may_have_nan(ca->value)))
                     goto completed;
                 if (!ca || !cb)
                     goto comparison_failed;
