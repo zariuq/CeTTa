@@ -75,14 +75,14 @@ Atom *petta_type_query(Arena *arena, Atom *value, PettaTypeQuery query);
  * authored get-type equation adds answers; false means defer, not reject. */
 bool petta_type_literal_proves(const Atom *value, const Atom *required);
 
-/* Relational compound queries use these patterns on the caller's existing
- * match/query continuations. They must not enumerate fresh types and filter
- * afterwards: the subject and requirement can both acquire bindings. */
+/* Relational compound queries retain the selected declaration on the
+ * caller's trail. Literal domain wildcards are frozen before result matching
+ * can refine a declaration variable to the same spelling. */
 typedef struct {
     Atom *pattern;
-    Atom *domains;
+    Atom *signature;
 } PettaTypeFunctionQuery;
-bool petta_type_function_query(Arena *arena, Atom *sequence, Atom *required,
+bool petta_type_function_query(Arena *arena, Atom *sequence,
                                 PettaTypeFunctionQuery *query);
 Atom *petta_type_tuple_query(Arena *arena, CettaExprLen length);
 Atom *petta_type_declaration_query(Arena *arena, Atom *subject, Atom *required);

@@ -30147,6 +30147,20 @@ test-petta-eager-value-predicates: $(BIN)
 	done; \
 	echo "PASS: value predicates retain computation, bindings and ready values"
 
+.PHONY: test-petta-type-confirmation
+test-petta-semantics: test-petta-type-confirmation
+test-petta-type-confirmation: $(BIN)
+	@set -eu; \
+	for route in tier machine; do \
+		if [ $$route = machine ]; then reference=1; else reference=; fi; \
+		for fixture in type_confirmation space_type_confirmation type_confirmation_relational; do \
+			CETTA_OPEN_EQUATIONS_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+				--lang petta tests/petta/$$fixture.metta \
+				| diff -u tests/petta/$$fixture.expected -; \
+		done; \
+	done; \
+	echo "PASS: type confirmations preserve candidates, wildcard roles and bindings"
+
 .PHONY: test-petta-get-type-relation
 # get-type is SWI-PeTTa's relation over the space's declarations: a literal's
 # type, any type for a variable, a declared function's result type when its

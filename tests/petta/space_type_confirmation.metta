@@ -1,0 +1,42 @@
+; A captured owner uses the same candidate/confirmation contract as &self.
+!(bind! &type-owner (new-space))
+!(add-atom &type-owner (: token OwnerType))
+(: token DefaultType)
+!(test (get-type token) DefaultType)
+!(test (eval (get-type token) &type-owner) OwnerType)
+!(test (collapse (eval (let DefaultType (get-type token) wrong) &type-owner)) ())
+!(test (collapse (eval (let %Undefined% (get-type token) wrong) &type-owner)) ())
+!(test (eval (get-type unknown-token) &type-owner) %Undefined%)
+
+; Intrinsic kinds commit before a requested type or shadow annotation.
+!(add-atom &type-owner (: 42 Shadow))
+!(add-atom &type-owner (: "s" Shadow))
+!(add-atom &type-owner (: True Shadow))
+!(test (eval (get-type 42) &type-owner) Number)
+!(test (collapse (eval (let %Undefined% (get-type 42) wrong) &type-owner)) ())
+!(test (collapse (eval (let Shadow (get-type 42) wrong) &type-owner)) ())
+!(test (collapse (eval (let Shadow (get-type "s") wrong) &type-owner)) ())
+!(test (collapse (eval (let Shadow (get-type True) wrong) &type-owner)) ())
+
+; Only an authored literal %Undefined% parameter is unconstrained.
+!(add-atom &type-owner (: any-param (-> %Undefined% Result)))
+!(test (eval (get-type (any-param token)) &type-owner) Result)
+!(test (eval (get-type (any-param 42)) &type-owner) Result)
+(: any-underscore (-> _ Result))
+!(add-atom &type-owner (: any-underscore (-> _ Result)))
+!(test (get-type (any-underscore 42)) Result)
+!(test (eval (get-type (any-underscore 42)) &type-owner) Result)
+!(add-atom &type-owner (: identity-type (-> $t $t)))
+!(test (collapse (eval (let %Undefined% (get-type (identity-type 42)) wrong) &type-owner)) ())
+!(add-atom &type-owner (: to-result (-> Number Result)))
+!(test (collapse (eval (let $x (get-type (to-result $x)) $x) &type-owner)) (Result))
+
+; Shared signature variables reject mismatches in either argument order.
+!(add-atom &type-owner (: owner-same (-> $t $t Bool)))
+!(add-atom &type-owner (= (owner-same $x $y) True))
+!(test (collapse (eval (owner-same unknown-token 42) &type-owner)) ())
+!(test (collapse (eval (owner-same 42 unknown-token) &type-owner)) ())
+!(test (collapse (eval (let $f owner-same ($f unknown-token 42)) &type-owner)) ())
+!(test (collapse (eval (let $f owner-same ($f 42 unknown-token)) &type-owner)) ())
+!(test (collapse (eval (owner-same 1 2) &type-owner)) (True))
+!(test (collapse (eval (owner-same unknown-token another-token) &type-owner)) (True))

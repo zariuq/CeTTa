@@ -1,6 +1,6 @@
 (%Undefined% Number)
 ()
-(OK)
+()
 ()
 String
 ((-> Number String) Bool)

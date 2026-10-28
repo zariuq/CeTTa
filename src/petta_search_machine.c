@@ -246,6 +246,7 @@ typedef enum {
     PETTA_GOAL_TYPE_GUARD_READY,
     PETTA_GOAL_TYPE_QUERY_SELECT,
     PETTA_GOAL_TYPE_FUNCTION_QUERY,
+    PETTA_GOAL_TYPE_FUNCTION_SIGNATURE,
     PETTA_GOAL_TYPE_LIST_PROBE,
     PETTA_GOAL_TYPE_LIST_QUERY,
     PETTA_GOAL_TYPE_DECLARATION_QUERY,
@@ -588,6 +589,7 @@ static void petta_machine_record_goal_class(
     case PETTA_GOAL_TYPE_GUARD_READY:
     case PETTA_GOAL_TYPE_QUERY_SELECT:
     case PETTA_GOAL_TYPE_FUNCTION_QUERY:
+    case PETTA_GOAL_TYPE_FUNCTION_SIGNATURE:
     case PETTA_GOAL_TYPE_LIST_PROBE:
     case PETTA_GOAL_TYPE_LIST_QUERY:
     case PETTA_GOAL_TYPE_DECLARATION_QUERY:
@@ -22714,10 +22716,15 @@ static bool petta_machine_start_relational_type_query(
     PettaMachineImpl *machine, Atom *subject, Atom *required, uint32_t barrier) {
     Atom *matched = petta_fresh_variable(machine);
     Atom *truth = petta_semantics_boolean_value(&machine->heap, true);
+    Atom *request = petta_machine_apply_bindings(machine,
+        search_context_bindings(&machine->search), &machine->heap, required);
+    Atom *candidate = request && (request->kind == ATOM_VAR ||
+        atom_is_symbol_id(request, g_builtin_syms.undefined_type))
+        ? petta_fresh_variable(machine) : required;
     size_t fallback_index = machine->choice_len;
-    if (!matched || !truth || !petta_goal_push(machine, &(PettaGoal){
+    if (!matched || !truth || !request || !candidate || !petta_goal_push(machine, &(PettaGoal){
             .kind = PETTA_GOAL_TYPE_QUERY_SELECT, .barrier = barrier,
-            .first = matched, .second = required,
+            .first = matched, .second = required, .third = candidate,
         }))
         return false;
     PettaChoice fallback = {
@@ -22732,13 +22739,15 @@ static bool petta_machine_start_relational_type_query(
         machine, &(PettaGoal){
             .kind = PETTA_GOAL_EQUAL_COMMIT, .barrier = barrier,
             .first = truth, .second = matched, .choice_index = fallback_index,
-        }) && petta_machine_start_type_candidates(machine, subject, required, barrier);
+        }) && petta_machine_start_type_candidates(machine, subject, candidate, barrier);
 }
 
 static bool petta_machine_type_element_queries(
     PettaMachineImpl *machine, Atom *const *elements, Atom *domains,
     uint32_t barrier) {
     for (CettaExprIndex i = domains->expr.len; i > 0u; i--) {
+        if (petta_type_demand(domains->expr.elems[i - 1u]) == PETTA_TYPE_TRANSLATE)
+            continue;
         Atom *query = petta_type_query(
             &machine->heap, elements[i - 1u], PETTA_TYPE_QUERY_EXACT);
         if (!query || !petta_goal_push(machine, &(PettaGoal){
@@ -37160,8 +37169,9 @@ static bool petta_machine_dispatch_goal(
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
-        return matched || petta_machine_unify(
-            machine, second, atom_undefined_type(&machine->heap));
+        return matched
+            ? petta_machine_unify(machine, goal.third, second)
+            : petta_machine_unify(machine, second, atom_undefined_type(&machine->heap));
     }
 
     if (goal.kind == PETTA_GOAL_TYPE_FUNCTION_QUERY) {
@@ -37176,9 +37186,11 @@ static bool petta_machine_dispatch_goal(
         if (!space_type_annotation_may_match_subject(machine->space, elements[0]))
             return false;
         PettaTypeFunctionQuery query;
-        if (!petta_type_function_query(&machine->heap, first, second, &query) ||
-            !petta_machine_type_element_queries(
-                machine, elements + 1u, query.domains, goal.barrier)) {
+        if (!petta_type_function_query(&machine->heap, first, &query) ||
+            !petta_goal_push(machine, &(PettaGoal){
+                .kind = PETTA_GOAL_TYPE_FUNCTION_SIGNATURE, .barrier = goal.barrier,
+                .first = query.signature, .second = first, .third = second,
+            })) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
         }
@@ -37190,6 +37202,23 @@ static bool petta_machine_dispatch_goal(
         return petta_machine_start_match_choice(
             machine, machine->space, query.pattern, truth, truth,
             goal.barrier, NULL);
+    }
+
+    if (goal.kind == PETTA_GOAL_TYPE_FUNCTION_SIGNATURE) {
+        Atom *const *elements = NULL;
+        CettaExprLen length = 0u;
+        if (!atom_sequence_view(second, &elements, &length) || !length ||
+            !petta_type_call_open(first, length - 1u, NULL))
+            return false;
+        Atom *domains = atom_expr(&machine->heap,
+            first->expr.elems + 1u, first->expr.len - 2u);
+        if (!domains || !petta_machine_type_element_queries(
+                machine, elements + 1u, domains, goal.barrier)) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
+        return petta_push_unify(machine, first->expr.elems[first->expr.len - 1u],
+                                goal.third, goal.barrier);
     }
 
     if (goal.kind == PETTA_GOAL_TYPE_LIST_PROBE) {
