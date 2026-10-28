@@ -35,10 +35,10 @@ static const CettaProfile CETTA_HOL_PROFILES[] = {
 
 /* Sorted by name for policy lookup; presentation order is not observable. */
 static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
-    {"@<", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
-    {"@<=", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
-    {"@>", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
-    {"@>=", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
+    {"@<", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "petta_standard_order"},
+    {"@<=", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "petta_standard_order"},
+    {"@>", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "petta_standard_order"},
+    {"@>=", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "petta_standard_order"},
     {"_minimal-foldl-atom", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
     {"add-atom-nodup", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"capture", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
@@ -243,15 +243,15 @@ bool cetta_language_version_petta_typed_line(
                        version->id == CETTA_LANGUAGE_VERSION_PETTA_1_1_C);
 }
 
-/* PeTTa 1.0.6 reads the libraries vendored from release v1.0.6.  PeTTa 1.1
+/* Corrected stable PeTTa uses the audited stable libraries. PeTTa 1.1
  * reads the typed libraries of PeTTa's main line first (typecheck/), and
  * runs under its checker unless a program names another 1.1 profile.
  * PeTTa 1.1.c keeps 1.0.6's type language and libraries, takes the typed
  * line's evaluation and module laws, and runs declarations as contracts. */
 static const CettaLanguageVersion CETTA_LANGUAGE_VERSIONS[] = {
-    {CETTA_LANGUAGE_VERSION_PETTA_1_0_6, CETTA_LANGUAGE_PETTA, "1.0.6",
-     NULL, NULL, "PeTTa release v1.0.6, untyped; PeTTa's default",
-     CETTA_RELATIVE_MODULE_POLICY_WORKING_DIR_ONLY, false, .is_default = true},
+    {CETTA_LANGUAGE_VERSION_PETTA_STABLE, CETTA_LANGUAGE_PETTA, "stable-fixed",
+     NULL, NULL, "Corrected stable PeTTa; the default",
+     CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = true},
     {CETTA_LANGUAGE_VERSION_PETTA_1_1, CETTA_LANGUAGE_PETTA, "1.1",
      "typecheck-v2", "typecheck", "PeTTa's typed language",
      CETTA_RELATIVE_MODULE_POLICY_CURRENT_DIR_ONLY, true, .is_default = false},
@@ -561,8 +561,8 @@ bool cetta_language_allows_builtin_policy(CettaLanguageId language_id,
                                           const CettaProfile *profile,
                                           const CettaBuiltinPolicy *policy) {
     if (!policy) return true;
-    /* Other language adapters use the general builtin mask. Structural
-       order is explicitly an HE/PeTTa extended-profile operation. */
+    /* Other language adapters use the general builtin mask. These operators
+       belong to PeTTa and HE's explicit structural-order extension. */
     if (language_id != CETTA_LANGUAGE_HE &&
         language_id != CETTA_LANGUAGE_PETTA && policy->name[0] == '@' &&
         (strcmp(policy->name, "@<") == 0 ||

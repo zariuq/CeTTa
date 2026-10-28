@@ -2,7 +2,7 @@
 (: spine-pair (-> $a $b (Pair $a $b)))
 (= (spine-body $unused) (let $t (get-type (spine-box $t)) $t))
 
-; A shared output sees the row while its tail is still open.
+; A fresh output is unified after inference, even when it occurs in the subject.
 !(let $t (get-type (spine-box $t)) $t)
 !(spine-body unused)
 !(let $t (get-type (spine-pair $t 1)) $t)

@@ -78,7 +78,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     for name in ("lib_ic_tree_archive.metta", "lib_ic_source_archive.metta"):
         check_controls((ROOT / "lib/petta" / name).read_text())
-    code = ['!(import! &self "lib/petta/lib_ic_source_archive.metta")', '''
+    code = ['!(import! &self (library lib_ic_source_archive))', '''
 (= (tree-archive:view $tree)
    (case $tree
      (((Binary:Leaf $bytes) (Binary:Leaf (tensor:inspect $bytes)))

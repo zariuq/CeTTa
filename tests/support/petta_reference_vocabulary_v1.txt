@@ -1,17 +1,39 @@
-# Real PeTTa's function vocabulary at commit ae66fa8: its registered
+# Real PeTTa's function vocabulary at commit e1db30d: its registered
 # functions (fun/1 after loading src/metta.pl), the special forms its
 # translator dispatches on, and the heads lib_he defines.  Regenerate with
 # make refresh-petta-reference-vocabulary-v1 PETTA_REFERENCE_ROOT=<checkout>.
 [functions]
--
+!=
+#*
+#+
+#-
+#//
+#<
+#=
+#>
+#\=
+#div
+#max
+#min
+#mod
+%
+*
 +
+-
+/
 <
 <=
-!=
+=
 ==
+=?
 =alpha
 >
 >=
+@<
+@<=
+@>
+@>=
+Predicate
 abs-math
 acos-math
 add-atom
@@ -42,7 +64,6 @@ cos-math
 current-time
 decons
 decons-atom
-#div
 empty
 eval
 exclude-item
@@ -69,14 +90,15 @@ intersection-atom
 is-alpha-member
 is-expr
 is-ground
-isinf-math
 is-member
-isnan-math
 is-space
 is-var
+isinf-math
+isnan-math
 last
 length
 let
+let*
 library
 list_to_set
 log
@@ -90,13 +112,12 @@ member
 min
 min-atom
 mm2-exec
-#mod
 msort
+new-space
 not
 or
 parse
 pow-math
-Predicate
 println!
 py-call
 random-float
@@ -130,7 +151,6 @@ union-atom
 unique-atom
 xor
 [forms]
-|->
 add-atom
 and-then
 call
@@ -144,9 +164,11 @@ filter-atom
 foldall
 foldl-atom
 forall
+get-type
 hyperpose
 if
 let
+let*
 map-atom
 match
 once
@@ -162,6 +184,7 @@ test
 transaction
 translatePredicate
 with_mutex
+|->
 [lib_he]
 add-reduct
 assertAlphaEqual

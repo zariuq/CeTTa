@@ -12,7 +12,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cetta', required=True, type=Path)
     args = parser.parse_args()
-    command = [str(args.cetta.resolve()), '--lang', 'petta@1.0.6']
+    command = [str(args.cetta.resolve()), '--lang', 'petta']
     source = '''!(import! &self (library list))
 !(let $held (quote (+ 1 2)) (map-atom (a b) $x $held))
 !(let $held (quote (== 1 1)) (filter-atom (a b) $x $held))

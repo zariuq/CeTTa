@@ -32,7 +32,7 @@ def main():
         assert result.returncode == 0, (source, result)
         return result.stdout
 
-    for language in ('he', 'petta@1.0.6', 'prime'):
+    for language in ('he', 'petta', 'prime'):
         for command in ('control', 'bytes', 'duplex', 'signal', 'exit', 'environment'):
             options = (('(stdin "input λ\\n") ' if command == 'duplex' else '') +
                        '(env (("CETTA_PROC_FIXTURE" "isolated"))) '
@@ -72,7 +72,7 @@ def main():
     source = ('!(import! &self proc)\n!(let $first (proc:run (' + json.dumps(str(fixture)) +
               ' "sleep" ' + json.dumps(str(ready)) + ') ((lifetime owner) (timeout-ms 1000))) '
               '(proc:run (' + json.dumps(str(fixture)) + ' "control") ((lifetime owner))))\n')
-    caller = subprocess.Popen([str(live), '--lang', 'petta@1.0.6', '-e', source],
+    caller = subprocess.Popen([str(live), '--lang', 'petta', '-e', source],
                               cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         end = time.monotonic() + 30
@@ -92,7 +92,7 @@ def main():
     shutil.copy2(binary, invalid)
     Path(str(invalid) + '.proc-scope').symlink_to(shutil.which('true'))
     source = '!(import! &self proc)\n!(proc:run ("true") ((lifetime owner)))\n'
-    bad = subprocess.run([str(invalid), '--lang', 'petta@1.0.6', '-e', source],
+    bad = subprocess.run([str(invalid), '--lang', 'petta', '-e', source],
                          cwd=ROOT, capture_output=True, timeout=30)
     assert bad.returncode == 0 and b'proc:host-failed' in bad.stdout, bad
     count += 1

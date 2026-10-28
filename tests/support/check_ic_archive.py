@@ -186,7 +186,7 @@ def main():
     # 30 source nodes become 15 definition nodes plus 2 calls, but bytes grow.
     assert source(small) == source(expensive)
     assert len(encode(expensive)) > len(encode(small))
-    code = ['!(import! &self "lib/petta/lib_ic_archive.metta")', '''
+    code = ['!(import! &self (library lib_ic_archive))', '''
 (= (archive-view $archive)
    (case $archive
      (((IC:Archive $version (IC:Observation $kind $bytes) $signature $heads $literals $definitions $items)

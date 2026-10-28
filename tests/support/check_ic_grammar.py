@@ -93,7 +93,7 @@ def main():
     args = ap.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     check_controls((ROOT / "lib/petta/lib_ic_grammar.metta").read_text())
-    code = ['!(import! &self "lib/petta/lib_ic_grammar.metta")']
+    code = ['!(import! &self (library lib_ic_grammar))']
     expected = []
 
     def add(call, value, bag=False):

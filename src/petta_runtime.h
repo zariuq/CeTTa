@@ -14,6 +14,7 @@ void cetta_petta_runtime_state_free(struct CettaPettaRuntimeState *state);
  * Native host values of the PeTTa dialect.  These are projections of CeTTa's
  * own process state, not foreign predicates.  A recognized call may produce
  * no result (for example, an argv index outside the available range).
+ * An Error constructed by this service is a raised runtime fault.
  */
 PeTTaNamedArity cetta_petta_runtime_named_arity(
     const struct CettaLibraryContext *context,

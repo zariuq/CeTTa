@@ -122,6 +122,11 @@ CettaTensorStatus cetta_tensor_entries(const CettaTensor *tensor,
  * missing source coordinates remain absent; present indices must be in bounds. */
 CettaTensorStatus cetta_tensor_gather(const CettaTensor *tensor,
     const CettaTensor *indices, CettaTensor **out);
+/* Select leading-axis rows by an Index vector. Request positions and duplicate
+ * rows survive; absent indices or source coordinates remain absent. Trailing
+ * dimensions and scalar bits are unchanged, including zero-width rows. */
+CettaTensorStatus cetta_tensor_gather_rows(const CettaTensor *tensor,
+    const CettaTensor *rows, CettaTensor **out);
 /* Inclusive sum along one axis, in increasing axis position. Each fiber
  * starts with its first present value; missing positions stay missing. The
  * accumulator has the input dtype, including per-step f32 rounding and

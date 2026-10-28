@@ -160,7 +160,7 @@ def main():
     sorts, operators, parameters = fixture()
     family = family_wire(sorts, operators, parameters)
     family_call = syntax(family)
-    program = ['!(import! &self "lib/petta/lib_scoped_templates.metta")', '''
+    program = ['!(import! &self (library lib_scoped_templates))', '''
 (= (scoped-test $family $ordinary $sort $pattern $source)
    (case (scoped:match $family $ordinary $sort $pattern $source)
      (((IC:Some $captures)
@@ -283,8 +283,8 @@ def main():
 
     # Read and assemble an actual authored module, then use the projected
     # binder table for matching and expansion, not just a label comparison.
-    program += ['!(import! &self "lib/petta/lib_scoped_module.metta")',
-                '!(import! &self "lib/petta/lib_module.metta")']
+    program += ['!(import! &self (library lib_scoped_module))',
+                '!(import! &self (library lib_module))']
     module_sorts = [q("Name"), q("Expr")]
     module_operators = [("NameX", q("Name"), []), ("NameY", q("Name"), []),
                         ("Zero", q("Expr"), []), ("Ref", q("Expr"), [([], q("Name"))]),

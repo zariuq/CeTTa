@@ -75,7 +75,7 @@ def main():
         candidate = improved if outcome == "accept" else original
         expected = args.iterations * (len(encode(original)) + len(encode(candidate))) if outcome == "accept" else 0
         for mode, function in (("encoded", "archive-check-encoded"), ("measured", "archive-check-sized")):
-            program = '!(import! &self "lib/petta/lib_ic_archive.metta")\n' + BASELINE + MEASURED + f'''
+            program = '!(import! &self (library lib_ic_archive))\n' + BASELINE + MEASURED + f'''
 (= (cost-repeat $n $original $candidate)
    (if (== $n 0) 0
      (let $result ({function} $original $original $candidate)

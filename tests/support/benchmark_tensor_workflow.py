@@ -60,7 +60,7 @@ def main():
         native=[]; reference=[]
         for _ in range(args.repeat):
             begin=time.perf_counter_ns()
-            result=subprocess.run([str(args.cetta.resolve()),'--lang','petta@1.0.6',str(program.resolve())],
+            result=subprocess.run([str(args.cetta.resolve()),'--lang','petta',str(program.resolve())],
                                   cwd=ROOT,text=True,capture_output=True,timeout=180)
             whole=time.perf_counter_ns()-begin
             assert result.returncode==0,(result.stdout[-1000:],result.stderr)

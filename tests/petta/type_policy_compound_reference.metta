@@ -3,6 +3,7 @@
 !(pcg-inspect (a 6))
 !(pcg-inspect ())
 
+; These cells require Undefined; they are not literal parameter wildcards.
 (: pcg-required-list (-> (%Undefined% %Undefined%) Atom))
 (= (pcg-required-list $x) OK)
 (: pcg-pass-data (-> Atom %Undefined%))

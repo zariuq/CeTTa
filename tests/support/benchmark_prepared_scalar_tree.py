@@ -16,7 +16,7 @@ def measure(binary,program,reference):
     env=dict(os.environ,CETTA_PREPARED_PURE_SCALAR_TREE_REFERENCE='1' if reference else '0')
     started=time.perf_counter_ns()
     with program.with_suffix('.out').open('w') as out,program.with_suffix('.err').open('w') as err:
-        child=subprocess.Popen([str(binary),'--lang','petta@1.0.6',str(program)],
+        child=subprocess.Popen([str(binary),'--lang','petta',str(program)],
             cwd=ROOT,env=env,stdout=out,stderr=err)
         peak=0
         while True:

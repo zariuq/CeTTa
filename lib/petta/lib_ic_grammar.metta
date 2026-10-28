@@ -1,7 +1,7 @@
 ; Finite typed first-order template generation, independent of pairwise seeds.
 ; Depth bounds constructor nesting. Hole identities are their first positions
 ; in the hole-occurrence stream, shared across a forest and both rule sides.
-!(import! &self "lib/petta/lib_ic_search.metta")
+!(import! &self (library lib_ic_search))
 
 (= (ic-grammar:choose $values)
    (if (== $values ()) (superpose ()) (car-atom $values)))

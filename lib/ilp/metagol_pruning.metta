@@ -1,0 +1,104 @@
+; Example-derived pruning of complete right-hand completion families. Only
+; physically admitted immutable facts authorize speculative prefix execution.
+; Ordinary executable backgrounds retain their existing evaluation route.
+!(import! &self "metagol_core.metta")
+!(import! &self "metagol_prime.metta")
+!(import! &self (library binary))
+
+(= (mil-prune:closed? $value)
+   (case (binary:value-kind $value)
+     ((Symbol True) (Text True) (Natural True)
+      (Expression (mil-prune:closed-list? $value)) ($unsupported False))))
+(= (mil-prune:closed-list? $values)
+   (if (== $values ()) True
+     (and (mil-prune:closed? (car-atom $values)) (mil-prune:closed-list? (cdr-atom $values)))))
+(= (mil-prune:edges? $rows)
+   (if (== (get-metatype $rows) Expression)
+     (if (== $rows ()) True
+       (case (car-atom $rows)
+         (((MIL.Edge $program $input $output)
+           (and (== (binary:value-kind $program) Symbol)
+             (and (mil-prune:closed? $input)
+               (and (mil-prune:closed? $output) (mil-prune:edges? (cdr-atom $rows))))))
+          ($invalid-row False)))) False))
+(= (mil:freeze-facts $rows)
+   (if (mil-prune:edges? $rows) (MIL.FrozenFacts $rows) (MIL.PruningRefused Facts)))
+(= (mil-prune:examples? $rows)
+   (if (== (get-metatype $rows) Expression)
+     (if (== $rows ()) True
+       (case (car-atom $rows)
+         (((MIL.Ex $input $output)
+           (and (mil-prune:closed? $input)
+             (and (mil-prune:closed? $output) (mil-prune:examples? (cdr-atom $rows)))))
+          ($invalid-example False)))) False))
+(= (mil:pruning-status $sem $examples)
+   (case $sem
+     (((MIL.FrozenFacts $rows)
+       (if (mil-prune:edges? $rows)
+         (case $examples
+           (((MIL.Examples $positive $negative $mode)
+             (if (and (mil-prune:examples? $positive) (mil-prune:examples? $negative))
+               (if (or (mil:same-atom $mode MIL.Relational) (mil:same-atom $mode MIL.Functional))
+                 MIL.PruningReady (MIL.PruningRefused Mode))
+               (MIL.PruningRefused Examples))) ($invalid-examples (MIL.PruningRefused Examples))))
+         (MIL.PruningRefused Facts)))
+      ((MIL.PruningRefused $reason) (MIL.PruningRefused $reason))
+      ($executable-background MIL.PruningFallback))))
+
+; An empty chain prefix cannot be repaired by any suffix. Missing the final
+; expected output is not this condition: a suffix can transform an intermediate.
+(= (mil-prune:chain-supported? $sem $prefix $positive)
+   (if (== $positive ()) True
+     (case (car-atom $positive)
+       (((MIL.Ex $input $output)
+         (and (mil:list-nonempty (mil:outputs $sem $prefix $input))
+           (mil-prune:chain-supported? $sem $prefix (cdr-atom $positive))))))))
+; Union cannot remove an already forbidden answer or a functional mismatch.
+; Missing positive answers alone cannot reject a choice's unfinished branch.
+(= (mil-prune:functional-compatible? $sem $prefix $positive)
+   (if (== $positive ()) True
+     (case (car-atom $positive)
+       (((MIL.Ex $input $output)
+         (and (mil:list-all-equal $output (mil:outputs $sem $prefix $input))
+           (mil-prune:functional-compatible? $sem $prefix (cdr-atom $positive))))))))
+(= (mil-prune:choice-compatible? $sem $prefix (MIL.Examples $positive $negative $mode))
+   (and (mil:all-negative $sem $prefix $negative)
+     (if (mil:same-atom $mode MIL.Functional)
+       (mil-prune:functional-compatible? $sem $prefix $positive) True)))
+
+; The existing filler carries the same environment across both operands.
+; Pruning removes a family before any right-hand substitution is generated.
+(= (mil-prune:root-fill $rows $sem $examples $skeleton $type)
+   (case ($skeleton $type)
+     ((((MIL.Chain $left $right) (MIL.Rel $a $c))
+       (mil-prune:chain-fill $rows $sem $examples $left $right $a $c))
+      (((MIL.Choice $left $right) (MIL.Rel $a $b))
+       (mil-prune:choice-fill $rows $sem $examples $left $right $a $b))
+      ($other-root (mil:prime:typed-fill-vocabulary $rows $skeleton $type)))))
+(= (mil-prune:chain-fill $rows $sem (MIL.Examples $positive $negative $mode) $left $right $a $c)
+   (case (mil:prime:typed-fill-state $rows $left (MIL.Rel $a $b) ())
+     (((MIL.Filling $first $middle)
+       (if (mil-prune:chain-supported? $sem $first $positive)
+         (case (mil:prime:typed-fill-state $rows $right (MIL.Rel $b $c) $middle)
+           (((MIL.Filling $second $next) (MIL.Chain $first $second))))
+         (superpose ()))))))
+(= (mil-prune:choice-fill $rows $sem $examples $left $right $a $b)
+   (case (mil:prime:typed-fill-state $rows $left (MIL.Rel $a $b) ())
+     (((MIL.Filling $first $middle)
+       (if (mil-prune:choice-compatible? $sem $first $examples)
+         (case (mil:prime:typed-fill-state $rows $right (MIL.Rel $a $b) $middle)
+           (((MIL.Filling $second $next) (MIL.Choice $first $second))))
+         (superpose ()))))))
+
+(= (mil:prime:pruned-filled-candidate $bias $sem $examples $skeleton $type $fuel)
+   (case (mil:pruning-status $sem $examples)
+     ((MIL.PruningReady
+       (case ((mil:typed-vocabulary $bias) (mil:normalize-skeleton $skeleton))
+         ((((MIL.TypeVocabulary $rows) (MIL.Skeleton $normalized))
+           (mil-prune:root-fill $rows $sem $examples $normalized $type))
+          ($invalid-skeleton (superpose ())))))
+      (MIL.PruningFallback (mil:prime:typed-filled-candidate $bias $skeleton $type $fuel))
+      ($invalid-frozen-task (superpose ())))))
+(= (mil:prime:pruned-consistent-filled-candidate $bias $sem $examples $skeleton $type $fuel)
+   (let $program (mil:prime:pruned-filled-candidate $bias $sem $examples $skeleton $type $fuel)
+     (if (mil:consistent $sem $program $examples) $program (superpose ()))))

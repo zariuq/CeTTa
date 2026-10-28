@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: b9db234d078d3460f0f479833ab18ca6865f229f38c24a98398191b3ab12631b
+ * Source SHA-256: 36a03562d74f6b3c7e3b096031e6301034a51af2ddfe346ec41610ba8614ba7f
  */
 
 #include <stdbool.h>
@@ -76,6 +76,7 @@ typedef enum {
     X(tensor_inspect, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(tensor_entries, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(tensor_gather, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(tensor_gather_rows, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(tensor_merge, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(tensor_zip_map, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(lib_tensor_try_zip_map, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
