@@ -3183,6 +3183,19 @@ static bool oem_guard_native_node(OemCompile *compile, Atom *expr,
 static bool oem_build_builtin_entry(OemCompile *compile, Atom *expr,
                                     const PettaPlanNode *plan, uint32_t depth,
                                     bool tail, uint32_t *out) {
+    if (compile->host && compile->host->declared_builtin_protocol &&
+        expr && expr->kind == ATOM_EXPR && expr->expr.len > 0u &&
+        expr->expr.elems[0]->kind == ATOM_SYMBOL && plan &&
+        plan->role != PETTA_PLAN_VALUE && plan->role != PETTA_PLAN_DATA &&
+        is_grounded_op(atom_symbol_current_id(expr->expr.elems[0])) &&
+        petta_semantics_form(atom_symbol_current_id(expr->expr.elems[0])) == PETTA_FORM_NONE &&
+        space_head_declares_type(compile->program->space, atom_symbol_current_id(expr->expr.elems[0]))) {
+        if (!oem_build_host(compile, expr, plan, depth, "declared builtin protocol", out))
+            return false;
+        compile->nodes[*out].host_fast = OEM_HOST_PLAIN;
+        compile->nodes[*out].op = SYMBOL_ID_NONE;
+        return true;
+    }
     bool guarded = oem_builtin_source(compile, expr, plan);
     if (guarded && compile->host->builtin_equations(
             compile->host->context, compile->program->space,

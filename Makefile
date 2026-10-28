@@ -50943,3 +50943,8 @@ test-ic-library: $(BIN)
 	python3 tests/support/check_ic_library.py --cetta ./$(BIN) --output runtime/ic-library-qualification
 
 test-incremental-compression: test-ic-reference test-ic-templates test-ic-archive test-ic-search test-compact-dag test-source-codec test-binary-value test-scoped-templates test-ic-scoped-archive test-scoped-grammar test-tensor-sequences test-ic-numeric test-ic-library
+
+.PHONY: test-petta-corrected-stable
+test-petta-semantics: test-petta-corrected-stable
+test-petta-corrected-stable: $(BIN)
+	python3 tests/support/check_petta_corrected_stable.py $(BIN)

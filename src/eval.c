@@ -80266,6 +80266,7 @@ static CettaOpenEquationHost petta_eval_open_compile_host(
         .bounded_collections = language == CETTA_LANGUAGE_PETTA,
         .evaluates_instances = language == CETTA_LANGUAGE_HE,
         .call_contracts = petta_eval_contracts(),
+        .declared_builtin_protocol = language == CETTA_LANGUAGE_PETTA,
     };
     return host;
 }

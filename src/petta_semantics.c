@@ -607,6 +607,11 @@ PeTTaNamedArity petta_semantics_named_arity(
         info.smaller = info.smaller || intrinsic < supplied;
     }
 
+    /* A declaration describes a callable; it does not install one. In
+     * particular a forward declaration alone must not manufacture partials. */
+    if (!info.known)
+        return info;
+
     Atom **types = NULL;
     uint32_t count = space_get_declared_types(
         space, scratch, head_atom, &types);

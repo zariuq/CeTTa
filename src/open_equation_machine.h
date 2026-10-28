@@ -136,6 +136,8 @@ typedef struct {
     /* petta@1.1.c's call contracts: a typed call has no guard at a position
      * whose declared type is a variable. */
     bool call_contracts;
+    /* PeTTa selects live declarations before entering intrinsic functions. */
+    bool declared_builtin_protocol;
 } CettaOpenEquationHost;
 
 /* Term carriers the compiled region interprets. Sharing is visited once;
