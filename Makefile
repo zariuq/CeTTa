@@ -50373,8 +50373,9 @@ test-ordered-module-realizations-v1: check-ordered-module-fused-generated-v1
 		--output "$(ORDERED_MODULE_OUTPUT_V1)"
 
 
-# PeTTa's language versions: 1.0.6, untyped, with the libraries of release
-# v1.0.6; 1.1, typed, with its main line's libraries (lib/petta/typecheck/).
+# PeTTa's current stable contract and its opt-in typed line. The default
+# libraries follow the pinned corrected stable reference; typed libraries
+# remain in lib/petta/typecheck/.
 # Each case runs one fixture under the arguments given and must exit as
 # given, with the phrase in its output.  The library a version reads is
 # compared exactly.

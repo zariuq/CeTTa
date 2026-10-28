@@ -5,8 +5,9 @@ runs several MeTTa dialects over one shared substrate (atoms, spaces,
 matching, indexing and memory management), and it hosts native proof kernels
 for HOL Light, MM0 and Megalodon.
 
-PeTTa is the default language. CeTTa runs the PeTTa language of release
-1.0.6, the most widely used MeTTa dialect, so PeTTa programs run directly.
+PeTTa is the default language. Its reference is
+[corrected stable PeTTa](https://github.com/godelclaw/PeTTa/tree/stable-fixed),
+preserving the stable language's typing policy.
 Hyperon Experimental MeTTa and the other languages are selected with `--lang`.
 
 ```bash
@@ -282,8 +283,13 @@ make BUILD=python test-tsan
 make test-asan-main
 ```
 
-`make test-petta-release-reference` checks that the default PeTTa semantics
-and libraries are those of release 1.0.6.
+`make test-petta-release-reference` checks the pinned corrected stable libraries
+and selected default observations. The source revision and file hashes are in
+`langdef/petta/reference.json`; this check does not claim complete conformance.
+`python3 tools/check_petta_stable_corpus.py --reference <PeTTa-checkout> --cetta ./cetta`
+compares the active reference programs and exits unsuccessfully for every remaining
+disagreement. Existing conformance gaps are described in
+[the compatibility notes](docs/petta_compatibility.txt).
 
 The `Runtime portability` workflow builds clean source archives in Ubuntu
 24.04/26.04, Fedora and Alpine/musl. All four Linux entries are required.
