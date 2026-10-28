@@ -364,6 +364,7 @@ static inline SymbolSpelling symbol_spelling(
     X(binary_symbol_utf8, "binary:symbol-utf8") \
     X(binary_from_symbol_utf8, "binary:from-symbol-utf8") \
     X(binary_value_kind, "binary:value-kind") \
+    X(binary_portable_kind, "binary:portable-kind") \
     X(binary_is_unsigned, "binary:unsigned?") \
     X(heap_empty, "heap:empty") \
     X(heap_insert, "heap:insert") \
@@ -371,6 +372,8 @@ static inline SymbolSpelling symbol_spelling(
     X(heap_size_public, "heap:size") \
     X(heap_valid, "heap:valid?") \
     X(work_epoch, "work:epoch") \
+    X(work_source_epoch, "work:source-epoch") \
+    X(work_source_status, "work:source-status") \
     X(dag_from_forest, "dag:from-forest") \
     X(dag_from_records, "dag:from-records") \
     X(dag_export, "dag:export") \
@@ -392,6 +395,7 @@ static inline SymbolSpelling symbol_spelling(
     X(tensor_is_tensor, "tensor:is-tensor") \
     X(tensor_entries, "tensor:entries") \
     X(tensor_gather, "tensor:gather") \
+    X(tensor_gather_rows, "tensor:gather-rows") \
     X(tensor_scan_sum, "tensor:scan-sum") \
     X(tensor_concatenate, "tensor:concatenate") \
     X(tensor_permute, "tensor:permute") \
@@ -687,16 +691,17 @@ static inline SymbolSpelling symbol_spelling(
     X(binary_unsigned) X(binary_from_unsigned) \
     X(binary_symbol_utf8) X(binary_from_symbol_utf8) \
     X(binary_value_kind) \
+    X(binary_portable_kind) \
     X(binary_is_unsigned) \
     X(binary_utf8) X(binary_from_utf8) \
     X(heap_empty) X(heap_insert) X(heap_take) X(heap_size_public) X(heap_valid) \
-    X(work_epoch) \
+    X(work_epoch) X(work_source_epoch) X(work_source_status) \
     X(dag_from_forest) X(dag_from_records) X(dag_export) X(dag_roots) \
     X(dag_node) X(dag_unfold) X(dag_stats) X(dag_close) \
     X(syntax_read) X(syntax_restore) X(syntax_freeze) X(syntax_write) X(syntax_intrinsic_head) \
     X(tensor_from_values) X(tensor_from_json) X(tensor_from_coo) X(tensor_from_coordinates) X(tensor_inspect) \
     X(tensor_shape) X(tensor_dtype) X(tensor_layout) X(tensor_at) X(tensor_is_tensor) \
-    X(tensor_entries) X(tensor_gather) X(tensor_merge) \
+    X(tensor_entries) X(tensor_gather) X(tensor_gather_rows) X(tensor_merge) \
     X(tensor_scan_sum) X(tensor_concatenate) X(tensor_permute) \
     X(tensor_copy) X(tensor_convert) X(tensor_cast) X(tensor_promote) X(tensor_view) X(tensor_reshape) X(tensor_sum) \
     X(tensor_matvec) X(tensor_top_k) X(tensor_encode) X(tensor_decode) \
