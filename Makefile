@@ -770,6 +770,7 @@ SRC += src/u64_index.c
 SRC += src/library_syntax.c
 SRC += src/str_stream.c
 SRC += src/relational_plan.c src/relational_cursor.c src/native_query.c src/dense_relation.c
+SRC += src/space_dense.c
 SRC += src/space_path_index.c
 SRC += src/producer_reads.c
 SRC += src/producer_dependencies.c src/producer_schedule.c
@@ -1955,7 +1956,7 @@ PARSER_STANDALONE_SRC = src/parser.c src/name_key.c
 # standalone linker that includes match.c must include the snapshot algebra.
 MATCH_STANDALONE_SRC = src/match.c src/binding/closure.c src/binding/frame_schema.c src/binding/slot_store.c src/binding/activation_view.c src/prime_need.c
 SHARED_TRANSITION_STANDALONE_SRC = src/shared_transition.c
-SPACE_STANDALONE_SRC = src/space.c src/space_path_index.c src/binding/rule.c src/fixpoint.c
+SPACE_STANDALONE_SRC = src/space.c src/space_dense.c src/space_path_index.c src/binding/rule.c src/fixpoint.c
 SPACE_STANDALONE_DEPS = $(SPACE_STANDALONE_SRC) $(wildcard src/*.h src/binding/*.h) Makefile
 RELATIONAL_STANDALONE_SRC = src/relational_plan.c src/relational_cursor.c
 SPACE_MATCH_BACKEND_STANDALONE_SRC = src/space_match_backend.c $(RELATIONAL_STANDALONE_SRC)
@@ -1966,6 +1967,7 @@ MORK_QUERY_ROW_STREAM_ABI_TEST_BIN = runtime/test_mork_query_row_stream_abi-$(BU
 MORK_QUERY_ADMISSION_FALLBACK_TEST_BIN = runtime/test_mork_query_admission_fallback-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 SPACE_TERM_UNIVERSE_MEMBERSHIP_TEST_BIN = runtime/test_space_term_universe_membership-$(BUILD_OBJ_TAG)
 TERM_UNIVERSE_COLLECTION_TEST_BIN = runtime/test_term_universe_collection-$(BUILD_OBJ_TAG)
+SPACE_DENSE_TEST_BIN = runtime/test_space_dense-$(BUILD_OBJ_TAG)
 TERM_UNIVERSE_STORE_ABI_TEST_BIN = runtime/test_term_universe_store_abi-$(BUILD_OBJ_TAG).runtime-stats
 TERM_UNIVERSE_STORE_ABI_REFERENCE_TEST_BIN = runtime/test_term_universe_store_abi-$(BUILD_OBJ_TAG).disc-int-linear-reference.runtime-stats
 TERM_UNIVERSE_BACKEND_ADD_ABI_TEST_BIN = runtime/test_term_universe_backend_add_abi-$(BUILD_OBJ_TAG).runtime-stats
@@ -6161,11 +6163,84 @@ test-compare-answers: $(BIN) tests/support/compare_answers.py \
 
 # Programs whose answers depend on what spaces know by keys no row holds,
 # run collecting at every safe point: they must answer as without collection.
+TERM_UNIVERSE_COLLECTION_TYPED_PROGRAMS = collection_inferred_signatures
 TERM_UNIVERSE_COLLECTION_PROGRAMS = collection_set_space_variants \
 	collection_process_calculus
 
+# Terms made fresh every turn and dropped with it plateau: reclaiming, the
+# peak memory of four times the turns stays within 1 MiB, and with collection
+# off it grows past that.
+TERM_UNIVERSE_PLATEAU_TURNS ?= 10000
+test-term-universe-plateau: $(BIN) tests/petta/collection_plateau.metta \
+		tests/petta/collection_plateau.expected tests/support/check_plateau.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_plateau.py \
+		tests/petta/collection_plateau.metta \
+		tests/petta/collection_plateau.expected $(TERM_UNIVERSE_PLATEAU_TURNS)
+
+# A relation kept as bits agrees with a list of its pairs under random adds,
+# removals, membership tests, counts and walks.
+$(SPACE_DENSE_TEST_BIN): tests/test_space_dense.c src/space_dense.c src/space_dense.h
+	@mkdir -p runtime
+	$(CC) $(CFLAGS) -Isrc -o $@ tests/test_space_dense.c src/space_dense.c
+
+# Programs whose answers must not depend on whether a relation is kept as
+# bits: each runs with bits off and on, compared with its expected answers as
+# bags, since bits read a relation in an order of their own.
+SPACE_DENSE_PROGRAMS = dense_relations dense_relations_derived
+
+.PHONY: test-space-dense
+test-space-dense: $(SPACE_DENSE_TEST_BIN) $(BIN) \
+		$(foreach t,$(SPACE_DENSE_PROGRAMS),tests/petta/$(t).metta tests/petta/$(t).expected)
+	@$(call cetta_exec,./$(SPACE_DENSE_TEST_BIN))
+	@set -eu; actual=$$(mktemp); trap 'rm -f "$$actual"' EXIT; \
+	for t in $(SPACE_DENSE_PROGRAMS); do \
+		for mode in off on; do \
+			CETTA_SPACE_DENSE=$$mode $(CETTA_BIN_INVOKE) --profile extended \
+				--lang petta tests/petta/$$t.metta > "$$actual" 2>&1; \
+			if ! python3 tests/support/compare_answers.py --lang petta \
+				--program tests/petta/$$t.metta \
+				--expected tests/petta/$$t.expected --actual "$$actual" \
+				--cetta $(CETTA_BIN_INVOKE) --profile extended --lang petta; then \
+				echo "FAIL: $$t, relations as bits $$mode"; exit 1; \
+			fi; \
+		done; \
+	done; \
+	echo "PASS: relations kept as bits answer as rows do ($(SPACE_DENSE_PROGRAMS))"
+
+# A dense relation kept as bits grows by its bits: from one size to twice it,
+# its peak memory grows by at most a third of what it grows as rows.
+SPACE_DENSE_SCALING_NODES ?= 2000
+.PHONY: test-space-dense-scaling
+test-space-dense-scaling: $(BIN) tests/petta/dense_relations_scaling.metta \
+		tests/support/check_dense_scaling.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_dense_scaling.py \
+		tests/petta/dense_relations_scaling.metta $(SPACE_DENSE_SCALING_NODES)
+
+# The counting checks must catch a hold, a release, a cascade or a reused
+# slot's candidacy gone missing.
+test-term-universe-collection-mutants: tests/support/mutate_term_universe_counts.py \
+		$(TERM_UNIVERSE_COLLECTION_TEST_SRC) $(BUILD_CONFIG_HEADER)
+	@set -eu; \
+	mutation_dir=runtime/bootstrap/term-universe-count-mutations-$(BUILD_OBJ_TAG); \
+	mkdir -p "$$mutation_dir"; \
+	for kind in hold release cascade reuse; do \
+		python3 tests/support/mutate_term_universe_counts.py \
+			src/term_universe.c "$$kind" "$$mutation_dir/term_universe_$$kind.c"; \
+		$(CC) $(CPPFLAGS) -DCETTA_RUNTIME_STATS_IMPL=1 \
+			-DCETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS=1 $(CFLAGS) \
+			-o "$$mutation_dir/$$kind" \
+			$(filter-out src/term_universe.c,$(TERM_UNIVERSE_COLLECTION_TEST_SRC)) \
+			"$$mutation_dir/term_universe_$$kind.c" $(LDFLAGS); \
+		if "$$mutation_dir/$$kind" > "$$mutation_dir/$$kind.log" 2>&1 || \
+		   ! grep -q 'against the counts' "$$mutation_dir/$$kind.log"; then \
+			echo "FAIL: the counting checks accept the $$kind mutant"; \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: the counting checks reject the hold, release, cascade and reuse mutants"
+
 test-term-universe-collection: $(TERM_UNIVERSE_COLLECTION_TEST_BIN) $(BIN) \
-		$(foreach t,$(TERM_UNIVERSE_COLLECTION_PROGRAMS),tests/petta/$(t).metta tests/petta/$(t).expected)
+		$(foreach t,$(TERM_UNIVERSE_COLLECTION_PROGRAMS) $(TERM_UNIVERSE_COLLECTION_TYPED_PROGRAMS),tests/petta/$(t).metta tests/petta/$(t).expected)
 	@$(call cetta_exec,./$(TERM_UNIVERSE_COLLECTION_TEST_BIN))
 	@set -eu; for t in $(TERM_UNIVERSE_COLLECTION_PROGRAMS); do \
 		answers=$$(CETTA_TERM_UNIVERSE_COLLECTION=reclaim-every \
@@ -6177,7 +6252,17 @@ test-term-universe-collection: $(TERM_UNIVERSE_COLLECTION_TEST_BIN) $(BIN) \
 			exit 1; \
 		fi; \
 	done; \
-	echo "PASS: set spaces answer alike collecting at every safe point"
+	for t in $(TERM_UNIVERSE_COLLECTION_TYPED_PROGRAMS); do \
+		answers=$$(CETTA_TERM_UNIVERSE_COLLECTION=reclaim-every \
+			$(CETTA_BIN_INVOKE) --profile typecheck-v3 --lang petta \
+			tests/petta/$$t.metta 2>&1); \
+		if [ "$$answers" != "$$(cat tests/petta/$$t.expected)" ]; then \
+			echo "FAIL: $$t, collecting at every safe point"; \
+			diff tests/petta/$$t.expected <(printf '%s\n' "$$answers"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: set spaces and inferred signatures answer alike collecting at every safe point"
 
 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN): private CPPFLAGS += -DCETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS=1 -DCETTA_RUNTIME_STATS_IMPL=1
 $(TERM_UNIVERSE_STORE_ABI_TEST_BIN): tests/test_term_universe_store_abi.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(MATCH_STANDALONE_SRC) src/subst_tree.c src/term_canon.c src/variant_shape.c src/variant_instance.c src/term_universe.c $(GROUNDED_STANDALONE_DEPS) src/native_sha256.c src/search_machine.c $(SPACE_STANDALONE_DEPS) $(SHARED_TRANSITION_STANDALONE_SRC) $(PARSER_STANDALONE_SRC) src/cetta_stdlib.c $(BUILD_CONFIG_HEADER)
@@ -18738,7 +18823,7 @@ test-lean: test-plain-bnf-semantic-generated-artifact-current-v1
 test-all: test-plain-bnf-reader-v1
 test-all: test-plain-bnf-denotation-v1
 
-test-all: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-collection test-compare-answers test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
+test-all: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-collection test-term-universe-collection-mutants test-term-universe-plateau test-space-dense test-space-dense-scaling test-compare-answers test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
 
 .PHONY: test-lean test-rhocalc-lean test-lean-corpus
 # Gates that check CeTTa against a Mettapedia checkout, some with its Lean

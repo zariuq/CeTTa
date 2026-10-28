@@ -382,6 +382,9 @@ typedef struct {
     PettaProgramInferredSignature *inferred_signatures;
     size_t inferred_signature_len;
     size_t inferred_signature_cap;
+    /* The universe the signatures are interned in, which collects them
+     * only past the program's listing (petta_program_signature_roots). */
+    TermUniverse *signature_universe;
     uint64_t inferred_signature_revision;
     bool inferred_signatures_valid;
     CettaNikDirectAuthorityStampV1 inferred_signature_authority;
@@ -442,6 +445,10 @@ typedef struct {
     const PettaPlanNode *plan;
 } PettaPlanInternEntry;
 
+static void petta_program_signature_roots(const TermUniverse *universe,
+                                          TermUniverseRootVisit visit,
+                                          void *visit_context, void *ctx);
+
 struct PettaProgram {
     unsigned admitted_rule_forms;
     bool refresh_callability;
@@ -460,6 +467,11 @@ struct PettaProgram {
     size_t space_len;
     size_t space_cap;
     PettaProgramAnalysisState *analysis;
+    /* The universes holding this program's inferred signatures, each of
+     * which lists them from the program at a collection. */
+    TermUniverse **signature_universes;
+    size_t signature_universe_len;
+    size_t signature_universe_cap;
     PettaCallabilityDomain predeclared_callability;
     uint64_t predeclared_generation;
     /* Callability is program knowledge: the heads of the equation
@@ -4295,6 +4307,12 @@ bool petta_program_analysis_enabled(const PettaProgram *program) {
 void petta_program_free(PettaProgram *program) {
     if (!program)
         return;
+    /* A universe freed first has dropped its listings already. */
+    for (size_t index = 0u; index < program->signature_universe_len; index++)
+        term_universe_remove_root_provider(program->signature_universes[index],
+                                           petta_program_signature_roots,
+                                           program);
+    free(program->signature_universes);
     for (size_t index = 0u;
          index < program->space_len; index++) {
         petta_program_space_dispose_catalog(
@@ -6481,6 +6499,47 @@ void petta_program_inferred_signatures_reset_under_authority(
     }
 }
 
+/* An inferred signature keeps its interned id from one statement to the
+ * next, so the program lists the ids it keeps in a universe whenever that
+ * universe collects. */
+static void petta_program_signature_roots(const TermUniverse *universe,
+                                          TermUniverseRootVisit visit,
+                                          void *visit_context, void *ctx) {
+    const PettaProgram *program = ctx;
+    if (!program->analysis)
+        return;
+    for (size_t index = 0u; index < program->analysis->space_len; index++) {
+        const PettaProgramAnalysisSpace *entry =
+            &program->analysis->spaces[index];
+        if (entry->signature_universe != universe)
+            continue;
+        for (size_t signature = 0u;
+             signature < entry->inferred_signature_len; signature++)
+            visit(visit_context,
+                  entry->inferred_signatures[signature].signature_id);
+    }
+}
+
+static bool petta_program_list_signatures_in(PettaProgram *program,
+                                             TermUniverse *universe) {
+    for (size_t index = 0u; index < program->signature_universe_len;
+         index++) {
+        if (program->signature_universes[index] == universe)
+            return true;
+    }
+    if (!petta_program_reserve(
+            (void **)&program->signature_universes,
+            &program->signature_universe_cap,
+            program->signature_universe_len + 1u,
+            sizeof(*program->signature_universes)) ||
+        !term_universe_add_root_provider(
+            universe, petta_program_signature_roots, program))
+        return false;
+    program->signature_universes[program->signature_universe_len++] =
+        universe;
+    return true;
+}
+
 static bool petta_program_inferred_signature_put_internal(
     PettaProgram *program, Space *space,
     const CettaNikDirectAuthorityStampV1 *authority,
@@ -6498,6 +6557,9 @@ static bool petta_program_inferred_signature_put_internal(
             program, space, authority)) {
         return false;
     }
+    if (!petta_program_list_signatures_in(program, space->native.universe))
+        return false;
+    entry->signature_universe = space->native.universe;
     AtomId signature_id = term_universe_store_atom_id(
         space->native.universe,
         space->native.universe->persistent_arena,

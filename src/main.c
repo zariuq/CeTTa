@@ -2748,6 +2748,8 @@ static MainPettaBlockLoadResult main_petta_load_declaration_block(
     bool ok = true;
     Arena diagnostic_arena;
     arena_init(&diagnostic_arena);
+    if (atom_count > 0)
+        space_dense_prepare_adds(space, atom_ids, (CettaCount)atom_count);
     for (int index = 0; ok && index < atom_count; index++) {
         /* A fact is only stored: the program reads equations and type
          * declarations, so nothing else is decoded for it. */

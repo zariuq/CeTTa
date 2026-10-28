@@ -3121,6 +3121,10 @@ static bool petta_space_remove_pattern_all(
     CettaCount logical_len = space_length64(space);
     if (logical_len == 0u)
         return true;
+    /* A ground fact the space keeps as bits leaves them by its parts: it
+     * may have no record of its own to look up.  Its row copies follow. */
+    CettaCount bits_removed = atom_has_vars(pattern)
+        ? 0u : space_dense_remove_ground(space, pattern);
     /* A ground pattern unifies with exactly the rows equal to it when no
      * row of its head holds a variable: the exact index removes those by
      * id, without reading any other row. */
@@ -3128,6 +3132,15 @@ static bool petta_space_remove_pattern_all(
         pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
         AtomId id = term_universe_lookup_atom_id(space->native.universe,
                                                  pattern);
+        if (id == CETTA_ATOM_ID_NONE && bits_removed != 0u) {
+            /* No record: no row holds it either. */
+            petta_specializer_note_mutation(space, pattern);
+            if (program)
+                petta_program_note_remove_all(program, space, pattern);
+            if (removed_out)
+                *removed_out = bits_removed;
+            return true;
+        }
         if (id != CETTA_ATOM_ID_NONE &&
             space_remove_exact_ids(space, pattern->expr.elems[0]->sym_id,
                                    &id, 1u)) {
@@ -45581,6 +45594,28 @@ static bool petta_native_query_apply(void *context,
               context, effect->target, effect->call, ids, count);
 }
 
+/* Additions into a relation the target set keeps as bits, by the pairs of
+ * their columns: the same facts petta_eval_machine_add_ground_instances
+ * adds, without a record of each. */
+static bool petta_native_query_apply_pairs(void *context,
+                                           const CettaNativeQueryEffect *effect,
+                                           Atom *head, AtomId head_id,
+                                           const AtomId *pairs, size_t count) {
+    (void)context;
+    Atom *call = effect->call;
+    if (!effect->target || !head || head->kind != ATOM_SYMBOL || !call ||
+        call->kind != ATOM_EXPR || call->expr.len != 3u || (count && !pairs))
+        return false;
+    __attribute__((cleanup(cetta_shared_transition_guard_leave)))
+    CettaSharedTransitionGuard shared_transition = {0};
+    cetta_shared_transition_guard_enter(&shared_transition);
+    if (!space_add_dense_pairs(effect->target, head->sym_id, head_id, pairs,
+                               (CettaCount)count))
+        return false;
+    petta_specializer_note_mutation(effect->target, call->expr.elems[2]);
+    return true;
+}
+
 /* An effect a native query can make: `(add-atom R D)` or `(remove-atom R D)`
  * of data D into a space R named without evaluation, neither operation
  * redefined by the program, which the host admits as a batch.  *ANSWER is
@@ -45801,11 +45836,18 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
         native.effects = effects;
         native.effect_count = effect_count;
         native.apply = petta_native_query_apply;
+        native.apply_pairs = petta_native_query_apply_pairs;
         native.apply_context = context;
-    } else if (listed || count_only ||
+    } else if (listed ||
+               (count_only &&
+                !(native.pattern_count > 1u &&
+                  space_dense_meets_patterns(source, native.patterns,
+                                             native.pattern_count))) ||
                !petta_plan_match_template_is_single_data_answer(
                    petta_plan_child(plan, 3u))) {
-        /* A count of data answers has its own folds. */
+        /* A count of data answers has its own folds, which read rows: a
+         * conjunction meeting a relation kept as bits is counted here, by
+         * loops that read the bits. */
         return CETTA_NATIVE_QUERY_DECLINED;
     }
 

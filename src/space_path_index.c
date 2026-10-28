@@ -606,6 +606,7 @@ static __attribute__((noinline)) CettaCount path_merge_open_rows(
 
 bool space_path_index_candidates(Space *space, Atom *pattern,
                                 CettaIndex **out, CettaIndex *count) {
+    space_dense_settle_for_pattern(space, pattern);
     if (!space || !space->native.universe || !out || !count || space->overlay_base ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
@@ -691,6 +692,7 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
 
 bool space_path_index_existing_candidates(Space *space, Atom *pattern,
                                           CettaIndex **out, CettaIndex *count) {
+    space_dense_settle_for_pattern(space, pattern);
     if (!space || !out || !count || !space_path_index_may_select(pattern) ||
         !path_generation_current(space))
         return false;
@@ -1152,6 +1154,7 @@ static CettaSpaceHeadIndex *head_index_build(Space *space) {
 
 bool space_head_index_open(Space *space, const Atom *pattern,
                            CettaSpaceHeadCursor *cursor) {
+    space_dense_settle_for_pattern(space, pattern);
     memset(cursor, 0, sizeof(*cursor));
     if (!space || !space->native.universe || space->overlay_base ||
         (space->kind != SPACE_KIND_ATOM && space->kind != SPACE_KIND_SET) ||
