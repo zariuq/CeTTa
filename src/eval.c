@@ -69120,6 +69120,11 @@ static bool petta_eval_machine_extension_call(
     bool runtime_completed = cetta_petta_runtime_call(
         eval_context->library_context, arena,
         expression, &runtime_result, recognized);
+    if (*recognized && runtime_completed && runtime_result && atom_is_error(runtime_result)) {
+        if (end)
+            *end = cetta_call_raised(runtime_result);
+        return true;
+    }
     if (*recognized)
         return runtime_completed && (!runtime_result ||
             petta_memo_add_result(arena, outcomes, runtime_result));

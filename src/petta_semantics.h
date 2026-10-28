@@ -380,6 +380,7 @@ bool petta_semantics_contract_error(Atom *error);
 /* PeTTa 1.1's error for an import no file answers:
  * existence_error(source_sink, File) in context(import!, File). */
 Atom *petta_semantics_missing_import_error(Arena *arena, Atom *file);
+Atom *petta_semantics_arithmetic_operand_error(Arena *arena, Atom *value);
 /* The message the reference prints for an uncaught error of its typecheck
  * vocabulary ("Type mismatch: got V but expected T", "No matching typed
  * overload for F"), written into `out`; false for any other error. */

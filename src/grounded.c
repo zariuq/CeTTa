@@ -705,7 +705,7 @@ bool is_grounded_op(SymbolId id) {
         return false;
     if (grounded_op_is_pattern(id))
         return eval_current_pattern_head && eval_current_pattern_head(id) != SYMBOL_ID_NONE;
-    /* These appended opcodes require an explicit extended profile. Keep
+    /* These appended opcodes have a language-specific policy. Keep
      * the decision outside the symbol cache so a session/profile handoff
      * cannot reuse another profile's permission. */
     if (grounded_op_is_term_order(id))
@@ -3656,6 +3656,18 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
     if (grounded_op_is_term_order(head_id)) {
         if (nargs != 2u)
             return grounded_incorrect_arity(a, head, args, nargs);
+        if (grounded_current_language_is_petta()) {
+            /* PeTTa's operators and msort share SWI's standard term order.
+             * HE's structural ordering below is a different contract. */
+            int order = 0;
+            if (!petta_semantics_term_compare(args[0], args[1], &order))
+                return grounded_raise(a, head, args, nargs,
+                    atom_symbol(a, "IncomparableTermOrder"));
+            bool truth = head_id == g_builtin_syms.term_lt ? order < 0 :
+                head_id == g_builtin_syms.term_gt ? order > 0 :
+                head_id == g_builtin_syms.term_le ? order <= 0 : order >= 0;
+            return petta_semantics_boolean_value(a, truth);
+        }
         CettaTermOrder order = term_graph_value_compare(args[0], args[1]);
         if (order == CETTA_TERM_ORDER_INCOMPARABLE ||
             order == CETTA_TERM_ORDER_INVALID ||

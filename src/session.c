@@ -41,10 +41,10 @@ static const CettaProfile CETTA_HOL_PROFILES[] = {
 
 /* Sorted by name for policy lookup; presentation order is not observable. */
 static const CettaBuiltinPolicy CETTA_BUILTIN_POLICIES[] = {
-    {"@<", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
-    {"@<=", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
-    {"@>", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
-    {"@>=", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_EXTENDED, "extension_only"},
+    {"@<", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "petta_standard_order"},
+    {"@<=", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "petta_standard_order"},
+    {"@>", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "petta_standard_order"},
+    {"@>=", CETTA_PROFILE_MASK_HE_EXTENDED | CETTA_PROFILE_MASK_PETTA_BASE_FORMS, "petta_standard_order"},
     {"_minimal-foldl-atom", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "compat_alias"},
     {"add-atom-nodup", CETTA_PROFILE_MASK_HE_NON_COMPAT | CETTA_PROFILE_MASK_PETTA_EXTENDED, "clean_primary_extension"},
     {"capture", CETTA_PROFILE_MASK_HE_PUBLIC | CETTA_PROFILE_MASK_PETTA_EXTENDED, "keep_he_public_builtin"},
@@ -627,8 +627,8 @@ bool cetta_language_allows_builtin_policy(CettaLanguageId language_id,
                                           const CettaProfile *profile,
                                           const CettaBuiltinPolicy *policy) {
     if (!policy) return true;
-    /* Other language adapters use the general builtin mask. Structural
-       order is explicitly an HE/PeTTa extended-profile operation. */
+    /* Other language adapters use the general builtin mask. These operators
+       belong to PeTTa and HE's explicit structural-order extension. */
     if (language_id != CETTA_LANGUAGE_HE &&
         language_id != CETTA_LANGUAGE_PETTA && policy->name[0] == '@' &&
         (strcmp(policy->name, "@<") == 0 ||

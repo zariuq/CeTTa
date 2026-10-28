@@ -556,6 +556,14 @@ static bool petta_runtime_random_float(
     } else if (arguments != 2u) {
         return true;
     }
+    for (CettaExprIndex index = start; index < start + 2u; index++) {
+        Atom *arg = expression->expr.elems[index];
+        if (arg->kind == ATOM_EXPR ||
+            (arg->kind == ATOM_GROUNDED && arg->ground.gkind == GV_STRING)) {
+            *result = petta_semantics_arithmetic_operand_error(arena, arg);
+            return *result != NULL;
+        }
+    }
     double minimum;
     double maximum;
     if (!petta_runtime_double(expression->expr.elems[start], &minimum) ||
