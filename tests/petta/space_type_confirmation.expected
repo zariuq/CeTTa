@@ -1,0 +1,54 @@
+is DefaultType, should DefaultType. ✅ 
+is OwnerType, should OwnerType. ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+is %Undefined%, should %Undefined%. ✅ 
+is Number, should Number. ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+is Result, should Result. ✅ 
+is Result, should Result. ✅ 
+is Result, should Result. ✅ 
+is Result, should Result. ✅ 
+is (), should (). ✅ 
+is (Result), should (Result). ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+is (), should (). ✅ 
+is (true), should (true). ✅ 
+is (true), should (true). ✅ 
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true
+true

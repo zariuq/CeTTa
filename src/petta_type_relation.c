@@ -13,7 +13,7 @@
 #include <string.h>
 
 /* Intrinsic PeTTa candidate order: literal/variable, application, list,
- * declaration; Undefined only when the required-type query has no candidate.
+ * declaration; Undefined only when the subject has no candidate.
  * Values are inspected, never executed.  The explicit stack handles deeply
  * nested data independently of the evaluator stack. */
 
@@ -414,6 +414,12 @@ static bool petta_type_check_arguments(
     CettaExprLen arity = declaration->expr.len - 2u;
     while (index < arity) {
         Atom *formal = declaration->expr.elems[index + 1u];
+        /* Literal wildcards are selected before result matching or another
+         * argument refines a declaration variable to the same spelling. */
+        if (petta_type_demand(formal) == PETTA_TYPE_TRANSLATE) {
+            index++;
+            continue;
+        }
         /* Matching the result requirement may already have bound a variable
          * appearing in this argument. Only a still-free subject skips its check. */
         Atom *resolved_argument = bindings_apply_if_vars(
@@ -867,15 +873,32 @@ static bool petta_type_answers_bound(
     Space *space, Arena *arena, Atom *subject, Atom *target, PeTTaTypeList *out) {
     if (!petta_type_stack_available())
         return false;
-    /* An independent output variable imposes no input constraint. Infer the
-     * ordered answers directly instead of first constructing a private row
-     * and repeatedly applying its bindings. A variable shared with the
-     * subject must keep the bound query: result matching can refine an
-     * argument before its type is checked. */
-    if (target->kind == ATOM_VAR && subject->kind != ATOM_VAR &&
-        space_type_annotations_have_only_symbol_subjects(space) &&
-        !cetta_observation_atom_contains_var(subject, target->var_id))
+    /* A fresh request receives a candidate before it is unified with that
+     * request, including when the request occurs in the subject. */
+    if (target->kind == ATOM_VAR)
         return petta_type_answers_fresh(space, arena, subject, out);
+    if (atom_is_symbol_id(target, g_builtin_syms.undefined_type)) {
+        bool ok = petta_type_answers_bound_uncached(space, arena, subject, target, out);
+        if (!ok || out->length)
+            return ok;
+        /* A literal or a structural list has an intrinsic candidate. The
+         * pure service need not materialize a list's entire type product
+         * merely to establish that positive existence fact. */
+        Atom *tail = subject;
+        while (petta_semantics_is_open_cons_value(tail))
+            tail = tail->expr.elems[2];
+        Atom *const *elements = NULL;
+        CettaExprLen length = 0u;
+        if (petta_type_of_literal(arena, subject) ||
+            atom_sequence_view(tail, &elements, &length))
+            return true;
+        PeTTaTypeList declared = {0};
+        ok = petta_type_push_declared(space, arena, subject, &declared);
+        if (ok && declared.length == 0u)
+            ok = petta_type_list_push(out, target);
+        free(declared.items);
+        return ok;
+    }
     bool found = false;
     if (!petta_type_fact_lookup(space, arena, subject, target, out, &found))
         return false;
@@ -904,9 +927,7 @@ static bool petta_type_answers_bound_uncached(
         ok = petta_type_leaf_answers(space, arena, subject, &candidates) &&
              petta_type_append_matching(arena, &candidates, target, out);
         free(candidates.items);
-        candidates = (PeTTaTypeList){0};
-        if (!ok || out->length > 0u)
-            return ok;
+        return ok;
     } else {
         Atom *const *elements = NULL;
         CettaExprLen length = 0u;
@@ -982,15 +1003,6 @@ static bool petta_type_answers_bound_uncached(
         ok = petta_type_push_declared(space, arena, subject, &candidates) &&
              petta_type_append_matching(arena, &candidates, target, out);
     free(candidates.items);
-    if (!ok || out->length > 0u)
-        return ok;
-    if (target->kind == ATOM_SYMBOL)
-        return !atom_is_symbol_id(target, g_builtin_syms.undefined_type) ||
-               petta_type_list_push(out, target);
-    PeTTaTypeList fallback = {0};
-    ok = petta_type_list_push(&fallback, atom_undefined_type(arena)) &&
-         petta_type_append_matching(arena, &fallback, target, out);
-    free(fallback.items);
     return ok;
 }
 
@@ -1004,8 +1016,8 @@ static bool petta_type_answers_bound_uncached(
  * type, a number, string or truth value its literal type, every other leaf
  * %Undefined%, and an expression the tuple of its elements' types.
  *
- * Against a requirement, a subject variable and a required %Undefined%
- * accept anything; a required variable takes the subject's type; a literal
+ * Against a requirement, a subject variable accepts any type, while
+ * %Undefined% confirms an untyped leaf. A required variable takes the subject's type; a literal
  * is accepted by its own type; a tuple by a tuple of the same length, element
  * by element, the elements sharing one refinement of the requirement's
  * variables; nothing else is accepted.  A non-ordinary requirement, a
@@ -1059,7 +1071,7 @@ static SymbolId petta_type_interned(_Atomic(SymbolId) *slot, const char *name) {
 
 /* The type petta_type_of_literal gives, as a symbol; none for other atoms. */
 static SymbolId petta_type_inert_literal(const Atom *atom) {
-    static _Atomic(SymbolId) number, string, truth_type;
+    static _Atomic(SymbolId) number, string, truth_type, tensor;
     if(atom_is_structural(atom)) {
         const char *name=atom_structural_type_name(atom);
         return name ? symbol_intern_cstr(g_symbols,name) : SYMBOL_ID_NONE;
@@ -1073,6 +1085,8 @@ static SymbolId petta_type_inert_literal(const Atom *atom) {
             return petta_type_interned(&number, "Number");
         case GV_STRING:
             return petta_type_interned(&string, "String");
+        case GV_TENSOR:
+            return petta_type_interned(&tensor, "Tensor");
         default:
             break;
         }
@@ -1252,7 +1266,9 @@ static PettaTypeInertMatch petta_type_inert_match(
         return PETTA_TYPE_INERT_MATCH;
     }
     if (atom_is_symbol_id(required, g_builtin_syms.undefined_type))
-        return PETTA_TYPE_INERT_MATCH;
+        return subject->kind != ATOM_EXPR &&
+               petta_type_inert_literal(subject) == SYMBOL_ID_NONE
+            ? PETTA_TYPE_INERT_MATCH : PETTA_TYPE_INERT_MISMATCH;
     SymbolId literal = petta_type_inert_literal(subject);
     if (literal != SYMBOL_ID_NONE)
         return required->kind == ATOM_SYMBOL && atom_symbol_current_id(required) == literal

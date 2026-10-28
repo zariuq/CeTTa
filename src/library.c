@@ -25,12 +25,16 @@
 #include "library_io.h"
 #include "library_cwp.h"
 #include "library_space_service.h"
+#include "library_store.h"
+#include "library_math.h"
 #include "library_proc.h"
 #include "proc_child.h"
 #include "proc_capture.h"
 #include "library_fs.h"
 #include "library_postings.h"
 #include "library_tensor.h"
+#include "library_crypto.h"
+#include "library_toml.h"
 #include "library_group.h"
 #include "library_re.h"
 #include "library_proc_run.h"
@@ -45,6 +49,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,6 +61,9 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 #ifndef CETTA_BUILD_WITH_JSON_GSLT
 #define CETTA_BUILD_WITH_JSON_GSLT 0
@@ -166,10 +174,18 @@ enum {
     CETTA_LIBRARY_JSON = 1u << 12
 #endif
 };
+/* Native modules and the store reserve the lower 44 import bits. */
+#define CETTA_LIBRARY_CRYPTO (UINT64_C(1) << 44)
+#define CETTA_LIBRARY_TOML (UINT64_C(1) << 45)
+
+#define CETTA_LIBRARY_STORE (UINT64_C(1) << 36)
 
 _Static_assert((CETTA_NATIVE_IMPORT_GPARSE &
-                (((CettaLibraryMask)CETTA_LIBRARY_TENSOR << 1) - 1)) == 0,
+                (((UINT64_C(1) << 25) - 1) | CETTA_LIBRARY_STORE |
+                 CETTA_LIBRARY_CRYPTO | CETTA_LIBRARY_TOML)) == 0,
                "native grammar import aliases the shared library catalog");
+_Static_assert((CETTA_LIBRARY_TOML & CETTA_LIBRARY_STORE) == 0,
+               "TOML and native store imports must be independent");
 
 static bool library_prime_host_intrinsic(SymbolId head) {
     return cetta_prime_host_intrinsic_head(head) ||
@@ -189,6 +205,8 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"re", CETTA_LIBRARY_RE, NULL},
     {"postings", CETTA_LIBRARY_POSTINGS, NULL},
     {"tensor", CETTA_LIBRARY_TENSOR, NULL},
+    {"crypto", CETTA_LIBRARY_CRYPTO, NULL},
+    {"toml", CETTA_LIBRARY_TOML, NULL},
     {"lts", CETTA_LIBRARY_LTS, NULL},
     {"mork", CETTA_LIBRARY_MORK, NULL},
     {"rho", CETTA_LIBRARY_RHO, NULL},
@@ -204,6 +222,7 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"proc", CETTA_LIBRARY_PROC, NULL},
     {"llm", CETTA_LIBRARY_LLM, NULL},
     {"space_service", CETTA_LIBRARY_SPACE_SERVICE, NULL},
+    {"store", CETTA_LIBRARY_STORE, NULL},
     {"mailbox", CETTA_LIBRARY_MAILBOX, NULL},
     {"sqlite", CETTA_LIBRARY_SQLITE, NULL},
     {"siwc", CETTA_LIBRARY_SIWC, NULL},
@@ -211,6 +230,17 @@ static const CettaLibrarySpec CETTA_LIBRARIES[] = {
     {"json", CETTA_LIBRARY_JSON, NULL},
 #endif
 };
+
+static bool library_catalog_valid(void) {
+    CettaLibraryMask mask = 0;
+    for (size_t i = 0; i < sizeof(CETTA_LIBRARIES) / sizeof(CETTA_LIBRARIES[0]); ++i) {
+        CettaLibraryMask bit = CETTA_LIBRARIES[i].bit;
+        if (!bit || (bit & (bit - 1)) || (mask & bit))
+            return false;
+        mask |= bit;
+    }
+    return cetta_native_module_catalog_valid(mask);
+}
 
 /* These namespaces dispatch through structural mechanisms, without a
  * separate mutable runtime owner. Availability is not permission: the
@@ -521,6 +551,10 @@ void cetta_library_context_init(CettaLibraryContext *ctx) {
 static void library_context_init_services(CettaLibraryContext *ctx,
         CettaLanguageId language_id, const CettaProfile *profile,
         bool foreign_services) {
+    if (!library_catalog_valid()) {
+        fputs("cetta: conflicting library import bits\n", stderr);
+        abort();
+    }
     cetta_eval_session_init(&ctx->session, language_id, profile);
     ctx->nik_runtime_mutex_ready =
         pthread_mutex_init(&ctx->nik_runtime_mutex, NULL) == 0;
@@ -4619,16 +4653,47 @@ static Atom *system_write(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     return atom_unit(a);
 }
 
+/* The working directory at any length, as CPython's os.getcwd reads it: the
+ * buffer grows while getcwd answers ERANGE. On failure errno is kept and NULL
+ * returned; ENOMEM also covers a directory longer than a string can be. */
+static char *library_getcwd(size_t *length) {
+    size_t capacity = PATH_MAX;
+    char *buffer = NULL;
+    for (;;) {
+        char *grown = realloc(buffer, capacity);
+        if (!grown) {
+            free(buffer);
+            errno = ENOMEM;
+            return NULL;
+        }
+        buffer = grown;
+        if (getcwd(buffer, capacity)) {
+            *length = strlen(buffer);
+            return buffer;
+        }
+        if (errno != ERANGE || capacity > CETTA_STRING_BYTES_MAX) {
+            int code = errno == ERANGE ? ENOMEM : errno;
+            free(buffer);
+            errno = code;
+            return NULL;
+        }
+        capacity *= 2;
+    }
+}
+
 static Atom *system_cwd(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
-    char path[PATH_MAX];
     if (!system_zero_arg_ok(args, nargs)) {
         return library_signature_error(a, head, args, nargs, "expected: (system:cwd)");
     }
-    if (!getcwd(path, sizeof(path))) {
+    size_t length;
+    char *path = library_getcwd(&length);
+    if (!path) {
         return library_signature_error(a, head, args, nargs,
                                        "cannot determine current directory");
     }
-    return atom_string(a, path);
+    Atom *value = atom_string_n(a, path, length);
+    free(path);
+    return value;
 }
 
 static Atom *system_monotonic_ns(Arena *a, Atom *head, Atom **args,
@@ -4647,6 +4712,137 @@ static Atom *system_monotonic_ns(Arena *a, Atom *head, Atom **args,
                                        "monotonic clock value exceeds signed integer range");
     }
     return atom_int(a, (int64_t)ns);
+}
+
+/* Standard input as lines, through a buffer of the runtime's own rather than
+ * stdio's, so a timed read can tell whether a line is already buffered. The
+ * blocking and the timed read share it. */
+static struct {
+    char *bytes;
+    size_t start, end, capacity;
+    bool eof;
+} g_stdin_lines;
+
+/* One read into the buffer, waiting at most TIMEOUT_MS, or indefinitely when
+ * it is negative: 1 when bytes or the end of input arrived, 0 when nothing
+ * did in time, -1 on an error. */
+static int stdin_lines_fill(int64_t timeout_ms) {
+    size_t held = g_stdin_lines.end - g_stdin_lines.start;
+    if (g_stdin_lines.start) {
+        memmove(g_stdin_lines.bytes, g_stdin_lines.bytes + g_stdin_lines.start, held);
+        g_stdin_lines.start = 0;
+        g_stdin_lines.end = held;
+    }
+    if (g_stdin_lines.end == g_stdin_lines.capacity) {
+        size_t capacity = g_stdin_lines.capacity ? g_stdin_lines.capacity * 2u : 65536u;
+        char *bytes = capacity > g_stdin_lines.capacity ? realloc(g_stdin_lines.bytes, capacity) : NULL;
+        if (!bytes) return -1;
+        g_stdin_lines.bytes = bytes;
+        g_stdin_lines.capacity = capacity;
+    }
+    uint64_t started = 0;
+    if (timeout_ms >= 0) {
+        if (!library_read_monotonic_ns(&started)) return -1;
+    }
+    for (;;) {
+        int wait = -1;
+        if (timeout_ms >= 0) {
+            uint64_t now;
+            if (!library_read_monotonic_ns(&now)) return -1;
+            /* Subtract elapsed time rather than multiply an arbitrary
+             * millisecond duration into a wrapping absolute deadline. */
+            uint64_t elapsed = (now - started) / 1000000u;
+            uint64_t left = elapsed < (uint64_t)timeout_ms
+                ? (uint64_t)timeout_ms - elapsed : 0;
+            wait = left > INT_MAX ? INT_MAX : (int)left;
+        }
+        struct pollfd input = {STDIN_FILENO, POLLIN, 0};
+        int ready = poll(&input, 1, wait);
+        if (ready < 0 && errno != EINTR) return -1;
+        if (ready <= 0) {
+            if (ready == 0 && timeout_ms >= 0) {
+                uint64_t now;
+                if (!library_read_monotonic_ns(&now)) return -1;
+                if ((now - started) / 1000000u >= (uint64_t)timeout_ms) return 0;
+            }
+            continue;
+        }
+        ssize_t count = read(STDIN_FILENO, g_stdin_lines.bytes + g_stdin_lines.end,
+                             g_stdin_lines.capacity - g_stdin_lines.end);
+        if (count > 0) { g_stdin_lines.end += (size_t)count; return 1; }
+        if (!count) { g_stdin_lines.eof = true; return 1; }
+        /* A descriptor set nonblocking by someone else polls again. */
+        if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) return -1;
+    }
+}
+
+/* (system:read-line) waits for a line; (system:read-line MS) waits at most MS
+ * milliseconds and answers () when no line has begun arriving. A line that has
+ * begun is read to its end, so () leaves nothing buffered. The line comes
+ * without its newline and one carriage return before it; end_of_file follows
+ * the last line. */
+static Atom *system_read_line(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
+    int64_t timeout_ms = -1;
+    if (!system_zero_arg_ok(args, nargs)) {
+        if (nargs != 1 || !args[0] || args[0]->kind != ATOM_GROUNDED ||
+            args[0]->ground.gkind != GV_INT || args[0]->ground.ival < 0)
+            return library_signature_error(a, head, args, nargs,
+                "expected (system:read-line) or (system:read-line milliseconds)");
+        timeout_ms = args[0]->ground.ival;
+    }
+    for (;;) {
+        size_t held = g_stdin_lines.end - g_stdin_lines.start;
+        char *bytes = held ? g_stdin_lines.bytes + g_stdin_lines.start : NULL;
+        char *newline = held ? memchr(bytes, '\n', held) : NULL;
+        if (newline || (held && g_stdin_lines.eof)) {
+            size_t size = newline ? (size_t)(newline - bytes) : held;
+            g_stdin_lines.start += newline ? size + 1u : size;
+            if (size && bytes[size - 1] == '\r') --size;
+            return atom_string_n(a, bytes, size);
+        }
+        if (g_stdin_lines.eof) return atom_symbol(a, "end_of_file");
+        int filled = stdin_lines_fill(held ? -1 : timeout_ms);
+        if (filled < 0)
+            return library_signature_error(a, head, args, nargs, "cannot read standard input");
+        if (!filled) return atom_unit(a);
+    }
+}
+
+/* The running executable's path with symbolic links resolved, or NULL with
+ * errno set. A binary replaced since it started is named by its path. */
+static char *library_executable_path(void) {
+#if defined(__APPLE__)
+    uint32_t size = 0;
+    (void)_NSGetExecutablePath(NULL, &size);
+    char *path = malloc(size ? size : 1u);
+    if (!path) return NULL;
+    if (_NSGetExecutablePath(path, &size)) { free(path); errno = ENAMETOOLONG; return NULL; }
+    char *resolved = realpath(path, NULL);
+    free(path);
+    return resolved;
+#elif defined(__linux__)
+    for (size_t capacity = 256;; capacity *= 2u) {
+        char *path = malloc(capacity);
+        if (!path) return NULL;
+        ssize_t size = readlink("/proc/self/exe", path, capacity);
+        if (size < 0) { free(path); return NULL; }
+        if ((size_t)size < capacity) {
+            const char deleted[] = " (deleted)";
+            struct stat executable;
+            if (!stat("/proc/self/exe", &executable) && !executable.st_nlink &&
+                (size_t)size >= sizeof deleted - 1u &&
+                !memcmp(path + size - (sizeof deleted - 1u), deleted, sizeof deleted - 1u))
+                size -= (ssize_t)(sizeof deleted - 1u);
+            path[size] = '\0';
+            return path;
+        }
+        free(path);
+        if (capacity > SIZE_MAX / 4u) { errno = ENAMETOOLONG; return NULL; }
+    }
+#else
+    errno = ENOSYS;
+    return NULL;
+#endif
 }
 
 static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
@@ -4671,6 +4867,20 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
                                                       : (double)ns / 1e9);
         }
         if (!strcmp(operation, "pid") && nargs == 1) return atom_int(a, getpid());
+        /* The running executable, for a program that starts another process
+         * of the same runtime, or the errno and message when it cannot be
+         * named. */
+        if (!strcmp(operation, "executable") && nargs == 1) {
+            char *path = library_executable_path();
+            if (!path) {
+                int code = errno;
+                return atom_expr3(a, atom_symbol(a, "system:os-error"), atom_int(a, code),
+                                  atom_string(a, strerror(code)));
+            }
+            Atom *value = atom_string(a, path);
+            free(path);
+            return value;
+        }
         if (!strcmp(operation, "uuid4-hex") && nargs == 1) {
             /* Version 4 in the high nibble of byte 6, the RFC 4122 variant in
              * the two high bits of byte 8, as uuid.UUID(version=4) sets them. */
@@ -4701,6 +4911,30 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
             int code = errno;
             return atom_expr3(a, atom_symbol(a, "system:os-error"), atom_int(a, code),
                               atom_string(a, strerror(code)));
+        }
+        /* os.getcwd: the directory at any length, or the refusal's errno and
+         * message, as CPython raises OSError (ENOENT for a removed directory,
+         * EACCES when an unreadable ancestor hides a long one's name). */
+        if (!strcmp(operation, "getcwd") && nargs == 1) {
+            size_t length;
+            char *path = library_getcwd(&length);
+            if (!path) {
+                int code = errno;
+                return atom_expr3(a, atom_symbol(a, "system:os-error"), atom_int(a, code),
+                                  atom_string(a, strerror(code)));
+            }
+            Atom *value = atom_string_n(a, path, length);
+            free(path);
+            return value;
+        }
+        /* os.TMP_MAX: the C platform constant. Python 3.12's tempfile profile
+         * uses it; later Python versions can choose their own retry policy. */
+        if (!strcmp(operation, "tmp-max") && nargs == 1) {
+#ifdef TMP_MAX
+            return atom_int(a, TMP_MAX);
+#else
+            return atom_int(a, 10000);
+#endif
         }
         if (!strcmp(operation, "errno-value") && nargs == 2) {
             const char *name = library_text_arg(args[1]);
@@ -4761,19 +4995,8 @@ static Atom *cetta_library_dispatch_system(CettaLibraryContext *ctx,
         }
         return library_signature_error(a, head, args, nargs, "unsupported system operation or arguments");
     }
-    if (head_id == g_builtin_syms.lib_system_read_line) {
-        if (!system_zero_arg_ok(args, nargs)) return library_signature_error(a, head, args, nargs, "expected system:read-line");
-        char *line = NULL; size_t capacity = 0;
-        ssize_t size = getline(&line, &capacity, stdin);
-        if (size < 0) {
-            free(line);
-            if (feof(stdin)) return atom_symbol(a, "end_of_file");
-            return library_signature_error(a, head, args, nargs, "cannot read standard input");
-        }
-        if (size && line[size - 1] == '\n') --size;
-        if (size && line[size - 1] == '\r') --size;
-        Atom *result = atom_string_n(a, line, (size_t)size); free(line); return result;
-    }
+    if (head_id == g_builtin_syms.lib_system_read_line)
+        return system_read_line(a, head, args, nargs);
     if (head_id == g_builtin_syms.lib_system_args) {
         return system_cli_args(ctx, a, head, args, nargs);
     }
@@ -9203,7 +9426,55 @@ static AtomId library_module_capture_tokens(CettaLibraryContext *ctx,
         persistent_arena ? persistent_arena : eval_arena, statement);
 }
 
+static bool cetta_library_petta_execute_listed_document_ids(
+    CettaLibraryContext *ctx, Space *work_space,
+    Arena *eval_arena, Arena *persistent_arena,
+    Registry *registry, AtomId *atom_ids, int atom_count,
+    ResultSet *runnable_results, ResultSet *last_results,
+    CettaDocumentResultObserver observer, void *observer_context,
+    CettaPettaDocumentFailure *failure_out,
+    Atom **detail_out);
+
+typedef struct {
+    const AtomId *ids;
+    int count;
+} CettaLibraryDocumentRoots;
+
+/* A module's forms stay in the universe while its document runs. */
+static void cetta_library_document_roots(const TermUniverse *universe,
+                                         TermUniverseRootVisit visit,
+                                         void *visit_context, void *context) {
+    const CettaLibraryDocumentRoots *document = context;
+    (void)universe;
+    for (int i = 0; i < document->count; i++)
+        visit(visit_context, document->ids[i]);
+}
+
 static bool cetta_library_petta_execute_document_ids(
+    CettaLibraryContext *ctx, Space *work_space,
+    Arena *eval_arena, Arena *persistent_arena,
+    Registry *registry, AtomId *atom_ids, int atom_count,
+    ResultSet *runnable_results, ResultSet *last_results,
+    CettaDocumentResultObserver observer, void *observer_context,
+    CettaPettaDocumentFailure *failure_out,
+    Atom **detail_out) {
+    TermUniverse *universe = work_space ? work_space->native.universe : NULL;
+    CettaLibraryDocumentRoots roots = {.ids = atom_ids,
+                                       .count = atom_ids ? atom_count : 0};
+    if (universe)
+        (void)term_universe_add_root_provider(
+            universe, cetta_library_document_roots, &roots);
+    bool ok = cetta_library_petta_execute_listed_document_ids(
+        ctx, work_space, eval_arena, persistent_arena, registry, atom_ids,
+        atom_count, runnable_results, last_results, observer,
+        observer_context, failure_out, detail_out);
+    if (universe)
+        term_universe_remove_root_provider(
+            universe, cetta_library_document_roots, &roots);
+    return ok;
+}
+
+static bool cetta_library_petta_execute_listed_document_ids(
     CettaLibraryContext *ctx, Space *work_space,
     Arena *eval_arena, Arena *persistent_arena,
     Registry *registry, AtomId *atom_ids, int atom_count,
@@ -12143,16 +12414,28 @@ bool cetta_library_import_module(CettaLibraryContext *ctx, const char *spec,
         if (target_is_fresh) {
             if (module_space_out)
                 *module_space_out = entry->space;
+            if (word_interface && entry->provider_kind == CETTA_MODULE_PROVIDER_STDLIB_FILE)
+                ctx->active_mask |= interface->bit;
             return true;
         }
+        bool imported;
         if (entry->provider || entry->export_words)
-            return library_name_he_provider(ctx, space, registry, entry,
-                                            eval_arena, persistent_arena, error_out);
-        return library_link_he_module(space, entry->space, eval_arena,
-                                      error_out);
+            imported = library_name_he_provider(ctx, space, registry, entry,
+                                               eval_arena, persistent_arena, error_out);
+        else
+            imported = library_link_he_module(space, entry->space, eval_arena,
+                                             error_out);
+        /* A vocabulary library may also own pure native operations. Activate
+         * them only after its standard-library import actually succeeded. */
+        if (imported && word_interface && entry->provider_kind == CETTA_MODULE_PROVIDER_STDLIB_FILE)
+            ctx->active_mask |= interface->bit;
+        return imported;
     }
-    return execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
-                               registry, fuel, NULL, error_out);
+    bool imported = execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
+                                       registry, fuel, NULL, error_out);
+    if (imported && word_interface && plan.provider_kind == CETTA_MODULE_PROVIDER_STDLIB_FILE)
+        ctx->active_mask |= interface->bit;
+    return imported;
 }
 
 bool cetta_library_import_error_is_missing_module(Atom *error) {
@@ -12458,6 +12741,13 @@ static Atom *cetta_library_dispatch_native_value(
         if (ctx->active_mask & CETTA_LIBRARY_STR)
             result=cetta_library_dispatch_str(a,head,args,nargs,result_form);
         if (result) return result;
+        if (ctx->active_mask & CETTA_LIBRARY_MATH) {
+            result=cetta_math_dispatch(a,head,args,nargs);
+            if (result) {
+                *result_form=CETTA_CALL_RESULT_COMPLETED_VALUE;
+                return result;
+            }
+        }
 #if CETTA_BUILD_WITH_JSON_GSLT
         if (ctx->active_mask & CETTA_LIBRARY_JSON)
             result=cetta_json_library_dispatch_v1(ctx->json_runtime,a,head,args,nargs);
@@ -12522,6 +12812,20 @@ static Atom *cetta_library_dispatch_native_value(
             return result;
         }
     }
+    if (ctx->active_mask & CETTA_LIBRARY_STORE) {
+        Atom *result=cetta_store_dispatch(ctx,a,head,args,nargs);
+        if (result) {
+            *result_form=CETTA_CALL_RESULT_COMPLETED_VALUE;
+            return result;
+        }
+    }
+    if (ctx->active_mask & CETTA_LIBRARY_MATH) {
+        Atom *result=cetta_math_dispatch(a,head,args,nargs);
+        if (result) {
+            *result_form=CETTA_CALL_RESULT_COMPLETED_VALUE;
+            return result;
+        }
+    }
     if (ctx->active_mask & CETTA_LIBRARY_PROC) {
         Atom *result = cetta_proc_dispatch(a, head, args, nargs);
         if (result) return result;
@@ -12563,6 +12867,10 @@ bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
         cetta_postings_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_RE) &&
         cetta_re_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_CRYPTO) &&
+        cetta_crypto_call(ctx, a, head, args, nargs, out)) return true;
+    if (ctx && (ctx->active_mask & CETTA_LIBRARY_TOML) &&
+        cetta_toml_call(ctx, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_FS) &&
         cetta_fs_call(ctx, a, head, args, nargs, out)) return true;
     /* lib/proc offers two families: owned process jobs (spawn, poll, wait,

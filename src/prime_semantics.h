@@ -515,7 +515,8 @@ Atom *prime_semantics_scope_activation(Arena *arena, Atom *term, Atom *space);
 
 /* Whether `term` is an authored lambda `(lam binders body)` whose binders the
  * kernel's grammar reads.  Such a lambda is a value. */
-bool prime_semantics_is_authored_lambda(Arena *arena, Atom *term);
+bool prime_semantics_is_authored_lambda(Arena *arena, Atom *term)
+    __attribute__((weak));
 
 /* One beta, pair projection, or reflexivity elimination at the root of an
  * authored term; subterms are not entered. The same pointer means nothing

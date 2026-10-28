@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 56e300240e8203afdc8c5b6ddaf7e2ed09676535d7145b9db2afd050fee4e4b0
+ * Source SHA-256: 413db7f4fe8385f86a885559258b1cc3f7a0161f950d2009d7605f25f54aa580
  */
 
 #include <stdbool.h>
@@ -815,6 +815,7 @@ typedef enum {
     CETTA_CONTROL_INVOKE = 12,
     CETTA_CONTROL_SEQUENCE_FIRST = 13,
     CETTA_CONTROL_SEQUENCE_LAST = 14,
+    CETTA_CONTROL_COLLECT = 15,
 } CettaControlOperation;
 
 #define CETTA_CONTROL_OPERAND_ABSENT UINT8_MAX
@@ -845,6 +846,7 @@ static inline bool cetta_control_operation_is_control_form(CettaControlOperation
     case CETTA_CONTROL_HANDLE:
     case CETTA_CONTROL_SEQUENCE_FIRST:
     case CETTA_CONTROL_SEQUENCE_LAST:
+    case CETTA_CONTROL_COLLECT:
         return true;
     default:
         return false;
@@ -997,6 +999,7 @@ static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan pla
     X(eval, 1u, CETTA_CONTROL_FORCE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
     X(function, 1u, CETTA_CONTROL_RETURN_SCOPE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
     X(superpose, 1u, CETTA_CONTROL_ORDERED_CHOICE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
+    X(collapse, 1u, CETTA_CONTROL_COLLECT, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
     X(empty_form, 0u, CETTA_CONTROL_FAILURE, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT)
 
 /* Dialect classification admits these forms before reading their operands.

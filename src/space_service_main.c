@@ -95,9 +95,13 @@ typedef struct {
     uint64_t id, source, revision, expires;
     uint64_t authority_grant, authority_generation;
     Principal holder;
+    char creation[129];
+    uint64_t creation_until;
+    Bytes creation_request;
     ScopeView *views;
     size_t reads, writes, size;
 } Observation;
+typedef struct { Principal holder; char creation[129]; uint64_t source, until; } CancelledCreation;
 typedef struct { char id[129]; Principal caller; Bytes request, reply; } Receipt;
 typedef struct {
     char id[129];
@@ -123,6 +127,7 @@ typedef struct {
     Store *stores[STORES];
     Snapshot snapshots[SNAPSHOTS];
     Observation observations[SNAPSHOTS];
+    CancelledCreation cancelled[RECEIPTS];
     Receipt receipts[RECEIPTS];
     Decision *decisions;
     size_t decision_count, decision_capacity;
@@ -138,18 +143,21 @@ typedef struct {
     uint64_t next_store, next_cursor, catalog_revision;
     uint64_t max_facts, max_live_bytes, max_journal_bytes, journal_bytes, checkpoint_bytes;
     uint64_t max_query_bytes, max_snapshot_bytes;
+    uint64_t max_account_view_bytes;
     uint64_t max_decisions, max_tickets, max_grants, max_principals;
     unsigned query_ms;
     size_t watchers, max_watchers;
+    size_t max_account_views, max_account_watchers;
     char uuid[33], boot[33];
     int journal, directory, lock;
     /* The process account wrote every record that names no account. */
     uint32_t owner_uid, process_uid;
-    bool poisoned, restoring;
+    bool poisoned, restoring, shared_profile;
     /* Recovery is replaying the journal: recorded history is accepted under
      * the rule that admitted it, and live authority under the current one. */
     bool replaying;
     Client *clients;
+    Observation *capturing;
 } Service;
 struct Client {
     int fd;
@@ -1026,7 +1034,48 @@ static void observation_free(Service *s, Observation *o) {
         for (size_t j=0;j<view->rows.count;++j) bytes_free(&view->rows.rows[j]);
         free(view->rows.rows);
     }
-    free(o->views); s->observation_bytes-=o->size; *o=(Observation){0};
+    free(o->views); bytes_free(&o->creation_request);
+    s->observation_bytes-=o->size; *o=(Observation){0};
+}
+static void view_usage(Service *s,uint32_t uid,size_t *count,uint64_t *bytes,size_t *waits) {
+    *count=0; *bytes=0; *waits=0;
+    for (size_t i=0;i<SNAPSHOTS;++i) {
+        Snapshot *q=&s->snapshots[i]; Observation *o=&s->observations[i];
+        if (q->id && q->holder.uid==uid) { ++*count; *bytes+=q->size; }
+        if (o->id && o->holder.uid==uid) { ++*count; *bytes+=o->size; }
+    }
+    if (s->capturing && s->capturing->holder.uid==uid) {
+        ++*count; *bytes+=s->capturing->size;
+    }
+    if (s->clients) for (size_t i=0;i<CLIENTS;++i) {
+        Client *c=&s->clients[i];
+        if (c->watching && c->principal.uid==uid) ++*waits;
+        if (c->watched.id && c->watched.holder.uid==uid) { ++*count; *bytes+=c->watched.size; }
+    }
+}
+static const char *view_room(Service *s,uint32_t uid,size_t added,uint64_t *available) {
+    size_t count,waits; uint64_t used;
+    view_usage(s,uid,&count,&used,&waits);
+    size_t limit=s->max_account_views ? s->max_account_views :
+        s->shared_profile ? SNAPSHOTS/2 : SNAPSHOTS*2+CLIENTS;
+    uint64_t budget=s->max_account_view_bytes ? s->max_account_view_bytes :
+        s->shared_profile ? s->max_snapshot_bytes/2+s->max_snapshot_bytes%2 : s->max_snapshot_bytes;
+    if (added>limit || count>limit-added) return "account-view-limit";
+    if (used>budget) return "account-view-byte-limit";
+    *available=budget-used;
+    return NULL;
+}
+static const char *view_admit(Service *s,uint32_t uid,size_t added,uint64_t bytes) {
+    uint64_t available=0;
+    const char *failure=view_room(s,uid,added,&available);
+    return failure ? failure : bytes>available ? "account-view-byte-limit" : NULL;
+}
+static bool account_watch_full(Service *s,uint32_t uid) {
+    size_t count,waits; uint64_t bytes;
+    view_usage(s,uid,&count,&bytes,&waits);
+    size_t limit=s->max_account_watchers ? s->max_account_watchers :
+        s->shared_profile ? (s->max_watchers+1)/2 : s->max_watchers;
+    return waits>=limit;
 }
 static void expire(Service *s) {
     uint64_t now = now_ms();
@@ -1035,6 +1084,9 @@ static void expire(Service *s) {
     for (size_t i=0;i<SNAPSHOTS;++i)
         if (s->observations[i].id && s->observations[i].expires<=now)
             observation_free(s,&s->observations[i]);
+    for (size_t i=0;i<RECEIPTS;++i)
+        if (s->cancelled[i].until && s->cancelled[i].until<=now)
+            s->cancelled[i]=(CancelledCreation){0};
 }
 static Snapshot *find_snapshot(Service *s, uint64_t id) {
     for (size_t i = 0; i < SNAPSHOTS; ++i) if (s->snapshots[i].id == id && id) return &s->snapshots[i];
@@ -1044,6 +1096,41 @@ static Observation *find_observation(Service *s, uint64_t id) {
     for (size_t i=0;i<SNAPSHOTS;++i)
         if (id && s->observations[i].id==id) return &s->observations[i];
     return NULL;
+}
+static Observation *find_creation(Service *s,Principal holder,const char *id) {
+    for (size_t i=0;i<SNAPSHOTS;++i) {
+        Observation *o=&s->observations[i];
+        if (o->id && principal_same(o->holder,holder) && !strcmp(o->creation,id)) return o;
+    }
+    return NULL;
+}
+static Observation *find_waiting_creation(Service *s,Principal holder,const char *id) {
+    if (s->clients) for (size_t i=0;i<CLIENTS;++i) {
+        Observation *o=&s->clients[i].watched;
+        if (o->id && principal_same(o->holder,holder) && !strcmp(o->creation,id)) return o;
+    }
+    return NULL;
+}
+static bool creation_cancelled(Service *s,Principal holder,uint64_t source,const char *id,uint64_t until) {
+    for (size_t i=0;i<RECEIPTS;++i) {
+        CancelledCreation *c=&s->cancelled[i];
+        if (c->until==until && principal_same(c->holder,holder) && c->source==source && !strcmp(c->creation,id)) return true;
+    }
+    return false;
+}
+static bool cancel_creation(Service *s,Principal holder,uint64_t source,const char *id,uint64_t until) {
+    if (until<=now_ms() || creation_cancelled(s,holder,source,id,until)) return true;
+    size_t slot=RECEIPTS,owned=0;
+    for (size_t i=0;i<RECEIPTS;++i) {
+        if (!s->cancelled[i].until && slot==RECEIPTS) slot=i;
+        if (s->cancelled[i].until && s->cancelled[i].holder.uid==holder.uid) ++owned;
+    }
+    /* Unexpired cancellation fences are never evicted: a delayed creating
+     * request must remain refused until its own deadline has passed. */
+    if (slot==RECEIPTS || owned>=RECEIPTS/2) return false;
+    s->cancelled[slot]=(CancelledCreation){.holder=holder,.source=source,.until=until};
+    snprintf(s->cancelled[slot].creation,sizeof(s->cancelled[slot].creation),"%s",id);
+    return true;
 }
 static void receipt_free(Receipt *r) {
     bytes_free(&r->request); bytes_free(&r->reply); *r = (Receipt){0};
@@ -1568,11 +1655,16 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
     Snapshot q = {.id=s->next_cursor,.source=st->id,.revision=st->revision,.holder=holder,
                   .authority_grant=authority_grant,
                   .authority_generation=authority_generation};
+    uint32_t uid=holder.uid;
+    uint64_t account_room=0,total_room=s->max_snapshot_bytes-s->snapshot_bytes-s->observation_bytes;
+    size_t capacity=0;
     if (!counting) {
-        q.rows = calloc((size_t)limit,sizeof(*q.rows));
-        if (!q.rows) { space_occurrence_cursor_release(&cursor); return error(a,request,"memory"); }
+        /* The single owner cannot admit another query during this scan.
+         * Capture its remaining allowance once, not once per returned row. */
+        const char *refused=view_room(s,uid,original_records ? 0 : 1,&account_room);
+        if (refused) { space_occurrence_cursor_release(&cursor); return error(a,request,refused); }
     }
-    uint64_t matches = 0, examined = 0;
+    uint64_t matches = 0, examined = 0, payload_bytes=0;
     const char *failure = NULL;
     CettaIndex index;
     SpaceOccurrenceCursorStep step=SPACE_OCCURRENCE_CURSOR_END;
@@ -1598,10 +1690,27 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
                     Atom *value = original_records ? source : bindings_apply(&bindings,&scratch,projection);
                     Bytes b = {0};
                     if (!value || !wire(value,&b)) failure="query-value-limit";
-                    else if (b.size > s->max_query_bytes - q.size ||
-                        b.size > s->max_snapshot_bytes - s->snapshot_bytes - s->observation_bytes - q.size) {
+                    else if (b.size>s->max_query_bytes-payload_bytes || b.size>total_room-q.size) {
                         bytes_free(&b); failure="query-byte-limit";
-                    } else { q.rows[q.count++] = b; q.size += b.size; }
+                    } else if (b.size>account_room-q.size) {
+                        bytes_free(&b); failure="account-view-byte-limit";
+                    } else {
+                        if (q.count==capacity) {
+                            uint64_t room=total_room<account_room ? total_room : account_room;
+                            size_t extra=(size_t)((room-q.size-b.size)/sizeof(*q.rows));
+                            size_t desired=capacity ? capacity : 1;
+                            if (desired>limit-capacity) desired=(size_t)limit-capacity;
+                            if (extra>desired) extra=desired;
+                            if (!extra) failure=account_room<total_room ? "account-view-byte-limit" : "query-byte-limit";
+                            else {
+                                Bytes *rows=realloc(q.rows,(capacity+extra)*sizeof(*q.rows));
+                                if (!rows) failure="memory";
+                                else { q.rows=rows; capacity+=extra; q.size+=extra*sizeof(*q.rows); }
+                            }
+                        }
+                        if (failure) bytes_free(&b);
+                        else { q.rows[q.count++]=b; q.size+=b.size; payload_bytes+=b.size; }
+                    }
                 }
             }
         }
@@ -1615,6 +1724,13 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
         free(q.rows); return error(a,request,failure);
     }
     if (counting) return reply(a,request,true,atom_int(a,matches));
+    if (q.count<capacity) {
+        Bytes *rows=realloc(q.rows,q.count*sizeof(*q.rows));
+        if (rows || !q.count) {
+            q.rows=rows; q.size-=(capacity-q.count)*sizeof(*q.rows);
+        }
+        /* A failed shrink retains and charges its actual allocation. */
+    }
     q.expires = now_ms()+lease;
     s->snapshots[slot] = q; s->snapshot_bytes += q.size; ++s->next_cursor;
     Atom *args[] = {atom_string(a,s->boot),atom_int(a,q.id),atom_int(a,q.source),
@@ -1636,8 +1752,9 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
 /* Captured views are complete records, including duplicates and original
  * variable sharing. A client projection never becomes validation authority. */
 static Atom *observe_scopes(Service *s, Client *client, Arena *a, Atom *request, Store *st,
-                            AuthorityView authority) {
+                            AuthorityView authority,uint64_t creation_until,Bytes raw) {
     uint64_t deadline=now_ms()+s->query_ms;
+    if (creation_until && creation_until<deadline) deadline=creation_until;
     Atom *reads=part(request,5), *writes=part(request,6);
     uint64_t limit,lease;
     if (!reads || !writes || reads->kind!=ATOM_EXPR || writes->kind!=ATOM_EXPR ||
@@ -1650,16 +1767,26 @@ static Atom *observe_scopes(Service *s, Client *client, Arena *a, Atom *request,
     for (size_t i=0;i<SNAPSHOTS;++i) if (!s->observations[i].id) { slot=i; break; }
     if (slot==SNAPSHOTS || s->next_cursor>=INT64_MAX) return error(a,request,"observation-limit");
     size_t count=(size_t)(reads->expr.len-1)+(size_t)(writes->expr.len-1);
-    if (count>SIZE_MAX/sizeof(ScopeView) || count*sizeof(ScopeView)>
+    size_t request_bytes=creation_until ? raw.size : 0;
+    if (count>SIZE_MAX/sizeof(ScopeView) || request_bytes>SIZE_MAX-count*sizeof(ScopeView) ||
+        count*sizeof(ScopeView)+request_bytes>
         s->max_snapshot_bytes-s->snapshot_bytes-s->observation_bytes)
         return error(a,request,"observation-byte-limit");
-    Observation o={.id=s->next_cursor++,.source=st->id,.revision=st->revision,
+    const char *quota=view_admit(s,client->principal.uid,1,count*sizeof(ScopeView)+request_bytes);
+    if (quota) return error(a,request,quota);
+    Observation o={.id=s->next_cursor++,.source=st->id,.revision=st->revision,.holder=client->principal,
         .authority_grant=authority.grant,.authority_generation=authority.generation,
-        .holder=client->principal,
-        .reads=reads->expr.len-1,.writes=writes->expr.len-1,.size=count*sizeof(ScopeView)};
-    o.views=calloc(count ? count : 1,sizeof(*o.views));
-    if (!o.views) return error(a,request,"memory");
+        .reads=reads->expr.len-1,.writes=writes->expr.len-1,.size=count*sizeof(ScopeView)+request_bytes};
+    o.views=count ? calloc(count,sizeof(*o.views)) : NULL;
+    if (count && !o.views) return error(a,request,"memory");
+    if (creation_until) {
+        const char *id=NULL;
+        if (!token(part(request,1),&id)) { free(o.views); return error(a,request,"invalid-id"); }
+        if (!bytes_copy(&o.creation_request,raw.data,raw.size)) { free(o.views); return error(a,request,"memory"); }
+        snprintf(o.creation,sizeof(o.creation),"%s",id); o.creation_until=creation_until;
+    }
     s->observation_bytes+=o.size;
+    s->capturing=&o;
     const char *failure=NULL;
     for (size_t i=0;i<count;++i) {
         if (now_ms()>=deadline) { failure="query-time-limit"; break; }
@@ -1669,6 +1796,8 @@ static Atom *observe_scopes(Service *s, Client *client, Arena *a, Atom *request,
         if (encoded.size>s->max_snapshot_bytes-s->snapshot_bytes-s->observation_bytes) {
             bytes_free(&encoded); failure="observation-byte-limit"; break;
         }
+        quota=view_admit(s,client->principal.uid,0,encoded.size);
+        if (quota) { bytes_free(&encoded); failure=quota; break; }
         o.views[i].pattern=encoded; o.size+=encoded.size; s->observation_bytes+=encoded.size;
         Atom *args[]={part(request,1),atom_symbol(a,"query"),part(request,3),part(request,4),
             pattern,atom_unit(a),part(request,7),part(request,8)};
@@ -1677,21 +1806,18 @@ static Atom *observe_scopes(Service *s, Client *client, Arena *a, Atom *request,
         uint64_t cursor;
         if (!shape(answer,"reply",4) || !atom_is_symbol(part(answer,2),"ok") ||
             !integer(part(part(answer,3),2),&cursor)) {
-            observation_free(s,&o); return answer;
+            s->capturing=NULL; observation_free(s,&o); return answer;
         }
         Snapshot *snapshot=find_snapshot(s,cursor);
         if (!snapshot) { failure="observation-capture"; break; }
-        /* Queries allocate an allowance-sized pointer vector. Charge that
-         * memory as well while an observation retains it. */
-        size_t metadata=(size_t)limit*sizeof(Bytes);
-        if (metadata>s->max_snapshot_bytes-s->snapshot_bytes-s->observation_bytes) {
-            snapshot_free(s,snapshot); failure="observation-byte-limit"; break;
-        }
+        /* Query ownership includes its pointer vector as well as row bytes. */
         o.views[i].rows=*snapshot;
         s->snapshot_bytes-=snapshot->size;
-        o.size+=snapshot->size+metadata; s->observation_bytes+=snapshot->size+metadata;
+        o.size+=snapshot->size; s->observation_bytes+=snapshot->size;
         *snapshot=(Snapshot){0};
     }
+    s->capturing=NULL;
+    if (!failure && creation_until && now_ms()>=creation_until) failure="creation-expired";
     if (failure) { observation_free(s,&o); return error(a,request,failure); }
     o.expires=now_ms()+lease; s->observations[slot]=o;
     Atom *args[]={atom_string(a,s->boot),atom_int(a,o.id),atom_int(a,o.source),atom_int(a,o.revision),
@@ -1937,10 +2063,11 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
             atom_symbol(a,"attenuating-grants"),atom_symbol(a,"account-origins"),
             atom_symbol(a,"explicit-read-grants"),atom_symbol(a,"stable-principals"),
             atom_symbol(a,"native-ordered"),atom_symbol(a,"scoped-observations-v1"),
-            atom_symbol(a,"scope-waits-v1")};
+            atom_symbol(a,"scope-waits-v1"),
+            atom_symbol(a,"scoped-creation-v2"),atom_symbol(a,"account-view-budgets-v1")};
         /* Only the owner creates stores, so only it needs the catalog revision. */
         Atom *args[] = {atom_int(a,1),atom_string(a,s->uuid),atom_string(a,s->boot),
-            atom_int(a,client->owner ? s->catalog_revision : 0),form(a,"capabilities",caps,20)};
+            atom_int(a,client->owner ? s->catalog_revision : 0),form(a,"capabilities",caps,sizeof(caps)/sizeof(caps[0]))};
         return reply(a,request,true,form(a,"service",args,5));
     }
     if (shape(request,"request",3) && atom_is_symbol(part(request,2),"whoami")) {
@@ -2035,6 +2162,24 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
         return reply(a,request,true,form(a,"page",args,5));
     }
     if (!service_matches(s,part(request,3))) return error(a,request,"service-identity");
+    if (atom_is_symbol(part(request,2),"observe-abandon") && request->expr.len==8) {
+        const char *creation=NULL; uint64_t source,until;
+        if (!integer(part(request,4),&source) || !boot_matches(s,part(request,5)) ||
+            !token(part(request,6),&creation) || !integer(part(request,7),&until))
+            return error(a,request,"creation-identity");
+        expire(s);
+        if (find_waiting_creation(s,client->principal,creation)) return error(a,request,"creation-transferred");
+        Observation *o=find_creation(s,client->principal,creation);
+        if (o && (o->source!=source || o->creation_until!=until)) return error(a,request,"creation-identity");
+        Store *owned_source=find_store(s,source);
+        if (!o && (!owned_source || !(rights_of(s,client,owned_source)&RIGHT_READ)))
+            return error(a,request,"missing-space");
+        if (until>now_ms()+300000) return error(a,request,"invalid-creation-deadline");
+        bool fenced=cancel_creation(s,client->principal,source,creation,until);
+        if (o) observation_free(s,o);
+        if (!fenced) return error(a,request,"creation-fence-limit");
+        return reply(a,request,true,atom_symbol(a,"closed"));
+    }
     if (atom_is_symbol(part(request,2),"principal-ref") && request->expr.len==4) {
         if (unbound) return error(a,request,"authority-refused");
         return reply(a,request,true,principal_ref_atom(s,a,client->principal));
@@ -2129,7 +2274,28 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
     if (!rights) return error(a,request,"missing-space");
     if (atom_is_symbol(part(request,2),"observe") && request->expr.len==9) {
         if (!(rights&RIGHT_READ)) return error(a,request,"forbidden");
-        return observe_scopes(s,client,a,request,st,authority);
+        return observe_scopes(s,client,a,request,st,authority,0,raw);
+    }
+    if (atom_is_symbol(part(request,2),"observe-until") && request->expr.len==11) {
+        if (!(rights&RIGHT_READ)) return error(a,request,"forbidden");
+        uint64_t until,now=now_ms();
+        if (!boot_matches(s,part(request,9)) || !integer(part(request,10),&until))
+            return error(a,request,"creation-identity");
+        if (until<=now) return error(a,request,"creation-expired");
+        if (until-now>300000) return error(a,request,"invalid-creation-deadline");
+        expire(s);
+        if (creation_cancelled(s,client->principal,store_id,id,until)) return error(a,request,"creation-closed");
+        if (find_waiting_creation(s,client->principal,id)) return error(a,request,"creation-transferred");
+        Observation *o=find_creation(s,client->principal,id);
+        if (o) {
+            if (!same_bytes(o->creation_request,raw)) return error(a,request,"reused-id");
+            uint64_t current=now_ms();
+            if (o->expires<=current) { observation_free(s,o); return error(a,request,"expired-or-closed"); }
+            Atom *args[]={atom_string(a,s->boot),atom_int(a,o->id),atom_int(a,o->source),atom_int(a,o->revision),
+                atom_int(a,o->reads),atom_int(a,o->writes),atom_int(a,o->expires-current)};
+            return reply(a,request,true,form(a,"observation",args,7));
+        }
+        return observe_scopes(s,client,a,request,st,authority,until,raw);
     }
     if (atom_is_symbol(part(request,2),"observe-watch") && request->expr.len==8) {
         if (!(rights&RIGHT_READ)) return error(a,request,"forbidden");
@@ -2156,6 +2322,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
             return reply(a,request,true,form(a,failure ? "changed" : "unchanged",args,3));
         }
         if (s->watchers>=s->max_watchers) return error(a,request,"watch-capacity");
+        if (account_watch_full(s,client->principal.uid)) return error(a,request,"account-watch-limit");
         /* Transfer ownership, extending the observation through this wait.
          * The old handle cannot also authorize a mutation or another wait. */
         client->watched=*o; *o=(Observation){0};
@@ -2219,6 +2386,7 @@ static Atom *dispatch(Service *s, Client *client, Arena *a, Atom *request, Bytes
          * No commit can occur between the check and the saved wait. This is
          * a read notification, never an application receive or a receipt. */
         if (s->watchers >= s->max_watchers) return error(a,request,"watch-capacity");
+        if (account_watch_full(s,client->principal.uid)) return error(a,request,"account-watch-limit");
         client->watching=true; ++s->watchers;
         client->watch_source=st->id; client->watch_revision=revision;
         client->watch_authority_grant=authority.grant;
@@ -3567,6 +3735,7 @@ int main(int argc,char **argv) {
                  "  [--shared-socket ABSOLUTE_PATH --shared-group GROUP] [--owner-uid N]\n"
                  "  [--max-facts N] [--max-live-bytes N] [--max-journal-bytes N] [--query-ms N]\n"
                  "  [--max-query-bytes N] [--max-snapshot-bytes N] [--max-watchers N]\n"
+                 "  [--max-account-view-bytes N] [--max-account-views N] [--max-account-watchers N]\n"
                  "  [--max-decisions N] (default: unlimited, refusal instead of eviction)\n"
                  "  [--max-tickets N] (default: unlimited, refusal instead of reuse)\n"
                  "  [--max-grants N] (default: unlimited, immutable history is retained)\n"
@@ -3589,6 +3758,9 @@ int main(int argc,char **argv) {
             else if (!strcmp(option,"--max-journal-bytes")) s->max_journal_bytes=n;
             else if (!strcmp(option,"--max-query-bytes")) s->max_query_bytes=n;
             else if (!strcmp(option,"--max-snapshot-bytes")) s->max_snapshot_bytes=n;
+            else if (!strcmp(option,"--max-account-view-bytes")) s->max_account_view_bytes=n;
+            else if (!strcmp(option,"--max-account-views") && n<=SNAPSHOTS*2+CLIENTS) s->max_account_views=(size_t)n;
+            else if (!strcmp(option,"--max-account-watchers") && n<CLIENTS) s->max_account_watchers=(size_t)n;
             else if (!strcmp(option,"--max-decisions")) s->max_decisions=n;
             else if (!strcmp(option,"--max-tickets")) s->max_tickets=n;
             else if (!strcmp(option,"--max-grants")) s->max_grants=n;
@@ -3599,6 +3771,7 @@ int main(int argc,char **argv) {
         }
     }
     if (!path || !directory || directory[0]!='/' || !shared_path != !shared_group) goto invalid;
+    s->shared_profile=shared_path!=NULL;
     umask(0077);
     SymbolTable symbols; symbol_table_init(&symbols); g_symbols=&symbols;
     symbol_table_init_builtins(&symbols,&g_builtin_syms);
@@ -3648,6 +3821,8 @@ int main(int argc,char **argv) {
             if (s->snapshots[i].id && s->snapshots[i].expires<deadline) deadline=s->snapshots[i].expires;
         for (size_t i=0;i<SNAPSHOTS;++i)
             if (s->observations[i].id && s->observations[i].expires<deadline) deadline=s->observations[i].expires;
+        for (size_t i=0;i<RECEIPTS;++i)
+            if (s->cancelled[i].until && s->cancelled[i].until<deadline) deadline=s->cancelled[i].until;
         current=now_ms();
         uint64_t timeout=deadline>current ? deadline-current : 0;
         struct timespec wait_time={(time_t)(timeout/1000),(long)(timeout%1000)*1000000L};

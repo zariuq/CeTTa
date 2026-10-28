@@ -15,6 +15,7 @@ void cetta_native_sha256_init(CettaNativeSha256 *sha);
 void cetta_native_sha256_update(CettaNativeSha256 *sha,
                                 const uint8_t *bytes,
                                 size_t len);
+void cetta_native_sha256_finish(CettaNativeSha256 *sha, uint8_t out[32]);
 void cetta_native_sha256_finish_hex(CettaNativeSha256 *sha, char out[65]);
 void cetta_native_sha256_hex(const uint8_t *bytes, size_t len, char out[65]);
 

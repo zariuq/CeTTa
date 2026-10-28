@@ -46,7 +46,15 @@ typedef struct {
     int launch_error, host_error, wait_status;
     const char *launch_stage;
     bool waited, timed_out, cancelled, owned_tree;
+    /* run: the tree is released when the command exits by itself. detached:
+     * the child leads a session of its own and outlives its handle;
+     * orphaned: its handle is gone and this job's thread frees it. */
+    bool release_on_exit, detached, orphaned;
+    bool caller_group;      /* (group caller): the child stays in the caller's group */
     ProcCapture output[2];
+    /* Standard input, output and error: a pipe of the job's own (input
+     * bytes, captured output), the caller's descriptor, or /dev/null. */
+    enum { PROC_STDIO_PIPE, PROC_STDIO_INHERIT, PROC_STDIO_NULL } stdio[3];
 } ProcJob;
 
 static uint64_t monotonic_ms(void) {
@@ -129,16 +137,7 @@ done: {
 }
 }
 
-static void stop_job(void *resource) {
-    ProcJob *job = resource;
-    if (!job) return;
-    if (job->started) {
-        pthread_mutex_lock(&job->lock);
-        job->cancel = true;
-        pthread_mutex_unlock(&job->lock);
-        wake_job(job);
-        pthread_join(job->thread, NULL);
-    }
+static void free_job(ProcJob *job) {
     for (int i = 0; i < 2; i++) {
         if (job->wake[i] >= 0) close(job->wake[i]);
         free(job->output[i].bytes);
@@ -149,6 +148,28 @@ static void stop_job(void *resource) {
     pthread_cond_destroy(&job->changed);
     pthread_mutex_destroy(&job->lock);
     free(job);
+}
+
+static void stop_job(void *resource) {
+    ProcJob *job = resource;
+    if (!job) return;
+    if (job->started) {
+        pthread_mutex_lock(&job->lock);
+        if (job->detached && !job->done) {
+            /* A detached child outlives its handle: the job's thread goes on
+             * reaping it, and frees the job once it has. */
+            pthread_t thread = job->thread;
+            job->orphaned = true;
+            pthread_mutex_unlock(&job->lock);
+            pthread_detach(thread);
+            return;
+        }
+        if (!job->detached) job->cancel = true;
+        pthread_mutex_unlock(&job->lock);
+        wake_job(job);
+        pthread_join(job->thread, NULL);
+    }
+    free_job(job);
 }
 
 static bool capture(ProcJob *job, ProcCapture *out, const unsigned char *bytes, size_t size) {
@@ -212,11 +233,28 @@ static void *execute(void *resource) {
     int input[2] = {-1,-1}, output[2][2] = {{-1,-1},{-1,-1}};
     int owner[2] = {-1,-1}, receipt[2] = {-1,-1};
     int report[2] = {-1,-1};
+    int null_device = -1;
     pid_t pid = -1;
     if (cancelled(job)) { job->cancelled = true; goto finish; }
-    if (owned_pipe(input, O_CLOEXEC) || owned_pipe(output[0], O_CLOEXEC) || owned_pipe(output[1], O_CLOEXEC)) {
+    if ((job->stdio[0] == PROC_STDIO_PIPE && owned_pipe(input, O_CLOEXEC)) ||
+        (job->stdio[1] == PROC_STDIO_PIPE && owned_pipe(output[0], O_CLOEXEC)) ||
+        (job->stdio[2] == PROC_STDIO_PIPE && owned_pipe(output[1], O_CLOEXEC))) {
         job->launch_error = errno; job->launch_stage = "pipe"; goto finish;
     }
+    if ((job->stdio[1] == PROC_STDIO_NULL || job->stdio[2] == PROC_STDIO_NULL) &&
+        (null_device = open("/dev/null", O_WRONLY | O_CLOEXEC)) < 0) {
+        job->launch_error = errno; job->launch_stage = "null-device"; goto finish;
+    }
+    /* The child's standard descriptors, and its process group: its own unless
+     * (group caller) keeps it in the caller's, as a foreground job that reads
+     * the caller's terminal must be; a background group reading the terminal
+     * is stopped by it. A detached child leads a session of its own. */
+    int in = job->stdio[0] == PROC_STDIO_INHERIT ? STDIN_FILENO : input[0];
+    int out = job->stdio[1] == PROC_STDIO_PIPE ? output[0][1]
+        : job->stdio[1] == PROC_STDIO_INHERIT ? STDOUT_FILENO : null_device;
+    int err = job->stdio[2] == PROC_STDIO_PIPE ? output[1][1]
+        : job->stdio[2] == PROC_STDIO_INHERIT ? STDERR_FILENO : null_device;
+    int new_group = job->detached ? 2 : !job->caller_group;
     if (job->owned_tree &&
         (owned_pipe(owner, O_CLOEXEC) ||
          owned_pipe(receipt, O_CLOEXEC | O_NONBLOCK))) {
@@ -235,14 +273,17 @@ static void *execute(void *resource) {
     sigset_t empty, defaults;
     sigemptyset(&empty); sigfillset(&defaults);
 #define SPAWN_STEP(operation) do { if (!error) error = (operation); } while (0)
-    SPAWN_STEP(posix_spawnattr_setflags(&attributes, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF));
-    SPAWN_STEP(posix_spawnattr_setpgroup(&attributes, 0));
+    SPAWN_STEP(posix_spawnattr_setflags(&attributes,
+        (new_group == 2 ? POSIX_SPAWN_SETSID : new_group ? POSIX_SPAWN_SETPGROUP : 0) |
+        POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF));
+    if (new_group == 1) SPAWN_STEP(posix_spawnattr_setpgroup(&attributes, 0));
     SPAWN_STEP(posix_spawnattr_setsigmask(&attributes, &empty));
     SPAWN_STEP(posix_spawnattr_setsigdefault(&attributes, &defaults));
     SPAWN_STEP(posix_spawn_file_actions_addchdir_np(&actions, job->cwd));
-    SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, input[0], STDIN_FILENO));
-    SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, output[0][1], STDOUT_FILENO));
-    SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, output[1][1], STDERR_FILENO));
+    /* An inherited descriptor is already in place. */
+    if (in != STDIN_FILENO) SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, in, STDIN_FILENO));
+    if (out != STDOUT_FILENO) SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, out, STDOUT_FILENO));
+    if (err != STDERR_FILENO) SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, err, STDERR_FILENO));
     if (job->owned_tree) {
         SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, owner[0], 3));
         SPAWN_STEP(posix_spawn_file_actions_adddup2(&actions, receipt[1], 4));
@@ -270,14 +311,13 @@ static void *execute(void *resource) {
     pid = fork();
     if (!pid) {
         if (job->owned_tree) {
-            cetta_proc_child_exec_scoped(
+            cetta_proc_child_exec_group_fds(
                 job->program, job->argv, job->env, job->cwd,
-                input[0], output[0][1], output[1][1], report[1],
-                owner[0], receipt[1]);
+                in, out, err, report[1], new_group, owner[0], receipt[1]);
         }
-        cetta_proc_child_exec(
+        cetta_proc_child_exec_group(
             job->program, job->argv, job->env, job->cwd,
-            input[0], output[0][1], output[1][1], report[1]);
+            in, out, err, report[1], new_group);
     }
     int fork_error = errno;
     (void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
@@ -288,11 +328,12 @@ static void *execute(void *resource) {
         close(receipt[1]); receipt[1] = -1;
     }
 #endif
-    close(input[0]); input[0] = -1;
-    for (int i = 0; i < 2; i++) { close(output[i][1]); output[i][1] = -1; }
-    if (fcntl(input[1], F_SETFL, O_NONBLOCK) < 0) job->host_error = errno;
+    if (input[0] >= 0) { close(input[0]); input[0] = -1; }
+    for (int i = 0; i < 2; i++) if (output[i][1] >= 0) { close(output[i][1]); output[i][1] = -1; }
+    if (null_device >= 0) { close(null_device); null_device = -1; }
+    if (input[1] >= 0 && fcntl(input[1], F_SETFL, O_NONBLOCK) < 0) job->host_error = errno;
     for (int i = 0; i < 2; i++)
-        if (fcntl(output[i][0], F_SETFL, O_NONBLOCK) < 0) job->host_error = errno;
+        if (output[i][0] >= 0 && fcntl(output[i][0], F_SETFL, O_NONBLOCK) < 0) job->host_error = errno;
     /* SIGPIPE is blocked only in this owner; child defaults were restored. */
     sigset_t broken;
     sigemptyset(&broken); sigaddset(&broken, SIGPIPE);
@@ -322,7 +363,10 @@ static void *execute(void *resource) {
             {input_ready ? input[1] : -1, POLLOUT, 0},
             {readable[0], POLLIN, 0}, {readable[1], POLLIN, 0},
             {child_exited ? -1 : exited_fd, POLLIN, 0}};
-        int ready = poll(fds, 5, 20);
+        /* A pidfd reports the exit and the wakeup pipe a cancellation, so
+         * without a deadline nothing needs a tick; a detached child may live
+         * for days. */
+        int ready = poll(fds, 5, exited_fd >= 0 && !job->timeout_ms ? -1 : 20);
         if (ready < 0 && errno != EINTR) { job->host_error = errno; break; }
         if (fds[0].revents & POLLIN) {
             unsigned char notifications[64];
@@ -397,6 +441,7 @@ static void *execute(void *resource) {
     }
     for (int i = 0; i < 2; i++) if (output[i][0] >= 0) drain(job, &output[i][0], &job->output[i]);
 finish:
+    if (null_device >= 0) close(null_device);
     for (int i = 0; i < 2; i++) {
         if (report[i] >= 0) close(report[i]);
         if (input[i] >= 0) close(input[i]);
@@ -407,8 +452,10 @@ finish:
     pthread_mutex_lock(&job->lock);
     job->input_ended = true;
     job->done = true;
+    bool orphaned = job->orphaned;
     pthread_cond_broadcast(&job->changed);
     pthread_mutex_unlock(&job->lock);
+    if (orphaned) free_job(job);
     return NULL;
 }
 
@@ -467,13 +514,20 @@ static bool prepare_scope(ProcJob *job) {
     }
     size_t count = 0;
     while (job->argv[count]) count++;
-    if (count > SIZE_MAX / sizeof(char *) - 3) { free(companion); errno = EOVERFLOW; return false; }
-    char **arguments = calloc(count + 3, sizeof(char *));
+    /* The companion releases what the command leaves running when it was
+     * told so before the program it starts. */
+    size_t flag = job->release_on_exit ? 1u : 0u;
+    if (count > SIZE_MAX / sizeof(char *) - 4) { free(companion); errno = EOVERFLOW; return false; }
+    char **arguments = calloc(count + 3 + flag, sizeof(char *));
     char *executable = strdup(companion);
-    if (!arguments || !executable) { free(companion); free(arguments); free(executable); return false; }
+    char *release = flag ? strdup(CETTA_PROCESS_SCOPE_RELEASE_ON_EXIT_V1) : NULL;
+    if (!arguments || !executable || (flag && !release)) {
+        free(companion); free(arguments); free(executable); free(release); return false;
+    }
     arguments[0] = companion;
-    arguments[1] = job->program;
-    for (size_t i = 0; i < count; i++) arguments[i + 2] = job->argv[i];
+    if (flag) arguments[1] = release;
+    arguments[1 + flag] = job->program;
+    for (size_t i = 0; i < count; i++) arguments[i + 2 + flag] = job->argv[i];
     free(job->argv);
     job->argv = arguments; job->program = executable;
     return true;
@@ -520,7 +574,8 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
         unsigned bit = atom_is_symbol(key, "cwd") ? 1u : atom_is_symbol(key, "env") ? 2u :
             atom_is_symbol(key, "stdin") ? 4u : atom_is_symbol(key, "timeout-ms") ? 8u :
             atom_is_symbol(key, "max-bytes") ? 16u : atom_is_symbol(key, "lifetime") ? 32u :
-            atom_is_symbol(key, "mode") ? 64u : 0u;
+            atom_is_symbol(key, "stdout") ? 64u : atom_is_symbol(key, "stderr") ? 128u :
+            atom_is_symbol(key, "group") ? 256u : atom_is_symbol(key, "mode") ? 512u : 0u;
         if (!bit || (seen & bit)) { *reason = "unknown or duplicate process option"; goto refuse; }
         seen |= bit;
         if (bit == 1u) {
@@ -531,21 +586,34 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
             }
         }
         else if (bit == 2u) env = value;
-        else if (bit == 64u) {
+        else if (bit == 512u) {
             if (!atom_is_symbol(value, "stream") && !atom_is_symbol(value, "capture")) {
                 *reason = "mode must be capture or stream"; goto refuse;
             }
             job->streaming = atom_is_symbol(value, "stream");
         }
         else if (bit == 32u) {
-            if (!atom_is_symbol(value, "owner") && !atom_is_symbol(value, "group")) {
-                *reason = "lifetime must be owner or group"; goto refuse;
+            if (atom_is_symbol(value, "owner")) job->owned_tree = true;
+            else if (atom_is_symbol(value, "run")) job->owned_tree = job->release_on_exit = true;
+            else if (atom_is_symbol(value, "detached")) job->detached = true;
+            else if (!atom_is_symbol(value, "group")) {
+                *reason = "lifetime must be group, owner, run or detached"; goto refuse;
             }
-            job->owned_tree = atom_is_symbol(value, "owner");
         }
+        else if (bit == 256u) {
+            if (atom_is_symbol(value, "caller")) job->caller_group = true;
+            else if (!atom_is_symbol(value, "own")) { *reason = "group must be own or caller"; goto refuse; }
+        }
+        else if (bit == 64u || bit == 128u) {
+            int stream = bit == 64u ? 1 : 2;
+            if (atom_is_symbol(value, "inherit")) job->stdio[stream] = PROC_STDIO_INHERIT;
+            else if (atom_is_symbol(value, "null")) job->stdio[stream] = PROC_STDIO_NULL;
+            else { *reason = "stdout and stderr must be inherit or null"; goto refuse; }
+        }
+        else if (bit == 4u && atom_is_symbol(value, "inherit")) job->stdio[0] = PROC_STDIO_INHERIT;
         else if (bit == 4u) {
             const char *bytes;
-            if (!bytes_arg(value, &bytes, &job->input_len)) { *reason = "stdin must be a byte string"; goto refuse; }
+            if (!bytes_arg(value, &bytes, &job->input_len)) { *reason = "stdin must be a byte string or inherit"; goto refuse; }
             job->input = malloc(job->input_len ? job->input_len : 1u);
             if (!job->input) goto allocation;
             memcpy(job->input, bytes, job->input_len);
@@ -560,7 +628,17 @@ static ProcJob *prepare(Atom *argv, Atom *options, const char **kind, const char
         goto refuse;
     }
     job->input_size = job->input_capacity = job->input_len;
-    job->input_closed = !job->streaming;
+    job->input_closed = !job->streaming || job->stdio[0] != PROC_STDIO_PIPE;
+    job->input_ended = job->stdio[0] != PROC_STDIO_PIPE;
+    /* Nobody reads a detached child's output once its handle is gone, and a
+     * child apart from the caller's terminal cannot share its input. */
+    if (job->detached && (job->stdio[0] == PROC_STDIO_INHERIT || job->caller_group ||
+                          job->stdio[1] == PROC_STDIO_PIPE || job->stdio[2] == PROC_STDIO_PIPE)) {
+        *reason = "a detached child's output must be inherit or null, and it shares neither the caller's input nor its group";
+        goto refuse;
+    }
+    /* A stream that is not captured has nothing more to give. */
+    for (int i = 0; i < 2; i++) job->output[i].eof = job->stdio[i + 1] != PROC_STDIO_PIPE;
     char *current = getcwd(NULL, 0);
     if (!current) goto host_failure;
     job->cwd = join_path(current, cwd ? cwd : ".");

@@ -690,13 +690,16 @@ int main(int argc, char **argv) {
     const uint32_t first = 0u;
 #endif
     CHECK(capabilities && capabilities->kind == ATOM_EXPR &&
-              capabilities->expr.len == 7u + first &&
+              capabilities->expr.len == 10u + first &&
               (first == 0u ||
                atom_is_symbol(capabilities->expr.elems[0], "siwc")) &&
               atom_is_symbol(capabilities->expr.elems[first], "http") &&
               atom_is_symbol(capabilities->expr.elems[first + 1u], "proc") &&
-              atom_is_symbol(capabilities->expr.elems[first + 2u], "timer"),
-          "native providers advertise HTTP, processes and timers");
+              atom_is_symbol(capabilities->expr.elems[first + 2u], "timer") &&
+              atom_is_symbol(capabilities->expr.elems[first + 7u], "ws") &&
+              atom_is_symbol(capabilities->expr.elems[first + 8u], "tcp") &&
+              atom_is_symbol(capabilities->expr.elems[first + 9u], "ws-server"),
+          "native providers advertise HTTP, processes, timers, WebSockets and TCP");
 
     if (getenv("CETTA_IO_REPLAY_ONLY")) {
         char replay_url[512];

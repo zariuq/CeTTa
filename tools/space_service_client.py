@@ -418,6 +418,18 @@ class Space:
         return self.client.call("observe", self.uuid, self.id,
                                 E("reads", *reads), E("writes", *writes), limit, lease_ms)
 
+    def observe_until(self, reads=(), writes=(), limit: int = 4096, lease_ms: int = 30000,
+                      *, request_id=None, until_ms=None):
+        """Create within a known local monotonic deadline; retain identity for cleanup."""
+        boot = self.client.hello()[3]
+        creation = request_id or uuid.uuid4().hex
+        until = until_ms if until_ms is not None else time.monotonic_ns() // 1000000 + int(self.client.timeout * 1000)
+        return self.client.call("observe-until", self.uuid, self.id, E("reads", *reads), E("writes", *writes),
+                                limit, lease_ms, boot, until, request_id=creation)
+
+    def abandon_observation(self, boot, creation, until_ms):
+        return self.client.call("observe-abandon", self.uuid, self.id, boot, creation, until_ms)
+
     def observe_fetch(self, observation, scope: int, offset: int = 0, count: int = 128):
         return self.client.call("observe-fetch", observation[1], observation[2], scope, offset, count)
 

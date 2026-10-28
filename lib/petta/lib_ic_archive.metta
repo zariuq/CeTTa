@@ -1,0 +1,242 @@
+; IC1: complete first-order program archives. The fixed format table governs
+; encoding and decoding. Operator/literal identities, names, definitions,
+; substitutions and residuals all contribute to encoded cost.
+!(import! &self (library lib_binary_schema))
+!(import! &self (library lib_ic_templates))
+
+(= (ic-archive:schema)
+   ((Binary:Form 1 IC:Archive
+      (Text (Record IC:Observation) (Vector (Record IC:Operator))
+       (Vector (Either (IC:Name IC:LiteralRef))) (Vector (Record IC:Literal))
+       (Vector (Record IC:Definition)) (Vector (Either (IC:Raw IC:Call)))))
+    (Binary:Form 2 IC:Observation (Symbol Bytes))
+    (Binary:Form 3 IC:Operator (Symbol (Vector (Record IC:Slot))))
+    (Binary:Form 4 IC:Slot (Symbol Symbol))
+    (Binary:Form 5 IC:Name (Text))
+    (Binary:Form 6 IC:LiteralRef (Natural))
+    (Binary:Form 7 IC:Literal (Symbol Bytes))
+    (Binary:Form 8 IC:Definition
+      (Text (Vector (Record IC:Slot)) (Vector (Either (IC:Node IC:Hole)))))
+    (Binary:Form 9 IC:Node (Natural (Vector (Either (IC:Node IC:Hole)))))
+    (Binary:Form 10 IC:Hole (Symbol Natural))
+    (Binary:Form 11 IC:Raw ((Vector (Record IC:Slot)) (Vector (Record IC:Node))))
+    (Binary:Form 12 IC:Call (Natural (Vector (Record IC:Binding))))
+    (Binary:Form 13 IC:Binding (Symbol Natural (Record IC:Node)))))
+
+(= (ic-archive:heads? $signature $heads $literals)
+   (if (== $signature ()) (== $heads ())
+     (if (== $heads ()) False
+       (let* ((($operator $operators) (decons-atom $signature))
+              (($head $tail) (decons-atom $heads)))
+         (case ($operator $head)
+           ((((IC:Operator $sort $slots) (IC:Name $name))
+             (and (binary-schema:text? $name) (ic-archive:heads? $operators $tail $literals)))
+            (((IC:Operator $sort ()) (IC:LiteralRef $index))
+             (if (ic-template:natural? $index)
+               (case (ic-template:operator $literals $index)
+                 (((IC:Some $literal) (ic-archive:heads? $operators $tail $literals))
+                  ($other False))) False))
+            ($other False)))))))
+
+(= (ic-archive:literals? $literals)
+   (if (== $literals ()) True
+     (let ($literal $tail) (decons-atom $literals)
+       (case $literal
+         (((IC:Literal $kind $bytes)
+           (if (binary-tree:bytes? $bytes)
+             (and
+               (case $kind
+                 ((U8 True)
+                  (I64 (== (tensor:shape $bytes) (8)))
+                  (F64 (== (tensor:shape $bytes) (8)))
+                  (String (binary-schema:text? (binary:from-utf8 $bytes)))
+                  (Symbol (== (get-metatype (binary:from-symbol-utf8 $bytes)) Symbol))
+                  ($other False)))
+               (ic-archive:literals? $tail)) False))
+          ($other False))))))
+
+(= (ic-archive:definitions? $signature $definitions)
+   (if (== $definitions ()) True
+     (let ($definition $tail) (decons-atom $definitions)
+       (case $definition
+         (((IC:Definition $name $slots $patterns)
+           (if (and (binary-schema:text? $name) (ic-template:slots? $slots))
+             (case (ic-template:admit-list $signature $slots $patterns ())
+               (((IC:Some $holes) (ic-archive:definitions? $signature $tail)) ($other False)))
+             False))
+          ($other False))))))
+
+(= (ic-archive:all-bound? $holes $environment)
+   (if (== $holes ()) True
+     (let ($hole $tail) (decons-atom $holes)
+       (case $hole
+         (((IC:Binding $role $index $sort)
+           (and (not (== (ic-template:lookup $environment $role $index) IC:None))
+                (ic-archive:all-bound? $tail $environment))))))))
+
+(= (ic-archive:environment? $signature $holes $environment $seen)
+   (if (== $environment ()) (ic-archive:all-bound? $holes $seen)
+     (let ($binding $tail) (decons-atom $environment)
+       (case $binding
+         (((IC:Binding $role $index $source)
+           (if (and (ic-template:natural? $index)
+                    (== (ic-template:lookup $seen $role $index) IC:None))
+             (case (ic-template:lookup $holes $role $index)
+               (((IC:Some $sort)
+                 (if (ic-template:source? $signature $sort $source)
+                   (let $next (cons-atom $binding $seen)
+                     (ic-archive:environment? $signature $holes $tail $next)) False))
+                ($other False))) False))
+          ($other False))))))
+
+(= (ic-archive:restore-item $signature $definitions $item)
+   (case $item
+     (((IC:Raw $slots $sources)
+       (if (and (ic-template:slots? $slots) (ic-template:sources? $signature $slots $sources))
+         (IC:Some (IC:Packet $slots $sources)) IC:None))
+      ((IC:Call $index $environment)
+       (if (ic-template:natural? $index)
+         (case (ic-template:operator $definitions $index)
+           (((IC:Some (IC:Definition $name $slots $patterns))
+             (case (ic-template:admit-list $signature $slots $patterns ())
+               (((IC:Some $holes)
+                 (if (ic-archive:environment? $signature $holes $environment ())
+                   (case (ic-template:expand-list $environment $patterns)
+                     (((IC:Some $sources) (IC:Some (IC:Packet $slots $sources))) ($other IC:None)))
+                   IC:None))
+                ($other IC:None))))
+            ($other IC:None))) IC:None))
+      ($other IC:None))))
+
+(= (ic-archive:restore-items $signature $definitions $items)
+   (if (== $items ()) (IC:Some ())
+     (let ($item $tail) (decons-atom $items)
+       (case (ic-archive:restore-item $signature $definitions $item)
+         (((IC:Some $packet)
+           (case (ic-archive:restore-items $signature $definitions $tail)
+             (((IC:Some $rest) (let $packets (cons-atom $packet $rest) (IC:Some $packets)))
+              ($other IC:None))))
+          ($other IC:None))))))
+
+; Called after schema admission. The observation profile is exact ordered
+; syntax. Approximate numerical profiles require their own task observation.
+(= (ic-archive:restore $archive)
+   (case $archive
+     (((IC:Archive "IC1" (IC:Observation ExactSyntax $options) $signature $heads $literals $definitions $items)
+       (if (and (== (tensor:shape $options) (0))
+                (and (ic-template:signature? $signature)
+                  (and (ic-archive:literals? $literals)
+                    (and (ic-archive:heads? $signature $heads $literals)
+                         (ic-archive:definitions? $signature $definitions)))))
+         (ic-archive:restore-items $signature $definitions $items) IC:None))
+      ($other IC:None))))
+
+(= (ic-archive:prepare $archive)
+   (case (binary-schema:to-tree (ic-archive:schema) (Record IC:Archive) $archive)
+     (((Binary:Tree $tree)
+       (case (ic-archive:restore $archive)
+         (((IC:Some $sources)
+           (IC:PreparedArchive $tree (ic-archive:catalog $archive) $sources))
+          ($other IC:None))))
+      ($other IC:None))))
+(= (ic-archive:pack $archive)
+   (case (ic-archive:prepare $archive)
+     (((IC:PreparedArchive $tree $catalog $sources) (binary-tree:encode $tree))
+      ($other (Binary:TreeFault InvalidArchive)))))
+(= (ic-archive:unpack $bytes)
+   (case (binary-schema:decode (ic-archive:schema) (Record IC:Archive) $bytes)
+     (((Binary:Value $archive)
+       (case (ic-archive:restore $archive)
+         (((IC:Some $sources) (IC:Some $archive)) ($other (Binary:TreeFault InvalidArchive)))))
+      ($other $other))))
+
+(= (ic-archive:catalog $archive)
+   (case $archive
+     (((IC:Archive $version $observation $signature $heads $literals $definitions $items)
+       (IC:Catalog $version $observation $signature $heads $literals)))))
+
+; Validate against the original task at every step. Costs come from complete
+; packed archives, including all definitions and argument records.
+(= (ic-archive:check $original $current $candidate)
+   (case ((ic-archive:prepare $original) (ic-archive:prepare $current) (ic-archive:prepare $candidate))
+     ((((IC:PreparedArchive $original-tree $catalog $source)
+        (IC:PreparedArchive $before-tree $before-catalog $before-source)
+        (IC:PreparedArchive $after-tree $after-catalog $after-source))
+       (if (and (== $catalog $before-catalog) (== $catalog $after-catalog))
+         (if (and (== $source $before-source) (== $source $after-source))
+             (case ((binary-tree:encode $before-tree) (binary-tree:encode $after-tree))
+               ((((Binary:TreeBytes $before) (Binary:TreeBytes $after))
+                 (case ((tensor:shape $before) (tensor:shape $after))
+                   (((($before-size) ($after-size))
+                     (if (< $after-size $before-size)
+                       (IC:ArchiveAccepted $candidate $after $before-size $after-size)
+                       (IC:ArchiveRejected NotSmaller))))))
+                ($other (IC:ArchiveRejected InvalidEncoding))))
+             (IC:ArchiveRejected Reconstruction))
+         (IC:ArchiveRejected Catalog)))
+      ($other (IC:ArchiveRejected InvalidArchive)))))
+
+; Packet roots are disjoint occurrence sites. A source adapter proposing
+; subterm sites must resolve overlap before calling acceptance.
+(= (ic-archive:replace-items $signature $definitions $index $slots $patterns $items)
+   (if (== $items ()) (IC:Rewritten () 0)
+     (let ($item $tail) (decons-atom $items)
+       (case (ic-archive:restore-item $signature $definitions $item)
+         (((IC:Some (IC:Packet $actual-slots $sources))
+           (let $replacement
+             (if (== $actual-slots $slots)
+               (case (ic-template:match $signature $slots $patterns $sources)
+                 (((IC:Some $environment) (IC:Replacement (IC:Call $index $environment) 1))
+                  ($other (IC:Replacement $item 0))))
+               (IC:Replacement $item 0))
+             (case $replacement
+               (((IC:Replacement $next $count)
+                 (case (ic-archive:replace-items $signature $definitions $index $slots $patterns $tail)
+                   (((IC:Rewritten $rest $later)
+                     (let $result (cons-atom $next $rest) (IC:Rewritten $result (+ $count $later))))
+                    ($other IC:None))))))))
+          ($other IC:None))))))
+
+(= (ic-archive:factor $current $name $slots $patterns)
+   (case (ic-archive:prepare $current)
+     (((IC:PreparedArchive $tree $catalog $sources)
+       (case $current
+         (((IC:Archive $version $observation $signature $heads $literals $definitions $items)
+           (if (and (binary-schema:text? $name) (ic-template:slots? $slots))
+             (case (ic-template:admit-list $signature $slots $patterns ())
+               (((IC:Some $holes)
+                 (let $index (size-atom $definitions)
+                   (case (ic-archive:replace-items $signature $definitions $index $slots $patterns $items)
+                     (((IC:Rewritten $residual $count)
+                       (let $library (union-atom $definitions ((IC:Definition $name $slots $patterns)))
+                         (IC:Proposal
+                           (IC:Archive $version $observation $signature $heads $literals $library $residual)
+                           $count)))
+                      ($other IC:None)))))
+                ($other IC:None))) IC:None)))))
+      ($other IC:None))))
+
+(= (ic-archive:install $original $current $name $slots $patterns)
+   (case (ic-archive:factor $current $name $slots $patterns)
+     (((IC:Proposal $candidate $count) (ic-archive:check $original $current $candidate))
+      ($other (IC:ArchiveRejected InvalidProposal)))))
+
+; A seed operation for the bounded learner. Search decides which pairs and
+; additional top-down templates to try; this operation never claims exhaustion.
+(= (ic-archive:learn-pair $original $current $name $left-index $right-index)
+   (if (and (ic-template:natural? $left-index) (ic-template:natural? $right-index))
+     (case (ic-archive:prepare $current)
+       (((IC:PreparedArchive $tree $catalog $sources)
+         (case ((ic-template:operator $sources $left-index) (ic-template:operator $sources $right-index))
+           ((((IC:Some (IC:Packet $left-slots $left)) (IC:Some (IC:Packet $right-slots $right)))
+             (if (== $left-slots $right-slots)
+               (case $current
+                 (((IC:Archive $version $observation $signature $heads $literals $definitions $items)
+                   (case (ic-template:generalize $signature $left-slots $left $right)
+                     (((IC:Generalized $patterns $left-env $right-env)
+                       (ic-archive:install $original $current $name $left-slots $patterns))
+                      ($other (IC:ArchiveRejected InvalidProposal)))))))
+               (IC:ArchiveRejected IncompatibleTasks)))
+            ($other (IC:ArchiveRejected InvalidSelection)))))
+        ($other (IC:ArchiveRejected InvalidArchive))))
+     (IC:ArchiveRejected InvalidSelection)))

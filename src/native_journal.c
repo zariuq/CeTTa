@@ -48,17 +48,31 @@ static CettaJournalStatus read_all(int fd, unsigned char *data, size_t size,
 
 CettaJournalStatus cetta_journal_append(int fd, const unsigned char *data,
         size_t size, bool synchronize, uint64_t *written) {
-    if (fd < 0 || (size && !data) || size > UINT32_MAX ||
-        (written && *written > UINT64_MAX - FRAME_HEADER - size))
-        return CETTA_JOURNAL_INVALID;
+    CettaJournalPart part={data,size};
+    return cetta_journal_append_parts(fd,&part,1,synchronize,written);
+}
+
+CettaJournalStatus cetta_journal_append_parts(int fd, const CettaJournalPart *parts,
+        size_t count, bool synchronize, uint64_t *written) {
+    if (fd<0 || (count && !parts)) return CETTA_JOURNAL_INVALID;
+    size_t size=0;
+    for (size_t i=0;i<count;++i) {
+        if ((parts[i].size && !parts[i].data) || parts[i].size>UINT32_MAX-size)
+            return CETTA_JOURNAL_INVALID;
+        size+=parts[i].size;
+    }
+    if (written && *written>UINT64_MAX-FRAME_HEADER-size) return CETTA_JOURNAL_INVALID;
     unsigned char header[FRAME_HEADER] = {'C', 'S', 'L', '1'};
     for (size_t i = 0; i < 4; ++i)
         header[4 + i] = (unsigned char)(size >> (24 - 8 * i));
-    char digest[65];
-    cetta_native_sha256_hex(data, size, digest);
+    CettaNativeSha256 hash; cetta_native_sha256_init(&hash);
+    for (size_t i=0;i<count;++i) cetta_native_sha256_update(&hash,parts[i].data,parts[i].size);
+    char digest[65]; cetta_native_sha256_finish_hex(&hash,digest);
     memcpy(header + 8, digest, 64);
-    if (!write_all(fd, header, sizeof(header)) || !write_all(fd, data, size) ||
-        (synchronize && !synchronize_file(fd))) return CETTA_JOURNAL_UNKNOWN;
+    if (!write_all(fd,header,sizeof(header))) return CETTA_JOURNAL_UNKNOWN;
+    for (size_t i=0;i<count;++i)
+        if (!write_all(fd,parts[i].data,parts[i].size)) return CETTA_JOURNAL_UNKNOWN;
+    if (synchronize && !synchronize_file(fd)) return CETTA_JOURNAL_UNKNOWN;
     if (written) *written += FRAME_HEADER + size;
     return CETTA_JOURNAL_OK;
 }
@@ -105,6 +119,39 @@ CettaJournalStatus cetta_journal_trim_tail(int fd, uint64_t valid_bytes) {
     int result;
     do { result = ftruncate(fd, (off_t)valid_bytes); } while (result < 0 && errno == EINTR);
     if (result < 0 || !synchronize_file(fd)) return CETTA_JOURNAL_UNKNOWN;
+    return CETTA_JOURNAL_OK;
+}
+
+CettaJournalStatus cetta_journal_copy(int source, uint64_t offset,
+        uint64_t file_size, size_t max_record_bytes, int destination,
+        uint64_t *written) {
+    if (source<0 || destination<0 || !written || offset>file_size ||
+        file_size>INT64_MAX) return CETTA_JOURNAL_INVALID;
+    if (offset==file_size) return CETTA_JOURNAL_END;
+    if (file_size-offset<FRAME_HEADER) return CETTA_JOURNAL_TORN;
+    unsigned char header[FRAME_HEADER], buffer[32768];
+    CettaJournalStatus status=read_all(source,header,sizeof(header),offset);
+    if (status!=CETTA_JOURNAL_OK) return status;
+    if (memcmp(header,"CSL1",4)) return CETTA_JOURNAL_CORRUPT;
+    size_t size=0;
+    for (size_t i=4;i<8;++i) size=(size<<8)|header[i];
+    if (size>max_record_bytes) return CETTA_JOURNAL_CORRUPT;
+    if ((uint64_t)size>file_size-offset-FRAME_HEADER) return CETTA_JOURNAL_TORN;
+    if (*written>INT64_MAX-FRAME_HEADER-size) return CETTA_JOURNAL_INVALID;
+    if (!write_all(destination,header,sizeof(header))) return CETTA_JOURNAL_UNKNOWN;
+    CettaNativeSha256 hash; cetta_native_sha256_init(&hash);
+    for (size_t done=0;done<size;) {
+        size_t amount=size-done;
+        if (amount>sizeof(buffer)) amount=sizeof(buffer);
+        status=read_all(source,buffer,amount,offset+FRAME_HEADER+done);
+        if (status!=CETTA_JOURNAL_OK) return status;
+        cetta_native_sha256_update(&hash,buffer,amount);
+        if (!write_all(destination,buffer,amount)) return CETTA_JOURNAL_UNKNOWN;
+        done+=amount;
+    }
+    char digest[65]; cetta_native_sha256_finish_hex(&hash,digest);
+    if (memcmp(digest,header+8,64)) return CETTA_JOURNAL_CORRUPT;
+    *written+=FRAME_HEADER+size;
     return CETTA_JOURNAL_OK;
 }
 

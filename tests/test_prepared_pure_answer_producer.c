@@ -364,7 +364,9 @@ static CettaPreparedPureProjectionMode entry_projection_mode;
 static SymbolId entry_view_head;
 
 static CettaPreparedPureExpressionViewState entry_view(
-    Space *space, const Atom *expression, CettaPreparedPureExpressionView *view) {
+    Space *space, const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view) {
+    (void)computation;
     (void)space;
     if (expression->kind != ATOM_EXPR || expression->expr.len != 2u ||
         !atom_is_symbol_id(expression->expr.elems[0], entry_view_head))
@@ -1598,7 +1600,9 @@ static void test_cursor_limit_keeps_frontier(void) {
 }
 
 static CettaPreparedPureExpressionViewState zero_view(
-    Space *space, const Atom *expression, CettaPreparedPureExpressionView *view) {
+    Space *space, const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view) {
+    (void)computation;
     (void)space;
     (void)view;
     return expression && expression->kind == ATOM_EXPR &&
@@ -3291,9 +3295,10 @@ static CettaPreparedPureProgram *compile_scalar(Fixture *fixture, const char *ca
 
 static size_t result_preparation_views;
 static CettaPreparedPureExpressionViewState counted_zero_view(
-    Space *space, const Atom *expression, CettaPreparedPureExpressionView *view) {
+    Space *space, const Atom *expression, const CettaComputationPlan *computation,
+    CettaPreparedPureExpressionView *view) {
     result_preparation_views++;
-    return zero_view(space, expression, view);
+    return zero_view(space, expression, computation, view);
 }
 
 static CettaPreparedPureProgram *compile_result(Fixture *fixture,

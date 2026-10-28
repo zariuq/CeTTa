@@ -414,12 +414,21 @@ def lock_cases(engine, failures):
         failures.append(("Python is refused a native lock", "acquired", "EWOULDBLOCK"))
     except BlockingIOError:
         pass
+    probe = ("!(import! &self (library fs))\n"
+             "!(let $w (fs:open-write %s (\"append\") 0) (println! (RESULT (fs:lock $w %s))))\n")
+    for mode in ("exclusive-nowait", "shared-nowait"):
+        held = engine.results(probe % (literal(str(path)), mode))
+        if held != ["fs:held"]:
+            failures.append(("native %s is told the lock is held" % mode, held, ["fs:held"]))
     holder.communicate(b"\n", timeout=60)
+    free = engine.results(probe % (literal(str(path)), "exclusive-nowait"))
+    if free != ["fs:locked"]:
+        failures.append(("native exclusive-nowait takes a free lock", free, ["fs:locked"]))
     fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
     os.close(descriptor)
     if path.read_bytes() != b"python\nnative\nnative again\n":
         failures.append(("native holder's write", path.read_bytes(), b"python\nnative\nnative again\n"))
-    return 2
+    return 5
 
 
 def interleaving(engine, failures, writers, count, seed):

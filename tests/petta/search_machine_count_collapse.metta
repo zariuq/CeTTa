@@ -125,3 +125,13 @@
    (match &self
           ($relation count-dynamic-marker)
           ($relation count-dynamic-marker)))
+
+; A binder the query reads outside its let keeps its collection: counting it
+; inside the let changes nothing the query shows.
+!(bar (let $items (counted-items) (length $items)) $items)
+!(bar (let* (($items (counted-items))) (length $items)) $items)
+
+; A collapse whose binder nothing reads is made for its effects alone.
+!(let $made (collapse (match &self (counted $x) (add-atom &self (counted-made $x)))) done)
+!(let* (($made (collapse (match &self (counted b) (add-atom &self (counted-made c)))))) done)
+!(length (collapse (match &self (counted-made $x) $x)))

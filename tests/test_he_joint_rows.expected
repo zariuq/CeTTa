@@ -3,7 +3,7 @@
 [(took 1 two), (took 2 one)]
 [()]
 [p, q, p, q]
-[(p q p q)]
+[(p p q q)]
 [(opened k), (opened k2)]
 [(k k2)]
 [6, 4]

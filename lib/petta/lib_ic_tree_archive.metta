@@ -1,0 +1,127 @@
+; Ordered byte trees as ordinary IC1 tasks. The catalogue, packed payloads,
+; node arities and every root occurrence belong to the complete archive.
+; Native DAG admission and key factorization are reused; search stays authored.
+!(import! &self (library dag))
+!(import! &self (library list))
+!(import! &self (library lib_ic_archive))
+
+(= (ic-tree-archive:descriptors $records)
+   (if (== $records ()) ()
+     (let ($record $rest) (decons-atom $records)
+       (let $tail (ic-tree-archive:descriptors $rest)
+         (case $record
+           (((Binary:Leaf $bytes) (cons-atom (IC:BytesKey $bytes) $tail))
+            ((Binary:Node $tag $children)
+             (let $tagged (cons-atom (IC:BytesKey $tag) $tail)
+               (cons-atom (IC:ArityKey (size-atom $children)) $tagged)))))))))
+
+(= (ic-tree-archive:slots $count)
+   (if (== $count 0) ()
+     (let $rest (ic-tree-archive:slots (- $count 1))
+       (cons-atom (IC:Slot Value ByteTree) $rest))))
+
+(= (ic-tree-archive:catalog $keys $literal-index)
+   (if (== $keys ()) (IC:TreeCatalog () () ())
+     (let ($key $tail) (decons-atom $keys)
+       (case $key
+         (((IC:BytesKey $bytes)
+           (case (ic-tree-archive:catalog $tail (+ $literal-index 1))
+             (((IC:TreeCatalog $signature $heads $literals)
+               (let* (($operators (cons-atom (IC:Operator ByteTree ()) $signature))
+                      ($names (cons-atom (IC:LiteralRef $literal-index) $heads))
+                      ($values (cons-atom (IC:Literal U8 $bytes) $literals)))
+                 (IC:TreeCatalog $operators $names $values))))))
+          ((IC:ArityKey $arity)
+           (case (ic-tree-archive:catalog $tail $literal-index)
+             (((IC:TreeCatalog $signature $heads $literals)
+               (let* (($slots (ic-tree-archive:slots (+ $arity 1)))
+                      ($operators (cons-atom (IC:Operator ByteTree $slots) $signature))
+                      ($names (cons-atom (IC:Name "Binary:Node") $heads)))
+                 (IC:TreeCatalog $operators $names $literals)))))))))))
+
+; Records are chronological. The reversed value vector retains every edge;
+; hash-consing storage never turns repeated edges into set membership.
+(= (ic-tree-archive:build $records $codes $values)
+   (if (== $records ()) (IC:TreeValues $values)
+     (let* ((($record $rest) (decons-atom $records))
+            (($code $later) (decons-atom $codes)))
+       (case $record
+         (((Binary:Leaf $bytes)
+           (let $next (cons-atom (IC:Node $code ()) $values)
+             (ic-tree-archive:build $rest $later $next)))
+          ((Binary:Node $tag $children)
+           (let* ((($tag-code $remaining) (decons-atom $later))
+                  ($arguments (map-atom $children $child
+                    (index-atom $values (- (- (size-atom $values) 1) $child))))
+                  ($fields (cons-atom (IC:Node $tag-code ()) $arguments))
+                  ($next (cons-atom (IC:Node $code $fields) $values)))
+             (ic-tree-archive:build $rest $remaining $next))))))))
+
+(= (ic-tree-archive:from-records (Dag:Forest $roots $records))
+   (case (list:factorize (ic-tree-archive:descriptors $records))
+     (((List:Factorization $keys $codes $firsts)
+       (case ((ic-tree-archive:catalog $keys 0) (ic-tree-archive:build $records $codes ()))
+         ((((IC:TreeCatalog $signature $heads $literals) (IC:TreeValues $values))
+           (let $items
+             (map-atom $roots $root
+               (let $value (index-atom $values (- (- (size-atom $values) 1) $root))
+                 (IC:Raw ((IC:Slot Root ByteTree)) ($value))))
+             (IC:Archive "IC1" (IC:Observation ExactSyntax (binary:unsigned 0))
+               $signature $heads $literals () $items)))))))))
+
+(= (ic:prepare-trees $forest)
+   (case (dag:from-forest $forest)
+     (((Dag:Fault $reason) (Dag:Fault $reason))
+      ($handle
+       (let* (($records (dag:export $handle)) ($released (dag:close $handle)))
+         (case $records
+           (((Dag:Forest $roots $entries)
+             (let $archive (ic-tree-archive:from-records $records)
+               (case (ic-archive:prepare $archive)
+                 (((IC:PreparedArchive $tree $catalog $source) (IC:TreeArchive $archive))
+                  ($other (IC:TreeFault InvalidArchive))))))
+            ($other $other))))))))
+
+(= (ic-tree-archive:recover $heads $literals (IC:Node $index $children))
+   (case (ic-template:operator $heads $index)
+     (((IC:Some (IC:LiteralRef $literal))
+       (case (ic-template:operator $literals $literal)
+         (((IC:Some (IC:Literal U8 $bytes))
+           (if (== $children ()) (IC:Some (Binary:Leaf $bytes)) IC:None))
+          ($other IC:None))))
+      ((IC:Some (IC:Name "Binary:Node"))
+       (if (== $children ()) IC:None
+         (let ($first $rest) (decons-atom $children)
+           (case ((ic-tree-archive:recover $heads $literals $first)
+                  (ic-tree-archive:recover-many $heads $literals $rest))
+             ((((IC:Some (Binary:Leaf $tag)) (IC:Some $values))
+               (IC:Some (Binary:Node $tag $values)))
+              ($other IC:None))))))
+      ($other IC:None))))
+
+(= (ic-tree-archive:recover-many $heads $literals $nodes)
+   (if (== $nodes ()) (IC:Some ())
+     (let ($node $tail) (decons-atom $nodes)
+       (case ((ic-tree-archive:recover $heads $literals $node)
+              (ic-tree-archive:recover-many $heads $literals $tail))
+         ((((IC:Some $tree) (IC:Some $rest))
+           (let $trees (cons-atom $tree $rest) (IC:Some $trees)))
+          ($other IC:None))))))
+
+(= (ic-tree-archive:recover-packets $heads $literals $packets)
+   (if (== $packets ()) (IC:Some ())
+     (let ($packet $tail) (decons-atom $packets)
+       (case $packet
+         (((IC:Packet ((IC:Slot Root ByteTree)) ($node))
+           (case ((ic-tree-archive:recover $heads $literals $node)
+                  (ic-tree-archive:recover-packets $heads $literals $tail))
+             ((((IC:Some $tree) (IC:Some $rest))
+               (let $trees (cons-atom $tree $rest) (IC:Some $trees)))
+              ($other IC:None))))
+          ($other IC:None))))))
+
+(= (ic:restore-trees $archive)
+   (case (ic-archive:prepare $archive)
+     (((IC:PreparedArchive $tree (IC:Catalog $version $observation $signature $heads $literals) $packets)
+       (ic-tree-archive:recover-packets $heads $literals $packets))
+      ($other IC:None))))

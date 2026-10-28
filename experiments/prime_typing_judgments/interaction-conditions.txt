@@ -1,0 +1,71 @@
+Conditional interaction: source and native comparison
+2026-10-28
+
+The source theory now includes absence of a complete source query. A query's
+local bindings do not reach the following sources. Its successful absence row
+retains observations of the regions needed to establish that no row exists.
+This includes empty queries, nested absence, pure computed sources, and every.
+
+Example: a space contains (msg a) and (ack b). Each pattern has a match, but
+(read (msg $x)) followed by (read (ack $x)) has no joined row. Its absence
+therefore succeeds. Adding (ack a) disables that absence.
+
+Theorem-to-interface correspondence
+-----------------------------------
+Mettapedia's OccurrenceCommits owner:
+
+SourceCompilation.SourceList.absent
+  The recursive query-and-continuation constructor.
+SourceCompilation.mem_rows_absent
+  Query emptiness, original bindings, and exact retained query observations.
+SourceSemantics.agreementFor / agreement
+  Computed rows agree with the independent declarative source relation under
+  the stated matcher and pure-computation laws, including nested absence.
+SourceAbsence.rows_absent_eq
+  The constructor composes a query-only result with its continuation.
+SourceAbsence.mem_absenceRows_iff_holds
+  Retained observations validate the exact old result. Continued absence alone
+  can be weaker: a new nonjoining row may leave absence true but stale its evidence.
+ConditionTransport.PredicateQuery.holds_fire_iff_pullback
+  An exact observed-region postcondition becomes finite initial tests.
+CommitPreconditions.CommitPrecondition.sequential_holds_iff
+  Compiled preconditions characterize two enabled occurrence commits exactly.
+SequentialComposition.Commit.composition_exact
+  The compiled condition and net update synthesize and decompose the original
+  two applications. Intermediate freshness is retained in the condition.
+SequentialComposition.Commit.compose_assoc_fire / compose_comm_fire
+  Final occurrence-store associativity, and commutation with explicit independence.
+
+TransformComposition.Span:
+composeAlong / sequential_iff_exists_overlap
+  Counted resource composition at explicit overlaps.
+compose_assoc / compose_eq_fuse
+  Associativity of the canonical counted composite; the previous handoff-only
+  fusion is a special case. Finer occurrence-map multiplicities are not erased
+  by these theorems, but also are not enumerated by this counted construction.
+
+Native comparison
+-----------------
+Run interaction-conditions.metta with the Prime dialect. The correlated-query
+examples agree with the source calculation. The experiment intentionally also
+retains unresolved cases; it is not an all-passing conformance fixture.
+
+The source-form classifier now recognizes the empty conjunction, let and every.
+An explicitly supplied location still selects literal-pattern absence, including
+patterns whose heads happen to be source operators.
+
+Open findings:
+
+1. Native absence flattens every into candidate rows. With no candidates it
+   reports absence. The source every has one amalgamated row even when its
+   contributing set is empty, so an enclosing absence is false there.
+2. A computed source inside native absence is currently stuck. Standalone let
+   is now classified as a source, so it no longer falsely establishes absence
+   by searching for a stored atom shaped like the computation.
+
+The native adaptive scan may retain fewer regions than the source's conservative
+completeness footprint. Its correspondence needs the actual adaptive read history;
+the source's footprint theorem does not by itself prove that implementation.
+
+No default notation or universal operational-to-conversion rule is selected.
+Successful checking of a rule still requires its selected theory and evidence.

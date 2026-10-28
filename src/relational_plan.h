@@ -31,6 +31,9 @@ typedef enum {
     /* Cyclic intersections, or counts with one factor covering every shared
      * coordinate, avoid enumerating factor-private Cartesian products. */
     CETTA_RELATIONAL_ADMIT_FACTORIZED_COUNT,
+    /* Every query, keeping each variable, private ones included, so that a
+     * leaf assigns them all: the plan enumerates whole solutions. */
+    CETTA_RELATIONAL_ADMIT_ENUMERATION,
 } CettaRelationalAdmission;
 
 typedef struct {
@@ -82,6 +85,34 @@ const CettaRelationalPlanInfo *cetta_relational_plan_info(
 bool cetta_relational_plan_count(
     const CettaRelationalPlan *plan, const Space *live_space,
     uint64_t *count_out, CettaRelationalWork *work);
+/* The plan's variables, in the order a solution's values follow. */
+size_t cetta_relational_plan_variable_count(const CettaRelationalPlan *plan);
+VarId cetta_relational_plan_variable_at(const CettaRelationalPlan *plan,
+                                        size_t index);
+/* Whether the patterns' hypergraph of shared variables is cyclic, by its
+ * GYO reduction: an acyclic query joins well one pattern at a time.
+ * False when a pattern is not an expression. */
+bool cetta_relational_patterns_cyclic(Atom *const *patterns, size_t count,
+                                      bool *cyclic);
+/* The position of a pattern variable among the plan's variables, or
+ * SIZE_MAX when the plan does not keep it. */
+size_t cetta_relational_plan_variable_index(
+    const CettaRelationalPlan *plan, VarId id);
+/* One solution of an enumeration: VALUES assigns each plan variable, in the
+ * plan's order, and WEIGHT counts the row combinations that give it,
+ * duplicate rows included.  False stops the enumeration. */
+typedef bool (*CettaRelationalVisit)(void *context, const AtomId *values,
+                                     uint64_t weight);
+/* Visit each solution of a plan prepared with ADMIT_ENUMERATION once, with
+ * its weight; COUNT_OUT receives the sum of the weights.  The plan holds the
+ * rows it was prepared from, so the visitor may change the space without
+ * changing the solutions still to come.  False when the plan is stale at the
+ * start, a weight overflows, or the visitor stops; the visitor may then have
+ * seen some solutions. */
+bool cetta_relational_plan_enumerate(
+    const CettaRelationalPlan *plan, const Space *live_space,
+    CettaRelationalVisit visit, void *context, uint64_t *count_out,
+    CettaRelationalWork *work);
 /* Retain requires an already owned live reference. It grants another owned
  * handle, not a stronger Space read contract; overflow leaves ownership
  * unchanged. Free releases one handle and needs no live Space or universe. */

@@ -51,7 +51,7 @@
 !(collapse (let ((-> Number Result) Number) (get-type (tier-infer-mono 7)) Row))
 !(collapse (get-type ($same $same)))
 !(collapse (get-type (tier-infer-mono $x)))
-; Sharing the incoming requirement with the subject changes the judgment.
+; A fresh request is bound after its candidate is produced, even when shared.
 !(collapse (let $x (get-type (tier-infer-mono $x)) (Bound $x)))
 !(collapse (get-type (tier-infer-pair $x 7)))
 !(collapse (get-type (tier-infer-pair (tier-infer-mono 7) $x)))

@@ -17,3 +17,5 @@
 !(bind! math.round math:round)
 !(bind! math.isnan math:isnan)
 !(bind! math.isinf math:isinf)
+!(bind! math.binary64-parts math:binary64-parts)
+!(bind! math.integer-divmod math:integer-divmod)

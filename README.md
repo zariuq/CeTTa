@@ -5,8 +5,9 @@ runs several MeTTa dialects over one shared substrate (atoms, spaces,
 matching, indexing and memory management), and it hosts native proof kernels
 for HOL Light, MM0 and Megalodon.
 
-PeTTa is the default language. CeTTa runs the PeTTa language of release
-1.0.6, the most widely used MeTTa dialect, so PeTTa programs run directly.
+PeTTa is the default language. Its reference is
+[corrected stable PeTTa](https://github.com/godelclaw/PeTTa/tree/stable-fixed),
+preserving the stable language's typing policy.
 Hyperon Experimental MeTTa and the other languages are selected with `--lang`.
 
 ```bash
@@ -22,14 +23,14 @@ implementation, and a program is written for one of them.
 
 | `--lang` | Language | Profiles (`--profile`) |
 |---|---|---|
-| `petta` (default) | PeTTa, as released in version 1.0.6 | `extended` adds CeTTa's labeled extensions; `typecheck-v2` and `typecheck-v3` add native type checking (`petta@1.1`); `petta@1.1.c` is the typed line with declarations as call contracts |
+| `petta` (default) | Corrected stable PeTTa | `extended` adds CeTTa's labeled extensions; `typecheck-v2` and `typecheck-v3` add native type checking (`petta@1.1`); `petta@1.1.c` is the typed line with declarations as call contracts |
 | `he` | Hyperon Experimental MeTTa 0.2.10, in CeTTa's fork | `he` (default) is the fork with its deliberate differences; `he-compat` keeps the Rust implementation's behavior where `he` differs; `extended` adds CeTTa's labeled extensions; `he-prime` adds dependent binders and typed inhabitation search |
 | `prime` | the MeTTa-Prime 0.0.1 draft | |
 | `hol-light` | the HOL Light kernel, checking HOLR proof streams | `standard` (default), `open`, `sealed` |
 | `rhocalc` | the reflective higher-order rho-calculus | `strict-core`, `cost`, `rhometta` |
 | `mm2` | MM2 programs, lowered directly and run on MORK | `gslt` |
 
-`--lang <name>@<version>` names a version: `petta@1.0.6`, `petta@1.1`
+`--lang <name>@<version>` names a contract: `petta@stable-fixed`, `petta@1.1`
 (typed PeTTa), `petta@1.1.c`, `he@0.2.10` (the Hyperon Experimental release
 CeTTa's HE forks; every HE profile) and `prime@0.0.1`. See
 `docs/language_versions.txt`.
@@ -282,8 +283,14 @@ make BUILD=python test-tsan
 make test-asan-main
 ```
 
-`make test-petta-release-reference` checks that the default PeTTa semantics
-and libraries are those of release 1.0.6.
+`make test-petta-release-reference` checks the pinned corrected stable libraries
+and selected default observations. The source revision and file hashes are in
+`langdef/petta/reference.json`; this check does not claim complete conformance.
+`python3 tools/check_petta_stable_corpus.py --reference <PeTTa-checkout> --cetta ./cetta`
+records the original corpus and independently framed observations. Raw disagreements
+are diagnostic evidence, not a conformance score. `make test-petta-corrected-stable`
+checks the selected settled rules. Classifications and open questions are described in
+[the compatibility notes](docs/petta_compatibility.txt).
 
 The `Runtime portability` workflow builds clean source archives in Ubuntu
 24.04/26.04, Fedora and Alpine/musl. All four Linux entries are required.

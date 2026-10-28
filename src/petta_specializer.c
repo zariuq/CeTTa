@@ -3576,6 +3576,16 @@ static Atom *petta_specializer_keep_dispatches(
         }
         if (!elements[index])
             return NULL;
+        /* An authored reduce already owns this application's dispatch.
+         * Wrapping its selected head again turns reduce ($f $x) into
+         * reduce (reduce (f $x)), which tries to reduce the result value. */
+        if (form == PETTA_FORM_REDUCE && len == 2u && index == 1u &&
+            child->kind == ATOM_EXPR && child->expr.len > 0u &&
+            petta_specializer_var_selected(child->expr.elems[0], selected, selected_len) &&
+            elements[index]->kind == ATOM_EXPR && elements[index]->expr.len == 2u &&
+            atom_is_symbol_id(elements[index]->expr.elems[0], g_builtin_syms.reduce)) {
+            elements[index] = elements[index]->expr.elems[1];
+        }
     }
     if (head->kind == ATOM_EXPR) {
         elements[0] = petta_specializer_keep_dispatches(

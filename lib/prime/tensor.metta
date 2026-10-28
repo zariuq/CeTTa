@@ -23,8 +23,12 @@
 (: tensor:from-coordinates (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (: tensor:from-coordinates (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (: tensor:inspect (-> %Undefined% %Undefined%))
+(: tensor:is-tensor (-> %Undefined% %Undefined%))
 (: tensor:entries (-> %Undefined% %Undefined%))
 (: tensor:gather (-> %Undefined% %Undefined% %Undefined%))
+(: tensor:scan-sum (-> %Undefined% %Undefined% %Undefined%))
+(: tensor:concatenate (-> %Undefined% %Undefined% %Undefined% %Undefined%))
+(: tensor:permute (-> %Undefined% %Undefined% %Undefined%))
 (: tensor:merge (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (: tensor:zip-map (-> %Undefined% %Undefined% %Undefined% %Undefined% %Undefined%))
 (: __cetta_lib_tensor_try_zip_map (-> Atom Atom Atom Atom Atom))
@@ -47,6 +51,10 @@
 (: tensor:top-k (-> %Undefined% %Undefined% %Undefined%))
 (: tensor:encode (-> %Undefined% %Undefined%))
 (: tensor:decode (-> %Undefined% %Undefined%))
+; CTN1 interchange through packed U8 values, with identical framing to the
+; binary-string interface. Arbitrary payload bytes are never treated as UTF-8.
+(: tensor:encode-bytes (-> %Undefined% %Undefined%))
+(: tensor:decode-bytes (-> %Undefined% %Undefined%))
 (: tensor:builder (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (: tensor:builder (-> %Undefined% %Undefined% %Undefined%))
 (: tensor:put (-> %Undefined% %Undefined% %Undefined% %Undefined%))

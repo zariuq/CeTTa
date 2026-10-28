@@ -6,6 +6,7 @@
 #include "parser.h"
 #include "answer_storage.h"
 #include "delay_service.h"
+#include "term_universe.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -14,6 +15,63 @@
 
 static unsigned checks;
 #define CHECK(condition) do { assert(condition); checks++; } while (0)
+
+static size_t reported_allocation(const CettaStorageCensus *census, const void *owner) {
+    for (size_t i = 0u; i < census->capacity; i++)
+        if (census->slots[i].identity == owner &&
+            census->slots[i].domain == CETTA_STORAGE_BLOCK)
+            return census->slots[i].retained;
+    return 0u;
+}
+
+static size_t universe_metadata(const TermUniverse *universe) {
+    CettaStorageCensus census = {0};
+    term_universe_storage_census(universe, &census);
+    cetta_storage_finish(&census);
+    CHECK(!census.incomplete && !census.overflow && !census.invalidated);
+    if (universe->decoded_pages) {
+        CHECK(reported_allocation(&census, universe->decoded_pages) ==
+              universe->decoded_page_cap * sizeof(*universe->decoded_pages));
+        for (size_t i = 0u; i < universe->decoded_page_cap; i++)
+            if (universe->decoded_pages[i])
+                CHECK(reported_allocation(&census, universe->decoded_pages[i]) >= sizeof(Atom *));
+    }
+    size_t bytes = census.retained;
+    cetta_storage_census_free(&census);
+    return bytes;
+}
+
+static void no_roots(const TermUniverse *universe, TermUniverseRootVisit visit,
+                     void *visit_context, void *provider_context) {
+    (void)universe; (void)visit; (void)visit_context; (void)provider_context;
+}
+
+static void decoded_universe_storage(void) {
+    Arena arena;
+    arena_init_detached(&arena);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &arena);
+    AtomId id = tu_intern_int(&universe, 7);
+    CHECK(id != CETTA_ATOM_ID_NONE && !universe.decoded_page_cap);
+    size_t cold = universe_metadata(&universe);
+    Atom *value = term_universe_get_atom(&universe, id);
+    CHECK(value && value->kind == ATOM_GROUNDED && value->ground.gkind == GV_INT);
+    CHECK(value->ground.ival == 7 && universe.decoded_page_cap);
+    size_t decoded = universe_metadata(&universe);
+    /* Both the sparse directory and its allocated atom page are retained;
+     * decoding into the separate arena must not hide either allocation. */
+    CHECK(decoded > cold + universe.decoded_page_cap * sizeof(*universe.decoded_pages));
+    CHECK(term_universe_get_atom(&universe, id) == value);
+    CHECK(universe_metadata(&universe) == decoded);
+    CHECK(term_universe_add_root_provider(&universe, no_roots, NULL));
+    size_t with_roots = universe_metadata(&universe);
+    CHECK(with_roots == decoded + universe.root_provider_cap * sizeof(*universe.root_providers));
+    term_universe_remove_root_provider(&universe, no_roots, NULL);
+    CHECK(universe_metadata(&universe) == with_roots);
+    term_universe_free(&universe);
+    arena_free(&arena);
+}
 
 static void identities(void) {
     unsigned char objects[1024] = {0};
@@ -398,7 +456,7 @@ int main(void) {
     var_intern_init(&variables);
     g_symbols = &symbols; g_var_intern = &variables; g_hashcons = NULL;
     identities(); cycles_and_depth(); arenas_and_owners(); bindings_and_need(); numeric_storage(); private_world_storage();
-    registry_state_storage();
+    registry_state_storage(); decoded_universe_storage();
     answer_collection_storage();delayed_goal_storage();
     var_intern_free(&variables); symbol_table_free(&symbols);
     g_symbols = NULL; g_var_intern = NULL;

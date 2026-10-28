@@ -1,4 +1,7 @@
 #include "relational_plan_internal.h"
+
+#include "dense_relation.h"
+#include "native_query.h"
 #include "shared_transition.h"
 #include "stats.h"
 
@@ -63,25 +66,32 @@ static RelationalKeyState *relational_key_state(
     return &check->slots[p];
 }
 
+/* A symbol, an integer, a Boolean or a string is a key by its header. */
+static inline bool relational_leaf_key(const CettaTermHdr *header) {
+    return header->tag == ATOM_SYMBOL ||
+        (header->tag == ATOM_GROUNDED &&
+         (header->subtag == GV_INT || header->subtag == GV_BOOL ||
+          header->subtag == GV_STRING));
+}
+
 /* A memoized, explicit-stack check of the coordinate equality fragment.
- * No term decoding is needed and shared children are inspected once. States
- * 1/2/3 mean discovered, active and checked; a cycle cannot pass as a tree. */
+ * No term decoding is needed and shared children are inspected once; a
+ * leaf is read from its header and needs no memo. States 1/2/3 mean
+ * discovered, active and checked; a cycle cannot pass as a tree. */
 static bool relational_exact_key(
     RelationalKeyCheck *check, const TermUniverse *universe, AtomId root) {
     size_t depth = 0u;
     AtomId next = root;
     for (;;) {
-        RelationalKeyState *state = relational_key_state(check, next);
         const CettaTermHdr *header = tu_hdr(universe, next);
-        if (!state || !header || state->state == 2u)
+        if (!header)
             return false;
-        if (state->state != 3u) {
-            if (header->tag == ATOM_SYMBOL ||
-                (header->tag == ATOM_GROUNDED &&
-                 (header->subtag == GV_INT || header->subtag == GV_BOOL ||
-                  header->subtag == GV_STRING))) {
-                state->state = 3u;
-            } else if (header->tag == ATOM_EXPR && !tu_has_vars(universe, next)) {
+        bool leaf = relational_leaf_key(header);
+        RelationalKeyState *state = leaf ? NULL : relational_key_state(check, next);
+        if (!leaf && (!state || state->state == 2u))
+            return false;
+        if (state && state->state != 3u) {
+            if (header->tag == ATOM_EXPR && !tu_has_vars(universe, next)) {
                 state->state = 2u;
                 if (depth == check->stack_capacity) {
                     size_t capacity = check->stack_capacity ? check->stack_capacity * 2u : 32u;
@@ -115,6 +125,65 @@ static bool relational_exact_key(
             depth--;
         }
     }
+}
+
+/* A stored row is a key when each of its children is.  A factor reads each
+ * row once, so rows are not memoized themselves: the memo holds only the
+ * atoms rows share. */
+static bool relational_row_exact_key(
+    RelationalKeyCheck *check, const TermUniverse *universe, AtomId row) {
+    const CettaTermHdr *header = tu_hdr(universe, row);
+    if (!header || header->tag != ATOM_EXPR || tu_has_vars(universe, row))
+        return false;
+    for (CettaExprIndex c = 0u; c < tu_arity(universe, row); c++) {
+        if (!relational_exact_key(check, universe, tu_child(universe, row, c)))
+            return false;
+    }
+    return true;
+}
+
+/* A row the factors cannot key that is joined on its own: each of its
+ * children a key, or a stored variable standing for the whole column. */
+static bool relational_row_open_key(
+    RelationalKeyCheck *check, const TermUniverse *universe, AtomId row) {
+    const CettaTermHdr *header = tu_hdr(universe, row);
+    if (!header || header->tag != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex c = 0u; c < tu_arity(universe, row); c++) {
+        AtomId child = tu_child(universe, row, c);
+        if (tu_kind(universe, child) != ATOM_VAR &&
+            !relational_exact_key(check, universe, child))
+            return false;
+    }
+    return true;
+}
+
+/* Parts a query may have, its own and its parts' together: each is a plan
+ * prepared from the space. */
+enum { RELATIONAL_OPEN_PARTS = 64u };
+
+typedef struct {
+    size_t factor;
+    AtomId row;
+} RelationalOpenRow;
+
+typedef struct {
+    RelationalOpenRow *rows;
+    size_t len, cap;
+} RelationalOpenRows;
+
+static bool relational_open_push(RelationalOpenRows *open, size_t factor,
+                                 AtomId row) {
+    if (open->len == open->cap) {
+        size_t cap = open->cap ? open->cap * 2u : 8u;
+        RelationalOpenRow *rows = realloc(open->rows, cap * sizeof(*rows));
+        if (!rows)
+            return false;
+        open->rows = rows;
+        open->cap = cap;
+    }
+    open->rows[open->len++] = (RelationalOpenRow){factor, row};
+    return true;
 }
 
 static size_t relational_variable(const CettaRelationalPlan *plan, VarId id) {
@@ -222,26 +291,33 @@ static bool relational_query_class(const CettaRelationalPlan *plan,
     return true;
 }
 
+/* Append a tuple; false when a value does not fit a cell, which declines
+ * the plan. */
 static bool relational_factor_push(RelationalFactor *factor, const uint64_t *tuple) {
+    for (size_t i = 0u; i < factor->width; i++) {
+        if (tuple[i] > UINT32_MAX)
+            return false;
+    }
     if (factor->length == factor->capacity) {
         size_t capacity = factor->capacity ? factor->capacity * 2u : 16u;
         if (capacity < factor->capacity ||
-            factor->width > SIZE_MAX / sizeof(uint64_t) ||
-            capacity > SIZE_MAX / (factor->width * sizeof(uint64_t)))
+            factor->width > SIZE_MAX / sizeof(*factor->tuples) ||
+            capacity > SIZE_MAX / (factor->width * sizeof(*factor->tuples)))
             return false;
-        uint64_t *tuples = realloc(factor->tuples, capacity * factor->width * sizeof(*tuples));
+        uint32_t *tuples = realloc(factor->tuples, capacity * factor->width * sizeof(*tuples));
         if (!tuples)
             return false;
         factor->tuples = tuples;
         factor->capacity = capacity;
     }
-    memcpy(factor->tuples + factor->length * factor->width, tuple,
-           factor->width * sizeof(*tuple));
+    uint32_t *cells = factor->tuples + factor->length * factor->width;
+    for (size_t i = 0u; i < factor->width; i++)
+        cells[i] = (uint32_t)tuple[i];
     factor->length++;
     return true;
 }
 
-static int relational_tuple_compare(const uint64_t *left, const uint64_t *right, size_t width) {
+static int relational_tuple_compare(const uint32_t *left, const uint32_t *right, size_t width) {
     for (size_t i = 0u; i < width; i++) {
         if (left[i] != right[i])
             return left[i] < right[i] ? -1 : 1;
@@ -249,35 +325,26 @@ static int relational_tuple_compare(const uint64_t *left, const uint64_t *right,
     return 0;
 }
 
+/* The width of the tuples the sort compares, set for the sort's duration. */
+static _Thread_local size_t g_relational_sort_width;
+
+static int relational_tuple_order(const void *left, const void *right) {
+    return relational_tuple_compare(left, right, g_relational_sort_width);
+}
+
 /* Sort each factor once by the common variable order and then by its
- * physical occurrence. Duplicate values remain distinct physical rows. */
+ * physical occurrence. Duplicate values remain distinct physical rows.  A
+ * tuple ends with its row, so no two compare equal and any sort will do:
+ * the C library's, which merges through one buffer instead of copying the
+ * factor back at every pass. */
 static bool relational_factor_sort(RelationalFactor *factor) {
     if (factor->length < 2u)
         return true;
-    size_t row_bytes = factor->width * sizeof(uint64_t);
-    uint64_t *scratch = relational_array(factor->length, row_bytes);
-    if (!scratch)
-        return false;
-    for (size_t run = 1u; run < factor->length;) {
-        for (size_t begin = 0u; begin < factor->length;) {
-            size_t middle = begin + (factor->length - begin < run ? factor->length - begin : run);
-            size_t end = middle + (factor->length - middle < run ? factor->length - middle : run);
-            size_t left = begin, right = middle;
-            for (size_t dst = begin; dst < end; dst++) {
-                size_t src = right == end ||
-                    (left < middle && relational_tuple_compare(factor->tuples + left * factor->width,
-                        factor->tuples + right * factor->width, factor->width) <= 0)
-                    ? left++ : right++;
-                memcpy(scratch + dst * factor->width, factor->tuples + src * factor->width, row_bytes);
-            }
-            begin = end;
-        }
-        memcpy(factor->tuples, scratch, factor->length * row_bytes);
-        if (run > factor->length / 2u)
-            break;
-        run *= 2u;
-    }
-    free(scratch);
+    size_t saved = g_relational_sort_width;
+    g_relational_sort_width = factor->width;
+    qsort(factor->tuples, factor->length, factor->width * sizeof(*factor->tuples),
+          relational_tuple_order);
+    g_relational_sort_width = saved;
     return true;
 }
 
@@ -359,6 +426,50 @@ const CettaRelationalPlanInfo *cetta_relational_plan_info(const CettaRelationalP
     return plan ? &plan->info : NULL;
 }
 
+size_t cetta_relational_plan_variable_index(const CettaRelationalPlan *plan, VarId id) {
+    return plan ? relational_variable(plan, id) : SIZE_MAX;
+}
+
+size_t cetta_relational_plan_variable_count(const CettaRelationalPlan *plan) {
+    return plan ? plan->info.variable_count : 0u;
+}
+
+VarId cetta_relational_plan_variable_at(const CettaRelationalPlan *plan,
+                                        size_t index) {
+    return plan->variables[index];
+}
+
+bool cetta_relational_patterns_cyclic(Atom *const *patterns, size_t count,
+                                      bool *cyclic) {
+    CettaRelationalPlan shape = {0};
+    size_t capacity = 0u;
+    for (size_t i = 0u; i < count; i++) {
+        if (!patterns[i] || patterns[i]->kind != ATOM_EXPR)
+            return false;
+        capacity += patterns[i]->expr.len;
+    }
+    shape.variables = relational_array(capacity, sizeof(*shape.variables));
+    if (!shape.variables)
+        return false;
+    shape.info.factor_count = count;
+    for (size_t i = 0u; i < count; i++) {
+        for (CettaExprIndex c = 0u; c < patterns[i]->expr.len; c++) {
+            Atom *item = patterns[i]->expr.elems[c];
+            if (item->kind == ATOM_VAR &&
+                relational_variable(&shape, item->var_id) == SIZE_MAX)
+                shape.variables[shape.info.variable_count++] = item->var_id;
+        }
+    }
+    CettaRelationalQueryClass query_class = CETTA_RELATIONAL_ACYCLIC_QUERY;
+    size_t workspace = 0u;
+    bool classified = relational_query_class(&shape, patterns, &query_class,
+                                             &workspace);
+    free(shape.variables);
+    if (classified)
+        *cyclic = query_class == CETTA_RELATIONAL_CYCLIC_QUERY;
+    return classified;
+}
+
 bool cetta_relational_plan_retain(const CettaRelationalPlan *plan) {
     if (!plan)
         return false;
@@ -387,13 +498,29 @@ void cetta_relational_plan_free(CettaRelationalPlan *plan) {
     free(plan->variables);
     free(plan->variable_offsets);
     free(plan->incidences);
+    free(plan->scan_positions);
+    free(plan->scan_constants);
+    for (size_t i = 0u; i < plan->open_part_count; i++) {
+        cetta_relational_plan_free(plan->open_parts[i].plan);
+        free(plan->open_parts[i].sources);
+        free(plan->open_parts[i].constants);
+    }
+    free(plan->open_parts);
     free(plan);
 }
 
-bool cetta_relational_plan_prepare(
+static bool relational_open_parts(
+    CettaRelationalPlan *plan, Space *space, Arena *scratch, Atom **resolved,
+    size_t pattern_count, CettaRelationalAdmission admission,
+    const bool *ground_only, size_t *budget, const RelationalOpenRows *open);
+
+/* Prepare a plan whose factors listed in `ground_only` (NULL for none)
+ * read only the rows without stored variables; `budget` counts the parts
+ * the whole query may still have. */
+static bool relational_plan_prepare_with(
     Space *space, Arena *scratch, Atom *const *patterns, size_t pattern_count,
-    const Bindings *seed, CettaRelationalAdmission admission, CettaRelationalPlan **out) {
-    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    const Bindings *seed, CettaRelationalAdmission admission,
+    const bool *ground_only, size_t *budget, CettaRelationalPlan **out) {
     if (!space || !scratch || !patterns || !out || !pattern_count ||
         !space->native.universe || space->overlay_base || space->dep_count ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
@@ -401,10 +528,16 @@ bool cetta_relational_plan_prepare(
         return false;
     ArenaMark mark = arena_mark(scratch);
     CettaRelationalPlan *plan = calloc(1u, sizeof(*plan));
-    if (plan)
+    if (plan) {
         atomic_init(&plan->references, 1u);
+        /* A part, which has factors reading only some rows, keeps its
+         * rows like any plan. */
+        plan->rows_unsorted = admission == CETTA_RELATIONAL_ADMIT_ENUMERATION &&
+            pattern_count == 1u && !ground_only;
+    }
     Atom **resolved = relational_array(pattern_count, sizeof(*resolved));
     RelationalKeyCheck keys = {0};
+    RelationalOpenRows open = {0};
     bool ready = plan && resolved;
     size_t variable_capacity = 0u;
     if (ready) {
@@ -469,7 +602,9 @@ bool cetta_relational_plan_prepare(
         /* A complete count cannot observe a factor-private binding. Keep its
          * row constraint and multiplicity, but project it out of the common
          * key. In particular, occurrence labels never force a Cartesian
-         * enumeration that the count consumer cannot observe. */
+         * enumeration that the count consumer cannot observe.  An
+         * enumeration observes every binding and keeps them all. */
+        bool enumeration = admission == CETTA_RELATIONAL_ADMIT_ENUMERATION;
         size_t kept = 0u;
         plan->info.source_variable_count = plan->info.variable_count;
         for (size_t v = 0u; v < plan->info.source_variable_count; v++) {
@@ -486,10 +621,13 @@ bool cetta_relational_plan_prepare(
             }
             if (factors > 1u)
                 plan->variables[kept++] = id;
+            else if (enumeration)
+                plan->variables[kept++] = id;
         }
         plan->info.variable_count = kept;
         plan->info.covering_factor = relational_covering_factor(plan, resolved);
-        ready = admission == CETTA_RELATIONAL_ADMIT_FULL_QUERY ||
+        ready = enumeration ||
+            admission == CETTA_RELATIONAL_ADMIT_FULL_QUERY ||
             (admission == CETTA_RELATIONAL_ADMIT_CYCLIC_QUERY &&
              plan->info.query_class == CETTA_RELATIONAL_CYCLIC_QUERY) ||
             (admission == CETTA_RELATIONAL_ADMIT_FACTORIZED_COUNT &&
@@ -555,9 +693,15 @@ bool cetta_relational_plan_prepare(
                         atom_symbol_current_id(pattern->expr.elems[0]))
                     continue;
             }
-            if (!relational_exact_key(&keys, space->native.universe, id)) {
-                ready = false;
-                break;
+            if (!relational_row_exact_key(&keys, space->native.universe, id)) {
+                /* A row holding a stored variable for a whole column is
+                 * joined on its own; any other row the factor cannot key
+                 * declines the plan. */
+                ready = !plan->rows_unsorted &&
+                    relational_row_open_key(&keys, space->native.universe, id);
+                if (ready && !(ground_only && ground_only[i]))
+                    ready = relational_open_push(&open, i, id);
+                continue;
             }
             for (size_t c = 0u; c < columns; c++)
                 tuple[c] = CETTA_ATOM_ID_NONE;
@@ -586,8 +730,22 @@ bool cetta_relational_plan_prepare(
             }
             if (matched) {
                 tuple[columns] = row;
-                ready = relational_factor_push(factor, tuple);
+                ready = plan->rows_unsorted ||
+                    relational_factor_push(factor, tuple);
                 plan->info.input_occurrences++;
+            }
+        }
+        if (ready && plan->rows_unsorted) {
+            plan->scan_len = pattern->expr.len;
+            plan->scan_rows = rows;
+            plan->scan_positions = relational_array((size_t)pattern->expr.len,
+                                                    sizeof(*positions));
+            plan->scan_constants = relational_array((size_t)pattern->expr.len,
+                                                    sizeof(*constants));
+            ready = plan->scan_positions && plan->scan_constants;
+            for (CettaExprIndex c = 0u; ready && c < pattern->expr.len; c++) {
+                plan->scan_positions[c] = positions[c];
+                plan->scan_constants[c] = constants[c];
             }
         }
         size_t temporary = 0u;
@@ -596,10 +754,10 @@ bool cetta_relational_plan_prepare(
             relational_add_bytes(&temporary, pattern_count, sizeof(*resolved)) &&
             relational_add_bytes(&temporary, pattern->expr.len ? (size_t)pattern->expr.len : 1u, sizeof(*constants) + sizeof(*positions)) &&
             relational_add_bytes(&temporary, factor->width, sizeof(*tuple)) &&
-            relational_add_bytes(&temporary, factor->length + factor->capacity / 2u, factor->width * sizeof(*tuple));
+            relational_add_bytes(&temporary, factor->length + factor->capacity / 2u, factor->width * sizeof(*factor->tuples));
         if (ready)
             ready = relational_account(plan, (variable_capacity ? variable_capacity : 1u) * sizeof(*plan->variables), temporary) &&
-                relational_factor_sort(factor);
+                (plan->rows_unsorted || relational_factor_sort(factor));
         free(constants);
         free(positions);
         free(tuple);
@@ -612,6 +770,11 @@ bool cetta_relational_plan_prepare(
             relational_add_bytes(&temporary, pattern_count, sizeof(*resolved)) &&
             relational_account(plan, (variable_capacity ? variable_capacity : 1u) * sizeof(*plan->variables), temporary);
     }
+    if (ready && open.len)
+        ready = relational_open_parts(plan, space, scratch, resolved,
+                                      pattern_count, admission, ground_only,
+                                      budget, &open);
+    free(open.rows);
     free(keys.slots);
     free(keys.stack);
     free(resolved);
@@ -621,6 +784,152 @@ bool cetta_relational_plan_prepare(
         return false;
     }
     *out = plan;
+    return true;
+}
+
+/* The atom of plan variable `id` as a pattern holds it. */
+static Atom *relational_variable_atom(Atom **resolved, size_t pattern_count,
+                                      VarId id) {
+    for (size_t i = 0u; i < pattern_count; i++) {
+        for (CettaExprIndex c = 0u; c < resolved[i]->expr.len; c++) {
+            Atom *item = resolved[i]->expr.elems[c];
+            if (item->kind == ATOM_VAR && var_id_eq(item->var_id, id))
+                return item;
+        }
+    }
+    return NULL;
+}
+
+/* Each open row's part: the row, renamed apart, unified with its factor's
+ * pattern, and the other patterns with those bindings joined by a plan of
+ * their own.  An enumeration needs every variable's value from a part, so
+ * a part leaving one unbound declines it. */
+static bool relational_open_parts(
+    CettaRelationalPlan *plan, Space *space, Arena *scratch, Atom **resolved,
+    size_t pattern_count, CettaRelationalAdmission admission,
+    const bool *ground_only, size_t *budget, const RelationalOpenRows *open) {
+    /* More open rows than the query may still have parts decline before
+     * any part is prepared. */
+    if (open->len > *budget)
+        return false;
+    CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
+    bool enumeration = admission == CETTA_RELATIONAL_ADMIT_ENUMERATION;
+    /* A part joins fewer patterns, whatever their shape. */
+    CettaRelationalAdmission part_admission = enumeration
+        ? admission : CETTA_RELATIONAL_ADMIT_FULL_QUERY;
+    size_t variables = plan->info.variable_count;
+    plan->open_parts = relational_array(open->len, sizeof(*plan->open_parts));
+    Atom **others = relational_array(pattern_count, sizeof(*others));
+    bool *before = relational_array(pattern_count, sizeof(*before));
+    bool ready = plan->open_parts && others && before;
+    for (size_t k = 0u; ready && k < open->len; k++) {
+        if (*budget == 0u) {
+            ready = false;
+            break;
+        }
+        (*budget)--;
+        size_t i = open->rows[k].factor;
+        Atom *row = term_universe_get_atom(space->native.universe,
+                                           open->rows[k].row);
+        Atom *fresh = row ? rename_vars(scratch, row,
+            cetta_frame_identity_scope_fresh(&frame_identity_scope)) : NULL;
+        if (!fresh) {
+            ready = false;
+            break;
+        }
+        Bindings bindings;
+        bindings_init(&bindings);
+        if (!match_atoms(resolved[i], fresh, &bindings, scratch)) {
+            /* The row meets no row combination of this query. */
+            bindings_free(&bindings);
+            continue;
+        }
+        size_t others_len = 0u;
+        for (size_t j = 0u; ready && j < pattern_count; j++) {
+            if (j == i)
+                continue;
+            others[others_len] = bindings_apply(&bindings, scratch, resolved[j]);
+            before[others_len] = j < i || (ground_only && ground_only[j]);
+            ready = others[others_len++] != NULL;
+        }
+        RelationalOpenPart *part = &plan->open_parts[plan->open_part_count];
+        *part = (RelationalOpenPart){0};
+        if (ready && others_len)
+            ready = relational_plan_prepare_with(
+                space, scratch, others, others_len, NULL, part_admission,
+                before, budget, &part->plan);
+        if (ready)
+            plan->open_part_count++;
+        if (ready && enumeration) {
+            part->sources = relational_array(variables, sizeof(*part->sources));
+            part->constants = relational_array(variables, sizeof(*part->constants));
+            ready = part->sources && part->constants;
+            for (size_t v = 0u; ready && v < variables; v++) {
+                Atom *variable = relational_variable_atom(
+                    resolved, pattern_count, plan->variables[v]);
+                Atom *value = variable
+                    ? bindings_apply(&bindings, scratch, variable) : NULL;
+                if (!value) {
+                    ready = false;
+                } else if (!atom_has_vars(value)) {
+                    part->sources[v] = SIZE_MAX;
+                    part->constants[v] = term_universe_lookup_atom_id(
+                        space->native.universe, value);
+                    ready = part->constants[v] != CETTA_ATOM_ID_NONE;
+                } else {
+                    part->sources[v] = value->kind == ATOM_VAR && part->plan
+                        ? cetta_relational_plan_variable_index(part->plan,
+                                                               value->var_id)
+                        : SIZE_MAX;
+                    ready = part->sources[v] != SIZE_MAX;
+                }
+            }
+        }
+        bindings_free(&bindings);
+    }
+    free(others);
+    free(before);
+    return ready;
+}
+
+bool cetta_relational_plan_prepare(
+    Space *space, Arena *scratch, Atom *const *patterns, size_t pattern_count,
+    const Bindings *seed, CettaRelationalAdmission admission, CettaRelationalPlan **out) {
+    CETTA_SCOPED_SHARED_TRANSITION(shared_read);
+    size_t budget = RELATIONAL_OPEN_PARTS;
+    return relational_plan_prepare_with(space, scratch, patterns, pattern_count,
+                                        seed, admission, NULL, &budget, out);
+}
+
+/* A conjunction over dense binary relations counts by popcounts. */
+static bool relational_dense_count(Space *space, Arena *scratch,
+    Atom *const *patterns, size_t pattern_count, const Bindings *seed,
+    uint64_t *count_out) {
+    enum { PATTERNS = 32u, VARIABLES = 64u };
+    if (pattern_count < 2u || pattern_count > PATTERNS)
+        return false;
+    Atom *bound[PATTERNS];
+    for (size_t p = 0u; p < pattern_count; p++) {
+        bound[p] = bindings_apply_if_vars(seed, scratch, patterns[p]);
+        if (!bound[p])
+            return false;
+    }
+    CettaDenseQuery *query = NULL;
+    if (!cetta_dense_query_prepare(space, scratch, bound, pattern_count,
+                                   &query))
+        return false;
+    bool kept[VARIABLES] = {false};
+    CettaDenseWork work = {0};
+    uint64_t count = 0u;
+    bool counted = cetta_dense_query_run(query, kept, NULL, NULL, &count,
+                                         &work);
+    cetta_dense_query_free(query);
+    if (!counted)
+        return false;
+    *count_out = count;
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_DENSE_RELATION_ADMISSION);
+    cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_DENSE_RELATION_WORD,
+                            work.words);
     return true;
 }
 
@@ -636,10 +945,16 @@ bool space_native_relational_count(Space *space, Arena *scratch,
     }
     if (!enabled || !count_out)
         return false;
+    if (relational_dense_count(space, scratch, patterns, pattern_count, seed,
+                               count_out))
+        return true;
     CettaRelationalPlan *plan = NULL;
+    /* Rows the plan cannot key, such as rows holding variables inside a
+     * column, may still meet the native path's index loops. */
     if (!cetta_relational_plan_prepare(space, scratch, patterns, pattern_count, seed,
             CETTA_RELATIONAL_ADMIT_FACTORIZED_COUNT, &plan))
-        return false;
+        return cetta_native_query_count(space, scratch, patterns,
+                                        pattern_count, seed, count_out);
     CettaRelationalWork work;
     bool counted = cetta_relational_plan_count(plan, space, count_out, &work);
     if (counted) {

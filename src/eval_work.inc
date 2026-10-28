@@ -76,6 +76,7 @@ static const char *const eval_work_component_names[
 
 typedef struct {
     uint64_t id;
+    uint64_t epoch;
     EvalWorkState state;
     EvalWorkRoute route;
     CettaLanguageId language;
@@ -186,7 +187,15 @@ static EvalWork *eval_work_lookup(Atom *handle) {
     if (!g_library_context ||
         !cetta_native_handle_arg(handle, eval_work_kind, &id))
         return NULL;
-    return cetta_native_handle_get(g_library_context, eval_work_kind, id);
+    return cetta_native_handle_get_owned(g_library_context, eval_work_kind, handle);
+}
+
+Atom *eval_current_work_epoch(Arena *arena, Atom *handle) {
+    EvalWork *work = eval_work_lookup(handle);
+    if (!work) return NULL;
+    char text[32];
+    snprintf(text, sizeof(text), "%" PRIu64, work->epoch);
+    return atom_string(arena, text);
 }
 
 static Atom *eval_work_handle(Arena *a, const EvalWork *work) {
@@ -1277,6 +1286,14 @@ static void eval_work_call(Space *s, Arena *a, Atom *atom, SymbolId head,
         outcome_set_add(os, atom_error(a, atom,
             atom_symbol(a, "WorkBusy")), &empty);
         return;
+    }
+    if (head != g_builtin_syms.work_record) {
+        if (work->epoch == UINT64_MAX) {
+            outcome_set_add(os, atom_error(a, atom,
+                atom_symbol(a, "WorkEpochCapacity")), &empty);
+            return;
+        }
+        work->epoch++;
     }
     if (head == g_builtin_syms.work_route) {
         outcome_set_add(os, eval_work_route(a, atom, work,

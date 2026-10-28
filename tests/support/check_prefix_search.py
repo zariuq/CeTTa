@@ -29,7 +29,7 @@ def main():
     expected = [sum(value < bound for value in values) for values, bound in cases]
     assert expected == [bisect.bisect_left(values, bound) for values, bound in cases]
     checks = 0
-    fixture = subprocess.run([str(binary), "--no-results", "--lang", "petta@1.0.6",
+    fixture = subprocess.run([str(binary), "--no-results", "--lang", "petta",
                               "--profile", "extended", "tests/list_value/list_lower_bound.metta"],
                              cwd=ROOT, capture_output=True, text=True, timeout=90)
     assert fixture.returncode == 0, fixture.stderr
@@ -37,7 +37,7 @@ def main():
     checks += len(fixture.stdout.splitlines())
     (ROOT / "runtime").mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="prefix-search-", dir=ROOT / "runtime") as directory:
-        for language, profile in (("petta@1.0.6", None), ("petta@1.0.6", "extended"),
+        for language, profile in (("petta", None), ("petta", "extended"),
                                   ("he", "extended"), ("prime", None)):
             library = "lib/petta/list.metta" if language.startswith("petta") else "lib/list.metta"
             calls = []

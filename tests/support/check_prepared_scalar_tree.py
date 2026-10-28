@@ -128,7 +128,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='prepared-scalar-tree-',dir=ROOT/'runtime') as work:
         source=Path(work)/'controls.metta'
         for name,text,outputs in programs():
-            for language in ('petta@1.0.6','he','prime'):
+            for language in ('petta','he','prime'):
                 if name=='collection' and not language.startswith('petta'):
                     text_for_language=text.replace('(library list)','list')
                 else: text_for_language=text

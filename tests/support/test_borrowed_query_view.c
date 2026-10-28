@@ -5,6 +5,11 @@
 #include "space.h"
 #include "symbol.h"
 
+static int compare_index(const void *left, const void *right) {
+    CettaIndex a = *(const CettaIndex *)left, b = *(const CettaIndex *)right;
+    return (a > b) - (a < b);
+}
+
 static void compare(Space *space, Arena *arena, Atom **parts, CettaExprLen len) {
     Atom *query = atom_expr(arena, parts, len);
     assert(query);
@@ -13,29 +18,29 @@ static void compare(Space *space, Arena *arena, Atom **parts, CettaExprLen len) 
     ArenaMark mark = arena_mark(arena);
     assert(space_match_candidates_expression_coordinates64(space, parts, len, &borrowed, &actual));
     assert(arena_at_mark(arena, mark));
+    /* The index offers its rows in its own order: the candidates that match
+     * are exactly the rows a scan matches, each once. */
+    CettaIndex *kept = malloc(sizeof(*kept) * (actual ? actual : 1u));
+    CettaIndex kept_len = 0u;
+    for (CettaIndex i = 0u; i < actual; i++) {
+        Bindings trial; bindings_init(&trial);
+        if (match_atoms_atom_id_epoch(query, space->native.universe,
+                space_get_atom_id_at64(space, borrowed[i]), &trial, arena, (CettaFrameIdentity){334u}))
+            kept[kept_len++] = borrowed[i];
+        bindings_free(&trial);
+    }
+    qsort(kept, kept_len, sizeof(*kept), compare_index);
     CettaIndex matched = 0u;
     for (CettaIndex position = 0u; position < space_length64(space); position++) {
         Bindings reference; bindings_init(&reference);
         bool succeeds = match_atoms_atom_id_epoch(query, space->native.universe,
             space_get_atom_id_at64(space, position), &reference, arena, (CettaFrameIdentity){333u});
         bindings_free(&reference);
-        if (!succeeds) continue;
-        while (matched < actual) {
-            Bindings trial; bindings_init(&trial);
-            bool kept = match_atoms_atom_id_epoch(query, space->native.universe,
-                space_get_atom_id_at64(space, borrowed[matched]), &trial, arena, (CettaFrameIdentity){334u});
-            bindings_free(&trial);
-            if (kept) break;
-            matched++;
-        }
-        assert(matched < actual && borrowed[matched++] == position);
+        if (succeeds)
+            assert(matched < kept_len && kept[matched++] == position);
     }
-    while (matched < actual) {
-        Bindings trial; bindings_init(&trial);
-        assert(!match_atoms_atom_id_epoch(query, space->native.universe,
-            space_get_atom_id_at64(space, borrowed[matched++]), &trial, arena, (CettaFrameIdentity){335u}));
-        bindings_free(&trial);
-    }
+    assert(matched == kept_len);
+    free(kept);
     assert(expected == actual);
     for (CettaIndex i = 0; i < expected; i++) assert(ordinary[i] == borrowed[i]);
     AtomExprBorrowedView view;

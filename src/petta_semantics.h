@@ -78,57 +78,16 @@ typedef enum {
 /* Elaborate an already classified authored control occurrence. PeTTa's
  * value-binding spelling has the same operand layout; its matching demand
  * remains the caller's policy. No evaluation or source authority is inferred. */
-static inline CettaControlOperationPlan petta_semantics_elaborate_control(
-        SymbolId head, PeTTaForm form, CettaExprLen arity) {
-#define CETTA_PETTA_VARIADIC_FORM(native_form, op) \
-    if (form == (native_form)) \
-        return (CettaControlOperationPlan){arity ? (op) : CETTA_CONTROL_FAILURE, \
-            CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT};
-    CETTA_PETTA_VARIADIC_FORM_ROWS(CETTA_PETTA_VARIADIC_FORM)
-#undef CETTA_PETTA_VARIADIC_FORM
-#define CETTA_PETTA_CONTROL_FORM(native_form, count, op, source_arg, first_arg, last_arg) \
-    if (form == (native_form) && arity == (count)) \
-        return (CettaControlOperationPlan){(op), (source_arg), (first_arg), (last_arg)};
-    CETTA_PETTA_CONTROL_FORM_ROWS(CETTA_PETTA_CONTROL_FORM)
-#undef CETTA_PETTA_CONTROL_FORM
-    if (form == PETTA_FORM_IF)
-        head = g_builtin_syms.if_text;
-    else if (form == PETTA_FORM_LET || form == PETTA_FORM_VALUE_LET)
-        head = g_builtin_syms.let;
-    else if (form == PETTA_FORM_CHAIN)
-        head = g_builtin_syms.chain;
-    else if (form == PETTA_FORM_EVAL)
-        head = g_builtin_syms.eval;
-    else if (head != g_builtin_syms.let_star &&
-             head != g_builtin_syms.superpose && head != g_builtin_syms.empty_form)
-        return (CettaControlOperationPlan){0};
-    CettaControlOperationPlan plan = {0};
-    cetta_control_operation_decode(head, arity, &plan, &g_builtin_syms);
-    return plan;
-}
+CettaControlOperationPlan petta_semantics_elaborate_control(
+        SymbolId head, PeTTaForm form, CettaExprLen arity);
 
 /* Native source admission precedes this layout. Live declarations may still
  * hold arguments; neither the body tag nor the range grants demand authority. */
-static inline CettaInvocationPlan petta_semantics_elaborate_invocation(
-        SymbolId head, PeTTaForm form, CettaExprLen arity) {
-#define CETTA_PETTA_INVOCATION_FORM(native_form, count, body, first, last) \
-    if (form == (native_form) && arity == (count)) \
-        return (CettaInvocationPlan){(body), (first), (last)};
-    CETTA_PETTA_INVOCATION_FORM_ROWS(CETTA_PETTA_INVOCATION_FORM)
-#undef CETTA_PETTA_INVOCATION_FORM
-    CettaInvocationPlan plan = {0};
-    cetta_invocation_plan_decode(head, arity, &plan, &g_builtin_syms);
-    return plan;
-}
+CettaInvocationPlan petta_semantics_elaborate_invocation(
+        SymbolId head, PeTTaForm form, CettaExprLen arity);
 
-static inline CettaComputationPlan petta_semantics_elaborate_computation(
-        SymbolId head, PeTTaForm form, CettaExprLen arity) {
-    CettaComputationPlan plan = {
-        .control = petta_semantics_elaborate_control(head, form, arity)};
-    if (!cetta_control_operation_is_control_form(plan.control))
-        plan.invocation = petta_semantics_elaborate_invocation(head, form, arity);
-    return plan;
-}
+CettaComputationPlan petta_semantics_elaborate_computation(
+        SymbolId head, PeTTaForm form, CettaExprLen arity);
 
 
 typedef struct {
@@ -421,6 +380,7 @@ bool petta_semantics_contract_error(Atom *error);
 /* PeTTa 1.1's error for an import no file answers:
  * existence_error(source_sink, File) in context(import!, File). */
 Atom *petta_semantics_missing_import_error(Arena *arena, Atom *file);
+Atom *petta_semantics_arithmetic_operand_error(Arena *arena, Atom *value);
 /* The message the reference prints for an uncaught error of its typecheck
  * vocabulary ("Type mismatch: got V but expected T", "No matching typed
  * overload for F"), written into `out`; false for any other error. */
@@ -505,6 +465,13 @@ bool petta_semantics_construct_value_allocation_bound(
     CettaExprLen length, size_t *bytes_out);
 Atom *petta_semantics_materialize_value(
     Arena *arena, Atom *value);
+/* Observe native operand values without mutating the borrowed vector.
+ * Ordinary operands reuse that vector; observable private list carriers
+ * require one arena-owned vector and the same quote/closure-preserving value
+ * materialization as the ordinary evaluator. A successful empty view is
+ * non-NULL even when the input vector is NULL. */
+Atom *const *petta_semantics_materialize_arguments(
+    Arena *arena, Atom *const *arguments, CettaExprLen arity);
 /* True exactly when materialize_value has an observable open-cons carrier
  * to erase.  Opaque closures and quoted syntax are not observation
  * boundaries, so carriers below them deliberately do not count.  Allocation

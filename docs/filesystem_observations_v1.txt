@@ -200,7 +200,7 @@ For example:
 
   ./cetta --lang he --profile extended \
     tests/filesystem_v1/bytes_zero_positive.metta path/to/input
-  ./cetta --lang petta@1.0.6 --profile extended \
+  ./cetta --lang petta --profile extended \
     tests/filesystem_v1/directory_empty_positive.metta path/to/empty-directory
 
   make BUILD=core ENABLE_GMP=0 ENABLE_LIB_PROLOG=0 ENABLE_HTTP=0 test-filesystem-v1

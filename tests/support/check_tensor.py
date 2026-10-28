@@ -105,7 +105,7 @@ def main():
         (f'(tensor:reshape {dense} (7))', '(Tensor:Fault shape-mismatch)'),
     ]
     checks = 0
-    for language, profile in [('petta@1.0.6', None), ('petta@1.0.6', 'extended'),
+    for language, profile in [('petta', None), ('petta', 'extended'),
                               ('he', 'extended'), ('prime', None)]:
         library = '(library tensor)' if language.startswith('petta') else 'tensor'
         prefix = f'!(import! &self {library})\n(= (tensor-test:square $x) (* $x $x))\n(= (tensor-test:subtract $x $y) (- $x $y))\n(= (tensor:sum Custom) 23)\n'

@@ -890,6 +890,7 @@ class Spec:
             "invoke": (False, False, False),
             "sequence-first": (False, False, False),
             "sequence-last": (False, False, False),
+            "collect": (True, False, False),
         }
         if set(self.control_operations) != set(slot_shapes):
             raise SpecError("control operations must have a native operand-layout scheme")

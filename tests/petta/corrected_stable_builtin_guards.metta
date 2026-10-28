@@ -1,0 +1,17 @@
+; Explicit intrinsic declarations govern direct, dynamic and partial calls.
+(: + (-> Number Number Number))
+!(test (collapse (+ wrong 1)) ())
+!(test (collapse (let $f + ($f wrong 1))) ())
+!(test (collapse (let $p (+ 1) ($p wrong))) ())
+!(test ((+ 1) 2) 3)
+!(bind! &builtin-ticks (new-state 0))
+(= (builtin-tick) (change-state! &builtin-ticks (+ (get-state &builtin-ticks) 1)))
+!(test (collapse (+ (builtin-tick) wrong)) ())
+!(test (get-state &builtin-ticks) 1)
+!(test (collapse (let $f + ($f (builtin-tick) wrong))) ())
+!(test (get-state &builtin-ticks) 2)
+!(test (collapse (let $v (quote (builtin-tick)) (+ $v 1))) ())
+!(test (get-state &builtin-ticks) 2)
+; Duplicate valid declaration branches retain multiplicity.
+(: + (-> %Undefined% Number Number))
+!(test (collapse (+ 1 2)) (3 3))

@@ -6500,7 +6500,18 @@ static void terminal_open_reply_case(unsigned which) {
         .prepared_pure_cache={.root_space=&space}};
     PrimeEvalStackDriver *prior_driver=g_prime_eval_stack_driver;g_prime_eval_stack_driver=&driver;
     Atom *call=br_parse(&arena,which==10u?"(to:root 17)":"(to:root)");
-    assert(prime_capsule_search_schedule(&space,&arena,call,atom_symbol_id(&arena,g_builtin_syms.undefined_type),-1,&environment,true,&out));
+    bool scheduled = prime_capsule_search_schedule(&space,&arena,call,
+        atom_symbol_id(&arena,g_builtin_syms.undefined_type),-1,&environment,true,&out);
+    if (!scheduled) {
+        PreparedPureClosedCallPlan diagnostic;
+        fprintf(stderr, "terminal open %u: active=%d safe=%d plan=%d holds=%d capacity=%d\n",which,
+            prime_capsule_search_active(&driver,&arena,&out),
+            prime_native_expression_safe(&space,&arena,call,&g_prime_need_active),
+            prepared_pure_closed_call_plan(&space,&arena,call,-1,true,NULL,&diagnostic),
+            prime_relational_head_holds_arguments(&space,call->expr.elems[0],call->expr.len-1u),
+            driver.capacity_blocked);
+    }
+    assert(scheduled);
     PrimeEvalStackFrame *frame=driver.top;assert(frame && frame->kind==PRIME_EVAL_STACK_FRAME_CAPSULE_SEARCH);
     PrimeCapsuleSearch *search=frame->capsule_search;
     for(unsigned n=0u;n<100u && search->last_step!=CETTA_PREPARED_CLOSED_SERVICE && !driver.capacity_blocked;n++)

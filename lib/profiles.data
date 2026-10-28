@@ -30,7 +30,7 @@
     (Unique id)
     (Rows
       (Row CETTA_LANGUAGE_VERSION_NONE 0)
-      (Row CETTA_LANGUAGE_VERSION_PETTA_1_0_6 1)
+      (Row CETTA_LANGUAGE_VERSION_PETTA_STABLE 6)
       (Row CETTA_LANGUAGE_VERSION_PETTA_1_1 2)
       (Row CETTA_LANGUAGE_VERSION_PRIME_0_0_1 3)
       (Row CETTA_LANGUAGE_VERSION_HE_0_2_10 4)
@@ -61,7 +61,7 @@
       ; written.  One variable can then name two things in one body, and the
       ; answer depends on the evaluation route (SealedCode.asWritten_incoherent).
       (Row 21 CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN CETTA_PROFILE_PRIME_QUOTE_AS_WRITTEN_VALUE CETTA_LANGUAGE_PRIME "quote-as-written" "Opt-in: substitution enters quotations and quoted parameters capture their arguments as written." false true true false CETTA_LANGUAGE_VERSION_NONE CETTA_IDENTITY_POLICY_J CETTA_CONTEXT_SELF_PROGRAM true before)
-      (Row 7 CETTA_PROFILE_PETTA_EXTENDED CETTA_PROFILE_PETTA_EXTENDED_VALUE CETTA_LANGUAGE_PETTA "extended" "PeTTa semantics plus labeled shared CeTTa extensions." false true false false CETTA_LANGUAGE_VERSION_PETTA_1_0_6 CETTA_IDENTITY_POLICY_J CETTA_CONTEXT_SELF_PROGRAM false before)
+      (Row 7 CETTA_PROFILE_PETTA_EXTENDED CETTA_PROFILE_PETTA_EXTENDED_VALUE CETTA_LANGUAGE_PETTA "extended" "Corrected stable PeTTa plus labeled shared CeTTa extensions." false true false false CETTA_LANGUAGE_VERSION_PETTA_STABLE CETTA_IDENTITY_POLICY_J CETTA_CONTEXT_SELF_PROGRAM false before)
       (Row 22 CETTA_PROFILE_PETTA_1_1_C CETTA_PROFILE_PETTA_1_1_C_VALUE CETTA_LANGUAGE_PETTA "petta@1.1.c" "PeTTa's typed line with declarations as call contracts: a failed check raises on every route." false false false false CETTA_LANGUAGE_VERSION_PETTA_1_1_C CETTA_IDENTITY_POLICY_J CETTA_CONTEXT_SELF_PROGRAM false before)
       (Row 8 CETTA_PROFILE_PETTA_TYPECHECK_V2 CETTA_PROFILE_PETTA_TYPECHECK_V2_VALUE CETTA_LANGUAGE_PETTA "typecheck-v2" "PeTTa with native Roman-compatible residual type checking." false true false false CETTA_LANGUAGE_VERSION_PETTA_1_1 CETTA_IDENTITY_POLICY_J CETTA_CONTEXT_SELF_PROGRAM false typing)
       (Row 13 CETTA_PROFILE_PETTA_TYPECHECK_V3 CETTA_PROFILE_PETTA_TYPECHECK_V3_VALUE CETTA_LANGUAGE_PETTA "typecheck-v3" "PeTTa with native v3 judgments and coherent typecheck-v2 delegation." false true false false CETTA_LANGUAGE_VERSION_PETTA_1_1 CETTA_IDENTITY_POLICY_J CETTA_CONTEXT_SELF_PROGRAM false typing)

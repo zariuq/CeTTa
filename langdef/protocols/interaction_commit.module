@@ -1,0 +1,58 @@
+-- One interaction commit as a declared protocol (src/interaction_core.c).
+-- The guards validate the commit against the live store: every region read is
+-- at the revision it was read at; every footprint entry has its right, is at
+-- its revision and, for a take or a keep, still holds the atom read, and every
+-- predicate query in the footprint (full, full-of) is at the revision it was
+-- read at; nothing is taken twice or both taken and kept; every make has its
+-- right.  The writes happen inside one epoch, and the epoch is published only
+-- when every space the commit changed has moved its revision: the contract a
+-- later commit's validation relies on.
+Module InteractionCommit {
+  Theory Protocols() {
+    Empty Equations {
+      (ia_commit_run) == (Protocol "cesta-protocol/1"
+        (Context IaCommitRun)
+        (Hooks
+          (Hook seen ia_commit_seen guard (Requires) (Uses) (Proves current))
+          (Hook footprint ia_commit_footprint guard (Requires current) (Uses) (Proves formed))
+          (Hook linear ia_commit_linear guard (Requires formed) (Uses) (Proves linear))
+          (Hook makes ia_commit_makes guard (Requires linear) (Uses) (Proves permitted))
+          (Hook take ia_commit_take effect
+            (Requires current formed linear permitted) (Uses epoch) (Proves taken))
+          (Hook make ia_commit_make effect (Requires taken) (Uses epoch) (Proves made))
+          (Hook moved ia_commit_moved guard (Requires made) (Uses epoch) (Proves moved)))
+        (Resources
+          (Resource epoch ia_commit_epoch_open ia_commit_epoch_abandon ia_commit_epoch_publish
+            (AcquireRequires current formed linear permitted)
+            (TransferRequires made moved)))
+        (Entry (Facts) (Owns))
+        (Body
+          (Call seen
+            (Call footprint
+              (Call linear
+                (Call makes
+                  (Acquire epoch
+                    (Call take
+                      (Call make
+                        (Call moved
+                          (Transfer epoch (Return answered))
+                          (Release epoch (Return engine_failure)))
+                        (Release epoch (Return engine_failure)))
+                      (Release epoch (Return engine_failure)))
+                    (Return resource_failure))
+                  (Return declined))
+                (Return declined))
+              (Return declined))
+            (Return declined)))
+        (Checks
+          (Fact current ia_commit_is_current)
+          (Fact formed ia_commit_is_formed)
+          (Fact linear ia_commit_is_linear)
+          (Fact permitted ia_commit_is_permitted)
+          (Fact taken ia_commit_was_taken)
+          (Fact made ia_commit_was_made)
+          (Fact moved ia_commit_has_moved)
+          (Own epoch ia_commit_epoch_is_open)));
+    }
+  }
+}

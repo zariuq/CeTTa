@@ -1,0 +1,1020 @@
+Checked incremental compression
+===============================
+
+The implementation is an authored PeTTa library. It requires no Python or Prolog
+runtime and adds no learner-specific C primitive. Python is used by the separate
+correspondence gates as an independent reference.
+
+Theory, inspirations and provenance
+----------------------------------
+The feature/descriptive-map framework, incremental compression theory and ALICE
+originate in Arthur Franz, Oleksandr Antonenko and Roman Soletskyi, "A theory of
+incremental compression", Information Sciences 547 (2021), 28-48:
+
+  https://doi.org/10.1016/j.ins.2020.08.035
+  https://arxiv.org/abs/1908.03781
+
+WILLIAM, by Arthur Franz, Michael Löffler and contributors, is an implementation
+inspiration and a capability/reference-workload source for this learner:
+
+  https://gitlab.com/occam_ua/william
+
+Its operator/inverse learning approach and sequence, regression and clustering
+families inform the programme. CeTTa's learner is an independent implementation;
+it does not require WILLIAM at runtime. Intellectual credit is distinct from
+whether implementation source is copied. No claim of full WILLIAM coverage or
+superior search quality follows from the controls reported here.
+
+The Mettapedia formalization was also informed by and compared with the separate
+ic-theory developments in the dmacd and af271 lineage:
+
+  https://github.com/dmacd/ic-theory
+  https://github.com/af271/ic-theory
+
+Results are developed over Mettapedia's shared computability and conditional
+plain/prefix foundations, with explicit machine and quantifier assumptions.
+Compilation of an external formalization does not by itself discharge those
+correspondence obligations.
+
+The CeTTa/Mettapedia work contributes its particular typed/scoped representations,
+complete archive codecs, checked reconstruction, resumable execution machinery
+and implementation-correspondence controls. Algorithmic Lean laws and finite
+runtime checks are separate evidence; neither practical cost descent nor a
+bounded search proves the paper's ideal shortest-feature hypotheses.
+
+Layers
+------
+lib/petta/lib_incremental_compression.metta owns acceptance, first-accepted
+selection, bounded iteration, reconstruction and cost accumulation.
+lib/petta/lib_ic_repeated_block.metta supplies a closed bit-sequence family.
+lib/petta/lib_ic_syntax.metta supplies exact ordered-syntax factoring with fresh
+representation references. These references are not host-language variables.
+
+Import the desired family, for example:
+
+  !(import! &self "lib/petta/lib_ic_syntax.metta")
+
+Counts and search budgets use IC:Z / (IC:S predecessor). This explicit boundary
+does not silently treat fractional numbers as natural budgets or reference IDs.
+Syntax values are (IC:Leaf symbol), (IC:Ref natural), or (IC:Pair left right).
+Leaves must be symbols, not numbers whose matching could promote 1 to 1.0.
+
+  (ic:compress kernel proposals fuel source)
+  (ic:compress-generated kernel fuel source)
+  (ic:restore kernel features residual)
+  (ic:plan-cost kernel features residual)
+
+Compression returns (IC:Plan features residual stop). IC:BudgetExhausted records
+the search bound; IC:NoCandidateAccepted refers only to the supplied finite
+proposal family. Neither result asserts global incompressibility. Reconstruction
+returns (IC:Some source) or a refusal/unavailable result.
+
+Kernel operations are extract, expand, feature-cost, data-cost and, optionally,
+propose. They have a deterministic pure contract with natural costs and the
+IC:Some/IC:None boundary. The current qualified instances satisfy that contract;
+this interface does not prove arbitrary user-defined callbacks pure, total or
+single-valued. Multivalued inverses must expose branch choices as distinct
+proposals rather than hide a first-answer selection inside extraction.
+
+Costs
+-----
+The two initial instances use explicit constructor-size models, including feature
+and residual costs. They do not claim prefix-code bit optimality. A future binary
+codec must charge its framing, alphabet/library and reference costs explicitly.
+Source labels and reference IDs remain part of the representation observation.
+
+The binary library now provides the reusable record framing for that codec:
+
+  !(import! &self (library binary))
+  !(import! &self (library tensor))
+  !(let* (($name (binary:utf8 "example"))
+          ($payload (tensor:from-values u8 (3) (0 1 255))))
+      (binary:pack-fields ($name $payload)))
+
+Fields and results are immutable, fully supported rank-one U8 tensors. The wire
+contains E2(binaryBits(fieldCount)), then E2(fieldBits) for every field; bits are
+most significant first. Zero padding completes the final byte. Thus dictionaries,
+definitions and residuals can use nested records without hidden field boundaries.
+binary:packed-length returns the exact encoded byte count without packing data.
+Its (Binary:FieldLengths (length ...)) input measures the same record from exact
+nonnegative integer byte lengths, without allocating those payloads. Invalid
+lengths and encoded-size overflow remain explicit faults.
+binary:unpack-fields returns (Binary:Fields fields), or a completed Binary:Fault
+for malformed framing, noncanonical lengths, unaligned fields or trailing data.
+Unsupported non-tensor inputs remain available to authored extensions.
+
+binary:utf8 and binary:from-utf8 convert explicitly between text and byte vectors,
+validate UTF-8 and retain embedded NUL. Packed binary fields themselves may contain
+arbitrary bytes. Views preserve their logical byte order; missing sparse entries
+are never filled implicitly. The library has no compression-specific evaluator
+case and is activated through the ordinary library registry.
+
+binary:unsigned encodes a nonnegative machine integer as minimal big-endian bytes
+(zero has an empty payload); binary:from-unsigned reads that representation.
+Redundant leading zero bytes, negative inputs and values above the machine-integer
+range are refused. Floating-point inputs are not silently treated as integer IDs.
+
+binary:unsigned? inspects the actual nonnegative integer representation directly.
+The schema and template validators use it without constructing temporary byte
+vectors for every operator or hole ID.
+
+binary:symbol-utf8 and binary:from-symbol-utf8 convert literal symbol names through
+the native symbol interface. They do not use the source reader. Symbol names
+exclude NUL, while String and opaque byte payloads can retain it.
+
+The initial reference compressors retain their constructor costs. The IC1 archive
+path below supplies complete byte accounting for admitted first-order templates.
+
+Immutable compact forests
+--------------------------
+The ordinary dag library stores Binary:Leaf and Binary:Node forests through a
+private instance of the runtime's existing collision-checked structural store.
+Only packed byte payloads and child coordinates are retained. It does not keep
+an unfolded Atom tree alongside the compact records.
+Tree import memoizes source identity for the duration of its private build,
+reusing the existing u32 indexes as an exact two-level u64 index. Active source
+entries detect cycles; completed entries avoid revisiting shared children. No
+source pointer or mutable import memo survives publication.
+
+  !(import! &self (library dag))
+  (dag:from-forest trees)
+  (dag:from-records (Dag:Forest roots records))
+  (dag:export handle)
+  (dag:roots handle)
+  (dag:node handle index)
+  (dag:unfold handle index)
+  (dag:fold-unique handle leaf-algebra node-algebra)
+  (dag:stats handle)
+  (dag:close handle)
+
+An exported record is (Binary:Leaf bytes) or (Binary:Node tag child-indices).
+Every child index must point strictly backward. Root order, duplicate roots
+and duplicate child edges survive. Import validates the whole record table
+before publication and canonicalizes exact duplicate records. A leaf and an
+empty node remain different even when their payloads agree. Opaque bytes do
+not acquire numeric promotion, text parsing or approximate equality.
+
+Public indices are dense coordinates within one forest. They are not stable
+cross-forest identities or owning references. Copies of a live handle retain
+the immutable store; explicit close invalidates aliases. Printing and reparsing
+or arithmetically reconstructing its visible ID cannot recover ownership.
+Dag:Stats reports node count, edge count and conservative retained-resource
+accounting, not total process RSS.
+
+fold-unique visits each stored node once, in chronological order, then projects
+the ordered roots. For a pure deterministic algebra it agrees with folding the
+unfolded trees. With effects or choice it explicitly observes that unique-node
+schedule; it must not silently replace a tree fold under those observations.
+
+lib/petta/lib_dag_codec.metta supplies dag:pack and dag:unpack through the same
+framing and schema machinery as IC1. The DAG1 envelope contains its version,
+root vector, payloads and all references. Decoding creates a new owned forest,
+not authority for a previous handle. IC1's logical source codec and default
+acceptance cost remain unchanged.
+
+dag:encoded-lengths calculates each root's exact unfolded-tree encoding length
+through a memoized length algebra. It does not allocate the expanded encoding.
+The 21-record focused control represents 1,048,576 leaf occurrences per root;
+each unfolded encoding is 51,310,291 bytes, while the DAG resource accounting
+is about 20 KB. This is a representation control, not an application speedup or
+total-process memory comparison.
+
+The ordinary recursive binary-tree:byte-length is also available as a reference
+length evaluator. Replacing archive acceptance's encoder with this evaluator
+was slower in a paired local experiment and was not retained. The explicit
+bench_ic_archive_cost.py command preserves both implementations as controls;
+it is not part of the ordinary correctness suite.
+
+Parameterized templates
+-----------------------
+lib/petta/lib_ic_templates.metta provides ranked first-order matching and pairwise
+generalization in ordinary MeTTa, using the canonical role/index schema from the
+Gauthier theory. A source node is (IC:Node operator-index children). A pattern may
+also contain (IC:Hole role index), where role is Root, Code or Value. IDs are exact
+nonnegative machine integers; source variable syntax is not an implicit hole.
+
+The ordered signature contains (IC:Operator result-sort slots) rows; each slot is
+(IC:Slot role sort), with symbol sort labels. A row's position is its operator ID.
+Admission checks result sorts, child counts, hole roles and consistent hole sorts.
+No source operator is executed by matching or expansion.
+
+  (ic-template:match signature root-slots patterns sources)
+  (ic-template:generalize signature root-slots left-sources right-sources)
+
+match returns IC:None for a disagreement, (IC:Some environment) on success, or an
+IC:Invalid result for malformed admitted inputs. A forest shares one environment:
+matching a rewrite's left and right sides separately would lose their constraints.
+Distinct corpus occurrences use separate environments. expand-list reconstructs
+an admitted pattern forest from its returned environment.
+
+generalize returns (IC:Generalized patterns left-environment right-environment).
+Repeated disagreement pairs share a hole. IDs are first-occurrence positions in
+the complete hole stream, including repetitions; swapping the input pair keeps
+the schema but swaps its residual arguments. This supplies pairwise search seeds,
+not a complete template grammar search. It does not itself accept compression or
+claim that introducing a helper is profitable. Binder templates require the
+existing scoped matcher and a source adapter; they are not erased into this
+first-order representation. Lossless source capture and source-template archive
+reuse are described below. Scoped helper transformations, corpus-guided
+refinement and the full learner remain subsequent work.
+
+Source observations and source-level acceptance
+-----------------------------------------------
+The ordinary syntax library reads source through the active document reader,
+without evaluating it. PeTTa imports it with (library syntax); Prime imports
+syntax. The syntax reader, not a separate compression tokenizer, owns dialect
+normalization and the set of admitted source forms.
+
+  (syntax:read text)
+  (syntax:restore document)
+  (syntax:freeze source)
+  (syntax:write document)
+
+An ST1 document records its reader language, resolved version, profile and ordered
+source forms. Each form includes a first-occurrence variable inventory. Repeated
+references retain identity; anonymous variables are distinct occurrences. Names
+are presentation data, not identity keys. Quote syntax, duplicate declarations,
+all expression children and literal payloads survive. Comments and whitespace are
+not part of this syntax observation. Capturing syntax establishes no binding,
+purity or execution permission.
+
+restore reconstructs a private owned SourceSyntax value with fresh internal
+variable identities. These variables belong to the quoted source, not to the
+enclosing program's logical environment. The value owns actual restored syntax,
+not a copy of the input document. freeze observes that reconstructed syntax.
+Separate restores have separate identity; compare their frozen documents for
+portable syntax equality. Runtime handles are not source literals.
+
+write preserves source names and dialect string rules, then checks that the
+active reader returns the same complete document. A changed reader is refused.
+A document may be transportable without being printable by that reader: two
+distinct identities with the same display name, for example, must not silently
+collapse during emission. Unsupported emission returns Syntax:Fault.
+
+lib/petta/lib_source_codec.metta supplies syntax:pack and syntax:unpack through
+the common schema/framing machinery. ST1 charges reader metadata, name inventories,
+literal kinds and packed payloads, ordinals and every expression boundary. Fixed
+I64/F64 payloads retain their type and bits; payloads are never approximate keys.
+
+lib/petta/lib_ic_tree_archive.metta maps ordered byte trees into IC1 using the
+existing immutable DAG and stable key factorization. Payloads are nullary typed
+operators; a node-arity operator receives a packed tag and its ordered children.
+Repeated edges and roots remain separate observations. The dictionary, operator
+arities, literals, definitions and substitutions are charged archive data.
+
+lib/petta/lib_ic_source_archive.metta maps a captured source into a header plus
+ordered form roots. A whole rule retains one shared variable inventory across
+its left and right sides. The first-order learner can factor those inert source
+records; it does not perform a capture-sensitive rewrite inside the source or
+install a learned rule into a running space.
+
+  (ic:prepare-trees forest)       -> (IC:TreeArchive archive), or refusal
+  (ic:restore-trees archive)      -> (IC:Some forest), or IC:None
+  (ic:prepare-source document)    -> (IC:TreeArchive archive), or refusal
+  (ic:restore-source archive)     -> (IC:Some document), or IC:None
+
+The ranked-tree intermediate must not inflate the baseline used to accept
+compression. Source-level artifacts therefore use a SIC1 envelope: the common
+three-field framing of UTF-8 "SIC1", UTF-8 codec name, and complete packed payload.
+ST1 and IC1 are explicit alternatives. The envelope and all payload bytes count.
+
+  (ic:source-pack document)        -> plain ST1 source artifact bytes
+  (ic:source-from-archive archive)  -> learned IC1 source artifact bytes
+  (ic:source-unpack bytes)         -> (IC:Some document), or IC:None
+  (ic:source-check original current candidate)
+
+source-check independently reconstructs all three complete documents, checks
+them against the original observation and accepts only a strict reduction in
+complete artifact byte length. The ordinary resumable search uses this contract
+under IC:SourceArchive; IC:ProgramArchive remains the intermediate archive model.
+An IC:SourceTemplate proposal contains archive, name, slots and patterns. Proposal
+construction cannot bypass source reconstruction or complete-cost acceptance.
+
+The focused real-wrapper control factors four authored list helpers from 12,517
+to 8,675 IC1 bytes. Plain ST1 is only 2,307 bytes, so source-level acceptance
+correctly refuses that candidate. A separate repeated-rule control preserves
+all twelve declarations and reduces the complete SIC1 artifact from 7,418 to
+5,623 bytes. These are representation controls, not held-out learning results,
+execution speedups or comparisons against a general-purpose text compressor.
+
+SourceFrame.lean proves fresh variable reconstruction and occurrence/alias
+preservation. TreeArchive.lean connects complete dictionaries and indexed
+byte-tree encoding to actual template matching and reconstruction. These are
+algorithm laws, not universal verification of the native implementation or
+permission to erase scope information.
+
+  make test-source-codec
+
+This focused gate checks independent ST1/IC1/SIC1 bytes, source preservation,
+current-reader emission, actual loading/execution, codec choices and source-level
+search. It is not added to the ordinary test dependencies.
+
+Scoped parameterized templates
+------------------------------
+lib/petta/lib_scoped_templates.metta supplies an ordinary MeTTa instance of the
+shared sorted binding-term matcher and partial reconstructor. It does not add
+another binding calculus or an evaluator dispatch case.
+
+  (Scoped:Family sorts operators parameters)
+  (Scoped:Operator name result-sort ((Scoped:Slot binder-sorts child-sort) ...))
+  (Scoped:Parameter name role dependency-sorts result-sort)
+
+Names are text metadata. Sort labels are explicit symbols or UTF-8 strings;
+they are compared without conversion between those kinds. Parameters retain
+Root/Code/Value roles. Operator and parameter positions are exact nonnegative
+integer coordinates within the declared family, not hashes or host variables.
+
+The wire carrier is the existing Binding.WireCodec.Data: Wire:Atom holds a
+natural, Wire:Pair holds two data cells. Terms and argument vectors follow the
+original Binding.Term/Args codec. Source operators use a table ordinal; schema
+operators use the tagged base/parameter sum. These helpers construct that wire:
+
+  (scoped:variable index)
+  (scoped:base operator-index children)
+  (scoped:rigid operator-index patterns)
+  (scoped:meta parameter-index arguments)
+
+  (scoped:match family ordinary-context result-sort pattern source)
+  (scoped:expand family ordinary-context result-sort captures pattern)
+  (scoped:match-many family ordinary-context root-sorts patterns sources)
+  (scoped:expand-many family ordinary-context root-sorts captures patterns)
+
+Matching returns IC:None for an unsupported/disagreeing match, IC:Invalid for
+malformed input, or (IC:Some (Scoped:Captures variables parameters)). Expansion
+independently reads those captures; it never returns a cached source term.
+Unused parameters may stay absent. A used but missing capture is refused, not
+replaced by an invented value or an unexpanded hole.
+
+Every binder field uses its declared sort prefix. Contextual arguments must be
+distinct bound variables at the declared sorts, in the supplied order. Subsets
+and permutations are supported. Recovery rejects references to unselected
+ambient binders, while keeping binders introduced inside a captured body local.
+Repeated parameters compare the recovered bodies, including at different depths.
+Ordinary rule variables have closed images and cannot capture object binders.
+Repeated or nonvariable argument spines can be declined even when a more general
+higher-order solution exists. This is not general higher-order unification.
+
+match-many shares one accumulator across rule components. It must not be replaced
+by independent matches of each side. Raw wire admission checks constructor
+markers and list terminators as well as indices: numeric matching does not make
+0.0 an acceptable encoding of the natural marker 0.
+
+lib/petta/lib_scoped_module.metta projects finite AST operator families from the
+existing LanguageDef carrier produced by the module reader:
+
+  (scoped:family-from-language language parameter-declarations)
+
+The result is the same Scoped:Family used by ordinary registration. Simple
+base-sort parameters and supported single-binding parameters are derived from
+their authored type fields. Unsupported carriers/parameter forms return a
+Scoped:Refused value; they are not silently given a nonbinding interpretation.
+This is a signature projection, not permission to execute a module's equations,
+rewrites, premises or notation. Plain MeTTa source needs no module conversion.
+
+The focused gate reads and assembles the existing BindingValues.module, derives
+its Name/Expr binder fields, matches a contextual template, reconstructs an outer
+reference, and checks the corresponding term through native LanguageDef
+admission. An ordinary registered family gives the same observations. Changing
+the binder declaration changes admission. Constructor names are never invoked.
+
+ScopedTemplates.lean proves direct reconstruction from the actual scoped
+matcher's partial captures, without requiring a total completion.
+ScopedTemplateWire.lean supplies the finite operator-table codec instance for
+arbitrary decidable sort labels, using the shared term/argument codecs.
+The controls include an unused sort with no closed inhabitant: no total ordinary
+or metavariable assignment exists, yet the used template still reconstructs.
+These laws and executable conformance controls are not a universal proof of the
+MeTTa evaluator, nor automatic higher-order template discovery.
+
+  make test-scoped-templates
+  make test-incremental-compression
+
+The second command explicitly joins the implemented IC component gates.
+Neither command expands ordinary make test. Numerical learning, automatic scoped
+proposal generation, library installation/export and held-out execution-cost
+qualification remain separate programme requirements.
+
+Closed protocol values and scoped archives
+-----------------------------------------
+lib/petta/lib_binary_value.metta transports closed protocol values as BV1.
+Its scalar profile distinguishes flat symbols, UTF-8 text, exact nonnegative
+machine integers and fully supported packed U8 vectors. Ordered expressions
+retain every child, including duplicates. Text permits embedded NUL. Live
+variables, runtime handles, internal carriers and structured symbol names are
+not serialized by this profile. Other numerical literals belong in explicitly
+typed packed payloads, not silently rounded or reclassified protocol scalars.
+
+The schema uses tags 1 Symbol, 2 Text, 3 Natural, 4 Bytes, 5 Expression and
+6 Archive. Scalar forms have one payload leaf; Expression has one zero-tagged
+vector of recursively encoded forms. Archive has the text version BV1 and one
+value form. All records use the existing recursive E2 framing. Independently
+implemented fixtures check the complete bytes, not only a label-table checksum.
+
+binary:value-kind classifies the physical portable representation; it is not
+a purity, ownership or execution certificate. In particular, PeTTa may report
+a builtin symbol's semantic metatype as Grounded. That does not change its
+physical symbol bytes. Schema symbol fields use the physical guard without
+changing PeTTa reflection. Decoding constructs expressions with cons-atom and
+does not invoke a decoded head, even when it spells quote or println!.
+
+lib/petta/lib_ic_scoped_archive.metta combines the same scoped matcher,
+protocol codec and ordinary resumable controller:
+
+  (Scoped:Archive "SC1" sorts operators definitions items)
+  (Scoped:Definition name ordinary-context parameters root-sorts pattern-forest)
+  (Scoped:Raw origin root-sorts source-forest)
+  (Scoped:Call origin definition-index (Scoped:Captures variables parameters))
+
+The original archive carries only its base signature and raw sources. An unused
+proposal grammar is not charged to the original in order to make a later result
+look smaller. Each installed definition carries its full parameter declarations,
+context, root sorts and pattern forest. Calls carry the actual partial captures.
+Origins, component order, duplicate occurrences and every unmatched source
+remain part of the reconstructed observation and the encoded cost.
+
+  (ic:prepare-scoped family source-packets)
+  (ic:scoped-factor archive name ordinary-context parameters root-sorts patterns)
+  (ic:scoped-pack archive)
+  (ic:scoped-unpack bytes)
+  (ic:scoped-check original-bytes current-bytes candidate-bytes)
+  (ic:learn-scoped original-bytes (IC:Candidates proposals) quantum)
+
+A source packet is (Scoped:Packet origin root-sorts source-forest). Preparation
+returns (IC:ScopedTask bytes). A proposal is (Scoped:Factor base-archive name
+ordinary-context parameters root-sorts patterns). The explicit base permits a
+proposal to refer to an earlier checked snapshot. The final checker still
+compares with the original task. Existing definitions use base syntax; this
+profile does not implement recursive or arbitrary inter-definition references.
+
+Factoring selects disjoint whole-packet sites and shares one capture environment
+across the forest. Expansion independently validates and reconstructs each call.
+The search adapter requires at least two matching occurrences, accepts only a
+smaller complete artifact, records the current equation space as a dependency,
+and returns the ordinary IC:PreparedSearch for ic:resume, ic:cancel and
+ic:release. These entry points search supplied proposals; automatic scoped
+grammar/corpus proposal discovery is not established by this adapter.
+
+lib/petta/lib_ic_packed.metta owns the common packed-artifact check, used by the
+source and scoped adapters. A domain supplies an observation decoder and an
+acceptance criterion against the original observation. Both the current and
+proposed artifacts must meet that fixed criterion. It need not be transitive:
+the control with successive observations 0, 1, 2 accepts 1 within a tolerance of
+1 but refuses 2 against the original 0, even though both encodings get cheaper.
+Source and scoped tasks use exact reconstruction. This general criterion is
+not a completed numerical learner or an approximate search implementation.
+
+The scoped control replaces eight of nine occurrences and preserves a ninth
+whose repeated parameter disagrees across rule components. Complete bytes fall
+from 80,680 to 26,890. This is a synthetic scoped representation control, not a
+held-out library result, a runtime speedup or a general compression-quality claim.
+
+  make test-binary-value
+  make test-ic-scoped-archive
+
+Corpus-guided scoped discovery
+------------------------------
+Import lib/petta/lib_scoped_grammar.metta to generate templates automatically
+inside a declared finite scoped family:
+
+  (scoped-grammar:enumerate family ordinary-context root-sorts sources depth)
+  (ic:learn-scoped original-bytes
+    (IC:Grammar family name ordinary-context root-sorts depth) quantum)
+
+The first operation yields Scoped:Template forests for one guide occurrence.
+The second returns the same IC:PreparedSearch used by supplied candidates.
+The family's base signature must agree with the archive. Parameter declarations
+and the ordinary context specify the finite leaf choices; this entry point does
+not synthesize new higher-order parameter declarations or perform general
+higher-order anti-unification.
+
+Depth bounds retained rigid constructors. At each source position the generator
+may retain the actual constructor, preserve the actual bound variable, introduce
+an ordinary closed-image variable, or apply a declared contextual parameter to
+distinct correctly sorted bound variables. Subsets and permutations are covered.
+The matcher is run as choices are made, threading one capture environment through
+all siblings and rule components. A captured subtree need not fit within the
+rigid-constructor depth bound. An exhausted empty region is not a budget stop.
+
+Every compatible corpus occurrence can guide refinement. Identical guide
+forests are generated once; their source occurrences still count separately
+when factoring and computing support. Different guides can generate the same
+template. No unproved cost bound or match-based dominance heuristic suppresses
+those proposals. Final source reconstruction and complete-byte acceptance are
+unchanged. The generator does not execute operator names or install helpers
+into an application.
+
+An independent implementation enumerates the full syntactic products first and
+matches complete forests afterward. The focused gate compares its finite regions
+with early capture pruning, then independently computes every complete candidate
+cost. In the small binding corpus, eleven proposals find the 8,350-byte minimum
+from a 15,073-byte original. This is bounded search coverage and representation
+savings, not a held-out real-library execution claim.
+
+ScopedGuidance.lean proves that interleaved matching gives exactly the ordered
+late-filtered candidate account, including duplicates, and independently expands
+each successful template. ScopedChoices.lean constructs finite sorted variable
+and contextual-spine choices and connects that equality to checked refinement
+under a complete cost. Concrete controls cover a generated binding template,
+the depth boundary, repeated-spine refusal and unused uninhabited parameters.
+Finite runtime conformance is separate from these algorithm laws.
+
+Owned fair search now reuses the existing generated structural-operation
+contracts for expression construction, deconstruction and concatenation. Binding
+patterns, like case patterns, are not executed by the relation-safety scan; their
+source values and bodies are still checked. Only the imported unary exact-integer
+observer receives native purity permission; physical value-kind classification
+does not. Other codec calls,
+wrong arities, effects and unavailable providers stay conservatively refused.
+The safety cache records native observer availability as well as the program
+token, including loaded-module availability without a source edit. This does not
+grant type-level evaluation permission or blanket purity to native libraries.
+
+  make test-native-observer-safety
+  make test-scoped-grammar
+
+Complete first-order archives
+----------------------------
+lib/petta/lib_binary_tree.metta carries nested records without unpacking numeric
+payloads into atoms. A leaf is the framed pair (empty-marker, payload). A node is
+the framed triple (one-marker, tag, framed-vector-of-child-records). The marker
+for one is the byte 0x01; zero has an empty payload. Both payloads and tags are
+rank-one U8 tensors. Decoding derives its budget from the actual encoded bit
+length. Extra fields, invalid markers and malformed nested frames are refused.
+
+lib/petta/lib_binary_schema.metta maps registered constructors to these trees.
+The schema declares each positive numeric tag, constructor and field kinds:
+Bytes, Text, Symbol, Natural, Record, Either and Vector. Vector records use tag
+zero. Duplicate tags/names, unknown field kinds and dangling constructor names
+are rejected on registration. One table governs reading and writing.
+
+lib/petta/lib_ic_archive.metta declares IC1 and supplies its observation checker:
+
+  (IC:Archive "IC1" observation signature heads literals definitions residuals)
+
+The signature and slots use the template representation above. Each head is
+(IC:Name text) or (IC:LiteralRef index). The literal dictionary stores
+(IC:Literal kind bytes), with U8, I64, F64, String and Symbol kinds. Integers and
+binary64 literals use eight big-endian bytes. Symbol and String literals use
+UTF-8; String permits embedded NUL. Literal heads must have arity zero.
+
+A definition is (IC:Definition name root-slots patterns). A residual packet is
+(IC:Raw root-slots sources) or (IC:Call definition-index environment). Calls carry
+one explicit (IC:Binding role index source) per required hole. Missing, duplicate,
+unknown and wrongly sorted bindings are rejected. All definitions currently use
+base operators; recursive/inter-definition references and binder adapters remain
+outside this first-order profile. Packet order and duplicate occurrences survive
+restoration. Head/literal tables are fixed for an admitted task.
+
+  (ic-archive:pack archive)
+  (ic-archive:unpack bytes)
+  (ic-archive:check original current candidate)
+  (ic-archive:factor current name root-slots patterns)
+  (ic-archive:install original current name root-slots patterns)
+  (ic-archive:learn-pair original current name left-index right-index)
+
+pack returns Binary:TreeBytes or Binary:TreeFault. unpack validates both syntax
+and semantics before returning IC:Some archive. check accepts only a candidate
+that reconstructs the original task, retains its catalogue/observation and has
+strictly fewer complete serialized bytes than the current artifact. It returns
+IC:ArchiveAccepted with the candidate, bytes and before/after sizes, or a reason
+for rejection. Definitions, their names, all substitutions and framing are paid.
+An unused or excessively large definition can therefore lose despite reducing
+the count of source nodes.
+
+factor builds a proposal at disjoint packet roots. install checks that proposal;
+learn-pair derives its seed from two selected packets and tries it on every
+compatible packet. These operations produce inspectable data and never edit
+application sources. They are components of the learner: the fair scheduler,
+top-down candidate grammar, source adapters and library exporter remain open.
+
+The current profile is (IC:Observation ExactSyntax empty-bytes). Numerical
+approximation requires a separate declared observation against the original
+task. Transported definitions never acquire execution or certificate authority.
+
+Resumable search
+----------------
+lib/petta/lib_ic_search.metta supplies one cooperative controller for candidate
+streams. The current model is IC:ProgramArchive. A producer returns
+(IC:Candidate archive) or (IC:ProducerFault reason); every candidate is checked
+against the original task. Rejection never discards the producer's later answers.
+
+The ordinary work library exposes the existing retained-computation engine on
+plain PeTTa:
+
+  !(import! &self (library work))
+
+work-new holds its source unevaluated. work-budget bounds a take in machine
+transitions, work-take retains the remaining alternatives, and work-cancel
+releases the resource. work:epoch is an opaque token that changes on a mutating
+work operation. ID arithmetic or print/reparse cannot supply an owning reference.
+The ordinary heap library exposes the persistent pairing-heap implementation
+without a Prolog import: heap:empty, heap:insert, heap:take, heap:size and
+heap:valid?. Operations preserve valid heaps; validate untrusted data once at
+the boundary. Equal keys retain the established meld tie order; composite
+(priority serial) keys give deterministic age ties.
+
+Search entry points are:
+
+  (ic:prepare model original sources quantum branches)
+  (ic:resume state slices)
+  (ic:cancel state)
+  (ic:release state)
+
+branches contains (IC:Branch priority work-handle) values. Each producer must be
+fresh, owned, distinct and qualified for the common FIFO continuation route.
+Preparation returns IC:PreparedSearch state or IC:SearchRefused reason. The
+named ic-search:from-list relation supplies a finite stream without dropping
+duplicates. sources lists every mutable source space declared by the operator
+adapter; preparation captures their actual revisions. Dependency inference for
+arbitrary user code is not supplied by this API.
+
+Seven services choose the least priority, keeping age order on ties. The eighth
+chooses the oldest pending ticket. A paused producer rejoins with a fresh ticket.
+The first queue implementation is the ordinary list reference from FairQueue.lean;
+indexed persistent frontiers remain a separate runtime facility. Both the outer
+queue and the producer's admitted FIFO route preserve later alternatives.
+
+resume returns (IC:SearchResult best statistics reason first-fault state).
+Statistics count services, candidates, accepted improvements and faults. Only
+the first fault detail is retained, with all faults counted. Reasons distinguish
+RegionExhausted, FaultedRegion, BudgetExhausted, Cancelled and Capacity. Exhaustion
+refers to the supplied producer region; it does not assert incompressibility.
+Every supported resume checks the task observation, source revisions and cursor
+epochs. A consumed earlier snapshot returns CursorChanged rather than replaying
+an advanced cursor. Handles remain in-process resources and cannot be recovered
+from serialized identifiers.
+
+Search cancellation is a cooperative pause at a slice boundary, retaining the
+latest state for resume. release is the explicit destructive resource operation.
+Terminal producers are released by the controller. Hard process termination is
+not a durable search checkpoint. Quantum bounds cooperative machine work; the
+fairness bound counts slices, not elapsed seconds.
+
+The controller checks source dependencies at slice boundaries. Operator adapters
+must declare all mutable sources they read. The current archive model preserves
+exact syntax; numerical approximation needs its declared observation model.
+The supplied-stream controller is not the full template-grammar or numerical
+proposal learner: those families and their completeness controls remain open.
+
+In syntax factoring, extraction replaces exact matching subtrees by a fresh
+reference. It refuses an ID already present in the current source. Reconstruction
+expands features in reverse extraction order and restores the exact ordered tree.
+Original rule multiplicity, names and binding syntax are therefore retained when
+included in the input tree. The compact representation is not itself authorized
+as a new rewrite system. Direct compact execution needs a separate correspondence.
+
+Formal layer
+------------
+The host-independent owner is Mettapedia/Algorithms/Compression:
+
+- Checked.lean proves the acceptance characterization, selection soundness,
+  complete-chain reconstruction, non-increasing cost and bounded chain length.
+  Its binary-program instance constructs the existing mathematical CompressionStep.
+- RepeatedBlock.lean proves the executable word-description instance reconstructs
+  every source and does not increase its declared size.
+- SyntaxFactor.lean proves fresh replacement/expansion, checked-chain recovery and
+  observation preservation after expansion. A counterexample shows why freshness
+  cannot be omitted.
+- Framing.lean proves canonical field and record decoding, contextual suffix
+  recovery, prefix freeness, exact encoded length, and uniqueness of zero-padded
+  byte framing. The native codec implements its byte-field instance; finite
+  correspondence controls are separate from these mathematical proofs.
+- TemplateMatching.lean reuses canonical schemas and proves that matching
+  constructs a reconstructing environment, retains previous bindings and is
+  complete for first-order instantiation. Its bridge proves that existing
+  role-indexed pairwise generalization seeds are accepted by this matcher.
+- FramedTree.lean proves nested-record round trips, canonical decoding,
+  sufficient decoding fuel and exact packed length. UnsignedBytes.lean proves
+  canonical base-256 fields and the bounded machine-integer profile.
+- CostedArtifact.lean proves checked refinement and minimum complete cost over
+  an explicit candidate list under a fixed observation criterion. The criterion
+  need not be transitive; a concrete decreasing-cost control refuses accumulated
+  error. WholeArtifact.lean specializes those algorithms to framed records.
+- WholeArtifact.lean proves reconstruction and strict bit decrease for accepted
+  whole records, and optimal selection over an explicit finite candidate list.
+  Its domain decoder is a parameter; the IC1 implementation correspondence is
+  tested independently. It is not a proof of the MeTTa schema interpreter.
+- TemplateGrammar.lean implements the finite typed constructor-depth grammar
+  independently of pairwise anti-unification. Soundness and completeness relate
+  the executable generator to separate relational productions, with one shared
+  parameter state across a forest. These are bounds on a first-order search
+  region, not completeness for the full abstraction language.
+- CompactDag.lean proves that memoized record traversal agrees with folding its
+  actual unfolded interpretation, including ordered duplicate roots. It also
+  proves that the length algebra computes exact complete unfolded byte lengths.
+  The native structural interner and handle implementation are checked separately.
+- FairQueue.lean constructs the seven-priority/one-age policy and proves a
+  bounded service guarantee for every live ticket, including zero-cost loops
+  and fresh cheaper arrivals. Search.lean composes its emitted proposal prefix
+  with whole-artifact checking, proving preservation, prefix optimality and
+  exact composition across pause/resume. Runtime resource ownership remains a
+  separate implementation obligation tested through the ordinary interfaces.
+- ScopedFactor.lean proves that factoring disjoint occurrence forests and
+  independently expanding their partial captures reconstructs every source,
+  origin, order and duplicate occurrence. A call records one shared matcher
+  environment for its whole forest. Complete-cost acceptance remains separate.
+
+These are algorithmic laws, not a universal proof of CeTTa's evaluator. The
+Python/MeTTa gates supply finite implementation correspondence separately.
+
+Computability/KolmogorovComplexity/FeatureTheory.lean supplies the mathematical
+feature interface over the existing CompressionStep foundation. It proves
+existence of feature/map minima, the two conditional shortest-program equalities,
+singleton compression, and a uniform universal-feature constant for computable
+universal plain interpreters. An explicit bridge to the existing conditional
+prefix-machine complexity proves IC Lemma 3.1 in that notation without treating
+plain universality as prefix universality. A counterexample shows that strict
+checked compression need not use a shortest feature. Independence, randomness
+tests and the remaining full-paper correspondences are separate obligations.
+
+Bounded program learning
+------------------------
+Import lib/petta/lib_ic_grammar.metta, then call:
+
+  (ic:learn-programs archive name slots constructor-depth quantum)
+
+This returns the same IC:PreparedSearch consumed by ic:resume. The grammar
+introduces fresh typed parameters, reuses earlier parameters only with the same
+role and sort, and expands signature constructors up to the stated depth. It
+does not depend on a pair of corpus examples. Its parameter positions follow
+the canonical first-occurrence convention used by pairwise seeds.
+
+The retained producer performs structural generation only. It emits inert
+IC:Factor proposals, which the program-archive model materializes outside the
+producer. Fewer than two matching packet occurrences is an explicit support
+refusal. Other candidates still pass original-task reconstruction and complete
+byte-cost checking. Support retains duplicate occurrences. This is not a
+partial-template cost bound and makes no global optimality claim outside the
+declared grammar and support region.
+
+The preparation records the current equation space as a dependency. A change
+to that space refuses resumption rather than silently changing the generator.
+Unknown/custom input languages must still provide an appropriate source adapter;
+this entry point does not parse arbitrary MeTTa or erase binding information.
+
+The focused control includes three distinct programs whose pairwise seeds each
+miss the third. A 199-template grammar finds the common abstraction and the
+independent minimum-byte result for that region: 1,539 to 1,435 complete bytes.
+This is a search-coverage and reconstruction control, not a runtime speed claim
+or evidence about held-out real libraries.
+
+Feature-scene example
+---------------------
+Mettapedia's metta/gslt/module/FeatureScene.module defines a small typed scene
+language. Shapes and colours form extensional objects, and scenes are ordered
+object pairs. Its glyph aliases explicitly ground all four icons. The canonical
+surface is unambiguous and is not claimed to recover every convention of the
+original illustrative glyph notation.
+
+Languages/FeatureScene/Basic.lean proves variable-renaming semantics, reduction
+soundness and termination, and soundness of an equality/conjunction proof
+calculus over that model. It includes negative controls separating colour from
+object identity and symmetric equality from directed reduction. This is a
+quantifier-free example, not all of first-order logic.
+
+check_feature_scene.py obtains constructor signatures and notation from CeTTa's
+assembled module and generates bounded well-typed source terms. An independent
+product-model evaluator checks parsed terms and normal forms. Depth-held-out
+examples are exported for learning; the generator does not count their existence
+as evidence that a learner has recovered the calculus.
+
+Focused qualification
+---------------------
+From the CeTTa repository root, with CETTA naming the desired binary and
+SCENE_MODULE naming Mettapedia's FeatureScene.module:
+
+  python3 tests/support/check_incremental_compression.py --cetta "$CETTA" --output runtime/ic-repeat
+  python3 tests/support/check_feature_scene.py --cetta "$CETTA" --module "$SCENE_MODULE" --output runtime/ic-scenes
+  python3 tests/support/check_ic_syntax.py --cetta "$CETTA" --examples runtime/ic-scenes/examples.json --module-core runtime/ic-scenes/core.log --output runtime/ic-syntax
+  make BUILD=core ENABLE_LIB_PROLOG=0 test-binary-codec
+  python3 tests/support/check_ic_templates.py --cetta "$CETTA" --output runtime/ic-templates
+  python3 tests/support/check_binary_tree.py --cetta "$CETTA" --output runtime/ic-binary-tree
+  python3 tests/support/check_ic_archive.py --cetta "$CETTA" --output runtime/ic-archive
+
+test-ic-archive composes the binary, recursive-record and IC1 archive gates:
+
+  make BUILD=core ENABLE_LIB_PROLOG=0 test-ic-archive
+  make BUILD=core ENABLE_LIB_PROLOG=0 test-ic-search
+  make BUILD=core ENABLE_LIB_PROLOG=0 test-compact-dag
+
+This focused command does not run the numerical learner or a discovery sweep.
+Those capabilities are not supplied by the first-order archive checkpoint.
+
+From the Mettapedia Lean root:
+
+  lake build Mettapedia.Examples.Compression.FeatureSceneControls
+
+The Lean audit checks theorem dependencies; the executable gates retain input,
+output and result records. They are deliberately separate from ordinary make test.
+No WILLIAM source is copied or required by these implementations.
+
+Reachable search and residual-bounded information
+------------------------------------------------
+Mettapedia's Compression.FairSearch proves that the actual cost/age queue
+services each live occurrence within its ticket deadline and eventually services
+every node on every finite successor path. Successors may include a continuing
+cheap branch. Empty residual work certifies coverage of the rooted region.
+A finite instruction or scheduler budget does not certify that coverage.
+The complete-byte checker consequently eventually matches or improves any
+reachable valid candidate, and a completed region supplies the corresponding
+minimum-cost bound. These are algorithm laws over cooperative slices; native
+work-handle conformance is checked independently.
+
+Compression.ScopedGuidance compares interleaved capture checking with generation
+followed by the actual whole-pattern matcher. It proves equality of the complete
+ordered candidate lists, including repeated candidates and shared captures.
+Parameter roles, typed contexts and the finite leaf supply remain explicit.
+This permits early capture pruning without changing the declared region's cost
+optimum or tie order. Matched templates independently reconstruct their guides.
+
+FeatureIncompressibility uses one fixed direct description-application compiler
+for the plain shortest-feature lower bound. General prefix and information
+bounds retain their owner in FeatureInformation and the prefix reference bridge.
+BoundedFeature reuses FeatureCompressionRatio's definitions and preserves the
+real-factor residual bound in conditional-minimum and prefix-information
+arguments. Its natural-factor arithmetic correspondence does not identify two
+interpreters. Compiler overheads are chosen before the feature/source family.
+Practical acceptance supplies neither an ideal shortest-feature hypothesis nor
+a claim of independence without those hypotheses.
+
+The optional source capability audit reads the independent WILLIAM checkout and
+IC theory without executing or importing their implementations:
+
+  python3 tests/support/audit_ic_coverage.py --william "$WILLIAM_SOURCE" \
+    --ic-theory "$IC_THEORY_SOURCE" --mettapedia "$METTAPEDIA_SOURCE" \
+    --output runtime/ic-capability-ledger.json
+
+The ledger records fourteen declared sequence/regression/matrix tasks and the
+two unconditionally skipped clustering-discovery tests. It marks native
+numerical discovery, held-out applications and remaining theorem bridges as
+qualification obligations. Declaration or skip counts never become pass counts.
+
+Finite affine fitting and packed sequences
+------------------------------------------
+Import lib/petta/lib_ic_numeric.metta. Numerical observations are finite,
+fully supported f64 vectors, with an explicit same-shaped Bool comparison mask
+and one nonnegative absolute tolerance. Masked positions do not contribute to
+acceptance. This profile preserves row order and repeated observations.
+
+  (ic:prepare-numeric inputs outputs mask tolerance)
+  (ic:prepare-fit Numeric:Affine original-bytes (scale-domain offset-domain) sources)
+  (ic:fit Numeric:Affine original-bytes (scale-domain offset-domain) sources budget)
+  (ic:predict Numeric:Affine model-bytes new-inputs)
+
+Preparation returns IC:NumericArtifact containing complete NC1 bytes. Fitting
+uses the existing IC:PreparedSearch / IC:SearchResult and its cancellation,
+resumption, dependency guards and completion reasons. Each parameter domain
+is a finite fully supported I64 or F64 vector. Its ordered scalar alternatives
+are snapshotted once before opening the retained producer; their Cartesian
+product is enumerated lazily. Repeated parameter alternatives remain repeated
+search occurrences. Observation tensors and model payloads remain packed.
+An explicit frontier fixes product order independently of the retained
+worker's FIFO scheduling; pausing does not select a different equal-cost fit.
+Domain snapshot allocation is preparation work, not compression saving.
+Physical tensor admission uses tensor:is-tensor, not a declared Tensor type.
+An authored value cannot supply packed storage merely by mimicking observers.
+
+NC1 uses the existing BV1 framing and CTN1 dense payloads. Inputs, mask,
+precision, profile identifier and the complete raw-output or affine-parameter
+body all contribute to the candidate cost. Bool masks use exact U8 transport;
+the decoder rejects bytes other than zero and one. Every accepted candidate
+must beat the current complete byte cost and satisfy the original task's
+criterion. Tolerance is never chained through a previous winner. Resumption
+rechecks changed winners through that same original-task checker; equality of
+decoded predictions is not required. Dependency guards run before decoding.
+
+Integer parameters require exact conversion to binary64. Wrong shapes,
+unsupported domains, missing entries and nonfinite values are refused.
+Finite-region exhaustion with no better fit retains the original artifact;
+it does not fabricate a fitted model. Prediction validates the whole model
+archive and its finite parameters before evaluating new inputs.
+
+The ordinary tensor library also provides tensor:scan-sum, tensor:concatenate
+and tensor:permute. Scans retain missing positions, use the first present
+value as each fiber's seed, and preserve ordered dtype-specific addition.
+Integer overflow is a fault. Concatenation and permutation retain support
+and occurrences. tensor:encode-bytes / tensor:decode-bytes expose existing
+CTN1 bytes through packed U8 carriers; unsupported sparse transport remains
+unsupported. A caller may explicitly convert a fully supported value to dense.
+
+  make test-ic-numeric
+  make test-tensor-sequences
+
+These focused gates are included in test-incremental-compression, not in the
+ordinary test suite. Their independent references check complete NC1/CTN1
+bytes, finite grid results, masked tolerance, original-bound error, resumable
+search and prediction on new inputs. They qualify a bounded affine family,
+not broad numerical learner coverage, inverse-DAG search or WILLIAM parity.
+
+Compression.ParameterRegion proves that its finite frontier emits the exact
+ordered Cartesian product, preserves duplicate alternatives, and composes
+exactly across pause/resume. Its decreasing administrative-work measure proves
+finite exhaustion and joins the original-task full-cost checker to region
+optimality. ObservedSearch proves the corresponding fixed-predicate winner and
+fair-search laws, including nontransitive observations. OrderedScan supplies
+the ordered partial-scan laws. Native correspondence remains a separate gate.
+
+  lake build Mettapedia.Examples.Compression.NumericalSearchControls
+
+Executable helper boundaries
+----------------------------
+A reconstructing source template is not automatically a semantics-preserving
+function extraction. An unannotated PeTTa helper call can evaluate an argument
+before entering its definition. Discarding that parameter in the body does not
+undo its effects or failure. Evaluating a choice once and reusing its value also
+differs from independently evaluating that choice at each source occurrence.
+
+The source-archive gate includes negative controls for unused effects, shared
+choices and failed arguments, plus a positive control where the surrounding
+function has already established its argument values. These observations are
+about executable call boundaries, not failures of exact archive reconstruction.
+An executable exporter needs the corresponding scope and argument-demand
+conditions. Archive preparation and learning do not install helpers into
+application sources or claim general extraction permission.
+
+Entered-value source-library export
+----------------------------------
+lib/petta/lib_ic_library.metta supplies the first executable export profile:
+
+  (ic:prepare-library document)
+  (ic:factor-library prepared full-helper-name patterns)
+  (ic:learn-library document suffix quantum)
+  (ic:library-unpack bytes)
+  (ic:library-check original-bytes current-bytes candidate-bytes)
+  (ic:export-library bytes)
+
+Documents come from syntax:read. The qualified profile is the active default
+PeTTa reader; reader/profile changes are refused rather than silently changing
+the interpretation. The suffix is text, and the generated name begins with
+ic-learned:. It must round-trip as one symbol and be absent throughout the
+original source, including quoted symbols.
+
+The selected sites are whole right-hand sides of unannotated first-order
+function equations. Each left side lists its distinct parameters directly.
+Supported bodies use an explicit primitive grammar, quotation and choice
+containers. There are no local binders or variable-headed calls in this initial
+profile. Helper arguments are original entry variables or scalar literals,
+never compound computations. Original function entries, variable identities,
+equation order, duplicate clauses and unsupported source forms remain intact.
+The helper body may itself have effects, choice or failure; those behaviours
+are not relocated into newly eager arguments.
+
+syntax:intrinsic-head? reuses PeTTa's existing intrinsic-head classification to
+exclude nonordinary entry forms. It is conservative and grants no purity or
+value evidence. Declared Atom, String or Grounded types are not value evidence.
+This profile qualifies complete default-PeTTa source slices, not installation
+into arbitrary ambient spaces with extra declarations or reflective observers.
+Installing a new definition is itself visible to a space observer. The exporter
+returns source for review and does not perform that installation.
+
+Source bodies project into the existing typed byte-tree learner. Per-occurrence
+variable identities prevent unrelated equations from becoming one rigid local
+variable. Repeated template holes share one argument, and the expansion checker
+restores the original variable relationships. Search currently considers all
+pairs of admitted bodies as template seeds; this is a finite seed region, not
+the complete template grammar used by the separate scoped search.
+
+LC1 extends the ST1 schema with one Library:Archive record containing its
+version, helper name and rewritten document. The SIC1 envelope, full helper
+definition, parameter names, original wrappers and residual source all count
+toward its encoded byte cost. It avoids a second generic value wrapper around
+every source node. Decoding validates the document, entry profile and helper
+arguments, then expands whole-body calls back to the original ordered source.
+The common original-task checker independently requires exact reconstruction
+and strict complete-byte improvement. A smaller projected template archive
+does not by itself justify accepting the exported library.
+
+Learning returns the existing IC:PreparedSearch. ic:resume, ic:cancel and
+ic:release retain their usual ownership and completion contracts. Source-space
+revisions and the reader interpretation guard resumption. The best artifact
+starts as the original SIC1/ST1 source. A search with no cheaper library keeps
+that source; ic:export-library then reports NoLearnedLibrary. A valid LC1 export
+returns (Library:Export name document source-text expanded-original). The text
+round-trips through the current reader and runs as ordinary MeTTa without
+importing the learner.
+
+  make test-ic-library
+  lake build Mettapedia.Examples.Compression.LibraryExportControls
+
+The focused native gate uses an independent source-AST generalizer and LC1
+encoder. It executes original and emitted libraries in fresh processes, checking
+answer multiplicity and effect traces, with positive and negative controls for
+repeated holes, quotation, annotations, unsupported binders, malformed archives,
+changed dependencies and interrupted/resumed search. It does not expand the
+ordinary test suite.
+
+TemplateExport proves that role/index holes transported to distinct helper
+ports reconstruct matched source; missing ports fail reconstruction.
+ValueArguments proves that caching already-established argument values preserves
+any lawful monadic body, including effects and choice. Counterexamples show why
+this is false for arbitrary argument computations. These checked laws and the
+finite native correspondence controls are not a proof of the whole C evaluator.
+
+A generated four-function training family decreases from 3433 to 1911 complete
+bytes. That is a storage result on one synthetic family, not held-out discovery
+or a runtime speedup. Intake controls currently admit 11 of 62 list-library
+equations, one of 44 postings equations and one of 16 tensor equations. Richer
+scoped/demand profiles, held-out library reuse and execution-cost measurements
+remain part of the programme. An independent all-pair seed audit proposes no
+supported helper on these three current library inputs. That identifies a limit
+of this initial export profile, not an absence of repetition in the libraries.

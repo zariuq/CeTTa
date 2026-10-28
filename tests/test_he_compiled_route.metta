@@ -37,8 +37,8 @@
 ; A match's results are its template's instances, evaluated whole.
 (item (+ 1 2))
 (item done)
-(= (items) (collapse (match &self (item $t) $t)))
-(= (paired) (collapse (match &self (item $t) (pair $t x))))
+(= (items) (let $bag (collapse (match &self (item $t) $t)) (sort-atom $bag)))
+(= (paired) (let $bag (collapse (match &self (item $t) (pair $t x))) (sort-atom $bag)))
 !(items)
 !(paired)
 
@@ -46,5 +46,5 @@
 (p 1)
 (p 2)
 (= (grow) (let $r (match &self (p $x) (add-atom &self (q $x)))
-             (collapse (match &self (q $y) $y))))
+             (let $bag (collapse (match &self (q $y) $y)) (sort-atom $bag))))
 !(grow)

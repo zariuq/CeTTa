@@ -17,6 +17,7 @@
 #include <SWI-Prolog.h>
 
 #include <assert.h>
+#include <errno.h>
 #include <limits.h>
 #include <pthread.h>
 #include <signal.h>
@@ -25,6 +26,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 typedef struct {
     SymbolId symbol;
@@ -1521,6 +1523,18 @@ static void petta_libpl_global_init(void) {
             program, quiet, no_signals, no_alert_signal,
             no_init, no_init_file, NULL,
         };
+        /* SWI-Prolog's start-up reads the working directory into a
+         * PATH_MAX buffer. When it cannot (a directory deeper than PATH_MAX,
+         * or one that was removed), it raises before its stacks exist and
+         * the process dies. Leave the engine unstarted instead, so every
+         * crossing reports it unavailable. */
+        char working_directory[PATH_MAX];
+        if (!getcwd(working_directory, sizeof(working_directory))) {
+            int code = errno;
+            fprintf(stderr, "cetta: embedded SWI-Prolog not started: cannot read the "
+                            "working directory into PATH_MAX bytes (%s)\n", strerror(code));
+            return;
+        }
         PettaLibplHostAltStack host_altstack;
         if (!petta_libpl_host_altstack_save(&host_altstack))
             return;
@@ -5686,6 +5700,20 @@ static bool petta_libpl_numeric_call(
     bool comparison, CettaCallOutcome *out) {
     if (out)
         *out = cetta_call_failure();
+    /* Stable's arith_arg/1 excludes MeTTa text and list values before is/2.
+     * Do not let SWI reinterpret a character or singleton list as a number.
+     * Named numeric constants still use the ordinary arithmetic path below. */
+    if (arena && out && args) {
+        for (uint32_t i = 0u; i < nargs; i++) {
+            Atom *arg = args[i];
+            if (arg && (arg->kind == ATOM_EXPR ||
+                        (arg->kind == ATOM_GROUNDED &&
+                         arg->ground.gkind == GV_STRING))) {
+                *out = cetta_call_raised(petta_semantics_arithmetic_operand_error(arena, arg));
+                return out->term != NULL;
+            }
+        }
+    }
     CettaLibraryContext *context = eval_current_library_context();
     CettaLibPrologRuntime *runtime = context ? context->lib_prolog : NULL;
     if (!runtime || !arena || !out || !args || nargs == 0u ||

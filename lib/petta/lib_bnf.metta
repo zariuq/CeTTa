@@ -3,7 +3,7 @@
 ; HE-only native wrappers spelled as PeTTa calls.
 
 !(import! &self (library langdef))
-!(import! &self langdef/petta/generated/plain_bnf_semantic_admission_v1.metta)
+!(import! &self ../../langdef/petta/generated/plain_bnf_semantic_admission_v1.metta)
 (= (bnf:empty-lexical-environment) (bnf-v1:lexical-environment (bnf-v1:lexical-declarations-nil)))
 (= (bnf:grammar-authority $start-name $lexical-environment) (bnf-v1:grammar-authority (bnf-v1:start $start-name) $lexical-environment))
 (= (bnf:default-authority $start-string) (bnf:grammar-authority-from-string $start-string (bnf:empty-lexical-environment)))
