@@ -55,6 +55,14 @@ def check_libraries(contract):
         expected = contract['library_adaptations'].get(name, upstream)
         if digest(path) != expected:
             raise ValueError('default library changed: ' + name)
+    provenance = (ROOT / 'lib/petta/vendored_from_petta.tsv').read_text().splitlines()
+    actual = [line.split('\t') for line in provenance
+              if line and not line.startswith('#')]
+    expected = [['file', 'source_sha256', 'petta_commit']] + [
+        [name, sha[:16], contract['reference_commit'][:7]]
+        for name, sha in sorted(contract['library_files'].items())]
+    if actual != expected:
+        raise ValueError('library provenance does not match the current reference')
 
 
 def check_default(binary):

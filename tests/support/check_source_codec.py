@@ -17,7 +17,7 @@ from check_ic_archive import q, syntax, uint
 from check_ic_search import check_controls
 
 
-READER = ["Syntax:Reader", q("petta"), q("1.0.6"), q("")]
+READER = ["Syntax:Reader", q("petta"), q("stable-fixed"), q("")]
 TERM = ("either", ("Syntax:Variable", "Syntax:Literal", "Syntax:Expr"))
 FORMS = {
     "Syntax:Document": (1, ["text", "Syntax:Reader", ("vector", "Syntax:Form")]),

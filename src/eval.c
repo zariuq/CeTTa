@@ -71374,6 +71374,34 @@ static void petta_eval_machine_deliver_native_return(
     }
 }
 
+/* A value predicate observes a completed value without entering its contents. */
+static bool petta_value_predicate_answer(
+    PeTTaForm form, Atom *value, bool *answer) {
+    if (!value || !answer)
+        return false;
+    switch (form) {
+    case PETTA_FORM_IS_VAR:
+        *answer = value->kind == ATOM_VAR;
+        return true;
+    case PETTA_FORM_IS_GROUND:
+        *answer = !atom_contains_vars(value);
+        return true;
+    case PETTA_FORM_IS_EXPR:
+        *answer = petta_semantics_is_closed_list(value);
+        return true;
+    case PETTA_FORM_IS_SPACE: {
+        const char *name = value->kind == ATOM_SYMBOL
+            ? atom_name_cstr(value) : NULL;
+        *answer = (name && name[0] == '&') ||
+            (value->kind == ATOM_GROUNDED &&
+             value->ground.gkind == GV_SPACE && value->ground.ptr);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 /* Apply an admitted operation to the values already computed by the machine.
  * Language forms, mutation/import protocols, transactions and open operands
  * retain their ordinary owners. Completion is the same service used by an
@@ -71384,12 +71412,35 @@ static bool petta_eval_machine_apply_ready_values(
     const Bindings *environment, OutcomeSet *outcomes,
     CettaCallOutcome *end) {
     PettaEvalMachineContext *eval_context = context;
-    if (!eval_context || eval_context->transaction || !space || !arena ||
+    if (!eval_context || !space || !arena ||
         !invocation || !outcomes)
         return false;
     Atom *head = invocation->head.skeleton;
-    if (!head || head->kind != ATOM_SYMBOL ||
-        petta_semantics_form(atom_symbol_current_id(head)) != PETTA_FORM_NONE ||
+    if (!head || head->kind != ATOM_SYMBOL)
+        return false;
+    PeTTaForm form = petta_semantics_form(atom_symbol_current_id(head));
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+        (form == PETTA_FORM_IS_VAR || form == PETTA_FORM_IS_GROUND ||
+         form == PETTA_FORM_IS_EXPR || form == PETTA_FORM_IS_SPACE)) {
+        CettaExprLen arity = 0u;
+        if (!cetta_invocation_arity(invocation, &arity) || arity != 1u)
+            return false;
+        Atom *const *arguments = cetta_invocation_borrow_arguments(invocation);
+        if (!arguments)
+            arguments = cetta_invocation_materialize_arguments(arena, invocation);
+        if (!arguments)
+            return false;
+        Atom *value = bindings_apply_if_vars(environment, arena, arguments[0]);
+        bool answer = false;
+        if (!petta_value_predicate_answer(form, value, &answer))
+            return false;
+        Atom *result = petta_semantics_boolean_value(arena, answer);
+        if (!result)
+            return false;
+        petta_ready_add_answer(context, arena, outcomes, environment, result);
+        return true;
+    }
+    if (eval_context->transaction || form != PETTA_FORM_NONE ||
         atom_symbol_current_id(head) == g_builtin_syms.add_atom ||
         atom_symbol_current_id(head) == g_builtin_syms.add_atom_nodup ||
         atom_symbol_current_id(head) == g_builtin_syms.remove_atom ||
@@ -82554,20 +82605,8 @@ static __attribute__((noinline)) MettaDispatchResult metta_petta_dispatch(
             for (CettaCount index = 0u; index < values.len; index++) {
                 Atom *value = values.items[index];
                 bool answer = false;
-                if (petta_form == PETTA_FORM_IS_VAR) {
-                    answer = value->kind == ATOM_VAR;
-                } else if (petta_form == PETTA_FORM_IS_GROUND) {
-                    answer = !atom_contains_vars(value);
-                } else if (petta_form == PETTA_FORM_IS_EXPR) {
-                    answer = petta_semantics_is_closed_list(value);
-                } else {
-                    const char *name = value->kind == ATOM_SYMBOL
-                        ? atom_name_cstr(value)
-                        : NULL;
-                    answer = (name && name[0] == '&') ||
-                        (value->kind == ATOM_GROUNDED &&
-                         value->ground.gkind == GV_SPACE && value->ground.ptr);
-                }
+                if (!petta_value_predicate_answer(petta_form, value, &answer))
+                    continue;
                 outcome_set_add(
                     os, petta_semantics_boolean_value(a, answer),
                     CURRENT_ENV);

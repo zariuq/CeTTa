@@ -3,6 +3,7 @@
 # registered functions (fun/1 after loading src/metta.pl), the special forms
 # its translator dispatches on, and the heads lib_he defines.
 set -euo pipefail
+export LC_ALL=C
 if (( $# != 2 )); then
     echo 'usage: petta_reference_vocabulary_v1.sh PETTA_CHECKOUT OUTPUT' >&2
     exit 2
