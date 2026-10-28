@@ -878,10 +878,25 @@ static bool petta_type_answers_bound(
     if (target->kind == ATOM_VAR)
         return petta_type_answers_fresh(space, arena, subject, out);
     if (atom_is_symbol_id(target, g_builtin_syms.undefined_type)) {
-        PeTTaTypeList candidates = {0};
-        bool ok = petta_type_answers_fresh(space, arena, subject, &candidates) &&
-            petta_type_append_matching(arena, &candidates, target, out);
-        free(candidates.items);
+        bool ok = petta_type_answers_bound_uncached(space, arena, subject, target, out);
+        if (!ok || out->length)
+            return ok;
+        /* A literal or a structural list has an intrinsic candidate. The
+         * pure service need not materialize a list's entire type product
+         * merely to establish that positive existence fact. */
+        Atom *tail = subject;
+        while (petta_semantics_is_open_cons_value(tail))
+            tail = tail->expr.elems[2];
+        Atom *const *elements = NULL;
+        CettaExprLen length = 0u;
+        if (petta_type_of_literal(arena, subject) ||
+            atom_sequence_view(tail, &elements, &length))
+            return true;
+        PeTTaTypeList declared = {0};
+        ok = petta_type_push_declared(space, arena, subject, &declared);
+        if (ok && declared.length == 0u)
+            ok = petta_type_list_push(out, target);
+        free(declared.items);
         return ok;
     }
     bool found = false;
@@ -988,15 +1003,6 @@ static bool petta_type_answers_bound_uncached(
         ok = petta_type_push_declared(space, arena, subject, &candidates) &&
              petta_type_append_matching(arena, &candidates, target, out);
     free(candidates.items);
-    if (!ok || out->length > 0u)
-        return ok;
-    if (target->kind == ATOM_SYMBOL)
-        return !atom_is_symbol_id(target, g_builtin_syms.undefined_type) ||
-               petta_type_list_push(out, target);
-    PeTTaTypeList fallback = {0};
-    ok = petta_type_list_push(&fallback, atom_undefined_type(arena)) &&
-         petta_type_append_matching(arena, &fallback, target, out);
-    free(fallback.items);
     return ok;
 }
 

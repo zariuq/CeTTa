@@ -245,6 +245,8 @@ typedef enum {
     PETTA_GOAL_TYPE_REQUIRE_READY,
     PETTA_GOAL_TYPE_GUARD_READY,
     PETTA_GOAL_TYPE_QUERY_SELECT,
+    PETTA_GOAL_TYPE_UNDEFINED_SELECT,
+    PETTA_GOAL_TYPE_ABSENCE_SELECT,
     PETTA_GOAL_TYPE_FUNCTION_QUERY,
     PETTA_GOAL_TYPE_FUNCTION_SIGNATURE,
     PETTA_GOAL_TYPE_LIST_PROBE,
@@ -588,6 +590,8 @@ static void petta_machine_record_goal_class(
     case PETTA_GOAL_TYPE_REQUIRE_READY:
     case PETTA_GOAL_TYPE_GUARD_READY:
     case PETTA_GOAL_TYPE_QUERY_SELECT:
+    case PETTA_GOAL_TYPE_UNDEFINED_SELECT:
+    case PETTA_GOAL_TYPE_ABSENCE_SELECT:
     case PETTA_GOAL_TYPE_FUNCTION_QUERY:
     case PETTA_GOAL_TYPE_FUNCTION_SIGNATURE:
     case PETTA_GOAL_TYPE_LIST_PROBE:
@@ -22718,13 +22722,14 @@ static bool petta_machine_start_relational_type_query(
     Atom *truth = petta_semantics_boolean_value(&machine->heap, true);
     Atom *request = petta_machine_apply_bindings(machine,
         search_context_bindings(&machine->search), &machine->heap, required);
-    Atom *candidate = request && (request->kind == ATOM_VAR ||
-        atom_is_symbol_id(request, g_builtin_syms.undefined_type))
+    Atom *candidate = request && request->kind == ATOM_VAR
         ? petta_fresh_variable(machine) : required;
     size_t fallback_index = machine->choice_len;
     if (!matched || !truth || !request || !candidate || !petta_goal_push(machine, &(PettaGoal){
-            .kind = PETTA_GOAL_TYPE_QUERY_SELECT, .barrier = barrier,
-            .first = matched, .second = required, .third = candidate,
+            .kind = atom_is_symbol_id(request, g_builtin_syms.undefined_type)
+                ? PETTA_GOAL_TYPE_UNDEFINED_SELECT : PETTA_GOAL_TYPE_QUERY_SELECT,
+            .barrier = barrier,
+            .first = matched, .second = required, .third = candidate, .fourth = subject,
         }))
         return false;
     PettaChoice fallback = {
@@ -22740,6 +22745,32 @@ static bool petta_machine_start_relational_type_query(
             .kind = PETTA_GOAL_EQUAL_COMMIT, .barrier = barrier,
             .first = truth, .second = matched, .choice_index = fallback_index,
         }) && petta_machine_start_type_candidates(machine, subject, candidate, barrier);
+}
+
+/* Negation tests one unconstrained candidate, on a private trial. A failed
+ * constrained Undefined query does not establish that no type exists. */
+static bool petta_machine_start_type_absence(
+    PettaMachineImpl *machine, Atom *subject, Atom *required, uint32_t barrier) {
+    Atom *matched = petta_fresh_variable(machine);
+    Atom *candidate = petta_fresh_variable(machine);
+    Atom *truth = petta_semantics_boolean_value(&machine->heap, true);
+    size_t fallback_index = machine->choice_len;
+    if (!matched || !candidate || !truth || !petta_goal_push(machine, &(PettaGoal){
+            .kind = PETTA_GOAL_TYPE_ABSENCE_SELECT, .barrier = barrier,
+            .first = matched, .second = required, .choice_index = fallback_index,
+        }))
+        return false;
+    PettaChoice fallback = {
+        .kind = PETTA_CHOICE_EQUAL_DEFAULT,
+        .manufacture_epoch = machine->manufacture_epoch,
+        .binding_mark = bindings_builder_save(search_context_builder(&machine->search)),
+        .goal_height = machine->goal_len, .barrier = barrier,
+        .as.equal_default.expected = matched,
+    };
+    return petta_choice_push(machine, fallback) && petta_goal_push(machine, &(PettaGoal){
+        .kind = PETTA_GOAL_EQUAL_COMMIT, .barrier = barrier,
+        .first = truth, .second = matched, .choice_index = fallback_index,
+    }) && petta_machine_start_type_candidates(machine, subject, candidate, barrier);
 }
 
 static bool petta_machine_type_element_queries(
@@ -37163,11 +37194,27 @@ static bool petta_machine_dispatch_goal(
             machine, second, goal.third, goal.barrier, failure);
     }
 
-    if (goal.kind == PETTA_GOAL_TYPE_QUERY_SELECT) {
+    if (goal.kind == PETTA_GOAL_TYPE_QUERY_SELECT ||
+        goal.kind == PETTA_GOAL_TYPE_UNDEFINED_SELECT ||
+        goal.kind == PETTA_GOAL_TYPE_ABSENCE_SELECT) {
         bool matched = false;
         if (!petta_semantics_truth_value(first, &matched)) {
             *failure = PETTA_MACHINE_STEP_CAPACITY;
             return false;
+        }
+        if (goal.kind == PETTA_GOAL_TYPE_ABSENCE_SELECT) {
+            if (matched) {
+                petta_choice_truncate(machine, goal.choice_index);
+                return false;
+            }
+            return petta_machine_unify(machine, second, atom_undefined_type(&machine->heap));
+        }
+        if (!matched && goal.kind == PETTA_GOAL_TYPE_UNDEFINED_SELECT) {
+            if (!petta_machine_start_type_absence(machine, goal.fourth, second, goal.barrier)) {
+                *failure = PETTA_MACHINE_STEP_CAPACITY;
+                return false;
+            }
+            return true;
         }
         return matched
             ? petta_machine_unify(machine, goal.third, second)

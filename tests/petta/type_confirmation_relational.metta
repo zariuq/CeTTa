@@ -15,3 +15,21 @@
 (: confirmation-mixed %Undefined%)
 !(test (collapse (let %Undefined% (get-type confirmation-mixed) found)) (found found))
 !(test (collapse (let Missing (get-type confirmation-mixed) wrong)) ())
+
+; Both absence probes stop at the first witness and preserve classifier effects.
+!(bind! &confirmation-effects (new-state 0))
+(= (get-type (confirmation-effect-value))
+   (let $u (change-state! &confirmation-effects (+ (get-state &confirmation-effects) 1)) A))
+(= (get-type (confirmation-effect-value))
+   (let $u (change-state! &confirmation-effects (+ (get-state &confirmation-effects) 1)) A))
+(= (get-type (confirmation-effect-value))
+   (let $u (change-state! &confirmation-effects (+ (get-state &confirmation-effects) 1)) A))
+(: confirmation-effect-call (-> A Result))
+!(test (collapse (let %Undefined% (get-type (quote (confirmation-effect-call (confirmation-effect-value)))) wrong)) ())
+!(test (get-state &confirmation-effects) 2)
+
+; A bound request constrains the premises; an unbound request waits for its candidate.
+(: %Undefined% NotUndefined)
+(: (confirmation-reflect $x) (-> $x $x))
+!(test (collapse (let %Undefined% (get-type (quote ((confirmation-reflect $x) $x))) wrong)) ())
+!(test (collapse (let $t (get-type (quote ((confirmation-reflect $x) $x))) (== $t $x))) (True))
