@@ -83,6 +83,22 @@
 
 (= (rel:inner-join $predicate $projection $left $right)
    (rel-i:publish (rel-i:inner-join $predicate $projection $left $right)))
+
+; Optional matching supplies an explicit caller-selected absence value to
+; the projection. A returned empty tuple is an ordinary row, not no answer.
+(= (rel:left-join $predicate $projection $missing $left $right)
+   (rel-i:publish (rel-i:left-join $predicate $projection $missing $left $right)))
+(= (rel-i:left-join $predicate $projection $missing $left $right)
+   (if (== $left ()) (RelOk ())
+     (let ($head $tail) (decons-atom $left)
+       (case (rel-i:join-row $predicate $projection $head $right)
+         (((Error $source $reason) (Error $source $reason))
+          ((RelOk $block)
+           (let $rows (if (== $block ())
+                          (case (rel-i:call2 $projection $head $missing)
+                            (((RelOk $row) (RelOk ($row))) ($fault $fault)))
+                          (RelOk $block))
+             (rel-i:append $rows (rel-i:left-join $predicate $projection $missing $tail $right)))))))))
 (= (rel-i:inner-join $predicate $projection $left $right)
    (if (== $left ()) (RelOk ())
      (let ($head $tail) (decons-atom $left)
