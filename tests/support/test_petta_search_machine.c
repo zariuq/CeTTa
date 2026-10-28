@@ -2208,6 +2208,37 @@ static void test_deep_typecheck_source_rewrites(
     eval_set_library_context(previous);
 }
 
+static void test_native_argument_observation(void) {
+    Arena source, destination;
+    arena_init(&source);
+    arena_init(&destination);
+    Atom *item = atom_string(&source, "native-observation");
+    Atom *carrier = petta_semantics_open_cons_value(
+        &source, item, atom_unit(&source));
+    Atom *quoted = atom_expr2(&source,
+        atom_symbol_id(&source, g_builtin_syms.quote), carrier);
+    Atom *borrowed[] = {carrier, quoted};
+    Atom *const *observed = petta_semantics_materialize_arguments(
+        &destination, borrowed, 2u);
+    assert(observed && observed != borrowed);
+    assert(borrowed[0] == carrier && borrowed[1] == quoted);
+    assert(petta_semantics_is_open_cons_value(borrowed[0]));
+    assert(observed[0]->kind == ATOM_EXPR && observed[0]->expr.len == 1u);
+    assert(atom_value_eq(observed[0]->expr.elems[0], item));
+    assert(observed[1] == quoted);
+    assert(petta_semantics_is_open_cons_value(quoted->expr.elems[1]));
+    Atom *ordinary[] = {item, quoted};
+    assert(petta_semantics_materialize_arguments(
+               &destination, ordinary, 2u) == ordinary);
+    assert(petta_semantics_materialize_arguments(
+               &destination, NULL, 0u) != NULL);
+    assert(petta_semantics_materialize_arguments(
+               &destination, NULL, 1u) == NULL);
+    arena_free(&destination);
+    arena_free(&source);
+    puts("PASS: native observation preserves borrowed vectors, quotes and empty calls");
+}
+
 static void test_shared_value_observation(void) {
     Arena source, destination;
     arena_init(&source);
@@ -15714,6 +15745,7 @@ int main(int argc, char **argv) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    test_native_argument_observation();
     if (transient_only) {
         test_transient_value_plan_lifetime();
         test_transient_plan_keys_own_their_storage();

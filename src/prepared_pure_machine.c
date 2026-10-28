@@ -8712,6 +8712,11 @@ static bool prepared_pure_grounded_intrinsic_type_equal(
 static bool prepared_pure_equality_reads_fields(
     const CettaPreparedPureProgram *program, const Atom *left,
     const Atom *right) {
+    /* Private list spines are not the operand values equality observes,
+     * regardless of the dialect's evaluation discipline. */
+    if (petta_semantics_value_contains_observable_open_cons(left) ||
+        petta_semantics_value_contains_observable_open_cons(right))
+        return true;
     if (!program ||
         program->call_mode != CETTA_GSLT_PURE_CALL_CALL_BY_NEED ||
         !left || !right || left == right ||
@@ -8780,6 +8785,11 @@ static Atom *prepared_pure_execute_register(
     if (!program || !program->boolean_value || !arena || !arguments ||
         arity != 2u)
         return NULL;
+    if (instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
+        arguments = petta_semantics_materialize_arguments(arena, arguments, arity);
+        if (!arguments)
+            return NULL;
+    }
     if (instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL &&
         prepared_pure_equality_reads_fields(
             program, arguments[0], arguments[1]))
@@ -8875,6 +8885,9 @@ static Atom *prepared_pure_execute_intrinsic(
         return NULL;
     switch (instruction) {
     case CETTA_GSLT_PREPARED_PURE_INTRINSIC_GROUNDED_DISPATCH: {
+        arguments = petta_semantics_materialize_arguments(arena, arguments, arity);
+        if (!arguments)
+            return NULL;
         Atom *result = grounded_dispatch(arena, head, (Atom **)arguments, arity);
         return result && !atom_is_empty_or_error(result) ? result : NULL;
     }
@@ -13711,6 +13724,8 @@ static PREPARED_PURE_ALWAYS_INLINE bool prepared_pure_ready_register_scalar(
     if (node->instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL) {
         PreparedPureScalar left = {.atom = left_atom};
         PreparedPureScalar right = {.atom = right_atom};
+        if (prepared_pure_equality_reads_fields(program, left_atom, right_atom))
+            return false;
         if (node->result_kind != CETTA_GSLT_REGISTER_RESULT_BOOLEAN ||
             (!program->total_structural_equality &&
              !prepared_pure_scalar_operands_share_type(

@@ -1606,6 +1606,31 @@ Atom *petta_semantics_materialize_value(Arena *arena, Atom *value) {
     return out;
 }
 
+Atom *const *petta_semantics_materialize_arguments(
+        Arena *arena, Atom *const *arguments, CettaExprLen arity) {
+    if (!arena || (!arguments && arity > 0u))
+        return NULL;
+    if (arity == 0u) {
+        static Atom *const empty[] = {NULL};
+        return arguments ? arguments : empty;
+    }
+    Atom **observed = NULL;
+    for (CettaExprLen index = 0u; index < arity; ++index) {
+        if (!petta_semantics_value_contains_observable_open_cons(arguments[index]))
+            continue;
+        if (!observed) {
+            if (arity > SIZE_MAX / sizeof(*observed))
+                return NULL;
+            observed = arena_alloc(arena, (size_t)arity * sizeof(*observed));
+            memcpy(observed, arguments, (size_t)arity * sizeof(*observed));
+        }
+        observed[index] = petta_semantics_materialize_value(arena, arguments[index]);
+        if (!observed[index])
+            return NULL;
+    }
+    return observed ? observed : arguments;
+}
+
 typedef struct {
     BindingValue left;
     BindingValue right;

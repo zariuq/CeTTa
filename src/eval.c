@@ -6527,6 +6527,18 @@ static bool eval_native_invocation_on(Space *s, Arena *a,
     if (demand == EVAL_NATIVE_CLOSED_READY_ARGUMENTS) {
         if (!cetta_invocation_resolve_arguments(a, prefix, invocation, true, &ready))
             return false;
+        if (nargs > 0u) {
+            Atom *const *arguments = cetta_invocation_borrow_arguments(&ready);
+            if (!arguments)
+                arguments = cetta_invocation_materialize_arguments(a, &ready);
+            Atom *const *observed = arguments
+                ? petta_semantics_materialize_arguments(a, arguments, nargs) : NULL;
+            if (!observed)
+                return false;
+            if (observed != arguments)
+                ready = (CettaInvocation){.head = ready.head,
+                    .supplied = {.atoms = observed, .count = nargs}};
+        }
         invocation = &ready;
         prefix = NULL;
         syntax = NULL;
@@ -21462,32 +21474,18 @@ static bool eval_prepared_pure_native_call(
         return false;
     CettaCallOutcome outcome = {0};
     if (!head || head->kind != ATOM_SYMBOL)
-        return NULL;
+        return false;
     if (!prime_prepared_native_call_inline(atom_symbol_current_id(head)))
-        return NULL;
+        return false;
     /* The prepared route has the same observation boundary as direct host
      * dispatch. Erase PeTTa's private open-cons carriers once before a native
      * reads its operands, preserving quoted syntax and opaque callables.
      * Never modify the invocation's borrowed argument vector. */
-    Atom **observed_arguments = NULL;
-    for (CettaExprLen index = 0u; index < arity; ++index) {
-        if (!petta_semantics_value_contains_observable_open_cons(arguments[index]))
-            continue;
-        if (!observed_arguments) {
-            if (arity > SIZE_MAX / sizeof(*observed_arguments))
-                return false;
-            observed_arguments = arena_alloc(
-                arena, (size_t)arity * sizeof(*observed_arguments));
-            memcpy(observed_arguments, arguments,
-                   (size_t)arity * sizeof(*observed_arguments));
-        }
-        observed_arguments[index] = petta_semantics_materialize_value(
-            arena, arguments[index]);
-        if (!observed_arguments[index])
-            return false;
-    }
-    if (observed_arguments)
-        arguments = observed_arguments;
+    Atom *const *observed_arguments =
+        petta_semantics_materialize_arguments(arena, arguments, arity);
+    if (!observed_arguments)
+        return false;
+    arguments = (Atom **)observed_arguments;
     if (!cetta_library_call_native_prepared_view(
             library, space, arena, head, arguments,
             (uint32_t)arity, &outcome)) {

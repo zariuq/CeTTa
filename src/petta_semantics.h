@@ -464,6 +464,13 @@ bool petta_semantics_construct_value_allocation_bound(
     CettaExprLen length, size_t *bytes_out);
 Atom *petta_semantics_materialize_value(
     Arena *arena, Atom *value);
+/* Observe native operand values without mutating the borrowed vector.
+ * Ordinary operands reuse that vector; observable private list carriers
+ * require one arena-owned vector and the same quote/closure-preserving value
+ * materialization as the ordinary evaluator. A successful empty view is
+ * non-NULL even when the input vector is NULL. */
+Atom *const *petta_semantics_materialize_arguments(
+    Arena *arena, Atom *const *arguments, CettaExprLen arity);
 /* True exactly when materialize_value has an observable open-cons carrier
  * to erase.  Opaque closures and quoted syntax are not observation
  * boundaries, so carriers below them deliberately do not count.  Allocation
