@@ -7211,6 +7211,282 @@ static Atom *add_unregistered_equation(
     return stored;
 }
 
+static void assert_catalog_occurrence_bag(PettaProgram *program, Space *space,
+        SymbolId head, Atom *const *expected, size_t expected_count) {
+    assert(petta_program_synchronize_space(program, space));
+    PettaCandidateSnapshotLease lease = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, space, head, &lease, NULL));
+    assert(lease.len == expected_count);
+    bool *seen = calloc(expected_count ? expected_count : 1u, sizeof(*seen));
+    assert(seen);
+    for (size_t index = 0u; index < lease.len; index++) {
+        PettaEquationCandidate candidate = lease.items[index];
+        SpaceEquationOccurrence resolved = {0};
+        assert(candidate.rhs_plan && candidate.source_root &&
+            space_equation_occurrence_resolve(candidate.occurrence, &resolved) &&
+            atom_alpha_eq(candidate.equation, resolved.equation));
+        size_t match = 0u;
+        while (match < expected_count &&
+            (seen[match] || !atom_alpha_eq(candidate.equation, expected[match])))
+            match++;
+        assert(match < expected_count);
+        seen[match] = true;
+    }
+    free(seen);
+    petta_program_candidate_snapshot_lease_release(&lease);
+}
+
+/* A notified append may retain a synchronized catalog only while its actual
+ * old prefix and occurrence plans still match. Other edits require rereading
+ * the live space. Compare occurrence bags, not private catalog order. */
+static void test_notified_catalog_append(TermUniverse *universe, Arena *persistent) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    SymbolId head = symbol_intern_cstr(g_symbols, "catalog-append");
+    Atom *first = add_compiled_program_equation(program, &space, persistent,
+        "(= (catalog-append duplicate) old)");
+    assert(petta_program_synchronize_space(program, &space));
+    PettaCandidateSnapshotLease prior = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &space, head, &prior, NULL));
+    assert(prior.len == 1u && prior.items[0].rhs_plan);
+
+    Atom *duplicate = add_compiled_program_equation(program, &space, persistent,
+        "(= (catalog-append duplicate) old)");
+    Atom *expected[] = {first, duplicate, NULL, NULL, NULL, NULL, NULL, NULL};
+    assert_catalog_occurrence_bag(program, &space, head, expected, 2u);
+    PettaCandidateSnapshotLease pair = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &space, head, &pair, NULL));
+    assert(pair.len == 2u && pair.items[0].source_root != pair.items[1].source_root &&
+        pair.items[0].occurrence.logical_index != pair.items[1].occurrence.logical_index &&
+        prior.len == 1u && atom_alpha_eq(prior.items[0].equation, first));
+    petta_program_candidate_snapshot_lease_release(&pair);
+
+    /* A second, unnotified edit must not be absorbed by the later notice. */
+    Atom *raw = add_unregistered_equation(&space, persistent,
+        "(= (catalog-append raw) raw-result)");
+    Atom *notified = add_compiled_program_equation(program, &space, persistent,
+        "(= (catalog-append notified) notified-result)");
+    expected[2] = raw; expected[3] = notified;
+    assert_catalog_occurrence_bag(program, &space, head, expected, 4u);
+
+    /* A prefix rewrite followed by an append cannot reuse the old prefix. */
+    assert(space_remove(&space, first));
+    petta_program_note_remove_one(program, &space, first);
+    Atom *later = add_compiled_program_equation(program, &space, persistent,
+        "(= (catalog-append later) later-result)");
+    expected[0] = duplicate; expected[1] = raw; expected[2] = notified; expected[3] = later;
+    assert_catalog_occurrence_bag(program, &space, head, expected, 4u);
+    assert(prior.len == 1u && atom_alpha_eq(prior.items[0].equation, first));
+    petta_program_candidate_snapshot_lease_release(&prior);
+
+    /* A notification naming a different row cannot certify the live append. */
+    Atom *phantom = parse_one(persistent, "(= (catalog-append phantom) absent)");
+    const PettaPlanNode *phantom_plan = petta_program_plan_dynamic_add(program, phantom);
+    Atom *actual = add_unregistered_equation(&space, persistent,
+        "(= (catalog-append actual) present)");
+    assert(phantom_plan && petta_program_note_add(program, &space, phantom, phantom_plan));
+    expected[4] = actual;
+    assert_catalog_occurrence_bag(program, &space, head, expected, 5u);
+
+    /* Data-only edits can change physical positions without changing the
+     * equation projection. A later notified equation must still be exact. */
+    Atom *data = parse_one(persistent, "catalog-append-data");
+    space_add(&space, data);
+    assert_catalog_occurrence_bag(program, &space, head, expected, 5u);
+    assert(space_remove(&space, data));
+    assert_catalog_occurrence_bag(program, &space, head, expected, 5u);
+    expected[5] = add_compiled_program_equation(program, &space, persistent,
+        "(= (catalog-append after-data) data-result)");
+    assert_catalog_occurrence_bag(program, &space, head, expected, 6u);
+
+    /* A catalog edit without a matching Space write must prevent the next
+     * real append from certifying that edited catalog as the source prefix. */
+    Atom *orphan = parse_one(persistent, "(= (catalog-orphan x) absent)");
+    const PettaPlanNode *orphan_plan = petta_program_plan_dynamic_add(program, orphan);
+    assert(orphan_plan && petta_program_note_add(program, &space, orphan, orphan_plan));
+    expected[6] = add_compiled_program_equation(program, &space, persistent,
+        "(= (catalog-append after-orphan) real)");
+    assert_catalog_occurrence_bag(program, &space, head, expected, 7u);
+    assert(!petta_program_head_declared(program, symbol_intern_cstr(g_symbols, "catalog-orphan")));
+
+    /* A linked module changes the full view; own-row append evidence alone
+     * is insufficient for that view. */
+    Space provider;
+    space_init_with_universe(&provider, universe);
+    space_add(&provider, parse_one(persistent, "(= (catalog-import x) imported)"));
+    assert(space_add_dependency(&space, &provider));
+    assert_catalog_occurrence_bag(program, &space, head, expected, 7u);
+    expected[7] = add_compiled_program_equation(program, &space, persistent,
+        "(= (catalog-append linked) linked-result)");
+    assert_catalog_occurrence_bag(program, &space, head, expected, 8u);
+
+    petta_program_free(program);
+    space_free(&space);
+    space_free(&provider);
+
+    /* Identical source rows admitted before and after a new callable head
+     * retain the plan chosen for each occurrence. */
+    Space meanings;
+    space_init_with_universe(&meanings, universe);
+    program = petta_program_new();
+    assert(program);
+    add_compiled_program_equation(program, &meanings, persistent,
+        "(= (catalog-meaning x) (catalog-later 9))");
+    assert(petta_program_synchronize_space(program, &meanings));
+    PettaCandidateSnapshotLease old_meaning = {0};
+    SymbolId meaning_head = symbol_intern_cstr(g_symbols, "catalog-meaning");
+    assert(petta_program_candidate_snapshot_lease_profiled(
+        program, &meanings, meaning_head, &old_meaning, NULL));
+    assert(old_meaning.len == 1u && old_meaning.items[0].rhs_plan &&
+        old_meaning.items[0].rhs_plan->role == PETTA_PLAN_DATA);
+    add_compiled_program_equation(program, &meanings, persistent,
+        "(= (catalog-later $x) changed)");
+    add_compiled_program_equation(program, &meanings, persistent,
+        "(= (catalog-meaning x) (catalog-later 9))");
+    assert(petta_program_synchronize_space(program, &meanings));
+    PettaCandidateSnapshotLease both_meanings = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(
+        program, &meanings, meaning_head, &both_meanings, NULL));
+    assert(both_meanings.len == 2u && both_meanings.items[0].rhs_plan &&
+        both_meanings.items[1].rhs_plan);
+    unsigned data_plans = 0u, calls = 0u;
+    for (size_t index = 0u; index < both_meanings.len; index++) {
+        data_plans += both_meanings.items[index].rhs_plan->role == PETTA_PLAN_DATA;
+        calls += both_meanings.items[index].rhs_plan->role == PETTA_PLAN_STATIC_CALL;
+    }
+    assert(data_plans == 1u && calls == 1u && old_meaning.items[0].rhs_plan->role == PETTA_PLAN_DATA);
+    petta_program_candidate_snapshot_lease_release(&both_meanings);
+    petta_program_candidate_snapshot_lease_release(&old_meaning);
+    petta_program_free(program);
+    space_free(&meanings);
+    puts("PASS: notified catalog appends retain occurrence plans and decline stale prefixes");
+}
+
+/* A single unnotified append can use the same prefix evidence only when the
+ * program's callability domain is exactly the live Space view. */
+static void test_unnotified_catalog_append(TermUniverse *universe, Arena *persistent) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    add_compiled_program_equation(program, &space, persistent,
+        "(= (raw-meaning x) (raw-later 9))");
+    assert(petta_program_synchronize_space(program, &space));
+    SymbolId meaning = symbol_intern_cstr(g_symbols, "raw-meaning");
+    PettaCandidateSnapshotLease first = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &space, meaning, &first, NULL));
+    assert(first.len == 1u && first.items[0].rhs_plan && first.items[0].rhs_plan->role == PETTA_PLAN_DATA);
+
+    add_unregistered_equation(&space, persistent, "(= (raw-later $x) changed)");
+    assert(petta_program_synchronize_space(program, &space));
+    add_unregistered_equation(&space, persistent, "(= (raw-meaning x) (raw-later 9))");
+    assert(petta_program_synchronize_space(program, &space));
+    PettaCandidateSnapshotLease both = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &space, meaning, &both, NULL));
+    assert(both.len == 2u);
+    unsigned data = 0u, calls = 0u;
+    for (size_t index = 0u; index < both.len; index++) {
+        assert(both.items[index].rhs_plan);
+        data += both.items[index].rhs_plan->role == PETTA_PLAN_DATA;
+        calls += both.items[index].rhs_plan->role == PETTA_PLAN_STATIC_CALL;
+    }
+    assert(data == 1u && calls == 1u && first.items[0].rhs_plan->role == PETTA_PLAN_DATA);
+    petta_program_candidate_snapshot_lease_release(&both);
+    petta_program_candidate_snapshot_lease_release(&first);
+
+    /* The newly added equation's own head is callable in its source plan. */
+    add_unregistered_equation(&space, persistent,
+        "(= (raw-recursive x) (raw-recursive x))");
+    assert(petta_program_synchronize_space(program, &space));
+    PettaCandidateSnapshotLease recursive = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &space,
+        symbol_intern_cstr(g_symbols, "raw-recursive"), &recursive, NULL));
+    assert(recursive.len == 1u && recursive.items[0].rhs_plan &&
+        recursive.items[0].rhs_plan->role == PETTA_PLAN_STATIC_CALL);
+    petta_program_candidate_snapshot_lease_release(&recursive);
+
+    /* Two unnotified edits need a full view before either new plan is made. */
+    add_unregistered_equation(&space, persistent,
+        "(= (raw-batch-use x) (raw-batch-target x))");
+    add_unregistered_equation(&space, persistent,
+        "(= (raw-batch-target x) target)");
+    assert(petta_program_synchronize_space(program, &space));
+    PettaCandidateSnapshotLease batch = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &space,
+        symbol_intern_cstr(g_symbols, "raw-batch-use"), &batch, NULL));
+    assert(batch.len == 1u && batch.items[0].rhs_plan &&
+        batch.items[0].rhs_plan->role == PETTA_PLAN_STATIC_CALL);
+    petta_program_candidate_snapshot_lease_release(&batch);
+
+    /* A variable-headed equation changes callability even for a head that
+     * has no named equation of its own. */
+    add_unregistered_equation(&space, persistent,
+        "(= ($raw-head wildcard) wildcard-result)");
+    assert(petta_program_synchronize_space(program, &space));
+    Atom *wild_use = add_unregistered_equation(&space, persistent,
+        "(= (raw-wild-use x) (raw-unknown 9))");
+    assert(petta_program_synchronize_space(program, &space));
+    PettaCandidateSnapshotLease wildcard = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &space,
+        symbol_intern_cstr(g_symbols, "raw-wild-use"), &wildcard, NULL));
+    bool found_wild_use = false;
+    for (size_t index = 0u; index < wildcard.len; index++) {
+        if (atom_alpha_eq(wildcard.items[index].equation, wild_use)) {
+            assert(wildcard.items[index].rhs_plan &&
+                wildcard.items[index].rhs_plan->role == PETTA_PLAN_STATIC_CALL);
+            found_wild_use = true;
+        }
+    }
+    assert(found_wild_use);
+    petta_program_candidate_snapshot_lease_release(&wildcard);
+    petta_program_free(program);
+    space_free(&space);
+
+    /* A predeclared but absent head is not in this Space's full live view. */
+    Space predeclared;
+    space_init_with_universe(&predeclared, universe);
+    program = petta_program_new();
+    assert(program && petta_program_predeclare_equation(program, &predeclared,
+        parse_one(persistent, "(= (raw-predeclared $x) absent)")));
+    assert(petta_program_synchronize_space(program, &predeclared));
+    add_unregistered_equation(&predeclared, persistent,
+        "(= (raw-predeclared-use x) (raw-predeclared x))");
+    assert(petta_program_synchronize_space(program, &predeclared));
+    PettaCandidateSnapshotLease predeclared_use = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &predeclared,
+        symbol_intern_cstr(g_symbols, "raw-predeclared-use"), &predeclared_use, NULL));
+    assert(predeclared_use.len == 1u && predeclared_use.items[0].rhs_plan &&
+        predeclared_use.items[0].rhs_plan->role == PETTA_PLAN_DATA);
+    petta_program_candidate_snapshot_lease_release(&predeclared_use);
+    petta_program_free(program);
+    space_free(&predeclared);
+
+    /* An unrelated Space in the same program is also outside this view. */
+    Space root, other;
+    space_init_with_universe(&root, universe);
+    space_init_with_universe(&other, universe);
+    program = petta_program_new();
+    assert(program);
+    add_compiled_program_equation(program, &root, persistent, "(= (raw-root x) seed)");
+    add_compiled_program_equation(program, &other, persistent, "(= (raw-other $x) elsewhere)");
+    assert(petta_program_synchronize_space(program, &root));
+    add_unregistered_equation(&root, persistent,
+        "(= (raw-other-use x) (raw-other x))");
+    assert(petta_program_synchronize_space(program, &root));
+    PettaCandidateSnapshotLease other_use = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &root,
+        symbol_intern_cstr(g_symbols, "raw-other-use"), &other_use, NULL));
+    assert(other_use.len == 1u && other_use.items[0].rhs_plan &&
+        other_use.items[0].rhs_plan->role == PETTA_PLAN_DATA);
+    petta_program_candidate_snapshot_lease_release(&other_use);
+    petta_program_free(program);
+    space_free(&root);
+    space_free(&other);
+    puts("PASS: unnotified single appends preserve occurrence plans and local callability");
+}
+
 /* A revision view is an opaque selection authority.  Its contract is the
  * declaration-ordered bag of current occurrences, not whether a particular
  * realization borrowed, copied, or compiled those occurrences. */
@@ -14115,7 +14391,7 @@ static void test_compiled_native_returns(TermUniverse *universe, Arena *arena) {
         assert(fixture.entries == (mode == 11u ? 0u : 1u));
         assert(stats.native_calls == fixture.entries);
         CettaCallOutcome returned = cetta_call_failure();
-        if (mode <= 1u) {
+        if (mode == 1u) {
             assert(step == CETTA_OPEN_EQUATION_ANSWER && stats.host_goals == 0u);
             assert(atom_eq(value, mode == 0u ? atom_int(&answers, 7)
                 : parse_one(&answers, "(function (return (readln!)))")));
@@ -14146,7 +14422,11 @@ static void test_compiled_native_returns(TermUniverse *universe, Arena *arena) {
             } else {
                 assert(host_mode == CETTA_OPEN_EQUATION_HOST_NATIVE_RETURN);
                 assert(cetta_open_equation_cursor_host_return(cursor, &returned));
-                if (mode == 2u || mode == 12u) {
+                if (mode == 0u) {
+                    assert(returned.kind == CETTA_CALL_VALUE &&
+                        returned.result_form == CETTA_CALL_RESULT_EXPRESSION &&
+                        atom_eq(returned.term, atom_int(&answers, 7)));
+                } else if (mode == 2u || mode == 12u) {
                     assert(returned.kind == CETTA_CALL_VALUE);
                     assert(returned.result_form == CETTA_CALL_RESULT_COMPLETED_FRONTIER);
                     if (mode == 2u)
@@ -14253,6 +14533,9 @@ typedef struct {
     bool blocked;
     CettaSourceStep admitted[128];
     size_t length;
+    SymbolId effect_head;
+    int64_t effects[4];
+    size_t effect_count;
 } SourceAccountingProbe;
 
 static bool source_accounting_permit(void *context, const CettaSourceStep *step) {
@@ -14291,6 +14574,20 @@ static CettaBranchAdmission source_accounting_capture(void *context, Space *spac
     };
 }
 
+static size_t source_accounting_retained_positions(
+        const PettaPlanNode *before, const PettaPlanNode *after) {
+    assert(before && after && before->source_position == after->source_position &&
+        before->source_debit == after->source_debit);
+    if (!after->child_count)
+        return before->child_count ? 1u : 0u;
+    assert(before->child_count == after->child_count);
+    size_t pruned = 0u;
+    for (CettaExprIndex index = 0u; index < after->child_count; index++)
+        pruned += source_accounting_retained_positions(
+            &before->children[index], &after->children[index]);
+    return pruned;
+}
+
 static void test_source_accounting(TermUniverse *universe, Arena *persistent,
         Arena *answers) {
     Space space;
@@ -14318,6 +14615,18 @@ static void test_source_accounting(TermUniverse *universe, Arena *persistent,
     assert(petta_plan_child(repeated, 1u)->source_position &&
         petta_plan_child(repeated, 1u)->source_position <
         petta_plan_child(repeated, 2u)->source_position);
+    /* The first data subtree occupies seven preorder positions. Collapsing
+     * it cannot move either later quotation or merge their equal syntax. */
+    Atom *pruning_query = parse_one(answers,
+        "(progn (Tuple alpha (Nested beta gamma)) (quote same) (quote same))");
+    const PettaPlanNode *before = petta_program_plan_current(program, pruning_query);
+    const PettaPlanNode *after = petta_program_plan_transient(program, pruning_query, NULL);
+    assert(before && after && before->child_count == 4u && after->child_count == 4u);
+    assert(before->children[1].child_count && !after->children[1].child_count);
+    assert(source_accounting_retained_positions(before, after) > 0u);
+    assert(after->children[1].source_position == 3u &&
+        after->children[2].source_position == 10u &&
+        after->children[3].source_position == 13u);
     SourceAccountingProbe probe = {.program = program, .physical = 1024u, .purse = 1024u};
     PettaMachineHost host = {.context = &probe,
         .candidate_snapshot_lease = source_accounting_catalog,
@@ -14415,13 +14724,238 @@ static void test_source_accounting(TermUniverse *universe, Arena *persistent,
     puts("PASS: declaration origins, retained source positions and 48 independent debit/allowance controls");
 }
 
+static PettaMachineHostMode source_accounting_classify(
+        void *context, Space *space, Atom *expression) {
+    (void)space;
+    SourceAccountingProbe *probe = context;
+    return expression && expression->kind == ATOM_EXPR &&
+        expression->expr.len == 2u &&
+        atom_is_symbol_id(expression->expr.elems[0], probe->effect_head)
+        ? PETTA_MACHINE_HOST_READY_OVERRIDE : PETTA_MACHINE_HOST_NONE;
+}
+
+static bool source_accounting_effect(
+        void *context, Space *space, Arena *arena, Atom *expression,
+        const Bindings *environment, OutcomeSet *outcomes,
+        CettaCallOutcome *end, const CettaDelayView *delay) {
+    (void)space;
+    (void)environment;
+    (void)delay;
+    SourceAccountingProbe *probe = context;
+    Atom *value = expression->expr.elems[1];
+    assert(value && value->kind == ATOM_GROUNDED && value->ground.gkind == GV_INT);
+    assert(probe->effect_count < sizeof(probe->effects) / sizeof(*probe->effects));
+    probe->effects[probe->effect_count++] = value->ground.ival;
+    Bindings empty;
+    bindings_init(&empty);
+    outcome_set_add(outcomes, atom_int(arena, value->ground.ival), &empty);
+    *end = cetta_call_failure();
+    return true;
+}
+
+/* Price the existing program-owned occurrence tree independently of the
+ * machine's physical allowance. Administrative transitions retain unit cost. */
+static PettaPlanNode *source_accounting_priced_plan(
+        Arena *arena, const PettaPlanNode *source, uint32_t debit) {
+    PettaPlanNode *plan = arena_alloc(arena, sizeof(*plan));
+    *plan = *source;
+    plan->source_debit = debit;
+    if (source->child_count) {
+        PettaPlanNode *children = arena_alloc(arena,
+            sizeof(*children) * (size_t)source->child_count);
+        for (CettaExprIndex index = 0u; index < source->child_count; index++)
+            children[index] = *source_accounting_priced_plan(
+                arena, &source->children[index], debit);
+        plan->children = children;
+    }
+    return plan;
+}
+
+static void test_source_effect_accounting(TermUniverse *universe, Arena *answers) {
+    const char *queries[] = {
+        "(progn (println! 7) (println! 8) 42)",
+        "(progn (println! 7) (empty) (println! 8))",
+        "(let $x (println! 7) (progn (println! $x) $x))",
+    };
+    const int64_t expected[][2] = {{7, 8}, {7, 0}, {7, 7}};
+    const size_t effect_counts[] = {2u, 1u, 2u};
+    const size_t allowances[] = {0u, 1u, 4u, 1024u};
+    const uint32_t debits[] = {0u, 1u, 3u};
+    Space space;
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    for (size_t query_index = 0u; query_index < 3u; query_index++) {
+        Atom *query = parse_one(answers, queries[query_index]);
+        const PettaPlanNode *original = petta_program_plan_current(program, query);
+        assert(original && original->source_position == 1u);
+        for (size_t cost = 0u; cost < 3u; cost++) {
+            const PettaPlanNode *plan = source_accounting_priced_plan(
+                answers, original, debits[cost]);
+            for (size_t physical = 0u; physical < 4u; physical++) {
+                for (size_t credit = 0u; credit < 4u; credit++) {
+                    SourceAccountingProbe probe = {
+                        .physical = allowances[physical], .purse = allowances[credit],
+                        .effect_head = g_builtin_syms.println_bang,
+                    };
+                    PettaMachineHost host = {
+                        .context = &probe, .permit_transition = source_accounting_permit,
+                        .classify = source_accounting_classify, .classify_may_override = true,
+                        .evaluate = source_accounting_effect,
+                        .admit_branch_capture = source_accounting_capture,
+                    };
+                    PettaMachine machine;
+                    assert(petta_machine_init_with_plan(&machine, &space, answers,
+                        query, plan, NULL, &host));
+                    size_t count = 0u;
+                    for (size_t attempt = 0u;; attempt++) {
+                        assert(attempt < 256u);
+                        Atom *answer = NULL;
+                        Bindings environment;
+                        PettaMachineStep step = petta_machine_next(
+                            &machine, &answer, &environment);
+                        bindings_free(&environment);
+                        assert(probe.effect_count <= effect_counts[query_index]);
+                        for (size_t effect = 0u; effect < probe.effect_count; effect++)
+                            assert(probe.effects[effect] == expected[query_index][effect]);
+                        if (step == PETTA_MACHINE_STEP_EXHAUSTED)
+                            break;
+                        if (step == PETTA_MACHINE_STEP_ANSWER) {
+                            assert(query_index != 1u && answer &&
+                                answer->kind == ATOM_GROUNDED &&
+                                answer->ground.gkind == GV_INT &&
+                                answer->ground.ival == (query_index == 2u ? 7 : 42));
+                            count++;
+                            continue;
+                        }
+                        assert(step == PETTA_MACHINE_STEP_SUSPENDED && probe.blocked);
+                        uint64_t spent = probe.spent;
+                        size_t effects = probe.effect_count;
+                        CettaOwnedContinuation retained;
+                        cetta_owned_continuation_init(&retained);
+                        assert(capture_relational_continuation(&machine, &retained) ==
+                            CETTA_CONTINUATION_READY);
+                        assert(restore_relational_continuation(&machine, &retained) ==
+                            CETTA_CONTINUATION_READY);
+                        cetta_owned_continuation_destroy(&retained);
+                        assert(petta_machine_next(&machine, &answer, &environment) ==
+                            PETTA_MACHINE_STEP_SUSPENDED);
+                        bindings_free(&environment);
+                        assert(probe.spent == spent && probe.effect_count == effects);
+                        probe.physical = allowances[physical] ? allowances[physical] : 1u;
+                        probe.purse = allowances[credit] > debits[cost]
+                            ? allowances[credit] : debits[cost] ? debits[cost] : 1u;
+                    }
+                    assert(count == (query_index != 1u));
+                    assert(probe.effect_count == effect_counts[query_index]);
+                    uint64_t invoice = 0u;
+                    for (size_t index = 0u; index < probe.length; index++)
+                        invoice += probe.admitted[index].source.position ? debits[cost] : 1u;
+                    assert(probe.spent == invoice);
+                    petta_machine_destroy(&machine);
+                }
+            }
+        }
+    }
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: 144 priced-source effect, failure and binding continuations preserve independent budgets");
+}
+
+typedef struct {
+    size_t attempts;
+    size_t accepted;
+    size_t refusal_queries;
+    bool stable_refusal;
+} CalleeAdmissionProbe;
+
+static bool callee_admission_declined(void *context, Space *space,
+        SymbolId head, CettaExprLen arity) {
+    (void)space;
+    CalleeAdmissionProbe *probe = context;
+    assert(head == symbol_intern_cstr(g_symbols, "callee-admission-loop") && arity == 2u);
+    probe->refusal_queries++;
+    return probe->stable_refusal;
+}
+
+static bool callee_admission_execute(void *context, Space *space, Arena *arena,
+        SymbolId head, Atom *const *arguments, uint32_t arity,
+        CettaCallOutcome *outcome) {
+    (void)space;
+    (void)arena;
+    CalleeAdmissionProbe *probe = context;
+    assert(head == symbol_intern_cstr(g_symbols, "callee-admission-loop") && arity == 2u);
+    assert(!atom_has_vars(arguments[0]) && !atom_has_vars(arguments[1]));
+    probe->attempts++;
+    if (arguments[1]->kind == ATOM_GROUNDED &&
+        arguments[1]->ground.gkind == GV_INT && arguments[1]->ground.ival == 13)
+        return false;
+    probe->accepted++;
+    *outcome = cetta_call_completed_value(arguments[1]);
+    return true;
+}
+
+static void test_callee_admission_scope(TermUniverse *universe, Arena *source) {
+    Space space;
+    space_init_with_universe(&space, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    add_compiled_program_equation(program, &space, source,
+        "(= (callee-admission-loop $n $x) (if (== $n 0) $x (callee-admission-loop (- $n 1) $x)))");
+    add_compiled_program_equation(program, &space, source,
+        "(= (callee-admission-bridge $x) (progn (callee-admission-loop 0 $x) (callee-admission-loop 0 7)))");
+    const char *reason = NULL;
+    CettaOpenEquationProgram *compiled = cetta_open_equation_program_compile(
+        program, &space, symbol_intern_cstr(g_symbols, "callee-admission-bridge"),
+        1u, NULL, &reason);
+    if (!compiled) fprintf(stderr, "callee admission compile: %s\n", reason);
+    assert(compiled);
+    for (unsigned mode = 0u; mode < 3u; mode++)
+    for (unsigned repeat = 0u; repeat < 2u; repeat++) {
+        Arena answers;
+        arena_init(&answers);
+        CalleeAdmissionProbe probe = {.stable_refusal = mode == 2u && repeat == 0u};
+        CettaOpenEquationRuntime runtime = {
+            .context = &probe, .execute_pure_relation = callee_admission_execute,
+            .pure_relation_declined = callee_admission_declined,
+        };
+        Atom *open = mode == 1u ? atom_int(source, 13)
+            : atom_var_with_id(source, "$open-admission", fresh_var_id());
+        Atom *arguments[] = {open};
+        Atom *const *query_vars = mode == 1u ? NULL : arguments;
+        CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+            compiled, &answers, arguments, 1u, NULL, query_vars,
+            mode == 1u ? 0u : 1u, &runtime);
+        assert(cursor);
+        CettaCallOutcome returned = cetta_call_failure();
+        assert(cetta_open_equation_cursor_next(cursor, query_vars, &returned, NULL) ==
+            CETTA_OPEN_EQUATION_ANSWER);
+        assert(returned.kind == CETTA_CALL_VALUE &&
+            returned.result_form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+            atom_eq(returned.term, atom_int(&answers, 7)));
+        assert(probe.attempts == (probe.stable_refusal ? 0u : mode == 1u ? 2u : 1u));
+        assert(probe.accepted == !probe.stable_refusal && probe.refusal_queries == 2u);
+        assert(cetta_open_equation_cursor_next(cursor, query_vars, &returned, NULL) ==
+            CETTA_OPEN_EQUATION_EXHAUSTED);
+        cetta_open_equation_cursor_close(cursor);
+        arena_free(&answers);
+    }
+    cetta_open_equation_program_release(compiled);
+    petta_program_free(program);
+    space_free(&space);
+    puts("PASS: six callee admission controls preserve input-local refusal and current owner authority");
+}
+
 int main(int argc, char **argv) {
     bool worker_only = argc == 2 && strcmp(argv[1], "--worker-ownership") == 0;
     bool resume_only = argc == 2 && strcmp(argv[1], "--resume-contract") == 0;
     bool arity_only = argc == 2 && strcmp(argv[1], "--arity-contract") == 0;
     bool native_only = argc == 2 && strcmp(argv[1], "--native-return") == 0;
-    if (argc != 1 && !worker_only && !resume_only && !arity_only && !native_only) {
-        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--native-return]\n", stderr);
+    bool source_only = argc == 2 && strcmp(argv[1], "--source-accounting") == 0;
+    bool admission_only = argc == 2 && strcmp(argv[1], "--callee-admission") == 0;
+    bool catalog_only = argc == 2 && strcmp(argv[1], "--catalog-append") == 0;
+    if (argc != 1 && !worker_only && !resume_only && !arity_only && !native_only && !source_only && !admission_only && !catalog_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--native-return|--source-accounting|--callee-admission|--catalog-append]\n", stderr);
         return 2;
     }
     Arena persistent;
@@ -14444,6 +14978,15 @@ int main(int argc, char **argv) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    if (catalog_only) {
+        test_notified_catalog_append(&universe, &persistent);
+        test_unnotified_catalog_append(&universe, &persistent);
+        goto release_owners;
+    }
+    if (admission_only) {
+        test_callee_admission_scope(&universe, &persistent);
+        goto release_owners;
+    }
     if (native_only) {
         test_compiled_native_returns(&universe, &persistent);
     test_entered_service_returns(&universe, &persistent);
@@ -14461,6 +15004,10 @@ int main(int argc, char **argv) {
     }
     test_count_binder_visibility(&universe, &persistent, &answers);
     test_source_accounting(&universe, &persistent, &answers);
+    test_source_effect_accounting(&universe, &answers);
+    test_callee_admission_scope(&universe, &persistent);
+    if (source_only)
+        goto release_owners;
     test_resume_contract(&universe, &answers);
     if (resume_only)
         goto release_owners;
@@ -14548,6 +15095,8 @@ int main(int argc, char **argv) {
         &universe, &persistent, &answers);
     test_program_head_occurrence_index(
         &universe, &persistent);
+    test_notified_catalog_append(&universe, &persistent);
+    test_unnotified_catalog_append(&universe, &persistent);
     test_program_equation_template_c0(
         &universe, &persistent);
     test_open_pattern_support_certificate(

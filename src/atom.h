@@ -1477,6 +1477,13 @@ void atom_visit_set_free(AtomVisitSet *set);
  * the path to it: each distinct subexpression is visited once. */
 bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
                     void *context);
+/* A barrier is a semantic value boundary: neither the predicate nor its
+ * children are observed there. Graph predicates and barriers are independent
+ * of the path by which a subterm is reached. */
+bool atom_tree_any_pruned(const Atom *root, AtomTreePredicate predicate,
+                          AtomTreePredicate barrier, void *context);
+bool atom_graph_any_pruned(const Atom *root, AtomTreePredicate predicate,
+                           AtomTreePredicate barrier, void *context);
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 

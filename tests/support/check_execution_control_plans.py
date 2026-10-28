@@ -11,7 +11,19 @@ from gen_execution_contracts import Spec, SpecError
 def main():
     text = (ROOT / 'lib/gslt_execution_contracts.metta').read_text()
     spec = Spec(text)
-    assert len(spec.control_plans) == 10
+    assert len(spec.control_plans) == 11
+    selection = '(source-head case 2 match-branches (operands 0 1 absent) (fold none))'
+    for replacement in [
+            selection + '\n  ' + selection,
+            selection.replace('operands 0 1 absent', 'operands 0 0 absent'),
+            selection.replace('operands 0 1 absent', 'operands 0 absent absent'),
+            selection.replace('operands 0 1 absent', 'operands 0 2 absent'),
+            selection.replace('fold none', 'fold branch')]:
+        try:
+            Spec(text.replace(selection, replacement))
+        except SpecError:
+            continue
+        raise AssertionError(('invalid case plan was admitted', replacement))
     assert len(spec.control_forms) == 2
     assert len(spec.variadic_forms) == 2
     collection = '(source-head collapse 1 collect (operands 0 absent absent) (fold none))'

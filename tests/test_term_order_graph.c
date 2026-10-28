@@ -483,6 +483,61 @@ static void scoped_copy_loans(void) {
     puts("PASS: scoped graph loans preserve aliases without certifying publication ownership");
 }
 
+
+typedef struct {
+    const Atom *needle;
+    const Atom *barrier;
+    unsigned matches;
+    unsigned expressions;
+    bool stop;
+} WalkObservation;
+
+static bool walk_observe(const Atom *atom, void *opaque) {
+    WalkObservation *seen = opaque;
+    seen->expressions += atom->kind == ATOM_EXPR;
+    seen->matches += atom == seen->needle;
+    return seen->stop && atom == seen->needle;
+}
+
+static bool walk_value_barrier(const Atom *atom, void *opaque) {
+    return atom == ((WalkObservation *)opaque)->barrier;
+}
+
+static void semantic_walk_barriers(Arena *arena) {
+    Atom *needle = atom_symbol(arena, "walk-payload");
+    Atom *quoted = atom_expr2(arena, atom_symbol(arena, "walk-quote"), needle);
+    WalkObservation seen = {.needle = needle, .barrier = quoted, .stop = true};
+    assert(!atom_tree_any_pruned(quoted, walk_observe, walk_value_barrier, &seen));
+    assert(!seen.matches && !seen.expressions);
+    assert(atom_tree_any(quoted, walk_observe, &seen));
+    assert(seen.matches == 1u);
+
+    Atom *mixed = atom_expr3(arena, atom_symbol(arena, "walk-pair"), quoted, needle);
+    seen = (WalkObservation){.needle = needle, .barrier = quoted, .stop = true};
+    assert(atom_graph_any_pruned(mixed, walk_observe, walk_value_barrier, &seen));
+    assert(seen.matches == 1u && seen.expressions == 1u);
+
+    Atom *shared = atom_expr2(arena, atom_symbol(arena, "walk-child"), needle);
+    Atom *twice = atom_expr3(arena, atom_symbol(arena, "walk-pair"), shared, shared);
+    seen = (WalkObservation){.needle = needle};
+    assert(!atom_tree_any_pruned(twice, walk_observe, NULL, &seen));
+    assert(seen.matches == 2u && seen.expressions == 3u);
+    seen = (WalkObservation){.needle = needle};
+    assert(!atom_graph_any_pruned(twice, walk_observe, NULL, &seen));
+    assert(seen.matches == 1u && seen.expressions == 2u);
+
+    Atom *dag = atom_int(arena, 0);
+    for (unsigned depth = 0u; depth < 40u; depth++)
+        dag = atom_expr3(arena, atom_symbol(arena, "walk-node"), dag, dag);
+    seen = (WalkObservation){.needle = needle};
+    assert(!atom_graph_any_pruned(dag, walk_observe, NULL, &seen));
+    assert(seen.expressions == 40u && !seen.matches);
+    seen = (WalkObservation){.needle = needle, .barrier = dag};
+    assert(!atom_graph_any_pruned(dag, walk_observe, walk_value_barrier, &seen));
+    assert(!seen.expressions && !seen.matches);
+    puts("PASS: semantic walk barriers preserve data, tree occurrences and graph sharing");
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -490,6 +545,7 @@ int main(void) {
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
     g_symbols = &symbols;
     arena_init(&arena);
+    semantic_walk_barriers(&arena);
     scoped_copy_loans();
     expression_boundary_cases(&arena);
     finite_cases(&arena);

@@ -1195,9 +1195,10 @@ static bool langdef_semantic_q_symbol_v1(
     if (!term || term->kind != ATOM_EXPR || term->expr.len != 2u ||
         !atom_is_symbol(term->expr.elems[0], "q-sym") ||
         !term->expr.elems[1] ||
-        term->expr.elems[1]->kind != ATOM_SYMBOL || !symbol)
-        return set_error(error, error_size,
-                         "quoted symbol has the wrong shape");
+        term->expr.elems[1]->kind != ATOM_SYMBOL || !symbol) {
+        set_error(error, error_size, "quoted symbol has the wrong shape");
+        return false;
+    }
     *symbol = term->expr.elems[1];
     return true;
 }
