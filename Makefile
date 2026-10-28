@@ -50759,6 +50759,12 @@ test-petta-overloaded-choice-retention: $(BIN) tests/support/check_petta_overloa
 
 test-petta-search-machine test-all: test-petta-overloaded-choice-retention
 
+.PHONY: test-petta-prepared-native-values
+test-petta-prepared-native-values: $(BIN)
+	python3 tests/support/check_prepared_native_values.py ./$(BIN)
+
+test-petta-search-machine test-all: test-petta-prepared-native-values
+
 .PHONY: test-rel
 REL_TEST_OUTPUT ?= runtime/rel-qualification-$(BUILD_OBJ_TAG)
 test-rel: $(BIN) lib/petta/rel.metta tests/support/check_rel.py

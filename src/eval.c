@@ -21465,6 +21465,29 @@ static bool eval_prepared_pure_native_call(
         return NULL;
     if (!prime_prepared_native_call_inline(atom_symbol_current_id(head)))
         return NULL;
+    /* The prepared route has the same observation boundary as direct host
+     * dispatch. Erase PeTTa's private open-cons carriers once before a native
+     * reads its operands, preserving quoted syntax and opaque callables.
+     * Never modify the invocation's borrowed argument vector. */
+    Atom **observed_arguments = NULL;
+    for (CettaExprLen index = 0u; index < arity; ++index) {
+        if (!petta_semantics_value_contains_observable_open_cons(arguments[index]))
+            continue;
+        if (!observed_arguments) {
+            if (arity > SIZE_MAX / sizeof(*observed_arguments))
+                return false;
+            observed_arguments = arena_alloc(
+                arena, (size_t)arity * sizeof(*observed_arguments));
+            memcpy(observed_arguments, arguments,
+                   (size_t)arity * sizeof(*observed_arguments));
+        }
+        observed_arguments[index] = petta_semantics_materialize_value(
+            arena, arguments[index]);
+        if (!observed_arguments[index])
+            return false;
+    }
+    if (observed_arguments)
+        arguments = observed_arguments;
     if (!cetta_library_call_native_prepared_view(
             library, space, arena, head, arguments,
             (uint32_t)arity, &outcome)) {
