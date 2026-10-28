@@ -4851,15 +4851,12 @@ static CettaMatchCompletion space_read_view_equal(Atom *left, Atom *right) {
         ? CETTA_MATCH_MATCHED : CETTA_MATCH_REFUTED;
 }
 
-/* PeTTa removal interprets a nonempty expression as its match pattern.  A
- * bare matcher variable carries no finite expression arity, so its removal
- * receipt is empty; other data have no removal interpretation. */
+/* Stored primitive values and empty expressions have the same removal
+ * interpretation as nonempty rows. Root variables are handled by the caller. */
 static Atom *petta_space_remove_request_pattern(Arena *arena, Atom *value) {
     if (!arena || !value)
         return NULL;
-    if (value->kind == ATOM_EXPR)
-        return value->expr.len != 0u ? value : NULL;
-    return NULL;
+    return value->kind != ATOM_VAR ? value : NULL;
 }
 
 /* One stable contraction by an occurrence mask, then every derived execution
@@ -4943,8 +4940,7 @@ static bool petta_space_remove_pattern_all(
         CettaCount *removed_out) {
     if (removed_out)
         *removed_out = 0u;
-    if (!space || !pattern || pattern->kind != ATOM_EXPR ||
-        pattern->expr.len == 0u)
+    if (!space || !pattern || pattern->kind == ATOM_VAR)
         return false;
 
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
@@ -4957,7 +4953,8 @@ static bool petta_space_remove_pattern_all(
     /* A ground pattern unifies with exactly the rows equal to it when no
      * row of its head holds a variable: the exact index removes those by
      * id, without reading any other row. */
-    if (!atom_has_vars(pattern) && space->native.universe &&
+    if (pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
+        !atom_has_vars(pattern) && space->native.universe &&
         pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
         AtomId id = term_universe_lookup_atom_id(space->native.universe,
                                                  pattern);
@@ -4988,7 +4985,8 @@ static bool petta_space_remove_pattern_all(
     /* Only native, uncomposed candidate coordinates are the logical
      * occurrence positions consumed by the removal mask. Other stores keep
      * the full logical scan until they supply that coordinate contract. */
-    bool indexed = !space->overlay_base && !space_has_dependencies(space) &&
+    bool indexed = pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
+        !space->overlay_base && !space_has_dependencies(space) &&
         logical_len > MATCH_TRIE_THRESHOLD &&
         (space->match_backend.kind == SPACE_ENGINE_NATIVE ||
          space->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT);

@@ -50765,6 +50765,23 @@ test-petta-prepared-native-values: $(BIN)
 
 test-petta-search-machine test-all: test-petta-prepared-native-values
 
+.PHONY: test-petta-primitive-space-mutations
+test-petta-primitive-space-mutations: $(BIN)
+	@set -eu; \
+	for reference in 0 1; do \
+		actual=$$(CETTA_OPEN_EQUATIONS_REFERENCE=$$reference \
+			CETTA_PREPARED_PURE_REFERENCE=$$reference $(CETTA_BIN_INVOKE) \
+			--lang petta tests/petta/primitive_space_mutations.metta 2>&1); \
+		if [ "$$actual" != "$$(cat tests/petta/primitive_space_mutations.expected)" ]; then \
+			echo "FAIL: primitive space mutations (reference=$$reference)"; \
+			diff -u tests/petta/primitive_space_mutations.expected <(printf '%s\n' "$$actual"); \
+			exit 1; \
+		fi; \
+	done; \
+	echo "PASS: 46 primitive space removal checks preserve unrelated occurrences"
+
+test-petta-semantics test-all: test-petta-primitive-space-mutations
+
 .PHONY: test-rel
 REL_TEST_OUTPUT ?= runtime/rel-qualification-$(BUILD_OBJ_TAG)
 test-rel: $(BIN) lib/petta/rel.metta tests/support/check_rel.py
