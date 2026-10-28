@@ -12,10 +12,11 @@ import subprocess
 import tempfile
 
 
-def run(binary, path, source, *, reference=False):
+def run(binary, path, source, *, reference=False, prepared_reference=False):
     path.write_text(source)
     env = dict(os.environ, CETTA_PETTA_MACHINE_STATS="1")
     env.pop("CETTA_OPEN_EQUATIONS_REFERENCE", None)
+    env["CETTA_PREPARED_PURE_REFERENCE"] = "1" if prepared_reference else "0"
     if reference:
         env["CETTA_OPEN_EQUATIONS_REFERENCE"] = "1"
     result = subprocess.run([binary, "--lang", "petta", str(path)],
@@ -25,7 +26,7 @@ def run(binary, path, source, *, reference=False):
     lines = [line for line in result.stderr.splitlines()
              if line.startswith("PETTA_MACHINE_STATS ")]
     if not lines:
-        raise AssertionError("missing evaluator statistics")
+        return result.stdout.strip().splitlines(), None
     stats = dict(re.findall(r"(\w+)=(\d+)", lines[-1]))
     return result.stdout.strip().splitlines(), int(stats["max_choice_depth"])
 
@@ -62,6 +63,15 @@ def main():
                         "!(repeat-test " + str(count) + ")\n")
                     output, depth = run(binary, path, source, reference=reference)
                     assert output[-1:] == ["done"], (name, output)
+                    if depth is None:
+                        # A fully prepared pure producer need not enter the
+                        # search machine. Check its answers above, then measure
+                        # actual machine choices on the ordinary route; absent
+                        # instrumentation is never interpreted as depth zero.
+                        ordinary, depth = run(binary, path, source,
+                            reference=reference, prepared_reference=True)
+                        assert ordinary == output, (name, output, ordinary)
+                    assert depth is not None, (name, "missing machine statistics")
                     depths.append(depth)
                     checks += 1
                 assert depths[1] <= depths[0] + 2, (name, reference, depths)
