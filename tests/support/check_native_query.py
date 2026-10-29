@@ -23,7 +23,8 @@ fresh names in an order that follows them, so the outputs are compared with
 every variable named alike and every printed collection's elements sorted.
 With --stats, the binary is a runtime-stats build, and the native path must
 also have answered at least one collection per program on average, and
-joined by rows of bits in at least one program in five, so that the
+joined by rows of bits in at least one program in five, rows it builds for
+the join or the pairs of a relation the space keeps as bits, so that the
 agreement is not vacuous.
 """
 import argparse
@@ -277,8 +278,9 @@ def run(binary, path, reference, stats):
         fields = line.split()
         if fields[:2] == ["runtime-counter", "native-query-admission"]:
             admissions = int(fields[2])
-        if fields[:2] == ["runtime-counter", "dense-relation-admission"]:
-            dense = int(fields[2])
+        if fields[:2] in (["runtime-counter", "dense-relation-admission"],
+                          ["runtime-counter", "native-query-bits-leg"]):
+            dense += int(fields[2])
     return (p.returncode, canonical(p.stdout)), admissions, dense
 
 

@@ -255,6 +255,12 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * has it when a child has it.  Storage that drops the mark copies such an
  * atom rather than sharing it. */
 #define ATOM_STRUCTURAL_HAS_HE_EVALUATED UINT32_C(0x00001000)
+/* Every leaf of the atom is a symbol, so its structural hash is a function of
+ * what atom_eq compares: two such atoms whose known hashes differ are
+ * unequal.  Like the closed facts, it holds of an expression only when it
+ * holds of every child; any other leaf, or a hand-built atom, leaves it
+ * unset. */
+#define ATOM_STRUCTURAL_SYMBOLIC UINT32_C(0x00002000)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -265,7 +271,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_RATIONAL +
                        ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
                        ATOM_STRUCTURAL_OWNER_CLOSED + ATOM_STRUCTURAL_STRING_STORAGE +
-                       ATOM_STRUCTURAL_HAS_HE_EVALUATED ==
+                       ATOM_STRUCTURAL_HAS_HE_EVALUATED + ATOM_STRUCTURAL_SYMBOLIC ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
@@ -274,7 +280,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                     ATOM_STRUCTURAL_HAS_RATIONAL |
                     ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
                     ATOM_STRUCTURAL_OWNER_CLOSED | ATOM_STRUCTURAL_STRING_STORAGE |
-                    ATOM_STRUCTURAL_HAS_HE_EVALUATED),
+                    ATOM_STRUCTURAL_HAS_HE_EVALUATED | ATOM_STRUCTURAL_SYMBOLIC),
                "structural fact bits overlap");
 
 /*
@@ -949,6 +955,32 @@ bool atom_spread_hash(Atom *atom, uint64_t *out);
 #define ATOM_HASH_ZERO_SPELLING UINT32_C(0x9e3779b9)
 #define ATOM_HASH_SPELL(h) \
     ((uint32_t)(h) != 0u ? (uint32_t)(h) : ATOM_HASH_ZERO_SPELLING)
+
+/* An expression's hash is finished once its children are folded in, before
+ * it is spelled.  The fold xors its last child in, so without the finish a
+ * constructor applied twice would give back its argument's hash ((S (S x))
+ * hashing as x) and whole families of nested terms would share two hashes.
+ * The finish is murmur3's fmix32, a bijection taking 0 to 0; every place
+ * that folds an expression's hash (atom.c, the term universe, the
+ * compile-time list hashes) finishes it alike. */
+#define ATOM_HASH_FINISH_STEP(h, shift, factor) \
+    ((uint32_t)(((uint32_t)(h) ^ ((uint32_t)(h) >> (shift))) * (factor)))
+#define ATOM_HASH_EXPR_FINISH(h)                                          \
+    ((uint32_t)(ATOM_HASH_FINISH_STEP(                                    \
+                    ATOM_HASH_FINISH_STEP((h), 16, 0x85ebca6bu), 13,      \
+                    0xc2b2ae35u) ^                                        \
+                (ATOM_HASH_FINISH_STEP(                                   \
+                     ATOM_HASH_FINISH_STEP((h), 16, 0x85ebca6bu), 13,     \
+                     0xc2b2ae35u) >> 16)))
+
+static inline uint32_t atom_hash_expr_finish(uint32_t h) {
+    h ^= h >> 16;
+    h *= 0x85ebca6bu;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35u;
+    h ^= h >> 16;
+    return h;
+}
 
 /* ── Variable identity intern/freshening ──────────────────────────────── */
 

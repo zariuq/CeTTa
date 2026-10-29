@@ -21,6 +21,16 @@ static Atom *integer_hashing_to(Arena *arena, uint32_t target) {
     return atom_int(arena, (int64_t)(integer_leaf_prefix() ^ target));
 }
 
+/* The inverse of the finish an expression's hash takes after its fold. */
+static uint32_t hash_unfinish(uint32_t h) {
+    h ^= h >> 16;
+    h *= 0x7ed1b41du;
+    h ^= (h >> 13) ^ (h >> 26);
+    h *= 0xa5cb9243u;
+    h ^= h >> 16;
+    return h;
+}
+
 static Atom *fresh_copy(Arena *arena, Atom *atom) {
     if (atom->kind != ATOM_EXPR)
         return atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_INT
@@ -46,10 +56,11 @@ static void test_zero_spelling(Arena *arena) {
     Atom *uncached = atom_expr2(arena, f, integer_hashing_to(arena, 0u));
     assert(atom_hash(cached_first) == atom_hash(uncached));
 
-    /* (f n) folds to X ^ hash(n) for a fixed X; a child hashing to X makes
-     * the expression itself fold to 0. */
+    /* (f n) folds to X ^ hash(n) for a fixed X before its finish; a child
+     * hashing to X makes the expression itself fold to 0. */
     Atom *probe = atom_expr2(arena, f, atom_int(arena, 7));
-    uint32_t x = atom_hash(probe) ^ atom_hash(probe->expr.elems[1]);
+    uint32_t x = hash_unfinish(atom_hash(probe)) ^
+        atom_hash(probe->expr.elems[1]);
     Atom *zero_expr = atom_expr2(arena, f, integer_hashing_to(arena, x));
     uint32_t zero_expr_hash = atom_hash(zero_expr);
     assert(zero_expr_hash == spelled);

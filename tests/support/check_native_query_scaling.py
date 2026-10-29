@@ -20,9 +20,14 @@ Last, an odd-even sort collects each phase's swaps and then makes them
 through `(let P (superpose L) B)`, at 30 and 100 cells.  The native path
 must answer every swap twice (its collection and its effects), the run may
 make at most four unification attempts per phase however many swaps a phase
-makes (the ordinary path makes several per swap), and the removed rows'
-marks may be settled with work bounded by the initial rows and the removed
-occurrences. A dense representation can compact fewer rows more often.
+makes (the ordinary path makes several per swap), and settling the removed
+rows' marks may read at most six rows for each row removed, however many
+batches of additions the phases append: a settle the marks start reads at most
+two rows for each it removes, readers that need settled rows start a few
+more, and a space settled at every batch reads all its rows each time, tens
+of rows for each row removed.  The same work stays within four passes over
+every row the run can hold, its initial rows and two for each swap; a dense
+representation can compact fewer rows more often.
 
 Then cells (p i) and rows holding constructor patterns, (step (p $u)
 (q $u)) and (step (q $u) (r $u)), as Hexlife's neighbour relation holds
@@ -61,6 +66,7 @@ LOOKUPS = """{facts}
 """
 
 CELLS = (30, 100)
+SETTLE_ROWS_PER_REMOVED = 6
 
 
 def sort_settle_work_limit(initial_rows, swaps):
@@ -209,6 +215,13 @@ def main():
                       f"{found.get('unification-attempt', 0)} unification "
                       f"attempts over {phases} phases and {swaps} swaps")
                 return 1
+            removed = found.get("space-marked-row", 0)
+            if found.get("space-mark-settle-row", 0) > SETTLE_ROWS_PER_REMOVED * removed:
+                print(f"FAIL: the sort of {cells} cells settled its marks "
+                      f"{found.get('space-mark-settle', 0)} times, reading "
+                      f"{found.get('space-mark-settle-row', 0)} rows for "
+                      f"{removed} removed")
+                return 1
             settled_rows = found.get("space-mark-settle-row", 0)
             settle_limit = sort_settle_work_limit(int(answers[0]), swaps)
             if settled_rows > settle_limit:
@@ -245,8 +258,10 @@ def main():
           f"unification attempts over {SIZES[0][1]} and {SIZES[1][1]} edges, and "
           f"lookups for {CUSTOMERS[0]} and {CUSTOMERS[1]} customers read "
           f"{read[0]} then {read[1]} rows, and sorts of {CELLS[0]} and "
-          f"{CELLS[1]} cells make their swaps natively with bounded row work "
-          f"settling their marks, and rows holding patterns meet "
+          f"{CELLS[1]} cells make their swaps natively, settling their marks "
+          f"with at most {SETTLE_ROWS_PER_REMOVED} rows read for each removed "
+          f"and within four passes over their rows, "
+          f"and rows holding patterns meet "
           f"{OPEN_CELLS[0]} and {OPEN_CELLS[1]} cells one way")
     return 0
 
