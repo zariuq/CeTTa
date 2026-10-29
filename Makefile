@@ -49306,8 +49306,8 @@ value-worker: $(VALUE_WORKER_BIN)
 	@echo "Built $(VALUE_WORKER_BIN)"
 
 .PHONY: test-kb-db
-test-kb-db: $(VALUE_WORKER_BIN)
-	CETTA_CHANNEL_ROOT="$(CURDIR)" CETTA_VALUE_WORKER="$(abspath $(VALUE_WORKER_BIN))" \
+test-kb-db: $(BIN) $(VALUE_WORKER_BIN)
+	CETTA_CHANNEL_ROOT="$(CURDIR)" CETTA_VALUE_WORKER="$(abspath $(VALUE_WORKER_BIN))" CETTA_KB_CLI="$(abspath $(BIN))" \
 		$(PYTHON) -m unittest discover -s tests -p 'test_kb_*.py' -v
 .PHONY: test-value-worker-imports
 test-value-worker-imports: $(BIN) $(VALUE_WORKER_BIN)
