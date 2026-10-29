@@ -29,7 +29,7 @@ class DatabaseTests(unittest.TestCase):
 
     def new_worker(self):
         return Worker(WORKER, ROOT / "tests/support/kb_probe.metta", "kb-probe:run",
-                      language="petta", import_mode="relative", timeout=30)
+                      language="petta", import_mode="relative", timeout=30, profile=True)
 
     def call(self, command):
         return self.worker.call(E("At", str(self.path), command))
@@ -147,6 +147,46 @@ class DatabaseTests(unittest.TestCase):
         result = self.call(E("Select", E("KbArgument", "edge", 0, 81)))
         self.assertEqual(result[2][1], 1)
         self.assertLessEqual(result[2][2], 2)
+
+    def test_unbound_selector_is_refused_without_selecting_every_fact(self):
+        self.commit([E("KbPut", "one", "row", (1,))])
+        self.same(self.worker.call(E("Explain", Var(1))), E("KbRefused", S("selector-format")))
+        self.same(self.call(E("Select", Var(1))), E("KbRefused", S("selector-format")))
+
+    def test_point_and_combined_observations_cover_the_actual_fact_namespace(self):
+        first = (E("KbPut", "alice", "person", ("added",)),)
+        second = (E("KbPut", "decision", "decision", ("absent",)),)
+        result = self.call(E("PointRace", ("alice",), E("KbRelation", "unrelated"), first, second))
+        self.assertEqual(result[1][0], S("KnowledgeCommittedV1"), result)
+        self.same(result[2], E("StoreRefused", S("conflict")))
+        # The relation half of a composite observation is also validated.
+        result = self.call(E("PointRace", ("unrelated",), E("KbRelation", "watched"),
+                             (E("KbPut", "new", "watched", (1,)),), second))
+        self.same(result[2], E("StoreRefused", S("conflict")))
+
+    def test_ground_value_equality_and_open_term_alpha_equality_are_separate(self):
+        self.same(self.worker.call(E("Equal", Var(1), Var(2))), E("KbRefused", S("nonground-equality")))
+        self.assertIn(self.worker.call(E("AlphaEqual", E("p", Var(1), Var(1)), E("p", Var(2), Var(2)))),
+                      (S("true"), True))
+        self.assertIn(self.worker.call(E("AlphaEqual", E("p", Var(1), Var(1)), E("p", Var(2), Var(3)))),
+                      (S("false"), False))
+
+    def test_repeated_commits_do_not_retain_one_space_per_request(self):
+        self.commit([E("KbPut", "fixed", "value", (0,))])
+        before = self.worker.last_metrics["permanent_bytes"]
+        for value in range(1, 101):
+            self.commit([E("KbPut", "fixed", "value", (value,))])
+        self.assertEqual(self.worker.last_metrics["permanent_bytes"], before)
+
+    def test_scans_reject_a_body_with_an_inconsistent_identity(self):
+        self.commit([E("KbPut", "row", "relation", (1, 2))])
+        key = b"kb/fact/v1/" + encode("row")
+        wrong = E("KbFact", "other", "relation", (1, 2))
+        self.assertEqual(self.call(E("CorruptBody", key, wrong)), S("CorruptionFixtureReady"))
+        self.same(self.call(E("Select", S("KbAll"))), E("KbRefused", S("index-identity")))
+        key = b"kb/relation/v1/" + encode("relation") + encode("row")
+        self.assertEqual(self.call(E("CorruptBody", key, wrong)), S("CorruptionFixtureReady"))
+        self.same(self.call(E("Select", E("KbRelation", "relation"))), E("KbRefused", S("index-identity")))
 
 
 if __name__ == "__main__":

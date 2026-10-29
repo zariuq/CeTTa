@@ -2,12 +2,12 @@
 !(import! &self ../../lib/petta/knowledge.metta)
 
 (= (knowledge-probe:read $view $identities $budget)
-  (kb:observe $view $identities $budget))
+  (knowledge:observe $view $identities $budget))
 (= (knowledge-probe:apply $owner $view
       (KnowledgeApplyV1 $identities $receipt $command $answer $changes $budget))
-  (case (kb:observe $view $identities $budget)
+  (case (knowledge:observe $view $identities $budget)
     (((KnowledgeObservedV1 $points $reads)
-      (kb:publish $owner $view $reads $receipt $command $answer $changes $budget))
+      (knowledge:publish $owner $view $reads $receipt $command $answer $changes $budget))
      ($error $error))))
 
 (= (knowledge-probe:at-view $owner $view $epoch $revision $operation)
@@ -15,7 +15,7 @@
     (((KnowledgeReadV1 $identities $budget) (knowledge-probe:read $view $identities $budget))
      ((KnowledgeApplyV1 $ids $receipt $command $answer $changes $budget)
       (knowledge-probe:apply $owner $view $operation))
-     ((KnowledgeResolveV1 $receipt $command $budget) (kb:resolve $owner $receipt $command $budget))
+     ((KnowledgeResolveV1 $receipt $command $budget) (knowledge:resolve $owner $receipt $command $budget))
      ((KnowledgeRaceV1 $first $second)
       (let* (($left (knowledge-probe:apply $owner $view $first))
              ($right (knowledge-probe:apply $owner $view $second)))

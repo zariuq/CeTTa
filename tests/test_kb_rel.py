@@ -11,7 +11,7 @@ WORKER = os.environ.get("CETTA_VALUE_WORKER")
 if WORKER:
     sys.path.insert(0, str(Path(os.environ.get("CETTA_CHANNEL_ROOT", ROOT)) / "tools"))
     from value_worker_client import Worker
-    from space_service_client import E, S, encode
+    from space_service_client import E, S, Var, encode
 
 
 @unittest.skipUnless(WORKER, "CETTA_VALUE_WORKER is required")
@@ -47,6 +47,13 @@ class OptionalJoinTests(unittest.TestCase):
         fault = self.worker.call(E("Several", left, right))
         self.assertEqual(fault[0], S("RelFailure"))
         self.assertEqual(fault[2][0], S("RelCallbackAnswers"))
+
+    def test_open_truth_and_comparison_values_are_rejected_without_binding(self):
+        for command in [E("Not", Var(1)), E("And", Var(1), S("RelTrue")),
+                        E("Or", Var(1), S("RelFalse")), E("OpenTruth", ((Var(1), "value"),)),
+                        E("OpenBool", ((Var(1), "a"), (Var(2), "b")))]:
+            with self.subTest(command=command):
+                self.assertEqual(self.worker.call(command)[0], S("RelFailure"))
 
 
 if __name__ == "__main__":
