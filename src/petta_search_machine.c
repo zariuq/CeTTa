@@ -10109,30 +10109,34 @@ static bool petta_machine_maybe_collect(
     const Bindings *bindings = bindings_builder_bindings(builder);
     size_t nursery_live =
         arena_accounted_live_bytes(&machine->heap);
-    size_t tenured_live =
-        arena_accounted_live_bytes(&machine->tenured);
-    if (nursery_live >
-            machine->stats.maximum_nursery_live_bytes) {
-        machine->stats.maximum_nursery_live_bytes =
-            nursery_live;
+    /* The peaks are statistics, reported only when they are measured, and
+     * this runs at every step. */
+    if (machine->host.measure_stats) {
+        size_t tenured_live =
+            arena_accounted_live_bytes(&machine->tenured);
+        if (nursery_live >
+                machine->stats.maximum_nursery_live_bytes) {
+            machine->stats.maximum_nursery_live_bytes =
+                nursery_live;
+        }
+        if (tenured_live >
+                machine->stats.maximum_tenured_live_bytes) {
+            machine->stats.maximum_tenured_live_bytes =
+                tenured_live;
+        }
+        size_t total_heap_live =
+            petta_machine_total_heap_live(machine);
+        if (total_heap_live >
+            machine->stats.maximum_heap_live_bytes) {
+            machine->stats.maximum_heap_live_bytes =
+                total_heap_live;
+        }
+        size_t binding_count = 0u;
+        if (!bindings_current_binding_count(bindings, &binding_count))
+            return false;
+        if (binding_count > machine->stats.maximum_binding_entries)
+            machine->stats.maximum_binding_entries = binding_count;
     }
-    if (tenured_live >
-            machine->stats.maximum_tenured_live_bytes) {
-        machine->stats.maximum_tenured_live_bytes =
-            tenured_live;
-    }
-    size_t total_heap_live =
-        petta_machine_total_heap_live(machine);
-    if (total_heap_live >
-        machine->stats.maximum_heap_live_bytes) {
-        machine->stats.maximum_heap_live_bytes =
-            total_heap_live;
-    }
-    size_t binding_count = 0u;
-    if (!bindings_current_binding_count(bindings, &binding_count))
-        return false;
-    if (binding_count > machine->stats.maximum_binding_entries)
-        machine->stats.maximum_binding_entries = binding_count;
     if (machine->choice_len != 0u) {
         if (nursery_live >= machine->heap_collect_after) {
             if (!petta_choice_heap_evacuation_supported(machine)) {
@@ -39066,10 +39070,8 @@ static bool petta_machine_identities_exhausted(
 /* Ordinary canonical visits retain their existing unit charge. Specialized
  * lowerings must establish their own source debits before metered entry.
  * The host admits the source debit and its separate physical allowance. */
-static bool petta_machine_permit_source_step(
+static bool petta_machine_permit_metered_source_step(
         PettaMachineImpl *machine, CettaSourcePhase phase) {
-    if (!machine->host.permit_transition)
-        return true;
     const PettaGoal *goal = phase == CETTA_SOURCE_COMPUTE && machine->goal_len
         ? &machine->goals[machine->goal_len - 1u] : NULL;
     CettaSourceOccurrence occurrence = {
@@ -39094,8 +39096,52 @@ static bool petta_machine_permit_source_step(
     return machine->host.permit_transition(machine->host.context, &source);
 }
 
-static void petta_machine_offer_collection(PettaMachineImpl *impl,
-                                           uint32_t steps_open);
+/* Every step asks; an unmetered machine answers at the call site. */
+static inline __attribute__((always_inline)) bool petta_machine_permit_source_step(
+        PettaMachineImpl *machine, CettaSourcePhase phase) {
+    return !machine->host.permit_transition ||
+        petta_machine_permit_metered_source_step(machine, phase);
+}
+
+/* Local steps under way on this thread.  A collection of the universe may
+ * run where exactly STEPS_OPEN steps are open: before a step of the
+ * outermost machine (none open), or between the goals of that step (its
+ * own).  There no dispatch is under way, the machines hold atoms, and every
+ * holder of ids is a listed provider. */
+static _Thread_local uint32_t g_petta_machine_steps_open = 0u;
+
+static __attribute__((noinline)) void petta_machine_collect_offered(
+        TermUniverse *universe) {
+    if (!cetta_shared_transition_scope_active())
+        (void)term_universe_collect_at_safe_point(universe, NULL);
+}
+
+#if !CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+/* Steps until the next offer.  A collection falls due after thousands of
+ * entries, so asking at one step in 64 delays it by a few steps and keeps the
+ * check off the rest; a build with collection checks asks at every step,
+ * where its traps need a collection at every safe point. */
+#define PETTA_MACHINE_OFFER_PERIOD 64u
+static _Thread_local uint32_t g_petta_machine_offer_countdown =
+    PETTA_MACHINE_OFFER_PERIOD;
+#endif
+
+/* The collection itself stays out of the step loop.  Only offers at a safe
+ * depth count down, so no pattern of nested steps can keep the countdown
+ * ending on a depth that may not collect. */
+static inline __attribute__((always_inline)) void petta_machine_offer_collection(
+        PettaMachineImpl *impl, uint32_t steps_open) {
+    if (g_petta_machine_steps_open != steps_open || !impl->space)
+        return;
+#if !CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    if (--g_petta_machine_offer_countdown != 0u)
+        return;
+    g_petta_machine_offer_countdown = PETTA_MACHINE_OFFER_PERIOD;
+#endif
+    TermUniverse *universe = impl->space->native.universe;
+    if (universe && term_universe_collection_due(universe))
+        petta_machine_collect_offered(universe);
+}
 
 static PettaMachineStep petta_machine_next_local(
     PettaMachine *machine, Atom **answer, Bindings *environment) {
@@ -39315,22 +39361,6 @@ dispatch_body_resume_segment:
             return failure;
         }
     }
-}
-
-/* Local steps under way on this thread.  A collection of the universe may
- * run where exactly STEPS_OPEN steps are open: before a step of the
- * outermost machine (none open), or between the goals of that step (its
- * own).  There no dispatch is under way, the machines hold atoms, and every
- * holder of ids is a listed provider. */
-static _Thread_local uint32_t g_petta_machine_steps_open = 0u;
-
-static void petta_machine_offer_collection(PettaMachineImpl *impl,
-                                           uint32_t steps_open) {
-    TermUniverse *universe = impl->space ? impl->space->native.universe : NULL;
-    if (g_petta_machine_steps_open == steps_open && universe &&
-        term_universe_collection_due(universe) &&
-        !cetta_shared_transition_scope_active())
-        (void)term_universe_collect_at_safe_point(universe, NULL);
 }
 
 PettaMachineStep petta_machine_next(
