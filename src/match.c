@@ -3810,20 +3810,69 @@ static bool bindings_frame_relocation_store(BindingsFrameRelocations *memo,
     return true;
 }
 
-bool bindings_promote_logical_atoms_with_session(
-    Bindings *bindings, AtomDeepCopySession *session) {
+static bool bindings_delta_value_equal(BindingValue a, BindingValue b) {
+    return binding_value_kind(a) == binding_value_kind(b) &&
+        cetta_frame_identity_eq(binding_value_epoch(a), binding_value_epoch(b)) &&
+        ((!a.skeleton && !b.skeleton) ||
+         (a.skeleton && b.skeleton && atom_eq(a.skeleton, b.skeleton)));
+}
+
+static bool bindings_delta_schema_equal(const BindingsFrameSchema *a,
+        const BindingsFrameSchema *b) {
+    if (a == b) return true;
+    if (!a || !b || a->len != b->len || a->cap != b->cap) return false;
+    for (uint32_t i = 0u; i < a->len; ++i)
+        if (!var_id_eq(a->source_ids[i], b->source_ids[i])) return false;
+    for (uint32_t i = 0u; i < a->cap; ++i) {
+        if (a->spellings[i] != b->spellings[i]) return false;
+        if (a->name_keys[i] != b->name_keys[i] &&
+            (!a->name_keys[i] || !b->name_keys[i] || !atom_eq(a->name_keys[i], b->name_keys[i])))
+            return false;
+    }
+    return true;
+}
+
+static bool bindings_delta_base_value(const BindingsFrameIndexEntry *frame,
+        uint32_t slot, const BindingsFrameIndexEntry *base, BindingValue *value) {
+    uint32_t base_slot;
+    if (!base || !bindings_frame_index_find_slot(base,
+            bindings_frame_slot_source_id(frame, slot), &base_slot) || base_slot >= base->slot_len)
+        return false;
+    BindingValue original = bindings_frame_slot_value(base, base_slot);
+    if (!bindings_delta_value_equal(bindings_frame_slot_value(frame, slot), original)) return false;
+    if (value) *value = original;
+    return true;
+}
+
+static Atom *bindings_delta_base_name(const BindingsFrameIndexEntry *frame,
+        uint32_t slot, const BindingsFrameIndexEntry *base, Atom *name) {
+    uint32_t base_slot;
+    if (!name || !base || slot >= frame->slot_len || !bindings_frame_index_find_slot(base,
+            bindings_frame_slot_source_id(frame, slot), &base_slot) || base_slot >= base->slot_len) return NULL;
+    Atom *original = bindings_frame_slot_name_key(base, base_slot);
+    return original && atom_eq(name, original) ? original : NULL;
+}
+
+static bool bindings_promote_logical_with_base(Bindings *bindings,
+        AtomDeepCopySession *session, const Bindings *base) {
     if (!bindings)
         return true;
     if (atom_deep_copy_session_failed(session))
         return false;
     if (!bindings_prepare_logical_write(bindings))
         return false;
+    if (base && base->owners) bindings_inherit_owners(bindings, base);
     for (uint32_t i = 0; i < bindings->len; i++) {
-        Atom *promoted_name_key = bindings->entries[i].name_key
+        const Binding *original = base && i < base->len ? bindings_entry_at(base, i) : NULL;
+        if (original && !var_id_eq(bindings->entries[i].var_id, original->var_id)) original = NULL;
+        bool inherited_key = original && (bindings->entries[i].name_key == original->name_key ||
+            (bindings->entries[i].name_key && original->name_key && atom_eq(bindings->entries[i].name_key, original->name_key)));
+        bool inherited_value = original && bindings_delta_value_equal(bindings->entries[i].value, original->value);
+        Atom *promoted_name_key = inherited_key ? original->name_key : bindings->entries[i].name_key
             ? atom_deep_copy_session_copy(
                   session, bindings->entries[i].name_key)
             : NULL;
-        Atom *promoted = bindings->entries[i].value.skeleton
+        Atom *promoted = inherited_value ? original->value.skeleton : bindings->entries[i].value.skeleton
             ? atom_deep_copy_session_copy(
                   session, bindings->entries[i].value.skeleton)
             : NULL;
@@ -3834,6 +3883,22 @@ bool bindings_promote_logical_atoms_with_session(
         bindings->entries[i].value.skeleton = promoted;
     }
     for (uint32_t i = 0; i < bindings->eq_len; i++) {
+        const BindingConstraint *inherited = NULL;
+        if (base) {
+            /* Normalization can discharge an earlier constraint, shifting
+             * unchanged survivors. Their borrowed roots still belong to base. */
+            for (uint32_t j = 0u; j < base->eq_len; j++) {
+                uint32_t index = i < base->eq_len ? (uint32_t)(((uint64_t)i + j) % base->eq_len) : j;
+                if (bindings_delta_value_equal(bindings->constraints[i].lhs, base->constraints[index].lhs) &&
+                    bindings_delta_value_equal(bindings->constraints[i].rhs, base->constraints[index].rhs)) {
+                    inherited = &base->constraints[index]; break;
+                }
+            }
+        }
+        if (inherited) {
+            bindings->constraints[i] = *inherited;
+            continue;
+        }
         Atom *lhs = bindings->constraints[i].lhs.skeleton
             ? atom_deep_copy_session_copy(
                   session, bindings->constraints[i].lhs.skeleton)
@@ -3860,20 +3925,59 @@ bool bindings_promote_logical_atoms_with_session(
              frame_index < bindings->frame_index->len; frame_index++) {
             BindingsFrameIndexEntry *frame =
                 &bindings->frame_index->frames[frame_index];
+            const BindingsFrameIndexEntry *original = base
+                ? bindings_frame_index_find_frame_const(base->frame_index, frame->epoch) : NULL;
+            bool same_schema = original && bindings_delta_schema_equal(frame->schema, original->schema);
+            bool same_payload = same_schema && original->slot_len == frame->slot_len && original->storage_references &&
+                frame->bound_value_count == original->bound_value_count &&
+                frame->private_value_count == original->private_value_count &&
+                frame->schema_complete == original->schema_complete &&
+                frame->has_activation_write_boundary == original->has_activation_write_boundary &&
+                frame->activation_write_boundary == original->activation_write_boundary;
+            for (uint32_t slot = 0u; same_payload && slot < frame->slot_len; ++slot)
+                same_payload = bindings_delta_value_equal(bindings_frame_slot_value(frame, slot),
+                    bindings_frame_slot_value(original, slot)) &&
+                    bindings_frame_slot_version(frame, slot) == bindings_frame_slot_version(original, slot);
+            if (original) {
+                if (!directory_private) {
+                    if (!bindings_frame_index_detach(bindings)) return false;
+                    directory_private = true;
+                    frame = &bindings->frame_index->frames[frame_index];
+                }
+                if (same_payload) {
+                    bindings_frame_index_entry_share_payload(frame, original);
+                    continue;
+                }
+                if (same_schema && frame->schema != original->schema) {
+                    bindings_frame_schema_retain(original->schema);
+                    bindings_frame_schema_release(frame->schema);
+                    frame->schema = original->schema;
+                }
+                if (!bindings_frame_index_entry_detach(frame)) return false;
+                for (uint32_t slot = 0u; slot < frame->cap && slot < frame->slot_len; ++slot) {
+                    BindingValue inherited;
+                    if (bindings_delta_base_value(frame, slot, original, &inherited))
+                        frame->values[slot] = inherited;
+                }
+            }
             bool foreign_name_keys = false;
             bool foreign_values = false;
+            for (uint32_t slot = 0u; !same_schema && frame->schema && slot < frame->schema->cap; slot++) {
+                Atom *key = frame->schema->name_keys[slot];
+                Atom *inherited = bindings_delta_base_name(frame, slot, original, key);
+                if (key && ((inherited && inherited != key) ||
+                    (!inherited && !atom_deep_copy_session_settled(session, key))))
+                    foreign_name_keys = true;
+            }
             for (uint32_t slot = 0u;
                  slot < frame->slot_len; slot++) {
-                Atom *name_key = bindings_frame_slot_name_key(frame, slot);
-                if (name_key &&
-                    !atom_deep_copy_session_settled(session, name_key))
-                    foreign_name_keys = true;
                 Atom *value = bindings_frame_slot_value(frame, slot).skeleton;
-                if (value &&
+                bool inherited = bindings_delta_base_value(frame, slot, original, NULL);
+                if (!inherited && value &&
                     !atom_deep_copy_session_settled(session, value))
                     foreign_values = true;
             }
-            bool mapped_schema = bindings_frame_schema_copy_lookup(
+            bool mapped_schema = !same_schema && bindings_frame_schema_copy_lookup(
                 frame->schema, session) != NULL;
             if (!foreign_name_keys && !foreign_values && !mapped_schema)
                 continue;
@@ -3900,8 +4004,24 @@ bool bindings_promote_logical_atoms_with_session(
                 retained_source = true;
             }
             if (foreign_name_keys || mapped_schema) {
-                BindingsFrameSchema *promoted_schema =
-                    bindings_frame_schema_copy_with_session(frame->schema, session);
+                BindingsFrameSchema *promoted_schema = NULL;
+                if (original) {
+                    promoted_schema = bindings_frame_schema_clone(frame->schema);
+                    for (uint32_t slot = 0u; promoted_schema && slot < promoted_schema->cap; ++slot) {
+                        Atom *key = promoted_schema->name_keys[slot];
+                        if (!key) continue;
+                        Atom *inherited = bindings_delta_base_name(frame, slot, original, key);
+                        Atom *image = inherited ? inherited : atom_deep_copy_session_copy(session, key);
+                        if (!image) {
+                            bindings_frame_schema_release(promoted_schema);
+                            promoted_schema = NULL;
+                            break;
+                        }
+                        promoted_schema->name_keys[slot] = image;
+                    }
+                } else {
+                    promoted_schema = bindings_frame_schema_copy_with_session(frame->schema, session);
+                }
                 if (!promoted_schema) {
                     if (retained_source) bindings_frame_index_entry_drop(&source);
                     return false;
@@ -3914,6 +4034,7 @@ bool bindings_promote_logical_atoms_with_session(
                 return false;
             }
             for (uint32_t slot = 0u; foreign_values && slot < frame->slot_len; slot++) {
+                if (bindings_delta_base_value(frame, slot, original, NULL)) continue;
                 if (!bindings_frame_slot_value(frame, slot).skeleton) {
                     continue;
                 }
@@ -3935,6 +4056,21 @@ bool bindings_promote_logical_atoms_with_session(
     /* Promotion preserves variable identities and the retained frame inventory;
      * it changes only syntax ownership. No context rediscovery is required. */
     return true;
+}
+
+bool bindings_promote_logical_atoms_with_session(Bindings *bindings,
+        AtomDeepCopySession *session) {
+    return bindings_promote_logical_with_base(bindings, session, NULL);
+}
+
+bool bindings_promote_logical_delta_to_arena(Bindings *bindings,
+        const Bindings *base, Arena *dst) {
+    if (!bindings || !base || bindings == base || !dst) return false;
+    AtomDeepCopySession *session = atom_deep_copy_session_new(dst);
+    if (!session) return false;
+    bool ok = bindings_promote_logical_with_base(bindings, session, base);
+    atom_deep_copy_session_free(session);
+    return ok;
 }
 
 bool bindings_logical_atoms_satisfy(

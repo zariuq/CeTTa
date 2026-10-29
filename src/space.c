@@ -146,6 +146,10 @@ const char *space_match_backend_error_name(SpaceMatchBackendError code) {
         return "NativeSpaceTooLarge";
     case SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE:
         return "PacketTooLarge";
+    case SPACE_MATCH_BACKEND_ERROR_QUERY_UNAVAILABLE:
+        return "SpaceQueryUnavailable";
+    case SPACE_MATCH_BACKEND_ERROR_READ_ONLY:
+        return "ReadOnlySpace";
     }
     return "UnknownSpaceMatchBackendError";
 }
@@ -204,6 +208,8 @@ static uint64_t space_match_backend_limit_for_error(SpaceMatchBackendError error
     case SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE:
         return space_match_backend_packet_materialization_limit();
     case SPACE_MATCH_BACKEND_ERROR_NONE:
+    case SPACE_MATCH_BACKEND_ERROR_QUERY_UNAVAILABLE:
+    case SPACE_MATCH_BACKEND_ERROR_READ_ONLY:
         return UINT64_MAX;
     }
     return UINT64_MAX;
@@ -2243,7 +2249,7 @@ static bool space_occurrence_source_admit(Space *space, Atom *pattern,
         SpaceOccurrenceCursor *cursor) {
     const SpaceMatchBackendOps *backend = space ? space->match_backend.ops : NULL;
     const SpaceSourceCursorOps *ops = backend ? backend->occurrence_ops : NULL;
-    if (!cursor || !space || space->overlay_base || space->dep_count ||
+    if (!cursor || !space || space->overlay_base || space->dep_count || space->module_own_view ||
         !ops || !backend->occurrence_open || !ops->clone || !ops->next ||
         !ops->atom || !ops->free) return false;
     space_occurrence_cursor_init_empty(cursor);
@@ -2251,10 +2257,12 @@ static bool space_occurrence_source_admit(Space *space, Atom *pattern,
     cursor->read = space_read_token(space);
     cursor->prefix_epoch = cursor->read.prefix_epoch;
     cursor->source_ops = ops;
-    if (!backend->occurrence_open(space, pattern, &cursor->source_state) || !cursor->source_state) {
+    SpaceOccurrenceCursorStep failure = SPACE_OCCURRENCE_CURSOR_CAPACITY;
+    if (!backend->occurrence_open(space, pattern, &cursor->source_state, &failure) || !cursor->source_state) {
         if (cursor->source_state) ops->free(cursor->source_state);
         cursor->source_state = NULL;
-        cursor->source_failure = SPACE_OCCURRENCE_CURSOR_CAPACITY;
+        cursor->source_failure = failure == SPACE_OCCURRENCE_CURSOR_CAPACITY ||
+            failure == SPACE_OCCURRENCE_CURSOR_INVALIDATED ? failure : SPACE_OCCURRENCE_CURSOR_INCOMPLETE;
     }
     return true;
 }
@@ -2406,7 +2414,11 @@ static bool space_occurrence_cursor_copy(
         dst->prefix_epoch = src->prefix_epoch;
         dst->source_ops = src->source_ops;
         dst->source_failure = src->source_failure;
-        if (!src->source_state) return src->source_failure != 0;
+        if (src->source_failure) {
+            if (rewind) { space_occurrence_cursor_release(dst); return false; }
+            return true;
+        }
+        if (!src->source_state) { space_occurrence_cursor_release(dst); return false; }
         if (src->source_ops->clone(src->source_state, rewind, &dst->source_state) && dst->source_state)
             return true;
         space_occurrence_cursor_release(dst);
@@ -2518,10 +2530,12 @@ bool space_occurrence_cursor_select(const SpaceOccurrenceCursor *captured,
     out->read = captured->read;
     out->prefix_epoch = captured->prefix_epoch;
     out->source_ops = captured->source_ops;
-    if (!captured->source_ops->select(captured->source_state, pattern, &out->source_state) || !out->source_state) {
+    SpaceOccurrenceCursorStep failure = SPACE_OCCURRENCE_CURSOR_CAPACITY;
+    if (!captured->source_ops->select(captured->source_state, pattern, &out->source_state, &failure) || !out->source_state) {
         if (out->source_state) out->source_ops->free(out->source_state);
         out->source_state = NULL;
-        out->source_failure = SPACE_OCCURRENCE_CURSOR_CAPACITY;
+        out->source_failure = failure == SPACE_OCCURRENCE_CURSOR_CAPACITY ||
+            failure == SPACE_OCCURRENCE_CURSOR_INVALIDATED ? failure : SPACE_OCCURRENCE_CURSOR_INCOMPLETE;
     }
     return true;
 }
@@ -6338,6 +6352,11 @@ static bool space_add_dependency_link(Space *importer, Space *dependency) {
 
 bool space_add_dependency(Space *importer, Space *dependency) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if ((importer && importer->match_backend.kind == SPACE_ENGINE_SOURCE) ||
+        (dependency && dependency->match_backend.kind == SPACE_ENGINE_SOURCE)) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_READ_ONLY);
+        return false;
+    }
     return importer && !importer->module_own_view &&
            space_add_dependency_link(importer, dependency);
 }
@@ -6778,6 +6797,9 @@ void space_storage_census(const Space *s, CettaStorageCensus *c) {
         sizeof(*exact->inexact_heads), 0u);
     if (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) {
+        if (s->match_backend.ops && s->match_backend.ops->storage) {
+            s->match_backend.ops->storage(s,c); return;
+        }
         cetta_storage_refuse(c, "ForeignSpaceBackendOwner"); return;
     }
     const SpaceMatchNativeState *state = &s->match_backend.native;
@@ -6985,8 +7007,18 @@ bool space_read_view_has_incremental_occurrences(const SpaceReadView *view) {
     const Space *space = view ? view->root.space : NULL;
     const SpaceMatchBackendOps *backend = space ? space->match_backend.ops : NULL;
     const SpaceSourceCursorOps *ops = backend ? backend->occurrence_ops : NULL;
-    return space && !view->base_count && !space->overlay_base && !space->dep_count &&
+    return space && !view->base_count && !space->overlay_base && !space->dep_count && !space->module_own_view &&
         ops && backend->occurrence_open && ops->clone && ops->next && ops->atom && ops->free;
+}
+
+bool space_read_view_uses_occurrence_source(const SpaceReadView *view) {
+    if (!view) return false;
+    for (size_t i = 0u; i <= view->base_count; ++i) {
+        const Space *space = i ? view->bases[i - 1u].space : view->root.space;
+        if (space && (space->match_backend.kind == SPACE_ENGINE_SOURCE ||
+            (space->match_backend.ops && space->match_backend.ops->occurrence_ops))) return true;
+    }
+    return false;
 }
 
 bool space_read_view_visit(const SpaceReadView *view,

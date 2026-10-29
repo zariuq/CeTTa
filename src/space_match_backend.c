@@ -11341,6 +11341,7 @@ CettaIndex space_match_backend_candidates64(Space *s, Atom *pattern,
     if (!s->match_backend.ops || !s->match_backend.ops->candidates) {
         if (out)
             *out = NULL;
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_QUERY_UNAVAILABLE);
         return 0;
     }
     space_linearize(s);
@@ -11437,6 +11438,7 @@ bool space_match_backend_ground_exact_exists_frontier(
 void space_match_backend_query(Space *s, Arena *a, Atom *query, SubstMatchSet *out) {
     if (!s->match_backend.ops || !s->match_backend.ops->query) {
         smset_init(out);
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_QUERY_UNAVAILABLE);
         return;
     }
     space_settle_marks(s);
@@ -12201,6 +12203,25 @@ typedef enum {
     SPACE_QUERY_WORK_PIPE,
 } SpaceQueryWorkKind;
 
+typedef struct {
+    Arena arena;
+    ArenaMark empty;
+} SpaceQueryCandidateArena;
+
+static SpaceQueryCandidateArena *space_query_candidate_arena_new(void) {
+    SpaceQueryCandidateArena *owner = calloc(1u, sizeof(*owner));
+    if (!owner) return NULL;
+    arena_init_detached(&owner->arena);
+    owner->empty = arena_mark(&owner->arena);
+    return owner;
+}
+
+static void space_query_candidate_arena_free(SpaceQueryCandidateArena *owner) {
+    if (!owner) return;
+    arena_free(&owner->arena);
+    free(owner);
+}
+
 typedef struct SpaceQueryWork {
     struct SpaceQueryWork *previous;
     SpaceQuerySequence *sequence;
@@ -12209,6 +12230,7 @@ typedef struct SpaceQueryWork {
     Bindings candidate;
     SpaceOccurrenceCursor occurrences;
     CettaMatchCursor *matcher;
+    SpaceQueryCandidateArena *candidate_arena;
     Atom *grounded;
     CettaExprIndex branch;
     CettaIndex candidate_index;
@@ -12314,6 +12336,7 @@ static void space_query_work_free(SpaceQueryWork *work) {
     bindings_free(&work->candidate);
     space_occurrence_cursor_release(&work->occurrences);
     match_atoms_cursor_free(work->matcher);
+    space_query_candidate_arena_free(work->candidate_arena);
     free(work);
 }
 
@@ -12364,6 +12387,10 @@ static SpaceQueryCursor *space_query_cursor_new_internal(Space *space, Arena *ar
             !space_occurrence_cursor_init_scan(space, &cursor->captured_source)) {
             space_query_cursor_free(cursor); return NULL;
         }
+    }
+    if (!cursor->incremental && space_read_view_uses_occurrence_source(&cursor->reads)) {
+        cursor->fallback_started = cursor->fallback_constructed = true;
+        cursor->fallback_complete = false;
     }
     if (cursor->incremental) {
         SpaceQuerySequence *sequence = NULL;
@@ -12614,9 +12641,24 @@ static SpaceQueryCursor *space_query_cursor_clone_internal(
             !space_occurrence_cursor_clone(&work->occurrences, &item->occurrences))
             goto fail;
         if (work->matcher) {
-            item->matcher = atoms
-                ? match_atoms_cursor_copy_to_arena(work->matcher, arena, atoms)
-                : match_atoms_cursor_clone(work->matcher);
+            if (work->candidate_arena) {
+                /* Source matching owns all its inputs, including the pattern
+                 * and seed, in one private arena. Its transport therefore
+                 * needs no mutation of an already-used enclosing arena map. */
+                item->candidate_arena = space_query_candidate_arena_new();
+                AtomDeepCopySession *private_copy = item->candidate_arena
+                    ? atom_deep_copy_session_new(&item->candidate_arena->arena) : NULL;
+                AtomDeepCopyArenaPair pair = {&work->candidate_arena->arena,
+                    item->candidate_arena ? &item->candidate_arena->arena : NULL};
+                if (private_copy && atom_deep_copy_session_set_arena_map(private_copy, &pair, 1u))
+                    item->matcher = match_atoms_cursor_copy_to_arena(work->matcher,
+                        &item->candidate_arena->arena, private_copy);
+                atom_deep_copy_session_free(private_copy);
+            } else {
+                item->matcher = atoms
+                    ? match_atoms_cursor_copy_to_arena(work->matcher, arena, atoms)
+                    : match_atoms_cursor_clone(work->matcher);
+            }
             if (!item->matcher) goto fail;
         }
     }
@@ -12796,10 +12838,40 @@ SpaceQueryCursorStep space_query_cursor_step_with_budget(SpaceQueryCursor *curso
     work->candidate_index = index;
     cetta_native_cost_charge(CETTA_COST_INDEX_VISIT, 1u);
     cetta_native_cost_charge(CETTA_COST_CANDIDATE_ROW, 1u);
-    Atom *candidate = space_occurrence_cursor_receive_atom(&work->occurrences, index, cursor->arena);
-    work->matcher = candidate ? match_atoms_cursor_new(
-        work->grounded,candidate,&work->seed,cursor->arena) : NULL;
+    Atom *candidate = space_occurrence_cursor_atom(&work->occurrences, index);
+    if (candidate && work->occurrences.source_ops) {
+        if (!work->candidate_arena) work->candidate_arena = space_query_candidate_arena_new();
+        AtomDeepCopySession *copy = work->candidate_arena
+            ? atom_deep_copy_session_new(&work->candidate_arena->arena) : NULL;
+        Bindings seed, logical_only;
+        bindings_init(&seed); bindings_init(&logical_only);
+        Atom *left = copy ? atom_deep_copy_session_copy(copy, work->grounded) : NULL;
+        Atom *right = left ? atom_deep_copy_session_copy(copy, candidate) : NULL;
+        bool forked = false;
+        if (right) {
+            BindingsBuilder fork;
+            forked = bindings_builder_init(&fork, &work->seed);
+            if (forked) bindings_builder_take(&fork, &seed);
+            bindings_builder_free(&fork);
+        }
+        if (forked) {
+            /* Matching changes logical substitutions only. Keep the caller's
+             * orthogonal Need/receipt/weight product on work->seed, where its
+             * existing enclosing transport preserves all sharing. */
+            bindings_prime_assign(&seed, &logical_only);
+            if (bindings_promote_logical_atoms_with_session(&seed, copy))
+                work->matcher = match_atoms_cursor_new(left, right, &seed, &work->candidate_arena->arena);
+        }
+        bindings_free(&seed);
+        bindings_free(&logical_only);
+        atom_deep_copy_session_free(copy);
+    } else {
+        work->matcher = candidate ? match_atoms_cursor_new(
+            work->grounded,candidate,&work->seed,cursor->arena) : NULL;
+    }
     if (!work->matcher) {
+        if (work->candidate_arena)
+            arena_reset(&work->candidate_arena->arena, work->candidate_arena->empty);
         work->blocked = SPACE_QUERY_CURSOR_CAPACITY;
         return work->blocked;
     }
@@ -12813,13 +12885,29 @@ match_candidate:;
             ? SPACE_QUERY_CURSOR_INCOMPLETE : SPACE_QUERY_CURSOR_CAPACITY;
         return work->blocked;
     }
-    if (result == CETTA_MATCH_CURSOR_MATCHED &&
-        !match_atoms_cursor_take(work->matcher,&work->candidate)) {
-        work->blocked = SPACE_QUERY_CURSOR_CAPACITY;
-        return work->blocked;
+    if (result == CETTA_MATCH_CURSOR_MATCHED) {
+        Bindings matched; bindings_init(&matched);
+        bool ready = match_atoms_cursor_take(work->matcher, &matched);
+        if (ready && work->candidate_arena)
+            ready = bindings_promote_logical_delta_to_arena(&matched, &work->seed, cursor->arena);
+        if (ready) {
+            if (work->candidate_arena) bindings_prime_assign(&matched, &work->seed);
+            bindings_move(&work->candidate, &matched);
+        }
+        bindings_free(&matched);
+        if (!ready) {
+            match_atoms_cursor_free(work->matcher);
+            work->matcher = NULL;
+            if (work->candidate_arena)
+                arena_reset(&work->candidate_arena->arena, work->candidate_arena->empty);
+            work->blocked = SPACE_QUERY_CURSOR_CAPACITY;
+            return work->blocked;
+        }
     }
     match_atoms_cursor_free(work->matcher);
     work->matcher = NULL;
+    if (work->candidate_arena)
+        arena_reset(&work->candidate_arena->arena, work->candidate_arena->empty);
     if (result == CETTA_MATCH_CURSOR_REFUTED) return SPACE_QUERY_CURSOR_PROGRESS;
     work->candidate_ready = true;
     return SPACE_QUERY_CURSOR_PROGRESS;
@@ -12901,6 +12989,9 @@ void space_query_cursor_storage_census(const SpaceQueryCursor *cursor,
         bindings_storage_census(&work->candidate, census);
         space_occurrence_cursor_storage_census(&work->occurrences, census);
         match_atoms_cursor_storage_census(work->matcher,census);
+        if (work->candidate_arena && cetta_storage_object(census, work->candidate_arena,
+                sizeof(*work->candidate_arena), CETTA_STORAGE_BLOCK))
+            arena_storage_census(&work->candidate_arena->arena, census);
         for (const SpaceQuerySequence *seq = work->sequence; seq; seq = seq->tail)
             if (!cetta_storage_object(census, seq, sizeof(*seq), CETTA_STORAGE_BLOCK)) break;
         for (const SpaceQueryWitness *w = work->witnesses; w; w = w->previous)

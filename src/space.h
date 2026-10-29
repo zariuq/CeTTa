@@ -382,7 +382,12 @@ bool space_init_module_own_view(Space *s, Space *module);
 bool space_module_own_view_select(Space *view, Space *storage);
 void space_module_own_view_release(Space *view, Space *storage);
 static inline Space *space_mutation_target(Space *s) {
-    return s && s->module_own_view ? (Space *)s->overlay_base : s;
+    s = s && s->module_own_view ? (Space *)s->overlay_base : s;
+    if (s && s->match_backend.kind == SPACE_ENGINE_SOURCE) {
+        space_match_backend_set_error(SPACE_MATCH_BACKEND_ERROR_READ_ONLY);
+        return NULL;
+    }
+    return s;
 }
 void space_init(Space *s);
 /* Mark the current contents as imported-module atoms.  False, leaving the
@@ -650,6 +655,7 @@ bool space_read_view_has_native_occurrences(const SpaceReadView *view);
 /* Native occurrence pins, or one standalone backend with the explicit
  * incremental occurrence interface. This does not grant native index access. */
 bool space_read_view_has_incremental_occurrences(const SpaceReadView *view);
+bool space_read_view_uses_occurrence_source(const SpaceReadView *view);
 bool space_read_view_visit(const SpaceReadView *view,
     bool (*visitor)(SpaceReadToken read, void *context), void *context);
 void space_read_view_release(SpaceReadView *view);

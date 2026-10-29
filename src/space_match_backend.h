@@ -19,7 +19,7 @@ typedef enum {
     SPACE_ENGINE_NATIVE_CANDIDATE_EXACT = 1,
     SPACE_ENGINE_PATHMAP = 2,
     SPACE_ENGINE_MORK = 3,
-    /* A host-supplied occurrence source. Its operation table, rather than
+    /* A read-only host-supplied occurrence source. Its operation table, rather than
      * native shadow rows, owns the source's storage contract. */
     SPACE_ENGINE_SOURCE = 4,
 } SpaceEngine;
@@ -38,12 +38,16 @@ typedef enum {
  * bindings. Positional sources identify occurrences by index; other sources
  * must supply identity below rather than expose a traversal counter as an
  * occurrence identity. A clone owns independent traversal
- * and must neither recapture a newer view nor perform a query. */
+ * and must neither recapture a newer view nor perform a query. Transient
+ * decode arenas must be detached from process-wide interning. Patterns
+ * supplied to open/select are call-scoped: encode bounds or own a copy;
+ * retaining a caller's Atom pointer across nursery relocation is invalid. */
 typedef struct SpaceSourceCursorOps {
     bool (*clone)(const void *source, bool rewind, void **out);
     /* Reopen candidates against the same captured source, never its live
      * publisher. NULL keeps the complete captured scan as a correct fallback. */
-    bool (*select)(const void *source, Atom *pattern, void **out);
+    bool (*select)(const void *source, Atom *pattern, void **out,
+        SpaceOccurrenceCursorStep *failure);
     SpaceOccurrenceCursorStep (*next)(void *source, CettaIndex *index);
     Atom *(*atom)(const void *source, CettaIndex index);
     /* Stable, ground occurrence identity. NULL means this source really uses
@@ -214,10 +218,16 @@ typedef struct SpaceMatchBackendOps {
     const char *name;
     /* NULL pattern opens a complete captured scan. A non-NULL pattern may
      * select a complete candidate superset; canonical matching is unchanged.
-     * Failure after admission is capacity, not an empty successful scan and
-     * not permission to retry through a materializing backend fallback. */
+     * Failure after admission stays explicit, never an empty successful scan
+     * or permission to retry through a materializing backend fallback. */
     const SpaceSourceCursorOps *occurrence_ops;
-    bool (*occurrence_open)(Space *space, Atom *pattern, void **out);
+    /* On refusal, failure distinguishes capacity from an incomplete or stale
+     * source. The output stays NULL, or supplies a releasable partial owner. */
+    bool (*occurrence_open)(Space *space, Atom *pattern, void **out,
+        SpaceOccurrenceCursorStep *failure);
+    /* Optional owner census for non-native storage; called with the Space.
+     * Cursor traversal owners have their separate occurrence_ops->storage. */
+    void (*storage)(const Space *space, CettaStorageCensus *census);
     /* Primary storage access seam.
        Positive example: a real backend-owned pathmap space can answer length
        and projection through its own state instead of pretending the native C
@@ -355,6 +365,8 @@ typedef enum {
     SPACE_MATCH_BACKEND_ERROR_NONE = 0,
     SPACE_MATCH_BACKEND_ERROR_NATIVE_SPACE_TOO_LARGE = 1,
     SPACE_MATCH_BACKEND_ERROR_PACKET_TOO_LARGE = 2,
+    SPACE_MATCH_BACKEND_ERROR_QUERY_UNAVAILABLE = 3,
+    SPACE_MATCH_BACKEND_ERROR_READ_ONLY = 4,
 } SpaceMatchBackendError;
 
 void space_match_backend_clear_error(void);

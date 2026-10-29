@@ -636,6 +636,12 @@ bool      bindings_copy_owned_atoms_with_session(
     Bindings *bindings, Arena *dst, AtomDeepCopySession *session);
 bool      bindings_promote_logical_atoms_to_arena(Bindings *bindings,
                                                    Arena *dst);
+/* Promote an unpublished match result, preserving unchanged bindings and
+ * frame values from BASE by identity. The caller retains BASE's borrowed
+ * syntax under the same lifetime as an ordinary seeded match. Failure may
+ * leave partial private preparation; discard the unpublished result. */
+bool bindings_promote_logical_delta_to_arena(Bindings *bindings,
+    const Bindings *base, Arena *dst);
 bool      bindings_promote_logical_atoms_with_session(
               Bindings *bindings, AtomDeepCopySession *session);
 bool      bindings_logical_atoms_closed_for_arena(

@@ -4634,7 +4634,7 @@ test-pattern-query-cursor: $(PATTERN_QUERY_CURSOR_TEST_BIN)
 SPACE_SOURCE_CURSOR_TEST_BIN = runtime/test_space_source_cursor-$(BUILD_OBJ_TAG)
 $(SPACE_SOURCE_CURSOR_TEST_BIN): tests/test_space_source_cursor.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_source_cursor.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Wl,--wrap=bindings_promote_logical_delta_to_arena -o $@ tests/test_space_source_cursor.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
 .PHONY: test-space-source-cursor
 test-all: test-space-source-cursor
 test-space-source-cursor: $(SPACE_SOURCE_CURSOR_TEST_BIN)

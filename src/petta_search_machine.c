@@ -7937,10 +7937,10 @@ static bool petta_machine_owned_profile_supported(
                 (choice->as.match.binding_snapshot.len != 0u &&
                  !choice->as.match.binding_snapshot.items) ||
                 (choice->as.match.occurrence_cursor_mode &&
-                 (!cursor->pinned ||
+                 (!(cursor->pinned || cursor->source_ops) ||
                   cursor->space != choice->as.match.space)) ||
                 (!choice->as.match.occurrence_cursor_mode &&
-                 cursor->pinned)) {
+                 (cursor->pinned || cursor->source_ops))) {
                 return false;
             }
         } else if (choice->kind == PETTA_CHOICE_SUPERPOSE) {
@@ -21079,20 +21079,19 @@ static bool petta_machine_advance_choice(
             }
             if (step == SPACE_OCCURRENCE_CURSOR_CAPACITY ||
                 step == SPACE_OCCURRENCE_CURSOR_INCOMPLETE) {
-                /* A failed read contributes one raised outcome. It is not a
-                 * fresh alternative to retry after that Error is observed. */
-                if (step == SPACE_OCCURRENCE_CURSOR_INCOMPLETE)
-                    choice->as.match.occurrence_exhausted = true;
-                if (step == SPACE_OCCURRENCE_CURSOR_INCOMPLETE &&
-                    petta_machine_raise_error(machine,
-                        atom_error(&machine->heap, choice->as.match.pattern,
-                            atom_symbol(&machine->heap, "OccurrenceSourceIncomplete"))))
-                    return true;
+                /* Storage incompleteness is a machine fault. Runtime equation
+                 * dispatch may recover from language exceptions as non-match;
+                 * it must never apply that rule to an unfinished source read. */
+                choice->as.match.occurrence_exhausted = true;
                 *failure = step == SPACE_OCCURRENCE_CURSOR_CAPACITY
                     ? PETTA_MACHINE_STEP_CAPACITY : PETTA_MACHINE_STEP_HOST_ERROR;
                 return false;
             }
             if (!choice->as.match.pattern_query && choice->as.match.occurrences.source_ops) {
+                if (!petta_choice_restore(machine, choice)) {
+                    *failure = PETTA_MACHINE_STEP_CAPACITY;
+                    return false;
+                }
                 candidate = space_occurrence_cursor_receive_atom(
                     &choice->as.match.occurrences, candidate_index, &machine->heap);
                 if (!candidate) {
@@ -25053,8 +25052,23 @@ static bool petta_machine_start_match_choice_policy(
     cetta_shared_transition_guard_enter(&shared_transition);
     if (!petta_machine_observe_query_read(machine, space_read_token(space)))
         return false;
+    bool source_read = false;
+    if (space->overlay_base || space->dep_count || space->module_own_view ||
+        space->match_backend.kind == SPACE_ENGINE_SOURCE ||
+        (space->match_backend.ops && space->match_backend.ops->occurrence_ops)) {
+        SpaceReadView view = {0};
+        if (!space_read_view_capture(space, &view)) return false;
+        source_read = space_read_view_uses_occurrence_source(&view);
+        bool admitted = !source_read || space_read_view_has_incremental_occurrences(&view);
+        space_read_view_release(&view);
+        if (!admitted) {
+            machine->terminal = true;
+            machine->terminal_step = PETTA_MACHINE_STEP_HOST_ERROR;
+            return false;
+        }
+    }
     bool terminal_count_fold = false;
-    if (!pattern_query && machine->observation_algebra ==
+    if (!source_read && !pattern_query && machine->observation_algebra ==
             CETTA_OBSERVATION_ALGEBRA_PREFERRED_FALLBACK_COUNT &&
         machine->goal_len == 0u) {
         bool handled = false;

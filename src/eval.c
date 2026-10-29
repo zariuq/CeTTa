@@ -78756,7 +78756,8 @@ static PrimeNeedCallInputs *prime_need_call_inputs_new(Space *space,
                     while(ready) {
                         CettaIndex index;SpaceOccurrenceCursorStep step=space_occurrence_cursor_next(&cursor,&index,NULL);
                         if(step==SPACE_OCCURRENCE_CURSOR_END) break;
-                        Atom *row=step==SPACE_OCCURRENCE_CURSOR_ITEM ? space_occurrence_cursor_atom(&cursor,index) : NULL;
+                        Atom *row=step==SPACE_OCCURRENCE_CURSOR_ITEM
+                            ? space_occurrence_cursor_receive_atom(&cursor,index,&inputs->storage) : NULL;
                         Atom *execution=row && space_equation_view(row,true,NULL,NULL,NULL)
                             ? space_equation_execution_view(&inputs->storage,row)
                             : row ? space_match_execution_view(&inputs->storage,row) : NULL;
