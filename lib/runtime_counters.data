@@ -1238,4 +1238,8 @@
   (1117 TERM_UNIVERSE_COLLECTION_DEAD_PEAK "term-universe-collection-dead-peak")
   ; Entries a reclaiming collection freed, and their record bytes.
   (1118 TERM_UNIVERSE_COLLECTION_RECLAIMED "term-universe-collection-reclaimed")
-  (1119 TERM_UNIVERSE_COLLECTION_RECLAIMED_BYTES "term-universe-collection-reclaimed-bytes")))
+  (1119 TERM_UNIVERSE_COLLECTION_RECLAIMED_BYTES "term-universe-collection-reclaimed-bytes")
+  ; Pairs of subterms a structural comparison visits.
+  (1120 ATOM_COMPARE_PAIR "atom-compare-pair")
+  ; Legs of a native query that read the pairs of a relation kept as bits.
+  (1121 NATIVE_QUERY_BITS_LEG "native-query-bits-leg")))

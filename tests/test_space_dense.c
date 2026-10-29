@@ -1,7 +1,10 @@
 /* The dense relation store against a model: a plain array of the pairs
  * held.  Random adds, removals, membership tests, counts and walks with
  * either column fixed or both free must agree with the model at every step,
- * over ids drawn from a small and from a sparse range, 0 among them. */
+ * over ids drawn from a small and from a sparse range, 0 among them, and
+ * with first columns many and second columns few, or first columns few and
+ * second columns many: rows that stay sorted arrays, rows that turn to
+ * bits, and rows that removals empty and adds fill again. */
 #include "space_dense.h"
 
 #include <assert.h>
@@ -43,13 +46,14 @@ static uint64_t model_count(const Model *m, CettaDenseId a, CettaDenseId b) {
     return n;
 }
 
-static void run(CettaDenseId range, CettaDenseId stride, unsigned steps) {
+static void run(CettaDenseId range, CettaDenseId b_range, CettaDenseId stride,
+                unsigned steps) {
     CettaDenseRelation rel;
     cetta_dense_relation_init(&rel);
     Model m = {0};
     for (unsigned step = 0u; step < steps; step++) {
         CettaDenseId a = (rng() % range) * stride;
-        CettaDenseId b = (rng() % range) * stride;
+        CettaDenseId b = (rng() % b_range) * stride;
         unsigned op = (unsigned)(rng() % 10u);
         if (op < 5u) {
             bool oom = false;
@@ -96,16 +100,19 @@ static void run(CettaDenseId range, CettaDenseId stride, unsigned steps) {
         numbered += cetta_dense_relation_number(&rel, rel.ids[n]) == n;
     assert(numbered == rel.len);
     printf("PASS: dense relation agrees with its model over %u steps "
-           "(range %llu, %llu pairs held, %llu bytes)\n", steps,
-           (unsigned long long)range, (unsigned long long)m.len,
+           "(columns of %llu and %llu ids, %llu pairs held, %llu bytes)\n",
+           steps, (unsigned long long)range, (unsigned long long)b_range,
+           (unsigned long long)m.len,
            (unsigned long long)cetta_dense_relation_bytes(&rel));
     cetta_dense_relation_free(&rel);
     free(m.items);
 }
 
 int main(void) {
-    run(16u, 1u, 20000u);
-    run(200u, 1u, 50000u);
-    run(300u, 1000003u, 50000u);
+    run(16u, 16u, 1u, 20000u);
+    run(200u, 200u, 1u, 50000u);
+    run(300u, 300u, 1000003u, 50000u);
+    run(3000u, 3u, 1u, 30000u);
+    run(4u, 5000u, 7u, 30000u);
     return 0;
 }

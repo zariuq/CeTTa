@@ -1990,7 +1990,7 @@ static uint32_t atom_hash_fold(Atom *root, bool value_mode,
                 child, 0u, atom_hash_expr_seed(child, value_mode)};
             continue;
         }
-        result = ATOM_HASH_SPELL(frame->hash);
+        result = ATOM_HASH_SPELL(atom_hash_expr_finish(frame->hash));
         if (!value_mode && len > 1u && atom_is_hash_stable(frame->node))
             atom_hash_cache_store(frame->node, result);
         len--;
@@ -2021,7 +2021,7 @@ static uint32_t atom_hash_compute(Atom *atom) {
                 return atom_hash_fold(atom, false, true);
             hash = ((hash << 5) + hash) ^ child_hash;
         }
-        return ATOM_HASH_SPELL(hash);
+        return ATOM_HASH_SPELL(atom_hash_expr_finish(hash));
     }
     return atom_hash_fold(atom, false, true);
 }
@@ -2153,6 +2153,7 @@ static bool atom_hashcons_graph_admitted(const Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:
         expected = atom_flags_for_symbol_id(atom->sym_id);
+        expected_structural_facts |= ATOM_STRUCTURAL_SYMBOLIC;
         break;
     case ATOM_VAR:
         if (var_id_is_none(atom->var_id) ||
@@ -3881,11 +3882,13 @@ static inline __attribute__((always_inline)) uint32_t atom_summary_finish(
     uint32_t structural_facts =
         (summary->all_facts & ATOM_STRUCTURAL_FACTS_VALID)
         ? ATOM_STRUCTURAL_FACTS_VALID |
+              (summary->all_facts & ATOM_STRUCTURAL_SYMBOLIC) |
               (summary->any_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                       ATOM_STRUCTURAL_GENERATION_CLOSED |
                                       ATOM_STRUCTURAL_OWNER_CLOSED |
                                       ATOM_STRUCTURAL_FRONT_SLACK |
-                                      ATOM_STRUCTURAL_STRING_STORAGE))
+                                      ATOM_STRUCTURAL_STRING_STORAGE |
+                                      ATOM_STRUCTURAL_SYMBOLIC))
         : 0u;
     bool generation_closed = summary->generation_closed;
     if (summary->missing) {
@@ -3993,7 +3996,7 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     temp.sym_id = sym_id;
     temp.arena_id = a->identity;
     temp.hash_cache = 0;
-    temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
+    temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
     /* A canonical symbol goes to the scalar owner only into an empty slot,
@@ -4034,7 +4037,7 @@ Atom *atom_symbol_canonical(SymbolId sym_id) {
         .sym_id = sym_id,
         .arena_id = 0u,
         .name_key = NULL,
-        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID,
+        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC,
     };
     if (atom_is_hash_stable(made))
         made->hash_cache = atom_hash_compute(made);
@@ -4788,12 +4791,12 @@ static Atom g_atom_empty_list = {
     .sym_id = SYMBOL_ID_NONE,
     .arena_id = 0u,
     .name_key = NULL,
-    .hash_cache = ATOM_HASH_SPELL(ATOM_LIST_TAG_HASH_STEP(
+    .hash_cache = ATOM_HASH_SPELL(ATOM_HASH_EXPR_FINISH(ATOM_LIST_TAG_HASH_STEP(
         ATOM_LIST_TAG_HASH_STEP(
             ATOM_LIST_TAG_HASH_STEP(
                 ATOM_LIST_TAG_HASH_STEP(5381u, ATOM_EXPR), 1u),
             0u),
-        ATOM_HASH_SPELL(ATOM_LIST_TAG_HASH(CETTA_INTERNAL_TAG_LIST)))),
+        ATOM_HASH_SPELL(ATOM_LIST_TAG_HASH(CETTA_INTERNAL_TAG_LIST))))),
     .structural_facts = ATOM_STRUCTURAL_FACTS_VALID |
                         ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                         ATOM_STRUCTURAL_HAS_LIST,
@@ -5599,6 +5602,7 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     uint32_t departed_any = 0u;
     uint32_t departed_lacks = 0u;
     uint32_t departed_facts = 0u;
+    uint32_t departed_lacks_facts = 0u;
     bool departed_known = true;
     /* A list in the older generation is closed for that arena, not this
      * one, so the view's closure is folded afresh for this arena. */
@@ -5614,15 +5618,19 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
         departed_any |= departed->flags;
         departed_lacks |= ~departed->flags;
         departed_facts |= departed->structural_facts;
+        departed_lacks_facts |= ~departed->structural_facts;
         closure_inherits = closure_inherits &&
             atom_summary_closed_child(departed, a->identity);
         generation_inherits = generation_inherits &&
             atom_generation_admits(a->identity, a->older_identity, departed);
     }
+    /* A symbolic term is one whose every element is: a fact the suffix
+     * holds when no remaining element lacks it, as a required flag. */
+    const uint32_t facts_all = ATOM_STRUCTURAL_SYMBOLIC;
     const uint32_t facts_any = ~(ATOM_STRUCTURAL_FACTS_VALID |
                                  ATOM_STRUCTURAL_GENERATION_CLOSED |
                                  ATOM_STRUCTURAL_OWNER_CLOSED |
-                                 ATOM_STRUCTURAL_FRONT_SLACK);
+                                 ATOM_STRUCTURAL_FRONT_SLACK | facts_all);
     const uint32_t owner_evidence = ATOM_STRUCTURAL_FACTS_VALID |
                                     ATOM_STRUCTURAL_OWNER_CLOSED;
     if (departed_known &&
@@ -5637,17 +5645,21 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
         uint32_t find_any = departed_any & flags & ATOM_SUMMARY_INHERITED;
         uint32_t find_facts = departed_facts & facts & facts_any;
         uint32_t find_all = departed_lacks & ~flags & ATOM_SUMMARY_REQUIRED;
+        uint32_t find_all_facts = departed_lacks_facts & ~facts & facts_all;
         for (CettaExprIndex index = 0u;
-             (find_any | find_facts | find_all) != 0u && index < len;
+             (find_any | find_facts | find_all | find_all_facts) != 0u &&
+             index < len;
              index++) {
             const Atom *child = elems[index];
             find_any &= ~child->flags;
             find_facts &= ~child->structural_facts;
             find_all &= child->flags;
+            find_all_facts &= child->structural_facts;
         }
         flags &= ~find_any;
         facts &= ~find_facts;
         flags |= find_all;
+        facts |= find_all_facts;
         flags = atom_summary_head_adjust(elems[0], flags);
         if (!closure_inherits) {
             /* A departed child was open for the arena, so closure is folded
@@ -5879,6 +5891,9 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
         if (!head_closed)
             flags &= ~ATOM_FLAG_ARENA_CLOSED;
         flags = atom_summary_head_adjust(head, flags);
+        /* The facts are the list's and the head's, as a fold gives them:
+         * a string's storage stays with the string, and the term is
+         * symbolic only when the head and every element of the list are. */
         uint32_t facts =
             (list->structural_facts & ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
                                         ATOM_STRUCTURAL_OWNER_CLOSED |
@@ -5886,7 +5901,11 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
             (head->structural_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                         ATOM_STRUCTURAL_GENERATION_CLOSED |
                                         ATOM_STRUCTURAL_OWNER_CLOSED |
-                                        ATOM_STRUCTURAL_FRONT_SLACK));
+                                        ATOM_STRUCTURAL_FRONT_SLACK |
+                                        ATOM_STRUCTURAL_STRING_STORAGE));
+        if ((list->structural_facts & head->structural_facts &
+             ATOM_STRUCTURAL_SYMBOLIC) == 0u)
+            facts &= ~ATOM_STRUCTURAL_SYMBOLIC;
         if ((flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
             atom_graph_is_owner_closed_for_arena(a, list) &&
             atom_graph_is_owner_closed_for_arena(a, head))
@@ -6534,8 +6553,17 @@ static inline int atom_eq_flat_tree(Atom *left, Atom *right) {
     return 1;
 }
 
-/* The ordinary pointer/leaf fast path needs no frame of its own. */
+/* The ordinary pointer/leaf fast path needs no frame of its own.  Symbolic
+ * atoms whose structural hashes are already known differ when the hashes
+ * do, whatever their depth. */
 static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b) {
+    if ((a->structural_facts & b->structural_facts &
+         ATOM_STRUCTURAL_SYMBOLIC) != 0u) {
+        uint32_t left_hash = atom_hash_cache_load(a);
+        uint32_t right_hash = atom_hash_cache_load(b);
+        if (left_hash != 0u && right_hash != 0u && left_hash != right_hash)
+            return false;
+    }
     int small = atom_eq_flat_tree(a, b);
     if (small >= 0)
         return small != 0;
@@ -6593,6 +6621,7 @@ static inline __attribute__((always_inline)) void atom_compare_push(
                               AtomCompareStack *work, Atom *left, Atom *right,
                               AtomCompareMode mode, size_t scope,
                               bool fresh_scope) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_COMPARE_PAIR);
     if (fresh_scope) {
         if (work->scope_len == work->scope_capacity) {
             size_t grown = work->scope_capacity * 2u;

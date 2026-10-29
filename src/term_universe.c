@@ -1883,9 +1883,9 @@ static inline uint32_t term_universe_hash_mix(uint32_t h, uint32_t piece) {
 /*
  * The stored hash32 remains the cross-module structural-hash contract and the
  * cheap equality pre-filter.  It is deliberately not the intern-table hash:
- * its incremental xor recurrence admits large equal-hash term families, and
- * no finalizer can separate keys that have already collapsed to the same
- * 32-bit value.
+ * 32 bits collide by the birthday bound at the sizes the universe reaches,
+ * and no finalizer can separate keys that have already collapsed to the
+ * same 32-bit value.
  *
  * The intern index therefore derives a second, 64-bit structural hash from
  * the same canonical fields.  Expressions mix their canonical child ids in
@@ -2312,7 +2312,7 @@ static uint32_t term_universe_hash_expr_ids(const TermUniverse *universe,
     h = term_universe_hash_mix(h, 0u);
     for (uint32_t i = 0; i < arity; i++)
         h = term_universe_hash_mix(h, tu_hash32(universe, child_ids[i]));
-    return ATOM_HASH_SPELL(h);
+    return ATOM_HASH_SPELL(atom_hash_expr_finish(h));
 }
 
 static bool term_universe_entry_eq_record(const TermUniverse *universe, AtomId id,
@@ -3771,7 +3771,7 @@ static bool term_universe_prepare_expr(const TermUniverse *universe,
     hdr->arity_or_len = arity > UINT16_MAX ? UINT16_MAX : (uint16_t)arity;
     hdr->sym_or_head = head_sym;
     hdr->aux32 = term_universe_aux_make(arity, has_vars);
-    hdr->hash32 = ATOM_HASH_SPELL(hash);
+    hdr->hash32 = ATOM_HASH_SPELL(atom_hash_expr_finish(hash));
     *coordinate = term_universe_coordinate(
         term_universe_expr_ids_slot_hash(hdr, child_ids, arity));
     return true;

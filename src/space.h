@@ -212,6 +212,9 @@ typedef struct {
      * every head, which every positional read past the rows asks. */
     struct SpaceDense *dense;
     CettaCount dense_pairs;
+    /* The head last found to keep rows, whose facts an add asks no more
+     * than their header. */
+    SymbolId dense_rows_head;
     bool eq_idx_dirty;
     bool ty_idx_dirty;
     bool exact_idx_dirty;
@@ -249,6 +252,7 @@ typedef struct Space {
             CettaIndex id_present_key_len, id_present_key_cap;
             struct SpaceDense *dense;
             CettaCount dense_pairs;
+            SymbolId dense_rows_head;
             bool eq_idx_dirty;
             bool ty_idx_dirty;
             bool exact_idx_dirty;
@@ -263,6 +267,10 @@ typedef struct Space {
         };
     };
     SpaceKind kind;
+    /* Strict: the space keeps only what its kind needs, and a general match
+     * reads its rows in turn; full: it keeps the general indexes too.  Both
+     * answer every operation alike. */
+    bool strict;
     /* A live projection of a module's own storage, not a writable overlay. */
     bool module_own_view;
     /* Process-local lifetime identity.  A revision identifies a state only
@@ -467,6 +475,9 @@ bool space_dense_count_columns(const Space *s, Atom *const *columns,
  * and _end, which keep the guards from giving the bits back meanwhile. */
 const CettaDenseRelation *space_dense_relation(const Space *s,
                                                SymbolId head);
+/* Whether no row can match a fact of `head` beside its bits: the head keeps
+ * bits, none of its facts is a row, and no row's head is open. */
+bool space_dense_head_rows_absent(Space *s, SymbolId head);
 /* Whether a pattern names a head the space keeps as bits: the native
  * query's loops read bits; the planners that read rows would give them
  * back to the rows. */
@@ -498,10 +509,21 @@ Space *space_heap_clone_shallow(Space *src);
 void space_replace_contents(Space *dst, Space *src);
 const char *space_kind_name(SpaceKind kind);
 bool space_kind_from_name(const char *name, SpaceKind *out);
+void space_set_strict(Space *s, bool strict);
 bool space_is_ordered(const Space *s);
 bool space_is_stack(const Space *s);
 bool space_is_queue(const Space *s);
 bool space_is_hash(const Space *s);
+/* Whether a general match reads LEN rows in turn instead of an index: a
+ * small space, or a strict one. */
+static inline bool space_match_reads_rows(const Space *s, CettaIndex len) {
+    return len <= MATCH_TRIE_THRESHOLD || (s && s->strict);
+}
+/* The exact index is kept by a full space, and by a hash space, whose
+ * lookups are its kind's own. */
+static inline bool space_keeps_exact_index(const Space *s) {
+    return s && (!s->strict || s->kind == SPACE_KIND_HASH);
+}
 bool space_is_set(const Space *s);
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx);
 CettaCount space_length64(const Space *s);
