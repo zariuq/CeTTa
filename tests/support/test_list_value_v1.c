@@ -115,6 +115,29 @@ static void normal_form(Arena *a) {
            "a tail past the end is []");
 }
 
+static void length_admission(Arena *a) {
+    Atom *one[] = {sym(a, "item")};
+    Atom *tail = atom_var(a, "tail");
+    const CettaExprLen capacity = (CettaExprLen)(SIZE_MAX / sizeof(Atom *));
+    expect(atom_list(a, one, UINT64_MAX) == NULL,
+           "a list rejects length addition overflow before reading elements");
+    expect(atom_list(a, one, capacity) == NULL,
+           "a list reserves its tag within the allocation bound");
+    expect(atom_list_with_rest(a, one, UINT64_MAX - 1u, tail) == NULL,
+           "an open list rejects two-slot addition overflow");
+    expect(atom_list_with_rest(a, one, capacity - 1u, tail) == NULL,
+           "an open list reserves both its tag and rest slots");
+    Atom oversized = *list_of(a, 1, one[0]);
+    oversized.expr.len = UINT64_MAX;
+    expect(atom_list_with_rest(a, one, 1u, &oversized) == NULL,
+           "splicing rejects an unrepresentable advertised rest length");
+    expect(atom_list_with_rest(a, one, capacity - 1u, list_of(a, 1, one[0])) == NULL,
+           "splicing checks the combined length before addition");
+    expect(atom_eq(atom_list(a, one, 1u), list_of(a, 1, one[0])) &&
+           atom_list_with_rest(a, NULL, 0u, tail) == tail,
+           "ordinary lists and an empty open prefix retain their meanings");
+}
+
 static void distinct_from_expressions(Arena *a) {
     Atom *f = sym(a, "f"), *x = sym(a, "a");
     Atom *fa_list = list_of(a, 2, f, x);
@@ -412,6 +435,7 @@ int main(void) {
 
     construction_and_printing(&arena);
     normal_form(&arena);
+    length_admission(&arena);
     distinct_from_expressions(&arena);
     term_stability(&arena);
     sharing_and_copying(&arena);
@@ -420,6 +444,8 @@ int main(void) {
     term_store(&arena);
 
     arena_free(&arena);
+    symbol_table_free(&symbols);
+    g_symbols = NULL;
     printf("list value: %d passed, %d failed\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }

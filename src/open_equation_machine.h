@@ -44,8 +44,11 @@
 
 #include "atom.h"
 #include "call_outcome.h"
+#include "owned_execution.h"
 #include "space.h"
 #include "native_query.h"
+
+struct CettaPreparedPureAnswerCursor;
 
 typedef struct CettaOpenEquationProgram CettaOpenEquationProgram;
 
@@ -283,6 +286,8 @@ typedef enum {
      * language reads it otherwise than the region: the host evaluates the
      * whole call again, as if the cursor had never run. */
     CETTA_OPEN_EQUATION_HANDOFF_WITHDRAWN,
+    /* A retained callee lost its source or host execution authority. */
+    CETTA_OPEN_EQUATION_HANDOFF_INVALIDATED,
 } CettaOpenEquationHandoff;
 
 typedef enum {
@@ -462,15 +467,26 @@ typedef struct {
      * guards kept. It comes retained just like current's body entry. */
     CettaOpenEquationProgram *(*current_ready)(void *context, Space *space,
                                                SymbolId head, uint32_t arity);
-    /* A privately tagged lexical callable, compiled over one or two value
-     * parameters into an opaque determinate pure plan. The cursor owns the
-     * plan and its source syntax together; a refusal leaves canonical dynamic
-     * application authoritative. */
+    /* A privately tagged lexical callable over ready value parameters,
+     * lowered to a scalar/tail worker or a continuation-bearing body plan.
+     * The cursor owns plan and source syntax.
+     * Pure prefixes may end in a native tail whose complete tagged packet
+     * transfers to the cursor's caller continuation. False refuses before
+     * native entry; true can never select canonical replay. */
     void *(*prepare_pure_callable)(void *context, Space *space, Arena *owner,
                                    Atom *callable, uint32_t arity);
     bool (*execute_pure_callable)(void *context, void *prepared, Arena *arena,
                                   Atom *const *arguments, uint32_t arity,
-                                  Atom **result_out);
+                                  CettaCallOutcome *outcome);
+    /* A continuation-bearing worker of the same opaque callable plan. NULL
+     * refuses before entry. Values borrow the caller through the first pull;
+     * the cursor owns any residual before the caller resumes. */
+    struct CettaPreparedPureAnswerCursor *(*open_callable_answers)(
+        void *context, void *prepared, Arena *arena,
+        Atom *const *arguments, uint32_t arity);
+    CettaOwnedExecutionStep (*next_callable_answer)(void *context, Space *space,
+        struct CettaPreparedPureAnswerCursor *cursor, CettaOwnedReturn *returned,
+        CettaEvalCompletion *completion);
     void (*release_pure_callable)(void *context, void *prepared);
     /* A named pure relation over closed arguments. False leaves it to the
      * region's equations; true transfers a completed value, logical failure
@@ -478,6 +494,11 @@ typedef struct {
     bool (*execute_pure_relation)(void *context, Space *space, Arena *arena,
                                   SymbolId head, Atom *const *arguments,
                                   uint32_t arity, CettaCallOutcome *outcome);
+    /* A stable compilation refusal, owned and revalidated by the callee's
+     * program cache. Read before resolving operands. Input-specific or
+     * observer refusals cannot disable this relation for other calls. */
+    bool (*pure_relation_declined)(void *context, Space *space,
+                                   SymbolId head, CettaExprLen arity);
     /* A lexical body with choices or effects, compiled into this same
      * continuation machine. Comes retained; NULL declines before execution. */
     CettaOpenEquationProgram *(*compile_callable)(void *context, Space *space,

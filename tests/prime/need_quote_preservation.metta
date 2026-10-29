@@ -33,3 +33,25 @@
 ; A value-demanding body evaluates the argument, as before.
 (= (need-add-one $x) (+ $x 1))
 !(need-add-one (+ 1 2))
+
+; Syntax capture is explicit in the sealed profile: a Data parameter and
+; a crossing into each quotation retain the argument without demanding it.
+(: need-quote-syntax-twice (-> (Data Atom) Atom))
+(= (need-quote-syntax-twice $x) (quote (Pair $x $x)){$x})
+!(need-quote-syntax-twice (need-add-one 7))
+(: need-two-syntax-quotes (-> (Data Atom) Atom))
+(= (need-two-syntax-quotes $x) (Pair (quote $x){$x} (quote $x){$x}))
+!(need-two-syntax-quotes (need-add-one 7))
+
+; Outside quotation, both uses share the demanded computation.
+(= (need-two-values $x) (Pair $x $x))
+!(need-two-values (need-add-one 7))
+!(quote (quote (+ 1 2)))
+
+; Carrying an effect's source under quotation does not perform the effect.
+!(bind! &need-quote-counter (new-state 0))
+(= (need-quote-effect)
+   (let $old (get-state &need-quote-counter)
+     (let $_ (change-state! &need-quote-counter (+ $old 1)) $old)))
+!(need-two-syntax-quotes (need-quote-effect))
+!(get-state &need-quote-counter)

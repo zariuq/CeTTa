@@ -19,6 +19,7 @@
 #endif
 #include "exact_integer.h"
 #include "generated/cetta_execution_contracts.generated.h"
+#include <float.h>
 #include <inttypes.h>
 #include <string.h>
 #include <math.h>
@@ -804,22 +805,33 @@ static bool get_numeric_arg(Atom *a, NumArg *out) {
      */
     if (a->kind == ATOM_SYMBOL &&
         eval_current_language_id &&
-        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
-        (atom_symbol_equals_cstr(a, "inf") ||
-         atom_symbol_equals_cstr(a, "-inf") ||
-         atom_symbol_equals_cstr(a, "nan"))) {
-        bool nan_value = atom_symbol_equals_cstr(a, "nan");
-        out->val = nan_value
-            ? NAN
-            : (atom_symbol_equals_cstr(a, "-inf")
-                   ? -INFINITY : INFINITY);
-        out->ival = 0;
-        out->bigint = NULL;
-        out->rational = NULL;
-        out->is_float = true;
-        out->is_bigint = false;
-        out->is_rational = false;
-        return true;
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        double constant = 0.0;
+        bool known = true;
+        if (atom_symbol_equals_cstr(a, "inf"))
+            constant = INFINITY;
+        else if (atom_symbol_equals_cstr(a, "-inf"))
+            constant = -INFINITY;
+        else if (atom_symbol_equals_cstr(a, "nan"))
+            constant = NAN;
+        else if (atom_symbol_equals_cstr(a, "pi"))
+            constant = acos(-1.0);
+        else if (atom_symbol_equals_cstr(a, "e"))
+            constant = exp(1.0);
+        else if (atom_symbol_equals_cstr(a, "epsilon"))
+            constant = DBL_EPSILON;
+        else
+            known = false;
+        if (known) {
+            out->val = constant;
+            out->ival = 0;
+            out->bigint = NULL;
+            out->rational = NULL;
+            out->is_float = true;
+            out->is_bigint = false;
+            out->is_rational = false;
+            return true;
+        }
     }
     if (a->kind != ATOM_GROUNDED) return false;
     if (a->ground.gkind == GV_INT) {
@@ -4354,7 +4366,14 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         bool petta_strict =
             eval_current_language_id &&
             eval_current_language_id() == CETTA_LANGUAGE_PETTA;
-        if (bad_arg->kind == ATOM_GROUNDED || petta_strict) {
+        if (petta_strict) {
+            Atom *error =
+                petta_semantics_arithmetic_operand_error(a, bad_arg);
+            if (error)
+                g_grounded_raised = true;
+            return error;
+        }
+        if (bad_arg->kind == ATOM_GROUNDED) {
             return grounded_bad_arg_type(a, head, args, nargs,
                                          !na_ok ? 1 : 2,
                                          atom_symbol(a, "Number"),

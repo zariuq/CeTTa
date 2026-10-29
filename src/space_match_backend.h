@@ -100,6 +100,9 @@ typedef struct {
     /* Cold flat queries can consume the encoded sequence before a full
      * trie is worth retaining. Repeated scans exhaust this startup allowance. */
     uint8_t cold_flat_scans;
+    /* The head a count over variables last scanned: a second count of it
+     * builds the head index, a first one only scans. */
+    SymbolId head_count_scanned;
     uint32_t match_trie_pins;
     SpacePinnedOccurrences *pinned;
     CettaSpacePathIndex *path_indexes;

@@ -3383,9 +3383,10 @@ Atom *abt_grounded_dispatch(Arena *arena, Atom *head,
                                       "ABTIncorrectArity");
         /* Reify raw guest syntax without forming Prime values inside it.
          * The chosen language's elaborator/interpreter remains an explicit
-         * later operation. Supplied identities and scope records are kept. */
+         * later operation. The Data argument carrier is not guest syntax;
+         * its payload keeps its identities, sharing and scope records. */
         return atom_expr2(arena, atom_symbol_id(arena, g_builtin_syms.quote),
-                          args[0]);
+                          atom_prime_held_payload(args[0]));
     }
     if (kind == ABT_OP_DEFAULT_SIGNATURES) {
         if (nargs != 1u)

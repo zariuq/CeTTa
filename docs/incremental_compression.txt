@@ -391,8 +391,9 @@ MeTTa evaluator, nor automatic higher-order template discovery.
 
 The second command explicitly joins the implemented IC component gates.
 Neither command expands ordinary make test. Numerical learning, automatic scoped
-proposal generation, library installation/export and held-out execution-cost
-qualification remain separate programme requirements.
+proposal generation, library export and held-out execution-cost qualification
+require their own adapters and evidence; the later sections describe the
+implemented interfaces and their remaining limits.
 
 Closed protocol values and scoped archives
 -----------------------------------------
@@ -628,6 +629,16 @@ duplicates. sources lists every mutable source space declared by the operator
 adapter; preparation captures their actual revisions. Dependency inference for
 arbitrary user code is not supplied by this API.
 
+The work library also exposes work:source-epoch and work:source-status. A source
+epoch retains the lifetime-qualified instance identity, own revision and live
+base/module dependency epoch as complete decimal uint64 fields. Capture and
+validation resolve the source and inspect it inside one protected physical read.
+Validation returns Work:Current or Work:Changed; invalid or closed sources return
+Work:Fault. This is a currency observation, not execution or borrowing authority.
+IC guards now use these complete views, including nested overlay dependencies;
+a base-prefix rewrite can invalidate a task without moving the overlay's own
+revision. A masked append outside a frozen prefix need not invalidate that view.
+
 Seven services choose the least priority, keeping age order on ties. The eighth
 chooses the oldest pending ticket. A paused producer rejoins with a fresh ticket.
 The first queue implementation is the ordinary list reference from FairQueue.lean;
@@ -639,7 +650,7 @@ Statistics count services, candidates, accepted improvements and faults. Only
 the first fault detail is retained, with all faults counted. Reasons distinguish
 RegionExhausted, FaultedRegion, BudgetExhausted, Cancelled and Capacity. Exhaustion
 refers to the supplied producer region; it does not assert incompressibility.
-Every supported resume checks the task observation, source revisions and cursor
+Every supported resume checks the task observation, complete source views and cursor
 epochs. A consumed earlier snapshot returns CursorChanged rather than replaying
 an advanced cursor. Handles remain in-process resources and cannot be recovered
 from serialized identifiers.
@@ -725,7 +736,9 @@ universal plain interpreters. An explicit bridge to the existing conditional
 prefix-machine complexity proves IC Lemma 3.1 in that notation without treating
 plain universality as prefix universality. A counterexample shows that strict
 checked compression need not use a shortest feature. Independence, randomness
-tests and the remaining full-paper correspondences are separate obligations.
+tests and full-paper correspondences require additional results beyond that
+interface; the shared information modules described below prove the stated
+independence and incremental bounds under explicit shortest-feature premises.
 
 Bounded program learning
 ------------------------
@@ -763,7 +776,7 @@ Feature-scene example
 Mettapedia's metta/gslt/module/FeatureScene.module defines a small typed scene
 language. Shapes and colours form extensional objects, and scenes are ordered
 object pairs. Its glyph aliases explicitly ground all four icons. The canonical
-surface is unambiguous and is not claimed to recover every convention of the
+syntax is unambiguous and is not claimed to recover every convention of the
 original illustrative glyph notation.
 
 Languages/FeatureScene/Basic.lean proves variable-renaming semantics, reduction
@@ -836,6 +849,116 @@ arguments. Its natural-factor arithmetic correspondence does not identify two
 interpreters. Compiler overheads are chosen before the feature/source family.
 Practical acceptance supplies neither an ideal shortest-feature hypothesis nor
 a claim of independence without those hypotheses.
+
+Uniform shortest-feature information
+------------------------------------
+The shared residual-search development constructs a partial-recursive search
+for a residual, proves its soundness and completeness when a reconstructing
+residual exists, and bounds the selected descriptive map. FeatureJointInformation
+and FeatureDecompositionInformation retain feature/residual independence and
+the source-conditioned residual description. FeatureIncrementalInformation
+uses these results for a uniform information bound along an actual ShortestChain.
+
+ConditionalInformationTransport provides prefix-machine composition,
+information symmetry and the data-processing inequality of IC Lemma 3.4.
+Pair swapping, condition selection and output projection are actual effective
+machine transformations with charged compiler prefixes. Directional information
+is a signed integer, not a truncated natural subtraction.
+
+FeatureOrthogonality proves IC Theorem 3.5 on the same shared machines. There
+is one constant C, chosen before every source, chain and pair of distinct
+positions, such that
+
+  |I_V(feature_i : feature_j)|
+    <= |i-j| * (20 * floor(log2(source_length + 1)) + C).
+
+Every step assumes a shortest feature and shortest descriptive map. The
+canonical-machine controls discharge the universal/reference machine and
+compiler premises, rather than replacing the theorem by a finite toy instance.
+Positive and negative controls also cover positional splitting, directional
+information and the failure of pointwise logarithmic bounds to imply a uniform
+bound. These are checked mathematical laws, not a proof that the practical
+bounded learner finds ideal shortest features or that the C implementation
+refines the formal interpreter.
+
+FeatureShortMaps proves the short-map bound corresponding to IC Theorem 3.8
+over the same effective universal plain interpreter. One fixed compiler
+followed by the feature supplies an extractor
+for every source admitting that feature. A minimum descriptive map therefore
+has length at most the feature length plus the compiler's fixed overhead.
+For each fixed feature-length budget this is a source-independent bound;
+the actual extracted residual has that same minimum plain conditional
+complexity. The prefix-reference bound charges its separate framing overhead.
+A fixed feature on arbitrarily large sources supplies a nonvacuous control.
+
+FeatureConstrainedSearch applies an effective guard to every finite candidate
+before selecting a residual. It proves partial recursiveness, soundness and
+termination when an admitted reconstruction exists. For a fixed rational
+factor p/q with q > 0, the guard is the exact integer comparison
+
+  p * residual_length <= q * source_length.
+
+Minimum ratio-restricted maps inherit the linear-in-feature bound. Together
+with IC Theorem 3.7 this yields constant feature and map bounds for sources
+compressible by a fixed rational factor greater than one. The actual selected
+residual retains the ratio. No computability of comparison with an arbitrary
+real factor is assumed.
+
+The negative controls distinguish unrestricted and ratio-restricted minima.
+Another two-answer control proves that filtering an already selected result
+loses a later admitted answer, while filtering candidates before selection
+reaches it. An actual partial-recursive search also reaches a ratio-admitted
+residual despite a diverging earlier computation. These are mathematical
+search laws, not a new native implementation or an ideal-optimality claim for
+the practical learner.
+
+Complete ideal-chain descriptions
+--------------------------------
+FeatureSchemeCodec defines an actual plain description of a feature chain:
+a count field, the length-delimited feature frames in execution order and
+the raw terminal residual. Its decoder is primitive recursive and its
+interpreter is partial recursive. The exact bit length is
+
+  final_length + 2 * sum(feature_lengths) + 3 * step_count + 1.
+
+The count, frame headers and duplicate feature occurrences are all retained.
+A missing frame is refused; reversing two noncommuting features changes the
+result. A feature computation that does not return cannot fabricate an answer.
+This mathematical packet does not replace the learner's portable artifacts.
+
+FeatureRationalScheme specifies ideal shortest ratio-restricted steps and the
+actual output of each minimum map. A finite scheme exists for every source,
+stopping below the fixed cutoff or at a source not compressible by its factor.
+ConditionalPlainComposition supplies the actual fixed compiler for transporting
+complexity through bounded maps; the producer program is not doubled.
+
+For every fixed rational b > 1, the complete plain packet has lower complexity
+bound K_U(source) <= packet_bits + C and upper bound
+
+  packet_bits <= b * K_U(source) + A * log(source_length + 1) + B.
+
+The constants precede all sources and schemes. Feature lengths are uniformly
+bounded and the number of steps is logarithmic. These are the effective
+rational-factor, plain-source-interpreter counterparts of IC Theorem 3.9.
+
+FeatureSchemePrefix wraps that packet with the existing exact E2 codec.
+Its prefix interpreter rejects every nonempty extension of a complete frame.
+The charged wrapper adds at most 2 * floor(log2(source_length + 1)) + 7 bits
+over the plain packet. Actual compilers transfer the same two-sided form to
+any stated effective prefix reference machine V, using K_V(source) on both
+sides. The constants still precede all source data.
+
+This does not identify shortest features of U with those of V, assume a
+computable test for arbitrary real ratios or claim that practical discovery
+finds these ideal minima. Canonical-machine controls include nonempty schemes
+on arbitrarily large sources. A cross-format control also shows why framing
+cannot be inferred from bytes: a raw packet can be a valid E2 field whose
+decoded payload is a different bit string.
+
+Remaining full-paper obligations include additional b-compression results,
+global ALICE/Greedy-ALICE interleaving, randomness-test correspondences and the
+remaining interpreter correspondences to the independent development. The
+existing eight-turn cooperative queue theorem is not a global ALICE theorem.
 
 The optional source capability audit reads the independent WILLIAM checkout and
 IC theory without executing or importing their implementations:
@@ -951,11 +1074,16 @@ original source, including quoted symbols.
 
 The selected sites are whole right-hand sides of unannotated first-order
 function equations. Each left side lists its distinct parameters directly.
-Supported bodies use an explicit primitive grammar, quotation and choice
-containers. There are no local binders or variable-headed calls in this initial
-profile. Helper arguments are original entry variables or scalar literals,
-never compound computations. Original function entries, variable identities,
-equation order, duplicate clauses and unsupported source forms remain intact.
+Supported bodies use an explicit primitive grammar, quotation, choice
+containers and the simple fresh-variable forms of let, sequential let*,
+map-atom, filter-atom and foldl-atom. Each initializer is checked in its old
+scope; the body sees exactly the declared new variables. Rebinding, compound
+binding patterns, forward references and variable-headed calls remain outside
+this profile. This is a learner admission rule, not a claim that those forms
+are invalid PeTTa. Helper arguments are original entry variables or scalar
+literals, never compound computations or local variables. Original function
+entries, variable identities, equation order, duplicate clauses and unsupported
+source forms remain intact.
 The helper body may itself have effects, choice or failure; those behaviours
 are not relocated into newly eager arguments.
 
@@ -973,6 +1101,22 @@ variable. Repeated template holes share one argument, and the expansion checker
 restores the original variable relationships. Search currently considers all
 pairs of admitted bodies as template seeds; this is a finite seed region, not
 the complete template grammar used by the separate scoped search.
+
+lib/petta/lib_source_scope.metta owns the simple source-binding admission rule;
+its ordinary-operation inventory is supplied by the consumer. Rigid local
+leaves retain both their ordinal and original display name and cannot become
+call arguments. The helper stores its locals after its parameter ports; its
+callers retain only their entry-name inventory. Expansion rebases the locals
+after each caller's entries and restores the original inventory. All names
+remain charged in the helper source. Generated port names avoid collisions
+with those locals. The existing list library supplies inventory slicing.
+
+This first local-frame profile shares only matching local-name inventories;
+it does not silently erase binder names or claim general contextual-hole
+export. General scoped matching remains owned by the separate Binding.Term
+development and scoped archive adapter. A syntax-local operator such as if
+also cannot simply become a callable parameter: a new ordinary call would
+evaluate its arguments first. The gate retains that negative control.
 
 LC1 extends the ST1 schema with one Library:Archive record containing its
 version, helper name and rewritten document. The SIC1 envelope, full helper
@@ -1005,6 +1149,11 @@ ordinary test suite.
 
 TemplateExport proves that role/index holes transported to distinct helper
 ports reconstruct matched source; missing ports fail reconstruction.
+LocalFrames proves that compiling parameter/local namespaces and then
+expanding into a caller frame equals direct substitution. It proves injective
+addressing and the separation of argument names from shifted locals, with a
+counterexample for an unshifted representation. These laws use the existing
+SourceFrame.Term, not a second binding calculus.
 ValueArguments proves that caching already-established argument values preserves
 any lawful monadic body, including effects and choice. Counterexamples show why
 this is false for arbitrary argument computations. These checked laws and the
@@ -1018,3 +1167,1188 @@ scoped/demand profiles, held-out library reuse and execution-cost measurements
 remain part of the programme. An independent all-pair seed audit proposes no
 supported helper on these three current library inputs. That identifies a limit
 of this initial export profile, not an absence of repetition in the libraries.
+
+Typed numerical programs and bounded forward discovery
+-----------------------------------------------------
+lib/petta/lib_tensor_program.metta supplies a reusable tensor-program layer,
+independently of IC search. Its operator family is ordinary immutable data:
+
+  (TP:Family "TF1" ((TP:Operator name input-sorts output-sort recipe) ...))
+
+The closed recipes are Add, Subtract, Multiply, Divide, Less, Greater, Scan,
+Concatenate, Permute, Broadcast, BroadcastLike, Matvec, Sum, Gather and GatherRows,
+prefixed TP:. Sorts
+are the text labels F64Tensor, BoolTensor and I64Tensor. Admission inspects
+actual packed storage, dtype and finite stored values; declared language types
+are not storage or purity evidence. Shape/support policies are those of the
+existing tensor operations. Elementwise arithmetic requires equal shape and
+support. Broadcast explicitly takes a scalar and a target shape. BroadcastLike
+takes a scalar plus a second tensor whose shape determines the result; a
+learned coefficient can therefore follow new input lengths without retaining
+the training shape. Axis,
+permutation and sequential/fixed4 schedule parameters remain explicit.
+
+Operator labels never become evaluator calls. Recipes select fixed authored
+operations, including lexical scalar projections. Packed scalar mapping shares
+the existing relational callable compiler for exact unary/binary lexical
+applications over ready numeric values. Effects, choice, unsupported captures,
+native-return lifetimes and bounded semantic fuel retain the authored route.
+In particular, a free captured frame is not licensed merely because its eventual
+value happens to be numeric. This is not arbitrary callable fast-path coverage.
+
+The existing compact-DAG owner supplies chronological records, collision-checked
+sharing and ordered roots. Every child reference points backward. Input leaves
+name a sort and external input index; constant leaves contain a complete CTN1
+payload. Bool constants use exact U8 storage. Unsupported sparse constant
+transport remains an explicit refusal; sparse external inputs retain their
+actual support. TP1 packs the family, names, recipes, parameters, references,
+constants and root vector through the existing BV1 codec. Decoding constructs
+fresh owned DAG handles, validates the whole typed program and grants no
+certificate authority.
+
+  (tensor-program:input sort index)
+  (tensor-program:constant sort tensor)
+  (tensor-program:node operator-index parameters children)
+  (tensor-program:pack family (Dag:Forest roots records))
+  (tensor-program:run bytes inputs)
+
+Packing returns (TP:Artifact bytes). Running returns (TP:Outputs values), whose
+entries are (TP:Value sort tensor) or explicit TP:Fault data. An operation fault
+propagates only through dependent nodes, in argument order; it does not erase
+an independent root. Malformed references fail program admission instead.
+The public tensor-program:unpack operation returns TP:Loaded with a fresh owned
+handle; a direct caller must close that handle with dag:close. run owns this
+lifetime internally.
+
+langdef/tensor_program/Operators.module describes the operator signature.
+lib/petta/lib_tensor_program_module.metta projects its constructor sorts and
+argument slots, together with an explicit TP:Implementation recipe mapping,
+into the same TF1 family accepted by ordinary registration. The resulting
+contracts govern actual program admission and execution. Changed output sorts,
+argument counts and binder fields are refused; parsed operator names and
+declared rewrites are not executed as host code. Plain clients need no module.
+
+lib/petta/lib_ic_numeric_program.metta joins these programs to NC1 and NC2's
+original observations, precision masks, complete-byte acceptance and owned
+scheduler. It preserves the finite affine API and adds:
+
+  (tensor-program:prepare-region family input-sorts constants domains max-nodes)
+  (ic:prepare-fit Numeric:Programs original-bytes region sources)
+  (ic:fit Numeric:Programs original-bytes region sources budget)
+  (ic:predict Numeric:Programs model-bytes new-inputs)
+
+A constant seed is (TP:ConstantSeed sort tensor). A parameter-domain row is
+(TP:Domain operator-index alternatives). For example, a scan with axis zero
+uses ((TP:Domain 0 ((0)))); an operation without parameters uses alternatives
+(()). The region enumerates typed chronological DAG extensions up to the
+declared operator-node bound, selecting earlier operands of the required
+sorts. All eligible roots, duplicate choices and unused nodes remain in the
+region. No unproved cost or dead-node pruning is enabled. Prepared-value
+constructors do not confer authority: their types and instructions are checked
+again before opening a retained producer. Runtime handles and numerical
+execution stay outside that producer.
+
+NC1 preserves its single fully observed F64 input/output vector interface.
+NC2 admits an ordered expression of fully stored F64, I64 or Bool inputs and
+one arbitrary-rank target, with a same-shaped explicit Bool comparison mask:
+
+  (ic:prepare-numeric (Numeric:Inputs (input-a input-b ...))
+    target mask (Numeric:Absolute tolerance))
+  (ic:prepare-numeric (Numeric:Inputs (input-a input-b ...))
+    target mask Numeric:Exact)
+
+Absolute precision applies to finite F64 targets; exact comparison applies to
+Bool and I64 targets. No declared type or Grounded tag establishes storage
+admission. Dense conversion canonicalizes fully supported sparse/view inputs
+but refuses holes rather than silently filling them. Input order, duplicate
+input occurrences and target positions are preserved. Missing observations
+are an explicit comparison mask, not an implicit zero. A masked coordinate
+still has stored finite data; it is excluded only from the fit comparison.
+
+The NC2 BV1 value is (Numeric:ArrayArchive "NC2" input-fields output-sort
+mask-field comparison body). Each array field is BV1 (TP:Constant sort
+CTN1-bytes), including the canonical U8 carrier for Bool. Comparison is
+Numeric:Exact or (Numeric:Absolute precision-field), where precision is a
+nonnegative finite one-element F64 vector. Body is (Numeric:Raw target-field)
+or (Numeric:Program TP1-bytes). Every input, target/model, mask, precision and
+framing byte contributes to the complete cost. No verification log is charged
+as decoding payload or accepted as authority.
+
+The root sort is taken from the independently checked original task. The
+public tensor-program:proposals-for operation also accepts an explicit known
+root sort; tensor-program:proposals retains its F64 default. Static typing
+does not promise compatible shapes: shape-invalid proposals are rejected
+candidate observations, not silent pruning of their declared search region.
+Prediction revalidates the model format and original-domain execution; a
+decoded model is not a certificate of fitting an external dataset. The shared
+checker compares candidates against the original task, never the preceding
+winner, so successive approximate fits cannot accumulate extra tolerance.
+
+  make test-tensor-lexical
+  make test-tensor-program
+  make test-ic-numeric-program
+  make test-ic-numeric-arrays
+  lake build Mettapedia.Examples.Compression.TensorProgramControls
+
+These focused gates belong to the explicit IC command, not ordinary make test.
+Independent references cover complete TP1/NC1/NC2 bytes, typed recipes, module
+contracts, unfolded versus shared execution, fault dependencies, exact FIFO
+proposal order, resumed fitting and held-out prediction. Bounded discovery
+controls learn one scan, two composed scans, a square, matrix/vector regression
+from a declared finite coefficient bank and two-input comparison classification
+within their declared regions. New matrix rows and new classification inputs
+exercise held-out prediction, not training-output replay. These controls do
+not establish continuous coefficient fitting, broad WILLIAM coverage or superior
+search quality.
+
+PartialDag extends the existing CompactDag law to partial operators represented
+by explicit result values. Memoized and unfolded executions agree without
+associativity or totality assumptions. Its positive/negative controls separate
+unused faults, dependent faults, ordered fault selection and malformed
+references. TypedDag reuses the same records and chronological fold. A static
+earlier-reference/arity/sort check, actual runtime leaf-kind checks and guarded
+kernel outputs imply aligned root kinds. Its operand theorem derives actual
+kernel input kinds rather than assuming them from labels. Positive/negative
+controls include opaque declared values, wrong kernel result kinds, wrong
+operand sorts and an independent root surviving a kernel failure. These are
+algorithm-level laws, not proofs of a physical tensor observer, shape checker,
+decoder or C kernel. Concrete enumerator correspondence, inverse propagation,
+general multivariable fitting and the remaining numerical families remain open.
+
+TypedDagRegion connects the actual position-ordered sort selector and Cartesian
+operand generator to independent legal-extension productions. It proves both
+directions: filtering neither loses a legal earlier-node tuple nor admits an
+incorrectly sorted one. Repeated operands and duplicate instruction occurrences
+remain distinct enumeration positions. This justifies sort filtering, not cost,
+shape or dead-node pruning. The full nested builder-worklist correspondence is
+still separate from this one-extension law.
+
+The optional bench_tensor_program.py command records interleaved whole-process
+packed/authored timings with exact output checks. It charges imports, input
+construction, decoding, typechecking and result comparison; it is not a
+kernel-only measurement or a Python/WILLIAM performance comparison.
+
+Backward proposals and dynamically retained continuations
+--------------------------------------------------------
+lib/petta/lib_tensor_inverse.metta searches declared paths with one unknown
+constant. Known siblings refer to the typed records of an ordinary tensor
+program prefix. The family remains the same TF1 data, whether registered
+directly or projected from a module; no decoded name becomes a callback.
+
+  (tensor-program:prepare-inverse family input-sorts constants paths)
+  (ic:prepare-fit Numeric:InversePrograms original-NC2-bytes region sources)
+  (ic:fit Numeric:InversePrograms original-NC2-bytes region sources budget)
+  (ic:predict Numeric:InversePrograms model-bytes new-inputs)
+
+A path row is (TP:InversePath priority steps), with outermost operation first.
+Steps are (TP:InverseBinary operator-index parameters missing-slot known-index)
+or (TP:InverseUnary operator-index parameters). Missing slot is zero or one.
+The current backward rules cover Add, Subtract, Multiply, Divide, fixed-shape
+Broadcast and BroadcastLike (unknown scalar in slot zero). Known values and
+intermediate targets must have compatible shapes and actual finite F64 storage.
+Each completed path reconstructs an ordinary forward TP1 program, encoded and
+checked through the same NC2 original-task and complete-cost authority.
+
+For example, a Multiply whose missing second argument is broadcast like input
+zero can infer a scalar coefficient from the observed input/output ratios.
+The caller need not supply a coefficient bank. Paths may compose several
+inverse operations and retain multiple ordered input dependencies. The
+initial implementation does not infer arbitrary multi-unknown graphs or all
+matrix/sequence inverses; those remain learner work.
+
+Broadcast inversion proposes distinct observed scalar encodings. Unobserved
+coordinates impose no scalar suggestion. When no coordinate is observed, it
+proposes zero, which is still checked by the original task. Exact CTN1 bytes
+identify duplicate parameter proposals; approximate equality is never used
+for keys. Original rows, order, masks and evidence multiplicity are untouched.
+Duplicate/masked coordinates are scanned in bounded cooperative slices;
+distinct answers are yielded separately, with later alternatives retained.
+
+IC:Continue carries a priority and inert proposal data. The common IC controller
+creates, owns, queues and releases its cursor. IC:Responses injects a finite
+ordered event block; faults are recorded without swallowing later events.
+Materialization and numerical work run outside retained generators. Dynamic
+continuations use the existing seven cost turns followed by one oldest-entry
+turn; cancellation, cursor epochs, dependency guards and original-winner
+checking remain common machinery. These mechanisms are available to other
+artifact proposal families, not special evaluator dispatch for IC examples.
+
+Backward binary64 formulas are proposal heuristics, not exact preimage solvers.
+Zero multiplication can relax a parameter constraint, but cannot certify a
+nonzero target. Division/rounding, tolerance and all unobserved positions are
+resolved by replaying the complete forward program against the original
+observation. RegionExhausted covers the declared finite path/sample proposal
+region, not all floating-point models or global incompressibility.
+
+MaskedScalarInverse proves exact field fibers for masked addition, subtraction
+and multiplication, the zero-product consistency distinction, and the precise
+extra check required by a relaxed proposal constraint. These are not binary64
+identities. EvidenceSampling proves that bounded scans preserve the remaining
+ordered distinct-answer stream and that every sample reaches service under the
+cost/age queue, even with arbitrary competing branches. Its logical suffix,
+physical packed cursor, scalar codec and no-observation default are separate
+interfaces. Neither development claims C-evaluator refinement.
+
+  make test-ic-continuations
+  make test-tensor-inverse
+  lake build Mettapedia.Examples.Compression.InverseSearchControls
+
+The focused gates compare independent recursive backward proposals, complete
+model bytes, masks, approximation, resumed execution and new input lengths.
+They include a later improving scalar behind earlier rejected suggestions and
+a cheap endless competitor, forged cursor data, malformed paths, inconsistent
+zero products, masked arithmetic overflow and empty observations. Fixed-shape
+and input-shaped broadcasts retain their distinct contracts. The ordinary
+test suite is not expanded by these explicit IC targets.
+
+Contextual source helpers
+-------------------------
+lib/petta/lib_source_context.metta inventories evaluation positions and available
+source variables. lib/petta/lib_ic_context_library.metta learns ordinary source
+helpers at those positions, including bodies nested in let, let*, case, map,
+filter and fold. Binding patterns, quoted data and unknown argument roles are
+not rewrite sites. No module conversion or special evaluator dispatch is used.
+
+  !(import! &self "lib/petta/lib_ic_context_library.metta")
+  (ic:prepare-library Deferred source-document)
+  (ic:learn-library Deferred source-document "helper-suffix" quantum)
+  (ic:resume state scheduling-budget)
+  (ic:export-library complete-artifact-bytes)
+
+The prepared result is (Library:DeferredPrepared original tree-archive sites).
+The public learner returns the common IC:PreparedSearch. Its declared region is
+all ordered-by-position seed pairs, not a complete template grammar. Native
+ranked-tree anti-unification proposes the shared skeleton; matching selects
+disjoint preorder occurrences. The common checker requires exact original source
+reconstruction and a smaller complete artifact, including the helper definition,
+rewritten source, variable names and framing. Search cancellation, resumption,
+dependency changes and completion reasons use the existing IC controller.
+
+The skeleton contains only the standard fixed-arity arithmetic, comparison and
+conditional constructors. Different heads or arities are not callable holes.
+The reusable Constructors view of ic:prepare-trees interns (tag, arity) as one
+operator identity; the old tag-as-child view and its bytes remain unchanged.
+Payloads are separate nullary operators. Neither view evaluates decoded tags.
+
+Availability is not value readiness. Ordinary unannotated entry ports have
+already entered their function. They and physically typed source scalar
+literals may be passed directly when the seed and every matching site satisfy
+that judgment. A declared String or Grounded label grants no such permission.
+Local variables remain delayed even when a surrounding binding makes them
+available. Other captured computations travel as zero-argument closures and
+are forced at each original demand position. An unused branch therefore remains
+unused, and repeated effects or nondeterministic requests are not cached away.
+Unsupported binding forms remain opaque captures; all referenced source
+variables must already be available. General free-variable transport through
+arbitrary opaque binders is not implemented.
+
+The LC2 helper uses the existing Library:Archive schema and SIC1 envelope,
+with the LC2 version in both places. The decoder performs syntactic expansion,
+not evaluation. It rederives original evaluation sites and entry-port readiness,
+checks every helper-call position and argument shape, and rejects quotation,
+out-of-range ports, eager computations and source operator overrides. LC1
+decoding and export remain available before and after importing LC2.
+
+This is a standard, nonreflective PeTTa source profile. Definitions or annotations
+overriding the listed demand constructors are refused. Changed ambient argument
+strategies, context reflection and resource-sensitive observational equivalence
+are outside the qualified profile. Exported helpers are reviewable source,
+never automatically installed into an application or certified for native
+execution. Ordinary preparation still makes its own admission judgment.
+
+  make test-ic-constructor-trees
+  make test-ic-context-library
+  lake build Mettapedia.Examples.Compression.ContextLibraryControls
+
+The focused gates compare independently generated complete LC2 bytes, source
+expansion and exported parsing. Fresh processes execute originals and learned
+programs with local captures, choice multiplicity, unused failures, effects,
+quoted code and caught faults. Negative controls include forged ready arguments,
+calls in data, changed dependencies and a well-formed but incorrect variable
+alias. Native direct, budget-one and cancelled/resumed searches agree on the
+complete winner. Independent whole-task checking, not syntactic well-formedness
+alone, is reconstruction authority.
+
+ConstructorTrees proves catalogue-dependent tree and forest round trips,
+constructor/arity separation and template reconstruction. DeferredArguments
+proves actual template port transport for interpretations receiving unevaluated
+computations, including effectful and nondeterministic demand. The source
+walker, closure lowering and C evaluator remain separate correspondence
+obligations; no universal source-equivalence or C-verification claim is made.
+
+Actual source controls find smaller LC2 representations in lib_pln.metta and
+lib_ic_numeric_arrays.metta. PLN execution checks the extracted arithmetic
+fragment, not its enclosing inference routine. These are seed-selected source
+controls and new-input execution, not family-separated held-out library reuse.
+An optional bench_ic_context_fragment.py panel compares that fragment inline,
+with raw helper calls, with ordinary preparation, and with a handwritten packed
+implementation. It separates first and repeated execution, input construction,
+whole-process time, allocations and end-of-execution arena gauges. Instrumented
+counters are separate samples; arena retention is not total native-heap usage.
+Learning cost and profitable held-out reuse remain to be established.
+
+Transferring a fixed learned library
+-----------------------------------
+lib/petta/lib_ic_library_transfer.metta applies an exported helper to a new
+source document without generating or selecting a new template from that
+document. The same interface accepts a single helper or an LM1 library:
+
+  !(import! &self "lib/petta/lib_ic_library_transfer.metta")
+  (ic:reuse-library Deferred learned-artifact-bytes receiving-document)
+
+The result is (Library:Candidate bytes support), or a Library:Refused reason.
+This is a proposal, not cost acceptance or automatic installation. The caller
+uses ic:library-check against the receiving document's original source archive.
+Every candidate includes the full unchanged helper definition; library costs
+are not silently externalized or amortized across unrelated artifacts.
+
+Transfer validates the input through the ordinary exporter, then reifies the
+body's existing parameter ports in a transient joint constructor catalogue.
+Parameter order, repeated-port equalities and each ready/delayed convention
+remain fixed. Matching and publication reuse the same source pipeline as
+learning. Source names, reader metadata, annotations, available variables and
+ready-value conditions are checked again in the receiving document. A ready
+parameter does not admit a merely available local variable. A zero-parameter
+helper is supported; an unused declared parameter is explicitly refused.
+
+LC2 expansion permits one or more valid calls. Learning still requires two
+disjoint supported occurrences, while transfer may produce a single call.
+These are proposal policies rather than source-validity rules. A single-use
+candidate can reconstruct correctly yet fail the full-cost comparison. LC1
+entered-value helpers can transfer through the same interface when their
+actual bodies meet the source profile; the receiving package is LC2.
+
+  make test-ic-library-transfer
+
+The independent gate reifies fixed helper bodies, checks complete LC2 bytes
+and executes new receiving programs in fresh processes. Controls include
+exported parameter order differing from traversal order, repeated-port
+disagreement, zero parameters, local delayed captures, effects, duplicate
+answers, quotation, name collisions, missing matches, invalid artifacts and
+reader changes. The larger synthetic candidate is refused by the cost checker;
+a separate repeated-payload control reduces the complete artifact from 3,956
+to 3,200 bytes. These are mechanism controls, not held-out real-family utility.
+
+TemplateReification proves that expanding the reified ranked body agrees with
+independent recursive instantiation, and connects successful matching to
+reconstruction of a receiving tree. Physical source classification, demand
+inference and runtime execution remain separate interfaces. The source profile
+and correspondence limits of contextual helpers also apply to transfer.
+
+Guided source discovery beyond pairwise seeds
+--------------------------------------------
+lib/petta/lib_ic_guided_grammar.metta filters the existing finite ranked grammar
+during traversal. One or more source forests guide constructor choices. Fresh
+and repeated holes retain the original first-occurrence numbering, roles and
+sorts. A capture stores the ordered vector of values across all guides; reuse
+checks every coordinate. Guide duplicates are not evidence deduplication.
+
+  (ic-grammar:guided signature root-slots guide-forests constructor-depth)
+
+lib/petta/lib_ic_context_grammar.metta connects this mechanism to ordinary source:
+
+  !(import! &self "lib/petta/lib_ic_context_grammar.metta")
+  (ic:learn-library Deferred source-document "helper-suffix"
+    (IC:Grammar constructor-depth) quantum)
+
+The declared proposal region is a union: pairwise seeds, which retain their
+source-derived depth, and depth-bounded grammar templates matching at least
+two guide occurrences. The depth argument bounds refinement, not the separate
+seed family. The four owned producers prioritize same-headed seed pairs, then
+same-headed refinements, other-headed seeds and other-headed refinements.
+Other-headed pairs are retained; priorities are search heuristics, not pruning
+or lower bounds. The existing cost/age controller services older work.
+
+For each template, physical source images in its guide pair establish which
+parameters may be ready. Every subset of those permissions is explored: the
+remaining parameters stay delayed. Selecting fewer ready parameters can admit
+more receiving occurrences. Choice branches are inert owned continuations;
+the power set is not eagerly materialized. Source decoding, preparation,
+publication, full byte costs and independent expansion checks run outside the
+retained generators. Complete lists of guide rows are explicitly constructed
+as data, avoiding computed-head calls.
+
+The result remains IC:PreparedSearch, consumed by ic:resume, ic:cancel and
+ic:release. BudgetExhausted preserves the frontier and makes no optimum claim.
+RegionExhausted refers to the declared union and the recognized source profile,
+not global incompressibility or unrestricted MeTTa. The first-order source
+operator inventory and opaque-binding limits are unchanged by this control
+library. No module conversion is required of the input program.
+
+  make test-ic-guided-grammar
+  make test-ic-context-grammar
+  lake build Mettapedia.Examples.Compression.GuidedGrammarControls
+
+The guided gate independently generates complete finite grammars and matches
+them afterward. Cases include 23,455 candidates reduced to 1-3 supported
+templates, repeated captures, several guide forests, role separation, malformed
+inputs and capacity faults. The source gate checks complete small-region byte
+minima, direct versus resumed execution, cancellation and dependency changes.
+Fresh processes check accepted helpers, including an effectful rewrite with
+duplicate answers. A smaller effectful example correctly keeps its original
+artifact and is not counted as learned-helper execution evidence.
+
+The three-program control costs 2,765 original bytes. Pairwise candidates alone
+reach 2,533; the combined search reaches 2,458, sharing structure across all
+three. These are synthetic mechanism controls, not held-out real-family utility.
+
+GuidedTemplateGrammar proves membership agreement with the full bounded grammar
+followed by vector matching, and preserves the minimum of any supplied exact
+score over a completed supported region. Its calling-convention law covers
+every effective subset of eligible permissions. Physical decoders, source
+classification, scheduling realization and the C evaluator remain separate
+correspondence interfaces. The matching assignment and extension laws now also
+serve capture vectors without duplicating their proof or changing the existing
+program matcher.
+
+The optional bench_ic_source_discovery.py command records bounded native work,
+preparation and search costs, stop reasons, faults and the checked best artifact.
+It never silently converts a budget stop into exhaustion or a utility claim.
+
+Operation-local decoder sharing
+-------------------------------
+The packed checker decodes each distinct byte value at most once per check.
+The domain decoder is deterministic. Sharing is local to that invocation:
+there is no retained observation certificate, approximate-value cache key or
+decoder result imported from a previous task. The current and proposed
+observations are still compared with the original task, and every encoded
+byte remains part of acceptance cost. All-distinct inputs retain three reads.
+
+  make test-ic-packed-observations
+  lake build Mettapedia.Examples.Compression.SharedObservationControls
+
+The native gate independently checks every triple of six artifacts under
+exact and nontransitive-tolerance policies, plus invalid byte carriers. The
+SharedObservation laws prove decision equality for any deterministic decoder
+and task policy, the one-to-three decoder-application bound, original-task
+comparison and strict complete-cost decrease. They do not verify the C
+evaluator or count its allocations.
+
+bench_ic_packed_check.py compares the shared and three-read implementations
+within one native process, alternating sample order. It checks their complete
+decisions on an original source and an exported LC2 helper. Preparation is
+outside the measured checker interval. The result is not a whole-learning,
+held-out reuse or execution-speed claim.
+
+Compression and inductive library learning
+-----------------------------------------
+The contextual learner currently proposes source abstractions, reconstructs
+the original source and charges the complete library artifact. This does not
+establish generalization to unseen programs.
+
+The existing lib/ilp metarule machinery provides a complementary proposal
+language: typed composition, alternatives, recursive closure and higher-order
+map, with positive and negative examples. Its skeleton fillers thread one
+substitution through every sibling: (MIL.Hole name) always reuses the first
+predicate assigned to that name. The typed filler also retains that closed
+declaration instance's source and target sorts. Separate overloaded declarations
+do not implicitly introduce a polymorphic binder. Distinct hole names retain
+independent choices; duplicate vocabulary occurrences remain occurrences.
+
+The focused gate extracts a helper afresh from the numerical-array source,
+registers that actual emitted definition as MIL background, and learns a mapped
+composition with an exactness test. Positive/negative examples reject an
+always-false operation and an operation returning both truth values. A new
+six-element list checks different length, order and repeated inputs. These are
+compositional mechanism controls, not held-out real-program-family evidence.
+
+  make test-ic-mil-skeletons
+  lake build Mettapedia.Examples.Compression.SkeletonInstantiationControls
+
+SkeletonInstantiation uses the existing role-indexed canonical schema. It
+proves that stateful filling reconstructs the instantiated skeleton, preserves
+earlier assignments, reuses complete substitutions and shares the final
+environment across a rewrite's two sides. Native source-name interning, typed
+unification and example execution remain separate correspondence boundaries.
+
+The functional numerical adapter below connects typed MIL skeletons to common
+IC search and complete cost. The source-backed vocabulary below now supplies
+portable helper dictionaries and lexical execution. MP1 additionally supports
+complete finite-example models and common cost-checked search. General recursive
+source-model fitting and a full learning-from-failure constraint system remain
+unfinished. The closed-fact
+completion guards below cover two qualified failure-derived pruning rules.
+Finite-example consistency, exact source reconstruction and a universal
+semantic theorem are distinct claims. Failure-derived pruning must preserve
+the explicitly declared hypothesis region; a smaller tested library must
+still pay for its background definitions, substitutions and residual data.
+
+Portable source-backed MIL vocabulary
+------------------------------------
+lib/petta/lib_ic_mil_source.metta connects extracted source helpers to the
+existing typed MIL filler and example checker without installing global rules:
+
+  (ic:source-background checked-library-artifact
+    (MIL.SourceFamily
+      ((MIL.SourceConstructor "Result" 1))
+      ((MIL.SourceBinding "ic-learned:helper" (MIL.Rel Input Output)))))
+
+This returns (MIL.SourceBytes sb1-bytes). Only the checked helper prefix enters
+the dictionary; application forms and top-level commands are not executed.
+The underlying framed SB1 record has tag 9 and three fields: version text "SB1",
+the BV1-encoded family, and the ST1 source document. It charges all reader and
+variable inventories, definitions, literals, constructor arities and type rows.
+Opaque callable handles are neither serialized nor recovered from identifiers.
+
+  (ic:prepare-background Source:MIL sb1-bytes additional-source-spaces)
+  (ic:run-background prepared mil-program entered-input)
+
+Preparation returns (MIL.SourcePrepared family document type-rows semantics)
+or MIL.SourceRefused. The rows contain inert (MIL.SourceRef ordinal) primitives.
+They can be passed directly to mil:prime:typed-fill-vocabulary; the semantics
+works with the existing mil:consistent positive/negative example checker.
+ic:run-background returns MIL.SourceOutputs, retaining answer order and duplicate
+occurrences, or refuses a changed source view. Functional example checking keeps
+its existing contract: nonempty results, all equal to the expected value; it
+does not turn that finite observation into a universal equivalence theorem.
+
+Raw helpers retain their original arity and ready/delayed port conventions.
+Unary MIL adapters take an entered value directly for arity one, or an explicit
+(MIL.Args value ...) product for every other arity. Wrong product arity yields
+no answers. Ready values can be wrapped as delayed computations without caching
+arbitrary effectful computations. Helper bodies retain their authored effects,
+failure and choice. Preparation compiles closures but does not run those bodies.
+
+The admitted source fragment has first-order parameters, declared constructors,
+standard operations, closed quotation, static choice vectors and zero-argument
+thunks. General local binding forms, unknown external operations, unused or mixed
+ready/delayed interfaces and cyclic helper dictionaries are refused. Existing
+authored MIL.Primitive registration remains available for other operations.
+No type label, Grounded classification or declared String supplies inertness.
+
+Helpers are linked through disjoint lexical variable slots, in dependency order.
+Only evaluation-position call heads are linked; quotation and data are not
+renamed into executable calls. The factory uses ordinary syntax:write, parse,
+eval and closures. It introduces no new evaluator dispatch. Admission checks
+the visible source, including imports, for overridden operators, data constructors
+and generated frame heads. Complete source guards are checked before publication
+and around execution. Their stamps grant no permission to memoize or prune
+executable background as frozen facts.
+
+SourceClosureFrames proves rebasing, disjoint slots, canonical reconstruction and
+entered-value adapter laws over the shared source and demand models.
+SourceViewEpoch derives guarded publication from the existing ordered dependency
+and overlay transitions, with an explicit local-revision counterexample. Native
+clock/lifetime implementation and source-role admission remain separate controls,
+not C-verification theorems.
+
+  make test-ic-mil-source
+  make test-work-source-epochs
+  lake build Mettapedia.Algorithms.Compression.SourceClosureFrames
+  lake build Mettapedia.Algorithms.Compression.SourceViewEpoch
+
+The gate independently constructs SB1 bytes, runs the actual extracted PLN and
+numerical-array helpers, and checks typed composition, shared holes, new input
+values, quotation, effects, duplicates, failure, source changes and imported
+overrides. SB1 is a complete vocabulary cost, not a complete learned MIL program
+by itself. The MP1 layer adds the program and task data. Held-out real-program-
+family reuse and execution-speed benefits remain to be qualified separately.
+
+Portable values and complete example models
+-------------------------------------------
+lib/petta/lib_portable_value.metta supplies PV1 without changing BV1. It retains
+BV1 symbols, UTF-8 text, naturals and supported U8 vectors, and adds signed I64
+and F64 scalars plus fully supported typed tensor values. Payloads use CTN1;
+boolean tensors use the existing exact U8 transport convention. Index tensors
+are admitted only when the exact I64 transport round-trips. Sparse holes are
+refused, not filled. Tensor values observe dtype, shape and supported logical
+entries, not layout or owner identity. Expressions retain ordered occurrences.
+
+PV1 uses the existing framed record schema with tags 1-6 for the common value
+forms and archive, tag 7 for (PortableValue:Scalar dtype payload-bytes), and tag
+8 for (PortableValue:Tensor dtype payload-bytes). The archive version is "PV1".
+Decoding checks payloads and re-encoding for canonicality. Arbitrary Grounded
+objects, host variables and resource handles are not portable values. Native
+binary:portable-kind is a representation observer, not evidence of inertness.
+
+lib/petta/lib_ic_mil_program.metta fits source-backed finite-composition models:
+
+  (ic:prepare-examples Source:MIL target-relation-type
+    (MIL.Examples positive-rows negative-rows mode))
+  (ic:prepare-fit Source:MIL original-mp1-bytes
+    (MIL.SourceRegion sb1-bytes skeletons) sources)
+  (ic:fit Source:MIL original-mp1-bytes region sources scheduling-budget)
+  (ic:verify Source:MIL original-mp1-bytes candidate-mp1-bytes)
+  (ic:predict Source:MIL learned-mp1-bytes query-inputs)
+
+Import lib/petta/lib_ic_mil_export.metta to export a checked model:
+
+  (ic:export-library Source:MIL original-mp1-bytes learned-mp1-bytes
+    "ic-learned:my-helper")
+
+The result is (MIL.ProgramExport name document text model-bytes
+  (MIL.ExportCosts original-model-bytes learned-model-bytes
+    framed-source-bytes rendered-utf8-bytes)). It first rechecks the finite
+examples and complete MP1 cost decrease. Export does not install equations.
+The document and text are ordinary PeTTa source, usable in a fresh process
+without importing the IC interpreter. Names must be fresh, valid ic-learned:
+symbols; current equations, type declarations and imported collisions are
+refused. Display renaming is recounted in both source representations.
+
+The generated unary entry consumes one entered value. Its declaration is
+(-> Atom %Undefined%): Atom prevents source-shaped data from being evaluated
+as the argument; the ordinary return protocol executes the generated body.
+This is an argument-demand contract, not evidence of purity. Evaluate an
+argument computation separately before passing its value. A multi-argument
+source helper receives (MIL.Args argument ...); a zero-argument helper receives
+(MIL.Args). Source quotation and ready/delayed ports retain their existing
+adapters. Background helpers are lexical, so unrelated ambient equations with
+the same helper names cannot replace them.
+
+The exported finite grammar covers references, identity, chain, choice and
+Cartesian map, including the declared higher-order map form. Chain uses a
+single-evaluation let; choice retains answer multiplicity; sequence positions
+remain ordered. No order is promised for an otherwise unordered answer bag.
+The source environment and topological helper order have one common owner
+shared with background preparation. Redefined generated operators are refused.
+
+RelationalSourceExport proves the compiler's finite pure relational IR laws,
+including fresh local allocation, complete occurrence observations, duplicate
+answers, failed prefixes and empty/failed maps. Source framing and adapter
+laws are reused. These are not native C refinement or arbitrary exception/
+effect-equivalence claims. The runtime gate separately compares fresh exported
+code with the original declared relation, including partial outcomes and IEEE
+infinity. A scoped relation's failed answer and a caught direct primitive
+error are not silently treated as the same observation.
+
+Run the focused export gate with make test-ic-mil-export. It includes native
+typed-search winners, a composition using the real array-codec helper, fresh
+processes under default/reference settings, no automatic installation and
+independently recomputed source costs. Other named models are explicit checked
+witnesses. These controls establish no universal generalization, held-out
+program-family coverage or runtime speedup.
+
+Preparation returns IC:SourceArtifact or a refusal. Its raw labels are a data
+baseline, not a claimed model; prediction requires a program body. MP1 is the
+PV1-encoded (MIL.SourceTaskArchive "MP1" header-bytes body). The header is a PV1
+MIL.SourceQueries record containing the target type, mode, ordered positive
+inputs and complete negative examples. The raw body stores positive label bytes;
+the learned body stores (MIL.SourceProgram complete-sb1-bytes program-term).
+There is no uncharged external helper table. Header identity is byte-exact,
+independently of the output matching policy. Every accepted change decreases
+the whole encoded artifact, not just its program node count.
+
+MIL.Functional requires a nonempty answer bag all of whose members match the
+positive label. MIL.Relational requires positive membership and excludes every
+declared negative. Their existing matching semantics are used, not hash-key
+approximation. Queries preserve input occurrence order and negative-only inputs
+are actually evaluated. Prediction returns IC:Predictions containing one answer
+bag per input occurrence. This is a finite-example criterion, not lossless source
+syntax compression, effect equivalence or a universal theorem about a program.
+The LC1/LC2/LM1 source-syntax compressor retains its separate exact contract.
+
+Fitting admits the closed source family without println!, and refuses intrinsic
+heads masquerading as data constructors. It does not speculatively run effectful
+background. The authored ic:run-background route remains available for helpers
+whose effects are intentional. Raised evaluation outcomes are distinct from
+returned Error-shaped data. The current fitting grammar contains primitives,
+identity, chain, choice and higher-order map; unbounded closure is refused here,
+not silently run or declared exhausted. Its authored MIL interface is unchanged.
+
+The common owned controller supplies budget exhaustion, cancellation, resumption
+and complete dependency checks. Producers retain only inert typed vocabulary
+and skeleton data. Callables are rebuilt and checked from their source bytes;
+caller-claimed closure tuples are not trusted as serialized evidence.
+
+PortableValueWire proves framed PV1 wire reconstruction, injectivity and complete
+bit/byte accounting. Payload validation remains a separate native boundary.
+ExampleObservation connects batched checking to the existing relational theory
+and also proves the algorithm for an arbitrary Boolean matching observer, without
+assuming that matching is reflexive or an equivalence relation.
+
+  make test-portable-value test-ic-mil-program
+  lake build Mettapedia.Algorithms.Compression.PortableValueWire
+  lake build Mettapedia.Algorithms.Compression.ExampleObservation
+
+The independent Python gate compares full bytes, finite typed enumeration,
+checked winners, costs and new-input predictions. A larger dictionary attached
+to a one-reference program is rejected even when its example behavior is right.
+This establishes no held-out real-program-family utility or execution speedup.
+
+External naming suggestions have no acceptance authority. The existing helper
+suffix is validated as a source name, collisions are refused and the emitted
+name is included in the complete encoded cost. Naming does not require a
+model call in the learner or change the meaning of its checked definition.
+
+Closed-fact completion pruning
+------------------------------
+Import lib/ilp/metagol_pruning.metta. Immutable fact semantics are explicit data:
+
+  (mil:freeze-facts ((MIL.Edge edge a b) (MIL.Edge edge b c)))
+
+This returns (MIL.FrozenFacts rows), retaining every occurrence. Preparation
+admits physical symbols, text, naturals and recursively closed expressions;
+variables, opaque handles, tensor carriers and unsupported scalars are refused.
+This is not a declared-type purity test or a new space kind. The common MIL
+interpreter supplies fact lookup, chain, choice, finite visited-state closure
+and the standard map operator over this data. Decoded or quoted expression
+payloads are not invoked as predicate names.
+
+  (mil:pruning-status semantics examples)
+  (mil:prime:pruned-filled-candidate bias semantics examples skeleton type fuel)
+  (mil:prime:pruned-consistent-filled-candidate bias semantics examples skeleton type fuel)
+
+The status is MIL.PruningReady for an admitted frozen task, MIL.PruningFallback
+for ordinary executable/space background, or (MIL.PruningRefused reason) for
+malformed frozen data. The candidate interface retains the authored route on
+fallback. It does not probe user callables to decide whether they are pure.
+
+At a chain root, a prefix with no answers for a required positive input cannot
+be repaired by any suffix. At a choice root, a forbidden negative answer or
+functional mismatch already in the prefix cannot be removed by a suffix.
+Only these failures prune a whole right-hand substitution family. The existing
+typed filler threads the same assignment environment through both operands.
+Nested and other roots retain their existing generation and final example
+checks. Missing a final expected value is not an empty-chain failure, and a
+missing positive answer is not sufficient to reject a choice prefix.
+
+  make test-ic-mil-pruning
+  lake build Mettapedia.Examples.Compression.RelationalPruningControls
+
+The independent reference enumerates complete substitutions first. Controls
+retain successful occurrences with duplicate declarations/facts, overloaded
+sorts, repeated holes, empty example sets, cycles and mapped programs. They
+also compare the exact executable-background effect trace against the authored
+route. In one finite functional-choice control the guards reduce complete
+checks from 36 to 18, preserving all five successful occurrences. Guard work
+is additional; this count is not a measured wall-time improvement.
+
+RelationalPruning proves necessity of both guards, equality with complete
+enumeration for dependent suffix regions, preservation of every ordered fold
+and the complete-check count bound. Its common-checker corollaries preserve
+complete artifact selection and the minimum over admitted materializations.
+It does not prove native evaluator
+refinement, general Popper constraint learning or global MIL completeness.
+Whole-library reconstruction and complete encoded cost remain separate checks.
+
+Joint source libraries and bounded continuation
+----------------------------------------------
+lib/petta/lib_ic_library_stack.metta continues an existing source artifact:
+
+  !(import! &self "lib/petta/lib_ic_library_stack.metta")
+  (ic:continue-library artifact-bytes "next-helper" 64)
+  (ic:continue-library Deferred artifact-bytes "next-helper" 64)
+  (ic:continue-library Deferred artifact-bytes "next-helper" 64
+    (Library:Seeds ((left-site right-site) ...)))
+
+The result is the ordinary IC:PreparedSearch, using ic:resume, ic:cancel and
+ic:release. The optional region is Library:AllPairs or Library:Seeds. An explicit
+seed vector preserves its order and repeated entries; physical site indices
+refer to the prepared document for the selected Entered/Deferred profile.
+Invalid indices are refused before opening a producer. An empty vector has
+an exhausted region, not an exhausted global grammar. RegionExhausted makes
+no claim about candidates outside that declared region.
+
+Continuation accepts ordinary source archives and existing LC1, LC2 or LM1
+artifacts. The task records the mode, inherited descriptors, preparation,
+new name and region. Resumption validates that complete observation and its
+source dependencies. Changed metadata does not inherit an earlier task's
+permission. Every materialized candidate reconstructs the original source
+and must strictly improve the complete current artifact's encoded cost.
+
+LM1 stores one final source document and a newest-first vector of explicit
+(Library:Layer codec helper-name) descriptors. Its record tags extend the
+existing source schema; SIC1 transport, descriptor names, helper definitions,
+parameter names, vector framing and all residual source are charged. Metadata
+is never inferred from an ic-learned: prefix: unrelated authored definitions
+with that prefix remain ordinary source. Single-helper candidates retain
+their existing LC1/LC2 bytes. No helper is automatically installed.
+
+The exporter returns (Library:ExportMany layers document source-text original)
+for LM1, preserving the existing Library:Export result for a single helper.
+The source text round-trips through the current reader and runs without the
+learner. Expansion applies each existing decoder in descriptor order and
+rejects the whole artifact if any intermediate restoration fails. Both source
+profiles keep their original admission restrictions; LM1 does not admit new
+binders or arbitrary helper-call interfaces. ic:reuse-library transfers a fixed
+joint library through the checked recovery/replay protocol below. Source-backed
+ILP generalization remains separate work.
+
+Publication additionally checks unique descriptor names, exact leading helper
+definitions and their finite dependency graph. A symbol mentioning a helper
+in a stored body is conservatively a dependency, including quoted symbols;
+String payloads are not symbol references. Kahn waves reject cycles. This is
+acyclicity of the declared fixed-helper graph, not a proof that arbitrary
+source evaluation terminates. The wave budget covers the pending helper count;
+a smaller supplied budget is distinguished from a detected cycle.
+
+  make test-ic-library-stack
+  lake build Mettapedia.Examples.Compression.LayeredSourceControls
+
+The focused gate independently constructs full LM1 bytes and expands actual
+stored helper definitions. It checks mixed source profiles, genuine helper
+dependencies, malformed records, cycles, reader/name conflicts, owned search,
+duplicate seed occurrences, cancellation and dependency invalidation. Fresh
+processes compare original and complete exported programs, including answer
+multiplicity, nested helper calls, effects and unused failing branches.
+Two successive synthetic source families shrink from 5,829 to 4,701 to 3,794
+complete bytes. These are codec/search controls, not held-out reuse or a speed
+claim. Large all-pairs searches can be costly; explicit seeds bound the actual
+search region without changing correctness acceptance.
+
+LayeredSource proves transport soundness, round trip, injectivity and exact
+serialized length over the common framing. Its partial expansion fold proves
+composition and rejection after a failed prefix. A symbol-reference catalogue
+connects the finite dependency relation to the source record schema. The bounded
+wave loop is proved to agree with the existing dependency-analysis service at
+a sufficient budget, and successful complete waves imply graph acyclicity.
+Concrete controls include an independently generated 117-byte wire fixture,
+charged descriptors, decoder order, cycles and budget exhaustion. These are
+algorithm/format laws, not verification of the C evaluator or source walker.
+
+Fixed joint-library recovery and replay
+--------------------------------------
+Transfer recovers the helper definition at each donor decoder stage, then
+replays those fixed stages oldest first on the receiving document. Earlier
+helper bodies participate as admitted receiving source, so dependencies may
+point either way relative to newest-first decoder order. The final definitions
+must exactly match the donor's stored prefix. No receiving example changes
+their parameters, bodies or names.
+
+All requested helpers must transfer successfully. A failing stage reports
+(Library:Refused (Library:TransferStep name reason)); it does not publish an
+earlier partial library. Name collisions and reader/standard-operator conflicts
+are checked before publication. Subset selection is a separate proposal policy,
+not an implicit deletion of unhelpful definitions. Existing source-interface
+restrictions still apply, including explicit refusal of unused parameters.
+
+Successful joint transfer uses LC2 descriptors and full LM1 storage. Every
+stage checks its local reconstruction. Final publication checks descriptor
+names, unchanged definitions, complete decoding against the receiving original,
+and the existing source profile. The support count includes replacements inside
+helper bodies. The ordinary complete-cost checker remains the acceptance
+authority: most small mechanism controls reconstruct but cost more than their
+original source, and are therefore rejected as optimizations.
+
+The common source emitter separates checked private rewrite data from the
+single-helper byte interface. Joint replay keeps intermediate documents private
+and serializes at publication rather than encoding and decoding each stage.
+Public single-helper results retain their exact LC2 bytes.
+
+  make test-ic-library-stack-transfer
+  lake build Mettapedia.Examples.Compression.LibraryTransferControls
+
+The independent gate reconstructs donor stages, replays fixed definitions and
+compares full LM1 bytes. It executes seven complete receiving programs in
+fresh processes, checking duplicate answers and the ordering of effects relative
+to answer publication. Controls include both dependency directions, a three-
+helper chain, quoted code, an unmatched new case, partial failure and changed
+definitions. A larger synthetic receiving program pays for its whole library:
+5,889 to 3,866 bytes. This is not a held-out real-family utility result.
+
+An optional --measure-pairs panel compares private-data replay with the same
+public per-stage serialized interface. Both use the same engine, fixed stages,
+receiving source, final checker and complete output. Donor preparation/recovery,
+replay/publication, whole-process time and peak RSS are reported separately.
+Peak RSS is not retained native-heap accounting; allocation and retained-heap
+measurements remain unclaimed by this panel.
+
+LibraryTransfer proves that recovery preserves the whole descriptor sequence
+and validates every decoder, and that checked reverse installation reconstructs
+the receiving source from its local inverses. The full LM1 cost law connects
+accepted byte costs to strict serialized-bit decrease. These do not establish
+generalization from examples or native C equivalence.
+
+Logical list equality inside prepared values
+-------------------------------------------
+Private list cells can occur inside source records. The prepared equality
+operation now observes their public list value rather than comparing a private
+cell's storage shape with a flat vector. Scalar realizations defer these values
+to the common boxed observation, which reuses the existing materializer and its
+opaque quote/closure policy. Ordinary values without observable cells retain
+the existing equality path; no source or helper names enter runtime dispatch.
+
+The native regression compares flat and nested-cell values through closed and
+answer-producing execution, with shared subrecords, unequal lengths/heads,
+opaque quotation and improper tails. The existing scalar-region gate includes
+these controls across its code realizations:
+
+  make test-prepared-scalar-tree
+  lake build Mettapedia.Examples.Compression.ListValueEqualityControls
+
+ListValueEquality reuses ListCells' term/readings model. Independent structural
+comparison after normalization agrees with reference equality on the closed
+list/data fragment, preserving order, duplicates and variable identity. A nested
+record is a counterexample to raw storage comparison; a bare private tag is a
+negative admission control. Numerical leaves, opaque barriers and the native
+implementation retain their separate correspondence obligations.
+
+Immutable type vocabularies and prepared generators
+--------------------------------------------------
+mil:typed-vocabulary snapshots finite MIL.Rel declarations from a space, or
+accepts (MIL.TypeVocabulary rows). Its rows are (MIL.TypeRow program type)
+data, distinct from executable declaration syntax. The typed filler uses one
+closed declaration instance per named hole and preserves duplicate rows.
+
+Prepare fields before wrapping them in a data constructor. In particular,
+an unevaluated cons-atom expression is syntax, not a completed sequence.
+The public filler performs vocabulary preparation and input-skeleton
+normalization before entering its structural generator. That generator has
+no space query or arbitrary-input metatype reflection. The existing owned
+FIFO admission is unchanged.
+Untyped skeleton filling snapshots primitive occurrences before the same
+syntax normalization. Existing space-based canonical metarule queries keep
+their original native match route. First-success controls check that a failed
+earlier candidate does not hide a later consistent predicate.
+
+Strict composition of typed tensor programs
+------------------------------------------
+lib/petta/lib_tensor_program_compose.metta supplies:
+
+  (tensor-program:compose-strict earlier-tp1-bytes later-tp1-bytes)
+
+Both programs have a single root and unary input zero of a consistent sort.
+The earlier output sort must match the later input sort. A validated constant
+leaf is total; a constant-only operation is not assumed total. The later
+root must propagate an input failure before a competing failure, as derived
+from ordered argument dependencies. Input-ignoring and uncertified competing
+branches are refused. Failures retain their identity on the admitted path.
+
+Identical operator declarations are shared. Conflicting declarations of one
+operator name are refused. Linking aliases later input-zero occurrences to
+the earlier root, remaps operator references and preserves repeated edges.
+The complete final TP1 program is checked and serialized through the existing
+DAG implementation. Snapshots release their temporary native DAG handles
+before publishing data; final serialization uses the existing checked packer.
+
+StrictProgramComposition proves the ordered-demand analysis sound, substitution
+agreement, strict partial-function composition and agreement with existing
+compact-DAG unfolding. CompactDag's generic traversal now supports arbitrary
+value universes, including error-valued algebras. Physical index relocation,
+codec admission and source-namespace adapters remain separate correspondences.
+
+  make test-tensor-program-compose
+  lake build Mettapedia.Examples.Compression.StrictProgramCompositionControls
+
+MIL proposals in common numerical IC search
+------------------------------------------
+lib/petta/lib_ic_mil_tensor.metta accepts ordinary TP1 primitives:
+
+  (MIL.TensorRegion
+    ((MIL.TensorPrimitive "display-name" tp1-bytes) ...)
+    (skeleton ...))
+
+  (ic:prepare-fit Numeric:MIL original-nc1-or-nc2 region sources)
+  (ic:fit Numeric:MIL original-nc1-or-nc2 region sources scheduling-budget)
+  (ic:predict Numeric:MIL checked-artifact new-inputs)
+
+The initial numerical skeleton grammar contains MIL.Hole, MIL.Id and MIL.Chain.
+Choice, closure and higher-order map are outside this numerical compilation
+profile; their existing authored MIL interfaces remain available. Input and
+output sorts come from decoding and checking each primitive, not claimed type
+flags. Primitive references are inert ordinal data and never become evaluator
+call heads. TP1 families may come from the existing module adapter or ordinary
+registration; the learning loop does not need a module wrapper.
+
+Only immutable declaration rows and structural skeletons enter retained work.
+Encoding, linking and numerical evaluation happen in materialization. NC1
+and NC2 share one program-candidate constructor, with the expected domain
+checked explicitly. Both original-task validity and complete serialized cost
+are decided by the existing numerical checker. The final artifact contains
+the complete linked program and operator family, without depending on the
+learning vocabulary or caller caches to decode predictions.
+
+The model observation binds the primitive vocabulary; ordinary source guards
+and cursor epochs remain active. Resume, cancellation and release use the
+existing common controller. Invalid dependency references are caught at the
+revision API and rejected; unsuccessful preparation releases its pending work.
+For prediction, NC1 takes one vector and NC2 takes
+the existing raw tuple of input tensors. Numeric:Inputs selects NC2 during
+preparation; it is not a prediction wrapper.
+
+  make test-ic-mil-tensor
+
+Focused controls cover full NC1/NC2 bytes, matrix and Boolean predictions on
+new input shapes, direct/resumed/cancelled agreement, changed primitive/source
+dependencies and refusal of a larger complete model. A successful small fit
+does not establish exhaustive numerical-family or real-program utility.
+
+Shared finite parameters in tensor DAGs
+--------------------------------------
+lib/petta/lib_tensor_program_parameters.metta learns several parameters of one
+typed chronological DAG together. A template uses ordinary Binary:Leaf and
+Binary:Node records, plus (TP:Parameter "name") at parameter positions. Each
+name has exactly one finite domain:
+
+  (TP:ParameterDomain "name" "F64Tensor" (ready-tensor-choice ...))
+
+I64Tensor and BoolTensor domains use their actual tensor dtypes. A choice may
+be a scalar or an array; matrix weights need not become scalar atom lists.
+Constant choices use the existing supported dense CTN1 subset. Unsupported
+transport is refused rather than silently filling sparse support.
+
+  (tensor-program:prepare-parameters family (Dag:Forest (root) records) domains)
+  (ic:prepare-fit Numeric:ParameterizedPrograms original region sources)
+  (ic:fit Numeric:ParameterizedPrograms original region sources budget)
+  (ic:predict Numeric:ParameterizedPrograms checked-artifact new-inputs)
+
+Prepare ready tensor values before placing them in domain records. Preparation
+checks operator contracts, chronological references, sorts, the single root,
+distinct domain names, and complete parameter declarations. Repeated uses of
+a name share one slot and one assignment. Unused declarations are refused.
+Empty domains are valid empty regions; no domains supply one empty assignment.
+The template result sort must agree with the original numerical task.
+
+Domains are snapshotted as checked constant records. Retained FIFO work carries
+only finite occurrence indices, not packed values or encoding callbacks. It
+uses the existing resumable Cartesian frontier and common cost/age controller.
+Duplicate alternatives and their order are retained. Materialization validates
+assignment indices, installs each selected constant at every use of its slot,
+and packs an ordinary complete TP1 program. The existing NC1/NC2 original-task
+checker decides validity and complete encoded cost; the template is no proof
+certificate. Model observations bind the prepared region, and ordinary source
+revision and cursor guards remain active.
+
+The focused gate covers three-coefficient and matrix regression, repeated
+parameters, integer-position/float-offset classification, NC1 fitting, new
+input shapes, ordered FIFO alternatives, masking, empty shapes, overflow,
+invalid dimensions, cancellation/resumption, changed dependencies and larger
+exact models that must not replace their originals. Given a supplied template
+and finite domains, this searches every assignment; it does not infer an
+unrestricted graph or certify a continuous/global optimum.
+
+Broadcast and BroadcastLike now normalize the logical scalar before creating
+a view. Computed COO scalars and nonzero backing offsets therefore compose
+correctly. Missing scalar support still fails instead of becoming zero.
+
+ParameterizedDag proves ordered index/value-product agreement, finite-region
+coverage and cost optimality under the actual validator, and agreement of
+materialized records with independent template execution. Record counts,
+references and repeated parameter identities are preserved. Physical codec
+admission and tensor storage implementations remain separate boundaries.
+Typed domain selection and template inference also establish the existing
+checked-DAG execution contract after instantiation; partial kernels retain
+their ordinary failure results rather than gaining an assumed totality law.
+
+  make test-tensor-program-parameters
+  lake build Mettapedia.Examples.Compression.ParameterizedDagControls
+
+Frozen helper transfer between source families
+---------------------------------------------
+The PeTTa source-context inventory includes get-metatype/1 as an eager value
+observation, matching its actual argument-demand convention. This does not
+admit arbitrary source reflection, infer purity from a type label, or authorize
+native callback specialization. The source profile still refuses redefined
+standard operators and retains code, quotation and binding barriers.
+
+  make test-ic-family-transfer
+
+The focused qualification extracts a helper from the actual binary-schema
+library, freezes that artifact before reading its fixed receiving cohort, and
+compares native transfer with independent source-level reification. The emitted
+definition is:
+
+  (= (ic-learned:expr? $p0) (== (get-metatype $p0) Expression))
+
+This is seed-guided extraction from training source, not a claim of unrestricted
+native discovery. Related numerical files share one evaluation family, and
+generated dialect variants are not separate training/test evidence. Complete
+cost includes the chosen name, definition, calls and all receiving source forms.
+
+The frozen helper currently replaces seven sites in the finite-parameter DAG
+library, shrinking its complete source archive from 40,413 to 40,218 bytes.
+The entire exported receiving library passes its 66-control numerical fitting
+gate, including new-input predictions. The list library has no matches; the
+transform, forward-DAG and search-control receiving files have matches but
+larger complete archives, which are rejected. The cohort retains these negative
+outcomes instead of selecting only successful targets.
+
+Ready and delayed observation controls preserve quotation, duplicate answers,
+failure and effect traces in fresh processes. Reconstructing admitted syntax
+does not by itself prove arbitrary reflective-program equivalence.
+
+The independent source controls locate authored criterion branches structurally
+rather than relying on incidental site ordinals when the inventory grows.
+check_tensor_program_parameters.py --library-source accepts an explicit complete
+export for receiving-component qualification without installing it.
+
+bench_ic_parameter_reuse.py measures the actual parameter selector through
+original/learned sources and default/reference routes. Seven paired runs of
+4,096 calls retain a median paired default-route ratio of about 1.017: the
+learned source is slightly slower, not faster. Peak child RSS is about 2% higher.
+Every sample is retained. This panel supplies no retained-heap accounting,
+verified compiler-admission result or same-contract bulk implementation; these
+are explicit omissions, not successful measurements. Native training extraction,
+checking and export process time is recorded separately by the qualification
+receipt. Exported helpers remain review candidates, not automatic source edits.
+
+Bounded prototype discovery and new-point prediction
+--------------------------------------------------
+Import lib/petta/lib_ic_clustering.metta. This independent proposal family uses
+farthest-first source rows followed by a declared number of masked Lloyd mean
+updates. It is not a translation of WILLIAM's radial-mask clustering graph and
+does not establish full WILLIAM clustering coverage or a global optimum.
+
+  (ic:prepare-fit Numeric:Clusters original-nc2-bytes region sources)
+  (ic:fit Numeric:Clusters original-nc2-bytes region sources scheduling-budget)
+  (ic:predict Numeric:Clusters checked-model-bytes new-point-matrix)
+  (ic:predict Numeric:Clusters checked-model-bytes (Numeric:Points points mask))
+
+The source task is a raw NC2 F64 matrix with no external inputs, at least one
+row, a same-shaped Bool mask and a nonnegative absolute tolerance. A region is
+(TP:ClusterRegion prototype-counts starting-row-indices maximum-mean-updates).
+Counts and starts are ordered finite lists; repeated entries remain repeated
+trajectories. Counts are positive and at most the number of rows. Zero updates
+still checks the initial seeded model. Empty regions are exhausted without
+inventing a fit. Empty-coordinate rows remain legal; an empty source row axis
+is refused by this fitting family.
+
+The common IC scheduler retains and checks every candidate. Fitting slices row
+scans and centroid updates into explicit validated continuations; budget
+exhaustion and cancellation retain resumable state. Resumption rechecks source
+dependencies and the original task. Arithmetic faults decline that proposal
+branch without discarding an earlier checked winner. Stable centroid bytes end
+only that deterministic trajectory, not the rest of the region.
+
+The model is an ordinary TP1 GatherRows program stored inside NC2. Its complete
+cost includes the family and operator names, centroid matrix, every ordered
+row assignment, mask, tolerance and all framing. Nothing needed for prediction
+is kept in an external cache. Approximate fit never becomes key equality.
+Initial seeds and updated means must satisfy the original observations, not a
+previous winner's approximate reconstruction. A proposal that does not reduce
+the complete archive stays rejected.
+
+The generic tensor:gather-rows operation selects the leading axis with an Index
+vector, preserving request order, duplicates, explicit zeroes and missing
+support. Bounds are checked even for zero-width rows. TP:GatherRows uses the
+same operation after an exact I64-to-Index cast. Existing recipe ordinals are
+unchanged. The Operators.module adapter produces the same declared family.
+
+tensor-program:compact-constant optionally encodes I64 literals with an explicit
+TP:PackedConstant "I64Tensor" "u8" record. Every integer must cast exactly; the
+decoder requires actual U8 storage and widens exactly. The complete tagged
+record must be smaller than the ordinary literal. Normal constant construction
+and existing CTN1 bytes are unchanged. There is no untagged dtype reinterpretation.
+
+For example, this complete fitting invocation requires no supplied centroids:
+
+  !(import! &self "lib/petta/lib_ic_clustering.metta")
+  !(let* (($pair (tensor:from-values f64 (2) (-3.0 3.0)))
+          ($points (tensor:reshape (tensor:view $pair (128 2) (0 1) 0) (256 1)))
+          ($mask (tensor:view (tensor:from-values bool () (True)) (256 1) (0 0) 0)))
+     (case (ic-arrays:prepare () $points $mask (Numeric:Absolute 0.0))
+       (((IC:NumericArtifact $original)
+         (ic:fit Numeric:Clusters $original (TP:ClusterRegion (2) (0) 2) () 1000)))))
+
+Prediction returns IC:ClusterPrediction with an I64 assignment vector and an
+F64 prototype reconstruction. Squared distances observe only masked coordinates;
+ties select the first prototype. All-masked rows therefore select index zero.
+An empty cluster coordinate retains its previous value. Missing seed coordinates
+use zero only as a parameter guess; they are not imputed observations. New
+matrices may have different row counts, including zero, but must retain the
+fitted coordinate width. Strided inputs are normalized to owned logical rows.
+
+  make test-ic-clustering
+  make test-tensor-gather-rows
+  make test-tensor-program-literals
+  lake build Mettapedia.Examples.Compression.PrototypeLearningControls
+
+The focused gates compare independent complete NC2/TP1 bytes, data-derived
+seeds and mean updates, masked/duplicate rows, empty clusters and dimensions,
+overflow, repeated trajectories, cancellation, sliced resumption, dependency
+invalidation, malformed cursors and prediction on new points. The row-gather
+gate also injects allocation failure through all allocation points exercised by
+dense, sparse and empty construction. These gates extend the explicit joined IC
+command, not ordinary make test. Lean proves logical row selection, tie/minimum
+selection, stable partial updates and exact compact-literal/full-cost laws;
+native C refinement and global clustering optimality are not claimed.

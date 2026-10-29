@@ -1054,6 +1054,9 @@ Atom *bindings_capture_images(Arena *arena, Atom *const *variables,
  * its range. The caller owns the returned array. No syntax is materialized. */
 bool bindings_collect_support(const Bindings *bindings,
                               VarId **ids, size_t *count);
+/* Saved substitutions are syntax-opaque but expose logical ports. This
+ * predicate does not make those ports ordinary substitutable occurrences. */
+bool bindings_value_has_captured_support(const Atom *value);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
 /* Textual keys resolve only in the supplied receiving syntax and environment.
  * Missing or ambiguous names fail; explicit variable keys already carry identity.

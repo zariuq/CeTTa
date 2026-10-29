@@ -384,6 +384,14 @@ bool petta_rule_snapshot_lease(Space *space, SymbolId head, unsigned admitted_fo
 typedef struct PettaProgram PettaProgram;
 typedef struct PettaDeclarationBlock PettaDeclarationBlock;
 
+/* Intern a normalized computation using already established source roles.
+ * Children are plans owned by this program. This neither looks up a
+ * declaration nor reclassifies Atom syntax. */
+const PettaPlanNode *petta_program_project_computation(
+    PettaProgram *program, const PettaPlanNode *source,
+    CettaComputationPlan computation, bool dynamic, bool relation_head_admitted,
+    const PettaPlanNode *const *children, CettaExprLen child_count);
+
 typedef enum {
     PETTA_RELATION_SAFETY_UNSAFE = 0,
     PETTA_RELATION_SAFETY_STATIC,

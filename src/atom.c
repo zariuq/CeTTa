@@ -2174,7 +2174,7 @@ static uint32_t atom_hash_fold(Atom *root, bool value_mode,
                 child, 0u, atom_hash_expr_seed(child, value_mode)};
             continue;
         }
-        result = ATOM_HASH_SPELL(frame->hash);
+        result = ATOM_HASH_SPELL(atom_hash_expr_finish(frame->hash));
         if (!value_mode && len > 1u && g_atom_hash_read_scope_depth == 0u &&
             atom_is_hash_stable(frame->node))
             atom_hash_cache_store(frame->node, result);
@@ -2206,7 +2206,7 @@ static uint32_t atom_hash_compute(Atom *atom) {
                 return atom_hash_fold(atom, false, true);
             hash = ((hash << 5) + hash) ^ child_hash;
         }
-        return ATOM_HASH_SPELL(hash);
+        return ATOM_HASH_SPELL(atom_hash_expr_finish(hash));
     }
     return atom_hash_fold(atom, false, true);
 }
@@ -2361,6 +2361,7 @@ static bool atom_hashcons_graph_admitted(const Atom *atom) {
     switch (atom->kind) {
     case ATOM_SYMBOL:
         expected = atom_flags_for_symbol_id(atom->symbol_number);
+        expected_structural_facts |= ATOM_STRUCTURAL_SYMBOLIC;
         break;
     case ATOM_VAR:
         if (var_id_is_none(atom->var_id) ||
@@ -4117,11 +4118,13 @@ static inline __attribute__((always_inline)) uint32_t atom_summary_finish(
     uint32_t structural_facts =
         (summary->all_facts & ATOM_STRUCTURAL_FACTS_VALID)
         ? ATOM_STRUCTURAL_FACTS_VALID |
+              (summary->all_facts & ATOM_STRUCTURAL_SYMBOLIC) |
               (summary->any_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                       ATOM_STRUCTURAL_GENERATION_CLOSED |
                                       ATOM_STRUCTURAL_OWNER_CLOSED |
                                       ATOM_STRUCTURAL_FRONT_SLACK |
-                                      ATOM_STRUCTURAL_STRING_STORAGE))
+                                      ATOM_STRUCTURAL_STRING_STORAGE |
+                                      ATOM_STRUCTURAL_SYMBOLIC))
         : 0u;
     bool generation_closed = summary->generation_closed;
     if (summary->missing) {
@@ -4229,7 +4232,7 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     temp.symbol_number = sym_id;
     temp.arena_id = a->identity;
     temp.hash_cache = 0;
-    temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID;
+    temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
     /* A canonical symbol goes to the scalar owner only into an empty slot,
@@ -4270,7 +4273,7 @@ Atom *atom_symbol_canonical(SymbolId sym_id) {
         .symbol_number = sym_id,
         .arena_id = 0u,
         .name_key = NULL,
-        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID,
+        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC,
     };
     if (atom_is_hash_stable(made))
         made->hash_cache = atom_hash_compute(made);
@@ -5341,12 +5344,12 @@ static Atom g_atom_empty_list = {
     .symbol_number = SYMBOL_ID_NONE,
     .arena_id = 0u,
     .name_key = NULL,
-    .hash_cache = ATOM_HASH_SPELL(ATOM_LIST_TAG_HASH_STEP(
+    .hash_cache = ATOM_HASH_SPELL(ATOM_HASH_EXPR_FINISH(ATOM_LIST_TAG_HASH_STEP(
         ATOM_LIST_TAG_HASH_STEP(
             ATOM_LIST_TAG_HASH_STEP(
                 ATOM_LIST_TAG_HASH_STEP(5381u, ATOM_EXPR), 1u),
             0u),
-        ATOM_HASH_SPELL(ATOM_LIST_TAG_HASH(CETTA_INTERNAL_TAG_LIST)))),
+        ATOM_HASH_SPELL(ATOM_LIST_TAG_HASH(CETTA_INTERNAL_TAG_LIST))))),
     .structural_facts = ATOM_STRUCTURAL_FACTS_VALID |
                         ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                         ATOM_STRUCTURAL_HAS_LIST,
@@ -5534,10 +5537,10 @@ Atom *atom_counted_collection(
 Atom *atom_list(Arena *a, Atom *const *elems, CettaExprLen len) {
     Atom *tag, *list;
     Atom **parts;
+    const CettaExprLen capacity = (CettaExprLen)(SIZE_MAX / sizeof(*parts));
     if (len == 0u)
         return &g_atom_empty_list;
-    if (!a || !elems ||
-        !cetta_expr_len_mul_fits_size(len + 1u, sizeof(Atom *)))
+    if (!a || !elems || len >= capacity)
         return NULL;
     tag = atom_internal_tag(a, CETTA_INTERNAL_TAG_LIST);
     if (!tag)
@@ -5568,12 +5571,13 @@ Atom *atom_list_with_rest(Arena *a, Atom *const *elems, CettaExprLen len, Atom *
     Atom *tag, *result;
     Atom **parts;
     CettaExprLen rest_len;
-    if (!a || !rest || (!elems && len > 0u))
+    const CettaExprLen capacity = (CettaExprLen)(SIZE_MAX / sizeof(*parts));
+    if (!a || !rest || (!elems && len > 0u) || len > capacity)
         return NULL;
     if (atom_is_list(rest) || atom_is_list_rest(rest)) {
         /* [x... | [y...]] is [x... y...]; [x... | [y... | r]] is [x... y... | r]. */
         rest_len = rest->expr.len - 1u;
-        if (!cetta_expr_len_mul_fits_size(len + rest_len + 1u, sizeof(Atom *)))
+        if (rest_len >= capacity || len > capacity - rest_len - 1u)
             return NULL;
         parts = cetta_malloc(sizeof(*parts) * (size_t)(len + rest_len + 1u));
         parts[0] = rest->expr.elems[0];
@@ -5586,7 +5590,7 @@ Atom *atom_list_with_rest(Arena *a, Atom *const *elems, CettaExprLen len, Atom *
     }
     if (len == 0u)
         return rest; /* [| r] is r */
-    if (!cetta_expr_len_mul_fits_size(len + 2u, sizeof(Atom *)))
+    if (len > capacity - 2u)
         return NULL;
     tag = atom_internal_tag(a, CETTA_INTERNAL_TAG_LIST_REST);
     if (!tag)
@@ -6280,6 +6284,7 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     uint32_t departed_any = 0u;
     uint32_t departed_lacks = 0u;
     uint32_t departed_facts = 0u;
+    uint32_t departed_lacks_facts = 0u;
     bool departed_known = true;
     /* A list in the older generation is closed for that arena, not this
      * one, so the view's closure is folded afresh for this arena. */
@@ -6295,15 +6300,19 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
         departed_any |= departed->flags;
         departed_lacks |= ~departed->flags;
         departed_facts |= departed->structural_facts;
+        departed_lacks_facts |= ~departed->structural_facts;
         closure_inherits = closure_inherits &&
             atom_summary_closed_child(departed, a->identity);
         generation_inherits = generation_inherits &&
             atom_generation_admits(a->identity, a->older_identity, departed);
     }
+    /* A symbolic term is one whose every element is: a fact the suffix
+     * holds when no remaining element lacks it, as a required flag. */
+    const uint32_t facts_all = ATOM_STRUCTURAL_SYMBOLIC;
     const uint32_t facts_any = ~(ATOM_STRUCTURAL_FACTS_VALID |
                                  ATOM_STRUCTURAL_GENERATION_CLOSED |
                                  ATOM_STRUCTURAL_OWNER_CLOSED |
-                                 ATOM_STRUCTURAL_FRONT_SLACK);
+                                 ATOM_STRUCTURAL_FRONT_SLACK | facts_all);
     const uint32_t owner_evidence = ATOM_STRUCTURAL_FACTS_VALID |
                                     ATOM_STRUCTURAL_OWNER_CLOSED;
     if (departed_known &&
@@ -6318,17 +6327,21 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
         uint32_t find_any = departed_any & flags & ATOM_SUMMARY_INHERITED;
         uint32_t find_facts = departed_facts & facts & facts_any;
         uint32_t find_all = departed_lacks & ~flags & ATOM_SUMMARY_REQUIRED;
+        uint32_t find_all_facts = departed_lacks_facts & ~facts & facts_all;
         for (CettaExprIndex index = 0u;
-             (find_any | find_facts | find_all) != 0u && index < len;
+             (find_any | find_facts | find_all | find_all_facts) != 0u &&
+             index < len;
              index++) {
             const Atom *child = elems[index];
             find_any &= ~child->flags;
             find_facts &= ~child->structural_facts;
             find_all &= child->flags;
+            find_all_facts &= child->structural_facts;
         }
         flags &= ~find_any;
         facts &= ~find_facts;
         flags |= find_all;
+        facts |= find_all_facts;
         flags = atom_summary_head_adjust(elems[0], flags);
         if (!closure_inherits) {
             /* A departed child was open for the arena, so closure is folded
@@ -6560,6 +6573,9 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
         if (!head_closed)
             flags &= ~ATOM_FLAG_ARENA_CLOSED;
         flags = atom_summary_head_adjust(head, flags);
+        /* The facts are the list's and the head's, as a fold gives them:
+         * a string's storage stays with the string, and the term is
+         * symbolic only when the head and every element of the list are. */
         uint32_t facts =
             (list->structural_facts & ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
                                         ATOM_STRUCTURAL_OWNER_CLOSED |
@@ -6567,7 +6583,11 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
             (head->structural_facts & ~(ATOM_STRUCTURAL_FACTS_VALID |
                                         ATOM_STRUCTURAL_GENERATION_CLOSED |
                                         ATOM_STRUCTURAL_OWNER_CLOSED |
-                                        ATOM_STRUCTURAL_FRONT_SLACK));
+                                        ATOM_STRUCTURAL_FRONT_SLACK |
+                                        ATOM_STRUCTURAL_STRING_STORAGE));
+        if ((list->structural_facts & head->structural_facts &
+             ATOM_STRUCTURAL_SYMBOLIC) == 0u)
+            facts &= ~ATOM_STRUCTURAL_SYMBOLIC;
         if ((flags & ATOM_FLAG_ARENA_CLOSED) == 0u &&
             atom_graph_is_owner_closed_for_arena(a, list) &&
             atom_graph_is_owner_closed_for_arena(a, head))
@@ -6897,63 +6917,6 @@ SymbolId atom_head_symbol_id(const Atom *a) {
     return SYMBOL_ID_NONE;
 }
 
-bool atom_tree_any(const Atom *root, AtomTreePredicate predicate,
-                   void *context) {
-    enum { INLINE_CAPACITY = 64 };
-    const Atom *inline_stack[INLINE_CAPACITY];
-    const Atom **stack = inline_stack;
-    size_t capacity = INLINE_CAPACITY;
-    size_t length = 0u;
-
-    if (!root || !predicate)
-        return false;
-    stack[length++] = root;
-    while (length > 0u) {
-        const Atom *node = stack[--length];
-        if (!node)
-            continue;
-        if (predicate(node, context)) {
-            if (stack != inline_stack)
-                free((void *)stack);
-            return true;
-        }
-        if (node->kind != ATOM_EXPR || node->expr.len == 0u)
-            continue;
-        if (node->expr.len > (CettaExprLen)(SIZE_MAX - length))
-            cetta_oom(SIZE_MAX);
-        size_t needed = length + (size_t)node->expr.len;
-        if (needed > capacity) {
-            size_t next_capacity = capacity;
-            while (next_capacity < needed) {
-                if (next_capacity > SIZE_MAX / 2u) {
-                    next_capacity = needed;
-                    break;
-                }
-                next_capacity *= 2u;
-            }
-            if (next_capacity > SIZE_MAX / sizeof(*stack))
-                cetta_oom(SIZE_MAX);
-            if (stack == inline_stack) {
-                const Atom **grown = cetta_malloc(
-                    next_capacity * sizeof(*grown));
-                memcpy((void *)grown, inline_stack,
-                       length * sizeof(*grown));
-                stack = grown;
-            } else {
-                stack = cetta_realloc(
-                    (void *)stack, next_capacity * sizeof(*stack));
-            }
-            capacity = next_capacity;
-        }
-        /* Reverse push preserves the recursive walk's left-to-right order. */
-        for (CettaExprIndex i = node->expr.len; i > 0u; i--)
-            stack[length++] = node->expr.elems[i - 1u];
-    }
-    if (stack != inline_stack)
-        free((void *)stack);
-    return false;
-}
-
 static size_t atom_visit_slot(const Atom *atom, size_t cap) {
     uintptr_t key = (uintptr_t)atom;
     key ^= key >> 33u;
@@ -6998,8 +6961,9 @@ void atom_visit_set_free(AtomVisitSet *set) {
     *set = (AtomVisitSet){0};
 }
 
-bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
-                    void *context) {
+static inline __attribute__((always_inline)) bool atom_walk_any(
+    const Atom *root, AtomTreePredicate predicate, AtomTreePredicate barrier,
+    void *context, bool unique, size_t allowance, bool *complete) {
     enum { INLINE_CAPACITY = 64 };
     const Atom *inline_stack[INLINE_CAPACITY];
     const Atom **stack = inline_stack;
@@ -7009,8 +6973,15 @@ bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
     bool fault = false;
     bool found = false;
 
-    if (!root || !predicate)
+    if (complete)
+        *complete = true;
+    if (!root)
         return false;
+    if (!predicate) {
+        if (complete)
+            *complete = false;
+        return false;
+    }
     stack[length++] = root;
     while (length > 0u && !found) {
         const Atom *node = stack[--length];
@@ -7018,17 +6989,29 @@ bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
             continue;
         /* A subexpression met again was answered where it was first met;
          * where the set cannot grow the walk goes on as a tree walk. */
-        if (node != root && node->kind == ATOM_EXPR && node->expr.len &&
+        if (unique && node != root && node->kind == ATOM_EXPR && node->expr.len &&
             !fault && !atom_visit_set_add(&seen, node, &fault) && !fault)
             continue;
+        if (complete && fault)
+            goto incomplete;
+        if (barrier && barrier(node, context))
+            continue;
+        if (complete) {
+            if (!allowance)
+                goto incomplete;
+            allowance--;
+        }
         if (predicate(node, context)) {
             found = true;
             break;
         }
         if (node->kind != ATOM_EXPR || node->expr.len == 0u)
             continue;
-        if (node->expr.len > (CettaExprLen)(SIZE_MAX - length))
+        if (node->expr.len > (CettaExprLen)(SIZE_MAX - length)) {
+            if (complete)
+                goto incomplete;
             cetta_oom(SIZE_MAX);
+        }
         size_t needed = length + (size_t)node->expr.len;
         if (needed > capacity) {
             size_t next_capacity = capacity;
@@ -7039,27 +7022,69 @@ bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
                 }
                 next_capacity *= 2u;
             }
-            if (next_capacity > SIZE_MAX / sizeof(*stack))
+            if (next_capacity > SIZE_MAX / sizeof(*stack)) {
+                if (complete)
+                    goto incomplete;
                 cetta_oom(SIZE_MAX);
+            }
             if (stack == inline_stack) {
-                const Atom **grown = cetta_malloc(
-                    next_capacity * sizeof(*grown));
+                const Atom **grown = complete
+                    ? malloc(next_capacity * sizeof(*grown))
+                    : cetta_malloc(next_capacity * sizeof(*grown));
+                if (!grown)
+                    goto incomplete;
                 memcpy((void *)grown, inline_stack,
                        length * sizeof(*grown));
                 stack = grown;
             } else {
-                stack = cetta_realloc(
-                    (void *)stack, next_capacity * sizeof(*stack));
+                const Atom **grown = complete
+                    ? realloc((void *)stack, next_capacity * sizeof(*stack))
+                    : cetta_realloc((void *)stack, next_capacity * sizeof(*stack));
+                if (!grown)
+                    goto incomplete;
+                stack = grown;
             }
             capacity = next_capacity;
         }
         for (CettaExprIndex i = node->expr.len; i > 0u; i--)
             stack[length++] = node->expr.elems[i - 1u];
     }
+    goto finished;
+incomplete:
+    if (complete)
+        *complete = false;
+finished:
     if (stack != inline_stack)
         free((void *)stack);
-    atom_visit_set_free(&seen);
+    if (unique)
+        atom_visit_set_free(&seen);
     return found;
+}
+
+
+bool atom_tree_any(const Atom *root, AtomTreePredicate predicate, void *context) {
+    return atom_walk_any(root, predicate, NULL, context, false, SIZE_MAX, NULL);
+}
+
+bool atom_graph_any(const Atom *root, AtomTreePredicate predicate, void *context) {
+    return atom_walk_any(root, predicate, NULL, context, true, SIZE_MAX, NULL);
+}
+
+bool atom_tree_any_pruned(const Atom *root, AtomTreePredicate predicate,
+                          AtomTreePredicate barrier, void *context) {
+    return atom_walk_any(root, predicate, barrier, context, false, SIZE_MAX, NULL);
+}
+
+bool atom_graph_any_pruned(const Atom *root, AtomTreePredicate predicate,
+                           AtomTreePredicate barrier, void *context) {
+    return atom_walk_any(root, predicate, barrier, context, true, SIZE_MAX, NULL);
+}
+
+bool atom_graph_any_checked(const Atom *root, AtomTreePredicate predicate,
+                            AtomTreePredicate barrier, void *context,
+                            size_t allowance, bool *complete) {
+    assert(complete);
+    return atom_walk_any(root, predicate, barrier, context, true, allowance, complete);
 }
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
@@ -7383,6 +7408,13 @@ static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b, AtomCompare
     int small = atom_eq_flat_tree(a, b);
     if (small >= 0)
         return small != 0;
+    if ((a->structural_facts & b->structural_facts &
+         ATOM_STRUCTURAL_SYMBOLIC) != 0u) {
+        uint32_t left_hash = atom_hash_cache_load(a);
+        uint32_t right_hash = atom_hash_cache_load(b);
+        if (left_hash != 0u && right_hash != 0u && left_hash != right_hash)
+            return false;
+    }
     small = atom_eq_small_tree(a, b);
     if (small >= 0)
         return small != 0;
@@ -7444,6 +7476,7 @@ static inline __attribute__((always_inline)) void atom_compare_push(
                               AtomCompareStack *work, Atom *left, Atom *right,
                               AtomCompareMode mode, size_t scope,
                               bool fresh_scope) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_ATOM_COMPARE_PAIR);
     if (fresh_scope) {
         if (work->scope_len == work->scope_capacity) {
             size_t grown = work->scope_capacity * 2u;

@@ -8912,6 +8912,8 @@ static bool bindings_support_collect_atom(const Atom *atom, void *raw) {
             binding_value_qualify_id(collector->value, atom->var_id));
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_BINDINGS) {
         const CettaBindingsValue *captured = atom->ground.ptr;
+        if (!captured || (captured->support_count && !captured->support))
+            return true;
         for (size_t i = 0u; i < captured->support_count; i++)
             if (!var_id_set_add(&collector->ids, captured->support[i]))
                 return true;
@@ -8952,13 +8954,52 @@ static bool bindings_support_collect_atom(const Atom *atom, void *raw) {
     return false;
 }
 
+static bool bindings_support_drain(BindingsSupportCollector *collector) {
+    BindingApplyGraph visited = {0};
+    bool ok = false;
+    while (collector->len) {
+        collector->value = collector->pending[--collector->len];
+        Atom *atom = collector->value.skeleton;
+        bool created = false;
+        if (!bindings_apply_graph_enter(&visited, atom,
+                (BindingsApplyScope){.epoch = binding_value_epoch(collector->value),
+                                     .kind = binding_value_kind(collector->value)}, 0u, &created))
+            goto done;
+        if (!created) continue;
+        if (bindings_support_collect_atom(atom, collector)) goto done;
+        if (atom->kind == ATOM_EXPR) {
+            for (CettaExprIndex i = atom->expr.len; i > 0u; --i) {
+                BindingValue child = collector->value;
+                child.skeleton = atom->expr.elems[i - 1u];
+                if (!bindings_support_push(collector, child)) goto done;
+            }
+        }
+    }
+    ok = true;
+done:
+    free(visited.entries);
+    return ok;
+}
+
+static bool bindings_captured_support_present(const Atom *atom, void *unused) {
+    (void)unused;
+    if (atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_BINDINGS)
+        return false;
+    const CettaBindingsValue *captured = atom->ground.ptr;
+    return !captured || captured->support_count != 0u;
+}
+
+bool bindings_value_has_captured_support(const Atom *value) {
+    return value && atom_has_identity_grounded(value) &&
+        atom_graph_any(value, bindings_captured_support_present, NULL);
+}
+
 bool bindings_collect_support(const Bindings *bindings,
                               VarId **ids, size_t *count) {
     if (!bindings || !ids || !count) return false;
     *ids = NULL;
     *count = 0u;
     BindingsSupportCollector collector = {.need = bindings_need_view(bindings)};
-    BindingApplyGraph visited = {0};
     var_id_set_init(&collector.ids);
     var_id_set_init(&collector.visited_thunks);
     bool ok = false;
@@ -8974,24 +9015,7 @@ bool bindings_collect_support(const Bindings *bindings,
             !bindings_support_push(&collector, bindings->constraints[i].rhs))
             goto done;
     }
-    while (collector.len) {
-        collector.value = collector.pending[--collector.len];
-        Atom *atom = collector.value.skeleton;
-        bool created = false;
-        if (!bindings_apply_graph_enter(&visited, atom,
-                (BindingsApplyScope){.epoch = binding_value_epoch(collector.value),
-                                     .kind = binding_value_kind(collector.value)}, 0u, &created))
-            goto done;
-        if (!created) continue;
-        if (bindings_support_collect_atom(atom, &collector)) goto done;
-        if (atom->kind == ATOM_EXPR) {
-            for (CettaExprIndex i = atom->expr.len; i > 0u; --i) {
-                BindingValue child = collector.value;
-                child.skeleton = atom->expr.elems[i - 1u];
-                if (!bindings_support_push(&collector, child)) goto done;
-            }
-        }
-    }
+    if (!bindings_support_drain(&collector)) goto done;
     if (collector.ids.len) {
         *ids = cetta_malloc(sizeof(**ids) * collector.ids.len);
         memcpy(*ids, collector.ids.items, sizeof(**ids) * collector.ids.len);
@@ -8999,7 +9023,6 @@ bool bindings_collect_support(const Bindings *bindings,
     *count = collector.ids.len;
     ok = true;
 done:
-    free(visited.entries);
     free(collector.pending);
     var_id_set_free(&collector.visited_thunks);
     var_id_set_free(&collector.ids);
@@ -10175,6 +10198,22 @@ static bool bindings_reachable_vars_add(
 static bool bindings_reachable_vars_add_value(
     BindingsReachableVars *vars, BindingValue value) {
     Atom *atom = value.skeleton;
+    /* Opaque binding values have identity-bearing ports even when their
+     * enclosing syntax is ground. Reuse the closure-support traversal; the
+     * ordinary-variable path and occurs-check semantics stay separate. */
+    if (bindings_value_has_captured_support(atom)) {
+        BindingsSupportCollector collector = {0};
+        var_id_set_init(&collector.ids);
+        var_id_set_init(&collector.visited_thunks);
+        bool ok = bindings_support_push(&collector, value) &&
+            bindings_support_drain(&collector);
+        for (uint32_t i = 0u; ok && i < collector.ids.len; i++)
+            ok = bindings_reachable_vars_add(vars, collector.ids.items[i]);
+        free(collector.pending);
+        var_id_set_free(&collector.visited_thunks);
+        var_id_set_free(&collector.ids);
+        return ok;
+    }
     if (!atom || !atom_has_vars(atom))
         return true;
     VarId single = binding_value_single_variable_id(value);
@@ -10207,6 +10246,9 @@ static bool bindings_reachable_vars_add_epoch_root(
     const BindingsEpochRoot *root) {
     if (!vars || !root || !root->atom || cetta_frame_identity_is_none(root->epoch))
         return false;
+    if (bindings_value_has_captured_support(root->atom))
+        return bindings_reachable_vars_add_value(
+            vars, binding_value_from_context(root->atom, root->epoch));
     if (!atom_has_vars(root->atom))
         return true;
     if (root->variable_support) {

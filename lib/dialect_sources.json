@@ -5,6 +5,16 @@
       "source": "native_history.metta",
       "old": "(: history:explain (-> Atom %Undefined%))",
       "new": "(: history:explain (-> (Data Atom) %Undefined%))"
+    },
+    {
+      "source": "langdef.metta",
+      "old": "(: langdef:quote-syntax (-> Atom %Undefined%))",
+      "new": "(: langdef:quote-syntax (-> (Data Atom) %Undefined%))"
+    },
+    {
+      "source": "stdlib.metta",
+      "old": "(: quote (-> Atom Atom))",
+      "new": "(: quote (-> (Data Atom) Atom))"
     }
   ],
   "groups": [

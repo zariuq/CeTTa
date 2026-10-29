@@ -152,6 +152,26 @@ bool eval_prime_install_standard_library(Space *space, Arena *arena) {
     if (!space || !arena || !g_library_context ||
         eval_current_language_id() != CETTA_LANGUAGE_PRIME) return false;
     if (g_library_context->prime_standard_library) return true;
+    /* The boot library is an HE blob. Its quote contract holds syntax;
+     * express that contract in Prime before installing editable delegates.
+     * An ordinary Prime Atom parameter remains a value parameter. */
+    Atom *quote_name = atom_symbol_id(arena, g_builtin_syms.quote);
+    Atom *atom_type = atom_symbol_id(arena, g_builtin_syms.atom);
+    Atom *quote_type = atom_expr3(arena,
+        atom_symbol_id(arena, g_builtin_syms.colon), quote_name,
+        atom_expr3(arena, atom_symbol_id(arena, g_builtin_syms.arrow),
+            atom_type, atom_type));
+    CettaCount quote_declarations = 0u;
+    while (space_remove(space, quote_type)) quote_declarations++;
+    if (quote_declarations) {
+        Atom *held_type = atom_expr3(arena,
+            atom_symbol_id(arena, g_builtin_syms.colon), quote_name,
+            atom_expr3(arena, atom_symbol_id(arena, g_builtin_syms.arrow),
+                atom_expr2(arena, atom_symbol_id(arena, g_builtin_syms.prime_data),
+                    atom_type), atom_type));
+        for (CettaCount i = 0u; i < quote_declarations; i++)
+            space_add(space, held_type);
+    }
     PrimeStandardLibrary *library = cetta_malloc(sizeof(*library));
     memset(library, 0, sizeof(*library));
     arena_init(&library->arena);

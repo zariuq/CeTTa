@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import subprocess
 
+from check_petta_corrected_stable import complete
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -44,8 +46,26 @@ def main():
                 if actual != wanted:
                     raise AssertionError((options, machine, case, actual, wanted))
                 observations += 1
+    extension_assertions = 0
+    extension_fixtures = Path(__file__).resolve().parents[1] / 'petta'
+    for options in (['--lang', 'petta'], ['--lang', 'petta', '--profile', 'extended']):
+        cases = {'explicit_library_imports': 16, 'explicit_library_import_failure': 5}
+        if '--profile' in options:
+            cases['explicit_library_import_spaces'] = 8
+        for machine in ('0', '1'):
+            for case, assertions in cases.items():
+                run = subprocess.run(
+                    [str(binary), *options, str(extension_fixtures / (case + '.metta'))],
+                    cwd=fixtures, env=dict(os.environ, CETTA_PETTA_SEARCH_MACHINE=machine),
+                    capture_output=True, text=True, timeout=30)
+                if not complete(run, assertions):
+                    raise AssertionError((options, machine, case, run.returncode,
+                                          run.stdout, run.stderr))
+                extension_assertions += assertions
     print(f'PASS: {observations} import observations preserve versioned lookup, '
           'directory restoration, cycles, canonical paths and separate spaces')
+    print(f'PASS: {extension_assertions} explicit library assertions preserve inert names, '
+          'qualified exports, sequential batches and per-space imports')
 
 
 if __name__ == '__main__':

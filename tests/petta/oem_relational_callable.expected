@@ -12,3 +12,16 @@ done
 ((Triple left right first))
 ()
 (Record done done 1729 "leased literal")
+true
+true
+(Pair (JsonNumberV1 "7") (JsonNumberV1 "8"))
+(Pair "cetta" "cetta!")
+(Pair (JsonBox (JsonNumberV1 "7") (JsonNumberV1 "7")) (JsonBox (JsonNumberV1 "8") (JsonNumberV1 "8")))
+(Pair (Record "cetta" left right "cetta") (Record "MeTTa" right left "MeTTa"))
+()
+((JsonBox (JsonNumberV1 "7") (JsonNumberV1 "7")))
+((Result 9))
+(Accepted Accepted)
+3
+()
+((Result 9))

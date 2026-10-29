@@ -457,7 +457,7 @@
 ; inside it. Existing scope records and variable identities are preserved.
 ; This differs from lifting an already formed Prime value into code.
 (: __cetta_abt_quote_syntax (-> Atom Atom))
-(: langdef:quote-syntax (-> Atom %Undefined%))
+(: langdef:quote-syntax (-> (Data Atom) %Undefined%))
 
 (= (langdef:load-deterministic-equations $sources)
    (function

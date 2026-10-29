@@ -2,7 +2,7 @@
 #define CETTA_EXECUTION_CONTRACTS_GENERATED_H
 
 /* Generated from lib/gslt_execution_contracts.metta.
- * Source SHA-256: 413db7f4fe8385f86a885559258b1cc3f7a0161f950d2009d7605f25f54aa580
+ * Source SHA-256: 8e3db2f8e052811ff5db19e12178a66506b96a88e4906b935ee79f8d40081bf6
  */
 
 #include <stdbool.h>
@@ -172,6 +172,7 @@ static inline bool cetta_gslt_progress_inline(CettaGsltProgressAdvice progress) 
     X(tensor_inspect, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(tensor_entries, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(tensor_gather, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
+    X(tensor_gather_rows, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(tensor_merge, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(tensor_zip_map, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
     X(lib_tensor_try_zip_map, CETTA_GSLT_QUERY_EFFECT_RELATIONAL_QUERY) \
@@ -816,6 +817,7 @@ typedef enum {
     CETTA_CONTROL_SEQUENCE_FIRST = 13,
     CETTA_CONTROL_SEQUENCE_LAST = 14,
     CETTA_CONTROL_COLLECT = 15,
+    CETTA_CONTROL_MATCH_BRANCHES = 16,
 } CettaControlOperation;
 
 #define CETTA_CONTROL_OPERAND_ABSENT UINT8_MAX
@@ -847,6 +849,7 @@ static inline bool cetta_control_operation_is_control_form(CettaControlOperation
     case CETTA_CONTROL_SEQUENCE_FIRST:
     case CETTA_CONTROL_SEQUENCE_LAST:
     case CETTA_CONTROL_COLLECT:
+    case CETTA_CONTROL_MATCH_BRANCHES:
         return true;
     default:
         return false;
@@ -860,6 +863,14 @@ static inline bool cetta_control_operation_binding_layout(
     return producer_index <= 1u && plan.operation == CETTA_CONTROL_SEQUENCE &&
         plan.source == producer_index && plan.first == 1u - producer_index &&
         plan.last == 2u;
+}
+
+/* Match selection retains two distinct source occurrences. */
+static inline bool cetta_control_operation_match_branches_layout(
+        CettaControlOperationPlan plan, CettaExprLen arity) {
+    return plan.operation == CETTA_CONTROL_MATCH_BRANCHES &&
+        plan.source < arity && plan.first < arity &&
+        plan.source != plan.first && plan.last == CETTA_CONTROL_OPERAND_ABSENT;
 }
 
 /* Variadic series select a result without bounding their argument count.
@@ -1000,6 +1011,7 @@ static inline uint32_t cetta_control_operation_key(CettaControlOperationPlan pla
     X(function, 1u, CETTA_CONTROL_RETURN_SCOPE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
     X(superpose, 1u, CETTA_CONTROL_ORDERED_CHOICE, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
     X(collapse, 1u, CETTA_CONTROL_COLLECT, 0u, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT) \
+    X(case_text, 2u, CETTA_CONTROL_MATCH_BRANCHES, 0u, 1u, CETTA_CONTROL_OPERAND_ABSENT) \
     X(empty_form, 0u, CETTA_CONTROL_FAILURE, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT, CETTA_CONTROL_OPERAND_ABSENT)
 
 /* Dialect classification admits these forms before reading their operands.
