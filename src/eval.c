@@ -4572,6 +4572,7 @@ static Atom *eval_petta_program_mutation_error(
         !cetta_profile_uses_petta_typing(session->profile)) {
         return NULL;
     }
+    CETTA_SCOPED_SHARED_TRANSITION(typecheck_mutation_read);
     PettaProgram *program = g_library_context
         ? g_library_context->petta_program : NULL;
     PettaTypecheckBlockResult checked;
@@ -10637,6 +10638,9 @@ EvalSpaceMutationEffect eval_apply_space_addition_unchecked_static_from_source(
         effect.emit_result = false;
         return effect;
     }
+    /* The schema check and the Space/program publication observe one state.
+     * Separate per-helper locks would admit two mutually conflicting writes. */
+    CETTA_SCOPED_SHARED_TRANSITION(space_add_publication);
     /* A space holds finite terms only (P-GRAPH-4): adding one that is not a
      * finite tree raises representation_error(cyclic_term), the error of
      * the assertz/1 that PeTTa adds with. */
@@ -10742,6 +10746,7 @@ static inline __attribute__((always_inline))
 EvalSpaceMutationEffect eval_apply_space_addition(
         Space *target, Arena *arena, Atom *call, Atom *payload,
         bool suppress_duplicate) {
+    CETTA_SCOPED_SHARED_TRANSITION(space_add_static_check);
     /* A row static-import! loaded is static data. */
     Atom *static_refusal = petta_static_rows_refusal(
         arena, target, payload, "assertz");
@@ -10756,6 +10761,7 @@ EvalSpaceMutationEffect eval_apply_space_addition(
 
 static EvalSpaceMutationEffect eval_apply_space_removal(
         Space *target, Arena *arena, Atom *call, Atom *payload) {
+    CETTA_SCOPED_SHARED_TRANSITION(space_remove_publication);
     EvalSpaceMutationEffect effect = {
         .error = NULL,
         .emit_result = true,
@@ -10834,6 +10840,7 @@ static void prime_native_adopt_own_data_publication(
 static inline __attribute__((always_inline)) EvalSpaceMutationEffect
 eval_apply_space_mutation_kernel(Space *target, Arena *arena, Atom *call,
         Atom *payload, bool remove, bool add_nodup, bool traced) {
+    CETTA_SCOPED_SHARED_TRANSITION(space_mutation_publication);
     uint64_t revision_before = target->revision;
     uint64_t equation_before = target->equation_revision;
     uint64_t declaration_before = target->declaration_revision;
@@ -24625,6 +24632,7 @@ static bool emit_add_atoms_from_evaluated_tuple(
         return true;
     }
 
+    CETTA_SCOPED_SHARED_TRANSITION(space_batch_publication);
     /* Type checking is observational and must finish before the optimized
      * publication.  A rejection is reported at the same public call rather
      * than being mislabeled as a capacity failure. */
@@ -24688,6 +24696,7 @@ static bool add_atoms_from_evaluated_source_results(Space *s, Arena *a,
                 return true;
             }
             for (CettaExprIndex j = 0; j < item->expr.len; j++) {
+                CETTA_SCOPED_SHARED_TRANSITION(space_row_publication);
                 Atom *type_error = eval_petta_program_mutation_error(
                     a, call_atom, target, item->expr.elems[j],
                     PETTA_TYPECHECK_MUTATION_ADD);
@@ -24707,6 +24716,7 @@ static bool add_atoms_from_evaluated_source_results(Space *s, Arena *a,
                 }
             }
         } else {
+            CETTA_SCOPED_SHARED_TRANSITION(space_row_publication);
             Atom *type_error = eval_petta_program_mutation_error(
                 a, call_atom, target, item,
                 PETTA_TYPECHECK_MUTATION_ADD);

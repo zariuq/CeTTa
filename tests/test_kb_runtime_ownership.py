@@ -209,6 +209,34 @@ INITIAL
                     self.assertTrue(bag.startswith("(") and bag.endswith(")"), bag)
                     self.assertEqual(sorted(bag[1:-1].split()), ["0", "42"])
 
+    @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for typed publication checks")
+    def test_competing_typed_mutations_publish_a_serially_valid_program(self):
+        padding = "\n".join(f"(= (typed-pad-{i} $x) $x)" for i in range(600))
+        header = padding + "\n(= (typed-spin 0) true)\n(= (typed-spin $n) (if (<= $n 0) true (typed-spin (- $n 1))))\n"
+        annotation = "(add-atom &self (: typed-race (-> Int Int)))"
+        equation = '(add-atom &self (= (typed-race "not-an-int") "not-an-int"))'
+        queries = "\n!(collapse (match &self (: typed-race $t) has-type))\n!(collapse (match &self (= (typed-race $a) $b) has-equation))\n"
+        with tempfile.TemporaryDirectory(prefix="cetta-typed-publication-", dir=os.environ.get("TMPDIR")) as directory:
+            source = Path(directory) / "publication.metta"
+            report = Path(directory) / "report.json"
+            for order in [(annotation, equation), (equation, annotation)]:
+                actions = " ".join(f"(catch (let $wait (typed-spin 8000) {action}))" for action in order)
+                source.write_text(header + f"!(collapse (hyperpose ({actions})))" + queries)
+                for threads in (1, 2):
+                    for trial in range(1 if threads == 1 else 12):
+                        with self.subTest(annotation_first=order[0] == annotation, threads=threads, trial=trial):
+                            result = subprocess.run([CLI, "--lang", "petta", "--profile", "typecheck-v2",
+                                                     "--num-threads", str(threads), "--run-contract",
+                                                     "--run-report", str(report), str(source)],
+                                                    capture_output=True, text=True, timeout=30)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            framed = json.loads(report.read_text())
+                            self.assertEqual(framed["queries_declared"], 3)
+                            self.assertTrue(all(q["observation_complete"] for q in framed["queries"]))
+                            lines = result.stdout.strip().splitlines()
+                            self.assertEqual(len(lines), 3, result.stdout)
+                            self.assertTrue(lines[1] == "()" or lines[2] == "()", result.stdout)
+
     @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for typed profile checks")
     def test_live_callability_policy_matches_inside_and_outside_transaction(self):
         program = """(= (live-caller) (live-callee))

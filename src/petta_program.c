@@ -4923,6 +4923,7 @@ bool petta_program_enable_analysis(PettaProgram *program) {
 }
 
 bool petta_program_analysis_enabled(const PettaProgram *program) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_analysis_read);
     return program && program->analysis;
 }
 
