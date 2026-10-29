@@ -46,6 +46,18 @@ class RuntimeOwnershipTests(unittest.TestCase):
                 for answer in answers:
                     self.preserved(answer)
 
+    def test_shared_mutation_keeps_preexisting_roles_in_sibling_workers(self):
+        for mode in ("direct", "transaction"):
+            with self.subTest(mode=mode):
+                answers = self.worker.call(E("SiblingMutation", self.value, S(mode)))
+                self.assertEqual(len(answers), 2)
+                for answer in answers:
+                    self.preserved(answer)
+
+    def test_direct_worker_addition_keeps_roles_after_join(self):
+        self.worker.call(S("InstallFromWorker"))
+        self.preserved(self.worker.call(E("AfterWorker", self.value)))
+
     @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for typed profile checks")
     def test_live_callability_policy_matches_inside_and_outside_transaction(self):
         program = """(= (live-caller) (live-callee))
