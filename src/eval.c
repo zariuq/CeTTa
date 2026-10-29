@@ -210,6 +210,10 @@ extern bool cetta_syntax_gslt_data_arg_v1(const char *, uint32_t)
 /* Global registry for named spaces/values (set by eval_top_with_registry) */
 static __thread Registry *g_registry = NULL;
 
+static Space *petta_eval_adopt_created_space(Space *space);
+static Atom *petta_eval_export_persistent_value(
+    Arena *arena, Atom *value, const StateCell *destination);
+
 /* PeTTa named state belongs to an executing worker, independently of spaces
  * and transaction registry views. Its scope spans all jobs in one invocation. */
 typedef struct {
@@ -25568,7 +25572,7 @@ static Space *space_algebra_fresh_result(Arena *a) {
         space_free(ns);
         return NULL;
     }
-    return ns;
+    return petta_eval_adopt_created_space(ns);
 }
 
 /* Bag union adds occurrence multiplicities. */
@@ -25660,6 +25664,9 @@ static Space *petta_ensure_named_space(
         space_free(created);
         return NULL;
     }
+    created = petta_eval_adopt_created_space(created);
+    if (!created)
+        return NULL;
     Atom *value = atom_space(storage, created);
     if (eval_storage_is_persistent(storage)) {
         cetta_provenance_assert_not_transient(
@@ -41120,6 +41127,9 @@ static bool petta_named_state_write(Registry *registry, Arena *scratch,
                                     const Atom *name, Atom *value) {
     if (g_petta_worker_named_state)
         registry = g_petta_worker_named_state;
+    value = petta_eval_export_persistent_value(eval_storage_arena(scratch), value, NULL);
+    if (!value)
+        return false;
     Atom *fresh = atom_has_vars(value)
         ? rename_vars_except(scratch, value, atom_unit(scratch))
         : value;
@@ -66757,6 +66767,7 @@ typedef struct {
 
 typedef struct PettaEvalTransaction {
     struct PettaEvalTransaction *parent;
+    struct PettaEvalTransaction *context_previous;
     Registry registry;
     Registry *outer_registry;
     Registry *side_effect_registry;
@@ -66772,6 +66783,33 @@ typedef struct PettaEvalTransaction {
     Arena *persistent_arena;
     CettaSharedTransitionGuard shared_lifetime;
 } PettaEvalTransaction;
+
+/* A host form may enter another search machine while its caller still owns
+ * a transaction. Keep that ancestry explicit; the new machine restores its
+ * own prior slot rather than taking ownership of the caller's transaction. */
+typedef struct PettaEvalTransactionScope {
+    PettaProgram *program;
+    PettaEvalTransaction **current;
+    struct PettaEvalTransactionScope *previous;
+} PettaEvalTransactionScope;
+
+static _Thread_local PettaEvalTransactionScope *g_petta_transaction_scope;
+
+static void petta_eval_transaction_scope_leave(PettaEvalTransactionScope *scope) {
+    assert(g_petta_transaction_scope == scope);
+    g_petta_transaction_scope = scope->previous;
+}
+
+static PettaEvalTransaction *petta_eval_active_transaction(void) {
+    PettaProgram *program = eval_current_language_id() == CETTA_LANGUAGE_PETTA && g_library_context
+        ? g_library_context->petta_program : NULL;
+    if (!program)
+        return NULL;
+    for (PettaEvalTransactionScope *scope = g_petta_transaction_scope; scope; scope = scope->previous)
+        if (scope->program == program && *scope->current)
+            return *scope->current;
+    return NULL;
+}
 
 /* Private transaction containers and working resources. Source resources,
  * term universes and the two host arenas are borrowed from the enclosing
@@ -67678,6 +67716,14 @@ static Space *petta_eval_transaction_clone_space(
     PettaEvalTransaction *transaction, Space *space) {
     if (!transaction || !space)
         return NULL;
+    CETTA_SCOPED_SHARED_TRANSITION(transaction_enrollment);
+    if (petta_eval_transaction_space_by_working(transaction, space))
+        return space;
+    if (transaction->parent) {
+        space = petta_eval_transaction_clone_space(transaction->parent, space);
+        if (!space)
+            return NULL;
+    }
     PettaEvalTransactionSpace *existing =
         petta_eval_transaction_space_by_original(
             transaction, space);
@@ -67756,6 +67802,14 @@ static StateCell *petta_eval_transaction_clone_state(
     PettaEvalTransaction *transaction, StateCell *state) {
     if (!transaction || !state)
         return NULL;
+    CETTA_SCOPED_SHARED_TRANSITION(transaction_state_enrollment);
+    if (petta_eval_transaction_state_by_working(transaction, state))
+        return state;
+    if (transaction->parent) {
+        state = petta_eval_transaction_clone_state(transaction->parent, state);
+        if (!state)
+            return NULL;
+    }
     PettaEvalTransactionState *existing =
         petta_eval_transaction_state_by_original(
             transaction, state);
@@ -67855,6 +67909,28 @@ static Atom *petta_eval_transaction_rebind_atom(
             return NULL;
     }
     return atom_expr(arena, elements, atom->expr.len);
+}
+
+static Space *petta_eval_adopt_created_space(Space *space) {
+    PettaEvalTransaction *transaction = petta_eval_active_transaction();
+    /* The tracked empty original outlives rollback. Only its private image
+     * gains contents or executable declarations until publication succeeds. */
+    return transaction && space
+        ? petta_eval_transaction_clone_space(transaction, space) : space;
+}
+
+static Atom *petta_eval_export_persistent_value(
+        Arena *arena, Atom *value, const StateCell *destination) {
+    for (PettaEvalTransaction *transaction = petta_eval_active_transaction();
+         transaction && value; transaction = transaction->parent) {
+        /* A private destination may retain references owned by its own
+         * transaction. A named/nontransactional destination may retain none. */
+        if (destination && petta_eval_transaction_state_by_working(
+                transaction, (StateCell *)destination))
+            break;
+        value = petta_eval_transaction_rebind_atom(transaction, arena, value, false);
+    }
+    return value;
 }
 
 static void petta_eval_transaction_destroy(
@@ -68149,7 +68225,9 @@ static bool petta_eval_machine_transaction_begin(
        refinement requiring stable cross-revision occurrence identities. */
     cetta_shared_transition_guard_enter(
         &transaction->shared_lifetime);
-    transaction->parent = eval_context->transaction;
+    transaction->context_previous = eval_context->transaction;
+    transaction->parent = eval_context->transaction
+        ? eval_context->transaction : petta_eval_active_transaction();
     transaction->outer_registry = transaction->parent
         ? &transaction->parent->registry : g_registry;
     transaction->side_effect_registry = transaction->parent
@@ -68391,7 +68469,7 @@ static bool petta_eval_machine_transaction_commit(
     free(registry_values);
     free(state_values);
     free(state_types);
-    eval_context->transaction = transaction->parent;
+    eval_context->transaction = transaction->context_previous;
     petta_eval_machine_advance_semantic_authority(eval_context);
     petta_eval_transaction_destroy(transaction);
     return true;
@@ -68406,7 +68484,7 @@ static void petta_eval_machine_transaction_rollback(
     cetta_runtime_stats_inc(
         CETTA_RUNTIME_COUNTER_PETTA_TRANSACTION_ROLLBACK);
     if (eval_context->transaction == transaction)
-        eval_context->transaction = transaction->parent;
+        eval_context->transaction = transaction->context_previous;
     petta_eval_machine_advance_semantic_authority(eval_context);
     petta_eval_transaction_destroy(transaction);
 }
@@ -71691,8 +71769,12 @@ static bool petta_eval_machine_evaluate_host(
     if (evaluated && outcomes)
         prime_need_export_ready_data(arena, outcomes, published);
     Atom *raised = petta_eval_take_raise();
-    if (raised)
+    if (raised) {
+        raised = petta_eval_export_persistent_value(arena, raised, NULL);
+        if (!raised)
+            return false;
         *end = cetta_call_raised(raised);
+    }
     return evaluated;
 }
 
@@ -74965,6 +75047,12 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
         .map = petta_eval_private_map, .image_at = petta_eval_private_image_at,
     };
     petta_program_private_scope_enter(&program_scope);
+    __attribute__((cleanup(petta_eval_transaction_scope_leave)))
+    PettaEvalTransactionScope transaction_scope = {
+        .program = program_scope.program, .current = &context.transaction,
+        .previous = g_petta_transaction_scope,
+    };
+    g_petta_transaction_scope = &transaction_scope;
     CettaMatchDecisionSemanticIdentity match_decision_semantics =
         petta_eval_machine_match_semantics(
             context.library_context,
@@ -82331,6 +82419,12 @@ static void state_change_publish_value(Space *s, Arena *a, Atom *call,
                 bindings_free(&effect_env);
             }
         } else {
+            value = petta_eval_export_persistent_value(
+                eval_storage_arena(a), value, cell);
+            if (!value) {
+                eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                return;
+            }
             cell->value = eval_persistent_arena()
                 ? eval_store_value(eval_persistent_arena(), value) : value;
             if (eval_persistent_arena())
@@ -82627,6 +82721,11 @@ static __attribute__((noinline)) MettaDispatchResult metta_storage_dispatch(
             outcome_set_add(os,
                 atom_error(a, (*call), atom_symbol(a, "SpaceOwnershipFailed")),
                 empty);
+            return METTA_DISPATCH_HANDLED;
+        }
+        ns = petta_eval_adopt_created_space(ns);
+        if (!ns) {
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
             return METTA_DISPATCH_HANDLED;
         }
         outcome_set_add(os, atom_space(pa, ns), empty);
@@ -85876,6 +85975,11 @@ static __attribute__((noinline)) MettaDispatchResult metta_state_dispatch(
         /* Allocate state in persistent storage unless a transactional payload
          * needs a scratch-local cell that can be reclaimed at payload end. */
         Arena *pa = eval_storage_arena(a);
+        initial = petta_eval_export_persistent_value(pa, initial, NULL);
+        if (!initial) {
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return METTA_DISPATCH_HANDLED;
+        }
         StateCell *cell = g_eval_payload_transactional
             ? cetta_malloc(sizeof(StateCell))
             : arena_alloc(pa, sizeof(StateCell));

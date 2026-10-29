@@ -128,6 +128,66 @@ INITIAL
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(), "()")
 
+    @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for resource identity checks")
+    def test_named_state_exports_original_identity_across_transaction_outcomes(self):
+        template = """!(let $space (new-space)
+  (let $a (add-atom $space (kept 1))
+    (let $result (collapse (transaction
+      (let $b (add-atom $space (changed 2))
+        (let $exported (change-state! exported-space $space) OUTCOME))))
+      (== $space (get-state exported-space)))))
+"""
+        with tempfile.TemporaryDirectory(prefix="cetta-space-export-", dir=os.environ.get("TMPDIR")) as directory:
+            source = Path(directory) / "export.metta"
+            report = Path(directory) / "report.json"
+            for outcome in ["true", "(empty)"]:
+                with self.subTest(outcome=outcome):
+                    source.write_text(template.replace("OUTCOME", outcome))
+                    result = subprocess.run([CLI, "--lang", "petta", "--run-contract",
+                                             "--run-report", str(report), str(source)],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), "true")
+                    self.assertTrue(json.loads(report.read_text())["queries"][0]["observation_complete"])
+
+    @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for resource identity checks")
+    def test_new_space_export_survives_nested_rollback_as_empty_original(self):
+        program = """!(let $rolled-back (collapse (transaction
+  (let $inner (transaction
+    (let $s (new-space)
+      (let $added (add-atom $s (discarded 1))
+        (change-state! exported-new-space $s))))
+    (empty))))
+  (collapse (get-atoms (get-state exported-new-space))))
+"""
+        with tempfile.TemporaryDirectory(prefix="cetta-created-space-export-", dir=os.environ.get("TMPDIR")) as directory:
+            source = Path(directory) / "export.metta"
+            source.write_text(program)
+            result = subprocess.run([CLI, "--lang", "petta", str(source)],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "()")
+
+    @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for typed resource identity checks")
+    def test_caught_host_error_exports_original_space_identity(self):
+        program = """(: &typed (SpaceOf Number))
+!(let $space (new-space)
+  (let $added (add-atom $space (kept 1))
+    (let $caught (catch (transaction
+      (let $changed (add-atom $space (discarded 2))
+        (forall (superpose (1)) (== (add-atom &typed $space) true)))))
+      (case $caught
+        (((Error (literal_type_mismatch $actual Number) typecheck) (== $actual $space))
+         ($other unexpected-error))))))
+"""
+        with tempfile.TemporaryDirectory(prefix="cetta-caught-space-export-", dir=os.environ.get("TMPDIR")) as directory:
+            source = Path(directory) / "export.metta"
+            source.write_text(program)
+            result = subprocess.run([CLI, "--lang", "petta", "--profile", "typecheck-v2", str(source)],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "true")
+
     @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for worker space transport")
     def test_worker_created_space_retains_its_program_catalog(self):
         program = """(= (transport-probe) 0)
