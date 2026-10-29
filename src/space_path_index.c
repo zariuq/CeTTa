@@ -606,6 +606,7 @@ static __attribute__((noinline)) CettaCount path_merge_open_rows(
 
 bool space_path_index_candidates(Space *space, Atom *pattern,
                                 CettaIndex **out, CettaIndex *count) {
+    space_dense_settle_for_pattern(space, pattern);
     if (!space || !space->native.universe || !out || !count || space->overlay_base ||
         (space->match_backend.kind != SPACE_ENGINE_NATIVE &&
          space->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
@@ -691,6 +692,7 @@ bool space_path_index_candidates(Space *space, Atom *pattern,
 
 bool space_path_index_existing_candidates(Space *space, Atom *pattern,
                                           CettaIndex **out, CettaIndex *count) {
+    space_dense_settle_for_pattern(space, pattern);
     if (!space || !out || !count || !space_path_index_may_select(pattern) ||
         !path_generation_current(space))
         return false;
@@ -1130,8 +1132,14 @@ static CettaSpaceHeadIndex *head_index_build(Space *space) {
         .prefix_epoch = space->prefix_epoch,
     };
     (void)head_posting_push(index, 0u);
-    /* The rows as they stand, those removed by mark included. */
+    /* The rows as they stand.  A row removed by mark is left out: its
+     * readers skip it by the marks, and its term a collection may since have
+     * reclaimed, so it is not read. */
+    const uint64_t *marks = space->native.marked ? space->native.marks : NULL;
     for (CettaIndex row = 0u; row < space->native.len; row++) {
+        if (marks && row < space->native.mark_rows &&
+            ((marks[row >> 6] >> (row & 63u)) & 1u) != 0u)
+            continue;
         AtomId id = cetta_atom_id_storage_load_bits(
             space->native.atom_ids + (size_t)row * width,
             space->native.atom_id_width_bits);
@@ -1146,6 +1154,7 @@ static CettaSpaceHeadIndex *head_index_build(Space *space) {
 
 bool space_head_index_open(Space *space, const Atom *pattern,
                            CettaSpaceHeadCursor *cursor) {
+    space_dense_settle_for_pattern(space, pattern);
     memset(cursor, 0, sizeof(*cursor));
     if (!space || !space->native.universe || space->overlay_base ||
         (space->kind != SPACE_KIND_ATOM && space->kind != SPACE_KIND_SET) ||

@@ -934,6 +934,10 @@ static bool relational_dense_count(Space *space, Arena *scratch,
 
 bool space_native_relational_count(Space *space, Arena *scratch,
     Atom *const *patterns, size_t pattern_count, const Bindings *seed, uint64_t *count_out) {
+    /* A relation kept as bits is counted by the native query's loops. */
+    if (count_out && space_dense_meets_patterns(space, patterns, pattern_count))
+        return cetta_native_query_count(space, scratch, patterns,
+                                        pattern_count, seed, count_out);
     if (space_native_flat_chain_count(space, scratch, patterns, pattern_count, seed, count_out))
         return true;
     static _Thread_local int enabled = -1;

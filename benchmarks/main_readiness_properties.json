@@ -31,7 +31,7 @@
       "id": "space.native.storage",
       "implementation_path": "native-space/term-universe",
       "source_anchors": [
-        {"path": "src/space.c", "symbol": "static void space_add_stored_id(", "expected_occurrences": 1},
+        {"path": "src/space.c", "symbol": "static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {", "expected_occurrences": 1},
         {"path": "src/space.c", "symbol": "static void space_reserve_linear(", "expected_occurrences": 1},
         {"path": "src/term_universe.c", "symbol": "AtomId term_universe_store_atom_id(", "expected_occurrences": 1},
         {"path": "src/term_universe.c", "symbol": "term_universe_compact32_auto_migration_threshold(", "expected_occurrences": 2}

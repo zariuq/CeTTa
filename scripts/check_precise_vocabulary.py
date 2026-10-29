@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reject the word ``surface`` anywhere in this tree.
+"""Reject the word ``surface`` in authored names and descriptions.
 
 The word is banned outright: every prior use was a stand-in for a more
 precise noun.  The public builtin set is named ``builtin``; the two text
@@ -8,7 +8,8 @@ its ``location`` (Meredith: a purse is *located at* a rho name; the word
 ``surface`` appears in his cost papers only in the attack-surface idiom,
 never as the purse coordinate).  If a genuinely spatial or geometric
 surface ever enters this tree, add a narrow exemption below with the
-mathematical justification.
+mathematical justification. Pinned upstream filenames are evidence identities,
+not authored vocabulary: their exact serialized fields are retained below.
 """
 
 from __future__ import annotations
@@ -55,6 +56,20 @@ SKIP_SUFFIXES = {
 }
 WORD = re.compile(r"surface", re.IGNORECASE)
 
+# Preserve the real upstream identifier. This does not exempt either file,
+# other JSON fields, nearby prose, or a different upstream spelling.
+PINNED_REFERENCE_FIELDS = {
+    Path("langdef/petta/reference.json"): re.compile(
+        r'\s*"examples/import_error_surface\.metta":\s*"[0-9a-f]{64}",?\s*'),
+    Path("tests/petta/corrected_stable_observations.json"): re.compile(
+        r'\s*"source":\s*"examples/import_error_surface\.metta",?\s*'),
+}
+
+
+def pinned_reference_field(relative: Path, line: str) -> bool:
+    rule = PINNED_REFERENCE_FIELDS.get(relative)
+    return rule is not None and rule.fullmatch(line) is not None
+
 
 def files_under(path: Path):
     if path.is_file():
@@ -91,7 +106,7 @@ def main() -> int:
                 hits.append(f"{rel}: read failed: {exc}")
                 continue
             for line_number, line in enumerate(source.splitlines(), start=1):
-                if WORD.search(line):
+                if WORD.search(line) and not pinned_reference_field(rel, line):
                     hits.append(f"{rel}:{line_number}:{line}")
 
     if hits:

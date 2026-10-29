@@ -38,6 +38,17 @@ uint32_t cetta_pattern_adapter_arity(SymbolId head) {
     return 0u;
 }
 
+uint32_t cetta_pattern_operation_arity(SymbolId head) {
+    uint32_t arity = cetta_pattern_adapter_arity(head);
+    if (arity) return arity;
+    if (head == g_builtin_syms.pat_query) return 3u;
+    if (head == g_builtin_syms.pat_view) return 1u;
+    if (head == g_builtin_syms.pat_solve || head == g_builtin_syms.pat_apply ||
+        head == g_builtin_syms.pat_is_instance || head == g_builtin_syms.pat_is_variant)
+        return 2u;
+    return 0u;
+}
+
 CettaTermMatchStatus cetta_pattern_bind_retrieval(Arena *arena,
     Atom *patterns, Atom *rows, Atom *stored_output, bool conjunction,
     BindingsBuilder *builder) {
@@ -58,11 +69,9 @@ CettaTermMatchStatus cetta_pattern_bind_retrieval(Arena *arena,
 bool cetta_pattern_module_enabled(const CettaLibraryContext *context) {
     if (!context || !(context->active_mask & CETTA_NATIVE_IMPORT_PAT)) return false;
     const CettaProfile *profile = context->session.profile;
-    return profile &&
-        ((context->session.language_id == CETTA_LANGUAGE_HE &&
-          profile->id == CETTA_PROFILE_HE_EXTENDED) ||
-         (context->session.language_id == CETTA_LANGUAGE_PETTA &&
-          profile->id == CETTA_PROFILE_PETTA_EXTENDED));
+    return context->session.language_id == CETTA_LANGUAGE_PETTA ||
+        (context->session.language_id == CETTA_LANGUAGE_HE && profile &&
+         profile->id == CETTA_PROFILE_HE_EXTENDED);
 }
 
 SymbolId cetta_pattern_resolve_head(const CettaLibraryContext *context, SymbolId head) {
@@ -81,8 +90,6 @@ static CettaCallOutcome pattern_fault(Arena *arena, Atom *head,
 
 static CettaCallOutcome pattern_solve(Arena *arena, Atom *head,
     Atom **arguments, uint32_t count) {
-    if (count != 2u)
-        return pattern_fault(arena, head, arguments, count, "IncorrectNumberOfArguments");
     bool unify = atom_is_symbol(arguments[0], "unify");
     CettaTermMatchMode mode;
     if (unify || atom_is_symbol(arguments[0], "match%")) mode = CETTA_TERM_MATCH_FORWARD;
@@ -144,12 +151,14 @@ bool cetta_pattern_module_call(CettaLibraryContext *context, Space *space,
     if (!head || head->kind != ATOM_SYMBOL || !cetta_pattern_module_enabled(context))
         return false;
     SymbolId operation = cetta_pattern_resolve_head(context, head->sym_id);
+    uint32_t arity = cetta_pattern_operation_arity(operation);
+    if (!arity) return false;
+    if (count != arity) {
+        *out = pattern_fault(arena, head, arguments, count, "IncorrectNumberOfArguments");
+        return true;
+    }
     if (operation == g_builtin_syms.pat_is_instance ||
         operation == g_builtin_syms.pat_is_variant) {
-        if (count != 2u) {
-            *out = pattern_fault(arena, head, arguments, count, "IncorrectNumberOfArguments");
-            return true;
-        }
         CettaTermMatch images;
         CettaTermMatchStatus status = term_graph_match_many(arena,
             &(CettaTermMatchPair){arguments[1], arguments[0]}, 1u,
@@ -178,10 +187,6 @@ bool cetta_pattern_module_call(CettaLibraryContext *context, Space *space,
     bool apply = head->sym_id == g_builtin_syms.pat_apply;
     bool view = head->sym_id == g_builtin_syms.pat_view;
     if (!apply && !view) return false;
-    if (count != (apply ? 2u : 1u)) {
-        *out = pattern_fault(arena, head, arguments, count, "IncorrectNumberOfArguments");
-        return true;
-    }
     if (arguments[0]->kind != ATOM_GROUNDED ||
         arguments[0]->ground.gkind != GV_BINDINGS || !arguments[0]->ground.ptr) {
         *out = pattern_fault(arena, head, arguments, count, "ExpectedMatchingWitness");
