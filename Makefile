@@ -50274,6 +50274,16 @@ $(REGISTERED_REGISTRY_TEST_BIN): $(REGISTERED_REGISTRY_TEST_OBJ) $(FALLBACK_EVAL
 test-registered-registry: $(REGISTERED_REGISTRY_TEST_BIN)
 	./$(REGISTERED_REGISTRY_TEST_BIN)
 
+REGISTRY_PUBLICATION_TEST_BIN = runtime/test_registry_publication-$(BUILD_OBJ_TAG)
+$(REGISTRY_PUBLICATION_TEST_BIN): tests/test_registry_publication.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ $< $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc,--wrap=registry_binding_publication_copy
+
+.PHONY: test-registry-publication
+test-registry-publication: $(REGISTRY_PUBLICATION_TEST_BIN)
+	./$(REGISTRY_PUBLICATION_TEST_BIN)
+
+test-all: test-registry-publication
+
 .PHONY: test-registered-symbol-names
 test-registered-symbol-names: $(BIN)
 	@set -eu; \

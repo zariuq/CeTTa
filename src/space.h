@@ -1271,6 +1271,20 @@ bool registry_unbind_symbol(Registry *r, const Atom *name);
 Atom *registry_entry_symbol(const Registry *r, uint32_t index, Arena *owner);
 bool registry_copy_entry(Registry *dst, const Registry *src,
                           uint32_t index, Atom *value);
+
+/* Prepare a replacement binding namespace without changing its destination.
+ * Values remain caller-owned. The caller holds exclusive binding access from
+ * preparation through publication; the separate named-state namespace is
+ * neither copied nor replaced. Publication consumes the prepared namespace
+ * without allocation and invalidates borrowed entry/key pointers. */
+typedef struct RegistryBindingPublication RegistryBindingPublication;
+RegistryBindingPublication *registry_binding_publication_new(Registry *destination);
+bool registry_binding_publication_copy(RegistryBindingPublication *publication,
+    const Registry *source, uint32_t index, Atom *value);
+void registry_binding_publication_commit(RegistryBindingPublication *publication);
+void registry_binding_publication_free(RegistryBindingPublication *publication);
+void registry_binding_publication_storage(const RegistryBindingPublication *publication,
+    CettaStorageCensus *census);
 void registry_bind(Registry *r, const char *name, Atom *value);
 Atom *registry_lookup(Registry *r, const char *name);
 bool registry_bind_name(Registry *r, Atom *name_key, Atom *value);

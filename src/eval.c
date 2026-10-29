@@ -66795,6 +66795,7 @@ typedef struct PettaEvalTransaction {
     Registry registry;
     Registry *outer_registry;
     Registry *side_effect_registry;
+    RegistryBindingPublication *binding_publication;
     Atom **initial_registry_values;
     uint32_t initial_registry_len;
     PettaEvalTransactionSpace *spaces;
@@ -66854,6 +66855,7 @@ static void petta_eval_transaction_storage_visit(const void *raw,
         return;
     }
     registry_storage_census(&transaction->registry, census);
+    registry_binding_publication_storage(transaction->binding_publication, census);
     cetta_storage_array(census, transaction->initial_registry_values,
         transaction->initial_registry_len,
         sizeof(*transaction->initial_registry_values), 0u);
@@ -68010,6 +68012,7 @@ static void petta_eval_transaction_destroy(
     PettaEvalTransaction *transaction) {
     if (!transaction)
         return;
+    registry_binding_publication_free(transaction->binding_publication);
 
     for (size_t index = 0u;
          index < transaction->space_len; index++) {
@@ -68373,16 +68376,6 @@ static bool petta_eval_transaction_registry_value_changed(
     return !initial || !current || !atom_eq(initial, current);
 }
 
-static bool petta_eval_transaction_bind_commit_value(
-    Registry *registry, const Registry *source,
-    uint32_t source_index, Atom *value) {
-    if (!registry || !source || source_index >= source->len ||
-        !value) {
-        return false;
-    }
-    return registry_copy_entry(registry, source, source_index, value);
-}
-
 static PettaTransactionCatalog *petta_eval_publication_catalog(void *raw, const Space *space) {
     PettaEvalTransactionSpace *entry = raw;
     return space == entry->publication ? entry->publication_catalog : NULL;
@@ -68562,11 +68555,40 @@ static bool petta_eval_machine_transaction_commit(
 
     PettaProgram *program = eval_context->library_context
         ? eval_context->library_context->petta_program : NULL;
+    /* Name ownership and index growth belong to preparation, never to the
+     * publication loop after a Space has already become visible. Preserve
+     * current unrelated bindings and the separate nontransactional states. */
+    for (uint32_t index = 0u; index < transaction->registry.len; index++) {
+        if (!registry_values[index])
+            continue;
+        if (!transaction->outer_registry) {
+            free(registry_values);
+            free(state_values);
+            free(state_types);
+            return false;
+        }
+        if (!transaction->binding_publication)
+            transaction->binding_publication =
+                registry_binding_publication_new(transaction->outer_registry);
+        if (!transaction->binding_publication ||
+            !registry_binding_publication_copy(transaction->binding_publication,
+                &transaction->registry, index, registry_values[index])) {
+            registry_binding_publication_free(transaction->binding_publication);
+            transaction->binding_publication = NULL;
+            free(registry_values);
+            free(state_values);
+            free(state_types);
+            eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return false;
+        }
+    }
     /* Rebind row resources to the receiving transaction's identities before
      * publishing any Space. The staged catalog preserves authored roles;
      * rebuilding it from current callability would change stored programs. */
     if (!petta_eval_transaction_stage_rows(transaction, program) ||
         !petta_program_transaction_reserve_publication(program, transaction->space_len)) {
+        registry_binding_publication_free(transaction->binding_publication);
+        transaction->binding_publication = NULL;
         free(registry_values);
         free(state_values);
         free(state_types);
@@ -68600,21 +68622,8 @@ static bool petta_eval_machine_transaction_commit(
         transaction->states[index].original->content_type =
             state_types[index];
     }
-    for (uint32_t index = 0u;
-         index < transaction->registry.len; index++) {
-        if (!registry_values[index])
-            continue;
-        if (!transaction->outer_registry ||
-            !petta_eval_transaction_bind_commit_value(
-                transaction->outer_registry,
-                &transaction->registry,
-                index, registry_values[index])) {
-            free(registry_values);
-            free(state_values);
-            free(state_types);
-            return false;
-        }
-    }
+    if (transaction->binding_publication)
+        registry_binding_publication_commit(transaction->binding_publication);
 
     free(registry_values);
     free(state_values);

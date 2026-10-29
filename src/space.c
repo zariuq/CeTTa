@@ -9837,8 +9837,9 @@ static bool registry_index_ensure_capacity(Registry *r,
         next_cap *= 2u;
     }
     if (r->index_slots && r->index_cap == next_cap) return true;
-    uint32_t *next = cetta_malloc(sizeof(*next) * (size_t)next_cap);
-    memset(next, 0, sizeof(*next) * (size_t)next_cap);
+    uint32_t *next = calloc((size_t)next_cap, sizeof(*next));
+    if (!next)
+        return false;
     if (r->index_slots && r->index_slots != r->inline_index_slots)
         free(r->index_slots);
     r->index_slots = next;
@@ -9870,12 +9871,15 @@ static bool registry_ensure_capacity(Registry *r, uint32_t min_needed) {
         SIZE_MAX / (size_t)next_cap < sizeof(RegistryEntry))
         return false;
     if (r->entries == r->inline_entries) {
-        next = cetta_malloc(sizeof(RegistryEntry) * (size_t)next_cap);
+        next = malloc(sizeof(RegistryEntry) * (size_t)next_cap);
+        if (!next)
+            return false;
         if (r->len > 0)
             memcpy(next, r->entries, sizeof(RegistryEntry) * (size_t)r->len);
     } else {
-        next = cetta_realloc(r->entries,
-                             sizeof(RegistryEntry) * (size_t)next_cap);
+        next = realloc(r->entries, sizeof(RegistryEntry) * (size_t)next_cap);
+        if (!next)
+            return false;
     }
     r->entries = next;
     r->cap = next_cap;
@@ -10071,6 +10075,83 @@ bool registry_copy_entry(Registry *dst, const Registry *src,
     }
     Atom *key = (Atom *)registry_entry_name_key(src, index);
     return key && registry_bind_name(dst, key, value);
+}
+
+struct RegistryBindingPublication {
+    Registry *destination;
+    Registry prepared;
+    bool failed;
+    bool committed;
+};
+
+RegistryBindingPublication *registry_binding_publication_new(Registry *destination) {
+    if (!destination)
+        return NULL;
+    RegistryBindingPublication *publication = calloc(1u, sizeof(*publication));
+    if (!publication)
+        return NULL;
+    publication->destination = destination;
+    registry_init(&publication->prepared);
+    if (!publication->prepared.name_keys) {
+        registry_binding_publication_free(publication);
+        return NULL;
+    }
+    for (uint32_t i = 0u; i < destination->len; i++) {
+        if (!registry_copy_entry(&publication->prepared, destination, i,
+                destination->entries[i].value)) {
+            registry_binding_publication_free(publication);
+            return NULL;
+        }
+    }
+    return publication;
+}
+
+bool registry_binding_publication_copy(RegistryBindingPublication *publication,
+        const Registry *source, uint32_t index, Atom *value) {
+    if (!publication || publication->committed || publication->failed)
+        return false;
+    if (!registry_copy_entry(&publication->prepared, source, index, value)) {
+        publication->failed = true;
+        return false;
+    }
+    return true;
+}
+
+void registry_binding_publication_commit(RegistryBindingPublication *publication) {
+    assert(publication && !publication->failed && !publication->committed);
+    Registry *destination = publication->destination;
+    Registry *prepared = &publication->prepared;
+    assert(destination && !prepared->states);
+    struct RegistryStates *states = destination->states;
+    destination->states = NULL;
+    registry_free(destination);
+    bool inline_entries = prepared->entries == prepared->inline_entries;
+    bool inline_index = prepared->index_slots == prepared->inline_index_slots;
+    *destination = *prepared;
+    if (inline_entries)
+        destination->entries = destination->inline_entries;
+    if (inline_index)
+        destination->index_slots = destination->inline_index_slots;
+    destination->states = states;
+    /* A disposable moved-from registry needs no freshly allocated name table. */
+    *prepared = (Registry){0};
+    publication->committed = true;
+}
+
+void registry_binding_publication_free(RegistryBindingPublication *publication) {
+    if (!publication)
+        return;
+    registry_free(&publication->prepared);
+    free(publication);
+}
+
+void registry_binding_publication_storage(const RegistryBindingPublication *publication,
+        CettaStorageCensus *census) {
+    if (!publication || !cetta_storage_object(census, publication,
+            sizeof(*publication), CETTA_STORAGE_BLOCK))
+        return;
+    if (!publication->committed)
+        registry_storage_census(&publication->prepared, census);
 }
 
 /* The states' names and current values, with the arena holding each value.
