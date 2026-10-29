@@ -6553,10 +6553,13 @@ static inline int atom_eq_flat_tree(Atom *left, Atom *right) {
     return 1;
 }
 
-/* The ordinary pointer/leaf fast path needs no frame of its own.  Symbolic
- * atoms whose structural hashes are already known differ when the hashes
- * do, whatever their depth. */
+/* The ordinary pointer/leaf fast path needs no frame of its own.  Small trees
+ * compare at once; beyond them, symbolic atoms whose structural hashes are
+ * already known differ when the hashes do, whatever their depth. */
 static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b) {
+    int small = atom_eq_flat_tree(a, b);
+    if (small >= 0)
+        return small != 0;
     if ((a->structural_facts & b->structural_facts &
          ATOM_STRUCTURAL_SYMBOLIC) != 0u) {
         uint32_t left_hash = atom_hash_cache_load(a);
@@ -6564,9 +6567,6 @@ static __attribute__((noinline)) bool atom_eq_walk(Atom *a, Atom *b) {
         if (left_hash != 0u && right_hash != 0u && left_hash != right_hash)
             return false;
     }
-    int small = atom_eq_flat_tree(a, b);
-    if (small >= 0)
-        return small != 0;
     small = atom_eq_small_tree(a, b);
     if (small >= 0)
         return small != 0;
