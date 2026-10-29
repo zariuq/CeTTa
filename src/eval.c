@@ -10685,8 +10685,7 @@ EvalSpaceMutationEffect eval_apply_space_addition_unchecked_static_from_source(
     CettaLanguageId language_id = eval_current_language_id();
     PettaProgram *program =
         language_id == CETTA_LANGUAGE_PETTA &&
-                g_library_context &&
-                !cetta_shared_transition_scope_active()
+                g_library_context
             ? g_library_context->petta_program
             : NULL;
     const PettaPlanNode *add_plan = NULL;
@@ -18477,11 +18476,16 @@ typedef struct {
     bool first_success;
     uint32_t worker_count;
     CettaLibraryContext *library_context;
+    const PettaProgramPrivateScope *program_scope;
     CettaParallelExecutor parallel;
     _Atomic bool cancel_requested;
     _Atomic bool unsafe_result;
     _Atomic int winner_index;
 } HyperposeThreadRun;
+
+static void petta_private_scope_restore(const PettaProgramPrivateScope **previous) {
+    (void)petta_program_private_scope_swap(*previous);
+}
 
 typedef enum {
     HYPERPOSE_THREAD_OBSERVE_OCCURRENCES = 0,
@@ -19494,6 +19498,12 @@ static Atom *hyperpose_transfer_atom(HyperposeResourceTransfer *transfer,
 
 static void hyperpose_eval_branch_in_thread(HyperposeThreadRun *run,
                                             HyperposeThreadBranch *branch) {
+    /* The parent waits for all workers before retiring its evaluator scopes.
+     * Workers share a parent transaction's private Space/catalog through that
+     * owned scope, and restore the worker thread's prior scope on every exit. */
+    __attribute__((cleanup(petta_private_scope_restore)))
+    const PettaProgramPrivateScope *previous_program_scope =
+        petta_program_private_scope_swap(run->program_scope);
     if (atomic_load_explicit(&run->unsafe_result, memory_order_acquire))
         return;
     if (run->first_success &&
@@ -20045,6 +20055,7 @@ static bool hyperpose_threaded_execute(
             observation == HYPERPOSE_THREAD_OBSERVE_FIRST,
         .worker_count = thread_count,
         .library_context = g_library_context,
+        .program_scope = petta_program_private_scope_current(),
     };
     atomic_init(&run.cancel_requested, false);
     atomic_init(&run.unsafe_result, false);
@@ -66718,6 +66729,7 @@ static bool prime_native_interaction_dispatch(Space *space, Arena *arena, Atom *
 typedef struct {
     Space *original;
     Space *working;
+    PettaTransactionCatalog *catalog;
     SpaceReadToken original_read;
     uint64_t working_base_revision;
 } PettaEvalTransactionSpace;
@@ -66781,6 +66793,7 @@ static void petta_eval_transaction_storage_visit(const void *raw,
         }
         cetta_storage_object(census, working, sizeof(*working), CETTA_STORAGE_BLOCK);
         space_storage_census(working, census);
+        petta_program_transaction_catalog_storage(transaction->spaces[i].catalog, census);
     }
     for (size_t i = 0u; i < transaction->state_len; i++) {
         const StateCell *working = transaction->states[i].working;
@@ -66967,6 +66980,34 @@ typedef struct {
     PettaEvalMachineAnalysisState *analysis_state;
 #endif
 } PettaEvalMachineContext;
+
+static PettaTransactionCatalog *petta_eval_private_catalog(void *raw, const Space *space) {
+    PettaEvalMachineContext *context = raw;
+    for (PettaEvalTransaction *tx = context->transaction; tx; tx = tx->parent)
+        for (size_t i = 0u; i < tx->space_len; i++)
+            if (tx->spaces[i].working == space) return tx->spaces[i].catalog;
+    return NULL;
+}
+
+static Space *petta_eval_private_map(void *raw, Space *space) {
+    PettaEvalMachineContext *context = raw;
+    for (;;) {
+        Space *before = space;
+        for (PettaEvalTransaction *tx = context->transaction; tx; tx = tx->parent)
+            for (size_t i = 0u; i < tx->space_len; i++)
+                if (tx->spaces[i].original == space) space = tx->spaces[i].working;
+        if (space == before) return space;
+    }
+}
+
+static Space *petta_eval_private_image_at(void *raw, size_t index) {
+    PettaEvalMachineContext *context = raw;
+    for (PettaEvalTransaction *tx = context->transaction; tx; tx = tx->parent) {
+        if (index < tx->space_len) return tx->spaces[index].working;
+        index -= tx->space_len;
+    }
+    return NULL;
+}
 
 static void petta_eval_machine_context_storage(const PettaEvalMachineContext *context,
         CettaStorageCensus *census) {
@@ -67648,13 +67689,22 @@ static Space *petta_eval_transaction_clone_space(
     Space *working = space_heap_clone_shallow(space);
     if (!working)
         return NULL;
-    /* Space is semantic authority.  A transaction's working image is
-       branch-private and must not be installed into the shared derived
-       program catalog; candidate selection can reconstruct from the live
-       image when no private compiled plan is available. */
+    /* A shallow image shares its source term universe, so inherited immutable
+       plans retain their source representation. Catalog vectors are private;
+       nested evaluator scopes find an enclosing image before the live program. */
+    PettaProgram *program = eval_current_language_id() == CETTA_LANGUAGE_PETTA && g_library_context
+        ? g_library_context->petta_program : NULL;
+    PettaTransactionCatalog *catalog = program
+        ? petta_program_transaction_catalog_new(program, space, working, true) : NULL;
+    if (program && !catalog) {
+        space_free(working);
+        free(working);
+        return NULL;
+    }
     PettaEvalTransactionSpace entry = {
         .original = space,
         .working = working,
+        .catalog = catalog,
         .original_read = space_read_token(space),
         .working_base_revision = space_revision(working),
     };
@@ -67802,10 +67852,7 @@ static void petta_eval_transaction_destroy(
          index < transaction->space_len; index++) {
         Space *working = transaction->spaces[index].working;
         if (working) {
-            /* Explicit serial mutations can register private occurrence
-             * records. Retire them before the working Space is destroyed. */
-            if (g_library_context && g_library_context->petta_program)
-                petta_program_forget_space(g_library_context->petta_program, working);
+            petta_program_transaction_catalog_free(transaction->spaces[index].catalog);
             space_free(working);
             free(working);
         }
@@ -68277,6 +68324,14 @@ static bool petta_eval_machine_transaction_commit(
         }
     }
 
+    PettaProgram *program = eval_context->library_context
+        ? eval_context->library_context->petta_program : NULL;
+    if (!petta_program_transaction_reserve_publication(program, transaction->space_len)) {
+        free(registry_values);
+        free(state_values);
+        free(state_types);
+        return false;
+    }
     for (size_t index = 0u;
          index < transaction->space_len; index++) {
         PettaEvalTransactionSpace *entry =
@@ -68287,6 +68342,7 @@ static bool petta_eval_machine_transaction_commit(
                 CETTA_RUNTIME_COUNTER_PETTA_TRANSACTION_DIRTY_SPACE_COMMIT);
             space_replace_contents(
                 entry->original, entry->working);
+            petta_program_transaction_catalog_publish(program, entry->original, entry->catalog);
         }
     }
     for (size_t index = 0u;
@@ -70118,19 +70174,9 @@ static bool petta_eval_machine_candidate_snapshot_lease(
         !eval_context->library_context->petta_program) {
         return false;
     }
-    if (eval_context->transaction) {
-        Space *source = space;
-        for (PettaEvalTransaction *scope = eval_context->transaction;
-             scope; scope = scope->parent) {
-            PettaEvalTransactionSpace *image =
-                petta_eval_transaction_space_by_working(scope, source);
-            if (image)
-                source = image->original;
-        }
-        return petta_program_private_image_candidate_lease(
-            eval_context->library_context->petta_program,
-            eval_context->program_projection, source, space, head, lease, stats);
-    }
+    if (petta_program_space_is_private(eval_context->library_context->petta_program, space))
+        return petta_program_candidate_snapshot_lease_profiled(
+            eval_context->library_context->petta_program, space, head, lease, stats);
     if (eval_context->program_projection) {
         /* A worker sharing the captured source Space has the identity
          * presentation: the source's immutable VALUE/CALL roles still apply.
@@ -70140,6 +70186,10 @@ static bool petta_eval_machine_candidate_snapshot_lease(
                 eval_context->program_projection, space))
             return petta_program_revision_view_source_candidate_lease(
                 eval_context->program_projection, space, head, lease, stats);
+        if (petta_program_revision_projection_targets_source(eval_context->program_projection, space))
+            return petta_program_revision_source_live_lease(
+                eval_context->library_context->petta_program, eval_context->program_projection,
+                space, head, lease, stats);
         return petta_program_revision_view_equation_lease(
             eval_context->program_projection,
             space, head, lease, stats);
@@ -71014,6 +71064,10 @@ petta_eval_machine_admit_space_query(
         void *context, Space *space,
         SymbolId head, const CettaGsltTermCursorV1 *arguments,
         CettaExprLen arity, CettaGsltTermCursorObserverV1 observer) {
+    /* Admission only inspects the source. Keep its policy and relevance
+     * reads in one physical transition so an unrelated worker publication
+     * cannot tear this read and abort an otherwise valid call. */
+    CETTA_SCOPED_SHARED_TRANSITION(query_admission);
     PettaMachineSpaceQueryAdmission policy =
         petta_eval_machine_space_query_admission_policy(
             context, space, head, arity);
@@ -71038,6 +71092,7 @@ petta_eval_machine_admit_space_query_values(
         void *context, Space *space, SymbolId head,
         Bindings *environment, const BindingValue *arguments,
         CettaExprLen arity) {
+    CETTA_SCOPED_SHARED_TRANSITION(query_value_admission);
     PettaMachineSpaceQueryAdmission policy =
         petta_eval_machine_space_query_admission_policy(
             context, space, head, arity);
@@ -74884,6 +74939,14 @@ static __attribute__((noinline)) bool petta_eval_machine_run(
         .analysis_state = analysis_state,
 #endif
     };
+    __attribute__((cleanup(petta_program_private_scope_leave)))
+    PettaProgramPrivateScope program_scope = {
+        .program = eval_current_language_id() == CETTA_LANGUAGE_PETTA && context.library_context
+            ? context.library_context->petta_program : NULL,
+        .context = &context, .catalog = petta_eval_private_catalog,
+        .map = petta_eval_private_map, .image_at = petta_eval_private_image_at,
+    };
+    petta_program_private_scope_enter(&program_scope);
     CettaMatchDecisionSemanticIdentity match_decision_semantics =
         petta_eval_machine_match_semantics(
             context.library_context,

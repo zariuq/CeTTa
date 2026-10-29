@@ -631,6 +631,36 @@ bool petta_program_replace_space(
 void petta_program_forget_space(
     PettaProgram *program, const Space *space);
 
+/* Private evaluator images retain complete occurrence catalogs without
+ * registering their working Spaces in the shared program. Immutable plans
+ * remain owned by the enclosing program; catalog vectors have image lifetime.
+ * A scope only selects those owned catalogs. It grants no language authority. */
+typedef struct PettaTransactionCatalog PettaTransactionCatalog;
+typedef struct PettaProgramPrivateScope {
+    PettaProgram *program;
+    void *context;
+    PettaTransactionCatalog *(*catalog)(void *, const Space *);
+    Space *(*map)(void *, Space *);
+    Space *(*image_at)(void *, size_t);
+    const struct PettaProgramPrivateScope *previous;
+} PettaProgramPrivateScope;
+const PettaProgramPrivateScope *petta_program_private_scope_current(void);
+const PettaProgramPrivateScope *petta_program_private_scope_swap(
+    const PettaProgramPrivateScope *scope);
+void petta_program_private_scope_enter(PettaProgramPrivateScope *scope);
+void petta_program_private_scope_leave(PettaProgramPrivateScope *scope);
+bool petta_program_space_is_private(PettaProgram *program, const Space *space);
+PettaTransactionCatalog *petta_program_transaction_catalog_new(
+    PettaProgram *program, const Space *source, Space *image, bool borrow_source);
+void petta_program_transaction_catalog_free(PettaTransactionCatalog *catalog);
+void petta_program_transaction_catalog_storage(
+    const PettaTransactionCatalog *catalog, CettaStorageCensus *census);
+/* Reserve the maximum new public catalog slots before any semantic state is
+ * published. Publication then transfers vectors without allocation. */
+bool petta_program_transaction_reserve_publication(PettaProgram *program, size_t count);
+void petta_program_transaction_catalog_publish(
+    PettaProgram *program, Space *destination, PettaTransactionCatalog *catalog);
+
 /*
  * Return a declaration-ordered snapshot for one call head.  The caller owns
  * the candidate array and frees it with free(3); plans remain program-owned.
@@ -710,6 +740,14 @@ bool petta_program_revision_projection_current(
  * must not silently erase semantic roles through a fallback. */
 bool petta_program_revision_projection_is_source(
     const PettaProgramRevisionProjection *projection, const Space *target);
+bool petta_program_revision_projection_targets_source(
+    const PettaProgramRevisionProjection *projection, const Space *target);
+/* Current live catalog after a same-source revision change. The caller holds
+ * the source transition guard; this cannot authorize a cross-universe copy. */
+bool petta_program_revision_source_live_lease(
+    PettaProgram *program, const PettaProgramRevisionProjection *projection,
+    Space *space, SymbolId head, PettaCandidateSnapshotLease *lease,
+    PettaCandidateSnapshotStats *stats);
 /* The program and source remain owned by the caller. This validates the
  * extra dependencies needed to borrow this view's compiled source plans. */
 bool petta_program_revision_view_source_plans_current(

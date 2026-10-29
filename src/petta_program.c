@@ -7,6 +7,7 @@
 #include "petta_semantics.h"
 #include "shared_transition.h"
 #include "stats.h"
+#include <assert.h>
 #include "symbol.h"
 #include "term_canon.h"
 
@@ -403,6 +404,72 @@ typedef struct {
     size_t type_bucket_cap;
     bool type_index_dirty;
 } PettaProgramAnalysisSpace;
+
+struct PettaTransactionCatalog {
+    PettaProgramSpace catalog;
+    PettaProgramAnalysisSpace analysis;
+};
+
+static _Thread_local const PettaProgramPrivateScope *petta_private_scope;
+
+const PettaProgramPrivateScope *petta_program_private_scope_current(void) {
+    return petta_private_scope;
+}
+
+const PettaProgramPrivateScope *petta_program_private_scope_swap(
+        const PettaProgramPrivateScope *scope) {
+    const PettaProgramPrivateScope *previous = petta_private_scope;
+    petta_private_scope = scope;
+    return previous;
+}
+
+void petta_program_private_scope_enter(PettaProgramPrivateScope *scope) {
+    scope->previous = petta_program_private_scope_swap(scope);
+}
+
+void petta_program_private_scope_leave(PettaProgramPrivateScope *scope) {
+    assert(petta_private_scope == scope);
+    petta_private_scope = scope->previous;
+}
+
+static PettaTransactionCatalog *petta_program_private_catalog(
+        PettaProgram *program, const Space *space) {
+    if (!program || !space) return NULL;
+    for (const PettaProgramPrivateScope *scope = petta_private_scope;
+         scope; scope = scope->previous) {
+        if (scope->program != program || !scope->catalog) continue;
+        PettaTransactionCatalog *catalog = scope->catalog(scope->context, space);
+        if (catalog) return catalog;
+    }
+    return NULL;
+}
+
+bool petta_program_space_is_private(PettaProgram *program, const Space *space) {
+    return petta_program_private_catalog(program, space) != NULL;
+}
+
+static bool petta_program_has_private_images(const PettaProgram *program) {
+    for (const PettaProgramPrivateScope *scope = petta_private_scope;
+         scope; scope = scope->previous) {
+        if (scope->program == program && scope->image_at &&
+            scope->image_at(scope->context, 0u)) return true;
+    }
+    return false;
+}
+
+static Space *petta_program_private_map(PettaProgram *program, Space *space) {
+    /* Each mapping follows original -> working. Repeating over the scope
+     * chain also covers a nested evaluator whose transaction has a different
+     * machine context from its parent's transaction. */
+    for (;;) {
+        Space *before = space;
+        for (const PettaProgramPrivateScope *scope = petta_private_scope;
+             scope; scope = scope->previous)
+            if (scope->program == program && scope->map)
+                space = scope->map(scope->context, space);
+        if (space == before) return space;
+    }
+}
 
 typedef struct {
     PettaProgramAnalysisSpace *spaces;
@@ -3598,7 +3665,8 @@ static bool petta_program_space_is_live(const PettaProgramSpace *space) {
    still describe the cached domain. */
 static bool petta_program_callability_cache_current(
     const PettaProgram *program) {
-    if (!program->callability_cache_valid ||
+    if (petta_program_has_private_images(program) ||
+        !program->callability_cache_valid ||
         program->callability_cache_predeclared_generation !=
             program->predeclared_generation ||
         program->callability_cache_token_len != program->space_len) {
@@ -3680,7 +3748,8 @@ static PettaCallabilityScan petta_program_callability_scan_of(
  * and only the appended rows are read.  False when a space was rewritten,
  * replaced or added; the caller then rescans. */
 static bool petta_program_extend_callability(PettaProgram *program) {
-    if (!program->callability_cache_valid ||
+    if (petta_program_has_private_images(program) ||
+        !program->callability_cache_valid ||
         program->callability_cache_predeclared_generation !=
             program->predeclared_generation ||
         program->callability_cache_token_len != program->space_len) {
@@ -3732,6 +3801,57 @@ static bool petta_program_extend_callability(PettaProgram *program) {
     return true;
 }
 
+static bool petta_program_private_space_append(PettaProgram *program,
+        Space ***spaces, size_t *len, size_t *cap, Space *source) {
+    Space *space = petta_program_private_map(program, source);
+    if (!space) return true;
+    for (size_t i = 0u; i < *len; i++)
+        if ((*spaces)[i] == space) return true;
+    if (!petta_program_reserve((void **)spaces, cap, *len + 1u, sizeof(**spaces)))
+        return false;
+    (*spaces)[(*len)++] = space;
+    return true;
+}
+
+/* A temporary effective program view, never installed in the shared catalog
+ * or callability cache. Include type-only and newly created private Spaces. */
+static bool petta_program_private_spaces(PettaProgram *program,
+        Space ***out, size_t *length) {
+    Space **spaces = NULL;
+    size_t len = 0u, cap = 0u;
+    for (size_t i = 0u; i < program->space_len; i++) {
+        const PettaProgramSpace *entry = &program->spaces[i];
+        if (petta_program_space_is_live(entry) &&
+            !petta_program_private_space_append(program, &spaces, &len, &cap,
+                                               (Space *)entry->space)) goto fail;
+    }
+    for (size_t i = 0u; program->analysis && i < program->analysis->space_len; i++) {
+        const PettaProgramAnalysisSpace *entry = &program->analysis->spaces[i];
+        if (entry->space && entry->instance_id == space_instance_id(entry->space) &&
+            !petta_program_private_space_append(program, &spaces, &len, &cap,
+                                               (Space *)entry->space)) goto fail;
+    }
+    for (const PettaProgramPrivateScope *scope = petta_private_scope;
+         scope; scope = scope->previous) {
+        if (scope->program != program || !scope->image_at) continue;
+        for (size_t i = 0u;; i++) {
+            Space *image = scope->image_at(scope->context, i);
+            if (!image) break;
+            if (!petta_program_private_space_append(program, &spaces, &len, &cap, image))
+                goto fail;
+        }
+    }
+    *out = spaces; *length = len;
+    return true;
+fail:
+    free(spaces);
+    return false;
+}
+
+static void petta_program_private_spaces_free(Space ***spaces) {
+    free(*spaces);
+}
+
 static bool petta_program_scan_callability(
     const PettaProgram *program,
     PettaCallabilityDomain *callability) {
@@ -3769,6 +3889,17 @@ static bool petta_program_collect_callability(
     PettaCallabilityDomain *callability) {
     if (!program || !callability)
         return false;
+    if (petta_program_has_private_images(program)) {
+        Space **spaces = NULL;
+        size_t count = 0u;
+        bool ok = petta_callability_copy(callability, &program->predeclared_callability) &&
+                  petta_program_private_spaces(program, &spaces, &count);
+        for (size_t i = 0u; ok && i < count; i++)
+            ok = petta_program_scan_callability_rows(program, spaces[i], 0u,
+                    space_length64(spaces[i]), callability);
+        free(spaces);
+        return ok;
+    }
     if (petta_program_callability_cache_current(program) ||
         petta_program_extend_callability(program))
         return petta_callability_copy(
@@ -3800,6 +3931,8 @@ static PettaProgramSpace *petta_program_find_space(
     PettaProgram *program, const Space *space) {
     if (!program || !space)
         return NULL;
+    PettaTransactionCatalog *private = petta_program_private_catalog(program, space);
+    if (private) return &private->catalog;
     uint64_t instance = space_instance_id(space);
     for (size_t index = 0u;
          index < program->space_len; index++) {
@@ -4308,10 +4441,18 @@ bool petta_program_revision_projection_current(
 
 bool petta_program_revision_projection_is_source(
         const PettaProgramRevisionProjection *projection, const Space *target) {
-    return petta_program_revision_projection_current(projection, target) &&
-        projection->target.space == projection->view->source_equation_token.space &&
-        projection->target.instance_id == projection->view->source_equation_token.instance_id &&
+    return petta_program_revision_projection_targets_source(projection, target) &&
+        petta_program_revision_projection_current(projection, target) &&
         projection->target.equation_revision == projection->view->source_equation_token.equation_revision;
+}
+
+bool petta_program_revision_projection_targets_source(
+        const PettaProgramRevisionProjection *projection, const Space *target) {
+    return projection && projection->view && target &&
+        target == projection->view->source_equation_token.space &&
+        space_instance_id(target) == projection->view->source_equation_token.instance_id &&
+        projection->target.space == target &&
+        projection->target.instance_id == space_instance_id(target);
 }
 
 static bool petta_program_revision_view_source_plans_current_locked(
@@ -4518,6 +4659,8 @@ static PettaProgramAnalysisSpace *petta_program_find_analysis_space(
     PettaProgram *program, const Space *space) {
     if (!program || !program->analysis || !space)
         return NULL;
+    PettaTransactionCatalog *private = petta_program_private_catalog(program, space);
+    if (private) return &private->analysis;
     uint64_t instance = space_instance_id(space);
     for (size_t index = 0u;
          index < program->analysis->space_len; index++) {
@@ -4551,6 +4694,129 @@ static PettaProgramAnalysisSpace *petta_program_ensure_analysis_space(
     created->space = space;
     created->instance_id = space_instance_id(space);
     return created;
+}
+
+static void petta_program_private_analysis_clear(PettaProgramAnalysisSpace *entry) {
+    petta_program_space_clear_type_index(entry);
+    free(entry->inferred_signatures);
+    free(entry->type_annotations);
+    const Space *space = entry->space;
+    uint64_t instance = entry->instance_id;
+    *entry = (PettaProgramAnalysisSpace){.space = space, .instance_id = instance};
+}
+
+PettaTransactionCatalog *petta_program_transaction_catalog_new(
+        PettaProgram *program, const Space *source, Space *image, bool borrow_source) {
+    CETTA_SCOPED_SHARED_TRANSITION(private_catalog_capture);
+    if (!program || !source || !image) return NULL;
+    if (borrow_source && source->native.universe != image->native.universe)
+        return NULL;
+    PettaTransactionCatalog *result = calloc(1u, sizeof(*result));
+    if (!result) return NULL;
+    result->catalog.space = result->analysis.space = image;
+    result->catalog.instance_id = result->analysis.instance_id = space_instance_id(image);
+    result->catalog.head_index_dirty = true;
+    result->analysis.type_index_dirty = true;
+    const PettaProgramSpace *entry = borrow_source ? petta_program_find_space(program, source) : NULL;
+    const PettaProgramAnalysisSpace *analysis = borrow_source
+        ? petta_program_find_analysis_space(program, source) : NULL;
+    if (entry) {
+        if (!petta_program_reserve((void **)&result->catalog.equations,
+                &result->catalog.equation_cap, entry->equation_len, sizeof(*entry->equations)) ||
+            !petta_program_reserve((void **)&result->catalog.pending_heads,
+                &result->catalog.pending_head_cap, entry->pending_head_len, sizeof(*entry->pending_heads)))
+            goto fail;
+        if (entry->equation_len)
+            memcpy(result->catalog.equations, entry->equations,
+                   entry->equation_len * sizeof(*entry->equations));
+        if (entry->pending_head_len)
+            memcpy(result->catalog.pending_heads, entry->pending_heads,
+                   entry->pending_head_len * sizeof(*entry->pending_heads));
+        result->catalog.equation_len = entry->equation_len;
+        result->catalog.pending_head_len = entry->pending_head_len;
+    }
+    if (analysis) {
+        if (!petta_program_reserve((void **)&result->analysis.type_annotations,
+                &result->analysis.type_annotation_cap, analysis->type_annotation_len,
+                sizeof(*analysis->type_annotations))) goto fail;
+        if (analysis->type_annotation_len)
+            memcpy(result->analysis.type_annotations, analysis->type_annotations,
+                   analysis->type_annotation_len * sizeof(*analysis->type_annotations));
+        result->analysis.type_annotation_len = analysis->type_annotation_len;
+    }
+    return result;
+fail:
+    petta_program_transaction_catalog_free(result);
+    return NULL;
+}
+
+void petta_program_transaction_catalog_free(PettaTransactionCatalog *catalog) {
+    if (!catalog) return;
+    petta_program_space_dispose_catalog(&catalog->catalog);
+    petta_program_space_free_pending(&catalog->catalog);
+    petta_program_private_analysis_clear(&catalog->analysis);
+    free(catalog);
+}
+
+bool petta_program_transaction_reserve_publication(PettaProgram *program, size_t count) {
+    if (!program) return true;
+    if (count > SIZE_MAX - program->space_len ||
+        !petta_program_reserve((void **)&program->spaces, &program->space_cap,
+            program->space_len + count, sizeof(*program->spaces))) return false;
+    return !program->analysis ||
+        (count <= SIZE_MAX - program->analysis->space_len &&
+         petta_program_reserve((void **)&program->analysis->spaces,
+            &program->analysis->space_cap, program->analysis->space_len + count,
+            sizeof(*program->analysis->spaces)));
+}
+
+void petta_program_transaction_catalog_publish(
+        PettaProgram *program, Space *destination, PettaTransactionCatalog *catalog) {
+    if (!program || !destination || !catalog) return;
+    PettaProgramSpace *target = petta_program_find_space(program, destination);
+    if (!target && (catalog->catalog.equation_len || catalog->catalog.pending_head_len ||
+                    catalog->analysis.type_annotation_len)) {
+        /* Capacity was reserved before semantic publication. */
+        assert(program->space_len < program->space_cap);
+        target = &program->spaces[program->space_len++];
+        *target = (PettaProgramSpace){.space = destination,
+                                    .instance_id = space_instance_id(destination)};
+    }
+    if (target) {
+        petta_program_space_free_pending(target);
+        petta_program_space_clear_type_families(target);
+        petta_program_space_replace_catalog(target, catalog->catalog.equations,
+                                            catalog->catalog.equation_len);
+        target->equation_cap = catalog->catalog.equation_cap;
+        catalog->catalog.equations = NULL;
+        catalog->catalog.equation_len = catalog->catalog.equation_cap = 0u;
+        target->pending_heads = catalog->catalog.pending_heads;
+        target->pending_head_len = catalog->catalog.pending_head_len;
+        target->pending_head_cap = catalog->catalog.pending_head_cap;
+        catalog->catalog.pending_heads = NULL;
+        catalog->catalog.pending_head_len = catalog->catalog.pending_head_cap = 0u;
+        target->synchronized_revision = space_revision(destination);
+        target->synchronized_program = space_program_token(destination);
+        /* Future synchronization preserves these plans and checks any
+         * unregistered source rows; do not invent a completeness receipt. */
+        target->synchronized_snapshot = false;
+    }
+    PettaProgramAnalysisSpace *analysis = petta_program_find_analysis_space(program, destination);
+    if (!analysis && program->analysis && catalog->analysis.type_annotation_len) {
+        assert(program->analysis->space_len < program->analysis->space_cap);
+        analysis = &program->analysis->spaces[program->analysis->space_len++];
+        *analysis = (PettaProgramAnalysisSpace){.space = destination,
+                                              .instance_id = space_instance_id(destination)};
+    }
+    if (analysis) {
+        petta_program_private_analysis_clear(analysis);
+        analysis->type_annotations = catalog->analysis.type_annotations;
+        analysis->type_annotation_len = catalog->analysis.type_annotation_len;
+        analysis->type_annotation_cap = catalog->analysis.type_annotation_cap;
+        analysis->type_index_dirty = true;
+        catalog->analysis.type_annotations = NULL;
+        catalog->analysis.type_annotation_len = catalog->analysis.type_annotation_cap = 0u;
+    }
 }
 
 PettaProgram *petta_program_new_with_rules_and_host_intrinsics(unsigned admitted_forms,
@@ -5040,6 +5306,19 @@ const PettaPlanNode *petta_program_plan_transient(
         callability = &owned;
         current = petta_program_callability_cache_current(program);
     }
+    if (petta_program_has_private_images(program)) {
+        /* Share only content-interned immutable plan shapes. A private
+         * callability domain must not retag the public translation/value
+         * caches, nor retain request syntax as a global memo key. */
+        ArenaMark mark = arena_mark(&program->transient_scratch);
+        const PettaPlanNode *built = petta_plan_build_in(program,
+            &program->transient_scratch, callability, atom, false, true,
+            environment, NULL, 0u);
+        const PettaPlanNode *plan = built ? petta_program_intern_plan(program, built) : NULL;
+        arena_reset(&program->transient_scratch, mark);
+        free(owned.named_heads);
+        return plan;
+    }
     if (!environment || !program->transient_environment_valid ||
         !petta_translation_environment_equal(
             &program->transient_environment, environment)) {
@@ -5422,7 +5701,8 @@ static bool petta_program_refresh_callability(PettaProgram *program,
         free(local.named_heads);
         return false;
     }
-    const PettaCallabilityDomain *domain = program->callability_cache_valid
+    bool cached = !petta_program_has_private_images(program) && program->callability_cache_valid;
+    const PettaCallabilityDomain *domain = cached
         ? &program->callability_cache : &local;
     typedef struct {
         size_t index;
@@ -5447,7 +5727,7 @@ static bool petta_program_refresh_callability(PettaProgram *program,
             if (head != SYMBOL_ID_NONE && record->head != SYMBOL_ID_NONE &&
                 record->head != head)
                 continue;
-            if (program->callability_cache_valid && program->callability_epoch &&
+            if (cached && program->callability_epoch &&
                 entry->plan_callability_epochs[index] == program->callability_epoch)
                 continue;
             Atom *syntax = record->planning_syntax;
@@ -5457,7 +5737,7 @@ static bool petta_program_refresh_callability(PettaProgram *program,
                 break;
             if (!changed) {
                 entry->plan_callability_epochs[index] =
-                    program->callability_cache_valid ? program->callability_epoch : 0u;
+                    cached ? program->callability_epoch : 0u;
                 continue;
             }
             const PettaPlanNode *plan = petta_plan_build(program, domain, syntax);
@@ -5479,7 +5759,7 @@ static bool petta_program_refresh_callability(PettaProgram *program,
             PettaProgramEquation *record = &entry->equations[updates[i].index];
             record->plan = updates[i].plan;
             entry->plan_callability_epochs[updates[i].index] =
-                program->callability_cache_valid ? program->callability_epoch : 0u;
+                cached ? program->callability_epoch : 0u;
         }
         if (len)
             petta_program_space_commit_catalog_mutation(entry);
@@ -6225,6 +6505,14 @@ void petta_program_forget_space(
     CETTA_SCOPED_SHARED_TRANSITION(program_catalog_forget);
     if (!program || !space)
         return;
+    PettaTransactionCatalog *private = petta_program_private_catalog(program, space);
+    if (private) {
+        petta_program_space_dispose_catalog(&private->catalog);
+        petta_program_space_free_pending(&private->catalog);
+        private->catalog.synchronized_snapshot = false;
+        petta_program_private_analysis_clear(&private->analysis);
+        return;
+    }
     for (size_t index = 0u;
          index < program->space_len; index++) {
         PettaProgramSpace *entry = &program->spaces[index];
@@ -6789,13 +7077,28 @@ bool petta_program_candidate_snapshot_lease_profiled(
        optimization evidence, so concurrent workers may read only an
        explicitly captured immutable revision view. */
     PettaProgramSpace *entry =
-        program && !cetta_shared_transition_scope_active()
+        program && (!cetta_shared_transition_scope_active() ||
+                    petta_program_space_is_private(program, space))
             ? petta_program_find_space(program, space)
             : NULL;
     if (!petta_program_refresh_callability(program, entry, head))
         return false;
     return petta_program_candidate_snapshot_lease_from_entry(
         entry, entry, true, petta_program_rule_forms(program), program && program->graded_equations, space, head, lease, stats);
+}
+
+bool petta_program_revision_source_live_lease(
+        PettaProgram *program, const PettaProgramRevisionProjection *projection,
+        Space *space, SymbolId head, PettaCandidateSnapshotLease *lease,
+        PettaCandidateSnapshotStats *stats) {
+    CETTA_SCOPED_SHARED_TRANSITION(live_source_catalog);
+    if (!petta_program_revision_projection_targets_source(projection, space))
+        return false;
+    PettaProgramSpace *entry = petta_program_find_space(program, space);
+    if (!petta_program_refresh_callability(program, entry, head)) return false;
+    return petta_program_candidate_snapshot_lease_from_entry(entry, entry, true,
+        petta_program_rule_forms(program), program && program->graded_equations,
+        space, head, lease, stats);
 }
 
 bool petta_rule_snapshot_lease(Space *space, SymbolId head, unsigned admitted_forms,
@@ -7285,13 +7588,21 @@ bool petta_program_type_annotation_snapshot(
         return false;
     if (!program || !program->analysis)
         return true;
+    bool private = petta_program_has_private_images(program);
+    __attribute__((cleanup(petta_program_private_spaces_free)))
+    Space **private_spaces = NULL;
+    size_t private_count = 0u;
+    if (private && !petta_program_private_spaces(program, &private_spaces, &private_count))
+        return false;
     Atom **annotations = NULL;
     size_t count = 0u;
     size_t capacity = 0u;
     for (size_t space_index = 0u;
-         space_index < program->analysis->space_len; space_index++) {
-        PettaProgramAnalysisSpace *entry =
-            &program->analysis->spaces[space_index];
+         space_index < (private ? private_count : program->analysis->space_len); space_index++) {
+        PettaProgramAnalysisSpace *entry = private
+            ? petta_program_find_analysis_space(program, private_spaces[space_index])
+            : &program->analysis->spaces[space_index];
+        if (!entry) continue;
         for (size_t annotation_index = 0u;
              annotation_index < entry->type_annotation_len;
              annotation_index++) {
@@ -7323,13 +7634,21 @@ uint32_t petta_program_declared_types(
         subject->kind != ATOM_SYMBOL ||
         !arena || !types_out)
         return 0u;
+    bool private = petta_program_has_private_images(program);
+    __attribute__((cleanup(petta_program_private_spaces_free)))
+    Space **private_spaces = NULL;
+    size_t private_count = 0u;
+    if (private && !petta_program_private_spaces(program, &private_spaces, &private_count))
+        return 0u;
     Atom **types = NULL;
     size_t count = 0u;
     size_t capacity = 0u;
     for (size_t space_index = 0u;
-         space_index < program->analysis->space_len; space_index++) {
-        PettaProgramAnalysisSpace *entry =
-            &program->analysis->spaces[space_index];
+         space_index < (private ? private_count : program->analysis->space_len); space_index++) {
+        PettaProgramAnalysisSpace *entry = private
+            ? petta_program_find_analysis_space(program, private_spaces[space_index])
+            : &program->analysis->spaces[space_index];
+        if (!entry) continue;
         if (entry->type_index_dirty &&
             !petta_program_space_rebuild_type_index(entry)) {
             free(types);
@@ -8229,6 +8548,24 @@ static void petta_program_catalog_storage(const PettaProgramSpace *entry,
     }
     if (entry->type_families_current) arena_storage_census(&entry->type_family_storage, census);
     petta_program_revision_view_storage_census(entry->revision_view, census);
+}
+
+void petta_program_transaction_catalog_storage(
+        const PettaTransactionCatalog *catalog, CettaStorageCensus *census) {
+    if (!catalog || !cetta_storage_object(census, catalog, sizeof(*catalog),
+                                         CETTA_STORAGE_BLOCK)) return;
+    petta_program_catalog_storage(&catalog->catalog, census);
+    const PettaProgramAnalysisSpace *entry = &catalog->analysis;
+    if (!petta_program_storage_array(census, entry->type_annotations,
+            entry->type_annotation_len, entry->type_annotation_cap, sizeof(*entry->type_annotations)) ||
+        !petta_program_storage_array(census, entry->inferred_signatures,
+            entry->inferred_signature_len, entry->inferred_signature_cap, sizeof(*entry->inferred_signatures)) ||
+        !petta_program_storage_array(census, entry->type_buckets,
+            entry->type_bucket_len, entry->type_bucket_cap, sizeof(*entry->type_buckets))) return;
+    for (size_t i = 0u; i < entry->type_bucket_len; i++)
+        if (!petta_program_storage_array(census, entry->type_buckets[i].types,
+                entry->type_buckets[i].len, entry->type_buckets[i].cap,
+                sizeof(*entry->type_buckets[i].types))) return;
 }
 
 void petta_program_revision_view_storage_census(

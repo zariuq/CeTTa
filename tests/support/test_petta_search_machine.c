@@ -7824,6 +7824,122 @@ static void test_program_revision_view_transport(
          " occurrences and falls back safely after mutation");
 }
 
+typedef struct {
+    Space *source, *image;
+    PettaTransactionCatalog *catalog;
+} TestPrivateProgramImage;
+
+static PettaTransactionCatalog *test_private_program_catalog(void *raw, const Space *space) {
+    TestPrivateProgramImage *image = raw;
+    return image->image == space ? image->catalog : NULL;
+}
+static Space *test_private_program_map(void *raw, Space *space) {
+    TestPrivateProgramImage *image = raw;
+    return image->source == space ? image->image : space;
+}
+static Space *test_private_program_image_at(void *raw, size_t index) {
+    return index == 0u ? ((TestPrivateProgramImage *)raw)->image : NULL;
+}
+static PettaProgramPrivateScope test_private_program_scope(
+        PettaProgram *program, TestPrivateProgramImage *image) {
+    return (PettaProgramPrivateScope){.program = program, .context = image,
+        .catalog = test_private_program_catalog, .map = test_private_program_map,
+        .image_at = test_private_program_image_at};
+}
+
+static void test_program_private_catalog_scope(TermUniverse *universe, Arena *arena) {
+    Space source;
+    space_init_with_universe(&source, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program);
+    add_compiled_program_equation(program, &source, arena, "(= (private-keep $x) $x)");
+    assert(petta_program_enable_analysis(program));
+    SymbolId keep = symbol_intern_cstr(g_symbols, "private-keep");
+    Atom *future = parse_one(arena, "(private-future)");
+    const PettaPlanNode *before = petta_program_plan_current(program, future);
+    assert(before && !before->relation_head_admitted);
+    PettaCandidateSnapshotLease held = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &source, keep, &held, NULL));
+    assert(held.len == 1u && held.items[0].rhs_plan && held.items[0].rhs_plan->role == PETTA_PLAN_VALUE);
+    const PettaPlanNode *held_plan = held.items[0].rhs_plan;
+
+    Space *outer = space_heap_clone_shallow(&source);
+    assert(outer);
+    PettaTransactionCatalog *outer_catalog = petta_program_transaction_catalog_new(program, &source, outer, true);
+    assert(outer_catalog);
+    TestPrivateProgramImage outer_image = {&source, outer, outer_catalog};
+    PettaProgramPrivateScope outer_scope = test_private_program_scope(program, &outer_image);
+    petta_program_private_scope_enter(&outer_scope);
+    add_compiled_program_equation(program, outer, arena, "(= (private-future) 99)");
+    Atom *declaration = parse_one(arena, "(: private-type-marker PrivateType)");
+    space_add(outer, declaration);
+    assert(petta_program_note_add(program, outer, declaration, NULL));
+    Atom *type_subject = parse_one(arena, "private-type-marker");
+    Atom **types = NULL;
+    assert(petta_program_declared_types(program, type_subject, arena, &types) == 1u);
+    free(types); types = NULL;
+    const PettaPlanNode *inside = petta_program_plan_current(program, future);
+    assert(inside && inside->relation_head_admitted && space_length64(&source) == 1u);
+
+    Space *inner = space_heap_clone_shallow(outer);
+    assert(inner);
+    PettaTransactionCatalog *inner_catalog = petta_program_transaction_catalog_new(program, outer, inner, true);
+    assert(inner_catalog);
+    TestPrivateProgramImage inner_image = {outer, inner, inner_catalog};
+    PettaProgramPrivateScope inner_scope = test_private_program_scope(program, &inner_image);
+    petta_program_private_scope_enter(&inner_scope);
+    add_compiled_program_equation(program, inner, arena, "(= (private-inner $x) $x)");
+    PettaCandidateSnapshotLease private_lease = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(program, inner, keep, &private_lease, NULL));
+    assert(private_lease.len == 1u && private_lease.items[0].rhs_plan == held_plan);
+    petta_program_candidate_snapshot_lease_release(&private_lease);
+    assert(petta_program_transaction_reserve_publication(program, 1u));
+    space_replace_contents(outer, inner);
+    petta_program_transaction_catalog_publish(program, outer, inner_catalog);
+    petta_program_private_scope_leave(&inner_scope);
+    petta_program_transaction_catalog_free(inner_catalog);
+    space_free(inner); free(inner);
+    Atom *inner_call = parse_one(arena, "(private-inner x)");
+    const PettaPlanNode *nested = petta_program_plan_current(program, inner_call);
+    assert(nested && nested->relation_head_admitted && space_length64(outer) == 4u);
+
+    /* Leaving a private scope must restore public callability, including
+       after a nested publication. A failed reservation publishes nothing. */
+    petta_program_private_scope_leave(&outer_scope);
+    const PettaPlanNode *outside = petta_program_plan_current(program, future);
+    assert(outside && !outside->relation_head_admitted);
+    assert(petta_program_declared_types(program, type_subject, arena, &types) == 0u);
+    free(types); types = NULL;
+    assert(!petta_program_transaction_reserve_publication(program, SIZE_MAX));
+    assert(space_length64(&source) == 1u);
+    petta_program_private_scope_enter(&outer_scope);
+    assert(petta_program_transaction_reserve_publication(program, 1u));
+    space_replace_contents(&source, outer);
+    petta_program_transaction_catalog_publish(program, &source, outer_catalog);
+    petta_program_private_scope_leave(&outer_scope);
+    petta_program_transaction_catalog_free(outer_catalog);
+    space_free(outer); free(outer);
+    const PettaPlanNode *published = petta_program_plan_current(program, future);
+    assert(published && published->relation_head_admitted && space_length64(&source) == 4u);
+    assert(petta_program_declared_types(program, type_subject, arena, &types) == 1u);
+    free(types);
+    assert(held.items[0].rhs_plan == held_plan && held_plan->role == PETTA_PLAN_VALUE);
+    petta_program_candidate_snapshot_lease_release(&held);
+
+    Arena foreign_arena;
+    TermUniverse foreign_universe;
+    Space foreign;
+    arena_init(&foreign_arena);
+    arena_set_runtime_kind(&foreign_arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    term_universe_init(&foreign_universe);
+    term_universe_set_persistent_arena(&foreign_universe, &foreign_arena);
+    space_init_with_universe(&foreign, &foreign_universe);
+    assert(!petta_program_transaction_catalog_new(program, &source, &foreign, true));
+    space_free(&foreign); term_universe_free(&foreign_universe); arena_free(&foreign_arena);
+    petta_program_free(program); space_free(&source);
+    puts("PASS: private catalogs isolate callability, compose nested publication and retain active source plans");
+}
+
 static void test_program_analysis_sidecar_interop(
     TermUniverse *universe, Arena *persistent, Arena *scratch) {
     Space shared_space;
@@ -15966,6 +16082,7 @@ int main(int argc, char **argv) {
     test_native_argument_observation();
     if (revision_only) {
         test_program_revision_view_transport(&universe, &persistent);
+        test_program_private_catalog_scope(&universe, &persistent);
         goto release_owners;
     }
     if (transient_only) {
@@ -16105,6 +16222,7 @@ int main(int argc, char **argv) {
         &universe, &persistent);
     test_program_revision_view_transport(
         &universe, &persistent);
+    test_program_private_catalog_scope(&universe, &persistent);
     test_program_analysis_sidecar_interop(
         &universe, &persistent, &answers);
     test_typed_data_purity_boundary(
