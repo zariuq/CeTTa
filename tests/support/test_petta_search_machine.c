@@ -7912,6 +7912,64 @@ static void test_program_transferred_roles(TermUniverse *universe, Arena *arena)
     puts("PASS: transported spaces retain occurrence roles, duplicate equations and types after source retirement");
 }
 
+static void test_private_transient_value_isolation(TermUniverse *universe, Arena *arena) {
+    Space source;
+    space_init_with_universe(&source, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program && petta_program_synchronize_space(program, &source));
+    Arena input;
+    arena_init_detached(&input);
+    const Arena *sources[] = {&input};
+    PettaTranslationEnvironment environment = {.source_arenas = sources,
+        .source_arena_count = 1u, .host_identity = g_symbols,
+        .symbol_table_instance = symbol_table_instance_id(g_symbols)};
+    Atom *future = parse_one(&input, "(private-value-future 7)");
+    assert(transient_plan_is_value(program, future, &environment));
+    Space *working = space_heap_clone_shallow(&source);
+    assert(working);
+    PettaTransactionCatalog *catalog = petta_program_transaction_catalog_new(
+        program, &source, working, true);
+    assert(catalog);
+    TestPrivateProgramImage image = {&source, working, catalog};
+    PettaProgramPrivateScope scope = test_private_program_scope(program, &image);
+    petta_program_private_scope_enter(&scope);
+    add_compiled_program_equation(program, working, arena,
+        "(= (private-value-future $x) $x)");
+    /* A public positive value certificate is inapplicable to this private
+     * definition revision even when the syntax/arena addresses are identical. */
+    assert(!transient_plan_is_value(program, future, &environment));
+    Atom *payload = atom_int(&input, 0);
+    Atom *head = atom_symbol(&input, "private-payload-box");
+    Atom *trees[128];
+    for (size_t i = 0u; i < 128u; i++)
+        trees[i] = payload = atom_expr2(&input, head, payload);
+    const PettaPlanNode *value = petta_program_plan_transient(program, payload, &environment);
+    assert(value && value->role == PETTA_PLAN_VALUE && value->child_count == 0u);
+    CettaStorageCensus warm = {0};
+    petta_program_storage_census(program, &warm);
+    cetta_storage_finish(&warm);
+    assert(!warm.incomplete && !warm.overflow);
+    size_t bytes = warm.bytes;
+    cetta_storage_census_free(&warm);
+    for (size_t i = 0u; i < 128u; i++) {
+        const PettaPlanNode *plan = petta_program_plan_transient(program, trees[i], &environment);
+        assert(plan == value);
+    }
+    CettaStorageCensus after = {0};
+    petta_program_storage_census(program, &after);
+    cetta_storage_finish(&after);
+    assert(!after.incomplete && !after.overflow && after.bytes == bytes);
+    cetta_storage_census_free(&after);
+    petta_program_private_scope_leave(&scope);
+    assert(transient_plan_is_value(program, future, &environment));
+    petta_program_transaction_catalog_free(catalog);
+    space_free(working); free(working);
+    petta_program_free(program);
+    space_free(&source);
+    arena_free(&input);
+    puts("PASS: private value admission isolates public certificates and retains constant plan storage for data shapes");
+}
+
 static void test_program_private_catalog_scope(TermUniverse *universe, Arena *arena) {
     Space source;
     space_init_with_universe(&source, universe);
@@ -16149,6 +16207,7 @@ int main(int argc, char **argv) {
         test_program_revision_view_transport(&universe, &persistent);
         test_program_private_catalog_scope(&universe, &persistent);
         test_program_transferred_roles(&universe, &persistent);
+        test_private_transient_value_isolation(&universe, &persistent);
         goto release_owners;
     }
     if (transient_only) {
@@ -16290,6 +16349,7 @@ int main(int argc, char **argv) {
         &universe, &persistent);
     test_program_private_catalog_scope(&universe, &persistent);
     test_program_transferred_roles(&universe, &persistent);
+    test_private_transient_value_isolation(&universe, &persistent);
     test_program_analysis_sidecar_interop(
         &universe, &persistent, &answers);
     test_typed_data_purity_boundary(

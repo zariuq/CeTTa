@@ -5299,6 +5299,11 @@ const PettaPlanNode *petta_program_plan_transient(
     CETTA_SCOPED_SHARED_TRANSITION(program_plan_transient);
     if (!program || !atom)
         return NULL;
+    static const PettaPlanNode value_plan = {
+        .role = PETTA_PLAN_VALUE, .output = PETTA_PLAN_OUTPUT_VALUE,
+        .computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN,
+        .source_position = 1u, .source_debit = 1u,
+    };
     PettaCallabilityDomain owned = {0};
     const PettaCallabilityDomain *callability =
         &program->callability_cache;
@@ -5315,11 +5320,17 @@ const PettaPlanNode *petta_program_plan_transient(
         /* Share only content-interned immutable plan shapes. A private
          * callability domain must not retag the public translation/value
          * caches, nor retain request syntax as a global memo key. */
+        if (petta_translation_is_value(program, callability, NULL, atom)) {
+            free(owned.named_heads);
+            return &value_plan;
+        }
         ArenaMark mark = arena_mark(&program->transient_scratch);
-        const PettaPlanNode *built = petta_plan_build_in(program,
+        PettaPlanNode *built = petta_plan_build_in(program,
             &program->transient_scratch, callability, atom, false, true,
-            environment, NULL, 0u);
-        const PettaPlanNode *plan = built ? petta_program_intern_plan(program, built) : NULL;
+            NULL, NULL, 0u);
+        const PettaPlanNode *plan = built &&
+                petta_plan_collapse_values(program, atom, built, NULL)
+            ? petta_program_intern_plan(program, built) : NULL;
         arena_reset(&program->transient_scratch, mark);
         free(owned.named_heads);
         return plan;
@@ -5341,11 +5352,6 @@ const PettaPlanNode *petta_program_plan_transient(
     if (current && environment &&
         petta_translation_is_value(
             program, callability, environment, atom)) {
-        static const PettaPlanNode value_plan = {
-            .role = PETTA_PLAN_VALUE, .output = PETTA_PLAN_OUTPUT_VALUE,
-            .computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN,
-            .source_position = 1u, .source_debit = 1u,
-        };
         free(owned.named_heads);
         return &value_plan;
     }
