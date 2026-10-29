@@ -127,7 +127,8 @@ materialization precedes a scan's first row.
   produced prefix, and scans released.
 
 Every step advances at most one leaf stream. `(KqWork steps examined-keys
-decoded-bytes)` measures accumulated work. A full page needs another probe to
+decoded-source-bytes)` measures driver steps and storage input, not all CPU,
+copying or allocation costs. A full page needs another probe to
 establish completion. Consume a continuation once; to cancel it, call
 `kbq:close cursor`. Terminal cursors have already closed. A rejected page
 argument does not consume the cursor. The borrowed view is closed separately.

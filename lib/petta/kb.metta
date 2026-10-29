@@ -151,7 +151,8 @@
 ; Selectors choose exact structural access paths. General pattern matching is
 ; layered on these streams and must not mistake structural equality for unify.
 (= (kb:explain $selector)
-   (if (== (get-metatype $selector) Variable) (KbRefused selector-format) (kb:explain-value $selector)))
+   (if (or (== $selector KbAll) (knowledge:headed? $selector))
+       (kb:explain-value $selector) (KbRefused selector-format)))
 (= (kb:explain-value $selector)
    (case $selector
      ((KbAll (KbAccess facts (kb:fact-prefix)))

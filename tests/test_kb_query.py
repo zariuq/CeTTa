@@ -198,6 +198,38 @@ class QueryTests(unittest.TestCase):
             self.assertIn(first[2], (S("more"), S("paused")))
         self.assertEqual(len(list(fds.iterdir())), baseline)
 
+    def test_malformed_explanations_and_free_cursors_refuse_without_binding(self):
+        for plan, reason in [(Var(1), "query-plan"), (E("KqRows", S("bad")), "query-rows"),
+                             (E("KqUnion", S("bad")), "query-plans"), ((Var(1), ()), "query-plan")]:
+            with self.subTest(plan=plan):
+                self.assertEqual(self.worker.call(E("ExplainQuery", plan)), E("KbRefused", S(reason)))
+        answers = self.worker.call(E("CursorOperations", Var(1)))
+        self.assertEqual(answers[:-1], (E("KbRefused", S("query-cursor")),) * 5)
+        self.assertEqual(answers[-1], S("Variable"))
+        result = self.query(E("KqRows", ()), E("FreeObservation", Var(1)))
+        self.assertEqual(result, E("KqObservationCheck", E("KnowledgeRefusedV1", S("bound-observation-required")), S("Variable")))
+
+    def test_existence_queries_keep_original_open_rows(self):
+        x, y = Var(1), Var(2)
+        original = E("KbFact", "open", "rule", (x, y))
+        self.commit([E("KbPut", "open", "rule", (x, y))])
+        row = Var(3)
+        left = E("KqScan", E("KbRelation", "rule"), row, row)
+        pattern = E("KbFact", Var(4), "rule", (Var(5), 42))
+        for mode, right in [("KqSemi", (S("hit"),)), ("KqAnti", ())]:
+            with self.subTest(mode=mode):
+                result = self.rows(E(mode, left, pattern, E("KqRows", right)))
+                self.assertEqual(encode(result), encode((original,)))
+
+    def test_pattern_matching_does_not_mutate_later_rows_or_input_plan(self):
+        x, a = Var(1), Var(2)
+        plan = E("KqBind", E("KqRows", ((x, 1), (x, 2))), (a, a), E("KqRows", (E("diag", a),)))
+        result = self.query(plan, E("PagesWithPlan", 1, 2))
+        self.assertEqual(result[0], S("KqWithPlan"))
+        rows = tuple(row for page in result[1][1] for row in page)
+        self.assertEqual(rows, (E("diag", 1), E("diag", 2)))
+        self.assertEqual(encode(result[2]), encode(plan))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -29,6 +29,11 @@
        (let $cursor (KqCursor $v $state $steps $keys $bytes)
          (case $command
            (((Pages $count $fuel) (kbq-probe:pages $cursor $count $fuel 10000 ()))
+            ((PagesWithPlan $count $fuel)
+             (let $answer (kbq-probe:pages $cursor $count $fuel 10000 ()) (KqWithPlan $answer $plan)))
+            ((FreeObservation $observation)
+             (let* (($result (knowledge:scopes-on $view $observation)) ($closed (kbq:close $cursor)))
+               (KqObservationCheck $result (get-metatype $observation))))
             ((First $count $fuel) (kbq-probe:first $cursor $count $fuel))
             ((Held $changes $count $fuel)
              (let $committed (kb-probe:commit $owner $view (HeldQuery $changes) $changes
@@ -60,4 +65,7 @@
              (let $closed (store:close $owner) $result)))
           ($error $error))))
       ((ExplainQuery $plan) (kbq:explain $plan))
+      ((CursorOperations $cursor)
+       ((kbq:observe $cursor) (kbq:work $cursor) (kbq:close $cursor)
+        (kbq:step $cursor) (kbq:page $cursor 1 1) (get-metatype $cursor)))
       ($ordinary (kb-probe:run $ordinary)))))

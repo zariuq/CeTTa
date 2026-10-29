@@ -5,6 +5,15 @@
 !(import! &self (library store))
 !(import! &self (library str))
 
+; Protocol records are data constructors, not patterns to instantiate.
+(= (knowledge:headed? $value)
+  (if (== (get-metatype $value) Expression)
+    (if (> (size-atom $value) 0)
+      (not (== (get-metatype (car-atom $value)) Variable)) False) False))
+(= (knowledge:tagged? $value $tag $size)
+  (if (knowledge:headed? $value)
+    (and (== (size-atom $value) $size) (== (car-atom $value) $tag)) False))
+
 (= (knowledge:ground-identity? $identity)
   (case (get-metatype $identity)
     ((Variable False)
@@ -91,6 +100,10 @@
     (((KnowledgeObservedV1 $points $reads) (KnowledgeObservedOnV2 $view $points $reads))
      ($error $error))))
 (= (knowledge:scopes-on $view $observation)
+  (if (knowledge:tagged? $observation KnowledgeObservedOnV2 4)
+    (knowledge:scopes-value $view $observation)
+    (KnowledgeRefusedV1 bound-observation-required)))
+(= (knowledge:scopes-value $view $observation)
   (case $observation
     (((KnowledgeObservedOnV2 $captured $points $reads)
       (if (== $view $captured) (KnowledgeReadScopesV2 $reads)

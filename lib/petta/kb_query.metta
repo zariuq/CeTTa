@@ -6,7 +6,16 @@
 ; Encoding the pattern and continuation together preserves their variable
 ; sharing. Decoding for each candidate freshens query variables independently.
 ; In particular a binding from one row must not constrain the next row.
+; Copy the row too: matching may bind its variables, while semi/anti return
+; the original value and a KqRows tail may share variables with that value.
 (= (kbq:match $program $row)
+   (case (store:encode $row)
+     (((StoreEncoded $bytes)
+       (case (store:decode $bytes)
+         (((StoreDecoded $fresh) (kbq:match-fresh $program $fresh))
+          ($error (KbRefused query-row-codec)))))
+      ($error (KbRefused query-row-codec)))))
+(= (kbq:match-fresh $program $row)
    (case (store:decode $program)
      (((StoreDecoded (KqMatch $pattern $template))
        (case $row (($pattern (KqHit $template)) ($other KqMiss))))
@@ -15,7 +24,7 @@
    (case (kbq:begin $view $plan $bytes)
      (((KqReady $state) (KqCursor $view $state 0 0 0)) ($error $error))))
 (= (kbq:begin $view $plan $bytes)
-   (if (== (get-metatype $plan) Variable) (KbRefused query-plan)
+   (if (not (knowledge:headed? $plan)) (KbRefused query-plan)
      (case $plan
        (((KqRows $rows)
          (if (== (get-metatype $rows) Expression) (KqReady (KqRowsState $rows))
@@ -60,10 +69,24 @@
 ; Conservative validation covers even unvisited negative/aggregate/path facts.
 ; These plans have no arbitrary effectful callbacks or external reads. A caller
 ; adding such computations must supply their additional dependency contract.
-(= (kbq:observe (KqCursor $view $state $steps $keys $bytes))
+(= (kbq:cursor? $cursor)
+   ; This validates record shape. Native operations still check owned handles;
+   ; a printed NativeHandle expression is not an owning reference.
+   (if (knowledge:tagged? $cursor KqCursor 6)
+       (let (KqCursor $view $state $steps $keys $bytes) $cursor
+         (if (and (not (== (get-metatype $view) Variable)) (knowledge:headed? $state))
+             (if (and (kb:integer? $steps) (and (kb:integer? $keys) (kb:integer? $bytes)))
+                 (and (>= $steps 0) (and (>= $keys 0) (>= $bytes 0))) False) False)) False))
+(= (kbq:observe $cursor)
+   (if (kbq:cursor? $cursor) (kbq:observe-ready $cursor) (KbRefused query-cursor)))
+(= (kbq:observe-ready (KqCursor $view $state $steps $keys $bytes))
    (kb:observe-selector $view KbAll))
-(= (kbq:work (KqCursor $view $state $steps $keys $bytes)) (KqWork $steps $keys $bytes))
-(= (kbq:close (KqCursor $view $state $steps $keys $bytes)) (kbq:close-state $state))
+(= (kbq:work $cursor)
+   (if (kbq:cursor? $cursor) (kbq:work-ready $cursor) (KbRefused query-cursor)))
+(= (kbq:work-ready (KqCursor $view $state $steps $keys $bytes)) (KqWork $steps $keys $bytes))
+(= (kbq:close $cursor)
+   (if (kbq:cursor? $cursor) (kbq:close-ready $cursor) (KbRefused query-cursor)))
+(= (kbq:close-ready (KqCursor $view $state $steps $keys $bytes)) (kbq:close-state $state))
 (= (kbq:close-state $state)
    (case $state
      (((KqScanState $source $program) (let $closed (kb:query-close $source) KqClosed))
@@ -146,7 +169,9 @@
                (KqSkip $resume $keys $decoded))))
         ((KqFail $error $keys $decoded)
          (let $closed (kbq:close-state $outer) (KqFail $error $keys $decoded)))))))
-(= (kbq:step (KqCursor $view $state $steps $keys $bytes))
+(= (kbq:step $cursor)
+   (if (kbq:cursor? $cursor) (kbq:step-ready $cursor) (KbRefused query-cursor)))
+(= (kbq:step-ready (KqCursor $view $state $steps $keys $bytes))
    (case (kbq:advance $state)
      (((KqOut $row $next $extra $decoded)
        (KqYield $row (KqCursor $view $next (+ $steps 1) (+ $keys $extra) (+ $bytes $decoded))))
@@ -157,6 +182,8 @@
        (KqFailed $error (KqWork (+ $steps 1) (+ $keys $extra) (+ $bytes $decoded)))))))
 
 (= (kbq:page $cursor $count $fuel)
+   (if (kbq:cursor? $cursor) (kbq:page-ready $cursor $count $fuel) (KbRefused query-cursor)))
+(= (kbq:page-ready $cursor $count $fuel)
    (if (and (kb:integer? $count) (kb:integer? $fuel))
        (if (and (> $count 0) (>= $fuel 0)) (kbq:page-walk $cursor $count $fuel ())
            (KbRefused query-page-budget))
@@ -164,7 +191,7 @@
 (= (kbq:page-walk $cursor $count $fuel $reversed)
    (if (== $count 0) (KqPage (list:reverse $reversed) (KqMore $cursor))
      (if (== $fuel 0) (KqPage (list:reverse $reversed) (KqPaused $cursor))
-       (case (kbq:step $cursor)
+       (case (kbq:step-ready $cursor)
          (((KqYield $row $next) (kbq:page-walk $next (- $count 1) (- $fuel 1) (cons-atom $row $reversed)))
           ((KqContinue $next) (kbq:page-walk $next $count (- $fuel 1) $reversed))
           ((KqDone $work) (KqPage (list:reverse $reversed) (KqComplete $work)))
@@ -173,11 +200,19 @@
 ; Explanation distinguishes a caller-selected exact domain from unification.
 ; A dependent inner plan is explained only after its outer bindings exist.
 (= (kbq:explain $plan)
+   (if (knowledge:headed? $plan) (kbq:explain-value $plan) (KbRefused query-plan)))
+(= (kbq:explain-value $plan)
    (case $plan
-     (((KqRows $rows) (KqPlan values (explicit-materialization (size-atom $rows))))
+     (((KqRows $rows)
+       (if (== (get-metatype $rows) Expression)
+           (KqPlan values (explicit-materialization (size-atom $rows)))
+           (KbRefused query-rows)))
       ((KqScan $selector $pattern $template)
        (KqPlan scan (kb:explain $selector) unification streamed))
-      ((KqUnion $plans) (KqPlan union-all (map-atom $plans $part (kbq:explain $part))))
+      ((KqUnion $plans)
+       (if (== (get-metatype $plans) Expression)
+           (KqPlan union-all (map-atom $plans $part (kbq:explain $part)))
+           (KbRefused query-plans)))
       ((KqBind $left $pattern $right) (KqPlan nested-loop (kbq:explain $left) dependent streamed))
       ((KqOptional $left $pattern $right $missing) (KqPlan optional (kbq:explain $left) dependent streamed))
       ((KqSemi $left $pattern $right) (KqPlan semi (kbq:explain $left) dependent streamed))
