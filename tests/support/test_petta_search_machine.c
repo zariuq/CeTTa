@@ -7687,6 +7687,30 @@ static void test_program_revision_view_transport(
         &lease, &target, hot_target_equations, HOT_COUNT);
     petta_program_candidate_snapshot_lease_release(&lease);
 
+    /* Identity-bound workers retain the semantic source roles. An
+       alpha-equivalent target, including its shallow transaction image,
+       has no authority to borrow source-universe execution pointers. */
+    assert(petta_program_revision_view_source_candidate_lease(
+        &data_source_projection, &source, hot, &lease, NULL));
+    assert(lease.len == HOT_COUNT);
+    for (size_t i = 0u; i < lease.len; i++)
+        assert(lease.items[i].rhs_plan);
+    petta_program_candidate_snapshot_lease_release(&lease);
+    assert(!petta_program_revision_view_source_candidate_lease(
+        &projection, &target, hot, &lease, NULL));
+    Space *private_target = space_heap_clone_shallow(&target);
+    assert(private_target);
+    assert(petta_program_private_image_candidate_lease(
+        program, &projection, &target, private_target, hot, &lease, NULL));
+    assert(lease.len == HOT_COUNT);
+    for (size_t i = 0u; i < lease.len; i++) {
+        assert(!lease.items[i].rhs_plan);
+        assert(!lease.items[i].equation_template);
+    }
+    petta_program_candidate_snapshot_lease_release(&lease);
+    space_free(private_target);
+    free(private_target);
+
     /* A variable-headed equation remains an authored occurrence and is the
        only candidate for an otherwise absent relation. */
     assert(petta_program_revision_view_equation_lease(
@@ -15914,8 +15938,9 @@ int main(int argc, char **argv) {
     bool transient_only = argc == 2 && strcmp(argv[1], "--transient-plans") == 0;
     bool native_only = argc == 2 && strcmp(argv[1], "--native-return") == 0;
     bool safety_only = argc == 2 && strcmp(argv[1], "--safety-catalog") == 0;
-    if (argc != 1 && !worker_only && !resume_only && !arity_only && !transient_only && !native_only && !safety_only) {
-        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--transient-plans|--native-return|--safety-catalog]\n", stderr);
+    bool revision_only = argc == 2 && strcmp(argv[1], "--revision-views") == 0;
+    if (argc != 1 && !worker_only && !resume_only && !arity_only && !transient_only && !native_only && !safety_only && !revision_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--transient-plans|--native-return|--safety-catalog|--revision-views]\n", stderr);
         return 2;
     }
     Arena persistent;
@@ -15939,6 +15964,10 @@ int main(int argc, char **argv) {
     g_symbols = &symbols;
     g_var_intern = &variables;
     test_native_argument_observation();
+    if (revision_only) {
+        test_program_revision_view_transport(&universe, &persistent);
+        goto release_owners;
+    }
     if (transient_only) {
         test_transient_value_plan_lifetime();
         test_transient_plan_keys_own_their_storage();

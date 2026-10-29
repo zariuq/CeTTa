@@ -705,6 +705,11 @@ bool petta_program_revision_view_bind(
 bool petta_program_revision_projection_current(
     const PettaProgramRevisionProjection *projection,
     const Space *target);
+/* Whether the current projection is its source's identity presentation.
+ * Check eligibility separately from acquiring a lease: allocation failure
+ * must not silently erase semantic roles through a fallback. */
+bool petta_program_revision_projection_is_source(
+    const PettaProgramRevisionProjection *projection, const Space *target);
 /* The program and source remain owned by the caller. This validates the
  * extra dependencies needed to borrow this view's compiled source plans. */
 bool petta_program_revision_view_source_plans_current(

@@ -70132,6 +70132,14 @@ static bool petta_eval_machine_candidate_snapshot_lease(
             eval_context->program_projection, source, space, head, lease, stats);
     }
     if (eval_context->program_projection) {
+        /* A worker sharing the captured source Space has the identity
+         * presentation: the source's immutable VALUE/CALL roles still apply.
+         * An alpha-equivalent copy has no such representation map and must
+         * continue through the payload-erased target lease below. */
+        if (petta_program_revision_projection_is_source(
+                eval_context->program_projection, space))
+            return petta_program_revision_view_source_candidate_lease(
+                eval_context->program_projection, space, head, lease, stats);
         return petta_program_revision_view_equation_lease(
             eval_context->program_projection,
             space, head, lease, stats);

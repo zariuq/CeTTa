@@ -4306,6 +4306,14 @@ bool petta_program_revision_projection_current(
             projection->target, target);
 }
 
+bool petta_program_revision_projection_is_source(
+        const PettaProgramRevisionProjection *projection, const Space *target) {
+    return petta_program_revision_projection_current(projection, target) &&
+        projection->target.space == projection->view->source_equation_token.space &&
+        projection->target.instance_id == projection->view->source_equation_token.instance_id &&
+        projection->target.equation_revision == projection->view->source_equation_token.equation_revision;
+}
+
 static bool petta_program_revision_view_source_plans_current_locked(
         PettaProgram *program, Space *source, PettaProgramSpace *entry,
         const PettaProgramRevisionView *view) {
@@ -6803,7 +6811,10 @@ bool petta_program_private_image_candidate_lease(
     const PettaProgramSpace *entry = NULL;
     const PettaProgramSpace *local = NULL;
     if (projection) {
-        if (petta_program_revision_projection_current(projection, source))
+        /* Only an identity presentation licenses borrowing source plans.
+         * An alpha-equivalent target alone does not transport pointer-bound
+         * execution payloads into its term universe. */
+        if (petta_program_revision_projection_is_source(projection, source))
             entry = &projection->view->catalog;
     } else if (!cetta_shared_transition_scope_active()) {
         entry = petta_program_find_space(program, source);
@@ -6861,14 +6872,7 @@ bool petta_program_revision_view_source_candidate_lease(
         Space *space, SymbolId head,
         PettaCandidateSnapshotLease *lease,
         PettaCandidateSnapshotStats *stats) {
-    if (!petta_program_revision_projection_current(
-            projection, space) ||
-        projection->target.space !=
-            projection->view->source_equation_token.space ||
-        projection->target.instance_id !=
-            projection->view->source_equation_token.instance_id ||
-        projection->target.equation_revision !=
-            projection->view->source_equation_token.equation_revision) {
+    if (!petta_program_revision_projection_is_source(projection, space)) {
         if (lease)
             memset(lease, 0, sizeof(*lease));
         if (stats)
