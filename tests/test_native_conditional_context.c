@@ -3618,6 +3618,202 @@ static void he_canonical_plan_run(Space *space, Arena *arena, Atom *carrier,
     g_he_canonical_driver = NULL;
 }
 
+/* Exercise both real completion consumers. The expected observations below
+ * follow the raw instruction protocol and the declared Atom codomain of
+ * function, independently of the completion decision's implementation. */
+static void he_completion_consume(Space *space, Arena *arena, Atom *source,
+    Atom *expected, const Bindings *prefix, bool canonical, bool allow_tail,
+    OutcomeSet *outcomes) {
+    if (!canonical) {
+        Atom *next = NULL, *type = NULL;
+        Bindings env;
+        bindings_init(&env);
+        if (he_eval_typed_instruction(space, arena, source, expected, -1,
+                prefix, true, allow_tail, &next, &type, &env, outcomes))
+            metta_call_impl(space, arena, next, type, -1, true, &env, -1, outcomes);
+        bindings_free(&env);
+        return;
+    }
+    assert(!g_he_canonical_driver);
+    HeCanonicalDriver driver = {.root_target = outcomes, .arena = arena};
+    g_he_canonical_driver = &driver;
+    HeCanonicalFrame parent = {.space = space, .arena = arena, .fuel = -1,
+        .preserve_bindings = true};
+    he_canonical_instruction_push(&parent, source, expected, prefix, true,
+        allow_tail, outcomes);
+    while (driver.stack.top && !eval_unwinding())
+        he_canonical_resume((HeCanonicalFrame *)driver.stack.top);
+    while (driver.stack.top)
+        he_canonical_pop();
+    while (driver.free_frames) {
+        void *next = *(void **)driver.free_frames;
+        free(driver.free_frames);
+        driver.free_frames = next;
+    }
+    g_he_canonical_driver = NULL;
+}
+
+static unsigned he_instruction_completion_controls(bool receipts) {
+    const struct {
+        const char *source;
+        const char *answers[4];
+        unsigned count;
+        bool effect;
+    } cases[] = {
+        {"(eval (completion-row))", {"7", "7", "7",
+            "(Error 7 (BadType Expression Number))"}, 3u, false},
+        {"(eval (completion-empty))", {NULL}, 0u, false},
+        {"(eval (completion-missing))", {"(completion-missing)"}, 1u, false},
+        {"(function (return (completion-tick)))", {"(completion-tick)", "()",
+            "()", "(completion-tick)"}, 1u, true},
+        {"(function (return (function (return (+ 1 2)))))",
+            {"(function (return (+ 1 2)))", "(+ 1 2)", "(+ 1 2)",
+             "(function (return (+ 1 2)))"}, 1u, false},
+        {"(function (return NotReducible))",
+            {"(function (return NotReducible))"}, 1u, false},
+        {"(function (return (Error datum fault)))", {"(Error datum fault)"}, 1u, false},
+        {"(function (return (return (completion-tick))))",
+            {"(return (completion-tick))"}, 1u, false},
+        {"(eval (completion-open $key))", {"(Box 5)"}, 1u, false},
+        {"(function (return (Box $outer $outer)))", {"(Box 99 99)"}, 1u, false},
+    };
+    const char *demands[] = {"Atom", "%Undefined%", "Number", "Expression"};
+    const unsigned credits[] = {0u, 1u, 2u, 4u, 16u, 512u, UINT_MAX};
+    const CettaProfile *profiles[] = {cetta_profile_he_formal(),
+        cetta_profile_he_compat(), cetta_profile_he_extended()};
+    unsigned checks = 0u;
+    for (unsigned profile = 0u; profile < 3u; profile++) {
+        CettaLibraryContext *library = calloc(1u, sizeof(*library));
+        assert(library);
+        cetta_library_context_init_for_language_profile(library, CETTA_LANGUAGE_HE,
+            profiles[profile]);
+        eval_set_library_context(library);
+        Arena storage;
+        arena_init(&storage);
+        Space space;
+        space_init(&space);
+        const char *declarations[] = {
+            "(: function (-> Atom Atom))", "(: return (-> $t $t))",
+            "(= (completion-row) 7)", "(= (completion-row) 7)",
+            "(= (completion-row) 9)", "(= (completion-empty) Empty)",
+            "(= (completion-open 5) (Box 5))",
+            "(= (completion-tick) (add-atom &self completion-effect))",
+        };
+        for (unsigned i = 0u; i < sizeof(declarations) / sizeof(*declarations); i++)
+            space_add(&space, fixture_atom(&storage, declarations[i]));
+        Registry registry;
+        registry_init(&registry);
+        registry_bind_id(&registry, g_builtin_syms.self, atom_space(&storage, &space));
+        g_registry = &registry;
+        for (unsigned shape = 0u; shape < 2u; shape++)
+        for (unsigned demand = 0u; demand < 2u; demand++)
+        for (unsigned frontier = 0u; frontier < 2u; frontier++) {
+            Arena arena;
+            arena_init(&arena);
+            Atom *value = fixture_atom(&arena, shape
+                ? "(function (return (completion-tick)))" : "NotReducible");
+            CettaCallOutcome packet = frontier
+                ? cetta_call_completed_frontier(atom_expr2(&arena, value, value))
+                : cetta_call_completed_value(value);
+            OutcomeSet outcomes;
+            outcome_set_init_with_owner(&outcomes, &arena);
+            Bindings empty;
+            bindings_init(&empty);
+            Atom *expression = NULL;
+            CettaCount before = space_length64(&space);
+            CettaEvalEpisode episode = {.budget_limited = true};
+            g_eval_completion_tracker = &episode;
+            assert(sequence_native_call(&space, &arena, packet, false,
+                fixture_atom(&arena, demands[demand]), &empty, &outcomes, &expression));
+            g_eval_completion_tracker = NULL;
+            assert(!expression && outcomes.len == (frontier ? 2u : 1u));
+            assert(episode.completion == CETTA_EVAL_COMPLETE && !episode.steps_spent);
+            assert(space_length64(&space) == before);
+            for (CettaCount i = 0u; i < outcomes.len; i++)
+                assert(atom_eq(outcome_atom_materialize(&arena, &outcomes.items[i]), value));
+            outcome_set_free(&outcomes);
+            bindings_free(&empty);
+            arena_free(&arena);
+            checks++;
+        }
+        for (unsigned sample = 0u; sample < sizeof(cases) / sizeof(*cases); sample++)
+        for (unsigned demand = 0u; demand < 4u; demand++)
+        for (unsigned canonical = 0u; canonical < 2u; canonical++)
+        for (unsigned tail = 0u; tail < 2u; tail++)
+        for (unsigned purse = 0u; purse < sizeof(credits) / sizeof(*credits); purse++) {
+            Arena arena;
+            arena_init(&arena);
+            Atom *source = fixture_atom(&arena, cases[sample].source);
+            Bindings prefix;
+            bindings_init(&prefix);
+            Atom *outer = he_plan_source_variable(source, "outer");
+            if (outer)
+                assert(bindings_add_var(&prefix, outer, atom_int(&arena, 99)));
+            OutcomeSet outcomes;
+            outcome_set_init_with_owner(&outcomes, &arena);
+            CettaCount before = space_length64(&space);
+            bool limited = credits[purse] != UINT_MAX;
+            CettaEvalEpisode episode = {.budget_limited = limited,
+                .budget_initial = limited ? credits[purse] : 0u,
+                .budget_remaining = limited ? credits[purse] : 0u};
+            g_eval_completion_tracker = &episode;
+            he_completion_consume(&space, &arena, source,
+                fixture_atom(&arena, demands[demand]), &prefix, canonical, tail, &outcomes);
+            g_eval_completion_tracker = NULL;
+            CettaCount effects = space_length64(&space) - before;
+            bool expected_effect = cases[sample].effect && (demand == 1u || demand == 2u);
+            assert(effects <= (expected_effect ? 1u : 0u));
+            if (episode.completion == CETTA_EVAL_COMPLETE) {
+                assert(outcomes.len == cases[sample].count);
+                assert(effects == (expected_effect ? 1u : 0u));
+                for (CettaCount i = 0u; i < outcomes.len; i++) {
+                    const char *text = cases[sample].answers[demand]
+                        ? cases[sample].answers[demand] : cases[sample].answers[0];
+                    if (sample == 0u && i == 2u)
+                        text = demand == 3u ? "(Error 9 (BadType Expression Number))" : "9";
+                    if (sample == 2u && profile == 1u)
+                        text = cases[sample].source;
+                    Atom *actual = outcome_atom_materialize(&arena, &outcomes.items[i]);
+                    if (!atom_eq(actual, fixture_atom(&arena, text)))
+                        fprintf(stderr, "HE completion profile=%u sample=%u demand=%u canonical=%u tail=%u: %s != %s\n",
+                            profile, sample, demand, canonical, tail,
+                            atom_to_string(&arena, actual), text);
+                    assert(atom_eq(actual, fixture_atom(&arena, text)));
+                    if (outer)
+                        assert(atom_eq(bindings_apply_if_vars(&outcomes.items[i].env,
+                            &arena, outer), atom_int(&arena, 99)));
+                }
+            } else
+                assert(episode.completion == CETTA_EVAL_INCOMPLETE_FUEL);
+            if (limited)
+                assert(episode.steps_spent + episode.budget_remaining == credits[purse]);
+            if (receipts) {
+                printf("he-completion %u %u %u %u %u %u: status=%u spent=%" PRIu64
+                    " effects=%" PRIu64 " answers=", profile, sample, demand,
+                    canonical, tail, credits[purse], (unsigned)episode.completion,
+                    episode.steps_spent, (uint64_t)effects);
+                for (CettaCount i = 0u; i < outcomes.len; i++)
+                    printf("%s%s", i ? "|" : "", atom_to_string(&arena,
+                        outcome_atom_materialize(&arena, &outcomes.items[i])));
+                putchar('\n');
+            }
+            assert(space_truncate64(&space, before));
+            outcome_set_free(&outcomes);
+            bindings_free(&prefix);
+            arena_free(&arena);
+            checks++;
+        }
+        g_registry = NULL;
+        registry_free(&registry);
+        space_free(&space);
+        arena_free(&storage);
+        eval_set_library_context(NULL);
+        cetta_library_context_free(library);
+        free(library);
+    }
+    return checks;
+}
+
 static unsigned he_canonical_plan_controls(void) {
     const struct { const char *source, *head, *expected; } cases[] = {
         {"(chain (he-three) $dst (return $dst))", "chain-carrier", "(return 3)"},
@@ -7650,12 +7846,15 @@ int main(int argc, char **argv) {
     bool collection_failure_only = argc == 2 && strcmp(argv[1], "--borrowed-collection-failure") == 0;
     bool bound_completion_only = argc == 2 && strcmp(argv[1], "--bound-completion") == 0;
     bool caller_dag_only = argc == 2 && strcmp(argv[1], "--caller-dag") == 0;
+    bool he_completion_only = argc == 2 && strcmp(argv[1], "--he-completion") == 0;
     bool conditional_only = argc == 2 && strcmp(argv[1], "--conditional-continuation") == 0;
     bool resumption_only = argc == 2 && strcmp(argv[1], "--contextual-resumption") == 0;
     bool stale_tail_only = argc == 2 && strcmp(argv[1], "--stale-native-tail") == 0;
-    assert(argc == 1 || availability_only || episode_only || prime_data_only || fold_only || callee_only || lexical_only || body_only || collection_failure_only || bound_completion_only || resumption_only || conditional_only || stale_tail_only || caller_dag_only);
+    assert(argc == 1 || availability_only || episode_only || prime_data_only || fold_only || callee_only || lexical_only || body_only || collection_failure_only || bound_completion_only || resumption_only || conditional_only || stale_tail_only || caller_dag_only || he_completion_only);
     unsigned checks = prepared_worker_availability();
-    if (stale_tail_only)
+    if (he_completion_only)
+        checks += he_instruction_completion_controls(true);
+    else if (stale_tail_only)
         checks += stale_native_tail_controls();
     else if (caller_dag_only)
         checks += frozen_source_caller_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls();
@@ -7681,7 +7880,7 @@ int main(int argc, char **argv) {
     else if (episode_only)
         checks += episode_accounting() + evaluator_episode_consumers();
     else if (!availability_only)
-        checks += frozen_source_caller_controls() + stale_native_tail_controls() + conditional_native_continuation_controls() + native_frontier_rejoin_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls() + contextual_resumption_controls() + bound_native_completion_controls() + relational_body_destination_controls() + oem_body_retention_controls() + prepared_body_entry_controls() + lexical_native_tail_controls() + lexical_packet_controls() + oem_callee_owner_controls() + fold_completion_controls() + prime_prepared_data_controls() + episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + source_invocation_plans() + prepared_computation_plans() + generic_budget_checks() + source_collection_plans() + source_case_plans() + captured_binding_projection_controls() + he_instruction_plan_controls() + he_canonical_plan_controls() + he_instruction_source_gc_controls() + ordinary_invocation_consumers() + shared_compilation_refusals() + closed_failure_cache() + ready_invocation_controls() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
+        checks += he_instruction_completion_controls(false) + frozen_source_caller_controls() + stale_native_tail_controls() + conditional_native_continuation_controls() + native_frontier_rejoin_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls() + contextual_resumption_controls() + bound_native_completion_controls() + relational_body_destination_controls() + oem_body_retention_controls() + prepared_body_entry_controls() + lexical_native_tail_controls() + lexical_packet_controls() + oem_callee_owner_controls() + fold_completion_controls() + prime_prepared_data_controls() + episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + source_invocation_plans() + prepared_computation_plans() + generic_budget_checks() + source_collection_plans() + source_case_plans() + captured_binding_projection_controls() + he_instruction_plan_controls() + he_canonical_plan_controls() + he_instruction_source_gc_controls() + ordinary_invocation_consumers() + shared_compilation_refusals() + closed_failure_cache() + ready_invocation_controls() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
     cetta_lib_prolog_global_shutdown();
     symbol_table_free(&symbols);
     var_intern_free(&variables);

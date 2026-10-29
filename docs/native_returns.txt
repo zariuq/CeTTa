@@ -1347,6 +1347,17 @@ profile-specific NoReturn readback, malformed instructions and C ownership
 remain separate correspondence obligations. One-step eval still returns raw
 syntax; an entered function delimiter owns its own completion.
 
+Public instruction completion and invocation delimiters share one HE decision
+over the producer's reached result. Public completion omits raw Empty events;
+refusal restores the saved source image; typed evaluation keeps its expected
+type and binding frame. A returned function acquires its own public codomain
+before its body runs. The ordinary and canonical continuations consume this
+same policy without adding metadata to values or reconstructing instructions.
+HEInstructionCompletion refines that decision to the maintained HE call-return
+judgment. Native source debit, profile readback and pointer ownership remain
+separate obligations. Producer-completed native values retain their tagged
+completion path, including values shaped like a function or refusal marker.
+
 Invocation projection includes the logical ports declared by saved substitution
 values, including ports nested in an otherwise ground carrier. The binding
 owner's existing support traversal supplies those identities; ordinary syntax

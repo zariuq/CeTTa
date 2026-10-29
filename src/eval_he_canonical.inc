@@ -2272,10 +2272,8 @@ static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
             !eval_unwinding()) {
             Outcome *source = &frame->work.items[0];
             Atom *value = outcome_atom_materialize(a, source);
-            if (value && !atom_is_legacy_empty_sentinel(value) &&
-                !he_not_reducible(value) &&
-                atom_head_symbol_id(value) != g_builtin_syms.function &&
-                eval_atom_type_demand(a, value, frame->type) == HE_TYPE_INTERPRET) {
+            if (he_instruction_completion(a, value, frame->type, true, true) ==
+                    HE_INSTRUCTION_TAIL) {
                 frame->phase = 5u;
                 he_canonical_tail_push(frame, value, frame->type,
                     &source->env, &frame->paths);
@@ -2291,9 +2289,11 @@ static void he_canonical_resume_instruction(HeCanonicalFrame *frame) {
         } else {
             Outcome *source = &frame->work.items[frame->index++];
             Atom *value = outcome_atom_materialize(a, source);
-            if (!value || (frame->typed && atom_is_legacy_empty_sentinel(value)))
+            HeInstructionCompletion completion = he_instruction_completion(
+                a, value, frame->type, frame->typed, false);
+            if (completion == HE_INSTRUCTION_OMIT)
                 return;
-            if (he_not_reducible(value)) {
+            if (completion == HE_INSTRUCTION_REFUSAL) {
                 if (frame->typed)
                     value = he_instruction_refusal_readback(
                         frame->live[0], frame->atom, control);
