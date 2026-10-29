@@ -10,7 +10,11 @@ memory by at most 24 bytes an added item more than it grows with no match
 at all: they build no index, and the bound leaves room for garbage a
 collection has not yet reclaimed.  Under the same matches a full stack's
 must grow by at least 64 bytes an added item more than the strict one's,
-its indexes, or the test measures nothing.  The binary is $CETTA_BIN."""
+its indexes, or the test measures nothing.  The binary is $CETTA_BIN.
+
+A sanitized binary runs with its quarantine off: the freed blocks it holds
+back for checking would count as growth (general matches' transient
+allocations grew a strict stack by a further 38 bytes an item that way)."""
 import os
 import resource
 import subprocess
@@ -35,9 +39,12 @@ def program(path, profile, items, matches):
 
 
 def peak_kib(path):
+    env = dict(os.environ)
+    env['ASAN_OPTIONS'] = ':'.join(
+        part for part in (env.get('ASAN_OPTIONS', ''), 'quarantine_size_mb=0') if part)
     child = subprocess.run(
         [sys.executable, __file__, '--one', path],
-        capture_output=True, text=True, timeout=1200)
+        capture_output=True, text=True, timeout=1200, env=env)
     rc, _, rest = child.stdout.strip().partition(' ')
     peak, _, last = rest.partition(' ')
     if child.returncode != 0 or rc != '0':
