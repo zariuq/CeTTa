@@ -3177,7 +3177,7 @@ static bool petta_space_remove_pattern_all(
      * the full logical scan until they supply that coordinate contract. */
     bool indexed = pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
         !space->overlay_base && !space_has_dependencies(space) &&
-        logical_len > MATCH_TRIE_THRESHOLD &&
+        !space_match_reads_rows(space, logical_len) &&
         (space->match_backend.kind == SPACE_ENGINE_NATIVE ||
          space->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT);
     if (indexed) {
@@ -14798,6 +14798,7 @@ static Space *hyperpose_clone_space_materialized(
     Space *clone = cetta_malloc(sizeof(Space));
     space_init_with_universe(clone, universe);
     clone->kind = src->kind;
+    space_set_strict(clone, src->strict);
     CettaCount len = space_length64(src);
     for (CettaCount i = 0; i < len; i++) {
         Atom *item = space_get_at(src, i);
@@ -15262,6 +15263,7 @@ static Space *hyperpose_transfer_space(HyperposeResourceTransfer *transfer,
         return NULL;
     space_init_with_universe(target, transfer->parent_universe);
     target->kind = source->kind;
+    space_set_strict(target, source->strict);
     if (!hyperpose_transferred_space_insert(transfer, source, target)) {
         space_free(target);
         return NULL;
@@ -20337,6 +20339,7 @@ static Space *space_persistent_clone(Space *src, Arena *dst) {
     Space *clone = arena_alloc(dst, sizeof(Space));
     space_init_with_universe(clone, src ? src->native.universe : NULL);
     clone->kind = src->kind;
+    space_set_strict(clone, src->strict);
     (void)space_match_backend_try_set(clone, src->match_backend.kind);
     for (uint32_t i = 0; i < len; i++) {
         AtomId atom_id = space_get_atom_id_at(src, i);
@@ -21702,6 +21705,7 @@ static Space *space_snapshot_clone(Space *src, Arena *a) {
     clone = cetta_malloc(sizeof(Space));
     space_init_with_universe(clone, src ? src->native.universe : NULL);
     clone->kind = src->kind;
+    space_set_strict(clone, src->strict);
     /* Snapshots freeze a logical view for evaluator-side reads/matches.
        Use a native query backend over that frozen atom-id sequence so the
        snapshot remains stable even when the live source space is backed by a
@@ -22551,7 +22555,7 @@ static bool profile_declared_type_visible_for_atom(Atom *atom, Atom *ty) {
     }
     if (atom_is_symbol_id(atom, g_builtin_syms.new_space) &&
         is_function_type(ty) &&
-        get_function_arg_count(ty) == 1 &&
+        get_function_arg_count(ty) >= 1 &&
         !active_builtin_allowed("new-space-kind")) {
         return false;
     }
@@ -42914,6 +42918,7 @@ static bool petta_token_space_admit_clause(
     Space *replacement = cetta_malloc(sizeof(*replacement));
     space_init_with_universe(replacement, target->native.universe);
     replacement->kind = target->kind;
+    space_set_strict(replacement, target->strict);
     SpaceEngine engine = space_engine_uses_pathmap(
         target->match_backend.kind)
         ? SPACE_ENGINE_NATIVE
@@ -56360,7 +56365,7 @@ petta_lowered_to_shared_form:
 
     /* ── new-space ──────────────────────────────────────────────────────── */
     if (head_id == g_builtin_syms.new_space) {
-        if (nargs > 1) {
+        if (nargs > 2) {
             outcome_set_add(os,
                 atom_error(a, atom, atom_symbol(a, "IncorrectNumberOfArguments")),
                 &_empty);
@@ -56371,7 +56376,8 @@ petta_lowered_to_shared_form:
         if (backend_kind == SPACE_ENGINE_MORK) {
             backend_kind = SPACE_ENGINE_PATHMAP;
         }
-        if (nargs == 1) {
+        bool kind_named = false;
+        if (nargs >= 1) {
             if (!active_builtin_allowed("new-space-kind")) {
                 goto generic_dispatch;
             }
@@ -56398,10 +56404,28 @@ petta_lowered_to_shared_form:
                     atom_error(a, atom, atom_symbol(a, "UnknownSpaceKind")),
                     &_empty);
                 return;
+            } else {
+                kind_named = true;
             }
             if (kind == SPACE_KIND_STACK || kind == SPACE_KIND_QUEUE ||
                 kind == SPACE_KIND_SET)
                 backend_kind = SPACE_ENGINE_NATIVE;
+        }
+        /* A stack or a queue keeps only its order unless made full; the
+         * other kinds keep the general indexes unless made strict. */
+        bool strict = kind == SPACE_KIND_STACK || kind == SPACE_KIND_QUEUE;
+        if (nargs == 2) {
+            const char *profile = string_like_atom(expr_arg(atom, 1));
+            if (profile && kind_named && strcmp(profile, "strict") == 0) {
+                strict = true;
+            } else if (profile && kind_named && strcmp(profile, "full") == 0) {
+                strict = false;
+            } else {
+                outcome_set_add(os,
+                    atom_error(a, atom, atom_symbol(a, "UnknownSpaceProfile")),
+                    &_empty);
+                return;
+            }
         }
         Arena *pa = eval_storage_arena(a);
         Space *ns = g_eval_payload_transactional
@@ -56415,6 +56439,7 @@ petta_lowered_to_shared_form:
         }
         space_init_with_universe(ns, eval_current_term_universe());
         ns->kind = kind;
+        space_set_strict(ns, strict);
         if (!space_match_backend_try_set(ns, backend_kind)) {
             if (g_eval_payload_transactional) {
                 space_free(ns);

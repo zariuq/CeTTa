@@ -9,8 +9,10 @@
  * A binary relation kept as bits: the facts (h a b) of one head h whose
  * columns are atoms equal only to themselves, as a set of pairs (a, b).
  * One numbering covers the atoms of both columns; each numbered first
- * column has a row of bits over the numbers.  The relation is a set: a
- * space that holds a pair more than once keeps the other copies as rows.
+ * column has a row over the numbers of its second column: a sorted array
+ * while that takes fewer bytes than bits up to its largest number, then
+ * bits.  The relation is a set: a space that holds a pair more than once
+ * keeps the other copies as rows.
  *
  * Ids are the universe's: the store neither interns nor reads terms, and a
  * caller that counts references holds each numbered id while it is numbered
@@ -22,6 +24,7 @@ typedef uint64_t CettaDenseId;
 /* A column left free in a walk or a count.  Every other value is an id,
  * 0 included. */
 #define CETTA_DENSE_ANY UINT64_MAX
+#define CETTA_DENSE_ROW_BITS UINT32_C(0x80000000)
 
 typedef struct {
     /* The numbering: number -> id, and an open-addressed table id -> number
@@ -30,10 +33,11 @@ typedef struct {
     uint32_t len, cap;
     uint32_t *slots;
     uint32_t slot_mask;
-    /* Rows of bits, one per number used in the first column; NULL until
-     * that number first appears there.  row_words[n] is the row's length. */
-    uint64_t **rows;
-    uint32_t *row_words;
+    /* Rows, one per number used in the first column; NULL until that
+     * number first appears there.  row_len[n] is a sorted array's count of
+     * numbers, or with CETTA_DENSE_ROW_BITS a row of bits' count of words. */
+    void **rows;
+    uint32_t *row_len;
     uint32_t row_cap;
     /* Pairs held, and the bytes the rows take. */
     uint64_t pairs;
