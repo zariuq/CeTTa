@@ -3574,6 +3574,17 @@ bool petta_machine_table_storage(
                 return false;
         }
     }
+    for (size_t i = 0u; i < table->entry_len; i++) {
+        const PettaTableEntry *entry = &table->entries[i];
+        size_t bytes = 0u;
+        if (__builtin_mul_overflow(entry->space_read_cap,
+                sizeof(*entry->space_reads), &bytes) ||
+            __builtin_add_overflow(storage.dependency_bytes, bytes,
+                &storage.dependency_bytes) ||
+            __builtin_add_overflow(storage.dependency_records,
+                entry->space_read_len, &storage.dependency_records))
+            return false;
+    }
     *out = storage;
     return true;
 }
@@ -39871,6 +39882,27 @@ bool petta_machine_init(
         NULL, base_environment, host);
 }
 
+/* A synchronous host request may enter another root while its caller is
+ * paused in this thread. Completed tables can be borrowed through that
+ * actual caller's lease, under the same source and host meaning. An active
+ * generator, a different host, or a lease held outside this call stack
+ * cannot grant this borrowing. The nested root never releases the lease. */
+static bool petta_table_reentrant_borrowable(PettaTableShared *shared,
+    Space *space, const PettaMachineHost *host) {
+    if (!shared || !shared->root_leased || !host ||
+        !petta_table_shared_reusable(shared))
+        return false;
+    for (PettaTableReadScope *scope = g_petta_table_read_scopes; scope;
+         scope = scope->previous)
+        for (size_t i = *scope->length; i > 0u; i--) {
+            PettaMachineImpl *caller = (*scope->frames)[i - 1u].machine->impl;
+            if (caller->space == space && caller->table_shared == shared &&
+                petta_transfer_hosts_equal(&caller->host, host))
+                return true;
+        }
+    return false;
+}
+
 bool petta_machine_init_with_plan(
     PettaMachine *machine, Space *space, Arena *answer_arena,
     Atom *query, const PettaPlanNode *plan,
@@ -39884,7 +39916,9 @@ bool petta_machine_init_with_plan(
     PettaTableShared *shared = host ? host->shared_table : NULL;
     bool owns_shared = true;
     bool borrowed_shared = false;
-    if (shared && !shared->root_leased) {
+    if (petta_table_reentrant_borrowable(shared, space, host)) {
+        owns_shared = false;
+    } else if (shared && !shared->root_leased) {
         if (!petta_table_shared_reusable(shared))
             petta_table_shared_reset(shared);
         else if (shared->mutation_policy == PETTA_TABLE_MUTATION_STATIC_WORLD)
@@ -39899,7 +39933,13 @@ bool petta_machine_init_with_plan(
         owns_shared = false;
         borrowed_shared = true;
     } else {
+        PettaTableMutationPolicy policy = shared ? shared->mutation_policy
+            : PETTA_TABLE_MUTATION_REVISION_GUARDED;
         shared = petta_table_shared_new();
+        /* Private storage preserves the caller's table semantics. A leased
+         * static-world table does not turn a nested call revision-guarded. */
+        if (shared)
+            shared->mutation_policy = policy;
     }
     if (!shared)
         return false;

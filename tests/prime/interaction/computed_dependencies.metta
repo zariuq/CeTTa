@@ -92,3 +92,30 @@
 !(remove-atom &cd-blocker blocked)
 !(transform &cd-tick () ())
 !(assertEqual (collapse (get-atoms &cd-removal)) (done))
+
+; Computed premises use Prime's ordinary value boundary. A stored record
+; can be inspected through a constructor argument without exposing its held
+; carrier to the checker or executing code contained in the record.
+!(bind! &cv-work (new-space))
+!(bind! &cv-effects (new-space))
+(= (cv-record (Request (Envelope $value))) (Some $value))
+(= (cv-inspect (Request $record))
+   (case $record (((Envelope $value) (Some 7)) ($_ None))))
+(= (cv-effect) (let $_ (add-atom &cv-effects executed) 42))
+!(add-atom &cv-work (stored (Envelope 7)))
+!(assertEqual (transform &cv-work
+   (, (take (stored $record)) (let (Some $value) (cv-record (Request $record))))
+   (add-atom &cv-work (checked $value))) ())
+!(assertEqual (collapse (get-atoms &cv-work)) ((checked 7)))
+!(add-atom &cv-work (code (Envelope (cv-effect))))
+!(assertEqual (transform &cv-work
+   (, (take (code $record)) (let (Some 7) (cv-inspect (Request $record))))
+   (add-atom &cv-work inspected)) ())
+!(assertEqual (collapse (get-atoms &cv-effects)) ())
+
+; Opening a stored program explicitly runs it once.
+!(add-atom &cv-work (run (cv-effect)))
+!(assertEqual (transform &cv-work
+   (, (take (run $code)) (let 42 (eval $code)))
+   (add-atom &cv-work complete)) ())
+!(assertEqual (collapse (get-atoms &cv-effects)) (executed))

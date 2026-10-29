@@ -34486,11 +34486,12 @@ static bool eval_transform_evaluate(void *context, Arena *a, Atom *expression,
     *results_out = NULL;
     *len_out = 0u;
     *error_out = NULL;
-    /* The library runs the code as (eval $code) with the code a variable's
-     * value: the term is translated once at that event and its quoted values
-     * stay data.  The same call runs here, in the relational machine, which
-     * this native boundary enters directly as the pattern-query boundary
-     * does (eval_pattern_query_ready). */
+    /* Computed sources retain the dialect's value discipline. Prime's
+     * ordinary bind understands held arguments and Need cells; entering
+     * PeTTa's equation machine directly would expose those carriers to
+     * structural patterns. PeTTa opens the stored code once as (eval $code),
+     * retaining the quotes installed by the interaction substitution. */
+    bool prime = eval_current_language_id() == CETTA_LANGUAGE_PRIME;
     Atom *code = atom_var_with_id(a, "tf-code", fresh_var_id());
     Atom *call = code ? atom_expr2(a, atom_symbol(a, "eval"), code) : NULL;
     Bindings environment;
@@ -34505,13 +34506,17 @@ static bool eval_transform_evaluate(void *context, Arena *a, Atom *expression,
     bool enclosing_active = g_active_petta_search_machine;
     bool enclosing_raised = g_petta_machine_run_raised;
     g_he_shared_execution = false;
-    g_active_petta_search_machine = true;
+    g_active_petta_search_machine = !prime;
     g_petta_machine_run_raised = false;
     CettaEvalEpisode tracker;
     eval_completion_child_begin(&tracker);
-    bool handled = petta_eval_machine_run(host->root, a, call, NULL, host->fuel,
-        &environment, false, &outcomes, PETTA_RELATION_SAFETY_STATIC,
-        CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST, false, false);
+    bool handled = true;
+    if (prime)
+        metta_eval_bind(host->root, a, expression, host->fuel, &outcomes);
+    else
+        handled = petta_eval_machine_run(host->root, a, call, NULL, host->fuel,
+            &environment, false, &outcomes, PETTA_RELATION_SAFETY_STATIC,
+            CETTA_SEARCH_CONTROLLER_INLINE_DEPTH_FIRST, false, false);
     if (!handled && tracker.completion == CETTA_EVAL_COMPLETE)
         eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
     CettaEvalCompletion completion = eval_completion_child_end(&tracker);
@@ -34546,7 +34551,7 @@ static bool eval_transform_evaluate(void *context, Arena *a, Atom *expression,
     }
     size_t len = 0u;
     for (CettaCount i = 0u; i < outcomes.len; i++) {
-        Atom *result = outcome_atom_materialize(a, &outcomes.items[i]);
+        Atom *result = outcome_observe_top_value(a, &outcomes.items[i]);
         if (!result) {
             free(results);
             outcome_set_free(&outcomes);
@@ -72173,6 +72178,15 @@ static CettaNativeQueryStatus petta_eval_machine_native_collect(
     }
 
     native.count_only = count_only;
+    /* The fused collection loop reads the same complete relation as an
+     * ordinary match, including an empty answer bag. Retain that original
+     * read in enclosing computations and active table generators before
+     * the loop can run its template effects. Listed rows are already data. */
+    if (!listed) {
+        prime_native_observe_space_read(source);
+        if (eval_native_interrupted())
+            return CETTA_NATIVE_QUERY_FAILED;
+    }
     CettaNativeQueryResult result = {0};
     CettaNativeQueryStatus status =
         cetta_native_query_run(&native, arena, &result);
@@ -74077,9 +74091,11 @@ static PettaMachineHost petta_eval_machine_host(
     bool prepared_available = source_unbounded && !prepared_pure_reference_enabled();
     PettaMachineHost host = {
         .context = context,
-        .observe_space_read = prime_native_owner_active() || g_prime_eval_top_authority ||
-            g_eval_read_scopes
-            ? petta_eval_machine_observe_space_read : NULL,
+        /* A memo generator records reads even when its first caller has no
+         * observer. Keep the hook stable across callers: installing a read
+         * scope must not change the shared-table host identity or rerun an
+         * effectful cached producer. The hook forwards to current owners. */
+        .observe_space_read = petta_eval_machine_observe_space_read,
         .analysis =
 #if CETTA_BUILD_WITH_PETTA_TYPECHECK_V2
             type_obligations

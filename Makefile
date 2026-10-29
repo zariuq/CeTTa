@@ -27298,7 +27298,7 @@ test-petta-memoization: $(BIN)
 	@for stem in memo_control memo_policy_limits memo_size_admission memo_answers \
 			memo_effect_boundary memo_equation_projection \
 			memo_direct_foreign_inert memo_inert memo_library \
-			memo_nested_replay; do \
+			memo_nested_replay memo_interaction_reads; do \
 		actual=runtime/test-petta-search-machine-$$stem.out; \
 		expected=tests/petta/search_machine_$$stem.expected; \
 		if [ "$(LIB_PROLOG_ENABLED)" != 1 ] && \
