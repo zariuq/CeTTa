@@ -19,7 +19,39 @@ typedef enum {
     SPACE_ENGINE_NATIVE_CANDIDATE_EXACT = 1,
     SPACE_ENGINE_PATHMAP = 2,
     SPACE_ENGINE_MORK = 3,
+    /* A host-supplied occurrence source. Its operation table, rather than
+     * native shadow rows, owns the source's storage contract. */
+    SPACE_ENGINE_SOURCE = 4,
 } SpaceEngine;
+
+typedef enum {
+    SPACE_OCCURRENCE_CURSOR_END = 0,
+    SPACE_OCCURRENCE_CURSOR_ITEM,
+    SPACE_OCCURRENCE_CURSOR_INVALIDATED,
+    SPACE_OCCURRENCE_CURSOR_INCOMPLETE,
+    SPACE_OCCURRENCE_CURSOR_CAPACITY,
+} SpaceOccurrenceCursorStep;
+
+/* Incremental candidates, not a second matcher. The source owns its captured
+ * view and traversal; next lends a row until the next source operation. The
+ * ordinary matcher copies that row into its receiving arena before retaining
+ * bindings. Positional sources identify occurrences by index; other sources
+ * must supply identity below rather than expose a traversal counter as an
+ * occurrence identity. A clone owns independent traversal
+ * and must neither recapture a newer view nor perform a query. */
+typedef struct SpaceSourceCursorOps {
+    bool (*clone)(const void *source, bool rewind, void **out);
+    /* Reopen candidates against the same captured source, never its live
+     * publisher. NULL keeps the complete captured scan as a correct fallback. */
+    bool (*select)(const void *source, Atom *pattern, void **out);
+    SpaceOccurrenceCursorStep (*next)(void *source, CettaIndex *index);
+    Atom *(*atom)(const void *source, CettaIndex index);
+    /* Stable, ground occurrence identity. NULL means this source really uses
+     * the ordinary Space's positional coordinates, not a scan-local counter. */
+    Atom *(*identity)(const void *source, CettaIndex index);
+    void (*free)(void *source);
+    CettaStorageVisitor storage;
+} SpaceSourceCursorOps;
 
 /* A batch accelerator is never the mutation authority.  UNSUPPORTED asks the
    Space layer to replay the same ordered occurrences through the singular
@@ -180,6 +212,12 @@ typedef struct {
 
 typedef struct SpaceMatchBackendOps {
     const char *name;
+    /* NULL pattern opens a complete captured scan. A non-NULL pattern may
+     * select a complete candidate superset; canonical matching is unchanged.
+     * Failure after admission is capacity, not an empty successful scan and
+     * not permission to retry through a materializing backend fallback. */
+    const SpaceSourceCursorOps *occurrence_ops;
+    bool (*occurrence_open)(Space *space, Atom *pattern, void **out);
     /* Primary storage access seam.
        Positive example: a real backend-owned pathmap space can answer length
        and projection through its own state instead of pretending the native C
@@ -257,6 +295,8 @@ typedef struct {
     SpaceMatchNativeState native;
     PathmapLocalState pathmap;
     MorkImportedState mork;
+    /* Owned according to the source backend's free operation. */
+    void *source;
 } SpaceMatchBackend;
 
 typedef bool (*CettaMorkBindingsVisitor)(const Bindings *bindings, void *ctx);

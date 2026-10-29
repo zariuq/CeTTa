@@ -21077,6 +21077,25 @@ static bool petta_machine_advance_choice(
                 *failure = PETTA_MACHINE_STEP_INVALIDATED;
                 return false;
             }
+            if (step == SPACE_OCCURRENCE_CURSOR_CAPACITY ||
+                step == SPACE_OCCURRENCE_CURSOR_INCOMPLETE) {
+                if (step == SPACE_OCCURRENCE_CURSOR_INCOMPLETE &&
+                    petta_machine_raise_error(machine,
+                        atom_error(&machine->heap, choice->as.match.pattern,
+                            atom_symbol(&machine->heap, "OccurrenceSourceIncomplete"))))
+                    return true;
+                *failure = step == SPACE_OCCURRENCE_CURSOR_CAPACITY
+                    ? PETTA_MACHINE_STEP_CAPACITY : PETTA_MACHINE_STEP_HOST_ERROR;
+                return false;
+            }
+            if (!choice->as.match.pattern_query && choice->as.match.occurrences.source_ops) {
+                candidate = space_occurrence_cursor_receive_atom(
+                    &choice->as.match.occurrences, candidate_index, &machine->heap);
+                if (!candidate) {
+                    *failure = PETTA_MACHINE_STEP_CAPACITY;
+                    return false;
+                }
+            }
             if (!candidate)
                 continue;
             if (choice->as.match.pattern_query) {

@@ -11161,6 +11161,7 @@ void space_match_backend_init(Space *s) {
     s->match_backend.native = (SpaceMatchNativeState){0};
     memset(&s->match_backend.pathmap, 0, sizeof(s->match_backend.pathmap));
     memset(&s->match_backend.mork, 0, sizeof(s->match_backend.mork));
+    s->match_backend.source = NULL;
 }
 
 void space_match_backend_free(Space *s) {
@@ -11474,6 +11475,8 @@ const char *space_match_backend_kind_name(SpaceEngine kind) {
         return "pathmap";
     case SPACE_ENGINE_MORK:
         return "mork";
+    case SPACE_ENGINE_SOURCE:
+        return "source";
     default:
         return "unknown";
     }
@@ -12189,6 +12192,7 @@ typedef struct SpaceQueryWitness {
     SpaceReadToken read;
     CettaIndex index;
     struct SpaceQueryWitness *previous;
+    Atom *identity;
 } SpaceQueryWitness;
 
 typedef enum {
@@ -12352,7 +12356,7 @@ static SpaceQueryCursor *space_query_cursor_new_internal(Space *space, Arena *ar
     if (seed && !bindings_clone(&cursor->seed, seed)) {
         space_query_cursor_free(cursor); return NULL;
     }
-    cursor->incremental = space_read_view_has_native_occurrences(&cursor->reads);
+    cursor->incremental = space_read_view_has_incremental_occurrences(&cursor->reads);
     if (captured) {
         cursor->incremental = cursor->incremental && !space->overlay_base &&
             !space->dep_count && !space->module_own_view;
@@ -12494,7 +12498,10 @@ static bool space_query_clone_chain(SpaceQueryClone *map, const void *root,
             if (!source->references) return false;
             SpaceQueryWitness *witness = malloc(sizeof(*witness));
             if (!witness) return false;
-            *witness = (SpaceQueryWitness){1u, source->read, source->index, NULL};
+            Atom *identity = source->identity && map->atoms
+                ? atom_deep_copy_session_copy(map->atoms, source->identity) : source->identity;
+            if (source->identity && !identity) { free(witness); return false; }
+            *witness = (SpaceQueryWitness){1u, source->read, source->index, NULL, identity};
             copy = witness;
         }
         *entry = (SpaceQueryCloneEntry){node, copy, kind, false};
@@ -12567,7 +12574,7 @@ static SpaceQueryCursor *space_query_cursor_clone_internal(
     binding_set_init(&copy->fallback_rows);
     if (!copy->pattern || !space_read_view_clone(&source->reads, &copy->reads) ||
         !space_query_clone_bindings(&copy->seed, &source->seed, arena, atoms)) goto fail;
-    if (source->captured_source.pinned &&
+    if ((source->captured_source.pinned || source->captured_source.source_ops) &&
         !space_occurrence_cursor_clone(&source->captured_source, &copy->captured_source)) goto fail;
     for (CettaIndex i = 0u; i < source->fallback_rows.len; i++) {
         if (!binding_set_push(&copy->fallback_rows, &source->fallback_rows.items[i]) ||
@@ -12603,7 +12610,7 @@ static SpaceQueryCursor *space_query_cursor_clone_internal(
         if (!space_query_clone_chain(&transport, work->witnesses,
                 SPACE_QUERY_CLONE_WITNESS, &chain)) goto fail;
         item->witnesses = chain;
-        if ((work->occurrences.pinned || work->occurrences.logical_scan) &&
+        if ((work->occurrences.pinned || work->occurrences.logical_scan || work->occurrences.source_ops) &&
             !space_occurrence_cursor_clone(&work->occurrences, &item->occurrences))
             goto fail;
         if (work->matcher) {
@@ -12652,8 +12659,18 @@ static SpaceQueryCursorStep space_query_cursor_publish_candidate(
         free(witness); space_query_sequence_release(rest);
         return SPACE_QUERY_CURSOR_CAPACITY;
     }
+    Atom *identity = NULL;
+    if (work->occurrences.source_ops && work->occurrences.source_ops->identity) {
+        identity = space_occurrence_cursor_identity(&work->occurrences,
+            work->candidate_index, cursor->arena);
+        if (!identity) {
+            space_query_witness_release(work->witnesses);
+            free(witness); space_query_sequence_release(rest);
+            return SPACE_QUERY_CURSOR_CAPACITY;
+        }
+    }
     *witness = (SpaceQueryWitness){1u, cursor->reads.root,
-        work->candidate_index, work->witnesses};
+        work->candidate_index, work->witnesses, identity};
     SpaceQueryWork *child = space_query_work_new(rest, witness, &work->candidate);
     space_query_sequence_release(rest);
     space_query_witness_release(witness);
@@ -12732,8 +12749,10 @@ SpaceQueryCursorStep space_query_cursor_step_with_budget(SpaceQueryCursor *curso
         }
         work->grounded = bindings_apply_if_vars(&work->seed, cursor->arena, pattern);
         if (!work->grounded || !(cursor->captured
-                ? space_occurrence_cursor_clone(&cursor->captured_source, &work->occurrences)
-                : space_occurrence_cursor_init_scan(cursor->space, &work->occurrences)))
+                ? space_occurrence_cursor_select(&cursor->captured_source, work->grounded, &work->occurrences)
+                : (cursor->space->match_backend.ops->occurrence_ops
+                    ? space_occurrence_cursor_init(cursor->space, work->grounded, &work->occurrences)
+                    : space_occurrence_cursor_init_scan(cursor->space, &work->occurrences))))
             return SPACE_QUERY_CURSOR_CAPACITY;
         work->kind = SPACE_QUERY_WORK_ATOM;
         return SPACE_QUERY_CURSOR_PROGRESS;
@@ -12765,6 +12784,11 @@ SpaceQueryCursorStep space_query_cursor_step_with_budget(SpaceQueryCursor *curso
     SpaceOccurrenceCursorStep step = space_occurrence_cursor_next(&work->occurrences, &index, NULL);
     if (step == SPACE_OCCURRENCE_CURSOR_INVALIDATED)
         return SPACE_QUERY_CURSOR_INVALIDATED;
+    if (step == SPACE_OCCURRENCE_CURSOR_CAPACITY || step == SPACE_OCCURRENCE_CURSOR_INCOMPLETE) {
+        work->blocked = step == SPACE_OCCURRENCE_CURSOR_CAPACITY
+            ? SPACE_QUERY_CURSOR_CAPACITY : SPACE_QUERY_CURSOR_INCOMPLETE;
+        return work->blocked;
+    }
     if (step == SPACE_OCCURRENCE_CURSOR_END) {
         space_query_cursor_pop(cursor);
         return SPACE_QUERY_CURSOR_PROGRESS;
@@ -12772,7 +12796,7 @@ SpaceQueryCursorStep space_query_cursor_step_with_budget(SpaceQueryCursor *curso
     work->candidate_index = index;
     cetta_native_cost_charge(CETTA_COST_INDEX_VISIT, 1u);
     cetta_native_cost_charge(CETTA_COST_CANDIDATE_ROW, 1u);
-    Atom *candidate = space_occurrence_cursor_atom(&work->occurrences, index);
+    Atom *candidate = space_occurrence_cursor_receive_atom(&work->occurrences, index, cursor->arena);
     work->matcher = candidate ? match_atoms_cursor_new(
         work->grounded,candidate,&work->seed,cursor->arena) : NULL;
     if (!work->matcher) {
@@ -12818,6 +12842,7 @@ bool space_query_cursor_visit_witnesses(const SpaceQueryCursor *cursor,
         return false;
     size_t length = 0u;
     for (const SpaceQueryWitness *w = cursor->last_witnesses; w; w = w->previous) {
+        if (w->identity) return false;
         if (length == SIZE_MAX / sizeof(w)) return false;
         length++;
     }
@@ -12829,6 +12854,30 @@ bool space_query_cursor_visit_witnesses(const SpaceQueryCursor *cursor,
     bool accepted = true;
     for (index = 0u; accepted && index < length; index++)
         accepted = visitor(ordered[index]->read, ordered[index]->index, context);
+    free(ordered);
+    return accepted;
+}
+
+bool space_query_cursor_visit_occurrences(const SpaceQueryCursor *cursor,
+        SpaceQueryOccurrenceVisitor visitor, void *context) {
+    if (!cursor || !cursor->incremental || !cursor->last_row || !visitor) return false;
+    size_t length = 0u;
+    for (const SpaceQueryWitness *w = cursor->last_witnesses; w; w = w->previous) {
+        if (length == SIZE_MAX / sizeof(w)) return false;
+        length++;
+    }
+    const SpaceQueryWitness **ordered = length ? malloc(length * sizeof(*ordered)) : NULL;
+    if (length && !ordered) return false;
+    size_t index = length;
+    for (const SpaceQueryWitness *w = cursor->last_witnesses; w; w = w->previous)
+        ordered[--index] = w;
+    bool accepted = true;
+    for (index = 0u; accepted && index < length; index++) {
+        const SpaceQueryWitness *w = ordered[index];
+        Atom *identity = w->identity ? w->identity
+            : w->index <= INT64_MAX ? atom_int(cursor->arena, (int64_t)w->index) : NULL;
+        accepted = identity && visitor(w->read, identity, context);
+    }
     free(ordered);
     return accepted;
 }

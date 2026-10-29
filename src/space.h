@@ -647,6 +647,9 @@ bool space_read_view_capture(const Space *space, SpaceReadView *out);
 bool space_read_view_clone(const SpaceReadView *source, SpaceReadView *out);
 bool space_read_view_is_current(const SpaceReadView *view);
 bool space_read_view_has_native_occurrences(const SpaceReadView *view);
+/* Native occurrence pins, or one standalone backend with the explicit
+ * incremental occurrence interface. This does not grant native index access. */
+bool space_read_view_has_incremental_occurrences(const SpaceReadView *view);
 bool space_read_view_visit(const SpaceReadView *view,
     bool (*visitor)(SpaceReadToken read, void *context), void *context);
 void space_read_view_release(SpaceReadView *view);
@@ -871,13 +874,10 @@ typedef struct {
     bool has_last;
     CettaIndex last_logical;
     CettaIndex last_row;
+    const SpaceSourceCursorOps *source_ops;
+    void *source_state;
+    SpaceOccurrenceCursorStep source_failure;
 } SpaceOccurrenceCursor;
-
-typedef enum {
-    SPACE_OCCURRENCE_CURSOR_END = 0,
-    SPACE_OCCURRENCE_CURSOR_ITEM,
-    SPACE_OCCURRENCE_CURSOR_INVALIDATED,
-} SpaceOccurrenceCursorStep;
 
 void space_occurrence_cursor_init_empty(SpaceOccurrenceCursor *cursor);
 bool space_occurrence_cursor_init(Space *s, Atom *pattern,
@@ -898,6 +898,8 @@ bool space_occurrence_cursor_clone_unstarted(
  * rows, ceiling, and next occurrence as the source. */
 bool space_occurrence_cursor_clone(
     const SpaceOccurrenceCursor *src, SpaceOccurrenceCursor *dst);
+bool space_occurrence_cursor_select(const SpaceOccurrenceCursor *captured,
+    Atom *pattern, SpaceOccurrenceCursor *out);
 /* Select and lend the next captured row in one shared read transition.
  * An optional payload stays borrowed from the pinned view; the optional
  * index has view-local coordinates. No matching is performed. */
@@ -906,6 +908,13 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
 /* The atom at an index the cursor yielded, from the rows it captured. */
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index);
+/* Native rows remain borrowed from their pin. A backend source's lent row is
+ * copied into the receiving arena so later source advancement or release
+ * cannot invalidate an answer, matcher or binding which retains the value. */
+Atom *space_occurrence_cursor_receive_atom(const SpaceOccurrenceCursor *cursor,
+    CettaIndex index, Arena *arena);
+Atom *space_occurrence_cursor_identity(const SpaceOccurrenceCursor *cursor,
+    CettaIndex index, Arena *arena);
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor);
 void space_occurrence_cursor_storage_census(const SpaceOccurrenceCursor *cursor,
                                            CettaStorageCensus *census);
@@ -1580,6 +1589,13 @@ typedef bool (*SpaceQueryWitnessVisitor)(SpaceReadToken read,
     CettaIndex logical_index, void *context);
 bool space_query_cursor_visit_witnesses(const SpaceQueryCursor *cursor,
     SpaceQueryWitnessVisitor visitor, void *context);
+/* General occurrence identities. The positional visitor above refuses a
+ * non-positional witness before invoking its visitor at all. Both visitors
+ * report evidence, not mutation authority or a complete read footprint. */
+typedef bool (*SpaceQueryOccurrenceVisitor)(SpaceReadToken read,
+    Atom *identity, void *context);
+bool space_query_cursor_visit_occurrences(const SpaceQueryCursor *cursor,
+    SpaceQueryOccurrenceVisitor visitor, void *context);
 void space_query_cursor_free(SpaceQueryCursor *cursor);
 void space_query_cursor_storage_census(const SpaceQueryCursor *cursor,
                                        CettaStorageCensus *census);

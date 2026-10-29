@@ -2239,6 +2239,26 @@ static bool space_occurrence_cursor_frontier_is_full(
     return selected == live;
 }
 
+static bool space_occurrence_source_admit(Space *space, Atom *pattern,
+        SpaceOccurrenceCursor *cursor) {
+    const SpaceMatchBackendOps *backend = space ? space->match_backend.ops : NULL;
+    const SpaceSourceCursorOps *ops = backend ? backend->occurrence_ops : NULL;
+    if (!cursor || !space || space->overlay_base || space->dep_count ||
+        !ops || !backend->occurrence_open || !ops->clone || !ops->next ||
+        !ops->atom || !ops->free) return false;
+    space_occurrence_cursor_init_empty(cursor);
+    cursor->space = space;
+    cursor->read = space_read_token(space);
+    cursor->prefix_epoch = cursor->read.prefix_epoch;
+    cursor->source_ops = ops;
+    if (!backend->occurrence_open(space, pattern, &cursor->source_state) || !cursor->source_state) {
+        if (cursor->source_state) ops->free(cursor->source_state);
+        cursor->source_state = NULL;
+        cursor->source_failure = SPACE_OCCURRENCE_CURSOR_CAPACITY;
+    }
+    return true;
+}
+
 /* The checks that admit a native, standalone Space to an occurrence cursor. */
 static bool space_occurrence_cursor_admit(Space *s,
                                           SpaceOccurrenceCursor *cursor) {
@@ -2266,6 +2286,7 @@ static bool space_occurrence_cursor_capture(
 
 bool space_occurrence_cursor_init_scan(Space *s, SpaceOccurrenceCursor *cursor) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (space_occurrence_source_admit(s, NULL, cursor)) return true;
     if (s && cursor && s->overlay_base) {
         space_occurrence_cursor_init_empty(cursor);
         if (!space_read_view_capture(s, &cursor->logical_reads) ||
@@ -2294,6 +2315,7 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         space_occurrence_cursor_init_empty(cursor);
         return false;
     }
+    if (space_occurrence_source_admit(s, pattern, cursor)) return true;
     if (!space_occurrence_cursor_admit(s, cursor))
         return false;
     if (pattern->kind == ATOM_VAR ||
@@ -2378,6 +2400,18 @@ static bool space_occurrence_cursor_copy(
     space_occurrence_cursor_init_empty(dst);
     if (!src)
         return false;
+    if (src->source_ops) {
+        dst->space = src->space;
+        dst->read = src->read;
+        dst->prefix_epoch = src->prefix_epoch;
+        dst->source_ops = src->source_ops;
+        dst->source_failure = src->source_failure;
+        if (!src->source_state) return src->source_failure != 0;
+        if (src->source_ops->clone(src->source_state, rewind, &dst->source_state) && dst->source_state)
+            return true;
+        space_occurrence_cursor_release(dst);
+        return false;
+    }
     if (src->logical_scan) {
         if (!space_read_view_clone(&src->logical_reads, &dst->logical_reads))
             return false;
@@ -2473,6 +2507,25 @@ bool space_occurrence_cursor_clone(
     return space_occurrence_cursor_copy(src, dst, false);
 }
 
+bool space_occurrence_cursor_select(const SpaceOccurrenceCursor *captured,
+        Atom *pattern, SpaceOccurrenceCursor *out) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (!captured || !out || captured == out || !pattern) return false;
+    if (!captured->source_ops || !captured->source_ops->select || captured->source_failure)
+        return space_occurrence_cursor_clone(captured, out);
+    space_occurrence_cursor_init_empty(out);
+    out->space = captured->space;
+    out->read = captured->read;
+    out->prefix_epoch = captured->prefix_epoch;
+    out->source_ops = captured->source_ops;
+    if (!captured->source_ops->select(captured->source_state, pattern, &out->source_state) || !out->source_state) {
+        if (out->source_state) out->source_ops->free(out->source_state);
+        out->source_state = NULL;
+        out->source_failure = SPACE_OCCURRENCE_CURSOR_CAPACITY;
+    }
+    return true;
+}
+
 /* Yield `row` as its logical index, unless the view's marks removed it. */
 static bool space_occurrence_cursor_yield(
         SpaceOccurrenceCursor *cursor, const SpaceViewMarks *marks,
@@ -2491,6 +2544,19 @@ static SpaceOccurrenceCursorStep space_occurrence_cursor_next_locked(
     SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out) {
     if (logical_index_out)
         *logical_index_out = 0u;
+    if (cursor && cursor->source_ops) {
+        if (cursor->source_failure) return cursor->source_failure;
+        CettaIndex index = 0u;
+        SpaceOccurrenceCursorStep step = cursor->source_ops->next(cursor->source_state, &index);
+        if (step == SPACE_OCCURRENCE_CURSOR_ITEM) {
+            if (!cursor->source_ops->atom(cursor->source_state, index))
+                step = SPACE_OCCURRENCE_CURSOR_INCOMPLETE;
+            else if (logical_index_out) *logical_index_out = index;
+        }
+        if (step != SPACE_OCCURRENCE_CURSOR_ITEM && step != SPACE_OCCURRENCE_CURSOR_END)
+            cursor->source_failure = step;
+        return step;
+    }
     if (cursor && cursor->logical_scan) {
         if (!space_read_view_is_current(&cursor->logical_reads))
             return SPACE_OCCURRENCE_CURSOR_INVALIDATED;
@@ -2631,17 +2697,20 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
     CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (atom_out)
         *atom_out = NULL;
-    SpaceOccurrenceCursorStep step =
-        space_occurrence_cursor_next_locked(cursor, logical_index_out);
+    CettaIndex index = 0u;
+    SpaceOccurrenceCursorStep step = space_occurrence_cursor_next_locked(cursor, &index);
+    if (logical_index_out) *logical_index_out = index;
     if (step == SPACE_OCCURRENCE_CURSOR_ITEM && atom_out)
-        *atom_out = space_pinned_occurrences_atom_at_row(
-            cursor->occurrences, cursor->last_row);
+        *atom_out = space_occurrence_cursor_atom(cursor, index);
     return step;
 }
 
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (cursor && cursor->source_ops)
+        return cursor->source_state && !cursor->source_failure
+            ? cursor->source_ops->atom(cursor->source_state, index) : NULL;
     if (cursor && cursor->logical_scan) {
         if (index >= cursor->ceiling ||
             !space_read_view_is_current(&cursor->logical_reads)) return NULL;
@@ -2661,10 +2730,31 @@ Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
         occurrences, space_view_row(&marks, index));
 }
 
+Atom *space_occurrence_cursor_receive_atom(const SpaceOccurrenceCursor *cursor,
+        CettaIndex index, Arena *arena) {
+    Atom *value = space_occurrence_cursor_atom(cursor, index);
+    if (value && cursor->source_ops)
+        return arena ? atom_deep_copy(arena, value) : NULL;
+    return value;
+}
+
+Atom *space_occurrence_cursor_identity(const SpaceOccurrenceCursor *cursor,
+        CettaIndex index, Arena *arena) {
+    if (!cursor || !arena) return NULL;
+    if (cursor->source_ops && cursor->source_ops->identity) {
+        Atom *identity = cursor->source_state && !cursor->source_failure
+            ? cursor->source_ops->identity(cursor->source_state, index) : NULL;
+        return identity && !atom_has_vars(identity) ? atom_deep_copy(arena, identity) : NULL;
+    }
+    return index <= INT64_MAX ? atom_int(arena, (int64_t)index) : NULL;
+}
+
 void space_occurrence_cursor_release(SpaceOccurrenceCursor *cursor) {
     CETTA_SCOPED_SHARED_TRANSITION(transition);
     if (!cursor)
         return;
+    if (cursor->source_ops && cursor->source_state)
+        cursor->source_ops->free(cursor->source_state);
     if (cursor->pinned)
         space_pinned_occurrences_release(cursor->occurrences);
     space_read_view_release(&cursor->logical_reads);
@@ -6709,6 +6799,10 @@ void space_storage_census(const Space *s, CettaStorageCensus *c) {
 void space_occurrence_cursor_storage_census(const SpaceOccurrenceCursor *cursor,
                                             CettaStorageCensus *c) {
     if(!cursor || !cetta_storage_object(c,cursor,0u,CETTA_STORAGE_VISITED))return;
+    if (cursor->source_ops && cursor->source_state) {
+        if (cursor->source_ops->storage) cursor->source_ops->storage(cursor->source_state, c);
+        else cetta_storage_refuse(c, "OccurrenceSourceStorage");
+    }
     cetta_storage_array(c,cursor->nodes,cursor->node_len,sizeof(*cursor->nodes),0u);
     cetta_storage_array(c,cursor->leaf_pos,cursor->node_len,sizeof(*cursor->leaf_pos),0u);
     cetta_storage_array(c,cursor->flat,cursor->flat_capacity,sizeof(*cursor->flat),0u);
@@ -6884,6 +6978,15 @@ bool space_read_view_has_native_occurrences(const SpaceReadView *view) {
             !space_match_backend_has_native_occurrences(view->bases[i].space))
             return false;
     return true;
+}
+
+bool space_read_view_has_incremental_occurrences(const SpaceReadView *view) {
+    if (space_read_view_has_native_occurrences(view)) return true;
+    const Space *space = view ? view->root.space : NULL;
+    const SpaceMatchBackendOps *backend = space ? space->match_backend.ops : NULL;
+    const SpaceSourceCursorOps *ops = backend ? backend->occurrence_ops : NULL;
+    return space && !view->base_count && !space->overlay_base && !space->dep_count &&
+        ops && backend->occurrence_open && ops->clone && ops->next && ops->atom && ops->free;
 }
 
 bool space_read_view_visit(const SpaceReadView *view,

@@ -4631,6 +4631,15 @@ test-all: test-pattern-query-cursor test-pattern-queries
 test-pattern-query-cursor: $(PATTERN_QUERY_CURSOR_TEST_BIN)
 	@$(call cetta_exec,./$(PATTERN_QUERY_CURSOR_TEST_BIN))
 
+SPACE_SOURCE_CURSOR_TEST_BIN = runtime/test_space_source_cursor-$(BUILD_OBJ_TAG)
+$(SPACE_SOURCE_CURSOR_TEST_BIN): tests/test_space_source_cursor.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_space_source_cursor.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-space-source-cursor
+test-all: test-space-source-cursor
+test-space-source-cursor: $(SPACE_SOURCE_CURSOR_TEST_BIN)
+	@$(PYTHON) -c 'import os,subprocess,tempfile; d=tempfile.TemporaryDirectory(prefix="cetta-space-source-", dir=os.environ.get("TMPDIR")); subprocess.run(["./$(SPACE_SOURCE_CURSOR_TEST_BIN)",d.name],check=True)'
+
 PATTERN_OCCURRENCE_DROP_BIN = runtime/test_pattern_occurrence_drop-$(BUILD_OBJ_TAG)
 $(PATTERN_OCCURRENCE_DROP_BIN): tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -Wl,--wrap=space_occurrence_cursor_next -o $@ tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
