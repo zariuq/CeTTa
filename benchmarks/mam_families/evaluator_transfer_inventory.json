@@ -2394,6 +2394,15 @@
     {
       "construction": "Mettapedia/Machines/ContextualInvocation.lean",
       "application": "Borrowed ready invocations join the existing native field-reader and certified partial-expansion models to contextual CBPV entry. Exact post-entry computations and continuations agree, including ordered arguments, lexical scopes, source debits and arbitrary later slices; native admission and C correspondence remain separate. InvocationLayout additionally relates source list destructuring to compiled array ranges and contextual argument worklists, including body identity, lexical operands, duplicates and stale-head rejection. Native descriptor, demand, charging and C correspondence obligations remain explicit."
+    },
+    {
+      "construction": "Mettapedia/Machines/HEInstructionCompletion.lean",
+      "application": "The shared HE instruction-completion decision refines the maintained call-return judgment, retaining expected type and reached bindings. Public Empty omission, refusal restoration and separately admitted tail carriers are explicit. Returned functions retain their own public codomain; producer-completed marker-shaped data uses its distinct completion judgment. Native type-demand correspondence, profile readback, source debit and C ownership remain separate obligations.",
+      "native": [
+        "src/eval_he_boundary.inc:he_instruction_completion",
+        "src/eval_he_canonical.inc:he_canonical_resume_instruction"
+      ],
+      "control": "tests/test_native_conditional_context.c:he_instruction_completion_controls"
     }
   ],
   "cross_tree_reconciliation": [
