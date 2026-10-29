@@ -7,7 +7,8 @@
 (= (kb:fact-prefix) "kb/fact/v1/")
 (= (kb:relation-prefix $relation) (knowledge:address "kb/relation/v1/" $relation))
 (= (kb:argument-prefix $relation $position $value)
-   (knowledge:address "kb/argument/v1/" ($relation $position $value)))
+   (knowledge:address "kb/argument/v1/"
+     (cons-atom $relation (cons-atom $position (cons-atom $value ())))))
 (= (kb:fact-key $identity) (knowledge:address (kb:fact-prefix) $identity))
 (= (kb:equal $a $b)
    (if (and (knowledge:ground-identity? $a) (knowledge:ground-identity? $b))

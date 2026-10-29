@@ -171,6 +171,15 @@ class DatabaseTests(unittest.TestCase):
         self.assertIn(self.worker.call(E("AlphaEqual", E("p", Var(1), Var(1)), E("p", Var(2), Var(3)))),
                       (S("false"), False))
 
+    def test_callable_relation_names_are_inert_argument_index_data(self):
+        self.commit([E("KbPut", "a", S("+"), (7, 6)), E("KbPut", "b", S("+"), (5, 6))])
+        answer = self.call(E("Select", E("KbArgument", S("+"), 0, 7)))
+        self.same(answer[1], (E("KbFact", "a", S("+"), (7, 6)),))
+        # Constructing (+ position value) would alias these two selectors.
+        first = self.worker.call(E("Explain", E("KbArgument", S("+"), 0, 7)))
+        second = self.worker.call(E("Explain", E("KbArgument", S("+"), 1, 6)))
+        self.assertNotEqual(first[2], second[2])
+
     def test_repeated_commits_do_not_retain_one_space_per_request(self):
         self.commit([E("KbPut", "fixed", "value", (0,))])
         before = self.worker.last_metrics["permanent_bytes"]
