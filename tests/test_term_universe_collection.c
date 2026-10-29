@@ -585,5 +585,7 @@ int main(void) {
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
     test_read_of_reclaimed_entry_traps();
 #endif
+    var_intern_free(&var_intern);
+    symbol_table_free(&symbols);
     return 0;
 }

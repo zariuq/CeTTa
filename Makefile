@@ -3386,7 +3386,11 @@ PRIME_FAST_TESTS = $(PRIME_CONFORMANCE_TESTS) $(PRIME_EXAMPLE_TESTS) $(PRIME_PRA
 # Per-test wall-clock cap for the prime conformance/completion gates.  A clean
 # prime_02_completion_resources run is a few seconds; a pathological blow-up
 # (e.g. the O(n^3) reify-judge regression) must fail LOUD instead of grinding
-# for hours and wedging the whole verification sweep.
+# for hours and wedging the whole verification sweep.  A build that collects
+# at every safe point runs the largest completions several times slower.
+ifeq ($(TERM_UNIVERSE_COLLECTION_CHECKS),1)
+PRIME_COMPLETION_TIMEOUT ?= 300
+endif
 PRIME_COMPLETION_TIMEOUT ?= 60
 PYTHON_TESTS = tests/test_py_ops_syntax.metta tests/test_import_foreign_python_file.metta tests/test_import_foreign_pkg_error.metta tests/test_namespace_sugar_guardrails.metta
 PATHMAP_REQUIRED_TESTS = \
@@ -44707,9 +44711,9 @@ test-postings-descriptors: $(BIN) tools/generate_postings_descriptors.py \
 		lib/postings_descriptors.metta lib/petta/postings_descriptors.metta
 	python3 tools/generate_postings_descriptors.py --cetta ./$(BIN) --check
 	@set -eu; got=$$(./$(BIN) --no-results --lang petta --profile extended \
-		tests/langdef/postings/descriptors_surface_v1.metta); \
-	test "$$got" = "$$(cat tests/langdef/postings/descriptors_surface_v1.expected)"; \
-	echo '(PostingsDescriptorSurface 5 0)'
+		tests/langdef/postings/descriptors_api_v1.metta); \
+	test "$$got" = "$$(cat tests/langdef/postings/descriptors_api_v1.expected)"; \
+	echo '(PostingsDescriptorAPI 5 0)'
 
 qualify-postings-descriptors-lean:
 	@set -eu; \

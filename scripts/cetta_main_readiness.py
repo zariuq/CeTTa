@@ -34,6 +34,14 @@ from cetta_readiness_model import (
 PERFORMANCE_BASELINE_COMMIT = "9050a2d171946f6edf417152f259b7bc4e98907d"
 CONSOLIDATION_BASELINE_COMMIT = "c632ecd1479fc766dcdf0efafd4cbc311213af6d"
 PROPERTY_MANIFEST = "benchmarks/main_readiness_properties.json"
+PETTA_CONTRACT_TARGETS = (
+    "test-petta-release-reference",
+    "test-petta-corrected-stable",
+    "test-petta-swi-differences",
+    "test-language-versions",
+    "test-petta-language-versions",
+    "test-petta-versioned-imports",
+)
 
 
 def consolidation_baseline(root: Path) -> dict[str, Any]:
@@ -134,6 +142,12 @@ def explicit_input_identity(root: Path) -> dict[str, str]:
         "tests/rhocalc_cost_run/parallel_claim_rollback_competition.mrho",
         "tests/rhocalc_cost_run/parallel_claim_rollback_competition.expected",
         "tests/test_manifest.tsv",
+        "langdef/petta/reference.json",
+        "tests/petta/corrected_stable_observations.json",
+        "tests/support/check_petta_corrected_stable.py",
+        "tools/check_petta_release_reference.py",
+        "tests/support/compare_answers.py",
+        "tests/support/check_compare_answers.py",
     ]
     result: dict[str, str] = {}
     for name in paths:
@@ -425,7 +439,11 @@ def run_logged(
 
 
 def common_readiness_commands() -> list[list[str]]:
-    return [
+    # These checks establish the selected contract before the broad matrix.
+    # A historical differential is additional evidence, not a replacement
+    # for accepted repairs and intentional differences from its reference.
+    return [["make", "BUILD=main", target]
+            for target in PETTA_CONTRACT_TARGETS] + [
         ["make", "BUILD=main", "test-correctness-all"],
         ["make", "BUILD=main", "test-profiles"],
         ["make", "BUILD=main", "test-asan"],
