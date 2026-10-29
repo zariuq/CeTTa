@@ -49,6 +49,7 @@ struct PrimeNeedFrame {
     uint64_t import_key;
     uint64_t source_occurrence_id;
     uint64_t source_argument_index;
+    PrimeNeedSourceRole source_role;
     PrimeNeedCacheState cache_state;
     PrimeNeedValueRole value_role;
     /* Optional direct producer of this VALUE update, in the same session.
@@ -1238,6 +1239,7 @@ static bool prime_need_snapshot_push(Arena *owner,
                                      uint64_t import_key,
                                      uint64_t source_occurrence_id,
                                      uint64_t source_argument_index,
+                                     PrimeNeedSourceRole source_role,
                                      PrimeNeedCacheState cache_state,
                                      PrimeNeedValueRole value_role,
                                      uint64_t value_producer_thunk,
@@ -1253,6 +1255,8 @@ static bool prime_need_snapshot_push(Arena *owner,
     if (!prime_need_owner_admissible(owner) || !base || !out ||
         !prime_need_snapshot_present(base) ||
         thunk_id == 0u || authority_id == 0u || !origin ||
+        (source_role != PRIME_NEED_SOURCE_INFERRED &&
+         source_role != PRIME_NEED_SOURCE_COMPUTATION) ||
         ((value_producer_thunk == 0u) != (value_producer_update == 0u)) ||
         (value_producer_thunk && (cache_state != PRIME_NEED_CACHE_VALUE ||
             value_producer_thunk == thunk_id)) ||
@@ -1299,6 +1303,7 @@ static bool prime_need_snapshot_push(Arena *owner,
     frame->import_key = import_key;
     frame->source_occurrence_id = source_occurrence_id;
     frame->source_argument_index = source_argument_index;
+    frame->source_role = source_role;
     frame->cache_state = cache_state;
     frame->value_role = value_role;
     frame->value_producer_thunk = value_producer_thunk;
@@ -1357,6 +1362,7 @@ static void prime_need_cell_view_from_frame(
     out->import_key = frame->import_key;
     out->source_occurrence_id = frame->source_occurrence_id;
     out->source_argument_index = frame->source_argument_index;
+    out->source_role = frame->source_role;
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
     out->capture_known = frame->capture_known;
     out->capture_var_ids = frame->capture_var_ids;
@@ -1672,6 +1678,54 @@ PrimeNeedReadCapture *prime_need_read_capture_copy(const PrimeNeedReadCapture *c
     return copy;
 }
 
+PrimeNeedReadCapture *prime_need_read_capture_copy_with_session(
+    Arena *destination,AtomDeepCopySession *session,const PrimeNeedReadCapture *capture) {
+    if (!capture || !atom_deep_copy_session_relocation_targets(session,destination) ||
+        atom_deep_copy_session_failed(session) ||
+        capture->length>capture->capacity ||
+        capture->capacity>SIZE_MAX/sizeof(*capture->reads) ||
+        (!!capture->reads != !!capture->capacity) ||
+        !prime_need_snapshot_present(&capture->context) ||
+        !prime_need_snapshot_is_ancestor(&capture->context,&capture->entrance)) return NULL;
+    /* The read coordinates must describe the advertised entrance. Copying
+     * malformed support must not turn it into permission for another world. */
+    for(size_t i=0u;i<capture->length;i++) {
+        const PrimeNeedReadDependency *read=&capture->reads[i];
+        uint64_t thunk=0u,update=0u;
+        if (!prime_need_capture_query(&capture->entrance,read->kind,read->key,
+                read->origin,&thunk,&update) ||
+            thunk!=read->thunk_id || update!=read->update_id) return NULL;
+    }
+    PrimeNeedReadCapture *copy=calloc(1u,sizeof(*copy));
+    if (!copy) return NULL;
+    copy->context=capture->context;copy->entrance=capture->entrance;
+    copy->length=capture->length;copy->capacity=capture->capacity;
+    copy->complete=capture->complete;
+    if (copy->capacity) {
+        copy->reads=malloc(copy->capacity*sizeof(*copy->reads));
+        if (!copy->reads) goto fail;
+        memcpy(copy->reads,capture->reads,copy->length*sizeof(*copy->reads));
+    }
+    if (!prime_need_snapshot_copy_with_session(destination,session,&copy->context) ||
+        !prime_need_snapshot_copy_with_session(destination,session,&copy->entrance) ||
+        !prime_need_snapshot_is_ancestor(&copy->context,&copy->entrance)) goto fail;
+    for(size_t i=0u;i<copy->length;i++) {
+        PrimeNeedReadDependency *read=&copy->reads[i];
+        if (read->origin) {
+            read->origin=atom_deep_copy_session_copy(session,read->origin);
+            if (!read->origin) goto fail;
+        }
+        uint64_t thunk=0u,update=0u;
+        if (!prime_need_capture_query(&copy->entrance,read->kind,read->key,
+                read->origin,&thunk,&update) ||
+            thunk!=read->thunk_id || update!=read->update_id) goto fail;
+    }
+    return copy;
+fail:
+    prime_need_read_capture_free(copy);
+    return NULL;
+}
+
 bool prime_need_read_capture_complete(const PrimeNeedReadCapture *capture) {
     return capture && capture->complete;
 }
@@ -1869,7 +1923,8 @@ CettaMatchCompletion prime_need_snapshot_import_production_checked(Arena *owner,
         if (!prime_need_snapshot_push(owner, &imported, 0u, frame->update_id,
             frame->thunk_id, frame->authority_id, frame->evaluator_id,
             frame->storage_key, frame->import_key, frame->source_occurrence_id,
-            frame->source_argument_index, frame->cache_state, frame->value_role,
+            frame->source_argument_index, frame->source_role,
+            frame->cache_state, frame->value_role,
             frame->value_producer_thunk, frame->value_producer_update,
             frame->origin, frame->cached,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
@@ -1902,6 +1957,7 @@ static bool prime_need_snapshot_allocate_with_storage_key(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t storage_key, uint64_t source_occurrence_id,
     uint64_t source_argument_index, bool ready,
+    PrimeNeedSourceRole source_role,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
     bool capture_known, const VarId *capture_var_ids,
     size_t capture_var_count,
@@ -1969,7 +2025,7 @@ static bool prime_need_snapshot_allocate_with_storage_key(
         return false;
     if (!prime_need_snapshot_push(
             owner, base, 0u, 0u, thunk_id, authority_id, 0u, storage_key,
-            import_key, source_occurrence_id, source_argument_index,
+            import_key, source_occurrence_id, source_argument_index, source_role,
             ready ? PRIME_NEED_CACHE_VALUE : PRIME_NEED_CACHE_EMPTY,
             ready ? PRIME_NEED_VALUE_READY : PRIME_NEED_VALUE_DEMAND_RESULT,
             0u, 0u, term, ready ? term : NULL,
@@ -1988,7 +2044,7 @@ bool prime_need_snapshot_allocate(Arena *owner,
                                   PrimeNeedSnapshot *out,
                                   uint64_t *out_thunk_id) {
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, 0u, 0u, 0u, false,
+        owner, base, term, 0u, 0u, 0u, false, PRIME_NEED_SOURCE_INFERRED,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         false, NULL, 0u,
 #endif
@@ -2010,12 +2066,13 @@ uint64_t prime_need_fresh_resample_scope(void) {
 bool prime_need_snapshot_allocate_source_argument(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t source_occurrence_id, uint64_t source_argument_index,
+    PrimeNeedSourceRole source_role,
     PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
     if (source_occurrence_id == 0u)
         return false;
     return prime_need_snapshot_allocate_with_storage_key(
         owner, base, term, 0u, source_occurrence_id,
-        source_argument_index, false,
+        source_argument_index, false, source_role,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         false, NULL, 0u,
 #endif
@@ -2029,7 +2086,7 @@ bool prime_need_snapshot_allocate_persisted(
     if (storage_key == 0u)
         return false;
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, storage_key, 0u, 0u, false,
+        owner, base, term, storage_key, 0u, 0u, false, PRIME_NEED_SOURCE_INFERRED,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         false, NULL, 0u,
 #endif
@@ -2052,6 +2109,7 @@ bool prime_need_snapshot_allocate_named(
         return false;
     return prime_need_snapshot_push(
         owner, base, 0u, 0u, thunk_id, authority_id, 0u, 0u, 0u, 0u, 0u,
+        PRIME_NEED_SOURCE_INFERRED,
         PRIME_NEED_CACHE_EMPTY, PRIME_NEED_VALUE_DEMAND_RESULT, 0u, 0u, term, NULL,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         /* The term is closed: it captures no variable. */
@@ -2066,20 +2124,21 @@ bool prime_need_snapshot_allocate_closure(
     const VarId *capture_var_ids, size_t capture_var_count,
     PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, 0u, 0u, 0u, false, true,
+        owner, base, term, 0u, 0u, 0u, false, PRIME_NEED_SOURCE_INFERRED, true,
         capture_var_ids, capture_var_count, out, out_thunk_id);
 }
 
 bool prime_need_snapshot_allocate_source_argument_closure(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t source_occurrence_id, uint64_t source_argument_index,
+    PrimeNeedSourceRole source_role,
     const VarId *capture_var_ids, size_t capture_var_count,
     PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
     if (source_occurrence_id == 0u)
         return false;
     return prime_need_snapshot_allocate_with_storage_key(
         owner, base, term, 0u, source_occurrence_id,
-        source_argument_index, false, true, capture_var_ids,
+        source_argument_index, false, source_role, true, capture_var_ids,
         capture_var_count, out, out_thunk_id);
 }
 
@@ -2091,7 +2150,7 @@ bool prime_need_snapshot_allocate_persisted_closure(
     if (storage_key == 0u)
         return false;
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, term, storage_key, 0u, 0u, false, true,
+        owner, base, term, storage_key, 0u, 0u, false, PRIME_NEED_SOURCE_INFERRED, true,
         capture_var_ids, capture_var_count, out, out_thunk_id);
 }
 bool prime_need_snapshot_allocate_ready_value_closure(
@@ -2099,7 +2158,7 @@ bool prime_need_snapshot_allocate_ready_value_closure(
     const VarId *capture_var_ids, size_t capture_var_count,
     PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, value, 0u, 0u, 0u, true, true,
+        owner, base, value, 0u, 0u, 0u, true, PRIME_NEED_SOURCE_INFERRED, true,
         capture_var_ids, capture_var_count, out, out_thunk_id);
 }
 #endif
@@ -2108,7 +2167,7 @@ bool prime_need_snapshot_allocate_ready_value(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *value,
     PrimeNeedSnapshot *out, uint64_t *out_thunk_id) {
     return prime_need_snapshot_allocate_with_storage_key(
-        owner, base, value, 0u, 0u, 0u, true,
+        owner, base, value, 0u, 0u, 0u, true, PRIME_NEED_SOURCE_INFERRED,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
         false, NULL, 0u,
 #endif
@@ -2146,6 +2205,7 @@ static bool prime_need_snapshot_transition(
         next == PRIME_NEED_CACHE_EVALUATING ? evaluator_id : 0u,
         previous.storage_key, previous.import_key,
         previous.source_occurrence_id, previous.source_argument_index,
+        previous.source_role,
         next, value_role, value_producer_thunk, value_producer_update,
         previous.origin, cached,
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
@@ -2336,7 +2396,7 @@ bool prime_need_snapshot_promote_with_session(
                 path[i]->authority_id, path[i]->evaluator_id,
                 path[i]->storage_key, path[i]->import_key,
                 path[i]->source_occurrence_id,
-                path[i]->source_argument_index,
+                path[i]->source_argument_index, path[i]->source_role,
                 path[i]->cache_state, path[i]->value_role,
                 path[i]->value_producer_thunk, path[i]->value_producer_update,
                 origin, cached,
@@ -2691,7 +2751,7 @@ bool prime_need_snapshot_promote_suffix_with_session(
                 path[i]->authority_id, path[i]->evaluator_id,
                 path[i]->storage_key, path[i]->import_key,
                 path[i]->source_occurrence_id,
-                path[i]->source_argument_index,
+                path[i]->source_argument_index, path[i]->source_role,
                 path[i]->cache_state, path[i]->value_role,
                 path[i]->value_producer_thunk, path[i]->value_producer_update,
                 origin, cached,
@@ -3153,6 +3213,210 @@ static CettaMatchCompletion prime_need_reader_context_share(const PrimeNeedReade
     PrimeNeedReaderContext **out) {
     prime_need_reader_context_retain((PrimeNeedReaderContext *)source);
     prime_need_reader_context_replace(out,(PrimeNeedReaderContext *)source);
+    return CETTA_MATCH_MATCHED;
+}
+
+static const char prime_need_reader_context_copy_kind, prime_need_reader_lineage_copy_kind;
+
+static void prime_need_reader_context_copy_hold(const void *raw) {
+    prime_need_reader_context_retain((PrimeNeedReaderContext *)raw);
+}
+static void prime_need_reader_context_copy_drop(const void *raw) {
+    prime_need_reader_context_release((PrimeNeedReaderContext *)raw);
+}
+static void prime_need_reader_lineage_copy_hold(const void *raw) {
+    PrimeNeedReaderLineage *node=(PrimeNeedReaderLineage *)raw;
+    prime_need_reader_reference_retain(&node->references);
+}
+static void prime_need_reader_lineage_copy_drop(const void *raw) {
+    prime_need_reader_lineage_release((PrimeNeedReaderLineage *)raw);
+}
+
+/* A mapped image is already owned by this session. Re-copying a carrier
+ * after an earlier transport must not create a second version of its image. */
+static void *prime_need_reader_copy_image(const AtomDeepCopySession *session,
+    const void *kind,const void *source,size_t bytes) {
+    if (!kind || !source || !bytes) return NULL;
+    void *image=atom_deep_copy_session_object_forwarded(session,kind,source,bytes);
+    const void *original=atom_deep_copy_session_object_original(session,kind,source,bytes);
+    if (image) {
+        if (image==source || original ||
+            atom_deep_copy_session_object_forwarded(session,kind,image,bytes)) return NULL;
+        return image;
+    }
+    return original && original!=source ? (void *)source : NULL;
+}
+
+static bool prime_need_reader_copy_value(AtomDeepCopySession *session,
+    PrimeNeedReaderValue source,PrimeNeedReaderValue *out) {
+    if (!source.value) {
+        if (source.operations) return false;
+        *out=(PrimeNeedReaderValue){0};
+        return true;
+    }
+    const PrimeNeedReaderValueOps *ops=source.operations;
+    if (!ops || !ops->retain || !ops->release) return false;
+    void *image=prime_need_reader_copy_image(session,ops->copy_kind,
+        source.value,ops->copy_size);
+    if (!image) return false;
+    *out=(PrimeNeedReaderValue){.value=image,.operations=ops};
+    return true;
+}
+
+static size_t prime_need_reader_lineage_copy_index(const PrimeNeedReaderLineages *nodes,
+    const size_t *indices,const PrimeNeedReaderLineage *node) {
+    size_t slot=prime_need_pointer_hash(node)&(nodes->seen_cap-1u);
+    while (nodes->seen[slot] && nodes->seen[slot]!=node)
+        slot=(slot+1u)&(nodes->seen_cap-1u);
+    return nodes->seen[slot] ? indices[slot] : SIZE_MAX;
+}
+
+static PrimeNeedReaderLineage *prime_need_reader_lineage_copy(
+    const PrimeNeedReaderLineage *source,AtomDeepCopySession *session) {
+    if (!source) return NULL;
+    PrimeNeedReaderLineage *known=prime_need_reader_copy_image(session,
+        &prime_need_reader_lineage_copy_kind,source,sizeof(*source));
+    if (known) return known;
+    PrimeNeedReaderLineages nodes={0};
+    size_t *indices=NULL,*heads=NULL,*children=NULL,*next=NULL,*queue=NULL;
+    unsigned char *waiting=NULL;
+    bool copied=false;
+    if (!prime_need_reader_lineages_push(&nodes,source)) goto done;
+    for (size_t i=0u;i<nodes.len;i++) {
+        const PrimeNeedReaderLineage *node=nodes.items[i];
+        if (!node->depth || node->retiring ||
+            !atomic_load_explicit(&node->references,memory_order_relaxed)) goto done;
+        if (prime_need_reader_copy_image(session,&prime_need_reader_lineage_copy_kind,
+                node,sizeof(*node))) continue;
+        const PrimeNeedReaderLineage *parents[]={node->left,node->right,
+            node->import_entrance,node->import_production};
+        for (size_t k=0u;k<4u;k++) {
+            if (!parents[k]) continue;
+            if ((k<2u && parents[k]->depth>=node->depth) ||
+                !prime_need_reader_lineages_push(&nodes,parents[k])) goto done;
+        }
+    }
+    if (nodes.len>SIZE_MAX/(4u*sizeof(size_t)) ||
+        nodes.seen_cap>SIZE_MAX/sizeof(*indices)) goto done;
+    indices=malloc(nodes.seen_cap*sizeof(*indices));
+    heads=malloc(nodes.len*sizeof(*heads));
+    children=malloc(4u*nodes.len*sizeof(*children));
+    next=malloc(4u*nodes.len*sizeof(*next));
+    queue=malloc(nodes.len*sizeof(*queue));
+    waiting=calloc(nodes.len,sizeof(*waiting));
+    if (!indices || !heads || !children || !next || !queue || !waiting) goto done;
+    for (size_t i=0u;i<nodes.len;i++) {
+        size_t slot=prime_need_pointer_hash(nodes.items[i])&(nodes.seen_cap-1u);
+        while (nodes.seen[slot]!=nodes.items[i]) slot=(slot+1u)&(nodes.seen_cap-1u);
+        indices[slot]=i;
+        heads[i]=SIZE_MAX;
+    }
+    size_t edges=0u,queued=0u,processed=0u;
+    for (size_t i=0u;i<nodes.len;i++) {
+        const PrimeNeedReaderLineage *node=nodes.items[i];
+        if (prime_need_reader_copy_image(session,&prime_need_reader_lineage_copy_kind,
+                node,sizeof(*node))) continue;
+        const PrimeNeedReaderLineage *parents[]={node->left,node->right,
+            node->import_entrance,node->import_production};
+        for (size_t k=0u;k<4u;k++) {
+            if (!parents[k] || prime_need_reader_copy_image(session,
+                    &prime_need_reader_lineage_copy_kind,parents[k],sizeof(*parents[k]))) continue;
+            size_t parent=prime_need_reader_lineage_copy_index(&nodes,indices,parents[k]);
+            if (parent==SIZE_MAX) goto done;
+            waiting[i]++;
+            children[edges]=i;next[edges]=heads[parent];heads[parent]=edges++;
+        }
+    }
+    for (size_t i=0u;i<nodes.len;i++) if (!waiting[i]) queue[queued++]=i;
+    while (processed<queued) {
+        size_t index=queue[processed++];
+        const PrimeNeedReaderLineage *node=nodes.items[index];
+        if (prime_need_reader_copy_image(session,&prime_need_reader_lineage_copy_kind,
+                node,sizeof(*node))) goto advance;
+        PrimeNeedReaderLineage *image=calloc(1u,sizeof(*image));
+        if (!image) goto done;
+        atomic_init(&image->references,1u);
+        image->depth=node->depth;
+        const PrimeNeedReaderLineage *parents[]={node->left,node->right,
+            node->import_entrance,node->import_production};
+        PrimeNeedReaderLineage **targets[]={&image->left,&image->right,
+            &image->import_entrance,&image->import_production};
+        bool ready=true;
+        for (size_t k=0u;ready && k<4u;k++) {
+            if (!parents[k]) continue;
+            PrimeNeedReaderLineage *parent=prime_need_reader_copy_image(session,
+                &prime_need_reader_lineage_copy_kind,parents[k],sizeof(*parents[k]));
+            if (!parent) {ready=false;break;}
+            prime_need_reader_reference_retain(&parent->references);
+            *targets[k]=parent;
+        }
+        if (ready) ready=atom_deep_copy_session_object_record_retained(session,
+            &prime_need_reader_lineage_copy_kind,node,image,sizeof(*node),
+            prime_need_reader_lineage_copy_hold,prime_need_reader_lineage_copy_drop);
+        prime_need_reader_lineage_release(image);
+        if (!ready) goto done;
+advance:
+        for (size_t edge=heads[index];edge!=SIZE_MAX;edge=next[edge]) {
+            size_t child=children[edge];
+            if (!waiting[child]) goto done;
+            if (!--waiting[child]) queue[queued++]=child;
+        }
+    }
+    copied=processed==nodes.len;
+done:
+    free(indices);free(heads);free(children);free(next);free(queue);free(waiting);
+    prime_need_reader_lineages_free(&nodes);
+    return copied ? prime_need_reader_copy_image(session,&prime_need_reader_lineage_copy_kind,
+        source,sizeof(*source)) : NULL;
+}
+
+PrimeNeedReaderContext *prime_need_reader_context_copy_lookup(
+    const PrimeNeedReaderContext *source,const AtomDeepCopySession *session) {
+    if (!source || source->length>source->capacity ||
+        source->capacity>(SIZE_MAX-sizeof(*source))/sizeof(*source->entries)) return NULL;
+    size_t bytes=sizeof(*source)+source->capacity*sizeof(*source->entries);
+    return prime_need_reader_copy_image(session,&prime_need_reader_context_copy_kind,source,bytes);
+}
+
+CettaMatchCompletion prime_need_reader_context_copy_with_session(
+    const PrimeNeedReaderContext *source,Arena *owner,
+    AtomDeepCopySession *session,PrimeNeedReaderContext **out) {
+    if (!out || !atom_deep_copy_session_targets(session,owner)) return CETTA_MATCH_INCOMPLETE;
+    if (!source) return prime_need_reader_context_share(NULL,out);
+    if (source->length>source->capacity || !source->lineage ||
+        !atomic_load_explicit(&source->references,memory_order_relaxed) ||
+        source->capacity>(SIZE_MAX-sizeof(*source))/sizeof(*source->entries))
+        return CETTA_MATCH_INCOMPLETE;
+    size_t bytes=sizeof(*source)+source->capacity*sizeof(*source->entries);
+    PrimeNeedReaderContext *known=prime_need_reader_context_copy_lookup(source,session);
+    if (known) return prime_need_reader_context_share(known,out);
+    for (size_t i=0u;i<source->length;i++) {
+        PrimeNeedReaderValue image;
+        if (!source->entries[i].key ||
+            (i && source->entries[i-1u].key>=source->entries[i].key) ||
+            !prime_need_reader_copy_value(session,source->entries[i].reader,&image))
+            return CETTA_MATCH_INCOMPLETE;
+    }
+    PrimeNeedReaderLineage *lineage=prime_need_reader_lineage_copy(source->lineage,session);
+    if (!lineage) return CETTA_MATCH_INCOMPLETE;
+    PrimeNeedReaderContext *image=malloc(bytes);
+    if (!image) return CETTA_MATCH_INCOMPLETE;
+    *image=(PrimeNeedReaderContext){.references=1u,.capacity=source->capacity,.lineage=lineage};
+    prime_need_reader_reference_retain(&lineage->references);
+    bool ready=true;
+    for (size_t i=0u;ready && i<source->length;i++) {
+        PrimeNeedReaderEntry entry=source->entries[i];
+        ready=prime_need_reader_copy_value(session,entry.reader,&entry.reader) &&
+            prime_need_reader_context_append(image,entry);
+    }
+    if (ready) ready=atom_deep_copy_session_object_record_retained(session,
+        &prime_need_reader_context_copy_kind,source,image,bytes,
+        prime_need_reader_context_copy_hold,prime_need_reader_context_copy_drop);
+    if (!ready) {
+        prime_need_reader_context_release(image);
+        return CETTA_MATCH_INCOMPLETE;
+    }
+    prime_need_reader_context_replace(out,image);
     return CETTA_MATCH_MATCHED;
 }
 
@@ -7205,6 +7469,7 @@ bool prime_need_snapshot_compare(const PrimeNeedSnapshot *left,
         PN_ID("need.source_occurrence",CETTA_CHECKPOINT_SOURCE_OCCURRENCE,a->source_occurrence_id,b->source_occurrence_id);
         PN_SCALAR("need.source_argument",a->source_argument_index,b->source_argument_index);
         PN_SCALAR("need.cache_state",a->cache_state,b->cache_state);
+        PN_SCALAR("need.source_role",a->source_role,b->source_role);
         PN_SCALAR("need.value_role",a->value_role,b->value_role);
         PN_ID("need.value_producer",CETTA_CHECKPOINT_NEED_THUNK,a->value_producer_thunk,b->value_producer_thunk);
         PN_ID("need.value_producer_update",CETTA_CHECKPOINT_NEED_SERIAL,a->value_producer_update,b->value_producer_update);

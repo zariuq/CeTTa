@@ -1,15 +1,13 @@
-; In Prime `Atom` is the top type: an argument at an `Atom` position is
-; evaluated like any other.  Holding an argument as written is what `Data`
-; is for.
-(: keep (-> Atom Atom))
+; Proc parameters denote computation; Atom parameters preserve syntax.
+(: keep (-> Proc Proc))
 (= (keep $x) (got $x))
 !(keep (+ 1 2))
-(: hold (-> (Data Atom) Atom))
+(: hold (-> Atom Proc))
 (= (hold $x) (got $x))
 !(hold (+ 1 2))
-(: Box (-> Atom Box))
+(: Box (-> Proc Box))
 !(Box (+ 1 2))
-(: HBox (-> (Data Atom) HBox))
+(: HBox (-> Atom HBox))
 !(HBox (+ 1 2))
 
 ; The standard library is written in HE, where an `Atom` position holds its
@@ -18,7 +16,7 @@
 !(map-atom (1 2 3) $x (+ $x 1))
 
 ; A held part taken out of a record compares as the syntax it holds.
-(: Verdict (-> (Data Atom) (Data Atom) Atom))
+(: Verdict (-> Atom Atom Proc))
 (= (established $trace)
    (let ((Verdict $status $program) $rest) (decons-atom $trace)
      (if (== $status Established) yes no)))

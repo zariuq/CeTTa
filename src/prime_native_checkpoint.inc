@@ -152,6 +152,7 @@ static bool parent_copy_frame_shells(PrimeParentCopy *copy,
     const PrimeEvalStackFrame *source, PrimeEvalStackFrame **out, bool retired) {
     PrimeEvalStackFrame **tail=out;
     for(;source;source=source->control_next) {
+        if(source->context) return parent_copy_refuse(copy,"FrameContextOwner");
         if(source->control_retired!=retired) return parent_copy_refuse(copy,"FrameMembership");
         if(!retired && (source->native_service || source->capsule_search || source->call_force_reader))
             return parent_copy_refuse(copy,"FrameExternalOwner");
@@ -240,6 +241,7 @@ static bool parent_copy_licence(PrimeParentCopy *copy,const PrimeWeightLicence *
 }
 static bool parent_copy_task(PrimeParentCopy *copy, const PrimeEvalStackTask *source,
     PrimeEvalStackTask *image) {
+    if(source->context) return parent_copy_refuse(copy,"TaskContextOwner");
     *image=*source;
     memset(&image->dynamic_env,0,sizeof(image->dynamic_env));
     memset(&image->seed_env,0,sizeof(image->seed_env));
@@ -495,6 +497,15 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
         PC_ATOM(d,key);PC_ATOM(d,bound);
         PC_EDGE(d,s,advice,parent_copy_advice_kind);
     }
+    if (source->control_pending_return_limit) {
+        if (source->control_pending_return_limit > source->child.len ||
+            source->control_pending_return_limit < source->control_return_advice_length)
+            return parent_copy_refuse(copy,"PendingReturnAdviceExtent");
+        PrimeNativeReturnAdvice *d=&image->control_pending_return_advice;
+        const PrimeNativeReturnAdvice *s=&source->control_pending_return_advice;
+        PC_ATOM(d,key);PC_ATOM(d,bound);
+        PC_EDGE(d,s,advice,parent_copy_advice_kind);
+    }
     PC_ARRAY(image,source,normalization_children,source->normalization_child_count);
     for(size_t i=0u;i<source->normalization_child_count;i++)if(!parent_copy_atom(copy,&image->normalization_children[i]))return false;
     PC_ARRAY(image,source,control_selection,source->control_selection_length);
@@ -604,6 +615,7 @@ static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
     if (source->driver.authority_parent || source->driver.call_permit_parent ||
         source->driver.call_permit || source->driver.call_permit_context ||
         source->driver.observe_space_read || source->driver.space_read_context ||
+        source->driver.observe_context_read || source->driver.context_read_context ||
         source->driver.own_data_read || source->driver.own_data_published ||
         source->driver.own_data_context || source->driver.normalization_value_role ||
         source->driver.normalization_role_context) {

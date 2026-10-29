@@ -63,6 +63,21 @@ typedef struct {
 CettaOccurrenceLog *cetta_occurrence_log_new(size_t consumers, size_t limit);
 void cetta_occurrence_log_free(CettaOccurrenceLog *log);
 
+/* Copy a quiescent log without advancing any reader or replaying a producer.
+ * Consumer and pin IDs, cancelled slots, retained occurrence positions,
+ * completion and allocated capacity are preserved. Each live row needs an
+ * explicit host copy, including rows whose value is NULL. Success transfers
+ * one independent row ownership share to out; refusal leaves attempted row
+ * allocations with the callback. The callback must preserve relevant payload
+ * aliases through its enclosing copy session and must not mutate this log.
+ * This operation has unbounded traversal/allocation cost outside a service
+ * grant. Failure releases accepted image rows and leaves the source unchanged.
+ * No permission to copy a row's external world is inferred by this API. */
+typedef bool (*CettaOccurrenceCopyRow)(void *context, uint64_t position,
+    const CettaOccurrenceRow *source, CettaOccurrenceRow *out);
+CettaOccurrenceLog *cetta_occurrence_log_copy(const CettaOccurrenceLog *source,
+    CettaOccurrenceCopyRow copy_row, void *context);
+
 /* Fork an active reader at its current unread position. The new reader pins
  * the same retained suffix, then advances independently. This never restarts
  * a producer, resurrects a cancelled reader or reads a trimmed prefix. A

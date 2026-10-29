@@ -152,6 +152,37 @@ bool eval_prime_install_standard_library(Space *space, Arena *arena) {
     if (!space || !arena || !g_library_context ||
         eval_current_language_id() != CETTA_LANGUAGE_PRIME) return false;
     if (g_library_context->prime_standard_library) return true;
+    /* These ordinary lazy functions consume computations, including the
+     * selected continuation. Their demand is public declaration data,
+     * retained by the qualified delegates and replaceable by programs. */
+    static const struct { const char *name; CettaExprLen arity; } demands[] = {
+        {"if-error", 3u}, {"return-on-error", 2u},
+    };
+    for (size_t d = 0u; d < sizeof(demands) / sizeof(*demands); d++) {
+        CettaCount count = space_length64(space);
+        for (CettaIndex i = 0u; i < count; i++) {
+            Atom *row = space_get_at64(space, i);
+            if (!row || row->kind != ATOM_EXPR || row->expr.len != 3u ||
+                !atom_is_symbol_id(row->expr.elems[0], g_builtin_syms.colon) ||
+                !atom_is_symbol(row->expr.elems[1], demands[d].name)) continue;
+            Atom *type = row->expr.elems[2];
+            if (!is_function_type(type) ||
+                get_function_arg_count(type) != demands[d].arity) continue;
+            Atom **parts = arena_alloc(arena, sizeof(*parts) * type->expr.len);
+            if (!parts) return false;
+            memcpy(parts, type->expr.elems, sizeof(*parts) * type->expr.len);
+            for (CettaExprIndex k = 1u; k <= demands[d].arity; k++)
+                parts[k] = atom_symbol_id(arena, g_builtin_syms.prime_proc);
+            Atom *signature = atom_expr(arena, parts, type->expr.len);
+            Atom *declaration = signature ? atom_expr3(arena,
+                row->expr.elems[0], row->expr.elems[1], signature) : NULL;
+            if (!declaration || !space_remove(space, row)) return false;
+            space_add(space, declaration);
+            break;
+        }
+    }
+    /* quote's shared Atom domain already holds syntax in Prime. The
+     * qualified delegate retains that ordinary declaration unchanged. */
     PrimeStandardLibrary *library = cetta_malloc(sizeof(*library));
     memset(library, 0, sizeof(*library));
     arena_init(&library->arena);

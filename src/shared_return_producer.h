@@ -101,6 +101,44 @@ CettaSharedReturnProducer *cetta_shared_return_producer_new(
     CettaOwnedExecution *execution, size_t consumers, size_t row_limit,
     CettaSharedReturnCapture capture, CettaSharedReturnCompatible compatible,
     void *context);
+
+/* The enclosing graph copier supplies the actual execution/world transport.
+ * Register the producer and checkpoint images before copying any return or
+ * execution payload, so cycles through immutable reader contexts can refer
+ * to these unpublished images. Mapping callbacks preserve aliases through
+ * that copier's common session. They do not grant invocation authority.
+ *
+ * A checkpoint mapping retains the image for its actual receiving owner;
+ * the temporary construction share is released after success or refusal.
+ * All mapped checkpoints must have receiving owners before publication.
+ * A row/execution callback transfers one complete image owner on success;
+ * refusal leaves its attempted allocations with that callback. The execution
+ * image preserves the paid continuation, pending return, accepted count and
+ * stop state, and must not replay source work. capture/compatible and
+ * image_context belong to the copied world and remain live with its owner.
+ * An aliased source computation is refused without cancelling it; its
+ * ownership remains with the supplier, as for an unqualified image.
+ *
+ * Calls are serialized. The caller keeps the source quiescent throughout,
+ * supplies complete external-resource lifetimes, and discards the enclosing
+ * failed copy session on refusal. Partially registered images never become
+ * callable; retained checkpoint placeholders remain invalid until released.
+ * This transport has its own unbounded allocation/traversal cost. */
+typedef struct {
+    void *context;
+    bool (*producer)(void *context, const CettaSharedReturnProducer *source,
+        CettaSharedReturnProducer *image);
+    bool (*checkpoint)(void *context, const CettaSharedReturnCheckpoint *source,
+        CettaSharedReturnCheckpoint *image);
+    bool (*execution)(void *context, const CettaOwnedExecution *source,
+        CettaOwnedExecution *image);
+    CettaOccurrenceCopyRow row;
+    CettaSharedReturnCapture capture;
+    CettaSharedReturnCompatible compatible;
+    void *image_context;
+} CettaSharedReturnCopy;
+CettaSharedReturnProducer *cetta_shared_return_producer_copy(
+    CettaSharedReturnProducer *source, const CettaSharedReturnCopy *copy);
 /* Release the caller's producer share. Reader checkpoints retain the same
  * execution and buffered rows independently; the last share cancels/retires
  * the execution. The callback context and services outlive all those shares. */

@@ -409,6 +409,14 @@ struct CettaPreparedPureProgram;
 struct CettaPreparedPureProgram *eval_prepare_pure_value_call(
     Space *space, Arena *owner, Atom *call);
 
+/* Exact unary/binary lexical applications over ready values share the pure
+ * expression machine used by the relational callable consumer. The owner
+ * retains opened source syntax until the program is freed. Execute through
+ * program_execute_controlled with those one/two values, not a closed-call
+ * rebind. Refusal leaves the ordinary callable application authoritative. */
+struct CettaPreparedPureProgram *eval_prepare_pure_lexical_values(
+    Space *space, Arena *owner, Atom *callable, uint32_t arity);
+
 /* Each entry owns its mutable query banks and compiled scratch. Reentrant
  * entry suspends that owner; returning restores it. Newly appended structural
  * results are published in `a` before the invocation's storage is released.

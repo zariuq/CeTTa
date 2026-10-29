@@ -1574,11 +1574,20 @@ Atom *atom_prime_held_wrap(Arena *a, Atom *atom);
 /* Whether the process has made a held value yet: until it has, no term can
    contain one, and atom_contains_prime_held need not look. */
 bool atom_prime_held_made(void);
-/* Whether a held value occurs anywhere in `atom`. */
+/* Whether a held value may occur anywhere in `atom`. A negative answer is
+ * complete; refused metadata traversal conservatively gives true. */
 bool atom_contains_prime_held(const Atom *atom);
 /* The syntax a value holds, at every depth: held wrappers removed.  For a
    position that takes syntax as such, a held value is that syntax. */
 Atom *atom_prime_held_strip(Arena *a, Atom *atom);
+/* Children-first image of the expressions selected by descend. Each distinct
+ * selected node is rebuilt once; shared edges retain one image. Unselected
+ * nodes are borrowed unchanged, so their owners must remain live. This is
+ * a projection, not independent ownership transport. A selected cycle or
+ * allocation/refusal returns NULL without changing source nodes. */
+Atom *atom_graph_image(void *context, Arena *arena, Atom *root,
+    bool (*descend)(void *, Arena *, Atom *),
+    Atom *(*build)(void *, Arena *, Atom *, Atom **, bool));
 Atom *atom_petta_prolog_compound(Arena *a, Atom *body);
 /* PeTTa's no-result marker: an internal atom no program can write. */
 Atom *atom_petta_no_result(Arena *a);
@@ -1608,6 +1617,10 @@ Atom *atom_list_tail(Arena *a, const Atom *list, CettaExprLen from);
  * otherwise an expression. */
 Atom *atom_sequence_like(Arena *a, const Atom *like, Atom *const *elems,
                          CettaExprLen len);
+/* Iteration view of a held sequence: move the container's data role to its
+ * elements, retaining sequence kind and borrowed payload nodes. Unheld inputs
+ * pass through. A held non-sequence or failed construction returns NULL. */
+Atom *atom_sequence_data_view(Arena *arena, Atom *sequence);
 bool atom_counted_collection_count(
     Atom *atom, int64_t *count);
 Atom *atom_prime_need_capability(Arena *a, uint64_t session_id,
@@ -1799,6 +1812,13 @@ void atom_visit_set_free(AtomVisitSet *set);
  * the path to it: each distinct subexpression is visited once. */
 bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
                     void *context);
+/* A barrier is a semantic value boundary: neither the predicate nor its
+ * children are observed there. Graph predicates and barriers are independent
+ * of the path by which a subterm is reached. */
+bool atom_tree_any_pruned(const Atom *root, AtomTreePredicate predicate,
+                          AtomTreePredicate barrier, void *context);
+bool atom_graph_any_pruned(const Atom *root, AtomTreePredicate predicate,
+                           AtomTreePredicate barrier, void *context);
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 

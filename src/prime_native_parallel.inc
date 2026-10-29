@@ -1603,6 +1603,9 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_publish_
     if (parallel->child->failed || parallel->child->invalidated ||
         parallel->child->registry_read.incomplete) {
         owner->completion = parallel->child->completion;
+        if (parallel->child->pure_call_refused &&
+            owner->completion == CETTA_EVAL_INCOMPLETE_EFFECT_DENIED)
+            owner->completion = prime_eval_publish_pure_refusal(&owner->driver);
         if (owner->completion != CETTA_EVAL_COMPLETE)
             eval_mark_incomplete(owner->completion);
         owner->failed = true;

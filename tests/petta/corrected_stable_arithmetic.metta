@@ -5,6 +5,8 @@
 !(test (< 1 2) True)
 !(test (max 3 7) 7)
 !(test (< 3 (+ pi 0)) True)
+!(test (> (+ e 0) 2) True)
+!(test (> (+ epsilon 0) 0) True)
 !(test (isinf-math inf) True)
 !(test (let (Error $e $c) (catch (+ 1 "s")) raised) raised)
 !(test (let (Error $e $c) (catch (+ 1 "st")) raised) raised)

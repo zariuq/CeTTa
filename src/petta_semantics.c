@@ -46,7 +46,7 @@ CettaControlOperationPlan petta_semantics_elaborate_control(
         head = g_builtin_syms.eval;
     else if (head != g_builtin_syms.let_star &&
              head != g_builtin_syms.superpose && head != g_builtin_syms.empty_form &&
-             head != g_builtin_syms.collapse)
+             head != g_builtin_syms.collapse && head != g_builtin_syms.case_text)
         return (CettaControlOperationPlan){0};
     CettaControlOperationPlan plan = {0};
     cetta_control_operation_decode(head, arity, &plan, &g_builtin_syms);

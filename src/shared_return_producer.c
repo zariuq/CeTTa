@@ -30,6 +30,7 @@ struct CettaSharedReturnProducer {
     size_t checkpoint_pin;
     bool checkpoint_pin_active;
     bool detached;
+    bool copy_pending;
 };
 
 struct CettaSharedReturnCheckpoint {
@@ -43,6 +44,10 @@ struct CettaSharedReturnCheckpoint {
 void cetta_shared_return_producer_storage(const CettaSharedReturnProducer *producer,
     CettaStorageCensus *census,CettaStorageVisitor computation_storage,CettaStorageVisitor row_storage) {
     if(!producer || !cetta_storage_object(census,producer,sizeof(*producer),CETTA_STORAGE_BLOCK)) return;
+    if (producer->copy_pending) {
+        cetta_storage_refuse(census, "UnpublishedReturnCopy");
+        return;
+    }
     cetta_occurrence_log_storage(producer->log,census,row_storage);
     for(const CettaSharedReturnCheckpoint *checkpoint=producer->checkpoint_head;checkpoint;checkpoint=checkpoint->next)
         cetta_storage_object(census,checkpoint,sizeof(*checkpoint),CETTA_STORAGE_BLOCK);
@@ -179,7 +184,7 @@ static CettaSharedReturnStep execution_stop(CettaSharedReturnProducer *producer)
 
 CettaSharedReturnStep cetta_shared_return_producer_advance(
     CettaSharedReturnProducer *producer, uint64_t allowance) {
-    if (!producer)
+    if (!producer || producer->copy_pending)
         return CETTA_SHARED_RETURN_INVALID;
     if (producer->detached)
         return CETTA_SHARED_RETURN_DETACHED;
@@ -250,6 +255,8 @@ static CettaSharedDelivery delivery(CettaOccurrenceReply reply) {
 
 CettaSharedDelivery cetta_shared_return_producer_peek(
     const CettaSharedReturnProducer *producer, size_t consumer) {
+    if (producer && producer->copy_pending)
+        return (CettaSharedDelivery){.kind = CETTA_SHARED_DELIVERY_INVALID};
     CettaSharedDelivery out = delivery(cetta_occurrence_log_peek(
         producer ? producer->log : NULL, consumer));
     if (producer && out.kind != CETTA_SHARED_DELIVERY_INVALID &&
@@ -285,17 +292,18 @@ CettaSharedDelivery cetta_shared_return_producer_take(
 
 bool cetta_shared_return_producer_cancel(
     CettaSharedReturnProducer *producer, size_t consumer) {
-    return producer && (!producer->checkpoint_pin_active || consumer != producer->checkpoint_pin) &&
+    return producer && !producer->copy_pending &&
+        (!producer->checkpoint_pin_active || consumer != producer->checkpoint_pin) &&
         cetta_occurrence_log_cancel(producer->log, consumer);
 }
 
 size_t cetta_shared_return_producer_trim(CettaSharedReturnProducer *producer) {
-    return producer ? cetta_occurrence_log_trim(producer->log) : 0u;
+    return producer && !producer->copy_pending ? cetta_occurrence_log_trim(producer->log) : 0u;
 }
 
 bool cetta_shared_return_producer_detach_execution(
     CettaSharedReturnProducer *producer, CettaOwnedExecution *destination) {
-    if (!producer || producer->detached || producer->checkpoints ||
+    if (!producer || producer->copy_pending || producer->detached || producer->checkpoints ||
         !cetta_owned_execution_move(destination, &producer->execution))
         return false;
     producer->detached = true;
@@ -304,12 +312,12 @@ bool cetta_shared_return_producer_detach_execution(
 
 const CettaOwnedExecution *cetta_shared_return_producer_execution(
     const CettaSharedReturnProducer *producer) {
-    return producer && !producer->detached ? &producer->execution : NULL;
+    return producer && !producer->copy_pending && !producer->detached ? &producer->execution : NULL;
 }
 
 const CettaOccurrenceLog *cetta_shared_return_producer_log(
     const CettaSharedReturnProducer *producer) {
-    return producer ? producer->log : NULL;
+    return producer && !producer->copy_pending ? producer->log : NULL;
 }
 
 static CettaSharedReturnCheckpoint *checkpoint_allocate(
@@ -338,7 +346,8 @@ static void checkpoint_adopt(CettaSharedReturnCheckpoint *checkpoint) {
 static CettaSharedReturnCheckpoint *checkpoint_new(
     CettaSharedReturnProducer *producer, size_t consumer,bool retains_producer) {
     uint64_t position = 0u, pin = 0u;
-    if (!producer || (producer->checkpoint_pin_active && consumer == producer->checkpoint_pin) ||
+    if (!producer || producer->copy_pending ||
+        (producer->checkpoint_pin_active && consumer == producer->checkpoint_pin) ||
         !cetta_occurrence_log_position(producer->log, consumer, &position))
         return NULL;
     CettaSharedReturnCheckpoint *checkpoint = checkpoint_allocate(producer, position,retains_producer);
@@ -392,9 +401,10 @@ void cetta_shared_return_checkpoint_release(CettaSharedReturnCheckpoint *checkpo
     else producer->checkpoint_head = checkpoint->next;
     if (checkpoint->next) checkpoint->next->previous = checkpoint->previous;
     if (!--producer->checkpoints) {
-        (void)cetta_occurrence_log_pin_release(producer->log, producer->checkpoint_pin);
+        if (!producer->copy_pending)
+            (void)cetta_occurrence_log_pin_release(producer->log, producer->checkpoint_pin);
         producer->checkpoint_pin_active = false;
-    } else {
+    } else if (!producer->copy_pending) {
         uint64_t oldest = UINT64_MAX;
         for (CettaSharedReturnCheckpoint *held=producer->checkpoint_head; held; held=held->next)
             if (held->position < oldest) oldest = held->position;
@@ -415,7 +425,7 @@ bool cetta_shared_return_checkpoint_position(
 CettaSharedDelivery cetta_shared_return_checkpoint_peek(
     const CettaSharedReturnCheckpoint *checkpoint) {
     CettaSharedDelivery result = {.kind = CETTA_SHARED_DELIVERY_INVALID};
-    if (!checkpoint || !checkpoint->producer) return result;
+    if (!checkpoint || !checkpoint->producer || checkpoint->producer->copy_pending) return result;
     CettaSharedReturnProducer *producer = checkpoint->producer;
     if (!producer->compatible(producer->context)) {
         result.kind = CETTA_SHARED_DELIVERY_CONTEXT_REFUSED;
@@ -440,6 +450,8 @@ CettaSharedDelivery cetta_shared_return_checkpoint_peek(
 
 CettaSharedReturnStep cetta_shared_return_checkpoint_advance(
     CettaSharedReturnCheckpoint *checkpoint, uint64_t allowance) {
+    if (checkpoint && checkpoint->producer && checkpoint->producer->copy_pending)
+        return CETTA_SHARED_RETURN_INVALID;
     if (checkpoint && checkpoint->producer && allowance && !checkpoint->producer->detached) {
         if (!checkpoint->producer->compatible(checkpoint->producer->context))
             return CETTA_SHARED_RETURN_CONTEXT_REFUSED;
@@ -474,4 +486,136 @@ CettaSharedDelivery cetta_shared_return_checkpoint_take(
     *out_next = next;
     cetta_shared_return_checkpoint_release((CettaSharedReturnCheckpoint *)checkpoint);
     return result;
+}
+
+static bool copied_execution_shape(const CettaOwnedExecution *source,
+    const CettaOwnedExecution *image) {
+    if (!image->computation || image->computation == source->computation ||
+        image->next != source->next || image->release != source->release ||
+        image->release_poll != source->release_poll ||
+        image->final_is_current != source->final_is_current ||
+        image->completion != source->completion || image->stop != source->stop ||
+        image->accepted != source->accepted || image->has_pending != source->has_pending ||
+        image->terminal != source->terminal || image->retiring != source->retiring ||
+        image->release_ready != source->release_ready ||
+        !image->relocatable || image->relocatable != source->relocatable)
+        return false;
+    if (!source->has_pending)
+        return true;
+    return source->pending.final == image->pending.final &&
+        source->pending.outcome.kind == image->pending.outcome.kind &&
+        source->pending.outcome.result_form == image->pending.outcome.result_form &&
+        (source->pending.outcome.term != NULL) == (image->pending.outcome.term != NULL) &&
+        (source->pending.outcome.delayed != NULL) == (image->pending.outcome.delayed != NULL) &&
+        (source->pending.environment != NULL) == (image->pending.environment != NULL);
+}
+
+typedef struct {
+    CettaSharedReturnCheckpoint *source, *image;
+} CopiedCheckpoint;
+
+CettaSharedReturnProducer *cetta_shared_return_producer_copy(
+    CettaSharedReturnProducer *source, const CettaSharedReturnCopy *copy) {
+    if (!source || source->copy_pending || !source->references ||
+        source->references == SIZE_MAX || !copy || !copy->producer ||
+        !copy->capture || !copy->compatible ||
+        !cetta_occurrence_log_valid(source->log) ||
+        source->checkpoints > SIZE_MAX / sizeof(CopiedCheckpoint) ||
+        source->checkpoint_pin_active != (source->checkpoints != 0u) ||
+        (source->checkpoints && !copy->checkpoint) ||
+        (!source->detached && (!copy->execution || !source->execution.computation ||
+            !source->execution.relocatable || source->execution.retiring)))
+        return NULL;
+    source->references++;
+    CettaSharedReturnProducer *image = calloc(1u, sizeof(*image));
+    CopiedCheckpoint *checkpoints = NULL;
+    size_t held = 0u;
+    bool ready = false;
+    if (!image)
+        goto done;
+    *image = (CettaSharedReturnProducer){.references = 1u, .copy_pending = true,
+        .capture = copy->capture, .compatible = copy->compatible,
+        .context = copy->image_context, .refusal = source->refusal,
+        .detached = source->detached, .checkpoint_pin = source->checkpoint_pin,
+        .checkpoint_pin_active = source->checkpoint_pin_active};
+    if (source->checkpoints) {
+        checkpoints = calloc(source->checkpoints, sizeof(*checkpoints));
+        if (!checkpoints)
+            goto done;
+    }
+    CettaSharedReturnCheckpoint *previous = NULL, *checkpoint = source->checkpoint_head;
+    uint64_t oldest = UINT64_MAX;
+    while (checkpoint && held < source->checkpoints) {
+        if (checkpoint->producer != source || checkpoint->previous != previous ||
+            !checkpoint->references || !cetta_shared_return_checkpoint_retain(checkpoint))
+            goto done;
+        checkpoints[held++].source = checkpoint;
+        if (checkpoint->position < oldest)
+            oldest = checkpoint->position;
+        previous = checkpoint;
+        checkpoint = checkpoint->next;
+    }
+    if (checkpoint || held != source->checkpoints)
+        goto done;
+    if (held) {
+        uint64_t pin;
+        if (!cetta_occurrence_log_position(source->log, source->checkpoint_pin, &pin) || pin != oldest)
+            goto done;
+    }
+    /* Allocate every checkpoint before exposing any image edge. Insertion
+     * in reverse preserves the original owner list as well as its pin. */
+    for (size_t i = held; i > 0u; i--) {
+        CopiedCheckpoint *pair = &checkpoints[i - 1u];
+        pair->image = checkpoint_allocate(image, pair->source->position,
+            pair->source->retains_producer);
+        if (!pair->image)
+            goto done;
+        checkpoint_adopt(pair->image);
+    }
+    if (!copy->producer(copy->context, source, image))
+        goto done;
+    for (size_t i = 0u; i < held; i++)
+        if (!copy->checkpoint(copy->context, checkpoints[i].source, checkpoints[i].image))
+            goto done;
+    image->log = cetta_occurrence_log_copy(source->log, copy->row, copy->context);
+    if (!image->log)
+        goto done;
+    if (!source->detached) {
+        CettaOwnedExecution execution = {0};
+        if (!copy->execution(copy->context, &source->execution, &execution))
+            goto done;
+        /* A borrowed source computation is not an independently owned
+         * image. In particular, do not cancel the source on this refusal. */
+        if (execution.computation == source->execution.computation)
+            goto done;
+        if (!copied_execution_shape(&source->execution, &execution) ||
+            !cetta_owned_execution_move(&image->execution, &execution)) {
+            cetta_owned_execution_cancel(&execution);
+            goto done;
+        }
+    } else image->execution = source->execution;
+    /* A temporary construction share is not an owner of an operational
+     * checkpoint. The receiving graph must have adopted every live image. */
+    for (size_t i = 0u; i < held; i++)
+        if (checkpoints[i].image->references <= 1u)
+            goto done;
+    image->copy_pending = false;
+    ready = true;
+done:
+    if (image && !ready) {
+        cetta_owned_execution_cancel(&image->execution);
+        cetta_occurrence_log_free(image->log);
+        image->log = NULL;
+    }
+    for (size_t i = 0u; i < held; i++) {
+        cetta_shared_return_checkpoint_release(checkpoints[i].image);
+        cetta_shared_return_checkpoint_release(checkpoints[i].source);
+    }
+    free(checkpoints);
+    cetta_shared_return_producer_free(source);
+    if (!ready) {
+        cetta_shared_return_producer_free(image);
+        return NULL;
+    }
+    return image;
 }

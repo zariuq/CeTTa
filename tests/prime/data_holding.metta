@@ -2,19 +2,19 @@
 ; written, and the call site does not change.  Held syntax stays held
 ; through return, deconstruction and construction; explicit evaluation runs
 ; it; size is an ordinary number.
-(: hold (-> (Data Atom) (Data Atom)))
+(: hold (-> Atom Atom))
 (= (hold $x) $x)
-(: tail-of (-> (Data Atom) (Data Atom)))
+(: tail-of (-> Atom Atom))
 (= (tail-of $x) (cdr-atom $x))
-(: head-of (-> (Data Atom) (Data Atom)))
+(: head-of (-> Atom Atom))
 (= (head-of $x) (car-atom $x))
-(: build (-> (Data Atom) (Data Atom)))
+(: build (-> Atom Atom))
 (= (build $x) (cons-atom wrap $x))
-(: run-held (-> (Data Atom) $r))
+(: run-held (-> Atom $r))
 (= (run-held $x) (eval $x))
-(: pick (-> (Data Atom) (Data Atom)))
+(: pick (-> Atom Atom))
 (= (pick $x) (let ($h $t) (decons-atom $x) $h))
-(: rest (-> (Data Atom) (Data Atom)))
+(: rest (-> Atom Atom))
 (= (rest $x) (let ($h $t) (decons-atom $x) $t))
 (= (f $y) (g $y))
 (= (g $y) (pair $y $y))
@@ -37,11 +37,11 @@
 !(== (hold (f nil)) (hold (g nil)))
 
 ; Shape, indexing and unification read held syntax; bound parts stay held.
-(: shape (-> (Data Atom) $r))
+(: shape (-> Atom $r))
 (= (shape $x) (get-metatype $x))
-(: second (-> (Data Atom) (Data Atom)))
+(: second (-> Atom Atom))
 (= (second $x) (index-atom $x 1))
-(: body-of (-> (Data Atom) (Data Atom)))
+(: body-of (-> Atom Atom))
 (= (body-of $x) (unify $x (lam $y $b) $b none))
 !(shape (f nil))
 !(shape nil)
@@ -55,7 +55,7 @@
 !(run-held (f nil))
 
 ; Passing a held value on keeps it held once, not twice.
-(: hold-again (-> (Data Atom) (Data Atom)))
+(: hold-again (-> Atom Atom))
 (= (hold-again $d) (hold $d))
 !(hold-again (f nil))
 !(size-atom (hold-again (f nil)))

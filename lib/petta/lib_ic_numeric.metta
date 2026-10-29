@@ -4,27 +4,28 @@
 !(import! &self (library lib_ic_parameters))
 !(import! &self (library lib_binary_value))
 !(import! &self (library lib_ic_packed))
+!(import! &self (library lib_tensor_program))
+!(import! &self (library lib_ic_numeric_values))
+!(import! &self (library lib_ic_numeric_arrays))
 
 (= (ic-numeric:encode $value) (tensor:encode-bytes (tensor:convert $value dense)))
 
 (= (ic-numeric:affine $scale $offset $input) (+ (* $scale $input) $offset))
-(= (ic-numeric:near $tolerance $mask $expected $actual)
-   (if $mask
-     (case (catch (and (<= (- $actual $expected) $tolerance)
-                      (<= (- $expected $actual) $tolerance)))
-       (((Error $reason $context) False) ($decision $decision))) True))
 
 (= (ic-numeric:compatible? $inputs $outputs $mask $tolerance)
-   (and (ic-parameters:vector? f64 $inputs)
-     (and (ic-parameters:vector? f64 $outputs)
-       (and (ic-parameters:vector? bool $mask)
-         (and (ic-parameters:vector? f64 $tolerance)
-           (and (== (tensor:shape $inputs) (tensor:shape $outputs))
-             (and (== (tensor:shape $inputs) (tensor:shape $mask))
-               (and (== (tensor:shape $tolerance) (1))
-                 (let (tensor:present $value) (tensor:at $tolerance 0) (>= $value 0.0))))))))))
+   (if (and (ic-parameters:vector? f64 $inputs)
+         (and (ic-parameters:vector? f64 $outputs)
+           (and (ic-parameters:vector? bool $mask) (ic-parameters:vector? f64 $tolerance))))
+     (if (and (== (tensor:shape $inputs) (tensor:shape $outputs))
+           (and (== (tensor:shape $inputs) (tensor:shape $mask)) (== (tensor:shape $tolerance) (1))))
+       (let (tensor:present $value) (tensor:at $tolerance 0) (>= $value 0.0)) False)
+     False))
 
 (= (ic:prepare-numeric $inputs $outputs $mask $tolerance)
+   (case $inputs
+     (((Numeric:Inputs $items) (ic-arrays:prepare $items $outputs $mask $tolerance))
+      ($other (ic-numeric:prepare-vector $other $outputs $mask $tolerance)))))
+(= (ic-numeric:prepare-vector $inputs $outputs $mask $tolerance)
    (let $precision (tensor:from-values f64 (1) ($tolerance))
      (if (ic-numeric:compatible? $inputs $outputs $mask $precision)
        (case (binary-value:pack
@@ -37,6 +38,10 @@
 (= (ic-numeric:predicted $inputs $body)
    (case $body
      (((Numeric:Raw $bytes) (tensor:decode-bytes $bytes))
+      ((Numeric:Program $bytes)
+       (case (tensor-program:run $bytes ($inputs))
+         (((TP:Outputs ((TP:Value "F64Tensor" $value))) $value)
+          ($other (IC:NumericFault Program)))))
       ((Numeric:Affine $bytes)
         (let $parameters (tensor:decode-bytes $bytes)
           (if (ic-parameters:vector? f64 $parameters)
@@ -82,6 +87,11 @@
      (((IC:PackedAccepted $next $before $after) (IC:CandidateAccepted $next))
       ((IC:PackedRejected $reason) (IC:CandidateRejected $reason)))))
 
+(= (ic-numeric:materialize-program $original $family $forest)
+   (case (tensor-program:pack $family $forest)
+     (((TP:Artifact $program)
+       (ic-numeric:program-candidate IC:NumericArchive $original $program)) ($other (IC:Refused InvalidProgram)))))
+
 (= (ic-search:materialize IC:NumericArchive $original $proposal)
    (case $proposal
      (((IC:ParameterProposal ($scale $offset))
@@ -96,6 +106,7 @@
                   ($other (IC:ProducerFault Codec)))))
               ($other (IC:ProducerFault Original)))))
           ($other (IC:ProducerFault ParameterConversion)))))
+      ((TP:Blueprint $family $forest) (ic-numeric:materialize-program $original $family $forest))
       ($other (IC:ProducerFault ParameterCount)))))
 
 (= (ic:prepare-fit Numeric:Affine $original $domains $sources)

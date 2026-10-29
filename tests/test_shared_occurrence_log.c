@@ -474,6 +474,180 @@ static void test_retention_pins(void) {
     cetta_occurrence_log_free(log);
 }
 
+typedef struct {
+    const AnswerGraph *source;
+    AnswerGraph *image;
+    unsigned *reclaimed;
+    size_t calls, refuse_at;
+} LogCopyRows;
+
+static bool copy_graph_row(void *raw, uint64_t position,
+    const CettaOccurrenceRow *source, CettaOccurrenceRow *out) {
+    LogCopyRows *copy = raw;
+    assert(position == 2u + copy->calls);
+    if (++copy->calls == copy->refuse_at)
+        return false;
+    assert(source->owner == copy->source && source->release == release_graph);
+    const int *value = source->value;
+    assert(value == &copy->source->values[0] || value == &copy->source->values[1]);
+    if (!copy->image) {
+        copy->image = malloc(sizeof(*copy->image));
+        if (!copy->image)
+            return false;
+        *copy->image = (AnswerGraph){.references = 1u, .reclaimed = copy->reclaimed,
+            .values = {copy->source->values[0], copy->source->values[1]}};
+    }
+    ++copy->image->references;
+    *out = (CettaOccurrenceRow){
+        .value = &copy->image->values[value - copy->source->values],
+        .owner = copy->image, .release = release_graph};
+    return true;
+}
+
+static void check_log_copy_source(CettaOccurrenceLog *source, AnswerGraph *graph) {
+    CettaOccurrenceLogInfo info;
+    assert(cetta_occurrence_log_valid(source) && cetta_occurrence_log_info(source, &info));
+    assert(info.base == 2u && info.past_end == 5u && info.rows == 3u &&
+        info.reserved_rows == 3u && info.limit == 3u && info.consumers == 4u);
+    assert(cetta_occurrence_log_peek(source, 0u).position == 2u &&
+        cetta_occurrence_log_peek(source, 1u).kind == CETTA_OCCURRENCE_CANCELLED &&
+        cetta_occurrence_log_peek(source, 2u).kind == CETTA_OCCURRENCE_INVALID &&
+        cetta_occurrence_log_peek(source, 3u).position == 4u);
+    assert(graph->references == 4u);
+    for (size_t i = 0u; i < 3u; i++) {
+        CettaOccurrenceRow row;
+        assert(cetta_occurrence_log_row(source, i, &row) && row.owner == graph &&
+            row.value == &graph->values[i % 2u]);
+    }
+}
+
+static void test_log_copy(bool complete) {
+    unsigned reclaimed = 0u;
+    AnswerGraph *graph = malloc(sizeof(*graph));
+    assert(graph);
+    *graph = (AnswerGraph){.references = 1u, .reclaimed = &reclaimed, .values = {7, 11}};
+    CettaOccurrenceLog *source = cetta_occurrence_log_new(2u, 3u);
+    assert(source);
+    for (size_t i = 0u; i < 3u; i++) {
+        graph->references++;
+        assert(cetta_occurrence_log_append(source, (CettaOccurrenceRow){
+            .value = &graph->values[i % 2u], .owner = graph, .release = release_graph}) ==
+            CETTA_OCCURRENCE_APPENDED);
+    }
+    for (size_t c = 0u; c < 2u; c++)
+        for (size_t i = 0u; i < 2u; i++)
+            assert(cetta_occurrence_log_take(source, c, publish_constant, NULL).position == i);
+    size_t pin = SIZE_MAX, child = SIZE_MAX;
+    assert(cetta_occurrence_log_pin(source, 2u, &pin) && pin == 2u &&
+        cetta_occurrence_log_cancel(source, 1u));
+    assert(cetta_occurrence_log_trim(source) == 2u);
+    for (size_t i = 3u; i < 5u; i++) {
+        graph->references++;
+        assert(cetta_occurrence_log_append(source, (CettaOccurrenceRow){
+            .value = &graph->values[i % 2u], .owner = graph, .release = release_graph}) ==
+            CETTA_OCCURRENCE_APPENDED);
+    }
+    assert(cetta_occurrence_log_fork(source, 0u, &child) && child == 3u);
+    for (size_t i = 2u; i < 4u; i++)
+        assert(cetta_occurrence_log_take(source, child, publish_constant, NULL).position == i);
+    if (complete)
+        cetta_occurrence_log_complete(source);
+    check_log_copy_source(source, graph);
+    assert(!cetta_occurrence_log_copy(source, NULL, NULL));
+
+    /* Each physical allocation and every accepted-row prefix can refuse.
+     * The source's ownership shares and all reader states must survive. */
+    for (unsigned failure = 0u; failure < 7u; failure++) {
+        unsigned image_reclaimed = 0u;
+        LogCopyRows rows = {.source = graph, .reclaimed = &image_reclaimed};
+        if (failure == 0u) fail_calloc = 1u;
+        else if (failure < 4u) fail_malloc = failure;
+        else rows.refuse_at = failure - 3u;
+        assert(!cetta_occurrence_log_copy(source, copy_graph_row, &rows));
+        assert(!fail_malloc && !fail_calloc);
+        check_log_copy_source(source, graph);
+        if (rows.image) {
+            assert(rows.image->references == 1u && !image_reclaimed);
+            release_graph(rows.image);
+            assert(image_reclaimed == 1u);
+        } else assert(!image_reclaimed);
+    }
+
+    unsigned image_reclaimed = 0u;
+    LogCopyRows rows = {.source = graph, .reclaimed = &image_reclaimed};
+    CettaOccurrenceLog *image = cetta_occurrence_log_copy(source, copy_graph_row, &rows);
+    assert(image && image != source && rows.calls == 3u && rows.image != graph &&
+        rows.image->references == 4u && cetta_occurrence_log_valid(image));
+    CettaOccurrenceLogInfo a, b;
+    assert(cetta_occurrence_log_info(source, &a) && cetta_occurrence_log_info(image, &b));
+    assert(a.base == b.base && a.past_end == b.past_end && a.rows == b.rows &&
+        a.limit == b.limit && a.consumers == b.consumers &&
+        a.reserved_rows == b.reserved_rows && a.completed == b.completed);
+    assert(cetta_occurrence_log_peek(image, 1u).kind == CETTA_OCCURRENCE_CANCELLED &&
+        cetta_occurrence_log_peek(image, pin).kind == CETTA_OCCURRENCE_INVALID &&
+        cetta_occurrence_log_peek(image, child).position == 4u);
+    size_t untouched = SIZE_MAX;
+    assert(!cetta_occurrence_log_fork(image, pin, &untouched) && untouched == SIZE_MAX &&
+        !cetta_occurrence_log_cancel(image, pin));
+    assert(cetta_occurrence_log_take(image, 0u, refuse_publication, NULL).kind ==
+        CETTA_OCCURRENCE_PUBLICATION_REFUSED && cetta_occurrence_log_peek(image, 0u).position == 2u);
+    assert(cetta_occurrence_log_append(image, (CettaOccurrenceRow){0}) ==
+        (complete ? CETTA_OCCURRENCE_APPEND_COMPLETED : CETTA_OCCURRENCE_BACKPRESSURE));
+    check_log_copy_source(source, graph);
+    cetta_occurrence_log_free(source);
+    assert(graph->references == 1u && !reclaimed);
+    release_graph(graph);
+    assert(reclaimed == 1u);
+    for (uint64_t position = 2u; position < 5u; position++) {
+        CettaOccurrenceReply reply = cetta_occurrence_log_take(image, 0u, publish_constant, NULL);
+        assert(reply.kind == CETTA_OCCURRENCE_ANSWER && reply.position == position &&
+            reply.value == &rows.image->values[position % 2u]);
+    }
+    assert(cetta_occurrence_log_peek(image, 0u).kind ==
+        (complete ? CETTA_OCCURRENCE_COMPLETED : CETTA_OCCURRENCE_PAUSED));
+    assert(cetta_occurrence_log_trim(image) == 0u &&
+        cetta_occurrence_log_pin_move(image, pin, 5u) &&
+        cetta_occurrence_log_cancel(image, child) && cetta_occurrence_log_trim(image) == 3u);
+    cetta_occurrence_log_complete(image);
+    assert(cetta_occurrence_log_peek(image, 0u).kind == CETTA_OCCURRENCE_COMPLETED &&
+        rows.image->references == 1u && !image_reclaimed);
+    cetta_occurrence_log_free(image);
+    release_graph(rows.image);
+    assert(image_reclaimed == 1u);
+}
+
+static bool copy_null_row(void *raw, uint64_t position,
+    const CettaOccurrenceRow *source, CettaOccurrenceRow *out) {
+    unsigned *copies = raw;
+    assert(position == 0u && !source->value && !source->owner && !source->release);
+    (*copies)++;
+    *out = *source;
+    return true;
+}
+
+static void test_empty_log_copy(void) {
+    assert(!cetta_occurrence_log_copy(NULL, NULL, NULL));
+    CettaOccurrenceLog *empty = cetta_occurrence_log_new(0u, 0u);
+    assert(empty);
+    cetta_occurrence_log_complete(empty);
+    CettaOccurrenceLog *image = cetta_occurrence_log_copy(empty, NULL, NULL);
+    CettaOccurrenceLogInfo info;
+    assert(image && cetta_occurrence_log_info(image, &info) && info.completed &&
+        !info.rows && !info.limit && !info.consumers && !info.reserved_rows);
+    cetta_occurrence_log_free(empty);
+    cetta_occurrence_log_free(image);
+    empty = cetta_occurrence_log_new(1u, 1u);
+    assert(empty && cetta_occurrence_log_append(empty, (CettaOccurrenceRow){0}) == CETTA_OCCURRENCE_APPENDED);
+    assert(!cetta_occurrence_log_copy(empty, NULL, NULL));
+    unsigned copies = 0u;
+    image = cetta_occurrence_log_copy(empty, copy_null_row, &copies);
+    assert(image && copies == 1u && cetta_occurrence_log_valid(image) &&
+        cetta_occurrence_log_peek(image, 0u).kind == CETTA_OCCURRENCE_ANSWER &&
+        !cetta_occurrence_log_peek(image, 0u).value);
+    cetta_occurrence_log_free(empty);
+    cetta_occurrence_log_free(image);
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--replay"))
         return replay();
@@ -489,6 +663,9 @@ int main(int argc, char **argv) {
     test_allocation_refusals();
     test_reader_forks();
     test_retention_pins();
+    test_log_copy(false);
+    test_log_copy(true);
+    test_empty_log_copy();
     puts("shared occurrence log: independent delivery, ownership, refusal and retention controls passed");
     return 0;
 }

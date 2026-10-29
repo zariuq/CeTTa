@@ -149,6 +149,16 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
            df->control_return_advice_length>df->child.len) return r->valid=false;
         copy_identity(r,11,sf->control_return_advice,df->control_return_advice);
         copy_identity(r,10,sf->control_advice,df->control_advice);
+        if(sf->control_pending_return_limit!=df->control_pending_return_limit ||
+           (sf->control_pending_return_advice.key==NULL)!=(df->control_pending_return_advice.key==NULL) ||
+           (sf->control_pending_return_advice.bound==NULL)!=(df->control_pending_return_advice.bound==NULL) ||
+           (sf->control_pending_return_advice.key &&
+            !atom_eq(sf->control_pending_return_advice.key,df->control_pending_return_advice.key)) ||
+           (sf->control_pending_return_advice.bound &&
+            !atom_eq(sf->control_pending_return_advice.bound,df->control_pending_return_advice.bound)))
+            return r->valid=false;
+        copy_identity(r,10,sf->control_pending_return_advice.advice,
+            df->control_pending_return_advice.advice);
         for(size_t i=0u;i<sf->control_return_advice_length;i++) {
             const PrimeNativeReturnAdvice *a=&sf->control_return_advice[i];
             const PrimeNativeReturnAdvice *b=&df->control_return_advice[i];

@@ -3483,13 +3483,15 @@ int main(void) {
     PrimeNeedCellView source_argument_cell;
     CHECK(prime_need_snapshot_allocate_source_argument(
               &arena, &thunk, term, source_occurrence, 2u,
+              PRIME_NEED_SOURCE_INFERRED,
               &source_argument, &source_argument_id) &&
               prime_need_snapshot_lookup(
                   &source_argument, source_argument_id,
                   &source_argument_cell) &&
               source_argument_cell.source_occurrence_id ==
                   source_occurrence &&
-              source_argument_cell.source_argument_index == 2u,
+              source_argument_cell.source_argument_index == 2u &&
+              source_argument_cell.source_role == PRIME_NEED_SOURCE_INFERRED,
           "a source argument cell retains application and position identity");
     CHECK(source_argument_cell.value_role ==
                   PRIME_NEED_VALUE_DEMAND_RESULT &&

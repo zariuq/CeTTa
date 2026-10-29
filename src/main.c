@@ -2117,6 +2117,9 @@ static void main_add_he_prime_typing_op_decls(Space *space, Arena *arena) {
 }
 
 static void main_add_prime_semantic_op_decls(Space *space, Arena *arena) {
+    Atom *proc_type=atom_expr3(arena,atom_symbol_id(arena,g_builtin_syms.colon),
+        atom_symbol_id(arena,g_builtin_syms.prime_proc),atom_symbol(arena,"Type"));
+    if(!space_admit_atom(space,arena,proc_type))space_add(space,proc_type);
     static const struct { const char *name; const char *sig; } ops[] = {
         {"prime-package", "u"},
         {"prime:elaborate", "A"},
@@ -2472,6 +2475,8 @@ static int main_prime_compiled_bytes_backend(
     *complete_count = count >= 0 ? count : 0;
     return count;
 }
+
+
 
 static void main_he_compiled_reader_free(void *context) {
     he_compiled_reader_v1_free(context);
@@ -4306,10 +4311,8 @@ static int cetta_main(int argc, char **argv) {
     } else
         stdlib_load(&space, &arena);
 
-    /* The standard library is written in HE; in Prime its declarations
-     * keep their HE meaning (eval_prime_set_he_signature_heads).  The space
-     * holds exactly the library at this point, so the symbols it declares a
-     * type for are read from its annotations. */
+    /* Record the shared library's signature provenance before adding the
+     * active dialect's native declarations. Atom demand is uniform in Prime. */
     if (lang->id == CETTA_LANGUAGE_PRIME) {
         eval_prime_set_he_signature_space(&space);
     }

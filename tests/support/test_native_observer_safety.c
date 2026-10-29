@@ -38,6 +38,7 @@ int main(void) {
     const char *equations[] = {
         "(= (observer-unsigned $x) (binary:unsigned? $x))",
         "(= (observer-kind $x) (binary:value-kind $x))",
+        "(= (observer-portable-kind $x) (binary:portable-kind $x))",
         "(= (observer-wrong-arity $x) (binary:unsigned? $x 0))",
         "(= (observer-partial $x) (binary:pack-fields $x))",
         "(= (observer-construct $x) (cons-atom $x ()))",
@@ -54,6 +55,7 @@ int main(void) {
     assert(petta_program_synchronize_space(program, &space));
     SymbolId unsigned_head = atom_symbol_current_id(atom_symbol(&arena, "observer-unsigned"));
     SymbolId kind_head = atom_symbol_current_id(atom_symbol(&arena, "observer-kind"));
+    SymbolId portable_head = atom_symbol_current_id(atom_symbol(&arena, "observer-portable-kind"));
     SpaceProgramToken unchanged = space_program_token(&space);
 
     /* Availability changes without editing the program. Both stale unsafe
@@ -61,9 +63,11 @@ int main(void) {
     library.active_mask = 0u;
     assert(petta_program_relation_safety(program, &space, unsigned_head, 1u) == PETTA_RELATION_SAFETY_UNSAFE);
     assert(petta_program_relation_safety(program, &space, kind_head, 1u) == PETTA_RELATION_SAFETY_UNSAFE);
+    assert(petta_program_relation_safety(program, &space, portable_head, 1u) == PETTA_RELATION_SAFETY_UNSAFE);
     library.active_mask = CETTA_NATIVE_IMPORT_BINARY;
     assert(petta_program_relation_safety(program, &space, unsigned_head, 1u) == PETTA_RELATION_SAFETY_STATIC);
     assert(petta_program_relation_safety(program, &space, kind_head, 1u) == PETTA_RELATION_SAFETY_UNSAFE);
+    assert(petta_program_relation_safety(program, &space, portable_head, 1u) == PETTA_RELATION_SAFETY_UNSAFE);
     assert(petta_program_relation_safety(program, &space, unsigned_head, 1u) == PETTA_RELATION_SAFETY_STATIC);
     library.active_mask = 0u;
     assert(petta_program_relation_safety(program, &space, unsigned_head, 1u) == PETTA_RELATION_SAFETY_UNSAFE);
@@ -99,6 +103,6 @@ int main(void) {
     space_free(&space);
     arena_free(&arena);
     symbol_table_free(&symbols);
-    puts("PASS: native observers, structural constructors, pattern binders, refusal and availability-keyed safety cache (21 controls)");
+    puts("PASS: native observers, structural constructors, pattern binders, refusal and availability-keyed safety cache (23 controls)");
     return 0;
 }

@@ -535,11 +535,22 @@ static bool prime_native_note_returns(PrimeNativeControl *control, PrimeEvalStac
      * this optional scheduling sidecar. */
     if (frame->kind != PRIME_EVAL_STACK_FRAME_DIALECT_SOURCE &&
         !control->policy.priority && !control->live_bound) return true;
+    if (!frame->control_pending_return_limit) {
+        frame->control_pending_return_limit = (size_t)frame->child.len;
+        frame->control_pending_return_advice = (PrimeNativeReturnAdvice){
+            .key=control->active_key, .bound=control->active_bound,
+            .advice=control->active_advice};
+    }
     if (!prime_native_return_reserve_advice_count(frame,(size_t)frame->child.len)) return false;
-    while (frame->control_return_advice_length < frame->child.len)
-        frame->control_return_advice[frame->control_return_advice_length++]=
-            (PrimeNativeReturnAdvice){.key=control->active_key,
+    while (frame->control_return_advice_length < frame->child.len) {
+        size_t index = frame->control_return_advice_length++;
+        frame->control_return_advice[index] = index < frame->control_pending_return_limit
+            ? frame->control_pending_return_advice
+            : (PrimeNativeReturnAdvice){.key=control->active_key,
                 .bound=control->active_bound,.advice=control->active_advice};
+    }
+    frame->control_pending_return_limit = 0u;
+    frame->control_pending_return_advice = (PrimeNativeReturnAdvice){0};
     return true;
 }
 

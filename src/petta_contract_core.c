@@ -781,11 +781,17 @@ static bool contract_if(ContractScan *scan, Atom *expr,
 static bool contract_case(ContractScan *scan, Atom *expr,
                           const PettaPlanNode *plan, uint32_t depth,
                           ContractValue *out) {
-    Atom *branches = expr->expr.elems[2];
-    const PettaPlanNode *branches_plan = petta_plan_child(plan, 2u);
+    CettaControlOperationPlan control = plan->computation.control;
+    CettaExprLen arity = expr->expr.len - 1u;
+    if (!cetta_control_operation_match_branches_layout(control, arity))
+        return false;
+    CettaExprIndex key_child = (CettaExprIndex)control.source + 1u;
+    CettaExprIndex arms_child = (CettaExprIndex)control.first + 1u;
+    Atom *branches = expr->expr.elems[arms_child];
+    const PettaPlanNode *branches_plan = petta_plan_child(plan, arms_child);
     ContractValue key = {0};
     if (!branches || branches->kind != ATOM_EXPR || !branches_plan ||
-        !contract_eval(scan, expr->expr.elems[1], petta_plan_child(plan, 1u),
+        !contract_eval(scan, expr->expr.elems[key_child], petta_plan_child(plan, key_child),
                        depth + 1u, &key))
         return false;
     ContractFactSave save = {0};
@@ -1002,6 +1008,8 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
         *out = (ContractValue){.bottom = true};
         return true;
     }
+    if (plan->computation.control.operation == CETTA_CONTROL_MATCH_BRANCHES)
+        return contract_case(scan, expr, plan, depth, out);
     if (cetta_control_operation_is_control_form(plan->computation.control))
         return false;
     bool static_call = head->kind == ATOM_SYMBOL &&
@@ -1009,9 +1017,6 @@ static bool contract_eval(ContractScan *scan, Atom *expr,
     if (static_call && expr->expr.len == 4u &&
         atom_symbol_current_id(head) == g_builtin_syms.match)
         return contract_match(scan, expr, plan, depth, out);
-    if (static_call && expr->expr.len == 3u &&
-        atom_symbol_current_id(head) == g_builtin_syms.case_text)
-        return contract_case(scan, expr, plan, depth, out);
     /* `(reduce (f a…))` over a written call is that call under the run-time
      * dispatch's handler, which the compiled call keeps. */
     if (static_call && expr->expr.len == 2u &&

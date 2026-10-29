@@ -119,3 +119,24 @@
    (, (take (run $code)) (let 42 (eval $code)))
    (add-atom &cv-work complete)) ())
 !(assertEqual (collapse (get-atoms &cv-effects)) (executed))
+
+; Source currency observations report the Space they inspected. A later
+; computed write invalidates the publication while preserving that write.
+!(import! &self work)
+!(bind! &cv-epoch-data (new-space))
+!(add-atom &cv-work currency-pending)
+!(assertEqual (collapse (transform &cv-work
+   (, (take currency-pending) (let $epoch (work:source-epoch &cv-epoch-data))
+      (let $_ (add-atom &cv-epoch-data changed)))
+   (add-atom &cv-work currency-forbidden))) ())
+!(assertEqual (collapse (match &cv-work currency-pending currency-pending)) (currency-pending))
+!(assertEqual (collapse (get-atoms &cv-epoch-data)) (changed))
+!(assertEqual (collapse (match &cv-work currency-forbidden currency-forbidden)) ())
+
+; A fresh epoch and its current-status observation may publish.
+!(assertEqual (transform &cv-work
+   (, (take currency-pending) (let $epoch (work:source-epoch &cv-epoch-data))
+      (let Work:Current (work:source-status &cv-epoch-data $epoch)))
+   (add-atom &cv-work currency-done)) ())
+!(assertEqual (collapse (match &cv-work currency-done currency-done)) (currency-done))
+!(assertEqual (collapse (match &cv-work currency-pending currency-pending)) ())
