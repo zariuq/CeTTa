@@ -1516,6 +1516,13 @@ bool atom_tree_any_pruned(const Atom *root, AtomTreePredicate predicate,
                           AtomTreePredicate barrier, void *context);
 bool atom_graph_any_pruned(const Atom *root, AtomTreePredicate predicate,
                            AtomTreePredicate barrier, void *context);
+/* Read-only admission with a bounded number of predicate observations.
+ * Barriers and already visited subexpressions need no observation. Budget
+ * or allocation refusal sets *complete false; false then certifies nothing.
+ * COMPLETE is required. No terms or source effects are changed. */
+bool atom_graph_any_checked(const Atom *root, AtomTreePredicate predicate,
+                            AtomTreePredicate barrier, void *context,
+                            size_t allowance, bool *complete);
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 

@@ -6,6 +6,7 @@
 #include "stats.h"
 #include "binding/name_space.h"
 #include "generated/cetta_execution_contracts.generated.h"
+#include <assert.h>
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
@@ -6169,7 +6170,7 @@ void atom_visit_set_free(AtomVisitSet *set) {
 
 static inline __attribute__((always_inline)) bool atom_walk_any(
     const Atom *root, AtomTreePredicate predicate, AtomTreePredicate barrier,
-    void *context, bool unique) {
+    void *context, bool unique, size_t allowance, bool *complete) {
     enum { INLINE_CAPACITY = 64 };
     const Atom *inline_stack[INLINE_CAPACITY];
     const Atom **stack = inline_stack;
@@ -6179,8 +6180,15 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
     bool fault = false;
     bool found = false;
 
-    if (!root || !predicate)
+    if (complete)
+        *complete = true;
+    if (!root)
         return false;
+    if (!predicate) {
+        if (complete)
+            *complete = false;
+        return false;
+    }
     stack[length++] = root;
     while (length > 0u && !found) {
         const Atom *node = stack[--length];
@@ -6191,16 +6199,26 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
         if (unique && node != root && node->kind == ATOM_EXPR && node->expr.len &&
             !fault && !atom_visit_set_add(&seen, node, &fault) && !fault)
             continue;
+        if (complete && fault)
+            goto incomplete;
         if (barrier && barrier(node, context))
             continue;
+        if (complete) {
+            if (!allowance)
+                goto incomplete;
+            allowance--;
+        }
         if (predicate(node, context)) {
             found = true;
             break;
         }
         if (node->kind != ATOM_EXPR || node->expr.len == 0u)
             continue;
-        if (node->expr.len > (CettaExprLen)(SIZE_MAX - length))
+        if (node->expr.len > (CettaExprLen)(SIZE_MAX - length)) {
+            if (complete)
+                goto incomplete;
             cetta_oom(SIZE_MAX);
+        }
         size_t needed = length + (size_t)node->expr.len;
         if (needed > capacity) {
             size_t next_capacity = capacity;
@@ -6211,23 +6229,38 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
                 }
                 next_capacity *= 2u;
             }
-            if (next_capacity > SIZE_MAX / sizeof(*stack))
+            if (next_capacity > SIZE_MAX / sizeof(*stack)) {
+                if (complete)
+                    goto incomplete;
                 cetta_oom(SIZE_MAX);
+            }
             if (stack == inline_stack) {
-                const Atom **grown = cetta_malloc(
-                    next_capacity * sizeof(*grown));
+                const Atom **grown = complete
+                    ? malloc(next_capacity * sizeof(*grown))
+                    : cetta_malloc(next_capacity * sizeof(*grown));
+                if (!grown)
+                    goto incomplete;
                 memcpy((void *)grown, inline_stack,
                        length * sizeof(*grown));
                 stack = grown;
             } else {
-                stack = cetta_realloc(
-                    (void *)stack, next_capacity * sizeof(*stack));
+                const Atom **grown = complete
+                    ? realloc((void *)stack, next_capacity * sizeof(*stack))
+                    : cetta_realloc((void *)stack, next_capacity * sizeof(*stack));
+                if (!grown)
+                    goto incomplete;
+                stack = grown;
             }
             capacity = next_capacity;
         }
         for (CettaExprIndex i = node->expr.len; i > 0u; i--)
             stack[length++] = node->expr.elems[i - 1u];
     }
+    goto finished;
+incomplete:
+    if (complete)
+        *complete = false;
+finished:
     if (stack != inline_stack)
         free((void *)stack);
     if (unique)
@@ -6237,21 +6270,28 @@ static inline __attribute__((always_inline)) bool atom_walk_any(
 
 
 bool atom_tree_any(const Atom *root, AtomTreePredicate predicate, void *context) {
-    return atom_walk_any(root, predicate, NULL, context, false);
+    return atom_walk_any(root, predicate, NULL, context, false, SIZE_MAX, NULL);
 }
 
 bool atom_graph_any(const Atom *root, AtomTreePredicate predicate, void *context) {
-    return atom_walk_any(root, predicate, NULL, context, true);
+    return atom_walk_any(root, predicate, NULL, context, true, SIZE_MAX, NULL);
 }
 
 bool atom_tree_any_pruned(const Atom *root, AtomTreePredicate predicate,
                           AtomTreePredicate barrier, void *context) {
-    return atom_walk_any(root, predicate, barrier, context, false);
+    return atom_walk_any(root, predicate, barrier, context, false, SIZE_MAX, NULL);
 }
 
 bool atom_graph_any_pruned(const Atom *root, AtomTreePredicate predicate,
                            AtomTreePredicate barrier, void *context) {
-    return atom_walk_any(root, predicate, barrier, context, true);
+    return atom_walk_any(root, predicate, barrier, context, true, SIZE_MAX, NULL);
+}
+
+bool atom_graph_any_checked(const Atom *root, AtomTreePredicate predicate,
+                            AtomTreePredicate barrier, void *context,
+                            size_t allowance, bool *complete) {
+    assert(complete);
+    return atom_walk_any(root, predicate, barrier, context, true, allowance, complete);
 }
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */

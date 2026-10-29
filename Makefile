@@ -1028,6 +1028,7 @@ PETTA_COMPILED_READER_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ) $(COMPILED_
 PETTA_SEARCH_MACHINE_TEST_SRC = tests/support/test_petta_search_machine.c
 PETTA_SEARCH_MACHINE_TEST_OBJ = runtime/bootstrap/test_petta_search_machine.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
 PETTA_SEARCH_MACHINE_TEST_BIN = runtime/test_petta_search_machine-$(BUILD_CANON)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
+NATIVE_QUERY_PROJECTION_TEST_BIN = runtime/test_native_query_projection-$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),-runtime-stats,)
 PETTA_SEARCH_MACHINE_TEST_LINK_OBJ = $(FALLBACK_EVAL_TEST_LINK_OBJ)
 PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_SRC = tests/support/test_petta_typecheck_v2_guard_langdef.c
 PETTA_TYPECHECK_V2_GUARD_LANGDEF_TEST_OBJ = runtime/bootstrap/test_petta_typecheck_v2_guard_langdef.$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTIME_STATS)),.runtime-stats,).o
@@ -5377,7 +5378,7 @@ $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ): tests/test_native_conditional_context.c 
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
 
 $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN): $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ) $(filter-out src/eval.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=space_query_effect_for_head,--wrap=malloc $(LDFLAGS)
 
 .PHONY: test-native-conditional-context
 test-all: test-native-conditional-context
@@ -28888,6 +28889,14 @@ test-petta-set-space: $(BIN) tests/petta/set_space.metta tests/petta/set_space.e
 	echo "PASS: a set space holds each atom once on every route"
 
 .PHONY: test-native-query
+$(NATIVE_QUERY_PROJECTION_TEST_BIN): tests/test_native_query_projection.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -Isrc -o $@ $^ -Wl,--wrap=malloc,--wrap=calloc,--wrap=realloc $(LDFLAGS)
+
+.PHONY: test-native-query-projection
+test-native-query-projection: $(NATIVE_QUERY_PROJECTION_TEST_BIN)
+	@$(call cetta_exec,./$(NATIVE_QUERY_PROJECTION_TEST_BIN))
+
+test-native-query: test-native-query-projection
 test-petta-semantics: test-native-query
 # A match collected whole answers the same bag on the native query path as
 # on the ordinary one, and leaves the same spaces behind, over generated
