@@ -20107,6 +20107,18 @@ static bool hyperpose_threaded_execute(
         return false;
     }
 
+    PettaSpecializerPublicationWatch parent_derivations = {0};
+    if (petta_execution &&
+        !petta_specializer_capture_publications(g_library_context
+            ? g_library_context->petta_program : NULL, &parent_derivations)) {
+        cetta_parallel_executor_free(&run.parallel);
+        free(run.worker_states);
+        for (CettaCount i = 0u; i < branch_count; i++)
+            hyperpose_thread_branch_free(&branches[i]);
+        free(branches);
+        return false;
+    }
+
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_THREADED_RUN);
     if (run.first_success)
         cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_HYPERPOSE_ONCE_RUN);
@@ -20117,6 +20129,8 @@ static bool hyperpose_threaded_execute(
         atomic_load_explicit(&run.unsafe_result, memory_order_acquire);
     cetta_parallel_executor_free(&run.parallel);
     free(run.worker_states);
+
+    petta_specializer_finish_publications(&parent_derivations);
 
     if (!run_ok || unsafe) {
         const bool petta_execution_started =
@@ -68343,6 +68357,10 @@ static bool petta_eval_machine_transaction_commit(
             space_replace_contents(
                 entry->original, entry->working);
             petta_program_transaction_catalog_publish(program, entry->original, entry->catalog);
+            /* The private image did not notify derivations attached to the
+             * published identity. Retire those routes at publication, also
+             * for the serial transaction path where no worker join follows. */
+            petta_specializer_note_import(entry->original);
         }
     }
     for (size_t index = 0u;

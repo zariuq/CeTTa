@@ -631,6 +631,15 @@ bool petta_program_replace_space(
 void petta_program_forget_space(
     PettaProgram *program, const Space *space);
 
+/* Capture program-projection revisions from registered, evaluator-owned
+ * Spaces. Callers free the returned vector. Validating a borrowed identity
+ * first checks catalog membership, without dereferencing an unregistered
+ * address. These observations do not retain or authorize a Space. */
+bool petta_program_capture_projections(PettaProgram *program,
+    SpaceProgramToken **reads, size_t *length);
+bool petta_program_registered_space_token(PettaProgram *program,
+    const Space *identity, uint64_t instance, SpaceProgramToken *token);
+
 /* Private evaluator images retain complete occurrence catalogs without
  * registering their working Spaces in the shared program. Immutable plans
  * remain owned by the enclosing program; catalog vectors have image lifetime.

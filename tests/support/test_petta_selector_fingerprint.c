@@ -139,6 +139,69 @@ static void check_artifact_catalog(Arena *arena) {
     checks += 20u;
 }
 
+static void check_publication_watch(Arena *arena) {
+    Space spaces[3];
+    space_init(&spaces[0]);
+    space_init(&spaces[1]);
+    space_init(&spaces[2]);
+    PettaProgram *program = petta_program_new();
+    PettaProgram *other = petta_program_new();
+    assert(program && other);
+    assert(g_petta_specializations.len == 0u);
+    CettaExprIndex path[] = {1u};
+    PettaSpecializationBinding binding = {.value = atom_symbol(arena, "watch-value"),
+        .path = path, .path_len = 1u, .positional = true};
+    PettaSpecializationBindings selected = {&binding, 1u, 1u};
+    SymbolId source = atom_symbol_current_id(atom_symbol(arena, "watch-source"));
+    for (unsigned i = 0u; i < 3u; i++) {
+        PettaSpecializerContext context = {.space = &spaces[i == 2u], .persistent = arena,
+            .program = i == 2u ? other : program};
+        char name[48];
+        snprintf(name, sizeof(name), "watch-derived-%u", i);
+        Atom *head = atom_symbol(arena, name);
+        Atom *equation = atom_expr3(arena,
+            atom_symbol_id(arena, g_builtin_syms.equals), atom_expr(arena, &head, 1u),
+            atom_int(arena, i));
+        PettaSpecializationRecord *record = petta_create_record(
+            &context, source, atom_symbol_current_id(head), &selected);
+        assert(record && petta_record_add(record, equation, NULL, NULL));
+        space_add(context.space, equation);
+        assert(petta_program_synchronize_space(context.program, context.space));
+    }
+    assert(petta_program_synchronize_space(program, &spaces[2]));
+    PettaSpecializerPublicationWatch watch = {0};
+    assert(petta_specializer_capture_publications(program, &watch) && watch.len == 2u);
+    space_add(&spaces[0], atom_expr2(arena, atom_symbol(arena, "watch-data"), atom_int(arena, 1)));
+    petta_specializer_finish_publications(&watch);
+    assert(g_petta_specializations.len == 3u && !watch.reads && !watch.len);
+    assert(petta_specializer_capture_publications(program, &watch));
+    /* A different registered Space changes global callability while the
+     * cached source Space stays unchanged. Another program is unaffected. */
+    Atom *source_head = atom_symbol_id(arena, source);
+    space_add(&spaces[2], atom_expr3(arena,
+        atom_symbol_id(arena, g_builtin_syms.equals),
+        atom_expr(arena, &source_head, 1u), atom_int(arena, 9)));
+    petta_specializer_finish_publications(&watch);
+    assert(g_petta_specializations.len == 1u &&
+           g_petta_specializations.items[0].space == &spaces[1]);
+    assert(space_length64(&spaces[0]) == 1u && space_length64(&spaces[1]) == 1u &&
+           space_length64(&spaces[2]) == 1u);
+    Atom **equations = NULL;
+    size_t count = 0u;
+    assert(petta_program_equation_snapshot(program, &spaces[0], &equations, &count));
+    assert(count == 0u);
+    free(equations);
+    petta_specializer_finish_publications(&watch);
+    assert(g_petta_specializations.len == 1u);
+    petta_specializer_reset_thread();
+    petta_program_free(program);
+    petta_program_free(other);
+    space_free(&spaces[0]);
+    space_free(&spaces[1]);
+    space_free(&spaces[2]);
+    checks += 11u;
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -155,6 +218,7 @@ int main(void) {
     eval_set_library_context(&library);
     assert(petta_selector_fingerprint_enabled());
     check_artifact_catalog(&source);
+    check_publication_watch(&source);
 
     Atom *a = atom_symbol(&source, "selector-a");
     Atom *b = atom_symbol(&source, "selector-b");

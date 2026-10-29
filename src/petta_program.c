@@ -6500,6 +6500,53 @@ bool petta_program_native_eager_equations(
     return accepted;
 }
 
+bool petta_program_capture_projections(PettaProgram *program,
+        SpaceProgramToken **reads, size_t *length) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_projection_capture);
+    if (!program || !reads || !length)
+        return false;
+    *reads = NULL;
+    *length = 0u;
+    Space **spaces = NULL;
+    size_t count = 0u;
+    if (!petta_program_private_spaces(program, &spaces, &count))
+        return false;
+    SpaceProgramToken *tokens = count && count <= SIZE_MAX / sizeof(*tokens)
+        ? calloc(count, sizeof(*tokens)) : NULL;
+    if (count && !tokens) {
+        free(spaces);
+        return false;
+    }
+    for (size_t i = 0u; i < count; i++)
+        tokens[i] = space_program_token(spaces[i]);
+    free(spaces);
+    *reads = tokens;
+    *length = count;
+    return true;
+}
+
+bool petta_program_registered_space_token(PettaProgram *program,
+        const Space *identity, uint64_t instance, SpaceProgramToken *token) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_projection_lookup);
+    if (!program || !identity || !instance || !token)
+        return false;
+    for (size_t i = 0u; i < program->space_len; i++) {
+        const PettaProgramSpace *entry = &program->spaces[i];
+        if (entry->space == identity && entry->instance_id == instance) {
+            *token = space_program_token(entry->space);
+            return token->instance_id == instance;
+        }
+    }
+    for (size_t i = 0u; program->analysis && i < program->analysis->space_len; i++) {
+        const PettaProgramAnalysisSpace *entry = &program->analysis->spaces[i];
+        if (entry->space == identity && entry->instance_id == instance) {
+            *token = space_program_token(entry->space);
+            return token->instance_id == instance;
+        }
+    }
+    return false;
+}
+
 void petta_program_forget_space(
     PettaProgram *program, const Space *space) {
     CETTA_SCOPED_SHARED_TRANSITION(program_catalog_forget);
