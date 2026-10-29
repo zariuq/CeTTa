@@ -6796,6 +6796,44 @@ bool petta_rule_snapshot_lease(Space *space, SymbolId head, unsigned admitted_fo
         admitted_forms, false, space, head, lease, NULL);
 }
 
+bool petta_program_private_image_candidate_lease(
+    PettaProgram *program, const PettaProgramRevisionProjection *projection,
+    Space *source, Space *image, SymbolId head,
+    PettaCandidateSnapshotLease *lease, PettaCandidateSnapshotStats *stats) {
+    const PettaProgramSpace *entry = NULL;
+    const PettaProgramSpace *local = NULL;
+    if (projection) {
+        if (petta_program_revision_projection_current(projection, source))
+            entry = &projection->view->catalog;
+    } else if (!cetta_shared_transition_scope_active()) {
+        entry = petta_program_find_space(program, source);
+        local = source != image ? petta_program_find_space(program, image) : NULL;
+    }
+    /* An explicit add inside a serial transaction may already have compiled
+     * an image-local occurrence. Retain that role too; neither record stream
+     * grants permission to publish a derived catalog for this read. */
+    PettaProgramSpace joined = {0};
+    if (local && local->equation_len) {
+        size_t base = entry ? entry->equation_len : 0u;
+        if (local->equation_len > SIZE_MAX - base ||
+            base + local->equation_len > SIZE_MAX / sizeof(*joined.equations))
+            return false;
+        joined.equation_len = base + local->equation_len;
+        joined.equations = cetta_malloc(joined.equation_len * sizeof(*joined.equations));
+        if (base)
+            memcpy(joined.equations, entry->equations, base * sizeof(*joined.equations));
+        memcpy(joined.equations + base, local->equations,
+               local->equation_len * sizeof(*joined.equations));
+        joined.head_index_dirty = true;
+        entry = &joined;
+    }
+    bool ok = petta_program_candidate_snapshot_lease_from_entry(
+        entry, NULL, true, petta_program_rule_forms(program),
+        program && program->graded_equations, image, head, lease, stats);
+    free(joined.equations);
+    return ok;
+}
+
 bool petta_program_revision_view_equation_lease(
     const PettaProgramRevisionProjection *projection,
     Space *space, SymbolId head,

@@ -6579,7 +6579,11 @@ static bool eval_native_invocation_on(Space *s, Arena *a,
             return false;
         Atom *resolved = registry_lookup_atom(arg);
         arg = materialize_runtime_token(s, a, resolved ? resolved : arg);
-        if (atom_is_legacy_empty_sentinel(arg) || atom_is_error(arg) ||
+        /* A completed PeTTa Error-shaped datum is still an argument value.
+         * Declining here would re-enter sibling values as source on fallback. */
+        if (atom_is_legacy_empty_sentinel(arg) ||
+            (atom_is_error(arg) &&
+             (!arguments_are_values || eval_current_language_id() != CETTA_LANGUAGE_PETTA)) ||
             (!arguments_are_values &&
              !atom_eval_is_immediate_value(arg, fuel) &&
              !grounded_dispatch_accepts_data_arg(head, i) &&
@@ -67798,6 +67802,10 @@ static void petta_eval_transaction_destroy(
          index < transaction->space_len; index++) {
         Space *working = transaction->spaces[index].working;
         if (working) {
+            /* Explicit serial mutations can register private occurrence
+             * records. Retire them before the working Space is destroyed. */
+            if (g_library_context && g_library_context->petta_program)
+                petta_program_forget_space(g_library_context->petta_program, working);
             space_free(working);
             free(working);
         }
@@ -70110,6 +70118,19 @@ static bool petta_eval_machine_candidate_snapshot_lease(
         !eval_context->library_context->petta_program) {
         return false;
     }
+    if (eval_context->transaction) {
+        Space *source = space;
+        for (PettaEvalTransaction *scope = eval_context->transaction;
+             scope; scope = scope->parent) {
+            PettaEvalTransactionSpace *image =
+                petta_eval_transaction_space_by_working(scope, source);
+            if (image)
+                source = image->original;
+        }
+        return petta_program_private_image_candidate_lease(
+            eval_context->library_context->petta_program,
+            eval_context->program_projection, source, space, head, lease, stats);
+    }
     if (eval_context->program_projection) {
         return petta_program_revision_view_equation_lease(
             eval_context->program_projection,
@@ -72298,8 +72319,9 @@ static bool petta_value_predicate_answer(
 }
 
 /* Apply an admitted operation to the values already computed by the machine.
- * Language forms, mutation/import protocols and transactions retain their
- * ordinary owners. Open data is still a value, not code to evaluate again.
+ * Language forms and mutation/import protocols retain their ordinary owners.
+ * Transactions rebind native resources through their existing registry owner.
+ * Open data is still a value, not code to evaluate again.
  * Completion is the same service used by an
  * entered OEM native return, independent of how that call was executed. */
 static bool petta_eval_machine_apply_ready_values(
@@ -72336,7 +72358,9 @@ static bool petta_eval_machine_apply_ready_values(
         petta_ready_add_answer(context, arena, outcomes, environment, result);
         return true;
     }
-    if (eval_context->transaction || form != PETTA_FORM_NONE ||
+    if ((eval_context->transaction &&
+         eval_current_language_id() != CETTA_LANGUAGE_PETTA) ||
+        form != PETTA_FORM_NONE ||
         atom_symbol_current_id(head) == g_builtin_syms.add_atom ||
         atom_symbol_current_id(head) == g_builtin_syms.add_atom_nodup ||
         atom_symbol_current_id(head) == g_builtin_syms.remove_atom ||
@@ -72352,13 +72376,69 @@ static bool petta_eval_machine_apply_ready_values(
         return false;
     EvalNativeCallPlan plan = {
         head, (uint32_t)arity, demand};
+    PettaEvalTransaction *transaction = eval_context->transaction;
+    Registry *previous_registry = g_registry;
+    Space *previous_root_space = g_eval_root_space;
+    CettaInvocation rebound_invocation;
+    if (transaction) {
+        Atom *source = cetta_invocation_materialize(arena, invocation);
+        Atom *applied = source
+            ? bindings_apply_if_vars(environment, arena, source) : NULL;
+        Atom *rebound = applied
+            ? petta_eval_transaction_rebind_atom(transaction, arena, applied, true)
+            : NULL;
+        if (!rebound || rebound->kind != ATOM_EXPR ||
+            rebound->expr.len != arity + 1u) {
+            *end = cetta_call_interrupted();
+            return true;
+        }
+        rebound_invocation = (CettaInvocation){
+            .head = binding_value_from_atom(rebound->expr.elems[0]),
+            .supplied = {.atoms = rebound->expr.elems + 1u, .count = arity}};
+        invocation = &rebound_invocation;
+        g_registry = &transaction->registry;
+        g_eval_root_space = space;
+    }
     CettaCallOutcome native_outcome;
     if (!eval_native_invocation_on(space, arena, &plan, invocation, NULL,
-            environment, eval_context->fuel, &native_outcome))
+            environment, eval_context->fuel, &native_outcome)) {
+        g_registry = previous_registry;
+        g_eval_root_space = previous_root_space;
         return false;
+    }
+    CettaCount first_return = outcomes->len;
     CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
     petta_eval_machine_deliver_native_return(
         context, space, arena, native_outcome, environment, outcomes, end, &completion);
+    g_registry = previous_registry;
+    g_eval_root_space = previous_root_space;
+    if (transaction) {
+        for (CettaCount i = first_return; i < outcomes->len; ++i) {
+            Outcome *result = &outcomes->items[i];
+            if (result->atom) {
+                result->atom = petta_eval_transaction_rebind_atom(
+                    transaction, arena, result->atom, false);
+                if (!result->atom) {
+                    *end = cetta_call_interrupted();
+                    return true; /* An entered native call must not be retried. */
+                }
+            }
+            if (result->materialized_atom) {
+                result->materialized_atom = petta_eval_transaction_rebind_atom(
+                    transaction, arena, result->materialized_atom, false);
+                if (!result->materialized_atom) {
+                    *end = cetta_call_interrupted();
+                    return true;
+                }
+            }
+        }
+        if (end->kind == CETTA_CALL_RAISED && end->term) {
+            end->term = petta_eval_transaction_rebind_atom(
+                transaction, arena, end->term, false);
+            if (!end->term)
+                *end = cetta_call_interrupted();
+        }
+    }
     return true;
 }
 

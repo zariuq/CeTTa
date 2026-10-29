@@ -39,6 +39,31 @@ class CodecTests(unittest.TestCase):
                 decoded = decode(raw.encode("utf-8") if isinstance(raw, str) else raw)
                 self.assertEqual(encode(decoded), encode(value))
 
+    def test_transaction_preserves_completed_open_and_callable_data(self):
+        for value in [E("+", Var(1), Var(1)), E("+", 2, 3), E("kb-codec:datum-call"),
+                      E("Error", "source", "data")]:
+            with self.subTest(value=value):
+                result = self.worker.call(E("TransactionProduced", value))
+                self.assertEqual(result[0], S("CodecEffects"))
+                self.assertEqual(result[2], (S("produced"),))
+                self.assertEqual(result[1][0], S("StoreEncoded"))
+                body = result[1][1]
+                self.assertEqual(encode(decode(body.encode() if isinstance(body, str) else body)), encode(value))
+
+    def test_error_datum_sibling_does_not_reenter_completed_arguments(self):
+        for right in ["x", E("Error", "source", "data")]:
+            result = self.worker.call(E("ErrorSibling", E("kb-codec:datum-call"), right))
+            self.assertEqual(result[2], (S("produced"), S("produced")))
+
+    def test_nested_transactions_and_new_equations_keep_value_roles(self):
+        for mode in ["NestedTransaction", "TransactionAdded"]:
+            value = E("+", 2, 3)
+            with self.subTest(mode=mode):
+                result = self.worker.call(E(mode, value))
+                self.assertEqual(result[0], S("StoreEncoded"))
+                body = result[1]
+                self.assertEqual(encode(decode(body.encode() if isinstance(body, str) else body)), encode(value))
+
 
 if __name__ == "__main__":
     unittest.main()

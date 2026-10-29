@@ -686,6 +686,14 @@ typedef struct {
     SpaceEquationToken target;
 } PettaProgramRevisionProjection;
 
+/* Join a private shallow image's live occurrences with its source's compiled
+ * roles. No image catalog/cache is published. In concurrent scopes the source
+ * roles must come from the explicitly captured immutable projection. */
+bool petta_program_private_image_candidate_lease(
+    PettaProgram *program, const PettaProgramRevisionProjection *projection,
+    Space *source, Space *image, SymbolId head,
+    PettaCandidateSnapshotLease *lease, PettaCandidateSnapshotStats *stats);
+
 PettaProgramRevisionView *petta_program_revision_view_capture(
     PettaProgram *program, Space *source);
 bool petta_program_revision_view_retain(PettaProgramRevisionView *view);
