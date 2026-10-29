@@ -211,6 +211,20 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
             atom_expr2(a,atom_symbol(a,"StoreCollected"),unsigned_value(a,removed));
         cetta_native_handle_use_release(&use);return answer;
     }
+    if (atom_is_symbol(head,"__cetta_lib_store_check_view")) {
+        if (n!=2) return refused(a,"invalid-view-check");
+        CettaNativeHandleUse owner={0},view={0};
+        if (!acquire(ctx,owner_kind,args[0],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&owner))
+            return refused(a,"closed-or-busy");
+        if (!acquire(ctx,view_kind,args[1],CETTA_NATIVE_HANDLE_USE_LIFETIME,&view)) {
+            cetta_native_handle_use_release(&owner); return refused(a,"closed-view");
+        }
+        CettaDiskStoreStatus status=cetta_disk_store_check_view(
+            cetta_native_handle_use_resource(&owner),cetta_native_handle_use_resource(&view));
+        cetta_native_handle_use_release(&view);
+        cetta_native_handle_use_release(&owner);
+        return status==CETTA_STORE_OK ? atom_symbol(a,"StoreViewValid") : status_value(a,status);
+    }
     bool commit_call=atom_is_symbol(head,"__cetta_lib_store_commit"),scoped_call=atom_is_symbol(head,"__cetta_lib_store_commit_scoped");
     if (commit_call || scoped_call) {
         if (n!=(scoped_call ? 5u : 3u)) return refused(a,"invalid-commit");

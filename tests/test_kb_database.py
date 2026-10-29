@@ -188,6 +188,20 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(self.call(E("CorruptBody", key, wrong)), S("CorruptionFixtureReady"))
         self.same(self.call(E("Select", E("KbRelation", "relation"))), E("KbRefused", S("index-identity")))
 
+    def test_receipt_replay_requires_a_live_publisher_for_the_captured_domain(self):
+        changes = (E("KbPut", "one", "row", (1,)),)
+        self.commit(changes, "receipt")
+        other = self.directory / "other"
+        other.mkdir(mode=0o700)
+        self.assertEqual(self.worker.call(E("Create", str(other)))[0], S("KnowledgeReadyV1"))
+        self.same(self.call(E("ReplayOwner", S("path"), str(other), "receipt", changes)),
+                  E("StoreRefused", S("conflict")))
+        for mode in ("invalid", "closed"):
+            self.same(self.call(E("ReplayOwner", S(mode), "", "receipt", changes)),
+                      E("StoreRefused", S("closed-or-busy")))
+        self.same(self.call(E("ReplayOwner", S("path"), str(self.path), "receipt", changes)),
+                  E("KnowledgeReplayedV1", S("KbAccepted")))
+
 
 if __name__ == "__main__":
     unittest.main()

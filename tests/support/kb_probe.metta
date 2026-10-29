@@ -13,6 +13,16 @@
    (case $command
      (((Commit $receipt $changes)
        (kb-probe:commit $owner $view $receipt $changes (kb:observe-empty $view)))
+      ((ReplayOwner $mode $path $receipt $changes)
+       (case $mode
+         ((invalid (kb-probe:commit "not-an-owner" $view $receipt $changes (kb:observe-empty $view)))
+          (closed (let $closed (store:close $owner)
+                    (kb-probe:commit $owner $view $receipt $changes (kb:observe-empty $view))))
+          (path (case (store:open $path "existing")
+            (((StoreOpened $publisher)
+              (let* (($answer (kb-probe:commit $publisher $view $receipt $changes (kb:observe-empty $view)))
+                     ($closed (store:close $publisher))) $answer))
+             ($error $error)))))))
       ((Select $selector) (kb:select $view $selector 1048576))
       ((Fact $id) (kb:fact $view $id 1048576))
       ((CorruptBody $key $fact)
@@ -74,7 +84,7 @@
        (let $answer
          (case (store:snapshot $owner)
            (((StoreSnapshot $view $epoch $revision)
-             (let* (($result (kb-probe:at $owner $view $command)) ($closed (store:close $view))) $result))
+             (let* (($result (kb-probe:at $owner $view $command)) ($view-closed (store:close $view))) $result))
             ($error $error)))
-         (let $closed (store:close $owner) $answer)))
+         (let $owner-closed (store:close $owner) $answer)))
       ($error $error))))

@@ -154,7 +154,17 @@
         (((KnowledgeDeltaV1 $operations $writes)
           (knowledge:publish-ready $owner $view $reads $identity $command $answer $operations $writes))
          ($error $error))))
-     ($replay-or-error $replay-or-error))))
+     ($replay-or-error (knowledge:replay-on $owner $view $replay-or-error)))))
+
+; A receipt lookup is a historical read. Returning it from a publication API
+; additionally requires a live publisher for this same store domain/epoch.
+; A later actual publication still validates all influencing scopes atomically.
+(= (knowledge:replay-on $owner $view $result)
+  (case $result
+    (((KnowledgeReplayedV1 $answer)
+      (case (store:check-view $owner $view)
+        ((StoreViewValid (KnowledgeReplayedV1 $answer)) ($error $error))))
+     ($other $other))))
 
 (= (knowledge:publish-ready $owner $view $reads $identity $command $answer $operations $writes)
   (case (knowledge:receipt-address $identity)

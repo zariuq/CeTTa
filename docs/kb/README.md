@@ -31,7 +31,10 @@ have not been migrated by introducing these libraries.
 - `kb:commit owner view observation receipt command answer edits byte-budget`
   publishes facts, relation/argument indexes and the immutable receipt together.
   The observation must be bound to that actual captured view. Replaying the same
-  command/receipt returns its old answer; a receipt collision is refused.
+  command/receipt returns its old answer after checking the publisher/view
+  domain; a closed, recovering or foreign publisher is refused. A receipt
+  collision is refused too. `knowledge:receipt` is the separate lookup-only
+  operation when publisher validation is not requested.
 - `kb:observe-selector view selector` records the complete selected index prefix,
   including absence. Covering index values contain the full row, so a projected
   non-key field change invalidates the observation too. This initial choice

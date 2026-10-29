@@ -31,6 +31,11 @@ Import `(library store)` in PeTTa, or `store` in HE and Prime.
   published manifest instead of silently creating new state.
 - `(store:snapshot owner)` returns `(StoreSnapshot view epoch revision)`.
   It confirms the durability of a first-seen root before returning it.
+- `(store:check-view owner view)` returns `StoreViewValid` when a live publisher
+  and captured view belong to the same physical store domain and epoch. A
+  publisher awaiting recovery is refused. An older revision remains valid;
+  this check neither publishes nor validates the read/write set of a later
+  commit. That later commit still performs its own atomic validation.
 - `(store:close resource)` returns `StoreClosed`. Owners, snapshots, body readers
   and scans are independent resources. A reader can outlive its snapshot, and a
   snapshot can outlive its owner. Explicit close and request-arena retirement

@@ -145,7 +145,7 @@
                        (cons-atom ops $ops) (cons-atom writes $writes)))
                     ($error $error)))))
               ($error $error))))
-          ($replayed $replayed))))
+          ($replayed (knowledge:replay-on $owner $view $replayed)))))
       ($error $error))))
 
 ; Selectors choose exact structural access paths. General pattern matching is
