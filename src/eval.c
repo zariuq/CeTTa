@@ -23614,6 +23614,12 @@ static void outcome_set_append_prefixed(Arena *a, OutcomeSet *dst,
                                         bool preserve_bindings);
 static bool prime_need_strict_argument_needs_eval(Space *s, Arena *a,
                                                   Atom *argument);
+typedef enum {
+    PREPARED_PURE_COMPILE_INQUIRY,
+    PREPARED_PURE_ADMISSION_INQUIRY,
+    PREPARED_PURE_ENTRY_INQUIRY,
+} PreparedPureRefusalInquiry;
+
 typedef struct PreparedPureCacheEntry {
     struct PreparedPureCacheEntry *next;
     Space *space;
@@ -23625,7 +23631,7 @@ typedef struct PreparedPureCacheEntry {
     const void *source_identity;
     bool entry_arguments_are_values;
     bool total_structural_equality;
-    bool compilation_declined;
+    bool admission_refused;
     CettaPreparedPureProgram *program;
 } PreparedPureCacheEntry;
 
@@ -23642,6 +23648,7 @@ typedef struct {
     bool entry_arguments_are_values;
     bool total_structural_equality;
     bool declined;
+    PreparedPureRefusalInquiry inquiry;
 } PreparedPureDeclineSlot;
 
 enum { PREPARED_PURE_DECLINE_SLOTS = 64u };
@@ -44085,7 +44092,7 @@ static bool prepared_pure_program_cache_has_decline_head(
     CettaExprLen arity, const void *source_identity,
     CettaLanguageId language_id, CettaGsltPureCallMode call_mode,
     bool answer_producer, bool entry_arguments_are_values,
-    bool total_structural_equality);
+    bool total_structural_equality, PreparedPureRefusalInquiry inquiry);
 
 static _Thread_local bool g_he_shared_execution;
 
@@ -44214,12 +44221,12 @@ static bool petta_eval_machine_execute_prepared_pure_call(
         petta_eval_machine_prepared_pure_cache(context), outcome);
 }
 
-/* The same decline the closed-call entry reads first, asked by head so the
- * machine need not prove a call closed or materialize it to learn that the
- * relation does not compile.  The key matches that entry exactly: a machine
- * call has no source root and passes its arguments as values. */
-static bool petta_eval_machine_prepared_pure_call_declined(
-    void *context, Space *space, SymbolId head, CettaExprLen arity) {
+/* The ordinary machine asks about frontend/worker construction; the open
+ * machine can also skip a pure-entry attempt rejected by source policy.
+ * Neither inquiry materializes operands or certifies logical failure. */
+static bool petta_eval_machine_prepared_refused(
+    void *context, Space *space, SymbolId head, CettaExprLen arity,
+    PreparedPureRefusalInquiry inquiry) {
     PreparedPureProgramCache *program_cache =
         petta_eval_machine_prepared_pure_cache(context);
     if (!program_cache || !program_cache->entries)
@@ -44230,7 +44237,19 @@ static bool petta_eval_machine_prepared_pure_call_declined(
         language_id == CETTA_LANGUAGE_PRIME
             ? CETTA_GSLT_PURE_CALL_CALL_BY_NEED
             : CETTA_GSLT_PURE_CALL_EAGER,
-        false, true, active_composition_uses_total_structural_eq());
+        false, true, active_composition_uses_total_structural_eq(), inquiry);
+}
+
+static bool petta_eval_machine_prepared_pure_call_declined(
+    void *context, Space *space, SymbolId head, CettaExprLen arity) {
+    return petta_eval_machine_prepared_refused(context, space, head, arity,
+        PREPARED_PURE_COMPILE_INQUIRY);
+}
+
+static bool petta_eval_open_pure_relation_declined(
+    void *context, Space *space, SymbolId head, CettaExprLen arity) {
+    return petta_eval_machine_prepared_refused(context, space, head, arity,
+        PREPARED_PURE_ENTRY_INQUIRY);
 }
 
 static bool petta_eval_machine_all_grounded_args_are_data(
@@ -49480,9 +49499,9 @@ static CettaPreparedPureProgram *prepared_pure_program_cache_lookup(
     bool answer_producer,
     bool entry_arguments_are_values,
     bool total_structural_equality,
-    bool *compilation_declined) {
-    if (compilation_declined)
-        *compilation_declined = false;
+    bool *program_declined) {
+    if (program_declined)
+        *program_declined = false;
     uint64_t capability_revision =
         language_id == CETTA_LANGUAGE_PETTA && g_library_context
             ? petta_libpl_capability_revision(
@@ -49506,9 +49525,9 @@ static CettaPreparedPureProgram *prepared_pure_program_cache_lookup(
             link = &entry->next;
             continue;
         }
-        if (entry->compilation_declined) {
-            if (compilation_declined)
-                *compilation_declined = true;
+        if (!entry->program) {
+            if (program_declined)
+                *program_declined = true;
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_NEGATIVE_CACHE_HIT);
             return NULL;
@@ -49528,14 +49547,10 @@ static CettaPreparedPureProgram *prepared_pure_program_cache_lookup(
     return NULL;
 }
 
-/* A structural compilation decline is safe to consult before dynamic
- * admission checks: every observer/effect state reaches the same canonical
- * fallback. Positive programs still pass the complete admission boundary
- * before execution. */
-/* A compilation decline is a fact about the relation under one program
- * revision and capability revision, not about a call's arguments: the key
- * names only the head, arity and compilation parameters.  It can therefore
- * be read before a call is proved closed or materialized. */
+/* Refusals name a preparation stage under the complete cache authority.
+ * A source assessment does not establish a frontend refusal. The inquiry
+ * also belongs to the direct-mapped lookup key. Positive programs always
+ * pass the full admission boundary before execution. */
 static bool prepared_pure_program_cache_has_decline_head(
         PreparedPureProgramCache *cache,
         Space *space, SymbolId head, CettaExprLen arity,
@@ -49544,7 +49559,7 @@ static bool prepared_pure_program_cache_has_decline_head(
         CettaGsltPureCallMode call_mode,
         bool answer_producer,
         bool entry_arguments_are_values,
-        bool total_structural_equality) {
+        bool total_structural_equality, PreparedPureRefusalInquiry inquiry) {
     uint64_t capability_revision =
         language_id == CETTA_LANGUAGE_PETTA && g_library_context
             ? petta_libpl_capability_revision(
@@ -49571,7 +49586,7 @@ static bool prepared_pure_program_cache_has_decline_head(
             slot->entry_arguments_are_values ==
                 entry_arguments_are_values &&
             slot->total_structural_equality ==
-                total_structural_equality) {
+                total_structural_equality && slot->inquiry == inquiry) {
             if (slot->declined)
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_NEGATIVE_CACHE_HIT);
@@ -49581,7 +49596,9 @@ static bool prepared_pure_program_cache_has_decline_head(
     bool declined = false;
     for (PreparedPureCacheEntry *entry = cache->entries;
          entry; entry = entry->next) {
-        if (entry->compilation_declined &&
+        if (!entry->program &&
+            (inquiry == PREPARED_PURE_ENTRY_INQUIRY ||
+             entry->admission_refused == (inquiry == PREPARED_PURE_ADMISSION_INQUIRY)) &&
             prepared_pure_program_cache_entry_matches(
                 entry, space, head, arity, source_identity,
                 language_id, call_mode, answer_producer,
@@ -49603,12 +49620,39 @@ static bool prepared_pure_program_cache_has_decline_head(
             .answer_producer = answer_producer,
             .entry_arguments_are_values = entry_arguments_are_values,
             .total_structural_equality = total_structural_equality,
-            .declined = declined,
+            .declined = declined, .inquiry = inquiry,
         };
     }
     return declined;
 }
 
+
+/* The source and borrowed-invocation frontends share one cache-entry owner.
+ * Optional metadata allocation may fail without changing execution. */
+static bool prepared_pure_program_cache_store_entry(
+    PreparedPureProgramCache *cache, Space *space, SymbolId head, CettaExprLen arity,
+    const void *source_identity, CettaLanguageId language_id,
+    CettaGsltPureCallMode call_mode, bool answer_producer,
+    bool entry_arguments_are_values, bool total_structural_equality,
+    CettaPreparedPureProgram *program, bool admission_refused) {
+    PreparedPureCacheEntry *entry = malloc(sizeof(*entry));
+    if (!entry)
+        return false;
+    *entry = (PreparedPureCacheEntry){
+        .next = cache->entries, .space = space, .head = head, .arity = arity,
+        .source_identity = source_identity, .language_id = language_id,
+        .call_mode = call_mode, .answer_producer = answer_producer,
+        .entry_arguments_are_values = entry_arguments_are_values,
+        .total_structural_equality = total_structural_equality,
+        .admission_refused = admission_refused, .program = program,
+    };
+    cache->entries = entry;
+    cache->entry_generation++;
+    cetta_runtime_stats_inc(program
+        ? CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_PROGRAM_CACHE_STORE
+        : CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_NEGATIVE_CACHE_STORE);
+    return true;
+}
 
 static bool prepared_pure_program_cache_insert(
     PreparedPureProgramCache *cache,
@@ -49622,82 +49666,48 @@ static bool prepared_pure_program_cache_insert(
     CettaPreparedPureProgram *program) {
     uint64_t capability_revision =
         language_id == CETTA_LANGUAGE_PETTA && g_library_context
-            ? petta_libpl_capability_revision(
-                  g_library_context->lib_prolog)
-            : 0u;
-    if (!prepared_pure_program_cache_prepare_revision(
-            cache, space, capability_revision) ||
-        !call || !program ||
-        call->kind != ATOM_EXPR || call->expr.len == 0u ||
-        !call->expr.elems[0] ||
-        call->expr.elems[0]->kind != ATOM_SYMBOL ||
+            ? petta_libpl_capability_revision(g_library_context->lib_prolog) : 0u;
+    if (!prepared_pure_program_cache_prepare_revision(cache, space, capability_revision) ||
+        !call || !program || call->kind != ATOM_EXPR || !call->expr.len ||
+        !call->expr.elems[0] || call->expr.elems[0]->kind != ATOM_SYMBOL ||
         !cetta_prepared_pure_program_is_current(program) ||
-        !cetta_prepared_pure_program_rebind_closed_entry_call(
-            program, call))
+        !cetta_prepared_pure_program_rebind_closed_entry_call(program, call))
         return false;
     cetta_prepared_pure_program_clear_closed_entry_call(program);
-    PreparedPureCacheEntry *entry = cetta_malloc(sizeof(*entry));
-    entry->next = cache->entries;
-    entry->space = space;
-    entry->head = call->expr.elems[0]->sym_id;
-    entry->arity = call->expr.len - 1u;
-    entry->source_identity = source_identity;
-    entry->language_id = language_id;
-    entry->call_mode = call_mode;
-    entry->answer_producer = answer_producer;
-    entry->entry_arguments_are_values =
-        entry_arguments_are_values;
-    entry->total_structural_equality =
-        total_structural_equality;
-    entry->compilation_declined = false;
-    entry->program = program;
-    cache->entries = entry;
-    cache->entry_generation++;
-    cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_PROGRAM_CACHE_STORE);
-    return true;
+    return prepared_pure_program_cache_store_entry(cache, space,
+        call->expr.elems[0]->sym_id, call->expr.len - 1u, source_identity,
+        language_id, call_mode, answer_producer, entry_arguments_are_values,
+        total_structural_equality, program, false);
+}
+
+/* A source-qualified refusal has no operand payload to retain. */
+static bool prepared_pure_program_cache_insert_decline_head(
+    PreparedPureProgramCache *cache, Space *space, SymbolId head, CettaExprLen arity,
+    const void *source_identity, CettaLanguageId language_id,
+    CettaGsltPureCallMode call_mode, bool answer_producer,
+    bool entry_arguments_are_values, bool total_structural_equality,
+    bool admission_refused) {
+    uint64_t capability_revision =
+        language_id == CETTA_LANGUAGE_PETTA && g_library_context
+            ? petta_libpl_capability_revision(g_library_context->lib_prolog) : 0u;
+    return head != SYMBOL_ID_NONE &&
+        prepared_pure_program_cache_prepare_revision(cache, space, capability_revision) &&
+        prepared_pure_program_cache_store_entry(cache, space, head, arity,
+            source_identity, language_id, call_mode, answer_producer,
+            entry_arguments_are_values, total_structural_equality, NULL, admission_refused);
 }
 
 static bool prepared_pure_program_cache_insert_decline(
-    PreparedPureProgramCache *cache,
-    Space *space, Atom *call,
-    const void *source_identity,
-    CettaLanguageId language_id,
-    CettaGsltPureCallMode call_mode,
-    bool answer_producer,
-    bool entry_arguments_are_values,
-    bool total_structural_equality) {
-    uint64_t capability_revision =
-        language_id == CETTA_LANGUAGE_PETTA && g_library_context
-            ? petta_libpl_capability_revision(
-                  g_library_context->lib_prolog)
-            : 0u;
-    if (!prepared_pure_program_cache_prepare_revision(
-            cache, space, capability_revision) ||
-        !call || call->kind != ATOM_EXPR || call->expr.len == 0u ||
-        !call->expr.elems[0] ||
-        call->expr.elems[0]->kind != ATOM_SYMBOL)
-        return false;
-    PreparedPureCacheEntry *entry = cetta_malloc(sizeof(*entry));
-    entry->next = cache->entries;
-    entry->space = space;
-    entry->head = call->expr.elems[0]->sym_id;
-    entry->arity = call->expr.len - 1u;
-    entry->source_identity = source_identity;
-    entry->language_id = language_id;
-    entry->call_mode = call_mode;
-    entry->answer_producer = answer_producer;
-    entry->entry_arguments_are_values =
-        entry_arguments_are_values;
-    entry->total_structural_equality =
-        total_structural_equality;
-    entry->compilation_declined = true;
-    entry->program = NULL;
-    cache->entries = entry;
-    cache->entry_generation++;
-    cetta_runtime_stats_inc(
-        CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_NEGATIVE_CACHE_STORE);
-    return true;
+    PreparedPureProgramCache *cache, Space *space, Atom *call,
+    const void *source_identity, CettaLanguageId language_id,
+    CettaGsltPureCallMode call_mode, bool answer_producer,
+    bool entry_arguments_are_values, bool total_structural_equality) {
+    return call && call->kind == ATOM_EXPR && call->expr.len &&
+        call->expr.elems[0] && call->expr.elems[0]->kind == ATOM_SYMBOL &&
+        prepared_pure_program_cache_insert_decline_head(cache, space,
+            call->expr.elems[0]->sym_id, call->expr.len - 1u, source_identity,
+            language_id, call_mode, answer_producer, entry_arguments_are_values,
+            total_structural_equality, false);
 }
 
 static void prepared_pure_program_cache_remove(
@@ -50122,6 +50132,18 @@ static bool prepared_pure_closed_invocation_plan(
         invocation->head.skeleton->kind != ATOM_SYMBOL)
         return prepared_pure_precheck_refuse(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_PRECHECK_SHAPE, "not a named invocation", call);
+    /* Source classification is a callee fact, independent of this call's
+     * operand interpretation. Frontend refusals have their own inquiry. */
+    if (program_cache && program_cache->entries) {
+        CettaLanguageId language = eval_current_language_id();
+        if (prepared_pure_program_cache_has_decline_head(program_cache, space,
+                invocation->head.skeleton->sym_id, arity, NULL, language,
+                language == CETTA_LANGUAGE_PRIME ? CETTA_GSLT_PURE_CALL_CALL_BY_NEED
+                    : CETTA_GSLT_PURE_CALL_EAGER,
+                false, true, active_composition_uses_total_structural_eq(),
+                PREPARED_PURE_ADMISSION_INQUIRY))
+            return false;
+    }
     /* An existing source call carries compositional graph facts for all
      * operands. A ready span without that source supplies its own roots. */
     CettaExprLen roots = call ? 1u : arity;
@@ -50167,9 +50189,22 @@ static bool prepared_pure_closed_invocation_plan(
             "active table mode", call);
     }
     bool defined = false;
+    SpaceProgramToken effect_source = space_program_token(space);
     CettaGsltQueryEffect effect = space_query_effect_for_head(
         space, head->sym_id, &defined);
     if (effect != CETTA_GSLT_QUERY_EFFECT_PURE || !defined) {
+        /* A completed source classification refuses this strategy for every
+         * operand. An incomplete analysis leaves defined false and stays
+         * retryable, as do the input/observer refusals above this point. */
+        if (defined && program_cache &&
+            space_program_token_matches_live_space(effect_source, space)) {
+            CettaLanguageId language = eval_current_language_id();
+            (void)prepared_pure_program_cache_insert_decline_head(program_cache,
+                space, head->sym_id, arity, NULL, language,
+                language == CETTA_LANGUAGE_PRIME ? CETTA_GSLT_PURE_CALL_CALL_BY_NEED
+                    : CETTA_GSLT_PURE_CALL_EAGER,
+                false, true, active_composition_uses_total_structural_eq(), true);
+        }
         char reason[96] = "effect";
         if (prepared_pure_precheck_debug_enabled())
             snprintf(
@@ -50435,12 +50470,12 @@ static bool prepared_pure_closed_invocation_try(
                 program_cache, space, invocation->head.skeleton->sym_id, arity, early_source_view.root,
                 early_language_id, early_call_mode, false,
                 entry_arguments_are_values,
-                early_total_structural_equality) ||
+                early_total_structural_equality, PREPARED_PURE_ENTRY_INQUIRY) ||
             (!entry_arguments_are_values &&
              prepared_pure_program_cache_has_decline_head(
                  program_cache, space, invocation->head.skeleton->sym_id, arity, early_source_view.root,
                  early_language_id, early_call_mode, false, true,
-                 early_total_structural_equality))) {
+                 early_total_structural_equality, PREPARED_PURE_ENTRY_INQUIRY))) {
             cetta_runtime_stats_inc(
                 CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
             return false;
@@ -50470,15 +50505,15 @@ static bool prepared_pure_closed_invocation_try(
         plan.total_structural_equality;
     bool cacheable_program = plan.cacheable_program;
     bool program_is_cached = false;
-    bool compilation_declined = false;
+    bool program_declined = false;
     CettaPreparedPureProgram *program =
         prepared_pure_program_cache_lookup(
             program_cache, space, &plan.invocation, source_view.root,
             language_id, call_mode,
             false,
             cache_entry_arguments_are_values,
-            total_structural_equality, &compilation_declined);
-    if (compilation_declined) {
+            total_structural_equality, &program_declined);
+    if (program_declined) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
         return false;
@@ -50819,7 +50854,7 @@ prepared_pure_closed_answers_try(
                 program_cache, space, call->expr.elems[0]->sym_id,
                 call->expr.len - 1u, NULL, plan.language_id,
                 plan.call_mode, true, true,
-                plan.total_structural_equality))
+                plan.total_structural_equality, PREPARED_PURE_COMPILE_INQUIRY))
             return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
         CettaCallOutcome entry;
         if (!prepared_pure_answers_entry_call(
@@ -50840,7 +50875,7 @@ prepared_pure_closed_answers_try(
         !plan.cacheable_program)
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
 
-    bool compilation_declined = false;
+    bool program_declined = false;
     bool program_is_cached = false;
     CettaPreparedPureProgram *program =
         prepared_pure_program_cache_lookup(
@@ -50848,8 +50883,8 @@ prepared_pure_closed_answers_try(
             plan.language_id, plan.call_mode, true,
             plan.cache_entry_arguments_are_values,
             plan.total_structural_equality,
-            &compilation_declined);
-    if (compilation_declined) {
+            &program_declined);
+    if (program_declined) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_ANSWER_PRODUCER_DECLINE);
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
@@ -51159,15 +51194,15 @@ static CettaPreparedPureAnswerCursor *petta_eval_machine_open_answer_cursor(
         !plan.cacheable_program)
         return NULL;
 
-    bool compilation_declined = false;
+    bool program_declined = false;
     CettaPreparedPureProgram *program =
         prepared_pure_program_cache_lookup(
             program_cache, space, &plan.invocation, plan.source_view.root,
             plan.language_id, plan.call_mode, true,
             plan.cache_entry_arguments_are_values,
             plan.total_structural_equality,
-            &compilation_declined);
-    if (compilation_declined)
+            &program_declined);
+    if (program_declined)
         return NULL;
     bool program_is_cached = program != NULL;
     if (!program) {
@@ -51249,7 +51284,7 @@ static bool petta_eval_machine_answer_cursor_declined(
     return prepared_pure_program_cache_has_decline_head(
         program_cache, space, head, arity, NULL, language_id,
         CETTA_GSLT_PURE_CALL_EAGER, true, true,
-        active_composition_uses_total_structural_eq());
+        active_composition_uses_total_structural_eq(), PREPARED_PURE_COMPILE_INQUIRY);
 }
 
 /* HE completes a producer before its caller consumes it, so a closed call
@@ -51275,19 +51310,10 @@ static bool petta_eval_machine_collect_closed_answers(
          prepared_pure_program_cache_has_decline_head(
              program_cache, space, head, call->expr.len - 1u, NULL,
              CETTA_LANGUAGE_HE, CETTA_GSLT_PURE_CALL_EAGER, true, true,
-             total_structural_equality)))
+             total_structural_equality, PREPARED_PURE_COMPILE_INQUIRY)))
         return false;
-    /* A relation whose equations are not all pure never has an answer
-     * program; record that by head so its later calls stop here. */
-    bool defined = false;
-    if (space_query_effect_for_head(space, head, &defined) !=
-            CETTA_GSLT_QUERY_EFFECT_PURE || !defined) {
-        (void)prepared_pure_program_cache_insert_decline(
-            program_cache, space, call, NULL, CETTA_LANGUAGE_HE,
-            CETTA_GSLT_PURE_CALL_EAGER, true, true,
-            total_structural_equality);
-        return false;
-    }
+    /* The common invocation plan owns source classification and retains
+     * only completed source refusals. An unavailable read stays retryable. */
     Bindings empty;
     bindings_init(&empty);
     return prepared_pure_closed_answers_try(
@@ -52177,7 +52203,7 @@ static CettaOpenEquationCursor *petta_eval_machine_open_relation_cursor(
         .next_callable_answer = petta_eval_machine_next_answer_cursor,
         .release_pure_callable = petta_eval_open_release_pure_callable,
         .execute_pure_relation = he ? NULL : petta_eval_open_execute_pure_relation,
-        .pure_relation_declined = he ? NULL : petta_eval_machine_prepared_pure_call_declined,
+        .pure_relation_declined = he ? NULL : petta_eval_open_pure_relation_declined,
         .compile_callable = petta_eval_open_compile_callable,
         .open_head_is_data = !he,
         .program_current = petta_eval_open_program_current,

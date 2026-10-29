@@ -1385,6 +1385,23 @@ a miss; an unknown result uses the existing iterative lookup. Deep and wide
 graphs retain that general path. Managed native identifiers keep their lifetime
 checks and are never admitted as their scalar spelling.
 
+Native projection support
+-------------------------
+
+Native query projection inspects template support through the common graph
+observer. Its checked form keeps predicate allowances and allocation refusal
+separate from a complete negative answer. An incomplete observation declines
+the projection route; it does not classify the program as refusing. The
+existing native template limit still governs compilation, before effects.
+Repeated subexpressions share inspection work, while answer multiplicity and
+the effect consumer retain their own contracts.
+
+NativeProjectionObservation relates memoized metadata folds to independent
+reachability and the complete support criterion. Its refusal controls separate
+missing evidence from a negative program fact. Native pruning flags, predicate
+allowances, allocator behavior and pointer correspondence remain separate
+obligations; its cost bound counts metadata combinations.
+
 Fold completion provenance
 --------------------------
 
@@ -1446,3 +1463,26 @@ preserves validation visits and duplicates, and leaves prior slots unchanged on
 refusal. Its environment refinement joins every contextual CBPV physical slice.
 Native pointer lifetime, graph facts, mutable authority and full source-fuel
 correspondence remain separate obligations.
+
+Stage-specific preparation refusals
+------------------------------------
+
+The invocation cache distinguishes frontend/worker refusal from a completed
+source assessment that rules out pure entry. The ordinary machine asks the
+former question; a closed-entry attempt can use either. Direct-mapped lookup
+slots include that inquiry. Source assessments retain no operands or caller
+source occurrence, so different callers reuse the same callee fact.
+
+The existing program, capability, library, profile and language authority
+guards every lookup. Source changes during analysis prevent retention.
+Undefined or incomplete analysis, unsuitable input and bounded episodes do
+not supply source refusal evidence. Metadata allocation failure is retryable.
+HE collection uses this common admission owner instead of a separate effect
+check. No refused attempt enters or publishes a computation.
+
+PreparedRefusalCache connects stage-qualified certificates and revision-aware
+cache operations to an independent compiler-script reference and fallback.
+It also bounds repeated source observations after a retained refusal. Literal
+native classifier correspondence and stability of all legacy frontend
+factory refusals remain separate obligations; the model does not establish
+that every null compiler result is a stable refusal.

@@ -1037,36 +1037,40 @@ static bool native_query_meets_bits(const CettaNativeQuery *query) {
                                       query->pattern_count);
 }
 
-static bool native_query_atom_holds_var(const Atom *atom, VarId var) {
-    if (!atom || !atom_has_vars(atom))
-        return false;
-    if (atom->kind == ATOM_VAR)
-        return var_id_eq(atom->var_id, var);
-    if (atom->kind != ATOM_EXPR)
-        return false;
-    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
-        if (native_query_atom_holds_var(atom->expr.elems[i], var))
-            return true;
-    }
-    return false;
+static bool native_query_closed_node(const Atom *atom, void *context) {
+    (void)context;
+    return !atom_has_vars(atom);
 }
 
-static bool native_query_effects_read(const CettaNativeQuery *query,
-                                      const Atom *atom) {
-    if (!atom || !atom_has_vars(atom))
-        return true;
-    if (atom->kind == ATOM_VAR) {
-        for (size_t e = 0u; e < query->effect_count; e++) {
-            if (native_query_atom_holds_var(query->effects[e].data,
-                                            atom->var_id))
-                return true;
-        }
+static bool native_query_variable_node(const Atom *atom, void *context) {
+    return atom->kind == ATOM_VAR &&
+        var_id_eq(atom->var_id, *(const VarId *)context);
+}
+
+typedef struct {
+    const CettaNativeQuery *query;
+    bool complete;
+} NativeQueryProjectionRead;
+
+/* Read-only support inspection has no path-dependent binding context. The
+ * shared graph visitor therefore asks each subexpression once, including
+ * effect templates the bounded compiler will subsequently decline. */
+static bool native_query_unread_variable(const Atom *atom, void *context) {
+    if (atom->kind != ATOM_VAR)
         return false;
-    }
-    if (atom->kind != ATOM_EXPR)
-        return true;
-    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
-        if (!native_query_effects_read(query, atom->expr.elems[i]))
+    NativeQueryProjectionRead *read = context;
+    const CettaNativeQuery *query = read->query;
+    VarId variable = atom->var_id;
+    for (size_t e = 0u; e < query->effect_count; e++) {
+        bool complete;
+        bool found = atom_graph_any_checked(query->effects[e].data,
+            native_query_variable_node, native_query_closed_node, &variable,
+            NATIVE_QUERY_TEMPLATE_NODES, &complete);
+        if (!complete) {
+            read->complete = false;
+            return true;
+        }
+        if (found)
             return false;
     }
     return true;
@@ -1086,8 +1090,15 @@ static bool native_query_projects(const CettaNativeQuery *query) {
         if (query->effects[e].removal || !space_is_set(query->effects[e].target))
             return false;
     }
+    NativeQueryProjectionRead read = {.query = query, .complete = true};
     for (size_t i = 0u; i < query->pattern_count; i++) {
-        if (!native_query_effects_read(query, query->patterns[i]))
+        bool complete;
+        bool unread = atom_graph_any_checked(query->patterns[i],
+            native_query_unread_variable, native_query_closed_node, &read,
+            NATIVE_QUERY_TEMPLATE_NODES, &complete);
+        if (!complete || !read.complete)
+            return false;
+        if (unread)
             return true;
     }
     return false;

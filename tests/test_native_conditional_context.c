@@ -16,6 +16,61 @@ Atom *__wrap_cetta_invocation_materialize(Arena *arena, const CettaInvocation *c
     return __real_cetta_invocation_materialize(arena, call);
 }
 
+static bool refusal_cache_allocation_fail;
+static unsigned refusal_cache_allocation_failures;
+void *__real_malloc(size_t);
+void *__wrap_malloc(size_t bytes) {
+    if (refusal_cache_allocation_fail && bytes == sizeof(PreparedPureCacheEntry)) {
+        refusal_cache_allocation_fail = false;
+        refusal_cache_allocation_failures++;
+        return NULL;
+    }
+    return __real_malloc(bytes);
+}
+
+static SymbolId refusal_effect_head = SYMBOL_ID_NONE;
+static unsigned refusal_effect_calls, refusal_effect_mode;
+static Arena *refusal_effect_owner;
+static Atom *refusal_effect_equation;
+static Atom *refusal_add_equation(Space *space, Arena *owner, const char *text) {
+    size_t position = 0u;
+    Atom *equation = parse_sexpr(owner, text, &position);
+    PettaProgram *program = g_library_context->petta_program;
+    const PettaPlanNode *plan = petta_program_plan_dynamic_add(program, equation);
+    assert(plan);
+    CettaCount row = space_length64(space);
+    space_add(space, equation);
+    Atom *stored = space_get_at64(space, row);
+    assert(petta_program_note_add(program, space, stored, plan));
+    return stored;
+}
+
+static void refusal_remove_equation(Space *space, Atom *equation) {
+    assert(space_remove(space, equation));
+    petta_program_note_remove_one(g_library_context->petta_program, space, equation);
+}
+
+CettaGsltQueryEffect __real_space_query_effect_for_head(Space *, SymbolId, bool *);
+CettaGsltQueryEffect __wrap_space_query_effect_for_head(Space *space, SymbolId head,
+        bool *defined) {
+    if (head != refusal_effect_head)
+        return __real_space_query_effect_for_head(space, head, defined);
+    refusal_effect_calls++;
+    if (refusal_effect_mode == 1u) {
+        *defined = false;
+        return CETTA_GSLT_QUERY_EFFECT_UNCERTAIN_HEAD;
+    }
+    CettaGsltQueryEffect result = __real_space_query_effect_for_head(space, head, defined);
+    if (refusal_effect_mode == 2u) {
+        refusal_effect_mode = 0u;
+        assert(*defined && result != CETTA_GSLT_QUERY_EFFECT_PURE);
+        refusal_remove_equation(space, refusal_effect_equation);
+        refusal_add_equation(space, refusal_effect_owner,
+            "(= (refusal-source $x) (+ $x 2))");
+    }
+    return result;
+}
+
 static SymbolId conditional_head = SYMBOL_ID_NONE;
 static unsigned conditional_calls;
 static bool opaque_check;
@@ -1328,7 +1383,8 @@ static unsigned prepared_native_consumers(void) {
             assert(prepared_pure_program_cache_has_decline_head(&cache, &space,
                 call->expr.elems[0]->sym_id, 1u, plan.source_view.root,
                 plan.language_id, plan.call_mode, false,
-                plan.cache_entry_arguments_are_values, plan.total_structural_equality));
+                plan.cache_entry_arguments_are_values, plan.total_structural_equality,
+                PREPARED_PURE_COMPILE_INQUIRY));
             OutcomeSet result;
             outcome_set_init(&result);
             assert(prepared_pure_closed_answers_try(&space, &arena, call, -1,
@@ -1840,6 +1896,212 @@ static CettaPreparedPureExpressionViewState refusal_test_view(const Atom *atom,
         return CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT;
     }
     return petta_prepared_pure_expression_view(atom, computation, view);
+}
+
+static bool source_refusal_hit(PreparedPureProgramCache *cache, Space *space,
+        SymbolId head, PreparedPureRefusalInquiry inquiry) {
+    return prepared_pure_program_cache_has_decline_head(cache, space, head, 1u,
+        NULL, CETTA_LANGUAGE_PETTA, CETTA_GSLT_PURE_CALL_EAGER, false, true,
+        active_composition_uses_total_structural_eq(), inquiry);
+}
+
+static unsigned source_admission_refusal_controls(void) {
+    CettaLibraryContext *library = calloc(1u, sizeof(*library));
+    assert(library);
+    cetta_library_context_init_for_language_profile(library, CETTA_LANGUAGE_PETTA, NULL);
+    eval_set_library_context(library);
+    Arena source;
+    arena_init(&source);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &source);
+    Space space;
+    space_init_with_universe(&space, &universe);
+    Atom *effectful = refusal_add_equation(&space, &source,
+        "(= (refusal-source $x) (readln!))");
+    refusal_add_equation(&space, &source, "(= (refusal-pure $x) (+ $x 1))");
+    Atom *pure = fixture_atom(&source, "(refusal-pure 7)");
+    Atom *call = fixture_atom(&source, "(refusal-source 7)");
+    refusal_effect_head = call->expr.elems[0]->sym_id;
+    refusal_effect_calls = refusal_effect_mode = 0u;
+    refusal_cache_allocation_failures = 0u;
+    PreparedPureProgramCache cache = {.root_space = &space};
+    PreparedPureClosedCallPlan plan;
+    unsigned checks = 0u;
+
+    /* Input and episode refusals do not classify the callee. */
+    assert(!prepared_pure_closed_call_plan(&space, &source,
+        fixture_atom(&source, "(refusal-pure $x)"), -1, true, &cache, &plan));
+    assert(!cache.entries);
+    assert(!prepared_pure_closed_call_plan(&space, &source, pure, 0, true, &cache, &plan));
+    assert(!cache.entries);
+    assert(prepared_pure_closed_call_plan(&space, &source, pure, -1, true, &cache, &plan));
+    assert(!prepared_pure_closed_call_plan(&space, &source,
+        fixture_atom(&source, "(refusal-undefined 7)"), -1, true, &cache, &plan));
+    assert(!cache.entries);
+    checks += 4u;
+
+    /* Missing/incomplete classification cannot become a program refusal. */
+    refusal_effect_mode = 1u;
+    for (unsigned retry = 0u; retry < 2u; retry++) {
+        assert(!prepared_pure_closed_call_plan(&space, &source, call, -1, true, &cache, &plan));
+        assert(!cache.entries);
+        checks++;
+    }
+    assert(refusal_effect_calls == 2u);
+    refusal_effect_mode = 0u;
+    refusal_cache_allocation_fail = true;
+    assert(!prepared_pure_closed_call_plan(&space, &source, call, -1, true, &cache, &plan));
+    assert(!refusal_cache_allocation_fail && refusal_cache_allocation_failures == 1u &&
+        !cache.entries);
+    checks++;
+
+    assert(!prepared_pure_closed_call_plan(&space, &source, call, -1, false, &cache, &plan));
+    assert(cache.entries && !cache.entries->next && !cache.entries->program &&
+        cache.entries->admission_refused && !cache.entries->source_identity &&
+        cache.entries->entry_arguments_are_values && refusal_effect_calls == 4u);
+    uint64_t generation = cache.entry_generation;
+    for (unsigned retry = 0u; retry < 128u; retry++) {
+        Atom *fresh = atom_expr2(&source, call->expr.elems[0], atom_int(&source, retry));
+        assert(!prepared_pure_closed_call_plan(&space, &source, fresh, -1,
+            retry % 2u == 0u, &cache, &plan));
+        assert(refusal_effect_calls == 4u && cache.entry_generation == generation &&
+            !cache.entries->next);
+        /* Alternating inquiries share the same direct-mapped slot. */
+        assert(source_refusal_hit(&cache, &space, refusal_effect_head,
+            PREPARED_PURE_ADMISSION_INQUIRY));
+        assert(!source_refusal_hit(&cache, &space, refusal_effect_head,
+            PREPARED_PURE_COMPILE_INQUIRY));
+        assert(source_refusal_hit(&cache, &space, refusal_effect_head,
+            PREPARED_PURE_ENTRY_INQUIRY));
+        checks++;
+    }
+    for (unsigned field = 0u; field < 7u; field++) {
+        assert(!prepared_pure_program_cache_has_decline_head(&cache, &space,
+            field == 0u ? pure->expr.elems[0]->sym_id : refusal_effect_head,
+            field == 1u ? 2u : 1u, field == 2u ? call : NULL,
+            CETTA_LANGUAGE_PETTA,
+            field == 3u ? CETTA_GSLT_PURE_CALL_CALL_BY_NEED : CETTA_GSLT_PURE_CALL_EAGER,
+            field == 4u, field != 5u,
+            field == 6u ? !active_composition_uses_total_structural_eq()
+                        : active_composition_uses_total_structural_eq(),
+            PREPARED_PURE_ENTRY_INQUIRY));
+        checks++;
+    }
+
+    /* A true frontend refusal must never masquerade as a source assessment. */
+    prepared_pure_program_cache_clear_entries(&cache);
+    assert(prepared_pure_program_cache_insert_decline(&cache, &space, call,
+        NULL, CETTA_LANGUAGE_PETTA, CETTA_GSLT_PURE_CALL_EAGER, false, true,
+        active_composition_uses_total_structural_eq()));
+    assert(!source_refusal_hit(&cache, &space, refusal_effect_head,
+        PREPARED_PURE_ADMISSION_INQUIRY));
+    assert(source_refusal_hit(&cache, &space, refusal_effect_head,
+        PREPARED_PURE_COMPILE_INQUIRY));
+    assert(source_refusal_hit(&cache, &space, refusal_effect_head,
+        PREPARED_PURE_ENTRY_INQUIRY));
+    checks++;
+
+    /* The existing authority guard applies before either kind of hit. */
+    uint32_t mask = library->active_mask;
+    library->active_mask ^= 1u;
+    assert(!source_refusal_hit(&cache, &space, refusal_effect_head,
+        PREPARED_PURE_ENTRY_INQUIRY) && !cache.entries);
+    library->active_mask = mask;
+    assert(!prepared_pure_closed_call_plan(&space, &source, call, -1, true, &cache, &plan));
+    assert(cache.entries && cache.entries->admission_refused);
+    refusal_remove_equation(&space, effectful);
+    Atom *replacement = refusal_add_equation(&space, &source,
+        "(= (refusal-source $x) (+ $x 2))");
+    assert(prepared_pure_closed_call_plan(&space, &source, call, -1, true, &cache, &plan));
+    assert(!cache.entries);
+    CettaCallOutcome result;
+    assert(prepared_pure_closed_call_try(&space, &source, call, -1, true, true,
+        &cache, &result));
+    assert(result.kind == CETTA_CALL_VALUE && atom_eq(result.term, atom_int(&source, 9)));
+    checks += 3u;
+
+    /* A source change during classification cannot be stamped as current. */
+    prepared_pure_program_cache_free(&cache);
+    cache = (PreparedPureProgramCache){.root_space = &space};
+    refusal_remove_equation(&space, replacement);
+    effectful = refusal_add_equation(&space, &source,
+        "(= (refusal-source $x) (readln!))");
+    refusal_effect_owner = &source;
+    refusal_effect_equation = effectful;
+    refusal_effect_mode = 2u;
+    assert(!prepared_pure_closed_call_plan(&space, &source, call, -1, true, &cache, &plan));
+    assert(!refusal_effect_mode && !cache.entries);
+    assert(prepared_pure_closed_call_try(&space, &source, call, -1, true, true,
+        &cache, &result));
+    assert(result.kind == CETTA_CALL_VALUE && atom_eq(result.term, atom_int(&source, 9)));
+    checks += 2u;
+    prepared_pure_program_cache_free(&cache);
+    refusal_effect_head = SYMBOL_ID_NONE;
+    refusal_effect_owner = NULL;
+    refusal_effect_equation = NULL;
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&source);
+    eval_set_library_context(NULL);
+    cetta_library_context_free(library);
+    free(library);
+    return checks;
+}
+
+static unsigned he_source_refusal_controls(void) {
+    CettaLibraryContext *library = calloc(1u, sizeof(*library));
+    assert(library);
+    cetta_library_context_init_for_language_profile(library, CETTA_LANGUAGE_HE, NULL);
+    eval_set_library_context(library);
+    Arena source;
+    arena_init(&source);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &source);
+    Space space;
+    space_init_with_universe(&space, &universe);
+    Atom *equation = fixture_atom(&source, "(= (refusal-he $x) (readln!))");
+    assert(space_admit_atom(&space, &source, equation));
+    Atom *call = fixture_atom(&source, "(refusal-he 7)");
+    refusal_effect_head = call->expr.elems[0]->sym_id;
+    refusal_effect_mode = 1u;
+    refusal_effect_calls = 0u;
+    PettaEvalMachineContext context = {.library_context = library, .fuel = -1,
+        .prepared_pure_cache = {.root_space = &space}};
+    OutcomeSet result;
+    outcome_set_init(&result);
+    unsigned checks = 0u;
+    for (unsigned retry = 0u; retry < 2u; retry++) {
+        assert(!petta_eval_machine_collect_closed_answers(&context, &space, &source, call, &result));
+        assert(!context.prepared_pure_cache.entries && !result.len);
+        checks++;
+    }
+    assert(refusal_effect_calls == 2u);
+    refusal_effect_mode = 0u;
+    assert(!petta_eval_machine_collect_closed_answers(&context, &space, &source, call, &result));
+    assert(context.prepared_pure_cache.entries &&
+        context.prepared_pure_cache.entries->admission_refused && !result.len);
+    assert(!petta_eval_machine_collect_closed_answers(&context, &space, &source, call, &result));
+    assert(refusal_effect_calls == 3u && !result.len);
+    checks += 2u;
+    assert(space_remove(&space, equation));
+    assert(space_admit_atom(&space, &source,
+        fixture_atom(&source, "(= (refusal-he $x) (+ $x 2))")));
+    assert(petta_eval_machine_collect_closed_answers(&context, &space, &source, call, &result));
+    assert(result.len == 1u && atom_eq(outcome_atom_materialize(&source, &result.items[0]),
+        atom_int(&source, 9)));
+    checks++;
+    outcome_set_free(&result);
+    prepared_pure_program_cache_free(&context.prepared_pure_cache);
+    refusal_effect_head = SYMBOL_ID_NONE;
+    space_free(&space);
+    term_universe_free(&universe);
+    arena_free(&source);
+    eval_set_library_context(NULL);
+    cetta_library_context_free(library);
+    free(library);
+    return checks;
 }
 
 static unsigned shared_compilation_refusals(void) {
@@ -7837,6 +8099,7 @@ int main(int argc, char **argv) {
     g_symbols = &symbols;
     g_var_intern = &variables;
     bool availability_only = argc == 2 && strcmp(argv[1], "--worker-availability") == 0;
+    bool refusal_only = argc == 2 && strcmp(argv[1], "--source-refusal") == 0;
     bool episode_only = argc == 2 && strcmp(argv[1], "--episode-contract") == 0;
     bool prime_data_only = argc == 2 && strcmp(argv[1], "--prime-data") == 0;
     bool fold_only = argc == 2 && strcmp(argv[1], "--fold-completion") == 0;
@@ -7850,9 +8113,11 @@ int main(int argc, char **argv) {
     bool conditional_only = argc == 2 && strcmp(argv[1], "--conditional-continuation") == 0;
     bool resumption_only = argc == 2 && strcmp(argv[1], "--contextual-resumption") == 0;
     bool stale_tail_only = argc == 2 && strcmp(argv[1], "--stale-native-tail") == 0;
-    assert(argc == 1 || availability_only || episode_only || prime_data_only || fold_only || callee_only || lexical_only || body_only || collection_failure_only || bound_completion_only || resumption_only || conditional_only || stale_tail_only || caller_dag_only || he_completion_only);
+    assert(argc == 1 || refusal_only || availability_only || episode_only || prime_data_only || fold_only || callee_only || lexical_only || body_only || collection_failure_only || bound_completion_only || resumption_only || conditional_only || stale_tail_only || caller_dag_only || he_completion_only);
     unsigned checks = prepared_worker_availability();
-    if (he_completion_only)
+    if (refusal_only)
+        checks += source_admission_refusal_controls() + he_source_refusal_controls();
+    else if (he_completion_only)
         checks += he_instruction_completion_controls(true);
     else if (stale_tail_only)
         checks += stale_native_tail_controls();
@@ -7880,7 +8145,7 @@ int main(int argc, char **argv) {
     else if (episode_only)
         checks += episode_accounting() + evaluator_episode_consumers();
     else if (!availability_only)
-        checks += he_instruction_completion_controls(false) + frozen_source_caller_controls() + stale_native_tail_controls() + conditional_native_continuation_controls() + native_frontier_rejoin_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls() + contextual_resumption_controls() + bound_native_completion_controls() + relational_body_destination_controls() + oem_body_retention_controls() + prepared_body_entry_controls() + lexical_native_tail_controls() + lexical_packet_controls() + oem_callee_owner_controls() + fold_completion_controls() + prime_prepared_data_controls() + episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + source_invocation_plans() + prepared_computation_plans() + generic_budget_checks() + source_collection_plans() + source_case_plans() + captured_binding_projection_controls() + he_instruction_plan_controls() + he_canonical_plan_controls() + he_instruction_source_gc_controls() + ordinary_invocation_consumers() + shared_compilation_refusals() + closed_failure_cache() + ready_invocation_controls() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
+        checks += source_admission_refusal_controls() + he_source_refusal_controls() + he_instruction_completion_controls(false) + frozen_source_caller_controls() + stale_native_tail_controls() + conditional_native_continuation_controls() + native_frontier_rejoin_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls() + contextual_resumption_controls() + bound_native_completion_controls() + relational_body_destination_controls() + oem_body_retention_controls() + prepared_body_entry_controls() + lexical_native_tail_controls() + lexical_packet_controls() + oem_callee_owner_controls() + fold_completion_controls() + prime_prepared_data_controls() + episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + source_invocation_plans() + prepared_computation_plans() + generic_budget_checks() + source_collection_plans() + source_case_plans() + captured_binding_projection_controls() + he_instruction_plan_controls() + he_canonical_plan_controls() + he_instruction_source_gc_controls() + ordinary_invocation_consumers() + shared_compilation_refusals() + closed_failure_cache() + ready_invocation_controls() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
     cetta_lib_prolog_global_shutdown();
     symbol_table_free(&symbols);
     var_intern_free(&variables);

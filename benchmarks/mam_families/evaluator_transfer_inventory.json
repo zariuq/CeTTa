@@ -2403,6 +2403,25 @@
         "src/eval_he_canonical.inc:he_canonical_resume_instruction"
       ],
       "control": "tests/test_native_conditional_context.c:he_instruction_completion_controls"
+    },
+    {
+      "construction": "Mettapedia/Machines/NativeProjectionObservation.lean",
+      "application": "Memoized support folds refine independent reachability and the complete projection-support criterion. Unknown observation is distinct from a negative program fact. Native projection uses the common checked graph observer and the existing template admission limit before effects. Pruning flags, predicate allowances, allocation and C pointer correspondence remain separate obligations; model bounds count metadata combinations.",
+      "native": [
+        "src/atom.c:atom_graph_any_checked",
+        "src/native_query.c:native_query_projects"
+      ],
+      "control": "tests/test_native_query_projection.c"
+    },
+    {
+      "construction": "Mettapedia/Machines/PreparedRefusalCache.lean",
+      "application": "Stage-qualified refusal evidence and revision-aware lookup/retention preserve the independent compiler-script reference and fallback. Completed source assessments are callee facts, not frontend failures; incomplete analysis, changed authority and unavailable allocation do not install evidence. Repeated source observations are bounded after retention. Literal classifier correspondence and stability of every legacy frontend factory refusal remain open; null compiler results are not certified by this model.",
+      "native": [
+        "src/eval.c:prepared_pure_program_cache_has_decline_head",
+        "src/eval.c:prepared_pure_closed_invocation_plan",
+        "src/eval.c:petta_eval_machine_collect_closed_answers"
+      ],
+      "control": "tests/test_native_conditional_context.c:source_admission_refusal_controls,he_source_refusal_controls"
     }
   ],
   "cross_tree_reconciliation": [
