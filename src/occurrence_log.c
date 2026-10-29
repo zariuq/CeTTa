@@ -1,6 +1,7 @@
 #include "occurrence_log.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct {
     uint64_t position;
@@ -154,6 +155,50 @@ void cetta_occurrence_log_free(CettaOccurrenceLog *log) {
     free(log->rows);
     free(log->positions);
     free(log);
+}
+
+CettaOccurrenceLog *cetta_occurrence_log_copy(const CettaOccurrenceLog *source,
+    CettaOccurrenceCopyRow copy_row, void *context) {
+    if (!cetta_occurrence_log_valid(source) || (source->length && !copy_row))
+        return NULL;
+    CettaOccurrenceLog *image = calloc(1u, sizeof(*image));
+    if (!image)
+        return NULL;
+    image->base = source->base;
+    image->head = source->head;
+    image->capacity = source->capacity;
+    image->limit = source->limit;
+    image->consumers = source->consumers;
+    image->consumer_capacity = source->consumer_capacity;
+    image->completed = source->completed;
+    if (image->capacity) {
+        image->rows = malloc(image->capacity * sizeof(*image->rows));
+        if (!image->rows)
+            goto fail;
+    }
+    if (image->consumer_capacity) {
+        image->positions = malloc(image->consumer_capacity * sizeof(*image->positions));
+        if (!image->positions)
+            goto fail;
+        memcpy(image->positions, source->positions,
+            image->consumers * sizeof(*image->positions));
+    }
+    for (size_t i = 0u; i < source->length; i++) {
+        CettaOccurrenceRow copied = {0};
+        if (!copy_row(context, source->base + (uint64_t)i,
+                &source->rows[row_index(source, i)], &copied))
+            goto fail;
+        image->rows[row_index(image, i)] = copied;
+        image->length++;
+    }
+    return image;
+fail:
+    for (size_t i = 0u; i < image->length; i++)
+        release_row(image->rows[row_index(image, i)]);
+    free(image->rows);
+    free(image->positions);
+    free(image);
+    return NULL;
 }
 
 CettaOccurrenceAdmission cetta_occurrence_log_append(

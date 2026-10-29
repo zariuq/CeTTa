@@ -94,6 +94,11 @@ void outcome_set_storage_census(const OutcomeSet *os, CettaStorageCensus *census
  * identity-mapped regions retain their separate caller lifetime contracts. */
 bool outcome_set_copy_to_arena(const OutcomeSet *source, OutcomeSet *destination,
     Arena *arena, AtomDeepCopySession *atoms);
+/* Same physical occurrence copy, within a still-retained source episode.
+ * Reader handles remain qualified by that episode instead of being erased or
+ * treated as independently checkpointed resources. */
+bool outcome_set_copy_to_episode(const OutcomeSet *source,OutcomeSet *destination,
+    Arena *arena,AtomDeepCopySession *atoms);
 
 /* An owned copy of a quiescent Prime search checkpoint. NEW accepts an owning
  * prime-search residual from the current library context and reserves its

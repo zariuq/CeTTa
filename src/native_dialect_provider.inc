@@ -524,8 +524,9 @@ static bool prime_native_return_receiver(const PrimeEvalStackFrame *frame) {
 }
 
 static bool prime_native_note_returns(PrimeNativeControl *control, PrimeEvalStackFrame *frame) {
-    if (!prime_native_return_receiver(frame) || !frame->child_initialized ||
-        frame->control_return_advice_length >= frame->child.len) return true;
+    if (!prime_native_return_receiver(frame) || !frame->child_initialized) return true;
+    if(frame->control_return_advice_length>=frame->child.len)
+        return !frame->control_return_pending;
 #ifdef CETTA_PRIME_NATIVE_CONTROL_MUTATION_AMBIENT_SCAN
     /* Fault control: use the caller's active controller instead of the owner. */
     control=g_prime_eval_stack_driver ? g_prime_eval_stack_driver->control : NULL;
@@ -535,11 +536,31 @@ static bool prime_native_note_returns(PrimeNativeControl *control, PrimeEvalStac
      * this optional scheduling sidecar. */
     if (frame->kind != PRIME_EVAL_STACK_FRAME_DIALECT_SOURCE &&
         !control->policy.priority && !control->live_bound) return true;
+    if(!frame->control_return_pending) {
+        frame->control_return_pending_advice=(PrimeNativeReturnAdvice){
+            .key=control->active_key,.bound=control->active_bound,
+            .advice=control->active_advice};
+        frame->control_return_pending_begin=frame->control_return_advice_length;
+        frame->control_return_pending_end=(size_t)frame->child.len;
+        frame->control_return_pending=true;
+    } else if(frame->control_return_pending_begin!=frame->control_return_advice_length ||
+        frame->control_return_pending_end<=frame->control_return_pending_begin ||
+        frame->control_return_pending_end>(size_t)frame->child.len) return false;
     if (!prime_native_return_reserve_advice_count(frame,(size_t)frame->child.len)) return false;
-    while (frame->control_return_advice_length < frame->child.len)
-        frame->control_return_advice[frame->control_return_advice_length++]=
-            (PrimeNativeReturnAdvice){.key=control->active_key,
+    while(frame->control_return_advice_length<frame->child.len) {
+        size_t index=frame->control_return_advice_length++;
+        frame->control_return_advice[index]=frame->control_return_pending &&
+            index<frame->control_return_pending_end
+            ? frame->control_return_pending_advice
+            : (PrimeNativeReturnAdvice){.key=control->active_key,
                 .bound=control->active_bound,.advice=control->active_advice};
+        if(frame->control_return_pending &&
+            frame->control_return_advice_length==frame->control_return_pending_end) {
+            frame->control_return_pending_advice=(PrimeNativeReturnAdvice){0};
+            frame->control_return_pending_begin=frame->control_return_pending_end=0u;
+            frame->control_return_pending=false;
+        }
+    }
     return true;
 }
 

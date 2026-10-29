@@ -2002,7 +2002,8 @@ typedef struct {
 } AtomDeepCopyGlobalInspection;
 
 /* Before arena-map setup, restrict a fresh copy session to one held current
- * runtime hashcons table plus the built-in static list nodes. Admission
+ * runtime hashcons table, built-in static list nodes, and the exact published
+ * canonical-symbol/unit prefix of the same symbol-table instance. Admission
  * checks the complete table's closure by pointer membership, without
  * dereferencing foreign children. Source/table/symbol owners must remain
  * live and quiescent. Reclamation, runtime-table or symbol-instance changes

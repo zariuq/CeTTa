@@ -365,9 +365,10 @@
       "source": "native_history.metta",
       "output": "native_history.metta",
       "source_sha256": "953c5364eb43d7acd3b040741ac017dd52d213779a4cf8837989898f6345d56c",
-      "output_sha256": "0605a7a403bba87d7943820e9c470af2ac02db81fc83b01a495faa64671b52d7",
+      "output_sha256": "984eb113842b96671a1e8d6c51b19864d0cc13364935284a17baec42866cdda9",
       "edits": 17,
-      "code_diagnostics": 0
+      "code_diagnostics": 0,
+      "dialect_replacements": 1
     },
     {
       "source": "native_search_goals.metta",

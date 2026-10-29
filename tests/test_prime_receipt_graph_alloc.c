@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 #include "atom.h"
 #include "prime_need.h"
@@ -12,12 +13,18 @@
 static bool probing;
 static size_t fail_at;
 static size_t allocation_count;
+static void (*allocation_hook)(void);
 
 void *__real_malloc(size_t size);
 void *__real_calloc(size_t count, size_t size);
 void *__real_realloc(void *memory, size_t size);
 
 static bool refuse_allocation(void) {
+    if (allocation_hook) {
+        void (*hook)(void)=allocation_hook;
+        allocation_hook=NULL;
+        hook();
+    }
     return probing && allocation_count++ == fail_at;
 }
 
@@ -183,6 +190,84 @@ static CettaMatchCompletion state_selected_initial(void *context, StateCell *cel
     return CETTA_MATCH_MATCHED;
 }
 
+static struct {
+    pthread_mutex_t mutex;
+    pthread_cond_t changed;
+    PrimeNeedRecording *group;
+    bool collecting,retired;
+} graph_retirement={.mutex=PTHREAD_MUTEX_INITIALIZER,.changed=PTHREAD_COND_INITIALIZER};
+
+static void *graph_retire_reader(void *unused) {
+    (void)unused;
+    assert(!pthread_mutex_lock(&graph_retirement.mutex));
+    while (!graph_retirement.collecting)
+        assert(!pthread_cond_wait(&graph_retirement.changed,&graph_retirement.mutex));
+    assert(!pthread_mutex_unlock(&graph_retirement.mutex));
+    prime_need_recording_forget(graph_retirement.group);
+    prime_need_recording_release(graph_retirement.group);
+    assert(!pthread_mutex_lock(&graph_retirement.mutex));
+    graph_retirement.retired=true;
+    assert(!pthread_cond_signal(&graph_retirement.changed));
+    assert(!pthread_mutex_unlock(&graph_retirement.mutex));
+    return NULL;
+}
+
+static void graph_retire_during_collection(void) {
+    assert(!pthread_mutex_lock(&graph_retirement.mutex));
+    graph_retirement.collecting=true;
+    assert(!pthread_cond_signal(&graph_retirement.changed));
+    while (!graph_retirement.retired)
+        assert(!pthread_cond_wait(&graph_retirement.changed,&graph_retirement.mutex));
+    assert(!pthread_mutex_unlock(&graph_retirement.mutex));
+}
+
+/* Interpose at the collector's first real allocation, after it has entered
+ * the selected view and before it traverses the retained frame. Retirement
+ * on the other thread must not reclaim that frame or its returned payload. */
+static void check_recording_graph_retirement(Arena *arena) {
+    PrimeNeedRecording *group=prime_need_recording_new(
+        (PrimeNeedRecordingLimits){4u,16384u,1u,0u});
+    PrimeNeedReceipt receipt={0};
+    assert(group && prime_need_recording_reserve(group,NULL,4u,16384u,&receipt) &&
+        prime_need_receipt_observe_cell(arena,&receipt,31u,9u,atom_int(arena,71),&receipt));
+    prime_need_recording_carrier_retain(group);
+    PrimeNeedReceiptGraph graph={0};
+    fail_at=SIZE_MAX;allocation_count=0u;probing=true;
+    PrimeNeedReceiptGraphStatus status=prime_need_receipt_graph_collect(&receipt,&graph);
+    probing=false;size_t allocations=allocation_count;
+    assert(status==PRIME_NEED_RECEIPT_GRAPH_COMPLETE && allocations>0u);
+    PrimeNeedReceiptGraph saved=graph;
+    for(size_t i=0u;i<allocations;i++) {
+        fail_at=i;allocation_count=0u;probing=true;
+        status=prime_need_receipt_graph_collect(&receipt,&graph);
+        probing=false;
+        assert(status==PRIME_NEED_RECEIPT_GRAPH_REFUSED &&
+            allocation_count>=i+1u && !memcmp(&graph,&saved,sizeof(graph)));
+    }
+    prime_need_receipt_graph_free(&graph);
+    graph_retirement.group=group;
+    pthread_t retire;
+    assert(!pthread_create(&retire,NULL,graph_retire_reader,NULL));
+    allocation_hook=graph_retire_during_collection;
+    status=prime_need_receipt_graph_collect(&receipt,&graph);
+    bool interposed=allocation_hook==NULL;
+    if (!interposed) {allocation_hook=NULL;graph_retire_during_collection();}
+    assert(!pthread_join(retire,NULL));
+    assert(interposed && status==PRIME_NEED_RECEIPT_GRAPH_COMPLETE && graph.length==1u &&
+        graph.event_count==1u && graph.recording_owner==group &&
+        graph.nodes[0].event.after && graph.nodes[0].event.after->ground.ival==71 &&
+        prime_need_receipt_graph_validate(&graph)==PRIME_NEED_RECEIPT_GRAPH_COMPLETE);
+    assert(!prime_need_receipt_present(&receipt) && prime_need_recording_status(group).nodes==1u);
+    PrimeNeedReceiptGraph erased={0};
+    assert(prime_need_receipt_graph_collect(&receipt,&erased)==PRIME_NEED_RECEIPT_GRAPH_ABSENT &&
+        !erased.nodes && !erased.recording_owner);
+    prime_need_receipt_graph_free(&erased);
+    prime_need_receipt_graph_free(&graph);
+    assert(!prime_need_recording_status(group).nodes);
+    prime_need_recording_carrier_release(group);
+    printf("PASS: concurrent recording retirement and %zu graph refusals preserve view lifetime\n",allocations);
+}
+
 static void check_state_import_allocation_refusal(Arena *arena) {
     StateCell a={.value=atom_int(arena,0)},b={.value=atom_int(arena,0)};
     PrimeNeedBranchState common={0},entrance={0},production={0},recipient={0},out={0};
@@ -216,6 +301,20 @@ static void check_state_import_allocation_refusal(Arena *arena) {
         assert(status==CETTA_MATCH_INCOMPLETE && allocation_count>=i+1u);
     }
     printf("PASS: %zu State input comparison refusals remain incomplete\n",comparisons);
+    Atom *value=NULL;uint64_t write_id=0u;
+    fail_at=SIZE_MAX;allocation_count=0u;probing=true;
+    status=prime_need_branch_state_lookup_version_checked(&out,&b,&value,&write_id);
+    probing=false;size_t inspections=allocation_count;
+    assert(status==CETTA_MATCH_MATCHED && value && write_id && inspections>0u);
+    for(size_t i=0u;i<inspections;i++) {
+        value=a.value;write_id=UINT64_MAX;
+        fail_at=i;allocation_count=0u;probing=true;
+        status=prime_need_branch_state_lookup_version_checked(&out,&b,&value,&write_id);
+        probing=false;
+        assert(status==CETTA_MATCH_INCOMPLETE && allocation_count>=i+1u &&
+            value==a.value && write_id==UINT64_MAX);
+    }
+    printf("PASS: %zu State version inspection refusals preserve both outputs\n",inspections);
     CettaWeightLedger empty={0},entry={0},produced={0},reader={0},result={0};
     assert(cetta_weight_ledger_append(arena,&empty,11u,21u,atom_int(arena,3),&entry));
     assert(cetta_weight_ledger_append(arena,&entry,12u,22u,atom_int(arena,7),&produced));
@@ -239,6 +338,7 @@ int main(void) {
     arena_init(&arena);
     check_capture_allocation_refusal(&arena);
     check_state_import_allocation_refusal(&arena);
+    check_recording_graph_retirement(&arena);
     PrimeNeedReceipt receipt = {0};
     PrimeNeedReceiptGraph graph = {0};
     assert(collect_with_fault(&receipt, &graph, 0u) ==

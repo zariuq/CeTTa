@@ -38,6 +38,15 @@ struct PrimeNativeParallel {
     uint64_t borrowed_library_revision;
     uint64_t borrowed_symbol_instance;
     PrimeNativeControl *child;
+    /* A worker records the exact call it refused, but never mutates an
+     * external authority owner. Publication rechecks this call against the
+     * coordinator's current authority graph. The worker arenas and spaces
+     * remain owned by this parallel slice until that join. */
+    Space *authority_refusal_space;
+    Arena *authority_refusal_arena;
+    Atom *authority_refusal_call;
+    bool authority_refusal_recorded;
+    bool authority_refusal_ambiguous;
     /* Parent that owns the shared Need claim. Not a second world. */
     PrimeNativeControl *claim_control;
     PrimeNativeWork *dialect_operation;
@@ -100,6 +109,24 @@ typedef struct {
 } PrimeNativeParallelRun;
 
 static _Thread_local PrimeNativeParallel *g_prime_native_parallel_current;
+
+static void prime_native_parallel_note_authority_refusal(
+        PrimeNativeControl *control,Space *space,Arena *arena,Atom *call) {
+    PrimeNativeParallel *parallel=control ? control->parallel_owner : NULL;
+    if(!parallel || !control->worker_execution || !space || !arena || !call)
+        return;
+    if(!parallel->authority_refusal_recorded) {
+        parallel->authority_refusal_space=space;
+        parallel->authority_refusal_arena=arena;
+        parallel->authority_refusal_call=call;
+        parallel->authority_refusal_recorded=true;
+        return;
+    }
+    if(parallel->authority_refusal_space!=space ||
+        parallel->authority_refusal_arena!=arena ||
+        parallel->authority_refusal_call!=call)
+        parallel->authority_refusal_ambiguous=true;
+}
 
 static void prime_native_parallel_destroy(PrimeNativeParallel *parallel) {
     if (!parallel) return;
@@ -1568,6 +1595,32 @@ static bool prime_native_parallel_validate(PrimeNativeControl *owner,
     return !owner->registry_read.stale && !owner->registry_read.incomplete;
 }
 
+/* The worker's combined pure flag says only that some boundary refused; it
+ * cannot identify the owner. Re-evaluate the retained call over the current
+ * coordinator graph. An admitted graph means the refusal is owned by the
+ * worker task itself; a refusal marks every live denying parent through the
+ * common graph walk. Ambiguous/missing provenance is never downgraded. */
+static bool prime_native_parallel_current_authority_refused(
+        PrimeNativeControl *owner,PrimeNativeWork *work,bool *classified) {
+    PrimeNativeParallel *parallel=work ? work->parallel : NULL;
+    *classified=false;
+    if(!owner || !parallel || !parallel->authority_refusal_recorded ||
+        parallel->authority_refusal_ambiguous ||
+        !parallel->authority_refusal_space ||
+        !parallel->authority_refusal_arena ||
+        !parallel->authority_refusal_call) return false;
+    Space *space=parallel->authority_refusal_space;
+    if(space==parallel->world.space && work->task.space)
+        space=work->task.space;
+    PrimeEvalScopeWalkResult walk=PRIME_EVAL_SCOPE_WALK_CAPACITY;
+    bool admitted=prime_eval_collect_call_authority_refusals_from(&owner->driver,space,
+        parallel->authority_refusal_arena,parallel->authority_refusal_call,
+        &walk);
+    if(walk!=PRIME_EVAL_SCOPE_WALK_COMPLETE) return false;
+    *classified=true;
+    return !admitted;
+}
+
 static inline __attribute__((always_inline)) bool prime_native_parallel_publish_kernel(
         PrimeNativeControl *owner, PrimeNativeWork *work,
         bool receipts, bool carried) {
@@ -1602,7 +1655,14 @@ static inline __attribute__((always_inline)) bool prime_native_parallel_publish_
     }
     if (parallel->child->failed || parallel->child->invalidated ||
         parallel->child->registry_read.incomplete) {
-        owner->completion = parallel->child->completion;
+        bool classified=false;
+        bool external_refusal=parallel->child->failed &&
+            parallel->child->completion==CETTA_EVAL_INCOMPLETE_EFFECT_DENIED &&
+            prime_native_parallel_current_authority_refused(owner,work,&classified);
+        owner->completion = classified
+            ? (external_refusal ? CETTA_EVAL_INCOMPLETE_EFFECT_DENIED
+                                : CETTA_EVAL_COMPLETE)
+            : parallel->child->completion;
         if (owner->completion != CETTA_EVAL_COMPLETE)
             eval_mark_incomplete(owner->completion);
         owner->failed = true;

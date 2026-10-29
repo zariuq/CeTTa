@@ -274,7 +274,8 @@ typedef struct AtomDeepCopyMemo {
     uint64_t snapshot_epoch;
     const HashConsTable *global_owner;
     uint64_t global_instance, global_symbols;
-    uint32_t global_count;
+    uint32_t global_count, global_symbol_count;
+    const Atom *global_unit;
     struct AtomDeepCopyMemo *global_nodes;
     /* Whether copies drop HE's evaluated marks (a space storing syntax). */
     bool strip_he_marks;
@@ -8268,6 +8269,8 @@ static void atom_deep_copy_memo_init(AtomDeepCopyMemo *memo) {
     memo->global_owner = NULL;
     memo->global_instance = memo->global_symbols = 0u;
     memo->global_count = 0u;
+    memo->global_symbol_count = 0u;
+    memo->global_unit = NULL;
     memo->global_nodes = NULL;
     memo->strip_he_marks = g_atom_deep_copy_strip_he_marks != 0u;
     memo->loan_arenas = NULL;
@@ -9228,13 +9231,29 @@ static Atom *const atom_checkpoint_static_roots[] = {
 /* Build from actual held table keys before reading any child header. The
  * service is serial here: table growth may occur between calls, never during
  * this validation. Header caches are not an immutable-cell equality claim. */
+typedef struct {
+    AtomDeepCopyMemo *nodes;
+    AtomDeepCopyGlobalInspection *inspection;
+    size_t limit;
+} AtomGlobalSymbolCapture;
+
+static bool atom_deep_copy_global_symbol(void *raw, void *context) {
+    AtomGlobalSymbolCapture *capture=context;
+    Atom *atom=raw;
+    return atom && atom_deep_copy_memo_store_inspected(capture->nodes,atom,atom,
+        capture->inspection,capture->limit);
+}
+
 static bool atom_deep_copy_global_capture(const HashConsTable *owner,
         uint64_t instance, uint64_t symbols, size_t inspection_limit,
         AtomDeepCopyGlobalInspection *inspection, AtomDeepCopyMemo **result,
-        uint32_t *captured_count) {
+        uint32_t *captured_count, uint32_t *captured_symbols,
+        const Atom **captured_unit) {
     if(!instance || owner!=g_hashcons || instance!=hashcons_instance_id(owner))return false;
     uint32_t count=owner->used, size=owner->size;
     Atom **table=owner->table;
+    uint32_t canonical_count=symbol_canonical_count(g_symbols);
+    Atom *unit=atomic_load_explicit(&g_atom_unit_canonical,memory_order_acquire);
     if(!atom_deep_copy_inspect(inspection,inspection_limit,0u,1u))return false;
     AtomDeepCopyMemo *nodes=malloc(sizeof(*nodes));
     if (!nodes) return false;
@@ -9248,6 +9267,11 @@ static bool atom_deep_copy_global_capture(const HashConsTable *owner,
     for (size_t i=0u;i<sizeof(atom_checkpoint_static_roots)/sizeof(*atom_checkpoint_static_roots);i++)
         if (!atom_deep_copy_memo_store_inspected(nodes,atom_checkpoint_static_roots[i],
             atom_checkpoint_static_roots[i],inspection,inspection_limit)) goto done;
+    AtomGlobalSymbolCapture capture={nodes,inspection,inspection_limit};
+    if (!symbol_canonical_visit(g_symbols,symbols,canonical_count,
+            atom_deep_copy_global_symbol,&capture)) goto done;
+    if (unit && !atom_deep_copy_memo_store_inspected(nodes,unit,unit,
+            inspection,inspection_limit)) goto done;
     for (uint32_t i=0u;i<size;i++) {
         if (!atom_deep_copy_inspect(inspection,inspection_limit,1u,0u)) goto done;
         Atom *atom=table[i];
@@ -9274,11 +9298,14 @@ static bool atom_deep_copy_global_capture(const HashConsTable *owner,
         }
     }
     ready=owner==g_hashcons&&instance==hashcons_instance_id(owner)&&
-        symbols==symbol_table_instance_id(g_symbols)&&owner->table==table&&
+        symbols==symbol_table_instance_id(g_symbols)&&
+        symbol_canonical_count(g_symbols)==canonical_count&&
+        atomic_load_explicit(&g_atom_unit_canonical,memory_order_acquire)==unit&&owner->table==table&&
         owner->size==size&&owner->used==count;
 done:
     if (!ready) { atom_deep_copy_memo_free(nodes);free(nodes);return false; }
-    *result=nodes;*captured_count=count;return true;
+    *result=nodes;*captured_count=count;*captured_symbols=canonical_count;
+    *captured_unit=unit;return true;
 }
 
 bool atom_deep_copy_session_restrict_globals(AtomDeepCopySession *session,
@@ -9294,11 +9321,13 @@ bool atom_deep_copy_session_restrict_globals(AtomDeepCopySession *session,
         owner->used>owner->size||!g_symbols||!inspection_limit) return false;
     uint64_t instance=hashcons_instance_id(owner),symbols=symbol_table_instance_id(g_symbols);
     if (!instance||instance==UINT64_MAX||!symbols) return false;
-    AtomDeepCopyMemo *nodes=NULL;uint32_t count=0u;
-    if (!atom_deep_copy_global_capture(owner,instance,symbols,inspection_limit,inspection,&nodes,&count))
+    AtomDeepCopyMemo *nodes=NULL;uint32_t count=0u,canonical_count=0u;const Atom *unit=NULL;
+    if (!atom_deep_copy_global_capture(owner,instance,symbols,inspection_limit,inspection,
+            &nodes,&count,&canonical_count,&unit))
         return false;
     session->memo.global_owner=owner;session->memo.global_instance=instance;
     session->memo.global_symbols=symbols;session->memo.global_count=count;
+    session->memo.global_symbol_count=canonical_count;session->memo.global_unit=unit;
     session->memo.global_nodes=nodes;return true;
 }
 
@@ -9317,7 +9346,10 @@ bool atom_deep_copy_session_global_extension_budget(const AtomDeepCopySession *s
         (session->memo.arenas&&!atom_deep_copy_arena_map_current(session))) return false;
     /* Same-owner allocation is append-only until reclamation. A rehash
      * changes bucket storage, not these held immutable logical cells. */
-    if (owner->used==session->memo.global_count) return true;
+    uint32_t canonical_count=symbol_canonical_count(g_symbols);
+    const Atom *unit=atomic_load_explicit(&g_atom_unit_canonical,memory_order_acquire);
+    if (owner->used==session->memo.global_count&&
+        canonical_count==session->memo.global_symbol_count&&unit==session->memo.global_unit) return true;
     if (!atom_checkpoint_global_budget(owner,node_limit,bytes,work)||
         session->memo.global_nodes->cap>SIZE_MAX-*work) return false;
     *work+=session->memo.global_nodes->cap;return true;
@@ -9332,9 +9364,11 @@ bool atom_deep_copy_session_extend_globals(AtomDeepCopySession *session,
     if (!atom_deep_copy_session_global_extension_budget(session,owner,node_limit,&bytes,&work)||
         bytes>additional_bytes) return false;
     if (!bytes) return true;
-    AtomDeepCopyMemo *old=session->memo.global_nodes,*nodes=NULL;uint32_t count=0u;
+    AtomDeepCopyMemo *old=session->memo.global_nodes,*nodes=NULL;
+    uint32_t count=0u,canonical_count=0u;const Atom *unit=NULL;
     if (!atom_deep_copy_global_capture(owner,session->memo.global_instance,
-        session->memo.global_symbols,inspection_limit,inspection,&nodes,&count)) return false;
+        session->memo.global_symbols,inspection_limit,inspection,&nodes,&count,
+        &canonical_count,&unit)) return false;
     bool ready=false;
     for (size_t i=0u;i<old->cap;i++) {
         if (!atom_deep_copy_inspect(inspection,inspection_limit,1u,0u)) goto done;
@@ -9344,12 +9378,15 @@ bool atom_deep_copy_session_extend_globals(AtomDeepCopySession *session,
     }
     ready=owner==g_hashcons&&session->memo.global_instance==hashcons_instance_id(owner)&&
         session->memo.global_symbols==symbol_table_instance_id(g_symbols)&&owner->used==count&&
+        symbol_canonical_count(g_symbols)==canonical_count&&
+        atomic_load_explicit(&g_atom_unit_canonical,memory_order_acquire)==unit&&
         (!session->memo.arenas||atom_deep_copy_arena_map_current(session));
 done:
     if (!ready) {atom_deep_copy_memo_free(nodes);free(nodes);return false;}
     /* Only the membership carrier changes. All Atom, buffer and object
      * forwarding, mapped arena authority and source keys stay untouched. */
     session->memo.global_nodes=nodes;session->memo.global_count=count;
+    session->memo.global_symbol_count=canonical_count;session->memo.global_unit=unit;
     atom_deep_copy_memo_free(old);free(old);return true;
 }
 
@@ -11097,9 +11134,12 @@ void hashcons_storage_census(const HashConsTable *hc, CettaStorageCensus *census
 bool atom_checkpoint_global_budget(const HashConsTable *owner,size_t limit,
     size_t *bytes,size_t *work) {
     const size_t statics=sizeof(atom_checkpoint_static_roots)/sizeof(*atom_checkpoint_static_roots);
-    if(!bytes||!work||!owner||owner!=g_hashcons||!hashcons_instance_id(owner)||owner->used>owner->size||
-        owner->used>limit||owner->used>SIZE_MAX-statics)return false;
-    size_t n=(size_t)owner->used+statics;
+    uint32_t canonical_count=symbol_canonical_count(g_symbols);
+    Atom *unit=atomic_load_explicit(&g_atom_unit_canonical,memory_order_acquire);
+    if(!bytes||!work||!owner||owner!=g_hashcons||!g_symbols||!hashcons_instance_id(owner)||owner->used>owner->size||
+        owner->used>limit||
+        owner->used>SIZE_MAX-statics||canonical_count>SIZE_MAX-statics-owner->used)return false;
+    size_t n=(size_t)owner->used+statics+canonical_count+(unit?1u:0u);
     if(n>SIZE_MAX/(8u*sizeof(AtomDeepCopyMemoSlot)))return false;
     size_t arrays=n*8u*sizeof(AtomDeepCopyMemoSlot);
     size_t fixed=sizeof(AtomDeepCopySession)+sizeof(AtomDeepCopyMemo);
@@ -11109,7 +11149,8 @@ bool atom_checkpoint_global_budget(const HashConsTable *owner,size_t limit,
      * arbitrary edge multiplicity may require more. The service stops
      * at its supplied allowance and returns the actual metered prefix. */
     if(n>SIZE_MAX/n||n*n>SIZE_MAX/16u||owner->size>SIZE_MAX-n*n*16u)return false;
-    *bytes=fixed+arrays;*work=(size_t)owner->size+n*n*16u;return true;
+    if(canonical_count>SIZE_MAX-(size_t)owner->size-n*n*16u)return false;
+    *bytes=fixed+arrays;*work=(size_t)owner->size+canonical_count+n*n*16u;return true;
 }
 bool atom_checkpoint_global_contains(const AtomDeepCopySession *domain,
     const Atom *atom,const CettaCheckpointCompare *read) {

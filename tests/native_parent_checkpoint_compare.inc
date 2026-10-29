@@ -41,8 +41,55 @@ static bool copy_factors(CopyRelation *r,const CettaWeightLedger *s,const CettaW
     }
     return (!x&&!y)||(r->valid=false);
 }
+typedef struct {
+    CopyRelation *relation;
+    const PrimeNeedReaderContext *other;
+    size_t count;
+} CopyReaders;
+static CettaMatchCompletion copy_reader_entry(uint64_t key,
+        const PrimeNeedReaderValue *source,void *raw) {
+    CopyReaders *copy=raw;PrimeNeedReaderValue image={0};
+    if(!prime_need_reader_context_lookup(copy->other,key,&image)||
+        source->operations!=image.operations)return CETTA_MATCH_REFUTED;
+    bool good=false;
+    if(source->operations==&prime_need_call_link_ops) {
+        const PrimeNeedCallLink *a=source->value,*b=image.value;
+        good=copy_identity(copy->relation,17,a,b)&&
+            copy_identity(copy->relation,21,a->sources,b->sources)&&
+            copy_identity(copy->relation,22,a->sources->episode,b->sources->episode)&&
+            a->identity_count==b->identity_count;
+        for(size_t i=0u;good&&i<a->identity_count;i++)
+            good=!memcmp(&a->identities[i],&b->identities[i],sizeof(a->identities[i]));
+    } else if(source->operations==&prime_need_call_reader_ops) {
+        const PrimeNeedCallForceReader *a=source->value,*b=image.value;
+        uint64_t ap=0u,bp=0u;
+        good=copy_identity(copy->relation,18,a,b)&&
+            copy_identity(copy->relation,17,a->link,b->link)&&
+            copy_identity(copy->relation,19,a->cell,b->cell)&&
+            copy_identity(copy->relation,20,a->slot,b->slot)&&
+            copy_identity(copy->relation,23,a->position,b->position)&&
+            cetta_shared_return_checkpoint_position(a->position,&ap)&&
+            cetta_shared_return_checkpoint_position(b->position,&bp)&&ap==bp;
+    }
+    copy->count++;
+    return good?CETTA_MATCH_MATCHED:CETTA_MATCH_REFUTED;
+}
+static CettaMatchCompletion count_reader_entry(uint64_t key,
+        const PrimeNeedReaderValue *value,void *raw) {
+    (void)key;(void)value;(*(size_t *)raw)++;return CETTA_MATCH_MATCHED;
+}
+static bool copy_readers(CopyRelation *r,const PrimeNeedReaderContext *a,
+        const PrimeNeedReaderContext *b) {
+    if(!copy_identity(r,24,a,b))return false;
+    if(!a||!b)return a==b;
+    CopyReaders copy={.relation=r,.other=b};size_t other=0u;
+    return prime_need_reader_context_visit(a,copy_reader_entry,&copy)==CETTA_MATCH_MATCHED&&
+        prime_need_reader_context_visit(b,count_reader_entry,&other)==CETTA_MATCH_MATCHED&&
+        copy.count==other;
+}
 static bool copy_bindings(CopyRelation *r,const Bindings *s,const Bindings *d) {
-    if(bindings_reader_context_view(s)||bindings_reader_context_view(d))return r->valid=false;
+    if(!copy_readers(r,bindings_reader_context_view(s),bindings_reader_context_view(d)))
+        return r->valid=false;
     if((s->prime_ext!=NULL)!=(d->prime_ext!=NULL)||bindings_occurrence_token(s)!=bindings_occurrence_token(d))return r->valid=false;
     bool good=copy_need(r,bindings_need_view(s),bindings_need_view(d));
     good=copy_receipt(r,bindings_branch_state_view(s),bindings_branch_state_view(d),3)&&good;

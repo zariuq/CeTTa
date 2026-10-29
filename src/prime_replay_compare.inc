@@ -91,7 +91,7 @@ static bool prime_replay_compare_task(const PrimeEvalStackTask *a,const PrimeEva
     if(a->space!=b->space)return false;
 #define RT(f) RC_FIELDS("task",a,b,f)
     RT(kind);RT(pure_authority);RT(fuel);RT(preserve_bindings);RT(strict_ready_argument);
-    RT(dynamic_env_initialized);RT(seed_env_initialized);RT(control_scoring);
+    RT(dynamic_env_initialized);RT(dynamic_env_is_seed);RT(seed_env_initialized);RT(control_scoring);
 #undef RT
     RC_P("task.space",a->space,b->space);if(!read->arena(read->context,"task.arena",a->arena,b->arena))return false;
     RC_P("task.target",a->target,b->target);

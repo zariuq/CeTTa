@@ -1,5 +1,12 @@
 {
   "schema": "metta-library-dialect-sources-v1",
+  "prime_replacements": [
+    {
+      "source": "native_history.metta",
+      "old": "(: history:explain (-> Atom %Undefined%))",
+      "new": "(: history:explain (-> (Data Atom) %Undefined%))"
+    }
+  ],
   "groups": [
     {
       "dialect": "petta",
