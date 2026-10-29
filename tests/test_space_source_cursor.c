@@ -340,6 +340,40 @@ int main(int argc, char **argv) {
     assert(space_query_cursor_step(cursor,&first)==SPACE_QUERY_CURSOR_INCOMPLETE);
     space_query_cursor_free(cursor); assert(input.live==0);
 
+    /* A failure after a published prefix is still incomplete, not END. A
+     * saved failed continuation cannot reinterpret a later successful read
+     * as permission to restart or silently finish the original query. */
+    Atom *one_pattern=parse(&answers,"(p 1 $y)");
+    cursor=space_query_cursor_new_captured(&source,&answers,one_pattern,NULL); assert(cursor);
+    bindings_init(&first);
+    do { step=space_query_cursor_step(cursor,&first); } while(step==SPACE_QUERY_CURSOR_PROGRESS);
+    assert(step==SPACE_QUERY_CURSOR_ROW); bindings_free(&first); bindings_init(&first);
+    input.fail_next=true;
+    do { step=space_query_cursor_step(cursor,&first); } while(step==SPACE_QUERY_CURSOR_PROGRESS);
+    assert(step==SPACE_QUERY_CURSOR_INCOMPLETE);
+    clone=space_query_cursor_clone(cursor); assert(clone);
+    input.fail_next=false;
+    assert(space_query_cursor_step(clone,&first)==SPACE_QUERY_CURSOR_INCOMPLETE);
+    space_query_cursor_free(cursor); space_query_cursor_free(clone); bindings_free(&first);
+    assert(input.live==0);
+
+    for(size_t i=0;i<2;i++) {
+        input.fail_open=i==0; input.fail_next=i==1;
+        PettaMachine machine;
+        assert(petta_machine_init(&machine,&source,&answers,parse(&answers,calls[0]),NULL,&host));
+        Atom *answer=NULL;
+        PettaMachineStep result=next_answer(&machine,&answer);
+        if(i==0) assert(result==PETTA_MACHINE_STEP_CAPACITY);
+        else {
+            /* Ordinary unhandled PeTTa exceptions publish an Error value. */
+            assert(result==PETTA_MACHINE_STEP_ANSWER && atom_is_error(answer));
+            assert(atom_is_symbol(answer->expr.elems[2],"OccurrenceSourceIncomplete"));
+            assert(next_answer(&machine,&answer)==PETTA_MACHINE_STEP_EXHAUSTED);
+        }
+        petta_machine_destroy(&machine); assert(input.live==0);
+        input.fail_open=input.fail_next=false;
+    }
+
     /* The snapshot's root and row identities remain stable after publication. */
     cursor=space_query_cursor_new_captured(&source,&answers,query,NULL); assert(cursor);
     assert(collect(cursor,&answers,projection,actual)==wanted); space_query_cursor_free(cursor);

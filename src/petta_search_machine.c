@@ -21079,6 +21079,10 @@ static bool petta_machine_advance_choice(
             }
             if (step == SPACE_OCCURRENCE_CURSOR_CAPACITY ||
                 step == SPACE_OCCURRENCE_CURSOR_INCOMPLETE) {
+                /* A failed read contributes one raised outcome. It is not a
+                 * fresh alternative to retry after that Error is observed. */
+                if (step == SPACE_OCCURRENCE_CURSOR_INCOMPLETE)
+                    choice->as.match.occurrence_exhausted = true;
                 if (step == SPACE_OCCURRENCE_CURSOR_INCOMPLETE &&
                     petta_machine_raise_error(machine,
                         atom_error(&machine->heap, choice->as.match.pattern,
