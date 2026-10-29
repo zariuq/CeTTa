@@ -8,13 +8,53 @@
  * This copies state; it does not authenticate a replay or execute an edge. */
 static const char parent_copy_frame_kind, parent_copy_outcome_kind;
 static const char parent_copy_advice_kind, parent_copy_equation_kind, parent_copy_licence_kind;
+static CettaMatchCompletion prime_need_call_reader_context_copy_with_session(
+    const PrimeNeedReaderContext *,AtomDeepCopySession *,PrimeNeedReaderContext **);
+static PrimeNeedCallForceReader *prime_need_call_reader_copy_with_session(
+    const PrimeNeedCallForceReader *,AtomDeepCopySession *);
+static bool prime_need_production_driver_owned(
+    const PrimeEvalStackDriver *,const void *);
+typedef struct PrimeNeedEpisodeCopyPlan PrimeNeedEpisodeCopyPlan;
+static PrimeNeedEpisodeCopyPlan *prime_need_episode_copy_plan_new(
+    const PrimeNativeControl *,PrimeNativeControl *,
+    const PrimeNativeTopEpisode *,PrimeNativeTopEpisode *);
+static void prime_need_episode_copy_plan_free(PrimeNeedEpisodeCopyPlan *);
+static size_t prime_need_episode_copy_pair_count(const PrimeNeedEpisodeCopyPlan *);
+static bool prime_need_episode_copy_pair_at(const PrimeNeedEpisodeCopyPlan *,
+    size_t,AtomDeepCopyArenaPair *);
+static bool prime_need_episode_copy_capture(PrimeNeedEpisodeCopyPlan *,
+    AtomDeepCopySession *,const char **);
+static void prime_need_episode_copy_plan_storage(
+    const PrimeNeedEpisodeCopyPlan *,CettaStorageCensus *);
 
 typedef struct {
     const PrimeNativeControl *source;
     PrimeNativeControl *image;
     AtomDeepCopySession *atoms;
     const char *refusal;
+    /* Frame/task transport is shared by the native-control checkpoint and
+     * ordinary retained computations.  The explicit continuation profile
+     * keeps that common copier independent of either enclosing owner. */
+    const PrimeEvalStackDriver *source_driver;
+    PrimeEvalStackDriver *image_driver;
+    Space *source_space;
+    Arena *image_storage;
+    bool retain_reader_contexts;
 } PrimeParentCopy;
+
+static const PrimeEvalStackDriver *parent_copy_source_driver(
+        const PrimeParentCopy *copy) {
+    return copy->source_driver ? copy->source_driver
+        : copy->source ? &copy->source->driver : NULL;
+}
+static Space *parent_copy_source_space(const PrimeParentCopy *copy) {
+    return copy->source_space ? copy->source_space
+        : copy->source ? copy->source->space : NULL;
+}
+static Arena *parent_copy_image_storage(const PrimeParentCopy *copy) {
+    return copy->image_storage ? copy->image_storage
+        : copy->image ? &copy->image->storage : NULL;
+}
 
 static bool parent_copy_refuse(PrimeParentCopy *copy, const char *why) {
     if (!copy->refusal) copy->refusal = why;
@@ -22,6 +62,10 @@ static bool parent_copy_refuse(PrimeParentCopy *copy, const char *why) {
 }
 static bool parent_copy_atom(PrimeParentCopy *copy, Atom **slot) {
     if (!*slot) return true;
+    /* An episode-relative continuation keeps immutable syntax and grounded
+     * identities under its retained source owner.  Independent checkpoints
+     * still require an owned graph image. */
+    if(copy->retain_reader_contexts)return true;
     Atom *value = atom_deep_copy_session_copy(copy->atoms, *slot);
     if (!value) return parent_copy_refuse(copy, "AtomOwner");
     *slot = value;
@@ -58,21 +102,44 @@ static bool parent_copy_register(PrimeParentCopy *copy, const void *kind,
 }
 static bool parent_copy_environment(PrimeParentCopy *copy,
     Bindings *out, const Bindings *source) {
+    Arena *storage=parent_copy_image_storage(copy);
     bindings_init(out);
-    return (bindings_clone(out, source) &&
-        bindings_copy_owned_atoms_with_session(out, &copy->image->storage, copy->atoms)) ||
-        parent_copy_refuse(copy, "BindingsOwner");
+    const PrimeEvalStackDriver *driver=parent_copy_source_driver(copy);
+    if(!storage||!driver||!bindings_clone(out,source))
+        return parent_copy_refuse(copy,"BindingsOwner");
+    if(copy->retain_reader_contexts)return true;
+    PrimeNeedReaderContext *readers=bindings_reader_context_view(source),*image=NULL;
+    if(readers && prime_need_call_reader_context_copy_with_session(
+            readers,copy->atoms,&image)!=CETTA_MATCH_MATCHED) {
+        bindings_free(out);
+        return parent_copy_refuse(copy,"ReaderContextOwner");
+    }
+    if(readers)bindings_reader_context_set(out,NULL);
+    bool ready=bindings_copy_owned_atoms_with_session(out,storage,copy->atoms);
+    if(ready&&image)bindings_reader_context_set(out,image);
+    prime_need_reader_context_release(image);
+    if(!ready) {
+        bindings_free(out);
+        return parent_copy_refuse(copy,"BindingsOwner");
+    }
+    return true;
 }
 static bool parent_copy_outcomes(PrimeParentCopy *copy, const OutcomeSet *source,
     OutcomeSet *image) {
-    return outcome_set_copy_to_arena(source, image, &copy->image->storage, copy->atoms) ||
+    Arena *storage=parent_copy_image_storage(copy);
+    return (storage && (copy->retain_reader_contexts
+        ? outcome_set_copy_to_episode(source,image,storage,copy->atoms)
+        : outcome_set_copy_to_arena_mapping_readers(source,image,storage,
+            copy->atoms,prime_need_call_reader_context_copy_with_session))) ||
         parent_copy_refuse(copy, "OutcomeOwner");
 }
 static bool parent_copy_owner(PrimeParentCopy *copy, Arena **owner) {
     if (!*owner) return true;
+    Arena *storage=parent_copy_image_storage(copy);
     Arena *mapped = NULL;
-    if (!atom_deep_copy_session_destination_for_owner(copy->atoms, *owner, &mapped) ||
-        mapped != &copy->image->storage)
+    if (!atom_deep_copy_session_destination_for_owner(copy->atoms,*owner,&mapped))
+        return copy->retain_reader_contexts;
+    if(!storage || mapped!=storage)
         return parent_copy_refuse(copy, "PrivateOwner");
     *owner = mapped;
     return true;
@@ -111,19 +178,33 @@ static bool parent_copy_registry(PrimeParentCopy *copy, const Registry *source,
     return true;
 }
 
+static bool parent_copy_registry_read_view(PrimeParentCopy *copy,
+    const RegistryReadView *source,RegistryReadView *image) {
+    Arena *storage=parent_copy_image_storage(copy);
+    if(!source->initialized || !storage)
+        return parent_copy_refuse(copy,"RegistryCapture");
+    *image=(RegistryReadView){.arena=storage,.initialized=true,
+        .passive=source->passive,.stale=source->stale,
+        .incomplete=source->incomplete,.refusal=source->refusal,
+        .stale_name=source->stale_name,.stale_expected=source->stale_expected,
+        .stale_actual=source->stale_actual};
+    return parent_copy_registry(copy,&source->initial,&image->initial) &&
+        parent_copy_registry(copy,&source->consulted,&image->consulted) &&
+        parent_copy_atom(copy,&image->stale_name) &&
+        parent_copy_atom(copy,&image->stale_expected) &&
+        parent_copy_atom(copy,&image->stale_actual);
+}
+
 static bool parent_copy_equation_shell(PrimeParentCopy *copy,
     const PrimeNeedEquationContinuation *source, PrimeNeedEquationContinuation **out) {
     *out = NULL;
     if (!source) return true;
-    /* Ordered resident cohorts are an inline stack owner until their source
-     * closes. Their ancestor edge is not a relocatable native parent edge. */
-    if (source->cohort_owner || source->independent_readers)
-        return parent_copy_refuse(copy,"EquationCohortOwner");
     if (source->work.len > source->work_meta_cap ||
         (source->work.len && !source->work_meta))
         return parent_copy_refuse(copy,"WorkMetaExtent");
-    if (source->arena!=copy->source->driver.arena ||
-        source->space!=copy->source->space)
+    const PrimeEvalStackDriver *driver=parent_copy_source_driver(copy);
+    if (!driver || source->arena!=driver->arena ||
+        source->space!=parent_copy_source_space(copy))
         return parent_copy_refuse(copy,"EquationDecisionOwner");
     PrimeNeedEquationContinuation *image=calloc(1u,sizeof(*image));
     if (!image) return parent_copy_refuse(copy,"Allocation");
@@ -148,38 +229,50 @@ static bool parent_copy_equation_shell(PrimeParentCopy *copy,
     }
     return true;
 }
+static bool parent_copy_frame_shell(PrimeParentCopy *copy,
+    const PrimeEvalStackFrame *source,PrimeEvalStackFrame **out,bool retired) {
+    *out=NULL;
+    if(source->control_retired!=retired)
+        return parent_copy_refuse(copy,"FrameMembership");
+    if(!retired && (source->native_service || source->capsule_search))
+        return parent_copy_refuse(copy,"FrameExternalOwner");
+    PrimeEvalStackFrame *image=calloc(1u,sizeof(*image));
+    if(!image)return parent_copy_refuse(copy,"Allocation");
+    *out=image;
+    if(!parent_copy_register(copy,&parent_copy_frame_kind,source,image,sizeof(*source)))
+        return false;
+    image->control_retired=retired;
+    if(retired)return true;
+    const PrimeEvalStackDriver *driver=parent_copy_source_driver(copy);
+    if(!driver || source->control_nested || source->control_nested_operation ||
+        source->control_nested_retained || source->dialect_source ||
+        source->space!=parent_copy_source_space(copy) || source->arena!=driver->arena)
+        return parent_copy_refuse(copy,"FrameExternalOwner");
+    if(source->child_initialized) {
+        outcome_set_init(&image->child);image->child_initialized=true;
+        if(!parent_copy_register(copy,&parent_copy_outcome_kind,&source->child,
+                &image->child,sizeof(OutcomeSet)))return false;
+    }
+    if(source->force_pending_initialized) {
+        if(source->kind!=PRIME_EVAL_STACK_FRAME_FORCE || source->force_pending.len>1u ||
+            (source->force_pending.len && source->index>=source->child.len) ||
+            (source->force_pending_observed && !source->force_pending.len))
+            return parent_copy_refuse(copy,"ForcePendingExtent");
+        outcome_set_init(&image->force_pending);image->force_pending_initialized=true;
+        if(!parent_copy_register(copy,&parent_copy_outcome_kind,&source->force_pending,
+                &image->force_pending,sizeof(OutcomeSet)))return false;
+    } else if(source->force_pending_observed)
+        return parent_copy_refuse(copy,"ForcePendingState");
+    return parent_copy_equation_shell(
+        copy,source->equation_search,&image->equation_search);
+}
 static bool parent_copy_frame_shells(PrimeParentCopy *copy,
     const PrimeEvalStackFrame *source, PrimeEvalStackFrame **out, bool retired) {
     PrimeEvalStackFrame **tail=out;
     for(;source;source=source->control_next) {
-        if(source->control_retired!=retired) return parent_copy_refuse(copy,"FrameMembership");
-        if(!retired && (source->native_service || source->capsule_search || source->call_force_reader))
-            return parent_copy_refuse(copy,"FrameExternalOwner");
-        PrimeEvalStackFrame *image=calloc(1u,sizeof(*image));
-        if(!image)return parent_copy_refuse(copy,"Allocation");
+        PrimeEvalStackFrame *image=NULL;
+        if(!parent_copy_frame_shell(copy,source,&image,retired))return false;
         *tail=image;tail=&image->control_next;
-        if(!parent_copy_register(copy,&parent_copy_frame_kind,source,image,sizeof(*source)))return false;
-        image->control_retired=retired;
-        if(retired)continue;
-        if(source->control_nested || source->control_nested_operation ||
-            source->control_nested_retained || source->dialect_source ||
-            source->space!=copy->source->space ||
-            source->arena!=copy->source->driver.arena)
-            return parent_copy_refuse(copy,"FrameExternalOwner");
-        if(source->child_initialized) {
-            outcome_set_init(&image->child);image->child_initialized=true;
-            if(!parent_copy_register(copy,&parent_copy_outcome_kind,&source->child,&image->child,sizeof(OutcomeSet)))return false;
-        }
-        if(source->force_pending_initialized) {
-            if(source->kind!=PRIME_EVAL_STACK_FRAME_FORCE || source->force_pending.len>1u ||
-                (source->force_pending.len && source->index>=source->child.len) ||
-                (source->force_pending_observed && !source->force_pending.len))
-                return parent_copy_refuse(copy,"ForcePendingExtent");
-            outcome_set_init(&image->force_pending);image->force_pending_initialized=true;
-            if(!parent_copy_register(copy,&parent_copy_outcome_kind,&source->force_pending,
-                &image->force_pending,sizeof(OutcomeSet)))return false;
-        } else if(source->force_pending_observed)return parent_copy_refuse(copy,"ForcePendingState");
-        if(!parent_copy_equation_shell(copy,source->equation_search,&image->equation_search))return false;
     }
     return true;
 }
@@ -244,7 +337,8 @@ static bool parent_copy_task(PrimeParentCopy *copy, const PrimeEvalStackTask *so
     memset(&image->dynamic_env,0,sizeof(image->dynamic_env));
     memset(&image->seed_env,0,sizeof(image->seed_env));
     image->dynamic_env_initialized=false;image->seed_env_initialized=false;
-    if(source->space!=copy->source->space || !parent_copy_owner(copy,&image->arena))
+    if(source->space!=parent_copy_source_space(copy) ||
+        !parent_copy_owner(copy,&image->arena))
         return parent_copy_refuse(copy,"TaskSpace");
     PC_EDGE(image,source,target,parent_copy_outcome_kind);
     PC_ATOM(image,atom);PC_ATOM(image,etype);PC_ATOM(image,control_key);
@@ -319,7 +413,9 @@ static bool parent_copy_pattern_readiness(PrimeParentCopy *copy,
 static bool parent_copy_equation(PrimeParentCopy *copy,
     const PrimeNeedEquationContinuation *source, PrimeNeedEquationContinuation *image) {
     if(!source)return image==NULL;
-    image->state=source->state;image->space=source->space;image->arena=&copy->image->storage;
+    Arena *storage=parent_copy_image_storage(copy);
+    if(!storage)return parent_copy_refuse(copy,"EquationOwner");
+    image->state=source->state;image->space=source->space;image->arena=storage;
     image->original_call=source->original_call;PC_ATOM(image,original_call);
     image->source_occurrence_id=source->source_occurrence_id;
     image->fuel=source->fuel;image->preserve_bindings=source->preserve_bindings;
@@ -394,6 +490,7 @@ static bool parent_copy_equation(PrimeParentCopy *copy,
     image->current_fault=source->current_fault;
     image->current_coverage_only=source->current_coverage_only;
     image->independent_readers=source->independent_readers;
+    PC_EDGE(image,source,cohort_owner,parent_copy_equation_kind);
     image->root_atom_count=source->root_atom_count;PC_ARRAY(image,source,root_atoms,source->root_atom_count);
     for(size_t i=0u;i<image->root_atom_count;i++)if(!parent_copy_atom(copy,&image->root_atoms[i]))return false;
     image->result_contract_count=source->result_contract_count;
@@ -425,6 +522,7 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
     image->dialect_source=NULL;image->control_return_advice=NULL;image->control_nested=NULL;
     image->control_nested_operation=NULL;
     image->native_service=NULL;image->capsule_search=NULL;
+    image->call_force_reader=NULL;
     image->force_producer=NULL;image->force_waiters=NULL;
     image->force_waiter_next=NULL;image->open_force_next=NULL;
     if(source->child_initialized&&!source->control_retired) {
@@ -449,6 +547,10 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
     PC_EDGE(image,source,control_parent,parent_copy_frame_kind);
     PC_EDGE(image,source,stream_consumer,parent_copy_frame_kind);
     PC_EDGE(image,source,control_advice,parent_copy_advice_kind);
+    if(source->call_force_reader&&!(image->call_force_reader=
+            prime_need_call_reader_copy_with_session(
+                source->call_force_reader,copy->atoms)))
+        return parent_copy_refuse(copy,"CallReaderOwner");
     if(source->control_retired) {
         /* Retirement has already released children; their leftover bits are
          * not roots. Never inspect or reconstruct them. */
@@ -495,20 +597,45 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
         PC_ATOM(d,key);PC_ATOM(d,bound);
         PC_EDGE(d,s,advice,parent_copy_advice_kind);
     }
+    if(source->control_return_pending) {
+        if(source->control_return_pending_begin!=source->control_return_advice_length ||
+            source->control_return_pending_end<=source->control_return_pending_begin ||
+            source->control_return_pending_end>source->child.len)
+            return parent_copy_refuse(copy,"ReturnAdvicePendingExtent");
+        PrimeNativeReturnAdvice *d=&image->control_return_pending_advice;
+        const PrimeNativeReturnAdvice *s=&source->control_return_pending_advice;
+        PC_ATOM(d,key);PC_ATOM(d,bound);
+        PC_EDGE(d,s,advice,parent_copy_advice_kind);
+    } else if(source->control_return_pending_begin || source->control_return_pending_end ||
+        source->control_return_pending_advice.key ||
+        source->control_return_pending_advice.bound ||
+        source->control_return_pending_advice.advice)
+        return parent_copy_refuse(copy,"ReturnAdvicePendingShape");
     PC_ARRAY(image,source,normalization_children,source->normalization_child_count);
     for(size_t i=0u;i<source->normalization_child_count;i++)if(!parent_copy_atom(copy,&image->normalization_children[i]))return false;
     PC_ARRAY(image,source,control_selection,source->control_selection_length);
     PC_ARRAY(image,source,control_child_bounds,source->control_child_bound_capacity);
     if(source->control_child_bound_length>source->control_child_bound_capacity)return parent_copy_refuse(copy,"BoundExtent");
     for(size_t i=0u;i<source->control_child_bound_length;i++)if(!parent_copy_atom(copy,&image->control_child_bounds[i]))return false;
-    if(!prime_need_snapshot_copy_with_session(&copy->image->storage,copy->atoms,&image->before)||
-        !prime_need_snapshot_copy_with_session(&copy->image->storage,copy->atoms,&image->evaluating))return parent_copy_refuse(copy,"FrameNeedOwner");
+    Arena *storage=parent_copy_image_storage(copy);
+    bool before=copy->retain_reader_contexts ||
+        prime_need_snapshot_copy_with_session(storage,copy->atoms,&image->before);
+    bool evaluating=before && (copy->retain_reader_contexts ||
+        prime_need_snapshot_copy_with_session(storage,copy->atoms,&image->evaluating));
+    if(!storage || !before || !evaluating)
+        return parent_copy_refuse(copy,"FrameNeedOwner");
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    if(!prime_need_receipt_copy_with_session(&copy->image->storage,copy->atoms,&image->before_receipt))return parent_copy_refuse(copy,"FrameReceiptOwner");
+    if(!copy->retain_reader_contexts &&
+        !prime_need_receipt_copy_with_session(storage,copy->atoms,&image->before_receipt))
+        return parent_copy_refuse(copy,"FrameReceiptOwner");
 #endif
     if(source->kind==PRIME_EVAL_STACK_FRAME_FORCE) {
         PrimeNeedCellView expected;
-        if(!prime_need_snapshot_lookup(&source->before,source->thunk_id,&expected)||
+        const PrimeNeedSnapshot *source_world=source->call_force_reader
+            ? bindings_need_view(&source->env):&source->before;
+        PrimeNeedSnapshot *image_world=source->call_force_reader
+            ? bindings_need_mut(&image->env):&image->before;
+        if(!prime_need_snapshot_lookup(source_world,source->thunk_id,&expected)||
             expected.cache_state!=source->cell.cache_state||expected.value_role!=source->cell.value_role||
             expected.value_producer_thunk!=source->cell.value_producer_thunk||
             expected.value_producer_update!=source->cell.value_producer_update||
@@ -520,7 +647,9 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
             ||expected.capture_known!=source->cell.capture_known||expected.capture_var_ids!=source->cell.capture_var_ids||expected.capture_var_count!=source->cell.capture_var_count
 #endif
-            ||!prime_need_snapshot_lookup(&image->before,image->thunk_id,&image->cell))return parent_copy_refuse(copy,"ForceCellCapture");
+            )return parent_copy_refuse(copy,"ForceCellSource");
+        if(!prime_need_snapshot_lookup(image_world,image->thunk_id,&image->cell))
+            return parent_copy_refuse(copy,"ForceCellImage");
     } else if(source->cell.origin||source->cell.cached)return parent_copy_refuse(copy,"UnexpectedCellCapture");
     if(source->match_rows) {
         const PrimeMatchRows *s=source->match_rows;
@@ -529,7 +658,7 @@ static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *
         PrimeMatchRows *d=image->match_rows;
         d->read=s->read;d->pending_ready=s->pending_ready;d->blocked=s->blocked;d->matched=s->matched;
         if(!parent_copy_visible(copy,&s->visible,&d->visible)||!parent_copy_environment(copy,&d->pending,&s->pending))return false;
-        if(s->cursor && !(d->cursor=space_query_cursor_copy_to_arena(s->cursor,&copy->image->storage,copy->atoms)))return parent_copy_refuse(copy,"QueryOwner");
+        if(s->cursor && !(d->cursor=space_query_cursor_copy_to_arena(s->cursor,storage,copy->atoms)))return parent_copy_refuse(copy,"QueryOwner");
     }
     return parent_copy_equation(copy,source->equation_search,equation);
 }
@@ -577,9 +706,12 @@ static CettaContinuationStatus parent_copy_refusal_status(const char *refusal) {
 /* The reservation excludes another admitted resume. It does not establish
  * worker or callback quiescence; check those same source conditions before
  * allocating an episode shell and again before the first payload copy. */
-static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
-    bool source_reserved, bool transaction, const char **refusal) {
-    if (!source || !source->owned_arena || source->driver.arena != &source->storage) {
+static bool parent_copy_quiescent_in_profile(const PrimeNativeControl *source,
+    bool source_reserved,bool transaction,const void *driver_owner,
+    const char **refusal) {
+    if (!source || (!driver_owner&&(!source->owned_arena||
+            source->driver.arena!=&source->storage)) ||
+        (driver_owner&&(source->owned_arena||!source->driver.arena))) {
         if (refusal) *refusal = "QuiescentOwnerProfile";
         return false;
     }
@@ -601,26 +733,36 @@ static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
     /* Invocation and authority parents are borrowed drivers. Their stack or
      * service lifetime is not mapped by this checkpoint. Do not discard an
      * unknown grant or silently retain a callback's original context. */
+    bool owned_driver=driver_owner&&
+        prime_need_production_driver_owned(&source->driver,driver_owner);
     if (source->driver.authority_parent || source->driver.call_permit_parent ||
-        source->driver.call_permit || source->driver.call_permit_context ||
+        (!owned_driver&&(source->driver.call_permit || source->driver.call_permit_context ||
+        source->driver.call_refusal_generation ||
+        source->driver.call_refusal_retained || source->driver.call_refusal_context ||
         source->driver.observe_space_read || source->driver.space_read_context ||
         source->driver.own_data_read || source->driver.own_data_published ||
         source->driver.own_data_context || source->driver.normalization_value_role ||
-        source->driver.normalization_role_context) {
+        source->driver.normalization_role_context))) {
         if (refusal) *refusal = "BorrowedAuthorityScope";
         return false;
     }
     /* These retained protocols have not supplied an injective transport
      * of their producer owners. A shallow copy would alias arrays
      * and copy a live mutex. Refuse before creating an image. */
-    if (source->need_claim_count || source->need_share_waiting || source->owns_execution_episode) {
-        if (refusal) *refusal = "RetainedProducerWorldTransport";
+    if (source->need_claim_count) {
+        if (refusal) *refusal = "RetainedProducerClaims";
+        return false;
+    }
+    if (source->need_share_waiting) {
+        if (refusal) *refusal = "RetainedProducerShareWait";
         return false;
     }
     if(g_prime_eval_stack_driver==&source->driver||g_prime_eval_top_authority==&source->driver||
         !source->driver.nested||source->driver.running_task||source->driver.active_task||source->driver.root_call_running||source->active_work||
-        source->active_allowance||source->active_spent||source->driver.task_ready||source->driver.top||
-        source->driver.continuations.top||source->driver.continuations.depth||source->leased!=source_reserved||
+        source->active_allowance||source->active_spent||
+        (!driver_owner&&(source->driver.task_ready||source->driver.top||
+            source->driver.continuations.top||source->driver.continuations.depth))||
+        source->leased!=source_reserved||
         source->parallel_owner||(!transaction&&source->space_agenda)||source->parallel_inflight_count||source->parallel_wave_pending||
         source->reclaimed_frames || source->driver.prepared_opaque_frames ||
         source->driver.prepared_pure_cache.entries||source->driver.prepared_pure_cache.execution_scratch_ready)
@@ -634,6 +776,12 @@ static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
         {if(refusal)*refusal="RecordingOwner";return false;}
 #endif
     return true;
+}
+
+static bool parent_copy_quiescent_in(const PrimeNativeControl *source,
+    bool source_reserved,bool transaction,const char **refusal) {
+    return parent_copy_quiescent_in_profile(source,source_reserved,transaction,
+        NULL,refusal);
 }
 
 static bool parent_copy_transaction_work(const PrimeNativeControl *source,
@@ -684,10 +832,11 @@ static bool parent_copy_episode_admitted(const PrimeNativeControl *control) {
     if (!arena_retains_owner(&control->storage, source,
             prime_native_top_episode_release)) return false;
     if (source->owned_region || !atomic_load_explicit(&source->references, memory_order_acquire) ||
-        !source->ready || !source->request_storage_ready ||
+        !source->ready ||
         !source->request_expression || source->space != control->space ||
         source->library != g_library_context || source->observer || source->observer_context ||
-        source->arena.hashcons || source->request_storage.hashcons ||
+        source->arena.hashcons ||
+        (source->request_storage_ready&&source->request_storage.hashcons) ||
         source->regions.depth || source->regions.level_count > source->regions.level_capacity ||
         source->regions.level_capacity > SIZE_MAX / sizeof(*source->regions.levels) ||
         (source->regions.level_capacity && !source->regions.levels) ||
@@ -714,8 +863,10 @@ static PrimeNativeTopEpisode *parent_copy_episode_new(
     atomic_init(&image->references, 1u);
     parent_copy_episode_arena(&image->arena, &source->arena);
     image->ready = true;
-    parent_copy_episode_arena(&image->request_storage, &source->request_storage);
-    image->request_storage_ready = true;
+    if(source->request_storage_ready) {
+        parent_copy_episode_arena(&image->request_storage,&source->request_storage);
+        image->request_storage_ready=true;
+    }
     image->regions.stable_owner = source->regions.stable_owner ? &image->arena : NULL;
     image->regions.level_capacity = source->regions.level_capacity;
     image->regions.level_count = source->regions.level_count;
@@ -750,9 +901,10 @@ static PrimeNativeTopEpisode *parent_copy_episode_new(
 static bool parent_copy_episode_capture(const PrimeNativeTopEpisode *source,
     PrimeNativeTopEpisode *image, AtomDeepCopySession *atoms) {
     if (!source || !image || source == image || !image->ready ||
-        !image->request_storage_ready ||
+        source->request_storage_ready!=image->request_storage_ready ||
         !atom_deep_copy_session_maps_arena(atoms, &source->arena, &image->arena) ||
-        !atom_deep_copy_session_maps_arena(atoms, &source->request_storage, &image->request_storage))
+        (source->request_storage_ready&&!atom_deep_copy_session_maps_arena(
+            atoms,&source->request_storage,&image->request_storage)))
         return false;
     for (size_t i = 0u; i < source->regions.level_count; i++) {
         if (!source->regions.levels[i]) continue;
@@ -790,7 +942,9 @@ static bool parent_copy_episode_capture(const PrimeNativeTopEpisode *source,
     }
 #endif
     AtomDeepCopyDestinationScope scope = {0};
-    if (!atom_deep_copy_destination_enter(atoms, &image->request_storage, &scope))
+    Arena *request_destination=image->request_storage_ready
+        ? &image->request_storage:&image->arena;
+    if (!atom_deep_copy_destination_enter(atoms,request_destination,&scope))
         return false;
     image->request_expression = atom_deep_copy_session_copy(atoms, source->request_expression);
     bool ok = image->request_expression != NULL;
@@ -1027,33 +1181,41 @@ static bool parent_copy_selectors_capture(const PrimeNativeControl *source,
 }
 
 static bool parent_copy_selectors_transported(const PrimeNativeControl *source,
-    const PrimeNativeControl *image, const AtomDeepCopySession *atoms) {
+    const PrimeNativeControl *image,const Arena *image_storage,
+    const AtomDeepCopySession *atoms) {
     for(size_t i=0u;;i++) {
         const EquationMatchDecisionCacheSlot *s=parent_copy_selector_at(source,i);
         if(!s)return true;
         const EquationMatchDecisionCacheSlot *d=atom_deep_copy_session_object_forwarded(
             atoms,&parent_copy_selector_kind,s,sizeof(*s));
         if(!d || d==s || !d->valid ||
-            !arena_retains_owner(&image->storage,d,equation_match_decision_owner_release) ||
+            !arena_retains_owner(image_storage,d,equation_match_decision_owner_release) ||
             cetta_match_decision_copy_lookup(s->decision,atoms)!=d->decision)
             return false;
         if(i==SIZE_MAX)return false;
     }
 }
 
-static bool prime_native_parent_copy_with_session(const PrimeNativeControl *source,
+static bool prime_native_parent_copy_with_session_profile(const PrimeNativeControl *source,
     PrimeNativeControl *image, AtomDeepCopySession *atoms, bool source_reserved,
-    SpaceCheckpointBudget *transaction, const char **refusal) {
-    PrimeParentCopy state={source,image,atoms,NULL},*copy=&state;
+    SpaceCheckpointBudget *transaction,const void *driver_owner,
+    Arena *external_image_storage,
+    const char **refusal) {
+    const Arena *source_storage=driver_owner?source->driver.arena:&source->storage;
+    Arena *image_storage=external_image_storage?external_image_storage:&image->storage;
+    PrimeParentCopy state={.source=source,.image=image,.atoms=atoms,
+        .source_driver=&source->driver,.image_driver=&image->driver,
+        .source_space=source->space,.image_storage=image_storage},*copy=&state;
     if(refusal)*refusal=NULL;
-    if(!source||!image||source==image||!source->owned_arena||source->driver.arena!=&source->storage||
-        !atom_deep_copy_session_targets(atoms,&image->storage)||
-        !atom_deep_copy_session_maps_arena(atoms,&source->storage,&image->storage))return false;
+    if(!source||!image||source==image||!source_storage||!image_storage||
+        !atom_deep_copy_session_targets(atoms,image_storage)||
+        !atom_deep_copy_session_maps_arena(atoms,source_storage,image_storage))return false;
     if (transaction ? !parent_copy_transaction_admitted(source,source_reserved,transaction,refusal)
-                    : !parent_copy_quiescent(source,source_reserved,refusal)) return false;
+                    : !parent_copy_quiescent_in_profile(source,source_reserved,
+                        false,driver_owner,refusal)) return false;
     if ((source->source_services && !image->source_services) ||
         !parent_copy_selectors_admitted(source) ||
-        !parent_copy_selectors_transported(source,image,atoms)) {
+        !parent_copy_selectors_transported(source,image,image_storage,atoms)) {
         if(refusal)*refusal="EquationSelectorOwner";
         return false;
     }
@@ -1081,8 +1243,10 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     image->need_claims=NULL;image->need_claim_count=0u;image->need_claim_cap=0u;
     image->need_claim_mu_ready=false;
     memset(&image->need_claim_mu,0,sizeof(image->need_claim_mu));
-    image->owned_arena=true;image->handle_id=0u;image->leased=false;
-    image->owned_top_episode=NULL;image->space_agenda=NULL;
+    image->owned_arena=external_image_storage==NULL;
+    image->handle_id=0u;image->leased=false;
+    image->owned_top_episode=NULL;image->owns_execution_episode=false;
+    image->space_agenda=NULL;
     image->interaction_selection=NULL;
     image->resume_choice=NULL;
     memset(&image->hub,0,sizeof(image->hub));image->frames=NULL;image->retired_frames=NULL;
@@ -1105,18 +1269,31 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     image->weight_environment_initialized=false;memset(&image->weight_environment,0,sizeof(image->weight_environment));
     memset(&image->weight_source,0,sizeof(image->weight_source));memset(&image->registry_read,0,sizeof(image->registry_read));
     outcome_set_init(&image->output);
-    image->driver.control=image;image->driver.arena=&image->storage;
+    image->driver.control=image;image->driver.arena=image_storage;
+    image->driver.authority_parent=NULL;image->driver.call_permit_parent=NULL;
+    image->driver.call_permit=NULL;image->driver.call_permit_context=NULL;
+    image->driver.call_refusal_generation=NULL;
+    image->driver.call_refusal_retained=NULL;
+    image->driver.call_refusal_context=NULL;
+    image->driver.observe_space_read=NULL;image->driver.space_read_context=NULL;
+    image->driver.own_data_read=NULL;image->driver.own_data_published=NULL;
+    image->driver.own_data_context=NULL;
+    image->driver.normalization_value_role=NULL;
+    image->driver.normalization_role_context=NULL;
     image->driver.root_target=NULL;image->driver.stream_pending=NULL;
+    image->driver.top=NULL;image->driver.continuations=(CettaOwnedFrameStack){0};
+    image->driver.task_ready=false;image->driver.running_task=false;
+    image->driver.active_task=NULL;image->driver.root_call_running=false;
     memset(&image->driver.task,0,sizeof(image->driver.task));
     image->driver.prepared_pure_cache=source->driver.prepared_pure_cache;
-    image->driver.gc_anchor=arena_mark(&image->storage);
+    image->driver.gc_anchor=arena_mark(image_storage);
     bool ok=parent_copy_register(copy,&parent_copy_outcome_kind,&source->output,&image->output,sizeof(OutcomeSet));
     if(ok) {
         image->need_claim_mu_ready=pthread_mutex_init(&image->need_claim_mu,NULL)==0;
         if(!image->need_claim_mu_ready)ok=parent_copy_refuse(copy,"NeedClaimMutex");
     }
     if(ok && source->space_agenda && (!transaction ||
-        !cetta_space_agenda_checkpoint_copy(source->space_agenda,&image->storage,atoms,
+        !cetta_space_agenda_checkpoint_copy(source->space_agenda,image_storage,atoms,
             &image->space_agenda,transaction)))
         ok=parent_copy_refuse(copy,transaction&&transaction->refusal?transaction->refusal:"TransactionImage");
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
@@ -1128,11 +1305,11 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
      * A real additional source arena hold is restored separately. */
     if(ok && recording) {
         ok=prime_need_recording_copy_enclosing_owner(recording,
-            &source->storage,&image->storage);
-        if(ok && arena_retains_owner(&source->storage,source->history.group,
+            source_storage,image_storage);
+        if(ok && arena_retains_owner(source_storage,source->history.group,
                 prime_need_recording_release))
             ok=prime_need_recording_copy_restore_holder(recording,
-                &source->storage,&image->storage);
+                source_storage,image_storage);
         if(!ok)parent_copy_refuse(copy,"RecordingLifetime");
     }
     if(ok && !erase_recording && source->history.entries)
@@ -1140,8 +1317,8 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
             source->history.spec.selections,sizeof(*source->history.entries));
     for(size_t i=0u;ok && i<image->history.count;i++) {
         PrimeNativeHistorySelection *entry=&image->history.entries[i];
-        ok=prime_need_receipt_copy_with_session(&image->storage,atoms,&entry->operation) &&
-            prime_need_receipt_copy_with_session(&image->storage,atoms,&entry->prepared);
+        ok=prime_need_receipt_copy_with_session(image_storage,atoms,&entry->operation) &&
+            prime_need_receipt_copy_with_session(image_storage,atoms,&entry->prepared);
         if(!ok)parent_copy_refuse(copy,"RecordingSelection");
     }
 #endif
@@ -1166,6 +1343,23 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     for(PrimeEvalStackFrame *d=image->frames;ok&&d;d=d->control_next,sf=sf->control_next)ok=parent_copy_frame(copy,sf,d);
     sf=source->retired_frames;
     for(PrimeEvalStackFrame *d=image->retired_frames;ok&&d;d=d->control_next,sf=sf->control_next)ok=parent_copy_frame(copy,sf,d);
+    if(ok&&source->driver.task_ready) {
+        ok=parent_copy_task(copy,&source->driver.task,&image->driver.task);
+        image->driver.task_ready=ok;
+    }
+    if(ok&&source->driver.top)
+        ok=parent_copy_edge(copy,&parent_copy_frame_kind,source->driver.top,
+            sizeof(*source->driver.top),(void **)&image->driver.top);
+    if(ok&&source->driver.continuations.top) {
+        PrimeEvalStackFrame *top=NULL;
+        ok=parent_copy_edge(copy,&parent_copy_frame_kind,
+            (const PrimeEvalStackFrame *)source->driver.continuations.top,
+            sizeof(PrimeEvalStackFrame),(void **)&top);
+        if(ok)image->driver.continuations.top=&top->continuation;
+    }
+    if(ok) {
+        image->driver.continuations.depth=source->driver.continuations.depth;
+    }
     /* The lookup and producer/waiter links name this parent's registered
      * frames. Reusing a source bucket would outlive its retired owner. */
     for(size_t i=0u;ok&&i<sizeof(source->open_force_buckets)/sizeof(*source->open_force_buckets);i++)
@@ -1176,21 +1370,11 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     if(ok&&source->base_environment_initialized){image->base_environment_initialized=true;ok=parent_copy_environment(copy,&image->base_environment,&source->base_environment);}
     if(ok&&source->weight_environment_initialized){image->weight_environment_initialized=true;ok=parent_copy_environment(copy,&image->weight_environment,&source->weight_environment);}
     if(ok)ok=parent_copy_outcomes(copy,&source->output,&image->output);
-    if(ok&&!cetta_weight_ledger_copy_with_session(&image->storage,atoms,&image->weight_entry))
+    if(ok&&!cetta_weight_ledger_copy_with_session(image_storage,atoms,&image->weight_entry))
         ok=parent_copy_refuse(copy,"WeightEntryOwner");
     if(ok)ok=parent_copy_read_view(copy,&source->weight_source,&image->weight_source);
-    if(ok) {
-        RegistryReadView *d=&image->registry_read;const RegistryReadView *s=&source->registry_read;
-        if(!s->initialized)ok=parent_copy_refuse(copy,"RegistryCapture");
-        else {
-            d->initialized=true;d->passive=s->passive;d->arena=&image->storage;d->stale=s->stale;d->incomplete=s->incomplete;d->refusal=s->refusal;
-            d->stale_name=s->stale_name;d->stale_expected=s->stale_expected;d->stale_actual=s->stale_actual;
-            /* Inactive entry links are not owned capture roots; enter writes
-             * fresh dynamic links under the destination episode. */
-            ok=parent_copy_registry(copy,&s->initial,&d->initial)&&parent_copy_registry(copy,&s->consulted,&d->consulted)&&
-                parent_copy_atom(copy,&d->stale_name)&&parent_copy_atom(copy,&d->stale_expected)&&parent_copy_atom(copy,&d->stale_actual);
-        }
-    }
+    if(ok)ok=parent_copy_registry_read_view(
+        copy,&source->registry_read,&image->registry_read);
 #define PA(f) if(ok)ok=parent_copy_atom(copy,&image->f)
     PA(active_key);PA(active_bound);PA(pending_effect);PA(source_expression);PA(weight_algebra);PA(weight_subject);
     PA(weight_coefficient_variable);PA(weight_factor_variable);PA(weight_refusal);PA(weight_frontier_bound);PA(weight_selected_bound);
@@ -1258,14 +1442,24 @@ static bool prime_native_parent_copy_with_session(const PrimeNativeControl *sour
     }
 #endif
     if (ok && episode_image) {
-        ok = arena_retain_owner_with_storage(&image->storage, episode_image,
+        ok = arena_retain_owner_with_storage(image_storage, episode_image,
             prime_native_top_episode_retain, prime_native_top_episode_release,
             prime_native_top_episode_storage);
-        if (ok) image->owned_top_episode = episode_image;
+        if (ok) {
+            image->owned_top_episode=episode_image;
+            image->owns_execution_episode=source->owns_execution_episode;
+        }
         else parent_copy_refuse(copy, "EpisodeOwnership");
     }
     if(refusal)*refusal=state.refusal;
     return ok;
+}
+
+static bool prime_native_parent_copy_with_session(const PrimeNativeControl *source,
+    PrimeNativeControl *image,AtomDeepCopySession *atoms,bool source_reserved,
+    SpaceCheckpointBudget *transaction,const char **refusal) {
+    return prime_native_parent_copy_with_session_profile(source,image,atoms,
+        source_reserved,transaction,NULL,NULL,refusal);
 }
 #undef PC_ATOM
 #undef PC_ARRAY
@@ -1282,6 +1476,7 @@ struct CettaPrimeCheckpointCopy {
     Atom *source_holder;
     AtomDeepCopyArenaPair pair;
     PrimeNativeTopEpisode *episode_image;
+    PrimeNeedEpisodeCopyPlan *episode_calls;
     PrimeParentSelectorImages selectors;
     const EquationMatchDecisionCache *service_selectors;
     EquationMatchDecisionCache service_selection_at_capture;
@@ -1318,6 +1513,8 @@ static void prime_checkpoint_context_retire(void *raw) {
     prime_native_control_destroy(copy->image);
     copy->image = NULL;
     parent_copy_selectors_free(&copy->selectors);
+    prime_need_episode_copy_plan_free(copy->episode_calls);
+    copy->episode_calls = NULL;
     if (copy->episode_image) prime_native_top_episode_release(copy->episode_image);
     copy->episode_image = NULL;
     copy->source = NULL;
@@ -1340,6 +1537,7 @@ static void prime_checkpoint_storage(const void *raw, CettaStorageCensus *census
         if(copy->selectors.items[i].image)
             equation_match_decision_owner_storage(copy->selectors.items[i].image,census);
     if (copy->episode_image) prime_native_top_episode_storage(copy->episode_image, census);
+    prime_need_episode_copy_plan_storage(copy->episode_calls,census);
 }
 
 static CettaPrimeCheckpointCopy *prime_checkpoint_copy_new_profile(
@@ -1434,6 +1632,13 @@ static CettaPrimeCheckpointCopy *prime_checkpoint_copy_new_profile(
             if (status) *status = CETTA_CONTINUATION_CAPACITY;
             return NULL;
         }
+        copy->episode_calls=prime_need_episode_copy_plan_new(source,image,
+            source->owned_top_episode,copy->episode_image);
+        if(!copy->episode_calls) {
+            cetta_prime_checkpoint_copy_free(copy);
+            if(status)*status=CETTA_CONTINUATION_CAPACITY;
+            return NULL;
+        }
     }
     copy->source_holder = cetta_native_handle_owned_atom(context, &copy->holder, "prime-search", id);
     if (!copy->source_holder) {
@@ -1502,9 +1707,12 @@ size_t cetta_prime_checkpoint_copy_arena_pair_count(const CettaPrimeCheckpointCo
     if (source) {
         if (!copy->episode_image || !parent_copy_episode_admitted(copy->source) ||
             source->regions.level_count > SIZE_MAX - 3u) return 0u;
-        count += 2u;
+        count += 1u+source->request_storage_ready;
         for (size_t i = 0u; i < source->regions.level_count; i++)
             if (source->regions.levels[i]) count++;
+        size_t episode_pairs=prime_need_episode_copy_pair_count(copy->episode_calls);
+        if(episode_pairs>SIZE_MAX-count)return 0u;
+        count+=episode_pairs;
     }
     if(copy->selectors.count>SIZE_MAX-count)return 0u;
     return count+copy->selectors.count;
@@ -1520,8 +1728,10 @@ bool cetta_prime_checkpoint_copy_arena_pair_at(const CettaPrimeCheckpointCopy *c
     if(source) {
         if (!index) { *pair = (AtomDeepCopyArenaPair){&source->arena, &image->arena}; return true; }
         index--;
-        if (!index) { *pair = (AtomDeepCopyArenaPair){&source->request_storage, &image->request_storage}; return true; }
-        index--;
+        if(source->request_storage_ready) {
+            if (!index) { *pair = (AtomDeepCopyArenaPair){&source->request_storage, &image->request_storage}; return true; }
+            index--;
+        }
         for (size_t i = 0u; i < source->regions.level_count; i++) {
             if (!source->regions.levels[i]) continue;
             if (!index) {
@@ -1530,6 +1740,10 @@ bool cetta_prime_checkpoint_copy_arena_pair_at(const CettaPrimeCheckpointCopy *c
             }
             index--;
         }
+        size_t episode_pairs=prime_need_episode_copy_pair_count(copy->episode_calls);
+        if(index<episode_pairs)
+            return prime_need_episode_copy_pair_at(copy->episode_calls,index,pair);
+        index-=episode_pairs;
     }
     if(index>=copy->selectors.count)return false;
     *pair=(AtomDeepCopyArenaPair){&copy->selectors.items[index].source->pattern_arena,
@@ -1542,11 +1756,41 @@ bool cetta_prime_checkpoint_copy_arena_pair(
     return cetta_prime_checkpoint_copy_arena_pair_at(copy, 0u, pair);
 }
 
+static bool prime_checkpoint_episode_capture(
+        const PrimeNativeTopEpisode *source,PrimeNativeTopEpisode *image,
+        AtomDeepCopySession *atoms,bool *capacity) {
+    errno=0;
+    bool copied=parent_copy_episode_capture(source,image,atoms);
+    *capacity=!copied&&errno==ENOMEM;
+    return copied;
+}
+
+static bool prime_checkpoint_producer_capture(PrimeNeedEpisodeCopyPlan *plan,
+        AtomDeepCopySession *atoms,const char **refusal,bool *capacity) {
+    errno=0;
+    bool copied=prime_need_episode_copy_capture(plan,atoms,refusal);
+    *capacity=!copied&&(errno==ENOMEM||
+        (*refusal&&!strcmp(*refusal,"Allocation")));
+    return copied;
+}
+
+static bool prime_checkpoint_control_capture(CettaPrimeCheckpointCopy *copy,
+        AtomDeepCopySession *atoms,bool *capacity) {
+    errno=0;
+    bool copied=prime_native_parent_copy_with_session(copy->source,copy->image,
+        atoms,true,copy->transaction_boundary?&copy->transaction_budget:NULL,
+        &copy->refusal);
+    *capacity=!copied&&(errno==ENOMEM||
+        (copy->refusal&&!strcmp(copy->refusal,"Allocation")));
+    return copied;
+}
+
 CettaContinuationStatus cetta_prime_checkpoint_copy_prepare(
     CettaPrimeCheckpointCopy *copy, AtomDeepCopySession *atoms) {
     if (!copy) return CETTA_CONTINUATION_UNSUPPORTED;
     if (copy->attempted) return copy->status;
     copy->attempted = true;
+    bool episode_capacity=false,producer_capacity=false,control_capacity=false;
     if (copy->context != g_library_context || !copy->reserved ||
         !prime_checkpoint_source_live(copy) || !copy->source->leased) {
         copy->status = CETTA_CONTINUATION_INVALIDATED;
@@ -1560,14 +1804,20 @@ CettaContinuationStatus cetta_prime_checkpoint_copy_prepare(
         !parent_copy_selectors_capture(copy->source,copy->image,copy->service_selectors,&copy->selectors,atoms)) {
         copy->status=CETTA_CONTINUATION_UNSUPPORTED;
         copy->refusal="EquationSelectorCapture";
-    } else if (copy->episode_image && !parent_copy_episode_capture(
-            copy->source->owned_top_episode, copy->episode_image, atoms)) {
-        copy->status = CETTA_CONTINUATION_UNSUPPORTED;
+    } else if (copy->episode_image && !prime_checkpoint_episode_capture(
+            copy->source->owned_top_episode, copy->episode_image, atoms,
+            &episode_capacity)) {
+        copy->status = episode_capacity ? CETTA_CONTINUATION_CAPACITY
+            : CETTA_CONTINUATION_UNSUPPORTED;
         copy->refusal = "EpisodeCapture";
-    } else if (!prime_native_parent_copy_with_session(copy->source, copy->image,
-            atoms, true, copy->transaction_boundary?&copy->transaction_budget:NULL,&copy->refusal)) {
-        copy->status = copy->refusal && strcmp(copy->refusal, "Allocation") == 0
-            ? CETTA_CONTINUATION_CAPACITY : parent_copy_refusal_status(copy->refusal);
+    } else if(copy->episode_calls&&!prime_checkpoint_producer_capture(
+            copy->episode_calls,atoms,&copy->refusal,&producer_capacity)) {
+        copy->status=producer_capacity ? CETTA_CONTINUATION_CAPACITY
+            : CETTA_CONTINUATION_UNSUPPORTED;
+        if(!copy->refusal)copy->refusal="EpisodeProducerCapture";
+    } else if (!prime_checkpoint_control_capture(copy,atoms,&control_capacity)) {
+        copy->status = control_capacity ? CETTA_CONTINUATION_CAPACITY
+            : parent_copy_refusal_status(copy->refusal);
     } else {
         bool target=true;
         if(copy->transaction_boundary) {

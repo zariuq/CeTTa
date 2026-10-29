@@ -4996,7 +4996,9 @@ CettaMatchCompletion bindings_import_production_checked(Arena *owner,
     }
     const PrimeNeedReceipt *receipt = NULL;
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
-    receipt = bindings_receipt_view(recipient);
+    PrimeNeedReceipt receipt_value = {0};
+    receipt_value = *bindings_receipt_view(recipient);
+    receipt = &receipt_value;
 #endif
     /* Join logical support without invoking the ambient occurrence/history
      * merge policy. All operational carriers were prepared above, and a live
@@ -5009,12 +5011,21 @@ CettaMatchCompletion bindings_import_production_checked(Arena *owner,
         PrimeNeedReaderContext *readers=NULL;
         result=prime_need_reader_context_import(bindings_reader_context_view(entrance),
             bindings_reader_context_view(production),bindings_reader_context_view(recipient),&readers);
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+        if (result==CETTA_MATCH_MATCHED) {
+            result=prime_need_receipt_join_qualified(owner,&receipt_value,
+                bindings_receipt_view(production));
+        }
+#endif
         if (result==CETTA_MATCH_MATCHED) {
             bindings_prime_set(&staged, &need, &state, occurrence, receipt, &weights);
             bindings_reader_context_set(&staged,readers);
             prime_need_reader_context_release(readers);
             bindings_replace(out, &staged);
-        } else bindings_free(&staged);
+        } else {
+            prime_need_reader_context_release(readers);
+            bindings_free(&staged);
+        }
     }
     else bindings_free(&staged);
     return result;

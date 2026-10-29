@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "shared_return_producer.h"
+#include "owned_return_image.h"
 #include "grounded.h"
 #include "foreign.h"
 #include "library.h"
@@ -346,6 +347,401 @@ static CettaOccurrenceLogInfo log_info(CettaSharedReturnProducer *producer) {
         cetta_shared_return_producer_log(producer), &info));
     assert(cetta_occurrence_log_valid(cetta_shared_return_producer_log(producer)));
     return info;
+}
+
+static bool copy_owned_buffer_row(void *context, uint64_t position,
+    const CettaOccurrenceRow *source, CettaOccurrenceRow *out) {
+    (void)position;
+    CettaSharedReturnRow image = {0};
+    if (!cetta_shared_return_capture_image(context, source->value, &image))
+        return false;
+    *out = (CettaOccurrenceRow){.value = image.returned,
+        .owner = image.owner, .release = image.release};
+    return true;
+}
+
+typedef struct {
+    CettaOwnedReturnImage *rows[2];
+    size_t length;
+} CopiedBufferRecipient;
+
+static bool accept_copied_buffer(void *context, uint64_t position, const void *value) {
+    CopiedBufferRecipient *recipient = context;
+    assert(recipient->length < 2u && position == recipient->length + 1u);
+    CettaOwnedReturnImage *image = cetta_owned_return_image_from_view(value);
+    if (!image || !cetta_owned_return_image_retain(image))
+        return false;
+    recipient->rows[recipient->length++] = image;
+    return true;
+}
+
+static void test_copied_return_buffer(void) {
+    Account account = {.compatible = true};
+    CettaOwnedExecution execution = new_execution(&account, 4u);
+    Computation *computation = execution.computation;
+    Atom *term = computation->packet.outcome.term;
+    Atom *parts[] = {term->expr.elems[0], term->expr.elems[1],
+        term->expr.elems[2], term->expr.elems[2]};
+    computation->packet.outcome.term = atom_expr(&computation->arena, parts, 4u);
+    computation->packet.outcome.delayed = atom_expr2(&computation->arena,
+        computation->packet.outcome.delayed->expr.elems[0], parts[1]);
+    CettaSharedReturnProducer *producer = cetta_shared_return_producer_new(
+        &execution, 2u, 3u, capture, compatible, &account);
+    assert(producer);
+    for (unsigned i = 0u; i < 3u; i++)
+        assert(cetta_shared_return_producer_advance(producer, 1u) == CETTA_SHARED_RETURN_PAUSED);
+    assert(account.effects == 3u && account.next_calls == 3u && account.captures == 3u);
+    CettaSharedReturnCheckpoint *bookmark = cetta_shared_return_checkpoint_new_scoped(producer, 0u);
+    Recipient recipient = {.producer = producer, .consumer = 0u};
+    assert(bookmark && take_answer(producer, 0u, &recipient, 0u).kind == CETTA_SHARED_DELIVERY_ANSWER);
+    release_recipient(&recipient);
+    assert(cetta_shared_return_producer_cancel(producer, 1u) &&
+        cetta_shared_return_producer_trim(producer) == 0u);
+    const CettaOccurrenceLog *source = cetta_shared_return_producer_log(producer);
+    CettaOccurrenceRow original;
+    assert(cetta_occurrence_log_row(source, 1u, &original));
+    const CettaOwnedReturn *borrowed = original.value;
+    assert(borrowed->outcome.term->expr.elems[1] == borrowed->outcome.delayed->expr.elems[1] &&
+        borrowed->outcome.term->expr.elems[2] == borrowed->outcome.term->expr.elems[3]);
+    CettaOccurrenceLog *image = cetta_occurrence_log_copy(source, copy_owned_buffer_row, NULL);
+    assert(image && cetta_occurrence_log_valid(image));
+    assert(account.effects == 3u && account.next_calls == 3u && account.captures == 3u);
+    CettaOccurrenceLogInfo info;
+    assert(cetta_occurrence_log_info(image, &info) && info.rows == 3u &&
+        info.consumers == 3u && !info.completed);
+    assert(cetta_occurrence_log_peek(image, 0u).position == 1u &&
+        cetta_occurrence_log_peek(image, 1u).kind == CETTA_OCCURRENCE_CANCELLED &&
+        cetta_occurrence_log_peek(image, 2u).kind == CETTA_OCCURRENCE_INVALID);
+    cetta_shared_return_producer_free(producer);
+    assert(account.released == 1u && account.freed == 3u && account.effects == 3u);
+    assert(cetta_shared_return_checkpoint_peek(bookmark).kind == CETTA_SHARED_DELIVERY_INVALID);
+    cetta_shared_return_checkpoint_release(bookmark);
+
+    Arena observed;
+    arena_init_detached(&observed);
+    CopiedBufferRecipient accepted = {0};
+    for (uint64_t position = 1u; position < 3u; position++) {
+        CettaOccurrenceReply reply = cetta_occurrence_log_peek(image, 0u);
+        const CettaOwnedReturn *returned = reply.value;
+        assert(reply.kind == CETTA_OCCURRENCE_ANSWER && reply.position == position &&
+            returned && returned->outcome.kind == CETTA_CALL_SUSPENDED && returned->environment);
+        Atom *term = returned->outcome.term, *delayed = returned->outcome.delayed;
+        assert(term->expr.elems[1] == delayed->expr.elems[1] &&
+            term->expr.elems[2] == term->expr.elems[3]);
+        Atom *value = bindings_apply((Bindings *)returned->environment, &observed, term);
+        Atom *goals = bindings_apply((Bindings *)returned->environment, &observed, delayed);
+        assert(strcmp(atom_to_string(&observed, value), "(closure 7 7 7)") == 0 &&
+            strcmp(atom_to_string(&observed, goals), "(check 7)") == 0);
+        assert(cetta_occurrence_log_take(image, 0u, accept_copied_buffer, &accepted).position == position);
+    }
+    /* Copying a buffered prefix neither runs the fourth effect nor proves
+     * the unfinished source complete when that prefix has been consumed. */
+    assert(cetta_occurrence_log_peek(image, 0u).kind == CETTA_OCCURRENCE_PAUSED &&
+        account.effects == 3u && account.next_calls == 3u);
+    assert(cetta_occurrence_log_pin_release(image, 2u) && cetta_occurrence_log_trim(image) == 3u);
+    cetta_occurrence_log_free(image);
+    assert(accepted.length == 2u);
+    for (size_t i = 0u; i < accepted.length; i++) {
+        const CettaOwnedReturn *returned = cetta_owned_return_image_view(accepted.rows[i]);
+        assert(strcmp(atom_to_string(&observed, bindings_apply(
+            (Bindings *)returned->environment, &observed, returned->outcome.delayed)), "(check 7)") == 0);
+        cetta_owned_return_image_release(accepted.rows[i]);
+    }
+    arena_free(&observed);
+    puts("PASS: copied return buffers preserve reader positions, aliases and delayed bindings after source retirement without replay or false exhaustion");
+}
+
+typedef struct {
+    CettaSharedReturnProducer *source, *image;
+    const CettaSharedReturnCheckpoint *source_positions[3];
+    CettaSharedReturnCheckpoint *positions[3];
+    Account account;
+    size_t mapped, row_calls, execution_calls, compatibility_checks;
+    unsigned refusal;
+} SharedCopyFixture;
+
+static bool map_shared_producer(void *raw, const CettaSharedReturnProducer *source,
+    CettaSharedReturnProducer *image) {
+    SharedCopyFixture *copy = raw;
+    assert(source == copy->source && source != image);
+    copy->image = image;
+    assert(cetta_shared_return_producer_advance(image, 1u) == CETTA_SHARED_RETURN_INVALID &&
+        cetta_shared_return_producer_peek(image, 0u).kind == CETTA_SHARED_DELIVERY_INVALID &&
+        !cetta_shared_return_producer_execution(image) && !cetta_shared_return_producer_log(image) &&
+        !cetta_shared_return_producer_cancel(image, 0u) && !cetta_shared_return_producer_trim(image) &&
+        !cetta_shared_return_checkpoint_new(image, 0u));
+    assert(!copy->compatibility_checks);
+    return copy->refusal != 1u;
+}
+
+static bool map_shared_checkpoint(void *raw, const CettaSharedReturnCheckpoint *source,
+    CettaSharedReturnCheckpoint *image) {
+    SharedCopyFixture *copy = raw;
+    uint64_t before, after;
+    assert(source != image && cetta_shared_return_checkpoint_position(source, &before) &&
+        cetta_shared_return_checkpoint_position(image, &after) && before == after);
+    assert(cetta_shared_return_checkpoint_peek(image).kind == CETTA_SHARED_DELIVERY_INVALID &&
+        cetta_shared_return_checkpoint_advance(image, 1u) == CETTA_SHARED_RETURN_INVALID);
+    assert(!copy->compatibility_checks);
+    if (copy->refusal == 2u && copy->mapped == 1u)
+        return false;
+    if (copy->refusal == 6u)
+        return true; /* A map without a receiving owner must be refused. */
+    assert(copy->mapped < 3u && cetta_shared_return_checkpoint_retain(image));
+    copy->source_positions[copy->mapped] = source;
+    copy->positions[copy->mapped++] = image;
+    return true;
+}
+
+static bool copy_shared_row(void *raw, uint64_t position,
+    const CettaOccurrenceRow *source, CettaOccurrenceRow *out) {
+    SharedCopyFixture *copy = raw;
+    (void)position;
+    if (++copy->row_calls == 2u && copy->refusal == 3u)
+        return false;
+    CettaSharedReturnRow image = {0};
+    if (!capture(&copy->account, source->value, &image))
+        return false;
+    *out = (CettaOccurrenceRow){.value = image.returned, .owner = image.owner,
+        .release = image.release};
+    return true;
+}
+
+static void hold_copied_packet(void *raw) {
+    bool held = cetta_owned_return_image_retain(raw);
+    assert(held);
+}
+
+static bool copy_shared_execution(void *raw, const CettaOwnedExecution *source,
+    CettaOwnedExecution *out) {
+    SharedCopyFixture *copy = raw;
+    copy->execution_calls++;
+    if (copy->refusal == 4u)
+        return false;
+    if (copy->refusal == 7u) {
+        *out = *source; /* Borrowing the actual source is not copying it. */
+        return true;
+    }
+    const Computation *original = source->computation;
+    Computation *image = calloc(1u, sizeof(*image));
+    if (!image)
+        return false;
+    image->account = &copy->account;
+    image->count = original->count;
+    image->pause_once = original->pause_once;
+    image->incomplete = original->incomplete;
+    image->handoff = original->handoff;
+    image->change_during_next = original->change_during_next;
+    arena_init_detached(&image->arena);
+    bindings_init(&image->bindings);
+    CettaOwnedReturnImage *packet = cetta_owned_return_image_capture(&original->packet, NULL);
+    if (!packet) {
+        release_computation(image);
+        return false;
+    }
+    if (!arena_retain_owner(&image->arena, packet, hold_copied_packet,
+            cetta_owned_return_image_release)) {
+        cetta_owned_return_image_release(packet);
+        release_computation(image);
+        return false;
+    }
+    image->packet = *cetta_owned_return_image_view(packet);
+    cetta_owned_return_image_release(packet);
+    copy->account.emitted = original->account->emitted;
+    *out = *source;
+    out->computation = image;
+    out->pending = source->has_pending ? image->packet : (CettaOwnedReturn){0};
+    if (source->has_pending)
+        assert(source->pending.outcome.term == original->packet.outcome.term &&
+            source->pending.outcome.delayed == original->packet.outcome.delayed &&
+            source->pending.environment == original->packet.environment);
+    if (copy->refusal == 5u)
+        out->accepted++;
+    return true;
+}
+
+static bool copied_producer_capture(void *raw, const CettaOwnedReturn *returned,
+    CettaSharedReturnRow *out) {
+    SharedCopyFixture *copy = raw;
+    return capture(&copy->account, returned, out);
+}
+
+static bool copied_producer_compatible(void *raw) {
+    SharedCopyFixture *copy = raw;
+    copy->compatibility_checks++;
+    return compatible(&copy->account);
+}
+
+static CettaSharedReturnCopy shared_copy_policy(SharedCopyFixture *copy) {
+    return (CettaSharedReturnCopy){.context = copy,
+        .producer = map_shared_producer, .checkpoint = map_shared_checkpoint,
+        .execution = copy_shared_execution, .row = copy_shared_row,
+        .capture = copied_producer_capture, .compatible = copied_producer_compatible,
+        .image_context = copy};
+}
+
+static void release_copied_checkpoints(SharedCopyFixture *copy, bool refused) {
+    for (size_t i = 0u; i < copy->mapped; i++) {
+        if (refused)
+            assert(cetta_shared_return_checkpoint_peek(copy->positions[i]).kind ==
+                CETTA_SHARED_DELIVERY_INVALID);
+        cetta_shared_return_checkpoint_release(copy->positions[i]);
+        copy->positions[i] = NULL;
+    }
+    copy->mapped = 0u;
+}
+
+static bool accept_checkpoint(void *context, uint64_t position,
+    const CettaOwnedReturn *returned, CettaSharedReturnCheckpoint *next) {
+    (void)context; (void)position; (void)returned; (void)next;
+    return true;
+}
+
+static void test_producer_copy(void) {
+    Account source_account = {.compatible = true};
+    CettaOwnedExecution execution = new_execution(&source_account, 4u);
+    CettaSharedReturnProducer *source = cetta_shared_return_producer_new(
+        &execution, 2u, 3u, capture, compatible, &source_account);
+    assert(source);
+    CettaSharedReturnCheckpoint *first = cetta_shared_return_checkpoint_new(source, 0u);
+    CettaSharedReturnCheckpoint *scoped = cetta_shared_return_checkpoint_new_scoped(source, 0u);
+    for (unsigned i = 0u; i < 3u; i++)
+        assert(cetta_shared_return_producer_advance(source, 1u) == CETTA_SHARED_RETURN_PAUSED);
+    CettaSharedReturnCheckpoint *later = NULL;
+    assert(first && scoped && cetta_shared_return_checkpoint_take(first,
+        accept_checkpoint, NULL, &later).kind == CETTA_SHARED_DELIVERY_ANSWER);
+    Recipient recipient = {.producer = source, .consumer = 0u};
+    for (uint64_t i = 0u; i < 3u; i++)
+        take_answer(source, 0u, &recipient, i);
+    release_recipient(&recipient);
+    assert(cetta_shared_return_producer_cancel(source, 1u));
+
+    for (unsigned refusal = 1u; refusal < 8u; refusal++) {
+        SharedCopyFixture failed = {.source = source, .account = {.compatible = true},
+            .refusal = refusal};
+        CettaSharedReturnCopy policy = shared_copy_policy(&failed);
+        assert(!cetta_shared_return_producer_copy(source, &policy));
+        release_copied_checkpoints(&failed, true);
+        assert(!failed.compatibility_checks);
+        assert(source_account.effects == 3u && source_account.next_calls == 3u &&
+            !source_account.released && !source_account.freed);
+        assert(cetta_shared_return_checkpoint_peek(first).position == 0u &&
+            cetta_shared_return_checkpoint_peek(later).position == 1u &&
+            log_info(source).rows == 3u &&
+            cetta_shared_return_producer_execution(source)->accepted == 3u);
+        assert(failed.account.freed == failed.account.captures);
+    }
+    for (unsigned failure = 0u; failure < 5u; failure++) {
+        SharedCopyFixture failed = {.source = source, .account = {.compatible = true}};
+        CettaSharedReturnCopy policy = shared_copy_policy(&failed);
+        if (failure < 2u) fail_calloc = failure + 1u;
+        else fail_malloc = failure - 1u;
+        assert(!cetta_shared_return_producer_copy(source, &policy) && !fail_calloc && !fail_malloc);
+        release_copied_checkpoints(&failed, true);
+        assert(source_account.effects == 3u && !source_account.released && log_info(source).rows == 3u);
+    }
+
+    SharedCopyFixture copied = {.source = source, .account = {.compatible = true}};
+    CettaSharedReturnCopy policy = shared_copy_policy(&copied);
+    CettaSharedReturnProducer *image = cetta_shared_return_producer_copy(source, &policy);
+    assert(image && image == copied.image && copied.mapped == 3u && copied.execution_calls == 1u &&
+        !copied.compatibility_checks &&
+        source_account.effects == 3u && source_account.next_calls == 3u && !copied.account.effects &&
+        !copied.account.next_calls && copied.account.emitted == 3u);
+    assert(cetta_shared_return_producer_execution(image)->accepted == 3u &&
+        cetta_shared_return_producer_peek(image, 0u).kind == CETTA_SHARED_DELIVERY_PAUSED &&
+        cetta_shared_return_producer_advance(image, 1u) == CETTA_SHARED_RETURN_BACKPRESSURE);
+    cetta_shared_return_producer_free(source);
+    cetta_shared_return_checkpoint_release(first);
+    cetta_shared_return_checkpoint_release(scoped);
+    cetta_shared_return_checkpoint_release(later);
+    assert(source_account.released == 1u && source_account.freed == 3u);
+    for (size_t i = 0u; i < copied.mapped; i++) {
+        uint64_t position;
+        assert(cetta_shared_return_checkpoint_position(copied.positions[i], &position));
+        if (!position) {
+            cetta_shared_return_checkpoint_release(copied.positions[i]);
+            copied.positions[i] = NULL;
+        }
+    }
+    CettaSharedReturnCheckpoint *retained = NULL;
+    for (size_t i = 0u; i < copied.mapped; i++)
+        if (copied.positions[i]) retained = copied.positions[i];
+    assert(retained);
+    cetta_shared_return_producer_free(image);
+    assert(!copied.account.released &&
+        cetta_shared_return_checkpoint_advance(retained, 1u) == CETTA_SHARED_RETURN_PAUSED &&
+        copied.account.effects == 1u && copied.account.next_calls == 1u);
+    Recipient image_recipient = {.producer = image, .consumer = 0u};
+    take_answer(image, 0u, &image_recipient, 3u);
+    release_recipient(&image_recipient);
+    CettaSharedReturnCheckpoint *at_end = cetta_shared_return_checkpoint_new(image, 0u);
+    assert(at_end);
+    release_copied_checkpoints(&copied, false);
+    assert(cetta_shared_return_producer_trim(image) == 3u &&
+        cetta_shared_return_checkpoint_advance(at_end, 1u) == CETTA_SHARED_RETURN_COMPLETE &&
+        copied.account.effects == 1u && copied.account.next_calls == 2u &&
+        cetta_shared_return_producer_execution(image)->accepted == 4u);
+    cetta_shared_return_checkpoint_release(at_end);
+    assert(copied.account.released == 1u && copied.account.freed == 4u);
+    puts("PASS: shared producer copies preserve buffered roots, checkpoint ownership, backpressure and paid continuation without replay; partial or borrowed images refuse");
+}
+
+static void test_pending_producer_copy(void) {
+    Account account = {.compatible = true, .refuse_capture = true};
+    CettaOwnedExecution execution = new_execution(&account, 2u);
+    CettaSharedReturnProducer *source = cetta_shared_return_producer_new(
+        &execution, 1u, 2u, capture, compatible, &account);
+    assert(source && cetta_shared_return_producer_advance(source, 1u) == CETTA_SHARED_RETURN_CAPTURE_REFUSED);
+    SharedCopyFixture copied = {.source = source, .account = {.compatible = true}};
+    CettaSharedReturnCopy policy = shared_copy_policy(&copied);
+    CettaSharedReturnProducer *image = cetta_shared_return_producer_copy(source, &policy);
+    assert(image && cetta_shared_return_producer_execution(image)->has_pending &&
+        !cetta_shared_return_producer_execution(image)->accepted &&
+        cetta_shared_return_producer_execution(source)->has_pending);
+    assert(cetta_shared_return_producer_advance(image, 1u) == CETTA_SHARED_RETURN_PAUSED &&
+        !cetta_shared_return_producer_execution(image)->has_pending &&
+        cetta_shared_return_producer_execution(image)->accepted == 1u &&
+        !copied.account.next_calls && !copied.account.effects &&
+        account.next_calls == 1u && account.effects == 1u);
+    cetta_shared_return_producer_free(source);
+    cetta_shared_return_producer_free(image);
+    assert(account.released == 1u && copied.account.released == 1u && copied.account.freed == 1u);
+    puts("PASS: a copied pending return is accepted without polling or repeating its already-paid effect");
+}
+
+static void test_terminal_producer_copy(bool detached) {
+    Account account = {.compatible = true};
+    CettaOwnedExecution execution = new_execution(&account, 1u), tail = {0};
+    CettaSharedReturnProducer *source = cetta_shared_return_producer_new(
+        &execution, 1u, 2u, capture, compatible, &account);
+    assert(source && cetta_shared_return_producer_advance(source, 1u) == CETTA_SHARED_RETURN_PAUSED);
+    if (detached)
+        assert(cetta_shared_return_producer_detach_execution(source, &tail));
+    else
+        assert(cetta_shared_return_producer_advance(source, 1u) == CETTA_SHARED_RETURN_COMPLETE);
+    SharedCopyFixture copied = {.source = source, .account = {.compatible = true}};
+    CettaSharedReturnCopy policy = shared_copy_policy(&copied);
+    if (detached) policy.execution = NULL;
+    CettaSharedReturnProducer *image = cetta_shared_return_producer_copy(source, &policy);
+    assert(image && !copied.mapped &&
+        copied.execution_calls == (detached ? 0u : 1u) &&
+        cetta_shared_return_producer_advance(image, 1u) ==
+            (detached ? CETTA_SHARED_RETURN_DETACHED : CETTA_SHARED_RETURN_COMPLETE) &&
+        !copied.account.next_calls && !copied.account.effects);
+    assert(detached ? !cetta_shared_return_producer_execution(image) :
+        cetta_shared_return_producer_execution(image)->accepted == 1u);
+    cetta_shared_return_producer_free(source);
+    cetta_owned_execution_cancel(&tail);
+    assert(account.released == 1u && account.freed == 1u);
+    Recipient recipient = {.producer = image, .consumer = 0u};
+    take_answer(image, 0u, &recipient, 0u);
+    release_recipient(&recipient);
+    assert(cetta_shared_return_producer_peek(image, 0u).kind ==
+        (detached ? CETTA_SHARED_DELIVERY_PAUSED : CETTA_SHARED_DELIVERY_COMPLETED));
+    assert(cetta_shared_return_producer_trim(image) == 1u);
+    cetta_shared_return_producer_free(image);
+    assert(copied.account.released == (detached ? 0u : 1u) && copied.account.freed == 1u);
 }
 
 static void test_refusal_and_owned_graph(void) {
@@ -2374,6 +2770,11 @@ int main(int argc, char **argv) {
         test_prime_native_return_boundary();
     } else if (!oem_native_fixture) {
         test_refusal_and_owned_graph();
+        test_copied_return_buffer();
+        test_producer_copy();
+        test_pending_producer_copy();
+        test_terminal_producer_copy(false);
+        test_terminal_producer_copy(true);
         test_authority_and_detachment();
         test_construction_and_terminal_states();
         test_pending_return_detachment();

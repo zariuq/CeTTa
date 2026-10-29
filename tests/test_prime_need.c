@@ -2457,6 +2457,25 @@ static void check_state_production_import(void) {
         prime_need_branch_state_write(&source,&entrance,&c,c.value,atom_int(&source,1),&right);
     CHECK(ready, "State producer and recipient retain distinct earlier a writes");
     if (!ready) goto done;
+    PrimeNeedBranchState no_state_result={0};
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&entrance,
+        &recipient,state_import_initial,&view,&no_state_result)==CETTA_MATCH_MATCHED &&
+        no_state_result.top==recipient.top && state_import_number(&no_state_result,&a,2),
+        "a row with no post-entrance State event preserves a different recipient branch");
+    PrimeNeedBranchState absent_recipient={0};
+    no_state_result=recipient;
+    CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&entrance,
+        &absent_recipient,state_import_initial,&view,&no_state_result)==CETTA_MATCH_MATCHED &&
+        !no_state_result.top && !no_state_result.session_id && !no_state_result.owner,
+        "a row with no post-entrance State event preserves an absent recipient world");
+    PrimeNeedBranchState foreign_root={0},foreign_recipient={0},foreign_result={0};
+    CHECK(prime_need_branch_state_begin(&source,&foreign_root) &&
+        prime_need_branch_state_write(&source,&foreign_root,&a,a.value,atom_int(&source,4),
+            &foreign_recipient) && foreign_recipient.session_id!=common.session_id &&
+        prime_need_branch_state_import_suffix(&receiving,&common,&entrance,&entrance,
+            &foreign_recipient,state_import_initial,&view,&foreign_result)==CETTA_MATCH_MATCHED &&
+        foreign_result.top==foreign_recipient.top && state_import_number(&foreign_result,&a,4),
+        "a row with no post-entrance State event preserves a foreign recipient session");
     production = left;
     CHECK(prime_need_branch_state_merge(&production,&right),
         "the produced suffix has independent b and c branches joined above the entrance");
@@ -2595,6 +2614,68 @@ static void check_state_production_import(void) {
         "a generic join and suffix completion retain the same canonical events without counting e twice");
     CHECK(prime_need_branch_state_same_writes_checked(&joined,&full,&b)==CETTA_MATCH_MATCHED,
         "input write comparison retains canonical order across join and suffix representations");
+#if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+    PrimeNeedReceiptEvent original_write={0};bool held=false;
+    CHECK(prime_need_receipt_event_at(&original_e,0u,&original_write) &&
+        original_write.kind==PRIME_NEED_RECEIPT_WRITE_STATE,
+        "State entrance-membership control names one canonical write occurrence");
+    CHECK(prime_need_branch_state_holds_write_checked(&original_e,&b,
+            original_write.event_id,&held)==CETTA_MATCH_MATCHED && held &&
+        prime_need_branch_state_holds_write_checked(&graft,&b,
+            original_write.event_id,&held)==CETTA_MATCH_MATCHED && held &&
+        prime_need_branch_state_holds_write_checked(&original_f,&b,
+            original_write.event_id,&held)==CETTA_MATCH_MATCHED && held,
+        "canonical State write membership survives later writes and physical graft aliases");
+    held=true;
+    CHECK(prime_need_branch_state_holds_write_checked(&common,&b,
+            original_write.event_id,&held)==CETTA_MATCH_MATCHED && !held &&
+        prime_need_branch_state_holds_write_checked(&original_e,&a,
+            original_write.event_id,&held)==CETTA_MATCH_REFUTED && !held,
+        "missing writes report false while a mismatched cell cannot reuse the occurrence identity");
+#endif
+    Atom *version_value = NULL;
+    uint64_t e_write = 0u, f_write = 0u, selected_write = 0u;
+    CHECK(prime_need_branch_state_lookup_version_checked(&original_e,&b,&version_value,&e_write)==
+        CETTA_MATCH_MATCHED && version_value && version_value->ground.ival==1 && e_write,
+        "a State value identifies its actual supplying write");
+    CHECK(prime_need_branch_state_lookup_version_checked(&original_f,&b,&version_value,&f_write)==
+        CETTA_MATCH_MATCHED && version_value && version_value->ground.ival==2 && f_write && f_write!=e_write,
+        "a later canonical write supplies a distinct State version");
+    CHECK(prime_need_branch_state_lookup_version_checked(&graft,&b,&version_value,&selected_write)==
+        CETTA_MATCH_MATCHED && version_value && version_value->ground.ival==1 && selected_write==e_write,
+        "a deeper graft retains the original write identity, not its physical copy identity");
+    CHECK(prime_need_branch_state_lookup_version_checked(&joined,&b,&version_value,&selected_write)==
+        CETTA_MATCH_MATCHED && version_value && version_value->ground.ival==2 && selected_write==f_write,
+        "canonical ancestry selects f despite the deeper receiving record of e");
+    CHECK(prime_need_branch_state_lookup_version_checked(&full,&b,&version_value,&selected_write)==
+        CETTA_MATCH_MATCHED && version_value && version_value->ground.ival==2 && selected_write==f_write,
+        "suffix completion and generic join expose the same supplying occurrence");
+    CHECK(prime_need_branch_state_lookup_version_checked(&rival,&b,&version_value,&selected_write)==
+        CETTA_MATCH_MATCHED && version_value && version_value->ground.ival==1 && selected_write && selected_write!=e_write,
+        "independent equal-valued writes cannot share a causal anchor");
+    version_value = b.value; selected_write = f_write;
+    CHECK(prime_need_branch_state_lookup_version_checked(&common,&b,&version_value,&selected_write)==
+        CETTA_MATCH_MATCHED && !version_value && !selected_write,
+        "an untouched logical State does not read a physical value or invent a write");
+    CHECK(prime_need_branch_state_lookup_version_checked(&absent,&b,&version_value,&selected_write)==
+        CETTA_MATCH_MATCHED && !version_value && !selected_write,
+        "an absent State has no logical value or write occurrence");
+    version_value = b.value; selected_write = f_write;
+    CHECK(prime_need_branch_state_lookup_version_checked(&malformed,&b,&version_value,&selected_write)==
+        CETTA_MATCH_INCOMPLETE && version_value==b.value && selected_write==f_write,
+        "an uninitialized State leaves the coherent output pair untouched");
+    CHECK(prime_need_branch_state_lookup_version_checked(&full,&b,&version_value,NULL)==
+        CETTA_MATCH_INCOMPLETE && version_value==b.value && selected_write==f_write &&
+        prime_need_branch_state_lookup_version_checked(&full,&b,NULL,&selected_write)==
+        CETTA_MATCH_INCOMPLETE && selected_write==f_write,
+        "an incomplete observation destination publishes neither output");
+    PrimeNeedBranchState inconsistent_read = {0};
+    CHECK(prime_need_branch_state_read(&source,&original_f,&b,atom_int(&source,99),&inconsistent_read),
+        "the raw State witness constructor can expose an inconsistent recorded read");
+    CHECK(prime_need_branch_state_lookup_version_checked(&inconsistent_read,&b,
+        &version_value,&selected_write)==CETTA_MATCH_REFUTED && version_value==b.value &&
+        selected_write==f_write,
+        "a read value cannot claim a supplying write with a different payload");
     PrimeNeedBranchState independent_c = {0}, e_on_f = {0}, f_on_e = {0};
     CHECK(prime_need_branch_state_write(&source,&common,&c,c.value,atom_int(&source,1),&independent_c) &&
         prime_need_branch_state_import_suffix(&receiving,&common,&common,&original_e,&independent_c,
@@ -2621,6 +2702,9 @@ static void check_state_production_import(void) {
         "a read-only component retains both distinct canonical observations");
     CHECK(prime_need_branch_state_same_writes_checked(&read_e,&e_on_f,&b)==CETTA_MATCH_MATCHED,
         "equal commuting read-only additions preserve the selected write input");
+    CHECK(prime_need_branch_state_lookup_version_checked(&e_on_f,&b,&version_value,&selected_write)==
+        CETTA_MATCH_MATCHED && version_value && atom_eq(version_value,b.value) && !selected_write,
+        "a commuting read frontier reports its selected initial value without a fictitious write");
     CHECK(prime_need_branch_state_import_suffix(&receiving,&common,&common,&read_e,&e_on_f,
         state_import_initial,&view,&repeated) == CETTA_MATCH_MATCHED && repeated.top == e_on_f.top,
         "an already-held read remains idempotent inside a commuting read component");
@@ -2633,6 +2717,9 @@ static void check_state_production_import(void) {
     }
     CHECK(prime_need_branch_state_write(&receiving,&e_on_f,&b,b.value,atom_int(&receiving,2),&after) &&
         state_import_number(&after,&b,2), "an explicitly later write wins after the joined read frontier");
+    CHECK(prime_need_branch_state_lookup_version_checked(&after,&b,&version_value,&selected_write)==
+        CETTA_MATCH_MATCHED && version_value && version_value->ground.ival==2 && selected_write,
+        "a write after joined reads becomes the supplying occurrence");
     Atom *zero = b.value;
     view.values[1] = atom_int(&persistent,7);
     PrimeNeedBranchState selected = {0}, selected_result = {0};
@@ -2656,6 +2743,9 @@ static void check_state_production_import(void) {
     arena_free(&receiving); arena_init_detached(&receiving);
     CHECK(state_import_number(&retained,&a,100) && state_import_number(&retained,&b,2),
         "promoted grafts survive both original physical history owners retiring");
+    CHECK(prime_need_branch_state_lookup_version_checked(&retained,&b,&version_value,&selected_write)==
+        CETTA_MATCH_MATCHED && version_value && version_value->ground.ival==2 && selected_write==f_write,
+        "the supplying write survives promotion and retirement of original and receiving arenas");
 done:
     arena_free(&source); arena_free(&receiving); arena_free(&persistent);
 }
@@ -3167,6 +3257,142 @@ static void check_private_need_suffix(Arena *arena, Arena *promoted_arena) {
 }
 
 #if CETTA_BUILD_WITH_PRIME_CAUSAL_RECEIPTS
+static void check_qualified_receipt_join(void) {
+    Arena common_owner,left_owner,right_owner,output_owner,payload_owner;
+    arena_init_detached(&common_owner);arena_init_detached(&left_owner);
+    arena_init_detached(&right_owner);arena_init_detached(&output_owner);
+    arena_init_detached(&payload_owner);
+    Atom *zero=atom_int(&payload_owner,0),*one=atom_int(&payload_owner,1);
+    StateCell cell={.value=zero};
+    PrimeNeedReceipt root={0},left={0},right={0},joined={0};
+    bool ready=prime_need_receipt_begin(&common_owner,&root) &&
+        prime_need_receipt_read_state(&common_owner,&root,&cell,zero,&left) &&
+        prime_need_receipt_write_state(&common_owner,&root,&cell,zero,one,&right);
+    CHECK(ready,"qualified receipt join has sibling read and write evidence");
+    CHECK(ready && prime_need_receipt_promote(&left_owner,&left) &&
+        prime_need_receipt_promote(&right_owner,&right),
+        "qualified receipt inputs retain independent physical owners");
+    PrimeNeedReceipt ordinary=left;
+    CHECK(!prime_need_receipt_merge(&ordinary,&right) && ordinary.top==left.top,
+        "an unqualified receipt merge still rejects incomparable State effects");
+    joined=left;
+    CHECK(prime_need_receipt_join_qualified(&output_owner,&joined,&right)==
+        CETTA_MATCH_MATCHED && joined.owner==&output_owner,
+        "operational qualification admits a causal evidence join in the destination owner");
+    PrimeNeedReceiptGraph graph={0};
+    CHECK(prime_need_receipt_graph_collect(&joined,&graph)==PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        graph.length==3u && graph.event_count==2u && !graph.nodes[2].has_event &&
+        graph.nodes[2].left_id && graph.nodes[2].right_id &&
+        graph.nodes[2].left_id!=graph.nodes[2].right_id,
+        "qualified join retains both exact event occurrences under one fresh causal node");
+    uint64_t joined_identity=graph.root_id;
+    prime_need_receipt_graph_free(&graph);
+    CHECK(prime_need_receipt_join_qualified(&output_owner,&joined,&right)==
+        CETTA_MATCH_MATCHED &&
+        prime_need_receipt_graph_collect(&joined,&graph)==PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        graph.root_id==joined_identity && graph.event_count==2u,
+        "reimporting held evidence is idempotent across promoted aliases");
+    const PrimeNeedReceiptFrame *joined_top=joined.top;
+    PrimeNeedReceipt foreign={0};
+    CHECK(prime_need_receipt_begin(&payload_owner,&foreign) &&
+        prime_need_receipt_observe_cell(&payload_owner,&foreign,77u,91u,one,&foreign),
+        "foreign receipt session supplies real evidence");
+    CHECK(prime_need_receipt_join_qualified(&output_owner,&joined,&foreign)==
+        CETTA_MATCH_REFUTED && joined.top==joined_top,
+        "qualified joining never identifies independent receipt sessions");
+    PrimeNeedSnapshot need_root={0},need_empty={0},need_running={0},need_done={0};
+    uint64_t need_cell=0u,need_evaluator=prime_need_fresh_evaluator_id(),need_update=0u;
+    bool need_ready=prime_need_snapshot_begin(&need_root) &&
+        prime_need_snapshot_allocate(&common_owner,&need_root,one,&need_empty,&need_cell) &&
+        prime_need_snapshot_start_evaluation(&common_owner,&need_empty,need_cell,
+            need_evaluator,&need_running) &&
+        prime_need_snapshot_resolve_value(&common_owner,&need_running,need_cell,
+            need_evaluator,one,&need_done) &&
+        prime_need_snapshot_cached_update_id(&need_done,need_cell,&need_update);
+    PrimeNeedReceipt need_catalogue={0};
+    CHECK(need_ready && prime_need_receipt_observe_cached_cell(&common_owner,&root,
+        &need_done,need_cell,true,false,one,&need_catalogue),
+        "cached anchor catalogue contains one actual completed update");
+    PrimeNeedReceipt need_anchored=root;bool found=false;
+    CHECK(prime_need_receipt_join_cached_anchor_qualified(&output_owner,&need_anchored,
+        &need_catalogue,need_done.session_id,need_cell,need_update,&found)==
+        CETTA_MATCH_MATCHED && found && prime_need_receipt_event_count(&need_anchored)==1u,
+        "cached observation selects the exact producer-completion prefix");
+    const PrimeNeedReceiptFrame *need_top=need_anchored.top;found=true;
+    found=false;
+    CHECK(prime_need_receipt_join_cached_anchor_qualified(&output_owner,&need_anchored,
+        &root,need_done.session_id,need_cell,need_update,&found)==CETTA_MATCH_MATCHED &&
+        found && need_anchored.top==need_top,
+        "an already-held producer completion needs no entrance-catalogue copy");
+    found=true;
+    CHECK(prime_need_receipt_join_cached_anchor_qualified(&output_owner,&need_anchored,
+        &need_catalogue,need_done.session_id,need_cell,need_update+1u,&found)==
+        CETTA_MATCH_INCOMPLETE && found && need_anchored.top==need_top,
+        "missing plain cached evidence refuses without changing output or found flag");
+    PrimeNeedBranchState operation_root={0},operation={0};
+    PrimeNeedReceipt state_catalogue={0};PrimeNeedReceiptEvent state_event={0};
+    bool state_ready=prime_need_branch_state_begin(&common_owner,&operation_root) &&
+        prime_need_branch_state_write(&common_owner,&operation_root,&cell,zero,one,&operation) &&
+        prime_need_receipt_event_at(&operation,0u,&state_event) && state_event.event_id &&
+        prime_need_receipt_record_state(&common_owner,&root,&operation,&state_catalogue);
+    CHECK(state_ready,"State anchor catalogue records one exact operational write");
+    PrimeNeedReceipt state_anchored=root;found=false;
+    CHECK(state_ready && prime_need_receipt_join_state_anchor_qualified(&output_owner,
+        &state_anchored,&state_catalogue,state_event.event_id,&found)==CETTA_MATCH_MATCHED &&
+        found && prime_need_receipt_event_count(&state_anchored)==1u,
+        "State observation selects its canonical supplying-write prefix");
+    prime_need_receipt_graph_free(&graph);
+    arena_free(&common_owner);arena_free(&left_owner);arena_free(&right_owner);
+    CHECK(prime_need_receipt_graph_collect(&joined,&graph)==PRIME_NEED_RECEIPT_GRAPH_COMPLETE &&
+        graph.length==3u,"qualified receipt output survives every shorter-lived source owner");
+    prime_need_receipt_graph_free(&graph);
+    CHECK(prime_need_receipt_join_qualified(NULL,&joined,NULL)==CETTA_MATCH_INCOMPLETE &&
+        joined.top==joined_top,"missing destination ownership refuses without changing the receipt");
+    PrimeNeedRecording *group=prime_need_recording_new(
+        (PrimeNeedRecordingLimits){8u,65536u,3u,4u});
+    PrimeNeedReceipt recorded_left={0},recorded_right={0};
+    bool recorded=group && prime_need_recording_reserve(group,NULL,4u,16384u,&recorded_left) &&
+        prime_need_recording_reserve(group,NULL,4u,16384u,&recorded_right) &&
+        prime_need_receipt_observe_cell(&payload_owner,&recorded_left,81u,1u,zero,&recorded_left) &&
+        prime_need_receipt_observe_cell(&payload_owner,&recorded_right,81u,2u,one,&recorded_right);
+    CHECK(recorded,"qualified receipt recording control has two bounded branches");
+    PrimeNeedRecordingScope scope;
+    if(recorded) prime_need_recording_enter(&scope,&recorded_left);
+    CettaMatchCompletion recorded_join=recorded
+        ? prime_need_receipt_join_qualified(&output_owner,&recorded_left,&recorded_right)
+        : CETTA_MATCH_INCOMPLETE;
+    if(recorded) prime_need_recording_leave(&scope);
+    CHECK(recorded_join==CETTA_MATCH_MATCHED,
+        "qualified join reuses the active bounded recording owner");
+    PrimeNeedReceiptGraph recorded_graph={0};
+    CHECK(recorded_join==CETTA_MATCH_MATCHED &&
+        prime_need_receipt_graph_collect(&recorded_left,&recorded_graph)==
+            PRIME_NEED_RECEIPT_GRAPH_COMPLETE && recorded_graph.event_count==2u,
+        "bounded qualified join retains both admitted row histories");
+    prime_need_receipt_graph_free(&recorded_graph);
+    PrimeNeedRecording *foreign_group=prime_need_recording_new(
+        (PrimeNeedRecordingLimits){4u,32768u,1u,2u});
+    PrimeNeedReceipt foreign_recording={0};
+    bool foreign_ready=foreign_group && prime_need_recording_reserve(
+        foreign_group,NULL,4u,16384u,&foreign_recording) &&
+        prime_need_receipt_observe_cell(&payload_owner,&foreign_recording,82u,1u,one,
+            &foreign_recording);
+    CHECK(foreign_ready,"foreign bounded history supplies real evidence");
+    if(foreign_ready) {
+        prime_need_recording_enter(&scope,&recorded_left);
+        recorded_join=prime_need_receipt_join_qualified(
+            &output_owner,&recorded_left,&foreign_recording);
+        prime_need_recording_leave(&scope);
+    }
+    PrimeNeedRecordingStatus recording_status=prime_need_recording_status(group);
+    CHECK(foreign_ready && recorded_join==CETTA_MATCH_MATCHED &&
+        recording_status.incomplete && recording_status.omitted>0u,
+        "untransportable foreign optional history becomes explicit omission");
+    if(foreign_group)prime_need_recording_release(foreign_group);
+    if(group)prime_need_recording_release(group);
+    arena_free(&payload_owner);arena_free(&output_owner);
+}
+
 static void check_state_receipt_operation_identity(void) {
     Arena values,operations,observations,copied;
     arena_init(&values);arena_init(&operations);arena_init(&observations);arena_init(&copied);
@@ -3196,6 +3422,11 @@ static void check_state_receipt_operation_identity(void) {
         CHECK(ready,"record the operational occurrence through the common receipt owner");
         if(!ready)break;
         ids[i]=operation.event_id;
+        Atom *version_value=NULL;uint64_t write_id=0u;
+        CHECK(prime_need_branch_state_lookup_version_checked(&states[i+1u],&cell,
+            &version_value,&write_id)==CETTA_MATCH_MATCHED && version_value==operation.after &&
+            write_id==ids[i==4u?3u:i],
+            "State observation names the exact supplying write through ABA, equal writes and later reads");
         CHECK(observation.state_event_id==operation.event_id &&
             observation.event_id>observation.state_event_id && observation.kind==operation.kind &&
             observation.state_cell==&cell && atom_eq(observation.after,operation.after) &&
@@ -3231,11 +3462,18 @@ static void check_state_receipt_operation_identity(void) {
         CHECK(prime_need_receipt_use_equation_ids(&observations,&receipts[0],1u,1u,&not_state) &&
             !prime_need_receipt_record_state(&observations,&receipts[0],&not_state,&preserved) &&
             preserved.top==receipts[5].top,"a non-State operation cannot masquerade as a State witness");
+        Atom *untouched=one;uint64_t untouched_write=UINT64_MAX;
+        CHECK(prime_need_branch_state_lookup_version_checked(&not_state,&cell,&untouched,
+            &untouched_write)==CETTA_MATCH_INCOMPLETE && untouched==one && untouched_write==UINT64_MAX,
+            "an equation receipt is not an operational State version");
         PrimeNeedRecording *group=prime_need_recording_new((PrimeNeedRecordingLimits){8u,16384u,1u,4u});
         PrimeNeedReceipt bounded={0},omitted={0};
         bool reserved=group && prime_need_recording_reserve(group,NULL,4u,8192u,&bounded);
         CHECK(reserved,"reserve a bounded observer without changing State execution");
         if(reserved) {
+            CHECK(prime_need_branch_state_lookup_version_checked(&bounded,&cell,&untouched,
+                &untouched_write)==CETTA_MATCH_INCOMPLETE && untouched==one && untouched_write==UINT64_MAX,
+                "a bounded receipt slice cannot supply an operational State version");
             PrimeNeedRecordingScope scope;
             prime_need_recording_enter(&scope,&bounded);
             CHECK(prime_need_receipt_record_state(&observations,&bounded,&states[5],&omitted),
@@ -3270,6 +3508,112 @@ static void check_state_receipt_operation_identity(void) {
 }
 #endif
 
+typedef struct {size_t references;unsigned identity;} ReaderCopyProbe;
+static bool reader_copy_probe_retain(void *raw) {
+    ReaderCopyProbe *probe=raw;
+    if(!probe||!probe->references||probe->references==SIZE_MAX)return false;
+    probe->references++;return true;
+}
+static void reader_copy_probe_release(void *raw) {
+    ReaderCopyProbe *probe=raw;
+    if(probe&&!--probe->references)free(probe);
+}
+static bool reader_copy_probe_payloads(const void *raw,AtomTreePredicate atoms,
+        bool (*cells)(const StateCell *,void *),void *context) {
+    (void)raw;(void)atoms;(void)cells;(void)context;return true;
+}
+static const PrimeNeedReaderValueOps reader_copy_probe_ops={
+    .retain=reader_copy_probe_retain,.release=reader_copy_probe_release,
+    .payloads=reader_copy_probe_payloads};
+typedef struct {
+    ReaderCopyProbe *source[2],*image[2];
+    bool refuse;
+} ReaderCopyFixture;
+static CettaMatchCompletion reader_copy_probe_map(void *raw,
+        const PrimeNeedReaderValue *source,PrimeNeedReaderValue *image) {
+    ReaderCopyFixture *copy=raw;
+    if(copy->refuse||source->operations!=&reader_copy_probe_ops)
+        return CETTA_MATCH_INCOMPLETE;
+    size_t index=source->value==copy->source[0]?0u:
+        source->value==copy->source[1]?1u:SIZE_MAX;
+    if(index==SIZE_MAX)return CETTA_MATCH_INCOMPLETE;
+    if(!copy->image[index]) {
+        copy->image[index]=calloc(1u,sizeof(*copy->image[index]));
+        if(!copy->image[index])return CETTA_MATCH_INCOMPLETE;
+        *copy->image[index]=(ReaderCopyProbe){.references=1u,
+            .identity=copy->source[index]->identity};
+    } else if(!reader_copy_probe_retain(copy->image[index]))
+        return CETTA_MATCH_INCOMPLETE;
+    *image=(PrimeNeedReaderValue){.value=copy->image[index],
+        .operations=&reader_copy_probe_ops};
+    return CETTA_MATCH_MATCHED;
+}
+static void check_reader_context_copy(void) {
+    ReaderCopyFixture copy={0};
+    for(size_t i=0u;i<2u;i++) {
+        copy.source[i]=calloc(1u,sizeof(*copy.source[i]));
+        CHECK(copy.source[i]!=NULL,"reader-copy source probe allocation succeeds");
+        if(copy.source[i])*copy.source[i]=(ReaderCopyProbe){.references=1u,
+            .identity=(unsigned)i+1u};
+    }
+    if(!copy.source[0]||!copy.source[1]) {
+        reader_copy_probe_release(copy.source[0]);
+        reader_copy_probe_release(copy.source[1]);return;
+    }
+    PrimeNeedReaderContext *base=NULL,*descendant=NULL,*tombstone=NULL;
+    PrimeNeedReaderValue first={.value=copy.source[0],.operations=&reader_copy_probe_ops};
+    PrimeNeedReaderValue second={.value=copy.source[1],.operations=&reader_copy_probe_ops};
+    CHECK(prime_need_reader_context_update(NULL,11u,&first,&base)==CETTA_MATCH_MATCHED &&
+          prime_need_reader_context_update(base,17u,&second,&descendant)==CETTA_MATCH_MATCHED &&
+          prime_need_reader_context_update(descendant,11u,NULL,&tombstone)==CETTA_MATCH_MATCHED,
+        "reader-copy fixture builds ancestry and a tombstone");
+    reader_copy_probe_release(copy.source[0]);
+    reader_copy_probe_release(copy.source[1]);
+    Arena arena;arena_init_detached(&arena);
+    AtomDeepCopySession *session=atom_deep_copy_session_new(&arena);
+    PrimeNeedReaderContext *base_image=NULL,*descendant_image=NULL,*again=NULL,*tombstone_image=NULL;
+    CettaMatchCompletion status=session?prime_need_reader_context_copy_with_session(
+        base,session,reader_copy_probe_map,&copy,&base_image):CETTA_MATCH_INCOMPLETE;
+    status=status==CETTA_MATCH_MATCHED?prime_need_reader_context_copy_with_session(
+        descendant,session,reader_copy_probe_map,&copy,&descendant_image):status;
+    status=status==CETTA_MATCH_MATCHED?prime_need_reader_context_copy_with_session(
+        descendant,session,reader_copy_probe_map,&copy,&again):status;
+    status=status==CETTA_MATCH_MATCHED?prime_need_reader_context_copy_with_session(
+        tombstone,session,reader_copy_probe_map,&copy,&tombstone_image):status;
+    PrimeNeedReaderValue observed={0};
+    CHECK(status==CETTA_MATCH_MATCHED&&base_image&&descendant_image&&again==descendant_image&&
+          prime_need_reader_context_lookup(descendant_image,11u,&observed)&&
+          observed.value==copy.image[0]&&observed.value!=copy.source[0]&&
+          !prime_need_reader_context_lookup(tombstone_image,11u,&observed)&&
+          prime_need_reader_context_lookup(tombstone_image,17u,&observed)&&
+          observed.value==copy.image[1],
+        "reader context copy preserves mapped values, repeated identity and tombstones");
+    PrimeNeedReaderContext *merged=NULL;
+    CHECK(prime_need_reader_context_merge(base_image,descendant_image,&merged)==CETTA_MATCH_MATCHED&&
+          merged==descendant_image,
+        "reader context copy preserves ancestry used by later merges");
+    ReaderCopyFixture refusing=copy;refusing.refuse=true;
+    Arena refused_arena;arena_init_detached(&refused_arena);
+    AtomDeepCopySession *refused=atom_deep_copy_session_new(&refused_arena);
+    PrimeNeedReaderContext *unchanged=base_image;
+    prime_need_reader_context_retain(unchanged);
+    CHECK(refused&&prime_need_reader_context_copy_with_session(descendant,refused,
+              reader_copy_probe_map,&refusing,&unchanged)==CETTA_MATCH_INCOMPLETE&&
+          unchanged==base_image,
+        "reader context copy refusal leaves the destination owner unchanged");
+    prime_need_reader_context_release(unchanged);
+    atom_deep_copy_session_free(refused);arena_free(&refused_arena);
+    prime_need_reader_context_release(merged);
+    prime_need_reader_context_release(tombstone_image);
+    prime_need_reader_context_release(again);
+    prime_need_reader_context_release(descendant_image);
+    prime_need_reader_context_release(base_image);
+    atom_deep_copy_session_free(session);arena_free(&arena);
+    prime_need_reader_context_release(tombstone);
+    prime_need_reader_context_release(descendant);
+    prime_need_reader_context_release(base);
+}
+
 int main(void) {
     SymbolTable symbols;
     Arena arena;
@@ -3288,6 +3632,7 @@ int main(void) {
     arena_init(&snapshot_branch_arena);
     arena_init(&promoted_arena);
 
+    check_reader_context_copy();
     interleaved_history_controls(&arena, &promoted_arena, &branch_arena);
     check_production_view_import();
     check_state_production_import();
@@ -4180,6 +4525,7 @@ int main(void) {
     CHECK(prime_need_receipt_event_count(&independent_join) == 3u,
           "the join is the occurrence-preserving union of common support");
 
+    check_qualified_receipt_join();
     check_state_receipt_operation_identity();
 
     StateCell state = {

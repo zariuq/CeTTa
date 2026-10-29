@@ -126,6 +126,13 @@ void prime_need_read_capture_free(PrimeNeedReadCapture *capture);
 /* Freeze the currently earned support for a row. Subsequent reads cannot
  * mutate this copy. Payload ownership remains with the enclosing host. */
 PrimeNeedReadCapture *prime_need_read_capture_copy(const PrimeNeedReadCapture *capture);
+/* Independent graph transport for a resident's read support. CONTEXT and
+ * ENTRANCE are the already-copied cuts corresponding to the source capture;
+ * origin atoms are copied through the enclosing session. */
+PrimeNeedReadCapture *prime_need_read_capture_copy_with_session(
+    Arena *destination,AtomDeepCopySession *session,
+    const PrimeNeedReadCapture *source,const PrimeNeedSnapshot *context,
+    const PrimeNeedSnapshot *entrance);
 void prime_need_read_capture_storage(const PrimeNeedReadCapture *capture,CettaStorageCensus *census);
 bool prime_need_read_capture_complete(const PrimeNeedReadCapture *capture);
 /* The enclosing packet uses these exact captured cuts, including storage
@@ -282,6 +289,18 @@ bool prime_need_reader_context_lookup(const PrimeNeedReaderContext *context,
 CettaMatchCompletion prime_need_reader_context_visit(const PrimeNeedReaderContext *context,
     CettaMatchCompletion (*visit)(uint64_t key,const PrimeNeedReaderValue *value,void *state),
     void *state);
+/* Copy one immutable context and its complete ancestry through a common graph
+ * session. VALUE_COPY returns one owned share of each mapped live value; the
+ * copied context retains it and this operation releases the callback share.
+ * Tombstones, import cuts, shared lineage nodes and repeated context identity
+ * are preserved. Refusal leaves OUT unchanged; discard the enclosing failed
+ * graph session because it can contain unpublished shell mappings. */
+typedef CettaMatchCompletion (*PrimeNeedReaderValueCopy)(void *state,
+    const PrimeNeedReaderValue *source,PrimeNeedReaderValue *image);
+CettaMatchCompletion prime_need_reader_context_copy_with_session(
+    const PrimeNeedReaderContext *source,AtomDeepCopySession *session,
+    PrimeNeedReaderValueCopy value_copy,void *state,
+    PrimeNeedReaderContext **out);
 /* NULL value removes a key. Only the newest values are held; version ancestry
  * retains no payloads or producers. out owns a nullable context and changes
  * only after complete preparation. Removing the last key preserves the empty
@@ -659,6 +678,23 @@ bool prime_need_branch_state_lookup(
     const PrimeNeedBranchState *state, StateCell *cell, Atom **out_value);
 CettaMatchCompletion prime_need_branch_state_lookup_checked(
     const PrimeNeedBranchState *state, StateCell *cell, Atom **out_value);
+/* A coherent value and its canonical supplying write in this State session.
+ * A zero write ID denotes the selected initial value, including a read-only
+ * frontier; a NULL value denotes no logical observation. Neither case reads
+ * the physical cell. Resolve graft aliases by causal ancestry, never by node
+ * depth or allocation order. The caller holds the State and payload owners.
+ * Failure leaves both outputs unchanged. This inspection does not supply a
+ * recorded receipt, resource authority, or permission to replay an operation. */
+CettaMatchCompletion prime_need_branch_state_lookup_version_checked(
+    const PrimeNeedBranchState *state, StateCell *cell,
+    Atom **out_value, uint64_t *out_write_event_id);
+/* Whether this validated State DAG holds the exact canonical write occurrence
+ * for the selected cell. Graft aliases preserve the answer. A missing event
+ * writes false; a reused ID with another role/cell is refusal. Failure leaves
+ * the output unchanged. */
+CettaMatchCompletion prime_need_branch_state_holds_write_checked(
+    const PrimeNeedBranchState *state, StateCell *cell,
+    uint64_t write_event_id, bool *out_held);
 /* Agreement of canonical write occurrences/payloads and their causal order
  * for one selected cell. Unrelated cells and equal commuting read additions
  * do not distinguish the inputs. ABA writes do. Both held DAGs are validated;
@@ -761,6 +797,8 @@ bool prime_need_recording_reserve_growing(PrimeNeedRecording *recording,
 bool prime_need_recording_promote(Arena *dst, PrimeNeedReceipt *receipt);
 bool prime_need_recording_promote_carrier(Arena *dst, PrimeNeedReceipt *receipt);
 bool prime_need_recording_readable(const PrimeNeedReceipt *receipt);
+bool prime_need_recording_same_group(
+    const PrimeNeedReceipt *left, const PrimeNeedReceipt *right);
 bool prime_need_recording_erased(const PrimeNeedReceipt *receipt);
 bool prime_need_recording_audit_receipt(PrimeNeedArenaAudit *audit,
     const PrimeNeedReceipt *receipt);
@@ -908,6 +946,26 @@ static inline bool prime_need_receipt_merge(
     PrimeNeedReceipt *dst, const PrimeNeedReceipt *src) {
     return prime_need_receipt_merge_operation(dst, src);
 }
+/* Join causal evidence only after the host has qualified the corresponding
+ * Need, State, weight, authority and logical-support transport. This operation
+ * supplies no compatibility or replay authority of its own. Plain receipts
+ * are homed in owner and may join otherwise-conflicting observation branches
+ * because the operational import already ordered them. Recording receipts use
+ * a compatible active bounded scope; an unrelated scope cannot replace a held
+ * reader. Unavailable/foreign evidence is exposed as omission.
+ * Refusal leaves dst unchanged, though a bounded target may become incomplete. */
+CettaMatchCompletion prime_need_receipt_join_qualified(
+    Arena *owner, PrimeNeedReceipt *dst, const PrimeNeedReceipt *src);
+/* Select one exact dependency from an immutable entrance catalogue and join
+ * its causal prefix through the same already-qualified boundary. Missing
+ * bounded evidence marks the target incomplete; missing plain evidence is an
+ * unavailable causal dependency. `found` changes only on successful return. */
+CettaMatchCompletion prime_need_receipt_join_cached_anchor_qualified(
+    Arena *owner, PrimeNeedReceipt *dst, const PrimeNeedReceipt *catalogue,
+    uint64_t need_session_id, uint64_t thunk_id, uint64_t update_id, bool *found);
+CettaMatchCompletion prime_need_receipt_join_state_anchor_qualified(
+    Arena *owner, PrimeNeedReceipt *dst, const PrimeNeedReceipt *catalogue,
+    uint64_t state_event_id, bool *found);
 static inline bool prime_need_receipt_promote(
     Arena *dst, PrimeNeedReceipt *receipt) {
     if (receipt && receipt->recording)
@@ -1078,9 +1136,14 @@ bool prime_need_receipt_state_value(const PrimeNeedReceipt *receipt,
 /* A checked view of the existing receipt DAG, including its non-event joins.
  * IDs and predecessors survive promotion.  The increasing-ID order is a
  * topological allocation order, not the parent agenda's publication order.
- * The node array is owned by the view; Atom and StateCell payloads remain
- * borrowed from the receipt's retained owners.  Free the view before releasing
- * those owners.  This view does not authenticate causes or certify replay. */
+ * The view owns its node array and retains bounded recording payloads until
+ * graph_free. Unrecorded Atom payloads and external StateCell resources remain
+ * borrowed from their held owners. A successful recorded observation survives
+ * later forgetting; forgetting forbids new observations through a borrowed
+ * carrier. Hold the receipt's metadata owner during collection and keep its
+ * selected frames immutable. Move owned views; do not duplicate their ownership
+ * by copying the struct. This view does not authenticate causes, certify replay
+ * or provide a snapshot of concurrently changing recording metadata. */
 typedef struct {
     uint64_t identity_id;
     uint64_t left_id;
@@ -1096,6 +1159,7 @@ typedef struct {
     size_t length;
     size_t event_count;
     bool incomplete;
+    PrimeNeedRecording *recording_owner;
 } PrimeNeedReceiptGraph;
 
 typedef enum {

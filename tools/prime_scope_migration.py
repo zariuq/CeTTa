@@ -202,10 +202,22 @@ def library_spellings(binary: Path, root: Path, *, check: bool):
     pending = []
     dialect_path = root / "dialect_sources.json"
     declared = {}
+    prime_replacements = {}
     if dialect_path.exists():
         dialects = json.loads(dialect_path.read_text())
         if dialects.get("schema") != "metta-library-dialect-sources-v1":
             raise ValueError("unrecognized library dialect declaration")
+        for replacement in dialects.get("prime_replacements", []):
+            name = replacement.get("source")
+            old, new = replacement.get("old"), replacement.get("new")
+            relative = Path(name) if isinstance(name, str) else Path(".")
+            if (not relative.parts or relative.is_absolute() or ".." in relative.parts or
+                    relative.parts[0] in ("prime", "petta") or
+                    relative.suffix != ".metta" or not (root / relative).is_file() or
+                    not isinstance(old, str) or not isinstance(new, str) or
+                    not old or old == new):
+                raise ValueError("invalid Prime library replacement")
+            prime_replacements.setdefault(name, []).append((old, new))
         from petta_prime_guest_v1 import compile_library_group
         for index, group in enumerate(dialects["groups"]):
             if group.get("dialect") != "petta" or group.get("generator") != "petta-prime-guest-v1":
@@ -269,7 +281,12 @@ def library_spellings(binary: Path, root: Path, *, check: bool):
         text = source.read_text()
         records = native_plan(binary, source)
         translated, edits, diagnostics = translate(text, records)
-        if not edits and str(relative) not in owned:
+        replacements = prime_replacements.get(str(relative), [])
+        for old, new in replacements:
+            if translated.count(old) != 1:
+                raise ValueError(f"Prime library replacement is stale or ambiguous: {relative}")
+            translated = translated.replace(old, new, 1)
+        if not edits and not replacements and str(relative) not in owned:
             continue
         output = root / "prime" / relative
         name = str(relative)
@@ -287,6 +304,8 @@ def library_spellings(binary: Path, root: Path, *, check: bool):
                           "source_sha256": hashlib.sha256(text.encode()).hexdigest(),
                           "output_sha256": hashlib.sha256(generated.encode()).hexdigest(),
                           "edits": len(edits), "code_diagnostics": len(diagnostics)})
+        if replacements:
+            libraries[-1]["dialect_replacements"] = len(replacements)
     manifest = {"schema": "prime-scope-library-spellings-v1", "libraries": libraries,
                 "delegated": delegated}
     if check:
