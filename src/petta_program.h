@@ -628,6 +628,12 @@ bool petta_program_clone_space(
     PettaProgram *program, const Space *source, Space *destination);
 bool petta_program_replace_space(
     PettaProgram *program, Space *destination, const Space *source);
+/* The runtime has transported every source row, in order, into an unpublished
+ * destination with its own syntax/resource owner. Transfer accepted source
+ * occurrence roles and rebuild templates/compiled regions against that syntax;
+ * source-arena pointers and current callability are not substituted for roles. */
+bool petta_program_transfer_space_roles(
+    PettaProgram *program, const Space *source, Space *destination);
 void petta_program_forget_space(
     PettaProgram *program, const Space *space);
 

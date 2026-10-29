@@ -3624,6 +3624,10 @@ static const PettaPlanNode *petta_plan_rebind_frame_syntax(
         node->deterministic_region = NULL;
         node->region_hole_program = NULL;
         node->has_equation_variable_slot = false;
+        if (node->role == PETTA_PLAN_VALUE && node->child_count == 0u) {
+            node->children = NULL;
+            continue;
+        }
         if (item.atom->kind != ATOM_EXPR) {
             ok = node->child_count == 0u;
             node->children = NULL;
@@ -5506,9 +5510,9 @@ bool petta_plan_match_template_is_single_data_answer(
           !template_plan->contains_call));
 }
 
-bool petta_program_note_add(
+static bool petta_program_note_add_with_execution_plan(
     PettaProgram *program, Space *space, Atom *atom,
-    const PettaPlanNode *plan) {
+    const PettaPlanNode *plan, bool transferred_execution_plan) {
     CETTA_SCOPED_SHARED_TRANSITION(program_catalog_add);
     if (!program || !space || !atom)
         return false;
@@ -5575,7 +5579,8 @@ bool petta_program_note_add(
         if (!execution) return false;
         lhs = execution->expr.elems[1];
         rhs = execution->expr.elems[2];
-        plan = petta_program_plan_equation(program, execution, NULL, 0u);
+        if (!transferred_execution_plan || !plan)
+            plan = petta_program_plan_equation(program, execution, NULL, 0u);
         if (!plan) return false;
     }
     PettaProgramSpace *entry =
@@ -5623,6 +5628,11 @@ bool petta_program_note_add(
                 petta_program_rhs_binds_variables(lhs, rhs),
         });
     return true;
+}
+
+bool petta_program_note_add(PettaProgram *program, Space *space,
+        Atom *atom, const PettaPlanNode *plan) {
+    return petta_program_note_add_with_execution_plan(program, space, atom, plan, false);
 }
 
 /* Check the same callability observations that formed this source plan.
@@ -6592,6 +6602,73 @@ void petta_program_forget_space(
         program->analysis->space_len--;
         break;
     }
+}
+
+bool petta_program_transfer_space_roles(PettaProgram *program,
+        const Space *source, Space *destination) {
+    CETTA_SCOPED_SHARED_TRANSITION(program_role_transport);
+    if (!program || !source || !destination || source == destination ||
+        space_length64(source) != space_length64(destination))
+        return false;
+    PettaProgramSpace *entry = petta_program_find_space(program, source);
+    PettaProgramAnalysisSpace *analysis = petta_program_find_analysis_space(program, source);
+    if (!entry && !analysis)
+        return true;
+    /* Adding the destination may move program->spaces. Retain the source
+     * records while both syntax owners are alive, before allocating its entry. */
+    size_t count = entry ? entry->equation_len : 0u;
+    PettaProgramEquation *records = count ? calloc(count, sizeof(*records)) : NULL;
+    bool *used = count ? calloc(count, sizeof(*used)) : NULL;
+    if (count && (!records || !used)) {
+        free(records);
+        free(used);
+        return false;
+    }
+    if (count)
+        memcpy(records, entry->equations, count * sizeof(*records));
+    bool ok = true;
+    size_t next = 0u, copied = 0u;
+    CettaCount length = space_length64(source);
+    for (CettaIndex i = 0u; ok && i < length; i++) {
+        Atom *old = space_get_at64(source, i);
+        Atom *target = space_get_at64(destination, i);
+        if (!old || !target) {
+            ok = false;
+            break;
+        }
+        if (petta_program_type_declaration_view(old, NULL, NULL)) {
+            ok = petta_program_note_add(program, destination, target, NULL);
+            continue;
+        }
+        size_t found = count;
+        if (next < count && !used[next] && atom_eq(records[next].equation, old)) {
+            found = next++;
+        } else {
+            for (size_t j = 0u; j < count; j++)
+                if (!used[j] && atom_eq(records[j].equation, old)) {
+                    found = j;
+                    break;
+                }
+        }
+        if (found == count)
+            continue;
+        Atom *execution = target->kind == ATOM_EXPR && target->expr.len != 3u
+            ? space_equation_execution_view(&program->plans, target) : target;
+        const PettaPlanNode *role = records[found].plan;
+        const PettaPlanNode *rebound = role && execution
+            ? petta_plan_rebind_frame_syntax(program, execution, role) : NULL;
+        ok = execution && (!role || rebound) &&
+            petta_program_note_add_with_execution_plan(
+                program, destination, target, rebound, true);
+        used[found] = true;
+        copied++;
+    }
+    ok = ok && copied == count;
+    free(records);
+    free(used);
+    if (!ok)
+        petta_program_forget_space(program, destination);
+    return ok;
 }
 
 static bool petta_program_copy_records(

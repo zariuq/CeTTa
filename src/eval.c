@@ -18528,8 +18528,11 @@ static bool hyperpose_owned_spaces_push(HyperposeOwnedSpaces *spaces,
     if (!spaces || !space)
         return false;
     for (CettaCount i = 0; i < spaces->len; i++) {
-        if (spaces->items[i].space == space)
+        if (spaces->items[i].space == space) {
+            if (!spaces->items[i].petta_program)
+                spaces->items[i].petta_program = petta_program;
             return true;
+        }
     }
     if (spaces->len >= spaces->cap) {
         CettaCount next_cap;
@@ -19322,8 +19325,10 @@ static Space *hyperpose_transfer_space(HyperposeResourceTransfer *transfer,
        worker arena rather than registering it as a `new-space`.  Record it as
        branch-owned before copying so its heap-backed indexes are released
        after the parent has received the logical graph. */
+    PettaProgram *program = eval_current_language_id() == CETTA_LANGUAGE_PETTA && g_library_context
+        ? g_library_context->petta_program : NULL;
     if (!hyperpose_owned_spaces_push(
-            &transfer->branch->owned_spaces, source, NULL)) {
+            &transfer->branch->owned_spaces, source, program)) {
         return NULL;
     }
 
@@ -19356,6 +19361,8 @@ static Space *hyperpose_transfer_space(HyperposeResourceTransfer *transfer,
             return NULL;
         }
     }
+    if (program && !petta_program_transfer_space_roles(program, source, target))
+        return NULL;
     return target;
 }
 

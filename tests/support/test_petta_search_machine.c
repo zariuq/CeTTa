@@ -7847,6 +7847,71 @@ static PettaProgramPrivateScope test_private_program_scope(
         .image_at = test_private_program_image_at};
 }
 
+static void test_program_transferred_roles(TermUniverse *universe, Arena *arena) {
+    Arena foreign_arena;
+    TermUniverse foreign_universe;
+    arena_init(&foreign_arena);
+    arena_set_runtime_kind(&foreign_arena, CETTA_ARENA_RUNTIME_KIND_PERSISTENT);
+    term_universe_init(&foreign_universe);
+    term_universe_set_persistent_arena(&foreign_universe, &foreign_arena);
+    Space source, target, later;
+    space_init_with_universe(&source, &foreign_universe);
+    space_init_with_universe(&target, universe);
+    space_init_with_universe(&later, universe);
+    PettaProgram *program = petta_program_new();
+    assert(program && petta_program_enable_analysis(program));
+    add_compiled_program_equation(program, &source, &foreign_arena,
+        "(= (transport-id $x) $x)");
+    add_compiled_program_equation(program, &source, &foreign_arena,
+        "(= (transport-id $x) $x)");
+    add_compiled_program_equation(program, &source, &foreign_arena,
+        "(= (transport-held) (transport-later 7))");
+    add_indexed_program_equation(program, &source, &foreign_arena,
+        "(: transport-type-marker TransportType)");
+    SymbolId held_head = symbol_intern_cstr(g_symbols, "transport-held");
+    PettaCandidateSnapshotLease original = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(
+        program, &source, held_head, &original, NULL));
+    assert(original.len == 1u && original.items[0].rhs_plan &&
+           !original.items[0].rhs_plan->contains_call);
+    uint8_t original_role = original.items[0].rhs_plan->role;
+    petta_program_candidate_snapshot_lease_release(&original);
+    /* Recompiling against the new global domain would incorrectly turn the
+     * held body into a call. Transport must retain the authored decision. */
+    add_compiled_program_equation(program, &later, arena,
+        "(= (transport-later $x) $x)");
+    for (CettaIndex i = 0u; i < space_length64(&source); i++)
+        assert(space_admit_atom(&target, arena,
+            atom_deep_copy(arena, space_get_at64(&source, i))));
+    assert(petta_program_transfer_space_roles(program, &source, &target));
+    PettaCandidateSnapshotLease copied = {0};
+    assert(petta_program_candidate_snapshot_lease_profiled(
+        program, &target, held_head, &copied, NULL));
+    assert(copied.len == 1u && copied.items[0].rhs_plan->role == original_role &&
+           !copied.items[0].rhs_plan->contains_call);
+    assert(!arena_owns_ptr(&foreign_arena, copied.items[0].equation));
+    assert(!arena_owns_ptr(&foreign_arena, copied.items[0].activation_layout.rhs));
+    petta_program_candidate_snapshot_lease_release(&copied);
+    petta_program_forget_space(program, &source);
+    space_free(&source);
+    term_universe_free(&foreign_universe);
+    arena_free(&foreign_arena);
+    assert(petta_program_candidate_snapshot_lease_profiled(program, &target,
+        symbol_intern_cstr(g_symbols, "transport-id"), &copied, NULL));
+    assert(copied.len == 2u && copied.items[0].equation_template &&
+           copied.items[1].equation_template);
+    petta_program_candidate_snapshot_lease_release(&copied);
+    Atom **types = NULL;
+    assert(petta_program_declared_types(program,
+        parse_one(arena, "transport-type-marker"), arena, &types) == 1u);
+    assert(atom_eq(types[0], parse_one(arena, "TransportType")));
+    free(types);
+    petta_program_free(program);
+    space_free(&target);
+    space_free(&later);
+    puts("PASS: transported spaces retain occurrence roles, duplicate equations and types after source retirement");
+}
+
 static void test_program_private_catalog_scope(TermUniverse *universe, Arena *arena) {
     Space source;
     space_init_with_universe(&source, universe);
@@ -16083,6 +16148,7 @@ int main(int argc, char **argv) {
     if (revision_only) {
         test_program_revision_view_transport(&universe, &persistent);
         test_program_private_catalog_scope(&universe, &persistent);
+        test_program_transferred_roles(&universe, &persistent);
         goto release_owners;
     }
     if (transient_only) {
@@ -16223,6 +16289,7 @@ int main(int argc, char **argv) {
     test_program_revision_view_transport(
         &universe, &persistent);
     test_program_private_catalog_scope(&universe, &persistent);
+    test_program_transferred_roles(&universe, &persistent);
     test_program_analysis_sidecar_interop(
         &universe, &persistent, &answers);
     test_typed_data_purity_boundary(
