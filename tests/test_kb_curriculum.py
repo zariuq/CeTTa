@@ -29,6 +29,7 @@ class CurriculumTests(unittest.TestCase):
                 first = worker.call(directory)
             finally:
                 worker.close()
+
             self.assertEqual(first[0], S("CurriculumResult"), first)
             self.assertEqual(first[2], E("OriginCounts", 4, 2))
             self.assertEqual({row[1] for row in first[1]}, {S("judgement1"), S("judgement2"), S("judgement3")})
@@ -47,22 +48,44 @@ class CurriculumTests(unittest.TestCase):
             finally:
                 worker.close()
 
+    def test_graph_curriculum_survives_restart_with_occurrence_paths(self):
+        with tempfile.TemporaryDirectory(prefix="cetta-kb-graph-example-", dir=os.environ.get("TMPDIR")) as directory:
+            def run():
+                worker = Worker(WORKER, ROOT / "examples/kb/graph_curriculum.metta", "graph-curriculum:run",
+                                language="petta", import_mode="relative")
+                try:
+                    return worker.call(directory)
+                finally:
+                    worker.close()
+            answer = run()
+            self.assertEqual(answer[0], S("GraphCurriculum"), answer)
+            self.assertTrue(all(part[0] == S("GraphRows") for part in answer[1:]), answer)
+            self.assertEqual(len(answer[1][1]), 3)
+            self.assertEqual(set(answer[3][1]), {S("parse"), S("check"), S("lex")})
+            expected = [E("KgPath", (S("emit"), S("parse"), S("lex")),
+                          (S(first), S("dep1")), 2) for first in ("dep4", "dep6")]
+            self.assertEqual(sorted(map(encode, answer[4][1])), sorted(map(encode, expected)))
+            self.assertEqual(answer[6][1], ())
+            self.assertEqual(encode(run()), encode(answer))
+
     @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for the command-line boundary")
     def test_documented_cli_completes_the_result_query(self):
-        with tempfile.TemporaryDirectory(prefix="cetta-kb-cli-", dir=os.environ.get("TMPDIR")) as directory:
-            store = Path(directory) / "store"
-            store.mkdir(mode=0o700)
-            report = Path(directory) / "report.json"
-            run = subprocess.run([CLI, "--lang", "petta", "--run-contract", "--run-report", str(report),
-                                  str(ROOT / "examples/kb/run.metta"), str(store)],
-                                 capture_output=True, text=True, timeout=30)
-            self.assertEqual(run.returncode, 0, run.stderr)
-            self.assertIn("(CurriculumResult ", run.stdout)
-            record = json.loads(report.read_text())
-            self.assertEqual(record["queries_unsettled"], 0, record)
-            self.assertEqual(record["queries_declared"], 3, record)
-            self.assertEqual(record["queries"][-1]["answers"], 1, record)
-            self.assertTrue(record["queries"][-1]["observation_complete"], record)
+        for program, constructor in [("run.metta", "CurriculumResult"), ("graph_run.metta", "GraphCurriculum")]:
+            with self.subTest(program=program):
+                with tempfile.TemporaryDirectory(prefix="cetta-kb-cli-", dir=os.environ.get("TMPDIR")) as directory:
+                    store = Path(directory) / "store"
+                    store.mkdir(mode=0o700)
+                    report = Path(directory) / "report.json"
+                    run = subprocess.run([CLI, "--lang", "petta", "--run-contract", "--run-report", str(report),
+                                          str(ROOT / "examples/kb" / program), str(store)],
+                                         capture_output=True, text=True, timeout=30)
+                    self.assertEqual(run.returncode, 0, run.stderr)
+                    self.assertIn("(" + constructor + " ", run.stdout)
+                    record = json.loads(report.read_text())
+                    self.assertEqual(record["queries_unsettled"], 0, record)
+                    self.assertEqual(record["queries_declared"], 3, record)
+                    self.assertEqual(record["queries"][-1]["answers"], 1, record)
+                    self.assertTrue(record["queries"][-1]["observation_complete"], record)
 
 
 if __name__ == "__main__":

@@ -39,8 +39,18 @@ The optional query returns four `HasEvidence` rows and
 The dependency query returns five two-edge paths from `emit`. `dep4` and
 `dep6` remain distinct, so paths through each appear separately. The cycle
 between `parse` and `check` is harmless for this explicitly two-hop query.
-Unbounded traversal, shortest paths, constraints and the multi-client server
-are subsequent curriculum steps under development.
+The graph chapter adds finite reachability and shortest paths on this same
+captured store:
+
+```sh
+./cetta --lang petta --run-contract examples/kb/graph_run.metta "$PWD/demo-kb"
+```
+
+It reports three outgoing edge occurrences from `emit`, three incoming edge
+occurrences at `parse`, the distinct reachable programs `{check, parse, lex}`,
+and both shortest paths to `lex`: `(dep4 dep1)` and `(dep6 dep1)`. The isolated
+program has no reachable endpoint. Repeating the command preserves these
+results. Constraints and the multi-client server remain under development.
 
 `curriculum.metta` exports `curriculum:run path`. The CLI and native value worker
 invoke this same entry. It installs all records atomically, captures a new
@@ -51,3 +61,50 @@ its small final answer deliberately; library query cursors stream their inputs.
 datasets. Its four query answers are in `portable_patterns.expected`; module
 import acknowledgements are separate. This portable portion can run on PeTTa
 as well as CeTTa. The durable `store:` interface is native to CeTTa.
+
+## Graph interface
+
+Import `(library kb_graph)`. A graph specification is
+`(KgRelation relation source-field target-field)`, using zero-based positions.
+Its edges are the relation's records having both specified fields present and
+ground. Other fields may hold open syntax. This is an explicit projection:
+it does not unify open endpoints with a requested vertex. Ordinary KB pattern
+queries continue to include and match those open records.
+
+The inert plans are:
+
+| Plan | Result |
+| --- | --- |
+| `(KgNeighbours spec start out-or-in)` | `(KgEdge fact-id source target)`, preserving occurrences |
+| `(KgPaths spec start minimum maximum out-or-in)` | Bounded walks, including repeated vertices/edges |
+| `(KgReach spec start out-or-in)` | Distinct endpoints of positive-length paths; includes `start` only when a cycle reaches it |
+| `(KgShortest spec start goal one-or-all out-or-in)` | One shortest path, or all shortest occurrence paths |
+| `(KgTriangles spec start out-or-in)` | Anchored directed three-edge cycles with three distinct vertices |
+
+Paths are `(KgPath (vertex...) (edge-id...) length)`. A zero-length path has
+the supplied start identity and no edges; shortest `start = goal` returns it.
+The graph specification does not require a separate vertex relation. `one`
+chooses the first shortest answer in the captured index traversal order;
+it is not a promise of lexicographically least vertex names. Triangles retain
+parallel-edge occurrences and do not identify different anchor rotations.
+
+`(kbg:open view plan maximum-row-bytes maximum-retained-states)` opens a cursor.
+`(kbg:page cursor row-count step-budget)` returns `KgPage` with `KgMore`,
+`KgPaused`, `KgComplete` or `KgFailure`. Both paused and nonterminal pages carry
+the next cursor. Consume each continuation once. Closing releases its active
+scan; the captured view is borrowed and remains the caller's responsibility.
+These are in-process continuations, not serializable remote capabilities.
+
+`kbg:observe` records a conservative relation-range dependency, covering
+negative paths and edges not visited by an early shortest answer. Combine
+additional application reads before a query-informed write. `kbg:explain`
+shows the argument index, graph projection and traversal strategy.
+
+`KgWork` reports driver steps, candidate keys, decoded source bytes and
+frontier admissions. These are not total CPU/allocation costs. A page advances
+at most one indexed edge per step, although a visited-list lookup or frontier
+rotation may inspect multiple retained entries. The initial visited-set
+implementation is a linear MeTTa reference. The state allowance bounds queued
+paths plus remembered identities, not bytes or elapsed time; capacity failure
+is distinct from completed emptiness. General scaling and service lifetime
+qualification remain separate obligations.
