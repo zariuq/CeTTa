@@ -3624,6 +3624,8 @@ static const PettaPlanNode *petta_plan_rebind_frame_syntax(
         node->deterministic_region = NULL;
         node->region_hole_program = NULL;
         node->has_equation_variable_slot = false;
+        node->equation_variable_slot = 0u;
+        node->open_template_admitted = false;
         if (node->role == PETTA_PLAN_VALUE && node->child_count == 0u) {
             node->children = NULL;
             continue;

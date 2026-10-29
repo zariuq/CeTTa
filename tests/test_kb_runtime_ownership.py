@@ -237,6 +237,109 @@ INITIAL
                             self.assertEqual(len(lines), 3, result.stdout)
                             self.assertTrue(lines[1] == "()" or lines[2] == "()", result.stdout)
 
+    @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for nested resource returns")
+    def test_nested_transaction_returns_remain_usable(self):
+        with tempfile.TemporaryDirectory(prefix="cetta-nested-return-", dir=os.environ.get("TMPDIR")) as directory:
+            source = Path(directory) / "return.metta"
+            for depth in (1, 2, 3):
+                created = "(new-space)"
+                for _ in range(depth):
+                    created = f"(transaction {created})"
+                source.write_text(f"!(let $s {created} (let $added (add-atom $s (kept 1)) (collapse (get-atoms $s))))\n")
+                with self.subTest(depth=depth):
+                    result = subprocess.run([CLI, "--lang", "petta", str(source)],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), "((kept 1))")
+
+    @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for nested host ownership")
+    def test_nested_host_machine_inherits_transaction_context(self):
+        cases = [
+            ("rollback", """(= (nested-host-write $ignored) (match &self (box $s) (== (add-atom $s (discarded 1)) true)))
+!(let $s (new-space) (let $a (add-atom &self (box $s))
+  (let $rb (collapse (transaction (let $step (forall (superpose (1)) nested-host-write) (empty))))
+    (collapse (get-atoms $s)))))
+""", [], ["()"]),
+            ("state", """(= (nested-host-state-ok $ignored) (== (get-state nested-host-state) 77))
+!(collapse (transaction (let $set (change-state! nested-host-state 77)
+  (forall (superpose (1)) nested-host-state-ok))))
+""", [], ["(true)"]),
+            ("named-space-commit", """!(collapse (transaction (let $bound (collapse (bind! &nested-bound (new-space)))
+  (add-atom &nested-bound (kept 1)))))
+!(collapse (get-atoms &nested-bound))
+""", ["--profile", "extended"], ["(true)", "((kept 1))"]),
+            ("named-space-rollback", """!(collapse (transaction (let $bound (collapse (bind! &nested-bound (new-space)))
+  (let $added (add-atom &nested-bound (discarded 1)) (empty)))))
+!(collapse (get-atoms &nested-bound))
+""", ["--profile", "extended"], ["()", "()"]),
+        ]
+        with tempfile.TemporaryDirectory(prefix="cetta-nested-host-", dir=os.environ.get("TMPDIR")) as directory:
+            source = Path(directory) / "host.metta"
+            for name, program, flags, expected in cases:
+                with self.subTest(case=name):
+                    source.write_text(program)
+                    result = subprocess.run([CLI, "--lang", "petta", *flags, str(source)],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip().splitlines(), expected)
+
+    @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for joined private spaces")
+    def test_worker_created_declarations_follow_enclosing_rollback(self):
+        program = """(= (joined-rollback-victim $x) $x)
+!(collapse (transaction (let $space (hyperpose ((let $s (new-space)
+  (let $added (add-atom $s (: joined-rollback-victim (-> String String))) $s)))) (empty))))
+!(joined-rollback-victim 42)
+"""
+        with tempfile.TemporaryDirectory(prefix="cetta-joined-rollback-", dir=os.environ.get("TMPDIR")) as directory:
+            source = Path(directory) / "joined.metta"
+            source.write_text(program)
+            for threads in (1, 2):
+                with self.subTest(threads=threads):
+                    result = subprocess.run([CLI, "--lang", "petta", "--profile", "typecheck-v2",
+                                             "--num-threads", str(threads), str(source)],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip().splitlines(), ["()", "42"])
+
+    @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for committed resource identities")
+    def test_committed_rows_preserve_original_resource_identity(self):
+        # Compare identities without following the stored reference: a row
+        # must not retain the transaction's temporary physical Space image.
+        template = """!(let $inner (new-space)
+  (let $outer (new-space)
+    (let $stored PUBLICATION
+      (match $outer (holds $actual) (== $actual $inner)))))
+"""
+        with tempfile.TemporaryDirectory(prefix="cetta-row-identity-", dir=os.environ.get("TMPDIR")) as directory:
+            source = Path(directory) / "row.metta"
+            publication = "(add-atom $outer (holds $inner))"
+            for depth in (1, 2, 3):
+                publication = f"(transaction {publication})"
+                source.write_text(template.replace("PUBLICATION", publication))
+                with self.subTest(depth=depth):
+                    result = subprocess.run([CLI, "--lang", "petta", str(source)],
+                                            capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout.strip(), "true")
+
+    @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for staged row roles")
+    def test_staged_resource_rows_keep_definition_time_roles(self):
+        program = """!(let $inner (new-space)
+  (let $published (transaction
+    (let $added (add-atom &self (= (stored-resource) (holder $inner (late-holder))))
+      (add-atom &self (= (late-holder) 42))))
+    (case (eval (stored-resource))
+      (((holder $actual $held) (Result (== $actual $inner) (== $held (quote (late-holder)))))
+       ($other unexpected-result)))))
+"""
+        with tempfile.TemporaryDirectory(prefix="cetta-row-roles-", dir=os.environ.get("TMPDIR")) as directory:
+            source = Path(directory) / "row.metta"
+            source.write_text(program)
+            result = subprocess.run([CLI, "--lang", "petta", str(source)],
+                                    capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), "(Result true true)")
+
     @unittest.skipUnless(CLI, "CETTA_KB_CLI is required for typed profile checks")
     def test_live_callability_policy_matches_inside_and_outside_transaction(self):
         program = """(= (live-caller) (live-callee))
