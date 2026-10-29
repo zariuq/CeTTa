@@ -71,6 +71,9 @@
        ($other (KnowledgeRefusedV1 observation-format))))))
 
 (= (knowledge:observe $view $identities $maximum-bytes)
+  (if (== (get-metatype $identities) Expression)
+    (knowledge:observe-list $view $identities $maximum-bytes) (KnowledgeRefusedV1 identity-list)))
+(= (knowledge:observe-list $view $identities $maximum-bytes)
   (if (== $identities ()) (KnowledgeObservedV1 () (reads))
     (let* (($identity (car-atom $identities)) ($tail (cdr-atom $identities)))
       (case (knowledge:read $view $identity $maximum-bytes)
@@ -113,7 +116,13 @@
 ; Prepare every edit before publication. Ordered edits use the last value for
 ; an identity; removing an absent identity is a harmless local no-op.
 (= (knowledge:prepare $changes)
+  (if (== (get-metatype $changes) Expression)
+    (knowledge:prepare-list $changes) (KnowledgeRefusedV1 mutation-list)))
+(= (knowledge:prepare-list $changes)
   (if (== $changes ()) (KnowledgeDeltaV1 (ops) (writes))
+    (if (knowledge:headed? (car-atom $changes)) (knowledge:prepare-item $changes)
+      (KnowledgeRefusedV1 mutation-format))))
+(= (knowledge:prepare-item $changes)
     (case (car-atom $changes)
       (((KnowledgePutV1 $identity $value)
         (case (store:encode (KnowledgeFactV1 $identity $value))
@@ -122,7 +131,7 @@
            ($error $error))))
        ((KnowledgeRemoveV1 $identity)
         (knowledge:prepare-one $identity KnowledgeDeleteV1 (cdr-atom $changes)))
-       ($other (KnowledgeRefusedV1 mutation-format))))))
+       ($other (KnowledgeRefusedV1 mutation-format)))))
 
 (= (knowledge:prepare-one $identity $body $remaining)
   (case (knowledge:fact-address $identity)

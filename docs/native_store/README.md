@@ -31,6 +31,10 @@ Import `(library store)` in PeTTa, or `store` in HE and Prime.
   published manifest instead of silently creating new state.
 - `(store:snapshot owner)` returns `(StoreSnapshot view epoch revision)`.
   It confirms the durability of a first-seen root before returning it.
+- `(store:view-info view)` returns `(StoreViewInfo epoch revision)` for a live
+  snapshot handle. These are its captured coordinates, even after later
+  publications. The call creates no resource and does not validate a publisher
+  or a transaction's read dependencies.
 - `(store:check-view owner view)` returns `StoreViewValid` when a live publisher
   and captured view belong to the same physical store domain and epoch. A
   publisher awaiting recovery is refused. An older revision remains valid;

@@ -55,6 +55,13 @@ class OptionalJoinTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.worker.call(command)[0], S("RelFailure"))
 
+    def test_callable_values_remain_data_in_optional_rows_and_diagnostics(self):
+        self.assertEqual(self.worker.call(S("CallableProjection")), (S("kb-rel:callable-data"),))
+        for operation in ("And", "Or"):
+            result = self.worker.call(E(operation, S("kb-rel:unary"), S("payload")))
+            self.assertEqual(result, E("RelFailure", S("rel:" + operation.lower()),
+                                      E("RelExpectedTruthPair", (S("kb-rel:unary"), S("payload")))))
+
 
 if __name__ == "__main__":
     unittest.main()

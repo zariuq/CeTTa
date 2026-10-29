@@ -180,6 +180,31 @@ class DatabaseTests(unittest.TestCase):
         second = self.worker.call(E("Explain", E("KbArgument", S("+"), 1, 6)))
         self.assertNotEqual(first[2], second[2])
 
+    def test_observation_merge_refuses_callable_data_without_invoking_it(self):
+        self.same(self.worker.call(E("MalformedMerge", S("kb-probe:pure-many"), S("data"))),
+                  E("KnowledgeRefusedV1", S("bound-observation-required")))
+
+    def test_view_info_preserves_captured_revision_and_refuses_closed_views(self):
+        result = self.call(E("ViewInfo"))
+        self.assertEqual(result[1][0], S("StoreViewInfo"))
+        self.same(result[1], result[3])
+        self.assertEqual(result[2][0], S("KnowledgeCommittedV1"))
+        self.assertGreater(result[2][3], result[1][2])
+        self.assertEqual(result[4][0], S("StoreRefused"))
+
+    def test_malformed_mutation_and_identity_lists_refuse_without_binding(self):
+        for value in (Var(1), S("not-a-list"), "text", 7):
+            with self.subTest(value=value):
+                result = self.call(E("MalformedLists", value))
+                self.assertEqual(result[1:6], (E("KbRefused", S("edit-format")),
+                    E("KbRefused", S("edit-list")), E("KbRefused", S("identity-list")),
+                    E("KnowledgeRefusedV1", S("identity-list")), E("KnowledgeRefusedV1", S("mutation-list"))))
+                if isinstance(value, Var):
+                    self.assertEqual(result[-1], S("Variable"))
+        result = self.call(E("OpenMutation", Var(1)))
+        self.assertEqual(result, E("KbInputCheck", E("KbRefused", S("edit-format")),
+                                  E("KnowledgeRefusedV1", S("mutation-format")), S("Variable")))
+
     def test_repeated_commits_do_not_retain_one_space_per_request(self):
         self.commit([E("KbPut", "fixed", "value", (0,))])
         before = self.worker.last_metrics["permanent_bytes"]

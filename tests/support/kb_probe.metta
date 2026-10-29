@@ -1,5 +1,7 @@
 !(import! &self "../../lib/petta/kb.metta")
 !(import! &self "kb_knowledge_probe.metta")
+(= (kb-probe:pure-many $value) (superpose (one two)))
+(= (kb-probe:run (MalformedMerge $left $right)) (kb:observe-merge $left $right))
 
 (= (kb-probe:commit $owner $view $receipt $changes $observation)
    (kb:commit $owner $view $observation $receipt (KbChanges $changes) KbAccepted $changes 1048576))
@@ -11,7 +13,22 @@
       ($error $error))))
 (= (kb-probe:at $owner $view $command)
    (case $command
-     (((Commit $receipt $changes)
+     (((MalformedLists $value)
+       (KbInputCheck (kb:edit $value) (kb:edits $value ())
+         (kb:observe-facts $view $value 1024) (knowledge:observe $view $value 1024)
+         (knowledge:prepare $value) (get-metatype $value)))
+      ((OpenMutation $hole)
+       (KbInputCheck (kb:edits (cons-atom $hole ()) ())
+         (knowledge:prepare (cons-atom $hole ())) (get-metatype $hole)))
+      ((ViewInfo)
+       (let* (($before (store:view-info $view))
+              ($written (kb-probe:commit $owner $view view-info-check
+                           ((KbPut "view-info-row" "example" (1))) (kb:observe-empty $view)))
+              ($after (store:view-info $view))
+              ($closed (store:close $view))
+              ($refused (store:view-info $view)))
+         (KbViewInfoCheck $before $written $after $refused)))
+      ((Commit $receipt $changes)
        (kb-probe:commit $owner $view $receipt $changes (kb:observe-empty $view)))
       ((ReplayOwner $mode $path $receipt $changes)
        (case $mode

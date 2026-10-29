@@ -22,7 +22,8 @@ class CodecTests(unittest.TestCase):
     def test_open_callable_syntax_roundtrips_without_execution(self):
         x, y = Var(31), Var(32)
         for value in [x, E("+", x, x), E("+", x, y), E("=", E("f", x), E("+", x, x)),
-                      E("data", E("*", x, 2)), E("Error", "source", "datum"), E("+", 2, 3)]:
+                      E("data", E("*", x, 2)), E("Error", "source", "datum"), E("+", 2, 3),
+                      E("NativeHandle", "disk-store", 42)]:
             with self.subTest(value=value):
                 answer = self.worker.call(E("Roundtrip", value))
                 self.assertEqual(answer[0], S("StoreDecoded"), answer)

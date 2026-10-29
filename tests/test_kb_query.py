@@ -209,6 +209,13 @@ class QueryTests(unittest.TestCase):
         result = self.query(E("KqRows", ()), E("FreeObservation", Var(1)))
         self.assertEqual(result, E("KqObservationCheck", E("KnowledgeRefusedV1", S("bound-observation-required")), S("Variable")))
 
+    def test_constant_queries_require_a_live_captured_view(self):
+        for kind in ("free", "owner", "closed"):
+            with self.subTest(kind=kind):
+                result = self.query(E("KqRows", ()), E("InvalidViewRows", S(kind), Var(1)))
+                self.assertEqual(result[1][0], S("StoreRefused"), result)
+                self.assertEqual(result[2], S("Variable"))
+
     def test_existence_queries_keep_original_open_rows(self):
         x, y = Var(1), Var(2)
         original = E("KbFact", "open", "rule", (x, y))

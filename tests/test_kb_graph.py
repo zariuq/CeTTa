@@ -207,6 +207,27 @@ class GraphTests(unittest.TestCase):
         self.assertEqual(result[:-1], (E("KbRefused", S("graph-cursor")),) * 5)
         self.assertEqual(result[-1], S("Variable"))
 
+    def test_unencodable_identities_refuse_at_open_and_explanation(self):
+        for part in ("start", "goal", "relation"):
+            with self.subTest(part=part):
+                result = self.worker.call(E("ValidateGraph", self.path, E("Identity", S(part))))
+                self.assertEqual(result, E("KgValidation", E("StoreCodecRefused", "unsupported"),
+                                          E("StoreCodecRefused", "unsupported")))
+
+    def test_zero_length_paths_require_a_live_view(self):
+        for kind in ("free", "owner", "integer", "closed"):
+            with self.subTest(kind=kind):
+                result = self.worker.call(E("ValidateGraph", self.path, E("View", S(kind), Var(1))))
+                self.assertEqual(result[1][0], S("StoreRefused"), result)
+                self.assertEqual(result[2], S("Variable"))
+
+    def test_nested_cursor_holes_and_bad_counters_refuse_without_binding(self):
+        for part in ("config", "scan", "work"):
+            for operation in ("work", "observe", "close", "step", "page"):
+                with self.subTest(part=part, operation=operation):
+                    result = self.worker.call(E("ValidateGraph", self.path, E("Cursor", S(part), S(operation), Var(1))))
+                    self.assertEqual(result, E("KgValidation", E("KbRefused", S("graph-cursor")), S("Variable")))
+
     def test_repeated_queries_do_not_grow_permanent_request_storage(self):
         self.edges([(n, n, (n + 1) % 16) for n in range(16)])
         plan = E("KgReach", self.spec, 0, S("out"))
