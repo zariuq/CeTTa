@@ -89,11 +89,17 @@ it is not a promise of lexicographically least vertex names. Triangles retain
 parallel-edge occurrences and do not identify different anchor rotations.
 
 `(kbg:open view plan maximum-row-bytes maximum-retained-states)` opens a cursor.
+The view must be live even for a zero-length path. Plan identities must be
+portable CAV1 values; unsupported resources return a codec refusal, never a
+completed empty traversal. Comparisons and explanations propagate refusals.
 `(kbg:page cursor row-count step-budget)` returns `KgPage` with `KgMore`,
 `KgPaused`, `KgComplete` or `KgFailure`. Both paused and nonterminal pages carry
 the next cursor. Consume each continuation once. Closing releases its active
 scan; the captured view is borrowed and remains the caller's responsibility.
 These are in-process continuations, not serializable remote capabilities.
+Public cursor operations reject non-ground control records and invalid shapes
+before destructuring them. This validation does not authenticate arbitrary
+caller-constructed states; use continuations returned by the library.
 
 `kbg:observe` records a conservative relation-range dependency, covering
 negative paths and edges not visited by an early shortest answer. Combine
@@ -102,9 +108,16 @@ shows the argument index, graph projection and traversal strategy.
 
 `KgWork` reports driver steps, candidate keys, decoded source bytes and
 frontier admissions. These are not total CPU/allocation costs. A page advances
-at most one indexed edge per step, although a visited-list lookup or frontier
-rotation may inspect multiple retained entries. The initial visited-set
+at most one indexed edge per step, although continuation validation, a
+visited-list lookup or frontier rotation may inspect multiple retained entries. The initial visited-set
 implementation is a linear MeTTa reference. The state allowance bounds queued
 paths plus remembered identities, not bytes or elapsed time; capacity failure
 is distinct from completed emptiness. General scaling and service lifetime
 qualification remain separate obligations.
+
+The scaling driver is `tests/support/bench_kb_graph.py`. Its version-2 receipt
+separates case-level loading, storage and repeated updates from query samples.
+`VmHWM` remains process-cumulative, including loading and prior operations;
+it is not a query-specific peak. Empirical p95 is a statistic of the recorded
+sample and equals its maximum when fewer than 20 samples are used. The raw
+samples and their count are retained.

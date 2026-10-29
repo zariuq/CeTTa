@@ -68,7 +68,7 @@ def main():
     from value_worker_client import Worker
     from space_service_client import E, S, encode
     args.output.mkdir(parents=True, exist_ok=False)
-    records = []
+    records, measured_cases = [], []
     for shape in args.shapes:
         for count in args.sizes:
             edges = graph(shape, count)
@@ -86,12 +86,18 @@ def main():
                     result = worker.call(E("At", str(path), E("Commit", E("load", offset), edits)))
                     assert result[0] == S("KnowledgeCommittedV1"), result
                 load_ns = time.perf_counter_ns() - started
+                case_id = f"{shape}-{count}"
+                case_record = {"case_id": case_id, "shape": shape, "vertices": count,
+                               "edges": len(edges), "load_and_index_ns": load_ns,
+                               "memory_before_load": baseline,
+                               "memory_after_load": memory(worker.process.pid)}
                 spec = E("KgRelation", "edge", 0, 1)
                 cases = [("first-neighbour", E("KgNeighbours", spec, 0, S("out")), E("First", 1, 2)),
                          ("reach", E("KgReach", spec, 0, S("out")), E("Pages", 128, 512)),
                          ("shortest-one", E("KgShortest", spec, 0, count - 1, S("one"), S("out")), E("Pages", 1, 512))]
                 for name, plan, command in cases:
                     samples, metrics = [], []
+                    memory_before = memory(worker.process.pid)
                     for repeat in range(args.repeats + 1):
                         started = time.perf_counter_ns()
                         result = worker.call(E("Graph", str(path), plan, max(16, 4 * count), command))
@@ -121,39 +127,53 @@ def main():
                         else:
                             samples.append(elapsed)
                             metrics.append(dict(worker.last_metrics))
-                    record = {"shape": shape, "vertices": count, "edges": len(edges), "operation": name,
-                              "load_and_index_ns": load_ns, "first_query_ns": first_ns,
+                    record = {"case_id": case_id, "shape": shape, "vertices": count,
+                              "edges": len(edges), "operation": name, "first_query_ns": first_ns,
                               "samples_ns": samples, "median_ns": statistics.median(samples),
-                              "p95_ns": sorted(samples)[min(len(samples) - 1, int(.95 * len(samples)))],
+                              "sample_count": len(samples), "max_sample_ns": max(samples),
+                              "empirical_p95_ns": sorted(samples)[math.ceil(.95 * len(samples)) - 1],
                               "result_rows": len(rows), "result_bytes": len(encode(rows)),
                               "steps": work[1], "candidate_keys": work[2], "decoded_source_bytes": work[3],
                               "frontier_admissions": work[4], "worker_metrics": metrics,
-                              "memory": memory(worker.process.pid), "baseline_memory": baseline}
-                    record["rss_peak_delta_per_edge"] = max(0, record["memory"]["VmHWM"] - baseline["VmHWM"]) / len(edges)
+                              "memory_before_operation": memory_before,
+                              "memory_after_operation": memory(worker.process.pid)}
                     records.append(record)
                     print(shape, count, name, f"{record['median_ns']/1e6:.3f} ms", "keys", work[2], flush=True)
-                update_start = time.perf_counter_ns()
-                added = worker.call(E("At", str(path), E("Commit", S("benchmark-insert"),
-                                    (E("KbPut", S("temporary"), "edge", (count, 0)),))))
-                inserted_ns = time.perf_counter_ns() - update_start
-                delete_start = time.perf_counter_ns()
-                removed = worker.call(E("At", str(path), E("Commit", S("benchmark-delete"), (E("KbDelete", S("temporary")),))))
-                delete_ns = time.perf_counter_ns() - delete_start
-                assert added[0] == removed[0] == S("KnowledgeCommittedV1")
-                stored_bytes = sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
-                for record in records[-len(cases):]:
-                    record.update(insert_ns=inserted_ns, delete_ns=delete_ns,
-                                  storage_bytes=stored_bytes, storage_bytes_per_edge=stored_bytes / len(edges))
+                case_record["memory_after_queries"] = memory(worker.process.pid)
+                insert_samples, delete_samples = [], []
+                for repeat in range(args.repeats):
+                    update_start = time.perf_counter_ns()
+                    added = worker.call(E("At", str(path), E("Commit", E("benchmark-insert", repeat),
+                                        (E("KbPut", S("temporary"), "edge", (count, 0)),))))
+                    insert_samples.append(time.perf_counter_ns() - update_start)
+                    delete_start = time.perf_counter_ns()
+                    removed = worker.call(E("At", str(path), E("Commit", E("benchmark-delete", repeat),
+                                          (E("KbDelete", S("temporary")),))))
+                    delete_samples.append(time.perf_counter_ns() - delete_start)
+                    assert added[0] == removed[0] == S("KnowledgeCommittedV1")
+                files = [p.stat() for p in path.rglob("*") if p.is_file()]
+                stored_bytes = sum(item.st_size for item in files)
+                case_record.update(insert_samples_ns=insert_samples, delete_samples_ns=delete_samples,
+                                   storage_bytes=stored_bytes,
+                                   allocated_storage_bytes=sum(item.st_blocks * 512 for item in files),
+                                   storage_bytes_per_edge=stored_bytes / len(edges),
+                                   memory_after_updates=memory(worker.process.pid))
+                measured_cases.append(case_record)
             finally:
                 assert worker.close() == 0
     sources = ["lib/petta/kb.metta", "lib/petta/kb_graph.metta", "lib/petta/knowledge.metta",
                "tests/support/kb_graph_probe.metta", "tests/support/bench_kb_graph.py"]
-    receipt = {"worker_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
+    receipt = {"format_version": 2, "worker_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
                "working_tree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True)),
                "sources": {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in sources},
                "scope": "small graph scaling; first query after loading does not imply a cold OS page cache; worker RPC and response materialization included; no service or cross-engine performance claim",
-               "records": records}
+               "measurement_notes": {
+                   "percentile": "empirical nearest-rank over the recorded warm samples; with fewer than 20 samples p95 equals the maximum, not a population-tail estimate",
+                   "memory": "VmHWM is process-cumulative, including loading and earlier operations; no per-operation peak attribution. VmRSS is a point observation, not retained logical bytes",
+                   "updates": "independent insert/delete samples belong to each case, not to each query operation; unique receipt IDs ensure real updates rather than replay",
+                   "storage": "file lengths and allocated blocks include indexes, journal/metadata and all load/update receipts; not isolated index bytes"},
+               "cases": measured_cases, "records": records}
     (args.output / "results.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
 
