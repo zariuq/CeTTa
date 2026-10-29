@@ -1957,6 +1957,10 @@ uint32_t eval_current_pattern_control_arity(SymbolId head) {
     return cetta_pattern_adapter_arity(eval_current_pattern_head(head));
 }
 
+uint32_t eval_current_pattern_operation_arity(SymbolId head) {
+    return cetta_pattern_operation_arity(eval_current_pattern_head(head));
+}
+
 SymbolId eval_current_pattern_head(SymbolId head) {
     return cetta_pattern_resolve_head(g_library_context, head);
 }
@@ -17048,6 +17052,28 @@ static const void *petta_prepared_pure_source_child(
         (const PettaPlanNode *)source_view, child_index);
 }
 
+static __attribute__((cold, noinline)) const void *petta_prepared_pure_project_source(
+        void *context, const CettaPreparedPureSourceProjection *projection) {
+    if (!projection || (projection->child_count && !projection->children) ||
+        !cetta_expr_len_mul_fits_size(projection->child_count, sizeof(PettaPlanNode *)))
+        return NULL;
+    const PettaPlanNode *inline_children[16] = {0};
+    const PettaPlanNode **children = projection->child_count <= 16u ? inline_children
+        : malloc(sizeof(*children) * (size_t)projection->child_count);
+    if (!children)
+        return NULL;
+    for (CettaExprIndex index = 0u; index < projection->child_count; index++)
+        children[index] = projection->children[index];
+    const PettaPlanNode *plan = petta_program_project_computation(context, projection->source,
+        projection->computation,
+        projection->role == CETTA_PREPARED_PURE_SOURCE_DYNAMIC_CALL,
+        projection->relation_head_admitted,
+        children, projection->child_count);
+    if (children != inline_children)
+        free(children);
+    return plan;
+}
+
 /* PeTTa evaluates a call below an equation's head rather than matching it:
  * such a relational head runs through equation search's own phases, and no
  * prepared program may read it as a structural pattern.  This is the one test
@@ -17286,6 +17312,7 @@ static CettaPreparedPureSourceView prepared_pure_source_view_for_language(
     view.computation = petta_prepared_pure_source_computation;
     view.child = petta_prepared_pure_source_child;
     view.equation_rhs = petta_prepared_pure_equation_source;
+    view.project_source = petta_prepared_pure_project_source;
     return view;
 }
 
@@ -56584,6 +56611,27 @@ petta_lowered_to_shared_form:
 
     if (head_id == g_builtin_syms.import_bang &&
         nargs == 2 && g_registry && g_library_context) {
+        Atom *const *members = NULL;
+        CettaExprLen member_count = 0u;
+        if (language_id == CETTA_LANGUAGE_PETTA &&
+            petta_semantics_import_batch(expr_arg(atom, 1), &members, &member_count)) {
+            /* Sequential imports use the ordinary sequencing owner. Each
+             * retains the single-import loader's faults, idempotence and
+             * source-relative resolution; prior effects survive later faults. */
+            if (!cetta_expr_len_mul_fits_size(member_count, sizeof(Atom *))) {
+                eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+                return;
+            }
+            Atom **bindings = arena_alloc(a, sizeof(*bindings) * (member_count ? member_count : 1u));
+            for (CettaExprIndex i = 0u; i < member_count; i++) {
+                Atom *call = atom_expr3(a, atom->expr.elems[0], expr_arg(atom, 0), members[i]);
+                Atom *ignored = atom_var_with_id(a, "__import", fresh_var_id());
+                bindings[i] = atom_expr2(a, ignored, call);
+            }
+            Atom *sequence = atom_expr3(a, atom_symbol_id(a, g_builtin_syms.let_star),
+                atom_expr(a, bindings, member_count), petta_semantics_success_value(a));
+            TAIL_REENTER(sequence);
+        }
         const char *spec = string_like_atom(expr_arg(atom, 1));
         PeTTaLibraryReference library_reference;
         bool has_library_reference =

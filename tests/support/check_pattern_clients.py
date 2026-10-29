@@ -127,4 +127,15 @@ assert observations('(a a)\n', 'petta') != observations('(a)\n', 'petta')
 assert agrees('((x $a) (y $b))\n', 'petta', ['((y $v0) (x $v1))'])
 assert not agrees('((x a) (x a))\n', 'petta', ['((x a) (y a))'])
 assert not agrees('((pair $a $a) (z))\n', 'petta', ['((z) (pair $v0 $v1))'])
+protocol = root / 'tests/petta/pattern_declared_protocol.metta'
+protocol_expected = protocol.with_suffix('.expected').read_text().splitlines()
+for machine in ('0', '1'):
+    result = subprocess.run(
+        [binary, '--lang', 'petta', '--profile', 'extended', str(protocol)],
+        cwd=root, env=dict(os.environ, CETTA_PETTA_SEARCH_MACHINE=machine),
+        capture_output=True, text=True, timeout=30)
+    if result.returncode or result.stderr or not agrees(result.stdout, 'petta', protocol_expected):
+        raise AssertionError(('declared pattern protocol', machine, result.returncode,
+                              result.stdout, result.stderr))
+    checked += 1
 print(f'PASS: {checked} SKI, retrieval, Nil coverage, clause, PLN-selection and policy-form clients')

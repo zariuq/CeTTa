@@ -10931,10 +10931,15 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
     }
     import_bit = spec ? spec->bit : native_spec->import_bit;
     import_name = spec ? spec->name : native_spec->name;
-    /* These vocabulary libraries publish their words into each importing
-       reader. File inventory still prevents replay within that reader. */
-    const uint32_t naming_interfaces = CETTA_LIBRARY_RHO;
-    if ((ctx->active_mask & import_bit) && !(import_bit & naming_interfaces))
+    /* Native availability belongs to the session; source definitions belong
+     * to each importing space. The file inventory prevents replay in that
+     * space, including cycles, without skipping another space's import. */
+    bool previously_active = (ctx->active_mask & import_bit) != 0u;
+    /* HE's native modules have session-wide initialization; its vocabulary
+     * libraries alone republish words into each reader. PeTTa source modules
+     * use the per-space file inventory below. */
+    if (previously_active && ctx->session.language_id != CETTA_LANGUAGE_PETTA &&
+        import_bit != CETTA_LIBRARY_RHO)
         return true;
 
 #if CETTA_BUILD_WITH_JSON_GSLT
@@ -10966,7 +10971,8 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
                              &plan, eval_arena, error_out) ||
         !execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
                              registry, fuel, NULL, error_out)) {
-        ctx->active_mask &= ~import_bit;
+        if (!previously_active)
+            ctx->active_mask &= ~import_bit;
         return false;
     }
     if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)

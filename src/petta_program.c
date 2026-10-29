@@ -2943,6 +2943,17 @@ static const PettaPlanNode *petta_plan_build(
  * call-free subtree, then replaces each with one VALUE place.  A value held
  * only by its parent (for example quote's argument) is never certified for a
  * different context. */
+static PettaPlanNode petta_plan_value_projection(const PettaPlanNode *source) {
+    return (PettaPlanNode){
+        .role = PETTA_PLAN_VALUE,
+        .computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN,
+        .output = PETTA_PLAN_OUTPUT_VALUE,
+        .literal_case_default = source && source->literal_case_default,
+        .source_position = source ? source->source_position : 0u,
+        .source_debit = source ? source->source_debit : 0u,
+    };
+}
+
 static bool petta_plan_collapse_values(
         PettaProgram *program, Atom *root_source, PettaPlanNode *root,
         const PettaTranslationEnvironment *environment) {
@@ -2973,14 +2984,7 @@ static bool petta_plan_collapse_values(
         }
         if (item.finish) {
             petta_translation_value_keep(program, environment, source);
-            *node = (PettaPlanNode){
-                .role = PETTA_PLAN_VALUE,
-                .computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN,
-                .output = PETTA_PLAN_OUTPUT_VALUE,
-                .literal_case_default = node->literal_case_default,
-                .source_position = node->source_position,
-                .source_debit = node->source_debit,
-            };
+            *node = petta_plan_value_projection(node);
             continue;
         }
         if (node->role == PETTA_PLAN_VALUE) {
@@ -2989,14 +2993,7 @@ static bool petta_plan_collapse_values(
                  petta_semantics_is_canonical_closure(source))) {
                 petta_translation_value_keep(program, environment, source);
             }
-            *node = (PettaPlanNode){
-                .role = PETTA_PLAN_VALUE,
-                .computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN,
-                .output = PETTA_PLAN_OUTPUT_VALUE,
-                .literal_case_default = node->literal_case_default,
-                .source_position = node->source_position,
-                .source_debit = node->source_debit,
-            };
+            *node = petta_plan_value_projection(node);
             continue;
         }
         if (source->kind != ATOM_EXPR ||
@@ -3228,7 +3225,7 @@ static bool petta_program_grow_interned_plans(PettaProgram *program) {
 }
 
 static const PettaPlanNode *petta_program_intern_plan(
-    PettaProgram *program, const PettaPlanNode *built) {
+    PettaProgram *program, const PettaPlanNode *built, bool shared_children) {
     uint64_t hash = 0u;
     if (!petta_plan_content_hash(built, &hash))
         return NULL;
@@ -3251,8 +3248,24 @@ static const PettaPlanNode *petta_program_intern_plan(
         }
         slot = (slot + 1u) & mask;
     }
-    const PettaPlanNode *copy =
-        petta_plan_copy_into(&program->plans, built);
+    const PettaPlanNode *copy = NULL;
+    if (shared_children) {
+        /* The normalized children already belong to this immutable pool.
+         * Copy their descriptors, retaining their shared descendants. */
+        PettaPlanNode *root = arena_alloc(&program->plans, sizeof(*root));
+        PettaPlanNode *children = built->child_count ? arena_alloc(
+            &program->plans, sizeof(*children) * (size_t)built->child_count) : NULL;
+        if (root && (!built->child_count || children)) {
+            *root = *built;
+            if (built->child_count)
+                memcpy(children, built->children,
+                    sizeof(*children) * (size_t)built->child_count);
+            root->children = children;
+            copy = root;
+        }
+    } else {
+        copy = petta_plan_copy_into(&program->plans, built);
+    }
     if (!copy)
         return NULL;
     program->interned_plans[slot] = (PettaPlanInternEntry){
@@ -3261,6 +3274,86 @@ static const PettaPlanNode *petta_program_intern_plan(
     };
     program->interned_plan_len++;
     return copy;
+}
+
+__attribute__((cold, noinline)) const PettaPlanNode *petta_program_project_computation(
+        PettaProgram *program, const PettaPlanNode *source,
+        CettaComputationPlan computation, bool dynamic, bool relation_head_admitted,
+        const PettaPlanNode *const *children, CettaExprLen child_count) {
+    if (!program || (child_count && !children) ||
+        !cetta_expr_len_mul_fits_size(child_count, sizeof(PettaPlanNode)))
+        return NULL;
+    CettaControlOperation operation = computation.control.operation;
+    if (operation != CETTA_CONTROL_RETURN_VALUE && operation != CETTA_CONTROL_CONSTRUCT &&
+        operation != CETTA_CONTROL_INVOKE && operation != CETTA_CONTROL_SEQUENCE &&
+        operation != CETTA_CONTROL_BRANCH && operation != CETTA_CONTROL_FAILURE)
+        return NULL;
+    PettaPlanNode node = {
+        .role = operation == CETTA_CONTROL_RETURN_VALUE ? PETTA_PLAN_VALUE
+            : operation == CETTA_CONTROL_CONSTRUCT ? PETTA_PLAN_DATA
+            : dynamic ? PETTA_PLAN_DYNAMIC_CALL : PETTA_PLAN_STATIC_CALL,
+        .computation = computation,
+        .source_position = source ? source->source_position : 0u,
+        .source_debit = source ? source->source_debit : 0u,
+        .relation_head_admitted = relation_head_admitted,
+        .open_template_admitted = source && source->open_template_admitted,
+        .dispatch_handler = dynamic || (source && source->dispatch_handler),
+        .child_count = child_count,
+    };
+    if (operation == CETTA_CONTROL_RETURN_VALUE) {
+        if (child_count)
+            return NULL;
+        node = petta_plan_value_projection(&node);
+    } else if (operation == CETTA_CONTROL_CONSTRUCT) {
+        /* Completed fields contain only value ports. Keep the existing
+         * runtime translation's one value place, rather than re-entering
+         * a constructor and visiting every field on each answer. */
+        bool ready = true;
+        for (CettaExprIndex index = 0u; index < child_count; index++) {
+            if (!children[index])
+                return NULL;
+            ready &= children[index]->role == PETTA_PLAN_VALUE;
+        }
+        if (ready) {
+            node = petta_plan_value_projection(&node);
+            return petta_program_intern_plan(program, &node, true);
+        }
+        node.output = child_count ? PETTA_PLAN_OUTPUT_CONSTRUCTOR : PETTA_PLAN_OUTPUT_VALUE;
+        if (source && source->role == PETTA_PLAN_DATA)
+            node.execution = source->execution;
+    } else {
+        node.contains_call = true;
+        if (operation == CETTA_CONTROL_SEQUENCE) {
+            if (child_count != 4u ||
+                !cetta_control_operation_binding_layout(computation.control, 1u))
+                return NULL;
+            node.output = PETTA_PLAN_OUTPUT_CHILD;
+            node.output_child = 3u;
+        } else if (operation == CETTA_CONTROL_INVOKE) {
+            /* Surviving calls retain observation/occurrence obligations.
+             * Completed ports erase them through the value projection. */
+            node.contains_cardinality_call = source && source->contains_cardinality_call;
+            node.contains_deferred_occurrence_transport = source && source->contains_deferred_occurrence_transport;
+            node.execution = relation_head_admitted ? PETTA_PLAN_EXEC_RELATION_SLOTS
+                : source && source->role == PETTA_PLAN_STATIC_CALL ? source->execution
+                : PETTA_PLAN_EXEC_GENERIC;
+        }
+    }
+    PettaPlanNode *items = child_count ? malloc(sizeof(*items) * (size_t)child_count) : NULL;
+    if (child_count && !items)
+        return NULL;
+    bool ok = true;
+    for (CettaExprIndex index = 0u; index < child_count; index++) {
+        if (!children[index]) { ok = false; break; }
+        items[index] = *children[index];
+        node.contains_call |= items[index].contains_call;
+        node.contains_cardinality_call |= items[index].contains_cardinality_call;
+        node.contains_deferred_occurrence_transport |= items[index].contains_deferred_occurrence_transport;
+    }
+    node.children = items;
+    const PettaPlanNode *projected = ok ? petta_program_intern_plan(program, &node, true) : NULL;
+    free(items);
+    return projected;
 }
 
 /* Renaming variables does not change control or callability facts.  Rebuild
@@ -4254,6 +4347,10 @@ PettaProgram *petta_program_new_with_rules(unsigned admitted_forms) {
     arena_set_hashcons(&program->plans, NULL);
     arena_init(&program->transient_scratch);
     arena_init(&program->transient_plan_atoms);
+    /* Bounded source keys usually occupy a small fraction of a worker
+     * block; grow the metadata pool only as actual retained keys require. */
+    arena_set_block_capacity(&program->transient_plan_atoms, ARENA_BLOCK_SIZE / 16u);
+    arena_set_block_growth(&program->transient_plan_atoms, true);
     arena_set_hashcons(&program->transient_scratch, NULL);
     return program;
 }
@@ -4761,7 +4858,7 @@ const PettaPlanNode *petta_program_plan_transient(
     const PettaPlanNode *plan =
         built && petta_plan_collapse_values(
             program, atom, built, environment)
-            ? petta_program_intern_plan(program, built)
+            ? petta_program_intern_plan(program, built, false)
             : NULL;
     arena_reset(&program->transient_scratch, mark);
     free(owned.named_heads);

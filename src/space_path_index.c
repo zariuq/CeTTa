@@ -385,6 +385,14 @@ static bool path_query_term_key(const TermUniverse *universe, const Atom *elemen
 
 typedef struct { Atom *term; CettaExprIndex child; } PathQueryFrame;
 
+static bool path_term_holds_term(const Atom *term) {
+    for (CettaExprIndex index = 0u; index < term->expr.len; index++) {
+        if (term->expr.elems[index]->kind == ATOM_EXPR)
+            return true;
+    }
+    return false;
+}
+
 /* The shape of a flat pattern: its length, then two bits per element
  * (variable, symbol, integer, other leaf). Coordinate selection reads only
  * this shape. 0 for a nested or long pattern. */
@@ -500,10 +508,14 @@ static CettaSpacePathIndex *path_demand(Space *space, Atom *pattern,
         }
         if (child && child->kind == ATOM_EXPR && !atom_has_vars(child)) {
             /* A ground term whose leaves are all symbols is one id however
-             * deep: after a variable it is the coordinate itself, where its
-             * deepest leaf would ask for a path as deep as the term.  Before
-             * any variable a ground term holds no coordinate to find. */
-            if (unbound && frame->child != 0u &&
+             * deep: after a variable a term holding a term is the coordinate
+             * itself, where its deepest leaf would ask for a path as deep as
+             * the term.  A flat one is keyed by its first leaf after its
+             * head: a row whose term there holds variables is then a miss
+             * unless the leaf the key reads is open in it, where keyed whole
+             * it would stay a candidate.  Before any variable a ground term
+             * holds no coordinate to find. */
+            if (unbound && frame->child != 0u && path_term_holds_term(child) &&
                 path_query_term_key(space->native.universe, child, key)) {
                 kind = CETTA_SPACE_PATH_TERM_KEY;
                 found = true;

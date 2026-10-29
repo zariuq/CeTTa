@@ -274,10 +274,9 @@ def compare_completed_runs(kinds, expected, actual, representations=None):
 
 
 def compare_petta(program, expected, actual, cetta):
-    # The framed copy runs beside the program, so a relative command must
-    # be resolved from where this tool was called.
-    if os.sep in cetta[0] and os.path.exists(cetta[0]):
-        cetta = [os.path.abspath(cetta[0]), *cetta[1:]]
+    # Keep the invocation's working directory, including for wrapper commands
+    # with a relative binary argument. The copy's location beside the source
+    # preserves source-relative imports without changing the process context.
     text = Path(program).read_text()
     source, kinds = framed(text)
     with tempfile.NamedTemporaryFile('w', suffix='.metta', delete=False,
@@ -288,12 +287,13 @@ def compare_petta(program, expected, actual, cetta):
     # than a caller's, still removes it.
     try:
         run = subprocess.run([*cetta, framed_path], capture_output=True, text=True,
-                             cwd=os.path.dirname(os.path.abspath(program)),
                              timeout=FRAMED_TIMEOUT)
     except subprocess.TimeoutExpired:
         return False, f'the framed run took over {FRAMED_TIMEOUT} s'
     finally:
         os.unlink(framed_path)
+    if run.returncode != 0 or run.stderr:
+        return False, f'framed execution failed (exit {run.returncode}): {run.stderr.strip()}'
     lines = run.stdout.splitlines()
     marks = [i for i, line in enumerate(lines) if line.strip() == MARKER]
     if len(marks) != len(kinds) + 1:

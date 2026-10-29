@@ -25,7 +25,9 @@ rows' marks may read at most six rows for each row removed, however many
 batches of additions the phases append: a settle the marks start reads at most
 two rows for each it removes, readers that need settled rows start a few
 more, and a space settled at every batch reads all its rows each time, tens
-of rows for each row removed.
+of rows for each row removed.  The same work stays within four passes over
+every row the run can hold, its initial rows and two for each swap; a dense
+representation can compact fewer rows more often.
 
 Then cells (p i) and rows holding constructor patterns, (step (p $u)
 (q $u)) and (step (q $u) (r $u)), as Hexlife's neighbour relation holds
@@ -66,6 +68,15 @@ LOOKUPS = """{facts}
 CELLS = (30, 100)
 SETTLE_ROWS_PER_REMOVED = 6
 
+
+def sort_settle_work_limit(initial_rows, swaps):
+    # Initial storage includes the dialect's prelude; each swap removes two
+    # occurrences. The initial length observation does not enumerate rows.
+    # Preserve the original four-full-pass budget, expressed in actual row
+    # visits. At most initial_rows + 2*swaps rows can exist in this run;
+    # many small compactions may cost less than four passes over that set.
+    return 4 * (initial_rows + 2 * swaps)
+
 SORT = """{facts}
 (= (phase $p)
    (let $swaps (collapse (match &self (, (parity $i $p) (succ $i $si) (A $i $e) (A $si $se) (lt $se $e))
@@ -75,6 +86,7 @@ SORT = """{facts}
               ($c (add-atom &self (A $i $se))) ($d (add-atom &self (A $si $e))))
          t))))))
 (= (rounds $k) (if (== $k 0) done (let* (($o (phase odd)) ($e (phase even))) (rounds (- $k 1)))))
+!(space-len &self)
 !(rounds {cells})
 !(size-atom (collapse (match &self (, (A $i $e) (A $si $se) (succ $i $si) (lt $se $e)) bad)))
 !(size-atom (collapse (match &self (A $i $e) t)))
@@ -210,6 +222,12 @@ def main():
                       f"{found.get('space-mark-settle-row', 0)} rows for "
                       f"{removed} removed")
                 return 1
+            settled_rows = found.get("space-mark-settle-row", 0)
+            settle_limit = sort_settle_work_limit(int(answers[0]), swaps)
+            if settled_rows > settle_limit:
+                print(f"FAIL: the sort of {cells} cells scanned {settled_rows} "
+                      f"rows settling its marks, more than {settle_limit}")
+                return 1
     with tempfile.TemporaryDirectory(prefix="cetta-native-query-open-") as work:
         for cells in OPEN_CELLS:
             facts = "\n".join(f"(cell (p {i}))" for i in range(cells))
@@ -241,7 +259,8 @@ def main():
           f"lookups for {CUSTOMERS[0]} and {CUSTOMERS[1]} customers read "
           f"{read[0]} then {read[1]} rows, and sorts of {CELLS[0]} and "
           f"{CELLS[1]} cells make their swaps natively, settling their marks "
-          f"with at most {SETTLE_ROWS_PER_REMOVED} rows read for each removed, "
+          f"with at most {SETTLE_ROWS_PER_REMOVED} rows read for each removed "
+          f"and within four passes over their rows, "
           f"and rows holding patterns meet "
           f"{OPEN_CELLS[0]} and {OPEN_CELLS[1]} cells one way")
     return 0
