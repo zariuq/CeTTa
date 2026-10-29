@@ -500,6 +500,7 @@ static bool native_query_bits_select(const NativeQueryLoops *loops,
                                      const NativeQueryLeg *leg,
                                      const CettaDenseRelation *bits,
                                      NativeQueryPairs *pairs) {
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_NATIVE_QUERY_BITS_LEG);
     CettaDenseId columns[3] = {CETTA_DENSE_ANY, CETTA_DENSE_ANY,
                                CETTA_DENSE_ANY};
     for (CettaExprIndex c = 1u; c < 3u; c++) {
@@ -556,6 +557,14 @@ static bool native_query_bits_visit(NativeQueryLoops *loops,
  * Asked once a query: no effect is made while its loops run. */
 static bool native_query_bits_rows(NativeQueryLoops *loops, size_t leg) {
     if (loops->bits_rows[leg] == 0u) {
+        /* A head none of whose facts is a row, in a space with no open row,
+         * answers at once; the candidates would demand a full index. */
+        const NativeQueryLeg *l = &loops->legs[leg];
+        if (space_dense_head_rows_absent(loops->space,
+                                         tu_sym(loops->universe, l->fixed[0]))) {
+            loops->bits_rows[leg] = 1u;
+            return false;
+        }
         CettaIndex *rows = NULL;
         space_dense_reading_bits_begin();
         CettaIndex count = space_match_candidates64(
@@ -1021,11 +1030,67 @@ static bool native_query_disjoint(const NativeQueryRun *run) {
 }
 
 /* Whether a pattern reads a head the source space keeps as bits: the
- * loops read bits; the dense query and the relational plan read rows, and
- * would give the bits back to them. */
+ * loops and the dense query read the bits; the relational plan reads rows,
+ * and would give the bits back to them. */
 static bool native_query_meets_bits(const CettaNativeQuery *query) {
     return space_dense_meets_patterns(query->source, query->patterns,
                                       query->pattern_count);
+}
+
+static bool native_query_atom_holds_var(const Atom *atom, VarId var) {
+    if (!atom || !atom_has_vars(atom))
+        return false;
+    if (atom->kind == ATOM_VAR)
+        return var_id_eq(atom->var_id, var);
+    if (atom->kind != ATOM_EXPR)
+        return false;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (native_query_atom_holds_var(atom->expr.elems[i], var))
+            return true;
+    }
+    return false;
+}
+
+static bool native_query_effects_read(const CettaNativeQuery *query,
+                                      const Atom *atom) {
+    if (!atom || !atom_has_vars(atom))
+        return true;
+    if (atom->kind == ATOM_VAR) {
+        for (size_t e = 0u; e < query->effect_count; e++) {
+            if (native_query_atom_holds_var(query->effects[e].data,
+                                            atom->var_id))
+                return true;
+        }
+        return false;
+    }
+    if (atom->kind != ATOM_EXPR)
+        return true;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (!native_query_effects_read(query, atom->expr.elems[i]))
+            return false;
+    }
+    return true;
+}
+
+/* Whether the effects sum a variable out: every effect adds into a set,
+ * the answers read no variable, and some variable of the patterns is read
+ * by no effect.  Only then does the dense query make each instance once for
+ * many solutions; over relations kept as bits it copies their pairs, which
+ * the loops read in place. */
+static bool native_query_projects(const CettaNativeQuery *query) {
+    if (query->effect_count == 0u ||
+        (!query->count_only && query->template_atom &&
+         atom_has_vars(query->template_atom)))
+        return false;
+    for (size_t e = 0u; e < query->effect_count; e++) {
+        if (query->effects[e].removal || !space_is_set(query->effects[e].target))
+            return false;
+    }
+    for (size_t i = 0u; i < query->pattern_count; i++) {
+        if (!native_query_effects_read(query, query->patterns[i]))
+            return true;
+    }
+    return false;
 }
 
 /* Make the deferred effects: every removal, then every addition, in
@@ -1176,8 +1241,8 @@ CettaNativeQueryStatus cetta_native_query_run(
                 leg->fixed[c] = term_universe_store_atom_id(
                     universe, arena, leg->pattern->expr.elems[c]);
         }
-    } else if ((dense || !selective) && !meets_bits &&
-               query->pattern_count >= 2u &&
+    } else if ((dense || !selective) && query->pattern_count >= 2u &&
+               (!meets_bits || native_query_projects(query)) &&
                cetta_dense_query_prepare(query->source, arena, query->patterns,
                                          query->pattern_count, &dense_query)) {
         /* Binary relations dense enough for rows of bits join by them. */

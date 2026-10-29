@@ -683,6 +683,23 @@ static bool relational_plan_prepare_with(
                 ready = false;
                 break;
             }
+            /* A row stored without a record holds an object compared by
+             * identity, which no factor can key: one the pattern could match
+             * declines the plan.  Its head and length are read from the row
+             * itself, since its children have no ids. */
+            if (kind == ATOM_EXPR && !tu_hdr(space->native.universe, id)) {
+                Atom *stored = term_universe_get_atom(space->native.universe, id);
+                if (stored && stored->kind == ATOM_EXPR &&
+                    (stored->expr.len != pattern->expr.len ||
+                     (pattern->expr.len &&
+                      pattern->expr.elems[0]->kind == ATOM_SYMBOL &&
+                      stored->expr.elems[0]->kind == ATOM_SYMBOL &&
+                      stored->expr.elems[0]->sym_id !=
+                          pattern->expr.elems[0]->sym_id)))
+                    continue;
+                ready = false;
+                break;
+            }
             if (kind != ATOM_EXPR ||
                 tu_arity(space->native.universe, id) != pattern->expr.len)
                 continue;

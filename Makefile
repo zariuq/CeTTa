@@ -3386,7 +3386,11 @@ PRIME_FAST_TESTS = $(PRIME_CONFORMANCE_TESTS) $(PRIME_EXAMPLE_TESTS) $(PRIME_PRA
 # Per-test wall-clock cap for the prime conformance/completion gates.  A clean
 # prime_02_completion_resources run is a few seconds; a pathological blow-up
 # (e.g. the O(n^3) reify-judge regression) must fail LOUD instead of grinding
-# for hours and wedging the whole verification sweep.
+# for hours and wedging the whole verification sweep.  A build that collects
+# at every safe point runs the largest completions several times slower.
+ifeq ($(TERM_UNIVERSE_COLLECTION_CHECKS),1)
+PRIME_COMPLETION_TIMEOUT ?= 300
+endif
 PRIME_COMPLETION_TIMEOUT ?= 60
 PYTHON_TESTS = tests/test_py_ops_syntax.metta tests/test_import_foreign_python_file.metta tests/test_import_foreign_pkg_error.metta tests/test_namespace_sugar_guardrails.metta
 PATHMAP_REQUIRED_TESTS = \
@@ -6193,9 +6197,10 @@ $(SPACE_DENSE_TEST_BIN): tests/test_space_dense.c src/space_dense.c src/space_de
 	$(CC) $(CFLAGS) -Isrc -o $@ tests/test_space_dense.c src/space_dense.c
 
 # Programs whose answers must not depend on whether a relation is kept as
-# bits: each runs with bits off and on, compared with its expected answers as
-# bags, since bits read a relation in an order of their own.
-SPACE_DENSE_PROGRAMS = dense_relations dense_relations_derived
+# bits: each runs with bits off and with bits from a head's first fact,
+# compared with its expected answers as bags, since bits read a relation in
+# an order of their own.
+SPACE_DENSE_PROGRAMS = dense_relations dense_relations_derived term_keyed_columns
 
 .PHONY: test-space-dense
 test-space-dense: $(SPACE_DENSE_TEST_BIN) $(BIN) \
@@ -6203,7 +6208,7 @@ test-space-dense: $(SPACE_DENSE_TEST_BIN) $(BIN) \
 	@$(call cetta_exec,./$(SPACE_DENSE_TEST_BIN))
 	@set -eu; actual=$$(mktemp); trap 'rm -f "$$actual"' EXIT; \
 	for t in $(SPACE_DENSE_PROGRAMS); do \
-		for mode in off on; do \
+		for mode in off eager; do \
 			CETTA_SPACE_DENSE=$$mode $(CETTA_BIN_INVOKE) --profile extended \
 				--lang petta tests/petta/$$t.metta > "$$actual" 2>&1; \
 			if ! python3 tests/support/compare_answers.py --lang petta \
@@ -6224,6 +6229,34 @@ test-space-dense-scaling: $(BIN) tests/petta/dense_relations_scaling.metta \
 		tests/support/check_dense_scaling.py
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_dense_scaling.py \
 		tests/petta/dense_relations_scaling.metta $(SPACE_DENSE_SCALING_NODES)
+
+# A PeTTa document read a few forms at a time answers as one read whole, an
+# import calling an equation defined after it among them; and reading a
+# document in slices keeps the load flat: from one size to four times it,
+# its peak memory grows by at most a third of what it grows read whole.
+PETTA_SLICES_PROGRAMS = $(SPACE_DENSE_PROGRAMS) search_machine_import_forward
+PETTA_SLICES_FORMS ?= 200000
+.PHONY: test-petta-slices
+test-petta-slices: $(BIN) tests/support/check_petta_slices.py \
+		$(foreach t,$(PETTA_SLICES_PROGRAMS),tests/petta/$(t).metta tests/petta/$(t).expected)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_petta_slices.py \
+		$(PETTA_SLICES_FORMS) $(foreach t,$(PETTA_SLICES_PROGRAMS),tests/petta/$(t).metta)
+
+# A strict stack keeps no structure beyond its order: general matches grow
+# its peak memory by nothing, where a full stack builds its indexes.
+SPACE_PROFILES_SCALING_ITEMS ?= 50000
+.PHONY: test-space-profiles-scaling
+test-space-profiles-scaling: $(BIN) tests/support/check_space_profiles_scaling.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_space_profiles_scaling.py \
+		$(SPACE_PROFILES_SCALING_ITEMS)
+
+# A count asked once rents a scan and builds no index; counts that keep
+# coming buy their column's index.
+COUNT_FOOTPRINT_FACTS ?= 200000
+.PHONY: test-count-footprint
+test-count-footprint: $(BIN) tests/support/check_count_footprint.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_count_footprint.py \
+		$(COUNT_FOOTPRINT_FACTS)
 
 # The counting checks must catch a hold, a release, a cascade or a reused
 # slot's candidacy gone missing.
@@ -18839,7 +18872,7 @@ test-lean: test-plain-bnf-semantic-generated-artifact-current-v1
 test-all: test-plain-bnf-reader-v1
 test-all: test-plain-bnf-denotation-v1
 
-test-all: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-collection test-term-universe-collection-mutants test-term-universe-plateau test-space-dense test-space-dense-scaling test-compare-answers test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
+test-all: $(BIN) test-python-build-config test-lib-prolog-build-config test-precise-vocabulary test-prime-public-judgment-vocabulary test-manifest-strict test-fail-atomic-build-v1 test-operational-language-def-v1 test-language-def-premise-free-rewriter-v1 test-walters-zantema-da-to-radix-digit-transform-v1 test-walters-zantema-da-to-radix-digit-emitted-c-v1 test-walters-zantema-da-radix-digit-nik-v1 test-exact-arithmetic-to-external-call-v1 test-language-def-core-v1 test-language-def-ground-term-v1 test-exact-integer-theory-v1 test-json-gslt test-io test-git-module test-symbolid-guard test-variant-shape-roundtrip test-arena-frame-identity-ownership test-name-space test-arena-identity-names test-arena-block-growth test-delay-service test-bindings-lookup-index test-atom-deep-copy-iterative test-abt test-rhometta-payload-map-capacity-c test-space-term-universe-membership test-term-universe-collection test-term-universe-collection-mutants test-term-universe-plateau test-space-dense test-space-dense-scaling test-petta-slices test-space-profiles-scaling test-count-footprint test-compare-answers test-stable-occurrence-transport test-shared-space-concurrent-index test-parallel-executor-lifecycle test-stable-occurrence-realization-tournament test-help-flags test-rhocalc test-he-contract-suite test-he-return-contract-correlation test-closed-stream-fastpath test-parse-depth-guard test-stdlib-growth-memory-regression test-rhometta-macro-audit test-eval-gc-adversarial test-list-lanes test-syn-lanes test-lib-prolog test-petta-libpl test-petta-process-text test-match-decision test-petta-search-machine test-petta-semantics test-petta-corpus-manifest-unit test-petta-chainer-manifest-unit test-petta-typecheck-v3-core-langdef-v1 test-petta-typecheck-v3-file-runner-v1 test-petta-typecheck-v3-profile test-gslt-provider-generation-v1 test-gslt-provider-runtime test-prime-nik-core-v1 test-prime-authored-chaining-fixtures test-prime-relational-plan test-subzero test-mettazero test-gslt-il test-zerouv test-metta-interact test-mm2-gslt-profile-v1 test-decl-langdef-v1
 
 .PHONY: test-lean test-rhocalc-lean test-lean-corpus
 # Gates that check CeTTa against a Mettapedia checkout, some with its Lean
@@ -28812,6 +28845,23 @@ ifeq ($(ENABLE_RUNTIME_STATS),1)
 else
 	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
 		test-space-read-scaling-stats
+endif
+
+.PHONY: test-space-index-scaling-stats
+test-petta-semantics: test-space-index-scaling-stats
+# Reads of deep ground terms, and of rows derived in batches, take work that
+# does not grow with the depth of the terms or with the rows already held: a
+# level spelled as a deep term selects its own rows, read with a variable
+# before or after it; two such terms whose hashes differ compare unequal at
+# once; and a batch of derived rows reaches every index the space keeps.
+test-space-index-scaling-stats: $(BIN) tests/support/check_term_keyed_scaling.py \
+		tests/support/check_batch_index_scaling.py
+ifeq ($(ENABLE_RUNTIME_STATS),1)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_term_keyed_scaling.py ./$(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_batch_index_scaling.py ./$(BIN)
+else
+	@$(MAKE) -s BUILD=$(BUILD_CANON) ENABLE_RUNTIME_STATS=1 \
+		test-space-index-scaling-stats
 endif
 
 .PHONY: test-petta-set-space
