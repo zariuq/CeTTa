@@ -21,8 +21,8 @@ through `(let P (superpose L) B)`, at 30 and 100 cells.  The native path
 must answer every swap twice (its collection and its effects), the run may
 make at most four unification attempts per phase however many swaps a phase
 makes (the ordinary path makes several per swap), and the removed rows'
-marks may be settled at most four times, however many batches of additions
-the phases append.
+marks may be settled with work bounded by the initial rows and the removed
+occurrences. A dense representation can compact fewer rows more often.
 
 Then cells (p i) and rows holding constructor patterns, (step (p $u)
 (q $u)) and (step (q $u) (r $u)), as Hexlife's neighbour relation holds
@@ -61,7 +61,15 @@ LOOKUPS = """{facts}
 """
 
 CELLS = (30, 100)
-SETTLES = 4
+
+
+def sort_settle_work_limit(initial_rows, swaps):
+    # Initial storage includes the dialect's prelude; each swap removes two
+    # occurrences. The initial length observation does not enumerate rows.
+    # Preserve the original four-full-pass budget, expressed in actual row
+    # visits. At most initial_rows + 2*swaps rows can exist in this run;
+    # many small compactions may cost less than four passes over that set.
+    return 4 * (initial_rows + 2 * swaps)
 
 SORT = """{facts}
 (= (phase $p)
@@ -72,6 +80,7 @@ SORT = """{facts}
               ($c (add-atom &self (A $i $se))) ($d (add-atom &self (A $si $e))))
          t))))))
 (= (rounds $k) (if (== $k 0) done (let* (($o (phase odd)) ($e (phase even))) (rounds (- $k 1)))))
+!(space-len &self)
 !(rounds {cells})
 !(size-atom (collapse (match &self (, (A $i $e) (A $si $se) (succ $i $si) (lt $se $e)) bad)))
 !(size-atom (collapse (match &self (A $i $e) t)))
@@ -200,9 +209,11 @@ def main():
                       f"{found.get('unification-attempt', 0)} unification "
                       f"attempts over {phases} phases and {swaps} swaps")
                 return 1
-            if found.get("space-mark-settle", 0) > SETTLES:
-                print(f"FAIL: the sort of {cells} cells settled its marks "
-                      f"{found.get('space-mark-settle', 0)} times")
+            settled_rows = found.get("space-mark-settle-row", 0)
+            settle_limit = sort_settle_work_limit(int(answers[0]), swaps)
+            if settled_rows > settle_limit:
+                print(f"FAIL: the sort of {cells} cells scanned {settled_rows} "
+                      f"rows settling its marks, more than {settle_limit}")
                 return 1
     with tempfile.TemporaryDirectory(prefix="cetta-native-query-open-") as work:
         for cells in OPEN_CELLS:
@@ -234,8 +245,8 @@ def main():
           f"unification attempts over {SIZES[0][1]} and {SIZES[1][1]} edges, and "
           f"lookups for {CUSTOMERS[0]} and {CUSTOMERS[1]} customers read "
           f"{read[0]} then {read[1]} rows, and sorts of {CELLS[0]} and "
-          f"{CELLS[1]} cells make their swaps natively, settling their marks "
-          f"at most {SETTLES} times, and rows holding patterns meet "
+          f"{CELLS[1]} cells make their swaps natively with bounded row work "
+          f"settling their marks, and rows holding patterns meet "
           f"{OPEN_CELLS[0]} and {OPEN_CELLS[1]} cells one way")
     return 0
 

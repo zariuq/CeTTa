@@ -14556,8 +14556,9 @@ typedef struct {
     uint64_t spent;
     CettaSourceStep pending;
     bool blocked;
-    CettaSourceStep admitted[128];
+    CettaSourceStep admitted[512];
     size_t length;
+    bool cancel_after_effect;
     SymbolId effect_head;
     int64_t effects[4];
     size_t effect_count;
@@ -14568,7 +14569,8 @@ static bool source_accounting_permit(void *context, const CettaSourceStep *step)
     assert(step && step->source.root && step->source.debit == step->debit);
     if (probe->blocked)
         assert(resume_source_equal(probe->pending, *step));
-    if (!probe->physical || step->debit > probe->purse) {
+    if (!probe->physical || step->debit > probe->purse ||
+        (probe->cancel_after_effect && probe->effect_count)) {
         probe->pending = *step;
         probe->blocked = true;
         return false;
@@ -14887,6 +14889,218 @@ static void test_source_effect_accounting(TermUniverse *universe, Arena *answers
     puts("PASS: 144 priced-source effect, failure and binding continuations preserve independent budgets");
 }
 
+/* Compare the actual admitted schedule across slices. Query roots are
+ * fresh; declaration roots retain their identity within this program. */
+static void source_segment_same_receipts(const CettaSourceStep *first,
+        const CettaSourceStep *later, size_t count) {
+    for (size_t index = 0u; index < count; index++) {
+        assert(first[index].phase == later[index].phase &&
+            first[index].debit == later[index].debit &&
+            first[index].source.position == later[index].source.position &&
+            first[index].source.debit == later[index].source.debit);
+        bool first_query = first[index].source.root == first[0].source.root;
+        bool later_query = later[index].source.root == later[0].source.root;
+        assert(first_query == later_query);
+        if (!first_query)
+            assert(first[index].source.root == later[index].source.root);
+    }
+}
+
+static bool source_segment_activation_admitted(void *context, Space *space,
+        SymbolId head, CettaExprLen arity) {
+    (void)context;
+    bool defined = false, dynamic = false;
+    return space_query_static_effect_for_head(space, head, &defined, &dynamic) ==
+        CETTA_GSLT_QUERY_EFFECT_PURE && defined && !dynamic &&
+        space_head_call_untyped(space, head, arity);
+}
+
+static void test_metered_body_segments(TermUniverse *universe, Arena *persistent,
+        Arena *answers, bool receipts) {
+    const char *bodies[] = {
+        "(let $v (meter-leaf $x) (let $p (Pair $v $v) $p))",
+        "(let 7 (meter-leaf $x) (Pair 7 7))",
+        "(let $v (meter-leaf $x) (empty))",
+    };
+    const int64_t effects[][3] = {{7, 7, 9}, {7, 7, 0}, {7, 0, 0}};
+    const size_t counts[] = {3u, 2u, 1u};
+    const size_t answers_count[] = {3u, 2u, 0u};
+    const size_t allowances[] = {0u, 1u, 2u, 64u, 1024u};
+    const uint32_t debits[] = {0u, 1u, 3u};
+    unsigned checks = 0u;
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    CettaRuntimeStats initial, final;
+    bool stats_enabled = cetta_runtime_stats_is_enabled();
+    cetta_runtime_stats_enable();
+    cetta_runtime_stats_snapshot(&initial);
+#endif
+    for (size_t fixture = 0u; fixture < 3u; fixture++)
+    for (size_t cost = 0u; cost < 3u; cost++) {
+        Space space;
+        space_init_with_universe(&space, universe);
+        PettaProgram *program = petta_program_new();
+        assert(program);
+        char root[320];
+        snprintf(root, sizeof(root), "(= (metered-body $x) %s)", bodies[fixture]);
+        const char *definitions[] = {"(= (meter-leaf $x) 7)", "(= (meter-leaf $x) 7)",
+            "(= (meter-leaf $x) 9)", root};
+        for (size_t index = 0u; index < sizeof(definitions) / sizeof(*definitions); index++) {
+            Atom *equation = parse_one(persistent, definitions[index]);
+            const PettaPlanNode *authored = petta_program_plan_dynamic_add(program, equation);
+            assert(authored);
+            const PettaPlanNode *priced = source_accounting_priced_plan(persistent, authored, debits[cost]);
+            space_add(&space, equation);
+            assert(petta_program_note_add(program, &space,
+                space_get_at64(&space, space_length64(&space) - 1u), priced));
+        }
+        Atom *query = parse_one(answers, fixture == 2u
+            ? "(progn (println! 7) (metered-body $input))"
+            : "(let (Pair $first $second) (metered-body $input) (let $_ (println! $first) (Pair $first $second)))");
+        const PettaPlanNode *query_plan = source_accounting_priced_plan(answers,
+            petta_program_plan_current(program, query), debits[cost]);
+        CettaSourceStep reference[512];
+        size_t reference_len = 0u;
+        for (size_t physical = 5u; physical-- > 0u;)
+        for (size_t credit = 5u; credit-- > 0u;)
+        for (unsigned cancellation = 0u; cancellation < 2u; cancellation++)
+        for (unsigned delayed = 0u; delayed < 2u; delayed++) {
+            SourceAccountingProbe probe = {.program = program,
+                .physical = allowances[physical], .purse = allowances[credit],
+                .cancel_after_effect = cancellation != 0u,
+                .effect_head = g_builtin_syms.println_bang};
+            PettaMachineHost host = {.context = &probe,
+                .candidate_snapshot_lease = source_accounting_catalog,
+                .equation_activation_relation_admissible = source_segment_activation_admitted,
+                .permit_transition = source_accounting_permit,
+                .classify = source_accounting_classify, .classify_may_override = true,
+                .evaluate = source_accounting_effect,
+                .admit_branch_capture = source_accounting_capture};
+            PettaMachine machine;
+            assert(petta_machine_init_with_plan(&machine, &space, answers, query,
+                query_plan, NULL, &host));
+            if (delayed) {
+                CettaDelayService *service = cetta_delay_service_new();
+                VarId pending = fresh_var_id();
+                assert(service && cetta_delay_suspend(service, 0u, CETTA_DELAY_CLIENT_PROLOG,
+                    atom_symbol(answers, "pending-source-control"), &pending, 1u, false));
+                assert(petta_machine_inherit_delayed_goals(&machine, service));
+                cetta_delay_service_free(service);
+            }
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+            CettaRuntimeStats before_run, after_run;
+            cetta_runtime_stats_snapshot(&before_run);
+#endif
+            size_t seen = 0u;
+            for (unsigned attempt = 0u;; attempt++) {
+                assert(attempt < 2048u);
+                Atom *answer = NULL;
+                Bindings environment;
+                PettaMachineStep step = petta_machine_next(&machine, &answer, &environment);
+                if (step == PETTA_MACHINE_STEP_ANSWER) {
+                    assert(seen < answers_count[fixture]);
+                    Atom *value = bindings_apply_if_vars(&environment, answers, answer);
+                    char expected[64];
+                    int64_t item = effects[fixture][seen];
+                    snprintf(expected, sizeof(expected), "(Pair %lld %lld)",
+                        (long long)item, (long long)item);
+                    assert(value && atom_alpha_eq(value, parse_one(answers, expected)));
+                    seen++;
+                }
+                bindings_free(&environment);
+                assert(probe.effect_count <= counts[fixture]);
+                for (size_t index = 0u; index < probe.effect_count; index++)
+                    assert(probe.effects[index] == effects[fixture][index]);
+                if (step == PETTA_MACHINE_STEP_EXHAUSTED)
+                    break;
+                if (step == PETTA_MACHINE_STEP_ANSWER)
+                    continue;
+                assert(step == PETTA_MACHINE_STEP_SUSPENDED && probe.blocked);
+                uint64_t spent = probe.spent;
+                size_t done = probe.effect_count, admitted = probe.length;
+                CettaOwnedContinuation saved;
+                cetta_owned_continuation_init(&saved);
+                CettaContinuationStatus captured = capture_relational_continuation(&machine, &saved);
+                if (delayed) {
+                    /* This external snapshot API cannot transport the live
+                     * solver. Refusal must leave the resident caller usable. */
+                    assert(captured == CETTA_CONTINUATION_UNSUPPORTED);
+                } else {
+                    assert(captured == CETTA_CONTINUATION_READY);
+                    assert(restore_relational_continuation(&machine, &saved) == CETTA_CONTINUATION_READY);
+                }
+                cetta_owned_continuation_destroy(&saved);
+                assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_SUSPENDED);
+                bindings_free(&environment);
+                assert(probe.spent == spent && probe.effect_count == done && probe.length == admitted);
+                probe.physical = allowances[physical] ? allowances[physical] : 1u;
+                probe.purse = allowances[credit] > debits[cost] ? allowances[credit]
+                    : debits[cost] ? debits[cost] : 1u;
+                if (probe.effect_count)
+                    probe.cancel_after_effect = false;
+            }
+            assert(seen == answers_count[fixture] && probe.effect_count == counts[fixture]);
+            if (physical == 4u && credit == 4u && !cancellation && !delayed) {
+                reference_len = probe.length;
+                memcpy(reference, probe.admitted, reference_len * sizeof(*reference));
+                if (receipts) {
+                    uint64_t roots[512];
+                    size_t root_count = 0u;
+                    printf("source-segment %zu %u", fixture, debits[cost]);
+                    for (size_t i = 0u; i < reference_len; i++) {
+                        size_t root = 0u;
+                        for (; root < root_count; root++)
+                            if (roots[root] == reference[i].source.root) break;
+                        if (root == root_count) roots[root_count++] = reference[i].source.root;
+                        printf(" %u/%zu/%u/%llu", (unsigned)reference[i].phase, root,
+                            reference[i].source.position, (unsigned long long)reference[i].debit);
+                    }
+                    putchar('\n');
+                }
+            }
+            assert(reference_len == probe.length);
+            source_segment_same_receipts(reference, probe.admitted, reference_len);
+            uint64_t invoice = 0u;
+            for (size_t index = 0u; index < probe.length; index++)
+                invoice += probe.admitted[index].source.position ? debits[cost] : 1u;
+            assert(invoice == probe.spent);
+            PettaMachineStats stats;
+            assert(petta_machine_stats(&machine, &stats) && stats.transitions);
+            size_t compute_visits = 0u;
+            for (size_t i = 0u; i < probe.length; i++)
+                compute_visits += probe.admitted[i].phase == CETTA_SOURCE_COMPUTE;
+            assert(stats.transitions == compute_visits);
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+            cetta_runtime_stats_snapshot(&after_run);
+            if (delayed || getenv("CETTA_PETTA_BODY_RESUME_SEGMENT_REFERENCE"))
+                assert(after_run.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_COMMIT] ==
+                    before_run.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_COMMIT]);
+#endif
+            petta_machine_destroy(&machine);
+            checks++;
+        }
+        petta_program_free(program);
+        space_free(&space);
+    }
+#if CETTA_BUILD_WITH_RUNTIME_STATS
+    cetta_runtime_stats_snapshot(&final);
+    uint64_t committed = final.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_COMMIT] -
+        initial.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_COMMIT];
+    if (getenv("CETTA_PETTA_BODY_RESUME_SEGMENT_REFERENCE"))
+        assert(!committed);
+    else {
+        if (!committed)
+            fprintf(stderr, "metered segments attempted=%llu declined=%llu activation=%llu\n",
+                (unsigned long long)(final.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_ATTEMPT] - initial.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_ATTEMPT]),
+                (unsigned long long)(final.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_DECLINE] - initial.counters[CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_DECLINE]),
+                (unsigned long long)(final.counters[CETTA_RUNTIME_COUNTER_PETTA_EQUATION_ACTIVATION_PLAN_ADMITTED] - initial.counters[CETTA_RUNTIME_COUNTER_PETTA_EQUATION_ACTIVATION_PLAN_ADMITTED]));
+        assert(committed);
+    }
+    if (!stats_enabled)
+        cetta_runtime_stats_disable();
+#endif
+    printf("PASS: %u metered caller segments preserve source receipts, independent slices, cancellation and effects\n", checks);
+}
+
 typedef struct {
     size_t attempts;
     size_t accepted;
@@ -14979,8 +15193,9 @@ int main(int argc, char **argv) {
     bool source_only = argc == 2 && strcmp(argv[1], "--source-accounting") == 0;
     bool admission_only = argc == 2 && strcmp(argv[1], "--callee-admission") == 0;
     bool catalog_only = argc == 2 && strcmp(argv[1], "--catalog-append") == 0;
-    if (argc != 1 && !worker_only && !resume_only && !arity_only && !native_only && !source_only && !admission_only && !catalog_only) {
-        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--native-return|--source-accounting|--callee-admission|--catalog-append]\n", stderr);
+    bool segments_only = argc == 2 && strcmp(argv[1], "--source-segments") == 0;
+    if (argc != 1 && !worker_only && !resume_only && !arity_only && !native_only && !source_only && !admission_only && !catalog_only && !segments_only) {
+        fputs("usage: test_petta_search_machine [--worker-ownership|--resume-contract|--arity-contract|--native-return|--source-accounting|--callee-admission|--catalog-append|--source-segments]\n", stderr);
         return 2;
     }
     Arena persistent;
@@ -15003,6 +15218,10 @@ int main(int argc, char **argv) {
     var_intern_init(&variables);
     g_symbols = &symbols;
     g_var_intern = &variables;
+    if (segments_only) {
+        test_metered_body_segments(&universe, &persistent, &answers, true);
+        goto release_owners;
+    }
     if (catalog_only) {
         test_notified_catalog_append(&universe, &persistent);
         test_unnotified_catalog_append(&universe, &persistent);
@@ -15030,6 +15249,7 @@ int main(int argc, char **argv) {
     test_count_binder_visibility(&universe, &persistent, &answers);
     test_source_accounting(&universe, &persistent, &answers);
     test_source_effect_accounting(&universe, &answers);
+    test_metered_body_segments(&universe, &persistent, &answers, false);
     test_callee_admission_scope(&universe, &persistent);
     if (source_only)
         goto release_owners;
