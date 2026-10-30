@@ -3,12 +3,21 @@
 ; the original task; every byte required by its decoder belongs to the cost.
 !(import! &self (library lib_binary_tree))
 
+; Domain observation is deterministic. Share only within this operation and
+; only for identical byte values; neither approximate observation equality
+; nor a retained, caller-claimed observation is a cache key.
+(= (ic-packed:observations $model $original $current $candidate)
+   (let* (($source (ic-packed:observe $model $original))
+          ($before (if (== $current $original) $source (ic-packed:observe $model $current)))
+          ($after (if (== $candidate $original) $source
+                    (if (== $candidate $current) $before (ic-packed:observe $model $candidate)))))
+     (IC:Observations $source $before $after)))
+
 (= (ic-packed:check $model $original $current $candidate)
    (if (and (binary-tree:bytes? $original)
             (and (binary-tree:bytes? $current) (binary-tree:bytes? $candidate)))
-     (case ((ic-packed:observe $model $original) (ic-packed:observe $model $current)
-            (ic-packed:observe $model $candidate))
-       ((((IC:Some $source) (IC:Some $before-source) (IC:Some $after-source))
+     (case (ic-packed:observations $model $original $current $candidate)
+       (((IC:Observations (IC:Some $source) (IC:Some $before-source) (IC:Some $after-source))
          (if (and (ic-packed:accepts? $model $source $before-source)
                   (ic-packed:accepts? $model $source $after-source))
            (let* (($before (index-atom (tensor:shape $current) 0))

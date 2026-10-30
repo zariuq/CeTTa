@@ -2,6 +2,8 @@
 ; Producers yield (IC:Candidate artifact) or (IC:ProducerFault reason).
 ; A take keeps every later answer in its work handle. Work and source epochs
 ; reject stale snapshots before another slice is executed.
+; Materializers may return IC:Responses and IC:Continue events. Continuations
+; carry inert proposal data; this controller alone creates their owned cursors.
 !(import! &self (library work))
 !(import! &self (library lib_ic_archive))
 !(import! &self (library lib_fair_queue))
@@ -63,19 +65,26 @@
    (if (== $sources ()) (IC:Some ())
      (if (== (get-metatype $sources) Expression)
        (let ($source $tail) (decons-atom $sources)
-         (let $revision (_minimal-space-revision $source)
-           (if (binary:unsigned? $revision)
+         (let $epoch (catch (work:source-epoch $source))
+           (if (ic-search:source-epoch? $epoch)
              (case (ic-search:guards $tail)
                (((IC:Some $rest)
-                 (let $guards (cons-atom (IC:Guard $source $revision) $rest) (IC:Some $guards)))
+                 (let $guards (cons-atom (IC:Guard $source $epoch) $rest) (IC:Some $guards)))
                 ($other IC:None))) IC:None))) IC:None)))
 (= (ic-search:guards-current? $guards)
    (if (== $guards ()) True
      (let ($guard $tail) (decons-atom $guards)
        (case $guard
-         (((IC:Guard $source $revision)
-           (and (== (_minimal-space-revision $source) $revision) (ic-search:guards-current? $tail)))
+         (((IC:Guard $source $epoch)
+           (case (catch (work:source-status $source $epoch))
+             ((Work:Current (ic-search:guards-current? $tail)) ($not-current False))))
           ($other False))))))
+(= (ic-search:source-epoch? $epoch)
+   (case $epoch
+     (((Work:SourceEpoch $identity $revision $dependencies)
+       (and (== (binary:value-kind $identity) Text)
+         (and (== (binary:value-kind $revision) Text) (== (binary:value-kind $dependencies) Text))))
+      ($invalid-epoch False))))
 
 (= (ic-search:open $branches $quantum $queue)
    (if (== $branches ()) (IC:Some $queue)
@@ -151,35 +160,56 @@
                     ((IC:NoFault (IC:FirstFault $ticket $reason)) ($other $first)))
          (IC:Faulted (IC:Statistics $turns $candidates $accepted (+ $faults 1)) $saved))))))
 
-(= (ic-search:consume $model $original $best $statistics $first $ticket $prefix)
-   (if (== $prefix ()) (IC:Consumed $best $statistics $first)
+(= (ic-search:continue $queue $quantum $cost $proposal)
+   (if (binary:unsigned? $cost)
+     (let $handle (work-new (ic-search:from-list ((IC:Proposal $proposal))))
+       (case (ic-search:open ((IC:Branch $cost $handle)) $quantum $queue)
+         (((IC:Some $next) (IC:Some $next))
+          ($other (let $released (work-cancel $handle) (IC:ContinuationFault Capacity))))))
+     (IC:ContinuationFault InvalidPriority)))
+
+(= (ic-search:consume $model $original $best $statistics $first $ticket $prefix $queue $quantum)
+   (if (== $prefix ()) (IC:Consumed $best $statistics $first $queue)
      (let ($answer $tail) (decons-atom $prefix)
        (case $answer
          (((IC:Proposal $proposal)
            (let $event (ic-search:materialize $model $original $proposal)
              (let $pending (cons-atom $event $tail)
-               (ic-search:consume $model $original $best $statistics $first $ticket $pending))))
+               (ic-search:consume $model $original $best $statistics $first $ticket $pending $queue $quantum))))
+          ((IC:Responses $events)
+           (if (== (get-metatype $events) Expression)
+             (let $pending (union-atom $events $tail)
+               (ic-search:consume $model $original $best $statistics $first $ticket $pending $queue $quantum))
+             (ic-search:consume $model $original $best $statistics $first $ticket
+               (cons-atom (IC:ProducerFault InvalidResponses) $tail) $queue $quantum)))
+          ((IC:Continue $cost $proposal)
+           (case (ic-search:continue $queue $quantum $cost $proposal)
+             (((IC:Some $next)
+               (ic-search:consume $model $original $best $statistics $first $ticket $tail $next $quantum))
+              ((IC:ContinuationFault $reason)
+               (ic-search:consume $model $original $best $statistics $first $ticket
+                 (cons-atom (IC:ProducerFault $reason) $tail) $queue $quantum)))))
           ((IC:Refused $reason)
            (case $statistics
              (((IC:Statistics $turns $candidates $accepted $faults)
                (ic-search:consume $model $original $best
-                 (IC:Statistics $turns (+ $candidates 1) $accepted $faults) $first $ticket $tail)))))
+                 (IC:Statistics $turns (+ $candidates 1) $accepted $faults) $first $ticket $tail $queue $quantum)))))
           ((IC:Candidate $candidate)
            (case $statistics
              (((IC:Statistics $turns $candidates $accepted $faults)
                (case (ic-search:consider $model $original $best $candidate)
                  (((IC:CandidateAccepted $next)
                    (ic-search:consume $model $original $next
-                     (IC:Statistics $turns (+ $candidates 1) (+ $accepted 1) $faults) $first $ticket $tail))
+                     (IC:Statistics $turns (+ $candidates 1) (+ $accepted 1) $faults) $first $ticket $tail $queue $quantum))
                   ((IC:CandidateRejected $reason)
                    (ic-search:consume $model $original $best
-                     (IC:Statistics $turns (+ $candidates 1) $accepted $faults) $first $ticket $tail))))))))
+                     (IC:Statistics $turns (+ $candidates 1) $accepted $faults) $first $ticket $tail $queue $quantum))))))))
           ((IC:ProducerFault $reason)
            (case (ic-search:with-fault $statistics $first $ticket $reason)
-             (((IC:Faulted $stats $saved) (ic-search:consume $model $original $best $stats $saved $ticket $tail)))))
+             (((IC:Faulted $stats $saved) (ic-search:consume $model $original $best $stats $saved $ticket $tail $queue $quantum)))))
           ($other
            (case (ic-search:with-fault $statistics $first $ticket InvalidProducerObservation)
-             (((IC:Faulted $stats $saved) (ic-search:consume $model $original $best $stats $saved $ticket $tail))))))))))
+             (((IC:Faulted $stats $saved) (ic-search:consume $model $original $best $stats $saved $ticket $tail $queue $quantum))))))))))
 
 (= (ic-search:finish-slice $task $remaining $best $statistics $first $ticket $cost $handle $status)
    (case $status
@@ -206,10 +236,10 @@
        (case (work-take $handle 1)
          (((taken $prefix $status)
            (case (ic-search:consume $model $original $best
-                   (IC:Statistics (+ $turns 1) $candidates $accepted $faults) $first $ticket $prefix)
-             (((IC:Consumed $next-best $statistics $saved)
+                   (IC:Statistics (+ $turns 1) $candidates $accepted $faults) $first $ticket $prefix $remaining $quantum)
+             (((IC:Consumed $next-best $statistics $saved $next-queue)
                (ic-search:finish-slice (IC:Task $model $original $observation $guards $quantum)
-                 $remaining $next-best $statistics $saved $ticket $cost $handle $status)))))
+                 $next-queue $next-best $statistics $saved $ticket $cost $handle $status)))))
           ($other
            (ic-search:finish-slice (IC:Task $model $original $observation $guards $quantum)
              $remaining $best (IC:Statistics (+ $turns 1) $candidates $accepted $faults)

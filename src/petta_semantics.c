@@ -22,6 +22,10 @@ int cetta_dense_tensor_v1_compare(const CettaDenseTensorV1 *, const CettaDenseTe
 #pragma weak term_graph_assumption_key
 #pragma weak term_graph_assumptions_free
 
+/* Standalone semantic tools have no imported native operation provider. */
+extern uint32_t eval_current_pattern_operation_arity(SymbolId head)
+    __attribute__((weak));
+
 /* One dialect elaborator consumes the generated operation descriptors. */
 CettaControlOperationPlan petta_semantics_elaborate_control(
         SymbolId head, PeTTaForm form, CettaExprLen arity) {
@@ -46,7 +50,7 @@ CettaControlOperationPlan petta_semantics_elaborate_control(
         head = g_builtin_syms.eval;
     else if (head != g_builtin_syms.let_star &&
              head != g_builtin_syms.superpose && head != g_builtin_syms.empty_form &&
-             head != g_builtin_syms.collapse)
+             head != g_builtin_syms.collapse && head != g_builtin_syms.case_text)
         return (CettaControlOperationPlan){0};
     CettaControlOperationPlan plan = {0};
     cetta_control_operation_decode(head, arity, &plan, &g_builtin_syms);
@@ -2263,6 +2267,14 @@ bool petta_semantics_boolean_relation_arity(
 bool petta_semantics_intrinsic_partial_arity(
     SymbolId head, CettaExprLen *arity) {
     const PeTTaSymbolIds *ids = petta_symbol_ids();
+    if (head >= g_builtin_syms.pat_solve && head <= g_builtin_syms.pat_is_variant &&
+        eval_current_pattern_operation_arity) {
+        uint32_t imported = eval_current_pattern_operation_arity(head);
+        if (imported) {
+            if (arity) *arity = imported;
+            return true;
+        }
+    }
     bool binary =
         head == g_builtin_syms.op_plus ||
         head == g_builtin_syms.op_minus ||
@@ -2707,6 +2719,23 @@ bool petta_semantics_library_reference(
         return true;
     }
     return false;
+}
+
+bool petta_semantics_import_batch(const Atom *atom,
+    Atom *const **members, CettaExprLen *count) {
+    PeTTaLibraryReference reference;
+    if (!atom || atom->kind != ATOM_EXPR ||
+        petta_semantics_library_reference(atom, &reference))
+        return false;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        const Atom *member = atom->expr.elems[i];
+        if (!petta_semantics_path_component(member) &&
+            !petta_semantics_library_reference(member, &reference))
+            return false;
+    }
+    *members = atom->expr.elems;
+    *count = atom->expr.len;
+    return true;
 }
 
 bool petta_semantics_library_path_effect(

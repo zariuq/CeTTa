@@ -131,7 +131,7 @@
       ((ia:done (ia:stuck $s)) (Error (ia:stuck $s) NotInterpretedHere))
       ((ia:done $error) $error))))
 
-(: ia:finish-else (-> %Undefined% (Data Atom) %Undefined%))
+(: ia:finish-else (-> %Undefined% Atom %Undefined%))
 (= (ia:finish-else $i $k)
    (case $i
      (((ia:done ia:none) (eval $k))
@@ -156,8 +156,8 @@
 (scope:source transform (take value pattern))
 (scope:source transform (let pattern value))
 
-(: transform (-> %Undefined% (Data Atom) (Data Atom) %Undefined%))
-(: transform (-> %Undefined% (Data Atom) (Data Atom) %Undefined% %Undefined%))
+(: transform (-> %Undefined% Atom Atom %Undefined%))
+(: transform (-> %Undefined% Atom Atom %Undefined% %Undefined%))
 (= (transform $r $sources $template)
    (let $i (__cetta_lib_interaction_fire $r $sources $template) (ia:finish (ia:run $i))))
 (= (transform $r $sources $template $dest)
@@ -165,15 +165,15 @@
 
 ;; ---- firing at once, later or always --------------------------------------------
 
-(: await (-> (Data Atom) %Undefined%))
+(: await (-> Atom %Undefined%))
 (= (await $x) (let $i (__cetta_lib_interaction_await $x) (ia:finish (ia:run $i))))
 
-(: whenever (-> (Data Atom) %Undefined%))
+(: whenever (-> Atom %Undefined%))
 (= (whenever $x) (let $i (__cetta_lib_interaction_whenever $x) (ia:finish (ia:run $i))))
 
-(: choose (-> (Data Atom) (Data Atom) %Undefined%))
-(: choose (-> (Data Atom) (Data Atom) (Data Atom) %Undefined%))
-(: choose (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom) %Undefined%))
+(: choose (-> Atom Atom %Undefined%))
+(: choose (-> Atom Atom Atom %Undefined%))
+(: choose (-> Atom Atom Atom Atom %Undefined%))
 (= (choose $x $y)
    (let $i (__cetta_lib_interaction_now-choose $x $y) (ia:finish (ia:run $i))))
 (= (choose $x $y $z)
@@ -181,7 +181,7 @@
 (= (choose $x $y $z $w)
    (let $i (__cetta_lib_interaction_now-choose $x $y $z $w) (ia:finish (ia:run $i))))
 
-(: else (-> (Data Atom) (Data Atom) %Undefined%))
+(: else (-> Atom Atom %Undefined%))
 (= (else $x $k)
    (let $i (__cetta_lib_interaction_now $x) (ia:finish-else (ia:run $i) $k)))
 
@@ -211,14 +211,14 @@
 
 ;; ---- processes and names ---------------------------------------------------------
 
-(: par (-> (Data Atom) %Undefined%))
-(: par (-> (Data Atom) (Data Atom) %Undefined%))
-(: par (-> (Data Atom) (Data Atom) (Data Atom) %Undefined%))
-(: par (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom) %Undefined%))
-(: par (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom) (Data Atom) %Undefined%))
-(: par (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom) (Data Atom) (Data Atom) %Undefined%))
-(: par (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom) (Data Atom) (Data Atom) (Data Atom) %Undefined%))
-(: par (-> (Data Atom) (Data Atom) (Data Atom) (Data Atom) (Data Atom) (Data Atom) (Data Atom) (Data Atom) %Undefined%))
+(: par (-> Atom %Undefined%))
+(: par (-> Atom Atom %Undefined%))
+(: par (-> Atom Atom Atom %Undefined%))
+(: par (-> Atom Atom Atom Atom %Undefined%))
+(: par (-> Atom Atom Atom Atom Atom %Undefined%))
+(: par (-> Atom Atom Atom Atom Atom Atom %Undefined%))
+(: par (-> Atom Atom Atom Atom Atom Atom Atom %Undefined%))
+(: par (-> Atom Atom Atom Atom Atom Atom Atom Atom %Undefined%))
 (= (par $a) (let $s (__cetta_lib_interaction_spawn $a) (ia:spawned $s)))
 (= (par $a $b) (let $s (__cetta_lib_interaction_spawn $a $b) (ia:spawned $s)))
 (= (par $a $b $c) (let $s (__cetta_lib_interaction_spawn $a $b $c) (ia:spawned $s)))
@@ -229,7 +229,7 @@
 (= (par $a $b $c $d $e $f $g $h) (let $s (__cetta_lib_interaction_spawn $a $b $c $d $e $f $g $h) (ia:spawned $s)))
 (= (ia:spawned $_) (let $d (ia:drive) ()))
 
-(: seq (-> (Data Atom) (Data Atom) (Data Atom) %Undefined%))
+(: seq (-> Atom Atom Atom %Undefined%))
 (= (seq $e $v $k)
    (let $answers (collapse (eval $e))
      (__cetta_lib_interaction_seq $v $answers $k)))
@@ -243,9 +243,9 @@
 (scope:binder (contract value pattern body))
 (scope:binder (seq value pattern body))
 
-(: for (-> (Data Atom) (Data Atom) %Undefined%))
+(: for (-> Atom Atom %Undefined%))
 (= (for $binds $body) (let $i (__cetta_lib_interaction_for $binds $body) (ia:finish (ia:run $i))))
 
-(: contract (-> %Undefined% (Data Atom) (Data Atom) %Undefined%))
+(: contract (-> %Undefined% Atom Atom %Undefined%))
 (= (contract $c $p $body)
    (let $i (__cetta_lib_interaction_contract $c $p $body) (ia:finish (ia:run $i))))

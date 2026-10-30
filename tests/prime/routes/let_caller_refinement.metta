@@ -58,7 +58,7 @@
 (= (open-code $code $arg)
    (unify $code (quote (lam $x $body)) (let (quote $x) $arg @$body) (empty)))
 !(let $h @(lam $v (f $v $v)) (Pair (open-code $h @a) (open-code $h @b)))
-(: open-held (-> (Data Atom) (Data Atom) (Data Atom)))
+(: open-held (-> Atom Atom Atom))
 (= (open-held (lam $x $body) $v) (let $x $v $body))
 !(let $h (lam $y (and (f $y) (g $y)))
    (pair (open-held $h 0) (pair (open-held $h 1) $h)))

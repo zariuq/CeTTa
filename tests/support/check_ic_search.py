@@ -147,6 +147,8 @@ def main():
               (let $released (ic:release $state) (DependencyObservation $result $unchanged)))))
          ($other $other))))'''),
         ["DependencyObservation", ["IC:ResumeRejected", "ChangedDependencies"], "true"])
+    add('(ic-search:guards (NotASpace))', 'IC:None')
+    add('(ic-search:guards-current? ((IC:Guard NotASpace 0)))', 'false')
     add(bound('''(let $h (work-new (ic-search:from-list ((IC:Candidate $candidate))))
       (case (ic:prepare IC:ProgramArchive $original () 64 ((IC:Branch 1 $h)))
         (((IC:PreparedSearch $state)

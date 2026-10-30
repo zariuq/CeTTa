@@ -8,6 +8,7 @@
 #include "grounded.h"
 #include "match.h"
 #include "petta_semantics.h"
+#include "shared_transition.h"
 #include "stats.h"
 #include "symbol.h"
 
@@ -57,6 +58,7 @@ struct PettaSpecializerPatternNode {
 typedef struct {
     Space *space;
     uint64_t space_instance;
+    PettaProgram *program;
     SymbolId source;
     SymbolId specialized;
     PettaSpecializationBinding *selectors;
@@ -2917,6 +2919,7 @@ static PettaSpecializationRecord *petta_create_record(
     record->space = context->space;
     record->space_instance =
         space_instance_id(context->space);
+    record->program = context->program;
     record->source = source;
     record->specialized = specialized;
     petta_artifact_head_added(specialized);
@@ -4878,6 +4881,14 @@ static void petta_record_release_owned(
     record->direct_dependency_cap = 0u;
 }
 
+static void petta_discard_record_at(size_t index) {
+    petta_record_release_owned(&g_petta_specializations.items[index]);
+    g_petta_specializations.items[index] =
+        g_petta_specializations.items[g_petta_specializations.len - 1u];
+    g_petta_specializations.len--;
+    petta_artifact_heads_clear();
+}
+
 static void petta_remove_record_at(size_t index) {
     PettaSpecializationRecord *record =
         &g_petta_specializations.items[index];
@@ -4886,17 +4897,12 @@ static void petta_remove_record_at(size_t index) {
             space_instance_id(record->space)) {
         for (size_t artifact = record->artifact_len;
              artifact > 0u; artifact--) {
-            (void)space_remove(
-                record->space,
-                record->artifacts[artifact - 1u].atom);
+            Atom *atom = record->artifacts[artifact - 1u].atom;
+            if (space_remove(record->space, atom) && record->program)
+                petta_program_note_remove_one(record->program, record->space, atom);
         }
     }
-    petta_record_release_owned(record);
-    g_petta_specializations.items[index] =
-        g_petta_specializations.items[
-            g_petta_specializations.len - 1u];
-    g_petta_specializations.len--;
-    petta_artifact_heads_clear();
+    petta_discard_record_at(index);
 }
 
 static bool petta_record_depends_on(
@@ -5027,6 +5033,59 @@ void petta_specializer_note_import(Space *space) {
         }
         index++;
     }
+}
+
+bool petta_specializer_capture_publications(PettaProgram *program,
+        PettaSpecializerPublicationWatch *watch) {
+    CETTA_SCOPED_SHARED_TRANSITION(specializer_capture);
+    if (!watch || watch->program || watch->reads || watch->len)
+        return false;
+    bool needed = false;
+    for (size_t i = 0u; i < g_petta_specializations.len; i++) {
+        if (g_petta_specializations.items[i].program == program)
+            needed = true;
+    }
+    if (!needed)
+        return true;
+    if (!petta_program_capture_projections(program, &watch->reads, &watch->len))
+        return false;
+    watch->program = program;
+    return true;
+}
+
+void petta_specializer_finish_publications(PettaSpecializerPublicationWatch *watch) {
+    CETTA_SCOPED_SHARED_TRANSITION(specializer_refresh);
+    if (!watch)
+        return;
+    /* Workers have joined. Callability includes other registered Spaces, so
+     * any changed projection conservatively retires this program's parent
+     * derivations. Neither stale cache addresses nor worker syntax are read. */
+    SpaceProgramToken *current = NULL;
+    size_t length = 0u;
+    bool unchanged = !watch->program ||
+        (petta_program_capture_projections(watch->program, &current, &length) &&
+         length == watch->len);
+    for (size_t i = 0u; unchanged && i < length; i++)
+        unchanged = space_program_token_eq(watch->reads[i], current[i]);
+    free(current);
+    if (!unchanged) {
+        petta_relation_relevance_cache_clear();
+        for (size_t i = 0u; i < g_petta_specializations.len;) {
+            PettaSpecializationRecord *record = &g_petta_specializations.items[i];
+            if (record->program != watch->program) {
+                i++;
+                continue;
+            }
+            SpaceProgramToken live;
+            if (petta_program_registered_space_token(watch->program,
+                    record->space, record->space_instance, &live))
+                petta_remove_record_at(i);
+            else
+                petta_discard_record_at(i);
+        }
+    }
+    free(watch->reads);
+    *watch = (PettaSpecializerPublicationWatch){0};
 }
 
 static const PettaSpecializationArtifact *

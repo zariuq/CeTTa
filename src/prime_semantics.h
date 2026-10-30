@@ -361,6 +361,11 @@ Atom *prime_semantics_form_built(Arena *arena, Atom *built)
  * the function of its binders.  NULL when `code` is no code value or cannot
  * be formed. */
 Atom *prime_semantics_open_code(Arena *arena, Atom *code);
+
+/* Query the recorded binding structure, including pattern and sequential
+ * binders. False means the analysis failed; it supplies no free-name answer. */
+bool prime_semantics_has_free_store_names(Arena *arena, Atom *term,
+                                         bool *has_names);
 /* Prime's binding structure in the generic substitution (match.h): the
  * application of bindings, which every route shares, forms each expression
  * whose head it fills with a symbol (a binder sealed, in code too; a lambda
@@ -449,7 +454,8 @@ int prime_semantics_read_source_file_ids(struct PrimeCompiledReaderV1 *reader,
 typedef enum {
     PRIME_ITERATION_DECLINE = 0,
     PRIME_ITERATION_REENTER,
-    PRIME_ITERATION_VALUE
+    PRIME_ITERATION_VALUE,
+    PRIME_ITERATION_REFUSED
 } PrimeIterationStep;
 /* Recognize the same scoped iteration form without executing its body.
  * This alone grants no authority to the callbacks it will invoke. */

@@ -23,7 +23,7 @@
 ; each nested type query, rather than every earlier caller frame.
 (: SupportMeasure Type)
 (: SupportValue (-> Number SupportMeasure))
-(: SupportEvidence (-> Atom SupportMeasure Type))
+(: SupportEvidence (-> Proc SupportMeasure Type))
 (: support-premise (SupportEvidence SupportEvent (SupportValue 1)))
 (: SupportReturnFirst
    (-> (SupportEvidence $x0 $m0)

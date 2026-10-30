@@ -21,7 +21,7 @@
 
 ; 4. A diverging argument held as code, or as data, is not run.
 !(konst A @(loop))
-(: hold (-> (Data Atom) Atom))
+(: hold (-> Atom Proc))
 (= (hold $x) done)
 !(hold (loop))
 

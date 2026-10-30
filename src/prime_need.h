@@ -56,6 +56,14 @@ typedef enum {
     PRIME_NEED_VALUE_READY,
 } PrimeNeedValueRole;
 
+/* An explicitly computational argument remains a demand even when its
+ * source contains open logic variables. Inferred arguments retain the
+ * declaration-free template behavior. This role does not make demand eager. */
+typedef enum {
+    PRIME_NEED_SOURCE_INFERRED = 0,
+    PRIME_NEED_SOURCE_COMPUTATION,
+} PrimeNeedSourceRole;
+
 typedef struct PrimeNeedFrame PrimeNeedFrame;
 typedef struct PrimeNeedArenaAudit PrimeNeedArenaAudit;
 #if CETTA_PRIME_NEED_HEAP_INDEX
@@ -99,6 +107,7 @@ typedef struct {
     uint64_t import_key;
     uint64_t source_occurrence_id;
     uint64_t source_argument_index;
+    PrimeNeedSourceRole source_role;
 #if CETTA_PRIME_NEED_CLOSURE_CAPTURE
     bool capture_known;
     const VarId *capture_var_ids;
@@ -126,13 +135,19 @@ void prime_need_read_capture_free(PrimeNeedReadCapture *capture);
 /* Freeze the currently earned support for a row. Subsequent reads cannot
  * mutate this copy. Payload ownership remains with the enclosing host. */
 PrimeNeedReadCapture *prime_need_read_capture_copy(const PrimeNeedReadCapture *capture);
-/* Independent graph transport for a resident's read support. CONTEXT and
- * ENTRANCE are the already-copied cuts corresponding to the source capture;
- * origin atoms are copied through the enclosing session. */
+/* Independent metadata transport through the enclosing owner map. Returns
+ * a fresh capture owner; snapshots and Atom images share the supplied copy
+ * session with the producer's other roots. Both cuts and every dependency
+ * origin are transported, including negative lookups and incomplete evidence.
+ * The existing plain relocation profile excludes source forwarding, resolving
+ * rewrites and destination interning. Borrowed payloads, if selected by the
+ * session, keep their separate lifetime contract.
+ * The source must stay live and quiescent during preparation. On refusal,
+ * discard the unpublished destination graph and session. This supplies no
+ * lifetime authority for external StateCell/Space identities. */
 PrimeNeedReadCapture *prime_need_read_capture_copy_with_session(
-    Arena *destination,AtomDeepCopySession *session,
-    const PrimeNeedReadCapture *source,const PrimeNeedSnapshot *context,
-    const PrimeNeedSnapshot *entrance);
+    Arena *destination, AtomDeepCopySession *session,
+    const PrimeNeedReadCapture *capture);
 void prime_need_read_capture_storage(const PrimeNeedReadCapture *capture,CettaStorageCensus *census);
 bool prime_need_read_capture_complete(const PrimeNeedReadCapture *capture);
 /* The enclosing packet uses these exact captured cuts, including storage
@@ -267,6 +282,13 @@ typedef struct {
      * This permits internal relocation only, without retaining that owner,
      * renewing invocation borrows or licensing an independent graph copy. */
     bool (*lives_in)(const void *value,const Arena *arena);
+    /* Independent copies require an explicit image of the actual owner in
+     * the common copy session. These identify that provider's object record;
+     * an absent record never grants permission to retain the source owner.
+     * The provider separately supplies the owner's world and lifetime
+     * transport; these record keys do not certify that transport. */
+    const void *copy_kind;
+    size_t copy_size;
 } PrimeNeedReaderValueOps;
 typedef struct {
     void *value;
@@ -289,18 +311,28 @@ bool prime_need_reader_context_lookup(const PrimeNeedReaderContext *context,
 CettaMatchCompletion prime_need_reader_context_visit(const PrimeNeedReaderContext *context,
     CettaMatchCompletion (*visit)(uint64_t key,const PrimeNeedReaderValue *value,void *state),
     void *state);
-/* Copy one immutable context and its complete ancestry through a common graph
- * session. VALUE_COPY returns one owned share of each mapped live value; the
- * copied context retains it and this operation releases the callback share.
- * Tombstones, import cuts, shared lineage nodes and repeated context identity
- * are preserved. Refusal leaves OUT unchanged; discard the enclosing failed
- * graph session because it can contain unpublished shell mappings. */
+/* A provider can first prepare missing owner images. Both entry points use
+ * the same retained context/lineage copier. The callback yields one owned
+ * share with the same operations table and a distinct mapped value. The session
+ * retains both endpoints until disposal, including on failure. Failure leaves
+ * OUT unchanged and requires discarding the unpublished session. */
 typedef CettaMatchCompletion (*PrimeNeedReaderValueCopy)(void *state,
-    const PrimeNeedReaderValue *source,PrimeNeedReaderValue *image);
+    const PrimeNeedReaderValue *source, PrimeNeedReaderValue *image);
+CettaMatchCompletion prime_need_reader_context_prepare_copy_with_session(
+    const PrimeNeedReaderContext *source, AtomDeepCopySession *session,
+    PrimeNeedReaderValueCopy prepare, void *state, PrimeNeedReaderContext **out);
+/* Copy immutable reader versions and their complete ancestry, using only
+ * owner images already registered by the enclosing provider. The source is
+ * held quiescent through session disposal. Sharing within the graph is
+ * preserved; unknown, stale and identity owner mappings refuse. A refusal
+ * leaves out unchanged; discard its unpublished copy session. */
 CettaMatchCompletion prime_need_reader_context_copy_with_session(
-    const PrimeNeedReaderContext *source,AtomDeepCopySession *session,
-    PrimeNeedReaderValueCopy value_copy,void *state,
-    PrimeNeedReaderContext **out);
+    const PrimeNeedReaderContext *source, Arena *owner,
+    AtomDeepCopySession *session, PrimeNeedReaderContext **out);
+/* Borrow an explicitly prepared metadata image. This lookup constructs
+ * nothing and grants no independent ownership of a producer or its world. */
+PrimeNeedReaderContext *prime_need_reader_context_copy_lookup(
+    const PrimeNeedReaderContext *source, const AtomDeepCopySession *session);
 /* NULL value removes a key. Only the newest values are held; version ancestry
  * retains no payloads or producers. out owns a nullable context and changes
  * only after complete preparation. Removing the last key preserves the empty
@@ -491,6 +523,7 @@ uint64_t prime_need_fresh_resample_scope(void);
 bool prime_need_snapshot_allocate_source_argument(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t source_occurrence_id, uint64_t source_argument_index,
+    PrimeNeedSourceRole source_role,
     PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
 bool prime_need_snapshot_allocate_persisted(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
@@ -515,6 +548,7 @@ bool prime_need_snapshot_allocate_closure(
 bool prime_need_snapshot_allocate_source_argument_closure(
     Arena *owner, const PrimeNeedSnapshot *base, Atom *term,
     uint64_t source_occurrence_id, uint64_t source_argument_index,
+    PrimeNeedSourceRole source_role,
     const VarId *capture_var_ids, size_t capture_var_count,
     PrimeNeedSnapshot *out, uint64_t *out_thunk_id);
 bool prime_need_snapshot_allocate_persisted_closure(

@@ -407,8 +407,7 @@ static Atom *zip_map(Space *space, Arena *destination, Atom **args) {
     if (!zip_contract_supported() || !sequence(destination, args[1], &inputs, &count) || !count ||
         !sequence(destination, args[3], &captures, &captured) ||
         count > 64u || captured > 64u - count ||
-        dtype(args[0]) != CETTA_TENSOR_F64 ||
-        !args[2] || args[2]->kind != ATOM_SYMBOL)
+        dtype(args[0]) != CETTA_TENSOR_F64 || !args[2])
         return NULL;
     CettaTensor *tensors[64];
     CettaTensorCallbackEncoding encodings[64];
@@ -444,7 +443,11 @@ static Atom *zip_map(Space *space, Arena *destination, Atom **args) {
         call_args[captured + i + 1] = &leaves[i];
     }
     Atom *prototype = atom_expr(&source, call_args, count + captured + 1);
-    CettaPreparedPureProgram *program = eval_prepare_pure_value_call(space, &source, prototype);
+    bool lexical = args[2]->kind != ATOM_SYMBOL;
+    CettaPreparedPureProgram *program = lexical
+        ? eval_prepare_pure_lexical_values(
+            space, &source, args[2], (uint32_t)(count + captured))
+        : eval_prepare_pure_value_call(space, &source, prototype);
     Atom *answer = NULL;
     CettaTensor *coordinates = NULL, *unused = NULL, *result = NULL;
     size_t n = cetta_tensor_stored(tensors[0]);
@@ -476,14 +479,28 @@ static Atom *zip_map(Space *space, Arena *destination, Atom **args) {
             call_args[captured + i + 1] = callback_atom(&scratch, encodings[i], scalar_value, &leaves[i]);
             if (!call_args[captured + i + 1]) goto cleanup;
         }
-        Atom *call = atom_expr(&scratch, call_args, count + captured + 1);
-        CettaCallOutcome returned;
-        if (!cetta_prepared_pure_program_rebind_closed_entry_call(program, call) ||
-            !cetta_prepared_pure_program_execute_closed_controlled(program, &scratch,
-                65536u, tensor_callback_stop, NULL, &returned) ||
-            returned.kind != CETTA_CALL_VALUE)
-            goto cleanup;
-        Atom *value = returned.term;
+        Atom *value = NULL;
+        if (lexical) {
+            CettaCallOutcome returned;
+            if (!cetta_prepared_pure_program_execute_controlled(
+                    program, &scratch, call_args[1],
+                    count + captured == 2u ? call_args[2] : call_args[1],
+                    tensor_callback_stop, NULL, &returned) ||
+                returned.kind != CETTA_CALL_VALUE ||
+                returned.result_form != CETTA_CALL_RESULT_COMPLETED_VALUE ||
+                !returned.term)
+                goto cleanup;
+            value = returned.term;
+        } else {
+            Atom *call = atom_expr(&scratch, call_args, count + captured + 1);
+            CettaCallOutcome returned;
+            if (!cetta_prepared_pure_program_rebind_closed_entry_call(program, call) ||
+                !cetta_prepared_pure_program_execute_closed_controlled(program, &scratch,
+                    65536u, tensor_callback_stop, NULL, &returned) ||
+                returned.kind != CETTA_CALL_VALUE)
+                goto cleanup;
+            value = returned.term;
+        }
         CettaTensorScalar converted;
         if (scalar(CETTA_TENSOR_F64, value, &converted) != CETTA_TENSOR_OK)
             goto cleanup;
@@ -695,11 +712,11 @@ bool cetta_tensor_call(CettaLibraryContext *context,Space *space,Arena *a,Atom *
         *out = cetta_call_completed_value(publish(a, status, result));
         return true;
     }
-    if (op == g_builtin_syms.tensor_entries || op == g_builtin_syms.tensor_gather ||
+    if (op == g_builtin_syms.tensor_entries || op == g_builtin_syms.tensor_gather || op == g_builtin_syms.tensor_gather_rows ||
         op == g_builtin_syms.tensor_merge || op == g_builtin_syms.lib_tensor_try_zip_map) {
         bool map = op == g_builtin_syms.lib_tensor_try_zip_map;
         if (nargs != (map ? 4u : op == g_builtin_syms.tensor_merge ? 3u :
-                      op == g_builtin_syms.tensor_gather ? 2u : 1u)) return false;
+                      (op == g_builtin_syms.tensor_gather || op == g_builtin_syms.tensor_gather_rows) ? 2u : 1u)) return false;
         CettaTensor *first = map ? NULL : cetta_tensor_from_atom(args[0]);
         if (map) {
             Atom *const *inputs; CettaExprLen n;
@@ -732,6 +749,8 @@ bool cetta_tensor_call(CettaLibraryContext *context,Space *space,Arena *a,Atom *
         } else {
             if (op == g_builtin_syms.tensor_gather)
                 status = cetta_tensor_gather(first, second, &result);
+            else if (op == g_builtin_syms.tensor_gather_rows)
+                status = cetta_tensor_gather_rows(first, second, &result);
             else {
                 CettaTensorDuplicates policy = CETTA_TENSOR_REJECT;
                 if (atom_is_symbol(args[2], "first")) policy = CETTA_TENSOR_FIRST;

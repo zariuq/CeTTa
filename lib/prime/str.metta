@@ -222,12 +222,12 @@
 ; Refusals are (StrRefusedV1 call detail) data, not raised host control.
 (: __cetta_lib_str_value (-> Atom Atom Atom))
 (: str:utf8-new (-> %Undefined% Atom))
-(: str:utf8-feed (-> Atom %Undefined% %Undefined% Atom))
+(: str:utf8-feed (-> Proc %Undefined% %Undefined% Atom))
 (: str:line-new (-> Atom))
 (: str:line-segments (-> %Undefined% %Undefined% Atom))
-(: str:collect-lines (-> Atom Atom %Undefined% Atom))
-(: str:feed-lines (-> Atom %Undefined% %Undefined% Atom))
-(: str:advance-lines (-> Atom %Undefined% %Undefined% Atom))
+(: str:collect-lines (-> Proc Proc %Undefined% Atom))
+(: str:feed-lines (-> Proc %Undefined% %Undefined% Atom))
+(: str:advance-lines (-> Proc %Undefined% %Undefined% Atom))
 (: str:find-ascii-uncased (-> %Undefined% %Undefined% Atom))
 
 (= (str:utf8-new $policy)

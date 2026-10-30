@@ -120,6 +120,37 @@ static void *symbol_malloc(size_t size) {
     return ptr;
 }
 
+/* Spellings are packed into chunks of this many bytes; a longer one than an
+ * eighth of a chunk gets a block of its own. */
+#define SYMBOL_SPELLING_CHUNK_BYTES 65536u
+
+struct SymbolSpellingChunk {
+    struct SymbolSpellingChunk *next;
+    char bytes[];
+};
+
+static char *symbol_spelling_alloc(SymbolTable *st, size_t size) {
+    if (size > SYMBOL_SPELLING_CHUNK_BYTES / 8u) {
+        struct SymbolSpellingChunk *own =
+            symbol_malloc(sizeof(*own) + size);
+        own->next = st->spelling_chunks;
+        st->spelling_chunks = own;
+        return own->bytes;
+    }
+    if (st->spelling_left < size) {
+        struct SymbolSpellingChunk *chunk =
+            symbol_malloc(sizeof(*chunk) + SYMBOL_SPELLING_CHUNK_BYTES);
+        chunk->next = st->spelling_chunks;
+        st->spelling_chunks = chunk;
+        st->spelling_free = chunk->bytes;
+        st->spelling_left = SYMBOL_SPELLING_CHUNK_BYTES;
+    }
+    char *at = st->spelling_free;
+    st->spelling_free += size;
+    st->spelling_left -= size;
+    return at;
+}
+
 static void *symbol_calloc(size_t count, size_t size) {
     void *ptr = calloc(count == 0 ? 1 : count, size == 0 ? 1 : size);
     if (!ptr) symbol_oom(count * size);
@@ -255,6 +286,9 @@ void symbol_table_init(SymbolTable *st) {
     st->name_trie = NULL;
     st->name_trie_count = 1u;
     st->name_trie_invalid = 0u;
+    st->spelling_chunks = NULL;
+    st->spelling_free = NULL;
+    st->spelling_left = 0u;
     st->entry_chunks = symbol_calloc(SYMBOL_ENTRY_CHUNK_COUNT, sizeof(SymbolEntry *));
     symbol_table_note_metadata(
         st, (uint64_t)SYMBOL_ENTRY_CHUNK_COUNT * sizeof(SymbolEntry *));
@@ -277,7 +311,6 @@ void symbol_table_free(SymbolTable *st) {
     for (uint32_t i = 1; i < entry_len; i++) {
         SymbolEntry *entry = symbol_table_entry_mut(st, (SymbolId)i);
         if (!entry) continue;
-        free((void *)entry->bytes);
         entry->bytes = NULL;
         free(atomic_load_explicit(&entry->canonical_atom,
                                   memory_order_relaxed));
@@ -297,6 +330,13 @@ void symbol_table_free(SymbolTable *st) {
         free(canonical);
         canonical = next;
     }
+    while (st->spelling_chunks) {
+        struct SymbolSpellingChunk *next = st->spelling_chunks->next;
+        free(st->spelling_chunks);
+        st->spelling_chunks = next;
+    }
+    st->spelling_free = NULL;
+    st->spelling_left = 0u;
     cetta_scalar_trie_free(st->name_trie);
     st->name_trie = NULL;
     st->name_trie_count = st->name_trie_invalid = 0u;
@@ -340,7 +380,7 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
                 fprintf(stderr, "fatal: symbol table exhausted symbol id space\n");
                 abort();
             }
-            char *copy = symbol_malloc((size_t)len + 1);
+            char *copy = symbol_spelling_alloc(st, (size_t)len + 1);
             memcpy(copy, bytes, len);
             copy[len] = '\0';
 

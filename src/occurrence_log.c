@@ -193,6 +193,8 @@ CettaOccurrenceLog *cetta_occurrence_log_copy(const CettaOccurrenceLog *source,
     }
     return image;
 fail:
+    /* Consumers may not have been allocated yet. Only the accepted row
+     * prefix owns payload shares; no source pin or callback is touched. */
     for (size_t i = 0u; i < image->length; i++)
         release_row(image->rows[row_index(image, i)]);
     free(image->rows);

@@ -2,7 +2,7 @@
 ; space-indexed HE refinement service is consulted.
 !(type:refine (-> u0 u0))
 
-(: provisional-true-refinement (-> Atom Bool))
+(: provisional-true-refinement (-> Proc Bool))
 (= (provisional-true-refinement $type) True)
 (type-level-function provisional-true-refinement)
 (type-index-refinement -> 1 provisional-true-refinement)
@@ -10,7 +10,7 @@
 
 ; A marker alone cannot admit a user computation into Prime, regardless of
 ; whether its HE result would be true or false.
-(: provisional-false-refinement (-> Atom Bool))
+(: provisional-false-refinement (-> Proc Bool))
 (= (provisional-false-refinement $type) False)
 (type-level-function provisional-false-refinement)
 (type-index-refinement -> 1 provisional-false-refinement)

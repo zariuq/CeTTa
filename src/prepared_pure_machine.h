@@ -203,6 +203,9 @@ typedef enum {
      * No matching arm answers nothing.  A pattern any part of which
      * computes is left to the canonical evaluator. */
     CETTA_PREPARED_PURE_EXPRESSION_SELECT,
+    /* The complete expression is syntax data. Substitute lexical slots and
+     * build its fields without interpreting a head or demanding an operand. */
+    CETTA_PREPARED_PURE_EXPRESSION_DATA,
 } CettaPreparedPureExpressionViewState;
 typedef enum {
     CETTA_PREPARED_PURE_PROJECT_SOURCE = 0,
@@ -304,6 +307,22 @@ typedef bool (*CettaPreparedPureEquationSourceFn)(
     size_t occurrence_ordinal,
     SpaceEquationOccurrenceId occurrence,
     const Atom *equation, const void **rhs_view_out);
+
+/* The normalized reading of an existing computation node. Captured slots
+ * and completed literals become value places; surviving operations retain
+ * their computation words. Projection consults immutable source metadata,
+ * never the live Space or the shape of a returned value. The adapter owns
+ * the resulting plan for at least as long as its execution host. */
+typedef struct {
+    const void *source;
+    CettaPreparedPureSourceRole role;
+    CettaComputationPlan computation;
+    const void *const *children;
+    CettaExprLen child_count;
+    bool relation_head_admitted;
+} CettaPreparedPureSourceProjection;
+typedef const void *(*CettaPreparedPureProjectSourceFn)(
+    void *context, const CettaPreparedPureSourceProjection *projection);
 typedef struct {
     void *context;
     const void *root;
@@ -312,6 +331,7 @@ typedef struct {
     CettaPreparedPureSourceComputationFn computation;
     CettaPreparedPureSourceChildFn child;
     CettaPreparedPureEquationSourceFn equation_rhs;
+    CettaPreparedPureProjectSourceFn project_source;
     /* Decline a named executable occurrence whose admitted rule semantics
      * this compiler cannot realize. Checked during compilation, including
      * callees, and at runtime-created application boundaries. */
@@ -341,6 +361,13 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     const CettaPreparedPureSourceView *source_view,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics);
+
+/* Admit native entry only at a terminal node of an open eager body. All
+ * operands and every compiled callee are native-free. Controlled execution
+ * then transfers the native packet to its caller, which owns completion and
+ * the remaining continuation. Refusal has entered no native operation. */
+bool cetta_prepared_pure_program_use_native_tail_returns(
+    CettaPreparedPureProgram *program);
 
 /* Compile a closed, deterministic, effect-free expression into the same
  * explicit-stack machine used by prepared folds.  Callable arguments are
@@ -463,7 +490,26 @@ bool cetta_prepared_pure_program_returns_optional(
 /* The compiled node graph only selects, constructs, or observes values.
  * It neither interprets argument syntax nor matches/binds caller variables.
  * A live unresolved branch condition can still decline at execution. */
+/* Compile a body over distinct ready-value parameters into the ordinary
+ * answer cursor's continuation steps. The root has no Space equation or
+ * named-call admission. Source syntax remains owned by the caller. */
+CettaPreparedPureProgram *cetta_prepared_pure_program_compile_body_answers(
+    Space *space, Atom *expression, const VarId *parameters, uint32_t arity,
+    CettaPreparedPureBooleanValue boolean_value,
+    CettaPreparedPureConstructValue construct_value,
+    CettaPreparedPureConstructsExpression constructs_expression,
+    CettaPreparedPureOpaqueValue opaque_value,
+    CettaPreparedPureRegisterViewFn register_view,
+    CettaPreparedPureExpressionViewFn expression_view,
+    CettaPreparedPurePatternViewFn pattern_view,
+    const CettaPreparedPureSourceView *source_view,
+    bool total_structural_equality,
+    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+
 bool cetta_prepared_pure_program_accepts_open_values(
+    const CettaPreparedPureProgram *program);
+/* Immutable slot accounting for root admission and retained-storage bounds. */
+size_t cetta_prepared_pure_program_root_local_count(
     const CettaPreparedPureProgram *program);
 
 /* For a fresh open-input node program, select canonical or execution-arena
@@ -471,6 +517,13 @@ bool cetta_prepared_pure_program_accepts_open_values(
  * Refuses a plan whose literals already retain its inline Boolean cache. */
 bool cetta_prepared_pure_program_use_exportable_booleans(
     CettaPreparedPureProgram *program);
+
+/* Rebind closed unqualified values from captured and supplied spans. Arity,
+ * every operand and lexical scope are checked before any slot changes.
+ * The invocation and operands remain borrowed; this grants no source authority. */
+bool cetta_prepared_pure_program_rebind_closed_invocation(
+    CettaPreparedPureProgram *program, const CettaInvocation *invocation);
+
 /* Rebind the runtime arguments of a previously compiled closed entry call.
  * The head, arity and argument role promised at compilation must still hold;
  * this low-level operation cannot recheck a dialect's value predicate. */
@@ -486,11 +539,14 @@ bool cetta_prepared_pure_program_execute(
     CettaPreparedPureProgram *program, Arena *arena,
     Atom *accumulator, Atom *item, Atom **result_out);
 
+/* True transfers a completed value, logical failure or interruption from
+ * an open-entry invocation. False declines this realization. Values borrow
+ * the same storage as execute; payload syntax does not classify completion. */
 bool cetta_prepared_pure_program_execute_controlled(
     CettaPreparedPureProgram *program, Arena *arena,
     Atom *accumulator, Atom *item,
     CettaPreparedPureInterruptPollFn interrupt_poll,
-    void *interrupt_context, Atom **result_out);
+    void *interrupt_context, CettaCallOutcome *outcome);
 
 /* Execute using a caller-owned scratch arena.  A nonzero nursery budget
  * enables copying collection at the machine's generated-root loop boundary;
@@ -626,6 +682,9 @@ typedef struct {
      * the storage of consumed answers and finished calls.  A caller arena
      * keeps every answer valid until the caller resets it. */
     Arena *arena;
+    /* Use caller storage synchronously, then copy the exact live frontier
+     * into private storage before retaining or suspending work. */
+    bool borrowed_until_escape;
     CettaPreparedPureAnswerLimits limits;
     CettaPreparedPureUnmatchedCall unmatched_call;
     CettaPreparedPureInterruptPollFn interrupt_poll;
@@ -649,6 +708,15 @@ typedef struct {
     const void *continuation_context;
 } CettaPreparedPureAnswerCursorOptions;
 
+/* Conservative admission of an immutable possible result. Variables in
+ * shape are unknown operands, not values to interpret or bind. False may
+ * reject only when no instantiation can meet the consumer. The callback
+ * neither retains the shape nor changes logical bindings. */
+typedef bool (*CettaPreparedPureAnswerAdmissionFn)(void *context, const Atom *shape);
+bool cetta_prepared_pure_answer_cursor_set_admission(
+    CettaPreparedPureAnswerCursor *cursor, CettaPreparedPureAnswerAdmissionFn admit,
+    void *context);
+
 /* Open a cursor at the program's bound closed entry call.  The cursor
  * retains the program; it borrows the entry arguments, which must stay valid
  * until the cursor is closed or detached. The source Space/read view remains
@@ -661,6 +729,13 @@ typedef struct {
  * entry relation is not admitted. */
 CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open(
     CettaPreparedPureProgram *program,
+    const CettaPreparedPureAnswerCursorOptions *options);
+
+/* Closed, resource-free ready parameters enter the compiled root body
+ * directly. They are borrowed until detachment or an entered native return
+ * retains the frontier. The entry source belongs to the program's caller. */
+CettaPreparedPureAnswerCursor *cetta_prepared_pure_answer_cursor_open_body(
+    CettaPreparedPureProgram *program, Atom *const *arguments, uint32_t arity,
     const CettaPreparedPureAnswerCursorOptions *options);
 
 /* Produce the next answer.  An answer is borrowed until the next call on
@@ -699,7 +774,7 @@ bool cetta_prepared_pure_answer_cursor_can_detach(
 /* Copy every value the frontier holds into the cursor's own arena, so that
  * nothing it holds borrows storage its caller may move or free.  An answer
  * borrowed before the call is released.  A cursor opened on a caller arena
- * has no arena of its own and is left as it is. */
+ * stays borrowed unless borrowed_until_escape requested promotion. */
 bool cetta_prepared_pure_answer_cursor_detach(
     CettaPreparedPureAnswerCursor *cursor);
 
@@ -728,6 +803,16 @@ CettaOwnedExecutionStep cetta_prepared_pure_answer_cursor_return(
 bool cetta_prepared_pure_answer_cursor_unyield(
     CettaPreparedPureAnswerCursor *cursor);
 
+/* Execution storage, separately from any borrowed input graph. A containing
+ * owner must detach this cursor before relocating that storage. */
+bool cetta_prepared_pure_answer_cursor_uses_arena(
+    const CettaPreparedPureAnswerCursor *cursor, const Arena *arena);
+
+/* Keep a result in destination storage before releasing its loan. Values
+ * already allocated in that caller arena need no second materialization. */
+Atom *cetta_prepared_pure_answer_cursor_copy_value(
+    const CettaPreparedPureAnswerCursor *cursor, Arena *destination, Atom *value);
+
 /* The consumer has taken the answer just produced for good and keeps the
  * cursor only for its remaining alternatives: the answer can no longer be
  * withdrawn, its storage is released now rather than at the next step, and
@@ -741,10 +826,12 @@ CettaPreparedPureHandoffReason cetta_prepared_pure_answer_cursor_handoff_reason(
 /* Inspect the ready call or actual pending return at a native boundary.
  * The loan remains owned by the cursor. No source call or producer is run.
  * When entered is false, the caller may execute the ready invocation once;
- * otherwise it completes the returned packet without repeating that call. */
+ * otherwise it completes the returned packet without repeating that call.
+ * Stale authority permits inspection of retained data. It does not grant
+ * resumption of compiled work. */
 bool cetta_prepared_pure_answer_cursor_native_boundary(
     CettaPreparedPureAnswerCursor *cursor, CettaInvocation *invocation,
-    bool *entered, const CettaOwnedReturn **returned);
+    bool *entered, CettaOwnedReturn *returned);
 /* Move a replacement producer for that boundary into the retained cursor.
  * An entered packet remains live until the replacement finishes. A stale or
  * interrupted cursor refuses the move without changing either owner. */
@@ -757,19 +844,57 @@ bool cetta_prepared_pure_answer_cursor_native_started(
 bool cetta_prepared_pure_program_has_native_calls(
     const CettaPreparedPureProgram *program);
 /* Structural control metadata; dialects still own completion permission. */
+/* A transferred canonical caller owns every remaining computation; the
+ * retired compiled frontier contains no future lookup or executable step. */
+bool cetta_prepared_pure_answer_cursor_owns_native_frontier(
+    const CettaPreparedPureAnswerCursor *cursor);
+/* Read structural completeness before moving the native owner. This does
+ * not grant authority to execute a saved caller or an untried equation. */
+bool cetta_prepared_pure_answer_cursor_native_frontier_complete(
+    const CettaPreparedPureAnswerCursor *cursor);
+/* A parent continuation can request an entered native boundary instead of
+ * constructing a second dialect machine. Readiness grants no ownership.
+ * Taking moves the raw producer, including its pending return. The cursor
+ * retains its untried equations; owns_native_frontier is true only when none
+ * remain. The parent first captures untried frames and their shared callers. It
+ * can also transfer an entered packet after declaration changes when saved
+ * plans cover its callers and host continuation authority is still current.
+ * Without saved plans, stale transfer requires exhausted ordinary frames
+ * and no compiled caller left to resume. It
+ * still owns the producer's backing storage: cancel the moved execution
+ * before closing it. A parent that closes this cursor captures its
+ * untried frames first. Refusal leaves destination intact. */
+void cetta_prepared_pure_answer_cursor_defer_native_completion(
+    CettaPreparedPureAnswerCursor *cursor);
+bool cetta_prepared_pure_answer_cursor_native_transfer_ready(
+    CettaPreparedPureAnswerCursor *cursor);
+bool cetta_prepared_pure_answer_cursor_take_native(
+    CettaPreparedPureAnswerCursor *cursor, CettaOwnedExecution *destination);
+/* After the exact moved producer and its parent caller bodies have finished,
+ * retire that native frame and retain the actual compiled alternatives.
+ * Success consumes completed; refusal preserves it. Stale authority refuses
+ * untried compiled work, allowing a frozen frontier to take over; retiring
+ * an exhausted frontier requires no new source authority. */
+bool cetta_prepared_pure_answer_cursor_resume_native_frontier(
+    CettaPreparedPureAnswerCursor *cursor, CettaOwnedExecution *completed);
 bool cetta_prepared_pure_program_has_branches(
     const CettaPreparedPureProgram *program);
-/* Extend physical work only at an intact equation-frontier boundary. This
+/* Extend physical work only at an intact frontier transition boundary. This
  * neither grants semantic fuel nor changes pending values or continuations.
  * Scratch exhaustion inside an operation is not such a boundary. */
 /* Borrowed cursor consumers use the same retained-boundary transitions as
  * owned execution. Refilling preserves the exact frontier and records stale
- * authority; installing completion takes the replacement only on success. */
+ * authority; installing completion takes the replacement only on success.
+ * completes_callers certifies that the replacement consumes the entire saved
+ * caller chain. Its results must not enter that chain again. When all other
+ * frames are matched and exhausted, this owner needs no compiled authority;
+ * its own dialect machine checks all of its remaining work. */
 bool cetta_prepared_pure_answer_cursor_refill_transitions(
     CettaPreparedPureAnswerCursor *cursor, uint64_t allowance,
     CettaEvalCompletion *completion);
 bool cetta_prepared_pure_answer_cursor_complete_native(
-    CettaPreparedPureAnswerCursor *cursor, CettaOwnedExecution *replacement);
+    CettaPreparedPureAnswerCursor *cursor, CettaOwnedExecution *replacement,
+    bool completes_callers);
 
 bool cetta_prepared_pure_answer_cursor_resume_transitions(
     CettaOwnedExecution *execution, uint64_t allowance);
@@ -784,7 +909,11 @@ size_t cetta_prepared_pure_answer_cursor_head_count(
 SymbolId cetta_prepared_pure_answer_cursor_head(
     const CettaPreparedPureAnswerCursor *cursor, size_t index);
 
-/* The frontier, outermost call first.  `next_ordinal` indexes the head's
+/* The named-call frontier, outermost call first. A parameterized root has no
+ * authored equation: frame_count includes its execution frame, but frame
+ * refuses that frame. Its owned cursor retains the body; physical refills
+ * and native-boundary inspection do not fabricate an equation choice.
+ * `next_ordinal` indexes the head's
  * equation occurrences in Space cursor order.  While it is below
  * `equation_count`, `next_equation` and `next_logical_index` name that
  * occurrence.  Arguments are owned by the cursor. */
@@ -820,12 +949,49 @@ typedef Atom *(*CettaPreparedPureImportValueFn)(void *context, Atom *value);
  * standing for the frame's answer.  Solving the result once per answer of the
  * frame's call gives exactly the answers the cursor would have delivered for
  * that call, in the same order; operands the callers had already evaluated
- * appear as their values and are not evaluated again.  False when the frame
- * resumes no continuation or a pending caller has no source reading. */
+ * appear as fresh ports in `captures`, so the ordinary binding owner reads
+ * their values without evaluating them again. `captures` must be initialized;
+ * success replaces it, and refusal leaves it unchanged. A native frame reads
+ * its actual retained continuation; a native tail has the identity residual.
+ * Reading retained code does not grant execution authority. False when an
+ * ordinary frame resumes no continuation or a caller has no source reading. */
 bool cetta_prepared_pure_answer_cursor_frame_resumption(
     const CettaPreparedPureAnswerCursor *cursor, size_t index, Arena *arena,
     Atom *hole, CettaPreparedPureImportValueFn import_value,
-    void *import_context, Atom **term_out);
+    void *import_context, Bindings *captures, Atom **term_out);
+
+/* A caller is decoded once, with an input value port and a parent root.
+ * Root zero denotes the consumer; node i has root i+1 and an older parent.
+ * Captures are immutable input values, not a second branch binding state.
+ * This readout neither enters code nor transfers the cursor's producer. */
+typedef struct {
+    size_t parent;
+    Atom *input;
+    Atom *term;
+    Bindings captures;
+    /* Immutable plan projected by the same source adapter during lowering.
+     * NULL preserves the consumer's fresh, authority-checked elaboration. */
+    const void *plan;
+} CettaPreparedPureCaller;
+
+typedef struct {
+    CettaPreparedPureCaller *nodes;
+    size_t length;
+    size_t *roots;
+    size_t root_count;
+} CettaPreparedPureCallerGraph;
+
+/* Select callers by frame index, sharing actual retained ancestor records.
+ * The destination must be empty. Failure leaves it empty; imported atoms
+ * belong to arena, and the graph's arrays/capture vectors are freed below.
+ * For example sibling frames can select different roots with one ancestor.
+ * An invalid index or a caller without a source reading refuses the readout. */
+bool cetta_prepared_pure_answer_cursor_read_callers(
+    const CettaPreparedPureAnswerCursor *cursor,
+    const size_t *frames, size_t frame_count, Arena *arena,
+    CettaPreparedPureImportValueFn import_value, void *import_context,
+    CettaPreparedPureCallerGraph *destination);
+void cetta_prepared_pure_caller_graph_free(CettaPreparedPureCallerGraph *graph);
 
 uint64_t cetta_prepared_pure_answer_cursor_answer_count(
     const CettaPreparedPureAnswerCursor *cursor);

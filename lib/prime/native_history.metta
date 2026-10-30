@@ -32,7 +32,7 @@
 (: history:forest-admissions (-> Atom %Undefined%))
 (: history:selection-admissions (-> Atom %Undefined%))
 (: history:selections-admissions (-> Atom %Undefined%))
-(: history:explain (-> (Data Atom) %Undefined%))
+(: history:explain (-> Atom %Undefined%))
 
 ; This projection keeps selection order and separate branch roots.
 ; Empty projections mean no recorded verdict, not a rejected body or closure.

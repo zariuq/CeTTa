@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -3509,6 +3510,7 @@ static void check_state_receipt_operation_identity(void) {
 #endif
 
 typedef struct {size_t references;unsigned identity;} ReaderCopyProbe;
+static size_t reader_copy_live;
 static bool reader_copy_probe_retain(void *raw) {
     ReaderCopyProbe *probe=raw;
     if(!probe||!probe->references||probe->references==SIZE_MAX)return false;
@@ -3516,34 +3518,38 @@ static bool reader_copy_probe_retain(void *raw) {
 }
 static void reader_copy_probe_release(void *raw) {
     ReaderCopyProbe *probe=raw;
-    if(probe&&!--probe->references)free(probe);
+    if(probe&&!--probe->references){assert(reader_copy_live);reader_copy_live--;free(probe);}
 }
 static bool reader_copy_probe_payloads(const void *raw,AtomTreePredicate atoms,
         bool (*cells)(const StateCell *,void *),void *context) {
     (void)raw;(void)atoms;(void)cells;(void)context;return true;
 }
+static const char reader_copy_probe_kind;
 static const PrimeNeedReaderValueOps reader_copy_probe_ops={
+    .copy_kind=&reader_copy_probe_kind,.copy_size=sizeof(ReaderCopyProbe),
     .retain=reader_copy_probe_retain,.release=reader_copy_probe_release,
     .payloads=reader_copy_probe_payloads};
 typedef struct {
     ReaderCopyProbe *source[2],*image[2];
     bool refuse;
+    size_t calls, fail_at;
 } ReaderCopyFixture;
 static CettaMatchCompletion reader_copy_probe_map(void *raw,
         const PrimeNeedReaderValue *source,PrimeNeedReaderValue *image) {
     ReaderCopyFixture *copy=raw;
-    if(copy->refuse||source->operations!=&reader_copy_probe_ops)
+    copy->calls++;
+    if(copy->refuse || (copy->fail_at && copy->calls==copy->fail_at) || source->operations!=&reader_copy_probe_ops) {
+        *image=*source; /* Borrowed scratch output: failure grants no ownership. */
         return CETTA_MATCH_INCOMPLETE;
+    }
     size_t index=source->value==copy->source[0]?0u:
         source->value==copy->source[1]?1u:SIZE_MAX;
     if(index==SIZE_MAX)return CETTA_MATCH_INCOMPLETE;
-    if(!copy->image[index]) {
-        copy->image[index]=calloc(1u,sizeof(*copy->image[index]));
-        if(!copy->image[index])return CETTA_MATCH_INCOMPLETE;
-        *copy->image[index]=(ReaderCopyProbe){.references=1u,
-            .identity=copy->source[index]->identity};
-    } else if(!reader_copy_probe_retain(copy->image[index]))
-        return CETTA_MATCH_INCOMPLETE;
+    copy->image[index]=calloc(1u,sizeof(*copy->image[index]));
+    if(!copy->image[index])return CETTA_MATCH_INCOMPLETE;
+    reader_copy_live++;
+    *copy->image[index]=(ReaderCopyProbe){.references=1u,
+        .identity=copy->source[index]->identity};
     *image=(PrimeNeedReaderValue){.value=copy->image[index],
         .operations=&reader_copy_probe_ops};
     return CETTA_MATCH_MATCHED;
@@ -3552,6 +3558,7 @@ static void check_reader_context_copy(void) {
     ReaderCopyFixture copy={0};
     for(size_t i=0u;i<2u;i++) {
         copy.source[i]=calloc(1u,sizeof(*copy.source[i]));
+        if(copy.source[i])reader_copy_live++;
         CHECK(copy.source[i]!=NULL,"reader-copy source probe allocation succeeds");
         if(copy.source[i])*copy.source[i]=(ReaderCopyProbe){.references=1u,
             .identity=(unsigned)i+1u};
@@ -3572,13 +3579,13 @@ static void check_reader_context_copy(void) {
     Arena arena;arena_init_detached(&arena);
     AtomDeepCopySession *session=atom_deep_copy_session_new(&arena);
     PrimeNeedReaderContext *base_image=NULL,*descendant_image=NULL,*again=NULL,*tombstone_image=NULL;
-    CettaMatchCompletion status=session?prime_need_reader_context_copy_with_session(
+    CettaMatchCompletion status=session?prime_need_reader_context_prepare_copy_with_session(
         base,session,reader_copy_probe_map,&copy,&base_image):CETTA_MATCH_INCOMPLETE;
-    status=status==CETTA_MATCH_MATCHED?prime_need_reader_context_copy_with_session(
+    status=status==CETTA_MATCH_MATCHED?prime_need_reader_context_prepare_copy_with_session(
         descendant,session,reader_copy_probe_map,&copy,&descendant_image):status;
-    status=status==CETTA_MATCH_MATCHED?prime_need_reader_context_copy_with_session(
+    status=status==CETTA_MATCH_MATCHED?prime_need_reader_context_prepare_copy_with_session(
         descendant,session,reader_copy_probe_map,&copy,&again):status;
-    status=status==CETTA_MATCH_MATCHED?prime_need_reader_context_copy_with_session(
+    status=status==CETTA_MATCH_MATCHED?prime_need_reader_context_prepare_copy_with_session(
         tombstone,session,reader_copy_probe_map,&copy,&tombstone_image):status;
     PrimeNeedReaderValue observed={0};
     CHECK(status==CETTA_MATCH_MATCHED&&base_image&&descendant_image&&again==descendant_image&&
@@ -3592,17 +3599,44 @@ static void check_reader_context_copy(void) {
     CHECK(prime_need_reader_context_merge(base_image,descendant_image,&merged)==CETTA_MATCH_MATCHED&&
           merged==descendant_image,
         "reader context copy preserves ancestry used by later merges");
+    CHECK(copy.calls==2u,"the session memoizes owners without callback-side caching");
+    size_t live_before=reader_copy_live;
+    ReaderCopyFixture mid={.source={copy.source[0],copy.source[1]},.fail_at=2u};
+    Arena mid_arena;arena_init_detached(&mid_arena);
+    AtomDeepCopySession *mid_session=atom_deep_copy_session_new(&mid_arena);
+    PrimeNeedReaderContext *mid_out=base_image;
+    prime_need_reader_context_retain(mid_out);
+    bool failed=mid_session && prime_need_reader_context_prepare_copy_with_session(
+        descendant,mid_session,reader_copy_probe_map,&mid,&mid_out)==CETTA_MATCH_INCOMPLETE;
+    bool held=failed && mid_out==base_image && mid.calls==2u &&
+        reader_copy_live==live_before+1u;
+    CHECK(held,"a later preparation failure retains earlier mapped owners until disposal");
+    CHECK(held && prime_need_reader_context_prepare_copy_with_session(
+        descendant,mid_session,reader_copy_probe_map,&mid,&mid_out)==CETTA_MATCH_INCOMPLETE &&
+        mid.calls==2u,"a failed preparation cannot publish on retry");
+    prime_need_reader_context_release(mid_out);
+    atom_deep_copy_session_free(mid_session);arena_free(&mid_arena);
+    CHECK(reader_copy_live==live_before,"failed copy disposal releases every prepared owner");
     ReaderCopyFixture refusing=copy;refusing.refuse=true;
     Arena refused_arena;arena_init_detached(&refused_arena);
     AtomDeepCopySession *refused=atom_deep_copy_session_new(&refused_arena);
     PrimeNeedReaderContext *unchanged=base_image;
     prime_need_reader_context_retain(unchanged);
-    CHECK(refused&&prime_need_reader_context_copy_with_session(descendant,refused,
+    CHECK(refused&&prime_need_reader_context_prepare_copy_with_session(descendant,refused,
               reader_copy_probe_map,&refusing,&unchanged)==CETTA_MATCH_INCOMPLETE&&
           unchanged==base_image,
         "reader context copy refusal leaves the destination owner unchanged");
     prime_need_reader_context_release(unchanged);
     atom_deep_copy_session_free(refused);arena_free(&refused_arena);
+    PrimeNeedReaderContext *prior_image=base_image;
+    prime_need_reader_context_retain(prior_image);
+    CHECK(prime_need_reader_context_prepare_copy_with_session(base,session,NULL,NULL,
+        &prior_image)==CETTA_MATCH_INCOMPLETE && prior_image==base_image,
+        "early preparation refusal preserves the previous output");
+    CHECK(!prime_need_reader_context_copy_lookup(base,session) &&
+        prime_need_reader_context_copy_with_session(base,&arena,session,&prior_image)==CETTA_MATCH_INCOMPLETE &&
+        prior_image==base_image,"a mixed success/failure session refuses further reader publication");
+    prime_need_reader_context_release(prior_image);
     prime_need_reader_context_release(merged);
     prime_need_reader_context_release(tombstone_image);
     prime_need_reader_context_release(again);
@@ -3612,6 +3646,7 @@ static void check_reader_context_copy(void) {
     prime_need_reader_context_release(tombstone);
     prime_need_reader_context_release(descendant);
     prime_need_reader_context_release(base);
+    CHECK(reader_copy_live==0u,"all source and image probe owners retire after session cleanup");
 }
 
 int main(void) {
@@ -3828,13 +3863,15 @@ int main(void) {
     PrimeNeedCellView source_argument_cell;
     CHECK(prime_need_snapshot_allocate_source_argument(
               &arena, &thunk, term, source_occurrence, 2u,
+              PRIME_NEED_SOURCE_INFERRED,
               &source_argument, &source_argument_id) &&
               prime_need_snapshot_lookup(
                   &source_argument, source_argument_id,
                   &source_argument_cell) &&
               source_argument_cell.source_occurrence_id ==
                   source_occurrence &&
-              source_argument_cell.source_argument_index == 2u,
+              source_argument_cell.source_argument_index == 2u &&
+              source_argument_cell.source_role == PRIME_NEED_SOURCE_INFERRED,
           "a source argument cell retains application and position identity");
     CHECK(source_argument_cell.value_role ==
                   PRIME_NEED_VALUE_DEMAND_RESULT &&

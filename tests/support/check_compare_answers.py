@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import json
+import os
 from pathlib import Path
 from compare_answers import answers_equal, observe_framed, compare_framed, compare_completed_runs, MARKER
 
@@ -32,7 +33,8 @@ def agrees(lang, program, expected, actual, cetta):
         cmd = ['python3', str(TOOL), '--lang', lang, '--program', str(d / 'p.metta'),
                '--expected', str(d / 'e'), '--actual', str(d / 'a')]
         if lang == 'petta':
-            cmd += ['--cetta', cetta, '--lang', 'petta']
+            cmd += ['--cetta', *(cetta if isinstance(cetta, list) else [cetta]),
+                    '--lang', 'petta']
         return subprocess.run(cmd, capture_output=True).returncode == 0
 
 
@@ -102,6 +104,13 @@ def main():
     for name, actual, want in petta:
         if agrees('petta', PROGRAM, expected, actual, cetta) != want:
             failures.append(f'petta: {name}')
+    relative_binary = os.path.relpath(Path(cetta).resolve())
+    wrapper = ['sh', '-c', 'exec "$@"', 'cetta-wrapper', relative_binary]
+    if not agrees('petta', PROGRAM, expected, petta[0][1], wrapper):
+        failures.append('petta: wrapped execution changed its working directory')
+    failing_wrapper = ['sh', '-c', '"$@"; exit 7', 'cetta-wrapper', relative_binary]
+    if agrees('petta', PROGRAM, expected, petta[0][1], failing_wrapper):
+        failures.append('petta: matching frames concealed an execution failure')
     for lang in ('he', 'prime'):
         for name, actual, want in he:
             if agrees(lang, PROGRAM, he_expected, actual, cetta) != want:
@@ -121,7 +130,7 @@ def main():
             print('  ' + failure)
         return 1
     print(f'PASS: answers compare as bags, collapses by their elements, effects in order '
-          f'({len(petta) + 2 * len(he) + len(independent) + len(representations) + 9} cases)')
+          f'({len(petta) + 2 * len(he) + len(independent) + len(representations) + 11} cases)')
     return 0
 
 

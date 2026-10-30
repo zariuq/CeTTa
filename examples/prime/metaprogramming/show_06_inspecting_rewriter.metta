@@ -10,12 +10,12 @@
 ; effects, after simplification, by explicit evaluation.
 
 ; ---- rewriting held code
-(: literal? (-> (Data Atom) Bool))
+(: literal? (-> Atom Bool))
 (= (literal? $x)
    (if (== (get-metatype $x) Grounded)
        (let $v (eval $x) (== (get-type $v) Number)){$v}
        False))
-(: simp (-> (Data Atom) (Data Atom)))
+(: simp (-> Atom Atom))
 (= (simp $e)
    (if (== (get-metatype $e) Expression)
        (if (noreduce-eq $e ()) ()
@@ -23,14 +23,14 @@
              (if (noreduce-eq $h quote) $e
                  (let $kids (simp-list $e) (simp-node $kids)){$kids})){$h})
        $e))
-(: simp-list (-> (Data Atom) (Data Atom)))
+(: simp-list (-> Atom Atom))
 (= (simp-list $e)
    (if (noreduce-eq $e ()) ()
        (let ($h $t) (decons-atom $e)
          (let $h2 (simp $h)
            (let $t2 (simp-list $t)
              (cons-atom $h2 $t2)){$t2}){$h2}){$h $t}))
-(: simp-node (-> (Data Atom) (Data Atom)))
+(: simp-node (-> Atom Atom))
 (= (simp-node $e)
    (unify $e (+ 0 $x) $x
    (unify $e (+ $x 0) $x
@@ -43,14 +43,14 @@
    $e)))))))
 
 ; ---- inspecting held code, following calls into the program's equations
-(: effect? (-> (Data Atom) Bool))
+(: effect? (-> Atom Bool))
 (= (effect? $h)
    (if (== (get-metatype $h) Symbol)
        (case (repr $h)
          (("println!" True) ("add-atom" True) ("remove-atom" True)
           ("bind!" True) ("import!" True) ("new-space" True) ($_ False))){$_}
        False))
-(: heads (-> (Data Atom) (Data Atom)))
+(: heads (-> Atom Atom))
 (= (heads $e)
    (if (== (get-metatype $e) Expression)
        (if (noreduce-eq $e ()) ()
@@ -60,7 +60,7 @@
                  (let $ab (union-atom $a $b)
                    (if (== (get-metatype $h) Symbol) (union-atom ($h) $ab) $ab)){$ab}){$b}){$a}){$h $t})
        ()))
-(: elements (-> (Data Atom) (Data Atom)))
+(: elements (-> Atom Atom))
 (= (elements $l)
    (if (noreduce-eq $l ()) (empty)
        (let ($h $t) (decons-atom $l) (superpose ($h (elements $t)))){$h $t}))
@@ -69,13 +69,13 @@
 ; (a Data parameter), so lifting it runs nothing.
 ; Read the head before comparing its syntax: inspected functions can have
 ; different declared types, so typed equality is not this comparison.
-(: as-written (-> (Data Atom) Atom))
+(: as-written (-> Atom Proc))
 (= (as-written $x) $x)
 (= (bodies-of $h)
    (collapse (match &self (= $lhs $rhs)
      (let $head (car-atom $lhs)
        (if (noreduce-eq $head $h) (lift (as-written $rhs)) (empty))))))
-(: effect-in (-> (Data Atom) Number (Data Atom)))
+(: effect-in (-> Atom Number Atom))
 (= (effect-in $e $depth)
    (let $hs (heads $e)
      (let $h (elements $hs)
@@ -85,11 +85,11 @@
                  (let $q (elements $bodies)
                    (unify $q (quote $b) (effect-in $b (- $depth 1)) (empty))){$q}){$bodies}
                (empty))))))
-(: effects-in (-> (Data Atom) (Data Atom)))
+(: effects-in (-> Atom Atom))
 (= (effects-in $e) (let $found (collapse (effect-in $e 3)) (unique-atom $found)))
 
 ; ---- the gate
-(: run-checked (-> (Data Atom) $r))
+(: run-checked (-> Atom $r))
 (= (run-checked $e)
    (let $bad (effects-in $e)
      (if (== $bad ())

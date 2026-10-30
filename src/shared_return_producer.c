@@ -616,6 +616,8 @@ CettaSharedReturnProducer *cetta_shared_return_producer_copy_finish(
         CettaOwnedExecution execution = {0};
         if (!copy->execution(copy->context, &source->execution, &execution))
             goto done;
+        /* A borrowed source computation is not an independently owned
+         * image. In particular, do not cancel the source on this refusal. */
         if (execution.computation == source->execution.computation)
             goto done;
         if (!copied_execution_shape(&source->execution, &execution) ||

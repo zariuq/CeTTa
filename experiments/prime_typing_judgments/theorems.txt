@@ -26,6 +26,26 @@ Source-aware rule application
   assumption ledgers and missing profiles. Source-specific authenticity and
   semantic adequacy remain adapter obligations.
 
+Cached computed reads and retained publication
+  Machines/ReadOnlyQuery.lean
+    Observation.extend; extend_eq_run_bind_of_valid; checkReads_extend
+    changed_cached_read_refuses_extend
+    Controls.newer_read_does_not_rebase_cached
+    Controls.cached_then_query_retains_both
+  Assumptions: complete pure query observations and agreement on original
+  reads. The suffix appends its certificate; it never resamples the prefix.
+  Native interfaces: eval_interaction_values, CettaEvalReadScope,
+  PettaTableEntry's original Space read tokens, and interaction validation.
+  Corpus: tests/prime/interaction/computed_dependencies.metta and
+  tests/petta/search_machine_memo_interaction_reads.metta. The latter also
+  qualifies once-only cached effects independently of the pure theorem.
+  Both cold native collections and completed cache hits report their reads.
+  A synchronous nested root may borrow only its actual paused caller's idle
+  completed table under matching source and host semantics; it releases no
+  parent lease. Native C refinement and dependencies on Registry, State and
+  foreign reads remain obligations. memoized-query-dependencies.metta retains
+  the separate virtual-location negative-lookup gap.
+
 Reading and checking a result at the requested statement
   GSLT/LanguageDef/CertificateGSLTOpenApplicationWire.lean
     applyOpenPacket_exact; applyOpenPacket_checked

@@ -1,5 +1,5 @@
-(: keep-name (-> Atom Atom))
-(: fresh-name (-> Atom))
+(: keep-name (-> Proc Proc))
+(: fresh-name (-> Proc))
 
 (= (keep-name $@(meta "x")) $@(meta "x"))
 (= (fresh-name) $@(generated "y"))

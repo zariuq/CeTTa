@@ -19,6 +19,7 @@
 #endif
 #include "exact_integer.h"
 #include "generated/cetta_execution_contracts.generated.h"
+#include <float.h>
 #include <inttypes.h>
 #include <string.h>
 #include <math.h>
@@ -804,22 +805,33 @@ static bool get_numeric_arg(Atom *a, NumArg *out) {
      */
     if (a->kind == ATOM_SYMBOL &&
         eval_current_language_id &&
-        eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
-        (atom_symbol_equals_cstr(a, "inf") ||
-         atom_symbol_equals_cstr(a, "-inf") ||
-         atom_symbol_equals_cstr(a, "nan"))) {
-        bool nan_value = atom_symbol_equals_cstr(a, "nan");
-        out->val = nan_value
-            ? NAN
-            : (atom_symbol_equals_cstr(a, "-inf")
-                   ? -INFINITY : INFINITY);
-        out->ival = 0;
-        out->bigint = NULL;
-        out->rational = NULL;
-        out->is_float = true;
-        out->is_bigint = false;
-        out->is_rational = false;
-        return true;
+        eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        double constant = 0.0;
+        bool known = true;
+        if (atom_symbol_equals_cstr(a, "inf"))
+            constant = INFINITY;
+        else if (atom_symbol_equals_cstr(a, "-inf"))
+            constant = -INFINITY;
+        else if (atom_symbol_equals_cstr(a, "nan"))
+            constant = NAN;
+        else if (atom_symbol_equals_cstr(a, "pi"))
+            constant = acos(-1.0);
+        else if (atom_symbol_equals_cstr(a, "e"))
+            constant = exp(1.0);
+        else if (atom_symbol_equals_cstr(a, "epsilon"))
+            constant = DBL_EPSILON;
+        else
+            known = false;
+        if (known) {
+            out->val = constant;
+            out->ival = 0;
+            out->bigint = NULL;
+            out->rational = NULL;
+            out->is_float = true;
+            out->is_bigint = false;
+            out->is_rational = false;
+            return true;
+        }
     }
     if (a->kind != ATOM_GROUNDED) return false;
     if (a->ground.gkind == GV_INT) {
@@ -3353,7 +3365,8 @@ static bool grounded_builds_value_head(Atom *head) {
     SymbolId id = atom_symbol_current_id(head);
     return id == g_builtin_syms.parse ||
            id == g_builtin_syms.parse_first ||
-           id == g_builtin_syms.readln_bang;
+           id == g_builtin_syms.readln_bang ||
+           (he_typing_is_op_id && he_typing_is_op_id(id));
 }
 
 bool grounded_op_is_sequence_constructor(SymbolId id) {
@@ -3531,10 +3544,14 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             sequences = 2u;
             sequence_result = true;
         }
-        bool any_list = false;
+        bool adapt = false;
+        bool held = false;
         for (uint32_t i = 0u; i < nargs && i < 2u; i++) {
             if (!(sequences & (1u << i)))
                 continue;
+            Atom *sequence = atom_prime_held_payload(args[i]);
+            held = held || atom_prime_held_is(args[i]);
+            adapt = adapt || sequence != args[i] || atom_is_list(sequence);
             /* An expression the one sequence view declines (a braces node,
              * for which no set form is defined yet, or a list pattern) is
              * not a sequence: none of its internal tags is read as an
@@ -3543,30 +3560,30 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             Atom *const *view_elems = NULL;
             CettaExprLen view_len = 0u;
             if (!grounded_current_language_is_petta() &&
-                args[i]->kind == ATOM_EXPR &&
-                !atom_sequence_view(args[i], &view_elems, &view_len))
+                sequence->kind == ATOM_EXPR &&
+                !atom_sequence_view(sequence, &view_elems, &view_len))
                 return NULL;
-            if (atom_is_list(args[i]))
-                any_list = true;
         }
-        if (any_list) {
+        if (adapt) {
             Atom *elements[2] = {args[0], nargs > 1u ? args[1] : NULL};
             const Atom *kind = NULL;
             for (uint32_t i = 0u; i < nargs && i < 2u; i++) {
                 if (!(sequences & (1u << i)))
                     continue;
+                elements[i] = atom_prime_held_payload(args[i]);
                 if (!kind)
-                    kind = args[i];
-                if (atom_is_list(args[i]))
+                    kind = elements[i];
+                if (atom_is_list(elements[i]))
                     elements[i] = atom_sequence_like(
-                        a, NULL, atom_list_elems(args[i]),
-                        atom_list_len(args[i]));
+                        a, NULL, atom_list_elems(elements[i]),
+                        atom_list_len(elements[i]));
             }
             Atom *result = grounded_dispatch(a, head, elements, nargs);
             if (sequence_result && atom_is_list(kind) && result &&
-                result->kind == ATOM_EXPR && !atom_is_error(result))
+                result->kind == ATOM_EXPR && !g_grounded_raised)
                 result = atom_list(a, result->expr.elems, result->expr.len);
-            return result;
+            return result && held && !g_grounded_raised
+                ? atom_prime_held_wrap(a, result) : result;
         }
     }
 
@@ -4354,7 +4371,14 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
         bool petta_strict =
             eval_current_language_id &&
             eval_current_language_id() == CETTA_LANGUAGE_PETTA;
-        if (bad_arg->kind == ATOM_GROUNDED || petta_strict) {
+        if (petta_strict) {
+            Atom *error =
+                petta_semantics_arithmetic_operand_error(a, bad_arg);
+            if (error)
+                g_grounded_raised = true;
+            return error;
+        }
+        if (bad_arg->kind == ATOM_GROUNDED) {
             return grounded_bad_arg_type(a, head, args, nargs,
                                          !na_ok ? 1 : 2,
                                          atom_symbol(a, "Number"),

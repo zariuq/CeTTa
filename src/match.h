@@ -631,11 +631,19 @@ bool      bindings_promote_atoms_with_session(
     Bindings *bindings, Arena *dst, AtomDeepCopySession *session);
 /* For an unpublished cloned carrier: copy its roots through the shared
  * checkpoint graph, retaining physical Need frame/index/capture identities.
+ * Reader versions require explicitly prepared images in that same session;
+ * current and rollback readers are checked before relocating logical roots.
  * Failure discards this carrier and the enclosing destination/session. */
 bool      bindings_copy_owned_atoms_with_session(
     Bindings *bindings, Arena *dst, AtomDeepCopySession *session);
 bool      bindings_promote_logical_atoms_to_arena(Bindings *bindings,
                                                    Arena *dst);
+/* Promote an unpublished match result, preserving unchanged bindings and
+ * frame values from BASE by identity. The caller retains BASE's borrowed
+ * syntax under the same lifetime as an ordinary seeded match. Failure may
+ * leave partial private preparation; discard the unpublished result. */
+bool bindings_promote_logical_delta_to_arena(Bindings *bindings,
+    const Bindings *base, Arena *dst);
 bool      bindings_promote_logical_atoms_with_session(
               Bindings *bindings, AtomDeepCopySession *session);
 bool      bindings_logical_atoms_closed_for_arena(
@@ -1048,6 +1056,9 @@ Atom *bindings_capture_images(Arena *arena, Atom *const *variables,
  * its range. The caller owns the returned array. No syntax is materialized. */
 bool bindings_collect_support(const Bindings *bindings,
                               VarId **ids, size_t *count);
+/* Saved substitutions are syntax-opaque but expose logical ports. This
+ * predicate does not make those ports ordinary substitutable occurrences. */
+bool bindings_value_has_captured_support(const Atom *value);
 Atom     *bindings_to_atom(Arena *a, const Bindings *b);
 /* Textual keys resolve only in the supplied receiving syntax and environment.
  * Missing or ambiguous names fail; explicit variable keys already carry identity.
@@ -1298,6 +1309,11 @@ bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, CettaFram
 CettaMatchCompletion match_atoms_epoch_builder_checked(
     Atom *left, Atom *right, BindingsBuilder *builder, Arena *arena,
     CettaFrameIdentity epoch, uint64_t pair_budget);
+/* Both operands already carry their variable identities. No new rule
+ * activation is introduced; incomplete matching remains distinct from no. */
+CettaMatchCompletion match_atoms_builder_checked(
+    Atom *left, Atom *right, BindingsBuilder *builder, Arena *arena,
+    uint64_t pair_budget);
 
 typedef struct CettaMatchCursor CettaMatchCursor;
 typedef enum {
