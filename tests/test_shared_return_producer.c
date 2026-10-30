@@ -587,7 +587,7 @@ static void test_real_prepared_producer(void) {
         NULL, NULL, NULL, NULL, NULL, true, true,
         (CettaMatchDecisionSemanticIdentity){
             .compiler_identity = cetta_match_decision_compiler_identity(),
-        });
+        }, NULL);
     assert(program);
     CettaPreparedPureAnswerCursorOptions options = {
         .limits = {.max_transitions = 1024u, .max_scratch_bytes = 1024u * 1024u,
@@ -1806,7 +1806,7 @@ static void test_prepared_native_continuation(void) {
         atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
         NULL, NULL, NULL, NULL, &view, true, true,
         (CettaMatchDecisionSemanticIdentity){
-            .compiler_identity = cetta_match_decision_compiler_identity()});
+            .compiler_identity = cetta_match_decision_compiler_identity()}, NULL);
     assert(program);
     CettaPreparedPureAnswerCursorOptions options = {
         .limits = {.max_transitions = 1024u, .max_scratch_bytes = 1024u * 1024u,
@@ -1872,7 +1872,7 @@ static void test_prepared_native_continuation(void) {
             atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
             NULL, NULL, NULL, NULL, &view, true, true,
             (CettaMatchDecisionSemanticIdentity){
-                .compiler_identity = cetta_match_decision_compiler_identity()});
+                .compiler_identity = cetta_match_decision_compiler_identity()}, NULL);
         assert(loop);
         options.limits.max_transitions = series ? 65u : 3u;
         CettaPreparedPureAnswerCursor *bounded = cetta_prepared_pure_answer_cursor_open(loop, &options);
@@ -1906,7 +1906,7 @@ static void test_prepared_native_continuation(void) {
             atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
             NULL, NULL, NULL, NULL, &view, true, true,
             (CettaMatchDecisionSemanticIdentity){
-                .compiler_identity = cetta_match_decision_compiler_identity()});
+                .compiler_identity = cetta_match_decision_compiler_identity()}, NULL);
         assert(loop);
         options.limits.max_transitions = 100000u;
         options.interrupt_poll = prepared_native_interrupt_poll;
@@ -1939,7 +1939,7 @@ static void test_prepared_native_continuation(void) {
         atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
         NULL, NULL, NULL, NULL, &view, true, true,
         (CettaMatchDecisionSemanticIdentity){
-            .compiler_identity = cetta_match_decision_compiler_identity()});
+            .compiler_identity = cetta_match_decision_compiler_identity()}, NULL);
     assert(retained);
     options.limits.max_transitions = 100000u;
     CettaPreparedPureAnswerCursor *first = cetta_prepared_pure_answer_cursor_open(retained, &options);
@@ -1979,7 +1979,7 @@ static void test_prepared_native_continuation(void) {
             atom_bool, atom_expr, cetta_prepared_pure_constructs_expression_always,
             NULL, NULL, NULL, NULL, &view, true, true,
             (CettaMatchDecisionSemanticIdentity){
-                .compiler_identity = cetta_match_decision_compiler_identity()});
+                .compiler_identity = cetta_match_decision_compiler_identity()}, NULL);
         assert(saved);
         native_mode = 20u; native_calls = prepared_native_attempts = 0u;
         CettaPreparedPureAnswerCursor *first = cetta_prepared_pure_answer_cursor_open(saved, &options);

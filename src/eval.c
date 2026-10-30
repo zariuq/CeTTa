@@ -17671,8 +17671,7 @@ static PreparedFoldResult prepared_unary_collection_single_result(
         arena_reset(&nursery, nursery_origin);
         CettaCallOutcome returned = {0};
         Atom *item = closed_items->expr.elems[index];
-        if (!cetta_prepared_pure_program_is_current(program) ||
-            !cetta_prepared_pure_program_execute_controlled(
+        if (!cetta_prepared_pure_program_execute_controlled(
                 program, &nursery, item, item,
                 eval_prepared_pure_interrupt_poll, NULL,
                 &returned) || returned.kind != CETTA_CALL_VALUE ||
@@ -23784,6 +23783,17 @@ static bool prepared_pure_program_cache_prepare_revision(
     cache->profile = profile;
     cache->language = language;
     return cache->program.instance_id != 0u;
+}
+
+/* A compiler callback may change authority or reenter this cache. Observe
+ * its current revision before publishing evidence from the earlier attempt. */
+static bool prepared_pure_program_cache_refusal_current(
+        PreparedPureProgramCache *cache, Space *space, CettaLanguageId language,
+        uint64_t generation) {
+    uint64_t capability = language == CETTA_LANGUAGE_PETTA && g_library_context
+        ? petta_libpl_capability_revision(g_library_context->lib_prolog) : 0u;
+    return prepared_pure_program_cache_prepare_revision(cache, space, capability) &&
+        cache->entry_generation == generation;
 }
 
 /* This bounds optimization metadata, not program admission. Larger keys
@@ -41840,6 +41850,26 @@ static void petta_eval_machine_advance_semantic_authority(
             ? 1u : context->semantic_authority_epoch + 1u;
 }
 
+/* Snapshot construction and currentness consume the same field inventory.
+ * A currentness inquiry compares those fields directly, without building
+ * another token merely to discard it after comparison. */
+#define PETTA_SEMANTIC_AUTHORITY_WORDS(X) \
+    X(0u, foreign.instance_id) \
+    X(1u, foreign.revision) \
+    X(2u, context->semantic_authority_epoch) \
+    X(3u, context->transaction ? UINT64_C(1) : UINT64_C(0)) \
+    X(4u, translator_revision)
+
+#define PETTA_ANSWER_AUTHORITY_WORDS(X) \
+    X(5u, library ? cetta_library_petta_admission_revision(library) : 0u) \
+    X(6u, library && library->lib_prolog \
+        ? petta_libpl_capability_revision(library->lib_prolog) : 0u) \
+    X(7u, library ? library->active_mask : 0u)
+
+enum { PETTA_SEMANTIC_AUTHORITY_WORD_COUNT = 5u, PETTA_ANSWER_AUTHORITY_WORD_COUNT = 8u };
+_Static_assert(PETTA_ANSWER_AUTHORITY_WORD_COUNT <= PETTA_MACHINE_AUTHORITY_WORD_CAPACITY,
+               "answer authority must fit the existing token");
+
 static bool petta_eval_machine_semantic_authority_token(
     void *opaque, PettaMachineAuthorityToken *token) {
     PettaEvalMachineContext *context = opaque;
@@ -41855,16 +41885,10 @@ static bool petta_eval_machine_semantic_authority_token(
         ? cetta_library_petta_translator_rule_revision(
               context->library_context)
         : 0u;
-    *token = (PettaMachineAuthorityToken){
-        .words = {
-            foreign.instance_id,
-            foreign.revision,
-            context->semantic_authority_epoch,
-            context->transaction ? UINT64_C(1) : UINT64_C(0),
-            translator_revision,
-        },
-        .length = 5u,
-    };
+    *token = (PettaMachineAuthorityToken){.length = PETTA_SEMANTIC_AUTHORITY_WORD_COUNT};
+#define PETTA_STORE_AUTHORITY_WORD(index, value) token->words[index] = (value);
+    PETTA_SEMANTIC_AUTHORITY_WORDS(PETTA_STORE_AUTHORITY_WORD)
+#undef PETTA_STORE_AUTHORITY_WORD
     return true;
 }
 
@@ -44134,7 +44158,7 @@ static bool petta_eval_machine_answer_cursor_declined(
     void *context, Space *space, SymbolId head, CettaExprLen arity);
 static bool petta_eval_machine_collect_closed_answers(
     void *context, Space *space, Arena *result_arena, Atom *call,
-    OutcomeSet *outcomes);
+    OutcomeSet *outcomes, CettaEvalCompletion *completion);
 static bool atom_is_constructor_normal_form(Space *s, Arena *a, Atom *atom,
                                             int fuel);
 
@@ -49710,6 +49734,23 @@ static bool prepared_pure_program_cache_insert_decline(
             total_structural_equality, false);
 }
 
+/* Publish only the demands the compiler actually certified. A failed
+ * scalar attempt may certify answers alone, or neither demand. */
+static void prepared_pure_program_cache_publish_report(
+        PreparedPureProgramCache *cache, Space *space, Atom *call,
+        const void *source_identity, CettaLanguageId language,
+        CettaGsltPureCallMode mode, bool entry_values, bool equality,
+        const CettaPreparedPureCompileReport *report, uint64_t generation) {
+    if (!report || !report->refusals ||
+        !prepared_pure_program_cache_refusal_current(cache, space, language, generation))
+        return;
+    for (unsigned demand = 0u; demand < 2u; demand++) {
+        if (cetta_prepared_pure_compile_refused(report, space, demand != 0u))
+            (void)prepared_pure_program_cache_insert_decline(cache, space, call,
+                source_identity, language, mode, demand != 0u, entry_values, equality);
+    }
+}
+
 static void prepared_pure_program_cache_remove(
     PreparedPureProgramCache *cache,
     CettaPreparedPureProgram *program) {
@@ -50041,7 +50082,12 @@ static bool prepared_pure_eager_entry_arguments_are_values(
         Atom *argument = call->expr.elems[index];
         if (!argument || atom_has_vars(argument))
             return false;
-        if (!atom_eval_is_immediate_value(argument, fuel) &&
+        /* HE's completed-value mark is interpretation provenance. An
+         * unmarked expression can still be source in he-compat, even after
+         * an argument evaluator returned it. */
+        if (!(eval_current_language_id() == CETTA_LANGUAGE_HE &&
+              atom_is_he_evaluated(argument)) &&
+            !atom_eval_is_immediate_value(argument, fuel) &&
             !atom_is_constructor_normal_form(
                 space, arena, argument, fuel))
             return false;
@@ -50303,21 +50349,60 @@ CettaPreparedPureProgram *eval_prepare_pure_value_call(
         prepared_pure_match_decision_semantics(plan.call_mode), NULL);
 }
 
-/* One opened lexical source serves both the scalar worker and the answer
- * producer.  The body and parameter identities belong to `owner`; neither
- * consumer reconstructs them independently. */
+/* One parameter sequence and opened body supply each lexical lowering.
+ * The opening can borrow unchanged input nodes; its caller owns that loan. */
 typedef struct {
     Atom *body;
-    Atom *binders[2];
-    VarId parameters[64];
+    Atom *parameters[64];
     bool open_captures;
-} PreparedPureLexicalSource;
+} PettaLexicalSource;
 
+static bool petta_open_lexical_source(
+        Arena *owner, Atom *callable, uint32_t arity, const char *parameter_name,
+        PettaLexicalSource *source) {
+    if (source)
+        *source = (PettaLexicalSource){0};
+    if (!owner || !callable || !source || !parameter_name ||
+        arity == 0u || arity > 64u)
+        return false;
+    int64_t identity = 0;
+    if (!atom_petta_callable_identity(callable, &identity))
+        return false;
+    /* Decide this exact-arity inquiry within its bounded prefix, before
+     * allocating parameters. A longer or cyclic nominal chain refuses. */
+    Atom *body = callable;
+    for (uint32_t index = 0u; index < arity; index++) {
+        int64_t nested = 0;
+        if (!atom_petta_callable_identity(body, &nested) || nested != identity ||
+            !petta_semantics_lambda_body(body, &body))
+            return false;
+    }
+    int64_t remaining = 0;
+    if (atom_petta_callable_identity(body, &remaining) && remaining == identity &&
+        petta_semantics_lambda_body(body, NULL))
+        return false;
+    body = callable;
+    for (uint32_t index = 0u; body && index < arity; index++) {
+        Atom *parameter = atom_var_with_id(owner, parameter_name, fresh_var_id());
+        if (!parameter)
+            return false;
+        source->parameters[index] = parameter;
+        body = cetta_petta_open_callable(owner, body, parameter);
+    }
+    if (!body)
+        return false;
+    source->body = body;
+    source->open_captures = atom_has_vars(callable);
+    return true;
+}
+
+/* Saved prepared bodies outlive their input loan. Substitution shares
+ * unchanged nodes, so own the callable before opening its parameters. */
 static bool prepared_pure_open_lexical_source(
         Arena *owner, Atom *callable, uint32_t arity,
-        PreparedPureLexicalSource *source) {
+        PettaLexicalSource *source) {
     if (source)
-        *source = (PreparedPureLexicalSource){0};
+        *source = (PettaLexicalSource){0};
     if (!owner || !callable || !source || arity == 0u || arity > 64u ||
         atom_has_registry_refs(callable) ||
         hyperpose_atom_has_thread_local_resource(callable))
@@ -50325,40 +50410,24 @@ static bool prepared_pure_open_lexical_source(
     int64_t identity = 0;
     if (!atom_petta_callable_identity(callable, &identity))
         return false;
-    Atom *body = atom_deep_copy(owner, callable);
-    for (uint32_t index = 0u; body && index < arity; index++) {
-        int64_t nested_identity = 0;
-        if (!atom_petta_callable_identity(body, &nested_identity) ||
-            nested_identity != identity ||
-            !petta_semantics_lambda_body(body, NULL))
-            return false;
-        Atom *binder = atom_var_with_id(
-            owner, "$__pure_callable", fresh_var_id());
-        if (!binder)
-            return false;
-        source->parameters[index] = binder->var_id;
-        if (index < 2u)
-            source->binders[index] = binder;
-        body = cetta_petta_open_callable(owner, body, binder);
-    }
-    if (!body || petta_semantics_lambda_body(body, NULL))
+    Atom *owned = atom_deep_copy(owner, callable);
+    if (!petta_open_lexical_source(owner, owned, arity, "$__pure_callable", source) ||
+        petta_semantics_lambda_body(source->body, NULL))
         return false;
     if (arity == 1u) {
-        source->binders[1] = atom_var_with_id(
+        source->parameters[1] = atom_var_with_id(
             owner, "$__pure_callable_unused", fresh_var_id());
-        if (!source->binders[1])
+        if (!source->parameters[1])
             return false;
     }
-    source->body = body;
-    source->open_captures = atom_has_vars(callable);
     return true;
 }
 
 static CettaPreparedPureProgram *prepared_pure_compile_lexical_source_values(
-        Space *space, const PreparedPureLexicalSource *source,
+        Space *space, const PettaLexicalSource *source,
         uint32_t arity) {
     if (!space || !source || !source->body || arity == 0u || arity > 2u ||
-        !source->binders[0] || !source->binders[1] ||
+        !source->parameters[0] || !source->parameters[1] ||
         cetta_prepared_pure_single_result_requires_answer_effect(
             source->body, petta_prepared_pure_expression_view))
         return NULL;
@@ -50368,7 +50437,7 @@ static CettaPreparedPureProgram *prepared_pure_compile_lexical_source_values(
     CETTA_SCOPED_SHARED_TRANSITION(pure_callable_compile);
     return cetta_prepared_pure_program_compile(
         space, source->body,
-        source->binders[0]->var_id, source->binders[1]->var_id,
+        source->parameters[0]->var_id, source->parameters[1]->var_id,
         CETTA_GSLT_PURE_CALL_EAGER,
         petta_semantics_boolean_value,
         petta_semantics_construct_value,
@@ -50387,7 +50456,7 @@ static CettaPreparedPureProgram *prepared_pure_compile_lexical_source_values(
  * retains its own observer, fuel and transaction admission. */
 static CettaPreparedPureProgram *prepared_pure_compile_lexical_values(
         Space *space, Arena *owner, Atom *callable, uint32_t arity) {
-    PreparedPureLexicalSource source;
+    PettaLexicalSource source;
     if (!prepared_pure_open_lexical_source(
             owner, callable, arity, &source))
         return NULL;
@@ -50539,7 +50608,8 @@ static bool prepared_pure_closed_invocation_try(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
         return false;
     }
-    bool answer_frontend_refusal = false;
+    CettaPreparedPureCompileReport compilation = {0};
+    uint64_t generation = program_cache ? program_cache->entry_generation : 0u;
     if (!program) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_COMPILE_ATTEMPT);
@@ -50550,24 +50620,15 @@ static bool prepared_pure_closed_invocation_try(
             &source_view,
             cache_entry_arguments_are_values,
             total_structural_equality,
-            prepared_pure_match_decision_semantics(call_mode), &answer_frontend_refusal);
+            prepared_pure_match_decision_semantics(call_mode), &compilation);
     }
     if (!program) {
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_COMPILE_DECLINE);
-        if (program_cache && cacheable_program) {
-            (void)prepared_pure_program_cache_insert_decline(
-                program_cache, space, call, source_view.root,
-                language_id, call_mode,
-                false,
-                cache_entry_arguments_are_values,
-                total_structural_equality);
-        }
-        if (answer_frontend_refusal && program_cache && cacheable_program)
-            (void)prepared_pure_program_cache_insert_decline(
-                program_cache, space, call, source_view.root,
-                language_id, call_mode, true,
-                cache_entry_arguments_are_values, total_structural_equality);
+        if (cacheable_program)
+            prepared_pure_program_cache_publish_report(program_cache, space, call,
+                source_view.root, language_id, call_mode, cache_entry_arguments_are_values,
+                total_structural_equality, &compilation, generation);
         prepared_pure_precheck_debug("program compilation failed", call);
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_CALL_DECLINE);
@@ -50576,12 +50637,16 @@ static bool prepared_pure_closed_invocation_try(
     if (cetta_prepared_pure_program_has_native_calls(program)) {
         /* This consumer has no entered-return continuation. Cache its
          * worker refusal before execution, separately from answer demand. */
+        bool publish = cacheable_program && call_mode == CETTA_GSLT_PURE_CALL_EAGER &&
+            cetta_prepared_pure_program_is_current(program) &&
+            prepared_pure_program_cache_refusal_current(
+                program_cache, space, language_id, generation);
         cetta_prepared_pure_program_clear_closed_entry_call(program);
         if (program_is_cached)
             prepared_pure_program_cache_remove(program_cache, program);
         else
             cetta_prepared_pure_program_free(program);
-        if (program_cache && cacheable_program && call_mode == CETTA_GSLT_PURE_CALL_EAGER)
+        if (publish)
             (void)prepared_pure_program_cache_insert_decline(
                 program_cache, space, call, source_view.root,
                 language_id, call_mode, false,
@@ -50890,6 +50955,8 @@ prepared_pure_closed_answers_try(
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
     }
     program_is_cached = program != NULL;
+    CettaPreparedPureCompileReport compilation = {0};
+    uint64_t generation = program_cache ? program_cache->entry_generation : 0u;
     if (!program) {
         program = cetta_prepared_pure_program_compile_closed_answers(
             space, call, plan.call_mode,
@@ -50899,16 +50966,13 @@ prepared_pure_closed_answers_try(
             plan.expression_view, plan.pattern_view,
             &plan.source_view,
             true, plan.total_structural_equality,
-            prepared_pure_match_decision_semantics(plan.call_mode));
+            prepared_pure_match_decision_semantics(plan.call_mode), &compilation);
     }
     if (!program) {
-        if (program_cache) {
-            (void)prepared_pure_program_cache_insert_decline(
-                program_cache, space, call, plan.source_view.root,
-                plan.language_id, plan.call_mode, true,
-                plan.cache_entry_arguments_are_values,
-                plan.total_structural_equality);
-        }
+        prepared_pure_program_cache_publish_report(program_cache, space, call,
+            plan.source_view.root, plan.language_id, plan.call_mode,
+            plan.cache_entry_arguments_are_values, plan.total_structural_equality,
+            &compilation, generation);
         cetta_runtime_stats_inc(
             CETTA_RUNTIME_COUNTER_PREPARED_PURE_ANSWER_PRODUCER_DECLINE);
         return CETTA_PREPARED_PURE_ANSWERS_DECLINED;
@@ -50918,9 +50982,12 @@ prepared_pure_closed_answers_try(
         cetta_prepared_pure_program_has_branches(program)) {
         /* HE's held-operand/type completion owns an invalid condition's
          * authored error observation. Keep that obligation before entry. */
+        bool publish = cetta_prepared_pure_program_is_current(program) &&
+            prepared_pure_program_cache_refusal_current(
+                program_cache, space, plan.language_id, generation);
         if (!program_is_cached)
             cetta_prepared_pure_program_free(program);
-        if (program_cache)
+        if (publish)
             (void)prepared_pure_program_cache_insert_decline(
                 program_cache, space, call, plan.source_view.root,
                 plan.language_id, plan.call_mode, true,
@@ -51101,8 +51168,8 @@ prepared_pure_closed_answers_try(
  * finite-answer program that it was not while its arguments were unevaluated;
  * its answers then come from the answer producer instead of equation search,
  * cast to the type the call is expected to have as HE casts them
- * (he_cast_computed_answer). */
-static bool he_cast_computed_answers(Space *s, Arena *a, OutcomeSet *raw,
+ * (he_complete_prepared_answer). */
+static void he_complete_prepared_answers(Space *s, Arena *a, OutcomeSet *raw,
                                      Atom *expected, OutcomeSet *outcomes);
 static bool he_evaluated_call_answers_try(
     Space *space, Arena *arena, Atom *call, Atom *etype, int fuel,
@@ -51132,10 +51199,9 @@ static bool he_evaluated_call_answers_try(
     if (answered) {
         OutcomeSet cast;
         outcome_set_init(&cast);
-        answered = he_cast_computed_answers(space, arena, &raw, etype, &cast);
-        if (answered)
-            outcome_set_append_prefixed_move(
-                arena, outcomes, &cast, NULL, preserve_bindings);
+        he_complete_prepared_answers(space, arena, &raw, etype, &cast);
+        outcome_set_append_prefixed_move(
+            arena, outcomes, &cast, NULL, preserve_bindings);
         outcome_set_free(&cast);
     }
     outcome_set_free(&raw);
@@ -51205,6 +51271,8 @@ static CettaPreparedPureAnswerCursor *petta_eval_machine_open_answer_cursor(
     if (program_declined)
         return NULL;
     bool program_is_cached = program != NULL;
+    CettaPreparedPureCompileReport compilation = {0};
+    uint64_t generation = program_cache ? program_cache->entry_generation : 0u;
     if (!program) {
         program = cetta_prepared_pure_program_compile_closed_answers(
             space, call, plan.call_mode,
@@ -51214,13 +51282,12 @@ static CettaPreparedPureAnswerCursor *petta_eval_machine_open_answer_cursor(
             plan.expression_view, plan.pattern_view,
             &plan.source_view,
             true, plan.total_structural_equality,
-            prepared_pure_match_decision_semantics(plan.call_mode));
+            prepared_pure_match_decision_semantics(plan.call_mode), &compilation);
         if (!program) {
-            (void)prepared_pure_program_cache_insert_decline(
-                program_cache, space, call, plan.source_view.root,
-                plan.language_id, plan.call_mode, true,
-                plan.cache_entry_arguments_are_values,
-                plan.total_structural_equality);
+            prepared_pure_program_cache_publish_report(program_cache, space, call,
+                plan.source_view.root, plan.language_id, plan.call_mode,
+                plan.cache_entry_arguments_are_values, plan.total_structural_equality,
+                &compilation, generation);
             return NULL;
         }
         if (!cetta_prepared_pure_program_rebind_closed_entry_call(
@@ -51293,7 +51360,10 @@ static bool petta_eval_machine_answer_cursor_declined(
  * at all.  A relation known to decline is refused by head first. */
 static bool petta_eval_machine_collect_closed_answers(
     void *context, Space *space, Arena *result_arena, Atom *call,
-    OutcomeSet *outcomes) {
+    OutcomeSet *outcomes, CettaEvalCompletion *completion) {
+    if (!completion)
+        return false;
+    *completion = CETTA_EVAL_COMPLETE;
     PettaEvalMachineContext *eval_context = context;
     if (!eval_context || eval_context->transaction ||
         eval_current_language_id() != CETTA_LANGUAGE_HE ||
@@ -51316,9 +51386,17 @@ static bool petta_eval_machine_collect_closed_answers(
      * only completed source refusals. An unavailable read stays retryable. */
     Bindings empty;
     bindings_init(&empty);
-    return prepared_pure_closed_answers_try(
-               space, result_arena, call, -1, program_cache, &empty, false,
-               outcomes) == CETTA_PREPARED_PURE_ANSWERS_COMPLETE;
+    CettaEvalEpisode episode;
+    eval_completion_child_begin(&episode);
+    CettaPreparedPureAnswersResult result = prepared_pure_closed_answers_try(
+        space, result_arena, call, -1, program_cache, &empty, false, outcomes);
+    *completion = eval_completion_child_end(&episode);
+    if (result == CETTA_PREPARED_PURE_ANSWERS_STOPPED) {
+        if (*completion == CETTA_EVAL_COMPLETE)
+            *completion = CETTA_EVAL_INCOMPLETE_HOST_FAILURE;
+        return true;
+    }
+    return result == CETTA_PREPARED_PURE_ANSWERS_COMPLETE;
 }
 
 static bool petta_eval_machine_answer_authority_token(
@@ -51329,11 +51407,28 @@ static bool petta_eval_machine_answer_authority_token(
         token->length + 3u > PETTA_MACHINE_AUTHORITY_WORD_CAPACITY)
         return false;
     CettaLibraryContext *library = eval_context->library_context;
-    token->words[token->length++] = library
-        ? cetta_library_petta_admission_revision(library) : 0u;
-    token->words[token->length++] = library && library->lib_prolog
-        ? petta_libpl_capability_revision(library->lib_prolog) : 0u;
-    token->words[token->length++] = library ? library->active_mask : 0u;
+#define PETTA_STORE_ANSWER_WORD(index, value) token->words[index] = (value);
+    PETTA_ANSWER_AUTHORITY_WORDS(PETTA_STORE_ANSWER_WORD)
+#undef PETTA_STORE_ANSWER_WORD
+    token->length = PETTA_ANSWER_AUTHORITY_WORD_COUNT;
+    return true;
+}
+
+static bool petta_eval_machine_answer_authority_current(
+    const PettaEvalMachineContext *context, const PettaMachineAuthorityToken *token) {
+    if (!context || !token || token->length != PETTA_ANSWER_AUTHORITY_WORD_COUNT)
+        return false;
+    CettaLibraryContext *library = context->library_context;
+    CettaLibPrologReadToken foreign = library && library->lib_prolog
+        ? cetta_lib_prolog_read_token(library->lib_prolog)
+        : (CettaLibPrologReadToken){0};
+    uint64_t translator_revision = library
+        ? cetta_library_petta_translator_rule_revision(library) : 0u;
+#define PETTA_CHECK_AUTHORITY_WORD(index, value) \
+    if (token->words[index] != (value)) return false;
+    PETTA_SEMANTIC_AUTHORITY_WORDS(PETTA_CHECK_AUTHORITY_WORD)
+    PETTA_ANSWER_AUTHORITY_WORDS(PETTA_CHECK_AUTHORITY_WORD)
+#undef PETTA_CHECK_AUTHORITY_WORD
     return true;
 }
 
@@ -51887,26 +51982,17 @@ static CettaOpenEquationProgram *petta_eval_open_compile_callable(
     if (!petta_eval_open_callable_admitted(context, space, callable, arity) ||
         !petta_eval_open_relation_ready(eval_context))
         return NULL;
-    CettaExprLen full_arity = 0u;
-    int64_t identity = 0;
-    if (!atom_petta_callable_identity(callable, &identity) ||
-        !petta_semantics_lambda_arity(callable, &full_arity) || full_arity != arity)
-        return NULL;
     Arena source;
     arena_init_detached(&source);
-    Atom *body = callable;
-    Atom *parameters[64];
-    for (uint32_t index = 0u; body && index < arity; index++) {
-        parameters[index] = atom_var_with_id(&source, "__lexical_arg", fresh_var_id());
-        body = parameters[index]
-            ? cetta_petta_open_callable(&source, body, parameters[index]) : NULL;
-    }
+    PettaLexicalSource opened;
+    bool ready = petta_open_lexical_source(
+        &source, callable, arity, "__lexical_arg", &opened);
     CettaOpenEquationHost host = petta_eval_open_compile_host(eval_context, space, false);
     const char *reason = NULL;
-    CettaOpenEquationProgram *program = body
+    CettaOpenEquationProgram *program = ready
         ? cetta_open_equation_program_compile_body(
             eval_context->library_context->petta_program, space,
-            body, parameters, arity, &host, &reason) : NULL;
+            opened.body, opened.parameters, arity, &host, &reason) : NULL;
     if (!program)
         petta_eval_open_note_decline("<lexical>", arity, reason);
     arena_free(&source);
@@ -51926,12 +52012,10 @@ typedef struct {
 
 static bool petta_eval_callable_authority_current(const void *context) {
     const PettaCallableAuthority *authority = context;
-    PettaMachineAuthorityToken current;
     return authority && authority->library == g_library_context &&
         authority->context->library_context == authority->library &&
-        petta_eval_machine_answer_authority_token(
-        authority->context, &current) &&
-        cetta_nik_direct_authority_token_v1_equal(&authority->token, &current);
+        petta_eval_machine_answer_authority_current(
+            authority->context, &authority->token);
 }
 
 /* Elaborate a lexical body once. Scalar/tail and continuation-bearing
@@ -51943,7 +52027,7 @@ static void *petta_eval_open_prepare_pure_callable(
         atom_has_registry_refs(callable) ||
         !petta_eval_open_callable_admitted(context, space, callable, arity))
         return NULL;
-    PreparedPureLexicalSource source;
+    PettaLexicalSource source;
     if (!prepared_pure_open_lexical_source(
             owner, callable, arity, &source))
         return NULL;
@@ -51975,8 +52059,11 @@ static void *petta_eval_open_prepare_pure_callable(
         CettaPreparedPureSourceView source_view =
             prepared_pure_source_view_for_language(
                 CETTA_LANGUAGE_PETTA, source.body);
+        VarId parameters[64];
+        for (uint32_t index = 0u; index < arity; index++)
+            parameters[index] = source.parameters[index]->var_id;
         prepared = cetta_prepared_pure_program_compile_body_answers(
-            space, source.body, source.parameters, arity,
+            space, source.body, parameters, arity,
             petta_semantics_boolean_value,
             petta_semantics_construct_value, petta_semantics_construct_value_is_expression,
             petta_semantics_is_opaque_runtime_value, petta_prepared_pure_register_view,
@@ -52005,9 +52092,10 @@ static CettaPreparedPureAnswerCursor *petta_eval_open_callable_answers(
         Atom *const *arguments, uint32_t arity) {
     (void)context;
     PettaPreparedCallable *plan = prepared;
-    if (!plan || !plan->body_authority ||
-        !petta_eval_callable_authority_current(plan->body_authority))
+    if (!plan || !plan->body_authority)
         return NULL;
+    /* The cursor checks this authority on its first pull, before entering
+     * the body, and again after any native call. */
     size_t scratch = prepared_pure_nursery_budget_bytes();
     if (!scratch)
         scratch = 256u * ARENA_BLOCK_SIZE;
@@ -52035,8 +52123,7 @@ static bool petta_eval_open_execute_pure_callable(
     PettaPreparedCallable *plan = prepared;
     CettaPreparedPureProgram *program = plan ? plan->program : NULL;
     if (!program || plan->body_authority || !arena || !arguments || !outcome ||
-        arity == 0u || arity > 2u ||
-        !cetta_prepared_pure_program_is_current(program))
+        arity == 0u || arity > 2u)
         return false;
     bool open_values = false;
     for (uint32_t index = 0u; index < arity; index++) {
@@ -52095,7 +52182,8 @@ static bool petta_eval_open_execute_pure_relation(
         cetta_library_petta_memo_contains(library, head, arity))
         return false;
     ArenaMark mark = arena_mark(arena);
-    Atom head_value = {.kind = ATOM_SYMBOL, .sym_id = head, .var_id = VAR_ID_NONE};
+    Atom head_value;
+    atom_init_symbol(&head_value, head);
     CettaInvocation invocation = {.head = binding_value_from_atom(&head_value),
         .supplied = {.atoms = arguments, .count = arity}};
     CettaCallOutcome returned;
@@ -52396,42 +52484,38 @@ static void he_library_answer(Space *s, Arena *a,
     outcome_set_add(os, value, &empty);
 }
 
-/* HE casts what a call answers to the type the call is expected to have.
- * An answer the prepared machine computed is cast as HE casts a value: a
- * symbol, a grounded value, () or a list is cast to the type, binding a type
- * variable there or answering BadType; a variable, or an expression whose
- * head declares no type, is a finished value HE answers as it is.  HE types
- * an expression whose head declares a type when it evaluates the call, so
- * such an answer is refused (false) and the call is evaluated canonically. */
-static bool he_cast_computed_answer(Space *s, Arena *a, Atom *answer,
-                                    Atom *expected, const Bindings *env,
-                                    OutcomeSet *outcomes) {
-    if (!answer)
-        return false;
+/* The producer has completed this value. Scalar atoms retain HE's ordinary
+ * cast; a typed expression uses the same value/type boundary as an evaluated
+ * argument. Held fields never re-enter source interpretation. */
+static void he_complete_prepared_answer(Space *s, Arena *a, Atom *answer,
+                                        Atom *expected, const Bindings *env,
+                                        OutcomeSet *outcomes) {
+    if (!answer) {
+        eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
+        return;
+    }
     if (eval_atom_is_cast_value(answer)) {
         type_cast_outcomes(s, a, answer, expected, env, outcomes);
-        return true;
+        return;
     }
     if (answer->kind == ATOM_EXPR && answer->expr.len > 0u &&
         answer->expr.elems[0]->kind == ATOM_SYMBOL &&
         !space_head_call_untyped(s, answer->expr.elems[0]->sym_id,
-                                 answer->expr.len - 1u))
-        return false;
+                                 answer->expr.len - 1u)) {
+        he_answer_evaluated_into(s, a, answer, expected, true, true, env, outcomes);
+        return;
+    }
     outcome_set_add_prefixed(a, outcomes, answer, env, NULL, true);
-    return true;
 }
 
-/* The prepared machine's answers of a call HE expects to have `expected`,
- * cast to it into `outcomes`; false when one of them is refused. */
-static bool he_cast_computed_answers(Space *s, Arena *a, OutcomeSet *raw,
-                                     Atom *expected, OutcomeSet *outcomes) {
-    for (CettaCount i = 0u; i < raw->len; i++) {
-        if (!he_cast_computed_answer(
-                s, a, outcome_atom_materialize(a, &raw->items[i]), expected,
-                &raw->items[i].env, outcomes))
-            return false;
-    }
-    return true;
+/* Completion consumes the actual reached values and bindings. A type error
+ * is an answer at this boundary; it cannot retry the producer's invocation. */
+static void he_complete_prepared_answers(Space *s, Arena *a, OutcomeSet *raw,
+                                         Atom *expected, OutcomeSet *outcomes) {
+    for (CettaCount i = 0u; i < raw->len && !eval_unwinding(); i++)
+        he_complete_prepared_answer(
+            s, a, outcome_atom_materialize(a, &raw->items[i]), expected,
+            &raw->items[i].env, outcomes);
 }
 
 static void metta_call_impl(
@@ -52857,7 +52941,7 @@ tail_call: ;
     Atom *prepared_pure_result = NULL;
     CettaCallOutcome prepared_return;
     /* HE casts what a call answers to the type the call is expected to have
-     * (he_cast_computed_answer).  A typed head's range meets that type before
+     * (he_complete_prepared_answer).  A typed head's range meets that type before
      * HE evaluates anything, and its errors name the call: the canonical
      * evaluator answers such a call. */
     bool he_expected = language_id == CETTA_LANGUAGE_HE && etype &&
@@ -52885,17 +52969,13 @@ tail_call: ;
     if (prepared_pure_result && he_expected) {
         OutcomeSet cast;
         outcome_set_init(&cast);
-        bool cast_ok = he_cast_computed_answer(
+        he_complete_prepared_answer(
             s, a, prepared_pure_result, etype, CURRENT_ENV, &cast);
-        if (cast_ok) {
-            petta_directive_note_answer(atom, false);
-            outcome_set_append_prefixed_move(
-                a, os, &cast, NULL, preserve_bindings);
-        }
+        petta_directive_note_answer(atom, false);
+        outcome_set_append_prefixed_move(
+            a, os, &cast, NULL, preserve_bindings);
         outcome_set_free(&cast);
-        if (cast_ok)
-            return;
-        prepared_pure_result = NULL;
+        return;
     }
     if (prepared_pure_result) {
         petta_directive_note_answer(atom, false);
@@ -52940,11 +53020,9 @@ tail_call: ;
             prepared_answers == CETTA_PREPARED_PURE_ANSWERS_STOPPED) {
             OutcomeSet cast;
             outcome_set_init(&cast);
-            if (he_cast_computed_answers(s, a, &raw, etype, &cast))
-                outcome_set_append_prefixed_move(
-                    a, os, &cast, NULL, preserve_bindings);
-            else
-                prepared_answers = CETTA_PREPARED_PURE_ANSWERS_DECLINED;
+            he_complete_prepared_answers(s, a, &raw, etype, &cast);
+            outcome_set_append_prefixed_move(
+                a, os, &cast, NULL, preserve_bindings);
             outcome_set_free(&cast);
         }
         outcome_set_free(&raw);

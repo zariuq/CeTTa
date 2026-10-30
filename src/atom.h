@@ -991,6 +991,9 @@ typedef _Atomic(uint64_t) VarInternEntry;
 typedef struct {
     _Atomic(VarInternEntry *) *chunks;
     pthread_mutex_t write_mutex;
+    /* Sparse directories keep a separate list of their allocated owners.
+     * Only the writer changes it; disposal requires quiescent readers. */
+    struct VarInternChunk *owned_chunks;
 } VarInternTable;
 
 void    var_intern_init(VarInternTable *t);
@@ -1032,6 +1035,9 @@ Atom *atom_symbol(Arena *a, const char *name);
  * dynamic or mutable name buffers must use atom_symbol instead. */
 Atom *atom_symbol_literal(Arena *a, const char *name);
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
+/* Initialize borrowed symbol metadata without allocation or an arena owner.
+ * Storage must outlive its readers; escaping terms use an owning constructor. */
+void atom_init_symbol(Atom *target, SymbolId sym_id);
 /* The symbol's one atom owned by the symbol table (no arena): for atoms a
  * compiled program hands to terms that may outlive it.  NULL without a
  * table or for an id it does not hold. */

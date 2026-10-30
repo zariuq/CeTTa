@@ -886,24 +886,21 @@ done:
 
 static void term_universe_set_collection_due(TermUniverse *universe,
                                              uint64_t live) {
-    if (universe->counting) {
-        uint64_t due = universe->collection_eager
-            ? (live / 16u > 64u ? live / 16u : 64u)
-            : TERM_UNIVERSE_COUNTING_FLOOR;
-        if (!universe->collection_eager) {
-            if (universe->collection_roots_after * 2u > due)
-                due = universe->collection_roots_after * 2u;
-            if (live / 64u > due)
-                due = live / 64u;
-            if (universe->collection_backoff > due)
-                due = universe->collection_backoff;
-        }
+    if (universe->collection_eager) {
+        /* Every eligible safe point is due, including callers that consult
+         * the cheap due predicate before offering the collection. */
+        universe->collection_due = 0u;
+        universe->collection_due_released = 0u;
+    } else if (universe->counting) {
+        uint64_t due = TERM_UNIVERSE_COUNTING_FLOOR;
+        if (universe->collection_roots_after * 2u > due)
+            due = universe->collection_roots_after * 2u;
+        if (live / 64u > due)
+            due = live / 64u;
+        if (universe->collection_backoff > due)
+            due = universe->collection_backoff;
         universe->collection_due = due;
         universe->collection_due_released = UINT64_MAX;
-    } else if (universe->collection_eager) {
-        universe->collection_due = live / 16u > 64u ? live / 16u : 64u;
-        universe->collection_due_released =
-            live / 64u > 16u ? live / 64u : 16u;
     } else {
         universe->collection_due = live > TERM_UNIVERSE_COLLECTION_FLOOR
             ? live : TERM_UNIVERSE_COLLECTION_FLOOR;

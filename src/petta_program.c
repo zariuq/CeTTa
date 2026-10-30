@@ -2767,9 +2767,10 @@ static PettaPlanNode *petta_plan_build_in(
             continue;
         }
         Atom *head_atom = atom->expr.elems[0];
+        PeTTaForm form = PETTA_FORM_NONE;
         if (head_atom->kind == ATOM_SYMBOL) {
             SymbolId head = head_atom->sym_id;
-            PeTTaForm form = petta_semantics_form(head);
+            form = petta_semantics_form(head);
             if (form == PETTA_FORM_VALUE_LET)
                 form = PETTA_FORM_LET;
             node->contains_cardinality_call =
@@ -2847,9 +2848,6 @@ static PettaPlanNode *petta_plan_build_in(
             node->output = PETTA_PLAN_OUTPUT_CONSTRUCTOR;
         } else if (head_atom->kind == ATOM_SYMBOL) {
             SymbolId head = head_atom->sym_id;
-            PeTTaForm form = petta_semantics_form(head);
-            if (form == PETTA_FORM_VALUE_LET)
-                form = PETTA_FORM_LET;
             CettaExprLen nargs = atom->expr.len - 1u;
             if (head == g_builtin_syms.quote && nargs == 1u) {
                 node->output = PETTA_PLAN_OUTPUT_QUOTED_CHILD;

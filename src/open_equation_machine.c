@@ -11244,19 +11244,19 @@ static bool oem_applied_pure(const CettaOpenEquationCursor *cursor,
         !space_equations_may_match_known_head(program->space, head);
 }
 
-/* The application `data` of the type-pure operation `head` to values, ground
+/* The operands of the type-pure operation `head` are values, ground
  * but for a structural test's, run as the host's machine runs it
  * (oem_applied_pure); DECLINED when it is not such an application or the direct
  * run leaves it undecided. */
 static __attribute__((noinline)) OemRun oem_applied_pure_step(
         CettaOpenEquationCursor *cursor,
         const CettaOpenEquationProgram *program, Atom **locals,
-        const OemStep *step, Atom *head, Atom *data, uint32_t arity) {
+        const OemStep *step, Atom *head, Atom *const *operands, uint32_t arity) {
     if (!oem_applied_pure(cursor, program, head->sym_id, arity))
         return OEM_RUN_DECLINED;
     Atom *size = NULL;
     if (arity == 1u && oem_sequence_size_value(
-            cursor, head->sym_id, data->expr.elems[1], &size)) {
+            cursor, head->sym_id, operands[0], &size)) {
         if (!size)
             return OEM_RUN_HANDOFF;
         OemUnify unified = oem_meet(cursor, program, locals, step, size);
@@ -11265,7 +11265,7 @@ static __attribute__((noinline)) OemRun oem_applied_pure_step(
     }
     Atom *args[OEM_PURE_INLINE_ARGS];
     for (uint32_t index = 0u; index < arity; index++) {
-        Atom *arg = oem_resolve_mode(cursor, data->expr.elems[index + 1u],
+        Atom *arg = oem_resolve_mode(cursor, operands[index],
                                      true);
         if (!arg)
             return OEM_RUN_HANDOFF;
@@ -11517,12 +11517,12 @@ static OemRun oem_lexical_callable_step(
         CettaOpenEquationCursor *cursor,
         const CettaOpenEquationProgram *program, uint32_t pc, Atom **locals,
         uint32_t local_count, const OemCont *cont, uint32_t depth,
-        const OemStep *step, Atom *head, Atom *application,
+        const OemStep *step, Atom *head, Atom *const *operands,
         uint32_t arity, const CettaOpenEquationProgram **target_out,
         Atom **value_out) {
     enum { OEM_LEXICAL_INLINE_ARGS = 64u };
     *target_out = NULL;
-    if (!application || application->kind != ATOM_EXPR ||
+    if (!operands ||
         arity == 0u || arity > OEM_LEXICAL_INLINE_ARGS)
         return OEM_RUN_DECLINED;
     int64_t identity = 0;
@@ -11571,7 +11571,7 @@ static OemRun oem_lexical_callable_step(
 
     Atom *arguments[OEM_LEXICAL_INLINE_ARGS];
     for (uint32_t index = 0u; index < arity; index++) {
-        Atom *argument = application->expr.elems[index + 1u];
+        Atom *argument = operands[index];
         if (target && oem_callable_argument_guard(cursor, argument))
             continue;
         arguments[index] = oem_resolve_mode(cursor, argument, true);
@@ -11706,30 +11706,48 @@ static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
         expanded_partial = true;
     }
     bool symbol = head->kind == ATOM_SYMBOL;
-    if (!data)
-        data = oem_instantiate(cursor, program, locals, step->value);
-    uint32_t arity = data ? (uint32_t)data->expr.len - 1u : 0u;
+    uint32_t arity = data ? (uint32_t)data->expr.len - 1u : goal->count - 1u;
+    enum { OEM_APPLY_INLINE_ARGS = 64u };
+    Atom *inline_elements[OEM_APPLY_INLINE_ARGS + 1u];
+    Atom **elements = data ? data->expr.elems
+        : arity <= OEM_APPLY_INLINE_ARGS ? inline_elements
+        : arena_alloc(&cursor->region, sizeof(*elements) * goal->count);
+    if (!elements)
+        return OEM_RUN_HANDOFF;
+    if (!data) {
+        /* Direct calls read their program-owned operands. Materialize syntax
+         * only for a host inquiry or an application that is itself data. */
+        elements[0] = head;
+        for (uint32_t index = 0u; index < arity; index++) {
+            Atom *operand = oem_instantiate(cursor, program, locals,
+                program->template_children[goal->first + index + 1u]);
+            if (!operand)
+                return OEM_RUN_HANDOFF;
+            elements[index + 1u] = oem_deref(cursor, operand);
+        }
+    }
+    Atom *const *operands = elements + 1u;
     const CettaOpenEquationProgram *target = NULL;
-    if (data && !symbol) {
+    if (!symbol) {
         OemRun lexical = oem_lexical_callable_step(
             cursor, program, pc, locals, local_count, cont, depth,
-            step, head, data, arity, &target, value_out);
+            step, head, operands, arity, &target, value_out);
         if (lexical != OEM_RUN_DECLINED)
             return lexical;
         if (!target && !oem_application_inert(cursor, head))
             return OEM_RUN_DECLINED;
     }
-    if (data && symbol && step->target == OEM_HOST_APPLY && cursor->runtime.current)
+    if (symbol && step->target == OEM_HOST_APPLY && cursor->runtime.current)
         target =
             oem_enter_evaluated(cursor, program->space, head->sym_id, arity);
-    if (data && symbol && !target && arity == 2u) {
+    if (symbol && !target && arity == 2u) {
         /* A grounded operation over plain scalars, which the host applies
          * as its ready call: the scalar evaluator's exact result, unless the
          * program defines equations of the head, which the host's call
          * would enter instead. */
         Atom *args[2] = {
-            oem_resolve_mode(cursor, data->expr.elems[1], true),
-            oem_resolve_mode(cursor, data->expr.elems[2], true),
+            oem_resolve_mode(cursor, operands[0], true),
+            oem_resolve_mode(cursor, operands[1], true),
         };
         CettaPlainScalar scalar;
         if (args[0] && args[1] &&
@@ -11747,15 +11765,20 @@ static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
             return unified == OEM_UNIFY_OK ? OEM_RUN_CALLED : OEM_RUN_FAILED;
         }
     }
-    if (data && symbol && !target) {
+    if (symbol && !target) {
         OemRun run = oem_applied_pure_step(cursor, program, locals, step,
-                                           head, data, arity);
+                                           head, operands, arity);
         if (run != OEM_RUN_DECLINED)
             return run;
     }
-    if (data && symbol && !target &&
-        !oem_symbol_application_inert(cursor, program, data))
-        return OEM_RUN_DECLINED;
+    if (symbol && !target) {
+        if (!data)
+            data = atom_expr(&cursor->region, elements, arity + 1u);
+        if (!data)
+            return OEM_RUN_HANDOFF;
+        if (!oem_symbol_application_inert(cursor, program, data))
+            return OEM_RUN_DECLINED;
+    }
     if (target) {
         Atom **args = arena_alloc(&cursor->region,
                                   sizeof(*args) * (arity ? arity : 1u));
@@ -11763,7 +11786,7 @@ static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
         if (!args || !record)
             return OEM_RUN_HANDOFF;
         for (uint32_t index = 0u; index < arity; index++)
-            args[index] = data->expr.elems[index + 1u];
+            args[index] = operands[index];
         /* The step's output slot, stored at its first occurrence, takes a
          * cell for the callee to fill, as it does when the host fills it. */
         if (step->store && !locals[program->templates[step->pattern].slot]) {
@@ -11790,6 +11813,8 @@ static OemRun oem_apply_step(CettaOpenEquationCursor *cursor,
                 CETTA_RUNTIME_COUNTER_OPEN_EQUATION_PARTIAL_ENTER);
         return entered ? OEM_RUN_ENTERED : OEM_RUN_HANDOFF;
     }
+    if (!data)
+        data = atom_expr(&cursor->region, elements, arity + 1u);
     OemUnify built = data
         ? oem_meet(cursor, program, locals, step, data)
         : OEM_UNIFY_ERROR;
