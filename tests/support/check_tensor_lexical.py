@@ -9,7 +9,8 @@ import os
 from pathlib import Path
 import subprocess
 
-from check_binary_codec import ROOT, parse_forms
+from check_binary_codec import ROOT, parse_forms, tensor as byte_tensor
+from check_tensor_program import array, transport
 
 
 def vector(values, dtype="f64"):
@@ -59,6 +60,21 @@ def main():
 ''']
     command = [str(args.cetta.resolve()), "--lang", "petta"]
 
+    # The scalar service declares the floating exception policy. Qualify
+    # each supported policy, not equal failures or an arbitrary new outcome.
+    probe_source = '!(and (isinf-math (/ 1.0 0.0)) (> (/ 1.0 0.0) 0.0))\n'
+    probe = subprocess.run(command + ['-e', probe_source], cwd=ROOT,
+                           text=True, capture_output=True, timeout=60)
+    (args.output / 'float-policy.log').write_text(probe.stdout + probe.stderr)
+    if probe.returncode == 0 and probe.stdout == 'true\n' and not probe.stderr:
+        float_policy = 'IEEE-positive-infinity'
+    elif probe.returncode == 2 and 'evaluation_error zero_divisor' in probe.stderr:
+        float_policy = 'raised-zero-divisor'
+    else:
+        raise AssertionError(('unsupported scalar exception policy', probe.returncode,
+                              probe.stdout, probe.stderr))
+    infinity = '(tensor:decode-bytes ' + byte_tensor(transport(array((2,), [1.0, float('inf')]))) + ')'
+
     def run(name, lines, expected, reference="0", fuel=False):
         source = "\n".join(prefix + lines) + "\n"
         path = args.output / (name + ".metta")
@@ -100,8 +116,12 @@ def main():
         ordinary.append(f"!(println! (LexicalCase {i} (== (tensor:zip-map f64 {inputs} {projection} {captures}) {expected})))")
         expected_ordinary.append(["LexicalCase", str(i), "true"])
     for i, (inputs, projection, captures) in enumerate(negatives, len(positives)):
-        native.append(f"!(println! (LexicalCase {i} (__cetta_lib_tensor_try_zip_map f64 {inputs} {projection} {captures})))")
-        expected_native.append(["LexicalCase", str(i), "Tensor:Fallback"])
+        if i == len(positives) + len(negatives) - 1 and float_policy == 'IEEE-positive-infinity':
+            native.append(f"!(println! (LexicalCase {i} (lexical-test:admitted {inputs} {projection} {captures} {infinity})))")
+            expected_native.append(['LexicalCase', str(i), ['Native', 'true']])
+        else:
+            native.append(f"!(println! (LexicalCase {i} (__cetta_lib_tensor_try_zip_map f64 {inputs} {projection} {captures})))")
+            expected_native.append(["LexicalCase", str(i), "Tensor:Fallback"])
     # A dependency changes after the closure value was created. A new
     # operation must inspect the current source rather than a stale body.
     next_case = len(expected_native)
@@ -116,18 +136,25 @@ def main():
                run("ordinary-reference", ordinary, expected_ordinary, reference="1")]
     exceptional_inputs = f"({vector(['1.0','0.0'])})"
     exceptional_projection = "(|-> ($x) (/ 1.0 $x))"
-    results += [
-        run_raised("ordinary-native-raised",
-            f"!(tensor:zip-map f64 {exceptional_inputs} {exceptional_projection} ())"),
-        run_raised("ordinary-reference-raised",
-            f"!(tensor:zip-map f64 {exceptional_inputs} {exceptional_projection} ())", reference="1"),
-    ]
+    if float_policy == 'raised-zero-divisor':
+        results += [
+            run_raised("ordinary-native-raised",
+                f"!(tensor:zip-map f64 {exceptional_inputs} {exceptional_projection} ())"),
+            run_raised("ordinary-reference-raised",
+                f"!(tensor:zip-map f64 {exceptional_inputs} {exceptional_projection} ())", reference="1"),
+        ]
+    else:
+        ieee = [f'!(println! (LexicalCase 0 '
+                f'(== (tensor:zip-map f64 {exceptional_inputs} {exceptional_projection} ()) {infinity})))']
+        results += [run('ordinary-native-infinity', ieee, [['LexicalCase', '0', 'true']]),
+                    run('ordinary-reference-infinity', ieee, [['LexicalCase', '0', 'true']], reference='1')]
     # This is one admission control, not a configuration sweep: bounded
     # semantic fuel must retain the authored execution route.
     bounded = [f"!(println! (LexicalCase 0 (lexical-test:admitted {positives[0][0]} "
                f"{positives[0][1]} () {positives[0][3]})))"]
     results.append(run("bounded-admission", bounded, [["LexicalCase", "0", "Tensor:Fallback"]], fuel=True))
     receipt = {"passed": all(result["passed"] for result in results), "runs": results,
+               "floating_exception_policy": float_policy,
                "checks": sum(result["checks"] for result in results),
                "scope": "unary/binary lexical packed mapping through the shared pure-expression compiler"}
     (args.output / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")

@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "training": [
+    {"id": "lists", "corpus": "list-combinator", "family": "sequence-core", "source": "lib/petta/list.metta", "variants": ["lib/list.metta", "lib/prime/list.metta"]},
+    {"id": "terms", "corpus": "term-row", "family": "binary-schema", "source": "lib/petta/lib_binary_schema.metta"},
+    {"id": "numeric", "corpus": "tensor-postings", "family": "numeric-observation-codec", "source": "lib/petta/lib_ic_numeric_arrays.metta"}
+  ],
+  "evaluation": [
+    {"id": "queue", "corpus": "list-combinator", "family": "fair-scheduler", "source": "lib/petta/lib_fair_queue.metta", "queries": [
+      {"call": "(fair-queue:empty)", "expected": "((Fair:Queue 0 0 ()))"},
+      {"call": "(fair-queue:take (fair-queue:offer (fair-queue:offer (fair-queue:empty) 10 A) 1 B))", "expected": "((Fair:Taken (Fair:Entry 1 1 B) (Fair:Queue 1 2 ((Fair:Entry 0 10 A)))))"},
+      {"call": "(fair-queue:valid? (Fair:Queue 8 0 ()))", "expected": "(false)"}
+    ]},
+    {"id": "controller", "corpus": "list-combinator", "family": "incremental-controller", "source": "lib/petta/lib_ic_search.metta", "queries": [
+      {"call": "(ic-search:member? A (A B A))", "expected": "(true)"},
+      {"call": "(ic-search:member? C (A B A))", "expected": "(false)"}
+    ]},
+    {"id": "transform", "corpus": "term-row", "family": "space-transform", "source": "lib/petta/lib_transform.metta", "queries": [
+      {"call": "(let $s (new-space) (let $added (add-atom $s (p A)) (transform $s (p $x) (tag $x))))", "expected": "((tag A))"},
+      {"call": "(let $s (new-space) (let* (($a (add-atom $s (p A))) ($b (add-atom $s (p A)))) (transform $s (every (p $x)) (tag $x))))", "expected": "((tag A) (tag A))"}
+    ]},
+    {"id": "scope", "corpus": "term-row", "family": "source-binding", "source": "lib/petta/lib_source_scope.metta", "queries": [
+      {"call": "(source-scope:indices 4 2)", "expected": "((2 3))"},
+      {"call": "(source-scope:valid? () 1 1 (Syntax:Variable 0))", "expected": "(true)"},
+      {"call": "(source-scope:valid? () 0 1 (Syntax:Variable 0))", "expected": "(false)"}
+    ]},
+    {"id": "parameters", "corpus": "tensor-postings", "family": "tensor-program-search", "source": "lib/petta/lib_tensor_program_parameters.metta", "component": "parameters"},
+    {"id": "dag-search", "corpus": "tensor-postings", "family": "tensor-program-search", "source": "lib/petta/lib_tensor_program_search.metta", "queries": [
+      {"call": "(tp-grammar:inputs () 0)", "expected": "((TP:Seeds () ()))"},
+      {"call": "(tp-grammar:inputs (\"Wrong\") 0)", "expected": "((TP:Fault InputSort))"}
+    ]},
+    {"id": "postings", "corpus": "tensor-postings", "family": "posting-streams", "source": "lib/petta/postings.metta", "variants": ["lib/postings.metta", "lib/prime/postings.metta"], "queries": [
+      {"call": "(postings:sequence (quote (A A B)))", "expected": "((A A B))"}
+    ]}
+  ]
+}

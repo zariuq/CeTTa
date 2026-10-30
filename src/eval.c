@@ -49138,7 +49138,12 @@ static PettaMachineHost petta_eval_machine_host(
         .get_type = petta_eval_machine_get_type,
         .get_metatype = eval_current_language_id() == CETTA_LANGUAGE_PETTA
             ? petta_eval_machine_get_metatype : NULL,
-        .type_calls = eval_current_language_id() == CETTA_LANGUAGE_PETTA
+        /* A native query enters this child only after its public call has
+         * prepared the space operand and held the pattern as syntax. Running
+         * declaration preparation again would call the same native adapter
+         * recursively instead of entering the occurrence matcher. */
+        .type_calls = eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
+                !context->pattern_query_ready
             ? petta_eval_machine_type_calls : NULL,
         .boolean_value = petta_eval_machine_boolean_value,
         .is_data_constructor =
