@@ -487,6 +487,64 @@ static void test_freed_records_are_reused_and_compacted(void) {
 /* Integers live in pages by value rather than in the intern table.  A
  * reclaimed integer leaves its page, and the page's other integers stay
  * found, through the page's promotion from sparse to dense. */
+/* Pages of integers go with their values: rooted values keep exactly their
+ * pages, unrooted ones none, and rounds of ever-new integers leave nothing
+ * behind and no larger table. */
+static void test_integer_pages_go_with_their_values(void) {
+    Arena persistent;
+    arena_init(&persistent);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_set_collection_mode(&universe,
+                                      TERM_UNIVERSE_COLLECTION_RECLAIM);
+    TestIds roots = {0};
+    assert(term_universe_add_root_provider(&universe, test_list_roots,
+                                           &roots));
+    enum { VALUES = 64 * 512, EVERY = 97 };
+    static bool kept_page[64];
+    size_t kept_pages = 0u;
+    for (int64_t value = 0; value < VALUES; value++) {
+        AtomId id = tu_intern_int(&universe, value);
+        if (value % EVERY == 0) {
+            test_ids_push(&roots, id);
+            if (!kept_page[value / 512]) {
+                kept_page[value / 512] = true;
+                kept_pages++;
+            }
+        }
+    }
+    TermUniverseCollectionReport report;
+    assert(term_universe_collect(&universe, &report));
+    assert(universe.integer_used == kept_pages);
+    for (size_t i = 0u; i < roots.len; i++) {
+        int64_t value = tu_int(&universe, roots.ids[i]);
+        assert(value % EVERY == 0);
+        assert(tu_intern_int(&universe, value) == roots.ids[i]);
+    }
+    for (int64_t value = 1; value < VALUES; value += EVERY)
+        assert(tu_int(&universe, tu_intern_int(&universe, value)) == value);
+    roots.len = 0u;
+    assert(term_universe_collect(&universe, &report));
+    assert(universe.integer_used == 0u);
+    size_t mask = universe.integer_mask;
+    for (int64_t round = 0; round < 64; round++) {
+        for (int64_t value = 0; value < 4096; value++)
+            assert(tu_intern_int(&universe, VALUES + round * 4096 + value) !=
+                   CETTA_ATOM_ID_NONE);
+        assert(term_universe_collect(&universe, &report));
+        assert(universe.integer_used == 0u);
+    }
+    assert(universe.integer_mask == mask);
+    printf("PASS: integer pages go with their values (%zu pages kept for "
+           "%d rooted, none after; 64 rounds of fresh values leave none)\n",
+           kept_pages, (VALUES + EVERY - 1) / EVERY);
+    term_universe_remove_root_provider(&universe, test_list_roots, &roots);
+    free(roots.ids);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+}
+
 static void test_integer_pages_release_reclaimed_values(void) {
     Arena persistent;
     arena_init(&persistent);
@@ -728,6 +786,7 @@ int main(void) {
     test_collection_matches_reachability(false);
     test_collection_matches_reachability(true);
     test_integer_pages_release_reclaimed_values();
+    test_integer_pages_go_with_their_values();
     test_inhibited_safe_point_collects_nothing();
     test_saturated_counts_keep_their_entries();
     test_freed_records_are_reused_and_compacted();
