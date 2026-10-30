@@ -18,11 +18,22 @@ read every row of the space would make them grow sixteen times.
 
 Last, an odd-even sort collects each phase's swaps and then makes them
 through `(let P (superpose L) B)`, at 30 and 100 cells.  The native path
-must answer every swap twice (its collection and its effects), the run may
+must answer every swap and make each of its four effects, whether the
+collection and the spread run apart or as one region read on the
+collection's snapshot, the run may
 make at most four unification attempts per phase however many swaps a phase
-makes (the ordinary path makes several per swap), and the removed rows'
-marks may be settled at most four times, however many batches of additions
-the phases append.
+makes (the ordinary path makes several per swap), and settling the removed
+rows' marks may read at most six rows for each row removed, however many
+batches of additions the phases append: a settle the marks start reads at most
+two rows for each it removes, readers that need settled rows start a few
+more, and a space settled at every batch reads all its rows each time, tens
+of rows for each row removed.  The same work stays within four passes over
+every row the run can hold, its initial rows and two for each swap; a dense
+representation can compact fewer rows more often.  The larger sort runs
+again with its conjunction written in reverse, and may read at most twice
+the rows the conjunction as written reads: the join orders the patterns by
+what the bindings fix and, among patterns fixed alike, by the rows their
+probes meet, whatever order they are written in.
 
 Then cells (p i) and rows holding constructor patterns, (step (p $u)
 (q $u)) and (step (q $u) (r $u)), as Hexlife's neighbour relation holds
@@ -61,7 +72,18 @@ LOOKUPS = """{facts}
 """
 
 CELLS = (30, 100)
-SETTLES = 4
+SORT_CONJUNCTION = "(, (parity $i $p) (succ $i $si) (A $i $e) (A $si $se) (lt $se $e))"
+SORT_REVERSED = "(, (lt $se $e) (A $si $se) (A $i $e) (succ $i $si) (parity $i $p))"
+SETTLE_ROWS_PER_REMOVED = 6
+
+
+def sort_settle_work_limit(initial_rows, swaps):
+    # Initial storage includes the dialect's prelude; each swap removes two
+    # occurrences. The initial length observation does not enumerate rows.
+    # Preserve the original four-full-pass budget, expressed in actual row
+    # visits. At most initial_rows + 2*swaps rows can exist in this run;
+    # many small compactions may cost less than four passes over that set.
+    return 4 * (initial_rows + 2 * swaps)
 
 SORT = """{facts}
 (= (phase $p)
@@ -72,6 +94,7 @@ SORT = """{facts}
               ($c (add-atom &self (A $i $se))) ($d (add-atom &self (A $si $e))))
          t))))))
 (= (rounds $k) (if (== $k 0) done (let* (($o (phase odd)) ($e (phase even))) (rounds (- $k 1)))))
+!(space-len &self)
 !(rounds {cells})
 !(size-atom (collapse (match &self (, (A $i $e) (A $si $se) (succ $i $si) (lt $se $e)) bad)))
 !(size-atom (collapse (match &self (A $i $e) t)))
@@ -189,10 +212,12 @@ def main():
             if p.returncode != 0 or answers[-3:] != ["done", "0", str(cells)]:
                 print(f"FAIL: the sort of {cells} cells answered {answers[-3:]}")
                 return 1
-            if found.get("native-query-answer", 0) < 2 * swaps:
+            if (found.get("native-query-answer", 0) < swaps or
+                    found.get("native-query-effect-instance", 0) < 4 * swaps):
                 print(f"FAIL: over {cells} cells the native path answered "
-                      f"{found.get('native-query-answer', 0)} of {2 * swaps} "
-                      f"swap rows")
+                      f"{found.get('native-query-answer', 0)} of {swaps} swap "
+                      f"rows and made {found.get('native-query-effect-instance', 0)} "
+                      f"of {4 * swaps} effects")
                 return 1
             phases = 2 * cells
             if found.get("unification-attempt", 0) > 4 * phases:
@@ -200,10 +225,39 @@ def main():
                       f"{found.get('unification-attempt', 0)} unification "
                       f"attempts over {phases} phases and {swaps} swaps")
                 return 1
-            if found.get("space-mark-settle", 0) > SETTLES:
+            removed = found.get("space-marked-row", 0)
+            if found.get("space-mark-settle-row", 0) > SETTLE_ROWS_PER_REMOVED * removed:
                 print(f"FAIL: the sort of {cells} cells settled its marks "
-                      f"{found.get('space-mark-settle', 0)} times")
+                      f"{found.get('space-mark-settle', 0)} times, reading "
+                      f"{found.get('space-mark-settle-row', 0)} rows for "
+                      f"{removed} removed")
                 return 1
+            settled_rows = found.get("space-mark-settle-row", 0)
+            settle_limit = sort_settle_work_limit(int(answers[0]), swaps)
+            if settled_rows > settle_limit:
+                print(f"FAIL: the sort of {cells} cells scanned {settled_rows} "
+                      f"rows settling its marks, more than {settle_limit}")
+                return 1
+            if cells == CELLS[-1]:
+                assert program.count(SORT_CONJUNCTION) == 1
+                path = os.path.join(work, f"sort_{cells}_reversed.metta")
+                with open(path, "w") as f:
+                    f.write(program.replace(SORT_CONJUNCTION, SORT_REVERSED))
+                p = subprocess.run([binary, "--profile", "extended", "--lang",
+                                    "petta", "--emit-runtime-stats", path],
+                                   cwd=ROOT, env=env, capture_output=True,
+                                   text=True, timeout=600)
+                if p.returncode != 0 or p.stdout.split()[-3:] != answers[-3:]:
+                    print(f"FAIL: the sort of {cells} cells written in reverse "
+                          f"answered {p.stdout.split()[-3:]}")
+                    return 1
+                forward = found.get("native-query-loop-row", 0)
+                reverse = counters(p.stderr).get("native-query-loop-row", 0)
+                if reverse > 2 * forward:
+                    print(f"FAIL: the sort of {cells} cells read {reverse} rows "
+                          f"with its conjunction written in reverse, "
+                          f"{forward} as written")
+                    return 1
     with tempfile.TemporaryDirectory(prefix="cetta-native-query-open-") as work:
         for cells in OPEN_CELLS:
             facts = "\n".join(f"(cell (p {i}))" for i in range(cells))
@@ -235,7 +289,10 @@ def main():
           f"lookups for {CUSTOMERS[0]} and {CUSTOMERS[1]} customers read "
           f"{read[0]} then {read[1]} rows, and sorts of {CELLS[0]} and "
           f"{CELLS[1]} cells make their swaps natively, settling their marks "
-          f"at most {SETTLES} times, and rows holding patterns meet "
+          f"with at most {SETTLE_ROWS_PER_REMOVED} rows read for each removed "
+          f"and within four passes over their rows, reading as many rows "
+          f"with the conjunction written in reverse, "
+          f"and rows holding patterns meet "
           f"{OPEN_CELLS[0]} and {OPEN_CELLS[1]} cells one way")
     return 0
 

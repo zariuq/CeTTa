@@ -43,11 +43,11 @@ petta_expected = "".join(
 for reference in ("0", "1"):
     environment = {"CETTA_OPEN_EQUATIONS_REFERENCE": reference}
     check("he", "extended", source, he_expected, environment)
-    check("petta", "extended", source, petta_expected, environment)
+    for profile in (None, "extended"):
+        check("petta", profile, source, petta_expected, environment)
 
 for language, profile in (("he", "he"), ("he", "he-compat"),
-                          ("he", "he-prime"),
-                          ("petta", None)):
+                          ("he", "he-prime")):
     for operator in operators:
         call = f"({operator} a b)"
         expected = f"[{call}]\n" if language == "he" else call + "\n"
@@ -60,6 +60,11 @@ for language, profile in (("he", "he"), ("he", "he-compat"),
 
 check("he", "extended", "!(get-type @<)", "[(-> $a $b Bool)]\n",
       fresh_scopes=True)
+for profile in (None, "extended"):
+    # Registration makes the name callable; optional source declarations
+    # remain separately observable through get-type.
+    check("petta", profile, "!(get-metatype @<)", "Grounded\n")
+    check("petta", profile, "!(collapse (get-type @<))", "(%Undefined%)\n")
 for operator in operators:
     check("mm2", None, f"!({operator} a b)", f"[({operator} a b)]\n")
 for operator in operators:
@@ -67,9 +72,15 @@ for operator in operators:
         call = f"({operator} {operands})"
         check("he", "extended", "!" + call,
               f"[(Error {call} IncorrectNumberOfArguments)]\n")
-        check("petta", "extended", "!" + call, "", status=2,
-              diagnostic=f"error: uncaught PeTTa error: "
-              f"(Error {call} IncorrectNumberOfArguments)\n")
+    for profile in (None, "extended"):
+        # Corrected stable registers these as ordinary binary functions:
+        # a supplied prefix is partial, and excess arguments fail at entry.
+        truth = 'true' if operator in ('@<', '@<=') else 'false'
+        check("petta", profile, f"!(let $compare ({operator} a) ($compare b))",
+              truth + "\n")
+        check("petta", profile, f"!({operator} a b c)", "", status=2,
+              diagnostic="error: uncaught PeTTa error: "
+              f"(Error (domain_error (function_input_arities {operator} (2)) 3) none)\n")
 
 # Both dialects compare evaluated values. Effects in an operand must occur
 # before the result is observed, rather than comparing the operand's syntax.

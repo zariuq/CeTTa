@@ -78,8 +78,9 @@ example names its dialect and profile:
 ./cetta --lang he --profile extended examples/chaining/tutorial/01-backward.metta
 ./cetta --lang petta --profile extended examples/chaining/tutorial/01-backward.metta
 \end{code}
-The \name{pat} operations and \name{=%} rules belong to the \name{extended}
-profiles. Their names stay ordinary data in other profiles.
+PeTTa enables the \name{pat} operations by importing their library.
+HE's \name{pat} operations and both dialects' \name{=%} rules require the
+\name{extended} profile. Unimported library names stay ordinary data.
 This backward-chaining example also runs in plain PeTTa.
 
 \paragraph{Check.} One command runs the tutorial and its companion SKI,

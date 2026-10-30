@@ -268,7 +268,7 @@
    (if (== $rows ()) (superpose ()) (mil:typed-rows (cdr-atom $rows) $program $type)))
 (= (mil:typed-row-result (MIL.TypeRow $program $type) $program $type) (MIL.Selected $program))
 
-; Normalize the surface skeleton before retaining its structural generator.
+; Normalize the input skeleton before retaining its structural generator.
 ; Reflection on arbitrary input syntax stays at this preparation boundary.
 (= (mil:normalize-skeleton $term)
    (case $term

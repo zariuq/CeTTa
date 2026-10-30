@@ -15,6 +15,38 @@
  * outside the fragment is rejected and remains on the ordinary evaluator.
  */
 typedef struct CettaPreparedPureProgram CettaPreparedPureProgram;
+
+typedef enum {
+    CETTA_PREPARED_PURE_COMPILE_UNCERTIFIED,
+    CETTA_PREPARED_PURE_COMPILE_READY,
+    CETTA_PREPARED_PURE_COMPILE_INPUT_REFUSED,
+    CETTA_PREPARED_PURE_COMPILE_RESOURCE_REFUSED,
+    CETTA_PREPARED_PURE_COMPILE_INVALIDATED,
+    CETTA_PREPARED_PURE_COMPILE_STABLE_REFUSED,
+} CettaPreparedPureCompileStatus;
+
+enum {
+    CETTA_PREPARED_PURE_REFUSE_SCALAR = 1u,
+    CETTA_PREPARED_PURE_REFUSE_ANSWERS = 2u,
+};
+
+/* Preparation metadata, never an evaluation outcome. A failure can certify
+ * the other demand without certifying its own: a prior answer gate survives
+ * a later uncertified scalar failure. Unclassified failures remain retryable.
+ * The source is borrowed for the duration of its owner's preparation scope. */
+typedef struct {
+    SpaceProgramToken source;
+    CettaPreparedPureCompileStatus status;
+    uint8_t refusals;
+} CettaPreparedPureCompileReport;
+
+static inline bool cetta_prepared_pure_compile_refused(
+        const CettaPreparedPureCompileReport *report, Space *space, bool answers) {
+    return report &&
+        (report->refusals & (answers ? CETTA_PREPARED_PURE_REFUSE_ANSWERS
+                                   : CETTA_PREPARED_PURE_REFUSE_SCALAR)) != 0u &&
+        space_program_token_matches_live_space(report->source, space);
+}
 /* Whether the prepared machine can call `head` with `arity` arguments: the
  * dialect leaves the head untyped, or it is an HE head whose one signature
  * has that arity and value-class parameters and range (Number, String, Bool
@@ -176,6 +208,22 @@ typedef bool (*CettaPreparedPureEquationSourceFn)(
     size_t occurrence_ordinal,
     SpaceEquationOccurrenceId occurrence,
     const Atom *equation, const void **rhs_view_out);
+
+/* The normalized reading of an existing computation node. Captured slots
+ * and completed literals become value places; surviving operations retain
+ * their computation words. Projection consults immutable source metadata,
+ * never the live Space or the shape of a returned value. The adapter owns
+ * the resulting plan for at least as long as its execution host. */
+typedef struct {
+    const void *source;
+    CettaPreparedPureSourceRole role;
+    CettaComputationPlan computation;
+    const void *const *children;
+    CettaExprLen child_count;
+    bool relation_head_admitted;
+} CettaPreparedPureSourceProjection;
+typedef const void *(*CettaPreparedPureProjectSourceFn)(
+    void *context, const CettaPreparedPureSourceProjection *projection);
 typedef struct {
     void *context;
     const void *root;
@@ -184,6 +232,7 @@ typedef struct {
     CettaPreparedPureSourceComputationFn computation;
     CettaPreparedPureSourceChildFn child;
     CettaPreparedPureEquationSourceFn equation_rhs;
+    CettaPreparedPureProjectSourceFn project_source;
     /* Decline a named executable occurrence whose admitted rule semantics
      * this compiler cannot realize. Checked during compilation, including
      * callees, and at runtime-created application boundaries. */
@@ -224,11 +273,12 @@ bool cetta_prepared_pure_program_use_native_tail_returns(
 /* Compile a closed, deterministic, effect-free expression into the same
  * explicit-stack machine used by prepared folds.  Callable arguments are
  * retained as machine suspensions and forced according to call_mode. The
- * optional answer_frontend_refusal is false on success. True reports that
- * answer compilation would refuse under the same current source, callbacks,
- * call mode, ready arguments and equality semantics: either a shared terminal
- * dialect refusal before the first demand read, or an explicit single-result
- * gate reached before that read. Failure alone supplies no such evidence. */
+ * optional report separates this attempt's status from certified refusals.
+ * A generic ready entry can retain a terminal dialect refusal for this
+ * demand; crossing demands additionally requires a shared terminal refusal
+ * before demand inspection, or an explicit answer-excluding gate. Failure
+ * alone supplies no certificate. Remaining callback/authority inputs must
+ * stay fixed before any caller publishes a refusal. */
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     Space *space, Atom *expression,
     CettaGsltPureCallMode call_mode,
@@ -243,7 +293,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     bool entry_arguments_are_values,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics,
-    bool *answer_frontend_refusal);
+    CettaPreparedPureCompileReport *report);
 
 /* Compile the finite answer-producing fragment of a closed pure relation.
  * An equation whose body is a fully determined value, or a pure tail call on
@@ -265,7 +315,8 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
     const CettaPreparedPureSourceView *source_view,
     bool entry_arguments_are_values,
     bool total_structural_equality,
-    CettaMatchDecisionSemanticIdentity match_decision_semantics);
+    CettaMatchDecisionSemanticIdentity match_decision_semantics,
+    CettaPreparedPureCompileReport *report);
 
 bool cetta_prepared_pure_program_is_current(
     const CettaPreparedPureProgram *program);
@@ -578,14 +629,19 @@ bool cetta_prepared_pure_program_has_native_calls(
  * retired compiled frontier contains no future lookup or executable step. */
 bool cetta_prepared_pure_answer_cursor_owns_native_frontier(
     const CettaPreparedPureAnswerCursor *cursor);
+/* Read structural completeness before moving the native owner. This does
+ * not grant authority to execute a saved caller or an untried equation. */
+bool cetta_prepared_pure_answer_cursor_native_frontier_complete(
+    const CettaPreparedPureAnswerCursor *cursor);
 /* A parent continuation can request an entered native boundary instead of
  * constructing a second dialect machine. Readiness grants no ownership.
  * Taking moves the raw producer, including its pending return. The cursor
  * retains its untried equations; owns_native_frontier is true only when none
- * remain. With untried equations, multiple frames or more than two unshared
- * callers retain the cursor until their caller suffixes can be shared. It
- * can also transfer a stale entered packet when all ordinary frames are
- * exhausted and there is no compiled caller left to resume. It
+ * remain. The parent first captures untried frames and their shared callers. It
+ * can also transfer an entered packet after declaration changes when saved
+ * plans cover its callers and host continuation authority is still current.
+ * Without saved plans, stale transfer requires exhausted ordinary frames
+ * and no compiled caller left to resume. It
  * still owns the producer's backing storage: cancel the moved execution
  * before closing it. A parent that closes this cursor captures its
  * untried frames first. Refusal leaves destination intact. */
@@ -595,6 +651,13 @@ bool cetta_prepared_pure_answer_cursor_native_transfer_ready(
     CettaPreparedPureAnswerCursor *cursor);
 bool cetta_prepared_pure_answer_cursor_take_native(
     CettaPreparedPureAnswerCursor *cursor, CettaOwnedExecution *destination);
+/* After the exact moved producer and its parent caller bodies have finished,
+ * retire that native frame and retain the actual compiled alternatives.
+ * Success consumes completed; refusal preserves it. Stale authority refuses
+ * untried compiled work, allowing a frozen frontier to take over; retiring
+ * an exhausted frontier requires no new source authority. */
+bool cetta_prepared_pure_answer_cursor_resume_native_frontier(
+    CettaPreparedPureAnswerCursor *cursor, CettaOwnedExecution *completed);
 bool cetta_prepared_pure_program_has_branches(
     const CettaPreparedPureProgram *program);
 /* Extend physical work only at an intact frontier transition boundary. This
@@ -677,6 +740,39 @@ bool cetta_prepared_pure_answer_cursor_frame_resumption(
     const CettaPreparedPureAnswerCursor *cursor, size_t index, Arena *arena,
     Atom *hole, CettaPreparedPureImportValueFn import_value,
     void *import_context, Bindings *captures, Atom **term_out);
+
+/* A caller is decoded once, with an input value port and a parent root.
+ * Root zero denotes the consumer; node i has root i+1 and an older parent.
+ * Captures are immutable input values, not a second branch binding state.
+ * This readout neither enters code nor transfers the cursor's producer. */
+typedef struct {
+    size_t parent;
+    Atom *input;
+    Atom *term;
+    Bindings captures;
+    /* Immutable plan projected by the same source adapter during lowering.
+     * NULL preserves the consumer's fresh, authority-checked elaboration. */
+    const void *plan;
+} CettaPreparedPureCaller;
+
+typedef struct {
+    CettaPreparedPureCaller *nodes;
+    size_t length;
+    size_t *roots;
+    size_t root_count;
+} CettaPreparedPureCallerGraph;
+
+/* Select callers by frame index, sharing actual retained ancestor records.
+ * The destination must be empty. Failure leaves it empty; imported atoms
+ * belong to arena, and the graph's arrays/capture vectors are freed below.
+ * For example sibling frames can select different roots with one ancestor.
+ * An invalid index or a caller without a source reading refuses the readout. */
+bool cetta_prepared_pure_answer_cursor_read_callers(
+    const CettaPreparedPureAnswerCursor *cursor,
+    const size_t *frames, size_t frame_count, Arena *arena,
+    CettaPreparedPureImportValueFn import_value, void *import_context,
+    CettaPreparedPureCallerGraph *destination);
+void cetta_prepared_pure_caller_graph_free(CettaPreparedPureCallerGraph *graph);
 
 uint64_t cetta_prepared_pure_answer_cursor_answer_count(
     const CettaPreparedPureAnswerCursor *cursor);

@@ -11,6 +11,12 @@
 #define CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS 0
 #endif
 
+/* A build with collection checks traps every read of an entry the last
+ * collection found unreachable, unless a lookup has found it again since. */
+#ifndef CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+#define CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS 0
+#endif
+
 /*
  * TermUniverse isolates persistent term ownership from evaluator-local
  * scratch allocation.
@@ -52,6 +58,11 @@ typedef enum {
 } TermUniverseStoreFormat;
 
 typedef struct TermUniverse TermUniverse;
+
+typedef uint64_t CettaAtomId;
+typedef CettaAtomId AtomId;
+typedef uint64_t CettaCount;
+typedef uint64_t CettaIndex;
 
 typedef enum {
     CETTA_TERM_VARIABLE_SUPPORT_DENSE64 = 1,
@@ -130,6 +141,78 @@ typedef struct {
     void *ctx;
 } TermUniverseStoreFormatObserverEntry;
 
+/* Reclamation.  An entry is reachable when a root holds it or a reachable
+ * record has it as a child.  Roots are the ids a registered provider lists
+ * at a safe point: a space lists its rows, and every other structure that
+ * keeps ids beyond one call lists its own.
+ *
+ * Positive example:
+ *   - A space registers itself when it attaches to the universe and lists
+ *     its rows; an atom no row and no other provider reaches is unreachable.
+ *
+ * Negative example:
+ *   - A cache that keeps ids between calls without listing them, or without
+ *     keying on collection_epoch, reads entries a collection may reclaim. */
+typedef void (*TermUniverseRootVisit)(void *visit_context, AtomId id);
+typedef void (*TermUniverseRootProvider)(const TermUniverse *universe,
+                                         TermUniverseRootVisit visit,
+                                         void *visit_context,
+                                         void *provider_context);
+
+typedef struct {
+    TermUniverseRootProvider fn;
+    void *ctx;
+    /* A counted holder keeps a count on each id it holds (as a space does
+     * for its rows), so a counting collection need not list it; only the
+     * tracing check does. */
+    bool counted;
+} TermUniverseRootProviderEntry;
+
+/* A registry's index, kept once a registry holds many holders: open
+ * addressing from a holder's (function, context) to its slot.  An empty
+ * cell has fn 0. */
+typedef struct {
+    uintptr_t fn;
+    void *ctx;
+    size_t slot;
+} TermUniverseRegistryCell;
+
+typedef struct {
+    TermUniverseRegistryCell *cells;
+    size_t mask;
+} TermUniverseRegistryIndex;
+
+typedef enum {
+    TERM_UNIVERSE_COLLECTION_OFF = 0,
+    /* Find and report what a collection would reclaim; free nothing. */
+    TERM_UNIVERSE_COLLECTION_SHADOW = 1,
+    /* Free what it finds dead.  A freed entry stays as a tombstone: no id is
+     * named twice, and an id held past the collection names nothing. */
+    TERM_UNIVERSE_COLLECTION_RECLAIM = 2,
+} TermUniverseCollectionMode;
+
+/* What one collection found.  Entry counts include entries without a
+ * record; byte counts are record bytes in the blob pool. */
+typedef struct {
+    uint64_t entries;
+    uint64_t records;
+    uint64_t record_bytes;
+    uint64_t decoded;
+    uint64_t roots;
+    /* Listed ids naming no entry of this universe. */
+    uint64_t invalid_roots;
+    uint64_t live;
+    uint64_t live_record_bytes;
+    uint64_t dead;
+    uint64_t dead_record_bytes;
+    /* Entries this collection freed, and their record bytes. */
+    uint64_t reclaimed;
+    uint64_t reclaimed_record_bytes;
+} TermUniverseCollectionReport;
+
+/* Size classes of freed records: eight bytes a class, up to 256 bytes. */
+#define TERM_UNIVERSE_RECORD_CLASSES 33u
+
 struct TermUniverse {
     CettaFrameIdentityScope frame_identities;
     /* Process-local identity plus a storage generation make derived pointer
@@ -163,6 +246,91 @@ struct TermUniverse {
     TermUniverseStoreFormatObserverEntry *observers;
     size_t observer_len;
     size_t observer_cap;
+    TermUniverseRegistryIndex observer_index;
+    TermUniverseRootProviderEntry *root_providers;
+    size_t root_provider_len;
+    size_t root_provider_cap;
+    TermUniverseRegistryIndex root_provider_index;
+    TermUniverseCollectionMode collection_mode;
+    /* Collect at every safe point offered, and often inside statements: the
+     * policy of a build with collection checks, and of tests. */
+    bool collection_eager;
+    /* Open regions of C code holding ids no provider lists.  A safe point
+     * collects only when there are none. */
+    uint32_t collection_inhibit;
+    /* Advanced by every collection.  A structure keeping ids between calls
+     * either lists them as roots or keys on this and drops them. */
+    uint64_t collection_epoch;
+    /* Entries after the last collection, and the live ones among them: the
+     * trigger collects once the entries made since reach the live count. */
+    uint64_t collection_len_after;
+    uint64_t collection_live_after;
+    /* Rows released since the last collection (spaces report them): an
+     * estimate of the garbage made since. */
+    uint64_t collection_released;
+    /* A collection is due once the entries made since the last reach
+     * collection_due, the rows released reach collection_due_released, or
+     * the record bytes held exceed those held after the last by
+     * collection_due_bytes. */
+    uint64_t collection_due;
+    uint64_t collection_due_released;
+    uint64_t collection_bytes_after;
+    uint64_t collection_due_bytes;
+    /* Counting: the least wait for the next collection after one that found
+     * little garbage among its candidates, doubled each time; 0 otherwise. */
+    uint64_t collection_backoff;
+    /* With collection checks: the entries the last collection found dead,
+     * one bit each. */
+    uint64_t *collection_dead;
+    size_t collection_dead_words;
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    /* With collection checks: the candidates counting collections examined
+     * since the last that was checked in full (a recount and a trace). */
+    uint64_t collection_unchecked;
+#endif
+    /* Variable supports of reclaimed terms.  A holder of a decoded atom may
+     * keep its support, and the atom outlives its entry, so the support is
+     * kept until the storage is reset. */
+    CettaTermVariableSupport **retired_supports;
+    size_t retired_support_len, retired_support_cap;
+    /* Reference counts, while reclamation counts: one per entry, held by
+     * each record that has the entry as a child and by counted holders (a
+     * space's rows).  UINT16_MAX saturates, and such an entry is kept. */
+    bool counting;
+    uint16_t *counts;
+    size_t counts_cap;
+    /* Entries whose count has saturated. */
+    uint64_t saturated;
+    /* The entries whose count fell to zero, each once (its bit set): with
+     * the entries made since the last collection, the only candidates a
+     * counting collection examines. */
+    size_t *zero;
+    size_t zero_len, zero_cap;
+    uint64_t *zero_bits;
+    /* The entries an uncounted holder lists, while a collection runs. */
+    uint64_t *root_bits;
+    /* Entries holding a term: made and not reclaimed. */
+    uint64_t live_entries;
+    /* Freed entry slots, which later entries take before the entries grow.
+     * A build with collection checks holds a freed slot back for two
+     * counting collections first (quarantine, with the collection it was
+     * freed at), so a stale read in between still traps, and counts each
+     * slot's reuses (generations). */
+    size_t *free_slots;
+    size_t free_slot_len, free_slot_cap;
+    size_t *quarantine;
+    uint64_t *quarantine_at;
+    size_t quarantine_len, quarantine_cap;
+    uint32_t *generations;
+    uint64_t counting_collections;
+    /* Ids the last counting collection listed from uncounted holders. */
+    uint64_t collection_roots_after;
+    /* Freed record bytes by size class, eight bytes a class up to 256: each
+     * list runs through the freed bytes, as offset + 1.  Larger freed
+     * records are holes until the records are compacted. */
+    uint64_t record_free[TERM_UNIVERSE_RECORD_CLASSES];
+    uint64_t record_free_bytes;
+    uint64_t record_hole_bytes;
     TermUniverseError last_error;
     TermUniverseStoreFormat store_format;
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS
@@ -172,20 +340,16 @@ struct TermUniverse {
 #endif
 };
 
-typedef uint64_t CettaAtomId;
-typedef CettaAtomId AtomId;
-typedef uint64_t CettaCount;
-typedef uint64_t CettaIndex;
-
 /* A process-local capability for one stored root in one TermUniverse
  * generation.  It does not extend the lifetime of the TermUniverse object;
  * callers validate it against an independently live universe before use.
- * Space revisions may change while this token remains valid because stored
- * roots are append-only within a universe storage generation. */
+ * Space revisions may change while this token remains valid.  A collection
+ * that frees entries ends it: the root may be gone and its slot reused. */
 typedef struct {
     const TermUniverse *universe;
     uint64_t instance_id;
     uint64_t storage_epoch;
+    uint64_t collection_epoch;
     AtomId root_id;
 } TermUniverseRootToken;
 
@@ -311,6 +475,107 @@ void term_universe_remove_store_format_observer(
     TermUniverse *universe,
     TermUniverseStoreFormatObserver fn,
     void *ctx);
+bool term_universe_add_root_provider(TermUniverse *universe,
+                                     TermUniverseRootProvider fn, void *ctx);
+/* Register a holder that counts what it holds through term_universe_hold
+ * and term_universe_release; its listing serves the tracing check. */
+bool term_universe_add_counted_root_provider(TermUniverse *universe,
+                                             TermUniverseRootProvider fn,
+                                             void *ctx);
+void term_universe_remove_root_provider(TermUniverse *universe,
+                                        TermUniverseRootProvider fn,
+                                        void *ctx);
+void term_universe_set_collection_mode(TermUniverse *universe,
+                                       TermUniverseCollectionMode mode);
+/* Bracket a region of C code that holds ids no provider lists. */
+void term_universe_collection_inhibit_enter(TermUniverse *universe);
+void term_universe_collection_inhibit_leave(TermUniverse *universe);
+/* Collect now, unless a region inhibits it.  True when a collection ran;
+ * `out` (optional) receives what it found.  The caller is the only thread
+ * using the universe: a safe point lies outside concurrent evaluation. */
+bool term_universe_collect(TermUniverse *universe,
+                           TermUniverseCollectionReport *out);
+/* A safe point: collect when the trigger asks for it.  The trigger keeps a
+ * collection's work proportional to the entries made since the last one. */
+bool term_universe_collect_at_safe_point(TermUniverse *universe,
+                                         TermUniverseCollectionReport *out);
+/* A holder released COUNT references to entries: rows a space removed. */
+static inline void term_universe_collection_note_released(
+    TermUniverse *universe, uint64_t count) {
+    if (universe)
+        universe->collection_released += count;
+}
+
+/* A counted holder takes or drops one reference to ID. */
+void term_universe_hold_counted(TermUniverse *universe, AtomId id);
+void term_universe_release_counted(TermUniverse *universe, AtomId id);
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS || \
+    CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS
+static inline void term_universe_hold(TermUniverse *universe, AtomId id) {
+    if (universe && universe->counting)
+        term_universe_hold_counted(universe, id);
+}
+static inline void term_universe_release(TermUniverse *universe, AtomId id) {
+    if (universe && universe->counting)
+        term_universe_release_counted(universe, id);
+}
+#else
+/* An id is its entry's index here.  A count that saturates, or a release
+ * that reaches zero, takes the general path. */
+static inline void term_universe_hold(TermUniverse *universe, AtomId id) {
+    if (!universe || !universe->counting || id == CETTA_ATOM_ID_NONE ||
+        id >= universe->len)
+        return;
+    uint16_t count = universe->counts[id];
+    if (count >= UINT16_MAX - 1u) {
+        term_universe_hold_counted(universe, id);
+        return;
+    }
+    universe->counts[id] = (uint16_t)(count + 1u);
+}
+static inline void term_universe_release(TermUniverse *universe, AtomId id) {
+    if (!universe || !universe->counting || id == CETTA_ATOM_ID_NONE ||
+        id >= universe->len)
+        return;
+    uint16_t count = universe->counts[id];
+    if (count <= 1u || count == UINT16_MAX) {
+        term_universe_release_counted(universe, id);
+        return;
+    }
+    universe->counts[id] = (uint16_t)(count - 1u);
+}
+#endif
+
+/* Whether a safe point inside a statement should collect.  Counting, when
+ * the candidates, the entries made since the last collection and those
+ * whose count fell to zero, reach their due; tracing, when enough entries
+ * were made, or enough rows released, since the last collection.  Cheap
+ * enough to ask at every step. */
+/* The record bytes a universe holds: its pool, less the freed records
+ * kept for reuse and the holes left until compaction.  Only a collection
+ * frees records, so between collections it only grows. */
+static inline uint64_t term_universe_held_record_bytes(
+    const TermUniverse *universe) {
+    uint64_t loose = universe->record_free_bytes + universe->record_hole_bytes;
+    return (uint64_t)universe->blob_len > loose
+        ? (uint64_t)universe->blob_len - loose : 0u;
+}
+
+static inline bool term_universe_collection_due(const TermUniverse *universe) {
+    if (universe->collection_mode == TERM_UNIVERSE_COLLECTION_OFF)
+        return false;
+    uint64_t held = term_universe_held_record_bytes(universe);
+    if (held >= universe->collection_bytes_after &&
+        held - universe->collection_bytes_after >= universe->collection_due_bytes)
+        return true;
+    if (universe->counting)
+        return (uint64_t)universe->len - universe->collection_len_after +
+                   universe->zero_len >=
+               universe->collection_due;
+    return (uint64_t)universe->len - universe->collection_len_after >=
+               universe->collection_due ||
+           universe->collection_released >= universe->collection_due_released;
+}
 uint64_t term_universe_atom_id_capacity(const TermUniverse *universe);
 bool term_universe_migrate_store_format(TermUniverse *universe,
                                         TermUniverseStoreFormat format);
@@ -324,6 +589,31 @@ bool term_universe_atom_is_stable(Atom *atom);
  * term_universe_canonicalize_atom, this is not a presentation-preserving
  * epoch cleanup and must not be used to materialize user-visible terms. */
 Atom *term_universe_alpha_canonicalize_atom(Arena *dst, Atom *src);
+/* The alpha key of the stored term `id`, read from its record and stored:
+ * its variables renamed by first occurrence, left to right, as
+ * term_universe_alpha_canonicalize_atom renames an atom's, and each ground
+ * part kept as it is.  Nothing is decoded.  CETTA_ATOM_ID_NONE when a part
+ * holding a variable is no plain expression (tu_plain_expr), when
+ * the term has more distinct variables or deeper nesting than a record walk
+ * takes, or when the universe cannot store a part; the caller decodes. */
+AtomId term_universe_alpha_key_id(TermUniverse *universe, AtomId id);
+/* The alpha key of `atom` when the universe holds it, found by a walk that
+ * renames its variables as term_universe_alpha_canonicalize_atom renames
+ * them and looks each part up, making nothing and copying nothing.
+ * CETTA_ATOM_ID_NONE when the universe does not hold it; then *declined
+ * says whether the walk could not answer (a list, a value without a stable
+ * record, more variables or deeper nesting than it renames), and the caller
+ * copies instead. */
+AtomId term_universe_alpha_key_lookup(const TermUniverse *universe,
+                                      Atom *atom, bool *declined);
+/* The alpha key of `atom`, stored: its variables renamed as
+ * term_universe_alpha_key_lookup renames them, and every part made that the
+ * universe does not hold.  CETTA_ATOM_ID_NONE when the walk cannot take the
+ * atom apart (as the lookup declines) or the universe cannot store a part. */
+AtomId term_universe_store_alpha_key(TermUniverse *universe, Atom *atom);
+/* Whether term_universe_store_alpha_key forms `atom`'s key, short of the
+ * universe's own failures; nothing is stored. */
+bool term_universe_alpha_key_forms(Atom *atom);
 AtomId term_universe_store_atom_id(TermUniverse *universe, Arena *fallback,
                                    Atom *src);
 /* Store a source term owned by one resettable arena.  Reused expression
@@ -333,6 +623,11 @@ AtomId term_universe_store_atom_id_from_source_arena(
     TermUniverse *universe, Arena *fallback, const Arena *source_arena,
     Atom *src);
 AtomId term_universe_lookup_atom_id(const TermUniverse *universe, Atom *src);
+/* The entry the view `atom` was read from (term_universe_view_atom), while
+ * the universe's instance and epochs are those it was read under, else
+ * CETTA_ATOM_ID_NONE. */
+AtomId term_universe_view_origin(const TermUniverse *universe,
+                                 const Atom *atom);
 /* Non-inserting lookup of an expression presented as borrowed child
  * coordinates.  This is structurally identical to lookup of an expression
  * Atom with those children, but it never manufactures that wrapper. */
@@ -365,6 +660,15 @@ Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id);
  * until the entry is first read as an atom, except for an entry without a
  * record, whose atom it always is. */
 Atom *term_universe_decoded_atom_at(const TermUniverse *universe, AtomId id);
+/* The stored term `id` as a view built in `dst`: an expression over the
+ * universe's own atoms of its atoms (symbols, numbers, strings) and over
+ * its variables, built in `dst` as the universe decodes them, which the
+ * owner of `dst` reclaims with it, and which no longer-lived structure may
+ * keep.  The universe's atom of `id` instead when it has decoded it, when
+ * `dst` interns what it builds, and when `id` is a part a view does not
+ * take apart (tu_plain_expr), or one nested too deep. */
+Atom *term_universe_view_atom(const TermUniverse *universe, Arena *dst,
+                              AtomId id);
 Atom *term_universe_copy_atom(const TermUniverse *universe, Arena *dst,
                               AtomId id);
 /* Read ordinary symbol leaves while copying a form. The callback's meaning
@@ -408,7 +712,8 @@ __attribute__((always_inline))
 #endif
 static inline const CettaTermHdr *tu_hdr(const TermUniverse *universe,
                                          AtomId id) {
-#if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS || \
+    CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
     return term_universe_hdr_checked(universe, id);
 #else
     /* The sentinel id is past every universe's length. */
@@ -497,6 +802,46 @@ static inline AtomId tu_child(const TermUniverse *universe, AtomId id,
 }
 
 bool tu_has_vars(const TermUniverse *universe, AtomId id);
+/* The record header of `id`, an id read from a record or from a space's
+ * rows, which name this universe's entries: only an entry without a record
+ * has none.  Checked as tu_hdr checks in builds with collection checks. */
+static inline const CettaTermHdr *tu_hdr_stored(const TermUniverse *universe,
+                                                AtomId id) {
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_DIAGNOSTICS ||     CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+    return term_universe_hdr_checked(universe, id);
+#else
+    const TermEntry *entry = &universe->entries[id];
+    return entry->byte_off != CETTA_TERM_ENTRY_BLOB_NONE
+        ? (const CettaTermHdr *)(universe->blob_pool + entry->byte_off)
+        : NULL;
+#endif
+}
+
+/* The value of the integer whose record header is `hdr`: its eight bytes
+ * follow the header. */
+static inline int64_t tu_int_from_header(const CettaTermHdr *hdr) {
+    int64_t value = 0;
+    memcpy(&value, hdr + 1, sizeof(value));
+    return value;
+}
+
+bool tu_plain_expr(const TermUniverse *universe, AtomId id,
+                          const CettaTermHdr *hdr);
+/* Whether the stored term `id`, with header `hdr` (NULL when it has none),
+ * is ground and, when an expression, one a reader may take apart element
+ * by element and build again: not empty, headed by no internal tag (lists,
+ * cells, compounds and partials are), with an ordinary representation. */
+static inline bool tu_plain_ground(const TermUniverse *universe, AtomId id,
+                                   const CettaTermHdr *hdr) {
+    if (!hdr || (hdr->aux32 & CETTA_TERM_HDR_HAS_VARS) != 0u)
+        return false;
+    if (hdr->tag != ATOM_EXPR)
+        return true;
+    uint32_t len = hdr->aux32 & CETTA_TERM_HDR_DATA_MASK;
+    if (hdr->sym_or_head != SYMBOL_ID_NONE && len != 3u)
+        return len != 0u;
+    return tu_plain_expr(universe, id, hdr);
+}
 
 AtomId tu_intern_symbol(TermUniverse *universe, SymbolId sym_id);
 AtomId tu_intern_var(TermUniverse *universe, SymbolId sym_id, VarId var_id);
@@ -522,6 +867,10 @@ AtomId tu_list_from_ids(TermUniverse *universe, const AtomId *elems,
                         CettaExprLen elem_len, AtomId rest);
 AtomId tu_expr_from_ids(TermUniverse *universe, const AtomId *child_ids,
                         CettaExprLen arity);
+/* The expression of these children when the universe holds it; it is never
+ * made. */
+AtomId tu_expr_lookup_ids(const TermUniverse *universe,
+                          const AtomId *child_ids, CettaExprLen arity);
 /* Canonical fixed-arity rows in input order. An optional presence mask skips
  * rows without reading their coordinates and returns NONE in those positions.
  * Failure retains admitted prefix identities, with remaining outputs NONE;

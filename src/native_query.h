@@ -28,6 +28,14 @@ typedef struct {
     Space *target;
     Atom *data;
     Atom *call;
+    /* An addition whose data is a variable: each instance is checked
+     * before any change is made, and one headed by a symbol the dialect
+     * refuses here (its rules and declarations) declines the run. */
+    SymbolId refused_heads[4];
+    uint8_t refused_head_count;
+    /* An addition made once for each distinct instance its target does
+     * not hold: the effect of adding a row only where it is absent. */
+    bool insert;
 } CettaNativeQueryEffect;
 
 /* Make an effect for instances, with the dialect's semantics; the dialect
@@ -35,6 +43,12 @@ typedef struct {
 typedef bool (*CettaNativeQueryApply)(void *context,
                                       const CettaNativeQueryEffect *effect,
                                       const AtomId *ids, size_t count);
+/* Add the instances of an addition whose data is (h X Y), into a set that
+ * keeps h as bits: h as its symbol atom and id, each instance as the two
+ * ids of its columns in PAIRS.  The instances need no records. */
+typedef bool (*CettaNativeQueryApplyPairs)(
+    void *context, const CettaNativeQueryEffect *effect, Atom *head,
+    AtomId head_id, const AtomId *pairs, size_t count);
 
 typedef struct {
     Space *source;
@@ -47,13 +61,47 @@ typedef struct {
     const CettaNativeQueryEffect *effects;
     size_t effect_count;
     CettaNativeQueryApply apply;
+    /* Optional: additions into relations kept as bits, by pairs. */
+    CettaNativeQueryApplyPairs apply_pairs;
     void *apply_context;
     /* Only the number of answers is wanted. */
     bool count_only;
+    /* The source reads everything before making anything: every effect
+     * waits for the end of the run. */
+    bool snapshot;
     /* When set, the one pattern meets the elements of this expression, all
      * ground, in place of the source's rows; the source then names only the
      * term universe. */
     Atom *rows;
+    /* When set, the space each pattern reads, in order, all over the
+     * source's term universe; otherwise every pattern reads the source. */
+    Space *const *sources;
+    /* When set (EFFECTS only), each solution first asks whether a row of
+     * guard_space is the instance of guard_pattern, which the solution
+     * makes ground: with none it makes the effects and answers
+     * template_atom; with one it makes none and answers else_atom.  The
+     * rows asked are those the query began with: no effect changes a row
+     * the guard reads. */
+    Space *guard_space;
+    Atom *guard_pattern;
+    Atom *else_atom;
+    /* When set, the template's applications headed by these variables
+     * answer themselves where their values cannot be applied: each
+     * solution asks head_inert of each value, and a value that can be
+     * applied declines the run, which must then have made no effect: it
+     * collects, or its effects wait for the end. */
+    Atom *const *inert_heads;
+    size_t inert_head_count;
+    bool (*head_inert)(void *context, const TermUniverse *universe,
+                       AtomId value);
+    void *head_inert_context;
+    /* When set, the solutions answer once for each distinct instance of
+     * this template over the patterns' variables, as unique-atom keeps one
+     * element of each: a solution whose instance an earlier one made
+     * answers nothing and makes no effect.  An instance holding a variable
+     * declines the run, which must then have made no effect: it collects,
+     * or its effects wait for the end. */
+    Atom *distinct_key;
 } CettaNativeQuery;
 
 typedef enum {

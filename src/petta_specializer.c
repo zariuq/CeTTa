@@ -250,7 +250,7 @@ typedef struct {
     uint64_t symbol_table_instance;
     SymbolId source;
     PettaRelationRelevance relevance;
-    bool used;
+    uint64_t generation;
 } PettaRelationRelevanceCacheSlot;
 
 static _Thread_local PettaRelationRelevanceCacheSlot
@@ -263,13 +263,14 @@ typedef struct {
     uint64_t environment;
     uint64_t argument_shape;
     SymbolId source;
-    CettaExprLen arity;
     uint8_t result;
-    bool used;
+    CettaExprLen arity;
+    uint64_t generation;
 } PettaQueryForestCacheSlot;
 
 static _Thread_local PettaQueryForestCacheSlot
     g_petta_query_forest_cache[PETTA_QUERY_FOREST_CACHE_SLOTS];
+static _Thread_local uint64_t g_petta_admission_cache_generation = 1u;
 static _Thread_local PettaSpecializerSemanticCache
     g_petta_semantic_cache;
 
@@ -1120,7 +1121,7 @@ static bool petta_relation_relevance_cache_lookup(
     PettaRelationRelevanceCacheSlot *slot =
         &g_petta_relation_relevance_cache[
             petta_relation_relevance_cache_index(program, source)];
-    if (!slot->used ||
+    if (slot->generation != g_petta_admission_cache_generation ||
         !space_program_token_eq(slot->program, program) ||
         slot->symbol_table_instance !=
             symbol_table_instance_id(g_symbols) ||
@@ -1147,15 +1148,23 @@ static void petta_relation_relevance_cache_store(
         .symbol_table_instance = symbol_table_instance_id(g_symbols),
         .source = source,
         .relevance = relevance,
-        .used = true,
+        .generation = g_petta_admission_cache_generation,
     };
 }
 
 static void petta_relation_relevance_cache_clear(void) {
-    memset(g_petta_relation_relevance_cache, 0,
-           sizeof(g_petta_relation_relevance_cache));
-    memset(g_petta_query_forest_cache, 0,
-           sizeof(g_petta_query_forest_cache));
+    /* Preserve wholesale invalidation without writing every cold slot.
+     * Before reusing a generation, erase both tables so old facts cannot
+     * become live again. Zero remains reserved for an unused slot. */
+    if (g_petta_admission_cache_generation == UINT64_MAX) {
+        memset(g_petta_relation_relevance_cache, 0,
+               sizeof(g_petta_relation_relevance_cache));
+        memset(g_petta_query_forest_cache, 0,
+               sizeof(g_petta_query_forest_cache));
+        g_petta_admission_cache_generation = 1u;
+    } else {
+        g_petta_admission_cache_generation++;
+    }
 }
 
 /*
@@ -1417,7 +1426,8 @@ static bool petta_query_forest_cache_lookup(
             petta_query_forest_cache_index(
                 space, instance, environment, argument_shape,
                 source, arity)];
-    if (!slot->used || slot->space != space ||
+    if (slot->generation != g_petta_admission_cache_generation ||
+        slot->space != space ||
         slot->space_instance != instance ||
         slot->environment != environment ||
         slot->argument_shape != argument_shape ||
@@ -1447,7 +1457,7 @@ static void petta_query_forest_cache_store(
         .source = source,
         .arity = arity,
         .result = result,
-        .used = true,
+        .generation = g_petta_admission_cache_generation,
     };
 }
 

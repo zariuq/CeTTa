@@ -574,7 +574,7 @@ static void test_prepared_search_returns(bool change_during_publication) {
         NULL, NULL, NULL, NULL, NULL, true, true,
         (CettaMatchDecisionSemanticIdentity){
             .compiler_identity = cetta_match_decision_compiler_identity(),
-        });
+        }, NULL);
     assert(program);
     CettaPreparedPureAnswerCursorOptions options = {
         .limits = {.max_transitions = 1024u, .max_scratch_bytes = 1024u * 1024u,

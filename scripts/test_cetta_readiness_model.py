@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 from bench_d4_progress import census_classification
 from cetta_main_readiness import readiness_commands
+from check_precise_vocabulary import WORD, pinned_reference_field
 from rhocalc_bench_provenance import benchmark_provenance
 from cetta_readiness_ladders import (
     primary_contract,
@@ -351,7 +352,9 @@ def check_scale_frontier_exit_contract() -> None:
                 "CETTA_BENCH_BACKEND_SCRIPT": str(fake_backend),
                 "CETTA_BENCH_TRANSFER_SCRIPT": str(fake_transfer),
                 "CETTA_SCALE_RUNTIME_DIR": str(evidence_dir),
-                "CETTA_SCALE_CASE_TIMEOUT_S": "0.05",
+                # This checks timeout classification, not subprocess launch
+                # latency. The deliberate timeout fixtures sleep five seconds.
+                "CETTA_SCALE_CASE_TIMEOUT_S": "1",
                 "CETTA_GENERATOR_LITMUS_FACT_COUNT": "100",
                 # These attempted weakenings must be ignored by qualification.
                 "BACKEND_MODES_STR": "",
@@ -426,7 +429,7 @@ def check_scale_frontier_exit_contract() -> None:
         litmus_environment.update(
             {
                 "CETTA_SCALE_FIXTURE_LITMUS_TIMEOUT": "1",
-                "CETTA_GENERATOR_LITMUS_TIMEOUT_S": "0.05",
+                "CETTA_GENERATOR_LITMUS_TIMEOUT_S": "1",
             }
         )
         litmus = run_scale_fixture(litmus_environment)
@@ -461,6 +464,20 @@ def main() -> int:
     )
     report_pass(f"readiness manifest {len(manifest['properties'])} properties")
     report_pass(f"readiness source anchors {len(anchors)} resolved")
+    reference = json.loads((ROOT / 'langdef/petta/reference.json').read_text())
+    upstream = next(name for name in reference['reference_files'] if WORD.search(name))
+    ledger = Path('tests/petta/corrected_stable_observations.json')
+    field = json.dumps('source') + ': ' + json.dumps(upstream) + ','
+    require(pinned_reference_field(ledger, field), 'pinned external identity was rejected')
+    for path, changed in (
+        (Path('docs/note.txt'), field),
+        (ledger, field.replace('"source"', '"assessment"')),
+        (ledger, field.replace('import_error', 'another_name')),
+        (ledger, field + ' ' + WORD.pattern),
+    ):
+        require(not pinned_reference_field(path, changed),
+                'external identity exemption accepted authored vocabulary')
+    report_pass('pinned external identity exemption rejects changed fields, paths and prose')
     require(
         manifest["negative_calibration_witnesses"],
         "negative calibration registry is empty",
@@ -896,6 +913,19 @@ def main() -> int:
     exhaustive_targets = {
         command[-1] for command in readiness_commands("exhaustive")
     }
+    settled_petta_targets = {
+        "test-petta-release-reference", "test-petta-corrected-stable",
+        "test-petta-swi-differences", "test-language-versions",
+        "test-petta-language-versions", "test-petta-versioned-imports",
+    }
+    require(settled_petta_targets <= routine_targets & exhaustive_targets,
+            "readiness omits a settled PeTTa contract gate")
+    for tier in ("routine", "exhaustive"):
+        targets = [command[-1] for command in readiness_commands(tier)]
+        require(all(targets.index(target) < targets.index("test-correctness-all")
+                    for target in settled_petta_targets),
+                "broad readiness starts before validating its PeTTa contract")
+    report_pass("both tiers qualify corrected-stable PeTTa before the broad matrix")
     require("main-readiness-consolidation" in routine_targets & exhaustive_targets,
             "a readiness tier omits the original consolidation baseline")
     require("bench-evaluator-tax" in routine_targets & exhaustive_targets,

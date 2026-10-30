@@ -2116,6 +2116,16 @@ static uint32_t test_integer_hashing_to(uint32_t target) {
     return (h * 33u) ^ target;
 }
 
+/* The inverse of the finish an expression's hash takes after its fold. */
+static uint32_t hash_unfinish(uint32_t h) {
+    h ^= h >> 16;
+    h *= 0x7ed1b41du;
+    h ^= (h >> 13) ^ (h >> 26);
+    h *= 0xa5cb9243u;
+    h ^= h >> 16;
+    return h;
+}
+
 static void test_record_hash_is_atom_hash(void) {
     Arena arena, persistent;
     arena_init(&arena);
@@ -2126,7 +2136,8 @@ static void test_record_hash_is_atom_hash(void) {
     Atom *zero = atom_int(&arena, (int64_t)test_integer_hashing_to(0u));
     Atom *f = atom_symbol(&arena, "f");
     Atom *probe = atom_expr2(&arena, f, atom_int(&arena, 7));
-    uint32_t x = atom_hash(probe) ^ atom_hash(probe->expr.elems[1]);
+    uint32_t x = hash_unfinish(atom_hash(probe)) ^
+        atom_hash(probe->expr.elems[1]);
     Atom *zero_expr = atom_expr2(
         &arena, f, atom_int(&arena, (int64_t)test_integer_hashing_to(x)));
     assert(atom_hash(zero) == ATOM_HASH_ZERO_SPELLING);
@@ -2196,6 +2207,224 @@ static void test_readonly_lookup_coordinates(void) {
     arena_free(&source);
 }
 
+/* A random term over symbols, integers, spelled and named variables, and
+ * expressions headed by a symbol, an integer or a variable. */
+static Atom *alpha_key_random_term(Arena *arena, uint64_t *state,
+                                   uint32_t depth) {
+    *state = *state * 6364136223846793005ull + 1442695040888963407ull;
+    uint32_t pick = (uint32_t)(*state >> 33);
+    static const char *const names[] = {"a", "b", "c"};
+    static const char *const spellings[] = {"x", "y", "z"};
+    if (depth == 0u || pick % 5u < 2u) {
+        switch (pick % 7u) {
+        case 0u:
+        case 1u:
+            return atom_symbol(arena, names[(pick >> 3) % 3u]);
+        case 2u:
+            return atom_int(arena, (int64_t)((pick >> 3) % 4u));
+        case 3u: {
+            Atom *key = atom_expr2(arena, atom_symbol(arena, "k"),
+                                   atom_int(arena, (int64_t)((pick >> 3) % 2u)));
+            return atom_var_with_name_key(
+                arena, key, var_id_from_base(10u + (pick >> 3) % 2u));
+        }
+        default:
+            return atom_var_with_spelling(
+                arena, symbol_intern_cstr(g_symbols,
+                                          spellings[(pick >> 3) % 3u]),
+                var_id_from_base(1u + (pick >> 5) % 4u));
+        }
+    }
+    uint32_t arity = 1u + (pick >> 3) % 4u;
+    Atom *elems[5];
+    for (uint32_t index = 0u; index < arity; index++)
+        elems[index] = alpha_key_random_term(arena, state, depth - 1u);
+    return atom_expr(arena, elems, arity);
+}
+
+/* An open record's alpha key read from the record is the key the decoded
+ * atom's canonical copy stores; alpha-variants share it, other terms do
+ * not; a term with more variables than a record walk renames declines. */
+static void test_alpha_key_id_law(void) {
+    Arena persistent;
+    Arena scratch;
+    TermUniverse universe;
+    arena_init(&persistent);
+    arena_init_detached(&scratch);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+
+    uint64_t state = 20261029u;
+    uint32_t open = 0u;
+    for (uint32_t trial = 0u; trial < 2000u; trial++) {
+        Atom *term = alpha_key_random_term(&scratch, &state, 4u);
+        AtomId id = term_universe_store_atom_id(&universe, &scratch, term);
+        assert(id != CETTA_ATOM_ID_NONE);
+        AtomId key = term_universe_alpha_key_id(&universe, id);
+        Atom *decoded = term_universe_get_atom(&universe, id);
+        assert(decoded);
+        Atom *canonical =
+            term_universe_alpha_canonicalize_atom(&scratch, decoded);
+        AtomId expected =
+            term_universe_store_atom_id(&universe, &scratch, canonical);
+        assert(expected != CETTA_ATOM_ID_NONE);
+        assert(key == expected);
+        open += atom_has_vars(term) ? 1u : 0u;
+    }
+    assert(open > 500u);
+
+    /* A term's alpha key stored directly is its canonical copy, stored. */
+    state = 20261031u;
+    for (uint32_t trial = 0u; trial < 1000u; trial++) {
+        Atom *term = alpha_key_random_term(&scratch, &state, 4u);
+        AtomId direct = term_universe_store_alpha_key(&universe, term);
+        Atom *canonical =
+            term_universe_alpha_canonicalize_atom(&scratch, term);
+        assert(direct != CETTA_ATOM_ID_NONE);
+        assert(direct == term_universe_store_atom_id(&universe, &scratch,
+                                                     canonical));
+    }
+
+    /* Unstored terms' keys are looked up as their canonical copies are,
+     * missing before their keys are stored and found after. */
+    state = 20261030u;
+    for (uint32_t trial = 0u; trial < 1000u; trial++) {
+        Atom *term = alpha_key_random_term(&scratch, &state, 4u);
+        bool declined = true;
+        AtomId found = term_universe_alpha_key_lookup(&universe, term,
+                                                      &declined);
+        Atom *canonical =
+            term_universe_alpha_canonicalize_atom(&scratch, term);
+        assert(!declined);
+        assert(found == term_universe_lookup_atom_id(&universe, canonical));
+        AtomId stored = term_universe_store_atom_id(&universe, &scratch,
+                                                    canonical);
+        assert(stored != CETTA_ATOM_ID_NONE);
+        assert(term_universe_alpha_key_lookup(&universe, term, &declined) ==
+               stored);
+        assert(!declined);
+    }
+
+    Atom *f = atom_symbol(&scratch, "f");
+    Atom *x = atom_var_with_spelling(
+        &scratch, symbol_intern_cstr(g_symbols, "x"), var_id_from_base(1u));
+    Atom *y = atom_var_with_spelling(
+        &scratch, symbol_intern_cstr(g_symbols, "y"), var_id_from_base(2u));
+    Atom *u = atom_var_with_spelling(
+        &scratch, symbol_intern_cstr(g_symbols, "u"), var_id_from_base(7u));
+    AtomId xy = term_universe_store_atom_id(
+        &universe, &scratch, atom_expr3(&scratch, f, x, y));
+    AtomId ux = term_universe_store_atom_id(
+        &universe, &scratch, atom_expr3(&scratch, f, u, x));
+    AtomId xx = term_universe_store_atom_id(
+        &universe, &scratch, atom_expr3(&scratch, f, x, x));
+    assert(xy != ux);
+    assert(term_universe_alpha_key_id(&universe, xy) ==
+           term_universe_alpha_key_id(&universe, ux));
+    assert(term_universe_alpha_key_id(&universe, xx) !=
+           term_universe_alpha_key_id(&universe, xy));
+
+    Atom *many[66];
+    many[0] = f;
+    for (uint32_t index = 1u; index < 66u; index++)
+        many[index] = atom_var_with_spelling(
+            &scratch, symbol_intern_cstr(g_symbols, "v"),
+            var_id_from_base(100u + index));
+    AtomId wide = term_universe_store_atom_id(
+        &universe, &scratch, atom_expr(&scratch, many, 66u));
+    assert(wide != CETTA_ATOM_ID_NONE);
+    assert(term_universe_alpha_key_id(&universe, wide) == CETTA_ATOM_ID_NONE);
+
+    term_universe_free(&universe);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
+/* A ground view names the entry it was read from: looking it up or storing
+ * it gives that entry's id.  What is made from a view (a header copy, a
+ * suffix, a deep copy, an expression over it) names nothing, and a
+ * collection ends the name. */
+/* A ground term of symbols and integers, nested up to `depth`. */
+static Atom *view_origin_random_ground_term(Arena *arena, uint64_t *state,
+                                            uint32_t depth) {
+    *state = *state * 6364136223846793005ull + 1442695040888963407ull;
+    uint32_t pick = (uint32_t)(*state >> 33);
+    static const char *const names[] = {"a", "b", "c"};
+    if (depth == 0u || pick % 5u < 2u)
+        return pick % 3u == 0u
+            ? atom_int(arena, (int64_t)((pick >> 3) % 4u))
+            : atom_symbol(arena, names[(pick >> 3) % 3u]);
+    uint32_t arity = 1u + (pick >> 3) % 4u;
+    Atom *elems[5];
+    for (uint32_t index = 0u; index < arity; index++)
+        elems[index] = view_origin_random_ground_term(arena, state, depth - 1u);
+    return atom_expr(arena, elems, arity);
+}
+
+static void test_view_origin_law(void) {
+    Arena persistent;
+    Arena scratch;
+    Arena reader;
+    TermUniverse universe;
+    arena_init(&persistent);
+    arena_init_detached(&scratch);
+    arena_init_detached(&reader);
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+
+    uint64_t state = 20261101u;
+    uint32_t named = 0u;
+    Atom *kept = NULL;
+    AtomId kept_id = CETTA_ATOM_ID_NONE;
+    for (uint32_t trial = 0u; trial < 2000u; trial++) {
+        Atom *term = trial % 4u == 3u
+            ? alpha_key_random_term(&scratch, &state, 4u)
+            : view_origin_random_ground_term(&scratch, &state, 4u);
+        AtomId id = term_universe_store_atom_id(&universe, &scratch, term);
+        assert(id != CETTA_ATOM_ID_NONE);
+        Atom *view = term_universe_view_atom(&universe, &reader, id);
+        assert(view);
+        AtomId origin = term_universe_view_origin(&universe, view);
+        assert(origin == CETTA_ATOM_ID_NONE || origin == id);
+        if (origin == CETTA_ATOM_ID_NONE)
+            continue;
+        named++;
+        assert(!atom_has_vars(view));
+        assert(term_universe_lookup_atom_id(&universe, view) == id);
+        assert(term_universe_store_atom_id(&universe, &scratch, view) == id);
+        Atom copy;
+        atom_header_copy(&copy, view);
+        assert(term_universe_view_origin(&universe, &copy) ==
+               CETTA_ATOM_ID_NONE);
+        Atom *deep = atom_deep_copy(&scratch, view);
+        assert(deep && term_universe_view_origin(&universe, deep) ==
+               CETTA_ATOM_ID_NONE);
+        Atom *over = atom_expr2(&scratch, atom_symbol(&scratch, "over"), view);
+        assert(term_universe_view_origin(&universe, over) ==
+               CETTA_ATOM_ID_NONE);
+        if (view->expr.len > 1u) {
+            Atom *suffix = atom_expr_suffix(&scratch, view, 1u);
+            assert(!suffix || term_universe_view_origin(&universe, suffix) ==
+                              CETTA_ATOM_ID_NONE);
+        }
+        kept = view;
+        kept_id = id;
+    }
+    assert(named > 300u);
+    assert(term_universe_view_origin(&universe, kept) == kept_id);
+    universe.collection_epoch++;
+    assert(term_universe_view_origin(&universe, kept) == CETTA_ATOM_ID_NONE);
+    universe.collection_epoch--;
+    universe.storage_epoch++;
+    assert(term_universe_view_origin(&universe, kept) == CETTA_ATOM_ID_NONE);
+    universe.storage_epoch--;
+
+    term_universe_free(&universe);
+    arena_free(&reader);
+    arena_free(&scratch);
+    arena_free(&persistent);
+}
+
 int main(void) {
     SymbolTable symbols;
     VarInternTable var_intern;
@@ -2235,6 +2464,8 @@ int main(void) {
     test_shallow_ground_admit_shares_structure_keeps_occurrences();
     test_intrinsic_variable_support_contract();
     test_copy_reads_symbols_once_with_owned_values();
+    test_alpha_key_id_law();
+    test_view_origin_law();
     arena_init(&persistent);
     arena_init(&scratch);
     term_universe_init(&universe);

@@ -104,13 +104,17 @@ for language in ("he", "petta"):
             assert fault.returncode == 2 and 'UnknownMatchingPolicy' in fault.stderr, fault
             checks += 1
 
-    # The syntax is licensed by import AND profile.
+    # PeTTa requires an import; HE additionally requires its extended profile.
     call = "(pat:query &self match% (p a))"
     # HE reads &self into the form even when its unknown head remains data;
     # PeTTa keeps the named-space symbol.
     inert = call.replace("&self", "ModuleSpace(GroundingSpace-top)") if language == "he" else call
     check(language, "!" + call, [inert], imported=False)
-    check(language, "!" + call, [inert], profile="he" if language == "he" else None)
+    if language == 'he':
+        check(language, "!" + call, [inert], profile="he")
+    else:
+        check(language, '(p a)\n!(collapse (pat:match% &self (p $x) (found $x)))',
+              ['((found a))'], profile=None)
 
     # Equal rows remain distinguishable occurrences, stable within this read.
     result = run(language, "(row a) (row a)\n!(pat:query &self match% (row a))")

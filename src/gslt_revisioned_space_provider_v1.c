@@ -227,6 +227,7 @@ static Space *revisioned_space_clone_world_v1(
     }
     space_init_with_universe(snapshot, &provider->universe);
     snapshot->kind = source->kind;
+    space_set_strict(snapshot, source->strict);
     if (!space_match_backend_snapshot_clone(snapshot, source)) {
         space_free(snapshot);
         free(snapshot);

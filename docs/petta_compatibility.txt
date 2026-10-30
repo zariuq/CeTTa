@@ -7,6 +7,24 @@ contract. The historical 1.0.6 selector is retired; old commits and artifacts
 remain reproducibility references, not additional runtime profiles. Typed
 PeTTa remains opt-in.
 
+Library imports
+---------------
+
+The implicit prelude follows the pinned PeTTa contract. Additional library
+names are qualified and require an import: `(str:starts-with "abc" "a")`
+is data before `!(import! &self str)` and returns true afterward. Importing
+one library does not open unrelated namespaces or unqualified aliases.
+The same rule applies to `pat`: its explicit import enables its qualified
+operations in ordinary PeTTa, without requiring the extended profile.
+
+`!(import! &self (str json))` imports the listed libraries from left to right
+and returns true after they finish. The empty list succeeds without loading
+anything. Each member uses the ordinary import policy; `(library str)`
+remains a single library descriptor. If a later import fails, earlier imports
+remain in effect, as with separately written imports. Repeating an import
+does not replay its module in the same space. Importing it into another space
+installs its definitions there as well.
+
 Authority and reference
 -----------------------
 

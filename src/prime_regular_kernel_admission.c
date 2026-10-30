@@ -29,6 +29,9 @@ struct CettaPrimeRegularKernelAdmittedConversionV1 {
     const TermUniverse *universe;
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    /* A collection may reclaim the ids an entry holds: entries made before
+     * the universe's last collection are not reused after it. */
+    uint64_t universe_collection_epoch;
     AtomId context_id;
     AtomId left_term_id;
     AtomId right_term_id;
@@ -85,6 +88,7 @@ static bool cached_conversion_matches(
     return cached && universe && token && cached->universe == universe &&
            cached->universe_instance_id == universe->instance_id &&
            cached->universe_storage_epoch == universe->storage_epoch &&
+           cached->universe_collection_epoch == universe->collection_epoch &&
            cached->left_term_id == left_id &&
            cached->right_term_id == right_id &&
            profile_equal(cached->profile, profile) &&
@@ -317,6 +321,7 @@ cetta_prime_regular_kernel_admit_closed_conversion_v1(
         .universe = universe,
         .universe_instance_id = universe->instance_id,
         .universe_storage_epoch = universe->storage_epoch,
+        .universe_collection_epoch = universe->collection_epoch,
         .context_id = context_id,
         .left_term_id = left_id,
         .right_term_id = right_id,
@@ -414,6 +419,8 @@ bool cetta_prime_regular_kernel_admitted_conversion_v1_is_current(
             live_space->native.universe->instance_id ||
         conversion->universe_storage_epoch !=
             live_space->native.universe->storage_epoch ||
+        conversion->universe_collection_epoch !=
+            live_space->native.universe->collection_epoch ||
         !profile_equal(conversion->profile, profile) ||
         conversion->source_binding !=
             &prime_typing_open_regular_kernel_source_binding_v1) {
@@ -449,6 +456,7 @@ bool cetta_prime_regular_kernel_admitted_conversion_v1_metadata(
     *metadata_out = (CettaPrimeRegularKernelAdmissionMetadataV1){
         .universe_instance_id = conversion->universe_instance_id,
         .universe_storage_epoch = conversion->universe_storage_epoch,
+        .universe_collection_epoch = conversion->universe_collection_epoch,
         .context_id = conversion->context_id,
         .left_term_id = conversion->left_term_id,
         .right_term_id = conversion->right_term_id,
@@ -467,7 +475,9 @@ bool cetta_prime_regular_kernel_admitted_conversion_v1_erase(
     if (!conversion || !live_universe || !destination ||
         conversion->universe != live_universe ||
         conversion->universe_instance_id != live_universe->instance_id ||
-        conversion->universe_storage_epoch != live_universe->storage_epoch) {
+        conversion->universe_storage_epoch != live_universe->storage_epoch ||
+        conversion->universe_collection_epoch !=
+            live_universe->collection_epoch) {
         return false;
     }
     Atom *left = term_universe_copy_atom(
@@ -489,6 +499,9 @@ struct CettaPrimeRegularKernelAdmittedSynthesisV1 {
     const TermUniverse *universe;
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    /* A collection may reclaim the ids an entry holds: entries made before
+     * the universe's last collection are not reused after it. */
+    uint64_t universe_collection_epoch;
     AtomId context_id;
     AtomId term_id;
     AtomId type_id;
@@ -543,6 +556,7 @@ static bool cached_synthesis_matches(
     return cached && universe && token && cached->universe == universe &&
            cached->universe_instance_id == universe->instance_id &&
            cached->universe_storage_epoch == universe->storage_epoch &&
+           cached->universe_collection_epoch == universe->collection_epoch &&
            cached->term_id == term_id &&
            synthesis_profile_equal(cached->profile, profile) &&
            cached->source_binding == source_binding &&
@@ -733,6 +747,7 @@ cetta_prime_regular_kernel_admit_closed_synthesis_v1(
         .universe = universe,
         .universe_instance_id = universe->instance_id,
         .universe_storage_epoch = universe->storage_epoch,
+        .universe_collection_epoch = universe->collection_epoch,
         .context_id = context_id,
         .term_id = term_id,
         .type_id = type_id,
@@ -759,6 +774,8 @@ bool cetta_prime_regular_kernel_admitted_synthesis_v1_is_current(
             live_space->native.universe->instance_id ||
         synthesis->universe_storage_epoch !=
             live_space->native.universe->storage_epoch ||
+        synthesis->universe_collection_epoch !=
+            live_space->native.universe->collection_epoch ||
         !synthesis_profile_equal(synthesis->profile, profile) ||
         synthesis->source_binding !=
             &prime_typing_open_regular_kernel_source_binding_v1) {
@@ -865,6 +882,7 @@ bool cetta_prime_regular_kernel_admitted_synthesis_v1_metadata(
     *metadata_out = (CettaPrimeRegularKernelSynthesisMetadataV1){
         .universe_instance_id = synthesis->universe_instance_id,
         .universe_storage_epoch = synthesis->universe_storage_epoch,
+        .universe_collection_epoch = synthesis->universe_collection_epoch,
         .context_id = synthesis->context_id,
         .term_id = synthesis->term_id,
         .type_id = synthesis->type_id,
@@ -881,7 +899,9 @@ bool cetta_prime_regular_kernel_admitted_synthesis_v1_erase(
     if (!synthesis || !live_universe || !destination ||
         synthesis->universe != live_universe ||
         synthesis->universe_instance_id != live_universe->instance_id ||
-        synthesis->universe_storage_epoch != live_universe->storage_epoch) {
+        synthesis->universe_storage_epoch != live_universe->storage_epoch ||
+        synthesis->universe_collection_epoch !=
+            live_universe->collection_epoch) {
         return false;
     }
     Atom *term = term_universe_copy_atom(
@@ -900,6 +920,9 @@ struct CettaPrimeRegularKernelAdmittedCheckingV1 {
     const TermUniverse *universe;
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    /* A collection may reclaim the ids an entry holds: entries made before
+     * the universe's last collection are not reused after it. */
+    uint64_t universe_collection_epoch;
     AtomId context_id;
     AtomId term_id;
     AtomId expected_type_id;
@@ -954,6 +977,7 @@ static bool cached_checking_matches(
     return cached && universe && token && cached->universe == universe &&
            cached->universe_instance_id == universe->instance_id &&
            cached->universe_storage_epoch == universe->storage_epoch &&
+           cached->universe_collection_epoch == universe->collection_epoch &&
            cached->term_id == term_id &&
            cached->expected_type_id == expected_type_id &&
            checking_profile_equal(cached->profile, profile) &&
@@ -1164,6 +1188,7 @@ cetta_prime_regular_kernel_admit_closed_checking_v1(
         .universe = universe,
         .universe_instance_id = universe->instance_id,
         .universe_storage_epoch = universe->storage_epoch,
+        .universe_collection_epoch = universe->collection_epoch,
         .context_id = context_id,
         .term_id = term_id,
         .expected_type_id = expected_type_id,
@@ -1190,6 +1215,8 @@ bool cetta_prime_regular_kernel_admitted_checking_v1_is_current(
             live_space->native.universe->instance_id ||
         checking->universe_storage_epoch !=
             live_space->native.universe->storage_epoch ||
+        checking->universe_collection_epoch !=
+            live_space->native.universe->collection_epoch ||
         !checking_profile_equal(checking->profile, profile) ||
         checking->source_binding !=
             &prime_typing_open_regular_kernel_source_binding_v1) {
@@ -1488,6 +1515,7 @@ bool cetta_prime_regular_kernel_admitted_checking_v1_metadata(
     *metadata_out = (CettaPrimeRegularKernelCheckingMetadataV1){
         .universe_instance_id = checking->universe_instance_id,
         .universe_storage_epoch = checking->universe_storage_epoch,
+        .universe_collection_epoch = checking->universe_collection_epoch,
         .context_id = checking->context_id,
         .term_id = checking->term_id,
         .expected_type_id = checking->expected_type_id,
@@ -1504,7 +1532,9 @@ bool cetta_prime_regular_kernel_admitted_checking_v1_erase(
     if (!checking || !live_universe || !destination ||
         checking->universe != live_universe ||
         checking->universe_instance_id != live_universe->instance_id ||
-        checking->universe_storage_epoch != live_universe->storage_epoch) {
+        checking->universe_storage_epoch != live_universe->storage_epoch ||
+        checking->universe_collection_epoch !=
+            live_universe->collection_epoch) {
         return false;
     }
     Atom *term = term_universe_copy_atom(

@@ -8482,7 +8482,55 @@ static AtomId library_module_capture_tokens(CettaLibraryContext *ctx,
         persistent_arena ? persistent_arena : eval_arena, statement);
 }
 
+static bool cetta_library_petta_execute_listed_document_ids(
+    CettaLibraryContext *ctx, Space *work_space,
+    Arena *eval_arena, Arena *persistent_arena,
+    Registry *registry, AtomId *atom_ids, int atom_count,
+    ResultSet *runnable_results, ResultSet *last_results,
+    CettaDocumentResultObserver observer, void *observer_context,
+    CettaPettaDocumentFailure *failure_out,
+    Atom **detail_out);
+
+typedef struct {
+    const AtomId *ids;
+    int count;
+} CettaLibraryDocumentRoots;
+
+/* A module's forms stay in the universe while its document runs. */
+static void cetta_library_document_roots(const TermUniverse *universe,
+                                         TermUniverseRootVisit visit,
+                                         void *visit_context, void *context) {
+    const CettaLibraryDocumentRoots *document = context;
+    (void)universe;
+    for (int i = 0; i < document->count; i++)
+        visit(visit_context, document->ids[i]);
+}
+
 static bool cetta_library_petta_execute_document_ids(
+    CettaLibraryContext *ctx, Space *work_space,
+    Arena *eval_arena, Arena *persistent_arena,
+    Registry *registry, AtomId *atom_ids, int atom_count,
+    ResultSet *runnable_results, ResultSet *last_results,
+    CettaDocumentResultObserver observer, void *observer_context,
+    CettaPettaDocumentFailure *failure_out,
+    Atom **detail_out) {
+    TermUniverse *universe = work_space ? work_space->native.universe : NULL;
+    CettaLibraryDocumentRoots roots = {.ids = atom_ids,
+                                       .count = atom_ids ? atom_count : 0};
+    if (universe)
+        (void)term_universe_add_root_provider(
+            universe, cetta_library_document_roots, &roots);
+    bool ok = cetta_library_petta_execute_listed_document_ids(
+        ctx, work_space, eval_arena, persistent_arena, registry, atom_ids,
+        atom_count, runnable_results, last_results, observer,
+        observer_context, failure_out, detail_out);
+    if (universe)
+        term_universe_remove_root_provider(
+            universe, cetta_library_document_roots, &roots);
+    return ok;
+}
+
+static bool cetta_library_petta_execute_listed_document_ids(
     CettaLibraryContext *ctx, Space *work_space,
     Arena *eval_arena, Arena *persistent_arena,
     Registry *registry, AtomId *atom_ids, int atom_count,
@@ -10883,10 +10931,15 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
     }
     import_bit = spec ? spec->bit : native_spec->import_bit;
     import_name = spec ? spec->name : native_spec->name;
-    /* These vocabulary libraries publish their words into each importing
-       reader. File inventory still prevents replay within that reader. */
-    const uint32_t naming_interfaces = CETTA_LIBRARY_RHO;
-    if ((ctx->active_mask & import_bit) && !(import_bit & naming_interfaces))
+    /* Native availability belongs to the session; source definitions belong
+     * to each importing space. The file inventory prevents replay in that
+     * space, including cycles, without skipping another space's import. */
+    bool previously_active = (ctx->active_mask & import_bit) != 0u;
+    /* HE's native modules have session-wide initialization; its vocabulary
+     * libraries alone republish words into each reader. PeTTa source modules
+     * use the per-space file inventory below. */
+    if (previously_active && ctx->session.language_id != CETTA_LANGUAGE_PETTA &&
+        import_bit != CETTA_LIBRARY_RHO)
         return true;
 
 #if CETTA_BUILD_WITH_JSON_GSLT
@@ -10918,7 +10971,8 @@ bool cetta_library_import(CettaLibraryContext *ctx, const char *name,
                              &plan, eval_arena, error_out) ||
         !execute_import_plan(ctx, &plan, eval_arena, persistent_arena,
                              registry, fuel, NULL, error_out)) {
-        ctx->active_mask &= ~import_bit;
+        if (!previously_active)
+            ctx->active_mask &= ~import_bit;
         return false;
     }
     if (import_bit == CETTA_LIBRARY_IO && !ctx->io_runtime)
