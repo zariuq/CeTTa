@@ -2358,16 +2358,6 @@ static bool gslt_direct_petta_peek(
     return false;
 }
 
-static bool gslt_direct_petta_append_current(
-    GSLTDirectCursorV1 *cursor, GSLTDirectBytesV1 *output,
-    size_t width) {
-    if (!gslt_direct_reader_v1_bytes_append(
-            output, cursor->input + cursor->pos, width))
-        return false;
-    gslt_direct_reader_v1_consume_width(cursor, width);
-    return true;
-}
-
 static bool gslt_direct_petta_skip_document(
     const GSLTDirectPeTTaReaderV1Plan *plan,
     GSLTDirectCursorV1 *cursor, char *error_buf,
@@ -2413,31 +2403,39 @@ static bool gslt_direct_petta_skip_document(
     }
 }
 
+/* The balanced form at CURSOR, every scalar checked.  A form with no
+ * comment inside it is the document's own bytes, DATA and LEN, and FORM
+ * stays empty; a comment, through its LF, is left out of the text the form
+ * reader sees, so a form with comments is copied into FORM, a run at a time
+ * between them. */
 static bool gslt_direct_petta_extract_form(
     const GSLTDirectPeTTaReaderV1Plan *plan,
     GSLTDirectCursorV1 *cursor, GSLTDirectBytesV1 *form,
+    const uint8_t **data, size_t *len,
     char *error_buf, size_t error_buf_size) {
     uint32_t depth = 0u;
     uint32_t codepoint;
     size_t width;
+    size_t start = cursor->pos;
+    size_t run = start;
+    bool commented = false;
 
     if (!gslt_direct_petta_peek(
             cursor, &codepoint, &width, error_buf, error_buf_size) ||
-        codepoint != plan->expression_open ||
-        !gslt_direct_petta_append_current(cursor, form, width)) {
+        codepoint != plan->expression_open) {
         gslt_direct_reader_v1_error(
             error_buf, error_buf_size,
             "compiled PeTTa document expected an opening expression");
         return false;
     }
+    gslt_direct_reader_v1_consume_width(cursor, width);
     depth = 1u;
     while (cursor->pos < cursor->input_len) {
         if (!gslt_direct_petta_peek(
                 cursor, &codepoint, &width, error_buf, error_buf_size))
             return false;
         if (codepoint == plan->string_quote) {
-            if (!gslt_direct_petta_append_current(cursor, form, width))
-                return false;
+            gslt_direct_reader_v1_consume_width(cursor, width);
             for (;;) {
                 if (cursor->pos == cursor->input_len ||
                     !gslt_direct_petta_peek(
@@ -2449,17 +2447,13 @@ static bool gslt_direct_petta_extract_form(
                     return false;
                 }
                 if (codepoint == plan->string_quote) {
-                    if (!gslt_direct_petta_append_current(
-                            cursor, form, width))
-                        return false;
+                    gslt_direct_reader_v1_consume_width(cursor, width);
                     break;
                 }
                 if (codepoint == plan->splitter_string_escape) {
                     /* The escape and the scalar after it stay inside the
                      * string; the form reader decodes the pair. */
-                    if (!gslt_direct_petta_append_current(
-                            cursor, form, width))
-                        return false;
+                    gslt_direct_reader_v1_consume_width(cursor, width);
                     if (cursor->pos == cursor->input_len ||
                         !gslt_direct_petta_peek(
                             cursor, &codepoint, &width,
@@ -2469,20 +2463,21 @@ static bool gslt_direct_petta_extract_form(
                             "compiled PeTTa splitter found an unclosed quote");
                         return false;
                     }
-                    if (!gslt_direct_petta_append_current(
-                            cursor, form, width))
-                        return false;
+                    gslt_direct_reader_v1_consume_width(cursor, width);
                     continue;
                 }
                 if (!gslt_direct_reader_v1_class_contains(
-                        plan->splitter_string_plain, codepoint) ||
-                    !gslt_direct_petta_append_current(
-                        cursor, form, width))
+                        plan->splitter_string_plain, codepoint))
                     return false;
+                gslt_direct_reader_v1_consume_width(cursor, width);
             }
             continue;
         }
         if (codepoint == plan->comment_marker) {
+            if (!gslt_direct_reader_v1_bytes_append(
+                    form, cursor->input + run, cursor->pos - run))
+                return false;
+            commented = true;
             gslt_direct_reader_v1_consume_width(cursor, width);
             while (cursor->pos < cursor->input_len) {
                 if (!gslt_direct_petta_peek(
@@ -2505,35 +2500,45 @@ static bool gslt_direct_petta_extract_form(
                 return false;
             }
             gslt_direct_reader_v1_consume_width(cursor, width);
+            run = cursor->pos;
             continue;
         }
         if (codepoint == plan->expression_open) {
-            if (depth == plan->depth_limit ||
-                !gslt_direct_petta_append_current(cursor, form, width)) {
+            if (depth == plan->depth_limit) {
                 gslt_direct_reader_v1_error(
                     error_buf, error_buf_size,
                     "compiled PeTTa document exceeded its nesting limit");
                 return false;
             }
+            gslt_direct_reader_v1_consume_width(cursor, width);
             depth++;
             continue;
         }
         if (codepoint == plan->expression_close) {
-            if (!gslt_direct_petta_append_current(cursor, form, width))
-                return false;
+            gslt_direct_reader_v1_consume_width(cursor, width);
             depth--;
-            if (depth == 0u)
+            if (depth > 0u)
+                continue;
+            if (!commented) {
+                *data = cursor->input + start;
+                *len = cursor->pos - start;
                 return true;
-            continue;
+            }
+            if (!gslt_direct_reader_v1_bytes_append(
+                    form, cursor->input + run, cursor->pos - run))
+                return false;
+            *data = form->data;
+            *len = form->len;
+            return true;
         }
         if (!gslt_direct_reader_v1_class_contains(
-                plan->splitter_ordinary, codepoint) ||
-            !gslt_direct_petta_append_current(cursor, form, width)) {
+                plan->splitter_ordinary, codepoint)) {
             gslt_direct_reader_v1_error(
                 error_buf, error_buf_size,
                 "compiled PeTTa splitter rejected a balanced-form scalar");
             return false;
         }
+        gslt_direct_reader_v1_consume_width(cursor, width);
     }
     gslt_direct_reader_v1_error(
         error_buf, error_buf_size,
@@ -3219,6 +3224,8 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids_from(
     document.pos = start;
     while (forms < max_forms) {
         GSLTDirectBytesV1 form = {0};
+        const uint8_t *form_data = NULL;
+        size_t form_len = 0u;
         bool runnable = false;
         AtomId value;
         AtomId projected[2] = {CETTA_ATOM_ID_NONE, CETTA_ATOM_ID_NONE};
@@ -3241,12 +3248,13 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids_from(
         }
         if (!projection->begin_form(projection->context) ||
             !gslt_direct_petta_extract_form(
-                plan, &document, &form, error_buf, error_buf_size)) {
+                plan, &document, &form, &form_data, &form_len,
+                error_buf, error_buf_size)) {
             free(form.data);
             goto done;
         }
         value = gslt_direct_petta_parse_form(
-            plan, form.data, form.len, projection,
+            plan, form_data, form_len, projection,
             &tokens, &form_shifts, &reductions,
             error_buf, error_buf_size);
         free(form.data);

@@ -83,7 +83,8 @@ static bool same_metadata(const PettaPlanNode *left, const PettaPlanNode *right)
         SAME(contains_deferred_occurrence_transport) && SAME(plain_scalar_tree) &&
         SAME(relation_head_admitted) && SAME(open_template_admitted) &&
         SAME(has_equation_variable_slot) && SAME(dispatch_handler) &&
-        SAME(literal_case_default) && SAME(plain_scalar_tree_operations) &&
+        SAME(literal_case_default) && SAME(binding_local) && SAME(value_variables) &&
+        SAME(plain_scalar_tree_operations) &&
         SAME(equation_variable_slot) && SAME(deterministic_region) &&
         SAME(region_hole_program) && SAME(child_count) &&
         SAME(source_position) && SAME(source_debit);
@@ -119,7 +120,7 @@ int main(void) {
     BYTE(computation.control.operation); BYTE(computation.control.source);
     BYTE(computation.control.first); BYTE(computation.control.last);
     BYTE(computation.invocation.operation); BYTE(computation.invocation.first);
-    BYTE(computation.invocation.last);
+    BYTE(computation.invocation.last); BYTE(value_variables);
     WORD(plain_scalar_tree_operations); WORD(equation_variable_slot);
     WORD(source_position); WORD(source_debit);
     for (unsigned bit = 0u; bit < 64u; bit++) {
@@ -131,7 +132,7 @@ int main(void) {
     VARY(contains_deferred_occurrence_transport, true); VARY(plain_scalar_tree, true);
     VARY(relation_head_admitted, true); VARY(open_template_admitted, true);
     VARY(has_equation_variable_slot, true); VARY(dispatch_handler, true);
-    VARY(literal_case_default, true);
+    VARY(literal_case_default, true); VARY(binding_local, true);
     Arena owners;
     arena_init(&owners);
     VARY(deterministic_region, arena_alloc(&owners, 64u));
@@ -139,6 +140,7 @@ int main(void) {
     compare_metadata(&base, &base);
     base = (PettaPlanNode){.role = UINT8_MAX, .execution = UINT8_MAX,
         .continuation = UINT8_MAX, .output = UINT8_MAX,
+        .binding_local = true, .value_variables = UINT8_MAX,
         .computation = {.control = {UINT8_MAX, UINT8_MAX, UINT8_MAX, UINT8_MAX},
             .invocation = {UINT8_MAX, UINT8_MAX, UINT8_MAX}},
         .source_position = UINT32_MAX, .source_debit = UINT32_MAX,

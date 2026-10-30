@@ -9,6 +9,17 @@
 #endif
 #include <assert.h>
 
+static int64_t observed_callable_identity = INT64_MIN;
+static unsigned observed_callable_arity_reads;
+bool __real_petta_semantics_lambda_arity(const Atom *, CettaExprLen *);
+bool __wrap_petta_semantics_lambda_arity(const Atom *callable, CettaExprLen *arity) {
+    int64_t identity = 0;
+    if (observed_callable_identity != INT64_MIN &&
+        atom_petta_callable_identity(callable, &identity) && identity == observed_callable_identity)
+        observed_callable_arity_reads++;
+    return __real_petta_semantics_lambda_arity(callable, arity);
+}
+
 static unsigned invocation_syntax_observations;
 static bool observe_ordered_pattern_plans;
 static unsigned ordered_pattern_plan_calls;
@@ -33,6 +44,7 @@ static SymbolId refusal_compile_head = SYMBOL_ID_NONE;
 static unsigned refusal_compile_calls;
 static bool refusal_compile_once;
 static bool refusal_compile_resource;
+static CettaPreparedPureCompileStatus refusal_compile_status;
 static _Thread_local bool refusal_program_allocation_fail;
 static CettaPreparedPureCompileReport refusal_last_report;
 void *__real_calloc(size_t, size_t);
@@ -70,7 +82,7 @@ CettaPreparedPureProgram *__wrap_cetta_prepared_pure_program_compile_closed(
             else {
                 refusal_last_report = (CettaPreparedPureCompileReport){
                     .source = space_program_token(space),
-                    .status = CETTA_PREPARED_PURE_COMPILE_UNCERTIFIED,
+                    .status = refusal_compile_status,
                 };
                 if (report)
                     *report = refusal_last_report;
@@ -2471,7 +2483,8 @@ static unsigned scalar_callable_admission(void) {
     assert(prepared_calls == 0u && prepared_attempts == 0u);
     petta_eval_open_release_pure_callable(&context, native_plan);
     void *compiled = petta_eval_open_prepare_pure_callable(&context, &space, &owner, pure, 1u);
-    assert(compiled);
+    assert(compiled && !petta_eval_open_callable_answers_only(&context, compiled));
+    assert(!petta_eval_open_callable_answers_only(&context, NULL));
     Atom *arguments[] = {atom_int(&source, 5)};
     CettaCallOutcome result = {0};
     assert(petta_eval_open_execute_pure_callable(&context, compiled, &owner,
@@ -2483,6 +2496,7 @@ static unsigned scalar_callable_admission(void) {
         fixture_atom(&source, "(= (ScalarEntryRevision) changed)")));
     assert(!cetta_prepared_pure_program_is_current(
         ((PettaPreparedCallable *)compiled)->program));
+    assert(!petta_eval_open_callable_answers_only(&context, compiled));
     size_t stale_live = arena_accounted_live_bytes(&owner);
     result = (CettaCallOutcome){0};
     assert(!petta_eval_open_execute_pure_callable(&context, compiled, &owner,
@@ -2746,26 +2760,70 @@ static unsigned uncertified_compile_refusal_controls(void) {
     space_init_with_universe(&space, &universe);
     refusal_add_equation(&space, &source, "(= (compile-retry $x) (+ $x 1))");
     refusal_compile_head = symbol_intern_cstr(g_symbols, "compile-retry");
-    for (unsigned resource = 0u; resource < 2u; resource++) {
+    unsigned checks = 0u;
+    const CettaPreparedPureCompileStatus causes[] = {
+        CETTA_PREPARED_PURE_COMPILE_UNCERTIFIED,
+        CETTA_PREPARED_PURE_COMPILE_RESOURCE_REFUSED,
+        CETTA_PREPARED_PURE_COMPILE_INPUT_REFUSED,
+        CETTA_PREPARED_PURE_COMPILE_INVALIDATED,
+    };
+    for (unsigned cause = 0u; cause < sizeof(causes) / sizeof(*causes); cause++) {
         refusal_compile_calls = 0u;
         refusal_compile_once = true;
-        refusal_compile_resource = resource != 0u;
+        refusal_compile_resource = causes[cause] == CETTA_PREPARED_PURE_COMPILE_RESOURCE_REFUSED;
+        refusal_compile_status = causes[cause];
         PreparedPureProgramCache cache = {.root_space = &space};
         CettaCallOutcome result;
         assert(!prepared_pure_closed_call_try(&space, &source,
             fixture_atom(&source, "(compile-retry 7)"), -1, true, true, &cache, &result));
         assert(refusal_compile_calls == 1u && !cache.entries &&
             !refusal_program_allocation_fail && !refusal_last_report.refusals &&
-            refusal_last_report.status == (resource
-                ? CETTA_PREPARED_PURE_COMPILE_RESOURCE_REFUSED
-                : CETTA_PREPARED_PURE_COMPILE_UNCERTIFIED));
+            refusal_last_report.status == causes[cause]);
         assert(prepared_pure_closed_call_try(&space, &source,
             fixture_atom(&source, "(compile-retry 9)"), -1, true, true, &cache, &result));
         assert(refusal_compile_calls == 2u && result.kind == CETTA_CALL_VALUE &&
             atom_eq(result.term, atom_int(&source, 10)) &&
             refusal_last_report.status == CETTA_PREPARED_PURE_COMPILE_READY);
         prepared_pure_program_cache_free(&cache);
+        checks += 2u;
     }
+    refusal_compile_status = CETTA_PREPARED_PURE_COMPILE_UNCERTIFIED;
+    refusal_compile_resource = false;
+    refusal_compile_calls = 0u;
+    PettaEvalMachineContext context = {.library_context = library, .fuel = -1,
+        .prepared_pure_cache = {.root_space = &space}};
+    const unsigned attempts[] = {1u, 2u, 2u, 3u, 3u, 3u, 3u, 4u};
+    CettaCallOutcome result;
+    for (unsigned call = 0u; call < sizeof(attempts) / sizeof(*attempts); call++) {
+        refusal_compile_once = true;
+        assert(!prepared_pure_closed_call_try(&space, &source,
+            fixture_atom(&source, "(compile-retry 9)"), -1, true, true,
+            &context.prepared_pure_cache, &result));
+        assert(refusal_compile_calls == attempts[call] && !context.prepared_pure_cache.entries);
+        checks++;
+    }
+    refusal_compile_once = false;
+    assert(petta_eval_machine_prepared_refused(&context, &space, refusal_compile_head,
+        1u, PREPARED_PURE_ENTRY_INQUIRY));
+    uint64_t epoch = context.prepared_pure_cache.backoff_epoch;
+    refusal_add_equation(&space, &source, "(= (retry-new-authority) 17)");
+    assert(!petta_eval_machine_prepared_refused(&context, &space, refusal_compile_head,
+        1u, PREPARED_PURE_ENTRY_INQUIRY) &&
+        context.prepared_pure_cache.backoff_epoch != epoch);
+    assert(prepared_pure_closed_call_try(&space, &source,
+        fixture_atom(&source, "(compile-retry 9)"), -1, true, true,
+        &context.prepared_pure_cache, &result));
+    assert(refusal_compile_calls == 5u && result.kind == CETTA_CALL_VALUE &&
+        atom_eq(result.term, atom_int(&source, 10)));
+    prepared_pure_program_cache_free(&context.prepared_pure_cache);
+    PreparedPureBackoffSlot first = {0}, capped = {.refusals = 16u};
+    prepared_pure_backoff_refused(&first);
+    assert(first.refusals == 1u && first.skip == 0u);
+    prepared_pure_backoff_refused(&capped);
+    assert(capped.refusals == 17u && capped.skip == 65535u);
+    prepared_pure_backoff_refused(&capped);
+    assert(capped.refusals == 17u && capped.skip == 65535u);
+    checks += 6u;
     refusal_compile_head = SYMBOL_ID_NONE;
     space_free(&space);
     term_universe_free(&universe);
@@ -2773,7 +2831,7 @@ static unsigned uncertified_compile_refusal_controls(void) {
     eval_set_library_context(NULL);
     cetta_library_context_free(library);
     free(library);
-    return 4u;
+    return checks;
 }
 
 static unsigned he_source_refusal_controls(void) {
@@ -3593,12 +3651,14 @@ static unsigned generic_budget_checks(void) {
         "(once 7)",
         "(superpose ((once (superpose (7 8))) (once (superpose (9 10)))))",
         "(once (superpose ((empty) 9)))",
+        "(case (once (match &self (missing 7) 11)) ((Empty absent) ($v present)))",
+        "(case (collapse (match &self (missing 7) 11)) ((Empty absent) ($v present)))",
     };
     const char *answers[][3] = {{"(1)", "(2)", "(1)"}, {"((+ 1 2))"}, {"()"}, {NULL},
         {"(+ 1 2)"}, {"(+ 1 2)"}, {"3"}, {NULL}, {NULL}, {"7"}, {"7", "7", "9"},
-        {"7"}, {NULL}, {"7"}, {"7", "9"}, {"9"}};
+        {"7"}, {NULL}, {"7"}, {"7", "9"}, {"9"}, {"absent"}, {"present"}};
     const size_t counts[] = {3u, 1u, 1u, 0u, 1u, 1u, 1u, 0u, 0u, 1u, 3u,
-        1u, 0u, 1u, 2u, 1u};
+        1u, 0u, 1u, 2u, 1u, 1u, 1u};
     const uint64_t budgets[] = {0u, 1u, 2u, 3u, 64u, 1024u};
     const size_t budget_count = sizeof(budgets) / sizeof(*budgets);
     unsigned checks = 0u;
@@ -3966,6 +4026,95 @@ static unsigned source_first_success_plans(void) {
         cetta_open_equation_program_release(program);
         checks++;
     }
+    for (unsigned mode = 0u; mode < 3u; mode++) {
+        bool first = mode != 0u;
+        Atom *call = fixture_atom(&arena,
+            "(case (once (match &self (missing 7) 11)) ((Empty absent) ($v present)))");
+        const PettaPlanNode *authored = petta_program_plan_current(owner, call);
+        PettaPlanNode key = *petta_plan_child(authored, 1u);
+        key.computation.control.operation = first ? CETTA_CONTROL_FIRST_SUCCESS : CETTA_CONTROL_COLLECT;
+        key.output = first ? PETTA_PLAN_OUTPUT_CHILD : PETTA_PLAN_OUTPUT_VALUE;
+        PettaPlanNode key_children[] = {*petta_plan_child(&key, 0u), *petta_plan_child(&key, 1u)};
+        key.children = key_children;
+        if (mode == 2u) {
+            key_children[1].role = PETTA_PLAN_VALUE;
+            key_children[1].computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN;
+            key_children[1].children = NULL;
+            key_children[1].child_count = 0u;
+        }
+        const char *wanted = mode == 1u ? "absent" : "present";
+        PettaPlanNode children[] = {*petta_plan_child(authored, 0u), key,
+            *petta_plan_child(authored, 2u)};
+        PettaPlanNode selected = *authored;
+        selected.children = children;
+        PettaMachineHost ordinary = host;
+        ordinary.unlimited_transition_budget = true;
+        ordinary.execute_prepared_pure_call = NULL;
+        ordinary.open_answer_cursor = NULL;
+        ordinary.open_relation_cursor = NULL;
+        PettaMachine machine;
+        assert(petta_machine_init_with_plan(&machine, &space, &arena, call, &selected, NULL, &ordinary));
+        Atom *answer = NULL;
+        Bindings environment;
+        assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER);
+        if (!atom_is_symbol(answer, wanted)) {
+            fprintf(stderr, "case operation first=%u actual=", first); atom_print(answer, stderr); fputc('\n', stderr);
+        }
+        assert(atom_is_symbol(answer, wanted));
+        bindings_free(&environment);
+        assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
+        bindings_free(&environment);
+        petta_machine_destroy(&machine);
+        checks++;
+    }
+
+
+    Atom *dynamic_default = fixture_atom(&arena,
+        "(case (once (match &self (missing 7) 11)) ((Empty absent) ($v present)))");
+    const PettaPlanNode *default_source = petta_program_plan_current(owner, dynamic_default);
+    PettaPlanNode arms = *petta_plan_child(default_source, 2u);
+    PettaPlanNode arm_items[] = {*petta_plan_child(&arms, 0u), *petta_plan_child(&arms, 1u)};
+    arm_items[0].literal_case_default = false;
+    arms.children = arm_items;
+    PettaPlanNode default_items[] = {*petta_plan_child(default_source, 0u),
+        *petta_plan_child(default_source, 1u), arms};
+    PettaPlanNode selected_default = *default_source;
+    selected_default.children = default_items;
+    PettaMachineHost default_host = host;
+    default_host.unlimited_transition_budget = true;
+    default_host.execute_prepared_pure_call = NULL;
+    default_host.open_answer_cursor = NULL;
+    default_host.open_relation_cursor = NULL;
+    PettaMachine default_machine;
+    assert(petta_machine_init_with_plan(&default_machine, &space, &arena,
+        dynamic_default, &selected_default, NULL, &default_host));
+    Atom *default_answer = NULL;
+    Bindings default_environment;
+    assert(petta_machine_next(&default_machine, &default_answer, &default_environment) ==
+        PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&default_environment);
+    petta_machine_destroy(&default_machine);
+    checks++;
+    space_add(&space, fixture_atom(&arena, "(missing 7)"));
+    Atom *escaping = fixture_atom(&arena,
+        "(let $r (case (once (match &self (missing 7) 11)) ((Empty absent) ($v present))) (Pair $r $v))");
+    PettaMachineHost observing = host;
+    observing.unlimited_transition_budget = true;
+    observing.execute_prepared_pure_call = NULL;
+    observing.open_answer_cursor = NULL;
+    observing.open_relation_cursor = NULL;
+    PettaMachine machine;
+    assert(petta_machine_init_with_plan(&machine, &space, &arena, escaping,
+        petta_program_plan_current(owner, escaping), NULL, &observing));
+    Atom *answer = NULL;
+    Bindings environment;
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_ANSWER &&
+        atom_eq(answer, fixture_atom(&arena, "(Pair present 11)")));
+    bindings_free(&environment);
+    assert(petta_machine_next(&machine, &answer, &environment) == PETTA_MACHINE_STEP_EXHAUSTED);
+    bindings_free(&environment);
+    petta_machine_destroy(&machine);
+    checks++;
     prepared_pure_program_cache_free(&context.prepared_pure_cache);
     eval_set_library_context(prior_library);
     cetta_library_context_free(library);
@@ -5801,7 +5950,7 @@ static unsigned lexical_packet_controls(void) {
 typedef struct {
     uint32_t arity;
     Atom *first, *second;
-    unsigned prepares, calls, releases, inquiries;
+    unsigned prepares, calls, releases, inquiries, availability_reads;
 } ProgramOperandProbe;
 
 static void program_operand_check(ProgramOperandProbe *probe,
@@ -5842,6 +5991,14 @@ static void *program_operand_prepare(void *context, Space *space, Arena *arena,
     assert(arity == probe->arity);
     probe->prepares++;
     return probe;
+}
+
+
+static bool program_operand_answers_only(void *context, const void *prepared) {
+    ProgramOperandProbe *probe = context;
+    assert(prepared == probe);
+    probe->availability_reads++;
+    return false;
 }
 
 static bool program_operand_execute(void *context, void *prepared, Arena *arena,
@@ -5970,6 +6127,62 @@ static unsigned program_operand_controls(void) {
     free(library);
     printf("PASS: %u common-plan operand controls preserve ordered fields, sharing, data readback and wide refusal\n", checks);
     return checks;
+}
+
+
+static unsigned callable_signature_reuse_controls(void) {
+    CettaLibraryContext *prior = g_library_context;
+    CettaLibraryContext *library = calloc(1u, sizeof(*library));
+    assert(library);
+    cetta_library_context_init_for_language_profile(library, CETTA_LANGUAGE_PETTA, NULL);
+    eval_set_library_context(library);
+    Arena source;
+    arena_init(&source);
+    Space space;
+    space_init(&space);
+    refusal_add_equation(&space, &source,
+        "(= (signature-repeat $n $f) (if (== $n 0) done (let $v ($f 7) (signature-repeat (- $n 1) $f))))");
+    const char *reason = NULL;
+    CettaOpenEquationProgram *program = cetta_open_equation_program_compile(
+        library->petta_program, &space, symbol_intern_cstr(g_symbols, "signature-repeat"),
+        2u, NULL, &reason);
+    assert(program);
+    const unsigned counts[] = {1u, 16u, 256u};
+    for (size_t run = 0u; run < sizeof(counts) / sizeof(*counts); run++) {
+        Arena answers;
+        arena_init(&answers);
+        Atom *callable = petta_capture_lambda(&source,
+            fixture_atom(&source, "(|-> ($x) ignored)"), NULL);
+        assert(atom_petta_callable_identity(callable, &observed_callable_identity));
+        observed_callable_arity_reads = 0u;
+        ProgramOperandProbe probe = {.arity = 1u, .first = atom_int(&source, 7)};
+        CettaOpenEquationRuntime runtime = {.context = &probe,
+            .prepare_pure_callable = program_operand_prepare,
+            .execute_pure_callable = program_operand_execute,
+            .callable_answers_only = program_operand_answers_only,
+            .release_pure_callable = program_operand_release};
+        Atom *arguments[] = {atom_int(&source, counts[run]), callable};
+        CettaOpenEquationCursor *cursor = cetta_open_equation_cursor_open(
+            program, &answers, arguments, 2u, NULL, NULL, 0u, &runtime);
+        assert(cursor);
+        CettaCallOutcome result = {0};
+        assert(cetta_open_equation_cursor_next(cursor, NULL, &result, NULL) == CETTA_OPEN_EQUATION_ANSWER &&
+            result.kind == CETTA_CALL_VALUE && atom_is_symbol(result.term, "done"));
+        assert(cetta_open_equation_cursor_next(cursor, NULL, &result, NULL) == CETTA_OPEN_EQUATION_EXHAUSTED);
+        assert(probe.calls == counts[run] && probe.prepares == 1u &&
+            probe.availability_reads == 1u && observed_callable_arity_reads == 2u);
+        cetta_open_equation_cursor_close(cursor);
+        assert(probe.releases == 1u);
+        observed_callable_identity = INT64_MIN;
+        arena_free(&answers);
+    }
+    cetta_open_equation_program_release(program);
+    space_free(&space);
+    arena_free(&source);
+    eval_set_library_context(prior);
+    cetta_library_context_free(library);
+    free(library);
+    return 12u;
 }
 
 /* Real lexical compilation and native entry, followed by the search
@@ -6357,6 +6570,7 @@ static unsigned relational_body_destination_controls(void) {
         CettaOpenEquationRuntime runtime = {.context = &probe,
             .prepare_pure_callable = petta_eval_open_prepare_pure_callable,
             .execute_pure_callable = petta_eval_open_execute_pure_callable,
+            .callable_answers_only = petta_eval_open_callable_answers_only,
             .open_callable_answers = oem_body_probe_open,
             .next_callable_answer = oem_body_retention_next,
             .release_pure_callable = petta_eval_open_release_pure_callable,
@@ -6467,6 +6681,7 @@ static unsigned borrowed_collection_failure_control(void) {
     CettaOpenEquationRuntime runtime = {.context = &probe,
         .prepare_pure_callable = petta_eval_open_prepare_pure_callable,
         .execute_pure_callable = petta_eval_open_execute_pure_callable,
+        .callable_answers_only = petta_eval_open_callable_answers_only,
         .open_callable_answers = oem_body_probe_open,
         .next_callable_answer = oem_body_retention_next,
         .release_pure_callable = petta_eval_open_release_pure_callable,
@@ -6563,6 +6778,7 @@ static unsigned oem_body_retention_controls(void) {
         CettaOpenEquationRuntime runtime = {.context = &probe,
             .prepare_pure_callable = petta_eval_open_prepare_pure_callable,
             .execute_pure_callable = petta_eval_open_execute_pure_callable,
+            .callable_answers_only = petta_eval_open_callable_answers_only,
             .open_callable_answers = petta_eval_open_callable_answers,
             .next_callable_answer = oem_body_retention_next,
             .release_pure_callable = petta_eval_open_release_pure_callable,
@@ -10157,6 +10373,47 @@ static unsigned execution_semantic_ledger_controls(void) {
     return checks;
 }
 
+static unsigned retry_demand_controls(void) {
+    CettaLibraryContext *prior = g_library_context;
+    CettaLibraryContext *library = calloc(1u, sizeof(*library));
+    assert(library);
+    cetta_library_context_init_for_language_profile(library, CETTA_LANGUAGE_PETTA, NULL);
+    eval_set_library_context(library);
+    Space space;
+    space_init(&space);
+    PreparedPureProgramCache cache = {.root_space = &space};
+    assert(prepared_pure_program_cache_prepare_revision(&cache, &space,
+        petta_libpl_capability_revision(library->lib_prolog)));
+    SymbolId head = symbol_intern_cstr(g_symbols, "retry-demand-probe");
+    PreparedPureBackoffSlot *scalar = prepared_pure_backoff_slot(&cache,
+        head, 1u, CETTA_LANGUAGE_PETTA, CETTA_GSLT_PURE_CALL_EAGER,
+        false, NULL, true, false, true);
+    assert(scalar);
+    prepared_pure_backoff_refused(scalar);
+    prepared_pure_backoff_refused(scalar);
+    assert(!prepared_pure_backoff_slot(&cache, head, 1u, CETTA_LANGUAGE_PETTA,
+        CETTA_GSLT_PURE_CALL_EAGER, true, NULL, true, false, false));
+    assert(prepared_pure_backoff_take_pause(&cache, &space, CETTA_LANGUAGE_PETTA, scalar));
+    assert(!prepared_pure_backoff_take_pause(&cache, &space, CETTA_LANGUAGE_PETTA, scalar));
+    PreparedPureBackoffSlot *answers = prepared_pure_backoff_slot(&cache,
+        head, 1u, CETTA_LANGUAGE_PETTA, CETTA_GSLT_PURE_CALL_EAGER,
+        true, NULL, true, false, true);
+    assert(answers);
+    prepared_pure_backoff_refused(answers);
+    prepared_pure_backoff_refused(answers);
+    scalar = prepared_pure_backoff_slot(&cache, head, 1u, CETTA_LANGUAGE_PETTA,
+        CETTA_GSLT_PURE_CALL_EAGER, false, NULL, true, false, false);
+    assert(!scalar || scalar->skip == 0u);
+    assert(prepared_pure_backoff_take_pause(&cache, &space, CETTA_LANGUAGE_PETTA, answers));
+    assert(!prepared_pure_backoff_take_pause(&cache, &space, CETTA_LANGUAGE_PETTA, answers));
+    prepared_pure_program_cache_free(&cache);
+    space_free(&space);
+    eval_set_library_context(prior);
+    cetta_library_context_free(library);
+    free(library);
+    return 6u;
+}
+
 int main(int argc, char **argv) {
     SymbolTable symbols;
     VarInternTable variables;
@@ -10198,7 +10455,7 @@ int main(int argc, char **argv) {
     if (ledger_only || argc == 1)
         checks += execution_semantic_ledger_controls();
     if (ledger_only)
-        checks += source_computation_plans() + source_invocation_plans() + generic_budget_checks() + source_first_success_plans();
+        checks += source_computation_plans() + source_invocation_plans() + generic_budget_checks() + source_first_success_plans() + retry_demand_controls() + callable_signature_reuse_controls();
     if (caller_only)
         checks += caller_result_controls() + caller_real_collection_controls();
     else if (he_prepared_only)
@@ -10210,7 +10467,7 @@ int main(int argc, char **argv) {
     else if (lexical_source_only)
         checks += lexical_source_controls();
     else if (compiler_refusal_only)
-        checks += uncertified_compile_refusal_controls() + shared_compilation_refusals();
+        checks += uncertified_compile_refusal_controls() + shared_compilation_refusals() + retry_demand_controls();
     else if (refusal_only)
         checks += source_admission_refusal_controls() + he_source_refusal_controls();
     else if (he_completion_only)
@@ -10231,7 +10488,7 @@ int main(int argc, char **argv) {
     else if (body_only)
         checks += prepared_body_entry_controls();
     else if (lexical_only)
-        checks += scalar_callable_admission() + lexical_packet_controls() + program_operand_controls() + lexical_native_tail_controls() + oem_body_retention_controls() + relational_body_destination_controls();
+        checks += callable_signature_reuse_controls() + scalar_callable_admission() + lexical_packet_controls() + program_operand_controls() + lexical_native_tail_controls() + oem_body_retention_controls() + relational_body_destination_controls();
     else if (callee_only)
         checks += oem_callee_owner_controls() + ready_invocation_controls();
     else if (fold_only)
@@ -10241,7 +10498,7 @@ int main(int argc, char **argv) {
     else if (episode_only)
         checks += episode_accounting() + evaluator_episode_consumers();
     else if (!availability_only && !ledger_only && !ordered_only && !metered_invocation_only)
-        checks += caller_result_controls() + caller_real_collection_controls() + he_prepared_completion_controls() + authority_observation_controls() + lexical_source_controls() + uncertified_compile_refusal_controls() + source_admission_refusal_controls() + he_source_refusal_controls() + he_instruction_completion_controls(false) + frozen_source_caller_controls() + stale_native_tail_controls() + conditional_native_continuation_controls() + native_frontier_rejoin_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls() + contextual_resumption_controls() + bound_native_completion_controls() + relational_body_destination_controls() + oem_body_retention_controls() + prepared_body_entry_controls() + lexical_native_tail_controls() + lexical_packet_controls() + program_operand_controls() + oem_callee_owner_controls() + fold_completion_controls() + prime_prepared_data_controls() + episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + source_role_elaboration_controls() + source_invocation_plans() + prepared_computation_plans() + generic_budget_checks() + source_first_success_plans() + source_collection_plans() + source_case_plans() + captured_binding_projection_controls() + he_instruction_plan_controls() + he_canonical_plan_controls() + he_instruction_source_gc_controls() + ordinary_invocation_consumers() + shared_compilation_refusals() + closed_failure_cache() + ready_invocation_controls() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
+        checks += callable_signature_reuse_controls() + caller_result_controls() + caller_real_collection_controls() + he_prepared_completion_controls() + authority_observation_controls() + lexical_source_controls() + uncertified_compile_refusal_controls() + source_admission_refusal_controls() + he_source_refusal_controls() + he_instruction_completion_controls(false) + frozen_source_caller_controls() + stale_native_tail_controls() + conditional_native_continuation_controls() + native_frontier_rejoin_controls() + branching_native_frontier_controls() + caller_dag_scaling_controls() + contextual_resumption_controls() + bound_native_completion_controls() + relational_body_destination_controls() + oem_body_retention_controls() + prepared_body_entry_controls() + lexical_native_tail_controls() + lexical_packet_controls() + program_operand_controls() + oem_callee_owner_controls() + fold_completion_controls() + prime_prepared_data_controls() + episode_accounting() + evaluator_episode_consumers() + source_computation_plans() + source_role_elaboration_controls() + source_invocation_plans() + prepared_computation_plans() + generic_budget_checks() + source_first_success_plans() + source_collection_plans() + source_case_plans() + captured_binding_projection_controls() + he_instruction_plan_controls() + he_canonical_plan_controls() + he_instruction_source_gc_controls() + ordinary_invocation_consumers() + retry_demand_controls() + shared_compilation_refusals() + closed_failure_cache() + ready_invocation_controls() + evaluator_consumers() + projected_roots() + residual_consumers() + prepared_native_consumers() + scalar_callable_admission();
     cetta_lib_prolog_global_shutdown();
     symbol_table_free(&symbols);
     var_intern_free(&variables);

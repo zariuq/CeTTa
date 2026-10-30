@@ -1530,6 +1530,15 @@ without disabling scalar preparation. Input-dependent entries do not publish
 callee facts. The source token and cache generation are checked before one
 publisher installs any certified demand under the existing exact cache key.
 
+A current uncertified compile refusal may postpone another optimized attempt.
+It supplies no refusal certificate or answer: postponed calls use ordinary
+execution. Retry calls follow 0, 1, 3, 7 and doubling gaps, capped at 65,536
+calls. Resource, input and invalidation statuses do not start this pause.
+Program, capability, library and profile changes clear a pending pause before
+it can suppress an attempt. BackoffRetryCost checks the retry cost and recovery
+bounds; uncertified_compile_refusal_controls checks the native countdown,
+immediate resource/input recovery, authority changes and the cap.
+
 The controlled scalar executor validates the retained source program before
 worker entry. Lexical scalar adapters and unary collection workers rely on
 that check. A collection's separate read token still validates its input
@@ -1645,6 +1654,21 @@ Caller resumption and retained scheduling work
 ---------------------------------------------
 
 Body, IF and activation-tail resumption share one context admission predicate.
+An exact lexical cache entry retains the callable's immutable arity, checked
+before that entry was published. Reusing this signature does not certify a
+worker or skip current program, library, native-entry or return authority.
+An identity or supplied-arity mismatch retains ordinary signature inspection.
+CallableArityCache proves publication validity and saturation classification;
+its negative control rejects an unchecked receipt for a partial application.
+
+The prepared callee may also report that its artifact has only an answer
+worker. That immutable fact is queried once per prepared artifact and avoids
+probing a scalar executor that cannot run it. An absent report keeps the
+existing probe; an input-dependent execution refusal cannot establish worker
+absence. Actual results still cross the owned cursor and final authority
+boundary. Native controls check constant signature reads, single metadata
+inquiry, and the existing OEM-to-prepared entered-return protocol.
+
 A retained constraint owner, dormant goal, queued wake or table entry keeps
 the ordinary scheduling boundary. Unlimited source credit does not establish
 that no work can precede the next computation. A drained context may readmit
@@ -1811,6 +1835,15 @@ Shared observers and collection
     stale_native_tail_controls. ScopedFirst proves source entry, whole-packet
     commitment, outside alternatives, source debit and conditional publication;
     native C correspondence remains a separately tested obligation.
+  O-CASE-FIRST: An exact existence shortcut consumes first-success and match
+    operation/value authority and the arm's literal-default provenance. It
+    installs the pattern binding through the ordinary trail before the chosen
+    body; a caller may observe that binding even when the body ignores it.
+    Metered, traced and externally observed stages retain ordinary entry.
+    CaseFirstObservation refines literal-row matching followed by maintained
+    case selection to membership plus binding under its stated admission.
+    Native controls distinguish collection, completed match-shaped data,
+    dynamic Empty, escaping bindings and finite source prefixes.
   O-DISPATCH: A PeTTa reduce occurrence elaborates to the common dispatch
     operation; eval elaborates to force. Plan construction, ordinary entry,
     prepared admission, OEM lowering and residual projection consume the

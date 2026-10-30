@@ -488,10 +488,14 @@
         {
           "file": "src/open_equation_machine.c",
           "symbol": "oem_build_builtin_entry"
+        },
+        {
+          "file": "src/eval.c",
+          "symbol": "petta_eval_open_callable_answers_only"
         }
       ],
       "admission": "Readiness, type authority, computation/data provenance and result demand are separate judgments. Prepared cursor construction retains a handle without entering work; first execution and resumption own optional host-authority admission. A lexical preparation precheck cannot replace that entry check.",
-      "remaining_transfer": "Prepared occurrence plans retain argument demand and projection policy; bounded constructor-role decoding is now shared by concrete atoms and contextual value observations. Complete call argument transport still needs to preserve lexical values, ownership and current evidence without building whole substituted applications. Scalar, answer-body and OEM compilers now share one exact-arity lexical opener and one parameter-atom sequence. Saved prepared source owns unchanged input nodes; OEM compilation retains its scoped input loan. Compact parameter IDs are derived only at the body-lowering boundary. Ordinary application retains its partial/extra-argument and binding transitions. HE completed-value marks now enter the shared ready-argument classifier. Scalar and finite prepared returns complete through the existing HE value/type boundary without a post-result refusal; unmarked HE-compat expressions retain ordinary interpretation. PeTTa dispatch/force stages now use the common operation word through ordinary execution, prepared admission, OEM lowering and residual projection; other caller families retain their own coverage obligations.",
+      "remaining_transfer": "Prepared occurrence plans retain argument demand and projection policy; bounded constructor-role decoding is now shared by concrete atoms and contextual value observations. Complete call argument transport still needs to preserve lexical values, ownership and current evidence without building whole substituted applications. Scalar, answer-body and OEM compilers now share one exact-arity lexical opener and one parameter-atom sequence. Saved prepared source owns unchanged input nodes; OEM compilation retains its scoped input loan. Compact parameter IDs are derived only at the body-lowering boundary. Ordinary application retains its partial/extra-argument and binding transitions. HE completed-value marks now enter the shared ready-argument classifier. Scalar and finite prepared returns complete through the existing HE value/type boundary without a post-result refusal; unmarked HE-compat expressions retain ordinary interpretation. PeTTa dispatch/force stages now use the common operation word through ordinary execution, prepared admission, OEM lowering and residual projection; other caller families retain their own coverage obligations. Nominal callable entries reuse exact saturation receipts and callee-owned immutable worker availability; these grant no mutable execution authority. Optional worker metadata preserves scalar probes for input-specific refusals, and the existing prepared-answer route still precedes OEM fallback.",
       "measure": [
         "admission attempts",
         "repeated checks",
@@ -610,9 +614,9 @@
         "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
         "family": "ready-call-and-result-contracts",
         "counts": {
-          "type": 65,
+          "type": 66,
           "call": 30,
-          "reference": 34
+          "reference": 35
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
       },
@@ -860,6 +864,17 @@
           "tests/petta/dynamic_explicit_evaluation.metta",
           "tests/petta/dispatch_error_scope.metta"
         ]
+      },
+      "qualified_callable_metadata": {
+        "model": "Mettapedia.Machines.CallableArityCache",
+        "laws": [
+          "publication_valid",
+          "classification_refines",
+          "worker_selection_refines",
+          "remembering_one_refusal_as_absence_changes_result"
+        ],
+        "native_control": "tests/test_native_conditional_context.c:callable_signature_reuse_controls",
+        "boundary": "The source model assumes immutable identity-to-parameter registration. Native registration, mutable admission, cursor lifetime and C correspondence remain separately tested obligations."
       }
     },
     {
@@ -1453,8 +1468,8 @@
         "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
         "family": "occurs-check-certificates",
         "counts": {
-          "call": 22,
-          "reference": 22
+          "call": 26,
+          "reference": 26
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
       }
@@ -2397,7 +2412,7 @@
       }
     }
   ],
-  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 340 linked C translation units in both build configurations, and admission/validity/cost obligations. The 108 named anchors include the compiler report and publication boundary. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open.",
+  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 340 linked C translation units in both build configurations, and admission/validity/cost obligations. The 109 named anchors include the compiler report and publication boundary. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open.",
   "review_reconciliation": [
     {
       "idea": "Shared call contract over existing engines",

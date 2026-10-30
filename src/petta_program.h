@@ -169,6 +169,16 @@ struct PettaPlanNode {
      * is an unannotated adapter; its legacy canonical visit costs one. */
     uint32_t source_position;
     uint32_t source_debit;
+    /* A `(let $v (collapse X) B)` of a plan made for a whole equation or
+     * directive: $v occurs nowhere else in it (binding_local); and one more
+     * than the number of X's own variables, those occurring nowhere else
+     * (or in B too, when B spreads the list by X's template itself), when
+     * each other variable of X is a parameter of the equation, which
+     * occurs in X and the left side alone (value_variables; zero
+     * otherwise).  An instance of X holding more variables than its own
+     * took one from a call's argument. */
+    bool binding_local;
+    uint8_t value_variables;
     CettaExprIndex output_child;
     bool contains_cardinality_call;
     bool contains_call;
@@ -550,6 +560,13 @@ const PettaPlanNode *petta_program_plan_derived_add(
  * call-free DATA occurrence remains ordinary data. */
 bool petta_plan_match_template_is_single_data_answer(
     const PettaPlanNode *template_plan);
+
+/* PLAN's binding_local and value_variables for LET, a
+ * `(let $v (collapse X) B)` within ROOT, an equation whose left side is
+ * LHS, or a directive (LHS NULL).  When B spreads the list by X's template
+ * itself, the template's variables may also occur in B. */
+void petta_plan_mark_let_scope(const Atom *root, const Atom *lhs,
+                               const Atom *let, PettaPlanNode *plan);
 
 bool petta_program_note_add(
     PettaProgram *program, Space *space, Atom *atom,
