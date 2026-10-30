@@ -1,0 +1,61 @@
+import "CPreprocessing.module" as pp
+Module GNUPreprocessingModule {
+  Theory GNUPPLexical() {
+    Empty Exports { CPPUnterminated; CPPRawString; }
+    Terms {
+      -- GCC and Clang end an unterminated character constant or string literal
+      -- at the end of its line, as one token.
+      token CPPUnterminated ((["LuU"] | {"u8"})? ["'\""] (char - ["\n\r"])*);
+      -- GNU C raw string literal; its contents are read before phases 1 and 2,
+      -- and the scanner matches the closing delimiter to the opening one.
+      token CPPRawString ((["LuU"] | {"u8"})? 'R' '"' (char - ["\\ ()\t\x0b\x0c\n\r\""])* '(' char*
+        ')' (char - ["\\ ()\t\x0b\x0c\n\r\""])* '"');
+    }
+  }
+  Theory GNUPreprocessing(base: pp.CPP) {
+    { base \/ GNUPPLexical() } Exports { }
+    Terms {
+      -- GNU and C23 directives that GCC reads in gnu11 and c11.
+      IncludeNext . ControlLine ::= "#" "include_next" [PPToken] CPPNewLine;
+      Import . ControlLine ::= "#" "import" [PPToken] CPPNewLine;
+      Embed . ControlLine ::= "#" "embed" [PPToken] CPPNewLine;
+      Warning . ControlLine ::= "#" "warning" OptionalPPTokens CPPNewLine;
+      Ident . ControlLine ::= "#" "ident" [PPToken] CPPNewLine;
+      Sccs . ControlLine ::= "#" "sccs" [PPToken] CPPNewLine;
+      Assert . ControlLine ::= "#" "assert" [PPToken] CPPNewLine;
+      Unassert . ControlLine ::= "#" "unassert" [PPToken] CPPNewLine;
+      ElifDefined . ElifGroup ::= "<elif-line>" "#" "elifdef" CPPIdentifier CPPNewLine [GroupPart];
+      ElifNotDefined . ElifGroup ::= "<elif-line>" "#" "elifndef" CPPIdentifier CPPNewLine [GroupPart];
+      -- GCC's line marker: # digit-sequence, as in preprocessed output.
+      LineMarker . ControlLine ::= "#" "<line-marker>" [PPToken] CPPNewLine;
+      -- GNU named variadic parameter: #define f(args...) and f(a, args...).
+      DefineNamedVariadic . ControlLine ::= "#" "define" CPPIdentifier CPPLParen IdentifierList "..." ")" ReplacementList CPPNewLine;
+      -- A known directive that does not have its required form. GCC reads a
+      -- skipped one only through its name, and diagnoses an active one.
+      LenientIf . IfGroup ::= "#" "<lenient>" "if" OptionalPPTokens CPPNewLine [GroupPart];
+      LenientIfDefined . IfGroup ::= "#" "<lenient>" "ifdef" OptionalPPTokens CPPNewLine [GroupPart];
+      LenientIfNotDefined . IfGroup ::= "#" "<lenient>" "ifndef" OptionalPPTokens CPPNewLine [GroupPart];
+      LenientElif . ElifGroup ::= "<elif-line>" "#" "<lenient>" "elif" OptionalPPTokens CPPNewLine [GroupPart];
+      LenientElifDefined . ElifGroup ::= "<elif-line>" "#" "<lenient>" "elifdef" OptionalPPTokens CPPNewLine [GroupPart];
+      LenientElifNotDefined . ElifGroup ::= "<elif-line>" "#" "<lenient>" "elifndef" OptionalPPTokens CPPNewLine [GroupPart];
+      LenientElse . ElseGroup ::= "<else-line>" "#" "<lenient>" "else" [PPToken] CPPNewLine [GroupPart];
+      LenientEndif . EndifLine ::= "<endif-line>" "#" "<lenient>" "endif" [PPToken] CPPNewLine;
+      LenientInclude . ControlLine ::= "#" "<lenient>" "include" OptionalPPTokens CPPNewLine;
+      LenientIncludeNext . ControlLine ::= "#" "<lenient>" "include_next" OptionalPPTokens CPPNewLine;
+      LenientImport . ControlLine ::= "#" "<lenient>" "import" OptionalPPTokens CPPNewLine;
+      LenientEmbed . ControlLine ::= "#" "<lenient>" "embed" OptionalPPTokens CPPNewLine;
+      LenientDefine . ControlLine ::= "#" "<lenient>" "define" OptionalPPTokens CPPNewLine;
+      LenientUndef . ControlLine ::= "#" "<lenient>" "undef" OptionalPPTokens CPPNewLine;
+      LenientLine . ControlLine ::= "#" "<lenient>" "line" OptionalPPTokens CPPNewLine;
+      LenientIdent . ControlLine ::= "#" "<lenient>" "ident" OptionalPPTokens CPPNewLine;
+      LenientSccs . ControlLine ::= "#" "<lenient>" "sccs" OptionalPPTokens CPPNewLine;
+      LenientAssert . ControlLine ::= "#" "<lenient>" "assert" OptionalPPTokens CPPNewLine;
+      LenientUnassert . ControlLine ::= "#" "<lenient>" "unassert" OptionalPPTokens CPPNewLine;
+      -- GCC token forms beyond ISO 6.4.
+      PPUnterminated . PPToken ::= CPPUnterminated;
+      PPRawString . PPToken ::= CPPRawString;
+    }
+  }
+  Theory CPPGNU() { GNUPreprocessing(pp.CPP()) }
+  theory CPPGNU()
+}

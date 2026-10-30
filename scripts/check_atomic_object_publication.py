@@ -37,8 +37,12 @@ $(ATOMIC_GATE_ROOT)/unsafe.o: $(ATOMIC_GATE_ROOT)/payload.c $(ATOMIC_GATE_ROOT)/
 \t$(CC) $(CFLAGS) $(DEPFLAGS) -MT "$@" -MF "$(@:.o=.d)" -c -o "$@" "$<"
 """)
     driver = work / "compiler.py"
+    # Only object compiles take part; the Makefile's own toolchain probes at
+    # parse time (a link to /dev/null) pass straight to the compiler.
     driver.write_text("""import os, pathlib, subprocess, sys, time
 args = sys.argv[1:]
+if '-c' not in args:
+    raise SystemExit(subprocess.call(['cc', *args]))
 pathlib.Path(args[args.index('-o') + 1]).write_bytes(b'')
 marker = os.environ.get('ATOMIC_GATE_MARKER')
 if marker:

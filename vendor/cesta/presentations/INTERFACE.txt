@@ -1,0 +1,139 @@
+Cesta presentation interface, version 2
+
+Every presentation interprets into the same C AST. A native view
+checks each proposed abbreviation by expanding it and comparing the resulting
+tree. Exact constructors remain available, and their children can be abbreviated.
+Conversion expands the input presentation and views the result in the output
+presentation. Source printing additionally checks source-grammar derivability.
+
+ast/1 is the AST itself: explicit c: constructors and ordered c:List fields.
+compact-c/2 is the current written form of C. Literals are the atoms their C
+spellings read as: 42, 0x2au and 'a' are symbols and "hi\n" is a string, so
+the token spelling is the atom's printed form; a spelling that is not exactly
+one atom's printed form keeps its exact text in (char ...) or (strings ...).
+Specifier sequences are flat C words, (static inline int); structures,
+unions and enumerations are (struct node (int value)), (struct node) and
+(enum color RED (= GREEN 4) BLUE); declarations are (var ...), (decl ...) and
+(typedef T name); type names are (char *) or plain words; sizeof, typeof and
+alignment of a type are written (sizeof type T). Calls splice their arguments,
+(call f a b), and parameter lists may close with ... .
+compact-c/1 is the first compact version, retained: literal atoms are
+strings containing exact C token spellings, and its specifier, structure and
+enumeration forms name grammar constructors.
+cmera-style/1 adds independently written function and pointer spellings and
+inherits the common compact-c/1 forms. Its *name spellings are opaque symbol
+atoms for host pattern matching. It is a non-structural presentation, without
+Common Lisp reader, macro-environment or full C-Mera compatibility claims.
+
+Examples:
+  (unit (fn void bump ((unsigned (* p))) (+= (* p) 1u)))
+  (unit (fn void bump ((unsigned (* p))) (+= (* p) "1u")))      compact-c/1
+  (unit (function bump ((unsigned *p)) -> void (+= *p "1u")))  cmera-style/1
+
+Documents record the presentation/version, AST-schema identity and actual
+rule-data identity. An unknown version or changed schema/rule identity is
+refused. Raw .cesta authoring defaults to compact-c/2; sealed documents select
+their declared presentation, so a sealed compact-c/1 document keeps reading
+while the AST schema is unchanged.
+Calls use an explicit call form, so adding an unrelated head does not
+reinterpret a function call.
+
+A schema step adds AST constructors, such as GNU label attributes
+(label done ((__attribute__ unused)) (return 0)). It changes the schema
+identity, so documents sealed before it are refused. Every presentation gains
+a form for each new constructor and keeps every existing form: a retained
+version still writes and reads every earlier tree the same way.
+
+Rule forms
+
+A surface rule describes atoms, not characters. A word is one symbol; a token
+category alone is the token in its own representation (an identifier symbol,
+or a string holding a literal's exact spelling); a prefix and a token category
+are one symbol, and the empty prefix "" writes a token as the atom its
+spelling reads as. A list form begins with a fixed word (a headed form) or
+with a field (a tuple). Fixed words may appear among the fields, a list field
+in last field position is spliced into the form, and fixed words may close the
+spliced list, as in (function f (int a) ...). A "." before the last field
+makes it a dotted tail: (static . rest) is written (static inline int) when
+rest is the list (inline int), and (static size_t) when rest is one atom.
+A rule with a token, word or list shape takes precedence over an unheaded rule
+of its sort; several unheaded rules are allowed when their targets accept
+disjoint atoms.
+
+Dispatch is one-atom lookahead over S-expressions. Every sort has first-atom
+keys: the symbols, strings and list heads its atoms can begin with, its exact
+c: heads included. Two rules of a sort are refused when, at some common length,
+every position can hold one atom under both; otherwise the rule whose shape
+matches and whose positions admit the atom's items is selected. The keys
+over-approximate the atoms that decode, so admission never refuses a valid
+atom, and the view still keeps a short form only when it expands back to the
+same tree. Sorts are the grammar's coercion classes, so rules for categories
+joined by unit coercions, such as unique and primitive type specifiers,
+dispatch together.
+
+The portable/1 wire quotes symbol, text and expression kinds as ordinary MeTTa
+data, using hexadecimal bytes. It supports ordinary CeTTa, PeTTa and HE readers
+without relying on their registrations for names or numbers. Wire size is a
+separate transport measurement from compact presentation payload size.
+
+Shared module adapter
+
+C AST theories and presentation theories are read through the same
+grammar/TheoryModule.cf adapter and the same native module/catalog algebra.
+Presentation Terms and Equations introduce ordinary declarations in this
+adapter; they do not use another .module parser. The metta-venus grammar and
+fixtures are historical compatibility inputs, not the specification of an
+unchangeable final language.
+
+Imports resolve named modules and instantiate their theory parameters. Exports
+and replacements retain their declaration identities. The origin-coherent
+composition profile requires one structural view per origin; origin-view
+composition retains distinct structural declarations at a shared origin while
+requiring exposed labels to identify declarations uniquely. The corresponding
+Lean algebras distinguish these admission and composition laws explicitly.
+
+The Terms adapter lowers to LBNF through cesta module-grammar. The native grammar
+metadata then exposes categories, projected constructors, ordered argument
+sorts, lexical declarations and transparent/list projections. This is the
+explicit syntax boundary into the shared sorted GSLT/codec model. Presentation
+equations lower to sorted constructor templates at that boundary.
+
+CeTTa's source-driven ParserPack compiler consumes the operational LanguageDef
+representation; its current interface does not directly read these .module
+files. A downstream adapter must translate the same lowered declarations into
+that representation and report its supported fragment. In particular, C's
+typedef feedback and scope profile are separate from first-order syntax and
+cannot be dropped in that translation. Full native CeTTa ParserPack admission of
+Cesta's C profile is not a claimed property of this presentation interface.
+
+Qualification counts compact coverage over original AST constructor
+occurrences. Absorbed wrapper constructors count as covered; ordered lists and
+lexical tokens are separate. The >=95% coverage and <=1.6 aggregate nonlayout
+payload/C-byte gates apply to compact-c/1 and compact-c/2 separately on each
+corpus. compact-c/2 is also gated on naturalness: at most 1% of its list heads
+on each corpus may be a grammar constructor's name (a hyphenated head equal to
+the kebab-case of the constructor label it spells) rather than a C spelling.
+Other presentations publish their own measurements.
+
+Ordinary make builds mixed C/.cesta sources through cesta.mk and native compilers.
+The emitted program links no Cesta runtime. Dependency files name authored
+sources and native headers. Presentation work happens during the build.
+
+Lossless source/1 documents also build through cesta cc. Their decoded main
+file supplies C source bytes; the document path supplies its file identity,
+quoted-include directory and file-name builtins. Main-file self-inclusion uses
+those supplied bytes again. The preprocessor emits .i files, and native target,
+optimization and link flags remain in force. Mixed source/1, compact and C
+inputs share that route when a source document is present. Plain C builds
+without a source document retain the ordinary compiler route.
+
+Generated .i files depend on their complete expanded contents and are published
+atomically. Make dependencies name original inputs and actually read headers,
+including empty headers; -MMD/-MM omit system headers. Leading ./ is omitted
+from dependency spellings. This source/1 build route does not provide compact
+directive editing, conditional-alternative admission or macro-use folding.
+
+Generic Lean inverse and switching laws, kernel admission of actual rule/schema
+data, independent case replay, corpus tree laws and matching native objects are
+separate evidence. These do not assert a universal proof of the native parser,
+scope implementation, wire implementation or C compiler semantics.

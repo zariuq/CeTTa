@@ -1,0 +1,89 @@
+import "CLex.module" as lex
+Module CExprModule {
+  Theory CExpr(l: lex.CLex) {
+    l Exports { Expr; Arguments; GenericAssociation; UnaryOperator; AssignmentOperator; }
+    Terms {
+      -- ISO 6.5.1: primary-expression. TypeName/Initializer are supplied by CDecl.
+      Var . Expr16 ::= COrdinaryName;
+      IntConst . Expr16 ::= CInteger;
+      FloatConst . Expr16 ::= CFloat;
+      CharConst . Expr16 ::= CCharacter;
+      StringLiterals . Expr16 ::= [CString];
+      separator nonempty CString "";
+      -- ISO 6.5.1.1: generic-selection, association list and association.
+      Generic . Expr16 ::= "_Generic" "(" Expr1 "," [GenericAssociation] ")";
+      separator nonempty GenericAssociation ",";
+      GenericType . GenericAssociation ::= TypeName ":" Expr1;
+      GenericDefault . GenericAssociation ::= "default" ":" Expr1;
+      -- ISO 6.5.2: postfix-expression and argument-expression-list.
+      Subscript . Expr15 ::= Expr15 "[" Expr "]";
+      Call . Expr15 ::= Expr15 "(" Arguments ")";
+      NoArguments . Arguments ::=;
+      Arguments . Arguments ::= [Expr1];
+      separator nonempty Expr1 ",";
+      Member . Expr15 ::= Expr15 "." CGeneralName;
+      PointerMember . Expr15 ::= Expr15 "->" CGeneralName;
+      PostIncrement . Expr15 ::= Expr15 "++";
+      PostDecrement . Expr15 ::= Expr15 "--";
+      CompoundLiteral . Expr15 ::= "(" TypeName ")" "{" [InitializerElement] "}";
+      CompoundLiteralComma . Expr15 ::= "(" TypeName ")" "{" [InitializerElement] "," "}";
+      -- ISO 6.5.3: unary-expression and unary-operator. Operator expansion
+      -- keeps operation constructors distinct without inventing source syntax.
+      PreIncrement . Expr14 ::= "++" Expr14;
+      PreDecrement . Expr14 ::= "--" Expr14;
+      AddressOf . Expr14 ::= "&" Expr13;
+      Indirection . Expr14 ::= "*" Expr13;
+      UnaryPlus . Expr14 ::= "+" Expr13;
+      Negate . Expr14 ::= "-" Expr13;
+      BitNot . Expr14 ::= "~" Expr13;
+      Not . Expr14 ::= "!" Expr13;
+      SizeofExpression . Expr14 ::= "sizeof" Expr14;
+      SizeofType . Expr14 ::= "sizeof" "(" TypeName ")";
+      Alignof . Expr14 ::= "_Alignof" "(" TypeName ")";
+      -- ISO 6.5.4: cast-expression.
+      Cast . Expr13 ::= "(" TypeName ")" Expr13;
+      -- ISO 6.5.5: multiplicative-expression.
+      Multiply . Expr12 ::= Expr12 "*" Expr13;
+      Divide . Expr12 ::= Expr12 "/" Expr13;
+      Remainder . Expr12 ::= Expr12 "%" Expr13;
+      -- ISO 6.5.6: additive-expression.
+      Add . Expr11 ::= Expr11 "+" Expr12;
+      Subtract . Expr11 ::= Expr11 "-" Expr12;
+      -- ISO 6.5.7: shift-expression.
+      ShiftLeft . Expr10 ::= Expr10 "<<" Expr11;
+      ShiftRight . Expr10 ::= Expr10 ">>" Expr11;
+      -- ISO 6.5.8: relational-expression.
+      Less . Expr9 ::= Expr9 "<" Expr10;
+      Greater . Expr9 ::= Expr9 ">" Expr10;
+      LessEqual . Expr9 ::= Expr9 "<=" Expr10;
+      GreaterEqual . Expr9 ::= Expr9 ">=" Expr10;
+      -- ISO 6.5.9: equality-expression.
+      Equal . Expr8 ::= Expr8 "==" Expr9;
+      NotEqual . Expr8 ::= Expr8 "!=" Expr9;
+      -- ISO 6.5.10, 6.5.11, 6.5.12: bitwise expressions.
+      BitAnd . Expr7 ::= Expr7 "&" Expr8;
+      BitXor . Expr6 ::= Expr6 "^" Expr7;
+      BitOr . Expr5 ::= Expr5 "|" Expr6;
+      -- ISO 6.5.13, 6.5.14: logical expressions.
+      And . Expr4 ::= Expr4 "&&" Expr5;
+      Or . Expr3 ::= Expr3 "||" Expr4;
+      -- ISO 6.5.15: conditional-expression.
+      Conditional . Expr2 ::= Expr3 "?" Expr ":" Expr2;
+      -- ISO 6.5.16: assignment-expression and assignment-operator expansion.
+      Assign . Expr1 ::= Expr14 "=" Expr1;
+      MultiplyAssign . Expr1 ::= Expr14 "*=" Expr1;
+      DivideAssign . Expr1 ::= Expr14 "/=" Expr1;
+      RemainderAssign . Expr1 ::= Expr14 "%=" Expr1;
+      AddAssign . Expr1 ::= Expr14 "+=" Expr1;
+      SubtractAssign . Expr1 ::= Expr14 "-=" Expr1;
+      ShiftLeftAssign . Expr1 ::= Expr14 "<<=" Expr1;
+      ShiftRightAssign . Expr1 ::= Expr14 ">>=" Expr1;
+      BitAndAssign . Expr1 ::= Expr14 "&=" Expr1;
+      BitXorAssign . Expr1 ::= Expr14 "^=" Expr1;
+      BitOrAssign . Expr1 ::= Expr14 "|=" Expr1;
+      -- ISO 6.5.17: expression; 6.6 constant-expression uses Expr2.
+      Comma . Expr ::= Expr "," Expr1;
+      coercions Expr 16;
+    }
+  }
+}

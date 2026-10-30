@@ -1,0 +1,41 @@
+import "CDecl.module" as decl
+Module CStmtModule {
+  Theory CStmt(d: decl.CDecl) {
+    d Exports { Statement; Block; BlockItem; }
+    Terms {
+      -- ISO 6.8: statement; wrappers retain statement-sort distinctions.
+      LabeledStatement . Statement ::= LabeledStatement;
+      CompoundStatement . Statement ::= Block;
+      ExpressionStatement . Statement ::= OptionalFullExpression ";";
+      SelectionStatement . Statement ::= SelectionStatement;
+      IterationStatement . Statement ::= IterationStatement;
+      JumpStatement . Statement ::= JumpStatement;
+      -- ISO 6.8.1: labeled-statement; labels use the separate label namespace.
+      Label . LabeledStatement ::= CGeneralName ":" Statement;
+      Case . LabeledStatement ::= "case" Expr2 ":" Statement;
+      Default . LabeledStatement ::= "default" ":" Statement;
+      -- ISO 6.8.2: compound-statement, block-item-list, block-item.
+      Block . Block ::= "{" [BlockItem] "}";
+      terminator BlockItem "";
+      BlockDeclaration . BlockItem ::= Declaration;
+      BlockStatement . BlockItem ::= Statement;
+      -- ISO 6.8.3: optional full expression (including comma expressions).
+      NoFullExpression . OptionalFullExpression ::=;
+      SomeFullExpression . OptionalFullExpression ::= Expr;
+      -- ISO 6.8.4: selection-statement; nearest-else policy is separate.
+      If . SelectionStatement ::= "if" "(" Expr ")" Statement;
+      IfElse . SelectionStatement ::= "if" "(" Expr ")" Statement "else" Statement;
+      Switch . SelectionStatement ::= "switch" "(" Expr ")" Statement;
+      -- ISO 6.8.5: iteration-statement.
+      While . IterationStatement ::= "while" "(" Expr ")" Statement;
+      DoWhile . IterationStatement ::= "do" Statement "while" "(" Expr ")" ";";
+      For . IterationStatement ::= "for" "(" OptionalFullExpression ";" OptionalFullExpression ";" OptionalFullExpression ")" Statement;
+      ForDeclaration . IterationStatement ::= "for" "(" Declaration OptionalFullExpression ";" OptionalFullExpression ")" Statement;
+      -- ISO 6.8.6: jump-statement.
+      Goto . JumpStatement ::= "goto" CGeneralName ";";
+      Continue . JumpStatement ::= "continue" ";";
+      Break . JumpStatement ::= "break" ";";
+      Return . JumpStatement ::= "return" OptionalFullExpression ";";
+    }
+  }
+}

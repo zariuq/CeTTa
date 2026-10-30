@@ -1,0 +1,163 @@
+Module-driven C macro templates
+==============================
+
+An authoring unit imports a theory directly:
+
+  (use-macros "Arithmetic.module" Macros)
+
+The filename is relative to the authoring file. Imported module files,
+including transitive theory imports, are ordinary make dependencies.
+use-macros appears directly in unit. Includes and C preprocessor macros still
+go to the selected native compiler.
+
+The module uses Cesta's existing Module/Theory/Terms/Equations/Rewrites adapter:
+
+  Module Arithmetic {
+    Theory Macros() {
+      Empty Terms {
+        Twice . Expr ::= "(" "twice-once" Expr ")";
+      }
+      Equations {
+        (Twice x) == (Macro "cesta-macro/1"
+          (Profile "gnu11")
+          (Arguments (Arg x (CType int) "value" (Evaluation "once")))
+          (Result (CType int) "value")
+          (Locals)
+          (Template ("+" (Argument x) (Argument x))));
+      }
+    }
+  }
+
+Terms declares result and argument sorts. The equation supplies a versioned
+contract and a structural template, not a string containing a program.
+Quoted atom heads permit C operators and module-language keywords. String
+and integer AST leaves are additive extensions of Cesta's adapter; this is
+not a claim that the historical metta-venus reader accepts the extension.
+Existing theory composition retains its declared origin profile.
+Macro Terms is a constructor signature interpreted over the existing C
+signature. Argument sorts such as DeclarationSpecifiers may be supplied by
+that target signature. This extraction does not create a standalone textual
+parser for the referenced C sorts.
+
+cesta check-macros Arithmetic.module Macros checks definitions and emits their
+structured contracts. Users add constructors and templates without changing
+the C engine. Ordinary compact forms keep their meanings; a macro cannot
+replace an existing compact head in the same result sort.
+
+Supported contract fields
+-------------------------
+
+Profile is c11 or gnu11. The initial executable profile admits Statement
+macros in C11 and Expr/value macros in GNU C. Portable C11 expression lowering
+and additional syntax-result sorts remain to be admitted.
+
+CType carries compact declaration specifiers and an optional declarator
+template with exactly one TypeSlot:
+
+  (CType int)
+  (CType ("unsigned" long))
+  (CType int ("*" TypeSlot))
+
+The native compiler checks the resulting C types. Value arguments use
+_Generic's value-context type. Addressable arguments compare pointer types,
+retaining qualifications on the designated object. addressable-modifiable
+also requires assignment to be valid. Non-addressable bit-fields do not
+satisfy that contract. syntax arguments are unevaluated template syntax.
+CType object size must be an integer constant expression.
+
+Evaluation "once" evaluates each reached argument once, in declaration order,
+and substitutes its saved value or place. "deferred" requires one template
+occurrence and leaves its evaluation to the surrounding C control flow.
+"repeat" includes an explicit template occurrence count; control flow still
+determines which occurrences execute. "syntax" inserts unevaluated syntax
+and requires the syntax category. These occurrence checks are not a proof
+of arbitrary loop iteration counts or of behavior after nonlocal exits.
+
+Generated native function-like macros prescan each supplied token sequence
+before its use in admission and executable code. A separate result-admission
+helper prescans the body before its type check and executable occurrence.
+This keeps preprocessor effects such as __COUNTER__ from being repeated by
+type checks. Statement and type arguments travel in shielded token tuples;
+the native preprocessor removes those tuple delimiters at their sorted uses.
+These are build-time helpers, not native runtime routines.
+
+Clang's unevaluated-expression warning is suppressed only around generated
+type/category admission expressions. Executable template diagnostics remain
+enabled. Admission adds no runtime operation.
+
+Binding markers
+---------------
+
+  (Locals (Local tmp "ordinary"))
+  (LocalRef "ordinary" tmp)
+  (Capture "ordinary" "caller_name")
+
+LocalRef resolves to a declared slot identity. The definition checker uses
+Cesta's existing C scope program to require one C declaration in the right
+namespace, and rejects undeclared or multiply declared identities.
+ordinary, tag and label binders use that admission. Member binders require
+a record-owner port, which is not implemented yet.
+
+The native driver asks the selected compiler for an identifier inventory using
+-E -dD, with the project's headers and flags, before emitting final fresh names.
+This admission query remains private; exported C retains authored includes and
+macro uses. The expander excludes written, module and admitted native names,
+and emits guards against preprocessor macros with generated names. Arguments
+containing opaque native fragments are refused by this profile. Unmarked
+free expression identifiers in templates are refused; intentional caller
+capture is explicit.
+
+Definition-site ports, cesta-macro/2
+-----------------------------------
+
+Version 2 adds Ports between Profile and Arguments:
+
+  (Ports (NativeSymbol absolute (SystemHeader "stdlib.h")
+           (CType int ("function" TypeSlot int)) "abs"))
+  (DefinitionRef "ordinary" absolute)
+
+A used port includes its declaring header and captures the native C object or
+function at the use-macros import point. The compiler checks its exact pointer
+type with a static assertion. A caller's local declaration cannot redirect the
+saved reference. Preprocessor aliases of the native name are temporarily
+disabled while acquiring that reference, then restored. Unused ports emit no
+header. SystemHeader lookup uses the native compiler's ordinary -I options.
+If an earlier macro changed the native declaration itself, an unavailable or
+incompatible entity is refused by the compiler.
+
+Type parameters and compiler ports, cesta-macro/3
+------------------------------------------------
+
+Version 3 has the same outer fields as version 2. A DeclarationSpecifiers hole
+with syntax category and syntax evaluation may be used as (TypeArgument t)
+in CType or a template type position. Its use-site syntax is checked at that
+sort; the native compiler checks the instantiated type constraints. For
+example (CType (TypeArgument t) ("*" TypeSlot)) is a pointer to the supplied
+type. Type arguments are not executable expression occurrences. They cannot
+parameterize an import-level NativeSymbol port.
+
+GNU profiles may declare (CompilerBuiltin conversion "__builtin_add_overflow")
+in Ports and reference it with (CompilerRef conversion). This explicitly
+denotes a compiler intrinsic rather than a caller binding or an addressable
+native function. Native __has_builtin admission and preprocessor-name guards
+reject unavailable or macro-redefined intrinsics.
+
+This is partial hygiene admission. A finite native inventory is not a proof
+about arbitrary preprocessor programs that manufacture identifiers depending
+on the newly chosen spelling. Record-owner ports and the full native printing
+correspondence remain open.
+
+Formal and test boundary
+------------------------
+
+MacroTemplateNames proves structural symbol origin, local-marker reflection
+under independent freshness, and preservation of exact named-context binding
+positions across fresh frames. Kernel admission checks the actual template
+slot bounds and occurrence counts from exported module data.
+MacroDefinitionPorts proves acquisition and preservation of definition-site
+declaration identities under independently admitted caller freshness. Actual
+port registries and DefinitionRef requests are kernel checked separately.
+
+The native implementation, C type/category checks, ordered side effects and
+object equivalence are tested separately with GCC and Clang. These results
+do not prove the whole C compiler or establish the remaining hygiene joins.

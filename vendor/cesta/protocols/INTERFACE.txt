@@ -1,0 +1,300 @@
+Executable protocols
+--------------------
+
+A protocol defines the control flow between native C hooks. It orders admission,
+preparation, effects and ownership transfer, then emits an ordinary inline C
+function. Hooks implement the domain-specific work; the protocol makes their
+prerequisites and the exits of that work explicit.
+
+  cesta protocol check MODULE THEORY
+  cesta protocol plan MODULE THEORY -o PLAN
+  cesta protocol export MODULE THEORY -o HEADER --plan PLAN --depfile DEPS
+  cesta protocol verify MODULE THEORY -o HEADER --plan PLAN
+
+verify regenerates and compares both artifacts byte for byte. It refuses changed
+output even when the changed text is valid C. Exported definitions must occur
+once per translation unit. Repeated protocol names are diagnosed, including
+names introduced by separate imported modules; a later definition never silently
+replaces or hides an earlier definition.
+
+Declaration
+-----------
+
+  Module Example {
+    Theory Protocols() {
+      Empty Equations {
+        (run) == (Protocol "cesta-protocol/1"
+          (Context CallContext)
+          (Hooks
+            (Hook arity call_arity guard (Requires) (Uses) (Proves exact))
+            (Hook prepare call_prepare prepare
+              (Requires exact) (Uses frame) (Proves ready))
+            (Hook execute call_execute effect
+              (Requires ready) (Uses frame) (Proves)))
+          (Resources (Resource frame frame_acquire frame_release frame_transfer
+            (AcquireRequires exact) (TransferRequires ready)))
+          (Entry (Facts) (Owns))
+          (Body
+            (Call arity
+              (Acquire frame
+                (Call prepare
+                  (Call execute
+                    (Release frame (Return answered))
+                    (Release frame (Return raised)))
+                  (Release frame (Return declined)))
+                (Return resource_failure))
+              (Return declined)))
+          (Checks (Fact exact call_has_exact_arity)
+                  (Fact ready call_is_ready)
+                  (Own frame frame_is_owned)));
+      }
+    }
+  }
+
+The context is a C typedef. A Boolean hook takes Context * and returns bool.
+Acquire has that signature too. Release and Transfer take Context * and return
+void. Define the context and native functions before including the output.
+Native declarations must be compatible with <stdint.h> and, for checked mode,
+<stdio.h> and <stdlib.h>; include these before defining the native hooks. The
+reader refuses callable names belonging to the C11 declarations used by these
+headers, including diagnostic functions/streams and integer typedefs. Platform
+extensions and the rest of the surrounding C namespace remain the compiler's
+responsibility. Contexts may use an existing standard typedef.
+
+guard inspects eligibility. prepare performs reversible preparation. effect may
+commit an observable change, on either its true or false result. Requires lists
+facts established on this path; Proves adds facts on the true path. Uses lists
+resources whose tokens must be owned while the hook runs. An optional final
+(Invalidates FACT...) list forgets certificates after that hook, on both true
+and false branches. Requires is checked before forgetting; Proves then adds
+certificates on the true branch. A write that may partly succeed before
+reporting failure must invalidate its dependencies on that path too.
+
+Invalidation forgets knowledge. It does not assert a false validator result,
+change memory permissions, revoke another borrow or destroy an older immutable
+snapshot. A subsequent hook must re-establish any required currentness fact.
+Hooks must preserve certificates they do not invalidate; resource operations
+must preserve certificates. Describe a mutating operation as a hook so its
+invalidation is explicit. Native hook conformance remains an obligation.
+
+Current.module demonstrates a mutation followed by revalidation before
+publication. Omitting that revalidation is refused on either Boolean branch.
+
+Statements
+----------
+
+  (Return OUTCOME)
+  (Call HOOK TRUE-BRANCH FALSE-BRANCH)
+  (Acquire RESOURCE ACQUIRED-BRANCH FAILURE-BRANCH)
+  (Release RESOURCE NEXT)
+  (Transfer RESOURCE NEXT)
+
+Outcomes are declined, answered, done, raised, suspended, resource_failure and
+engine_failure. done represents an ordinary completed computation, including an
+empty answer. A failed match is not an allocation failure. The consuming runtime
+chooses its explicit mapping from these outcomes to its own statuses.
+
+Acquire succeeds with one new token; failure adds none. Release consumes the
+token. Transfer consumes it and publishes responsibility to a receiving owner.
+AcquireRequires and TransferRequires list facts required at those calls. Both
+lists may be omitted together when neither native operation needs extra facts.
+Declaring them prevents allocation before eligibility or publication before a
+reservation has been validated. Release needs the live token and stays available
+for cleanup even when a publication prerequisite fails.
+All returns, including failure and suspension, must discharge every token.
+Entry Owns can describe tokens supplied to a resumed boundary.
+
+An optional (ExitRequires (OUTCOME FACT...) ...) clause declares certificates
+required at each listed return. It may accompany Checks in either order.
+Outcomes cannot repeat. Static checking requires the certificates on every
+return path; checked execution re-observes them immediately before returning.
+For example, (ExitRequires (suspended wake_registered) (answered result_ready))
+refuses a pause without an established wake registration and an answer without
+a completed result. Existing protocols without the clause retain their policy.
+
+CallOnce.module demonstrates a shared logical call. Its effect requires a
+permit which that effect invalidates on both Boolean outcomes. Later readers
+must observe the saved result or establish a wake registration. The adapter
+owns the persistent call identity, consumed-permit state and wake registry;
+the generated protocol does not add a scheduler. Registration must bind the
+same call and reader to a live completion source or finite timeout. A registered
+obligation alone does not prove that an arbitrary scheduler eventually runs it.
+
+Both effect calls and Transfer prohibit a later declined return. Acquire followed
+by Release can still decline if the host implements it reversibly. A nested
+protocol must inherit irreversible history from its caller; separately checking
+two functions from an empty entry does not establish safe composition.
+
+Rejected examples include preparation before its required arity fact, using a
+resource before acquiring it, acquiring it twice, releasing it twice, leaking it
+on failure, or transferring it before declining. Unknown hook kinds, outcomes,
+resource names and repeated native identifiers are also refused.
+
+Authoring and ordinary C
+-----------------------
+
+Inside a native-c/1 document, import the same protocol:
+
+  (cesta native-c/1 compact-c/2
+    (unit
+      (include "local_hooks.h")
+      (use-protocols "Example.module" Protocols)
+      (fn int invoke ((CallContext (* context)))
+        (return (== (call run context) run_answered)))))
+
+cesta cc compiles the document with the selected C compiler. cesta export-c
+writes its ordinary C representation and accepts --plan to record imported
+protocol plans. The module filename is relative to the document. C compiler
+dependency output includes the imported modules. Protocol imports occur at
+translation-unit scope and may coexist with use-macros.
+
+A project can keep the .cesta and .module definitions as its authoring source and
+check in the generated C for users who build with GCC or Clang alone. Its optional
+regeneration check needs Cesta; its ordinary C build does not need Lean or Cesta's
+qualification suite.
+
+Checked execution and decline counters
+--------------------------------------
+
+The optional final Checks clause maps facts and resource ownership to pure
+Boolean predicates of Context *. Predicates observe the current state; they
+must not prepare arguments, allocate, retain, release, mutate the context or
+consume an external reply. They are distinct from the ordinary native hooks.
+Every mapping must name a declared fact or resource, and mappings cannot repeat.
+
+Define run_CHECKED to 1 before including a generated protocol named run to enable
+validation. It checks Entry facts and each resource's declared initial ownership,
+then checks each hook's Requires and Uses before calling it. Acquisition checks
+its prerequisites and absence of ownership, then checks ownership against the
+Boolean result. Release and Transfer require ownership, and must relinquish it.
+Transfer also checks TransferRequires. Every return checks that no pending token
+remains. A failed check prints the protocol, fact/resource and expected state,
+then aborts before executing its continuation. NDEBUG does not disable this mode.
+Missing required validators make checked compilation fail explicitly. Omitting
+Checks remains supported for ordinary execution.
+
+Facts are re-observed where they are required; guards are never replayed to
+produce diagnostics. This catches a changed prerequisite before its next use,
+but does not make arbitrary native predicates truthful or memory-safe.
+
+Every declined return has a named run_decline_reason: run_declined_at_entry, or
+run_declined_after_NATIVE_true/false for the latest Boolean control decision.
+Void cleanup preserves that reason. A declined return records one event; other
+returns record none. These are reasons for declining a route, not necessarily
+the semantic cause of a failure inside the native hook.
+
+By default, counting is disabled and no counter storage is allocated. To use the
+generated saturating uint64_t helper with a private counter bank:
+
+  struct run_counters;
+  typedef struct CallContext {
+      struct run_counters *diagnostics;
+      /* application fields */
+  } CallContext;
+  #define run_COUNT_DECLINE(ctx, reason) \
+      run_count_decline((ctx)->diagnostics, reason)
+  #include "run.generated.h"
+
+After inclusion, run_counters is a complete type. Its declines array is indexed
+by run_decline_reason, with run_decline_count entries (or one unused slot when
+no branch declines). The helper exists when counting is enabled and the protocol
+has a decline. It ignores a null bank or invalid index and saturates at
+UINT64_MAX. For the counted model, supply a valid private bank and use this
+helper exactly once per macro invocation. A custom override's effects are not
+covered by that model. Shared banks need synchronization supplied by the caller;
+ordinary counter writes are not atomic. Checked mode and counting are separate.
+
+With both disabled, focused controls require byte-identical complete objects
+against ordinary C at -O0 and -O2 under GCC and Clang.
+
+Evidence and boundary
+---------------------
+
+The exported plan records the authored protocol and an independently emitted
+target tree of Return, IfCall and VoidCall. MeTTapedia's ExecutableProtocol model
+checks the protocol and equality of that target with its separate lowering.
+The source and target interpreters are independent. The simulation theorem
+preserves the exact result, arbitrary host state, ordered repeated native calls,
+Boolean replies consumed and the unconsumed suffix.
+
+Instrumentation is recorded separately, including its validator mappings and
+the actual Validate/Tick target. Missing mappings produce Unavailable rather
+than a checked target. ExecutableProtocolInstrumentation and its correctness
+module independently lower and interpret these nodes. Successful checked
+execution projects to the same ordinary execution; a failed validation stops
+before its continuation. Disabled nodes perform no observations or counter
+updates. Counter state is separate from the host state, and the laws distinguish
+one decline event from its saturating numeric update. The admission gate checks
+actual emitted instrumentation against this lowering and refuses changed
+validators, expectations, branches, tick reasons, missing checks and extra ticks.
+
+ExecutableProtocolSafety proves prerequisite and ownership discipline on every
+enabled trace, discharged tokens at every return and absence of publication on
+decline. ExecutableProtocolComposition proves finite continuation substitution,
+trace/state concatenation and additive event charges, retaining prior charges
+on failure and suspension. Concrete token handoff requires an explicit host
+ownership relation and conformance to it. Equal resource names are not evidence
+that two boundaries transfer the same physical owner.
+
+test-protocol-admission has the kernel decide actual recorded plans and reject
+altered targets. test-protocols independently interprets authored declarations
+and compares outcomes, host state and ordered traces with compiled exports under
+GCC and Clang. It also tests authoring, dependency output and malformed inputs.
+
+The model does not establish native hook purity, truth of native facts, physical
+token exclusivity, allocator behavior, printed-C fidelity or compiler correctness.
+Those remain implementation obligations. A declaration cannot make an arbitrary
+C handler obey them. Event charges are a specified accounting observation, not a
+claim about physical instructions, wall time, retained bytes or termination of a
+native hook. Protocol bodies are finite; hooks may still diverge or suspend.
+
+Operation contracts describe operation footprints, demand and policy. Executable
+protocols define sequencing. There is no automatic inference that a hook obeys
+an operation declaration, and an unknown footprint never establishes purity.
+
+Bounded iteration
+-----------------
+
+  (Loop 64 BODY EXHAUSTED)
+  (Loop (Limit budget) BODY EXHAUSTED)
+  (Continue)
+
+Loop snapshots its bound once and executes BODY at most that many times.
+Continue starts the next iteration of the nearest enclosing loop. Return exits
+the protocol. Exhaustion executes EXHAUSTED; that branch is part of the checked
+protocol, so timeout cleanup and its outcome are explicit. Nested loops are
+supported. Continue outside a loop is refused.
+
+A literal is a canonical decimal integer in the uint64_t range. A field bound
+names a nonvolatile uint64_t (or const uint64_t) context member; generated C
+checks the actual member type. A hook changing that member does not change the
+snapshot. The exporter emits a countdown, not a copy of BODY for every step.
+
+Every Continue must preserve the loop entry's exact set of resource tokens and
+at least its facts. It cannot silently drop a pending request or DMA buffer.
+The conservative checker treats entering a loop as committed history, even
+when its bound is zero; declining after a loop is refused. Exhaustion and all
+other returns must discharge pending tokens. The bound counts iterations,
+not elapsed time or the internal work of a native hook. Bounded completion
+therefore requires the hooks themselves to return.
+
+Checked mode re-observes entry facts and ownership at Continue. A freestanding
+program may define run_CHECK_FAILURE(ctx, kind, id, expected) before importing
+the protocol. The hook must stop execution; if it returns, generated code
+remains in a nonreturning loop rather than executing an unchecked continuation.
+Without an override, the default prints the failed check and aborts. Validators
+must be pure and truthful in either configuration.
+
+protocols/Wait.module gives a bounded request wait with explicit transfer on
+completion and release on failure or timeout. A DMA timeout instead commonly
+transfers the obligation to a failed-device quarantine: timing out is not proof
+that hardware has stopped accessing its buffer.
+
+The bounded source calculus and independently defined call/branch/countdown
+calculus have equal executions, including calls, results, state and replies.
+Lean also proves checker equivalence to the inductive formation rules, the
+iteration bound, owner preservation at continuation and successful checked-run
+erasure. tests/protocol_loop_admission.py checks the actual recorded ordinary
+and instrumented targets and refuses altered targets. Native hooks, C text
+printing and compilation remain separate obligations; this is not a proof of
+arbitrary C hooks or a general borrow checker.
