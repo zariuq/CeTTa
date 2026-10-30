@@ -211,6 +211,21 @@ bool petta_semantics_count_use_children_executable(SymbolId head);
  * The shape is syntactic; the machine decides the rest when it runs. */
 bool petta_semantics_match_existence_observer_shape(
     const Atom *expression, SymbolId primary_reify);
+/* An existence observer in any of its spellings: `(== () R)` or
+ * `(== R ())`, R `(reify (once M))` or `(reify M)`; `(== (size-atom R) 0)`
+ * or `(== 0 (size-atom R))`; and each with `!=`, which observes the
+ * negation.  M is `(match S P T)`; a collection of M's answers is empty
+ * exactly when M has no row, whatever its template answers. */
+typedef struct {
+    CettaExprIndex observed;   /* the side holding the reification */
+    bool counted;              /* the side is (size-atom R), the other 0 */
+    bool once;                 /* R reifies (once M) */
+    bool negated;              /* the comparison is `!=` */
+    const Atom *match;
+} PeTTaExistenceView;
+bool petta_semantics_existence_view(const Atom *expression,
+                                    SymbolId primary_reify,
+                                    PeTTaExistenceView *view);
 bool petta_semantics_intrinsic_partial_arity(
     SymbolId head, CettaExprLen *arity);
 
@@ -250,6 +265,10 @@ PeTTaNamedArity petta_semantics_registered_named_arity(
 Atom *petta_semantics_success_value(Arena *arena);
 bool petta_semantics_library_reference(
     const Atom *atom, PeTTaLibraryReference *reference);
+/* (str json) is a batch of literal import specifications; (library str)
+ * remains one descriptor. No member is evaluated to discover an import. */
+bool petta_semantics_import_batch(const Atom *atom,
+    Atom *const **members, CettaExprLen *count);
 bool petta_semantics_library_path_effect(
     const Atom *atom, PeTTaLibraryPathEffect *effect);
 

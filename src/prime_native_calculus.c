@@ -63,6 +63,8 @@ typedef struct {
     const TermUniverse *universe;
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    /* A collection may have freed the entries the cached values name. */
+    uint64_t universe_collection_epoch;
     AtomId source_program_id;
     const CettaPrimeTypedValueV1 *program;
     const CettaPrimeTypedValueV1 *denotation;
@@ -199,6 +201,7 @@ static bool prime_native_hyp_admission_cache_find(
             entry->universe != universe ||
             entry->universe_instance_id != universe->instance_id ||
             entry->universe_storage_epoch != universe->storage_epoch ||
+            entry->universe_collection_epoch != universe->collection_epoch ||
             entry->source_program_id != source_program_id) {
             continue;
         }
@@ -284,6 +287,7 @@ static void prime_native_hyp_admission_cache_store(
             .universe = universe,
             .universe_instance_id = universe->instance_id,
             .universe_storage_epoch = universe->storage_epoch,
+            .universe_collection_epoch = universe->collection_epoch,
             .source_program_id = source_program_id,
             .program = retained_program,
             .denotation = retained_denotation,

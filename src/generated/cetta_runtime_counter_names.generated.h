@@ -1118,6 +1118,17 @@ static const char *const CETTA_RUNTIME_COUNTER_NAMES[CETTA_RUNTIME_COUNTER_COUNT
   [CETTA_RUNTIME_COUNTER_DENSE_RELATION_ADMISSION] = "dense-relation-admission",
   [CETTA_RUNTIME_COUNTER_DENSE_RELATION_WORD] = "dense-relation-word",
   [CETTA_RUNTIME_COUNTER_NATIVE_QUERY_EFFECT_INSTANCE] = "native-query-effect-instance",
+  [CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COLLECTION] = "term-universe-collection",
+  [CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COLLECTION_INHIBITED] = "term-universe-collection-inhibited",
+  [CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COLLECTION_ROOT] = "term-universe-collection-root",
+  [CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COLLECTION_LIVE] = "term-universe-collection-live",
+  [CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COLLECTION_DEAD] = "term-universe-collection-dead",
+  [CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COLLECTION_DEAD_BYTES] = "term-universe-collection-dead-bytes",
+  [CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COLLECTION_DEAD_PEAK] = "term-universe-collection-dead-peak",
+  [CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COLLECTION_RECLAIMED] = "term-universe-collection-reclaimed",
+  [CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_COLLECTION_RECLAIMED_BYTES] = "term-universe-collection-reclaimed-bytes",
+  [CETTA_RUNTIME_COUNTER_ATOM_COMPARE_PAIR] = "atom-compare-pair",
+  [CETTA_RUNTIME_COUNTER_NATIVE_QUERY_BITS_LEG] = "native-query-bits-leg",
 };
 
 #endif

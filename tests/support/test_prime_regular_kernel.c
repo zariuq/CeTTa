@@ -1529,6 +1529,43 @@ int main(int argc, char **argv) {
               CETTA_PRIME_REGULAR_KERNEL_ADMISSION_ADMITTED &&
               checking_generation_admission.checking,
           "checking generation fixture first admits a current judgment");
+    /* A real storage reset changes both epochs. Isolate them as well so
+     * neither currentness guard can hide a missing check for the other. */
+    for (unsigned dimension = 0u; dimension < 2u; dimension++) {
+        CHECK(cetta_prime_regular_kernel_admitted_conversion_v1_is_current(
+                  generation_admission.conversion, &foreign_space,
+                  cetta_prime_regular_kernel_closed_conversion_profile_v1) &&
+              cetta_prime_regular_kernel_admitted_synthesis_v1_is_current(
+                  synthesis_generation_admission.synthesis, &foreign_space,
+                  cetta_prime_regular_kernel_closed_synthesis_profile_v1) &&
+              cetta_prime_regular_kernel_admitted_checking_v1_is_current(
+                  checking_generation_admission.checking, &foreign_space,
+                  cetta_prime_regular_kernel_closed_checking_profile_v1),
+              "independent epoch controls start with current admissions");
+        uint64_t *epoch = dimension == 0u
+            ? &foreign_universe.storage_epoch : &foreign_universe.collection_epoch;
+        uint64_t saved_epoch = *epoch;
+        (*epoch)++;
+        CHECK(!cetta_prime_regular_kernel_admitted_conversion_v1_is_current(
+                  generation_admission.conversion, &foreign_space,
+                  cetta_prime_regular_kernel_closed_conversion_profile_v1),
+              dimension == 0u
+                  ? "a replaced TermUniverse storage generation invalidates admission independently of collection"
+                  : "a replaced TermUniverse collection epoch invalidates admission independently of storage");
+        CHECK(!cetta_prime_regular_kernel_admitted_synthesis_v1_is_current(
+                  synthesis_generation_admission.synthesis, &foreign_space,
+                  cetta_prime_regular_kernel_closed_synthesis_profile_v1),
+              dimension == 0u
+                  ? "replaced TermUniverse storage generation invalidates synthesis independently of collection"
+                  : "replaced TermUniverse collection epoch invalidates synthesis independently of storage");
+        CHECK(!cetta_prime_regular_kernel_admitted_checking_v1_is_current(
+                  checking_generation_admission.checking, &foreign_space,
+                  cetta_prime_regular_kernel_closed_checking_profile_v1),
+              dimension == 0u
+                  ? "replaced TermUniverse storage generation invalidates checking independently of collection"
+                  : "replaced TermUniverse collection epoch invalidates checking independently of storage");
+        *epoch = saved_epoch;
+    }
     term_universe_set_persistent_arena(
         &foreign_universe, &foreign_persistent);
     CHECK(!cetta_prime_regular_kernel_admitted_conversion_v1_is_current(

@@ -785,7 +785,7 @@ Feature-scene example
 Mettapedia's metta/gslt/module/FeatureScene.module defines a small typed scene
 language. Shapes and colours form extensional objects, and scenes are ordered
 object pairs. Its glyph aliases explicitly ground all four icons. The canonical
-surface is unambiguous and is not claimed to recover every convention of the
+syntax is unambiguous and is not claimed to recover every convention of the
 original illustrative glyph notation.
 
 Languages/FeatureScene/Basic.lean proves variable-renaming semantics, reduction
@@ -2690,12 +2690,12 @@ closed declaration instance per named hole and preserves duplicate rows.
 
 Prepare fields before wrapping them in a data constructor. In particular,
 an unevaluated cons-atom expression is syntax, not a completed sequence.
-The public filler performs vocabulary preparation and surface-skeleton
+The public filler performs vocabulary preparation and input-skeleton
 normalization before entering its structural generator. That generator has
 no space query or arbitrary-input metatype reflection. The existing owned
 FIFO admission is unchanged.
 Untyped skeleton filling snapshots primitive occurrences before the same
-surface normalization. Existing space-based canonical metarule queries keep
+syntax normalization. Existing space-based canonical metarule queries keep
 their original native match route. First-success controls check that a failed
 earlier candidate does not hide a later consistent predicate.
 

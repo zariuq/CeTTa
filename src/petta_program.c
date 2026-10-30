@@ -387,6 +387,9 @@ typedef struct {
     PettaProgramInferredSignature *inferred_signatures;
     size_t inferred_signature_len;
     size_t inferred_signature_cap;
+    /* The universe the signatures are interned in, which collects them
+     * only past the program's listing (petta_program_signature_roots). */
+    TermUniverse *signature_universe;
     uint64_t inferred_signature_revision;
     bool inferred_signatures_valid;
     CettaNikDirectAuthorityStampV1 inferred_signature_authority;
@@ -447,6 +450,10 @@ typedef struct {
     const PettaPlanNode *plan;
 } PettaPlanInternEntry;
 
+static void petta_program_signature_roots(const TermUniverse *universe,
+                                          TermUniverseRootVisit visit,
+                                          void *visit_context, void *ctx);
+
 struct PettaProgram {
     unsigned admitted_rule_forms;
     bool refresh_callability;
@@ -465,6 +472,11 @@ struct PettaProgram {
     size_t space_len;
     size_t space_cap;
     PettaProgramAnalysisState *analysis;
+    /* The universes holding this program's inferred signatures, each of
+     * which lists them from the program at a collection. */
+    TermUniverse **signature_universes;
+    size_t signature_universe_len;
+    size_t signature_universe_cap;
     PettaCallabilityDomain predeclared_callability;
     uint64_t predeclared_generation;
     /* Callability is program knowledge: the heads of the equation
@@ -2674,6 +2686,145 @@ static bool petta_plan_assign_source_positions(PettaPlanNode *root) {
     return true;
 }
 
+static size_t petta_plan_occurrences(const Atom *atom, const Atom *var) {
+    if (!atom)
+        return 0u;
+    if (atom->kind == ATOM_VAR)
+        return var_id_eq(atom->var_id, var->var_id) ? 1u : 0u;
+    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
+        return 0u;
+    size_t count = 0u;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++)
+        count += petta_plan_occurrences(atom->expr.elems[i], var);
+    return count;
+}
+
+/* ATOM's distinct variables added to SEEN, which holds *COUNT of at most
+ * CAP; false past CAP. */
+static bool petta_plan_variables(const Atom *atom, const Atom **seen,
+                                 size_t cap, size_t *count) {
+    if (atom->kind == ATOM_VAR) {
+        for (size_t i = 0u; i < *count; i++) {
+            if (var_id_eq(seen[i]->var_id, atom->var_id))
+                return true;
+        }
+        if (*count == cap)
+            return false;
+        seen[(*count)++] = atom;
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
+        return true;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (!petta_plan_variables(atom->expr.elems[i], seen, cap, count))
+            return false;
+    }
+    return true;
+}
+
+/* VALUE when it is `(collapse M)`, or the collapse inside
+ * `(unique-atom (collapse M))`, which reads the same collection; NULL
+ * otherwise. */
+static const Atom *petta_plan_collapse_of(const Atom *value) {
+    if (value->kind == ATOM_EXPR && value->expr.len == 2u &&
+        atom_is_symbol_id(value->expr.elems[0], g_builtin_syms.unique_atom))
+        value = value->expr.elems[1];
+    return value->kind == ATOM_EXPR && value->expr.len == 2u &&
+                   atom_is_symbol_id(value->expr.elems[0],
+                                     g_builtin_syms.collapse)
+        ? value : NULL;
+}
+
+static bool petta_plan_let_of_collapse(const Atom *atom) {
+    return atom->kind == ATOM_EXPR && atom->expr.len == 4u &&
+        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.let) &&
+        atom->expr.elems[1]->kind == ATOM_VAR &&
+        petta_plan_collapse_of(atom->expr.elems[2]);
+}
+
+/* PAT of BODY, `(let PAT (superpose VAR) E)` alone or under a collapse
+ * or its count; NULL otherwise. */
+static const Atom *petta_plan_spread_pattern(const Atom *body,
+                                             const Atom *var) {
+    if (body->kind == ATOM_EXPR && body->expr.len == 2u &&
+        atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.size_atom))
+        body = body->expr.elems[1];
+    if (body->kind == ATOM_EXPR && body->expr.len == 2u &&
+        atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.collapse))
+        body = body->expr.elems[1];
+    if (body->kind != ATOM_EXPR || body->expr.len != 4u ||
+        !atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.let))
+        return NULL;
+    const Atom *source = body->expr.elems[2];
+    return source->kind == ATOM_EXPR && source->expr.len == 2u &&
+               atom_is_symbol_id(source->expr.elems[0],
+                                 g_builtin_syms.superpose) &&
+               source->expr.elems[1]->kind == ATOM_VAR &&
+               var_id_eq(source->expr.elems[1]->var_id, var->var_id)
+        ? body->expr.elems[1] : NULL;
+}
+
+void petta_plan_mark_let_scope(const Atom *root, const Atom *lhs,
+                               const Atom *let, PettaPlanNode *plan) {
+    if (!plan)
+        return;
+    plan->binding_local = false;
+    plan->value_variables = 0u;
+    if (!root || !let || !petta_plan_let_of_collapse(let))
+        return;
+    const Atom *var = let->expr.elems[1];
+    const Atom *value = let->expr.elems[2];
+    const Atom *body = let->expr.elems[3];
+    plan->binding_local = petta_plan_occurrences(root, var) ==
+        petta_plan_occurrences(let, var);
+    /* A body spreading the list by the collected template itself meets
+     * each element as the match left that template's variables. */
+    const Atom *collected = petta_plan_collapse_of(value)->expr.elems[1];
+    const Atom *template = collected->kind == ATOM_EXPR &&
+            collected->expr.len == 4u &&
+            atom_is_symbol_id(collected->expr.elems[0], g_builtin_syms.match)
+        ? collected->expr.elems[3] : NULL;
+    const Atom *pattern = petta_plan_spread_pattern(body, var);
+    bool spread_by_template = template && pattern &&
+        atom_eq((Atom *)template, (Atom *)pattern);
+    const Atom *seen[64];
+    size_t count = 0u;
+    if (!petta_plan_variables(value, seen, 64u, &count))
+        return;
+    size_t own = 0u;
+    for (size_t i = 0u; i < count; i++) {
+        size_t in_value = petta_plan_occurrences(value, seen[i]);
+        size_t in_root = petta_plan_occurrences(root, seen[i]);
+        if (in_root == in_value ||
+            (spread_by_template &&
+             petta_plan_occurrences(template, seen[i]) &&
+             in_root == in_value + petta_plan_occurrences(body, seen[i]))) {
+            own++;
+            continue;
+        }
+        size_t in_lhs = petta_plan_occurrences(lhs, seen[i]);
+        if (!in_lhs || in_root != in_value + in_lhs)
+            return;
+    }
+    plan->value_variables = (uint8_t)(own + 1u);
+}
+
+/* The let scopes of ATOM, a part of ROOT, an equation whose left side is
+ * LHS, read alongside ATOM's plan. */
+static void petta_plan_mark_scopes(const Atom *root, const Atom *lhs,
+                                   const Atom *atom, PettaPlanNode *plan,
+                                   uint32_t depth) {
+    if (!atom || !plan || atom->kind != ATOM_EXPR || depth > 256u ||
+        plan->child_count != atom->expr.len || !atom_has_vars(atom))
+        return;
+    if (petta_plan_let_of_collapse(atom))
+        petta_plan_mark_let_scope(root, lhs, atom, plan);
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++)
+        petta_plan_mark_scopes(root, lhs, atom->expr.elems[i],
+                               (PettaPlanNode *)&plan->children[i],
+                               depth + 1u);
+}
+
 static PettaPlanNode *petta_plan_build_in(
     PettaProgram *program, Arena *plans,
     const PettaCallabilityDomain *callability, Atom *root,
@@ -2755,9 +2906,10 @@ static PettaPlanNode *petta_plan_build_in(
             continue;
         }
         Atom *head_atom = atom->expr.elems[0];
+        PeTTaForm form = PETTA_FORM_NONE;
         if (head_atom->kind == ATOM_SYMBOL) {
             SymbolId head = head_atom->sym_id;
-            PeTTaForm form = petta_semantics_form(head);
+            form = petta_semantics_form(head);
             if (form == PETTA_FORM_VALUE_LET)
                 form = PETTA_FORM_LET;
             node->contains_cardinality_call =
@@ -2835,9 +2987,6 @@ static PettaPlanNode *petta_plan_build_in(
             node->output = PETTA_PLAN_OUTPUT_CONSTRUCTOR;
         } else if (head_atom->kind == ATOM_SYMBOL) {
             SymbolId head = head_atom->sym_id;
-            PeTTaForm form = petta_semantics_form(head);
-            if (form == PETTA_FORM_VALUE_LET)
-                form = PETTA_FORM_LET;
             CettaExprLen nargs = atom->expr.len - 1u;
             if (head == g_builtin_syms.quote && nargs == 1u) {
                 node->output = PETTA_PLAN_OUTPUT_QUOTED_CHILD;
@@ -2912,6 +3061,12 @@ static PettaPlanNode *petta_plan_build_in(
         petta_plan_compile_region_hole_programs(
             program, root, plan);
     }
+    /* An equation is a scope of its own; a translated fragment may share
+     * its variables with what surrounds it. */
+    Atom *lhs = NULL;
+    if (!translation &&
+        petta_program_equation_view(program, root, &lhs, NULL, NULL))
+        petta_plan_mark_scopes(root, lhs, root, plan, 0u);
     return plan;
 }
 
@@ -2931,6 +3086,17 @@ static const PettaPlanNode *petta_plan_build(
  * call-free subtree, then replaces each with one VALUE place.  A value held
  * only by its parent (for example quote's argument) is never certified for a
  * different context. */
+static PettaPlanNode petta_plan_value_projection(const PettaPlanNode *source) {
+    return (PettaPlanNode){
+        .role = PETTA_PLAN_VALUE,
+        .computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN,
+        .output = PETTA_PLAN_OUTPUT_VALUE,
+        .literal_case_default = source && source->literal_case_default,
+        .source_position = source ? source->source_position : 0u,
+        .source_debit = source ? source->source_debit : 0u,
+    };
+}
+
 static bool petta_plan_collapse_values(
         PettaProgram *program, Atom *root_source, PettaPlanNode *root,
         const PettaTranslationEnvironment *environment) {
@@ -2961,14 +3127,7 @@ static bool petta_plan_collapse_values(
         }
         if (item.finish) {
             petta_translation_value_keep(program, environment, source);
-            *node = (PettaPlanNode){
-                .role = PETTA_PLAN_VALUE,
-                .computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN,
-                .output = PETTA_PLAN_OUTPUT_VALUE,
-                .literal_case_default = node->literal_case_default,
-                .source_position = node->source_position,
-                .source_debit = node->source_debit,
-            };
+            *node = petta_plan_value_projection(node);
             continue;
         }
         if (node->role == PETTA_PLAN_VALUE) {
@@ -2977,14 +3136,7 @@ static bool petta_plan_collapse_values(
                  petta_semantics_is_canonical_closure(source))) {
                 petta_translation_value_keep(program, environment, source);
             }
-            *node = (PettaPlanNode){
-                .role = PETTA_PLAN_VALUE,
-                .computation.control = CETTA_CONTROL_RETURN_VALUE_PLAN,
-                .output = PETTA_PLAN_OUTPUT_VALUE,
-                .literal_case_default = node->literal_case_default,
-                .source_position = node->source_position,
-                .source_debit = node->source_debit,
-            };
+            *node = petta_plan_value_projection(node);
             continue;
         }
         if (source->kind != ATOM_EXPR ||
@@ -3216,7 +3368,7 @@ static bool petta_program_grow_interned_plans(PettaProgram *program) {
 }
 
 static const PettaPlanNode *petta_program_intern_plan(
-    PettaProgram *program, const PettaPlanNode *built) {
+    PettaProgram *program, const PettaPlanNode *built, bool shared_children) {
     uint64_t hash = 0u;
     if (!petta_plan_content_hash(built, &hash))
         return NULL;
@@ -3239,8 +3391,24 @@ static const PettaPlanNode *petta_program_intern_plan(
         }
         slot = (slot + 1u) & mask;
     }
-    const PettaPlanNode *copy =
-        petta_plan_copy_into(&program->plans, built);
+    const PettaPlanNode *copy = NULL;
+    if (shared_children) {
+        /* The normalized children already belong to this immutable pool.
+         * Copy their descriptors, retaining their shared descendants. */
+        PettaPlanNode *root = arena_alloc(&program->plans, sizeof(*root));
+        PettaPlanNode *children = built->child_count ? arena_alloc(
+            &program->plans, sizeof(*children) * (size_t)built->child_count) : NULL;
+        if (root && (!built->child_count || children)) {
+            *root = *built;
+            if (built->child_count)
+                memcpy(children, built->children,
+                    sizeof(*children) * (size_t)built->child_count);
+            root->children = children;
+            copy = root;
+        }
+    } else {
+        copy = petta_plan_copy_into(&program->plans, built);
+    }
     if (!copy)
         return NULL;
     program->interned_plans[slot] = (PettaPlanInternEntry){
@@ -3249,6 +3417,86 @@ static const PettaPlanNode *petta_program_intern_plan(
     };
     program->interned_plan_len++;
     return copy;
+}
+
+__attribute__((cold, noinline)) const PettaPlanNode *petta_program_project_computation(
+        PettaProgram *program, const PettaPlanNode *source,
+        CettaComputationPlan computation, bool dynamic, bool relation_head_admitted,
+        const PettaPlanNode *const *children, CettaExprLen child_count) {
+    if (!program || (child_count && !children) ||
+        !cetta_expr_len_mul_fits_size(child_count, sizeof(PettaPlanNode)))
+        return NULL;
+    CettaControlOperation operation = computation.control.operation;
+    if (operation != CETTA_CONTROL_RETURN_VALUE && operation != CETTA_CONTROL_CONSTRUCT &&
+        operation != CETTA_CONTROL_INVOKE && operation != CETTA_CONTROL_SEQUENCE &&
+        operation != CETTA_CONTROL_BRANCH && operation != CETTA_CONTROL_FAILURE)
+        return NULL;
+    PettaPlanNode node = {
+        .role = operation == CETTA_CONTROL_RETURN_VALUE ? PETTA_PLAN_VALUE
+            : operation == CETTA_CONTROL_CONSTRUCT ? PETTA_PLAN_DATA
+            : dynamic ? PETTA_PLAN_DYNAMIC_CALL : PETTA_PLAN_STATIC_CALL,
+        .computation = computation,
+        .source_position = source ? source->source_position : 0u,
+        .source_debit = source ? source->source_debit : 0u,
+        .relation_head_admitted = relation_head_admitted,
+        .open_template_admitted = source && source->open_template_admitted,
+        .dispatch_handler = dynamic || (source && source->dispatch_handler),
+        .child_count = child_count,
+    };
+    if (operation == CETTA_CONTROL_RETURN_VALUE) {
+        if (child_count)
+            return NULL;
+        node = petta_plan_value_projection(&node);
+    } else if (operation == CETTA_CONTROL_CONSTRUCT) {
+        /* Completed fields contain only value ports. Keep the existing
+         * runtime translation's one value place, rather than re-entering
+         * a constructor and visiting every field on each answer. */
+        bool ready = true;
+        for (CettaExprIndex index = 0u; index < child_count; index++) {
+            if (!children[index])
+                return NULL;
+            ready &= children[index]->role == PETTA_PLAN_VALUE;
+        }
+        if (ready) {
+            node = petta_plan_value_projection(&node);
+            return petta_program_intern_plan(program, &node, true);
+        }
+        node.output = child_count ? PETTA_PLAN_OUTPUT_CONSTRUCTOR : PETTA_PLAN_OUTPUT_VALUE;
+        if (source && source->role == PETTA_PLAN_DATA)
+            node.execution = source->execution;
+    } else {
+        node.contains_call = true;
+        if (operation == CETTA_CONTROL_SEQUENCE) {
+            if (child_count != 4u ||
+                !cetta_control_operation_binding_layout(computation.control, 1u))
+                return NULL;
+            node.output = PETTA_PLAN_OUTPUT_CHILD;
+            node.output_child = 3u;
+        } else if (operation == CETTA_CONTROL_INVOKE) {
+            /* Surviving calls retain observation/occurrence obligations.
+             * Completed ports erase them through the value projection. */
+            node.contains_cardinality_call = source && source->contains_cardinality_call;
+            node.contains_deferred_occurrence_transport = source && source->contains_deferred_occurrence_transport;
+            node.execution = relation_head_admitted ? PETTA_PLAN_EXEC_RELATION_SLOTS
+                : source && source->role == PETTA_PLAN_STATIC_CALL ? source->execution
+                : PETTA_PLAN_EXEC_GENERIC;
+        }
+    }
+    PettaPlanNode *items = child_count ? malloc(sizeof(*items) * (size_t)child_count) : NULL;
+    if (child_count && !items)
+        return NULL;
+    bool ok = true;
+    for (CettaExprIndex index = 0u; index < child_count; index++) {
+        if (!children[index]) { ok = false; break; }
+        items[index] = *children[index];
+        node.contains_call |= items[index].contains_call;
+        node.contains_cardinality_call |= items[index].contains_cardinality_call;
+        node.contains_deferred_occurrence_transport |= items[index].contains_deferred_occurrence_transport;
+    }
+    node.children = items;
+    const PettaPlanNode *projected = ok ? petta_program_intern_plan(program, &node, true) : NULL;
+    free(items);
+    return projected;
 }
 
 /* Renaming variables does not change control or callability facts.  Rebuild
@@ -4242,6 +4490,10 @@ PettaProgram *petta_program_new_with_rules(unsigned admitted_forms) {
     arena_set_hashcons(&program->plans, NULL);
     arena_init(&program->transient_scratch);
     arena_init(&program->transient_plan_atoms);
+    /* Bounded source keys usually occupy a small fraction of a worker
+     * block; grow the metadata pool only as actual retained keys require. */
+    arena_set_block_capacity(&program->transient_plan_atoms, ARENA_BLOCK_SIZE / 16u);
+    arena_set_block_growth(&program->transient_plan_atoms, true);
     arena_set_hashcons(&program->transient_scratch, NULL);
     return program;
 }
@@ -4317,6 +4569,12 @@ bool petta_program_analysis_enabled(const PettaProgram *program) {
 void petta_program_free(PettaProgram *program) {
     if (!program)
         return;
+    /* A universe freed first has dropped its listings already. */
+    for (size_t index = 0u; index < program->signature_universe_len; index++)
+        term_universe_remove_root_provider(program->signature_universes[index],
+                                           petta_program_signature_roots,
+                                           program);
+    free(program->signature_universes);
     for (size_t index = 0u;
          index < program->space_len; index++) {
         petta_program_space_dispose_catalog(
@@ -4743,7 +5001,7 @@ const PettaPlanNode *petta_program_plan_transient(
     const PettaPlanNode *plan =
         built && petta_plan_collapse_values(
             program, atom, built, environment)
-            ? petta_program_intern_plan(program, built)
+            ? petta_program_intern_plan(program, built, false)
             : NULL;
     arena_reset(&program->transient_scratch, mark);
     free(owned.named_heads);
@@ -6592,6 +6850,47 @@ void petta_program_inferred_signatures_reset_under_authority(
     }
 }
 
+/* An inferred signature keeps its interned id from one statement to the
+ * next, so the program lists the ids it keeps in a universe whenever that
+ * universe collects. */
+static void petta_program_signature_roots(const TermUniverse *universe,
+                                          TermUniverseRootVisit visit,
+                                          void *visit_context, void *ctx) {
+    const PettaProgram *program = ctx;
+    if (!program->analysis)
+        return;
+    for (size_t index = 0u; index < program->analysis->space_len; index++) {
+        const PettaProgramAnalysisSpace *entry =
+            &program->analysis->spaces[index];
+        if (entry->signature_universe != universe)
+            continue;
+        for (size_t signature = 0u;
+             signature < entry->inferred_signature_len; signature++)
+            visit(visit_context,
+                  entry->inferred_signatures[signature].signature_id);
+    }
+}
+
+static bool petta_program_list_signatures_in(PettaProgram *program,
+                                             TermUniverse *universe) {
+    for (size_t index = 0u; index < program->signature_universe_len;
+         index++) {
+        if (program->signature_universes[index] == universe)
+            return true;
+    }
+    if (!petta_program_reserve(
+            (void **)&program->signature_universes,
+            &program->signature_universe_cap,
+            program->signature_universe_len + 1u,
+            sizeof(*program->signature_universes)) ||
+        !term_universe_add_root_provider(
+            universe, petta_program_signature_roots, program))
+        return false;
+    program->signature_universes[program->signature_universe_len++] =
+        universe;
+    return true;
+}
+
 static bool petta_program_inferred_signature_put_internal(
     PettaProgram *program, Space *space,
     const CettaNikDirectAuthorityStampV1 *authority,
@@ -6609,6 +6908,9 @@ static bool petta_program_inferred_signature_put_internal(
             program, space, authority)) {
         return false;
     }
+    if (!petta_program_list_signatures_in(program, space->native.universe))
+        return false;
+    entry->signature_universe = space->native.universe;
     AtomId signature_id = term_universe_store_atom_id(
         space->native.universe,
         space->native.universe->persistent_arena,
