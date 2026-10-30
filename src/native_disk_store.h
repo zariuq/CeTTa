@@ -90,4 +90,19 @@ CettaDiskStoreStatus cetta_disk_store_recover(CettaDiskStore *store, CettaDiskSt
 CettaDiskStoreStatus cetta_disk_store_compact(CettaDiskStore *store, CettaDiskStoreView **out);
 CettaDiskStoreStatus cetta_disk_store_collect(CettaDiskStore *store, uint64_t *removed);
 
+/* A self-contained copy of exactly one captured revision into an existing,
+ * empty private directory. Logical epoch/revision and bytes are preserved;
+ * physical generation/root/domain are independent. The shared compactor
+ * streams checked live records without retaining the corpus. No source
+ * writer lock is held. Destination initialization/publication is exclusively
+ * locked; a synced invalid manifest precedes data construction so an
+ * interrupted backup cannot be initialized as an empty store with create.
+ * OK follows segment+manifest+directory synchronization. UNKNOWN requires
+ * opening/recovering that destination, not overwriting or blindly retrying.
+ * The caller keeps view alive. It also owns the durable parent entry for the
+ * destination directory, as for open(). Existing contents are never replaced.
+ */
+CettaDiskStoreStatus cetta_disk_store_backup(const CettaDiskStoreView *view,
+    const char *destination);
+
 #endif

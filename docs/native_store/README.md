@@ -29,7 +29,8 @@ the same committed values, multiplicities and occurrence identities. Test
 interrupted publication and lost replies as well as clean shutdown. The
 owning durable-Space adapter now passes the scoped gates described below. The
 MeTTa-configured local service also passes the scoped connection/cursor and
-restart gates below. Full workload, backup and release qualification remain.
+restart gates below, alongside captured backup/restore. Full workload and
+release qualification remain.
 
 The first bounded service milestone targets the actual local ledger/queue workloads.
 Its durability and isolation requirements remain strict while its API stays
@@ -168,7 +169,7 @@ allocation, duplicate/open atoms, inert programs, stable references, lost
 replies, atomic edits, stale/absent-read conflicts and old readers across
 publication/compaction. These scoped tests do not establish power-loss
 durability beyond the native owner's documented filesystem/fault model, nor
-complete the broader service, constraint, index or backup acceptance.
+complete the broader service, constraint, index or workload acceptance.
 
 ### Request-owned pattern cursors
 
@@ -456,6 +457,64 @@ readers across compaction, token/handle forgery refusals, stale commits,
 lost-reply recovery, crash/restart, transport replay, bounded clients/resources,
 idle/partial-frame cleanup, explicit and automatic connection retirement,
 incomplete handler outcomes, and repeated query/cancel memory measurements.
-It is a scoped service milestone. Backup/restore, selective durable indexes,
-application constraints and application transition parity remain required
-before any live replacement is qualified.
+It is a scoped service milestone. Captured backup/restore is described below;
+selective durable indexes, application constraints and application transition
+parity remain required before any live replacement is qualified.
+
+## Captured backup and restore
+
+`(store:backup view destination-directory)` creates a self-contained native
+store containing exactly that captured logical epoch/revision. The destination
+must be an existing, empty, private owned directory whose parent entry is
+already durable, as required for `store:open`. Success returns
+`(StoreBackedUp epoch revision)`. An occupied destination returns a conflict;
+the operation never overwrites an existing database or backup.
+
+The operation reuses the native checked compactor to stream reachable keys and
+value records into a new physical segment. It copies application records,
+occurrences, indexes and receipts without a corpus-sized materialization.
+Unreachable history is omitted. A captured view owns its original descriptor,
+so later source commits, compaction, collection and owner closure do not change
+the copy. No source writer lock is held while copying.
+
+The destination has one exclusive publication owner throughout construction.
+Before writing its segment, the owner synchronizes an invalid manifest and the
+directory. A process killed during copying therefore leaves a destination that
+refuses open/create as corrupt, rather than silently becoming an empty store.
+After all live records have been checked and copied, the segment is synced and
+the normal journal checkpoint publishes/syncs its manifest and directory.
+Success is acknowledged only after these steps. Partial destinations are kept
+for inspection; a failed attempt does not clear or initialize them.
+
+`StoreUncertain` means the destination may have been published. Reopen it with
+`store:open destination "existing"`, capture its view and compare its epoch and
+revision with the requested capture. Snapshot/recovery confirms the visible
+root through the existing native owner. Do not overwrite or blindly replay a
+backup after an uncertain reply. An earlier I/O/corruption failure may leave an
+intentionally incomplete destination; use a fresh empty destination for a new
+attempt.
+
+Restore consists of opening the completed copy with `"existing"` and using
+the normal Space/library/service operations. Logical occurrence identities and
+application retry receipts are preserved. Subsequent writes belong to its own
+physical commit domain; a source view cannot authorize a transaction on the
+copy. Preserve an archive by restoring into another fresh destination through
+the same captured-backup operation before making writes. Independently
+modified copies are not automatically merged or federated.
+
+The example service exposes `(UseV1 view-token Backup (BackupV1 directory))` as
+a Write route because it writes the destination filesystem. The destination
+path is supplied by a same-UID caller under the trusted account-level service
+configuration. A client needing less filesystem authority should use a handler
+whose trusted configuration chooses the destination. Source queries themselves
+remain read-only.
+
+`test-native-disk-store` includes empty and nonempty copies, source mutation
+and unlink/compaction during copying, physical-domain separation, each sync
+boundary, partial writes, uncertain rename outcomes, killed copies and corrupt
+source refusal. A separating negative control loses the invalid manifest and
+is rejected by the reopen/create test. `test-native-kb-service` restores the
+same occurrences through both service and embedded queries, resolves copied
+receipts, refuses forged view handles and proves independent subsequent writes.
+These tests use the native owner's existing filesystem assumptions; process
+kills alone do not prove power-loss behavior on every filesystem/device.

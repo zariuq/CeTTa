@@ -21,6 +21,7 @@
 (: __cetta_lib_store_recover (-> Atom Atom))
 (: __cetta_lib_store_compact (-> Atom Atom))
 (: __cetta_lib_store_collect (-> Atom Atom))
+(: __cetta_lib_store_backup (-> Atom String Atom))
 (: __cetta_lib_store_close (-> Atom Atom))
 (: __cetta_lib_store_encode (-> Atom Atom))
 (: __cetta_lib_store_decode (-> String Atom))
@@ -78,6 +79,10 @@
    (function (case (__cetta_lib_store_compact $store) (($result (return $result))))))
 (= (store:collect $store)
    (function (case (__cetta_lib_store_collect $store) (($result (return $result))))))
+; Captured revision -> self-contained store in an empty private directory.
+; UNKNOWN needs destination recovery; never overwrite or silently retry.
+(= (store:backup $view $destination)
+   (function (case (__cetta_lib_store_backup $view $destination) (($result (return $result))))))
 (= (store:close $handle)
    (function (case (__cetta_lib_store_close $handle) (($result (return $result))))))
 ; CAV1 convenience codec, with the existing portable-wire bounds. Large

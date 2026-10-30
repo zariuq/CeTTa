@@ -293,6 +293,17 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         Atom *handle=own(ctx,a,owner_kind,store,free_owner);
         return handle ? atom_expr2(a,atom_symbol(a,"StoreOpened"),handle) : refused(a,"capacity");
     }
+    if (atom_is_symbol(head,"__cetta_lib_store_backup")) {
+        CettaDiskBytes path;CettaNativeHandleUse use={0};
+        if (n!=2 || !string(args[1],&path) || !path.size || memchr(path.data,0,path.size)) return refused(a,"invalid-backup");
+        if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
+        CettaDiskStoreView *view=cetta_native_handle_use_resource(&use);
+        CettaDiskStoreStatus status=cetta_disk_store_backup(view,(const char *)path.data);
+        Atom *result=status==CETTA_STORE_OK
+            ? atom_expr3(a,atom_symbol(a,"StoreBackedUp"),view_epoch_value(a,view),unsigned_value(a,cetta_disk_store_view_revision(view)))
+            : status_value(a,status);
+        cetta_native_handle_use_release(&use);return result;
+    }
     if (atom_is_symbol(head,"__cetta_lib_store_encode")) {
         if (n!=1) return refused(a,"invalid-encode");
         unsigned char *bytes=NULL;size_t size=0;

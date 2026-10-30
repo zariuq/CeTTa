@@ -15,6 +15,7 @@
        (ServiceRouteV1 Cancel Read kb-server:cancel)
        (ServiceRouteV1 Commit Write kb-server:commit)
        (ServiceRouteV1 Resolve Read kb-server:resolve)
+       (ServiceRouteV1 Backup Write kb-server:backup)
        (ServiceRouteV1 Compact Write kb-server:compact))
       (ServiceLimitsV1 16 64 262144 30000 67108864 1000000))))
 
@@ -52,6 +53,9 @@
 
 (= (kb-server:resolve (ServiceCallV1 (KbConfigurationV1 $owner) $peer $unused (ResolveV1 $request $command)))
   (knowledge:resolve $owner $request $command 1048576))
+
+(= (kb-server:backup (ServiceCallV1 $configuration $peer $view (BackupV1 $destination)))
+  (store:backup $view $destination))
 
 (= (kb-server:compact (ServiceCallV1 (KbConfigurationV1 $owner) $peer $unused $arguments))
   (case (store:compact $owner)

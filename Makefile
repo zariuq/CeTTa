@@ -49488,7 +49488,7 @@ test-native-disk-index: runtime/test-native-disk-index
 .PHONY: test-native-disk-store
 runtime/test-native-disk-store: tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_store.h src/native_disk_index.c src/native_disk_index.h src/native_journal.c src/native_journal.h src/native_sha256.c src/native_sha256.h
 	@mkdir -p runtime
-	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_index.c src/native_journal.c src/native_sha256.c -Wl,--wrap=write,--wrap=fsync,--wrap=renameat -o $@
+	$(CC) -O2 -Wall -Wextra -Werror -std=c11 -Isrc tests/test_native_disk_store.c src/native_disk_store.c src/native_disk_index.c src/native_journal.c src/native_sha256.c -Wl,--wrap=write,--wrap=fsync,--wrap=renameat,--wrap=openat -o $@
 test-native-disk-store: runtime/test-native-disk-store
 	$<
 LIBRARY_IMPORT_CATALOG_TEST_BIN = runtime/test-library-import-catalog-$(BUILD_OBJ_TAG)

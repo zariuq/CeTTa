@@ -614,3 +614,58 @@ done:
     if (lock>=0) close(lock);
     return status;
 }
+
+static CettaDiskStoreStatus empty_directory(int fd,bool lock_created) {
+    int scan_fd=openat(fd,".",O_RDONLY|O_DIRECTORY|O_CLOEXEC);
+    DIR *scan=scan_fd<0 ? NULL : fdopendir(scan_fd);
+    if (!scan) { if (scan_fd>=0) close(scan_fd);return CETTA_STORE_IO; }
+    CettaDiskStoreStatus status=CETTA_STORE_OK;errno=0;
+    for (;;) {
+        struct dirent *entry=readdir(scan);
+        if (!entry) { if (errno) status=CETTA_STORE_IO;break; }
+        if (!strcmp(entry->d_name,".") || !strcmp(entry->d_name,"..") ||
+            (lock_created && (!strcmp(entry->d_name,"writer.lock") || !strcmp(entry->d_name,"root.csl")))) continue;
+        status=CETTA_STORE_CONFLICT;break;
+    }
+    closedir(scan);return status;
+}
+CettaDiskStoreStatus cetta_disk_store_backup(const CettaDiskStoreView *view,const char *path) {
+    if (!view || !path || !*path) return CETTA_STORE_INVALID;
+    CettaDiskStoreStatus status=disk_status(cetta_disk_root_check(&view->root));
+    if (status!=CETTA_STORE_OK) return status;
+    int directory=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC|O_NOFOLLOW);
+    if (directory<0) {
+        int code=errno;struct stat entry;
+        if (code==ENOTDIR && !lstat(path,&entry) && S_ISLNK(entry.st_mode)) return CETTA_STORE_OWNERSHIP;
+        errno=code;return code==ENOENT ? CETTA_STORE_ABSENT : open_error();
+    }
+    int lock=-1,manifest=-1,segment=-1;struct stat st;
+    if (fstat(directory,&st)) { status=CETTA_STORE_IO;goto done; }
+    if (st.st_uid!=geteuid() || (st.st_mode&077)) { status=CETTA_STORE_OWNERSHIP;goto done; }
+    if ((status=empty_directory(directory,false))!=CETTA_STORE_OK) goto done;
+    /* Install the invalid manifest as the first destination change, before
+     * even creating writer.lock. A process death in bootstrap must not leave
+     * a lock-only directory that create-mode can initialize as empty. */
+    manifest=file_open(directory,"root.csl",O_RDWR|O_CREAT|O_EXCL);
+    if (manifest<0) { status=errno==EEXIST ? CETTA_STORE_CONFLICT : open_error();goto done; }
+    if (!synchronize(manifest) || !synchronize(directory)) { status=CETTA_STORE_IO;goto done; }
+    lock=file_open(directory,"writer.lock",O_RDWR|O_CREAT|O_EXCL);
+    if (lock<0) { status=errno==EEXIST ? CETTA_STORE_CONFLICT : open_error();goto done; }
+    if (flock(lock,LOCK_EX|LOCK_NB)) { status=CETTA_STORE_BUSY;goto done; }
+    if ((status=empty_directory(directory,true))!=CETTA_STORE_OK) goto done;
+    CettaDiskStore target={.directory=directory,.device=st.st_dev,.inode=st.st_ino};
+    Meta meta=view->meta;
+    status=segment_create(&target,meta.segment,&segment);
+    if (status!=CETTA_STORE_OK) goto done;
+    CettaDiskRoot candidate;
+    status=disk_status(cetta_disk_compact(&view->root,segment,&candidate));
+    if (status==CETTA_STORE_OK) status=disk_status(cetta_disk_sync(&candidate));
+    if (status!=CETTA_STORE_OK) goto done;
+    meta.root=candidate.root;meta.end=candidate.end;
+    status=publish(&target,&manifest,&meta);
+done:
+    if (segment>=0) close(segment);
+    if (manifest>=0) close(manifest);
+    if (lock>=0) close(lock);
+    close(directory);return status;
+}

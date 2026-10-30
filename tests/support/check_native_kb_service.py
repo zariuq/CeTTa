@@ -298,7 +298,7 @@ def main():
             assert server.path.exists(), "SIGKILL should leave the stale socket witness"
             server.start()
             first = Client(server.path)
-            view, _ = first.snapshot()
+            view, recovered_metadata = first.snapshot()
             cursor = first.query(view, Var(0), Var(0))
             recovered = first.drain(cursor)
             assert len(recovered) == 6, recovered
@@ -306,6 +306,51 @@ def main():
             resolved = first.route("Resolve", E("ResolveV1", "lost-reply", E("SpaceCommitV1", S("sample"), lost_changes)))
             assert resolved[0] == S("KnowledgeResolvedV1"), resolved
             assert first.route("Next", E("NextV1", 0), lost_view, ok=False) == E("ServiceRefusedV1", S("unknown-resource"))
+            # A backup preserves logical identities and receipts but has its
+            # own physical commit domain. Restore through the same server and
+            # embedded Space API, then prove that its writes are independent.
+            restored_root = root / "restored"
+            restored_root.mkdir(mode=0o700)
+            restored_data = restored_root / "store"
+            restored_data.mkdir(mode=0o700)
+            backed_up = first.route("Backup", E("BackupV1", str(restored_data)), view)
+            assert backed_up == E("StoreBackedUp", *recovered_metadata[1:]), backed_up
+            assert first.route("Backup", E("BackupV1", str(restored_data)), view) == E("StoreRefused", S("conflict"))
+            restored_server = Server(args.worker.resolve(), restored_root)
+            restored_client = None
+            try:
+                restored_server.start(); restored_client = Client(restored_server.path)
+                restored_view, restored_metadata = restored_client.snapshot()
+                assert restored_metadata == recovered_metadata
+                restored_query = restored_client.query(restored_view, Var(0), Var(0))
+                assert restored_client.drain(restored_query) == recovered
+                replay = restored_client.route("Commit", E("CommitV1", S("sample"), "lost-reply", lost_changes), restored_view)
+                assert replay[0] == S("KnowledgeReplayedV1"), replay
+                latest, meta = restored_client.snapshot()
+                assert meta == recovered_metadata
+                restored_client.drop(latest)
+                forked = restored_client.route("Commit", E("CommitV1", S("sample"), "restored-only",
+                    (E("SpaceInsertV1", 0, E("restored-only")),)), restored_view)
+                assert forked[0] == S("KnowledgeCommittedV1"), forked
+                original_latest, original_meta = first.snapshot()
+                assert original_meta == recovered_metadata
+                first.drop(original_latest)
+                restored_client.drop(restored_query); restored_client.drop(restored_view)
+            finally:
+                if restored_client: restored_client.close()
+                restored_server.stop()
+            embedded = Worker(args.worker.resolve(), ROOT / "tests/support/durable_cursor_fixture.metta",
+                              "cursor-fixture:run", language="petta")
+            try:
+                answer = embedded.call(E("QuerySpec", str(restored_data), Var(0), Var(0)))
+                assert answer[0] == S("Rows") and len(answer[1]) == 7, answer
+                normalized = set(encode(row[1:]) for row in answer[1])
+                assert set(encode(row) for row in recovered).issubset(normalized), answer
+                guarded = root / "guarded-backup"
+                guarded.mkdir(mode=0o700)
+                assert embedded.call(E("BackupGuards", str(restored_data), str(guarded))) == S("BackupGuardsPassed")
+            finally:
+                embedded.close()
             first.drop(cursor); first.drop(view)
             # Duplicate owner startup must not remove the active socket.
             duplicate = subprocess.run(server.command, env=server.environment, capture_output=True, timeout=10)
@@ -313,6 +358,7 @@ def main():
             assert first.call(E("StatsV1"))[0] == S("ServiceStatsV1")
             report = {"post_warmup_rounds": args.rounds, "samples": samples,
                       "recovered_occurrences": len(recovered), "crash_restart": True,
+                      "backup_restore_service_and_embedded": True,
                       "scope": "same-UID local service; captured views, ordinary Space matching, connection-owned resources and durable receipts"}
         finally:
             if first: first.close()
