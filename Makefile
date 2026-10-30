@@ -1,28 +1,34 @@
 SHELL = /bin/bash
 # Cesta is the language this tree's C is written in: plain C is Cesta, and
 # declared protocols, layouts, tables and macros generate checked-in C.  Every
-# compile and link runs through one pinned Cesta tool, built from Cesta commit
-# CESTA_COMMIT, whose sha256 is CESTA_SHA256; plain C reaches the native
-# compiler unchanged.  `make cesta-tool CESTA_FROM=FILE` installs the tool;
-# CESTA_BUILD=0 builds with the native compiler alone.
-CESTA_COMMIT = 7f94e9309e123be98366a2e6a93db898374ef44c
-CESTA_SHA256 = 3d65f2604378f91f63415c5b5cdc4a35e8482fe933343e305c00663388acbf29
-CESTA ?= $(CURDIR)/runtime/cesta/cesta
+# compile and link runs through the Cesta tool built from the Cesta source in
+# vendor/cesta, whose COMMIT file names the Cesta commit it is; plain C reaches
+# the native compiler unchanged.  The tool is named by its source, so changed
+# source builds a new tool on first use.
+#   make cesta-update CESTA_REPO=DIR [CESTA_REV=REV]   vendor another Cesta commit
+#   CESTA_SRC=DIR      build the tool from another Cesta source tree instead
+#   CESTA=FILE         use that Cesta tool
+#   CESTA_BUILD=0      build with the native compiler alone
+CESTA_SRC ?= vendor/cesta
+CESTA_SRC_DIR := $(abspath $(CESTA_SRC))
 CESTA_NATIVE_CC ?= gcc
 CESTA_BUILD ?= 1
-export CESTA CESTA_NATIVE_CC
+CETTA_LTO ?= 0
+CETTA_LTO_JOBS ?= auto
+ifeq ($(origin CESTA),undefined)
+CESTA_SOURCE_ID := $(shell tools/cesta_tool.sh tool-id '$(CESTA_SRC_DIR)' '$(CESTA_NATIVE_CC)')
+ifeq ($(CESTA_SOURCE_ID),)
+$(error $(CESTA_SRC) is not a Cesta source tree; name one with CESTA_SRC=DIR or a tool with CESTA=FILE)
+endif
+CESTA := $(CURDIR)/runtime/cesta/cesta-$(CESTA_SOURCE_ID)
+endif
+export CESTA CESTA_SRC_DIR CESTA_NATIVE_CC CESTA_BUILD CETTA_LTO
+CESTA_READ_WARNINGS ?= 0
+export CESTA_READ_WARNINGS
 ifeq ($(CESTA_BUILD),1)
 CC = $(CURDIR)/tools/cesta_cc.sh
-ifeq ($(filter cesta-tool,$(MAKECMDGOALS)),)
-ifneq ($(CESTA_TOOL_VERIFIED),$(CESTA_SHA256) $(CESTA))
-ifneq ($(firstword $(shell sha256sum '$(CESTA)' 2>/dev/null)),$(CESTA_SHA256))
-$(error $(CESTA) is not the pinned Cesta tool (sha256 $(CESTA_SHA256), commit $(CESTA_COMMIT)); install it with 'make cesta-tool CESTA_FROM=FILE', or build with CESTA_BUILD=0)
-endif
-export CESTA_TOOL_VERIFIED := $(CESTA_SHA256) $(CESTA)
-endif
-endif
 else
-CC = $(CESTA_NATIVE_CC)
+CC = $(CURDIR)/tools/cesta_cc.sh --native
 endif
 LLVM_OPT ?= opt
 LLVM_CLANG ?= clang
@@ -615,6 +621,15 @@ endif
 ifeq ($(ENABLE_PIC),1)
 BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).pic
 endif
+ifeq ($(CETTA_LTO),1)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).lto-fat
+endif
+ifneq ($(CETTA_PGO),)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).pgo-$(CETTA_PGO)
+ifneq ($(CETTA_PGO_RUN),)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).run-$(CETTA_PGO_RUN)
+endif
+endif
 ifeq ($(CETTA_PROVENANCE_ASSERT),1)
 BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).provenance
 endif
@@ -675,6 +690,9 @@ BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).managed-symbols
 endif
 ifeq ($(ENABLE_SYMBOL_READ_COVERAGE),1)
 BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).symbol-read-coverage
+endif
+ifeq ($(CESTA_BUILD)$(CESTA_READ_WARNINGS),11)
+BUILD_CANONICAL_OBJ_TAG := $(BUILD_CANONICAL_OBJ_TAG).cesta-read
 endif
 ifeq ($(CETTA_PROC_FORK_SPAWN),1)
 BUILD_OBJ_TAG := $(BUILD_OBJ_TAG).proc-fork-spawn
@@ -755,7 +773,28 @@ CPPFLAGS = -Isrc -I. -Iexperiments/gslt2parse_foundation/native $(BRIDGE_CFLAGS)
 ifeq ($(CETTA_INTERACTION_COMMIT_CHECKED),1)
 CPPFLAGS += -Dia_commit_run_CHECKED=1
 endif
-CFLAGS = -O3 -Wall -Werror -std=c11 -pthread
+# Whole-program and profile-guided optimization, each in its own object
+# namespace.  CETTA_LTO=1 compiles and links with link-time optimization.
+# CETTA_PGO=generate builds an executable that counts where it runs;
+# CETTA_PGO=use builds from the counts it recorded (see `make pgo`).
+CETTA_PGO ?=
+OPTIMIZE_CFLAGS =
+ifeq ($(CETTA_LTO),1)
+OPTIMIZE_CFLAGS += -flto=$(CETTA_LTO_JOBS) -ffat-lto-objects
+else ifneq ($(CETTA_LTO),0)
+$(error CETTA_LTO is 0 or 1)
+endif
+ifeq ($(CETTA_PGO),generate)
+OPTIMIZE_CFLAGS += -fprofile-generate -fprofile-update=atomic
+else ifeq ($(CETTA_PGO),use)
+# GCC reports gaps in the counts (a callee the instrumented build inlined
+# away) as warnings without an option of their own; they stay warnings here.
+# The default build compiles the same sources with every warning an error.
+OPTIMIZE_CFLAGS += -fprofile-use -fprofile-partial-training -Wno-missing-profile -Wno-error
+else ifneq ($(CETTA_PGO),)
+$(error CETTA_PGO is generate or use)
+endif
+CFLAGS = -O3 -Wall -Werror -std=c11 -pthread $(OPTIMIZE_CFLAGS)
 DEPFLAGS = -MMD -MP
 # Libraries a binary does not use are not recorded as its dependencies, with
 # either compiler (some distributions' gcc passes this by default).
@@ -766,6 +805,9 @@ LDFLAGS = -Wl,--as-needed $(BRIDGE_LDFLAGS) -ldl -lm -pthread $(GMP_LDFLAGS) $(L
 PACK_RELATIVE_RELOCS := $(shell printf 'int main(void){return 0;}\n' | $(CC) -x c -Wl,-z,pack-relative-relocs -o /dev/null - >/dev/null 2>&1 && printf '%s' -Wl,-z,pack-relative-relocs)
 LDFLAGS += $(PACK_RELATIVE_RELOCS)
 ifeq ($(ENABLE_SANITIZERS),1)
+ifneq ($(strip $(OPTIMIZE_CFLAGS)),)
+$(error sanitizer builds take neither CETTA_LTO nor CETTA_PGO)
+endif
 CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all -Wall -Werror -std=c11 -pthread
 LDFLAGS += -fsanitize=$(SANITIZERS) -fno-sanitize-recover=all
 endif
@@ -774,6 +816,14 @@ CFLAGS += -fPIC
 endif
 
 include make/build_object_tag.mk
+
+# A profile-guided runtime (tools/cetta_pgo.sh): PGO_BIN is built from the
+# counts the test programs record in an instrumented build.  Configuration
+# such as CETTA_LTO=1 passes through to both builds.
+PGO_BIN ?= $(BIN)
+.PHONY: pgo
+pgo:
+	@tools/cetta_pgo.sh '$(PGO_BIN)'
 
 .PHONY: test-build-object-tag-isolation test-build-object-tag-full-isolation
 test-build-object-tag-isolation:
@@ -4255,15 +4305,15 @@ test-frame-identity: $(FRAME_IDENTITY_TEST_BIN)
 
 # Frame identities are spelled by the layout declared in
 # langdef/layouts/runtime_words.module.  The accessors are checked-in
-# ordinary C; regenerating them needs the pinned Cesta tool (CESTA), building
+# ordinary C; regenerating them needs the Cesta tool (CESTA), building
 # with them does not.  The test compares them with an independent reading of
 # the word.
 LAYOUT_WORDS_TEST_BIN = runtime/test_layout_words-$(BUILD_OBJ_TAG)
 
 .PHONY: regenerate-layout-words check-layout-words-generated test-layout-words
-regenerate-layout-words:
+regenerate-layout-words: | cesta-tool
 	python3 -B tools/regenerate_layout_words.py --cesta "$(CESTA)"
-check-layout-words-generated:
+check-layout-words-generated: | cesta-tool
 	python3 -B tools/regenerate_layout_words.py --cesta "$(CESTA)" --check
 
 $(LAYOUT_WORDS_TEST_BIN): tests/test_layout_words.c $(LAYOUT_WORDS_HEADER) src/binding/frame_identity.h src/match.h
@@ -7586,13 +7636,17 @@ test-atomic-object-publication:
 # Recursive test builds may compile the same configuration concurrently.
 # Publish completed object/dependency files so a linker or another make never
 # observes a truncated output; a failed compiler preserves the previous pair.
+# Under CETTA_PGO the counts of an object are named after the object, not the
+# temporary file it is compiled to.  Under CETTA_LTO the object's seed is its
+# name, so a concurrent recompile publishes the same bytes a linker may be
+# reading (link-time objects otherwise carry a random identity).
 define compile_c_object
 	@mkdir -p $(dir $@)
 	@set -eu; \
 	tmp_obj=$$(mktemp "$(dir $@).cetta-object.XXXXXX"); \
 	tmp_dep=$$(mktemp "$(dir $@).cetta-deps.XXXXXX"); \
 	trap 'rm -f "$$tmp_obj" "$$tmp_dep"' EXIT INT TERM; \
-	$(CC) $(1) -MT "$@" -MF "$$tmp_dep" -c -o "$$tmp_obj" "$<"; \
+	$(CC) $(1) $(if $(CETTA_PGO),-dumpbase "$(@:.o=)") $(if $(filter 1,$(CETTA_LTO)),-frandom-seed="$@") -MT "$@" -MF "$$tmp_dep" -c -o "$$tmp_obj" "$<"; \
 	mv "$$tmp_dep" "$(@:.o=.d)"; \
 	mv "$$tmp_obj" "$@"
 endef
@@ -51190,7 +51244,7 @@ test-prime-interaction-queries: tests/test_interaction_queries.c src/interaction
 # The commit of the interaction kernel is a declared protocol
 # (langdef/protocols/interaction_commit.module), generated as ordinary C into
 # src/generated/interaction_commit_protocol.generated.h with its plan for the
-# Lean kernel; regenerating them needs the pinned Cesta tool, building with
+# Lean kernel; regenerating them needs the Cesta tool, building with
 # them does not.  The control test (tests/test_interaction_commit_protocol.c)
 # runs in ordinary and in checked mode.
 INTERACTION_COMMIT_PROTOCOL_MODULE = langdef/protocols/interaction_commit.module
@@ -51229,27 +51283,36 @@ CESTA_PROJECT_DIR = runtime/cesta/$(BUILD_OBJ_TAG)$(if $(filter 1,$(ENABLE_RUNTI
 CESTA_PROJECT = $(CESTA_PROJECT_DIR)/cetta.project
 CESTA_PROJECT_VARS = $(CESTA_PROJECT_DIR)/make.vars
 CESTA_JOBS ?= 8
-EXPORT_C_DIR ?= $(CESTA_PROJECT_DIR)/export
-CESTA_IDENTITY_TAG ?= cesta-identity
+EXPORT_C_DIR ?= $(CESTA_PROJECT_DIR)/export-$(notdir $(CESTA))
+CESTA_IDENTITY_TAG ?= cesta-identity-$(notdir $(CESTA))
 
-.PHONY: cesta-tool cesta-tool-check cesta-project export-c
-.PHONY: test-cesta-project-build test-cesta-build-identity check-cesta-generated test-cesta-runtime-project
-cesta-tool:
-	@test -n '$(CESTA_FROM)' || { echo 'usage: make cesta-tool CESTA_FROM=FILE (Cesta built from commit $(CESTA_COMMIT))' >&2; exit 2; }
-	@actual=$$(sha256sum '$(CESTA_FROM)' | cut -d' ' -f1); \
-	if [ "$$actual" != '$(CESTA_SHA256)' ]; then \
-		echo '$(CESTA_FROM): not the pinned Cesta tool $(CESTA_SHA256)' >&2; exit 1; \
-	fi
-	@mkdir -p '$(dir $(CESTA))'
-	@cp '$(CESTA_FROM)' '$(CESTA).partial' && chmod 755 '$(CESTA).partial' && mv '$(CESTA).partial' '$(CESTA)'
-	@echo 'installed the pinned Cesta tool as $(CESTA)'
+.PHONY: cesta-tool cesta-tool-check cesta-update cesta-project export-c
+.PHONY: test-cesta-project-build test-cesta-build-identity check-cesta-generated test-cesta-runtime-project test-cesta-lto-wrap test-cesta-pgo-workloads
+cesta-tool: $(CESTA)
 
-cesta-tool-check:
-	@actual=$$(sha256sum '$(CESTA)' 2>/dev/null | cut -d' ' -f1); \
-	if [ "$$actual" != '$(CESTA_SHA256)' ]; then \
-		echo 'FAIL: $(CESTA) is not the pinned Cesta tool $(CESTA_SHA256)' >&2; exit 1; \
-	fi; \
-	echo 'Cesta tool $(CESTA_SHA256) (commit $(CESTA_COMMIT))'
+$(CESTA):
+	@tools/cesta_tool.sh build '$(CESTA_SRC_DIR)' '$(CESTA)'
+
+cesta-tool-check: cesta-tool
+	@echo 'Cesta tool $(CESTA)'; \
+	python3 -c 'import json,pathlib; p=pathlib.Path("$(CESTA_SRC_DIR)")/"SOURCE.json"; d=json.loads(p.read_text()) if p.exists() else {}; print("source:",d.get("source_sha256","external"),"snapshot:",d.get("snapshot","external"),"base:",d.get("base_commit","external"))'
+
+# Vendor a Cesta commit, then check the declarations and builds of this tree
+# with the tool built from it.
+CESTA_REV ?= HEAD
+CESTA_UPDATE_WORKTREE ?= 0
+CESTA_UPDATE_GATES ?= cesta-tool-check check-cesta-generated test-cesta-build-identity test-cesta-project-build export-c test-cesta-lto-wrap test-cesta-pgo-workloads
+cesta-update:
+	@test -n '$(CESTA_REPO)' || { echo 'usage: make cesta-update CESTA_REPO=DIR [CESTA_REV=REVISION]' >&2; exit 2; }
+	@set -eu; mkdir -p runtime/cesta/candidates; \
+	exec 9>runtime/cesta/update.lock; if command -v flock >/dev/null 2>&1; then flock 9; fi; \
+	candidate=$$(mktemp -d runtime/cesta/candidates/source.XXXXXX); \
+	python3 tools/cesta_vendor.py prepare '$(CESTA_REPO)' '$(CESTA_REV)' "$$candidate/source" \
+		$(if $(filter 1,$(CESTA_UPDATE_WORKTREE)),--working-tree,); \
+	$(MAKE) --no-print-directory CESTA_SRC="$$candidate/source" \
+		CESTA="$(CURDIR)/runtime/cesta/cesta-$$(tools/cesta_tool.sh tool-id "$$candidate/source" '$(CESTA_NATIVE_CC)')" \
+		$(CESTA_UPDATE_GATES); \
+	python3 tools/cesta_vendor.py promote "$$candidate/source" vendor/cesta --previous runtime/cesta/previous
 
 # Every word of a variable reaches the project as the shell splits the recipe.
 cesta-project: $(PARSER_BAKED_OBJ) $(BUILD_CONFIG_HEADER) | cesta-tool-check
@@ -51262,6 +51325,11 @@ cesta-project: $(PARSER_BAKED_OBJ) $(BUILD_CONFIG_HEADER) | cesta-tool-check
 	$(file >>$(CESTA_PROJECT_VARS),SECP256K1_CFLAGS=$(SECP256K1_CFLAGS))
 	$(file >>$(CESTA_PROJECT_VARS),PARSER_BAKED_OBJ=$(PARSER_BAKED_OBJ))
 	$(file >>$(CESTA_PROJECT_VARS),BRIDGE_DEPS=$(BRIDGE_DEPS))
+	$(file >>$(CESTA_PROJECT_VARS),BUILD_CONFIG_HEADER=$(BUILD_CONFIG_HEADER))
+	$(file >>$(CESTA_PROJECT_VARS),OP_LANG_PREPARED_HEADER_V1=$(OP_LANG_PREPARED_HEADER_V1))
+	$(file >>$(CESTA_PROJECT_VARS),SOURCE_OBJECTS=$(filter-out $(PARSER_BAKED_OBJ),$(OBJ)))
+	$(file >>$(CESTA_PROJECT_VARS),CETTA_LTO=$(CETTA_LTO))
+	$(file >>$(CESTA_PROJECT_VARS),CETTA_PGO=$(CETTA_PGO))
 	@python3 -B tools/cesta_runtime_project.py --vars $(CESTA_PROJECT_VARS) \
 		--out $(CESTA_PROJECT_DIR)/build --executable $(CESTA_PROJECT_DIR)/cetta \
 		--output $(CESTA_PROJECT)
@@ -51269,7 +51337,7 @@ cesta-project: $(PARSER_BAKED_OBJ) $(BUILD_CONFIG_HEADER) | cesta-tool-check
 # The export replaces an earlier export only, never another directory.
 export-c: $(BIN) cesta-project
 	@set -eu; dir='$(EXPORT_C_DIR)'; \
-	if [ -e "$$dir" ] && ! head -n 1 "$$dir/Makefile" 2>/dev/null | grep -q '^# Readable C exported by cesta build'; then \
+	if [ -e "$$dir" ] && ! head -n 1 "$$dir/GNUmakefile" 2>/dev/null | grep -q '^# Readable C exported by cesta build'; then \
 		echo "$$dir exists and is not a Cesta export; not replacing it" >&2; exit 1; \
 	fi; \
 	rm -rf "$$dir"; \
@@ -51295,6 +51363,13 @@ test-cesta-build-identity:
 test-cesta-runtime-project: | cesta-tool-check
 	@python3 -B tests/support/test_cesta_runtime_project.py --cesta '$(CESTA)' \
 		--cc '$(CESTA_NATIVE_CC)' --output runtime/cesta-runtime-project-controls
+
+test-cesta-lto-wrap: | cesta-tool-check
+	@python3 -B tests/support/test_lto_wrap.py --cesta '$(CESTA)' \
+		--cc '$(CESTA_NATIVE_CC)' --output runtime/cesta-lto-wrap-controls
+
+test-cesta-pgo-workloads:
+	@python3 -B tests/support/test_cetta_pgo.py
 
 check-cesta-generated: cesta-tool-check check-layout-words-generated check-interaction-commit-protocol-generated test-cesta-runtime-project
 	@python3 -B tools/regenerate_registry_tables.py --cesta '$(CESTA)' --check
@@ -51485,3 +51560,11 @@ test-incremental-compression: test-ic-reference test-ic-templates test-ic-archiv
 test-petta-semantics: test-petta-corrected-stable
 test-petta-corrected-stable: $(BIN)
 	python3 tests/support/check_petta_corrected_stable.py $(BIN)
+
+# A census rechecks C when its reader changes. Ordinary C objects depend on
+# their native inputs; source updates run fresh identity builds separately.
+ifeq ($(CESTA_BUILD),1)
+ifeq ($(CESTA_READ_WARNINGS),1)
+$(OBJ) $(STAGE0_OBJ) $(PARSER_COMPILER_CATALOG_OBJ): $(CESTA)
+endif
+endif

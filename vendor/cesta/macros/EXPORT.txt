@@ -1,0 +1,195 @@
+Readable C export
+=================
+
+Cesta writes its constructs as ordinary C that a project commits and builds
+with GCC or Clang alone. There are two routes, sharing one checked lowering.
+
+  cesta export-c [--cc COMPILER] [--plan PLAN] [-o OUTPUT.c] INPUT.cesta [-- FLAGS]
+  cesta export-header [--plan PLAN] EXPORT-SPEC -o OUTPUT.h
+
+Program export
+--------------
+
+export-c writes a whole Cesta unit as C. Each macro use stays where it is, as
+a statement expression: every evaluated argument is acquired once, in
+declared order, into a named local, and its declared type is checked exactly
+on that local, so argument text is never repeated:
+
+  return ({
+    __auto_type value_1 = value;
+    _Static_assert(_Generic(value_1, uint64_t: 1, default: 0), "...");
+    __auto_type out_1 = out;
+    _Static_assert(_Generic(out_1, uint32_t *: 1, default: 0), "...");
+    ({
+      uint32_t converted;
+      int accepted = 0;
+      ...
+      accepted;
+    });
+  });
+
+Template locals keep their module names. A name is suffixed only where it
+would shadow a name the unit writes or a native macro mentions. The output
+has the same objects as compiling the unit through cesta cc.
+
+Program export keeps the in-place form for arguments it cannot acquire once
+without changing meaning: deferred and repeated arguments, statement macros
+of the c11 profile, and arguments that would be copied while naming
+__COUNTER__, __LINE__ or a macro defined with them. Those uses are refused
+with a pointer to cesta expand, which keeps the exact form.
+
+--plan records each use as a cesta-export-plan/2 record: the rule, the
+arguments as written, the names chosen for acquisitions and locals in the
+order they were chosen, the position, and the structure handed to the
+printer, with every argument in place.
+
+Library export
+--------------
+
+export-header reads a cesta-export/1 specification and writes one header of
+named C definitions:
+
+  (cesta-export/1
+    (header CT_SIZES_H)
+    (profile gnu11)
+    (include <stdint.h>)
+    (include "pair.h")
+    (use "Sizes.module" Checked)
+    (function ct_pair_bytes_u32 ArrayBytes (element Pair) (count uint32_t) (size size_t)
+      (doc "..."))
+    (macro ct_probe Probe (doc "...")))
+
+function makes one static inline function per concrete instance; every type
+parameter is named in the specification. A construct qualifies when each
+evaluated argument is acquired once and the template has no caller context:
+no captures, native definition ports, return, break, continue, goto or
+__func__. Places become pointer parameters.
+
+A C call evaluates its arguments once each, in an order C leaves
+unspecified, and its prototype converts arguments to the parameter types.
+That is the header's contract. Callers that need ordered effects sequence
+them; callers that need exact types use program export.
+
+macro makes a function-like macro for constructs whose parameters all take
+syntax, such as probes. Evaluated parameters are refused: textual substitution
+does not capture their values or places once. Use a function or keep the
+in-place expansion for those constructs. A macro is one parenthesized
+expression, safe under if and else, and its
+static assertions sit inside sizeof so the macro needs no statement wrapper.
+
+Parameter and local names are protected from macros the includer defines,
+with push_macro and pop_macro around the definitions. Exported names and
+required compiler builtins are checked at the top of the header.
+
+Counter tables
+--------------
+
+A counter table is structured data, not C text:
+
+  (cesta-counters/1
+    (enum CettaRuntimeCounter)
+    (prefix CETTA_RUNTIME_COUNTER_)
+    (count COUNT)
+    (names CETTA_RUNTIME_COUNTER_NAMES)
+    (profile dense)
+    (rows
+      (0 BINDINGS_LOOKUP "bindings-lookup")
+      (1 BINDINGS_CLONE "bindings-clone")))
+
+(counters FILE) in a specification emits the enumeration and its count;
+(counter-names FILE) emits the spelling array, for the one source file that
+defines it. The dense profile requires IDs 0 to n-1 in order, unique names
+and spellings, C identifiers, and printable spellings without quotes or
+backslashes.
+
+Evidence
+--------
+
+Program export produces objects identical to cesta cc for every library, on
+both compilers, unoptimized and optimized. Exported headers compile
+standalone under -pedantic -Werror, behave as the library tests require, and
+keep their meaning when the includer defines macros with their local names.
+A counter table exported from CeTTa's runtime counters gives objects
+identical to CeTTa's own definitions, and the Lean kernel decides that its
+actual rows have the dense profile (ExportCounterTables.Dense).
+
+Program export is proved against a model of the C it writes, in MeTTapedia's
+MacroExport modules. There the lowering is restated as a function of the rule
+and the arguments as written. For every recorded use, the Lean kernel decides
+that the recorded structure is exactly that lowering, that the rule lies in
+the fragment the proof covers, and that the chosen names are distinct.
+recorded_export_correct then states: the recorded block, run by an interpreter
+for the C fragment the templates use, has the outcome of the source use from
+any state, with any caller code and any replies from called functions. That is
+the same value or fault, the same memory, the same ordered calls, the same
+replies consumed and the same private frame. Compound-assignment inputs and
+unsequenced operands are checked as simple reads. A plain assignment to a
+named local may have an effectful right operand because its left operand
+only designates a location. These checks make the selected evaluation order
+unobservable in the admitted fragment.
+
+The check is complete for the forms the exporter lowers, so what it accepts
+is not limited to the recorded uses. A rule is in those forms when it uses
+the gnu11 profile, evaluates each evaluated argument once and gives it a C
+type, and gives an expression's result a C type. Outside them the exporter
+refuses the use, and a module whose rule lacks those types does not load.
+export_complete states: for such a rule, arguments of the
+right number and any supply of enough distinct names, a prefix of the supply
+is exactly the names the lowering uses, the block fills in the arguments as
+written, its record is admitted, and the block behaves as the use. The kernel
+decides that every recorded rule, the shipped ones included, is in these
+forms.
+
+The library contracts are proved on the rules the modules ship:
+  - try-narrow and array-bytes store a representable result and otherwise
+    keep the destination;
+  - doubled-capacity starts at the initial value, doubles, or refuses an
+    overflow and keeps the destination;
+  - worklist-push refuses aliased, overfull and unallocated arguments with no
+    effect, and appends when there is room. When the buffer is full it makes
+    exactly one resize call. If the new size overflows it refuses before
+    calling, and if the resize returns null it refuses and keeps the buffer;
+  - a disabled probe runs nothing and an enabled one runs its effect once.
+
+Not proved:
+  - that GCC and Clang give the interpreted fragment the meaning the
+    interpreter gives it;
+  - that the printed C reads back as the recorded structure;
+  - what the caller's code and a resize function do, which the laws take as
+    hypotheses;
+  - that the counter rows read from CeTTa's sources are the rows CeTTa
+    compiles, which identical objects test.
+The first two are tested: the export gives objects identical to cesta cc and
+is compiled and run with both compilers, and the kernel refuses recorded
+blocks mutated in their stores, guards, branches, intrinsics, callees,
+acquisition order, duplicated acquisitions, scopes, result checks and names.
+Chosen names are checked against the written arguments for capture.
+
+Header export is proved the same way. export-header --plan records each
+definition: the rule, the type parameters, the names chosen, and the
+definition handed to the printer (for a macro, its expression before it
+becomes text). The kernel decides that every shipped header definition is the
+lowering of its rule. function_correct states that a function's body, run with
+its parameters holding the values and places a call supplies, has the outcome
+of the rule's template with those arguments. That gives each shipped header
+function its library's contract, and the probe macro, at a use, runs its
+effect exactly when its switch is nonzero. Header export is complete in the
+same sense: every function of a rule whose parameter declarators each have
+one slot and whose expression result is a plain C type, and every macro of a
+rule with syntax parameters only and no locals whose template is not empty,
+and not a block when the
+rule is an expression, is admitted for any distinct names
+(checkHeader_function_complete, checkHeader_macro_complete).
+
+A header's promise stops at the call. C evaluates the call's arguments in an
+unspecified order and converts them to the parameter types: a call with two
+effectful arguments can run them in either order, and a prototype converts
+what the exact contract refuses. Callers that need ordered effects or exact
+types use program export.
+
+Tests
+-----
+
+make check runs bounded local checks, make test the regression suite, and
+make qualify every gate, including corpora and Lean. A project consuming an
+exported header runs none of them.

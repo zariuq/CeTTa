@@ -1,0 +1,204 @@
+Checked byte-buffer functions
+=============================
+
+checked-c/1 is a sequential, typed byte-buffer fragment. It compiles through
+cesta cc and cesta build, and export-c writes ordinary C. Plain C continues
+to use the native compiler directly.
+
+    cesta checked check checked/examples/ByteViews.cesta
+    cesta checked plan checked/examples/ByteViews.cesta -o permissions.plan
+    cesta checked header checked/examples/ByteViews.cesta -o byte_views.h
+    cesta export-c checked/examples/ByteViews.cesta -o byte_views.c --
+    cesta cc -c checked/examples/ByteViews.cesta
+
+A module names its C namespace and failure hook. A module using allocated
+owners also names an allocator and release pair. word-bits is 32 or 64 and
+defaults to 64; the generated C checks it against the target's size_t.
+
+    (cesta checked-c/1
+      (module example)
+      (word-bits 64)
+      (failure example_failure)
+      (allocator example_allocate example_release)
+      (fn sum
+        (params (bytes read))
+        (returns u64)
+        (effects)
+        (body
+          (var total u64 (u64 0))
+          (for index bytes
+            (body (set total (wrap-add total (as u64 (at bytes index))))))
+          (return total))))
+
+Compiler hints
+--------------
+
+Build a checked module with -DCESTA_CHECKED_OPTIMIZE=1 to enable the compiler
+hint layer, or pass --checked-hints to cesta build. The project option applies
+the mode to every target source, participates in incremental command changes,
+and is preserved in the exported Makefile. Without it the default is zero.
+The ordinary C export retains the hints. The switch must be
+set before including a generated checked header. Other values are rejected.
+GCC and Clang receive cold/noinline on the generated failure wrapper and
+alloc_size(1) on the declared byte allocator. Other C compilers receive the
+same ordinary declarations without these attributes.
+
+The failure wrapper calls the declared failure hook and never returns even
+if that hook returns. The allocator must supply the requested byte extent on
+success; it may return null. These hints do not add a nonnull, malloc,
+restrict, pure, const or alignment promise. A short exclusive borrow does not
+establish the whole-function precondition of restrict. Failure checks remain
+observable and are retained in both modes.
+
+test-checked-hints compares authored and exported builds in both modes under
+GCC and Clang, runs the existing ownership and trap controls with sanitizers,
+and independently checks the compiler's object-size knowledge. Hint emission
+does not imply a speedup on every programme.
+
+Types and interfaces
+--------------------
+
+unit is the result of a procedure. bool, u8, u16, u32, u64 and usize are
+scalar types. read and write are borrowed byte views; own is an allocated
+byte buffer transferred by value. Fixed local arrays have their own internal
+owner kind and cannot escape as own or as a borrowed result.
+
+The exported C interface uses cesta_read_bytes, cesta_write_bytes and
+cesta_owned_bytes, each a pointer and size_t length. read has a const pointer.
+There is no run-time borrow ledger. The compiler checks permissions before
+emitting C; bounds, size, arithmetic and explicit require checks remain in C.
+
+Every function declares params, returns, effects and body. A borrowed result
+names its lifetime source: (returns read from bytes) or (returns write from
+bytes). That source must be a compatible borrowed parameter. An owned result
+transfers one allocated buffer; unreturned owners are released automatically.
+The heap effect is required for allocating or releasing owned buffers.
+Calling a function requires all its declared effects in the caller.
+Effects name additional operations such as allocation or I/O; argument modes
+separately describe access to supplied buffers. An empty effects list does
+not assert referential transparency for a function with writable arguments.
+
+    (import "FormatBytes.cesta" as Format)
+    (let length usize (call Format_unsigned_decimal output value))
+
+Imports resolve relative to the importing source and use an explicit local
+prefix. Only the imported module's defined functions are exposed; its imports
+and foreign declarations are not implicitly re-exported. Imported bodies are
+checked recursively. Cycles, duplicate prefixes, direct C declaration
+collisions and different word widths are refused. Calls pass the same
+descriptor ABI used by defined functions.
+An owned argument or result requires identical allocator/release names in
+both modules. Borrowed-only calls do not require a common allocator family.
+An import checks an interface; the project manifest still lists the source
+units that supply its definitions. Compiler dependency files track every
+transitive import, so a changed interface rechecks its callers.
+
+Foreign code is declared explicitly:
+
+    (foreign send native_send
+      (params (bytes read)) (returns usize) (effects io)
+      (obligation "Reads only the supplied initialized range; retains no pointer."))
+
+A foreign read/write argument lowers to pointer,length native parameters.
+Checked-to-checked calls use descriptor parameters instead.
+Foreign own arguments and borrowed/owned results use descriptors. Foreign
+implementations must satisfy their signature, lifetime and effect promises;
+the obligation text does not prove them. A public function called from C has
+the same obligations:
+all ranges are valid and initialized, exclusive or consumed arguments do not
+alias other arguments, and owners belong to this module's allocator pair.
+An owned result is initialized and exclusive. A borrowed result lies in the
+initialized range of its declared source and retains no longer lifetime.
+
+Statements
+----------
+
+let and var declare initialized scalars; set changes a var. let may also bind
+a borrowed call result or move/bind an owned result.
+
+    (array bytes 8)                    zero-initialized local bytes
+    (borrow view read bytes)           shared view; write requests exclusivity
+    (slice view read bytes start size) checked subrange, same root lifetime
+    (copy second view)                 scalar or read-view copy
+    (move moved bytes)                 transfer; old binding becomes unusable
+    (end view)                        end a borrow with no live reborrows
+    (drop bytes)                      release an unborrowed owner
+    (put view index (u8 7))            checked byte store
+    (require condition)               always checked, including NDEBUG builds
+    (call function arguments...)      checked signature and argument permissions
+    (return value)                    evaluate result, then clean up, then return
+
+    (if condition (then statements...) (else statements...))
+    (while condition (body statements...))
+    (for index view (body statements...))
+    (break)
+    (continue)
+    (block statements...)
+    (allocate bytes count (then statements...) (else statements...))
+
+Allocation failure takes else. A zero-sized allocation succeeds without
+calling the allocator. A successful allocation is initialized to zero before
+its body. Buffers larger than PTRDIFF_MAX take the failure branch.
+
+Block exits automatically end views and release remaining owners in reverse
+declaration order, including return, break and continue. The failure hook is
+fatal: if it returns, generated code spins. It is not an exception/unwinding
+mechanism. All normal branch exits must agree on outer permissions. Loop
+backedges and loop exits must restore the outer entry permissions.
+
+A reborrow suspends conflicting access through its parent. Ending that
+parent or moving its owner while a child is live is refused. Permissions
+are conservative for an entire buffer: two disjoint write slices still
+conflict. Pointer forging and arbitrary native expressions are unavailable
+inside a checked body.
+
+Expressions
+-----------
+
+Typed unsigned decimal literals use (u8 7), (u64 7) or (usize 7). bool uses
+true and false. Available operations are len, at, not, and, or, eq, ne, lt,
+le, gt, ge, add, sub, mul, div, rem, wrap-add, wrap-sub, wrap-mul, bit-and,
+bit-or, bit-xor, shl and shr. Binary arithmetic operands have the same type;
+shift counts are usize. add/sub/mul check overflow; div/rem reject zero;
+shifts reject counts at or above the operand's width. wrap operations are
+explicit modular arithmetic. as permits widening; truncate names narrowing.
+Calls bind a let or return directly; nested calls in scalar expressions are
+not supported.
+
+Proof and testing boundary
+-------------------------
+
+The emitted cesta-permissions/1 plan is a projection of root permissions,
+transfers, borrowed-result origins and structured control flow. Scalar work,
+condition values and iteration counts are erased; it is not an exact effect
+or cost trace. Short-circuit expressions are conservatively checked on both
+sides. The independent Lean checker validates every branch, loop invariant,
+call permission and return cleanup. Its laws cover all finite executions of
+that permission model, including arbitrarily many loop iterations. Signatures
+record their allocator/release family. Owned calls preserve that family;
+borrowed returns preserve their source lifetime. An interface extension that
+preserves already-resolved signatures preserves admitted plans.
+
+Import plans appear before the importing module's record. export-c --plan
+records the same projections while producing the actual C artifact. Repeated
+imports may repeat a record. Interface laws do not establish which native
+object a linker binds to a public name; supplied objects must implement their
+recorded definitions.
+
+Native allocator validity, foreign implementations, the source-to-plan
+projection, scalar lowering, printed C and GCC/Clang compilation are outside
+those permission proofs. Native runs, sanitizer controls and refused source
+examples test the implementation boundaries. This fragment does not yet
+provide general Rust ownership for records, enums, owned globals, threads,
+arbitrary pointers or shared graphs.
+
+make test-checked-core runs native and authored GCC/Clang controls.
+make test-checked-libraries checks byte packing and numeric formatting.
+make test-checked-imports checks calls, ownership and incremental builds across modules.
+make test-checked-sanitizers adds ASan/UBSan.
+make test-checked-model checks the laws and their proof dependencies.
+make test-checked-admission admits actual emitted plans and refuses mutations.
+make test-checked-generated additionally checks generated combinations of
+scopes, calls, moves and loans, with native allocation accounting and sanitizers.
+The core and library gates are in check; imports are in test. Model,
+admission, generated-program and sanitizer gates are in qualify.

@@ -1,0 +1,25 @@
+-- A scalar is copied; a borrowed aggregate transfers its actual owner's token.
+Module Delivery {
+  Theory Protocols() {
+    Empty Equations {
+      (delivery_run) == (Protocol "cesta-protocol/1"
+        (Context DeliveryContext)
+        (Hooks
+          (Hook scalar delivery_scalar guard (Requires) (Uses) (Proves scalar_value))
+          (Hook copy delivery_copy prepare (Requires scalar_value) (Uses) (Proves))
+          (Hook publish delivery_publish effect (Requires) (Uses owner) (Proves)))
+        (Resources (Resource owner delivery_retain delivery_release delivery_transfer))
+        (Entry (Facts) (Owns))
+        (Body
+          (Call scalar
+            (Call copy (Return answered) (Return resource_failure))
+            (Acquire owner
+              (Call publish
+                (Transfer owner (Return answered))
+                (Release owner (Return engine_failure)))
+              (Return resource_failure))))
+        (Checks (Fact scalar_value delivery_is_scalar)
+                (Own owner delivery_owns_owner)));
+    }
+  }
+}
