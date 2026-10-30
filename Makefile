@@ -3492,6 +3492,11 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/held_equality.metta \
 	tests/prime/held_patterns.metta \
 	tests/prime/held_value_pattern_inspection.metta \
+	tests/prime/library_template_values.metta \
+	tests/prime/streaming_state_values.metta \
+	tests/prime/library_quote_declarations.metta \
+	tests/prime/library_langdef_declarations.metta \
+	tests/prime/library_history_declarations.metta \
 	tests/prime/stored_variable_identity.metta \
 	tests/prime/error_continues.metta \
 	tests/prime/no_value_kinds.metta \

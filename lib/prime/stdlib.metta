@@ -36,7 +36,7 @@
 (: if-equal (-> Atom Atom Atom Atom %Undefined%))
 (: sealed (-> Atom Atom Atom))
 (: capture (-> Atom Atom))
-(: quote (-> (Data Atom) Atom))
+(: quote (-> Atom Atom))
 (: unquote (-> %Undefined% %Undefined%))
 (: switch-internal (-> Atom Expression Atom))
 (: import! (-> Atom Atom (->)))
