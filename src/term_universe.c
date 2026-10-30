@@ -26,15 +26,20 @@ typedef struct CettaTermVariableSupportBlock {
         slots[CETTA_TERM_VARIABLE_SUPPORT_BLOCK_SIZE];
 } CettaTermVariableSupportBlock;
 
+/* A page goes dense when an insertion finds DENSE_AT live values, and back
+ * to sparse when a removal leaves fewer than SPARSE_BELOW. */
 enum { TERM_UNIVERSE_INTEGER_PAGE_BITS = 9,
        TERM_UNIVERSE_INTEGER_PAGE_SIZE = 1u << TERM_UNIVERSE_INTEGER_PAGE_BITS,
-       TERM_UNIVERSE_INTEGER_DENSE_AT = 128u };
+       TERM_UNIVERSE_INTEGER_DENSE_AT = 128u,
+       TERM_UNIVERSE_INTEGER_SPARSE_BELOW = 32u };
 
 typedef struct {
     size_t physical_plus_one;
     uint16_t offset;
 } CettaIntegerPageEntry;
 
+/* A page of 512 consecutive values: `len` live values in either form, as a
+ * sorted array of `cap` entries or, dense, one position per value. */
 typedef struct {
     uint16_t len, cap;
     bool dense;
@@ -3162,6 +3167,7 @@ static AtomId term_universe_insert_new_record(TermUniverse *universe,
     if (integer) {
         if (integer_page->dense) {
             integer_page->data.positions[integer_position] = physical_index + 1u;
+            integer_page->len++;
         } else {
             memmove(integer_page->data.sparse + integer_position + 1u,
                     integer_page->data.sparse + integer_position,
@@ -6098,7 +6104,13 @@ AtomId term_universe_store_atom_id_from_source_arena(
         universe, fallback, source_arena, src);
 }
 
-static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
+static Atom *term_universe_get_atom_at(TermUniverse *universe, AtomId id,
+                                       uint32_t depth);
+
+/* Decode one entry DEPTH levels below the decode that asked for it, its
+ * children one level further down. */
+static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id,
+                                       uint32_t depth) {
     Arena *dst = universe ? universe->persistent_arena : NULL;
     const CettaTermHdr *hdr = tu_hdr(universe, id);
     const uint8_t *payload = term_universe_payload(universe, id);
@@ -6155,12 +6167,17 @@ static Atom *term_universe_decode_atom(TermUniverse *universe, AtomId id) {
         return NULL;
     case ATOM_EXPR: {
         uint32_t len = term_universe_aux_data(hdr);
-        Atom **elems = arena_alloc(dst, sizeof(Atom *) * len);
+        /* The constructor copies the children: a few are gathered on the C
+         * stack, more in the arena. */
+        enum { INLINE_CHILDREN = 32 };
+        Atom *inline_elems[INLINE_CHILDREN];
+        Atom **elems = len <= INLINE_CHILDREN
+            ? inline_elems : arena_alloc(dst, sizeof(Atom *) * len);
         size_t atom_id_width = term_universe_atom_id_storage_width_bytes(universe);
         for (uint32_t i = 0; i < len; i++) {
             AtomId child_id = term_universe_load_stored_atom_id(
                 universe, payload + ((size_t)i * atom_id_width));
-            elems[i] = term_universe_get_atom(universe, child_id);
+            elems[i] = term_universe_get_atom_at(universe, child_id, depth + 1u);
             if (!elems[i])
                 return NULL;
         }
@@ -6561,26 +6578,122 @@ Atom *term_universe_decoded_atom_at(const TermUniverse *universe, AtomId id) {
         ? term_universe_decoded_at(universe, physical_index) : NULL;
 }
 
-Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id) {
+/* Decode one entry and keep its atom. */
+static Atom *term_universe_decode_one(TermUniverse *universe, AtomId id,
+                                      size_t physical_index, uint32_t depth) {
+    Atom *decoded = term_universe_decode_atom(universe, id, depth);
+    if (!decoded ||
+        !term_universe_set_decoded_at(universe, physical_index, decoded))
+        return NULL;
+    TU_DIAG_INC(universe, lazy_decode_count);
+    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE);
+    term_universe_track_ptr_id(universe, id);
+    return decoded;
+}
+
+/* An entry that is an expression, holds a record and is not decoded yet. */
+static bool term_universe_decode_pending_expr(const TermUniverse *universe,
+                                              AtomId id, size_t *physical) {
+    if (!term_universe_atom_id_to_physical_index(universe, id, physical) ||
+        term_universe_decoded_at(universe, *physical) ||
+        !term_universe_entry_has_blob(&universe->entries[*physical]))
+        return false;
+    const CettaTermHdr *hdr = tu_hdr(universe, id);
+    return hdr && (AtomKind)hdr->tag == ATOM_EXPR;
+}
+
+typedef struct {
+    AtomId id;
+    size_t physical;
+    uint32_t next;
+} TermUniverseDecodeFrame;
+
+/* Decode ROOT's undecoded expression descendants, children before parents,
+ * by an explicit stack in the heap: the C stack holds one frame whatever the
+ * term's depth.  The universe is acyclic, so no entry is on the stack twice;
+ * an entry reached again by another path is decoded by then. */
+static bool term_universe_decode_below(TermUniverse *universe, AtomId root) {
+    enum { INLINE_FRAMES = 32 };
+    TermUniverseDecodeFrame inline_frames[INLINE_FRAMES];
+    TermUniverseDecodeFrame *frames = inline_frames;
+    size_t len = 0u, cap = INLINE_FRAMES;
+    size_t width = term_universe_atom_id_storage_width_bytes(universe);
+    bool ok = true;
+    frames[len++] = (TermUniverseDecodeFrame){.id = root, .next = 0u};
+    while (ok && len > 0u) {
+        TermUniverseDecodeFrame *top = &frames[len - 1u];
+        const CettaTermHdr *hdr = tu_hdr(universe, top->id);
+        const uint8_t *payload = term_universe_payload(universe, top->id);
+        uint32_t arity = hdr ? term_universe_aux_data(hdr) : 0u;
+        AtomId pending = CETTA_ATOM_ID_NONE;
+        size_t pending_physical = 0u;
+        while (payload && top->next < arity) {
+            AtomId child = term_universe_load_stored_atom_id(
+                universe, payload + (size_t)top->next * width);
+            top->next++;
+            if (term_universe_decode_pending_expr(universe, child,
+                                                  &pending_physical)) {
+                pending = child;
+                break;
+            }
+        }
+        if (pending != CETTA_ATOM_ID_NONE) {
+            if (len == cap) {
+                size_t grown = cap * 2u;
+                TermUniverseDecodeFrame *next = frames == inline_frames
+                    ? malloc(grown * sizeof(*next))
+                    : realloc(frames, grown * sizeof(*next));
+                if (!next) {
+                    ok = false;
+                    break;
+                }
+                if (frames == inline_frames)
+                    memcpy(next, inline_frames, len * sizeof(*next));
+                frames = next;
+                cap = grown;
+            }
+            frames[len++] = (TermUniverseDecodeFrame){
+                .id = pending, .physical = pending_physical, .next = 0u};
+            continue;
+        }
+        /* The root is decoded by the caller.  Each entry's expression
+         * children are decoded by now, so its build does not descend. */
+        if (len > 1u)
+            ok = term_universe_decode_one(universe, top->id, top->physical,
+                                          0u) != NULL;
+        len--;
+    }
+    if (frames != inline_frames)
+        free(frames);
+    return ok;
+}
+
+/* Decoding descends one C frame a level down to this depth; a subtree that
+ * starts deeper is decoded by the explicit stack, children before parents,
+ * so a term of any depth decodes within a bounded C stack. */
+enum { TERM_UNIVERSE_DECODE_RECURSION = 256u };
+
+static Atom *term_universe_get_atom_at(TermUniverse *universe, AtomId id,
+                                       uint32_t depth) {
     size_t physical_index = 0;
     if (!term_universe_atom_id_to_physical_index(universe, id, &physical_index))
         return NULL;
-    TermUniverse *mutable_universe = (TermUniverse *)universe;
-    TermEntry *entry = &mutable_universe->entries[physical_index];
     Atom *decoded = term_universe_decoded_at(universe, physical_index);
     if (decoded)
         return decoded;
-    if (!term_universe_entry_has_blob(entry))
+    if (!term_universe_entry_has_blob(&universe->entries[physical_index]))
         return NULL;
-    decoded = term_universe_decode_atom(mutable_universe, id);
-    if (!decoded ||
-        !term_universe_set_decoded_at(mutable_universe, physical_index,
-                                      decoded))
-        return NULL;
-    TU_DIAG_INC(mutable_universe, lazy_decode_count);
-    cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_TERM_UNIVERSE_LAZY_DECODE);
-    term_universe_track_ptr_id(mutable_universe, id);
-    return decoded;
+    if (depth >= TERM_UNIVERSE_DECODE_RECURSION) {
+        const CettaTermHdr *hdr = tu_hdr(universe, id);
+        if (hdr && (AtomKind)hdr->tag == ATOM_EXPR &&
+            !term_universe_decode_below(universe, id))
+            return NULL;
+    }
+    return term_universe_decode_one(universe, id, physical_index, depth);
+}
+
+Atom *term_universe_get_atom(const TermUniverse *universe, AtomId id) {
+    return term_universe_get_atom_at((TermUniverse *)universe, id, 0u);
 }
 
 Atom *term_universe_store_atom(TermUniverse *universe, Arena *fallback,
@@ -6938,25 +7051,112 @@ static void term_universe_ptr_remove(TermUniverse *universe, Atom *atom,
 }
 
 /* Take the integer VALUE, stored at physical INDEX, out of its page. */
+/* The prefix table's slot holding VALUE's page, or SIZE_MAX. */
+static size_t term_universe_integer_slot_of(const TermUniverse *universe,
+                                            int64_t value) {
+    if (!universe->integer_slots)
+        return SIZE_MAX;
+    uint64_t prefix = (uint64_t)value >> TERM_UNIVERSE_INTEGER_PAGE_BITS;
+    for (size_t pos = term_universe_integer_hash(prefix) &
+                      universe->integer_mask;
+         universe->integer_slots[pos].page;
+         pos = (pos + 1u) & universe->integer_mask) {
+        if (universe->integer_slots[pos].prefix == prefix)
+            return pos;
+    }
+    return SIZE_MAX;
+}
+
+/* A page left empty goes, and its slot with it: the entries after the slot
+ * shift back into the hole while their homes allow it, so every remaining
+ * page stays on its probe path. */
+static void term_universe_integer_release(TermUniverse *universe,
+                                          size_t slot) {
+    CettaIntegerInternPage *page = universe->integer_slots[slot].page;
+    if (page->dense)
+        free(page->data.positions);
+    else
+        free(page->data.sparse);
+    free(page);
+    size_t mask = universe->integer_mask;
+    size_t hole = slot;
+    for (size_t next = (hole + 1u) & mask; universe->integer_slots[next].page;
+         next = (next + 1u) & mask) {
+        size_t home =
+            term_universe_integer_hash(universe->integer_slots[next].prefix) &
+            mask;
+        if (((next - home) & mask) >= ((next - hole) & mask)) {
+            universe->integer_slots[hole] = universe->integer_slots[next];
+            hole = next;
+        }
+    }
+    universe->integer_slots[hole] = (CettaIntegerInternSlot){0};
+    universe->integer_used--;
+}
+
+/* A dense page with few values left returns to a sorted array of
+ * max(4, 2 len).  Without memory it stays dense, which answers alike. */
+static void term_universe_integer_make_sparse(CettaIntegerInternPage *page) {
+    uint16_t cap = page->len * 2u > 4u ? (uint16_t)(page->len * 2u) : 4u;
+    CettaIntegerPageEntry *entries = malloc(cap * sizeof(*entries));
+    if (!entries)
+        return;
+    uint16_t at = 0u;
+    for (uint32_t offset = 0u; offset < TERM_UNIVERSE_INTEGER_PAGE_SIZE;
+         offset++) {
+        if (page->data.positions[offset])
+            entries[at++] = (CettaIntegerPageEntry){
+                .offset = (uint16_t)offset,
+                .physical_plus_one = page->data.positions[offset]};
+    }
+    free(page->data.positions);
+    page->data.sparse = entries;
+    page->cap = cap;
+    page->dense = false;
+}
+
+/* A reclaimed integer leaves its page.  An emptied page goes; a dense page
+ * under TERM_UNIVERSE_INTEGER_SPARSE_BELOW values turns sparse; a sparse
+ * array a quarter full halves: each page costs at most a constant per live
+ * value, and a run that interns ever-new integers keeps only the pages its
+ * live ones need. */
 static void term_universe_integer_remove(TermUniverse *universe,
                                          int64_t value, size_t index) {
-    CettaIntegerInternPage *page =
-        term_universe_integer_page(universe, value, NULL, NULL);
-    if (!page)
+    size_t slot = term_universe_integer_slot_of(universe, value);
+    if (slot == SIZE_MAX)
         return;
+    CettaIntegerInternPage *page = universe->integer_slots[slot].page;
     uint16_t offset =
         (uint64_t)value & (TERM_UNIVERSE_INTEGER_PAGE_SIZE - 1u);
     if (page->dense) {
-        if (page->data.positions[offset] == index + 1u)
-            page->data.positions[offset] = 0u;
-        return;
-    }
-    uint16_t pos = term_universe_integer_sparse_position(page, offset);
-    if (pos < page->len && page->data.sparse[pos].offset == offset &&
-        page->data.sparse[pos].physical_plus_one == index + 1u) {
+        if (page->data.positions[offset] != index + 1u)
+            return;
+        page->data.positions[offset] = 0u;
+        page->len--;
+    } else {
+        uint16_t pos = term_universe_integer_sparse_position(page, offset);
+        if (pos >= page->len || page->data.sparse[pos].offset != offset ||
+            page->data.sparse[pos].physical_plus_one != index + 1u)
+            return;
         memmove(page->data.sparse + pos, page->data.sparse + pos + 1u,
                 (size_t)(page->len - pos - 1u) * sizeof(*page->data.sparse));
         page->len--;
+    }
+    if (page->len == 0u) {
+        term_universe_integer_release(universe, slot);
+        return;
+    }
+    if (page->dense) {
+        if (page->len < TERM_UNIVERSE_INTEGER_SPARSE_BELOW)
+            term_universe_integer_make_sparse(page);
+    } else if (page->cap > 4u && 4u * page->len <= page->cap) {
+        uint16_t cap = page->cap / 2u;
+        CettaIntegerPageEntry *entries =
+            realloc(page->data.sparse, cap * sizeof(*entries));
+        if (entries) {
+            page->data.sparse = entries;
+            page->cap = cap;
+        }
     }
 }
 
