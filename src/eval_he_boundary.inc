@@ -60,6 +60,29 @@ static Atom *he_instruction_refusal_readback(Atom *syntax, Atom *carrier,
     return syntax;
 }
 
+/* The public instruction boundary removes raw Empty events; a delimiter
+ * keeps them for ordinary completion. NotReducible restores the saved
+ * source image. A returned function must acquire its own public codomain
+ * before its body runs, so it cannot use the generic tail carrier. */
+typedef enum {
+    HE_INSTRUCTION_OMIT,
+    HE_INSTRUCTION_REFUSAL,
+    HE_INSTRUCTION_INTERPRET,
+    HE_INSTRUCTION_TAIL,
+} HeInstructionCompletion;
+
+static HeInstructionCompletion he_instruction_completion(Arena *arena,
+    Atom *value, Atom *expected, bool public_instruction, bool allow_tail) {
+    if (!value || (public_instruction && atom_is_legacy_empty_sentinel(value)))
+        return HE_INSTRUCTION_OMIT;
+    if (he_not_reducible(value))
+        return HE_INSTRUCTION_REFUSAL;
+    if (allow_tail && atom_head_symbol_id(value) != g_builtin_syms.function &&
+        eval_atom_type_demand(arena, value, expected) == HE_TYPE_INTERPRET)
+        return HE_INSTRUCTION_TAIL;
+    return HE_INSTRUCTION_INTERPRET;
+}
+
 /* (chain <nested> $v <template>) binds $v in <template>, and function and
  * collapse-bind carry code.  An environment reaches a chain's nested
  * computation at once and its template only after the selected result has
@@ -698,13 +721,8 @@ static bool he_eval_typed_instruction(Space *s, Arena *a, Atom *atom, Atom *codo
      * off the C stack without giving them a separate execution path. */
     if (allow_tail && minimal.len == 1u && !eval_unwinding()) {
         Atom *result = outcome_atom_materialize(a, &minimal.items[0]);
-        if (result && !atom_is_legacy_empty_sentinel(result) &&
-            !he_not_reducible(result) &&
-            /* A returned function is a fresh public invocation. Its own
-             * Atom codomain must be acquired before interpreting its body;
-             * the generic tail carrier instead treats it as a delimiter. */
-            atom_head_symbol_id(result) != g_builtin_syms.function &&
-            eval_atom_type_demand(a, result, live[1]) == HE_TYPE_INTERPRET) {
+        if (he_instruction_completion(a, result, live[1], true, true) ==
+                HE_INSTRUCTION_TAIL) {
             bool copied = bindings_copy(tail_env, &minimal.items[0].env);
             if (copied) {
                 *tail_next = result;
@@ -718,8 +736,10 @@ static bool he_eval_typed_instruction(Space *s, Arena *a, Atom *atom, Atom *codo
     }
     for (CettaCount i = 0u; i < minimal.len && !eval_unwinding(); i++) {
         Atom *result = outcome_atom_materialize(a, &minimal.items[i]);
-        if (!result || atom_is_legacy_empty_sentinel(result)) continue;
-        if (he_not_reducible(result)) {
+        HeInstructionCompletion completion = he_instruction_completion(
+            a, result, live[1], true, false);
+        if (completion == HE_INSTRUCTION_OMIT) continue;
+        if (completion == HE_INSTRUCTION_REFUSAL) {
             result = he_instruction_refusal_readback(live[0], live[0], control);
             outcome_set_add(os, result, &minimal.items[i].env);
         } else {
@@ -757,9 +777,11 @@ static void he_eval_invocation_delimiter(Space *s, Arena *a, Atom *atom,
     he_minimal_run(s, a, atom, fuel, &env, &returned);
     for (CettaCount i = 0u; i < returned.len && !eval_unwinding(); i++) {
         Atom *result = outcome_atom_materialize(a, &returned.items[i]);
-        if (he_not_reducible(result))
+        HeInstructionCompletion completion = he_instruction_completion(
+            a, result, live[1], false, false);
+        if (completion == HE_INSTRUCTION_REFUSAL)
             outcome_set_add(os, result, &returned.items[i].env);
-        else if (result)
+        else if (completion != HE_INSTRUCTION_OMIT)
             eval_for_caller(s, a, live[1], result, fuel,
                             &returned.items[i].env, preserve_bindings, os);
     }

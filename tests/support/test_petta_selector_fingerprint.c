@@ -132,6 +132,94 @@ static void check_artifact_catalog(Arena *arena) {
     checks += 20u;
 }
 
+static void check_admission_cache_invalidation(Arena *arena) {
+    Space space;
+    space_init(&space);
+    SpaceProgramToken program = space_program_token(&space);
+    SymbolId source = atom_symbol(arena, "cache-generation-source")->sym_id;
+    Atom *head = atom_symbol_id(arena, source);
+    Atom *equation = atom_expr3(
+        arena, atom_symbol_id(arena, g_builtin_syms.equals),
+        atom_expr2(arena, head, atom_var(arena, "cache-argument")),
+        atom_int(arena, 7));
+    Atom *declaration = atom_expr3(
+        arena, atom_symbol(arena, ":"), head, atom_symbol(arena, "Atom"));
+    Atom *open_equation = atom_expr3(
+        arena, atom_symbol_id(arena, g_builtin_syms.equals),
+        atom_var(arena, "cache-open-head"), atom_int(arena, 9));
+    uint64_t instance = space_instance_id(&space);
+    for (unsigned transition = 0u; transition < 6u; transition++) {
+        PettaRelationRelevance relevance = PETTA_RELATION_RELEVANCE_UNKNOWN;
+        uint8_t result = 0u;
+        petta_relation_relevance_cache_store(
+            program, source, PETTA_RELATION_RELEVANCE_IRRELEVANT);
+        petta_query_forest_cache_store(&space, instance, 13u, 17u,
+                                      source, 1u, 3u);
+        assert(petta_relation_relevance_cache_lookup(program, source,
+                                                     &relevance));
+        assert(relevance == PETTA_RELATION_RELEVANCE_IRRELEVANT);
+        assert(petta_query_forest_cache_lookup(&space, instance, 13u, 17u,
+                                              source, 1u, &result));
+        assert(result == 3u);
+        assert(!petta_query_forest_cache_lookup(&space, instance, 14u, 17u,
+                                               source, 1u, &result));
+        uint64_t generation = g_petta_admission_cache_generation;
+        petta_specializer_note_mutation(&space, atom_int(arena, 11));
+        assert(g_petta_admission_cache_generation == generation);
+        assert(petta_relation_relevance_cache_lookup(program, source,
+                                                     &relevance));
+        assert(petta_query_forest_cache_lookup(&space, instance, 13u, 17u,
+                                              source, 1u, &result));
+        switch (transition) {
+        case 0u: petta_specializer_note_mutation(&space, equation); break;
+        case 1u: petta_specializer_note_mutation(&space, declaration); break;
+        case 2u: petta_specializer_note_mutation(&space, open_equation); break;
+        case 3u: petta_specializer_note_import(&space); break;
+        case 4u: petta_specializer_reset_thread(); break;
+        default: petta_relation_relevance_cache_clear(); break;
+        }
+        assert(g_petta_admission_cache_generation != generation);
+        /* Even the old complete inquiry must miss after invalidation. */
+        assert(!petta_relation_relevance_cache_lookup(program, source,
+                                                      &relevance));
+        assert(!petta_query_forest_cache_lookup(&space, instance, 13u, 17u,
+                                               source, 1u, &result));
+        checks += 11u;
+    }
+    /* Generation one can still occupy any slot when the counter reaches its
+     * last value. Reuse must erase both tables, including unqueried slots. */
+    for (size_t index = 0u; index < PETTA_RELATION_RELEVANCE_CACHE_SLOTS; index++)
+        g_petta_relation_relevance_cache[index].generation = 1u;
+    for (size_t index = 0u; index < PETTA_QUERY_FOREST_CACHE_SLOTS; index++)
+        g_petta_query_forest_cache[index].generation = 1u;
+    g_petta_admission_cache_generation = UINT64_MAX;
+    petta_relation_relevance_cache_clear();
+    assert(g_petta_admission_cache_generation == 1u);
+    for (size_t index = 0u; index < PETTA_RELATION_RELEVANCE_CACHE_SLOTS; index++) {
+        assert(g_petta_relation_relevance_cache[index].generation == 0u);
+        checks++;
+    }
+    for (size_t index = 0u; index < PETTA_QUERY_FOREST_CACHE_SLOTS; index++) {
+        assert(g_petta_query_forest_cache[index].generation == 0u);
+        checks++;
+    }
+    PettaRelationRelevance relevance;
+    uint8_t result;
+    assert(!petta_relation_relevance_cache_lookup(program, source, &relevance));
+    assert(!petta_query_forest_cache_lookup(&space, instance, 13u, 17u,
+                                           source, 1u, &result));
+    petta_relation_relevance_cache_store(
+        program, source, PETTA_RELATION_RELEVANCE_CERTAIN);
+    petta_query_forest_cache_store(&space, instance, 13u, 17u, source, 1u, 5u);
+    assert(petta_relation_relevance_cache_lookup(program, source, &relevance));
+    assert(relevance == PETTA_RELATION_RELEVANCE_CERTAIN);
+    assert(petta_query_forest_cache_lookup(&space, instance, 13u, 17u,
+                                          source, 1u, &result) && result == 5u);
+    petta_specializer_reset_thread();
+    space_free(&space);
+    checks += 6u;
+}
+
 int main(void) {
     SymbolTable symbols;
     symbol_table_init(&symbols);
@@ -148,6 +236,7 @@ int main(void) {
     eval_set_library_context(&library);
     assert(petta_selector_fingerprint_enabled());
     check_artifact_catalog(&source);
+    check_admission_cache_invalidation(&source);
 
     Atom *a = atom_symbol(&source, "selector-a");
     Atom *b = atom_symbol(&source, "selector-b");

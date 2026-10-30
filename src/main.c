@@ -2697,9 +2697,12 @@ static bool main_petta_open_slices(CettaMainCleanup *cleanup,
 
 /* The next slice of the document, in place of the last: its count of
  * forms, 0 once the document is read through, -1 on a fault (reported).
- * The last slice is dropped and collected first. */
+ * The last slice is dropped and collected first.  CHECK reads it for the
+ * first pass, which builds only the forms the predeclaration reads
+ * (petta_compiled_document_v1_check_next). */
 static int main_petta_next_slice(CettaMainCleanup *cleanup,
-                                 TermUniverse *universe, AtomId **atom_ids) {
+                                 TermUniverse *universe, AtomId **atom_ids,
+                                 bool check) {
     free(*atom_ids);
     *atom_ids = NULL;
     cleanup->atom_ids = NULL;
@@ -2708,11 +2711,15 @@ static int main_petta_next_slice(CettaMainCleanup *cleanup,
     petta_compiled_document_v1_release_read(&cleanup->petta_document);
     (void)term_universe_collect_at_safe_point(universe, NULL);
     char error[512] = {0};
-    int n = petta_compiled_document_v1_next(
-        cleanup->petta_reader, &cleanup->petta_document,
-        (uint32_t)main_petta_slice_setting("CETTA_PETTA_SLICE_FORMS",
-                                           MAIN_PETTA_SLICE_FORMS),
-        universe, atom_ids, error, sizeof(error));
+    uint32_t forms = (uint32_t)main_petta_slice_setting(
+        "CETTA_PETTA_SLICE_FORMS", MAIN_PETTA_SLICE_FORMS);
+    int n = check
+        ? petta_compiled_document_v1_check_next(
+              cleanup->petta_reader, &cleanup->petta_document, forms,
+              universe, atom_ids, error, sizeof(error))
+        : petta_compiled_document_v1_next(
+              cleanup->petta_reader, &cleanup->petta_document, forms,
+              universe, atom_ids, error, sizeof(error));
     if (n < 0) {
         fprintf(stderr, "error: compiled PeTTa reader: %s\n",
                 error[0] ? error : "unreadable document");
@@ -2730,7 +2737,7 @@ static bool main_petta_check_slices(CettaMainCleanup *cleanup,
                                     Space *space, AtomId **atom_ids) {
     for (;;) {
         int n = main_petta_next_slice(cleanup, &libraries->term_universe,
-                                      atom_ids);
+                                      atom_ids, true);
         if (n < 0)
             return false;
         if (n == 0)
@@ -4417,7 +4424,7 @@ process_petta_document:
             goto cleanup;
         }
         n = main_petta_next_slice(&cleanup, &libraries.term_universe,
-                                  &atom_ids);
+                                  &atom_ids, false);
         if (n < 0) {
             rc = 1;
             goto cleanup;
@@ -4922,7 +4929,7 @@ petta_next_slice:
     /* A document read a slice at a time goes on with its next slice. */
     if (cleanup.petta_document_open && !stop_document_sequence && i >= n) {
         n = main_petta_next_slice(&cleanup, &libraries.term_universe,
-                                  &atom_ids);
+                                  &atom_ids, false);
         if (n < 0) {
             rc = 1;
             goto cleanup;

@@ -84,6 +84,17 @@ int petta_compiled_document_v1_next(PeTTaCompiledReaderV1 *reader,
                                     uint32_t max_forms,
                                     TermUniverse *universe, AtomId **out_ids,
                                     char *error_buf, size_t error_buf_size);
+/* The next slice of a document's first pass: every form parsed, and so
+ * checked, as petta_compiled_document_v1_next parses it, but only a form
+ * whose first token spells `=`, `=%` or `:` built into UNIVERSE; every
+ * other form stands as the empty expression, `!` before it when it runs. */
+int petta_compiled_document_v1_check_next(PeTTaCompiledReaderV1 *reader,
+                                          PeTTaCompiledDocumentV1 *document,
+                                          uint32_t max_forms,
+                                          TermUniverse *universe,
+                                          AtomId **out_ids,
+                                          char *error_buf,
+                                          size_t error_buf_size);
 void petta_compiled_document_v1_release_read(
     PeTTaCompiledDocumentV1 *document);
 void petta_compiled_document_v1_rewind(PeTTaCompiledDocumentV1 *document);

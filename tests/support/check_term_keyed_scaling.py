@@ -21,7 +21,9 @@ to be compared.  From D to 4 D, the pairs of subterms compared per pair of
 rows do not grow: two such levels are unequal at once by their hashes, which
 differ however the levels nest.  The same levels ending in a number instead
 of Z compare by walking, so their pairs must grow, or the test measures
-nothing.
+nothing.  These comparisons are read on the ordinary path, which reads the
+receives first, as written.  The native join reads the ground sends first
+and meets the receives by their rows, and compares no pair at either depth.
 
 Rules.  A space holds a seed (: seed (Reach g0)) and, for each k, rules
 (: reach_k (-> (: $p (Reach gk)) (Reach gk+1))) and (: noise_k (-> (: $p
@@ -119,13 +121,18 @@ def counters(report):
     return found
 
 
-def run(binary, work, name, source, expected):
+def run(binary, work, name, source, expected, reference=False):
     path = os.path.join(work, name + ".metta")
     with open(path, "w") as f:
         f.write(source)
+    env = dict(os.environ)
+    env.pop("CETTA_NATIVE_QUERY_REFERENCE", None)
+    if reference:
+        env["CETTA_NATIVE_QUERY_REFERENCE"] = "1"
     p = subprocess.run([binary, "--emit-runtime-stats", "--profile", "extended",
                         "--lang", "petta", path],
-                       cwd=ROOT, capture_output=True, text=True, timeout=600)
+                       cwd=ROOT, env=env, capture_output=True, text=True,
+                       timeout=600)
     answers = [l for l in p.stdout.splitlines() if l not in ("()", "true")
                and not l.startswith("runtime-")]
     if p.returncode != 0 or answers[-1:] != [str(expected)]:
@@ -153,10 +160,16 @@ def main():
         for bottom in ("Z", "0"):
             pairs[bottom] = []
             for depth in DEPTHS:
-                found = run(binary, work, f"channels_{bottom}_{depth}",
-                            CHANNELS.format(bottom=bottom, m=CHANNEL_LEVELS, d=depth),
-                            0)
+                program = CHANNELS.format(bottom=bottom, m=CHANNEL_LEVELS, d=depth)
+                found = run(binary, work, f"channels_{bottom}_{depth}", program,
+                            0, reference=True)
                 pairs[bottom].append(found.get("atom-compare-pair", 0) / compared_rows)
+                native = run(binary, work, f"channels_{bottom}_{depth}_native",
+                             program, 0).get("atom-compare-pair", 0)
+                if native:
+                    print(f"FAIL: the native join of channels ending in {bottom} "
+                          f"at depth {depth} compared {native} pairs of subterms")
+                    return 1
         if pairs["0"][1] < 2 * pairs["0"][0] or pairs["0"][1] < DEPTHS[0]:
             print(f"FAIL: levels ending in a number compare {pairs['0'][0]:.1f} and "
                   f"{pairs['0'][1]:.1f} pairs a row at depths {DEPTHS[0]} and "

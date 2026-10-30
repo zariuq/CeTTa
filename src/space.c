@@ -2262,7 +2262,10 @@ bool space_occurrence_cursor_init(Space *s, Atom *pattern,
         (!marked && space_match_native_try_cold_candidates(
             s, pattern, &cursor->flat, &cursor->flat_len)) ||
         (!marked && !leads && space_path_index_may_select(pattern) &&
-         space_path_index_candidates(s, pattern, &cursor->flat, &cursor->flat_len))) {
+         space_path_index_candidates(s, pattern, &cursor->flat, &cursor->flat_len)) ||
+        (!marked && !s->match_backend.native.match_trie &&
+         space_path_index_prefix_candidates(s, pattern, true, &cursor->flat,
+                                            &cursor->flat_len))) {
         cursor->flat_mode = true;
         return space_occurrence_cursor_capture(s, cursor);
     }
@@ -2406,7 +2409,10 @@ static bool space_occurrence_cursor_yield(
     return true;
 }
 
-static SpaceOccurrenceCursorStep space_occurrence_cursor_next_locked(
+/* Inlined into both readers, the atom's and the id's, as it was into the
+ * one reader there was. */
+static inline __attribute__((always_inline)) SpaceOccurrenceCursorStep
+space_occurrence_cursor_next_locked(
     SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out) {
     if (logical_index_out)
         *logical_index_out = 0u;
@@ -2519,21 +2525,33 @@ static SpaceOccurrenceCursorStep space_occurrence_cursor_next_locked(
 
 /* Physical rows belong to the same pinned view on either side of detach.
  * A selected row needs no second logical-to-physical index lookup. */
-static Atom *space_pinned_occurrences_atom_at_row(
+static AtomId space_pinned_occurrences_id_at_row(
         const SpacePinnedOccurrences *occurrences, CettaIndex row) {
     const SpaceNativeStorage *live = occurrences->space
         ? &occurrences->space->native : NULL;
     uint8_t bits = live ? live->atom_id_width_bits : occurrences->atom_id_width_bits;
     CettaCount length = live ? live->len : occurrences->len;
     const uint8_t *storage = live ? live->atom_ids : occurrences->atom_ids;
-    TermUniverse *universe = live ? live->universe : occurrences->universe;
     size_t width = cetta_atom_id_storage_width_bytes_from_bits(bits);
     if (row >= length || !storage || width == 0u)
-        return NULL;
-    AtomId atom_id = cetta_atom_id_storage_load_bits(
+        return CETTA_ATOM_ID_NONE;
+    return cetta_atom_id_storage_load_bits(
         storage + (size_t)row * width, bits);
+}
+
+static TermUniverse *space_pinned_occurrences_universe(
+        const SpacePinnedOccurrences *occurrences) {
+    return occurrences->space ? occurrences->space->native.universe
+                              : occurrences->universe;
+}
+
+static Atom *space_pinned_occurrences_atom_at_row(
+        const SpacePinnedOccurrences *occurrences, CettaIndex row) {
+    AtomId atom_id = space_pinned_occurrences_id_at_row(occurrences, row);
     return atom_id != CETTA_ATOM_ID_NONE
-        ? term_universe_get_atom(universe, atom_id) : NULL;
+        ? term_universe_get_atom(
+              space_pinned_occurrences_universe(occurrences), atom_id)
+        : NULL;
 }
 
 SpaceOccurrenceCursorStep space_occurrence_cursor_next(
@@ -2547,6 +2565,27 @@ SpaceOccurrenceCursorStep space_occurrence_cursor_next(
         *atom_out = space_pinned_occurrences_atom_at_row(
             cursor->occurrences, cursor->last_row);
     return step;
+}
+
+SpaceOccurrenceCursorStep space_occurrence_cursor_next_id(
+        SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out,
+        AtomId *id_out) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    if (id_out)
+        *id_out = CETTA_ATOM_ID_NONE;
+    SpaceOccurrenceCursorStep step =
+        space_occurrence_cursor_next_locked(cursor, logical_index_out);
+    if (step == SPACE_OCCURRENCE_CURSOR_ITEM && id_out)
+        *id_out = space_pinned_occurrences_id_at_row(cursor->occurrences,
+                                                     cursor->last_row);
+    return step;
+}
+
+TermUniverse *space_occurrence_cursor_universe(
+        const SpaceOccurrenceCursor *cursor) {
+    CETTA_SCOPED_SHARED_TRANSITION(transition);
+    return cursor && cursor->occurrences
+        ? space_pinned_occurrences_universe(cursor->occurrences) : NULL;
 }
 
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
@@ -4009,12 +4048,14 @@ static void id_present_free(SpaceNativeStorage *ns) {
 }
 
 /* Reusable per-thread scratch for canonicalization/interning fallback, reset
-   (not freed) per call so the hot dedup path pays no arena init/free churn. */
+   (not freed) per call so the hot dedup path pays no arena init/free churn.
+   What it builds lives until that reset, so it interns nothing in the
+   process's hash-cons table, which would keep it for the process. */
 static _Thread_local Arena g_canon_scratch;
 static _Thread_local bool g_canon_scratch_ready = false;
 static Arena *canon_scratch(void) {
     if (!g_canon_scratch_ready) {
-        arena_init(&g_canon_scratch);
+        arena_init_detached(&g_canon_scratch);
         g_canon_scratch_ready = true;
     }
     return &g_canon_scratch;
@@ -4035,6 +4076,11 @@ static AtomId space_canonical_id_for_stored(Space *s, AtomId atom_id) {
        persistent Atom merely to rediscover that it has no variables. */
     if (hdr && !tu_has_vars(s->native.universe, atom_id))
         return atom_id;
+    /* An open record's key is read from it: nothing is decoded. */
+    AtomId key = hdr ? term_universe_alpha_key_id(s->native.universe, atom_id)
+                     : CETTA_ATOM_ID_NONE;
+    if (key != CETTA_ATOM_ID_NONE)
+        return key;
     Atom *atom = term_universe_get_atom(s->native.universe, atom_id);
     if (!atom)
         return CETTA_ATOM_ID_NONE;
@@ -4058,6 +4104,12 @@ static AtomId space_canonical_id_for_query(Space *s, Atom *atom) {
         return CETTA_ATOM_ID_NONE;
     if (!atom_has_vars(atom))
         return term_universe_lookup_atom_id(s->native.universe, atom);
+    /* The key is looked up part by part, without a canonical copy. */
+    bool declined = false;
+    AtomId key = term_universe_alpha_key_lookup(s->native.universe, atom,
+                                                &declined);
+    if (!declined)
+        return key;
     Arena *scratch = canon_scratch();
     ArenaMark mark = arena_mark(scratch);
     Atom *canon = term_universe_alpha_canonicalize_atom(scratch, atom);
@@ -5133,14 +5185,21 @@ void space_dense_settle(Space *s, SymbolId head) {
 void space_dense_settle_for_pattern(Space *s, const Atom *pattern) {
     if (!s || s->native.dense_pairs == 0u)
         return;
-    SymbolId head = SYMBOL_ID_NONE;
     if (pattern && pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
-        pattern->expr.elems[0]->kind == ATOM_SYMBOL)
-        head = pattern->expr.elems[0]->sym_id;
-    /* A pattern of another arity, or a symbol, reads no fact the bits hold. */
-    if (pattern && head != SYMBOL_ID_NONE && pattern->expr.len != 3u)
+        pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
+        space_dense_settle_for_head(s, pattern->expr.elems[0]->sym_id,
+                                    pattern->expr.len);
         return;
+    }
+    /* A symbol reads no fact the bits hold. */
     if (pattern && pattern->kind == ATOM_SYMBOL)
+        return;
+    space_dense_settle(s, SYMBOL_ID_NONE);
+}
+
+void space_dense_settle_for_head(Space *s, SymbolId head, CettaExprLen len) {
+    /* A pattern of another arity reads no fact the bits hold. */
+    if (!s || s->native.dense_pairs == 0u || len != 3u)
         return;
     space_dense_settle(s, head);
 }
@@ -5796,8 +5855,9 @@ bool space_remove_logical_positions(Space *s, const CettaIndex *positions,
     SpaceMatchNativeState *native_state = &s->match_backend.native;
     for (CettaCount i = 0u; i < count; i++) {
         space_marks_mark(s, rows[i]);
-        /* The row leaves the match and position indexes now, so lookups do
-         * not meet it. */
+        /* The row leaves the match trie and the exact index now, so lookups
+         * do not meet it; the position indexes keep it until the marks
+         * settle, and their reader drops marked rows. */
         AtomId atom_id = space_atom_id_storage_load_at(
             s->native.atom_ids, s->native.atom_id_width_bits, rows[i]);
         term_universe_release(s->native.universe, atom_id);
@@ -8546,31 +8606,67 @@ static bool space_defer_incremental_secondary_indices(const Space *s) {
  * it.  A ground atom is held when its interned id is: the exact index says so
  * while a removal leaves the presence bitset to a full resync, the bitset
  * otherwise.  An open atom is compared through its canonical form. */
+/* Whether a set holds a row whose alpha key is `key`, when its presence
+ * bitset, keyed by alpha keys, can say: false leaves the caller to compare
+ * atoms. */
+static bool space_set_holds_key(Space *s, AtomId key, bool *held) {
+    TermUniverse *universe = s->native.universe;
+    if (key == CETTA_ATOM_ID_NONE || !universe ||
+        !space_tracks_atom_ids(s) || !tu_hdr(universe, key) ||
+        space_has_dependencies(s) || space_has_overlay_base(s) ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT) ||
+        !id_present_sync(s))
+        return false;
+    *held = id_present_contains(&s->native, key);
+    return true;
+}
+
 static bool space_set_holds(Space *s, AtomId atom_id, Atom *atom) {
     TermUniverse *universe = s->native.universe;
     if (atom_id != CETTA_ATOM_ID_NONE && space_tracks_atom_ids(s) &&
         universe && tu_hdr(universe, atom_id) &&
-        !tu_has_vars(universe, atom_id) && !space_has_dependencies(s) &&
-        !space_has_overlay_base(s) &&
+        !space_has_dependencies(s) && !space_has_overlay_base(s) &&
         (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
          s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) {
-        if (s->native.id_present_dirty && !s->native.exact_idx_dirty)
-            return exact_index_holds_id(&s->native.exact_idx, atom_id);
-        if (id_present_sync(s))
-            return id_present_contains(&s->native, atom_id);
+        if (!tu_has_vars(universe, atom_id)) {
+            if (s->native.id_present_dirty && !s->native.exact_idx_dirty)
+                return exact_index_holds_id(&s->native.exact_idx, atom_id);
+            if (id_present_sync(s))
+                return id_present_contains(&s->native, atom_id);
+        } else {
+            /* An open row is held, as itself or as a variant, when its
+             * key is; the key is read from its record. */
+            bool held = false;
+            if (space_set_holds_key(
+                    s, term_universe_alpha_key_id(universe, atom_id), &held))
+                return held;
+        }
     }
     if (!atom && space_tracks_atom_ids(s) && atom_id != CETTA_ATOM_ID_NONE)
         atom = term_universe_get_atom(universe, atom_id);
     return atom && space_contains_for_add_nodup(s, atom);
 }
 
+static void space_add_stored_id_as(Space *s, AtomId atom_id,
+                                   Atom *backend_atom, bool set_checked);
+
 static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
+    space_add_stored_id_as(s, atom_id, backend_atom, false);
+}
+
+/* `set_checked`: the caller has just found, by the presence bitset, that
+ * the set holds no copy of the atom and no alpha-variant, and `atom_id` is
+ * the atom's own presence key (its alpha key). */
+static void space_add_stored_id_as(Space *s, AtomId atom_id,
+                                   Atom *backend_atom, bool set_checked) {
     if (space_dense_route_add(s, atom_id))
         return;
     space_dense_note_row(s, atom_id);
     /* A set adds an atom only when it holds no copy of it, nor an
      * alpha-variant. */
-    if (s->kind == SPACE_KIND_SET && space_set_holds(s, atom_id, backend_atom))
+    if (s->kind == SPACE_KIND_SET && !set_checked &&
+        space_set_holds(s, atom_id, backend_atom))
         return;
     bool queue_gap = space_is_queue(s) && s->native.start != 0;
     bool backend_needs_atom =
@@ -8603,6 +8699,13 @@ static void space_add_stored_id(Space *s, AtomId atom_id, Atom *backend_atom) {
     }
     s->native.len++;
     space_hold_row(s, atom_id);
+    /* A row stored as its own presence key, the bitset synced up to it:
+     * the bitset takes it now, and no later sync reads its key again. */
+    if (set_checked && !s->native.id_present_dirty &&
+        space_dense_pairs(s) == 0u &&
+        s->native.id_present_synced_len + 1u == s->native.len &&
+        id_present_set(&s->native, atom_id))
+        s->native.id_present_synced_len = s->native.len;
     space_note_atom_id_storage_peak(s);
     space_publish_mutation(
         s, space_atom_equation_projection(s, atom_id, backend_atom),
@@ -8952,6 +9055,18 @@ TermUniverseError space_term_universe_last_error_code(const Space *s) {
 }
 
 
+/* The route space_admit_atom_impl takes for an open row of a PeTTa
+ * set keeping its own records: no backend stores the row directly, its
+ * relation's bits never take a row with variables, and the row is kept as
+ * its alpha key when the key forms. */
+bool space_keys_open_row(Space *s, Atom *atom) {
+    s = space_mutation_target(s);
+    return s && atom && atom_has_vars(atom) && s->kind == SPACE_KIND_SET &&
+        space_effect_language() == CETTA_LANGUAGE_PETTA &&
+        !(s->match_backend.ops && s->match_backend.ops->store_atom_direct) &&
+        space_tracks_atom_ids(s) && term_universe_alpha_key_forms(atom);
+}
+
 static bool space_admit_atom_impl(Space *s, Arena *fallback,
                                   const Arena *source_arena, Atom *atom) {
     s = space_mutation_target(s);
@@ -8969,24 +9084,43 @@ static bool space_admit_atom_impl(Space *s, Arena *fallback,
     if (space_tracks_atom_ids(s)) {
         if (space_dense_add_parts(s, atom))
             return true;
-        /* A set already holding an alpha-variant of an open atom adds
-         * nothing, and the variant, whose variables are fresh, is not
+        /* Deduplication by design: a set identifies a row with its
+         * variants, and PeTTa never shows a stored variable's name, so the
+         * row is kept as its alpha key, its own key: one record a variant,
+         * as a trie keyed by first occurrences keeps one path.  The key is
+         * interned first: a set holding a variant holds the key, which then
+         * exists already, so nothing grows, and its presence decides. */
+        bool open_row = s->kind == SPACE_KIND_SET && atom_has_vars(atom);
+        bool set_checked = false;
+        AtomId atom_id = CETTA_ATOM_ID_NONE;
+        if (open_row && space_effect_language() == CETTA_LANGUAGE_PETTA) {
+            atom_id = term_universe_store_alpha_key(s->native.universe, atom);
+            bool held = false;
+            if (space_set_holds_key(s, atom_id, &held)) {
+                if (held)
+                    return true;
+                set_checked = true;
+            }
+        }
+        /* Otherwise a set already holding an alpha-variant of an open atom
+         * adds nothing, and the variant, whose variables are fresh, is not
          * interned. */
-        if (s->kind == SPACE_KIND_SET && atom_has_vars(atom) &&
+        if (open_row && atom_id == CETTA_ATOM_ID_NONE &&
             space_set_holds(s, CETTA_ATOM_ID_NONE, atom))
             return true;
-        AtomId atom_id = source_arena
-            ? term_universe_store_atom_id_from_source_arena(
-                  s->native.universe, fallback, source_arena, atom)
-            : term_universe_store_atom_id(
-                  s->native.universe, fallback, atom);
+        if (atom_id == CETTA_ATOM_ID_NONE)
+            atom_id = source_arena
+                ? term_universe_store_atom_id_from_source_arena(
+                      s->native.universe, fallback, source_arena, atom)
+                : term_universe_store_atom_id(
+                      s->native.universe, fallback, atom);
         if (atom_id != CETTA_ATOM_ID_NONE) {
             if (space_store_via_backend_primary(
                     s, atom_id, atom, &transition_failed))
                 return true;
             if (transition_failed)
                 return false;
-            space_add_stored_id(s, atom_id, atom);
+            space_add_stored_id_as(s, atom_id, atom, set_checked);
             return true;
         }
         if (space_term_universe_failed(s))
@@ -10102,6 +10236,31 @@ bool space_contains_atom_id(const Space *s, AtomId atom_id) {
     return false;
 }
 
+bool space_holds_atom_id_exact(Space *s, AtomId atom_id) {
+    CETTA_SCOPED_SHARED_TRANSITION(holds);
+    if (!s || atom_id == CETTA_ATOM_ID_NONE)
+        return false;
+    if (space_dense_holds(s, atom_id))
+        return true;
+    if (!space_tracks_atom_ids(s) || space_has_dependencies(s) ||
+        space_has_overlay_base(s) ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return space_contains_atom_id(s, atom_id);
+    /* A set answers from its presence index, kept current by the rows
+     * added since; another space from its exact index, rebuilt here when
+     * stale and a rebuild is allowed, as exact_index_head_exact does. */
+    if (s->kind == SPACE_KIND_SET)
+        return space_set_holds(s, atom_id, NULL);
+    if (s->native.exact_idx_dirty && space_keeps_exact_index(s) &&
+        s->native.secondary_index_deferral_depth == 0u &&
+        s->native.marked == 0u)
+        exact_index_rebuild(s);
+    return s->native.exact_idx_dirty
+        ? space_contains_atom_id(s, atom_id)
+        : exact_index_holds_id(&s->native.exact_idx, atom_id);
+}
+
 static bool space_remove_atom_id_rows(Space *s, AtomId atom_id);
 
 bool space_remove_atom_id(Space *s, AtomId atom_id) {
@@ -10593,6 +10752,19 @@ Atom *space_get_at64(const Space *s, CettaIndex idx) {
 }
 
 Atom *space_get_at(const Space *s, uint32_t idx) {
+    return space_get_at64(s, idx);
+}
+
+Atom *space_view_at64(const Space *s, CettaIndex idx, Arena *dst) {
+    if (s && dst && s->native.universe && !space_has_overlay_base(s) &&
+        space_dense_pairs(s) == 0u &&
+        (s->match_backend.kind == SPACE_ENGINE_NATIVE ||
+         s->match_backend.kind == SPACE_ENGINE_NATIVE_CANDIDATE_EXACT)) {
+        CETTA_SCOPED_SHARED_TRANSITION(read);
+        AtomId id = space_get_atom_id_at64(s, idx);
+        if (id != CETTA_ATOM_ID_NONE)
+            return term_universe_view_atom(s->native.universe, dst, id);
+    }
     return space_get_at64(s, idx);
 }
 
@@ -11134,23 +11306,28 @@ CettaIndex space_exact_index_rows64(Space *s, Atom *pattern,
         ? 0u : exact_index_rows(&s->native.exact_idx, id, out);
 }
 
-bool space_exact_frontier_certified(Space *s, Atom *pattern) {
-    space_dense_settle_for_pattern(s, pattern);
-    if (!s || !pattern || pattern->kind != ATOM_EXPR ||
-        pattern->expr.len == 0u ||
-        pattern->expr.elems[0]->kind != ATOM_SYMBOL ||
-        space_has_overlay_base(s) ||
-        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
-         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
-        return false;
-    /* The index is read, and rebuilt by its first reader, as one physical
-     * transition of the space. */
-    CETTA_SCOPED_SHARED_TRANSITION(exact_frontier);
+CettaIndex space_exact_index_rows_ids64(Space *s, SymbolId head,
+                                        const AtomId *ids, CettaExprLen len,
+                                        CettaIndex **out) {
+    space_dense_settle_for_head(s, head, len);
+    *out = NULL;
+    CETTA_SCOPED_SHARED_TRANSITION(exact_rows);
+    if (!s || !ids || !s->native.universe || s->native.exact_idx_dirty)
+        return 0u;
+    AtomId id = tu_expr_lookup_ids(s->native.universe, ids, len);
+    return id == CETTA_ATOM_ID_NONE
+        ? 0u : exact_index_rows(&s->native.exact_idx, id, out);
+}
+
+/* Whether the exact index, read or rebuilt here, holds no row with a
+ * variable under HEAD and none without a symbol head: then every row an
+ * atom headed by HEAD meets is an exact row.  False when it cannot answer.
+ * Inside a deferral window rows arrive without index upkeep, so a rebuild
+ * per query would cost the whole space each time; a rebuild would also
+ * settle marks a query leaves to their own schedule.  A strict space builds
+ * none.  The caller holds the space's transition. */
+static bool exact_index_head_exact(Space *s, SymbolId head) {
     if (s->native.exact_idx_dirty) {
-        /* Inside a deferral window rows arrive without index upkeep, so a
-         * rebuild per query would cost the whole space each time; a rebuild
-         * would also settle marks a query leaves to their own schedule.  A
-         * strict space builds none. */
         if (!space_keeps_exact_index(s) ||
             s->native.secondary_index_deferral_depth > 0u ||
             s->native.marked != 0u)
@@ -11160,12 +11337,43 @@ bool space_exact_frontier_certified(Space *s, Atom *pattern) {
     ExactAtomIndex *idx = &s->native.exact_idx;
     if (idx->inexact_unheaded != 0u)
         return false;
-    ExactIndexInexactHead *entry = exact_index_inexact_head(
-        idx, pattern->expr.elems[0]->sym_id, false);
-    if (entry && entry->rows != 0u)
+    ExactIndexInexactHead *entry = exact_index_inexact_head(idx, head, false);
+    return !entry || entry->rows == 0u;
+}
+
+bool space_exact_frontier_certified(Space *s, Atom *pattern) {
+    if (pattern && pattern->kind == ATOM_EXPR && pattern->expr.len != 0u &&
+        pattern->expr.elems[0]->kind == ATOM_SYMBOL)
+        return space_exact_frontier_certified_head(
+            s, pattern->expr.elems[0]->sym_id, pattern->expr.len);
+    space_dense_settle_for_pattern(s, pattern);
+    return false;
+}
+
+bool space_exact_frontier_certified_head(Space *s, SymbolId head,
+                                         CettaExprLen len) {
+    space_dense_settle_for_head(s, head, len);
+    if (!s || len == 0u || space_has_overlay_base(s) ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return false;
+    /* The index is read, and rebuilt by its first reader, as one physical
+     * transition of the space. */
+    CETTA_SCOPED_SHARED_TRANSITION(exact_frontier);
+    if (!exact_index_head_exact(s, head))
         return false;
     cetta_runtime_stats_inc(CETTA_RUNTIME_COUNTER_SPACE_EXACT_FRONTIER_CERTIFIED);
     return true;
+}
+
+bool space_exact_head_certified(Space *s, SymbolId head) {
+    if (!s || head == SYMBOL_ID_NONE || !s->native.universe ||
+        space_has_overlay_base(s) || space_has_dependencies(s) ||
+        (s->match_backend.kind != SPACE_ENGINE_NATIVE &&
+         s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
+        return false;
+    CETTA_SCOPED_SHARED_TRANSITION(exact_head);
+    return exact_index_head_exact(s, head);
 }
 
 bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
@@ -11177,21 +11385,11 @@ bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
          s->match_backend.kind != SPACE_ENGINE_NATIVE_CANDIDATE_EXACT))
         return false;
     CETTA_SCOPED_SHARED_TRANSITION(exact_removal);
-    if (s->native.exact_idx_dirty) {
-        if (!space_keeps_exact_index(s) ||
-            s->native.secondary_index_deferral_depth > 0u ||
-            s->native.marked != 0u)
-            return false;
-        exact_index_rebuild(s);
-    }
     /* A row holding a variable could unify with an instance without
      * equalling it; the index certifies there is none under this head. */
+    if (!exact_index_head_exact(s, head))
+        return false;
     ExactAtomIndex *idx = &s->native.exact_idx;
-    if (idx->inexact_unheaded != 0u)
-        return false;
-    ExactIndexInexactHead *entry = exact_index_inexact_head(idx, head, false);
-    if (entry && entry->rows != 0u)
-        return false;
     /* Only an exact row is filed under its id. */
     for (size_t i = 0u; i < count; i++) {
         if (!atom_id_is_exact_indexable(s, ids[i]))

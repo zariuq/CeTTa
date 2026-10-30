@@ -13,13 +13,48 @@
   (match &self (vocabulary:pattern $pattern)
     (case (re:is-match $pattern $text)
       (((re:failed re:invalid-utf8 $detail) (vocabulary:contains-bytes $text))
-       ((re:failed $kind $detail)
+       ($result (vocabulary:regex-result $result))))))
+(= (vocabulary:regex-result $result)
+    (case $result
+      (((re:failed $kind $detail)
         (let $shown (system:write stderr "Cannot complete vocabulary check: regex execution failed\n")
           (system:exit 2)))
        ((re:incomplete $work)
         (let $shown (system:write stderr "Cannot complete vocabulary check: regex execution unfinished\n")
           (system:exit 2)))
-       ($boolean $boolean)))))
+       ($boolean $boolean))))
+
+; The exact serialized fields retain upstream evidence identities. An
+; unrelated field, path, spelling or malformed digest is still authored text.
+(= (vocabulary:pinned-source "reference")
+  (str:concat "^\\s*\"examples/import_error_" (str:concat (vocabulary:needle)
+    "\\.metta\":\\s*\"[0-9a-f]{64}\",?\\s*$")))
+(= (vocabulary:pinned-source "observation")
+  (str:concat "^\\s*\"source\":\\s*\"examples/import_error_" (str:concat (vocabulary:needle)
+    "\\.metta\",?\\s*$")))
+(= (vocabulary:pinned-match $kind $text)
+  (match &self (vocabulary:pinned-pattern $kind $pattern)
+    (case (re:is-match $pattern $text)
+      (((re:failed re:invalid-utf8 $detail) False)
+       ($result (vocabulary:regex-result $result))))))
+(= (vocabulary:pinned-field $relative $text)
+  (case $relative
+    (("langdef/petta/reference.json" (vocabulary:pinned-match "reference" $text))
+     ("tests/petta/corrected_stable_observations.json"
+        (vocabulary:pinned-match "observation" $text))
+     ($other False))))
+
+(= (vocabulary:prepare-pinned)
+ (let $reference (re:compile (vocabulary:pinned-source "reference"))
+ (let $observation (re:compile (vocabulary:pinned-source "observation"))
+ (case (VocabularyPatterns $reference $observation)
+  (((VocabularyPatterns (NativeHandle $kind1 $id1) (NativeHandle $kind2 $id2))
+    (let $saved1 (add-atom &self (vocabulary:pinned-pattern "reference" $reference))
+     (let $saved2 (add-atom &self (vocabulary:pinned-pattern "observation" $observation))
+      (vocabulary:main))))
+   ($fault
+    (let $shown (system:write stderr "Cannot complete vocabulary check: regex preparation failed\n")
+      (system:exit 2))))))))
 ; POSIX filenames can contain non-text bytes. Keep each such byte as a
 ; barrier, as Python's surrogateescaped path spelling does, rather than
 ; deleting bytes and accidentally joining two halves of a word.
@@ -60,8 +95,9 @@
   (case $row
     (((LineV1 $number $text)
       (if (vocabulary:contains $text)
-          (vocabulary:hit $count (str:concat $relative (str:concat ":"
-            (str:concat (str:number->string $number) (str:concat ":" $text)))))
+          (if (vocabulary:pinned-field $relative $text) $count
+            (vocabulary:hit $count (str:concat $relative (str:concat ":"
+              (str:concat (str:number->string $number) (str:concat ":" $text))))))
           $count))
      ($unexpected (vocabulary:problem $count (str:concat $relative ": unexpected line record"))))))
 
@@ -254,7 +290,7 @@
  (case $pattern
   (((NativeHandle $kind $id)
     (let $saved (add-atom &self (vocabulary:pattern $pattern))
-      (vocabulary:main)))
+      (vocabulary:prepare-pinned)))
    ($fault
     (let $shown (system:write stderr "Cannot complete vocabulary check: regex preparation failed\n")
       (system:exit 2)))))))

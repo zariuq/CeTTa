@@ -455,6 +455,9 @@ void space_rows_release(Space *s);
  * head a pattern names, or every head when its head is not a symbol. */
 void space_dense_settle(Space *s, SymbolId head);
 void space_dense_settle_for_pattern(Space *s, const Atom *pattern);
+/* space_dense_settle_for_pattern for an expression of LEN elements headed by
+ * the symbol HEAD. */
+void space_dense_settle_for_head(Space *s, SymbolId head, CettaExprLen len);
 void space_dense_settle_for_patterns(Space *s, Atom *const *patterns,
                                      CettaExprLen count);
 /* The pairs held as bits, over every head. */
@@ -525,10 +528,18 @@ static inline bool space_keeps_exact_index(const Space *s) {
     return s && (!s->strict || s->kind == SPACE_KIND_HASH);
 }
 bool space_is_set(const Space *s);
+/* Whether the set `s` keeps the row `atom`, which has variables, as its
+ * alpha key when it admits it: a record no naming of the variables
+ * changes. */
+bool space_keys_open_row(Space *s, Atom *atom);
 AtomId space_get_atom_id_at(const Space *s, uint32_t idx);
 CettaCount space_length64(const Space *s);
 AtomId space_get_atom_id_at64(const Space *s, CettaIndex idx);
 Atom *space_get_at64(const Space *s, CettaIndex idx);
+/* The row at IDX as a view built in DST (term_universe_view_atom) when the
+ * space keeps it as an id of its universe; otherwise its atom, as
+ * space_get_at64 reads it. */
+Atom *space_view_at64(const Space *s, CettaIndex idx, Arena *dst);
 Atom *space_get_at(const Space *s, uint32_t idx);
 bool space_row_may_be_rule(const Space *s, CettaIndex idx);
 bool space_view_row_may_be_rule(const Space *s, CettaIndex index);
@@ -793,6 +804,15 @@ bool space_occurrence_cursor_clone(
  * index has view-local coordinates. No matching is performed. */
 SpaceOccurrenceCursorStep space_occurrence_cursor_next(
     SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out, Atom **atom_out);
+/* As space_occurrence_cursor_next, lending the row as its id in the
+ * cursor's universe (space_occurrence_cursor_universe): nothing is decoded.
+ * The id names a row the pin keeps until the cursor is released. */
+SpaceOccurrenceCursorStep space_occurrence_cursor_next_id(
+    SpaceOccurrenceCursor *cursor, CettaIndex *logical_index_out,
+    AtomId *id_out);
+/* The universe naming the rows a cursor lends by id. */
+TermUniverse *space_occurrence_cursor_universe(
+    const SpaceOccurrenceCursor *cursor);
 /* The atom at an index the cursor yielded, from the rows it captured. */
 Atom *space_occurrence_cursor_atom(const SpaceOccurrenceCursor *cursor,
                                    CettaIndex index);
@@ -836,6 +856,15 @@ bool space_atom_is_exact_indexable(Atom *atom);
  * space, or a stale index it may not rebuild here (inside a deferral window,
  * or while rows are marked). */
 bool space_exact_frontier_certified(Space *s, Atom *pattern);
+/* space_exact_frontier_certified for a ground expression of LEN elements
+ * headed by the symbol HEAD. */
+bool space_exact_frontier_certified_head(Space *s, SymbolId head,
+                                         CettaExprLen len);
+/* Whether no row holding a variable is under HEAD or without a symbol head,
+ * read from the exact index as space_exact_frontier_certified reads it,
+ * without settling the facts kept as bits, which are ground.  False when
+ * the index cannot answer, or the space has imports. */
+bool space_exact_head_certified(Space *s, SymbolId head);
 /* Remove every row equal to one of the ground atoms IDS, all of head HEAD,
  * in one pass through the exact index.  False, having removed nothing, when
  * the index cannot answer for them: no current index, a row under HEAD or
@@ -846,6 +875,11 @@ bool space_remove_exact_ids(Space *s, SymbolId head, const AtomId *ids,
 /* The rows holding a ground pattern, ascending, read from a current exact
  * index without settling marks: physical rows while rows are marked. */
 CettaIndex space_exact_index_rows64(Space *s, Atom *pattern, CettaIndex **out);
+/* space_exact_index_rows64 for the ground expression whose LEN elements are
+ * the ids IDS, headed by the symbol HEAD. */
+CettaIndex space_exact_index_rows_ids64(Space *s, SymbolId head,
+                                        const AtomId *ids, CettaExprLen len,
+                                        CettaIndex **out);
 void space_begin_secondary_index_deferral(Space *s);
 void space_end_secondary_index_deferral(Space *s);
 
@@ -1102,6 +1136,9 @@ Space *resolve_space(Registry *r, Atom *ref);
 /* Remove an atom from a space (by structural equality). Returns true if found. */
 bool space_remove(Space *s, Atom *atom);
 bool space_contains_atom_id(const Space *s, AtomId atom_id);
+/* Whether a row of the space is the stored atom `atom_id`: by the exact
+ * index while it is current, one probe rather than a scan of the rows. */
+bool space_holds_atom_id_exact(Space *s, AtomId atom_id);
 bool space_remove_atom_id(Space *s, AtomId atom_id);
 bool space_remove_atom_ids_batch(Space *s, const AtomId *atom_ids,
                                  CettaCount atom_count,
@@ -1122,6 +1159,17 @@ bool space_remove_occurrence_mask_stable(
    For small spaces (< MATCH_TRIE_THRESHOLD), returns all indices.
    Caller must free(*out). Returns count. */
 CettaIndex space_match_candidates64(Space *s, Atom *pattern, CettaIndex **out);
+/* Candidates for a flat pattern given by ids of UNIVERSE, the space's own:
+ * COLUMNS[0] the head, a symbol, and each later column a value's id, or
+ * CETTA_ATOM_ID_NONE where the pattern holds a variable.  True when the
+ * native selector answers the pattern from its exact index or a prefix
+ * index, which it then reads by the ids: *OUT and *COUNT are what
+ * space_match_candidates64 answers for the pattern.  False when it would
+ * answer otherwise, having changed nothing that asking
+ * space_match_candidates64 would not. */
+bool space_match_candidates_ids64(Space *s, const TermUniverse *universe,
+                                  const AtomId *columns, CettaExprLen len,
+                                  CettaIndex **out, CettaIndex *count);
 /* Native candidate selection through borrowed expression coordinates. Reads
  * finish before return; only candidate coordinates escape. False leaves the
  * caller on its ordinary query route. Order and duplicate row occurrences
