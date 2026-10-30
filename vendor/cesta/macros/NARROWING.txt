@@ -1,0 +1,36 @@
+Checked integer conversion
+==========================
+
+Import Narrowing.module's Checked theory and write:
+
+  (try-narrow uint64_t uint32_t (post++ value) destination)
+
+The first two fields are compact declaration specifiers. The input expression
+must have the first type; the destination must be an addressable modifiable
+object of the second type. The GNU profile supports the integral types admitted
+by the native __builtin_add_overflow primitive. Floating types, bit-fields and
+const destinations are refused. Additional restrictions on integer extensions
+follow the selected compiler's builtin contract.
+
+Evaluation order is input first, then the destination's address, each once.
+These argument effects occur even when conversion fails. On success the macro
+stores the exact integer and returns int 1. On failure it leaves the destination
+unchanged and returns int 0. The macro introduces no return, break, continue or
+goto. It can be nested in ordinary C expression contexts.
+
+The overflow primitive computes value + 0 at unbounded integer precision and
+checks whether the destination type can represent that integer. Its temporary
+conversion result is copied to the caller's destination only on success.
+CompilerBuiltin/CompilerRef denotes this native primitive explicitly; a C
+preprocessor definition of its name is refused at import and expansion points.
+
+This contract uses ordinary C object validity and pointer access requirements.
+A null or otherwise invalid destination is not an admitted addressable object.
+An opaque native fragment cannot be a typed macro argument.
+
+Native tests cover signed/unsigned boundaries, wide-to-small conversion,
+failure preservation, evaluation order, type/category refusals, native export
+and identical objects against independent handwritten C at O0 and O2.
+MacroCheckedNarrowing proves the corresponding integer-range/store contract
+against independent accept/below/above rules. The builtin's native implementation
+and its lowering from the shipped template are tested, not proved by that law.

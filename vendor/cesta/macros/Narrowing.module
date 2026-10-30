@@ -1,0 +1,28 @@
+Module Narrowing {
+  Theory Checked() {
+    Empty Terms {
+      TryNarrow . Expr ::= "(" "try-narrow" DeclarationSpecifiers DeclarationSpecifiers Expr Expr ")";
+    }
+    Equations {
+      (TryNarrow source target value out) == (Macro "cesta-macro/3"
+        (Profile "gnu11")
+        (Ports (CompilerBuiltin conversion "__builtin_add_overflow"))
+        (Arguments
+          (Arg source (CType void) "syntax" (Evaluation "syntax"))
+          (Arg target (CType void) "syntax" (Evaluation "syntax"))
+          (Arg value (CType (TypeArgument source)) "value" (Evaluation "once"))
+          (Arg out (CType (TypeArgument target)) "addressable-modifiable" (Evaluation "once")))
+        (Result (CType int) "value")
+        (Locals (Local converted "ordinary") (Local accepted "ordinary"))
+        (Template (block
+          (var (TypeArgument target) (LocalRef "ordinary" converted))
+          (var int (LocalRef "ordinary" accepted) 0)
+          ("if" ("!" (call (CompilerRef conversion) (Argument value) 0
+                            ("&" (LocalRef "ordinary" converted))))
+            (block
+              ("=" (Argument out) (LocalRef "ordinary" converted))
+              ("=" (LocalRef "ordinary" accepted) 1)))
+          (LocalRef "ordinary" accepted))));
+    }
+  }
+}

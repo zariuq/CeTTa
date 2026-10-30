@@ -1,0 +1,24 @@
+Module Current {
+  Theory Protocols() {
+    Empty Equations {
+      (current_run) == (Protocol "cesta-protocol/1"
+        (Context CurrentContext)
+        (Hooks
+          (Hook mutate current_mutate effect
+            (Requires current) (Uses) (Proves) (Invalidates current))
+          (Hook refresh current_refresh guard
+            (Requires) (Uses) (Proves current))
+          (Hook publish current_publish effect
+            (Requires current) (Uses) (Proves)))
+        (Resources)
+        (Entry (Facts current) (Owns))
+        (Body
+          (Call mutate
+            (Call refresh
+              (Call publish (Return done) (Return raised))
+              (Return engine_failure))
+            (Return raised)))
+        (Checks (Fact current current_is_current)));
+    }
+  }
+}

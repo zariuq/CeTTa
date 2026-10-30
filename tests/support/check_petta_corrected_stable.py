@@ -45,6 +45,15 @@ def main():
                                     cwd=root, capture_output=True, text=True, timeout=30,
                                     env=dict(os.environ, CETTA_PETTA_SEARCH_MACHINE=machine))
             count += check_result(source, machine, expected, result)
+        source = root / 'tests/petta/argument_redefines_callee.metta'
+        expected = source.with_suffix('.expected').read_text()
+        result = subprocess.run([str(binary), '--lang', 'petta', str(source)],
+                                cwd=root, capture_output=True, text=True, timeout=30,
+                                env=dict(os.environ, CETTA_PETTA_SEARCH_MACHINE=machine))
+        if (result.returncode, result.stdout, result.stderr) != (0, expected, ''):
+            raise AssertionError((machine, source.name, result.returncode,
+                                  result.stdout, result.stderr, expected))
+        count += 1
     print(f'PASS: {count} settled corrected-stable assertions on both equation routes')
 
 
