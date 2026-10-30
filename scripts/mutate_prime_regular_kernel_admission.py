@@ -22,6 +22,9 @@ def main() -> None:
             "synthesis-generation",
             "checking-receipt",
             "checking-generation",
+            "collection",
+            "synthesis-collection",
+            "checking-collection",
         ),
     )
     parser.add_argument("source", type=Path)
@@ -62,29 +65,19 @@ def main() -> None:
             "source-binding identity",
         )
         text = prefix + body + suffix
-    elif args.mutation == "generation":
-        text = replace_once(
-            text,
-            "conversion->universe_storage_epoch !=\n"
-            "            live_space->native.universe->storage_epoch ||",
-            "conversion->universe_storage_epoch == UINT64_MAX ||",
-            "storage-generation currentness",
-        )
-    elif args.mutation == "synthesis-generation":
-        text = replace_once(
-            text,
-            "synthesis->universe_storage_epoch !=\n"
-            "            live_space->native.universe->storage_epoch ||",
-            "synthesis->universe_storage_epoch == UINT64_MAX ||",
-            "synthesis storage-generation currentness",
-        )
     else:
+        record = (
+            "synthesis" if args.mutation.startswith("synthesis-")
+            else "checking" if args.mutation.startswith("checking-")
+            else "conversion"
+        )
+        epoch = "storage" if args.mutation.endswith("generation") else "collection"
         text = replace_once(
             text,
-            "checking->universe_storage_epoch !=\n"
-            "            live_space->native.universe->storage_epoch ||",
-            "checking->universe_storage_epoch == UINT64_MAX ||",
-            "checking storage-generation currentness",
+            f"{record}->universe_{epoch}_epoch !=\n"
+            f"            live_space->native.universe->{epoch}_epoch ||",
+            f"{record}->universe_{epoch}_epoch == UINT64_MAX ||",
+            f"{record} {epoch} epoch currentness",
         )
     args.destination.write_text(text, encoding="utf-8")
 

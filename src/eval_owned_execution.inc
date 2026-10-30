@@ -325,7 +325,7 @@ static bool eval_owned_answers_open(EvalOwnedAnswers *answers,
         adapter->register_view, adapter->expression_view, adapter->pattern_view,
         &source_view, true,
         active_composition_uses_total_structural_eq(),
-        prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_EAGER));
+        prepared_pure_match_decision_semantics(CETTA_GSLT_PURE_CALL_EAGER), NULL);
     if (!answers->program)
         goto declined;
     size_t scratch_budget = prepared_pure_nursery_budget_bytes();

@@ -162,6 +162,11 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
 }
 
 #define ATOM_FLAG_HAS_VARS 0x01u
+/* A view of a term stored in a term universe: an AtomStoredOrigin stands just
+ * before the atom and names the term's entry (term_universe_view_origin).
+ * Only the view itself has it; an atom made from it (a copy, a suffix, a
+ * relocation, an expression over it) is another atom and leaves it unset. */
+#define ATOM_FLAG_STORED_ORIGIN 0x02u
 #define ATOM_FLAG_HAS_REGISTRY_REFS 0x04u
 #define ATOM_FLAG_HASH_STABLE 0x08u
 #define ATOM_FLAG_HASHCONS_ELIGIBLE 0x10u
@@ -573,13 +578,35 @@ static inline uint32_t atom_hash_cache_load(const Atom *atom) {
     return __atomic_load_n(&atom->hash_cache, __ATOMIC_RELAXED);
 }
 
-/* Copy an atom's header, reading its hash cache as the atomic word it is. */
+/* Take `hash` as the structural hash of `atom` when atom_hash would cache
+ * one: the hash a stored record of the same term carries, which is its
+ * atom_hash. */
+void atom_hash_cache_adopt(Atom *atom, uint32_t hash);
+
+/* The entry a view was read from: its universe, the universe's instance and
+ * the epochs under which the id names the entry's term. */
+typedef struct {
+    const void *owner;
+    uint64_t instance_id;
+    uint64_t storage_epoch;
+    uint64_t collection_epoch;
+    uint64_t id;
+} AtomStoredOrigin;
+
+static inline const AtomStoredOrigin *atom_stored_origin(const Atom *atom) {
+    return atom && (atom->flags & ATOM_FLAG_STORED_ORIGIN) != 0u
+        ? (const AtomStoredOrigin *)(const void *)atom - 1 : NULL;
+}
+
+/* Copy an atom's header, reading its hash cache as the atomic word it is.
+ * The copy is another atom: it names no stored entry. */
 static inline void atom_header_copy(Atom *dst, const Atom *src) {
     size_t after = offsetof(Atom, hash_cache) + sizeof(src->hash_cache);
     memcpy(dst, src, offsetof(Atom, hash_cache));
     dst->hash_cache = atom_hash_cache_load(src);
     memcpy((char *)dst + after, (const char *)src + after,
            sizeof(Atom) - after);
+    dst->flags &= ~ATOM_FLAG_STORED_ORIGIN;
 }
 
 static inline bool atom_is_he_evaluated(const Atom *atom) {
@@ -991,6 +1018,9 @@ typedef _Atomic(uint64_t) VarInternEntry;
 typedef struct {
     _Atomic(VarInternEntry *) *chunks;
     pthread_mutex_t write_mutex;
+    /* Sparse directories keep a separate list of their allocated owners.
+     * Only the writer changes it; disposal requires quiescent readers. */
+    struct VarInternChunk *owned_chunks;
 } VarInternTable;
 
 void    var_intern_init(VarInternTable *t);
@@ -1032,6 +1062,9 @@ Atom *atom_symbol(Arena *a, const char *name);
  * dynamic or mutable name buffers must use atom_symbol instead. */
 Atom *atom_symbol_literal(Arena *a, const char *name);
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id);
+/* Initialize borrowed symbol metadata without allocation or an arena owner.
+ * Storage must outlive its readers; escaping terms use an owning constructor. */
+void atom_init_symbol(Atom *target, SymbolId sym_id);
 /* The symbol's one atom owned by the symbol table (no arena): for atoms a
  * compiled program hands to terms that may outlive it.  NULL without a
  * table or for an id it does not hold. */
@@ -1356,6 +1389,11 @@ const CettaPrimeContext *atom_prime_context_value(const Atom *atom);
 Atom *atom_prime_context_lookup(const CettaPrimeContext *context, Atom *key);
 uint32_t atom_prime_context_depth(const CettaPrimeContext *context);
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len);
+/* atom_expr of a view read from a stored entry, with `origin` standing just
+ * before it when the arena places the expression right after it; otherwise
+ * the plain expression. */
+Atom *atom_expr_with_origin(Arena *a, Atom **elems, CettaExprLen len,
+                            const AtomStoredOrigin *origin);
 /* A read-only expression header over borrowed coordinates. The header and
  * vector are valid only for the consuming call; neither may be retained or
  * returned as an owned result. Structural summaries grant no ownership. */
@@ -1516,6 +1554,13 @@ bool atom_tree_any_pruned(const Atom *root, AtomTreePredicate predicate,
                           AtomTreePredicate barrier, void *context);
 bool atom_graph_any_pruned(const Atom *root, AtomTreePredicate predicate,
                            AtomTreePredicate barrier, void *context);
+/* Read-only admission with a bounded number of predicate observations.
+ * Barriers and already visited subexpressions need no observation. Budget
+ * or allocation refusal sets *complete false; false then certifies nothing.
+ * COMPLETE is required. No terms or source effects are changed. */
+bool atom_graph_any_checked(const Atom *root, AtomTreePredicate predicate,
+                            AtomTreePredicate barrier, void *context,
+                            size_t allowance, bool *complete);
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 
