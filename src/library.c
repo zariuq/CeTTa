@@ -12841,7 +12841,7 @@ static Atom *cetta_library_dispatch_native_value(
         if (result) return result;
     }
     if (ctx->active_mask & CETTA_LIBRARY_SPACE_SERVICE) {
-        Atom *result = cetta_space_service_dispatch(a, head, args, nargs);
+        Atom *result = cetta_space_service_dispatch(ctx, a, head, args, nargs);
         if (result) {
             *result_form = CETTA_CALL_RESULT_COMPLETED_VALUE;
             return result;
