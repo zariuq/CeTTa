@@ -10588,17 +10588,27 @@ static bool petta_machine_reduce_is_written_call(
 /* The occurrence is `(reduce (f a…))` whose written application is the
  * call it dispatches. */
 static bool petta_plan_reduces_written_call(
-    const PettaMachineImpl *machine, const PettaPlanNode *plan,
-    const Atom *occurrence) {
-    return plan->role == PETTA_PLAN_STATIC_CALL &&
-           plan->child_count == 2u &&
-           occurrence && occurrence->kind == ATOM_EXPR &&
-           occurrence->expr.len == 2u &&
-           occurrence->expr.elems[0]->kind == ATOM_SYMBOL &&
-           petta_semantics_form(occurrence->expr.elems[0]->sym_id) ==
-               PETTA_FORM_REDUCE &&
-           petta_machine_reduce_is_written_call(
-               machine, occurrence->expr.elems[1], &plan->children[1]);
+    PettaMachineImpl *machine, const PettaPlanNode *plan,
+    Atom *occurrence) {
+    if (plan->role != PETTA_PLAN_STATIC_CALL || plan->child_count != 2u ||
+        !occurrence || occurrence->kind != ATOM_EXPR || occurrence->expr.len != 2u)
+        return false;
+    CettaControlOperation operation = plan->computation.control.operation;
+    if (operation != CETTA_CONTROL_NONE && operation != CETTA_CONTROL_DISPATCH)
+        return false;
+    SymbolId head = atom_head_symbol_id(occurrence);
+    if (head == SYMBOL_ID_NONE)
+        return false;
+    /* Missing adapter metadata elaborates before this fused entrance, so
+     * it retains the same source visits as an already-planned occurrence. */
+    if (operation == CETTA_CONTROL_NONE) {
+        PettaGoal source = {.first = occurrence};
+        operation = petta_machine_computation_plan(machine,
+            &source, plan, occurrence, head, petta_semantics_form(head), 1u).control.operation;
+    }
+    return operation == CETTA_CONTROL_DISPATCH &&
+        petta_machine_reduce_is_written_call(
+            machine, occurrence->expr.elems[1], &plan->children[1]);
 }
 
 /* No argument of the application needs evaluating: each place is a value or
@@ -34336,10 +34346,15 @@ static bool petta_machine_dispatch_solve(
     if (control.operation == CETTA_CONTROL_FAILURE)
         return false;
 
-    if (head_id == g_builtin_syms.once && nargs == 1u) {
+    if (control.operation == CETTA_CONTROL_FIRST_SUCCESS) {
+        CettaExprIndex body = (CettaExprIndex)control.source + 1u;
+        if (control.source == CETTA_CONTROL_OPERAND_ABSENT || body >= expression->expr.len) {
+            *failure = PETTA_MACHINE_STEP_CAPACITY;
+            return false;
+        }
         return petta_machine_start_once(
-            machine, expression->expr.elems[1], expected,
-            goal->barrier, petta_plan_child(plan, 1u),
+            machine, expression->expr.elems[body], expected,
+            goal->barrier, petta_plan_child(plan, body),
             failure);
     }
 
@@ -35351,7 +35366,7 @@ static bool petta_machine_dispatch_solve(
     }
 
     if ((control.operation == CETTA_CONTROL_FORCE ||
-         form == PETTA_FORM_REDUCE) &&
+         control.operation == CETTA_CONTROL_DISPATCH) &&
         nargs == 1u) {
         /*
          * Neither form evaluates a computed result again (SWI-PeTTa's
@@ -35367,7 +35382,7 @@ static bool petta_machine_dispatch_solve(
         Atom *term = expression->expr.elems[1];
         const PettaPlanNode *term_plan = petta_plan_child(plan, 1u);
         bool written_application =
-            form == PETTA_FORM_REDUCE &&
+            control.operation == CETTA_CONTROL_DISPATCH &&
             term->kind == ATOM_EXPR && term->expr.len > 0u &&
             (!plan ||
              (term_plan && term_plan->role != PETTA_PLAN_VALUE &&

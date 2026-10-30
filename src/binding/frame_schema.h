@@ -17,5 +17,8 @@ void bindings_frame_schema_retain(BindingsFrameSchema *schema);
 void bindings_frame_schema_release(BindingsFrameSchema *schema);
 const VarId *bindings_frame_schema_source_ids(const BindingsFrameSchema *schema);
 uint32_t bindings_frame_schema_len(const BindingsFrameSchema *schema);
+/* Resolve an unqualified source identity to its immutable inventory slot. */
+bool bindings_frame_schema_find_slot(const BindingsFrameSchema *schema,
+                                     VarId source_id, uint32_t *slot_out);
 
 #endif

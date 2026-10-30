@@ -28,7 +28,5 @@ BindingsFrameSchema *bindings_frame_schema_alloc(uint32_t capacity);
 void bindings_frame_schema_publish(BindingsFrameSchema *schema, uint32_t len);
 BindingsFrameSchema *bindings_frame_schema_dense(uint32_t count);
 BindingsFrameSchema *bindings_frame_schema_clone(const BindingsFrameSchema *source);
-bool bindings_frame_schema_find_slot(const BindingsFrameSchema *schema,
-                                     VarId source_id, uint32_t *slot_out);
 
 #endif

@@ -87,6 +87,10 @@ Run with:
   benchmarks/revision_view_carriers/run.sh
 
 An optional odd trial count from 1 through 31 may be supplied.
+Run from the repository root. The script builds its standalone C source and
+does not require CeTTa, MORK or PathMap. CC selects the compiler. One trial
+checks the oracle comparisons; use repeated trials for timing and retain the
+complete realization tuple with each result.
 
 Interpretation boundary
 -----------------------

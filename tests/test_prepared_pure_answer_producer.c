@@ -1418,6 +1418,29 @@ static void test_continuation_late_decline(void) {
     destroy(&fixture);
 }
 
+/* Both alternatives borrow the argument made by the retired caller. Once
+ * exhausted, the callee reclaims that argument with the caller's storage. */
+static void test_cursor_reclaims_retired_arguments(void) {
+    const char *equations[] = {
+        "(= (retire-start $x) (retire-finish (Box $x)))",
+        "(= (retire-finish (Box $x)) $x)",
+        "(= (retire-finish (Box $x)) (Again $x))",
+    };
+    Fixture fixture;
+    init(&fixture, equations, 3u, "(retire-start seed)");
+    CettaPreparedPureAnswerCursor *cursor = open_cursor(&fixture, true);
+    size_t entry_live = cetta_prepared_pure_answer_cursor_storage(cursor).live_bytes;
+    expect_answer(&fixture, cursor, "seed");
+    expect_answer(&fixture, cursor, "(Again seed)");
+    Atom *answer = NULL;
+    assert(cetta_prepared_pure_answer_cursor_next(cursor, &answer) ==
+           CETTA_PREPARED_PURE_CURSOR_EXHAUSTED);
+    assert(cetta_prepared_pure_answer_cursor_frame_count(cursor) == 0u);
+    assert(cetta_prepared_pure_answer_cursor_storage(cursor).live_bytes == entry_live);
+    cetta_prepared_pure_answer_cursor_close(cursor);
+    destroy(&fixture);
+}
+
 /* A last call from a step program replaces its caller, so a recursion
  * keeps the frontier one call deep. */
 static void test_continuation_last_call_depth(void) {
@@ -2136,6 +2159,7 @@ int main(void) {
     test_continuation_zero_operand();
     test_continuation_choice_under_determinate_head();
     test_continuation_late_decline();
+    test_cursor_reclaims_retired_arguments();
     test_continuation_last_call_depth();
     test_continuation_unbounded_generator_limit();
     test_context_reconstruction_observes_interrupt();

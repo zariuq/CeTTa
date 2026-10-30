@@ -1,5 +1,11 @@
 Inference-cost axes: synthetic rows that separate the principal per-inference costs.
 
+Run commands from the repository root after building CeTTa. A direct invocation
+is ./cetta --lang petta benchmarks/inference_cost_axes/A_single_equation.metta.
+Each axis isolates a cost rather than representing a complete application.
+Use the standing panel below for application-level regression checks and keep
+the selected binary, dialect, profile and observation policy with every result.
+
 Runtime unification-attempt counts admitted matcher invocations, including nested
 comparisons of bound values and the linear-plan and encoded-term matchers.
 Every counted invocation ends in success, repeated-variable failure,

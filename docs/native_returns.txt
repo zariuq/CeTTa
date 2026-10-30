@@ -1799,6 +1799,75 @@ Existing Prime adapter
     Evidence: prime_prepared_data_controls and tests/prime/need_match_pattern_values.metta.
 
 Shared observers and collection
+  O-FIRST: Standard unary once elaborates to first-success with an explicit
+    body coordinate. Ordinary execution, legacy host fallback and OEM lowering
+    consume that word; the physical wrapper does not choose between first
+    success and collection. Residual projection retains its source occurrence
+    and debit. Policy-bearing multi-argument once keeps its existing policy.
+    Commitment removes only alternatives introduced inside this scope and
+    preserves the accepted packet's value role, delayed goals and bindings.
+    Raised control bypasses success commitment; interruption stays incomplete.
+    Evidence: source_first_success_plans, generic_budget_checks and
+    stale_native_tail_controls. ScopedFirst proves source entry, whole-packet
+    commitment, outside alternatives, source debit and conditional publication;
+    native C correspondence remains a separately tested obligation.
+  O-DISPATCH: A PeTTa reduce occurrence elaborates to the common dispatch
+    operation; eval elaborates to force. Plan construction, ordinary entry,
+    prepared admission, OEM lowering and residual projection consume the
+    selected operation. A held application already supplies values; a
+    written application's operands retain their own occurrence plans.
+    Dispatch does not execute a completed result again. Its error handler
+    remains distinct from errors raised while preparing operands.
+    Evidence: source_computation_plans, source_invocation_plans, the
+    dynamic_explicit_evaluation and dispatch_error_scope fixtures, and
+    DispatchOperands. The latter proves operand readback for a ready head;
+    dynamic-head execution, native ownership and source charging retain
+    their surrounding machine obligations.
+  O-CURSOR-MARK: A prepared call's entry mark retains its arguments while
+    alternatives remain. Tail replacement inherits the retired caller's
+    earlier rollback mark; exhaustion reclaims the constructed arguments
+    too. A fresh entry uses one arena snapshot for both positions. Taking
+    the same snapshot once changes neither authority checks nor source debit.
+    Evidence: test_cursor_reclaims_retired_arguments checks both answers
+    and restoration of the original live-storage count after exhaustion.
+  O-PLAN-KEY: Interned computation plans compare every immutable metadata
+    field and their ordered children. Packing a key may change hash buckets,
+    but cannot merge different source positions, debits, value/computation
+    roles, literal defaults, slots or retained program identities. Exact
+    content comparison remains authoritative after a hash collision. Keys
+    exclude struct padding and add no per-plan retained metadata.
+    Hashing and comparison borrow local scratch and spill only the live
+    worklist prefix. A failed spill is uncertainty, not inequality. Shared
+    child storage can establish reflexivity only after root metadata agrees;
+    all remaining children retain their ordered exact comparison.
+    Evidence: test_petta_plan_key checks independent field equality,
+    boundary values, ordered children and program interning.
+  O-INVOKE-PREFIX: A ready partial application's metered entrance retains
+    the canonical solve and call-ready visits before relation selection.
+    Borrowed argument equality alone does not permit deleting these visits:
+    finite source credit observes the entered prefix, remaining credit and
+    publication boundary. The existing unlimited-worker admission is a
+    separate specialization contract, not a general metered entry rule.
+    Evidence: metered_invocation_controls covers captured/supplied splits,
+    admission and refusal, independent physical slices and source purses.
+  O-GUARD: Structural head selection does not consume a body instruction.
+    Ordinary HE guards retain their argument demand, reached bindings and
+    result completion at the shared instruction boundary. In particular,
+    replacing a typed unify guard by its raw Empty branch is not equivalent
+    to completing that guard. The no-answer observation and completed data
+    named Empty remain distinct. The ordinary guard-extraction shortcut is
+    retired; retained specialized guard lowerings need their own admission.
+    Evidence: ordered_pattern_plan_controls compares declared guard success
+    and failure with head decisions enabled and disabled.
+  O-MATCH: A source-derived pattern plan supplies structural information,
+    not permission to speculate or reorder an ordinary match. The ordinary
+    route retains its authored field order, query/rule variable orientation,
+    rollback, residual obligations and duplicate equation occurrences. A
+    missing or source-mismatched plan leaves authoritative matching available.
+    Evidence: ordered_pattern_plan_controls, OrderedHeadPlan and
+    UnificationWorklist, the dialect demand/partial fixtures above and native
+    mutation/constraint controls. Immediate-checkpoint cost qualification is
+    pending; private rule-local refutation has a separate contract.
   O-RESULT: Observe primary answers, effects and completion separately. A
     suspended answer's delayed goals are live obligations, not optional
     diagnostics. Missing optional outputs cannot certify their discharge.

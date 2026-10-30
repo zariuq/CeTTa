@@ -412,6 +412,14 @@ struct CettaOpenPatternPlan {
     uint32_t linear_program_len;
 };
 
+/* Source and schema stay owned by the caller for the plan's lifetime.
+ * Refusal publishes no plan and leaves ordinary matching available.
+ * Optional physical lowering happens before publishing the plan. */
+CettaOpenPatternPlan *cetta_open_pattern_plan_compile(
+    Arena *owner, Atom *source, const BindingsFrameSchema *schema);
+bool cetta_open_pattern_plan_lower_linear(
+    Arena *owner, CettaOpenPatternPlan *plan);
+
 typedef Atom *(*BindingsRewriteVarFn)(Arena *a, Atom *var, void *ctx);
 typedef Atom *(*BindingsAtomTransportFn)(void *context, Atom *atom);
 
@@ -1078,6 +1086,12 @@ bool match_atoms_epoch(Atom *left, Atom *right, Bindings *b, Arena *a, CettaFram
 bool match_atoms_epoch_builder(Atom *left, Atom *right,
                                BindingsBuilder *bb, Arena *a,
                                CettaFrameIdentity epoch);
+/* Ordered ordinary matching over an exact published source plan. Missing or
+ * source-mismatched metadata falls back to the authoritative matcher. This
+ * does not grant private-frame refutation or alter variable orientation. */
+bool match_atoms_epoch_builder_planned(
+    Atom *left, Atom *right, const CettaOpenPatternPlan *right_plan,
+    BindingsBuilder *bb, Arena *a, CettaFrameIdentity epoch);
 /* Equation-activation-frame orientation of the same relation.  When two otherwise unbound
  * variables meet, bind the standardized-apart right rule slot to the live
  * left call variable.  This keeps a successful frame local when possible;

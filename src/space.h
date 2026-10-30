@@ -870,22 +870,21 @@ typedef bool (*QueryResultVisitor)(Atom *result, const Bindings *bindings,
  * an equation occurrence already proved unable to match.  The equation store
  * retains authority for candidate order, multiplicity, freshening, and exact
  * matching. */
-/* A revision-qualified caller may reject an impossible equation or provide a
- * derived exact-match pair.  A true result with every atom output NULL selects
- * the authored left and right sides.  A complete derived plan also supplies a
- * closed result for the case where the authored head matches but the refined
- * pattern does not; this preserves the difference between an unknown call and
- * a recognized equation whose guard produces zero answers.  The optional
- * frame schema is the complete, sorted inventory of unqualified variable ids
- * owned by this equation activation.  It remains useful with the authored
- * atoms and is interpreted independently of a partial atom override.  The
- * callback never establishes a match, and syntax must outlive the synchronous visit.
- * A supplied frame schema is borrowed here and retained by each activation. */
+/* A revision-qualified caller may exclude an impossible equation or
+ * supply its program-owned head, body and structural matching plan. A partial
+ * syntax override retains only the independent complete frame schema.
+ * Selection does not consume body guards or establish a match. All borrowed
+ * syntax and metadata must outlive the synchronous visit; activations retain
+ * their frame schema independently. */
+typedef struct {
+    Atom *match_pattern;
+    Atom *result_template;
+    BindingsFrameSchema *frame_schema;
+    const CettaOpenPatternPlan *match_plan;
+} QueryEquationPlan;
+
 typedef bool (*QueryEquationCandidatePlan)(
-    Atom *equation, void *ctx,
-    Atom **match_pattern, Atom **result_template,
-    Atom **refinement_failure_template, Atom **refinement_fallback_pattern,
-    BindingsFrameSchema **frame_schema);
+    Atom *equation, void *ctx, QueryEquationPlan *plan);
 
 void query_results_init(QueryResults *qr);
 bool query_results_push(QueryResults *qr, Atom *result, Bindings *b);

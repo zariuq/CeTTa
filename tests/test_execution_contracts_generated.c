@@ -117,10 +117,10 @@ static void test_call_preparation_plans(void) {
 static void test_control_operand_plans(void) {
     const BuiltinSyms builtins = {.let = 21u, .chain = 22u, .if_text = 23u,
         .let_star = 24u, .eval = 25u, .function = 26u,
-        .superpose = 27u, .empty_form = 28u, .case_text = 29u};
+        .superpose = 27u, .empty_form = 28u, .case_text = 29u, .once = 30u};
     const unsigned operands[] = {17u, 29u, 43u};
     unsigned observations = 0u;
-    for (SymbolId head = 21u; head <= 29u; head++) {
+    for (SymbolId head = 21u; head <= 30u; head++) {
         for (unsigned arity = 0u; arity <= 5u; arity++) {
             /* Independent source grammar: a let holds pattern, producer,
              * body; chain holds producer, pattern, body. No generated row
@@ -150,6 +150,9 @@ static void test_control_operand_plans(void) {
             } else if (head == 29u && arity == 2u) {
                 operation = CETTA_CONTROL_MATCH_BRANCHES;
                 source = 17u; first = 29u;
+            } else if (head == 30u && arity == 1u) {
+                operation = CETTA_CONTROL_FIRST_SUCCESS;
+                source = 17u;
             }
             CettaControlOperationPlan plan = {255u, 77u, 88u, 99u};
             uint32_t before = cetta_control_operation_key(plan);
@@ -217,7 +220,7 @@ static void test_control_operand_plans(void) {
     assert(!cetta_control_operation_decode(25u, UINT64_MAX, &force, &builtins));
     assert(!cetta_control_operation_decode(999u, 1u, NULL, &builtins));
     assert(!cetta_control_operation_decode(25u, 1u, NULL, NULL));
-    assert(observations == 10u);
+    assert(observations == 11u);
     CettaControlOperationPlan basic[] = {CETTA_CONTROL_RETURN_VALUE_PLAN,
         CETTA_CONTROL_CONSTRUCT_PLAN, CETTA_CONTROL_INVOKE_PLAN};
     for (size_t index = 0u; index < sizeof(basic) / sizeof(*basic); index++) {
@@ -235,13 +238,18 @@ static void test_control_operand_plans(void) {
             SYMBOL_ID_NONE, PETTA_FORM_CUT, arity);
         CettaControlOperationPlan handler = petta_semantics_elaborate_control(
             SYMBOL_ID_NONE, PETTA_FORM_CATCH, arity);
+        CettaControlOperationPlan dispatch = petta_semantics_elaborate_control(
+            SYMBOL_ID_NONE, PETTA_FORM_REDUCE, arity);
         assert(commit.operation == (arity == 0u
             ? CETTA_CONTROL_SCOPED_COMMIT : CETTA_CONTROL_NONE));
         assert(handler.operation == (arity == 1u
             ? CETTA_CONTROL_HANDLE : CETTA_CONTROL_NONE));
+        assert(dispatch.operation == (arity == 1u
+            ? CETTA_CONTROL_DISPATCH : CETTA_CONTROL_NONE));
         CettaGsltFoldControl untouched = CETTA_GSLT_FOLD_CONTROL_BRANCH;
         assert(!cetta_control_operation_lower_fold(commit, &untouched));
         assert(!cetta_control_operation_lower_fold(handler, &untouched));
+        assert(!cetta_control_operation_lower_fold(dispatch, &untouched));
         assert(untouched == CETTA_GSLT_FOLD_CONTROL_BRANCH);
         if (arity == 0u)
             assert(commit.source == CETTA_CONTROL_OPERAND_ABSENT);
@@ -249,6 +257,14 @@ static void test_control_operand_plans(void) {
             assert(handler.source == 0u &&
                 handler.first == CETTA_CONTROL_OPERAND_ABSENT &&
                 handler.last == CETTA_CONTROL_OPERAND_ABSENT);
+        if (arity == 1u) {
+            assert(dispatch.source == 0u &&
+                dispatch.first == CETTA_CONTROL_OPERAND_ABSENT &&
+                dispatch.last == CETTA_CONTROL_OPERAND_ABSENT);
+            assert(cetta_control_operation_is_control_form(dispatch));
+            assert(cetta_control_operation_key(dispatch) !=
+                cetta_control_operation_key(force));
+        }
     }
 }
 

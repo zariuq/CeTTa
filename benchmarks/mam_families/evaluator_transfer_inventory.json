@@ -123,10 +123,14 @@
         {
           "file": "src/open_equation_machine.c",
           "symbol": "oem_match_ground_template"
+        },
+        {
+          "file": "src/match.c",
+          "symbol": "match_atoms_epoch_builder_planned"
         }
       ],
       "admission": "Pattern plans must preserve nonlinear variables, scope, occurs checks and authoritative fallback.",
-      "remaining_transfer": "Identify ordinary candidate entry points still reinterpreting an available pattern plan.",
+      "remaining_transfer": "Ordinary HE decision entry now transports retained authored head plans through the shared matcher. Qualify its immediate-checkpoint costs; continue auditing ordinary entries without a retained head plan and dynamic callback boundaries.",
       "measure": [
         "pattern instructions",
         "unification attempts",
@@ -145,14 +149,20 @@
           "symbols": [
             "match_atoms_epoch_view_builder_rule_local_planned"
           ]
+        },
+        {
+          "file": "src/space.c",
+          "symbols": [
+            "match_atoms_epoch_builder_planned"
+          ]
         }
       ],
       "typed_native_caller_census": {
         "file": "benchmarks/mam_families/evaluator_transfer_callers.json",
         "family": "compiled-head-matching",
         "counts": {
-          "call": 2,
-          "reference": 2
+          "call": 3,
+          "reference": 3
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
       },
@@ -160,6 +170,15 @@
         "source": "src/open_equation_machine.c:oem_unify",
         "rule": "Keep the active pair local and defer only its siblings. Preserve the existing exact matcher, chronological pair order, full suffix coordinates, partial stores and rollback authority.",
         "proof": "Mettapedia.Machines.UnificationWorklist; exact inspection prefixes and residuals, with native C and allocation/capacity correspondence separate."
+      },
+      "ordinary_head_plans": {
+        "owner": "src/match.c:cetta_open_pattern_plan_compile",
+        "consumer": "src/space.c:query_equation_match_decoded_epoch",
+        "authority": "Retained equation source, complete frame schema and current equation token; null or source-mismatched plans retain ordinary matching.",
+        "ordering": "Ordinary query/rule variable direction and failure prefixes remain observable. Private rule-local refutation is not admitted here.",
+        "retirement": "Ordinary HE no longer extracts unify body guards or synthesizes their failure result. The common instruction boundary owns demand, source debit and completion.",
+        "controls": "tests/test_native_conditional_context.c:ordered_pattern_plan_controls",
+        "cost_status": "Pending immediate-checkpoint measurements; historical original-baseline holds remain open."
       }
     },
     {
@@ -457,10 +476,22 @@
             "petta_open_lexical_source",
             "prepared_pure_open_lexical_source"
           ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbol": "petta_machine_dispatch_solve"
+        },
+        {
+          "file": "src/eval.c",
+          "symbol": "petta_prepared_pure_expression_view"
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbol": "oem_build_builtin_entry"
         }
       ],
       "admission": "Readiness, type authority, computation/data provenance and result demand are separate judgments. Prepared cursor construction retains a handle without entering work; first execution and resumption own optional host-authority admission. A lexical preparation precheck cannot replace that entry check.",
-      "remaining_transfer": "Prepared occurrence plans retain argument demand and projection policy; bounded constructor-role decoding is now shared by concrete atoms and contextual value observations. Complete call argument transport still needs to preserve lexical values, ownership and current evidence without building whole substituted applications. Scalar, answer-body and OEM compilers now share one exact-arity lexical opener and one parameter-atom sequence. Saved prepared source owns unchanged input nodes; OEM compilation retains its scoped input loan. Compact parameter IDs are derived only at the body-lowering boundary. Ordinary application retains its partial/extra-argument and binding transitions. HE completed-value marks now enter the shared ready-argument classifier. Scalar and finite prepared returns complete through the existing HE value/type boundary without a post-result refusal; unmarked HE-compat expressions retain ordinary interpretation.",
+      "remaining_transfer": "Prepared occurrence plans retain argument demand and projection policy; bounded constructor-role decoding is now shared by concrete atoms and contextual value observations. Complete call argument transport still needs to preserve lexical values, ownership and current evidence without building whole substituted applications. Scalar, answer-body and OEM compilers now share one exact-arity lexical opener and one parameter-atom sequence. Saved prepared source owns unchanged input nodes; OEM compilation retains its scoped input loan. Compact parameter IDs are derived only at the body-lowering boundary. Ordinary application retains its partial/extra-argument and binding transitions. HE completed-value marks now enter the shared ready-argument classifier. Scalar and finite prepared returns complete through the existing HE value/type boundary without a post-result refusal; unmarked HE-compat expressions retain ordinary interpretation. PeTTa dispatch/force stages now use the common operation word through ordinary execution, prepared admission, OEM lowering and residual projection; other caller families retain their own coverage obligations.",
       "measure": [
         "admission attempts",
         "repeated checks",
@@ -554,6 +585,24 @@
           "symbols": [
             "PettaTypeCall"
           ]
+        },
+        {
+          "file": "src/petta_search_machine.c",
+          "symbols": [
+            "petta_machine_dispatch_solve"
+          ]
+        },
+        {
+          "file": "src/eval.c",
+          "symbols": [
+            "petta_prepared_pure_expression_view"
+          ]
+        },
+        {
+          "file": "src/open_equation_machine.c",
+          "symbols": [
+            "oem_build_builtin_entry"
+          ]
         }
       ],
       "case_source_evidence": "literal_case_default is derived from the authored arm, retained during value-plan collapse and included in plan content identity. A variable or computed pattern that evaluates to Empty remains a data pattern. Current source plans govern classification; printed shape alone is insufficient. Computed intrinsic Booleans use the prepared program's representation constructor, as ordinary dialect returns do; raw grounded Boolean leaves cannot select their own publication spelling.",
@@ -562,8 +611,8 @@
         "family": "ready-call-and-result-contracts",
         "counts": {
           "type": 65,
-          "call": 19,
-          "reference": 19
+          "call": 30,
+          "reference": 34
         },
         "scope": "Typed source uses in the recorded normal/main build cohorts. Call and function-reference records overlap; type uses include declarations. These are not admission certificates or runtime reachability claims."
       },
@@ -757,11 +806,61 @@
             "tests/he/prepared_completed_values.metta"
           ],
           "algorithm_law": "Mettapedia.Machines.PreparedReturnCompletion; dialect value/type callback and native marker correspondence remain separate."
+        },
+        {
+          "caller": "petta_machine_dispatch_solve",
+          "route": "PeTTa source dispatch and held-value forcing",
+          "mechanism": "Generated dispatch/force operation owns the stage; existing invocation, continuation and handler services execute it.",
+          "control": "tests/test_native_conditional_context.c:source_computation_plans, source_invocation_plans and generic_budget_checks",
+          "algorithm_law": "Mettapedia.Machines.DispatchOperands.compile_refines",
+          "scope": "Operand readback at a ready head. Dynamic-head execution, native ownership and charging retain their separate machine obligations."
+        },
+        {
+          "caller": "petta_prepared_pure_expression_view",
+          "route": "PeTTa source dispatch and held-value forcing",
+          "mechanism": "Generated dispatch/force operation owns the stage; existing invocation, continuation and handler services execute it.",
+          "control": "tests/test_native_conditional_context.c:source_computation_plans, source_invocation_plans and generic_budget_checks",
+          "algorithm_law": "Mettapedia.Machines.DispatchOperands.compile_refines",
+          "scope": "Operand readback at a ready head. Dynamic-head execution, native ownership and charging retain their separate machine obligations."
+        },
+        {
+          "caller": "oem_build_builtin_entry",
+          "route": "PeTTa source dispatch and held-value forcing",
+          "mechanism": "Generated dispatch/force operation owns the stage; existing invocation, continuation and handler services execute it.",
+          "control": "tests/test_native_conditional_context.c:source_computation_plans, source_invocation_plans and generic_budget_checks",
+          "algorithm_law": "Mettapedia.Machines.DispatchOperands.compile_refines",
+          "scope": "Operand readback at a ready head. Dynamic-head execution, native ownership and charging retain their separate machine obligations."
         }
       ],
       "native_entry_owner": "Lexical answer-body wrappers construct borrowed cursors without a redundant host-authority observation. The cursor admits host authority before its first body transition and after native entry; a stale pull cannot execute or replay the body.",
       "borrowed_storage_reuse": "A bounded spare owns capacity but no live frame or argument roots. Entry overwrites the published prefix; close resets all live lengths, execution state, callbacks and counters. Promoted owned frontiers remain independent.",
-      "native_controls": "tests/test_native_conditional_context.c: prepared_body_open_admission_controls and prepared_body_storage_controls cover repeated stale/current entries, invalidation between open and pull, budgets, interruption, sibling promotion and source-arena release. Faults removing first-pull admission or retaining a live frame on close are rejected."
+      "native_controls": "tests/test_native_conditional_context.c: prepared_body_open_admission_controls and prepared_body_storage_controls cover repeated stale/current entries, invalidation between open and pull, budgets, interruption, sibling promotion and source-arena release. Faults removing first-pull admission or retaining a live frame on close are rejected.",
+      "metered_partial_entry": {
+        "status": "Retained canonical specialization boundary",
+        "source": "src/petta_search_machine.c:PETTA_GOAL_APPLY_READY",
+        "reason": "A ready partial application has two canonical entrance visits before relation selection. Equality of borrowed fields does not license deletion or atomic aggregation of those source visits.",
+        "control": "tests/test_native_conditional_context.c:metered_invocation_controls",
+        "coverage": "512 cases: four captured/supplied splits, admission/refusal, source purses 0 through 15, and physical allowances 0, 1, 2 and 128. Publication, final advance and refused-goal identity remain observable.",
+        "native_scope": "The current finite C route still materializes and retains those visits. Allocation-free metered entry is not claimed.",
+        "proof": "Mettapedia.Machines.InvocationEntrySchedule; reconstruction, staged field access, retained accounting prefixes and split resumption. Native stage selection, pointer ownership and faulting services retain separate correspondence obligations."
+      },
+      "dispatch_stage_contract": {
+        "specification": "lib/gslt_execution_contracts.metta:execution-control-plans",
+        "elaborator": "petta_semantics_elaborate_control",
+        "source_operation": "CETTA_CONTROL_DISPATCH",
+        "force_operation": "CETTA_CONTROL_FORCE",
+        "missing_metadata": "Fresh adapters elaborate the operation before written-call fusion, preserving the same source visits.",
+        "residual_owner": "petta_program_project_computation",
+        "native_controls": [
+          "source_computation_plans",
+          "source_invocation_plans",
+          "generic_budget_checks"
+        ],
+        "independent_fixtures": [
+          "tests/petta/dynamic_explicit_evaluation.metta",
+          "tests/petta/dispatch_error_scope.metta"
+        ]
+      }
     },
     {
       "id": "outcome-and-owned-return",
@@ -789,7 +888,7 @@
         }
       ],
       "admission": "Value, failure, raised error, interruption and suspension remain distinct; acceptance and publication retain their owner.",
-      "remaining_transfer": "Owned residual, ordinary prepared-native and closed PeTTa search-machine continuations share tagged returns and pending ownership. Scalar consumers refuse native-required plans before entry with a result-demand-specific cache key. General invocation plans, OEM lexical workers, constraint registration and remaining dialect elaboration still need migration. Prepared scalar and finite callers now preserve the callee verdict after entered results; finite completion is explicit, and completed non-Boolean conditions resume the existing selector without source replay.",
+      "remaining_transfer": "Owned residual, ordinary prepared-native and closed PeTTa search-machine continuations share tagged returns and pending ownership. Scalar consumers refuse native-required plans before entry with a result-demand-specific cache key. Complete dynamic callback and constraint-registration coverage; remaining dialect elaboration and source-scheduling joins stay open. Prepared scalar and finite callers now preserve the callee verdict after entered results; finite completion is explicit, and completed non-Boolean conditions resume the existing selector without source replay.",
       "measure": [
         "returns accepted",
         "pending returns",
@@ -1111,6 +1210,17 @@
         "capacity": "New symbol allocation stops before the exclusive extent wraps; existing symbols remain readable at capacity.",
         "controls": "tests/test_atom_intern_vars.c: concurrent sparse IDs including UINT32_MAX, empty/repeated owners, exact/partial symbol chunks, canonical atoms, observed exact release and capacity reuse/exhaustion. Five faults are caught.",
         "proof": "Mettapedia/Machines/InternChunkOwnership.lean; allocated-owner registration preserves a duplicate-free complete directory invariant. Checked disposal refines the independent directory sweep. C layout/atomics and caller quiescence remain native obligations."
+      },
+      "plan_interning": {
+        "owner": "src/petta_program.c",
+        "key": "Eight words preserve the former twelve-word metadata equality; source positions, charges, literal defaults, program identities and ordered children remain distinct.",
+        "storage": "Hashing and comparison borrow local scratch, spill the live prefix and preserve uncertainty on allocation failure. Shared child storage is reused only after equal root metadata.",
+        "control": "tests/support/test_petta_plan_key.c",
+        "proof": [
+          "Mettapedia.Machines.PackedPlanKey",
+          "Mettapedia.Machines.LocalWorklistStorage"
+        ],
+        "cost": "Instruction-only affected checks and separate allocator observations; wall-time acceptance pending."
       }
     },
     {
@@ -2287,7 +2397,7 @@
       }
     }
   ],
-  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 340 linked C translation units in both build configurations, and admission/validity/cost obligations. The 104 named anchors include the compiler report and publication boundary. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open.",
+  "coverage": "All 29 named families have dispositions, source anchors, a typed native-use census across all 340 linked C translation units in both build configurations, and admission/validity/cost obligations. The 108 named anchors include the compiler report and publication boundary. Caller-by-caller semantic transfer completion, dynamic callback qualification and complete ordinary-route workload baselines remain open.",
   "review_reconciliation": [
     {
       "idea": "Shared call contract over existing engines",
@@ -2579,6 +2689,43 @@
       "construction": "Mettapedia/Machines/InternChunkOwnership.lean",
       "application": "Successful allocation into an empty directory slot preserves complete duplicate-free ownership. Checked disposal through the owner list has the same result as a full directory sweep, including refusal of repeated/dead owners; release work is bounded by allocated slots. Dense extent arithmetic includes the last partial chunk and rejects count wraparound. Native pointer layout, atomic publication, serialized writers and quiescent disposal remain separate realization obligations.",
       "control": "tests/test_atom_intern_vars.c"
+    },
+    {
+      "construction": "Mettapedia/Machines/OrderedHeadPlan.lean",
+      "application": "Independent atom inspection and compiled structural dispatch retain ordered matching prefixes, opaque binding direction, partial failure stores, faults and exact residual work at every allowance. Bounded compilation conservatively retains source work at its limit. Alias dereferencing, schema coordinates, native allocation and pointer lifetime are separate correspondence obligations.",
+      "native": [
+        "src/match.c:cetta_open_pattern_plan_compile",
+        "src/match.c:match_atoms_epoch_builder_planned",
+        "src/space.c:query_equation_match_decoded_epoch"
+      ],
+      "control": "tests/test_native_conditional_context.c:ordered_pattern_plan_controls"
+    },
+    {
+      "construction": "Mettapedia/Machines/InvocationEntrySchedule.lean",
+      "application": "A boxed application reference and captured/supplied field readers produce the same three-stage source schedule under arbitrary total world-transforming services. The maintained accounting machine preserves every source/physical prefix and exact residual. Counterexamples distinguish equal completed results from equal bounded entry and credit histories. This does not implement allocation-free finite C entry or establish native stage/fault correspondence.",
+      "native": [
+        "src/petta_search_machine.c:PETTA_GOAL_APPLY_READY",
+        "src/petta_search_machine.c:petta_machine_permit_metered_source_step"
+      ],
+      "control": "tests/test_native_conditional_context.c:metered_invocation_controls"
+    },
+    {
+      "construction": "Mettapedia/Machines/PackedPlanKey.lean",
+      "application": "The twelve-word reference and eight-word key distinguish exactly the same bounded metadata and ordered metadata sequences. The packing agrees with disjoint bitwise fields and fits native word widths. Hash collisions retain exact comparison; C field correspondence remains native-controlled.",
+      "native": [
+        "src/petta_program.c:petta_plan_node_key",
+        "src/petta_program.c:petta_plan_work_reserve"
+      ],
+      "control": "tests/support/test_petta_plan_key.c"
+    },
+    {
+      "construction": "Mettapedia/Machines/LocalWorklistStorage.lean",
+      "application": "A recursive prefix overwrite preserves live work and capacity when scratch moves to owned storage. Failed spill retains the previous owner. Native memcpy/realloc sizes, pointer lifetime and C correspondence remain separate obligations.",
+      "native": [
+        "src/petta_program.c:petta_plan_node_key",
+        "src/petta_program.c:petta_plan_work_reserve"
+      ],
+      "control": "tests/support/test_petta_plan_key.c"
     }
   ],
   "cross_tree_reconciliation": [

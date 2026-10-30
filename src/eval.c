@@ -4717,6 +4717,35 @@ static bool eval_is_reify_head(SymbolId head) {
         (head == g_builtin_syms.reify && active_builtin_allowed("reify"));
 }
 
+/* A retained word owns the operation. Only a fresh source inquiry or an
+ * unspecified callee body consults the active dialect's elaborator. */
+static CettaComputationPlan eval_computation_plan_current(Atom *expression) {
+    CettaComputationPlan computation = {0};
+    if (!expression || expression->kind != ATOM_EXPR || !expression->expr.len)
+        return computation;
+    SymbolId head = atom_head_symbol_id(expression);
+    CettaExprLen arity = expression->expr.len - 1u;
+    if (eval_current_language_id() == CETTA_LANGUAGE_PETTA) {
+        if (g_petta_source_plan && g_petta_source_plan_atom == expression &&
+            (g_petta_source_plan->role == PETTA_PLAN_VALUE ||
+             g_petta_source_plan->child_count == expression->expr.len))
+            computation = petta_plan_computation(g_petta_source_plan);
+        if (computation.control.operation == CETTA_CONTROL_NONE &&
+            computation.invocation.operation == CETTA_INVOCATION_NONE)
+            computation = petta_semantics_elaborate_computation(
+                head, petta_semantics_form(head), arity);
+    } else if (head == g_builtin_syms.once && arity == 1u) {
+        cetta_control_operation_decode(head, arity, &computation.control, &g_builtin_syms);
+    }
+    if ((computation.control.operation == CETTA_CONTROL_NONE ||
+         (computation.control.operation == CETTA_CONTROL_INVOKE &&
+          computation.invocation.operation == CETTA_INVOCATION_NONE)) &&
+        eval_is_reify_head(head) && arity == 1u)
+        cetta_control_operation_decode(g_builtin_syms.collapse, arity,
+            &computation.control, &g_builtin_syms);
+    return computation;
+}
+
 static void eval_note_test_verdict(bool passed) {
     CettaEvalSession *session = active_eval_session();
     if (session && session->test_verdict)
@@ -11659,7 +11688,7 @@ static bool query_equations_table_hit_visit(Space *s, Atom *query, Arena *a,
 
 enum {
     EQUATION_MATCH_DECISION_CACHE_SLOTS = 32u,
-    HE_MATCH_POLICY_STRUCTURAL_GUARDED_EQUATIONS_V3 = 3u,
+    HE_MATCH_POLICY_STRUCTURAL_HEAD_PLANS_V4 = 4u,
     HE_DEMAND_POLICY_EAGER_QUERY_V1 = 1u,
 };
 
@@ -11669,10 +11698,8 @@ typedef struct {
     Atom *equation;
     Atom *match_pattern;
     Atom *result_template;
-    Atom *refinement_fallback_pattern;
-    Atom *refinement_failure_template;
     BindingsFrameSchema *frame_schema;
-    uint32_t consumed_guard_count;
+    const CettaOpenPatternPlan *match_plan;
 } HeEquationMatchPlan;
 
 typedef struct {
@@ -11685,7 +11712,6 @@ typedef struct {
     size_t equation_count;
     Arena pattern_arena;
     bool pattern_arena_initialized;
-    size_t guard_refinement_count;
     bool valid;
     size_t references;
 } EquationMatchDecisionCacheSlot;
@@ -11744,7 +11770,7 @@ he_match_decision_semantics(void) {
             ? (uint32_t)session->profile->id
             : (uint32_t)CETTA_PROFILE_HE_EXTENDED,
         .match_policy_id =
-            HE_MATCH_POLICY_STRUCTURAL_GUARDED_EQUATIONS_V3,
+            HE_MATCH_POLICY_STRUCTURAL_HEAD_PLANS_V4,
         .demand_policy_id = HE_DEMAND_POLICY_EAGER_QUERY_V1,
         .presentation_identity = HE_SEMANTIC_PRESENTATION_ID_V3,
         .compiler_identity = cetta_match_decision_compiler_identity(),
@@ -11816,118 +11842,6 @@ static void equation_match_decision_owner_release(void *owner) {
     he_equation_match_plans_free(
         slot->plans, slot->equation_count);
     free(slot);
-}
-
-typedef struct {
-    VarId id;
-} HeGuardVariableIdentity;
-
-static bool he_guard_atom_has_variable(
-    const Atom *atom, void *context) {
-    const HeGuardVariableIdentity *identity = context;
-    return atom && identity && atom->kind == ATOM_VAR &&
-           var_id_eq(atom->var_id, identity->id);
-}
-
-/*
- * A translated non-linear or constructor head has the canonical form
- *
- *   (= (f ... $fresh ...)
- *      (unify $fresh pattern then Empty))
- *
- * HE's unify observes its first two operands as syntax.  If $fresh occurs as
- * exactly one direct head argument and nowhere inside the other arguments,
- * replacing that argument with pattern composes the equation-head match and
- * the guard match.  The intermediate variable is private: it may not occur in
- * the guard pattern or success body.  The derived plan is therefore exactly
- * the sequential pair of unifications with the private coordinate eliminated.
- * Unrecognized guards retain the authored equation unchanged.
- */
-static Atom *he_match_decision_guarded_pattern(
-    Arena *owner, Atom *lhs, Atom *rhs,
-    Atom **result_template, Atom **refinement_failure_template,
-    uint32_t *consumed_guard_count,
-    size_t *refinement_count) {
-    if (result_template)
-        *result_template = rhs;
-    if (refinement_failure_template)
-        *refinement_failure_template = NULL;
-    if (consumed_guard_count)
-        *consumed_guard_count = 0u;
-    if (!owner || !lhs || lhs->kind != ATOM_EXPR ||
-        lhs->expr.len == 0u) {
-        return lhs;
-    }
-
-    Atom *pattern = lhs;
-    Atom *guard = rhs;
-    while (guard && guard->kind == ATOM_EXPR &&
-           guard->expr.len == 5u &&
-           atom_is_symbol_id(
-               guard->expr.elems[0], g_builtin_syms.unify) &&
-           eval_unify_builtin() &&
-           atom_is_empty(guard->expr.elems[4])) {
-        Atom *actual = guard->expr.elems[1];
-        Atom *guard_pattern = guard->expr.elems[2];
-        if (!actual || actual->kind != ATOM_VAR ||
-            var_id_is_none(actual->var_id) || !guard_pattern) {
-            break;
-        }
-
-        HeGuardVariableIdentity identity = {.id = actual->var_id};
-        if (atom_graph_any(
-                guard_pattern, he_guard_atom_has_variable, &identity) ||
-            atom_graph_any(
-                guard->expr.elems[3],
-                he_guard_atom_has_variable, &identity)) {
-            break;
-        }
-
-        CettaExprIndex direct_index = pattern->expr.len;
-        bool ambiguous = false;
-        for (CettaExprIndex index = 0u;
-             index < pattern->expr.len; index++) {
-            Atom *child = pattern->expr.elems[index];
-            if (child && child->kind == ATOM_VAR &&
-                var_id_eq(child->var_id, actual->var_id)) {
-                if (direct_index != pattern->expr.len) {
-                    ambiguous = true;
-                    break;
-                }
-                direct_index = index;
-                continue;
-            }
-            if (atom_graph_any(
-                    child, he_guard_atom_has_variable, &identity)) {
-                ambiguous = true;
-                break;
-            }
-        }
-        if (ambiguous || direct_index == pattern->expr.len)
-            break;
-
-        if (!cetta_expr_len_mul_fits_size(
-                pattern->expr.len, sizeof(Atom *))) {
-            break;
-        }
-        Atom **children = cetta_malloc(
-            sizeof(*children) * (size_t)pattern->expr.len);
-        memcpy(children, pattern->expr.elems,
-               sizeof(*children) * (size_t)pattern->expr.len);
-        children[direct_index] = guard_pattern;
-        pattern = atom_expr(owner, children, pattern->expr.len);
-        free(children);
-        if (refinement_count)
-            (*refinement_count)++;
-        if (consumed_guard_count)
-            (*consumed_guard_count)++;
-        if (refinement_failure_template)
-            *refinement_failure_template = guard->expr.elems[4];
-        guard = guard->expr.elems[3];
-    }
-    if (result_template)
-        *result_template = guard;
-    return pattern;
 }
 
 static void equation_match_decision_lease_release(
@@ -12040,20 +11954,11 @@ static EquationMatchDecisionCacheSlot *equation_match_decision_lookup(
         plans[count] = (HeEquationMatchPlan){
             .equation = occurrence.equation,
             .result_template = compiled_equation->expr.elems[2],
-            .refinement_fallback_pattern = compiled_equation->expr.elems[1],
             .frame_schema = frame_schema,
         };
         plans[count].match_pattern = compiled_equation->expr.elems[1];
-        if (semantics.language_id == (uint32_t)CETTA_LANGUAGE_HE) {
-            plans[count].match_pattern =
-                he_match_decision_guarded_pattern(
-                    &slot->pattern_arena,
-                    compiled_equation->expr.elems[1], compiled_equation->expr.elems[2],
-                    &plans[count].result_template,
-                    &plans[count].refinement_failure_template,
-                    &plans[count].consumed_guard_count,
-                    &slot->guard_refinement_count);
-        }
+        plans[count].match_plan = cetta_open_pattern_plan_compile(
+            &slot->pattern_arena, plans[count].match_pattern, frame_schema);
         equations[count] = (CettaMatchDecisionEquation){
             .pattern = plans[count].match_pattern,
             .source_ref = (uint32_t)count,
@@ -12103,21 +12008,11 @@ typedef struct {
 } HeMatchDecisionPlanContext;
 
 static bool he_match_decision_candidate_plan(
-    Atom *equation, void *context,
-    Atom **match_pattern, Atom **result_template,
-    Atom **refinement_failure_template, Atom **refinement_fallback_pattern,
-    BindingsFrameSchema **frame_schema) {
+    Atom *equation, void *context, QueryEquationPlan *output) {
     HeMatchDecisionPlanContext *filter = context;
-    if (match_pattern)
-        *match_pattern = NULL;
-    if (result_template)
-        *result_template = NULL;
-    if (refinement_failure_template)
-        *refinement_failure_template = NULL;
-    if (refinement_fallback_pattern)
-        *refinement_fallback_pattern = NULL;
-    if (frame_schema)
-        *frame_schema = NULL;
+    if (!output)
+        return false;
+    *output = (QueryEquationPlan){0};
     if (!filter || !filter->space || !filter->slot || !equation ||
         !space_equation_token_matches_live_space(
             filter->slot->equation_projection, filter->space)) {
@@ -12136,8 +12031,7 @@ static bool he_match_decision_candidate_plan(
 
     const HeEquationMatchPlan *plan =
         &filter->slot->plans[plan_index];
-    if (frame_schema)
-        *frame_schema = plan->frame_schema;
+    output->frame_schema = plan->frame_schema;
     bool selected = false;
     for (size_t index = 0u;
          index < filter->selected_count; index++) {
@@ -12149,34 +12043,10 @@ static bool he_match_decision_candidate_plan(
             break;
         }
     }
-    if (plan->consumed_guard_count == 0u) {
-        if (match_pattern)
-            *match_pattern = plan->match_pattern;
-        if (result_template)
-            *result_template = plan->result_template;
-        return selected;
-    }
-
-    Atom *authored_lhs = NULL;
-    if (equation->kind != ATOM_EXPR || equation->expr.len != 3u ||
-        !atom_is_symbol_id(
-            equation->expr.elems[0], g_builtin_syms.equals) ||
-        !plan->refinement_failure_template) {
-        return true;
-    }
-    authored_lhs = plan->refinement_fallback_pattern;
-    if (refinement_fallback_pattern)
-        *refinement_fallback_pattern = authored_lhs;
-    if (match_pattern)
-        *match_pattern = selected ? plan->match_pattern : authored_lhs;
-    if (result_template) {
-        *result_template = selected
-            ? plan->result_template
-            : plan->refinement_failure_template;
-    }
-    if (refinement_failure_template)
-        *refinement_failure_template = plan->refinement_failure_template;
-    return true;
+    output->match_pattern = plan->match_pattern;
+    output->result_template = plan->result_template;
+    output->match_plan = plan->match_plan;
+    return selected;
 }
 
 typedef struct {
@@ -15740,14 +15610,18 @@ static const PettaPlanNode *hyperpose_stream_source_plan(
     if (g_petta_source_plan_atom == stream_expr)
         return g_petta_source_plan;
     const Atom *wrapper = g_petta_source_plan_atom;
-    if (wrapper->kind != ATOM_EXPR || wrapper->expr.len != 2u ||
-        wrapper->expr.elems[1] != stream_expr) {
+    if (wrapper->kind != ATOM_EXPR || wrapper->expr.len < 2u) {
         return NULL;
     }
-    SymbolId head = atom_head_symbol_id((Atom *)wrapper);
-    if (head != g_builtin_syms.once && !eval_is_reify_head(head))
+    CettaComputationPlan computation = eval_computation_plan_current((Atom *)wrapper);
+    CettaControlOperationPlan control = computation.control;
+    if ((control.operation != CETTA_CONTROL_FIRST_SUCCESS &&
+         control.operation != CETTA_CONTROL_COLLECT) ||
+        control.source == CETTA_CONTROL_OPERAND_ABSENT)
         return NULL;
-    return petta_plan_child(g_petta_source_plan, 1u);
+    CettaExprIndex body = (CettaExprIndex)control.source + 1u;
+    return body < wrapper->expr.len && wrapper->expr.elems[body] == stream_expr
+        ? petta_plan_child(g_petta_source_plan, body) : NULL;
 }
 
 typedef struct {
@@ -46832,10 +46706,11 @@ static Atom *petta_eval_machine_relational_subject(
         expression->expr.len == 0u) {
         return NULL;
     }
-    if (expression->expr.len == 2u &&
-        atom_is_symbol_id(
-            expression->expr.elems[0], g_builtin_syms.once)) {
-        Atom *body = expression->expr.elems[1];
+    CettaControlOperationPlan control = eval_computation_plan_current(expression).control;
+    if (control.operation == CETTA_CONTROL_FIRST_SUCCESS &&
+        control.source != CETTA_CONTROL_OPERAND_ABSENT &&
+        (CettaExprLen)control.source + 1u < expression->expr.len) {
+        Atom *body = expression->expr.elems[(CettaExprIndex)control.source + 1u];
         return body && body->kind == ATOM_EXPR &&
                body->expr.len > 0u
             ? body : NULL;
@@ -46845,10 +46720,7 @@ static Atom *petta_eval_machine_relational_subject(
 
 static CettaObservationDemand petta_eval_machine_root_observation(
         Atom *expression) {
-    if (expression && expression->kind == ATOM_EXPR &&
-        expression->expr.len == 2u &&
-        atom_is_symbol_id(
-            expression->expr.elems[0], g_builtin_syms.once)) {
+    if (eval_computation_plan_current(expression).control.operation == CETTA_CONTROL_FIRST_SUCCESS) {
         return (CettaObservationDemand){
             .completion = CETTA_OBSERVATION_FIRST,
         };
@@ -49904,6 +49776,7 @@ petta_prepared_pure_expression_view(
     CettaControlOperationPlan control = computation
         ? computation->control : petta_semantics_elaborate_control(head, form, arity);
     bool force = control.operation == CETTA_CONTROL_FORCE;
+    bool dispatch = control.operation == CETTA_CONTROL_DISPATCH;
 
     /* Check executable source occurrences at compilation, never the terms
      * already delivered as argument values.  Data/typecheck operations need
@@ -49948,7 +49821,7 @@ petta_prepared_pure_expression_view(
     }
     /* The word owns the stage, including after operand normalization.
      * Other controls require the canonical continuation machine. */
-    if (cetta_control_operation_is_control_form(control) && !force) {
+    if (cetta_control_operation_is_control_form(control) && !force && !dispatch) {
         bool supported =
             (control.operation == CETTA_CONTROL_SEQUENCE && arity == 3u) ||
             (control.operation == CETTA_CONTROL_BRANCH && arity == 3u) ||
@@ -49978,7 +49851,7 @@ petta_prepared_pure_expression_view(
     if ((form == PETTA_FORM_ID ||
          form == PETTA_FORM_CALL ||
          force ||
-         form == PETTA_FORM_REDUCE) &&
+         dispatch) &&
         expression->expr.len == 2u) {
         const Atom *child = expression->expr.elems[1];
         bool written_ordinary_call =
@@ -49986,7 +49859,7 @@ petta_prepared_pure_expression_view(
             child->expr.elems[0]->kind == ATOM_SYMBOL &&
             petta_semantics_runtime_head(child->expr.elems[0]->sym_id) ==
                 PETTA_RUNTIME_HEAD_ORDINARY;
-        if (form == PETTA_FORM_REDUCE && written_ordinary_call) {
+        if (dispatch && written_ordinary_call) {
             view->projected = expression->expr.elems[1];
             view->projection_mode = CETTA_PREPARED_PURE_PROJECT_APPLICATION;
             return CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT;
@@ -53052,6 +52925,8 @@ tail_call: ;
         return;
     }
 
+    CettaControlOperationPlan execution_control = eval_computation_plan_current(atom).control;
+
     /*
      * Nested PeTTa control delimiters deliberately avoid recursively
      * entering the relational machine.  Preserve the same grounded
@@ -53408,14 +53283,15 @@ prime_need_strict_argument_ready:
         if (!petta_semantics_special_form_reads(head_id, (CettaExprLen)nargs))
             goto generic_dispatch;
 
+
         /* catch and reduce take an error their body raises in this
          * evaluator, as the machine's markers do on its own goals; the
          * answers the body gave before it stay given.  catch then answers
          * with the error, under the bindings it was entered with, and
          * reduce, a dispatch decided at run time, has no further answer
          * (DispatchErrorScope.recover_add). */
-        if ((petta_form == PETTA_FORM_CATCH ||
-             petta_form == PETTA_FORM_REDUCE) && nargs == 1u) {
+        if (execution_control.operation == CETTA_CONTROL_HANDLE ||
+            execution_control.operation == CETTA_CONTROL_DISPATCH) {
             OutcomeSet body;
             outcome_set_init(&body);
             eval_for_caller(s, a, etype, expr_arg(atom, 0u), fuel,
@@ -53423,7 +53299,7 @@ prime_need_strict_argument_ready:
             Atom *raised = petta_eval_take_raise();
             for (CettaCount index = 0u; index < body.len; index++)
                 outcome_set_add_existing(os, &body.items[index]);
-            if (raised && petta_form == PETTA_FORM_CATCH)
+            if (raised && execution_control.operation == CETTA_CONTROL_HANDLE)
                 outcome_set_add(os, raised, CURRENT_ENV);
             else if (petta_eval_contract_raise(raised))
                 petta_eval_raise(raised);
@@ -53673,8 +53549,7 @@ prime_need_strict_argument_ready:
             petta_form == PETTA_FORM_OR_ELSE ||
             petta_form == PETTA_FORM_SECOND_FROM_PAIR ||
             petta_form == PETTA_FORM_CALL ||
-            petta_form == PETTA_FORM_EVAL ||
-            petta_form == PETTA_FORM_REDUCE) {
+            petta_form == PETTA_FORM_EVAL) {
             Atom *lowered = petta_semantics_lower(
                 a, atom, petta_form,
                 eval_reify_head());
@@ -54046,7 +53921,10 @@ petta_lowered_to_shared_form:
     }
 
     /* ── answer traversal reification ─────────────────────────────────── */
-    if (eval_is_reify_head(head_id) && nargs == 1) {
+    if (execution_control.operation == CETTA_CONTROL_COLLECT &&
+        execution_control.source != CETTA_CONTROL_OPERAND_ABSENT &&
+        execution_control.source < (CettaExprLen)nargs) {
+        Atom *reified_body = expr_arg(atom, execution_control.source);
         /* Reification consumes the complete occurrence bag.  Make that
          * demand visible throughout every realization below, including
          * nested relational machines.  A controller may use the fact to
@@ -54060,17 +53938,17 @@ petta_lowered_to_shared_form:
         bool prime_need_reify =
             language_id == CETTA_LANGUAGE_PRIME;
         if (!prime_need_reify && !preserve_bindings &&
-            try_effect_batch_append_collapse(s, a, expr_arg(atom, 0),
+            try_effect_batch_append_collapse(s, a, reified_body,
                                              fuel, CURRENT_ENV, os)) {
             return;
         }
         if (!prime_need_reify && !preserve_bindings &&
-            collapse_let_stream(s, a, expr_arg(atom, 0), fuel, CURRENT_ENV, os)) {
+            collapse_let_stream(s, a, reified_body, fuel, CURRENT_ENV, os)) {
             return;
         }
         if (!prime_need_reify &&
             hyperpose_threaded_execute(
-                s, a, expr_arg(atom, 0), fuel, CURRENT_ENV,
+                s, a, reified_body, fuel, CURRENT_ENV,
                 HYPERPOSE_THREAD_OBSERVE_REIFIED_BAG,
                 preserve_bindings, os)) {
             return;
@@ -54080,11 +53958,11 @@ petta_lowered_to_shared_form:
            with an empty environment.  The caller's preserve-bindings request
            must therefore not disable the equivalent direct consumer. */
         if (!prime_need_reify &&
-            collapse_direct_stream(s, a, expr_arg(atom, 0), fuel, os)) {
+            collapse_direct_stream(s, a, reified_body, fuel, os)) {
             return;
         }
         if (language_id == CETTA_LANGUAGE_HE &&
-            he_canonical_control_schedule(s, a, atom, etype, expr_arg(atom, 0),
+            he_canonical_control_schedule(s, a, atom, etype, reified_body,
                 fuel, CURRENT_ENV, preserve_bindings, eval_gc_query_closed, false, os))
             return;
         if (prime_need_reify) {
@@ -54096,7 +53974,7 @@ petta_lowered_to_shared_form:
              * open thunks see the branch's matcher refinements and heap.
              * The generic direct walker has no prefix parameter and would
              * otherwise sever precisely that correlation. */
-            Atom *stream_roots[1] = {expr_arg(atom, 0)};
+            Atom *stream_roots[1] = {reified_body};
             OutcomeSet inner;
             outcome_set_init(&inner);
             __attribute__((cleanup(eval_gc_outcome_suspension_end)))
@@ -54129,7 +54007,7 @@ petta_lowered_to_shared_form:
         }
         ResultSet inner;
         result_set_init(&inner);
-        metta_eval(s, a, NULL,expr_arg(atom, 0), fuel, &inner);
+        metta_eval(s, a, NULL,reified_body, fuel, &inner);
         /* HE treats Empty as an internal no-result sentinel here: collapse
            collects only surviving branches, not literal Empty placeholders. */
         Atom **collected_items = NULL;
@@ -55801,13 +55679,15 @@ petta_lowered_to_shared_form:
         head_id == g_builtin_syms.fold_by_key ||
         head_id == g_builtin_syms.reduce ||
         head_id == g_builtin_syms.select ||
-        head_id == g_builtin_syms.once) {
+        execution_control.operation == CETTA_CONTROL_FIRST_SUCCESS ||
+        (head_id == g_builtin_syms.once && nargs != 1u)) {
         bool is_collect = head_id == g_builtin_syms.collect;
         bool is_fold = head_id == g_builtin_syms.fold ||
                        head_id == g_builtin_syms.reduce;
         bool is_fold_by_key = head_id == g_builtin_syms.fold_by_key;
         bool is_reduce_alias = head_id == g_builtin_syms.reduce;
-        bool is_once = head_id == g_builtin_syms.once;
+        bool is_once = execution_control.operation == CETTA_CONTROL_FIRST_SUCCESS ||
+            (head_id == g_builtin_syms.once && nargs != 1u);
         const char *syntax = is_collect ? "collect" :
                               (is_fold ? (is_reduce_alias ? "reduce" : "fold") :
                                (is_fold_by_key ? "fold-by-key" :
@@ -56032,8 +55912,10 @@ petta_lowered_to_shared_form:
         }
 
         if (is_once) {
-            if (nargs == 1) {
-                stream_expr = expr_arg(atom, 0);
+            if (execution_control.operation == CETTA_CONTROL_FIRST_SUCCESS &&
+                execution_control.source != CETTA_CONTROL_OPERAND_ABSENT &&
+                execution_control.source < (CettaExprLen)nargs) {
+                stream_expr = expr_arg(atom, execution_control.source);
             } else if (nargs == 2) {
                 Atom *reason = NULL;
                 CettaSearchPolicyParseStatus parsed =
