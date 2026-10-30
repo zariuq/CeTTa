@@ -2675,6 +2675,16 @@ static bool petta_body_resume_segment_enabled(void) {
     return enabled != 0;
 }
 
+/* A source-derived continuation may skip the ordinary scheduling visit
+ * only without retained constraints or table work. Source credit alone
+ * does not establish that this boundary has no work due before the goal. */
+static inline bool petta_machine_resume_context_ready(
+        const PettaMachineImpl *machine) {
+    return (!machine->delay || !cetta_delay_holds(machine->delay)) &&
+        (!machine->table_shared || !machine->table_shared->entry_len);
+}
+
+
 static bool petta_activation_scalar_argument_segment_enabled(void) {
     static _Thread_local int enabled = -1;
     if (enabled < 0) {
@@ -10109,34 +10119,30 @@ static bool petta_machine_maybe_collect(
     const Bindings *bindings = bindings_builder_bindings(builder);
     size_t nursery_live =
         arena_accounted_live_bytes(&machine->heap);
-    /* The peaks are statistics, reported only when they are measured, and
-     * this runs at every step. */
-    if (machine->host.measure_stats) {
-        size_t tenured_live =
-            arena_accounted_live_bytes(&machine->tenured);
-        if (nursery_live >
-                machine->stats.maximum_nursery_live_bytes) {
-            machine->stats.maximum_nursery_live_bytes =
-                nursery_live;
-        }
-        if (tenured_live >
-                machine->stats.maximum_tenured_live_bytes) {
-            machine->stats.maximum_tenured_live_bytes =
-                tenured_live;
-        }
-        size_t total_heap_live =
-            petta_machine_total_heap_live(machine);
-        if (total_heap_live >
-            machine->stats.maximum_heap_live_bytes) {
-            machine->stats.maximum_heap_live_bytes =
-                total_heap_live;
-        }
-        size_t binding_count = 0u;
-        if (!bindings_current_binding_count(bindings, &binding_count))
-            return false;
-        if (binding_count > machine->stats.maximum_binding_entries)
-            machine->stats.maximum_binding_entries = binding_count;
+    size_t tenured_live =
+        arena_accounted_live_bytes(&machine->tenured);
+    if (nursery_live >
+            machine->stats.maximum_nursery_live_bytes) {
+        machine->stats.maximum_nursery_live_bytes =
+            nursery_live;
     }
+    if (tenured_live >
+            machine->stats.maximum_tenured_live_bytes) {
+        machine->stats.maximum_tenured_live_bytes =
+            tenured_live;
+    }
+    size_t total_heap_live =
+        petta_machine_total_heap_live(machine);
+    if (total_heap_live >
+        machine->stats.maximum_heap_live_bytes) {
+        machine->stats.maximum_heap_live_bytes =
+            total_heap_live;
+    }
+    size_t binding_count = 0u;
+    if (!bindings_current_binding_count(bindings, &binding_count))
+        return false;
+    if (binding_count > machine->stats.maximum_binding_entries)
+        machine->stats.maximum_binding_entries = binding_count;
     if (machine->choice_len != 0u) {
         if (nursery_live >= machine->heap_collect_after) {
             if (!petta_choice_heap_evacuation_supported(machine)) {
@@ -29228,18 +29234,13 @@ static bool petta_machine_execute_prepared_call(
         !petta_machine_value_result_admitted(machine, expected) ||
         petta_machine_prepared_call_blocked(machine, call))
         return false;
-    bool handled = machine->host.execute_prepared_pure_call(
+    return machine->host.execute_prepared_pure_call(
         machine->host.context, machine->space, &machine->heap, call, outcome);
-    /* A foreign registry can make a returned data head callable without a
-     * Space revision change. Such results still need ordinary dispatch. */
-    return handled && (outcome->kind != CETTA_CALL_VALUE || !outcome->term ||
-        !petta_machine_extension_callable(machine, outcome->term));
 }
 
-/* A closed call the determinate route declined, answered by the host's
- * completed finite-answer producer: its answers become one outcome choice.
- * Taken only when the producer completes and no answer needs ordinary
- * dispatch; otherwise nothing is published and equation search runs. */
+/* A completed finite producer lends data occurrences to one outcome choice.
+ * Only refusal before entry leaves the invocation to equation search. An
+ * incomplete producer stops this caller with its actual completion cause. */
 static bool petta_machine_collect_closed_answers(
         PettaMachineImpl *machine, Atom *call, Atom *expected,
         uint32_t barrier, bool *taken_out) {
@@ -29255,12 +29256,18 @@ static bool petta_machine_collect_closed_answers(
     ArenaMark mark = arena_mark(&machine->heap);
     OutcomeSet *answers = cetta_malloc(sizeof(*answers));
     outcome_set_init_with_owner(answers, &machine->heap);
-    bool complete = machine->host.collect_closed_answers(
-        machine->host.context, machine->space, &machine->heap, call, answers);
-    for (CettaCount index = 0u; complete && index < answers->len; index++)
-        complete = !petta_machine_extension_callable(
-            machine, answers->items[index].atom);
-    if (!complete) {
+    CettaEvalCompletion completion = CETTA_EVAL_COMPLETE;
+    bool handled = machine->host.collect_closed_answers(
+        machine->host.context, machine->space, &machine->heap, call, answers, &completion);
+    if (completion != CETTA_EVAL_COMPLETE) {
+        outcome_set_free(answers);
+        free(answers);
+        *taken_out = true;
+        machine->terminal = true;
+        (void)petta_machine_completion_failure(completion, &machine->terminal_step);
+        return false;
+    }
+    if (!handled) {
         outcome_set_free(answers);
         free(answers);
         arena_reset(&machine->heap, mark);
@@ -31776,10 +31783,10 @@ static Atom *petta_machine_materialize_closed_activation_call(
     return atom_expr_builder_finish(&machine->heap, draft);
 }
 
-/* An `if` whose condition is a closed call of a determinate pure relation
- * takes its branch from that call's one value, computed by the prepared
- * machine: no condition hole, no separate goal.  Any other condition, or a
- * value that is not a truth value, declines to the ordinary path. */
+/* A closed determinate condition enters through the callee's admission.
+ * Boolean results select directly; another completed value reaches the
+ * existing selector with its caller frame. Only refusal before entry leaves
+ * the condition's source computation to the ordinary path. */
 static bool petta_machine_activation_prepared_condition(
         PettaMachineImpl *machine, const PettaGoal *goal, Atom *source,
         CettaCallOutcome *outcome) {
@@ -32284,6 +32291,7 @@ activation_tail_segment:;
             (nargs == 2u || nargs == 3u)) {
             const PettaRegionHoleProgram *region_hole =
                 petta_activation_boolean_region_hole_view(goal, source);
+            Atom *completed_condition = NULL;
             if (nargs == 3u &&
                 petta_activation_scalar_if_enabled() &&
                 machine->host.unlimited_transition_budget) {
@@ -32339,6 +32347,8 @@ activation_tail_segment:;
                                     : PETTA_ACTIVATION_SOURCE_THIRD,
                             };
                             decided = true;
+                        } else {
+                            completed_condition = returned.term;
                         }
                     }
                 }
@@ -32359,6 +32369,7 @@ activation_tail_segment:;
                             CETTA_RUNTIME_COUNTER_PETTA_ACTIVATION_TAIL_SEGMENT_ATTEMPT);
                         tail_commit =
                             petta_activation_tail_segment_enabled() &&
+                            petta_machine_resume_context_ready(machine) &&
                             tail_segment_steps < 16u &&
                             !machine->host.analysis &&
                             !machine->host.externalize_equation_choices &&
@@ -32393,7 +32404,8 @@ activation_tail_segment:;
                 cetta_runtime_stats_inc(
                     CETTA_RUNTIME_COUNTER_PETTA_ACTIVATION_SCALAR_IF_DECLINE);
             }
-            Atom *condition = petta_fresh_variable(machine);
+            Atom *condition = completed_condition
+                ? completed_condition : petta_fresh_variable(machine);
             Atom *otherwise = nargs == 3u
                 ? source->expr.elems[3]
                 : atom_petta_no_result(&machine->heap);
@@ -32424,13 +32436,13 @@ activation_tail_segment:;
                             goal->activation_first_entry,
                         .activation_source_fields = source_fields,
                     }) ||
-                !petta_push_solve_activation_planned(
+                (!completed_condition && !petta_push_solve_activation_planned(
                     machine, source->expr.elems[1],
                     condition, goal->barrier,
                     petta_plan_child(goal->plan, 1u),
                     goal->activation_template,
                     goal->activation_epoch,
-                    goal->activation_first_entry)) {
+                    goal->activation_first_entry))) {
                 *failure = PETTA_MACHINE_STEP_CAPACITY;
                 return false;
             }
@@ -38252,6 +38264,7 @@ static bool petta_machine_dispatch_goal(
             resume_commit =
                 petta_if_resume_segment_enabled() &&
                 machine->host.unlimited_transition_budget &&
+                petta_machine_resume_context_ready(machine) &&
                 !machine->host.analysis &&
                 !machine->host.externalize_equation_choices &&
                 !machine->host.begin_relation_call &&
@@ -39078,10 +39091,14 @@ static bool petta_machine_permit_metered_source_step(
         .root = goal ? goal->source_root : machine->query_source_root,
         .debit = 1u,
     };
-    /* The retained plan owns these immutable fields. Read them here instead
-     * of copying them into every live goal and alternative. */
+    /* The retained plan owns these immutable fields; goals do not copy them.
+     *
+     * Retained constraints can synchronize, fail or wake another goal
+     * before dispatch. Such a visit has ordinary unit accounting, not an
+     * exact invoice for the still-waiting source node. */
     if (goal && petta_goal_is_computation(goal->kind) &&
-        goal->plan && goal->plan->source_position) {
+        goal->plan && goal->plan->source_position &&
+        (!machine->delay || !cetta_delay_holds(machine->delay))) {
         occurrence.position = goal->plan->source_position;
         occurrence.debit = goal->plan->source_debit;
     }
@@ -39116,28 +39133,13 @@ static __attribute__((noinline)) void petta_machine_collect_offered(
         (void)term_universe_collect_at_safe_point(universe, NULL);
 }
 
-#if !CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
-/* Steps until the next offer.  A collection falls due after thousands of
- * entries, so asking at one step in 64 delays it by a few steps and keeps the
- * check off the rest; a build with collection checks asks at every step,
- * where its traps need a collection at every safe point. */
-#define PETTA_MACHINE_OFFER_PERIOD 64u
-static _Thread_local uint32_t g_petta_machine_offer_countdown =
-    PETTA_MACHINE_OFFER_PERIOD;
-#endif
-
-/* The collection itself stays out of the step loop.  Only offers at a safe
- * depth count down, so no pattern of nested steps can keep the countdown
- * ending on a depth that may not collect. */
+/* Offer at every safe step. A thread-wide cadence can indefinitely miss
+ * one universe when callers interleave. The actual collection stays out
+ * of the step loop and still requires a quiescent transition boundary. */
 static inline __attribute__((always_inline)) void petta_machine_offer_collection(
         PettaMachineImpl *impl, uint32_t steps_open) {
     if (g_petta_machine_steps_open != steps_open || !impl->space)
         return;
-#if !CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
-    if (--g_petta_machine_offer_countdown != 0u)
-        return;
-    g_petta_machine_offer_countdown = PETTA_MACHINE_OFFER_PERIOD;
-#endif
     TermUniverse *universe = impl->space->native.universe;
     if (universe && term_universe_collection_due(universe))
         petta_machine_collect_offered(universe);
@@ -39305,8 +39307,7 @@ dispatch_body_resume_segment:
                         CETTA_RUNTIME_COUNTER_PETTA_BODY_RESUME_SEGMENT_ATTEMPT);
                     bool resume_commit =
                         petta_body_resume_segment_enabled() &&
-                        (impl->host.unlimited_transition_budget ||
-                         (!impl->delay && (!impl->table_shared || !impl->table_shared->entry_len))) &&
+                        petta_machine_resume_context_ready(impl) &&
                         body_resume_steps < 16u &&
                         !impl->host.analysis &&
                         !impl->host.externalize_equation_choices &&

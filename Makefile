@@ -3371,6 +3371,7 @@ PRIME_PRACTICAL_TESTS = \
 	tests/prime/practical/atp_indexed_example.metta \
 	tests/prime/practical/atp_resolution_replay.metta \
 	tests/prime/practical/first_order_resolution_input_unification.metta \
+	tests/prime/practical/first_order_resolution_input_demand.metta \
 	tests/prime/practical/atp_resolution_search.metta \
 	tests/prime/practical/atp_superposition_replay.metta \
 	tests/prime/practical/atp_agenda_example.metta \
@@ -4508,7 +4509,7 @@ test-atom-generations: $(ATOM_GENERATIONS_TEST_BIN)
 
 $(ATOM_INTERN_VARS_TEST_BIN): tests/test_atom_intern_vars.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(BUILD_CONFIG_HEADER) Makefile
 	@mkdir -p runtime
-	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_intern_vars.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(LDFLAGS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_atom_intern_vars.c $(SYMBOL_STANDALONE_SRC) src/atom.c src/binding/frame_identity.c $(LDFLAGS) -Wl,--wrap=malloc,--wrap=calloc,--wrap=free
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MM -MP -MT $@ $(filter %.c,$^) > $@.d
 
 -include $(ATOM_INTERN_VARS_TEST_BIN).d
@@ -5378,7 +5379,7 @@ $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ): tests/test_native_conditional_context.c 
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(DEPFLAGS) -MF $(@:.o=.d) -Isrc -c $< -o $@
 
 $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN): $(NATIVE_CONDITIONAL_CONTEXT_TEST_OBJ) $(filter-out src/eval.%,$(FALLBACK_EVAL_TEST_LINK_OBJ)) $(BRIDGE_DEPS)
-	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=space_query_effect_for_head,--wrap=malloc $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -Wl,--wrap=grounded_call,--wrap=cetta_library_call_native_prepared_view,--wrap=cetta_library_call_native,--wrap=cetta_invocation_materialize,--wrap=space_query_effect_for_head,--wrap=malloc,--wrap=calloc,--wrap=cetta_prepared_pure_program_compile_closed $(LDFLAGS)
 
 .PHONY: test-native-conditional-context
 test-all: test-native-conditional-context
@@ -22929,7 +22930,7 @@ test-prime-regular-kernel-admission-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
 	@set -e; \
 	mutation_dir=runtime/prime-regular-kernel-admission-mutations; \
 	mkdir -p "$$mutation_dir"; \
-	for mutation in receipt generation synthesis-receipt synthesis-generation checking-receipt checking-generation; do \
+	for mutation in receipt generation synthesis-receipt synthesis-generation checking-receipt checking-generation collection synthesis-collection checking-collection; do \
 		python3 scripts/mutate_prime_regular_kernel_admission.py \
 			"$$mutation" src/prime_regular_kernel_admission.c \
 			"$$mutation_dir/prime_regular_kernel_admission_$$mutation.c"; \
@@ -22962,7 +22963,13 @@ test-prime-regular-kernel-admission-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
 		"$$mutation_dir/checking-receipt.err"; \
 	grep -Fq 'replaced TermUniverse storage generation invalidates checking' \
 		"$$mutation_dir/checking-generation.err"; \
-	echo 'PASS: conversion, synthesis, and checking receipt/generation mutations are killed'
+	grep -Fq 'replaced TermUniverse collection epoch invalidates admission' \
+		"$$mutation_dir/collection.err"; \
+	grep -Fq 'replaced TermUniverse collection epoch invalidates synthesis' \
+		"$$mutation_dir/synthesis-collection.err"; \
+	grep -Fq 'replaced TermUniverse collection epoch invalidates checking' \
+		"$$mutation_dir/checking-collection.err"; \
+	echo 'PASS: conversion, synthesis, and checking receipt/storage/collection mutations are killed'
 
 .PHONY: test-prime-regular-kernel-verdict-polarity-mutations
 test-prime-regular-kernel-verdict-polarity-mutations: $(PRIME_REGULAR_KERNEL_TEST_BIN)
@@ -32042,7 +32049,10 @@ test-he-evaluated-values: $(BIN) tests/he/evaluated_values.metta \
 		tests/he/evaluated_values_typed.compat.expected \
 		tests/he/evaluated_values_stuck.metta \
 		tests/he/evaluated_values_stuck.expected \
-		tests/he/evaluated_values_stuck.compat.expected
+		tests/he/evaluated_values_stuck.compat.expected \
+		tests/he/prepared_completed_values.metta \
+		tests/he/prepared_completed_values.expected \
+		tests/he/prepared_completed_values.compat.expected
 	@set -eu -o pipefail; \
 	for lane in $(HE_PROFILE_LANES); do \
 	for route in "" "CETTA_PREPARED_PURE_REFERENCE=1" \
@@ -32051,7 +32061,7 @@ test-he-evaluated-values: $(BIN) tests/he/evaluated_values.metta \
 		env $$route $(CETTA_BIN_INVOKE) --lang $$lane \
 			tests/he/evaluated_values.metta \
 			| diff -u tests/he/evaluated_values.expected -; \
-		for program in evaluated_values_typed evaluated_values_stuck; do \
+		for program in evaluated_values_typed evaluated_values_stuck prepared_completed_values; do \
 		expected=tests/he/$$program.expected; \
 		case "$$lane" in *he-compat*) \
 			expected=tests/he/$$program.compat.expected;; esac; \
@@ -47641,3 +47651,10 @@ test-incremental-compression: test-ic-reference test-ic-templates test-ic-archiv
 test-petta-semantics: test-petta-corrected-stable
 test-petta-corrected-stable: $(BIN)
 	python3 tests/support/check_petta_corrected_stable.py $(BIN)
+
+.PHONY: test-execution-semantic-ledger
+test-execution-semantic-ledger: $(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) $(PETTA_SEARCH_MACHINE_TEST_BIN)
+	@$(NATIVE_CONDITIONAL_CONTEXT_TEST_BIN) --semantic-ledger
+	@$(PETTA_SEARCH_MACHINE_TEST_BIN) --semantic-ledger
+
+main-readiness-routine main-readiness-exhaustive: test-execution-semantic-ledger

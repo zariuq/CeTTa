@@ -601,12 +601,14 @@ typedef struct {
         void *context, Space *space, SymbolId head, CettaExprLen arity);
     /* For a language whose producers complete before their callers consume
      * them: the closed call's finite answers from the same producer its
-     * canonical evaluator uses, run to completion.  True with every answer
-     * in `outcomes`; false publishes nothing and leaves the call to equation
-     * search. */
+     * canonical evaluator uses, run to completion. True transfers completed
+     * data occurrences in `outcomes`. False with COMPLETE publishes nothing
+     * and leaves the invocation to equation search. An incomplete cause
+     * stops the caller without publishing the unconsumed frontier or retrying
+     * the producer. Completion metadata remains separate from answer shape. */
     bool (*collect_closed_answers)(
         void *context, Space *space, Arena *result_arena,
-        Atom *prepared_call, OutcomeSet *outcomes);
+        Atom *prepared_call, OutcomeSet *outcomes, CettaEvalCompletion *completion);
     /* Whether a ground term evaluates to itself in the host language: a
      * grounded value, a symbol nothing defines, or a term of constructors
      * with no error field. */

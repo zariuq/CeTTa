@@ -2832,8 +2832,14 @@ extern inline uint64_t var_base_id(VarId id);
 extern inline CettaFrameIdentity var_epoch_suffix(VarId id);
 extern inline VarId var_epoch_id(VarId id, CettaFrameIdentity epoch);
 
+struct VarInternChunk {
+    struct VarInternChunk *next;
+    VarInternEntry entries[VAR_INTERN_CHUNK_SIZE];
+};
+
 void var_intern_init(VarInternTable *t) {
     if (!t) return;
+    t->owned_chunks = NULL;
     /* Zeroed pages: each slot holds no chunk until one is made, and the
      * table occupies no page it has not used. */
     t->chunks = calloc(VAR_INTERN_CHUNK_COUNT, sizeof(*t->chunks));
@@ -2847,14 +2853,12 @@ void var_intern_init(VarInternTable *t) {
 
 void var_intern_free(VarInternTable *t) {
     if (!t) return;
-    if (t->chunks) {
-        for (uint32_t i = 0; i < VAR_INTERN_CHUNK_COUNT; i++) {
-            VarInternEntry *chunk =
-                atomic_load_explicit(&t->chunks[i], memory_order_relaxed);
-            free(chunk);
-        }
-        free(t->chunks);
+    while (t->owned_chunks) {
+        struct VarInternChunk *chunk = t->owned_chunks;
+        t->owned_chunks = chunk->next;
+        free(chunk);
     }
+    free(t->chunks);
     pthread_mutex_destroy(&t->write_mutex);
     t->chunks = NULL;
 }
@@ -2873,10 +2877,13 @@ static VarInternEntry *var_intern_ensure_chunk_locked(VarInternTable *t,
         atomic_load_explicit(&t->chunks[chunk_index], memory_order_relaxed);
     if (chunk) return chunk;
 
-    chunk = cetta_malloc(sizeof(*chunk) * VAR_INTERN_CHUNK_SIZE);
+    struct VarInternChunk *owner = cetta_malloc(sizeof(*owner));
+    chunk = owner->entries;
     for (uint32_t i = 0; i < VAR_INTERN_CHUNK_SIZE; i++) {
         atomic_init(&chunk[i], 0u);
     }
+    owner->next = t->owned_chunks;
+    t->owned_chunks = owner;
     atomic_store_explicit(&t->chunks[chunk_index], chunk, memory_order_release);
     return chunk;
 }
@@ -3976,6 +3983,16 @@ static Arena *arena_scalar_owner(Arena *a) {
     return &cache->owner;
 }
 
+void atom_init_symbol(Atom *target, SymbolId sym_id) {
+    *target = (Atom){
+        .kind = ATOM_SYMBOL,
+        .flags = atom_flags_for_symbol_id(sym_id),
+        .var_id = VAR_ID_NONE,
+        .sym_id = sym_id,
+        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC,
+    };
+}
+
 Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
     /* A symbol's admission depends on its id alone, so the canonical atom a
      * hash-cons table already published for the id is the one interning
@@ -3990,14 +4007,9 @@ Atom *atom_symbol_id(Arena *a, SymbolId sym_id) {
         if (cached)
             return cached;
     }
-    Atom temp = {0};
-    temp.kind = ATOM_SYMBOL;
-    temp.flags = atom_flags_for_symbol_id(sym_id);
-    temp.var_id = VAR_ID_NONE;
-    temp.sym_id = sym_id;
+    Atom temp;
+    atom_init_symbol(&temp, sym_id);
     temp.arena_id = a->identity;
-    temp.hash_cache = 0;
-    temp.structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC;
     Atom *shared = atom_maybe_hashcons(a, &temp);
     if (shared) return shared;
     /* A canonical symbol goes to the scalar owner only into an empty slot,
@@ -4031,15 +4043,7 @@ Atom *atom_symbol_canonical(SymbolId sym_id) {
     if (atom)
         return atom;
     Atom *made = cetta_malloc(sizeof(*made));
-    *made = (Atom){
-        .kind = ATOM_SYMBOL,
-        .flags = atom_flags_for_symbol_id(sym_id),
-        .var_id = VAR_ID_NONE,
-        .sym_id = sym_id,
-        .arena_id = 0u,
-        .name_key = NULL,
-        .structural_facts = ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_SYMBOLIC,
-    };
+    atom_init_symbol(made, sym_id);
     if (atom_is_hash_stable(made))
         made->hash_cache = atom_hash_compute(made);
     atom = symbol_publish_canonical_atom(g_symbols, sym_id, made);

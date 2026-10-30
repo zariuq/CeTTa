@@ -3246,8 +3246,20 @@ static bool prepared_pure_compile_inert_bind_pattern(
                                              0u))
         return prepared_pure_reject(
             program, "binding pattern requires source evaluation", pattern);
-    return prepared_pure_compile_bind_pattern(
-        program, context, pattern, pattern_index_out);
+    if (!prepared_pure_compile_bind_pattern(
+            program, context, pattern, pattern_index_out))
+        return false;
+    /* A bound variable in a Need pattern consumes its cell's value. The
+     * structural matcher only compares slots; it cannot demand that cell. */
+    if (program->call_mode == CETTA_GSLT_PURE_CALL_CALL_BY_NEED) {
+        const PreparedPureBindPattern *bound =
+            &program->bind_patterns[*pattern_index_out];
+        for (uint32_t i = 0u; i < bound->var_count; i++)
+            if (program->bind_vars[bound->first_var + i].prebound)
+                return prepared_pure_reject(
+                    program, "binding pattern demands a bound Need value", pattern);
+    }
+    return true;
 }
 
 static bool prepared_pure_value_tree(
@@ -4738,13 +4750,14 @@ static bool prepared_pure_compile_eval_with_role_in_source(
                 CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT) {
             if (expression_view_state ==
                     CETTA_PREPARED_PURE_EXPRESSION_PROJECT_SINGLE_RESULT) {
-                /* Both demands reach this gate before any demand-dependent
-                 * work. Answer production stops here even when the scalar
-                 * attempt later refuses a different operation. */
-                if (program->closed_program &&
-                    !program->compile_result_demand_observed)
+                /* An unobserved prefix exports the answer gate across
+                 * demands. An answer attempt also certifies its own reached
+                 * rejection after an earlier demand read. */
+                bool unobserved = !program->compile_result_demand_observed;
+                bool rejected = !program->closed_program || prepared_pure_wants_answers(program);
+                if (program->closed_program && (unobserved || rejected))
                     program->compile_answer_gate_refused = true;
-                if (!program->closed_program || prepared_pure_wants_answers(program))
+                if (rejected)
                     return prepared_pure_reject(
                         program, "projection requires a single-result attempt",
                         source);
@@ -9643,14 +9656,18 @@ static CettaPreparedPureProgram *prepared_pure_program_new(
     CettaPreparedPurePatternViewFn pattern_view,
     const CettaPreparedPureSourceView *source_view,
     bool total_structural_equality,
-    CettaMatchDecisionSemanticIdentity match_decision_semantics) {
+    CettaMatchDecisionSemanticIdentity match_decision_semantics,
+    CettaPreparedPureCompileReport *report) {
     if (!space || !boolean_value || !construct_value ||
         (call_mode != CETTA_GSLT_PURE_CALL_EAGER &&
          call_mode != CETTA_GSLT_PURE_CALL_CALL_BY_NEED))
         return NULL;
     CettaPreparedPureProgram *program = calloc(1u, sizeof(*program));
-    if (!program)
+    if (!program) {
+        if (report)
+            report->status = CETTA_PREPARED_PURE_COMPILE_RESOURCE_REFUSED;
         return NULL;
+    }
     program->references = 1u;
     program->space = space;
     program->source_program = space_program_token(space);
@@ -9697,7 +9714,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile(
     CettaPreparedPureProgram *program = prepared_pure_program_new(
         space, call_mode, boolean_value, construct_value, constructs_expression,
         opaque_value, register_view, expression_view, pattern_view, source_view,
-        total_structural_equality, match_decision_semantics);
+        total_structural_equality, match_decision_semantics, NULL);
     if (!program)
         return NULL;
     PreparedPureCompileContext context = {0};
@@ -11951,6 +11968,34 @@ static bool prepared_pure_native_calls_supported(const CettaPreparedPureProgram 
     return true;
 }
 
+static void prepared_pure_compile_failure_report(
+        CettaPreparedPureCompileReport *report, Space *space,
+        const CettaPreparedPureProgram *program, bool generic_entry,
+        bool entry_values, CettaGsltPureCallMode mode, bool answers) {
+    if (!report)
+        return;
+    report->refusals = 0u;
+    if (!space_program_token_matches_live_space(report->source, space)) {
+        report->status = CETTA_PREPARED_PURE_COMPILE_INVALIDATED;
+        return;
+    }
+    if (program && generic_entry && entry_values && mode == CETTA_GSLT_PURE_CALL_EAGER) {
+        if (program->compile_shared_view_refused) {
+            report->refusals = answers ? CETTA_PREPARED_PURE_REFUSE_ANSWERS
+                                      : CETTA_PREPARED_PURE_REFUSE_SCALAR;
+            if (!program->compile_result_demand_observed)
+                report->refusals |= CETTA_PREPARED_PURE_REFUSE_SCALAR |
+                                    CETTA_PREPARED_PURE_REFUSE_ANSWERS;
+        }
+        if (program->compile_answer_gate_refused)
+            report->refusals |= CETTA_PREPARED_PURE_REFUSE_ANSWERS;
+    }
+    uint8_t current = answers ? CETTA_PREPARED_PURE_REFUSE_ANSWERS
+                              : CETTA_PREPARED_PURE_REFUSE_SCALAR;
+    if ((report->refusals & current) != 0u)
+        report->status = CETTA_PREPARED_PURE_COMPILE_STABLE_REFUSED;
+}
+
 static CettaPreparedPureProgram *
 prepared_pure_program_compile_closed_mode(
     Space *space, Atom *expression,
@@ -11966,9 +12011,11 @@ prepared_pure_program_compile_closed_mode(
     bool entry_arguments_are_values,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics,
-    bool answer_producer, bool *answer_frontend_refusal) {
-    if (answer_frontend_refusal)
-        *answer_frontend_refusal = false;
+    bool answer_producer, CettaPreparedPureCompileReport *report) {
+    if (report)
+        *report = (CettaPreparedPureCompileReport){
+            .status = CETTA_PREPARED_PURE_COMPILE_INPUT_REFUSED,
+        };
     if (!space || !expression || atom_has_vars(expression) ||
         !boolean_value || !construct_value ||
         (call_mode != CETTA_GSLT_PURE_CALL_EAGER &&
@@ -11977,6 +12024,11 @@ prepared_pure_program_compile_closed_mode(
          (call_mode != CETTA_GSLT_PURE_CALL_EAGER ||
           !entry_arguments_are_values)))
         return NULL;
+    SpaceProgramToken observed = space_program_token(space);
+    if (report)
+        *report = (CettaPreparedPureCompileReport){
+            .source = observed, .status = CETTA_PREPARED_PURE_COMPILE_UNCERTIFIED,
+        };
     if (expression->kind == ATOM_EXPR && expression->expr.len > 0u) {
         Atom *root_head = expression->expr.elems[0];
         CettaExprLen root_arity = expression->expr.len - 1u;
@@ -12000,9 +12052,12 @@ prepared_pure_program_compile_closed_mode(
     CettaPreparedPureProgram *program = prepared_pure_program_new(
         space, call_mode, boolean_value, construct_value, constructs_expression,
         opaque_value, register_view, expression_view, pattern_view, source_view,
-        total_structural_equality, match_decision_semantics);
-    if (!program)
+        total_structural_equality, match_decision_semantics, report);
+    if (!program) {
+        prepared_pure_compile_failure_report(report, space, NULL, false,
+            entry_arguments_are_values, call_mode, answer_producer);
         return NULL;
+    }
     program->closed_program = true;
     program->answer_producer = answer_producer;
     program->allow_callable_templates = true;
@@ -12023,17 +12078,14 @@ prepared_pure_program_compile_closed_mode(
     if (compiled)
         compiled = prepared_pure_native_calls_supported(program);
     if (!compiled) {
-        if (answer_frontend_refusal)
-            *answer_frontend_refusal = !answer_producer &&
-                (program->compile_answer_gate_refused ||
-                 (program->compile_shared_view_refused &&
-                  !program->compile_result_demand_observed)) && entry_arguments_are_values &&
-                call_mode == CETTA_GSLT_PURE_CALL_EAGER &&
-                space_program_token_is_current(program->source_program);
+        prepared_pure_compile_failure_report(report, space, program,
+            entry_call_admitted, entry_arguments_are_values, call_mode, answer_producer);
         cetta_prepared_pure_program_free(program);
         return NULL;
     }
     if (answer_producer && !prepared_pure_lower_answer_producer(program)) {
+        prepared_pure_compile_failure_report(report, space, NULL, false,
+            entry_arguments_are_values, call_mode, answer_producer);
         cetta_prepared_pure_program_free(program);
         return NULL;
     }
@@ -12046,6 +12098,14 @@ prepared_pure_program_compile_closed_mode(
                         ? "bodies lowered to register code"
                         : "a body left to the node executor");
     }
+    if (!space_program_token_matches_live_space(observed, space)) {
+        prepared_pure_compile_failure_report(report, space, NULL, false,
+            entry_arguments_are_values, call_mode, answer_producer);
+        cetta_prepared_pure_program_free(program);
+        return NULL;
+    }
+    if (report)
+        report->status = CETTA_PREPARED_PURE_COMPILE_READY;
     return program;
 }
 
@@ -12063,13 +12123,13 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed(
     bool entry_arguments_are_values,
     bool total_structural_equality,
     CettaMatchDecisionSemanticIdentity match_decision_semantics,
-    bool *answer_frontend_refusal) {
+    CettaPreparedPureCompileReport *report) {
     return prepared_pure_program_compile_closed_mode(
         space, expression, call_mode, boolean_value, construct_value,
         constructs_expression, opaque_value, register_view,
         expression_view, pattern_view,
         source_view, entry_arguments_are_values,
-        total_structural_equality, match_decision_semantics, false, answer_frontend_refusal);
+        total_structural_equality, match_decision_semantics, false, report);
 }
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
@@ -12085,13 +12145,14 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_closed_answers(
     const CettaPreparedPureSourceView *source_view,
     bool entry_arguments_are_values,
     bool total_structural_equality,
-    CettaMatchDecisionSemanticIdentity match_decision_semantics) {
+    CettaMatchDecisionSemanticIdentity match_decision_semantics,
+    CettaPreparedPureCompileReport *report) {
     return prepared_pure_program_compile_closed_mode(
         space, expression, call_mode, boolean_value, construct_value,
         constructs_expression, opaque_value, register_view,
         expression_view, pattern_view,
         source_view, entry_arguments_are_values,
-        total_structural_equality, match_decision_semantics, true, NULL);
+        total_structural_equality, match_decision_semantics, true, report);
 }
 
 CettaPreparedPureProgram *cetta_prepared_pure_program_compile_body_answers(
@@ -12112,7 +12173,7 @@ CettaPreparedPureProgram *cetta_prepared_pure_program_compile_body_answers(
         space, CETTA_GSLT_PURE_CALL_EAGER, boolean_value, construct_value,
         constructs_expression, opaque_value, register_view, expression_view,
         pattern_view, source_view, total_structural_equality,
-        match_decision_semantics);
+        match_decision_semantics, NULL);
     if (!program)
         return NULL;
     program->closed_program = true;
@@ -15156,10 +15217,8 @@ void cetta_prepared_pure_answer_cursor_close(
             .native_spare = cursor->native_spare,
             .native_metadata_bytes = cursor->native_spare ? sizeof(*cursor->native_spare) : 0u,
         };
-        if (empty.frame_cap)
-            memset(empty.frames, 0, empty.frame_cap * sizeof(*empty.frames));
-        if (empty.argument_cap)
-            memset(empty.arguments, 0, empty.argument_cap * sizeof(*empty.arguments));
+        /* Only the lengths define live frames and roots. The next entry
+         * overwrites each slot before publishing it as live. */
         *cursor = empty;
         program->body_cursor_spare = cursor;
         cetta_prepared_pure_program_free(program);

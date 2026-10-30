@@ -184,9 +184,12 @@ void symbol_table_free(SymbolTable *st) {
                               memory_order_relaxed);
     }
     if (st->entry_chunks) {
-        for (uint32_t i = 0; i < SYMBOL_ENTRY_CHUNK_COUNT; i++) {
+        /* Sequential IDs publish a dense prefix, including reserved zero.
+         * The final partial chunk belongs to that prefix as well. */
+        uint32_t chunks = entry_len
+            ? ((entry_len - 1u) >> SYMBOL_ENTRY_CHUNK_BITS) + 1u : 0u;
+        for (uint32_t i = 0; i < chunks; i++)
             free(st->entry_chunks[i]);
-        }
         free(st->entry_chunks);
     }
     free(st->slots);
@@ -226,6 +229,12 @@ static SymbolId symbol_intern_span_hashed_unlocked(SymbolTable *st,
     while (true) {
         SymbolSlot *entry = &st->slots[slot];
         if (entry->id == SYMBOL_ID_NONE) {
+            /* Existing IDs remain usable at capacity; a new ID cannot
+             * wrap the exclusive published extent back to zero. */
+            if (entry_len == UINT32_MAX) {
+                fprintf(stderr, "fatal: symbol table exhausted symbol id space\n");
+                abort();
+            }
             char *copy = symbol_spelling_alloc(st, (size_t)len + 1);
             memcpy(copy, bytes, len);
             copy[len] = '\0';
