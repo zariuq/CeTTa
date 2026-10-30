@@ -1,5 +1,10 @@
 # Native byte stores
 
+For native ACT snapshot readers backing ordinary MeTTa spaces, see the
+[ACT/Space integration requirements](ACT_SPACE_REQUIREMENTS.md). That document
+separates byte-format compatibility from occurrence, query and durable-owner
+acceptance; it is a design contract, not an implementation-completion claim.
+
 `store` is a SQLite-free, persistent byte-key interface. Applications define
 records, key layouts, indexes, queries, constraints and receipts in MeTTa.
 The native owner validates snapshots and publishes one immutable root for a
