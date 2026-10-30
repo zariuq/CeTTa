@@ -29134,7 +29134,11 @@ test-all: test-term-universe-collection-floor
 # A space per item registers its holders in its universe in constant
 # expected time: 64,000 spaces cost at most sixteen times 8,000.
 test-term-universe-many-holders: $(BIN) tests/support/check_many_holders.py
+ifeq ($(TERM_UNIVERSE_COLLECTION_CHECKS),1)
+	@echo "SKIP: a build with collection checks collects eagerly"
+else
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_many_holders.py ./$(BIN)
+endif
 
 test-all: test-term-universe-many-holders
 
@@ -29201,6 +29205,36 @@ test-term-universe-shared-views: $(BIN) tests/petta/term_universe_shared_views.m
 	echo "PASS: a stored term sharing its subterms is read by its distinct subterms"
 
 test-all: test-term-universe-shared-views
+
+.PHONY: test-term-universe-deep-terms test-term-universe-deep-terms-scaling
+# A stored term 200,000 levels deep decodes without the C stack and interns
+# in linear time: stored, matched back, counted and compared.
+test-term-universe-deep-terms: $(BIN) tests/petta/term_universe_deep_terms.metta \
+		tests/petta/term_universe_deep_terms.expected
+	@set -eu; \
+	status=0; actual=$$(timeout 20 ./$(BIN) --lang petta \
+		tests/petta/term_universe_deep_terms.metta 2>&1) || status=$$?; \
+	if [ "$$status" -ne 0 ] || \
+	   [ "$$actual" != "$$(cat tests/petta/term_universe_deep_terms.expected)" ]; then \
+		echo "FAIL: a stored term 200,000 levels deep (exit $$status)"; \
+		exit 1; \
+	fi; \
+	echo "PASS: a stored term 200,000 levels deep is stored, matched back, counted and compared"
+
+# One stored term 800,000 levels deep costs at most twice eight terms of
+# 100,000 levels: a level costs the same at any depth.
+test-term-universe-deep-terms-scaling: $(BIN) tests/support/check_deep_terms_scaling.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_deep_terms_scaling.py ./$(BIN)
+
+test-all: test-term-universe-deep-terms test-term-universe-deep-terms-scaling
+
+.PHONY: test-space-remove-absent-scaling
+# Removing an atom a space does not hold costs the same in a space eight
+# times larger; a row holding a variable still unifies with a ground removal.
+test-space-remove-absent-scaling: $(BIN) tests/support/check_remove_absent_scaling.py
+	@$(CETTA_SCRIPT_RUN_ENV) python3 tests/support/check_remove_absent_scaling.py ./$(BIN)
+
+test-all: test-space-remove-absent-scaling
 
 .PHONY: test-set-space-open-adds-stats
 test-petta-semantics: test-set-space-open-adds-stats

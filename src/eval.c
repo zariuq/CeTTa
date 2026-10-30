@@ -3143,6 +3143,11 @@ static bool petta_space_remove_pattern_all(
         pattern->expr.elems[0]->kind == ATOM_SYMBOL) {
         AtomId id = term_universe_lookup_atom_id(space->native.universe,
                                                  pattern);
+        /* No record: no row equals it.  When no row of its head holds a
+         * variable, none unifies with it either, and nothing goes. */
+        if (id == CETTA_ATOM_ID_NONE && bits_removed == 0u &&
+            space_exact_head_certified(space, pattern->expr.elems[0]->sym_id))
+            return true;
         if (id == CETTA_ATOM_ID_NONE && bits_removed != 0u) {
             /* No record: no row holds it either. */
             petta_specializer_note_mutation(space, pattern);
@@ -3255,6 +3260,12 @@ static bool petta_space_remove_pattern_all(
         free(removed_atoms);
         free(removed_positions);
         return false;
+    }
+    /* No row unified: nothing changes, and no mask is built. */
+    if (receipt_len == 0u) {
+        free(removed_atoms);
+        free(removed_positions);
+        return true;
     }
     /* An index offers its rows in its own order; the receipt is read by
      * ascending position. */
@@ -23653,10 +23664,12 @@ typedef struct {
 enum { PREPARED_PURE_DECLINE_SLOTS = 64u };
 
 /* A pause after uncertified compile refusals of one key: the calls still to
- * skip, and the refusals so far, which set the next pause at 2^(refusals-1)
- * calls up to 2^PREPARED_PURE_BACKOFF_CAP.  `epoch` is the cache's backoff
- * epoch plus one when written, so a slot from before the entries were last
- * cleared never answers. */
+ * skip, and the refusals so far.  The r-th refusal skips the next
+ * 2^min(r-1, PREPARED_PURE_BACKOFF_CAP) - 1 calls, so a key whose
+ * compilations keep being refused is compiled at its 1st, 2nd, 4th, 8th, ...
+ * call, then once every 2^PREPARED_PURE_BACKOFF_CAP calls.  `epoch` is the
+ * cache's backoff epoch plus one when written, so a slot from before the
+ * entries were last cleared never answers. */
 typedef struct {
     uint64_t epoch;
     SymbolId head;
@@ -23761,13 +23774,14 @@ static PreparedPureBackoffSlot *prepared_pure_backoff_slot(
     return slot;
 }
 
-/* An uncertified refusal of the key: the pause doubles. */
+/* An uncertified refusal of the key: the gap to its next compilation
+ * doubles, the first being none. */
 static void prepared_pure_backoff_refused(PreparedPureBackoffSlot *slot) {
     if (!slot)
         return;
-    if (slot->refusals < PREPARED_PURE_BACKOFF_CAP)
+    if (slot->refusals <= PREPARED_PURE_BACKOFF_CAP)
         slot->refusals++;
-    slot->skip = UINT32_C(1) << (slot->refusals - 1u);
+    slot->skip = (UINT32_C(1) << (slot->refusals - 1u)) - 1u;
 }
 
 
