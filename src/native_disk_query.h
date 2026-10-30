@@ -27,6 +27,10 @@ typedef enum {
 CettaDiskStoreStatus cetta_disk_query_open(const CettaDiskStoreView *view,
     CettaDiskBytes prefix, uint64_t count, Atom *pattern, Atom *template,
     CettaDiskQuery **out);
+CettaDiskStoreStatus cetta_disk_query_open_indexed(const CettaDiskStoreView *view,
+    CettaDiskBytes prefix, uint64_t count, const CettaDiskSpaceIndex *indexes,
+    size_t index_count, Atom *pattern, Atom *template, CettaDiskQuery **out);
+bool cetta_disk_query_statistics(const CettaDiskQuery *query,CettaDiskSpaceStatistics *out);
 
 /* Bounded matcher transitions; each grants at most 32 matcher node actions.
  * This is not a byte/CPU bound for individual primitives or serialization.

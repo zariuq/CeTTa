@@ -195,14 +195,30 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
         ? cetta_atom_wire_decode(&metadata,body,got,&record) : ATOM_WIRE_CORRUPT;
     free(body);
     CettaDiskBytes prefix;uint64_t count=0;
-    bool valid=decoded==ATOM_WIRE_OK && record && record->kind==ATOM_EXPR && record->expr.len==3 &&
-        atom_is_symbol(record->expr.elems[0],"StoreSpaceV1") && string(record->expr.elems[1],&prefix) &&
+    bool version2=record && record->kind==ATOM_EXPR && record->expr.len==4 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV2");
+    bool valid=decoded==ATOM_WIRE_OK && record && record->kind==ATOM_EXPR &&
+        ((record->expr.len==3 && atom_is_symbol(record->expr.elems[0],"StoreSpaceV1")) || version2) && string(record->expr.elems[1],&prefix) &&
         prefix.size && prefix.size<=root->key_limit && number(record->expr.elems[2],&count) &&
         !(key.size>=prefix.size && !memcmp(key.data,prefix.data,prefix.size));
+    CettaDiskSpaceIndex *indexes=NULL;size_t index_count=0;
+    if (valid && version2) {
+        Atom *items=record->expr.elems[3];valid=items->kind==ATOM_EXPR;
+        if (valid && items->expr.len) {
+            index_count=items->expr.len;indexes=calloc(index_count,sizeof(*indexes));
+            if (!indexes) { result=refused(a,"capacity");arena_free(&metadata);goto done; }
+            for (size_t i=0;valid && i<index_count;i++) {
+                Atom *item=items->expr.elems[i];uint64_t arity=0,position=0;
+                valid=item->kind==ATOM_EXPR && item->expr.len==4 && atom_is_symbol(item->expr.elems[0],"StoreSpaceIndexV1") &&
+                    number(item->expr.elems[1],&arity) && arity && arity<=UINT32_MAX &&
+                    number(item->expr.elems[2],&position) && position<arity && string(item->expr.elems[3],&indexes[i].prefix);
+                indexes[i].arity=(uint32_t)arity;indexes[i].position=(uint32_t)position;
+            }
+        }
+    }
     if (!valid) result=refused(a,read!=CETTA_DISK_OK ? "space-metadata-read" : "space-metadata-format");
     else if (streaming) {
         CettaDiskQuery *query=NULL;
-        CettaDiskStoreStatus status=cetta_disk_query_open(view,prefix,count,args[2],args[3],&query);
+        CettaDiskStoreStatus status=cetta_disk_query_open_indexed(view,prefix,count,indexes,index_count,args[2],args[3],&query);
         if (status!=CETTA_STORE_OK) result=status_value(a,status);
         else {
             Atom *handle=own_query(ctx,a,query);
@@ -211,9 +227,9 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
         }
     } else {
         Space *space=arena_alloc(storage,sizeof(*space));
-        if (!space) { result=refused(a,"capacity");arena_free(&metadata);goto done; }
+        if (!space) { result=refused(a,"capacity");free(indexes);arena_free(&metadata);goto done; }
         space_init_with_universe(space,&ctx->term_universe);
-        CettaDiskStoreStatus status=cetta_disk_space_capture(space,view,prefix,count);
+        CettaDiskStoreStatus status=cetta_disk_space_capture_indexed(space,view,prefix,count,indexes,index_count);
         if (status!=CETTA_STORE_OK) { space_free(space);result=status_value(a,status); }
         else if (!eval_track_new_space(space)) { space_free(space);result=refused(a,"capacity"); }
         else {
@@ -222,7 +238,7 @@ static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n
             result=atom_expr(a,fields,4);
         }
     }
-    arena_free(&metadata);
+    free(indexes);arena_free(&metadata);
 done:
     cetta_native_handle_use_release(&use);return result;
 }
@@ -232,8 +248,9 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
     if (atom_is_symbol(head,"__cetta_lib_store_space_query_open")) return space_view(ctx,a,args,n,true);
     bool query_next=atom_is_symbol(head,"__cetta_lib_store_space_query_next");
     bool query_checkpoint=atom_is_symbol(head,"__cetta_lib_store_space_query_checkpoint");
+    bool query_info=atom_is_symbol(head,"__cetta_lib_store_space_query_info");
     bool query_cancel=atom_is_symbol(head,"__cetta_lib_store_space_query_cancel");
-    if (query_next || query_checkpoint || query_cancel) {
+    if (query_next || query_checkpoint || query_cancel || query_info) {
         uint64_t sequence=0,work=0,maximum=0;
         if (n!=(query_next ? 4u : 1u) || (query_next &&
             (!number(args[1],&sequence) || !number(args[2],&work) || !number(args[3],&maximum) || maximum>CETTA_ATOM_WIRE_BYTES)))
@@ -241,7 +258,13 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
         CettaNativeHandleUse use={0};
         if (!acquire(ctx,query_kind,args[0],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&use)) return refused(a,"closed-or-busy-query");
         CettaDiskQuery *query=cetta_native_handle_use_resource(&use);Atom *result=NULL;
-        if (query_checkpoint) result=cetta_disk_query_checkpoint(query)
+        if (query_info) {
+            CettaDiskSpaceStatistics stats={0};
+            result=cetta_disk_query_statistics(query,&stats)
+                ? atom_expr(a,(Atom *[]){atom_symbol(a,"StoreQueryInfo"),unsigned_value(a,stats.scans),
+                    unsigned_value(a,stats.indexed_selections),unsigned_value(a,stats.candidates),
+                    unsigned_value(a,stats.decoded_bytes),atom_bool(a,stats.overflow)},6) : refused(a,"query-statistics");
+        } else if (query_checkpoint) result=cetta_disk_query_checkpoint(query)
             ? atom_symbol(a,"StoreQueryCheckpointed") : refused(a,"capacity");
         else {
             CettaDiskBytes packet={0};size_t required=0;

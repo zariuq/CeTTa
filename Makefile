@@ -4690,10 +4690,25 @@ test-all: test-native-disk-query
 test-native-disk-query: $(NATIVE_DISK_QUERY_TEST_BIN)
 	@$(PYTHON) -c 'import os,subprocess,tempfile; d=tempfile.TemporaryDirectory(prefix="cetta-disk-query-", dir=os.environ.get("TMPDIR")); subprocess.run(["./$(NATIVE_DISK_QUERY_TEST_BIN)",d.name],check=True)'
 
+NATIVE_DISK_SPACE_INDEX_TEST_BIN = runtime/test_native_disk_space_index-$(BUILD_OBJ_TAG)
+$(NATIVE_DISK_SPACE_INDEX_TEST_BIN): tests/test_native_disk_space_index.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_native_disk_space_index.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-native-disk-space-index
+test-all: test-native-disk-space-index
+test-native-disk-space-index: $(NATIVE_DISK_SPACE_INDEX_TEST_BIN)
+	@$(PYTHON) -c 'import os,subprocess,tempfile; d=tempfile.TemporaryDirectory(prefix="cetta-disk-space-index-", dir=os.environ.get("TMPDIR")); subprocess.run(["./$(NATIVE_DISK_SPACE_INDEX_TEST_BIN)",d.name],check=True)'
+
 .PHONY: test-persistent-query-worker
 test-all: test-persistent-query-worker
 test-persistent-query-worker: value-worker
 	@$(PYTHON) tests/support/check_persistent_query_worker.py ./$(VALUE_WORKER_BIN)
+
+.PHONY: test-indexed-space-api test-worker-failure-feedback
+test-all: test-indexed-space-api test-worker-failure-feedback
+test-indexed-space-api: value-worker
+	$(PYTHON) tests/support/check_indexed_spaces.py $(VALUE_WORKER_BIN)
+test-worker-failure-feedback: value-worker
+	$(PYTHON) tests/support/check_worker_failure_feedback.py $(VALUE_WORKER_BIN)
 
 PATTERN_OCCURRENCE_DROP_BIN = runtime/test_pattern_occurrence_drop-$(BUILD_OBJ_TAG)
 $(PATTERN_OCCURRENCE_DROP_BIN): tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)

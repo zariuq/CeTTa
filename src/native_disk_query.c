@@ -15,6 +15,7 @@ struct CettaDiskQuery {
     unsigned char *packet;
     size_t packet_size;
     uint64_t next_sequence, packet_sequence, revision;
+    CettaDiskSpaceStatistics statistics;
 };
 
 static void packet_clear(CettaDiskQuery *query) {
@@ -23,6 +24,7 @@ static void packet_clear(CettaDiskQuery *query) {
 }
 static void release_query(CettaDiskQuery *query) {
     if (!query->live) return;
+    cetta_disk_space_statistics(&query->source,&query->statistics);
     space_query_cursor_free(query->cursor);query->cursor=NULL;
     space_free(&query->source);term_universe_free(&query->universe);
     arena_free(&query->arenas[0]);arena_free(&query->arenas[1]);
@@ -42,9 +44,9 @@ void cetta_disk_query_close(CettaDiskQuery *query) {
     release_query(query);packet_clear(query);free(query);
 }
 
-CettaDiskStoreStatus cetta_disk_query_open(const CettaDiskStoreView *view,
-        CettaDiskBytes prefix,uint64_t count,Atom *pattern,Atom *template,
-        CettaDiskQuery **out) {
+CettaDiskStoreStatus cetta_disk_query_open_indexed(const CettaDiskStoreView *view,
+        CettaDiskBytes prefix,uint64_t count,const CettaDiskSpaceIndex *indexes,
+        size_t index_count,Atom *pattern,Atom *template,CettaDiskQuery **out) {
     if (!out) return CETTA_STORE_INVALID;
     *out=NULL;
     if (!view || !pattern || !template) return CETTA_STORE_INVALID;
@@ -55,7 +57,7 @@ CettaDiskStoreStatus cetta_disk_query_open(const CettaDiskStoreView *view,
     term_universe_init(&query->universe);
     term_universe_set_persistent_arena(&query->universe,&query->source_arena);
     space_init_with_universe(&query->source,&query->universe);query->live=true;
-    CettaDiskStoreStatus status=cetta_disk_space_capture(&query->source,view,prefix,count);
+    CettaDiskStoreStatus status=cetta_disk_space_capture_indexed(&query->source,view,prefix,count,indexes,index_count);
     if (status!=CETTA_STORE_OK) goto failed;
     query->revision=cetta_disk_store_view_revision(view);
     Arena packet;arena_init_detached(&packet);
@@ -79,6 +81,15 @@ CettaDiskStoreStatus cetta_disk_query_open(const CettaDiskStoreView *view,
     *out=query;return CETTA_STORE_OK;
 failed:
     cetta_disk_query_close(query);return status;
+}
+CettaDiskStoreStatus cetta_disk_query_open(const CettaDiskStoreView *view,
+        CettaDiskBytes prefix,uint64_t count,Atom *pattern,Atom *template,CettaDiskQuery **out) {
+    return cetta_disk_query_open_indexed(view,prefix,count,NULL,0,pattern,template,out);
+}
+bool cetta_disk_query_statistics(const CettaDiskQuery *query,CettaDiskSpaceStatistics *out) {
+    if (!query || !out) return false;
+    if (query->live) return cetta_disk_space_statistics(&query->source,out);
+    *out=query->statistics;return true;
 }
 
 typedef struct { Atom **items;size_t count,capacity; } Ids;

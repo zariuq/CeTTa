@@ -13,6 +13,7 @@
        (ServiceRouteV1 Query Read kb-server:query)
        (ServiceRouteV1 Next Read kb-server:next)
        (ServiceRouteV1 Cancel Read kb-server:cancel)
+       (ServiceRouteV1 QueryInfo Read kb-server:query-info)
        (ServiceRouteV1 Commit Write kb-server:commit)
        (ServiceRouteV1 Resolve Read kb-server:resolve)
        (ServiceRouteV1 Backup Write kb-server:backup)
@@ -31,6 +32,13 @@
              ($_ (store:close $view))) $answer))
      ($error $error))))
 
+(= (kb-server:create (ServiceCallV1 (KbConfigurationV1 $owner) $peer $unused (CreateIndexedV1 $collection $request $specs)))
+  (case (store:snapshot $owner)
+    (((StoreSnapshot $view $epoch $revision)
+      (let* (($answer (durable-space:create-indexed $owner $view $collection $request $specs))
+             ($_ (store:close $view))) $answer))
+     ($error $error))))
+
 (= (kb-server:query (ServiceCallV1 $configuration $peer $view (QueryV1 $collection $pattern $template)))
   (case (durable-space:cursor $view $collection $pattern $template)
     (((StoreQueryOpened $query $epoch $revision) (ServiceKeepV1 $query (KbQueryV1 $epoch $revision)))
@@ -43,6 +51,9 @@
 
 (= (kb-server:cancel (ServiceCallV1 $configuration $peer $query $arguments))
   (store:space-query-cancel $query))
+
+(= (kb-server:query-info (ServiceCallV1 $configuration $peer $query $arguments))
+  (store:space-query-info $query))
 
 (= (kb-server:commit (ServiceCallV1 (KbConfigurationV1 $owner) $peer $view (CommitV1 $collection $request $changes)))
   (if (== (get-metatype $changes) Expression)

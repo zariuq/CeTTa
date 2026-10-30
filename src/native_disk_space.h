@@ -20,4 +20,27 @@
 CettaDiskStoreStatus cetta_disk_space_capture(Space *target,
     const CettaDiskStoreView *view, CettaDiskBytes prefix, uint64_t occurrence_count);
 
+/* Optional candidate indexes over one expression arity/position (head is
+ * position zero). A posting key is PREFIX + "/exact/" + CAV1(value) + "/" +
+ * full fact key, or PREFIX + "/any/" + full fact key. Its value is empty;
+ * the occurrence reference is already the key suffix. Symbol/string fields
+ * use exact postings. Every other field, and
+ * every whole-variable fact, uses any; nonmatching expression arities and
+ * nonvariable scalar facts have no posting for this index. Maintain all
+ * postings atomically with facts/metadata in the same captured commit domain.
+ * Numeric/compound probes keep the complete scan until their equality/index
+ * normalization is independently qualified. Indexes only select candidates;
+ * the ordinary matcher still owns all bindings and answer multiplicity. */
+typedef struct { uint32_t arity, position; CettaDiskBytes prefix; } CettaDiskSpaceIndex;
+CettaDiskStoreStatus cetta_disk_space_capture_indexed(Space *target,
+    const CettaDiskStoreView *view, CettaDiskBytes prefix, uint64_t occurrence_count,
+    const CettaDiskSpaceIndex *indexes, size_t index_count);
+typedef struct {
+    uint64_t scans, indexed_selections, candidates, decoded_bytes;
+    bool overflow;
+} CettaDiskSpaceStatistics;
+/* Diagnostic totals across cursors of this source. They do not authorize a
+ * result, describe internal index-node visits, or change its captured view. */
+bool cetta_disk_space_statistics(const Space *source, CettaDiskSpaceStatistics *out);
+
 #endif

@@ -71,8 +71,10 @@ durability: retain the documented filesystem assumptions and I/O fault tests.
 Remaining release requirements are not covered merely by existing store unit
 tests or the older named-space service. The latter materializes query snapshots;
 the MeTTa-configured path below instead owns shared incremental cursors.
-Selective access paths and measured large-KB scaling remain open. Live
-migration remains a separately authorized step.
+Declared symbol/string candidate indexes now use the shared Space cursor, with
+small chain-join measurements described below. Scalar range indexes, broad
+workload qualification and large-KB scaling remain open. Live migration remains
+a separately authorized step.
 
 ACT may become a native immutable base/segment under the same durability owner.
 Its reader and format qualification need not block the first workload release
@@ -98,6 +100,10 @@ implement another query language or matcher.
 
 - `(durable-space:create owner view collection request-id)` creates an empty
   collection if its metadata and occurrence range are absent.
+- `(durable-space:create-indexed owner view collection request-id indexes)`
+  additionally declares candidate indexes, each `(SpaceIndexV1 arity position)`.
+  Arity includes the head; position zero indexes the head. Declarations are
+  immutable for this collection. Empty declarations use the ordinary descriptor.
 - `(durable-space:commit owner view collection request-id changes)` accepts a
   list of `(SpaceInsertV1 local-id atom)`, `(SpaceUpdateV1 reference atom)` and
   `(SpaceDeleteV1 reference)` edits. At most one edit may name an occurrence
@@ -112,7 +118,8 @@ implement another query language or matcher.
 - `(durable-space:capture view collection)` returns `(StoreSpace space epoch
   revision)`. Ordinary `match`, `get-atoms`, and imported `pat` queries read
   the captured occurrences through the shared incremental Space cursor.
-  This adapter has a complete prefix-scan fallback, not a selective atom index.
+  Eligible declared indexes select candidates; other patterns use a complete
+  prefix scan. Both paths use the same matcher and occurrence identities.
 
 For example, with a captured `view` and an initialized `claims` collection:
 
@@ -161,6 +168,59 @@ identifies an occurrence. The descriptor must lie outside that prefix. A full
 scan checks the declared count. Corrupt atom bytes, count mismatches and I/O
 failures are incomplete execution, never successful empty or partial bags.
 Use `durable_space` to maintain this descriptor rather than editing it by hand.
+
+### Declared candidate indexes
+
+For example, an edge `(knows alice bob)` has arity three. Declarations
+`((SpaceIndexV1 3 0) (SpaceIndexV1 3 1) (SpaceIndexV1 3 2))` supply relation,
+outgoing and incoming candidate access. A probe uses the last declared eligible
+projection whose pattern field is a symbol or string. This is a deterministic
+selection rule, not a cardinality optimizer or an intersection of indexes.
+
+An indexed collection stores `(StoreSpaceV2 prefix occurrence-count indexes)`;
+each index descriptor is `(StoreSpaceIndexV1 arity position index-prefix)`.
+Symbol/string fields have exact postings. Other fields and whole-variable
+occurrences have wildcard postings. A selective read merges those two disjoint
+candidate ranges, then runs ordinary unification. Consequently a stored open
+term can still answer a bound query, and duplicate occurrences remain separate.
+Numeric and compound field equality has no new byte-normalization contract;
+those fields cannot select an exact index and retain a complete scan unless
+another declared projection is eligible. Results remain unordered answer bags.
+
+Posting keys contain the projection and full occurrence key; posting values are
+empty. A candidate fetch reads the fact from the same captured root, without
+copying every payload into each index. Inserts, updates, deletes, counts,
+postings and receipts share one atomic publication. Updates retire old postings.
+The library refuses orphaned index prefixes during creation. Dangling or malformed
+postings fail execution explicitly. Raw byte-store writes can bypass these
+invariants, including deleting a required posting; selective reads do not audit
+the entire index for missing postings. Use the collection writer consistently.
+
+Complete posting keys must fit the native key limit (currently 65,536 bytes).
+An otherwise portable wide string may therefore fit an unindexed collection
+but refuse in an indexed projection. Such a write returns `StoreRefused invalid`
+atomically, without a fact or success receipt. No posting is silently omitted.
+Large declarations and batches remain subject to the existing codec/commit
+limits. Rebuilding indexes on existing collections is not implemented.
+
+`(store:space-query-info query)` returns `(StoreQueryInfo scans indexed-traversals
+candidates decoded-bytes overflow)`, including after end or cancellation while
+the handle remains open. Traversals count actual first advances, not unopened
+cursor constructors. Candidates count physical fact/posting rows visited;
+decoded bytes count successfully decoded CAV1 fact payloads. These counters do
+not measure internal tree-node visits, all allocations or total I/O. Overflow
+saturates the counters and sets the flag. Query explanation is limited to these
+observed access-path totals; no cost-plan display is claimed.
+
+`test-native-disk-space-index` and `test-indexed-space-api` compare candidate
+reads with ordinary in-memory matching, including repeated/open variables,
+duplicate edges, joins, inert rules, NUL strings, numeric scan fallback, updates,
+replay, compaction, crash/restart and indexed backup/restore. The latter also
+checks repeated service queries, cancellation and disconnected cursor owners.
+`tests/support/measure_space_index_scaling.py VALUE_WORKER` reports a small
+dependency-chain size sweep. Its storage totals include receipts, key/value
+encoding and all live native index files after compaction; they are not a
+compressed-ACT benchmark. Timings describe that run and do not gate correctness.
 
 Qualification targets: `test-native-disk-space`, `test-persistent-space-api`,
 `test-durable-space-transactions`, existing `test-space-source-cursor` and
@@ -422,12 +482,14 @@ or server incarnation refuses. Serialized native identifiers do not confer
 ownership. Limits bound frame/cache buffers, connections and retained
 resources. One outstanding frame per connection supplies backpressure.
 
-The example exposes Snapshot, Create, Query, Next, Cancel, Commit, Resolve and
-Compact. Query uses the supplied captured view. Next grants bounded matcher
+The example exposes Snapshot, Create, Query, Next, Cancel, QueryInfo, Commit,
+Resolve, Backup and Compact. Create accepts either `CreateV1` or
+`(CreateIndexedV1 collection request-id indexes)`. Query uses the supplied
+captured view and its declared access paths. Next grants bounded matcher
 work and checkpoints the live cursor; the template is projected as data.
 Commits validate the same explicitly supplied informing view. This does not
-automatically enroll arbitrary earlier application reads. Current queries use
-the complete prefix-scan fallback and may return `StoreQueryTooLarge` if a row
+automatically enroll arbitrary earlier application reads. Queries retain the
+complete prefix-scan fallback and may return `StoreQueryTooLarge` if a row
 exceeds the configured output allowance.
 
 The last exact request/reply is cached per connection until another id arrives.
@@ -458,8 +520,26 @@ lost-reply recovery, crash/restart, transport replay, bounded clients/resources,
 idle/partial-frame cleanup, explicit and automatic connection retirement,
 incomplete handler outcomes, and repeated query/cancel memory measurements.
 It is a scoped service milestone. Captured backup/restore is described below;
-selective durable indexes, application constraints and application transition
-parity remain required before any live replacement is qualified.
+scalar range indexes, application constraints and application transition parity
+remain required before any live replacement is qualified.
+
+### Worker evaluation failures
+
+The embedded value-worker entry contract requires one complete, encodable
+protocol result. Empty/nonsingle evaluation is distinct from a handler returning
+an explicit empty result value. A failed evaluation returns
+`(WorkerEvaluationFailure completion answer-count raised-error diagnostic)`.
+Completion preserves fuel, cancellation, stack, capacity, invalidation, host
+failure, effect denial and paused outcomes separately; an available single
+language error is retained as the diagnostic. Profiled error replies preserve
+their metrics field, including when the result cannot be encoded.
+
+The Python worker client raises `WorkerEvaluationError` with those fields and
+keeps the process after a valid correlated failure reply. That failure does
+not imply rollback: effects may already have committed. A malformed, wrong-id
+or timed-out reply still discards the transport process; it does not trigger an
+automatic retry. `test-worker-failure-feedback` checks diagnostics, live-process
+continuation and a committed write followed by failed evaluation without replay.
 
 ## Captured backup and restore
 
