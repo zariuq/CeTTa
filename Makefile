@@ -3460,6 +3460,7 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/held_sequence_iteration.metta \
 	tests/prime/first_class_contexts.metta \
 	tests/prime/if_atom_data_boundary.metta \
+	tests/prime/inert_if_values.metta \
 	tests/prime/need_gc_lifetime.metta \
 	tests/prime/need_storage_boundary.metta \
 	tests/prime/need_value_denotation.metta \

@@ -4505,6 +4505,9 @@ static Atom *expr_arity_too_large_error(Arena *a, Atom *atom) {
 }
 
 static bool is_true_atom(Atom *a) {
+    if(eval_current_language_id()==CETTA_LANGUAGE_PRIME)
+        a=atom_prime_held_payload(a);
+    if(!a)return false;
     bool petta_value = false;
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         petta_semantics_truth_value(a, &petta_value)) {
@@ -4515,6 +4518,9 @@ static bool is_true_atom(Atom *a) {
 }
 
 static bool is_false_atom(Atom *a) {
+    if(eval_current_language_id()==CETTA_LANGUAGE_PRIME)
+        a=atom_prime_held_payload(a);
+    if(!a)return false;
     bool petta_value = true;
     if (eval_current_language_id() == CETTA_LANGUAGE_PETTA &&
         petta_semantics_truth_value(a, &petta_value)) {
@@ -56936,8 +56942,8 @@ static PrimeEvalStackTake prime_eval_stack_strict_take(
 static bool prime_eval_stack_schedule_if_branch(
     PrimeEvalStackFrame *frame, Atom *branch,
     const Bindings *condition_env, bool tail) {
-    Atom *code = prime_need_ready_code(frame->arena, branch, condition_env);
-    if (code) branch = code;
+    /* Selecting a branch demands its computation. It does not explicitly
+     * activate data already returned by that computation or its caller. */
     Bindings continuation;
     if (!bindings_project_control_continuation(
             frame->arena, branch, condition_env,
@@ -89718,8 +89724,7 @@ static __attribute__((noinline)) MettaDispatchResult metta_conditional_dispatch(
                 Atom *branch = true_branch ? then_br : else_br;
                 Atom *next_atom;
                 if (language_id == CETTA_LANGUAGE_PRIME) {
-                    Atom *code = prime_need_ready_code(a, branch, cond_env);
-                    next_atom = code ? code : branch;
+                    next_atom = branch;
                 } else {
                     next_atom = bindings_apply_if_vars(cond_env, a, branch);
                 }
@@ -89776,8 +89781,7 @@ static __attribute__((noinline)) MettaDispatchResult metta_conditional_dispatch(
             if (true_branch || false_branch) {
                 Atom *branch = true_branch ? then_br : else_br;
                 if (language_id == CETTA_LANGUAGE_PRIME) {
-                    Atom *code = prime_need_ready_code(a, branch, cond_env);
-                    Atom *next_atom = code ? code : branch;
+                    Atom *next_atom = branch;
                     Bindings continuation;
                     if (bindings_project_control_continuation(
                             a, next_atom, cond_env, preserve_bindings,
