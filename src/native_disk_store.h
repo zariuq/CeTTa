@@ -41,6 +41,14 @@ void cetta_disk_store_close(CettaDiskStore *store);
  * resource must use the same write gate as an uncertain filesystem reply. */
 void cetta_disk_store_require_recovery(CettaDiskStore *store);
 CettaDiskStoreStatus cetta_disk_store_snapshot(CettaDiskStore *store, CettaDiskStoreView **out);
+/* Own another descriptor for exactly this captured root, without reopening
+ * the publisher or confirming a later revision. The source stays borrowed
+ * only during this call; either view may then be closed independently. */
+CettaDiskStoreStatus cetta_disk_store_view_clone(const CettaDiskStoreView *view,
+    CettaDiskStoreView **out);
+struct CettaStorageCensus;
+void cetta_disk_store_view_storage_census(const CettaDiskStoreView *view,
+    struct CettaStorageCensus *census);
 /* Check a live, non-poisoned publisher against a captured view's physical
  * domain and epoch, without publishing or requiring the latest revision.
  * This does not replace atomic read/write validation at a later commit. */

@@ -40189,6 +40189,25 @@ static bool petta_machine_dispatch_goal(
                 machine, first->expr.elems[1], second,
                 goal.barrier, failure);
         }
+        /* The strict Space operand is already a value. Read a source by
+         * the same captured occurrence choice as match, instead of asking
+         * the host to materialize its absent native shadow. A fresh whole-
+         * row pattern preserves duplicates and returns stored code as data. */
+        if (head_id == g_builtin_syms.get_atoms && first->expr.len == 2u &&
+            machine->host.resolve_space) {
+            Space *source = machine->host.resolve_space(
+                machine->host.context, machine->space, &machine->heap,
+                first->expr.elems[1]);
+            if (source && source->match_backend.kind == SPACE_ENGINE_SOURCE) {
+                Atom *row = petta_fresh_variable(machine);
+                if (!row) {
+                    *failure = PETTA_MACHINE_STEP_CAPACITY;
+                    return false;
+                }
+                return petta_machine_start_match_choice(machine, source,
+                    row, row, second, goal.barrier, NULL);
+            }
+        }
         bool direct =
             goal.kind == PETTA_GOAL_HOST_STRICT_READY
                 ? is_grounded_op(head_id)

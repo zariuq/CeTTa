@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #include "native_disk_store.h"
 #include "native_journal.h"
+#include "storage_census.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -273,6 +274,24 @@ void cetta_disk_store_require_recovery(CettaDiskStore *store) {
 }
 void cetta_disk_store_view_close(CettaDiskStoreView *view) {
     if (view) { close(view->root.fd); free(view); }
+}
+CettaDiskStoreStatus cetta_disk_store_view_clone(const CettaDiskStoreView *view,
+        CettaDiskStoreView **out) {
+    if (!out) return CETTA_STORE_INVALID;
+    *out=NULL;
+    if (!view || view->root.fd<0) return CETTA_STORE_INVALID;
+    CettaDiskStoreView *copy=malloc(sizeof(*copy));
+    if (!copy) return CETTA_STORE_NOMEM;
+    *copy=*view;
+    do { copy->root.fd=fcntl(view->root.fd,F_DUPFD_CLOEXEC,0); }
+    while (copy->root.fd<0 && errno==EINTR);
+    if (copy->root.fd<0) { free(copy); return CETTA_STORE_IO; }
+    *out=copy;
+    return CETTA_STORE_OK;
+}
+void cetta_disk_store_view_storage_census(const CettaDiskStoreView *view,
+        CettaStorageCensus *census) {
+    if (view) cetta_storage_object(census,view,sizeof(*view),CETTA_STORAGE_BLOCK);
 }
 const CettaDiskRoot *cetta_disk_store_view_root(const CettaDiskStoreView *view) { return view ? &view->root : NULL; }
 uint64_t cetta_disk_store_view_revision(const CettaDiskStoreView *view) { return view ? view->meta.revision : 0; }

@@ -5,6 +5,7 @@
 (: __cetta_lib_store_snapshot (-> Atom Atom))
 (: __cetta_lib_store_view_info (-> Atom Atom))
 (: __cetta_lib_store_check_view (-> Atom Atom Atom))
+(: __cetta_lib_store_space_view (-> Atom String Atom))
 (: __cetta_lib_store_commit (-> Atom Atom Atom Atom))
 (: __cetta_lib_store_commit_scoped (-> Atom Atom Atom Atom Atom Atom))
 (: __cetta_lib_store_get (-> Atom String Number Atom))
@@ -32,6 +33,12 @@
    (function (case (__cetta_lib_store_view_info $view) (($result (return $result))))))
 (= (store:check-view $store $view)
    (function (case (__cetta_lib_store_check_view $store $view) (($result (return $result))))))
+; The named metadata record is (StoreSpaceV1 prefix occurrence-count), encoded
+; with store:encode in the same captured store as the atom rows. Each value
+; under prefix is one CAV1 atom and its key is the occurrence identity. The
+; resulting read-only Space owns its snapshot independently of the handles.
+(= (store:space-view $view $metadata-key)
+   (function (case (__cetta_lib_store_space_view $view $metadata-key) (($result (return $result))))))
 (= (store:commit $store $view $ops)
    (function (case (__cetta_lib_store_commit $store $view $ops) (($result (return $result))))))
 (= (store:commit-scoped $store $view $reads $writes $ops)

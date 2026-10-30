@@ -878,7 +878,7 @@ SRC += src/tensor_dense_v1.c
 SRC += src/producer_dependencies.c src/producer_schedule.c
 SRC += src/fallible_alloc.c
 SRC += src/occurrence_log.c src/shared_return_producer.c src/owned_return_image.c
-SRC += src/native_disk_index.c src/native_disk_store.c src/library_store.c src/library_math.c
+SRC += src/native_disk_index.c src/native_disk_store.c src/native_disk_space.c src/library_store.c src/library_math.c
 SRC += src/library_supervise.c $(DURABLE_SRC)
 # Shared opaque authority (lib_seal): runtime objects and the seal library.
 SRC += src/seal.c native/seal_module.c
@@ -4662,6 +4662,20 @@ $(SPACE_SOURCE_CURSOR_TEST_BIN): tests/test_space_source_cursor.c $(FALLBACK_EVA
 test-all: test-space-source-cursor
 test-space-source-cursor: $(SPACE_SOURCE_CURSOR_TEST_BIN)
 	@$(PYTHON) -c 'import os,subprocess,tempfile; d=tempfile.TemporaryDirectory(prefix="cetta-space-source-", dir=os.environ.get("TMPDIR")); subprocess.run(["./$(SPACE_SOURCE_CURSOR_TEST_BIN)",d.name],check=True)'
+
+NATIVE_DISK_SPACE_TEST_BIN = runtime/test_native_disk_space-$(BUILD_OBJ_TAG)
+$(NATIVE_DISK_SPACE_TEST_BIN): tests/test_native_disk_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
+	@mkdir -p runtime
+	$(CC) $(CPPFLAGS) $(CFLAGS) -o $@ tests/test_native_disk_space.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(LDFLAGS)
+.PHONY: test-native-disk-space
+test-all: test-native-disk-space
+test-native-disk-space: $(NATIVE_DISK_SPACE_TEST_BIN)
+	@$(PYTHON) tests/support/check_native_disk_space_restart.py ./$(NATIVE_DISK_SPACE_TEST_BIN)
+
+.PHONY: test-persistent-space-api
+test-all: test-persistent-space-api
+test-persistent-space-api: $(BIN)
+	@$(CETTA_SCRIPT_RUN_ENV) $(PYTHON) tests/support/check_persistent_space_api.py ./$(BIN)
 
 PATTERN_OCCURRENCE_DROP_BIN = runtime/test_pattern_occurrence_drop-$(BUILD_OBJ_TAG)
 $(PATTERN_OCCURRENCE_DROP_BIN): tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)

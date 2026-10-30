@@ -1,8 +1,10 @@
 #include "library_store.h"
 #include "library.h"
 #include "native_disk_store.h"
+#include "native_disk_space.h"
 #include "native_handle.h"
 #include "atom_wire.h"
+#include "eval.h"
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -146,8 +148,60 @@ static bool acquire(CettaLibraryContext *ctx,const char *kind,Atom *handle,
                     CettaNativeHandleUseMode mode,CettaNativeHandleUse *use) {
     return cetta_native_handle_acquire_owned(ctx,kind,handle,mode,use);
 }
+static Atom *space_view(CettaLibraryContext *ctx,Arena *a,Atom **args,uint32_t n) {
+    CettaDiskBytes key;
+    if (n!=2 || !string(args[1],&key)) return refused(a,"invalid-space-view");
+    /* Other dialects have different Space discovery/execution paths. Keep
+     * their public admission explicit until those paths are qualified. */
+    if (ctx->session.language_id!=CETTA_LANGUAGE_PETTA)
+        return refused(a,"space-language");
+    /* Persistent source values need the ordinary evaluator's Space owner.
+     * An unqualified transactional payload must not acquire a live foreign
+     * capability by receiving a raw Space pointer. */
+    Arena *storage=eval_current_persistent_arena();
+    if (!storage || eval_payload_transactional() || ctx->term_universe.persistent_arena!=storage)
+        return refused(a,"space-owner-context");
+    CettaNativeHandleUse use={0};
+    if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use)) return refused(a,"closed-view");
+    CettaDiskStoreView *view=cetta_native_handle_use_resource(&use);
+    CettaDiskBlob blob;const CettaDiskRoot *root=cetta_disk_store_view_root(view);
+    CettaDiskStatus read=cetta_disk_lookup(root,key,&blob);
+    Atom *result=NULL;
+    if (read!=CETTA_DISK_OK) { result=status_value(a,disk_status(read));goto done; }
+    if (blob.size>CETTA_ATOM_WIRE_BYTES) { result=refused(a,"space-metadata-limit");goto done; }
+    unsigned char *body=malloc(blob.size ? (size_t)blob.size : 1);size_t got=0;
+    if (!body) { result=refused(a,"capacity");goto done; }
+    read=cetta_disk_blob_read(root,blob,0,body,(size_t)blob.size,&got);
+    Arena metadata;arena_init_detached(&metadata);Atom *record=NULL;
+    CettaAtomWireStatus decoded=read==CETTA_DISK_OK && got==blob.size
+        ? cetta_atom_wire_decode(&metadata,body,got,&record) : ATOM_WIRE_CORRUPT;
+    free(body);
+    CettaDiskBytes prefix;uint64_t count=0;
+    bool valid=decoded==ATOM_WIRE_OK && record && record->kind==ATOM_EXPR && record->expr.len==3 &&
+        atom_is_symbol(record->expr.elems[0],"StoreSpaceV1") && string(record->expr.elems[1],&prefix) &&
+        prefix.size && prefix.size<=root->key_limit && number(record->expr.elems[2],&count) &&
+        !(key.size>=prefix.size && !memcmp(key.data,prefix.data,prefix.size));
+    if (!valid) result=refused(a,read!=CETTA_DISK_OK ? "space-metadata-read" : "space-metadata-format");
+    else {
+        Space *space=arena_alloc(storage,sizeof(*space));
+        if (!space) { result=refused(a,"capacity");arena_free(&metadata);goto done; }
+        space_init_with_universe(space,&ctx->term_universe);
+        CettaDiskStoreStatus status=cetta_disk_space_capture(space,view,prefix,count);
+        if (status!=CETTA_STORE_OK) { space_free(space);result=status_value(a,status); }
+        else if (!eval_track_new_space(space)) { space_free(space);result=refused(a,"capacity"); }
+        else {
+            Atom *fields[]={atom_symbol(a,"StoreSpace"),atom_space(a,space),view_epoch_value(a,view),
+                            unsigned_value(a,cetta_disk_store_view_revision(view))};
+            result=atom_expr(a,fields,4);
+        }
+    }
+    arena_free(&metadata);
+done:
+    cetta_native_handle_use_release(&use);return result;
+}
 Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **args,uint32_t n) {
     if (!ctx || !a || !head) return NULL;
+    if (atom_is_symbol(head,"__cetta_lib_store_space_view")) return space_view(ctx,a,args,n);
     if (atom_is_symbol(head,"__cetta_lib_store_key_i64")) {
         if (n!=1 || args[0]->kind!=ATOM_GROUNDED || args[0]->ground.gkind!=GV_INT) return refused(a,"invalid-integer");
         uint64_t value=(uint64_t)args[0]->ground.ival ^ (UINT64_C(1)<<63);unsigned char bytes[8];
