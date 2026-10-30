@@ -89,6 +89,21 @@ for language in ("he", "petta"):
               "(pat:query &self match% (, (p $x) (q $x))) (pat:apply $w (answer $x))))\n"
               "!(client first)\n!(client second)", ["(answer a)", "(answer a)"], **options)
 
+        if language == 'petta':
+            # Public call preparation owns the strict space operand. The
+            # native ready-query child must not prepare that call again.
+            prepared = run(language, '(edge a b)\n'
+                '(= (query-space) (let $_ (println! SpaceOnce) &self))\n!'
+                + images('(pat:query (query-space) match% (edge a $y))', '$y'), **options)
+            assert (prepared.returncode, prepared.stdout, prepared.stderr) == \
+                (0, 'SpaceOnce\ntrue\n(b)\n', ''), prepared
+            checks += 1
+            # Bypassing repeated internal preparation must not turn a native
+            # fault into successful empty relational search.
+            fault = run(language, '(edge a b)\n!(pat:query &self unknown (edge a b))', **options)
+            assert fault.returncode == 2 and 'UnknownMatchingPolicy' in fault.stderr, fault
+            checks += 1
+
     # The syntax is licensed by import AND profile.
     call = "(pat:query &self match% (p a))"
     # HE reads &self into the form even when its unknown head remains data;
