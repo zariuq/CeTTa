@@ -269,6 +269,15 @@ row must fit the existing CAV1 limits. Work limits count matcher transitions,
 not wall-clock time or all primitive byte costs. Network framing needs its own
 reply-envelope allowance, deadlines and resource quotas.
 
+`(durable-space:probe view collection pattern template transitions)` makes one
+bounded first-answer attempt, then closes its temporary query on every outcome.
+It returns `(SpaceProbeFoundV1 value occurrence-identities)` or
+`SpaceProbeAbsentV1` only after a completed negative search. A paused, failed,
+oversized or refused search remains that explicit outcome. `StoreQueryPaused`
+from this helper has no retained continuation; retry with a larger budget on
+the same view if appropriate. Do not treat it as absence. This is a convenience
+over the shared cursor, not a separate predicate evaluator.
+
 `test-native-disk-query` checks data/identity replay, pending row byte limits,
 checkpoint refusal, variable sharing, sixteen interleaved captured readers,
 old roots across compaction and immediate cleanup on errors/end/cancel. Its
@@ -280,6 +289,54 @@ library and include a deliberately false assertion as a negative control.
 These cursor gates do not yet establish socket disconnect handling or the
 complete service acceptance. Session-lived `store:space-view` keeps its
 ordinary Space lifetime; this cursor provides the bounded request owner.
+
+### Constraints as MeTTa programs
+
+`examples/native_space_invariants.metta` demonstrates a trusted application
+policy over the same captured view and collection writer:
+
+```text
+ (ProgramV1 a) ── DependsV1 ──> (ProgramV1 b)
+       unique identity              unique identity
+       referenced programs cannot be removed
+
+ (JobV1 id QueuedV1 payload) ── claim ──> (JobV1 id (ClaimedV1 worker) payload)
+             same durable occurrence; one successful claimant
+```
+
+Ordinary pattern probes check program/job uniqueness, both dependency endpoints
+and incoming/outgoing references before deletion. The writer validates that
+same whole revision when publishing the edits and receipt. An insertion after
+an earlier negative check therefore conflicts; the caller must capture a new
+view and decide again. This conservative policy also conflicts with unrelated
+concurrent changes. No narrower dependency validator is claimed here.
+
+The example checks the original operation's receipt before rechecking current
+state. Otherwise a completed claim whose reply was lost could be misreported
+as a new `not-queued` refusal. `(durable-space:commit-command owner view
+collection request-id command changes)` lets trusted policy code identify a
+versioned original command separately from query-derived edits. It uses the
+same staging/index/publication machinery as `durable-space:commit`. The command
+must describe the complete policy intent, including its collection and semantic
+version; the helper does not verify arbitrary policy code. An existing receipt
+returns its original result without applying a newly computed edit list.
+The ordinary edit API retains its `SpaceCommitV1` fingerprint unchanged.
+
+These are application invariants for a collection created empty and maintained
+through that policy. They do not impose a schema on all Spaces or make raw
+owner writes constrained. The test service reuses the existing server and read
+handlers, replacing its unrestricted Commit route with the trusted Apply route.
+Client-supplied terms are data, not selectable executable policy functions.
+
+`test-space-invariants` compares scripted/generated transitions with a SQLite
+constraint/claim oracle over overlapping identity semantics. It checks duplicate
+edges, reference restrictions, competing uniqueness/claim writers, stale negative
+reads, stable occurrences, shared/inert/error-valued payloads, bounded incomplete
+probes, receipt collisions/replay, and a lost claim reply across process restart.
+The identical policy runs embedded and through the service. A fixed-KB probe
+lifetime sweep checks descriptor and retained-arena stability. This small policy
+example is not a replacement for a production gateway's deadlines, accounting,
+dispatch or external-effect recovery rules, and does not authorize live migration.
 
 ## Owners and snapshots
 

@@ -4703,12 +4703,14 @@ test-all: test-persistent-query-worker
 test-persistent-query-worker: value-worker
 	@$(PYTHON) tests/support/check_persistent_query_worker.py ./$(VALUE_WORKER_BIN)
 
-.PHONY: test-indexed-space-api test-worker-failure-feedback
-test-all: test-indexed-space-api test-worker-failure-feedback
+.PHONY: test-indexed-space-api test-worker-failure-feedback test-space-invariants
+test-all: test-indexed-space-api test-worker-failure-feedback test-space-invariants
 test-indexed-space-api: value-worker
 	$(PYTHON) tests/support/check_indexed_spaces.py $(VALUE_WORKER_BIN)
 test-worker-failure-feedback: value-worker
 	$(PYTHON) tests/support/check_worker_failure_feedback.py $(VALUE_WORKER_BIN)
+test-space-invariants: value-worker
+	$(PYTHON) tests/support/check_space_invariants.py $(VALUE_WORKER_BIN)
 
 PATTERN_OCCURRENCE_DROP_BIN = runtime/test_pattern_occurrence_drop-$(BUILD_OBJ_TAG)
 $(PATTERN_OCCURRENCE_DROP_BIN): tests/test_pattern_query_cursor.c tests/test_pattern_occurrence_drop.c $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)

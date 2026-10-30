@@ -23,6 +23,20 @@
   (case (durable-space:metadata $collection)
     (((KnowledgeAddressV1 $key) (store:space-query-open $view $key $pattern $template)) ($error $error))))
 
+; One bounded first-answer probe over the shared matcher. A paused/failed
+; search is never absence. The temporary cursor closes on every outcome.
+(: durable-space:probe (-> %Undefined% Atom Atom Atom Number %Undefined%))
+(= (durable-space:probe $view $collection $pattern $template $transitions)
+  (case (durable-space:cursor $view $collection $pattern $template)
+    (((StoreQueryOpened $query $epoch $revision)
+      (let* (($answer (store:space-query-next $query 0 $transitions 1048576))
+             ($_ (store:space-query-cancel $query)) ($_ (store:close $query)))
+        (case $answer
+          (((StoreQueryRow $sequence $value $identities) (SpaceProbeFoundV1 $value $identities))
+           (StoreQueryEnd SpaceProbeAbsentV1)
+           ($failure $failure)))))
+     ($failure $failure))))
+
 ; A new collection must have neither metadata nor orphaned rows. The scan
 ; reads at most one key at/after the prefix and closes on every outcome.
 (= (durable-space:empty-prefix? $view $prefix)
@@ -221,6 +235,13 @@
 (: durable-space:commit (-> %Undefined% %Undefined% Atom Atom Atom %Undefined%))
 (= (durable-space:commit $owner $view $collection $request $changes)
   (let $command (SpaceCommitV1 $collection $changes)
+    (durable-space:commit-command $owner $view $collection $request $command $changes)))
+
+; Trusted application policies can identify the original operation separately
+; from its query-derived edits. Resolve this same versioned command before
+; rechecking a retry; owner authority is still required for publication.
+(: durable-space:commit-command (-> %Undefined% %Undefined% Atom Atom Atom Atom %Undefined%))
+(= (durable-space:commit-command $owner $view $collection $request $command $changes)
     (case (knowledge:receipt $view $request $command (durable-space:wire-limit))
       ((KnowledgeReceiptAbsentV1
         (case (durable-space:metadata $collection)
@@ -239,4 +260,4 @@
                    ($error $error))))
                ($error $error))))
            ($error $error))))
-       ($result (knowledge:replay-on $owner $view $result))))))
+       ($result (knowledge:replay-on $owner $view $result)))))
