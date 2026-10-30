@@ -1871,19 +1871,6 @@ static bool petta_machine_try_plain_scalar_truth(
          (arguments[1]->ground.gkind != GV_INT &&
           arguments[1]->ground.gkind != GV_FLOAT)))
         return false;
-    /* A structural equality primitive may have correlated domains. Only
-     * plain numbers establish that contract without asking the host. */
-    if (machine->host.grounded_call && head &&
-        atom_symbol_current_id(head) == g_builtin_syms.op_eq &&
-        (argument_count != 2u ||
-         !arguments[0] || !arguments[1] ||
-         arguments[0]->kind != ATOM_GROUNDED ||
-         arguments[1]->kind != ATOM_GROUNDED ||
-         (arguments[0]->ground.gkind != GV_INT &&
-          arguments[0]->ground.gkind != GV_FLOAT) ||
-         (arguments[1]->ground.gkind != GV_INT &&
-          arguments[1]->ground.gkind != GV_FLOAT)))
-        return false;
     return petta_machine_builtin_allowed(machine, head) &&
         grounded_try_plain_scalar_truth(
             head, arguments, argument_count, truth_out);
@@ -3626,6 +3613,17 @@ bool petta_machine_table_storage(
                     &storage.dependency_bytes))
                 return false;
         }
+    }
+    for (size_t i = 0u; i < table->entry_len; i++) {
+        const PettaTableEntry *entry = &table->entries[i];
+        size_t bytes = 0u;
+        if (__builtin_mul_overflow(entry->space_read_cap,
+                sizeof(*entry->space_reads), &bytes) ||
+            __builtin_add_overflow(storage.dependency_bytes, bytes,
+                &storage.dependency_bytes) ||
+            __builtin_add_overflow(storage.dependency_records,
+                entry->space_read_len, &storage.dependency_records))
+            return false;
     }
     *out = storage;
     return true;
@@ -40685,6 +40683,27 @@ bool petta_machine_init(
         NULL, base_environment, host);
 }
 
+/* A synchronous host request may enter another root while its caller is
+ * paused in this thread. Completed tables can be borrowed through that
+ * actual caller's lease, under the same source and host meaning. An active
+ * generator, a different host, or a lease held outside this call stack
+ * cannot grant this borrowing. The nested root never releases the lease. */
+static bool petta_table_reentrant_borrowable(PettaTableShared *shared,
+    Space *space, const PettaMachineHost *host) {
+    if (!shared || !shared->root_leased || !host ||
+        !petta_table_shared_reusable(shared))
+        return false;
+    for (PettaTableReadScope *scope = g_petta_table_read_scopes; scope;
+         scope = scope->previous)
+        for (size_t i = *scope->length; i > 0u; i--) {
+            PettaMachineImpl *caller = (*scope->frames)[i - 1u].machine->impl;
+            if (caller->space == space && caller->table_shared == shared &&
+                petta_transfer_hosts_equal(&caller->host, host))
+                return true;
+        }
+    return false;
+}
+
 static bool petta_machine_init_entry(
     PettaMachine *machine, Space *space, Arena *answer_arena,
     Atom *query, const PettaPlanNode *plan,
@@ -40698,7 +40717,9 @@ static bool petta_machine_init_entry(
     PettaTableShared *shared = host ? host->shared_table : NULL;
     bool owns_shared = true;
     bool borrowed_shared = false;
-    if (shared && !shared->root_leased) {
+    if (petta_table_reentrant_borrowable(shared, space, host)) {
+        owns_shared = false;
+    } else if (shared && !shared->root_leased) {
         if (!petta_table_shared_reusable(shared))
             petta_table_shared_reset(shared);
         else if (shared->mutation_policy == PETTA_TABLE_MUTATION_STATIC_WORLD)
@@ -40713,7 +40734,13 @@ static bool petta_machine_init_entry(
         owns_shared = false;
         borrowed_shared = true;
     } else {
+        PettaTableMutationPolicy policy = shared ? shared->mutation_policy
+            : PETTA_TABLE_MUTATION_REVISION_GUARDED;
         shared = petta_table_shared_new();
+        /* Private storage preserves the caller's table semantics. A leased
+         * static-world table does not turn a nested call revision-guarded. */
+        if (shared)
+            shared->mutation_policy = policy;
     }
     if (!shared)
         return false;

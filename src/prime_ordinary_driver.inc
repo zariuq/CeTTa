@@ -94,7 +94,8 @@ static bool prime_ordinary_support_frontier(PrimeEvalStackDriver *driver,Space *
             frame->env_initialized?&frame->env:NULL};
         const Atom *roots[]={frame->atom,frame->etype,frame->strict_source,frame->then_branch,
             frame->else_branch,frame->weight_subject,frame->weight_algebra,frame->weight_trace,
-            frame->ref,frame->cell.origin,frame->cell.cached,frame->control_key,frame->control_bound};
+            frame->ref,frame->cell.origin,frame->cell.cached,frame->control_key,frame->control_bound,
+            frame->control_return_pending_advice.key,frame->control_return_pending_advice.bound};
         for(size_t j=0u;j<sizeof(roots)/sizeof(*roots);j++)
             if(!prime_ordinary_support_atom(roots[j],&bound))return false;
         for(size_t j=0u;j<frame->normalization_child_count;j++)

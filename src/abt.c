@@ -3377,6 +3377,15 @@ Atom *abt_grounded_dispatch(Arena *arena, Atom *head,
     if (!head || head->kind != ATOM_SYMBOL) return NULL;
     SymbolId id = atom_symbol_current_id(head);
     AbtOpKind kind = abt_op_kind(id);
+    /* Native ABT operations inspect values, not the Data-position carriers
+     * used by their caller. Preserve each payload graph exactly as supplied.
+     * ABT operations have at most four operands; wider calls follow the
+     * existing arity-error path below. */
+    Atom *values[4];
+    if (nargs<=4u) {
+        for (uint32_t i=0u;i<nargs;i++) values[i]=atom_prime_held_payload(args[i]);
+        args=values;
+    }
     if (kind == ABT_OP_QUOTE_SYNTAX) {
         if (nargs != 1u)
             return abt_grounded_error(arena, head, args, nargs,

@@ -2,21 +2,21 @@
 ; one.  A variable denotes what its binding parameter's type says.  A value
 ; parameter denotes its argument's value: the quotation holds the shared
 ; cell, nothing is forced when the quotation is formed, and observing or
-; matching it computes the cell once.  A `(Data Atom)` parameter holds its
+; matching it computes the cell once. An Atom parameter holds its
 ; argument as written, so it denotes that syntax: source capture is asked
 ; for by the parameter's type, never decided by evaluation timing.
 ; quote_profiles/need_quote_preservation.metta tests the same programs under
 ; the quote-as-written profile; routes/quote_seal.metta tests sealing.
 (= (need-quote $x) (quote $x){$x})
 !(need-quote (+ 1 2))
-(: need-quote-syntax (-> (Data Atom) Atom))
+(: need-quote-syntax (-> Atom Proc))
 (= (need-quote-syntax $x) (quote $x){$x})
 !(need-quote-syntax (+ 1 2))
 
 ; The same through an ordinary constructor.
 (= (need-quote-box $x) (quote (box $x)){$x})
 !(need-quote-box (* (+ 1 2) 4))
-(: need-quote-box-syntax (-> (Data Atom) Atom))
+(: need-quote-box-syntax (-> Atom Proc))
 (= (need-quote-box-syntax $x) (quote (box $x)){$x})
 !(need-quote-box-syntax (* (+ 1 2) 4))
 

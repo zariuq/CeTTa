@@ -3543,10 +3543,14 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             sequences = 2u;
             sequence_result = true;
         }
-        bool any_list = false;
+        bool adapt = false;
+        bool held = false;
         for (uint32_t i = 0u; i < nargs && i < 2u; i++) {
             if (!(sequences & (1u << i)))
                 continue;
+            Atom *sequence = atom_prime_held_payload(args[i]);
+            held = held || atom_prime_held_is(args[i]);
+            adapt = adapt || sequence != args[i] || atom_is_list(sequence);
             /* An expression the one sequence view declines (a braces node,
              * for which no set form is defined yet, or a list pattern) is
              * not a sequence: none of its internal tags is read as an
@@ -3555,30 +3559,30 @@ static Atom *grounded_dispatch_open(Arena *a, Atom *head, Atom **args,
             Atom *const *view_elems = NULL;
             CettaExprLen view_len = 0u;
             if (!grounded_current_language_is_petta() &&
-                args[i]->kind == ATOM_EXPR &&
-                !atom_sequence_view(args[i], &view_elems, &view_len))
+                sequence->kind == ATOM_EXPR &&
+                !atom_sequence_view(sequence, &view_elems, &view_len))
                 return NULL;
-            if (atom_is_list(args[i]))
-                any_list = true;
         }
-        if (any_list) {
+        if (adapt) {
             Atom *elements[2] = {args[0], nargs > 1u ? args[1] : NULL};
             const Atom *kind = NULL;
             for (uint32_t i = 0u; i < nargs && i < 2u; i++) {
                 if (!(sequences & (1u << i)))
                     continue;
+                elements[i] = atom_prime_held_payload(args[i]);
                 if (!kind)
-                    kind = args[i];
-                if (atom_is_list(args[i]))
+                    kind = elements[i];
+                if (atom_is_list(elements[i]))
                     elements[i] = atom_sequence_like(
-                        a, NULL, atom_list_elems(args[i]),
-                        atom_list_len(args[i]));
+                        a, NULL, atom_list_elems(elements[i]),
+                        atom_list_len(elements[i]));
             }
             Atom *result = grounded_dispatch(a, head, elements, nargs);
             if (sequence_result && atom_is_list(kind) && result &&
-                result->kind == ATOM_EXPR && !atom_is_error(result))
+                result->kind == ATOM_EXPR && !g_grounded_raised)
                 result = atom_list(a, result->expr.elems, result->expr.len);
-            return result;
+            return result && held && !g_grounded_raised
+                ? atom_prime_held_wrap(a, result) : result;
         }
     }
 

@@ -128,12 +128,12 @@
 !(let $s (mk 14) (ignore-second $s (ready-values:bump)))
 ; A quotation's crossing name denotes what its parameter's type says.  A
 ; value parameter denotes the argument's value: forming the quotation runs
-; nothing, and observing it computes the cell once.  A `(Data Atom)`
+; nothing, and observing it computes the cell once.  A `Atom`
 ; parameter holds the argument as written, and its quotation keeps that
 ; syntax.
 (= (keep-syntax $x) (quote $x){$x})
 !(let $s (mk 15) (keep-syntax (ready-values:bump)))
-(: keep-syntax-data (-> (Data Atom) Atom))
+(: keep-syntax-data (-> Atom Proc))
 (= (keep-syntax-data $x) (quote $x){$x})
 !(let $s (mk 15) (keep-syntax-data (ready-values:bump)))
 !(get-state &ready-values:count)

@@ -1985,6 +1985,7 @@ static bool petta_program_builtin_names_data(SymbolId head) {
            head == g_builtin_syms.empty ||
            head == g_builtin_syms.error ||
            head == g_builtin_syms.atom ||
+           head == g_builtin_syms.prime_proc ||
            head == g_builtin_syms.symbol ||
            head == g_builtin_syms.variable ||
            head == g_builtin_syms.expression ||
@@ -6260,6 +6261,7 @@ bool petta_program_synchronize_space(
     free(taken);
     free(known);
     free(own_rules);
+    bool empty_callability = !callability.admits_any_head && !callability.named_len;
     free(callability.named_heads);
 
     if (!ok || !space_read_token_matches_live_space(read, space)) {
@@ -6279,6 +6281,17 @@ bool petta_program_synchronize_space(
     installed->synchronized_equation_len = installed->equation_len;
     installed->synchronized_catalog_generation = installed->catalog_generation;
     installed->synchronized_snapshot = true;
+    /* A newly registered fact-only space contributes no callable heads.
+     * Extend the cache's resource inventory without invalidating the domain
+     * or the immutable plans already certified against it. */
+    if (empty_callability && program->callability_cache_valid &&
+        program->callability_cache_token_len + 1u == program->space_len &&
+        installed == &program->spaces[program->space_len - 1u] &&
+        petta_program_reserve((void **)&program->callability_cache_tokens,
+            &program->callability_cache_token_cap, program->space_len,
+            sizeof(*program->callability_cache_tokens)))
+        program->callability_cache_tokens[program->callability_cache_token_len++] =
+            petta_program_callability_scan_of(installed);
     return true;
 }
 
@@ -6841,6 +6854,18 @@ void petta_program_forget_space(
         PettaProgramSpace *entry = &program->spaces[index];
         if (entry->space != space)
             continue;
+        if (program->callability_cache_valid &&
+            program->callability_cache_token_len == program->space_len &&
+            !entry->equation_len && entry->synchronized_snapshot &&
+            space_program_token_matches_live_space(entry->synchronized_program, space) &&
+            space_equation_token_matches_live_space(
+                program->callability_cache_tokens[index].equations, space)) {
+            memmove(&program->callability_cache_tokens[index],
+                &program->callability_cache_tokens[index + 1u],
+                (program->space_len - index - 1u) *
+                    sizeof(*program->callability_cache_tokens));
+            program->callability_cache_token_len--;
+        }
         petta_program_space_dispose_catalog(entry);
         petta_program_space_free_pending(entry);
         memmove(

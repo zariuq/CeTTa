@@ -3638,7 +3638,7 @@ static unsigned captured_binding_projection_controls(void) {
 }
 
 static Atom *he_plan_source_variable(Atom *source, const char *name) {
-    if (source->kind == ATOM_VAR && strcmp(symbol_bytes(g_symbols, atom_symbol_current_id(source)), name) == 0)
+    if (source->kind == ATOM_VAR && strcmp(atom_name_cstr(source), name) == 0)
         return source;
     if (source->kind == ATOM_EXPR)
         for (CettaExprIndex i = 0u; i < source->expr.len; i++) {

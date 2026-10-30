@@ -78,7 +78,7 @@
    (-> (A : (u 0)) (source : A)
        (candidate : (sigma (value : A) (id A source value))) A)
    (= (useEqual $A $source $candidate) (fst $candidate)))
-(: propose-fusion (-> Atom Atom))
+(: propose-fusion (-> Proc Proc))
 (= (propose-fusion $source)
    (case $source
      (((mapf $f (mapf $g $xs)) (fuseMap $f $g (fusion $f $g) $xs)))))

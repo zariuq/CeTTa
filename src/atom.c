@@ -5412,52 +5412,168 @@ bool atom_prime_held_made(void) {
     return g_atom_prime_held_made;
 }
 
-bool atom_contains_prime_held(const Atom *atom) {
-    if (!atom || !g_atom_prime_held_made)
+static bool atom_held_query_descends(void *context, Arena *arena, Atom *atom) {
+    (void)arena;
+    bool *found = context;
+    if (*found || !atom || !atom_structural_may_have_internal_tag(atom)) return false;
+    if (atom_prime_held_is(atom)) {
+        *found = true;
         return false;
-    const Atom *inline_items[64];
-    const Atom **items = inline_items;
-    size_t len = 0u, cap = sizeof(inline_items) / sizeof(inline_items[0]);
-    items[len++] = atom;
-    bool found = false;
-    while (len > 0u && !found) {
-        const Atom *current = items[--len];
-        if (!current || current->kind != ATOM_EXPR)
-            continue;
-        if (atom_prime_held_is(current)) {
-            found = true;
-            break;
-        }
-        for (CettaExprIndex i = 0u; i < current->expr.len; i++) {
-            if (len == cap) {
-                size_t next = cap * 2u;
-                const Atom **grown = cetta_malloc(sizeof(*grown) * next);
-                memcpy(grown, items, sizeof(*grown) * len);
-                if (items != inline_items)
-                    free(items);
-                items = grown;
-                cap = next;
-            }
-            items[len++] = current->expr.elems[i];
-        }
     }
-    if (items != inline_items)
-        free(items);
-    return found;
+    return atom->kind == ATOM_EXPR && atom->expr.len != 0u;
 }
 
-Atom *atom_prime_held_strip(Arena *a, Atom *atom) {
-    if (!atom) return NULL;
-    if (atom_prime_held_is(atom)) return atom_prime_held_strip(a, atom->expr.elems[1]);
-    if (atom->kind != ATOM_EXPR || atom->expr.len == 0u) return atom;
-    Atom **items = arena_alloc(a, sizeof(Atom *) * (size_t)atom->expr.len);
-    if (!items) return atom;
-    bool changed = false;
-    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
-        items[i] = atom_prime_held_strip(a, atom->expr.elems[i]);
-        changed = changed || items[i] != atom->expr.elems[i];
+static Atom *atom_held_query_build(void *context, Arena *arena, Atom *atom,
+                                  Atom **children, bool changed) {
+    (void)context; (void)arena; (void)children; (void)changed;
+    return atom;
+}
+
+bool atom_contains_prime_held(const Atom *atom) {
+    if (!atom || !g_atom_prime_held_made ||
+        !atom_structural_may_have_internal_tag(atom)) return false;
+    Arena scratch;
+    arena_init_detached(&scratch);
+    bool found = false;
+    Atom *result = atom_graph_image(&found, &scratch, (Atom *)atom,
+        atom_held_query_descends, atom_held_query_build);
+    arena_free(&scratch);
+    return found || !result;
+}
+
+typedef struct {
+    Atom *source;
+    Atom *image; /* NULL while the selected source is active. */
+} AtomGraphImageSlot;
+
+typedef struct {
+    AtomGraphImageSlot *slots;
+    size_t count, capacity;
+} AtomGraphImages;
+
+static AtomGraphImageSlot *atom_graph_image_slot(
+    AtomGraphImages *images, Atom *source, bool create) {
+    if (create && images->count >= images->capacity / 2u) {
+        if (images->capacity > SIZE_MAX / 2u) return NULL;
+        size_t capacity = images->capacity ? 2u * images->capacity : 64u;
+        if (capacity > SIZE_MAX / sizeof(*images->slots)) return NULL;
+        AtomGraphImageSlot *slots = calloc(capacity, sizeof(*slots));
+        if (!slots) return NULL;
+        for (size_t i = 0u; i < images->capacity; i++) {
+            if (!images->slots[i].source) continue;
+            size_t at = ((uintptr_t)images->slots[i].source >> 4u) & (capacity - 1u);
+            while (slots[at].source) at = (at + 1u) & (capacity - 1u);
+            slots[at] = images->slots[i];
+        }
+        free(images->slots);
+        images->slots = slots;
+        images->capacity = capacity;
     }
-    return changed ? atom_expr(a, items, atom->expr.len) : atom;
+    if (!images->capacity) return NULL;
+    size_t at = ((uintptr_t)source >> 4u) & (images->capacity - 1u);
+    while (images->slots[at].source && images->slots[at].source != source)
+        at = (at + 1u) & (images->capacity - 1u);
+    if (!images->slots[at].source) {
+        if (!create) return NULL;
+        images->slots[at].source = source;
+        images->count++;
+    }
+    return &images->slots[at];
+}
+
+typedef struct {
+    Atom *node;
+    Atom **children;
+    CettaExprIndex next;
+} AtomGraphImageFrame;
+
+Atom *atom_graph_image(void *context, Arena *arena, Atom *root,
+    bool (*descend)(void *, Arena *, Atom *),
+    Atom *(*build)(void *, Arena *, Atom *, Atom **, bool)) {
+    if (!arena || !root || !descend || !build) return NULL;
+    if (!descend(context, arena, root)) return root;
+    if (root->kind != ATOM_EXPR) return NULL;
+    AtomGraphImages images = {0};
+    AtomGraphImageFrame local[32], *frames = local;
+    size_t depth = 0u, capacity = sizeof(local) / sizeof(*local);
+    Atom *result = NULL;
+    if (!atom_graph_image_slot(&images, root, true)) goto done;
+    frames[depth++] = (AtomGraphImageFrame){root, NULL, 0u};
+    while (depth) {
+        AtomGraphImageFrame *frame = &frames[depth - 1u];
+        Atom *node = frame->node;
+        if (!frame->children) {
+            if (!cetta_expr_len_mul_fits_size(node->expr.len, sizeof(*frame->children)))
+                goto done;
+            size_t bytes = sizeof(*frame->children) * (size_t)node->expr.len;
+            frame->children = arena_alloc(arena, bytes ? bytes : sizeof(Atom *));
+            if (!frame->children) goto done;
+            if (bytes) memcpy(frame->children, node->expr.elems, bytes);
+        }
+        if (frame->next < node->expr.len) {
+            CettaExprIndex index = frame->next++;
+            Atom *child = node->expr.elems[index];
+            if (!child) goto done;
+            if (!descend(context, arena, child)) continue;
+            if (child->kind != ATOM_EXPR) goto done;
+            AtomGraphImageSlot *known = atom_graph_image_slot(&images, child, false);
+            if (known) {
+                if (!known->image) goto done; /* A selected cycle. */
+                frame->children[index] = known->image;
+                continue;
+            }
+            if (!atom_graph_image_slot(&images, child, true)) goto done;
+            if (depth == capacity) {
+                if (capacity > SIZE_MAX / 2u ||
+                    capacity * 2u > SIZE_MAX / sizeof(*frames)) goto done;
+                size_t grown = capacity * 2u;
+                AtomGraphImageFrame *replacement = malloc(sizeof(*frames) * grown);
+                if (!replacement) goto done;
+                memcpy(replacement, frames, sizeof(*frames) * depth);
+                if (frames != local) free(frames);
+                frames = replacement;
+                capacity = grown;
+            }
+            frames[depth++] = (AtomGraphImageFrame){child, NULL, 0u};
+            continue;
+        }
+        bool changed = false;
+        for (CettaExprIndex i = 0u; i < node->expr.len && !changed; i++)
+            changed = frame->children[i] != node->expr.elems[i];
+        Atom *image = build(context, arena, node, frame->children, changed);
+        if (!image) goto done;
+        AtomGraphImageSlot *slot = atom_graph_image_slot(&images, node, false);
+        if (!slot) goto done;
+        slot->image = image;
+        depth--;
+        if (depth)
+            frames[depth - 1u].children[frames[depth - 1u].next - 1u] = image;
+        else
+            result = image;
+    }
+done:
+    if (frames != local) free(frames);
+    free(images.slots);
+    return result;
+}
+
+static bool atom_held_strip_descends(void *context, Arena *arena, Atom *atom) {
+    (void)context; (void)arena;
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len != 0u &&
+        atom_structural_may_have_internal_tag(atom);
+}
+
+static Atom *atom_held_strip_build(void *context, Arena *arena, Atom *atom,
+                                  Atom **children, bool changed) {
+    (void)context;
+    if (atom_prime_held_is(atom)) return children[1];
+    return changed ? atom_expr_rebuild(arena, atom, children, atom->expr.len) : atom;
+}
+
+Atom *atom_prime_held_strip(Arena *arena, Atom *atom) {
+    return g_atom_prime_held_made
+        ? atom_graph_image(NULL, arena, atom, atom_held_strip_descends,
+                           atom_held_strip_build) : atom;
 }
 
 Atom *atom_petta_prolog_compound(Arena *a, Atom *body) {
@@ -5618,6 +5734,22 @@ Atom *atom_sequence_like(Arena *a, const Atom *like, Atom *const *elems,
     Atom *result = atom_expr(a, copy, len);
     free(copy);
     return result;
+}
+
+Atom *atom_sequence_data_view(Arena *arena, Atom *sequence) {
+    if (!atom_prime_held_is(sequence)) return sequence;
+    Atom *payload = atom_prime_held_payload(sequence);
+    Atom *const *items = NULL;
+    CettaExprLen count = 0u;
+    if (!atom_sequence_view(payload, &items, &count) ||
+        !cetta_expr_len_mul_fits_size(count, sizeof(Atom *))) return NULL;
+    Atom **values = count ? arena_alloc(arena, sizeof(*values) * (size_t)count) : NULL;
+    if (count && !values) return NULL;
+    for (CettaExprIndex i = 0u; i < count; i++) {
+        values[i] = atom_prime_held_wrap(arena, items[i]);
+        if (!values[i]) return NULL;
+    }
+    return atom_sequence_like(arena, payload, values, count);
 }
 
 Atom *atom_sequence_rest(Arena *a, Atom *sequence, Atom *const *elems,
@@ -8367,7 +8499,7 @@ static AtomDeepCopyBufferSlot *atom_deep_copy_buffer_lookup(
     return NULL;
 }
 
-static void atom_deep_copy_buffer_store(
+static bool atom_deep_copy_buffer_store(
     AtomDeepCopyMemo *memo, Atom *source, Atom *copy) {
     Atom **end = source->expr.elems + source->expr.len;
     AtomDeepCopyBufferSlot *known = atom_deep_copy_buffer_lookup(memo, end);
@@ -8375,13 +8507,18 @@ static void atom_deep_copy_buffer_store(
         if (copy->expr.len > known->longest->expr.len)
             known->longest = copy;
         known->recent = copy;
-        return;
+        return true;
     }
     if ((memo->buffer_used + 1u) * 4u >= memo->buffer_cap * 3u) {
         size_t cap = memo->buffer_cap ? memo->buffer_cap * 2u : 16u;
-        if (cap < memo->buffer_cap || cap > SIZE_MAX / sizeof(*memo->buffers))
+        bool fallible=memo->arenas || memo->snapshot;
+        if (cap < memo->buffer_cap || cap > SIZE_MAX / sizeof(*memo->buffers)) {
+            if(fallible)return false;
             cetta_oom(SIZE_MAX);
-        AtomDeepCopyBufferSlot *slots = cetta_malloc(cap * sizeof(*slots));
+        }
+        AtomDeepCopyBufferSlot *slots = fallible ? malloc(cap * sizeof(*slots))
+            : cetta_malloc(cap * sizeof(*slots));
+        if(!slots)return false;
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
             cap * sizeof(*slots));
         memset(slots, 0, cap * sizeof(*slots));
@@ -8405,6 +8542,7 @@ static void atom_deep_copy_buffer_store(
         pos = (pos + 1u) & (memo->buffer_cap - 1u);
     memo->buffers[pos] = (AtomDeepCopyBufferSlot){end, copy, copy};
     memo->buffer_used++;
+    return true;
 }
 
 static bool atom_deep_copy_buffer_enabled(
@@ -8470,9 +8608,9 @@ static bool atom_deep_copy_memo_grow_inspected(AtomDeepCopyMemo *memo,
     if(new_cap>SIZE_MAX/sizeof(AtomDeepCopyMemoSlot)||
         !atom_deep_copy_inspect(inspection,limit,0u,1u))return false;
     AtomDeepCopyMemoSlot *old_slots=memo->slots;
-    /* A metered temporary carrier can return allocation refusal. The
-     * ordinary copier retains its established fatal-allocation service. */
-    AtomDeepCopyMemoSlot *new_slots=inspection?
+    /* Metered and mapped graph preparation can return allocation refusal.
+     * Ordinary copying retains its existing allocation service. */
+    AtomDeepCopyMemoSlot *new_slots=(inspection || memo->arenas || memo->snapshot)?
         malloc(sizeof(*new_slots)*new_cap):cetta_malloc(sizeof(*new_slots)*new_cap);
     if(!new_slots)return false;
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
@@ -8579,7 +8717,7 @@ static inline bool atom_deep_copy_record(AtomDeepCopyMemo *memo, Atom *src,
     if (!atom_deep_copy_memo_store(memo, src, dst)) return false;
     if (memo->arenas && src == dst && src && src->kind == ATOM_EXPR &&
         src->expr.len)
-        atom_deep_copy_buffer_store(memo, src, dst);
+        return atom_deep_copy_buffer_store(memo, src, dst);
     return true;
 }
 
@@ -8962,7 +9100,9 @@ static inline __attribute__((always_inline)) AtomDeepCopyStep atom_deep_copy_run
         if (!atom_deep_copy_record(memo, copy_source, copy_tail)) { \
             goto failed; \
         } \
-        if (child_count) atom_deep_copy_buffer_store(memo, copy_source, copy_tail); \
+        if (child_count && !atom_deep_copy_buffer_store(memo, copy_source, copy_tail)) { \
+            goto failed; \
+        } \
     } else if (prefix_len) { \
         copy_elems = arena_alloc(copy_destination, (size_t)prefix_len * sizeof(Atom *)); \
     } \
@@ -8971,8 +9111,11 @@ static inline __attribute__((always_inline)) AtomDeepCopyStep atom_deep_copy_run
         if (next_cap < stack_cap || \
             next_cap > SIZE_MAX / sizeof(AtomDeepCopyFrame)) \
             cetta_oom(SIZE_MAX); \
-        stack = cetta_realloc(stack, \
-                              next_cap * sizeof(AtomDeepCopyFrame)); \
+        AtomDeepCopyFrame *grown_stack=(memo->arenas || memo->snapshot) \
+            ? realloc(stack,next_cap*sizeof(*stack)) \
+            : cetta_realloc(stack,next_cap*sizeof(*stack)); \
+        if(!grown_stack) { goto failed; } \
+        stack=grown_stack; \
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES, \
             next_cap * sizeof(AtomDeepCopyFrame)); \
         cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_FREE_BYTES, \
@@ -9101,7 +9244,7 @@ static inline __attribute__((always_inline)) AtomDeepCopyStep atom_deep_copy_run
                                        frame->prefix_len - 1u);
                 result = atom_expr_prepend(home, frame->elems[0], tail);
             }
-            atom_deep_copy_buffer_store(memo, frame->src, result);
+            if(!atom_deep_copy_buffer_store(memo, frame->src, result))goto failed;
         } else {
             result = share
                 ? atom_expr_shared(home, frame->elems, frame->src->expr.len)
@@ -9617,6 +9760,11 @@ bool atom_deep_copy_session_targets(const AtomDeepCopySession *session,
         (!session->memo.arenas || atom_deep_copy_private_destination(session, dst));
 }
 
+bool atom_deep_copy_session_private_destination(const AtomDeepCopySession *session) {
+    return session && !session->failed && atom_deep_copy_arena_map_current(session) &&
+        atom_deep_copy_session_targets(session, session->dst);
+}
+
 bool atom_deep_copy_destination_enter(AtomDeepCopySession *session,
     Arena *destination, AtomDeepCopyDestinationScope *scope) {
     if (!scope || scope->active ||
@@ -9873,8 +10021,7 @@ static bool atom_deep_copy_observe_header(AtomDeepCopyMemo *views, Atom *header)
     if (!header->expr.elems ||
         !cetta_expr_len_mul_fits_size(header->expr.len, sizeof(Atom *)))
         return false;
-    atom_deep_copy_buffer_store(views, header, header);
-    return true;
+    return atom_deep_copy_buffer_store(views, header, header);
 }
 
 static bool atom_deep_copy_header_image_agrees(
@@ -9939,7 +10086,7 @@ AtomDeepCopySession *atom_deep_copy_session_relocate(
         Atom **end = image->expr.elems + image->expr.len;
         /* Different backing ends must not coalesce either. */
         if (atom_deep_copy_buffer_lookup(&image_ends, end)) goto fail;
-        atom_deep_copy_buffer_store(&image_ends, image, view->longest);
+        if(!atom_deep_copy_buffer_store(&image_ends, image, view->longest))goto fail;
         view->recent = image;
     }
     for (size_t i = 0u; i < source->memo.cap; i++) {
@@ -10226,7 +10373,8 @@ bool atom_deep_copy_session_install_inventory(AtomDeepCopySession *session,
         !atom_deep_copy_arena_map_current(session) ||
         atom_deep_copy_session_inventory(session, kind))
         return false;
-    AtomDeepCopyInventory *entry = cetta_malloc(sizeof(*entry));
+    AtomDeepCopyInventory *entry = malloc(sizeof(*entry));
+    if (!entry) return false;
     cetta_runtime_stats_add(CETTA_RUNTIME_COUNTER_ATOM_TRANSPORT_METADATA_ALLOC_BYTES,
                            sizeof(*entry));
     *entry = (AtomDeepCopyInventory){.kind = kind, .value = inventory,

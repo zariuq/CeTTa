@@ -16981,6 +16981,15 @@ int main(int argc, char **argv) {
         test_callee_admission_scope(&universe, &persistent);
         goto release_owners;
     }
+    if (catalog_only) {
+        test_notified_catalog_append(&universe, &persistent);
+        test_unnotified_catalog_append(&universe, &persistent);
+        goto release_owners;
+    }
+    if (admission_only) {
+        test_callee_admission_scope(&universe, &persistent);
+        goto release_owners;
+    }
     if (native_only) {
         test_compiled_native_returns(&universe, &persistent);
         test_entered_service_returns(&universe, &persistent);

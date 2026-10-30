@@ -51,8 +51,44 @@ static PrimeNeedReceiptGraphStatus collect_with_fault(
     return status;
 }
 
+static void check_atom_projection_refusal(void) {
+    Arena source, destination;
+    arena_init_detached(&source);
+    arena_init_detached(&destination);
+    Atom *leaf = atom_int(&source, 91);
+    Atom *held = atom_prime_held_wrap(&source, leaf);
+    Atom *root = held;
+    for (unsigned i = 0u; i < 96u; i++) root = atom_expr2(&source, root, root);
+    (void)arena_alloc(&destination, 1u);
+    ArenaMark mark = arena_mark(&destination);
+    allocation_count = 0u; fail_at = SIZE_MAX; probing = true;
+    Atom *image = atom_prime_held_strip(&destination, root);
+    probing = false;
+    assert(image);
+    size_t allocations = allocation_count;
+    for (unsigned i = 0u; i < 96u; i++) {
+        assert(image->expr.elems[0] == image->expr.elems[1]);
+        image = image->expr.elems[0];
+    }
+    assert(image == leaf && allocations > 0u);
+    arena_reset(&destination, mark);
+    for (size_t i = 0u; i < allocations; i++) {
+        allocation_count = 0u; fail_at = i; probing = true;
+        image = atom_prime_held_strip(&destination, root);
+        probing = false;
+        assert(!image && allocation_count >= i + 1u);
+        assert(atom_prime_held_is(held) && root->expr.elems[0] == root->expr.elems[1]);
+        arena_reset(&destination, mark);
+    }
+    assert(atom_prime_held_strip(&destination, root));
+    arena_free(&destination);
+    arena_free(&source);
+    printf("PASS: %zu graph projection allocation refusals leave source sharing unchanged\n", allocations);
+}
+
 
 typedef struct {unsigned references;} ReaderAllocationOwner;
+static const char reader_allocation_copy_kind;
 static bool reader_allocation_retain(void *raw) {
     ((ReaderAllocationOwner *)raw)->references++;return true;
 }
@@ -61,6 +97,7 @@ static void reader_allocation_release(void *raw) {
 }
 static const PrimeNeedReaderValueOps reader_allocation_ops={
     .retain=reader_allocation_retain,.release=reader_allocation_release,
+    .copy_kind=&reader_allocation_copy_kind,.copy_size=sizeof(ReaderAllocationOwner),
 };
 static CettaMatchCompletion reader_allocation_clear(uint64_t key,
         const PrimeNeedReaderValue *value,void *state,bool *clear) {
@@ -108,6 +145,51 @@ static void check_reader_context_refusal(void) {
     prime_need_reader_context_release(second);prime_need_reader_context_release(joined);
     assert(!owner.references);
     printf("PASS: %zu reader-context allocation refusals preserve versions and owners\n",refused);
+}
+
+static void check_reader_copy_refusal(void) {
+    ReaderAllocationOwner owners[2]={{0},{0}},images[2]={{0},{0}};
+    PrimeNeedReaderValue values[2]={{&owners[0],&reader_allocation_ops},
+        {&owners[1],&reader_allocation_ops}};
+    PrimeNeedReaderContext *base=NULL,*production=NULL,*recipient=NULL,*imported=NULL,*out=NULL;
+    assert(prime_need_reader_context_update(NULL,11u,&values[0],&base)==CETTA_MATCH_MATCHED);
+    assert(prime_need_reader_context_update(base,22u,&values[1],&production)==CETTA_MATCH_MATCHED);
+    for (size_t i=0u;i<40u;i++)
+        assert(prime_need_reader_context_update(production,33u,&values[i%2u],&production)==
+            CETTA_MATCH_MATCHED);
+    assert(prime_need_reader_context_update(base,44u,&values[0],&recipient)==CETTA_MATCH_MATCHED);
+    assert(prime_need_reader_context_import(base,production,recipient,&imported)==CETTA_MATCH_MATCHED);
+    unsigned before[2]={owners[0].references,owners[1].references};
+    Arena destination;arena_init_detached(&destination);
+    size_t allocations=0u;
+    for (size_t attempt=0u;;attempt++) {
+        AtomDeepCopySession *session=atom_deep_copy_session_new(&destination);assert(session);
+        for (size_t i=0u;i<2u;i++)
+            assert(atom_deep_copy_session_object_record(session,&reader_allocation_copy_kind,
+                &owners[i],&images[i],sizeof(owners[i])));
+        if (attempt) {out=base;prime_need_reader_context_retain(out);}
+        allocation_count=0u;fail_at=attempt ? attempt-1u : SIZE_MAX;probing=true;
+        CettaMatchCompletion status=prime_need_reader_context_copy_with_session(imported,
+            &destination,session,&out);
+        probing=false;
+        if (!attempt) {
+            allocations=allocation_count;
+            assert(status==CETTA_MATCH_MATCHED && out && out!=imported && allocations);
+        } else assert(status==CETTA_MATCH_INCOMPLETE && out==base);
+        PrimeNeedReaderValue unchanged;
+        assert(prime_need_reader_context_lookup(imported,11u,&unchanged) && unchanged.value==&owners[0]);
+        prime_need_reader_context_release(out);out=NULL;
+        atom_deep_copy_session_free(session);
+        assert(owners[0].references==before[0] && owners[1].references==before[1] &&
+            !images[0].references && !images[1].references);
+        if (attempt==allocations) break;
+    }
+    prime_need_reader_context_release(base);prime_need_reader_context_release(production);
+    prime_need_reader_context_release(recipient);prime_need_reader_context_release(imported);
+    arena_free(&destination);
+    assert(!owners[0].references && !owners[1].references);
+    printf("PASS: %zu reader-copy allocation refusals preserve the old output and both owner graphs\n",
+        allocations);
 }
 
 static void check_production_support_refusal(Arena *arena) {
@@ -158,6 +240,171 @@ static void check_production_support_refusal(Arena *arena) {
     assert(prime_need_snapshot_lookup(&imported, thunk, &cell) && cell.cached == value);
     prime_need_read_capture_free(capture);
     puts("PASS: 5 production-support allocation refusals preserve lookups, evidence and destination");
+}
+
+static Atom *read_capture_resolver(void *raw,Atom *atom) {
+    (*(unsigned *)raw)++;
+    return atom;
+}
+
+static void check_read_capture_transport(void) {
+    Arena source,terms,image,image_terms;
+    arena_init_detached(&source);arena_init_detached(&terms);
+    arena_init_detached(&image);arena_init_detached(&image_terms);
+    Atom *value=atom_expr2(&terms,atom_symbol(&terms,"CopiedReadValue"),atom_int(&terms,77));
+    Atom *layer=atom_symbol(&terms,"ReadLayer");
+    for(unsigned i=0u;i<96u;i++)value=atom_expr2(&terms,layer,value);
+    Atom *absent=atom_expr2(&terms,atom_symbol(&terms,"AbsentReadOrigin"),value);
+    PrimeNeedSnapshot root={0},allocated={0},context={0},running={0},entrance={0};
+    PrimeNeedSnapshot changed={0},stored={0},produced={0},shadow={0};
+    PrimeNeedSnapshot import_shadow={0},cell_shadow={0};
+    uint64_t dependency=0u,result=0u,stored_cell=0u,shadow_cell=0u,import_cell=0u;
+    assert(prime_need_snapshot_begin(&root));
+    assert(prime_need_snapshot_allocate(&source,&root,value,&allocated,&dependency));
+    assert(prime_need_snapshot_allocate(&source,&allocated,value,&context,&result));
+    uint64_t evaluator=prime_need_fresh_evaluator_id();
+    assert(prime_need_snapshot_start_evaluation(&source,&context,dependency,evaluator,&running));
+    assert(prime_need_snapshot_resolve_value(&source,&running,dependency,evaluator,value,&entrance));
+    evaluator=prime_need_fresh_evaluator_id();
+    assert(prime_need_snapshot_start_evaluation(&source,&context,dependency,evaluator,&running));
+    assert(prime_need_snapshot_resolve_value(&source,&running,dependency,evaluator,
+        atom_int(&terms,9),&changed));
+    PrimeNeedReadCapture *capture=prime_need_read_capture_new(&context,&entrance);
+    assert(capture);
+    PrimeNeedReadScope scope;prime_need_read_scope_enter(&scope,capture);
+    PrimeNeedCellView cell;
+    assert(prime_need_snapshot_lookup(&entrance,dependency,&cell) && cell.cached==value);
+    assert(!prime_need_snapshot_lookup(&entrance,UINT64_MAX,&cell));
+    assert(!prime_need_snapshot_find_imported_cell(&entrance,119u,absent,NULL));
+    assert(prime_need_snapshot_allocate_persisted(&source,&entrance,absent,113u,
+        &stored,&stored_cell));
+    evaluator=prime_need_fresh_evaluator_id();
+    assert(prime_need_snapshot_start_evaluation(&source,&stored,result,evaluator,&running));
+    assert(prime_need_snapshot_resolve_value(&source,&running,result,evaluator,value,&produced));
+    prime_need_read_scope_leave(&scope);
+    assert(prime_need_read_capture_complete(capture));
+    assert(prime_need_snapshot_allocate_persisted(&source,&entrance,absent,113u,
+        &shadow,&shadow_cell) && shadow_cell!=stored_cell);
+    assert(prime_need_snapshot_allocate_persisted(&source,&entrance,absent,119u,
+        &import_shadow,&import_cell));
+    assert(prime_need_snapshot_allocate_named(&source,&entrance,absent,UINT64_MAX,&cell_shadow));
+
+    AtomDeepCopyArenaPair pairs[]={{&source,&image},{&terms,&image_terms}};
+    AtomDeepCopySession *session=atom_deep_copy_session_new(&image);assert(session);
+    assert(atom_deep_copy_session_set_arena_map(session,pairs,2u));
+    PrimeNeedReadCapture *copy=prime_need_read_capture_copy_with_session(&image,session,capture);
+    assert(copy && copy!=capture && prime_need_read_capture_complete(copy));
+    PrimeNeedSnapshot mapped_context=context,mapped_entrance=entrance;
+    PrimeNeedSnapshot mapped_produced=produced,mapped_changed=changed,mapped_shadow=shadow;
+    PrimeNeedSnapshot mapped_import_shadow=import_shadow,mapped_cell_shadow=cell_shadow;
+    assert(prime_need_snapshot_copy_with_session(&image,session,&mapped_context));
+    assert(prime_need_snapshot_copy_with_session(&image,session,&mapped_entrance));
+    assert(prime_need_snapshot_copy_with_session(&image,session,&mapped_produced));
+    assert(prime_need_snapshot_copy_with_session(&image,session,&mapped_changed));
+    assert(prime_need_snapshot_copy_with_session(&image,session,&mapped_shadow));
+    assert(prime_need_snapshot_copy_with_session(&image,session,&mapped_import_shadow));
+    assert(prime_need_snapshot_copy_with_session(&image,session,&mapped_cell_shadow));
+    Atom *mapped_value=atom_deep_copy_session_copy(session,value);
+    Atom *mapped_absent=atom_deep_copy_session_copy(session,absent);
+    assert(mapped_value && mapped_value!=value && mapped_absent && mapped_absent!=absent);
+    assert(prime_need_read_capture_has_cuts(copy,&mapped_context,&mapped_entrance));
+    assert(!prime_need_read_capture_has_cuts(copy,&context,&entrance));
+    assert(prime_need_snapshot_lookup(&mapped_produced,result,&cell) && cell.cached==mapped_value);
+
+    PrimeNeedReadCapture *unfinished=prime_need_read_capture_new(&context,&entrance);
+    PrimeNeedSnapshot unrelated={0};assert(unfinished && prime_need_snapshot_begin(&unrelated));
+    prime_need_read_scope_enter(&scope,unfinished);
+    assert(!prime_need_snapshot_lookup(&unrelated,result,&cell));
+    prime_need_read_scope_leave(&scope);
+    assert(!prime_need_read_capture_complete(unfinished));
+    PrimeNeedReadCapture *unfinished_copy=prime_need_read_capture_copy_with_session(&image,session,unfinished);
+    PrimeNeedSnapshot unchanged=mapped_context;
+    assert(unfinished_copy && !prime_need_read_capture_complete(unfinished_copy) &&
+        prime_need_snapshot_import_production_checked(&image,unfinished_copy,&mapped_produced,
+            result,&mapped_entrance,&unchanged)==CETTA_MATCH_INCOMPLETE &&
+        memcmp(&unchanged,&mapped_context,sizeof(unchanged))==0);
+    prime_need_read_capture_free(unfinished_copy);prime_need_read_capture_free(unfinished);
+
+    /* Missing/identity owners, a wrong target and destructive source
+     * forwarding cannot justify this non-destructive metadata transport. */
+    for(unsigned mode=0u;mode<6u;mode++) {
+        Arena target;arena_init_detached(&target);
+        AtomDeepCopySession *bad=atom_deep_copy_session_new(&target);assert(bad);
+        AtomDeepCopyArenaPair selected[]={{&source,mode==1u?&source:&target},
+            {&terms,&target}};
+        if(mode<2u)assert(atom_deep_copy_session_set_arena_map(bad,selected+(!mode),mode?2u:1u));
+        if(mode==3u)assert(atom_deep_copy_session_forward_region(bad,&terms,(ArenaMark){0}));
+        unsigned resolved=0u;
+        if(mode==4u)atom_deep_copy_session_set_resolver(bad,read_capture_resolver,&resolved);
+        if(mode==5u) {
+            assert(!atom_deep_copy_session_copy(bad,NULL) && atom_deep_copy_session_failed(bad));
+            allocation_count=0u;fail_at=0u;probing=true;
+        }
+        uint32_t original_arena=value->arena_id;
+        assert(!prime_need_read_capture_copy_with_session(mode==2u?&image_terms:&target,bad,capture));
+        probing=false;
+        assert(!resolved && (mode!=5u || allocation_count==0u));
+        assert(prime_need_read_capture_complete(capture) &&
+            prime_need_read_capture_has_cuts(capture,&context,&entrance) &&
+            value->arena_id==original_arena);
+        atom_deep_copy_session_free(bad);arena_free(&target);
+    }
+
+    /* Preallocate arena blocks so the sweep targets fallible graph/capture
+     * preparation, independently of the arena's backing-allocation policy. */
+    size_t allocations=0u;
+    for(size_t fault=0u;;fault++) {
+        Arena target,target_terms;arena_init_detached(&target);arena_init_detached(&target_terms);
+        (void)arena_alloc(&target,1u);(void)arena_alloc(&target_terms,1u);
+        AtomDeepCopySession *attempt=atom_deep_copy_session_new(&target);assert(attempt);
+        AtomDeepCopyArenaPair map[]={{&source,&target},{&terms,&target_terms}};
+        assert(atom_deep_copy_session_set_arena_map(attempt,map,2u));
+        allocation_count=0u;fail_at=fault;probing=true;
+        PrimeNeedReadCapture *candidate=prime_need_read_capture_copy_with_session(&target,attempt,capture);
+        probing=false;
+        bool done=candidate!=NULL;
+        if(done) {allocations=allocation_count;assert(fault==allocations);}
+        else assert(allocation_count>=fault+1u);
+        assert(prime_need_read_capture_complete(capture) &&
+            prime_need_read_capture_has_cuts(capture,&context,&entrance));
+        prime_need_read_capture_free(candidate);
+        atom_deep_copy_session_free(attempt);arena_free(&target_terms);arena_free(&target);
+        if(done)break;
+    }
+    prime_need_read_capture_free(capture);
+    atom_deep_copy_session_free(session);
+    arena_free(&terms);arena_free(&source);
+
+    /* The copied support still distinguishes a changed positive dependency
+     * and a conflicting insertion after both source arenas have retired. */
+    PrimeNeedSnapshot imported=mapped_context,saved=imported;
+    assert(prime_need_snapshot_import_production_checked(&image,copy,&mapped_produced,
+        result,&mapped_changed,&imported)==CETTA_MATCH_REFUTED &&
+        memcmp(&imported,&saved,sizeof(saved))==0);
+    assert(prime_need_snapshot_import_production_checked(&image,copy,&mapped_produced,
+        result,&mapped_shadow,&imported)==CETTA_MATCH_REFUTED &&
+        memcmp(&imported,&saved,sizeof(saved))==0);
+    assert(prime_need_snapshot_import_production_checked(&image,copy,&mapped_produced,
+        result,&mapped_import_shadow,&imported)==CETTA_MATCH_REFUTED &&
+        memcmp(&imported,&saved,sizeof(saved))==0);
+    assert(prime_need_snapshot_import_production_checked(&image,copy,&mapped_produced,
+        result,&mapped_cell_shadow,&imported)==CETTA_MATCH_REFUTED &&
+        memcmp(&imported,&saved,sizeof(saved))==0);
+    assert(prime_need_snapshot_import_production(&image,copy,&mapped_produced,result,
+        &mapped_entrance,&imported));
+    assert(prime_need_snapshot_lookup(&imported,result,&cell) && cell.cached==mapped_value);
+    Atom *leaf=cell.cached;
+    for(unsigned i=0u;i<96u;i++) {
+        assert(leaf->kind==ATOM_EXPR && leaf->expr.len==2u &&
+            atom_is_symbol(leaf->expr.elems[0],"ReadLayer"));
+        leaf=leaf->expr.elems[1];
+    }
+    assert(!strcmp(atom_to_string(&image_terms,leaf),"(CopiedReadValue 77)"));
+    uint64_t found=0u;
+    assert(prime_need_snapshot_find_imported_cell(&imported,113u,mapped_absent,&found) &&
+        found==stored_cell);
+    prime_need_read_capture_free(copy);arena_free(&image_terms);arena_free(&image);
+    printf("PASS: independent read support survives source retirement; %zu allocation refusals preserve both cuts\n",allocations);
 }
 
 static void check_capture_allocation_refusal(Arena *arena) {
@@ -335,6 +582,7 @@ int main(void) {
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
     g_symbols = &symbols;
+    check_atom_projection_refusal();
     arena_init(&arena);
     check_capture_allocation_refusal(&arena);
     check_state_import_allocation_refusal(&arena);
@@ -406,7 +654,9 @@ int main(void) {
     prime_need_receipt_graph_free(&graph);
     prime_need_receipt_graph_free(&complete);
     check_reader_context_refusal();
+    check_reader_copy_refusal();
     check_production_support_refusal(&arena);
+    check_read_capture_transport();
     prime_need_receipt_graph_free(&graph);
     arena_free(&arena);
     symbol_table_free(&symbols);

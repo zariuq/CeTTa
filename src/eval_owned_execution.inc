@@ -537,7 +537,8 @@ static CettaOwnedExecutionStep eval_owned_residual_next(void *context,
                                    : cetta_call_completed_value(value),
         .environment = &outcome->env,
     };
-    returned->outcome.result_form = work->normalize_result
+    returned->outcome.result_form = work->normalize_result && !outcome->delayed &&
+        outcome->result_form==CETTA_CALL_RESULT_EXPRESSION
         ? CETTA_CALL_RESULT_COMPLETED_VALUE : outcome->result_form;
     return CETTA_OWNED_EXECUTION_RETURN;
 }
@@ -614,10 +615,19 @@ static bool eval_owned_residual_continue_ready(void *context,
         *execution = proposed;
         return true;
     }
-    /* This source adapter admits only inert completed values. A value
-     * outside that fragment must not be reinterpreted as source, and a
-     * refusal after production must not restart the producer. */
-    if (!normalized && form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+    /* HE already has an explicit completed-value representation. Copy the
+     * mark onto the returned value; never mutate the producer's syntax. */
+    if (form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
+        eval_current_language_id() == CETTA_LANGUAGE_HE) {
+        value=he_answer_as_value(residual->arena,value);
+        if (!value) {
+            residual->ok=false;eval_mark_incomplete(CETTA_EVAL_INCOMPLETE_CAPACITY);
+            return false;
+        }
+    }
+    /* Other source adapters retain their existing admission boundary. */
+    if (eval_current_language_id() != CETTA_LANGUAGE_HE &&
+        !normalized && form == CETTA_CALL_RESULT_COMPLETED_VALUE &&
         !atom_is_constructor_normal_form(
             residual->answers->space, residual->arena, value, -1)) {
         eval_mark_interrupted(CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
@@ -631,13 +641,24 @@ static bool eval_owned_residual_continue_ready(void *context,
     bind->child.owns_selected = true;
     BindingsIterator captures = {.bindings = residual->captures};
     Binding capture;
-    while (residual->captures && bindings_iterator_next(&captures, &capture))
-        if (!bindings_builder_add_id_fresh(&bind->child.selected,
-                capture.var_id, capture.spelling, capture.value.skeleton))
-            goto refused;
+    while (residual->captures && bindings_iterator_next(&captures, &capture)) {
+        Atom *captured=binding_value_materialize(residual->arena,capture.value);
+        if (eval_current_language_id()==CETTA_LANGUAGE_HE)
+            captured=he_answer_as_value(residual->arena,captured);
+        if (!captured || !bindings_builder_add_id_fresh(&bind->child.selected,
+                capture.var_id, capture.spelling, captured)) goto refused;
+    }
     if (!bindings_builder_add_var_fresh(&bind->child.selected,
-            residual->hole,returned->outcome.term)) goto refused;
+            residual->hole,value)) goto refused;
     bind->child.bindings = bindings_builder_bindings(&bind->child.selected);
+    if (form == CETTA_CALL_RESULT_EXPRESSION) {
+        /* Source syntax is inserted before the caller interprets it. A
+         * completed value instead stays in its ready binding below. */
+        bind->child.body = bindings_apply_if_vars(bind->child.bindings,
+            residual->arena, residual->resumption);
+        if (!bind->child.body)
+            goto refused;
+    }
     *execution = proposed;
     return true;
 refused:

@@ -4288,6 +4288,31 @@ static Atom *library_call_expr(Arena *a, Atom *head, Atom **args, uint32_t nargs
     return atom_expr(a, elems, nargs + 1);
 }
 
+/* Native services receive atom values, without evaluator-private carriers.
+ * This projection inspects syntax only; demand and activation belong to
+ * the caller's declaration and to the service's explicit interpreter. */
+static Atom *library_native_value(Arena *arena, Atom *value) {
+    return eval_current_language_id() == CETTA_LANGUAGE_PRIME
+        ? atom_prime_held_strip(arena, value) : value;
+}
+
+static Atom **library_native_arguments(Arena *arena, Atom **arguments,
+                                       uint32_t count) {
+    Atom **visible = arguments;
+    for (uint32_t i = 0u; i < count; i++) {
+        Atom *value = library_native_value(arena, arguments[i]);
+        if (!value) return NULL;
+        if (value != arguments[i]) {
+            if (visible == arguments) {
+                visible = arena_alloc(arena, sizeof(*visible) * count);
+                memcpy(visible, arguments, sizeof(*visible) * count);
+            }
+            visible[i] = value;
+        }
+    }
+    return visible;
+}
+
 static Atom *library_signature_error(Arena *a, Atom *head, Atom **args,
                                      uint32_t nargs, const char *message) {
     return atom_error(a, library_call_expr(a, head, args, nargs),
@@ -5601,7 +5626,11 @@ static CettaOwnedExecutionStep library_native_execution_next(void *raw,
             job->returned = true;
             return CETTA_OWNED_EXECUTION_RETURN;
         }
-        Atom *input = job->call->expr.elems[1];
+        Atom *input = library_native_value(job->arena, job->call->expr.elems[1]);
+        if (!input) {
+            *completion = CETTA_EVAL_INCOMPLETE_CAPACITY;
+            return CETTA_OWNED_EXECUTION_INTERRUPTED;
+        }
         if (atom_is_symbol_id(job->call->expr.elems[0], g_builtin_syms.lib_rhometta_values))
             job->values = rhocalc_values_open(job->arena, input);
         else {
@@ -12865,6 +12894,12 @@ static Atom *cetta_library_dispatch_native_value(
 bool cetta_library_call_native(CettaLibraryContext *ctx, Space *space,
                                Arena *a, Atom *head, Atom **args,
                                uint32_t nargs, CettaCallOutcome *out) {
+    Atom **visible = library_native_arguments(a, args, nargs);
+    if (nargs && !visible) {
+        *out = cetta_call_interrupted();
+        return true;
+    }
+    args = visible;
     if (ctx && cetta_group_sum_call(a, head, args, nargs, out)) return true;
     if (ctx && cetta_key_factorize_call(space, a, head, args, nargs, out)) return true;
     if (ctx && (ctx->active_mask & CETTA_LIBRARY_TENSOR) &&
@@ -12933,6 +12968,12 @@ bool cetta_library_call_native_prepared_view(
     uint32_t nargs, CettaCallOutcome *out) {
     if (!ctx || !a || !head || !out)
         return false;
+    Atom **visible = library_native_arguments(a, args, nargs);
+    if (nargs && !visible) {
+        *out = cetta_call_interrupted();
+        return true;
+    }
+    args = visible;
 #if CETTA_BUILD_WITH_JSON_GSLT
     if (ctx->active_mask & CETTA_LIBRARY_JSON) {
         Atom *value = NULL;

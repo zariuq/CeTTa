@@ -73,7 +73,7 @@
 ; The head symbol and arity of an equation, read from its code.  (The result
 ; type is a variable: a declared result type Atom would hold the body, see
 ; inv_04 gap 2.)
-(: form-signature (-> (Data Atom) $r))
+(: form-signature (-> Atom $r))
 (= (form-signature (= $lhs $rhs)) (Defines (car-atom $lhs) (- (size-atom $lhs) 1)))
 (= (signature (quote $form)) (form-signature $form))
 

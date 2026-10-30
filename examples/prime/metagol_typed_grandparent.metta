@@ -19,13 +19,13 @@
 ; The relation vocabulary and the constructor instances this problem admits.
 (: MIL.Rel (-> Type Type Type))
 (: MIL.Chain
-   (-> (MIL.Rel Atom Atom)
-       (MIL.Rel Atom Atom)
-       (MIL.Rel Atom Atom)))
+   (-> (MIL.Rel Proc Proc)
+       (MIL.Rel Proc Proc)
+       (MIL.Rel Proc Proc)))
 (: MIL.Choice
-   (-> (MIL.Rel Atom Atom)
-       (MIL.Rel Atom Atom)
-       (MIL.Rel Atom Atom)))
+   (-> (MIL.Rel Proc Proc)
+       (MIL.Rel Proc Proc)
+       (MIL.Rel Proc Proc)))
 
 (: r-mother (MIL.Rel Atom Atom))
 (: r-father (MIL.Rel Atom Atom))
@@ -36,14 +36,14 @@
 !(add-atom &gp-kb (: MIL.Rel (-> Type Type Type)))
 !(add-atom &gp-kb
    (: MIL.Chain
-      (-> (MIL.Rel Atom Atom)
-          (MIL.Rel Atom Atom)
-          (MIL.Rel Atom Atom))))
+      (-> (MIL.Rel Proc Proc)
+          (MIL.Rel Proc Proc)
+          (MIL.Rel Proc Proc))))
 !(add-atom &gp-kb
    (: MIL.Choice
-      (-> (MIL.Rel Atom Atom)
-          (MIL.Rel Atom Atom)
-          (MIL.Rel Atom Atom))))
+      (-> (MIL.Rel Proc Proc)
+          (MIL.Rel Proc Proc)
+          (MIL.Rel Proc Proc))))
 !(add-atom &gp-kb (: r-mother (MIL.Rel Atom Atom)))
 !(add-atom &gp-kb (: r-father (MIL.Rel Atom Atom)))
 

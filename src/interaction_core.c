@@ -239,6 +239,7 @@ static bool ia_rights_from(Arena *a, Atom *list, uint32_t *out) {
         return false;
     if (atom_contains_prime_held(list))
         list = atom_prime_held_strip(a, list);
+    if (!list) return false;
     if (list->kind == ATOM_SYMBOL) {
         for (size_t j = 0; j < 4u; j++)
             if (atom_is_symbol(list, g_rights[j].name)) {
@@ -852,8 +853,13 @@ static CettaMatchCompletion ia_match(Atom *pattern, Atom *value, Bindings *bindi
                                      Arena *a, CettaFrameIdentity epoch) {
     BindingsBuilder builder;
     bindings_builder_init_owned(&builder, bindings);
-    CettaMatchCompletion result = match_atoms_epoch_builder_checked(
-        pattern, value, &builder, a, epoch, UINT64_MAX);
+    /* Stored rows introduce a fresh activation. A computed result already
+     * has materialized identities, including free variables shared with
+     * the remaining sources; it must not acquire a second rule frame. */
+    CettaMatchCompletion result = cetta_frame_identity_is_none(epoch)
+        ? match_atoms_builder_checked(pattern, value, &builder, a, UINT64_MAX)
+        : match_atoms_epoch_builder_checked(
+            pattern, value, &builder, a, epoch, UINT64_MAX);
     bindings_builder_take(&builder, bindings);
     return result;
 }
@@ -3158,6 +3164,7 @@ typedef struct {
     bool waiting;
     bool computing; /* a borrowed evaluator owns the pending request */
     bool cancelled;
+    bool retired;
     uint64_t request;
     Atom *firing; /* as parked, for an await that does not fire now */
     Atom *current; /* the alternative being attempted */
@@ -3220,17 +3227,30 @@ static void ia_machine_retain(void *resource) {
     atomic_fetch_add(&m->holders, 1u);
 }
 
+/* Issued tokens may outlive the terminal reply so that reusing one can be
+ * refused. They need the request identity, not the finished walk's storage.
+ * Replies and parked firings have already acquired their own Atom owners. */
+static void ia_machine_retire(IaMachine *m) {
+    if (!m || m->retired)
+        return;
+    m->retired = true;
+    ia_machine_reset_attempt(m);
+    free(m->jobs); m->jobs = NULL; m->capjobs = 0u;
+    free(m->ctxs); m->ctxs = NULL; m->capctxs = 0u;
+    free(m->all_seen.items);
+    m->all_seen = (IaList){0};
+    free(m->alts); m->alts = NULL; m->nalts = m->alt_i = 0u;
+    free(m->woken); m->woken = NULL; m->nwoken = m->woken_i = 0u;
+    m->region = m->dest = m->firing = m->current = NULL;
+    m->let_job = (IaJob){0};
+    arena_free(&m->arena);
+}
+
 static void ia_machine_release(void *resource) {
     IaMachine *m = resource;
     if (!m || atomic_fetch_sub(&m->holders, 1u) != 1u)
         return;
-    ia_machine_reset_attempt(m);
-    free(m->jobs);
-    free(m->ctxs);
-    free(m->all_seen.items);
-    free(m->alts);
-    free(m->woken);
-    arena_free(&m->arena);
+    ia_machine_retire(m);
     free(m);
 }
 
@@ -3716,7 +3736,7 @@ static bool ia_agenda_next(IaMachine *m);
 static bool ia_parked_update(uint64_t ticket, Atom *seen, bool drop);
 static uint64_t ia_park(Atom *firing, bool always, Atom *seen);
 
-static Atom *ia_machine_run(IaMachine *m, Arena *out) {
+static Atom *ia_machine_run_inner(IaMachine *m, Arena *out) {
     Arena *a = &m->arena;
     g_ia_lane = m->lane;
     g_ia_raw = m->raw_values;
@@ -3838,6 +3858,15 @@ static Atom *ia_machine_run(IaMachine *m, Arena *out) {
             return ia_done(out, atom_expr2(out, atom_symbol(out, "ia:fired"), fired));
         }
     }
+}
+
+static Atom *ia_machine_run(IaMachine *m, Arena *out) {
+    Atom *result = ia_machine_run_inner(m, out);
+    if (!result)
+        ia_machine_cancel(m);
+    if (!m->waiting)
+        ia_machine_retire(m);
+    return result;
 }
 
 /* Resume after a `let`: each value matched against its pattern continues
@@ -4185,6 +4214,9 @@ static bool op_compute(Space *space, Arena *a, Atom **args, uint32_t nargs,
         if (!error)
             error = atom_error(a, atom_symbol(a, "transform"),
                 atom_symbol(a, "incomplete-computation"));
+        /* A host's diagnostic may still cite the stored request. */
+        error = atom_deep_copy(a, error);
+        ia_machine_retire(m);
         return ia_answer(out, ia_done(a, error));
     }
     Atom *reply = atom_expr(a, values, (CettaExprLen)len);
@@ -4473,7 +4505,9 @@ CettaInteractionOutcome cetta_interaction_fire(
             if (m->refused)
                 error = atom_error(a, atom_symbol(a, "transform"),
                     atom_expr2(a, atom_symbol(a, "refused"), atom_deep_copy(a, m->refused)));
+            error = atom_deep_copy(a, error);
             ia_machine_cancel(m);
+            ia_machine_retire(m);
             m->host = NULL;
             g_ia_host = NULL;
             ia_machine_release(m);

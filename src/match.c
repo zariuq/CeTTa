@@ -4220,19 +4220,24 @@ bool bindings_promote_logical_atoms_to_arena(Bindings *bindings,
     return promoted;
 }
 
-static bool bindings_occurrence_readers_qualified(const PrimeOccurrence *occurrence,bool owned_copy,const Arena *owner) {
-    return !occurrence || (owned_copy ? !occurrence->reader_context :
+static bool bindings_occurrence_readers_qualified(const PrimeOccurrence *occurrence,bool owned_copy,
+    const Arena *owner,const AtomDeepCopySession *session) {
+    return !occurrence || (owned_copy ? (!occurrence->reader_context ||
+        prime_need_reader_context_copy_lookup(occurrence->reader_context,session)!=NULL) :
         prime_need_reader_context_can_promote(occurrence->reader_context,&occurrence->prime_need,owner)==CETTA_MATCH_MATCHED);
 }
 
 static bool bindings_promote_occurrence_with_session(
     Arena *dst, AtomDeepCopySession *copy_session, PrimeOccurrence *occurrence,
     bool owned_copy) {
-    if (!occurrence || !bindings_occurrence_readers_qualified(occurrence,owned_copy,dst) ||
+    if (!occurrence || !bindings_occurrence_readers_qualified(occurrence,owned_copy,dst,copy_session) ||
         !atom_deep_copy_session_targets(copy_session, dst))
         return false;
     PrimeNeedReaderContext *readers=NULL;
-    if(!owned_copy && prime_need_reader_context_promote(occurrence->reader_context,
+    if (owned_copy) {
+        readers=prime_need_reader_context_copy_lookup(occurrence->reader_context,copy_session);
+        prime_need_reader_context_retain(readers);
+    } else if (prime_need_reader_context_promote(occurrence->reader_context,
             &occurrence->prime_need,dst,&readers)!=CETTA_MATCH_MATCHED) return false;
     PrimeOccurrence promoted = *occurrence;
     promoted.reader_context=readers;
@@ -4277,7 +4282,7 @@ bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
 
 bool bindings_promote_atoms_with_session(
     Bindings *bindings, Arena *dst, AtomDeepCopySession *session) {
-    if (!bindings || !bindings_occurrence_readers_qualified(bindings->prime_ext,false,dst) ||
+    if (!bindings || !bindings_occurrence_readers_qualified(bindings->prime_ext,false,dst,session) ||
         !atom_deep_copy_session_targets(session, dst) ||
         !bindings_promote_logical_atoms_with_session(bindings, session))
         return false;
@@ -4287,7 +4292,7 @@ bool bindings_promote_atoms_with_session(
 
 bool bindings_copy_owned_atoms_with_session(
     Bindings *bindings, Arena *dst, AtomDeepCopySession *session) {
-    if (!bindings || bindings_reader_context_view(bindings) ||
+    if (!bindings || !bindings_occurrence_readers_qualified(bindings->prime_ext,true,dst,session) ||
         !atom_deep_copy_session_targets(session, dst) ||
         !bindings_promote_logical_atoms_with_session(bindings, session))
         return false;
@@ -7577,19 +7582,20 @@ bool bindings_builder_promote_prime_atoms_to_arena(
     return ok;
 }
 
-static bool bindings_builder_readers_qualified(const BindingsBuilder *builder,bool owned_copy,const Arena *owner) {
-    if (!bindings_occurrence_readers_qualified(builder->current.prime_ext,owned_copy,owner) ||
+static bool bindings_builder_readers_qualified(const BindingsBuilder *builder,bool owned_copy,
+    const Arena *owner,const AtomDeepCopySession *session) {
+    if (!bindings_occurrence_readers_qualified(builder->current.prime_ext,owned_copy,owner,session) ||
         builder->prime_trail_len>builder->prime_trail_cap ||
         (builder->prime_trail_len && !builder->prime_trail)) return false;
     for (uint32_t i=0u;i<builder->prime_trail_len;i++)
-        if (!bindings_occurrence_readers_qualified(&builder->prime_trail[i],owned_copy,owner)) return false;
+        if (!bindings_occurrence_readers_qualified(&builder->prime_trail[i],owned_copy,owner,session)) return false;
     return true;
 }
 
 static bool bindings_builder_move_prime_atoms_with_session(
         BindingsBuilder *bb, Arena *owner, AtomDeepCopySession *session,
         bool owned_copy) {
-    if (!bb || !bindings_builder_readers_qualified(bb,owned_copy,owner) ||
+    if (!bb || !bindings_builder_readers_qualified(bb,owned_copy,owner,session) ||
         !atom_deep_copy_session_targets(session, owner)) {
         return false;
     }
@@ -7628,7 +7634,7 @@ bool bindings_builder_promote_atoms_to_arena(
 static bool bindings_builder_move_atoms_with_session(
         BindingsBuilder *bb, Arena *owner, AtomDeepCopySession *session,
         bool owned_copy) {
-    if (!bb || !bindings_builder_readers_qualified(bb,owned_copy,owner) ||
+    if (!bb || !bindings_builder_readers_qualified(bb,owned_copy,owner,session) ||
         !atom_deep_copy_session_targets(session, owner))
         return false;
     bool promoted = bindings_promote_logical_atoms_with_session(
@@ -12932,7 +12938,9 @@ bool match_types(Atom *actual, Atom *expected, Bindings *b, Arena *a) {
     if (match_types_held_accepted(actual, expected)) return true;
     /* Atom is the expected-side value top. An actual Atom is not evidence for
        an arbitrary concrete expected type. */
-    if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
+    if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
+        (eval_current_language_id && eval_current_language_id()==CETTA_LANGUAGE_PRIME &&
+            atom_is_symbol_id(expected,g_builtin_syms.prime_proc))) return true;
     if (type_match_uses_space_class_bridge(actual, expected)) {
         return true;
     }
@@ -12944,7 +12952,9 @@ bool match_types(Atom *actual, Atom *expected, Bindings *b, Arena *a) {
 bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb,
                          Arena *a) {
     if (match_types_held_accepted(actual, expected)) return true;
-    if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
+    if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
+        (eval_current_language_id && eval_current_language_id()==CETTA_LANGUAGE_PRIME &&
+            atom_is_symbol_id(expected,g_builtin_syms.prime_proc))) return true;
     if (type_match_uses_space_class_bridge(actual, expected)) {
         return true;
     }
@@ -15101,6 +15111,18 @@ CettaMatchCompletion match_atoms_epoch_builder_checked(
         left, BINDING_VALUE_MATERIALIZED, CETTA_FRAME_IDENTITY_NONE, 0u,
         right, NULL, builder, arena, epoch, BINDING_VALUE_CONTEXTUAL,
         false, NULL, NULL, NULL, &decision, pair_budget, NULL);
+    return decision;
+}
+
+CettaMatchCompletion match_atoms_builder_checked(
+        Atom *left, Atom *right, BindingsBuilder *builder, Arena *arena,
+        uint64_t pair_budget) {
+    CettaMatchCompletion decision = CETTA_MATCH_INCOMPLETE;
+    (void)match_atoms_epoch_views_worklist_checked(
+        left, BINDING_VALUE_MATERIALIZED, CETTA_FRAME_IDENTITY_NONE, 0u,
+        right, NULL, builder, arena, CETTA_FRAME_IDENTITY_NONE,
+        BINDING_VALUE_MATERIALIZED, false, NULL, NULL, NULL,
+        &decision, pair_budget, NULL);
     return decision;
 }
 

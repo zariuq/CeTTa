@@ -15,14 +15,19 @@ static bool source_field_equal(Atom *field, const char *text) {
 /* The same protected view supplies capture and validation. Epochs retain
  * complete decimal uint64 fields; checking does not allocate another token. */
 static Atom *source_view(Arena *arena, Atom *reference, Atom *expected) {
+    /* Observe a returned record through its data carrier without executing
+     * its contents. The record grants no lifetime or write authority. */
+    while (atom_prime_held_is(expected))
+        expected = atom_prime_held_payload(expected);
     if (!reference || reference->kind != ATOM_GROUNDED ||
         reference->ground.gkind != GV_SPACE)
         return atom_expr2(arena, atom_symbol(arena, "Work:Fault"), atom_symbol(arena, "InvalidSource"));
     __attribute__((cleanup(cetta_shared_transition_guard_leave)))
     CettaSharedTransitionGuard transition = {0};
     cetta_shared_transition_guard_enter(&transition);
-    Space *source = eval_resolve_space_read
-        ? eval_resolve_space_read(reference->ground.ptr) : NULL;
+    Space *source = eval_observe_space_read
+        ? eval_observe_space_read(reference->ground.ptr)
+        : eval_resolve_space_read ? eval_resolve_space_read(reference->ground.ptr) : NULL;
     if (!source)
         return atom_expr2(arena, atom_symbol(arena, "Work:Fault"), atom_symbol(arena, "ClosedSource"));
     SpaceReadToken read = space_read_token(source);

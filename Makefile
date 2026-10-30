@@ -167,13 +167,13 @@ ENABLE_PETTA_TYPECHECK_V2 ?= 1
 ENABLE_PETTA_TYPECHECK_CENSUS ?= 0
 ENABLE_LANGDEF_DIAGNOSTIC_BACKENDS ?= 0
 CETTA_PROC_FORK_SPAWN ?= 0
-PRIME_NEED_ALGEBRA_CHECKS := 959
+PRIME_NEED_ALGEBRA_CHECKS := 966
 PRIME_NEED_CLOSURE_CAPTURE_GATE :=
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE :=
 PRIME_EVAL_STACK_GATE :=
 PRIME_EVAL_STACK_STATS_GATE :=
 ifeq ($(ENABLE_PRIME_NEED_CLOSURE_CAPTURE),1)
-PRIME_NEED_ALGEBRA_CHECKS := 968
+PRIME_NEED_ALGEBRA_CHECKS := 975
 PRIME_NEED_CLOSURE_CAPTURE_GATE := test-prime-need-closure-capture
 ifeq ($(ENABLE_RUNTIME_STATS),1)
 PRIME_NEED_CLOSURE_CAPTURE_STATS_GATE := test-prime-need-closure-capture-stats
@@ -3455,6 +3455,9 @@ PRIME_CONFORMANCE_TESTS = \
 	tests/prime/need_explicit_control_negative.metta \
 	tests/prime/function_faults.metta \
 	tests/prime/need_demand_modes.metta \
+	tests/prime/atom_proc_roles.metta \
+	tests/prime/atom_proc_forwarding.metta \
+	tests/prime/held_sequence_iteration.metta \
 	tests/prime/first_class_contexts.metta \
 	tests/prime/if_atom_data_boundary.metta \
 	tests/prime/need_gc_lifetime.metta \
@@ -6977,7 +6980,7 @@ test-abt-scope-construction-candidates: $(BIN)
 test-abt: $(ABT_TEST_BIN) test-abt-mm2-boundary test-rhocalc-abt-substitution test-abt-mutations test-abt-default-signatures test-lib-parse-abt-bridge test-abt-integration-ledger
 	@result=$$(./$(ABT_TEST_BIN) 2>&1); \
 	printf '%s\n' "$$result"; \
-	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 209 209 0)')" -ne 1 ] || \
+	if [ "$$(printf '%s\n' "$$result" | grep -Fxc '(ABTCoreSummary 211 211 0)')" -ne 1 ] || \
 	   [ "$$(printf '%s\n' "$$result" | grep -Fxc 'PASS: iterative capture-avoiding ABT core')" -ne 1 ]; then \
 		echo "FAIL: ABT core exact summary absent or duplicated"; \
 		exit 1; \
@@ -27440,7 +27443,7 @@ test-petta-memoization: $(BIN)
 	@for stem in memo_control memo_policy_limits memo_size_admission memo_answers \
 			memo_effect_boundary memo_equation_projection \
 			memo_direct_foreign_inert memo_inert memo_library \
-			memo_nested_replay; do \
+			memo_nested_replay memo_interaction_reads; do \
 		actual=runtime/test-petta-search-machine-$$stem.out; \
 		expected=tests/petta/search_machine_$$stem.expected; \
 		if [ "$(LIB_PROLOG_ENABLED)" != 1 ] && \
@@ -46899,9 +46902,8 @@ test-tensor: $(BIN) runtime/test_tensor-$(BUILD_OBJ_TAG)
 	python3 tests/support/check_tensor_bulk.py --cetta ./$(BIN)
 
 .PHONY: test-tensor-sequences
-test-tensor-sequences: $(BIN)
+test-tensor-sequences: $(BIN) test-prime-scope-library-spellings
 	python3 tools/library_spelling.py lib/tensor.metta lib/petta/tensor.metta --check
-	python3 tools/library_spelling.py lib/tensor.metta lib/prime/tensor.metta --dialect=prime --check
 	python3 tests/support/check_tensor_sequences.py --cetta ./$(BIN) --output runtime/tensor-sequence-qualification
 
 runtime/test_tensor_screening-$(BUILD_OBJ_TAG): tests/support/test_tensor_screening.c src/tensor_screening.h $(FALLBACK_EVAL_TEST_LINK_OBJ) $(BRIDGE_DEPS)
@@ -50421,7 +50423,7 @@ test-prime-scope-migration: $(BIN)
 
 test-prime-scope-library-spellings: $(BIN)
 	@$(CETTA_SCRIPT_RUN_ENV) python3 tools/prime_scope_migration.py \
-		--binary "$(abspath $(BIN))" --libraries lib --check
+		--binary "$(abspath $(BIN))" --libraries lib --tracked-only --check
 
 # This optional gate consumes the separately kernel-checked reference corpus.
 test-lean: test-prime-scope-translation-reference

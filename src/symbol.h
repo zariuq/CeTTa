@@ -865,6 +865,7 @@ static inline SymbolSpelling symbol_spelling(
     X(hol_colon_interpret, "hol:interpret") \
     X(petta_decons, "decons") \
     X(prime_data, "Data") \
+    X(prime_proc, "Proc") \
     X(prime_lam, "lam") \
     X(prime_meta, "meta") \
     X(prime_new, "new") \
@@ -904,7 +905,7 @@ static inline SymbolSpelling symbol_spelling(
     X(petta_msort) X(petta_transaction) X(petta_with_mutex) \
     X(petta_min) X(petta_max) X(petta_decons)
 #define CETTA_BUILTIN_CONSTRUCTOR_SYMBOL_FIELDS(X) \
-    X(prime_data) X(subtype)
+    X(prime_data) X(prime_proc) X(subtype)
 
 /* Libraries may publish native primitives under their public names. The
  * shared registry supplies dispatch and operand-observation capability;

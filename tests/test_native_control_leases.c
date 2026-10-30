@@ -4176,7 +4176,7 @@ static void owned_authority_refusal_cases(void) {
             caller.pure_authority=mode==2u;
             bool external=parent.pure_authority || caller.pure_authority;
             parent.failed=false;parent.completion=CETTA_EVAL_COMPLETE;
-            caller.failed=false;
+            parent.driver.failed=false;caller.failed=false;
             child.failed=false;child.driver.failed=false;
             child.completion=CETTA_EVAL_COMPLETE;
             completion=(CettaEvalEpisode){0};
@@ -5455,7 +5455,7 @@ static void stored_judgment_syntax_case(unsigned which) {
     Atom *variable=atom_var(&arena,"captured");
     assert(bindings_add_var_owned(&lexical,variable,atom_int(&arena,17)));
     Atom *term=atom_expr2(&arena,atom_symbol(&arena,"println!"),variable),*ref=NULL;
-    assert(prime_need_allocate_source_argument_ref(&arena,term,prime_need_fresh_source_occurrence(),1u,&lexical,&local,&ref));
+    assert(prime_need_allocate_source_argument_ref(&arena,term,prime_need_fresh_source_occurrence(),1u, PRIME_NEED_SOURCE_INFERRED,&lexical,&local,&ref));
     PrimeNeedSnapshot world=*bindings_need_view(&local),other;
     uint64_t id=0u;PrimeNeedCellView before,after;
     assert(prime_need_ref_belongs_to(ref,&world,&id));
@@ -5591,7 +5591,7 @@ static void dependency_view_case(unsigned which) {
     Bindings lexical, local; bindings_init(&lexical); bindings_init(&local);
     Atom *reference = NULL;
     assert(prime_need_allocate_source_argument_ref(
-        &arena, origin, prime_need_fresh_source_occurrence(), 1u,
+        &arena, origin, prime_need_fresh_source_occurrence(), 1u, PRIME_NEED_SOURCE_INFERRED,
         &lexical, &local, &reference));
     uint64_t cell_id = 0u;
     assert(prime_need_ref_belongs_to(reference, bindings_need_view(&local), &cell_id));
@@ -5711,7 +5711,7 @@ static void pattern_root_case(unsigned which) {
     if(which==13u)raw=atom_error(&arena,raw,atom_symbol(&arena,"child-fault"));
     Atom *child=NULL;
     assert(prime_need_allocate_source_argument_ref(&arena,raw,
-        prime_need_fresh_source_occurrence(),1u,&env,&branch,&child));
+        prime_need_fresh_source_occurrence(),1u, PRIME_NEED_SOURCE_INFERRED,&env,&branch,&child));
     bindings_replace(&env,&branch);
     uint64_t child_id=0u;
     assert(prime_need_ref_belongs_to(child,bindings_need_view(&env),&child_id));
@@ -5745,7 +5745,7 @@ static void pattern_root_case(unsigned which) {
     if(which==12u) {
         assert(prime_need_allocate_source_argument_ref(&arena,
             parse_one(&arena,"(superpose ())"),prime_need_fresh_source_occurrence(),
-            2u,&env,&branch,&root));
+            2u, PRIME_NEED_SOURCE_INFERRED,&env,&branch,&root));
         bindings_replace(&env,&branch);
     } else assert(prime_need_ready_value_ref(&arena,payload,&env,&root));
     uint64_t root_id=0u;
@@ -6167,24 +6167,43 @@ static void binding_role_case(unsigned which) {
         }
         assert(eval_current_language_id()==(which==23u?CETTA_LANGUAGE_PRIME:
             which==24u?CETTA_LANGUAGE_HE:CETTA_LANGUAGE_PETTA));
+        /* The CLI prelude supplies this HE contract; a bare C Space does not. */
+        if (which==24u) space_add(&space,
+            br_parse(&arena,"(: cons-atom (-> Atom Expression Atom))"));
         Atom *hole=atom_var(&arena,"br-resumption-slot");
         Atom *callable=br_parse(&arena,"(+ 2 3)");
         assert(bindings_add_var(&env,variable,atom_int(&arena,19)));
         EvalOwnedAnswers answers={.space=&space};
-        for(unsigned ready=0u;ready<2u;ready++) {
+        for(unsigned ready=0u;ready<3u;ready++) {
+            if (ready==2u && which==23u) continue;
+            Atom *packet_atom=ready==2u ? br_parse(&arena,"(cons-atom + (2 3))") : callable;
             CettaCallOutcome returned=cetta_call_failure();
             EvalOwnedResidual residual={.answers=&answers,.arena=&arena,
                 .resumption=atom_expr3(&arena,atom_symbol(&arena,"Pair"),hole,variable),.hole=hole,
                 .consume=br_owned_return,.consumer=&returned,.ok=true};
-            Outcome row;outcome_init(&row);row.atom=callable;
-            row.result_form=ready?CETTA_CALL_RESULT_COMPLETED_VALUE:CETTA_CALL_RESULT_EXPRESSION;
+            Outcome row;outcome_init(&row);row.atom=packet_atom;
+            row.result_form=ready==1u?CETTA_CALL_RESULT_COMPLETED_VALUE:CETTA_CALL_RESULT_EXPRESSION;
             bindings_copy(&row.env,&env);
             CettaEvalEpisode tracker={.completion=CETTA_EVAL_COMPLETE};
             CettaEvalEpisode *prior=g_eval_completion_tracker;g_eval_completion_tracker=&tracker;
-            br_native_calls=0u;br_suspend_native=ready && which!=23u;
-            bool accepted=eval_owned_residual_return(&row,&residual);
+            br_native_calls=0u;br_suspend_native=ready==1u && which!=23u;
+            CettaOwnedReturn packet={
+                .outcome=ready==1u?cetta_call_completed_value(packet_atom):cetta_call_value(packet_atom),
+                .environment=&row.env};
+            EvalOwnedResidualBind child={.residual=&residual};
+            CettaOwnedExecution continuation={0};
+            bool accepted=eval_owned_residual_continue(&child,&packet,&continuation);
+            if(accepted) {
+                CettaOwnedExecutionStep step;
+                do {
+                    step=cetta_owned_execution_sequence(&continuation,UINT64_MAX,
+                        residual.consume,residual.consumer);
+                } while(step==CETTA_OWNED_EXECUTION_PAUSED && !continuation.has_pending);
+                accepted=step==CETTA_OWNED_EXECUTION_COMPLETE;
+                cetta_owned_execution_cancel(&continuation);
+            }
             br_suspend_native=false;g_eval_completion_tracker=prior;
-            if(ready && which!=23u) {
+            if(ready==1u && which==25u) {
                 assert(!accepted && !residual.ok && br_native_calls==0u);
                 assert(tracker.interrupted && tracker.completion==CETTA_EVAL_INCOMPLETE_HOST_FAILURE);
                 assert(returned.kind==CETTA_CALL_FAILURE);
@@ -6208,13 +6227,24 @@ static void binding_role_case(unsigned which) {
             .consume=br_owned_return,.consumer=&returned,.ok=true};
         Outcome row;outcome_init(&row);row.atom=raw;
         row.result_form=CETTA_CALL_RESULT_EXPRESSION;row.delayed=condition;
-        assert(eval_owned_residual_return(&row,&residual));
+        EvalOwnedResidualWork leaf;
+        CettaOwnedExecution producer;
+        eval_owned_residual_open(&leaf,&residual,NULL,NULL,&producer);
+        leaf.started=true;
+        outcome_set_add_existing(&leaf.values,&row);
+        assert(cetta_owned_execution_sequence(&producer,UINT64_MAX,
+            residual.consume,residual.consumer)==CETTA_OWNED_EXECUTION_COMPLETE);
+        cetta_owned_execution_cancel(&producer);
         assert(returned.kind==CETTA_CALL_SUSPENDED && returned.term==raw &&
             returned.delayed==condition && returned.result_form==CETTA_CALL_RESULT_EXPRESSION);
         returned=cetta_call_failure();residual.hole=atom_var(&arena,"br-conditional-hole");
         residual.resumption=br_parse(&arena,"(+ 2 3)");
         br_native_calls=0u;br_suspend_native=true;
-        assert(!eval_owned_residual_return(&row,&residual));
+        CettaOwnedReturn packet={.outcome=cetta_call_suspended(raw,condition),
+            .environment=&row.env};
+        EvalOwnedResidualBind child={.residual=&residual};
+        CettaOwnedExecution continuation={0};
+        assert(!eval_owned_residual_continue(&child,&packet,&continuation));
         br_suspend_native=false;
         assert(!residual.ok && br_native_calls==0u && returned.kind==CETTA_CALL_FAILURE);
         assert(row.delayed==condition && row.atom==raw);
@@ -6303,7 +6333,28 @@ static void binding_role_case(unsigned which) {
                 .resumption=atom_expr3(&arena,atom_symbol(&arena,"Pair"),hole,atom_int(&arena,19)),
                 .hole=hole,.consume=br_owned_return,.consumer=&returned,.ok=true};
             Outcome row;outcome_init(&row);row.atom=value;
-            assert(eval_owned_residual_return(&row,&residual));
+            CettaOwnedReturn packet={.outcome=cetta_call_value(value),.environment=&row.env};
+            EvalOwnedResidualBind child={.residual=&residual};
+            CettaOwnedExecution continuation={0};
+            assert(eval_owned_residual_continue(&child,&packet,&continuation));
+            CettaOwnedExecutionStep step;
+            unsigned advances=0u;
+            do {
+                assert(++advances<64u);
+                step=cetta_owned_execution_sequence(&continuation,UINT64_MAX,
+                    residual.consume,residual.consumer);
+            } while(step==CETTA_OWNED_EXECUTION_PAUSED && !continuation.has_pending);
+            if (step!=CETTA_OWNED_EXECUTION_COMPLETE) {
+                fprintf(stderr,"Inert continuation dialect=%u step=%u completion=%u ok=%u kind=%u normalization=%zu\n",
+                    dialect,step,continuation.completion,residual.ok,returned.kind,child.normalization.values.len);
+                for(CettaCount i=0u;i<child.normalization.values.len;i++) {
+                    Outcome *row=&child.normalization.values.items[i];
+                    fprintf(stderr,"normalized form=%u delayed=%u value=%s\n",row->result_form,row->delayed!=NULL,
+                        atom_to_string(&arena,outcome_atom_materialize(&arena,row)));
+                }
+            }
+            assert(step==CETTA_OWNED_EXECUTION_COMPLETE);
+            cetta_owned_execution_cancel(&continuation);
             assert(returned.kind==CETTA_CALL_VALUE && returned.result_form==CETTA_CALL_RESULT_COMPLETED_VALUE);
             assert(atom_eq(returned.term,br_parse(&arena,"(Pair (Box 7) 19)")));
             outcome_free_fields(&row);
@@ -6409,7 +6460,7 @@ static void stored_head_case(unsigned which) {
     if(which==2u || which==3u)
         origin=br_parse(&arena,"(superpose ((lam sh:z (Pair A sh:z)) (lam sh:z (Pair B sh:z))))");
     Atom *reference=NULL;
-    assert(prime_need_allocate_source_argument_ref(&arena,origin,prime_need_fresh_source_occurrence(),0u,&lexical,&env,&reference));
+    assert(prime_need_allocate_source_argument_ref(&arena,origin,prime_need_fresh_source_occurrence(),0u, PRIME_NEED_SOURCE_INFERRED,&lexical,&env,&reference));
     uint64_t cell_id=0u;assert(prime_need_ref_belongs_to(reference,bindings_need_view(&env),&cell_id));
     PrimeNeedCellView before,after;assert(prime_need_snapshot_lookup(bindings_need_view(&env),cell_id,&before));
     if(which==4u || which==9u) {
@@ -6436,7 +6487,7 @@ static void stored_head_case(unsigned which) {
     Atom *second=ready;uint64_t second_id=cell_id;
     if(which==3u) {
         Bindings next;Atom *other=NULL;
-        assert(prime_need_allocate_source_argument_ref(&arena,origin,prime_need_fresh_source_occurrence(),0u,&env,&next,&other));
+        assert(prime_need_allocate_source_argument_ref(&arena,origin,prime_need_fresh_source_occurrence(),0u, PRIME_NEED_SOURCE_INFERRED,&env,&next,&other));
         bindings_replace(&env,&next);
         assert(prime_need_ref_belongs_to(other,bindings_need_view(&env),&second_id) && second_id!=cell_id);
         Atom *other_stored=prime_need_persist_data(&arena,other,&env);
@@ -6515,7 +6566,7 @@ static void stored_return_role_case(unsigned which) {
         : br_parse(&arena,"(println! MustNotRunDuringStorage)");
     Atom *reference=NULL;
     assert(prime_need_allocate_source_argument_ref(&arena,origin,
-        prime_need_fresh_source_occurrence(),0u,&lexical,&env,&reference));
+        prime_need_fresh_source_occurrence(),0u, PRIME_NEED_SOURCE_INFERRED,&lexical,&env,&reference));
     uint64_t id=0u;
     assert(prime_need_ref_belongs_to(reference,bindings_need_view(&env),&id));
     PrimeNeedCellView before,after;
@@ -6531,7 +6582,7 @@ static void stored_return_role_case(unsigned which) {
             Bindings leaf_env;Atom *leaf=NULL;
             assert(prime_need_allocate_source_argument_ref(&arena,
                 atom_symbol(&arena,"LeafSource"),
-                prime_need_fresh_source_occurrence(),0u,&env,&leaf_env,&leaf));
+                prime_need_fresh_source_occurrence(),0u, PRIME_NEED_SOURCE_INFERRED,&env,&leaf_env,&leaf));
             bindings_replace(&env,&leaf_env);
             uint64_t leaf_id=0u,leaf_evaluator=prime_need_fresh_evaluator_id();
             PrimeNeedSnapshot leaf_running,leaf_ready;
@@ -6548,7 +6599,7 @@ static void stored_return_role_case(unsigned which) {
         }
         assert(prime_need_allocate_source_argument_ref(&arena,
             child_origin,prime_need_fresh_source_occurrence(),
-            0u,&env,&child_env,&child));
+            0u, PRIME_NEED_SOURCE_INFERRED,&env,&child_env,&child));
         bindings_replace(&env,&child_env);
         uint64_t child_id=0u;PrimeNeedCellView child_view;
         assert(prime_need_ref_belongs_to(child,bindings_need_view(&env),&child_id));
@@ -6922,7 +6973,7 @@ static void numeric_capsule_account_case(unsigned which) {
             Bindings pending;Atom *pending_ref=NULL;
             assert(prime_need_allocate_source_argument_ref(&arena,
                 atom_symbol(&arena,"A"),prime_need_fresh_source_occurrence(),
-                0u,&environment,&pending,&pending_ref));
+                0u, PRIME_NEED_SOURCE_INFERRED,&environment,&pending,&pending_ref));
             bindings_replace(&environment,&pending);
             stored=prime_need_persist_data(&arena,pending_ref,&environment);
             assert(stored && prime_need_is_stored_thunk(stored,NULL,NULL,NULL));
@@ -6931,7 +6982,7 @@ static void numeric_capsule_account_case(unsigned which) {
             Bindings pending;Atom *source_ref=NULL;
             assert(prime_need_allocate_source_argument_ref(&arena,
                 br_parse(&arena,"(+ 100 200)"),
-                prime_need_fresh_source_occurrence(),0u,
+                prime_need_fresh_source_occurrence(),0u, PRIME_NEED_SOURCE_INFERRED,
                 &environment,&pending,&source_ref));
             bindings_replace(&environment,&pending);
             uint64_t id=0u,evaluator=prime_need_fresh_evaluator_id();
@@ -9432,7 +9483,7 @@ static uint64_t retained_reification_case(PrimeNeedReifyMode mode,uint64_t quant
     Atom *origin=parse_one(&source,"(Origin 7)"),*earned=parse_one(&source,"(Earned 99)");
     Atom *reference=NULL;
     assert(prime_need_allocate_source_argument_ref(&source,origin,
-        prime_need_fresh_source_occurrence(),0u,&lexical,&environment,&reference));
+        prime_need_fresh_source_occurrence(),0u, PRIME_NEED_SOURCE_INFERRED,&lexical,&environment,&reference));
     uint64_t cell=0u;assert(prime_need_ref_belongs_to(reference,bindings_need_view(&environment),&cell));
     uint64_t evaluator=prime_need_fresh_evaluator_id();PrimeNeedSnapshot running,completed;
     assert(prime_need_snapshot_start_evaluation(&source,bindings_need_view(&environment),cell,evaluator,&running));
@@ -9474,7 +9525,7 @@ static void retained_reification_currency_case(unsigned damage) {
     Bindings lexical,environment;bindings_init(&lexical);bindings_init(&environment);
     Atom *reference=NULL;
     assert(prime_need_allocate_source_argument_ref(&source,atom_int(&source,7),
-        prime_need_fresh_source_occurrence(),0u,&lexical,&environment,&reference));
+        prime_need_fresh_source_occurrence(),0u, PRIME_NEED_SOURCE_INFERRED,&lexical,&environment,&reference));
     PrimeNeedReification state;
     prime_need_reification_init(&state,&destination,retained_reification_wrap(&source,reference),
         bindings_need_view(&environment),PRIME_NEED_REIFY_OBSERVATION,&environment,NULL,NULL,NULL);
@@ -9577,7 +9628,7 @@ static void retained_preparation_failure_case(void) {
     Outcome row;outcome_init(&row);Bindings lexical;bindings_init(&lexical);
     Atom *reference=NULL;
     assert(prime_need_allocate_source_argument_ref(&arena,atom_int(&arena,7),
-        prime_need_fresh_source_occurrence(),0u,&lexical,&row.env,&reference));
+        prime_need_fresh_source_occurrence(),0u, PRIME_NEED_SOURCE_INFERRED,&lexical,&row.env,&reference));
     Atom *cycle=atom_expr2(&arena,atom_symbol(&arena,"Cycle"),atom_int(&arena,0));
     cycle->expr.elems[1]=cycle;cycle->structural_facts=0u;row.atom=cycle;
     PrimeNativeControl *control=calloc(1u,sizeof(*control));assert(control);control->driver.arena=&arena;
@@ -10043,6 +10094,9 @@ static void ordinary_source_delivery_check(OrdinarySourceDelivery *delivery,
     Arena arena;arena_init_detached(&arena);
     for(size_t i=0u;i<delivery->count;i++) {
         const CettaOwnedReturn *returned=cetta_owned_return_image_view(delivery->images[i]);
+        if(i>=count || !atom_eq(returned->outcome.term,parse_one(&arena,expected[i])))
+            fprintf(stderr,"Source delivery %zu actual=%s expected=%s\n",i,
+                atom_to_string(&arena,returned->outcome.term),i<count?expected[i]:"<no row>");
         CHECK(i<count && atom_eq(returned->outcome.term,parse_one(&arena,expected[i])));
         CHECK(returned->outcome.kind==CETTA_CALL_VALUE);
         CHECK(returned->environment);
@@ -11795,7 +11849,7 @@ static void payload_top_prelude_cases(Arena *arena,const RhocalcEvalContext *con
     CHECK(bindings_add_var_owned(&lexical,variable,atom_int(arena,17)));
     Atom *term=atom_expr3(arena,atom_symbol(arena,"+"),variable,atom_int(arena,1)),*ref=NULL;
     CHECK(prime_need_allocate_source_argument_ref(arena,term,prime_need_fresh_source_occurrence(),
-        1u,&lexical,&local,&ref));
+        1u, PRIME_NEED_SOURCE_INFERRED,&lexical,&local,&ref));
     Atom *stored=prime_need_persist_data(arena,ref,&local);
     CHECK(stored && prime_need_is_stored_thunk(stored,NULL,NULL,NULL));
     Registry registry;registry_init(&registry);registry_bind(&registry,"&saved",stored);
@@ -13643,7 +13697,7 @@ static void equation_observation_cohort_cases(void) {
         .image_storage=&destination};
     PrimeNeedEquationContinuation *image = NULL;
     continuation.cohort_owner = &continuation;
-    CHECK(parent_copy_equation_shell(&copy,&continuation,&image));
+    CHECK(parent_copy_equation_shell(&copy,&continuation,&image,NULL));
     CHECK(image && parent_copy_equation(&copy,&continuation,image) &&
         image->cohort_owner==image && image->cohort_owner!=&continuation &&
         image->plans!=plans && image->plans[0].equation!=plans[0].equation &&
@@ -15849,7 +15903,10 @@ static void call_source_freshening_controls(Space *space,Arena *syntax,const Bin
     /* The same opening operations must remain usable when their resulting
      * computation is pure; authority is about the operation that runs. */
     const char *pure_code[]={"(unquote (quote (+ 1 2)))",
-        "(eval (unquote (quote (+ 1 2))))"};
+        "(eval (unquote (quote (+ 1 2))))",
+        "(evalc (+ 1 2) &self)","(eval (+ 1 2) &self)",
+        "(evalc (captured &self (+ 1 2)) &self)",
+        "(evalc (ctx:capture &self (+ 1 2)) &self)"};
     for(size_t example=0u;example<sizeof(pure_code)/sizeof(pure_code[0]);example++) {
         CettaEvalEpisode pure=cetta_eval_episode_begin(NULL,-1);g_eval_completion_tracker=&pure;
         refusal_demand_open(&demand,space,syntax,world,pure_code[example],NULL,NULL);
@@ -15875,28 +15932,15 @@ static void call_source_freshening_controls(Space *space,Arena *syntax,const Bin
         g_eval_completion_tracker=outer;refusal_demand_close(&demand);
     }
 
-    /* A service outside the finite input domain is not an authority verdict.
-     * The pending call remains retained, but this reader observes capacity
-     * rather than effect denial. */
-    CettaEvalEpisode unclassified=cetta_eval_episode_begin(NULL,-1);
-    g_eval_completion_tracker=&unclassified;
-    refusal_demand_open(&demand,space,syntax,world,
-        "(evalc (+ 1 2) &self)",NULL,NULL);
-    demand.driver.pure_authority=true;
-    unsigned unclassified_effects=br_resident_effects;
-    CHECK(prime_need_call_force(space,syntax,demand.reference,demand.thunk,
-        -1,&demand.out,true));
-    CHECK(!refusal_drive(&demand.driver,100000u) && unclassified.interrupted &&
-        unclassified.completion==CETTA_EVAL_INCOMPLETE_CAPACITY &&
-        !demand.out.len && br_resident_effects==unclassified_effects);
-    g_eval_completion_tracker=outer;refusal_demand_close(&demand);
-
     /* Freshening and opening held code grant no permission to activate its
      * effects. Once another reader supplies authority, both forms resume the
      * same source, and a later reader observes the result without replay. */
     const char *effectful_code[]={
         "(let $code (sealed () (quote (println! sealed-effect))) (eval (unquote $code)))",
-        "(unquote (quote (println! direct-open-effect)))"};
+        "(unquote (quote (println! direct-open-effect)))",
+        "(evalc (println! scoped-effect) &self)",
+        "(evalc (captured &self (println! captured-effect)) &self)",
+        "(evalc (ctx:capture &self (println! capture-effect)) &self)"};
     /* Quote is data until its opener executes it; a pure-source certificate
      * must therefore inspect the opened operation before licensing reuse. */
     CHECK(!prime_native_expression_safe_in(space,syntax,
@@ -15998,30 +16042,6 @@ static void call_source_nested_open_refusal_controls(Space *space,Arena *syntax,
     }
 }
 
-/* Equal source syntax in different requesting programs is not one input
- * world. The common Need identity does not choose either program's rules. */
-static void call_source_program_identity_controls(Space *space,Space *alternative,
-    Arena *syntax,const Bindings *world) {
-    space_add(space,parse_one(syntax,"(= (requester-program-value) 17)"));
-    space_add(alternative,parse_one(syntax,"(= (requester-program-value) 29)"));
-    RefusalDemand demand;
-    refusal_demand_open(&demand,space,syntax,world,"(requester-program-value)",NULL,NULL);
-    CHECK(prime_need_call_force(space,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
-    PrimeEvalStackFrame *frame=demand.driver.top;assert(frame && frame->call_force_reader);
-    PrimeNeedCallSourceSlot *first=frame->call_force_reader->slot;
-    CHECK(refusal_drive(&demand.driver,100000u) && demand.out.len==1u &&
-        atom_eq(demand.out.items[0].atom,atom_int(syntax,17)));
-    uint64_t paid=first->source->dispatches;
-    CHECK(prime_need_call_force(alternative,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
-    frame=demand.driver.top;assert(frame && frame->call_force_reader);
-    CHECK(frame->call_force_reader->slot!=first && frame->call_force_reader->slot->source->space==alternative);
-    CHECK(refusal_drive(&demand.driver,100000u) && demand.out.len==2u &&
-        atom_eq(demand.out.items[1].atom,atom_int(syntax,29)) && first->source->dispatches==paid);
-    refusal_demand_close(&demand);
-}
-
-/* A context read distinguishes request worlds, while an unrelated or untaken
- * context reference must not duplicate an already shared visible effect. */
 static void call_source_context_identity_controls(Space *space,Space *alternative,
     Arena *syntax,const Bindings *world) {
     Space third;space_init(&third);
@@ -16101,6 +16121,239 @@ static void call_source_context_identity_controls(Space *space,Space *alternativ
     eval_context_restore(&saved);
     space_free(&third);
 }
+
+static void call_source_scoped_open_refusal_case(Space *space,Arena *syntax,
+    const Bindings *world,const char *origin) {
+    unsigned effects=br_resident_effects,refusals=0u;
+    CettaEvalEpisode denied=cetta_eval_episode_begin(NULL,-1);
+    CettaEvalEpisode *outer=g_eval_completion_tracker;g_eval_completion_tracker=&denied;
+    RefusalDemand demand;
+    EvalContextState context=eval_context_capture();
+    refusal_demand_open(&demand,space,syntax,world,origin,refusal_deny_open,&refusals);
+    CHECK(prime_need_call_force(space,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
+    PrimeEvalStackFrame *frame=demand.driver.top;assert(frame && frame->call_force_reader);
+    PrimeNeedCallSourceSlot *slot=frame->call_force_reader->slot;
+    bool refused=!refusal_drive(&demand.driver,100000u) && refusals &&
+        denied.completion!=CETTA_EVAL_COMPLETE && !demand.out.len &&
+        br_resident_effects==effects+1u;
+    CHECK(refused);
+    CHECK(g_context_here_depth==context.here_depth &&
+        g_context_home_depth==context.home_depth);
+    if(refused && strstr(origin,"evalc")) {
+        PrimeEvalStackFrame *scope=slot->source->agenda?slot->source->agenda->frames:
+            slot->source->resident.driver.top;
+        while(scope && !scope->context) scope=slot->source->agenda?scope->control_next:
+            (PrimeEvalStackFrame *)scope->continuation.next;
+        CHECK(scope && scope->context->value.here_depth==context.here_depth+1u &&
+            scope->context->value.here[context.here_depth]==space);
+        if(scope) {
+            PrimeParentCopy copy={0};PrimeEvalStackFrame *image=NULL;
+            CHECK(!parent_copy_frame_shells(&copy,scope,&image,false) && !image &&
+                copy.refusal && !strcmp(copy.refusal,"FrameContextOwner"));
+        }
+    }
+    if(refused) {
+        prime_eval_stack_abandon(&demand.driver);
+        prepared_pure_program_cache_free(&demand.driver.prepared_pure_cache);
+        demand.driver=(PrimeEvalStackDriver){.arena=syntax,.root_target=&demand.out,
+            .streaming=true,.heap_phase=true};
+        CettaEvalEpisode allowed=cetta_eval_episode_begin(NULL,-1);g_eval_completion_tracker=&allowed;
+        CHECK(prime_need_call_force(space,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
+        frame=demand.driver.top;assert(frame && frame->call_force_reader);
+        bool same=frame->call_force_reader->slot==slot;
+        bool completed=refusal_drive(&demand.driver,100000u);
+        if(!same || !completed || allowed.interrupted || demand.out.len!=1u ||
+            br_resident_effects!=effects+2u)
+            fprintf(stderr,"nested open retry: same=%u completed=%u completion=%u "
+                "answers=%zu effects=%u source-completion=%u task-ready=%u\n",
+                same,completed,(unsigned)allowed.completion,demand.out.len,
+                br_resident_effects-effects,(unsigned)slot->source->resident.completion,
+                slot->source->resident.driver.task_ready);
+        CHECK(same && completed && !allowed.interrupted && demand.out.len==1u &&
+            br_resident_effects==effects+2u);
+        CHECK(g_context_here_depth==context.here_depth &&
+            g_context_home_depth==context.home_depth);
+    }
+    g_eval_completion_tracker=outer;refusal_demand_close(&demand);
+}
+
+static void call_source_scoped_open_refusal_controls(Space *space,Arena *syntax,
+    const Bindings *world) {
+    call_source_scoped_open_refusal_case(space,syntax,world,
+        "(let $_ (println! nested-prefix) (eval (unquote (quote (println! nested-body)))))");
+    call_source_scoped_open_refusal_case(space,syntax,world,
+        "(let $_ (println! nested-scoped-prefix) (evalc (eval (unquote (quote (println! nested-body)))) &self))");
+}
+
+/* Use a separate predicate from the context-role fixture: Spaces preserve duplicates. */
+static void call_source_context_name_identity_controls(Space *space,Space *alternative,
+    Arena *syntax,const Bindings *world) {
+    space_add(space,parse_one(syntax,"(context-name-marker A)"));
+    space_add(alternative,parse_one(syntax,"(context-name-marker B)"));
+    space_add(space,parse_one(syntax,"(= (context-through $x) $x)"));
+    Atom *fixed_name=atom_symbol(syntax,"&context-fixed");
+    Atom *old_fixed=registry_lookup_atom(fixed_name);
+    CHECK(registry_bind_symbol(g_registry,fixed_name,atom_space(syntax,space)));
+    Atom *other_name=atom_symbol(syntax,"&context-other");
+    Atom *old_other=registry_lookup_atom(other_name);
+    CHECK(registry_bind_symbol(g_registry,other_name,atom_space(syntax,alternative)));
+    const struct {const char *origin,*left,*right;unsigned effects;} cases[]={
+        {"(match &here (context-name-marker $v) $v)","A","B",0u},
+        {"(let $_ (println! context-unrelated) 7)","7","7",1u},
+        {"(let $_ (println! context-untaken) (if True 7 (match &here (context-name-marker $v) $v)))","7","7",1u},
+        {"(let $_ (println! context-prefix) (match &here (context-name-marker $v) $v))","A","B",1u},
+        {"(let $_ (println! context-alias-untaken) (let $r (match &context-fixed (context-name-marker $v) $v) (if True $r (match &here (context-name-marker $v) $v))))","A","A",1u},
+        {"(let $_ (println! context-local) (evalc (match &here (context-name-marker $v) $v) &context-fixed))","A","A",1u},
+        {"(context-through (match &here (context-name-marker $v) $v))","A","B",0u},
+        {"(let $_ (println! context-alias) (eval (match &here (context-name-marker $v) $v) &context-fixed))","A","A",1u},
+        {"(let $_ (println! context-body-prefix) (evalc (let $_ (println! context-body) (match &here (context-name-marker $v) $v)) &context-fixed))","A","A",2u},
+        {"(let $_ (println! context-captured) (evalc (captured &context-fixed (match &home (context-name-marker $v) $v)) &context-other))","A","A",1u},
+        {"(let $_ (println! context-nested) (evalc (let $first (match &here (context-name-marker $a) $a) (let $middle (evalc (match &here (context-name-marker $b) $b) &context-other) (let $last (match &here (context-name-marker $c) $c) (if (== $first A) (if (== $middle B) (if (== $last A) 1 30) 20) 10)))) &context-fixed))","1","1",1u},
+        {"(let $_ (println! context-capture) (evalc (ctx:capture &context-fixed (match &home (context-name-marker $v) $v)) &context-other))","A","A",1u}};
+    EvalContextState saved=eval_context_capture();
+    assert(g_context_here_depth<64u);
+    g_context_here_stack[g_context_here_depth++]=space;
+    for(unsigned which=0u;which<sizeof(cases)/sizeof(*cases);which++) {
+        CettaEvalEpisode context_run=cetta_eval_episode_begin(NULL,-1);
+        CettaEvalEpisode *previous_episode=g_eval_completion_tracker;
+        g_eval_completion_tracker=&context_run;
+        g_context_here_stack[g_context_here_depth-1u]=space;
+        unsigned effects=br_resident_effects;
+        unsigned expected_effects=cases[which].effects;
+        RefusalDemand demand;
+        refusal_demand_open(&demand,space,syntax,world,cases[which].origin,NULL,NULL);
+        CHECK(prime_need_call_force(space,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
+        PrimeNeedCallSourceSlot *context_slot=demand.driver.top && demand.driver.top->call_force_reader
+            ? demand.driver.top->call_force_reader->slot : NULL;
+        bool left=refusal_drive(&demand.driver,100000u);
+        Atom *left_answer=parse_one(syntax,cases[which].left);
+        if(!left || demand.out.len!=1u || !atom_eq(demand.out.items[0].atom,left_answer) ||
+            br_resident_effects!=effects+expected_effects) {
+            fprintf(stderr,"context first case=%u completed=%u answers=%zu effects=%u expected-effects=%u\n",
+                which,left,demand.out.len,br_resident_effects-effects,expected_effects);
+            if(demand.out.len) {fputs("context actual: ",stderr);
+                atom_print(demand.out.items[0].atom,stderr);fputc('\n',stderr);}
+        }
+        if(!left && context_slot)
+            fprintf(stderr,"context source: input-refused=%u refusals=%llu reason=%u resident-status=%u context-roles=%zu\n",
+                context_slot->source->input_refused,(unsigned long long)context_slot->source->call_refusals,
+                (unsigned)context_slot->source->call_refusal_reason,
+                (unsigned)context_slot->source->resident.completion,context_slot->inputs->context_count);
+        CHECK(left && demand.out.len==1u && atom_eq(demand.out.items[0].atom,left_answer) &&
+            br_resident_effects==effects+expected_effects);
+        CHECK(g_context_here_depth==saved.here_depth+1u &&
+            g_context_here_stack[g_context_here_depth-1u]==space &&
+            g_context_home_depth==saved.home_depth);
+        if(left && which==4u && context_slot) {
+            bool found=false;
+            for(size_t i=0u;i<context_slot->inputs->context_count;i++)
+                if(context_slot->inputs->contexts[i].name==g_builtin_syms.amp_here) {
+                    found=true;CHECK(!(context_slot->source->context_names_observed & EVAL_CONTEXT_ROLE_HERE));
+                }
+            CHECK(found);
+            PrimeEvalStackDriver *previous_driver=g_prime_eval_stack_driver;
+            g_prime_eval_stack_driver=context_slot->source->agenda
+                ? &context_slot->source->agenda->driver : &context_slot->source->resident.driver;
+            g_context_here_stack[g_context_here_depth++]=alternative;
+            CHECK(resolve_single_space_arg(space,syntax,atom_symbol_id(syntax,g_builtin_syms.amp_here),-1)==alternative);
+            g_context_here_depth--;
+            g_prime_eval_stack_driver=previous_driver;
+            for(size_t i=0u;i<context_slot->inputs->context_count;i++)
+                if(context_slot->inputs->contexts[i].name==g_builtin_syms.amp_here)
+                    CHECK(!(context_slot->source->context_names_observed & EVAL_CONTEXT_ROLE_HERE));
+            CHECK(!context_slot->source->input_refused);
+        }
+        if(left && demand.out.len==1u) {
+            g_context_here_stack[g_context_here_depth-1u]=alternative;
+            CHECK(prime_need_call_force(space,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
+            bool right=refusal_drive(&demand.driver,100000u);
+            Atom *right_answer=parse_one(syntax,cases[which].right);
+            if(!right || demand.out.len!=2u || !atom_eq(demand.out.items[1].atom,right_answer) ||
+                br_resident_effects!=effects+expected_effects)
+                fprintf(stderr,"context reuse case=%u completed=%u answers=%zu effects=%u expected-effects=%u\n",
+                    which,right,demand.out.len,br_resident_effects-effects,expected_effects);
+            CHECK(right && demand.out.len==2u && atom_eq(demand.out.items[1].atom,right_answer) &&
+                br_resident_effects==effects+expected_effects);
+            CHECK(g_context_here_depth==saved.here_depth+1u &&
+                g_context_here_stack[g_context_here_depth-1u]==alternative &&
+                g_context_home_depth==saved.home_depth);
+        }
+        refusal_demand_close(&demand);
+        g_eval_completion_tracker=previous_episode;
+    }
+    {
+        OutcomeSet output;outcome_set_init(&output);
+        PrimeEvalStackDriver driver={.arena=syntax,.root_target=&output,
+            .streaming=true,.heap_phase=true,.raw_call_depth=1u};
+        PrimeEvalStackDriver *previous_driver=g_prime_eval_stack_driver;
+        g_prime_eval_stack_driver=&driver;
+        Atom *code=parse_one(syntax,"(println! context-construction)");
+        unsigned effects=br_resident_effects;
+        CHECK(!br_payload_lookup_refusals);
+        br_payload_lookup_bytes=sizeof(PrimeEvalContext);br_payload_lookup_refusals=1u;
+        CHECK(!prime_eval_stack_schedule_context(space,NULL,syntax,code,-1,world,&output));
+        CHECK(!br_payload_lookup_refusals && !driver.top && !driver.task_ready &&
+            !output.len && br_resident_effects==effects);
+        br_payload_lookup_bytes=0u;
+        CHECK(prime_eval_stack_schedule_context(space,NULL,syntax,code,-1,world,&output));
+        CHECK(driver.top && driver.top->context && driver.task_ready);
+        prime_eval_stack_abandon(&driver);
+        CHECK(!driver.top && !driver.task_ready && !output.len && br_resident_effects==effects);
+        g_prime_eval_stack_driver=previous_driver;
+        outcome_set_free(&output);
+        CHECK(g_context_here_depth==saved.here_depth+1u &&
+            g_context_home_depth==saved.home_depth);
+    }
+    if(old_fixed) CHECK(registry_bind_symbol(g_registry,fixed_name,old_fixed));
+    else CHECK(registry_unbind_symbol(g_registry,fixed_name));
+    if(old_other) CHECK(registry_bind_symbol(g_registry,other_name,old_other));
+    else CHECK(registry_unbind_symbol(g_registry,other_name));
+    /* The requesting context is chosen when FORCE starts, even if another
+     * context becomes current before the resident takes its first step. */
+    g_context_here_stack[g_context_here_depth-1u]=space;
+    CettaEvalEpisode run=cetta_eval_episode_begin(NULL,-1);
+    CettaEvalEpisode *outer=g_eval_completion_tracker;g_eval_completion_tracker=&run;
+    RefusalDemand delayed;
+    refusal_demand_open(&delayed,space,syntax,world,
+        "(match &here (context-name-marker $v) $v)",NULL,NULL);
+    CHECK(prime_need_call_force(space,syntax,delayed.reference,delayed.thunk,-1,&delayed.out,true));
+    g_context_here_stack[g_context_here_depth-1u]=alternative;
+    bool finished=refusal_drive(&delayed.driver,100000u);
+    CHECK(finished && delayed.out.len==1u &&
+        atom_eq(delayed.out.items[0].atom,atom_symbol(syntax,"A")));
+    g_eval_completion_tracker=outer;refusal_demand_close(&delayed);
+    eval_context_restore(&saved);
+}
+
+
+
+
+
+/* Equal source syntax in different requesting programs is not one input
+ * world. The common Need identity does not choose either program's rules. */
+static void call_source_program_identity_controls(Space *space,Space *alternative,
+    Arena *syntax,const Bindings *world) {
+    space_add(space,parse_one(syntax,"(= (requester-program-value) 17)"));
+    space_add(alternative,parse_one(syntax,"(= (requester-program-value) 29)"));
+    RefusalDemand demand;
+    refusal_demand_open(&demand,space,syntax,world,"(requester-program-value)",NULL,NULL);
+    CHECK(prime_need_call_force(space,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
+    PrimeEvalStackFrame *frame=demand.driver.top;assert(frame && frame->call_force_reader);
+    PrimeNeedCallSourceSlot *first=frame->call_force_reader->slot;
+    CHECK(refusal_drive(&demand.driver,100000u) && demand.out.len==1u &&
+        atom_eq(demand.out.items[0].atom,atom_int(syntax,17)));
+    uint64_t paid=first->source->dispatches;
+    CHECK(prime_need_call_force(alternative,syntax,demand.reference,demand.thunk,-1,&demand.out,true));
+    frame=demand.driver.top;assert(frame && frame->call_force_reader);
+    CHECK(frame->call_force_reader->slot!=first && frame->call_force_reader->slot->source->space==alternative);
+    CHECK(refusal_drive(&demand.driver,100000u) && demand.out.len==2u &&
+        atom_eq(demand.out.items[1].atom,atom_int(syntax,29)) && first->source->dispatches==paid);
+    refusal_demand_close(&demand);
+}
+
+/* A context read distinguishes request worlds, while an unrelated or untaken
+ * context reference must not duplicate an already shared visible effect. */
+
 
 /* A changed Space can require another result, but a failed or incompatible
  * import must not replay the effect already paid by the shared source. */
@@ -16806,10 +17059,12 @@ static void resident_force_production_case(void) {
     call_source_authored_builtin_controls(&space,&syntax,&seven);
     call_source_freshening_controls(&space,&syntax,&seven);
     call_source_nested_open_refusal_controls(&space,&syntax,&seven);
+    call_source_scoped_open_refusal_controls(&space,&syntax,&seven);
     call_source_refusal_controls(&space,&syntax,&seven);
     call_source_delivery_controls(&space,&syntax,&seven,&log);
     call_source_program_identity_controls(&space,&alternative,&syntax,&seven);
     call_source_context_identity_controls(&space,&alternative,&syntax,&seven);
+    call_source_context_name_identity_controls(&space,&alternative,&syntax,&seven);
     call_source_changed_space_controls(&space,&log,&syntax,&seven);
     call_source_unobserved_state_controls(&space,&syntax,&seven,&nine);
     unsigned final_effects=br_resident_effects;
@@ -17058,11 +17313,52 @@ static void production_delivery_join_case(void) {
     puts("Earned production joins Need, State, ordered factors and logical support atomically");
 }
 
+static void session_policy_padding_controls(void) {
+    CettaEvalSession *a=malloc(sizeof(*a)),*b=malloc(sizeof(*b));
+    assert(a && b);memset(a,0xa5,sizeof(*a));memset(b,0x5a,sizeof(*b));
+    CettaEvalSession *both[]={a,b};
+    for(size_t i=0u;i<2u;i++) {
+        CettaModulePolicy *p=&both[i]->module_policy;
+        p->provider_flags=3u;p->relative_module_policy=0;p->transactional_imports=false;
+        CettaEvaluatorOptions *o=&both[i]->options;
+        o->type_check_auto=false;o->he_typing=0u;o->interpreter_mode=CETTA_INTERPRETER_DEFAULT;
+        o->max_stack_depth=100;o->fuel_limit=-1;o->entry_len=1u;
+        strcpy(o->entries[0].key,"mode");strcpy(o->entries[0].repr,"enabled");
+        o->entries[0].kind=CETTA_EVAL_OPTION_VALUE_SYMBOL;
+    }
+    CHECK(prime_need_session_policy_same(a,b));
+    b->options.entries[0].repr[0]='x';CHECK(!prime_need_session_policy_same(a,b));
+    b->options.entries[0].repr[0]='e';
+    a->options.entries[0].kind=b->options.entries[0].kind=CETTA_EVAL_OPTION_VALUE_INT;
+    a->options.entries[0].int_value=1;b->options.entries[0].int_value=2;
+    strcpy(a->options.entries[0].repr,"1");strcpy(b->options.entries[0].repr,"1");
+    CHECK(!prime_need_session_policy_same(a,b));
+    b->options.entries[0].int_value=1;CHECK(prime_need_session_policy_same(a,b));
+    b->module_policy.provider_flags=4u;CHECK(!prime_need_session_policy_same(a,b));
+    free(a);free(b);
+}
+
 int main(int argc, char **argv) {
     outcome_seen_identity_control();
+    session_policy_padding_controls();
     SymbolTable symbols;symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols,&g_builtin_syms);g_symbols=&symbols;
     VarInternTable variables;var_intern_init(&variables);g_var_intern=&variables;g_hashcons=NULL;
+    if (argc==3 && strcmp(argv[1],"--binding-role")==0) {
+        unsigned which=(unsigned)strtoul(argv[2],NULL,10);
+        if (which<23u || which>31u) return 2;
+        binding_role_case(which);
+        eval_release_temporary_spaces();eval_match_decision_cache_free_for_current_thread();
+        var_intern_free(&variables);g_var_intern=NULL;symbol_table_free(&symbols);g_symbols=NULL;
+        return failures?1:0;
+    }
+    if (argc==2 && strcmp(argv[1],"--binding-roles")==0) {
+        for (unsigned which=23u;which<=25u;which++) binding_role_case(which);
+        eval_release_temporary_spaces();eval_match_decision_cache_free_for_current_thread();
+        var_intern_free(&variables);g_var_intern=NULL;symbol_table_free(&symbols);g_symbols=NULL;
+        printf("Binding return roles: %zu checks, %zu failures\n",checks,failures);
+        return failures?1:0;
+    }
     if (argc==2 && strcmp(argv[1],"--transfer-authority")==0) {
         ordinary_transfer_authority_cases();
         var_intern_free(&variables);g_var_intern=NULL;symbol_table_free(&symbols);g_symbols=NULL;

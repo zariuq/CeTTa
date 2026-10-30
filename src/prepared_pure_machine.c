@@ -1076,13 +1076,9 @@ static inline __attribute__((always_inline)) bool prepared_pure_value_walk_any(
     return found;
 }
 
-/* Occurrence-sensitive clients retain every path through shared data;
- * existential properties may inspect each distinct node just once. Both
- * observations stop at the same dialect-owned value boundary. */
-static bool prepared_pure_value_tree_any(CettaPreparedPureProgram *program,
-    const Atom *root, AtomTreePredicate predicate, void *context) {
-    return prepared_pure_value_walk_any(program, root, predicate, context, false);
-}
+/* Existential properties inspect each distinct node once, stopping at the
+ * dialect-owned value boundary. */
+
 
 static bool prepared_pure_value_graph_any(CettaPreparedPureProgram *program,
     const Atom *root, AtomTreePredicate predicate, void *context) {
@@ -7586,12 +7582,22 @@ static bool prepared_pure_duplicate_callable_result_node(
 
 static bool prepared_pure_result_data_barrier(const Atom *atom, void *context) {
     CettaPreparedPureProgram *program = context;
-    if (!program || !program->expression_view || !atom ||
-        atom->kind != ATOM_EXPR)
+    if (!program || !atom)
+        return false;
+    if (prepared_pure_opaque_value(program, (Atom *)atom))
+        return true;
+    if (!program->expression_view || atom->kind != ATOM_EXPR)
         return false;
     CettaPreparedPureExpressionView view = {0};
-    return program->expression_view(program->space, atom, NULL, &view) ==
-        CETTA_PREPARED_PURE_EXPRESSION_DATA;
+    CettaPreparedPureExpressionViewState state =
+        program->expression_view(program->space, atom, NULL, &view);
+    return state == CETTA_PREPARED_PURE_EXPRESSION_DATA ||
+        state == CETTA_PREPARED_PURE_EXPRESSION_OPAQUE_VALUE;
+}
+
+static bool prepared_pure_escaping_data_barrier(const Atom *atom, void *context) {
+    PreparedPureEscapingSuspensions *seen = context;
+    return seen && prepared_pure_result_data_barrier(atom, seen->program);
 }
 
 /* The private memo table is an execution-time implementation of Need update
@@ -7609,8 +7615,9 @@ static bool prepared_pure_result_has_escaping_suspension(
     PreparedPureEscapingSuspensions seen = {
         .program = program,
     };
-    bool duplicated = prepared_pure_value_tree_any(
-        program, result, prepared_pure_duplicate_callable_result_node, &seen);
+    bool duplicated = atom_tree_any_pruned(result,
+        prepared_pure_duplicate_callable_result_node,
+        prepared_pure_escaping_data_barrier, &seen);
     free(seen.slots);
     return duplicated;
 }
@@ -8933,8 +8940,7 @@ static Atom *prepared_pure_execute_register(
         arguments = observed;
     }
     if (instruction == CETTA_GSLT_REGISTER_INSTRUCTION_ATOM_EQUAL &&
-        prepared_pure_equality_reads_fields(
-            program, arguments[0], arguments[1]))
+        prepared_pure_equality_reads_fields(program, arguments[0], arguments[1]))
         return NULL;
     CettaGsltRegisterOperandDiscipline discipline;
     if (!cetta_gslt_register_operand_discipline(
@@ -10738,7 +10744,8 @@ static bool prepared_pure_compile_closed_entry_call(
         CettaPreparedPureExpressionViewState state =
             prepared_pure_describe_expression(program, expression,
                 program->source_view.root, &view);
-        if (state == CETTA_PREPARED_PURE_EXPRESSION_DATA)
+        if (state == CETTA_PREPARED_PURE_EXPRESSION_OPAQUE_VALUE ||
+            state == CETTA_PREPARED_PURE_EXPRESSION_DATA)
             return true;
         if (state == CETTA_PREPARED_PURE_EXPRESSION_PROJECT) {
             /* An entry value cannot stand for evaluation as code or for

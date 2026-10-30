@@ -90,7 +90,7 @@
      False))
 
 ;; The metatype of a term held as written.
-(: nu:metatype (-> (Data Atom) $r))
+(: nu:metatype (-> Atom $r))
 (= (nu:metatype $t) (get-metatype $t))
 
 ;; Whether a code value is a metavariable: the whole term is still unknown.

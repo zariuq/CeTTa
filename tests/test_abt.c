@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 125 + 45 + 35 + 4,
+    ABT_EXPECTED_CHECKS = 125 + 45 + 35 + 6,
 };
 
 static unsigned failures = 0;
@@ -1240,6 +1240,19 @@ static void test_logical_binding_instances(Arena *arena) {
     CHECK(dispatched && abt_named_alpha_equal(&signature, arena,
               dispatched->expr.elems[1], source, &equal) && equal,
           "the ordinary grounded interface uses the same declaration traversal");
+    Atom *held_args[] = {atom_prime_held_wrap(arena, declarations),
+        atom_prime_held_wrap(arena, none), atom_prime_held_wrap(arena, source)};
+    Atom *admitted = abt_grounded_dispatch(arena,
+        atom_symbol(arena, "__cetta_abt_signature_admitted"), held_args, 1u);
+    CHECK(admitted && atom_eq(admitted, atom_true(arena)),
+        "Data carriers do not change signature admission");
+    Atom *held_instance = abt_grounded_dispatch(arena,
+        atom_symbol(arena, "__cetta_abt_instantiate"), held_args, 3u);
+    CHECK(held_instance && held_instance->kind == ATOM_EXPR &&
+        atom_head_symbol_id(held_instance) == atom_head_symbol_id(dispatched) &&
+        abt_named_alpha_equal(&signature, arena,
+            held_instance->expr.elems[1], source, &equal) && equal,
+        "held native arguments preserve binding instantiation");
     abt_signature_free(&nominal_signature);
     abt_signature_free(&signature);
 }

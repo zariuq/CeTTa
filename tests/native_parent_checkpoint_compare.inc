@@ -196,6 +196,18 @@ static bool copy_relation(const PrimeNativeControl *s,const PrimeNativeControl *
            df->control_return_advice_length>df->child.len) return r->valid=false;
         copy_identity(r,11,sf->control_return_advice,df->control_return_advice);
         copy_identity(r,10,sf->control_advice,df->control_advice);
+        if(sf->control_return_pending!=df->control_return_pending ||
+           sf->control_return_pending_begin!=df->control_return_pending_begin ||
+           sf->control_return_pending_end!=df->control_return_pending_end ||
+           (sf->control_return_pending_advice.key==NULL)!=(df->control_return_pending_advice.key==NULL) ||
+           (sf->control_return_pending_advice.bound==NULL)!=(df->control_return_pending_advice.bound==NULL) ||
+           (sf->control_return_pending_advice.key &&
+            !atom_eq(sf->control_return_pending_advice.key,df->control_return_pending_advice.key)) ||
+           (sf->control_return_pending_advice.bound &&
+            !atom_eq(sf->control_return_pending_advice.bound,df->control_return_pending_advice.bound)))
+            return r->valid=false;
+        copy_identity(r,10,sf->control_return_pending_advice.advice,
+            df->control_return_pending_advice.advice);
         for(size_t i=0u;i<sf->control_return_advice_length;i++) {
             const PrimeNativeReturnAdvice *a=&sf->control_return_advice[i];
             const PrimeNativeReturnAdvice *b=&df->control_return_advice[i];

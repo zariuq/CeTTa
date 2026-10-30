@@ -1486,3 +1486,119 @@ It also bounds repeated source observations after a retained refusal. Literal
 native classifier correspondence and stability of all legacy frontend
 factory refusals remain separate obligations; the model does not establish
 that every null compiler result is a stable refusal.
+Shared producer transport
+--------------------------
+
+cetta_occurrence_log_copy copies a quiescent retained buffer, including
+cancelled consumers, pin slots, absolute positions and backpressure. A host
+callback supplies each row's independent payload owner. An open copied buffer
+stays open; copying its earned prefix does not complete or restart its source.
+
+cetta_shared_return_producer_copy registers an unpublished producer and all
+checkpoint identities before copying payloads. The receiving owner must adopt
+every live checkpoint. The host supplies the actual execution/world image,
+preserving its pending loan, accepted count and stop state. Mapping alone
+grants no permission to invoke a computation or carry a borrowed authority.
+Unpublished images refuse stepping and delivery. A failed copy leaves the
+source intact; the caller discards its failed enclosing graph-copy session.
+
+The existing SharedOccurrenceLog.map_peek, map_pull, map_trim and append_map
+laws describe payload mapping at fixed occurrence positions. The existing
+ProducerOccurrenceLog.mapCarriers_acceptedCount and pump_mapCarriers laws
+preserve accepted work and composition under separately established local
+step, capture, capacity and context laws. These conditional model laws do not
+prove the C provider's root discovery or world transport.
+
+tests/test_shared_occurrence_log.c checks wraparound, aliases, pins, allocation
+refusals and source retirement. tests/test_shared_return_producer.c checks
+owned buffered returns, pending loans, copied checkpoints, paid continuations,
+backpressure, failed mappings and borrowed-owner refusal. Prime's enclosing
+parent copier still needs its concrete retained-producer world mapping before
+it can admit that graph through the existing checkpoint boundary.
+
+Context dependencies and retained scopes
+---------------------------------------
+
+A call input records the actual context-name binding when it is read, including
+the selected space instance and the applicable self policy. Merely mentioning
+a name, or reading the same space through another name, does not observe that
+binding. Reads in locally entered scopes do not observe the requesting scope's
+binding. Nested argument reads propagate to their actual enclosing producers.
+
+Explicit-space evaluation retains an immutable context in the existing bind
+task/frame protocol. Tasks and frames hold their actual scope independently of
+execution-parent links: an outer consumer can schedule work while an inner
+producer remains active. Shared context owners survive suspension and refusal,
+and release on cancellation and completion. Entering or capturing code grants
+no authority to its effects; each resulting operation still crosses the current
+call contract. Independent checkpoint transport of these context owners remains
+unqualified and refuses before publishing an image.
+
+An ambient execution owner created by the first query remains selected until
+the embedding's temporary-space cleanup. Selecting a private receiver during a
+run instead restores that run's caller on exit, including an empty caller slot.
+Retirement invalidates the corresponding validity lease before freeing storage.
+
+tests/test_native_control_leases.c covers nested and captured scopes, pure and
+effectful callers, refused-operation retry, construction refusal and cancellation.
+tests/test_native_parent_checkpoint.c checks ambient creation/reuse/cleanup and
+private receiver selection under both empty and existing ambient owners. Native
+scope ownership is tested behavior; the model transport laws above do not supply
+an independent-copy theorem for it.
+
+Read-support transport
+----------------------
+
+prime_need_read_capture_copy_with_session creates a fresh capture owner in the
+enclosing graph preparation. It maps both the common and entrance Need cuts,
+their shared history/index objects, and every imported-origin Atom through the
+same session as the producer's other roots. It preserves storage capacity and
+the completion flag. Each copied query is rechecked against the copied entrance
+before the capture is returned. Incomplete evidence stays incomplete. External
+StateCell/Space lifetime and currentness remain obligations of the enclosing
+execution; this operation does not grant them.
+
+Mapped Atom-copy buffer, memo and traversal-stack growth refuse through the
+existing failed-copy path, preserving source syntax on metadata refusal. The
+existing backing-arena allocation policy is separate. A failed preparation still
+requires discarding its unpublished destination and session. Read-support
+transport uses the existing plain relocation profile; destructive forwarding,
+resolving rewrites, failed sessions and an incompatible destination refuse
+before transport. Any explicitly borrowed Atom payload retains its separate
+lifetime requirement.
+
+tests/test_prime_receipt_graph_alloc.c retires both source arenas before using
+the copied support. Separate sibling worlds contradict a positive dependency,
+a negative cell lookup, a negative stored-cell lookup and a negative imported-
+origin lookup. Valid import retains the aliased data value and the produced
+stored cell. The test also preserves incomplete evidence and sweeps fallible
+preparation allocations over a graph that grows its traversal and hash tables.
+
+ReadOnlyQuery.checkReads_iff and run_eq_of_agrees supply the existing logical
+read-certificate contract; ProducerReadCapture.capture_check_exact relates the
+first-read certificate to its complete trace. Cursor.ReadOnlyQuery's
+fixed_region_resume_account preserves the paid residual when its relocation
+and observation hypotheses hold. These laws describe the required observation
+comparison. The native owner-map, byte representation and whole-producer
+correspondence must still establish those hypotheses.
+
+Prime argument roles
+--------------------
+Atom domains hold syntax. Proc domains denote shared computations; an unused
+argument remains unforced, and demanding it repeatedly shares its evaluation.
+Specific domains such as Number request a computed value of that type. Result
+types classify what the body computes; an Atom result does not hold the body.
+
+An explicitly computational source argument records
+PRIME_NEED_SOURCE_COMPUTATION in its existing Need cell. Open logic variables
+in that source cannot turn the demand into a syntax template. Forwarding an
+inferred pending reference into a computational domain creates a value view
+that shares the original demand. Cache updates, imports and independent frame
+transport preserve this role. It grants no force or inspection authority.
+Undeclared parameters keep the existing inferred template behavior.
+
+Native services receive ordinary atom values without private held carriers.
+Explicit interpreters open code at their own boundary. A space also stores
+ordinary atoms: the existing graph projection removes private held carriers
+before publication, preserving shared subterms. The read boundary supplies the
+data role again. Registry values keep their separate value-role protocol.

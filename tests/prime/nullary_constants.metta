@@ -44,7 +44,7 @@
 ! fixed
 ; Where an atom is held as written, the symbol stays as written, and
 ; evaluating it explicitly runs its definition.
-(: hold-it (-> (Data Atom) (Data Atom)))
+(: hold-it (-> Atom Atom))
 (= (hold-it $x) $x)
 !(hold-it d)
 !(quote d)
