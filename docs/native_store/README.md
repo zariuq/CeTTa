@@ -23,6 +23,13 @@ does not migrate an application's existing database.
 
 ## First SQLite-replacement milestone
 
+First qualify persistent ordinary Spaces across fresh processes: commit data,
+end or kill the writer process, reopen from disk in a new process, and query
+the same committed values, multiplicities and occurrence identities. Test
+interrupted publication and lost replies as well as clean shutdown. The
+owning durable-Space adapter is the next implementation gate. The shared
+server then exposes that same qualified persistence and query core.
+
 The first bounded service milestone targets the actual local ledger/queue workloads.
 Its durability and isolation requirements remain strict while its API stays
 small. The broader graph/query curriculum remains a subsequent milestone.
@@ -67,7 +74,9 @@ large-KB paging. Live migration remains a separately authorized step.
 ACT may become a native immutable base/segment under the same durability owner.
 Its reader and format qualification need not block the first workload release
 over the existing index. Federation, multi-writer distributed commits, online
-resharding, SQL/Cypher syntax and a full cost optimizer are later capabilities.
+resharding and a full cost optimizer are later capabilities. Queries and
+updates are MeTTa programs over Spaces. SQL/Cypher parsing is outside this
+project's scope, including its later roadmap.
 
 The disk ABI is version 2 (`cetta_disk_abi_version`), with a generation in every
 `CettaDiskRoot`. A checksummed `CSD2` segment header carries the same generation
