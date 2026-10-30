@@ -3700,6 +3700,19 @@ Atom *he_typing_dispatch(Arena *a, Atom *head, Atom **args, uint32_t nargs) {
     const char *name = atom_symbol_bytes(head);
     if (!he_typing_is_op(name)) return NULL;
 
+    /* Native typing inspects ordinary atom syntax, never evaluator-private
+     * data carriers. This projection executes no term and preserves sharing.
+     * Invalid arities keep the operation's existing diagnostic below. */
+    Atom *values[6];
+    if (atom_prime_held_made() && nargs <= 6u) {
+        for(uint32_t i=0u;i<nargs;i++) {
+            values[i]=atom_prime_held_strip(a,args[i]);
+            if(!values[i])
+                return he_unknown(a,he_reason(a,"value-projection-incomplete"));
+        }
+        args=values;
+    }
+
     if (strcmp(name, "normalize-type") == 0) {
         if (nargs != 3)
             return he_reject(a, he_reason(a, "normalize-type-arity"));

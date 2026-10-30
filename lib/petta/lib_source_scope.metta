@@ -1,0 +1,97 @@
+; Source-level admission for simple PeTTa binding forms. This checks lexical
+; variable availability, not purity, types, groundness or evaluator authority.
+; The operation inventory is supplied by the consumer, not inferred from names.
+!(import! &self (library lib_source_codec))
+
+(= (source-scope:indices $count $index)
+   (if (== $count $index) ()
+     (let $rest (source-scope:indices $count (+ $index 1)) (cons-atom $index $rest))))
+(= (source-scope:fresh? $bound $count $value)
+   (case $value
+     (((Syntax:Variable $index)
+       (and (binary:unsigned? $index)
+         (and (< $index $count) (not (binary-schema:member? $index $bound))))) ($other False))))
+(= (source-scope:valid? $operations $parameters $count $term)
+   (if (and (binary:unsigned? $parameters)
+            (and (binary:unsigned? $count) (<= $parameters $count)))
+     (source-scope:term? $operations (source-scope:indices $parameters 0) $count $term False) False))
+
+(= (source-scope:term? $operations $bound $count $term $quoted)
+   (case $term
+     (((Syntax:Variable $index)
+       (and (binary:unsigned? $index) (binary-schema:member? $index $bound)))
+      ((Syntax:Literal $kind $bytes)
+       (not (and (== $kind Symbol) (== $bytes (binary:utf8 "&self")))))
+      ((Syntax:Expr $children)
+       (if (== $children ()) True
+         (if $quoted (source-scope:terms? $operations $bound $count $children True)
+           (let ($head $tail) (decons-atom $children)
+             (case $head
+               (((Syntax:Literal Symbol $bytes)
+                 (source-scope:call? $operations $bound $count (binary:from-utf8 $bytes) $tail))
+                ((Syntax:Literal $kind $bytes)
+                 (source-scope:terms? $operations $bound $count $children False))
+                ($other False)))))))
+      ($other False))))
+(= (source-scope:terms? $operations $bound $count $terms $quoted)
+   (if (== $terms ()) True
+     (and (source-scope:term? $operations $bound $count (car-atom $terms) $quoted)
+          (source-scope:terms? $operations $bound $count (cdr-atom $terms) $quoted))))
+(= (source-scope:call? $operations $bound $count $name $terms)
+   (if (and (== $name "quote") (== (size-atom $terms) 1))
+     (source-scope:terms? $operations $bound $count $terms True)
+     (if (and (== $name "superpose") (== (size-atom $terms) 1))
+       (case (car-atom $terms)
+         (((Syntax:Expr $answers) (source-scope:terms? $operations $bound $count $answers False))
+          ((Syntax:Variable $index)
+           (and (binary:unsigned? $index) (binary-schema:member? $index $bound))) ($other False)))
+       (if (or (== $name "let") (or (== $name "map-atom") (== $name "filter-atom")))
+         (source-scope:single? $operations $bound $count $name $terms)
+         (if (== $name "let*")
+           (case $terms
+             ((($bindings $body)
+               (case $bindings
+                 (((Syntax:Expr $rows) (source-scope:bindings? $operations $bound $count $rows $body))
+                  ($other False)))) ($other False)))
+           (if (== $name "foldl-atom")
+             (source-scope:fold? $operations $bound $count $terms)
+             (and (binary-schema:member? (cons-atom $name (cons-atom (size-atom $terms) ())) $operations)
+                  (source-scope:terms? $operations $bound $count $terms False))))))))
+(= (source-scope:single? $operations $bound $count $name $terms)
+   (case $terms
+     ((($first $second $body)
+       (let* (($binder (if (== $name "let") $first $second))
+              ($input (if (== $name "let") $second $first)))
+         (and (source-scope:fresh? $bound $count $binder)
+           (and (source-scope:term? $operations $bound $count $input False)
+             (case $binder
+               (((Syntax:Variable $index)
+                 (let $opened (cons-atom $index $bound)
+                   (source-scope:term? $operations $opened $count $body False))) ($other False)))))))
+      ($other False))))
+(= (source-scope:bindings? $operations $bound $count $rows $body)
+   (if (== $rows ()) (source-scope:term? $operations $bound $count $body False)
+     (case (car-atom $rows)
+       (((Syntax:Expr ($binder $input))
+         (and (source-scope:fresh? $bound $count $binder)
+           (and (source-scope:term? $operations $bound $count $input False)
+             (case $binder
+               (((Syntax:Variable $index)
+                 (let $opened (cons-atom $index $bound)
+                   (source-scope:bindings? $operations $opened $count (cdr-atom $rows) $body)))
+                ($other False)))))) ($other False)))))
+(= (source-scope:fold? $operations $bound $count $terms)
+   (case $terms
+     ((($items $initial $accumulator $item $step)
+       (and (source-scope:terms? $operations $bound $count ($items $initial) False)
+         (and (source-scope:fresh? $bound $count $accumulator)
+           (case $accumulator
+             (((Syntax:Variable $acc-index)
+               (let $first (cons-atom $acc-index $bound)
+                 (and (source-scope:fresh? $first $count $item)
+                   (case $item
+                     (((Syntax:Variable $item-index)
+                       (let $opened (cons-atom $item-index $first)
+                         (source-scope:term? $operations $opened $count $step False)))
+                      ($other False)))))) ($other False))))))
+      ($other False))))

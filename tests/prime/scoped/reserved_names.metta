@@ -4,7 +4,7 @@
 (= (+ $a $b) 42)
 !(collapse (+ 1 2))
 (= (std:+ $a $b) 99)
-(: std:get-type (-> Atom BogusType))
+(: std:get-type (-> Proc BogusType))
 !(add-atom &self (= (std:if $c $a $b) forged))
 !(std:+ 1 2)
 !(let $definition (std:definitions +) (remove-atom &self $definition))

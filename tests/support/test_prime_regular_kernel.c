@@ -3547,6 +3547,79 @@ int main(int argc, char **argv) {
               CETTA_PRIME_REGULAR_KERNEL_ADMISSION_ADMITTED &&
               checking_generation_admission.checking,
           "checking generation fixture first admits a current judgment");
+    CHECK(cetta_prime_regular_kernel_admitted_conversion_v1_is_current(
+              generation_admission.conversion, &foreign_space,
+              cetta_prime_regular_kernel_closed_conversion_profile_v1) &&
+              cetta_prime_regular_kernel_admitted_synthesis_v1_is_current(
+                  synthesis_generation_admission.synthesis, &foreign_space,
+                  cetta_prime_regular_kernel_closed_synthesis_profile_v1) &&
+              cetta_prime_regular_kernel_admitted_checking_v1_is_current(
+                  checking_generation_admission.checking, &foreign_space,
+                  cetta_prime_regular_kernel_closed_checking_profile_v1),
+          "all three admitted judgments are current before collection");
+    uint64_t storage_before_collection = foreign_universe.storage_epoch;
+    uint64_t collection_before = foreign_universe.collection_epoch;
+    CHECK(term_universe_store_atom_id(&foreign_universe, &arena,
+              atom_int(&arena, 7654321)) != CETTA_ATOM_ID_NONE,
+          "collection fixture installs an unrooted term");
+    term_universe_set_collection_mode(
+        &foreign_universe, TERM_UNIVERSE_COLLECTION_RECLAIM);
+    TermUniverseCollectionReport collection_report = {0};
+    CHECK(term_universe_collect(&foreign_universe, &collection_report) &&
+              collection_report.reclaimed > 0u &&
+              foreign_universe.storage_epoch == storage_before_collection &&
+              foreign_universe.collection_epoch != collection_before,
+          "collection reclaims terms without replacing storage");
+    CHECK(!cetta_prime_regular_kernel_admitted_conversion_v1_is_current(
+              generation_admission.conversion, &foreign_space,
+              cetta_prime_regular_kernel_closed_conversion_profile_v1),
+          "collection without storage replacement invalidates admission");
+    CHECK(!cetta_prime_regular_kernel_admitted_synthesis_v1_is_current(
+              synthesis_generation_admission.synthesis, &foreign_space,
+              cetta_prime_regular_kernel_closed_synthesis_profile_v1),
+          "collection without storage replacement invalidates synthesis");
+    CHECK(!cetta_prime_regular_kernel_admitted_checking_v1_is_current(
+              checking_generation_admission.checking, &foreign_space,
+              cetta_prime_regular_kernel_closed_checking_profile_v1),
+          "collection without storage replacement invalidates checking");
+    cetta_prime_regular_kernel_admitted_conversion_v1_free(
+        generation_admission.conversion);
+    cetta_prime_regular_kernel_admitted_synthesis_v1_free(
+        synthesis_generation_admission.synthesis);
+    cetta_prime_regular_kernel_admitted_checking_v1_free(
+        checking_generation_admission.checking);
+
+    /* Reacquire current evidence before testing the distinct storage-reset
+     * boundary; already-stale evidence cannot witness that boundary. */
+    cetta_prime_regular_kernel_budget_init(&generation_budget, false, 0u);
+    generation_admission = cetta_prime_regular_kernel_admit_closed_conversion_v1(
+        &arena, &foreign_space, distinct_left, distinct_left, &generation_budget,
+        cetta_prime_regular_kernel_closed_conversion_profile_v1,
+        &prime_typing_open_regular_kernel_source_binding_v1);
+    cetta_prime_regular_kernel_budget_init(&synthesis_generation_budget, false, 0u);
+    synthesis_generation_admission = cetta_prime_regular_kernel_admit_closed_synthesis_v1(
+        &arena, &foreign_space, distinct_left, &synthesis_generation_budget,
+        cetta_prime_regular_kernel_closed_synthesis_profile_v1,
+        &prime_typing_open_regular_kernel_source_binding_v1);
+    cetta_prime_regular_kernel_budget_init(&checking_generation_budget, false, 0u);
+    checking_generation_admission = cetta_prime_regular_kernel_admit_closed_checking_v1(
+        &arena, &foreign_space, distinct_left, parse_one(&arena, "U1"),
+        &checking_generation_budget,
+        cetta_prime_regular_kernel_closed_checking_profile_v1,
+        &prime_typing_open_regular_kernel_source_binding_v1);
+    CHECK(generation_admission.status == CETTA_PRIME_REGULAR_KERNEL_ADMISSION_ADMITTED &&
+              synthesis_generation_admission.status == CETTA_PRIME_REGULAR_KERNEL_ADMISSION_ADMITTED &&
+              checking_generation_admission.status == CETTA_PRIME_REGULAR_KERNEL_ADMISSION_ADMITTED &&
+              cetta_prime_regular_kernel_admitted_conversion_v1_is_current(
+                  generation_admission.conversion, &foreign_space,
+                  cetta_prime_regular_kernel_closed_conversion_profile_v1) &&
+              cetta_prime_regular_kernel_admitted_synthesis_v1_is_current(
+                  synthesis_generation_admission.synthesis, &foreign_space,
+                  cetta_prime_regular_kernel_closed_synthesis_profile_v1) &&
+              cetta_prime_regular_kernel_admitted_checking_v1_is_current(
+                  checking_generation_admission.checking, &foreign_space,
+                  cetta_prime_regular_kernel_closed_checking_profile_v1),
+          "all three judgments can be readmitted after collection");
     term_universe_set_persistent_arena(
         &foreign_universe, &foreign_persistent);
     CHECK(!cetta_prime_regular_kernel_admitted_conversion_v1_is_current(

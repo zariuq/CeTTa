@@ -18,7 +18,7 @@
 ; ordinary read and a declared Data view both retrieve that value, and
 ; neither view exposes heap IDs.
 !(match &prime-need:stored (Stored $saved) $saved)
-(: prime-need:stored-code (-> (Data Atom) (Data Atom)))
+(: prime-need:stored-code (-> Atom Atom))
 (= (prime-need:stored-code $value) $value)
 !(match &prime-need:stored (Stored $saved) (prime-need:stored-code $saved))
 !(match &prime-need:stored (Stored (__prime_need_ref_v1 $s $t)) leaked-ref)
@@ -132,20 +132,20 @@
 ; Explicit quotation crossing builds deferred code. If an enclosing caller
 ; has already produced a State, the service captures that caller's logical
 ; value before creating its isolated image. Two uses retain one image.  The
-; parameters that carry the code are `(Data Atom)`: they hold their argument
+; parameters that carry the code are `Atom`: they hold their argument
 ; as written, so the quotation captures the code.  A value parameter would
 ; denote the value the code computes, and observing the quotation would run
 ; it.
-(: prime-need:defer (-> (Data Atom) Atom))
+(: prime-need:defer (-> Atom Proc))
 (= (prime-need:defer $payload) (rho:eval-payload (quote $payload){$payload}))
-(: prime-need:run-payload (-> Atom %Undefined%))
+(: prime-need:run-payload (-> Proc %Undefined%))
 (= (prime-need:run-payload $node)
    (rhometta:values
      (rhometta:run-canonical
        (rho:par
          (rho:send (rho:quote rho:nil) $node)
          (rho:recv (rho:quote rho:nil) $answer (rho:drop $answer))))))
-(: prime-need:through-rho (-> (Data Atom) %Undefined%))
+(: prime-need:through-rho (-> Atom %Undefined%))
 (= (prime-need:through-rho $payload)
    (prime-need:run-payload (prime-need:defer $payload)))
 !(prime-need:defer (println! "DeferredCodeMustRemainInert"))

@@ -29,6 +29,29 @@ std:definitions returns the original type declarations and equations as data,
 one answer per occurrence. Open variables stay syntax during inspection.
 Qualified standard operations select their original implementation.
 
+Prime installs quote's signature as (-> Atom Atom). Its parameter
+denotes syntax, including when an added equation selects ordinary application:
+
+    (= (quote $body) extra-quote)
+    !(collapse (quote (+ 1 2)))
+
+The answers are (quote (+ 1 2)) and extra-quote. Producing (quote 3) would
+evaluate the held operand and violate this declaration. std:definitions quote
+returns the installed Atom declaration with its original delegate.
+Replacing the public declaration with (-> Proc Atom) makes that parameter
+denote a computation; the qualified original retains its Atom parameter.
+
+Passing already-held syntax to an ordinary function preserves its data role.
+The function can inspect and match its structure without executing it. The
+same rule applies to values read from a space, including through a transform's
+computed let sources. Only explicit eval opens that data as code. In contrast,
+an authored computation supplied to a Proc parameter denotes its computed
+value. Atom holds syntax, and Proc requests computation. A specific domain
+such as Number also requests computation and checks the resulting value.
+Function bodies compute their declared results; an Atom result type does
+not make the body itself inert. Undeclared parameters retain the existing
+call-by-need behavior.
+
 Restoring is ordinary programming:
 
     !(let $definition (std:definitions get-type)

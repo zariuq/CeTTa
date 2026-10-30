@@ -96,6 +96,12 @@ CettaDiskStatus cetta_disk_cursor_open_reverse_range(const CettaDiskRoot *root,
 CettaDiskStatus cetta_disk_cursor_next(CettaDiskCursor *cursor,
     CettaDiskBuffer *key, CettaDiskBlob *value);
 const CettaDiskRoot *cetta_disk_cursor_root(const CettaDiskCursor *cursor);
+/* Requested heap storage retained by a quiescent cursor, counted through the
+ * common identity census. The borrowed disk contents and kernel fd state are
+ * not heap allocations and are not included. */
+struct CettaStorageCensus;
+void cetta_disk_cursor_storage_census(const CettaDiskCursor *cursor,
+    struct CettaStorageCensus *census);
 void cetta_disk_cursor_close(CettaDiskCursor *cursor);
 void cetta_disk_buffer_free(CettaDiskBuffer *buffer);
 

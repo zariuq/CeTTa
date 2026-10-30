@@ -4,7 +4,7 @@
 
 (: Test.Rel (-> Type Type Type))
 (: Test.List (-> Type Type))
-(: Test.Wrap (-> (Data Atom) Atom))
+(: Test.Wrap (-> Atom Proc))
 (: Test.Pair
    (-> (Test.Rel Number Number)
        (Test.Rel Number Number)

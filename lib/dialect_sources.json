@@ -2,9 +2,34 @@
   "schema": "metta-library-dialect-sources-v1",
   "prime_replacements": [
     {
-      "source": "native_history.metta",
-      "old": "(: history:explain (-> Atom %Undefined%))",
-      "new": "(: history:explain (-> (Data Atom) %Undefined%))"
+      "source": "str.metta",
+      "old": "(: str:utf8-feed (-> Atom %Undefined% %Undefined% Atom))",
+      "new": "(: str:utf8-feed (-> Proc %Undefined% %Undefined% Atom))"
+    },
+    {
+      "source": "str.metta",
+      "old": "(: str:advance-lines (-> Atom %Undefined% %Undefined% Atom))",
+      "new": "(: str:advance-lines (-> Proc %Undefined% %Undefined% Atom))"
+    },
+    {
+      "source": "str.metta",
+      "old": "(: str:feed-lines (-> Atom %Undefined% %Undefined% Atom))",
+      "new": "(: str:feed-lines (-> Proc %Undefined% %Undefined% Atom))"
+    },
+    {
+      "source": "str.metta",
+      "old": "(: str:collect-lines (-> Atom Atom %Undefined% Atom))",
+      "new": "(: str:collect-lines (-> Proc Proc %Undefined% Atom))"
+    },
+    {
+      "source": "durable/telegram.metta",
+      "old": "(: tg-host:match (-> Atom Atom %Undefined%))",
+      "new": "(: tg-host:match (-> Atom Proc %Undefined%))"
+    },
+    {
+      "source": "durable/activity.metta",
+      "old": "(: activity:match (-> Atom Atom %Undefined%))",
+      "new": "(: activity:match (-> Atom Proc %Undefined%))"
     }
   ],
   "groups": [

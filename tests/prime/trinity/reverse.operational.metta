@@ -63,7 +63,7 @@
 !(cost:firings (rev (cons zero (cons (suc zero) (cons (suc (suc zero)) nil)))))
 !(cost:firings (rev-onto-list-first (cons zero (cons (suc zero) (cons (suc (suc zero)) nil))) nil))
 ; The counts at the lengths 0, 1, 2 and 3.
-(: count-firings (-> Atom Number))
+(: count-firings (-> Proc Number))
 (= (count-firings $e) (let ($values $n) (cost:firings $e) $n))
 ; rev: 1, 3, 6, 10, the quadratic (n + 1)(n + 2) / 2.
 !((count-firings (rev nil))

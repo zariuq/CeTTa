@@ -117,4 +117,17 @@ petta_specializer_pattern_child(
 /* Release thread-local derivation metadata at evaluator-session teardown. */
 void petta_specializer_reset_thread(void);
 
+/* Parent derivations are thread-local, while joined workers may publish to
+ * their source Spaces. Borrow these live program projections across one joined
+ * run, then retire derivations for every changed projection before resuming
+ * the parent. The enclosing evaluator retains the Spaces until finish. */
+typedef struct {
+    PettaProgram *program;
+    SpaceProgramToken *reads;
+    size_t len;
+} PettaSpecializerPublicationWatch;
+bool petta_specializer_capture_publications(PettaProgram *program,
+    PettaSpecializerPublicationWatch *watch);
+void petta_specializer_finish_publications(PettaSpecializerPublicationWatch *watch);
+
 #endif /* CETTA_PETTA_SPECIALIZER_H */

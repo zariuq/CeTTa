@@ -91,6 +91,8 @@ static void ordinary(const char *path) {
                       {false,text("answer"),text("retained")}};
     check(cetta_disk_store_commit(first,old,ops,3,&updated)==CETTA_STORE_OK);
     check(cetta_disk_store_view_revision(updated)==1);
+    check(cetta_disk_store_check_view(first,old)==CETTA_STORE_OK);
+    check(cetta_disk_store_check_view(second,old)==CETTA_STORE_OK);
     puts("STORE_PUBLICATION success committed 1");
     expect(updated,"receipt","done"); expect(updated,"usage","once"); expect(updated,"answer","retained");
     expect(old,"receipt",NULL);
@@ -399,9 +401,24 @@ static void parallel(const char *path,bool spend) {
     else for (int i=0;i<CHILDREN;++i) { char key[32];snprintf(key,sizeof(key),"channel/%d",i);expect(view,key,"29"); }
     cetta_disk_store_view_close(view);cetta_disk_store_close(store);
 }
+static void view_domains(const char *a,const char *b) {
+    CettaDiskStore *first=open_store(a),*other=open_store(b);
+    CettaDiskStoreView *view=snapshot(first),*recovered=NULL;
+    check(cetta_disk_store_check_view(NULL,view)==CETTA_STORE_INVALID);
+    check(cetta_disk_store_check_view(first,NULL)==CETTA_STORE_INVALID);
+    check(cetta_disk_store_check_view(first,view)==CETTA_STORE_OK);
+    check(cetta_disk_store_check_view(other,view)==CETTA_STORE_CONFLICT);
+    cetta_disk_store_require_recovery(first);
+    check(cetta_disk_store_check_view(first,view)==CETTA_STORE_RECOVERY_REQUIRED);
+    check(cetta_disk_store_recover(first,&recovered)==CETTA_STORE_OK);
+    check(cetta_disk_store_check_view(first,view)==CETTA_STORE_OK);
+    check(cetta_disk_store_view_revision(recovered)==0);
+    cetta_disk_store_view_close(recovered);cetta_disk_store_view_close(view);
+    cetta_disk_store_close(first);cetta_disk_store_close(other);
+}
 int main(void) {
     char root[]="runtime/disk-store-test.XXXXXX"; check(mkdtemp(root));
-    const char *labels[]={"ordinary","lock","unknown-before","unknown-after","partial","corrupt","sync-data","sync-manifest","sync-directory","scoped","parallel","spenders","collection-confirmation","live-builder","lost-writeback","ownership","old-version","wrong-header"};
+    const char *labels[]={"ordinary","lock","unknown-before","unknown-after","partial","corrupt","sync-data","sync-manifest","sync-directory","scoped","parallel","spenders","collection-confirmation","live-builder","lost-writeback","ownership","old-version","wrong-header","view-domain-a","view-domain-b"};
     enum { CASES=sizeof(labels)/sizeof(*labels) };char paths[CASES][256];
     for (size_t i=0;i<CASES;++i) {
         check(snprintf(paths[i],sizeof(paths[i]),"%s/%s",root,labels[i])>0);
@@ -414,6 +431,7 @@ int main(void) {
     collection_confirmation(paths[12]);live_builder(paths[13]);
     lost_writeback(paths[14]);
     ownership(paths[15]);old_manifest_version(paths[16]);wrong_segment_header(paths[17]);
+    view_domains(paths[18],paths[19]);
     for (size_t i=0;i<CASES;++i) empty_directory(paths[i]);
     check(!rmdir(root)); printf("native disk store: %u checks passed\n",checks); return 0;
 }

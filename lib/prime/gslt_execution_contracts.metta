@@ -347,6 +347,7 @@
   (value sequence-first)
   (value sequence-last)
   (value collect)
+  (value match-branches)
   ; These operations are selected by dialect elaboration of an occurrence,
   ; without giving its value or constructor head new source-call authority.
   (implicit-operation return-value)
@@ -409,6 +410,7 @@
   (source-head function 1 return-scope (operands 0 absent absent) (fold evaluate))
   (source-head superpose 1 ordered-choice (operands 0 absent absent) (fold none))
   (source-head collapse 1 collect (operands 0 absent absent) (fold none))
+  (source-head case 2 match-branches (operands 0 1 absent) (fold none))
   (source-head empty 0 failure (operands absent absent absent) (fold none))
   (dialect-form petta cut 0 scoped-commit (operands absent absent absent) (fold none))
   (dialect-form petta catch 1 handle (operands 0 absent absent) (fold none)))
@@ -900,6 +902,7 @@
   (query-head tensor:inspect relational-query)
   (query-head tensor:entries relational-query)
   (query-head tensor:gather relational-query)
+  (query-head tensor:gather-rows relational-query)
   (query-head tensor:merge relational-query)
   (query-head tensor:zip-map relational-query)
   (query-head __cetta_lib_tensor_try_zip_map relational-query)

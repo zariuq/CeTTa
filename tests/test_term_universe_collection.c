@@ -19,13 +19,15 @@
 
 /* Reclamation of a term universe, against a reachability oracle.
  *
- * Each round makes new terms over the live ones, chooses roots, and
- * collects.  The collector must find live exactly the entries a plain
- * recursive walk from the roots reaches.  Every live entry must keep its
- * term, read back through its record after the records were compacted,
- * and a lookup of that term must still find it.  Every reclaimed term must
- * be gone from every lookup, and storing it again must give an equal term
- * under a new id. */
+ * Each round makes new terms over the live ones, chooses roots, lets a
+ * counted holder take and drop references, and collects.  The collector
+ * must find live exactly the entries a plain recursive walk from the roots
+ * and the holder's ids reaches.  Every live entry must keep its term, read
+ * back through its record wherever the record now lies, and a lookup of
+ * that term must still find it.  Every reclaimed term must be gone from
+ * every lookup, and storing it again must give an equal live term, under
+ * any id: freed slots are reused.  The build checks every collection
+ * besides: it recounts the references and traces from the roots. */
 
 typedef struct {
     AtomId *ids;
@@ -48,6 +50,29 @@ static void test_list_roots(const TermUniverse *universe,
     (void)universe;
     for (size_t i = 0u; i < roots->len; i++)
         visit(visit_context, roots->ids[i]);
+}
+
+/* A counted holder, as a space is: a reference a held id, taken and dropped
+ * through the universe, and its ids listed for the check. */
+typedef struct {
+    TermUniverse *universe;
+    TestIds ids;
+} TestHolder;
+
+static void test_holder_take(TestHolder *holder, AtomId id) {
+    test_ids_push(&holder->ids, id);
+    term_universe_hold(holder->universe, id);
+}
+
+static void test_holder_drop(TestHolder *holder, size_t at) {
+    term_universe_release(holder->universe, holder->ids.ids[at]);
+    holder->ids.ids[at] = holder->ids.ids[--holder->ids.len];
+}
+
+static void test_list_held(const TermUniverse *universe,
+                           TermUniverseRootVisit visit, void *visit_context,
+                           void *ctx) {
+    test_list_roots(universe, visit, visit_context, &((TestHolder *)ctx)->ids);
 }
 
 static uint64_t g_rng = UINT64_C(0x9e3779b97f4a7c15);
@@ -97,7 +122,7 @@ static bool record_equals(const TermUniverse *universe, AtomId id,
         return false;
     switch (term->kind) {
     case ATOM_SYMBOL:
-        return tu_sym(universe, id) == term->sym_id;
+        return tu_sym(universe, id) == atom_symbol_current_id(term);
     case ATOM_VAR:
         return var_id_eq(tu_var_id(universe, id), term->var_id);
     case ATOM_GROUNDED:
@@ -167,8 +192,11 @@ static void test_collection_matches_reachability(bool wide) {
     term_universe_set_collection_mode(&universe,
                                       TERM_UNIVERSE_COLLECTION_RECLAIM);
     TestIds roots = {0}, live = {0};
+    TestHolder holder = {.universe = &universe};
     assert(term_universe_add_root_provider(&universe, test_list_roots,
                                            &roots));
+    assert(term_universe_add_counted_root_provider(&universe, test_list_held,
+                                                   &holder));
     uint64_t reclaimed_total = 0u, kept_total = 0u;
 
     for (unsigned round = 0u; round < 16u; round++) {
@@ -178,8 +206,20 @@ static void test_collection_matches_reachability(bool wide) {
             assert(term_universe_get_atom(&universe, live.ids[i]));
         roots.len = 0u;
         for (size_t i = 0u; i < live.len; i++) {
-            if (test_below(5u) == 0u)
+            if (test_below(6u) == 0u)
                 test_ids_push(&roots, live.ids[i]);
+            /* The holder takes some ids, a few more than once. */
+            if (test_below(12u) == 0u)
+                test_holder_take(&holder, live.ids[i]);
+            if (test_below(40u) == 0u)
+                test_holder_take(&holder, live.ids[i]);
+        }
+        /* And drops about a third of what it held. */
+        for (size_t i = 0u; i < holder.ids.len;) {
+            if (test_below(3u) == 0u)
+                test_holder_drop(&holder, i);
+            else
+                i++;
         }
 
         size_t len = universe.len;
@@ -189,6 +229,8 @@ static void test_collection_matches_reachability(bool wide) {
         assert(reached && terms && decoded);
         for (size_t i = 0u; i < roots.len; i++)
             oracle_reach(&universe, roots.ids[i], reached);
+        for (size_t i = 0u; i < holder.ids.len; i++)
+            oracle_reach(&universe, holder.ids.ids[i], reached);
         for (size_t i = 0u; i < live.len; i++) {
             AtomId id = live.ids[i];
             if (!terms[id]) {
@@ -252,7 +294,7 @@ static void test_collection_matches_reachability(bool wide) {
             Atom *term = terms[restore.ids[i]];
             AtomId again =
                 term_universe_store_atom_id(&universe, &persistent, term);
-            assert(again != CETTA_ATOM_ID_NONE && again >= len);
+            assert(again != CETTA_ATOM_ID_NONE);
             assert(record_equals(&universe, again, term));
             test_ids_push(&next, again);
         }
@@ -269,11 +311,177 @@ static void test_collection_matches_reachability(bool wide) {
            "rest (%" PRIu64 " kept, %" PRIu64 " reclaimed)\n",
            wide ? "wide" : "compact", kept_total, reclaimed_total);
     term_universe_remove_root_provider(&universe, test_list_roots, &roots);
+    term_universe_remove_root_provider(&universe, test_list_held, &holder);
     term_universe_free(&universe);
     arena_free(&persistent);
     arena_free(&snapshots);
     free(roots.ids);
+    free(holder.ids.ids);
     free(live.ids);
+}
+
+/* A count saturates at its largest value, and its entry is kept, with what
+ * it holds, whatever is released later; an entry held as often, short of
+ * that, is freed when its holders let go. */
+static void test_saturated_counts_keep_their_entries(void) {
+    Arena persistent;
+    arena_init(&persistent);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_set_collection_mode(&universe,
+                                      TERM_UNIVERSE_COLLECTION_RECLAIM);
+    /* Counting starts at the first collection; the holds below are bare,
+     * listed by no provider, so they must come after it. */
+    assert(term_universe_collect(&universe, NULL) && universe.counting);
+    SymbolId f = symbol_intern_cstr(g_symbols, "f");
+    AtomId kids[2] = {tu_intern_symbol(&universe, f),
+                      tu_intern_int(&universe, 70000)};
+    AtomId shared = tu_expr_from_ids(&universe, kids, 2u);
+    kids[1] = tu_intern_int(&universe, 60000);
+    AtomId often = tu_expr_from_ids(&universe, kids, 2u);
+    for (unsigned i = 0u; i < 70000u; i++)
+        term_universe_hold(&universe, shared);
+    for (unsigned i = 0u; i < 60000u; i++)
+        term_universe_hold(&universe, often);
+    assert(universe.saturated == 1u);
+    for (unsigned i = 0u; i < 70000u; i++)
+        term_universe_release(&universe, shared);
+    for (unsigned i = 0u; i < 60000u; i++)
+        term_universe_release(&universe, often);
+    TermUniverseCollectionReport report;
+    assert(term_universe_collect(&universe, &report));
+    assert(tu_kind(&universe, shared) == ATOM_EXPR &&
+           tu_int(&universe, tu_child(&universe, shared, 1u)) == 70000);
+    assert(term_universe_lookup_atom_id(
+               &universe, term_universe_copy_atom(&universe, &persistent,
+                                                  shared)) == shared);
+    /* OFTEN and its integer go; the symbol is held by SHARED. */
+    assert(report.reclaimed == 2u);
+    printf("PASS: a saturated count keeps its entry and what it holds\n");
+    term_universe_free(&universe);
+    arena_free(&persistent);
+}
+
+/* Freed entry slots are reused once their quarantine has passed: the
+ * entries grow no further, every new term reads back and is found under
+ * its reused id, and each reused slot counts a generation. */
+static void test_freed_slots_are_reused(void) {
+    Arena persistent;
+    arena_init(&persistent);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_set_collection_mode(&universe,
+                                      TERM_UNIVERSE_COLLECTION_RECLAIM);
+    TestIds roots = {0};
+    assert(term_universe_add_root_provider(&universe, test_list_roots,
+                                           &roots));
+    SymbolId h = symbol_intern_cstr(g_symbols, "h");
+    AtomId kids[2] = {tu_intern_symbol(&universe, h), CETTA_ATOM_ID_NONE};
+    test_ids_push(&roots, kids[0]);
+    for (int64_t i = 0; i < 500; i++) {
+        kids[1] = tu_intern_int(&universe, i);
+        (void)tu_expr_from_ids(&universe, kids, 2u);
+    }
+    /* Three collections let the freed slots past any quarantine. */
+    for (int round = 0; round < 3; round++)
+        assert(term_universe_collect(&universe, NULL));
+    size_t len = universe.len;
+    AtomId made[400];
+    for (int64_t i = 0; i < 400; i++) {
+        kids[1] = tu_intern_int(&universe, 1000 + i);
+        made[i] = tu_expr_from_ids(&universe, kids, 2u);
+        assert(made[i] != CETTA_ATOM_ID_NONE && made[i] < len);
+    }
+    assert(universe.len == len);
+    for (int64_t i = 0; i < 400; i++) {
+        test_ids_push(&roots, made[i]);
+        assert(tu_child(&universe, made[i], 0u) == kids[0]);
+        assert(tu_int(&universe, tu_child(&universe, made[i], 1u)) ==
+               1000 + i);
+        Atom *term = term_universe_copy_atom(&universe, &persistent, made[i]);
+        assert(term && term_universe_lookup_atom_id(&universe, term) ==
+                           made[i]);
+#if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
+        assert(universe.generations && universe.generations[made[i]] != 0u);
+#endif
+    }
+    /* The reused entries collect and are kept like any other. */
+    assert(term_universe_collect(&universe, NULL));
+    for (int64_t i = 0; i < 400; i++)
+        assert(tu_int(&universe, tu_child(&universe, made[i], 1u)) ==
+               1000 + i);
+    printf("PASS: freed slots are reused past their quarantine\n");
+    term_universe_remove_root_provider(&universe, test_list_roots, &roots);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+    free(roots.ids);
+}
+
+/* Freed records are reused by size, and records too large for the size
+ * lists leave holes until the records are compacted; either way every live
+ * record reads back.  Compaction runs once the loose bytes reach the
+ * pool's half. */
+static void test_freed_records_are_reused_and_compacted(void) {
+    Arena persistent;
+    arena_init(&persistent);
+    TermUniverse universe;
+    term_universe_init(&universe);
+    term_universe_set_persistent_arena(&universe, &persistent);
+    term_universe_set_collection_mode(&universe,
+                                      TERM_UNIVERSE_COLLECTION_RECLAIM);
+    TestIds roots = {0};
+    assert(term_universe_add_root_provider(&universe, test_list_roots,
+                                           &roots));
+    SymbolId g = symbol_intern_cstr(g_symbols, "g");
+    AtomId head = tu_intern_symbol(&universe, g);
+    test_ids_push(&roots, head);
+    /* Small records, each kept or not; the freed ones are reused. */
+    AtomId kids[96];
+    kids[0] = head;
+    for (int64_t i = 0; i < 1000; i++) {
+        kids[1] = tu_intern_int(&universe, i);
+        AtomId id = tu_expr_from_ids(&universe, kids, 2u);
+        if (i % 10 == 0)
+            test_ids_push(&roots, id);
+    }
+    TermUniverseCollectionReport report;
+    assert(term_universe_collect(&universe, &report));
+    assert(universe.record_free_bytes != 0u);
+    size_t pool = universe.blob_len;
+    /* Fewer than were freed, all of the freed size: the pool keeps its
+     * length. */
+    for (int64_t i = 2000; i < 2800; i++) {
+        kids[1] = tu_intern_int(&universe, i);
+        (void)tu_expr_from_ids(&universe, kids, 2u);
+    }
+    assert(universe.blob_len == pool);
+    assert(term_universe_collect(&universe, &report));
+    /* Large records leave holes, and the holes bring on compaction. */
+    for (int64_t i = 0; i < 600; i++) {
+        for (unsigned k = 1u; k < 96u; k++)
+            kids[k] = tu_intern_int(&universe, (int64_t)k * 100000 + i);
+        AtomId id = tu_expr_from_ids(&universe, kids, 96u);
+        if (i % 10 == 0)
+            test_ids_push(&roots, id);
+    }
+    assert(term_universe_collect(&universe, &report));
+    assert(universe.record_free_bytes == 0u &&
+           universe.record_hole_bytes == 0u);
+    for (size_t i = 0u; i < roots.len; i++) {
+        AtomId id = roots.ids[i];
+        if (tu_kind(&universe, id) != ATOM_EXPR)
+            continue;
+        assert(tu_child(&universe, id, 0u) == head);
+        Atom *term = term_universe_copy_atom(&universe, &persistent, id);
+        assert(term && term_universe_lookup_atom_id(&universe, term) == id);
+    }
+    printf("PASS: freed records are reused, and holes are compacted away\n");
+    term_universe_remove_root_provider(&universe, test_list_roots, &roots);
+    term_universe_free(&universe);
+    arena_free(&persistent);
+    free(roots.ids);
 }
 
 /* Integers live in pages by value rather than in the intern table.  A
@@ -302,8 +510,6 @@ static void test_integer_pages_release_reclaimed_values(void) {
         AtomId again = tu_intern_int(&universe, value);
         if (value % 3 == 0)
             assert(again == ids[value]);
-        else
-            assert(again != ids[value] && again >= 400u);
         assert(tu_int(&universe, again) == value);
     }
     printf("PASS: integer pages keep rooted values and release the rest\n");
@@ -373,8 +579,13 @@ int main(void) {
     test_collection_matches_reachability(true);
     test_integer_pages_release_reclaimed_values();
     test_inhibited_safe_point_collects_nothing();
+    test_saturated_counts_keep_their_entries();
+    test_freed_records_are_reused_and_compacted();
+    test_freed_slots_are_reused();
 #if CETTA_BUILD_WITH_TERM_UNIVERSE_COLLECTION_CHECKS
     test_read_of_reclaimed_entry_traps();
 #endif
+    var_intern_free(&var_intern);
+    symbol_table_free(&symbols);
     return 0;
 }

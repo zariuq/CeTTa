@@ -204,6 +204,13 @@ static bool petta_machine_pattern_candidate(PettaMachineImpl *machine,
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
+    /* Restore rolls back the preceding branch heap. Receive a source's
+     * borrowed row only after that rollback, so the new branch owns it. */
+    if (choice->as.match.occurrence_cursor_mode && choice->as.match.occurrences.source_ops) {
+        candidate = space_occurrence_cursor_receive_atom(
+            &choice->as.match.occurrences, occurrence, &machine->heap);
+        if (!candidate) { *failure = PETTA_MACHINE_STEP_CAPACITY; return false; }
+    }
     machine->stats.match_candidates++;
     Atom *state = choice->as.match.template;
     CETTA_FRAME_IDENTITY_SCOPE(frame);
@@ -231,16 +238,20 @@ static bool petta_machine_pattern_candidate(PettaMachineImpl *machine,
     if (status == CETTA_TERM_MATCH_MISMATCH) return false;
     if (status == CETTA_TERM_MATCH_INVALID)
         return petta_machine_pattern_query_fault(machine, row, "InvalidTermGraph");
-    if (status != CETTA_TERM_MATCH_OK || occurrence > INT64_MAX ||
+    if (status != CETTA_TERM_MATCH_OK ||
         choice->as.match.read.instance_id > INT64_MAX ||
         choice->as.match.read.revision > INT64_MAX) {
         *failure = PETTA_MACHINE_STEP_CAPACITY;
         return false;
     }
+    Atom *occurrence_id = choice->as.match.occurrence_cursor_mode
+        ? space_occurrence_cursor_identity(&choice->as.match.occurrences, occurrence, &machine->heap)
+        : occurrence <= INT64_MAX ? atom_int(&machine->heap, (int64_t)occurrence) : NULL;
+    if (!occurrence_id) { *failure = PETTA_MACHINE_STEP_CAPACITY; return false; }
     Atom *identity_fields[] = {atom_symbol(&machine->heap, "pat:occurrence"),
         atom_int(&machine->heap, (int64_t)choice->as.match.read.instance_id),
         atom_int(&machine->heap, (int64_t)choice->as.match.read.revision),
-        atom_int(&machine->heap, (int64_t)occurrence)};
+        occurrence_id};
     Atom *identity = atom_expr(&machine->heap, identity_fields, 4u);
     Atom *occurrences = petta_pattern_append(&machine->heap,
         state->expr.elems[PAT_QUERY_OCCURRENCES], identity);

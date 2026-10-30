@@ -1,2 +1,2 @@
-[(-> SpaceType), (-> Atom SpaceType)]
+[(-> SpaceType), (-> Atom SpaceType), (-> Atom Atom SpaceType)]
 [(Error (new-space 1) UnknownSpaceKind)]

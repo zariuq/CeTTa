@@ -1,7 +1,7 @@
 ; A pattern that takes a held value apart reads the syntax it holds, in let,
 ; let* and case as in unify and Data equation heads.  The parts it binds stay
 ; held: they are returned as written and run only when evaluated.
-(: hold (-> (Data Atom) (Data Atom)))
+(: hold (-> Atom Atom))
 (= (hold $x) $x)
 !(let (ex $l) (hold (ex a)) $l)
 !(let* (($d (hold (ex a))) ((ex $l) $d)) $l)
@@ -20,9 +20,9 @@
 ; pattern comes from a Data parameter or from a let.
 (fact a)
 (fact b)
-(: find (-> (Data Atom) $r))
+(: find (-> Atom $r))
 (= (find $p) (collapse (match &self $p found){$p}))
-(: find-part (-> (Data Atom) $r))
+(: find-part (-> Atom $r))
 (= (find-part $p) (match &self $p $p){$p})
 !(find (fact a))
 !(find (fact c))

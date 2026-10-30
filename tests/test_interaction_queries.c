@@ -12,6 +12,8 @@ static bool g_incomplete_scan_only;
 static bool g_cancel_after_match;
 static CettaMatchCompletion query_match(Atom *, Atom *, BindingsBuilder *, Arena *,
     CettaFrameIdentity, uint64_t);
+static CettaMatchCompletion query_match_materialized(Atom *, Atom *,
+    BindingsBuilder *, Arena *, uint64_t);
 static bool query_interrupted(void) { return g_cancel; }
 static size_t g_calloc_fail = SIZE_MAX, g_realloc_fail = SIZE_MAX;
 static bool g_frontier_fail, g_frontier_failed;
@@ -45,6 +47,7 @@ static void *query_realloc(void *p, size_t bytes) {
 
 #define eval_native_interrupted query_interrupted
 #define match_atoms_epoch_builder_checked query_match
+#define match_atoms_builder_checked query_match_materialized
 #define calloc query_calloc
 #define realloc query_realloc
 #include "../src/interaction_core.c"
@@ -52,15 +55,23 @@ static void *query_realloc(void *p, size_t bytes) {
 #undef calloc
 #undef eval_native_interrupted
 #undef match_atoms_epoch_builder_checked
+#undef match_atoms_builder_checked
 
 static CettaMatchCompletion query_match(Atom *left, Atom *right, BindingsBuilder *builder,
     Arena *arena, CettaFrameIdentity epoch, uint64_t budget) {
     if (g_incomplete_match && (!g_incomplete_scan_only || atom_is_symbol(left, "missing")))
         return CETTA_MATCH_INCOMPLETE;
-    CettaMatchCompletion result = match_atoms_epoch_builder_checked(left, right, builder, arena, epoch, budget);
+    CettaMatchCompletion result = cetta_frame_identity_is_none(epoch)
+        ? match_atoms_builder_checked(left, right, builder, arena, budget)
+        : match_atoms_epoch_builder_checked(left, right, builder, arena, epoch, budget);
     if (g_cancel_after_match && result == CETTA_MATCH_MATCHED)
         g_cancel = true;
     return result;
+}
+
+static CettaMatchCompletion query_match_materialized(Atom *left, Atom *right,
+    BindingsBuilder *builder, Arena *arena, uint64_t budget) {
+    return query_match(left, right, builder, arena, CETTA_FRAME_IDENTITY_NONE, budget);
 }
 
 static unsigned g_checks, g_failures;
@@ -126,9 +137,13 @@ static void request_ownership(void) {
     CHECK(ia_head(first, "ia:need", 3u));
     CHECK(space_length64(&space) == 1u && holds(&space, atom_symbol(&a, "pending")));
     if (ia_head(first, "ia:need", 3u)) {
+        IaResumeToken *issued = ia_resume_token_of(first->expr.elems[1]);
+        IaMachine *owner = issued ? issued->machine : NULL;
+        CHECK(owner && !owner->retired && arena_accounted_live_bytes(&owner->arena) > 0u);
         Atom *one = atom_int(&a, 7);
         Atom *second = resume(&a, first->expr.elems[1], atom_expr(&a, &one, 1u));
         CHECK(ia_head(second, "ia:need", 3u));
+        CHECK(owner && !owner->retired && owner->waiting);
         CHECK(space_length64(&space) == 1u);
         Atom *stale = resume(&a, first->expr.elems[1], atom_unit(&a));
         CHECK(failed(stale));
@@ -138,6 +153,10 @@ static void request_ownership(void) {
             CHECK(fired(last));
             CHECK(space_length64(&space) == 1u && holds(&space, atom_symbol(&a, "done")));
             CHECK(!holds(&space, atom_symbol(&a, "pending")));
+            CHECK(owner && owner->retired && !owner->waiting &&
+                arena_accounted_live_bytes(&owner->arena) == 0u);
+            CHECK(owner && !owner->jobs && !owner->ctxs && !owner->alts &&
+                !owner->all_seen.items && !owner->firing && !owner->let_job.expr);
             CHECK(failed(resume(&a, second->expr.elems[1], atom_unit(&a))));
         }
     }

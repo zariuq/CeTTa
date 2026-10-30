@@ -2564,8 +2564,9 @@ static void test_prepared_native_continuation(void) {
             assert(stop == CETTA_OWNED_EXECUTION_HANDOFF && recipient.count == 0u);
             CettaInvocation call;
             bool entered;
-            const CettaOwnedReturn *pending;
-            assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &call, &entered, &pending));
+            CettaOwnedReturn snapshot;
+            assert(cetta_prepared_pure_answer_cursor_native_boundary(cursor, &call, &entered, &snapshot));
+            const CettaOwnedReturn *pending = entered ? &snapshot : NULL;
             assert(entered == (native_mode != 18u));
             if (native_mode == 6u)
                 assert(pending && pending->outcome.kind == CETTA_CALL_SUSPENDED && pending->outcome.delayed);

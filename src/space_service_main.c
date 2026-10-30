@@ -1718,7 +1718,7 @@ static Atom *query(Service *s, Arena *a, Atom *request, Store *st, bool counting
         if (failure || (first && q.count)) break;
     }
     space_occurrence_cursor_release(&cursor);
-    if (!failure && step == SPACE_OCCURRENCE_CURSOR_INVALIDATED) failure="backend";
+    if (!failure && step != SPACE_OCCURRENCE_CURSOR_ITEM && step != SPACE_OCCURRENCE_CURSOR_END) failure="backend";
     if (failure) {
         for (size_t i = 0; i < q.count; ++i) bytes_free(&q.rows[i]);
         free(q.rows); return error(a,request,failure);
@@ -1852,7 +1852,7 @@ static const char *scope_current(Service *s, Store *st, ScopeView *view, uint64_
         }
         bindings_free(&bindings); bytes_free(&encoded); arena_free(&scratch);
     }
-    if (!failure && step==SPACE_OCCURRENCE_CURSOR_INVALIDATED) failure="backend";
+    if (!failure && step!=SPACE_OCCURRENCE_CURSOR_ITEM && step!=SPACE_OCCURRENCE_CURSOR_END) failure="backend";
     if (!failure && position!=view->rows.count) failure="scope-conflict";
     space_occurrence_cursor_release(&cursor); arena_free(&terms);
     (void)s;
@@ -1954,7 +1954,7 @@ static int store_any(Store *st, Atom *pattern) {
         if (!found && match_atoms(pattern,row,&bindings,&scratch)) found = 1;
         bindings_free(&bindings); arena_free(&scratch);
     }
-    if (!found && step == SPACE_OCCURRENCE_CURSOR_INVALIDATED) found = -1;
+    if (!found && step != SPACE_OCCURRENCE_CURSOR_ITEM && step != SPACE_OCCURRENCE_CURSOR_END) found = -1;
     space_occurrence_cursor_release(&cursor);
     return found;
 }

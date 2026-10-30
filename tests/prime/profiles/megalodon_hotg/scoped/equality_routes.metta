@@ -36,8 +36,8 @@
 !(import! &self pf)
 
 ; The length of a proof or term in symbols.
-(: syntax-length (-> (Data Atom) Number))
-(: syntax-length-tail (-> (Data Atom) Number))
+(: syntax-length (-> Atom Number))
+(: syntax-length-tail (-> Atom Number))
 (= (syntax-length $t)
    (if (== (get-metatype $t) Expression) (syntax-length-tail $t) 1))
 (= (syntax-length-tail $t)

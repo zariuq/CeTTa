@@ -1,4 +1,7 @@
 #include <assert.h>
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -8,6 +11,126 @@
 #include "tests/test_runtime_stats_stubs.h"
 
 enum { COPY_DEPTH = 100000 };
+
+typedef struct {
+    _Atomic bool *start;
+    Arena source;
+    Arena destination;
+    Atom *held;
+    Atom *value;
+} HeldProjectionThread;
+
+static void *project_held_on_worker(void *context) {
+    HeldProjectionThread *worker = context;
+    arena_init_detached(&worker->source);
+    arena_init_detached(&worker->destination);
+    while (!atomic_load_explicit(worker->start, memory_order_acquire))
+        sched_yield();
+    for (unsigned i = 0u; i < 256u; i++) {
+        worker->value = atom_int(&worker->source, (int64_t)i);
+        worker->held = atom_prime_held_wrap(&worker->source, worker->value);
+        assert(worker->held && atom_prime_held_made());
+        assert(atom_contains_prime_held(worker->held));
+        assert(!atom_contains_prime_held(worker->value));
+        assert(atom_prime_held_strip(&worker->destination, worker->held) ==
+               worker->value);
+    }
+    return NULL;
+}
+
+/* Each worker owns its arenas; only the monotone held-tag summary is shared.
+ * A joined worker's value must also project correctly on another thread. */
+static void check_parallel_held_projection(void) {
+    enum { WORKERS = 4 };
+    _Atomic bool start = false;
+    HeldProjectionThread workers[WORKERS] = {0};
+    pthread_t threads[WORKERS];
+    for (unsigned i = 0u; i < WORKERS; i++) {
+        workers[i].start = &start;
+        assert(pthread_create(&threads[i], NULL, project_held_on_worker,
+                              &workers[i]) == 0);
+    }
+    atomic_store_explicit(&start, true, memory_order_release);
+    for (unsigned i = 0u; i < WORKERS; i++)
+        assert(pthread_join(threads[i], NULL) == 0);
+    assert(atom_prime_held_made());
+    Arena destination;
+    arena_init_detached(&destination);
+    for (unsigned i = 0u; i < WORKERS; i++) {
+        assert(atom_contains_prime_held(workers[i].held));
+        assert(atom_prime_held_strip(&destination, workers[i].held) ==
+               workers[i].value);
+        assert(atom_prime_held_strip(&destination, workers[i].value) ==
+               workers[i].value);
+        arena_free(&workers[i].destination);
+        arena_free(&workers[i].source);
+    }
+    arena_free(&destination);
+    puts("PASS: held values project across worker-owned arenas and joined threads");
+}
+
+typedef struct { unsigned visits, refuse_at; } TestGraphProjection;
+
+static bool project_expression(void *context, Arena *arena, Atom *atom) {
+    (void)context; (void)arena;
+    return atom && atom->kind == ATOM_EXPR && atom->expr.len != 0u;
+}
+
+static Atom *project_held_payload(void *context, Arena *arena, Atom *atom,
+                                  Atom **children, bool changed) {
+    TestGraphProjection *trace = context;
+    trace->visits++;
+    if (trace->refuse_at && trace->visits == trace->refuse_at) return NULL;
+    if (atom_prime_held_is(atom)) return children[1];
+    return changed ? atom_expr_rebuild(arena, atom, children, atom->expr.len) : atom;
+}
+
+static void check_graph_projection(Arena *source, Arena *destination) {
+    Atom *leaf = atom_int(source, 73);
+    Atom *held = atom_prime_held_wrap(source, leaf);
+    Atom *dag = held;
+    for (unsigned i = 0u; i < 80u; i++) dag = atom_expr2(source, dag, dag);
+    dag = atom_he_evaluated_copy(source, dag);
+    TestGraphProjection trace = {0};
+    Atom *image = atom_graph_image(&trace, destination, dag,
+        project_expression, project_held_payload);
+    assert(image && trace.visits == 81u && atom_is_he_evaluated(image));
+    Atom *cursor = image;
+    for (unsigned i = 0u; i < 80u; i++) {
+        assert(cursor->expr.elems[0] == cursor->expr.elems[1]);
+        cursor = cursor->expr.elems[0];
+    }
+    assert(cursor == leaf && atom_prime_held_is(held));
+    Atom *stripped = atom_prime_held_strip(destination, dag);
+    assert(stripped && stripped->expr.elems[0] == stripped->expr.elems[1]);
+    trace = (TestGraphProjection){.refuse_at = 8u};
+    assert(!atom_graph_image(&trace, destination, dag,
+        project_expression, project_held_payload));
+    assert(trace.visits == 8u && atom_prime_held_is(held));
+
+    Atom *plain = atom_expr2(source, leaf, leaf);
+    trace = (TestGraphProjection){0};
+    assert(atom_graph_image(&trace, destination, plain,
+        project_expression, project_held_payload) == plain);
+    assert(trace.visits == 1u);
+    Atom *deep = held;
+    for (unsigned i = 0u; i < COPY_DEPTH; i++)
+        deep = atom_expr2(source, atom_symbol(source, "projection-link"), deep);
+    stripped = atom_prime_held_strip(destination, deep);
+    assert(stripped);
+    for (unsigned i = 0u; i < COPY_DEPTH; i++) stripped = stripped->expr.elems[1];
+    assert(stripped == leaf);
+
+    Arena cyclic;
+    arena_init_detached(&cyclic);
+    Atom *cycle = atom_expr2(&cyclic, leaf, leaf);
+    cycle->expr.elems[1] = cycle;
+    trace = (TestGraphProjection){0};
+    assert(!atom_graph_image(&trace, destination, cycle,
+        project_expression, project_held_payload));
+    assert(cycle->expr.elems[1] == cycle);
+    arena_free(&cyclic);
+}
 
 typedef struct {
     Atom *from;
@@ -963,6 +1086,7 @@ int main(void) {
     Atom *list;
     Atom *copy;
 
+    check_parallel_held_projection();
     symbol_table_init(&symbols);
     symbol_table_init_builtins(&symbols, &g_builtin_syms);
     g_symbols = &symbols;
@@ -1258,6 +1382,8 @@ int main(void) {
         "temporary"));
     assert(atom_is_symbol(single_mixed->expr.elems[1]->expr.elems[0], "temporary"));
     assert(atom_is_symbol(single_parent->expr.elems[1]->expr.elems[0], "old"));
+
+    check_graph_projection(&source, &destination);
 
     arena_free(&destination);
     arena_free(&source);

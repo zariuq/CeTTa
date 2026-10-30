@@ -694,6 +694,9 @@ static bool checkpoint_borrowed_permit(void *context,Space *space,PettaMachineOp
  (void)context;(void)space;(void)operation;(void)view;return true;
 }
 static void checkpoint_borrowed_read(void *context,SpaceReadToken token) {(void)context;(void)token;}
+static bool checkpoint_borrowed_context(void *context,Space *program,SymbolId name,Space *space) {
+ (void)context;(void)program;(void)name;(void)space;return true;
+}
 static void checkpoint_borrowed_write(void *context,Space *space,uint64_t revision,uint64_t prefix) {
  (void)context;(void)space;(void)revision;(void)prefix;
 }
@@ -704,6 +707,7 @@ static bool checkpoint_borrowed_role(void *context,Atom *value,Atom *type,
 static bool checkpoint_has_borrowed_driver(const PrimeEvalStackDriver *driver) {
  return driver->authority_parent || driver->call_permit_parent || driver->call_permit ||
   driver->call_permit_context || driver->observe_space_read || driver->space_read_context ||
+  driver->observe_context_read || driver->context_read_context ||
   driver->own_data_read || driver->own_data_published || driver->own_data_context ||
   driver->normalization_value_role || driver->normalization_role_context;
 }
@@ -711,7 +715,7 @@ static bool checkpoint_has_borrowed_driver(const PrimeEvalStackDriver *driver) {
 /* A quiescent image must not acquire pointers to another invocation's stack.
  * Refusing an untransportable source is allowed, but must leave it intact. */
 static void borrowed_authority_checkpoint_cases(void) {
- for(unsigned mask=0u;mask<=28u;mask++) {
+ for(unsigned mask=0u;mask<=32u;mask++) {
   unsigned client=500u+mask,cut=0u;
   Arena syntax;arena_init(&syntax);arena_set_hashcons(&syntax,NULL);
   Space space;space_init(&space);Registry reg;registry_init(&reg);g_registry=&reg;
@@ -737,6 +741,8 @@ static void borrowed_authority_checkpoint_cases(void) {
   if(mask==10u)source->driver.own_data_context=&context;
   if(mask==11u)source->driver.normalization_value_role=checkpoint_borrowed_role;
   if(mask==12u)source->driver.normalization_role_context=&context;
+  if(mask==29u)source->driver.observe_context_read=checkpoint_borrowed_context;
+  if(mask==30u)source->driver.context_read_context=&context;
   source->driver.pure_authority=true;source->pure_authority=true;
   uint64_t id=0u;CHECK(cetta_native_handle_alloc(lib,"prime-search",source,prime_native_control_destroy,&id));
   source->handle_id=id;
@@ -851,6 +857,8 @@ static void borrowed_authority_checkpoint_cases(void) {
    if(mask==16u)source->driver.call_permit_parent=&caller;
    if(mask==20u)source->driver.call_permit=checkpoint_borrowed_permit;
    if(mask==21u)source->driver.normalization_role_context=&context;
+   if(mask==31u)source->driver.observe_context_read=checkpoint_borrowed_context;
+   if(mask==32u)source->driver.context_read_context=&context;
    if(mask==23u) {
     g_prime_eval_stack_driver=&deep[0];g_prime_eval_top_authority=NULL;checkpoint_calloc_refuse=true;
    }
@@ -863,9 +871,12 @@ static void borrowed_authority_checkpoint_cases(void) {
     CHECK(source->driver.authority_parent==(mask==15u?&ancestry:NULL) &&
      source->driver.call_permit_parent==(mask==16u?&caller:NULL) &&
      source->driver.call_permit==(mask==20u?checkpoint_borrowed_permit:NULL) &&
-     source->driver.normalization_role_context==(mask==21u?&context:NULL));
+     source->driver.normalization_role_context==(mask==21u?&context:NULL) &&
+     source->driver.observe_context_read==(mask==31u?checkpoint_borrowed_context:NULL) &&
+     source->driver.context_read_context==(mask==32u?&context:NULL));
     source->driver.authority_parent=NULL;source->driver.call_permit_parent=NULL;
     source->driver.call_permit=NULL;source->driver.normalization_role_context=NULL;
+   source->driver.observe_context_read=NULL;source->driver.context_read_context=NULL;
    } else if(prepared==CETTA_CONTINUATION_READY) {
     CHECK(!checkpoint_has_borrowed_driver(&copy->image->driver) &&
      copy->image->driver.pure_authority && copy->image->pure_authority);
@@ -873,8 +884,9 @@ static void borrowed_authority_checkpoint_cases(void) {
     prepared==CETTA_CONTINUATION_CAPACITY || prepared==CETTA_CONTINUATION_INVALIDATED));
    atom_deep_copy_session_free(atoms);cetta_prime_checkpoint_copy_free(copy);
   } else {
-   CHECK(mask!=0u && mask<15u && !copy && (status==CETTA_CONTINUATION_UNSUPPORTED || status==CETTA_CONTINUATION_CAPACITY ||
+   CHECK(mask!=0u && (mask<15u || mask==29u || mask==30u) && !copy && (status==CETTA_CONTINUATION_UNSUPPORTED || status==CETTA_CONTINUATION_CAPACITY ||
     status==CETTA_CONTINUATION_INVALIDATED));
+   if(mask==29u || mask==30u) CHECK(status==CETTA_CONTINUATION_UNSUPPORTED);
    cetta_prime_checkpoint_copy_free(copy);
   }
   CHECK(!source->leased && !memcmp(&initial,source,sizeof(initial)) &&
@@ -1249,7 +1261,77 @@ static void forgetting_recorded_parent(bool weighted, bool replace) {
 }
 #endif
 
+/* Lower-level runs use the ambient execution owner until explicit cleanup.
+ * A first query may create it after the run guard has saved an empty slot. */
+static void ambient_execution_scope_cases(void) {
+ EvalExecutionContext *previous=g_eval_execution;g_eval_execution=NULL;
+ for(unsigned mode=0u;mode<4u;mode++) {
+  unsigned client=600u+mode,cut=0u;
+  Arena syntax;arena_init(&syntax);Space space;space_init(&space);
+  Registry registry;registry_init(&registry);g_registry=&registry;
+  registry_bind(&registry,"&self",atom_space(&syntax,&space));
+  CettaLibraryContext *lib=malloc(sizeof(*lib));assert(lib);
+  cetta_library_context_init_for_language_profile(lib,CETTA_LANGUAGE_PRIME,cetta_profile_prime_default());
+  eval_set_library_context(lib);
+  space_add(&space,parse(&syntax,"(=w (ambient-coin) 2 3)"));
+  space_add(&space,parse(&syntax,"(=w (ambient-coin) 2 3)"));
+  space_add(&space,parse(&syntax,"(=w (ambient-coin) 5 7)"));
+  space_add(&space,parse(&syntax,"(= (ambient-pair $x) (Pair $x $x))"));
+  space_add(&space,parse(&syntax,"(= (ambient-use $x) $x)"));
+  bool private=mode>=2u;
+  EvalExecutionContext *initial=(mode&1u)?eval_execution_context():NULL;
+  PrimeNativeControl *control=malloc(sizeof(*control));assert(control);
+  CettaSearchPolicySpec policy={.native_control=true,.all=true,.retain=true,
+   .workers=1u,.work_budget=UINT64_MAX,.costs=true};
+  assert(prime_native_control_init(control,&space,&syntax,
+   parse(&syntax,private?"(ambient-use (ambient-coin))":
+       "(weight:read (algebra 0 1 + *) (ambient-pair (ambient-coin)))"),
+   -1,true,(CettaObservationDemand){.completion=CETTA_OBSERVATION_COMPLETE_BAG},
+   &policy,NULL,NULL,NULL));
+  if(private) {
+   /* Exercise first selection during an entered run, rather than relying on
+    * a source expression to select a particular compilation strategy. */
+   PrimeNativeRunGuard run;prime_native_run_enter(control,&run);
+   Bindings common,entrance;bindings_init(&common);bindings_init(&entrance);
+   CHECK(prime_need_snapshot_begin(bindings_need_mut(&common)));
+   Atom *reference=NULL;
+   CHECK(prime_need_allocate_ref(&syntax,parse(&syntax,"(ambient-coin)"),
+       &common,&entrance,&reference));
+   bool installed=false;
+   CHECK(prime_need_call_sources_prepare(&space,&syntax,&reference,1u,
+       prime_need_fresh_source_occurrence(),&entrance,&installed)==CETTA_MATCH_MATCHED && installed);
+   bindings_free(&entrance);bindings_free(&common);
+   prime_native_run_leave(&run);
+   CHECK(g_eval_execution==initial);
+  }
+  Result result={0};arena_init(&result.storage);
+  prime_native_control_run(control,3000u,seen,&result);
+  CHECK(result.count==3u && prime_native_control_closed(control));
+  EvalExecutionContext *owner=private && control->owned_top_episode?
+      control->owned_top_episode->execution:g_eval_execution;
+  CHECK(owner && (private?(control->owns_execution_episode &&
+      owner!=initial && g_eval_execution==initial):(!initial || owner==initial)));
+  EvalExecutionLease *lease=owner?owner->lease:NULL;
+  CHECK(lease && eval_execution_lease_hold(lease));
+  prime_native_control_run(control,0u,seen,&result);
+  CHECK(g_eval_execution==(private?initial:owner));
+  prime_native_control_destroy(control);arena_free(&result.storage);
+  CHECK(lease && (private?!lease->context:lease->context==owner));
+  eval_release_temporary_spaces();
+  CHECK(!g_eval_execution && lease && !lease->context);
+  eval_execution_lease_release(lease);
+  cetta_library_context_free(lib);free(lib);eval_set_library_context(NULL);
+  registry_free(&registry);g_registry=NULL;space_free(&space);arena_free(&syntax);
+ }
+ g_eval_execution=previous;
+}
+
 int main(int argc,char **argv){SymbolTable syms;symbol_table_init(&syms);symbol_table_init_builtins(&syms,&g_builtin_syms);g_symbols=&syms;VarInternTable vars;var_intern_init(&vars);g_var_intern=&vars;g_hashcons=NULL;
+ if(argc==2&&!strcmp(argv[1],"--ambient-execution")) {
+  ambient_execution_scope_cases();
+  eval_match_decision_cache_free_for_current_thread();var_intern_free(&vars);g_var_intern=NULL;
+  symbol_table_free(&syms);g_symbols=NULL;printf("CHECKS %zu FAILURES %zu\n",checks,failures);return failures?1:0;
+ }
  if(argc==4&&!strcmp(argv[1],"--case")) {
   char *client_end=NULL,*cut_end=NULL;
   unsigned long client=strtoul(argv[2],&client_end,10),cut=strtoul(argv[3],&cut_end,10);
@@ -1271,6 +1353,7 @@ int main(int argc,char **argv){SymbolTable syms;symbol_table_init(&syms);symbol_
   eval_release_temporary_spaces();eval_match_decision_cache_free_for_current_thread();var_intern_free(&vars);g_var_intern=NULL;
   symbol_table_free(&syms);g_symbols=NULL;printf("CHECKS %zu FAILURES %zu\n",checks,failures);return failures?1:0;
  }
+ ambient_execution_scope_cases();
  borrowed_authority_checkpoint_cases();
  hidden_active_disposal_cases();
  active_service_replacement_case();

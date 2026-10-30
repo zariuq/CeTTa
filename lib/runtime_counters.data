@@ -1240,4 +1240,6 @@
   (1158 TERM_UNIVERSE_COLLECTION_DEAD_BYTES "term-universe-collection-dead-bytes")
   (1159 TERM_UNIVERSE_COLLECTION_DEAD_PEAK "term-universe-collection-dead-peak")
   (1160 TERM_UNIVERSE_COLLECTION_RECLAIMED "term-universe-collection-reclaimed")
-  (1161 TERM_UNIVERSE_COLLECTION_RECLAIMED_BYTES "term-universe-collection-reclaimed-bytes")))
+  (1161 TERM_UNIVERSE_COLLECTION_RECLAIMED_BYTES "term-universe-collection-reclaimed-bytes")
+  (1162 ATOM_COMPARE_PAIR "atom-compare-pair")
+  (1163 NATIVE_QUERY_BITS_LEG "native-query-bits-leg")))

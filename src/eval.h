@@ -414,6 +414,14 @@ struct CettaPreparedPureProgram;
 struct CettaPreparedPureProgram *eval_prepare_pure_value_call(
     Space *space, Arena *owner, Atom *call);
 
+/* Exact unary/binary lexical applications over ready values share the pure
+ * expression machine used by the relational callable consumer. The owner
+ * retains opened source syntax until the program is freed. Execute through
+ * program_execute_controlled with those one/two values, not a closed-call
+ * rebind. Refusal leaves the ordinary callable application authoritative. */
+struct CettaPreparedPureProgram *eval_prepare_pure_lexical_values(
+    Space *space, Arena *owner, Atom *callable, uint32_t arity);
+
 /* Each entry owns its mutable query banks and compiled scratch. Reentrant
  * entry suspends that owner; returning restores it. Newly appended structural
  * results are published in `a` before the invocation's storage is released.
@@ -473,6 +481,7 @@ bool eval_current_uses_rust_he_compat_semantics(void) __attribute__((weak));
 bool eval_current_builtin_allowed(const char *name) __attribute__((weak));
 bool eval_current_pattern_module_enabled(void) __attribute__((weak));
 uint32_t eval_current_pattern_control_arity(SymbolId head) __attribute__((weak));
+uint32_t eval_current_pattern_operation_arity(SymbolId head) __attribute__((weak));
 uint64_t eval_current_native_observer_mask(void) __attribute__((weak));
 SymbolId eval_current_pattern_head(SymbolId head) __attribute__((weak));
 Space *eval_resolve_space_read(Space *space) __attribute__((weak));

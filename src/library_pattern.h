@@ -11,6 +11,8 @@ bool cetta_pattern_module_enabled(const CettaLibraryContext *context);
 SymbolId cetta_pattern_resolve_head(const CettaLibraryContext *context, SymbolId head);
 /* Controls share the relation kernel and their dialect's body continuations. */
 uint32_t cetta_pattern_adapter_arity(SymbolId head);
+/* The operation's interface; availability is checked by resolve_head. */
+uint32_t cetta_pattern_operation_arity(SymbolId head);
 /* Inputs have already been resolved in the caller's environment. Matching
  * never evaluates them; publication is atomic and cannot refine an existing
  * image by unification. */

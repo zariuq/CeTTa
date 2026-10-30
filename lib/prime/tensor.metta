@@ -26,6 +26,7 @@
 (: tensor:is-tensor (-> %Undefined% %Undefined%))
 (: tensor:entries (-> %Undefined% %Undefined%))
 (: tensor:gather (-> %Undefined% %Undefined% %Undefined%))
+(: tensor:gather-rows (-> %Undefined% %Undefined% %Undefined%))
 (: tensor:scan-sum (-> %Undefined% %Undefined% %Undefined%))
 (: tensor:concatenate (-> %Undefined% %Undefined% %Undefined% %Undefined%))
 (: tensor:permute (-> %Undefined% %Undefined% %Undefined%))

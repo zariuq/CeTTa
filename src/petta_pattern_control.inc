@@ -25,6 +25,8 @@ static bool petta_pattern_control_ready(PettaMachineImpl *machine,
     Atom *call = goal->first;
     SymbolId head = atom_head_symbol_id(call);
     if (!cetta_pattern_adapter_arity(head)) head = eval_current_pattern_head(head);
+    if (call->expr.len != cetta_pattern_adapter_arity(head) + 1u)
+        return petta_machine_pattern_query_fault(machine, call, "IncorrectNumberOfArguments");
     Atom *value = bindings_apply_graph((Bindings *)env, &machine->heap, goal->third);
     if (!value) { *failure = PETTA_MACHINE_STEP_CAPACITY; return false; }
     if (head == g_builtin_syms.pat_case_forward) {

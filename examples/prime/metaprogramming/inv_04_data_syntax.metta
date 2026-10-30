@@ -8,13 +8,13 @@
 (= (f $y) (g $y))
 (= (g $y) (pair $y $y))
 
-(: hold (-> (Data Atom) (Data Atom)))
+(: hold (-> Atom Atom))
 (= (hold $x) $x)
-(: tail-of (-> (Data Atom) (Data Atom)))
+(: tail-of (-> Atom Atom))
 (= (tail-of $x) (cdr-atom $x))
-(: build (-> (Data Atom) (Data Atom)))
+(: build (-> Atom Atom))
 (= (build $x) (cons-atom wrap $x))
-(: run-held (-> (Data Atom) $r))
+(: run-held (-> Atom $r))
 (= (run-held $x) (eval $x))
 
 ; 1-4. Holding; it survives return, deconstruction and construction.
@@ -29,13 +29,13 @@
 
 ; 7-10. An equation head destructures held syntax; the parts stay held, and
 ;       only explicit evaluation runs them.  No matching head: the call is data.
-(: shape (-> (Data Atom) (Data Atom)))
+(: shape (-> Atom Atom))
 (= (shape (lam $v $b)) (Lambda $b))
 (= (shape (Pair $x $y)) (Pair-of $x))
 !(shape (lam z (f z)))
 !(shape (Pair (f nil) B))
 !(shape (Triple A B C))
-(: run-first (-> (Data Atom) $r))
+(: run-first (-> Atom $r))
 (= (run-first (Pair $x $y)) (eval $x))
 !(run-first (Pair (f nil) B))
 
@@ -50,7 +50,7 @@
 ;        with the argument in place, and the lambda is untouched (so it can be
 ;        opened again at another argument).  `lift let` fills the binder's
 ;        slot in the held body, as it does in quoted code.
-(: open-at (-> (Data Atom) (Data Atom) (Data Atom)))
+(: open-at (-> Atom Atom Atom))
 (= (open-at (lam $x $body) $v) (lift let $x $v $body))
 !(open-at (lam $y (and (f $y) (g $y))) 0)
 !(let $h (lam $y (and (f $y) (g $y)))
@@ -63,7 +63,7 @@
 
 ; 18-19. `Atom` is the top type: an Atom parameter evaluates its argument,
 ;        a plain parameter too.
-(: arg-atom (-> Atom Number))
+(: arg-atom (-> Proc Number))
 (= (arg-atom $x) (+ $x 1))
 !(arg-atom (+ 1 2))
 (= (plain-first (pair $x $y)) $x)
@@ -81,7 +81,7 @@
 ; --- A held value used as a `match` pattern is the syntax it holds -------------
 ; Both find the fact.
 (fact a)
-(: find-held (-> (Data Atom) $r))
+(: find-held (-> Atom $r))
 (= (find-held $p) (collapse (match &self $p found){$p}))
 (= (find-plain $p) (collapse (match &self $p found){$p}))
 !(marker gap-3-begin)
@@ -91,7 +91,7 @@
 
 ; --- A declared result type Atom does not hold the body ------------------------
 ; `Atom` has no evaluation control, so both calls give 3.
-(: ret-atom (-> Number Atom))
+(: ret-atom (-> Number Proc))
 (= (ret-atom $x) (+ $x 1))
 (: ret-number (-> Number Number))
 (= (ret-number $x) (+ $x 1))

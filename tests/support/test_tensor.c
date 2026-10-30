@@ -359,6 +359,46 @@ static void packed_observers(void) {
     cetta_tensor_release(source); cetta_tensor_release(indices);
 }
 
+static void gathered_rows(void) {
+    CettaTensor *source=NULL,*rows=NULL,*result=NULL,*converted=NULL;
+    ok(cetta_tensor_new(CETTA_TENSOR_F64,(size_t[]){2,3},2,
+        (double[]){1,-0.0,3,4,5,6},48,&source));
+    ok(cetta_tensor_new(CETTA_TENSOR_INDEX,(size_t[]){3},1,(uint64_t[]){1,0,1},24,&rows));
+    for (CettaTensorLayout layout=CETTA_TENSOR_DENSE;layout<=CETTA_TENSOR_CSC;layout++) {
+        ok(cetta_tensor_convert(source,layout,&converted));
+        ok(cetta_tensor_gather_rows(converted,rows,&result));
+        check(cetta_tensor_rank(result)==2 && cetta_tensor_shape(result)[0]==3 && cetta_tensor_shape(result)[1]==3);
+        check(at(result,0)==4 && at(result,3)==1 && signbit(at(result,4)) && at(result,8)==6);
+        cetta_tensor_release(converted); cetta_tensor_release(result); result=NULL;
+    }
+    check(cetta_tensor_gather_rows(source,source,&result)==CETTA_TENSOR_DTYPE && !result);
+    cetta_tensor_release(rows); cetta_tensor_release(source);
+    ok(cetta_tensor_coo(CETTA_TENSOR_F64,(size_t[]){2,3},2,
+        (size_t[]){1,4},(double[]){-0.0,7},2,CETTA_TENSOR_REJECT,&source));
+    ok(cetta_tensor_coo(CETTA_TENSOR_INDEX,(size_t[]){4},1,
+        (size_t[]){0,2,3},(uint64_t[]){1,0,1},3,CETTA_TENSOR_REJECT,&rows));
+    ok(cetta_tensor_gather_rows(source,rows,&result));
+    check(cetta_tensor_stored(result)==3 && at(result,1)==7 && signbit(at(result,7)) && at(result,10)==7);
+    bool present; CettaTensorScalar scalar;
+    ok(cetta_tensor_get(result,4,&present,&scalar)); check(!present);
+    cetta_tensor_release(rows); cetta_tensor_release(source); cetta_tensor_release(result); result=NULL;
+    ok(cetta_tensor_new(CETTA_TENSOR_F64,(size_t[]){2,0},2,NULL,0,&source));
+    ok(cetta_tensor_new(CETTA_TENSOR_INDEX,(size_t[]){1},1,(uint64_t[]){2},8,&rows));
+    check(cetta_tensor_gather_rows(source,rows,&result)==CETTA_TENSOR_INDEX_ERROR && !result);
+    cetta_tensor_release(rows);
+    ok(cetta_tensor_new(CETTA_TENSOR_INDEX,(size_t[]){1},1,(uint64_t[]){1},8,&rows));
+    ok(cetta_tensor_gather_rows(source,rows,&result)); check(cetta_tensor_count(result)==0);
+    cetta_tensor_release(rows); cetta_tensor_release(source); cetta_tensor_release(result); result=NULL;
+    size_t huge=SIZE_MAX/3;
+    ok(cetta_tensor_coo(CETTA_TENSOR_F64,(size_t[]){1,3},2,
+        (size_t[]){2},(double[]){9},1,CETTA_TENSOR_REJECT,&source));
+    ok(cetta_tensor_coo(CETTA_TENSOR_INDEX,&huge,1,
+        (size_t[]){huge-1},(uint64_t[]){0},1,CETTA_TENSOR_REJECT,&rows));
+    ok(cetta_tensor_gather_rows(source,rows,&result));
+    check(cetta_tensor_stored(result)==1 && at(result,(huge-1)*3+2)==9);
+    cetta_tensor_release(rows); cetta_tensor_release(source); cetta_tensor_release(result);
+}
+
 static void owned_atoms(void) {
     Arena source,destination,persistent; arena_init(&source); arena_init(&destination); arena_init(&persistent);
     CettaTensor *dense=NULL,*coo=NULL;
@@ -400,7 +440,7 @@ static void owned_atoms(void) {
 }
 int main(void) {
     SymbolTable symbols; symbol_table_init(&symbols); symbol_table_init_builtins(&symbols,&g_builtin_syms); g_symbols=&symbols;
-    dense_views(); support_duplicates(); compressed_observers(); kernels(); normalized_and_ordered(); dense_schedules(); casts(); packed_observers(); owned_atoms();
+    dense_views(); support_duplicates(); compressed_observers(); kernels(); normalized_and_ordered(); dense_schedules(); casts(); packed_observers(); gathered_rows(); owned_atoms();
     symbol_table_free(&symbols); g_symbols=NULL;
     printf("TensorNative %u 0\n",checks); return 0;
 }

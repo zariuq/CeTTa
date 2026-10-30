@@ -15,7 +15,7 @@
 
 enum {
     ABT_DEEP_TERM_DEPTH = CETTA_ABT_MUTATION == 0 ? 100000 : 1000,
-    ABT_EXPECTED_CHECKS = 125 + 45 + 35,
+    ABT_EXPECTED_CHECKS = 125 + 45 + 35 + 6,
 };
 
 static unsigned failures = 0;
@@ -1125,10 +1125,10 @@ static void test_logical_binding_instances(Arena *arena) {
     if (!first || !second) exit(1);
     Atom *a = first->expr.elems[1], *b = second->expr.elems[1];
     Atom *fresh = a->expr.elems[1];
-    CHECK(fresh->kind == ATOM_VAR && var_epoch_suffix(fresh->var_id) != 0u &&
-              fresh->var_id != x->var_id,
+    CHECK(fresh->kind == ATOM_VAR && !cetta_frame_identity_is_none(var_epoch_suffix(fresh->var_id)) &&
+              !var_id_eq(fresh->var_id, x->var_id),
           "a local is a fresh private identity, not a spelling variant");
-    CHECK(fresh->var_id != b->expr.elems[1]->var_id,
+    CHECK(!var_id_eq(fresh->var_id, b->expr.elems[1]->var_id),
           "separate instances cannot alias their local slot");
     CHECK(a->expr.elems[2] == x,
           "freshening never captures an occurrence in the value");
@@ -1160,7 +1160,7 @@ static void test_logical_binding_instances(Arena *arena) {
     if (!nested_instance) exit(1);
     Atom *outer = nested_instance->expr.elems[1];
     Atom *inner = outer->expr.elems[3];
-    CHECK(outer->expr.elems[1]->var_id != inner->expr.elems[1]->var_id &&
+    CHECK(!var_id_eq(outer->expr.elems[1]->var_id, inner->expr.elems[1]->var_id) &&
               inner->expr.elems[2] == outer->expr.elems[1] &&
               inner->expr.elems[3]->expr.elems[1] == inner->expr.elems[1],
           "shadowed locals stay distinct and the inner value uses the outer slot");
@@ -1177,7 +1177,7 @@ static void test_logical_binding_instances(Arena *arena) {
     Atom *g = group_instance->expr.elems[1];
     Atom *gx = g->expr.elems[1]->expr.elems[0];
     Atom *gy = g->expr.elems[1]->expr.elems[1];
-    CHECK(gx != gy && gx->var_id != gy->var_id &&
+    CHECK(gx != gy && !var_id_eq(gx->var_id, gy->var_id) &&
               g->expr.elems[2]->expr.elems[1]->expr.elems[1] == gx &&
               g->expr.elems[2]->expr.elems[1]->expr.elems[2] == gy &&
               g->expr.elems[2]->expr.elems[2]->expr.elems[1] == gy &&
@@ -1189,7 +1189,7 @@ static void test_logical_binding_instances(Arena *arena) {
     Atom *pairs = atom_expr(arena,
         (Atom *[]){atom_expr(arena, (Atom *[]){y, x}, 2u)}, 1u);
     Atom *substituted = abt_substitute(&signature, arena, pairs, source);
-    CHECK(substituted && substituted->expr.elems[1]->var_id != x->var_id &&
+    CHECK(substituted && !var_id_eq(substituted->expr.elems[1]->var_id, x->var_id) &&
               substituted->expr.elems[3]->expr.elems[2] == x,
           "substitution avoids capture when logical variable values cross a binder");
     Atom *nominal = sx(arena, ABT_NAMED_MIXED_SIGNATURE);
@@ -1240,8 +1240,42 @@ static void test_logical_binding_instances(Arena *arena) {
     CHECK(dispatched && abt_named_alpha_equal(&signature, arena,
               dispatched->expr.elems[1], source, &equal) && equal,
           "the ordinary grounded interface uses the same declaration traversal");
+    Atom *held_args[] = {atom_prime_held_wrap(arena, declarations),
+        atom_prime_held_wrap(arena, none), atom_prime_held_wrap(arena, source)};
+    Atom *admitted = abt_grounded_dispatch(arena,
+        atom_symbol(arena, "__cetta_abt_signature_admitted"), held_args, 1u);
+    CHECK(admitted && atom_eq(admitted, atom_true(arena)),
+        "Data carriers do not change signature admission");
+    Atom *held_instance = abt_grounded_dispatch(arena,
+        atom_symbol(arena, "__cetta_abt_instantiate"), held_args, 3u);
+    CHECK(held_instance && held_instance->kind == ATOM_EXPR &&
+        atom_head_symbol_id(held_instance) == atom_head_symbol_id(dispatched) &&
+        abt_named_alpha_equal(&signature, arena,
+            held_instance->expr.elems[1], source, &equal) && equal,
+        "held native arguments preserve binding instantiation");
     abt_signature_free(&nominal_signature);
     abt_signature_free(&signature);
+}
+
+static void test_quote_syntax_carrier(Arena *arena) {
+    Atom *variable = atom_var(arena, "shared");
+    Atom *payload = node2(arena, "syntax", variable, variable);
+    Atom *head = atom_symbol(arena, "__cetta_abt_quote_syntax");
+    Atom *raw[] = {payload};
+    Atom *held[] = {atom_prime_held_wrap(arena, payload)};
+    Atom *direct = abt_grounded_dispatch(arena, head, raw, 1u);
+    Atom *carried = abt_grounded_dispatch(arena, head, held, 1u);
+    CHECK(direct && direct->kind == ATOM_EXPR && direct->expr.len == 2u &&
+        atom_is_symbol_id(direct->expr.elems[0], g_builtin_syms.quote),
+        "raw syntax is quoted without evaluation");
+    CHECK(direct && direct->expr.elems[1] == payload,
+        "quoting preserves the raw syntax identity");
+    CHECK(carried && carried->kind == ATOM_EXPR && carried->expr.len == 2u &&
+        carried->expr.elems[1] == payload,
+        "the Data argument carrier is not part of quoted syntax");
+    CHECK(carried && carried->expr.len == 2u &&
+        !atom_prime_held_is(carried->expr.elems[1]),
+        "transparent printing cannot conceal a held wrapper in code");
 }
 
 int main(void) {
@@ -1267,6 +1301,7 @@ int main(void) {
     test_deep_and_cyclic_inputs(&arena, &signature);
     test_named_binders(&arena);
     test_logical_binding_instances(&arena);
+    test_quote_syntax_carrier(&arena);
 
     abt_signature_free(&signature);
     arena_free(&arena);

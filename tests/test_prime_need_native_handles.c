@@ -213,7 +213,7 @@ int main(void) {
     uint64_t occurrence = prime_need_fresh_source_occurrence();
     assert(prime_need_snapshot_allocate_source_argument(
         &source, &base, atom_symbol(&source, "resource-producer"),
-        occurrence, 2u, &pending, &thunk_id));
+        occurrence, 2u, PRIME_NEED_SOURCE_COMPUTATION, &pending, &thunk_id));
     assert(prime_need_snapshot_start_evaluation(
         &source, &pending, thunk_id, 19u, &evaluating));
     assert(prime_need_snapshot_resolve_value(
@@ -227,6 +227,7 @@ int main(void) {
     CHECK(before.cache_state == PRIME_NEED_CACHE_VALUE &&
           before.cached == handle && before.source_occurrence_id == occurrence &&
           before.source_argument_index == 2u &&
+          before.source_role == PRIME_NEED_SOURCE_COMPUTATION &&
           history_resource_control(&ready, thunk_id, occurrence, resource),
           "memoization retains the value and source occurrence");
     uint64_t session_id = ready.session_id;
@@ -244,6 +245,7 @@ int main(void) {
           after.import_key == before.import_key &&
           after.source_occurrence_id == before.source_occurrence_id &&
           after.source_argument_index == before.source_argument_index &&
+          after.source_role == before.source_role &&
           history_resource_control(&ready, thunk_id, occurrence, resource),
           "transport preserves cell identity, role and occurrence");
     CHECK(after.cached != handle && after.cached->expr.elems[2] != identifier &&

@@ -35,6 +35,12 @@ typedef struct {
 typedef bool (*CettaNativeQueryApply)(void *context,
                                       const CettaNativeQueryEffect *effect,
                                       const AtomId *ids, size_t count);
+/* Add the instances of an addition whose data is (h X Y), into a set that
+ * keeps h as bits: h as its symbol atom and id, each instance as the two
+ * ids of its columns in PAIRS.  The instances need no records. */
+typedef bool (*CettaNativeQueryApplyPairs)(
+    void *context, const CettaNativeQueryEffect *effect, Atom *head,
+    AtomId head_id, const AtomId *pairs, size_t count);
 
 typedef struct {
     Space *source;
@@ -47,6 +53,8 @@ typedef struct {
     const CettaNativeQueryEffect *effects;
     size_t effect_count;
     CettaNativeQueryApply apply;
+    /* Optional: additions into relations kept as bits, by pairs. */
+    CettaNativeQueryApplyPairs apply_pairs;
     void *apply_context;
     /* Only the number of answers is wanted. */
     bool count_only;

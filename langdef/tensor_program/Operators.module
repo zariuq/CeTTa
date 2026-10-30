@@ -1,0 +1,23 @@
+Module TensorProgramOperators {
+  Theory Operators() {
+    Empty Exports { F64Tensor; BoolTensor; I64Tensor; }
+    Terms {
+      Add . F64Tensor ::= "add(" F64Tensor "," F64Tensor ")";
+      Subtract . F64Tensor ::= "subtract(" F64Tensor "," F64Tensor ")";
+      Multiply . F64Tensor ::= "multiply(" F64Tensor "," F64Tensor ")";
+      Divide . F64Tensor ::= "divide(" F64Tensor "," F64Tensor ")";
+      Less . BoolTensor ::= "less(" F64Tensor "," F64Tensor ")";
+      Greater . BoolTensor ::= "greater(" F64Tensor "," F64Tensor ")";
+      Scan . F64Tensor ::= "scan(" F64Tensor ")";
+      Concatenate . F64Tensor ::= "concatenate(" F64Tensor "," F64Tensor ")";
+      Permute . F64Tensor ::= "permute(" F64Tensor ")";
+      Broadcast . F64Tensor ::= "broadcast(" F64Tensor ")";
+      Matvec . F64Tensor ::= "matvec(" F64Tensor "," F64Tensor ")";
+      Sum . F64Tensor ::= "sum(" F64Tensor ")";
+      Gather . F64Tensor ::= "gather(" F64Tensor "," I64Tensor ")";
+      BroadcastLike . F64Tensor ::= "broadcast-like(" F64Tensor "," F64Tensor ")";
+      GatherRows . F64Tensor ::= "gather-rows(" F64Tensor "," I64Tensor ")";
+    }
+  }
+  theory Operators()
+}

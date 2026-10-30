@@ -11,7 +11,7 @@
 ; variable denotes what its binding parameter's type says instead: `k`'s
 ; parameter is a value parameter, so both mentions denote the value 3, by
 ; call, by let and by case alike.  Source capture is asked for with a
-; `(Data Atom)` parameter, which then denotes the syntax at both mentions.
+; `Atom` parameter, which then denotes the syntax at both mentions.
 ;
 ; Under the default profile the quotation is sealed.  It holds the variable
 ; itself on both routes (renamed apart with the rule at a call), and only the
@@ -30,7 +30,7 @@
 ; By case: as by let.
 !(inside (case (+ 1 2) (($x (Pair $x @$x)))){$x})
 
-; A `(Data Atom)` parameter denotes its argument's syntax at both mentions.
-(: k-syntax (-> (Data Atom) Atom))
+; A `Atom` parameter denotes its argument's syntax at both mentions.
+(: k-syntax (-> Atom Proc))
 (= (k-syntax $x) (Pair $x @$x))
 !(inside (k-syntax (+ 1 2)))

@@ -59,39 +59,59 @@
 ; are producers only: the calling problem performs final `type:check` admission
 ; in its own judgment context.
 
-(= (mil:prime:typed-fill $bias (MIL.Hole $name) (MIL.Rel $a $b))
-   (match $bias (: $program (MIL.Rel $a $b)) $program){$a $b})
+(= (mil:prime:typed-fill $bias $skeleton $type)
+   (case (mil:typed-vocabulary $bias)
+     (((MIL.TypeVocabulary $rows)
+       (case (mil:normalize-skeleton $skeleton)
+         (((MIL.Skeleton $normalized) (mil:prime:typed-fill-vocabulary $rows $normalized $type))
+          ($invalid-skeleton (superpose ())))){$normalized $invalid-skeleton}))))
+(= (mil:prime:typed-fill-vocabulary $rows $skeleton $type)
+   (case (mil:prime:typed-fill-state $rows $skeleton $type ())
+     (((MIL.Filling $program $environment) $program))))
 
-(= (mil:prime:typed-fill $bias (MIL.Chain $left $right) (MIL.Rel $a $c))
-   (let $left-program
-        (mil:prime:typed-fill $bias $left (MIL.Rel $a $b))
-     (let $right-program
-          (mil:prime:typed-fill $bias $right (MIL.Rel $b $c))
-       (MIL.Chain $left-program $right-program))))
+(= (mil:prime:typed-fill-state $bias (MIL.Hole $name) (MIL.Rel $a $b) $environment)
+   (case (mil:hole-lookup $environment $name)
+     (((MIL.Bound (MIL.Typed $program $a $b)) (MIL.Filling $program $environment))
+      (MIL.Unbound
+       (let $program (mil:typed-rows $bias $candidate (MIL.Rel $a $b))
+         (let $next (cons-atom (MIL.Binding $name (MIL.Typed $program $a $b)) $environment)
+           (MIL.Filling $program $next)){$next}){$program})
+      ($wrong-hole-type (superpose ())))){$program $a $b})
 
-(= (mil:prime:typed-fill $bias (MIL.Choice $left $right) (MIL.Rel $a $b))
-   (let $left-program
-        (mil:prime:typed-fill $bias $left (MIL.Rel $a $b))
-     (let $right-program
-          (mil:prime:typed-fill $bias $right (MIL.Rel $a $b))
-       (MIL.Choice $left-program $right-program))))
+(= (mil:prime:typed-fill-state $bias (MIL.Chain $left $right) (MIL.Rel $a $c) $environment)
+   (case (mil:prime:typed-fill-state $bias $left (MIL.Rel $a $b) $environment)
+     (((MIL.Filling $left-program $middle)
+       (case (mil:prime:typed-fill-state $bias $right (MIL.Rel $b $c) $middle)
+         (((MIL.Filling $right-program $next)
+           (MIL.Filling (MIL.Chain $left-program $right-program) $next)))){$right-program $next}))))
 
-(= (mil:prime:typed-fill $bias (MIL.Closure $inner) (MIL.Rel $a $a))
-   (MIL.Closure
-     (mil:prime:typed-fill $bias $inner (MIL.Rel $a $a))))
+(= (mil:prime:typed-fill-state $bias (MIL.Choice $left $right) (MIL.Rel $a $b) $environment)
+   (case (mil:prime:typed-fill-state $bias $left (MIL.Rel $a $b) $environment)
+     (((MIL.Filling $left-program $middle)
+       (case (mil:prime:typed-fill-state $bias $right (MIL.Rel $a $b) $middle)
+         (((MIL.Filling $right-program $next)
+           (MIL.Filling (MIL.Choice $left-program $right-program) $next)))){$right-program $next}))))
 
-(= (mil:prime:typed-fill
-     $bias (MIL.HO1 MIL.MapOp $inner)
-     (MIL.Rel (MIL.List $a) (MIL.List $b)))
-   (MIL.HO1 MIL.MapOp
-     (mil:prime:typed-fill $bias $inner (MIL.Rel $a $b))))
+(= (mil:prime:typed-fill-state $bias (MIL.Id $inner) (MIL.Rel $a $b) $environment)
+   (case (mil:prime:typed-fill-state $bias $inner (MIL.Rel $a $b) $environment)
+     (((MIL.Filling $program $next) (MIL.Filling (MIL.Id $program) $next)))))
+(= (mil:prime:typed-fill-state $bias (MIL.Closure $inner) (MIL.Rel $a $a) $environment)
+   (case (mil:prime:typed-fill-state $bias $inner (MIL.Rel $a $a) $environment)
+     (((MIL.Filling $program $next) (MIL.Filling (MIL.Closure $program) $next)))))
+(= (mil:prime:typed-fill-state $bias (MIL.Map $inner)
+     (MIL.Rel (MIL.List $a) (MIL.List $b)) $environment)
+   (case (mil:prime:typed-fill-state $bias $inner (MIL.Rel $a $b) $environment)
+     (((MIL.Filling $program $next) (MIL.Filling (MIL.Map $program) $next)))))
+(= (mil:prime:typed-fill-state $bias (MIL.HO1 MIL.MapOp $inner)
+     (MIL.Rel (MIL.List $a) (MIL.List $b)) $environment)
+   (case (mil:prime:typed-fill-state $bias $inner (MIL.Rel $a $b) $environment)
+     (((MIL.Filling $program $next) (MIL.Filling (MIL.HO1 MIL.MapOp $program) $next)))))
 
 ; A closed primitive may occur in an LLM-supplied skeleton.  It is retained
 ; only when its declared type matches the expected relation type exactly.
-(= (mil:prime:typed-fill $bias $closed (MIL.Rel $a $b))
-   (if (== (get-metatype $closed) Symbol)
-       (match $bias (: $closed (MIL.Rel $a $b)) $closed){$closed $a $b}
-       (superpose ())))
+(= (mil:prime:typed-fill-state $bias (MIL.PrimitiveTerm $closed) (MIL.Rel $a $b) $environment)
+   (let $retained (mil:typed-rows $bias $closed (MIL.Rel $a $b))
+     (MIL.Filling $retained $environment)))
 
 (= (mil:prime:typed-filled-candidate
      $bias $skeleton $target-type $fuel)

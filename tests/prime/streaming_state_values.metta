@@ -1,0 +1,10 @@
+; Streaming state constructors and pre-bound state values agree.
+!(import! &self str)
+!(assertEqual (str:feed-lines (str:line-new) "a\nb" True)
+   (let $buffer (str:line-new) (str:feed-lines $buffer "a\nb" True)))
+!(assertEqual (str:collect-lines (str:line-new) (str:line-segments "a\nb" False) True)
+   (let $buffer (str:line-new)
+     (let $segments (str:line-segments "a\nb" False)
+       (str:collect-lines $buffer $segments True))))
+!(assertEqual (str:advance-lines (str:line-new) "a\nb" True)
+   (let $buffer (str:line-new) (str:advance-lines $buffer "a\nb" True)))

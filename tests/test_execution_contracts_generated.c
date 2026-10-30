@@ -126,10 +126,10 @@ static void test_call_preparation_plans(void) {
 static void test_control_operand_plans(void) {
     const BuiltinSyms builtins = {.let = 21u, .chain = 22u, .if_text = 23u,
         .let_star = 24u, .eval = 25u, .function = 26u,
-        .superpose = 27u, .empty_form = 28u};
+        .superpose = 27u, .empty_form = 28u, .case_text = 29u};
     const unsigned operands[] = {17u, 29u, 43u};
     unsigned observations = 0u;
-    for (SymbolId head = 21u; head <= 28u; head++) {
+    for (SymbolId head = 21u; head <= 29u; head++) {
         for (unsigned arity = 0u; arity <= 5u; arity++) {
             /* Independent source grammar: a let holds pattern, producer,
              * body; chain holds producer, pattern, body. No generated row
@@ -156,6 +156,9 @@ static void test_control_operand_plans(void) {
                 source = 17u;
             } else if (head == 28u && arity == 0u) {
                 operation = CETTA_CONTROL_FAILURE;
+            } else if (head == 29u && arity == 2u) {
+                operation = CETTA_CONTROL_MATCH_BRANCHES;
+                source = 17u; first = 29u;
             }
             CettaControlOperationPlan plan = {255u, 77u, 88u, 99u};
             uint32_t before = cetta_control_operation_key(plan);
@@ -202,6 +205,18 @@ static void test_control_operand_plans(void) {
                 assert(!cetta_control_operation_lower_fold(plan, &lowered));
             }
             observations++;
+            if (operation == CETTA_CONTROL_MATCH_BRANCHES) {
+                assert(cetta_control_operation_match_branches_layout(plan, arity));
+                CettaControlOperationPlan invalid = plan;
+                invalid.first = invalid.source;
+                assert(!cetta_control_operation_match_branches_layout(invalid, arity));
+                invalid = plan;
+                invalid.source = arity;
+                assert(!cetta_control_operation_match_branches_layout(invalid, arity));
+                invalid = plan;
+                invalid.last = 0u;
+                assert(!cetta_control_operation_match_branches_layout(invalid, arity));
+            }
         }
     }
     CettaControlOperationPlan force, scope;
@@ -211,7 +226,7 @@ static void test_control_operand_plans(void) {
     assert(!cetta_control_operation_decode(25u, UINT64_MAX, &force, &builtins));
     assert(!cetta_control_operation_decode(999u, 1u, NULL, &builtins));
     assert(!cetta_control_operation_decode(25u, 1u, NULL, NULL));
-    assert(observations == 9u);
+    assert(observations == 10u);
     CettaControlOperationPlan basic[] = {CETTA_CONTROL_RETURN_VALUE_PLAN,
         CETTA_CONTROL_CONSTRUCT_PLAN, CETTA_CONTROL_INVOKE_PLAN};
     for (size_t index = 0u; index < sizeof(basic) / sizeof(*basic); index++) {

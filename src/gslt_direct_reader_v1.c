@@ -3621,6 +3621,17 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids(
     size_t input_len, const GSLTDirectPeTTaProjectionV1 *projection,
     AtomId **out_ids, GSLTDirectPeTTaReaderV1Receipt *receipt,
     char *error_buf, size_t error_buf_size) {
+    return gslt_direct_petta_reader_v1_parse_bytes_ids_from(
+        plan, input, input_len, 0u, UINT32_MAX, projection, out_ids,
+        receipt, NULL, error_buf, error_buf_size);
+}
+
+int gslt_direct_petta_reader_v1_parse_bytes_ids_from(
+    const GSLTDirectPeTTaReaderV1Plan *plan, const uint8_t *input,
+    size_t input_len, size_t start, uint32_t max_forms,
+    const GSLTDirectPeTTaProjectionV1 *projection, AtomId **out_ids,
+    GSLTDirectPeTTaReaderV1Receipt *receipt, size_t *end_out,
+    char *error_buf, size_t error_buf_size) {
     GSLTDirectCursorV1 document = {0};
     AtomId *ids = NULL;
     uint32_t len = 0u;
@@ -3643,7 +3654,7 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids(
         !projection->dollar_symbol || !projection->expression ||
         !projection->finish_form ||
         (plan->list_open != 0u && !projection->list) ||
-        !out_ids || input_len > UINT32_MAX ||
+        !out_ids || input_len > UINT32_MAX || start > input_len ||
         (input_len > 0u && !input)) {
         gslt_direct_reader_v1_error(
             error_buf, error_buf_size,
@@ -3652,7 +3663,8 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids(
     }
     document.input = input;
     document.input_len = input_len;
-    while (true) {
+    document.pos = start;
+    while (forms < max_forms) {
         GSLTDirectBytesV1 form = {0};
         bool runnable = false;
         AtomId value;
@@ -3722,6 +3734,8 @@ int gslt_direct_petta_reader_v1_parse_bytes_ids(
         receipt->shift_len = document.shifts + form_shifts;
         receipt->reduce_len = reductions;
     }
+    if (end_out)
+        *end_out = document.pos;
     *out_ids = ids;
     ids = NULL;
     result = (int)len;

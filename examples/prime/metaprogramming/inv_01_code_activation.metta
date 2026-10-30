@@ -52,7 +52,7 @@
 !(observe @(pair *@(println! "must-not-run: inside code") 0))
 
 ; 16-17. A Data parameter holds `*@e` as written; explicit eval then runs it.
-(: hold (-> (Data Atom) (Data Atom)))
+(: hold (-> Atom Atom))
 (= (hold $x) $x)
 !(hold *@(+ 1 2))
 !(let $h (hold *@(+ 1 2)) (eval $h))

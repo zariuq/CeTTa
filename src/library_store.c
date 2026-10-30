@@ -63,18 +63,23 @@ static Atom *unsigned_value(Arena *a,uint64_t value) {
     char text[32];snprintf(text,sizeof(text),"%llu",(unsigned long long)value);
     return atom_bigint(a,text);
 }
-static Atom *view_value(CettaLibraryContext *ctx,Arena *a,CettaDiskStoreView *view,
-        bool published,CettaDiskStore *owner) {
+static Atom *view_epoch_value(Arena *a,const CettaDiskStoreView *view) {
     const unsigned char *epoch=cetta_disk_store_view_epoch(view);
     static const char digits[]="0123456789abcdef"; char text[33];
     for (size_t i=0;i<16;++i) { text[i*2]=digits[epoch[i]>>4]; text[i*2+1]=digits[epoch[i]&15]; }
-    text[32]=0; uint64_t revision=cetta_disk_store_view_revision(view);
+    text[32]=0;
+    return atom_string(a,text);
+}
+static Atom *view_value(CettaLibraryContext *ctx,Arena *a,CettaDiskStoreView *view,
+        bool published,CettaDiskStore *owner) {
+    Atom *epoch=view_epoch_value(a,view);
+    uint64_t revision=cetta_disk_store_view_revision(view);
     Atom *handle=own(ctx,a,view_kind,view,free_view);
     if (!handle) {
         if (published) cetta_disk_store_require_recovery(owner);
         return published ? status_value(a,CETTA_STORE_UNKNOWN) : refused(a,"capacity");
     }
-    Atom *fields[]={atom_symbol(a,"StoreSnapshot"),handle,atom_string(a,text),unsigned_value(a,revision)};
+    Atom *fields[]={atom_symbol(a,"StoreSnapshot"),handle,epoch,unsigned_value(a,revision)};
     return atom_expr(a,fields,4);
 }
 static bool operations(Atom *list,CettaDiskOp **out,size_t *count) {
@@ -210,6 +215,32 @@ Atom *cetta_store_dispatch(CettaLibraryContext *ctx,Arena *a,Atom *head,Atom **a
             view ? view_value(ctx,a,view,!strcmp(simple,"compact"),store) :
             atom_expr2(a,atom_symbol(a,"StoreCollected"),unsigned_value(a,removed));
         cetta_native_handle_use_release(&use);return answer;
+    }
+    if (atom_is_symbol(head,"__cetta_lib_store_view_info")) {
+        if (n!=1) return refused(a,"invalid-view-info");
+        CettaNativeHandleUse use={0};
+        if (!acquire(ctx,view_kind,args[0],CETTA_NATIVE_HANDLE_USE_LIFETIME,&use))
+            return refused(a,"closed-view");
+        CettaDiskStoreView *view=cetta_native_handle_use_resource(&use);
+        Atom *fields[]={atom_symbol(a,"StoreViewInfo"),view_epoch_value(a,view),
+                       unsigned_value(a,cetta_disk_store_view_revision(view))};
+        Atom *answer=atom_expr(a,fields,3);
+        cetta_native_handle_use_release(&use);
+        return answer;
+    }
+    if (atom_is_symbol(head,"__cetta_lib_store_check_view")) {
+        if (n!=2) return refused(a,"invalid-view-check");
+        CettaNativeHandleUse owner={0},view={0};
+        if (!acquire(ctx,owner_kind,args[0],CETTA_NATIVE_HANDLE_USE_EXCLUSIVE,&owner))
+            return refused(a,"closed-or-busy");
+        if (!acquire(ctx,view_kind,args[1],CETTA_NATIVE_HANDLE_USE_LIFETIME,&view)) {
+            cetta_native_handle_use_release(&owner); return refused(a,"closed-view");
+        }
+        CettaDiskStoreStatus status=cetta_disk_store_check_view(
+            cetta_native_handle_use_resource(&owner),cetta_native_handle_use_resource(&view));
+        cetta_native_handle_use_release(&view);
+        cetta_native_handle_use_release(&owner);
+        return status==CETTA_STORE_OK ? atom_symbol(a,"StoreViewValid") : status_value(a,status);
     }
     bool commit_call=atom_is_symbol(head,"__cetta_lib_store_commit"),scoped_call=atom_is_symbol(head,"__cetta_lib_store_commit_scoped");
     if (commit_call || scoped_call) {

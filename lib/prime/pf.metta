@@ -48,13 +48,13 @@
 ; Values are forced with let before they are compared, deconstructed or
 ; passed on: an atom builtin in argument position reaches its callee as
 ; syntax, not as its value.
-(: pf:member (-> Atom (Data Atom) Bool))
+(: pf:member (-> Proc Atom Bool))
 (= (pf:member $x $list)
    (if (== $list ()) False
        (let $h (car-atom $list)
          (if (== $h $x) True
              (let $rest (cdr-atom $list) (pf:member $x $rest)){$rest})){$h}))
-(: pf:verb-head (-> (Data Atom) Bool))
+(: pf:verb-head (-> Atom Bool))
 (= (pf:verb-head $t)
    (let $h (car-atom $t)
      (if (== (get-metatype $h) Symbol)
@@ -64,8 +64,8 @@
 ; A list is walked as syntax: the walker's parameter is Data, so the tail of a
 ; term such as (mapf (lam y b) nil), the list ((lam y b) nil), stays held
 ; through car-atom and cdr-atom and is never run as an application.
-(: pf:expand-tail (-> (Data Atom) (Data Atom)))
-(: pf:expand-list (-> (Data Atom) (Data Atom)))
+(: pf:expand-tail (-> Atom Atom))
+(: pf:expand-list (-> Atom Atom))
 (= (pf:expand-list $t) (pf:expand-tail $t))
 (= (pf:expand-tail $t)
    (if (== $t ()) ()
@@ -75,7 +75,7 @@
              (let $et (pf:expand-tail $rest)
                (cons-atom $eh $et)){$et}){$eh}){$rest}){$h}))
 
-(: pf:expand (-> (Data Atom) (Data Atom)))
+(: pf:expand (-> Atom Atom))
 (= (pf:expand $t)
    (if (== (get-metatype $t) Expression)
        (if (== $t ()) ()
@@ -104,14 +104,14 @@
 
 ; Syntax is handed to a judgment quoted: the evaluator then leaves it
 ; alone even where a constant shares its name with a builtin.  A proposition
-; and a proof are syntax, so their parameters are `(Data Atom)`, which holds
+; and a proof are syntax, so their parameters are `Atom`, which holds
 ; an argument as written; an `Atom` parameter is an ordinary value in Prime,
 ; and a quotation of it would hold its value.
 ; The namespace a space is judged in.
-(: pf:namespace (-> Atom Atom))
+(: pf:namespace (-> Proc Proc))
 (= (pf:namespace $space)
    (if (== (collapse (match $space (hol:profile $p) $p){$p}) ()) set hol))
-(: pf:theorem (-> Atom Atom (Data Atom) (Data Atom) %Undefined%))
+(: pf:theorem (-> Proc Proc Atom Atom %Undefined%))
 (= (pf:theorem $space $name $prop $proof)
    (let $p (pf:expand $proof)
      (let $qp (cons-atom quote ($p))
@@ -119,7 +119,7 @@
          (if (== (pf:namespace $space) hol)
              (hol:theorem $space $name $qprop $qp)
              (set:theorem $space $name $qprop $qp))))))
-(: pf:proves (-> Atom (Data Atom) (Data Atom) %Undefined%))
+(: pf:proves (-> Proc Atom Atom %Undefined%))
 (= (pf:proves $space $proof $prop)
    (let $p (pf:expand $proof)
      (let $qp (cons-atom quote ($p))
@@ -128,7 +128,7 @@
              (hol:proves $space $qp $qprop)
              (set:proves $space $qp $qprop))))))
 
-(: pf:axiom (-> Atom Atom (Data Atom) %Undefined%))
+(: pf:axiom (-> Proc Proc Atom %Undefined%))
 (= (pf:axiom $space $name $statement)
    (if (== (pf:namespace $space) hol)
        (hol:axiom $space $name $statement)
@@ -164,12 +164,12 @@
        (let $t (add-atom &self (pf:equality-of $A $refl $subst))
          ($r $s))))))))))
 ; (all A (lam x body)) with the name x as its binder.
-(: pf:all (-> Atom Atom Atom Atom))
+(: pf:all (-> Proc Proc Proc Proc))
 (= (pf:all $A $x $body)
    (let $binder (cons-atom lam ($x $body))
      (cons-atom all ($A $binder))))
 ; all P : A -> prop. all x y : A. eq A x y -> P x -> P y
-(: pf:substitution-statement (-> Atom Atom Atom Atom Atom))
+(: pf:substitution-statement (-> Proc Proc Proc Proc Proc))
 (= (pf:substitution-statement $A $P $x $y)
    (let $inner (pf:all $A $y (imp (eq $A $x $y) (imp ($P $x) ($P $y))))
      (let $middle (pf:all $A $x $inner)
@@ -182,7 +182,7 @@
            (pf:binder-apart-from $base $next $k1 $t)){$next}){$k1}
        $name))
 ; whether the symbol s occurs in t; t is walked as syntax
-(: pf:mentions-tail (-> (Data Atom) Atom Bool))
+(: pf:mentions-tail (-> Atom Proc Bool))
 (= (pf:mentions $t $s)
    (if (== $t $s) True
        (if (== (get-metatype $t) Expression)
@@ -205,7 +205,7 @@
 
 ; substitute the symbol s by r in t, respecting lam binders of the same name;
 ; t is walked as syntax through a Data parameter
-(: pf:subst-tail (-> Atom Atom (Data Atom) (Data Atom)))
+(: pf:subst-tail (-> Proc Proc Atom Atom))
 (= (pf:subst-list $s $r $t) (pf:subst-tail $s $r $t))
 (= (pf:subst-tail $s $r $t)
    (if (== $t ()) ()
@@ -317,7 +317,7 @@
          (if (== (car-atom $package) HolNativeProofV1) $package (empty))){$package}
        (let $package (set:native-proof $space $name)
          (if (== (car-atom $package) SetNativeProofV1) $package (empty))){$package}))
-(: pf:rests-on-walk (-> Atom (Data Atom) (Data Atom) (Data Atom) (Data Atom)))
+(: pf:rests-on-walk (-> Proc Atom Atom Atom Atom))
 (= (pf:rests-on-walk $space $todo $seen $found)
    (if (== $todo ()) $found
        (let $name (car-atom $todo)
@@ -334,7 +334,7 @@
                              (pf:rests-on-walk $space $rest $seen1 $found1)){$found1}){$last}
                          (let $todo1 (pf:append $cited $rest)
                            (pf:rests-on-walk $space $todo1 $seen1 $found)){$todo1})){$seen1}){$cited}){$kind $n $p $proof $term $type $context $rules $rows $digest})){$rest}){$name}))
-(: pf:append (-> (Data Atom) (Data Atom) (Data Atom)))
+(: pf:append (-> Atom Atom Atom))
 (= (pf:append $xs $ys)
    (if (== $xs ()) $ys
        (let $h (car-atom $xs)

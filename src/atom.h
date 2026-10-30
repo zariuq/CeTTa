@@ -301,6 +301,12 @@ static inline bool cetta_internal_tag_is_term_stable(int64_t tag) {
  * has it when a child has it.  Storage that drops the mark copies such an
  * atom rather than sharing it. */
 #define ATOM_STRUCTURAL_HAS_HE_EVALUATED UINT32_C(0x00002000)
+/* Every leaf of the atom is a symbol, so its structural hash is a function of
+ * what atom_eq compares: two such atoms whose known hashes differ are
+ * unequal.  Like the closed facts, it holds of an expression only when it
+ * holds of every child; any other leaf, or a hand-built atom, leaves it
+ * unset. */
+#define ATOM_STRUCTURAL_SYMBOLIC UINT32_C(0x00004000)
 /* Each fact has its own bit: for one-bit flags the sum equals the union
  * exactly when no two share one. */
 _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
@@ -312,7 +318,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                        ATOM_STRUCTURAL_HAS_PETTA_NONLIST +
                        ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL +
                        ATOM_STRUCTURAL_OWNER_CLOSED + ATOM_STRUCTURAL_STRING_STORAGE +
-                       ATOM_STRUCTURAL_HAS_HE_EVALUATED ==
+                       ATOM_STRUCTURAL_HAS_HE_EVALUATED + ATOM_STRUCTURAL_SYMBOLIC ==
                    (ATOM_STRUCTURAL_FACTS_VALID | ATOM_STRUCTURAL_HAS_INTERNAL_TAG |
                     ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID | ATOM_STRUCTURAL_HAS_NAN |
                     ATOM_STRUCTURAL_HAS_OPEN_LIST | ATOM_STRUCTURAL_HAS_LIST |
@@ -322,7 +328,7 @@ _Static_assert(ATOM_STRUCTURAL_FACTS_VALID + ATOM_STRUCTURAL_HAS_INTERNAL_TAG +
                     ATOM_STRUCTURAL_HAS_PETTA_NONLIST |
                     ATOM_STRUCTURAL_HAS_SPELLED_SYMBOL |
                     ATOM_STRUCTURAL_OWNER_CLOSED | ATOM_STRUCTURAL_STRING_STORAGE |
-                    ATOM_STRUCTURAL_HAS_HE_EVALUATED),
+                    ATOM_STRUCTURAL_HAS_HE_EVALUATED | ATOM_STRUCTURAL_SYMBOLIC),
                "structural fact bits overlap");
 
 /*
@@ -1178,6 +1184,32 @@ bool atom_spread_hash(Atom *atom, uint64_t *out);
 #define ATOM_HASH_SPELL(h) \
     ((uint32_t)(h) != 0u ? (uint32_t)(h) : ATOM_HASH_ZERO_SPELLING)
 
+/* An expression's hash is finished once its children are folded in, before
+ * it is spelled.  The fold xors its last child in, so without the finish a
+ * constructor applied twice would give back its argument's hash ((S (S x))
+ * hashing as x) and whole families of nested terms would share two hashes.
+ * The finish is murmur3's fmix32, a bijection taking 0 to 0; every place
+ * that folds an expression's hash (atom.c, the term universe, the
+ * compile-time list hashes) finishes it alike. */
+#define ATOM_HASH_FINISH_STEP(h, shift, factor) \
+    ((uint32_t)(((uint32_t)(h) ^ ((uint32_t)(h) >> (shift))) * (factor)))
+#define ATOM_HASH_EXPR_FINISH(h)                                          \
+    ((uint32_t)(ATOM_HASH_FINISH_STEP(                                    \
+                    ATOM_HASH_FINISH_STEP((h), 16, 0x85ebca6bu), 13,      \
+                    0xc2b2ae35u) ^                                        \
+                (ATOM_HASH_FINISH_STEP(                                   \
+                     ATOM_HASH_FINISH_STEP((h), 16, 0x85ebca6bu), 13,     \
+                     0xc2b2ae35u) >> 16)))
+
+static inline uint32_t atom_hash_expr_finish(uint32_t h) {
+    h ^= h >> 16;
+    h *= 0x85ebca6bu;
+    h ^= h >> 13;
+    h *= 0xc2b2ae35u;
+    h ^= h >> 16;
+    return h;
+}
+
 /* ── Variable identity intern/freshening ──────────────────────────────── */
 
 /* An interned source variable has no activation epoch, so an entry holds
@@ -1574,11 +1606,20 @@ Atom *atom_prime_held_wrap(Arena *a, Atom *atom);
 /* Whether the process has made a held value yet: until it has, no term can
    contain one, and atom_contains_prime_held need not look. */
 bool atom_prime_held_made(void);
-/* Whether a held value occurs anywhere in `atom`. */
+/* Whether a held value may occur anywhere in `atom`. A negative answer is
+ * complete; refused metadata traversal conservatively gives true. */
 bool atom_contains_prime_held(const Atom *atom);
 /* The syntax a value holds, at every depth: held wrappers removed.  For a
    position that takes syntax as such, a held value is that syntax. */
 Atom *atom_prime_held_strip(Arena *a, Atom *atom);
+/* Children-first image of the expressions selected by descend. Each distinct
+ * selected node is rebuilt once; shared edges retain one image. Unselected
+ * nodes are borrowed unchanged, so their owners must remain live. This is
+ * a projection, not independent ownership transport. A selected cycle or
+ * allocation/refusal returns NULL without changing source nodes. */
+Atom *atom_graph_image(void *context, Arena *arena, Atom *root,
+    bool (*descend)(void *, Arena *, Atom *),
+    Atom *(*build)(void *, Arena *, Atom *, Atom **, bool));
 Atom *atom_petta_prolog_compound(Arena *a, Atom *body);
 /* PeTTa's no-result marker: an internal atom no program can write. */
 Atom *atom_petta_no_result(Arena *a);
@@ -1608,6 +1649,10 @@ Atom *atom_list_tail(Arena *a, const Atom *list, CettaExprLen from);
  * otherwise an expression. */
 Atom *atom_sequence_like(Arena *a, const Atom *like, Atom *const *elems,
                          CettaExprLen len);
+/* Iteration view of a held sequence: move the container's data role to its
+ * elements, retaining sequence kind and borrowed payload nodes. Unheld inputs
+ * pass through. A held non-sequence or failed construction returns NULL. */
+Atom *atom_sequence_data_view(Arena *arena, Atom *sequence);
 bool atom_counted_collection_count(
     Atom *atom, int64_t *count);
 Atom *atom_prime_need_capability(Arena *a, uint64_t session_id,
@@ -1799,6 +1844,20 @@ void atom_visit_set_free(AtomVisitSet *set);
  * the path to it: each distinct subexpression is visited once. */
 bool atom_graph_any(const Atom *root, AtomTreePredicate predicate,
                     void *context);
+/* A barrier is a semantic value boundary: neither the predicate nor its
+ * children are observed there. Graph predicates and barriers are independent
+ * of the path by which a subterm is reached. */
+bool atom_tree_any_pruned(const Atom *root, AtomTreePredicate predicate,
+                          AtomTreePredicate barrier, void *context);
+bool atom_graph_any_pruned(const Atom *root, AtomTreePredicate predicate,
+                           AtomTreePredicate barrier, void *context);
+/* Read-only admission with a bounded number of predicate observations.
+ * Barriers and already visited subexpressions need no observation. Budget
+ * or allocation refusal sets *complete false; false then certifies nothing.
+ * COMPLETE is required. No terms or source effects are changed. */
+bool atom_graph_any_checked(const Atom *root, AtomTreePredicate predicate,
+                            AtomTreePredicate barrier, void *context,
+                            size_t allowance, bool *complete);
 
 /* ── Comparison ─────────────────────────────────────────────────────────── */
 
@@ -2194,6 +2253,8 @@ Atom *atom_deep_copy_session_forwarded(
 bool atom_deep_copy_session_settled(
     const AtomDeepCopySession *session, const Atom *atom);
 bool atom_deep_copy_session_failed(const AtomDeepCopySession *session);
+/* Validate the selected metadata destination without exposing its address. */
+bool atom_deep_copy_session_private_destination(const AtomDeepCopySession *session);
 void atom_deep_copy_session_free(AtomDeepCopySession *session);
 void atom_deep_copy_session_storage_census(const AtomDeepCopySession *session,
     CettaStorageCensus *census);

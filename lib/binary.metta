@@ -22,3 +22,6 @@
 ; internal representations, nonflat symbol names and unknown facts are refused.
 ; This classification grants no purity, evaluation or ownership authority.
 (: binary:value-kind (-> %Undefined% %Undefined%))
+; Extended portable-value profile: signed machine integers, F64 scalars and
+; owned tensor values in addition to the BV1 kinds. No authority is conferred.
+(: binary:portable-kind (-> %Undefined% %Undefined%))

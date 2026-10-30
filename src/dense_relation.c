@@ -214,9 +214,32 @@ static bool dense_pair_push(DenseRelation *relation, uint32_t first,
 /* Read the rows of one relation: those with its head and three elements.
  * False when a row could match the relation's patterns but is not a pair of
  * keys, or memory runs out. */
+typedef struct {
+    CettaDenseQuery *query;
+    DenseRelation *relation;
+} DenseBitsReader;
+
+static bool dense_read_pair(void *context, CettaDenseId first_id,
+                            CettaDenseId second_id) {
+    DenseBitsReader *reader = context;
+    uint32_t first = 0u, second = 0u;
+    return dense_number(reader->query, (AtomId)first_id, &first) &&
+           dense_number(reader->query, (AtomId)second_id, &second) &&
+           dense_pair_push(reader->relation, first, second);
+}
+
 static bool dense_read_rows(CettaDenseQuery *query, Space *space,
                             Arena *scratch, Atom *head,
                             DenseRelation *relation) {
+    /* A relation the space keeps as bits gives its pairs from them, when no
+     * row stands beside them: reading its rows would give the bits back. */
+    const CettaDenseRelation *bits = space_dense_relation(space, relation->head);
+    if (bits) {
+        DenseBitsReader reader = {query, relation};
+        return space_dense_head_rows_absent(space, relation->head) &&
+            cetta_dense_relation_each(bits, CETTA_DENSE_ANY, CETTA_DENSE_ANY,
+                                      dense_read_pair, &reader);
+    }
     Atom *elements[3] = {head, atom_var(scratch, "first"),
                          atom_var(scratch, "second")};
     Atom *probe = elements[1] && elements[2]

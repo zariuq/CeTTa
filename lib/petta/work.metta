@@ -11,3 +11,5 @@
 (: work-count (-> %Undefined% Expression))
 (: work-exists (-> %Undefined% Expression))
 (: work:epoch (-> %Undefined% %Undefined%))
+(: work:source-epoch (-> %Undefined% %Undefined%))
+(: work:source-status (-> %Undefined% %Undefined% %Undefined%))

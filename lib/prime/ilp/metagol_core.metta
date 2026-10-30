@@ -111,7 +111,26 @@
        (mil:closure-run
          $sem $program $next (cons-atom $next $seen))))
 
-; Primitive fallbacks come last.  Fact-backed relations are the preferred
+; Frozen facts are ordered occurrences, not a set. Only preparation in the
+; pruning library grants permission to use their closed-data failure guards.
+(= (mil:fact-outputs $rows $program $input)
+   (if (== $rows ()) (superpose ())
+     (case (car-atom $rows)
+       (((MIL.Edge $name $source $output)
+         (if (and (mil:same-atom $program $name) (mil:same-atom $input $source))
+           $output (superpose ())))
+        ($invalid-row (superpose ())))){$name $source $output $invalid-row}))
+(= (mil:fact-outputs $rows $program $input)
+   (if (== $rows ()) (superpose ()) (mil:fact-outputs (cdr-atom $rows) $program $input)))
+
+; A concrete semantic constructor uses ordinary structural dispatch. Space
+; primitives keep their original clauses, with no extra helper or case layer.
+(= (mil:run (MIL.FrozenFacts $rows) $program $input)
+   (mil:fact-outputs $rows $program $input))
+(= (mil:run (MIL.FrozenFacts $rows) (MIL.HO1 MIL.MapOp $program) $input)
+   (mil:map-run (MIL.FrozenFacts $rows) $program $input))
+
+; Primitive fallbacks come last. Fact-backed relations are the preferred
 ; representation for genuinely relational BK because absence then means zero
 ; answers in every dialect rather than an inert residual call.
 (= (mil:run $sem $program $input)
@@ -234,6 +253,57 @@
 (= (mil:primitive-name $bias)
    (match $bias (MIL.FactPrimitive $program $relation) $program))
 
+; A type vocabulary is immutable declaration data, not a new space kind or
+; executable background. Declaration occurrences retain their multiplicity.
+(= (mil:typed-vocabulary $bias)
+   (case $bias
+     (((MIL.TypeVocabulary $rows) (MIL.TypeVocabulary $rows))
+      ($space
+       (let $rows (collapse
+         (match $space (: $program (MIL.Rel $source $target))
+           (MIL.TypeRow $program (MIL.Rel $source $target))){$program $source $target})
+         (MIL.TypeVocabulary $rows)){$rows}))){$rows})
+(= (mil:typed-rows $rows $program $type)
+   (if (== $rows ()) (superpose ())
+     (case (mil:typed-row-result (car-atom $rows) $program $type)
+       (((MIL.Selected $selected) $selected) ($not-a-declaration (superpose ())))){$selected $not-a-declaration}))
+(= (mil:typed-rows $rows $program $type)
+   (if (== $rows ()) (superpose ()) (mil:typed-rows (cdr-atom $rows) $program $type)))
+(= (mil:typed-row-result (MIL.TypeRow $program $type) $program $type) (MIL.Selected $program))
+
+; Normalize the input skeleton before retaining its structural generator.
+; Reflection on arbitrary input syntax stays at this preparation boundary.
+(= (mil:normalize-skeleton $term)
+   (case $term
+     (((MIL.Hole $name) (MIL.Skeleton (MIL.Hole $name)))
+      ((MIL.Chain $left $right)
+       (case (mil:normalize-skeleton $left)
+         (((MIL.Skeleton $a)
+           (case (mil:normalize-skeleton $right)
+             (((MIL.Skeleton $b) (MIL.Skeleton (MIL.Chain $a $b))) ($invalid-right MIL.InvalidSkeleton))){$b $invalid-right})
+          ($invalid-left MIL.InvalidSkeleton))){$a $invalid-left})
+      ((MIL.Choice $left $right)
+       (case (mil:normalize-skeleton $left)
+         (((MIL.Skeleton $a)
+           (case (mil:normalize-skeleton $right)
+             (((MIL.Skeleton $b) (MIL.Skeleton (MIL.Choice $a $b))) ($invalid-choice-right MIL.InvalidSkeleton))){$b $invalid-choice-right})
+          ($invalid-choice-left MIL.InvalidSkeleton))){$a $invalid-choice-left})
+      ((MIL.Id $inner)
+       (case (mil:normalize-skeleton $inner)
+         (((MIL.Skeleton $value) (MIL.Skeleton (MIL.Id $value))) ($invalid-id MIL.InvalidSkeleton))){$value $invalid-id})
+      ((MIL.Closure $inner)
+       (case (mil:normalize-skeleton $inner)
+         (((MIL.Skeleton $value) (MIL.Skeleton (MIL.Closure $value))) ($invalid-closure MIL.InvalidSkeleton))){$value $invalid-closure})
+      ((MIL.Map $inner)
+       (case (mil:normalize-skeleton $inner)
+         (((MIL.Skeleton $value) (MIL.Skeleton (MIL.Map $value))) ($invalid-map MIL.InvalidSkeleton))){$value $invalid-map})
+      ((MIL.HO1 $operator $inner)
+       (case (mil:normalize-skeleton $inner)
+         (((MIL.Skeleton $value) (MIL.Skeleton (MIL.HO1 $operator $value))) ($invalid-ho MIL.InvalidSkeleton))){$value $invalid-ho})
+      ($closed
+       (if (== (get-metatype $closed) Symbol)
+         (MIL.Skeleton (MIL.PrimitiveTerm $closed)) MIL.InvalidSkeleton)))){$left $right $inner})
+
 (= (mil:instantiate-template $bias MIL.T.Primitive)
    (mil:primitive-name $bias))
 
@@ -297,27 +367,60 @@
 ; A user/LLM/ATP may supply an explicit program skeleton.  Hole symbols are
 ; filled from the same primitive vocabulary.  This small form is the bridge to
 ; learned template proposals without granting them acceptance authority.
-(= (mil:fill-holes $bias (MIL.Hole $name))
-   (mil:primitive-name $bias))
-(= (mil:fill-holes $bias (MIL.Chain $a $b))
-   (MIL.Chain (mil:fill-holes $bias $a)
-              (mil:fill-holes $bias $b)))
-(= (mil:fill-holes $bias (MIL.Choice $a $b))
-   (MIL.Choice (mil:fill-holes $bias $a)
-               (mil:fill-holes $bias $b)))
-(= (mil:fill-holes $bias (MIL.Closure $a))
-   (MIL.Closure (mil:fill-holes $bias $a)))
-(= (mil:fill-holes $bias (MIL.Map $a))
-   (MIL.Map (mil:fill-holes $bias $a)))
-(= (mil:fill-holes $bias (MIL.HO1 $operator $a))
-   (MIL.HO1 $operator (mil:fill-holes $bias $a)))
+(= (mil:hole-lookup $environment $name)
+   (if (== $environment ()) MIL.Unbound
+     (case (car-atom $environment)
+       (((MIL.Binding $key $value)
+         (if (mil:same-atom $name $key) (MIL.Bound $value)
+           (mil:hole-lookup (cdr-atom $environment) $name))))){$key $value}))
+
+; One second-order substitution is threaded through the whole skeleton.
+; A repeated name reuses its first choice; it does not make another choice.
+(= (mil:fill-holes $bias $skeleton)
+   (let $choices (collapse (mil:primitive-name $bias))
+     (case (mil:normalize-skeleton $skeleton)
+       (((MIL.Skeleton $normalized)
+         (case (mil:fill-holes-state $choices $normalized ())
+           (((MIL.Filling $program $environment) $program))){$program $environment})
+        ($invalid-skeleton (superpose ()))))))
+(= (mil:primitive-choice $choices)
+   (if (== $choices ()) (superpose ()) (car-atom $choices)))
+(= (mil:primitive-choice $choices)
+   (if (== $choices ()) (superpose ()) (mil:primitive-choice (cdr-atom $choices))))
+(= (mil:fill-holes-state $bias (MIL.Hole $name) $environment)
+   (case (mil:hole-lookup $environment $name)
+     (((MIL.Bound $program) (MIL.Filling $program $environment))
+      (MIL.Unbound
+       (let $program (mil:primitive-choice $bias)
+         (let $next (cons-atom (MIL.Binding $name $program) $environment)
+           (MIL.Filling $program $next)){$next}){$program}))){$program})
+(= (mil:fill-holes-state $bias (MIL.Chain $a $b) $environment)
+   (case (mil:fill-holes-state $bias $a $environment)
+     (((MIL.Filling $left $middle)
+       (case (mil:fill-holes-state $bias $b $middle)
+         (((MIL.Filling $right $next) (MIL.Filling (MIL.Chain $left $right) $next)))){$right $next}))))
+(= (mil:fill-holes-state $bias (MIL.Choice $a $b) $environment)
+   (case (mil:fill-holes-state $bias $a $environment)
+     (((MIL.Filling $left $middle)
+       (case (mil:fill-holes-state $bias $b $middle)
+         (((MIL.Filling $right $next) (MIL.Filling (MIL.Choice $left $right) $next)))){$right $next}))))
+(= (mil:fill-holes-state $bias (MIL.Id $a) $environment)
+   (case (mil:fill-holes-state $bias $a $environment)
+     (((MIL.Filling $program $next) (MIL.Filling (MIL.Id $program) $next)))))
+(= (mil:fill-holes-state $bias (MIL.Closure $a) $environment)
+   (case (mil:fill-holes-state $bias $a $environment)
+     (((MIL.Filling $program $next) (MIL.Filling (MIL.Closure $program) $next)))))
+(= (mil:fill-holes-state $bias (MIL.Map $a) $environment)
+   (case (mil:fill-holes-state $bias $a $environment)
+     (((MIL.Filling $program $next) (MIL.Filling (MIL.Map $program) $next)))))
+(= (mil:fill-holes-state $bias (MIL.HO1 $operator $a) $environment)
+   (case (mil:fill-holes-state $bias $a $environment)
+     (((MIL.Filling $program $next) (MIL.Filling (MIL.HO1 $operator $program) $next)))))
 ; Closed primitive symbols pass through unchanged.  Non-symbol composite terms
 ; without a dedicated skeleton rule fail closed; this prevents a MIL.Hole term
 ; from surviving as a spurious candidate via the catch-all equation.
-(= (mil:fill-holes $bias $closed)
-   (if (== (get-metatype $closed) Symbol)
-       $closed
-       (superpose ())))
+(= (mil:fill-holes-state $bias (MIL.PrimitiveTerm $closed) $environment)
+   (MIL.Filling $closed $environment))
 
 ; Template metadata is ordinary data, so guidance systems can score it without
 ; changing the semantics of generated programs.

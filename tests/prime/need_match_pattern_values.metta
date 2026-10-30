@@ -29,10 +29,10 @@
 !(match &self (fact (+ 1 1) $y) $y)
 ; A value needs no forcing.  A quotation's crossing name denotes what its
 ; parameter's type says, as a pattern's captured name does: the value 2 for
-; a value parameter, the syntax written for a `(Data Atom)` one.
+; a value parameter, the syntax written for a `Atom` one.
 !(q 2)
 !(qq (+ 1 1))
-(: qq-syntax (-> (Data Atom) Atom))
+(: qq-syntax (-> Atom Proc))
 (= (qq-syntax $x) (quote $x){$x})
 !(qq-syntax (+ 1 1))
 

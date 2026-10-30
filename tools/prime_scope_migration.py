@@ -191,12 +191,19 @@ def translate(text: str, records):
     return out, edits, diagnostics
 
 
-def library_spellings(binary: Path, root: Path, *, check: bool):
+def library_spellings(binary: Path, root: Path, *, check: bool, tracked_only=False):
     """Generate the lexical spelling, leaving other dialect sources intact."""
+    tracked = None
+    if tracked_only:
+        listing = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "."],
+                                 check=True, capture_output=True)
+        tracked = {os.fsdecode(path) for path in listing.stdout.split(b"\0") if path}
     manifest_path = root / "prime" / "scope_migration.json"
     managed = json.loads(manifest_path.read_text()) if manifest_path.exists() else {"libraries": []}
-    owned = {r["output"] for r in managed["libraries"]}
-    authored = {r["output"] for r in managed["libraries"] if r.get("authored", False)}
+    selected = [r for r in managed["libraries"]
+                if tracked is None or r["source"] in tracked]
+    owned = {r["output"] for r in selected}
+    authored = {r["output"] for r in selected if r.get("authored", False)}
     libraries = []
     delegated = []
     pending = []
@@ -229,6 +236,8 @@ def library_spellings(binary: Path, root: Path, *, check: bool):
                     raise ValueError("invalid declared library source " + name)
                 if name in declared or relative.suffix != ".metta" or not (root / relative).is_file():
                     raise ValueError("duplicate or missing declared library source " + name)
+                if tracked is not None and name not in tracked:
+                    raise ValueError("declared library source is not versioned: " + name)
                 declared[name] = None
                 sources.append(root / relative)
             generated = compile_library_group(sources, binary,
@@ -239,6 +248,8 @@ def library_spellings(binary: Path, root: Path, *, check: bool):
     for source in sorted(root.rglob("*.metta")):
         relative = source.relative_to(root)
         if relative.parts[0] in ("petta", "prime"):
+            continue
+        if tracked is not None and str(relative) not in tracked:
             continue
         output = root / "prime" / relative
         if str(relative) in authored:
@@ -328,13 +339,16 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("source", type=Path, nargs="?")
     ap.add_argument("--libraries", type=Path)
+    ap.add_argument("--tracked-only", action="store_true",
+                    help="Restrict the library census to files listed in the Git index")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--binary", required=True, type=Path)
     ap.add_argument("--output", type=Path)
     ap.add_argument("--receipt", type=Path)
     args = ap.parse_args()
     if args.libraries:
-        manifest = library_spellings(args.binary.resolve(), args.libraries.resolve(), check=args.check)
+        manifest = library_spellings(args.binary.resolve(), args.libraries.resolve(),
+                                     check=args.check, tracked_only=args.tracked_only)
         print(f"Scope library spellings: {len(manifest['libraries'])} checked" if args.check else f"Scope library spellings: {len(manifest['libraries'])} generated")
         return
     if not args.source:

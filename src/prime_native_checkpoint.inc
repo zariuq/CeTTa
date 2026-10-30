@@ -195,8 +195,22 @@ static bool parent_copy_registry_read_view(PrimeParentCopy *copy,
         parent_copy_atom(copy,&image->stale_actual);
 }
 
+/* A local fork can retain a receiver selected by an entered scope. This
+ * copies no new authority; independent world transport keeps its boundary. */
+static bool parent_copy_admits_space(const PrimeParentCopy *copy,
+        const PrimeEvalContext *context,const Space *space) {
+    if (space==parent_copy_source_space(copy)) return true;
+    if (!copy->retain_reader_contexts || !context) return false;
+    const EvalContextState *state=&context->value;
+    if (state->here_depth>64u || state->home_depth>64u) return false;
+    for (size_t i=0u;i<state->here_depth;i++) if(state->here[i]==space) return true;
+    for (size_t i=0u;i<state->home_depth;i++) if(state->home[i]==space) return true;
+    return false;
+}
+
 static bool parent_copy_equation_shell(PrimeParentCopy *copy,
-    const PrimeNeedEquationContinuation *source, PrimeNeedEquationContinuation **out) {
+    const PrimeNeedEquationContinuation *source, PrimeNeedEquationContinuation **out,
+    const PrimeEvalContext *context) {
     *out = NULL;
     if (!source) return true;
     if (source->work.len > source->work_meta_cap ||
@@ -204,7 +218,7 @@ static bool parent_copy_equation_shell(PrimeParentCopy *copy,
         return parent_copy_refuse(copy,"WorkMetaExtent");
     const PrimeEvalStackDriver *driver=parent_copy_source_driver(copy);
     if (!driver || source->arena!=driver->arena ||
-        source->space!=parent_copy_source_space(copy))
+        !parent_copy_admits_space(copy,context,source->space))
         return parent_copy_refuse(copy,"EquationDecisionOwner");
     PrimeNeedEquationContinuation *image=calloc(1u,sizeof(*image));
     if (!image) return parent_copy_refuse(copy,"Allocation");
@@ -232,6 +246,8 @@ static bool parent_copy_equation_shell(PrimeParentCopy *copy,
 static bool parent_copy_frame_shell(PrimeParentCopy *copy,
     const PrimeEvalStackFrame *source,PrimeEvalStackFrame **out,bool retired) {
     *out=NULL;
+    if(source->context && !copy->retain_reader_contexts)
+        return parent_copy_refuse(copy,"FrameContextOwner");
     if(source->control_retired!=retired)
         return parent_copy_refuse(copy,"FrameMembership");
     if(!retired && (source->native_service || source->capsule_search))
@@ -246,7 +262,8 @@ static bool parent_copy_frame_shell(PrimeParentCopy *copy,
     const PrimeEvalStackDriver *driver=parent_copy_source_driver(copy);
     if(!driver || source->control_nested || source->control_nested_operation ||
         source->control_nested_retained || source->dialect_source ||
-        source->space!=parent_copy_source_space(copy) || source->arena!=driver->arena)
+        !parent_copy_admits_space(copy,source->context,source->space) ||
+        source->arena!=driver->arena)
         return parent_copy_refuse(copy,"FrameExternalOwner");
     if(source->child_initialized) {
         outcome_set_init(&image->child);image->child_initialized=true;
@@ -264,7 +281,7 @@ static bool parent_copy_frame_shell(PrimeParentCopy *copy,
     } else if(source->force_pending_observed)
         return parent_copy_refuse(copy,"ForcePendingState");
     return parent_copy_equation_shell(
-        copy,source->equation_search,&image->equation_search);
+        copy,source->equation_search,&image->equation_search,source->context);
 }
 static bool parent_copy_frame_shells(PrimeParentCopy *copy,
     const PrimeEvalStackFrame *source, PrimeEvalStackFrame **out, bool retired) {
@@ -332,12 +349,17 @@ static bool parent_copy_licence(PrimeParentCopy *copy,const PrimeWeightLicence *
     return true;
 }
 static bool parent_copy_task(PrimeParentCopy *copy, const PrimeEvalStackTask *source,
-    PrimeEvalStackTask *image) {
-    *image=*source;
+    PrimeEvalStackTask *destination) {
+    if(source->context && !copy->retain_reader_contexts)
+        return parent_copy_refuse(copy,"TaskContextOwner");
+    if(source==destination)return parent_copy_refuse(copy,"TaskIdentityOwner");
+    __attribute__((cleanup(prime_eval_stack_task_free))) PrimeEvalStackTask staged=*source;
+    PrimeEvalStackTask *image=&staged;
+    prime_eval_context_retain(image->context);
     memset(&image->dynamic_env,0,sizeof(image->dynamic_env));
     memset(&image->seed_env,0,sizeof(image->seed_env));
     image->dynamic_env_initialized=false;image->seed_env_initialized=false;
-    if(source->space!=parent_copy_source_space(copy) ||
+    if(!parent_copy_admits_space(copy,source->context,source->space) ||
         !parent_copy_owner(copy,&image->arena))
         return parent_copy_refuse(copy,"TaskSpace");
     PC_EDGE(image,source,target,parent_copy_outcome_kind);
@@ -350,6 +372,7 @@ static bool parent_copy_task(PrimeParentCopy *copy, const PrimeEvalStackTask *so
         image->seed_env_initialized=true;
         if(!parent_copy_environment(copy,&image->seed_env,&source->seed_env))return false;
     }
+    *destination=staged;memset(&staged,0,sizeof(staged));
     return true;
 }
 static bool parent_copy_equation_metadata(PrimeParentCopy *copy,
@@ -509,10 +532,15 @@ static bool parent_copy_equation(PrimeParentCopy *copy,
 }
 static bool parent_copy_frame(PrimeParentCopy *copy, const PrimeEvalStackFrame *source,
     PrimeEvalStackFrame *image) {
+    if(source->context && !copy->retain_reader_contexts)
+        return parent_copy_refuse(copy,"FrameContextOwner");
     PrimeEvalStackFrame *next=image->control_next;
     PrimeNeedEquationContinuation *equation=image->equation_search;
     OutcomeSet child=image->child;
     *image=*source;
+    /* A local fork shares immutable scope metadata with its retained source.
+     * Independent world transport still requires its own context mapping. */
+    prime_eval_context_retain(image->context);
     image->control_next=next;
     memset(&image->env,0,sizeof(image->env));image->env_initialized=false;
     memset(&image->child,0,sizeof(image->child));image->child_initialized=false;
@@ -740,6 +768,7 @@ static bool parent_copy_quiescent_in_profile(const PrimeNativeControl *source,
         source->driver.call_refusal_generation ||
         source->driver.call_refusal_retained || source->driver.call_refusal_context ||
         source->driver.observe_space_read || source->driver.space_read_context ||
+        source->driver.observe_context_read || source->driver.context_read_context ||
         source->driver.own_data_read || source->driver.own_data_published ||
         source->driver.own_data_context || source->driver.normalization_value_role ||
         source->driver.normalization_role_context))) {
@@ -1276,6 +1305,7 @@ static bool prime_native_parent_copy_with_session_profile(const PrimeNativeContr
     image->driver.call_refusal_retained=NULL;
     image->driver.call_refusal_context=NULL;
     image->driver.observe_space_read=NULL;image->driver.space_read_context=NULL;
+    image->driver.observe_context_read=NULL;image->driver.context_read_context=NULL;
     image->driver.own_data_read=NULL;image->driver.own_data_published=NULL;
     image->driver.own_data_context=NULL;
     image->driver.normalization_value_role=NULL;

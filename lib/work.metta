@@ -11,3 +11,6 @@
 (: work-exists (-> %Undefined% Expression))
 ; The opaque epoch changes on a mutating work operation, even a zero take.
 (: work:epoch (-> %Undefined% %Undefined%))
+; Lifetime-qualified source read view, including live base/module dependencies.
+(: work:source-epoch (-> %Undefined% %Undefined%))
+(: work:source-status (-> %Undefined% %Undefined% %Undefined%))

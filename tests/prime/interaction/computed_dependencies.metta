@@ -92,3 +92,51 @@
 !(remove-atom &cd-blocker blocked)
 !(transform &cd-tick () ())
 !(assertEqual (collapse (get-atoms &cd-removal)) (done))
+
+; Computed premises use Prime's ordinary value boundary. A stored record
+; can be inspected through a constructor argument without exposing its held
+; carrier to the checker or executing code contained in the record.
+!(bind! &cv-work (new-space))
+!(bind! &cv-effects (new-space))
+(= (cv-record (Request (Envelope $value))) (Some $value))
+(= (cv-inspect (Request $record))
+   (case $record (((Envelope $value) (Some 7)) ($_ None))))
+(= (cv-effect) (let $_ (add-atom &cv-effects executed) 42))
+!(add-atom &cv-work (stored (Envelope 7)))
+!(assertEqual (transform &cv-work
+   (, (take (stored $record)) (let (Some $value) (cv-record (Request $record))))
+   (add-atom &cv-work (checked $value))) ())
+!(assertEqual (collapse (get-atoms &cv-work)) ((checked 7)))
+!(add-atom &cv-work (code (Envelope (cv-effect))))
+!(assertEqual (transform &cv-work
+   (, (take (code $record)) (let (Some 7) (cv-inspect (Request $record))))
+   (add-atom &cv-work inspected)) ())
+!(assertEqual (collapse (get-atoms &cv-effects)) ())
+
+; Opening a stored program explicitly runs it once.
+!(add-atom &cv-work (run (cv-effect)))
+!(assertEqual (transform &cv-work
+   (, (take (run $code)) (let 42 (eval $code)))
+   (add-atom &cv-work complete)) ())
+!(assertEqual (collapse (get-atoms &cv-effects)) (executed))
+
+; Source currency observations report the Space they inspected. A later
+; computed write invalidates the publication while preserving that write.
+!(import! &self work)
+!(bind! &cv-epoch-data (new-space))
+!(add-atom &cv-work currency-pending)
+!(assertEqual (collapse (transform &cv-work
+   (, (take currency-pending) (let $epoch (work:source-epoch &cv-epoch-data))
+      (let $_ (add-atom &cv-epoch-data changed)))
+   (add-atom &cv-work currency-forbidden))) ())
+!(assertEqual (collapse (match &cv-work currency-pending currency-pending)) (currency-pending))
+!(assertEqual (collapse (get-atoms &cv-epoch-data)) (changed))
+!(assertEqual (collapse (match &cv-work currency-forbidden currency-forbidden)) ())
+
+; A fresh epoch and its current-status observation may publish.
+!(assertEqual (transform &cv-work
+   (, (take currency-pending) (let $epoch (work:source-epoch &cv-epoch-data))
+      (let Work:Current (work:source-status &cv-epoch-data $epoch)))
+   (add-atom &cv-work currency-done)) ())
+!(assertEqual (collapse (match &cv-work currency-done currency-done)) (currency-done))
+!(assertEqual (collapse (match &cv-work currency-pending currency-pending)) ())

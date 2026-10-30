@@ -1,0 +1,18 @@
+; Synthetic claims and evidence. The numbers are illustrative judgements,
+; not calibrated truth values and not independent evidence counts.
+(KbFact claim1 claim ("The reservoir level rose."))
+(KbFact claim2 claim ("A bridge inspection was completed."))
+(KbFact source1 source (origin1 "Station record"))
+(KbFact source2 source (origin1 "Copy of station record"))
+(KbFact source3 source (origin2 "Independent survey"))
+(KbFact lineage1 derived-from (source2 source1))
+(KbFact judgement1 judgement (claim1 supports (Assessment 0.8 0.6)))
+(KbFact judgement2 judgement (claim1 supports (Assessment 0.8 0.6)))
+(KbFact judgement3 judgement (claim1 opposes (Assessment 0.7 0.3)))
+(KbFact judgement4 judgement (claim2 undecided (Assessment 0.5 0.0)))
+(KbFact evidence1 evidence (judgement1 source1))
+(KbFact evidence2 evidence (judgement2 source2))
+(KbFact evidence3 evidence (judgement3 source3))
+(KbFact evidence4 evidence (judgement1 source1))
+(KbFact annotation1 provenance (evidence4 evidence1 "Duplicate extraction"))
+(KbFact program1 stored-program ((= (assessment $claim) (lookup-evidence $claim))))

@@ -16,19 +16,18 @@ classifier
 ()
 (($V0 $V1))
 (Result)
-((Bound %Undefined%))
+((Bound Result))
 ((Tagged Number))
 ((Tagged Result))
 (Fresh)
 (Fresh)
 (((Box $V0) (Box $V1)))
 Number
-(6)
+()
 ()
 ((+ 6 1) (+ 6 1))
 20
 ()
-6
 ((Changed (+ 2 3)) (Changed 5))
 (FirstDeclaration (+ 1 2))
 (Accepted Accepted)

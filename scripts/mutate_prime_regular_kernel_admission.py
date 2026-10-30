@@ -22,6 +22,9 @@ def main() -> None:
             "synthesis-generation",
             "checking-receipt",
             "checking-generation",
+            "collection",
+            "synthesis-collection",
+            "checking-collection",
         ),
     )
     parser.add_argument("source", type=Path)
@@ -62,30 +65,22 @@ def main() -> None:
             "source-binding identity",
         )
         text = prefix + body + suffix
-    elif args.mutation == "generation":
-        text = replace_once(
-            text,
-            "conversion->universe_storage_epoch !=\n"
-            "            live_space->native.universe->storage_epoch ||",
-            "conversion->universe_storage_epoch == UINT64_MAX ||",
-            "storage-generation currentness",
-        )
-    elif args.mutation == "synthesis-generation":
-        text = replace_once(
-            text,
-            "synthesis->universe_storage_epoch !=\n"
-            "            live_space->native.universe->storage_epoch ||",
-            "synthesis->universe_storage_epoch == UINT64_MAX ||",
-            "synthesis storage-generation currentness",
-        )
     else:
-        text = replace_once(
-            text,
-            "checking->universe_storage_epoch !=\n"
-            "            live_space->native.universe->storage_epoch ||",
-            "checking->universe_storage_epoch == UINT64_MAX ||",
-            "checking storage-generation currentness",
-        )
+        owner = (args.mutation.split("-", 1)[0]
+                 if "-" in args.mutation else "conversion")
+        # Replacing storage advances both epochs. Disabling just its storage
+        # check leaves the collection check enforcing that same boundary.
+        # Collection alone must also be tested, without replacing storage.
+        epochs = (("storage", "collection")
+                  if args.mutation.endswith("generation") else ("collection",))
+        for epoch in epochs:
+            text = replace_once(
+                text,
+                f"{owner}->universe_{epoch}_epoch !=\n"
+                f"            live_space->native.universe->{epoch}_epoch ||",
+                f"{owner}->universe_{epoch}_epoch == UINT64_MAX ||",
+                f"{owner} {epoch}-generation currentness",
+            )
     args.destination.write_text(text, encoding="utf-8")
 
 

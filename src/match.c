@@ -3810,20 +3810,69 @@ static bool bindings_frame_relocation_store(BindingsFrameRelocations *memo,
     return true;
 }
 
-bool bindings_promote_logical_atoms_with_session(
-    Bindings *bindings, AtomDeepCopySession *session) {
+static bool bindings_delta_value_equal(BindingValue a, BindingValue b) {
+    return binding_value_kind(a) == binding_value_kind(b) &&
+        cetta_frame_identity_eq(binding_value_epoch(a), binding_value_epoch(b)) &&
+        ((!a.skeleton && !b.skeleton) ||
+         (a.skeleton && b.skeleton && atom_eq(a.skeleton, b.skeleton)));
+}
+
+static bool bindings_delta_schema_equal(const BindingsFrameSchema *a,
+        const BindingsFrameSchema *b) {
+    if (a == b) return true;
+    if (!a || !b || a->len != b->len || a->cap != b->cap) return false;
+    for (uint32_t i = 0u; i < a->len; ++i)
+        if (!var_id_eq(a->source_ids[i], b->source_ids[i])) return false;
+    for (uint32_t i = 0u; i < a->cap; ++i) {
+        if (a->spellings[i] != b->spellings[i]) return false;
+        if (a->name_keys[i] != b->name_keys[i] &&
+            (!a->name_keys[i] || !b->name_keys[i] || !atom_eq(a->name_keys[i], b->name_keys[i])))
+            return false;
+    }
+    return true;
+}
+
+static bool bindings_delta_base_value(const BindingsFrameIndexEntry *frame,
+        uint32_t slot, const BindingsFrameIndexEntry *base, BindingValue *value) {
+    uint32_t base_slot;
+    if (!base || !bindings_frame_index_find_slot(base,
+            bindings_frame_slot_source_id(frame, slot), &base_slot) || base_slot >= base->slot_len)
+        return false;
+    BindingValue original = bindings_frame_slot_value(base, base_slot);
+    if (!bindings_delta_value_equal(bindings_frame_slot_value(frame, slot), original)) return false;
+    if (value) *value = original;
+    return true;
+}
+
+static Atom *bindings_delta_base_name(const BindingsFrameIndexEntry *frame,
+        uint32_t slot, const BindingsFrameIndexEntry *base, Atom *name) {
+    uint32_t base_slot;
+    if (!name || !base || slot >= frame->slot_len || !bindings_frame_index_find_slot(base,
+            bindings_frame_slot_source_id(frame, slot), &base_slot) || base_slot >= base->slot_len) return NULL;
+    Atom *original = bindings_frame_slot_name_key(base, base_slot);
+    return original && atom_eq(name, original) ? original : NULL;
+}
+
+static bool bindings_promote_logical_with_base(Bindings *bindings,
+        AtomDeepCopySession *session, const Bindings *base) {
     if (!bindings)
         return true;
     if (atom_deep_copy_session_failed(session))
         return false;
     if (!bindings_prepare_logical_write(bindings))
         return false;
+    if (base && base->owners) bindings_inherit_owners(bindings, base);
     for (uint32_t i = 0; i < bindings->len; i++) {
-        Atom *promoted_name_key = bindings->entries[i].name_key
+        const Binding *original = base && i < base->len ? bindings_entry_at(base, i) : NULL;
+        if (original && !var_id_eq(bindings->entries[i].var_id, original->var_id)) original = NULL;
+        bool inherited_key = original && (bindings->entries[i].name_key == original->name_key ||
+            (bindings->entries[i].name_key && original->name_key && atom_eq(bindings->entries[i].name_key, original->name_key)));
+        bool inherited_value = original && bindings_delta_value_equal(bindings->entries[i].value, original->value);
+        Atom *promoted_name_key = inherited_key ? original->name_key : bindings->entries[i].name_key
             ? atom_deep_copy_session_copy(
                   session, bindings->entries[i].name_key)
             : NULL;
-        Atom *promoted = bindings->entries[i].value.skeleton
+        Atom *promoted = inherited_value ? original->value.skeleton : bindings->entries[i].value.skeleton
             ? atom_deep_copy_session_copy(
                   session, bindings->entries[i].value.skeleton)
             : NULL;
@@ -3834,6 +3883,22 @@ bool bindings_promote_logical_atoms_with_session(
         bindings->entries[i].value.skeleton = promoted;
     }
     for (uint32_t i = 0; i < bindings->eq_len; i++) {
+        const BindingConstraint *inherited = NULL;
+        if (base) {
+            /* Normalization can discharge an earlier constraint, shifting
+             * unchanged survivors. Their borrowed roots still belong to base. */
+            for (uint32_t j = 0u; j < base->eq_len; j++) {
+                uint32_t index = i < base->eq_len ? (uint32_t)(((uint64_t)i + j) % base->eq_len) : j;
+                if (bindings_delta_value_equal(bindings->constraints[i].lhs, base->constraints[index].lhs) &&
+                    bindings_delta_value_equal(bindings->constraints[i].rhs, base->constraints[index].rhs)) {
+                    inherited = &base->constraints[index]; break;
+                }
+            }
+        }
+        if (inherited) {
+            bindings->constraints[i] = *inherited;
+            continue;
+        }
         Atom *lhs = bindings->constraints[i].lhs.skeleton
             ? atom_deep_copy_session_copy(
                   session, bindings->constraints[i].lhs.skeleton)
@@ -3860,20 +3925,59 @@ bool bindings_promote_logical_atoms_with_session(
              frame_index < bindings->frame_index->len; frame_index++) {
             BindingsFrameIndexEntry *frame =
                 &bindings->frame_index->frames[frame_index];
+            const BindingsFrameIndexEntry *original = base
+                ? bindings_frame_index_find_frame_const(base->frame_index, frame->epoch) : NULL;
+            bool same_schema = original && bindings_delta_schema_equal(frame->schema, original->schema);
+            bool same_payload = same_schema && original->slot_len == frame->slot_len && original->storage_references &&
+                frame->bound_value_count == original->bound_value_count &&
+                frame->private_value_count == original->private_value_count &&
+                frame->schema_complete == original->schema_complete &&
+                frame->has_activation_write_boundary == original->has_activation_write_boundary &&
+                frame->activation_write_boundary == original->activation_write_boundary;
+            for (uint32_t slot = 0u; same_payload && slot < frame->slot_len; ++slot)
+                same_payload = bindings_delta_value_equal(bindings_frame_slot_value(frame, slot),
+                    bindings_frame_slot_value(original, slot)) &&
+                    bindings_frame_slot_version(frame, slot) == bindings_frame_slot_version(original, slot);
+            if (original) {
+                if (!directory_private) {
+                    if (!bindings_frame_index_detach(bindings)) return false;
+                    directory_private = true;
+                    frame = &bindings->frame_index->frames[frame_index];
+                }
+                if (same_payload) {
+                    bindings_frame_index_entry_share_payload(frame, original);
+                    continue;
+                }
+                if (same_schema && frame->schema != original->schema) {
+                    bindings_frame_schema_retain(original->schema);
+                    bindings_frame_schema_release(frame->schema);
+                    frame->schema = original->schema;
+                }
+                if (!bindings_frame_index_entry_detach(frame)) return false;
+                for (uint32_t slot = 0u; slot < frame->cap && slot < frame->slot_len; ++slot) {
+                    BindingValue inherited;
+                    if (bindings_delta_base_value(frame, slot, original, &inherited))
+                        frame->values[slot] = inherited;
+                }
+            }
             bool foreign_name_keys = false;
             bool foreign_values = false;
+            for (uint32_t slot = 0u; !same_schema && frame->schema && slot < frame->schema->cap; slot++) {
+                Atom *key = frame->schema->name_keys[slot];
+                Atom *inherited = bindings_delta_base_name(frame, slot, original, key);
+                if (key && ((inherited && inherited != key) ||
+                    (!inherited && !atom_deep_copy_session_settled(session, key))))
+                    foreign_name_keys = true;
+            }
             for (uint32_t slot = 0u;
                  slot < frame->slot_len; slot++) {
-                Atom *name_key = bindings_frame_slot_name_key(frame, slot);
-                if (name_key &&
-                    !atom_deep_copy_session_settled(session, name_key))
-                    foreign_name_keys = true;
                 Atom *value = bindings_frame_slot_value(frame, slot).skeleton;
-                if (value &&
+                bool inherited = bindings_delta_base_value(frame, slot, original, NULL);
+                if (!inherited && value &&
                     !atom_deep_copy_session_settled(session, value))
                     foreign_values = true;
             }
-            bool mapped_schema = bindings_frame_schema_copy_lookup(
+            bool mapped_schema = !same_schema && bindings_frame_schema_copy_lookup(
                 frame->schema, session) != NULL;
             if (!foreign_name_keys && !foreign_values && !mapped_schema)
                 continue;
@@ -3900,8 +4004,24 @@ bool bindings_promote_logical_atoms_with_session(
                 retained_source = true;
             }
             if (foreign_name_keys || mapped_schema) {
-                BindingsFrameSchema *promoted_schema =
-                    bindings_frame_schema_copy_with_session(frame->schema, session);
+                BindingsFrameSchema *promoted_schema = NULL;
+                if (original) {
+                    promoted_schema = bindings_frame_schema_clone(frame->schema);
+                    for (uint32_t slot = 0u; promoted_schema && slot < promoted_schema->cap; ++slot) {
+                        Atom *key = promoted_schema->name_keys[slot];
+                        if (!key) continue;
+                        Atom *inherited = bindings_delta_base_name(frame, slot, original, key);
+                        Atom *image = inherited ? inherited : atom_deep_copy_session_copy(session, key);
+                        if (!image) {
+                            bindings_frame_schema_release(promoted_schema);
+                            promoted_schema = NULL;
+                            break;
+                        }
+                        promoted_schema->name_keys[slot] = image;
+                    }
+                } else {
+                    promoted_schema = bindings_frame_schema_copy_with_session(frame->schema, session);
+                }
                 if (!promoted_schema) {
                     if (retained_source) bindings_frame_index_entry_drop(&source);
                     return false;
@@ -3914,6 +4034,7 @@ bool bindings_promote_logical_atoms_with_session(
                 return false;
             }
             for (uint32_t slot = 0u; foreign_values && slot < frame->slot_len; slot++) {
+                if (bindings_delta_base_value(frame, slot, original, NULL)) continue;
                 if (!bindings_frame_slot_value(frame, slot).skeleton) {
                     continue;
                 }
@@ -3935,6 +4056,21 @@ bool bindings_promote_logical_atoms_with_session(
     /* Promotion preserves variable identities and the retained frame inventory;
      * it changes only syntax ownership. No context rediscovery is required. */
     return true;
+}
+
+bool bindings_promote_logical_atoms_with_session(Bindings *bindings,
+        AtomDeepCopySession *session) {
+    return bindings_promote_logical_with_base(bindings, session, NULL);
+}
+
+bool bindings_promote_logical_delta_to_arena(Bindings *bindings,
+        const Bindings *base, Arena *dst) {
+    if (!bindings || !base || bindings == base || !dst) return false;
+    AtomDeepCopySession *session = atom_deep_copy_session_new(dst);
+    if (!session) return false;
+    bool ok = bindings_promote_logical_with_base(bindings, session, base);
+    atom_deep_copy_session_free(session);
+    return ok;
 }
 
 bool bindings_logical_atoms_satisfy(
@@ -4084,19 +4220,24 @@ bool bindings_promote_logical_atoms_to_arena(Bindings *bindings,
     return promoted;
 }
 
-static bool bindings_occurrence_readers_qualified(const PrimeOccurrence *occurrence,bool owned_copy,const Arena *owner) {
-    return !occurrence || (owned_copy ? !occurrence->reader_context :
+static bool bindings_occurrence_readers_qualified(const PrimeOccurrence *occurrence,bool owned_copy,
+    const Arena *owner,const AtomDeepCopySession *session) {
+    return !occurrence || (owned_copy ? (!occurrence->reader_context ||
+        prime_need_reader_context_copy_lookup(occurrence->reader_context,session)!=NULL) :
         prime_need_reader_context_can_promote(occurrence->reader_context,&occurrence->prime_need,owner)==CETTA_MATCH_MATCHED);
 }
 
 static bool bindings_promote_occurrence_with_session(
     Arena *dst, AtomDeepCopySession *copy_session, PrimeOccurrence *occurrence,
     bool owned_copy) {
-    if (!occurrence || !bindings_occurrence_readers_qualified(occurrence,owned_copy,dst) ||
+    if (!occurrence || !bindings_occurrence_readers_qualified(occurrence,owned_copy,dst,copy_session) ||
         !atom_deep_copy_session_targets(copy_session, dst))
         return false;
     PrimeNeedReaderContext *readers=NULL;
-    if(!owned_copy && prime_need_reader_context_promote(occurrence->reader_context,
+    if (owned_copy) {
+        readers=prime_need_reader_context_copy_lookup(occurrence->reader_context,copy_session);
+        prime_need_reader_context_retain(readers);
+    } else if (prime_need_reader_context_promote(occurrence->reader_context,
             &occurrence->prime_need,dst,&readers)!=CETTA_MATCH_MATCHED) return false;
     PrimeOccurrence promoted = *occurrence;
     promoted.reader_context=readers;
@@ -4141,7 +4282,7 @@ bool bindings_promote_atoms_to_arena(Bindings *bindings, Arena *dst) {
 
 bool bindings_promote_atoms_with_session(
     Bindings *bindings, Arena *dst, AtomDeepCopySession *session) {
-    if (!bindings || !bindings_occurrence_readers_qualified(bindings->prime_ext,false,dst) ||
+    if (!bindings || !bindings_occurrence_readers_qualified(bindings->prime_ext,false,dst,session) ||
         !atom_deep_copy_session_targets(session, dst) ||
         !bindings_promote_logical_atoms_with_session(bindings, session))
         return false;
@@ -4151,7 +4292,7 @@ bool bindings_promote_atoms_with_session(
 
 bool bindings_copy_owned_atoms_with_session(
     Bindings *bindings, Arena *dst, AtomDeepCopySession *session) {
-    if (!bindings || bindings_reader_context_view(bindings) ||
+    if (!bindings || !bindings_occurrence_readers_qualified(bindings->prime_ext,true,dst,session) ||
         !atom_deep_copy_session_targets(session, dst) ||
         !bindings_promote_logical_atoms_with_session(bindings, session))
         return false;
@@ -7441,19 +7582,20 @@ bool bindings_builder_promote_prime_atoms_to_arena(
     return ok;
 }
 
-static bool bindings_builder_readers_qualified(const BindingsBuilder *builder,bool owned_copy,const Arena *owner) {
-    if (!bindings_occurrence_readers_qualified(builder->current.prime_ext,owned_copy,owner) ||
+static bool bindings_builder_readers_qualified(const BindingsBuilder *builder,bool owned_copy,
+    const Arena *owner,const AtomDeepCopySession *session) {
+    if (!bindings_occurrence_readers_qualified(builder->current.prime_ext,owned_copy,owner,session) ||
         builder->prime_trail_len>builder->prime_trail_cap ||
         (builder->prime_trail_len && !builder->prime_trail)) return false;
     for (uint32_t i=0u;i<builder->prime_trail_len;i++)
-        if (!bindings_occurrence_readers_qualified(&builder->prime_trail[i],owned_copy,owner)) return false;
+        if (!bindings_occurrence_readers_qualified(&builder->prime_trail[i],owned_copy,owner,session)) return false;
     return true;
 }
 
 static bool bindings_builder_move_prime_atoms_with_session(
         BindingsBuilder *bb, Arena *owner, AtomDeepCopySession *session,
         bool owned_copy) {
-    if (!bb || !bindings_builder_readers_qualified(bb,owned_copy,owner) ||
+    if (!bb || !bindings_builder_readers_qualified(bb,owned_copy,owner,session) ||
         !atom_deep_copy_session_targets(session, owner)) {
         return false;
     }
@@ -7492,7 +7634,7 @@ bool bindings_builder_promote_atoms_to_arena(
 static bool bindings_builder_move_atoms_with_session(
         BindingsBuilder *bb, Arena *owner, AtomDeepCopySession *session,
         bool owned_copy) {
-    if (!bb || !bindings_builder_readers_qualified(bb,owned_copy,owner) ||
+    if (!bb || !bindings_builder_readers_qualified(bb,owned_copy,owner,session) ||
         !atom_deep_copy_session_targets(session, owner))
         return false;
     bool promoted = bindings_promote_logical_atoms_with_session(
@@ -8776,6 +8918,8 @@ static bool bindings_support_collect_atom(const Atom *atom, void *raw) {
             binding_value_qualify_id(collector->value, atom->var_id));
     if (atom->kind == ATOM_GROUNDED && atom->ground.gkind == GV_BINDINGS) {
         const CettaBindingsValue *captured = atom->ground.ptr;
+        if (!captured || (captured->support_count && !captured->support))
+            return true;
         for (size_t i = 0u; i < captured->support_count; i++)
             if (!var_id_set_add(&collector->ids, captured->support[i]))
                 return true;
@@ -8816,13 +8960,52 @@ static bool bindings_support_collect_atom(const Atom *atom, void *raw) {
     return false;
 }
 
+static bool bindings_support_drain(BindingsSupportCollector *collector) {
+    BindingApplyGraph visited = {0};
+    bool ok = false;
+    while (collector->len) {
+        collector->value = collector->pending[--collector->len];
+        Atom *atom = collector->value.skeleton;
+        bool created = false;
+        if (!bindings_apply_graph_enter(&visited, atom,
+                (BindingsApplyScope){.epoch = binding_value_epoch(collector->value),
+                                     .kind = binding_value_kind(collector->value)}, 0u, &created))
+            goto done;
+        if (!created) continue;
+        if (bindings_support_collect_atom(atom, collector)) goto done;
+        if (atom->kind == ATOM_EXPR) {
+            for (CettaExprIndex i = atom->expr.len; i > 0u; --i) {
+                BindingValue child = collector->value;
+                child.skeleton = atom->expr.elems[i - 1u];
+                if (!bindings_support_push(collector, child)) goto done;
+            }
+        }
+    }
+    ok = true;
+done:
+    free(visited.entries);
+    return ok;
+}
+
+static bool bindings_captured_support_present(const Atom *atom, void *unused) {
+    (void)unused;
+    if (atom->kind != ATOM_GROUNDED || atom->ground.gkind != GV_BINDINGS)
+        return false;
+    const CettaBindingsValue *captured = atom->ground.ptr;
+    return !captured || captured->support_count != 0u;
+}
+
+bool bindings_value_has_captured_support(const Atom *value) {
+    return value && atom_has_identity_grounded(value) &&
+        atom_graph_any(value, bindings_captured_support_present, NULL);
+}
+
 bool bindings_collect_support(const Bindings *bindings,
                               VarId **ids, size_t *count) {
     if (!bindings || !ids || !count) return false;
     *ids = NULL;
     *count = 0u;
     BindingsSupportCollector collector = {.need = bindings_need_view(bindings)};
-    BindingApplyGraph visited = {0};
     var_id_set_init(&collector.ids);
     var_id_set_init(&collector.visited_thunks);
     bool ok = false;
@@ -8838,24 +9021,7 @@ bool bindings_collect_support(const Bindings *bindings,
             !bindings_support_push(&collector, bindings->constraints[i].rhs))
             goto done;
     }
-    while (collector.len) {
-        collector.value = collector.pending[--collector.len];
-        Atom *atom = collector.value.skeleton;
-        bool created = false;
-        if (!bindings_apply_graph_enter(&visited, atom,
-                (BindingsApplyScope){.epoch = binding_value_epoch(collector.value),
-                                     .kind = binding_value_kind(collector.value)}, 0u, &created))
-            goto done;
-        if (!created) continue;
-        if (bindings_support_collect_atom(atom, &collector)) goto done;
-        if (atom->kind == ATOM_EXPR) {
-            for (CettaExprIndex i = atom->expr.len; i > 0u; --i) {
-                BindingValue child = collector.value;
-                child.skeleton = atom->expr.elems[i - 1u];
-                if (!bindings_support_push(&collector, child)) goto done;
-            }
-        }
-    }
+    if (!bindings_support_drain(&collector)) goto done;
     if (collector.ids.len) {
         *ids = cetta_malloc(sizeof(**ids) * collector.ids.len);
         memcpy(*ids, collector.ids.items, sizeof(**ids) * collector.ids.len);
@@ -8863,7 +9029,6 @@ bool bindings_collect_support(const Bindings *bindings,
     *count = collector.ids.len;
     ok = true;
 done:
-    free(visited.entries);
     free(collector.pending);
     var_id_set_free(&collector.visited_thunks);
     var_id_set_free(&collector.ids);
@@ -10039,6 +10204,22 @@ static bool bindings_reachable_vars_add(
 static bool bindings_reachable_vars_add_value(
     BindingsReachableVars *vars, BindingValue value) {
     Atom *atom = value.skeleton;
+    /* Opaque binding values have identity-bearing ports even when their
+     * enclosing syntax is ground. Reuse the closure-support traversal; the
+     * ordinary-variable path and occurs-check semantics stay separate. */
+    if (bindings_value_has_captured_support(atom)) {
+        BindingsSupportCollector collector = {0};
+        var_id_set_init(&collector.ids);
+        var_id_set_init(&collector.visited_thunks);
+        bool ok = bindings_support_push(&collector, value) &&
+            bindings_support_drain(&collector);
+        for (uint32_t i = 0u; ok && i < collector.ids.len; i++)
+            ok = bindings_reachable_vars_add(vars, collector.ids.items[i]);
+        free(collector.pending);
+        var_id_set_free(&collector.visited_thunks);
+        var_id_set_free(&collector.ids);
+        return ok;
+    }
     if (!atom || !atom_has_vars(atom))
         return true;
     VarId single = binding_value_single_variable_id(value);
@@ -10071,6 +10252,9 @@ static bool bindings_reachable_vars_add_epoch_root(
     const BindingsEpochRoot *root) {
     if (!vars || !root || !root->atom || cetta_frame_identity_is_none(root->epoch))
         return false;
+    if (bindings_value_has_captured_support(root->atom))
+        return bindings_reachable_vars_add_value(
+            vars, binding_value_from_context(root->atom, root->epoch));
     if (!atom_has_vars(root->atom))
         return true;
     if (root->variable_support) {
@@ -12754,7 +12938,9 @@ bool match_types(Atom *actual, Atom *expected, Bindings *b, Arena *a) {
     if (match_types_held_accepted(actual, expected)) return true;
     /* Atom is the expected-side value top. An actual Atom is not evidence for
        an arbitrary concrete expected type. */
-    if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
+    if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
+        (eval_current_language_id && eval_current_language_id()==CETTA_LANGUAGE_PRIME &&
+            atom_is_symbol_id(expected,g_builtin_syms.prime_proc))) return true;
     if (type_match_uses_space_class_bridge(actual, expected)) {
         return true;
     }
@@ -12766,7 +12952,9 @@ bool match_types(Atom *actual, Atom *expected, Bindings *b, Arena *a) {
 bool match_types_builder(Atom *actual, Atom *expected, BindingsBuilder *bb,
                          Arena *a) {
     if (match_types_held_accepted(actual, expected)) return true;
-    if (atom_is_symbol_id(expected, g_builtin_syms.atom)) return true;
+    if (atom_is_symbol_id(expected, g_builtin_syms.atom) ||
+        (eval_current_language_id && eval_current_language_id()==CETTA_LANGUAGE_PRIME &&
+            atom_is_symbol_id(expected,g_builtin_syms.prime_proc))) return true;
     if (type_match_uses_space_class_bridge(actual, expected)) {
         return true;
     }
@@ -14923,6 +15111,18 @@ CettaMatchCompletion match_atoms_epoch_builder_checked(
         left, BINDING_VALUE_MATERIALIZED, CETTA_FRAME_IDENTITY_NONE, 0u,
         right, NULL, builder, arena, epoch, BINDING_VALUE_CONTEXTUAL,
         false, NULL, NULL, NULL, &decision, pair_budget, NULL);
+    return decision;
+}
+
+CettaMatchCompletion match_atoms_builder_checked(
+        Atom *left, Atom *right, BindingsBuilder *builder, Arena *arena,
+        uint64_t pair_budget) {
+    CettaMatchCompletion decision = CETTA_MATCH_INCOMPLETE;
+    (void)match_atoms_epoch_views_worklist_checked(
+        left, BINDING_VALUE_MATERIALIZED, CETTA_FRAME_IDENTITY_NONE, 0u,
+        right, NULL, builder, arena, CETTA_FRAME_IDENTITY_NONE,
+        BINDING_VALUE_MATERIALIZED, false, NULL, NULL, NULL,
+        &decision, pair_budget, NULL);
     return decision;
 }
 

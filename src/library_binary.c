@@ -38,6 +38,20 @@ static const char *value_kind(Atom *value) {
     return byte_vector(cetta_tensor_from_atom(value)) ? "Bytes" : "Unsupported";
 }
 
+/* An explicit extended codec profile. BV1 keeps its narrower contract.
+ * This is a physical classification, never an inertness or call permission. */
+static const char *portable_kind(Atom *value) {
+    const char *base = value_kind(value);
+    if (strcmp(base, "Unsupported")) return base;
+    if (!value || value->kind != ATOM_GROUNDED ||
+        (value->structural_facts & (ATOM_STRUCTURAL_HAS_NATIVE_HANDLE_ID |
+          ATOM_STRUCTURAL_HAS_INTERNAL_TAG | ATOM_STRUCTURAL_HAS_RATIONAL)))
+        return "Unsupported";
+    if (value->ground.gkind == GV_INT) return "Integer";
+    if (value->ground.gkind == GV_FLOAT) return "Float";
+    return cetta_tensor_from_atom(value) ? "Tensor" : "Unsupported";
+}
+
 static CettaTensorStatus copy_bytes(CettaTensor *tensor, uint8_t **out, size_t *size) {
     *size = cetta_tensor_count(tensor);
     *out = *size ? malloc(*size) : NULL;
@@ -74,6 +88,10 @@ bool cetta_binary_module_call(struct CettaLibraryContext *context, struct Space 
     const char *name = atom_name_cstr(head);
     if (!strcmp(name, "binary:value-kind")) {
         *out = cetta_call_completed_value(atom_symbol(arena, value_kind(arguments[0])));
+        return true;
+    }
+    if (!strcmp(name, "binary:portable-kind")) {
+        *out = cetta_call_completed_value(atom_symbol(arena, portable_kind(arguments[0])));
         return true;
     }
     bool pack = !strcmp(name, "binary:pack-fields");

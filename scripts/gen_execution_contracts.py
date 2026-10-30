@@ -891,6 +891,7 @@ class Spec:
             "sequence-first": (False, False, False),
             "sequence-last": (False, False, False),
             "collect": (True, False, False),
+            "match-branches": (True, True, False),
         }
         if set(self.control_operations) != set(slot_shapes):
             raise SpecError("control operations must have a native operand-layout scheme")
@@ -2330,6 +2331,14 @@ static inline bool cetta_control_operation_binding_layout(
     return producer_index <= 1u && plan.operation == CETTA_CONTROL_SEQUENCE &&
         plan.source == producer_index && plan.first == 1u - producer_index &&
         plan.last == 2u;
+}}
+
+/* Match selection retains two distinct source occurrences. */
+static inline bool cetta_control_operation_match_branches_layout(
+        CettaControlOperationPlan plan, CettaExprLen arity) {{
+    return plan.operation == CETTA_CONTROL_MATCH_BRANCHES &&
+        plan.source < arity && plan.first < arity &&
+        plan.source != plan.first && plan.last == CETTA_CONTROL_OPERAND_ABSENT;
 }}
 
 /* Variadic series select a result without bounding their argument count.

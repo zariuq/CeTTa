@@ -8385,6 +8385,23 @@ static void prime_free_names_walk(PrimeFreeNames *f, Atom *term,
     f->nesting--;
 }
 
+bool prime_semantics_has_free_store_names(Arena *arena, Atom *term,
+                                         bool *has_names) {
+    if (!arena || !term || !has_names) return false;
+    PrimeFreeNames names = {.arena = arena};
+    Atom *own = atom_prime_template_own_hidden(term)
+        ? term->expr.elems[term->expr.len - 1u] : NULL;
+    for (CettaExprIndex i = PRIME_OWN_FIRST;
+         own && i < own->expr.len; i++)
+        prime_free_names_hide(&names, own->expr.elems[i]);
+    prime_free_names_walk(&names, term, false);
+    bool ok = !names.failed;
+    if (ok) *has_names = names.found_len != 0u;
+    free(names.found);
+    free(names.hidden);
+    return ok;
+}
+
 /* `names` copied to fresh slots throughout `body`, and in `own` when they
  * are listed there.  A copy is an instance, as an equation variable renamed for
  * one call is: it carries a frame identity of its own, held by the arena
@@ -8523,6 +8540,14 @@ PrimeIterationStep prime_semantics_iteration_step(Arena *arena, Atom *call,
         return PRIME_ITERATION_DECLINE;
     bool fold = view.param_count == 2u;
     Atom *list = call->expr.elems[1];
+    if (atom_prime_held_is(list)) {
+        Atom *const *items = NULL;
+        CettaExprLen count = 0u;
+        if (atom_sequence_view(atom_prime_held_payload(list), &items, &count)) {
+            list = atom_sequence_data_view(arena, list);
+            if (!list) return PRIME_ITERATION_REFUSED;
+        }
+    }
     /* The elements are those of the one sequence view.  A list, and an
      * expression the view declines (a braces node, a list pattern), are
      * read by the library, without the record: a list by its elements, and

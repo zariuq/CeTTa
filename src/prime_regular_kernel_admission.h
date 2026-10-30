@@ -82,6 +82,7 @@ typedef struct {
 typedef struct {
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    uint64_t universe_collection_epoch;
     AtomId context_id;
     AtomId left_term_id;
     AtomId right_term_id;
@@ -159,6 +160,7 @@ typedef struct {
 typedef struct {
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    uint64_t universe_collection_epoch;
     AtomId context_id;
     AtomId term_id;
     AtomId type_id;
@@ -222,6 +224,7 @@ typedef struct {
 typedef struct {
     uint64_t universe_instance_id;
     uint64_t universe_storage_epoch;
+    uint64_t universe_collection_epoch;
     AtomId context_id;
     AtomId term_id;
     AtomId expected_type_id;

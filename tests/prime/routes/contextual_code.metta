@@ -51,7 +51,7 @@
 !(let (quote (f $a)) (quote (f (lam z z))) (Got $a))
 
 ; ---- Held syntax obeys the rule quotations do: lift let fills its slot.
-(: open-held (-> (Data Atom) (Data Atom) (Data Atom)))
+(: open-held (-> Atom Atom Atom))
 (= (open-held (lam $x $body) $v) (lift let $x $v $body))
 !(row held)
 !(let $h (lam $y (g $y $y)) (Pair (open-held $h 0) (open-held $h 1)))

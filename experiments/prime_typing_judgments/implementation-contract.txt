@@ -108,26 +108,45 @@ relocatable resource packaging.
 Open runtime findings
 ---------------------
 
-The computed-read integration is WIP. Run memoized-query-dependencies.metta
-with the current executable's --lang petta selector. The warmed lookup returns
-(1), then a later computed source adds (item 2) to its consulted space.
-The current diagnostic ends with (()), (done), and ((item 1) (item 2)).
-The intended dependent-publication contract instead refuses that commit,
-retains pending work, and preserves the computed insertion. The attempted
-cached-read capture/replay changes have not closed this case. This diagnostic
-is separate from check.py's passing corpus; a zero process exit is not a pass.
+Computed sources retain the dialect's value boundary. Prime uses its ordinary
+bind evaluator, so held records reach structural checkers as values, and code
+inside those records runs only when explicitly opened. The three mathematics
+publication regressions are repaired; check.py passes all twenty programs.
+
+PeTTa's fused collection loop reports its Space reads, including empty answer
+bags. Completed tables can be reused through a paused synchronous caller's
+lease only when the source and host meanings agree and no generator is active.
+Private table storage retains the caller's mutation policy. The focused
+memo_interaction_reads fixture checks twenty assertions: current reuse,
+once-only cached effects, stale positive and negative reads, a fresh suffix
+that cannot rebase an old certificate, and explicit cache clearing.
+
+Run memoized-query-dependencies.metta with --lang petta. Its first case now
+returns (), (pending), and ((item 1) (item 2)): the dependent publication is
+refused while the computed insertion remains. Its second case exposes a
+remaining gap. A never-materialized logical location has no Space token;
+the registry's negative lookup must also be retained and replayed with cached
+answers. That case currently publishes virtual-published instead of retaining
+virtual-pending. Registry, State and foreign-read dependencies still require
+their own integration. A zero process exit is not a passing diagnostic.
 
 The current native sources pass thirteen interaction fixtures, 404 focused
 query/continuation controls and 266 corrected-stable assertions on both
-equation routes. The final staging check of this directory's mathematics
-corpus passes seventeen of twenty programs. judgment-transforms.metta,
-interactive-judgments.metta and query-judgments.metta regress: expected proof
-publications are absent and pending work remains. These failures are separate
-from the cached-read diagnostic above and still require investigation.
+equation routes. The computed-value fixture includes structural record
+inspection, protected embedded code and one explicit execution of that code.
 
-Final sanitizer and native/project/plain-C comparisons for these dependency
-edits are outstanding. Earlier sanitizer, complete mathematics-corpus and
-byte-agreement receipts qualify the earlier continuation checkpoint only.
+The joined native and sanitizer gates pass, with leak detection against the
+reviewed corrected SWI provider. All twenty mathematics programs and the
+673-check HOL host pass in both builds. The current-source, Cesta-project and
+plain-C executables are byte-identical under the unchanged Cesta pin. Each
+runs the twenty-program mathematics corpus, thirteen interaction fixtures and
+the twenty cache assertions on both equation routes and the query reference
+route, with the runtime library tree supplied explicitly.
+
+The wider retained-control panels remain WIP: 17 lease failures, 65 parent-
+checkpoint failures and the safety catalog's fresh-pure-view failure are still
+present. Rechecking the current sources reproduces the same failure statements
+as the merged checkpoint. These findings are not passing qualification.
 
 The current draft still separates raw ordinary rewrite selection from admitted
 conversion; the supplied conflict and same-source-admission fixtures retain

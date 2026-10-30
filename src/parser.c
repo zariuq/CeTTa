@@ -1820,6 +1820,7 @@ static bool parser_render_collect_vars(ParserRenderContext *ctx, Atom *atom,
     size_t len = 0u, cap = sizeof inline_frames / sizeof inline_frames[0];
     bool ok = false;
     for (;;) {
+        atom = atom_prime_held_payload(atom);
         if (!atom || depth <= 0)
             goto done;
         if (atom->kind == ATOM_VAR) {
@@ -1965,6 +1966,7 @@ static bool parser_render_form(FILE *out, ParserRenderContext *ctx, Atom *atom,
         return false;
 
 render_node:
+    atom = atom_prime_held_payload(atom);
     if (!atom || depth <= 0)
         goto done;
     {

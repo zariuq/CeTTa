@@ -161,6 +161,15 @@ CASES = [
      "[(pair A accepted)]\n", False),
     ("minimal-no-return", "!(function (chain (eval (+ 1 2)) $x $x))\n",
      "[(Error (function (chain (eval (+ 1 2)) $x $x)) NoReturn)]\n", False),
+    ("minimal-raw-result-stays-syntax", "(= (raw-step) (+ 1 2))\n"
+     "!(eval (raw-step))\n", "[(+ 1 2)]\n", False),
+    ("minimal-returned-effect-stays-data", "!(function (return (println! must-stay-data)))\n",
+     "[(println! must-stay-data)]\n", False),
+    ("minimal-chain-keeps-duplicates", "!(function "
+     "(chain (eval (superpose (7 7 8))) $dst (return $dst)))\n",
+     "[7, 7, 8]\n", False),
+    ("minimal-raw-delimiter-completes", "(= (code) (function (return (+ 1 2))))\n"
+     "!(eval (code))\n", "[(+ 1 2)]\n", False),
     ("match-caller-alias", "(row 1 a)\n(row 1 a)\n(row 2 b)\n"
      "(= (select $x) (match &self (row $x $v) (let $w $v ($x $w))))\n"
      "!(let $out (select $caller) ($caller $out))\n",
@@ -185,6 +194,17 @@ CASES = [
     ("collapse-bind-aliases", "(= (row 1) a)\n(= (row 1) a)\n(= (row 2) b)\n"
      "!(let $pairs (collapse-bind (row $k)) "
      "(let $v (superpose-bind $pairs) ($k $v)))\n",
+     "[(1 a), (1 a), (2 b)]\n", False),
+    ("minimal-capture-keeps-caller-alias", "(= (row 1) a)\n"
+     "(= (row 1) a)\n(= (row 2) b)\n"
+     "!(let $pairs (collapse-bind (eval (row $key))) "
+     "(let $value (superpose-bind $pairs) ($key $value)))\n",
+     "[(1 a), (1 a), (2 b)]\n", False),
+    ("minimal-capture-through-wrapper", "(= (row 1) a)\n"
+     "(= (row 1) a)\n(= (row 2) b)\n"
+     "(= (restore $pairs) (superpose-bind $pairs))\n"
+     "!(let $pairs (collapse-bind (eval (row $key))) "
+     "(let $value (restore $pairs) ($key $value)))\n",
      "[(1 a), (1 a), (2 b)]\n", False),
     ("state-values", "!(let $n (/ 0.0 0.0) "
      "(let $s (new-state $n) (== $s $s)))\n"

@@ -4290,6 +4290,158 @@ static void reader_context_cases(Arena *arena) {
         "deep version retirement releases its lineage and current reader completely");
 }
 
+static const char reader_copy_owner_kind;
+static const PrimeNeedReaderValueOps copied_reader_ops={
+    .retain=reader_owner_retain,.release=reader_owner_release,
+    .copy_kind=&reader_copy_owner_kind,.copy_size=sizeof(ReaderOwnerFixture)};
+
+static bool copied_reader_has(const PrimeNeedReaderContext *context,uint64_t key,void *owner) {
+    PrimeNeedReaderValue value={0};
+    return prime_need_reader_context_lookup(context,key,&value) &&
+        value.value==owner && value.operations==&copied_reader_ops;
+}
+
+static void reader_context_copy_cases(void) {
+    ReaderOwnerFixture source_owners[3]={{.references=1u},{.references=1u},{.references=1u}};
+    ReaderOwnerFixture image_owners[3]={{.references=1u},{.references=1u},{.references=1u}};
+    PrimeNeedReaderValue values[3];
+    for (size_t i=0u;i<3u;i++) values[i]=(PrimeNeedReaderValue){&source_owners[i],&copied_reader_ops};
+    PrimeNeedReaderContext *source[7]={0},*images[7]={0},*out=NULL,*alias=NULL;
+    enum {BASE,LEFT,RIGHT,JOINED,REMOVED,DEEP,IMPORTED};
+    Arena destination,syntax;arena_init_detached(&destination);arena_init_detached(&syntax);
+    Bindings captured,original;bindings_init(&captured);bindings_init(&original);
+    BindingsBuilder builder={0};bool builder_ready=false;
+    AtomDeepCopySession *session=NULL;
+    bool ready=prime_need_reader_context_update(NULL,11u,&values[0],&source[BASE])==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(source[BASE],22u,&values[1],&source[LEFT])==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(source[BASE],33u,&values[2],&source[RIGHT])==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_merge(source[LEFT],source[RIGHT],&source[JOINED])==CETTA_MATCH_MATCHED &&
+        prime_need_reader_context_update(source[LEFT],22u,NULL,&source[REMOVED])==CETTA_MATCH_MATCHED;
+    source[DEEP]=source[RIGHT];prime_need_reader_context_retain(source[DEEP]);
+    for (size_t i=0u;ready && i<4096u;i++)
+        ready=prime_need_reader_context_update(source[DEEP],44u,&values[i%2u],&source[DEEP])==CETTA_MATCH_MATCHED;
+    ready=ready && prime_need_reader_context_import(source[BASE],source[DEEP],source[LEFT],
+        &source[IMPORTED])==CETTA_MATCH_MATCHED;
+    CHECK(ready,"prepare shared reader ancestry, retirement and a deep imported production");
+    if (!ready) goto done;
+    out=source[LEFT];prime_need_reader_context_retain(out);
+    /* Each failed graph attempt owns its own unpublished session. */
+    for (unsigned refusal=0u;refusal<6u;refusal++) {
+        session=atom_deep_copy_session_new(&destination);
+        CHECK(session!=NULL,"prepare reader transport refusal session");
+        if (!session) goto done;
+        for (size_t i=0u;i<3u;i++) {
+            if (refusal==0u || (refusal==3u && i==1u)) continue;
+            void *image=refusal==1u ? (void *)&source_owners[i] : (void *)&image_owners[i];
+            if (refusal==5u && i<2u) image=&source_owners[1u-i];
+            size_t bytes=sizeof(source_owners[i])-(refusal==2u);
+            CHECK(atom_deep_copy_session_object_record(session,&reader_copy_owner_kind,
+                &source_owners[i],image,bytes),"register the selected actual opaque owner mapping");
+        }
+        image_owners[1].refuse=refusal==4u;
+        CHECK(prime_need_reader_context_copy_with_session(source[JOINED],&destination,session,&out)==
+                CETTA_MATCH_INCOMPLETE && out==source[LEFT] &&
+                copied_reader_has(source[JOINED],11u,&source_owners[0]),
+            "unregistered, identity, wrong-extent, partial, refused and crossed owner copies preserve both roots");
+        image_owners[1].refuse=false;
+        atom_deep_copy_session_free(session);session=NULL;
+        CHECK(image_owners[0].references==1u && image_owners[1].references==1u &&
+            image_owners[2].references==1u,"unpublished reader images release every acquired value");
+    }
+    session=atom_deep_copy_session_new(&destination);
+    CHECK(session!=NULL,"prepare common reader graph transport");
+    if (!session) goto done;
+    for (size_t i=0u;i<3u;i++)
+        ready=ready && atom_deep_copy_session_object_record(session,&reader_copy_owner_kind,
+            &source_owners[i],&image_owners[i],sizeof(source_owners[i]));
+    for (size_t i=0u;ready && i<7u;i++) {
+        ready=prime_need_reader_context_copy_with_session(source[i],&destination,session,&images[i])==
+            CETTA_MATCH_MATCHED;
+        CHECK(ready && images[i]!=source[i],"reader versions receive independent objects through one session");
+    }
+    if (!ready) goto done;
+    CHECK(copied_reader_has(images[JOINED],11u,&image_owners[0]) &&
+        copied_reader_has(images[JOINED],22u,&image_owners[1]) &&
+        copied_reader_has(images[JOINED],33u,&image_owners[2]),
+        "equal reader owners across versions retain one mapped image and the exact entry keys");
+    CHECK(prime_need_reader_context_copy_with_session(source[JOINED],&destination,session,&alias)==
+            CETTA_MATCH_MATCHED && alias==images[JOINED] &&
+        prime_need_reader_context_copy_with_session(alias,&destination,session,&alias)==
+            CETTA_MATCH_MATCHED && alias==images[JOINED],
+        "reader graph transport is idempotent for both source and already transported roots");
+    CHECK(prime_need_reader_context_merge(images[BASE],images[LEFT],&out)==CETTA_MATCH_MATCHED &&
+            out==images[LEFT],"copied reader versions preserve actual ancestry selection");
+    CHECK(prime_need_reader_context_merge(images[LEFT],images[RIGHT],&out)==CETTA_MATCH_MATCHED &&
+        copied_reader_has(out,11u,&image_owners[0]) && copied_reader_has(out,22u,&image_owners[1]) &&
+        copied_reader_has(out,33u,&image_owners[2]),"copied sibling versions preserve their disjoint merge");
+    CHECK(prime_need_reader_context_merge(images[LEFT],images[REMOVED],&out)==CETTA_MATCH_MATCHED &&
+            out==images[REMOVED] && !copied_reader_has(out,22u,&image_owners[1]),
+        "copying a retired version cannot resurrect its earlier reader");
+    CHECK(prime_need_reader_context_import(images[BASE],images[DEEP],images[IMPORTED],&out)==
+            CETTA_MATCH_MATCHED && out==images[IMPORTED],
+        "an imported production remains adopted after all four lineage edges are transported");
+    PrimeNeedReaderContext *before=out;
+    CHECK(prime_need_reader_context_merge(source[BASE],images[BASE],&out)==CETTA_MATCH_REFUTED && out==before,
+        "independent source and image owners are not identified by equal reader keys");
+    Atom *variable=atom_var_with_id(&syntax,"transported-reader",test_id(9860u));
+    Atom *payload=atom_expr2(&syntax,atom_symbol(&syntax,"ReaderOwned"),atom_int(&syntax,19));
+    bindings_reader_context_set(&captured,source[LEFT]);
+    CHECK(bindings_add_var(&captured,variable,payload) && bindings_clone(&original,&captured),
+        "reader transport has a real binding payload and an independently held source");
+    CHECK(bindings_copy_owned_atoms_with_session(&captured,&destination,session) &&
+        bindings_reader_context_view(&captured)==images[LEFT] &&
+        bindings_reader_context_view(&original)==source[LEFT] &&
+        bindings_lookup_value_id(&captured,variable->var_id).skeleton!=payload &&
+        atom_eq(bindings_lookup_value_id(&captured,variable->var_id).skeleton,payload),
+        "owned bindings use the prepared reader image and relocate their logical payload");
+    builder_ready=bindings_builder_init(&builder,&original);
+    uint32_t checkpoint=builder_ready ? bindings_builder_save(&builder) : 0u;
+    bool built=builder_ready && bindings_builder_add_var_fresh(&builder,
+        atom_var_with_id(&syntax,"reader-copy-trail",test_id(9861u)),payload);
+    if (built) bindings_reader_context_set(&builder.current,source[RIGHT]);
+    bool transported=built && builder.prime_trail_len &&
+        bindings_builder_copy_owned_atoms_with_session(&builder,&destination,session);
+    CHECK(transported && bindings_reader_context_view(&builder.current)==images[RIGHT],
+        "a binding builder transports its current reader and rollback versions together");
+    if (transported) {
+        bindings_builder_rollback(&builder,checkpoint);
+        CHECK(bindings_reader_context_view(&builder.current)==images[LEFT] &&
+            bindings_lookup_value_id(&builder.current,variable->var_id).skeleton==
+                bindings_lookup_value_id(&captured,variable->var_id).skeleton,
+            "rollback selects the corresponding copied version and shared logical image");
+    }
+    /* Source and target metadata have explicit session holds, not arena
+     * lifetime authority. Reset invalidates the registration for reuse. */
+    ArenaMark mark=arena_mark(&destination);arena_reset(&destination,mark);
+    CHECK(prime_need_reader_context_copy_with_session(source[BASE],&destination,session,&out)==
+            CETTA_MATCH_INCOMPLETE && out==before,
+        "a reset destination cannot authorize reuse of stale reader-owner mappings");
+    bindings_free(&original);
+    for (size_t i=0u;i<7u;i++) {
+        prime_need_reader_context_release(source[i]);source[i]=NULL;
+    }
+    atom_deep_copy_session_free(session);session=NULL;
+    CHECK(source_owners[0].references==1u && source_owners[1].references==1u &&
+        source_owners[2].references==1u && copied_reader_has(images[JOINED],33u,&image_owners[2]) &&
+        prime_need_reader_context_import(images[BASE],images[DEEP],images[IMPORTED],&out)==
+            CETTA_MATCH_MATCHED && out==images[IMPORTED],
+        "copied versions and imported ancestry survive source retirement and session disposal");
+done:
+    if (builder_ready) bindings_builder_free(&builder);
+    bindings_free(&captured);bindings_free(&original);
+    prime_need_reader_context_release(out);prime_need_reader_context_release(alias);
+    for (size_t i=0u;i<7u;i++) {
+        prime_need_reader_context_release(source[i]);
+        prime_need_reader_context_release(images[i]);
+    }
+    atom_deep_copy_session_free(session);
+    arena_free(&syntax);arena_free(&destination);
+    CHECK(source_owners[0].references==1u && source_owners[1].references==1u &&
+        source_owners[2].references==1u && image_owners[0].references==1u &&
+        image_owners[1].references==1u && image_owners[2].references==1u,
+        "reader graph copy and failure cleanup release both endpoint graphs completely");
+}
+
 typedef struct {
     size_t visits,fail_on;
     uint64_t previous;
@@ -4455,6 +4607,46 @@ static void reader_settlement_cases(Arena *arena) {
     CHECK(owner.references==1u,"settlement and refusal release every independently owned reader share");
 }
 
+static void materialized_match_cases(Arena *arena) {
+    Atom *x = atom_var_with_id(arena, "materialized-x", test_id(70001u));
+    Atom *y = atom_var_with_id(arena, "materialized-y", test_id(70002u));
+    Atom *payload = atom_expr3(arena, atom_symbol(arena, "Repeated"), y, y);
+    Atom *pattern = atom_expr2(arena, atom_symbol(arena, "Envelope"), x);
+    Atom *value = atom_expr2(arena, atom_symbol(arena, "Envelope"), payload);
+    BindingsBuilder builder;
+    CHECK(bindings_builder_init(&builder, NULL), "initialize materialized matching");
+    CHECK(match_atoms_builder_checked(pattern, value, &builder, arena, UINT64_MAX) ==
+        CETTA_MATCH_MATCHED, "a computed open value needs no fresh rule activation");
+    Atom *observed = bindings_apply(&builder.current, arena, x);
+    CHECK(atom_eq(observed, payload), "materialized matching preserves existing free-variable identities");
+    bindings_builder_free(&builder);
+
+    Bindings seed;
+    bindings_init(&seed);
+    CHECK(bindings_add_var(&seed, y, atom_int(arena, 9)) &&
+        bindings_builder_init(&builder, &seed), "supply an existing computed-variable binding");
+    CHECK(match_atoms_builder_checked(pattern, value, &builder, arena, UINT64_MAX) ==
+        CETTA_MATCH_MATCHED && atom_eq(
+            bindings_apply(&builder.current, arena, x),
+            atom_expr3(arena, atom_symbol(arena, "Repeated"),
+                atom_int(arena, 9), atom_int(arena, 9))),
+        "a computed value shares its caller's variable, rather than freshening it");
+    bindings_builder_free(&builder);
+    bindings_free(&seed);
+
+    CHECK(bindings_builder_init(&builder, NULL), "initialize checked materialized controls");
+    CHECK(match_atoms_builder_checked(pattern, value, &builder, arena, 0u) ==
+        CETTA_MATCH_INCOMPLETE && bindings_builder_bindings(&builder)->len == 0u,
+        "zero matching allowance cannot prove materialized absence");
+    CHECK(match_atoms_builder_checked(
+        atom_expr3(arena, atom_symbol(arena, "Pair"), x, x),
+        atom_expr3(arena, atom_symbol(arena, "Pair"),
+            atom_int(arena, 1), atom_int(arena, 2)),
+        &builder, arena, UINT64_MAX) == CETTA_MATCH_REFUTED,
+        "a repeated materialized variable refuses incompatible values");
+    bindings_builder_free(&builder);
+}
+
 int main(void) {
     CETTA_FRAME_IDENTITY_SCOPE(frame_identity_scope);
     SymbolTable symbols;
@@ -4468,7 +4660,9 @@ int main(void) {
 
     Arena arena;
     arena_init(&arena);
+    materialized_match_cases(&arena);
     reader_context_cases(&arena);
+    reader_context_copy_cases();
     reader_context_batch_cases();
     reader_settlement_cases(&arena);
     check_capture_agreement(&arena);

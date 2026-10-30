@@ -89,7 +89,7 @@ for language in ("he", "petta"):
               "(pat:query &self match% (, (p $x) (q $x))) (pat:apply $w (answer $x))))\n"
               "!(client first)\n!(client second)", ["(answer a)", "(answer a)"], **options)
 
-    # The syntax is licensed by import AND profile.
+    # PeTTa requires an import; HE additionally requires its extended profile.
     call = "(pat:query &self match% (p a))"
     # HE reads &self into the form even when its unknown head remains data;
     # PeTTa keeps the named-space symbol.
@@ -111,6 +111,9 @@ for language in ("he", "petta"):
               [inert, "()" if language == "he" else "true", retained,
                *(["(ready)"] if language == "petta" else []), "(ready)"],
               imported=False, reference=reference)
+    if language == 'petta':
+        check(language, '(p a)\n!(collapse (pat:match% &self (p $x) (found $x)))',
+              ['((found a))'], profile=None)
 
     # Equal rows remain distinguishable occurrences, stable within this read.
     result = run(language, "(row a) (row a)\n!(pat:query &self match% (row a))")

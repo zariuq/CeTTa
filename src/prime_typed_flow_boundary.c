@@ -104,6 +104,8 @@ CettaPrimeTypedValueV1 *cetta_prime_typed_value_import_synthesis_v1(
             space->native.universe->instance_id ||
         metadata.universe_storage_epoch !=
             space->native.universe->storage_epoch ||
+        metadata.universe_collection_epoch !=
+            space->native.universe->collection_epoch ||
         metadata.type_id != type_id ||
         !cetta_prime_typing_direct_authority_token_v1(
             space, CETTA_PRIME_TYPED_FLOW_POLICY_V1, &token)) {

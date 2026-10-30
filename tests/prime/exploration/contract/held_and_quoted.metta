@@ -13,12 +13,12 @@
 (= (pick) B)
 
 ; 1. A Data position holds its argument: one answer, nothing chosen.
-(: hold2 (-> (Data Atom) (Data Atom)))
+(: hold2 (-> Atom Atom))
 (= (hold2 $x) (Pair $x $x))
 !(hold2 (pick))
 
 ; 2. Each explicit run of held syntax chooses afresh: four answers.
-(: run2 (-> (Data Atom) Atom))
+(: run2 (-> Atom Proc))
 (= (run2 $x) (Pair (eval $x) (eval $x)))
 !(run2 (pick))
 
@@ -34,9 +34,9 @@
 !(unquote @(S (pick)))
 
 ; 5. Atom and Expression positions are computed, and shared.
-(: atomPair (-> Atom Atom))
+(: atomPair (-> Proc Proc))
 (= (atomPair $x) (Pair $x $x))
 !(atomPair (pick))
-(: exprPair (-> Expression Atom))
+(: exprPair (-> Expression Proc))
 (= (exprPair $x) (Pair $x $x))
 !(exprPair (pick))

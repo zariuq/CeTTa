@@ -2,7 +2,7 @@
 (= (my-car $e) (car-atom $e))
 (= (my-cdr $e) (cdr-atom $e))
 (= (my-decons $e) (decons-atom $e))
-(: id-atom (-> Atom Atom))
+(: id-atom (-> Proc Proc))
 (= (id-atom $x) $x)
 (= (Box $a $b) (Hostile $a))
 

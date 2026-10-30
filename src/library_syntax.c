@@ -70,12 +70,13 @@ static Atom *encode_scalar(Arena *arena, Atom *source) {
     case GV_INT:
         big_endian((uint64_t)source->ground.ival, payload);
         return literal(arena, "I64", payload, 8);
-    case GV_FLOAT:
+    case GV_FLOAT: {
         _Static_assert(sizeof(double) == sizeof(uint64_t) && DBL_MANT_DIG == 53 && DBL_MAX_EXP == 1024,
             "syntax F64 requires binary64 storage");
         memcpy(&bits, &source->ground.fval, sizeof bits);
         big_endian(bits, payload);
         return literal(arena, "F64", payload, 8);
+    }
     case GV_BOOL:
         payload[0] = source->ground.bval;
         return literal(arena, "Bool", payload, 1);

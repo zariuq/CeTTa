@@ -1,5 +1,6 @@
 #include "eval.h"
 #include "parser.h"
+#include "petta_semantics.h"
 #include "prepared_pure_machine.h"
 #include "symbol.h"
 #include <assert.h>
@@ -22,6 +23,45 @@ static CettaPreparedPureProgram *compile(Space *space, Arena *source, const char
         NULL, NULL, NULL, NULL, NULL, true, true,
         (CettaMatchDecisionSemanticIdentity){
             .compiler_identity = cetta_match_decision_compiler_identity()}, NULL);
+}
+
+typedef struct { Arena *arena; bool expected; unsigned count; } EqualityAnswer;
+
+static bool equality_answer(Atom *answer, void *context) {
+    EqualityAnswer *expected = context;
+    assert(atom_eq(answer, atom_bool(expected->arena, expected->expected)));
+    expected->count++;
+    return true;
+}
+
+static void check_list_equality(Space *space, Arena *source, Arena *scratch,
+                                Atom *left, Atom *right, bool expected) {
+    Atom *call = atom_expr3(source, atom_symbol(source, "private-list-equality"), left, right);
+    CettaMatchDecisionSemanticIdentity identity = {
+        .compiler_identity = cetta_match_decision_compiler_identity()};
+    CettaPreparedPureProgram *program = cetta_prepared_pure_program_compile_closed(
+        space, call, CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
+        cetta_prepared_pure_constructs_expression_always,
+        NULL, NULL, NULL, NULL, NULL, true, true, identity, NULL);
+    assert(program);
+    Atom *result = NULL;
+    assert(cetta_prepared_pure_program_execute_closed(program, scratch, 0u, &result));
+    assert(atom_eq(result, atom_bool(source, expected)));
+    cetta_prepared_pure_program_free(program);
+    program = cetta_prepared_pure_program_compile_closed_answers(
+        space, call, CETTA_GSLT_PURE_CALL_EAGER, atom_bool, atom_expr,
+        cetta_prepared_pure_constructs_expression_always,
+        NULL, NULL, NULL, NULL, NULL, true, true, identity);
+    assert(program);
+    CettaPreparedPureAnswerLimits limits = {
+        .max_transitions = 1024u, .max_scratch_bytes = 1024u * 1024u,
+        .construct_allocation_bound = atom_expr_allocation_bound};
+    EqualityAnswer answer = {source, expected, 0u};
+    CettaPreparedPureAnswersResult returned = cetta_prepared_pure_program_visit_closed_answers(
+        program, scratch, &limits, CETTA_PREPARED_PURE_UNMATCHED_DECLINES,
+        equality_answer, &answer, NULL, NULL, NULL, NULL);
+    assert(returned == CETTA_PREPARED_PURE_ANSWERS_COMPLETE && answer.count == 1u);
+    cetta_prepared_pure_program_free(program);
 }
 
 int main(void) {
@@ -51,6 +91,7 @@ int main(void) {
         "(= (equal-result $x) (== (+ $x 1.0) (* $x 2.0)))",
         "(= (allocate $n) (if (== $n 0) End (Box $n (allocate (- $n 1)))))",
         "(= (after-allocation $n $x) (let $derived (+ $x 0.25) (let $unused (allocate $n) (+ (* $derived 0.5) 1.0))))",
+        "(= (private-list-equality $left $right) (== $left $right))",
     };
     for (size_t i=0u; i<sizeof(equations)/sizeof(*equations); i++)
         assert(space_admit_atom(&space, &source, read_atom(&source, equations[i])));
@@ -84,6 +125,36 @@ int main(void) {
     assert(cetta_prepared_pure_program_execute_closed(program,&scratch,65536u,&result));
     assert(result->ground.gkind==GV_FLOAT && result->ground.fval==1.625);
     cetta_prepared_pure_program_free(program);
+    Atom *a = atom_symbol(&source, "list-a"), *b = atom_symbol(&source, "list-b");
+    Atom *cell = petta_semantics_open_cons_value(&source, a,
+        petta_semantics_open_cons_value(&source, b, atom_unit(&source)));
+    Atom *flat_values[] = {a, b};
+    Atom *flat = atom_expr(&source, flat_values, 2u);
+    Atom *wrap = atom_symbol(&source, "ListRecord");
+    Atom *nested_cell = atom_expr2(&source, wrap, cell);
+    Atom *nested_flat = atom_expr2(&source, wrap, flat);
+    assert(!atom_value_eq(nested_cell, nested_flat));
+    check_list_equality(&space, &source, &scratch, cell, flat, true);
+    check_list_equality(&space, &source, &scratch, nested_cell, nested_flat, true);
+    check_list_equality(&space, &source, &scratch, nested_flat, nested_cell, true);
+    check_list_equality(&space, &source, &scratch,
+        atom_expr3(&source, wrap, nested_cell, nested_cell),
+        atom_expr3(&source, wrap, nested_flat, nested_flat), true);
+    check_list_equality(&space, &source, &scratch, cell, atom_expr(&source, &a, 1u), false);
+    check_list_equality(&space, &source, &scratch, nested_cell,
+        atom_expr2(&source, wrap, atom_expr(&source, &a, 1u)), false);
+    check_list_equality(&space, &source, &scratch, nested_cell,
+        atom_expr2(&source, atom_symbol(&source, "OtherRecord"), flat), false);
+    Atom *quote = atom_symbol(&source, "quote");
+    check_list_equality(&space, &source, &scratch,
+        atom_expr2(&source, quote, cell), atom_expr2(&source, quote, flat), false);
+    check_list_equality(&space, &source, &scratch,
+        atom_expr2(&source, quote, cell), atom_expr2(&source, quote, cell), true);
+    Atom *improper = petta_semantics_open_cons_value(&source, a, b);
+    Atom *authored = atom_expr3(&source, atom_symbol(&source, "cons"), a, b);
+    check_list_equality(&space, &source, &scratch,
+        atom_expr2(&source, wrap, improper), atom_expr2(&source, wrap, authored), true);
+    printf("PreparedListEquality observations=20 nested-cells, shared-records, mismatches, opaque-quotes and improper-tails\n");
     program = compile(&space,&source,"(equal-result 1.0)");
     assert(program && cetta_prepared_pure_program_execute_closed(program,&scratch,0u,&result));
     assert(atom_eq(result,atom_bool(&source,true)));

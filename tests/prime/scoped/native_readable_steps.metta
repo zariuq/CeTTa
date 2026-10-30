@@ -40,7 +40,7 @@
 (= (mentions $t $s)
    (if (== $t $s) True
        (if (== (get-metatype $t) Expression) (mentions-any $t $s) False)))
-(: mentions-any (-> (Data Atom) Atom Bool))
+(: mentions-any (-> Atom Proc Bool))
 (= (mentions-any $t $s)
    (if (== $t ()) False
        (let $h (car-atom $t)
