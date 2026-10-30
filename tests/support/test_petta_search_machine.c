@@ -10521,9 +10521,11 @@ static void test_deterministic_heap_collection(
     Atom *query = atom_expr(answers, query_items, 2u);
     assert(list && query);
 
+    /* The peaks below are gathered only for a host that measures. */
+    PettaMachineHost measured = {.measure_stats = true};
     PettaMachine machine;
     assert(petta_machine_init(
-        &machine, space, answers, query, NULL, NULL));
+        &machine, space, answers, query, NULL, &measured));
     Atom *answer = NULL;
     Bindings environment;
     assert(petta_machine_next(
@@ -10567,6 +10569,7 @@ static void test_deterministic_heap_collection(
     assert(stats.deterministic_binding_entries_discarded > 0u);
     assert(stats.maximum_nursery_live_bytes > 0u);
     assert(stats.maximum_tenured_live_bytes > 0u);
+    assert(stats.maximum_binding_entries > 0u);
     /*
      * The two-equation relation retains one semantically live choice point per
      * input cell until its first answer.  Binding storage may therefore grow
@@ -10612,9 +10615,11 @@ static void test_choice_binding_compaction(
     Atom *query = atom_expr(answers, query_items, 2u);
     assert(list && query);
 
+    /* The binding peak below is gathered only for a host that measures. */
+    PettaMachineHost measured = {.measure_stats = true};
     PettaMachine machine;
     assert(petta_machine_init(
-        &machine, space, answers, query, NULL, NULL));
+        &machine, space, answers, query, NULL, &measured));
     Atom *answer = NULL;
     Bindings environment;
     assert(petta_machine_next(
@@ -10633,6 +10638,7 @@ static void test_choice_binding_compaction(
     assert(stats.choice_nursery_goal_roots_scanned > 0u);
     assert(stats.choice_nursery_bytes_evacuated > 0u);
     assert(stats.choice_nursery_bytes_reclaimed > 0u);
+    assert(stats.maximum_binding_entries > 0u);
     assert(
         stats.maximum_binding_entries <=
         (size_t)ITEM_COUNT * 2u +
@@ -10901,7 +10907,7 @@ static void test_same_machine_add_atom_ground_fact(
     CettaCount before = space_length64(space);
     PettaMachineHost host = {
         .classify = test_admit_ground_atom_classify,
-        .admit_ground_atom = test_admit_ground_atom,
+        .admit_atom = test_admit_ground_atom,
     };
     Atom *query = parse_one(answers, "(add-atom &self (admit-row 7))");
     assert(query);
@@ -14399,7 +14405,7 @@ static void test_entered_service_returns(TermUniverse *universe, Arena *arena) {
                 };
                 CettaOpenEquationRuntime runtime = {
                     .context = &fixture, .program_current = test_service_current,
-                    .admit_ground_atom = test_service_admit,
+                    .admit_atom = test_service_admit,
                     .named_state = test_service_state, .raises_he_errors = raises,
                 };
                 CettaCount before = space_length64(&space);
@@ -14464,7 +14470,7 @@ static void test_entered_service_returns(TermUniverse *universe, Arena *arena) {
         ServiceReturnFixture fixture = {.mode = mode};
         PettaMachineHost host = {
             .context = &fixture, .classify = test_admit_ground_atom_classify,
-            .admit_ground_atom = test_service_ordinary_admit,
+            .admit_atom = test_service_ordinary_admit,
             .evaluate = test_service_ordinary_fallback,
         };
         PettaMachine machine;

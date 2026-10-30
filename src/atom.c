@@ -2027,6 +2027,12 @@ static uint32_t atom_hash_compute(Atom *atom) {
     return atom_hash_fold(atom, false, true);
 }
 
+void atom_hash_cache_adopt(Atom *atom, uint32_t hash) {
+    if (atom && hash != 0u && atom_is_hash_stable(atom) &&
+        atom_hash_cache_load(atom) == 0u)
+        atom_hash_cache_store(atom, hash);
+}
+
 uint32_t atom_hash(Atom *a) {
     if (!a)
         return 0;
@@ -5487,6 +5493,23 @@ bool atom_expr_borrowed_view_init(AtomExprBorrowedView *out,
     return true;
 }
 
+/* The origin is written first and the expression built at once after it:
+ * an expression this arena places right after the origin is the view, and
+ * names the entry; one placed elsewhere (a new block, an interned atom) does
+ * not, and the origin's bytes stay unused. */
+Atom *atom_expr_with_origin(Arena *a, Atom **elems, CettaExprLen len,
+                            const AtomStoredOrigin *origin) {
+    AtomStoredOrigin *slot = arena_alloc(a, sizeof(*slot));
+    Atom *view = atom_expr(a, elems, len);
+    if (view && slot && origin && (void *)(slot + 1) == (void *)view &&
+        view->kind == ATOM_EXPR && view->expr.len == len &&
+        view->arena_id == a->identity) {
+        *slot = *origin;
+        view->flags |= ATOM_FLAG_STORED_ORIGIN;
+    }
+    return view;
+}
+
 Atom *atom_expr(Arena *a, Atom **elems, CettaExprLen len) {
     if (!a->hashcons && a->older_identity == 0u && elems) {
         switch (len) {
@@ -5641,7 +5664,8 @@ Atom *atom_expr_suffix(Arena *a, Atom *expression, CettaExprLen offset) {
     if (departed_known &&
         !atom_summary_head_adjusts(expression->expr.elems[0]) &&
         (expression->structural_facts & ATOM_STRUCTURAL_FACTS_VALID) != 0u) {
-        uint32_t flags = expression->flags & ~ATOM_FLAG_HE_EVALUATED;
+        uint32_t flags = expression->flags &
+                         ~(ATOM_FLAG_HE_EVALUATED | ATOM_FLAG_STORED_ORIGIN);
         /* A new expression: an evaluated mark is not inherited. */
         uint32_t facts = expression->structural_facts &
                          ~(ATOM_STRUCTURAL_GENERATION_CLOSED |
@@ -5789,7 +5813,8 @@ Atom *atom_expr_view_rehome(Arena *a, const Atom *view, Atom **elems) {
         .kind = ATOM_EXPR,
         /* Relocated storage may contain renamed cells. Keep variable
          * support unknown and do not inherit a hash of the old identities. */
-        .flags = view->flags & ~ATOM_FLAG_ARENA_CLOSED,
+        .flags = view->flags &
+                 ~(ATOM_FLAG_ARENA_CLOSED | ATOM_FLAG_STORED_ORIGIN),
         .var_id = VAR_ID_NONE,
         .sym_id = SYMBOL_ID_NONE,
         .arena_id = a->identity,
@@ -5888,7 +5913,8 @@ Atom *atom_expr_prepend(Arena *a, Atom *head, Atom *list) {
         /* The list's summary is its fold, since its head adjusts nothing;
          * the new head steps onto it and then adjusts it
          * (TailSummary.summary_prepend). */
-        uint32_t flags = list->flags & ~ATOM_FLAG_HE_EVALUATED;
+        uint32_t flags = list->flags &
+                         ~(ATOM_FLAG_HE_EVALUATED | ATOM_FLAG_STORED_ORIGIN);
         /* A new expression: an evaluated mark is not inherited. */
         flags |= head->flags & ATOM_SUMMARY_INHERITED;
         flags &= head->flags | ~ATOM_SUMMARY_REQUIRED;
@@ -8167,24 +8193,47 @@ typedef struct {
     int character;
 } AtomPrintAction;
 
+/* The pending parts of one print: the printer's own frame holds the
+ * first ATOM_PRINT_INLINE, the heap any beyond. */
+#define ATOM_PRINT_INLINE 32u
+
 typedef struct {
     AtomPrintAction *items;
     size_t length;
     size_t capacity;
+    AtomPrintAction inline_items[ATOM_PRINT_INLINE];
 } AtomPrintStack;
+
+static void atom_print_stack_init(AtomPrintStack *stack) {
+    stack->items = stack->inline_items;
+    stack->length = 0u;
+    stack->capacity = ATOM_PRINT_INLINE;
+}
+
+static void atom_print_stack_free(AtomPrintStack *stack) {
+    if (stack->items != stack->inline_items)
+        free(stack->items);
+}
 
 static void atom_print_stack_push(
     AtomPrintStack *stack, AtomPrintAction action) {
     if (stack->length == stack->capacity) {
-        size_t next_capacity =
-            stack->capacity ? stack->capacity * 2u : 64u;
+        size_t next_capacity = stack->capacity * 2u;
         if (next_capacity <= stack->capacity ||
             next_capacity > SIZE_MAX / sizeof(*stack->items)) {
             cetta_oom(SIZE_MAX);
         }
-        stack->items = cetta_realloc(
-            stack->items,
-            sizeof(*stack->items) * next_capacity);
+        if (stack->items == stack->inline_items) {
+            AtomPrintAction *items =
+                cetta_malloc(sizeof(*items) * next_capacity);
+            memcpy(items, stack->inline_items,
+                   sizeof(*items) * stack->length);
+            stack->items = items;
+        } else {
+            stack->items = cetta_realloc(
+                stack->items,
+                sizeof(*stack->items) * next_capacity);
+        }
         stack->capacity = next_capacity;
     }
     stack->items[stack->length++] = action;
@@ -8435,7 +8484,8 @@ static void atom_print_string_bytes(FILE *out, const char *text, size_t len,
 static void atom_print_mode(
     Atom *root, FILE *out, bool petta,
     PettaPrintVariables *variables) {
-    AtomPrintStack stack = {0};
+    AtomPrintStack stack;
+    atom_print_stack_init(&stack);
     atom_print_stack_push_atom(&stack, root);
 
     while (stack.length > 0u) {
@@ -8642,7 +8692,7 @@ static void atom_print_mode(
         break;
         }
     }
-    free(stack.items);
+    atom_print_stack_free(&stack);
 }
 
 void atom_print(Atom *a, FILE *out) {

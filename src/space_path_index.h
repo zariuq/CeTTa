@@ -12,6 +12,9 @@ typedef enum {
     CETTA_SPACE_PATH_INTEGER_KEY,
     /* A ground term keyed by its universe id. */
     CETTA_SPACE_PATH_TERM_KEY,
+    /* The bound prefix after the head: a mix of the ids of the first
+     * columns, each a value equal only to itself or a ground term. */
+    CETTA_SPACE_PATH_PREFIX_KEY,
 } CettaSpacePathKeyKind;
 
 /* A path is a vector of expression-child positions. Each index belongs to
@@ -104,6 +107,29 @@ bool space_path_index_candidates(
  * the Space keeps no such index. */
 bool space_path_index_lead_candidates(Space *space, Atom *pattern, bool build,
                                       CettaIndex **out, CettaIndex *count);
+/* The rows of a pattern's head whose first columns hold the pattern's bound
+ * prefix (symbols, integers, strings, truth values, ground terms of
+ * symbols), with the rows open there: a hash probe of the index kept for
+ * that prefix's length, built when `build` asks, where the trie would
+ * descend the prefix holding every row of the space.  False when the
+ * pattern binds no prefix or the Space keeps no such index. */
+bool space_path_index_prefix_candidates(Space *space, Atom *pattern, bool build,
+                                        CettaIndex **out, CettaIndex *count);
+/* space_path_index_prefix_candidates, building the index, for a flat
+ * pattern given by ids: headed by the symbol HEAD, and each of COLUMNS[1]
+ * to COLUMNS[LEN - 1] a value's id, a symbol, an integer, a string or a
+ * truth value, or CETTA_ATOM_ID_NONE where the pattern holds a variable. */
+bool space_path_index_prefix_candidates_ids(Space *space, SymbolId head,
+                                            const AtomId *columns,
+                                            CettaExprLen len,
+                                            CettaIndex **out,
+                                            CettaIndex *count);
+/* The number of leading columns after a pattern's head that a prefix key
+ * can hold, 0 when it binds none. */
+size_t space_path_index_prefix_bound(const Atom *pattern);
+/* Retire the indexes of bound prefixes alone: the trie, once built, descends
+ * every prefix they key. */
+void space_path_indexes_retire_prefixes(Space *space);
 void space_path_indexes_note_add(Space *space, AtomId id, CettaIndex position);
 /* Candidates from an index that already serves this pattern's shape, as
  * physical rows, without building one and only when no open row needs

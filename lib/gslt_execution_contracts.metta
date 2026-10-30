@@ -808,6 +808,7 @@
   (query-head tensor:entries relational-query)
   (query-head tensor:gather relational-query)
   (query-head tensor:gather-rows relational-query)
+  (query-head tensor:where relational-query)
   (query-head tensor:merge relational-query)
   (query-head tensor:zip-map relational-query)
   (query-head __cetta_lib_tensor_try_zip_map relational-query)

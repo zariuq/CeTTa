@@ -2481,6 +2481,145 @@ static bool petta_plan_assign_source_positions(PettaPlanNode *root) {
     return true;
 }
 
+static size_t petta_plan_occurrences(const Atom *atom, const Atom *var) {
+    if (!atom)
+        return 0u;
+    if (atom->kind == ATOM_VAR)
+        return var_id_eq(atom->var_id, var->var_id) ? 1u : 0u;
+    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
+        return 0u;
+    size_t count = 0u;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++)
+        count += petta_plan_occurrences(atom->expr.elems[i], var);
+    return count;
+}
+
+/* ATOM's distinct variables added to SEEN, which holds *COUNT of at most
+ * CAP; false past CAP. */
+static bool petta_plan_variables(const Atom *atom, const Atom **seen,
+                                 size_t cap, size_t *count) {
+    if (atom->kind == ATOM_VAR) {
+        for (size_t i = 0u; i < *count; i++) {
+            if (var_id_eq(seen[i]->var_id, atom->var_id))
+                return true;
+        }
+        if (*count == cap)
+            return false;
+        seen[(*count)++] = atom;
+        return true;
+    }
+    if (atom->kind != ATOM_EXPR || !atom_has_vars(atom))
+        return true;
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++) {
+        if (!petta_plan_variables(atom->expr.elems[i], seen, cap, count))
+            return false;
+    }
+    return true;
+}
+
+/* VALUE when it is `(collapse M)`, or the collapse inside
+ * `(unique-atom (collapse M))`, which reads the same collection; NULL
+ * otherwise. */
+static const Atom *petta_plan_collapse_of(const Atom *value) {
+    if (value->kind == ATOM_EXPR && value->expr.len == 2u &&
+        atom_is_symbol_id(value->expr.elems[0], g_builtin_syms.unique_atom))
+        value = value->expr.elems[1];
+    return value->kind == ATOM_EXPR && value->expr.len == 2u &&
+                   atom_is_symbol_id(value->expr.elems[0],
+                                     g_builtin_syms.collapse)
+        ? value : NULL;
+}
+
+static bool petta_plan_let_of_collapse(const Atom *atom) {
+    return atom->kind == ATOM_EXPR && atom->expr.len == 4u &&
+        atom_is_symbol_id(atom->expr.elems[0], g_builtin_syms.let) &&
+        atom->expr.elems[1]->kind == ATOM_VAR &&
+        petta_plan_collapse_of(atom->expr.elems[2]);
+}
+
+/* PAT of BODY, `(let PAT (superpose VAR) E)` alone or under a collapse
+ * or its count; NULL otherwise. */
+static const Atom *petta_plan_spread_pattern(const Atom *body,
+                                             const Atom *var) {
+    if (body->kind == ATOM_EXPR && body->expr.len == 2u &&
+        atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.size_atom))
+        body = body->expr.elems[1];
+    if (body->kind == ATOM_EXPR && body->expr.len == 2u &&
+        atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.collapse))
+        body = body->expr.elems[1];
+    if (body->kind != ATOM_EXPR || body->expr.len != 4u ||
+        !atom_is_symbol_id(body->expr.elems[0], g_builtin_syms.let))
+        return NULL;
+    const Atom *source = body->expr.elems[2];
+    return source->kind == ATOM_EXPR && source->expr.len == 2u &&
+               atom_is_symbol_id(source->expr.elems[0],
+                                 g_builtin_syms.superpose) &&
+               source->expr.elems[1]->kind == ATOM_VAR &&
+               var_id_eq(source->expr.elems[1]->var_id, var->var_id)
+        ? body->expr.elems[1] : NULL;
+}
+
+void petta_plan_mark_let_scope(const Atom *root, const Atom *lhs,
+                               const Atom *let, PettaPlanNode *plan) {
+    if (!plan)
+        return;
+    plan->binding_local = false;
+    plan->value_variables = 0u;
+    if (!root || !let || !petta_plan_let_of_collapse(let))
+        return;
+    const Atom *var = let->expr.elems[1];
+    const Atom *value = let->expr.elems[2];
+    const Atom *body = let->expr.elems[3];
+    plan->binding_local = petta_plan_occurrences(root, var) ==
+        petta_plan_occurrences(let, var);
+    /* A body spreading the list by the collected template itself meets
+     * each element as the match left that template's variables. */
+    const Atom *collected = petta_plan_collapse_of(value)->expr.elems[1];
+    const Atom *template = collected->kind == ATOM_EXPR &&
+            collected->expr.len == 4u &&
+            atom_is_symbol_id(collected->expr.elems[0], g_builtin_syms.match)
+        ? collected->expr.elems[3] : NULL;
+    const Atom *pattern = petta_plan_spread_pattern(body, var);
+    bool spread_by_template = template && pattern &&
+        atom_eq((Atom *)template, (Atom *)pattern);
+    const Atom *seen[64];
+    size_t count = 0u;
+    if (!petta_plan_variables(value, seen, 64u, &count))
+        return;
+    size_t own = 0u;
+    for (size_t i = 0u; i < count; i++) {
+        size_t in_value = petta_plan_occurrences(value, seen[i]);
+        size_t in_root = petta_plan_occurrences(root, seen[i]);
+        if (in_root == in_value ||
+            (spread_by_template &&
+             petta_plan_occurrences(template, seen[i]) &&
+             in_root == in_value + petta_plan_occurrences(body, seen[i]))) {
+            own++;
+            continue;
+        }
+        size_t in_lhs = petta_plan_occurrences(lhs, seen[i]);
+        if (!in_lhs || in_root != in_value + in_lhs)
+            return;
+    }
+    plan->value_variables = (uint8_t)(own + 1u);
+}
+
+/* The let scopes of ATOM, a part of ROOT, an equation whose left side is
+ * LHS, read alongside ATOM's plan. */
+static void petta_plan_mark_scopes(const Atom *root, const Atom *lhs,
+                                   const Atom *atom, PettaPlanNode *plan,
+                                   uint32_t depth) {
+    if (!atom || !plan || atom->kind != ATOM_EXPR || depth > 256u ||
+        plan->child_count != atom->expr.len || !atom_has_vars(atom))
+        return;
+    if (petta_plan_let_of_collapse(atom))
+        petta_plan_mark_let_scope(root, lhs, atom, plan);
+    for (CettaExprIndex i = 0u; i < atom->expr.len; i++)
+        petta_plan_mark_scopes(root, lhs, atom->expr.elems[i],
+                               (PettaPlanNode *)&plan->children[i],
+                               depth + 1u);
+}
+
 static PettaPlanNode *petta_plan_build_in(
     PettaProgram *program, Arena *plans,
     const PettaCallabilityDomain *callability, Atom *root,
@@ -2716,6 +2855,12 @@ static PettaPlanNode *petta_plan_build_in(
         petta_plan_compile_region_hole_programs(
             program, root, plan);
     }
+    /* An equation is a scope of its own; a translated fragment may share
+     * its variables with what surrounds it. */
+    Atom *lhs = NULL;
+    if (!translation &&
+        petta_program_equation_view(program, root, &lhs, NULL, NULL))
+        petta_plan_mark_scopes(root, lhs, root, plan, 0u);
     return plan;
 }
 
@@ -2847,6 +2992,8 @@ static inline __attribute__((always_inline)) void petta_plan_node_key(
              (uint64_t)node->has_equation_variable_slot << 6 |
              (uint64_t)node->dispatch_handler << 7 |
              (uint64_t)node->literal_case_default << 8 |
+             (uint64_t)node->binding_local << 9 |
+             (uint64_t)node->value_variables << 16u |
              (uint64_t)node->equation_variable_slot << 32u;
     key[3] = (uint64_t)node->output_child;
     key[4] = (uint64_t)(uintptr_t)node->deterministic_region;
